@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2a2d3a"/>
+      <stop offset="100%" stop-color="#14151f"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#8ab4f8"/>
+      <stop offset="100%" stop-color="#c7a0ff"/>
+    </linearGradient>
+    <linearGradient id="s1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#7aa6ff"/>
+      <stop offset="100%" stop-color="#5c7cf0"/>
+    </linearGradient>
+    <linearGradient id="s2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#58d08a"/>
+      <stop offset="100%" stop-color="#3ca869"/>
+    </linearGradient>
+    <linearGradient id="s3" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffb74d"/>
+      <stop offset="100%" stop-color="#e69025"/>
+    </linearGradient>
+    <linearGradient id="s4" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#c7a0ff"/>
+      <stop offset="100%" stop-color="#9871d6"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="10" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Rounded background -->
+  <rect x="0" y="0" width="1024" height="1024" rx="224" ry="224" fill="url(#bg)"/>
+
+  <!-- Subtle border glow -->
+  <rect x="4" y="4" width="1016" height="1016" rx="220" ry="220"
+        fill="none" stroke="url(#accent)" stroke-width="2" opacity="0.25"/>
+
+  <!-- Pipeline connectors -->
+  <g stroke="url(#accent)" stroke-width="8" stroke-linecap="round" fill="none" opacity="0.55">
+    <!-- 1 → 2 (top horizontal) -->
+    <path d="M 360 300 L 664 300"/>
+    <!-- 2 → 3 (right vertical) -->
+    <path d="M 724 360 L 724 664"/>
+    <!-- 3 → 4 (bottom horizontal, reversed) -->
+    <path d="M 664 724 L 360 724"/>
+    <!-- arrows -->
+    <path d="M 640 280 L 670 300 L 640 320"/>
+    <path d="M 704 640 L 724 670 L 744 640"/>
+    <path d="M 384 704 L 354 724 L 384 744"/>
+  </g>
+
+  <!-- 4 stage nodes -->
+  <!-- Stage 1: top-left -->
+  <circle cx="300" cy="300" r="80" fill="url(#s1)" filter="url(#glow)"/>
+  <text x="300" y="324" font-family="SF Pro, -apple-system, system-ui, sans-serif"
+        font-size="80" font-weight="700" fill="#fff" text-anchor="middle">1</text>
+
+  <!-- Stage 2: top-right -->
+  <circle cx="724" cy="300" r="80" fill="url(#s2)" filter="url(#glow)"/>
+  <text x="724" y="324" font-family="SF Pro, -apple-system, system-ui, sans-serif"
+        font-size="80" font-weight="700" fill="#fff" text-anchor="middle">2</text>
+
+  <!-- Stage 3: bottom-right -->
+  <circle cx="724" cy="724" r="80" fill="url(#s3)" filter="url(#glow)"/>
+  <text x="724" y="748" font-family="SF Pro, -apple-system, system-ui, sans-serif"
+        font-size="80" font-weight="700" fill="#fff" text-anchor="middle">3</text>
+
+  <!-- Stage 4: bottom-left -->
+  <circle cx="300" cy="724" r="80" fill="url(#s4)" filter="url(#glow)"/>
+  <text x="300" y="748" font-family="SF Pro, -apple-system, system-ui, sans-serif"
+        font-size="80" font-weight="700" fill="#fff" text-anchor="middle">4</text>
+
+  <!-- Center "M" monogram -->
+  <text x="512" y="560" font-family="SF Pro, -apple-system, system-ui, sans-serif"
+        font-size="200" font-weight="800" fill="url(#accent)" text-anchor="middle"
+        opacity="0.9">M</text>
+</svg>

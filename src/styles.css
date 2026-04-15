@@ -249,6 +249,25 @@ html, body, #root {
   position: relative;
 }
 
+.tile-body.drag-over {
+  outline: 2px dashed #4aa3ff;
+  outline-offset: -4px;
+}
+
+.drop-hint {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  padding: 8px 16px;
+  background: rgba(30, 60, 110, 0.85);
+  color: #cfe6ff;
+  border-radius: 6px;
+  font-size: 13px;
+  pointer-events: none;
+  z-index: 5;
+}
+
 .placeholder {
   padding: 16px;
   font-size: 12px;
@@ -260,6 +279,30 @@ html, body, #root {
   height: 100%;
   padding: 4px;
   background: #1e1e1e;
+}
+
+/* Tame xterm's viewport scrollbar (Chromium + Firefox). */
+.term-host .xterm-viewport {
+  scrollbar-width: thin;
+  scrollbar-color: #3a3a3a transparent;
+}
+.term-host .xterm-viewport::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.term-host .xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+.term-host .xterm-viewport::-webkit-scrollbar-thumb {
+  background: #3a3a3a;
+  border-radius: 4px;
+  border: 2px solid #1e1e1e;
+}
+.term-host .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+.term-host .xterm-viewport::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 .tile-btn {
@@ -781,6 +824,18 @@ html, body, #root {
 
 .history-item:hover {
   background: #333;
+}
+
+.history-item.history-import {
+  margin: 0 0 8px 0;
+  padding: 8px;
+  background: #1f3a5c;
+  color: #cfe6ff;
+  border: 1px dashed #4aa3ff;
+}
+
+.history-item.history-import:hover {
+  background: #244869;
 }
 
 .history-item.active {

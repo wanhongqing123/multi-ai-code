@@ -47,7 +47,9 @@ export default function App() {
   const [startAllNonce, setStartAllNonce] = useState(0)
   const [killAllNonce, setKillAllNonce] = useState(0)
   const [feedbackFrom, setFeedbackFrom] = useState<number | null>(null)
+  const [feedbackForcedTarget, setFeedbackForcedTarget] = useState<number | null>(null)
   const [showHistory, setShowHistory] = useState(false)
+  const [pickerStage, setPickerStage] = useState<number | null>(null)
   const [stageStatus, setStageStatus] = useState<Record<number, string>>({})
 
   const handleStatusChange = useCallback((stageId: number, status: string) => {
@@ -269,8 +271,22 @@ export default function App() {
               onStatusChange={handleStatusChange}
               disabled={!hasProject}
               onRequestFeedback={
-                s.id >= 2 ? () => setFeedbackFrom(s.id) : undefined
+                s.id >= 2
+                  ? () => {
+                      setFeedbackForcedTarget(null)
+                      setFeedbackFrom(s.id)
+                    }
+                  : undefined
               }
+              onRequestRedesign={
+                s.id >= 3
+                  ? () => {
+                      setFeedbackForcedTarget(1)
+                      setFeedbackFrom(s.id)
+                    }
+                  : undefined
+              }
+              onPickHistory={s.id === 1 ? () => setPickerStage(1) : undefined}
             />
           ))}
         </main>
@@ -280,19 +296,107 @@ export default function App() {
             projectId={DEMO_PROJECT}
             projectDir={projectDir}
             onClose={() => setShowHistory(false)}
+            onRestore={async (record) => {
+              const res = await window.api.artifact.restore({
+                projectId: DEMO_PROJECT,
+                projectDir,
+                stageId: record.stage_id,
+                snapshotPath: record.path,
+                sessionId: sessionIdFor(record.stage_id)
+              })
+              if (!res.ok) {
+                alert(`恢复失败：${res.error}`)
+                return
+              }
+              setShowHistory(false)
+            }}
+          />
+        )}
+        {pickerStage !== null && (
+          <HistoryDrawer
+            projectId={DEMO_PROJECT}
+            projectDir={projectDir}
+            pickStage={pickerStage}
+            onClose={() => setPickerStage(null)}
+            onPick={async (snapshotPath) => {
+              const res = await window.api.artifact.restore({
+                projectId: DEMO_PROJECT,
+                projectDir,
+                stageId: pickerStage,
+                snapshotPath,
+                sessionId: sessionIdFor(pickerStage)
+              })
+              if (!res.ok) {
+                alert(`恢复历史方案失败：${res.error}`)
+                return
+              }
+              setPickerStage(null)
+              // The main process already broadcast stage:done → CompletionDrawer opens.
+            }}
+            onImportFile={async () => {
+              const res = await window.api.artifact.importFile({
+                projectId: DEMO_PROJECT,
+                projectDir,
+                stageId: pickerStage,
+                sessionId: sessionIdFor(pickerStage)
+              })
+              if (res.canceled) return
+              if (!res.ok) {
+                alert(`导入文件失败：${res.error}`)
+                return
+              }
+              setPickerStage(null)
+            }}
+            onRefine={async (snapshotPath) => {
+              const seeded = await window.api.artifact.seed({
+                projectId: DEMO_PROJECT,
+                projectDir,
+                stageId: pickerStage,
+                snapshotPath
+              })
+              if (!seeded.ok) {
+                alert(`导入方案失败：${seeded.error}`)
+                return
+              }
+              const sid = sessionIdFor(pickerStage)
+              try {
+                await ensureStageRunning(pickerStage, sid)
+              } catch (err) {
+                alert((err as Error).message)
+                return
+              }
+              await window.api.cc.sendUser(
+                sid,
+                [
+                  `已把上一版方案写回到 ${seeded.artifactAbs}（同一个默认产物路径）。`,
+                  `请先完整读取这份方案，然后与用户交互，逐点补充 / 修正 / 完善它；`,
+                  `完善完成后仍按系统 prompt 约定，覆盖写回同一路径并打印 <<STAGE_DONE ...>> 标记。`
+                ].join('\n')
+              )
+              setPickerStage(null)
+            }}
           />
         )}
         {feedbackFrom !== null && (
           <FeedbackDialog
             fromStage={feedbackFrom}
-            targetOptions={Array.from(
-              { length: feedbackFrom - 1 },
-              (_, i) => i + 1
-            )}
-            defaultTarget={feedbackFrom === 2 ? 1 : feedbackFrom - 1}
+            targetOptions={
+              feedbackForcedTarget !== null
+                ? [feedbackForcedTarget]
+                : Array.from({ length: feedbackFrom - 1 }, (_, i) => i + 1)
+            }
+            defaultTarget={
+              feedbackForcedTarget ?? (feedbackFrom === 2 ? 1 : feedbackFrom - 1)
+            }
             displayIndexOf={displayIndexOf}
-            onSubmit={submitFeedback}
-            onCancel={() => setFeedbackFrom(null)}
+            onSubmit={async (p) => {
+              await submitFeedback(p)
+              setFeedbackForcedTarget(null)
+            }}
+            onCancel={() => {
+              setFeedbackFrom(null)
+              setFeedbackForcedTarget(null)
+            }}
           />
         )}
         {pendingDone && (

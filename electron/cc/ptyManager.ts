@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow } from 'electron'
+import { ipcMain, BrowserWindow, dialog } from 'electron'
 import { promises as fs } from 'fs'
 import { join, isAbsolute } from 'path'
 import { PtyCCProcess } from './PtyCCProcess.js'
@@ -36,6 +36,9 @@ interface Session {
   projectId: string
   stageId: number
   projectDir: string
+  /** Stage working directory the CLI was spawned in — used as a safe place
+   *  to drop inject-files that even a sandboxed CLI (codex --full-auto) can read. */
+  cwd: string
   sessionId: string
   /** Resolves to true once we've injected initial system prompt. */
   primed: boolean
@@ -51,13 +54,57 @@ function broadcast(channel: string, payload: unknown): void {
 
 /** Delay (ms) after spawn before injecting the system prompt, so CC's TUI is ready. */
 const PRIMING_DELAY_MS = 1200
+/** Extra delay for stage 1 (codex) which boots slower than claude. */
+const PRIMING_DELAY_MS_STAGE1 = 2500
 
-/** Write one "message" into the CC TTY: text + CR to submit. */
-function sendMessage(proc: PtyCCProcess, text: string): void {
-  // For a typical interactive CC TUI, a single CR submits current line.
-  // Multi-line text: CC accepts newlines as-is within the input buffer;
-  // final CR submits.
-  proc.write(text)
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms))
+
+/**
+ * Persist a long prompt to disk and return its absolute path, so we can
+ * instruct the AI to `Read` it instead of pasting multi-KB text through the
+ * PTY (which triggers bracketed-paste / truncation on Windows conpty).
+ */
+async function writePromptFile(
+  baseDir: string,
+  stageId: number,
+  kind: 'system' | 'handoff' | 'feedback',
+  content: string
+): Promise<string> {
+  // Place the file under the stage's own cwd so sandboxed CLIs (codex
+  // --full-auto on stage 1) can always read it.
+  const dir = join(baseDir, '.injections')
+  await fs.mkdir(dir, { recursive: true })
+  const ts = new Date().toISOString().replace(/[:.]/g, '-')
+  const full = join(dir, `stage${stageId}-${kind}-${ts}.md`)
+  await fs.writeFile(full, content, 'utf8')
+  return full
+}
+
+/**
+ * Write one "message" into the CC TTY: text + CR to submit.
+ *
+ * NOTE: TUIs like codex/claude detect bracketed-paste when a large chunk
+ * arrives in one PTY read, and stash it as `[Pasted Content N chars]`
+ * without auto-submitting. That breaks system-prompt injection on Windows
+ * (conpty flushes our whole buffer at once). To look like real typing we
+ * stream in small chunks with a tiny delay between them.
+ */
+async function sendMessage(proc: PtyCCProcess, text: string): Promise<void> {
+  const CHUNK = 64
+  for (let i = 0; i < text.length; i += CHUNK) {
+    proc.write(text.slice(i, i + CHUNK))
+    // Yield between chunks so conpty doesn't coalesce them into one read.
+    await sleep(6)
+  }
+  // Let the TUI fully render & exit any transient paste state before we
+  // submit. On Windows conpty this must be generous or `\r` gets absorbed
+  // into the paste buffer instead of committing it.
+  await sleep(500)
+  proc.write('\r')
+  // Safety net: a second CR after a beat ensures the buffered input is
+  // actually dispatched even if the first CR raced with a rendering tick.
+  await sleep(150)
   proc.write('\r')
 }
 
@@ -91,6 +138,7 @@ export function registerPtyIpc(): void {
       projectId: req.projectId,
       stageId: req.stageId,
       projectDir: req.projectDir,
+      cwd: finalCwd,
       sessionId: req.sessionId,
       primed: false
     }
@@ -186,7 +234,18 @@ export function registerPtyIpc(): void {
             targetRepo,
             stageCwd: finalCwd
           })
-          sendMessage(proc, sysPrompt)
+          const refPath = await writePromptFile(finalCwd, req.stageId, 'system', sysPrompt)
+          const artifactAbs = join(req.projectDir, STAGE_ARTIFACTS[req.stageId] ?? '')
+          await sendMessage(
+            proc,
+            [
+              `请先完整读取 ${refPath} 作为本阶段的系统角色与约束说明，逐字遵守后再开始工作。`,
+              ``,
+              `【硬性约定，绝不能忘】工作完全结束时，必须：`,
+              `1) 把本阶段产物写到 ${artifactAbs}；`,
+              `2) 在终端单独一行原样打印形如 \`<<STAGE_DONE artifact=${artifactAbs} summary="一句话概括">>\` 的完成标记（必须是这两个尖括号，任何变体平台都识别不到，流程会卡住无法进入下一阶段）。`
+            ].join('\n')
+          )
           session.primed = true
         } catch (err) {
           broadcast('cc:notice', {
@@ -195,7 +254,7 @@ export function registerPtyIpc(): void {
             message: `系统 prompt 注入失败: ${(err as Error).message}`
           })
         }
-      }, PRIMING_DELAY_MS)
+      }, req.stageId === 1 ? PRIMING_DELAY_MS_STAGE1 : PRIMING_DELAY_MS)
     }
 
     return { ok: true }
@@ -279,7 +338,16 @@ export function registerPtyIpc(): void {
         summary: req.summary,
         verdict: req.verdict
       })
-      sendMessage(s.proc, msg)
+      const refPath = await writePromptFile(s.cwd, req.toStage, 'handoff', msg)
+      const artifactAbs = join(pdir, STAGE_ARTIFACTS[req.toStage] ?? '')
+      await sendMessage(
+        s.proc,
+        [
+          `请读取 ${refPath}，这是来自上一阶段的 handoff（含上一阶段产物 + Stage 1 原始设计文档 + 本阶段约束），读完后继续本阶段工作。`,
+          ``,
+          `【硬性约定】完成本阶段时：把产物写到 ${artifactAbs}，并在终端单独一行打印 \`<<STAGE_DONE artifact=${artifactAbs} summary="一句话概括">>\`。不打印该标记平台就识别不到，流程会卡住。`
+        ].join('\n')
+      )
       return { ok: true }
     }
   )
@@ -301,7 +369,11 @@ export function registerPtyIpc(): void {
       const s = sessions.get(req.sessionId)
       if (!s) return { ok: false, error: 'no session' }
       const msg = buildFeedbackHandoff(req)
-      sendMessage(s.proc, msg)
+      const refPath = await writePromptFile(s.cwd, req.toStage, 'feedback', msg)
+      await sendMessage(
+        s.proc,
+        `请读取 ${refPath}，这是下游阶段发回的 feedback，读完后基于反馈调整并重新产出产物。`
+      )
       return { ok: true }
     }
   )
@@ -374,6 +446,204 @@ export function registerPtyIpc(): void {
     'artifact:list',
     (_e, { projectId, stageId }: { projectId: string; stageId?: number }) => {
       return listArtifacts(projectId, stageId)
+    }
+  )
+
+  /** Shared helper: materialize a content blob as the stage's default artifact,
+   *  optionally firing a synthesized stage:done. */
+  async function materializeArtifact(req: {
+    projectId: string
+    projectDir: string
+    stageId: number
+    content: string
+    sessionId?: string
+    kind: string
+    summary: string
+    /** When true, skip the stage:done broadcast (e.g. seeding for further refinement). */
+    skipBroadcast?: boolean
+  }): Promise<{ ok: true; artifactPath: string; artifactAbs: string; snapshotPath: string | null } | { ok: false; error: string }> {
+    const artifactRel = STAGE_ARTIFACTS[req.stageId]
+    if (!artifactRel) return { ok: false, error: `unknown stage ${req.stageId}` }
+    const artifactAbs = join(req.projectDir, artifactRel)
+    await fs.mkdir(join(artifactAbs, '..'), { recursive: true })
+    await fs.writeFile(artifactAbs, req.content, 'utf8')
+    const snapshotPath = await snapshotArtifact({
+      projectId: req.projectId,
+      projectDir: req.projectDir,
+      stageId: req.stageId,
+      content: req.content,
+      kind: req.kind
+    })
+    if (!req.skipBroadcast) {
+      broadcast('stage:done', {
+        sessionId: req.sessionId ?? `${req.projectId}:stage${req.stageId}`,
+        projectId: req.projectId,
+        stageId: req.stageId,
+        raw: `<<${req.kind}>>`,
+        params: { summary: req.summary },
+        artifactPath: artifactRel,
+        artifactContent: req.content,
+        snapshotPath
+      })
+    }
+    return { ok: true, artifactPath: artifactRel, artifactAbs, snapshotPath }
+  }
+
+  /**
+   * Restore a historical snapshot into the stage's default artifact path, then
+   * fire a synthesized `stage:done` so the completion drawer pops and the
+   * user can advance to the next stage without re-running the CLI.
+   */
+  ipcMain.handle(
+    'artifact:restore',
+    async (
+      _e,
+      req: {
+        projectId: string
+        projectDir: string
+        stageId: number
+        /** Project-dir-relative path of the snapshot to restore. */
+        snapshotPath: string
+        sessionId?: string
+      }
+    ) => {
+      try {
+        const snapAbs = isAbsolute(req.snapshotPath)
+          ? req.snapshotPath
+          : join(req.projectDir, req.snapshotPath)
+        const content = await fs.readFile(snapAbs, 'utf8')
+        return materializeArtifact({
+          projectId: req.projectId,
+          projectDir: req.projectDir,
+          stageId: req.stageId,
+          content,
+          sessionId: req.sessionId,
+          kind: 'restored',
+          summary: '选用历史方案'
+        })
+      } catch (err) {
+        return { ok: false, error: (err as Error).message }
+      }
+    }
+  )
+
+  /**
+   * Seed a stage's default artifact with either a historical snapshot or an
+   * external file, WITHOUT firing the completion drawer. Returns the absolute
+   * artifact path so the caller can then prompt the AI to refine it.
+   */
+  ipcMain.handle(
+    'artifact:seed',
+    async (
+      _e,
+      req: {
+        projectId: string
+        projectDir: string
+        stageId: number
+        /** Exactly one of these must be provided. */
+        snapshotPath?: string
+        /** Open a native file picker instead (ignored if snapshotPath is set). */
+        pickFile?: boolean
+      }
+    ) => {
+      try {
+        let content: string
+        let sourceLabel: string
+        if (req.snapshotPath) {
+          const abs = isAbsolute(req.snapshotPath)
+            ? req.snapshotPath
+            : join(req.projectDir, req.snapshotPath)
+          content = await fs.readFile(abs, 'utf8')
+          sourceLabel = `历史快照 ${req.snapshotPath}`
+        } else if (req.pickFile) {
+          const res = await dialog.showOpenDialog({
+            title: '选择要继续完善的方案文件',
+            properties: ['openFile'],
+            filters: [
+              { name: 'Markdown / Text', extensions: ['md', 'markdown', 'txt'] },
+              { name: 'All Files', extensions: ['*'] }
+            ]
+          })
+          if (res.canceled || res.filePaths.length === 0) {
+            return { ok: false, canceled: true }
+          }
+          content = await fs.readFile(res.filePaths[0], 'utf8')
+          sourceLabel = `外部文件 ${res.filePaths[0]}`
+        } else {
+          return { ok: false, error: 'either snapshotPath or pickFile required' }
+        }
+        const mat = await materializeArtifact({
+          projectId: req.projectId,
+          projectDir: req.projectDir,
+          stageId: req.stageId,
+          content,
+          kind: 'refine-seed',
+          summary: `基于${sourceLabel}继续完善`,
+          skipBroadcast: true
+        })
+        if (!mat.ok) return mat
+        return {
+          ok: true,
+          artifactPath: mat.artifactPath,
+          artifactAbs: mat.artifactAbs,
+          snapshotPath: mat.snapshotPath,
+          sourceLabel
+        }
+      } catch (err) {
+        return { ok: false, error: (err as Error).message }
+      }
+    }
+  )
+
+  /** Send an arbitrary user-typed message to a running session. */
+  ipcMain.handle(
+    'cc:send-user',
+    async (_e, { sessionId, text }: { sessionId: string; text: string }) => {
+      const s = sessions.get(sessionId)
+      if (!s) return { ok: false, error: 'no session' }
+      await sendMessage(s.proc, text)
+      return { ok: true }
+    }
+  )
+
+  /** Import an external file as a stage's default artifact. Opens a native
+   *  file picker, reads the chosen file, then materializes + fires stage:done. */
+  ipcMain.handle(
+    'artifact:import-file',
+    async (
+      _e,
+      req: {
+        projectId: string
+        projectDir: string
+        stageId: number
+        sessionId?: string
+      }
+    ) => {
+      try {
+        const res = await dialog.showOpenDialog({
+          title: '选择要作为本阶段产物的文件',
+          properties: ['openFile'],
+          filters: [
+            { name: 'Markdown / Text', extensions: ['md', 'markdown', 'txt'] },
+            { name: 'All Files', extensions: ['*'] }
+          ]
+        })
+        if (res.canceled || res.filePaths.length === 0) {
+          return { ok: false, canceled: true }
+        }
+        const content = await fs.readFile(res.filePaths[0], 'utf8')
+        return materializeArtifact({
+          projectId: req.projectId,
+          projectDir: req.projectDir,
+          stageId: req.stageId,
+          content,
+          sessionId: req.sessionId,
+          kind: 'imported',
+          summary: `导入文件: ${res.filePaths[0]}`
+        })
+      } catch (err) {
+        return { ok: false, error: (err as Error).message }
+      }
     }
   )
 

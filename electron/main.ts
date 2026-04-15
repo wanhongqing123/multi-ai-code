@@ -1,5 +1,7 @@
 import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron'
 import { join } from 'path'
+import { tmpdir } from 'os'
+import { randomBytes } from 'crypto'
 import { initDb, closeDb, getProject, createProject } from './store/db.js'
 import {
   ensureRootDir,
@@ -135,6 +137,27 @@ app.whenReady().then(async () => {
       await fs.writeFile(metaPath, JSON.stringify(meta, null, 2))
 
       return { ok: true, target_repo: path, name: meta.name as string }
+    }
+  )
+
+  // Save a clipboard-pasted image (incl. screenshots) to a temp file so the
+  // CLI can reference it by path.
+  ipcMain.handle(
+    'clipboard:save-image',
+    async (_e, { data, ext }: { data: Uint8Array | ArrayBuffer; ext: string }) => {
+      try {
+        const dir = join(tmpdir(), 'multi-ai-code', 'pasted')
+        await fs.mkdir(dir, { recursive: true })
+        const safeExt = /^[a-z0-9]{1,6}$/i.test(ext) ? ext.toLowerCase() : 'png'
+        const ts = new Date().toISOString().replace(/[:.]/g, '-')
+        const name = `paste-${ts}-${randomBytes(3).toString('hex')}.${safeExt}`
+        const full = join(dir, name)
+        const buf = Buffer.from(data as ArrayBuffer)
+        await fs.writeFile(full, buf)
+        return { ok: true, path: full }
+      } catch (err) {
+        return { ok: false, error: (err as Error).message }
+      }
     }
   )
 

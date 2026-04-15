@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron'
+import { contextBridge, ipcRenderer, IpcRendererEvent, webUtils } from 'electron'
 
 export interface SpawnOptions {
   sessionId: string
@@ -77,6 +77,16 @@ export interface FeedbackInjection {
 }
 
 const api = {
+  /** Resolve a DataTransfer File to its absolute filesystem path (Electron 32+). */
+  getPathForFile: (file: File): string => webUtils.getPathForFile(file),
+  clipboard: {
+    saveImage: (data: ArrayBuffer, ext: string) =>
+      ipcRenderer.invoke('clipboard:save-image', { data, ext }) as Promise<{
+        ok: boolean
+        path?: string
+        error?: string
+      }>
+  },
   ping: () => ipcRenderer.invoke('app:ping'),
   version: () => ipcRenderer.invoke('app:version'),
   demoProject: () =>
@@ -109,6 +119,11 @@ const api = {
       ipcRenderer.send('cc:resize', { sessionId, cols, rows }),
     kill: (sessionId: string) =>
       ipcRenderer.invoke('cc:kill', { sessionId }) as Promise<{ ok: boolean; error?: string }>,
+    sendUser: (sessionId: string, text: string) =>
+      ipcRenderer.invoke('cc:send-user', { sessionId, text }) as Promise<{
+        ok: boolean
+        error?: string
+      }>,
     killAll: () =>
       ipcRenderer.invoke('cc:kill-all') as Promise<{ ok: boolean; killed: string[] }>,
     list: () => ipcRenderer.invoke('cc:list') as Promise<string[]>,
@@ -172,6 +187,48 @@ const api = {
       ipcRenderer.invoke('artifact:read', { projectDir, path }) as Promise<{
         ok: boolean
         content?: string
+        error?: string
+      }>,
+    restore: (req: {
+      projectId: string
+      projectDir: string
+      stageId: number
+      snapshotPath: string
+      sessionId?: string
+    }) =>
+      ipcRenderer.invoke('artifact:restore', req) as Promise<{
+        ok: boolean
+        artifactPath?: string
+        snapshotPath?: string | null
+        error?: string
+      }>,
+    seed: (req: {
+      projectId: string
+      projectDir: string
+      stageId: number
+      snapshotPath?: string
+      pickFile?: boolean
+    }) =>
+      ipcRenderer.invoke('artifact:seed', req) as Promise<{
+        ok: boolean
+        canceled?: boolean
+        artifactPath?: string
+        artifactAbs?: string
+        snapshotPath?: string | null
+        sourceLabel?: string
+        error?: string
+      }>,
+    importFile: (req: {
+      projectId: string
+      projectDir: string
+      stageId: number
+      sessionId?: string
+    }) =>
+      ipcRenderer.invoke('artifact:import-file', req) as Promise<{
+        ok: boolean
+        canceled?: boolean
+        artifactPath?: string
+        snapshotPath?: string | null
         error?: string
       }>
   }

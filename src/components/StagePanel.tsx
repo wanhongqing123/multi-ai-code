@@ -28,6 +28,10 @@ export interface StagePanelProps {
   onStatusChange?: (stageId: number, status: 'idle' | 'running' | 'awaiting-confirm' | 'exited') => void
   /** Disables Start / 完成 / 回退 actions (e.g. no project opened). */
   disabled?: boolean
+  /** When provided, renders a "选用历史方案" button that opens the picker. */
+  onPickHistory?: () => void
+  /** When provided, renders a "↩ 重新设计" shortcut that sends feedback directly to Stage 1. */
+  onRequestRedesign?: () => void
 }
 
 type Status = 'idle' | 'running' | 'awaiting-confirm' | 'exited'
@@ -56,12 +60,91 @@ export default function StagePanel(props: StagePanelProps) {
   const unsubRef = useRef<Array<() => void>>([])
   const [status, setStatus] = useState<Status>('idle')
   const [error, setError] = useState<string | null>(null)
+  const [dragActive, setDragActive] = useState(false)
+
+  function quoteForShell(p: string): string {
+    // Wrap in double quotes if it contains whitespace or special chars.
+    return /[\s"'`$&|<>()]/.test(p) ? `"${p.replace(/"/g, '\\"')}"` : p
+  }
+
+  function handleDrop(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault()
+    e.stopPropagation()
+    setDragActive(false)
+    const files = Array.from(e.dataTransfer?.files ?? [])
+    if (files.length === 0) return
+    const paths: string[] = []
+    for (const f of files) {
+      try {
+        const p = window.api.getPathForFile(f)
+        if (p) paths.push(quoteForShell(p))
+      } catch {
+        /* ignore */
+      }
+    }
+    if (paths.length === 0) return
+    // Insert as a space-separated list, with a leading space so it doesn't glue
+    // onto any existing prompt text the user just typed.
+    const text = (paths.length > 1 ? ' ' : '') + paths.join(' ') + ' '
+    window.api.cc.write(sessionId, text)
+    termRef.current?.focus()
+  }
+
+  function handleDragOver(e: React.DragEvent<HTMLDivElement>) {
+    if (!e.dataTransfer?.types?.includes('Files')) return
+    e.preventDefault()
+    e.stopPropagation()
+    e.dataTransfer.dropEffect = 'copy'
+    if (!dragActive) setDragActive(true)
+  }
+
+  async function handlePaste(e: ClipboardEvent) {
+    const host = containerRef.current
+    if (!host) return
+    // Only intercept if focus is inside this terminal host
+    const active = document.activeElement
+    if (!active || !host.contains(active)) return
+    const items = Array.from(e.clipboardData?.items ?? [])
+    const imageItems = items.filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
+    if (imageItems.length > 0) {
+      e.preventDefault()
+      e.stopPropagation()
+      const paths: string[] = []
+      for (const it of imageItems) {
+        const file = it.getAsFile()
+        if (!file) continue
+        const ext = (file.type.split('/')[1] || 'png').split('+')[0]
+        const buf = await file.arrayBuffer()
+        const res = await window.api.clipboard.saveImage(buf, ext)
+        if (res.ok && res.path) paths.push(quoteForShell(res.path))
+      }
+      if (paths.length === 0) return
+      window.api.cc.write(sessionId, paths.join(' ') + ' ')
+      termRef.current?.focus()
+      return
+    }
+    // Plain text paste — xterm.js's internal textarea doesn't always win the
+    // paste event on Windows when focus lands on the wrapper div. Write the
+    // clipboard text directly to the PTY so Ctrl+V / Cmd+V always works.
+    const text = e.clipboardData?.getData('text') ?? ''
+    if (!text) return
+    e.preventDefault()
+    e.stopPropagation()
+    window.api.cc.write(sessionId, text)
+    termRef.current?.focus()
+  }
+
+  function handleDragLeave(e: React.DragEvent<HTMLDivElement>) {
+    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return
+    setDragActive(false)
+  }
 
   useEffect(() => {
     if (!containerRef.current) return
     const term = new Terminal({
-      fontSize: 12,
-      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+      fontSize: 15,
+      lineHeight: 1.2,
+      fontFamily: 'Menlo, Monaco, Consolas, "Courier New", monospace',
       cursorBlink: true,
       convertEol: true,
       theme: { background: '#1e1e1e', foreground: '#e6e6e6' },
@@ -91,6 +174,12 @@ export default function StagePanel(props: StagePanelProps) {
     })
     ro.observe(containerRef.current)
 
+    const pasteListener = (e: ClipboardEvent) => {
+      void handlePaste(e)
+    }
+    // Capture phase so we beat xterm's textarea from eating the event for images
+    window.addEventListener('paste', pasteListener, true)
+
     const offData = window.api.cc.onData((evt) => {
       if (evt.sessionId === sessionId) {
         term.write(evt.chunk)
@@ -111,6 +200,7 @@ export default function StagePanel(props: StagePanelProps) {
 
     return () => {
       ro.disconnect()
+      window.removeEventListener('paste', pasteListener, true)
       unsubRef.current.forEach((fn) => fn())
       unsubRef.current = []
       term.dispose()
@@ -230,6 +320,16 @@ export default function StagePanel(props: StagePanelProps) {
         <span className="tile-id">{props.displayIndex ?? stageId}</span>
         <span className="tile-name">{stageName}</span>
         <span className={`tile-badge ${badge}`}>{badge}</span>
+        {props.onPickHistory && (
+          <button
+            className="tile-btn"
+            onClick={props.onPickHistory}
+            disabled={disabled}
+            title="直接选用此阶段的历史产物或外部文件，跳过 AI 执行"
+          >
+            📋 选用历史
+          </button>
+        )}
         {status === 'idle' || status === 'exited' ? (
           <button
             className="tile-btn"
@@ -257,6 +357,15 @@ export default function StagePanel(props: StagePanelProps) {
                 ↺ 回退
               </button>
             )}
+            {props.onRequestRedesign && (
+              <button
+                className="tile-btn"
+                onClick={props.onRequestRedesign}
+                title="发现方案本身有问题，直接回到「方案设计」阶段重做"
+              >
+                ⇦ 重新设计
+              </button>
+            )}
             <button className="tile-btn" onClick={handleKill}>
               Kill
             </button>
@@ -273,8 +382,15 @@ export default function StagePanel(props: StagePanelProps) {
         )}
       </div>
       {error && <div className="tile-error">⚠ {error}</div>}
-      <div className="tile-body">
+      <div
+        className={`tile-body${dragActive ? ' drag-over' : ''}`}
+        onDrop={handleDrop}
+        onDragOver={handleDragOver}
+        onDragEnter={handleDragOver}
+        onDragLeave={handleDragLeave}
+      >
         <div ref={containerRef} className="term-host" />
+        {dragActive && <div className="drop-hint">松开以粘贴文件路径</div>}
       </div>
     </section>
   )

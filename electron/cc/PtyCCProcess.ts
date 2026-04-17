@@ -1,7 +1,7 @@
 import { spawn, IPty } from 'node-pty'
 import { EventEmitter } from 'events'
 import { delimiter, join, isAbsolute, extname } from 'path'
-import { statSync } from 'fs'
+import { statSync, readFileSync, writeFileSync } from 'fs'
 
 const isWindows = process.platform === 'win32'
 
@@ -76,6 +76,46 @@ export class PtyCCProcess extends EventEmitter {
       ...(this.opts.env ?? {}),
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor'
+    }
+
+    // Suppress Codex CLI upgrade prompts by dismissing the latest version.
+    // version.json lives in ~/.codex/; we overwrite dismissed_version on
+    // every spawn so codex never pauses to show the "update available" banner.
+    if (command === 'codex' || command.endsWith('/codex') || command.endsWith('\\codex')) {
+      try {
+        const codexDir = isWindows
+          ? join(process.env.USERPROFILE ?? '', '.codex')
+          : join(process.env.HOME ?? '', '.codex')
+        const versionFile = join(codexDir, 'version.json')
+        const raw = JSON.parse(readFileSync(versionFile, 'utf8'))
+        if (raw.latest_version && raw.dismissed_version !== raw.latest_version) {
+          raw.dismissed_version = raw.latest_version
+          writeFileSync(versionFile, JSON.stringify(raw), 'utf8')
+        }
+      } catch {
+        /* ignore — file may not exist on first run */
+      }
+    }
+
+    // On Windows, purge variables from MSYS2 / Git-for-Windows that confuse
+    // child processes spawned by the AI CLI (bash.exe, MSBuild, etc.).
+    if (isWindows) {
+      const toxic = [
+        'MSYSTEM', 'MSYSTEM_CARCH', 'MSYSTEM_CHOST', 'MSYSTEM_PREFIX',
+        'MSYS', 'CHERE_INVOKING', 'SHELL', 'CONFIG_SITE', 'ORIGINAL_PATH',
+        'MINGW_CHOST', 'MINGW_PREFIX', 'MINGW_PACKAGE_PREFIX',
+        'PKG_CONFIG_PATH', 'PKG_CONFIG_SYSTEM_INCLUDE_PATH',
+        'PKG_CONFIG_SYSTEM_LIBRARY_PATH', 'ACLOCAL_PATH',
+        // Prevents cmd.exe / MSBuild from finding executables in cwd
+        'NoDefaultCurrentDirectoryInExePath'
+      ]
+      for (const key of toxic) {
+        delete env[key]
+        // env keys may differ in case on Windows; do a case-insensitive sweep
+        for (const k of Object.keys(env)) {
+          if (k.toLowerCase() === key.toLowerCase()) delete env[k]
+        }
+      }
     }
 
     // Ensure common install dirs are in PATH (Electron may launch without the

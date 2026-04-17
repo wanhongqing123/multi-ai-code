@@ -13,6 +13,25 @@ export const STAGE_ARTIFACTS: Record<number, string> = {
 }
 
 /**
+ * Compute the stage's working artifact path. When a plan name is given,
+ * Stage 1 uses `<planName>.md` inside its isolated workspace so the file
+ * name matches the plan label (instead of a generic "design.md"). Stages
+ * 2-4 retain their semantic names (impl-summary/acceptance/test-report)
+ * since they represent different document types, not "the plan".
+ */
+export function stageArtifactPath(stageId: number, label?: string | null): string {
+  if (stageId === 1 && label && label.trim()) {
+    const safe = label
+      .trim()
+      .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
+      .replace(/\s+/g, '_')
+      .slice(0, 80)
+    return `workspaces/stage1_design/${safe}.md`
+  }
+  return STAGE_ARTIFACTS[stageId]
+}
+
+/**
  * Per-stage cwd (relative to project dir).
  * Stage 1 runs in an isolated empty workspace (codex --full-auto is sandboxed
  * to its cwd subtree and therefore cannot touch source code).

@@ -108,6 +108,22 @@ export function getProject(id: string): ProjectRow | undefined {
     | undefined
 }
 
+export function deleteProject(id: string): void {
+  getDb().prepare(`DELETE FROM projects WHERE id = ?`).run(id)
+}
+
+export function updateProjectName(id: string, name: string): void {
+  const now = new Date().toISOString()
+  getDb()
+    .prepare(`UPDATE projects SET name = ?, updated_at = ? WHERE id = ?`)
+    .run(name, now, id)
+}
+
+export function touchProject(id: string): void {
+  const now = new Date().toISOString()
+  getDb().prepare(`UPDATE projects SET updated_at = ? WHERE id = ?`).run(now, id)
+}
+
 export function listProjects(): ProjectRow[] {
   return getDb()
     .prepare(`SELECT * FROM projects ORDER BY updated_at DESC`)
@@ -157,6 +173,32 @@ export function recordArtifact(a: {
     .get(info.lastInsertRowid) as ArtifactRow
 }
 
+/**
+ * Upsert-style record: if a row with the same (project_id, stage_id, path)
+ * already exists, bump its created_at + kind instead of inserting a new row.
+ * Used by Stage 1 where the plan file is appended across iterations.
+ */
+export function recordOrTouchArtifact(a: {
+  project_id: string
+  stage_id: number
+  path: string
+  kind: string
+}): ArtifactRow {
+  const existing = getDb()
+    .prepare(
+      `SELECT * FROM artifacts WHERE project_id = ? AND stage_id = ? AND path = ?`
+    )
+    .get(a.project_id, a.stage_id, a.path) as ArtifactRow | undefined
+  const now = new Date().toISOString()
+  if (existing) {
+    getDb()
+      .prepare(`UPDATE artifacts SET created_at = ?, kind = ? WHERE id = ?`)
+      .run(now, a.kind, existing.id)
+    return { ...existing, created_at: now, kind: a.kind }
+  }
+  return recordArtifact(a)
+}
+
 export function listArtifacts(projectId: string, stageId?: number): ArtifactRow[] {
   const sql = stageId
     ? `SELECT * FROM artifacts WHERE project_id = ? AND stage_id = ? ORDER BY created_at DESC`
@@ -185,4 +227,22 @@ export function recordEvent(e: {
       e.payload ? JSON.stringify(e.payload) : null,
       new Date().toISOString()
     )
+}
+
+export interface EventRow {
+  id: number
+  project_id: string
+  from_stage: number | null
+  to_stage: number | null
+  kind: string
+  payload: string | null
+  created_at: string
+}
+
+export function listEvents(projectId: string, limit = 500): EventRow[] {
+  return getDb()
+    .prepare(
+      `SELECT * FROM events WHERE project_id = ? ORDER BY id DESC LIMIT ?`
+    )
+    .all(projectId, limit) as EventRow[]
 }

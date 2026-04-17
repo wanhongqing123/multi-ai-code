@@ -1,5 +1,42 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ArtifactRecord } from '../../electron/preload'
+import DiffView from './DiffView'
+
+interface Version {
+  label: string
+  content: string
+}
+
+/** Parse an aggregate file (CURRENT + HISTORY markers) into versions, newest first. */
+function parseVersions(content: string): Version[] {
+  const versions: Version[] = []
+  const curStart = content.indexOf('<!-- CURRENT-START -->')
+  const curEnd = content.indexOf('<!-- CURRENT-END -->')
+  if (curStart !== -1 && curEnd > curStart) {
+    const block = content.slice(curStart + 22, curEnd).trim()
+    const nl = block.indexOf('\n')
+    const meta = nl >= 0 ? block.slice(0, nl).replace(/^##\s*/, '') : '当前版本'
+    const body = nl >= 0 ? block.slice(nl + 1).trim() : block
+    versions.push({ label: `当前版本 · ${meta}`, content: body })
+  }
+  const hStart = content.indexOf('<!-- HISTORY-START -->')
+  const hEnd = content.indexOf('<!-- HISTORY-END -->')
+  if (hStart !== -1 && hEnd > hStart) {
+    const historyBody = content.slice(hStart + 22, hEnd).trim()
+    // Split on "### " which is the demoted section marker
+    const chunks = historyBody.split(/\n(?=### )/g)
+    for (const c of chunks) {
+      const nl = c.indexOf('\n')
+      const meta = nl >= 0 ? c.slice(0, nl).replace(/^###\s*/, '') : '(历史)'
+      const body = nl >= 0 ? c.slice(nl + 1).trim() : c
+      if (body) versions.push({ label: meta, content: body })
+    }
+  }
+  if (versions.length === 0) {
+    versions.push({ label: '全文', content })
+  }
+  return versions
+}
 
 const STAGE_NAMES: Record<number, string> = {
   1: '方案设计',
@@ -22,6 +59,8 @@ export interface HistoryDrawerProps {
   onImportFile?: () => Promise<void> | void
   /** General-mode "restore into its own stage" action. */
   onRestore?: (record: ArtifactRecord) => Promise<void> | void
+  /** Picker mode: merge selected plans via AI (stage 1 CLI). */
+  onMergeViaAI?: (mergedContent: string) => Promise<void> | void
 }
 
 export default function HistoryDrawer({
@@ -32,7 +71,8 @@ export default function HistoryDrawer({
   onPick,
   onRefine,
   onImportFile,
-  onRestore
+  onRestore,
+  onMergeViaAI
 }: HistoryDrawerProps) {
   const [records, setRecords] = useState<ArtifactRecord[]>([])
   const [selected, setSelected] = useState<ArtifactRecord | null>(null)
@@ -43,6 +83,31 @@ export default function HistoryDrawer({
   useEffect(() => {
     window.api.artifact.list(projectId).then(setRecords)
   }, [projectId])
+
+  const [previews, setPreviews] = useState<Record<number, string>>({})
+  useEffect(() => {
+    if (records.length === 0) return
+    let cancelled = false
+    void (async () => {
+      const out: Record<number, string> = {}
+      await Promise.all(
+        records.map(async (r) => {
+          const res = await window.api.artifact.read(projectDir, r.path)
+          if (!res.ok || !res.content) return
+          // Prefer first heading line starting with #; fallback to first non-blank line
+          const heading = res.content.match(/^#+\s+(.+)$/m)?.[1]
+          const firstLine = res.content
+            .split(/\r?\n/)
+            .find((ln) => ln.trim() && !ln.trim().startsWith('#'))
+          out[r.id] = (heading || firstLine || '').slice(0, 80)
+        })
+      )
+      if (!cancelled) setPreviews(out)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [records, projectDir])
 
   const byStage = useMemo(() => {
     const out: Record<number, ArtifactRecord[]> = { 1: [], 2: [], 3: [], 4: [] }
@@ -55,6 +120,77 @@ export default function HistoryDrawer({
 
   const stagesToShow = pickStage !== undefined ? [pickStage] : [1, 2, 3, 4]
   const [picking, setPicking] = useState(false)
+  const [checked, setChecked] = useState<Set<number>>(new Set())
+  const [exporting, setExporting] = useState(false)
+  const [diffMode, setDiffMode] = useState(false)
+  const [leftIdx, setLeftIdx] = useState(1)
+  const [rightIdx, setRightIdx] = useState(0)
+
+  const versions = useMemo(() => (preview ? parseVersions(preview) : []), [preview])
+
+  function toggleCheck(id: number, e: React.MouseEvent) {
+    e.stopPropagation()
+    setChecked((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  async function handleExport() {
+    if (checked.size === 0) return
+    setExporting(true)
+    try {
+      const items = records.filter((r) => checked.has(r.id))
+      const parts: string[] = []
+      for (const r of items) {
+        const res = await window.api.artifact.read(projectDir, r.path)
+        const stageName = STAGE_NAMES[r.stage_id] ?? `Stage ${r.stage_id}`
+        const time = new Date(r.created_at).toLocaleString()
+        parts.push(
+          `# ${stageName} — ${time}\n\n` +
+            `> path: \`${r.path}\`  \n> kind: ${r.kind}\n\n` +
+            (res.ok ? res.content ?? '' : `⚠ 读取失败: ${res.error}`) +
+            '\n'
+        )
+      }
+      const merged = parts.join('\n---\n\n')
+      const defaultName = items.length === 1
+        ? items[0].path.split(/[/\\]/).pop()?.replace(/\.md$/, '') + '_导出.md'
+        : `方案合集_${items.length}份.md`
+      const saveRes = await window.api.saveFileAs(defaultName, merged)
+      if (saveRes.ok) setChecked(new Set())
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  async function handleMergeViaAI() {
+    if (checked.size === 0 || !onMergeViaAI) return
+    setExporting(true)
+    try {
+      const items = records.filter((r) => checked.has(r.id))
+      const parts: string[] = []
+      for (const r of items) {
+        const res = await window.api.artifact.read(projectDir, r.path)
+        const stageName = STAGE_NAMES[r.stage_id] ?? `Stage ${r.stage_id}`
+        const time = new Date(r.created_at).toLocaleString()
+        parts.push(
+          `## 方案来源：${stageName} — ${time}\n` +
+            `> path: \`${r.path}\`\n\n` +
+            (res.ok ? res.content ?? '' : `⚠ 读取失败: ${res.error}`) +
+            '\n'
+        )
+      }
+      const merged = `# 以下是 ${items.length} 份待合并优化的历史方案\n\n` +
+        parts.join('\n---\n\n')
+      await onMergeViaAI(merged)
+      setChecked(new Set())
+    } finally {
+      setExporting(false)
+    }
+  }
 
   async function openRecord(r: ArtifactRecord) {
     setSelected(r)
@@ -78,6 +214,28 @@ export default function HistoryDrawer({
               ? `📋 选用历史方案 · Stage ${pickStage} ${STAGE_NAMES[pickStage] ?? ''}`
               : `📋 产物历史 · ${records.length} 份`}
           </h3>
+          {checked.size > 0 && (
+            <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+              {onMergeViaAI && checked.size >= 2 && (
+                <button
+                  className="drawer-btn warn"
+                  disabled={exporting}
+                  onClick={handleMergeViaAI}
+                  title="把勾选的方案内容喂给 Stage 1 CLI，由 AI 合并优化为一份统一设计"
+                >
+                  {exporting ? '处理中…' : `🔀 AI 合并优化 (${checked.size})`}
+                </button>
+              )}
+              <button
+                className="drawer-btn primary"
+                disabled={exporting}
+                onClick={handleExport}
+                style={{ marginRight: 8 }}
+              >
+                {exporting ? '导出中…' : `📤 导出选中 (${checked.size})`}
+              </button>
+            </span>
+          )}
           <button className="modal-close" onClick={onClose}>
             ×
           </button>
@@ -104,19 +262,31 @@ export default function HistoryDrawer({
                   <div className="history-empty">(无记录)</div>
                 ) : (
                   byStage[sid].map((r) => (
-                    <button
-                      key={r.id}
-                      className={`history-item ${
-                        selected?.id === r.id ? 'active' : ''
-                      }`}
-                      onClick={() => openRecord(r)}
-                      title={r.path}
-                    >
-                      <span className="history-time">
-                        {new Date(r.created_at).toLocaleString()}
-                      </span>
-                      <span className="history-kind">{r.kind}</span>
-                    </button>
+                    <div key={r.id} className="history-item-row">
+                      <input
+                        type="checkbox"
+                        className="history-check"
+                        checked={checked.has(r.id)}
+                        onClick={(e) => toggleCheck(r.id, e)}
+                        onChange={() => {}}
+                        title="勾选后可批量导出"
+                      />
+                      <button
+                        className={`history-item ${
+                          selected?.id === r.id ? 'active' : ''
+                        }`}
+                        onClick={() => openRecord(r)}
+                        title={`${r.path}\n\n${previews[r.id] ?? ''}`}
+                      >
+                        <span className="history-time">
+                          {new Date(r.created_at).toLocaleString()}
+                        </span>
+                        {previews[r.id] && (
+                          <span className="history-preview-line">{previews[r.id]}</span>
+                        )}
+                        <span className="history-kind">{r.kind}</span>
+                      </button>
+                    </div>
                   ))
                 )}
               </div>
@@ -132,8 +302,56 @@ export default function HistoryDrawer({
                 <>
                   <div className="drawer-meta">
                     path: <code>{selected.path}</code>
+                    {versions.length > 1 && (
+                      <span style={{ marginLeft: 16 }}>
+                        <label style={{ marginRight: 6 }}>
+                          <input
+                            type="checkbox"
+                            checked={diffMode}
+                            onChange={(e) => setDiffMode(e.target.checked)}
+                          />{' '}
+                          Diff 模式
+                        </label>
+                        {diffMode && (
+                          <>
+                            <select
+                              value={leftIdx}
+                              onChange={(e) => setLeftIdx(Number(e.target.value))}
+                              className="version-select"
+                            >
+                              {versions.map((v, i) => (
+                                <option key={i} value={i}>
+                                  旧: {v.label.slice(0, 40)}
+                                </option>
+                              ))}
+                            </select>
+                            <span style={{ margin: '0 4px' }}>→</span>
+                            <select
+                              value={rightIdx}
+                              onChange={(e) => setRightIdx(Number(e.target.value))}
+                              className="version-select"
+                            >
+                              {versions.map((v, i) => (
+                                <option key={i} value={i}>
+                                  新: {v.label.slice(0, 40)}
+                                </option>
+                              ))}
+                            </select>
+                          </>
+                        )}
+                      </span>
+                    )}
                   </div>
-                  <pre className="drawer-artifact">{preview}</pre>
+                  {diffMode && versions.length > 1 ? (
+                    <DiffView
+                      oldText={versions[leftIdx]?.content ?? ''}
+                      newText={versions[rightIdx]?.content ?? ''}
+                      oldLabel={versions[leftIdx]?.label ?? ''}
+                      newLabel={versions[rightIdx]?.label ?? ''}
+                    />
+                  ) : (
+                    <pre className="drawer-artifact">{preview}</pre>
+                  )}
                   {pickStage !== undefined && (onPick || onRefine) && (
                     <div className="drawer-actions">
                       {onPick && (

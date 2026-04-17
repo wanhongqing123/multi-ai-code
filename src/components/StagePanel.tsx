@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { SearchAddon } from '@xterm/addon-search'
 import '@xterm/xterm/css/xterm.css'
 
 export interface StagePanelProps {
@@ -32,6 +33,13 @@ export interface StagePanelProps {
   onPickHistory?: () => void
   /** When provided, renders a "↩ 重新设计" shortcut that sends feedback directly to Stage 1. */
   onRequestRedesign?: () => void
+  /** Stage 1 plan name input (controlled). */
+  planName?: string
+  onPlanNameChange?: (name: string) => void
+  planNameSuggestions?: string[]
+  /** Per-project CLI overrides from stage config dialog. */
+  commandOverride?: string
+  envOverride?: Record<string, string>
 }
 
 type Status = 'idle' | 'running' | 'awaiting-confirm' | 'exited'
@@ -57,10 +65,47 @@ export default function StagePanel(props: StagePanelProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
+  const searchRef = useRef<SearchAddon | null>(null)
+  const [showSearch, setShowSearch] = useState(false)
+  const [searchQ, setSearchQ] = useState('')
   const unsubRef = useRef<Array<() => void>>([])
   const [status, setStatus] = useState<Status>('idle')
   const [error, setError] = useState<string | null>(null)
   const [dragActive, setDragActive] = useState(false)
+  const [startAt, setStartAt] = useState<number | null>(null)
+  const [lastOutputAt, setLastOutputAt] = useState<number | null>(null)
+  const [bytesOut, setBytesOut] = useState(0)
+  const [tick, setTick] = useState(0)
+  const lastInputRef = useRef<string>('')
+  const inputBufRef = useRef<string>('')
+  const [exitInfo, setExitInfo] = useState<{ code: number; signal?: number } | null>(null)
+
+  useEffect(() => {
+    if (status !== 'running' && status !== 'awaiting-confirm') return
+    const id = setInterval(() => setTick((t) => t + 1), 1000)
+    return () => clearInterval(id)
+  }, [status])
+
+  // Initialize startAt the first time we flip into running (covers external
+  // triggers like advance/startAll that didn't go through handleStart).
+  useEffect(() => {
+    if (status === 'running' && startAt === null) setStartAt(Date.now())
+  }, [status, startAt])
+
+  function fmtDuration(ms: number): string {
+    const s = Math.floor(ms / 1000)
+    const hh = Math.floor(s / 3600)
+    const mm = Math.floor((s % 3600) / 60)
+    const ss = s % 60
+    if (hh > 0) return `${hh}:${mm.toString().padStart(2, '0')}:${ss.toString().padStart(2, '0')}`
+    return `${mm}:${ss.toString().padStart(2, '0')}`
+  }
+
+  function fmtBytes(n: number): string {
+    if (n < 1024) return `${n}B`
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}KB`
+    return `${(n / (1024 * 1024)).toFixed(2)}MB`
+  }
 
   function quoteForShell(p: string): string {
     // Wrap in double quotes if it contains whitespace or special chars.
@@ -151,7 +196,10 @@ export default function StagePanel(props: StagePanelProps) {
       allowProposedApi: true
     })
     const fit = new FitAddon()
+    const search = new SearchAddon()
     term.loadAddon(fit)
+    term.loadAddon(search)
+    searchRef.current = search
     term.open(containerRef.current)
     try {
       fit.fit()
@@ -161,7 +209,75 @@ export default function StagePanel(props: StagePanelProps) {
     termRef.current = term
     fitRef.current = fit
 
-    term.onData((data) => window.api.cc.write(sessionId, data))
+    term.onData((data) => {
+      window.api.cc.write(sessionId, data)
+      // Accumulate typed characters; commit to lastInputRef on Enter (\r or \n)
+      for (const ch of data) {
+        if (ch === '\r' || ch === '\n') {
+          if (inputBufRef.current.trim().length > 0) {
+            lastInputRef.current = inputBufRef.current
+          }
+          inputBufRef.current = ''
+        } else if (ch === '\x7f' || ch === '\b') {
+          inputBufRef.current = inputBufRef.current.slice(0, -1)
+        } else if (ch >= ' ') {
+          inputBufRef.current += ch
+        }
+      }
+    })
+
+    // Intercept copy/paste shortcuts so xterm doesn't forward them as raw keys
+    // to the PTY (which would e.g. send Ctrl+C as SIGINT while text is selected).
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type !== 'keydown') return true
+      const isCopy =
+        (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'c') ||
+        (e.ctrlKey && e.key.toLowerCase() === 'c' && term.hasSelection()) ||
+        (e.metaKey && e.key.toLowerCase() === 'c')
+      if (isCopy) {
+        const sel = term.getSelection()
+        if (sel) {
+          void navigator.clipboard.writeText(sel)
+          term.clearSelection()
+        }
+        return false
+      }
+      const isPaste =
+        (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'v') ||
+        (e.metaKey && e.key.toLowerCase() === 'v')
+      if (isPaste) {
+        void navigator.clipboard
+          .readText()
+          .then((t) => t && window.api.cc.write(sessionId, t))
+        return false
+      }
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'f') {
+        e.preventDefault()
+        setShowSearch(true)
+        return false
+      }
+      return true
+    })
+
+    // Right-click context menu: copy selection / paste clipboard
+    const onContextMenu = async (e: MouseEvent) => {
+      e.preventDefault()
+      if (term.hasSelection()) {
+        const sel = term.getSelection()
+        if (sel) {
+          await navigator.clipboard.writeText(sel)
+          term.clearSelection()
+        }
+      } else {
+        try {
+          const t = await navigator.clipboard.readText()
+          if (t) window.api.cc.write(sessionId, t)
+        } catch {
+          /* clipboard may be empty or permission-denied */
+        }
+      }
+    }
+    containerRef.current.addEventListener('contextmenu', onContextMenu)
 
     const ro = new ResizeObserver(() => {
       try {
@@ -183,13 +299,15 @@ export default function StagePanel(props: StagePanelProps) {
     const offData = window.api.cc.onData((evt) => {
       if (evt.sessionId === sessionId) {
         term.write(evt.chunk)
-        // Auto-flip to running when data flows in (e.g. other panel spawned us)
+        setLastOutputAt(Date.now())
+        setBytesOut((b) => b + (evt.chunk?.length ?? 0))
         setStatus((s) => (s === 'idle' || s === 'exited' ? 'running' : s))
       }
     })
     const offExit = window.api.cc.onExit((evt) => {
       if (evt.sessionId === sessionId) {
         setStatus('exited')
+        setExitInfo({ code: evt.exitCode, signal: evt.signal })
         term.write(`\r\n\x1b[33m[process exited code=${evt.exitCode}]\x1b[0m\r\n`)
       }
     })
@@ -198,9 +316,11 @@ export default function StagePanel(props: StagePanelProps) {
     })
     unsubRef.current.push(offData, offExit, offDone)
 
+    const hostEl = containerRef.current
     return () => {
       ro.disconnect()
       window.removeEventListener('paste', pasteListener, true)
+      hostEl?.removeEventListener('contextmenu', onContextMenu)
       unsubRef.current.forEach((fn) => fn())
       unsubRef.current = []
       term.dispose()
@@ -251,6 +371,10 @@ export default function StagePanel(props: StagePanelProps) {
 
   async function handleStart() {
     setError(null)
+    setStartAt(Date.now())
+    setLastOutputAt(null)
+    setBytesOut(0)
+    setExitInfo(null)
     const term = termRef.current
     const fit = fitRef.current
     if (!term || !fit) return
@@ -265,9 +389,12 @@ export default function StagePanel(props: StagePanelProps) {
       stageId,
       projectDir,
       cwd,
+      command: props.commandOverride,
       args,
+      env: props.envOverride,
       cols: term.cols,
-      rows: term.rows
+      rows: term.rows,
+      label: props.planName || undefined
     })
     if (!res.ok) {
       setError(res.error ?? 'spawn failed')
@@ -279,6 +406,16 @@ export default function StagePanel(props: StagePanelProps) {
   async function handleKill() {
     await window.api.cc.kill(sessionId)
     setStatus('exited')
+  }
+
+  async function handleRetry() {
+    const lastInput = lastInputRef.current
+    await handleStart()
+    // Wait for CLI to come up; then replay last user input if any
+    if (lastInput.trim()) {
+      await new Promise((r) => setTimeout(r, stageId === 1 ? 5500 : 3500))
+      window.api.cc.sendUser(sessionId, lastInput)
+    }
   }
 
   async function handleManualDone() {
@@ -331,14 +468,26 @@ export default function StagePanel(props: StagePanelProps) {
           </button>
         )}
         {status === 'idle' || status === 'exited' ? (
-          <button
-            className="tile-btn"
-            onClick={handleStart}
-            disabled={disabled}
-            title={disabled ? '请先打开项目' : 'Start'}
-          >
-            Start
-          </button>
+          <>
+            <button
+              className="tile-btn"
+              onClick={handleStart}
+              disabled={disabled}
+              title={disabled ? '请先打开项目' : 'Start'}
+            >
+              Start
+            </button>
+            {status === 'exited' && exitInfo && exitInfo.code !== 0 && lastInputRef.current && (
+              <button
+                className="tile-btn"
+                onClick={handleRetry}
+                disabled={disabled}
+                title={`CLI 非正常退出 (code=${exitInfo.code})。一键重启并重放最后一次输入：\n${lastInputRef.current.slice(0, 80)}…`}
+              >
+                🔄 重试
+              </button>
+            )}
+          </>
         ) : (
           <>
             <button
@@ -381,7 +530,75 @@ export default function StagePanel(props: StagePanelProps) {
           </button>
         )}
       </div>
+      {props.onPlanNameChange !== undefined && (
+        <div className="plan-name-bar">
+          <label>方案名称：</label>
+          <input
+            type="text"
+            placeholder="必填 — 用于归档识别（下拉可选历史方案）"
+            value={props.planName ?? ''}
+            onChange={(e) => props.onPlanNameChange?.(e.target.value)}
+            className="plan-name-input"
+            list={`plan-names-${projectId}`}
+          />
+          <datalist id={`plan-names-${projectId}`}>
+            {(props.planNameSuggestions ?? []).map((n) => (
+              <option key={n} value={n} />
+            ))}
+          </datalist>
+        </div>
+      )}
+      {(status === 'running' || status === 'awaiting-confirm') && startAt && (
+        <div className="tile-progress" data-tick={tick}>
+          <span title="自启动累计时长">⏱ {fmtDuration(Date.now() - startAt)}</span>
+          <span
+            title="距上次输出的时长；长时间无输出说明 CLI 可能在等待用户、卡住或在长推理中"
+            className={
+              lastOutputAt && Date.now() - lastOutputAt > 30_000 ? 'stale' : ''
+            }
+          >
+            💤 {lastOutputAt ? fmtDuration(Date.now() - lastOutputAt) : '—'}
+          </span>
+          <span title="累计输出字节 / 按 ~4 字符 ≈ 1 token 估算">
+            📤 {fmtBytes(bytesOut)} ≈ {Math.round(bytesOut / 4 / 1000)}k tok
+          </span>
+        </div>
+      )}
       {error && <div className="tile-error">⚠ {error}</div>}
+      {showSearch && (
+        <div className="term-search-bar">
+          <input
+            autoFocus
+            className="plan-name-input"
+            value={searchQ}
+            onChange={(e) => {
+              setSearchQ(e.target.value)
+              searchRef.current?.findNext(e.target.value, { decorations: { matchBackground: '#5a4400', activeMatchBackground: '#aa7700', matchOverviewRuler: '#5a4400', activeMatchColorOverviewRuler: '#aa7700' } })
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                if (e.shiftKey) searchRef.current?.findPrevious(searchQ)
+                else searchRef.current?.findNext(searchQ)
+              } else if (e.key === 'Escape') {
+                setShowSearch(false)
+                searchRef.current?.clearDecorations()
+              }
+            }}
+            placeholder="搜索（Enter 下一个 · Shift+Enter 上一个 · Esc 关闭）"
+          />
+          <button className="tile-btn" onClick={() => searchRef.current?.findPrevious(searchQ)}>↑</button>
+          <button className="tile-btn" onClick={() => searchRef.current?.findNext(searchQ)}>↓</button>
+          <button
+            className="tile-btn"
+            onClick={() => {
+              setShowSearch(false)
+              searchRef.current?.clearDecorations()
+            }}
+          >
+            ×
+          </button>
+        </div>
+      )}
       <div
         className={`tile-body${dragActive ? ' drag-over' : ''}`}
         onDrop={handleDrop}

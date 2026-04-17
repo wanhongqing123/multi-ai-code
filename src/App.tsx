@@ -3,7 +3,19 @@ import StagePanel from './components/StagePanel'
 import CompletionDrawer from './components/CompletionDrawer'
 import FeedbackDialog from './components/FeedbackDialog'
 import HistoryDrawer from './components/HistoryDrawer'
+import ProjectPicker, { type ProjectInfo } from './components/ProjectPicker'
+import ErrorPanel, { pushLog, useLogs } from './components/ErrorPanel'
+import StageSettingsDialog from './components/StageSettingsDialog'
+import TemplatesDialog from './components/TemplatesDialog'
+import TimelineDrawer from './components/TimelineDrawer'
+import OnboardingWizard from './components/OnboardingWizard'
+import DoctorDialog from './components/DoctorDialog'
+import CommandPalette, { type Command } from './components/CommandPalette'
+import ToastHost, { showToast } from './components/Toast'
+import GlobalSearchDialog from './components/GlobalSearchDialog'
 import type { StageDoneEvent } from '../electron/preload'
+
+const LAST_PROJECT_KEY = 'multi-ai-code.lastProjectId'
 
 const STAGES = [
   { id: 1, name: '方案设计' },
@@ -17,7 +29,6 @@ function displayIndexOf(stageId: number): number | undefined {
   return stageId >= 1 && stageId <= 4 ? stageId : undefined
 }
 
-const DEMO_PROJECT = 'demo'
 
 /**
  * Figure out which stage follows `fromStage` given an optional verdict.
@@ -29,19 +40,31 @@ const DEMO_PROJECT = 'demo'
  *   - Stage 3 verdict=fail → Stage 2
  *   - Stage 4 verdict=fail → Stage 2
  */
-function nextStageFor(fromStage: number, verdict?: string): number | null {
-  if (fromStage === 3 && verdict === 'fail') return 2
-  if (fromStage === 4 && verdict === 'fail') return 2
-  if (fromStage === 4) return null
-  if (fromStage >= 1 && fromStage < 4) return fromStage + 1
-  return null
+function nextStageFor(
+  fromStage: number,
+  verdict?: string,
+  skips?: Record<number, boolean>
+): number | null {
+  const isSkipped = (s: number) => !!skips?.[s]
+  let candidate: number | null
+  if (fromStage === 3 && verdict === 'fail') candidate = 2
+  else if (fromStage === 4 && verdict === 'fail') candidate = 2
+  else if (fromStage === 4) candidate = null
+  else if (fromStage >= 1 && fromStage < 4) candidate = fromStage + 1
+  else candidate = null
+  // Hop over skipped stages (forward only)
+  while (candidate !== null && candidate > fromStage && isSkipped(candidate)) {
+    if (candidate >= 4) return null
+    candidate = candidate + 1
+  }
+  return candidate
 }
 
 export default function App() {
   const [version, setVersion] = useState<string>('')
-  const [projectDir, setProjectDir] = useState<string>('')
-  const [targetRepo, setTargetRepo] = useState<string>('')
-  const [projectName, setProjectName] = useState<string>('')
+  const [projects, setProjects] = useState<ProjectInfo[]>([])
+  const [currentProjectId, setCurrentProjectId] = useState<string | null>(null)
+  const [showProjectPicker, setShowProjectPicker] = useState(false)
   const [pendingDone, setPendingDone] = useState<StageDoneEvent | null>(null)
   const [zoomedStage, setZoomedStage] = useState<number | null>(null)
   const [startAllNonce, setStartAllNonce] = useState(0)
@@ -50,7 +73,65 @@ export default function App() {
   const [feedbackForcedTarget, setFeedbackForcedTarget] = useState<number | null>(null)
   const [showHistory, setShowHistory] = useState(false)
   const [pickerStage, setPickerStage] = useState<number | null>(null)
+  const [planName, setPlanName] = useState('')
+  const [showErrors, setShowErrors] = useState(false)
+  const [showStageSettings, setShowStageSettings] = useState(false)
+  const [showTemplates, setShowTemplates] = useState(false)
+  const [showTimeline, setShowTimeline] = useState(false)
+  const [showOnboarding, setShowOnboarding] = useState(false)
+  const [showDoctor, setShowDoctor] = useState(false)
+  const [showCmdk, setShowCmdk] = useState(false)
+  const [showGlobalSearch, setShowGlobalSearch] = useState(false)
+  const [stageConfigs, setStageConfigs] = useState<
+    Record<string, { command?: string; args?: string[]; env?: Record<string, string>; skip?: boolean }>
+  >({})
+  const [planNameSuggestions, setPlanNameSuggestions] = useState<string[]>([])
+  const [planStagesDone, setPlanStagesDone] = useState<Record<number, boolean>>({})
+
+  // Refresh plan-name suggestions + per-stage "done" status when project/plan changes.
+  useEffect(() => {
+    if (!currentProjectId) {
+      setPlanNameSuggestions([])
+      setPlanStagesDone({})
+      return
+    }
+    void (async () => {
+      const all = await window.api.artifact.list(currentProjectId)
+      const names = new Set<string>()
+      const stageSafe = planName.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/\s+/g, '_').slice(0, 80)
+      const done: Record<number, boolean> = { 1: false, 2: false, 3: false, 4: false }
+      for (const r of all) {
+        const m = r.path.match(/artifacts[/\\]history[/\\]stage(\d+)[/\\](.+?)(_\d[^.]*)?\.md$/)
+        if (m) {
+          const stage = Number(m[1])
+          const decoded = m[2].replace(/_/g, ' ')
+          names.add(decoded)
+          if (stageSafe && m[2] === stageSafe) done[stage] = true
+        }
+      }
+      setPlanNameSuggestions(Array.from(names).sort())
+      setPlanStagesDone(done)
+    })()
+  }, [currentProjectId, pendingDone, planName])
+
+  const stageSkips: Record<number, boolean> = {
+    1: !!stageConfigs['1']?.skip,
+    2: !!stageConfigs['2']?.skip,
+    3: !!stageConfigs['3']?.skip,
+    4: !!stageConfigs['4']?.skip
+  }
+  const [logs] = useLogs()
+  const errorCount = logs.filter((l) => l.level === 'error' || l.level === 'warn').length
   const [stageStatus, setStageStatus] = useState<Record<number, string>>({})
+
+  /** Ensure planName is set; returns false if user cancelled. */
+  function requirePlanName(): string | null {
+    if (planName.trim()) return planName.trim()
+    const input = window.prompt('请输入本次方案名称（必填，用于归档时识别）：')
+    if (!input?.trim()) return null
+    setPlanName(input.trim())
+    return input.trim()
+  }
 
   const handleStatusChange = useCallback((stageId: number, status: string) => {
     setStageStatus((prev) =>
@@ -71,68 +152,139 @@ export default function App() {
     }
   }, [anyRunning])
 
+  const reloadProjects = useCallback(async () => {
+    const list = await window.api.project.list()
+    setProjects(list)
+    return list
+  }, [])
+
+  // Global keyboard shortcuts
   useEffect(() => {
-    window.api.version().then(setVersion)
-    window.api.demoProject().then((p) => {
-      setProjectDir(p.dir)
-      setTargetRepo(p.target_repo)
-      // Project considered "opened" only when target_repo is an external path
-      if (p.target_repo && p.target_repo !== p.dir) {
-        const base = p.target_repo.split('/').filter(Boolean).pop() || ''
-        setProjectName(base)
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey
+      if (mod && !e.shiftKey && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setShowCmdk((s) => !s)
+      } else if (mod && e.shiftKey && e.key.toLowerCase() === 'f') {
+        e.preventDefault()
+        setShowGlobalSearch(true)
+      } else if (mod && !e.shiftKey && /^[1-4]$/.test(e.key)) {
+        // Avoid stealing focus when typing in inputs
+        const target = e.target as HTMLElement | null
+        if (target && ['INPUT', 'TEXTAREA'].includes(target.tagName)) return
+        e.preventDefault()
+        const n = Number(e.key)
+        setZoomedStage((cur) => (cur === n ? null : n))
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  useEffect(() => {
+    // One-shot Doctor on startup: log any missing CLI into the error panel
+    void window.api.doctor.check().then((results) => {
+      for (const r of results) {
+        if (!r.ok && r.required) {
+          pushLog('warn', `Doctor:${r.name}`, `${r.error ?? '未就绪'} — ${r.install}`)
+        }
       }
     })
-  }, [])
+    window.api.version().then(setVersion)
+    void (async () => {
+      const list = await reloadProjects()
+      const last = localStorage.getItem(LAST_PROJECT_KEY)
+      const pick = list.find((p) => p.id === last) ?? list[0]
+      if (pick) {
+        setCurrentProjectId(pick.id)
+      } else if (!localStorage.getItem('multi-ai-code.onboarding-done')) {
+        setShowOnboarding(true)
+      } else {
+        setShowProjectPicker(true)
+      }
+    })()
+  }, [reloadProjects])
 
-  const handleOpenProject = useCallback(async () => {
-    const picked = await window.api.project.pickDir()
-    if (picked.canceled || !picked.path) return
-    const res = await window.api.project.setTargetRepo(picked.path)
-    if (!res.ok) {
-      alert(`打开项目失败：${res.error}`)
-      return
+  const currentProject = projects.find((p) => p.id === currentProjectId) ?? null
+  const projectDir = currentProject?.dir ?? ''
+  const targetRepo = currentProject?.target_repo ?? ''
+  const projectName = currentProject?.name ?? ''
+  const hasProject = currentProject !== null
+
+  useEffect(() => {
+    if (currentProjectId) {
+      localStorage.setItem(LAST_PROJECT_KEY, currentProjectId)
+      void window.api.project.touch(currentProjectId)
+      void window.api.project.getStageConfigs(currentProjectId).then(setStageConfigs)
+    } else {
+      setStageConfigs({})
     }
-    setTargetRepo(res.target_repo || picked.path)
-    setProjectName(res.name || picked.path.split('/').filter(Boolean).pop() || '')
-  }, [])
-
-  /** A project is "opened" only when target_repo is a real external dir. */
-  const hasProject = targetRepo !== '' && targetRepo !== projectDir
+  }, [currentProjectId])
 
   useEffect(() => {
     const off = window.api.stage.onDone((evt) => {
       setPendingDone(evt)
+      const stageName = STAGES.find((s) => s.id === evt.stageId)?.name ?? `Stage ${evt.stageId}`
+      showToast(`✓ ${stageName} 完成${evt.params.summary ? `：${evt.params.summary}` : ''}`, {
+        level: 'success'
+      })
     })
-    return off
+    const offNotice = window.api.cc.onNotice((evt) => {
+      pushLog(evt.level, `Stage:${evt.sessionId}`, evt.message)
+      showToast(evt.message, { level: evt.level === 'error' ? 'error' : 'warn' })
+    })
+    const offExit = window.api.cc.onExit((evt) => {
+      if (evt.exitCode !== 0 && evt.exitCode !== null) {
+        pushLog(
+          'warn',
+          `Stage:${evt.sessionId}`,
+          `CLI 进程退出 code=${evt.exitCode}${evt.signal ? ' signal=' + evt.signal : ''}`
+        )
+      }
+    })
+    return () => {
+      off()
+      offNotice()
+      offExit()
+    }
   }, [])
 
   const sessionIdFor = useCallback(
-    (stageId: number) => `${DEMO_PROJECT}:stage${stageId}`,
-    []
+    (stageId: number) => `${currentProjectId ?? 'none'}:stage${stageId}`,
+    [currentProjectId]
   )
 
   /** Ensure the target stage's CC is running; spawn + wait for prompt priming. */
   const ensureStageRunning = useCallback(
     async (stageId: number, sid: string) => {
+      if (!currentProjectId) throw new Error('未选择项目')
       const running = await window.api.cc.has(sid)
       if (running) return
+      const override = stageConfigs[String(stageId)]
       const res = await window.api.cc.spawn({
         sessionId: sid,
-        projectId: DEMO_PROJECT,
+        projectId: currentProjectId,
         stageId,
         projectDir,
-        cwd: projectDir
+        cwd: projectDir,
+        label: planName || undefined,
+        command: override?.command,
+        args: override?.args,
+        env: override?.env
       })
       if (!res.ok) throw new Error(`spawn stage ${stageId} failed: ${res.error}`)
-      // Wait for system prompt injection (PRIMING_DELAY_MS=1200) + buffer
-      await new Promise((r) => setTimeout(r, 2500))
+      // Wait for system prompt injection + sendMessage to finish.
+      // Stage 1 (codex) uses PRIMING_DELAY_MS_STAGE1=2500ms; others 1200ms.
+      // sendMessage itself takes time (chunked writes). Wait generously.
+      const waitMs = stageId === 1 ? 5000 : 3000
+      await new Promise((r) => setTimeout(r, waitMs))
     },
-    [projectDir]
+    [projectDir, planName, currentProjectId, stageConfigs]
   )
 
   const advance = useCallback(async () => {
     if (!pendingDone) return
-    const next = nextStageFor(pendingDone.stageId, pendingDone.params.verdict)
+    const next = nextStageFor(pendingDone.stageId, pendingDone.params.verdict, stageSkips)
     if (next === null) {
       setPendingDone(null)
       return
@@ -196,7 +348,7 @@ export default function App() {
   )
 
   const nextStage = pendingDone
-    ? nextStageFor(pendingDone.stageId, pendingDone.params.verdict)
+    ? nextStageFor(pendingDone.stageId, pendingDone.params.verdict, stageSkips)
     : null
 
   return (
@@ -204,22 +356,42 @@ export default function App() {
       <header className="topbar">
         <button
           className="topbar-btn topbar-btn-primary"
-          onClick={handleOpenProject}
-          title="选择项目代码仓库目录，所有 CLI 将把它作为工作目录"
+          onClick={() => setShowProjectPicker(true)}
+          title="管理 / 切换 / 新建项目"
         >
-          📂 {hasProject ? '切换项目' : '打开项目'}
+          📁 {hasProject ? `项目：${projectName}` : '选择项目'}
         </button>
         <h1>Multi-AI Code</h1>
         <span className="meta">
           v{version} ·{' '}
           {hasProject ? (
-            <>
-              <strong>{projectName}</strong> · <code title={targetRepo}>{targetRepo}</code>
-            </>
+            <code title={targetRepo}>{targetRepo}</code>
           ) : (
-            <span className="meta-warn">⚠ 未打开项目（请先点左上角「📂 打开项目」）</span>
+            <span className="meta-warn">⚠ 未选择项目（请点左上角「📁 选择项目」）</span>
           )}
         </span>
+        <button
+          className="topbar-btn"
+          onClick={() => setShowStageSettings(true)}
+          disabled={!hasProject}
+          title="配置每个阶段使用的 CLI 命令 / 参数 / 环境变量"
+        >
+          ⚙️ 阶段配置
+        </button>
+        <button
+          className="topbar-btn"
+          onClick={() => setShowTemplates(true)}
+          title="管理与插入常用 prompt 模板"
+        >
+          📋 模板
+        </button>
+        <button
+          className={`topbar-btn ${errorCount > 0 ? 'topbar-btn-danger' : ''}`}
+          onClick={() => setShowErrors((s) => !s)}
+          title="查看错误与通知日志"
+        >
+          {errorCount > 0 ? `⚠ ${errorCount}` : '📣 日志'}
+        </button>
         <button
           className="topbar-btn"
           onClick={() => setShowHistory(true)}
@@ -227,6 +399,14 @@ export default function App() {
           title="查看各阶段产物历史（每次完成自动归档）"
         >
           📋 历史
+        </button>
+        <button
+          className="topbar-btn"
+          onClick={() => setShowTimeline(true)}
+          disabled={!hasProject}
+          title="按时间线回放当前项目的所有阶段事件"
+        >
+          📜 时间线
         </button>
         <button
           className={`topbar-btn ${anyRunning ? 'topbar-btn-danger' : ''}`}
@@ -242,12 +422,51 @@ export default function App() {
         >
           {anyRunning ? '■ 终止全部' : '▶ 启动全部'}
         </button>
+        <button
+          className="topbar-btn"
+          onClick={() => setShowOnboarding(true)}
+          title="新手上手引导"
+        >
+          ❓ 向导
+        </button>
+        <button
+          className="topbar-btn"
+          onClick={() => setShowDoctor(true)}
+          title="检查 claude / codex / git / node 是否就绪"
+        >
+          🩺 体检
+        </button>
         {zoomedStage !== null && (
           <button className="topbar-btn" onClick={() => setZoomedStage(null)}>
             ↙ 退出放大 (Stage {displayIndexOf(zoomedStage) ?? zoomedStage})
           </button>
         )}
       </header>
+
+      {hasProject && planName.trim() && (
+        <div className="plan-progress-bar">
+          <span className="plan-progress-label">📍 当前方案：</span>
+          <strong>{planName}</strong>
+          <span className="plan-progress-sep">·</span>
+          {STAGES.map((s) => {
+            const st = stageStatus[s.id]
+            const skipped = stageSkips[s.id]
+            const isDone = planStagesDone[s.id]
+            let icon = '─'
+            let cls = ''
+            if (skipped) { icon = '⏭'; cls = 'skipped' }
+            else if (st === 'running') { icon = '⏳'; cls = 'running' }
+            else if (st === 'awaiting-confirm') { icon = '⏸'; cls = 'awaiting' }
+            else if (isDone) { icon = '✅'; cls = 'done' }
+            return (
+              <span key={s.id} className={`plan-progress-node ${cls}`} title={`${s.name}：${icon}`}>
+                <span style={{ marginRight: 4 }}>{'①②③④'[s.id - 1]}</span>
+                {icon}
+              </span>
+            )
+          })}
+        </div>
+      )}
 
       <div className="main-split">
         <main className={`grid ${zoomedStage !== null ? 'grid-zoomed' : ''}`}>
@@ -258,7 +477,7 @@ export default function App() {
               stageName={s.name}
               displayIndex={idx + 1}
               sessionId={sessionIdFor(s.id)}
-              projectId={DEMO_PROJECT}
+              projectId={currentProjectId ?? ''}
               projectDir={projectDir}
               cwd={projectDir || '/tmp'}
               zoomed={zoomedStage === s.id}
@@ -270,6 +489,9 @@ export default function App() {
               killAllNonce={killAllNonce}
               onStatusChange={handleStatusChange}
               disabled={!hasProject}
+              commandOverride={stageConfigs[String(s.id)]?.command}
+              args={stageConfigs[String(s.id)]?.args}
+              envOverride={stageConfigs[String(s.id)]?.env}
               onRequestFeedback={
                 s.id >= 2
                   ? () => {
@@ -286,19 +508,24 @@ export default function App() {
                     }
                   : undefined
               }
-              onPickHistory={s.id === 1 ? () => setPickerStage(1) : undefined}
+              planName={planName}
+              onPlanNameChange={s.id === 1 ? setPlanName : undefined}
+              planNameSuggestions={planNameSuggestions}
+              onPickHistory={
+                s.id === 1 ? () => setPickerStage(1) : undefined
+              }
             />
           ))}
         </main>
 
         {showHistory && (
           <HistoryDrawer
-            projectId={DEMO_PROJECT}
+            projectId={currentProjectId ?? ''}
             projectDir={projectDir}
             onClose={() => setShowHistory(false)}
             onRestore={async (record) => {
               const res = await window.api.artifact.restore({
-                projectId: DEMO_PROJECT,
+                projectId: currentProjectId ?? '',
                 projectDir,
                 stageId: record.stage_id,
                 snapshotPath: record.path,
@@ -310,35 +537,69 @@ export default function App() {
               }
               setShowHistory(false)
             }}
+            onMergeViaAI={async (mergedContent) => {
+              setShowHistory(false)
+              try {
+                const sid = sessionIdFor(1)
+                const tmpRes = await window.api.writeTemp(mergedContent, 'md')
+                if (!tmpRes.ok || !tmpRes.path) {
+                  alert(`写入临时文件失败：${tmpRes.error ?? '未知错误'}`)
+                  return
+                }
+                await ensureStageRunning(1, sid)
+                const sendRes = await window.api.cc.sendUser(
+                  sid,
+                  [
+                    `请完整读取 ${tmpRes.path}，其中包含用户从历史方案中勾选的多份方案。`,
+                    `请进行优化合并：取各方案精华，消除矛盾与冗余，输出一份统一的、完整的设计文档。`,
+                    `合并完成后把最终结果写到默认产物路径，并打印 <<STAGE_DONE ...>> 标记。`
+                  ].join('\n')
+                )
+                if (!sendRes.ok) {
+                  alert(`发送合并指令失败：${sendRes.error}`)
+                }
+              } catch (err) {
+                alert(`AI 合并优化出错：${(err as Error).message}`)
+              }
+            }}
           />
         )}
         {pickerStage !== null && (
           <HistoryDrawer
-            projectId={DEMO_PROJECT}
+            projectId={currentProjectId ?? ''}
             projectDir={projectDir}
             pickStage={pickerStage}
             onClose={() => setPickerStage(null)}
             onPick={async (snapshotPath) => {
+              if (pickerStage === 1 && !planName.trim()) {
+                alert('请先在 Stage 1 面板的 "方案名称" 输入框里填写名称，再选用历史方案。')
+                return
+              }
               const res = await window.api.artifact.restore({
-                projectId: DEMO_PROJECT,
+                projectId: currentProjectId ?? '',
                 projectDir,
                 stageId: pickerStage,
                 snapshotPath,
-                sessionId: sessionIdFor(pickerStage)
+                sessionId: sessionIdFor(pickerStage),
+                label: planName
               })
               if (!res.ok) {
                 alert(`恢复历史方案失败：${res.error}`)
                 return
               }
               setPickerStage(null)
-              // The main process already broadcast stage:done → CompletionDrawer opens.
             }}
             onImportFile={async () => {
+              if (pickerStage === 1 && !planName.trim()) {
+                alert('请先在 Stage 1 面板的 "方案名称" 输入框里填写名称，再从文件导入。')
+                return
+              }
               const res = await window.api.artifact.importFile({
-                projectId: DEMO_PROJECT,
+                projectId: currentProjectId ?? '',
                 projectDir,
                 stageId: pickerStage,
-                sessionId: sessionIdFor(pickerStage)
+                sessionId: sessionIdFor(pickerStage),
+                label: planName
               })
               if (res.canceled) return
               if (!res.ok) {
@@ -348,11 +609,16 @@ export default function App() {
               setPickerStage(null)
             }}
             onRefine={async (snapshotPath) => {
+              if (pickerStage === 1 && !planName.trim()) {
+                alert('请先在 Stage 1 面板的 "方案名称" 输入框里填写名称，再继续完善此方案。')
+                return
+              }
               const seeded = await window.api.artifact.seed({
-                projectId: DEMO_PROJECT,
+                projectId: currentProjectId ?? '',
                 projectDir,
                 stageId: pickerStage,
-                snapshotPath
+                snapshotPath,
+                label: planName
               })
               if (!seeded.ok) {
                 alert(`导入方案失败：${seeded.error}`)
@@ -374,6 +640,32 @@ export default function App() {
                 ].join('\n')
               )
               setPickerStage(null)
+            }}
+            onMergeViaAI={async (mergedContent) => {
+              const stage = pickerStage
+              setPickerStage(null)
+              try {
+                const sid = sessionIdFor(stage)
+                const tmpRes = await window.api.writeTemp(mergedContent, 'md')
+                if (!tmpRes.ok || !tmpRes.path) {
+                  alert(`写入临时文件失败：${tmpRes.error ?? '未知错误'}`)
+                  return
+                }
+                await ensureStageRunning(stage, sid)
+                const sendRes = await window.api.cc.sendUser(
+                  sid,
+                  [
+                    `请完整读取 ${tmpRes.path}，其中包含用户从历史方案中勾选的多份方案。`,
+                    `请进行优化合并：取各方案精华，消除矛盾与冗余，输出一份统一的、完整的设计文档。`,
+                    `合并完成后把最终结果写到默认产物路径，并打印 <<STAGE_DONE ...>> 标记。`
+                  ].join('\n')
+                )
+                if (!sendRes.ok) {
+                  alert(`发送合并指令失败：${sendRes.error}`)
+                }
+              } catch (err) {
+                alert(`AI 合并优化出错：${(err as Error).message}`)
+              }
             }}
           />
         )}
@@ -399,6 +691,21 @@ export default function App() {
             }}
           />
         )}
+        {showProjectPicker && (
+          <ProjectPicker
+            currentId={currentProjectId}
+            onClose={() => setShowProjectPicker(false)}
+            onSelect={(p) => {
+              void window.api.cc.killAll()
+              setKillAllNonce((n) => n + 1)
+              setCurrentProjectId(p.id)
+              setShowProjectPicker(false)
+            }}
+            onChanged={() => {
+              void reloadProjects()
+            }}
+          />
+        )}
         {pendingDone && (
           <CompletionDrawer
             event={pendingDone}
@@ -409,14 +716,91 @@ export default function App() {
             onAdvance={advance}
             onAdvanceWithFeedback={advanceWithFeedback}
             onDismiss={() => setPendingDone(null)}
+            targetRepo={targetRepo}
+            planName={planName}
           />
         )}
       </div>
 
+      {showGlobalSearch && currentProjectId && (
+        <GlobalSearchDialog
+          projectId={currentProjectId}
+          projectDir={projectDir}
+          onClose={() => setShowGlobalSearch(false)}
+        />
+      )}
+      {showCmdk && (
+        <CommandPalette
+          onClose={() => setShowCmdk(false)}
+          commands={[
+            { id: 'proj.picker', label: '📁 项目管理（切换 / 新建 / 删除）', keywords: 'project switch new', action: () => setShowProjectPicker(true) },
+            { id: 'onboard', label: '❓ 新手向导', keywords: 'help onboarding wizard', action: () => setShowOnboarding(true) },
+            { id: 'doctor', label: '🩺 CLI 体检', keywords: 'doctor check health', action: () => setShowDoctor(true) },
+            { id: 'settings', label: '⚙️ 阶段 CLI 配置', keywords: 'settings command', action: () => setShowStageSettings(true), disabled: !hasProject },
+            { id: 'tpl', label: '📋 Prompt 模板', keywords: 'templates prompt snippets', action: () => setShowTemplates(true) },
+            { id: 'hist', label: '📋 产物历史', keywords: 'history artifacts', action: () => setShowHistory(true), disabled: !hasProject },
+            { id: 'timeline', label: '📜 审计时间线', keywords: 'timeline events audit', action: () => setShowTimeline(true), disabled: !hasProject },
+            { id: 'search', label: '🔍 全局搜索', hint: 'Ctrl+Shift+F', keywords: 'find search', action: () => setShowGlobalSearch(true), disabled: !hasProject },
+            { id: 'logs', label: '📣 错误与通知', keywords: 'errors log notifications', action: () => setShowErrors(true) },
+            { id: 'start', label: anyRunning ? '■ 终止全部阶段' : '▶ 启动全部阶段', keywords: 'run stop kill', action: handleToggleAll, disabled: !hasProject },
+            { id: 'unzoom', label: '↙ 退出放大模式', keywords: 'zoom focus exit', action: () => setZoomedStage(null), disabled: zoomedStage === null },
+            { id: 'z1', label: '🎯 聚焦 Stage 1 方案设计', hint: 'Ctrl+1', action: () => setZoomedStage(1) },
+            { id: 'z2', label: '🎯 聚焦 Stage 2 方案实施', hint: 'Ctrl+2', action: () => setZoomedStage(2) },
+            { id: 'z3', label: '🎯 聚焦 Stage 3 方案验收', hint: 'Ctrl+3', action: () => setZoomedStage(3) },
+            { id: 'z4', label: '🎯 聚焦 Stage 4 测试验证', hint: 'Ctrl+4', action: () => setZoomedStage(4) }
+          ] as Command[]}
+        />
+      )}
+      {showDoctor && <DoctorDialog onClose={() => setShowDoctor(false)} />}
+      {showOnboarding && (
+        <OnboardingWizard
+          onClose={() => setShowOnboarding(false)}
+          onDone={async ({ projectId, planName: pn }) => {
+            setShowOnboarding(false)
+            await reloadProjects()
+            setCurrentProjectId(projectId)
+            setPlanName(pn)
+          }}
+        />
+      )}
+      {showTimeline && currentProjectId && (
+        <TimelineDrawer
+          projectId={currentProjectId}
+          onClose={() => setShowTimeline(false)}
+        />
+      )}
+      {showTemplates && (
+        <TemplatesDialog
+          sessions={Object.entries(stageStatus)
+            .filter(([, st]) => st === 'running' || st === 'awaiting-confirm')
+            .map(([sid]) => ({
+              stageId: Number(sid),
+              sessionId: sessionIdFor(Number(sid)),
+              name: STAGES.find((x) => x.id === Number(sid))?.name ?? ''
+            }))}
+          onClose={() => setShowTemplates(false)}
+          onInject={(sessionId, text) => {
+            void window.api.cc.sendUser(sessionId, text)
+          }}
+        />
+      )}
+      {showStageSettings && currentProjectId && (
+        <StageSettingsDialog
+          projectId={currentProjectId}
+          onClose={() => {
+            setShowStageSettings(false)
+            void window.api.project.getStageConfigs(currentProjectId).then(setStageConfigs)
+          }}
+        />
+      )}
+      {showErrors && <ErrorPanel onClose={() => setShowErrors(false)} />}
+
+      <ToastHost />
+
       <footer className="pipeline">
         <span>Pipeline:</span>
         {STAGES.map((s, i) => (
-          <span key={s.id} className="pipe-node">
+          <span key={s.id} className={`pipe-node ${stageSkips[s.id] ? 'pipe-skipped' : ''}`}>
             {s.name}
             {i < STAGES.length - 1 && <span className="pipe-arrow">─▶</span>}
           </span>

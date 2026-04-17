@@ -12,6 +12,7 @@ export interface SpawnOptions {
   rows?: number
   env?: Record<string, string>
   skipSystemPrompt?: boolean
+  label?: string
 }
 
 export interface DataEvent {
@@ -87,22 +88,139 @@ const api = {
         error?: string
       }>
   },
+  writeTemp: (content: string, ext?: string) =>
+    ipcRenderer.invoke('file:write-temp', { content, ext }) as Promise<{
+      ok: boolean
+      path?: string
+      error?: string
+    }>,
+  saveFileAs: (defaultName: string, content: string) =>
+    ipcRenderer.invoke('file:save-as', { defaultName, content }) as Promise<{
+      ok: boolean
+      canceled?: boolean
+      path?: string
+    }>,
+  search: {
+    artifacts: (projectId: string, query: string) =>
+      ipcRenderer.invoke('search:artifacts', { projectId, query }) as Promise<{
+        ok: boolean
+        results: { path: string; stageId: number; line: number; snippet: string }[]
+      }>
+  },
+  doctor: {
+    check: () =>
+      ipcRenderer.invoke('doctor:check') as Promise<
+        Array<{
+          name: string
+          required: boolean
+          ok: boolean
+          version?: string
+          error?: string
+          install: string
+        }>
+      >
+  },
+  events: {
+    list: (projectId: string, limit?: number) =>
+      ipcRenderer.invoke('event:list', { projectId, limit }) as Promise<
+        Array<{
+          id: number
+          project_id: string
+          from_stage: number | null
+          to_stage: number | null
+          kind: string
+          payload: string | null
+          created_at: string
+        }>
+      >
+  },
+  git: {
+    status: (cwd: string) =>
+      ipcRenderer.invoke('git:status', { cwd }) as Promise<{
+        ok: boolean
+        branch?: string
+        files?: { status: string; path: string }[]
+        error?: string
+      }>,
+    commit: (cwd: string, message: string) =>
+      ipcRenderer.invoke('git:commit', { cwd, message }) as Promise<{
+        ok: boolean
+        output?: string
+        error?: string
+      }>,
+    checkoutBranch: (cwd: string, name: string) =>
+      ipcRenderer.invoke('git:checkout-branch', { cwd, name }) as Promise<{
+        ok: boolean
+        created?: boolean
+        error?: string
+      }>
+  },
   ping: () => ipcRenderer.invoke('app:ping'),
   version: () => ipcRenderer.invoke('app:version'),
-  demoProject: () =>
-    ipcRenderer.invoke('app:demo-project') as Promise<{
-      id: string
-      dir: string
-      target_repo: string
-    }>,
   project: {
+    list: () =>
+      ipcRenderer.invoke('project:list') as Promise<
+        Array<{
+          id: string
+          name: string
+          target_repo: string
+          dir: string
+          created_at: string
+          updated_at: string
+        }>
+      >,
+    create: (name: string, target_repo: string) =>
+      ipcRenderer.invoke('project:create', { name, target_repo }) as Promise<{
+        ok: boolean
+        id?: string
+        name?: string
+        target_repo?: string
+        dir?: string
+        error?: string
+      }>,
+    delete: (id: string) =>
+      ipcRenderer.invoke('project:delete', { id }) as Promise<{
+        ok: boolean
+        trashPath?: string
+        snapshot?: { id: string; name: string; target_repo: string } | null
+        error?: string
+      }>,
+    undelete: (trashPath: string, snapshot: { id: string; name: string; target_repo: string }) =>
+      ipcRenderer.invoke('project:undelete', { trashPath, snapshot }) as Promise<{
+        ok: boolean
+        error?: string
+      }>,
+    purgeTrash: (trashPath: string) =>
+      ipcRenderer.invoke('project:purge-trash', { trashPath }) as Promise<{
+        ok: boolean
+      }>,
+    rename: (id: string, name: string) =>
+      ipcRenderer.invoke('project:rename', { id, name }) as Promise<{
+        ok: boolean
+        error?: string
+      }>,
+    touch: (id: string) => ipcRenderer.invoke('project:touch', { id }),
+    getStageConfigs: (id: string) =>
+      ipcRenderer.invoke('project:get-stage-configs', { id }) as Promise<
+        Record<string, { command?: string; args?: string[]; env?: Record<string, string> }>
+      >,
+    setStageConfigs: (
+      id: string,
+      configs: Record<
+        string,
+        { command?: string; args?: string[]; env?: Record<string, string> }
+      >
+    ) =>
+      ipcRenderer.invoke('project:set-stage-configs', { id, configs }) as Promise<{
+        ok: boolean
+      }>,
     pickDir: () =>
       ipcRenderer.invoke('project:pick-dir') as Promise<{
         canceled: boolean
         path?: string
       }>,
-    setTargetRepo: (path: string) =>
-      ipcRenderer.invoke('project:set-target-repo', { path }) as Promise<{
+    setTargetRepo: (id: string, path: string) =>
+      ipcRenderer.invoke('project:set-target-repo', { id, path }) as Promise<{
         ok: boolean
         target_repo?: string
         name?: string
@@ -138,6 +256,17 @@ const api = {
       const handler = (_e: IpcRendererEvent, evt: ExitEvent) => cb(evt)
       ipcRenderer.on('cc:exit', handler)
       return () => ipcRenderer.removeListener('cc:exit', handler)
+    },
+    onNotice: (
+      cb: (evt: {
+        sessionId: string
+        level: 'info' | 'warn' | 'error'
+        message: string
+      }) => void
+    ): (() => void) => {
+      const handler = (_e: IpcRendererEvent, evt: any) => cb(evt)
+      ipcRenderer.on('cc:notice', handler)
+      return () => ipcRenderer.removeListener('cc:notice', handler)
     }
   },
 
@@ -195,6 +324,7 @@ const api = {
       stageId: number
       snapshotPath: string
       sessionId?: string
+      label?: string
     }) =>
       ipcRenderer.invoke('artifact:restore', req) as Promise<{
         ok: boolean
@@ -208,6 +338,7 @@ const api = {
       stageId: number
       snapshotPath?: string
       pickFile?: boolean
+      label?: string
     }) =>
       ipcRenderer.invoke('artifact:seed', req) as Promise<{
         ok: boolean
@@ -223,6 +354,7 @@ const api = {
       projectDir: string
       stageId: number
       sessionId?: string
+      label?: string
     }) =>
       ipcRenderer.invoke('artifact:import-file', req) as Promise<{
         ok: boolean

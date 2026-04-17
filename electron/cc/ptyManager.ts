@@ -4,9 +4,10 @@ import { join, isAbsolute } from 'path'
 import { PtyCCProcess } from './PtyCCProcess.js'
 import { StageDoneScanner, StageDoneMeta } from './StageDoneScanner.js'
 import { snapshotArtifact } from '../store/snapshot.js'
-import { listArtifacts } from '../store/db.js'
+import { listArtifacts, listEvents, recordEvent } from '../store/db.js'
 import {
   STAGE_ARTIFACTS,
+  stageArtifactPath,
   STAGE_CLI_ARGS,
   STAGE_COMMAND,
   STAGE_CWD,
@@ -26,8 +27,9 @@ export interface SpawnRequest {
   cols?: number
   rows?: number
   env?: Record<string, string>
-  /** If true, skip injecting the system prompt on start. */
   skipSystemPrompt?: boolean
+  /** Human-readable label for snapshot filenames (plan name). */
+  label?: string
 }
 
 interface Session {
@@ -36,10 +38,10 @@ interface Session {
   projectId: string
   stageId: number
   projectDir: string
-  /** Stage working directory the CLI was spawned in — used as a safe place
-   *  to drop inject-files that even a sandboxed CLI (codex --full-auto) can read. */
   cwd: string
   sessionId: string
+  /** Human-readable label for snapshot filenames (e.g. plan name). */
+  label?: string
   /** Resolves to true once we've injected initial system prompt. */
   primed: boolean
 }
@@ -140,6 +142,7 @@ export function registerPtyIpc(): void {
       projectDir: req.projectDir,
       cwd: finalCwd,
       sessionId: req.sessionId,
+      label: req.label,
       primed: false
     }
 
@@ -154,7 +157,7 @@ export function registerPtyIpc(): void {
 
     scanner.on('done', async (meta: StageDoneMeta) => {
       const artifactRel =
-        meta.params.artifact ?? STAGE_ARTIFACTS[req.stageId] ?? null
+        meta.params.artifact ?? stageArtifactPath(req.stageId, req.label) ?? null
       const artifactAbs = artifactRel
         ? isAbsolute(artifactRel)
           ? artifactRel
@@ -176,7 +179,8 @@ export function registerPtyIpc(): void {
           projectDir: req.projectDir,
           stageId: req.stageId,
           content: artifactContent,
-          kind: 'auto'
+          kind: 'auto',
+          label: session.label
         })
       }
       broadcast('stage:done', {
@@ -188,6 +192,17 @@ export function registerPtyIpc(): void {
         artifactPath: artifactRel,
         artifactContent,
         snapshotPath
+      })
+      recordEvent({
+        project_id: req.projectId,
+        from_stage: req.stageId,
+        kind: 'stage:done',
+        payload: {
+          summary: meta.params.summary,
+          verdict: meta.params.verdict,
+          artifactPath: artifactRel,
+          label: session.label
+        }
       })
     })
 
@@ -227,15 +242,16 @@ export function registerPtyIpc(): void {
             /* ignore */
           }
 
+          const stagePath = stageArtifactPath(req.stageId, req.label)
           const sysPrompt = await buildSystemPrompt(req.stageId, {
             projectDir: req.projectDir,
-            artifactPath: STAGE_ARTIFACTS[req.stageId] ?? '',
+            artifactPath: stagePath ?? '',
             projectName,
             targetRepo,
             stageCwd: finalCwd
           })
           const refPath = await writePromptFile(finalCwd, req.stageId, 'system', sysPrompt)
-          const artifactAbs = join(req.projectDir, STAGE_ARTIFACTS[req.stageId] ?? '')
+          const artifactAbs = join(req.projectDir, stagePath ?? '')
           await sendMessage(
             proc,
             [
@@ -311,7 +327,7 @@ export function registerPtyIpc(): void {
       let designSpec: string | null = null
       if (req.toStage >= 3) {
         try {
-          const designAbs = join(pdir, STAGE_ARTIFACTS[1])
+          const designAbs = join(pdir, stageArtifactPath(1, s.label))
           designSpec = await fs.readFile(designAbs, 'utf8')
         } catch {
           designSpec = null
@@ -321,7 +337,7 @@ export function registerPtyIpc(): void {
       let acceptanceReport: string | null = null
       if (req.toStage === 4) {
         try {
-          const accAbs = join(pdir, STAGE_ARTIFACTS[3])
+          const accAbs = join(pdir, stageArtifactPath(3, s.label))
           acceptanceReport = await fs.readFile(accAbs, 'utf8')
         } catch {
           acceptanceReport = null
@@ -339,7 +355,7 @@ export function registerPtyIpc(): void {
         verdict: req.verdict
       })
       const refPath = await writePromptFile(s.cwd, req.toStage, 'handoff', msg)
-      const artifactAbs = join(pdir, STAGE_ARTIFACTS[req.toStage] ?? '')
+      const artifactAbs = join(pdir, stageArtifactPath(req.toStage, s.label) ?? '')
       await sendMessage(
         s.proc,
         [
@@ -348,6 +364,13 @@ export function registerPtyIpc(): void {
           `【硬性约定】完成本阶段时：把产物写到 ${artifactAbs}，并在终端单独一行打印 \`<<STAGE_DONE artifact=${artifactAbs} summary="一句话概括">>\`。不打印该标记平台就识别不到，流程会卡住。`
         ].join('\n')
       )
+      recordEvent({
+        project_id: s.projectId,
+        from_stage: req.fromStage,
+        to_stage: req.toStage,
+        kind: 'handoff',
+        payload: { summary: req.summary, verdict: req.verdict, label: s.label }
+      })
       return { ok: true }
     }
   )
@@ -374,9 +397,20 @@ export function registerPtyIpc(): void {
         s.proc,
         `请读取 ${refPath}，这是下游阶段发回的 feedback，读完后基于反馈调整并重新产出产物。`
       )
+      recordEvent({
+        project_id: s.projectId,
+        from_stage: req.fromStage,
+        to_stage: req.toStage,
+        kind: 'feedback',
+        payload: { note: req.note.slice(0, 400), label: s.label }
+      })
       return { ok: true }
     }
   )
+
+  ipcMain.handle('event:list', (_e, { projectId, limit }: { projectId: string; limit?: number }) => {
+    return listEvents(projectId, limit ?? 500)
+  })
 
   ipcMain.handle('cc:list', () => Array.from(sessions.keys()))
 
@@ -399,8 +433,9 @@ export function registerPtyIpc(): void {
         summary?: string
       }
     ) => {
+      const sessLabel = sessions.get(req.sessionId)?.label
       const artifactRel =
-        req.artifactPath ?? STAGE_ARTIFACTS[req.stageId] ?? null
+        req.artifactPath ?? stageArtifactPath(req.stageId, sessLabel) ?? null
       const artifactAbs = artifactRel
         ? isAbsolute(artifactRel)
           ? artifactRel
@@ -415,13 +450,15 @@ export function registerPtyIpc(): void {
         }
       }
       let snapshotPath: string | null = null
+      const triggerSession = sessions.get(req.sessionId)
       if (artifactContent) {
         snapshotPath = await snapshotArtifact({
           projectId: req.projectId,
           projectDir: req.projectDir,
           stageId: req.stageId,
           content: artifactContent,
-          kind: 'manual'
+          kind: 'manual',
+          label: triggerSession?.label
         })
       }
       broadcast('stage:done', {
@@ -461,8 +498,10 @@ export function registerPtyIpc(): void {
     summary: string
     /** When true, skip the stage:done broadcast (e.g. seeding for further refinement). */
     skipBroadcast?: boolean
+    /** Human-readable label for the snapshot filename (e.g. plan name). */
+    label?: string
   }): Promise<{ ok: true; artifactPath: string; artifactAbs: string; snapshotPath: string | null } | { ok: false; error: string }> {
-    const artifactRel = STAGE_ARTIFACTS[req.stageId]
+    const artifactRel = stageArtifactPath(req.stageId, req.label)
     if (!artifactRel) return { ok: false, error: `unknown stage ${req.stageId}` }
     const artifactAbs = join(req.projectDir, artifactRel)
     await fs.mkdir(join(artifactAbs, '..'), { recursive: true })
@@ -472,7 +511,8 @@ export function registerPtyIpc(): void {
       projectDir: req.projectDir,
       stageId: req.stageId,
       content: req.content,
-      kind: req.kind
+      kind: req.kind,
+      label: req.label
     })
     if (!req.skipBroadcast) {
       broadcast('stage:done', {
@@ -486,6 +526,12 @@ export function registerPtyIpc(): void {
         snapshotPath
       })
     }
+    recordEvent({
+      project_id: req.projectId,
+      from_stage: req.stageId,
+      kind: `artifact:${req.kind}`,
+      payload: { summary: req.summary, artifactPath: artifactRel, label: req.label }
+    })
     return { ok: true, artifactPath: artifactRel, artifactAbs, snapshotPath }
   }
 
@@ -502,9 +548,9 @@ export function registerPtyIpc(): void {
         projectId: string
         projectDir: string
         stageId: number
-        /** Project-dir-relative path of the snapshot to restore. */
         snapshotPath: string
         sessionId?: string
+        label?: string
       }
     ) => {
       try {
@@ -519,7 +565,8 @@ export function registerPtyIpc(): void {
           content,
           sessionId: req.sessionId,
           kind: 'restored',
-          summary: '选用历史方案'
+          summary: '选用历史方案',
+          label: req.label
         })
       } catch (err) {
         return { ok: false, error: (err as Error).message }
@@ -540,10 +587,9 @@ export function registerPtyIpc(): void {
         projectId: string
         projectDir: string
         stageId: number
-        /** Exactly one of these must be provided. */
         snapshotPath?: string
-        /** Open a native file picker instead (ignored if snapshotPath is set). */
         pickFile?: boolean
+        label?: string
       }
     ) => {
       try {
@@ -579,7 +625,8 @@ export function registerPtyIpc(): void {
           content,
           kind: 'refine-seed',
           summary: `基于${sourceLabel}继续完善`,
-          skipBroadcast: true
+          skipBroadcast: true,
+          label: req.label
         })
         if (!mat.ok) return mat
         return {
@@ -617,6 +664,7 @@ export function registerPtyIpc(): void {
         projectDir: string
         stageId: number
         sessionId?: string
+        label?: string
       }
     ) => {
       try {
@@ -639,7 +687,8 @@ export function registerPtyIpc(): void {
           content,
           sessionId: req.sessionId,
           kind: 'imported',
-          summary: `导入文件: ${res.filePaths[0]}`
+          summary: `导入文件: ${res.filePaths[0]}`,
+          label: req.label
         })
       } catch (err) {
         return { ok: false, error: (err as Error).message }

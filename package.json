@@ -18,7 +18,9 @@
     "postinstall": "electron-rebuild -f -o better-sqlite3,node-pty"
   },
   "dependencies": {
+    "@xterm/addon-search": "^0.16.0",
     "better-sqlite3": "^11.3.0",
+    "diff": "^9.0.0",
     "node-pty": "^1.0.0"
   },
   "devDependencies": {

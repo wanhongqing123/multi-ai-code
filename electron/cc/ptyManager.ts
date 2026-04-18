@@ -1,5 +1,5 @@
 import { ipcMain, BrowserWindow, dialog } from 'electron'
-import { promises as fs } from 'fs'
+import { promises as fs, createWriteStream, WriteStream } from 'fs'
 import { join, isAbsolute } from 'path'
 import { PtyCCProcess } from './PtyCCProcess.js'
 import { StageDoneScanner, StageDoneMeta } from './StageDoneScanner.js'
@@ -15,6 +15,82 @@ import {
   buildForwardHandoff,
   buildFeedbackHandoff
 } from '../orchestrator/prompts.js'
+import { detectMsys } from '../util/msys.js'
+import { rootDir } from '../store/paths.js'
+
+/**
+ * PTY chunk debug dumper. Enable by setting env var MULTI_AI_CODE_PTY_DUMP=1
+ * before launching the app. Writes one JSONL record per chunk to
+ * <rootDir>/logs/pty-stageN-<sessionId>-<ts>.jsonl so we can inspect the raw
+ * bytes (ANSI escapes included) and design accurate noise filters.
+ */
+const PTY_DUMP_ENABLED = process.env.MULTI_AI_CODE_PTY_DUMP === '1'
+
+async function openPtyDumpStream(
+  sessionId: string,
+  stageId: number,
+  projectId: string
+): Promise<WriteStream | null> {
+  if (!PTY_DUMP_ENABLED) return null
+  const dir = join(rootDir(), 'logs')
+  try {
+    await fs.mkdir(dir, { recursive: true })
+  } catch {
+    /* ignore */
+  }
+  const ts = new Date().toISOString().replace(/[:.]/g, '-')
+  const safeSid = sessionId.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 32)
+  const file = join(dir, `pty-stage${stageId}-${safeSid}-${ts}.jsonl`)
+  const stream = createWriteStream(file, { flags: 'a', encoding: 'utf8' })
+  stream.write(
+    JSON.stringify({
+      t: Date.now(),
+      event: 'spawn',
+      stage: stageId,
+      projectId,
+      sessionId
+    }) + '\n'
+  )
+  console.log(`[pty-dump] capturing raw chunks → ${file}`)
+  return stream
+}
+
+function writePtyDump(stream: WriteStream | null | undefined, chunk: string): void {
+  if (!stream) return
+  try {
+    stream.write(
+      JSON.stringify({ t: Date.now(), len: chunk.length, text: chunk }) + '\n'
+    )
+  } catch {
+    /* swallow: dump is best-effort */
+  }
+}
+
+function closePtyDump(
+  stream: WriteStream | null | undefined,
+  reason: string
+): void {
+  if (!stream) return
+  try {
+    stream.write(JSON.stringify({ t: Date.now(), event: 'close', reason }) + '\n')
+    stream.end()
+  } catch {
+    /* ignore */
+  }
+}
+
+const MSYS_STAGES = new Set([2, 3, 4])
+
+async function readProjectMsysEnabled(projectDir: string): Promise<boolean> {
+  try {
+    const meta = JSON.parse(
+      await fs.readFile(join(projectDir, 'project.json'), 'utf8')
+    ) as { msys_enabled?: boolean }
+    return !!meta.msys_enabled
+  } catch {
+    return false
+  }
+}
 
 export interface SpawnRequest {
   sessionId: string
@@ -44,6 +120,8 @@ interface Session {
   label?: string
   /** Resolves to true once we've injected initial system prompt. */
   primed: boolean
+  /** Raw-chunk dump stream (only when PTY_DUMP_ENABLED). */
+  dumpStream?: WriteStream | null
 }
 
 const sessions = new Map<string, Session>()
@@ -125,15 +203,42 @@ export function registerPtyIpc(): void {
     const stageCwdRel = STAGE_CWD[req.stageId]
     const finalCwd = stageCwdRel ? join(req.projectDir, stageCwdRel) : req.cwd
 
+    // If this project opted into MSYS and this is a stage that runs scripts
+    // against target_repo, wire MSYS bash + usr/bin into the CLI's env so
+    // `bash build.sh` etc. resolve against MSYS instead of failing.
+    let enableMsys = false
+    let msysBashPath: string | undefined
+    let msysUsrBinDir: string | undefined
+    if (
+      process.platform === 'win32' &&
+      MSYS_STAGES.has(req.stageId) &&
+      (await readProjectMsysEnabled(req.projectDir))
+    ) {
+      const info = await detectMsys()
+      if (info.available && info.bashPath && info.usrBinDir) {
+        enableMsys = true
+        msysBashPath = info.bashPath
+        msysUsrBinDir = info.usrBinDir
+      }
+    }
+
     const proc = new PtyCCProcess({
       cwd: finalCwd,
       command: finalCommand,
       args: finalArgs,
       cols: req.cols,
       rows: req.rows,
-      env: req.env
+      env: req.env,
+      enableMsys,
+      msysBashPath,
+      msysUsrBinDir
     })
     const scanner = new StageDoneScanner()
+    const dumpStream = await openPtyDumpStream(
+      req.sessionId,
+      req.stageId,
+      req.projectId
+    )
     const session: Session = {
       proc,
       scanner,
@@ -143,14 +248,17 @@ export function registerPtyIpc(): void {
       cwd: finalCwd,
       sessionId: req.sessionId,
       label: req.label,
-      primed: false
+      primed: false,
+      dumpStream
     }
 
     proc.on('data', (chunk: string) => {
+      writePtyDump(dumpStream, chunk)
       broadcast('cc:data', { sessionId: req.sessionId, chunk })
       scanner.push(chunk)
     })
     proc.on('exit', (info: { exitCode: number; signal?: number }) => {
+      closePtyDump(dumpStream, `exit(code=${info.exitCode})`)
       broadcast('cc:exit', { sessionId: req.sessionId, ...info })
       sessions.delete(req.sessionId)
     })
@@ -250,18 +358,48 @@ export function registerPtyIpc(): void {
             targetRepo,
             stageCwd: finalCwd
           })
-          const refPath = await writePromptFile(finalCwd, req.stageId, 'system', sysPrompt)
           const artifactAbs = join(req.projectDir, stagePath ?? '')
-          await sendMessage(
-            proc,
-            [
-              `请先完整读取 ${refPath} 作为本阶段的系统角色与约束说明，逐字遵守后再开始工作。`,
-              ``,
-              `【硬性约定，绝不能忘】工作完全结束时，必须：`,
-              `1) 把本阶段产物写到 ${artifactAbs}；`,
-              `2) 在终端单独一行原样打印形如 \`<<STAGE_DONE artifact=${artifactAbs} summary="一句话概括">>\` 的完成标记（必须是这两个尖括号，任何变体平台都识别不到，流程会卡住无法进入下一阶段）。`
-            ].join('\n')
-          )
+
+          // Stage 1 (claude) auto-loads `CLAUDE.md` from cwd on boot — no
+          // explicit Read / Get-Content tool call needed, no sandbox prompt,
+          // zero user-facing noise. Just drop the system prompt there and
+          // send a minimal kick-off message carrying the dynamic artifact path.
+          if (req.stageId === 1) {
+            const mdPath = join(finalCwd, 'CLAUDE.md')
+            await fs.writeFile(
+              mdPath,
+              `<!-- This file is auto-generated by Multi-AI Code. Do not edit; it is rewritten on every Stage 1 spawn. -->\n\n${sysPrompt}`,
+              'utf8'
+            )
+            await sendMessage(
+              proc,
+              [
+                `你好，本阶段是「方案设计」，你的角色与约束都写在 cwd 的 \`CLAUDE.md\` 里（启动时你会自动加载）。`,
+                ``,
+                `【本次方案的归档路径】${artifactAbs}`,
+                ``,
+                `准备好后，请用 brainstorming 与我开始澄清这次方案的需求与目标。`
+              ].join('\n')
+            )
+          } else {
+            // Legacy: write to .injections and instruct the CLI to read it.
+            const refPath = await writePromptFile(
+              finalCwd,
+              req.stageId,
+              'system',
+              sysPrompt
+            )
+            await sendMessage(
+              proc,
+              [
+                `请先完整读取 ${refPath} 作为本阶段的系统角色与约束说明，逐字遵守后再开始工作。`,
+                ``,
+                `【硬性约定，绝不能忘】工作完全结束时，必须：`,
+                `1) 把本阶段产物写到 ${artifactAbs}；`,
+                `2) 在终端单独一行原样打印形如 \`<<STAGE_DONE artifact=${artifactAbs} summary="一句话概括">>\` 的完成标记（必须是这两个尖括号，任何变体平台都识别不到，流程会卡住无法进入下一阶段）。`
+              ].join('\n')
+            )
+          }
           session.primed = true
         } catch (err) {
           broadcast('cc:notice', {
@@ -291,6 +429,7 @@ export function registerPtyIpc(): void {
     const s = sessions.get(sessionId)
     if (!s) return { ok: false, error: 'no session' }
     s.proc.kill()
+    closePtyDump(s.dumpStream, 'kill')
     sessions.delete(sessionId)
     return { ok: true }
   })
@@ -709,9 +848,96 @@ export function registerPtyIpc(): void {
       }
     }
   )
+
+  /** Read the CURRENT working artifact for a given stage, using the same
+   *  stageArtifactPath logic the CLI writes to. Returns absolute path +
+   *  content so the renderer can preview the in-progress plan. */
+  ipcMain.handle(
+    'artifact:read-current',
+    async (
+      _e,
+      {
+        projectDir,
+        stageId,
+        label
+      }: { projectDir: string; stageId: number; label?: string }
+    ) => {
+      const rel = stageArtifactPath(stageId, label)
+      if (!rel) return { ok: false, error: '该阶段没有默认产物路径' }
+      const abs = join(projectDir, rel)
+      try {
+        const content = await fs.readFile(abs, 'utf8')
+        return { ok: true, path: abs, relPath: rel, content }
+      } catch (err) {
+        return {
+          ok: false,
+          path: abs,
+          relPath: rel,
+          error: (err as Error).message
+        }
+      }
+    }
+  )
+
+  /** Open a text file and return its content WITHOUT materializing an artifact.
+   *  Used by the Stage-1 preview-before-commit flow. */
+  ipcMain.handle(
+    'dialog:pick-text-file',
+    async (_e, opts: { title?: string } = {}) => {
+      try {
+        const res = await dialog.showOpenDialog({
+          title: opts.title ?? '选择要导入的文件',
+          properties: ['openFile'],
+          filters: [
+            { name: 'Markdown / Text', extensions: ['md', 'markdown', 'txt'] },
+            { name: 'All Files', extensions: ['*'] }
+          ]
+        })
+        if (res.canceled || res.filePaths.length === 0) {
+          return { canceled: true as const }
+        }
+        const path = res.filePaths[0]
+        const content = await fs.readFile(path, 'utf8')
+        return { canceled: false as const, path, content }
+      } catch (err) {
+        return { canceled: false as const, error: (err as Error).message }
+      }
+    }
+  )
+
+  /** Commit caller-provided content as the stage artifact (post user preview). */
+  ipcMain.handle(
+    'artifact:commit-content',
+    async (
+      _e,
+      req: {
+        projectId: string
+        projectDir: string
+        stageId: number
+        content: string
+        sourcePath: string
+        sessionId?: string
+        label?: string
+      }
+    ) => {
+      return materializeArtifact({
+        projectId: req.projectId,
+        projectDir: req.projectDir,
+        stageId: req.stageId,
+        content: req.content,
+        sessionId: req.sessionId,
+        kind: 'imported',
+        summary: `导入文件: ${req.sourcePath}`,
+        label: req.label
+      })
+    }
+  )
 }
 
 export function killAllSessions(): void {
-  for (const [, s] of sessions) s.proc.kill()
+  for (const [, s] of sessions) {
+    s.proc.kill()
+    closePtyDump(s.dumpStream, 'killAll')
+  }
   sessions.clear()
 }

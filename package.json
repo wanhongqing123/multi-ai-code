@@ -21,7 +21,9 @@
     "@xterm/addon-search": "^0.16.0",
     "better-sqlite3": "^11.3.0",
     "diff": "^9.0.0",
-    "node-pty": "^1.0.0"
+    "node-pty": "^1.0.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.3",

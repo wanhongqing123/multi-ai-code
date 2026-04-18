@@ -31,6 +31,9 @@ export interface StagePanelProps {
   disabled?: boolean
   /** When provided, renders a "选用历史方案" button that opens the picker. */
   onPickHistory?: () => void
+  /** When provided (Stage 1 only), renders a "方案预览" button that opens
+   *  the current plan markdown for review + annotation → feedback. */
+  onReviewPlan?: () => void
   /** When provided, renders a "↩ 重新设计" shortcut that sends feedback directly to Stage 1. */
   onRequestRedesign?: () => void
   /** Stage 1 plan name input (controlled). */
@@ -40,6 +43,10 @@ export interface StagePanelProps {
   /** Per-project CLI overrides from stage config dialog. */
   commandOverride?: string
   envOverride?: Record<string, string>
+  /** Project's target repo abs path — used by the MSYS-terminal shortcut (stage ≥ 2). */
+  targetRepo?: string
+  /** Whether MSYS is enabled for this project. Controls visibility of the 🐚 button. */
+  msysEnabled?: boolean
 }
 
 type Status = 'idle' | 'running' | 'awaiting-confirm' | 'exited'
@@ -465,6 +472,29 @@ export default function StagePanel(props: StagePanelProps) {
             title="直接选用此阶段的历史产物或外部文件，跳过 AI 执行"
           >
             📋 选用历史
+          </button>
+        )}
+        {props.onReviewPlan && (
+          <button
+            className="tile-btn"
+            onClick={props.onReviewPlan}
+            disabled={disabled}
+            title="预览当前方案并对具体段落做标注，提交后由 Stage 1 CLI 根据意见修改方案"
+          >
+            👁 方案预览
+          </button>
+        )}
+        {stageId >= 2 && props.msysEnabled && props.targetRepo && (
+          <button
+            className="tile-btn"
+            onClick={async () => {
+              const res = await window.api.shell.openMsysTerminal(props.targetRepo!)
+              if (!res.ok) alert(`打开 MSYS 失败：${res.error}`)
+            }}
+            disabled={disabled}
+            title="在当前项目仓库目录打开 MSYS bash 终端，用于手动跑 .sh 脚本"
+          >
+            🐚 MSYS
           </button>
         )}
         {status === 'idle' || status === 'exited' ? (

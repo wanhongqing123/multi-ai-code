@@ -52,12 +52,18 @@ export const STAGE_NAMES: Record<number, string> = {
 }
 
 /**
- * Per-stage CLI binary. Stage 1 (方案设计) uses `codex` (OpenAI Codex CLI) for
- * design brainstorming; everything else uses `claude` (Claude Code).
+ * Per-stage CLI binary.
+ *   Stage 1 (方案设计) uses `claude` (Claude Code) — its brainstorming /
+ *     writing-plans skills and auto-loaded CLAUDE.md fit the pure
+ *     conversation-driven design flow best.
+ *   Stage 2 (方案实施) uses `codex` (OpenAI Codex CLI) with --full-auto —
+ *     the sandbox allows writing inside cwd subtree (target_repo), which is
+ *     exactly the impl stage's scope.
+ *   Stage 3 / 4 (验收 / 测试) stay on `claude` — read-heavy, needs MCP/tools.
  */
 export const STAGE_COMMAND: Record<number, string> = {
-  1: 'codex',
-  2: 'claude',
+  1: 'claude',
+  2: 'codex',
   3: 'claude',
   4: 'claude'
 }
@@ -122,12 +128,13 @@ function claudeArgs(extra: string[] = []): string[] {
  * Per-stage CLI args. Hard "only Stage 2 (方案实施) modifies code" constraint is
  * enforced in role prompts; allow-lists below just spare common safe ops from prompts.
  *
- *   - Codex (stage 1): --full-auto (workspace sandboxed to isolated cwd)
- *   - Claude (stages 2-4): --permission-mode auto + per-stage allowlist
+ *   - Claude (stage 1 — design): read-only allowlist; no code/test/build execution.
+ *   - Codex  (stage 2 — impl):    --full-auto — sandbox bounded by cwd (target_repo).
+ *   - Claude (stages 3-4):         --permission-mode auto + per-stage allowlist.
  */
 export const STAGE_CLI_ARGS: Record<number, string[]> = {
-  1: ['--full-auto'],
-  2: ['--permission-mode', 'auto'], // impl stage: full auto, no allowlist needed
+  1: claudeArgs(), // design stage: read + git-readonly only
+  2: ['--full-auto'], // impl stage: codex sandbox write-in-cwd
   3: claudeArgs(),
   4: claudeArgs([...TEST_RUNNERS, ...BUILD_RUNNERS])
 }

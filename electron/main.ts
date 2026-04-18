@@ -23,6 +23,8 @@ import {
   rootDir
 } from './store/paths.js'
 import { registerPtyIpc, killAllSessions } from './cc/ptyManager.js'
+import { detectMsys, buildOpenMsysTerminalCommand } from './util/msys.js'
+import { spawn as spawnChild } from 'child_process'
 import { promises as fs } from 'fs'
 
 const isDev = !app.isPackaged
@@ -61,6 +63,15 @@ function createWindow(): void {
 app.whenReady().then(async () => {
   await ensureRootDir()
   initDb()
+
+  if (process.env.MULTI_AI_CODE_PTY_DUMP === '1') {
+    console.log(
+      `[pty-dump] enabled. Raw PTY chunks for every session will be written to ${join(
+        rootDir(),
+        'logs'
+      )}\\pty-*.jsonl`
+    )
+  }
 
   ipcMain.handle('app:ping', () => 'pong')
   ipcMain.handle('app:version', () => app.getVersion())
@@ -222,6 +233,48 @@ app.whenReady().then(async () => {
       string,
       { command?: string; args?: string[]; env?: Record<string, string> }
     >
+  })
+
+  ipcMain.handle('project:get-msys-enabled', async (_e, { id }: { id: string }) => {
+    const meta = await readProjectMeta(projectDirFn(id))
+    return !!(meta as { msys_enabled?: boolean }).msys_enabled
+  })
+
+  ipcMain.handle(
+    'project:set-msys-enabled',
+    async (_e, { id, enabled }: { id: string; enabled: boolean }) => {
+      const metaPath = join(projectDirFn(id), 'project.json')
+      let meta: Record<string, unknown> = {}
+      try {
+        meta = JSON.parse(await fs.readFile(metaPath, 'utf8'))
+      } catch {
+        /* empty */
+      }
+      meta.msys_enabled = !!enabled
+      meta.updated_at = new Date().toISOString()
+      await fs.writeFile(metaPath, JSON.stringify(meta, null, 2))
+      return { ok: true }
+    }
+  )
+
+  ipcMain.handle('env:detect-msys', async () => detectMsys())
+
+  ipcMain.handle('shell:open-msys-terminal', async (_e, { cwd }: { cwd: string }) => {
+    const info = await detectMsys()
+    const cmd = buildOpenMsysTerminalCommand(info, cwd)
+    if (!cmd) return { ok: false, error: '未检测到 MSYS 环境（或非 Windows 平台）' }
+    try {
+      const child = spawnChild(cmd.command, cmd.args, {
+        cwd,
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: false
+      })
+      child.unref()
+      return { ok: true, variant: info.variant }
+    } catch (err) {
+      return { ok: false, error: (err as Error).message }
+    }
   })
 
   ipcMain.handle(
@@ -497,6 +550,20 @@ app.whenReady().then(async () => {
           install: t.install
         })
       }
+    }
+
+    // Optional: MSYS bash for running .sh scripts on Windows.
+    if (process.platform === 'win32') {
+      const msys = await detectMsys()
+      results.push({
+        name: 'msys',
+        required: false,
+        ok: msys.available,
+        version: msys.available ? `${msys.variant} · ${msys.bashPath}` : undefined,
+        error: msys.available ? undefined : '未检测到 MSYS bash',
+        install:
+          '安装 MSYS2 (https://www.msys2.org/) 或 Git for Windows (https://git-scm.com/downloads)，然后在项目配置里启用 MSYS。'
+      })
     }
     return results
   })

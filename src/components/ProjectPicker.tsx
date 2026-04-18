@@ -14,8 +14,12 @@ export interface ProjectPickerProps {
   currentId: string | null
   onClose: () => void
   onSelect: (p: ProjectInfo) => void
-  /** Called after a project is created / deleted — parent should refresh. */
-  onChanged: () => void
+  /**
+   * Called after a project is created / renamed / deleted / retargeted.
+   * Awaited so callers can resolve races (e.g. create-then-select needs the
+   * parent's project list to contain the new row before `onSelect` fires).
+   */
+  onChanged: () => Promise<void>
 }
 
 export default function ProjectPicker({
@@ -52,7 +56,10 @@ export default function ProjectPicker({
         return
       }
       await reload()
-      onChanged()
+      // Await parent refresh so its project list contains the new row
+      // BEFORE onSelect fires — otherwise App.tsx's `projects.find(...)` misses
+      // and currentProject briefly becomes null (empty projectDir etc.).
+      await onChanged()
       if (res.id) {
         onSelect({
           id: res.id,
@@ -80,7 +87,7 @@ export default function ProjectPicker({
         return
       }
       await reload()
-      onChanged()
+      await onChanged()
       if (res.trashPath && res.snapshot) {
         const trashPath = res.trashPath
         const snap = res.snapshot
@@ -97,7 +104,7 @@ export default function ProjectPicker({
               const r = await window.api.project.undelete(trashPath, snap)
               if (r.ok) {
                 showToast(`已恢复「${snap.name}」`, { level: 'success' })
-                onChanged()
+                await onChanged()
               } else {
                 showToast(`撤销失败：${r.error ?? ''}`, { level: 'error' })
               }
@@ -114,8 +121,12 @@ export default function ProjectPicker({
     const name = window.prompt('新名称：', p.name)
     if (!name?.trim() || name.trim() === p.name) return
     const res = await window.api.project.rename(p.id, name.trim())
-    if (!res.ok) alert(`重命名失败：${res.error}`)
-    else await reload()
+    if (!res.ok) {
+      alert(`重命名失败：${res.error}`)
+      return
+    }
+    await reload()
+    await onChanged()
   }
 
   async function handleChangeRepo(p: ProjectInfo) {
@@ -125,7 +136,7 @@ export default function ProjectPicker({
     if (!res.ok) alert(`修改目标仓库失败：${res.error}`)
     else {
       await reload()
-      onChanged()
+      await onChanged()
     }
   }
 

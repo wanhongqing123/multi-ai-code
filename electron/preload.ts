@@ -107,6 +107,16 @@ const api = {
         results: { path: string; stageId: number; line: number; snippet: string }[]
       }>
   },
+  dialog: {
+    /** Open file picker + read content in ONE round-trip. Does not materialize. */
+    pickTextFile: (opts: { title?: string } = {}) =>
+      ipcRenderer.invoke('dialog:pick-text-file', opts) as Promise<{
+        canceled: boolean
+        path?: string
+        content?: string
+        error?: string
+      }>
+  },
   doctor: {
     check: () =>
       ipcRenderer.invoke('doctor:check') as Promise<
@@ -119,6 +129,26 @@ const api = {
           install: string
         }>
       >
+  },
+  env: {
+    /** Detect MSYS2 / Git-for-Windows bash on the host. */
+    detectMsys: () =>
+      ipcRenderer.invoke('env:detect-msys') as Promise<{
+        available: boolean
+        bashPath: string | null
+        usrBinDir: string | null
+        variant: 'msys2' | 'git' | 'path' | null
+        candidates: { path: string; exists: boolean; variant: 'msys2' | 'git' }[]
+      }>
+  },
+  shell: {
+    /** Open an MSYS shell window with cwd set to the given dir. */
+    openMsysTerminal: (cwd: string) =>
+      ipcRenderer.invoke('shell:open-msys-terminal', { cwd }) as Promise<{
+        ok: boolean
+        variant?: 'msys2' | 'git' | 'path' | null
+        error?: string
+      }>
   },
   events: {
     list: (projectId: string, limit?: number) =>
@@ -204,6 +234,12 @@ const api = {
       ipcRenderer.invoke('project:get-stage-configs', { id }) as Promise<
         Record<string, { command?: string; args?: string[]; env?: Record<string, string> }>
       >,
+    getMsysEnabled: (id: string) =>
+      ipcRenderer.invoke('project:get-msys-enabled', { id }) as Promise<boolean>,
+    setMsysEnabled: (id: string, enabled: boolean) =>
+      ipcRenderer.invoke('project:set-msys-enabled', { id, enabled }) as Promise<{
+        ok: boolean
+      }>,
     setStageConfigs: (
       id: string,
       configs: Record<
@@ -318,6 +354,18 @@ const api = {
         content?: string
         error?: string
       }>,
+    readCurrent: (projectDir: string, stageId: number, label?: string) =>
+      ipcRenderer.invoke('artifact:read-current', {
+        projectDir,
+        stageId,
+        label
+      }) as Promise<{
+        ok: boolean
+        path?: string
+        relPath?: string
+        content?: string
+        error?: string
+      }>,
     restore: (req: {
       projectId: string
       projectDir: string
@@ -360,6 +408,23 @@ const api = {
         ok: boolean
         canceled?: boolean
         artifactPath?: string
+        snapshotPath?: string | null
+        error?: string
+      }>,
+    /** Write user-confirmed external content as the stage artifact + broadcast stage:done. */
+    commitContent: (req: {
+      projectId: string
+      projectDir: string
+      stageId: number
+      content: string
+      sourcePath: string
+      sessionId?: string
+      label?: string
+    }) =>
+      ipcRenderer.invoke('artifact:commit-content', req) as Promise<{
+        ok: boolean
+        artifactPath?: string
+        artifactAbs?: string
         snapshotPath?: string | null
         error?: string
       }>

@@ -29,6 +29,14 @@ export interface StageSettingsDialogProps {
 export default function StageSettingsDialog({ projectId, onClose }: StageSettingsDialogProps) {
   const [forms, setForms] = useState<Record<string, StageForm>>({})
   const [saving, setSaving] = useState(false)
+  const [msysEnabled, setMsysEnabled] = useState(false)
+  const [msysInfo, setMsysInfo] = useState<{
+    available: boolean
+    bashPath: string | null
+    variant: 'msys2' | 'git' | 'path' | null
+  } | null>(null)
+  const isWindows =
+    typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('windows')
 
   useEffect(() => {
     void (async () => {
@@ -46,8 +54,14 @@ export default function StageSettingsDialog({ projectId, onClose }: StageSetting
         }
       }
       setForms(next)
+      const enabled = await window.api.project.getMsysEnabled(projectId)
+      setMsysEnabled(enabled)
+      if (isWindows) {
+        const info = await window.api.env.detectMsys()
+        setMsysInfo({ available: info.available, bashPath: info.bashPath, variant: info.variant })
+      }
     })()
-  }, [projectId])
+  }, [projectId, isWindows])
 
   async function save() {
     setSaving(true)
@@ -69,6 +83,7 @@ export default function StageSettingsDialog({ projectId, onClose }: StageSetting
         }
       }
       await window.api.project.setStageConfigs(projectId, configs)
+      await window.api.project.setMsysEnabled(projectId, msysEnabled)
       onClose()
     } finally {
       setSaving(false)
@@ -90,6 +105,42 @@ export default function StageSettingsDialog({ projectId, onClose }: StageSetting
           <button className="modal-close" onClick={onClose}>×</button>
         </div>
         <div className="stage-settings-body">
+          {isWindows && (
+            <div className="stage-settings-card project-wide-card">
+              <div className="stage-settings-title">
+                🐚 项目级 · Windows 下的 .sh 脚本
+              </div>
+              <label className="msys-toggle-row">
+                <input
+                  type="checkbox"
+                  checked={msysEnabled}
+                  disabled={!msysInfo?.available}
+                  onChange={(e) => setMsysEnabled(e.target.checked)}
+                />
+                <span>
+                  启用 MSYS bash（仅作用于 Stage 2/3/4）
+                </span>
+              </label>
+              <div className="msys-detect-info">
+                {msysInfo === null ? (
+                  '检测中…'
+                ) : msysInfo.available ? (
+                  <>
+                    ✓ 已检测到：<code>{msysInfo.bashPath}</code>{' '}
+                    <span className="msys-variant">[{msysInfo.variant}]</span>
+                    <div className="msys-hint">
+                      开启后 Stage 2/3/4 的 CLI 子进程环境会注入 MSYS bash + usr/bin，
+                      便于 AI 生成的 <code>.sh</code> 脚本在编译阶段正确执行。
+                    </div>
+                  </>
+                ) : (
+                  <span className="msys-unavailable">
+                    ⚠ 未检测到 MSYS bash。请先安装 MSYS2 或 Git for Windows。
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
           {['1', '2', '3', '4'].map((s) => {
             const f = forms[s]
             if (!f) return null

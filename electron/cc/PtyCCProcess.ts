@@ -50,6 +50,17 @@ export interface PtyCCOptions {
   rows?: number
   /** Extra environment overrides */
   env?: Record<string, string>
+  /**
+   * Windows only. When true, the MSYS-related env purge is skipped and the
+   * MSYS usr/bin dir (if provided) is prepended to PATH, so .sh scripts
+   * spawned by the CLI can resolve bash / unix tools. Default false to keep
+   * existing behavior.
+   */
+  enableMsys?: boolean
+  /** Absolute path to MSYS bash.exe (required when enableMsys is true). */
+  msysBashPath?: string
+  /** Dir containing MSYS bash.exe and unix coreutils. */
+  msysUsrBinDir?: string
 }
 
 /**
@@ -97,9 +108,36 @@ export class PtyCCProcess extends EventEmitter {
       }
     }
 
+    // On Windows, when Electron is launched from Git Bash / MSYS, HOME is a
+    // POSIX path like "/c/Users/Administrator" — and any CLI that reads
+    // $HOME (claude, codex, etc.) will fail to find its credentials under
+    // that path on a native NTFS filesystem, producing OAuth 403 / "not
+    // logged in" symptoms even though the user IS logged in via cmd.
+    // Force HOME to the Windows-style USERPROFILE so credential lookups
+    // resolve to the real %USERPROFILE%\.claude\ etc.
+    if (isWindows && env.USERPROFILE) {
+      env.HOME = env.USERPROFILE
+    }
+
+    // CRITICAL: strip CLAUDE_CODE_* / CLAUDECODE* env vars before spawning.
+    // If Claude Code (the CLI) happens to be our ancestor process — e.g.
+    // when the user runs `npm run dev` from a terminal Claude Code spawned —
+    // it injects CLAUDE_CODE_ENTRYPOINT / CLAUDE_CODE_EXECPATH / CLAUDECODE
+    // into our env. Passing those through to a nested `claude` spawn makes
+    // the nested instance believe it's running as an SDK/MCP subagent of
+    // a host Claude Code, which disables its own OAuth flow and
+    // credentials-manager lookups — `/login` will complete in the browser
+    // but the returned token is never used, producing persistent
+    // "OAuth 403 / Request not allowed" even for a logged-in user.
+    for (const k of Object.keys(env)) {
+      if (/^CLAUDE_?CODE(_|$)/i.test(k)) delete env[k]
+    }
+
     // On Windows, purge variables from MSYS2 / Git-for-Windows that confuse
     // child processes spawned by the AI CLI (bash.exe, MSBuild, etc.).
-    if (isWindows) {
+    // Skipped when `enableMsys` is true — the caller explicitly wants .sh
+    // scripts to resolve to MSYS bash, so we keep MSYSTEM/SHELL etc.
+    if (isWindows && !this.opts.enableMsys) {
       const toxic = [
         'MSYSTEM', 'MSYSTEM_CARCH', 'MSYSTEM_CHOST', 'MSYSTEM_PREFIX',
         'MSYS', 'CHERE_INVOKING', 'SHELL', 'CONFIG_SITE', 'ORIGINAL_PATH',
@@ -118,10 +156,18 @@ export class PtyCCProcess extends EventEmitter {
       }
     }
 
+    // When MSYS is explicitly enabled, ensure usr/bin and bash are wired in.
+    if (isWindows && this.opts.enableMsys && this.opts.msysBashPath) {
+      env.SHELL = this.opts.msysBashPath.replace(/\\/g, '/')
+      if (!env.MSYSTEM) env.MSYSTEM = 'MINGW64'
+    }
+
     // Ensure common install dirs are in PATH (Electron may launch without the
     // user's shell rc loaded). Use platform-correct delimiter.
     const extraPaths = isWindows
       ? [
+          // MSYS usr/bin goes first when enabled, so `bash` / coreutils resolve there.
+          ...(this.opts.enableMsys && this.opts.msysUsrBinDir ? [this.opts.msysUsrBinDir] : []),
           join(process.env.APPDATA ?? '', 'npm'),
           join(process.env.LOCALAPPDATA ?? '', 'npm'),
           join(process.env.USERPROFILE ?? '', '.local', 'bin')
@@ -156,6 +202,43 @@ export class PtyCCProcess extends EventEmitter {
       } else {
         spawnCommand = resolved
       }
+    }
+
+    // Debug: on MULTI_AI_CODE_PTY_DUMP=1, dump a summary of the env we're
+    // about to hand to the CLI. Values of credential-like vars are redacted
+    // (length + first 2 chars) so we can diagnose auth issues without leaking
+    // secrets.
+    if (process.env.MULTI_AI_CODE_PTY_DUMP === '1') {
+      const SENSITIVE = /^(ANTHROPIC_|CLAUDE_|OPENAI_|.*_API_KEY|.*_TOKEN|.*_SECRET)/i
+      const interesting = [
+        'HOME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH',
+        'APPDATA', 'LOCALAPPDATA', 'TEMP', 'TMP',
+        'SHELL', 'MSYSTEM',
+        'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY',
+        'http_proxy', 'https_proxy', 'no_proxy',
+        'NODE_EXTRA_CA_CERTS', 'NODE_TLS_REJECT_UNAUTHORIZED',
+        'SSL_CERT_FILE', 'SSL_CERT_DIR',
+        'ELECTRON_RUN_AS_NODE'
+      ]
+      const summary: Record<string, string> = {}
+      for (const k of interesting) {
+        if (env[k] !== undefined) summary[k] = env[k]
+      }
+      for (const k of Object.keys(env)) {
+        if (SENSITIVE.test(k)) {
+          const v = env[k] ?? ''
+          summary[k] = `<redacted len=${v.length} head="${v.slice(0, 2)}">`
+        }
+      }
+      summary['__command'] = spawnCommand
+      summary['__args'] = JSON.stringify(spawnArgs)
+      summary['__cwd'] = this.opts.cwd
+      summary['__pathHead'] = (env[pathKey] ?? '').split(delimiter).slice(0, 6).join(' | ')
+      // Full env key list (no values) — used to find vars not covered by the
+      // interesting/sensitive whitelists, e.g. bash-injected vars that may
+      // affect nested `claude` auth.
+      summary['__allKeys'] = Object.keys(env).sort().join(',')
+      console.log('[pty-dump][env]', JSON.stringify(summary, null, 2))
     }
 
     this.pty = spawn(spawnCommand, spawnArgs, {

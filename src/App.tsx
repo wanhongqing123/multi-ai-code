@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import StagePanel from './components/StagePanel'
 import CompletionDrawer from './components/CompletionDrawer'
 import FeedbackDialog from './components/FeedbackDialog'
@@ -13,9 +13,12 @@ import DoctorDialog from './components/DoctorDialog'
 import CommandPalette, { type Command } from './components/CommandPalette'
 import ToastHost, { showToast } from './components/Toast'
 import GlobalSearchDialog from './components/GlobalSearchDialog'
+import FilePreviewDialog from './components/FilePreviewDialog'
+import PlanReviewDialog, { type Annotation } from './components/PlanReviewDialog'
 import type { StageDoneEvent } from '../electron/preload'
 
 const LAST_PROJECT_KEY = 'multi-ai-code.lastProjectId'
+const PLAN_NAME_KEY_PREFIX = 'multi-ai-code.planName.'
 
 const STAGES = [
   { id: 1, name: '方案设计' },
@@ -67,7 +70,6 @@ export default function App() {
   const [showProjectPicker, setShowProjectPicker] = useState(false)
   const [pendingDone, setPendingDone] = useState<StageDoneEvent | null>(null)
   const [zoomedStage, setZoomedStage] = useState<number | null>(null)
-  const [startAllNonce, setStartAllNonce] = useState(0)
   const [killAllNonce, setKillAllNonce] = useState(0)
   const [feedbackFrom, setFeedbackFrom] = useState<number | null>(null)
   const [feedbackForcedTarget, setFeedbackForcedTarget] = useState<number | null>(null)
@@ -87,6 +89,24 @@ export default function App() {
   >({})
   const [planNameSuggestions, setPlanNameSuggestions] = useState<string[]>([])
   const [planStagesDone, setPlanStagesDone] = useState<Record<number, boolean>>({})
+  const [msysEnabled, setMsysEnabled] = useState(false)
+  // Stage-1 external-file preview state. When set, FilePreviewDialog is shown
+  // and the user can confirm/cancel before the content becomes the stage artifact.
+  const [previewImport, setPreviewImport] = useState<{
+    path: string
+    content: string
+    stageId: number
+  } | null>(null)
+  // Stage-1 plan-review state. When set, PlanReviewDialog renders the current
+  // in-progress plan md; user annotates and the annotations get sent back to
+  // the Stage 1 CLI so it can revise the plan.
+  const [planReview, setPlanReview] = useState<{
+    path: string
+    content: string
+  } | null>(null)
+  // Remember which (project, planName) combos have already seen the starter
+  // "import from file?" toast so it's not shown repeatedly on each start.
+  const shownStarterHintsRef = useRef<Set<string>>(new Set())
 
   // Refresh plan-name suggestions + per-stage "done" status when project/plan changes.
   useEffect(() => {
@@ -95,8 +115,10 @@ export default function App() {
       setPlanStagesDone({})
       return
     }
+    let cancelled = false
     void (async () => {
       const all = await window.api.artifact.list(currentProjectId)
+      if (cancelled) return
       const names = new Set<string>()
       const stageSafe = planName.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/\s+/g, '_').slice(0, 80)
       const done: Record<number, boolean> = { 1: false, 2: false, 3: false, 4: false }
@@ -112,6 +134,9 @@ export default function App() {
       setPlanNameSuggestions(Array.from(names).sort())
       setPlanStagesDone(done)
     })()
+    return () => {
+      cancelled = true
+    }
   }, [currentProjectId, pendingDone, planName])
 
   const stageSkips: Record<number, boolean> = {
@@ -139,24 +164,41 @@ export default function App() {
     )
   }, [])
 
-  const anyRunning = Object.values(stageStatus).some(
-    (s) => s === 'running' || s === 'awaiting-confirm'
-  )
-
-  const handleToggleAll = useCallback(async () => {
-    if (anyRunning) {
-      await window.api.cc.killAll()
-      setKillAllNonce((n) => n + 1)
-    } else {
-      setStartAllNonce((n) => n + 1)
-    }
-  }, [anyRunning])
-
   const reloadProjects = useCallback(async () => {
     const list = await window.api.project.list()
     setProjects(list)
     return list
   }, [])
+
+  /** Clear UI state tied to a specific project (drawers, dialogs, plan name). */
+  const clearProjectScopedState = useCallback(() => {
+    setPendingDone(null)
+    setFeedbackFrom(null)
+    setFeedbackForcedTarget(null)
+    setPickerStage(null)
+    setShowHistory(false)
+    setShowGlobalSearch(false)
+    setZoomedStage(null)
+    setPlanName('')
+    setPreviewImport(null)
+    shownStarterHintsRef.current.clear()
+  }, [])
+
+  /** Open file picker, read content, and queue it in the preview dialog. */
+  const pickExternalFileForPreview = useCallback(
+    async (stageId: number) => {
+      const pick = await window.api.dialog.pickTextFile({
+        title: stageId === 1 ? '选择方案设计文档' : '选择要导入的文件'
+      })
+      if (pick.canceled) return
+      if (pick.error || !pick.path || pick.content === undefined) {
+        alert(`读取文件失败：${pick.error ?? '未知错误'}`)
+        return
+      }
+      setPreviewImport({ path: pick.path, content: pick.content, stageId })
+    },
+    []
+  )
 
   // Global keyboard shortcuts
   useEffect(() => {
@@ -197,6 +239,11 @@ export default function App() {
       const pick = list.find((p) => p.id === last) ?? list[0]
       if (pick) {
         setCurrentProjectId(pick.id)
+        const saved = localStorage.getItem(PLAN_NAME_KEY_PREFIX + pick.id)
+        if (saved) setPlanName(saved)
+        if (last && last !== pick.id) {
+          showToast(`上次打开的项目已不存在，已切换到「${pick.name}」`, { level: 'warn' })
+        }
       } else if (!localStorage.getItem('multi-ai-code.onboarding-done')) {
         setShowOnboarding(true)
       } else {
@@ -212,14 +259,62 @@ export default function App() {
   const hasProject = currentProject !== null
 
   useEffect(() => {
-    if (currentProjectId) {
-      localStorage.setItem(LAST_PROJECT_KEY, currentProjectId)
-      void window.api.project.touch(currentProjectId)
-      void window.api.project.getStageConfigs(currentProjectId).then(setStageConfigs)
-    } else {
+    if (!currentProjectId) {
       setStageConfigs({})
+      setMsysEnabled(false)
+      return
+    }
+    localStorage.setItem(LAST_PROJECT_KEY, currentProjectId)
+    void window.api.project.touch(currentProjectId)
+    let cancelled = false
+    void window.api.project.getStageConfigs(currentProjectId).then((cfg) => {
+      if (cancelled) return
+      setStageConfigs(cfg)
+    })
+    void window.api.project.getMsysEnabled(currentProjectId).then((enabled) => {
+      if (cancelled) return
+      setMsysEnabled(enabled)
+    })
+    return () => {
+      cancelled = true
     }
   }, [currentProjectId])
+
+  // Persist planName per project so it survives restart / project switch.
+  useEffect(() => {
+    if (!currentProjectId) return
+    const key = PLAN_NAME_KEY_PREFIX + currentProjectId
+    if (planName.trim()) {
+      localStorage.setItem(key, planName.trim())
+    } else {
+      localStorage.removeItem(key)
+    }
+  }, [currentProjectId, planName])
+
+  // When Stage 1 starts running with a plan that has no historical design,
+  // offer a one-shot import shortcut so the user isn't forced into a fresh
+  // design. Shown once per (project, planName) combo per session.
+  useEffect(() => {
+    if (!currentProjectId || !planName.trim()) return
+    if (stageStatus[1] !== 'running') return
+    if (planStagesDone[1]) return
+    const key = `${currentProjectId}:${planName.trim()}`
+    if (shownStarterHintsRef.current.has(key)) return
+    shownStarterHintsRef.current.add(key)
+    showToast(
+      `本次方案「${planName.trim()}」尚无设计稿，可直接对话设计，或从文件导入已有方案`,
+      {
+        level: 'info',
+        duration: 0,
+        action: {
+          label: '📁 从文件导入',
+          onClick: () => {
+            void pickExternalFileForPreview(1)
+          }
+        }
+      }
+    )
+  }, [currentProjectId, planName, stageStatus, planStagesDone, pickExternalFileForPreview])
 
   useEffect(() => {
     const off = window.api.stage.onDone((evt) => {
@@ -280,6 +375,73 @@ export default function App() {
       await new Promise((r) => setTimeout(r, waitMs))
     },
     [projectDir, planName, currentProjectId, stageConfigs]
+  )
+
+  /** Load the current Stage 1 plan md and open the review + annotation dialog. */
+  const openPlanReview = useCallback(async () => {
+    if (!projectDir) return
+    const res = await window.api.artifact.readCurrent(
+      projectDir,
+      1,
+      planName || undefined
+    )
+    if (!res.ok || res.content === undefined) {
+      showToast(
+        `暂无可预览的方案文件${res.path ? `（${res.path}）` : ''}。请先让 Stage 1 开始对话设计。`,
+        { level: 'warn' }
+      )
+      return
+    }
+    setPlanReview({ path: res.path ?? '', content: res.content })
+  }, [projectDir, planName])
+
+  /** Format annotations as markdown and push them into the Stage 1 session. */
+  const submitPlanReviewAnnotations = useCallback(
+    async (annotations: Annotation[], generalNote: string) => {
+      const sid = sessionIdFor(1)
+      const running = await window.api.cc.has(sid)
+      if (!running) {
+        showToast('Stage 1 的 CLI 未在运行，无法发送标注。请先启动 Stage 1。', {
+          level: 'error'
+        })
+        return
+      }
+      const lines: string[] = [
+        '我查看了当前方案，有以下反馈，请据此修改设计文档后再次输出 <<STAGE_DONE ...>> 标记。',
+        ''
+      ]
+      if (generalNote) {
+        lines.push('## 整体意见', '', generalNote, '')
+      }
+      annotations.forEach((a, i) => {
+        lines.push(
+          `## 批注 ${i + 1}`,
+          '',
+          '原文：',
+          ...a.quote.split('\n').map((ln) => `> ${ln}`),
+          '',
+          '意见：',
+          a.comment,
+          ''
+        )
+      })
+      lines.push(
+        '---',
+        '',
+        '请把以上每条意见落实到方案文件中，修改完成后重新写入产物并打印 <<STAGE_DONE ...>> 完成标记。'
+      )
+      const res = await window.api.cc.sendUser(sid, lines.join('\n'))
+      if (!res.ok) {
+        showToast(`发送标注失败：${res.error ?? '未知错误'}`, { level: 'error' })
+        return
+      }
+      showToast(
+        `已发送 ${annotations.length} 条批注${generalNote ? ' + 整体意见' : ''}到 Stage 1`,
+        { level: 'success' }
+      )
+      setPlanReview(null)
+    },
+    [sessionIdFor]
   )
 
   const advance = useCallback(async () => {
@@ -409,20 +571,6 @@ export default function App() {
           📜 时间线
         </button>
         <button
-          className={`topbar-btn ${anyRunning ? 'topbar-btn-danger' : ''}`}
-          onClick={handleToggleAll}
-          disabled={!hasProject}
-          title={
-            !hasProject
-              ? '请先打开项目'
-              : anyRunning
-                ? '一键终止所有运行中的阶段'
-                : '一键启动所有未运行的阶段'
-          }
-        >
-          {anyRunning ? '■ 终止全部' : '▶ 启动全部'}
-        </button>
-        <button
           className="topbar-btn"
           onClick={() => setShowOnboarding(true)}
           title="新手上手引导"
@@ -485,7 +633,6 @@ export default function App() {
               onToggleZoom={() =>
                 setZoomedStage((cur) => (cur === s.id ? null : s.id))
               }
-              autoStartNonce={hasProject ? startAllNonce : 0}
               killAllNonce={killAllNonce}
               onStatusChange={handleStatusChange}
               disabled={!hasProject}
@@ -514,6 +661,9 @@ export default function App() {
               onPickHistory={
                 s.id === 1 ? () => setPickerStage(1) : undefined
               }
+              onReviewPlan={s.id === 1 ? openPlanReview : undefined}
+              targetRepo={targetRepo}
+              msysEnabled={msysEnabled}
             />
           ))}
         </main>
@@ -592,6 +742,13 @@ export default function App() {
             onImportFile={async () => {
               if (pickerStage === 1 && !planName.trim()) {
                 alert('请先在 Stage 1 面板的 "方案名称" 输入框里填写名称，再从文件导入。')
+                return
+              }
+              // Stage 1 routes through the preview dialog so the user confirms
+              // the content before it becomes the stage artifact.
+              if (pickerStage === 1) {
+                setPickerStage(null)
+                void pickExternalFileForPreview(1)
                 return
               }
               const res = await window.api.artifact.importFile({
@@ -696,13 +853,28 @@ export default function App() {
             currentId={currentProjectId}
             onClose={() => setShowProjectPicker(false)}
             onSelect={(p) => {
+              if (p.id === currentProjectId) {
+                setShowProjectPicker(false)
+                return
+              }
               void window.api.cc.killAll()
               setKillAllNonce((n) => n + 1)
+              clearProjectScopedState()
+              const saved = localStorage.getItem(PLAN_NAME_KEY_PREFIX + p.id)
+              if (saved) setPlanName(saved)
               setCurrentProjectId(p.id)
               setShowProjectPicker(false)
             }}
-            onChanged={() => {
-              void reloadProjects()
+            onChanged={async () => {
+              const list = await reloadProjects()
+              // If the currently-open project was deleted, bail out of it cleanly.
+              if (currentProjectId && !list.some((p) => p.id === currentProjectId)) {
+                void window.api.cc.killAll()
+                setKillAllNonce((n) => n + 1)
+                clearProjectScopedState()
+                setCurrentProjectId(null)
+                showToast('当前项目已被删除，请另选一个或新建', { level: 'warn' })
+              }
             }}
           />
         )}
@@ -742,7 +914,6 @@ export default function App() {
             { id: 'timeline', label: '📜 审计时间线', keywords: 'timeline events audit', action: () => setShowTimeline(true), disabled: !hasProject },
             { id: 'search', label: '🔍 全局搜索', hint: 'Ctrl+Shift+F', keywords: 'find search', action: () => setShowGlobalSearch(true), disabled: !hasProject },
             { id: 'logs', label: '📣 错误与通知', keywords: 'errors log notifications', action: () => setShowErrors(true) },
-            { id: 'start', label: anyRunning ? '■ 终止全部阶段' : '▶ 启动全部阶段', keywords: 'run stop kill', action: handleToggleAll, disabled: !hasProject },
             { id: 'unzoom', label: '↙ 退出放大模式', keywords: 'zoom focus exit', action: () => setZoomedStage(null), disabled: zoomedStage === null },
             { id: 'z1', label: '🎯 聚焦 Stage 1 方案设计', hint: 'Ctrl+1', action: () => setZoomedStage(1) },
             { id: 'z2', label: '🎯 聚焦 Stage 2 方案实施', hint: 'Ctrl+2', action: () => setZoomedStage(2) },
@@ -752,6 +923,47 @@ export default function App() {
         />
       )}
       {showDoctor && <DoctorDialog onClose={() => setShowDoctor(false)} />}
+      {previewImport && (
+        <FilePreviewDialog
+          path={previewImport.path}
+          content={previewImport.content}
+          title={
+            previewImport.stageId === 1
+              ? '预览外部方案文件 · Stage 1 方案设计'
+              : '预览外部文件'
+          }
+          confirmLabel="✓ 确认使用此方案"
+          onCancel={() => setPreviewImport(null)}
+          onConfirm={async () => {
+            if (!currentProjectId || !projectDir) {
+              setPreviewImport(null)
+              return
+            }
+            const stageId = previewImport.stageId
+            const res = await window.api.artifact.commitContent({
+              projectId: currentProjectId,
+              projectDir,
+              stageId,
+              content: previewImport.content,
+              sourcePath: previewImport.path,
+              sessionId: sessionIdFor(stageId),
+              label: planName
+            })
+            setPreviewImport(null)
+            if (!res.ok) {
+              alert(`导入失败：${res.error}`)
+            }
+          }}
+        />
+      )}
+      {planReview && (
+        <PlanReviewDialog
+          path={planReview.path}
+          content={planReview.content}
+          onClose={() => setPlanReview(null)}
+          onSubmit={submitPlanReviewAnnotations}
+        />
+      )}
       {showOnboarding && (
         <OnboardingWizard
           onClose={() => setShowOnboarding(false)}
@@ -790,6 +1002,7 @@ export default function App() {
           onClose={() => {
             setShowStageSettings(false)
             void window.api.project.getStageConfigs(currentProjectId).then(setStageConfigs)
+            void window.api.project.getMsysEnabled(currentProjectId).then(setMsysEnabled)
           }}
         />
       )}

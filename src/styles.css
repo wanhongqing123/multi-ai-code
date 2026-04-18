@@ -1586,6 +1586,532 @@ html, body, #root {
   margin: 0 4px;
 }
 
+/* ---------- StageSettings · project-wide MSYS card ---------- */
+.project-wide-card {
+  border: 1px solid #3a4a5a;
+  background: #1b2330;
+}
+
+.msys-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  padding: 4px 0;
+}
+
+.msys-detect-info {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #bbb;
+  line-height: 1.5;
+}
+
+.msys-detect-info code {
+  color: #f0c674;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+}
+
+.msys-variant {
+  color: #7ab7ff;
+  font-size: 11px;
+  margin-left: 4px;
+}
+
+.msys-unavailable {
+  color: #e8a45a;
+}
+
+.msys-hint {
+  margin-top: 4px;
+  color: #888;
+}
+
+/* ---------- FilePreviewDialog ---------- */
+.file-preview-modal {
+  width: min(900px, 92vw);
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.file-preview-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: #1a1a1a;
+  border-bottom: 1px solid #333;
+  color: #bbb;
+  font-size: 12px;
+}
+
+.file-preview-name {
+  color: #ddd;
+  font-weight: 600;
+}
+
+.file-preview-sep {
+  color: #555;
+}
+
+.file-preview-path {
+  flex: 1 1 100%;
+  color: #666;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.file-preview-body {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 16px 20px;
+  background: #181818;
+  color: #ddd;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.file-preview-actions {
+  border-top: 1px solid #333;
+  padding: 10px 16px;
+  background: #1f1f1f;
+}
+
+.md-rendered h1,
+.md-rendered h2,
+.md-rendered h3,
+.md-rendered h4,
+.md-rendered h5,
+.md-rendered h6 {
+  margin: 18px 0 10px;
+  color: #eaeaea;
+  line-height: 1.35;
+}
+
+.md-rendered h1 { font-size: 22px; border-bottom: 1px solid #333; padding-bottom: 6px; }
+.md-rendered h2 { font-size: 18px; border-bottom: 1px solid #2a2a2a; padding-bottom: 4px; }
+.md-rendered h3 { font-size: 16px; }
+.md-rendered h4 { font-size: 14px; color: #ccc; }
+
+.md-rendered p {
+  margin: 10px 0;
+}
+
+.md-rendered a {
+  color: #7ab7ff;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.md-rendered strong {
+  color: #f5f5f5;
+}
+
+.md-rendered em {
+  color: #ddd;
+}
+
+.md-rendered blockquote {
+  margin: 10px 0;
+  padding: 6px 12px;
+  border-left: 3px solid #555;
+  color: #bbb;
+  background: #1c1c1c;
+}
+
+.md-rendered hr {
+  border: 0;
+  border-top: 1px solid #333;
+  margin: 18px 0;
+}
+
+.md-rendered .md-list {
+  padding-left: 22px;
+  margin: 8px 0;
+}
+
+.md-rendered .md-list li {
+  margin: 4px 0;
+}
+
+.md-rendered pre {
+  margin: 10px 0;
+  padding: 10px 12px;
+  background: #0f0f0f;
+  border: 1px solid #2a2a2a;
+  border-radius: 4px;
+  overflow-x: auto;
+  font-size: 12.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #e0e0e0;
+}
+
+.md-rendered pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+}
+
+.md-rendered code {
+  padding: 1px 6px;
+  background: #272727;
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  color: #f0c674;
+}
+
+/* GFM — tables */
+.md-rendered table {
+  border-collapse: collapse;
+  margin: 12px 0;
+  font-size: 13px;
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.md-rendered thead {
+  background: #1f1f1f;
+}
+
+.md-rendered th,
+.md-rendered td {
+  border: 1px solid #333;
+  padding: 6px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.md-rendered th {
+  color: #eaeaea;
+  font-weight: 600;
+}
+
+.md-rendered tbody tr:nth-child(even) {
+  background: #161616;
+}
+
+/* GFM — task lists */
+.md-rendered .md-list input[type='checkbox'],
+.md-rendered li input[type='checkbox'] {
+  margin-right: 6px;
+  transform: translateY(1px);
+}
+
+.md-rendered li.task-list-item {
+  list-style: none;
+  margin-left: -18px;
+}
+
+/* GFM — strikethrough */
+.md-rendered del {
+  color: #888;
+}
+
+/* images kept in-bounds */
+.md-rendered img {
+  max-width: 100%;
+  border-radius: 4px;
+  margin: 8px 0;
+}
+
+/* nested lists */
+.md-rendered ul ul,
+.md-rendered ul ol,
+.md-rendered ol ul,
+.md-rendered ol ol {
+  margin: 4px 0 4px 0;
+  padding-left: 20px;
+}
+
+/* generic list fallback (react-markdown emits plain <ul>/<ol>, no .md-list class) */
+.md-rendered ul,
+.md-rendered ol {
+  padding-left: 22px;
+  margin: 8px 0;
+}
+
+.md-rendered li {
+  margin: 4px 0;
+}
+
+/* ---------- PlanReviewDialog ---------- */
+.plan-review-modal {
+  width: min(1200px, 96vw);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  /* Anchor for the composer overlay which uses position:absolute inset:0. */
+  position: relative;
+}
+
+.plan-review-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: #1a1a1a;
+  border-bottom: 1px solid #333;
+  color: #bbb;
+  font-size: 12px;
+}
+
+.plan-review-body {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr);
+  min-height: 0;
+  border-bottom: 1px solid #333;
+}
+
+.plan-review-pane {
+  position: relative;
+  overflow: auto;
+  padding: 16px 20px;
+  background: #181818;
+  border-right: 1px solid #2a2a2a;
+}
+
+.plan-review-pane ::selection {
+  background: #5a8fd1;
+  color: #fff;
+}
+
+.plan-review-annotate-floater {
+  position: absolute;
+  background: #3b7fd1;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+  z-index: 10;
+}
+
+.plan-review-annotate-floater:hover {
+  background: #4e91e0;
+}
+
+.plan-review-side {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #1a1a1a;
+}
+
+.plan-review-side-title {
+  padding: 10px 16px;
+  border-bottom: 1px solid #2a2a2a;
+  font-size: 13px;
+  font-weight: 600;
+  color: #ddd;
+}
+
+.plan-review-empty {
+  padding: 16px;
+  color: #888;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.plan-review-list {
+  flex: 1 1 auto;
+  overflow: auto;
+  list-style: none;
+  margin: 0;
+  padding: 10px 12px;
+}
+
+.plan-review-item {
+  background: #141414;
+  border: 1px solid #2a2a2a;
+  border-radius: 4px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+
+.plan-review-item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.plan-review-item-idx {
+  color: #7ab7ff;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.plan-review-item-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+}
+
+.plan-review-item-btn {
+  background: transparent;
+  border: 1px solid #333;
+  color: #aaa;
+  border-radius: 3px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.plan-review-item-btn:hover {
+  background: #262626;
+  color: #fff;
+}
+
+.plan-review-item-btn.danger:hover {
+  background: #4a1f1f;
+  color: #ff8a8a;
+  border-color: #5a2a2a;
+}
+
+.plan-review-item-quote {
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  background: #0f0f0f;
+  border-left: 3px solid #3b7fd1;
+  color: #bbb;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.plan-review-item-comment {
+  color: #e0e0e0;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.plan-review-general {
+  border-top: 1px solid #2a2a2a;
+  padding: 10px 12px;
+  background: #141414;
+}
+
+.plan-review-general-label {
+  display: block;
+  font-size: 12px;
+  color: #aaa;
+  margin-bottom: 4px;
+}
+
+.plan-review-general-input {
+  width: 100%;
+  background: #0f0f0f;
+  color: #ddd;
+  border: 1px solid #2a2a2a;
+  border-radius: 3px;
+  padding: 6px 8px;
+  font-size: 12.5px;
+  font-family: inherit;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.plan-review-general-input:focus {
+  outline: none;
+  border-color: #3b7fd1;
+}
+
+.plan-review-composer-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(10, 10, 10, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+  padding: 24px;
+}
+
+.plan-review-composer {
+  background: #1e1e1e;
+  border: 1px solid #3b7fd1;
+  border-radius: 6px;
+  padding: 14px 16px;
+  width: min(560px, 92%);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.6);
+}
+
+.plan-review-composer-head {
+  font-size: 13px;
+  font-weight: 600;
+  color: #eaeaea;
+  margin-bottom: 8px;
+}
+
+.plan-review-composer-quote {
+  margin: 0 0 10px;
+  padding: 6px 10px;
+  background: #0f0f0f;
+  border-left: 3px solid #3b7fd1;
+  color: #bbb;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 140px;
+  overflow: auto;
+}
+
+.plan-review-composer-input {
+  width: 100%;
+  background: #0f0f0f;
+  color: #ddd;
+  border: 1px solid #2a2a2a;
+  border-radius: 3px;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.plan-review-composer-input:focus {
+  outline: none;
+  border-color: #3b7fd1;
+}
+
+.plan-review-composer-actions {
+  display: flex;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.plan-review-actions {
+  border-top: 1px solid #333;
+  padding: 10px 16px;
+  background: #1a1a1a;
+}
+
+@media (max-width: 860px) {
+  .plan-review-body {
+    grid-template-columns: 1fr;
+  }
+  .plan-review-side {
+    border-top: 1px solid #2a2a2a;
+  }
+  .plan-review-pane {
+    border-right: none;
+  }
+}
+
 /* ---------- ErrorBoundary fallback ---------- */
 .error-boundary {
   position: fixed;

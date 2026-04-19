@@ -8,6 +8,7 @@ import { listArtifacts, listEvents, recordEvent } from '../store/db.js'
 import {
   STAGE_ARTIFACTS,
   stageArtifactPath,
+  resolveStageArtifactAbs,
   STAGE_CLI_ARGS,
   STAGE_COMMAND,
   STAGE_CWD,
@@ -303,14 +304,27 @@ export function registerPtyIpc(): void {
       // artifact file, so don't fall back to stageArtifactPath — leaving it
       // null lets the CompletionDrawer show "本阶段未声明产物文件" cleanly
       // instead of "(未找到产物文件)".
-      const fallbackArtifact =
-        req.stageId === 3 ? null : stageArtifactPath(req.stageId, req.label)
-      const artifactRel = meta.params.artifact ?? fallbackArtifact ?? null
-      const artifactAbs = artifactRel
-        ? isAbsolute(artifactRel)
+      let artifactAbs: string | null = null
+      let artifactRel: string | null = null
+      if (meta.params.artifact) {
+        artifactRel = meta.params.artifact
+        artifactAbs = isAbsolute(artifactRel)
           ? artifactRel
           : join(req.projectDir, artifactRel)
-        : null
+      } else if (req.stageId !== 3) {
+        artifactAbs = await resolveStageArtifactAbs(
+          req.projectDir,
+          req.stageId,
+          req.label
+        )
+        // Report absolute path for stage 1 (target_repo-based); for stages
+        // 2/4 keep the project-dir-relative form for legacy UI/event
+        // consumers.
+        artifactRel =
+          req.stageId === 1
+            ? artifactAbs
+            : stageArtifactPath(req.stageId, req.label)
+      }
       let artifactContent: string | null = null
       if (artifactAbs) {
         try {
@@ -394,11 +408,10 @@ export function registerPtyIpc(): void {
           // the plan yet). In that case we tell the CLI to ask for a name at
           // archive time and not to hardcode a path now.
           const planPending = req.stageId === 1 && !req.label?.trim()
-          const stagePath = stageArtifactPath(req.stageId, req.label)
 
           // If this Stage 1 plan was previously imported from an external
-          // file, archive back to that file (not workspaces/). The mapping
-          // is persisted in project.json by the import flow.
+          // file, archive back to that file (not the default location). The
+          // mapping is persisted in project.json by the import flow.
           let externalArtifactAbs: string | null = null
           if (req.stageId === 1 && req.label?.trim()) {
             const sources = await readPlanSources(req.projectDir)
@@ -406,9 +419,22 @@ export function registerPtyIpc(): void {
             if (s && isAbsolute(s)) externalArtifactAbs = s
           }
 
-          const artifactPathForPrompt = externalArtifactAbs ?? stagePath ?? ''
-          const artifactAbs =
-            externalArtifactAbs ?? join(req.projectDir, stagePath ?? '')
+          const defaultAbs = await resolveStageArtifactAbs(
+            req.projectDir,
+            req.stageId,
+            req.label
+          )
+          const artifactAbs = externalArtifactAbs ?? defaultAbs
+          // For stage 1 we pass the absolute path to the prompt (since the
+          // canonical location is outside the cwd). Stages 2-4 keep their
+          // existing relative-form behavior so legacy prompt text stays
+          // valid.
+          const artifactPathForPrompt =
+            req.stageId === 1
+              ? artifactAbs
+              : externalArtifactAbs ??
+                stageArtifactPath(req.stageId, req.label) ??
+                ''
 
           const sysPrompt = await buildSystemPrompt(req.stageId, {
             projectDir: req.projectDir,
@@ -438,7 +464,7 @@ export function registerPtyIpc(): void {
               kickoffLines.push(
                 `【重要】用户还**没有**输入方案名称。请先跟用户对话澄清需求；`,
                 `在即将开始写设计文档之前，**必须先问用户**："你希望把这份方案归档成什么名字？"`,
-                `拿到名字后，把方案写到 \`workspaces/stage1_design/<用户给的名字>.md\` （相对于 cwd 的父级）的对应绝对路径，`,
+                `拿到名字后，把方案写到 \`${targetRepo ?? req.projectDir}/.multi-ai-code/designs/<用户给的名字>.md\` 这个绝对路径，`,
                 `并在 STAGE_DONE 标记里用这个完整的绝对路径作为 artifact= 的值。`,
                 ``,
                 `准备好后，请用 brainstorming 与我开始澄清这次方案的需求与目标。`
@@ -555,7 +581,7 @@ export function registerPtyIpc(): void {
       let designSpec: string | null = null
       if (req.toStage >= 3) {
         try {
-          const designAbs = join(pdir, stageArtifactPath(1, s.label))
+          const designAbs = await resolveStageArtifactAbs(pdir, 1, s.label)
           designSpec = await fs.readFile(designAbs, 'utf8')
         } catch {
           designSpec = null
@@ -583,7 +609,7 @@ export function registerPtyIpc(): void {
         verdict: req.verdict
       })
       const refPath = await writePromptFile(s.cwd, req.toStage, 'handoff', msg)
-      const artifactAbs = join(pdir, stageArtifactPath(req.toStage, s.label) ?? '')
+      const artifactAbs = await resolveStageArtifactAbs(pdir, req.toStage, s.label)
       await sendMessage(
         s.proc,
         [
@@ -662,13 +688,26 @@ export function registerPtyIpc(): void {
       }
     ) => {
       const sessLabel = sessions.get(req.sessionId)?.label
-      const artifactRel =
-        req.artifactPath ?? stageArtifactPath(req.stageId, sessLabel) ?? null
-      const artifactAbs = artifactRel
-        ? isAbsolute(artifactRel)
-          ? artifactRel
-          : join(req.projectDir, artifactRel)
-        : null
+      let artifactRel: string | null
+      let artifactAbs: string | null
+      if (req.artifactPath) {
+        artifactRel = req.artifactPath
+        artifactAbs = isAbsolute(req.artifactPath)
+          ? req.artifactPath
+          : join(req.projectDir, req.artifactPath)
+      } else {
+        artifactAbs = await resolveStageArtifactAbs(
+          req.projectDir,
+          req.stageId,
+          sessLabel
+        )
+        // Stage 1 path is outside the project dir, so surface the absolute
+        // form to the UI/event layer; stages 2-4 keep the relative form.
+        artifactRel =
+          req.stageId === 1
+            ? artifactAbs
+            : stageArtifactPath(req.stageId, sessLabel)
+      }
       let artifactContent: string | null = null
       if (artifactAbs) {
         try {
@@ -743,10 +782,19 @@ export function registerPtyIpc(): void {
       // handoff / UI can open it directly. There is no project-relative form.
       artifactPathForEvent = artifactAbs
     } else {
-      const rel = stageArtifactPath(req.stageId, req.label)
-      if (!rel) return { ok: false, error: `unknown stage ${req.stageId}` }
-      artifactAbs = join(req.projectDir, rel)
-      artifactPathForEvent = rel
+      const abs = await resolveStageArtifactAbs(
+        req.projectDir,
+        req.stageId,
+        req.label
+      )
+      if (!abs) return { ok: false, error: `unknown stage ${req.stageId}` }
+      artifactAbs = abs
+      // For stage 1 we now report absolute path (target_repo-based);
+      // stages 2-4 keep the legacy project-dir-relative form.
+      artifactPathForEvent =
+        req.stageId === 1
+          ? abs
+          : stageArtifactPath(req.stageId, req.label)
     }
     await fs.mkdir(dirname(artifactAbs), { recursive: true })
     await fs.writeFile(artifactAbs, req.content, 'utf8')
@@ -981,9 +1029,12 @@ export function registerPtyIpc(): void {
         if (s && isAbsolute(s)) abs = s
       }
       if (!abs) {
-        rel = stageArtifactPath(stageId, label)
-        if (!rel) return { ok: false, error: '该阶段没有默认产物路径' }
-        abs = join(projectDir, rel)
+        abs = await resolveStageArtifactAbs(projectDir, stageId, label)
+        if (!abs) return { ok: false, error: '该阶段没有默认产物路径' }
+        // Legacy relative form for display; for stage 1 (absolute) just
+        // echo abs so the renderer has something to show.
+        rel =
+          stageId === 1 ? abs : stageArtifactPath(stageId, label)
       }
       try {
         const content = await fs.readFile(abs, 'utf8')

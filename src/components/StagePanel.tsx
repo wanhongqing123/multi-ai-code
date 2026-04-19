@@ -34,8 +34,14 @@ export interface StagePanelProps {
   /** When provided (Stage 1 only), renders a "方案预览" button that opens
    *  the current plan markdown for review + annotation → feedback. */
   onReviewPlan?: () => void
+  /** When provided (Stage 3 only), renders a "Diff 审查" button that opens
+   *  the git diff viewer for annotation → feedback to the Stage 3 CLI. */
+  onReviewDiff?: () => void
   /** When provided, renders a "↩ 重新设计" shortcut that sends feedback directly to Stage 1. */
   onRequestRedesign?: () => void
+  /** When true, hides the "✓ 完成" manual-done button (e.g. Stage 3 which
+   *  signals completion from the CLI itself after user annotations). */
+  hideManualDone?: boolean
   /** Stage 1 plan name input (controlled). */
   planName?: string
   onPlanNameChange?: (name: string) => void
@@ -484,6 +490,16 @@ export default function StagePanel(props: StagePanelProps) {
             👁 方案预览
           </button>
         )}
+        {props.onReviewDiff && (
+          <button
+            className="tile-btn"
+            onClick={props.onReviewDiff}
+            disabled={disabled}
+            title="打开 Git Diff 审查：对代码变更逐行标注，发送后由 Stage 3 CLI 按意见修改代码"
+          >
+            👁 Diff 审查
+          </button>
+        )}
         {stageId >= 2 && props.msysEnabled && props.targetRepo && (
           <button
             className="tile-btn"
@@ -520,13 +536,15 @@ export default function StagePanel(props: StagePanelProps) {
           </>
         ) : (
           <>
-            <button
-              className="tile-btn"
-              onClick={handleManualDone}
-              title="手动标记完成并打开审批抽屉（读取默认产物文件）"
-            >
-              ✓ 完成
-            </button>
+            {!props.hideManualDone && (
+              <button
+                className="tile-btn"
+                onClick={handleManualDone}
+                title="手动标记完成并打开审批抽屉（读取默认产物文件）"
+              >
+                ✓ 完成
+              </button>
+            )}
             {onRequestFeedback && (
               <button
                 className="tile-btn"

@@ -183,6 +183,34 @@ const api = {
         ok: boolean
         created?: boolean
         error?: string
+      }>,
+    /** List recent commits on the given repo. */
+    log: (cwd: string, limit?: number) =>
+      ipcRenderer.invoke('git:log', { cwd, limit }) as Promise<{
+        ok: boolean
+        entries?: {
+          hash: string
+          short: string
+          author: string
+          date: string
+          subject: string
+        }[]
+        error?: string
+      }>,
+    /** Unified diff between various sources:
+     *   - working: uncommitted changes vs HEAD
+     *   - head1:   HEAD~1..HEAD (latest commit)
+     *   - commit:  show a single commit (refs=[hash])
+     *   - range:   A..B diff (refs=[from, to]) */
+    diff: (
+      cwd: string,
+      mode: 'working' | 'head1' | 'commit' | 'range' | 'working_range',
+      refs?: string[]
+    ) =>
+      ipcRenderer.invoke('git:diff', { cwd, mode, refs }) as Promise<{
+        ok: boolean
+        diff?: string
+        error?: string
       }>
   },
   ping: () => ipcRenderer.invoke('app:ping'),

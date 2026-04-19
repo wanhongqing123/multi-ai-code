@@ -15,10 +15,10 @@ import ToastHost, { showToast } from './components/Toast'
 import GlobalSearchDialog from './components/GlobalSearchDialog'
 import FilePreviewDialog from './components/FilePreviewDialog'
 import PlanReviewDialog, { type Annotation } from './components/PlanReviewDialog'
+import DiffViewerDialog, { type DiffAnnotation } from './components/DiffViewerDialog'
 import type { StageDoneEvent } from '../electron/preload'
 
 const LAST_PROJECT_KEY = 'multi-ai-code.lastProjectId'
-const PLAN_NAME_KEY_PREFIX = 'multi-ai-code.planName.'
 
 const STAGES = [
   { id: 1, name: '方案设计' },
@@ -73,7 +73,6 @@ export default function App() {
   const [killAllNonce, setKillAllNonce] = useState(0)
   const [feedbackFrom, setFeedbackFrom] = useState<number | null>(null)
   const [feedbackForcedTarget, setFeedbackForcedTarget] = useState<number | null>(null)
-  const [showHistory, setShowHistory] = useState(false)
   const [pickerStage, setPickerStage] = useState<number | null>(null)
   const [planName, setPlanName] = useState('')
   const [showErrors, setShowErrors] = useState(false)
@@ -104,6 +103,8 @@ export default function App() {
     path: string
     content: string
   } | null>(null)
+  // Stage-3 diff-review state. When true, DiffViewerDialog is rendered.
+  const [diffReviewOpen, setDiffReviewOpen] = useState(false)
   // Remember which (project, planName) combos have already seen the starter
   // "import from file?" toast so it's not shown repeatedly on each start.
   const shownStarterHintsRef = useRef<Set<string>>(new Set())
@@ -164,11 +165,21 @@ export default function App() {
     )
   }, [])
 
+  const reloadProjectsRef = useRef<() => Promise<ProjectInfo[]>>(
+    async () => []
+  )
+
   const reloadProjects = useCallback(async () => {
     const list = await window.api.project.list()
     setProjects(list)
     return list
   }, [])
+
+  // Sync ref so openProjectDirPicker (declared above reloadProjects for
+  // readability) can call the latest reloadProjects without a circular dep.
+  useEffect(() => {
+    reloadProjectsRef.current = reloadProjects
+  }, [reloadProjects])
 
   /** Clear UI state tied to a specific project (drawers, dialogs, plan name). */
   const clearProjectScopedState = useCallback(() => {
@@ -176,13 +187,43 @@ export default function App() {
     setFeedbackFrom(null)
     setFeedbackForcedTarget(null)
     setPickerStage(null)
-    setShowHistory(false)
     setShowGlobalSearch(false)
     setZoomedStage(null)
     setPlanName('')
     setPreviewImport(null)
+    setPlanReview(null)
+    setDiffReviewOpen(false)
     shownStarterHintsRef.current.clear()
   }, [])
+
+  /** One-click "switch project" flow: native directory picker. If the
+   *  picked dir is already registered as a project target_repo, switch to
+   *  it; otherwise register it as a new project using the dir's basename. */
+  const openProjectDirPicker = useCallback(async () => {
+    const pick = await window.api.project.pickDir()
+    if (pick.canceled || !pick.path) return
+    const picked = pick.path
+    const existing = projects.find((p) => p.target_repo === picked)
+    if (existing) {
+      if (existing.id === currentProjectId) return
+      void window.api.cc.killAll()
+      setKillAllNonce((n) => n + 1)
+      clearProjectScopedState()
+      setCurrentProjectId(existing.id)
+      return
+    }
+    const basename = picked.split(/[\\/]/).pop()?.trim() || '新项目'
+    const res = await window.api.project.create(basename, picked)
+    if (!res.ok || !res.id) {
+      alert(`创建项目失败：${res.error ?? '未知错误'}`)
+      return
+    }
+    await reloadProjectsRef.current()
+    void window.api.cc.killAll()
+    setKillAllNonce((n) => n + 1)
+    clearProjectScopedState()
+    setCurrentProjectId(res.id)
+  }, [projects, currentProjectId, clearProjectScopedState])
 
   /** Open file picker, read content, and queue it in the preview dialog. */
   const pickExternalFileForPreview = useCallback(
@@ -239,8 +280,6 @@ export default function App() {
       const pick = list.find((p) => p.id === last) ?? list[0]
       if (pick) {
         setCurrentProjectId(pick.id)
-        const saved = localStorage.getItem(PLAN_NAME_KEY_PREFIX + pick.id)
-        if (saved) setPlanName(saved)
         if (last && last !== pick.id) {
           showToast(`上次打开的项目已不存在，已切换到「${pick.name}」`, { level: 'warn' })
         }
@@ -279,17 +318,6 @@ export default function App() {
       cancelled = true
     }
   }, [currentProjectId])
-
-  // Persist planName per project so it survives restart / project switch.
-  useEffect(() => {
-    if (!currentProjectId) return
-    const key = PLAN_NAME_KEY_PREFIX + currentProjectId
-    if (planName.trim()) {
-      localStorage.setItem(key, planName.trim())
-    } else {
-      localStorage.removeItem(key)
-    }
-  }, [currentProjectId, planName])
 
   // When Stage 1 starts running with a plan that has no historical design,
   // offer a one-shot import shortcut so the user isn't forced into a fresh
@@ -394,6 +422,69 @@ export default function App() {
     }
     setPlanReview({ path: res.path ?? '', content: res.content })
   }, [projectDir, planName])
+
+  /** Open the Stage 3 git diff viewer. */
+  const openDiffReview = useCallback(() => {
+    if (!targetRepo) {
+      showToast('本项目没有 target_repo 路径，无法打开 Diff 审查', { level: 'warn' })
+      return
+    }
+    setDiffReviewOpen(true)
+  }, [targetRepo])
+
+  /** Format diff annotations as markdown and push to the Stage 3 session.
+   *  If Stage 3 isn't running yet, spawn it first (user-driven entry). */
+  const submitDiffAnnotations = useCallback(
+    async (anns: DiffAnnotation[], generalNote: string) => {
+      const sid = sessionIdFor(3)
+      try {
+        await ensureStageRunning(3, sid)
+      } catch (err) {
+        showToast(`启动 Stage 3 失败：${(err as Error).message}`, { level: 'error' })
+        return
+      }
+      const lines: string[] = [
+        '我基于以下 diff 审查结果，请你按每一条批注修改对应代码，然后打印 <<STAGE_DONE ...>> 完成标记。',
+        ''
+      ]
+      if (generalNote) {
+        lines.push('## 整体意见', '', generalNote, '')
+      }
+      anns.forEach((a, i) => {
+        lines.push(
+          `## 批注 ${i + 1}`,
+          '',
+          `> 文件：${a.file}`,
+          `> 行范围：${a.lineRange}`,
+          '',
+          '原文：',
+          '```',
+          a.snippet,
+          '```',
+          '',
+          '意见：',
+          a.comment,
+          ''
+        )
+      })
+      lines.push(
+        '---',
+        '',
+        '请逐条落实，最后单独一行输出 `<<STAGE_DONE summary="...">>` 标记。'
+      )
+      const res = await window.api.cc.sendUser(sid, lines.join('\n'))
+      if (!res.ok) {
+        showToast(`发送批注失败：${res.error ?? '未知错误'}`, { level: 'error' })
+        return
+      }
+      showToast(
+        `已发送 ${anns.length} 条批注${generalNote ? ' + 整体意见' : ''}到 Stage 3`,
+        { level: 'success' }
+      )
+      setDiffReviewOpen(false)
+    },
+    [sessionIdFor, ensureStageRunning]
+  )
 
   /** Format annotations as markdown and push them into the Stage 1 session. */
   const submitPlanReviewAnnotations = useCallback(
@@ -518,8 +609,8 @@ export default function App() {
       <header className="topbar">
         <button
           className="topbar-btn topbar-btn-primary"
-          onClick={() => setShowProjectPicker(true)}
-          title="管理 / 切换 / 新建项目"
+          onClick={() => void openProjectDirPicker()}
+          title="浏览一个仓库目录作为当前项目（已注册的目录会直接切回，新目录自动注册）"
         >
           📁 {hasProject ? `项目：${projectName}` : '选择项目'}
         </button>
@@ -553,14 +644,6 @@ export default function App() {
           title="查看错误与通知日志"
         >
           {errorCount > 0 ? `⚠ ${errorCount}` : '📣 日志'}
-        </button>
-        <button
-          className="topbar-btn"
-          onClick={() => setShowHistory(true)}
-          disabled={!hasProject}
-          title="查看各阶段产物历史（每次完成自动归档）"
-        >
-          📋 历史
         </button>
         <button
           className="topbar-btn"
@@ -640,7 +723,7 @@ export default function App() {
               args={stageConfigs[String(s.id)]?.args}
               envOverride={stageConfigs[String(s.id)]?.env}
               onRequestFeedback={
-                s.id >= 2
+                s.id === 2 || s.id === 4
                   ? () => {
                       setFeedbackForcedTarget(null)
                       setFeedbackFrom(s.id)
@@ -648,13 +731,14 @@ export default function App() {
                   : undefined
               }
               onRequestRedesign={
-                s.id >= 3
+                s.id === 4
                   ? () => {
                       setFeedbackForcedTarget(1)
                       setFeedbackFrom(s.id)
                     }
                   : undefined
               }
+              hideManualDone={s.id === 3}
               planName={planName}
               onPlanNameChange={s.id === 1 ? setPlanName : undefined}
               planNameSuggestions={planNameSuggestions}
@@ -662,58 +746,13 @@ export default function App() {
                 s.id === 1 ? () => setPickerStage(1) : undefined
               }
               onReviewPlan={s.id === 1 ? openPlanReview : undefined}
+              onReviewDiff={s.id === 3 ? openDiffReview : undefined}
               targetRepo={targetRepo}
               msysEnabled={msysEnabled}
             />
           ))}
         </main>
 
-        {showHistory && (
-          <HistoryDrawer
-            projectId={currentProjectId ?? ''}
-            projectDir={projectDir}
-            onClose={() => setShowHistory(false)}
-            onRestore={async (record) => {
-              const res = await window.api.artifact.restore({
-                projectId: currentProjectId ?? '',
-                projectDir,
-                stageId: record.stage_id,
-                snapshotPath: record.path,
-                sessionId: sessionIdFor(record.stage_id)
-              })
-              if (!res.ok) {
-                alert(`恢复失败：${res.error}`)
-                return
-              }
-              setShowHistory(false)
-            }}
-            onMergeViaAI={async (mergedContent) => {
-              setShowHistory(false)
-              try {
-                const sid = sessionIdFor(1)
-                const tmpRes = await window.api.writeTemp(mergedContent, 'md')
-                if (!tmpRes.ok || !tmpRes.path) {
-                  alert(`写入临时文件失败：${tmpRes.error ?? '未知错误'}`)
-                  return
-                }
-                await ensureStageRunning(1, sid)
-                const sendRes = await window.api.cc.sendUser(
-                  sid,
-                  [
-                    `请完整读取 ${tmpRes.path}，其中包含用户从历史方案中勾选的多份方案。`,
-                    `请进行优化合并：取各方案精华，消除矛盾与冗余，输出一份统一的、完整的设计文档。`,
-                    `合并完成后把最终结果写到默认产物路径，并打印 <<STAGE_DONE ...>> 标记。`
-                  ].join('\n')
-                )
-                if (!sendRes.ok) {
-                  alert(`发送合并指令失败：${sendRes.error}`)
-                }
-              } catch (err) {
-                alert(`AI 合并优化出错：${(err as Error).message}`)
-              }
-            }}
-          />
-        )}
         {pickerStage !== null && (
           <HistoryDrawer
             projectId={currentProjectId ?? ''}
@@ -860,8 +899,6 @@ export default function App() {
               void window.api.cc.killAll()
               setKillAllNonce((n) => n + 1)
               clearProjectScopedState()
-              const saved = localStorage.getItem(PLAN_NAME_KEY_PREFIX + p.id)
-              if (saved) setPlanName(saved)
               setCurrentProjectId(p.id)
               setShowProjectPicker(false)
             }}
@@ -910,7 +947,6 @@ export default function App() {
             { id: 'doctor', label: '🩺 CLI 体检', keywords: 'doctor check health', action: () => setShowDoctor(true) },
             { id: 'settings', label: '⚙️ 阶段 CLI 配置', keywords: 'settings command', action: () => setShowStageSettings(true), disabled: !hasProject },
             { id: 'tpl', label: '📋 Prompt 模板', keywords: 'templates prompt snippets', action: () => setShowTemplates(true) },
-            { id: 'hist', label: '📋 产物历史', keywords: 'history artifacts', action: () => setShowHistory(true), disabled: !hasProject },
             { id: 'timeline', label: '📜 审计时间线', keywords: 'timeline events audit', action: () => setShowTimeline(true), disabled: !hasProject },
             { id: 'search', label: '🔍 全局搜索', hint: 'Ctrl+Shift+F', keywords: 'find search', action: () => setShowGlobalSearch(true), disabled: !hasProject },
             { id: 'logs', label: '📣 错误与通知', keywords: 'errors log notifications', action: () => setShowErrors(true) },
@@ -940,6 +976,20 @@ export default function App() {
               return
             }
             const stageId = previewImport.stageId
+            // When importing from file for Stage 1, use the ORIGINAL filename
+            // (sans extension) as the plan name / archive filename — the
+            // archived md keeps the user's original identity instead of being
+            // renamed to whatever is currently in the plan-name input.
+            let effectiveLabel = planName
+            if (stageId === 1) {
+              const origName =
+                previewImport.path.split(/[\\/]/).pop() ?? ''
+              const fromFile = origName.replace(/\.(md|markdown|txt)$/i, '').trim()
+              if (fromFile) {
+                effectiveLabel = fromFile
+                setPlanName(fromFile)
+              }
+            }
             const res = await window.api.artifact.commitContent({
               projectId: currentProjectId,
               projectDir,
@@ -947,7 +997,7 @@ export default function App() {
               content: previewImport.content,
               sourcePath: previewImport.path,
               sessionId: sessionIdFor(stageId),
-              label: planName
+              label: effectiveLabel
             })
             setPreviewImport(null)
             if (!res.ok) {
@@ -962,6 +1012,13 @@ export default function App() {
           content={planReview.content}
           onClose={() => setPlanReview(null)}
           onSubmit={submitPlanReviewAnnotations}
+        />
+      )}
+      {diffReviewOpen && (
+        <DiffViewerDialog
+          cwd={targetRepo}
+          onClose={() => setDiffReviewOpen(false)}
+          onSubmit={submitDiffAnnotations}
         />
       )}
       {showOnboarding && (

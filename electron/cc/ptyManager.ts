@@ -1,6 +1,6 @@
 import { ipcMain, BrowserWindow, dialog } from 'electron'
 import { promises as fs, createWriteStream, WriteStream } from 'fs'
-import { join, isAbsolute } from 'path'
+import { join, isAbsolute, dirname } from 'path'
 import { PtyCCProcess } from './PtyCCProcess.js'
 import { StageDoneScanner, StageDoneMeta } from './StageDoneScanner.js'
 import { snapshotArtifact } from '../store/snapshot.js'
@@ -90,6 +90,41 @@ async function readProjectMsysEnabled(projectDir: string): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+/**
+ * Per-project mapping of Stage 1 plan-name → original absolute file path,
+ * stored in `project.json` under `plan_sources`. When a user imports a
+ * plan from an external markdown file, we keep writing back to that file
+ * on subsequent Stage 1 sessions — "归档 = 原文件" rather than copying.
+ */
+async function readPlanSources(projectDir: string): Promise<Record<string, string>> {
+  try {
+    const meta = JSON.parse(
+      await fs.readFile(join(projectDir, 'project.json'), 'utf8')
+    ) as { plan_sources?: Record<string, string> }
+    return meta.plan_sources ?? {}
+  } catch {
+    return {}
+  }
+}
+
+async function writePlanSource(
+  projectDir: string,
+  label: string,
+  absPath: string
+): Promise<void> {
+  const metaPath = join(projectDir, 'project.json')
+  let meta: Record<string, unknown> = {}
+  try {
+    meta = JSON.parse(await fs.readFile(metaPath, 'utf8'))
+  } catch {
+    /* new project or missing file — start empty */
+  }
+  const prev = (meta.plan_sources as Record<string, string> | undefined) ?? {}
+  meta.plan_sources = { ...prev, [label]: absPath }
+  meta.updated_at = new Date().toISOString()
+  await fs.writeFile(metaPath, JSON.stringify(meta, null, 2))
 }
 
 export interface SpawnRequest {
@@ -264,8 +299,13 @@ export function registerPtyIpc(): void {
     })
 
     scanner.on('done', async (meta: StageDoneMeta) => {
-      const artifactRel =
-        meta.params.artifact ?? stageArtifactPath(req.stageId, req.label) ?? null
+      // Stage 3 is user-annotation-driven code review; it does NOT produce an
+      // artifact file, so don't fall back to stageArtifactPath — leaving it
+      // null lets the CompletionDrawer show "本阶段未声明产物文件" cleanly
+      // instead of "(未找到产物文件)".
+      const fallbackArtifact =
+        req.stageId === 3 ? null : stageArtifactPath(req.stageId, req.label)
+      const artifactRel = meta.params.artifact ?? fallbackArtifact ?? null
       const artifactAbs = artifactRel
         ? isAbsolute(artifactRel)
           ? artifactRel
@@ -350,20 +390,39 @@ export function registerPtyIpc(): void {
             /* ignore */
           }
 
+          // Stage 1: plan name may be empty at spawn time (user hasn't named
+          // the plan yet). In that case we tell the CLI to ask for a name at
+          // archive time and not to hardcode a path now.
+          const planPending = req.stageId === 1 && !req.label?.trim()
           const stagePath = stageArtifactPath(req.stageId, req.label)
+
+          // If this Stage 1 plan was previously imported from an external
+          // file, archive back to that file (not workspaces/). The mapping
+          // is persisted in project.json by the import flow.
+          let externalArtifactAbs: string | null = null
+          if (req.stageId === 1 && req.label?.trim()) {
+            const sources = await readPlanSources(req.projectDir)
+            const s = sources[req.label.trim()]
+            if (s && isAbsolute(s)) externalArtifactAbs = s
+          }
+
+          const artifactPathForPrompt = externalArtifactAbs ?? stagePath ?? ''
+          const artifactAbs =
+            externalArtifactAbs ?? join(req.projectDir, stagePath ?? '')
+
           const sysPrompt = await buildSystemPrompt(req.stageId, {
             projectDir: req.projectDir,
-            artifactPath: stagePath ?? '',
+            artifactPath: artifactPathForPrompt,
             projectName,
             targetRepo,
-            stageCwd: finalCwd
+            stageCwd: finalCwd,
+            planPending
           })
-          const artifactAbs = join(req.projectDir, stagePath ?? '')
 
-          // Stage 1 (claude) auto-loads `CLAUDE.md` from cwd on boot — no
-          // explicit Read / Get-Content tool call needed, no sandbox prompt,
-          // zero user-facing noise. Just drop the system prompt there and
-          // send a minimal kick-off message carrying the dynamic artifact path.
+          // Stage 1 & Stage 3 use claude with auto-loaded `CLAUDE.md` — no
+          // explicit Read tool call, no permission prompt, no user-facing
+          // noise. Stage 2 / Stage 4 fall back to the legacy .injections
+          // flow (codex doesn't auto-load CLAUDE.md the same way).
           if (req.stageId === 1) {
             const mdPath = join(finalCwd, 'CLAUDE.md')
             await fs.writeFile(
@@ -371,14 +430,44 @@ export function registerPtyIpc(): void {
               `<!-- This file is auto-generated by Multi-AI Code. Do not edit; it is rewritten on every Stage 1 spawn. -->\n\n${sysPrompt}`,
               'utf8'
             )
-            await sendMessage(
-              proc,
-              [
-                `你好，本阶段是「方案设计」，你的角色与约束都写在 cwd 的 \`CLAUDE.md\` 里（启动时你会自动加载）。`,
+            const kickoffLines: string[] = [
+              `你好，本阶段是「方案设计」，你的角色与约束都写在 cwd 的 \`CLAUDE.md\` 里（启动时你会自动加载）。`,
+              ``
+            ]
+            if (planPending) {
+              kickoffLines.push(
+                `【重要】用户还**没有**输入方案名称。请先跟用户对话澄清需求；`,
+                `在即将开始写设计文档之前，**必须先问用户**："你希望把这份方案归档成什么名字？"`,
+                `拿到名字后，把方案写到 \`workspaces/stage1_design/<用户给的名字>.md\` （相对于 cwd 的父级）的对应绝对路径，`,
+                `并在 STAGE_DONE 标记里用这个完整的绝对路径作为 artifact= 的值。`,
                 ``,
+                `准备好后，请用 brainstorming 与我开始澄清这次方案的需求与目标。`
+              )
+            } else {
+              kickoffLines.push(
                 `【本次方案的归档路径】${artifactAbs}`,
                 ``,
                 `准备好后，请用 brainstorming 与我开始澄清这次方案的需求与目标。`
+              )
+            }
+            await sendMessage(proc, kickoffLines.join('\n'))
+          } else if (req.stageId === 3) {
+            // Stage 3 = code review + user-annotation-driven edits. No
+            // artifact, no forced handoff read. Just load the role via
+            // CLAUDE.md and tell the CLI to wait for user annotations.
+            const mdPath = join(finalCwd, 'CLAUDE.md')
+            await fs.writeFile(
+              mdPath,
+              `<!-- This file is auto-generated by Multi-AI Code. Do not edit; it is rewritten on every Stage 3 spawn. -->\n\n${sysPrompt}`,
+              'utf8'
+            )
+            await sendMessage(
+              proc,
+              [
+                `你好，本阶段是「方案验收 · 代码审查」。你的角色与约束都写在 cwd 的 \`CLAUDE.md\` 里（启动时你会自动加载）。`,
+                ``,
+                `请先回复一句话表示已就绪，然后**等待**我通过"Diff 审查"窗口把具体的代码标注发给你。`,
+                `收到标注后，按每条批注修改对应代码；全部处理完单独一行打印 \`<<STAGE_DONE summary="...">>\`（无需 artifact 参数）。`
               ].join('\n')
             )
           } else {
@@ -639,11 +728,27 @@ export function registerPtyIpc(): void {
     skipBroadcast?: boolean
     /** Human-readable label for the snapshot filename (e.g. plan name). */
     label?: string
+    /** Override target path (absolute). When provided (e.g. externally-
+     *  imported plan that should archive back to its origin file), content
+     *  is written there instead of the stageArtifactPath default.
+     *  A snapshot is still recorded under the platform's snapshot dir for
+     *  history tracking. */
+    externalArtifactPath?: string | null
   }): Promise<{ ok: true; artifactPath: string; artifactAbs: string; snapshotPath: string | null } | { ok: false; error: string }> {
-    const artifactRel = stageArtifactPath(req.stageId, req.label)
-    if (!artifactRel) return { ok: false, error: `unknown stage ${req.stageId}` }
-    const artifactAbs = join(req.projectDir, artifactRel)
-    await fs.mkdir(join(artifactAbs, '..'), { recursive: true })
+    let artifactAbs: string
+    let artifactPathForEvent: string
+    if (req.externalArtifactPath && isAbsolute(req.externalArtifactPath)) {
+      artifactAbs = req.externalArtifactPath
+      // For external files we report the absolute path in stage:done so
+      // handoff / UI can open it directly. There is no project-relative form.
+      artifactPathForEvent = artifactAbs
+    } else {
+      const rel = stageArtifactPath(req.stageId, req.label)
+      if (!rel) return { ok: false, error: `unknown stage ${req.stageId}` }
+      artifactAbs = join(req.projectDir, rel)
+      artifactPathForEvent = rel
+    }
+    await fs.mkdir(dirname(artifactAbs), { recursive: true })
     await fs.writeFile(artifactAbs, req.content, 'utf8')
     const snapshotPath = await snapshotArtifact({
       projectId: req.projectId,
@@ -660,7 +765,7 @@ export function registerPtyIpc(): void {
         stageId: req.stageId,
         raw: `<<${req.kind}>>`,
         params: { summary: req.summary },
-        artifactPath: artifactRel,
+        artifactPath: artifactPathForEvent,
         artifactContent: req.content,
         snapshotPath
       })
@@ -669,9 +774,13 @@ export function registerPtyIpc(): void {
       project_id: req.projectId,
       from_stage: req.stageId,
       kind: `artifact:${req.kind}`,
-      payload: { summary: req.summary, artifactPath: artifactRel, label: req.label }
+      payload: {
+        summary: req.summary,
+        artifactPath: artifactPathForEvent,
+        label: req.label
+      }
     })
-    return { ok: true, artifactPath: artifactRel, artifactAbs, snapshotPath }
+    return { ok: true, artifactPath: artifactPathForEvent, artifactAbs, snapshotPath }
   }
 
   /**
@@ -851,7 +960,9 @@ export function registerPtyIpc(): void {
 
   /** Read the CURRENT working artifact for a given stage, using the same
    *  stageArtifactPath logic the CLI writes to. Returns absolute path +
-   *  content so the renderer can preview the in-progress plan. */
+   *  content so the renderer can preview the in-progress plan.
+   *  For Stage 1 plans imported from an external file, reads that file
+   *  instead of the workspaces/ default. */
   ipcMain.handle(
     'artifact:read-current',
     async (
@@ -862,17 +973,26 @@ export function registerPtyIpc(): void {
         label
       }: { projectDir: string; stageId: number; label?: string }
     ) => {
-      const rel = stageArtifactPath(stageId, label)
-      if (!rel) return { ok: false, error: '该阶段没有默认产物路径' }
-      const abs = join(projectDir, rel)
+      let abs: string | null = null
+      let rel: string | null = null
+      if (stageId === 1 && label?.trim()) {
+        const sources = await readPlanSources(projectDir)
+        const s = sources[label.trim()]
+        if (s && isAbsolute(s)) abs = s
+      }
+      if (!abs) {
+        rel = stageArtifactPath(stageId, label)
+        if (!rel) return { ok: false, error: '该阶段没有默认产物路径' }
+        abs = join(projectDir, rel)
+      }
       try {
         const content = await fs.readFile(abs, 'utf8')
-        return { ok: true, path: abs, relPath: rel, content }
+        return { ok: true, path: abs, relPath: rel ?? abs, content }
       } catch (err) {
         return {
           ok: false,
           path: abs,
-          relPath: rel,
+          relPath: rel ?? abs,
           error: (err as Error).message
         }
       }
@@ -920,6 +1040,18 @@ export function registerPtyIpc(): void {
         label?: string
       }
     ) => {
+      // Stage 1 "import from file" flow: archive back to the original file
+      // (not workspaces/) and remember the mapping so subsequent Stage 1
+      // spawns for this plan-name keep writing to the same source path.
+      const useExternal =
+        req.stageId === 1 && !!req.sourcePath && isAbsolute(req.sourcePath)
+      if (useExternal && req.label) {
+        try {
+          await writePlanSource(req.projectDir, req.label, req.sourcePath)
+        } catch {
+          /* best-effort; mapping will simply not persist across restarts */
+        }
+      }
       return materializeArtifact({
         projectId: req.projectId,
         projectDir: req.projectDir,
@@ -928,7 +1060,8 @@ export function registerPtyIpc(): void {
         sessionId: req.sessionId,
         kind: 'imported',
         summary: `导入文件: ${req.sourcePath}`,
-        label: req.label
+        label: req.label,
+        externalArtifactPath: useExternal ? req.sourcePath : null
       })
     }
   )

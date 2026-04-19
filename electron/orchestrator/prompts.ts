@@ -1,5 +1,5 @@
 import { promises as fs } from 'fs'
-import { join, dirname } from 'path'
+import { join, dirname, isAbsolute } from 'path'
 import { fileURLToPath } from 'url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -133,9 +133,15 @@ function claudeArgs(extra: string[] = []): string[] {
  *   - Claude (stages 3-4):         --permission-mode auto + per-stage allowlist.
  */
 export const STAGE_CLI_ARGS: Record<number, string[]> = {
-  1: claudeArgs(), // design stage: read + git-readonly only
+  // design stage: read + git-readonly + Write/Edit (so the design md file can
+  // be written without per-call permission prompts). Writing source code is
+  // additionally barred by the role prompt & cwd isolation.
+  1: claudeArgs(['Write', 'Edit']),
   2: ['--full-auto'], // impl stage: codex sandbox write-in-cwd
-  3: claudeArgs(),
+  // review stage: user-driven annotations drive code edits. Needs Write
+  // powers to act on annotations; role prompt constrains it to "only modify
+  // what the annotations say".
+  3: claudeArgs(['Write', 'Edit', 'MultiEdit']),
   4: claudeArgs([...TEST_RUNNERS, ...BUILD_RUNNERS])
 }
 
@@ -178,13 +184,27 @@ export interface RenderContext {
   projectName?: string
   targetRepo?: string
   stageCwd?: string
+  /**
+   * Stage 1 only. When true, the user has NOT entered a plan name yet —
+   * the artifact filename will be decided at archive time by asking the user.
+   * Renders {{ARTIFACT_PATH}} as a self-explanatory placeholder so the CLI
+   * knows to prompt the user for the name BEFORE writing the final file.
+   */
+  planPending?: boolean
 }
 
 export function renderTemplate(tpl: string, ctx: RenderContext): string {
   // Pass absolute path to the AI to avoid any cwd-relative ambiguity.
-  const artifactAbs = ctx.artifactPath.startsWith('/')
-    ? ctx.artifactPath
-    : `${ctx.projectDir.replace(/\/$/, '')}/${ctx.artifactPath}`
+  let artifactAbs: string
+  if (ctx.planPending) {
+    artifactAbs = `${ctx.projectDir.replace(/\/$/, '')}/workspaces/stage1_design/<你稍后将向用户询问得到的方案名称>.md`
+  } else if (isAbsolute(ctx.artifactPath)) {
+    // Already absolute (POSIX or Windows) — e.g. externally-imported plan
+    // archived to its origin file. Use as-is.
+    artifactAbs = ctx.artifactPath
+  } else {
+    artifactAbs = `${ctx.projectDir.replace(/\/$/, '')}/${ctx.artifactPath}`
+  }
   return tpl
     .replaceAll('{{PROJECT_DIR}}', ctx.projectDir)
     .replaceAll('{{PROJECT_NAME}}', ctx.projectName ?? '(未设置)')

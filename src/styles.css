@@ -1630,8 +1630,10 @@ html, body, #root {
 
 /* ---------- FilePreviewDialog ---------- */
 .file-preview-modal {
-  width: min(900px, 92vw);
-  max-height: 86vh;
+  width: 96vw;
+  height: 94vh;
+  max-width: none;
+  max-height: none;
   display: flex;
   flex-direction: column;
 }
@@ -1843,8 +1845,10 @@ html, body, #root {
 
 /* ---------- PlanReviewDialog ---------- */
 .plan-review-modal {
-  width: min(1200px, 96vw);
-  max-height: 90vh;
+  width: 96vw;
+  height: 94vh;
+  max-width: none;
+  max-height: none;
   display: flex;
   flex-direction: column;
   /* Anchor for the composer overlay which uses position:absolute inset:0. */
@@ -2108,6 +2112,383 @@ html, body, #root {
     border-top: 1px solid #2a2a2a;
   }
   .plan-review-pane {
+    border-right: none;
+  }
+}
+
+/* ---------- DiffViewerDialog ---------- */
+.diff-viewer-modal {
+  width: 98vw;
+  height: 96vh;
+  max-width: none;
+  max-height: none;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.dv-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  background: #1a1a1a;
+  border-bottom: 1px solid #333;
+  flex-wrap: wrap;
+}
+
+.dv-mode-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.dv-mode-tab {
+  background: #1e1e1e;
+  border: 1px solid #333;
+  color: #bbb;
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.dv-mode-tab:hover {
+  background: #262626;
+  color: #fff;
+}
+
+.dv-mode-tab.active {
+  background: #3b7fd1;
+  border-color: #3b7fd1;
+  color: #fff;
+}
+
+.dv-ref-select {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #bbb;
+}
+
+.dv-ref-select select {
+  background: #0f0f0f;
+  color: #ddd;
+  border: 1px solid #333;
+  border-radius: 3px;
+  padding: 3px 6px;
+  font-size: 12px;
+  max-width: 420px;
+}
+
+.dv-num-input {
+  width: 56px;
+  background: #0f0f0f;
+  color: #ddd;
+  border: 1px solid #333;
+  border-radius: 3px;
+  padding: 3px 6px;
+  font-size: 12.5px;
+  text-align: center;
+}
+
+.dv-num-input:focus {
+  outline: none;
+  border-color: #3b7fd1;
+}
+
+.dv-refresh-btn {
+  margin-left: auto;
+  background: #1e1e1e;
+  border: 1px solid #333;
+  color: #ddd;
+  border-radius: 3px;
+  padding: 3px 10px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.dv-refresh-btn:hover {
+  background: #262626;
+}
+
+.dv-file-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 14px 0;
+  font-size: 12.5px;
+  color: #bbb;
+}
+
+.dv-file-picker select {
+  flex: 0 1 auto;
+  max-width: 480px;
+  min-width: 240px;
+  background: #0f0f0f;
+  color: #ddd;
+  border: 1px solid #333;
+  border-radius: 3px;
+  padding: 4px 8px;
+  font-size: 12.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.dv-nav-group {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.dv-nav-btn {
+  background: #1e1e1e;
+  border: 1px solid #333;
+  color: #ddd;
+  border-radius: 3px;
+  padding: 3px 10px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.dv-nav-btn:hover:not(:disabled) {
+  background: #262626;
+  border-color: #3b7fd1;
+}
+
+.dv-nav-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* When nav group takes margin-left:auto, refresh-btn should no longer
+   have its own margin-left:auto (otherwise they'd fight). */
+.dv-nav-group ~ .dv-refresh-btn {
+  margin-left: 0;
+}
+
+.dv-file-count {
+  color: #888;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.dv-body {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  min-height: 0;
+  border-bottom: 1px solid #333;
+}
+
+.dv-diff-pane {
+  position: relative;
+  overflow: auto;
+  background: #101010;
+  border-right: 1px solid #2a2a2a;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.6;
+}
+
+.dv-side {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #1a1a1a;
+}
+
+.dv-placeholder,
+.dv-error {
+  padding: 16px;
+  color: #888;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+
+.dv-error {
+  color: #e8a45a;
+}
+
+.dv-file {
+  border-top: 1px solid #2a2a2a;
+}
+
+.dv-file:first-child {
+  border-top: none;
+}
+
+.dv-file-head {
+  padding: 8px 14px;
+  background: #1c1c1c;
+  color: #eaeaea;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  border-bottom: 1px solid #2a2a2a;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+/* ---- side-by-side layout ---- */
+.dv-file-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.dv-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-bottom: 1px solid #181818;
+}
+
+.dv-hunk-row {
+  grid-template-columns: 1fr;
+  background: #12283d;
+  color: #7ab7ff;
+  padding: 4px 12px;
+  margin: 2px 0;
+  font-weight: 600;
+}
+
+.dv-cell {
+  display: grid;
+  grid-template-columns: 54px 20px 1fr;
+  padding: 2px 8px;
+  white-space: pre;
+  overflow: hidden;
+  color: #ddd;
+  border-right: 1px solid #2a2a2a;
+  min-width: 0;
+}
+
+.dv-cell:last-child {
+  border-right: none;
+}
+
+.dv-cell-left {
+  /* explicitly non-selectable: user can only annotate on the right */
+  user-select: none;
+  background: #0d0d0d;
+}
+
+.dv-cell-right {
+  background: transparent;
+  cursor: text;
+}
+
+/* per-state backgrounds — override the defaults on each side */
+.dv-cell-left.dv-del {
+  background: #3a1e1e;
+}
+
+.dv-cell-left.dv-context {
+  background: #0d0d0d;
+}
+
+.dv-cell-left.dv-empty {
+  background: #0a0a0a;
+}
+
+.dv-cell-right.dv-add {
+  background: #1a2e1e;
+}
+
+.dv-cell-right.dv-context {
+  background: transparent;
+}
+
+.dv-cell-right.dv-empty {
+  background: #0a0a0a;
+}
+
+.dv-cell .dv-gutter {
+  color: #555;
+  text-align: right;
+  padding-right: 6px;
+  user-select: none;
+  font-size: 12.5px;
+  font-weight: 400;
+}
+
+.dv-cell-right.dv-add .dv-gutter {
+  color: #6fce8d;
+}
+.dv-cell-left.dv-del .dv-gutter {
+  color: #d56f6f;
+}
+
+.dv-cell .dv-sign {
+  color: #888;
+  text-align: center;
+  user-select: none;
+}
+
+.dv-cell-right.dv-add .dv-sign {
+  color: #6fce8d;
+}
+.dv-cell-left.dv-del .dv-sign {
+  color: #d56f6f;
+}
+
+.dv-cell .dv-content {
+  color: inherit;
+  overflow: hidden;
+  text-overflow: clip;
+  white-space: pre;
+  min-width: 0;
+}
+
+.dv-cell-right.dv-add .dv-content {
+  color: #c4e8c4;
+}
+.dv-cell-left.dv-del .dv-content {
+  color: #e8c4c4;
+}
+
+.dv-cell-right ::selection {
+  background: #5a8fd1;
+  color: #fff;
+}
+
+/* Disable selection visuals on the left side so users aren't tempted to
+   annotate there (selection is captured but rejected in JS; this just
+   makes the affordance match). */
+.dv-cell-left ::selection {
+  background: #3a3a3a;
+  color: #888;
+}
+
+.dv-ann-location {
+  color: #7ab7ff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  word-break: break-all;
+}
+
+.dv-ann-snippet {
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  background: #0a0a0a;
+  border-left: 3px solid #3b7fd1;
+  color: #bbb;
+  font-size: 11.5px;
+  line-height: 1.45;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre;
+  overflow-x: auto;
+  max-height: 180px;
+}
+
+@media (max-width: 1000px) {
+  .dv-body {
+    grid-template-columns: 1fr;
+  }
+  .dv-side {
+    border-top: 1px solid #2a2a2a;
+  }
+  .dv-diff-pane {
     border-right: none;
   }
 }

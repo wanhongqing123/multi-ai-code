@@ -259,6 +259,98 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('env:detect-msys', async () => detectMsys())
 
+  // ---------- Git IPC: log + diff for Stage 3 Diff Review ----------
+
+  ipcMain.handle(
+    'git:log',
+    async (_e, { cwd, limit }: { cwd: string; limit?: number }) => {
+      try {
+        const args = [
+          'log',
+          `--max-count=${Math.max(1, Math.min(limit ?? 50, 500))}`,
+          '--pretty=format:%H%x00%h%x00%an%x00%ad%x00%s',
+          '--date=iso'
+        ]
+        const { stdout } = await execFileAsync('git', args, {
+          cwd,
+          maxBuffer: 10 * 1024 * 1024
+        })
+        const entries = stdout
+          .split('\n')
+          .filter(Boolean)
+          .map((line) => {
+            const [hash, short, author, date, subject] = line.split('\x00')
+            return { hash, short, author, date, subject }
+          })
+        return { ok: true, entries }
+      } catch (err) {
+        return { ok: false, error: (err as Error).message }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'git:diff',
+    async (
+      _e,
+      {
+        cwd,
+        mode,
+        refs
+      }: {
+        cwd: string
+        mode: 'working' | 'head1' | 'commit' | 'range' | 'working_range'
+        refs?: string[]
+      }
+    ) => {
+      try {
+        // Always emit full-file context so the user can see the entire file
+        // with changed lines highlighted (not just 3-line windows). Git caps
+        // -U at file length automatically — 99999 is effectively "whole file".
+        const fullCtx = '-U99999'
+        let args: string[]
+        switch (mode) {
+          case 'working':
+            args = ['diff', fullCtx, 'HEAD']
+            break
+          case 'head1':
+            args = ['diff', fullCtx, 'HEAD~1', 'HEAD']
+            break
+          case 'commit': {
+            const ref = refs?.[0]
+            if (!ref) return { ok: false, error: '缺少 commit 引用' }
+            args = ['show', fullCtx, '--format=', ref]
+            break
+          }
+          case 'range': {
+            const [from, to] = refs ?? []
+            if (!from || !to)
+              return { ok: false, error: '缺少 commit 范围（需要两个引用）' }
+            args = ['diff', fullCtx, `${from}..${to}`]
+            break
+          }
+          case 'working_range': {
+            // diff working tree vs a past commit ("from") — shows all
+            // uncommitted changes AND everything committed since <from>.
+            const from = refs?.[0]
+            if (!from) return { ok: false, error: '缺少起始 commit' }
+            args = ['diff', fullCtx, from]
+            break
+          }
+          default:
+            return { ok: false, error: `invalid mode: ${mode}` }
+        }
+        const { stdout } = await execFileAsync('git', args, {
+          cwd,
+          maxBuffer: 200 * 1024 * 1024
+        })
+        return { ok: true, diff: stdout }
+      } catch (err) {
+        return { ok: false, error: (err as Error).message }
+      }
+    }
+  )
+
   ipcMain.handle('shell:open-msys-terminal', async (_e, { cwd }: { cwd: string }) => {
     const info = await detectMsys()
     const cmd = buildOpenMsysTerminalCommand(info, cwd)

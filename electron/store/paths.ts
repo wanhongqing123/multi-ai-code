@@ -34,6 +34,10 @@ export function artifactsDir(projectId: string): string {
   return join(projectDir(projectId), 'artifacts')
 }
 
+export function designArchiveDir(targetRepo: string): string {
+  return join(targetRepo.replace(/[\/\\]+$/, ''), '.multi-ai-code', 'designs')
+}
+
 export async function ensureRootDir(): Promise<void> {
   await fs.mkdir(projectsDir(), { recursive: true })
 }
@@ -50,6 +54,11 @@ export async function createProjectLayout(
   const pdir = projectDir(projectId)
   await fs.mkdir(join(pdir, 'workspaces'), { recursive: true })
   await fs.mkdir(join(pdir, 'artifacts'), { recursive: true })
+
+  // Stage 1 designs now archive into target_repo/.multi-ai-code/designs/
+  // (previously lived in workspaces/stage1_design). The workspace dir below
+  // is still created because Stage 1 uses it as an isolated empty cwd.
+  await fs.mkdir(designArchiveDir(targetRepoPath), { recursive: true })
 
   // Stage 1 (design) runs in an isolated empty dir
   await fs.mkdir(workspaceDir(projectId, 1), { recursive: true })

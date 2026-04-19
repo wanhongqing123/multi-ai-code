@@ -1,5 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { stageArtifactPath, renderTemplate } from './prompts.js'
+import { promises as fs } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
+import {
+  stageArtifactPath,
+  renderTemplate,
+  resolveStageArtifactAbs
+} from './prompts.js'
 
 describe('stageArtifactPath', () => {
   it('stage 1 with targetRepo returns absolute path under .multi-ai-code/designs', () => {
@@ -54,11 +61,6 @@ describe('renderTemplate planPending', () => {
     expect(out).toBe('ART=/abs/path.md')
   })
 })
-
-import { promises as fs } from 'fs'
-import { tmpdir } from 'os'
-import { join } from 'path'
-import { resolveStageArtifactAbs } from './prompts.js'
 
 describe('resolveStageArtifactAbs', () => {
   let projectDir: string

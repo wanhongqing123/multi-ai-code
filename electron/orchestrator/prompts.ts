@@ -204,7 +204,11 @@ export async function loadStagePromptTemplate(stageId: number): Promise<string> 
 
 export interface RenderContext {
   projectDir: string
-  /** Project-dir-relative artifact path (stable, used by platform to read). */
+  /**
+   * Artifact path used by platform to read back. Project-dir-relative for
+   * Stages 2-4; absolute (target_repo-based) for Stage 1 since the canonical
+   * Stage 1 archive lives under <target_repo>/.multi-ai-code/designs/.
+   */
   artifactPath: string
   projectName?: string
   targetRepo?: string

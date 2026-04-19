@@ -591,7 +591,7 @@ export function registerPtyIpc(): void {
       let acceptanceReport: string | null = null
       if (req.toStage === 4) {
         try {
-          const accAbs = join(pdir, stageArtifactPath(3, s.label))
+          const accAbs = await resolveStageArtifactAbs(pdir, 3, s.label)
           acceptanceReport = await fs.readFile(accAbs, 'utf8')
         } catch {
           acceptanceReport = null
@@ -787,7 +787,6 @@ export function registerPtyIpc(): void {
         req.stageId,
         req.label
       )
-      if (!abs) return { ok: false, error: `unknown stage ${req.stageId}` }
       artifactAbs = abs
       // For stage 1 we now report absolute path (target_repo-based);
       // stages 2-4 keep the legacy project-dir-relative form.
@@ -1030,7 +1029,6 @@ export function registerPtyIpc(): void {
       }
       if (!abs) {
         abs = await resolveStageArtifactAbs(projectDir, stageId, label)
-        if (!abs) return { ok: false, error: '该阶段没有默认产物路径' }
         // Legacy relative form for display; for stage 1 (absolute) just
         // echo abs so the renderer has something to show.
         rel =

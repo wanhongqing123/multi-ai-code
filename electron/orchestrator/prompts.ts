@@ -350,3 +350,32 @@ export function buildFeedbackHandoff(params: {
   lines.push('---', '', '调整完毕后再次输出 `<<STAGE_DONE ...>>` 标记。')
   return lines.join('\n')
 }
+
+/**
+ * Resolve a stage's artifact absolute path. For Stage 1 this reads
+ * project.json to pick up target_repo and returns
+ * <target_repo>/.multi-ai-code/designs/<label>.md. For Stages 2-4 it joins
+ * the project-dir-relative path against projectDir. If project.json is
+ * missing or unparseable for a Stage 1 lookup, falls back to the legacy
+ * workspaces/stage1_design/<label>.md under projectDir so the caller
+ * degrades gracefully instead of throwing.
+ */
+export async function resolveStageArtifactAbs(
+  projectDir: string,
+  stageId: number,
+  label?: string | null
+): Promise<string> {
+  let targetRepo: string | undefined
+  if (stageId === 1) {
+    try {
+      const meta = JSON.parse(
+        await fs.readFile(join(projectDir, 'project.json'), 'utf8')
+      ) as { target_repo?: string }
+      if (meta.target_repo) targetRepo = meta.target_repo
+    } catch {
+      /* fall through to legacy relative */
+    }
+  }
+  const p = stageArtifactPath(stageId, label, targetRepo)
+  return isAbsolute(p) ? p : join(projectDir, p)
+}

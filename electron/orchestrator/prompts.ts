@@ -4,7 +4,14 @@ import { fileURLToPath } from 'url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
-/** Default artifact path (relative to project dir) per stage. */
+/**
+ * Default artifact path per stage.
+ * Stage 1: relative form kept only as a legacy fallback when targetRepo is
+ *          not available. The canonical Stage 1 artifact lives under
+ *          <target_repo>/.multi-ai-code/designs/<label>.md — see
+ *          stageArtifactPath() / resolveStageArtifactAbs() below.
+ * Stages 2-4: relative to project dir.
+ */
 export const STAGE_ARTIFACTS: Record<number, string> = {
   1: 'workspaces/stage1_design/design.md',
   2: 'artifacts/impl-summary.md',
@@ -12,20 +19,38 @@ export const STAGE_ARTIFACTS: Record<number, string> = {
   4: 'artifacts/test-report.md'
 }
 
+function sanitizeLabel(label: string): string {
+  return label
+    .trim()
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
+    .replace(/\s+/g, '_')
+    .slice(0, 80)
+}
+
 /**
- * Compute the stage's working artifact path. When a plan name is given,
- * Stage 1 uses `<planName>.md` inside its isolated workspace so the file
- * name matches the plan label (instead of a generic "design.md"). Stages
- * 2-4 retain their semantic names (impl-summary/acceptance/test-report)
- * since they represent different document types, not "the plan".
+ * Compute a stage's artifact path.
+ *
+ * Stage 1:
+ *   - When `targetRepo` is supplied, returns the absolute canonical path
+ *     `<targetRepo>/.multi-ai-code/designs/<label>.md`. Label defaults to
+ *     `design` when empty/null.
+ *   - Without `targetRepo`, falls back to the project-dir-relative legacy
+ *     path (kept so display/event code paths that lack targetRepo don't
+ *     break).
+ * Stages 2-4: always return project-dir-relative paths; `targetRepo` is
+ * ignored.
  */
-export function stageArtifactPath(stageId: number, label?: string | null): string {
-  if (stageId === 1 && label && label.trim()) {
-    const safe = label
-      .trim()
-      .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
-      .replace(/\s+/g, '_')
-      .slice(0, 80)
+export function stageArtifactPath(
+  stageId: number,
+  label?: string | null,
+  targetRepo?: string | null
+): string {
+  if (stageId === 1) {
+    const safe = label && label.trim() ? sanitizeLabel(label) : 'design'
+    if (targetRepo) {
+      const root = targetRepo.replace(/[\/\\]+$/, '')
+      return `${root}/.multi-ai-code/designs/${safe}.md`
+    }
     return `workspaces/stage1_design/${safe}.md`
   }
   return STAGE_ARTIFACTS[stageId]
@@ -197,7 +222,8 @@ export function renderTemplate(tpl: string, ctx: RenderContext): string {
   // Pass absolute path to the AI to avoid any cwd-relative ambiguity.
   let artifactAbs: string
   if (ctx.planPending) {
-    artifactAbs = `${ctx.projectDir.replace(/\/$/, '')}/workspaces/stage1_design/<你稍后将向用户询问得到的方案名称>.md`
+    const root = (ctx.targetRepo ?? ctx.projectDir).replace(/[\/\\]+$/, '')
+    artifactAbs = `${root}/.multi-ai-code/designs/<你稍后将向用户询问得到的方案名称>.md`
   } else if (isAbsolute(ctx.artifactPath)) {
     // Already absolute (POSIX or Windows) — e.g. externally-imported plan
     // archived to its origin file. Use as-is.

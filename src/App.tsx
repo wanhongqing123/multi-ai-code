@@ -119,15 +119,6 @@ export default function App() {
   const errorCount = logs.filter((l) => l.level === 'error' || l.level === 'warn').length
   const [stageStatus, setStageStatus] = useState<Record<number, string>>({})
 
-  /** Ensure planName is set; returns false if user cancelled. */
-  function requirePlanName(): string | null {
-    if (planName.trim()) return planName.trim()
-    const input = window.prompt('请输入本次方案名称（必填，用于归档时识别）：')
-    if (!input?.trim()) return null
-    setPlanName(input.trim())
-    return input.trim()
-  }
-
   const handleStatusChange = useCallback((stageId: number, status: string) => {
     setStageStatus((prev) =>
       prev[stageId] === status ? prev : { ...prev, [stageId]: status }
@@ -279,11 +270,16 @@ export default function App() {
         window.api.artifact.list(currentProjectId)
       ])
       if (cancelled) return
-      const items = planRes.ok ? planRes.items : []
+      // On IPC error keep the previous list and current selection untouched —
+      // do NOT wipe planName based on a transient failure.
+      if (!planRes.ok) return
+      const items = planRes.items
       setPlanList(items)
-      // If the currently selected plan is no longer in the list, fall back to
-      // "+ 新建方案" (empty planName).
-      if (planName && !items.some((p) => p.name === planName)) {
+      // Reset planName ONLY when the project actually has plans and the
+      // current name is no longer among them. An empty list usually means
+      // "brand-new project, user just typed a name via onboarding" — wiping
+      // it then would break the onboarding handoff.
+      if (planName && items.length > 0 && !items.some((p) => p.name === planName)) {
         setPlanName('')
       }
       const stageSafe = planName
@@ -421,6 +417,12 @@ export default function App() {
       setPlanName(value)
       const r = await window.api.artifact.readCurrent(projectDir, 1, value)
       if (!r.ok) {
+        // Missing artifact file is a normal state for a freshly listed plan
+        // that has not been opened yet — silently skip the preview rather
+        // than alarming the user.
+        if (r.error && /ENOENT|no such file|找不到|not.*exist/i.test(r.error)) {
+          return
+        }
         alert(`读取方案失败：${r.error ?? '未知错误'}`)
         return
       }

@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import StagePanel from './components/StagePanel'
 import CompletionDrawer from './components/CompletionDrawer'
 import FeedbackDialog from './components/FeedbackDialog'
-import HistoryDrawer from './components/HistoryDrawer'
 import ProjectPicker, { type ProjectInfo } from './components/ProjectPicker'
 import ErrorPanel, { pushLog, useLogs } from './components/ErrorPanel'
 import StageSettingsDialog from './components/StageSettingsDialog'
@@ -73,7 +72,6 @@ export default function App() {
   const [killAllNonce, setKillAllNonce] = useState(0)
   const [feedbackFrom, setFeedbackFrom] = useState<number | null>(null)
   const [feedbackForcedTarget, setFeedbackForcedTarget] = useState<number | null>(null)
-  const [pickerStage, setPickerStage] = useState<number | null>(null)
   const [planName, setPlanName] = useState('')
   const [showErrors, setShowErrors] = useState(false)
   const [showStageSettings, setShowStageSettings] = useState(false)
@@ -86,7 +84,9 @@ export default function App() {
   const [stageConfigs, setStageConfigs] = useState<
     Record<string, { command?: string; args?: string[]; env?: Record<string, string>; skip?: boolean }>
   >({})
-  const [planNameSuggestions, setPlanNameSuggestions] = useState<string[]>([])
+  const [planList, setPlanList] = useState<
+    { name: string; abs: string; source: 'internal' | 'external' }[]
+  >([])
   const [planStagesDone, setPlanStagesDone] = useState<Record<number, boolean>>({})
   const [msysEnabled, setMsysEnabled] = useState(false)
   // Stage-1 external-file preview state. When set, FilePreviewDialog is shown
@@ -108,37 +108,6 @@ export default function App() {
   // Remember which (project, planName) combos have already seen the starter
   // "import from file?" toast so it's not shown repeatedly on each start.
   const shownStarterHintsRef = useRef<Set<string>>(new Set())
-
-  // Refresh plan-name suggestions + per-stage "done" status when project/plan changes.
-  useEffect(() => {
-    if (!currentProjectId) {
-      setPlanNameSuggestions([])
-      setPlanStagesDone({})
-      return
-    }
-    let cancelled = false
-    void (async () => {
-      const all = await window.api.artifact.list(currentProjectId)
-      if (cancelled) return
-      const names = new Set<string>()
-      const stageSafe = planName.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/\s+/g, '_').slice(0, 80)
-      const done: Record<number, boolean> = { 1: false, 2: false, 3: false, 4: false }
-      for (const r of all) {
-        const m = r.path.match(/artifacts[/\\]history[/\\]stage(\d+)[/\\](.+?)(_\d[^.]*)?\.md$/)
-        if (m) {
-          const stage = Number(m[1])
-          const decoded = m[2].replace(/_/g, ' ')
-          names.add(decoded)
-          if (stageSafe && m[2] === stageSafe) done[stage] = true
-        }
-      }
-      setPlanNameSuggestions(Array.from(names).sort())
-      setPlanStagesDone(done)
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [currentProjectId, pendingDone, planName])
 
   const stageSkips: Record<number, boolean> = {
     1: !!stageConfigs['1']?.skip,
@@ -186,7 +155,6 @@ export default function App() {
     setPendingDone(null)
     setFeedbackFrom(null)
     setFeedbackForcedTarget(null)
-    setPickerStage(null)
     setShowGlobalSearch(false)
     setZoomedStage(null)
     setPlanName('')
@@ -297,6 +265,45 @@ export default function App() {
   const projectName = currentProject?.name ?? ''
   const hasProject = currentProject !== null
 
+  // Refresh plan list + per-stage "done" status when project/plan changes.
+  useEffect(() => {
+    if (!currentProjectId || !projectDir) {
+      setPlanList([])
+      setPlanStagesDone({})
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      const [planRes, all] = await Promise.all([
+        window.api.plan.list(projectDir),
+        window.api.artifact.list(currentProjectId)
+      ])
+      if (cancelled) return
+      const items = planRes.ok ? planRes.items : []
+      setPlanList(items)
+      // If the currently selected plan is no longer in the list, fall back to
+      // "+ 新建方案" (empty planName).
+      if (planName && !items.some((p) => p.name === planName)) {
+        setPlanName('')
+      }
+      const stageSafe = planName
+        .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
+        .replace(/\s+/g, '_')
+        .slice(0, 80)
+      const done: Record<number, boolean> = { 1: false, 2: false, 3: false, 4: false }
+      for (const r of all) {
+        const m = r.path.match(/artifacts[/\\]history[/\\]stage(\d+)[/\\](.+?)(_\d[^.]*)?\.md$/)
+        if (m && stageSafe && m[2] === stageSafe) {
+          done[Number(m[1])] = true
+        }
+      }
+      setPlanStagesDone(done)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [currentProjectId, projectDir, pendingDone, planName])
+
   useEffect(() => {
     if (!currentProjectId) {
       setStageConfigs({})
@@ -404,6 +411,53 @@ export default function App() {
     },
     [projectDir, planName, currentProjectId, stageConfigs]
   )
+
+  const onPlanSelect = useCallback(
+    async (value: string) => {
+      if (value === '__NEW__') {
+        setPlanName('')
+        return
+      }
+      setPlanName(value)
+      const r = await window.api.artifact.readCurrent(projectDir, 1, value)
+      if (!r.ok) {
+        alert(`读取方案失败：${r.error ?? '未知错误'}`)
+        return
+      }
+      setPlanReview({ path: r.path ?? value, content: r.content ?? '' })
+    },
+    [projectDir]
+  )
+
+  const onImportExternal = useCallback(async () => {
+    if (!projectDir) {
+      alert('请先打开一个项目')
+      return
+    }
+    const pick = await window.api.dialog.pickTextFile({
+      title: '选择要导入的外部方案文件 (.md)'
+    })
+    if (pick.canceled) return
+    if (pick.error || !pick.path) {
+      alert(`读取文件失败：${pick.error ?? '未知错误'}`)
+      return
+    }
+    const reg = await window.api.plan.registerExternal({
+      projectDir,
+      externalPath: pick.path
+    })
+    if (!reg.ok) {
+      alert(`导入失败：${reg.error}`)
+      return
+    }
+    const list = await window.api.plan.list(projectDir)
+    if (list.ok) setPlanList(list.items)
+    setPlanName(reg.name)
+    const cur = await window.api.artifact.readCurrent(projectDir, 1, reg.name)
+    if (cur.ok) {
+      setPlanReview({ path: cur.path ?? reg.name, content: cur.content ?? '' })
+    }
+  }, [projectDir])
 
   /** Load the current Stage 1 plan md and open the review + annotation dialog. */
   const openPlanReview = useCallback(async () => {
@@ -740,11 +794,9 @@ export default function App() {
               }
               hideManualDone={s.id === 3}
               planName={planName}
-              onPlanNameChange={s.id === 1 ? setPlanName : undefined}
-              planNameSuggestions={planNameSuggestions}
-              onPickHistory={
-                s.id === 1 ? () => setPickerStage(1) : undefined
-              }
+              onPlanSelect={s.id === 1 ? onPlanSelect : undefined}
+              planList={planList}
+              onImportExternal={s.id === 1 ? onImportExternal : undefined}
               onReviewPlan={s.id === 1 ? openPlanReview : undefined}
               onReviewDiff={s.id === 3 ? openDiffReview : undefined}
               targetRepo={targetRepo}
@@ -753,118 +805,6 @@ export default function App() {
           ))}
         </main>
 
-        {pickerStage !== null && (
-          <HistoryDrawer
-            projectId={currentProjectId ?? ''}
-            projectDir={projectDir}
-            pickStage={pickerStage}
-            onClose={() => setPickerStage(null)}
-            onPick={async (snapshotPath) => {
-              if (pickerStage === 1 && !planName.trim()) {
-                alert('请先在 Stage 1 面板的 "方案名称" 输入框里填写名称，再选用历史方案。')
-                return
-              }
-              const res = await window.api.artifact.restore({
-                projectId: currentProjectId ?? '',
-                projectDir,
-                stageId: pickerStage,
-                snapshotPath,
-                sessionId: sessionIdFor(pickerStage),
-                label: planName
-              })
-              if (!res.ok) {
-                alert(`恢复历史方案失败：${res.error}`)
-                return
-              }
-              setPickerStage(null)
-            }}
-            onImportFile={async () => {
-              if (pickerStage === 1 && !planName.trim()) {
-                alert('请先在 Stage 1 面板的 "方案名称" 输入框里填写名称，再从文件导入。')
-                return
-              }
-              // Stage 1 routes through the preview dialog so the user confirms
-              // the content before it becomes the stage artifact.
-              if (pickerStage === 1) {
-                setPickerStage(null)
-                void pickExternalFileForPreview(1)
-                return
-              }
-              const res = await window.api.artifact.importFile({
-                projectId: currentProjectId ?? '',
-                projectDir,
-                stageId: pickerStage,
-                sessionId: sessionIdFor(pickerStage),
-                label: planName
-              })
-              if (res.canceled) return
-              if (!res.ok) {
-                alert(`导入文件失败：${res.error}`)
-                return
-              }
-              setPickerStage(null)
-            }}
-            onRefine={async (snapshotPath) => {
-              if (pickerStage === 1 && !planName.trim()) {
-                alert('请先在 Stage 1 面板的 "方案名称" 输入框里填写名称，再继续完善此方案。')
-                return
-              }
-              const seeded = await window.api.artifact.seed({
-                projectId: currentProjectId ?? '',
-                projectDir,
-                stageId: pickerStage,
-                snapshotPath,
-                label: planName
-              })
-              if (!seeded.ok) {
-                alert(`导入方案失败：${seeded.error}`)
-                return
-              }
-              const sid = sessionIdFor(pickerStage)
-              try {
-                await ensureStageRunning(pickerStage, sid)
-              } catch (err) {
-                alert((err as Error).message)
-                return
-              }
-              await window.api.cc.sendUser(
-                sid,
-                [
-                  `已把上一版方案写回到 ${seeded.artifactAbs}（同一个默认产物路径）。`,
-                  `请先完整读取这份方案，然后与用户交互，逐点补充 / 修正 / 完善它；`,
-                  `完善完成后仍按系统 prompt 约定，覆盖写回同一路径并打印 <<STAGE_DONE ...>> 标记。`
-                ].join('\n')
-              )
-              setPickerStage(null)
-            }}
-            onMergeViaAI={async (mergedContent) => {
-              const stage = pickerStage
-              setPickerStage(null)
-              try {
-                const sid = sessionIdFor(stage)
-                const tmpRes = await window.api.writeTemp(mergedContent, 'md')
-                if (!tmpRes.ok || !tmpRes.path) {
-                  alert(`写入临时文件失败：${tmpRes.error ?? '未知错误'}`)
-                  return
-                }
-                await ensureStageRunning(stage, sid)
-                const sendRes = await window.api.cc.sendUser(
-                  sid,
-                  [
-                    `请完整读取 ${tmpRes.path}，其中包含用户从历史方案中勾选的多份方案。`,
-                    `请进行优化合并：取各方案精华，消除矛盾与冗余，输出一份统一的、完整的设计文档。`,
-                    `合并完成后把最终结果写到默认产物路径，并打印 <<STAGE_DONE ...>> 标记。`
-                  ].join('\n')
-                )
-                if (!sendRes.ok) {
-                  alert(`发送合并指令失败：${sendRes.error}`)
-                }
-              } catch (err) {
-                alert(`AI 合并优化出错：${(err as Error).message}`)
-              }
-            }}
-          />
-        )}
         {feedbackFrom !== null && (
           <FeedbackDialog
             fromStage={feedbackFrom}

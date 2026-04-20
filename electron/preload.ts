@@ -456,6 +456,19 @@ const api = {
         snapshotPath?: string | null
         error?: string
       }>
+  },
+  plan: {
+    list: (projectDir: string) =>
+      ipcRenderer.invoke('plan:list', { projectDir }) as Promise<{
+        ok: boolean
+        items: { name: string; abs: string; source: 'internal' | 'external' }[]
+        error?: string
+      }>,
+    registerExternal: (req: { projectDir: string; externalPath: string }) =>
+      ipcRenderer.invoke('plan:registerExternal', req) as Promise<
+        | { ok: true; name: string }
+        | { ok: false; error: string }
+      >
   }
 }
 

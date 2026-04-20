@@ -29,8 +29,8 @@ export interface StagePanelProps {
   onStatusChange?: (stageId: number, status: 'idle' | 'running' | 'awaiting-confirm' | 'exited') => void
   /** Disables Start / 完成 / 回退 actions (e.g. no project opened). */
   disabled?: boolean
-  /** When provided, renders a "选用历史方案" button that opens the picker. */
-  onPickHistory?: () => void
+  /** When provided, renders a "📥 导入外部方案" button. */
+  onImportExternal?: () => void
   /** When provided (Stage 1 only), renders a "方案预览" button that opens
    *  the current plan markdown for review + annotation → feedback. */
   onReviewPlan?: () => void
@@ -42,10 +42,15 @@ export interface StagePanelProps {
   /** When true, hides the "✓ 完成" manual-done button (e.g. Stage 3 which
    *  signals completion from the CLI itself after user annotations). */
   hideManualDone?: boolean
-  /** Stage 1 plan name input (controlled). */
+  /** Plan list for the dropdown selector. Empty array hides nothing — the
+   *  "+ 新建方案" sentinel is always available. */
+  planList?: { name: string; abs: string; source: 'internal' | 'external' }[]
+  /** Currently selected plan name. Empty string means "+ 新建方案" sentinel
+   *  is selected (will trigger planPending flow on Start). */
   planName?: string
-  onPlanNameChange?: (name: string) => void
-  planNameSuggestions?: string[]
+  /** Called when user changes selection. Value is `__NEW__` for the sentinel
+   *  or a plan name from `planList`. */
+  onPlanSelect?: (value: string) => void
   /** Per-project CLI overrides from stage config dialog. */
   commandOverride?: string
   envOverride?: Record<string, string>
@@ -470,14 +475,14 @@ export default function StagePanel(props: StagePanelProps) {
         <span className="tile-id">{props.displayIndex ?? stageId}</span>
         <span className="tile-name">{stageName}</span>
         <span className={`tile-badge ${badge}`}>{badge}</span>
-        {props.onPickHistory && (
+        {props.onImportExternal && (
           <button
             className="tile-btn"
-            onClick={props.onPickHistory}
+            onClick={props.onImportExternal}
             disabled={disabled}
-            title="直接选用此阶段的历史产物或外部文件，跳过 AI 执行"
+            title="挑一个外部 .md 文件作为方案。不复制——后续修改直接写回原文件。"
           >
-            📋 选用历史
+            📥 导入外部方案
           </button>
         )}
         {props.onReviewPlan && (
@@ -578,22 +583,25 @@ export default function StagePanel(props: StagePanelProps) {
           </button>
         )}
       </div>
-      {props.onPlanNameChange !== undefined && (
+      {props.onPlanSelect !== undefined && (
         <div className="plan-name-bar">
-          <label>方案名称：</label>
-          <input
-            type="text"
-            placeholder="必填 — 用于归档识别（下拉可选历史方案）"
-            value={props.planName ?? ''}
-            onChange={(e) => props.onPlanNameChange?.(e.target.value)}
+          <label>方案选择：</label>
+          <select
+            value={props.planName ? props.planName : '__NEW__'}
+            onChange={(e) => props.onPlanSelect?.(e.target.value)}
             className="plan-name-input"
-            list={`plan-names-${projectId}`}
-          />
-          <datalist id={`plan-names-${projectId}`}>
-            {(props.planNameSuggestions ?? []).map((n) => (
-              <option key={n} value={n} />
+          >
+            <option value="__NEW__">+ 新建方案</option>
+            {(props.planList ?? []).map((p) => (
+              <option
+                key={p.name}
+                value={p.name}
+                title={p.source === 'external' ? p.abs : ''}
+              >
+                {p.name}{p.source === 'external' ? '（外部）' : ''}
+              </option>
             ))}
-          </datalist>
+          </select>
         </div>
       )}
       {(status === 'running' || status === 'awaiting-confirm') && startAt && (

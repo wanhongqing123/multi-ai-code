@@ -618,55 +618,92 @@ html, body, #root {
 
 .toast-host {
   position: fixed;
-  bottom: 24px;
-  right: 24px;
+  top: var(--mac-sp-5);
+  right: var(--mac-sp-5);
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  z-index: 200;
+  gap: var(--mac-sp-2);
+  z-index: 1100;
+  pointer-events: none;
 }
+
 .toast {
+  pointer-events: auto;
   min-width: 280px;
   max-width: 420px;
-  padding: 10px 14px;
-  background: #2a2a2e;
-  border-left: 3px solid #4aa3ff;
-  border-radius: 4px;
+  padding: var(--mac-sp-3) var(--mac-sp-4);
+  background: var(--mac-surface-raised);
+  border: 1px solid var(--mac-border);
+  border-radius: var(--mac-r-md);
+  box-shadow: var(--mac-elev-2);
   display: flex;
-  align-items: center;
-  gap: 10px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
-  color: #ddd;
-  font-size: 13px;
-  animation: toast-in 0.2s ease-out;
+  align-items: flex-start;
+  gap: var(--mac-sp-3);
+  color: var(--mac-fg);
+  font-size: var(--mac-text-sm);
+  position: relative;
+  overflow: hidden;
+  animation: toast-in 0.2s ease-out both;
 }
+
 @keyframes toast-in {
   from { opacity: 0; transform: translateX(40px); }
-  to { opacity: 1; transform: translateX(0); }
+  to   { opacity: 1; transform: translateX(0); }
 }
-.toast-success { border-left-color: #7fd67f; }
-.toast-warn { border-left-color: #ffb74a; }
-.toast-error { border-left-color: #f88; }
-.toast-msg { flex: 1; word-break: break-word; }
+
+.toast::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--mac-info);
+}
+
+.toast.toast-success::before { background: var(--mac-success); }
+.toast.toast-warn::before    { background: var(--mac-warning); }
+.toast.toast-error::before   { background: var(--mac-danger); }
+
+.toast-msg {
+  flex: 1;
+  color: var(--mac-fg-muted);
+  word-break: break-word;
+}
+
 .toast-action {
   background: transparent;
-  border: 1px solid #555;
-  color: #cde;
-  padding: 2px 10px;
-  border-radius: 3px;
-  font-size: 12px;
+  border: none;
+  color: var(--mac-primary);
   cursor: pointer;
-  flex-shrink: 0;
+  font-size: var(--mac-text-sm);
+  font-weight: var(--mac-weight-medium);
+  padding: 0;
 }
+
+.toast-action:hover {
+  color: var(--mac-primary-hover);
+}
+
 .toast-close {
   background: transparent;
   border: none;
-  color: #888;
-  font-size: 16px;
+  color: var(--mac-fg-subtle);
   cursor: pointer;
-  padding: 0 4px;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 var(--mac-sp-1);
 }
-.toast-close:hover { color: #ddd; }
+
+.toast-close:hover {
+  color: var(--mac-fg);
+}
+
+.toast-close:focus-visible,
+.toast-action:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--mac-focus-ring);
+}
 
 .plan-progress-bar {
   display: flex;
@@ -746,9 +783,10 @@ html, body, #root {
   padding: 14px 16px;
   background: transparent;
   border: none;
-  border-bottom: 1px solid #333;
-  color: #eee;
-  font-size: 14px;
+  border-bottom: 1px solid var(--mac-border);
+  color: var(--mac-fg);
+  font-size: var(--mac-text-md);
+  font-family: var(--mac-font-sans);
   outline: none;
 }
 .gs-results {
@@ -1140,46 +1178,64 @@ html, body, #root {
 
 .error-panel {
   position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 240px;
-  background: #1a1a1d;
-  border-top: 2px solid #333;
-  z-index: 120;
+  right: var(--mac-sp-5);
+  bottom: var(--mac-sp-5);
+  width: 520px;
+  max-height: 60vh;
+  background: var(--mac-surface);
+  border: 1px solid var(--mac-border);
+  border-radius: var(--mac-r-lg);
+  box-shadow: var(--mac-elev-3);
   display: flex;
   flex-direction: column;
-  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  z-index: 1050;
+  color: var(--mac-fg);
 }
+
 .error-panel-head {
-  padding: 6px 12px;
-  background: #24242a;
-  color: #ddd;
-  font-size: 12px;
   display: flex;
   align-items: center;
-  border-bottom: 1px solid #333;
+  justify-content: space-between;
+  padding: var(--mac-sp-3) var(--mac-sp-4);
+  background: var(--mac-surface-raised);
+  border-bottom: 1px solid var(--mac-border-subtle);
+  color: var(--mac-fg);
+  font-size: var(--mac-text-sm);
+  font-weight: var(--mac-weight-medium);
 }
+
 .error-panel-body {
   flex: 1;
-  overflow-y: auto;
-  font-family: Menlo, Consolas, monospace;
-  font-size: 11px;
+  overflow: auto;
+  padding: var(--mac-sp-2) 0;
+  font-family: var(--mac-font-mono);
+  font-size: var(--mac-text-mono);
+  color: var(--mac-fg-muted);
 }
+
 .error-row {
   display: flex;
-  gap: 8px;
-  padding: 3px 12px;
-  border-bottom: 1px solid #2a2a2d;
-  color: #ccc;
+  gap: var(--mac-sp-2);
+  padding: 3px var(--mac-sp-4);
+  border-bottom: 1px solid var(--mac-border-subtle);
+  color: var(--mac-fg-muted);
 }
-.error-row.lv-error { color: #f99; }
-.error-row.lv-warn { color: #fe9; }
-.error-row.lv-info { color: #9cf; }
-.error-time { flex-shrink: 0; color: #666; }
-.error-level { flex-shrink: 0; width: 46px; font-weight: bold; }
-.error-source { flex-shrink: 0; width: 120px; color: #888; }
-.error-msg { flex: 1; word-break: break-all; white-space: pre-wrap; }
+
+.error-row.lv-error { color: var(--mac-danger); }
+.error-row.lv-warn  { color: var(--mac-warning); }
+.error-row.lv-info  { color: var(--mac-info); }
+
+.error-time   { flex-shrink: 0; color: var(--mac-fg-subtle); }
+.error-level  { flex-shrink: 0; width: 46px; font-weight: var(--mac-weight-medium); }
+.error-source { flex-shrink: 0; width: 120px; color: var(--mac-fg-subtle); }
+
+.error-msg {
+  flex: 1;
+  color: var(--mac-fg-muted);
+  word-break: break-word;
+  white-space: pre-wrap;
+}
 
 .version-select {
   background: #2a2a2d;
@@ -2862,52 +2918,49 @@ html, body, #root {
 
 /* ---------- ErrorBoundary fallback ---------- */
 .error-boundary {
-  position: fixed;
-  inset: 0;
-  background: rgba(20, 20, 20, 0.92);
+  min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 9999;
-  padding: 24px;
+  background: var(--mac-bg);
+  padding: var(--mac-sp-5);
 }
 
 .error-boundary-card {
-  background: #1e1e1e;
-  border: 1px solid #5a2a2a;
-  border-radius: 8px;
-  padding: 24px 28px;
-  max-width: 720px;
+  background: var(--mac-surface);
+  border: 1px solid var(--mac-border);
+  border-radius: var(--mac-r-xl);
+  box-shadow: var(--mac-elev-2);
+  padding: var(--mac-sp-6);
+  max-width: 640px;
   width: 100%;
-  max-height: 80vh;
-  overflow: auto;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
-  color: #ddd;
+  color: var(--mac-fg);
 }
 
 .error-boundary-card h2 {
-  margin: 0 0 12px;
-  color: #ff8a8a;
-  font-size: 18px;
+  margin: 0 0 var(--mac-sp-3);
+  color: var(--mac-danger);
+  font-size: var(--mac-text-lg);
 }
 
 .error-boundary-msg {
-  margin: 0 0 12px;
-  color: #f0f0f0;
-  font-size: 14px;
+  color: var(--mac-danger);
+  font-weight: var(--mac-weight-medium);
+  margin: var(--mac-sp-2) 0;
+  font-size: var(--mac-text-md);
   white-space: pre-wrap;
   word-break: break-word;
 }
 
 .error-boundary-stack {
-  margin: 0 0 16px;
-  padding: 12px;
-  background: #111;
-  border: 1px solid #333;
-  border-radius: 4px;
-  font-size: 12px;
-  color: #bbb;
-  max-height: 280px;
+  background: var(--mac-bg);
+  border: 1px solid var(--mac-border-subtle);
+  border-radius: var(--mac-r-md);
+  padding: var(--mac-sp-3);
+  font-family: var(--mac-font-mono);
+  font-size: var(--mac-text-mono);
+  color: var(--mac-fg-subtle);
+  max-height: 240px;
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
@@ -2915,26 +2968,34 @@ html, body, #root {
 
 .error-boundary-actions {
   display: flex;
-  gap: 8px;
-  margin-bottom: 12px;
+  gap: var(--mac-sp-2);
+  margin-top: var(--mac-sp-4);
+  justify-content: flex-end;
 }
 
 .error-boundary-actions button {
   padding: 6px 14px;
-  background: #2d2d2d;
-  border: 1px solid #555;
-  border-radius: 4px;
-  color: #ddd;
+  background: var(--mac-surface-raised);
+  border: 1px solid var(--mac-border);
+  border-radius: var(--mac-r-md);
+  color: var(--mac-fg);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--mac-text-sm);
+  transition: background var(--mac-dur-fast) var(--mac-ease),
+              border-color var(--mac-dur-fast) var(--mac-ease);
 }
 
 .error-boundary-actions button:hover {
-  background: #3a3a3a;
+  background: var(--mac-bg);
+}
+
+.error-boundary-actions button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--mac-focus-ring);
 }
 
 .error-boundary-hint {
-  margin: 0;
-  color: #888;
-  font-size: 12px;
+  color: var(--mac-fg-subtle);
+  font-size: var(--mac-text-xs);
+  margin-top: var(--mac-sp-3);
 }

@@ -1,6 +1,10 @@
 import { promises as fs } from 'fs'
 import { basename, extname, isAbsolute, join } from 'path'
 
+function nameFromMdPath(absPath: string): string {
+  return basename(absPath).replace(/\.md$/i, '')
+}
+
 export interface PlanEntry {
   name: string
   abs: string
@@ -77,7 +81,7 @@ export async function registerExternalPlan(
   } catch {
     return { ok: false, error: `文件不存在 (does not exist): ${externalAbsPath}` }
   }
-  const name = basename(externalAbsPath, '.md')
+  const name = nameFromMdPath(externalAbsPath)
   const existing = await listPlans(projectDir)
   if (existing.some((p) => p.name === name)) {
     return {

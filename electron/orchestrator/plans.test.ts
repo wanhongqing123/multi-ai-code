@@ -143,6 +143,14 @@ describe('registerExternalPlan', () => {
     await fs.rm(ext)
   })
 
+  it('strips the .MD extension case-insensitively', async () => {
+    const ext = join(tmpdir(), 'mac-reg-uppercase.MD')
+    await fs.writeFile(ext, '#')
+    const r = await registerExternalPlan(projectDir, ext)
+    expect(r).toEqual({ ok: true, name: 'mac-reg-uppercase' })
+    await fs.rm(ext)
+  })
+
   it('rejects when name conflicts with an existing external entry', async () => {
     const ext = join(tmpdir(), 'mac-reg-dup.md')
     await fs.writeFile(ext, '#')

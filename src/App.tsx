@@ -350,6 +350,18 @@ export default function App() {
   useEffect(() => {
     const off = window.api.stage.onDone((evt) => {
       setPendingDone(evt)
+      // After Stage 1 completes, surface the archived plan's name back into
+      // the dropdown so a "+ 新建方案" flow doesn't leave the sentinel
+      // selected. Idempotent: if the user already named the plan, the
+      // archived basename equals planName and setPlanName is a no-op.
+      if (evt.stageId === 1 && evt.artifactPath) {
+        const base = evt.artifactPath
+          .split(/[\\/]/)
+          .pop()
+          ?.replace(/\.md$/i, '')
+          ?.trim()
+        if (base) setPlanName(base)
+      }
       const stageName = STAGES.find((s) => s.id === evt.stageId)?.name ?? `Stage ${evt.stageId}`
       showToast(`✓ ${stageName} 完成${evt.params.summary ? `：${evt.params.summary}` : ''}`, {
         level: 'success'
@@ -414,18 +426,21 @@ export default function App() {
         setPlanName('')
         return
       }
-      setPlanName(value)
       const r = await window.api.artifact.readCurrent(projectDir, 1, value)
       if (!r.ok) {
         // Missing artifact file is a normal state for a freshly listed plan
-        // that has not been opened yet — silently skip the preview rather
-        // than alarming the user.
+        // that has not been opened yet — keep the selection but skip the
+        // preview rather than alarming the user.
         if (r.error && /ENOENT|no such file|找不到|not.*exist/i.test(r.error)) {
+          setPlanName(value)
           return
         }
+        // Unexpected error: roll back the selection so we don't end up with
+        // planName set to a plan we can't read.
         alert(`读取方案失败：${r.error ?? '未知错误'}`)
         return
       }
+      setPlanName(value)
       setPlanReview({ path: r.path ?? value, content: r.content ?? '' })
     },
     [projectDir]

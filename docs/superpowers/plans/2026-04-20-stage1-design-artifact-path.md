@@ -110,7 +110,7 @@ Inside `createProjectLayout`, after line 51 (after creating `workspaces` dir) ad
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run electron/store/paths.test.ts`
-Expected: PASS (3 tests).
+Expected: PASS (4 tests).
 
 - [ ] **Step 5: Typecheck**
 

@@ -86,6 +86,149 @@ function genId(): string {
   return `ann_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
 }
 
+/** Estimated height of one rendered `.dv-row`. Used by the row virtualizer
+ *  to compute spacer heights and by jumpHunk to scroll to a target index.
+ *  Line-height 1.6 × 14px + 2×2px padding ≈ 26px; we underestimate slightly
+ *  so overscan (+40 rows) compensates on fast scrolls. */
+const DV_ROW_H = 24
+
+/** Render only rows in the current scroll viewport of `paneRef`, plus
+ *  overscan. Spacer divs above/below preserve total scroll height so the
+ *  scrollbar behaves normally. */
+function VirtualizedFileRows({
+  filePath,
+  rows,
+  paneRef
+}: {
+  filePath: string
+  rows: PairedRow[]
+  paneRef: React.RefObject<HTMLDivElement | null>
+}): JSX.Element {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [range, setRange] = useState<[number, number]>(() => [
+    0,
+    Math.min(rows.length, 200)
+  ])
+
+  // Reset to top when the file (rows) changes.
+  useEffect(() => {
+    setRange([0, Math.min(rows.length, 200)])
+  }, [rows])
+
+  useEffect(() => {
+    const pane = paneRef.current
+    const container = containerRef.current
+    if (!pane || !container) return
+    let raf = 0
+    const compute = (): void => {
+      const paneRect = pane.getBoundingClientRect()
+      const ctRect = container.getBoundingClientRect()
+      // How many px from the top of `container` to the top of pane's visible
+      // region (can be negative if container starts below the viewport).
+      const scrolledPastContainer = paneRect.top - ctRect.top
+      const viewTop = Math.max(0, scrolledPastContainer)
+      const viewBottom = viewTop + pane.clientHeight
+      const OVER = 40
+      const start = Math.max(0, Math.floor(viewTop / DV_ROW_H) - OVER)
+      const end = Math.min(
+        rows.length,
+        Math.ceil(viewBottom / DV_ROW_H) + OVER
+      )
+      setRange((prev) =>
+        prev[0] === start && prev[1] === end ? prev : [start, end]
+      )
+    }
+    const schedule = (): void => {
+      if (raf) return
+      raf = requestAnimationFrame(() => {
+        raf = 0
+        compute()
+      })
+    }
+    compute()
+    pane.addEventListener('scroll', schedule, { passive: true })
+    const ro = new ResizeObserver(schedule)
+    ro.observe(pane)
+    return () => {
+      pane.removeEventListener('scroll', schedule)
+      ro.disconnect()
+      if (raf) cancelAnimationFrame(raf)
+    }
+  }, [rows.length, paneRef])
+
+  const [start, end] = range
+  const topPad = start * DV_ROW_H
+  const bottomPad = Math.max(0, (rows.length - end) * DV_ROW_H)
+
+  const isChangeRow = (r: PairedRow): boolean =>
+    r.kind === 'pair' && (r.left?.kind === 'del' || r.right?.kind === 'add')
+
+  return (
+    <div ref={containerRef} className="dv-file-rows">
+      {topPad > 0 && <div style={{ height: topPad }} aria-hidden="true" />}
+      {rows.slice(start, end).map((row, idx) => {
+        const i = start + idx
+        if (row.kind === 'hunk') {
+          return (
+            <div key={i} className="dv-row dv-hunk-row">
+              <span className="dv-hunk-text">{row.text}</span>
+            </div>
+          )
+        }
+        const left = row.left
+        const right = row.right
+        const thisIsChange = isChangeRow(row)
+        const prev = i > 0 ? rows[i - 1] : null
+        const prevIsChange = prev ? isChangeRow(prev) : false
+        const isChangeStart = thisIsChange && !prevIsChange
+        return (
+          <div
+            key={i}
+            className="dv-row"
+            data-row-idx={i}
+            data-change-start={isChangeStart ? 'true' : undefined}
+          >
+            <div
+              className={`dv-cell dv-cell-left ${
+                left?.kind === 'del'
+                  ? 'dv-del'
+                  : left
+                    ? 'dv-context'
+                    : 'dv-empty'
+              }`}
+            >
+              <span className="dv-gutter">{left?.oldLine ?? ''}</span>
+              <span className="dv-sign">
+                {left?.kind === 'del' ? '-' : left ? ' ' : ''}
+              </span>
+              <span className="dv-content">{left ? left.text : ''}</span>
+            </div>
+            <div
+              className={`dv-cell dv-cell-right ${
+                right?.kind === 'add'
+                  ? 'dv-add'
+                  : right
+                    ? 'dv-context'
+                    : 'dv-empty'
+              }`}
+              data-side="right"
+              data-file={filePath}
+              data-line={right?.newLine ?? ''}
+            >
+              <span className="dv-gutter">{right?.newLine ?? ''}</span>
+              <span className="dv-sign">
+                {right?.kind === 'add' ? '+' : right ? ' ' : ''}
+              </span>
+              <span className="dv-content">{right ? right.text : ''}</span>
+            </div>
+          </div>
+        )
+      })}
+      {bottomPad > 0 && <div style={{ height: bottomPad }} aria-hidden="true" />}
+    </div>
+  )
+}
+
 /** Parse a unified diff text (git diff output) into a per-file structure. */
 function parseUnifiedDiff(text: string): DiffFile[] {
   const files: DiffFile[] = []
@@ -210,6 +353,27 @@ export default function DiffViewerDialog({
     [files, deferredSelectedFile]
   )
 
+  // Pre-compute paired rows + change-start indices for the single visible
+  // file. Keeping these at the top level lets jumpHunk work against virtual
+  // indices (not DOM), so it stays correct even when rows are off-screen.
+  const currentFile = visibleFiles[0]
+  const currentRows = useMemo<PairedRow[]>(
+    () => (currentFile ? pairLines(currentFile.lines) : []),
+    [currentFile]
+  )
+  const changeStartIndices = useMemo<number[]>(() => {
+    const out: number[] = []
+    const isChange = (r: PairedRow): boolean =>
+      r.kind === 'pair' && (r.left?.kind === 'del' || r.right?.kind === 'add')
+    let prevChange = false
+    for (let i = 0; i < currentRows.length; i++) {
+      const cur = isChange(currentRows[i])
+      if (cur && !prevChange) out.push(i)
+      prevChange = cur
+    }
+    return out
+  }, [currentRows])
+
   // Keep selection valid when files change (mode switch / refresh).
   useEffect(() => {
     if (files.length === 0) {
@@ -287,29 +451,45 @@ export default function DiffViewerDialog({
   /** Scroll to the next / previous change block within the CURRENT file
    *  view. "Change block" = start of a contiguous add/del run (marked with
    *  data-change-start in the row DOM). */
-  const jumpHunk = useCallback((dir: 'next' | 'prev') => {
-    const pane = diffPaneRef.current
-    if (!pane) return
-    const starts = Array.from(
-      pane.querySelectorAll<HTMLDivElement>('[data-change-start="true"]')
-    )
-    if (starts.length === 0) return
-    const cur = pane.scrollTop
-    const EPS = 8
-    let target: HTMLDivElement | null = null
-    if (dir === 'next') {
-      target = starts.find((el) => el.offsetTop > cur + EPS) ?? starts[0]
-    } else {
-      for (let i = starts.length - 1; i >= 0; i--) {
-        if (starts[i].offsetTop < cur - EPS) {
-          target = starts[i]
-          break
+  const jumpHunk = useCallback(
+    (dir: 'next' | 'prev') => {
+      const pane = diffPaneRef.current
+      if (!pane || changeStartIndices.length === 0) return
+      // Locate the `.dv-file-rows` container inside the pane so we can
+      // compute each change block's absolute scroll offset from its row
+      // index (DOM query won't work — virtualization leaves most rows
+      // unmounted).
+      const rowsContainer = pane.querySelector<HTMLDivElement>('.dv-file-rows')
+      if (!rowsContainer) return
+      const paneRect = pane.getBoundingClientRect()
+      const ctRect = rowsContainer.getBoundingClientRect()
+      const containerTopInPane =
+        ctRect.top - paneRect.top + pane.scrollTop
+      const cur = pane.scrollTop
+      const EPS = 8
+      const targetY = (idx: number): number =>
+        containerTopInPane + idx * DV_ROW_H - pane.clientHeight / 2 + DV_ROW_H
+      let targetIdx: number | null = null
+      if (dir === 'next') {
+        targetIdx =
+          changeStartIndices.find((i) => targetY(i) > cur + EPS) ??
+          changeStartIndices[0]
+      } else {
+        for (let i = changeStartIndices.length - 1; i >= 0; i--) {
+          if (targetY(changeStartIndices[i]) < cur - EPS) {
+            targetIdx = changeStartIndices[i]
+            break
+          }
         }
+        if (targetIdx == null)
+          targetIdx = changeStartIndices[changeStartIndices.length - 1]
       }
-      target = target ?? starts[starts.length - 1]
-    }
-    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' })
-  }, [])
+      if (targetIdx != null) {
+        pane.scrollTo({ top: Math.max(0, targetY(targetIdx)), behavior: 'smooth' })
+      }
+    },
+    [changeStartIndices]
+  )
 
   // Capture text selection inside the RIGHT (new-code) column only —
   // annotations anchor on the modified side, matching user workflow.
@@ -623,87 +803,16 @@ export default function DiffViewerDialog({
                 （此源没有变更 —— 换一个 commit 或模式试试）
               </div>
             )}
-            {!diffLoading &&
-              !diffError &&
-              visibleFiles.map((file) => {
-                const rows = pairLines(file.lines)
-                // Mark the first row of each contiguous change block so the
-                // ↑/↓ nav buttons can jump between changes, not hunk headers.
-                const isChangeRow = (r: PairedRow): boolean =>
-                  r.kind === 'pair' &&
-                  (r.left?.kind === 'del' || r.right?.kind === 'add')
-                return (
-                  <div key={file.path} className="dv-file">
-                    <div className="dv-file-head">📄 {file.path}</div>
-                    <div className="dv-file-rows">
-                      {rows.map((row, i) => {
-                        if (row.kind === 'hunk') {
-                          return (
-                            <div key={i} className="dv-row dv-hunk-row">
-                              <span className="dv-hunk-text">{row.text}</span>
-                            </div>
-                          )
-                        }
-                        const left = row.left
-                        const right = row.right
-                        const thisIsChange = isChangeRow(row)
-                        const prev = i > 0 ? rows[i - 1] : null
-                        const prevIsChange = prev ? isChangeRow(prev) : false
-                        const isChangeStart = thisIsChange && !prevIsChange
-                        return (
-                          <div
-                            key={i}
-                            className="dv-row"
-                            data-change-start={isChangeStart ? 'true' : undefined}
-                          >
-                            <div
-                              className={`dv-cell dv-cell-left ${
-                                left?.kind === 'del'
-                                  ? 'dv-del'
-                                  : left
-                                    ? 'dv-context'
-                                    : 'dv-empty'
-                              }`}
-                            >
-                              <span className="dv-gutter">
-                                {left?.oldLine ?? ''}
-                              </span>
-                              <span className="dv-sign">
-                                {left?.kind === 'del' ? '-' : left ? ' ' : ''}
-                              </span>
-                              <span className="dv-content">
-                                {left ? left.text : ''}
-                              </span>
-                            </div>
-                            <div
-                              className={`dv-cell dv-cell-right ${
-                                right?.kind === 'add'
-                                  ? 'dv-add'
-                                  : right
-                                    ? 'dv-context'
-                                    : 'dv-empty'
-                              }`}
-                              data-side="right"
-                              data-file={file.path}
-                              data-line={right?.newLine ?? ''}
-                            >
-                              <span className="dv-gutter">
-                                {right?.newLine ?? ''}
-                              </span>
-                              <span className="dv-sign">
-                                {right?.kind === 'add' ? '+' : right ? ' ' : ''}
-                              </span>
-                              <span className="dv-content">
-                                {right ? right.text : ''}
-                              </span>
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
-                )
-              })}
+            {!diffLoading && !diffError && currentFile && (
+              <div className="dv-file">
+                <div className="dv-file-head">📄 {currentFile.path}</div>
+                <VirtualizedFileRows
+                  filePath={currentFile.path}
+                  rows={currentRows}
+                  paneRef={diffPaneRef}
+                />
+              </div>
+            )}
 
             {draft && (
               <button

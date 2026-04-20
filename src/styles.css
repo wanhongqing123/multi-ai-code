@@ -253,8 +253,9 @@ html, body, #root {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   grid-template-rows: repeat(2, 1fr);
-  gap: 8px;
-  padding: 8px;
+  gap: var(--mac-sp-3);
+  padding: var(--mac-sp-3);
+  background: var(--mac-bg);
   overflow: hidden;
   min-width: 0;
   min-height: 0;
@@ -341,72 +342,120 @@ html, body, #root {
 }
 
 .tile {
-  background: #252526;
-  border: 1px solid #333;
-  border-radius: 6px;
+  background: var(--mac-surface);
+  border: 1px solid var(--mac-border);
+  border-radius: var(--mac-r-lg);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  box-shadow: var(--mac-elev-1);
+  transition: box-shadow var(--mac-dur-fast) var(--mac-ease);
+}
+
+.tile:hover {
+  box-shadow: var(--mac-elev-2);
 }
 
 .tile-head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  background: #2d2d30;
-  border-bottom: 1px solid #333;
-  font-size: 12px;
+  gap: var(--mac-sp-2);
+  padding: 10px var(--mac-sp-3);
+  background: var(--mac-surface-raised);
+  border-bottom: 1px solid var(--mac-border-subtle);
+  font-size: var(--mac-text-sm);
+  color: var(--mac-fg);
 }
 
 .tile-id {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: #007acc;
-  color: #fff;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
-  font-weight: 600;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--mac-r-pill);
+  background: var(--mac-bg-subtle);
+  color: var(--mac-fg-subtle);
+  font-size: var(--mac-text-xs);
+  font-weight: var(--mac-weight-bold);
+  flex-shrink: 0;
+}
+
+.tile.tile-active .tile-id,
+.tile[data-status="running"] .tile-id {
+  background: var(--mac-primary-soft);
+  color: var(--mac-primary);
 }
 
 .tile-name {
   flex: 1;
-  font-weight: 500;
+  font-size: var(--mac-text-md);
+  font-weight: var(--mac-weight-medium);
+  color: var(--mac-fg);
 }
 
 .tile-badge {
-  font-size: 10px;
-  padding: 2px 6px;
-  border-radius: 3px;
-  text-transform: uppercase;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--mac-sp-1);
+  padding: 2px var(--mac-sp-2);
+  border-radius: var(--mac-r-pill);
+  font-size: var(--mac-text-xs);
+  font-weight: var(--mac-weight-medium);
+  background: var(--mac-bg-subtle);
+  color: var(--mac-fg-subtle);
 }
 
-.tile-badge.idle {
-  background: #444;
-  color: #aaa;
+.tile-badge.running,
+.tile-badge.tile-badge-running {
+  background: var(--mac-success-soft);
+  color: var(--mac-success);
 }
 
-.tile-badge.running {
-  background: #0e639c;
-  color: #fff;
+.tile-badge.running::before,
+.tile-badge.tile-badge-running::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: var(--mac-r-pill);
+  background: var(--mac-success);
+  display: inline-block;
 }
 
-.tile-badge.done {
-  background: #3c8b3c;
-  color: #fff;
+.tile-badge.done,
+.tile-badge.tile-badge-done {
+  background: var(--mac-success-soft);
+  color: var(--mac-success);
+}
+
+.tile-badge.tile-badge-failed {
+  background: var(--mac-danger-soft);
+  color: var(--mac-danger);
+}
+
+.tile-badge.exited {
+  background: var(--mac-danger-soft);
+  color: var(--mac-danger);
+}
+
+.tile-badge.awaiting-confirm {
+  background: var(--mac-warning-soft);
+  color: var(--mac-warning);
 }
 
 .tile-body {
+  position: relative;
   flex: 1;
   overflow: hidden;
-  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--mac-surface);
+  color: var(--mac-fg-muted);
+  min-height: 0;
 }
 
 .tile-body.drag-over {
-  outline: 2px dashed #4aa3ff;
+  outline: 2px dashed var(--mac-primary);
   outline-offset: -4px;
 }
 
@@ -462,21 +511,27 @@ html, body, #root {
 }
 
 .tile-btn {
-  font-size: 11px;
-  padding: 2px 8px;
-  border: 1px solid #555;
-  background: #333;
-  color: #eee;
-  border-radius: 3px;
+  background: transparent;
+  border: 1px solid var(--mac-border);
+  color: var(--mac-fg-muted);
+  padding: 4px var(--mac-sp-2);
+  border-radius: var(--mac-r-md);
   cursor: pointer;
+  font-size: var(--mac-text-xs);
+  transition: background var(--mac-dur-fast) var(--mac-ease);
 }
 
 .tile-btn:hover:not(:disabled) {
-  background: #444;
+  background: var(--mac-bg);
+}
+
+.tile-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--mac-focus-ring);
 }
 
 .tile-btn:disabled {
-  opacity: 0.45;
+  color: var(--mac-fg-disabled);
   cursor: not-allowed;
 }
 
@@ -608,25 +663,59 @@ html, body, #root {
 .plan-progress-bar {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 4px 14px;
-  background: #1b1b1d;
-  border-bottom: 1px solid #333;
-  color: #ccc;
-  font-size: 12px;
+  gap: var(--mac-sp-2);
+  padding: var(--mac-sp-2) var(--mac-sp-4);
+  background: var(--mac-surface-raised);
+  border-bottom: 1px solid var(--mac-border-subtle);
+  font-size: var(--mac-text-xs);
+  color: var(--mac-fg-subtle);
 }
-.plan-progress-label { color: #888; }
-.plan-progress-sep { color: #555; }
+
+.plan-progress-label {
+  font-weight: var(--mac-weight-medium);
+  color: var(--mac-fg-muted);
+}
+
+.plan-progress-sep {
+  color: var(--mac-border-strong);
+}
+
 .plan-progress-node {
-  padding: 2px 6px;
-  border-radius: 3px;
-  color: #888;
-  font-family: Menlo, Consolas, monospace;
+  padding: 2px var(--mac-sp-2);
+  border-radius: var(--mac-r-pill);
+  background: var(--mac-bg-subtle);
+  border: 1px solid var(--mac-border);
+  color: var(--mac-fg-subtle);
+  font-size: var(--mac-text-xs);
 }
-.plan-progress-node.done { color: #7fd67f; }
-.plan-progress-node.running { color: #4aa3ff; }
-.plan-progress-node.awaiting { color: #ffb74a; }
-.plan-progress-node.skipped { color: #666; text-decoration: line-through; }
+
+.plan-progress-node.done,
+.plan-progress-node.plan-progress-done {
+  background: var(--mac-success-soft);
+  border-color: var(--mac-success);
+  color: var(--mac-success);
+}
+
+.plan-progress-node.running,
+.plan-progress-node.plan-progress-current {
+  background: var(--mac-primary-soft);
+  border-color: var(--mac-primary);
+  color: var(--mac-primary);
+  box-shadow: 0 0 0 2px var(--mac-primary-soft);
+}
+
+.plan-progress-node.awaiting {
+  background: var(--mac-warning-soft);
+  border-color: var(--mac-warning);
+  color: var(--mac-warning);
+}
+
+.plan-progress-node.skipped {
+  background: var(--mac-bg-subtle);
+  border-color: var(--mac-border-subtle);
+  color: var(--mac-fg-disabled);
+  text-decoration: line-through;
+}
 
 .global-search-modal {
   position: fixed;
@@ -1112,59 +1201,50 @@ html, body, #root {
 
 .tile-progress {
   display: flex;
-  gap: 12px;
-  padding: 3px 10px;
-  background: #1b1b1d;
-  color: #888;
-  font-size: 11px;
-  font-family: Menlo, monospace;
-  border-top: 1px solid #2a2a2d;
+  gap: var(--mac-sp-3);
+  padding: var(--mac-sp-2) var(--mac-sp-3);
+  background: var(--mac-bg-subtle);
+  color: var(--mac-fg-subtle);
+  font-size: var(--mac-text-xs);
+  font-family: var(--mac-font-mono);
+  border-top: 1px solid var(--mac-border-subtle);
 }
 
 .tile-progress .stale {
-  color: #f88;
+  color: var(--mac-danger);
 }
 
 .plan-name-bar {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  background: #252528;
-  font-size: 12px;
-  color: #aaa;
+  gap: var(--mac-sp-3);
+  padding: var(--mac-sp-2) var(--mac-sp-4);
+  background: var(--mac-surface-raised);
+  border-bottom: 1px solid var(--mac-border-subtle);
 }
 
 .plan-name-input {
   flex: 1;
-  background: #1e1e1e;
-  border: 1px solid #444;
-  border-radius: 3px;
-  padding: 3px 8px;
-  color: #eee;
-  font-size: 12px;
+  background: var(--mac-surface);
+  border: 1px solid var(--mac-border);
+  border-radius: var(--mac-r-md);
+  padding: 6px var(--mac-sp-3);
+  color: var(--mac-fg);
+  font-size: var(--mac-text-sm);
 }
 
 .plan-name-input:focus {
-  border-color: #4aa3ff;
   outline: none;
+  border-color: var(--mac-primary);
+  box-shadow: 0 0 0 3px var(--mac-focus-ring);
 }
 
 .tile-error {
-  padding: 4px 10px;
-  font-size: 11px;
-  background: #5a1d1d;
-  color: #f88;
-}
-
-.tile-badge.exited {
-  background: #5a1d1d;
-  color: #f88;
-}
-
-.tile-badge.awaiting-confirm {
-  background: #a06a00;
-  color: #fff;
+  padding: var(--mac-sp-2) var(--mac-sp-3);
+  background: var(--mac-danger-soft);
+  color: var(--mac-danger);
+  font-size: var(--mac-text-xs);
+  border-bottom: 1px solid var(--mac-border-subtle);
 }
 
 /* Drawer */

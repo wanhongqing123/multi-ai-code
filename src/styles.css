@@ -1,3 +1,141 @@
+/* ==========================================================================
+   Design tokens — Chrome/Material redesign
+   See: docs/superpowers/specs/2026-04-20-ui-chrome-material-redesign-design.md
+   ========================================================================== */
+
+:root {
+  /* Surface */
+  --mac-bg:            #F1F3F4;
+  --mac-bg-subtle:     #E8EAED;
+  --mac-surface:       #FFFFFF;
+  --mac-surface-raised:#FAFBFC;
+
+  /* Foreground */
+  --mac-fg:            #202124;
+  --mac-fg-muted:      #3C4043;
+  --mac-fg-subtle:     #5F6368;
+  --mac-fg-disabled:   #80868B;
+
+  /* Primary (Google Blue) */
+  --mac-primary:       #1A73E8;
+  --mac-primary-hover: #1967D2;
+  --mac-primary-active:#174EA6;
+  --mac-primary-soft:  #E8F0FE;
+  --mac-primary-on:    #FFFFFF;
+
+  /* Status */
+  --mac-success:       #1E8E3E;
+  --mac-success-soft:  #E6F4EA;
+  --mac-danger:        #D93025;
+  --mac-danger-soft:   #FCE8E6;
+  --mac-warning:       #B06000;
+  --mac-warning-soft:  #FEF7E0;
+  --mac-info:          #1967D2;
+  --mac-info-soft:     #E8F0FE;
+
+  /* Border */
+  --mac-border:        #DADCE0;
+  --mac-border-subtle: #E8EAED;
+  --mac-border-strong: #BDC1C6;
+
+  /* Focus */
+  --mac-focus-ring:    rgba(26, 115, 232, 0.35);
+
+  /* Diff */
+  --mac-diff-add-bg:   #E6F4EA;
+  --mac-diff-add-fg:   #1E8E3E;
+  --mac-diff-del-bg:   #FCE8E6;
+  --mac-diff-del-fg:   #D93025;
+
+  /* Typography */
+  --mac-font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI',
+                   'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
+  --mac-font-mono: 'JetBrains Mono', 'Roboto Mono', Menlo, Consolas, monospace;
+
+  --mac-text-xl:   20px;
+  --mac-text-lg:   16px;
+  --mac-text-md:   14px;
+  --mac-text-sm:   13px;
+  --mac-text-xs:   12px;
+  --mac-text-mono: 11px;
+
+  --mac-weight-regular: 400;
+  --mac-weight-medium:  500;
+  --mac-weight-bold:    700;
+
+  --mac-line-tight:   1.3;
+  --mac-line-normal:  1.5;
+  --mac-line-relaxed: 1.7;
+
+  /* Shape */
+  --mac-r-sm:   4px;
+  --mac-r-md:   8px;
+  --mac-r-lg:  10px;
+  --mac-r-xl:  14px;
+  --mac-r-pill:999px;
+
+  /* Spacing */
+  --mac-sp-1: 4px;
+  --mac-sp-2: 8px;
+  --mac-sp-3: 12px;
+  --mac-sp-4: 16px;
+  --mac-sp-5: 20px;
+  --mac-sp-6: 24px;
+  --mac-sp-7: 32px;
+
+  /* Elevation */
+  --mac-elev-1: 0 1px 2px rgba(60, 64, 67, 0.05);
+  --mac-elev-2: 0 2px 6px rgba(60, 64, 67, 0.10);
+  --mac-elev-3: 0 8px 24px rgba(60, 64, 67, 0.15);
+
+  /* Motion */
+  --mac-dur-fast:   120ms;
+  --mac-dur-normal: 180ms;
+  --mac-ease:       cubic-bezier(0.2, 0, 0, 1);
+}
+
+:root.theme-dark {
+  --mac-bg:            #202124;
+  --mac-bg-subtle:     #292A2D;
+  --mac-surface:       #292A2D;
+  --mac-surface-raised:#35363A;
+
+  --mac-fg:            #E8EAED;
+  --mac-fg-muted:      #BDC1C6;
+  --mac-fg-subtle:     #9AA0A6;
+  --mac-fg-disabled:   #5F6368;
+
+  --mac-primary:       #8AB4F8;
+  --mac-primary-hover: #A8C7FA;
+  --mac-primary-active:#669DF6;
+  --mac-primary-soft:  rgba(138, 180, 248, 0.16);
+  --mac-primary-on:    #202124;
+
+  --mac-success:       #81C995;
+  --mac-success-soft:  rgba(129, 201, 149, 0.16);
+  --mac-danger:        #F28B82;
+  --mac-danger-soft:   rgba(242, 139, 130, 0.16);
+  --mac-warning:       #FDD663;
+  --mac-warning-soft:  rgba(253, 214, 99, 0.16);
+  --mac-info:          #8AB4F8;
+  --mac-info-soft:     rgba(138, 180, 248, 0.16);
+
+  --mac-border:        #3C4043;
+  --mac-border-subtle: #2A2D30;
+  --mac-border-strong: #5F6368;
+
+  --mac-focus-ring:    rgba(138, 180, 248, 0.45);
+
+  --mac-diff-add-bg:   rgba(129, 201, 149, 0.12);
+  --mac-diff-add-fg:   #81C995;
+  --mac-diff-del-bg:   rgba(242, 139, 130, 0.12);
+  --mac-diff-del-fg:   #F28B82;
+
+  --mac-elev-1: 0 1px 2px rgba(0, 0, 0, 0.30);
+  --mac-elev-2: 0 2px 6px rgba(0, 0, 0, 0.40);
+  --mac-elev-3: 0 8px 24px rgba(0, 0, 0, 0.50);
+}
+
 * {
   box-sizing: border-box;
 }

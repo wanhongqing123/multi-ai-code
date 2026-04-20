@@ -57,3 +57,6 @@ lerna-debug.log*
 
 # Claude Code local state
 .claude/
+
+# Superpowers brainstorming / visual-companion session state
+.superpowers/

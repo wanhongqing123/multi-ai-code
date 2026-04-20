@@ -95,7 +95,11 @@ app.whenReady().then(async () => {
       _e,
       { projectDir, externalPath }: { projectDir: string; externalPath: string }
     ) => {
-      return await registerExternalPlan(projectDir, externalPath)
+      try {
+        return await registerExternalPlan(projectDir, externalPath)
+      } catch (err) {
+        return { ok: false as const, error: (err as Error).message }
+      }
     }
   )
 

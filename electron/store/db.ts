@@ -58,8 +58,12 @@ export function initDb(): Database.Database {
 }
 
 export function getDb(): Database.Database {
-  if (!db) throw new Error('DB not initialized. Call initDb() first.')
-  return db
+  // Lazily initialize so that dev-time main-process module re-evaluations
+  // (which reset the module-level `db` singleton without re-running
+  // app.whenReady) don't leave the IPC handlers throwing "DB not
+  // initialized". `initDb` is idempotent.
+  if (!db) initDb()
+  return db!
 }
 
 export function closeDb(): void {

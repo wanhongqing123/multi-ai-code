@@ -2341,6 +2341,11 @@ html, body, #root {
   display: grid;
   grid-template-columns: 1fr 1fr;
   border-bottom: 1px solid #181818;
+  /* Whole-file diff (-U99999) can produce thousands of rows per file.
+     content-visibility skips layout/paint for off-screen rows so scroll
+     stays responsive during file switches. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 22px;
 }
 
 .dv-hunk-row {

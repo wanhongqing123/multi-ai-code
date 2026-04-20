@@ -422,6 +422,17 @@ export default function App() {
 
   const onPlanSelect = useCallback(
     async (value: string) => {
+      // Block plan switching while Stage 1 is running. The running CLI's
+      // artifact path is baked into its CLAUDE.md at spawn time; a live
+      // switch would leave the AI writing to the old target.
+      if (value !== planName) {
+        const sid = sessionIdFor(1)
+        const running = await window.api.cc.has(sid)
+        if (running) {
+          alert('Stage 1 正在运行，请先停止（Kill）后再切换方案。')
+          return
+        }
+      }
       if (value === '__NEW__') {
         setPlanName('')
         return
@@ -443,12 +454,21 @@ export default function App() {
       setPlanName(value)
       setPlanReview({ path: r.path ?? value, content: r.content ?? '' })
     },
-    [projectDir]
+    [projectDir, planName, sessionIdFor]
   )
 
   const onImportExternal = useCallback(async () => {
     if (!projectDir) {
       alert('请先打开一个项目')
+      return
+    }
+    // Block import while Stage 1 is running — the running CLI's artifact
+    // path is baked at spawn time; swapping the plan under it would write
+    // the revisions to the wrong file.
+    const sid = sessionIdFor(1)
+    const running = await window.api.cc.has(sid)
+    if (running) {
+      alert('Stage 1 正在运行，请先停止（Kill）后再导入外部方案。')
       return
     }
     const pick = await window.api.dialog.pickTextFile({
@@ -474,7 +494,7 @@ export default function App() {
     if (cur.ok) {
       setPlanReview({ path: cur.path ?? reg.name, content: cur.content ?? '' })
     }
-  }, [projectDir])
+  }, [projectDir, sessionIdFor])
 
   /** Load the current Stage 1 plan md and open the review + annotation dialog. */
   const openPlanReview = useCallback(async () => {

@@ -23,6 +23,7 @@ import {
   rootDir
 } from './store/paths.js'
 import { registerPtyIpc, killAllSessions } from './cc/ptyManager.js'
+import { listPlans, registerExternalPlan } from './orchestrator/plans.js'
 import { detectMsys, buildOpenMsysTerminalCommand } from './util/msys.js'
 import { spawn as spawnChild } from 'child_process'
 import { promises as fs } from 'fs'
@@ -75,6 +76,28 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('app:ping', () => 'pong')
   ipcMain.handle('app:version', () => app.getVersion())
+
+  ipcMain.handle(
+    'plan:list',
+    async (_e, { projectDir }: { projectDir: string }) => {
+      try {
+        const items = await listPlans(projectDir)
+        return { ok: true as const, items }
+      } catch (err) {
+        return { ok: false as const, error: (err as Error).message, items: [] }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'plan:registerExternal',
+    async (
+      _e,
+      { projectDir, externalPath }: { projectDir: string; externalPath: string }
+    ) => {
+      return await registerExternalPlan(projectDir, externalPath)
+    }
+  )
 
   // Migration: if an old hardcoded "demo" project dir exists but no DB row,
   // register it so users don't lose historical data.

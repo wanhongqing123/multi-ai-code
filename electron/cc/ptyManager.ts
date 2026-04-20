@@ -16,6 +16,7 @@ import {
   buildForwardHandoff,
   buildFeedbackHandoff
 } from '../orchestrator/prompts.js'
+import { listPlans, registerExternalPlan } from '../orchestrator/plans.js'
 import { detectMsys } from '../util/msys.js'
 import { rootDir } from '../store/paths.js'
 
@@ -91,41 +92,6 @@ async function readProjectMsysEnabled(projectDir: string): Promise<boolean> {
   } catch {
     return false
   }
-}
-
-/**
- * Per-project mapping of Stage 1 plan-name → original absolute file path,
- * stored in `project.json` under `plan_sources`. When a user imports a
- * plan from an external markdown file, we keep writing back to that file
- * on subsequent Stage 1 sessions — "归档 = 原文件" rather than copying.
- */
-async function readPlanSources(projectDir: string): Promise<Record<string, string>> {
-  try {
-    const meta = JSON.parse(
-      await fs.readFile(join(projectDir, 'project.json'), 'utf8')
-    ) as { plan_sources?: Record<string, string> }
-    return meta.plan_sources ?? {}
-  } catch {
-    return {}
-  }
-}
-
-async function writePlanSource(
-  projectDir: string,
-  label: string,
-  absPath: string
-): Promise<void> {
-  const metaPath = join(projectDir, 'project.json')
-  let meta: Record<string, unknown> = {}
-  try {
-    meta = JSON.parse(await fs.readFile(metaPath, 'utf8'))
-  } catch {
-    /* new project or missing file — start empty */
-  }
-  const prev = (meta.plan_sources as Record<string, string> | undefined) ?? {}
-  meta.plan_sources = { ...prev, [label]: absPath }
-  meta.updated_at = new Date().toISOString()
-  await fs.writeFile(metaPath, JSON.stringify(meta, null, 2))
 }
 
 export interface SpawnRequest {
@@ -414,9 +380,10 @@ export function registerPtyIpc(): void {
           // mapping is persisted in project.json by the import flow.
           let externalArtifactAbs: string | null = null
           if (req.stageId === 1 && req.label?.trim()) {
-            const sources = await readPlanSources(req.projectDir)
-            const s = sources[req.label.trim()]
-            if (s && isAbsolute(s)) externalArtifactAbs = s
+            const trimmedLabel = req.label.trim()
+            const sources = await listPlans(req.projectDir)
+            const ext = sources.find((p) => p.source === 'external' && p.name === trimmedLabel)
+            if (ext && isAbsolute(ext.abs)) externalArtifactAbs = ext.abs
           }
 
           const defaultAbs = await resolveStageArtifactAbs(
@@ -1023,9 +990,9 @@ export function registerPtyIpc(): void {
       let abs: string | null = null
       let rel: string | null = null
       if (stageId === 1 && label?.trim()) {
-        const sources = await readPlanSources(projectDir)
-        const s = sources[label.trim()]
-        if (s && isAbsolute(s)) abs = s
+        const sources = await listPlans(projectDir)
+        const ext = sources.find((p) => p.source === 'external' && p.name === label.trim())
+        if (ext && isAbsolute(ext.abs)) abs = ext.abs
       }
       if (!abs) {
         abs = await resolveStageArtifactAbs(projectDir, stageId, label)
@@ -1096,7 +1063,7 @@ export function registerPtyIpc(): void {
         req.stageId === 1 && !!req.sourcePath && isAbsolute(req.sourcePath)
       if (useExternal && req.label) {
         try {
-          await writePlanSource(req.projectDir, req.label, req.sourcePath)
+          await registerExternalPlan(req.projectDir, req.sourcePath)
         } catch {
           /* best-effort; mapping will simply not persist across restarts */
         }

@@ -322,13 +322,17 @@ export default function App() {
     }
   }, [currentProjectId])
 
-  // When Stage 1 starts running with a plan that has no historical design,
+  // When Stage 1 starts running with a brand-new plan (not in planList),
   // offer a one-shot import shortcut so the user isn't forced into a fresh
   // design. Shown once per (project, planName) combo per session.
+  //
+  // A plan that's already in planList — whether internal (file exists under
+  // .multi-ai-code/designs/) or external (registered in plan_sources) — by
+  // definition already has a design file, so the toast is suppressed.
   useEffect(() => {
     if (!currentProjectId || !planName.trim()) return
     if (stageStatus[1] !== 'running') return
-    if (planStagesDone[1]) return
+    if (planList.some((p) => p.name === planName.trim())) return
     const key = `${currentProjectId}:${planName.trim()}`
     if (shownStarterHintsRef.current.has(key)) return
     shownStarterHintsRef.current.add(key)
@@ -345,7 +349,7 @@ export default function App() {
         }
       }
     )
-  }, [currentProjectId, planName, stageStatus, planStagesDone, pickExternalFileForPreview])
+  }, [currentProjectId, planName, stageStatus, planList, pickExternalFileForPreview])
 
   useEffect(() => {
     const off = window.api.stage.onDone((evt) => {

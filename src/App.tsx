@@ -5,7 +5,7 @@ import CompletionDrawer from './components/CompletionDrawer'
 import FeedbackDialog from './components/FeedbackDialog'
 import ProjectPicker, { type ProjectInfo } from './components/ProjectPicker'
 import ErrorPanel, { pushLog, useLogs } from './components/ErrorPanel'
-import StageSettingsDialog from './components/StageSettingsDialog'
+import AiSettingsDialog, { type AiSettings } from './components/AiSettingsDialog'
 import TemplatesDialog from './components/TemplatesDialog'
 import TimelineDrawer from './components/TimelineDrawer'
 import OnboardingWizard from './components/OnboardingWizard'
@@ -75,7 +75,8 @@ export default function App() {
   const [feedbackForcedTarget, setFeedbackForcedTarget] = useState<number | null>(null)
   const [planName, setPlanName] = useState('')
   const [showErrors, setShowErrors] = useState(false)
-  const [showStageSettings, setShowStageSettings] = useState(false)
+  const [showAiSettings, setShowAiSettings] = useState(false)
+  const [aiSettings, setAiSettings] = useState<AiSettings>({ ai_cli: 'claude' })
   const [showTemplates, setShowTemplates] = useState(false)
   const [showTimeline, setShowTimeline] = useState(false)
   const [showOnboarding, setShowOnboarding] = useState(false)
@@ -312,6 +313,7 @@ export default function App() {
     if (!currentProjectId) {
       setStageConfigs({})
       setMsysEnabled(false)
+      setAiSettings({ ai_cli: 'claude' })
       return
     }
     localStorage.setItem(LAST_PROJECT_KEY, currentProjectId)
@@ -324,6 +326,10 @@ export default function App() {
     void window.api.project.getMsysEnabled(currentProjectId).then((enabled) => {
       if (cancelled) return
       setMsysEnabled(enabled)
+    })
+    void window.api.project.getAiSettings(currentProjectId).then((settings) => {
+      if (cancelled) return
+      setAiSettings(settings)
     })
     return () => {
       cancelled = true
@@ -707,11 +713,11 @@ export default function App() {
         </span>
         <button
           className="topbar-btn"
-          onClick={() => setShowStageSettings(true)}
+          onClick={() => setShowAiSettings(true)}
           disabled={!hasProject}
-          title="配置每个阶段使用的 CLI 命令 / 参数 / 环境变量"
+          title="配置 AI CLI 命令 / 参数 / 环境变量"
         >
-          ⚙️ 阶段配置
+          ⚙️ AI 设置
         </button>
         <button
           className="topbar-btn"
@@ -890,7 +896,7 @@ export default function App() {
             { id: 'proj.picker', label: '📁 项目管理（切换 / 新建 / 删除）', keywords: 'project switch new', action: () => setShowProjectPicker(true) },
             { id: 'onboard', label: '❓ 新手向导', keywords: 'help onboarding wizard', action: () => setShowOnboarding(true) },
             { id: 'doctor', label: '🩺 CLI 体检', keywords: 'doctor check health', action: () => setShowDoctor(true) },
-            { id: 'settings', label: '⚙️ 阶段 CLI 配置', keywords: 'settings command', action: () => setShowStageSettings(true), disabled: !hasProject },
+            { id: 'settings', label: '⚙️ AI 设置', keywords: 'settings command ai cli', action: () => setShowAiSettings(true), disabled: !hasProject },
             { id: 'tpl', label: '📋 Prompt 模板', keywords: 'templates prompt snippets', action: () => setShowTemplates(true) },
             { id: 'timeline', label: '📜 审计时间线', keywords: 'timeline events audit', action: () => setShowTimeline(true), disabled: !hasProject },
             { id: 'search', label: '🔍 全局搜索', hint: 'Ctrl+Shift+F', keywords: 'find search', action: () => setShowGlobalSearch(true), disabled: !hasProject },
@@ -999,14 +1005,12 @@ export default function App() {
           }}
         />
       )}
-      {showStageSettings && currentProjectId && (
-        <StageSettingsDialog
+      {showAiSettings && currentProjectId && (
+        <AiSettingsDialog
           projectId={currentProjectId}
-          onClose={() => {
-            setShowStageSettings(false)
-            void window.api.project.getStageConfigs(currentProjectId).then(setStageConfigs)
-            void window.api.project.getMsysEnabled(currentProjectId).then(setMsysEnabled)
-          }}
+          initial={aiSettings}
+          onClose={() => setShowAiSettings(false)}
+          onSaved={(next) => setAiSettings(next)}
         />
       )}
       {showErrors && <ErrorPanel onClose={() => setShowErrors(false)} />}

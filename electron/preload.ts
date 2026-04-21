@@ -1,5 +1,12 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent, webUtils } from 'electron'
 
+export interface AiSettings {
+  ai_cli: 'claude' | 'codex'
+  command?: string
+  args?: string[]
+  env?: Record<string, string>
+}
+
 export interface SpawnRequest {
   sessionId: string
   projectId: string
@@ -263,6 +270,13 @@ const api = {
       ipcRenderer.invoke('project:set-stage-configs', { id, configs }) as Promise<{
         ok: boolean
       }>,
+    getAiSettings: (id: string) =>
+      ipcRenderer.invoke('project:get-ai-settings', { id }) as Promise<AiSettings>,
+    setAiSettings: (id: string, settings: AiSettings) =>
+      ipcRenderer.invoke('project:set-ai-settings', {
+        id,
+        settings
+      }) as Promise<{ ok: boolean; error?: string }>,
     pickDir: () =>
       ipcRenderer.invoke('project:pick-dir') as Promise<{
         canceled: boolean

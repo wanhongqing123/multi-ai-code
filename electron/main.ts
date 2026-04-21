@@ -430,6 +430,47 @@ app.whenReady().then(async () => {
     }
   )
 
+  interface AiSettings {
+    ai_cli: 'claude' | 'codex'
+    command?: string
+    args?: string[]
+    env?: Record<string, string>
+  }
+
+  ipcMain.handle('project:get-ai-settings', async (_e, { id }: { id: string }) => {
+    const pdir = projectDirFn(id)
+    try {
+      const raw = await fs.readFile(join(pdir, 'project.json'), 'utf8')
+      const meta = JSON.parse(raw) as { ai_settings?: AiSettings }
+      return meta.ai_settings ?? { ai_cli: 'claude' as const }
+    } catch {
+      return { ai_cli: 'claude' as const }
+    }
+  })
+
+  ipcMain.handle(
+    'project:set-ai-settings',
+    async (
+      _e,
+      { id, settings }: { id: string; settings: AiSettings }
+    ): Promise<{ ok: boolean; error?: string }> => {
+      const pdir = projectDirFn(id)
+      const metaPath = join(pdir, 'project.json')
+      try {
+        const raw = await fs.readFile(metaPath, 'utf8')
+        const meta = JSON.parse(raw) as Record<string, unknown>
+        meta.ai_settings = settings as unknown as Record<string, unknown>
+        await fs.writeFile(metaPath, JSON.stringify(meta, null, 2))
+        return { ok: true }
+      } catch (err: unknown) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err)
+        }
+      }
+    }
+  )
+
   ipcMain.handle('project:pick-dir', async () => {
     const res = await dialog.showOpenDialog({
       title: '选择项目仓库目录',

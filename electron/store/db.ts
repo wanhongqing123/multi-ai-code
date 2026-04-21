@@ -54,6 +54,20 @@ export function initDb(): Database.Database {
   db.pragma('journal_mode = WAL')
   db.pragma('foreign_keys = ON')
   db.exec(SCHEMA)
+
+  // One-shot migration: single-stage architecture retires stages 2/3/4.
+  // Drop any orphaned rows so UI filters and aggregates stay clean.
+  try {
+    db.prepare('DELETE FROM stages WHERE stage_id > 1').run()
+  } catch (err) {
+    // Table may not exist on fresh installs or under a different name.
+  }
+  try {
+    db.prepare('DELETE FROM events WHERE from_stage > 1 OR to_stage > 1').run()
+  } catch (err) {
+    // Table may not exist on fresh installs or under a different name.
+  }
+
   return db
 }
 

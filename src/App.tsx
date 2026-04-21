@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getTheme, toggleTheme } from './utils/theme.js'
-import StagePanel from './components/StagePanel'
+import MainPanel from './components/MainPanel'
 import CompletionDrawer from './components/CompletionDrawer'
 import FeedbackDialog from './components/FeedbackDialog'
 import ProjectPicker, { type ProjectInfo } from './components/ProjectPicker'
@@ -790,56 +790,25 @@ export default function App() {
       )}
 
       <div className="main-split">
-        <main className={`grid ${zoomedStage !== null ? 'grid-zoomed' : ''}`}>
-          {STAGES.map((s, idx) => (
-            <StagePanel
-              key={s.id}
-              stageId={s.id}
-              stageName={s.name}
-              displayIndex={idx + 1}
-              sessionId={sessionIdFor(s.id)}
-              projectId={currentProjectId ?? ''}
-              projectDir={projectDir}
-              cwd={projectDir || '/tmp'}
-              zoomed={zoomedStage === s.id}
-              hidden={zoomedStage !== null && zoomedStage !== s.id}
-              onToggleZoom={() =>
-                setZoomedStage((cur) => (cur === s.id ? null : s.id))
-              }
-              killAllNonce={killAllNonce}
-              onStatusChange={handleStatusChange}
-              disabled={!hasProject}
-              commandOverride={stageConfigs[String(s.id)]?.command}
-              args={stageConfigs[String(s.id)]?.args}
-              envOverride={stageConfigs[String(s.id)]?.env}
-              onRequestFeedback={
-                s.id === 2 || s.id === 4
-                  ? () => {
-                      setFeedbackForcedTarget(null)
-                      setFeedbackFrom(s.id)
-                    }
-                  : undefined
-              }
-              onRequestRedesign={
-                s.id === 4
-                  ? () => {
-                      setFeedbackForcedTarget(1)
-                      setFeedbackFrom(s.id)
-                    }
-                  : undefined
-              }
-              hideManualDone={s.id === 3}
-              planName={planName}
-              onPlanSelect={s.id === 1 ? onPlanSelect : undefined}
-              planList={planList}
-              onImportExternal={s.id === 1 ? onImportExternal : undefined}
-              onReviewPlan={s.id === 1 ? openPlanReview : undefined}
-              onReviewDiff={s.id === 3 ? openDiffReview : undefined}
-              targetRepo={targetRepo}
-              msysEnabled={msysEnabled}
-            />
-          ))}
-        </main>
+        <MainPanel
+          sessionId={`sess_stage1_${currentProjectId ?? 'none'}`}
+          projectId={currentProjectId ?? ''}
+          projectDir={projectDir}
+          cwd={targetRepo}
+          planName={planName}
+          status="idle"
+          onStart={() => {
+            /* TODO Task 9: implement handleStart */
+          }}
+          onStop={() => {
+            /* TODO Task 9: implement handleStop */
+          }}
+          onRestart={() => {
+            /* TODO Task 9: implement handleRestart */
+          }}
+          onOpenDiff={() => setDiffReviewOpen(true)}
+          disabled={!currentProjectId || !planName}
+        />
 
         {feedbackFrom !== null && (
           <FeedbackDialog

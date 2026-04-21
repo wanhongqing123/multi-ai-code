@@ -2,6 +2,10 @@ import { ipcMain, BrowserWindow } from 'electron'
 import { promises as fs, createWriteStream, WriteStream } from 'fs'
 import { join } from 'path'
 import { PtyCCProcess } from './PtyCCProcess.js'
+import {
+  shouldAutoAcceptCodexTrustPrompt,
+  isCodexReadyForPromptInjection
+} from './codexTrust.js'
 
 import {
   buildSystemPrompt
@@ -94,6 +98,10 @@ interface Session {
   projectDir: string
   sessionId: string
   planName: string
+  command: string
+  codexTrustAccepted?: boolean
+  codexPromptReady?: boolean
+  codexBootText?: string
   /** Raw-chunk dump stream (only when PTY_DUMP_ENABLED). */
   dumpStream?: WriteStream | null
 }
@@ -113,6 +121,19 @@ const PRIMING_DELAY_MS_CODEX = 2500
 
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms))
+
+async function waitForCodexReady(
+  sessionId: string,
+  timeoutMs: number
+): Promise<void> {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const s = sessions.get(sessionId)
+    if (!s) return
+    if (s.codexPromptReady) return
+    await sleep(120)
+  }
+}
 
 /**
  * Write one "message" into the CC TTY: text + CR to submit.
@@ -194,10 +215,22 @@ export function registerPtyIpc(): void {
       projectDir: req.projectDir,
       sessionId: req.sessionId,
       planName: req.planName,
+      command: req.command,
       dumpStream
     }
 
     proc.on('data', (chunk: string) => {
+      if (session.command === 'codex') {
+        const boot = ((session.codexBootText ?? '') + chunk).slice(-16000)
+        session.codexBootText = boot
+        if (!session.codexTrustAccepted && shouldAutoAcceptCodexTrustPrompt(boot)) {
+          session.codexTrustAccepted = true
+          proc.write('\r')
+        }
+        if (!session.codexPromptReady && isCodexReadyForPromptInjection(boot)) {
+          session.codexPromptReady = true
+        }
+      }
       writePtyDump(dumpStream, chunk)
       broadcast('cc:data', { sessionId: req.sessionId, chunk })
     })
@@ -217,6 +250,11 @@ export function registerPtyIpc(): void {
     // Inject system prompt after CC TUI boots.
     setTimeout(async () => {
       try {
+        if (req.command === 'codex') {
+          // Startup time varies heavily (trust gate / update banner / MCP boot).
+          // Wait until Codex home UI appears, then inject prompt text.
+          await waitForCodexReady(req.sessionId, 10000)
+        }
         // Pull project metadata for the prompt
         let projectName: string | undefined
         try {

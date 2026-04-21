@@ -307,28 +307,6 @@ export function registerPtyIpc(): void {
     sessions.has(sessionId)
   )
 
-  /** Inject a user feedback note into an already-running session.
-   *  Single-stage: just pipes the note text directly via sendMessage. */
-  ipcMain.handle(
-    'stage:inject-feedback',
-    async (
-      _e,
-      req: {
-        sessionId: string
-        fromStage: number
-        toStage: number
-        note: string
-        artifactPath?: string
-        artifactContent?: string
-      }
-    ) => {
-      const s = sessions.get(req.sessionId)
-      if (!s) return { ok: false, error: 'no session' }
-      await sendMessage(s.proc, req.note)
-      return { ok: true }
-    }
-  )
-
   /** Send an arbitrary user-typed message to a running session. */
   ipcMain.handle(
     'cc:send-user',

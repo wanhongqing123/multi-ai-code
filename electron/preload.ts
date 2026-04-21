@@ -60,14 +60,6 @@ export interface ArtifactRecord {
   created_at: string
 }
 
-export interface FeedbackInjection {
-  sessionId: string
-  fromStage: number
-  toStage: number
-  note: string
-  artifactPath?: string
-  artifactContent?: string
-}
 
 const api = {
   /** Resolve a DataTransfer File to its absolute filesystem path (Electron 32+). */
@@ -341,16 +333,6 @@ const api = {
   },
 
   stage: {
-    onDone: (cb: (evt: StageDoneEvent) => void): (() => void) => {
-      const handler = (_e: IpcRendererEvent, evt: StageDoneEvent) => cb(evt)
-      ipcRenderer.on('stage:done', handler)
-      return () => ipcRenderer.removeListener('stage:done', handler)
-    },
-    injectFeedback: (h: FeedbackInjection) =>
-      ipcRenderer.invoke('stage:inject-feedback', h) as Promise<{
-        ok: boolean
-        error?: string
-      }>,
     triggerDone: (req: {
       sessionId: string
       projectId: string

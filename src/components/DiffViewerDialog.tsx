@@ -163,8 +163,36 @@ function VirtualizedFileRows({
   const isChangeRow = (r: PairedRow): boolean =>
     r.kind === 'pair' && (r.left?.kind === 'del' || r.right?.kind === 'add')
 
+  // Widest content across both sides, measured in mono characters. We use
+  // it to pin `.dv-file-rows` min-width so the diff pane's own horizontal
+  // scrollbar becomes the single unified scroller — rather than per-cell
+  // scrollbars or per-row clipping.
+  const maxChars = useMemo(() => {
+    let m = 0
+    for (const r of rows) {
+      if (r.kind === 'hunk') {
+        if (r.text.length > m) m = r.text.length
+      } else {
+        const l = r.left?.text.length ?? 0
+        const rt = r.right?.text.length ?? 0
+        if (l > m) m = l
+        if (rt > m) m = rt
+      }
+    }
+    return m
+  }, [rows])
+
+  // Each cell = (maxChars)ch + 90px (54 gutter + 20 sign + 16 padding).
+  // Row = 2 cells, so min-width = 2*maxChars ch + 180 px. When the diff
+  // pane is wider than this, cells size by flex:1 and no scrollbar shows.
+  const rowsMinWidth = `calc(${2 * maxChars}ch + 180px)`
+
   return (
-    <div ref={containerRef} className="dv-file-rows">
+    <div
+      ref={containerRef}
+      className="dv-file-rows"
+      style={{ minWidth: rowsMinWidth }}
+    >
       {topPad > 0 && <div style={{ height: topPad }} aria-hidden="true" />}
       {rows.slice(start, end).map((row, idx) => {
         const i = start + idx

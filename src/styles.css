@@ -2966,10 +2966,15 @@ html, body, #root {
   grid-template-columns: 54px 20px 1fr;
   padding: 2px var(--mac-sp-2);
   white-space: pre;
-  overflow: hidden;
   color: var(--mac-fg-muted);
   border-right: 1px solid var(--mac-border-subtle);
+  /* Rigid 50/50 split: flex:1 1 0 lets both cells equally share whatever
+     width their parent row takes. Row width is pinned by the file-rows
+     container's min-width (set from the widest line), so horizontal scroll
+     surfaces on .dv-diff-pane as a single unified bottom scrollbar. */
+  flex: 1 1 0;
   min-width: 0;
+  overflow: hidden;
   flex: 1;
 }
 

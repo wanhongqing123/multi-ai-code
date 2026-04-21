@@ -78,6 +78,55 @@ describe('listPlans', () => {
     expect(items).toEqual([])
   })
 
+  it('filters dead external plans AND prunes them from project.json', async () => {
+    const alive = join(tmpdir(), 'mac-listplans-alive.md')
+    const dead = join(tmpdir(), 'mac-listplans-dead-never-existed.md')
+    await fs.writeFile(alive, '# alive')
+    // intentionally DO NOT create `dead` — it's a stale entry
+    await fs.writeFile(
+      join(projectDir, 'project.json'),
+      JSON.stringify({
+        id: 'p',
+        name: 'p',
+        target_repo: targetRepo,
+        plan_sources: {
+          alive: alive,
+          'ghost-plan': dead,
+          'another-ghost': '/definitely/not/a/path/x.md'
+        }
+      })
+    )
+    const items = await listPlans(projectDir)
+    expect(items.map((i) => i.name)).toEqual(['alive'])
+    // project.json should have been rewritten to drop the two dead names.
+    const meta = JSON.parse(
+      await fs.readFile(join(projectDir, 'project.json'), 'utf8')
+    )
+    expect(meta.plan_sources).toEqual({ alive })
+    await fs.rm(alive)
+  })
+
+  it('tolerates project.json write failure when pruning (still filters)', async () => {
+    // Make project.json read-only so the prune write silently fails.
+    const deadExt = '/definitely/no/such/path/ghost.md'
+    await fs.writeFile(
+      join(projectDir, 'project.json'),
+      JSON.stringify({
+        id: 'p',
+        name: 'p',
+        target_repo: targetRepo,
+        plan_sources: { ghost: deadExt }
+      })
+    )
+    await fs.chmod(join(projectDir, 'project.json'), 0o444)
+    try {
+      const items = await listPlans(projectDir)
+      expect(items).toEqual([])
+    } finally {
+      await fs.chmod(join(projectDir, 'project.json'), 0o644)
+    }
+  })
+
   it('returns empty when project.json missing', async () => {
     await fs.rm(join(projectDir, 'project.json'))
     const items = await listPlans(projectDir)

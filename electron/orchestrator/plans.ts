@@ -26,6 +26,11 @@ async function readMeta(projectDir: string): Promise<ProjectMeta> {
   }
 }
 
+/** System/auto-generated files that live alongside design md's but are not
+ *  user plans (e.g., Claude Code's auto-loaded CLAUDE.md, legacy Codex
+ *  `.injections` file copies). Filename match is case-insensitive. */
+const RESERVED_DESIGN_NAMES = new Set<string>(['claude', 'codex', 'agents'])
+
 async function readDesignNames(targetRepo: string): Promise<string[]> {
   const dir = join(targetRepo, '.multi-ai-code', 'designs')
   try {
@@ -33,6 +38,7 @@ async function readDesignNames(targetRepo: string): Promise<string[]> {
     return entries
       .filter((f) => f.toLowerCase().endsWith('.md'))
       .map((f) => f.slice(0, -3))
+      .filter((name) => !RESERVED_DESIGN_NAMES.has(name.toLowerCase()))
   } catch {
     return []
   }
@@ -43,9 +49,23 @@ export async function listPlans(projectDir: string): Promise<PlanEntry[]> {
   const targetRepo = meta.target_repo
   const planSources = meta.plan_sources ?? {}
 
-  const externalEntries: PlanEntry[] = Object.entries(planSources).map(
-    ([name, abs]) => ({ name, abs, source: 'external' as const })
-  )
+  // Filter out dead external mappings — the user may have moved or deleted
+  // the original .md file since registering it. Both:
+  //   1. hide them from the plan list UI, AND
+  //   2. prune them from project.json so they don't linger as ghosts.
+  const externalEntries: PlanEntry[] = []
+  const deadNames: string[] = []
+  for (const [name, abs] of Object.entries(planSources)) {
+    try {
+      await fs.access(abs)
+      externalEntries.push({ name, abs, source: 'external' })
+    } catch {
+      deadNames.push(name)
+    }
+  }
+  if (deadNames.length > 0) {
+    await pruneDeadPlanSources(projectDir, deadNames)
+  }
   const externalNames = new Set(externalEntries.map((e) => e.name))
 
   const internalEntries: PlanEntry[] = []
@@ -64,6 +84,35 @@ export async function listPlans(projectDir: string): Promise<PlanEntry[]> {
   return [...internalEntries, ...externalEntries].sort((a, b) =>
     a.name.localeCompare(b.name)
   )
+}
+
+/** Remove the given names from `project.json.plan_sources`. Best-effort —
+ *  if the file is locked or unreadable we silently skip; the UI-layer
+ *  filter in `listPlans` still hides the ghosts in this call's result. */
+async function pruneDeadPlanSources(
+  projectDir: string,
+  names: string[]
+): Promise<void> {
+  const metaPath = join(projectDir, 'project.json')
+  try {
+    const raw = await fs.readFile(metaPath, 'utf8')
+    const meta = JSON.parse(raw) as Record<string, unknown>
+    const sources = meta.plan_sources as Record<string, string> | undefined
+    if (!sources) return
+    let changed = false
+    for (const name of names) {
+      if (name in sources) {
+        delete sources[name]
+        changed = true
+      }
+    }
+    if (!changed) return
+    meta.plan_sources = sources
+    meta.updated_at = new Date().toISOString()
+    await fs.writeFile(metaPath, JSON.stringify(meta, null, 2))
+  } catch {
+    /* tolerate failure — next listPlans call will try again */
+  }
 }
 
 export async function registerExternalPlan(

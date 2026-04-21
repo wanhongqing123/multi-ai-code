@@ -65,6 +65,11 @@ export async function migrateLegacyStage1Artifacts(): Promise<void> {
     }
     for (const f of files) {
       if (!f.endsWith('.md')) continue
+      // Skip auto-generated system prompt files the legacy backend left in
+      // the workspace (e.g., CLAUDE.md written as Claude's system prompt).
+      // They're not user plans and would pollute the plan list.
+      const base = f.slice(0, -3).toLowerCase()
+      if (base === 'claude' || base === 'codex' || base === 'agents') continue
       const src = join(legacyDir, f)
       const tgt = join(dest, f)
       try {

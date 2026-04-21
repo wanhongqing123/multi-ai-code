@@ -61,7 +61,7 @@ export function buildSelectedFeedback(items: ReviewItem[]): string {
   const lines = [
     `# Code Review 修复清单（共 ${items.length} 项）`,
     '',
-    '以下是 Reviewer 提出、用户审批通过的问题，请逐项修复。修复完毕后输出 `<<STAGE_DONE summary=... diff_ref=HEAD>>`。',
+    '以下是 Reviewer 提出、用户审批通过的问题，请逐项修复。修复完毕后在终端简述改了什么。',
     ''
   ]
   for (const it of items) {

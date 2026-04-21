@@ -34,7 +34,9 @@ export function formatInitialMessage(p: InitialMessageParams): string {
       '',
       '---',
       '',
-      '请基于当前方案继续工作（写代码 / 根据批注调整）。'
+      '请先阅读当前方案，用中文简要总结：目标、核心步骤、预期产物。',
+      '',
+      '**此时不要修改任何代码或方案文档**。等用户确认方向（或让你按方案实施）后，再继续执行。'
     ].join('\n')
   }
   return [

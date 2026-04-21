@@ -14,7 +14,7 @@ describe('formatInitialMessage', () => {
     })
     expect(out).toContain('# 方案：增加 OAuth')
     expect(out).toContain('详细步骤')
-    expect(out).toContain('请基于当前方案继续工作')
+    expect(out).toContain('此时不要修改任何代码')
   })
 
   it('returns a "kick off design" message when plan content is null', () => {
@@ -37,7 +37,7 @@ describe('formatInitialMessage', () => {
     expect(out).toContain('add-auth')
     expect(out).toContain('/repo/.multi-ai-code/designs/add-auth.md')
     expect(out).toContain('澄清需求')
-    expect(out).not.toContain('请基于当前方案继续工作')
+    expect(out).not.toContain('此时不要修改任何代码')
   })
 
   it('treats whitespace-only planContent as missing (kick-off branch)', () => {
@@ -47,7 +47,7 @@ describe('formatInitialMessage', () => {
       planContent: '   \n\n  '
     })
     expect(out).toContain('澄清需求')
-    expect(out).not.toContain('请基于当前方案继续工作')
+    expect(out).not.toContain('此时不要修改任何代码')
   })
 })
 

@@ -20,6 +20,8 @@ export interface DiffViewerDialogProps {
   title?: string
   onClose: () => void
   onSubmit: (annotations: DiffAnnotation[], generalNote: string) => Promise<void> | void
+  /** Whether the live AI session is running — gates the send button. */
+  sessionRunning?: boolean
 }
 
 type DiffMode = 'working' | 'head1' | 'commit' | 'range' | 'working_range'
@@ -375,7 +377,8 @@ export default function DiffViewerDialog({
   cwd,
   title,
   onClose,
-  onSubmit
+  onSubmit,
+  sessionRunning = true
 }: DiffViewerDialogProps) {
   const [mode, setMode] = useState<DiffMode>('working')
   const [commits, setCommits] = useState<CommitEntry[] | null>(null)
@@ -728,7 +731,7 @@ export default function DiffViewerDialog({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="modal-head">
-          <h3>{title ?? 'Diff 审查 · 代码标注反馈给 Stage 3'}</h3>
+          <h3>{title ?? 'Diff 审查 · 代码标注回灌给当前会话'}</h3>
           <button className="modal-close" onClick={handleSmoothClose}>
             ×
           </button>
@@ -1031,19 +1034,25 @@ export default function DiffViewerDialog({
             ✕ 关闭（不发送）
           </button>
           <span style={{ flex: 1 }} />
+          {!sessionRunning && (
+            <div
+              className="modal-error"
+              style={{ background: 'transparent', color: 'var(--mac-fg-subtle)' }}
+            >
+              会话未启动，请先启动会话再发送批注
+            </div>
+          )}
           <button
             className="drawer-btn primary"
+            disabled={!sessionRunning || annotations.length === 0}
             onClick={handleSubmit}
-            disabled={!canSubmit}
             title={
-              canSubmit
-                ? '合成批注消息发送到 Stage 3 CLI，让它按意见修代码'
-                : '至少要有一条批注或整体意见'
+              !sessionRunning
+                ? '会话未启动 — 先启动会话再发送批注'
+                : undefined
             }
           >
-            {submitting
-              ? '发送中…'
-              : `📤 发送到 Stage 3（${annotations.length} 条批注${generalNote.trim() ? ' + 整体意见' : ''}）`}
+            发送到会话 ({annotations.length} 条批注)
           </button>
         </div>
       </div>

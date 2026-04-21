@@ -759,6 +759,7 @@ export default function App() {
           cwd={targetRepo}
           onClose={() => setDiffReviewOpen(false)}
           onSubmit={submitDiffAnnotations}
+          sessionRunning={sessionStatus === 'running'}
         />
       )}
       {showOnboarding && (

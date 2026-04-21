@@ -14,7 +14,7 @@ const XTERM_DARK_THEME = {
 // colors) so terminal output harmonizes with the rest of the light UI.
 const XTERM_LIGHT_THEME = {
   background: '#FFFFFF',
-  foreground: '#202124',
+  foreground: '#000000',
   cursor: '#202124',
   cursorAccent: '#FFFFFF',
   selectionBackground: 'rgba(26, 115, 232, 0.2)',
@@ -72,12 +72,25 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
 
   useEffect(() => {
     if (!containerRef.current) return
+    // "Parisian Type" preset — refined editorial feel.
+    // JetBrains Mono at Light (300) weight, open 1.75 line-height, subtle
+    // 0.3px letter-spacing, underline caret. WebGL renderer handles the
+    // anti-aliasing so this stays crisp at thin weights.
     const term = new Terminal({
-      fontSize: 15,
-      lineHeight: 1.2,
-      fontFamily: 'Menlo, Monaco, Consolas, "Courier New", monospace',
+      fontSize: 13,
+      lineHeight: 1.75,
+      letterSpacing: 0.3,
+      fontFamily:
+        'Monaco, Menlo, "JetBrains Mono", "SF Mono", Consolas, monospace',
+      fontWeight: 600,
+      fontWeightBold: 800,
       cursorBlink: true,
+      cursorStyle: 'underline',
+      cursorInactiveStyle: 'underline',
+      cursorWidth: 1,
       convertEol: true,
+      minimumContrastRatio: 4.5,
+      smoothScrollDuration: 120,
       theme: xtermThemeFor(getTheme()),
       allowProposedApi: true
     })

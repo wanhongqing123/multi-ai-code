@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@xterm/addon-search": "^0.16.0",
+    "@xterm/addon-webgl": "^0.19.0",
     "better-sqlite3": "^11.3.0",
     "diff": "^9.0.0",
     "node-pty": "^1.0.0",

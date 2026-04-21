@@ -3,6 +3,42 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import '@xterm/xterm/css/xterm.css'
+import { getTheme, THEME_CHANGE_EVENT, type Theme } from '../utils/theme.js'
+
+const XTERM_DARK_THEME = {
+  background: '#1e1e1e',
+  foreground: '#e6e6e6'
+}
+
+// Light-theme xterm palette. Uses the same Google Blue / status colors as
+// --mac-* tokens so terminal output harmonizes with the rest of the UI.
+const XTERM_LIGHT_THEME = {
+  background: '#FFFFFF',
+  foreground: '#202124',
+  cursor: '#202124',
+  cursorAccent: '#FFFFFF',
+  selectionBackground: 'rgba(26, 115, 232, 0.2)',
+  black: '#202124',
+  red: '#D93025',
+  green: '#1E8E3E',
+  yellow: '#B06000',
+  blue: '#1A73E8',
+  magenta: '#9334E6',
+  cyan: '#0086A3',
+  white: '#5F6368',
+  brightBlack: '#5F6368',
+  brightRed: '#D93025',
+  brightGreen: '#1E8E3E',
+  brightYellow: '#B06000',
+  brightBlue: '#1A73E8',
+  brightMagenta: '#9334E6',
+  brightCyan: '#0086A3',
+  brightWhite: '#202124'
+}
+
+function xtermThemeFor(t: Theme): typeof XTERM_DARK_THEME {
+  return t === 'dark' ? XTERM_DARK_THEME : XTERM_LIGHT_THEME
+}
 
 export interface StagePanelProps {
   stageId: number
@@ -210,9 +246,14 @@ export default function StagePanel(props: StagePanelProps) {
       fontFamily: 'Menlo, Monaco, Consolas, "Courier New", monospace',
       cursorBlink: true,
       convertEol: true,
-      theme: { background: '#1e1e1e', foreground: '#e6e6e6' },
+      theme: xtermThemeFor(getTheme()),
       allowProposedApi: true
     })
+    const onThemeChange = (e: Event) => {
+      const next = (e as CustomEvent<Theme>).detail
+      term.options.theme = xtermThemeFor(next)
+    }
+    window.addEventListener(THEME_CHANGE_EVENT, onThemeChange)
     const fit = new FitAddon()
     const search = new SearchAddon()
     term.loadAddon(fit)
@@ -338,6 +379,7 @@ export default function StagePanel(props: StagePanelProps) {
     return () => {
       ro.disconnect()
       window.removeEventListener('paste', pasteListener, true)
+      window.removeEventListener(THEME_CHANGE_EVENT, onThemeChange)
       hostEl?.removeEventListener('contextmenu', onContextMenu)
       unsubRef.current.forEach((fn) => fn())
       unsubRef.current = []

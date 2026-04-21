@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach, beforeEach } from 'vitest'
 import { promises as fs } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { designArchiveDir, createProjectLayout, workspaceDir } from './paths.js'
+import { designArchiveDir, createProjectLayout, ensureRootDir } from './paths.js'
 
 describe('designArchiveDir', () => {
   it('returns <target_repo>/.multi-ai-code/designs', () => {
@@ -33,10 +33,35 @@ describe('createProjectLayout', () => {
     const stat = await fs.stat(designArchiveDir(targetRepo))
     expect(stat.isDirectory()).toBe(true)
   })
+})
 
-  it('still creates the isolated stage1_design workspace (used as cwd)', async () => {
-    await createProjectLayout('p_test', targetRepo)
-    const stat = await fs.stat(workspaceDir('p_test', 1))
-    expect(stat.isDirectory()).toBe(true)
+describe('ensureRootDir', () => {
+  it('removes existing workspaces/ dir in each project', async () => {
+    const projRoot = await fs.mkdtemp(join(tmpdir(), 'mac-paths-ensure-'))
+    process.env.MULTI_AI_ROOT = projRoot
+    try {
+      const pid = 'p_legacy'
+      const pdir = join(projRoot, 'projects', pid, 'workspaces', 'stage1_design')
+      await fs.mkdir(pdir, { recursive: true })
+      await fs.writeFile(join(pdir, 'old.md'), 'legacy content')
+      await ensureRootDir()
+      const wsStat = await fs.stat(join(projRoot, 'projects', pid, 'workspaces')).catch(() => null)
+      expect(wsStat).toBeNull()
+    } finally {
+      delete process.env.MULTI_AI_ROOT
+      await fs.rm(projRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('is a no-op when project has no workspaces/ dir', async () => {
+    const projRoot = await fs.mkdtemp(join(tmpdir(), 'mac-paths-noop-'))
+    process.env.MULTI_AI_ROOT = projRoot
+    try {
+      await fs.mkdir(join(projRoot, 'projects', 'p_clean'), { recursive: true })
+      await expect(ensureRootDir()).resolves.toBeUndefined()
+    } finally {
+      delete process.env.MULTI_AI_ROOT
+      await fs.rm(projRoot, { recursive: true, force: true })
+    }
   })
 })

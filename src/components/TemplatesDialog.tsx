@@ -23,14 +23,16 @@ function save(list: Template[]): void {
 }
 
 export interface TemplatesDialogProps {
-  /** Active running sessions the user can inject into. */
-  sessions: { stageId: number; sessionId: string; name: string }[]
+  /** The active session id (if any) to inject into. */
+  sessionId?: string | null
+  /** Whether the session is currently running (inject enabled only when true). */
+  sessionRunning?: boolean
   onClose: () => void
-  /** Inject text into the given session via PTY. */
+  /** Inject text into the active session via PTY. */
   onInject: (sessionId: string, text: string) => void
 }
 
-export default function TemplatesDialog({ sessions, onClose, onInject }: TemplatesDialogProps) {
+export default function TemplatesDialog({ sessionId, sessionRunning, onClose, onInject }: TemplatesDialogProps) {
   const [list, setList] = useState<Template[]>([])
   const [editing, setEditing] = useState<Template | null>(null)
   const [form, setForm] = useState({ name: '', body: '' })
@@ -140,21 +142,21 @@ export default function TemplatesDialog({ sessions, onClose, onInject }: Templat
                     </button>
                   )}
                 </div>
-                {editing.id && sessions.length > 0 && (
+                {editing.id && (
                   <div className="templates-inject">
-                    <div className="templates-inject-title">插入到阶段：</div>
-                    {sessions.map((s) => (
-                      <button
-                        key={s.sessionId}
-                        className="drawer-btn"
-                        onClick={() => {
-                          onInject(s.sessionId, form.body)
+                    <button
+                      className="drawer-btn primary"
+                      disabled={!sessionRunning || !sessionId}
+                      title={!sessionRunning ? '会话未在运行' : undefined}
+                      onClick={() => {
+                        if (sessionId) {
+                          onInject(sessionId, form.body)
                           onClose()
-                        }}
-                      >
-                        → Stage {s.stageId} {s.name}
-                      </button>
-                    ))}
+                        }
+                      }}
+                    >
+                      → 注入当前会话
+                    </button>
                   </div>
                 )}
               </>

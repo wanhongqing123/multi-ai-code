@@ -781,11 +781,8 @@ export default function App() {
       )}
       {showTemplates && (
         <TemplatesDialog
-          sessions={
-            sessionId && sessionStatus === 'running'
-              ? [{ stageId: 1, sessionId, name: '当前会话' }]
-              : []
-          }
+          sessionId={sessionId}
+          sessionRunning={sessionStatus === 'running'}
           onClose={() => setShowTemplates(false)}
           onInject={(sid, text) => {
             void window.api.cc.sendUser(sid, text)

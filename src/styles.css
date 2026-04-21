@@ -3002,8 +3002,12 @@ html, body, #root {
 }
 
 .dv-cell-left {
-  /* explicitly non-selectable: user can only annotate on the right */
-  user-select: none;
+  /* Left-side text is selectable so drag-selections can extend across
+     multiple rows (the row-level user-select:none on the whole cell was
+     breaking cross-row selection because intermediate rows contain a left
+     cell between consecutive right cells in DOM order). The annotation
+     handler ignores left cells anyway — it picks rows geometrically by
+     right-cell bounding rects. */
   background: var(--mac-bg-subtle);
 }
 

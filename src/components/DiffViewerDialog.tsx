@@ -22,6 +22,13 @@ export interface DiffViewerDialogProps {
   onSubmit: (annotations: DiffAnnotation[], generalNote: string) => Promise<void> | void
   /** Whether the live AI session is running — gates the send button. */
   sessionRunning?: boolean
+  /** Controlled annotations list — lifted to parent so unsent batches survive
+   *  a dialog close/reopen. Parent clears it after a successful submit. */
+  annotations: DiffAnnotation[]
+  onAnnotationsChange: (next: DiffAnnotation[]) => void
+  /** Controlled general-note field — same persistence rationale as annotations. */
+  generalNote: string
+  onGeneralNoteChange: (next: string) => void
 }
 
 type DiffMode = 'working' | 'head1' | 'commit' | 'range' | 'working_range'
@@ -378,7 +385,11 @@ export default function DiffViewerDialog({
   title,
   onClose,
   onSubmit,
-  sessionRunning = true
+  sessionRunning = true,
+  annotations,
+  onAnnotationsChange,
+  generalNote,
+  onGeneralNoteChange
 }: DiffViewerDialogProps) {
   const [mode, setMode] = useState<DiffMode>('working')
   const [commits, setCommits] = useState<CommitEntry[] | null>(null)
@@ -398,8 +409,27 @@ export default function DiffViewerDialog({
   // no longer present.
   const [selectedFile, setSelectedFile] = useState<string>('')
 
-  const [annotations, setAnnotations] = useState<DiffAnnotation[]>([])
-  const [generalNote, setGeneralNote] = useState('')
+  // Controlled: annotations + generalNote live in the parent so unsent
+  // batches persist across dialog close/reopen. Parent is responsible for
+  // clearing after a successful submit.
+  const setAnnotations = useCallback(
+    (
+      updater:
+        | DiffAnnotation[]
+        | ((prev: DiffAnnotation[]) => DiffAnnotation[])
+    ) => {
+      const next =
+        typeof updater === 'function'
+          ? (updater as (prev: DiffAnnotation[]) => DiffAnnotation[])(annotations)
+          : updater
+      onAnnotationsChange(next)
+    },
+    [annotations, onAnnotationsChange]
+  )
+  const setGeneralNote = useCallback(
+    (next: string) => onGeneralNoteChange(next),
+    [onGeneralNoteChange]
+  )
   const [submitting, setSubmitting] = useState(false)
 
   const [draft, setDraft] = useState<{
@@ -580,6 +610,12 @@ export default function DiffViewerDialog({
 
   // Capture text selection inside the RIGHT (new-code) column only —
   // annotations anchor on the modified side, matching user workflow.
+  //
+  // Geometry-based detection: iterate every `.dv-cell-right` in the pane and
+  // include any whose bounding rect overlaps the selection's rect vertically.
+  // This avoids fragility with `sel.getRangeAt(0).startContainer/endContainer`
+  // when the drag crosses rows (intermediate gutter/sign columns are
+  // `user-select:none`, which can make a naive endpoint check fail).
   const handleMouseUp = useCallback(() => {
     const sel = window.getSelection()
     if (!sel || sel.isCollapsed || !diffPaneRef.current) {
@@ -587,55 +623,65 @@ export default function DiffViewerDialog({
       return
     }
     const range = sel.getRangeAt(0)
-    if (!diffPaneRef.current.contains(range.commonAncestorContainer)) {
+    const pane = diffPaneRef.current
+    if (!pane.contains(range.commonAncestorContainer)) {
       setDraft(null)
       return
     }
-    const findCell = (node: Node | null): HTMLElement | null => {
-      let cur: Node | null = node
-      while (cur && cur !== diffPaneRef.current) {
-        if (
-          cur.nodeType === Node.ELEMENT_NODE &&
-          (cur as HTMLElement).classList.contains('dv-cell')
-        ) {
-          return cur as HTMLElement
-        }
-        cur = cur.parentNode
+    const selRect = range.getBoundingClientRect()
+    if (selRect.width === 0 && selRect.height === 0) {
+      setDraft(null)
+      return
+    }
+    const rightCells = pane.querySelectorAll<HTMLElement>(
+      '.dv-cell-right[data-file][data-line]'
+    )
+    let touchedFile = ''
+    let loLine = Infinity
+    let hiLine = -Infinity
+    for (const cell of Array.from(rightCells)) {
+      const r = cell.getBoundingClientRect()
+      // Intersect vertically with the selection rect.
+      if (r.bottom <= selRect.top) continue
+      if (r.top >= selRect.bottom) continue
+      const ln = parseInt(cell.dataset.line ?? '0', 10)
+      if (!ln) continue
+      if (ln < loLine) loLine = ln
+      if (ln > hiLine) hiLine = ln
+      if (!touchedFile) touchedFile = cell.dataset.file ?? ''
+    }
+    if (!touchedFile || loLine === Infinity) {
+      setDraft(null)
+      return
+    }
+    const lineRange = loLine === hiLine ? `${loLine}` : `${loLine}-${hiLine}`
+    // Single-line: use the literal selected text so partial-line selections
+    // anchor on the actual tokens the user highlighted.
+    // Multi-line: rebuild from DOM, one line per row, so the composer shows
+    // each line of code rather than a concatenated blob (`.dv-content`s are
+    // inline spans, so `sel.toString()` drops line boundaries).
+    let snippet: string
+    if (loLine === hiLine) {
+      snippet = sel.toString()
+    } else {
+      const escFile = touchedFile.replace(/"/g, '\\"')
+      const collected: string[] = []
+      for (let n = loLine; n <= hiLine; n++) {
+        const cell = pane.querySelector<HTMLElement>(
+          `.dv-cell-right[data-file="${escFile}"][data-line="${n}"]`
+        )
+        const content = cell?.querySelector<HTMLElement>('.dv-content')
+        collected.push(content?.textContent ?? '')
       }
-      return null
+      snippet = collected.join('\n')
     }
-    const startCell = findCell(range.startContainer)
-    const endCell = findCell(range.endContainer)
-    // Require the selection to be anchored on the right (new-code) side.
-    if (
-      !startCell ||
-      !endCell ||
-      startCell.dataset.side !== 'right' ||
-      endCell.dataset.side !== 'right'
-    ) {
-      setDraft(null)
-      return
-    }
-    const file = startCell.dataset.file ?? ''
-    const startLine = parseInt(startCell.dataset.line ?? '0', 10)
-    const endLine = parseInt(endCell.dataset.line ?? '0', 10)
-    if (!file || !startLine) {
-      setDraft(null)
-      return
-    }
-    const lineRange =
-      startLine === endLine
-        ? `${startLine}`
-        : `${Math.min(startLine, endLine)}-${Math.max(startLine, endLine)}`
-    const snippet = sel.toString()
-    const rect = range.getBoundingClientRect()
-    const paneRect = diffPaneRef.current.getBoundingClientRect()
+    const paneRect = pane.getBoundingClientRect()
     setDraft({
-      file,
+      file: touchedFile,
       lineRange,
       snippet,
-      x: rect.right - paneRect.left + 4,
-      y: rect.top - paneRect.top + diffPaneRef.current.scrollTop - 4
+      x: selRect.right - paneRect.left + 4,
+      y: selRect.top - paneRect.top + pane.scrollTop - 4
     })
   }, [])
 

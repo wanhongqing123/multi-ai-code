@@ -70,6 +70,10 @@ export default function App() {
   } | null>(null)
   // Diff-review state. When true, DiffViewerDialog is rendered.
   const [diffReviewOpen, setDiffReviewOpen] = useState(false)
+  // Lifted from DiffViewerDialog so unsent batches survive a close/reopen
+  // cycle. Cleared on: successful submit, project switch, plan switch.
+  const [diffAnnotations, setDiffAnnotations] = useState<DiffAnnotation[]>([])
+  const [diffGeneralNote, setDiffGeneralNote] = useState('')
   // Remember which (project, planName) combos have already seen the starter
   // "import from file?" toast so it's not shown repeatedly on each start.
   const shownStarterHintsRef = useRef<Set<string>>(new Set())
@@ -100,6 +104,8 @@ export default function App() {
     setPreviewImport(null)
     setPlanReview(null)
     setDiffReviewOpen(false)
+    setDiffAnnotations([])
+    setDiffGeneralNote('')
     setSessionId(null)
     setSessionStatus('idle')
     shownStarterHintsRef.current.clear()
@@ -197,7 +203,12 @@ export default function App() {
   const projectName = currentProject?.name ?? ''
   const hasProject = currentProject !== null
 
-  // Refresh plan list when project/plan changes.
+  // Refresh plan list when project/projectDir changes. Do NOT depend on
+  // planName — that would re-run on every keystroke of the "new plan"
+  // input, and the "wipe if not in list" check below would clear the
+  // input after each character. Use functional setState so we can still
+  // prune a stale planName (e.g. after switching projects) without
+  // reading planName directly from the closure.
   useEffect(() => {
     if (!currentProjectId || !projectDir) {
       setPlanList([])
@@ -210,18 +221,23 @@ export default function App() {
       if (!planRes.ok) return
       const items = planRes.items
       setPlanList(items)
-      // Reset planName ONLY when the project actually has plans and the
-      // current name is no longer among them. An empty list usually means
-      // "brand-new project, user just typed a name via onboarding" — wiping
-      // it then would break the onboarding handoff.
-      if (planName && items.length > 0 && !items.some((p) => p.name === planName)) {
-        setPlanName('')
-      }
+      // Prune ghost plan names only when:
+      //   1. the project has any plans at all (empty list ≈ brand-new
+      //      project; keep whatever the user is typing), AND
+      //   2. the current name is not in that list (stale from a previous
+      //      project).
+      // Functional setState means we don't need planName as a dep.
+      setPlanName((prev) => {
+        if (prev && items.length > 0 && !items.some((p) => p.name === prev)) {
+          return ''
+        }
+        return prev
+      })
     })()
     return () => {
       cancelled = true
     }
-  }, [currentProjectId, projectDir, planName])
+  }, [currentProjectId, projectDir])
 
   useEffect(() => {
     if (!currentProjectId) {
@@ -389,6 +405,12 @@ export default function App() {
         alert('会话正在运行，请先停止（Kill）后再切换方案。')
         return
       }
+      // Clear diff annotations when switching to a different plan — they
+      // were gathered against the previous plan's diff context.
+      if (value !== planName) {
+        setDiffAnnotations([])
+        setDiffGeneralNote('')
+      }
       if (value === '__NEW__') {
         setPlanName('')
         return
@@ -482,7 +504,7 @@ export default function App() {
         return
       }
       const lines: string[] = [
-        '我查看了当前方案，有以下反馈，请据此修改设计文档后再次输出 <<STAGE_DONE ...>> 标记。',
+        '我查看了当前方案，有以下反馈，请据此修改方案文件。',
         ''
       ]
       if (generalNote) {
@@ -503,7 +525,7 @@ export default function App() {
       lines.push(
         '---',
         '',
-        '请把以上每条意见落实到方案文件中，修改完成后重新写入产物并打印 <<STAGE_DONE ...>> 完成标记。'
+        '请把以上每条意见落实到方案文件中，修改完成后在终端简述你改了什么。'
       )
       const res = await window.api.cc.sendUser(sessionId, lines.join('\n'))
       if (!res.ok) {
@@ -533,17 +555,15 @@ export default function App() {
         planAbsPath
       })
       window.api.cc.write(sessionId, text + '\r')
+      // Sent successfully — clear the batch so the next Diff 审查 starts fresh.
+      setDiffAnnotations([])
+      setDiffGeneralNote('')
       setDiffReviewOpen(false)
       showToast(`已发送 ${anns.length} 条批注到会话`, { level: 'info' })
     },
     [sessionId, sessionStatus, planName, getPlanAbsPath]
   )
 
-  // Suppress unused warning — onImportExternal and openPlanReview are used
-  // in command palette and plan-review flow.
-  void onImportExternal
-  void openPlanReview
-  void openDiffReview
 
   return (
     <div className="app">
@@ -618,16 +638,71 @@ export default function App() {
         </button>
       </header>
 
-      {hasProject && planName.trim() && (
-        <div className="plan-progress-bar">
-          <span className="plan-progress-label">📍 当前方案：</span>
-          <strong>{planName}</strong>
-          <span className="plan-progress-sep">·</span>
+      {hasProject && (
+        <div className="plan-name-bar">
+          <span className="plan-progress-label">📋 方案：</span>
+          <select
+            className="plan-name-input"
+            value={
+              planName && planList.some((p) => p.name === planName)
+                ? planName
+                : '__NEW__'
+            }
+            onChange={(e) => void onPlanSelect(e.target.value)}
+            disabled={sessionStatus === 'running'}
+            title={
+              sessionStatus === 'running'
+                ? '运行中无法切换方案，请先停止'
+                : '选择已有方案或新建'
+            }
+          >
+            <option value="__NEW__">+ 新建方案</option>
+            {planList.map((p) => (
+              <option key={p.name} value={p.name}>
+                {p.source === 'external' ? '📥 ' : ''}
+                {p.name}
+              </option>
+            ))}
+          </select>
+          {!planList.some((p) => p.name === planName) && (
+            <input
+              type="text"
+              className="plan-name-input"
+              placeholder="输入新方案名（例如 add-auth）"
+              value={planName}
+              onChange={(e) => setPlanName(e.target.value)}
+              disabled={sessionStatus === 'running'}
+              style={{ flex: 1 }}
+            />
+          )}
+          <button
+            className="topbar-btn"
+            onClick={() => void onImportExternal()}
+            disabled={sessionStatus === 'running' || !currentProjectId}
+            title="导入外部方案 md 文件（会归档到外部原路径）"
+          >
+            📥 导入外部方案
+          </button>
+          {planName.trim() && (
+            <button
+              className="topbar-btn"
+              onClick={() => void openPlanReview()}
+              disabled={!currentProjectId}
+              title="查看 / 编辑当前方案的 md"
+            >
+              👁 方案预览
+            </button>
+          )}
           <span
             className={`plan-progress-node ${sessionStatus === 'running' ? 'running' : sessionStatus === 'exited' ? 'done' : ''}`}
             title={`会话状态：${sessionStatus}`}
+            style={{ marginLeft: 'auto' }}
           >
-            {sessionStatus === 'running' ? '⏳ 运行中' : sessionStatus === 'exited' ? '✅ 已完成' : '─ 未启动'}
+            {sessionStatus === 'running'
+              ? '⏳ 运行中'
+              : sessionStatus === 'exited'
+                ? '✅ 已完成'
+                : '─ 未启动'}
           </span>
         </div>
       )}
@@ -760,6 +835,10 @@ export default function App() {
           onClose={() => setDiffReviewOpen(false)}
           onSubmit={submitDiffAnnotations}
           sessionRunning={sessionStatus === 'running'}
+          annotations={diffAnnotations}
+          onAnnotationsChange={setDiffAnnotations}
+          generalNote={diffGeneralNote}
+          onGeneralNoteChange={setDiffGeneralNote}
         />
       )}
       {showOnboarding && (

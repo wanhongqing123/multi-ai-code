@@ -163,36 +163,65 @@ function VirtualizedFileRows({
   const isChangeRow = (r: PairedRow): boolean =>
     r.kind === 'pair' && (r.left?.kind === 'del' || r.right?.kind === 'add')
 
-  // Widest content across both sides, measured in mono characters. We use
-  // it to pin `.dv-file-rows` min-width so the diff pane's own horizontal
-  // scrollbar becomes the single unified scroller — rather than per-cell
-  // scrollbars or per-row clipping.
-  const maxChars = useMemo(() => {
-    let m = 0
+  // Per-side max content width (in mono characters). Drives two fake
+  // horizontal scrollbars below; each side's scroll translates the code
+  // content inside its cells independently.
+  const { maxLeftChars, maxRightChars } = useMemo(() => {
+    let ml = 0
+    let mr = 0
     for (const r of rows) {
       if (r.kind === 'hunk') {
-        if (r.text.length > m) m = r.text.length
+        if (r.text.length > ml) ml = r.text.length
+        if (r.text.length > mr) mr = r.text.length
       } else {
         const l = r.left?.text.length ?? 0
         const rt = r.right?.text.length ?? 0
-        if (l > m) m = l
-        if (rt > m) m = rt
+        if (l > ml) ml = l
+        if (rt > mr) mr = rt
       }
     }
-    return m
+    return { maxLeftChars: ml, maxRightChars: mr }
   }, [rows])
 
-  // Each cell = (maxChars)ch + 90px (54 gutter + 20 sign + 16 padding).
-  // Row = 2 cells, so min-width = 2*maxChars ch + 180 px. When the diff
-  // pane is wider than this, cells size by flex:1 and no scrollbar shows.
-  const rowsMinWidth = `calc(${2 * maxChars}ch + 180px)`
+  const leftScrollRef = useRef<HTMLDivElement>(null)
+  const rightScrollRef = useRef<HTMLDivElement>(null)
+
+  // Reset scroll position when switching files.
+  useEffect(() => {
+    if (leftScrollRef.current) leftScrollRef.current.scrollLeft = 0
+    if (rightScrollRef.current) rightScrollRef.current.scrollLeft = 0
+    if (paneRef.current) {
+      paneRef.current.style.setProperty('--dv-left-scroll', '0px')
+      paneRef.current.style.setProperty('--dv-right-scroll', '0px')
+    }
+  }, [rows, paneRef])
+
+  const onLeftScroll = useCallback(
+    (e: React.UIEvent<HTMLDivElement>) => {
+      if (paneRef.current) {
+        paneRef.current.style.setProperty(
+          '--dv-left-scroll',
+          `${e.currentTarget.scrollLeft}px`
+        )
+      }
+    },
+    [paneRef]
+  )
+  const onRightScroll = useCallback(
+    (e: React.UIEvent<HTMLDivElement>) => {
+      if (paneRef.current) {
+        paneRef.current.style.setProperty(
+          '--dv-right-scroll',
+          `${e.currentTarget.scrollLeft}px`
+        )
+      }
+    },
+    [paneRef]
+  )
 
   return (
-    <div
-      ref={containerRef}
-      className="dv-file-rows"
-      style={{ minWidth: rowsMinWidth }}
-    >
+    <>
+    <div ref={containerRef} className="dv-file-rows">
       {topPad > 0 && <div style={{ height: topPad }} aria-hidden="true" />}
       {rows.slice(start, end).map((row, idx) => {
         const i = start + idx
@@ -229,7 +258,9 @@ function VirtualizedFileRows({
               <span className="dv-sign">
                 {left?.kind === 'del' ? '-' : left ? ' ' : ''}
               </span>
-              <span className="dv-content">{left ? left.text : ''}</span>
+              <span className="dv-content-clip">
+                <span className="dv-content">{left ? left.text : ''}</span>
+              </span>
             </div>
             <div
               className={`dv-cell dv-cell-right ${
@@ -247,13 +278,38 @@ function VirtualizedFileRows({
               <span className="dv-sign">
                 {right?.kind === 'add' ? '+' : right ? ' ' : ''}
               </span>
-              <span className="dv-content">{right ? right.text : ''}</span>
+              <span className="dv-content-clip">
+                <span className="dv-content">{right ? right.text : ''}</span>
+              </span>
             </div>
           </div>
         )
       })}
       {bottomPad > 0 && <div style={{ height: bottomPad }} aria-hidden="true" />}
     </div>
+    <div className="dv-hscroll-row" aria-hidden="true">
+      <div
+        ref={leftScrollRef}
+        className="dv-hscroll-side"
+        onScroll={onLeftScroll}
+      >
+        <div
+          className="dv-hscroll-track"
+          style={{ width: `calc(${maxLeftChars}ch + 74px)` }}
+        />
+      </div>
+      <div
+        ref={rightScrollRef}
+        className="dv-hscroll-side"
+        onScroll={onRightScroll}
+      >
+        <div
+          className="dv-hscroll-track"
+          style={{ width: `calc(${maxRightChars}ch + 74px)` }}
+        />
+      </div>
+    </div>
+    </>
   )
 }
 

@@ -3048,12 +3048,63 @@ html, body, #root {
   color: var(--mac-diff-del-fg);
 }
 
+/* Column 3 wrapper — takes the 1fr grid track, clips translated content
+   so it can't escape into the gutter/sign columns. */
+.dv-content-clip {
+  overflow: hidden;
+  min-width: 0;
+  /* give the transform a composite layer */
+  contain: paint;
+}
+
+/* `.dv-content` itself is the translated layer. Each side reads its own
+   CSS custom property so the two fake scrollbars at the bottom drive the
+   two sides independently. */
 .dv-cell .dv-content {
   color: inherit;
-  overflow: hidden;
-  text-overflow: clip;
+  display: inline-block;
   white-space: pre;
   min-width: 0;
+  will-change: transform;
+}
+
+.dv-cell-left .dv-content {
+  transform: translateX(calc(-1 * var(--dv-left-scroll, 0px)));
+}
+
+.dv-cell-right .dv-content {
+  transform: translateX(calc(-1 * var(--dv-right-scroll, 0px)));
+}
+
+/* Two fake horizontal scrollbars pinned to the bottom of the diff pane.
+   Each wraps a wide spacer; the browser renders a real native scrollbar
+   for it and we mirror its scrollLeft onto the corresponding CSS var. */
+.dv-hscroll-row {
+  position: sticky;
+  bottom: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  background: var(--mac-surface);
+  border-top: 1px solid var(--mac-border-subtle);
+  z-index: 5;
+}
+
+.dv-hscroll-side {
+  overflow-x: scroll;
+  overflow-y: hidden;
+  height: 14px;
+  font-family: var(--mac-font-mono);
+  font-size: var(--mac-text-mono);
+  border-right: 1px solid var(--mac-border-subtle);
+}
+
+.dv-hscroll-side:last-child {
+  border-right: none;
+}
+
+.dv-hscroll-track {
+  height: 1px;
+  pointer-events: none;
 }
 
 .dv-cell-right.dv-add .dv-content {

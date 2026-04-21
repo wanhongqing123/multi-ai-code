@@ -1,18 +1,24 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent, webUtils } from 'electron'
 
-export interface SpawnOptions {
+export interface SpawnRequest {
   sessionId: string
   projectId: string
-  stageId: number
   projectDir: string
-  cwd: string
-  command?: string
-  args?: string[]
+  targetRepo: string
+  planName: string
+  /** Absolute path resolved via resolvePlanArtifactAbs. */
+  planAbsPath: string
+  /** true when plan file does not yet exist on disk. */
+  planPending: boolean
+  /** First user message to feed after kickoff. */
+  initialUserMessage: string
+  /** CLI binary (claude | codex). */
+  command: string
+  /** CLI args. */
+  args: string[]
+  env?: Record<string, string>
   cols?: number
   rows?: number
-  env?: Record<string, string>
-  skipSystemPrompt?: boolean
-  label?: string
 }
 
 export interface DataEvent {
@@ -45,27 +51,6 @@ export interface ArtifactRecord {
   path: string
   kind: string
   created_at: string
-}
-
-export interface FeedbackEmittedEvent {
-  sessionId: string
-  projectId: string
-  fromStage: number
-  toStage: number
-  raw: string
-  params: Record<string, string>
-}
-
-export interface HandoffInjection {
-  sessionId: string
-  fromStage: number
-  toStage: number
-  artifactPath: string | null
-  artifactContent: string | null
-  summary?: string
-  verdict?: string
-  /** Optional — main process auto-loads design/acceptance from this dir. */
-  projectDir?: string
 }
 
 export interface FeedbackInjection {
@@ -293,7 +278,7 @@ const api = {
   },
 
   cc: {
-    spawn: (opts: SpawnOptions) =>
+    spawn: (opts: SpawnRequest) =>
       ipcRenderer.invoke('cc:spawn', opts) as Promise<{ ok: boolean; error?: string }>,
     write: (sessionId: string, data: string) =>
       ipcRenderer.send('cc:input', { sessionId, data }),
@@ -340,16 +325,6 @@ const api = {
       ipcRenderer.on('stage:done', handler)
       return () => ipcRenderer.removeListener('stage:done', handler)
     },
-    onFeedbackEmitted: (cb: (evt: FeedbackEmittedEvent) => void): (() => void) => {
-      const handler = (_e: IpcRendererEvent, evt: FeedbackEmittedEvent) => cb(evt)
-      ipcRenderer.on('stage:feedback-emitted', handler)
-      return () => ipcRenderer.removeListener('stage:feedback-emitted', handler)
-    },
-    injectHandoff: (h: HandoffInjection) =>
-      ipcRenderer.invoke('stage:inject-handoff', h) as Promise<{
-        ok: boolean
-        error?: string
-      }>,
     injectFeedback: (h: FeedbackInjection) =>
       ipcRenderer.invoke('stage:inject-feedback', h) as Promise<{
         ok: boolean

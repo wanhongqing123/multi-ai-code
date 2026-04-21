@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron'
-import { join } from 'path'
+import { join, isAbsolute, dirname } from 'path'
 import { tmpdir } from 'os'
 import { randomBytes } from 'crypto'
 import { execFile } from 'child_process'
@@ -13,7 +13,10 @@ import {
   listProjects,
   deleteProject as dbDeleteProject,
   updateProjectName,
-  touchProject
+  touchProject,
+  listArtifacts,
+  listEvents,
+  recordEvent
 } from './store/db.js'
 import {
   ensureRootDir,
@@ -27,6 +30,8 @@ import { listPlans, registerExternalPlan } from './orchestrator/plans.js'
 import { detectMsys, buildOpenMsysTerminalCommand } from './util/msys.js'
 import { spawn as spawnChild } from 'child_process'
 import { promises as fs } from 'fs'
+import { snapshotArtifact } from './store/snapshot.js'
+import { resolvePlanArtifactAbs } from './orchestrator/prompts.js'
 
 const isDev = !app.isPackaged
 
@@ -445,24 +450,6 @@ app.whenReady().then(async () => {
       }
       killAllSessions()
       const pdir = projectDirFn(id)
-      const stageDirs: Record<number, string> = {
-        2: 'stage2_impl',
-        3: 'stage3_acceptance',
-        4: 'stage4_test'
-      }
-      for (const [, dir] of Object.entries(stageDirs)) {
-        const link = join(pdir, 'workspaces', dir)
-        try {
-          await fs.rm(link, { force: true, recursive: false })
-        } catch {
-          /* ignore */
-        }
-        try {
-          await fs.symlink(path, link, 'dir')
-        } catch (err) {
-          return { ok: false, error: (err as Error).message }
-        }
-      }
       const metaPath = join(pdir, 'project.json')
       let meta: Record<string, unknown> = {}
       try {
@@ -743,6 +730,422 @@ app.whenReady().then(async () => {
       const r2 = await runGit(cwd, ['checkout', '-b', name])
       if (!r2.ok) return r2
       return { ok: true, created: true }
+    }
+  )
+
+  // ---------- Artifact handlers (single-stage) ----------
+
+  ipcMain.handle('event:list', (_e, { projectId, limit }: { projectId: string; limit?: number }) => {
+    return listEvents(projectId, limit ?? 500)
+  })
+
+  /** List snapshotted artifacts for a project, optionally filtered by stage. */
+  ipcMain.handle(
+    'artifact:list',
+    (_e, { projectId, stageId }: { projectId: string; stageId?: number }) => {
+      return listArtifacts(projectId, stageId)
+    }
+  )
+
+  /** Shared helper: materialize a content blob as the plan's design artifact,
+   *  optionally firing a synthesized stage:done. */
+  async function materializeArtifact(req: {
+    projectId: string
+    projectDir: string
+    content: string
+    sessionId?: string
+    kind: string
+    summary: string
+    /** When true, skip the stage:done broadcast (e.g. seeding for further refinement). */
+    skipBroadcast?: boolean
+    /** Human-readable label for the snapshot filename (e.g. plan name). */
+    label?: string
+    /** Override target path (absolute). When provided, content is written there
+     *  instead of the planArtifactPath default. */
+    externalArtifactPath?: string | null
+  }): Promise<{ ok: true; artifactPath: string; artifactAbs: string; snapshotPath: string | null } | { ok: false; error: string }> {
+    let artifactAbs: string
+    let artifactPathForEvent: string
+    if (req.externalArtifactPath && isAbsolute(req.externalArtifactPath)) {
+      artifactAbs = req.externalArtifactPath
+      artifactPathForEvent = artifactAbs
+    } else {
+      try {
+        artifactAbs = await resolvePlanArtifactAbs(req.projectDir, req.label)
+      } catch (err) {
+        return { ok: false, error: (err as Error).message }
+      }
+      artifactPathForEvent = artifactAbs
+    }
+    await fs.mkdir(dirname(artifactAbs), { recursive: true })
+    await fs.writeFile(artifactAbs, req.content, 'utf8')
+    const snapshotPath = await snapshotArtifact({
+      projectId: req.projectId,
+      projectDir: req.projectDir,
+      stageId: 1,
+      content: req.content,
+      kind: req.kind,
+      label: req.label
+    })
+    if (!req.skipBroadcast) {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) {
+          win.webContents.send('stage:done', {
+            sessionId: req.sessionId ?? `${req.projectId}:stage1`,
+            projectId: req.projectId,
+            stageId: 1,
+            raw: `<<${req.kind}>>`,
+            params: { summary: req.summary },
+            artifactPath: artifactPathForEvent,
+            artifactContent: req.content,
+            snapshotPath
+          })
+        }
+      }
+    }
+    recordEvent({
+      project_id: req.projectId,
+      from_stage: 1,
+      kind: `artifact:${req.kind}`,
+      payload: {
+        summary: req.summary,
+        artifactPath: artifactPathForEvent,
+        label: req.label
+      }
+    })
+    return { ok: true, artifactPath: artifactPathForEvent, artifactAbs, snapshotPath }
+  }
+
+  /**
+   * Restore a historical snapshot into the plan's design artifact path, then
+   * fire a synthesized `stage:done` so the completion drawer pops.
+   */
+  ipcMain.handle(
+    'artifact:restore',
+    async (
+      _e,
+      req: {
+        projectId: string
+        projectDir: string
+        stageId: number
+        snapshotPath: string
+        sessionId?: string
+        label?: string
+      }
+    ) => {
+      try {
+        const snapAbs = isAbsolute(req.snapshotPath)
+          ? req.snapshotPath
+          : join(projectDirFn(req.projectId), req.snapshotPath)
+        const content = await fs.readFile(snapAbs, 'utf8')
+        return materializeArtifact({
+          projectId: req.projectId,
+          projectDir: req.projectDir,
+          content,
+          sessionId: req.sessionId,
+          kind: 'restored',
+          summary: '选用历史方案',
+          label: req.label
+        })
+      } catch (err) {
+        return { ok: false, error: (err as Error).message }
+      }
+    }
+  )
+
+  /**
+   * Seed the plan's design artifact with either a historical snapshot or an
+   * external file, WITHOUT firing the completion drawer.
+   */
+  ipcMain.handle(
+    'artifact:seed',
+    async (
+      _e,
+      req: {
+        projectId: string
+        projectDir: string
+        stageId: number
+        snapshotPath?: string
+        pickFile?: boolean
+        label?: string
+      }
+    ) => {
+      try {
+        let content: string
+        let sourceLabel: string
+        if (req.snapshotPath) {
+          const abs = isAbsolute(req.snapshotPath)
+            ? req.snapshotPath
+            : join(projectDirFn(req.projectId), req.snapshotPath)
+          content = await fs.readFile(abs, 'utf8')
+          sourceLabel = `历史快照 ${req.snapshotPath}`
+        } else if (req.pickFile) {
+          const res = await dialog.showOpenDialog({
+            title: '选择要继续完善的方案文件',
+            properties: ['openFile'],
+            filters: [
+              { name: 'Markdown / Text', extensions: ['md', 'markdown', 'txt'] },
+              { name: 'All Files', extensions: ['*'] }
+            ]
+          })
+          if (res.canceled || res.filePaths.length === 0) {
+            return { ok: false, canceled: true }
+          }
+          content = await fs.readFile(res.filePaths[0], 'utf8')
+          sourceLabel = `外部文件 ${res.filePaths[0]}`
+        } else {
+          return { ok: false, error: 'either snapshotPath or pickFile required' }
+        }
+        const mat = await materializeArtifact({
+          projectId: req.projectId,
+          projectDir: req.projectDir,
+          content,
+          kind: 'refine-seed',
+          summary: `基于${sourceLabel}继续完善`,
+          skipBroadcast: true,
+          label: req.label
+        })
+        if (!mat.ok) return mat
+        return {
+          ok: true,
+          artifactPath: mat.artifactPath,
+          artifactAbs: mat.artifactAbs,
+          snapshotPath: mat.snapshotPath,
+          sourceLabel
+        }
+      } catch (err) {
+        return { ok: false, error: (err as Error).message }
+      }
+    }
+  )
+
+  /** Import an external file as the plan's design artifact. Opens a native
+   *  file picker, reads the chosen file, then materializes + fires stage:done. */
+  ipcMain.handle(
+    'artifact:import-file',
+    async (
+      _e,
+      req: {
+        projectId: string
+        projectDir: string
+        stageId: number
+        sessionId?: string
+        label?: string
+      }
+    ) => {
+      try {
+        const res = await dialog.showOpenDialog({
+          title: '选择要作为本阶段产物的文件',
+          properties: ['openFile'],
+          filters: [
+            { name: 'Markdown / Text', extensions: ['md', 'markdown', 'txt'] },
+            { name: 'All Files', extensions: ['*'] }
+          ]
+        })
+        if (res.canceled || res.filePaths.length === 0) {
+          return { ok: false, canceled: true }
+        }
+        const content = await fs.readFile(res.filePaths[0], 'utf8')
+        return materializeArtifact({
+          projectId: req.projectId,
+          projectDir: req.projectDir,
+          content,
+          sessionId: req.sessionId,
+          kind: 'imported',
+          summary: `导入文件: ${res.filePaths[0]}`,
+          label: req.label
+        })
+      } catch (err) {
+        return { ok: false, error: (err as Error).message }
+      }
+    }
+  )
+
+  /** Read a snapshot file by its project-dir-relative path. */
+  ipcMain.handle(
+    'artifact:read',
+    async (_e, { projectDir, path }: { projectDir: string; path: string }) => {
+      try {
+        const abs = isAbsolute(path) ? path : join(projectDir, path)
+        const content = await fs.readFile(abs, 'utf8')
+        return { ok: true, content }
+      } catch (err) {
+        return { ok: false, error: (err as Error).message }
+      }
+    }
+  )
+
+  /** Read the CURRENT working artifact for the plan's design.
+   *  Returns absolute path + content so the renderer can preview the plan. */
+  ipcMain.handle(
+    'artifact:read-current',
+    async (
+      _e,
+      {
+        projectDir,
+        stageId: _stageId,
+        label
+      }: { projectDir: string; stageId: number; label?: string }
+    ) => {
+      // Check for external plan first
+      let abs: string | null = null
+      if (label?.trim()) {
+        const sources = await listPlans(projectDir)
+        const ext = sources.find((p) => p.source === 'external' && p.name === label.trim())
+        if (ext && isAbsolute(ext.abs)) abs = ext.abs
+      }
+      if (!abs) {
+        try {
+          abs = await resolvePlanArtifactAbs(projectDir, label)
+        } catch (err) {
+          return { ok: false, path: null, relPath: null, error: (err as Error).message }
+        }
+      }
+      try {
+        const content = await fs.readFile(abs, 'utf8')
+        return { ok: true, path: abs, relPath: abs, content }
+      } catch (err) {
+        return {
+          ok: false,
+          path: abs,
+          relPath: abs,
+          error: (err as Error).message
+        }
+      }
+    }
+  )
+
+  /** Open a text file and return its content WITHOUT materializing an artifact.
+   *  Used by the plan preview-before-commit flow. */
+  ipcMain.handle(
+    'dialog:pick-text-file',
+    async (_e, opts: { title?: string } = {}) => {
+      try {
+        const res = await dialog.showOpenDialog({
+          title: opts.title ?? '选择要导入的文件',
+          properties: ['openFile'],
+          filters: [
+            { name: 'Markdown / Text', extensions: ['md', 'markdown', 'txt'] },
+            { name: 'All Files', extensions: ['*'] }
+          ]
+        })
+        if (res.canceled || res.filePaths.length === 0) {
+          return { canceled: true as const }
+        }
+        const path = res.filePaths[0]
+        const content = await fs.readFile(path, 'utf8')
+        return { canceled: false as const, path, content }
+      } catch (err) {
+        return { canceled: false as const, error: (err as Error).message }
+      }
+    }
+  )
+
+  /** Commit caller-provided content as the plan artifact (post user preview). */
+  ipcMain.handle(
+    'artifact:commit-content',
+    async (
+      _e,
+      req: {
+        projectId: string
+        projectDir: string
+        stageId: number
+        content: string
+        sourcePath: string
+        sessionId?: string
+        label?: string
+      }
+    ) => {
+      // Import from file flow: archive back to the original file (not default location)
+      // and remember the mapping so subsequent spawns keep writing to the same source path.
+      const useExternal = !!req.sourcePath && isAbsolute(req.sourcePath)
+      if (useExternal && req.label) {
+        try {
+          await registerExternalPlan(req.projectDir, req.sourcePath)
+        } catch {
+          /* best-effort; mapping will simply not persist across restarts */
+        }
+      }
+      return materializeArtifact({
+        projectId: req.projectId,
+        projectDir: req.projectDir,
+        content: req.content,
+        sessionId: req.sessionId,
+        kind: 'imported',
+        summary: `导入文件: ${req.sourcePath}`,
+        label: req.label,
+        externalArtifactPath: useExternal ? req.sourcePath : null
+      })
+    }
+  )
+
+  /** Manually trigger the "stage done" drawer even if the CLI never emitted the marker. */
+  ipcMain.handle(
+    'stage:trigger-done',
+    async (
+      _e,
+      req: {
+        sessionId: string
+        projectId: string
+        stageId: number
+        projectDir: string
+        artifactPath?: string
+        verdict?: string
+        summary?: string
+      }
+    ) => {
+      let artifactAbs: string | null = null
+      let artifactRel: string | null = null
+      if (req.artifactPath) {
+        artifactRel = req.artifactPath
+        artifactAbs = isAbsolute(req.artifactPath)
+          ? req.artifactPath
+          : join(req.projectDir, req.artifactPath)
+      } else {
+        try {
+          artifactAbs = await resolvePlanArtifactAbs(req.projectDir, undefined)
+          artifactRel = artifactAbs
+        } catch {
+          artifactAbs = null
+          artifactRel = null
+        }
+      }
+      let artifactContent: string | null = null
+      if (artifactAbs) {
+        try {
+          artifactContent = await fs.readFile(artifactAbs, 'utf8')
+        } catch {
+          artifactContent = null
+        }
+      }
+      let snapshotPath: string | null = null
+      if (artifactContent) {
+        snapshotPath = await snapshotArtifact({
+          projectId: req.projectId,
+          projectDir: req.projectDir,
+          stageId: req.stageId,
+          content: artifactContent,
+          kind: 'manual'
+        })
+      }
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) {
+          win.webContents.send('stage:done', {
+            sessionId: req.sessionId,
+            projectId: req.projectId,
+            stageId: req.stageId,
+            raw: '<<manual>>',
+            params: {
+              ...(req.verdict ? { verdict: req.verdict } : {}),
+              ...(req.summary ? { summary: req.summary } : {})
+            },
+            artifactPath: artifactRel,
+            artifactContent,
+            snapshotPath
+          })
+        }
+      }
+      return { ok: true, artifactFound: !!artifactContent, snapshotPath }
     }
   )
 

@@ -3,66 +3,39 @@ import { promises as fs } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import {
-  stageArtifactPath,
+  planArtifactPath,
+  resolvePlanArtifactAbs,
   renderTemplate,
-  resolveStageArtifactAbs
+  mainCliArgs,
+  MAIN_COMMAND_DEFAULT
 } from './prompts.js'
 
-describe('stageArtifactPath', () => {
-  it('stage 1 with targetRepo returns absolute path under .multi-ai-code/designs', () => {
-    expect(stageArtifactPath(1, 'my-plan', '/tmp/repo')).toBe(
+describe('planArtifactPath', () => {
+  it('returns <target_repo>/.multi-ai-code/designs/<label>.md when targetRepo is set', () => {
+    expect(planArtifactPath('my-plan', '/tmp/repo')).toBe(
       '/tmp/repo/.multi-ai-code/designs/my-plan.md'
     )
   })
 
-  it('stage 1 with targetRepo and no label defaults to design.md', () => {
-    expect(stageArtifactPath(1, null, '/tmp/repo')).toBe(
+  it('defaults label to "design" when empty/null', () => {
+    expect(planArtifactPath(null, '/tmp/repo')).toBe(
       '/tmp/repo/.multi-ai-code/designs/design.md'
     )
   })
 
-  it('stage 1 sanitizes unsafe filename characters', () => {
-    expect(stageArtifactPath(1, 'foo/bar:baz', '/tmp/repo')).toBe(
+  it('sanitizes unsafe filename characters', () => {
+    expect(planArtifactPath('foo/bar:baz', '/tmp/repo')).toBe(
       '/tmp/repo/.multi-ai-code/designs/foo_bar_baz.md'
     )
   })
 
-  it('stage 1 without targetRepo keeps legacy project-dir-relative path', () => {
-    expect(stageArtifactPath(1, 'my-plan')).toBe(
-      'workspaces/stage1_design/my-plan.md'
-    )
-  })
-
-  it('stage 2-4 ignore targetRepo and return legacy relative path', () => {
-    expect(stageArtifactPath(2, null, '/tmp/repo')).toBe('artifacts/impl-summary.md')
-    expect(stageArtifactPath(3, null, '/tmp/repo')).toBe('artifacts/acceptance.md')
-    expect(stageArtifactPath(4, null, '/tmp/repo')).toBe('artifacts/test-report.md')
+  it('returns undefined when targetRepo is missing', () => {
+    expect(planArtifactPath('my-plan', null)).toBeUndefined()
+    expect(planArtifactPath('my-plan', undefined)).toBeUndefined()
   })
 })
 
-describe('renderTemplate planPending', () => {
-  it('when targetRepo is set, uses <targetRepo>/.multi-ai-code/designs/<placeholder>.md', () => {
-    const out = renderTemplate('ART={{ARTIFACT_PATH}}', {
-      projectDir: '/p',
-      artifactPath: 'ignored',
-      planPending: true,
-      targetRepo: '/tmp/repo'
-    })
-    expect(out).toBe(
-      'ART=/tmp/repo/.multi-ai-code/designs/<你稍后将向用户询问得到的方案名称>.md'
-    )
-  })
-
-  it('when absolute artifactPath is passed, keeps it as-is', () => {
-    const out = renderTemplate('ART={{ARTIFACT_PATH}}', {
-      projectDir: '/p',
-      artifactPath: '/abs/path.md'
-    })
-    expect(out).toBe('ART=/abs/path.md')
-  })
-})
-
-describe('resolveStageArtifactAbs', () => {
+describe('resolvePlanArtifactAbs', () => {
   let projectDir: string
   let targetRepo: string
 
@@ -79,29 +52,69 @@ describe('resolveStageArtifactAbs', () => {
     await fs.rm(targetRepo, { recursive: true, force: true })
   })
 
-  it('stage 1 resolves to <target_repo>/.multi-ai-code/designs/<label>.md', async () => {
-    const abs = await resolveStageArtifactAbs(projectDir, 1, 'my-plan')
+  it('resolves to <target_repo>/.multi-ai-code/designs/<label>.md', async () => {
+    const abs = await resolvePlanArtifactAbs(projectDir, 'my-plan')
     expect(abs).toBe(join(targetRepo, '.multi-ai-code', 'designs', 'my-plan.md'))
   })
 
-  it('stage 1 with no label uses design.md', async () => {
-    const abs = await resolveStageArtifactAbs(projectDir, 1, null)
+  it('defaults label to design.md', async () => {
+    const abs = await resolvePlanArtifactAbs(projectDir, null)
     expect(abs).toBe(join(targetRepo, '.multi-ai-code', 'designs', 'design.md'))
   })
 
-  it('stage 1 falls back to legacy path when project.json missing', async () => {
+  it('throws when project.json is missing', async () => {
     await fs.rm(join(projectDir, 'project.json'))
-    const abs = await resolveStageArtifactAbs(projectDir, 1, 'my-plan')
-    expect(abs).toBe(join(projectDir, 'workspaces', 'stage1_design', 'my-plan.md'))
+    await expect(resolvePlanArtifactAbs(projectDir, 'my-plan')).rejects.toThrow()
+  })
+})
+
+describe('renderTemplate', () => {
+  it('replaces all documented variables', () => {
+    const out = renderTemplate(
+      'P={{PROJECT_NAME}} R={{TARGET_REPO}} C={{STAGE_CWD}} D={{PROJECT_DIR}} A={{ARTIFACT_PATH}}',
+      {
+        projectDir: '/p',
+        projectName: 'demo',
+        targetRepo: '/repo',
+        stageCwd: '/repo',
+        artifactPath: '/repo/.multi-ai-code/designs/x.md'
+      }
+    )
+    expect(out).toBe('P=demo R=/repo C=/repo D=/p A=/repo/.multi-ai-code/designs/x.md')
   })
 
-  it('stage 2 resolves to <projectDir>/artifacts/impl-summary.md', async () => {
-    const abs = await resolveStageArtifactAbs(projectDir, 2, null)
-    expect(abs).toBe(join(projectDir, 'artifacts', 'impl-summary.md'))
+  it('uses planPending placeholder when flag is set', () => {
+    const out = renderTemplate('A={{ARTIFACT_PATH}}', {
+      projectDir: '/p',
+      artifactPath: 'ignored',
+      planPending: true,
+      targetRepo: '/repo'
+    })
+    expect(out).toBe('A=/repo/.multi-ai-code/designs/<你稍后将向用户询问得到的方案名称>.md')
   })
 
-  it('stage 3 resolves to <projectDir>/artifacts/acceptance.md', async () => {
-    const abs = await resolveStageArtifactAbs(projectDir, 3, null)
-    expect(abs).toBe(join(projectDir, 'artifacts', 'acceptance.md'))
+  it('resolves relative artifactPath against projectDir', () => {
+    const out = renderTemplate('A={{ARTIFACT_PATH}}', {
+      projectDir: '/p',
+      artifactPath: 'artifacts/foo.md'
+    })
+    expect(out).toBe('A=/p/artifacts/foo.md')
+  })
+})
+
+describe('mainCliArgs', () => {
+  it('default binary is claude', () => {
+    expect(MAIN_COMMAND_DEFAULT).toBe('claude')
+  })
+
+  it('claude produces permission-mode auto + allowlist', () => {
+    const args = mainCliArgs('claude')
+    expect(args).toContain('--permission-mode')
+    expect(args).toContain('auto')
+    expect(args).toContain('--allowedTools')
+  })
+
+  it('codex produces --full-auto', () => {
+    expect(mainCliArgs('codex')).toEqual(['--full-auto'])
   })
 })

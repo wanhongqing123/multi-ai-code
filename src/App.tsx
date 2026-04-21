@@ -404,32 +404,18 @@ export default function App() {
     [currentProjectId]
   )
 
-  /** Ensure the target stage's CC is running; spawn + wait for prompt priming. */
+  // TODO Task 9: ensureStageRunning will be replaced by a single-stage spawn that
+  // uses the new SpawnRequest shape (targetRepo, planAbsPath, initialUserMessage, etc).
+  // For now this is a stub that only checks if the session is already running.
   const ensureStageRunning = useCallback(
-    async (stageId: number, sid: string) => {
+    async (_stageId: number, sid: string) => {
       if (!currentProjectId) throw new Error('未选择项目')
       const running = await window.api.cc.has(sid)
       if (running) return
-      const override = stageConfigs[String(stageId)]
-      const res = await window.api.cc.spawn({
-        sessionId: sid,
-        projectId: currentProjectId,
-        stageId,
-        projectDir,
-        cwd: projectDir,
-        label: planName || undefined,
-        command: override?.command,
-        args: override?.args,
-        env: override?.env
-      })
-      if (!res.ok) throw new Error(`spawn stage ${stageId} failed: ${res.error}`)
-      // Wait for system prompt injection + sendMessage to finish.
-      // Stage 1 (codex) uses PRIMING_DELAY_MS_STAGE1=2500ms; others 1200ms.
-      // sendMessage itself takes time (chunked writes). Wait generously.
-      const waitMs = stageId === 1 ? 5000 : 3000
-      await new Promise((r) => setTimeout(r, waitMs))
+      // Single-stage spawn is handled by StagePanel directly in Task 9.
+      // This stub prevents crashes when advance/feedback code paths call it.
     },
-    [projectDir, planName, currentProjectId, stageConfigs]
+    [currentProjectId]
   )
 
   const onPlanSelect = useCallback(
@@ -638,28 +624,15 @@ export default function App() {
     [sessionIdFor]
   )
 
+  // TODO Task 9: advance() used stage:inject-handoff which is removed in single-stage
+  // architecture. The multi-stage advance flow (spawning next stage + injecting handoff)
+  // will be replaced by the single-stage Task 9 UI rewrite.
   const advance = useCallback(async () => {
     if (!pendingDone) return
-    const next = nextStageFor(pendingDone.stageId, pendingDone.params.verdict, stageSkips)
-    if (next === null) {
-      setPendingDone(null)
-      return
-    }
-    const nextSession = sessionIdFor(next)
-    await ensureStageRunning(next, nextSession)
-    const res = await window.api.stage.injectHandoff({
-      sessionId: nextSession,
-      fromStage: pendingDone.stageId,
-      toStage: next,
-      artifactPath: pendingDone.artifactPath,
-      artifactContent: pendingDone.artifactContent,
-      summary: pendingDone.params.summary,
-      verdict: pendingDone.params.verdict,
-      projectDir
-    })
-    if (!res.ok) throw new Error(`inject handoff failed: ${res.error}`)
+    // In single-stage architecture, just dismiss the completion drawer.
+    // The full single-stage flow is implemented in Task 9.
     setPendingDone(null)
-  }, [pendingDone, sessionIdFor, ensureStageRunning])
+  }, [pendingDone])
 
   /** User-initiated reverse feedback from stage N to an earlier stage. */
   const submitFeedback = useCallback(
@@ -673,7 +646,10 @@ export default function App() {
         toStage: params.toStage,
         note: params.note
       })
-      if (!res.ok) throw new Error(`inject feedback failed: ${res.error}`)
+      if (!res.ok) {
+        showToast(`提交反馈失败：${res.error ?? 'no session'}`, { level: 'error' })
+        throw new Error(`inject feedback failed: ${res.error}`)
+      }
       if (params.alsoKillCurrent) {
         await window.api.cc.kill(sessionIdFor(feedbackFrom))
       }
@@ -697,7 +673,10 @@ export default function App() {
         artifactPath: pendingDone.artifactPath ?? undefined,
         artifactContent: pendingDone.artifactContent ?? undefined
       })
-      if (!res.ok) throw new Error(`inject feedback failed: ${res.error}`)
+      if (!res.ok) {
+        showToast(`提交反馈失败：${res.error ?? 'no session'}`, { level: 'error' })
+        throw new Error(`inject feedback failed: ${res.error}`)
+      }
       setPendingDone(null)
     },
     [pendingDone, sessionIdFor, ensureStageRunning]

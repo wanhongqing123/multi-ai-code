@@ -443,7 +443,9 @@ export default function StagePanel(props: StagePanelProps) {
     } catch {
       /* ignore */
     }
-    const res = await window.api.cc.spawn({
+    // TODO Task 9: replace with new SpawnRequest shape (targetRepo, planAbsPath,
+    // initialUserMessage, planPending, etc.) once the single-stage UI is implemented.
+    const res = await (window.api.cc.spawn as any)({
       sessionId,
       projectId,
       stageId,

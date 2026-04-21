@@ -1,23 +1,9 @@
 import { promises as fs } from 'fs'
 import { join, dirname, isAbsolute } from 'path'
 import { fileURLToPath } from 'url'
+import { designArchiveDir } from '../store/paths.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-
-/**
- * Default artifact path per stage.
- * Stage 1: relative form kept only as a legacy fallback when targetRepo is
- *          not available. The canonical Stage 1 artifact lives under
- *          <target_repo>/.multi-ai-code/designs/<label>.md — see
- *          stageArtifactPath() / resolveStageArtifactAbs() below.
- * Stages 2-4: relative to project dir.
- */
-export const STAGE_ARTIFACTS: Record<number, string> = {
-  1: 'workspaces/stage1_design/design.md',
-  2: 'artifacts/impl-summary.md',
-  3: 'artifacts/acceptance.md',
-  4: 'artifacts/test-report.md'
-}
 
 function sanitizeLabel(label: string): string {
   return label
@@ -28,76 +14,39 @@ function sanitizeLabel(label: string): string {
 }
 
 /**
- * Compute a stage's artifact path.
- *
- * Stage 1:
- *   - When `targetRepo` is supplied, returns the absolute canonical path
- *     `<targetRepo>/.multi-ai-code/designs/<label>.md`. Label defaults to
- *     `design` when empty/null.
- *   - Without `targetRepo`, falls back to the project-dir-relative legacy
- *     path (kept so display/event code paths that lack targetRepo don't
- *     break).
- * Stages 2-4: always return project-dir-relative paths; `targetRepo` is
- * ignored.
+ * Absolute path for a plan's design markdown.
+ * Returns undefined when targetRepo is missing.
  */
-export function stageArtifactPath(
-  stageId: number,
-  label?: string | null,
-  targetRepo?: string | null
-): string {
-  if (stageId === 1) {
-    const safe = label && label.trim() ? sanitizeLabel(label) : 'design'
-    if (targetRepo) {
-      const root = targetRepo.replace(/[\/\\]+$/, '')
-      return `${root}/.multi-ai-code/designs/${safe}.md`
-    }
-    return `workspaces/stage1_design/${safe}.md`
+export function planArtifactPath(
+  label: string | null | undefined,
+  targetRepo: string | null | undefined
+): string | undefined {
+  if (!targetRepo) return undefined
+  const safe = label && label.trim() ? sanitizeLabel(label) : 'design'
+  return join(designArchiveDir(targetRepo), `${safe}.md`)
+}
+
+/**
+ * Reads `project.json` from `projectDir` to derive target_repo, then returns
+ * the canonical design path. Throws if project.json is missing or malformed.
+ */
+export async function resolvePlanArtifactAbs(
+  projectDir: string,
+  label: string | null | undefined
+): Promise<string> {
+  const metaPath = join(projectDir, 'project.json')
+  const raw = await fs.readFile(metaPath, 'utf8')
+  const meta = JSON.parse(raw) as { target_repo?: string }
+  if (!meta.target_repo) {
+    throw new Error(`project.json missing target_repo: ${metaPath}`)
   }
-  return STAGE_ARTIFACTS[stageId]
+  const p = planArtifactPath(label, meta.target_repo)
+  if (!p) throw new Error('planArtifactPath returned undefined')
+  return p
 }
 
-/**
- * Per-stage cwd (relative to project dir).
- * Stage 1 runs in an isolated empty workspace (codex --full-auto is sandboxed
- * to its cwd subtree and therefore cannot touch source code).
- * Stages 2-4 cd into target_repo (via symlink) since they need to read/run/test code.
- */
-export const STAGE_CWD: Record<number, string> = {
-  1: 'workspaces/stage1_design',
-  2: 'workspaces/stage2_impl',
-  3: 'workspaces/stage3_acceptance',
-  4: 'workspaces/stage4_test'
-}
+export const MAIN_COMMAND_DEFAULT = 'claude'
 
-export const STAGE_NAMES: Record<number, string> = {
-  1: '方案设计',
-  2: '方案实施',
-  3: '方案验收',
-  4: '测试验证'
-}
-
-/**
- * Per-stage CLI binary.
- *   Stage 1 (方案设计) uses `claude` (Claude Code) — its brainstorming /
- *     writing-plans skills and auto-loaded CLAUDE.md fit the pure
- *     conversation-driven design flow best.
- *   Stage 2 (方案实施) uses `codex` (OpenAI Codex CLI) with --full-auto —
- *     the sandbox allows writing inside cwd subtree (target_repo), which is
- *     exactly the impl stage's scope.
- *   Stage 3 / 4 (验收 / 测试) stay on `claude` — read-heavy, needs MCP/tools.
- */
-export const STAGE_COMMAND: Record<number, string> = {
-  1: 'claude',
-  2: 'codex',
-  3: 'claude',
-  4: 'claude'
-}
-
-/**
- * Safe read-only / inspection commands pre-approved for every Claude stage.
- * `auto` permission mode already auto-judges safety, but explicit allow-listing
- * removes any chance of a prompt for these common operations.
- */
 const SAFE_READS = [
   'Read',
   'Glob',
@@ -123,114 +72,58 @@ const SAFE_GIT = [
   'Bash(git rev-parse:*)'
 ]
 
-const TEST_RUNNERS = [
-  'Bash(npm test:*)',
-  'Bash(npm run test:*)',
-  'Bash(pnpm test:*)',
-  'Bash(yarn test:*)',
-  'Bash(pytest:*)',
-  'Bash(go test:*)',
-  'Bash(cargo test:*)',
-  'Bash(make test:*)'
-]
+const WRITE_TOOLS = ['Write', 'Edit', 'MultiEdit']
 
-const BUILD_RUNNERS = [
-  'Bash(npm run build:*)',
-  'Bash(pnpm build:*)',
-  'Bash(yarn build:*)',
-  'Bash(make:*)',
-  'Bash(docker build:*)',
-  'Bash(cargo build:*)',
-  'Bash(go build:*)'
-]
-
-function claudeArgs(extra: string[] = []): string[] {
-  const allowed = [...SAFE_READS, ...SAFE_GIT, ...extra].join(' ')
+/**
+ * Default CLI args for the main single-stage AI session.
+ *   - claude: auto permission mode + read/grep/git allowlist + write tools
+ *   - codex: --full-auto (sandbox bounded by cwd = target_repo)
+ */
+export function mainCliArgs(
+  binary: string = MAIN_COMMAND_DEFAULT
+): string[] {
+  if (binary === 'codex') return ['--full-auto']
+  const allowed = [...SAFE_READS, ...SAFE_GIT, ...WRITE_TOOLS].join(' ')
   return ['--permission-mode', 'auto', '--allowedTools', allowed]
 }
 
-/**
- * Per-stage CLI args. Hard "only Stage 2 (方案实施) modifies code" constraint is
- * enforced in role prompts; allow-lists below just spare common safe ops from prompts.
- *
- *   - Claude (stage 1 — design): read-only allowlist; no code/test/build execution.
- *   - Codex  (stage 2 — impl):    --full-auto — sandbox bounded by cwd (target_repo).
- *   - Claude (stages 3-4):         --permission-mode auto + per-stage allowlist.
- */
-export const STAGE_CLI_ARGS: Record<number, string[]> = {
-  // design stage: read + git-readonly + Write/Edit (so the design md file can
-  // be written without per-call permission prompts). Writing source code is
-  // additionally barred by the role prompt & cwd isolation.
-  1: claudeArgs(['Write', 'Edit']),
-  2: ['--full-auto'], // impl stage: codex sandbox write-in-cwd
-  // review stage: user-driven annotations drive code edits. Needs Write
-  // powers to act on annotations; role prompt constrains it to "only modify
-  // what the annotations say".
-  3: claudeArgs(['Write', 'Edit', 'MultiEdit']),
-  4: claudeArgs([...TEST_RUNNERS, ...BUILD_RUNNERS])
-}
-
 function promptsDir(): string {
-  // In dev/prod both: prompts files are shipped alongside the compiled main
-  // under electron/prompts. In prod they remain in app resources; we ship them
-  // via electron-builder "files" glob. Resolve relative to the compiled file.
   return join(__dirname, '..', '..', 'electron', 'prompts')
 }
 
 function fallbackPromptsDir(): string {
-  // Fallback when running packaged app where source is gone: co-located copy
   return join(__dirname, 'prompts')
 }
 
-export async function loadStagePromptTemplate(stageId: number): Promise<string> {
-  const names: Record<number, string> = {
-    1: 'stage1-design.md',
-    2: 'stage2-impl.md',
-    3: 'stage3-acceptance.md',
-    4: 'stage4-test.md'
-  }
-  const file = names[stageId]
-  if (!file) throw new Error(`unknown stage ${stageId}`)
-
+export async function loadMainPromptTemplate(): Promise<string> {
   for (const base of [promptsDir(), fallbackPromptsDir()]) {
     try {
-      return await fs.readFile(join(base, file), 'utf8')
+      return await fs.readFile(join(base, 'main.md'), 'utf8')
     } catch {
-      // try next
+      /* try next */
     }
   }
-  throw new Error(`prompt template not found for stage ${stageId}`)
+  throw new Error('prompt template not found: main.md')
 }
 
 export interface RenderContext {
   projectDir: string
-  /**
-   * Artifact path used by platform to read back. Project-dir-relative for
-   * Stages 2-4; absolute (target_repo-based) for Stage 1 since the canonical
-   * Stage 1 archive lives under <target_repo>/.multi-ai-code/designs/.
-   */
+  /** Absolute path to the plan markdown. */
   artifactPath: string
   projectName?: string
   targetRepo?: string
   stageCwd?: string
-  /**
-   * Stage 1 only. When true, the user has NOT entered a plan name yet —
-   * the artifact filename will be decided at archive time by asking the user.
-   * Renders {{ARTIFACT_PATH}} as a self-explanatory placeholder so the CLI
-   * knows to prompt the user for the name BEFORE writing the final file.
-   */
+  /** When true, renderTemplate uses a placeholder in ARTIFACT_PATH so the
+   *  CLI can ask the user to pick a plan name at archive time. */
   planPending?: boolean
 }
 
 export function renderTemplate(tpl: string, ctx: RenderContext): string {
-  // Pass absolute path to the AI to avoid any cwd-relative ambiguity.
   let artifactAbs: string
   if (ctx.planPending) {
     const root = (ctx.targetRepo ?? ctx.projectDir).replace(/[\/\\]+$/, '')
     artifactAbs = `${root}/.multi-ai-code/designs/<你稍后将向用户询问得到的方案名称>.md`
   } else if (isAbsolute(ctx.artifactPath)) {
-    // Already absolute (POSIX or Windows) — e.g. externally-imported plan
-    // archived to its origin file. Use as-is.
     artifactAbs = ctx.artifactPath
   } else {
     artifactAbs = `${ctx.projectDir.replace(/\/$/, '')}/${ctx.artifactPath}`
@@ -245,7 +138,7 @@ export function renderTemplate(tpl: string, ctx: RenderContext): string {
 
 function buildProjectContextBlock(ctx: RenderContext): string {
   return [
-    '# 项目上下文（平台自动注入，所有阶段共享）',
+    '# 项目上下文（平台自动注入）',
     '',
     `- **项目名**：${ctx.projectName ?? '(未设置)'}`,
     `- **代码仓库绝对路径**：${ctx.targetRepo ?? '(未设置)'}`,
@@ -257,129 +150,8 @@ function buildProjectContextBlock(ctx: RenderContext): string {
   ].join('\n')
 }
 
-export async function buildSystemPrompt(
-  stageId: number,
-  ctx: RenderContext
-): Promise<string> {
-  const tpl = await loadStagePromptTemplate(stageId)
+export async function buildSystemPrompt(ctx: RenderContext): Promise<string> {
+  const tpl = await loadMainPromptTemplate()
   const body = renderTemplate(tpl, ctx)
   return buildProjectContextBlock(ctx) + body
-}
-
-export interface HandoffContext {
-  fromStage: number
-  toStage: number
-  artifactPath: string | null
-  artifactContent: string | null
-  /** Stage 1 design.md content; always bundled when to stage >= 3 for traceability. */
-  designSpec?: string | null
-  /** Stage 3 acceptance.md content; bundled when advancing 3 → 4 so tester has criteria. */
-  acceptanceReport?: string | null
-  summary?: string
-  verdict?: string
-  reason?: string
-}
-
-/**
- * Builds the message to feed into the NEXT stage's CC when advancing forward.
- */
-export function buildForwardHandoff(h: HandoffContext): string {
-  const fromName = STAGE_NAMES[h.fromStage] ?? `Stage ${h.fromStage}`
-  const toName = STAGE_NAMES[h.toStage] ?? `Stage ${h.toStage}`
-  const lines = [
-    `# Handoff: ${fromName} (Stage ${h.fromStage}) → ${toName} (Stage ${h.toStage})`,
-    ''
-  ]
-  if (h.summary) lines.push(`**摘要**: ${h.summary}`, '')
-  if (h.verdict) lines.push(`**结论**: ${h.verdict}`, '')
-
-  if (h.artifactContent) {
-    lines.push(`## 上一阶段产物 (${h.artifactPath})`, '', h.artifactContent, '')
-  } else if (h.artifactPath) {
-    lines.push(`上一阶段产物路径: \`${h.artifactPath}\``, '')
-  }
-
-  // Provide the original design spec as an authoritative source of truth for
-  // every stage that needs to validate against it (acceptance / test).
-  if (h.designSpec && h.toStage >= 3) {
-    lines.push(
-      '## 原始设计文档（Stage 1 产出，作为验收/测试的基准）',
-      '',
-      h.designSpec,
-      ''
-    )
-  }
-
-  // When entering the test stage, include acceptance report (which should
-  // contain the "测试验证标准" section).
-  if (h.acceptanceReport && h.toStage === 4) {
-    lines.push(
-      '## 方案验收报告（Stage 3 产出，包含测试验证标准）',
-      '',
-      h.acceptanceReport,
-      ''
-    )
-  }
-
-  lines.push(
-    '---',
-    '',
-    '请基于以上信息开始本阶段工作。完成后按系统 prompt 约定输出 `<<STAGE_DONE ...>>` 标记。'
-  )
-  return lines.join('\n')
-}
-
-/**
- * Builds the message to feed into the TARGET stage when user triggers a
- * reverse feedback (e.g. stage 3 → stage 2).
- */
-export function buildFeedbackHandoff(params: {
-  fromStage: number
-  toStage: number
-  note: string
-  artifactPath?: string
-  artifactContent?: string
-}): string {
-  const lines = [
-    `# Feedback from Stage ${params.fromStage} → Stage ${params.toStage}`,
-    '',
-    '下游阶段发现以下问题，请基于反馈调整后重新产出产物：',
-    '',
-    params.note,
-    ''
-  ]
-  if (params.artifactContent) {
-    lines.push(`## 参考产物 (${params.artifactPath})`, '', params.artifactContent, '')
-  }
-  lines.push('---', '', '调整完毕后再次输出 `<<STAGE_DONE ...>>` 标记。')
-  return lines.join('\n')
-}
-
-/**
- * Resolve a stage's artifact absolute path. For Stage 1 this reads
- * project.json to pick up target_repo and returns
- * <target_repo>/.multi-ai-code/designs/<label>.md. For Stages 2-4 it joins
- * the project-dir-relative path against projectDir. If project.json is
- * missing or unparseable for a Stage 1 lookup, falls back to the legacy
- * workspaces/stage1_design/<label>.md under projectDir so the caller
- * degrades gracefully instead of throwing.
- */
-export async function resolveStageArtifactAbs(
-  projectDir: string,
-  stageId: number,
-  label?: string | null
-): Promise<string> {
-  let targetRepo: string | undefined
-  if (stageId === 1) {
-    try {
-      const meta = JSON.parse(
-        await fs.readFile(join(projectDir, 'project.json'), 'utf8')
-      ) as { target_repo?: string }
-      if (meta.target_repo) targetRepo = meta.target_repo
-    } catch {
-      /* fall through to legacy relative */
-    }
-  }
-  const p = stageArtifactPath(stageId, label, targetRepo)
-  return isAbsolute(p) ? p : join(projectDir, p)
 }

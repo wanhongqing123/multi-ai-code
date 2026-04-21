@@ -3092,19 +3092,43 @@ html, body, #root {
 .dv-hscroll-side {
   overflow-x: scroll;
   overflow-y: hidden;
-  height: 14px;
+  height: 16px;
   font-family: var(--mac-font-mono);
   font-size: var(--mac-text-mono);
   border-right: 1px solid var(--mac-border-subtle);
+  /* macOS Electron defaults to overlay scrollbars that fade out. Force a
+     persistent classic scrollbar so the user can always click & drag. */
+  scrollbar-width: auto;
+  scrollbar-gutter: stable;
 }
 
 .dv-hscroll-side:last-child {
   border-right: none;
 }
 
+.dv-hscroll-side::-webkit-scrollbar {
+  -webkit-appearance: none;
+  height: 14px;
+  display: block;
+}
+
+.dv-hscroll-side::-webkit-scrollbar-track {
+  background: var(--mac-bg);
+}
+
+.dv-hscroll-side::-webkit-scrollbar-thumb {
+  background: var(--mac-border-strong);
+  border: 2px solid var(--mac-bg);
+  border-radius: var(--mac-r-sm);
+  min-width: 30px;
+}
+
+.dv-hscroll-side::-webkit-scrollbar-thumb:hover {
+  background: var(--mac-fg-subtle);
+}
+
 .dv-hscroll-track {
   height: 1px;
-  pointer-events: none;
 }
 
 .dv-cell-right.dv-add .dv-content {

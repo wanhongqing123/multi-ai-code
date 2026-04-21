@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getTheme, toggleTheme } from './utils/theme.js'
+import {
+  formatInitialMessage,
+  formatAnnotationsForSession,
+  planNameToFilename
+} from './utils/session-message-format'
 import MainPanel from './components/MainPanel'
-import CompletionDrawer from './components/CompletionDrawer'
-import FeedbackDialog from './components/FeedbackDialog'
 import ProjectPicker, { type ProjectInfo } from './components/ProjectPicker'
 import ErrorPanel, { pushLog, useLogs } from './components/ErrorPanel'
 import AiSettingsDialog, { type AiSettings } from './components/AiSettingsDialog'
@@ -16,63 +19,14 @@ import GlobalSearchDialog from './components/GlobalSearchDialog'
 import FilePreviewDialog from './components/FilePreviewDialog'
 import PlanReviewDialog, { type Annotation } from './components/PlanReviewDialog'
 import DiffViewerDialog, { type DiffAnnotation } from './components/DiffViewerDialog'
-import type { StageDoneEvent } from '../electron/preload'
 
 const LAST_PROJECT_KEY = 'multi-ai-code.lastProjectId'
-
-const STAGES = [
-  { id: 1, name: '方案设计' },
-  { id: 2, name: '方案实施' },
-  { id: 3, name: '方案验收' },
-  { id: 4, name: '测试验证' }
-]
-
-/** Internal stageId → 1-based UI position (identity for stages 1-4). */
-function displayIndexOf(stageId: number): number | undefined {
-  return stageId >= 1 && stageId <= 4 ? stageId : undefined
-}
-
-
-/**
- * Figure out which stage follows `fromStage` given an optional verdict.
- *
- * Pipeline:
- *   1 方案设计 → 2 方案实施 → 3 方案验收 → 4 测试验证 → (done)
- *
- * Fail routes back to implementation:
- *   - Stage 3 verdict=fail → Stage 2
- *   - Stage 4 verdict=fail → Stage 2
- */
-function nextStageFor(
-  fromStage: number,
-  verdict?: string,
-  skips?: Record<number, boolean>
-): number | null {
-  const isSkipped = (s: number) => !!skips?.[s]
-  let candidate: number | null
-  if (fromStage === 3 && verdict === 'fail') candidate = 2
-  else if (fromStage === 4 && verdict === 'fail') candidate = 2
-  else if (fromStage === 4) candidate = null
-  else if (fromStage >= 1 && fromStage < 4) candidate = fromStage + 1
-  else candidate = null
-  // Hop over skipped stages (forward only)
-  while (candidate !== null && candidate > fromStage && isSkipped(candidate)) {
-    if (candidate >= 4) return null
-    candidate = candidate + 1
-  }
-  return candidate
-}
 
 export default function App() {
   const [version, setVersion] = useState<string>('')
   const [projects, setProjects] = useState<ProjectInfo[]>([])
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null)
   const [showProjectPicker, setShowProjectPicker] = useState(false)
-  const [pendingDone, setPendingDone] = useState<StageDoneEvent | null>(null)
-  const [zoomedStage, setZoomedStage] = useState<number | null>(null)
-  const [killAllNonce, setKillAllNonce] = useState(0)
-  const [feedbackFrom, setFeedbackFrom] = useState<number | null>(null)
-  const [feedbackForcedTarget, setFeedbackForcedTarget] = useState<number | null>(null)
   const [planName, setPlanName] = useState('')
   const [showErrors, setShowErrors] = useState(false)
   const [showAiSettings, setShowAiSettings] = useState(false)
@@ -85,18 +39,20 @@ export default function App() {
   const [showGlobalSearch, setShowGlobalSearch] = useState(false)
   const [theme, setThemeState] = useState<'light' | 'dark'>(() => getTheme())
 
+  // Single-stage session state
+  const [sessionId, setSessionId] = useState<string | null>(null)
+  const [sessionStatus, setSessionStatus] = useState<'idle' | 'running' | 'exited'>('idle')
+
   const handleToggleTheme = useCallback(() => {
     setThemeState(toggleTheme())
-    // deps: [] is correct — setThemeState is a stable useState setter;
-    // toggleTheme is a module-level import (stable identity).
   }, [])
+
   const [stageConfigs, setStageConfigs] = useState<
     Record<string, { command?: string; args?: string[]; env?: Record<string, string>; skip?: boolean }>
   >({})
   const [planList, setPlanList] = useState<
     { name: string; abs: string; source: 'internal' | 'external' }[]
   >([])
-  const [planStagesDone, setPlanStagesDone] = useState<Record<number, boolean>>({})
   const [msysEnabled, setMsysEnabled] = useState(false)
   // Stage-1 external-file preview state. When set, FilePreviewDialog is shown
   // and the user can confirm/cancel before the content becomes the stage artifact.
@@ -105,34 +61,21 @@ export default function App() {
     content: string
     stageId: number
   } | null>(null)
-  // Stage-1 plan-review state. When set, PlanReviewDialog renders the current
+  // Plan-review state. When set, PlanReviewDialog renders the current
   // in-progress plan md; user annotates and the annotations get sent back to
-  // the Stage 1 CLI so it can revise the plan.
+  // the session CLI so it can revise the plan.
   const [planReview, setPlanReview] = useState<{
     path: string
     content: string
   } | null>(null)
-  // Stage-3 diff-review state. When true, DiffViewerDialog is rendered.
+  // Diff-review state. When true, DiffViewerDialog is rendered.
   const [diffReviewOpen, setDiffReviewOpen] = useState(false)
   // Remember which (project, planName) combos have already seen the starter
   // "import from file?" toast so it's not shown repeatedly on each start.
   const shownStarterHintsRef = useRef<Set<string>>(new Set())
 
-  const stageSkips: Record<number, boolean> = {
-    1: !!stageConfigs['1']?.skip,
-    2: !!stageConfigs['2']?.skip,
-    3: !!stageConfigs['3']?.skip,
-    4: !!stageConfigs['4']?.skip
-  }
   const [logs] = useLogs()
   const errorCount = logs.filter((l) => l.level === 'error' || l.level === 'warn').length
-  const [stageStatus, setStageStatus] = useState<Record<number, string>>({})
-
-  const handleStatusChange = useCallback((stageId: number, status: string) => {
-    setStageStatus((prev) =>
-      prev[stageId] === status ? prev : { ...prev, [stageId]: status }
-    )
-  }, [])
 
   const reloadProjectsRef = useRef<() => Promise<ProjectInfo[]>>(
     async () => []
@@ -152,15 +95,13 @@ export default function App() {
 
   /** Clear UI state tied to a specific project (drawers, dialogs, plan name). */
   const clearProjectScopedState = useCallback(() => {
-    setPendingDone(null)
-    setFeedbackFrom(null)
-    setFeedbackForcedTarget(null)
     setShowGlobalSearch(false)
-    setZoomedStage(null)
     setPlanName('')
     setPreviewImport(null)
     setPlanReview(null)
     setDiffReviewOpen(false)
+    setSessionId(null)
+    setSessionStatus('idle')
     shownStarterHintsRef.current.clear()
   }, [])
 
@@ -175,7 +116,6 @@ export default function App() {
     if (existing) {
       if (existing.id === currentProjectId) return
       void window.api.cc.killAll()
-      setKillAllNonce((n) => n + 1)
       clearProjectScopedState()
       setCurrentProjectId(existing.id)
       return
@@ -188,7 +128,6 @@ export default function App() {
     }
     await reloadProjectsRef.current()
     void window.api.cc.killAll()
-    setKillAllNonce((n) => n + 1)
     clearProjectScopedState()
     setCurrentProjectId(res.id)
   }, [projects, currentProjectId, clearProjectScopedState])
@@ -219,13 +158,6 @@ export default function App() {
       } else if (mod && e.shiftKey && e.key.toLowerCase() === 'f') {
         e.preventDefault()
         setShowGlobalSearch(true)
-      } else if (mod && !e.shiftKey && /^[1-4]$/.test(e.key)) {
-        // Avoid stealing focus when typing in inputs
-        const target = e.target as HTMLElement | null
-        if (target && ['INPUT', 'TEXTAREA'].includes(target.tagName)) return
-        e.preventDefault()
-        const n = Number(e.key)
-        setZoomedStage((cur) => (cur === n ? null : n))
       }
     }
     window.addEventListener('keydown', onKey)
@@ -265,22 +197,16 @@ export default function App() {
   const projectName = currentProject?.name ?? ''
   const hasProject = currentProject !== null
 
-  // Refresh plan list + per-stage "done" status when project/plan changes.
+  // Refresh plan list when project/plan changes.
   useEffect(() => {
     if (!currentProjectId || !projectDir) {
       setPlanList([])
-      setPlanStagesDone({})
       return
     }
     let cancelled = false
     void (async () => {
-      const [planRes, all] = await Promise.all([
-        window.api.plan.list(projectDir),
-        window.api.artifact.list(currentProjectId)
-      ])
+      const planRes = await window.api.plan.list(projectDir)
       if (cancelled) return
-      // On IPC error keep the previous list and current selection untouched —
-      // do NOT wipe planName based on a transient failure.
       if (!planRes.ok) return
       const items = planRes.items
       setPlanList(items)
@@ -291,23 +217,11 @@ export default function App() {
       if (planName && items.length > 0 && !items.some((p) => p.name === planName)) {
         setPlanName('')
       }
-      const stageSafe = planName
-        .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
-        .replace(/\s+/g, '_')
-        .slice(0, 80)
-      const done: Record<number, boolean> = { 1: false, 2: false, 3: false, 4: false }
-      for (const r of all) {
-        const m = r.path.match(/artifacts[/\\]history[/\\]stage(\d+)[/\\](.+?)(_\d[^.]*)?\.md$/)
-        if (m && stageSafe && m[2] === stageSafe) {
-          done[Number(m[1])] = true
-        }
-      }
-      setPlanStagesDone(done)
     })()
     return () => {
       cancelled = true
     }
-  }, [currentProjectId, projectDir, pendingDone, planName])
+  }, [currentProjectId, projectDir, planName])
 
   useEffect(() => {
     if (!currentProjectId) {
@@ -336,16 +250,42 @@ export default function App() {
     }
   }, [currentProjectId])
 
-  // When Stage 1 starts running with a brand-new plan (not in planList),
-  // offer a one-shot import shortcut so the user isn't forced into a fresh
-  // design. Shown once per (project, planName) combo per session.
-  //
-  // A plan that's already in planList — whether internal (file exists under
-  // .multi-ai-code/designs/) or external (registered in plan_sources) — by
-  // definition already has a design file, so the toast is suppressed.
+  // Wire cc.onExit to flip sessionStatus to 'exited' when the active session exits.
+  useEffect(() => {
+    const off = window.api.cc.onExit((evt) => {
+      if (evt.sessionId === sessionId) {
+        setSessionStatus('exited')
+      }
+    })
+    return off
+  }, [sessionId])
+
+  useEffect(() => {
+    const offNotice = window.api.cc.onNotice((evt) => {
+      pushLog(evt.level, `Session:${evt.sessionId}`, evt.message)
+      showToast(evt.message, { level: evt.level === 'error' ? 'error' : 'warn' })
+    })
+    const offExit = window.api.cc.onExit((evt) => {
+      if (evt.exitCode !== 0 && evt.exitCode !== null) {
+        pushLog(
+          'warn',
+          `Session:${evt.sessionId}`,
+          `CLI 进程退出 code=${evt.exitCode}${evt.signal ? ' signal=' + evt.signal : ''}`
+        )
+      }
+    })
+    return () => {
+      offNotice()
+      offExit()
+    }
+  }, [])
+
+  // When session starts running with a brand-new plan (not in planList),
+  // offer a one-shot import shortcut so the user isn't forced into a fresh design.
+  // Shown once per (project, planName) combo per session.
   useEffect(() => {
     if (!currentProjectId || !planName.trim()) return
-    if (stageStatus[1] !== 'running') return
+    if (sessionStatus !== 'running') return
     if (planList.some((p) => p.name === planName.trim())) return
     const key = `${currentProjectId}:${planName.trim()}`
     if (shownStarterHintsRef.current.has(key)) return
@@ -363,79 +303,91 @@ export default function App() {
         }
       }
     )
-  }, [currentProjectId, planName, stageStatus, planList, pickExternalFileForPreview])
+  }, [currentProjectId, planName, sessionStatus, planList, pickExternalFileForPreview])
 
-  useEffect(() => {
-    const off = window.api.stage.onDone((evt) => {
-      setPendingDone(evt)
-      // After Stage 1 completes, surface the archived plan's name back into
-      // the dropdown so a "+ 新建方案" flow doesn't leave the sentinel
-      // selected. Idempotent: if the user already named the plan, the
-      // archived basename equals planName and setPlanName is a no-op.
-      if (evt.stageId === 1 && evt.artifactPath) {
-        const base = evt.artifactPath
-          .split(/[\\/]/)
-          .pop()
-          ?.replace(/\.md$/i, '')
-          ?.trim()
-        if (base) setPlanName(base)
-      }
-      const stageName = STAGES.find((s) => s.id === evt.stageId)?.name ?? `Stage ${evt.stageId}`
-      showToast(`✓ ${stageName} 完成${evt.params.summary ? `：${evt.params.summary}` : ''}`, {
-        level: 'success'
-      })
-    })
-    const offNotice = window.api.cc.onNotice((evt) => {
-      pushLog(evt.level, `Stage:${evt.sessionId}`, evt.message)
-      showToast(evt.message, { level: evt.level === 'error' ? 'error' : 'warn' })
-    })
-    const offExit = window.api.cc.onExit((evt) => {
-      if (evt.exitCode !== 0 && evt.exitCode !== null) {
-        pushLog(
-          'warn',
-          `Stage:${evt.sessionId}`,
-          `CLI 进程退出 code=${evt.exitCode}${evt.signal ? ' signal=' + evt.signal : ''}`
-        )
-      }
-    })
-    return () => {
-      off()
-      offNotice()
-      offExit()
-    }
-  }, [])
-
-  const sessionIdFor = useCallback(
-    (stageId: number) => `${currentProjectId ?? 'none'}:stage${stageId}`,
-    [currentProjectId]
-  )
-
-  // TODO Task 9: ensureStageRunning will be replaced by a single-stage spawn that
-  // uses the new SpawnRequest shape (targetRepo, planAbsPath, initialUserMessage, etc).
-  // For now this is a stub that only checks if the session is already running.
-  const ensureStageRunning = useCallback(
-    async (_stageId: number, sid: string) => {
-      if (!currentProjectId) throw new Error('未选择项目')
-      const running = await window.api.cc.has(sid)
-      if (running) return
-      // Single-stage spawn is handled by StagePanel directly in Task 9.
-      // This stub prevents crashes when advance/feedback code paths call it.
+  /** Derive the absolute plan path from planList or construct a default. */
+  const getPlanAbsPath = useCallback(
+    (name: string): string => {
+      const entry = planList.find((p) => p.name === name)
+      if (entry) return entry.abs
+      // Default: internal design path under target_repo
+      return `${targetRepo.replace(/\/$/, '')}/.multi-ai-code/designs/${planNameToFilename(name)}`
     },
-    [currentProjectId]
+    [planList, targetRepo]
   )
+
+  const handleStart = useCallback(async () => {
+    if (!currentProjectId || !planName.trim()) return
+    const proj = projects.find((p) => p.id === currentProjectId)
+    if (!proj?.target_repo) {
+      showToast('当前项目未设置 target_repo，请先在项目选择器里选一个代码仓库', { level: 'warn' })
+      return
+    }
+    const planAbsPath = getPlanAbsPath(planName.trim())
+    let planContent: string | null = null
+    try {
+      const res = await window.api.fs.readUtf8(planAbsPath)
+      planContent = res.ok ? res.content : null
+    } catch {
+      planContent = null
+    }
+    const initialUserMessage = formatInitialMessage({
+      planName: planName.trim(),
+      planAbsPath,
+      planContent
+    })
+    const command = aiSettings.command ?? aiSettings.ai_cli ?? 'claude'
+    const defaultArgs = command === 'codex' ? ['--full-auto'] : []
+    const extraArgs = aiSettings.args ?? []
+    const args = [...defaultArgs, ...extraArgs]
+    const sid = `sess_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`
+    setSessionId(sid)
+    setSessionStatus('running')
+    const currentProj = projects.find((p) => p.id === currentProjectId)
+    const pDir = currentProj?.dir ?? ''
+    const res = await window.api.cc.spawn({
+      sessionId: sid,
+      projectId: currentProjectId,
+      projectDir: pDir,
+      targetRepo: proj.target_repo,
+      planName: planName.trim(),
+      planAbsPath,
+      planPending: planContent === null,
+      initialUserMessage,
+      command,
+      args,
+      env: aiSettings.env ?? {}
+    })
+    if (!res.ok) {
+      showToast(res.error ?? '启动失败', { level: 'error' })
+      setSessionStatus('idle')
+      setSessionId(null)
+    }
+  }, [currentProjectId, planName, projects, aiSettings, getPlanAbsPath])
+
+  const handleStop = useCallback(async () => {
+    if (!sessionId) return
+    await window.api.cc.kill(sessionId)
+    setSessionStatus('exited')
+  }, [sessionId])
+
+  const handleRestart = useCallback(async () => {
+    if (sessionId) {
+      await window.api.cc.kill(sessionId)
+    }
+    setSessionId(null)
+    setSessionStatus('idle')
+    setTimeout(() => void handleStart(), 50)
+  }, [sessionId, handleStart])
 
   const onPlanSelect = useCallback(
     async (value: string) => {
-      // Block plan switching while Stage 1 is running. The running CLI's
-      // artifact path is baked into its CLAUDE.md at spawn time; a live
-      // switch would leave the AI writing to the old target.
-      if (value !== planName) {
-        const sid = sessionIdFor(1)
-        const running = await window.api.cc.has(sid)
-        if (running) {
-          alert('Stage 1 正在运行，请先停止（Kill）后再切换方案。')
-          return
-        }
+      // Block plan switching while session is running. The running CLI's
+      // artifact path is baked at spawn time; a live switch would leave
+      // the AI writing to the old target.
+      if (value !== planName && sessionStatus === 'running') {
+        alert('会话正在运行，请先停止（Kill）后再切换方案。')
+        return
       }
       if (value === '__NEW__') {
         setPlanName('')
@@ -443,22 +395,17 @@ export default function App() {
       }
       const r = await window.api.artifact.readCurrent(projectDir, 1, value)
       if (!r.ok) {
-        // Missing artifact file is a normal state for a freshly listed plan
-        // that has not been opened yet — keep the selection but skip the
-        // preview rather than alarming the user.
         if (r.error && /ENOENT|no such file|找不到|not.*exist/i.test(r.error)) {
           setPlanName(value)
           return
         }
-        // Unexpected error: roll back the selection so we don't end up with
-        // planName set to a plan we can't read.
         alert(`读取方案失败：${r.error ?? '未知错误'}`)
         return
       }
       setPlanName(value)
       setPlanReview({ path: r.path ?? value, content: r.content ?? '' })
     },
-    [projectDir, planName, sessionIdFor]
+    [projectDir, planName, sessionStatus]
   )
 
   const onImportExternal = useCallback(async () => {
@@ -466,13 +413,11 @@ export default function App() {
       alert('请先打开一个项目')
       return
     }
-    // Block import while Stage 1 is running — the running CLI's artifact
+    // Block import while session is running — the running CLI's artifact
     // path is baked at spawn time; swapping the plan under it would write
     // the revisions to the wrong file.
-    const sid = sessionIdFor(1)
-    const running = await window.api.cc.has(sid)
-    if (running) {
-      alert('Stage 1 正在运行，请先停止（Kill）后再导入外部方案。')
+    if (sessionStatus === 'running') {
+      alert('会话正在运行，请先停止（Kill）后再导入外部方案。')
       return
     }
     const pick = await window.api.dialog.pickTextFile({
@@ -498,9 +443,9 @@ export default function App() {
     if (cur.ok) {
       setPlanReview({ path: cur.path ?? reg.name, content: cur.content ?? '' })
     }
-  }, [projectDir, sessionIdFor])
+  }, [projectDir, sessionStatus])
 
-  /** Load the current Stage 1 plan md and open the review + annotation dialog. */
+  /** Load the current plan md and open the review + annotation dialog. */
   const openPlanReview = useCallback(async () => {
     if (!projectDir) return
     const res = await window.api.artifact.readCurrent(
@@ -510,7 +455,7 @@ export default function App() {
     )
     if (!res.ok || res.content === undefined) {
       showToast(
-        `暂无可预览的方案文件${res.path ? `（${res.path}）` : ''}。请先让 Stage 1 开始对话设计。`,
+        `暂无可预览的方案文件${res.path ? `（${res.path}）` : ''}。请先让 AI 开始对话设计。`,
         { level: 'warn' }
       )
       return
@@ -518,7 +463,7 @@ export default function App() {
     setPlanReview({ path: res.path ?? '', content: res.content })
   }, [projectDir, planName])
 
-  /** Open the Stage 3 git diff viewer. */
+  /** Open the git diff viewer. */
   const openDiffReview = useCallback(() => {
     if (!targetRepo) {
       showToast('本项目没有 target_repo 路径，无法打开 Diff 审查', { level: 'warn' })
@@ -527,67 +472,11 @@ export default function App() {
     setDiffReviewOpen(true)
   }, [targetRepo])
 
-  /** Format diff annotations as markdown and push to the Stage 3 session.
-   *  If Stage 3 isn't running yet, spawn it first (user-driven entry). */
-  const submitDiffAnnotations = useCallback(
-    async (anns: DiffAnnotation[], generalNote: string) => {
-      const sid = sessionIdFor(3)
-      try {
-        await ensureStageRunning(3, sid)
-      } catch (err) {
-        showToast(`启动 Stage 3 失败：${(err as Error).message}`, { level: 'error' })
-        return
-      }
-      const lines: string[] = [
-        '我基于以下 diff 审查结果，请你按每一条批注修改对应代码，然后打印 <<STAGE_DONE ...>> 完成标记。',
-        ''
-      ]
-      if (generalNote) {
-        lines.push('## 整体意见', '', generalNote, '')
-      }
-      anns.forEach((a, i) => {
-        lines.push(
-          `## 批注 ${i + 1}`,
-          '',
-          `> 文件：${a.file}`,
-          `> 行范围：${a.lineRange}`,
-          '',
-          '原文：',
-          '```',
-          a.snippet,
-          '```',
-          '',
-          '意见：',
-          a.comment,
-          ''
-        )
-      })
-      lines.push(
-        '---',
-        '',
-        '请逐条落实，最后单独一行输出 `<<STAGE_DONE summary="...">>` 标记。'
-      )
-      const res = await window.api.cc.sendUser(sid, lines.join('\n'))
-      if (!res.ok) {
-        showToast(`发送批注失败：${res.error ?? '未知错误'}`, { level: 'error' })
-        return
-      }
-      showToast(
-        `已发送 ${anns.length} 条批注${generalNote ? ' + 整体意见' : ''}到 Stage 3`,
-        { level: 'success' }
-      )
-      setDiffReviewOpen(false)
-    },
-    [sessionIdFor, ensureStageRunning]
-  )
-
-  /** Format annotations as markdown and push them into the Stage 1 session. */
+  /** Format annotations as markdown and push them into the running session. */
   const submitPlanReviewAnnotations = useCallback(
     async (annotations: Annotation[], generalNote: string) => {
-      const sid = sessionIdFor(1)
-      const running = await window.api.cc.has(sid)
-      if (!running) {
-        showToast('Stage 1 的 CLI 未在运行，无法发送标注。请先启动 Stage 1。', {
+      if (!sessionId) {
+        showToast('会话的 CLI 未在运行，无法发送标注。请先启动会话。', {
           level: 'error'
         })
         return
@@ -616,84 +505,48 @@ export default function App() {
         '',
         '请把以上每条意见落实到方案文件中，修改完成后重新写入产物并打印 <<STAGE_DONE ...>> 完成标记。'
       )
-      const res = await window.api.cc.sendUser(sid, lines.join('\n'))
+      const res = await window.api.cc.sendUser(sessionId, lines.join('\n'))
       if (!res.ok) {
         showToast(`发送标注失败：${res.error ?? '未知错误'}`, { level: 'error' })
         return
       }
       showToast(
-        `已发送 ${annotations.length} 条批注${generalNote ? ' + 整体意见' : ''}到 Stage 1`,
+        `已发送 ${annotations.length} 条批注${generalNote ? ' + 整体意见' : ''}到会话`,
         { level: 'success' }
       )
       setPlanReview(null)
     },
-    [sessionIdFor]
+    [sessionId]
   )
 
-  // TODO Task 9: advance() used stage:inject-handoff which is removed in single-stage
-  // architecture. The multi-stage advance flow (spawning next stage + injecting handoff)
-  // will be replaced by the single-stage Task 9 UI rewrite.
-  const advance = useCallback(async () => {
-    if (!pendingDone) return
-    // In single-stage architecture, just dismiss the completion drawer.
-    // The full single-stage flow is implemented in Task 9.
-    setPendingDone(null)
-  }, [pendingDone])
-
-  /** User-initiated reverse feedback from stage N to an earlier stage. */
-  const submitFeedback = useCallback(
-    async (params: { toStage: number; note: string; alsoKillCurrent: boolean }) => {
-      if (feedbackFrom === null) return
-      const targetSession = sessionIdFor(params.toStage)
-      await ensureStageRunning(params.toStage, targetSession)
-      const res = await window.api.stage.injectFeedback({
-        sessionId: targetSession,
-        fromStage: feedbackFrom,
-        toStage: params.toStage,
-        note: params.note
+  /** Format diff annotations using session-message-format and push to live session via cc.write. */
+  const submitDiffAnnotations = useCallback(
+    async (anns: DiffAnnotation[], generalNote: string) => {
+      if (!sessionId || sessionStatus !== 'running') {
+        showToast('会话未启动，无法发送批注', { level: 'warn' })
+        return
+      }
+      const planAbsPath = getPlanAbsPath(planName.trim())
+      const text = formatAnnotationsForSession({
+        annotations: anns,
+        generalComment: generalNote,
+        planAbsPath
       })
-      if (!res.ok) {
-        showToast(`提交反馈失败：${res.error ?? 'no session'}`, { level: 'error' })
-        throw new Error(`inject feedback failed: ${res.error}`)
-      }
-      if (params.alsoKillCurrent) {
-        await window.api.cc.kill(sessionIdFor(feedbackFrom))
-      }
-      setFeedbackFrom(null)
+      window.api.cc.write(sessionId, text + '\r')
+      setDiffReviewOpen(false)
+      showToast(`已发送 ${anns.length} 条批注到会话`, { level: 'info' })
     },
-    [feedbackFrom, sessionIdFor, ensureStageRunning]
+    [sessionId, sessionStatus, planName, getPlanAbsPath]
   )
 
-  /** Stage 3 fail-route: send only the user-approved review items back to Stage 2 (方案实施). */
-  const advanceWithFeedback = useCallback(
-    async (feedbackMd: string) => {
-      if (!pendingDone) return
-      const targetStage = 2
-      const targetSession = sessionIdFor(targetStage)
-      await ensureStageRunning(targetStage, targetSession)
-      const res = await window.api.stage.injectFeedback({
-        sessionId: targetSession,
-        fromStage: pendingDone.stageId,
-        toStage: targetStage,
-        note: feedbackMd,
-        artifactPath: pendingDone.artifactPath ?? undefined,
-        artifactContent: pendingDone.artifactContent ?? undefined
-      })
-      if (!res.ok) {
-        showToast(`提交反馈失败：${res.error ?? 'no session'}`, { level: 'error' })
-        throw new Error(`inject feedback failed: ${res.error}`)
-      }
-      setPendingDone(null)
-    },
-    [pendingDone, sessionIdFor, ensureStageRunning]
-  )
-
-  const nextStage = pendingDone
-    ? nextStageFor(pendingDone.stageId, pendingDone.params.verdict, stageSkips)
-    : null
+  // Suppress unused warning — onImportExternal and openPlanReview are used
+  // in command palette and plan-review flow.
+  void onImportExternal
+  void openPlanReview
+  void openDiffReview
 
   return (
-    <div className={`app ${pendingDone ? 'has-drawer' : ''}`}>
+    <div className="app">
       <header className="topbar">
         <button
           className="topbar-btn topbar-btn-primary"
@@ -763,11 +616,6 @@ export default function App() {
         >
           {theme === 'dark' ? '☀' : '☾'}
         </button>
-        {zoomedStage !== null && (
-          <button className="topbar-btn" onClick={() => setZoomedStage(null)}>
-            ↙ 退出放大 (Stage {displayIndexOf(zoomedStage) ?? zoomedStage})
-          </button>
-        )}
       </header>
 
       {hasProject && planName.trim() && (
@@ -775,69 +623,30 @@ export default function App() {
           <span className="plan-progress-label">📍 当前方案：</span>
           <strong>{planName}</strong>
           <span className="plan-progress-sep">·</span>
-          {STAGES.map((s) => {
-            const st = stageStatus[s.id]
-            const skipped = stageSkips[s.id]
-            const isDone = planStagesDone[s.id]
-            let icon = '─'
-            let cls = ''
-            if (skipped) { icon = '⏭'; cls = 'skipped' }
-            else if (st === 'running') { icon = '⏳'; cls = 'running' }
-            else if (st === 'awaiting-confirm') { icon = '⏸'; cls = 'awaiting' }
-            else if (isDone) { icon = '✅'; cls = 'done' }
-            return (
-              <span key={s.id} className={`plan-progress-node ${cls}`} title={`${s.name}：${icon}`}>
-                <span style={{ marginRight: 4 }}>{'①②③④'[s.id - 1]}</span>
-                {icon}
-              </span>
-            )
-          })}
+          <span
+            className={`plan-progress-node ${sessionStatus === 'running' ? 'running' : sessionStatus === 'exited' ? 'done' : ''}`}
+            title={`会话状态：${sessionStatus}`}
+          >
+            {sessionStatus === 'running' ? '⏳ 运行中' : sessionStatus === 'exited' ? '✅ 已完成' : '─ 未启动'}
+          </span>
         </div>
       )}
 
       <div className="main-split">
         <MainPanel
-          sessionId={`sess_stage1_${currentProjectId ?? 'none'}`}
+          sessionId={sessionId ?? ''}
           projectId={currentProjectId ?? ''}
           projectDir={projectDir}
           cwd={targetRepo}
           planName={planName}
-          status="idle"
-          onStart={() => {
-            /* TODO Task 9: implement handleStart */
-          }}
-          onStop={() => {
-            /* TODO Task 9: implement handleStop */
-          }}
-          onRestart={() => {
-            /* TODO Task 9: implement handleRestart */
-          }}
+          status={sessionStatus}
+          onStart={handleStart}
+          onStop={handleStop}
+          onRestart={handleRestart}
           onOpenDiff={() => setDiffReviewOpen(true)}
-          disabled={!currentProjectId || !planName}
+          disabled={!currentProjectId || !planName.trim()}
         />
 
-        {feedbackFrom !== null && (
-          <FeedbackDialog
-            fromStage={feedbackFrom}
-            targetOptions={
-              feedbackForcedTarget !== null
-                ? [feedbackForcedTarget]
-                : Array.from({ length: feedbackFrom - 1 }, (_, i) => i + 1)
-            }
-            defaultTarget={
-              feedbackForcedTarget ?? (feedbackFrom === 2 ? 1 : feedbackFrom - 1)
-            }
-            displayIndexOf={displayIndexOf}
-            onSubmit={async (p) => {
-              await submitFeedback(p)
-              setFeedbackForcedTarget(null)
-            }}
-            onCancel={() => {
-              setFeedbackFrom(null)
-              setFeedbackForcedTarget(null)
-            }}
-          />
-        )}
         {showProjectPicker && (
           <ProjectPicker
             currentId={currentProjectId}
@@ -848,7 +657,6 @@ export default function App() {
                 return
               }
               void window.api.cc.killAll()
-              setKillAllNonce((n) => n + 1)
               clearProjectScopedState()
               setCurrentProjectId(p.id)
               setShowProjectPicker(false)
@@ -858,26 +666,11 @@ export default function App() {
               // If the currently-open project was deleted, bail out of it cleanly.
               if (currentProjectId && !list.some((p) => p.id === currentProjectId)) {
                 void window.api.cc.killAll()
-                setKillAllNonce((n) => n + 1)
                 clearProjectScopedState()
                 setCurrentProjectId(null)
                 showToast('当前项目已被删除，请另选一个或新建', { level: 'warn' })
               }
             }}
-          />
-        )}
-        {pendingDone && (
-          <CompletionDrawer
-            event={pendingDone}
-            nextStageId={nextStage}
-            nextSessionId={nextStage ? sessionIdFor(nextStage) : null}
-            currentDisplayIndex={displayIndexOf(pendingDone.stageId)}
-            nextDisplayIndex={nextStage ? displayIndexOf(nextStage) : undefined}
-            onAdvance={advance}
-            onAdvanceWithFeedback={advanceWithFeedback}
-            onDismiss={() => setPendingDone(null)}
-            targetRepo={targetRepo}
-            planName={planName}
           />
         )}
       </div>
@@ -902,11 +695,8 @@ export default function App() {
             { id: 'search', label: '🔍 全局搜索', hint: 'Ctrl+Shift+F', keywords: 'find search', action: () => setShowGlobalSearch(true), disabled: !hasProject },
             { id: 'logs', label: '📣 错误与通知', keywords: 'errors log notifications', action: () => setShowErrors(true) },
             { id: 'toggle-theme', label: theme === 'dark' ? '切换到浅色主题' : '切换到暗色主题', keywords: 'theme dark light color', action: handleToggleTheme },
-            { id: 'unzoom', label: '↙ 退出放大模式', keywords: 'zoom focus exit', action: () => setZoomedStage(null), disabled: zoomedStage === null },
-            { id: 'z1', label: '🎯 聚焦 Stage 1 方案设计', hint: 'Ctrl+1', action: () => setZoomedStage(1) },
-            { id: 'z2', label: '🎯 聚焦 Stage 2 方案实施', hint: 'Ctrl+2', action: () => setZoomedStage(2) },
-            { id: 'z3', label: '🎯 聚焦 Stage 3 方案验收', hint: 'Ctrl+3', action: () => setZoomedStage(3) },
-            { id: 'z4', label: '🎯 聚焦 Stage 4 测试验证', hint: 'Ctrl+4', action: () => setZoomedStage(4) }
+            { id: 'plan-review', label: '📝 审阅当前方案', keywords: 'plan review annotate', action: () => void openPlanReview(), disabled: !hasProject || !planName.trim() },
+            { id: 'diff-review', label: '🔀 Diff 审查', keywords: 'diff review code', action: () => void openDiffReview(), disabled: !hasProject }
           ] as Command[]}
         />
       )}
@@ -917,7 +707,7 @@ export default function App() {
           content={previewImport.content}
           title={
             previewImport.stageId === 1
-              ? '预览外部方案文件 · Stage 1 方案设计'
+              ? '预览外部方案文件 · 方案设计'
               : '预览外部文件'
           }
           confirmLabel="✓ 确认使用此方案"
@@ -928,10 +718,8 @@ export default function App() {
               return
             }
             const stageId = previewImport.stageId
-            // When importing from file for Stage 1, use the ORIGINAL filename
-            // (sans extension) as the plan name / archive filename — the
-            // archived md keeps the user's original identity instead of being
-            // renamed to whatever is currently in the plan-name input.
+            // When importing from file, use the ORIGINAL filename
+            // (sans extension) as the plan name / archive filename.
             let effectiveLabel = planName
             if (stageId === 1) {
               const origName =
@@ -948,7 +736,7 @@ export default function App() {
               stageId,
               content: previewImport.content,
               sourcePath: previewImport.path,
-              sessionId: sessionIdFor(stageId),
+              sessionId: sessionId ?? undefined,
               label: effectiveLabel
             })
             setPreviewImport(null)
@@ -992,16 +780,14 @@ export default function App() {
       )}
       {showTemplates && (
         <TemplatesDialog
-          sessions={Object.entries(stageStatus)
-            .filter(([, st]) => st === 'running' || st === 'awaiting-confirm')
-            .map(([sid]) => ({
-              stageId: Number(sid),
-              sessionId: sessionIdFor(Number(sid)),
-              name: STAGES.find((x) => x.id === Number(sid))?.name ?? ''
-            }))}
+          sessions={
+            sessionId && sessionStatus === 'running'
+              ? [{ stageId: 1, sessionId, name: '当前会话' }]
+              : []
+          }
           onClose={() => setShowTemplates(false)}
-          onInject={(sessionId, text) => {
-            void window.api.cc.sendUser(sessionId, text)
+          onInject={(sid, text) => {
+            void window.api.cc.sendUser(sid, text)
           }}
         />
       )}
@@ -1018,13 +804,16 @@ export default function App() {
       <ToastHost />
 
       <footer className="pipeline">
-        <span>Pipeline:</span>
-        {STAGES.map((s, i) => (
-          <span key={s.id} className={`pipe-node ${stageSkips[s.id] ? 'pipe-skipped' : ''}`}>
-            {s.name}
-            {i < STAGES.length - 1 && <span className="pipe-arrow">─▶</span>}
+        <span>Multi-AI Code · 单阶段架构</span>
+        {hasProject && (
+          <span style={{ marginLeft: 8, opacity: 0.7 }}>
+            {sessionStatus === 'running'
+              ? '● 运行中'
+              : sessionStatus === 'exited'
+              ? '○ 已退出'
+              : '○ 空闲'}
           </span>
-        ))}
+        )}
       </footer>
     </div>
   )

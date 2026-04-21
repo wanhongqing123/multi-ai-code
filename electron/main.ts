@@ -563,6 +563,19 @@ app.whenReady().then(async () => {
     }
   )
 
+  // ---------- fs:read-utf8 — renderer reads arbitrary text files ----------
+  ipcMain.handle('fs:read-utf8', async (_e, { path }: { path: string }) => {
+    try {
+      const content = await fs.readFile(path, 'utf8')
+      return { ok: true as const, content }
+    } catch (err: unknown) {
+      return {
+        ok: false as const,
+        error: err instanceof Error ? err.message : String(err)
+      }
+    }
+  })
+
   // ---------- Global search ----------
   ipcMain.handle(
     'search:artifacts',

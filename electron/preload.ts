@@ -291,6 +291,13 @@ const api = {
       }>
   },
 
+  fs: {
+    readUtf8: (path: string) =>
+      ipcRenderer.invoke('fs:read-utf8', { path }) as Promise<
+        { ok: true; content: string } | { ok: false; error: string }
+      >
+  },
+
   cc: {
     spawn: (opts: SpawnRequest) =>
       ipcRenderer.invoke('cc:spawn', opts) as Promise<{ ok: boolean; error?: string }>,

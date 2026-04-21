@@ -26,8 +26,67 @@ export function designArchiveDir(targetRepo: string): string {
   return join(targetRepo.replace(/[\/\\]+$/, ''), '.multi-ai-code', 'designs')
 }
 
+/**
+ * One-shot: for each project that still has a legacy
+ * `workspaces/stage1_design/<plan>.md`, copy the file into the new
+ * `<target_repo>/.multi-ai-code/designs/<plan>.md` location before the
+ * `workspaces/` directory itself is removed in `ensureRootDir`.
+ * Safe to call repeatedly; skips when target file already exists.
+ */
+export async function migrateLegacyStage1Artifacts(): Promise<void> {
+  let entries: string[]
+  try {
+    entries = await fs.readdir(projectsDir())
+  } catch {
+    return
+  }
+  for (const pid of entries) {
+    const pdir = projectDir(pid)
+    const legacyDir = join(pdir, 'workspaces', 'stage1_design')
+    let files: string[]
+    try {
+      files = await fs.readdir(legacyDir)
+    } catch {
+      continue
+    }
+    let meta: { target_repo?: string } | null = null
+    try {
+      meta = JSON.parse(await fs.readFile(join(pdir, 'project.json'), 'utf8'))
+    } catch {
+      /* missing or unreadable — skip migration for this project */
+      continue
+    }
+    if (!meta?.target_repo) continue
+    const dest = designArchiveDir(meta.target_repo)
+    try {
+      await fs.mkdir(dest, { recursive: true })
+    } catch {
+      continue
+    }
+    for (const f of files) {
+      if (!f.endsWith('.md')) continue
+      const src = join(legacyDir, f)
+      const tgt = join(dest, f)
+      try {
+        // skip if target already exists (don't clobber user's current plan)
+        await fs.access(tgt)
+        continue
+      } catch {
+        /* target missing — copy */
+      }
+      try {
+        await fs.copyFile(src, tgt)
+      } catch {
+        /* tolerate per-file failure */
+      }
+    }
+  }
+}
+
 export async function ensureRootDir(): Promise<void> {
   await fs.mkdir(projectsDir(), { recursive: true })
+  // Salvage any legacy stage-1 design md files before wiping workspaces/.
+  await migrateLegacyStage1Artifacts()
   // Retire the platform-managed `workspaces/` subdir from every project.
   // Stage 1 now writes design.md directly to <target_repo>/.multi-ai-code/designs/;
   // Stages 2-4 no longer exist. Safe to remove on every startup.

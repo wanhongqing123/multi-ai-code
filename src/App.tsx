@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { getTheme, toggleTheme } from './utils/theme.js'
 import StagePanel from './components/StagePanel'
 import CompletionDrawer from './components/CompletionDrawer'
 import FeedbackDialog from './components/FeedbackDialog'
@@ -81,6 +82,13 @@ export default function App() {
   const [showDoctor, setShowDoctor] = useState(false)
   const [showCmdk, setShowCmdk] = useState(false)
   const [showGlobalSearch, setShowGlobalSearch] = useState(false)
+  const [theme, setThemeState] = useState<'light' | 'dark'>(() => getTheme())
+
+  const handleToggleTheme = useCallback(() => {
+    setThemeState(toggleTheme())
+    // deps: [] is correct — setThemeState is a stable useState setter;
+    // toggleTheme is a module-level import (stable identity).
+  }, [])
   const [stageConfigs, setStageConfigs] = useState<
     Record<string, { command?: string; args?: string[]; env?: Record<string, string>; skip?: boolean }>
   >({})
@@ -762,6 +770,14 @@ export default function App() {
         >
           🩺 体检
         </button>
+        <button
+          className="topbar-btn"
+          onClick={handleToggleTheme}
+          title={theme === 'dark' ? '切换到浅色' : '切换到暗色'}
+          aria-label="切换主题"
+        >
+          {theme === 'dark' ? '☀' : '☾'}
+        </button>
         {zoomedStage !== null && (
           <button className="topbar-btn" onClick={() => setZoomedStage(null)}>
             ↙ 退出放大 (Stage {displayIndexOf(zoomedStage) ?? zoomedStage})
@@ -931,6 +947,7 @@ export default function App() {
             { id: 'timeline', label: '📜 审计时间线', keywords: 'timeline events audit', action: () => setShowTimeline(true), disabled: !hasProject },
             { id: 'search', label: '🔍 全局搜索', hint: 'Ctrl+Shift+F', keywords: 'find search', action: () => setShowGlobalSearch(true), disabled: !hasProject },
             { id: 'logs', label: '📣 错误与通知', keywords: 'errors log notifications', action: () => setShowErrors(true) },
+            { id: 'toggle-theme', label: theme === 'dark' ? '切换到浅色主题' : '切换到暗色主题', keywords: 'theme dark light color', action: handleToggleTheme },
             { id: 'unzoom', label: '↙ 退出放大模式', keywords: 'zoom focus exit', action: () => setZoomedStage(null), disabled: zoomedStage === null },
             { id: 'z1', label: '🎯 聚焦 Stage 1 方案设计', hint: 'Ctrl+1', action: () => setZoomedStage(1) },
             { id: 'z2', label: '🎯 聚焦 Stage 2 方案实施', hint: 'Ctrl+2', action: () => setZoomedStage(2) },

@@ -4,6 +4,9 @@ import App from './App'
 import './styles.css'
 import { pushLog } from './components/ErrorPanel'
 import ErrorBoundary from './components/ErrorBoundary'
+import { applyTheme } from './utils/theme.js'
+
+applyTheme()
 
 // Prevent Electron from navigating to a dropped file outside our drop zones
 window.addEventListener('dragover', (e) => e.preventDefault())

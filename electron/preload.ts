@@ -446,6 +446,10 @@ const api = {
       ipcRenderer.invoke('plan:registerExternal', req) as Promise<
         | { ok: true; name: string }
         | { ok: false; error: string }
+      >,
+    removeExternal: (req: { projectDir: string; name: string }) =>
+      ipcRenderer.invoke('plan:removeExternal', req) as Promise<
+        { ok: true } | { ok: false; error: string }
       >
   }
 }

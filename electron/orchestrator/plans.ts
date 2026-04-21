@@ -115,6 +115,36 @@ async function pruneDeadPlanSources(
   }
 }
 
+/**
+ * Explicitly remove a single external plan mapping from `project.json`.
+ * Returns `{ ok: true }` on success (even if the name wasn't present —
+ * idempotent). Used when the UI surfaces a "plan file is missing,
+ * remove it?" affordance to the user.
+ */
+export async function removeExternalPlan(
+  projectDir: string,
+  name: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const metaPath = join(projectDir, 'project.json')
+  try {
+    const raw = await fs.readFile(metaPath, 'utf8')
+    const meta = JSON.parse(raw) as Record<string, unknown>
+    const sources = meta.plan_sources as Record<string, string> | undefined
+    if (sources && name in sources) {
+      delete sources[name]
+      meta.plan_sources = sources
+      meta.updated_at = new Date().toISOString()
+      await fs.writeFile(metaPath, JSON.stringify(meta, null, 2))
+    }
+    return { ok: true }
+  } catch (err: unknown) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err)
+    }
+  }
+}
+
 export async function registerExternalPlan(
   projectDir: string,
   externalAbsPath: string

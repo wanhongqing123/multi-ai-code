@@ -203,15 +203,22 @@ export default function App() {
   const projectName = currentProject?.name ?? ''
   const hasProject = currentProject !== null
 
+  // Track plan names we've ever observed in the list. If `planName` was
+  // in a previous list but is gone from the current one, that's a
+  // deleted/pruned plan and we should clear the selection. A brand-new
+  // name (user typing "+ 新建方案") was never in any previous list and
+  // should NOT be cleared.
+  const knownPlanNamesRef = useRef<Set<string>>(new Set())
+
   // Refresh plan list when project/projectDir changes. Do NOT depend on
   // planName — that would re-run on every keystroke of the "new plan"
-  // input, and the "wipe if not in list" check below would clear the
-  // input after each character. Use functional setState so we can still
-  // prune a stale planName (e.g. after switching projects) without
-  // reading planName directly from the closure.
+  // input. Use functional setState so we can still prune a stale
+  // planName (after switching projects or after the backend auto-prunes
+  // a dead external mapping) without reading planName directly.
   useEffect(() => {
     if (!currentProjectId || !projectDir) {
       setPlanList([])
+      knownPlanNamesRef.current = new Set()
       return
     }
     let cancelled = false
@@ -221,18 +228,20 @@ export default function App() {
       if (!planRes.ok) return
       const items = planRes.items
       setPlanList(items)
-      // Prune ghost plan names only when:
-      //   1. the project has any plans at all (empty list ≈ brand-new
-      //      project; keep whatever the user is typing), AND
-      //   2. the current name is not in that list (stale from a previous
-      //      project).
-      // Functional setState means we don't need planName as a dep.
+      const currentNames = new Set(items.map((p) => p.name))
       setPlanName((prev) => {
-        if (prev && items.length > 0 && !items.some((p) => p.name === prev)) {
+        if (!prev) return prev
+        if (currentNames.has(prev)) return prev
+        // Not in current list — was it in a previous list?
+        if (knownPlanNamesRef.current.has(prev)) {
+          // Was known, now gone → stale selection, clear it.
           return ''
         }
+        // Never seen → user is typing a new plan name, keep it.
         return prev
       })
+      // Update "ever seen" set AFTER the prune check.
+      for (const n of currentNames) knownPlanNamesRef.current.add(n)
     })()
     return () => {
       cancelled = true
@@ -476,6 +485,44 @@ export default function App() {
       planName || undefined
     )
     if (!res.ok || res.content === undefined) {
+      // Special case: the current plan is external (registered via import)
+      // but its source file was deleted. Offer to remove the stale mapping
+      // instead of the generic "let AI design" hint.
+      const currentPlan = planList.find((p) => p.name === planName)
+      const isDeadExternal =
+        currentPlan?.source === 'external' && res.path
+          ? /ENOENT|no such file|不存在|找不到|not.*exist/i.test(
+              res.error ?? ''
+            )
+          : false
+      if (isDeadExternal && currentProjectId && planName) {
+        showToast(
+          `外部方案文件已丢失（${res.path}）。`,
+          {
+            level: 'warn',
+            duration: 8000,
+            action: {
+              label: '从列表移除',
+              onClick: async () => {
+                if (!projectDir) return
+                const rm = await window.api.plan.removeExternal({
+                  projectDir,
+                  name: planName
+                })
+                if (!rm.ok) {
+                  showToast(`移除失败：${rm.error}`, { level: 'error' })
+                  return
+                }
+                setPlanName('')
+                setPlanList((prev) => prev.filter((p) => p.name !== planName))
+                knownPlanNamesRef.current.delete(planName)
+                showToast('已从方案列表移除', { level: 'info' })
+              }
+            }
+          }
+        )
+        return
+      }
       showToast(
         `暂无可预览的方案文件${res.path ? `（${res.path}）` : ''}。请先让 AI 开始对话设计。`,
         { level: 'warn' }
@@ -483,7 +530,7 @@ export default function App() {
       return
     }
     setPlanReview({ path: res.path ?? '', content: res.content })
-  }, [projectDir, planName])
+  }, [projectDir, planName, planList, currentProjectId])
 
   /** Open the git diff viewer. */
   const openDiffReview = useCallback(() => {

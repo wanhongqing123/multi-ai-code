@@ -26,7 +26,11 @@ import {
   rootDir
 } from './store/paths.js'
 import { registerPtyIpc, killAllSessions } from './cc/ptyManager.js'
-import { listPlans, registerExternalPlan } from './orchestrator/plans.js'
+import {
+  listPlans,
+  registerExternalPlan,
+  removeExternalPlan
+} from './orchestrator/plans.js'
 import { detectMsys, buildOpenMsysTerminalCommand } from './util/msys.js'
 import { spawn as spawnChild } from 'child_process'
 import { promises as fs } from 'fs'
@@ -102,6 +106,20 @@ app.whenReady().then(async () => {
     ) => {
       try {
         return await registerExternalPlan(projectDir, externalPath)
+      } catch (err) {
+        return { ok: false as const, error: (err as Error).message }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'plan:removeExternal',
+    async (
+      _e,
+      { projectDir, name }: { projectDir: string; name: string }
+    ) => {
+      try {
+        return await removeExternalPlan(projectDir, name)
       } catch (err) {
         return { ok: false as const, error: (err as Error).message }
       }

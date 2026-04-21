@@ -169,13 +169,57 @@ html, body, #root {
   min-height: 0;
 }
 
-.app.has-drawer .main-split {
-  padding-right: var(--mac-drawer-width);
-  transition: padding-right var(--mac-dur-normal) var(--mac-ease);
+.main-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: var(--mac-surface);
+  border: 1px solid var(--mac-border);
+  border-radius: var(--mac-r-lg);
+  margin: var(--mac-sp-3);
+  overflow: hidden;
+  box-shadow: var(--mac-elev-1);
+  min-width: 0;
+  min-height: 0;
 }
 
-.main-split > .grid {
+.main-panel-head {
+  display: flex;
+  align-items: center;
+  gap: var(--mac-sp-3);
+  padding: var(--mac-sp-3) var(--mac-sp-4);
+  background: var(--mac-surface-raised);
+  border-bottom: 1px solid var(--mac-border-subtle);
+}
+
+.main-panel-title {
+  display: flex;
+  align-items: center;
+  gap: var(--mac-sp-2);
   flex: 1;
+  min-width: 0;
+  font-size: var(--mac-text-md);
+  font-weight: var(--mac-weight-medium);
+  color: var(--mac-fg);
+}
+
+.main-panel-plan {
+  color: var(--mac-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.main-panel-actions {
+  display: flex;
+  gap: var(--mac-sp-2);
+}
+
+.main-panel-body {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  min-height: 0;
 }
 
 .topbar {
@@ -255,32 +299,6 @@ html, body, #root {
   border-radius: var(--mac-r-sm);
   font-size: var(--mac-text-xs);
   font-weight: var(--mac-weight-medium);
-}
-
-.grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  grid-template-rows: repeat(2, 1fr);
-  gap: var(--mac-sp-3);
-  padding: var(--mac-sp-3);
-  background: var(--mac-bg);
-  overflow: hidden;
-  min-width: 0;
-  min-height: 0;
-}
-
-.grid.grid-zoomed {
-  grid-template-columns: 1fr;
-  grid-template-rows: 1fr;
-}
-
-.tile.tile-hidden {
-  display: none;
-}
-
-.tile.tile-zoomed {
-  grid-column: 1 / -1;
-  grid-row: 1 / -1;
 }
 
 .topbar-btn {
@@ -1208,13 +1226,13 @@ html, body, #root {
   font-size: var(--mac-text-xs);
 }
 
-.stage-settings-modal {
+.ai-settings-modal {
   width: 680px;
   max-height: 80vh;
   display: flex;
   flex-direction: column;
 }
-.stage-settings-body {
+.ai-settings-body {
   flex: 1;
   overflow-y: auto;
   padding: var(--mac-sp-3) var(--mac-sp-4);
@@ -1223,25 +1241,25 @@ html, body, #root {
   gap: var(--mac-sp-3);
   background: var(--mac-surface);
 }
-.stage-settings-card {
+.ai-settings-card {
   border: 1px solid var(--mac-border);
   border-radius: var(--mac-r-md);
   padding: var(--mac-sp-3) var(--mac-sp-3);
   background: var(--mac-surface-raised);
 }
-.stage-settings-card label {
+.ai-settings-card label {
   display: block;
   margin-top: var(--mac-sp-2);
   font-size: var(--mac-text-xs);
   color: var(--mac-fg-muted);
 }
-.stage-settings-card label > input,
-.stage-settings-card label > textarea {
+.ai-settings-card label > input,
+.ai-settings-card label > textarea {
   display: block;
   width: 100%;
   margin-top: 2px;
 }
-.stage-settings-title {
+.ai-settings-title {
   display: flex;
   align-items: center;
   font-size: var(--mac-text-sm);

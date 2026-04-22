@@ -4,6 +4,7 @@ import AnalysisPanel, { type RepoCodeAnnotation } from './AnalysisPanel'
 import CodePane, { type RepoSelection } from './CodePane'
 import FileTree from './FileTree'
 import { parseAnalysisOutput } from './parseAnalysisOutput'
+import { buildRepoAnnotationMessage } from './repoAnnotationMessage.js'
 
 function cleanTerminalChunk(raw: string): string {
   return raw
@@ -28,6 +29,7 @@ export default function RepoViewerWindow({
   const [loadingFile, setLoadingFile] = useState(false)
   const [repoViewSettings, setRepoViewSettings] = useState<AiSettings>({ ai_cli: 'claude' })
   const [annotations, setAnnotations] = useState<RepoCodeAnnotation[]>([])
+  const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null)
   const [analysisPending, setAnalysisPending] = useState(false)
   const [analysisAnswer, setAnalysisAnswer] = useState('')
   const [projectSummary, setProjectSummary] = useState('')
@@ -70,6 +72,7 @@ export default function RepoViewerWindow({
     setSelectedContent('')
     setSelectedSize(0)
     setAnnotations([])
+    setEditingAnnotationId(null)
     setAnalysisAnswer('')
     setProjectSummary('')
     setFileNote('')
@@ -99,6 +102,10 @@ export default function RepoViewerWindow({
       cancelled = true
     }
   }, [project, selectedFile])
+
+  useEffect(() => {
+    setEditingAnnotationId(null)
+  }, [selectedFile])
 
   useEffect(() => {
     const offData = window.api.repoView.onAnalysisData((evt) => {
@@ -141,15 +148,32 @@ export default function RepoViewerWindow({
   }, [])
 
   const onAnnotateSelection = useCallback(
-    (selection: RepoSelection) => {
+    (selection: RepoSelection, comment: string, editingId?: string) => {
       if (!selectedFile) return
+      if (editingId) {
+        setAnnotations((prev) =>
+          prev.map((annotation) =>
+            annotation.id === editingId
+              ? {
+                  ...annotation,
+                  lineRange: selection.lineRange,
+                  snippet: selection.snippet,
+                  comment
+                }
+              : annotation
+          )
+        )
+        setEditingAnnotationId(null)
+        return
+      }
       setAnnotations((prev) => [
         ...prev,
         {
           id: `ann_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
           filePath: selectedFile,
           lineRange: selection.lineRange,
-          snippet: selection.snippet
+          snippet: selection.snippet,
+          comment
         }
       ])
     },
@@ -176,9 +200,11 @@ export default function RepoViewerWindow({
         return
       }
 
-      const selection = targetAnns
-        .map((a, i) => [`[片段 ${i + 1} | 行 ${a.lineRange}]`, a.snippet].join('\n'))
-        .join('\n\n')
+      const selection = buildRepoAnnotationMessage({
+        filePath: selectedFile,
+        question,
+        annotations: targetAnns
+      })
 
       pendingMemoryFileRef.current = selectedFile
       analysisRawRef.current = ''
@@ -188,7 +214,7 @@ export default function RepoViewerWindow({
         repoRoot: project.target_repo,
         filePath: selectedFile,
         selection,
-        question,
+        question: '',
         projectSummary,
         fileNote
       })
@@ -221,6 +247,10 @@ export default function RepoViewerWindow({
           byteLength={selectedSize}
           loading={loadingFile}
           onAnnotateSelection={onAnnotateSelection}
+          editingAnnotation={
+            annotations.find((annotation) => annotation.id === editingAnnotationId) ?? null
+          }
+          onCancelEditing={() => setEditingAnnotationId(null)}
         />
       </main>
       <aside className="repo-view-analysis">
@@ -234,12 +264,15 @@ export default function RepoViewerWindow({
           answer={analysisAnswer}
           recentTopics={recentTopics}
           onSendAnalysis={onSendAnalysis}
-          onRemoveAnnotation={(id) =>
+          onEditAnnotation={(id) => setEditingAnnotationId(id)}
+          onRemoveAnnotation={(id) => {
+            if (editingAnnotationId === id) setEditingAnnotationId(null)
             setAnnotations((prev) => prev.filter((a) => a.id !== id))
-          }
-          onClearAnnotations={() =>
+          }}
+          onClearAnnotations={() => {
+            setEditingAnnotationId(null)
             setAnnotations((prev) => prev.filter((a) => a.filePath !== selectedFile))
-          }
+          }}
         />
       </aside>
     </div>

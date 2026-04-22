@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 export interface RepoSelection {
   snippet: string
@@ -10,7 +10,14 @@ export interface CodePaneProps {
   content: string
   byteLength: number
   loading: boolean
-  onAnnotateSelection: (selection: RepoSelection) => void
+  onAnnotateSelection: (selection: RepoSelection, comment: string, editingId?: string) => void
+  editingAnnotation?: {
+    id: string
+    lineRange: string
+    snippet: string
+    comment: string
+  } | null
+  onCancelEditing: () => void
 }
 
 function lineFromNode(node: Node | null): number | null {
@@ -28,7 +35,9 @@ export default function CodePane({
   content,
   byteLength,
   loading,
-  onAnnotateSelection
+  onAnnotateSelection,
+  editingAnnotation,
+  onCancelEditing
 }: CodePaneProps): JSX.Element {
   const paneRef = useRef<HTMLDivElement | null>(null)
   const [draft, setDraft] = useState<{
@@ -36,6 +45,12 @@ export default function CodePane({
     lineRange: string
     x: number
     y: number
+  } | null>(null)
+  const [composer, setComposer] = useState<{
+    snippet: string
+    lineRange: string
+    comment: string
+    editingId?: string
   } | null>(null)
 
   const lineCount = useMemo(() => (content ? content.split('\n').length : 0), [content])
@@ -73,11 +88,44 @@ export default function CodePane({
 
   const addAnnotation = useCallback(() => {
     if (!draft) return
-    onAnnotateSelection({ snippet: draft.quote, lineRange: draft.lineRange })
+    setComposer({
+      snippet: draft.quote,
+      lineRange: draft.lineRange,
+      comment: ''
+    })
     setDraft(null)
+  }, [draft])
+
+  const cancelComposer = useCallback(() => {
+    setComposer(null)
+    onCancelEditing()
+  }, [onCancelEditing])
+
+  const saveComposer = useCallback(() => {
+    if (!composer) return
+    const comment = composer.comment.trim()
+    if (!comment) return
+    onAnnotateSelection(
+      { snippet: composer.snippet, lineRange: composer.lineRange },
+      comment,
+      composer.editingId
+    )
+    setComposer(null)
+    onCancelEditing()
     const sel = window.getSelection()
     sel?.removeAllRanges()
-  }, [draft, onAnnotateSelection])
+  }, [composer, onAnnotateSelection, onCancelEditing])
+
+  useEffect(() => {
+    if (!editingAnnotation) return
+    setComposer({
+      snippet: editingAnnotation.snippet,
+      lineRange: editingAnnotation.lineRange,
+      comment: editingAnnotation.comment,
+      editingId: editingAnnotation.id
+    })
+    setDraft(null)
+  }, [editingAnnotation])
 
   return (
     <div className="repo-code-wrap">
@@ -122,6 +170,46 @@ export default function CodePane({
           </>
         )}
       </div>
+      {composer && (
+        <div className="plan-review-composer-backdrop" onClick={cancelComposer}>
+          <div
+            className="plan-review-composer"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="plan-review-composer-head">
+              {composer.editingId ? '编辑批注' : '添加批注'} · {filePath}:{composer.lineRange}
+            </div>
+            <blockquote className="plan-review-composer-quote">
+              {composer.snippet.length > 500
+                ? composer.snippet.slice(0, 500) + '…'
+                : composer.snippet}
+            </blockquote>
+            <textarea
+              className="plan-review-composer-input"
+              value={composer.comment}
+              onChange={(e) =>
+                setComposer({ ...composer, comment: e.target.value })
+              }
+              autoFocus
+              placeholder="写下这段代码需要分析或修改的具体说明..."
+              rows={5}
+            />
+            <div className="plan-review-composer-actions">
+              <button className="drawer-btn" onClick={cancelComposer}>
+                取消
+              </button>
+              <span style={{ flex: 1 }} />
+              <button
+                className="drawer-btn primary"
+                onClick={saveComposer}
+                disabled={!composer.comment.trim()}
+              >
+                {composer.editingId ? '保存修改' : '添加批注'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -6,6 +6,7 @@ export interface RepoCodeAnnotation {
   filePath: string
   lineRange: string
   snippet: string
+  comment: string
 }
 
 export default function AnalysisPanel({
@@ -16,6 +17,7 @@ export default function AnalysisPanel({
   answer,
   recentTopics,
   onSendAnalysis,
+  onEditAnnotation,
   onRemoveAnnotation,
   onClearAnnotations
 }: {
@@ -28,6 +30,7 @@ export default function AnalysisPanel({
   answer: string
   recentTopics: Array<{ at: string; filePath: string; topic: string }>
   onSendAnalysis: (question: string) => void
+  onEditAnnotation: (id: string) => void
   onRemoveAnnotation: (id: string) => void
   onClearAnnotations: () => void
 }): JSX.Element {
@@ -54,16 +57,25 @@ export default function AnalysisPanel({
                   <div className="repo-analysis-item-head">
                     <span>#{i + 1}</span>
                     <span>{a.lineRange} 行</span>
-                    <button
-                      className="repo-analysis-remove"
-                      onClick={() => onRemoveAnnotation(a.id)}
-                    >
-                      删除
-                    </button>
+                    <div className="repo-analysis-item-actions">
+                      <button
+                        className="repo-analysis-edit"
+                        onClick={() => onEditAnnotation(a.id)}
+                      >
+                        编辑
+                      </button>
+                      <button
+                        className="repo-analysis-remove"
+                        onClick={() => onRemoveAnnotation(a.id)}
+                      >
+                        删除
+                      </button>
+                    </div>
                   </div>
                   <blockquote className="repo-analysis-quote">
                     {a.snippet.length > 260 ? `${a.snippet.slice(0, 260)}…` : a.snippet}
                   </blockquote>
+                  <div className="repo-analysis-comment">{a.comment}</div>
                 </li>
               ))}
             </ul>

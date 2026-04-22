@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { buildRepoAnalysisPrompt } from './analysisPrompt.js'
 
 describe('buildRepoAnalysisPrompt', () => {
-  it('includes no-write constraints and memory block contract', () => {
+  it('includes action contract and memory block contract', () => {
     const text = buildRepoAnalysisPrompt({
       repoRoot: '/repo',
       filePath: 'src/app.ts',
@@ -11,7 +11,7 @@ describe('buildRepoAnalysisPrompt', () => {
       projectSummary: 'summary',
       fileNote: 'file note'
     })
-    expect(text).toContain('不要修改仓库文件')
+    expect(text).toContain('如果用户明确要求修改代码')
     expect(text).toContain('[[MEMORY_UPDATE]]')
     expect(text).toContain('[[END_OF_ANALYSIS]]')
     expect(text).toContain('src/app.ts')

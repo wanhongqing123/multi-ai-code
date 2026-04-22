@@ -3539,17 +3539,36 @@ html, body, #root {
   color: var(--mac-fg-subtle);
 }
 
+.repo-analysis-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.repo-analysis-edit,
 .repo-analysis-remove {
   border: none;
   background: transparent;
-  color: var(--mac-danger);
+  color: var(--mac-fg-subtle);
   cursor: pointer;
   padding: 0;
+}
+
+.repo-analysis-remove {
+  color: var(--mac-danger);
 }
 
 .repo-analysis-quote {
   margin: 8px 0 0;
   font-size: var(--mac-text-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.repo-analysis-comment {
+  margin-top: 8px;
+  font-size: var(--mac-text-xs);
+  color: var(--mac-fg);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }

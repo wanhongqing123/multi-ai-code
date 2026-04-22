@@ -1,0 +1,711 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Multi-AI Code · 产品介绍</title>
+  <style>
+    :root {
+      --ink: #121521;
+      --muted: #5e6677;
+      --line: rgba(24, 36, 61, 0.12);
+      --bg: #f5f2ec;
+      --panel: rgba(255, 255, 255, 0.84);
+      --card: #ffffff;
+      --accent: #b4532a;
+      --accent-2: #174f76;
+      --warm: #ede5db;
+      --shadow: 0 18px 50px rgba(20, 26, 36, 0.08);
+      --mono: "SFMono-Regular", "JetBrains Mono", "Menlo", "Consolas", monospace;
+      --serif: "Noto Serif SC", "Source Han Serif SC", "Songti SC", Georgia, serif;
+      --sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", Helvetica, "Microsoft YaHei", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background:
+        radial-gradient(circle at 15% 10%, rgba(180, 83, 42, 0.10), transparent 32%),
+        radial-gradient(circle at 90% 20%, rgba(23, 79, 118, 0.10), transparent 30%),
+        linear-gradient(180deg, #f7f3ed 0%, #f4efe8 100%);
+      color: var(--ink);
+      font-family: var(--sans);
+    }
+    .deck {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+    }
+    .deck::before,
+    .deck::after {
+      content: "";
+      position: absolute;
+      border-radius: 999px;
+      pointer-events: none;
+      filter: blur(2px);
+    }
+    .deck::before {
+      top: -120px;
+      right: -140px;
+      width: 360px;
+      height: 360px;
+      background: rgba(180, 83, 42, 0.07);
+    }
+    .deck::after {
+      left: -120px;
+      bottom: -140px;
+      width: 340px;
+      height: 340px;
+      background: rgba(23, 79, 118, 0.08);
+    }
+    .slide {
+      position: absolute;
+      inset: 0;
+      padding: 56px 72px 64px;
+      display: none;
+      flex-direction: column;
+      gap: 22px;
+      overflow: auto;
+    }
+    .slide.active { display: flex; }
+    h1 {
+      font-family: var(--serif);
+      font-weight: 600;
+      font-size: 58px;
+      line-height: 1.08;
+      margin: 0;
+      letter-spacing: -0.6px;
+    }
+    h2 {
+      font-family: var(--serif);
+      font-weight: 600;
+      font-size: 34px;
+      line-height: 1.15;
+      margin: 0;
+      letter-spacing: -0.35px;
+    }
+    h3 {
+      font-family: var(--sans);
+      font-weight: 700;
+      font-size: 15px;
+      text-transform: uppercase;
+      letter-spacing: 1.6px;
+      color: var(--muted);
+      margin: 0;
+    }
+    p, li {
+      font-size: 19px;
+      line-height: 1.58;
+      color: var(--ink);
+    }
+    p.lead {
+      font-size: 23px;
+      color: var(--muted);
+      max-width: 900px;
+    }
+    ul { margin: 0; padding-left: 22px; }
+    ul li { margin-bottom: 8px; }
+    ul li::marker { color: var(--muted); }
+    em.accent { font-style: normal; color: var(--accent); font-weight: 600; }
+    code, pre { font-family: var(--mono); }
+    code.inline {
+      font-size: 0.9em;
+      background: rgba(180, 83, 42, 0.08);
+      color: #8e3f1d;
+      padding: 1px 6px;
+      border-radius: 4px;
+    }
+    pre {
+      background: linear-gradient(180deg, #10141b 0%, #0d1117 100%);
+      color: #e4e6eb;
+      padding: 18px 22px;
+      border-radius: 16px;
+      font-size: 13.5px;
+      line-height: 1.55;
+      overflow-x: auto;
+      margin: 0;
+      box-shadow: var(--shadow);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    pre .k { color: #f08d49; }
+    pre .s { color: #7ec699; }
+    pre .c { color: #7a828b; font-style: italic; }
+    pre .t { color: #6bb0d9; }
+    .card {
+      background: rgba(255, 255, 255, 0.82);
+      backdrop-filter: blur(14px);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 20px 22px;
+      box-shadow: var(--shadow);
+    }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+    .footer {
+      position: absolute;
+      bottom: 18px;
+      left: 72px;
+      right: 72px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .nav-hint { opacity: 0.6; }
+    .kbd {
+      border: 1px solid var(--line);
+      border-bottom-width: 2px;
+      padding: 1px 6px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.72);
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--mono);
+      font-size: 12px;
+      padding: 5px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.78);
+      color: var(--muted);
+    }
+    .accent-bar { width: 58px; height: 4px; background: var(--accent); border-radius: 999px; }
+    .muted-box {
+      background: rgba(255, 255, 255, 0.64);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 18px 20px;
+    }
+    .cover { justify-content: center; align-items: stretch; }
+    .hero {
+      display: grid;
+      grid-template-columns: 1.05fr 0.95fr;
+      gap: 28px;
+      align-items: center;
+      min-height: 100%;
+    }
+    .cover .brand {
+      font-family: var(--mono);
+      font-size: 13px;
+      color: var(--muted);
+      letter-spacing: 2.6px;
+      text-transform: uppercase;
+      margin-bottom: 14px;
+    }
+    .tag-row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .col { display: flex; flex-direction: column; gap: 12px; }
+    .why-pain { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .why-pain .card strong { color: var(--accent); }
+    .arrow-flow {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-family: var(--mono);
+      font-size: 14px;
+      flex-wrap: wrap;
+    }
+    .arrow-flow .node {
+      background: rgba(255, 255, 255, 0.8);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 15px;
+      box-shadow: var(--shadow);
+    }
+    .arrow-flow .node.focus {
+      border-color: rgba(180, 83, 42, 0.4);
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .arrow-flow .ar { color: var(--muted); }
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 16px;
+    }
+    .feature {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-height: 182px;
+    }
+    .feature .index {
+      font-family: var(--mono);
+      color: var(--accent-2);
+      font-size: 13px;
+      letter-spacing: 0.2px;
+    }
+    .feature h3 {
+      text-transform: none;
+      letter-spacing: 0;
+      font-size: 18px;
+      color: var(--ink);
+    }
+    .feature p { margin: 0; color: var(--muted); font-size: 17px; }
+    .step-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .step { position: relative; min-height: 170px; }
+    .step .num {
+      font-family: var(--mono);
+      color: var(--accent);
+      font-size: 13px;
+      margin-bottom: 10px;
+    }
+    .step h3 {
+      text-transform: none;
+      letter-spacing: 0;
+      color: var(--ink);
+      font-size: 18px;
+      margin-bottom: 8px;
+    }
+    .step p { margin: 0; color: var(--muted); font-size: 16px; }
+    .hero-shot {
+      position: relative;
+      border-radius: 24px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      box-shadow: 0 24px 60px rgba(20, 26, 36, 0.18);
+      background: #fff;
+    }
+    .hero-shot img,
+    .shot img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .hero-shot .overlay {
+      position: absolute;
+      left: 20px;
+      right: 20px;
+      bottom: 20px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .mini-stat {
+      background: rgba(255, 255, 255, 0.92);
+      border-radius: 14px;
+      border: 1px solid rgba(18, 21, 33, 0.08);
+      padding: 12px 14px;
+      backdrop-filter: blur(10px);
+    }
+    .mini-stat b {
+      display: block;
+      font-size: 20px;
+      color: var(--ink);
+      margin-bottom: 4px;
+    }
+    .mini-stat span {
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.4;
+    }
+    .shot {
+      border-radius: 18px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow);
+      background: #fff;
+    }
+    .shot-caption {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      color: var(--muted);
+      font-size: 14px;
+      margin-top: 10px;
+    }
+    .shot-caption .label {
+      font-family: var(--mono);
+      color: var(--accent-2);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 1.1px;
+    }
+    .value-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 16px;
+    }
+    .value-card { min-height: 170px; }
+    .value-card .big {
+      font-family: var(--serif);
+      font-size: 34px;
+      line-height: 1;
+      color: var(--accent);
+      margin-bottom: 8px;
+    }
+    .value-card h3 {
+      text-transform: none;
+      font-size: 18px;
+      color: var(--ink);
+      letter-spacing: 0;
+      margin-bottom: 8px;
+    }
+    .value-card p { margin: 0; color: var(--muted); font-size: 16px; }
+    .tall-card { min-height: 100%; }
+    .stack { display: flex; flex-direction: column; gap: 14px; }
+    .section-note {
+      color: var(--muted);
+      font-size: 16px;
+      margin: 0;
+      max-width: 900px;
+    }
+    .closing {
+      margin-top: auto;
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 18px;
+      align-items: end;
+    }
+  </style>
+</head>
+<body>
+  <div class="deck" id="deck">
+
+    <section class="slide cover active">
+      <div class="hero">
+        <div class="stack">
+          <div class="brand">EXECUTIVE PRODUCT SHOWCASE</div>
+          <h1>Multi-AI Code</h1>
+          <p class="lead">把方案阅读、AI 编码推进、Diff 审查和批注回灌放进一个<em class="accent">本地可控</em>的工作台里，让 AI 真正适合真实项目推进。</p>
+          <div class="tag-row">
+            <span class="pill">本地仓库</span>
+            <span class="pill">方案驱动</span>
+            <span class="pill">Diff 审查</span>
+            <span class="pill">Claude Code / Codex</span>
+            <span class="pill">批注回灌</span>
+          </div>
+          <div class="muted-box" style="max-width: 640px;">
+            <p style="margin:0;">这是一份老板汇报版介绍：先看价值，再看使用流程，最后看当前已经具备的能力和下一步机会。</p>
+          </div>
+        </div>
+        <div class="hero-shot">
+          <img src="screenshots/主界面.png" alt="Multi-AI Code 主界面" />
+          <div class="overlay">
+            <div class="mini-stat"><b>本地</b><span>所有会话与方案都在目标仓库和本机运行</span></div>
+            <div class="mini-stat"><b>闭环</b><span>从方案到 Diff 批注，再回到 AI 继续修改</span></div>
+            <div class="mini-stat"><b>可切换</b><span>主会话与 CLI 工具配置可按团队习惯选择</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <h3>为什么需要这个产品</h3>
+      <div class="accent-bar"></div>
+      <h2>不是 AI 不够强，而是 <em class="accent">协作流程不够顺</em></h2>
+      <p class="lead">在真实项目里，最耗时的不是写第一版代码，而是方案确认、上下文保持、审查反馈和继续修改这几个来回。</p>
+      <div class="why-pain">
+        <div class="card">
+          <h3>方案散落</h3>
+          <p><strong>方案</strong>如果只在聊天记录里，过两天就很难复用，也很难交接。</p>
+        </div>
+        <div class="card">
+          <h3>长会话偏移</h3>
+          <p><strong>目标</strong>容易被最新一次修改带偏，最后变成“修着修着忘了原意”。</p>
+        </div>
+        <div class="card">
+          <h3>审查与执行断开</h3>
+          <p><strong>Diff</strong> 看完后要手工复述给 AI，容易丢行号、丢上下文、丢重点。</p>
+        </div>
+        <div class="card">
+          <h3>工具切换成本高</h3>
+          <p><strong>Claude Code</strong> 和 <strong>Codex</strong> 可以都用，但最好有统一的入口和流程。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <h3>产品定位</h3>
+      <div class="accent-bar"></div>
+      <h2>一个面向本地仓库的 <em class="accent">AI 编码工作台</em></h2>
+      <p class="lead">它不是普通聊天壳，也不是一次性的脚本，而是把方案、执行、审查和反馈都放进同一条工作流。</p>
+      <div class="grid-2">
+        <div class="card tall-card">
+          <h3>它做什么</h3>
+          <ul>
+            <li>把方案变成显式文件，而不是隐藏在聊天记录里</li>
+            <li>把代码实施放进一个本地 AI 会话里推进</li>
+            <li>把 Diff 审查变成结构化批注，而不是口头描述</li>
+            <li>把批注继续回灌给 AI，形成闭环</li>
+          </ul>
+        </div>
+        <div class="card tall-card">
+          <h3>它的边界</h3>
+          <ul>
+            <li>不替代代码编辑器，而是补足 AI 协作环节</li>
+            <li>不把所有能力做成云端服务，而是优先保证本地可控</li>
+            <li>不依赖单一 CLI 工具，Claude Code 和 Codex 都能接入</li>
+            <li>不把技术实现当卖点，重点是工作流是否顺手</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <h3>核心能力总览</h3>
+      <div class="accent-bar"></div>
+      <h2>四个能力，拼成一条可用的产品闭环</h2>
+      <div class="feature-grid">
+        <div class="card feature">
+          <div class="index">01</div>
+          <h3>主会话终端</h3>
+          <p>一个 PTY 驱动的主会话，负责方案推进、代码修改和过程输出。</p>
+        </div>
+        <div class="card feature">
+          <div class="index">02</div>
+          <h3>方案导入与预览</h3>
+          <p>支持内部方案和外部方案，先看清方向，再决定是否启动。</p>
+        </div>
+        <div class="card feature">
+          <div class="index">03</div>
+          <h3>Diff 审查与回灌</h3>
+          <p>把代码修改后的反馈变成结构化批注，直接发回 AI 继续处理。</p>
+        </div>
+        <div class="card feature">
+          <div class="index">04</div>
+          <h3>双 CLI 配置</h3>
+          <p>Claude Code 与 Codex 可按团队习惯选择，主会话和辅助能力可分别配置。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <h3>典型使用流程</h3>
+      <div class="accent-bar"></div>
+      <h2>实际使用时，不是“随便聊到哪算哪”，而是按一个清晰的节奏往前推进。</h2>
+      <div class="step-grid">
+        <div class="card step">
+          <div class="num">STEP 1</div>
+          <h3>选仓库</h3>
+          <p>先确定当前工作的目标仓库，后续方案和修改都围绕它展开。</p>
+        </div>
+        <div class="card step">
+          <div class="num">STEP 2</div>
+          <h3>选方案</h3>
+          <p>从已有方案中挑选，或导入外部方案，再决定要不要启动。</p>
+        </div>
+        <div class="card step">
+          <div class="num">STEP 3</div>
+          <h3>启动 AI</h3>
+          <p>AI 先读方案，先总结，再等待确认；确认后才进入实施。</p>
+        </div>
+        <div class="card step">
+          <div class="num">STEP 4</div>
+          <h3>Diff 审查</h3>
+          <p>改完后看差异，逐行标注哪里需要修、哪里需要补。</p>
+        </div>
+        <div class="card step">
+          <div class="num">STEP 5</div>
+          <h3>批注回灌</h3>
+          <p>把批注直接发回 AI CLI，让下一轮修改接着上一次的上下文继续。</p>
+        </div>
+      </div>
+      <div class="shot">
+        <img src="screenshots/主界面.png" alt="Multi-AI Code 主界面流程" />
+      </div>
+    </section>
+
+    <section class="slide">
+      <h3>方案驱动能力</h3>
+      <div class="accent-bar"></div>
+      <h2>方案不是附件，而是整个流程的起点</h2>
+      <p class="lead">Multi-AI Code 会先把方案变成明确的工作输入。对于外部方案，只发路径，不把整篇内容塞进会话里刷屏。</p>
+      <div class="grid-2">
+        <div class="col">
+          <div class="card">
+            <h3>内部方案</h3>
+            <p>方案已经在当前仓库里时，先让 AI 读内容、总结目标，再进入执行。</p>
+          </div>
+          <div class="card">
+            <h3>外部方案</h3>
+            <p>如果方案来自外部文件，只把绝对路径交给 AI，让它自己读取，减少上下文浪费。</p>
+          </div>
+          <div class="card">
+            <h3>用户确认前不修改代码</h3>
+            <p>先理解方案、先确认方向，避免 AI 在目标未确认时提前开改。</p>
+          </div>
+        </div>
+        <div>
+          <div class="shot">
+            <img src="screenshots/方案 Review.png" alt="方案预览与审查" />
+          </div>
+          <div class="shot-caption">
+            <span class="label">PLAN PREVIEW</span>
+            <span>方案预览页先把内容讲清楚，再决定是否启动</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <h3>Diff 审查与批注回灌</h3>
+      <div class="accent-bar"></div>
+      <h2>审查不是结束，而是 <em class="accent">下一轮修改的输入</em></h2>
+      <div class="grid-2">
+        <div class="card">
+          <h3>怎么看</h3>
+          <ul>
+            <li>看工作区改动、最近提交或指定 commit</li>
+            <li>左右对照查看修改前后差异</li>
+            <li>支持对单行或多行做批注</li>
+            <li>批注可以写整体意见，也可以点到具体行上</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>怎么回灌</h3>
+          <ul>
+            <li>批注会自动整理成结构化说明</li>
+            <li>发送后成为下一轮 AI CLI 的输入</li>
+            <li>AI 会基于这些反馈继续改代码</li>
+            <li>整条链路不需要人工再复制粘贴一次</li>
+          </ul>
+        </div>
+      </div>
+      <div class="shot">
+        <img src="screenshots/代码 Review.png" alt="Diff 审查界面" />
+      </div>
+    </section>
+
+    <section class="slide">
+      <h3>AI CLI 配置能力</h3>
+      <div class="accent-bar"></div>
+      <h2>Claude Code 和 Codex 都能接，<em class="accent">按团队习惯选</em></h2>
+      <div class="grid-2">
+        <div class="card">
+          <h3>共同点</h3>
+          <ul>
+            <li>主会话和辅助能力都可分别选择 CLI 工具</li>
+            <li>支持 binary override、附加参数、环境变量</li>
+            <li>终端输出统一由本地 PTY 托管，保持交互一致</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>差异点</h3>
+          <ul>
+            <li><strong>Claude Code：</strong>适合已有 Claude 工作流的团队</li>
+            <li><strong>Codex：</strong>适合更偏工具链、命令式的使用习惯</li>
+            <li>界面只暴露“选择哪个 CLI”和“怎么配”，不用关心底层协议</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <h3>当前产品价值</h3>
+      <div class="accent-bar"></div>
+      <h2>它的价值不在“能不能写”，而在<em class="accent">能不能把过程管住</em></h2>
+      <div class="value-grid">
+        <div class="card value-card">
+          <div class="big">01</div>
+          <h3>过程更可控</h3>
+          <p>方案先行、确认后执行，减少 AI 在目标不明确时跑偏。</p>
+        </div>
+        <div class="card value-card">
+          <div class="big">02</div>
+          <h3>反馈更闭环</h3>
+          <p>Diff 审查的批注直接进入下一轮输入，减少人工转述。</p>
+        </div>
+        <div class="card value-card">
+          <div class="big">03</div>
+          <h3>切换更顺手</h3>
+          <p>Claude Code 和 Codex 都能接入，不强迫团队改变既有习惯。</p>
+        </div>
+        <div class="card value-card">
+          <div class="big">04</div>
+          <h3>资产可沉淀</h3>
+          <p>方案、批注和历史都保留在本地，后续可继续扩展成团队知识资产。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <h3>下一步机会</h3>
+      <div class="accent-bar"></div>
+      <h2>当前已经能展示和使用，下一步重点是<em class="accent">更稳、更顺、更能沉淀</em></h2>
+      <p class="section-note">这部分不是“功能堆更多”，而是把当前已经有的协作闭环做得更像一个团队级产品。</p>
+      <div class="grid-3">
+        <div class="card">
+          <h3>更好的可读性</h3>
+          <p>继续提升 markdown、长文本和代码块的展示，让内容更适合汇报和复盘。</p>
+        </div>
+        <div class="card">
+          <h3>更完整的记忆</h3>
+          <p>把方案、批注、项目上下文沉淀得更系统，让下次打开同仓库时更快接上。</p>
+        </div>
+        <div class="card">
+          <h3>更强的团队使用方式</h3>
+          <p>把演示、复盘和后续协作做得更标准化，方便团队持续使用，而不只是单次 demo。</p>
+        </div>
+      </div>
+      <div class="closing">
+        <div class="muted-box">
+          <h2 style="font-size:26px;margin-bottom:10px;">结论</h2>
+          <p style="margin:0;">Multi-AI Code 现在已经不是概念稿，而是一套可以讲清楚、可以演示、也可以继续打磨的产品工作台。</p>
+        </div>
+        <div class="muted-box">
+          <p style="margin:0 0 6px 0;font-family:var(--mono);font-size:12px;color:var(--accent-2);text-transform:uppercase;letter-spacing:1.1px;">Presentation format</p>
+          <p style="margin:0;">老板汇报版 · 产品展示优先 · 10 页左右</p>
+        </div>
+      </div>
+    </section>
+
+    <div class="footer">
+      <span class="nav-hint">
+        <span class="kbd">←</span> <span class="kbd">→</span> 翻页 ·
+        <span class="kbd">Home</span> / <span class="kbd">End</span> 首末 ·
+        <span class="kbd">F</span> 全屏
+      </span>
+      <span id="page-indicator">1 / 10</span>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      const slides = Array.from(document.querySelectorAll('.slide'));
+      const indicator = document.getElementById('page-indicator');
+      let idx = 0;
+
+      function show(next) {
+        idx = Math.max(0, Math.min(slides.length - 1, next));
+        slides.forEach((s, i) => s.classList.toggle('active', i === idx));
+        indicator.textContent = (idx + 1) + ' / ' + slides.length;
+        location.hash = String(idx + 1);
+      }
+
+      window.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') { show(idx + 1); e.preventDefault(); }
+        else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { show(idx - 1); e.preventDefault(); }
+        else if (e.key === 'Home') { show(0); e.preventDefault(); }
+        else if (e.key === 'End') { show(slides.length - 1); e.preventDefault(); }
+        else if (e.key.toLowerCase() === 'f') {
+          if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+          else document.exitFullscreen();
+        }
+      });
+
+      document.addEventListener('click', (e) => {
+        if (e.target.closest('a, button, code, pre, img')) return;
+        const x = e.clientX;
+        if (x > window.innerWidth * 0.6) show(idx + 1);
+        else if (x < window.innerWidth * 0.4) show(idx - 1);
+      });
+
+      const hashN = parseInt(location.hash.replace('#', ''), 10);
+      if (!isNaN(hashN)) show(hashN - 1);
+      else show(0);
+    })();
+  </script>
+</body>
+</html>

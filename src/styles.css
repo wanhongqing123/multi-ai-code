@@ -3597,16 +3597,69 @@ html, body, #root {
   gap: 8px;
 }
 
-.repo-analysis-answer {
-  margin: 0;
+.repo-analysis-chat {
   padding: 0 12px 12px;
-  max-height: 28vh;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 34vh;
   overflow: auto;
+}
+
+.repo-analysis-bubble {
+  border-radius: 14px;
+  padding: 10px 12px;
+  max-width: 100%;
+}
+
+.repo-analysis-bubble-user {
+  background: rgba(10, 132, 255, 0.16);
+  border: 1px solid rgba(10, 132, 255, 0.22);
+}
+
+.repo-analysis-bubble-assistant {
+  background: var(--mac-surface);
+  border: 1px solid var(--mac-border-subtle);
+}
+
+.repo-analysis-bubble-head {
+  font-size: 11px;
+  color: var(--mac-fg-subtle);
+  margin-bottom: 6px;
+}
+
+.repo-analysis-bubble-body {
+  margin: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-family: Consolas, 'SFMono-Regular', Menlo, Monaco, monospace;
   font-size: 12px;
   color: var(--mac-fg);
+}
+
+.repo-analysis-markdown {
+  font-family: inherit;
+}
+
+.repo-analysis-markdown > :first-child {
+  margin-top: 0;
+}
+
+.repo-analysis-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.repo-analysis-markdown p,
+.repo-analysis-markdown ul,
+.repo-analysis-markdown ol,
+.repo-analysis-markdown pre,
+.repo-analysis-markdown blockquote {
+  margin: 0 0 8px;
+}
+
+.repo-analysis-markdown code {
+  font-family: Consolas, 'SFMono-Regular', Menlo, Monaco, monospace;
+  font-size: 12px;
 }
 
 .repo-analysis-recent {

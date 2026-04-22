@@ -15,11 +15,24 @@ export interface InitialMessageParams {
   planName: string
   /** Absolute path where the plan markdown lives (or should be written). */
   planAbsPath: string
+  /** Whether the selected plan is stored inside the repo or mapped from an external file. */
+  planSource: 'internal' | 'external'
   /** Plan file content if it already exists on disk; null for new plans. */
   planContent: string | null
 }
 
 export function formatInitialMessage(p: InitialMessageParams): string {
+  if (p.planSource === 'external') {
+    return [
+      `本次方案名：${p.planName}。`,
+      '',
+      `当前方案文件来自外部文件：\`${p.planAbsPath}\`（完整绝对路径）。`,
+      '',
+      '请先自行读取这个方案文件，用中文简要总结：目标、核心步骤、预期产物。',
+      '',
+      '**此时不要修改任何代码或方案文档**。等用户确认方向（或让你按方案实施）后，再继续执行。'
+    ].join('\n')
+  }
   if (p.planContent !== null && p.planContent.trim().length > 0) {
     return [
       p.planContent.trimEnd(),

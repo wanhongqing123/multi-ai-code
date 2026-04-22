@@ -1,5 +1,8 @@
 import { useMemo, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { getCliTargetLabel, type AiCliKind } from '../components/cliTarget'
+import { type RepoConversationMessage } from './repoConversation.js'
 
 export interface RepoCodeAnnotation {
   id: string
@@ -14,7 +17,7 @@ export default function AnalysisPanel({
   annotations,
   aiCli,
   running,
-  answer,
+  messages,
   recentTopics,
   onSendAnalysis,
   onEditAnnotation,
@@ -27,7 +30,7 @@ export default function AnalysisPanel({
   annotations: RepoCodeAnnotation[]
   aiCli: AiCliKind
   running: boolean
-  answer: string
+  messages: RepoConversationMessage[]
   recentTopics: Array<{ at: string; filePath: string; topic: string }>
   onSendAnalysis: (question: string) => void
   onEditAnnotation: (id: string) => void
@@ -111,7 +114,29 @@ export default function AnalysisPanel({
               {running ? '分析中…' : `发送给 ${targetLabel}`}
             </button>
           </div>
-          {answer && <pre className="repo-analysis-answer">{answer}</pre>}
+          {messages.length > 0 && (
+            <div className="repo-analysis-chat">
+              {messages.map((message) => (
+                <div
+                  key={message.id}
+                  className={`repo-analysis-bubble repo-analysis-bubble-${message.role}`}
+                >
+                  <div className="repo-analysis-bubble-head">
+                    {message.role === 'user' ? '你' : message.streaming ? 'AI 正在回复' : 'AI'}
+                  </div>
+                  {message.role === 'assistant' ? (
+                    <div className="repo-analysis-bubble-body repo-analysis-markdown">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {message.text}
+                      </ReactMarkdown>
+                    </div>
+                  ) : (
+                    <pre className="repo-analysis-bubble-body">{message.text}</pre>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
           {recentTopics.length > 0 && (
             <div className="repo-analysis-recent">
               <div className="repo-analysis-subhead">最近主题</div>

@@ -5,6 +5,11 @@ import CodePane, { type RepoSelection } from './CodePane'
 import FileTree from './FileTree'
 import { parseAnalysisOutput } from './parseAnalysisOutput'
 import { buildRepoAnnotationMessage } from './repoAnnotationMessage.js'
+import {
+  createUserMessage,
+  syncAssistantMessage,
+  type RepoConversationMessage
+} from './repoConversation.js'
 
 function cleanTerminalChunk(raw: string): string {
   return raw
@@ -31,7 +36,7 @@ export default function RepoViewerWindow({
   const [annotations, setAnnotations] = useState<RepoCodeAnnotation[]>([])
   const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null)
   const [analysisPending, setAnalysisPending] = useState(false)
-  const [analysisAnswer, setAnalysisAnswer] = useState('')
+  const [analysisMessages, setAnalysisMessages] = useState<RepoConversationMessage[]>([])
   const [projectSummary, setProjectSummary] = useState('')
   const [fileNote, setFileNote] = useState('')
   const [recentTopics, setRecentTopics] = useState<RecentTopic[]>([])
@@ -73,7 +78,7 @@ export default function RepoViewerWindow({
     setSelectedSize(0)
     setAnnotations([])
     setEditingAnnotationId(null)
-    setAnalysisAnswer('')
+    setAnalysisMessages([])
     setProjectSummary('')
     setFileNote('')
     setRecentTopics([])
@@ -113,7 +118,11 @@ export default function RepoViewerWindow({
       if (!chunk) return
       analysisRawRef.current = (analysisRawRef.current + chunk).slice(-220000)
       const parsed = parseAnalysisOutput(analysisRawRef.current)
-      setAnalysisAnswer(parsed.answer)
+      if (parsed.answer.trim()) {
+        setAnalysisMessages((prev) =>
+          syncAssistantMessage(prev, parsed.answer, !parsed.complete)
+        )
+      }
       if (!parsed.complete || !project) return
       const pendingFile = pendingMemoryFileRef.current
       pendingMemoryFileRef.current = null
@@ -196,7 +205,9 @@ export default function RepoViewerWindow({
         env: repoViewSettings.env ?? {}
       })
       if (!startRes.ok) {
-        setAnalysisAnswer(`分析会话启动失败：${startRes.error ?? '未知错误'}`)
+        setAnalysisMessages((prev) =>
+          syncAssistantMessage(prev, `分析会话启动失败：${startRes.error ?? '未知错误'}`, false)
+        )
         return
       }
 
@@ -209,7 +220,14 @@ export default function RepoViewerWindow({
       pendingMemoryFileRef.current = selectedFile
       analysisRawRef.current = ''
       setAnalysisPending(true)
-      setAnalysisAnswer('')
+      setAnalysisMessages((prev) => [
+        ...prev,
+        createUserMessage({
+          filePath: selectedFile,
+          annotationCount: targetAnns.length,
+          question
+        })
+      ])
       const sendRes = await window.api.repoView.analysisSend({
         repoRoot: project.target_repo,
         filePath: selectedFile,
@@ -221,7 +239,9 @@ export default function RepoViewerWindow({
       if (!sendRes.ok) {
         pendingMemoryFileRef.current = null
         setAnalysisPending(false)
-        setAnalysisAnswer(`分析请求发送失败：${sendRes.error ?? '未知错误'}`)
+        setAnalysisMessages((prev) =>
+          syncAssistantMessage(prev, `分析请求发送失败：${sendRes.error ?? '未知错误'}`, false)
+        )
       }
     },
     [annotations, fileNote, project, projectId, projectSummary, repoViewSettings, selectedFile]
@@ -261,7 +281,7 @@ export default function RepoViewerWindow({
           annotations={annotations.filter((a) => a.filePath === selectedFile)}
           aiCli={repoViewSettings.ai_cli}
           running={analysisPending}
-          answer={analysisAnswer}
+          messages={analysisMessages}
           recentTopics={recentTopics}
           onSendAnalysis={onSendAnalysis}
           onEditAnnotation={(id) => setEditingAnnotationId(id)}

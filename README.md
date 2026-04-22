@@ -1,72 +1,239 @@
 # Multi-AI Code
 
-> 持续交付集成管理平台 · 把多个 AI CLI（Claude Code / Codex）编排成一条流水线
+> 面向本地仓库的 AI CLI 协作桌面工具。用 Claude Code 或 Codex 驱动主会话，在同一个界面里完成方案阅读、终端协作、Diff 审查、仓库查看与代码分析。
 
-![stages](build/icon-256.png)
+![Multi-AI Code](build/icon-256.png)
 
-## 核心能力
+## 产品定位
 
-一条 4 阶段流水线，每个阶段由一个独立的 AI CLI 实例驱动：
+Multi-AI Code 不是传统的聊天壳，也不再是早期版本里的“四阶段流水线”。
 
+当前版本更接近一个面向真实代码仓库的 AI 工作台：
+
+- 选择一个本地代码仓库作为当前项目
+- 选择或导入一个方案文件作为当前任务上下文
+- 用主会话 AI CLI 在终端里推进任务
+- 在 `Diff 审查` 里查看改动、做批注、把反馈回灌给当前会话
+- 在 `仓库查看` 窗口里浏览整个仓库、选中代码做标注，并交给独立 AI 分析或直接修改
+
+适合这几类场景：
+
+- 让 AI 根据方案文件继续落地实现
+- 对当前代码改动做针对性审查
+- 浏览大仓库时，针对某段代码让 AI 解释逻辑、排查问题、补测试或直接改代码
+- 为同一个仓库积累本地私有的分析记忆，减少每次重新解释上下文的成本
+
+## 当前核心能力
+
+### 1. 主会话终端
+
+主界面中间是一个真实 PTY 终端，由 AI CLI 驱动。
+
+- 支持 `Claude Code` 或 `Codex`
+- 可切换当前仓库与当前方案
+- 支持拖拽文件到终端，直接插入路径
+- 会话状态明确区分为 `待启动 / 运行中 / 已退出`
+- 终端输出做了 markdown 风格格式化，适合长文本阅读
+
+### 2. 方案选择、导入与预览
+
+你可以使用仓库内方案，也可以导入外部 Markdown 方案文件。
+
+- 支持从当前项目中选择方案
+- 支持 `导入外部方案`
+- 支持 `方案预览`
+- 方案预览里可以直接做标注，再发送给当前配置的 AI CLI
+- 如果是外部方案，启动主会话时不会把整份文件内容直接灌进终端，而是把方案路径交给 AI CLI 自行读取
+
+### 3. Diff 审查
+
+`Diff 审查` 是面向当前代码改动的双栏审查窗口。
+
+- 查看工作区改动、最近一次提交或指定 commit
+- 左侧代码区域支持单行和多行标注
+- 右侧批注面板可逐条填写说明
+- 批注会回灌给当前主会话，适合让 AI 继续修正实现
+- 审查窗口尺寸更大，接近全屏使用
+- 代码区域字体与滚动体验针对程序员阅读做了优化
+
+适合的操作方式：
+
+- 选中 diff 中的一段实现
+- 写明问题、风险或修改要求
+- 点击发送，让当前主会话继续处理
+
+### 4. 仓库查看
+
+`仓库查看` 是一个独立窗口，不替代 `Diff 审查`，两者并存。
+
+- 左侧：文件树，接近编辑器式浏览体验
+- 中间：单文件源码查看
+- 右侧：分析对话区与标注列表
+- 过滤大目录：`.git`、`node_modules`、`dist`、`build`、`out`
+- 支持选中任意代码片段后添加标注说明
+- 标注可发送给独立的仓库查看 AI，而不是占用主会话
+
+这个窗口更适合做“像代码浏览器一样”的工作：
+
+- 看某个文件的实现细节
+- 让 AI 解释某段逻辑
+- 让 AI 分析问题根因
+- 让 AI 根据标注直接改代码或补测试
+
+### 5. 独立 AI 配置
+
+软件现在支持两套 AI CLI 配置：
+
+- `主会话 AI`
+- `仓库查看分析 AI`
+
+两套配置可以独立设置，互不影响。默认建议：
+
+- 主会话：按你的习惯选择 `Claude Code` 或 `Codex`
+- 仓库查看分析 AI：默认 `Claude Code`
+
+每套配置都支持：
+
+- 选择 `Claude Code` 或 `Codex`
+- Binary override
+- 自定义附加参数
+- 自定义环境变量
+
+这意味着你可以：
+
+- 主界面用 `Codex` 推进任务
+- 仓库查看窗口用 `Claude Code` 做代码解释或局部修改
+
+### 6. 仓库级本地记忆
+
+`仓库查看` 的分析结果可以写入当前仓库下的本地私有目录：
+
+```text
+<target_repo>/.multi-ai-code/repo-memory/
 ```
-① 方案设计 → ② 方案实施 → ③ 方案验收 → ④ 测试验证
-```
 
-- **方案设计**：codex `--full-auto`（隔离 workspace 沙箱，仅能写 design.md）
-- **方案实施**：claude `--permission-mode auto`（**唯一能改源码的阶段**）
-- **方案验收**：claude（读 + 对照设计严格验收，产出含测试标准的 acceptance.md）
-- **测试验证**：claude（只读 + 跑测试命令，按 acceptance.md 的标准执行）
+目前会保存：
 
-### 关键特性
+- `project-summary.md`：项目级压缩总结
+- `file-notes/<path>.md`：文件级笔记
+- `recent-topics.json`：最近分析主题
+- `repo-view-history.json`：仓库查看窗口的对话历史
 
-- **自动流转 + 用户确认**：每阶段输出 `<<STAGE_DONE artifact=...>>` 标记，平台扫描到后弹抽屉，用户确认才进入下一阶段
-- **Review 审批清单**：Stage 3 fail 时抽屉列出每条问题，用户勾选后才把需要修复的发回 Stage 2
-- **反向反馈**：任意阶段点 `↺ 回退`，把问题 + 上下文注入上游阶段
-- **设计文档贯穿**：Stage 3/4 的 handoff 自动附带 Stage 1 原始设计，保证验收/测试有权威基准
-- **产物版本化归档**：每次完成自动快照到 `artifacts/history/stageN/<timestamp>.md` + SQLite 索引，顶栏「📋 历史」可查
-- **项目仓库切换**：左上角「📂 打开项目」选择目标 repo，所有阶段共享该项目上下文
-- **6 宫格仪表盘 + 双击放大 + 一键启动/终止全部**
+特点：
 
-## 运行
+- 数据跟着仓库走，换机器或换分支时更容易一起迁移
+- 默认自动写入 `.git/info/exclude`，避免把这些私有记忆误提交进 git
+- 下次重新打开同一个仓库时，AI 能更快恢复上下文
+
+## 典型使用流程
+
+### 流程 A：根据方案推进实现
+
+1. 打开一个本地仓库
+2. 选择当前方案，或导入外部方案
+3. 点击 `启动`
+4. 在主会话里让 AI 阅读方案并继续推进实现
+5. 需要检查改动时，打开 `Diff 审查`
+6. 对具体改动写批注，再发回当前会话继续修改
+
+### 流程 B：只分析某段代码逻辑
+
+1. 点击 `仓库查看`
+2. 在左侧文件树里找到目标文件
+3. 选中需要分析的代码片段
+4. 点击标注，填写你想问的问题
+5. 发送给独立分析 AI
+6. 在右侧聊天流里持续追问，必要时让它直接修改代码
+
+### 流程 C：导入外部方案但不想刷屏
+
+1. 导入外部 `.md` 方案
+2. 点击 `启动`
+3. 主会话只会把方案路径交给 AI CLI，自行读取文件
+4. 不会把整份方案正文直接打印到终端里
+
+## 主要界面说明
+
+### 顶栏
+
+- `AI 设置`：配置主会话与仓库查看的 AI CLI
+- `模板`：保存和复用常用 prompt
+- `时间线`：查看当前项目的重要事件轨迹
+- `体检`：检查本机 CLI 环境是否可用
+
+### 主工作区
+
+- `方案`：当前任务对应的方案文件
+- `导入外部方案`：从仓库外导入 Markdown 方案
+- `方案预览`：先看方案并批注
+- `启动 / 停止 / 重启`：控制主会话
+- `仓库查看`：打开独立代码浏览与分析窗口
+- `Diff 审查`：打开当前改动的双栏审查窗口
+
+## 安装与运行
+
+### 环境要求
+
+- Node.js 20+
+- macOS 或 Windows
+- 本机已安装至少一种 AI CLI：
+  - `claude`
+  - `codex`
+
+如果使用 `Codex`，建议先确认命令行可直接运行；如果使用 `Claude Code`，也需要先保证本地 CLI 已安装并登录可用。
+
+### 本地启动
 
 ```bash
-npm install           # 自动跑 electron-rebuild 处理 better-sqlite3 / node-pty
-npm run dev           # 启动开发模式
-npm run dist:mac      # macOS DMG
-npm run dist:win      # Windows (需在 Windows 机器或 CI 上跑)
+npm install
+npm run dev
+```
+
+说明：
+
+- `npm install` 后会自动执行 `electron-rebuild`
+- 原生依赖包括 `better-sqlite3` 和 `node-pty`
+
+## 打包
+
+### 构建应用
+
+```bash
+npm run build
+```
+
+### macOS
+
+```bash
+npm run dist:mac
+```
+
+### Windows
+
+```bash
+npm run dist:win
+```
+
+### 同时构建多平台
+
+```bash
+npm run dist:all
 ```
 
 ## 技术栈
 
-- **Electron 33** + **React 18** + **TypeScript 5**
-- **electron-vite** 构建
-- **node-pty** 驱动真实 CLI 子进程（带 PTY）
-- **xterm.js** 终端渲染
-- **better-sqlite3** 持久化项目 / 阶段 / 产物索引
+- Electron 33
+- React 18
+- TypeScript 5
+- electron-vite
+- node-pty
+- xterm.js
+- react-markdown + remark-gfm
+- better-sqlite3
 
-## 数据目录
+## 当前版本的使用边界
 
-```
-~/MultiAICode/
-├── multi-ai-code.db                  # SQLite: projects / stages / events / artifacts
-└── projects/<id>/
-    ├── project.json                  # 项目元数据 (name / target_repo)
-    ├── workspaces/
-    │   ├── stage1_design/            # 独立空目录（codex 沙箱）
-    │   ├── stage2_impl  → target_repo
-    │   ├── stage3_acceptance → target_repo
-    │   └── stage4_test → target_repo
-    └── artifacts/
-        ├── impl-summary.md           # 最新副本
-        ├── acceptance.md
-        ├── test-report.md
-        └── history/                  # 所有历史版本
-            └── stage{N}/<timestamp>.md
-```
-
-## 跨平台打包
-
-macOS 本机可直接出 DMG。Windows 因为 `node-pty` 是原生模块不支持跨编译，推荐两种方式：
-
-1. **GitHub Actions**（已配置 `.github/workflows/build.yml`，push tag 或手动触发即可）
-2. **Windows 本地**：装 Node 20 + Python 3.11 + VS Build Tools (Desktop C++)
+- 主会话依赖你本机真实安装的 AI CLI，不是内置模型
+- `仓库查看` 的分析能力取决于你配置的独立 AI CLI
+- 本地私有记忆默认不会进入 git，但如果你手动调整了 `.git/info/exclude`，仍需要自行确认
+- README 以当前主分支实现为准；如果你正在使用历史版本，界面与能力可能不同

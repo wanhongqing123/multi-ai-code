@@ -2712,10 +2712,11 @@ html, body, #root {
 
 /* ---------- DiffViewerDialog ---------- */
 .diff-viewer-modal {
-  width: 92vw;
-  max-width: 1280px;
-  height: 86vh;
+  width: calc(100vw - 24px);
+  max-width: none;
+  height: calc(100vh - 24px);
   max-height: none;
+  margin: 12px;
   display: flex;
   flex-direction: column;
   position: relative;
@@ -2897,7 +2898,9 @@ html, body, #root {
   overflow: auto;
   background: var(--mac-surface);
   border-right: 1px solid var(--mac-border-subtle);
-  font-family: var(--mac-font-mono);
+  --dv-code-font: Consolas, 'Cascadia Mono', 'SFMono-Regular', Menlo, Monaco,
+    monospace;
+  font-family: var(--dv-code-font);
   font-size: var(--mac-text-mono);
   font-weight: var(--mac-weight-medium);
   line-height: 1.6;
@@ -2938,13 +2941,18 @@ html, body, #root {
   border-bottom: 1px solid var(--mac-border-subtle);
   font-weight: var(--mac-weight-medium);
   font-size: var(--mac-text-sm);
-  font-family: var(--mac-font-mono);
+  font-family: var(--dv-code-font);
   position: sticky;
   top: 0;
   z-index: 2;
 }
 
 /* ---- side-by-side layout ---- */
+.dv-scroll-region {
+  display: flex;
+  flex-direction: column;
+}
+
 .dv-file-rows {
   display: flex;
   flex-direction: column;
@@ -2952,7 +2960,7 @@ html, body, #root {
 
 .dv-row {
   display: flex;
-  font-family: var(--mac-font-mono);
+  font-family: var(--dv-code-font);
   font-size: var(--mac-text-mono);
   line-height: 1.5;
   border-bottom: 1px solid var(--mac-border-subtle);
@@ -3115,7 +3123,7 @@ html, body, #root {
   overflow-x: scroll;
   overflow-y: hidden;
   height: 16px;
-  font-family: var(--mac-font-mono);
+  font-family: var(--dv-code-font);
   font-size: var(--mac-text-mono);
   border-right: 1px solid var(--mac-border-subtle);
   /* macOS Electron defaults to overlay scrollbars that fade out. Force a
@@ -3288,4 +3296,316 @@ html, body, #root {
   color: var(--mac-fg-subtle);
   font-size: var(--mac-text-xs);
   margin-top: var(--mac-sp-3);
+}
+
+/* ---------- Repo Viewer Window ---------- */
+
+.repo-view-window {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr) 360px;
+  height: 100vh;
+  background: var(--mac-bg);
+  color: var(--mac-fg);
+}
+
+.repo-view-sidebar,
+.repo-view-main,
+.repo-view-analysis {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.repo-view-sidebar {
+  border-right: 1px solid var(--mac-border-subtle);
+  background: var(--mac-surface);
+}
+
+.repo-view-main {
+  background: var(--mac-surface);
+  display: flex;
+  flex-direction: column;
+}
+
+.repo-view-analysis {
+  border-left: 1px solid var(--mac-border-subtle);
+  background: var(--mac-surface-raised);
+}
+
+.repo-view-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  color: var(--mac-fg-subtle);
+  font-size: var(--mac-text-md);
+}
+
+.repo-tree {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.repo-tree-head {
+  height: 40px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  font-weight: var(--mac-weight-semibold);
+  border-bottom: 1px solid var(--mac-border-subtle);
+}
+
+.repo-tree-body {
+  overflow: auto;
+  padding: 6px 0;
+}
+
+.repo-tree-row {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.repo-tree-row:hover {
+  background: var(--mac-bg);
+}
+
+.repo-tree-row.active {
+  background: rgba(10, 132, 255, 0.18);
+}
+
+.repo-tree-caret {
+  width: 12px;
+  text-align: center;
+  color: var(--mac-fg-subtle);
+}
+
+.repo-tree-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repo-tree-loading,
+.repo-tree-error {
+  padding: 8px 12px;
+  color: var(--mac-fg-subtle);
+  font-size: var(--mac-text-xs);
+}
+
+.repo-tree-error {
+  color: var(--mac-danger);
+}
+
+.repo-code-wrap {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.repo-code-head {
+  height: 40px;
+  border-bottom: 1px solid var(--mac-border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 12px;
+}
+
+.repo-code-head > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--mac-weight-medium);
+}
+
+.repo-code-meta {
+  color: var(--mac-fg-subtle);
+  font-size: var(--mac-text-xs);
+  white-space: nowrap;
+}
+
+.repo-code-pane {
+  flex: 1;
+  overflow: auto;
+  position: relative;
+}
+
+.repo-code-empty {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--mac-fg-subtle);
+  font-size: var(--mac-text-md);
+}
+
+.repo-code-pre {
+  margin: 0;
+  padding: 8px 0;
+  font-family: Consolas, 'SFMono-Regular', Menlo, Monaco, monospace;
+  font-size: 13px;
+  font-weight: 550;
+}
+
+.repo-code-line {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  line-height: 1.65;
+  white-space: pre;
+}
+
+.repo-code-gutter {
+  text-align: right;
+  padding: 0 10px 0 0;
+  color: var(--mac-fg-subtle);
+  user-select: none;
+  border-right: 1px solid var(--mac-border-subtle);
+}
+
+.repo-code-text {
+  padding: 0 12px;
+}
+
+.repo-code-annotate-floater {
+  position: absolute;
+  z-index: 8;
+  border: 1px solid var(--mac-border);
+  border-radius: var(--mac-r-md);
+  background: var(--mac-surface-raised);
+  color: var(--mac-fg);
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.repo-analysis-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.repo-analysis-head {
+  height: 40px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--mac-border-subtle);
+  font-weight: var(--mac-weight-semibold);
+}
+
+.repo-analysis-subhead {
+  padding: 12px 12px 6px;
+  font-size: var(--mac-text-sm);
+  color: var(--mac-fg-subtle);
+}
+
+.repo-analysis-empty {
+  padding: 12px;
+  color: var(--mac-fg-subtle);
+  font-size: var(--mac-text-sm);
+}
+
+.repo-analysis-list {
+  margin: 0;
+  padding: 0 12px;
+  list-style: none;
+  overflow: auto;
+  max-height: 44vh;
+}
+
+.repo-analysis-item {
+  border: 1px solid var(--mac-border-subtle);
+  border-radius: var(--mac-r-md);
+  padding: 8px;
+  margin-bottom: 8px;
+}
+
+.repo-analysis-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--mac-text-xs);
+  color: var(--mac-fg-subtle);
+}
+
+.repo-analysis-remove {
+  border: none;
+  background: transparent;
+  color: var(--mac-danger);
+  cursor: pointer;
+  padding: 0;
+}
+
+.repo-analysis-quote {
+  margin: 8px 0 0;
+  font-size: var(--mac-text-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.repo-analysis-input-label {
+  padding: 8px 12px 6px;
+  font-size: var(--mac-text-xs);
+  color: var(--mac-fg-subtle);
+}
+
+.repo-analysis-input {
+  margin: 0 12px;
+  resize: vertical;
+  min-height: 92px;
+  border: 1px solid var(--mac-border);
+  border-radius: var(--mac-r-md);
+  background: var(--mac-surface);
+  color: var(--mac-fg);
+  padding: 8px;
+}
+
+.repo-analysis-actions {
+  margin-top: auto;
+  padding: 12px;
+  display: flex;
+  gap: 8px;
+}
+
+.repo-analysis-answer {
+  margin: 0;
+  padding: 0 12px 12px;
+  max-height: 28vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: Consolas, 'SFMono-Regular', Menlo, Monaco, monospace;
+  font-size: 12px;
+  color: var(--mac-fg);
+}
+
+.repo-analysis-recent {
+  border-top: 1px solid var(--mac-border-subtle);
+  padding-bottom: 8px;
+}
+
+.repo-analysis-recent-list {
+  margin: 0;
+  padding: 0 12px;
+  list-style: none;
+  color: var(--mac-fg-subtle);
+  font-size: var(--mac-text-xs);
+}
+
+.repo-analysis-recent-list li {
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

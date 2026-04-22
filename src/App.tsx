@@ -31,6 +31,9 @@ export default function App() {
   const [showErrors, setShowErrors] = useState(false)
   const [showAiSettings, setShowAiSettings] = useState(false)
   const [aiSettings, setAiSettings] = useState<AiSettings>({ ai_cli: 'claude' })
+  const [repoViewAiSettings, setRepoViewAiSettings] = useState<AiSettings>({
+    ai_cli: 'claude'
+  })
   const [showTemplates, setShowTemplates] = useState(false)
   const [showTimeline, setShowTimeline] = useState(false)
   const [showOnboarding, setShowOnboarding] = useState(false)
@@ -253,6 +256,7 @@ export default function App() {
       setStageConfigs({})
       setMsysEnabled(false)
       setAiSettings({ ai_cli: 'claude' })
+      setRepoViewAiSettings({ ai_cli: 'claude' })
       return
     }
     localStorage.setItem(LAST_PROJECT_KEY, currentProjectId)
@@ -269,6 +273,10 @@ export default function App() {
     void window.api.project.getAiSettings(currentProjectId).then((settings) => {
       if (cancelled) return
       setAiSettings(settings)
+    })
+    void window.api.project.getRepoViewAiSettings(currentProjectId).then((settings) => {
+      if (cancelled) return
+      setRepoViewAiSettings(settings)
     })
     return () => {
       cancelled = true
@@ -541,6 +549,17 @@ export default function App() {
     setDiffReviewOpen(true)
   }, [targetRepo])
 
+  const openRepoView = useCallback(async () => {
+    if (!currentProjectId || !targetRepo) {
+      showToast('本项目没有 target_repo 路径，无法打开仓库查看', { level: 'warn' })
+      return
+    }
+    const res = await window.api.repoView.openWindow(currentProjectId)
+    if (!res.ok) {
+      showToast(`打开仓库查看失败：${res.error ?? '未知错误'}`, { level: 'error' })
+    }
+  }, [currentProjectId, targetRepo])
+
   /** Format annotations as markdown and push them into the running session. */
   const submitPlanReviewAnnotations = useCallback(
     async (annotations: Annotation[], generalNote: string) => {
@@ -765,8 +784,10 @@ export default function App() {
           onStart={handleStart}
           onStop={handleStop}
           onRestart={handleRestart}
+          onOpenRepoView={() => void openRepoView()}
           onOpenDiff={() => setDiffReviewOpen(true)}
           disabled={!currentProjectId || !planName.trim()}
+          repoViewDisabled={!currentProjectId}
         />
 
         {showProjectPicker && (
@@ -818,7 +839,8 @@ export default function App() {
             { id: 'logs', label: '📣 错误与通知', keywords: 'errors log notifications', action: () => setShowErrors(true) },
             { id: 'toggle-theme', label: theme === 'dark' ? '切换到浅色主题' : '切换到暗色主题', keywords: 'theme dark light color', action: handleToggleTheme },
             { id: 'plan-review', label: '📝 审阅当前方案', keywords: 'plan review annotate', action: () => void openPlanReview(), disabled: !hasProject || !planName.trim() },
-            { id: 'diff-review', label: '🔀 Diff 审查', keywords: 'diff review code', action: () => void openDiffReview(), disabled: !hasProject }
+            { id: 'diff-review', label: '🔀 Diff 审查', keywords: 'diff review code', action: () => void openDiffReview(), disabled: !hasProject },
+            { id: 'repo-view', label: '🗂 仓库查看', keywords: 'repo browser code view', action: () => void openRepoView(), disabled: !hasProject }
           ] as Command[]}
         />
       )}
@@ -872,6 +894,7 @@ export default function App() {
         <PlanReviewDialog
           path={planReview.path}
           content={planReview.content}
+          aiCli={aiSettings.ai_cli}
           onClose={() => setPlanReview(null)}
           onSubmit={submitPlanReviewAnnotations}
         />
@@ -919,8 +942,10 @@ export default function App() {
         <AiSettingsDialog
           projectId={currentProjectId}
           initial={aiSettings}
+          initialRepoView={repoViewAiSettings}
           onClose={() => setShowAiSettings(false)}
           onSaved={(next) => setAiSettings(next)}
+          onSavedRepoView={(next) => setRepoViewAiSettings(next)}
         />
       )}
       {showErrors && <ErrorPanel onClose={() => setShowErrors(false)} />}

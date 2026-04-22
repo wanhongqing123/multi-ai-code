@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { getCliTargetLabel, type AiCliKind } from './cliTarget'
 
 export interface Annotation {
   id: string
@@ -12,6 +13,7 @@ export interface PlanReviewDialogProps {
   path: string
   content: string
   title?: string
+  aiCli?: AiCliKind
   /** Called when user submits annotations back to the CLI. */
   onSubmit: (annotations: Annotation[], generalNote: string) => Promise<void> | void
   onClose: () => void
@@ -25,6 +27,7 @@ export default function PlanReviewDialog({
   path,
   content,
   title,
+  aiCli = 'claude',
   onSubmit,
   onClose
 }: PlanReviewDialogProps) {
@@ -41,6 +44,7 @@ export default function PlanReviewDialog({
   const [editingId, setEditingId] = useState<string | null>(null)
 
   const mdRef = useRef<HTMLDivElement | null>(null)
+  const cliTargetLabel = useMemo(() => getCliTargetLabel(aiCli), [aiCli])
 
   const filename = useMemo(() => path.split(/[\\/]/).pop() ?? path, [path])
 
@@ -153,7 +157,7 @@ export default function PlanReviewDialog({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="modal-head">
-          <h3>{title ?? '方案预览 · 可标注后反馈给 Stage 1'}</h3>
+          <h3>{title ?? `方案预览 · 可标注后反馈给 ${cliTargetLabel}`}</h3>
           <button className="modal-close" onClick={onClose}>
             ×
           </button>
@@ -315,11 +319,13 @@ export default function PlanReviewDialog({
             disabled={!canSubmit}
             title={
               canSubmit
-                ? '把批注合成一条消息发送到 Stage 1，让 CLI 根据意见修改方案'
+                ? `把批注合成一条消息发送给 ${cliTargetLabel}，让 CLI 根据意见修改方案`
                 : '至少添加一条批注或整体意见'
             }
           >
-            {submitting ? '发送中…' : `📤 发送到 Stage 1（${annotations.length} 条批注${generalNote.trim() ? ' + 整体意见' : ''}）`}
+            {submitting
+              ? '发送中…'
+              : `📤 发送给 ${cliTargetLabel}（${annotations.length} 条批注${generalNote.trim() ? ' + 整体意见' : ''}）`}
           </button>
         </div>
       </div>

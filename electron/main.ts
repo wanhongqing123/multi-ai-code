@@ -36,8 +36,21 @@ import { spawn as spawnChild } from 'child_process'
 import { promises as fs } from 'fs'
 import { snapshotArtifact } from './store/snapshot.js'
 import { resolvePlanArtifactAbs } from './orchestrator/prompts.js'
+import { buildRepoViewSearch } from './repo-view/windowMode.js'
+import { listRepoTree, readRepoTextFile } from './repo-view/filesystem.js'
+import {
+  applyRepoMemoryUpdate,
+  readRepoFileNote,
+  readRepoMemory
+} from './repo-view/memory.js'
+import {
+  sendRepoAnalysisPrompt,
+  startRepoAnalysisSession,
+  stopRepoAnalysisSession
+} from './repo-view/repoAnalysisManager.js'
 
 const isDev = !app.isPackaged
+const repoViewWindows = new Map<string, BrowserWindow>()
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -68,6 +81,53 @@ function createWindow(): void {
   } else {
     win.loadFile(join(__dirname, '../renderer/index.html'))
   }
+}
+
+function createRepoViewWindow(projectId: string, title: string): BrowserWindow {
+  const existing = repoViewWindows.get(projectId)
+  if (existing && !existing.isDestroyed()) {
+    if (existing.isMinimized()) existing.restore()
+    existing.focus()
+    return existing
+  }
+
+  const win = new BrowserWindow({
+    width: 1600,
+    height: 960,
+    minWidth: 1100,
+    minHeight: 720,
+    show: false,
+    autoHideMenuBar: true,
+    title: `仓库查看 · ${title}`,
+    webPreferences: {
+      preload: join(__dirname, '../preload/preload.mjs'),
+      sandbox: false,
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  })
+
+  repoViewWindows.set(projectId, win)
+  win.on('ready-to-show', () => win.show())
+  win.on('closed', () => {
+    stopRepoAnalysisSession(win.id)
+    repoViewWindows.delete(projectId)
+  })
+
+  win.webContents.setWindowOpenHandler((details) => {
+    shell.openExternal(details.url)
+    return { action: 'deny' }
+  })
+
+  const search = buildRepoViewSearch(projectId)
+  if (isDev && process.env['ELECTRON_RENDERER_URL']) {
+    const base = process.env['ELECTRON_RENDERER_URL']
+    const root = base.endsWith('/') ? base : `${base}/`
+    win.loadURL(`${root}${search}`)
+  } else {
+    win.loadFile(join(__dirname, '../renderer/index.html'), { search })
+  }
+  return win
 }
 
 app.whenReady().then(async () => {
@@ -145,6 +205,149 @@ app.whenReady().then(async () => {
       return {}
     }
   }
+
+  ipcMain.handle(
+    'repo-view:open-window',
+    async (_e, { projectId }: { projectId: string }) => {
+      const row = getProject(projectId)
+      if (!row) return { ok: false, error: 'project not found' }
+      const pdir = projectDirFn(projectId)
+      const meta = await readProjectMeta(pdir)
+      createRepoViewWindow(projectId, meta.name || row.name || projectId)
+      return { ok: true }
+    }
+  )
+
+  ipcMain.handle(
+    'repo-view:list-tree',
+    async (_e, { root, dir }: { root: string; dir?: string }) => {
+      try {
+        return { ok: true as const, entries: await listRepoTree(root, dir ?? '') }
+      } catch (err) {
+        return {
+          ok: false as const,
+          error: (err as Error).message,
+          entries: [] as Awaited<ReturnType<typeof listRepoTree>>
+        }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'repo-view:read-file',
+    async (_e, { root, path }: { root: string; path: string }) => {
+      try {
+        return { ok: true as const, ...(await readRepoTextFile(root, path)) }
+      } catch (err) {
+        return { ok: false as const, error: (err as Error).message }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'repo-view:memory-load',
+    async (_e, { root }: { root: string }) => {
+      try {
+        return { ok: true as const, ...(await readRepoMemory(root)) }
+      } catch (err) {
+        return { ok: false as const, error: (err as Error).message }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'repo-view:memory-file-note',
+    async (_e, { root, path }: { root: string; path: string }) => {
+      try {
+        return { ok: true as const, fileNote: await readRepoFileNote(root, path) }
+      } catch (err) {
+        return { ok: false as const, error: (err as Error).message }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'repo-view:memory-apply',
+    async (
+      _e,
+      {
+        root,
+        path,
+        memoryUpdate
+      }: {
+        root: string
+        path: string
+        memoryUpdate: string
+      }
+    ) => {
+      try {
+        return {
+          ok: true as const,
+          ...(await applyRepoMemoryUpdate({
+            root,
+            filePath: path,
+            memoryUpdate
+          }))
+        }
+      } catch (err) {
+        return { ok: false as const, error: (err as Error).message }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'repo-view:analysis-start',
+    async (
+      e,
+      req: {
+        projectId: string
+        targetRepo: string
+        command: string
+        args: string[]
+        env?: Record<string, string>
+      }
+    ) => {
+      const win = BrowserWindow.fromWebContents(e.sender)
+      if (!win) return { ok: false as const, error: 'window not found' }
+      try {
+        await startRepoAnalysisSession({ winId: win.id, ...req })
+        return { ok: true as const }
+      } catch (err) {
+        return { ok: false as const, error: (err as Error).message }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'repo-view:analysis-send',
+    async (
+      e,
+      req: {
+        repoRoot: string
+        filePath: string
+        selection: string
+        question: string
+        projectSummary: string
+        fileNote: string
+      }
+    ) => {
+      const win = BrowserWindow.fromWebContents(e.sender)
+      if (!win) return { ok: false as const, error: 'window not found' }
+      try {
+        await sendRepoAnalysisPrompt({ winId: win.id, ...req })
+        return { ok: true as const }
+      } catch (err) {
+        return { ok: false as const, error: (err as Error).message }
+      }
+    }
+  )
+
+  ipcMain.handle('repo-view:analysis-stop', (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    if (!win) return { ok: false as const, error: 'window not found' }
+    stopRepoAnalysisSession(win.id)
+    return { ok: true as const }
+  })
 
   ipcMain.handle('project:list', async () => {
     const rows = listProjects()
@@ -478,6 +681,43 @@ app.whenReady().then(async () => {
         const raw = await fs.readFile(metaPath, 'utf8')
         const meta = JSON.parse(raw) as Record<string, unknown>
         meta.ai_settings = settings as unknown as Record<string, unknown>
+        await fs.writeFile(metaPath, JSON.stringify(meta, null, 2))
+        return { ok: true }
+      } catch (err: unknown) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err)
+        }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'project:get-repo-view-ai-settings',
+    async (_e, { id }: { id: string }) => {
+      const pdir = projectDirFn(id)
+      try {
+        const raw = await fs.readFile(join(pdir, 'project.json'), 'utf8')
+        const meta = JSON.parse(raw) as { repo_view_ai_settings?: AiSettings }
+        return meta.repo_view_ai_settings ?? { ai_cli: 'claude' as const }
+      } catch {
+        return { ai_cli: 'claude' as const }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'project:set-repo-view-ai-settings',
+    async (
+      _e,
+      { id, settings }: { id: string; settings: AiSettings }
+    ): Promise<{ ok: boolean; error?: string }> => {
+      const pdir = projectDirFn(id)
+      const metaPath = join(pdir, 'project.json')
+      try {
+        const raw = await fs.readFile(metaPath, 'utf8')
+        const meta = JSON.parse(raw) as Record<string, unknown>
+        meta.repo_view_ai_settings = settings as unknown as Record<string, unknown>
         await fs.writeFile(metaPath, JSON.stringify(meta, null, 2))
         return { ok: true }
       } catch (err: unknown) {

@@ -1,10 +1,12 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
+import RepoViewerWindow from './repo-view/RepoViewerWindow'
 import './styles.css'
 import { pushLog } from './components/ErrorPanel'
 import ErrorBoundary from './components/ErrorBoundary'
 import { applyTheme } from './utils/theme.js'
+import { parseRendererWindowModeSearch } from './repo-view/windowMode.js'
 
 applyTheme()
 
@@ -29,10 +31,16 @@ window.addEventListener('unhandledrejection', (e) => {
   pushLog('error', 'promise', reason)
 })
 
+const windowMode = parseRendererWindowModeSearch(window.location.search)
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ErrorBoundary>
-      <App />
+      {windowMode.kind === 'repo-view' ? (
+        <RepoViewerWindow projectId={windowMode.projectId} />
+      ) : (
+        <App />
+      )}
     </ErrorBoundary>
   </React.StrictMode>
 )

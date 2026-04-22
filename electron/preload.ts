@@ -269,6 +269,13 @@ const api = {
         id,
         settings
       }) as Promise<{ ok: boolean; error?: string }>,
+    getRepoViewAiSettings: (id: string) =>
+      ipcRenderer.invoke('project:get-repo-view-ai-settings', { id }) as Promise<AiSettings>,
+    setRepoViewAiSettings: (id: string, settings: AiSettings) =>
+      ipcRenderer.invoke('project:set-repo-view-ai-settings', {
+        id,
+        settings
+      }) as Promise<{ ok: boolean; error?: string }>,
     pickDir: () =>
       ipcRenderer.invoke('project:pick-dir') as Promise<{
         canceled: boolean
@@ -281,6 +288,91 @@ const api = {
         name?: string
         error?: string
       }>
+  },
+
+  repoView: {
+    openWindow: (projectId: string) =>
+      ipcRenderer.invoke('repo-view:open-window', { projectId }) as Promise<{
+        ok: boolean
+        error?: string
+      }>,
+    listTree: (root: string, dir = '') =>
+      ipcRenderer.invoke('repo-view:list-tree', { root, dir }) as Promise<{
+        ok: boolean
+        entries: Array<{ name: string; path: string; isDirectory: boolean }>
+        error?: string
+      }>,
+    readFile: (root: string, path: string) =>
+      ipcRenderer.invoke('repo-view:read-file', { root, path }) as Promise<{
+        ok: boolean
+        content?: string
+        byteLength?: number
+        error?: string
+      }>,
+    memoryLoad: (root: string) =>
+      ipcRenderer.invoke('repo-view:memory-load', { root }) as Promise<{
+        ok: boolean
+        summary?: string
+        recentTopics?: unknown[]
+        error?: string
+      }>,
+    memoryFileNote: (root: string, path: string) =>
+      ipcRenderer.invoke('repo-view:memory-file-note', { root, path }) as Promise<{
+        ok: boolean
+        fileNote?: string
+        error?: string
+      }>,
+    memoryApply: (root: string, path: string, memoryUpdate: string) =>
+      ipcRenderer.invoke('repo-view:memory-apply', { root, path, memoryUpdate }) as Promise<{
+        ok: boolean
+        summary?: string
+        fileNote?: string
+        recentTopics?: unknown[]
+        error?: string
+      }>,
+    analysisStart: (req: {
+      projectId: string
+      targetRepo: string
+      command: string
+      args: string[]
+      env?: Record<string, string>
+    }) =>
+      ipcRenderer.invoke('repo-view:analysis-start', req) as Promise<{
+        ok: boolean
+        error?: string
+      }>,
+    analysisSend: (req: {
+      repoRoot: string
+      filePath: string
+      selection: string
+      question: string
+      projectSummary: string
+      fileNote: string
+    }) =>
+      ipcRenderer.invoke('repo-view:analysis-send', req) as Promise<{
+        ok: boolean
+        error?: string
+      }>,
+    analysisStop: () =>
+      ipcRenderer.invoke('repo-view:analysis-stop') as Promise<{
+        ok: boolean
+        error?: string
+      }>,
+    onAnalysisData: (cb: (evt: { chunk: string }) => void) => {
+      const handler = (_: IpcRendererEvent, evt: { chunk: string }) => cb(evt)
+      ipcRenderer.on('repo-view:analysis-data', handler)
+      return () => ipcRenderer.removeListener('repo-view:analysis-data', handler)
+    },
+    onAnalysisStatus: (
+      cb: (evt: { status: string; exitCode?: number; signal?: number }) => void
+    ) => {
+      const handler = (
+        _: IpcRendererEvent,
+        evt: { status: string; exitCode?: number; signal?: number }
+      ) => cb(evt)
+      ipcRenderer.on('repo-view:analysis-status', handler)
+      return () => ipcRenderer.removeListener('repo-view:analysis-status', handler)
+    }
   },
 
   fs: {

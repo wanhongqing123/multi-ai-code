@@ -1,4 +1,6 @@
 import {
+  type Dispatch,
+  type SetStateAction,
   useCallback,
   useDeferredValue,
   useEffect,
@@ -7,6 +9,7 @@ import {
   useState
 } from 'react'
 import { placeDraftButton } from './diffAnnotationPosition.js'
+import { applyControlledStateUpdate } from './controlledState.js'
 import {
   DIFF_MODE_TABS,
   diffModeLabel,
@@ -32,10 +35,10 @@ export interface DiffViewerDialogProps {
   /** Controlled annotations list — lifted to parent so unsent batches survive
    *  a dialog close/reopen. Parent clears it after a successful submit. */
   annotations: DiffAnnotation[]
-  onAnnotationsChange: (next: DiffAnnotation[]) => void
+  onAnnotationsChange: Dispatch<SetStateAction<DiffAnnotation[]>>
   /** Controlled general-note field — same persistence rationale as annotations. */
   generalNote: string
-  onGeneralNoteChange: (next: string) => void
+  onGeneralNoteChange: Dispatch<SetStateAction<string>>
 }
 
 interface CommitEntry {
@@ -459,21 +462,14 @@ export default function DiffViewerDialog({
   // batches persist across dialog close/reopen. Parent is responsible for
   // clearing after a successful submit.
   const setAnnotations = useCallback(
-    (
-      updater:
-        | DiffAnnotation[]
-        | ((prev: DiffAnnotation[]) => DiffAnnotation[])
-    ) => {
-      const next =
-        typeof updater === 'function'
-          ? (updater as (prev: DiffAnnotation[]) => DiffAnnotation[])(annotations)
-          : updater
-      onAnnotationsChange(next)
+    (updater: SetStateAction<DiffAnnotation[]>) => {
+      applyControlledStateUpdate(onAnnotationsChange, updater)
     },
-    [annotations, onAnnotationsChange]
+    [onAnnotationsChange]
   )
   const setGeneralNote = useCallback(
-    (next: string) => onGeneralNoteChange(next),
+    (next: SetStateAction<string>) =>
+      applyControlledStateUpdate(onGeneralNoteChange, next),
     [onGeneralNoteChange]
   )
   const [submitting, setSubmitting] = useState(false)

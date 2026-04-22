@@ -18,6 +18,7 @@
     "postinstall": "electron-rebuild -f -o better-sqlite3,node-pty"
   },
   "dependencies": {
+    "@xterm/addon-canvas": "^0.7.0",
     "@xterm/addon-search": "^0.16.0",
     "@xterm/addon-webgl": "^0.19.0",
     "better-sqlite3": "^11.3.0",

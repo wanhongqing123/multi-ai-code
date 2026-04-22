@@ -2,43 +2,19 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
+import { CanvasAddon } from '@xterm/addon-canvas'
 import '@xterm/xterm/css/xterm.css'
 import { getTheme, THEME_CHANGE_EVENT, type Theme } from '../utils/theme.js'
-
-const XTERM_DARK_THEME = {
-  background: '#1e1e1e',
-  foreground: '#e6e6e6'
-}
-
-// Light-theme palette — mirrors the StagePanel colors (Google Blue + status
-// colors) so terminal output harmonizes with the rest of the light UI.
-const XTERM_LIGHT_THEME = {
-  background: '#FFFFFF',
-  foreground: '#000000',
-  cursor: '#202124',
-  cursorAccent: '#FFFFFF',
-  selectionBackground: 'rgba(26, 115, 232, 0.2)',
-  black: '#202124',
-  red: '#D93025',
-  green: '#1E8E3E',
-  yellow: '#B06000',
-  blue: '#1A73E8',
-  magenta: '#9334E6',
-  cyan: '#0086A3',
-  white: '#5F6368',
-  brightBlack: '#5F6368',
-  brightRed: '#D93025',
-  brightGreen: '#1E8E3E',
-  brightYellow: '#B06000',
-  brightBlue: '#1A73E8',
-  brightMagenta: '#9334E6',
-  brightCyan: '#0086A3',
-  brightWhite: '#202124'
-}
-
-function xtermThemeFor(t: Theme): typeof XTERM_DARK_THEME {
-  return t === 'dark' ? XTERM_DARK_THEME : XTERM_LIGHT_THEME
-}
+import {
+  buildMainTerminalOptions,
+  shouldUseMainTerminalCanvasRenderer,
+  shouldEnableMainTerminalGpuAcceleration,
+  xtermThemeFor
+} from './mainTerminalConfig.js'
+import {
+  createTerminalMarkdownState,
+  formatMarkdownChunk
+} from './terminalMarkdown.js'
 
 export interface MainPanelProps {
   sessionId: string
@@ -56,10 +32,14 @@ export interface MainPanelProps {
   onRestart: () => void
   /** Called when user clicks "Diff 审查". */
   onOpenDiff: () => void
+  /** Called when user clicks "仓库查看". */
+  onOpenRepoView: () => void
   /** Session running state (driven from App.tsx). */
   status: 'idle' | 'running' | 'exited'
   /** Disabled everything while session is spawning or no project. */
   disabled?: boolean
+  /** Disable only the repo-view button. */
+  repoViewDisabled?: boolean
 }
 
 export default function MainPanel(props: MainPanelProps): JSX.Element {
@@ -67,33 +47,13 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
   const searchRef = useRef<SearchAddon | null>(null)
+  const markdownStateRef = useRef(createTerminalMarkdownState())
   const unsubRef = useRef<Array<() => void>>([])
   const [dragActive, setDragActive] = useState(false)
 
   useEffect(() => {
     if (!containerRef.current) return
-    // "Parisian Type" preset — refined editorial feel.
-    // JetBrains Mono at Light (300) weight, open 1.75 line-height, subtle
-    // 0.3px letter-spacing, underline caret. WebGL renderer handles the
-    // anti-aliasing so this stays crisp at thin weights.
-    const term = new Terminal({
-      fontSize: 13,
-      lineHeight: 1.75,
-      letterSpacing: 0.3,
-      fontFamily:
-        'Monaco, Menlo, "JetBrains Mono", "SF Mono", Consolas, monospace',
-      fontWeight: 600,
-      fontWeightBold: 800,
-      cursorBlink: true,
-      cursorStyle: 'underline',
-      cursorInactiveStyle: 'underline',
-      cursorWidth: 1,
-      convertEol: true,
-      minimumContrastRatio: 4.5,
-      smoothScrollDuration: 120,
-      theme: xtermThemeFor(getTheme()),
-      allowProposedApi: true
-    })
+    const term = new Terminal(buildMainTerminalOptions(getTheme()))
     const onThemeChange = (e: Event) => {
       term.options.theme = xtermThemeFor((e as CustomEvent<Theme>).detail)
     }
@@ -104,6 +64,12 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
     term.loadAddon(search)
     searchRef.current = search
     term.open(containerRef.current)
+    if (shouldUseMainTerminalCanvasRenderer()) {
+      term.loadAddon(new CanvasAddon())
+    }
+    if (shouldEnableMainTerminalGpuAcceleration()) {
+      /* reserved for a future opt-in path after Electron stability work */
+    }
     try {
       fit.fit()
     } catch {
@@ -118,7 +84,8 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
 
     const offData = window.api.cc.onData((evt) => {
       if (evt.sessionId !== props.sessionId) return
-      term.write(evt.chunk)
+      const formatted = formatMarkdownChunk(evt.chunk, markdownStateRef.current)
+      term.write(formatted.text)
     })
     unsubRef.current.push(offData)
 
@@ -147,6 +114,7 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
       term.dispose()
       termRef.current = null
       fitRef.current = null
+      markdownStateRef.current = createTerminalMarkdownState()
     }
   }, [props.sessionId])
 
@@ -194,6 +162,14 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
           <span className={`tile-badge ${props.status}`}>{statusLabel}</span>
         </div>
         <div className="main-panel-actions">
+          <button
+            className="tile-btn"
+            onClick={props.onOpenRepoView}
+            disabled={props.repoViewDisabled}
+            title="打开独立仓库查看窗口"
+          >
+            仓库查看
+          </button>
           <button
             className="tile-btn"
             onClick={props.onOpenDiff}

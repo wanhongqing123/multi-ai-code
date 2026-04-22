@@ -6,6 +6,13 @@ import {
   useRef,
   useState
 } from 'react'
+import { placeDraftButton } from './diffAnnotationPosition.js'
+import {
+  DIFF_MODE_TABS,
+  diffModeLabel,
+  type DiffMode
+} from './diffViewerConfig.js'
+import { getHorizontalTrackpadDelta } from './diffViewerScroll.js'
 
 export interface DiffAnnotation {
   id: string
@@ -30,8 +37,6 @@ export interface DiffViewerDialogProps {
   generalNote: string
   onGeneralNoteChange: (next: string) => void
 }
-
-type DiffMode = 'working' | 'head1' | 'commit' | 'range' | 'working_range'
 
 interface CommitEntry {
   hash: string
@@ -228,8 +233,49 @@ function VirtualizedFileRows({
     [paneRef]
   )
 
+  const syncScrollCssVars = useCallback(() => {
+    if (!paneRef.current) return
+    paneRef.current.style.setProperty(
+      '--dv-left-scroll',
+      `${leftScrollRef.current?.scrollLeft ?? 0}px`
+    )
+    paneRef.current.style.setProperty(
+      '--dv-right-scroll',
+      `${rightScrollRef.current?.scrollLeft ?? 0}px`
+    )
+  }, [paneRef])
+
+  const handleHorizontalWheel = useCallback(
+    (e: React.WheelEvent<HTMLDivElement>) => {
+      const delta = getHorizontalTrackpadDelta({
+        deltaX: e.deltaX,
+        deltaY: e.deltaY,
+        shiftKey: e.shiftKey
+      })
+      if (delta === 0) return
+      const explicitSide = (e.target as HTMLElement | null)?.closest<HTMLElement>(
+        '[data-dv-scroll-side]'
+      )
+      const side =
+        explicitSide?.dataset.dvScrollSide ??
+        (() => {
+          const pane = paneRef.current
+          if (!pane) return 'right'
+          const rect = pane.getBoundingClientRect()
+          return e.clientX < rect.left + rect.width / 2 ? 'left' : 'right'
+        })()
+      const scrollEl =
+        side === 'left' ? leftScrollRef.current : rightScrollRef.current
+      if (!scrollEl) return
+      scrollEl.scrollLeft += delta
+      syncScrollCssVars()
+      e.preventDefault()
+    },
+    [paneRef, syncScrollCssVars]
+  )
+
   return (
-    <>
+    <div className="dv-scroll-region" onWheelCapture={handleHorizontalWheel}>
     <div ref={containerRef} className="dv-file-rows">
       {topPad > 0 && <div style={{ height: topPad }} aria-hidden="true" />}
       {rows.slice(start, end).map((row, idx) => {
@@ -262,6 +308,7 @@ function VirtualizedFileRows({
                     ? 'dv-context'
                     : 'dv-empty'
               }`}
+              data-dv-scroll-side="left"
             >
               <span className="dv-gutter">{left?.oldLine ?? ''}</span>
               <span className="dv-sign">
@@ -279,6 +326,7 @@ function VirtualizedFileRows({
                     ? 'dv-context'
                     : 'dv-empty'
               }`}
+              data-dv-scroll-side="right"
               data-side="right"
               data-file={filePath}
               data-line={right?.newLine ?? ''}
@@ -300,6 +348,7 @@ function VirtualizedFileRows({
       <div
         ref={leftScrollRef}
         className="dv-hscroll-side"
+        data-dv-scroll-side="left"
         onScroll={onLeftScroll}
       >
         <div
@@ -310,6 +359,7 @@ function VirtualizedFileRows({
       <div
         ref={rightScrollRef}
         className="dv-hscroll-side"
+        data-dv-scroll-side="right"
         onScroll={onRightScroll}
       >
         <div
@@ -318,7 +368,7 @@ function VirtualizedFileRows({
         />
       </div>
     </div>
-    </>
+    </div>
   )
 }
 
@@ -395,8 +445,6 @@ export default function DiffViewerDialog({
   const [commits, setCommits] = useState<CommitEntry[] | null>(null)
   const [commitsLoading, setCommitsLoading] = useState(false)
   const [selectedCommit, setSelectedCommit] = useState<string>('')
-  const [rangeFrom, setRangeFrom] = useState<string>('')
-  const [rangeTo, setRangeTo] = useState<string>('')
   /** "最近 N 次 commit + 当前改动" — internally maps to `git diff HEAD~N`. */
   const [workingRangeCount, setWorkingRangeCount] = useState<number>(3)
 
@@ -512,8 +560,6 @@ export default function DiffViewerDialog({
       if (res.ok && res.entries) {
         setCommits(res.entries)
         if (!selectedCommit && res.entries[0]) setSelectedCommit(res.entries[0].hash)
-        if (!rangeTo && res.entries[0]) setRangeTo(res.entries[0].hash)
-        if (!rangeFrom && res.entries[1]) setRangeFrom(res.entries[1].hash)
       } else {
         setCommits([])
       }
@@ -536,13 +582,6 @@ export default function DiffViewerDialog({
         return
       }
       refs = [selectedCommit]
-    } else if (mode === 'range') {
-      if (!rangeFrom || !rangeTo) {
-        setDiffError('请选择范围的起止 commit')
-        setDiffLoading(false)
-        return
-      }
-      refs = [rangeFrom, rangeTo]
     } else if (mode === 'working_range') {
       if (!workingRangeCount || workingRangeCount < 1) {
         setDiffError('最近提交次数必须 ≥ 1')
@@ -558,7 +597,7 @@ export default function DiffViewerDialog({
     } else {
       setDiffError(res.error ?? '获取 diff 失败')
     }
-  }, [cwd, mode, selectedCommit, rangeFrom, rangeTo, workingRangeCount])
+  }, [cwd, mode, selectedCommit, workingRangeCount])
 
   // Auto-load diff when mode or refs change.
   useEffect(() => {
@@ -611,11 +650,12 @@ export default function DiffViewerDialog({
   // Capture text selection inside the RIGHT (new-code) column only —
   // annotations anchor on the modified side, matching user workflow.
   //
-  // Geometry-based detection: iterate every `.dv-cell-right` in the pane and
-  // include any whose bounding rect overlaps the selection's rect vertically.
-  // This avoids fragility with `sel.getRangeAt(0).startContainer/endContainer`
-  // when the drag crosses rows (intermediate gutter/sign columns are
-  // `user-select:none`, which can make a naive endpoint check fail).
+  // Geometry-based detection: iterate every rendered `.dv-row` in the pane
+  // and include any whose bounding rect overlaps the selection's rect
+  // vertically. For each included row, pull file+line off its right cell.
+  // Avoids fragility with `range.startContainer/endContainer` when the drag
+  // crosses rows (gutter/sign columns are user-select:none, which can make
+  // endpoint-based checks fall into the gaps).
   const handleMouseUp = useCallback(() => {
     const sel = window.getSelection()
     if (!sel || sel.isCollapsed || !diffPaneRef.current) {
@@ -633,22 +673,39 @@ export default function DiffViewerDialog({
       setDraft(null)
       return
     }
-    const rightCells = pane.querySelectorAll<HTMLElement>(
-      '.dv-cell-right[data-file][data-line]'
+    const rows = pane.querySelectorAll<HTMLElement>(
+      '.dv-row:not(.dv-hunk-row)'
     )
     let touchedFile = ''
     let loLine = Infinity
     let hiLine = -Infinity
-    for (const cell of Array.from(rightCells)) {
-      const r = cell.getBoundingClientRect()
-      // Intersect vertically with the selection rect.
+    let touchedRows = 0
+    for (const row of Array.from(rows)) {
+      const r = row.getBoundingClientRect()
       if (r.bottom <= selRect.top) continue
       if (r.top >= selRect.bottom) continue
-      const ln = parseInt(cell.dataset.line ?? '0', 10)
-      if (!ln) continue
+      const rightCell = row.querySelector<HTMLElement>(
+        '.dv-cell-right[data-file]'
+      )
+      if (!rightCell) continue
+      touchedRows++
+      const lineAttr = rightCell.dataset.line
+      if (!lineAttr) continue
+      const ln = parseInt(lineAttr, 10)
+      if (!Number.isFinite(ln) || ln <= 0) continue
       if (ln < loLine) loLine = ln
       if (ln > hiLine) hiLine = ln
-      if (!touchedFile) touchedFile = cell.dataset.file ?? ''
+      if (!touchedFile) touchedFile = rightCell.dataset.file ?? ''
+    }
+    if (import.meta.env?.DEV) {
+      console.debug('[DiffViewer] mouseup', {
+        touchedRows,
+        touchedFile,
+        loLine,
+        hiLine,
+        selRect: { top: selRect.top, bottom: selRect.bottom },
+        rowsInPane: rows.length
+      })
     }
     if (!touchedFile || loLine === Infinity) {
       setDraft(null)
@@ -676,12 +733,20 @@ export default function DiffViewerDialog({
       snippet = collected.join('\n')
     }
     const paneRect = pane.getBoundingClientRect()
+    const buttonPos = placeDraftButton({
+      paneWidth: pane.clientWidth,
+      paneScrollTop: pane.scrollTop,
+      paneRectLeft: paneRect.left,
+      paneRectTop: paneRect.top,
+      selectionRectRight: selRect.right,
+      selectionRectTop: selRect.top
+    })
     setDraft({
       file: touchedFile,
       lineRange,
       snippet,
-      x: selRect.right - paneRect.left + 4,
-      y: selRect.top - paneRect.top + pane.scrollTop - 4
+      x: buttonPos.x,
+      y: buttonPos.y
     })
   }, [])
 
@@ -785,23 +850,13 @@ export default function DiffViewerDialog({
 
         <div className="dv-toolbar">
           <div className="dv-mode-tabs">
-            {(
-              ['working', 'working_range', 'head1', 'commit', 'range'] as DiffMode[]
-            ).map((m) => (
+            {DIFF_MODE_TABS.map((m) => (
               <button
                 key={m}
                 className={`dv-mode-tab ${mode === m ? 'active' : ''}`}
                 onClick={() => setMode(m)}
               >
-                {m === 'working'
-                  ? '📝 当前改动'
-                  : m === 'working_range'
-                    ? '📝+📐 当前 + 最近提交'
-                    : m === 'head1'
-                      ? '⏱ 最近一次 commit'
-                      : m === 'commit'
-                        ? '🎯 指定 commit'
-                        : '📐 commit 范围'}
+                {diffModeLabel(m)}
               </button>
             ))}
           </div>
@@ -824,34 +879,6 @@ export default function DiffViewerDialog({
                 ) : (
                   <option>（无 commit）</option>
                 )}
-              </select>
-            </div>
-          )}
-          {mode === 'range' && (
-            <div className="dv-ref-select">
-              <label>从：</label>
-              <select
-                value={rangeFrom}
-                onChange={(e) => setRangeFrom(e.target.value)}
-                disabled={commitsLoading}
-              >
-                {(commits ?? []).map((c) => (
-                  <option key={c.hash} value={c.hash}>
-                    {c.short} · {c.subject.slice(0, 40)}
-                  </option>
-                ))}
-              </select>
-              <label>到：</label>
-              <select
-                value={rangeTo}
-                onChange={(e) => setRangeTo(e.target.value)}
-                disabled={commitsLoading}
-              >
-                {(commits ?? []).map((c) => (
-                  <option key={c.hash} value={c.hash}>
-                    {c.short} · {c.subject.slice(0, 40)}
-                  </option>
-                ))}
               </select>
             </div>
           )}

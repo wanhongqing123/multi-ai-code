@@ -357,21 +357,16 @@ export default function App() {
       return
     }
     const planAbsPath = getPlanAbsPath(planName.trim())
-    const planEntry = planList.find((p) => p.name === planName.trim())
-    const planSource = planEntry?.source ?? 'internal'
     let planContent: string | null = null
-    if (planSource === 'internal') {
-      try {
-        const res = await window.api.fs.readUtf8(planAbsPath)
-        planContent = res.ok ? res.content : null
-      } catch {
-        planContent = null
-      }
+    try {
+      const res = await window.api.fs.readUtf8(planAbsPath)
+      planContent = res.ok ? res.content : null
+    } catch {
+      planContent = null
     }
     const initialUserMessage = formatInitialMessage({
       planName: planName.trim(),
       planAbsPath,
-      planSource,
       planContent
     })
     const command = aiSettings.command ?? aiSettings.ai_cli ?? 'claude'
@@ -401,7 +396,7 @@ export default function App() {
       setSessionStatus('idle')
       setSessionId(null)
     }
-  }, [currentProjectId, planName, projects, aiSettings, getPlanAbsPath, planList])
+  }, [currentProjectId, planName, projects, aiSettings, getPlanAbsPath])
 
   const handleStop = useCallback(async () => {
     if (!sessionId) return

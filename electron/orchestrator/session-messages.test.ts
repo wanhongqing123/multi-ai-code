@@ -10,7 +10,6 @@ describe('formatInitialMessage', () => {
     const out = formatInitialMessage({
       planName: 'add-auth',
       planAbsPath: '/repo/.multi-ai-code/designs/add-auth.md',
-      planSource: 'internal',
       planContent: '# 方案：增加 OAuth\n\n详细步骤...'
     })
     expect(out).toContain('# 方案：增加 OAuth')
@@ -22,7 +21,6 @@ describe('formatInitialMessage', () => {
     const out = formatInitialMessage({
       planName: 'add-auth',
       planAbsPath: '/repo/.multi-ai-code/designs/add-auth.md',
-      planSource: 'internal',
       planContent: null
     })
     expect(out).toContain('add-auth')
@@ -34,7 +32,6 @@ describe('formatInitialMessage', () => {
     const out = formatInitialMessage({
       planName: 'add-auth',
       planAbsPath: '/repo/.multi-ai-code/designs/add-auth.md',
-      planSource: 'internal',
       planContent: ''
     })
     expect(out).toContain('add-auth')
@@ -47,23 +44,10 @@ describe('formatInitialMessage', () => {
     const out = formatInitialMessage({
       planName: 'add-auth',
       planAbsPath: '/repo/.multi-ai-code/designs/add-auth.md',
-      planSource: 'internal',
       planContent: '   \n\n  '
     })
     expect(out).toContain('澄清需求')
     expect(out).not.toContain('此时不要修改任何代码')
-  })
-
-  it('uses path-only instructions for external plans instead of inlining content', () => {
-    const out = formatInitialMessage({
-      planName: 'vendor-plan',
-      planAbsPath: '/external/vendor-plan.md',
-      planSource: 'external',
-      planContent: '# 外部方案\n\n这里不应直接发给 AI'
-    })
-    expect(out).toContain('/external/vendor-plan.md')
-    expect(out).toContain('请先自行读取这个方案文件')
-    expect(out).not.toContain('这里不应直接发给 AI')
   })
 })
 

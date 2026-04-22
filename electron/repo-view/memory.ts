@@ -51,6 +51,16 @@ export interface RepoMemoryTopic {
   topic: string
 }
 
+export interface RepoConversationHistoryMessage {
+  id: string
+  role: 'user' | 'assistant'
+  text: string
+}
+
+export function repoMemoryConversationHistoryPath(root: string): string {
+  return join(repoMemoryDir(root), 'repo-view-history.json')
+}
+
 export async function readRepoMemory(root: string): Promise<{
   summary: string
   recentTopics: RepoMemoryTopic[]
@@ -74,6 +84,51 @@ export async function readRepoMemory(root: string): Promise<{
 
 export async function readRepoFileNote(root: string, relPath: string): Promise<string> {
   return fs.readFile(repoMemoryFileNotePath(root, relPath), 'utf8').catch(() => '')
+}
+
+function sanitizeConversationMessage(
+  message: RepoConversationHistoryMessage
+): RepoConversationHistoryMessage {
+  return {
+    id: String(message.id ?? ''),
+    role: message.role === 'assistant' ? 'assistant' : 'user',
+    text: String(message.text ?? '').slice(0, 16000)
+  }
+}
+
+export async function readRepoConversationHistory(
+  root: string
+): Promise<RepoConversationHistoryMessage[]> {
+  await ensureRepoMemoryExcluded(root)
+  const raw = await fs
+    .readFile(repoMemoryConversationHistoryPath(root), 'utf8')
+    .catch(() => '[]')
+  try {
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .filter((item) => item && typeof item === 'object')
+      .map((item) =>
+        sanitizeConversationMessage(item as RepoConversationHistoryMessage)
+      )
+  } catch {
+    return []
+  }
+}
+
+export async function writeRepoConversationHistory(
+  root: string,
+  messages: RepoConversationHistoryMessage[]
+): Promise<RepoConversationHistoryMessage[]> {
+  await ensureRepoMemoryExcluded(root)
+  const path = repoMemoryConversationHistoryPath(root)
+  await fs.mkdir(dirname(path), { recursive: true })
+  const next = messages
+    .map(sanitizeConversationMessage)
+    .filter((message) => message.text.trim().length > 0)
+    .slice(-40)
+  await fs.writeFile(path, JSON.stringify(next, null, 2), 'utf8')
+  return next
 }
 
 function keepTail(text: string, maxChars: number): string {

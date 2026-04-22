@@ -40,8 +40,10 @@ import { buildRepoViewSearch } from './repo-view/windowMode.js'
 import { listRepoTree, readRepoTextFile } from './repo-view/filesystem.js'
 import {
   applyRepoMemoryUpdate,
+  readRepoConversationHistory,
   readRepoFileNote,
-  readRepoMemory
+  readRepoMemory,
+  writeRepoConversationHistory
 } from './repo-view/memory.js'
 import {
   sendRepoAnalysisPrompt,
@@ -288,6 +290,43 @@ app.whenReady().then(async () => {
             filePath: path,
             memoryUpdate
           }))
+        }
+      } catch (err) {
+        return { ok: false as const, error: (err as Error).message }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'repo-view:history-load',
+    async (_e, { root }: { root: string }) => {
+      try {
+        return {
+          ok: true as const,
+          messages: await readRepoConversationHistory(root)
+        }
+      } catch (err) {
+        return { ok: false as const, error: (err as Error).message }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'repo-view:history-save',
+    async (
+      _e,
+      {
+        root,
+        messages
+      }: {
+        root: string
+        messages: Array<{ id: string; role: 'user' | 'assistant'; text: string }>
+      }
+    ) => {
+      try {
+        return {
+          ok: true as const,
+          messages: await writeRepoConversationHistory(root, messages)
         }
       } catch (err) {
         return { ok: false as const, error: (err as Error).message }

@@ -37,6 +37,7 @@ export default function RepoViewerWindow({
   const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null)
   const [analysisPending, setAnalysisPending] = useState(false)
   const [analysisMessages, setAnalysisMessages] = useState<RepoConversationMessage[]>([])
+  const [historyHydrated, setHistoryHydrated] = useState(false)
   const [projectSummary, setProjectSummary] = useState('')
   const [fileNote, setFileNote] = useState('')
   const [recentTopics, setRecentTopics] = useState<RecentTopic[]>([])
@@ -65,10 +66,18 @@ export default function RepoViewerWindow({
 
   useEffect(() => {
     if (!project) return
-    void window.api.repoView.memoryLoad(project.target_repo).then((res) => {
-      if (!res.ok) return
-      setProjectSummary(res.summary ?? '')
-      setRecentTopics((res.recentTopics ?? []) as RecentTopic[])
+    void Promise.all([
+      window.api.repoView.memoryLoad(project.target_repo),
+      window.api.repoView.historyLoad(project.target_repo)
+    ]).then(([memoryRes, historyRes]) => {
+      if (memoryRes.ok) {
+        setProjectSummary(memoryRes.summary ?? '')
+        setRecentTopics((memoryRes.recentTopics ?? []) as RecentTopic[])
+      }
+      if (historyRes.ok) {
+        setAnalysisMessages(historyRes.messages ?? [])
+      }
+      setHistoryHydrated(true)
     })
   }, [project])
 
@@ -79,6 +88,7 @@ export default function RepoViewerWindow({
     setAnnotations([])
     setEditingAnnotationId(null)
     setAnalysisMessages([])
+    setHistoryHydrated(false)
     setProjectSummary('')
     setFileNote('')
     setRecentTopics([])
@@ -155,6 +165,14 @@ export default function RepoViewerWindow({
       void window.api.repoView.analysisStop()
     }
   }, [])
+
+  useEffect(() => {
+    if (!project || !historyHydrated) return
+    const persistable = analysisMessages
+      .filter((message) => !message.streaming)
+      .map(({ id, role, text }) => ({ id, role, text }))
+    void window.api.repoView.historySave(project.target_repo, persistable)
+  }, [analysisMessages, historyHydrated, project])
 
   const onAnnotateSelection = useCallback(
     (selection: RepoSelection, comment: string, editingId?: string) => {

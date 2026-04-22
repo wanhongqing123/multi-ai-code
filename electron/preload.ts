@@ -330,6 +330,21 @@ const api = {
         recentTopics?: unknown[]
         error?: string
       }>,
+    historyLoad: (root: string) =>
+      ipcRenderer.invoke('repo-view:history-load', { root }) as Promise<{
+        ok: boolean
+        messages?: Array<{ id: string; role: 'user' | 'assistant'; text: string }>
+        error?: string
+      }>,
+    historySave: (
+      root: string,
+      messages: Array<{ id: string; role: 'user' | 'assistant'; text: string }>
+    ) =>
+      ipcRenderer.invoke('repo-view:history-save', { root, messages }) as Promise<{
+        ok: boolean
+        messages?: Array<{ id: string; role: 'user' | 'assistant'; text: string }>
+        error?: string
+      }>,
     analysisStart: (req: {
       projectId: string
       targetRepo: string

@@ -445,8 +445,6 @@ export default function DiffViewerDialog({
   const [commits, setCommits] = useState<CommitEntry[] | null>(null)
   const [commitsLoading, setCommitsLoading] = useState(false)
   const [selectedCommit, setSelectedCommit] = useState<string>('')
-  /** "最近 N 次 commit + 当前改动" — internally maps to `git diff HEAD~N`. */
-  const [workingRangeCount, setWorkingRangeCount] = useState<number>(3)
 
   const [diffText, setDiffText] = useState<string>('')
   const [diffLoading, setDiffLoading] = useState(false)
@@ -582,13 +580,6 @@ export default function DiffViewerDialog({
         return
       }
       refs = [selectedCommit]
-    } else if (mode === 'working_range') {
-      if (!workingRangeCount || workingRangeCount < 1) {
-        setDiffError('最近提交次数必须 ≥ 1')
-        setDiffLoading(false)
-        return
-      }
-      refs = [`HEAD~${workingRangeCount}`]
     }
     const res = await window.api.git.diff(cwd, mode, refs)
     setDiffLoading(false)
@@ -597,7 +588,7 @@ export default function DiffViewerDialog({
     } else {
       setDiffError(res.error ?? '获取 diff 失败')
     }
-  }, [cwd, mode, selectedCommit, workingRangeCount])
+  }, [cwd, mode, selectedCommit])
 
   // Auto-load diff when mode or refs change.
   useEffect(() => {
@@ -880,25 +871,6 @@ export default function DiffViewerDialog({
                   <option>（无 commit）</option>
                 )}
               </select>
-            </div>
-          )}
-          {mode === 'working_range' && (
-            <div className="dv-ref-select">
-              <label>最近</label>
-              <input
-                type="number"
-                min={1}
-                max={50}
-                value={workingRangeCount}
-                onChange={(e) =>
-                  setWorkingRangeCount(
-                    Math.max(1, Math.min(50, parseInt(e.target.value, 10) || 1))
-                  )
-                }
-                className="dv-num-input"
-                title="合并最近 N 次 commit 的改动 + 当前未提交改动（git diff HEAD~N）"
-              />
-              <label>次 commit + 当前改动</label>
             </div>
           )}
           <div className="dv-nav-group">

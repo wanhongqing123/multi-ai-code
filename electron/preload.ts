@@ -188,7 +188,7 @@ const api = {
      *   - range:   A..B diff (refs=[from, to]) */
     diff: (
       cwd: string,
-      mode: 'working' | 'head1' | 'commit' | 'range' | 'working_range',
+      mode: 'working' | 'head1' | 'commit' | 'range',
       refs?: string[]
     ) =>
       ipcRenderer.invoke('git:diff', { cwd, mode, refs }) as Promise<{

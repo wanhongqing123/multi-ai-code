@@ -552,7 +552,7 @@ app.whenReady().then(async () => {
         refs
       }: {
         cwd: string
-        mode: 'working' | 'head1' | 'commit' | 'range' | 'working_range'
+        mode: 'working' | 'head1' | 'commit' | 'range'
         refs?: string[]
       }
     ) => {
@@ -580,14 +580,6 @@ app.whenReady().then(async () => {
             if (!from || !to)
               return { ok: false, error: '缺少 commit 范围（需要两个引用）' }
             args = ['diff', fullCtx, `${from}..${to}`]
-            break
-          }
-          case 'working_range': {
-            // diff working tree vs a past commit ("from") — shows all
-            // uncommitted changes AND everything committed since <from>.
-            const from = refs?.[0]
-            if (!from) return { ok: false, error: '缺少起始 commit' }
-            args = ['diff', fullCtx, from]
             break
           }
           default:

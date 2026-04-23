@@ -16,8 +16,10 @@ import {
   formatMarkdownChunk
 } from './terminalMarkdown.js'
 import {
+  copySelection,
   installCopyBinding,
-  installPasteHandler
+  installPasteHandler,
+  pasteFromClipboard
 } from './terminalClipboard.js'
 
 export interface MainPanelProps {
@@ -54,6 +56,11 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
   const markdownStateRef = useRef(createTerminalMarkdownState())
   const unsubRef = useRef<Array<() => void>>([])
   const [dragActive, setDragActive] = useState(false)
+  const [menu, setMenu] = useState<{
+    x: number
+    y: number
+    hasSelection: boolean
+  } | null>(null)
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -157,6 +164,49 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
     [props.sessionId]
   )
 
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      e.preventDefault()
+      const sel = termRef.current?.getSelection() ?? ''
+      setMenu({ x: e.clientX, y: e.clientY, hasSelection: sel.length > 0 })
+    },
+    []
+  )
+
+  const closeMenu = useCallback(() => setMenu(null), [])
+
+  const handleMenuCopy = useCallback(() => {
+    const term = termRef.current
+    if (term) copySelection(term)
+    closeMenu()
+  }, [closeMenu])
+
+  const handleMenuPaste = useCallback(() => {
+    void pasteFromClipboard({
+      sessionId: props.sessionId,
+      writeInput: window.api.cc.write,
+      saveImage: window.api.clipboard.saveImage
+    })
+    termRef.current?.focus()
+    closeMenu()
+  }, [props.sessionId, closeMenu])
+
+  useEffect(() => {
+    if (!menu) return
+    const onDown = () => closeMenu()
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeMenu()
+    }
+    window.addEventListener('mousedown', onDown)
+    window.addEventListener('resize', closeMenu)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('mousedown', onDown)
+      window.removeEventListener('resize', closeMenu)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [menu, closeMenu])
+
   const statusLabel =
     props.status === 'running'
       ? '运行中'
@@ -217,9 +267,34 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
+        onContextMenu={handleContextMenu}
       >
         {dragActive && <div className="drop-hint">松开以粘贴文件路径</div>}
       </div>
+      {menu && (
+        <ul
+          className="term-ctxmenu"
+          style={{ left: menu.x, top: menu.y }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.preventDefault()}
+          role="menu"
+        >
+          <li
+            role="menuitem"
+            className={`term-ctxmenu-item${menu.hasSelection ? '' : ' is-disabled'}`}
+            onClick={menu.hasSelection ? handleMenuCopy : undefined}
+          >
+            复制
+          </li>
+          <li
+            role="menuitem"
+            className="term-ctxmenu-item"
+            onClick={handleMenuPaste}
+          >
+            粘贴
+          </li>
+        </ul>
+      )}
     </div>
   )
 }

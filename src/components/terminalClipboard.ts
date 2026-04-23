@@ -9,6 +9,19 @@ function isMacPlatform(): boolean {
   return plat.includes('mac')
 }
 
+/** Copy the current xterm selection to the system clipboard.
+ *  No-op when there is no selection. */
+export function copySelection(term: Terminal): boolean {
+  const selection = term.getSelection()
+  if (!selection) return false
+  try {
+    void navigator.clipboard.writeText(selection)
+  } catch {
+    // older/blocked environments — ignore
+  }
+  return true
+}
+
 /** Install Cmd+C / Ctrl+Shift+C copy on the given xterm instance.
  *  Only consumes the chord when there is a selection — otherwise Ctrl+C
  *  is left alone so it can reach the PTY as SIGINT. */
@@ -20,13 +33,7 @@ export function installCopyBinding(term: Terminal): void {
       ? e.metaKey && !e.ctrlKey && !e.altKey && e.code === 'KeyC'
       : e.ctrlKey && e.shiftKey && !e.altKey && e.code === 'KeyC'
     if (!copyChord) return true
-    const selection = term.getSelection()
-    if (!selection) return true // nothing to copy — don't swallow Ctrl+C
-    try {
-      void navigator.clipboard.writeText(selection)
-    } catch {
-      // older/blocked environments — ignore
-    }
+    if (!copySelection(term)) return true // nothing to copy — don't swallow Ctrl+C
     e.preventDefault()
     return false
   })
@@ -99,5 +106,45 @@ export function installPasteHandler(
     container.removeEventListener('paste', handler, { capture: true } as
       | AddEventListenerOptions
       | EventListenerOptions)
+  }
+}
+
+/** Read the system clipboard (image or text) and forward the result into
+ *  the session — matches the semantics of the native `paste` handler but
+ *  is driven programmatically (e.g. from a context menu). */
+export async function pasteFromClipboard(
+  options: PasteHandlerOptions
+): Promise<void> {
+  const { sessionId, writeInput, saveImage } = options
+  const clip = navigator.clipboard as
+    | (Clipboard & { read?: () => Promise<ClipboardItems> })
+    | undefined
+
+  if (clip && typeof clip.read === 'function') {
+    try {
+      const items = await clip.read()
+      for (const item of items) {
+        const imageType = item.types.find((t) => t.startsWith('image/'))
+        if (!imageType) continue
+        const blob = await item.getType(imageType)
+        if (blob.size === 0 || blob.size > MAX_IMAGE_SIZE) return
+        const rawExt = imageType.split('/')[1] ?? IMAGE_EXT_FALLBACK
+        const ext =
+          rawExt.replace(/[^a-z0-9]/gi, '').toLowerCase() || IMAGE_EXT_FALLBACK
+        const buf = await blob.arrayBuffer()
+        const res = await saveImage(buf, ext)
+        if (res.ok && res.path) writeInput(sessionId, res.path)
+        return
+      }
+    } catch {
+      // permission denied / unsupported MIME — fall through to text
+    }
+  }
+
+  try {
+    const text = await navigator.clipboard.readText()
+    if (text) writeInput(sessionId, text)
+  } catch {
+    /* ignore */
   }
 }

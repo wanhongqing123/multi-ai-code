@@ -513,6 +513,43 @@ html, body, #root {
   background: var(--mac-bg);
 }
 
+.term-ctxmenu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 140px;
+  margin: 0;
+  padding: var(--mac-sp-1) 0;
+  list-style: none;
+  background: var(--mac-surface, var(--mac-bg));
+  border: 1px solid var(--mac-border-strong);
+  border-radius: var(--mac-r-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  font-size: var(--mac-text-sm);
+  color: var(--mac-fg);
+  user-select: none;
+}
+
+.term-ctxmenu-item {
+  padding: var(--mac-sp-1) var(--mac-sp-3);
+  cursor: pointer;
+  line-height: 1.6;
+}
+
+.term-ctxmenu-item:hover {
+  background: var(--mac-primary-soft);
+  color: var(--mac-primary);
+}
+
+.term-ctxmenu-item.is-disabled {
+  color: var(--mac-fg-disabled);
+  cursor: default;
+}
+
+.term-ctxmenu-item.is-disabled:hover {
+  background: transparent;
+  color: var(--mac-fg-disabled);
+}
+
 /* Tame xterm's viewport scrollbar (Chromium + Firefox). */
 .term-host .xterm-viewport {
   scrollbar-width: thin;

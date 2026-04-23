@@ -39,6 +39,15 @@ export interface DiffViewerDialogProps {
   /** Controlled general-note field — same persistence rationale as annotations. */
   generalNote: string
   onGeneralNoteChange: Dispatch<SetStateAction<string>>
+  /** Controlled diff-mode tab + commit + file selection. Lifted so that closing
+   *  and reopening the dialog against the same repo keeps the tab and the
+   *  selected file. Parent resets these on project switch. */
+  mode: DiffMode
+  onModeChange: Dispatch<SetStateAction<DiffMode>>
+  selectedCommit: string
+  onSelectedCommitChange: Dispatch<SetStateAction<string>>
+  selectedFile: string
+  onSelectedFileChange: Dispatch<SetStateAction<string>>
 }
 
 interface CommitEntry {
@@ -442,21 +451,36 @@ export default function DiffViewerDialog({
   annotations,
   onAnnotationsChange,
   generalNote,
-  onGeneralNoteChange
+  onGeneralNoteChange,
+  mode,
+  onModeChange,
+  selectedCommit,
+  onSelectedCommitChange,
+  selectedFile,
+  onSelectedFileChange
 }: DiffViewerDialogProps) {
-  const [mode, setMode] = useState<DiffMode>('working')
+  const setMode = useCallback(
+    (next: SetStateAction<DiffMode>) =>
+      applyControlledStateUpdate(onModeChange, next),
+    [onModeChange]
+  )
+  const setSelectedCommit = useCallback(
+    (next: SetStateAction<string>) =>
+      applyControlledStateUpdate(onSelectedCommitChange, next),
+    [onSelectedCommitChange]
+  )
+  const setSelectedFile = useCallback(
+    (next: SetStateAction<string>) =>
+      applyControlledStateUpdate(onSelectedFileChange, next),
+    [onSelectedFileChange]
+  )
+
   const [commits, setCommits] = useState<CommitEntry[] | null>(null)
   const [commitsLoading, setCommitsLoading] = useState(false)
-  const [selectedCommit, setSelectedCommit] = useState<string>('')
 
   const [diffText, setDiffText] = useState<string>('')
   const [diffLoading, setDiffLoading] = useState(false)
   const [diffError, setDiffError] = useState<string | null>(null)
-
-  // Which file's diff is currently shown. When files[] changes (user flipped
-  // mode / re-fetched), default to first file if the previous selection is
-  // no longer present.
-  const [selectedFile, setSelectedFile] = useState<string>('')
 
   // Controlled: annotations + generalNote live in the parent so unsent
   // batches persist across dialog close/reopen. Parent is responsible for
@@ -553,7 +577,8 @@ export default function DiffViewerDialog({
       setCommitsLoading(false)
       if (res.ok && res.entries) {
         setCommits(res.entries)
-        if (!selectedCommit && res.entries[0]) setSelectedCommit(res.entries[0].hash)
+        const stillExists = res.entries.some((e) => e.hash === selectedCommit)
+        if (!stillExists && res.entries[0]) setSelectedCommit(res.entries[0].hash)
       } else {
         setCommits([])
       }

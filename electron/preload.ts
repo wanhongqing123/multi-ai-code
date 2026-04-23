@@ -134,20 +134,6 @@ const api = {
         error?: string
       }>
   },
-  events: {
-    list: (projectId: string, limit?: number) =>
-      ipcRenderer.invoke('event:list', { projectId, limit }) as Promise<
-        Array<{
-          id: number
-          project_id: string
-          from_stage: number | null
-          to_stage: number | null
-          kind: string
-          payload: string | null
-          created_at: string
-        }>
-      >
-  },
   git: {
     status: (cwd: string) =>
       ipcRenderer.invoke('git:status', { cwd }) as Promise<{

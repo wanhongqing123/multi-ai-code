@@ -15,7 +15,6 @@ import {
   updateProjectName,
   touchProject,
   listArtifacts,
-  listEvents,
   recordEvent
 } from './store/db.js'
 import {
@@ -53,6 +52,7 @@ import {
 
 const isDev = !app.isPackaged
 const repoViewWindows = new Map<string, BrowserWindow>()
+const appIconPath = join(__dirname, '../../build/icon-256.png')
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -62,6 +62,7 @@ function createWindow(): void {
     minHeight: 700,
     show: false,
     autoHideMenuBar: true,
+    icon: appIconPath,
     webPreferences: {
       preload: join(__dirname, '../preload/preload.mjs'),
       sandbox: false,
@@ -101,6 +102,7 @@ function createRepoViewWindow(projectId: string, title: string): BrowserWindow {
     show: false,
     autoHideMenuBar: true,
     title: `仓库查看 · ${title}`,
+    icon: appIconPath,
     webPreferences: {
       preload: join(__dirname, '../preload/preload.mjs'),
       sandbox: false,
@@ -133,6 +135,14 @@ function createRepoViewWindow(projectId: string, title: string): BrowserWindow {
 }
 
 app.whenReady().then(async () => {
+  if (process.platform === 'darwin' && app.dock) {
+    try {
+      app.dock.setIcon(appIconPath)
+    } catch {
+      /* ignore — icon file missing in some dev configurations */
+    }
+  }
+
   await ensureRootDir()
   initDb()
 
@@ -1077,10 +1087,6 @@ app.whenReady().then(async () => {
   )
 
   // ---------- Artifact handlers (single-stage) ----------
-
-  ipcMain.handle('event:list', (_e, { projectId, limit }: { projectId: string; limit?: number }) => {
-    return listEvents(projectId, limit ?? 500)
-  })
 
   /** List snapshotted artifacts for a project, optionally filtered by stage. */
   ipcMain.handle(

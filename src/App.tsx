@@ -10,7 +10,6 @@ import ProjectPicker, { type ProjectInfo } from './components/ProjectPicker'
 import ErrorPanel, { pushLog, useLogs } from './components/ErrorPanel'
 import AiSettingsDialog, { type AiSettings } from './components/AiSettingsDialog'
 import TemplatesDialog from './components/TemplatesDialog'
-import TimelineDrawer from './components/TimelineDrawer'
 import OnboardingWizard from './components/OnboardingWizard'
 import DoctorDialog from './components/DoctorDialog'
 import CommandPalette, { type Command } from './components/CommandPalette'
@@ -19,6 +18,7 @@ import GlobalSearchDialog from './components/GlobalSearchDialog'
 import FilePreviewDialog from './components/FilePreviewDialog'
 import PlanReviewDialog, { type Annotation } from './components/PlanReviewDialog'
 import DiffViewerDialog, { type DiffAnnotation } from './components/DiffViewerDialog'
+import type { DiffMode } from './components/diffViewerConfig'
 
 const LAST_PROJECT_KEY = 'multi-ai-code.lastProjectId'
 
@@ -35,7 +35,6 @@ export default function App() {
     ai_cli: 'claude'
   })
   const [showTemplates, setShowTemplates] = useState(false)
-  const [showTimeline, setShowTimeline] = useState(false)
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [showDoctor, setShowDoctor] = useState(false)
   const [showCmdk, setShowCmdk] = useState(false)
@@ -77,6 +76,12 @@ export default function App() {
   // cycle. Cleared on: successful submit, project switch, plan switch.
   const [diffAnnotations, setDiffAnnotations] = useState<DiffAnnotation[]>([])
   const [diffGeneralNote, setDiffGeneralNote] = useState('')
+  // Diff dialog view state — mode tab + chosen commit + chosen file. Lifted
+  // here so closing and reopening the dialog against the same repo preserves
+  // where the user was. Cleared on project switch (see clearProjectScopedState).
+  const [diffMode, setDiffMode] = useState<DiffMode>('working')
+  const [diffSelectedCommit, setDiffSelectedCommit] = useState('')
+  const [diffSelectedFile, setDiffSelectedFile] = useState('')
   // Remember which (project, planName) combos have already seen the starter
   // "import from file?" toast so it's not shown repeatedly on each start.
   const shownStarterHintsRef = useRef<Set<string>>(new Set())
@@ -109,6 +114,9 @@ export default function App() {
     setDiffReviewOpen(false)
     setDiffAnnotations([])
     setDiffGeneralNote('')
+    setDiffMode('working')
+    setDiffSelectedCommit('')
+    setDiffSelectedFile('')
     setSessionId(null)
     setSessionStatus('idle')
     shownStarterHintsRef.current.clear()
@@ -607,7 +615,11 @@ export default function App() {
     [sessionId]
   )
 
-  /** Format diff annotations using session-message-format and push to live session via cc.write. */
+  /** Format diff annotations and push them into the live session.
+   *  Uses cc.sendUser (chunked write + priming) not cc.write (raw): large
+   *  annotation batches hitting the PTY as a single chunk get stashed by the
+   *  TUI as "[Pasted Content N chars]" (bracketed-paste detection) or drop
+   *  bytes, so mirror the plan-review path that already worked. */
   const submitDiffAnnotations = useCallback(
     async (anns: DiffAnnotation[], generalNote: string) => {
       if (!sessionId || sessionStatus !== 'running') {
@@ -620,7 +632,11 @@ export default function App() {
         generalComment: generalNote,
         planAbsPath
       })
-      window.api.cc.write(sessionId, text + '\r')
+      const res = await window.api.cc.sendUser(sessionId, text)
+      if (!res.ok) {
+        showToast(`发送批注失败：${res.error ?? '未知错误'}`, { level: 'error' })
+        return
+      }
       // Sent successfully — clear the batch so the next Diff 审查 starts fresh.
       setDiffAnnotations([])
       setDiffGeneralNote('')
@@ -671,14 +687,6 @@ export default function App() {
           title="查看错误与通知日志"
         >
           {errorCount > 0 ? `⚠ ${errorCount}` : '📣 日志'}
-        </button>
-        <button
-          className="topbar-btn"
-          onClick={() => setShowTimeline(true)}
-          disabled={!hasProject}
-          title="按时间线回放当前项目的所有阶段事件"
-        >
-          📜 时间线
         </button>
         <button
           className="topbar-btn"
@@ -834,7 +842,6 @@ export default function App() {
             { id: 'doctor', label: '🩺 CLI 体检', keywords: 'doctor check health', action: () => setShowDoctor(true) },
             { id: 'settings', label: '⚙️ AI 设置', keywords: 'settings command ai cli', action: () => setShowAiSettings(true), disabled: !hasProject },
             { id: 'tpl', label: '📋 Prompt 模板', keywords: 'templates prompt snippets', action: () => setShowTemplates(true) },
-            { id: 'timeline', label: '📜 审计时间线', keywords: 'timeline events audit', action: () => setShowTimeline(true), disabled: !hasProject },
             { id: 'search', label: '🔍 全局搜索', hint: 'Ctrl+Shift+F', keywords: 'find search', action: () => setShowGlobalSearch(true), disabled: !hasProject },
             { id: 'logs', label: '📣 错误与通知', keywords: 'errors log notifications', action: () => setShowErrors(true) },
             { id: 'toggle-theme', label: theme === 'dark' ? '切换到浅色主题' : '切换到暗色主题', keywords: 'theme dark light color', action: handleToggleTheme },
@@ -909,6 +916,12 @@ export default function App() {
           onAnnotationsChange={setDiffAnnotations}
           generalNote={diffGeneralNote}
           onGeneralNoteChange={setDiffGeneralNote}
+          mode={diffMode}
+          onModeChange={setDiffMode}
+          selectedCommit={diffSelectedCommit}
+          onSelectedCommitChange={setDiffSelectedCommit}
+          selectedFile={diffSelectedFile}
+          onSelectedFileChange={setDiffSelectedFile}
         />
       )}
       {showOnboarding && (
@@ -920,12 +933,6 @@ export default function App() {
             setCurrentProjectId(projectId)
             setPlanName(pn)
           }}
-        />
-      )}
-      {showTimeline && currentProjectId && (
-        <TimelineDrawer
-          projectId={currentProjectId}
-          onClose={() => setShowTimeline(false)}
         />
       )}
       {showTemplates && (

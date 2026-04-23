@@ -247,20 +247,3 @@ export function recordEvent(e: {
     )
 }
 
-export interface EventRow {
-  id: number
-  project_id: string
-  from_stage: number | null
-  to_stage: number | null
-  kind: string
-  payload: string | null
-  created_at: string
-}
-
-export function listEvents(projectId: string, limit = 500): EventRow[] {
-  return getDb()
-    .prepare(
-      `SELECT * FROM events WHERE project_id = ? ORDER BY id DESC LIMIT ?`
-    )
-    .all(projectId, limit) as EventRow[]
-}

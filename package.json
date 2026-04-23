@@ -55,6 +55,7 @@
     "files": [
       "out/**/*",
       "electron/prompts/**/*",
+      "build/icon-256.png",
       "node_modules/**/*",
       "package.json"
     ],

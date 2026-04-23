@@ -1091,37 +1091,6 @@ html, body, #root {
 .onb-hint ul { margin: var(--mac-sp-2) 0 0 var(--mac-sp-5); padding: 0; }
 .onb-hint li { line-height: var(--mac-line-relaxed); }
 
-.timeline-modal {
-  width: 960px;
-  max-width: 94vw;
-  max-height: 80vh;
-  display: flex;
-  flex-direction: column;
-}
-.timeline-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: var(--mac-sp-1) 0;
-  font-family: var(--mac-font-mono);
-  font-size: var(--mac-text-mono);
-}
-.timeline-row {
-  display: flex;
-  gap: var(--mac-sp-3);
-  padding: var(--mac-sp-1) var(--mac-sp-4);
-  border-bottom: 1px solid var(--mac-border-subtle);
-  color: var(--mac-fg-muted);
-  align-items: baseline;
-  transition: background var(--mac-dur-fast) var(--mac-ease);
-}
-.timeline-row:hover { background: var(--mac-bg); }
-.timeline-time { flex-shrink: 0; color: var(--mac-fg-subtle); width: 165px; }
-.timeline-kind { flex-shrink: 0; width: 120px; font-weight: var(--mac-weight-medium); color: var(--mac-fg); }
-.timeline-stage { flex-shrink: 0; width: 90px; color: var(--mac-primary); }
-.timeline-payload { flex: 1; overflow-wrap: anywhere; }
-.timeline-verdict { margin-left: var(--mac-sp-2); color: var(--mac-warning); }
-.timeline-note { margin-left: var(--mac-sp-2); color: var(--mac-fg-subtle); }
-
 .drawer-git {
   padding: var(--mac-sp-3) var(--mac-sp-3);
   background: var(--mac-bg-subtle);

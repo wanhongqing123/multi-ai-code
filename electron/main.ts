@@ -134,6 +134,15 @@ function createRepoViewWindow(projectId: string, title: string): BrowserWindow {
   return win
 }
 
+// On Windows, taskbar groups windows by AppUserModelID. If we don't set this
+// explicitly, Electron's default id wins and the taskbar keeps showing the
+// stock Electron icon / groups our windows under "Electron" — even after we
+// set BrowserWindow.icon. Must be set before the first window is created.
+// Safe to call as no-op on non-Windows, but we gate it for clarity.
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.multiaicode.app')
+}
+
 app.whenReady().then(async () => {
   if (process.platform === 'darwin' && app.dock) {
     try {

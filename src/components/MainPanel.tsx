@@ -15,6 +15,10 @@ import {
   createTerminalMarkdownState,
   formatMarkdownChunk
 } from './terminalMarkdown.js'
+import {
+  installCopyBinding,
+  installPasteHandler
+} from './terminalClipboard.js'
 
 export interface MainPanelProps {
   sessionId: string
@@ -81,6 +85,14 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
     term.onData((data) => {
       window.api.cc.write(props.sessionId, data)
     })
+
+    installCopyBinding(term)
+    const detachPaste = installPasteHandler(containerRef.current, {
+      sessionId: props.sessionId,
+      writeInput: window.api.cc.write,
+      saveImage: window.api.clipboard.saveImage
+    })
+    unsubRef.current.push(detachPaste)
 
     const offData = window.api.cc.onData((evt) => {
       if (evt.sessionId !== props.sessionId) return

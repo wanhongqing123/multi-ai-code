@@ -50,7 +50,10 @@ export function buildMainTerminalOptions(theme: Theme): ITerminalOptions {
     cursorInactiveStyle: 'underline',
     cursorWidth: 1,
     convertEol: true,
-    minimumContrastRatio: 1,
+    // Force xterm to auto-lighten/darken the foreground when a CLI-emitted
+    // background (highlight blocks, selection bars, etc.) would otherwise
+    // swallow the text. 4.5 is the WCAG AA threshold for body text.
+    minimumContrastRatio: 4.5,
     smoothScrollDuration: 0,
     theme: xtermThemeFor(theme),
     allowProposedApi: true

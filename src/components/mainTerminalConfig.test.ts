@@ -41,7 +41,7 @@ describe('buildMainTerminalOptions', () => {
     expect(buildMainTerminalOptions('light')).toMatchObject({
       lineHeight: 1.45,
       letterSpacing: 0,
-      minimumContrastRatio: 1,
+      minimumContrastRatio: 4.5,
       cursorBlink: false
     })
   })

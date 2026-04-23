@@ -558,11 +558,11 @@ export default function DiffViewerDialog({
   }, [currentRows])
 
   // Keep selection valid when files change (mode switch / refresh).
+  // Do NOT clear when files is empty — refreshDiff() transiently empties
+  // files between "loading" and "loaded", and clearing here would wipe the
+  // persisted selection the parent holds across close/reopen.
   useEffect(() => {
-    if (files.length === 0) {
-      if (selectedFile) setSelectedFile('')
-      return
-    }
+    if (files.length === 0) return
     if (!files.some((f) => f.path === selectedFile)) {
       setSelectedFile(files[0].path)
     }

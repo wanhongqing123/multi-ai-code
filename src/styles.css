@@ -3346,14 +3346,7 @@ html, body, #root {
   flex-direction: column;
 }
 
-.repo-view-analysis {
-  border-left: 1px solid var(--mac-border-subtle);
-  background: var(--mac-surface-raised);
-  display: flex;
-  flex-direction: column;
-}
-
-.repo-view-analysis-top {
+.repo-view-main-top {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
@@ -3361,25 +3354,33 @@ html, body, #root {
   overflow: hidden;
 }
 
-.repo-view-analysis-divider {
+.repo-view-main-divider {
   flex: 0 0 6px;
   background: var(--mac-border-subtle);
   cursor: row-resize;
   transition: background 0.15s;
 }
 
-.repo-view-analysis-divider:hover,
-.repo-view-analysis-divider:active {
+.repo-view-main-divider:hover,
+.repo-view-main-divider:active {
   background: var(--mac-primary);
 }
 
-.repo-view-analysis-bottom {
+.repo-view-main-bottom {
   flex: 0 0 auto;
   min-height: 120px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   background: var(--mac-bg);
+}
+
+.repo-view-analysis {
+  border-left: 1px solid var(--mac-border-subtle);
+  background: var(--mac-surface-raised);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .repo-terminal-panel {
@@ -3645,9 +3646,16 @@ html, body, #root {
 
 .repo-analysis-quote {
   margin: 8px 0 0;
+  padding: 4px 8px;
+  font-family: var(--mac-font-mono);
   font-size: var(--mac-text-xs);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  background: var(--mac-bg);
+  border-left: 2px solid var(--mac-border-subtle);
+  border-radius: var(--mac-r-sm);
+  max-height: 160px;
+  overflow: auto;
 }
 
 .repo-analysis-comment {

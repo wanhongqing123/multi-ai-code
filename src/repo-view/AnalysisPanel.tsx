@@ -1,4 +1,8 @@
 import { useState } from 'react'
+import {
+  canSendRepoAnnotations,
+  repoSendButtonTitle
+} from './analysisPanelState'
 
 export interface RepoCodeAnnotation {
   id: string
@@ -11,6 +15,7 @@ export interface RepoCodeAnnotation {
 export default function AnalysisPanel({
   filePath,
   annotations,
+  sessionRunning,
   onSendToCli,
   onEditAnnotation,
   onRemoveAnnotation,
@@ -18,13 +23,14 @@ export default function AnalysisPanel({
 }: {
   filePath: string
   annotations: RepoCodeAnnotation[]
+  sessionRunning: boolean
   onSendToCli: (question: string) => void
   onEditAnnotation: (id: string) => void
   onRemoveAnnotation: (id: string) => void
   onClearAnnotations: () => void
 }): JSX.Element {
   const [question, setQuestion] = useState('')
-  const canSend = annotations.length > 0
+  const canSend = canSendRepoAnnotations(sessionRunning, annotations.length)
 
   return (
     <div className="repo-analysis-panel">
@@ -61,7 +67,7 @@ export default function AnalysisPanel({
                     </div>
                   </div>
                   <blockquote className="repo-analysis-quote">
-                    {a.snippet.length > 260 ? `${a.snippet.slice(0, 260)}…` : a.snippet}
+                    {a.snippet.length > 800 ? `${a.snippet.slice(0, 800)}\n…` : a.snippet}
                   </blockquote>
                   <div className="repo-analysis-comment">{a.comment}</div>
                 </li>
@@ -91,7 +97,7 @@ export default function AnalysisPanel({
                 onSendToCli(question.trim())
                 setQuestion('')
               }}
-              title={canSend ? '注入到下方 AI CLI' : '至少需要一条标注'}
+              title={repoSendButtonTitle(sessionRunning, annotations.length)}
             >
               发送到 AI CLI
             </button>

@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   normalizeTerminalText,
   shouldAutoAcceptCodexTrustPrompt,
-  isCodexReadyForPromptInjection
+  isCodexReadyForPromptInjection,
+  shouldAutoAcceptSessionEditPrompt
 } from './codexTrust.js'
 
 describe('normalizeTerminalText', () => {
@@ -36,5 +37,44 @@ describe('isCodexReadyForPromptInjection', () => {
   it('returns true once OpenAI Codex home screen is visible', () => {
     const raw = '\u001b[2m│ \u001b[22m\u001b[1mOpenAI Codex\u001b[22m\u001b[2m (v0.120.0) │\u001b[m'
     expect(isCodexReadyForPromptInjection(raw)).toBe(true)
+  })
+})
+
+describe('shouldAutoAcceptSessionEditPrompt', () => {
+  it('returns true for claude-style allow all edits prompt', () => {
+    const raw = [
+      'Do you want to create libobs-metal__metal-subsystem.swift.md?',
+      '1. Yes',
+      '2. Yes, allow all edits during this session (shift+tab)',
+      '3. No'
+    ].join('\n')
+    expect(shouldAutoAcceptSessionEditPrompt(raw)).toBe(true)
+  })
+
+  it('returns true for the per-tool "Do you want to proceed" prompt with a persistent option', () => {
+    const raw = [
+      'Bash command',
+      '  mkdir -p /repo/.multi-ai-code/repo-view/analyses',
+      '  Ensure analyses cache directory exists',
+      '',
+      'Do you want to proceed?',
+      '❯ 1. Yes',
+      '  2. Yes, and always allow access to analyses/ from this project',
+      '  3. No'
+    ].join('\n')
+    expect(shouldAutoAcceptSessionEditPrompt(raw)).toBe(true)
+  })
+
+  it('returns false for a per-tool "Do you want to proceed" prompt without a persistent option', () => {
+    const raw = [
+      'Do you want to proceed?',
+      '❯ 1. Yes',
+      '  2. No'
+    ].join('\n')
+    expect(shouldAutoAcceptSessionEditPrompt(raw)).toBe(false)
+  })
+
+  it('returns false for unrelated output', () => {
+    expect(shouldAutoAcceptSessionEditPrompt('OpenAI Codex v0.120.0')).toBe(false)
   })
 })

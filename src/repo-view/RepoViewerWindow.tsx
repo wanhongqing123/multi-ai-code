@@ -4,6 +4,7 @@ import AnalysisPanel, { type RepoCodeAnnotation } from './AnalysisPanel'
 import CodePane, { type RepoSelection } from './CodePane'
 import FileTree from './FileTree'
 import RepoTerminalPanel from './RepoTerminalPanel'
+import { showToast } from '../components/Toast'
 import { buildCliInjectionText } from './buildCliInjectionText'
 
 const TERMINAL_SPLIT_MIN = 120
@@ -262,18 +263,15 @@ export default function RepoViewerWindow({
   const onSendToCli = useCallback(
     async (question: string) => {
       if (!project || !selectedFile) return
+      if (!sessionRunning) {
+        showToast('请先启动下方 AI CLI，再发送代码标注', { level: 'warn' })
+        return
+      }
       const targetAnns = annotations.filter((a) => a.filePath === selectedFile)
       if (targetAnns.length === 0) return
       if (sendingRef.current) return
       sendingRef.current = true
       try {
-        if (!sessionRunning) {
-          const ok = await onStartCli()
-          if (!ok) {
-            console.error('[repo-view] CLI start failed; cannot send annotation')
-            return
-          }
-        }
         const text = buildCliInjectionText({
           repoRoot: project.target_repo,
           filePath: selectedFile,
@@ -285,13 +283,21 @@ export default function RepoViewerWindow({
           text
         })
         if (!res.ok) {
-          console.error('[repo-view] analysisSend failed:', res.error)
+          showToast(`发送标注失败：${res.error ?? '未知错误'}`, { level: 'error' })
+          return
         }
+        const sent = targetAnns.length
+        setEditingAnnotationId(null)
+        setAnnotations((prev) => prev.filter((a) => a.filePath !== selectedFile))
+        showToast(`已发送 ${sent} 条标注到 AI CLI`, {
+          level: 'success',
+          duration: 3000
+        })
       } finally {
         sendingRef.current = false
       }
     },
-    [annotations, project, selectedFile, sessionRunning, onStartCli]
+    [annotations, project, selectedFile, sessionRunning]
   )
 
   if (!project) {
@@ -312,52 +318,29 @@ export default function RepoViewerWindow({
           onSelectFile={setSelectedFile}
         />
       </aside>
-      <main className="repo-view-main">
-        <CodePane
-          filePath={selectedFile}
-          content={selectedContent}
-          byteLength={selectedSize}
-          loading={loadingFile}
-          onAnnotateSelection={onAnnotateSelection}
-          editingAnnotation={
-            annotations.find((annotation) => annotation.id === editingAnnotationId) ?? null
-          }
-          onCancelEditing={() => setEditingAnnotationId(null)}
-        />
-      </main>
-      <div
-        className="repo-view-width-divider"
-        onMouseDown={onWidthMouseDown}
-        role="separator"
-        aria-orientation="vertical"
-        title="拖拽调整右侧面板宽度"
-      />
-      <aside className="repo-view-analysis" ref={splitContainerRef}>
-        <div className="repo-view-analysis-top">
-          <AnalysisPanel
+      <main className="repo-view-main" ref={splitContainerRef}>
+        <div className="repo-view-main-top">
+          <CodePane
             filePath={selectedFile}
-            annotations={annotations.filter((a) => a.filePath === selectedFile)}
-            onSendToCli={onSendToCli}
-            onEditAnnotation={(id) => setEditingAnnotationId(id)}
-            onRemoveAnnotation={(id) => {
-              if (editingAnnotationId === id) setEditingAnnotationId(null)
-              setAnnotations((prev) => prev.filter((a) => a.id !== id))
-            }}
-            onClearAnnotations={() => {
-              setEditingAnnotationId(null)
-              setAnnotations((prev) => prev.filter((a) => a.filePath !== selectedFile))
-            }}
+            content={selectedContent}
+            byteLength={selectedSize}
+            loading={loadingFile}
+            onAnnotateSelection={onAnnotateSelection}
+            editingAnnotation={
+              annotations.find((annotation) => annotation.id === editingAnnotationId) ?? null
+            }
+            onCancelEditing={() => setEditingAnnotationId(null)}
           />
         </div>
         <div
-          className="repo-view-analysis-divider"
+          className="repo-view-main-divider"
           onMouseDown={onSplitMouseDown}
           role="separator"
           aria-orientation="horizontal"
           title="拖拽调整 AI CLI 面板高度"
         />
         <div
-          className="repo-view-analysis-bottom"
+          className="repo-view-main-bottom"
           style={{ height: terminalHeight }}
         >
           <RepoTerminalPanel
@@ -367,6 +350,30 @@ export default function RepoViewerWindow({
             onStop={onStopCli}
           />
         </div>
+      </main>
+      <div
+        className="repo-view-width-divider"
+        onMouseDown={onWidthMouseDown}
+        role="separator"
+        aria-orientation="vertical"
+        title="拖拽调整右侧面板宽度"
+      />
+      <aside className="repo-view-analysis">
+        <AnalysisPanel
+          filePath={selectedFile}
+          annotations={annotations.filter((a) => a.filePath === selectedFile)}
+          sessionRunning={sessionRunning}
+          onSendToCli={onSendToCli}
+          onEditAnnotation={(id) => setEditingAnnotationId(id)}
+          onRemoveAnnotation={(id) => {
+            if (editingAnnotationId === id) setEditingAnnotationId(null)
+            setAnnotations((prev) => prev.filter((a) => a.id !== id))
+          }}
+          onClearAnnotations={() => {
+            setEditingAnnotationId(null)
+            setAnnotations((prev) => prev.filter((a) => a.filePath !== selectedFile))
+          }}
+        />
       </aside>
     </div>
   )

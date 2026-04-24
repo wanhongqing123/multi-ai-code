@@ -5,6 +5,7 @@ import RepoViewerWindow from './repo-view/RepoViewerWindow'
 import './styles.css'
 import { pushLog } from './components/ErrorPanel'
 import ErrorBoundary from './components/ErrorBoundary'
+import ToastHost from './components/Toast'
 import { applyTheme } from './utils/theme.js'
 import { parseRendererWindowModeSearch } from './repo-view/windowMode.js'
 
@@ -37,7 +38,10 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ErrorBoundary>
       {windowMode.kind === 'repo-view' ? (
-        <RepoViewerWindow projectId={windowMode.projectId} />
+        <>
+          <RepoViewerWindow projectId={windowMode.projectId} />
+          <ToastHost />
+        </>
       ) : (
         <App />
       )}

@@ -2,6 +2,7 @@ import { BrowserWindow } from 'electron'
 import { PtyCCProcess } from '../cc/PtyCCProcess.js'
 import {
   shouldAutoAcceptCodexTrustPrompt,
+  shouldAutoAcceptSessionEditPrompt,
   isCodexReadyForPromptInjection,
   isClaudeReadyForPromptInjection
 } from '../cc/codexTrust.js'
@@ -17,11 +18,20 @@ interface RepoAnalysisSession {
   codexBootText?: string
   claudePromptReady?: boolean
   claudeBootText?: string
+  /** Last time we auto-pressed "2\r" on a permission prompt — debounce so
+   *  the same prompt streaming in across multiple chunks isn't answered
+   *  twice, but a *new* prompt later in the session still gets handled. */
+  lastPermissionRespondAt?: number
 }
+
+/** Minimum ms between consecutive auto-accepts. Claude's TUI clears the
+ *  prompt within ~100ms of receiving "2\r", so a debounce a few times
+ *  larger than that is enough to avoid double-fire on streaming chunks
+ *  while still letting a *different* later prompt through. */
+const PERMISSION_RESPOND_DEBOUNCE_MS = 1500
 
 /** Minimum time to wait for the CLI TUI to take over the PTY before
  *  we start typing into it — mirrors ptyManager's PRIMING_DELAY_MS. */
-const PRIMING_DELAY_MS_CLAUDE = 1200
 const READY_TIMEOUT_MS_CLAUDE = 15000
 const READY_TIMEOUT_MS_CODEX = 10000
 
@@ -29,6 +39,8 @@ const sessions = new Map<number, RepoAnalysisSession>()
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
+/** Type + submit text into the PTY: chunked-write to avoid the TUI's
+ *  bracketed-paste detection, then a CR (twice for safety) to submit. */
 async function sendMessage(proc: PtyCCProcess, text: string): Promise<void> {
   const chunk = 64
   for (let i = 0; i < text.length; i += chunk) {
@@ -91,8 +103,21 @@ export async function startRepoAnalysisSession(input: {
     command: input.command
   }
   proc.on('data', (chunk) => {
+    const combined = (((session.command === 'codex'
+      ? session.codexBootText
+      : session.claudeBootText) ?? '') + chunk).slice(-16000)
+    if (shouldAutoAcceptSessionEditPrompt(combined)) {
+      const now = Date.now()
+      if (
+        !session.lastPermissionRespondAt ||
+        now - session.lastPermissionRespondAt > PERMISSION_RESPOND_DEBOUNCE_MS
+      ) {
+        session.lastPermissionRespondAt = now
+        proc.write('2\r')
+      }
+    }
     if (session.command === 'codex') {
-      const boot = ((session.codexBootText ?? '') + chunk).slice(-16000)
+      const boot = combined
       session.codexBootText = boot
       if (!session.codexTrustAccepted && shouldAutoAcceptCodexTrustPrompt(boot)) {
         session.codexTrustAccepted = true
@@ -102,7 +127,7 @@ export async function startRepoAnalysisSession(input: {
         session.codexPromptReady = true
       }
     } else if (session.command === 'claude') {
-      const boot = ((session.claudeBootText ?? '') + chunk).slice(-16000)
+      const boot = combined
       session.claudeBootText = boot
       if (!session.claudePromptReady && isClaudeReadyForPromptInjection(boot)) {
         session.claudePromptReady = true
@@ -129,10 +154,11 @@ export async function sendRepoAnalysisPrompt(input: {
 }): Promise<void> {
   const session = sessions.get(input.winId)
   if (!session) throw new Error('repo analysis session not started')
-  if (session.command === 'codex') {
+  // Only pay the readiness cost on the first send for each CLI — once the
+  // TUI has been seen interactive, subsequent sends are immediate.
+  if (session.command === 'codex' && !session.codexPromptReady) {
     await waitForCodexReady(input.winId, READY_TIMEOUT_MS_CODEX)
-  } else if (session.command === 'claude') {
-    await sleep(PRIMING_DELAY_MS_CLAUDE)
+  } else if (session.command === 'claude' && !session.claudePromptReady) {
     await waitForClaudeReady(input.winId, READY_TIMEOUT_MS_CLAUDE)
   }
   await sendMessage(session.proc, input.text)

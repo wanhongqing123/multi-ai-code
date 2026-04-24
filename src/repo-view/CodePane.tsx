@@ -30,6 +30,27 @@ function lineFromNode(node: Node | null): number | null {
   return Number.isFinite(n) ? n : null
 }
 
+/** Compute the [lo, hi] line range a Range intersects, by scanning all
+ *  `.repo-code-line` elements under `root`. Robust to selections whose
+ *  endContainer lands on a parent or sibling of the actual line. */
+function lineRangeForSelection(
+  range: Range,
+  root: HTMLElement
+): { lo: number; hi: number } | null {
+  let lo: number | null = null
+  let hi: number | null = null
+  const lines = root.querySelectorAll<HTMLElement>('.repo-code-line[data-line]')
+  for (const ln of lines) {
+    if (!range.intersectsNode(ln)) continue
+    const n = Number(ln.dataset['line'])
+    if (!Number.isFinite(n)) continue
+    if (lo === null || n < lo) lo = n
+    if (hi === null || n > hi) hi = n
+  }
+  if (lo === null || hi === null) return null
+  return { lo, hi }
+}
+
 export default function CodePane({
   filePath,
   content,
@@ -71,18 +92,23 @@ export default function CodePane({
       setDraft(null)
       return
     }
-    const rect = range.getBoundingClientRect()
+    const rects = range.getClientRects()
+    const lastRect = rects.length > 0 ? rects[rects.length - 1] : range.getBoundingClientRect()
     const paneRect = paneRef.current.getBoundingClientRect()
-    const start = lineFromNode(range.startContainer)
-    const end = lineFromNode(range.endContainer)
-    const lo = typeof start === 'number' && typeof end === 'number' ? Math.min(start, end) : null
-    const hi = typeof start === 'number' && typeof end === 'number' ? Math.max(start, end) : null
-    const lineRange = lo && hi ? (lo === hi ? `${lo}` : `${lo}-${hi}`) : '未知行'
+    const span = lineRangeForSelection(range, paneRef.current)
+    const fallback = lineFromNode(range.startContainer) ?? lineFromNode(range.endContainer)
+    const lineRange = span
+      ? span.lo === span.hi
+        ? `${span.lo}`
+        : `${span.lo}-${span.hi}`
+      : fallback !== null
+      ? `${fallback}`
+      : '未知行'
     setDraft({
       quote: text,
       lineRange,
-      x: rect.right - paneRect.left + 6,
-      y: rect.top - paneRect.top + paneRef.current.scrollTop - 6
+      x: lastRect.right - paneRect.left + 6,
+      y: lastRect.top - paneRect.top + paneRef.current.scrollTop - 6
     })
   }, [])
 
@@ -180,8 +206,8 @@ export default function CodePane({
               {composer.editingId ? '编辑批注' : '添加批注'} · {filePath}:{composer.lineRange}
             </div>
             <blockquote className="plan-review-composer-quote">
-              {composer.snippet.length > 500
-                ? composer.snippet.slice(0, 500) + '…'
+              {composer.snippet.length > 2000
+                ? composer.snippet.slice(0, 2000) + '\n…'
                 : composer.snippet}
             </blockquote>
             <textarea

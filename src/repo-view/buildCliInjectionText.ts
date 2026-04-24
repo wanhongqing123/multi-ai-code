@@ -12,40 +12,6 @@ function fnv1a8(input: string): string {
   return h.toString(16).padStart(8, '0')
 }
 
-const EXT_TO_LANG: Record<string, string> = {
-  c: 'c',
-  h: 'c',
-  cc: 'cpp',
-  cpp: 'cpp',
-  hpp: 'cpp',
-  cs: 'csharp',
-  go: 'go',
-  java: 'java',
-  js: 'js',
-  jsx: 'jsx',
-  json: 'json',
-  kt: 'kotlin',
-  m: 'objc',
-  mm: 'objc',
-  md: 'markdown',
-  py: 'python',
-  rb: 'ruby',
-  rs: 'rust',
-  sh: 'bash',
-  swift: 'swift',
-  toml: 'toml',
-  ts: 'ts',
-  tsx: 'tsx',
-  yaml: 'yaml',
-  yml: 'yaml'
-}
-
-function langForFile(filePath: string): string {
-  const dot = filePath.lastIndexOf('.')
-  if (dot < 0) return ''
-  return EXT_TO_LANG[filePath.slice(dot + 1).toLowerCase()] ?? ''
-}
-
 export function encodeAnalysisFileName(filePath: string): string {
   const flat = filePath.replace(/\//g, '__')
   const withExt = `${flat}.md`
@@ -66,16 +32,12 @@ export interface BuildCliInjectionTextInput {
 export function buildCliInjectionText(
   input: BuildCliInjectionTextInput
 ): string {
-  const lang = langForFile(input.filePath)
-  const fenceOpen = lang ? '```' + lang : '```'
   const cachePath = `.multi-ai-code/repo-view/analyses/${encodeAnalysisFileName(input.filePath)}`
 
   const annotationBlocks = input.annotations.map((a, i) =>
     [
       `## 标注 ${i + 1}（第 ${a.lineRange} 行）`,
-      fenceOpen,
-      a.snippet,
-      '```',
+      `文件: ${a.filePath}`,
       `说明: ${a.comment}`
     ].join('\n')
   )
@@ -90,6 +52,14 @@ export function buildCliInjectionText(
     '',
     '## 问题',
     question,
+    '',
+    '## 上下文要求',
+    '先自行读取该文件以及标注行号附近的完整上下文，再开始分析或修改。',
+    '不要只依据这份摘要；若需要，继续向上向下扩展读取相关函数、类型和调用链。',
+    '',
+    '## 任务范围',
+    '默认先做分析与解释，先回答这段代码在做什么、风险和边界条件。',
+    '如果标注或问题明确要求修复、重构、补测试或直接落代码，可以直接修改代码，并在终端说明改了什么。',
     '',
     '## 记忆约定',
     `- 已有分析缓存：${cachePath}`,

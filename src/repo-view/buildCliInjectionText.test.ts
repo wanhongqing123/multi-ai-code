@@ -40,13 +40,11 @@ describe('buildCliInjectionText', () => {
     question: ''
   }
 
-  it('emits the file header, fenced snippet, comment, and default question', () => {
+  it('emits file references, comments, and the default question', () => {
     const text = buildCliInjectionText(baseInput)
     expect(text).toContain('仓库根: /repo/obs-studio')
     expect(text).toContain('文件: libobs/obs-audio-controls.c')
     expect(text).toContain('## 标注 1（第 52-53 行）')
-    expect(text).toContain('```c')
-    expect(text).toContain('float cur_db;')
     expect(text).toContain('说明: 这行是什么意思')
     expect(text).toContain('## 问题')
     expect(text).toContain('请按标注分析')
@@ -89,24 +87,19 @@ describe('buildCliInjectionText', () => {
     expect(text).toContain('append 形式写入该文件')
   })
 
-  it('picks a fence language from the file extension and falls back to empty', () => {
-    const tsx = buildCliInjectionText({
-      ...baseInput,
-      filePath: 'src/App.tsx',
-      annotations: [
-        { ...baseInput.annotations[0], filePath: 'src/App.tsx' }
-      ]
-    })
-    expect(tsx).toContain('```tsx')
+  it('includes a 任务范围 section that allows code changes when the request asks for them', () => {
+    const text = buildCliInjectionText(baseInput)
+    expect(text).toContain('## 任务范围')
+    expect(text).toContain('默认先做分析')
+    expect(text).toContain('如果标注或问题明确要求')
+    expect(text).toContain('可以直接修改代码')
+  })
 
-    const unknown = buildCliInjectionText({
-      ...baseInput,
-      filePath: 'data/blob.xyz',
-      annotations: [
-        { ...baseInput.annotations[0], filePath: 'data/blob.xyz' }
-      ]
-    })
-    // unknown extension → bare ``` fence
-    expect(unknown).toMatch(/```\nfloat cur_db;/)
+  it('asks the cli to read the file context itself instead of embedding raw snippets', () => {
+    const text = buildCliInjectionText(baseInput)
+    expect(text).toContain('先自行读取该文件以及标注行号附近的完整上下文')
+    expect(text).toContain('不要只依据这份摘要')
+    expect(text).not.toContain('```c')
+    expect(text).not.toContain('float cur_db;')
   })
 })

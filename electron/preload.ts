@@ -342,14 +342,7 @@ const api = {
         ok: boolean
         error?: string
       }>,
-    analysisSend: (req: {
-      repoRoot: string
-      filePath: string
-      selection: string
-      question: string
-      projectSummary: string
-      fileNote: string
-    }) =>
+    analysisSend: (req: { repoRoot: string; text: string }) =>
       ipcRenderer.invoke('repo-view:analysis-send', req) as Promise<{
         ok: boolean
         error?: string
@@ -359,6 +352,16 @@ const api = {
         ok: boolean
         error?: string
       }>,
+    analysisHas: () =>
+      ipcRenderer.invoke('repo-view:analysis-has') as Promise<{
+        ok: boolean
+        running?: boolean
+        error?: string
+      }>,
+    analysisInput: (data: string) =>
+      ipcRenderer.send('repo-view:analysis-input', { data }),
+    analysisResize: (cols: number, rows: number) =>
+      ipcRenderer.send('repo-view:analysis-resize', { cols, rows }),
     onAnalysisData: (cb: (evt: { chunk: string }) => void) => {
       const handler = (_: IpcRendererEvent, evt: { chunk: string }) => cb(evt)
       ipcRenderer.on('repo-view:analysis-data', handler)

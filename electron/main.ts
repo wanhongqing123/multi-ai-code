@@ -45,10 +45,14 @@ import {
   writeRepoConversationHistory
 } from './repo-view/memory.js'
 import {
+  hasRepoAnalysisSession,
+  resizeRepoAnalysisSession,
   sendRepoAnalysisPrompt,
   startRepoAnalysisSession,
-  stopRepoAnalysisSession
+  stopRepoAnalysisSession,
+  writeRepoAnalysisInput
 } from './repo-view/repoAnalysisManager.js'
+import { ensureAnalysisCacheDir } from './repo-view/analysisCache.js'
 
 const isDev = !app.isPackaged
 const repoViewWindows = new Map<string, BrowserWindow>()
@@ -378,21 +382,16 @@ app.whenReady().then(async () => {
 
   ipcMain.handle(
     'repo-view:analysis-send',
-    async (
-      e,
-      req: {
-        repoRoot: string
-        filePath: string
-        selection: string
-        question: string
-        projectSummary: string
-        fileNote: string
-      }
-    ) => {
+    async (e, req: { repoRoot: string; text: string }) => {
       const win = BrowserWindow.fromWebContents(e.sender)
       if (!win) return { ok: false as const, error: 'window not found' }
       try {
-        await sendRepoAnalysisPrompt({ winId: win.id, ...req })
+        await ensureAnalysisCacheDir(req.repoRoot)
+      } catch (err) {
+        console.warn('[repo-view] ensureAnalysisCacheDir failed:', err)
+      }
+      try {
+        await sendRepoAnalysisPrompt({ winId: win.id, text: req.text })
         return { ok: true as const }
       } catch (err) {
         return { ok: false as const, error: (err as Error).message }
@@ -406,6 +405,30 @@ app.whenReady().then(async () => {
     stopRepoAnalysisSession(win.id)
     return { ok: true as const }
   })
+
+  ipcMain.handle('repo-view:analysis-has', (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    if (!win) return { ok: false as const, error: 'window not found' }
+    return { ok: true as const, running: hasRepoAnalysisSession(win.id) }
+  })
+
+  ipcMain.on(
+    'repo-view:analysis-input',
+    (e, payload: { data: string }) => {
+      const win = BrowserWindow.fromWebContents(e.sender)
+      if (!win) return
+      writeRepoAnalysisInput(win.id, payload.data)
+    }
+  )
+
+  ipcMain.on(
+    'repo-view:analysis-resize',
+    (e, payload: { cols: number; rows: number }) => {
+      const win = BrowserWindow.fromWebContents(e.sender)
+      if (!win) return
+      resizeRepoAnalysisSession(win.id, payload.cols, payload.rows)
+    }
+  )
 
   ipcMain.handle('project:list', async () => {
     const rows = listProjects()

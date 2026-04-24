@@ -1,11 +1,10 @@
 import { BrowserWindow } from 'electron'
-import { promises as fs } from 'fs'
-import { join } from 'path'
-import { tmpdir } from 'os'
-import { randomBytes } from 'crypto'
 import { PtyCCProcess } from '../cc/PtyCCProcess.js'
-import { shouldAutoAcceptCodexTrustPrompt, isCodexReadyForPromptInjection } from '../cc/codexTrust.js'
-import { buildRepoAnalysisPrompt } from './analysisPrompt.js'
+import {
+  shouldAutoAcceptCodexTrustPrompt,
+  isCodexReadyForPromptInjection,
+  isClaudeReadyForPromptInjection
+} from '../cc/codexTrust.js'
 
 interface RepoAnalysisSession {
   winId: number
@@ -16,7 +15,15 @@ interface RepoAnalysisSession {
   codexTrustAccepted?: boolean
   codexPromptReady?: boolean
   codexBootText?: string
+  claudePromptReady?: boolean
+  claudeBootText?: string
 }
+
+/** Minimum time to wait for the CLI TUI to take over the PTY before
+ *  we start typing into it — mirrors ptyManager's PRIMING_DELAY_MS. */
+const PRIMING_DELAY_MS_CLAUDE = 1200
+const READY_TIMEOUT_MS_CLAUDE = 15000
+const READY_TIMEOUT_MS_CODEX = 10000
 
 const sessions = new Map<number, RepoAnalysisSession>()
 
@@ -47,6 +54,16 @@ async function waitForCodexReady(winId: number, timeoutMs: number): Promise<void
     const s = sessions.get(winId)
     if (!s) return
     if (s.codexPromptReady) return
+    await sleep(120)
+  }
+}
+
+async function waitForClaudeReady(winId: number, timeoutMs: number): Promise<void> {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const s = sessions.get(winId)
+    if (!s) return
+    if (s.claudePromptReady) return
     await sleep(120)
   }
 }
@@ -84,6 +101,12 @@ export async function startRepoAnalysisSession(input: {
       if (!session.codexPromptReady && isCodexReadyForPromptInjection(boot)) {
         session.codexPromptReady = true
       }
+    } else if (session.command === 'claude') {
+      const boot = ((session.claudeBootText ?? '') + chunk).slice(-16000)
+      session.claudeBootText = boot
+      if (!session.claudePromptReady && isClaudeReadyForPromptInjection(boot)) {
+        session.claudePromptReady = true
+      }
     }
     emitTo(input.winId, 'repo-view:analysis-data', { chunk })
   })
@@ -102,24 +125,17 @@ export async function startRepoAnalysisSession(input: {
 
 export async function sendRepoAnalysisPrompt(input: {
   winId: number
-  repoRoot: string
-  filePath: string
-  selection: string
-  question: string
-  projectSummary: string
-  fileNote: string
+  text: string
 }): Promise<void> {
   const session = sessions.get(input.winId)
   if (!session) throw new Error('repo analysis session not started')
   if (session.command === 'codex') {
-    await waitForCodexReady(input.winId, 10000)
+    await waitForCodexReady(input.winId, READY_TIMEOUT_MS_CODEX)
+  } else if (session.command === 'claude') {
+    await sleep(PRIMING_DELAY_MS_CLAUDE)
+    await waitForClaudeReady(input.winId, READY_TIMEOUT_MS_CLAUDE)
   }
-  const text = buildRepoAnalysisPrompt(input)
-  const dir = join(tmpdir(), 'multi-ai-code', 'repo-view')
-  await fs.mkdir(dir, { recursive: true })
-  const file = join(dir, `analysis-${randomBytes(4).toString('hex')}.md`)
-  await fs.writeFile(file, text, 'utf8')
-  await sendMessage(session.proc, `请先完整读取 ${file}，然后严格按要求输出分析结果。`)
+  await sendMessage(session.proc, input.text)
 }
 
 export function stopRepoAnalysisSession(winId: number): void {
@@ -127,4 +143,24 @@ export function stopRepoAnalysisSession(winId: number): void {
   if (!session) return
   session.proc.kill()
   sessions.delete(winId)
+}
+
+export function writeRepoAnalysisInput(winId: number, data: string): void {
+  const session = sessions.get(winId)
+  if (!session) return
+  session.proc.write(data)
+}
+
+export function resizeRepoAnalysisSession(
+  winId: number,
+  cols: number,
+  rows: number
+): void {
+  const session = sessions.get(winId)
+  if (!session) return
+  session.proc.resize(cols, rows)
+}
+
+export function hasRepoAnalysisSession(winId: number): boolean {
+  return sessions.has(winId)
 }

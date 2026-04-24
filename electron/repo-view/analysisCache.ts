@@ -12,7 +12,8 @@ export async function ensureAnalysisCacheDir(repoRoot: string): Promise<void> {
   let current = ''
   try {
     current = await fs.readFile(giPath, 'utf8')
-  } catch {
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
     /* missing — treat as empty */
   }
 

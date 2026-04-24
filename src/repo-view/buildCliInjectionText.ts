@@ -1,7 +1,16 @@
-import { createHash } from 'crypto'
 import type { RepoCodeAnnotation } from './AnalysisPanel'
 
 const MAX_FILENAME_LEN = 200
+
+function fnv1a8(input: string): string {
+  let h = 0x811c9dc5
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i)
+    // 32-bit FNV prime multiplication, modulo 2^32
+    h = Math.imul(h, 0x01000193) >>> 0
+  }
+  return h.toString(16).padStart(8, '0')
+}
 
 const EXT_TO_LANG: Record<string, string> = {
   c: 'c',
@@ -41,7 +50,7 @@ export function encodeAnalysisFileName(filePath: string): string {
   const flat = filePath.replace(/\//g, '__')
   const withExt = `${flat}.md`
   if (withExt.length <= MAX_FILENAME_LEN) return withExt
-  const hash = createHash('sha1').update(filePath).digest('hex').slice(0, 8)
+  const hash = fnv1a8(filePath)
   // budget: head + '__' + hash + '.md' ≤ MAX_FILENAME_LEN
   const head = flat.slice(0, MAX_FILENAME_LEN - (2 + 8 + 3))
   return `${head}__${hash}.md`

@@ -30,6 +30,7 @@ export default function RepoViewerWindow({
   const [annotations, setAnnotations] = useState<RepoCodeAnnotation[]>([])
   const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null)
   const [sessionRunning, setSessionRunning] = useState(false)
+  const sendingRef = useRef(false)
 
   const project = useMemo(
     () => projects.find((p) => p.id === projectId) ?? null,
@@ -263,22 +264,31 @@ export default function RepoViewerWindow({
       if (!project || !selectedFile) return
       const targetAnns = annotations.filter((a) => a.filePath === selectedFile)
       if (targetAnns.length === 0) return
-      if (!sessionRunning) {
-        const ok = await onStartCli()
-        if (!ok) return
-      }
-      const text = buildCliInjectionText({
-        repoRoot: project.target_repo,
-        filePath: selectedFile,
-        annotations: targetAnns,
-        question
-      })
-      const res = await window.api.repoView.analysisSend({
-        repoRoot: project.target_repo,
-        text
-      })
-      if (!res.ok) {
-        console.warn('[repo-view] analysisSend failed:', res.error)
+      if (sendingRef.current) return
+      sendingRef.current = true
+      try {
+        if (!sessionRunning) {
+          const ok = await onStartCli()
+          if (!ok) {
+            console.error('[repo-view] CLI start failed; cannot send annotation')
+            return
+          }
+        }
+        const text = buildCliInjectionText({
+          repoRoot: project.target_repo,
+          filePath: selectedFile,
+          annotations: targetAnns,
+          question
+        })
+        const res = await window.api.repoView.analysisSend({
+          repoRoot: project.target_repo,
+          text
+        })
+        if (!res.ok) {
+          console.error('[repo-view] analysisSend failed:', res.error)
+        }
+      } finally {
+        sendingRef.current = false
       }
     },
     [annotations, project, selectedFile, sessionRunning, onStartCli]

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { CanvasAddon } from '@xterm/addon-canvas'
 import '@xterm/xterm/css/xterm.css'
 import { getTheme, THEME_CHANGE_EVENT, type Theme } from '../utils/theme.js'
 import {
@@ -8,6 +9,10 @@ import {
   shouldUseMainTerminalCanvasRenderer,
   xtermThemeFor
 } from '../components/mainTerminalConfig.js'
+import {
+  createTerminalMarkdownState,
+  formatMarkdownChunk
+} from '../components/terminalMarkdown.js'
 import {
   copySelection,
   installCopyBinding,
@@ -32,6 +37,7 @@ export default function RepoTerminalPanel(
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
+  const markdownStateRef = useRef(createTerminalMarkdownState())
   const unsubRef = useRef<Array<() => void>>([])
   const [menu, setMenu] = useState<{
     x: number
@@ -50,7 +56,7 @@ export default function RepoTerminalPanel(
     term.loadAddon(fit)
     term.open(containerRef.current)
     if (shouldUseMainTerminalCanvasRenderer()) {
-      // Canvas addon is optional; static import only in MainPanel.
+      term.loadAddon(new CanvasAddon())
     }
     try {
       fit.fit()
@@ -73,7 +79,8 @@ export default function RepoTerminalPanel(
     unsubRef.current.push(detachPaste)
 
     const offData = window.api.repoView.onAnalysisData((evt) => {
-      term.write(evt.chunk)
+      const formatted = formatMarkdownChunk(evt.chunk, markdownStateRef.current)
+      term.write(formatted.text)
     })
     unsubRef.current.push(offData)
 
@@ -96,6 +103,7 @@ export default function RepoTerminalPanel(
       term.dispose()
       termRef.current = null
       fitRef.current = null
+      markdownStateRef.current = createTerminalMarkdownState()
     }
   }, [])
 
@@ -145,7 +153,15 @@ export default function RepoTerminalPanel(
   return (
     <div className="repo-terminal-panel">
       <div className="repo-terminal-head">
-        <span className="repo-terminal-title">AI CLI · {props.cliLabel}</span>
+        <div className="repo-terminal-title-wrap">
+          <span className="repo-terminal-title">AI CLI</span>
+          <span className="repo-terminal-cli-label">{props.cliLabel}</span>
+          <span
+            className={`tile-badge repo-terminal-badge ${props.running ? 'running' : 'idle'}`}
+          >
+            {props.running ? '运行中' : '待启动'}
+          </span>
+        </div>
         <div className="repo-terminal-actions">
           {props.running ? (
             <button className="tile-btn" onClick={props.onStop}>

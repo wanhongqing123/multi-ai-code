@@ -38,6 +38,10 @@ export function buildCliInjectionText(
     [
       `## 标注 ${i + 1}（第 ${a.lineRange} 行）`,
       `文件: ${a.filePath}`,
+      '代码片段：',
+      '```',
+      a.snippet,
+      '```',
       `说明: ${a.comment}`
     ].join('\n')
   )

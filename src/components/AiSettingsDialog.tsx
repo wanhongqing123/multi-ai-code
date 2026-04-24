@@ -68,8 +68,8 @@ function SettingsSection(props: {
           value={props.aiCli}
           onChange={(e) => props.onAiCli(e.target.value as 'claude' | 'codex')}
         >
-          <option value="claude">Claude Code (默认)</option>
-          <option value="codex">Codex (--full-auto)</option>
+          <option value="claude">Claude Code (默认 acceptEdits)</option>
+          <option value="codex">Codex (workspace-write + never)</option>
         </select>
       </label>
       <label>

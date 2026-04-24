@@ -3372,7 +3372,7 @@ html, body, #root {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--mac-bg);
+  background: var(--mac-surface);
 }
 
 .repo-view-analysis {
@@ -3389,33 +3389,77 @@ html, body, #root {
   height: 100%;
   min-height: 0;
   position: relative;
+  margin: var(--mac-sp-3);
+  background: var(--mac-surface);
+  border: 1px solid var(--mac-border);
+  border-radius: var(--mac-r-lg);
+  overflow: hidden;
+  box-shadow: var(--mac-elev-1);
 }
 
 .repo-terminal-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--mac-sp-1) var(--mac-sp-3);
+  gap: var(--mac-sp-3);
+  padding: var(--mac-sp-3) var(--mac-sp-4);
   border-bottom: 1px solid var(--mac-border-subtle);
   background: var(--mac-surface-raised);
-  font-size: var(--mac-text-xs);
   color: var(--mac-fg-subtle);
 }
 
+.repo-terminal-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: var(--mac-sp-2);
+  min-width: 0;
+  flex: 1;
+}
+
 .repo-terminal-title {
-  font-weight: 600;
+  font-size: var(--mac-text-md);
+  font-weight: var(--mac-weight-medium);
   color: var(--mac-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repo-terminal-cli-label {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--mac-r-pill);
+  background: var(--mac-bg-subtle);
+  border: 1px solid var(--mac-border-subtle);
+  color: var(--mac-fg-subtle);
+  font-size: var(--mac-text-xs);
+  font-weight: var(--mac-weight-medium);
+  text-transform: lowercase;
+  letter-spacing: 0.01em;
+}
+
+.repo-terminal-badge {
+  flex: 0 0 auto;
+}
+
+.repo-terminal-badge.running {
+  color: var(--mac-success);
+  background: var(--mac-success-soft);
 }
 
 .repo-terminal-actions {
   display: flex;
-  gap: var(--mac-sp-1);
+  gap: var(--mac-sp-2);
+  flex: 0 0 auto;
 }
 
 .repo-terminal-body {
   flex: 1 1 auto;
   min-height: 0;
   position: relative;
+  background: var(--mac-bg);
 }
 
 .repo-view-empty {
@@ -3689,4 +3733,3 @@ html, body, #root {
   display: flex;
   gap: 8px;
 }
-

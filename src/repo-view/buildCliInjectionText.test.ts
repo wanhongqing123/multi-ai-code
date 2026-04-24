@@ -45,6 +45,9 @@ describe('buildCliInjectionText', () => {
     expect(text).toContain('仓库根: /repo/obs-studio')
     expect(text).toContain('文件: libobs/obs-audio-controls.c')
     expect(text).toContain('## 标注 1（第 52-53 行）')
+    expect(text).toContain('代码片段：')
+    expect(text).toContain('float cur_db;')
+    expect(text).toContain('bool ignore_next_signal;')
     expect(text).toContain('说明: 这行是什么意思')
     expect(text).toContain('## 问题')
     expect(text).toContain('请按标注分析')
@@ -95,11 +98,11 @@ describe('buildCliInjectionText', () => {
     expect(text).toContain('可以直接修改代码')
   })
 
-  it('asks the cli to read the file context itself instead of embedding raw snippets', () => {
+  it('embeds the selected snippet and still asks the cli to read surrounding context', () => {
     const text = buildCliInjectionText(baseInput)
     expect(text).toContain('先自行读取该文件以及标注行号附近的完整上下文')
     expect(text).toContain('不要只依据这份摘要')
-    expect(text).not.toContain('```c')
-    expect(text).not.toContain('float cur_db;')
+    expect(text).toContain('代码片段：')
+    expect(text).toContain('float cur_db;')
   })
 })

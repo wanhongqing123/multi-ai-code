@@ -7,6 +7,7 @@ import {
   resolvePlanArtifactAbs,
   renderTemplate,
   mainCliArgs,
+  buildCliLaunchArgs,
   MAIN_COMMAND_DEFAULT
 } from './prompts.js'
 
@@ -107,14 +108,91 @@ describe('mainCliArgs', () => {
     expect(MAIN_COMMAND_DEFAULT).toBe('claude')
   })
 
-  it('claude produces permission-mode auto + allowlist', () => {
+  it('claude produces permission-mode acceptEdits + allowlist', () => {
     const args = mainCliArgs('claude')
     expect(args).toContain('--permission-mode')
-    expect(args).toContain('auto')
+    expect(args).toContain('acceptEdits')
     expect(args).toContain('--allowedTools')
   })
 
-  it('codex produces --full-auto', () => {
-    expect(mainCliArgs('codex')).toEqual(['--full-auto'])
+  it('codex produces reduced-confirmation sandbox args', () => {
+    expect(mainCliArgs('codex')).toEqual([
+      '--sandbox',
+      'workspace-write',
+      '-a',
+      'never'
+    ])
+  })
+})
+
+describe('buildCliLaunchArgs', () => {
+  it('adds claude repo path and default permission mode', () => {
+    expect(buildCliLaunchArgs('claude', '/repo/demo')).toEqual([
+      '--add-dir',
+      '/repo/demo',
+      '--permission-mode',
+      'acceptEdits',
+      '--allowedTools',
+      expect.any(String)
+    ])
+  })
+
+  it('adds codex repo path and reduced-confirmation args', () => {
+    expect(buildCliLaunchArgs('codex', '/repo/demo')).toEqual([
+      '-C',
+      '/repo/demo',
+      '--sandbox',
+      'workspace-write',
+      '-a',
+      'never'
+    ])
+  })
+
+  it('does not duplicate claude permission-mode when user overrides it', () => {
+    expect(
+      buildCliLaunchArgs('claude', '/repo/demo', [
+        '--permission-mode',
+        'bypassPermissions'
+      ])
+    ).toEqual([
+      '--add-dir',
+      '/repo/demo',
+      '--allowedTools',
+      expect.any(String),
+      '--permission-mode',
+      'bypassPermissions'
+    ])
+  })
+
+  it('does not duplicate codex sandbox or approval args when user overrides them', () => {
+    expect(
+      buildCliLaunchArgs('codex', '/repo/demo', [
+        '--sandbox',
+        'danger-full-access',
+        '-a',
+        'on-request'
+      ])
+    ).toEqual([
+      '-C',
+      '/repo/demo',
+      '--sandbox',
+      'danger-full-access',
+      '-a',
+      'on-request'
+    ])
+  })
+
+  it('does not duplicate repo path args when user already passes them', () => {
+    expect(
+      buildCliLaunchArgs('claude', '/repo/demo', ['--add-dir', '/repo/demo', '--verbose'])
+    ).toEqual([
+      '--permission-mode',
+      'acceptEdits',
+      '--allowedTools',
+      expect.any(String),
+      '--add-dir',
+      '/repo/demo',
+      '--verbose'
+    ])
   })
 })

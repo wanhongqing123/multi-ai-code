@@ -16,6 +16,10 @@ describe('canSendRepoAnnotations', () => {
   it('returns true only when session is running and annotations exist', () => {
     expect(canSendRepoAnnotations(true, 1)).toBe(true)
   })
+
+  it('returns false while a send is already in progress', () => {
+    expect(canSendRepoAnnotations(true, 2, true)).toBe(false)
+  })
 })
 
 describe('repoSendButtonTitle', () => {
@@ -29,5 +33,9 @@ describe('repoSendButtonTitle', () => {
 
   it('uses the injection hint when sending is allowed', () => {
     expect(repoSendButtonTitle(true, 2)).toBe('注入到下方 AI CLI')
+  })
+
+  it('shows a sending hint while the request is in flight', () => {
+    expect(repoSendButtonTitle(true, 2, true)).toBe('发送中…')
   })
 })

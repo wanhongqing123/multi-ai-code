@@ -46,6 +46,7 @@ export async function resolvePlanArtifactAbs(
 }
 
 export const MAIN_COMMAND_DEFAULT = 'claude'
+export type SupportedCli = 'claude' | 'codex'
 
 const SAFE_READS = [
   'Read',
@@ -74,17 +75,48 @@ const SAFE_GIT = [
 
 const WRITE_TOOLS = ['Write', 'Edit', 'MultiEdit']
 
-/**
- * Default CLI args for the main single-stage AI session.
- *   - claude: auto permission mode + read/grep/git allowlist + write tools
- *   - codex: --full-auto (sandbox bounded by cwd = target_repo)
- */
+function hasAnyArg(args: readonly string[], flags: readonly string[]): boolean {
+  return args.some((arg) => flags.includes(arg))
+}
+
 export function mainCliArgs(
-  binary: string = MAIN_COMMAND_DEFAULT
+  binary: SupportedCli = MAIN_COMMAND_DEFAULT
 ): string[] {
-  if (binary === 'codex') return ['--full-auto']
+  if (binary === 'codex') return ['--sandbox', 'workspace-write', '-a', 'never']
   const allowed = [...SAFE_READS, ...SAFE_GIT, ...WRITE_TOOLS].join(' ')
-  return ['--permission-mode', 'auto', '--allowedTools', allowed]
+  return ['--permission-mode', 'acceptEdits', '--allowedTools', allowed]
+}
+
+export function buildCliLaunchArgs(
+  binary: SupportedCli,
+  targetRepo: string,
+  extraArgs: readonly string[] = []
+): string[] {
+  const args: string[] = []
+  if (binary === 'claude') {
+    if (!hasAnyArg(extraArgs, ['--add-dir'])) {
+      args.push('--add-dir', targetRepo)
+    }
+    if (!hasAnyArg(extraArgs, ['--permission-mode'])) {
+      args.push('--permission-mode', 'acceptEdits')
+    }
+    if (!hasAnyArg(extraArgs, ['--allowedTools', '--allowed-tools'])) {
+      const allowed = [...SAFE_READS, ...SAFE_GIT, ...WRITE_TOOLS].join(' ')
+      args.push('--allowedTools', allowed)
+    }
+    return [...args, ...extraArgs]
+  }
+
+  if (!hasAnyArg(extraArgs, ['-C', '--cd'])) {
+    args.push('-C', targetRepo)
+  }
+  if (!hasAnyArg(extraArgs, ['--sandbox', '-s'])) {
+    args.push('--sandbox', 'workspace-write')
+  }
+  if (!hasAnyArg(extraArgs, ['-a', '--ask-for-approval'])) {
+    args.push('-a', 'never')
+  }
+  return [...args, ...extraArgs]
 }
 
 function promptsDir(): string {

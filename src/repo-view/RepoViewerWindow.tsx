@@ -6,6 +6,7 @@ import FileTree from './FileTree'
 import RepoTerminalPanel from './RepoTerminalPanel'
 import { showToast } from '../components/Toast'
 import { buildCliInjectionText } from './buildCliInjectionText'
+import { buildCliLaunchArgs } from '../utils/cliLaunchArgs'
 
 const TERMINAL_SPLIT_MIN = 120
 const TERMINAL_SPLIT_MAX_RATIO = 0.75
@@ -31,6 +32,7 @@ export default function RepoViewerWindow({
   const [annotations, setAnnotations] = useState<RepoCodeAnnotation[]>([])
   const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null)
   const [sessionRunning, setSessionRunning] = useState(false)
+  const [sending, setSending] = useState(false)
   const sendingRef = useRef(false)
 
   const project = useMemo(
@@ -113,8 +115,11 @@ export default function RepoViewerWindow({
   const onStartCli = useCallback(async (): Promise<boolean> => {
     if (!project) return false
     const command = repoViewSettings.command ?? repoViewSettings.ai_cli
-    const defaultArgs = command === 'codex' ? ['--full-auto'] : []
-    const args = [...defaultArgs, ...(repoViewSettings.args ?? [])]
+    const args = buildCliLaunchArgs(
+      repoViewSettings.ai_cli,
+      project.target_repo,
+      repoViewSettings.args ?? []
+    )
     const res = await window.api.repoView.analysisStart({
       projectId,
       targetRepo: project.target_repo,
@@ -271,6 +276,7 @@ export default function RepoViewerWindow({
       if (targetAnns.length === 0) return
       if (sendingRef.current) return
       sendingRef.current = true
+      setSending(true)
       try {
         const text = buildCliInjectionText({
           repoRoot: project.target_repo,
@@ -295,6 +301,7 @@ export default function RepoViewerWindow({
         })
       } finally {
         sendingRef.current = false
+        setSending(false)
       }
     },
     [annotations, project, selectedFile, sessionRunning]
@@ -363,6 +370,7 @@ export default function RepoViewerWindow({
           filePath={selectedFile}
           annotations={annotations.filter((a) => a.filePath === selectedFile)}
           sessionRunning={sessionRunning}
+          sending={sending}
           onSendToCli={onSendToCli}
           onEditAnnotation={(id) => setEditingAnnotationId(id)}
           onRemoveAnnotation={(id) => {

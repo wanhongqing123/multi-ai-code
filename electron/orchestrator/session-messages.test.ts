@@ -68,14 +68,17 @@ describe('formatAnnotationsForSession', () => {
     expect(out.startsWith('# 用户批注')).toBe(true)
   })
 
-  it('references each annotation with file:line + snippet + comment', () => {
+  it('references each annotation with explicit file, line, snippet, and comment fields', () => {
     const out = formatAnnotationsForSession({
       annotations: [ann1],
       generalComment: '',
       planAbsPath: '/repo/.multi-ai-code/designs/add-auth.md'
     })
-    expect(out).toContain('src/auth.ts:10-12')
+    expect(out).toContain('文件: src/auth.ts')
+    expect(out).toContain('行号: 10-12')
+    expect(out).toContain('代码片段:')
     expect(out).toContain('const token = req.headers.auth')
+    expect(out).toContain('批注:')
     expect(out).toContain('改为读取 Authorization Bearer')
   })
 
@@ -119,8 +122,8 @@ describe('formatAnnotationsForSession', () => {
       generalComment: '',
       planAbsPath: '/repo/.multi-ai-code/designs/add-auth.md'
     })
-    const firstIdx = out.indexOf('src/auth.ts:10-12')
-    const secondIdx = out.indexOf('src/app.tsx:100')
+    const firstIdx = out.indexOf('文件: src/auth.ts')
+    const secondIdx = out.indexOf('文件: src/app.tsx')
     expect(firstIdx).toBeGreaterThan(-1)
     expect(secondIdx).toBeGreaterThan(firstIdx)
   })

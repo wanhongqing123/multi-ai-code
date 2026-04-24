@@ -5,6 +5,7 @@ import {
   formatAnnotationsForSession,
   planNameToFilename
 } from './utils/session-message-format'
+import { buildCliLaunchArgs } from './utils/cliLaunchArgs'
 import MainPanel from './components/MainPanel'
 import ProjectPicker, { type ProjectInfo } from './components/ProjectPicker'
 import ErrorPanel, { pushLog, useLogs } from './components/ErrorPanel'
@@ -378,9 +379,11 @@ export default function App() {
       planContent
     })
     const command = aiSettings.command ?? aiSettings.ai_cli ?? 'claude'
-    const defaultArgs = command === 'codex' ? ['--full-auto'] : []
-    const extraArgs = aiSettings.args ?? []
-    const args = [...defaultArgs, ...extraArgs]
+    const args = buildCliLaunchArgs(
+      aiSettings.ai_cli ?? 'claude',
+      proj.target_repo,
+      aiSettings.args ?? []
+    )
     const sid = `sess_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`
     setSessionId(sid)
     setSessionStatus('running')

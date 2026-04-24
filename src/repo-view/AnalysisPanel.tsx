@@ -16,6 +16,7 @@ export default function AnalysisPanel({
   filePath,
   annotations,
   sessionRunning,
+  sending,
   onSendToCli,
   onEditAnnotation,
   onRemoveAnnotation,
@@ -24,13 +25,14 @@ export default function AnalysisPanel({
   filePath: string
   annotations: RepoCodeAnnotation[]
   sessionRunning: boolean
+  sending: boolean
   onSendToCli: (question: string) => void
   onEditAnnotation: (id: string) => void
   onRemoveAnnotation: (id: string) => void
   onClearAnnotations: () => void
 }): JSX.Element {
   const [question, setQuestion] = useState('')
-  const canSend = canSendRepoAnnotations(sessionRunning, annotations.length)
+  const canSend = canSendRepoAnnotations(sessionRunning, annotations.length, sending)
 
   return (
     <div className="repo-analysis-panel">
@@ -97,9 +99,9 @@ export default function AnalysisPanel({
                 onSendToCli(question.trim())
                 setQuestion('')
               }}
-              title={repoSendButtonTitle(sessionRunning, annotations.length)}
+              title={repoSendButtonTitle(sessionRunning, annotations.length, sending)}
             >
-              发送到 AI CLI
+              {sending ? '发送中…' : '发送到 AI CLI'}
             </button>
           </div>
         </>

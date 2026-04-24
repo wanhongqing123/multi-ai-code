@@ -1,8 +1,4 @@
-import { useMemo, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import { getCliTargetLabel, type AiCliKind } from '../components/cliTarget'
-import { type RepoConversationMessage } from './repoConversation.js'
+import { useState } from 'react'
 
 export interface RepoCodeAnnotation {
   id: string
@@ -15,35 +11,24 @@ export interface RepoCodeAnnotation {
 export default function AnalysisPanel({
   filePath,
   annotations,
-  aiCli,
-  running,
-  messages,
-  recentTopics,
-  onSendAnalysis,
+  onSendToCli,
   onEditAnnotation,
   onRemoveAnnotation,
   onClearAnnotations
 }: {
-  projectId: string
-  repoRoot: string
   filePath: string
   annotations: RepoCodeAnnotation[]
-  aiCli: AiCliKind
-  running: boolean
-  messages: RepoConversationMessage[]
-  recentTopics: Array<{ at: string; filePath: string; topic: string }>
-  onSendAnalysis: (question: string) => void
+  onSendToCli: (question: string) => void
   onEditAnnotation: (id: string) => void
   onRemoveAnnotation: (id: string) => void
   onClearAnnotations: () => void
 }): JSX.Element {
   const [question, setQuestion] = useState('')
-  const targetLabel = useMemo(() => getCliTargetLabel(aiCli), [aiCli])
-  const canSend = annotations.length > 0 && !running
+  const canSend = annotations.length > 0
 
   return (
     <div className="repo-analysis-panel">
-      <div className="repo-analysis-head">代码分析</div>
+      <div className="repo-analysis-head">代码标注</div>
       {!filePath ? (
         <div className="repo-analysis-empty">先从左侧选择一个文件。</div>
       ) : (
@@ -51,7 +36,7 @@ export default function AnalysisPanel({
           <div className="repo-analysis-subhead">已标注片段（{annotations.length}）</div>
           {annotations.length === 0 ? (
             <div className="repo-analysis-empty">
-              在代码区选中文本后点击“✏ 标注”，即可把片段加入分析队列。
+              在代码区选中文本后点击"✏ 标注"，即可把片段加入分析队列。
             </div>
           ) : (
             <ul className="repo-analysis-list">
@@ -102,53 +87,15 @@ export default function AnalysisPanel({
             <button
               className="drawer-btn primary"
               disabled={!canSend}
-              onClick={() => onSendAnalysis(question.trim())}
-              title={
-                canSend
-                  ? `发送到独立 ${targetLabel} 进行分析`
-                  : running
-                  ? '分析进行中，请等待本轮完成'
-                  : '至少需要一条标注'
-              }
+              onClick={() => {
+                onSendToCli(question.trim())
+                setQuestion('')
+              }}
+              title={canSend ? '注入到下方 AI CLI' : '至少需要一条标注'}
             >
-              {running ? '分析中…' : `发送给 ${targetLabel}`}
+              发送到 AI CLI
             </button>
           </div>
-          {messages.length > 0 && (
-            <div className="repo-analysis-chat">
-              {messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={`repo-analysis-bubble repo-analysis-bubble-${message.role}`}
-                >
-                  <div className="repo-analysis-bubble-head">
-                    {message.role === 'user' ? '你' : message.streaming ? 'AI 正在回复' : 'AI'}
-                  </div>
-                  {message.role === 'assistant' ? (
-                    <div className="repo-analysis-bubble-body repo-analysis-markdown">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {message.text}
-                      </ReactMarkdown>
-                    </div>
-                  ) : (
-                    <pre className="repo-analysis-bubble-body">{message.text}</pre>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-          {recentTopics.length > 0 && (
-            <div className="repo-analysis-recent">
-              <div className="repo-analysis-subhead">最近主题</div>
-              <ul className="repo-analysis-recent-list">
-                {recentTopics.slice(0, 8).map((x, i) => (
-                  <li key={`${x.at}_${i}`}>
-                    {x.topic} · {x.filePath}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
         </>
       )}
     </div>

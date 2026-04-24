@@ -3,22 +3,16 @@ import { type AiSettings } from '../components/AiSettingsDialog'
 import AnalysisPanel, { type RepoCodeAnnotation } from './AnalysisPanel'
 import CodePane, { type RepoSelection } from './CodePane'
 import FileTree from './FileTree'
-import { parseAnalysisOutput } from './parseAnalysisOutput'
-import { buildRepoAnnotationMessage } from './repoAnnotationMessage.js'
-import {
-  createUserMessage,
-  syncAssistantMessage,
-  type RepoConversationMessage
-} from './repoConversation.js'
+import RepoTerminalPanel from './RepoTerminalPanel'
+import { buildCliInjectionText } from './buildCliInjectionText'
 
-function cleanTerminalChunk(raw: string): string {
-  return raw
-    .replace(/\u001B\][\s\S]*?(?:\u0007|\u001B\\)/g, '')
-    .replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, '')
-    .replace(/\r/g, '')
-}
+const TERMINAL_SPLIT_MIN = 120
+const TERMINAL_SPLIT_MAX_RATIO = 0.75
+const TERMINAL_SPLIT_STORAGE_KEY = 'repo-view:terminal-split-px'
+const ANALYSIS_WIDTH_MIN = 280
+const ANALYSIS_WIDTH_MAX = 900
+const ANALYSIS_WIDTH_STORAGE_KEY = 'repo-view:analysis-width-px'
 
-type RecentTopic = { at: string; filePath: string; topic: string }
 
 export default function RepoViewerWindow({
   projectId
@@ -35,14 +29,7 @@ export default function RepoViewerWindow({
   const [repoViewSettings, setRepoViewSettings] = useState<AiSettings>({ ai_cli: 'claude' })
   const [annotations, setAnnotations] = useState<RepoCodeAnnotation[]>([])
   const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null)
-  const [analysisPending, setAnalysisPending] = useState(false)
-  const [analysisMessages, setAnalysisMessages] = useState<RepoConversationMessage[]>([])
-  const [historyHydrated, setHistoryHydrated] = useState(false)
-  const [projectSummary, setProjectSummary] = useState('')
-  const [fileNote, setFileNote] = useState('')
-  const [recentTopics, setRecentTopics] = useState<RecentTopic[]>([])
-  const pendingMemoryFileRef = useRef<string | null>(null)
-  const analysisRawRef = useRef('')
+  const [sessionRunning, setSessionRunning] = useState(false)
 
   const project = useMemo(
     () => projects.find((p) => p.id === projectId) ?? null,
@@ -64,22 +51,6 @@ export default function RepoViewerWindow({
     })
   }, [projectId])
 
-  useEffect(() => {
-    if (!project) return
-    void Promise.all([
-      window.api.repoView.memoryLoad(project.target_repo),
-      window.api.repoView.historyLoad(project.target_repo)
-    ]).then(([memoryRes, historyRes]) => {
-      if (memoryRes.ok) {
-        setProjectSummary(memoryRes.summary ?? '')
-        setRecentTopics((memoryRes.recentTopics ?? []) as RecentTopic[])
-      }
-      if (historyRes.ok) {
-        setAnalysisMessages(historyRes.messages ?? [])
-      }
-      setHistoryHydrated(true)
-    })
-  }, [project])
 
   useEffect(() => {
     setSelectedFile('')
@@ -87,32 +58,25 @@ export default function RepoViewerWindow({
     setSelectedSize(0)
     setAnnotations([])
     setEditingAnnotationId(null)
-    setAnalysisMessages([])
-    setHistoryHydrated(false)
-    setProjectSummary('')
-    setFileNote('')
-    setRecentTopics([])
   }, [projectId])
 
   useEffect(() => {
     if (!project || !selectedFile) return
     let cancelled = false
     setLoadingFile(true)
-    void Promise.all([
-      window.api.repoView.readFile(project.target_repo, selectedFile),
-      window.api.repoView.memoryFileNote(project.target_repo, selectedFile)
-    ]).then(([readRes, noteRes]) => {
-      if (cancelled) return
-      setLoadingFile(false)
-      if (!readRes.ok || readRes.content === undefined) {
-        setSelectedContent(readRes.error ?? '无法读取文件')
-        setSelectedSize(0)
-      } else {
-        setSelectedContent(readRes.content)
-        setSelectedSize(readRes.byteLength ?? 0)
-      }
-      setFileNote(noteRes.ok ? noteRes.fileNote ?? '' : '')
-    })
+    void window.api.repoView
+      .readFile(project.target_repo, selectedFile)
+      .then((readRes) => {
+        if (cancelled) return
+        setLoadingFile(false)
+        if (!readRes.ok || readRes.content === undefined) {
+          setSelectedContent(readRes.error ?? '无法读取文件')
+          setSelectedSize(0)
+        } else {
+          setSelectedContent(readRes.content)
+          setSelectedSize(readRes.byteLength ?? 0)
+        }
+      })
     return () => {
       cancelled = true
     }
@@ -123,56 +87,143 @@ export default function RepoViewerWindow({
   }, [selectedFile])
 
   useEffect(() => {
-    const offData = window.api.repoView.onAnalysisData((evt) => {
-      const chunk = cleanTerminalChunk(evt.chunk)
-      if (!chunk) return
-      analysisRawRef.current = (analysisRawRef.current + chunk).slice(-220000)
-      const parsed = parseAnalysisOutput(analysisRawRef.current)
-      if (parsed.answer.trim()) {
-        setAnalysisMessages((prev) =>
-          syncAssistantMessage(prev, parsed.answer, !parsed.complete)
-        )
-      }
-      if (!parsed.complete || !project) return
-      const pendingFile = pendingMemoryFileRef.current
-      pendingMemoryFileRef.current = null
-      setAnalysisPending(false)
-      if (!pendingFile || !parsed.memoryUpdate.trim()) return
-      void window.api.repoView
-        .memoryApply(project.target_repo, pendingFile, parsed.memoryUpdate)
-        .then((res) => {
-          if (!res.ok) return
-          setProjectSummary(res.summary ?? '')
-          if (pendingFile === selectedFile) {
-            setFileNote(res.fileNote ?? '')
-          }
-          setRecentTopics((res.recentTopics ?? []) as RecentTopic[])
-        })
-    })
     const offStatus = window.api.repoView.onAnalysisStatus((evt) => {
-      if (evt.status === 'exited') {
-        setAnalysisPending(false)
+      if (evt.status === 'running') {
+        setSessionRunning(true)
+      } else if (evt.status === 'exited') {
+        setSessionRunning(false)
       }
     })
     return () => {
-      offData()
       offStatus()
     }
-  }, [project, selectedFile])
+  }, [])
 
   useEffect(() => {
+    void window.api.repoView.analysisHas().then((res) => {
+      if (res.ok && res.running) setSessionRunning(true)
+    })
     return () => {
       void window.api.repoView.analysisStop()
     }
   }, [])
 
+  const onStartCli = useCallback(async (): Promise<boolean> => {
+    if (!project) return false
+    const command = repoViewSettings.command ?? repoViewSettings.ai_cli
+    const defaultArgs = command === 'codex' ? ['--full-auto'] : []
+    const args = [...defaultArgs, ...(repoViewSettings.args ?? [])]
+    const res = await window.api.repoView.analysisStart({
+      projectId,
+      targetRepo: project.target_repo,
+      command,
+      args,
+      env: repoViewSettings.env ?? {}
+    })
+    if (res.ok) {
+      setSessionRunning(true)
+      return true
+    }
+    return false
+  }, [project, projectId, repoViewSettings])
+
+  const onStopCli = useCallback(() => {
+    void window.api.repoView.analysisStop().then(() => {
+      setSessionRunning(false)
+    })
+  }, [])
+
+  const [terminalHeight, setTerminalHeight] = useState<number>(() => {
+    const saved = Number(localStorage.getItem(TERMINAL_SPLIT_STORAGE_KEY))
+    return Number.isFinite(saved) && saved > TERMINAL_SPLIT_MIN ? saved : 260
+  })
+  const splitContainerRef = useRef<HTMLDivElement>(null)
+  const dragStartRef = useRef<{ y: number; height: number } | null>(null)
+
+  const onSplitMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault()
+      dragStartRef.current = { y: e.clientY, height: terminalHeight }
+      const onMove = (ev: MouseEvent) => {
+        if (!dragStartRef.current || !splitContainerRef.current) return
+        const delta = dragStartRef.current.y - ev.clientY
+        const total = splitContainerRef.current.clientHeight
+        const maxH = Math.max(
+          TERMINAL_SPLIT_MIN,
+          Math.floor(total * TERMINAL_SPLIT_MAX_RATIO)
+        )
+        const next = Math.min(
+          maxH,
+          Math.max(TERMINAL_SPLIT_MIN, dragStartRef.current.height + delta)
+        )
+        setTerminalHeight(next)
+      }
+      const onUp = () => {
+        dragStartRef.current = null
+        window.removeEventListener('mousemove', onMove)
+        window.removeEventListener('mouseup', onUp)
+        try {
+          localStorage.setItem(TERMINAL_SPLIT_STORAGE_KEY, String(terminalHeight))
+        } catch {
+          /* ignore */
+        }
+      }
+      window.addEventListener('mousemove', onMove)
+      window.addEventListener('mouseup', onUp)
+    },
+    [terminalHeight]
+  )
+
   useEffect(() => {
-    if (!project || !historyHydrated) return
-    const persistable = analysisMessages
-      .filter((message) => !message.streaming)
-      .map(({ id, role, text }) => ({ id, role, text }))
-    void window.api.repoView.historySave(project.target_repo, persistable)
-  }, [analysisMessages, historyHydrated, project])
+    try {
+      localStorage.setItem(TERMINAL_SPLIT_STORAGE_KEY, String(terminalHeight))
+    } catch {
+      /* ignore */
+    }
+  }, [terminalHeight])
+
+  const [analysisWidth, setAnalysisWidth] = useState<number>(() => {
+    const saved = Number(localStorage.getItem(ANALYSIS_WIDTH_STORAGE_KEY))
+    return Number.isFinite(saved) && saved >= ANALYSIS_WIDTH_MIN ? saved : 360
+  })
+  const widthDragRef = useRef<{ x: number; width: number } | null>(null)
+
+  const onWidthMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault()
+      widthDragRef.current = { x: e.clientX, width: analysisWidth }
+      const onMove = (ev: MouseEvent) => {
+        if (!widthDragRef.current) return
+        const delta = widthDragRef.current.x - ev.clientX
+        const maxW = Math.min(
+          ANALYSIS_WIDTH_MAX,
+          Math.max(ANALYSIS_WIDTH_MIN, window.innerWidth - 400)
+        )
+        const next = Math.min(
+          maxW,
+          Math.max(ANALYSIS_WIDTH_MIN, widthDragRef.current.width + delta)
+        )
+        setAnalysisWidth(next)
+      }
+      const onUp = () => {
+        widthDragRef.current = null
+        window.removeEventListener('mousemove', onMove)
+        window.removeEventListener('mouseup', onUp)
+      }
+      window.addEventListener('mousemove', onMove)
+      window.addEventListener('mouseup', onUp)
+    },
+    [analysisWidth]
+  )
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(ANALYSIS_WIDTH_STORAGE_KEY, String(analysisWidth))
+    } catch {
+      /* ignore */
+    }
+  }, [analysisWidth])
+
 
   const onAnnotateSelection = useCallback(
     (selection: RepoSelection, comment: string, editingId?: string) => {
@@ -207,62 +258,30 @@ export default function RepoViewerWindow({
     [selectedFile]
   )
 
-  const onSendAnalysis = useCallback(
+  const onSendToCli = useCallback(
     async (question: string) => {
       if (!project || !selectedFile) return
       const targetAnns = annotations.filter((a) => a.filePath === selectedFile)
       if (targetAnns.length === 0) return
-      const command = repoViewSettings.command ?? repoViewSettings.ai_cli
-      const defaultArgs = command === 'codex' ? ['--full-auto'] : []
-      const args = [...defaultArgs, ...(repoViewSettings.args ?? [])]
-      const startRes = await window.api.repoView.analysisStart({
-        projectId,
-        targetRepo: project.target_repo,
-        command,
-        args,
-        env: repoViewSettings.env ?? {}
-      })
-      if (!startRes.ok) {
-        setAnalysisMessages((prev) =>
-          syncAssistantMessage(prev, `分析会话启动失败：${startRes.error ?? '未知错误'}`, false)
-        )
-        return
+      if (!sessionRunning) {
+        const ok = await onStartCli()
+        if (!ok) return
       }
-
-      const selection = buildRepoAnnotationMessage({
-        filePath: selectedFile,
-        question,
-        annotations: targetAnns
-      })
-
-      pendingMemoryFileRef.current = selectedFile
-      analysisRawRef.current = ''
-      setAnalysisPending(true)
-      setAnalysisMessages((prev) => [
-        ...prev,
-        createUserMessage({
-          filePath: selectedFile,
-          annotationCount: targetAnns.length,
-          question
-        })
-      ])
-      const sendRes = await window.api.repoView.analysisSend({
+      const text = buildCliInjectionText({
         repoRoot: project.target_repo,
         filePath: selectedFile,
-        selection,
-        question: '',
-        projectSummary,
-        fileNote
+        annotations: targetAnns,
+        question
       })
-      if (!sendRes.ok) {
-        pendingMemoryFileRef.current = null
-        setAnalysisPending(false)
-        setAnalysisMessages((prev) =>
-          syncAssistantMessage(prev, `分析请求发送失败：${sendRes.error ?? '未知错误'}`, false)
-        )
+      const res = await window.api.repoView.analysisSend({
+        repoRoot: project.target_repo,
+        text
+      })
+      if (!res.ok) {
+        console.warn('[repo-view] analysisSend failed:', res.error)
       }
     },
-    [annotations, fileNote, project, projectId, projectSummary, repoViewSettings, selectedFile]
+    [annotations, project, selectedFile, sessionRunning, onStartCli]
   )
 
   if (!project) {
@@ -270,7 +289,12 @@ export default function RepoViewerWindow({
   }
 
   return (
-    <div className="repo-view-window">
+    <div
+      className="repo-view-window"
+      style={{
+        gridTemplateColumns: `300px minmax(0, 1fr) 6px ${analysisWidth}px`
+      }}
+    >
       <aside className="repo-view-sidebar">
         <FileTree
           repoRoot={project.target_repo}
@@ -291,27 +315,48 @@ export default function RepoViewerWindow({
           onCancelEditing={() => setEditingAnnotationId(null)}
         />
       </main>
-      <aside className="repo-view-analysis">
-        <AnalysisPanel
-          projectId={projectId}
-          repoRoot={project.target_repo}
-          filePath={selectedFile}
-          annotations={annotations.filter((a) => a.filePath === selectedFile)}
-          aiCli={repoViewSettings.ai_cli}
-          running={analysisPending}
-          messages={analysisMessages}
-          recentTopics={recentTopics}
-          onSendAnalysis={onSendAnalysis}
-          onEditAnnotation={(id) => setEditingAnnotationId(id)}
-          onRemoveAnnotation={(id) => {
-            if (editingAnnotationId === id) setEditingAnnotationId(null)
-            setAnnotations((prev) => prev.filter((a) => a.id !== id))
-          }}
-          onClearAnnotations={() => {
-            setEditingAnnotationId(null)
-            setAnnotations((prev) => prev.filter((a) => a.filePath !== selectedFile))
-          }}
+      <div
+        className="repo-view-width-divider"
+        onMouseDown={onWidthMouseDown}
+        role="separator"
+        aria-orientation="vertical"
+        title="拖拽调整右侧面板宽度"
+      />
+      <aside className="repo-view-analysis" ref={splitContainerRef}>
+        <div className="repo-view-analysis-top">
+          <AnalysisPanel
+            filePath={selectedFile}
+            annotations={annotations.filter((a) => a.filePath === selectedFile)}
+            onSendToCli={onSendToCli}
+            onEditAnnotation={(id) => setEditingAnnotationId(id)}
+            onRemoveAnnotation={(id) => {
+              if (editingAnnotationId === id) setEditingAnnotationId(null)
+              setAnnotations((prev) => prev.filter((a) => a.id !== id))
+            }}
+            onClearAnnotations={() => {
+              setEditingAnnotationId(null)
+              setAnnotations((prev) => prev.filter((a) => a.filePath !== selectedFile))
+            }}
+          />
+        </div>
+        <div
+          className="repo-view-analysis-divider"
+          onMouseDown={onSplitMouseDown}
+          role="separator"
+          aria-orientation="horizontal"
+          title="拖拽调整 AI CLI 面板高度"
         />
+        <div
+          className="repo-view-analysis-bottom"
+          style={{ height: terminalHeight }}
+        >
+          <RepoTerminalPanel
+            cliLabel={repoViewSettings.command ?? repoViewSettings.ai_cli}
+            running={sessionRunning}
+            onStart={() => void onStartCli()}
+            onStop={onStopCli}
+          />
+        </div>
       </aside>
     </div>
   )

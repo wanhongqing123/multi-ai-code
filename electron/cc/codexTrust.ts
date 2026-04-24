@@ -35,3 +35,13 @@ export function isCodexReadyForPromptInjection(raw: string): boolean {
   if (shouldAutoAcceptCodexTrustPrompt(raw)) return false
   return text.includes('openai codex')
 }
+
+/**
+ * Ready signal for Claude Code's TUI. Claude paints an input box and the
+ * "? for shortcuts" hint once its prompt is interactive — injecting text
+ * before that point gets wiped by the TUI's startup redraw.
+ */
+export function isClaudeReadyForPromptInjection(raw: string): boolean {
+  const text = normalizeTerminalText(raw).toLowerCase()
+  return text.includes('? for shortcuts')
+}

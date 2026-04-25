@@ -15,8 +15,8 @@ export interface RepoCodeAnnotation {
 export default function AnalysisPanel({
   filePath,
   annotations,
-  activeAnnotationId,
-  recentlyAddedAnnotationId,
+  activeAnnotationId = null,
+  recentlyAddedAnnotationId = null,
   sessionRunning,
   sending,
   onSendToCli,
@@ -26,8 +26,8 @@ export default function AnalysisPanel({
 }: {
   filePath: string
   annotations: RepoCodeAnnotation[]
-  activeAnnotationId: string | null
-  recentlyAddedAnnotationId: string | null
+  activeAnnotationId?: string | null
+  recentlyAddedAnnotationId?: string | null
   sessionRunning: boolean
   sending: boolean
   onSendToCli: (question: string) => void

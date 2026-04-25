@@ -169,9 +169,9 @@ export default function CodePane({
   return (
     <div className="repo-code-wrap">
       <div className="repo-code-head" title={filePath || '\u672a\u9009\u62e9\u6587\u4ef6'}>
-        <div className="repo-code-head-main">
+        <span className="repo-code-head-main">
           <span className="repo-code-path">{filePath || '\u672a\u9009\u62e9\u6587\u4ef6'}</span>
-        </div>
+        </span>
         {filePath && (
           <div className="repo-code-head-meta">
             <span className="repo-code-meta">

@@ -13,7 +13,7 @@
     "dist:mac": "npm run icons && electron-vite build && electron-builder --mac",
     "dist:win": "npm run icons && electron-vite build && electron-builder --win",
     "dist:all": "npm run icons && electron-vite build && electron-builder --mac --win",
-    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "typecheck": "node ./node_modules/typescript/bin/tsc --noEmit -p tsconfig.node.json && node ./node_modules/typescript/bin/tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "postinstall": "electron-rebuild -f -o better-sqlite3,node-pty"
   },

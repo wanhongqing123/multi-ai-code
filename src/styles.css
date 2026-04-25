@@ -3543,13 +3543,14 @@ html, body, #root {
 }
 
 .repo-code-head {
-  min-height: 48px;
+  min-height: 52px;
   border-bottom: 1px solid var(--mac-border-subtle);
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 8px 12px;
+  padding: 10px 14px;
+  background: linear-gradient(180deg, var(--mac-surface-raised), var(--mac-surface));
 }
 
 .repo-code-head-main {
@@ -3637,12 +3638,11 @@ html, body, #root {
   position: absolute;
   z-index: 8;
   border: 1px solid var(--mac-border);
-  border-radius: var(--mac-r-md);
-  background: var(--mac-primary);
-  color: var(--mac-primary-on);
+  border-radius: var(--mac-r-pill);
   padding: 6px 12px;
+  background: color-mix(in srgb, var(--mac-surface) 92%, var(--mac-primary-soft));
   cursor: pointer;
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.16);
+  box-shadow: var(--mac-elev-2);
   transition:
     transform 120ms ease,
     box-shadow 120ms ease,
@@ -3693,30 +3693,22 @@ html, body, #root {
 
 .repo-analysis-item {
   border: 1px solid var(--mac-border-subtle);
-  border-radius: var(--mac-r-md);
-  padding: 8px;
+  border-radius: var(--mac-r-lg);
+  padding: 12px;
   margin-bottom: 8px;
   background: var(--mac-surface);
   transition:
-    border-color 160ms ease,
-    background-color 160ms ease,
-    box-shadow 160ms ease,
-    transform 160ms ease;
+    border-color var(--mac-dur-fast) var(--mac-ease),
+    box-shadow var(--mac-dur-fast) var(--mac-ease);
 }
 
 .repo-analysis-item.active {
-  border-color: color-mix(in srgb, var(--mac-primary) 45%, var(--mac-border-subtle));
-  background: color-mix(in srgb, var(--mac-primary) 8%, var(--mac-surface));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--mac-primary) 16%, transparent);
+  border-color: var(--mac-primary);
+  box-shadow: 0 0 0 1px var(--mac-primary-soft);
 }
 
 .repo-analysis-item.recent {
-  border-color: color-mix(in srgb, var(--mac-primary) 55%, var(--mac-border-subtle));
-  background: color-mix(in srgb, var(--mac-primary) 14%, var(--mac-surface));
-  transform: translateY(-1px);
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--mac-primary) 22%, transparent),
-    0 10px 20px rgba(0, 0, 0, 0.08);
+  background: color-mix(in srgb, var(--mac-surface) 86%, var(--mac-primary-soft));
 }
 
 .repo-analysis-item-head {

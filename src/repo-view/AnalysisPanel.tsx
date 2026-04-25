@@ -15,6 +15,8 @@ export interface RepoCodeAnnotation {
 export default function AnalysisPanel({
   filePath,
   annotations,
+  activeAnnotationId,
+  recentlyAddedAnnotationId,
   sessionRunning,
   sending,
   onSendToCli,
@@ -24,6 +26,8 @@ export default function AnalysisPanel({
 }: {
   filePath: string
   annotations: RepoCodeAnnotation[]
+  activeAnnotationId: string | null
+  recentlyAddedAnnotationId: string | null
   sessionRunning: boolean
   sending: boolean
   onSendToCli: (question: string) => void
@@ -41,39 +45,53 @@ export default function AnalysisPanel({
         <div className="repo-analysis-empty">先从左侧选择一个文件。</div>
       ) : (
         <>
-          <div className="repo-analysis-subhead">已标注片段（{annotations.length}）</div>
+          <div className="repo-analysis-subhead">
+            当前文件待发送批注（{annotations.length}）
+          </div>
           {annotations.length === 0 ? (
             <div className="repo-analysis-empty">
-              在代码区选中文本后点击"✏ 标注"，即可把片段加入分析队列。
+              在代码区选中文本后点击“标注”，即可加入待发送批注托盘。
             </div>
           ) : (
             <ul className="repo-analysis-list">
-              {annotations.map((a, i) => (
-                <li key={a.id} className="repo-analysis-item">
-                  <div className="repo-analysis-item-head">
-                    <span>#{i + 1}</span>
-                    <span>{a.lineRange} 行</span>
-                    <div className="repo-analysis-item-actions">
-                      <button
-                        className="repo-analysis-edit"
-                        onClick={() => onEditAnnotation(a.id)}
-                      >
-                        编辑
-                      </button>
-                      <button
-                        className="repo-analysis-remove"
-                        onClick={() => onRemoveAnnotation(a.id)}
-                      >
-                        删除
-                      </button>
+              {annotations.map((a, i) => {
+                const itemClassName = [
+                  'repo-analysis-item',
+                  activeAnnotationId === a.id ? 'active' : '',
+                  recentlyAddedAnnotationId === a.id ? 'recent' : ''
+                ]
+                  .filter(Boolean)
+                  .join(' ')
+
+                return (
+                  <li key={a.id} className={itemClassName}>
+                    <div className="repo-analysis-item-head">
+                      <span>#{i + 1}</span>
+                      <span>{a.lineRange} 行</span>
+                      <div className="repo-analysis-item-actions">
+                        <button
+                          className="repo-analysis-edit"
+                          onClick={() => onEditAnnotation(a.id)}
+                        >
+                          编辑
+                        </button>
+                        <button
+                          className="repo-analysis-remove"
+                          onClick={() => onRemoveAnnotation(a.id)}
+                        >
+                          删除
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                  <blockquote className="repo-analysis-quote">
-                    {a.snippet.length > 800 ? `${a.snippet.slice(0, 800)}\n…` : a.snippet}
-                  </blockquote>
-                  <div className="repo-analysis-comment">{a.comment}</div>
-                </li>
-              ))}
+                    <blockquote className="repo-analysis-quote">
+                      {a.snippet.length > 800
+                        ? `${a.snippet.slice(0, 800)}\n…`
+                        : a.snippet}
+                    </blockquote>
+                    <div className="repo-analysis-comment">{a.comment}</div>
+                  </li>
+                )
+              })}
             </ul>
           )}
           <label className="repo-analysis-input-label">问题（可选）</label>
@@ -101,7 +119,7 @@ export default function AnalysisPanel({
               }}
               title={repoSendButtonTitle(sessionRunning, annotations.length, sending)}
             >
-              {sending ? '发送中…' : '发送到 AI CLI'}
+              {sending ? '发送中...' : '发送当前文件批注到 AI CLI'}
             </button>
           </div>
         </>

@@ -31,11 +31,11 @@ describe('repoSendButtonTitle', () => {
     expect(repoSendButtonTitle(true, 0)).toBe('至少需要一条标注')
   })
 
-  it('uses the injection hint when sending is allowed', () => {
-    expect(repoSendButtonTitle(true, 2)).toBe('注入到下方 AI CLI')
+  it('uses the send hint when sending is allowed', () => {
+    expect(repoSendButtonTitle(true, 2)).toBe('发送当前文件批注到 AI CLI')
   })
 
   it('shows a sending hint while the request is in flight', () => {
-    expect(repoSendButtonTitle(true, 2, true)).toBe('发送中…')
+    expect(repoSendButtonTitle(true, 2, true)).toBe('发送中...')
   })
 })

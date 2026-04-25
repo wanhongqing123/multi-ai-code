@@ -69,9 +69,7 @@ describe('AnalysisPanel', () => {
       recentlyAddedAnnotationId: 'ann_1'
     })
 
-    expect(markup).toContain('repo-analysis-item')
-    expect(markup).toContain('active')
-    expect(markup).toContain('recent')
+    expect(markup).toContain('repo-analysis-item active recent')
     expect(markup).toContain('当前文件待发送批注')
     expect(markup).toContain('发送当前文件批注到 AI CLI')
   })

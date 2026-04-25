@@ -329,6 +329,9 @@ export default function RepoViewerWindow({
         const sent = targetAnns.length
         setEditingAnnotationId(null)
         setAnnotations((prev) => prev.filter((a) => a.filePath !== selectedFile))
+        const clearedState = clearAnnotationVisualState()
+        setActiveAnnotationId(clearedState.activeAnnotationId)
+        setRecentlyAddedAnnotationId(clearedState.recentlyAddedAnnotationId)
         showToast(`已发送 ${sent} 条标注到 AI CLI`, {
           level: 'success',
           duration: 3000

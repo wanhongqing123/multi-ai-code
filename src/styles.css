@@ -3638,8 +3638,8 @@ html, body, #root {
   z-index: 8;
   border: 1px solid var(--mac-border);
   border-radius: var(--mac-r-md);
-  background: color-mix(in srgb, var(--mac-primary) 88%, white 12%);
-  color: white;
+  background: var(--mac-primary);
+  color: var(--mac-primary-on);
   padding: 6px 12px;
   cursor: pointer;
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.16);

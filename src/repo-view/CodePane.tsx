@@ -51,6 +51,15 @@ function lineRangeForSelection(
   return { lo, hi }
 }
 
+function parseLineRange(lineRange: string): { start: number; end: number } | null {
+  const match = lineRange.match(/^(\d+)(?:-(\d+))?$/)
+  if (!match) return null
+  const start = Number(match[1])
+  const end = Number(match[2] ?? match[1])
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null
+  return { start, end }
+}
+
 export default function CodePane({
   filePath,
   content,
@@ -75,6 +84,10 @@ export default function CodePane({
   } | null>(null)
 
   const lineCount = useMemo(() => (content ? content.split('\n').length : 0), [content])
+  const linkedRange = useMemo(
+    () => (editingAnnotation ? parseLineRange(editingAnnotation.lineRange) : null),
+    [editingAnnotation]
+  )
 
   const handleMouseUp = useCallback(() => {
     const sel = window.getSelection()
@@ -155,12 +168,17 @@ export default function CodePane({
 
   return (
     <div className="repo-code-wrap">
-      <div className="repo-code-head" title={filePath || '未选择文件'}>
-        <span>{filePath || '未选择文件'}</span>
+      <div className="repo-code-head" title={filePath || '\u672a\u9009\u62e9\u6587\u4ef6'}>
+        <div className="repo-code-head-main">
+          <span className="repo-code-path">{filePath || '\u672a\u9009\u62e9\u6587\u4ef6'}</span>
+        </div>
         {filePath && (
-          <span className="repo-code-meta">
-            {lineCount} 行 · {byteLength} bytes
-          </span>
+          <div className="repo-code-head-meta">
+            <span className="repo-code-meta">
+              {lineCount} {'\u884c'}
+            </span>
+            <span className="repo-code-meta">{byteLength} bytes</span>
+          </div>
         )}
       </div>
       <div
@@ -176,12 +194,23 @@ export default function CodePane({
         ) : (
           <>
             <pre className="repo-code-pre">
-              {content.split('\n').map((line, index) => (
-                <div key={index} className="repo-code-line" data-line={index + 1}>
-                  <span className="repo-code-gutter">{index + 1}</span>
-                  <span className="repo-code-text">{line || ' '}</span>
-                </div>
-              ))}
+              {content.split('\n').map((line, index) => {
+                const lineNumber = index + 1
+                const linked =
+                  linkedRange !== null &&
+                  lineNumber >= linkedRange.start &&
+                  lineNumber <= linkedRange.end
+                return (
+                  <div
+                    key={index}
+                    className={`repo-code-line${linked ? ' linked' : ''}`}
+                    data-line={lineNumber}
+                  >
+                    <span className="repo-code-gutter">{lineNumber}</span>
+                    <span className="repo-code-text">{line || ' '}</span>
+                  </div>
+                )
+              })}
             </pre>
             {draft && (
               <button

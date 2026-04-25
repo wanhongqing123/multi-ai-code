@@ -6,6 +6,12 @@ import FileTree from './FileTree'
 import RepoTerminalPanel from './RepoTerminalPanel'
 import { showToast } from '../components/Toast'
 import { buildCliInjectionText } from './buildCliInjectionText'
+import {
+  clearAnnotationVisualState,
+  removeAnnotationVisualState,
+  startEditingAnnotationState,
+  trackNewAnnotationState
+} from './annotationVisualState'
 import { buildCliLaunchArgs } from '../utils/cliLaunchArgs'
 
 const TERMINAL_SPLIT_MIN = 120
@@ -31,6 +37,8 @@ export default function RepoViewerWindow({
   const [repoViewSettings, setRepoViewSettings] = useState<AiSettings>({ ai_cli: 'claude' })
   const [annotations, setAnnotations] = useState<RepoCodeAnnotation[]>([])
   const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null)
+  const [activeAnnotationId, setActiveAnnotationId] = useState<string | null>(null)
+  const [recentlyAddedAnnotationId, setRecentlyAddedAnnotationId] = useState<string | null>(null)
   const [sessionRunning, setSessionRunning] = useState(false)
   const [sending, setSending] = useState(false)
   const sendingRef = useRef(false)
@@ -62,6 +70,8 @@ export default function RepoViewerWindow({
     setSelectedSize(0)
     setAnnotations([])
     setEditingAnnotationId(null)
+    setActiveAnnotationId(null)
+    setRecentlyAddedAnnotationId(null)
   }, [projectId])
 
   useEffect(() => {
@@ -88,7 +98,21 @@ export default function RepoViewerWindow({
 
   useEffect(() => {
     setEditingAnnotationId(null)
+    setActiveAnnotationId(null)
+    setRecentlyAddedAnnotationId(null)
   }, [selectedFile])
+
+  useEffect(() => {
+    if (!recentlyAddedAnnotationId) return
+    const timeoutId = window.setTimeout(() => {
+      setRecentlyAddedAnnotationId((current) =>
+        current === recentlyAddedAnnotationId ? null : current
+      )
+    }, 1800)
+    return () => {
+      window.clearTimeout(timeoutId)
+    }
+  }, [recentlyAddedAnnotationId])
 
   useEffect(() => {
     const offStatus = window.api.repoView.onAnalysisStatus((evt) => {
@@ -248,21 +272,31 @@ export default function RepoViewerWindow({
               : annotation
           )
         )
+        const nextState = startEditingAnnotationState(
+          { activeAnnotationId, recentlyAddedAnnotationId },
+          editingId
+        )
+        setActiveAnnotationId(nextState.activeAnnotationId)
+        setRecentlyAddedAnnotationId(nextState.recentlyAddedAnnotationId)
         setEditingAnnotationId(null)
         return
       }
+      const id = `ann_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`
       setAnnotations((prev) => [
         ...prev,
         {
-          id: `ann_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+          id,
           filePath: selectedFile,
           lineRange: selection.lineRange,
           snippet: selection.snippet,
           comment
         }
       ])
+      const nextState = trackNewAnnotationState(id)
+      setActiveAnnotationId(nextState.activeAnnotationId)
+      setRecentlyAddedAnnotationId(nextState.recentlyAddedAnnotationId)
     },
-    [selectedFile]
+    [activeAnnotationId, recentlyAddedAnnotationId, selectedFile]
   )
 
   const onSendToCli = useCallback(
@@ -369,17 +403,36 @@ export default function RepoViewerWindow({
         <AnalysisPanel
           filePath={selectedFile}
           annotations={annotations.filter((a) => a.filePath === selectedFile)}
+          activeAnnotationId={activeAnnotationId}
+          recentlyAddedAnnotationId={recentlyAddedAnnotationId}
           sessionRunning={sessionRunning}
           sending={sending}
           onSendToCli={onSendToCli}
-          onEditAnnotation={(id) => setEditingAnnotationId(id)}
+          onEditAnnotation={(id) => {
+            const nextState = startEditingAnnotationState(
+              { activeAnnotationId, recentlyAddedAnnotationId },
+              id
+            )
+            setActiveAnnotationId(nextState.activeAnnotationId)
+            setRecentlyAddedAnnotationId(nextState.recentlyAddedAnnotationId)
+            setEditingAnnotationId(id)
+          }}
           onRemoveAnnotation={(id) => {
             if (editingAnnotationId === id) setEditingAnnotationId(null)
             setAnnotations((prev) => prev.filter((a) => a.id !== id))
+            const nextState = removeAnnotationVisualState(
+              { activeAnnotationId, recentlyAddedAnnotationId },
+              id
+            )
+            setActiveAnnotationId(nextState.activeAnnotationId)
+            setRecentlyAddedAnnotationId(nextState.recentlyAddedAnnotationId)
           }}
           onClearAnnotations={() => {
             setEditingAnnotationId(null)
             setAnnotations((prev) => prev.filter((a) => a.filePath !== selectedFile))
+            const nextState = clearAnnotationVisualState()
+            setActiveAnnotationId(nextState.activeAnnotationId)
+            setRecentlyAddedAnnotationId(nextState.recentlyAddedAnnotationId)
           }}
         />
       </aside>

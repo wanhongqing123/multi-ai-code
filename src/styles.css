@@ -3543,20 +3543,33 @@ html, body, #root {
 }
 
 .repo-code-head {
-  height: 40px;
+  min-height: 48px;
   border-bottom: 1px solid var(--mac-border-subtle);
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 0 12px;
+  padding: 8px 12px;
 }
 
-.repo-code-head > span:first-child {
+.repo-code-head-main {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.repo-code-path {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: var(--mac-weight-medium);
+}
+
+.repo-code-head-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .repo-code-meta {
@@ -3595,6 +3608,19 @@ html, body, #root {
   white-space: pre;
 }
 
+.repo-code-line.linked {
+  background: color-mix(in srgb, var(--mac-primary) 10%, transparent);
+}
+
+.repo-code-line.linked .repo-code-gutter {
+  color: var(--mac-primary);
+  border-right-color: color-mix(in srgb, var(--mac-primary) 32%, var(--mac-border-subtle));
+}
+
+.repo-code-line.linked .repo-code-text {
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--mac-primary) 55%, transparent);
+}
+
 .repo-code-gutter {
   text-align: right;
   padding: 0 10px 0 0;
@@ -3612,10 +3638,21 @@ html, body, #root {
   z-index: 8;
   border: 1px solid var(--mac-border);
   border-radius: var(--mac-r-md);
-  background: var(--mac-surface-raised);
-  color: var(--mac-fg);
-  padding: 4px 10px;
+  background: color-mix(in srgb, var(--mac-primary) 88%, white 12%);
+  color: white;
+  padding: 6px 12px;
   cursor: pointer;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.16);
+  transition:
+    transform 120ms ease,
+    box-shadow 120ms ease,
+    filter 120ms ease;
+}
+
+.repo-code-annotate-floater:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.2);
+  filter: saturate(1.05);
 }
 
 .repo-analysis-panel {
@@ -3659,6 +3696,27 @@ html, body, #root {
   border-radius: var(--mac-r-md);
   padding: 8px;
   margin-bottom: 8px;
+  background: var(--mac-surface);
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.repo-analysis-item.active {
+  border-color: color-mix(in srgb, var(--mac-primary) 45%, var(--mac-border-subtle));
+  background: color-mix(in srgb, var(--mac-primary) 8%, var(--mac-surface));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--mac-primary) 16%, transparent);
+}
+
+.repo-analysis-item.recent {
+  border-color: color-mix(in srgb, var(--mac-primary) 55%, var(--mac-border-subtle));
+  background: color-mix(in srgb, var(--mac-primary) 14%, var(--mac-surface));
+  transform: translateY(-1px);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--mac-primary) 22%, transparent),
+    0 10px 20px rgba(0, 0, 0, 0.08);
 }
 
 .repo-analysis-item-head {

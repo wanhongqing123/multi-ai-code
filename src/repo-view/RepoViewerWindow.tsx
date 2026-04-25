@@ -300,15 +300,15 @@ export default function RepoViewerWindow({
   )
 
   const onSendToCli = useCallback(
-    async (question: string) => {
-      if (!project || !selectedFile) return
+    async (question: string): Promise<boolean> => {
+      if (!project || !selectedFile) return false
       if (!sessionRunning) {
         showToast('请先启动下方 AI CLI，再发送代码标注', { level: 'warn' })
-        return
+        return false
       }
       const targetAnns = annotations.filter((a) => a.filePath === selectedFile)
-      if (targetAnns.length === 0) return
-      if (sendingRef.current) return
+      if (targetAnns.length === 0) return false
+      if (sendingRef.current) return false
       sendingRef.current = true
       setSending(true)
       try {
@@ -324,7 +324,7 @@ export default function RepoViewerWindow({
         })
         if (!res.ok) {
           showToast(`发送标注失败：${res.error ?? '未知错误'}`, { level: 'error' })
-          return
+          return false
         }
         const sent = targetAnns.length
         setEditingAnnotationId(null)
@@ -336,6 +336,7 @@ export default function RepoViewerWindow({
           level: 'success',
           duration: 3000
         })
+        return true
       } finally {
         sendingRef.current = false
         setSending(false)

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import {
   canSendRepoAnnotations,
+  dispatchRepoSendQuestion,
   repoSendButtonTitle
 } from './analysisPanelState'
 
@@ -30,7 +31,7 @@ export default function AnalysisPanel({
   recentlyAddedAnnotationId?: string | null
   sessionRunning: boolean
   sending: boolean
-  onSendToCli: (question: string) => void
+  onSendToCli: (question: string) => Promise<boolean>
   onEditAnnotation: (id: string) => void
   onRemoveAnnotation: (id: string) => void
   onClearAnnotations: () => void
@@ -113,9 +114,9 @@ export default function AnalysisPanel({
             <button
               className="drawer-btn primary"
               disabled={!canSend}
-              onClick={() => {
-                onSendToCli(question.trim())
-                setQuestion('')
+              onClick={async () => {
+                const shouldClear = await dispatchRepoSendQuestion(question, onSendToCli)
+                if (shouldClear) setQuestion('')
               }}
               title={repoSendButtonTitle(sessionRunning, annotations.length, sending)}
             >

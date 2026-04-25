@@ -16,3 +16,10 @@ export function repoSendButtonTitle(
   if (annotationCount <= 0) return '至少需要一条标注'
   return '发送当前文件批注到 AI CLI'
 }
+
+export async function dispatchRepoSendQuestion(
+  question: string,
+  sendQuestion: (question: string) => Promise<boolean>
+): Promise<boolean> {
+  return sendQuestion(question.trim())
+}

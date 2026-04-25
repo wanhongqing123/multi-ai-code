@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   canSendRepoAnnotations,
+  dispatchRepoSendQuestion,
   repoSendButtonTitle
 } from './analysisPanelState'
 
@@ -37,5 +38,48 @@ describe('repoSendButtonTitle', () => {
 
   it('shows a sending hint while the request is in flight', () => {
     expect(repoSendButtonTitle(true, 2, true)).toBe('发送中...')
+  })
+})
+
+describe('dispatchRepoSendQuestion', () => {
+  it('returns false when the send fails so the input is preserved', async () => {
+    const sentQuestions: string[] = []
+
+    const shouldClear = await dispatchRepoSendQuestion(
+      '  investigate this branch  ',
+      async (question) => {
+        sentQuestions.push(question)
+        return false
+      }
+    )
+
+    expect(shouldClear).toBe(false)
+    expect(sentQuestions).toEqual(['investigate this branch'])
+  })
+
+  it('returns true when the send succeeds so the input can clear', async () => {
+    const sentQuestions: string[] = []
+
+    const shouldClear = await dispatchRepoSendQuestion(
+      '  summarize the risk  ',
+      async (question) => {
+        sentQuestions.push(question)
+        return true
+      }
+    )
+
+    expect(shouldClear).toBe(true)
+    expect(sentQuestions).toEqual(['summarize the risk'])
+  })
+
+  it('passes the trimmed question to the send function', async () => {
+    let receivedQuestion = ''
+
+    await dispatchRepoSendQuestion('  explain this change  ', async (question) => {
+      receivedQuestion = question
+      return true
+    })
+
+    expect(receivedQuestion).toBe('explain this change')
   })
 })

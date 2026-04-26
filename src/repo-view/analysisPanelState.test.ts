@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+﻿import { describe, expect, it } from 'vitest'
 import {
   canSendRepoAnnotations,
   dispatchRepoSendQuestion,
@@ -32,8 +32,8 @@ describe('repoSendButtonTitle', () => {
     expect(repoSendButtonTitle(true, 0)).toBe('至少需要一条标注')
   })
 
-  it('uses the send hint when sending is allowed', () => {
-    expect(repoSendButtonTitle(true, 2)).toBe('发送当前文件批注到 AI CLI')
+  it('uses the short send label when sending is allowed', () => {
+    expect(repoSendButtonTitle(true, 2)).toBe('发送')
   })
 
   it('shows a sending hint while the request is in flight', () => {

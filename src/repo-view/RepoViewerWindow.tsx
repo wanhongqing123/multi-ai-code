@@ -301,12 +301,12 @@ export default function RepoViewerWindow({
 
   const onSendToCli = useCallback(
     async (question: string): Promise<boolean> => {
-      if (!project || !selectedFile) return false
+      if (!project) return false
       if (!sessionRunning) {
         showToast('请先启动下方 AI CLI，再发送代码标注', { level: 'warn' })
         return false
       }
-      const targetAnns = annotations.filter((a) => a.filePath === selectedFile)
+      const targetAnns = annotations
       if (targetAnns.length === 0) return false
       if (sendingRef.current) return false
       sendingRef.current = true
@@ -314,7 +314,6 @@ export default function RepoViewerWindow({
       try {
         const text = buildCliInjectionText({
           repoRoot: project.target_repo,
-          filePath: selectedFile,
           annotations: targetAnns,
           question
         })
@@ -328,7 +327,7 @@ export default function RepoViewerWindow({
         }
         const sent = targetAnns.length
         setEditingAnnotationId(null)
-        setAnnotations((prev) => prev.filter((a) => a.filePath !== selectedFile))
+        setAnnotations([])
         const clearedState = clearAnnotationVisualState()
         setActiveAnnotationId(clearedState.activeAnnotationId)
         setRecentlyAddedAnnotationId(clearedState.recentlyAddedAnnotationId)
@@ -406,7 +405,7 @@ export default function RepoViewerWindow({
       <aside className="repo-view-analysis">
         <AnalysisPanel
           filePath={selectedFile}
-          annotations={annotations.filter((a) => a.filePath === selectedFile)}
+          annotations={annotations}
           activeAnnotationId={activeAnnotationId}
           recentlyAddedAnnotationId={recentlyAddedAnnotationId}
           sessionRunning={sessionRunning}
@@ -433,7 +432,7 @@ export default function RepoViewerWindow({
           }}
           onClearAnnotations={() => {
             setEditingAnnotationId(null)
-            setAnnotations((prev) => prev.filter((a) => a.filePath !== selectedFile))
+            setAnnotations([])
             const nextState = clearAnnotationVisualState()
             setActiveAnnotationId(nextState.activeAnnotationId)
             setRecentlyAddedAnnotationId(nextState.recentlyAddedAnnotationId)

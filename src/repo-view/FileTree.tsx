@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+﻿import { useCallback, useEffect, useMemo, useState } from 'react'
 
 interface RepoTreeEntry {
   name: string
@@ -12,6 +12,14 @@ export interface FileTreeProps {
   onSelectFile: (path: string) => void
 }
 
+function matchesFileQuery(entry: RepoTreeEntry, queryLower: string): boolean {
+  if (!queryLower) return true
+  return (
+    entry.name.toLowerCase().includes(queryLower) ||
+    entry.path.toLowerCase().includes(queryLower)
+  )
+}
+
 export default function FileTree({
   repoRoot,
   selectedFile,
@@ -21,6 +29,9 @@ export default function FileTree({
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(['']))
   const [loadingDirs, setLoadingDirs] = useState<Set<string>>(() => new Set())
   const [error, setError] = useState<string | null>(null)
+  const [fileQuery, setFileQuery] = useState('')
+
+  const queryLower = fileQuery.trim().toLowerCase()
 
   const loadDir = useCallback(
     async (dir: string) => {
@@ -45,8 +56,22 @@ export default function FileTree({
     setChildrenByDir({})
     setExpanded(new Set(['']))
     setError(null)
+    setFileQuery('')
     void loadDir('')
   }, [repoRoot, loadDir])
+
+  const directoryHasVisibleDescendants = useCallback(
+    (dir: string): boolean => {
+      if (!queryLower) return true
+      const entries = childrenByDir[dir] ?? []
+      return entries.some((entry) => {
+        if (matchesFileQuery(entry, queryLower)) return true
+        if (!entry.isDirectory) return false
+        return directoryHasVisibleDescendants(entry.path)
+      })
+    },
+    [childrenByDir, queryLower]
+  )
 
   const toggleDir = useCallback(
     (dir: string) => {
@@ -68,7 +93,12 @@ export default function FileTree({
     (dir: string, depth: number): JSX.Element[] => {
       const entries = childrenByDir[dir] ?? []
       return entries.flatMap((entry) => {
+        const selfMatches = matchesFileQuery(entry, queryLower)
+
         if (entry.isDirectory) {
+          const hasDescendants = directoryHasVisibleDescendants(entry.path)
+          if (!selfMatches && !hasDescendants) return []
+
           const isOpen = expanded.has(entry.path)
           const rows: JSX.Element[] = [
             <button
@@ -82,6 +112,7 @@ export default function FileTree({
               <span className="repo-tree-name">📁 {entry.name}</span>
             </button>
           ]
+
           if (isOpen) {
             if (loadingDirs.has(entry.path)) {
               rows.push(
@@ -90,7 +121,7 @@ export default function FileTree({
                   className="repo-tree-loading"
                   style={{ paddingLeft: 24 + depth * 14 }}
                 >
-                  加载中…
+                  加载中...
                 </div>
               )
             }
@@ -98,6 +129,8 @@ export default function FileTree({
           }
           return rows
         }
+
+        if (!selfMatches) return []
         return [
           <button
             key={`file:${entry.path}`}
@@ -112,19 +145,30 @@ export default function FileTree({
         ]
       })
     },
-    [childrenByDir, expanded, loadingDirs, onSelectFile, selectedFile, toggleDir]
+    [childrenByDir, directoryHasVisibleDescendants, expanded, loadingDirs, onSelectFile, queryLower, selectedFile, toggleDir]
   )
 
   const rows = useMemo(() => renderDir('', 0), [renderDir])
 
   return (
     <div className="repo-tree">
-      <div className="repo-tree-head">文件</div>
+      <div className="repo-tree-head">
+        <span>文件</span>
+        <input
+          className="repo-tree-search-input"
+          value={fileQuery}
+          onChange={(e) => setFileQuery(e.target.value)}
+          placeholder="搜索文件"
+          aria-label="搜索文件"
+        />
+      </div>
       {error && <div className="repo-tree-error">{error}</div>}
       {loadingDirs.has('') && !childrenByDir[''] ? (
-        <div className="repo-tree-loading">加载中…</div>
+        <div className="repo-tree-loading">加载中...</div>
       ) : (
-        <div className="repo-tree-body">{rows}</div>
+        <div className="repo-tree-body">
+          {rows.length > 0 ? rows : <div className="repo-tree-loading">无匹配文件</div>}
+        </div>
       )}
     </div>
   )

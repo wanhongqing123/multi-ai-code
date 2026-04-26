@@ -60,3 +60,6 @@ lerna-debug.log*
 
 # Superpowers brainstorming / visual-companion session state
 .superpowers/
+
+# Multi-AI Code local design/memory artifacts
+.multi-ai-code/

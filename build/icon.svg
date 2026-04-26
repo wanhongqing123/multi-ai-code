@@ -1,85 +1,55 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
   <defs>
-    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#2a2d3a"/>
-      <stop offset="100%" stop-color="#14151f"/>
+    <linearGradient id="bg" x1="8%" y1="6%" x2="94%" y2="94%">
+      <stop offset="0%" stop-color="#0f2233"/>
+      <stop offset="100%" stop-color="#07131f"/>
     </linearGradient>
-    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#8ab4f8"/>
-      <stop offset="100%" stop-color="#c7a0ff"/>
+    <linearGradient id="frame" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2ed6b5"/>
+      <stop offset="100%" stop-color="#2ea8ff"/>
     </linearGradient>
-    <linearGradient id="paper" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#f5f7ff"/>
-      <stop offset="100%" stop-color="#d8dcf0"/>
+    <linearGradient id="surface" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#eef7ff"/>
+      <stop offset="100%" stop-color="#d8ebfa"/>
     </linearGradient>
-    <linearGradient id="fold" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#bcc2de"/>
-      <stop offset="100%" stop-color="#8a91b5"/>
+    <linearGradient id="symbol" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00b89f"/>
+      <stop offset="100%" stop-color="#0078d9"/>
     </linearGradient>
-    <linearGradient id="spark" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#c7a0ff"/>
-      <stop offset="100%" stop-color="#7aa6ff"/>
-    </linearGradient>
-    <filter id="softshadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur stdDeviation="14" result="b"/>
-      <feOffset in="b" dx="0" dy="10" result="s"/>
-      <feColorMatrix in="s" type="matrix"
-        values="0 0 0 0 0.05  0 0 0 0 0.07  0 0 0 0 0.12  0 0 0 0.55 0"/>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="14" result="blur"/>
+      <feOffset in="blur" dy="10" result="offset"/>
+      <feColorMatrix
+        in="offset"
+        type="matrix"
+        values="0 0 0 0 0.02 0 0 0 0 0.07 0 0 0 0 0.12 0 0 0 0.5 0"
+      />
       <feMerge>
-        <feMergeNode/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
-    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
-      <feGaussianBlur stdDeviation="14" result="g"/>
-      <feMerge>
-        <feMergeNode in="g"/>
-        <feMergeNode in="SourceGraphic"/>
+        <feMergeNode />
+        <feMergeNode in="SourceGraphic" />
       </feMerge>
     </filter>
   </defs>
 
-  <rect x="0" y="0" width="1024" height="1024" rx="224" ry="224" fill="url(#bg)"/>
-  <rect x="4" y="4" width="1016" height="1016" rx="220" ry="220"
-        fill="none" stroke="url(#accent)" stroke-width="2" opacity="0.22"/>
+  <rect x="0" y="0" width="1024" height="1024" rx="224" ry="224" fill="url(#bg)" />
+  <rect x="6" y="6" width="1012" height="1012" rx="218" ry="218" fill="none" stroke="url(#frame)" stroke-width="3" opacity="0.3" />
 
-  <g filter="url(#softshadow)">
-    <path d="
-      M 264 232
-      L 692 232
-      L 792 332
-      L 792 808
-      Q 792 840 760 840
-      L 264 840
-      Q 232 840 232 808
-      L 232 264
-      Q 232 232 264 232 Z"
-      fill="url(#paper)"/>
-    <path d="M 692 232 L 792 332 L 692 332 Z" fill="url(#fold)"/>
+  <g filter="url(#shadow)">
+    <rect x="186" y="210" width="652" height="604" rx="74" ry="74" fill="url(#surface)" />
+    <rect x="186" y="210" width="652" height="118" rx="74" ry="74" fill="#c7e1f7" />
+    <circle cx="256" cy="270" r="14" fill="#ff7b7b" />
+    <circle cx="304" cy="270" r="14" fill="#ffca63" />
+    <circle cx="352" cy="270" r="14" fill="#34d399" />
   </g>
 
-  <g fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="42">
-    <polyline points="430,486 348,568 430,650" stroke="#5c7cf0"/>
-    <line x1="560" y1="448" x2="464" y2="688" stroke="#9871d6"/>
-    <polyline points="594,486 676,568 594,650" stroke="#5c7cf0"/>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="52">
+    <polyline points="360,474 282,552 360,630" stroke="url(#symbol)" />
+    <line x1="432" y1="640" x2="552" y2="640" stroke="#0f2233" />
   </g>
 
-  <g transform="translate(210 206)" filter="url(#glow)">
-    <path d="
-      M 0 -96
-      C 14 -30 30 -14 96 0
-      C 30 14 14 30 0 96
-      C -14 30 -30 14 -96 0
-      C -30 -14 -14 -30 0 -96 Z"
-      fill="url(#spark)"/>
-  </g>
-  <g transform="translate(126 312)" opacity="0.85">
-    <path d="
-      M 0 -36
-      C 6 -12 12 -6 36 0
-      C 12 6 6 12 0 36
-      C -6 12 -12 6 -36 0
-      C -12 -6 -6 -12 0 -36 Z"
-      fill="url(#spark)"/>
+  <g fill="none" stroke="#1d5b88" stroke-linecap="round" stroke-linejoin="round" stroke-width="18" opacity="0.55">
+    <polyline points="596,448 552,512 596,576" />
+    <line x1="648" y1="444" x2="620" y2="580" />
+    <polyline points="672,448 716,512 672,576" />
   </g>
 </svg>

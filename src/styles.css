@@ -2885,6 +2885,35 @@ html, body, #root {
   margin-left: auto;
 }
 
+.dv-search {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--mac-sp-1);
+}
+
+.dv-search-input {
+  width: 220px;
+  background: var(--mac-surface);
+  color: var(--mac-fg);
+  border: 1px solid var(--mac-border);
+  border-radius: var(--mac-r-sm);
+  padding: 4px var(--mac-sp-2);
+  font-size: var(--mac-text-xs);
+}
+
+.dv-search-input:focus {
+  outline: none;
+  border-color: var(--mac-primary);
+  box-shadow: 0 0 0 3px var(--mac-focus-ring);
+}
+
+.dv-search-count {
+  color: var(--mac-fg-subtle);
+  font-size: var(--mac-text-xs);
+  min-width: 48px;
+  text-align: center;
+}
+
 .dv-file-count {
   color: var(--mac-fg-subtle);
   font-size: var(--mac-text-xs);
@@ -2894,9 +2923,96 @@ html, body, #root {
 .dv-body {
   flex: 1 1 auto;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 280px;
+  grid-template-columns: var(--dv-tree-w, 260px) 6px minmax(0, 1fr) 6px var(--dv-side-w, 280px);
   min-height: 0;
   border-bottom: 1px solid var(--mac-border-subtle);
+}
+
+.dv-pane-splitter {
+  width: 6px;
+  cursor: col-resize;
+  background: var(--mac-border-subtle);
+  transition: background var(--mac-dur-fast) var(--mac-ease);
+}
+
+.dv-pane-splitter:hover {
+  background: var(--mac-primary-soft);
+}
+
+.dv-tree-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-right: 1px solid var(--mac-border-subtle);
+  background: var(--mac-surface-raised);
+}
+
+.dv-tree-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: var(--mac-sp-2) var(--mac-sp-3);
+  border-bottom: 1px solid var(--mac-border-subtle);
+  font-size: var(--mac-text-xs);
+  color: var(--mac-fg-muted);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--mac-surface-raised);
+}
+
+.dv-tree-empty {
+  padding: var(--mac-sp-3);
+  color: var(--mac-fg-subtle);
+  font-size: var(--mac-text-xs);
+}
+
+.dv-tree-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+}
+
+.dv-tree-node {
+  margin: 0;
+  padding: 0;
+}
+
+.dv-tree-dir,
+.dv-tree-file {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--mac-fg);
+  text-align: left;
+  cursor: pointer;
+  padding: 4px 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--mac-text-xs);
+  font-family: var(--mac-font-mono);
+}
+
+.dv-tree-dir:hover,
+.dv-tree-file:hover {
+  background: var(--mac-bg);
+}
+
+.dv-tree-file.active {
+  background: var(--mac-primary-soft);
+  color: var(--mac-primary);
+}
+
+.dv-tree-caret {
+  width: 12px;
+  color: var(--mac-fg-subtle);
+}
+
+.dv-tree-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .dv-diff-pane {
@@ -2919,6 +3035,18 @@ html, body, #root {
   background: var(--mac-surface-raised);
 }
 
+.dv-side-empty {
+  align-items: center;
+  justify-content: center;
+  color: var(--mac-fg-subtle);
+}
+
+.dv-side-empty-title {
+  font-size: var(--mac-text-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .dv-placeholder,
 .dv-error {
   padding: var(--mac-sp-5);
@@ -2933,6 +3061,7 @@ html, body, #root {
 }
 
 .dv-file {
+  position: relative;
   border-top: 1px solid var(--mac-border-subtle);
 }
 
@@ -2970,11 +3099,18 @@ html, body, #root {
   font-size: var(--mac-text-mono);
   line-height: 1.5;
   border-bottom: 1px solid var(--mac-border-subtle);
+  position: relative;
+  overflow: visible;
   /* Whole-file diff (-U99999) can produce thousands of rows per file.
      content-visibility skips layout/paint for off-screen rows so scroll
      stays responsive during file switches. */
   content-visibility: auto;
   contain-intrinsic-size: auto 22px;
+}
+
+.dv-row-expanded-ann {
+  content-visibility: visible;
+  z-index: 24;
 }
 
 .dv-hunk-row {
@@ -3000,14 +3136,9 @@ html, body, #root {
   white-space: pre;
   color: var(--mac-fg-muted);
   border-right: 1px solid var(--mac-border-subtle);
-  /* Rigid 50/50 split: flex:1 1 0 lets both cells equally share whatever
-     width their parent row takes. Row width is pinned by the file-rows
-     container's min-width (set from the widest line), so horizontal scroll
-     surfaces on .dv-diff-pane as a single unified bottom scrollbar. */
-  flex: 1 1 0;
   min-width: 0;
   overflow: hidden;
-  flex: 1;
+  flex: 0 0 auto;
 }
 
 .dv-cell:last-child,
@@ -3023,11 +3154,15 @@ html, body, #root {
      handler ignores left cells anyway — it picks rows geometrically by
      right-cell bounding rects. */
   background: var(--mac-bg-subtle);
+  width: var(--dv-code-left, 50%);
 }
 
 .dv-cell-right {
   background: transparent;
   cursor: text;
+  flex: 1 1 auto;
+  position: relative;
+  overflow: visible;
 }
 
 /* per-state backgrounds — override the defaults on each side */
@@ -3053,6 +3188,106 @@ html, body, #root {
 
 .dv-cell-right.dv-empty {
   background: var(--mac-bg);
+}
+
+.dv-inline-anns {
+  position: absolute;
+  right: 6px;
+  top: 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-end;
+  z-index: 14;
+}
+
+.dv-inline-ann {
+  position: relative;
+  width: 20px;
+  min-height: 20px;
+}
+
+.dv-inline-ann-icon {
+  border: 1px solid var(--mac-border);
+  background: var(--mac-surface-raised);
+  color: var(--mac-fg);
+  border-radius: var(--mac-r-sm);
+  width: 20px;
+  height: 20px;
+  line-height: 18px;
+  text-align: center;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.dv-inline-ann-icon:hover {
+  background: var(--mac-primary-soft);
+  color: var(--mac-primary);
+}
+
+.dv-inline-ann-panel {
+  width: min(320px, 34vw);
+  max-width: 320px;
+  border: 1px solid var(--mac-border);
+  border-radius: var(--mac-r-md);
+  background: var(--mac-surface-raised);
+  box-shadow: var(--mac-elev-2);
+  padding: 6px 8px;
+  position: absolute;
+  right: 24px;
+  top: -2px;
+  z-index: 20;
+}
+
+.dv-inline-ann.expanded {
+  z-index: 21;
+}
+
+.dv-inline-ann-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.dv-inline-ann-loc {
+  font-size: var(--mac-text-xs);
+  color: var(--mac-fg-subtle);
+  font-family: var(--mac-font-mono);
+}
+
+.dv-inline-ann-actions {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.dv-inline-ann-action {
+  border: 1px solid var(--mac-border);
+  background: var(--mac-surface);
+  color: var(--mac-fg-muted);
+  border-radius: var(--mac-r-sm);
+  font-size: 11px;
+  line-height: 16px;
+  padding: 0 6px;
+  cursor: pointer;
+}
+
+.dv-inline-ann-action:hover {
+  background: var(--mac-bg);
+}
+
+.dv-inline-ann-action.danger {
+  color: var(--mac-danger);
+}
+
+.dv-inline-ann-body {
+  font-size: var(--mac-text-xs);
+  color: var(--mac-fg);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .dv-cell .dv-gutter {
@@ -3119,10 +3354,26 @@ html, body, #root {
   position: sticky;
   bottom: 0;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: var(--dv-code-left, 50%) minmax(0, 1fr);
   background: var(--mac-surface);
   border-top: 1px solid var(--mac-border-subtle);
   z-index: 5;
+}
+
+.dv-code-splitter {
+  position: absolute;
+  top: 34px;
+  bottom: 16px;
+  width: 6px;
+  cursor: col-resize;
+  background: transparent;
+  border-left: 1px solid var(--mac-border-strong);
+  border-right: 1px solid var(--mac-border-strong);
+  z-index: 6;
+}
+
+.dv-code-splitter:hover {
+  border-color: var(--mac-primary);
 }
 
 .dv-hscroll-side {
@@ -3179,6 +3430,17 @@ html, body, #root {
   color: var(--mac-primary-on);
 }
 
+.dv-search-mark {
+  background: rgba(255, 217, 102, 0.45);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0;
+}
+
+.dv-search-mark-active {
+  background: rgba(255, 174, 0, 0.82);
+}
+
 /* Disable selection visuals on the left side so users aren't tempted to
    annotate there (selection is captured but rejected in JS; this just
    makes the affordance match). */
@@ -3212,8 +3474,16 @@ html, body, #root {
   .dv-body {
     grid-template-columns: 1fr;
   }
+  .dv-pane-splitter,
+  .dv-code-splitter {
+    display: none;
+  }
+  .dv-tree-pane,
   .dv-side {
     border-top: 1px solid var(--mac-border-subtle);
+  }
+  .dv-tree-pane {
+    border-right: none;
   }
   .dv-diff-pane {
     border-right: none;

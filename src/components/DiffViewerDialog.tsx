@@ -1,4 +1,5 @@
 import {
+  type CSSProperties,
   type Dispatch,
   type SetStateAction,
   useCallback,
@@ -75,6 +76,81 @@ type PairedRow =
   | { kind: 'pair'; left?: DiffLine; right?: DiffLine }
   | { kind: 'hunk'; text: string }
 
+interface SearchHit {
+  rowIndex: number
+  side: 'left' | 'right'
+  rangeIndex: number
+}
+
+interface DiffFileTreeNode {
+  name: string
+  fullPath: string
+  type: 'file' | 'dir'
+  children?: DiffFileTreeNode[]
+}
+
+function findMatchRanges(text: string, query: string): Array<[number, number]> {
+  if (!query) return []
+  const source = text.toLocaleLowerCase()
+  const needle = query.toLocaleLowerCase()
+  if (!needle) return []
+  const out: Array<[number, number]> = []
+  let from = 0
+  while (from <= source.length - needle.length) {
+    const idx = source.indexOf(needle, from)
+    if (idx < 0) break
+    out.push([idx, idx + needle.length])
+    from = idx + needle.length
+  }
+  return out
+}
+
+function rowMatchesQuery(row: PairedRow, query: string): boolean {
+  if (!query || row.kind !== 'pair') return false
+  const q = query.toLocaleLowerCase()
+  return (
+    (row.left?.text.toLocaleLowerCase().includes(q) ?? false) ||
+    (row.right?.text.toLocaleLowerCase().includes(q) ?? false)
+  )
+}
+
+function renderHighlightedText(
+  text: string,
+  query: string,
+  activeRangeIndex: number | null
+): JSX.Element | string {
+  if (!query) return text
+  const ranges = findMatchRanges(text, query)
+  if (ranges.length === 0) return text
+  const parts: JSX.Element[] = []
+  let cursor = 0
+  for (let i = 0; i < ranges.length; i++) {
+    const [start, end] = ranges[i]
+    if (start > cursor) {
+      parts.push(
+        <span key={`txt_${i}_${start}`}>{text.slice(cursor, start)}</span>
+      )
+    }
+    parts.push(
+      <mark
+        key={`mark_${i}_${start}`}
+        className={
+          activeRangeIndex === i
+            ? 'dv-search-mark dv-search-mark-active'
+            : 'dv-search-mark'
+        }
+      >
+        {text.slice(start, end)}
+      </mark>
+    )
+    cursor = end
+  }
+  if (cursor < text.length) {
+    parts.push(<span key={`tail_${cursor}`}>{text.slice(cursor)}</span>)
+  }
+  return <>{parts}</>
+}
+
 /** Fold a unified-diff line stream into side-by-side pairs. Consecutive
  *  del+add runs are zipped (so a modify shows the removed code on the left
  *  next to the added code on the right); pure deletes / inserts become rows
@@ -124,11 +200,25 @@ const DV_ROW_H = 24
 function VirtualizedFileRows({
   filePath,
   rows,
-  paneRef
+  paneRef,
+  searchQuery,
+  activeSearchHit,
+  annotationsByLine,
+  onEditAnnotation,
+  expandedAnnotationIds,
+  onToggleAnnotation,
+  onDeleteAnnotation
 }: {
   filePath: string
   rows: PairedRow[]
   paneRef: React.RefObject<HTMLDivElement | null>
+  searchQuery: string
+  activeSearchHit: SearchHit | null
+  annotationsByLine: Map<number, DiffAnnotation[]>
+  onEditAnnotation: (a: DiffAnnotation) => void
+  expandedAnnotationIds: Set<string>
+  onToggleAnnotation: (id: string) => void
+  onDeleteAnnotation: (id: string) => void
 }): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const [range, setRange] = useState<[number, number]>(() => [
@@ -305,10 +395,26 @@ function VirtualizedFileRows({
         const prev = i > 0 ? rows[i - 1] : null
         const prevIsChange = prev ? isChangeRow(prev) : false
         const isChangeStart = thisIsChange && !prevIsChange
+        const activeLeftRangeIndex =
+          activeSearchHit &&
+          activeSearchHit.rowIndex === i &&
+          activeSearchHit.side === 'left'
+            ? activeSearchHit.rangeIndex
+            : null
+        const activeRightRangeIndex =
+          activeSearchHit &&
+          activeSearchHit.rowIndex === i &&
+          activeSearchHit.side === 'right'
+            ? activeSearchHit.rangeIndex
+            : null
+        const rowAnns = right?.newLine
+          ? (annotationsByLine.get(right.newLine) ?? [])
+          : []
+        const hasExpandedAnn = rowAnns.some((a) => expandedAnnotationIds.has(a.id))
         return (
           <div
             key={i}
-            className="dv-row"
+            className={`dv-row ${hasExpandedAnn ? 'dv-row-expanded-ann' : ''}`}
             data-row-idx={i}
             data-change-start={isChangeStart ? 'true' : undefined}
           >
@@ -327,7 +433,15 @@ function VirtualizedFileRows({
                 {left?.kind === 'del' ? '-' : left ? ' ' : ''}
               </span>
               <span className="dv-content-clip">
-                <span className="dv-content">{left ? left.text : ''}</span>
+                <span className="dv-content">
+                  {left
+                    ? renderHighlightedText(
+                        left.text,
+                        searchQuery,
+                        activeLeftRangeIndex
+                      )
+                    : ''}
+                </span>
               </span>
             </div>
             <div
@@ -348,8 +462,59 @@ function VirtualizedFileRows({
                 {right?.kind === 'add' ? '+' : right ? ' ' : ''}
               </span>
               <span className="dv-content-clip">
-                <span className="dv-content">{right ? right.text : ''}</span>
+                <span className="dv-content">
+                  {right
+                    ? renderHighlightedText(
+                        right.text,
+                        searchQuery,
+                        activeRightRangeIndex
+                      )
+                    : ''}
+                </span>
               </span>
+              {rowAnns.length > 0 && (
+                <div className="dv-inline-anns">
+                  {rowAnns.map((a) => {
+                    const expanded = expandedAnnotationIds.has(a.id)
+                    return (
+                      <div
+                        key={a.id}
+                        className={`dv-inline-ann ${expanded ? 'expanded' : ''}`}
+                      >
+                        <button
+                          className="dv-inline-ann-icon"
+                          onClick={() => onToggleAnnotation(a.id)}
+                          title={expanded ? '折叠标注' : '展开标注'}
+                        >
+                          {expanded ? '▾' : '▸'}
+                        </button>
+                        {expanded && (
+                          <div className="dv-inline-ann-panel">
+                            <div className="dv-inline-ann-head">
+                              <span className="dv-inline-ann-loc">{a.lineRange}</span>
+                              <div className="dv-inline-ann-actions">
+                                <button
+                                  className="dv-inline-ann-action"
+                                  onClick={() => onEditAnnotation(a)}
+                                >
+                                  编辑
+                                </button>
+                                <button
+                                  className="dv-inline-ann-action danger"
+                                  onClick={() => onDeleteAnnotation(a.id)}
+                                >
+                                  删除
+                                </button>
+                              </div>
+                            </div>
+                            <div className="dv-inline-ann-body">{a.comment}</div>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
             </div>
           </div>
         )
@@ -442,6 +607,84 @@ function parseUnifiedDiff(text: string): DiffFile[] {
   return files
 }
 
+function buildDiffFileTree(paths: string[]): DiffFileTreeNode[] {
+  type MutableDir = {
+    name: string
+    fullPath: string
+    dirs: Map<string, MutableDir>
+    files: Set<string>
+  }
+  const root: MutableDir = {
+    name: '',
+    fullPath: '',
+    dirs: new Map(),
+    files: new Set()
+  }
+  for (const p of paths) {
+    const parts = p.split('/').filter(Boolean)
+    let cur = root
+    for (let i = 0; i < parts.length; i++) {
+      const seg = parts[i]
+      const isLast = i === parts.length - 1
+      if (isLast) {
+        cur.files.add(seg)
+      } else {
+        const nextFull = cur.fullPath ? `${cur.fullPath}/${seg}` : seg
+        const next =
+          cur.dirs.get(seg) ??
+          (() => {
+            const d: MutableDir = {
+              name: seg,
+              fullPath: nextFull,
+              dirs: new Map(),
+              files: new Set()
+            }
+            cur.dirs.set(seg, d)
+            return d
+          })()
+        cur = next
+      }
+    }
+  }
+  const toNodes = (dir: MutableDir): DiffFileTreeNode[] => {
+    const dirs = Array.from(dir.dirs.values())
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((d) => ({
+        name: d.name,
+        fullPath: d.fullPath,
+        type: 'dir' as const,
+        children: toNodes(d)
+      }))
+    const files = Array.from(dir.files)
+      .sort((a, b) => a.localeCompare(b))
+      .map((name) => ({
+        name,
+        fullPath: dir.fullPath ? `${dir.fullPath}/${name}` : name,
+        type: 'file' as const
+      }))
+    return [...dirs, ...files]
+  }
+  return toNodes(root)
+}
+
+function parentDirs(path: string): string[] {
+  const parts = path.split('/').filter(Boolean)
+  const out: string[] = []
+  let cur = ''
+  for (let i = 0; i < parts.length - 1; i++) {
+    cur = cur ? `${cur}/${parts[i]}` : parts[i]
+    out.push(cur)
+  }
+  return out
+}
+
+function parseLineRangeStart(lineRange: string): number | null {
+  const m = lineRange.match(/^(\d+)(?:-\d+)?$/)
+  if (!m) return null
+  const n = parseInt(m[1], 10)
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
 export default function DiffViewerDialog({
   cwd,
   title,
@@ -497,6 +740,16 @@ export default function DiffViewerDialog({
     [onGeneralNoteChange]
   )
   const [submitting, setSubmitting] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [activeSearchHit, setActiveSearchHit] = useState(0)
+  const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set())
+  const [expandedAnnotationIds, setExpandedAnnotationIds] = useState<Set<string>>(
+    new Set()
+  )
+  const [treePaneWidth, setTreePaneWidth] = useState(260)
+  const [sidePaneWidth, setSidePaneWidth] = useState(280)
+  const [codeLeftPercent, setCodeLeftPercent] = useState(50)
 
   const [draft, setDraft] = useState<{
     file: string
@@ -514,6 +767,13 @@ export default function DiffViewerDialog({
   } | null>(null)
 
   const diffPaneRef = useRef<HTMLDivElement | null>(null)
+  const searchInputRef = useRef<HTMLInputElement | null>(null)
+  const dragRef = useRef<{
+    kind: 'tree' | 'side' | 'code' | null
+    startX: number
+    startValue: number
+    paneWidth: number
+  }>({ kind: null, startX: 0, startValue: 0, paneWidth: 0 })
 
   // Defer the heavy diff render so mode switches / dropdown clicks / close
   // button remain responsive while a big diff is being laid out. React will
@@ -523,6 +783,10 @@ export default function DiffViewerDialog({
   const files = useMemo(
     () => parseUnifiedDiff(deferredDiffText),
     [deferredDiffText]
+  )
+  const fileTree = useMemo(
+    () => buildDiffFileTree(files.map((f) => f.path)),
+    [files]
   )
   // Defer the dropdown selection too — switching files re-mounts thousands
   // of DOM rows; without this, the dropdown itself freezes while React
@@ -535,6 +799,18 @@ export default function DiffViewerDialog({
         : files,
     [files, deferredSelectedFile]
   )
+
+  useEffect(() => {
+    if (files.length === 0) return
+    setExpandedDirs((prev) => {
+      const next = new Set(prev)
+      const selected = files.some((f) => f.path === selectedFile)
+        ? selectedFile
+        : files[0].path
+      for (const dir of parentDirs(selected)) next.add(dir)
+      return next
+    })
+  }, [files, selectedFile])
 
   // Pre-compute paired rows + change-start indices for the single visible
   // file. Keeping these at the top level lets jumpHunk work against virtual
@@ -556,6 +832,87 @@ export default function DiffViewerDialog({
     }
     return out
   }, [currentRows])
+
+  const searchHits = useMemo<SearchHit[]>(() => {
+    const q = searchQuery.trim()
+    if (!q) return []
+    const out: SearchHit[] = []
+    for (let i = 0; i < currentRows.length; i++) {
+      const row = currentRows[i]
+      if (row.kind !== 'pair') continue
+      if (row.left) {
+        const leftRanges = findMatchRanges(row.left.text, q)
+        for (let j = 0; j < leftRanges.length; j++) {
+          out.push({ rowIndex: i, side: 'left', rangeIndex: j })
+        }
+      }
+      if (row.right) {
+        const rightRanges = findMatchRanges(row.right.text, q)
+        for (let j = 0; j < rightRanges.length; j++) {
+          out.push({ rowIndex: i, side: 'right', rangeIndex: j })
+        }
+      }
+    }
+    return out
+  }, [currentRows, searchQuery])
+
+  const activeSearchMatch =
+    searchHits.length > 0
+      ? searchHits[Math.min(activeSearchHit, searchHits.length - 1)]
+      : null
+
+  const scrollToRow = useCallback(
+    (rowIdx: number, behavior: ScrollBehavior = 'smooth') => {
+      const pane = diffPaneRef.current
+      if (!pane) return
+      const rowsContainer = pane.querySelector<HTMLDivElement>('.dv-file-rows')
+      if (!rowsContainer) return
+      const paneRect = pane.getBoundingClientRect()
+      const ctRect = rowsContainer.getBoundingClientRect()
+      const containerTopInPane = ctRect.top - paneRect.top + pane.scrollTop
+      const targetTop =
+        containerTopInPane + rowIdx * DV_ROW_H - pane.clientHeight / 2 + DV_ROW_H
+      pane.scrollTo({ top: Math.max(0, targetTop), behavior })
+    },
+    []
+  )
+
+  const openSearch = useCallback(() => {
+    setSearchOpen(true)
+    requestAnimationFrame(() => {
+      searchInputRef.current?.focus()
+      searchInputRef.current?.select()
+    })
+  }, [])
+
+  const jumpSearch = useCallback(
+    (dir: 'next' | 'prev') => {
+      if (searchHits.length === 0) return
+      const n = searchHits.length
+      const next =
+        dir === 'next'
+          ? (activeSearchHit + 1) % n
+          : (activeSearchHit - 1 + n) % n
+      setActiveSearchHit(next)
+      scrollToRow(searchHits[next].rowIndex)
+    },
+    [activeSearchHit, scrollToRow, searchHits]
+  )
+
+  useEffect(() => {
+    if (searchHits.length === 0) {
+      setActiveSearchHit(0)
+      return
+    }
+    setActiveSearchHit((prev) => Math.min(prev, searchHits.length - 1))
+  }, [searchHits])
+
+  useEffect(() => {
+    if (!searchQuery.trim()) return
+    if (searchHits.length === 0) return
+    const hit = searchHits[Math.min(activeSearchHit, searchHits.length - 1)]
+    scrollToRow(hit.rowIndex, 'auto')
+  }, [activeSearchHit, scrollToRow, searchHits, searchQuery])
 
   // Keep selection valid when files change (mode switch / refresh).
   // Do NOT clear when files is empty — refreshDiff() transiently empties
@@ -764,9 +1121,23 @@ export default function DiffViewerDialog({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+        e.preventDefault()
+        openSearch()
+        return
+      }
+      if (searchOpen && e.key === 'Enter') {
+        e.preventDefault()
+        jumpSearch(e.shiftKey ? 'prev' : 'next')
+        return
+      }
       if (e.key === 'Escape') {
         if (composer) setComposer(null)
         else if (draft) setDraft(null)
+        else if (searchOpen) {
+          if (searchQuery.trim()) setSearchQuery('')
+          else setSearchOpen(false)
+        }
         else {
           setDiffText('')
           requestAnimationFrame(() => onClose())
@@ -775,7 +1146,7 @@ export default function DiffViewerDialog({
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [composer, draft, onClose])
+  }, [composer, draft, jumpSearch, onClose, openSearch, searchOpen, searchQuery])
 
   const openComposerFromDraft = useCallback(() => {
     if (!draft) return
@@ -812,10 +1183,6 @@ export default function DiffViewerDialog({
     setComposer(null)
   }, [composer])
 
-  const removeAnnotation = useCallback((id: string) => {
-    setAnnotations((prev) => prev.filter((a) => a.id !== id))
-  }, [])
-
   const editAnnotation = useCallback((a: DiffAnnotation) => {
     setComposer({
       file: a.file,
@@ -826,6 +1193,50 @@ export default function DiffViewerDialog({
     })
   }, [])
 
+  const removeEditingAnnotation = useCallback(() => {
+    if (!composer?.editingId) return
+    const id = composer.editingId
+    setAnnotations((prev) => prev.filter((a) => a.id !== id))
+    setExpandedAnnotationIds((prev) => {
+      const next = new Set(prev)
+      next.delete(id)
+      return next
+    })
+    setComposer(null)
+  }, [composer])
+
+  const removeAnnotation = useCallback((id: string) => {
+    setAnnotations((prev) => prev.filter((a) => a.id !== id))
+    setExpandedAnnotationIds((prev) => {
+      const next = new Set(prev)
+      next.delete(id)
+      return next
+    })
+  }, [])
+
+  const toggleInlineAnnotation = useCallback((id: string) => {
+    setExpandedAnnotationIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+
+  const annotationsByLine = useMemo(() => {
+    const map = new Map<number, DiffAnnotation[]>()
+    if (!currentFile) return map
+    for (const a of annotations) {
+      if (a.file !== currentFile.path) continue
+      const ln = parseLineRangeStart(a.lineRange)
+      if (!ln) continue
+      const arr = map.get(ln) ?? []
+      arr.push(a)
+      map.set(ln, arr)
+    }
+    return map
+  }, [annotations, currentFile])
+
   /** Close flow that clears the big diff DOM before unmounting the dialog,
    *  so the close click feels instant even when a 10k-line diff is loaded. */
   const handleSmoothClose = useCallback(() => {
@@ -834,18 +1245,163 @@ export default function DiffViewerDialog({
     requestAnimationFrame(() => onClose())
   }, [onClose])
 
-  const canSubmit =
-    !submitting && (annotations.length > 0 || generalNote.trim().length > 0)
+  const canSubmit = !submitting && annotations.length > 0
 
   const handleSubmit = useCallback(async () => {
     if (!canSubmit) return
     setSubmitting(true)
     try {
-      await onSubmit(annotations, generalNote.trim())
+      await onSubmit(annotations, '')
     } finally {
       setSubmitting(false)
     }
-  }, [canSubmit, annotations, generalNote, onSubmit])
+  }, [canSubmit, annotations, onSubmit])
+
+  const toggleDir = useCallback((dirPath: string) => {
+    setExpandedDirs((prev) => {
+      const next = new Set(prev)
+      if (next.has(dirPath)) next.delete(dirPath)
+      else next.add(dirPath)
+      return next
+    })
+  }, [])
+
+  const renderTreeNodes = useCallback(
+    (nodes: DiffFileTreeNode[], depth = 0): JSX.Element[] =>
+      nodes.map((node) => {
+        if (node.type === 'dir') {
+          const expanded = expandedDirs.has(node.fullPath)
+          return (
+            <li key={node.fullPath} className="dv-tree-node">
+              <button
+                className="dv-tree-dir"
+                style={{ paddingLeft: `${8 + depth * 14}px` }}
+                onClick={() => toggleDir(node.fullPath)}
+              >
+                <span className="dv-tree-caret">{expanded ? '▾' : '▸'}</span>
+                <span className="dv-tree-name">{node.name}</span>
+              </button>
+              {expanded && node.children && node.children.length > 0 && (
+                <ul className="dv-tree-list">
+                  {renderTreeNodes(node.children, depth + 1)}
+                </ul>
+              )}
+            </li>
+          )
+        }
+        const active = node.fullPath === selectedFile
+        return (
+          <li key={node.fullPath} className="dv-tree-node">
+            <button
+              className={`dv-tree-file ${active ? 'active' : ''}`}
+              style={{ paddingLeft: `${28 + depth * 14}px` }}
+              onClick={() => setSelectedFile(node.fullPath)}
+              title={node.fullPath}
+            >
+              <span className="dv-tree-name">{node.name}</span>
+            </button>
+          </li>
+        )
+      }),
+    [expandedDirs, selectedFile, setSelectedFile, toggleDir]
+  )
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      const drag = dragRef.current
+      if (!drag.kind) return
+      const dx = e.clientX - drag.startX
+      if (drag.kind === 'tree') {
+        setTreePaneWidth(Math.max(180, Math.min(520, drag.startValue + dx)))
+        return
+      }
+      if (drag.kind === 'side') {
+        setSidePaneWidth(Math.max(220, Math.min(560, drag.startValue - dx)))
+        return
+      }
+      if (drag.kind === 'code' && drag.paneWidth > 0) {
+        const next = Math.max(
+          22,
+          Math.min(78, drag.startValue + (dx / drag.paneWidth) * 100)
+        )
+        setCodeLeftPercent(next)
+      }
+    }
+    const onUp = () => {
+      if (!dragRef.current.kind) return
+      dragRef.current.kind = null
+      document.body.style.userSelect = ''
+      document.body.style.cursor = ''
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+  }, [])
+
+  const startTreeResize = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault()
+      dragRef.current = {
+        kind: 'tree',
+        startX: e.clientX,
+        startValue: treePaneWidth,
+        paneWidth: 0
+      }
+      document.body.style.userSelect = 'none'
+      document.body.style.cursor = 'col-resize'
+    },
+    [treePaneWidth]
+  )
+
+  const startSideResize = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault()
+      dragRef.current = {
+        kind: 'side',
+        startX: e.clientX,
+        startValue: sidePaneWidth,
+        paneWidth: 0
+      }
+      document.body.style.userSelect = 'none'
+      document.body.style.cursor = 'col-resize'
+    },
+    [sidePaneWidth]
+  )
+
+  const startCodeResize = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault()
+      dragRef.current = {
+        kind: 'code',
+        startX: e.clientX,
+        startValue: codeLeftPercent,
+        paneWidth: diffPaneRef.current?.clientWidth ?? 0
+      }
+      document.body.style.userSelect = 'none'
+      document.body.style.cursor = 'col-resize'
+    },
+    [codeLeftPercent]
+  )
+
+  const bodyStyle = useMemo(
+    () =>
+      ({
+        '--dv-tree-w': `${treePaneWidth}px`,
+        '--dv-side-w': `${sidePaneWidth}px`
+      }) as CSSProperties,
+    [treePaneWidth, sidePaneWidth]
+  )
+
+  const diffPaneStyle = useMemo(
+    () =>
+      ({
+        '--dv-code-left': `${codeLeftPercent}%`
+      }) as CSSProperties,
+    [codeLeftPercent]
+  )
 
   return (
     <div className="modal-backdrop" onClick={handleSmoothClose}>
@@ -897,6 +1453,13 @@ export default function DiffViewerDialog({
           <div className="dv-nav-group">
             <button
               className="dv-nav-btn"
+              onClick={openSearch}
+              title="Search in current file (Ctrl+F)"
+            >
+              Find
+            </button>
+            <button
+              className="dv-nav-btn"
               onClick={() => jumpHunk('prev')}
               disabled={diffLoading || visibleFiles.length === 0}
               title="跳到上一个改动块"
@@ -912,6 +1475,48 @@ export default function DiffViewerDialog({
               ↓ 下一个
             </button>
           </div>
+          {searchOpen && (
+            <div className="dv-search">
+              <input
+                ref={searchInputRef}
+                className="dv-search-input"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search current file (Ctrl+F)"
+              />
+              <span className="dv-search-count">
+                {searchQuery.trim()
+                  ? `${searchHits.length === 0 ? 0 : activeSearchHit + 1}/${searchHits.length}`
+                  : '0/0'}
+              </span>
+              <button
+                className="dv-nav-btn"
+                onClick={() => jumpSearch('prev')}
+                disabled={searchHits.length === 0}
+                title="Previous match (Shift+Enter)"
+              >
+                Prev
+              </button>
+              <button
+                className="dv-nav-btn"
+                onClick={() => jumpSearch('next')}
+                disabled={searchHits.length === 0}
+                title="Next match (Enter)"
+              >
+                Next
+              </button>
+              <button
+                className="dv-nav-btn"
+                onClick={() => {
+                  setSearchQuery('')
+                  setSearchOpen(false)
+                }}
+                title="Close search (Esc)"
+              >
+                Close
+              </button>
+            </div>
+          )}
           <button
             className="dv-refresh-btn"
             onClick={() => void refreshDiff()}
@@ -921,31 +1526,30 @@ export default function DiffViewerDialog({
             {diffLoading ? '…' : '⟳'}
           </button>
         </div>
-        {files.length > 0 && (
-          <div className="dv-file-picker">
-            <label>文件：</label>
-            <select
-              value={selectedFile}
-              onChange={(e) => setSelectedFile(e.target.value)}
-              title="选择要查看的文件"
-            >
-              {files.map((f) => (
-                <option key={f.path} value={f.path}>
-                  {f.path}
-                </option>
-              ))}
-            </select>
-            <span className="dv-file-count">
-              {files.length} 个文件有变更
-            </span>
-          </div>
-        )}
-
-        <div className="dv-body">
+        {/* file tree moved to left pane */}
+        <div className="dv-body" style={bodyStyle}>
+          <aside className="dv-tree-pane">
+            <div className="dv-tree-head">
+              Changed Files <span className="dv-file-count">{files.length}</span>
+            </div>
+            {files.length === 0 ? (
+              <div className="dv-tree-empty">No changed files</div>
+            ) : (
+              <ul className="dv-tree-list">{renderTreeNodes(fileTree)}</ul>
+            )}
+          </aside>
+          <div
+            className="dv-pane-splitter"
+            role="separator"
+            aria-orientation="vertical"
+            onMouseDown={startTreeResize}
+            title="拖拽调整文件树宽度"
+          />
           <div
             className="dv-diff-pane"
             ref={diffPaneRef}
             onMouseUp={handleMouseUp}
+            style={diffPaneStyle}
           >
             {diffLoading && <div className="dv-placeholder">正在加载 diff…</div>}
             {!diffLoading && diffError && (
@@ -963,6 +1567,21 @@ export default function DiffViewerDialog({
                   filePath={currentFile.path}
                   rows={currentRows}
                   paneRef={diffPaneRef}
+                  searchQuery={searchQuery.trim()}
+                  activeSearchHit={activeSearchMatch}
+                  annotationsByLine={annotationsByLine}
+                  onEditAnnotation={editAnnotation}
+                  expandedAnnotationIds={expandedAnnotationIds}
+                  onToggleAnnotation={toggleInlineAnnotation}
+                  onDeleteAnnotation={removeAnnotation}
+                />
+                <div
+                  className="dv-code-splitter"
+                  role="separator"
+                  aria-orientation="vertical"
+                  style={{ left: `calc(${codeLeftPercent}% - 3px)` }}
+                  onMouseDown={startCodeResize}
+                  title="拖拽调整左右代码列宽度"
                 />
               </div>
             )}
@@ -978,66 +1597,16 @@ export default function DiffViewerDialog({
               </button>
             )}
           </div>
+          <div
+            className="dv-pane-splitter"
+            role="separator"
+            aria-orientation="vertical"
+            onMouseDown={startSideResize}
+            title="拖拽调整批注栏宽度"
+          />
 
-          <aside className="dv-side">
-            <div className="plan-review-side-title">
-              批注（{annotations.length}）
-            </div>
-            {annotations.length === 0 ? (
-              <div className="plan-review-empty">
-                在左侧 diff 里选中代码行 → 点浮现的 "✏ 标注" 按钮。
-                <br />
-                也可以在下方写"整体意见"。
-              </div>
-            ) : (
-              <ul className="plan-review-list">
-                {annotations.map((a, i) => (
-                  <li key={a.id} className="plan-review-item">
-                    <div className="plan-review-item-head">
-                      <span className="plan-review-item-idx">#{i + 1}</span>
-                      <span className="dv-ann-location">
-                        {a.file}:{a.lineRange}
-                      </span>
-                      <div className="plan-review-item-actions">
-                        <button
-                          className="plan-review-item-btn"
-                          onClick={() => editAnnotation(a)}
-                          title="编辑"
-                        >
-                          ✎
-                        </button>
-                        <button
-                          className="plan-review-item-btn danger"
-                          onClick={() => removeAnnotation(a.id)}
-                          title="删除"
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    </div>
-                    <pre className="dv-ann-snippet">
-                      {a.snippet.length > 400
-                        ? a.snippet.slice(0, 400) + '…'
-                        : a.snippet}
-                    </pre>
-                    <div className="plan-review-item-comment">{a.comment}</div>
-                  </li>
-                ))}
-              </ul>
-            )}
-
-            <div className="plan-review-general">
-              <label className="plan-review-general-label">
-                整体意见（可选）
-              </label>
-              <textarea
-                className="plan-review-general-input"
-                value={generalNote}
-                onChange={(e) => setGeneralNote(e.target.value)}
-                placeholder="对这次 diff 的整体看法、遗漏项、优先级..."
-                rows={3}
-              />
-            </div>
+          <aside className="dv-side dv-side-empty">
+            <div className="dv-side-empty-title">Reserved</div>
           </aside>
         </div>
 
@@ -1078,6 +1647,14 @@ export default function DiffViewerDialog({
                 >
                   取消
                 </button>
+                {composer.editingId && (
+                  <button
+                    className="drawer-btn danger"
+                    onClick={removeEditingAnnotation}
+                  >
+                    Delete
+                  </button>
+                )}
                 <span style={{ flex: 1 }} />
                 <button
                   className="drawer-btn primary"
@@ -1092,13 +1669,6 @@ export default function DiffViewerDialog({
         )}
 
         <div className="drawer-actions plan-review-actions">
-          <button
-            className="drawer-btn"
-            onClick={handleSmoothClose}
-            disabled={submitting}
-          >
-            ✕ 关闭（不发送）
-          </button>
           <span style={{ flex: 1 }} />
           {!sessionRunning && (
             <div

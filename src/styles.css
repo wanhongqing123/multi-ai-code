@@ -2958,7 +2958,33 @@ html, body, #root {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: var(--mac-sp-2);
   background: var(--mac-surface-raised);
+}
+
+.dv-tree-head-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--mac-sp-1);
+  min-width: 0;
+}
+
+.dv-tree-head-toggle {
+  appearance: none;
+  border: 1px solid var(--mac-border-subtle);
+  background: transparent;
+  color: var(--mac-fg-muted);
+  font-size: var(--mac-text-xs);
+  padding: 2px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background var(--mac-dur-fast) var(--mac-ease),
+    color var(--mac-dur-fast) var(--mac-ease);
+}
+
+.dv-tree-head-toggle:hover {
+  background: var(--mac-primary-soft);
+  color: var(--mac-fg);
 }
 
 .dv-tree-empty {
@@ -3045,6 +3071,90 @@ html, body, #root {
   font-size: var(--mac-text-xs);
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.dv-side-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: var(--mac-sp-2) var(--mac-sp-3);
+  border-bottom: 1px solid var(--mac-border-subtle);
+  font-size: var(--mac-text-xs);
+  color: var(--mac-fg-muted);
+  display: flex;
+  align-items: center;
+  background: var(--mac-surface-raised);
+}
+
+.dv-side-empty-msg {
+  padding: var(--mac-sp-4) var(--mac-sp-3);
+  color: var(--mac-fg-subtle);
+  font-size: var(--mac-text-xs);
+  line-height: 1.5;
+}
+
+.dv-ann-list {
+  list-style: none;
+  margin: 0;
+  padding: var(--mac-sp-2) 0;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.dv-ann-item {
+  padding: var(--mac-sp-2) var(--mac-sp-3);
+  border-bottom: 1px solid var(--mac-border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: var(--mac-sp-1);
+}
+
+.dv-ann-item.active {
+  background: var(--mac-primary-soft);
+}
+
+.dv-ann-item-jump {
+  appearance: none;
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  text-align: left;
+  cursor: pointer;
+  display: block;
+  width: 100%;
+  font-family: var(--mac-font-mono);
+  font-size: var(--mac-text-mono);
+  line-height: 1.4;
+  word-break: break-all;
+}
+
+.dv-ann-item-file {
+  color: var(--mac-fg);
+}
+
+.dv-ann-item-jump:hover .dv-ann-item-file {
+  color: var(--mac-primary);
+}
+
+.dv-ann-item-lr {
+  color: var(--mac-primary);
+  margin-left: 2px;
+}
+
+.dv-ann-item-comment {
+  font-size: var(--mac-text-xs);
+  color: var(--mac-fg-muted);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.dv-ann-item-actions {
+  display: flex;
+  gap: var(--mac-sp-1);
+  justify-content: flex-end;
 }
 
 .dv-placeholder,

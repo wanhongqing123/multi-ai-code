@@ -205,7 +205,7 @@ function VirtualizedFileRows({
   activeSearchHit,
   annotationsByLine,
   onEditAnnotation,
-  expandedAnnotationIds,
+  collapsedAnnotationIds,
   onToggleAnnotation,
   onDeleteAnnotation
 }: {
@@ -216,7 +216,7 @@ function VirtualizedFileRows({
   activeSearchHit: SearchHit | null
   annotationsByLine: Map<number, DiffAnnotation[]>
   onEditAnnotation: (a: DiffAnnotation) => void
-  expandedAnnotationIds: Set<string>
+  collapsedAnnotationIds: Set<string>
   onToggleAnnotation: (id: string) => void
   onDeleteAnnotation: (id: string) => void
 }): JSX.Element {
@@ -410,7 +410,7 @@ function VirtualizedFileRows({
         const rowAnns = right?.newLine
           ? (annotationsByLine.get(right.newLine) ?? [])
           : []
-        const hasExpandedAnn = rowAnns.some((a) => expandedAnnotationIds.has(a.id))
+        const hasExpandedAnn = rowAnns.some((a) => !collapsedAnnotationIds.has(a.id))
         return (
           <div
             key={i}
@@ -475,7 +475,7 @@ function VirtualizedFileRows({
               {rowAnns.length > 0 && (
                 <div className="dv-inline-anns">
                   {rowAnns.map((a) => {
-                    const expanded = expandedAnnotationIds.has(a.id)
+                    const expanded = !collapsedAnnotationIds.has(a.id)
                     return (
                       <div
                         key={a.id}
@@ -667,6 +667,20 @@ function buildDiffFileTree(paths: string[]): DiffFileTreeNode[] {
   return toNodes(root)
 }
 
+function collectDiffTreeDirs(nodes: DiffFileTreeNode[]): string[] {
+  const out: string[] = []
+  const walk = (list: DiffFileTreeNode[]): void => {
+    for (const n of list) {
+      if (n.type === 'dir') {
+        out.push(n.fullPath)
+        if (n.children) walk(n.children)
+      }
+    }
+  }
+  walk(nodes)
+  return out
+}
+
 function parentDirs(path: string): string[] {
   const parts = path.split('/').filter(Boolean)
   const out: string[] = []
@@ -744,7 +758,7 @@ export default function DiffViewerDialog({
   const [searchQuery, setSearchQuery] = useState('')
   const [activeSearchHit, setActiveSearchHit] = useState(0)
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set())
-  const [expandedAnnotationIds, setExpandedAnnotationIds] = useState<Set<string>>(
+  const [collapsedAnnotationIds, setCollapsedAnnotationIds] = useState<Set<string>>(
     new Set()
   )
   const [treePaneWidth, setTreePaneWidth] = useState(260)
@@ -1197,7 +1211,8 @@ export default function DiffViewerDialog({
     if (!composer?.editingId) return
     const id = composer.editingId
     setAnnotations((prev) => prev.filter((a) => a.id !== id))
-    setExpandedAnnotationIds((prev) => {
+    setCollapsedAnnotationIds((prev) => {
+      if (!prev.has(id)) return prev
       const next = new Set(prev)
       next.delete(id)
       return next
@@ -1207,7 +1222,8 @@ export default function DiffViewerDialog({
 
   const removeAnnotation = useCallback((id: string) => {
     setAnnotations((prev) => prev.filter((a) => a.id !== id))
-    setExpandedAnnotationIds((prev) => {
+    setCollapsedAnnotationIds((prev) => {
+      if (!prev.has(id)) return prev
       const next = new Set(prev)
       next.delete(id)
       return next
@@ -1215,13 +1231,68 @@ export default function DiffViewerDialog({
   }, [])
 
   const toggleInlineAnnotation = useCallback((id: string) => {
-    setExpandedAnnotationIds((prev) => {
+    setCollapsedAnnotationIds((prev) => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
       else next.add(id)
       return next
     })
   }, [])
+
+  const pendingJumpRef = useRef<{ file: string; startLine: number } | null>(null)
+
+  const findRowIndexForLine = useCallback(
+    (rows: PairedRow[], startLine: number): number => {
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i]
+        if (r.kind !== 'pair') continue
+        if (r.right?.newLine === startLine) return i
+      }
+      return -1
+    },
+    []
+  )
+
+  const jumpToAnnotation = useCallback(
+    (a: DiffAnnotation) => {
+      const start = parseLineRangeStart(a.lineRange)
+      if (!start) return
+      // Always make sure the annotation card itself is expanded so the user
+      // sees the text right after the scroll lands.
+      setCollapsedAnnotationIds((prev) => {
+        if (!prev.has(a.id)) return prev
+        const next = new Set(prev)
+        next.delete(a.id)
+        return next
+      })
+      if (a.file !== selectedFile) {
+        pendingJumpRef.current = { file: a.file, startLine: start }
+        setSelectedFile(a.file)
+        return
+      }
+      const idx = findRowIndexForLine(currentRows, start)
+      if (idx >= 0) scrollToRow(idx)
+    },
+    [
+      currentRows,
+      findRowIndexForLine,
+      scrollToRow,
+      selectedFile,
+      setSelectedFile
+    ]
+  )
+
+  useEffect(() => {
+    const pending = pendingJumpRef.current
+    if (!pending) return
+    if (!currentFile || currentFile.path !== pending.file) return
+    if (currentRows.length === 0) return
+    const idx = findRowIndexForLine(currentRows, pending.startLine)
+    pendingJumpRef.current = null
+    if (idx < 0) return
+    // Wait one frame so virtualized rows + DOM layout settle.
+    requestAnimationFrame(() => scrollToRow(idx))
+  }, [currentFile, currentRows, findRowIndexForLine, scrollToRow])
 
   const annotationsByLine = useMemo(() => {
     const map = new Map<number, DiffAnnotation[]>()
@@ -1265,6 +1336,17 @@ export default function DiffViewerDialog({
       return next
     })
   }, [])
+
+  const allTreeDirs = useMemo(() => collectDiffTreeDirs(fileTree), [fileTree])
+  const expandAllDirs = useCallback(() => {
+    setExpandedDirs(new Set(allTreeDirs))
+  }, [allTreeDirs])
+  const collapseAllDirs = useCallback(() => {
+    setExpandedDirs(new Set())
+  }, [])
+  const allDirsExpanded =
+    allTreeDirs.length > 0 &&
+    allTreeDirs.every((d) => expandedDirs.has(d))
 
   const renderTreeNodes = useCallback(
     (nodes: DiffFileTreeNode[], depth = 0): JSX.Element[] =>
@@ -1530,7 +1612,19 @@ export default function DiffViewerDialog({
         <div className="dv-body" style={bodyStyle}>
           <aside className="dv-tree-pane">
             <div className="dv-tree-head">
-              Changed Files <span className="dv-file-count">{files.length}</span>
+              <span className="dv-tree-head-title">
+                Changed Files <span className="dv-file-count">{files.length}</span>
+              </span>
+              {allTreeDirs.length > 0 && (
+                <button
+                  type="button"
+                  className="dv-tree-head-toggle"
+                  onClick={allDirsExpanded ? collapseAllDirs : expandAllDirs}
+                  title={allDirsExpanded ? '全部收起' : '全部展开'}
+                >
+                  {allDirsExpanded ? '全部收起' : '全部展开'}
+                </button>
+              )}
             </div>
             {files.length === 0 ? (
               <div className="dv-tree-empty">No changed files</div>
@@ -1571,7 +1665,7 @@ export default function DiffViewerDialog({
                   activeSearchHit={activeSearchMatch}
                   annotationsByLine={annotationsByLine}
                   onEditAnnotation={editAnnotation}
-                  expandedAnnotationIds={expandedAnnotationIds}
+                  collapsedAnnotationIds={collapsedAnnotationIds}
                   onToggleAnnotation={toggleInlineAnnotation}
                   onDeleteAnnotation={removeAnnotation}
                 />
@@ -1605,8 +1699,51 @@ export default function DiffViewerDialog({
             title="拖拽调整批注栏宽度"
           />
 
-          <aside className="dv-side dv-side-empty">
-            <div className="dv-side-empty-title">Reserved</div>
+          <aside className="dv-side">
+            <div className="dv-side-head">
+              <span className="dv-tree-head-title">
+                批注 <span className="dv-file-count">{annotations.length}</span>
+              </span>
+            </div>
+            {annotations.length === 0 ? (
+              <div className="dv-side-empty-msg">
+                暂无批注 — 在右侧代码区选中文本后点击「✏ 标注」添加
+              </div>
+            ) : (
+              <ul className="dv-ann-list">
+                {annotations.map((a) => {
+                  const active = a.file === selectedFile
+                  return (
+                    <li key={a.id} className={`dv-ann-item ${active ? 'active' : ''}`}>
+                      <button
+                        type="button"
+                        className="dv-ann-item-jump"
+                        onClick={() => jumpToAnnotation(a)}
+                        title={`跳转到 ${a.file}:${a.lineRange}`}
+                      >
+                        <span className="dv-ann-item-file">{a.file}</span>
+                        <span className="dv-ann-item-lr">:{a.lineRange}</span>
+                      </button>
+                      <div className="dv-ann-item-comment">{a.comment}</div>
+                      <div className="dv-ann-item-actions">
+                        <button
+                          className="dv-inline-ann-action"
+                          onClick={() => editAnnotation(a)}
+                        >
+                          编辑
+                        </button>
+                        <button
+                          className="dv-inline-ann-action danger"
+                          onClick={() => removeAnnotation(a.id)}
+                        >
+                          删除
+                        </button>
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
           </aside>
         </div>
 

@@ -1,5 +1,6 @@
 import { promises as fs } from 'fs'
 import { dirname, join } from 'path'
+import { joinWithRootStyle } from '../pathStyle.js'
 
 function normalizeRelPath(relPath: string): string {
   return relPath
@@ -10,20 +11,20 @@ function normalizeRelPath(relPath: string): string {
 }
 
 export function repoMemoryDir(root: string): string {
-  return join(root, '.multi-ai-code', 'repo-memory')
+  return joinWithRootStyle(root, '.multi-ai-code', 'repo-memory')
 }
 
 export function repoMemoryProjectSummaryPath(root: string): string {
-  return join(repoMemoryDir(root), 'project-summary.md')
+  return joinWithRootStyle(repoMemoryDir(root), 'project-summary.md')
 }
 
 export function repoMemoryRecentTopicsPath(root: string): string {
-  return join(repoMemoryDir(root), 'recent-topics.json')
+  return joinWithRootStyle(repoMemoryDir(root), 'recent-topics.json')
 }
 
 export function repoMemoryFileNotePath(root: string, relPath: string): string {
   const safeRel = normalizeRelPath(relPath)
-  return join(repoMemoryDir(root), 'file-notes', `${safeRel}.md`)
+  return joinWithRootStyle(repoMemoryDir(root), 'file-notes', `${safeRel}.md`)
 }
 
 export async function ensureRepoMemoryExcluded(root: string): Promise<void> {
@@ -58,7 +59,7 @@ export interface RepoConversationHistoryMessage {
 }
 
 export function repoMemoryConversationHistoryPath(root: string): string {
-  return join(repoMemoryDir(root), 'repo-view-history.json')
+  return joinWithRootStyle(repoMemoryDir(root), 'repo-view-history.json')
 }
 
 export async function readRepoMemory(root: string): Promise<{

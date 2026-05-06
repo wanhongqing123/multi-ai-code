@@ -16,6 +16,8 @@ import {
   diffModeLabel,
   type DiffMode
 } from './diffViewerConfig.js'
+import MarkdownDiffPreview from './MarkdownDiffPreview.js'
+import { buildMarkdownPreviewText, isMarkdownDiffPath } from './diffMarkdownPreview.js'
 import { getHorizontalTrackpadDelta } from './diffViewerScroll.js'
 
 export interface DiffAnnotation {
@@ -49,6 +51,8 @@ export interface DiffViewerDialogProps {
   onSelectedCommitChange: Dispatch<SetStateAction<string>>
   selectedFile: string
   onSelectedFileChange: Dispatch<SetStateAction<string>>
+  initialDiffText?: string
+  initialFileViewMode?: 'diff' | 'markdown-preview'
 }
 
 interface CommitEntry {
@@ -714,7 +718,9 @@ export default function DiffViewerDialog({
   selectedCommit,
   onSelectedCommitChange,
   selectedFile,
-  onSelectedFileChange
+  onSelectedFileChange,
+  initialDiffText = '',
+  initialFileViewMode = 'diff'
 }: DiffViewerDialogProps) {
   const setMode = useCallback(
     (next: SetStateAction<DiffMode>) =>
@@ -735,9 +741,12 @@ export default function DiffViewerDialog({
   const [commits, setCommits] = useState<CommitEntry[] | null>(null)
   const [commitsLoading, setCommitsLoading] = useState(false)
 
-  const [diffText, setDiffText] = useState<string>('')
+  const [diffText, setDiffText] = useState<string>(initialDiffText)
   const [diffLoading, setDiffLoading] = useState(false)
   const [diffError, setDiffError] = useState<string | null>(null)
+  const [fileViewMode, setFileViewMode] = useState<'diff' | 'markdown-preview'>(
+    initialFileViewMode
+  )
 
   // Controlled: annotations + generalNote live in the parent so unsent
   // batches persist across dialog close/reopen. Parent is responsible for
@@ -830,6 +839,15 @@ export default function DiffViewerDialog({
   // file. Keeping these at the top level lets jumpHunk work against virtual
   // indices (not DOM), so it stays correct even when rows are off-screen.
   const currentFile = visibleFiles[0]
+  const currentFileIsMarkdown = currentFile
+    ? isMarkdownDiffPath(currentFile.path)
+    : false
+  const markdownPreviewActive =
+    currentFileIsMarkdown && fileViewMode === 'markdown-preview'
+  const currentMarkdownPreview = useMemo(
+    () => (currentFile ? buildMarkdownPreviewText(currentFile.lines) : null),
+    [currentFile]
+  )
   const currentRows = useMemo<PairedRow[]>(
     () => (currentFile ? pairLines(currentFile.lines) : []),
     [currentFile]
@@ -892,12 +910,13 @@ export default function DiffViewerDialog({
   )
 
   const openSearch = useCallback(() => {
+    if (markdownPreviewActive) return
     setSearchOpen(true)
     requestAnimationFrame(() => {
       searchInputRef.current?.focus()
       searchInputRef.current?.select()
     })
-  }, [])
+  }, [markdownPreviewActive])
 
   const jumpSearch = useCallback(
     (dir: 'next' | 'prev') => {
@@ -920,6 +939,19 @@ export default function DiffViewerDialog({
     }
     setActiveSearchHit((prev) => Math.min(prev, searchHits.length - 1))
   }, [searchHits])
+
+  useEffect(() => {
+    if (markdownPreviewActive && searchOpen) {
+      setSearchOpen(false)
+      setSearchQuery('')
+    }
+  }, [markdownPreviewActive, searchOpen])
+
+  useEffect(() => {
+    if (!currentFileIsMarkdown && fileViewMode !== 'diff') {
+      setFileViewMode('diff')
+    }
+  }, [currentFileIsMarkdown, fileViewMode])
 
   useEffect(() => {
     if (!searchQuery.trim()) return
@@ -992,6 +1024,7 @@ export default function DiffViewerDialog({
    *  data-change-start in the row DOM). */
   const jumpHunk = useCallback(
     (dir: 'next' | 'prev') => {
+      if (markdownPreviewActive) return
       const pane = diffPaneRef.current
       if (!pane || changeStartIndices.length === 0) return
       // Locate the `.dv-file-rows` container inside the pane so we can
@@ -1027,7 +1060,7 @@ export default function DiffViewerDialog({
         pane.scrollTo({ top: Math.max(0, targetY(targetIdx)), behavior: 'smooth' })
       }
     },
-    [changeStartIndices]
+    [changeStartIndices, markdownPreviewActive]
   )
 
   // Capture text selection inside the RIGHT (new-code) column only —
@@ -1040,6 +1073,10 @@ export default function DiffViewerDialog({
   // crosses rows (gutter/sign columns are user-select:none, which can make
   // endpoint-based checks fall into the gaps).
   const handleMouseUp = useCallback(() => {
+    if (markdownPreviewActive) {
+      setDraft(null)
+      return
+    }
     const sel = window.getSelection()
     if (!sel || sel.isCollapsed || !diffPaneRef.current) {
       setDraft(null)
@@ -1131,7 +1168,7 @@ export default function DiffViewerDialog({
       x: buttonPos.x,
       y: buttonPos.y
     })
-  }, [])
+  }, [markdownPreviewActive])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -1536,6 +1573,7 @@ export default function DiffViewerDialog({
             <button
               className="dv-nav-btn"
               onClick={openSearch}
+              disabled={markdownPreviewActive}
               title="Search in current file (Ctrl+F)"
             >
               Find
@@ -1543,7 +1581,9 @@ export default function DiffViewerDialog({
             <button
               className="dv-nav-btn"
               onClick={() => jumpHunk('prev')}
-              disabled={diffLoading || visibleFiles.length === 0}
+              disabled={
+                diffLoading || visibleFiles.length === 0 || markdownPreviewActive
+              }
               title="跳到上一个改动块"
             >
               ↑ 上一个
@@ -1551,13 +1591,15 @@ export default function DiffViewerDialog({
             <button
               className="dv-nav-btn"
               onClick={() => jumpHunk('next')}
-              disabled={diffLoading || visibleFiles.length === 0}
+              disabled={
+                diffLoading || visibleFiles.length === 0 || markdownPreviewActive
+              }
               title="跳到下一个改动块"
             >
               ↓ 下一个
             </button>
           </div>
-          {searchOpen && (
+          {searchOpen && !markdownPreviewActive && (
             <div className="dv-search">
               <input
                 ref={searchInputRef}
@@ -1657,6 +1699,34 @@ export default function DiffViewerDialog({
             {!diffLoading && !diffError && currentFile && (
               <div className="dv-file">
                 <div className="dv-file-head">📄 {currentFile.path}</div>
+                {currentFileIsMarkdown && (
+                  <div className="dv-file-view-tabs" role="tablist" aria-label="File view mode">
+                    <button
+                      className={`dv-file-view-tab ${
+                        fileViewMode === 'diff' ? 'active' : ''
+                      }`}
+                      onClick={() => setFileViewMode('diff')}
+                    >
+                      Diff
+                    </button>
+                    <button
+                      className={`dv-file-view-tab ${
+                        fileViewMode === 'markdown-preview' ? 'active' : ''
+                      }`}
+                      onClick={() => setFileViewMode('markdown-preview')}
+                    >
+                      Markdown Preview
+                    </button>
+                  </div>
+                )}
+                {markdownPreviewActive && currentMarkdownPreview ? (
+                  <MarkdownDiffPreview
+                    filePath={currentFile.path}
+                    oldText={currentMarkdownPreview.oldText}
+                    newText={currentMarkdownPreview.newText}
+                  />
+                ) : (
+                  <>
                 <VirtualizedFileRows
                   filePath={currentFile.path}
                   rows={currentRows}
@@ -1677,6 +1747,8 @@ export default function DiffViewerDialog({
                   onMouseDown={startCodeResize}
                   title="拖拽调整左右代码列宽度"
                 />
+                  </>
+                )}
               </div>
             )}
 

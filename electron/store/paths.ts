@@ -1,6 +1,7 @@
 import { promises as fs } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
+import { joinWithRootStyle } from '../pathStyle.js'
 
 export function rootDir(): string {
   return process.env.MULTI_AI_ROOT ?? join(homedir(), 'MultiAICode')
@@ -23,7 +24,7 @@ export function artifactsDir(projectId: string): string {
 }
 
 export function designArchiveDir(targetRepo: string): string {
-  return join(targetRepo.replace(/[\/\\]+$/, ''), '.multi-ai-code', 'designs')
+  return joinWithRootStyle(targetRepo, '.multi-ai-code', 'designs')
 }
 
 /**

@@ -20,6 +20,13 @@ describe('DiffViewerDialog', () => {
         onSelectedCommitChange={vi.fn()}
         selectedFile=""
         onSelectedFileChange={vi.fn()}
+        onJudgeExternalReviewItem={vi.fn(
+          async () =>
+            ({
+              ok: true,
+              result: { decision: 'accepted', reason: 'Looks good.' }
+            }) as const
+        )}
       />
     )
 
@@ -43,6 +50,13 @@ describe('DiffViewerDialog', () => {
         onSelectedCommitChange={vi.fn()}
         selectedFile="docs/guide.md"
         onSelectedFileChange={vi.fn()}
+        onJudgeExternalReviewItem={vi.fn(
+          async () =>
+            ({
+              ok: true,
+              result: { decision: 'accepted', reason: 'Looks good.' }
+            }) as const
+        )}
         initialDiffText={[
           'diff --git a/docs/guide.md b/docs/guide.md',
           '--- a/docs/guide.md',
@@ -63,5 +77,35 @@ describe('DiffViewerDialog', () => {
     expect(markup).toContain('<li>old item</li>')
     expect(markup).toContain('<li>new item</li>')
     expect(markup).not.toContain('dv-file-rows')
+  })
+
+  it('renders external review panel section in diff dialog', () => {
+    const markup = renderToStaticMarkup(
+      <DiffViewerDialog
+        cwd="E:/OpenSource/multi-ai-code"
+        onClose={vi.fn()}
+        onSubmit={vi.fn()}
+        sessionRunning={true}
+        annotations={[]}
+        onAnnotationsChange={vi.fn()}
+        generalNote=""
+        onGeneralNoteChange={vi.fn()}
+        mode="working"
+        onModeChange={vi.fn()}
+        selectedCommit=""
+        onSelectedCommitChange={vi.fn()}
+        selectedFile=""
+        onSelectedFileChange={vi.fn()}
+        onJudgeExternalReviewItem={vi.fn(
+          async () =>
+            ({
+              ok: true,
+              result: { decision: 'accepted', reason: 'Looks good.' }
+            }) as const
+        )}
+      />
+    )
+
+    expect(markup).toContain('dv-external-review')
   })
 })

@@ -20,6 +20,7 @@ import FilePreviewDialog from './components/FilePreviewDialog'
 import PlanReviewDialog, { type Annotation } from './components/PlanReviewDialog'
 import DiffViewerDialog, { type DiffAnnotation } from './components/DiffViewerDialog'
 import type { DiffMode } from './components/diffViewerConfig'
+import type { ExternalReviewSuggestion } from './components/externalAiReview'
 
 const LAST_PROJECT_KEY = 'multi-ai-code.lastProjectId'
 
@@ -649,6 +650,26 @@ export default function App() {
     [sessionId, sessionStatus, planName, getPlanAbsPath]
   )
 
+  const judgeExternalReviewItem = useCallback(
+    async (suggestion: ExternalReviewSuggestion) => {
+      if (!sessionId || sessionStatus !== 'running') {
+        return { ok: false as const, error: 'session not running' }
+      }
+      const planAbsPath = getPlanAbsPath(planName.trim())
+      return window.api.cc.judgeExternalReview({
+        sessionId,
+        planAbsPath,
+        suggestion: {
+          rawText: suggestion.rawText,
+          pathHint: suggestion.pathHint,
+          lineHint: suggestion.lineHint,
+          linkedDiffFile: suggestion.linkedDiffFile
+        }
+      })
+    },
+    [sessionId, sessionStatus, getPlanAbsPath, planName]
+  )
+
 
   return (
     <div className="app">
@@ -925,6 +946,7 @@ export default function App() {
           onSelectedCommitChange={setDiffSelectedCommit}
           selectedFile={diffSelectedFile}
           onSelectedFileChange={setDiffSelectedFile}
+          onJudgeExternalReviewItem={judgeExternalReviewItem}
         />
       )}
       {showOnboarding && (

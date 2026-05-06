@@ -16,9 +16,15 @@ import {
   diffModeLabel,
   type DiffMode
 } from './diffViewerConfig.js'
+import ExternalAiReviewPanel from './ExternalAiReviewPanel.js'
 import MarkdownDiffPreview from './MarkdownDiffPreview.js'
 import { buildMarkdownPreviewText, isMarkdownDiffPath } from './diffMarkdownPreview.js'
 import { getHorizontalTrackpadDelta } from './diffViewerScroll.js'
+import {
+  matchSuggestionsToDiffFiles,
+  parseExternalReviewSuggestions,
+  type ExternalReviewSuggestion
+} from './externalAiReview.js'
 
 export interface DiffAnnotation {
   id: string
@@ -51,6 +57,13 @@ export interface DiffViewerDialogProps {
   onSelectedCommitChange: Dispatch<SetStateAction<string>>
   selectedFile: string
   onSelectedFileChange: Dispatch<SetStateAction<string>>
+  onJudgeExternalReviewItem: (suggestion: ExternalReviewSuggestion) => Promise<
+    | {
+        ok: true
+        result: { decision: 'accepted' | 'rejected' | 'needs-human'; reason: string }
+      }
+    | { ok: false; error: string }
+  >
   initialDiffText?: string
   initialFileViewMode?: 'diff' | 'markdown-preview'
 }
@@ -719,6 +732,7 @@ export default function DiffViewerDialog({
   onSelectedCommitChange,
   selectedFile,
   onSelectedFileChange,
+  onJudgeExternalReviewItem,
   initialDiffText = '',
   initialFileViewMode = 'diff'
 }: DiffViewerDialogProps) {
@@ -747,6 +761,11 @@ export default function DiffViewerDialog({
   const [fileViewMode, setFileViewMode] = useState<'diff' | 'markdown-preview'>(
     initialFileViewMode
   )
+  const [externalReviewSourceLabel, setExternalReviewSourceLabel] = useState('')
+  const [externalReviewSuggestions, setExternalReviewSuggestions] = useState<
+    ExternalReviewSuggestion[]
+  >([])
+  const [externalReviewBusy, setExternalReviewBusy] = useState(false)
 
   // Controlled: annotations + generalNote live in the parent so unsent
   // batches persist across dialog close/reopen. Parent is responsible for
@@ -822,6 +841,87 @@ export default function DiffViewerDialog({
         : files,
     [files, deferredSelectedFile]
   )
+  const importExternalReview = useCallback(async () => {
+    const pick = await window.api.dialog.pickTextFile({
+      title: '选择外部 AI review 文件'
+    })
+    if (pick.canceled) return
+    if (pick.error || !pick.path || pick.content === undefined) {
+      setDiffError(pick.error ?? 'Failed to read external review file.')
+      return
+    }
+
+    const parsed = parseExternalReviewSuggestions(
+      pick.content,
+      pick.path.split(/[\\/]/).pop() ?? pick.path
+    )
+    const matched = matchSuggestionsToDiffFiles(
+      parsed,
+      files.map((file) => ({ path: file.path }))
+    )
+    setExternalReviewSourceLabel(pick.path)
+    setExternalReviewSuggestions(matched)
+  }, [files])
+
+  const judgeOneExternalReview = useCallback(
+    async (id: string) => {
+      const target = externalReviewSuggestions.find((item) => item.id === id)
+      if (!target) return
+      setExternalReviewBusy(true)
+      try {
+        const res = await onJudgeExternalReviewItem(target)
+        setExternalReviewSuggestions((prev) =>
+          prev.map((item) => {
+            if (item.id !== id) return item
+            if (res.ok) {
+              return {
+                ...item,
+                status: res.result.decision,
+                decisionReason: res.result.reason
+              }
+            }
+            return {
+              ...item,
+              status: 'error',
+              decisionReason: res.error || 'Failed to judge this suggestion.'
+            }
+          })
+        )
+      } finally {
+        setExternalReviewBusy(false)
+      }
+    },
+    [externalReviewSuggestions, onJudgeExternalReviewItem]
+  )
+
+  const judgeAllExternalReviews = useCallback(async () => {
+    if (externalReviewSuggestions.length === 0) return
+    setExternalReviewBusy(true)
+    try {
+      for (const item of externalReviewSuggestions) {
+        const res = await onJudgeExternalReviewItem(item)
+        setExternalReviewSuggestions((prev) =>
+          prev.map((current) => {
+            if (current.id !== item.id) return current
+            if (res.ok) {
+              return {
+                ...current,
+                status: res.result.decision,
+                decisionReason: res.result.reason
+              }
+            }
+            return {
+              ...current,
+              status: 'error',
+              decisionReason: res.error || 'Failed to judge this suggestion.'
+            }
+          })
+        )
+      }
+    } finally {
+      setExternalReviewBusy(false)
+    }
+  }, [externalReviewSuggestions, onJudgeExternalReviewItem])
 
   useEffect(() => {
     if (files.length === 0) return
@@ -1777,6 +1877,20 @@ export default function DiffViewerDialog({
                 批注 <span className="dv-file-count">{annotations.length}</span>
               </span>
             </div>
+            <ExternalAiReviewPanel
+              sourceLabel={externalReviewSourceLabel}
+              suggestions={externalReviewSuggestions}
+              busy={externalReviewBusy}
+              onImport={() => {
+                void importExternalReview()
+              }}
+              onJudgeOne={(id) => {
+                void judgeOneExternalReview(id)
+              }}
+              onJudgeAll={() => {
+                void judgeAllExternalReviews()
+              }}
+            />
             {annotations.length === 0 ? (
               <div className="dv-side-empty-msg">
                 暂无批注 — 在右侧代码区选中文本后点击「✏ 标注」添加

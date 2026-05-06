@@ -60,6 +60,22 @@ export interface ArtifactRecord {
   created_at: string
 }
 
+export interface ExternalReviewDecision {
+  decision: 'accepted' | 'rejected' | 'needs-human'
+  reason: string
+}
+
+export interface JudgeExternalReviewRequest {
+  sessionId: string
+  planAbsPath: string
+  suggestion: {
+    rawText: string
+    pathHint: string | null
+    lineHint: string | null
+    linkedDiffFile: { path: string } | null
+  }
+}
+
 
 const api = {
   /** Resolve a DataTransfer File to its absolute filesystem path (Electron 32+). */
@@ -400,6 +416,11 @@ const api = {
         ok: boolean
         error?: string
       }>,
+    judgeExternalReview: (req: JudgeExternalReviewRequest) =>
+      ipcRenderer.invoke('cc:judge-external-review', req) as Promise<
+        | { ok: true; result: ExternalReviewDecision }
+        | { ok: false; error: string }
+      >,
     killAll: () =>
       ipcRenderer.invoke('cc:kill-all') as Promise<{ ok: boolean; killed: string[] }>,
     list: () => ipcRenderer.invoke('cc:list') as Promise<string[]>,

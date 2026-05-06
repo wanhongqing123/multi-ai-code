@@ -1,6 +1,7 @@
 import { promises as fs } from 'fs'
 import { join, dirname, isAbsolute } from 'path'
 import { fileURLToPath } from 'url'
+import { joinWithRootStyle } from '../pathStyle.js'
 import { designArchiveDir } from '../store/paths.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -23,7 +24,7 @@ export function planArtifactPath(
 ): string | undefined {
   if (!targetRepo) return undefined
   const safe = label && label.trim() ? sanitizeLabel(label) : 'design'
-  return join(designArchiveDir(targetRepo), `${safe}.md`)
+  return joinWithRootStyle(designArchiveDir(targetRepo), `${safe}.md`)
 }
 
 /**

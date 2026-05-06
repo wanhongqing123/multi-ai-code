@@ -3192,6 +3192,89 @@ html, body, #root {
   z-index: 2;
 }
 
+.dv-file-view-tabs {
+  display: flex;
+  gap: var(--mac-sp-2);
+  padding: var(--mac-sp-2) var(--mac-sp-3);
+  border-bottom: 1px solid var(--mac-border-subtle);
+  background: color-mix(in srgb, var(--mac-surface-raised) 58%, var(--mac-surface) 42%);
+  position: sticky;
+  top: 37px;
+  z-index: 1;
+}
+
+.dv-file-view-tab {
+  border: 1px solid var(--mac-border);
+  background: var(--mac-surface);
+  color: var(--mac-fg-muted);
+  border-radius: var(--mac-r-pill);
+  padding: 6px 12px;
+  font-size: var(--mac-text-xs);
+  font-weight: var(--mac-weight-medium);
+}
+
+.dv-file-view-tab:hover {
+  background: var(--mac-surface-raised);
+  color: var(--mac-fg);
+}
+
+.dv-file-view-tab.active {
+  background: var(--mac-primary-soft);
+  border-color: color-mix(in srgb, var(--mac-primary) 40%, var(--mac-border) 60%);
+  color: var(--mac-primary);
+}
+
+.dv-md-preview {
+  padding: var(--mac-sp-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--mac-sp-3);
+}
+
+.dv-md-preview-title {
+  font-size: var(--mac-text-xs);
+  font-weight: var(--mac-weight-medium);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mac-fg-subtle);
+}
+
+.dv-md-preview-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--mac-sp-3);
+  align-items: start;
+}
+
+.dv-md-preview-col {
+  min-width: 0;
+  border: 1px solid var(--mac-border-subtle);
+  border-radius: var(--mac-r-lg);
+  overflow: hidden;
+  background: var(--mac-surface);
+}
+
+.dv-md-preview-head {
+  padding: var(--mac-sp-2) var(--mac-sp-3);
+  background: var(--mac-surface-raised);
+  border-bottom: 1px solid var(--mac-border-subtle);
+  color: var(--mac-fg);
+  font-size: var(--mac-text-xs);
+  font-weight: var(--mac-weight-medium);
+}
+
+.dv-md-preview-body {
+  padding: var(--mac-sp-3);
+}
+
+.dv-md-preview-empty {
+  padding: var(--mac-sp-5) var(--mac-sp-3);
+  color: var(--mac-fg-subtle);
+  font-size: var(--mac-text-sm);
+  text-align: center;
+  background: linear-gradient(180deg, var(--mac-bg-subtle), var(--mac-surface));
+}
+
 /* ---- side-by-side layout ---- */
 .dv-scroll-region {
   display: flex;
@@ -3582,6 +3665,9 @@ html, body, #root {
 
 @media (max-width: 1000px) {
   .dv-body {
+    grid-template-columns: 1fr;
+  }
+  .dv-md-preview-grid {
     grid-template-columns: 1fr;
   }
   .dv-pane-splitter,

@@ -6,6 +6,12 @@ import {
   shouldAutoAcceptCodexTrustPrompt,
   isCodexReadyForPromptInjection
 } from './codexTrust.js'
+import {
+  buildExternalReviewPrompt,
+  extractTaggedJsonReply,
+  type ExternalReviewDecision,
+  type ExternalReviewSuggestion
+} from './structuredReply.js'
 
 import {
   buildSystemPrompt
@@ -106,7 +112,23 @@ interface Session {
   dumpStream?: WriteStream | null
 }
 
+interface ExternalReviewJudgeRequest {
+  sessionId: string
+  planAbsPath: string
+  suggestion: ExternalReviewSuggestion
+}
+
+interface PendingExternalReview {
+  buffer: string
+  resolve: (value: ExternalReviewDecision) => void
+  reject: (error: Error) => void
+  timeout: NodeJS.Timeout
+}
+
 const sessions = new Map<string, Session>()
+const pendingExternalReviews = new Map<string, PendingExternalReview>()
+
+const EXTERNAL_REVIEW_TIMEOUT_MS = 90_000
 
 function broadcast(channel: string, payload: unknown): void {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -153,6 +175,30 @@ async function sendMessage(proc: PtyCCProcess, text: string): Promise<void> {
   proc.write('\r')
   await sleep(150)
   proc.write('\r')
+}
+
+function settlePendingExternalReview(
+  sessionId: string,
+  result:
+    | { kind: 'resolve'; value: ExternalReviewDecision }
+    | { kind: 'reject'; error: Error }
+): void {
+  const pending = pendingExternalReviews.get(sessionId)
+  if (!pending) return
+  clearTimeout(pending.timeout)
+  pendingExternalReviews.delete(sessionId)
+  if (result.kind === 'resolve') {
+    pending.resolve(result.value)
+    return
+  }
+  pending.reject(result.error)
+}
+
+function rejectPendingExternalReview(sessionId: string, message: string): void {
+  settlePendingExternalReview(sessionId, {
+    kind: 'reject',
+    error: new Error(message)
+  })
 }
 
 export function registerPtyIpc(): void {
@@ -231,10 +277,34 @@ export function registerPtyIpc(): void {
           session.codexPromptReady = true
         }
       }
+
+      const pending = pendingExternalReviews.get(req.sessionId)
+      if (pending) {
+        pending.buffer = (pending.buffer + chunk).slice(-128000)
+        try {
+          const parsed = extractTaggedJsonReply(pending.buffer)
+          if (parsed) {
+            settlePendingExternalReview(req.sessionId, {
+              kind: 'resolve',
+              value: parsed
+            })
+          }
+        } catch (err) {
+          settlePendingExternalReview(req.sessionId, {
+            kind: 'reject',
+            error: err instanceof Error ? err : new Error(String(err))
+          })
+        }
+      }
+
       writePtyDump(dumpStream, chunk)
       broadcast('cc:data', { sessionId: req.sessionId, chunk })
     })
     proc.on('exit', (info: { exitCode: number; signal?: number }) => {
+      rejectPendingExternalReview(
+        req.sessionId,
+        `external review session ended before a structured reply arrived (exit ${info.exitCode})`
+      )
       closePtyDump(dumpStream, `exit(code=${info.exitCode})`)
       broadcast('cc:exit', { sessionId: req.sessionId, ...info })
       sessions.delete(req.sessionId)
@@ -327,6 +397,10 @@ export function registerPtyIpc(): void {
     const s = sessions.get(sessionId)
     if (!s) return { ok: false, error: 'no session' }
     s.proc.kill()
+    rejectPendingExternalReview(
+      sessionId,
+      'external review session was terminated before a structured reply arrived'
+    )
     closePtyDump(s.dumpStream, 'kill')
     sessions.delete(sessionId)
     return { ok: true }
@@ -356,12 +430,68 @@ export function registerPtyIpc(): void {
     }
   )
 
+  ipcMain.handle(
+    'cc:judge-external-review',
+    async (_e, req: ExternalReviewJudgeRequest) => {
+      const s = sessions.get(req.sessionId)
+      if (!s) return { ok: false, error: 'no session' }
+      if (pendingExternalReviews.has(req.sessionId)) {
+        return { ok: false, error: 'external review already pending for this session' }
+      }
+
+      try {
+        const result = await new Promise<ExternalReviewDecision>(async (resolve, reject) => {
+          const timeout = setTimeout(() => {
+            settlePendingExternalReview(req.sessionId, {
+              kind: 'reject',
+              error: new Error('Timed out waiting for external review decision.')
+            })
+          }, EXTERNAL_REVIEW_TIMEOUT_MS)
+
+          pendingExternalReviews.set(req.sessionId, {
+            buffer: '',
+            resolve,
+            reject,
+            timeout
+          })
+
+          try {
+            await sendMessage(
+              s.proc,
+              buildExternalReviewPrompt({
+                planAbsPath: req.planAbsPath,
+                suggestion: req.suggestion
+              })
+            )
+          } catch (err) {
+            settlePendingExternalReview(req.sessionId, {
+              kind: 'reject',
+              error: err instanceof Error ? err : new Error(String(err))
+            })
+          }
+        })
+
+        return { ok: true, result }
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err)
+        }
+      }
+    }
+  )
+
 }
 
 export function killAllSessions(): void {
   for (const [, s] of sessions) {
     s.proc.kill()
+    rejectPendingExternalReview(
+      s.sessionId,
+      'external review session was terminated before a structured reply arrived'
+    )
     closePtyDump(s.dumpStream, 'killAll')
   }
+  pendingExternalReviews.clear()
   sessions.clear()
 }

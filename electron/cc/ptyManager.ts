@@ -484,12 +484,14 @@ export function registerPtyIpc(): void {
 }
 
 export function killAllSessions(): void {
-  for (const [, s] of sessions) {
-    s.proc.kill()
+  for (const sessionId of pendingExternalReviews.keys()) {
     rejectPendingExternalReview(
-      s.sessionId,
+      sessionId,
       'external review session was terminated before a structured reply arrived'
     )
+  }
+  for (const [, s] of sessions) {
+    s.proc.kill()
     closePtyDump(s.dumpStream, 'killAll')
   }
   pendingExternalReviews.clear()

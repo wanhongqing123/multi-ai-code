@@ -10,9 +10,13 @@ export interface ExternalReviewDecision {
 
 export interface ExternalReviewSuggestion {
   rawText: string
-  pathHint?: string
-  lineHint?: number
-  linkedDiffFile?: string
+  pathHint: string | null
+  lineHint: string | null
+  linkedDiffFile: ExternalReviewDiffFile | null
+}
+
+export interface ExternalReviewDiffFile {
+  path: string
 }
 
 export interface ExternalReviewPromptArgs {
@@ -30,6 +34,8 @@ export function buildExternalReviewPrompt({
   planAbsPath,
   suggestion
 }: ExternalReviewPromptArgs): string {
+  const linkedDiffPath = suggestion.linkedDiffFile?.path ?? '(none)'
+
   return [
     'Review the external review suggestion against the current plan and terminal context.',
     `Plan file: ${planAbsPath}`,
@@ -39,16 +45,15 @@ export function buildExternalReviewPrompt({
     '',
     `Path hint: ${suggestion.pathHint ?? '(none)'}`,
     `Line hint: ${suggestion.lineHint ?? '(none)'}`,
-    `Linked diff file: ${suggestion.linkedDiffFile ?? '(none)'}`,
+    `Linked diff file: ${linkedDiffPath}`,
     '',
     'Respond with exactly one decision.',
-    'Return a single JSON object wrapped by the stable sentinels below.',
-    'Do not include markdown fences or extra commentary inside the block.',
+    'Return a single JSON object wrapped by the stable sentinels listed below.',
+    `Start sentinel line: ${JSON_REPLY_START}`,
+    `End sentinel line: ${JSON_REPLY_END}`,
+    'Do not include markdown fences or extra commentary.',
+    'Only place your final decision JSON between those sentinel lines.',
     '{"decision":"accepted|rejected|needs-human","reason":"..."}',
-    '',
-    JSON_REPLY_START,
-    '{"decision":"accepted|rejected|needs-human","reason":"..."}',
-    JSON_REPLY_END
   ].join('\n')
 }
 

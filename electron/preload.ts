@@ -70,9 +70,9 @@ export interface JudgeExternalReviewRequest {
   planAbsPath: string
   suggestion: {
     rawText: string
-    pathHint?: string
-    lineHint?: number
-    linkedDiffFile?: string
+    pathHint: string | null
+    lineHint: string | null
+    linkedDiffFile: { path: string } | null
   }
 }
 

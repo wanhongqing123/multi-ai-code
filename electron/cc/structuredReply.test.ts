@@ -3,20 +3,22 @@ import {
   JSON_REPLY_END,
   JSON_REPLY_START,
   buildExternalReviewPrompt,
-  extractTaggedJsonReply
+  extractTaggedJsonReply,
+  type ExternalReviewPromptArgs
 } from './structuredReply.js'
 
 describe('buildExternalReviewPrompt', () => {
-  it('builds a tagged prompt that requests a single JSON decision block', () => {
-    const prompt = buildExternalReviewPrompt({
+  it('builds a prompt that requests a single tagged JSON decision block without embedding a tagged sample reply', () => {
+    const args: ExternalReviewPromptArgs = {
       planAbsPath: 'C:/plans/review-plan.md',
       suggestion: {
         rawText: 'Consider accepting the patch after verifying the null guard.',
         pathHint: 'src/app.ts',
-        lineHint: 42,
-        linkedDiffFile: 'C:/tmp/review.diff'
+        lineHint: '42-45',
+        linkedDiffFile: { path: 'C:/tmp/review.diff' }
       }
-    })
+    }
+    const prompt = buildExternalReviewPrompt(args)
 
     expect(prompt).toContain(JSON_REPLY_START)
     expect(prompt).toContain(JSON_REPLY_END)
@@ -25,8 +27,29 @@ describe('buildExternalReviewPrompt', () => {
     expect(prompt).toContain('single JSON object')
     expect(prompt).toContain('C:/plans/review-plan.md')
     expect(prompt).toContain('src/app.ts')
-    expect(prompt).toContain('42')
+    expect(prompt).toContain('42-45')
     expect(prompt).toContain('C:/tmp/review.diff')
+    expect(prompt).not.toContain(
+      `${JSON_REPLY_START}\n{"decision":"accepted|rejected|needs-human","reason":"..."}\n${JSON_REPLY_END}`
+    )
+  })
+
+  it('handles the renderer suggestion shape with nullable fields', () => {
+    const args: ExternalReviewPromptArgs = {
+      planAbsPath: 'C:/plans/review-plan.md',
+      suggestion: {
+        rawText: 'This suggestion has no matched path yet.',
+        pathHint: null,
+        lineHint: null,
+        linkedDiffFile: null
+      }
+    }
+
+    const prompt = buildExternalReviewPrompt(args)
+
+    expect(prompt).toContain('Path hint: (none)')
+    expect(prompt).toContain('Line hint: (none)')
+    expect(prompt).toContain('Linked diff file: (none)')
   })
 })
 

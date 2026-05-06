@@ -408,7 +408,14 @@ export function registerPtyIpc(): void {
 
   ipcMain.handle('cc:kill-all', () => {
     const killed = Array.from(sessions.keys())
+    for (const sessionId of pendingExternalReviews.keys()) {
+      rejectPendingExternalReview(
+        sessionId,
+        'external review session was terminated before a structured reply arrived'
+      )
+    }
     for (const [, s] of sessions) s.proc.kill()
+    pendingExternalReviews.clear()
     sessions.clear()
     return { ok: true, killed }
   })

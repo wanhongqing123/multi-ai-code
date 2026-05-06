@@ -3086,6 +3086,105 @@ html, body, #root {
   background: var(--mac-surface-raised);
 }
 
+.dv-external-review {
+  border-bottom: 1px solid var(--mac-border-subtle);
+  padding: var(--mac-sp-2) var(--mac-sp-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--mac-sp-2);
+}
+
+.dv-external-review-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--mac-sp-2);
+}
+
+.dv-external-review-title {
+  font-size: var(--mac-text-xs);
+  color: var(--mac-fg);
+  font-weight: var(--mac-weight-semibold);
+}
+
+.dv-external-review-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--mac-sp-1);
+}
+
+.dv-external-review-source {
+  font-size: var(--mac-text-mono);
+  color: var(--mac-fg-subtle);
+  word-break: break-all;
+}
+
+.dv-external-review-empty {
+  font-size: var(--mac-text-xs);
+  color: var(--mac-fg-subtle);
+}
+
+.dv-external-review-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--mac-sp-2);
+}
+
+.dv-external-review-item {
+  border: 1px solid var(--mac-border-subtle);
+  border-radius: var(--mac-radius-sm);
+  padding: var(--mac-sp-2);
+  background: var(--mac-surface);
+  display: flex;
+  flex-direction: column;
+  gap: var(--mac-sp-1);
+}
+
+.dv-external-review-item.status-accepted {
+  border-color: var(--mac-success);
+}
+
+.dv-external-review-item.status-rejected {
+  border-color: var(--mac-danger);
+}
+
+.dv-external-review-item.status-needs-human {
+  border-color: var(--mac-warn);
+}
+
+.dv-external-review-item.status-error {
+  border-color: var(--mac-danger);
+  background: var(--mac-danger-soft);
+}
+
+.dv-external-review-item-text {
+  font-size: var(--mac-text-xs);
+  line-height: 1.5;
+  color: var(--mac-fg);
+}
+
+.dv-external-review-item-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--mac-sp-2);
+  font-size: var(--mac-text-mono);
+  color: var(--mac-fg-subtle);
+}
+
+.dv-external-review-item-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.dv-external-review-item-reason {
+  font-size: var(--mac-text-xs);
+  color: var(--mac-fg-muted);
+}
+
 .dv-side-empty-msg {
   padding: var(--mac-sp-4) var(--mac-sp-3);
   color: var(--mac-fg-subtle);

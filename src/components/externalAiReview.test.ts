@@ -63,11 +63,11 @@ describe('parseExternalReviewSuggestions', () => {
     )
   })
 
-  it('uses unique ids across repeated parse calls with the same source label', () => {
+  it('assigns deterministic ids for the same input', () => {
     const first = parseExternalReviewSuggestions('- item 1', 'Imported review')
     const second = parseExternalReviewSuggestions('- item 1', 'Imported review')
 
-    expect(first[0].id).not.toBe(second[0].id)
+    expect(first[0].id).toBe(second[0].id)
   })
 })
 

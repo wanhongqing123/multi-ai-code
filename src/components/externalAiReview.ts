@@ -17,8 +17,6 @@ const BULLET_LINE_RE = /^(\s*)(?:[-*]|\d+\.)\s+(.*)$/
 const HEADING_LINE_RE = /^\s*#{1,6}\s+\S/
 const PATH_HINT_RE = /(?:\.{1,2}[\\/])?[A-Za-z0-9_.-]+(?:[\\/][A-Za-z0-9_.-]+)+\.[A-Za-z0-9]+/g
 
-let externalReviewParseRun = 0
-
 function normalizeText(text: string): string {
   return text.replace(/\r\n?/g, '\n')
 }
@@ -61,14 +59,24 @@ function slugify(value: string): string {
   return slug || 'source'
 }
 
-function buildSuggestionId(sourceLabel: string, index: number): string {
-  externalReviewParseRun += 1
-  return `external-review-${slugify(sourceLabel)}-${externalReviewParseRun}-${index + 1}`
+function hashSuggestionSeed(value: string): string {
+  let hash = 2166136261
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+
+  return (hash >>> 0).toString(36)
+}
+
+function buildSuggestionId(sourceLabel: string, rawText: string, index: number): string {
+  return `external-review-${slugify(sourceLabel)}-${index + 1}-${hashSuggestionSeed(`${sourceLabel}\n${rawText}`)}`
 }
 
 function buildSuggestion(sourceLabel: string, rawText: string, index: number): ExternalReviewSuggestion {
   return {
-    id: buildSuggestionId(sourceLabel, index),
+    id: buildSuggestionId(sourceLabel, rawText, index),
     sourceLabel,
     rawText,
     pathHint: extractPathHint(rawText),

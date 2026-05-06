@@ -1,4 +1,4 @@
-﻿export interface ExternalReviewDiffFile {
+export interface ExternalReviewDiffFile {
   path: string
 }
 
@@ -16,6 +16,8 @@ export interface ExternalReviewSuggestion {
 const BULLET_LINE_RE = /^(\s*)(?:[-*]|\d+\.)\s+(.*)$/
 const HEADING_LINE_RE = /^\s*#{1,6}\s+\S/
 const PATH_HINT_RE = /(?:\.{1,2}[\\/])?[A-Za-z0-9_.-]+(?:[\\/][A-Za-z0-9_.-]+)+\.[A-Za-z0-9]+/g
+
+let externalReviewParseRun = 0
 
 function normalizeText(text: string): string {
   return text.replace(/\r\n?/g, '\n')
@@ -60,7 +62,8 @@ function slugify(value: string): string {
 }
 
 function buildSuggestionId(sourceLabel: string, index: number): string {
-  return `external-review-${slugify(sourceLabel)}-${index + 1}`
+  externalReviewParseRun += 1
+  return `external-review-${slugify(sourceLabel)}-${externalReviewParseRun}-${index + 1}`
 }
 
 function buildSuggestion(sourceLabel: string, rawText: string, index: number): ExternalReviewSuggestion {
@@ -101,7 +104,11 @@ function splitBulletBlocks(text: string): string[] {
       continue
     }
 
-    if (sawBullet && current.length === 0 && !line.trim()) {
+    if (!sawBullet) {
+      continue
+    }
+
+    if (current.length === 0 && !line.trim()) {
       continue
     }
 
@@ -151,17 +158,23 @@ export function matchSuggestionsToDiffFiles<T extends ExternalReviewDiffFile>(
     }
 
     const normalizedHint = normalizePathForMatch(suggestion.pathHint)
-    const linkedDiffFile =
-      diffFiles.find((diffFile) => {
-        const normalizedPath = normalizePathForMatch(diffFile.path)
-        return (
-          normalizedPath === normalizedHint || normalizedPath.endsWith(`/${normalizedHint}`)
-        )
-      }) ?? null
+    const exactMatch =
+      diffFiles.find((diffFile) => normalizePathForMatch(diffFile.path) === normalizedHint) ?? null
+    if (exactMatch) {
+      return {
+        ...suggestion,
+        linkedDiffFile: exactMatch
+      }
+    }
+
+    const suffixMatches = diffFiles.filter((diffFile) => {
+      const normalizedPath = normalizePathForMatch(diffFile.path)
+      return normalizedPath.endsWith(`/${normalizedHint}`)
+    })
 
     return {
       ...suggestion,
-      linkedDiffFile
+      linkedDiffFile: suffixMatches.length === 1 ? suffixMatches[0] : null
     }
   })
 }

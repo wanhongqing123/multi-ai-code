@@ -33,6 +33,16 @@ describe('parseExternalReviewSuggestions', () => {
     )
   })
 
+  it('ignores intro text when bullet structure is present', () => {
+    const suggestions = parseExternalReviewSuggestions(
+      'Summary\n\n- item 1\n- item 2',
+      'Claude review'
+    )
+
+    expect(suggestions).toHaveLength(2)
+    expect(suggestions.map((suggestion) => suggestion.rawText)).toEqual(['item 1', 'item 2'])
+  })
+
   it('splits blank-line paragraphs when the review is not bullet structured', () => {
     const suggestions = parseExternalReviewSuggestions(
       'First paragraph about src/App.tsx line 120-128.\n\nSecond paragraph.\n\n# Heading only\n\nThird paragraph.',
@@ -52,6 +62,13 @@ describe('parseExternalReviewSuggestions', () => {
       })
     )
   })
+
+  it('uses unique ids across repeated parse calls with the same source label', () => {
+    const first = parseExternalReviewSuggestions('- item 1', 'Imported review')
+    const second = parseExternalReviewSuggestions('- item 1', 'Imported review')
+
+    expect(first[0].id).not.toBe(second[0].id)
+  })
 })
 
 describe('matchSuggestionsToDiffFiles', () => {
@@ -65,5 +82,27 @@ describe('matchSuggestionsToDiffFiles', () => {
     const matched = matchSuggestionsToDiffFiles(suggestions, diffFiles)
 
     expect(matched[0].linkedDiffFile).toBe(diffFiles[0])
+  })
+
+  it('does not link ambiguous suffix matches arbitrarily', () => {
+    const suggestions = parseExternalReviewSuggestions('- Fix src/App.tsx', 'Claude review')
+    const diffFiles = [{ path: 'packages/a/src/App.tsx' }, { path: 'packages/b/src/App.tsx' }]
+
+    const matched = matchSuggestionsToDiffFiles(suggestions, diffFiles)
+
+    expect(matched[0].linkedDiffFile).toBe(null)
+  })
+
+  it('prefers exact match over suffix candidates', () => {
+    const suggestions = parseExternalReviewSuggestions('- Fix src/App.tsx', 'Claude review')
+    const diffFiles = [
+      { path: 'packages/a/src/App.tsx' },
+      { path: 'src/App.tsx' },
+      { path: 'packages/b/src/App.tsx' }
+    ]
+
+    const matched = matchSuggestionsToDiffFiles(suggestions, diffFiles)
+
+    expect(matched[0].linkedDiffFile).toBe(diffFiles[1])
   })
 })

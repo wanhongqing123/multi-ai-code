@@ -61,5 +61,8 @@ lerna-debug.log*
 # Superpowers brainstorming / visual-companion session state
 .superpowers/
 
+# Local git worktrees
+.worktrees/
+
 # Multi-AI Code local design/memory artifacts
 .multi-ai-code/

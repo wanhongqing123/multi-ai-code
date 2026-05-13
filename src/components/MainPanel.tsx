@@ -21,6 +21,7 @@ import {
   installPasteHandler,
   pasteFromClipboard
 } from './terminalClipboard.js'
+import { buildDroppedFileInput } from './terminalDragDrop.js'
 
 export interface MainPanelProps {
   sessionId: string
@@ -97,6 +98,10 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
     const detachPaste = installPasteHandler(containerRef.current, {
       sessionId: props.sessionId,
       writeInput: window.api.cc.write,
+      writePastedText: async (sessionId, data) => {
+        const res = await window.api.cc.paste(sessionId, data)
+        if (!res.ok) throw new Error(res.error ?? 'paste failed')
+      },
       saveImage: window.api.clipboard.saveImage
     })
     unsubRef.current.push(detachPaste)
@@ -152,13 +157,12 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
     (e: React.DragEvent<HTMLDivElement>) => {
       e.preventDefault()
       setDragActive(false)
-      const files = Array.from(e.dataTransfer.files)
-      if (files.length === 0) return
-      const paths = files
-        .map((f) => (f as unknown as { path: string }).path)
-        .filter(Boolean)
-      if (paths.length === 0) return
-      window.api.cc.write(props.sessionId, paths.join(' '))
+      const text = buildDroppedFileInput(
+        e.dataTransfer.files,
+        (file) => window.api.getPathForFile(file as File)
+      )
+      if (!text) return
+      window.api.cc.write(props.sessionId, text)
       termRef.current?.focus()
     },
     [props.sessionId]
@@ -185,6 +189,10 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
     void pasteFromClipboard({
       sessionId: props.sessionId,
       writeInput: window.api.cc.write,
+      writePastedText: async (sessionId, data) => {
+        const res = await window.api.cc.paste(sessionId, data)
+        if (!res.ok) throw new Error(res.error ?? 'paste failed')
+      },
       saveImage: window.api.clipboard.saveImage
     })
     termRef.current?.focus()

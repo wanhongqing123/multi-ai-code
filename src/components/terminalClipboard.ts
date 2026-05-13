@@ -44,6 +44,8 @@ export interface PasteHandlerOptions {
   sessionId: string
   /** Forward text (or an image's saved path) to the PTY. */
   writeInput: (sessionId: string, data: string) => void
+  /** Optional large-text paste path (chunked in main process). */
+  writePastedText?: (sessionId: string, data: string) => Promise<void> | void
   /** Save a pasted image and return its path on disk. */
   saveImage: (
     data: ArrayBuffer,
@@ -63,7 +65,7 @@ export function installPasteHandler(
   container: HTMLElement,
   options: PasteHandlerOptions
 ): () => void {
-  const { sessionId, writeInput, saveImage } = options
+  const { sessionId, writeInput, writePastedText, saveImage } = options
 
   const handler = (event: Event): void => {
     const e = event as ClipboardEvent
@@ -97,7 +99,14 @@ export function installPasteHandler(
     if (text) {
       e.preventDefault()
       e.stopPropagation()
-      writeInput(sessionId, text)
+      if (writePastedText) {
+        void Promise.resolve(writePastedText(sessionId, text)).catch(() => {
+          // Fallback to raw write so paste still works when chunked route fails.
+          writeInput(sessionId, text)
+        })
+      } else {
+        writeInput(sessionId, text)
+      }
     }
   }
 
@@ -115,7 +124,7 @@ export function installPasteHandler(
 export async function pasteFromClipboard(
   options: PasteHandlerOptions
 ): Promise<void> {
-  const { sessionId, writeInput, saveImage } = options
+  const { sessionId, writeInput, writePastedText, saveImage } = options
   const clip = navigator.clipboard as
     | (Clipboard & { read?: () => Promise<ClipboardItems> })
     | undefined
@@ -143,7 +152,16 @@ export async function pasteFromClipboard(
 
   try {
     const text = await navigator.clipboard.readText()
-    if (text) writeInput(sessionId, text)
+    if (!text) return
+    if (writePastedText) {
+      try {
+        await writePastedText(sessionId, text)
+      } catch {
+        writeInput(sessionId, text)
+      }
+    } else {
+      writeInput(sessionId, text)
+    }
   } catch {
     /* ignore */
   }

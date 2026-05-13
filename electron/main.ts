@@ -50,7 +50,8 @@ import {
   sendRepoAnalysisPrompt,
   startRepoAnalysisSession,
   stopRepoAnalysisSession,
-  writeRepoAnalysisInput
+  writeRepoAnalysisInput,
+  pasteRepoAnalysisInput
 } from './repo-view/repoAnalysisManager.js'
 import { ensureAnalysisCacheDir } from './repo-view/analysisCache.js'
 
@@ -418,6 +419,23 @@ app.whenReady().then(async () => {
       const win = BrowserWindow.fromWebContents(e.sender)
       if (!win) return
       writeRepoAnalysisInput(win.id, payload.data)
+    }
+  )
+
+  ipcMain.handle(
+    'repo-view:analysis-paste',
+    async (e, payload: { data: string }) => {
+      const win = BrowserWindow.fromWebContents(e.sender)
+      if (!win) return { ok: false as const, error: 'window not found' }
+      try {
+        await pasteRepoAnalysisInput(win.id, payload.data)
+        return { ok: true as const }
+      } catch (err) {
+        return {
+          ok: false as const,
+          error: err instanceof Error ? err.message : String(err)
+        }
+      }
     }
   )
 

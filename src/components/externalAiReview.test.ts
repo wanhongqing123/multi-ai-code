@@ -1,19 +1,24 @@
 import { describe, expect, it } from 'vitest'
-import { matchSuggestionsToDiffFiles, parseExternalReviewSuggestions } from './externalAiReview.js'
+import {
+  formatDecisionErrorForDisplay,
+  formatDecisionForDisplay,
+  formatDecisionReasonForDisplay,
+  matchSuggestionsToDiffFiles,
+  parseExternalReviewSuggestions
+} from './externalAiReview.js'
 
 describe('parseExternalReviewSuggestions', () => {
-  it('splits markdown bullets into separate suggestions', () => {
+  it('keeps imported markdown review as one whole suggestion', () => {
     const suggestions = parseExternalReviewSuggestions(
-      '- Fix the button spacing in src/App.tsx line 42\n- Update the copy in electron/main.ts',
+      '# Summary\n\n- item 1 in src/App.tsx line 42\n- item 2 in electron/main.ts',
       'Claude review'
     )
 
-    expect(suggestions).toHaveLength(2)
+    expect(suggestions).toHaveLength(1)
     expect(suggestions[0]).toEqual(
       expect.objectContaining({
         id: expect.any(String),
         sourceLabel: 'Claude review',
-        rawText: 'Fix the button spacing in src/App.tsx line 42',
         pathHint: 'src/App.tsx',
         lineHint: '42',
         linkedDiffFile: null,
@@ -21,88 +26,83 @@ describe('parseExternalReviewSuggestions', () => {
         decisionReason: ''
       })
     )
-    expect(suggestions[1]).toEqual(
-      expect.objectContaining({
-        rawText: 'Update the copy in electron/main.ts',
-        pathHint: 'electron/main.ts',
-        lineHint: null,
-        linkedDiffFile: null,
-        status: 'idle',
-        decisionReason: ''
-      })
-    )
   })
 
-  it('ignores intro text when bullet structure is present', () => {
-    const suggestions = parseExternalReviewSuggestions(
-      'Summary\n\n- item 1\n- item 2',
-      'Claude review'
-    )
-
-    expect(suggestions).toHaveLength(2)
-    expect(suggestions.map((suggestion) => suggestion.rawText)).toEqual(['item 1', 'item 2'])
-  })
-
-  it('splits blank-line paragraphs when the review is not bullet structured', () => {
-    const suggestions = parseExternalReviewSuggestions(
-      'First paragraph about src/App.tsx line 120-128.\n\nSecond paragraph.\n\n# Heading only\n\nThird paragraph.',
-      'Imported review'
-    )
-
-    expect(suggestions).toHaveLength(3)
-    expect(suggestions.map((suggestion) => suggestion.rawText)).toEqual([
-      'First paragraph about src/App.tsx line 120-128.',
-      'Second paragraph.',
-      'Third paragraph.'
-    ])
-    expect(suggestions[0]).toEqual(
-      expect.objectContaining({
-        pathHint: 'src/App.tsx',
-        lineHint: '120-128'
-      })
-    )
-  })
-
-  it('assigns deterministic ids for the same input', () => {
-    const first = parseExternalReviewSuggestions('- item 1', 'Imported review')
-    const second = parseExternalReviewSuggestions('- item 1', 'Imported review')
-
-    expect(first[0].id).toBe(second[0].id)
+  it('returns empty when content is blank', () => {
+    expect(parseExternalReviewSuggestions('   \n\n', 'Imported review')).toEqual([])
   })
 })
 
 describe('matchSuggestionsToDiffFiles', () => {
   it('matches a parsed path hint to a visible diff file by suffix', () => {
     const suggestions = parseExternalReviewSuggestions(
-      '- Fix the issue in src/App.tsx line 42',
+      '# AI Review\n\n- Fix the issue in src/App.tsx line 42',
       'Claude review'
     )
     const diffFiles = [{ path: 'packages/app/src/App.tsx' }, { path: 'docs/readme.md' }]
-
     const matched = matchSuggestionsToDiffFiles(suggestions, diffFiles)
-
     expect(matched[0].linkedDiffFile).toBe(diffFiles[0])
   })
+})
 
-  it('does not link ambiguous suffix matches arbitrarily', () => {
-    const suggestions = parseExternalReviewSuggestions('- Fix src/App.tsx', 'Claude review')
-    const diffFiles = [{ path: 'packages/a/src/App.tsx' }, { path: 'packages/b/src/App.tsx' }]
+describe('formatDecisionReasonForDisplay', () => {
+  it('extracts reason from tagged JSON block and keeps output concise', () => {
+    const raw = [
+      'MAC_EXTERNAL_REVIEW_JSON_START',
+      '{"decision":"accepted","reason":"Evidence is sufficient and actionable."}',
+      'MAC_EXTERNAL_REVIEW_JSON_END'
+    ].join('\n')
 
-    const matched = matchSuggestionsToDiffFiles(suggestions, diffFiles)
+    expect(formatDecisionReasonForDisplay(raw)).toBe('Evidence is sufficient and actionable.')
+  })
+})
 
-    expect(matched[0].linkedDiffFile).toBe(null)
+describe('formatDecisionErrorForDisplay', () => {
+  it('hides low-level JSON parsing errors from end users', () => {
+    const raw = `Unexpected token '', "[45;3HEnd"... is not valid JSON`
+    expect(formatDecisionErrorForDisplay(raw)).toBe('AI 返回格式异常，请重试。')
   })
 
-  it('prefers exact match over suffix candidates', () => {
-    const suggestions = parseExternalReviewSuggestions('- Fix src/App.tsx', 'Claude review')
-    const diffFiles = [
-      { path: 'packages/a/src/App.tsx' },
-      { path: 'src/App.tsx' },
-      { path: 'packages/b/src/App.tsx' }
-    ]
+  it('does not expose raw sentinel protocol blocks', () => {
+    const raw = [
+      'MAC_EXTERNAL_REVIEW_JSON_START',
+      '{"decision":"accepted","reason":"something"}',
+      'MAC_EXTERNAL_REVIEW_JSON_END'
+    ].join('\n')
+    expect(formatDecisionErrorForDisplay(raw)).toBe(
+      'AI 返回格式不规范，已忽略原始协议内容。请重试。'
+    )
+  })
+})
 
-    const matched = matchSuggestionsToDiffFiles(suggestions, diffFiles)
+describe('formatDecisionForDisplay', () => {
+  it('renders accepted/rejected suggestions and modification plan into readable text', () => {
+    const content = formatDecisionForDisplay({
+      decision: 'accepted',
+      reason: 'Overall review is actionable.',
+      acceptedChanges: [
+        {
+          title: 'Guard cross-thread state',
+          reason: 'There is a confirmed race condition.',
+          fileHint: 'MediaPlayer.cpp',
+          lineHint: '1204',
+          recommendation: 'Use the existing mutex around both read and write.'
+        }
+      ],
+      rejectedChanges: [
+        {
+          title: 'Refactor utility naming',
+          reason: 'Low value and unrelated to current fix.'
+        }
+      ],
+      modificationPlan: ['Fix race condition first', 'Align callback contract']
+    })
 
-    expect(matched[0].linkedDiffFile).toBe(diffFiles[1])
+    expect(content).toContain('结论：采纳')
+    expect(content).toContain('需修改（建议采纳）：')
+    expect(content).toContain('无需修改（不建议采纳）：')
+    expect(content).toContain('建议修改方案：')
+    expect(content).toContain('Guard cross-thread state')
+    expect(content).toContain('Fix race condition first')
   })
 })

@@ -19,6 +19,7 @@ import {
   installPasteHandler,
   pasteFromClipboard
 } from '../components/terminalClipboard.js'
+import { buildDroppedFileInput } from '../components/terminalDragDrop.js'
 
 export interface RepoTerminalPanelProps {
   /** CLI label shown in the header (e.g. "claude"). */
@@ -39,6 +40,7 @@ export default function RepoTerminalPanel(
   const fitRef = useRef<FitAddon | null>(null)
   const markdownStateRef = useRef(createTerminalMarkdownState())
   const unsubRef = useRef<Array<() => void>>([])
+  const [dragActive, setDragActive] = useState(false)
   const [menu, setMenu] = useState<{
     x: number
     y: number
@@ -74,6 +76,10 @@ export default function RepoTerminalPanel(
     const detachPaste = installPasteHandler(containerRef.current, {
       sessionId: '',
       writeInput: (_sessionId, data) => window.api.repoView.analysisInput(data),
+      writePastedText: async (_sessionId, data) => {
+        const res = await window.api.repoView.analysisPaste(data)
+        if (!res.ok) throw new Error(res.error ?? 'paste failed')
+      },
       saveImage: window.api.clipboard.saveImage
     })
     unsubRef.current.push(detachPaste)
@@ -107,6 +113,31 @@ export default function RepoTerminalPanel(
     }
   }, [])
 
+  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    setDragActive(true)
+  }, [])
+
+  const handleDragLeave = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      if (e.currentTarget.contains(e.relatedTarget as Node | null)) return
+      setDragActive(false)
+    },
+    []
+  )
+
+  const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    setDragActive(false)
+    const text = buildDroppedFileInput(
+      e.dataTransfer.files,
+      (file) => window.api.getPathForFile(file as File)
+    )
+    if (!text) return
+    window.api.repoView.analysisInput(text)
+    termRef.current?.focus()
+  }, [])
+
   const handleContextMenu = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
       e.preventDefault()
@@ -128,6 +159,10 @@ export default function RepoTerminalPanel(
     void pasteFromClipboard({
       sessionId: '',
       writeInput: (_sessionId, data) => window.api.repoView.analysisInput(data),
+      writePastedText: async (_sessionId, data) => {
+        const res = await window.api.repoView.analysisPaste(data)
+        if (!res.ok) throw new Error(res.error ?? 'paste failed')
+      },
       saveImage: window.api.clipboard.saveImage
     })
     termRef.current?.focus()
@@ -178,7 +213,12 @@ export default function RepoTerminalPanel(
         className="repo-terminal-body term-host"
         ref={containerRef}
         onContextMenu={handleContextMenu}
-      />
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+        {dragActive && <div className="drop-hint">松开以粘贴文件路径</div>}
+      </div>
       {menu && (
         <ul
           className="term-ctxmenu"

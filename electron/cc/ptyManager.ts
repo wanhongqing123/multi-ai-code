@@ -167,15 +167,20 @@ async function waitForCodexReady(
  * chunks with a tiny delay between them.
  */
 async function sendMessage(proc: PtyCCProcess, text: string): Promise<void> {
+  await streamInput(proc, text)
+  await sleep(500)
+  proc.write('\r')
+  await sleep(150)
+  proc.write('\r')
+}
+
+/** Stream raw input into PTY in small chunks to avoid large-paste truncation. */
+async function streamInput(proc: PtyCCProcess, text: string): Promise<void> {
   const CHUNK = 64
   for (let i = 0; i < text.length; i += CHUNK) {
     proc.write(text.slice(i, i + CHUNK))
     await sleep(6)
   }
-  await sleep(500)
-  proc.write('\r')
-  await sleep(150)
-  proc.write('\r')
 }
 
 function settlePendingExternalReview(
@@ -370,6 +375,23 @@ export function registerPtyIpc(): void {
   ipcMain.on('cc:input', (_e, { sessionId, data }: { sessionId: string; data: string }) => {
     sessions.get(sessionId)?.proc.write(data)
   })
+
+  ipcMain.handle(
+    'cc:paste',
+    async (_e, { sessionId, data }: { sessionId: string; data: string }) => {
+      const s = sessions.get(sessionId)
+      if (!s) return { ok: false as const, error: 'no session' }
+      try {
+        await streamInput(s.proc, data)
+        return { ok: true as const }
+      } catch (err) {
+        return {
+          ok: false as const,
+          error: err instanceof Error ? err.message : String(err)
+        }
+      }
+    }
+  )
 
   ipcMain.on(
     'cc:resize',

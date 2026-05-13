@@ -97,15 +97,20 @@ export function shouldAutoRespondToRepoPermissionPrompt(
 /** Type + submit text into the PTY: chunked-write to avoid the TUI's
  *  bracketed-paste detection, then a CR (twice for safety) to submit. */
 async function sendMessage(proc: PtyCCProcess, text: string): Promise<void> {
+  await streamInput(proc, text)
+  await sleep(350)
+  proc.write('\r')
+  await sleep(120)
+  proc.write('\r')
+}
+
+/** Stream raw input in smaller chunks to reduce large-paste loss. */
+async function streamInput(proc: PtyCCProcess, text: string): Promise<void> {
   const chunk = 64
   for (let i = 0; i < text.length; i += chunk) {
     proc.write(text.slice(i, i + chunk))
     await sleep(6)
   }
-  await sleep(350)
-  proc.write('\r')
-  await sleep(120)
-  proc.write('\r')
 }
 
 function emitTo(winId: number, channel: string, payload: unknown): void {
@@ -232,6 +237,15 @@ export function writeRepoAnalysisInput(winId: number, data: string): void {
   const session = sessions.get(winId)
   if (!session) return
   session.proc.write(data)
+}
+
+export async function pasteRepoAnalysisInput(
+  winId: number,
+  data: string
+): Promise<void> {
+  const session = sessions.get(winId)
+  if (!session) throw new Error('repo analysis session not started')
+  await streamInput(session.proc, data)
 }
 
 export function resizeRepoAnalysisSession(

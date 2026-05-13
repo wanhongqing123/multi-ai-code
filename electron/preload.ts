@@ -63,6 +63,21 @@ export interface ArtifactRecord {
 export interface ExternalReviewDecision {
   decision: 'accepted' | 'rejected' | 'needs-human'
   reason: string
+  acceptedChanges?: Array<{
+    title: string
+    reason: string
+    fileHint?: string
+    lineHint?: string
+    recommendation?: string
+  }>
+  rejectedChanges?: Array<{
+    title: string
+    reason: string
+    fileHint?: string
+    lineHint?: string
+    recommendation?: string
+  }>
+  modificationPlan?: string[]
 }
 
 export interface JudgeExternalReviewRequest {
@@ -376,6 +391,11 @@ const api = {
       }>,
     analysisInput: (data: string) =>
       ipcRenderer.send('repo-view:analysis-input', { data }),
+    analysisPaste: (data: string) =>
+      ipcRenderer.invoke('repo-view:analysis-paste', { data }) as Promise<{
+        ok: boolean
+        error?: string
+      }>,
     analysisResize: (cols: number, rows: number) =>
       ipcRenderer.send('repo-view:analysis-resize', { cols, rows }),
     onAnalysisData: (cb: (evt: { chunk: string }) => void) => {
@@ -407,6 +427,11 @@ const api = {
       ipcRenderer.invoke('cc:spawn', opts) as Promise<{ ok: boolean; error?: string }>,
     write: (sessionId: string, data: string) =>
       ipcRenderer.send('cc:input', { sessionId, data }),
+    paste: (sessionId: string, data: string) =>
+      ipcRenderer.invoke('cc:paste', { sessionId, data }) as Promise<{
+        ok: boolean
+        error?: string
+      }>,
     resize: (sessionId: string, cols: number, rows: number) =>
       ipcRenderer.send('cc:resize', { sessionId, cols, rows }),
     kill: (sessionId: string) =>

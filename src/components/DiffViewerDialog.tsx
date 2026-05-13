@@ -21,8 +21,11 @@ import MarkdownDiffPreview from './MarkdownDiffPreview.js'
 import { buildMarkdownPreviewText, isMarkdownDiffPath } from './diffMarkdownPreview.js'
 import { getHorizontalTrackpadDelta } from './diffViewerScroll.js'
 import {
+  formatDecisionForDisplay,
+  formatDecisionErrorForDisplay,
   matchSuggestionsToDiffFiles,
   parseExternalReviewSuggestions,
+  type ExternalReviewDecisionPayload,
   type ExternalReviewSuggestion
 } from './externalAiReview.js'
 
@@ -60,7 +63,7 @@ export interface DiffViewerDialogProps {
   onJudgeExternalReviewItem: (suggestion: ExternalReviewSuggestion) => Promise<
     | {
         ok: true
-        result: { decision: 'accepted' | 'rejected' | 'needs-human'; reason: string }
+        result: ExternalReviewDecisionPayload
       }
     | { ok: false; error: string }
   >
@@ -716,6 +719,96 @@ function parseLineRangeStart(lineRange: string): number | null {
   return Number.isFinite(n) && n > 0 ? n : null
 }
 
+function formatExternalReviewSourceLabel(sourcePath: string): string {
+  const normalized = sourcePath.replace(/\\/g, '/')
+  const parts = normalized.split('/').filter(Boolean)
+  const fileName = parts[parts.length - 1] ?? sourcePath
+  if (parts.length <= 2) return fileName
+  const parentHint = parts.slice(Math.max(0, parts.length - 3), parts.length - 1).join('/')
+  return `${fileName} (${parentHint})`
+}
+
+interface DiffBrowseSnapshot {
+  version: 1
+  topByKey: Record<string, number>
+}
+
+interface DiffTreeSnapshot {
+  version: 1
+  expandedDirs: string[]
+}
+
+function makeDiffBrowseStorageKey(cwd: string): string {
+  return `multi-ai-code:diff-browse:${cwd}`
+}
+
+function safeReadBrowseSnapshot(storageKey: string): DiffBrowseSnapshot {
+  try {
+    const raw = window.localStorage.getItem(storageKey)
+    if (!raw) return { version: 1, topByKey: {} }
+    const parsed = JSON.parse(raw) as Partial<DiffBrowseSnapshot>
+    if (!parsed || parsed.version !== 1 || !parsed.topByKey) {
+      return { version: 1, topByKey: {} }
+    }
+    return { version: 1, topByKey: parsed.topByKey }
+  } catch {
+    return { version: 1, topByKey: {} }
+  }
+}
+
+function safeWriteBrowseSnapshot(storageKey: string, topByKey: Record<string, number>): void {
+  try {
+    const payload: DiffBrowseSnapshot = { version: 1, topByKey }
+    window.localStorage.setItem(storageKey, JSON.stringify(payload))
+  } catch {
+    /* ignore */
+  }
+}
+
+function makeDiffTreeStorageKey(cwd: string): string {
+  return `multi-ai-code:diff-tree:${cwd}`
+}
+
+function safeReadTreeSnapshot(storageKey: string): {
+  expandedDirs: Set<string>
+  hasSavedState: boolean
+} {
+  try {
+    const raw = window.localStorage.getItem(storageKey)
+    if (!raw) return { expandedDirs: new Set(), hasSavedState: false }
+    const parsed = JSON.parse(raw) as Partial<DiffTreeSnapshot>
+    if (
+      !parsed ||
+      parsed.version !== 1 ||
+      !Array.isArray(parsed.expandedDirs)
+    ) {
+      return { expandedDirs: new Set(), hasSavedState: false }
+    }
+    return {
+      expandedDirs: new Set(
+        parsed.expandedDirs.filter(
+          (v): v is string => typeof v === 'string' && v.length > 0
+        )
+      ),
+      hasSavedState: true
+    }
+  } catch {
+    return { expandedDirs: new Set(), hasSavedState: false }
+  }
+}
+
+function safeWriteTreeSnapshot(storageKey: string, expandedDirs: Set<string>): void {
+  try {
+    const payload: DiffTreeSnapshot = {
+      version: 1,
+      expandedDirs: Array.from(expandedDirs)
+    }
+    window.localStorage.setItem(storageKey, JSON.stringify(payload))
+  } catch {
+    /* ignore */
+  }
+}
+
 export default function DiffViewerDialog({
   cwd,
   title,
@@ -762,10 +855,12 @@ export default function DiffViewerDialog({
     initialFileViewMode
   )
   const [externalReviewSourceLabel, setExternalReviewSourceLabel] = useState('')
+  const [externalReviewSourcePath, setExternalReviewSourcePath] = useState('')
   const [externalReviewSuggestions, setExternalReviewSuggestions] = useState<
     ExternalReviewSuggestion[]
   >([])
   const [externalReviewBusy, setExternalReviewBusy] = useState(false)
+  const [externalReviewAutoOpenToken, setExternalReviewAutoOpenToken] = useState(0)
 
   // Controlled: annotations + generalNote live in the parent so unsent
   // batches persist across dialog close/reopen. Parent is responsible for
@@ -785,7 +880,7 @@ export default function DiffViewerDialog({
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [activeSearchHit, setActiveSearchHit] = useState(0)
-  const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set())
+  const [expandedDirs, setExpandedDirsState] = useState<Set<string>>(new Set())
   const [collapsedAnnotationIds, setCollapsedAnnotationIds] = useState<Set<string>>(
     new Set()
   )
@@ -807,15 +902,156 @@ export default function DiffViewerDialog({
     comment: string
     editingId: string | null
   } | null>(null)
+  const [composerOffset, setComposerOffset] = useState({ x: 0, y: 0 })
 
   const diffPaneRef = useRef<HTMLDivElement | null>(null)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
+  const browseStorageKeyRef = useRef(makeDiffBrowseStorageKey(cwd))
+  const browseTopByKeyRef = useRef<Record<string, number>>({})
+  const browsePersistTimerRef = useRef<number | null>(null)
+  const currentBrowseKeyRef = useRef<string | null>(null)
+  const restoredBrowseKeyRef = useRef<string | null>(null)
+  const restoringBrowseRef = useRef(false)
+  const refreshSeqRef = useRef(0)
+  const treeStorageKeyRef = useRef(makeDiffTreeStorageKey(cwd))
+  const treePersistTimerRef = useRef<number | null>(null)
+  const hasSavedTreeStateRef = useRef(false)
+  const treeHydratingRef = useRef(false)
+  const expandedDirsRef = useRef<Set<string>>(new Set())
   const dragRef = useRef<{
     kind: 'tree' | 'side' | 'code' | null
     startX: number
     startValue: number
     paneWidth: number
   }>({ kind: null, startX: 0, startValue: 0, paneWidth: 0 })
+  const composerDragRef = useRef<{
+    dragging: boolean
+    startX: number
+    startY: number
+    baseX: number
+    baseY: number
+  }>({
+    dragging: false,
+    startX: 0,
+    startY: 0,
+    baseX: 0,
+    baseY: 0
+  })
+  const composerOpenRef = useRef(false)
+
+  const setExpandedDirs = useCallback(
+    (next: SetStateAction<Set<string>>) => {
+      const base = expandedDirsRef.current
+      const resolved =
+        typeof next === 'function'
+          ? (next as (prev: Set<string>) => Set<string>)(base)
+          : next
+      const normalized = new Set(resolved)
+      expandedDirsRef.current = normalized
+      setExpandedDirsState(normalized)
+    },
+    []
+  )
+
+  const flushBrowseSnapshot = useCallback(() => {
+    if (browsePersistTimerRef.current !== null) {
+      window.clearTimeout(browsePersistTimerRef.current)
+      browsePersistTimerRef.current = null
+    }
+    safeWriteBrowseSnapshot(
+      browseStorageKeyRef.current,
+      browseTopByKeyRef.current
+    )
+  }, [])
+
+  const flushTreeSnapshot = useCallback(() => {
+    if (treePersistTimerRef.current !== null) {
+      window.clearTimeout(treePersistTimerRef.current)
+      treePersistTimerRef.current = null
+    }
+    safeWriteTreeSnapshot(treeStorageKeyRef.current, expandedDirsRef.current)
+  }, [])
+
+  const scheduleTreeSnapshotPersist = useCallback(() => {
+    if (treePersistTimerRef.current !== null) {
+      window.clearTimeout(treePersistTimerRef.current)
+    }
+    treePersistTimerRef.current = window.setTimeout(() => {
+      treePersistTimerRef.current = null
+      safeWriteTreeSnapshot(treeStorageKeyRef.current, expandedDirsRef.current)
+    }, 120)
+  }, [])
+
+  const scheduleBrowseSnapshotPersist = useCallback(() => {
+    if (browsePersistTimerRef.current !== null) {
+      window.clearTimeout(browsePersistTimerRef.current)
+    }
+    browsePersistTimerRef.current = window.setTimeout(() => {
+      browsePersistTimerRef.current = null
+      safeWriteBrowseSnapshot(
+        browseStorageKeyRef.current,
+        browseTopByKeyRef.current
+      )
+    }, 120)
+  }, [])
+
+  const makeBrowsePositionKey = useCallback(
+    (filePath: string): string =>
+      `${mode}::${mode === 'commit' ? selectedCommit : '-'}::${filePath}`,
+    [mode, selectedCommit]
+  )
+
+  const recordCurrentBrowseTop = useCallback(
+    (top: number) => {
+      const key = currentBrowseKeyRef.current
+      if (!key) return
+      if (!Number.isFinite(top)) return
+      browseTopByKeyRef.current[key] = Math.max(0, Math.floor(top))
+      scheduleBrowseSnapshotPersist()
+    },
+    [scheduleBrowseSnapshotPersist]
+  )
+
+  useEffect(() => {
+    browseStorageKeyRef.current = makeDiffBrowseStorageKey(cwd)
+    browseTopByKeyRef.current = safeReadBrowseSnapshot(
+      browseStorageKeyRef.current
+    ).topByKey
+    restoredBrowseKeyRef.current = null
+    treeStorageKeyRef.current = makeDiffTreeStorageKey(cwd)
+    const treeSnapshot = safeReadTreeSnapshot(treeStorageKeyRef.current)
+    hasSavedTreeStateRef.current = treeSnapshot.hasSavedState
+    treeHydratingRef.current = true
+    setExpandedDirs(treeSnapshot.expandedDirs)
+  }, [cwd])
+
+  useEffect(() => {
+    if (composer && !composerOpenRef.current) {
+      setComposerOffset({ x: 0, y: 0 })
+      composerOpenRef.current = true
+      return
+    }
+    if (!composer) {
+      composerOpenRef.current = false
+      composerDragRef.current.dragging = false
+    }
+  }, [composer])
+
+  useEffect(
+    () => () => {
+      flushBrowseSnapshot()
+      flushTreeSnapshot()
+    },
+    [flushBrowseSnapshot, flushTreeSnapshot]
+  )
+
+  useEffect(() => {
+    if (treeHydratingRef.current) {
+      treeHydratingRef.current = false
+      return
+    }
+    scheduleTreeSnapshotPersist()
+  }, [expandedDirs, scheduleTreeSnapshotPersist])
 
   // Defer the heavy diff render so mode switches / dropdown clicks / close
   // button remain responsive while a big diff is being laid out. React will
@@ -859,8 +1095,10 @@ export default function DiffViewerDialog({
       parsed,
       files.map((file) => ({ path: file.path }))
     )
-    setExternalReviewSourceLabel(pick.path)
+    setExternalReviewSourcePath(pick.path)
+    setExternalReviewSourceLabel(formatExternalReviewSourceLabel(pick.path))
     setExternalReviewSuggestions(matched)
+    setExternalReviewAutoOpenToken((prev) => prev + 1)
   }, [files])
 
   const judgeOneExternalReview = useCallback(
@@ -877,13 +1115,15 @@ export default function DiffViewerDialog({
               return {
                 ...item,
                 status: res.result.decision,
-                decisionReason: res.result.reason
+                decisionReason: formatDecisionForDisplay(res.result),
+                decisionPayload: res.result
               }
             }
             return {
               ...item,
               status: 'error',
-              decisionReason: res.error || 'Failed to judge this suggestion.'
+              decisionReason: formatDecisionErrorForDisplay(res.error),
+              decisionPayload: null
             }
           })
         )
@@ -895,7 +1135,7 @@ export default function DiffViewerDialog({
   )
 
   const judgeAllExternalReviews = useCallback(async () => {
-    if (externalReviewSuggestions.length === 0) return
+    if (externalReviewBusy || externalReviewSuggestions.length === 0) return
     setExternalReviewBusy(true)
     try {
       for (const item of externalReviewSuggestions) {
@@ -907,13 +1147,15 @@ export default function DiffViewerDialog({
               return {
                 ...current,
                 status: res.result.decision,
-                decisionReason: res.result.reason
+                decisionReason: formatDecisionForDisplay(res.result),
+                decisionPayload: res.result
               }
             }
             return {
               ...current,
               status: 'error',
-              decisionReason: res.error || 'Failed to judge this suggestion.'
+              decisionReason: formatDecisionErrorForDisplay(res.error),
+              decisionPayload: null
             }
           })
         )
@@ -921,10 +1163,11 @@ export default function DiffViewerDialog({
     } finally {
       setExternalReviewBusy(false)
     }
-  }, [externalReviewSuggestions, onJudgeExternalReviewItem])
+  }, [externalReviewBusy, externalReviewSuggestions, onJudgeExternalReviewItem])
 
   useEffect(() => {
     if (files.length === 0) return
+    if (hasSavedTreeStateRef.current) return
     setExpandedDirs((prev) => {
       const next = new Set(prev)
       const selected = files.some((f) => f.path === selectedFile)
@@ -952,6 +1195,50 @@ export default function DiffViewerDialog({
     () => (currentFile ? pairLines(currentFile.lines) : []),
     [currentFile]
   )
+
+  useEffect(() => {
+    currentBrowseKeyRef.current = currentFile
+      ? makeBrowsePositionKey(currentFile.path)
+      : null
+  }, [currentFile, makeBrowsePositionKey])
+
+  useEffect(() => {
+    const pane = diffPaneRef.current
+    if (!pane) return
+    const onScroll = (): void => {
+      if (restoringBrowseRef.current) return
+      recordCurrentBrowseTop(pane.scrollTop)
+    }
+    pane.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      pane.removeEventListener('scroll', onScroll)
+    }
+  }, [recordCurrentBrowseTop])
+
+  useEffect(() => {
+    const pane = diffPaneRef.current
+    if (!pane || !currentFile || currentRows.length === 0 || markdownPreviewActive) {
+      return
+    }
+    const key = makeBrowsePositionKey(currentFile.path)
+    if (restoredBrowseKeyRef.current === key) return
+    restoredBrowseKeyRef.current = key
+    const savedTop = browseTopByKeyRef.current[key]
+    if (!Number.isFinite(savedTop)) return
+    restoringBrowseRef.current = true
+    requestAnimationFrame(() => {
+      const maxTop = Math.max(0, pane.scrollHeight - pane.clientHeight)
+      pane.scrollTo({ top: Math.min(savedTop, maxTop), behavior: 'auto' })
+      requestAnimationFrame(() => {
+        restoringBrowseRef.current = false
+      })
+    })
+  }, [
+    currentFile,
+    currentRows.length,
+    makeBrowsePositionKey,
+    markdownPreviewActive
+  ])
   const changeStartIndices = useMemo<number[]>(() => {
     const out: number[] = []
     const isChange = (r: PairedRow): boolean =>
@@ -1092,27 +1379,31 @@ export default function DiffViewerDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cwd])
 
+  const activeCommitForDiff = mode === 'commit' ? selectedCommit : ''
+
   const refreshDiff = useCallback(async () => {
+    const seq = ++refreshSeqRef.current
     setDiffLoading(true)
     setDiffError(null)
-    setDiffText('')
     let refs: string[] | undefined
     if (mode === 'commit') {
-      if (!selectedCommit) {
+      if (!activeCommitForDiff) {
+        if (seq !== refreshSeqRef.current) return
         setDiffError('请先选择一个 commit')
         setDiffLoading(false)
         return
       }
-      refs = [selectedCommit]
+      refs = [activeCommitForDiff]
     }
     const res = await window.api.git.diff(cwd, mode, refs)
+    if (seq !== refreshSeqRef.current) return
     setDiffLoading(false)
     if (res.ok) {
       setDiffText(res.diff ?? '')
     } else {
       setDiffError(res.error ?? '获取 diff 失败')
     }
-  }, [cwd, mode, selectedCommit])
+  }, [activeCommitForDiff, cwd, mode])
 
   // Auto-load diff when mode or refs change.
   useEffect(() => {
@@ -1448,10 +1739,16 @@ export default function DiffViewerDialog({
   /** Close flow that clears the big diff DOM before unmounting the dialog,
    *  so the close click feels instant even when a 10k-line diff is loaded. */
   const handleSmoothClose = useCallback(() => {
+    const pane = diffPaneRef.current
+    if (pane) {
+      recordCurrentBrowseTop(pane.scrollTop)
+      flushBrowseSnapshot()
+    }
+    flushTreeSnapshot()
     setDiffText('')
     // Give the renderer one frame to shrink the DOM, then unmount the modal.
     requestAnimationFrame(() => onClose())
-  }, [onClose])
+  }, [flushBrowseSnapshot, flushTreeSnapshot, onClose, recordCurrentBrowseTop])
 
   const canSubmit = !submitting && annotations.length > 0
 
@@ -1527,6 +1824,16 @@ export default function DiffViewerDialog({
 
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
+      const composerDrag = composerDragRef.current
+      if (composerDrag.dragging) {
+        const dx = e.clientX - composerDrag.startX
+        const dy = e.clientY - composerDrag.startY
+        setComposerOffset({
+          x: composerDrag.baseX + dx,
+          y: composerDrag.baseY + dy
+        })
+        return
+      }
       const drag = dragRef.current
       if (!drag.kind) return
       const dx = e.clientX - drag.startX
@@ -1547,8 +1854,11 @@ export default function DiffViewerDialog({
       }
     }
     const onUp = () => {
-      if (!dragRef.current.kind) return
+      const wasSplitterDragging = Boolean(dragRef.current.kind)
+      const wasComposerDragging = composerDragRef.current.dragging
+      if (!wasSplitterDragging && !wasComposerDragging) return
       dragRef.current.kind = null
+      composerDragRef.current.dragging = false
       document.body.style.userSelect = ''
       document.body.style.cursor = ''
     }
@@ -1603,6 +1913,23 @@ export default function DiffViewerDialog({
       document.body.style.cursor = 'col-resize'
     },
     [codeLeftPercent]
+  )
+
+  const startComposerDrag = useCallback(
+    (e: React.MouseEvent) => {
+      if (!composer || e.button !== 0) return
+      e.preventDefault()
+      composerDragRef.current = {
+        dragging: true,
+        startX: e.clientX,
+        startY: e.clientY,
+        baseX: composerOffset.x,
+        baseY: composerOffset.y
+      }
+      document.body.style.userSelect = 'none'
+      document.body.style.cursor = 'grabbing'
+    },
+    [composer, composerOffset.x, composerOffset.y]
   )
 
   const bodyStyle = useMemo(
@@ -1672,14 +1999,6 @@ export default function DiffViewerDialog({
           <div className="dv-nav-group">
             <button
               className="dv-nav-btn"
-              onClick={openSearch}
-              disabled={markdownPreviewActive}
-              title="Search in current file (Ctrl+F)"
-            >
-              Find
-            </button>
-            <button
-              className="dv-nav-btn"
               onClick={() => jumpHunk('prev')}
               disabled={
                 diffLoading || visibleFiles.length === 0 || markdownPreviewActive
@@ -1719,7 +2038,7 @@ export default function DiffViewerDialog({
                 disabled={searchHits.length === 0}
                 title="Previous match (Shift+Enter)"
               >
-                Prev
+                ↑
               </button>
               <button
                 className="dv-nav-btn"
@@ -1727,7 +2046,7 @@ export default function DiffViewerDialog({
                 disabled={searchHits.length === 0}
                 title="Next match (Enter)"
               >
-                Next
+                ↓
               </button>
               <button
                 className="dv-nav-btn"
@@ -1879,19 +2198,29 @@ export default function DiffViewerDialog({
             </div>
             <ExternalAiReviewPanel
               sourceLabel={externalReviewSourceLabel}
+              sourcePath={externalReviewSourcePath}
               suggestions={externalReviewSuggestions}
               busy={externalReviewBusy}
+              autoOpenToken={externalReviewAutoOpenToken}
               onImport={() => {
                 void importExternalReview()
               }}
               onJudgeOne={(id) => {
                 void judgeOneExternalReview(id)
               }}
-              onJudgeAll={() => {
-                void judgeAllExternalReviews()
+              onJudgeAll={async () => {
+                try {
+                  await judgeAllExternalReviews()
+                } finally {
+                  onClose()
+                }
               }}
             />
-            {annotations.length === 0 ? (
+            {false ? (
+              <div className="dv-side-empty-msg">
+                外部 review 已最大化，点击“还原”可返回批注列表。
+              </div>
+            ) : (annotations.length === 0 ? (
               <div className="dv-side-empty-msg">
                 暂无批注 — 在右侧代码区选中文本后点击「✏ 标注」添加
               </div>
@@ -1929,20 +2258,23 @@ export default function DiffViewerDialog({
                   )
                 })}
               </ul>
-            )}
+            ))}
           </aside>
         </div>
 
         {composer && (
-          <div
-            className="plan-review-composer-backdrop"
-            onClick={() => setComposer(null)}
-          >
+          <div className="plan-review-composer-backdrop">
             <div
               className="plan-review-composer"
-              onClick={(e) => e.stopPropagation()}
+              style={{
+                transform: `translate(${composerOffset.x}px, ${composerOffset.y}px)`
+              }}
             >
-              <div className="plan-review-composer-head">
+              <div
+                className="plan-review-composer-head"
+                onMouseDown={startComposerDrag}
+                title="按住拖动"
+              >
                 {composer.editingId ? '编辑批注' : '添加批注'} ·{' '}
                 <span className="dv-ann-location">
                   {composer.file}:{composer.lineRange}

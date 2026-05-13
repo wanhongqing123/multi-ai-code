@@ -108,90 +108,54 @@ describe('mainCliArgs', () => {
     expect(MAIN_COMMAND_DEFAULT).toBe('claude')
   })
 
-  it('claude produces permission-mode acceptEdits + allowlist', () => {
+  it('claude produces full-permission args', () => {
     const args = mainCliArgs('claude')
-    expect(args).toContain('--permission-mode')
-    expect(args).toContain('acceptEdits')
-    expect(args).toContain('--allowedTools')
+    expect(args).toEqual(['--dangerously-skip-permissions'])
   })
 
-  it('codex produces reduced-confirmation sandbox args', () => {
+  it('codex produces full-permission args', () => {
     expect(mainCliArgs('codex')).toEqual([
-      '--sandbox',
-      'workspace-write',
-      '-a',
-      'never'
+      '--dangerously-bypass-approvals-and-sandbox'
     ])
   })
 })
 
 describe('buildCliLaunchArgs', () => {
-  it('adds claude repo path and default permission mode', () => {
+  it('adds claude full-permission arg', () => {
     expect(buildCliLaunchArgs('claude', '/repo/demo')).toEqual([
-      '--add-dir',
-      '/repo/demo',
-      '--permission-mode',
-      'acceptEdits',
-      '--allowedTools',
-      expect.any(String)
+      '--dangerously-skip-permissions'
     ])
   })
 
-  it('adds codex repo path and reduced-confirmation args', () => {
+  it('adds codex full-permission arg', () => {
     expect(buildCliLaunchArgs('codex', '/repo/demo')).toEqual([
-      '-C',
-      '/repo/demo',
-      '--sandbox',
-      'workspace-write',
-      '-a',
-      'never'
+      '--dangerously-bypass-approvals-and-sandbox'
     ])
   })
 
-  it('does not duplicate claude permission-mode when user overrides it', () => {
+  it('does not duplicate claude dangerously flag when user overrides it', () => {
     expect(
       buildCliLaunchArgs('claude', '/repo/demo', [
-        '--permission-mode',
-        'bypassPermissions'
+        '--dangerously-skip-permissions',
+        '--verbose'
       ])
-    ).toEqual([
-      '--add-dir',
-      '/repo/demo',
-      '--allowedTools',
-      expect.any(String),
-      '--permission-mode',
-      'bypassPermissions'
-    ])
+    ).toEqual(['--dangerously-skip-permissions', '--verbose'])
   })
 
-  it('does not duplicate codex sandbox or approval args when user overrides them', () => {
+  it('does not duplicate codex dangerously flag when user overrides it', () => {
     expect(
       buildCliLaunchArgs('codex', '/repo/demo', [
-        '--sandbox',
-        'danger-full-access',
-        '-a',
-        'on-request'
+        '--dangerously-bypass-approvals-and-sandbox',
+        '--verbose'
       ])
-    ).toEqual([
-      '-C',
-      '/repo/demo',
-      '--sandbox',
-      'danger-full-access',
-      '-a',
-      'on-request'
-    ])
+    ).toEqual(['--dangerously-bypass-approvals-and-sandbox', '--verbose'])
   })
 
-  it('does not duplicate repo path args when user already passes them', () => {
+  it('keeps extra args order after default claude dangerous arg', () => {
     expect(
-      buildCliLaunchArgs('claude', '/repo/demo', ['--add-dir', '/repo/demo', '--verbose'])
+      buildCliLaunchArgs('claude', '/repo/demo', ['--verbose'])
     ).toEqual([
-      '--permission-mode',
-      'acceptEdits',
-      '--allowedTools',
-      expect.any(String),
-      '--add-dir',
-      '/repo/demo',
+      '--dangerously-skip-permissions',
       '--verbose'
     ])
   })

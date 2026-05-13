@@ -3,9 +3,20 @@ export const JSON_REPLY_END = 'MAC_EXTERNAL_REVIEW_JSON_END'
 
 export type ExternalReviewDecisionValue = 'accepted' | 'rejected' | 'needs-human'
 
+export interface ExternalReviewAssessmentItem {
+  title: string
+  reason: string
+  fileHint?: string
+  lineHint?: string
+  recommendation?: string
+}
+
 export interface ExternalReviewDecision {
   decision: ExternalReviewDecisionValue
   reason: string
+  acceptedChanges?: ExternalReviewAssessmentItem[]
+  rejectedChanges?: ExternalReviewAssessmentItem[]
+  modificationPlan?: string[]
 }
 
 export interface ExternalReviewSuggestion {
@@ -24,36 +35,42 @@ export interface ExternalReviewPromptArgs {
   suggestion: ExternalReviewSuggestion
 }
 
-const VALID_DECISIONS = new Set<ExternalReviewDecisionValue>([
-  'accepted',
-  'rejected',
-  'needs-human'
-])
+const VALID_DECISIONS = new Set<ExternalReviewDecisionValue>(['accepted', 'rejected', 'needs-human'])
 
 export function buildExternalReviewPrompt({
   planAbsPath,
   suggestion
 }: ExternalReviewPromptArgs): string {
-  const linkedDiffPath = suggestion.linkedDiffFile?.path ?? '(none)'
-
   return [
-    'Review the external review suggestion against the current plan and terminal context.',
+    '认真查看下这个由其他外部AI的工具生成的Review建议，详细评价建议的合理性，哪些建议是合理的可以修改的，哪些是不合理的没必要修改的。给出详细的表格和修改方案。',
+    '请直接输出 Markdown 结果，不要输出 JSON。',
     `Plan file: ${planAbsPath}`,
     '',
-    'Suggestion:',
+    'External review content (Markdown):',
     suggestion.rawText,
     '',
-    `Path hint: ${suggestion.pathHint ?? '(none)'}`,
-    `Line hint: ${suggestion.lineHint ?? '(none)'}`,
-    `Linked diff file: ${linkedDiffPath}`,
+    '请严格按下面结构输出（中文，简明扼要）：',
+    '## 结论',
+    '- 一句话总评（建议采纳/不采纳/部分采纳）',
     '',
-    'Respond with exactly one decision.',
-    'Return a single JSON object wrapped by the stable sentinels listed below.',
+    '## 需修改（建议采纳）',
+    '| 问题 | 位置 | 理由 | 修改建议 |',
+    '| --- | --- | --- | --- |',
+    '| ... | ... | ... | ... |',
+    '',
+    '## 无需修改（不建议采纳）',
+    '| 问题 | 理由 |',
+    '| --- | --- |',
+    '| ... | ... |',
+    '',
+    '## 修改方案',
+    '1. ...',
+    '2. ...',
+    '',
+    '必须把完整 Markdown 放在以下标识之间：',
     `Start sentinel line: ${JSON_REPLY_START}`,
     `End sentinel line: ${JSON_REPLY_END}`,
-    'Do not include markdown fences or extra commentary.',
-    'Only place your final decision JSON between those sentinel lines.',
-    '{"decision":"accepted|rejected|needs-human","reason":"..."}',
+    '标识外不要重复内容。',
   ].join('\n')
 }
 
@@ -65,27 +82,39 @@ export function extractTaggedJsonReply(output: string): ExternalReviewDecision |
   const end = afterStart.indexOf(JSON_REPLY_END)
   if (end === -1) return null
 
-  const jsonText = afterStart.slice(0, end).trim()
-  const parsed = JSON.parse(jsonText) as unknown
-  return validateExternalReviewDecision(parsed)
+  const taggedBlock = afterStart.slice(0, end).trim()
+  const cleaned = stripTerminalControlSequences(taggedBlock).trim()
+  if (!cleaned) return null
+
+  const decision = inferDecisionFromMarkdown(cleaned)
+  return {
+    decision,
+    reason: cleaned
+  }
 }
 
-function validateExternalReviewDecision(value: unknown): ExternalReviewDecision {
-  if (!value || typeof value !== 'object') {
-    throw new Error('Tagged external review reply must be a JSON object.')
-  }
+function stripTerminalControlSequences(value: string): string {
+  return value
+    .replace(/\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g, '')
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/\u001b[@-_]/g, '')
+    .replace(/\[(?:\d{1,4};){0,8}\d{1,4}[A-Za-z]/g, '')
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '')
+}
 
-  const candidate = value as Record<string, unknown>
-  if (typeof candidate.decision !== 'string' || !VALID_DECISIONS.has(candidate.decision as ExternalReviewDecisionValue)) {
-    throw new Error('Tagged external review reply has an invalid decision.')
-  }
+function inferDecisionFromMarkdown(text: string): ExternalReviewDecisionValue {
+  const normalized = text.toLowerCase()
+  const hasAdopt = normalized.includes('建议采纳') || normalized.includes('需修改（建议采纳）')
+  const hasReject =
+    normalized.includes('不采纳') ||
+    normalized.includes('不建议采纳') ||
+    normalized.includes('无需修改（不建议采纳）')
 
-  if (typeof candidate.reason !== 'string' || candidate.reason.trim().length === 0) {
-    throw new Error('Tagged external review reply must include a non-empty reason.')
+  if (hasReject && !hasAdopt) {
+    return 'rejected'
   }
-
-  return {
-    decision: candidate.decision as ExternalReviewDecisionValue,
-    reason: candidate.reason.trim()
+  if (hasAdopt && !hasReject) {
+    return 'accepted'
   }
+  return 'needs-human'
 }

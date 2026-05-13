@@ -1,9 +1,27 @@
-import { spawn, IPty } from 'node-pty'
 import { EventEmitter } from 'events'
 import { delimiter, join, isAbsolute, extname } from 'path'
 import { statSync, readFileSync, writeFileSync } from 'fs'
+import { createRequire } from 'module'
+import type { IPty } from 'node-pty'
 
 const isWindows = process.platform === 'win32'
+const require = createRequire(import.meta.url)
+
+type NodePtySpawn = (file: string, args: string[], options: Record<string, unknown>) => IPty
+
+let nodePtySpawn: NodePtySpawn | null = null
+let nodePtyLoadError: Error | null = null
+
+try {
+  const mod = require('node-pty') as { spawn?: NodePtySpawn }
+  if (typeof mod.spawn === 'function') {
+    nodePtySpawn = mod.spawn
+  } else {
+    nodePtyLoadError = new Error('node-pty module loaded but `spawn` is missing')
+  }
+} catch (err) {
+  nodePtyLoadError = err instanceof Error ? err : new Error(String(err))
+}
 
 /** Resolve a bare command name against PATH + PATHEXT. Returns full path or null. */
 function resolveOnPath(cmd: string, envPath: string): string | null {
@@ -78,6 +96,10 @@ export class PtyCCProcess extends EventEmitter {
 
   start(): void {
     if (this.pty) return
+    if (!nodePtySpawn) {
+      const detail = nodePtyLoadError?.message ?? 'unknown error'
+      throw new Error(`node-pty 不可用，无法启动终端会话：${detail}`)
+    }
 
     const command = this.opts.command ?? 'claude'
     const args = this.opts.args ?? []
@@ -241,7 +263,7 @@ export class PtyCCProcess extends EventEmitter {
       console.log('[pty-dump][env]', JSON.stringify(summary, null, 2))
     }
 
-    this.pty = spawn(spawnCommand, spawnArgs, {
+    this.pty = nodePtySpawn(spawnCommand, spawnArgs, {
       name: 'xterm-256color',
       cols: this.opts.cols ?? 100,
       rows: this.opts.rows ?? 30,

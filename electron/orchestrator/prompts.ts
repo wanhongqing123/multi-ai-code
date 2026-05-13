@@ -49,33 +49,6 @@ export async function resolvePlanArtifactAbs(
 export const MAIN_COMMAND_DEFAULT = 'claude'
 export type SupportedCli = 'claude' | 'codex'
 
-const SAFE_READS = [
-  'Read',
-  'Glob',
-  'Grep',
-  'Bash(ls:*)',
-  'Bash(cat:*)',
-  'Bash(head:*)',
-  'Bash(tail:*)',
-  'Bash(wc:*)',
-  'Bash(find:*)',
-  'Bash(pwd)',
-  'Bash(echo:*)'
-]
-
-const SAFE_GIT = [
-  'Bash(git status:*)',
-  'Bash(git log:*)',
-  'Bash(git diff:*)',
-  'Bash(git show:*)',
-  'Bash(git blame:*)',
-  'Bash(git branch:*)',
-  'Bash(git remote:*)',
-  'Bash(git rev-parse:*)'
-]
-
-const WRITE_TOOLS = ['Write', 'Edit', 'MultiEdit']
-
 function hasAnyArg(args: readonly string[], flags: readonly string[]): boolean {
   return args.some((arg) => flags.includes(arg))
 }
@@ -83,39 +56,29 @@ function hasAnyArg(args: readonly string[], flags: readonly string[]): boolean {
 export function mainCliArgs(
   binary: SupportedCli = MAIN_COMMAND_DEFAULT
 ): string[] {
-  if (binary === 'codex') return ['--sandbox', 'workspace-write', '-a', 'never']
-  const allowed = [...SAFE_READS, ...SAFE_GIT, ...WRITE_TOOLS].join(' ')
-  return ['--permission-mode', 'acceptEdits', '--allowedTools', allowed]
+  if (binary === 'codex') return ['--dangerously-bypass-approvals-and-sandbox']
+  return ['--dangerously-skip-permissions']
 }
 
 export function buildCliLaunchArgs(
   binary: SupportedCli,
-  targetRepo: string,
+  _targetRepo: string,
   extraArgs: readonly string[] = []
 ): string[] {
   const args: string[] = []
   if (binary === 'claude') {
-    if (!hasAnyArg(extraArgs, ['--add-dir'])) {
-      args.push('--add-dir', targetRepo)
-    }
-    if (!hasAnyArg(extraArgs, ['--permission-mode'])) {
-      args.push('--permission-mode', 'acceptEdits')
-    }
-    if (!hasAnyArg(extraArgs, ['--allowedTools', '--allowed-tools'])) {
-      const allowed = [...SAFE_READS, ...SAFE_GIT, ...WRITE_TOOLS].join(' ')
-      args.push('--allowedTools', allowed)
+    if (!hasAnyArg(extraArgs, ['--dangerously-skip-permissions'])) {
+      args.push('--dangerously-skip-permissions')
     }
     return [...args, ...extraArgs]
   }
 
-  if (!hasAnyArg(extraArgs, ['-C', '--cd'])) {
-    args.push('-C', targetRepo)
-  }
-  if (!hasAnyArg(extraArgs, ['--sandbox', '-s'])) {
-    args.push('--sandbox', 'workspace-write')
-  }
-  if (!hasAnyArg(extraArgs, ['-a', '--ask-for-approval'])) {
-    args.push('-a', 'never')
+  if (
+    !hasAnyArg(extraArgs, [
+      '--dangerously-bypass-approvals-and-sandbox'
+    ])
+  ) {
+    args.push('--dangerously-bypass-approvals-and-sandbox')
   }
   return [...args, ...extraArgs]
 }

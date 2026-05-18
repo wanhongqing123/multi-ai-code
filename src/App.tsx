@@ -366,18 +366,13 @@ export default function App() {
       showToast('当前项目未设置 target_repo，请先在项目选择器里选一个代码仓库', { level: 'warn' })
       return
     }
-    const planAbsPath = getPlanAbsPath(planName.trim())
-    let planContent: string | null = null
-    try {
-      const res = await window.api.fs.readUtf8(planAbsPath)
-      planContent = res.ok ? res.content : null
-    } catch {
-      planContent = null
-    }
+    const normalizedPlanName = planName.trim()
+    const planAbsPath = getPlanAbsPath(normalizedPlanName)
+    const planExists = planList.some((p) => p.name === normalizedPlanName)
     const initialUserMessage = formatInitialMessage({
-      planName: planName.trim(),
+      planName: normalizedPlanName,
       planAbsPath,
-      planContent
+      planExists
     })
     const command = aiSettings.command ?? aiSettings.ai_cli ?? 'claude'
     const args = buildCliLaunchArgs(
@@ -395,9 +390,9 @@ export default function App() {
       projectId: currentProjectId,
       projectDir: pDir,
       targetRepo: proj.target_repo,
-      planName: planName.trim(),
+      planName: normalizedPlanName,
       planAbsPath,
-      planPending: planContent === null,
+      planPending: !planExists,
       initialUserMessage,
       command,
       args,
@@ -408,7 +403,7 @@ export default function App() {
       setSessionStatus('idle')
       setSessionId(null)
     }
-  }, [currentProjectId, planName, projects, aiSettings, getPlanAbsPath])
+  }, [currentProjectId, planName, planList, projects, aiSettings, getPlanAbsPath])
 
   const handleStop = useCallback(async () => {
     if (!sessionId) return

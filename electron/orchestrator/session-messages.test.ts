@@ -1,53 +1,37 @@
-import { describe, it, expect } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import {
-  formatInitialMessage,
   formatAnnotationsForSession,
+  formatInitialMessage,
   type SessionAnnotation
 } from './session-messages.js'
 
 describe('formatInitialMessage', () => {
-  it('returns a "please continue" message when plan file content is non-null', () => {
+  it('keeps startup message lightweight when a plan already exists', () => {
     const out = formatInitialMessage({
       planName: 'add-auth',
       planAbsPath: '/repo/.multi-ai-code/designs/add-auth.md',
-      planContent: '# 方案：增加 OAuth\n\n详细步骤...'
+      planExists: true
     })
-    expect(out).toContain('# 方案：增加 OAuth')
-    expect(out).toContain('详细步骤')
+
+    expect(out).toContain('add-auth')
+    expect(out).toContain('/repo/.multi-ai-code/designs/add-auth.md')
+    expect(out).toContain('请先阅读当前方案文件')
     expect(out).toContain('此时不要修改任何代码')
+    expect(out).not.toContain('# 方案：增加 OAuth')
+    expect(out).not.toContain('详细步骤')
   })
 
-  it('returns a "kick off design" message when plan content is null', () => {
+  it('returns a kick-off design message when the plan file does not exist', () => {
     const out = formatInitialMessage({
       planName: 'add-auth',
       planAbsPath: '/repo/.multi-ai-code/designs/add-auth.md',
-      planContent: null
+      planExists: false
     })
+
     expect(out).toContain('add-auth')
     expect(out).toContain('/repo/.multi-ai-code/designs/add-auth.md')
     expect(out).toContain('澄清需求')
-  })
-
-  it('treats empty planContent as missing (kick-off branch)', () => {
-    const out = formatInitialMessage({
-      planName: 'add-auth',
-      planAbsPath: '/repo/.multi-ai-code/designs/add-auth.md',
-      planContent: ''
-    })
-    expect(out).toContain('add-auth')
-    expect(out).toContain('/repo/.multi-ai-code/designs/add-auth.md')
-    expect(out).toContain('澄清需求')
-    expect(out).not.toContain('此时不要修改任何代码')
-  })
-
-  it('treats whitespace-only planContent as missing (kick-off branch)', () => {
-    const out = formatInitialMessage({
-      planName: 'add-auth',
-      planAbsPath: '/repo/.multi-ai-code/designs/add-auth.md',
-      planContent: '   \n\n  '
-    })
-    expect(out).toContain('澄清需求')
-    expect(out).not.toContain('此时不要修改任何代码')
+    expect(out).not.toContain('请先阅读当前方案文件')
   })
 })
 
@@ -85,7 +69,7 @@ describe('formatAnnotationsForSession', () => {
   it('appends the general comment section when provided', () => {
     const out = formatAnnotationsForSession({
       annotations: [ann1],
-      generalComment: '整体结构 OK，改前加一层抽象',
+      generalComment: '整体结构 OK，改前加一层抽象。',
       planAbsPath: '/repo/.multi-ai-code/designs/add-auth.md'
     })
     expect(out).toContain('## 整体意见')
@@ -115,7 +99,7 @@ describe('formatAnnotationsForSession', () => {
       file: 'src/app.tsx',
       lineRange: '100',
       snippet: '<Login />',
-      comment: '移到 <Router> 外'
+      comment: '移动到 <Router> 外层'
     }
     const out = formatAnnotationsForSession({
       annotations: [ann1, ann2],

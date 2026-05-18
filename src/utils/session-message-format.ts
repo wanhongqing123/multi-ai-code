@@ -1,4 +1,4 @@
-// Mirror of electron/orchestrator/session-messages.ts — renderer-safe copy.
+// Mirror of electron/orchestrator/session-messages.ts - renderer-safe copy.
 // Keep in sync manually when the backend copy changes.
 
 export interface SessionAnnotation {
@@ -24,21 +24,22 @@ export function planNameToFilename(name: string): string {
 export interface InitialMessageParams {
   readonly planName: string
   readonly planAbsPath: string
-  readonly planContent: string | null
+  readonly planExists: boolean
 }
 
 export function formatInitialMessage(p: InitialMessageParams): string {
-  if (p.planContent !== null && p.planContent.trim().length > 0) {
+  if (p.planExists) {
     return [
-      p.planContent.trimEnd(),
+      `本次方案名：${p.planName}。`,
       '',
-      '---',
+      `当前方案文件：\`${p.planAbsPath}\`。`,
       '',
-      '请先阅读当前方案，用中文简要总结：目标、核心步骤、预期产物。',
+      '请先阅读当前方案文件，用中文简要总结：目标、核心步骤、预期产物。',
       '',
-      '**此时不要修改任何代码或方案文档**。等用户确认方向（或让你按方案实施）后，再继续执行。'
+      '**此时不要修改任何代码或方案文件**。等用户确认方向（或让你按方案实施）后，再继续执行。'
     ].join('\n')
   }
+
   return [
     `本次方案名：${p.planName}。`,
     '',
@@ -64,6 +65,7 @@ export function formatAnnotationsForSession(
   lines.push('')
   lines.push('## 逐行批注')
   lines.push('')
+
   for (const a of p.annotations) {
     lines.push('### 批注')
     lines.push('')
@@ -81,6 +83,7 @@ export function formatAnnotationsForSession(
     lines.push(a.comment)
     lines.push('')
   }
+
   const gc = p.generalComment.trim()
   if (gc.length > 0) {
     lines.push('## 整体意见')
@@ -88,6 +91,7 @@ export function formatAnnotationsForSession(
     lines.push(gc)
     lines.push('')
   }
+
   lines.push('---')
   lines.push('')
   lines.push('请按照以上批注调整代码 / 方案，完成后在终端里简述改了什么。')

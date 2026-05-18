@@ -2143,6 +2143,8 @@ export default function DiffViewerDialog({
                     filePath={currentFile.path}
                     oldText={currentMarkdownPreview.oldText}
                     newText={currentMarkdownPreview.newText}
+                    oldChangedLines={currentMarkdownPreview.oldChangedLines}
+                    newChangedLines={currentMarkdownPreview.newChangedLines}
                   />
                 ) : (
                   <>

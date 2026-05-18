@@ -165,17 +165,8 @@ export default function AiSettingsDialog(
             onArgs={setArgsText}
             onEnv={setEnvText}
           />
-          <SettingsSection
-            title="仓库查看分析 AI（默认 Claude）"
-            aiCli={repoAiCli}
-            command={repoCommand}
-            argsText={repoArgsText}
-            envText={repoEnvText}
-            onAiCli={setRepoAiCli}
-            onCommand={setRepoCommand}
-            onArgs={setRepoArgsText}
-            onEnv={setRepoEnvText}
-          />
+          {/* 仓库查看分析 AI 配置已随仓库查看功能一并暂时隐藏。底层保存逻辑保留，
+              在 UI 中隐藏入口；将来恢复时把这块 SettingsSection 重新放回即可。 */}
           {error && <div className="modal-error">⚠ {error}</div>}
         </div>
         <div className="modal-actions">

@@ -3496,6 +3496,22 @@ html, body, #root {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--mac-fg-subtle);
+  display: flex;
+  align-items: center;
+  gap: var(--mac-sp-2);
+}
+
+.dv-md-preview-badge {
+  font-size: var(--mac-text-xs);
+  font-weight: var(--mac-weight-medium);
+  letter-spacing: 0;
+  text-transform: none;
+  padding: 2px var(--mac-sp-2);
+  border-radius: 999px;
+  background: var(--mac-surface-raised);
+  border: 1px solid var(--mac-border-subtle);
+  color: var(--mac-fg);
+  font-family: var(--mono-font, monospace);
 }
 
 .dv-md-preview-grid {
@@ -4619,4 +4635,515 @@ html, body, #root {
   padding: 12px;
   display: flex;
   gap: 8px;
+}
+
+/* ===== Skill 学习 (习惯学习智能体) ===== */
+.habit-source-hint {
+  padding: 10px 16px;
+  background: var(--mac-bg-subtle, #f5f5f7);
+  color: var(--mac-text-secondary, #555);
+  font-size: 12px;
+  border-bottom: 1px solid var(--mac-border-subtle, #e0e0e0);
+}
+.habit-source-link {
+  background: none;
+  border: none;
+  color: var(--mac-accent, #0a7aff);
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+  font-size: inherit;
+}
+.habit-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--mac-border-subtle, #e0e0e0);
+  padding: 0 16px;
+  gap: 4px;
+}
+.habit-tab-btn {
+  background: none;
+  border: none;
+  padding: 10px 16px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--mac-text-secondary, #555);
+  border-bottom: 2px solid transparent;
+}
+.habit-tab-btn.active {
+  color: var(--mac-text, #111);
+  border-bottom-color: var(--mac-accent, #0a7aff);
+}
+.habit-tab-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px;
+}
+.habit-settings-panel,
+.habit-candidates-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.habit-settings-section {
+  border: 1px solid var(--mac-border-subtle, #e0e0e0);
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: var(--mac-bg, #fff);
+}
+.habit-settings-section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.habit-settings-hint {
+  color: var(--mac-text-secondary, #777);
+  font-size: 12px;
+}
+.habit-settings-actions {
+  display: flex;
+  gap: 8px;
+}
+.habit-master-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+.habit-kind-toggles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 16px;
+}
+.habit-kind-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.habit-kind-toggle-label {
+  flex: 1;
+}
+.habit-kind-toggle-code {
+  color: var(--mac-text-secondary, #777);
+  font-size: 11px;
+  font-family: var(--mono-font, monospace);
+}
+.habit-retention-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.habit-event-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.habit-event-item {
+  display: grid;
+  grid-template-columns: 140px 160px 1fr;
+  gap: 8px;
+  font-size: 12px;
+  padding: 4px 6px;
+  border-bottom: 1px dashed var(--mac-border-subtle, #eee);
+}
+.habit-event-kind {
+  color: var(--mac-accent, #0a7aff);
+  font-weight: 500;
+}
+.habit-event-time {
+  color: var(--mac-text-secondary, #777);
+  font-family: var(--mono-font, monospace);
+}
+.habit-event-text {
+  font-family: var(--mono-font, monospace);
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+.habit-candidates-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.habit-candidate-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.habit-candidate-item {
+  border: 1px solid var(--mac-border-subtle, #e0e0e0);
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: var(--mac-bg, #fff);
+}
+.habit-candidate-meta {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: var(--mac-text-secondary, #777);
+  margin-bottom: 6px;
+}
+.habit-candidate-kind {
+  color: var(--mac-accent, #0a7aff);
+  font-weight: 500;
+}
+.habit-candidate-error {
+  color: #c33;
+}
+.habit-candidate-title {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+.habit-candidate-body {
+  background: var(--mac-bg-subtle, #f5f5f7);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-family: var(--mono-font, monospace);
+  font-size: 12px;
+  white-space: pre-wrap;
+  margin: 6px 0;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.habit-candidate-evidence summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--mac-text-secondary, #777);
+}
+.habit-candidate-evidence ul {
+  list-style: disc;
+  padding-left: 20px;
+  font-size: 12px;
+  color: var(--mac-text, #333);
+}
+.habit-candidate-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.habit-toast {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+  background: rgba(0, 0, 0, 0.78);
+  color: #fff;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  pointer-events: none;
+}
+.habit-firstrun-modal {
+  width: 620px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+.habit-firstrun-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--mac-text, #222);
+}
+.habit-firstrun-body p {
+  margin-top: 0;
+}
+.habit-firstrun-section {
+  margin: 12px 0;
+}
+.habit-firstrun-section strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--mac-text, #111);
+}
+.habit-firstrun-section ul {
+  margin: 4px 0;
+  padding-left: 22px;
+  color: var(--mac-text-secondary, #555);
+}
+.habit-firstrun-actions {
+  padding: 12px 16px;
+  border-top: 1px solid var(--mac-border-subtle, #e0e0e0);
+  justify-content: flex-end;
+}
+
+/* ===== Screenshot region overlay ===== */
+.screenshot-overlay-loading {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+}
+.screenshot-overlay-root {
+  position: fixed;
+  top: 0;
+  left: 0;
+  cursor: crosshair;
+  user-select: none;
+  overflow: hidden;
+}
+.screenshot-overlay-bg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  user-select: none;
+}
+.screenshot-overlay-dim {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+.screenshot-overlay-cutout {
+  position: absolute;
+  background-repeat: no-repeat;
+  pointer-events: none;
+}
+.screenshot-overlay-rect-border {
+  position: absolute;
+  border: 1px solid #38bdf8;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+.screenshot-overlay-size-tag {
+  position: absolute;
+  background: rgba(15, 23, 42, 0.85);
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: var(--mono-font, monospace);
+  pointer-events: none;
+}
+.screenshot-overlay-hint {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(15, 23, 42, 0.78);
+  color: #fff;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  pointer-events: none;
+}
+
+/* ===== Screenshot annotation editor ===== */
+.screenshot-editor-root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--mac-surface, #f5f5f7);
+  color: var(--mac-fg, #111);
+  user-select: none;
+}
+.screenshot-editor-loading,
+.screenshot-editor-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  font-size: 14px;
+  color: var(--mac-fg-subtle, #666);
+}
+.screenshot-editor-toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--mac-border-subtle, #e0e0e0);
+  background: var(--mac-surface-raised, #fff);
+}
+.screenshot-tool-group,
+.screenshot-color-group,
+.screenshot-action-group {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.screenshot-tool-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 4px 10px;
+  border: 1px solid var(--mac-border-subtle, #e0e0e0);
+  background: var(--mac-surface, #fafafa);
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--mac-fg, #111);
+  /* Lock text color so the UA `:active` state can't override it via the
+     system Button color keyword, which produced unreadable text on dark
+     theme. */
+  transition: background var(--mac-dur-fast, 120ms) ease;
+}
+.screenshot-tool-btn:hover:not(:disabled) {
+  background: var(--mac-surface-raised, #f0f0f0);
+}
+.screenshot-tool-btn:active:not(:disabled) {
+  /* Explicit pressed state so we don't fall through to the browser default,
+     which on Chromium pulls in a light system color regardless of theme. */
+  background: var(--mac-bg-subtle, #e8e8eb);
+  color: var(--mac-fg, #111);
+}
+.screenshot-tool-btn.active {
+  background: #0a7aff;
+  color: #fff;
+  border-color: #0a7aff;
+}
+.screenshot-tool-btn.active:hover:not(:disabled) {
+  /* Without this, the generic :hover rule wins specificity over .active and
+     paints a light grey background, leaving the white .active text invisible. */
+  background: #1a85ff;
+  color: #fff;
+}
+.screenshot-tool-btn.active:active:not(:disabled) {
+  background: #0867d4;
+  color: #fff;
+}
+.screenshot-tool-btn:focus-visible {
+  outline: 2px solid #0a7aff;
+  outline-offset: 1px;
+}
+.screenshot-tool-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.screenshot-color-swatch {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  outline: 1px solid var(--mac-border-subtle, #ccc);
+  cursor: pointer;
+  padding: 0;
+}
+.screenshot-color-swatch.active {
+  outline: 2px solid #0a7aff;
+  transform: scale(1.1);
+}
+.screenshot-color-swatch:focus-visible {
+  outline: 2px solid #0a7aff;
+  outline-offset: 1px;
+}
+.screenshot-canvas-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: repeating-conic-gradient(#e5e7eb 0% 25%, #f3f4f6 0% 50%) 50% / 16px 16px;
+}
+/* Hugs the rendered canvas so absolutely-positioned overlays (e.g. the
+   in-flight text input) sit flush with where the user clicked, regardless
+   of canvas scale or wrap padding. */
+.screenshot-canvas-anchor {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  max-height: 100%;
+  line-height: 0;
+}
+.screenshot-canvas {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  border: 1px solid var(--mac-border-subtle, #d0d0d5);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+  cursor: crosshair;
+}
+.screenshot-text-input {
+  position: absolute;
+  /* The committed text paints with textBaseline=top, so back the input up
+     a couple px to match its visual baseline. */
+  transform: translate(-2px, -2px);
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px dashed #0a7aff;
+  font: bold 18px system-ui, sans-serif;
+  padding: 2px 4px;
+  outline: none;
+  min-width: 120px;
+  z-index: 10;
+}
+.screenshot-editor-footer {
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+  padding: 10px 14px;
+  border-top: 1px solid var(--mac-border-subtle, #e0e0e0);
+  background: var(--mac-surface-raised, #fff);
+}
+.screenshot-prompt-input {
+  flex: 1;
+  resize: none;
+  padding: 6px 10px;
+  border: 1px solid var(--mac-border-subtle, #d0d0d5);
+  border-radius: 5px;
+  font-size: 13px;
+  font-family: inherit;
+  background: var(--mac-surface, #fafafa);
+  color: var(--mac-fg, #111);
+}
+.screenshot-prompt-input:focus {
+  outline: none;
+  border-color: #0a7aff;
+  background: var(--mac-surface-raised, #fff);
+}
+.screenshot-send-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-end;
+  justify-content: center;
+}
+.screenshot-send-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 8px 18px;
+  background: #0a7aff;
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+.screenshot-send-btn:hover:not(:disabled) {
+  background: #0867d4;
+}
+.screenshot-send-btn:active:not(:disabled) {
+  background: #0651a8;
+  color: #fff;
+}
+.screenshot-send-btn:focus-visible {
+  outline: 2px solid #0a7aff;
+  outline-offset: 2px;
+}
+.screenshot-send-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.screenshot-send-error {
+  color: #c33;
+  font-size: 12px;
 }

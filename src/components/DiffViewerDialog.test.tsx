@@ -74,8 +74,9 @@ describe('DiffViewerDialog', () => {
     expect(markup).toContain('Markdown Preview')
     expect(markup).toContain('dv-file-view-tab active')
     expect(markup).toContain('dv-md-preview')
-    expect(markup).toContain('<li>old item</li>')
-    expect(markup).toContain('<li>new item</li>')
+    // <li> now carries data-sourcepos for the diff-highlight overlay.
+    expect(markup).toMatch(/<li[^>]*>old item<\/li>/)
+    expect(markup).toMatch(/<li[^>]*>new item<\/li>/)
     expect(markup).not.toContain('dv-file-rows')
   })
 

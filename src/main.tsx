@@ -2,6 +2,8 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
 import RepoViewerWindow from './repo-view/RepoViewerWindow'
+import RegionOverlay from './screenshot/RegionOverlay'
+import AnnotationEditor from './screenshot/AnnotationEditor'
 import './styles.css'
 import { pushLog } from './components/ErrorPanel'
 import ErrorBoundary from './components/ErrorBoundary'
@@ -42,6 +44,10 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <RepoViewerWindow projectId={windowMode.projectId} />
           <ToastHost />
         </>
+      ) : windowMode.kind === 'screenshot-overlay' ? (
+        <RegionOverlay sessionToken={windowMode.sessionToken} />
+      ) : windowMode.kind === 'screenshot-editor' ? (
+        <AnnotationEditor sessionToken={windowMode.sessionToken} />
       ) : (
         <App />
       )}

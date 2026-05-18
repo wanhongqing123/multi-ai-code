@@ -234,14 +234,6 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
         <div className="main-panel-actions">
           <button
             className="tile-btn"
-            onClick={props.onOpenRepoView}
-            disabled={props.repoViewDisabled}
-            title="打开独立仓库查看窗口"
-          >
-            仓库查看
-          </button>
-          <button
-            className="tile-btn"
             onClick={props.onOpenDiff}
             disabled={props.disabled || props.status !== 'running'}
             title="打开 Diff 审查（把批注回灌给当前会话）"

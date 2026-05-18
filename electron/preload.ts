@@ -1,5 +1,21 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent, webUtils } from 'electron'
 
+export interface ScreenshotOverlayPayload {
+  imageDataUrl: string
+  logicalSize: { w: number; h: number }
+  physicalSize: { w: number; h: number }
+}
+
+export interface ScreenshotEditorPayload {
+  imageDataUrl: string
+  size: { w: number; h: number }
+}
+
+export interface ScreenshotDeliverEvent {
+  path: string
+  prompt: string
+}
+
 export interface AiSettings {
   ai_cli: 'claude' | 'codex'
   command?: string
@@ -593,6 +609,139 @@ const api = {
       ipcRenderer.invoke('plan:removeExternal', req) as Promise<
         { ok: true } | { ok: false; error: string }
       >
+  },
+  screenshot: {
+    start: () =>
+      ipcRenderer.invoke('screenshot:start') as Promise<{ ok: boolean }>,
+    overlayLoadPayload: (token: string) =>
+      ipcRenderer.invoke('screenshot:overlay-load', token) as Promise<
+        | { ok: true; payload: ScreenshotOverlayPayload }
+        | { ok: false; error: string }
+      >,
+    overlayCommit: (req: {
+      token: string
+      logicalRect: { x: number; y: number; w: number; h: number }
+      logicalSize: { w: number; h: number }
+      physicalSize: { w: number; h: number }
+    }) =>
+      ipcRenderer.invoke('screenshot:overlay-commit', req) as Promise<
+        { ok: true } | { ok: false; error: string }
+      >,
+    overlayCancel: (token: string) =>
+      ipcRenderer.invoke('screenshot:overlay-cancel', token) as Promise<{ ok: boolean }>,
+    editorLoadPayload: (token: string) =>
+      ipcRenderer.invoke('screenshot:editor-load', token) as Promise<
+        | { ok: true; payload: ScreenshotEditorPayload }
+        | { ok: false; error: string }
+      >,
+    editorCancel: (token: string) =>
+      ipcRenderer.invoke('screenshot:editor-cancel', token) as Promise<{ ok: boolean }>,
+    editorSend: (req: { token: string; pngBytes: Uint8Array; prompt: string }) =>
+      ipcRenderer.invoke('screenshot:editor-send', req) as Promise<
+        { ok: true; path: string } | { ok: false; error: string }
+      >,
+    onDeliver: (cb: (evt: ScreenshotDeliverEvent) => void): (() => void) => {
+      const handler = (_e: IpcRendererEvent, evt: ScreenshotDeliverEvent) =>
+        cb(evt)
+      ipcRenderer.on('screenshot:deliver', handler)
+      return () => ipcRenderer.removeListener('screenshot:deliver', handler)
+    },
+    onError: (
+      cb: (evt: { message: string }) => void
+    ): (() => void) => {
+      const handler = (_e: IpcRendererEvent, evt: { message: string }) => cb(evt)
+      ipcRenderer.on('screenshot:error', handler)
+      return () => ipcRenderer.removeListener('screenshot:error', handler)
+    }
+  },
+  habit: {
+    record: (input: {
+      kind:
+        | 'pty_cmd'
+        | 'ai_prompt_main'
+        | 'ai_prompt_repo'
+        | 'diff_annotation'
+        | 'repo_view_annotation'
+        | 'template_used'
+        | 'plan_imported'
+      text: string
+      projectId?: string
+      repoPath?: string
+      sourceWindow?: string
+      extras?: Record<string, unknown>
+    }) =>
+      ipcRenderer.invoke('habit:record', input) as Promise<{ ok: boolean }>,
+    settings: {
+      get: () => ipcRenderer.invoke('habit:settings:get') as Promise<unknown>,
+      save: (next: unknown) =>
+        ipcRenderer.invoke('habit:settings:save', next) as Promise<{ ok: boolean }>,
+      update: (patch: unknown) =>
+        ipcRenderer.invoke('habit:settings:update', patch) as Promise<unknown>
+    },
+    events: {
+      recent: (limit?: number) =>
+        ipcRenderer.invoke('habit:events:recent', { limit }) as Promise<{
+          events: Array<{
+            id: number
+            ts: number
+            kind: string
+            payload: string
+            project_id: string | null
+            repo_path: string | null
+            source_window: string | null
+          }>
+          total: number
+        }>,
+      clear: () =>
+        ipcRenderer.invoke('habit:events:clear') as Promise<{ ok: boolean; removed: number }>
+    },
+    runNow: () =>
+      ipcRenderer.invoke('habit:run-now') as Promise<
+        | {
+            ok: true
+            outcome: {
+              ran: boolean
+              reason: string
+              clustersFound?: number
+              candidatesInserted?: number
+              startedAt: number
+              finishedAt: number
+            }
+          }
+        | { ok: false; error: string }
+      >,
+    candidates: {
+      list: (opts?: { statuses?: string[]; limit?: number }) =>
+        ipcRenderer.invoke('habit:candidates:list', opts) as Promise<
+          Array<{
+            id: number
+            created_at: number
+            cluster_kind: string
+            cluster_size: number
+            source_event_ids: string
+            representative_samples: string
+            generated_title: string | null
+            generated_body: string | null
+            generated_meta: string | null
+            status: string
+            reviewed_at: number | null
+            snoozed_until: number | null
+            error_message: string | null
+          }>
+        >,
+      updateStatus: (req: {
+        id: number
+        status: string
+        snoozedUntil?: number | null
+        errorMessage?: string | null
+      }) =>
+        ipcRenderer.invoke('habit:candidates:update-status', req) as Promise<{ ok: boolean }>,
+      clear: () =>
+        ipcRenderer.invoke('habit:candidates:clear') as Promise<{
+          ok: boolean
+          removed: number
+        }>
+    }
   }
 }
 

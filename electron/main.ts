@@ -25,6 +25,16 @@ import {
   rootDir
 } from './store/paths.js'
 import { registerPtyIpc, killAllSessions } from './cc/ptyManager.js'
+import { registerHabitIpc } from './habit/ipc.js'
+import { recordHabitEvent } from './habit/collector.js'
+import {
+  registerScreenshotHotkey,
+  registerScreenshotIpc,
+  unregisterScreenshotHotkey
+} from './screenshot/manager.js'
+import { startScheduler, stopScheduler } from './habit/scheduler.js'
+import { getSkillGenerator, setSkillGenerator } from './habit/generatorRegistry.js'
+import { createDefaultSkillGenerator } from './habit/generator.js'
 import {
   listPlans,
   registerExternalPlan,
@@ -393,6 +403,13 @@ app.whenReady().then(async () => {
       }
       try {
         await sendRepoAnalysisPrompt({ winId: win.id, text: req.text })
+        // Habit collection: repo-view AI prompt. Best-effort; never throws.
+        void recordHabitEvent({
+          kind: 'ai_prompt_repo',
+          text: req.text,
+          repoPath: req.repoRoot,
+          sourceWindow: 'repo-view'
+        })
         return { ok: true as const }
       } catch (err) {
         return { ok: false as const, error: (err as Error).message }
@@ -1549,6 +1566,11 @@ app.whenReady().then(async () => {
   )
 
   registerPtyIpc()
+  registerHabitIpc()
+  registerScreenshotIpc()
+  registerScreenshotHotkey()
+  setSkillGenerator(createDefaultSkillGenerator())
+  startScheduler(getSkillGenerator())
 
   createWindow()
 
@@ -1565,4 +1587,6 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   killAllSessions()
+  stopScheduler()
+  unregisterScreenshotHotkey()
 })

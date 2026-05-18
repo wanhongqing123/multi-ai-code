@@ -325,6 +325,19 @@ export default function RepoViewerWindow({
           showToast(`发送标注失败：${res.error ?? '未知错误'}`, { level: 'error' })
           return false
         }
+        // Habit collection: capture each annotation text as its own signal so
+        // the aggregator can recognize recurring annotation patterns.
+        for (const a of targetAnns) {
+          const comment = (a.comment ?? '').trim()
+          if (!comment) continue
+          void window.api.habit.record({
+            kind: 'repo_view_annotation',
+            text: comment,
+            projectId: project.id,
+            repoPath: project.target_repo,
+            sourceWindow: 'repo-view'
+          })
+        }
         const sent = targetAnns.length
         setEditingAnnotationId(null)
         setAnnotations([])

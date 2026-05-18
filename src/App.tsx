@@ -11,6 +11,9 @@ import ProjectPicker, { type ProjectInfo } from './components/ProjectPicker'
 import ErrorPanel, { pushLog, useLogs } from './components/ErrorPanel'
 import AiSettingsDialog, { type AiSettings } from './components/AiSettingsDialog'
 import TemplatesDialog from './components/TemplatesDialog'
+import SkillStudioDialog from './habit/SkillStudioDialog'
+import FirstRunNoticeDialog from './habit/FirstRunNoticeDialog'
+import { getCliTargetLabel } from './components/cliTarget'
 import OnboardingWizard from './components/OnboardingWizard'
 import DoctorDialog from './components/DoctorDialog'
 import CommandPalette, { type Command } from './components/CommandPalette'
@@ -37,6 +40,8 @@ export default function App() {
     ai_cli: 'claude'
   })
   const [showTemplates, setShowTemplates] = useState(false)
+  const [showSkillStudio, setShowSkillStudio] = useState(false)
+  const [showHabitFirstRun, setShowHabitFirstRun] = useState(false)
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [showDoctor, setShowDoctor] = useState(false)
   const [showCmdk, setShowCmdk] = useState(false)
@@ -106,6 +111,50 @@ export default function App() {
   useEffect(() => {
     reloadProjectsRef.current = reloadProjects
   }, [reloadProjects])
+
+  // Show the first-run notice for the habit-learning agent exactly once per
+  // install: settings.firstRunNoticeShownAt is 0 before the user has seen it.
+  useEffect(() => {
+    void (async () => {
+      try {
+        const s = (await window.api.habit.settings.get()) as {
+          firstRunNoticeShownAt?: number
+        }
+        if (!s.firstRunNoticeShownAt || s.firstRunNoticeShownAt <= 0) {
+          setShowHabitFirstRun(true)
+        }
+      } catch {
+        /* ignore */
+      }
+    })()
+  }, [])
+
+  // Screenshot delivery: when the editor finishes and main saves the image,
+  // it broadcasts {path, prompt} here. Forward to the current main-session
+  // CLI exactly the way TemplatesDialog injects: cc.sendUser with the prompt
+  // text prefixed with an image path the CLI can read.
+  useEffect(() => {
+    const off = window.api.screenshot.onDeliver(({ path, prompt }) => {
+      if (!sessionId || sessionStatus !== 'running') {
+        showToast(
+          `截图已保存到 ${path}，但当前会话未启动，请先启动会话再发送`,
+          { level: 'warn', duration: 4500 }
+        )
+        return
+      }
+      const trimmed = (prompt ?? '').trim()
+      const text = trimmed ? `${trimmed}\n图片: ${path}` : `图片: ${path}`
+      void window.api.cc.sendUser(sessionId, text)
+      showToast('截图已发送到主会话', { level: 'success' })
+    })
+    const offErr = window.api.screenshot.onError(({ message }) => {
+      showToast(message, { level: 'error' })
+    })
+    return () => {
+      off()
+      offErr()
+    }
+  }, [sessionId, sessionStatus])
 
   /** Clear UI state tied to a specific project (drawers, dialogs, plan name). */
   const clearProjectScopedState = useCallback(() => {
@@ -482,6 +531,15 @@ export default function App() {
       alert(`导入失败：${reg.error}`)
       return
     }
+    // Habit signal: an external plan was imported. We record the plan name
+    // (filename), not the path or contents — the design says input-side only.
+    void window.api.habit.record({
+      kind: 'plan_imported',
+      text: `导入外部方案 ${reg.name}`,
+      projectId: currentProjectId ?? undefined,
+      repoPath: targetRepo || undefined,
+      sourceWindow: 'main'
+    })
     const list = await window.api.plan.list(projectDir)
     if (list.ok) setPlanList(list.items)
     setPlanName(reg.name)
@@ -636,13 +694,26 @@ export default function App() {
         showToast(`发送批注失败：${res.error ?? '未知错误'}`, { level: 'error' })
         return
       }
+      // Habit collection: record each non-empty annotation as a separate signal
+      // so the aggregator can detect recurring batch-annotation patterns.
+      for (const a of anns) {
+        const comment = (a.comment ?? '').trim()
+        if (!comment) continue
+        void window.api.habit.record({
+          kind: 'diff_annotation',
+          text: comment,
+          projectId: currentProjectId ?? undefined,
+          repoPath: targetRepo || undefined,
+          sourceWindow: 'diff-review'
+        })
+      }
       // Sent successfully — clear the batch so the next Diff 审查 starts fresh.
       setDiffAnnotations([])
       setDiffGeneralNote('')
       setDiffReviewOpen(false)
       showToast(`已发送 ${anns.length} 条批注到会话`, { level: 'info' })
     },
-    [sessionId, sessionStatus, planName, getPlanAbsPath]
+    [sessionId, sessionStatus, planName, getPlanAbsPath, currentProjectId, targetRepo]
   )
 
   const judgeExternalReviewItem = useCallback(
@@ -699,6 +770,13 @@ export default function App() {
           title="管理与插入常用 prompt 模板"
         >
           📋 模板
+        </button>
+        <button
+          className="topbar-btn"
+          onClick={() => setShowSkillStudio(true)}
+          title="基于行为习惯自动建议 skill"
+        >
+          🎓 Skill 学习
         </button>
         <button
           className={`topbar-btn ${errorCount > 0 ? 'topbar-btn-danger' : ''}`}
@@ -865,8 +943,7 @@ export default function App() {
             { id: 'logs', label: '📣 错误与通知', keywords: 'errors log notifications', action: () => setShowErrors(true) },
             { id: 'toggle-theme', label: theme === 'dark' ? '切换到浅色主题' : '切换到暗色主题', keywords: 'theme dark light color', action: handleToggleTheme },
             { id: 'plan-review', label: '📝 审阅当前方案', keywords: 'plan review annotate', action: () => void openPlanReview(), disabled: !hasProject || !planName.trim() },
-            { id: 'diff-review', label: '🔀 Diff 审查', keywords: 'diff review code', action: () => void openDiffReview(), disabled: !hasProject },
-            { id: 'repo-view', label: '🗂 仓库查看', keywords: 'repo browser code view', action: () => void openRepoView(), disabled: !hasProject }
+            { id: 'diff-review', label: '🔀 Diff 审查', keywords: 'diff review code', action: () => void openDiffReview(), disabled: !hasProject }
           ] as Command[]}
         />
       )}
@@ -962,6 +1039,43 @@ export default function App() {
           onClose={() => setShowTemplates(false)}
           onInject={(sid, text) => {
             void window.api.cc.sendUser(sid, text)
+            // Habit signal: a template was used. We record the template body
+            // so it clusters together with the corresponding ai_prompt_main
+            // events naturally — same shingles will match.
+            void window.api.habit.record({
+              kind: 'template_used',
+              text,
+              projectId: currentProjectId ?? undefined,
+              repoPath: targetRepo || undefined,
+              sourceWindow: 'main'
+            })
+          }}
+        />
+      )}
+      {showSkillStudio && (
+        <SkillStudioDialog
+          onClose={() => setShowSkillStudio(false)}
+          onOpenAiSettings={() => {
+            setShowSkillStudio(false)
+            setShowAiSettings(true)
+          }}
+          mainCliLabel={getCliTargetLabel(aiSettings.ai_cli)}
+        />
+      )}
+      {showHabitFirstRun && (
+        <FirstRunNoticeDialog
+          onAcknowledge={() => {
+            void window.api.habit.settings.update({
+              firstRunNoticeShownAt: Date.now()
+            })
+            setShowHabitFirstRun(false)
+          }}
+          onDisableCollection={() => {
+            void window.api.habit.settings.update({
+              enabled: false,
+              firstRunNoticeShownAt: Date.now()
+            })
+            setShowHabitFirstRun(false)
           }}
         />
       )}

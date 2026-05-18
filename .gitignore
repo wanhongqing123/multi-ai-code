@@ -66,3 +66,6 @@ lerna-debug.log*
 
 # Multi-AI Code local design/memory artifacts
 .multi-ai-code/
+
+# Runtime AI CLI system-prompt injection files (never the user's content)
+.injections/

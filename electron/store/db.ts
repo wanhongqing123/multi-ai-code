@@ -46,6 +46,35 @@ CREATE TABLE IF NOT EXISTS artifacts (
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_artifacts_project ON artifacts(project_id, stage_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS habit_events (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts            INTEGER NOT NULL,
+  kind          TEXT NOT NULL,
+  payload       TEXT NOT NULL,
+  project_id    TEXT,
+  repo_path     TEXT,
+  source_window TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_habit_events_ts ON habit_events(ts);
+CREATE INDEX IF NOT EXISTS idx_habit_events_kind ON habit_events(kind);
+
+CREATE TABLE IF NOT EXISTS skill_candidates (
+  id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at             INTEGER NOT NULL,
+  cluster_kind           TEXT NOT NULL,
+  cluster_size           INTEGER NOT NULL,
+  source_event_ids       TEXT NOT NULL,
+  representative_samples TEXT NOT NULL,
+  generated_title        TEXT,
+  generated_body         TEXT,
+  generated_meta         TEXT,
+  status                 TEXT NOT NULL DEFAULT 'pending',
+  reviewed_at            INTEGER,
+  snoozed_until          INTEGER,
+  error_message          TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_skill_candidates_status ON skill_candidates(status);
 `
 
 export function initDb(): Database.Database {

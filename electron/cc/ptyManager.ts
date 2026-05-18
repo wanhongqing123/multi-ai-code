@@ -19,6 +19,7 @@ import {
 } from '../orchestrator/prompts.js'
 import { detectMsys } from '../util/msys.js'
 import { rootDir } from '../store/paths.js'
+import { recordHabitEvent } from '../habit/collector.js'
 
 /**
  * PTY chunk debug dumper. Enable by setting env var MULTI_AI_CODE_PTY_DUMP=1
@@ -440,6 +441,14 @@ export function registerPtyIpc(): void {
       const s = sessions.get(sessionId)
       if (!s) return { ok: false, error: 'no session' }
       await sendMessage(s.proc, text)
+      // Habit collection: record this prompt for later skill suggestion.
+      // Best-effort, swallows its own errors; never blocks the user action.
+      void recordHabitEvent({
+        kind: 'ai_prompt_main',
+        text,
+        projectId: s.projectId,
+        sourceWindow: 'main'
+      })
       return { ok: true }
     }
   )

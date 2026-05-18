@@ -1241,38 +1241,75 @@ html, body, #root {
 .ai-settings-body {
   flex: 1;
   overflow-y: auto;
-  padding: var(--mac-sp-3) var(--mac-sp-4);
+  padding: var(--mac-sp-5) var(--mac-sp-5) var(--mac-sp-4);
   display: flex;
   flex-direction: column;
-  gap: var(--mac-sp-3);
+  gap: var(--mac-sp-4);
   background: var(--mac-surface);
 }
 .ai-settings-card {
-  border: 1px solid var(--mac-border);
-  border-radius: var(--mac-r-md);
-  padding: var(--mac-sp-3) var(--mac-sp-3);
+  border: 1px solid var(--mac-border-subtle);
+  border-radius: var(--mac-r-lg);
+  padding: var(--mac-sp-5);
   background: var(--mac-surface-raised);
-}
-.ai-settings-card label {
-  display: block;
-  margin-top: var(--mac-sp-2);
-  font-size: var(--mac-text-xs);
-  color: var(--mac-fg-muted);
-}
-.ai-settings-card label > input,
-.ai-settings-card label > textarea {
-  display: block;
-  width: 100%;
-  margin-top: 2px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--mac-sp-4);
 }
 .ai-settings-title {
   display: flex;
   align-items: center;
-  font-size: var(--mac-text-sm);
+  font-size: var(--mac-text-md);
   color: var(--mac-fg);
   font-weight: var(--mac-weight-medium);
   border-bottom: 1px solid var(--mac-border-subtle);
-  padding-bottom: var(--mac-sp-1);
+  padding-bottom: var(--mac-sp-3);
+  margin: 0;
+}
+.ai-settings-card label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  font-size: var(--mac-text-xs);
+  color: var(--mac-fg-subtle);
+  font-weight: var(--mac-weight-medium);
+  letter-spacing: 0.01em;
+}
+.ai-settings-card label > input,
+.ai-settings-card label > textarea,
+.ai-settings-card label > select {
+  display: block;
+  width: 100%;
+  margin: 0;
+  background: var(--mac-surface);
+  border: 1px solid var(--mac-border);
+  border-radius: var(--mac-r-md);
+  padding: 8px var(--mac-sp-3);
+  color: var(--mac-fg);
+  font-size: var(--mac-text-sm);
+  font-family: var(--mac-font-sans);
+  font-weight: var(--mac-weight-regular);
+  transition: border-color var(--mac-dur-fast) var(--mac-ease),
+              box-shadow var(--mac-dur-fast) var(--mac-ease),
+              background var(--mac-dur-fast) var(--mac-ease);
+}
+.ai-settings-card label > textarea {
+  min-height: 88px;
+  resize: vertical;
+  line-height: var(--mac-line-normal);
+}
+.ai-settings-card label > input:hover:not(:focus),
+.ai-settings-card label > textarea:hover:not(:focus),
+.ai-settings-card label > select:hover:not(:focus) {
+  border-color: var(--mac-border-strong);
+}
+.ai-settings-card label > input:focus,
+.ai-settings-card label > textarea:focus,
+.ai-settings-card label > select:focus {
+  outline: none;
+  border-color: var(--mac-primary);
+  box-shadow: 0 0 0 3px var(--mac-focus-ring);
 }
 
 .error-panel {

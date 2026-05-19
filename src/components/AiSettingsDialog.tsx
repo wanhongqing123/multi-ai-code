@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 const DEFAULT_SCREENSHOT_SHORTCUT = 'CommandOrControl+Shift+A'
 
@@ -35,15 +35,15 @@ export function resolveSavedAppSettings(
   return saved ?? requested
 }
 
-export function shouldSyncScreenshotSettings(
-  current: AppSettings,
+export function shouldApplyIncomingAppSettings(
+  lastSyncedExternal: AppSettings,
   incoming: AppSettings,
   saving: boolean
 ): boolean {
   if (saving) return false
   return (
-    current.screenshotShortcutEnabled !== incoming.screenshotShortcutEnabled ||
-    current.screenshotShortcut !== incoming.screenshotShortcut
+    lastSyncedExternal.screenshotShortcutEnabled !== incoming.screenshotShortcutEnabled ||
+    lastSyncedExternal.screenshotShortcut !== incoming.screenshotShortcut
   )
 }
 
@@ -202,23 +202,22 @@ export default function AiSettingsDialog(
   )
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const lastSyncedAppSettingsRef = useRef<AppSettings>(props.initialAppSettings)
 
   useEffect(() => {
-    const current = {
-      screenshotShortcutEnabled,
-      screenshotShortcut
-    }
-    if (!shouldSyncScreenshotSettings(current, props.initialAppSettings, saving)) {
+    if (
+      !shouldApplyIncomingAppSettings(
+        lastSyncedAppSettingsRef.current,
+        props.initialAppSettings,
+        saving
+      )
+    ) {
       return
     }
     setScreenshotShortcutEnabled(props.initialAppSettings.screenshotShortcutEnabled)
     setScreenshotShortcut(props.initialAppSettings.screenshotShortcut)
-  }, [
-    props.initialAppSettings,
-    saving,
-    screenshotShortcutEnabled,
-    screenshotShortcut
-  ])
+    lastSyncedAppSettingsRef.current = props.initialAppSettings
+  }, [props.initialAppSettings, saving])
 
   const restoreDefaultShortcut = (): void => {
     setScreenshotShortcutEnabled(true)
@@ -248,12 +247,10 @@ export default function AiSettingsDialog(
         throw new Error(appRes.error ?? 'save app settings failed')
       }
 
-      const savedAppSettings = resolveSavedAppSettings(
-        requestedAppSettings,
-        appRes.value
-      )
+      const savedAppSettings = resolveSavedAppSettings(requestedAppSettings, appRes.value)
       setScreenshotShortcutEnabled(savedAppSettings.screenshotShortcutEnabled)
       setScreenshotShortcut(savedAppSettings.screenshotShortcut)
+      lastSyncedAppSettingsRef.current = savedAppSettings
       props.onSavedAppSettings(savedAppSettings)
 
       if (props.projectId) {

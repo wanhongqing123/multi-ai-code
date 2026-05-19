@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import AiSettingsDialog, {
   resolveSavedAppSettings,
-  shouldSyncScreenshotSettings
+  shouldApplyIncomingAppSettings
 } from './AiSettingsDialog.js'
 
 describe('AiSettingsDialog', () => {
@@ -67,9 +67,25 @@ describe('AiSettingsDialog', () => {
     })
   })
 
-  it('does not sync incoming app settings into local screenshot state while saving', () => {
+  it('preserves local edits when the incoming app-settings prop has not changed', () => {
     expect(
-      shouldSyncScreenshotSettings(
+      shouldApplyIncomingAppSettings(
+        {
+          screenshotShortcutEnabled: true,
+          screenshotShortcut: 'CommandOrControl+Shift+A'
+        },
+        {
+          screenshotShortcutEnabled: true,
+          screenshotShortcut: 'CommandOrControl+Shift+A'
+        },
+        false
+      )
+    ).toBe(false)
+  })
+
+  it('does not apply incoming app settings during an active save', () => {
+    expect(
+      shouldApplyIncomingAppSettings(
         {
           screenshotShortcutEnabled: true,
           screenshotShortcut: 'CommandOrControl+Shift+A'

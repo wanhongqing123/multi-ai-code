@@ -177,7 +177,7 @@ export default function SkillStudioDialog(props: Props): JSX.Element {
           习惯学习智能体当前使用：<strong>{mainCliLabel}</strong>（与主会话 AI 同一份配置）。
           {' '}
           <button type="button" className="habit-source-link" onClick={onOpenAiSettings}>
-            打开 AI 设置
+            打开设置
           </button>
         </div>
 

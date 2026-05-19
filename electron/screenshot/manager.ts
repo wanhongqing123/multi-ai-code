@@ -2,8 +2,7 @@ import {
   BrowserWindow,
   desktopCapturer,
   ipcMain,
-  screen,
-  globalShortcut
+  screen
 } from 'electron'
 import { promises as fs } from 'fs'
 import { join } from 'path'
@@ -224,7 +223,7 @@ function deliverToMainWindow(path: string, prompt: string): void {
 }
 
 /** Starts a new screenshot session. Idempotent if a session is already live. */
-async function beginScreenshotSession(): Promise<void> {
+export async function beginScreenshotSession(): Promise<void> {
   // If a session is already in progress, ignore so the hotkey isn't a footgun.
   for (const s of sessions.values()) {
     if (s.overlayWin || s.editorWin) return
@@ -361,22 +360,3 @@ export function registerScreenshotIpc(): void {
   })
 }
 
-const HOTKEY = 'CommandOrControl+Shift+A'
-
-export function registerScreenshotHotkey(): void {
-  try {
-    globalShortcut.register(HOTKEY, () => {
-      void beginScreenshotSession()
-    })
-  } catch {
-    /* tolerate registration failure — manual trigger still works */
-  }
-}
-
-export function unregisterScreenshotHotkey(): void {
-  try {
-    globalShortcut.unregister(HOTKEY)
-  } catch {
-    /* ignore */
-  }
-}

@@ -1276,7 +1276,7 @@ html, body, #root {
   font-weight: var(--mac-weight-medium);
   letter-spacing: 0.01em;
 }
-.ai-settings-card label > input,
+.ai-settings-card label > input:not([type='checkbox']),
 .ai-settings-card label > textarea,
 .ai-settings-card label > select {
   display: block;
@@ -1299,17 +1299,37 @@ html, body, #root {
   resize: vertical;
   line-height: var(--mac-line-normal);
 }
-.ai-settings-card label > input:hover:not(:focus),
+.ai-settings-card label > input:not([type='checkbox']):hover:not(:focus),
 .ai-settings-card label > textarea:hover:not(:focus),
 .ai-settings-card label > select:hover:not(:focus) {
   border-color: var(--mac-border-strong);
 }
-.ai-settings-card label > input:focus,
+.ai-settings-card label > input:not([type='checkbox']):focus,
 .ai-settings-card label > textarea:focus,
 .ai-settings-card label > select:focus {
   outline: none;
   border-color: var(--mac-primary);
   box-shadow: 0 0 0 3px var(--mac-focus-ring);
+}
+.ai-settings-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--mac-sp-3);
+}
+.ai-settings-checkbox {
+  flex-direction: row !important;
+  align-items: center;
+  gap: var(--mac-sp-2) !important;
+}
+.ai-settings-checkbox input[type='checkbox'] {
+  margin: 0;
+}
+.ai-settings-help,
+.ai-settings-note {
+  font-size: var(--mac-text-xs);
+  color: var(--mac-fg-subtle);
+  line-height: var(--mac-line-normal);
 }
 
 .error-panel {

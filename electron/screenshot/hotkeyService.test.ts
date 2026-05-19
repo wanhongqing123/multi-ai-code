@@ -54,6 +54,12 @@ function createSave() {
   )
 }
 
+function createSaveFailure(message = 'save failed') {
+  return vi.fn<(_: ScreenshotHotkeySettings) => Promise<ScreenshotHotkeySettings>>().mockRejectedValue(
+    new Error(message)
+  )
+}
+
 function expectFailure(result: ScreenshotHotkeyResult): Extract<ScreenshotHotkeyResult, { ok: false }> {
   if (result.ok) {
     throw new Error('Expected hotkey operation to fail')
@@ -112,12 +118,50 @@ describe('initializeScreenshotHotkey', () => {
     const failure = expectFailure(result)
     expect(failure.error).toContain('different registrar')
     expect(failure.activeAccelerator).toBe('Alt+Shift+S')
+    expect(failure.settings).toEqual({
+      enabled: true,
+      shortcut: 'Alt+Shift+S'
+    })
+    expect(failure.requestedSettings).toEqual({
+      enabled: true,
+      shortcut: 'CommandOrControl+Shift+A'
+    })
     expect(owner.isRegistered('Alt+Shift+S')).toBe(true)
     expect(other.isRegistered('CommandOrControl+Shift+A')).toBe(false)
   })
 })
 
 describe('applyScreenshotHotkeySettings', () => {
+  it('normalizes the renderer shortcut before registration and persistence', async () => {
+    const registrar = createRegistrar()
+    await initializeScreenshotHotkey({
+      registrar,
+      load: async () => ({
+        enabled: false,
+        shortcut: 'Alt+Shift+S'
+      })
+    })
+    const save = createSave()
+
+    const result = await applyScreenshotHotkeySettings(
+      { enabled: true, shortcut: ' CommandOrControl+Shift+A ' },
+      { registrar, save }
+    )
+
+    expect(result.ok).toBe(true)
+    expect(result.activeAccelerator).toBe('CommandOrControl+Shift+A')
+    expect(result.settings).toEqual({
+      enabled: true,
+      shortcut: 'CommandOrControl+Shift+A'
+    })
+    expect(save).toHaveBeenCalledWith({
+      enabled: true,
+      shortcut: 'CommandOrControl+Shift+A'
+    })
+    expect(registrar.isRegistered('CommandOrControl+Shift+A')).toBe(true)
+    expect(registrar.isRegistered(' CommandOrControl+Shift+A ')).toBe(false)
+  })
+
   it('unregisters the previous shortcut and keeps the new one on success', async () => {
     const registrar = createRegistrar()
     await initializeScreenshotHotkey({
@@ -144,7 +188,7 @@ describe('applyScreenshotHotkeySettings', () => {
     expect(registrar.isRegistered('CommandOrControl+Shift+A')).toBe(true)
   })
 
-  it('rolls back to the previous shortcut when registration fails', async () => {
+  it('returns the previous effective settings when registration fails', async () => {
     const registrar = createRegistrar()
     await initializeScreenshotHotkey({
       registrar,
@@ -157,19 +201,27 @@ describe('applyScreenshotHotkeySettings', () => {
     registrar.failNextRegistration('CommandOrControl+Shift+A')
 
     const result = await applyScreenshotHotkeySettings(
-      { enabled: true, shortcut: 'CommandOrControl+Shift+A' },
+      { enabled: true, shortcut: ' CommandOrControl+Shift+A ' },
       { registrar, save }
     )
 
     const failure = expectFailure(result)
     expect(failure.error).toContain('CommandOrControl+Shift+A')
     expect(failure.activeAccelerator).toBe('Alt+Shift+S')
+    expect(failure.settings).toEqual({
+      enabled: true,
+      shortcut: 'Alt+Shift+S'
+    })
+    expect(failure.requestedSettings).toEqual({
+      enabled: true,
+      shortcut: 'CommandOrControl+Shift+A'
+    })
     expect(save).not.toHaveBeenCalled()
     expect(registrar.isRegistered('Alt+Shift+S')).toBe(true)
     expect(registrar.isRegistered('CommandOrControl+Shift+A')).toBe(false)
   })
 
-  it('reports no active shortcut if rollback cannot restore the previous shortcut', async () => {
+  it('returns disabled effective settings if rollback cannot restore the previous shortcut', async () => {
     const registrar = createRegistrar()
     await initializeScreenshotHotkey({
       registrar,
@@ -190,7 +242,46 @@ describe('applyScreenshotHotkeySettings', () => {
     const failure = expectFailure(result)
     expect(failure.error).toContain('rollback')
     expect(failure.activeAccelerator).toBeNull()
+    expect(failure.settings).toEqual({
+      enabled: false,
+      shortcut: 'Alt+Shift+S'
+    })
+    expect(failure.requestedSettings).toEqual({
+      enabled: true,
+      shortcut: 'CommandOrControl+Shift+A'
+    })
     expect(registrar.isRegistered('Alt+Shift+S')).toBe(false)
+    expect(registrar.isRegistered('CommandOrControl+Shift+A')).toBe(false)
+  })
+
+  it('returns the restored effective settings when save fails and rollback succeeds', async () => {
+    const registrar = createRegistrar()
+    await initializeScreenshotHotkey({
+      registrar,
+      load: async () => ({
+        enabled: true,
+        shortcut: 'Alt+Shift+S'
+      })
+    })
+    const save = createSaveFailure()
+
+    const result = await applyScreenshotHotkeySettings(
+      { enabled: true, shortcut: 'CommandOrControl+Shift+A' },
+      { registrar, save }
+    )
+
+    const failure = expectFailure(result)
+    expect(failure.error).toContain('save failed')
+    expect(failure.activeAccelerator).toBe('Alt+Shift+S')
+    expect(failure.settings).toEqual({
+      enabled: true,
+      shortcut: 'Alt+Shift+S'
+    })
+    expect(failure.requestedSettings).toEqual({
+      enabled: true,
+      shortcut: 'CommandOrControl+Shift+A'
+    })
+    expect(registrar.isRegistered('Alt+Shift+S')).toBe(true)
     expect(registrar.isRegistered('CommandOrControl+Shift+A')).toBe(false)
   })
 
@@ -243,6 +334,14 @@ describe('applyScreenshotHotkeySettings', () => {
 
     const failure = expectFailure(result)
     expect(failure.error).toContain('different registrar')
+    expect(failure.settings).toEqual({
+      enabled: true,
+      shortcut: 'Alt+Shift+S'
+    })
+    expect(failure.requestedSettings).toEqual({
+      enabled: true,
+      shortcut: 'CommandOrControl+Shift+A'
+    })
     expect(save).not.toHaveBeenCalled()
     expect(owner.isRegistered('Alt+Shift+S')).toBe(true)
     expect(other.isRegistered('CommandOrControl+Shift+A')).toBe(false)

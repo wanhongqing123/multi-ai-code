@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 const DEFAULT_SCREENSHOT_SHORTCUT = 'CommandOrControl+Shift+A'
 
@@ -26,6 +26,25 @@ export interface AiSettingsDialogProps {
   onSaved: (next: AiSettings) => void
   onSavedRepoView: (next: AiSettings) => void
   onSavedAppSettings: (next: AppSettings) => void
+}
+
+export function resolveSavedAppSettings(
+  requested: AppSettings,
+  saved: AppSettings | undefined
+): AppSettings {
+  return saved ?? requested
+}
+
+export function shouldSyncScreenshotSettings(
+  current: AppSettings,
+  incoming: AppSettings,
+  saving: boolean
+): boolean {
+  if (saving) return false
+  return (
+    current.screenshotShortcutEnabled !== incoming.screenshotShortcutEnabled ||
+    current.screenshotShortcut !== incoming.screenshotShortcut
+  )
 }
 
 function toEnvText(env: Record<string, string> | undefined): string {
@@ -184,6 +203,23 @@ export default function AiSettingsDialog(
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  useEffect(() => {
+    const current = {
+      screenshotShortcutEnabled,
+      screenshotShortcut
+    }
+    if (!shouldSyncScreenshotSettings(current, props.initialAppSettings, saving)) {
+      return
+    }
+    setScreenshotShortcutEnabled(props.initialAppSettings.screenshotShortcutEnabled)
+    setScreenshotShortcut(props.initialAppSettings.screenshotShortcut)
+  }, [
+    props.initialAppSettings,
+    saving,
+    screenshotShortcutEnabled,
+    screenshotShortcut
+  ])
+
   const restoreDefaultShortcut = (): void => {
     setScreenshotShortcutEnabled(true)
     setScreenshotShortcut(DEFAULT_SCREENSHOT_SHORTCUT)
@@ -199,7 +235,7 @@ export default function AiSettingsDialog(
     setSaving(true)
     setError(null)
 
-    const nextAppSettings: AppSettings = {
+    const requestedAppSettings: AppSettings = {
       screenshotShortcutEnabled,
       screenshotShortcut: normalizedShortcut
     }
@@ -207,10 +243,18 @@ export default function AiSettingsDialog(
     const nextRepoView = fromForm(repoAiCli, repoCommand, repoArgsText, repoEnvText)
 
     try {
-      const appRes = await window.api.settings.setAppSettings(nextAppSettings)
+      const appRes = await window.api.settings.setAppSettings(requestedAppSettings)
       if (!appRes.ok) {
         throw new Error(appRes.error ?? 'save app settings failed')
       }
+
+      const savedAppSettings = resolveSavedAppSettings(
+        requestedAppSettings,
+        appRes.value
+      )
+      setScreenshotShortcutEnabled(savedAppSettings.screenshotShortcutEnabled)
+      setScreenshotShortcut(savedAppSettings.screenshotShortcut)
+      props.onSavedAppSettings(savedAppSettings)
 
       if (props.projectId) {
         const [mainRes, repoRes] = await Promise.all([
@@ -223,7 +267,6 @@ export default function AiSettingsDialog(
         props.onSavedRepoView(nextRepoView)
       }
 
-      props.onSavedAppSettings(nextAppSettings)
       props.onClose()
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e))

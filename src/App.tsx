@@ -767,7 +767,7 @@ export default function App() {
         <button
           className="topbar-btn"
           onClick={() => setShowAiSettings(true)}
-          title="配置 AI CLI 命令 / 参数 / 环境变量"
+          title="配置全局截图快捷键，以及 AI CLI 命令 / 参数 / 环境变量"
         >
           ⚙️ 设置
         </button>

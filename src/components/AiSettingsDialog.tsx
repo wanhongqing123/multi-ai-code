@@ -17,6 +17,12 @@ export interface AppSettings {
   screenshotShortcut: string
 }
 
+interface AppSettingsSaveResponse {
+  ok: boolean
+  value?: AppSettings
+  error?: string
+}
+
 export interface AiSettingsDialogProps {
   projectId: string | null
   initial: AiSettings
@@ -33,6 +39,16 @@ export function resolveSavedAppSettings(
   saved: AppSettings | undefined
 ): AppSettings {
   return saved ?? requested
+}
+
+export function deriveAppSettingsSaveOutcome(
+  requested: AppSettings,
+  response: AppSettingsSaveResponse
+): { appSettings: AppSettings; error: string | null } {
+  return {
+    appSettings: resolveSavedAppSettings(requested, response.value),
+    error: response.ok ? null : response.error ?? 'save app settings failed'
+  }
 }
 
 export function shouldApplyIncomingAppSettings(
@@ -243,15 +259,23 @@ export default function AiSettingsDialog(
 
     try {
       const appRes = await window.api.settings.setAppSettings(requestedAppSettings)
-      if (!appRes.ok) {
-        throw new Error(appRes.error ?? 'save app settings failed')
+      const appOutcome = deriveAppSettingsSaveOutcome(requestedAppSettings, appRes)
+
+      if (appRes.value) {
+        setScreenshotShortcutEnabled(appOutcome.appSettings.screenshotShortcutEnabled)
+        setScreenshotShortcut(appOutcome.appSettings.screenshotShortcut)
+        lastSyncedAppSettingsRef.current = appOutcome.appSettings
+        props.onSavedAppSettings(appOutcome.appSettings)
+      } else if (appRes.ok) {
+        setScreenshotShortcutEnabled(appOutcome.appSettings.screenshotShortcutEnabled)
+        setScreenshotShortcut(appOutcome.appSettings.screenshotShortcut)
+        lastSyncedAppSettingsRef.current = appOutcome.appSettings
+        props.onSavedAppSettings(appOutcome.appSettings)
       }
 
-      const savedAppSettings = resolveSavedAppSettings(requestedAppSettings, appRes.value)
-      setScreenshotShortcutEnabled(savedAppSettings.screenshotShortcutEnabled)
-      setScreenshotShortcut(savedAppSettings.screenshotShortcut)
-      lastSyncedAppSettingsRef.current = savedAppSettings
-      props.onSavedAppSettings(savedAppSettings)
+      if (appOutcome.error) {
+        throw new Error(appOutcome.error)
+      }
 
       if (props.projectId) {
         const [mainRes, repoRes] = await Promise.all([

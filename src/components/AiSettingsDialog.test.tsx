@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import AiSettingsDialog, {
+  deriveAppSettingsSaveOutcome,
   resolveSavedAppSettings,
   shouldApplyIncomingAppSettings
 } from './AiSettingsDialog.js'
@@ -64,6 +65,31 @@ describe('AiSettingsDialog', () => {
     ).toEqual({
       screenshotShortcutEnabled: false,
       screenshotShortcut: 'Alt+Shift+S'
+    })
+  })
+
+  it('uses authoritative fallback app settings from a failed save response', () => {
+    expect(
+      deriveAppSettingsSaveOutcome(
+        {
+          screenshotShortcutEnabled: true,
+          screenshotShortcut: 'Attempted+Shortcut'
+        },
+        {
+          ok: false,
+          value: {
+            screenshotShortcutEnabled: false,
+            screenshotShortcut: 'Fallback+Shortcut'
+          },
+          error: 'save failed'
+        }
+      )
+    ).toEqual({
+      appSettings: {
+        screenshotShortcutEnabled: false,
+        screenshotShortcut: 'Fallback+Shortcut'
+      },
+      error: 'save failed'
     })
   })
 

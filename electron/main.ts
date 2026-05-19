@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, dialog, globalShortcut } from 'electron'
 import { join, isAbsolute, dirname } from 'path'
 import { tmpdir } from 'os'
 import { randomBytes } from 'crypto'
@@ -27,11 +27,16 @@ import {
 import { registerPtyIpc, killAllSessions } from './cc/ptyManager.js'
 import { registerHabitIpc } from './habit/ipc.js'
 import { recordHabitEvent } from './habit/collector.js'
+import { registerScreenshotIpc } from './screenshot/manager.js'
 import {
-  registerScreenshotHotkey,
-  registerScreenshotIpc,
-  unregisterScreenshotHotkey
-} from './screenshot/manager.js'
+  applyScreenshotHotkeySettings,
+  disposeScreenshotHotkey,
+  initializeScreenshotHotkey
+} from './screenshot/hotkeyService.js'
+import {
+  loadScreenshotHotkeySettings,
+  type ScreenshotHotkeySettings
+} from './screenshot/hotkeySettings.js'
 import { startScheduler, stopScheduler } from './habit/scheduler.js'
 import { getSkillGenerator, setSkillGenerator } from './habit/generatorRegistry.js'
 import { createDefaultSkillGenerator } from './habit/generator.js'
@@ -68,6 +73,25 @@ import { ensureAnalysisCacheDir } from './repo-view/analysisCache.js'
 const isDev = !app.isPackaged
 const repoViewWindows = new Map<string, BrowserWindow>()
 const appIconPath = join(__dirname, '../../build/icon-256.png')
+
+interface AppSettings {
+  screenshotShortcutEnabled: boolean
+  screenshotShortcut: string
+}
+
+function toRendererAppSettings(settings: ScreenshotHotkeySettings): AppSettings {
+  return {
+    screenshotShortcutEnabled: settings.enabled,
+    screenshotShortcut: settings.shortcut
+  }
+}
+
+function fromRendererAppSettings(settings: AppSettings): ScreenshotHotkeySettings {
+  return {
+    enabled: settings.screenshotShortcutEnabled,
+    shortcut: settings.screenshotShortcut
+  }
+}
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -181,6 +205,33 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('app:ping', () => 'pong')
   ipcMain.handle('app:version', () => app.getVersion())
+  ipcMain.handle('settings:get-app-settings', async () => {
+    const settings = await loadScreenshotHotkeySettings()
+    return toRendererAppSettings(settings)
+  })
+  ipcMain.handle(
+    'settings:set-app-settings',
+    async (
+      _e,
+      settings: AppSettings
+    ): Promise<{ ok: boolean; value?: AppSettings; error?: string }> => {
+      const result = await applyScreenshotHotkeySettings(
+        fromRendererAppSettings(settings),
+        { registrar: globalShortcut }
+      )
+      if (!result.ok) {
+        return {
+          ok: false,
+          value: toRendererAppSettings(result.settings),
+          error: result.error
+        }
+      }
+      return {
+        ok: true,
+        value: toRendererAppSettings(result.settings)
+      }
+    }
+  )
 
   ipcMain.handle(
     'plan:list',
@@ -1568,7 +1619,12 @@ app.whenReady().then(async () => {
   registerPtyIpc()
   registerHabitIpc()
   registerScreenshotIpc()
-  registerScreenshotHotkey()
+  const screenshotHotkeyInit = await initializeScreenshotHotkey({
+    registrar: globalShortcut
+  })
+  if (!screenshotHotkeyInit.ok) {
+    console.warn('[screenshot] failed to initialize hotkey:', screenshotHotkeyInit.error)
+  }
   setSkillGenerator(createDefaultSkillGenerator())
   startScheduler(getSkillGenerator())
 
@@ -1588,5 +1644,5 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   killAllSessions()
   stopScheduler()
-  unregisterScreenshotHotkey()
+  disposeScreenshotHotkey(globalShortcut)
 })

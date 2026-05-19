@@ -23,6 +23,11 @@ export interface AiSettings {
   env?: Record<string, string>
 }
 
+export interface AppSettings {
+  screenshotShortcutEnabled: boolean
+  screenshotShortcut: string
+}
+
 export interface SpawnRequest {
   sessionId: string
   projectId: string
@@ -178,6 +183,16 @@ const api = {
       ipcRenderer.invoke('shell:open-msys-terminal', { cwd }) as Promise<{
         ok: boolean
         variant?: 'msys2' | 'git' | 'path' | null
+        error?: string
+      }>
+  },
+  settings: {
+    getAppSettings: () =>
+      ipcRenderer.invoke('settings:get-app-settings') as Promise<AppSettings>,
+    setAppSettings: (settings: AppSettings) =>
+      ipcRenderer.invoke('settings:set-app-settings', settings) as Promise<{
+        ok: boolean
+        value?: AppSettings
         error?: string
       }>
   },

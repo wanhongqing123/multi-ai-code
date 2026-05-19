@@ -1,4 +1,4 @@
-﻿import { promises as fs } from 'fs'
+import { promises as fs } from 'fs'
 import { join } from 'path'
 import { rootDir } from '../store/paths.js'
 
@@ -48,7 +48,7 @@ export async function loadScreenshotHotkeySettings(): Promise<ScreenshotHotkeySe
 }
 
 export async function saveScreenshotHotkeySettings(
-  next: Partial<ScreenshotHotkeySettings>
+  next: ScreenshotHotkeySettings
 ): Promise<ScreenshotHotkeySettings> {
   const merged = mergeScreenshotHotkeySettings(next)
   await fs.mkdir(rootDir(), { recursive: true })

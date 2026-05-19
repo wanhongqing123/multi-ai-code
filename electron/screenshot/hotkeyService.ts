@@ -36,7 +36,8 @@ export type ScreenshotHotkeyResult = HotkeySuccessResult | HotkeyErrorResult
 
 let activeRegistration: ActiveRegistration | null = null
 let effectiveSettings: ScreenshotHotkeySettings | null = null
-let applyQueue: Promise<void> = Promise.resolve()
+let mutationQueue: Promise<void> = Promise.resolve()
+let lifecycleVersion = 0
 
 export async function initializeScreenshotHotkey({
   registrar,
@@ -47,10 +48,17 @@ export async function initializeScreenshotHotkey({
   trigger?: () => void | Promise<void>
   load?: () => Promise<ScreenshotHotkeySettings>
 }): Promise<ScreenshotHotkeyResult> {
-  const settings = mergeScreenshotHotkeySettings(await load())
-  const conflict = ensureRegistrarOwnership(registrar, settings)
-  if (conflict) return conflict
-  return applyRegistration(settings, registrar, trigger)
+  return runSerializedMutation(async () => {
+    const operationVersion = lifecycleVersion
+    const settings = mergeScreenshotHotkeySettings(await load())
+    if (operationVersion !== lifecycleVersion) {
+      return createLifecycleInterruptedResult(settings)
+    }
+
+    const conflict = ensureRegistrarOwnership(registrar, settings)
+    if (conflict) return conflict
+    return applyRegistration(settings, registrar, trigger)
+  })
 }
 
 export async function applyScreenshotHotkeySettings(
@@ -65,7 +73,8 @@ export async function applyScreenshotHotkeySettings(
     save?: (settings: ScreenshotHotkeySettings) => Promise<ScreenshotHotkeySettings>
   }
 ): Promise<ScreenshotHotkeyResult> {
-  return runSerializedApply(async () => {
+  return runSerializedMutation(async () => {
+    const operationVersion = lifecycleVersion
     const requestedSettings = mergeScreenshotHotkeySettings(next)
     const conflict = ensureRegistrarOwnership(registrar, requestedSettings)
     if (conflict) return conflict
@@ -79,6 +88,9 @@ export async function applyScreenshotHotkeySettings(
 
     try {
       const settings = await save(requestedSettings)
+      if (operationVersion !== lifecycleVersion) {
+        return createLifecycleInterruptedResult(requestedSettings)
+      }
       effectiveSettings = settings
       return {
         ok: true,
@@ -86,6 +98,12 @@ export async function applyScreenshotHotkeySettings(
         settings
       }
     } catch (error) {
+      if (operationVersion !== lifecycleVersion) {
+        return createLifecycleInterruptedResult(
+          requestedSettings,
+          `Screenshot hotkey apply was interrupted: ${error instanceof Error ? error.message : String(error)}`
+        )
+      }
       const rollback = rollbackRegistration(
         activeRegistration,
         previousRegistration,
@@ -111,6 +129,7 @@ export function disposeScreenshotHotkey(
   if (!current || current.registrar !== registrar) return
   if (!accelerator || current.accelerator !== accelerator) return
 
+  lifecycleVersion++
   if (registrar.isRegistered(accelerator)) {
     registrar.unregister(accelerator)
   }
@@ -266,10 +285,10 @@ function formatSaveFailure(error: unknown, rollbackError?: string): string {
   return rollbackError ? `${message}; rollback failed: ${rollbackError}` : message
 }
 
-async function runSerializedApply<T>(operation: () => Promise<T>): Promise<T> {
-  const previous = applyQueue
+async function runSerializedMutation<T>(operation: () => Promise<T>): Promise<T> {
+  const previous = mutationQueue
   let release!: () => void
-  applyQueue = new Promise<void>((resolve) => {
+  mutationQueue = new Promise<void>((resolve) => {
     release = resolve
   })
 
@@ -294,4 +313,30 @@ function toInactiveSettings(
 async function defaultTrigger(): Promise<void> {
   const { beginScreenshotSession } = await import('./manager.js')
   await beginScreenshotSession()
+}
+
+function createLifecycleInterruptedResult(
+  requestedSettings: ScreenshotHotkeySettings,
+  error = 'Screenshot hotkey apply was interrupted by a lifecycle change'
+): HotkeyErrorResult {
+  return {
+    ok: false,
+    activeAccelerator: activeRegistration?.accelerator ?? null,
+    settings: currentEffectiveSettings(requestedSettings.shortcut),
+    requestedSettings,
+    error
+  }
+}
+
+function currentEffectiveSettings(fallbackShortcut: string): ScreenshotHotkeySettings {
+  if (effectiveSettings) {
+    return effectiveSettings
+  }
+  if (activeRegistration) {
+    return {
+      enabled: true,
+      shortcut: activeRegistration.accelerator
+    }
+  }
+  return toInactiveSettings(null, fallbackShortcut)
 }

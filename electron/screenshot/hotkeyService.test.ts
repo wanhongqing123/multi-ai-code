@@ -424,6 +424,45 @@ describe('applyScreenshotHotkeySettings', () => {
 })
 
 describe('disposeScreenshotHotkey', () => {
+  it('is not undone by a later completion of an in-flight apply', async () => {
+    const registrar = createRegistrar()
+    await initializeScreenshotHotkey({
+      registrar,
+      load: async () => ({
+        enabled: true,
+        shortcut: 'Alt+Shift+S'
+      })
+    })
+    const save = createDeferredSave()
+
+    const applyPromise = applyScreenshotHotkeySettings(
+      { enabled: true, shortcut: 'CommandOrControl+Shift+A' },
+      { registrar, save: save.save }
+    )
+
+    await Promise.resolve()
+    disposeScreenshotHotkey(registrar, 'CommandOrControl+Shift+A')
+    save.resolve({
+      enabled: true,
+      shortcut: 'CommandOrControl+Shift+A'
+    })
+
+    const result = await applyPromise
+    const failure = expectFailure(result)
+    expect(failure.error).toContain('interrupted')
+    expect(failure.activeAccelerator).toBeNull()
+    expect(failure.settings).toEqual({
+      enabled: false,
+      shortcut: 'CommandOrControl+Shift+A'
+    })
+    expect(failure.requestedSettings).toEqual({
+      enabled: true,
+      shortcut: 'CommandOrControl+Shift+A'
+    })
+    expect(registrar.isRegistered('CommandOrControl+Shift+A')).toBe(false)
+    expect(registrar.isRegistered('Alt+Shift+S')).toBe(false)
+  })
+
   it('unregisters the active accelerator', async () => {
     const registrar = createRegistrar()
     await initializeScreenshotHotkey({

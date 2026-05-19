@@ -11,11 +11,12 @@ export interface ShortcutRegistrar {
 }
 
 interface ActiveRegistration {
+  registrar: ShortcutRegistrar
   accelerator: string
   callback: () => void
 }
 
-interface HotkeyLoadResult {
+interface HotkeySuccessResult {
   ok: true
   activeAccelerator: string | null
   settings: ScreenshotHotkeySettings
@@ -28,7 +29,7 @@ interface HotkeyErrorResult {
   error: string
 }
 
-export type ScreenshotHotkeyResult = HotkeyLoadResult | HotkeyErrorResult
+export type ScreenshotHotkeyResult = HotkeySuccessResult | HotkeyErrorResult
 
 let activeRegistration: ActiveRegistration | null = null
 
@@ -42,6 +43,8 @@ export async function initializeScreenshotHotkey({
   load?: () => Promise<ScreenshotHotkeySettings>
 }): Promise<ScreenshotHotkeyResult> {
   const settings = await load()
+  const conflict = ensureRegistrarOwnership(registrar, settings)
+  if (conflict) return conflict
   return applyRegistration(settings, registrar, trigger)
 }
 
@@ -57,9 +60,11 @@ export async function applyScreenshotHotkeySettings(
     save?: (settings: ScreenshotHotkeySettings) => Promise<ScreenshotHotkeySettings>
   }
 ): Promise<ScreenshotHotkeyResult> {
+  const conflict = ensureRegistrarOwnership(registrar, next)
+  if (conflict) return conflict
+
   const previousRegistration = activeRegistration
   const registrationResult = applyRegistration(next, registrar, trigger)
-
   if (!registrationResult.ok) {
     return registrationResult
   }
@@ -72,12 +77,12 @@ export async function applyScreenshotHotkeySettings(
       settings
     }
   } catch (error) {
-    restorePreviousRegistration(registrar, previousRegistration)
+    const rollback = rollbackRegistration(activeRegistration, previousRegistration)
     return {
       ok: false,
-      activeAccelerator: previousRegistration?.accelerator ?? null,
+      activeAccelerator: rollback.activeAccelerator,
       settings: next,
-      error: (error as Error).message
+      error: formatSaveFailure(error, rollback.error)
     }
   }
 }
@@ -86,13 +91,14 @@ export function disposeScreenshotHotkey(
   registrar: ShortcutRegistrar,
   accelerator = activeRegistration?.accelerator
 ): void {
-  if (accelerator && registrar.isRegistered(accelerator)) {
+  const current = activeRegistration
+  if (!current || current.registrar !== registrar) return
+  if (!accelerator || current.accelerator !== accelerator) return
+
+  if (registrar.isRegistered(accelerator)) {
     registrar.unregister(accelerator)
   }
-
-  if (!activeRegistration || activeRegistration.accelerator === accelerator) {
-    activeRegistration = null
-  }
+  activeRegistration = null
 }
 
 function applyRegistration(
@@ -102,12 +108,12 @@ function applyRegistration(
 ): ScreenshotHotkeyResult {
   const previousRegistration = activeRegistration
 
-  if (previousRegistration?.accelerator && registrar.isRegistered(previousRegistration.accelerator)) {
-    registrar.unregister(previousRegistration.accelerator)
+  if (previousRegistration && previousRegistration.registrar === registrar) {
+    unregisterIfPresent(previousRegistration)
+    activeRegistration = null
   }
 
   if (!settings.enabled) {
-    activeRegistration = null
     return {
       ok: true,
       activeAccelerator: null,
@@ -115,42 +121,104 @@ function applyRegistration(
     }
   }
 
-  const callback = () => {
-    void trigger()
-  }
-
-  if (!registrar.register(settings.shortcut, callback)) {
-    restorePreviousRegistration(registrar, previousRegistration)
-    return {
-      ok: false,
-      activeAccelerator: previousRegistration?.accelerator ?? null,
-      settings,
-      error: `Failed to register screenshot shortcut: ${settings.shortcut}`
+  const nextRegistration: ActiveRegistration = {
+    registrar,
+    accelerator: settings.shortcut,
+    callback: () => {
+      void trigger()
     }
   }
 
-  activeRegistration = {
-    accelerator: settings.shortcut,
-    callback
+  if (!registrar.register(nextRegistration.accelerator, nextRegistration.callback)) {
+    const rollback = restoreRegistration(previousRegistration)
+    return {
+      ok: false,
+      activeAccelerator: rollback.activeAccelerator,
+      settings,
+      error: formatRegistrationFailure(settings.shortcut, rollback.error)
+    }
   }
 
+  activeRegistration = nextRegistration
   return {
     ok: true,
-    activeAccelerator: settings.shortcut,
+    activeAccelerator: nextRegistration.accelerator,
     settings
   }
 }
 
-function restorePreviousRegistration(
+function ensureRegistrarOwnership(
   registrar: ShortcutRegistrar,
+  settings: ScreenshotHotkeySettings
+): HotkeyErrorResult | null {
+  if (!activeRegistration || activeRegistration.registrar === registrar) {
+    return null
+  }
+
+  return {
+    ok: false,
+    activeAccelerator: activeRegistration.accelerator,
+    settings,
+    error: 'Screenshot hotkey is already managed by a different registrar'
+  }
+}
+
+function rollbackRegistration(
+  currentRegistration: ActiveRegistration | null,
   previousRegistration: ActiveRegistration | null
-): void {
-  disposeScreenshotHotkey(registrar)
+): { activeAccelerator: string | null; error?: string } {
+  if (
+    currentRegistration &&
+    activeRegistration &&
+    activeRegistration.registrar === currentRegistration.registrar &&
+    activeRegistration.accelerator === currentRegistration.accelerator
+  ) {
+    unregisterIfPresent(currentRegistration)
+    activeRegistration = null
+  }
 
-  if (!previousRegistration) return
+  return restoreRegistration(previousRegistration)
+}
 
-  registrar.register(previousRegistration.accelerator, previousRegistration.callback)
-  activeRegistration = previousRegistration
+function restoreRegistration(
+  previousRegistration: ActiveRegistration | null
+): { activeAccelerator: string | null; error?: string } {
+  if (!previousRegistration) {
+    activeRegistration = null
+    return { activeAccelerator: null }
+  }
+
+  if (
+    previousRegistration.registrar.register(
+      previousRegistration.accelerator,
+      previousRegistration.callback
+    )
+  ) {
+    activeRegistration = previousRegistration
+    return { activeAccelerator: previousRegistration.accelerator }
+  }
+
+  activeRegistration = null
+  return {
+    activeAccelerator: null,
+    error: `Failed to restore screenshot shortcut: ${previousRegistration.accelerator}`
+  }
+}
+
+function unregisterIfPresent(registration: ActiveRegistration): void {
+  if (registration.registrar.isRegistered(registration.accelerator)) {
+    registration.registrar.unregister(registration.accelerator)
+  }
+}
+
+function formatRegistrationFailure(shortcut: string, rollbackError?: string): string {
+  const base = `Failed to register screenshot shortcut: ${shortcut}`
+  return rollbackError ? `${base}; rollback failed: ${rollbackError}` : base
+}
+
+function formatSaveFailure(error: unknown, rollbackError?: string): string {
+  const message = error instanceof Error ? error.message : String(error)
+  return rollbackError ? `${message}; rollback failed: ${rollbackError}` : message
 }
 
 async function defaultTrigger(): Promise<void> {

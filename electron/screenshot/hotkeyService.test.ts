@@ -60,6 +60,27 @@ function createSaveFailure(message = 'save failed') {
   )
 }
 
+function createDeferredSave() {
+  let resolve: ((settings: ScreenshotHotkeySettings) => void) | null = null
+  let reject: ((error: Error) => void) | null = null
+  const promise = new Promise<ScreenshotHotkeySettings>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+
+  return {
+    save: vi.fn<(_: ScreenshotHotkeySettings) => Promise<ScreenshotHotkeySettings>>().mockImplementation(
+      () => promise
+    ),
+    resolve(settings: ScreenshotHotkeySettings) {
+      resolve?.(settings)
+    },
+    reject(message = 'save failed') {
+      reject?.(new Error(message))
+    }
+  }
+}
+
 function expectFailure(result: ScreenshotHotkeyResult): Extract<ScreenshotHotkeyResult, { ok: false }> {
   if (result.ok) {
     throw new Error('Expected hotkey operation to fail')
@@ -283,6 +304,60 @@ describe('applyScreenshotHotkeySettings', () => {
     })
     expect(registrar.isRegistered('Alt+Shift+S')).toBe(true)
     expect(registrar.isRegistered('CommandOrControl+Shift+A')).toBe(false)
+  })
+
+  it('serializes overlapping applies so an earlier failure cannot roll back a later update', async () => {
+    const registrar = createRegistrar()
+    await initializeScreenshotHotkey({
+      registrar,
+      load: async () => ({
+        enabled: true,
+        shortcut: 'Alt+Shift+S'
+      })
+    })
+    const firstSave = createDeferredSave()
+    const secondSave = createDeferredSave()
+
+    const firstApplyPromise = applyScreenshotHotkeySettings(
+      { enabled: true, shortcut: 'CommandOrControl+Shift+A' },
+      { registrar, save: firstSave.save }
+    )
+    const secondApplyPromise = applyScreenshotHotkeySettings(
+      { enabled: true, shortcut: 'Alt+Shift+X' },
+      { registrar, save: secondSave.save }
+    )
+    let secondSettled = false
+    void secondApplyPromise.finally(() => {
+      secondSettled = true
+    })
+
+    await Promise.resolve()
+    expect(secondSettled).toBe(false)
+
+    firstSave.reject()
+    const firstResult = await firstApplyPromise
+    expect(secondSettled).toBe(false)
+
+    secondSave.resolve({
+      enabled: true,
+      shortcut: 'Alt+Shift+X'
+    })
+    const secondResult = await secondApplyPromise
+
+    const firstFailure = expectFailure(firstResult)
+    expect(firstFailure.settings).toEqual({
+      enabled: true,
+      shortcut: 'Alt+Shift+S'
+    })
+    expect(firstFailure.requestedSettings).toEqual({
+      enabled: true,
+      shortcut: 'CommandOrControl+Shift+A'
+    })
+    expect(secondResult.ok).toBe(true)
+    expect(secondResult.activeAccelerator).toBe('Alt+Shift+X')
+    expect(registrar.isRegistered('Alt+Shift+X')).toBe(true)
+    expect(registrar.isRegistered('CommandOrControl+Shift+A')).toBe(false)
+    expect(registrar.isRegistered('Alt+Shift+S')).toBe(false)
   })
 
   it('supports disabling without clearing the stored accelerator', async () => {

@@ -36,6 +36,7 @@ export type ScreenshotHotkeyResult = HotkeySuccessResult | HotkeyErrorResult
 
 let activeRegistration: ActiveRegistration | null = null
 let effectiveSettings: ScreenshotHotkeySettings | null = null
+let applyQueue: Promise<void> = Promise.resolve()
 
 export async function initializeScreenshotHotkey({
   registrar,
@@ -64,40 +65,42 @@ export async function applyScreenshotHotkeySettings(
     save?: (settings: ScreenshotHotkeySettings) => Promise<ScreenshotHotkeySettings>
   }
 ): Promise<ScreenshotHotkeyResult> {
-  const requestedSettings = mergeScreenshotHotkeySettings(next)
-  const conflict = ensureRegistrarOwnership(registrar, requestedSettings)
-  if (conflict) return conflict
+  return runSerializedApply(async () => {
+    const requestedSettings = mergeScreenshotHotkeySettings(next)
+    const conflict = ensureRegistrarOwnership(registrar, requestedSettings)
+    if (conflict) return conflict
 
-  const previousRegistration = activeRegistration
-  const previousSettings = effectiveSettings
-  const registrationResult = applyRegistration(requestedSettings, registrar, trigger)
-  if (!registrationResult.ok) {
-    return registrationResult
-  }
+    const previousRegistration = activeRegistration
+    const previousSettings = effectiveSettings
+    const registrationResult = applyRegistration(requestedSettings, registrar, trigger)
+    if (!registrationResult.ok) {
+      return registrationResult
+    }
 
-  try {
-    const settings = await save(requestedSettings)
-    effectiveSettings = settings
-    return {
-      ok: true,
-      activeAccelerator: registrationResult.activeAccelerator,
-      settings
+    try {
+      const settings = await save(requestedSettings)
+      effectiveSettings = settings
+      return {
+        ok: true,
+        activeAccelerator: registrationResult.activeAccelerator,
+        settings
+      }
+    } catch (error) {
+      const rollback = rollbackRegistration(
+        activeRegistration,
+        previousRegistration,
+        previousSettings,
+        requestedSettings.shortcut
+      )
+      return {
+        ok: false,
+        activeAccelerator: rollback.activeAccelerator,
+        settings: rollback.settings,
+        requestedSettings,
+        error: formatSaveFailure(error, rollback.error)
+      }
     }
-  } catch (error) {
-    const rollback = rollbackRegistration(
-      activeRegistration,
-      previousRegistration,
-      previousSettings,
-      requestedSettings.shortcut
-    )
-    return {
-      ok: false,
-      activeAccelerator: rollback.activeAccelerator,
-      settings: rollback.settings ?? toInactiveSettings(previousSettings, requestedSettings.shortcut),
-      requestedSettings,
-      error: formatSaveFailure(error, rollback.error)
-    }
-  }
+  })
 }
 
 export function disposeScreenshotHotkey(
@@ -193,7 +196,7 @@ function rollbackRegistration(
   previousRegistration: ActiveRegistration | null,
   previousSettings: ScreenshotHotkeySettings | null,
   fallbackShortcut: string
-): { activeAccelerator: string | null; settings?: ScreenshotHotkeySettings; error?: string } {
+): { activeAccelerator: string | null; settings: ScreenshotHotkeySettings; error?: string } {
   if (
     currentRegistration &&
     activeRegistration &&
@@ -261,6 +264,21 @@ function formatRegistrationFailure(shortcut: string, rollbackError?: string): st
 function formatSaveFailure(error: unknown, rollbackError?: string): string {
   const message = error instanceof Error ? error.message : String(error)
   return rollbackError ? `${message}; rollback failed: ${rollbackError}` : message
+}
+
+async function runSerializedApply<T>(operation: () => Promise<T>): Promise<T> {
+  const previous = applyQueue
+  let release!: () => void
+  applyQueue = new Promise<void>((resolve) => {
+    release = resolve
+  })
+
+  await previous
+  try {
+    return await operation()
+  } finally {
+    release()
+  }
 }
 
 function toInactiveSettings(

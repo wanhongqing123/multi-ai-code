@@ -79,6 +79,8 @@ interface AppSettings {
   screenshotShortcut: string
 }
 
+let effectiveAppSettings: AppSettings | null = null
+
 function toRendererAppSettings(settings: ScreenshotHotkeySettings): AppSettings {
   return {
     screenshotShortcutEnabled: settings.enabled,
@@ -91,6 +93,11 @@ function fromRendererAppSettings(settings: AppSettings): ScreenshotHotkeySetting
     enabled: settings.screenshotShortcutEnabled,
     shortcut: settings.screenshotShortcut
   }
+}
+
+function setEffectiveAppSettings(settings: ScreenshotHotkeySettings): AppSettings {
+  effectiveAppSettings = toRendererAppSettings(settings)
+  return effectiveAppSettings
 }
 
 function createWindow(): void {
@@ -206,8 +213,9 @@ app.whenReady().then(async () => {
   ipcMain.handle('app:ping', () => 'pong')
   ipcMain.handle('app:version', () => app.getVersion())
   ipcMain.handle('settings:get-app-settings', async () => {
+    if (effectiveAppSettings) return effectiveAppSettings
     const settings = await loadScreenshotHotkeySettings()
-    return toRendererAppSettings(settings)
+    return setEffectiveAppSettings(settings)
   })
   ipcMain.handle(
     'settings:set-app-settings',
@@ -222,13 +230,13 @@ app.whenReady().then(async () => {
       if (!result.ok) {
         return {
           ok: false,
-          value: toRendererAppSettings(result.settings),
+          value: setEffectiveAppSettings(result.settings),
           error: result.error
         }
       }
       return {
         ok: true,
-        value: toRendererAppSettings(result.settings)
+        value: setEffectiveAppSettings(result.settings)
       }
     }
   )
@@ -1622,6 +1630,7 @@ app.whenReady().then(async () => {
   const screenshotHotkeyInit = await initializeScreenshotHotkey({
     registrar: globalShortcut
   })
+  setEffectiveAppSettings(screenshotHotkeyInit.settings)
   if (!screenshotHotkeyInit.ok) {
     console.warn('[screenshot] failed to initialize hotkey:', screenshotHotkeyInit.error)
   }

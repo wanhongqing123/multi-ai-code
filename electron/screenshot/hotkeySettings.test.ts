@@ -57,7 +57,19 @@ describe('loadScreenshotHotkeySettings', () => {
 })
 
 describe('mergeScreenshotHotkeySettings', () => {
-  it('trims whitespace and restores the default shortcut when input is empty', () => {
+  it('trims whitespace from a padded shortcut', () => {
+    const settings = mergeScreenshotHotkeySettings({
+      enabled: false,
+      shortcut: '  Alt+Shift+S  '
+    })
+
+    expect(settings).toEqual({
+      enabled: false,
+      shortcut: 'Alt+Shift+S'
+    })
+  })
+
+  it('restores the default shortcut when input is empty after trimming', () => {
     const settings = mergeScreenshotHotkeySettings({
       enabled: false,
       shortcut: '   '

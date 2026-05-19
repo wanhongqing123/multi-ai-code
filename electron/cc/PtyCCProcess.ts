@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events'
-import { delimiter, join, isAbsolute, extname } from 'path'
+import { basename, delimiter, dirname, join, isAbsolute, extname } from 'path'
 import { statSync, readFileSync, writeFileSync } from 'fs'
 import { createRequire } from 'module'
 import type { IPty } from 'node-pty'
@@ -11,6 +11,72 @@ type NodePtySpawn = (file: string, args: string[], options: Record<string, unkno
 
 let nodePtySpawn: NodePtySpawn | null = null
 let nodePtyLoadError: Error | null = null
+
+function normalizeCliCommand(cmd: string): string {
+  let normalized = cmd.trim()
+  while (normalized.length >= 2) {
+    const first = normalized[0]
+    const last = normalized[normalized.length - 1]
+    if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
+      normalized = normalized.slice(1, -1).trim()
+      continue
+    }
+    break
+  }
+  return normalized
+}
+
+function fallbackCliAlias(cmd: string): 'claude' | 'codex' | null {
+  const base = basename(cmd).toLowerCase()
+  if (/^claude(\.(exe|cmd|bat|ps1))?$/.test(base)) return 'claude'
+  if (/^codex(\.(exe|cmd|bat|ps1))?$/.test(base)) return 'codex'
+  return null
+}
+
+function isExistingFile(path: string): boolean {
+  try {
+    return statSync(path).isFile()
+  } catch {
+    return false
+  }
+}
+
+function resolveClaudeNativeBinary(cmd: string): string | null {
+  if (!isWindows) return null
+  const normalized = normalizeCliCommand(cmd)
+  const base = basename(normalized).toLowerCase()
+
+  let packageRoot: string | null = null
+  if (base === 'claude' || base === 'claude.cmd' || base === 'claude.ps1') {
+    packageRoot = join(dirname(normalized), 'node_modules', '@anthropic-ai', 'claude-code')
+  } else if (base === 'claude.exe') {
+    const binDir = dirname(normalized)
+    const pkgRoot = dirname(binDir)
+    if (
+      basename(binDir).toLowerCase() === 'bin' &&
+      basename(pkgRoot).toLowerCase() === 'claude-code' &&
+      basename(dirname(pkgRoot)).toLowerCase() === '@anthropic-ai'
+    ) {
+      packageRoot = pkgRoot
+    }
+  }
+
+  if (!packageRoot) return null
+
+  const directBin = join(packageRoot, 'bin', 'claude.exe')
+  if (isExistingFile(directBin)) return directBin
+
+  const nativePkg =
+    process.arch === 'arm64' ? 'claude-code-win32-arm64' : 'claude-code-win32-x64'
+  const nestedNative = join(
+    packageRoot,
+    'node_modules',
+    '@anthropic-ai',
+    nativePkg,
+    'claude.exe'
+  )
+  return isExistingFile(nestedNative) ? nestedNative : null
+}
 
 try {
   const mod = require('node-pty') as { spawn?: NodePtySpawn }
@@ -25,31 +91,34 @@ try {
 
 /** Resolve a bare command name against PATH + PATHEXT. Returns full path or null. */
 function resolveOnPath(cmd: string, envPath: string): string | null {
-  if (isAbsolute(cmd) || cmd.includes('/') || cmd.includes('\\')) {
-    try {
-      if (statSync(cmd).isFile()) return cmd
-    } catch {
-      /* fall through */
-    }
+  const normalized = normalizeCliCommand(cmd)
+  if (isAbsolute(normalized) || normalized.includes('/') || normalized.includes('\\')) {
+    const nativeClaude = resolveClaudeNativeBinary(normalized)
+    if (nativeClaude) return nativeClaude
+    if (isExistingFile(normalized)) return normalized
+    const alias = fallbackCliAlias(normalized)
+    if (alias) return resolveOnPath(alias, envPath)
     return null
   }
   const exts = isWindows
     ? (process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').map((e) => e.toLowerCase())
     : ['']
   const dirs = envPath.split(delimiter).filter(Boolean)
-  const hasExt = isWindows && exts.includes(extname(cmd).toLowerCase())
+  const hasExt = isWindows && exts.includes(extname(normalized).toLowerCase())
   for (const dir of dirs) {
     // On Windows, only match files with a valid PATHEXT extension — a bare
     // name often collides with an sh script (e.g. npm installs `claude` as
     // both a POSIX shim and `claude.cmd`; spawning the shim via CreateProcess
     // fails with ERROR_FILE_NOT_FOUND).
-    const candidates = hasExt ? [cmd] : isWindows ? exts.map((e) => cmd + e) : [cmd]
+    const candidates = hasExt
+      ? [normalized]
+      : isWindows
+        ? exts.map((e) => normalized + e)
+        : [normalized]
     for (const name of candidates) {
       const full = join(dir, name)
-      try {
-        if (statSync(full).isFile()) return full
-      } catch {
-        /* not found */
+      if (isExistingFile(full)) {
+        return resolveClaudeNativeBinary(full) ?? full
       }
     }
   }
@@ -101,7 +170,7 @@ export class PtyCCProcess extends EventEmitter {
       throw new Error(`node-pty 不可用，无法启动终端会话：${detail}`)
     }
 
-    const command = this.opts.command ?? 'claude'
+    const command = normalizeCliCommand(this.opts.command ?? 'claude')
     const args = this.opts.args ?? []
 
     const env: Record<string, string> = {

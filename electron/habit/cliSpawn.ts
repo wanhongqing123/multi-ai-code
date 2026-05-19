@@ -1,4 +1,4 @@
-import { delimiter, extname, isAbsolute, join } from 'path'
+import { basename, delimiter, dirname, extname, isAbsolute, join } from 'path'
 import { statSync } from 'fs'
 
 /**
@@ -25,28 +25,97 @@ import { statSync } from 'fs'
 
 const isWindows = process.platform === 'win32'
 
-export function resolveOnPath(cmd: string, envPath: string): string | null {
-  if (isAbsolute(cmd) || cmd.includes('/') || cmd.includes('\\')) {
-    try {
-      if (statSync(cmd).isFile()) return cmd
-    } catch {
-      /* fall through */
+function normalizeCliCommand(cmd: string): string {
+  let normalized = cmd.trim()
+  while (normalized.length >= 2) {
+    const first = normalized[0]
+    const last = normalized[normalized.length - 1]
+    if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
+      normalized = normalized.slice(1, -1).trim()
+      continue
     }
+    break
+  }
+  return normalized
+}
+
+function fallbackCliAlias(cmd: string): 'claude' | 'codex' | null {
+  const base = basename(cmd).toLowerCase()
+  if (/^claude(\.(exe|cmd|bat|ps1))?$/.test(base)) return 'claude'
+  if (/^codex(\.(exe|cmd|bat|ps1))?$/.test(base)) return 'codex'
+  return null
+}
+
+function isExistingFile(path: string): boolean {
+  try {
+    return statSync(path).isFile()
+  } catch {
+    return false
+  }
+}
+
+function resolveClaudeNativeBinary(cmd: string): string | null {
+  if (!isWindows) return null
+  const normalized = normalizeCliCommand(cmd)
+  const base = basename(normalized).toLowerCase()
+
+  let packageRoot: string | null = null
+  if (base === 'claude' || base === 'claude.cmd' || base === 'claude.ps1') {
+    packageRoot = join(dirname(normalized), 'node_modules', '@anthropic-ai', 'claude-code')
+  } else if (base === 'claude.exe') {
+    const binDir = dirname(normalized)
+    const pkgRoot = dirname(binDir)
+    if (
+      basename(binDir).toLowerCase() === 'bin' &&
+      basename(pkgRoot).toLowerCase() === 'claude-code' &&
+      basename(dirname(pkgRoot)).toLowerCase() === '@anthropic-ai'
+    ) {
+      packageRoot = pkgRoot
+    }
+  }
+
+  if (!packageRoot) return null
+
+  const directBin = join(packageRoot, 'bin', 'claude.exe')
+  if (isExistingFile(directBin)) return directBin
+
+  const nativePkg =
+    process.arch === 'arm64' ? 'claude-code-win32-arm64' : 'claude-code-win32-x64'
+  const nestedNative = join(
+    packageRoot,
+    'node_modules',
+    '@anthropic-ai',
+    nativePkg,
+    'claude.exe'
+  )
+  return isExistingFile(nestedNative) ? nestedNative : null
+}
+
+export function resolveOnPath(cmd: string, envPath: string): string | null {
+  const normalized = normalizeCliCommand(cmd)
+  if (isAbsolute(normalized) || normalized.includes('/') || normalized.includes('\\')) {
+    const nativeClaude = resolveClaudeNativeBinary(normalized)
+    if (nativeClaude) return nativeClaude
+    if (isExistingFile(normalized)) return normalized
+    const alias = fallbackCliAlias(normalized)
+    if (alias) return resolveOnPath(alias, envPath)
     return null
   }
   const exts = isWindows
     ? (process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').map((e) => e.toLowerCase())
     : ['']
   const dirs = envPath.split(delimiter).filter(Boolean)
-  const hasExt = isWindows && exts.includes(extname(cmd).toLowerCase())
+  const hasExt = isWindows && exts.includes(extname(normalized).toLowerCase())
   for (const dir of dirs) {
-    const candidates = hasExt ? [cmd] : isWindows ? exts.map((e) => cmd + e) : [cmd]
+    const candidates = hasExt
+      ? [normalized]
+      : isWindows
+        ? exts.map((e) => normalized + e)
+        : [normalized]
     for (const name of candidates) {
       const full = join(dir, name)
-      try {
-        if (statSync(full).isFile()) return full
-      } catch {
-        /* not found */
+      if (isExistingFile(full)) {
+        return resolveClaudeNativeBinary(full) ?? full
       }
     }
   }
@@ -122,11 +191,12 @@ export function resolveCliSpawn(
   args: string[],
   env: Record<string, string>
 ): ResolveSpawnResult | ResolveSpawnError {
+  const normalizedCommand = normalizeCliCommand(command)
   if (!isWindows) {
     return {
       ok: true,
       resolved: {
-        spawnCommand: command,
+        spawnCommand: normalizedCommand,
         spawnArgs: args,
         shell: false
       }
@@ -134,7 +204,7 @@ export function resolveCliSpawn(
   }
   const pathKey = Object.keys(env).find((k) => k.toLowerCase() === 'path') ?? 'Path'
   const envPath = env[pathKey] ?? ''
-  const resolved = resolveOnPath(command, envPath)
+  const resolved = resolveOnPath(normalizedCommand, envPath)
   if (!resolved) {
     return {
       ok: false,

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { promises as fs } from 'fs'
-import { join } from 'path'
+import { dirname, join } from 'path'
 import { tmpdir } from 'os'
 import { buildEnvWithPath, resolveCliSpawn, resolveOnPath } from './cliSpawn.js'
 import { buildCliArgs } from './generator.js'
@@ -28,6 +28,16 @@ describe('resolveOnPath', () => {
   it('returns the absolute path when given an existing absolute path', async () => {
     const { full } = await mkBin(isWindows ? 'tool.exe' : 'tool')
     expect(resolveOnPath(full, '')).toBe(full)
+  })
+
+  it('accepts an existing absolute path wrapped in quotes', async () => {
+    const { full } = await mkBin(isWindows ? 'tool.exe' : 'tool')
+    expect(resolveOnPath(`"${full}"`, '')).toBe(full)
+  })
+
+  it('accepts an existing absolute path wrapped in multiple quote layers', async () => {
+    const { full } = await mkBin(isWindows ? 'tool.exe' : 'tool')
+    expect(resolveOnPath(`'"${full}"'`, '')).toBe(full)
   })
 
   it('returns null when the absolute path does not exist', () => {
@@ -129,6 +139,64 @@ describe('resolveCliSpawn', () => {
     expect(r.ok).toBe(true)
     if (r.ok) {
       expect(r.resolved.spawnCommand).toBe(full)
+      expect(r.resolved.spawnArgs).toEqual(['-p', 'hi'])
+    }
+  })
+
+  it('on Windows, accepts a quoted absolute .exe path', async () => {
+    if (!isWindows) return
+    const { full } = await mkBin('faketool.exe')
+    const r = resolveCliSpawn(`"${full}"`, ['-p', 'hi'], { Path: 'C:\\nothing' })
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.resolved.spawnCommand).toBe(full)
+      expect(r.resolved.spawnArgs).toEqual(['-p', 'hi'])
+    }
+  })
+
+  it('on Windows, falls back to PATH shim when a stale quoted claude.exe path no longer exists', async () => {
+    if (!isWindows) return
+    const { dir, full } = await mkBin('claude.cmd')
+    const r = resolveCliSpawn(`'"C:\\missing\\claude.exe"'`, ['-p', 'hi'], { Path: dir })
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.resolved.spawnCommand.toLowerCase()).toContain('cmd')
+      expect(r.resolved.spawnArgs[3]).toBe(full)
+      expect(r.resolved.spawnArgs.slice(4)).toEqual(['-p', 'hi'])
+    }
+  })
+
+  it('on Windows, prefers the real claude native binary from the npm wrapper package when bin/claude.exe is missing', async () => {
+    if (!isWindows) return
+    const dir = await fs.mkdtemp(join(tmpdir(), 'claude-wrapper-'))
+    tempRoots.push(dir)
+    const wrapperCmd = join(dir, 'claude.cmd')
+    await fs.writeFile(wrapperCmd, '@echo off\r\n')
+    const nativeExe = join(
+      dir,
+      'node_modules',
+      '@anthropic-ai',
+      'claude-code',
+      'node_modules',
+      '@anthropic-ai',
+      'claude-code-win32-x64',
+      'claude.exe'
+    )
+    await fs.mkdir(dirname(nativeExe), { recursive: true })
+    await fs.writeFile(nativeExe, 'binary')
+
+    const staleExe = join(
+      dir,
+      'node_modules',
+      '@anthropic-ai',
+      'claude-code',
+      'bin',
+      'claude.exe'
+    )
+    const r = resolveCliSpawn(`'"${staleExe}"'`, ['-p', 'hi'], { Path: dir })
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.resolved.spawnCommand).toBe(nativeExe)
       expect(r.resolved.spawnArgs).toEqual(['-p', 'hi'])
     }
   })

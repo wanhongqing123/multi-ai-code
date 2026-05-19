@@ -9,7 +9,10 @@ import { buildCliLaunchArgs } from './utils/cliLaunchArgs'
 import MainPanel from './components/MainPanel'
 import ProjectPicker, { type ProjectInfo } from './components/ProjectPicker'
 import ErrorPanel, { pushLog, useLogs } from './components/ErrorPanel'
-import AiSettingsDialog, { type AiSettings } from './components/AiSettingsDialog'
+import AiSettingsDialog, {
+  type AiSettings,
+  type AppSettings
+} from './components/AiSettingsDialog'
 import TemplatesDialog from './components/TemplatesDialog'
 import SkillStudioDialog from './habit/SkillStudioDialog'
 import FirstRunNoticeDialog from './habit/FirstRunNoticeDialog'
@@ -38,6 +41,10 @@ export default function App() {
   const [aiSettings, setAiSettings] = useState<AiSettings>({ ai_cli: 'claude' })
   const [repoViewAiSettings, setRepoViewAiSettings] = useState<AiSettings>({
     ai_cli: 'claude'
+  })
+  const [appSettings, setAppSettings] = useState<AppSettings>({
+    screenshotShortcutEnabled: true,
+    screenshotShortcut: 'CommandOrControl+Shift+A'
   })
   const [showTemplates, setShowTemplates] = useState(false)
   const [showSkillStudio, setShowSkillStudio] = useState(false)
@@ -242,6 +249,7 @@ export default function App() {
       }
     })
     window.api.version().then(setVersion)
+    void window.api.settings.getAppSettings().then(setAppSettings)
     void (async () => {
       const list = await reloadProjects()
       const last = localStorage.getItem(LAST_PROJECT_KEY)
@@ -759,10 +767,9 @@ export default function App() {
         <button
           className="topbar-btn"
           onClick={() => setShowAiSettings(true)}
-          disabled={!hasProject}
           title="配置 AI CLI 命令 / 参数 / 环境变量"
         >
-          ⚙️ AI 设置
+          ⚙️ 设置
         </button>
         <button
           className="topbar-btn"
@@ -937,7 +944,7 @@ export default function App() {
             { id: 'proj.picker', label: '📁 项目管理（切换 / 新建 / 删除）', keywords: 'project switch new', action: () => setShowProjectPicker(true) },
             { id: 'onboard', label: '❓ 新手向导', keywords: 'help onboarding wizard', action: () => setShowOnboarding(true) },
             { id: 'doctor', label: '🩺 CLI 体检', keywords: 'doctor check health', action: () => setShowDoctor(true) },
-            { id: 'settings', label: '⚙️ AI 设置', keywords: 'settings command ai cli', action: () => setShowAiSettings(true), disabled: !hasProject },
+            { id: 'settings', label: '⚙️ 设置', keywords: 'settings command ai cli', action: () => setShowAiSettings(true) },
             { id: 'tpl', label: '📋 Prompt 模板', keywords: 'templates prompt snippets', action: () => setShowTemplates(true) },
             { id: 'search', label: '🔍 全局搜索', hint: 'Ctrl+Shift+F', keywords: 'find search', action: () => setShowGlobalSearch(true), disabled: !hasProject },
             { id: 'logs', label: '📣 错误与通知', keywords: 'errors log notifications', action: () => setShowErrors(true) },
@@ -1079,14 +1086,16 @@ export default function App() {
           }}
         />
       )}
-      {showAiSettings && currentProjectId && (
+      {showAiSettings && (
         <AiSettingsDialog
           projectId={currentProjectId}
           initial={aiSettings}
           initialRepoView={repoViewAiSettings}
+          initialAppSettings={appSettings}
           onClose={() => setShowAiSettings(false)}
           onSaved={(next) => setAiSettings(next)}
           onSavedRepoView={(next) => setRepoViewAiSettings(next)}
+          onSavedAppSettings={(next) => setAppSettings(next)}
         />
       )}
       {showErrors && <ErrorPanel onClose={() => setShowErrors(false)} />}

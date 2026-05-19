@@ -1,5 +1,7 @@
 import { useState } from 'react'
 
+const DEFAULT_SCREENSHOT_SHORTCUT = 'CommandOrControl+Shift+A'
+
 export interface AiSettings {
   /** 'claude' | 'codex' */
   ai_cli: 'claude' | 'codex'
@@ -10,13 +12,20 @@ export interface AiSettings {
   env?: Record<string, string>
 }
 
+export interface AppSettings {
+  screenshotShortcutEnabled: boolean
+  screenshotShortcut: string
+}
+
 export interface AiSettingsDialogProps {
-  projectId: string
+  projectId: string | null
   initial: AiSettings
   initialRepoView: AiSettings
+  initialAppSettings: AppSettings
   onClose: () => void
   onSaved: (next: AiSettings) => void
   onSavedRepoView: (next: AiSettings) => void
+  onSavedAppSettings: (next: AppSettings) => void
 }
 
 function toEnvText(env: Record<string, string> | undefined): string {
@@ -38,11 +47,11 @@ function fromForm(
     env: Object.fromEntries(
       envText
         .split('\n')
-        .map((l) => l.trim())
-        .filter((l) => l.includes('='))
-        .map((l) => {
-          const idx = l.indexOf('=')
-          return [l.slice(0, idx).trim(), l.slice(idx + 1).trim()]
+        .map((line) => line.trim())
+        .filter((line) => line.includes('='))
+        .map((line) => {
+          const idx = line.indexOf('=')
+          return [line.slice(0, idx).trim(), line.slice(idx + 1).trim()]
         })
     )
   }
@@ -102,6 +111,53 @@ function SettingsSection(props: {
   )
 }
 
+function ScreenshotSettingsSection(props: {
+  enabled: boolean
+  shortcut: string
+  disabled: boolean
+  onEnabledChange: (next: boolean) => void
+  onShortcutChange: (next: string) => void
+  onRestoreDefaults: () => void
+}): JSX.Element {
+  return (
+    <section className="ai-settings-card">
+      <div className="ai-settings-title-row">
+        <div className="ai-settings-title">截图快捷键（全局）</div>
+        <button
+          type="button"
+          className="drawer-btn"
+          onClick={props.onRestoreDefaults}
+          disabled={props.disabled}
+        >
+          恢复默认
+        </button>
+      </div>
+      <label className="ai-settings-checkbox">
+        <input
+          type="checkbox"
+          checked={props.enabled}
+          onChange={(e) => props.onEnabledChange(e.target.checked)}
+          disabled={props.disabled}
+        />
+        <span>启用全局截图快捷键</span>
+      </label>
+      <label>
+        快捷键
+        <input
+          type="text"
+          value={props.shortcut}
+          onChange={(e) => props.onShortcutChange(e.target.value)}
+          placeholder={DEFAULT_SCREENSHOT_SHORTCUT}
+          disabled={props.disabled}
+        />
+      </label>
+      <div className="ai-settings-help">
+        默认值：{DEFAULT_SCREENSHOT_SHORTCUT}。示例：Alt+Shift+S、CommandOrControl+Alt+X。
+      </div>
+    </section>
+  )
+}
+
 export default function AiSettingsDialog(
   props: AiSettingsDialogProps
 ): JSX.Element {
@@ -119,23 +175,55 @@ export default function AiSettingsDialog(
   )
   const [repoEnvText, setRepoEnvText] = useState<string>(toEnvText(props.initialRepoView.env))
 
+  const [screenshotShortcutEnabled, setScreenshotShortcutEnabled] = useState<boolean>(
+    props.initialAppSettings.screenshotShortcutEnabled
+  )
+  const [screenshotShortcut, setScreenshotShortcut] = useState<string>(
+    props.initialAppSettings.screenshotShortcut
+  )
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const restoreDefaultShortcut = (): void => {
+    setScreenshotShortcutEnabled(true)
+    setScreenshotShortcut(DEFAULT_SCREENSHOT_SHORTCUT)
+  }
+
   const handleSave = async (): Promise<void> => {
+    const normalizedShortcut = screenshotShortcut.trim()
+    if (screenshotShortcutEnabled && !normalizedShortcut) {
+      setError('启用截图快捷键时，快捷键不能为空')
+      return
+    }
+
     setSaving(true)
     setError(null)
+
+    const nextAppSettings: AppSettings = {
+      screenshotShortcutEnabled,
+      screenshotShortcut: normalizedShortcut
+    }
     const nextMain = fromForm(aiCli, command, argsText, envText)
     const nextRepoView = fromForm(repoAiCli, repoCommand, repoArgsText, repoEnvText)
+
     try {
-      const [mainRes, repoRes] = await Promise.all([
-        window.api.project.setAiSettings(props.projectId, nextMain),
-        window.api.project.setRepoViewAiSettings(props.projectId, nextRepoView)
-      ])
-      if (!mainRes.ok) throw new Error(mainRes.error ?? 'save main settings failed')
-      if (!repoRes.ok) throw new Error(repoRes.error ?? 'save repo-view settings failed')
-      props.onSaved(nextMain)
-      props.onSavedRepoView(nextRepoView)
+      const appRes = await window.api.settings.setAppSettings(nextAppSettings)
+      if (!appRes.ok) {
+        throw new Error(appRes.error ?? 'save app settings failed')
+      }
+
+      if (props.projectId) {
+        const [mainRes, repoRes] = await Promise.all([
+          window.api.project.setAiSettings(props.projectId, nextMain),
+          window.api.project.setRepoViewAiSettings(props.projectId, nextRepoView)
+        ])
+        if (!mainRes.ok) throw new Error(mainRes.error ?? 'save main settings failed')
+        if (!repoRes.ok) throw new Error(repoRes.error ?? 'save repo-view settings failed')
+        props.onSaved(nextMain)
+        props.onSavedRepoView(nextRepoView)
+      }
+
+      props.onSavedAppSettings(nextAppSettings)
       props.onClose()
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e))
@@ -148,25 +236,40 @@ export default function AiSettingsDialog(
     <div className="modal-backdrop" onClick={props.onClose}>
       <div className="modal ai-settings-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <h3>AI 设置</h3>
+          <h3>设置</h3>
           <button className="modal-close" onClick={props.onClose} aria-label="关闭">
             ×
           </button>
         </div>
         <div className="ai-settings-body">
-          <SettingsSection
-            title="主会话 AI"
-            aiCli={aiCli}
-            command={command}
-            argsText={argsText}
-            envText={envText}
-            onAiCli={setAiCli}
-            onCommand={setCommand}
-            onArgs={setArgsText}
-            onEnv={setEnvText}
+          <ScreenshotSettingsSection
+            enabled={screenshotShortcutEnabled}
+            shortcut={screenshotShortcut}
+            disabled={saving}
+            onEnabledChange={setScreenshotShortcutEnabled}
+            onShortcutChange={setScreenshotShortcut}
+            onRestoreDefaults={restoreDefaultShortcut}
           />
+          {props.projectId ? (
+            <SettingsSection
+              title="主会话 AI"
+              aiCli={aiCli}
+              command={command}
+              argsText={argsText}
+              envText={envText}
+              onAiCli={setAiCli}
+              onCommand={setCommand}
+              onArgs={setArgsText}
+              onEnv={setEnvText}
+            />
+          ) : (
+            <section className="ai-settings-card">
+              <div className="ai-settings-title">AI CLI</div>
+              <div className="ai-settings-note">选择项目后可编辑 AI CLI 配置</div>
+            </section>
+          )}
           {/* 仓库查看分析 AI 配置已随仓库查看功能一并暂时隐藏。底层保存逻辑保留，
-              在 UI 中隐藏入口；将来恢复时把这块 SettingsSection 重新放回即可。 */}
+              只在 UI 中隐藏入口；将来恢复时把这块 SettingsSection 重新放回即可。 */}
           {error && <div className="modal-error">⚠ {error}</div>}
         </div>
         <div className="modal-actions">

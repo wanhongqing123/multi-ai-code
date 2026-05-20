@@ -4,8 +4,14 @@ import AiSettingsDialog, {
   deriveAppSettingsSaveOutcome,
   getProjectSettingsRepairToastMessage,
   resolveSavedAppSettings,
+  saveProjectScopedSettings,
   shouldApplyIncomingAppSettings
 } from './AiSettingsDialog.js'
+
+const defaultBuildConfig = {
+  enabled: false,
+  steps: []
+}
 
 describe('AiSettingsDialog', () => {
   it('renders renamed settings title and screenshot controls', () => {
@@ -18,10 +24,12 @@ describe('AiSettingsDialog', () => {
           screenshotShortcutEnabled: true,
           screenshotShortcut: 'Alt+Shift+S'
         }}
+        initialBuildConfig={defaultBuildConfig}
         onClose={vi.fn()}
         onSaved={vi.fn()}
         onSavedRepoView={vi.fn()}
         onSavedAppSettings={vi.fn()}
+        onSavedBuildConfig={vi.fn()}
       />
     )
 
@@ -41,10 +49,12 @@ describe('AiSettingsDialog', () => {
           screenshotShortcutEnabled: true,
           screenshotShortcut: 'CommandOrControl+Shift+S'
         }}
+        initialBuildConfig={defaultBuildConfig}
         onClose={vi.fn()}
         onSaved={vi.fn()}
         onSavedRepoView={vi.fn()}
         onSavedAppSettings={vi.fn()}
+        onSavedBuildConfig={vi.fn()}
       />
     )
 
@@ -77,10 +87,12 @@ describe('AiSettingsDialog', () => {
           screenshotShortcutEnabled: true,
           screenshotShortcut: 'Shift+Meta+K'
         }}
+        initialBuildConfig={defaultBuildConfig}
         onClose={vi.fn()}
         onSaved={vi.fn()}
         onSavedRepoView={vi.fn()}
         onSavedAppSettings={vi.fn()}
+        onSavedBuildConfig={vi.fn()}
       />
     )
 
@@ -112,14 +124,17 @@ describe('AiSettingsDialog', () => {
           screenshotShortcutEnabled: false,
           screenshotShortcut: 'CommandOrControl+Shift+A'
         }}
+        initialBuildConfig={defaultBuildConfig}
         onClose={vi.fn()}
         onSaved={vi.fn()}
         onSavedRepoView={vi.fn()}
         onSavedAppSettings={vi.fn()}
+        onSavedBuildConfig={vi.fn()}
       />
     )
 
     expect(markup).toContain('选择项目后可编辑 AI CLI 配置')
+    expect(markup).toContain('选择项目后可编辑项目构建配置')
   })
 
   it('prefers authoritative saved app settings returned from the backend', () => {
@@ -197,12 +212,76 @@ describe('AiSettingsDialog', () => {
     ).toBe(false)
   })
 
-  it('emits a repair toast only when a project settings save repaired metadata', () => {
+  it('emits a repair toast when any project settings save repaired metadata', () => {
     expect(
-      getProjectSettingsRepairToastMessage({ ok: true, repaired: false }, { ok: true, repaired: false })
+      getProjectSettingsRepairToastMessage(
+        { ok: true, repaired: false },
+        { ok: true, repaired: false }
+      )
     ).toBeNull()
     expect(
-      getProjectSettingsRepairToastMessage({ ok: true, repaired: true }, { ok: true, repaired: false })
+      getProjectSettingsRepairToastMessage(
+        { ok: true, repaired: false },
+        { ok: true, repaired: false },
+        { ok: true, repaired: true }
+      )
     ).toBe('项目设置文件已自动修复并保存')
+  })
+  it('syncs main and repo AI settings even when build-config save fails', async () => {
+    const onMainSaved = vi.fn()
+    const onRepoViewSaved = vi.fn()
+    const onBuildConfigSaved = vi.fn()
+
+    await expect(
+      saveProjectScopedSettings({
+        projectId: 'project-1',
+        nextMain: { ai_cli: 'claude', command: 'claude' },
+        nextRepoView: { ai_cli: 'codex', command: 'codex' },
+        nextBuildConfig: defaultBuildConfig,
+        setAiSettings: vi.fn().mockResolvedValue({ ok: true }),
+        setRepoViewAiSettings: vi.fn().mockResolvedValue({ ok: true }),
+        setBuildConfig: vi.fn().mockResolvedValue({
+          ok: false,
+          error: 'invalid build config',
+          details: [{ path: 'build_config.steps[0].cwd', message: 'cwd invalid' }]
+        }),
+        onMainSaved,
+        onRepoViewSaved,
+        onBuildConfigSaved
+      })
+    ).rejects.toThrow('invalid build config')
+
+    expect(onMainSaved).toHaveBeenCalledWith({ ai_cli: 'claude', command: 'claude' })
+    expect(onRepoViewSaved).toHaveBeenCalledWith({ ai_cli: 'codex', command: 'codex' })
+    expect(onBuildConfigSaved).not.toHaveBeenCalled()
+  })
+
+  it('returns a repair toast after all project saves succeed', async () => {
+    const onMainSaved = vi.fn()
+    const onRepoViewSaved = vi.fn()
+    const onBuildConfigSaved = vi.fn()
+
+    const expectedToast = getProjectSettingsRepairToastMessage(
+      { ok: true, repaired: false },
+      { ok: true, repaired: false },
+      { ok: true, repaired: true }
+    )
+
+    await expect(
+      saveProjectScopedSettings({
+        projectId: 'project-1',
+        nextMain: { ai_cli: 'claude' },
+        nextRepoView: { ai_cli: 'codex' },
+        nextBuildConfig: defaultBuildConfig,
+        setAiSettings: vi.fn().mockResolvedValue({ ok: true, repaired: false }),
+        setRepoViewAiSettings: vi.fn().mockResolvedValue({ ok: true, repaired: false }),
+        setBuildConfig: vi.fn().mockResolvedValue({ ok: true, repaired: true }),
+        onMainSaved,
+        onRepoViewSaved,
+        onBuildConfigSaved
+      })
+    ).resolves.toBe(expectedToast)
+
+    expect(onBuildConfigSaved).toHaveBeenCalledWith(defaultBuildConfig)
   })
 })

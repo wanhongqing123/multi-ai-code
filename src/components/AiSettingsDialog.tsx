@@ -1,4 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
+import type { ProjectBuildConfig } from '../../electron/preload'
+import ProjectBuildSettingsSection, {
+  formatBuildConfigSaveError
+} from './ProjectBuildSettingsSection.js'
 import { showToast } from './Toast.js'
 
 export const DEFAULT_SCREENSHOT_SHORTCUT = 'CommandOrControl+Shift+A'
@@ -48,11 +52,8 @@ export function restoreDefaultScreenshotShortcut(): ScreenshotShortcutState {
 }
 
 export interface AiSettings {
-  /** 'claude' | 'codex' */
   ai_cli: 'claude' | 'codex'
-  /** Optional override of the CLI binary name (defaults to ai_cli). */
   command?: string
-  /** Extra args appended to the default ones. */
   args?: string[]
   env?: Record<string, string>
 }
@@ -74,15 +75,21 @@ interface ProjectSettingsSaveResponse {
   error?: string
 }
 
+interface BuildConfigSaveResponse extends ProjectSettingsSaveResponse {
+  details?: Array<{ path: string; message: string }>
+}
+
 export interface AiSettingsDialogProps {
   projectId: string | null
   initial: AiSettings
   initialRepoView: AiSettings
   initialAppSettings: AppSettings
+  initialBuildConfig: ProjectBuildConfig
   onClose: () => void
   onSaved: (next: AiSettings) => void
   onSavedRepoView: (next: AiSettings) => void
   onSavedAppSettings: (next: AppSettings) => void
+  onSavedBuildConfig: (next: ProjectBuildConfig) => void
 }
 
 export function resolveSavedAppSettings(
@@ -116,14 +123,64 @@ export function shouldApplyIncomingAppSettings(
 
 export function getProjectSettingsRepairToastMessage(
   mainResponse: ProjectSettingsSaveResponse,
-  repoResponse: ProjectSettingsSaveResponse
+  repoResponse: ProjectSettingsSaveResponse,
+  buildResponse?: ProjectSettingsSaveResponse
 ): string | null {
-  return mainResponse.repaired || repoResponse.repaired ? '项目设置文件已自动修复并保存' : null
+  return mainResponse.repaired || repoResponse.repaired || buildResponse?.repaired
+    ? '项目设置文件已自动修复并保存'
+    : null
+}
+
+export interface SaveProjectScopedSettingsParams {
+  projectId: string
+  nextMain: AiSettings
+  nextRepoView: AiSettings
+  nextBuildConfig: ProjectBuildConfig
+  setAiSettings: (
+    projectId: string,
+    next: AiSettings
+  ) => Promise<ProjectSettingsSaveResponse>
+  setRepoViewAiSettings: (
+    projectId: string,
+    next: AiSettings
+  ) => Promise<ProjectSettingsSaveResponse>
+  setBuildConfig: (
+    projectId: string,
+    next: ProjectBuildConfig
+  ) => Promise<BuildConfigSaveResponse>
+  onMainSaved: (next: AiSettings) => void
+  onRepoViewSaved: (next: AiSettings) => void
+  onBuildConfigSaved: (next: ProjectBuildConfig) => void
+}
+
+export async function saveProjectScopedSettings(
+  params: SaveProjectScopedSettingsParams
+): Promise<string | null> {
+  const mainRes = await params.setAiSettings(params.projectId, params.nextMain)
+  if (!mainRes.ok) throw new Error(mainRes.error ?? 'save main settings failed')
+  params.onMainSaved(params.nextMain)
+
+  const repoRes = await params.setRepoViewAiSettings(params.projectId, params.nextRepoView)
+  if (!repoRes.ok) throw new Error(repoRes.error ?? 'save repo-view settings failed')
+  params.onRepoViewSaved(params.nextRepoView)
+
+  const buildRes = await params.setBuildConfig(params.projectId, params.nextBuildConfig)
+  if (!buildRes.ok) {
+    throw new Error(
+      formatBuildConfigSaveError(
+        buildRes.error ?? 'save build config failed',
+        buildRes.details
+      )
+    )
+  }
+  params.onBuildConfigSaved(params.nextBuildConfig)
+
+  return getProjectSettingsRepairToastMessage(mainRes, repoRes, buildRes)
 }
 
 function toEnvText(env: Record<string, string> | undefined): string {
   return Object.entries(env ?? {})
-    .map(([k, v]) => `${k}=${v}`)
+    .map(([key, value]) => `${key}=${value}`)
     .join('\n')
 }
 
@@ -143,8 +200,8 @@ function fromForm(
         .map((line) => line.trim())
         .filter((line) => line.includes('='))
         .map((line) => {
-          const idx = line.indexOf('=')
-          return [line.slice(0, idx).trim(), line.slice(idx + 1).trim()]
+          const index = line.indexOf('=')
+          return [line.slice(0, index).trim(), line.slice(index + 1).trim()]
         })
     )
   }
@@ -168,7 +225,7 @@ function SettingsSection(props: {
         AI CLI
         <select
           value={props.aiCli}
-          onChange={(e) => props.onAiCli(e.target.value as 'claude' | 'codex')}
+          onChange={(event) => props.onAiCli(event.target.value as 'claude' | 'codex')}
         >
           <option value="claude">Claude Code (默认 acceptEdits)</option>
           <option value="codex">Codex (workspace-write + never)</option>
@@ -179,7 +236,7 @@ function SettingsSection(props: {
         <input
           type="text"
           value={props.command}
-          onChange={(e) => props.onCommand(e.target.value)}
+          onChange={(event) => props.onCommand(event.target.value)}
           placeholder={props.aiCli === 'codex' ? 'codex' : 'claude'}
         />
       </label>
@@ -188,7 +245,7 @@ function SettingsSection(props: {
         <input
           type="text"
           value={props.argsText}
-          onChange={(e) => props.onArgs(e.target.value)}
+          onChange={(event) => props.onArgs(event.target.value)}
           placeholder="--foo --bar"
         />
       </label>
@@ -196,7 +253,7 @@ function SettingsSection(props: {
         环境变量 (每行 KEY=VALUE)
         <textarea
           value={props.envText}
-          onChange={(e) => props.onEnv(e.target.value)}
+          onChange={(event) => props.onEnv(event.target.value)}
           rows={4}
         />
       </label>
@@ -234,7 +291,7 @@ function ScreenshotSettingsSection(props: {
         <input
           type="checkbox"
           checked={props.enabled}
-          onChange={(e) => props.onEnabledChange(e.target.checked)}
+          onChange={(event) => props.onEnabledChange(event.target.checked)}
           disabled={props.disabled}
         />
         <span>启用全局截图快捷键</span>
@@ -268,7 +325,7 @@ function ScreenshotSettingsSection(props: {
           <input
             type="text"
             value={props.shortcut}
-            onChange={(e) => props.onShortcutChange(e.target.value)}
+            onChange={(event) => props.onShortcutChange(event.target.value)}
             placeholder={DEFAULT_SCREENSHOT_SHORTCUT}
             disabled={props.disabled}
           />
@@ -305,6 +362,7 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
   const [screenshotShortcutCustomExpanded, setScreenshotShortcutCustomExpanded] = useState<boolean>(
     createScreenshotShortcutState(props.initialAppSettings.screenshotShortcut).customExpanded
   )
+  const [buildConfig, setBuildConfig] = useState<ProjectBuildConfig>(props.initialBuildConfig)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const lastSyncedAppSettingsRef = useRef<AppSettings>(props.initialAppSettings)
@@ -326,6 +384,27 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
     )
     lastSyncedAppSettingsRef.current = props.initialAppSettings
   }, [props.initialAppSettings, saving])
+
+  useEffect(() => {
+    if (saving) return
+    setAiCli(props.initial.ai_cli ?? 'claude')
+    setCommand(props.initial.command ?? '')
+    setArgsText((props.initial.args ?? []).join(' '))
+    setEnvText(toEnvText(props.initial.env))
+  }, [props.initial, saving])
+
+  useEffect(() => {
+    if (saving) return
+    setRepoAiCli(props.initialRepoView.ai_cli ?? 'claude')
+    setRepoCommand(props.initialRepoView.command ?? '')
+    setRepoArgsText((props.initialRepoView.args ?? []).join(' '))
+    setRepoEnvText(toEnvText(props.initialRepoView.env))
+  }, [props.initialRepoView, saving])
+
+  useEffect(() => {
+    if (saving) return
+    setBuildConfig(props.initialBuildConfig)
+  }, [props.initialBuildConfig, saving])
 
   const handleRestoreDefaultShortcut = (): void => {
     const next = restoreDefaultScreenshotShortcut()
@@ -362,20 +441,13 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
     }
     const nextMain = fromForm(aiCli, command, argsText, envText)
     const nextRepoView = fromForm(repoAiCli, repoCommand, repoArgsText, repoEnvText)
+    const nextBuildConfig = buildConfig
 
     try {
       const appRes = await window.api.settings.setAppSettings(requestedAppSettings)
       const appOutcome = deriveAppSettingsSaveOutcome(requestedAppSettings, appRes)
 
-      if (appRes.value) {
-        setScreenshotShortcutEnabled(appOutcome.appSettings.screenshotShortcutEnabled)
-        setScreenshotShortcut(appOutcome.appSettings.screenshotShortcut)
-        setScreenshotShortcutCustomExpanded(
-          createScreenshotShortcutState(appOutcome.appSettings.screenshotShortcut).customExpanded
-        )
-        lastSyncedAppSettingsRef.current = appOutcome.appSettings
-        props.onSavedAppSettings(appOutcome.appSettings)
-      } else if (appRes.ok) {
+      if (appRes.value || appRes.ok) {
         setScreenshotShortcutEnabled(appOutcome.appSettings.screenshotShortcutEnabled)
         setScreenshotShortcut(appOutcome.appSettings.screenshotShortcut)
         setScreenshotShortcutCustomExpanded(
@@ -390,23 +462,26 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
       }
 
       if (props.projectId) {
-        // Both endpoints persist into the same project.json file, so save them
-        // sequentially to avoid overlapping writes that can re-corrupt metadata.
-        const mainRes = await window.api.project.setAiSettings(props.projectId, nextMain)
-        if (!mainRes.ok) throw new Error(mainRes.error ?? 'save main settings failed')
-        const repoRes = await window.api.project.setRepoViewAiSettings(props.projectId, nextRepoView)
-        if (!repoRes.ok) throw new Error(repoRes.error ?? 'save repo-view settings failed')
-        const repairToast = getProjectSettingsRepairToastMessage(mainRes, repoRes)
+        const repairToast = await saveProjectScopedSettings({
+          projectId: props.projectId,
+          nextMain,
+          nextRepoView,
+          nextBuildConfig,
+          setAiSettings: window.api.project.setAiSettings,
+          setRepoViewAiSettings: window.api.project.setRepoViewAiSettings,
+          setBuildConfig: window.api.project.setBuildConfig,
+          onMainSaved: props.onSaved,
+          onRepoViewSaved: props.onSavedRepoView,
+          onBuildConfigSaved: props.onSavedBuildConfig
+        })
         if (repairToast) {
           showToast(repairToast, { level: 'success' })
         }
-        props.onSaved(nextMain)
-        props.onSavedRepoView(nextRepoView)
       }
 
       props.onClose()
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e))
+    } catch (cause: unknown) {
+      setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       setSaving(false)
     }
@@ -414,7 +489,7 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
 
   return (
     <div className="modal-backdrop" onClick={props.onClose}>
-      <div className="modal ai-settings-modal" onClick={(e) => e.stopPropagation()}>
+      <div className="modal ai-settings-modal" onClick={(event) => event.stopPropagation()}>
         <div className="modal-head">
           <h3>设置</h3>
           <button className="modal-close" onClick={props.onClose} aria-label="关闭">
@@ -451,8 +526,12 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
               <div className="ai-settings-note">选择项目后可编辑 AI CLI 配置</div>
             </section>
           )}
-          {/* 仓库查看分析 AI 配置已随仓库查看功能一并暂时隐藏。底层保存逻辑保留，
-              只在 UI 中隐藏入口；将来恢复时把这块 SettingsSection 重新放回即可。 */}
+          <ProjectBuildSettingsSection
+            projectId={props.projectId}
+            value={buildConfig}
+            disabled={saving}
+            onChange={setBuildConfig}
+          />
           {error && <div className="modal-error">⚠ {error}</div>}
         </div>
         <div className="modal-actions">

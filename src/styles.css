@@ -1478,6 +1478,95 @@ html, body, #root {
   background: var(--mac-bg-subtle);
 }
 
+.project-build-settings-toolbar {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.project-build-settings-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mac-sp-3);
+}
+
+.project-build-step-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mac-sp-3);
+  padding: var(--mac-sp-4);
+  border: 1px solid var(--mac-border);
+  border-radius: var(--mac-r-lg);
+  background: var(--mac-surface);
+}
+
+.project-build-step-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--mac-sp-3);
+}
+
+.project-build-step-title {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.project-build-step-title strong {
+  font-size: var(--mac-text-sm);
+  color: var(--mac-fg);
+}
+
+.project-build-step-title span {
+  font-family: var(--mac-font-mono);
+  font-size: var(--mac-text-xs);
+  color: var(--mac-fg-subtle);
+}
+
+.project-build-step-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--mac-sp-2);
+}
+
+.project-build-step-actions .drawer-btn.danger {
+  border-color: color-mix(in srgb, var(--mac-danger) 32%, var(--mac-border));
+  color: var(--mac-danger);
+}
+
+.project-build-step-actions .drawer-btn.danger:hover:not(:disabled) {
+  background: var(--mac-danger-soft);
+}
+
+.project-build-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--mac-sp-3);
+}
+
+.project-build-settings-grid-full {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 760px) {
+  .project-build-step-head {
+    flex-direction: column;
+  }
+
+  .project-build-step-actions {
+    justify-content: flex-start;
+  }
+
+  .project-build-settings-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .project-build-settings-grid-full {
+    grid-column: auto;
+  }
+}
+
 .error-panel {
   position: fixed;
   right: var(--mac-sp-5);

@@ -28,8 +28,10 @@ import PlanReviewDialog, { type Annotation } from './components/PlanReviewDialog
 import DiffViewerDialog, { type DiffAnnotation } from './components/DiffViewerDialog'
 import type { DiffMode } from './components/diffViewerConfig'
 import type { ExternalReviewSuggestion } from './components/externalAiReview'
+import type { ProjectBuildConfig } from '../electron/preload'
 
 const LAST_PROJECT_KEY = 'multi-ai-code.lastProjectId'
+const DEFAULT_PROJECT_BUILD_CONFIG: ProjectBuildConfig = { enabled: false, steps: [] }
 
 export default function App() {
   const [version, setVersion] = useState<string>('')
@@ -49,6 +51,12 @@ export default function App() {
     screenshotShortcutEnabled: true,
     screenshotShortcut: 'CommandOrControl+Shift+A'
   })
+  const [projectBuildConfig, setProjectBuildConfig] = useState<ProjectBuildConfig>(
+    DEFAULT_PROJECT_BUILD_CONFIG
+  )
+  const [projectBuildConfigProjectId, setProjectBuildConfigProjectId] = useState<string | null>(
+    null
+  )
   const [showTemplates, setShowTemplates] = useState(false)
   const [showSkillStudio, setShowSkillStudio] = useState(false)
   const [showHabitFirstRun, setShowHabitFirstRun] = useState(false)
@@ -57,6 +65,11 @@ export default function App() {
   const [showCmdk, setShowCmdk] = useState(false)
   const [showGlobalSearch, setShowGlobalSearch] = useState(false)
   const [theme, setThemeState] = useState<'light' | 'dark'>(() => getTheme())
+
+  const visibleProjectBuildConfig =
+    currentProjectId !== null && projectBuildConfigProjectId === currentProjectId
+      ? projectBuildConfig
+      : DEFAULT_PROJECT_BUILD_CONFIG
 
   // Single-stage session state
   const [sessionId, setSessionId] = useState<string | null>(null)
@@ -336,6 +349,8 @@ export default function App() {
       setMsysEnabled(false)
       setAiSettings({ ai_cli: 'claude' })
       setRepoViewAiSettings({ ai_cli: 'claude' })
+      setProjectBuildConfig(DEFAULT_PROJECT_BUILD_CONFIG)
+      setProjectBuildConfigProjectId(null)
       setAiSettingsReady(false)
       setAiSettingsLoadError(null)
       return
@@ -343,6 +358,8 @@ export default function App() {
     localStorage.setItem(LAST_PROJECT_KEY, currentProjectId)
     void window.api.project.touch(currentProjectId)
     let cancelled = false
+    setProjectBuildConfig(DEFAULT_PROJECT_BUILD_CONFIG)
+    setProjectBuildConfigProjectId(null)
     setAiSettingsReady(false)
     setAiSettingsLoadError(null)
     void window.api.project.getStageConfigs(currentProjectId).then((cfg) => {
@@ -354,6 +371,18 @@ export default function App() {
       setMsysEnabled(enabled)
     })
     void (async () => {
+      const buildResult = await window.api.project.getBuildConfig(currentProjectId)
+      if (cancelled) return
+      if (!buildResult.ok) {
+        setProjectBuildConfig(DEFAULT_PROJECT_BUILD_CONFIG)
+        setProjectBuildConfigProjectId(currentProjectId)
+        showToast(buildResult.error ?? '读取项目构建配置失败', { level: 'error' })
+      } else {
+        setProjectBuildConfig(buildResult.value ?? DEFAULT_PROJECT_BUILD_CONFIG)
+        setProjectBuildConfigProjectId(currentProjectId)
+      }
+      const buildConfigRepaired = buildResult.ok && buildResult.repaired === true
+
       const aiResult = await window.api.project.getAiSettings(currentProjectId)
       if (cancelled) return
       if (!aiResult.ok) {
@@ -374,7 +403,7 @@ export default function App() {
       }
       setRepoViewAiSettings(repoResult.value ?? { ai_cli: 'claude' })
 
-      if (aiResult.repaired || repoResult.repaired) {
+      if (aiResult.repaired || repoResult.repaired || buildConfigRepaired) {
         showToast('项目设置文件已自动修复', { level: 'success' })
       }
     })()
@@ -1198,6 +1227,7 @@ export default function App() {
           initial={aiSettings}
           initialRepoView={repoViewAiSettings}
           initialAppSettings={appSettings}
+          initialBuildConfig={visibleProjectBuildConfig}
           onClose={() => setShowAiSettings(false)}
           onSaved={(next) => {
             // If the main-session CLI binary changes while a session is
@@ -1213,6 +1243,10 @@ export default function App() {
           }}
           onSavedRepoView={(next) => setRepoViewAiSettings(next)}
           onSavedAppSettings={(next) => setAppSettings(next)}
+          onSavedBuildConfig={(next) => {
+            setProjectBuildConfig(next)
+            setProjectBuildConfigProjectId(currentProjectId)
+          }}
         />
       )}
       {showErrors && <ErrorPanel onClose={() => setShowErrors(false)} />}

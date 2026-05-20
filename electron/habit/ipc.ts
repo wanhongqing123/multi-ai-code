@@ -24,6 +24,17 @@ import {
 import { runAggregationCoalesced } from './scheduler.js'
 import { getSkillGenerator } from './generatorRegistry.js'
 import type { ManagedChromeManager, ManagedChromeState } from './managedChrome.js'
+import {
+  createSkill,
+  deleteSkill,
+  getSkill,
+  listSkills,
+  touchSkillLastUsed,
+  updateSkill,
+  type CreateSkillInput,
+  type SkillStep,
+  type UpdateSkillInput
+} from './skills.js'
 
 const IDLE_MANAGED_CHROME_STATE: ManagedChromeState = {
   running: false,
@@ -201,4 +212,65 @@ export function registerHabitIpc(opts: { managedChromeManager?: ManagedChromeMan
       }
     }
   })
+
+  // ----- skills library -----
+  ipcMain.handle('habit:skills:list', async () => {
+    return listSkills()
+  })
+
+  ipcMain.handle('habit:skills:get', async (_e, { id }: { id: number }) => {
+    return getSkill(id)
+  })
+
+  ipcMain.handle('habit:skills:create', async (_e, input: CreateSkillInput) => {
+    const id = createSkill(input)
+    return { ok: true as const, id }
+  })
+
+  ipcMain.handle(
+    'habit:skills:update',
+    async (_e, { id, patch }: { id: number; patch: UpdateSkillInput }) => {
+      updateSkill(id, patch)
+      return { ok: true as const }
+    }
+  )
+
+  ipcMain.handle('habit:skills:delete', async (_e, { id }: { id: number }) => {
+    deleteSkill(id)
+    return { ok: true as const }
+  })
+
+  ipcMain.handle(
+    'habit:skills:touch-last-used',
+    async (_e, { id }: { id: number }) => {
+      touchSkillLastUsed(id)
+      return { ok: true as const }
+    }
+  )
+
+  /** Convenience: accept a candidate by reading its meta + persisting a skill. */
+  ipcMain.handle(
+    'habit:candidates:accept-as-skill',
+    async (
+      _e,
+      req: {
+        candidateId: number
+        name: string
+        description?: string | null
+        trigger?: string | null
+        steps: SkillStep[]
+      }
+    ) => {
+      const id = createSkill({
+        name: req.name,
+        description: req.description ?? null,
+        trigger: req.trigger ?? null,
+        steps: req.steps,
+        source: 'candidate',
+        candidateId: req.candidateId
+      })
+      updateSkillCandidateStatus(req.candidateId, 'accepted')
+      return { ok: true as const, id }
+    }
+  )
 }

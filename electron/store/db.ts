@@ -95,6 +95,19 @@ CREATE TABLE IF NOT EXISTS managed_chrome_sessions (
   running         INTEGER NOT NULL DEFAULT 1,
   last_active_url TEXT
 );
+
+CREATE TABLE IF NOT EXISTS skills (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at    INTEGER NOT NULL,
+  updated_at    INTEGER NOT NULL,
+  name          TEXT NOT NULL,
+  description   TEXT,
+  trigger       TEXT,
+  steps         TEXT NOT NULL,
+  source        TEXT,
+  candidate_id  INTEGER,
+  last_used_at  INTEGER
+);
 `
 
 const INDEXES = `
@@ -107,6 +120,8 @@ CREATE INDEX IF NOT EXISTS idx_skill_candidates_status ON skill_candidates(statu
 CREATE INDEX IF NOT EXISTS idx_habit_flows_status ON habit_flows(status);
 CREATE INDEX IF NOT EXISTS idx_habit_flows_kind ON habit_flows(kind);
 CREATE INDEX IF NOT EXISTS idx_managed_chrome_sessions_running ON managed_chrome_sessions(running);
+CREATE INDEX IF NOT EXISTS idx_skills_trigger ON skills(trigger);
+CREATE INDEX IF NOT EXISTS idx_skills_last_used_at ON skills(last_used_at DESC);
 `
 
 function ensureColumn(

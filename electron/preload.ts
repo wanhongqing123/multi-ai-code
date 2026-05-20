@@ -973,7 +973,57 @@ const api = {
         ipcRenderer.invoke('habit:candidates:clear') as Promise<{
           ok: boolean
           removed: number
+        }>,
+      acceptAsSkill: (req: {
+        candidateId: number
+        name: string
+        description?: string | null
+        trigger?: string | null
+        steps: unknown[]
+      }) =>
+        ipcRenderer.invoke('habit:candidates:accept-as-skill', req) as Promise<{
+          ok: boolean
+          id: number
         }>
+    },
+    skills: {
+      list: () =>
+        ipcRenderer.invoke('habit:skills:list') as Promise<
+          Array<{
+            id: number
+            name: string
+            description: string | null
+            trigger: string | null
+            steps: unknown[]
+            source: string | null
+            candidateId: number | null
+            createdAt: number
+            updatedAt: number
+            lastUsedAt: number | null
+          }>
+        >,
+      get: (id: number) =>
+        ipcRenderer.invoke('habit:skills:get', { id }) as Promise<unknown>,
+      create: (input: {
+        name: string
+        description?: string | null
+        trigger?: string | null
+        steps: unknown[]
+        source?: string
+        candidateId?: number | null
+      }) =>
+        ipcRenderer.invoke('habit:skills:create', input) as Promise<{ ok: boolean; id: number }>,
+      update: (id: number, patch: {
+        name?: string
+        description?: string | null
+        trigger?: string | null
+        steps?: unknown[]
+      }) =>
+        ipcRenderer.invoke('habit:skills:update', { id, patch }) as Promise<{ ok: boolean }>,
+      delete: (id: number) =>
+        ipcRenderer.invoke('habit:skills:delete', { id }) as Promise<{ ok: boolean }>,
+      touchLastUsed: (id: number) =>
+        ipcRenderer.invoke('habit:skills:touch-last-used', { id }) as Promise<{ ok: boolean }>
     }
   }
 }

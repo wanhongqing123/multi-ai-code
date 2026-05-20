@@ -1,10 +1,28 @@
 import { useEffect, useState } from 'react'
-import { HABIT_KIND_LABELS, type HabitEventKind, type SkillCandidateRow } from './habitTypes'
+import {
+  HABIT_KIND_LABELS,
+  type HabitEventKind,
+  type SkillCandidateRow
+} from './habitTypes'
+import type { SkillStep } from './skillTypes'
 
 interface Props {
   candidates: SkillCandidateRow[]
   onRefresh: () => Promise<void>
-  onAccept: (c: SkillCandidateRow, finalTitle: string, finalBody: string) => Promise<void>
+  /**
+   * Persist this candidate as a Skill in the platform library. The panel
+   * provides title/trigger/steps; the parent handles the IPC + downstream
+   * status update (so SkillBar can refresh).
+   */
+  onAccept: (
+    candidate: SkillCandidateRow,
+    payload: {
+      name: string
+      description?: string | null
+      trigger?: string | null
+      steps: SkillStep[]
+    }
+  ) => Promise<void>
   onDiscard: (id: number) => Promise<void>
   onSnooze: (id: number) => Promise<void>
   onRunAnalysisNow: () => Promise<void>
@@ -25,6 +43,57 @@ function parseSamples(raw: string): string[] {
   return []
 }
 
+interface CandidateMeta {
+  steps?: SkillStep[]
+  trigger?: string
+  variables?: string[]
+  category?: string
+  rationale?: string
+  source?: string
+}
+
+function parseMeta(raw: string | null): CandidateMeta {
+  if (!raw) return {}
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== 'object') return {}
+    return parsed as CandidateMeta
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * Derives a clean step list from candidate meta + the legacy body field.
+ * New candidates have meta.steps; old ones get wrapped from generated_body.
+ */
+function deriveSteps(c: SkillCandidateRow): SkillStep[] {
+  const meta = parseMeta(c.generated_meta)
+  if (Array.isArray(meta.steps) && meta.steps.length > 0) {
+    return meta.steps.filter(
+      (s): s is SkillStep =>
+        !!s &&
+        typeof s === 'object' &&
+        ((s as SkillStep).type === 'prompt' ||
+          (s as SkillStep).type === 'wait-response')
+    )
+  }
+  const body = (c.generated_body ?? '').trim()
+  if (body) return [{ type: 'prompt', text: body }]
+  return []
+}
+
+interface EditForm {
+  name: string
+  trigger: string
+  description: string
+  steps: SkillStep[]
+}
+
+function blankPromptStep(): SkillStep {
+  return { type: 'prompt', text: '' }
+}
+
 export default function SkillCandidatesPanel(props: Props): JSX.Element {
   const {
     candidates,
@@ -36,7 +105,7 @@ export default function SkillCandidatesPanel(props: Props): JSX.Element {
     analysisRunning
   } = props
   const [editingId, setEditingId] = useState<number | null>(null)
-  const [editForm, setEditForm] = useState({ title: '', body: '' })
+  const [editForm, setEditForm] = useState<EditForm | null>(null)
 
   useEffect(() => {
     void onRefresh()
@@ -44,18 +113,84 @@ export default function SkillCandidatesPanel(props: Props): JSX.Element {
   }, [])
 
   function startEdit(c: SkillCandidateRow) {
+    const meta = parseMeta(c.generated_meta)
     setEditingId(c.id)
     setEditForm({
-      title: c.generated_title ?? '',
-      body: c.generated_body ?? ''
+      name: c.generated_title ?? '',
+      trigger: meta.trigger ?? '',
+      description: meta.rationale ?? '',
+      steps: deriveSteps(c)
     })
   }
 
-  async function submitEdit() {
+  function updateStep(idx: number, patch: Partial<SkillStep>) {
+    setEditForm((f) => {
+      if (!f) return f
+      const next = f.steps.slice()
+      const current = next[idx]
+      // Type-narrowed merge — keep step type unless explicitly switching.
+      next[idx] = { ...current, ...patch } as SkillStep
+      return { ...f, steps: next }
+    })
+  }
+
+  function addStep(type: SkillStep['type']) {
+    setEditForm((f) => {
+      if (!f) return f
+      const newStep: SkillStep =
+        type === 'prompt' ? blankPromptStep() : { type: 'wait-response' }
+      return { ...f, steps: [...f.steps, newStep] }
+    })
+  }
+
+  function removeStep(idx: number) {
+    setEditForm((f) => {
+      if (!f) return f
+      return { ...f, steps: f.steps.filter((_, i) => i !== idx) }
+    })
+  }
+
+  function moveStep(idx: number, dir: -1 | 1) {
+    setEditForm((f) => {
+      if (!f) return f
+      const j = idx + dir
+      if (j < 0 || j >= f.steps.length) return f
+      const next = f.steps.slice()
+      ;[next[idx], next[j]] = [next[j], next[idx]]
+      return { ...f, steps: next }
+    })
+  }
+
+  async function commitEdit() {
+    if (!editForm || editingId == null) return
     const c = candidates.find((x) => x.id === editingId)
     if (!c) return
-    await onAccept(c, editForm.title.trim(), editForm.body)
+    const cleanSteps = editForm.steps.filter((s) => {
+      if (s.type === 'prompt') return s.text.trim().length > 0
+      return true
+    })
+    if (cleanSteps.length === 0 || !editForm.name.trim()) return
+    await onAccept(c, {
+      name: editForm.name.trim(),
+      description: editForm.description.trim() || null,
+      trigger: editForm.trigger.trim() || null,
+      steps: cleanSteps
+    })
     setEditingId(null)
+    setEditForm(null)
+  }
+
+  /** Fast-path accept: use the candidate as-is without opening the edit form. */
+  async function quickAccept(c: SkillCandidateRow) {
+    const steps = deriveSteps(c)
+    if (steps.length === 0 || !c.generated_title) return
+    const meta = parseMeta(c.generated_meta)
+    await onAccept(c, {
+      name: c.generated_title,
+      description: meta.rationale ?? null,
+      trigger: meta.trigger ?? null,
+      steps
+    })
   }
 
   return (
@@ -72,11 +207,7 @@ export default function SkillCandidatesPanel(props: Props): JSX.Element {
           >
             {analysisRunning ? '分析中…' : '立即分析'}
           </button>
-          <button
-            type="button"
-            className="drawer-btn"
-            onClick={() => void onRefresh()}
-          >
+          <button type="button" className="drawer-btn" onClick={() => void onRefresh()}>
             刷新
           </button>
         </span>
@@ -92,7 +223,10 @@ export default function SkillCandidatesPanel(props: Props): JSX.Element {
         <ul className="habit-candidate-list">
           {candidates.map((c) => {
             const samples = parseSamples(c.representative_samples)
-            const editing = editingId === c.id
+            const meta = parseMeta(c.generated_meta)
+            const steps = deriveSteps(c)
+            const editing = editingId === c.id && editForm
+
             return (
               <li key={c.id} className="habit-candidate-item">
                 <div className="habit-candidate-meta">
@@ -101,6 +235,9 @@ export default function SkillCandidatesPanel(props: Props): JSX.Element {
                   </span>
                   <span>簇大小: {c.cluster_size}</span>
                   <span>{fmtTs(c.created_at)}</span>
+                  {meta.trigger && (
+                    <span className="habit-candidate-trigger">/{meta.trigger}</span>
+                  )}
                   {c.status === 'error' && (
                     <span className="habit-candidate-error">
                       生成失败: {c.error_message ?? '未知错误'}
@@ -111,34 +248,123 @@ export default function SkillCandidatesPanel(props: Props): JSX.Element {
                 {editing ? (
                   <div className="habit-candidate-editor">
                     <label>
-                      标题
+                      Skill 名
                       <input
                         className="plan-name-input"
-                        value={editForm.title}
+                        value={editForm!.name}
                         onChange={(e) =>
-                          setEditForm((f) => ({ ...f, title: e.target.value }))
+                          setEditForm((f) => (f ? { ...f, name: e.target.value } : f))
                         }
                       />
                     </label>
                     <label>
-                      正文
-                      <textarea
+                      触发关键词 (可选)
+                      <input
                         className="plan-name-input"
-                        rows={6}
-                        value={editForm.body}
+                        placeholder="例如：审查改动"
+                        value={editForm!.trigger}
                         onChange={(e) =>
-                          setEditForm((f) => ({ ...f, body: e.target.value }))
+                          setEditForm((f) =>
+                            f ? { ...f, trigger: e.target.value } : f
+                          )
                         }
                       />
                     </label>
+                    <label>
+                      说明 (可选)
+                      <input
+                        className="plan-name-input"
+                        value={editForm!.description}
+                        onChange={(e) =>
+                          setEditForm((f) =>
+                            f ? { ...f, description: e.target.value } : f
+                          )
+                        }
+                      />
+                    </label>
+
+                    <div className="habit-step-list">
+                      {editForm!.steps.map((s, i) => (
+                        <div key={i} className="habit-step-row">
+                          <span className="habit-step-tag">
+                            {s.type === 'prompt' ? `Step ${i + 1} · prompt` : `Step ${i + 1} · 等响应`}
+                          </span>
+                          {s.type === 'prompt' ? (
+                            <textarea
+                              className="habit-step-text"
+                              rows={2}
+                              placeholder="prompt 文本，使用 {变量名} 占位"
+                              value={s.text}
+                              onChange={(e) =>
+                                updateStep(i, { type: 'prompt', text: e.target.value })
+                              }
+                            />
+                          ) : (
+                            <input
+                              className="habit-step-text"
+                              type="number"
+                              placeholder="超时 ms（可选）"
+                              value={s.timeoutMs ?? ''}
+                              onChange={(e) =>
+                                updateStep(i, {
+                                  type: 'wait-response',
+                                  timeoutMs: e.target.value === '' ? undefined : Number(e.target.value)
+                                })
+                              }
+                            />
+                          )}
+                          <div className="habit-step-actions">
+                            <button
+                              className="drawer-btn"
+                              disabled={i === 0}
+                              onClick={() => moveStep(i, -1)}
+                            >
+                              ↑
+                            </button>
+                            <button
+                              className="drawer-btn"
+                              disabled={i === editForm!.steps.length - 1}
+                              onClick={() => moveStep(i, 1)}
+                            >
+                              ↓
+                            </button>
+                            <button
+                              className="drawer-btn warn"
+                              onClick={() => removeStep(i)}
+                            >
+                              ×
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="habit-add-step-row">
+                      <button className="drawer-btn" onClick={() => addStep('prompt')}>
+                        ＋ 加 Prompt 步骤
+                      </button>
+                      <button className="drawer-btn" onClick={() => addStep('wait-response')}>
+                        ＋ 加 等待响应
+                      </button>
+                    </div>
+
                     <div className="drawer-actions">
-                      <button className="drawer-btn" onClick={() => setEditingId(null)}>
+                      <button
+                        className="drawer-btn"
+                        onClick={() => {
+                          setEditingId(null)
+                          setEditForm(null)
+                        }}
+                      >
                         取消
                       </button>
                       <button
                         className="drawer-btn primary"
-                        disabled={!editForm.title.trim() || !editForm.body.trim()}
-                        onClick={() => void submitEdit()}
+                        disabled={
+                          !editForm!.name.trim() ||
+                          editForm!.steps.filter((s) => s.type !== 'prompt' || s.text.trim()).length === 0
+                        }
+                        onClick={() => void commitEdit()}
                       >
                         保存并采纳
                       </button>
@@ -149,8 +375,21 @@ export default function SkillCandidatesPanel(props: Props): JSX.Element {
                     <div className="habit-candidate-title">
                       {c.generated_title || <em>（待生成）</em>}
                     </div>
-                    {c.generated_body && (
-                      <pre className="habit-candidate-body">{c.generated_body}</pre>
+                    {steps.length > 0 && (
+                      <ol className="habit-step-preview">
+                        {steps.map((s, i) => (
+                          <li key={i}>
+                            <span className="habit-step-tag">
+                              {s.type === 'prompt' ? 'prompt' : '等响应'}
+                            </span>
+                            {s.type === 'prompt' ? (
+                              <span>{s.text}</span>
+                            ) : (
+                              <span>等 AI 答完 ({s.timeoutMs ?? 'default'} ms)</span>
+                            )}
+                          </li>
+                        ))}
+                      </ol>
                     )}
 
                     <details className="habit-candidate-evidence">
@@ -165,14 +404,8 @@ export default function SkillCandidatesPanel(props: Props): JSX.Element {
                     <div className="drawer-actions">
                       <button
                         className="drawer-btn primary"
-                        disabled={!c.generated_title || !c.generated_body}
-                        onClick={() =>
-                          void onAccept(
-                            c,
-                            c.generated_title ?? '',
-                            c.generated_body ?? ''
-                          )
-                        }
+                        disabled={steps.length === 0 || !c.generated_title}
+                        onClick={() => void quickAccept(c)}
                       >
                         采纳
                       </button>

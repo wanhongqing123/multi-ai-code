@@ -22,6 +22,7 @@ import {
   pasteFromClipboard
 } from './terminalClipboard.js'
 import { buildDroppedFileInput } from './terminalDragDrop.js'
+import { scheduleTerminalMeasurementRecovery } from './terminalLayoutRecovery.js'
 
 export interface MainPanelProps {
   sessionId: string
@@ -82,11 +83,6 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
     if (shouldEnableMainTerminalGpuAcceleration()) {
       /* reserved for a future opt-in path after Electron stability work */
     }
-    try {
-      fit.fit()
-    } catch {
-      /* ignore */
-    }
     termRef.current = term
     fitRef.current = fit
 
@@ -119,7 +115,7 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
     })
     unsubRef.current.push(offExit)
 
-    const ro = new ResizeObserver(() => {
+    const syncTerminalViewport = () => {
       try {
         fit.fit()
         const { cols, rows } = term
@@ -127,11 +123,23 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
       } catch {
         /* ignore */
       }
+    }
+    syncTerminalViewport()
+    const cancelMeasurementRecovery = scheduleTerminalMeasurementRecovery(
+      syncTerminalViewport,
+      {
+        fonts: document.fonts ? { ready: document.fonts.ready } : null
+      }
+    )
+
+    const ro = new ResizeObserver(() => {
+      syncTerminalViewport()
     })
     ro.observe(containerRef.current)
 
     return () => {
       ro.disconnect()
+      cancelMeasurementRecovery()
       window.removeEventListener(THEME_CHANGE_EVENT, onThemeChange)
       unsubRef.current.forEach((fn) => fn())
       unsubRef.current = []

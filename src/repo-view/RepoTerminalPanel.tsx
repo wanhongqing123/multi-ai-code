@@ -20,6 +20,7 @@ import {
   pasteFromClipboard
 } from '../components/terminalClipboard.js'
 import { buildDroppedFileInput } from '../components/terminalDragDrop.js'
+import { scheduleTerminalMeasurementRecovery } from '../components/terminalLayoutRecovery.js'
 
 export interface RepoTerminalPanelProps {
   /** CLI label shown in the header (e.g. "claude"). */
@@ -60,11 +61,6 @@ export default function RepoTerminalPanel(
     if (shouldUseMainTerminalCanvasRenderer()) {
       term.loadAddon(new CanvasAddon())
     }
-    try {
-      fit.fit()
-    } catch {
-      /* ignore */
-    }
     termRef.current = term
     fitRef.current = fit
 
@@ -90,7 +86,7 @@ export default function RepoTerminalPanel(
     })
     unsubRef.current.push(offData)
 
-    const ro = new ResizeObserver(() => {
+    const syncTerminalViewport = () => {
       try {
         fit.fit()
         const { cols, rows } = term
@@ -98,11 +94,23 @@ export default function RepoTerminalPanel(
       } catch {
         /* ignore */
       }
+    }
+    syncTerminalViewport()
+    const cancelMeasurementRecovery = scheduleTerminalMeasurementRecovery(
+      syncTerminalViewport,
+      {
+        fonts: document.fonts ? { ready: document.fonts.ready } : null
+      }
+    )
+
+    const ro = new ResizeObserver(() => {
+      syncTerminalViewport()
     })
     ro.observe(containerRef.current)
 
     return () => {
       ro.disconnect()
+      cancelMeasurementRecovery()
       window.removeEventListener(THEME_CHANGE_EVENT, onThemeChange)
       unsubRef.current.forEach((fn) => fn())
       unsubRef.current = []

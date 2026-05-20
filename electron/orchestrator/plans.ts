@@ -26,9 +26,8 @@ async function readMeta(projectDir: string): Promise<ProjectMeta> {
   }
 }
 
-/** System/auto-generated files that live alongside design md's but are not
- *  user plans (e.g., Claude Code's auto-loaded CLAUDE.md, legacy Codex
- *  `.injections` file copies). Filename match is case-insensitive. */
+// System/auto-generated files that live alongside design md files but are
+// not user plans.
 const RESERVED_DESIGN_NAMES = new Set<string>(['claude', 'codex', 'agents'])
 
 async function readDesignNames(targetRepo: string): Promise<string[]> {
@@ -49,10 +48,9 @@ export async function listPlans(projectDir: string): Promise<PlanEntry[]> {
   const targetRepo = meta.target_repo
   const planSources = meta.plan_sources ?? {}
 
-  // Filter out dead external mappings — the user may have moved or deleted
-  // the original .md file since registering it. Both:
-  //   1. hide them from the plan list UI, AND
-  //   2. prune them from project.json so they don't linger as ghosts.
+  // Filter out dead external mappings. The user may have moved or deleted
+  // the original file since registering it. Hide them in the UI and prune
+  // them from project.json opportunistically.
   const externalEntries: PlanEntry[] = []
   const deadNames: string[] = []
   for (const [name, abs] of Object.entries(planSources)) {
@@ -86,9 +84,7 @@ export async function listPlans(projectDir: string): Promise<PlanEntry[]> {
   )
 }
 
-/** Remove the given names from `project.json.plan_sources`. Best-effort —
- *  if the file is locked or unreadable we silently skip; the UI-layer
- *  filter in `listPlans` still hides the ghosts in this call's result. */
+// Remove the given names from project.json.plan_sources. Best effort only.
 async function pruneDeadPlanSources(
   projectDir: string,
   names: string[]
@@ -111,15 +107,13 @@ async function pruneDeadPlanSources(
     meta.updated_at = new Date().toISOString()
     await fs.writeFile(metaPath, JSON.stringify(meta, null, 2))
   } catch {
-    /* tolerate failure — next listPlans call will try again */
+    // tolerate failure; next listPlans call will try again
   }
 }
 
 /**
- * Explicitly remove a single external plan mapping from `project.json`.
- * Returns `{ ok: true }` on success (even if the name wasn't present —
- * idempotent). Used when the UI surfaces a "plan file is missing,
- * remove it?" affordance to the user.
+ * Explicitly remove a single external plan mapping from project.json.
+ * Returns ok even when the name is not present.
  */
 export async function removeExternalPlan(
   projectDir: string,
@@ -160,7 +154,16 @@ export async function registerExternalPlan(
   } catch {
     return { ok: false, error: `文件不存在 (does not exist): ${externalAbsPath}` }
   }
+
   const name = nameFromMdPath(externalAbsPath)
+  const meta = await readMeta(projectDir)
+  const existingSource = meta.plan_sources?.[name]
+
+  // Re-importing the exact same external plan should be a no-op.
+  if (existingSource === externalAbsPath) {
+    return { ok: true, name }
+  }
+
   const existing = await listPlans(projectDir)
   if (existing.some((p) => p.name === name)) {
     return {
@@ -168,16 +171,12 @@ export async function registerExternalPlan(
       error: `已存在同名方案 "${name}"，请改源文件名后再导入`
     }
   }
+
   const metaPath = join(projectDir, 'project.json')
-  let meta: Record<string, unknown> = {}
-  try {
-    meta = JSON.parse(await fs.readFile(metaPath, 'utf8'))
-  } catch {
-    /* empty */
-  }
-  const prev = (meta.plan_sources as Record<string, string> | undefined) ?? {}
-  meta.plan_sources = { ...prev, [name]: externalAbsPath }
-  meta.updated_at = new Date().toISOString()
-  await fs.writeFile(metaPath, JSON.stringify(meta, null, 2))
+  const nextMeta: Record<string, unknown> = { ...(meta as Record<string, unknown>) }
+  const prev = (nextMeta.plan_sources as Record<string, string> | undefined) ?? {}
+  nextMeta.plan_sources = { ...prev, [name]: externalAbsPath }
+  nextMeta.updated_at = new Date().toISOString()
+  await fs.writeFile(metaPath, JSON.stringify(nextMeta, null, 2))
   return { ok: true, name }
 }

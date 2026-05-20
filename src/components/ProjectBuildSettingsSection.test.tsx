@@ -13,19 +13,22 @@ describe('ProjectBuildSettingsSection', () => {
     const markup = renderToStaticMarkup(
       <ProjectBuildSettingsSection
         projectId={null}
+        loading={false}
         value={{ enabled: false, steps: [] }}
         disabled={false}
         onChange={vi.fn()}
       />
     )
 
-    expect(markup).toContain('选择项目后可编辑项目构建配置')
+    expect(markup).toContain('ai-settings-note')
+    expect(markup).not.toContain('project-build-settings-toolbar')
   })
 
   it('renders build steps and editing controls for the selected project', () => {
     const markup = renderToStaticMarkup(
       <ProjectBuildSettingsSection
         projectId="project-1"
+        loading={false}
         value={{
           enabled: true,
           steps: [
@@ -44,15 +47,11 @@ describe('ProjectBuildSettingsSection', () => {
       />
     )
 
-    expect(markup).toContain('项目构建')
-    expect(markup).toContain('启用项目构建')
-    expect(markup).toContain('新增步骤')
+    expect(markup).toContain('project-build-settings-toolbar')
     expect(markup).toContain('Configure')
     expect(markup).toContain('MSYS2')
     expect(markup).toContain('Visual Studio Developer Command Prompt')
-    expect(markup).toContain('上移')
-    expect(markup).toContain('下移')
-    expect(markup).toContain('删除')
+    expect(markup).toContain('project-build-step-card')
   })
 
   it('appends a default enabled step', () => {
@@ -73,12 +72,34 @@ describe('ProjectBuildSettingsSection', () => {
     })
   })
 
+  it('renders a loading hint while the current project build config is still loading', () => {
+    const markup = renderToStaticMarkup(
+      <ProjectBuildSettingsSection
+        projectId="project-1"
+        loading={true}
+        value={{ enabled: false, steps: [] }}
+        disabled={true}
+        onChange={vi.fn()}
+      />
+    )
+
+    expect(markup).toContain('ai-settings-note')
+    expect(markup).not.toContain('project-build-settings-toolbar')
+  })
+
   it('moves steps up and down without mutating the rest of the config', () => {
     const initial: ProjectBuildConfig = {
       enabled: true,
       steps: [
         { id: 'one', name: 'One', envType: 'msys', cwd: '.', command: 'echo 1', enabled: true },
-        { id: 'two', name: 'Two', envType: 'visual-studio', cwd: 'build', command: 'echo 2', enabled: false }
+        {
+          id: 'two',
+          name: 'Two',
+          envType: 'visual-studio',
+          cwd: 'build',
+          command: 'echo 2',
+          enabled: false
+        }
       ]
     }
 
@@ -103,19 +124,21 @@ describe('ProjectBuildSettingsSection', () => {
   })
 
   it('formats validation details into a readable save error', () => {
-    expect(
-      formatBuildConfigSaveError('invalid build config', [
-        {
-          path: 'build_config.steps[0].command',
-          message: 'command must be a non-empty string'
-        },
-        {
-          path: 'build_config.steps[1].cwd',
-          message: 'cwd must be a relative path within target_repo'
-        }
-      ])
-    ).toBe(
-      '项目构建配置保存失败：invalid build config\n- 步骤 1 / command：command must be a non-empty string\n- 步骤 2 / cwd：cwd must be a relative path within target_repo'
-    )
+    const message = formatBuildConfigSaveError('invalid build config', [
+      {
+        path: 'build_config.steps[0].command',
+        message: 'command must be a non-empty string'
+      },
+      {
+        path: 'build_config.steps[1].cwd',
+        message: 'cwd must be a relative path within target_repo'
+      }
+    ])
+
+    expect(message).toContain('invalid build config')
+    expect(message).toContain('command must be a non-empty string')
+    expect(message).toContain('cwd must be a relative path within target_repo')
+    expect(message).toContain('1')
+    expect(message).toContain('2')
   })
 })

@@ -6,6 +6,7 @@ import type {
 
 export interface ProjectBuildSettingsSectionProps {
   projectId: string | null
+  loading: boolean
   value: ProjectBuildConfig
   disabled: boolean
   onChange: (next: ProjectBuildConfig) => void
@@ -97,7 +98,11 @@ export default function ProjectBuildSettingsSection(
   return (
     <section className="ai-settings-card">
       <div className="ai-settings-title">项目构建</div>
-      {props.projectId ? (
+      {!props.projectId ? (
+        <div className="ai-settings-note">选择项目后可编辑项目构建配置</div>
+      ) : props.loading ? (
+        <div className="ai-settings-note">正在读取项目构建配置...</div>
+      ) : (
         <>
           <label className="ai-settings-checkbox">
             <input
@@ -232,8 +237,6 @@ export default function ProjectBuildSettingsSection(
             <div className="ai-settings-note">还没有构建步骤，点击“新增步骤”开始配置。</div>
           )}
         </>
-      ) : (
-        <div className="ai-settings-note">选择项目后可编辑项目构建配置</div>
       )}
     </section>
   )

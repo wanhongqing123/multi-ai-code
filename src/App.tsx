@@ -70,6 +70,8 @@ export default function App() {
     currentProjectId !== null && projectBuildConfigProjectId === currentProjectId
       ? projectBuildConfig
       : DEFAULT_PROJECT_BUILD_CONFIG
+  const projectBuildConfigReady =
+    currentProjectId !== null && projectBuildConfigProjectId === currentProjectId
 
   // Single-stage session state
   const [sessionId, setSessionId] = useState<string | null>(null)
@@ -1228,6 +1230,7 @@ export default function App() {
           initialRepoView={repoViewAiSettings}
           initialAppSettings={appSettings}
           initialBuildConfig={visibleProjectBuildConfig}
+          buildConfigReady={projectBuildConfigReady}
           onClose={() => setShowAiSettings(false)}
           onSaved={(next) => {
             // If the main-session CLI binary changes while a session is

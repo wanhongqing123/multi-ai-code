@@ -25,6 +25,7 @@ describe('AiSettingsDialog', () => {
           screenshotShortcut: 'Alt+Shift+S'
         }}
         initialBuildConfig={defaultBuildConfig}
+        buildConfigReady={true}
         onClose={vi.fn()}
         onSaved={vi.fn()}
         onSavedRepoView={vi.fn()}
@@ -50,6 +51,7 @@ describe('AiSettingsDialog', () => {
           screenshotShortcut: 'CommandOrControl+Shift+S'
         }}
         initialBuildConfig={defaultBuildConfig}
+        buildConfigReady={true}
         onClose={vi.fn()}
         onSaved={vi.fn()}
         onSavedRepoView={vi.fn()}
@@ -88,6 +90,7 @@ describe('AiSettingsDialog', () => {
           screenshotShortcut: 'Shift+Meta+K'
         }}
         initialBuildConfig={defaultBuildConfig}
+        buildConfigReady={true}
         onClose={vi.fn()}
         onSaved={vi.fn()}
         onSavedRepoView={vi.fn()}
@@ -125,6 +128,7 @@ describe('AiSettingsDialog', () => {
           screenshotShortcut: 'CommandOrControl+Shift+A'
         }}
         initialBuildConfig={defaultBuildConfig}
+        buildConfigReady={false}
         onClose={vi.fn()}
         onSaved={vi.fn()}
         onSavedRepoView={vi.fn()}
@@ -283,5 +287,24 @@ describe('AiSettingsDialog', () => {
     ).resolves.toBe(expectedToast)
 
     expect(onBuildConfigSaved).toHaveBeenCalledWith(defaultBuildConfig)
+  })
+
+  it('skips build-config persistence when the current project config is still loading', async () => {
+    const setBuildConfig = vi.fn()
+
+    await expect(
+      saveProjectScopedSettings({
+        projectId: 'project-1',
+        nextMain: { ai_cli: 'claude' },
+        nextRepoView: { ai_cli: 'codex' },
+        setAiSettings: vi.fn().mockResolvedValue({ ok: true, repaired: false }),
+        setRepoViewAiSettings: vi.fn().mockResolvedValue({ ok: true, repaired: false }),
+        setBuildConfig,
+        onMainSaved: vi.fn(),
+        onRepoViewSaved: vi.fn()
+      })
+    ).resolves.toBeNull()
+
+    expect(setBuildConfig).not.toHaveBeenCalled()
   })
 })

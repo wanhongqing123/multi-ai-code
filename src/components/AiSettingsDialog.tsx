@@ -85,6 +85,7 @@ export interface AiSettingsDialogProps {
   initialRepoView: AiSettings
   initialAppSettings: AppSettings
   initialBuildConfig: ProjectBuildConfig
+  buildConfigReady: boolean
   onClose: () => void
   onSaved: (next: AiSettings) => void
   onSavedRepoView: (next: AiSettings) => void
@@ -135,7 +136,7 @@ export interface SaveProjectScopedSettingsParams {
   projectId: string
   nextMain: AiSettings
   nextRepoView: AiSettings
-  nextBuildConfig: ProjectBuildConfig
+  nextBuildConfig?: ProjectBuildConfig
   setAiSettings: (
     projectId: string,
     next: AiSettings
@@ -144,13 +145,13 @@ export interface SaveProjectScopedSettingsParams {
     projectId: string,
     next: AiSettings
   ) => Promise<ProjectSettingsSaveResponse>
-  setBuildConfig: (
+  setBuildConfig?: (
     projectId: string,
     next: ProjectBuildConfig
   ) => Promise<BuildConfigSaveResponse>
   onMainSaved: (next: AiSettings) => void
   onRepoViewSaved: (next: AiSettings) => void
-  onBuildConfigSaved: (next: ProjectBuildConfig) => void
+  onBuildConfigSaved?: (next: ProjectBuildConfig) => void
 }
 
 export async function saveProjectScopedSettings(
@@ -164,16 +165,20 @@ export async function saveProjectScopedSettings(
   if (!repoRes.ok) throw new Error(repoRes.error ?? 'save repo-view settings failed')
   params.onRepoViewSaved(params.nextRepoView)
 
-  const buildRes = await params.setBuildConfig(params.projectId, params.nextBuildConfig)
-  if (!buildRes.ok) {
-    throw new Error(
-      formatBuildConfigSaveError(
-        buildRes.error ?? 'save build config failed',
-        buildRes.details
+  let buildRes: ProjectSettingsSaveResponse | undefined
+  if (params.nextBuildConfig && params.setBuildConfig && params.onBuildConfigSaved) {
+    const nextBuildRes = await params.setBuildConfig(params.projectId, params.nextBuildConfig)
+    if (!nextBuildRes.ok) {
+      throw new Error(
+        formatBuildConfigSaveError(
+          nextBuildRes.error ?? 'save build config failed',
+          nextBuildRes.details
+        )
       )
-    )
+    }
+    params.onBuildConfigSaved(params.nextBuildConfig)
+    buildRes = nextBuildRes
   }
-  params.onBuildConfigSaved(params.nextBuildConfig)
 
   return getProjectSettingsRepairToastMessage(mainRes, repoRes, buildRes)
 }
@@ -441,7 +446,7 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
     }
     const nextMain = fromForm(aiCli, command, argsText, envText)
     const nextRepoView = fromForm(repoAiCli, repoCommand, repoArgsText, repoEnvText)
-    const nextBuildConfig = buildConfig
+    const nextBuildConfig = props.buildConfigReady ? buildConfig : undefined
 
     try {
       const appRes = await window.api.settings.setAppSettings(requestedAppSettings)
@@ -469,10 +474,10 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
           nextBuildConfig,
           setAiSettings: window.api.project.setAiSettings,
           setRepoViewAiSettings: window.api.project.setRepoViewAiSettings,
-          setBuildConfig: window.api.project.setBuildConfig,
+          setBuildConfig: props.buildConfigReady ? window.api.project.setBuildConfig : undefined,
           onMainSaved: props.onSaved,
           onRepoViewSaved: props.onSavedRepoView,
-          onBuildConfigSaved: props.onSavedBuildConfig
+          onBuildConfigSaved: props.buildConfigReady ? props.onSavedBuildConfig : undefined
         })
         if (repairToast) {
           showToast(repairToast, { level: 'success' })
@@ -528,6 +533,7 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
           )}
           <ProjectBuildSettingsSection
             projectId={props.projectId}
+            loading={props.projectId !== null && !props.buildConfigReady}
             value={buildConfig}
             disabled={saving}
             onChange={setBuildConfig}

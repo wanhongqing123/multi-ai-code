@@ -161,7 +161,9 @@ export function createBuildRunner(partialDeps?: Partial<BuildRunnerDeps>): Build
   let state = initialState()
   let activeChild: SpawnedBuildProcess | null = null
   let stopRequested = false
+  let stopCurrentStepRequested = false
   let logTruncated = false
+  let currentStepControl: { hasSettled: boolean } | null = null
   const dataListeners = new Set<(event: BuildDataEvent) => void>()
   const statusListeners = new Set<(nextState: BuildRuntimeState) => void>()
 
@@ -292,7 +294,10 @@ export function createBuildRunner(partialDeps?: Partial<BuildRunnerDeps>): Build
       try {
         const { child } = await spawnForStep(step)
         activeChild = child
-        if (stopRequested) {
+        currentStepControl = { hasSettled: false }
+        stopCurrentStepRequested = false
+        if (stopRequested && !currentStepControl.hasSettled) {
+          stopCurrentStepRequested = true
           activeChild.kill('SIGTERM')
         }
 
@@ -310,15 +315,21 @@ export function createBuildRunner(partialDeps?: Partial<BuildRunnerDeps>): Build
         const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
           (resolvePromise, rejectPromise) => {
             child.on('error', rejectPromise)
-            child.on('close', (code, signal) => resolvePromise({ code, signal }))
+            child.on('close', (code, signal) => {
+              if (currentStepControl) currentStepControl.hasSettled = true
+              resolvePromise({ code, signal })
+            })
           }
         )
 
         activeChild = null
+        const shouldStopCurrentStep = stopCurrentStepRequested
+        currentStepControl = null
+        stopCurrentStepRequested = false
         step.exitCode = result.code
         step.signal = result.signal
 
-        if (stopRequested) {
+        if (shouldStopCurrentStep) {
           step.status = 'skipped'
           step.finishedAt = deps.now()
           markPendingStepsSkipped(state.steps)
@@ -345,6 +356,8 @@ export function createBuildRunner(partialDeps?: Partial<BuildRunnerDeps>): Build
         return
       } catch (error: unknown) {
         activeChild = null
+        currentStepControl = null
+        stopCurrentStepRequested = false
         step.exitCode = null
         step.signal = null
         markFailure(
@@ -388,7 +401,9 @@ export function createBuildRunner(partialDeps?: Partial<BuildRunnerDeps>): Build
       }
 
       stopRequested = false
+      stopCurrentStepRequested = false
       logTruncated = false
+      currentStepControl = null
       state = {
         status: 'running',
         projectId: request.projectId,
@@ -432,15 +447,18 @@ export function createBuildRunner(partialDeps?: Partial<BuildRunnerDeps>): Build
       if (state.status !== 'running') {
         return { ok: false, error: 'no build running' }
       }
-    stopRequested = true
-    appendLog(state.activeStepId, 'system', '[build] stop requested\n')
-    if (deps.platform === 'win32' && typeof activeChild?.pid === 'number') {
-      deps.killProcessTree(activeChild.pid)
-    } else {
-      activeChild?.kill('SIGTERM')
-    }
-    return { ok: true }
-  },
+      stopRequested = true
+      appendLog(state.activeStepId, 'system', '[build] stop requested\n')
+      if (activeChild && currentStepControl && !currentStepControl.hasSettled) {
+        stopCurrentStepRequested = true
+        if (deps.platform === 'win32' && typeof activeChild.pid === 'number') {
+          deps.killProcessTree(activeChild.pid)
+        } else {
+          activeChild.kill('SIGTERM')
+        }
+      }
+      return { ok: true }
+    },
 
     getState(): BuildRuntimeState {
       return cloneState(state)

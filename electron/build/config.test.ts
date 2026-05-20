@@ -357,4 +357,33 @@ describe('setProjectBuildConfig', () => {
       ],
     })
   })
+
+  it('rejects parent traversal cwd on save', async () => {
+    await fs.writeFile(metaPath, JSON.stringify({ id: 'p8', name: 'demo' }, null, 2), 'utf8')
+
+    const result = await setProjectBuildConfig(metaPath, {
+      enabled: true,
+      steps: [
+        {
+          id: 'traversal',
+          name: 'Configure',
+          envType: 'msys',
+          cwd: '..\\..\\outside',
+          command: 'cmake -S . -B build',
+          enabled: true,
+        },
+      ],
+    })
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'invalid build config',
+      details: [
+        {
+          path: 'build_config.steps[0].cwd',
+          message: 'cwd must not contain parent traversal segments',
+        },
+      ],
+    })
+  })
 })

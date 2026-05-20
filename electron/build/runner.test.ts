@@ -315,6 +315,73 @@ describe('createBuildRunner', () => {
     expect(spawn).toHaveBeenCalledTimes(1)
   })
 
+  it('preserves the current step result when stop happens after close but before result handling', async () => {
+    const children: FakeChild[] = []
+    const spawn = vi.fn(() => {
+      const child = new FakeChild()
+      children.push(child)
+      return child
+    })
+    const runner = createBuildRunner({
+      platform: 'win32',
+      spawn,
+      detectMsys: vi.fn().mockResolvedValue({
+        available: true,
+        bashPath: 'C:\\msys64\\usr\\bin\\bash.exe',
+        usrBinDir: 'C:\\msys64\\usr\\bin',
+        variant: 'msys2',
+        candidates: [],
+      }),
+      resolveVisualStudioEnvironment: vi.fn().mockResolvedValue({
+        ok: true,
+        installationPath: 'C:\\VS',
+        devCmdPath: 'C:\\VS\\Common7\\Tools\\VsDevCmd.bat',
+        env: { Path: 'C:\\VS\\bin' },
+      }),
+      now: () => '2026-05-20T10:00:00.000Z',
+    })
+
+    await runner.start({
+      projectId: 'p-race',
+      projectName: 'Demo',
+      targetRepo: 'E:\\repo',
+      config: {
+        enabled: true,
+        steps: [
+          {
+            id: 'configure',
+            name: 'Configure',
+            envType: 'msys',
+            cwd: '.',
+            command: 'cmake -S . -B build',
+            enabled: true,
+          },
+          {
+            id: 'compile',
+            name: 'Compile',
+            envType: 'visual-studio',
+            cwd: 'build',
+            command: 'cmake --build .',
+            enabled: true,
+          },
+        ],
+      },
+    })
+
+    children[0].emit('close', 0, null)
+    expect(runner.stop()).toEqual({ ok: true })
+    await flush()
+
+    expect(runner.getState()).toMatchObject({
+      status: 'stopped',
+      steps: [
+        { id: 'configure', status: 'succeeded' },
+        { id: 'compile', status: 'skipped' },
+      ],
+    })
+    expect(spawn).toHaveBeenCalledTimes(1)
+  })
+
   it('fails immediately when msys is requested but unavailable', async () => {
     const runner = createBuildRunner({
       platform: 'win32',

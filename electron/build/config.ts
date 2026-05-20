@@ -41,6 +41,10 @@ function isBuildStepEnvType(value: unknown): value is BuildStepEnvType {
   return value === 'msys' || value === 'visual-studio'
 }
 
+function hasParentTraversal(cwd: string): boolean {
+  return cwd.split(/[\\/]+/).some((segment) => segment === '..')
+}
+
 function normalizeBuildStep(
   value: unknown,
   options?: NormalizeBuildConfigOptions
@@ -117,6 +121,11 @@ function validateBuildStep(step: NormalizedBuildStep, index: number): BuildConfi
     issues.push({
       path: `build_config.steps[${index}].cwd`,
       message: 'cwd must be a relative path within target_repo',
+    })
+  } else if (hasParentTraversal(step.cwd)) {
+    issues.push({
+      path: `build_config.steps[${index}].cwd`,
+      message: 'cwd must not contain parent traversal segments',
     })
   }
   if (!step.command.trim()) {

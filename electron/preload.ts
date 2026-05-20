@@ -35,6 +35,93 @@ export interface ProjectAiSettingsResponse {
   error?: string
 }
 
+// NOTE: tsconfig.web only includes electron/preload.ts. Importing electron/build/*
+// here pulls node-side files into the web program and fails with TS6307, so these
+// types intentionally mirror the shared build contracts.
+export type BuildStepEnvType = 'msys' | 'visual-studio'
+
+export interface BuildStepConfig {
+  id: string
+  name: string
+  envType: BuildStepEnvType
+  cwd: string
+  command: string
+  enabled: boolean
+}
+
+export interface ProjectBuildConfig {
+  enabled: boolean
+  steps: BuildStepConfig[]
+}
+
+export interface BuildConfigValidationIssue {
+  path: string
+  message: string
+}
+
+export type ProjectBuildConfigReadResult =
+  | { ok: true; value: ProjectBuildConfig; repaired?: true }
+  | { ok: false; error: string }
+
+export type ProjectBuildConfigWriteResult =
+  | { ok: true; repaired?: true }
+  | { ok: false; error: string; details?: BuildConfigValidationIssue[] }
+
+export interface BuildFailureContext {
+  projectId: string
+  projectName: string | null
+  targetRepo: string
+  stepId: string
+  stepName: string
+  envType: BuildStepEnvType
+  cwd: string
+  command: string
+  exitCode: number | null
+  signal: NodeJS.Signals | null
+  reason: string
+  logTail: string
+}
+
+export interface BuildStepRuntime extends BuildStepConfig {
+  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped'
+  resolvedCwd: string | null
+  startedAt: string | null
+  finishedAt: string | null
+  exitCode: number | null
+  signal: NodeJS.Signals | null
+}
+
+export interface BuildRuntimeState {
+  status: 'idle' | 'running' | 'succeeded' | 'failed' | 'stopped'
+  projectId: string | null
+  projectName: string | null
+  targetRepo: string | null
+  startedAt: string | null
+  finishedAt: string | null
+  activeStepId: string | null
+  steps: BuildStepRuntime[]
+  log: string
+  lastFailure: BuildFailureContext | null
+}
+
+export interface BuildDataEvent {
+  at: string
+  projectId: string | null
+  stepId: string | null
+  stream: 'stdout' | 'stderr' | 'system'
+  chunk: string
+}
+
+export type BuildStartResult =
+  | { ok: true; state: BuildRuntimeState }
+  | { ok: false; error: string; state: BuildRuntimeState }
+
+export type BuildStopResult = { ok: true } | { ok: false; error: string }
+
+export type BuildFailureAnalysisPromptResult =
+  | { ok: true; prompt: string }
+  | { ok: false; error: string }
+
 export interface SpawnRequest {
   sessionId: string
   projectId: string
@@ -329,9 +416,14 @@ const api = {
         { command?: string; args?: string[]; env?: Record<string, string> }
       >
     ) =>
-      ipcRenderer.invoke('project:set-stage-configs', { id, configs }) as Promise<{
-        ok: boolean
-      }>,
+      ipcRenderer.invoke('project:set-stage-configs', { id, configs }) as Promise<{ ok: boolean }>,
+    getBuildConfig: (id: string) =>
+      ipcRenderer.invoke('project:get-build-config', { id }) as Promise<ProjectBuildConfigReadResult>,
+    setBuildConfig: (id: string, config: ProjectBuildConfig) =>
+      ipcRenderer.invoke('project:set-build-config', {
+        id,
+        config
+      }) as Promise<ProjectBuildConfigWriteResult>,
     getAiSettings: (id: string) =>
       ipcRenderer.invoke('project:get-ai-settings', { id }) as Promise<ProjectAiSettingsResponse>,
     setAiSettings: (id: string, settings: AiSettings) =>
@@ -361,6 +453,25 @@ const api = {
         name?: string
         error?: string
       }>
+  },
+
+  build: {
+    start: (projectId: string) =>
+      ipcRenderer.invoke('build:start', { id: projectId }) as Promise<BuildStartResult>,
+    stop: () => ipcRenderer.invoke('build:stop') as Promise<BuildStopResult>,
+    getState: () => ipcRenderer.invoke('build:get-state') as Promise<BuildRuntimeState>,
+    getFailureAnalysisPrompt: () =>
+      ipcRenderer.invoke('build:get-failure-analysis-prompt') as Promise<BuildFailureAnalysisPromptResult>,
+    onData: (cb: (evt: BuildDataEvent) => void) => {
+      const handler = (_event: IpcRendererEvent, evt: BuildDataEvent) => cb(evt)
+      ipcRenderer.on('build:data', handler)
+      return () => ipcRenderer.removeListener('build:data', handler)
+    },
+    onStatus: (cb: (state: BuildRuntimeState) => void) => {
+      const handler = (_event: IpcRendererEvent, state: BuildRuntimeState) => cb(state)
+      ipcRenderer.on('build:status', handler)
+      return () => ipcRenderer.removeListener('build:status', handler)
+    }
   },
 
   repoView: {

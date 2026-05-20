@@ -13,6 +13,7 @@ import {
   type ExternalReviewSuggestion
 } from './structuredReply.js'
 import { planSystemPromptInjection } from './systemPromptInjection.js'
+import { buildResumeArgs, type ResumeCommand } from './resumeArgs.js'
 
 import {
   buildSystemPrompt
@@ -98,6 +99,12 @@ export interface SpawnRequest {
   env?: Record<string, string>
   cols?: number
   rows?: number
+  /**
+   * 'new' (default) spawns a fresh CLI session and injects the system prompt.
+   * 'resume' rewrites args to the CLI's native continue form and skips
+   * system-prompt injection so the CLI's saved conversation stays clean.
+   */
+  mode?: 'new' | 'resume'
 }
 
 interface Session {
@@ -248,10 +255,20 @@ export function registerPtyIpc(): void {
       }
     }
 
+    // Resume mode only applies to known CLIs; for anything else we fall back
+    // to the regular 'new' path so callers can't accidentally rewrite args
+    // for an unsupported binary.
+    const isResumeMode =
+      req.mode === 'resume' &&
+      (req.command === 'claude' || req.command === 'codex')
+    const effectiveArgs = isResumeMode
+      ? buildResumeArgs(req.command as ResumeCommand, req.args)
+      : req.args
+
     const proc = new PtyCCProcess({
       cwd: finalCwd,
       command: req.command,
-      args: req.args,
+      args: effectiveArgs,
       cols: req.cols,
       rows: req.rows,
       env: req.env,
@@ -272,7 +289,24 @@ export function registerPtyIpc(): void {
       dumpStream
     }
 
+    // Resume-failure detection: if the CLI exits with a non-zero code within
+    // this window, we treat it as "no conversation to resume" (or similar)
+    // and broadcast cc:resume-failed so the renderer can return to the boot
+    // gate. `resumeBootTail` keeps the most recent ~2KB of output for the
+    // failure event so the UI can show the CLI's own error message.
+    const RESUME_FAIL_WINDOW_MS = 5000
+    let resumeWindowOpen = isResumeMode
+    let resumeBootTail = ''
+    const resumeWindowTimer = isResumeMode
+      ? setTimeout(() => {
+          resumeWindowOpen = false
+        }, RESUME_FAIL_WINDOW_MS)
+      : null
+
     proc.on('data', (chunk: string) => {
+      if (resumeWindowOpen) {
+        resumeBootTail = (resumeBootTail + chunk).slice(-2048)
+      }
       if (session.command === 'codex') {
         const boot = ((session.codexBootText ?? '') + chunk).slice(-16000)
         session.codexBootText = boot
@@ -308,6 +342,15 @@ export function registerPtyIpc(): void {
       broadcast('cc:data', { sessionId: req.sessionId, chunk })
     })
     proc.on('exit', (info: { exitCode: number; signal?: number }) => {
+      if (resumeWindowTimer) clearTimeout(resumeWindowTimer)
+      if (resumeWindowOpen && info.exitCode !== 0) {
+        broadcast('cc:resume-failed', {
+          sessionId: req.sessionId,
+          exitCode: info.exitCode,
+          signal: info.signal,
+          tail: resumeBootTail
+        })
+      }
       rejectPendingExternalReview(
         req.sessionId,
         `external review session ended before a structured reply arrived (exit ${info.exitCode})`
@@ -323,6 +366,13 @@ export function registerPtyIpc(): void {
       return { ok: false, error: (err as Error).message }
     }
     sessions.set(req.sessionId, session)
+
+    // In resume mode, skip the system-prompt + initialUserMessage injection
+    // entirely. The CLI is loading its own saved conversation; injecting a
+    // fresh system prompt would pollute the resumed context.
+    if (isResumeMode) {
+      return { ok: true }
+    }
 
     // Inject system prompt after CC TUI boots.
     setTimeout(async () => {

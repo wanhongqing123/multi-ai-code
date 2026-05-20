@@ -180,6 +180,15 @@ export class PtyCCProcess extends EventEmitter {
       COLORTERM: 'truecolor'
     }
 
+    // On macOS/Linux, some CLIs (Claude Code, Codex) detect color support via
+    // `supports-color`, which can downgrade to 256-color or basic-color under
+    // node-pty's real PTY despite TERM/COLORTERM hints — the brand-colored
+    // banner then renders as gray. Windows ConPTY already reports truecolor
+    // correctly, so we leave Windows behavior untouched.
+    if (!isWindows) {
+      env.FORCE_COLOR = '3'
+    }
+
     // Suppress Codex CLI upgrade prompts by dismissing the latest version.
     // version.json lives in ~/.codex/; we overwrite dismissed_version on
     // every spawn so codex never pauses to show the "update available" banner.

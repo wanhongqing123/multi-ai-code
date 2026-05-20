@@ -7,6 +7,7 @@ import {
 } from './utils/session-message-format'
 import { buildCliLaunchArgs } from './utils/cliLaunchArgs'
 import MainPanel from './components/MainPanel'
+import MainBootGate, { type BootGatePhase } from './components/MainBootGate'
 import ProjectPicker, { type ProjectInfo } from './components/ProjectPicker'
 import ErrorPanel, { pushLog, useLogs } from './components/ErrorPanel'
 import AiSettingsDialog, {
@@ -60,6 +61,13 @@ export default function App() {
   // Single-stage session state
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [sessionStatus, setSessionStatus] = useState<'idle' | 'running' | 'exited'>('idle')
+  // MainPanel is mounted (true) or the boot gate is shown (false). Toggled
+  // by spawn success (→ true) and by "重置主会话" / resume-failure (→ false).
+  // sessionStatus === 'exited' deliberately keeps mainPanelMounted=true so
+  // the previous terminal scrollback and the existing 重启 button still work.
+  const [mainPanelMounted, setMainPanelMounted] = useState(false)
+  // Gate's internal display state when mainPanelMounted === false.
+  const [gatePhase, setGatePhase] = useState<BootGatePhase>({ kind: 'idle' })
 
   const handleToggleTheme = useCallback(() => {
     setThemeState(toggleTheme())
@@ -179,6 +187,8 @@ export default function App() {
     setDiffSelectedFile('')
     setSessionId(null)
     setSessionStatus('idle')
+    setMainPanelMounted(false)
+    setGatePhase({ kind: 'idle' })
     shownStarterHintsRef.current.clear()
   }, [])
 
@@ -383,6 +393,22 @@ export default function App() {
     return off
   }, [sessionId])
 
+  // Resume-mode failure: CLI exited within the 5s window with a non-zero
+  // code. Return to the boot gate with the error visible and let the user
+  // pick again.
+  useEffect(() => {
+    const off = window.api.cc.onResumeFailed((evt) => {
+      if (evt.sessionId !== sessionId) return
+      setGatePhase({
+        kind: 'failed',
+        reason: `CLI 启动后退出 (code=${evt.exitCode})`,
+        tail: evt.tail
+      })
+      setMainPanelMounted(false)
+    })
+    return off
+  }, [sessionId])
+
   useEffect(() => {
     const offNotice = window.api.cc.onNotice((evt) => {
       pushLog(evt.level, `Session:${evt.sessionId}`, evt.message)
@@ -439,7 +465,7 @@ export default function App() {
     [planList, targetRepo]
   )
 
-  const handleStart = useCallback(async () => {
+  const handleStart = useCallback(async (mode: 'new' | 'resume' = 'new') => {
     if (!currentProjectId || !planName.trim()) return
     if (!aiSettingsReady) {
       showToast(aiSettingsLoadError ?? '主会话 AI 设置尚未加载完成', { level: 'warn' })
@@ -454,6 +480,7 @@ export default function App() {
       showToast('当前项目未设置 target_repo，请先在项目选择器里选一个代码仓库', { level: 'warn' })
       return
     }
+    setGatePhase({ kind: 'spawning', mode })
     const normalizedPlanName = planName.trim()
     const planAbsPath = getPlanAbsPath(normalizedPlanName)
     const planExists = planList.some((p) => p.name === normalizedPlanName)
@@ -484,13 +511,18 @@ export default function App() {
       initialUserMessage,
       command,
       args,
-      env: aiSettings.env ?? {}
+      env: aiSettings.env ?? {},
+      mode
     })
     if (!res.ok) {
       showToast(res.error ?? '启动失败', { level: 'error' })
       setSessionStatus('idle')
       setSessionId(null)
+      setGatePhase({ kind: 'idle' })
+      setMainPanelMounted(false)
+      return
     }
+    setMainPanelMounted(true)
   }, [currentProjectId, planName, planList, projects, aiSettings, aiSettingsReady, aiSettingsLoadError, getPlanAbsPath])
 
   const handleStop = useCallback(async () => {
@@ -507,6 +539,29 @@ export default function App() {
     setSessionStatus('idle')
     setTimeout(() => void handleStart(), 50)
   }, [sessionId, handleStart])
+
+  /**
+   * Kill the current main session (if any) and return the UI to the boot
+   * gate. Differs from handleRestart in that it does not auto-spawn — the
+   * user is expected to pick "新会话 / 继续上次" again from the gate.
+   */
+  const handleResetMainSession = useCallback(async () => {
+    if (mainPanelMounted && sessionStatus === 'running') {
+      const ok = window.confirm('当前主会话将被结束，是否继续？')
+      if (!ok) return
+    }
+    if (sessionId) {
+      try {
+        await window.api.cc.kill(sessionId)
+      } catch {
+        /* best-effort kill */
+      }
+    }
+    setSessionId(null)
+    setSessionStatus('idle')
+    setMainPanelMounted(false)
+    setGatePhase({ kind: 'idle' })
+  }, [sessionId, sessionStatus, mainPanelMounted])
 
   const onPlanSelect = useCallback(
     async (value: string) => {
@@ -816,6 +871,15 @@ export default function App() {
         >
           🎓 Skill 学习
         </button>
+        {mainPanelMounted && (
+          <button
+            className="topbar-btn"
+            onClick={() => void handleResetMainSession()}
+            title="结束当前主会话，回到选择界面"
+          >
+            🔄 重置主会话
+          </button>
+        )}
         <button
           className={`topbar-btn ${errorCount > 0 ? 'topbar-btn-danger' : ''}`}
           onClick={() => setShowErrors((s) => !s)}
@@ -917,21 +981,32 @@ export default function App() {
       )}
 
       <div className="main-split">
-        <MainPanel
-          sessionId={sessionId ?? ''}
-          projectId={currentProjectId ?? ''}
-          projectDir={projectDir}
-          cwd={targetRepo}
-          planName={planName}
-          status={sessionStatus}
-          onStart={handleStart}
-          onStop={handleStop}
-          onRestart={handleRestart}
-          onOpenRepoView={() => void openRepoView()}
-          onOpenDiff={() => setDiffReviewOpen(true)}
-          disabled={!currentProjectId || !planName.trim()}
-          repoViewDisabled={!currentProjectId}
-        />
+        {mainPanelMounted ? (
+          <MainPanel
+            sessionId={sessionId ?? ''}
+            projectId={currentProjectId ?? ''}
+            projectDir={projectDir}
+            cwd={targetRepo}
+            planName={planName}
+            status={sessionStatus}
+            onStart={() => void handleStart('new')}
+            onStop={handleStop}
+            onRestart={handleRestart}
+            onOpenRepoView={() => void openRepoView()}
+            onOpenDiff={() => setDiffReviewOpen(true)}
+            disabled={!currentProjectId || !planName.trim()}
+            repoViewDisabled={!currentProjectId}
+          />
+        ) : (
+          <MainBootGate
+            phase={gatePhase}
+            command={aiSettings.command ?? aiSettings.ai_cli ?? 'claude'}
+            planName={planName}
+            disabled={!currentProjectId || !planName.trim()}
+            onChoose={(mode) => void handleStart(mode)}
+            onDismissFailure={() => setGatePhase({ kind: 'idle' })}
+          />
+        )}
 
         {showProjectPicker && (
           <ProjectPicker
@@ -1124,7 +1199,18 @@ export default function App() {
           initialRepoView={repoViewAiSettings}
           initialAppSettings={appSettings}
           onClose={() => setShowAiSettings(false)}
-          onSaved={(next) => setAiSettings(next)}
+          onSaved={(next) => {
+            // If the main-session CLI binary changes while a session is
+            // mounted, the existing PTY is running the previous CLI — its
+            // saved conversation is not addressable from the new CLI.
+            // Reset the session to keep "继续上次" honest.
+            const prevCli = aiSettings.command ?? aiSettings.ai_cli
+            const nextCli = next.command ?? next.ai_cli
+            setAiSettings(next)
+            if (prevCli !== nextCli && mainPanelMounted) {
+              void handleResetMainSession()
+            }
+          }}
           onSavedRepoView={(next) => setRepoViewAiSettings(next)}
           onSavedAppSettings={(next) => setAppSettings(next)}
         />

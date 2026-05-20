@@ -25,10 +25,27 @@ describe('xtermThemeFor', () => {
 describe('buildMainTerminalOptions', () => {
   it('disables smooth scrolling for large-output sessions', () => {
     expect(buildMainTerminalOptions('light')).toMatchObject({
-      smoothScrollDuration: 0,
-      fontWeight: 600,
-      fontWeightBold: 800
+      smoothScrollDuration: 0
     })
+  })
+
+  it('uses heavier weights and larger size on Windows; lighter elsewhere', () => {
+    const opts = buildMainTerminalOptions('light')
+    const plat =
+      typeof navigator !== 'undefined' ? navigator.platform.toLowerCase() : ''
+    if (plat.includes('win')) {
+      expect(opts).toMatchObject({
+        fontWeight: 600,
+        fontWeightBold: 800,
+        fontSize: 13
+      })
+    } else {
+      expect(opts).toMatchObject({
+        fontWeight: 400,
+        fontWeightBold: 700,
+        fontSize: 11
+      })
+    }
   })
 
   it('keeps the programmer-friendly mono stack', () => {

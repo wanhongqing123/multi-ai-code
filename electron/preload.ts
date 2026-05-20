@@ -54,6 +54,21 @@ export interface SpawnRequest {
   env?: Record<string, string>
   cols?: number
   rows?: number
+  /**
+   * 'new' (default) spawns a fresh CLI session and injects the system prompt.
+   * 'resume' rewrites args to the CLI's native continue form (claude
+   * --continue / codex resume --last) and skips system-prompt injection so
+   * the CLI's own saved conversation history stays clean.
+   */
+  mode?: 'new' | 'resume'
+}
+
+export interface ResumeFailedEvent {
+  sessionId: string
+  exitCode: number
+  signal?: number
+  /** Tail of PTY output emitted before exit, for diagnostics in the UI. */
+  tail: string
 }
 
 export interface DataEvent {
@@ -501,6 +516,11 @@ const api = {
       const handler = (_e: IpcRendererEvent, evt: ExitEvent) => cb(evt)
       ipcRenderer.on('cc:exit', handler)
       return () => ipcRenderer.removeListener('cc:exit', handler)
+    },
+    onResumeFailed: (cb: (evt: ResumeFailedEvent) => void): (() => void) => {
+      const handler = (_e: IpcRendererEvent, evt: ResumeFailedEvent) => cb(evt)
+      ipcRenderer.on('cc:resume-failed', handler)
+      return () => ipcRenderer.removeListener('cc:resume-failed', handler)
     },
     onNotice: (
       cb: (evt: {

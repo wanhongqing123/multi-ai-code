@@ -36,15 +36,24 @@ export function xtermThemeFor(
   return theme === 'dark' ? XTERM_DARK_THEME : XTERM_LIGHT_THEME
 }
 
+function isWindowsPlatform(): boolean {
+  const plat =
+    typeof navigator !== 'undefined' ? navigator.platform.toLowerCase() : ''
+  return plat.includes('win')
+}
+
 export function buildMainTerminalOptions(theme: Theme): ITerminalOptions {
+  // Windows 下 GDI/DirectWrite 渲染较瘦，保留较粗权重保证清晰度；
+  // macOS / Linux 的字体平滑会让相同权重显得过粗，降到 normal/bold。
+  const heavy = isWindowsPlatform()
   return {
-    fontSize: 13,
+    fontSize: heavy ? 13 : 11,
     lineHeight: 1.45,
     letterSpacing: 0,
     fontFamily:
       'Monaco, Menlo, "JetBrains Mono", "SF Mono", Consolas, monospace',
-    fontWeight: 600,
-    fontWeightBold: 800,
+    fontWeight: heavy ? 600 : 400,
+    fontWeightBold: heavy ? 800 : 700,
     cursorBlink: false,
     cursorStyle: 'underline',
     cursorInactiveStyle: 'underline',

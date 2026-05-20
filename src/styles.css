@@ -1331,6 +1331,24 @@ html, body, #root {
   color: var(--mac-fg-subtle);
   line-height: var(--mac-line-normal);
 }
+.ai-settings-shortcut-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--mac-sp-2);
+}
+
+.ai-settings-shortcut-presets .drawer-btn[aria-pressed='true'] {
+  background: var(--mac-primary-soft);
+  color: var(--mac-primary);
+  border-color: var(--mac-primary);
+}
+
+.ai-settings-shortcut-custom {
+  padding: var(--mac-sp-3);
+  border: 1px dashed var(--mac-border);
+  border-radius: var(--mac-r-md);
+  background: var(--mac-bg-subtle);
+}
 
 .error-panel {
   position: fixed;

@@ -28,6 +28,13 @@ export interface AppSettings {
   screenshotShortcut: string
 }
 
+export interface ProjectAiSettingsResponse {
+  ok: boolean
+  value?: AiSettings
+  repaired?: boolean
+  error?: string
+}
+
 export interface SpawnRequest {
   sessionId: string
   projectId: string
@@ -311,19 +318,22 @@ const api = {
         ok: boolean
       }>,
     getAiSettings: (id: string) =>
-      ipcRenderer.invoke('project:get-ai-settings', { id }) as Promise<AiSettings>,
+      ipcRenderer.invoke('project:get-ai-settings', { id }) as Promise<ProjectAiSettingsResponse>,
     setAiSettings: (id: string, settings: AiSettings) =>
       ipcRenderer.invoke('project:set-ai-settings', {
         id,
         settings
-      }) as Promise<{ ok: boolean; error?: string }>,
+      }) as Promise<{ ok: boolean; repaired?: boolean; error?: string }>,
     getRepoViewAiSettings: (id: string) =>
-      ipcRenderer.invoke('project:get-repo-view-ai-settings', { id }) as Promise<AiSettings>,
+      ipcRenderer.invoke(
+        'project:get-repo-view-ai-settings',
+        { id }
+      ) as Promise<ProjectAiSettingsResponse>,
     setRepoViewAiSettings: (id: string, settings: AiSettings) =>
       ipcRenderer.invoke('project:set-repo-view-ai-settings', {
         id,
         settings
-      }) as Promise<{ ok: boolean; error?: string }>,
+      }) as Promise<{ ok: boolean; repaired?: boolean; error?: string }>,
     pickDir: () =>
       ipcRenderer.invoke('project:pick-dir') as Promise<{
         canceled: boolean

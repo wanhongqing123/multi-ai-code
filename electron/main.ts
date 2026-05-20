@@ -59,6 +59,7 @@ import {
   readRepoMemory,
   writeRepoConversationHistory
 } from './repo-view/memory.js'
+import { readProjectMetaFile, writeProjectMetaFile } from './store/projectMeta.js'
 import {
   hasRepoAnalysisSession,
   resizeRepoAnalysisSession,
@@ -825,51 +826,76 @@ app.whenReady().then(async () => {
     env?: Record<string, string>
   }
 
-  ipcMain.handle('project:get-ai-settings', async (_e, { id }: { id: string }) => {
-    const pdir = projectDirFn(id)
+  async function readProjectSettingsField(
+    id: string,
+    field: 'ai_settings' | 'repo_view_ai_settings'
+  ): Promise<{ ok: true; value: AiSettings; repaired?: true } | { ok: false; error: string }> {
+    const metaPath = join(projectDirFn(id), 'project.json')
     try {
-      const raw = await fs.readFile(join(pdir, 'project.json'), 'utf8')
-      const meta = JSON.parse(raw) as { ai_settings?: AiSettings }
-      return meta.ai_settings ?? { ai_cli: 'claude' as const }
-    } catch {
-      return { ai_cli: 'claude' as const }
+      const readResult = await readProjectMetaFile(metaPath)
+      if (!readResult.ok) {
+        return { ok: false, error: '项目设置文件已损坏，无法自动修复' }
+      }
+      const value = readResult.meta[field]
+      if (!value || typeof value !== 'object') {
+        return readResult.repaired
+          ? { ok: true, value: { ai_cli: 'claude' as const }, repaired: true }
+          : { ok: true, value: { ai_cli: 'claude' as const } }
+      }
+      return readResult.repaired
+        ? { ok: true, value: value as AiSettings, repaired: true }
+        : { ok: true, value: value as AiSettings }
+    } catch (err: unknown) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err)
+      }
     }
+  }
+
+  ipcMain.handle('project:get-ai-settings', async (_e, { id }: { id: string }) => {
+    return await readProjectSettingsField(id, 'ai_settings')
   })
+
+  async function updateProjectSettingsField(
+    id: string,
+    field: 'ai_settings' | 'repo_view_ai_settings',
+    settings: AiSettings
+  ): Promise<{ ok: true; repaired?: true } | { ok: false; error: string }> {
+    try {
+      const metaPath = join(projectDirFn(id), 'project.json')
+      const readResult = await readProjectMetaFile(metaPath)
+      if (!readResult.ok) {
+        return { ok: false, error: '项目设置文件已损坏，无法自动修复' }
+      }
+
+      await writeProjectMetaFile(metaPath, {
+        ...readResult.meta,
+        [field]: settings as unknown as Record<string, unknown>
+      })
+      return readResult.repaired ? { ok: true, repaired: true } : { ok: true }
+    } catch (err: unknown) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err)
+      }
+    }
+  }
 
   ipcMain.handle(
     'project:set-ai-settings',
     async (
       _e,
       { id, settings }: { id: string; settings: AiSettings }
-    ): Promise<{ ok: boolean; error?: string }> => {
-      const pdir = projectDirFn(id)
-      const metaPath = join(pdir, 'project.json')
-      try {
-        const raw = await fs.readFile(metaPath, 'utf8')
-        const meta = JSON.parse(raw) as Record<string, unknown>
-        meta.ai_settings = settings as unknown as Record<string, unknown>
-        await fs.writeFile(metaPath, JSON.stringify(meta, null, 2))
-        return { ok: true }
-      } catch (err: unknown) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : String(err)
-        }
-      }
+    ): Promise<{ ok: boolean; repaired?: boolean; error?: string }> => {
+      return await updateProjectSettingsField(id, 'ai_settings', settings)
     }
   )
 
   ipcMain.handle(
     'project:get-repo-view-ai-settings',
     async (_e, { id }: { id: string }) => {
-      const pdir = projectDirFn(id)
-      try {
-        const raw = await fs.readFile(join(pdir, 'project.json'), 'utf8')
-        const meta = JSON.parse(raw) as { repo_view_ai_settings?: AiSettings }
-        return meta.repo_view_ai_settings ?? { ai_cli: 'claude' as const }
-      } catch {
-        return { ai_cli: 'claude' as const }
-      }
+      return await readProjectSettingsField(id, 'repo_view_ai_settings')
     }
   )
 
@@ -878,21 +904,8 @@ app.whenReady().then(async () => {
     async (
       _e,
       { id, settings }: { id: string; settings: AiSettings }
-    ): Promise<{ ok: boolean; error?: string }> => {
-      const pdir = projectDirFn(id)
-      const metaPath = join(pdir, 'project.json')
-      try {
-        const raw = await fs.readFile(metaPath, 'utf8')
-        const meta = JSON.parse(raw) as Record<string, unknown>
-        meta.repo_view_ai_settings = settings as unknown as Record<string, unknown>
-        await fs.writeFile(metaPath, JSON.stringify(meta, null, 2))
-        return { ok: true }
-      } catch (err: unknown) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : String(err)
-        }
-      }
+    ): Promise<{ ok: boolean; repaired?: boolean; error?: string }> => {
+      return await updateProjectSettingsField(id, 'repo_view_ai_settings', settings)
     }
   )
 

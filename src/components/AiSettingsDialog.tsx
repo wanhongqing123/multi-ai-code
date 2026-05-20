@@ -1,6 +1,51 @@
 import { useEffect, useRef, useState } from 'react'
+import { showToast } from './Toast.js'
 
-const DEFAULT_SCREENSHOT_SHORTCUT = 'CommandOrControl+Shift+A'
+export const DEFAULT_SCREENSHOT_SHORTCUT = 'CommandOrControl+Shift+A'
+
+export const SCREENSHOT_SHORTCUT_PRESETS = [
+  { value: 'CommandOrControl+Shift+A', label: 'Ctrl/Cmd + Shift + A' },
+  { value: 'CommandOrControl+Shift+S', label: 'Ctrl/Cmd + Shift + S' },
+  { value: 'CommandOrControl+Alt+A', label: 'Ctrl/Cmd + Alt + A' },
+  { value: 'Alt+Shift+A', label: 'Alt + Shift + A' }
+] as const
+
+export interface ScreenshotShortcutState {
+  screenshotShortcut: string
+  customExpanded: boolean
+}
+
+export function isPresetScreenshotShortcut(shortcut: string): boolean {
+  return SCREENSHOT_SHORTCUT_PRESETS.some((preset) => preset.value === shortcut)
+}
+
+export function createScreenshotShortcutState(shortcut: string): ScreenshotShortcutState {
+  return {
+    screenshotShortcut: shortcut,
+    customExpanded: !isPresetScreenshotShortcut(shortcut)
+  }
+}
+
+export function selectScreenshotShortcutPreset(shortcut: string): ScreenshotShortcutState {
+  return {
+    screenshotShortcut: shortcut,
+    customExpanded: false
+  }
+}
+
+export function openCustomScreenshotShortcut(shortcut: string): ScreenshotShortcutState {
+  return {
+    screenshotShortcut: shortcut,
+    customExpanded: true
+  }
+}
+
+export function restoreDefaultScreenshotShortcut(): ScreenshotShortcutState {
+  return {
+    screenshotShortcut: DEFAULT_SCREENSHOT_SHORTCUT,
+    customExpanded: false
+  }
+}
 
 export interface AiSettings {
   /** 'claude' | 'codex' */
@@ -20,6 +65,12 @@ export interface AppSettings {
 interface AppSettingsSaveResponse {
   ok: boolean
   value?: AppSettings
+  error?: string
+}
+
+interface ProjectSettingsSaveResponse {
+  ok: boolean
+  repaired?: boolean
   error?: string
 }
 
@@ -61,6 +112,13 @@ export function shouldApplyIncomingAppSettings(
     lastSyncedExternal.screenshotShortcutEnabled !== incoming.screenshotShortcutEnabled ||
     lastSyncedExternal.screenshotShortcut !== incoming.screenshotShortcut
   )
+}
+
+export function getProjectSettingsRepairToastMessage(
+  mainResponse: ProjectSettingsSaveResponse,
+  repoResponse: ProjectSettingsSaveResponse
+): string | null {
+  return mainResponse.repaired || repoResponse.repaired ? '项目设置文件已自动修复并保存' : null
 }
 
 function toEnvText(env: Record<string, string> | undefined): string {
@@ -149,11 +207,16 @@ function SettingsSection(props: {
 function ScreenshotSettingsSection(props: {
   enabled: boolean
   shortcut: string
+  customExpanded: boolean
   disabled: boolean
   onEnabledChange: (next: boolean) => void
+  onPresetSelect: (next: string) => void
+  onCustomOpen: () => void
   onShortcutChange: (next: string) => void
   onRestoreDefaults: () => void
 }): JSX.Element {
+  const shouldShowCustomInput = props.customExpanded || !isPresetScreenshotShortcut(props.shortcut)
+
   return (
     <section className="ai-settings-card">
       <div className="ai-settings-title-row">
@@ -176,16 +239,41 @@ function ScreenshotSettingsSection(props: {
         />
         <span>启用全局截图快捷键</span>
       </label>
-      <label>
-        快捷键
-        <input
-          type="text"
-          value={props.shortcut}
-          onChange={(e) => props.onShortcutChange(e.target.value)}
-          placeholder={DEFAULT_SCREENSHOT_SHORTCUT}
+      <div className="ai-settings-shortcut-presets">
+        {SCREENSHOT_SHORTCUT_PRESETS.map((preset) => (
+          <button
+            key={preset.value}
+            type="button"
+            className="drawer-btn"
+            aria-pressed={props.shortcut === preset.value}
+            onClick={() => props.onPresetSelect(preset.value)}
+            disabled={props.disabled}
+          >
+            {preset.label}
+          </button>
+        ))}
+        <button
+          type="button"
+          className="drawer-btn"
+          aria-pressed={shouldShowCustomInput}
+          onClick={props.onCustomOpen}
           disabled={props.disabled}
-        />
-      </label>
+        >
+          自定义
+        </button>
+      </div>
+      {shouldShowCustomInput && (
+        <label className="ai-settings-shortcut-custom">
+          快捷键
+          <input
+            type="text"
+            value={props.shortcut}
+            onChange={(e) => props.onShortcutChange(e.target.value)}
+            placeholder={DEFAULT_SCREENSHOT_SHORTCUT}
+            disabled={props.disabled}
+          />
+        </label>
+      )}
       <div className="ai-settings-help">
         默认值：{DEFAULT_SCREENSHOT_SHORTCUT}。示例：Alt+Shift+S、CommandOrControl+Alt+X。
       </div>
@@ -193,9 +281,7 @@ function ScreenshotSettingsSection(props: {
   )
 }
 
-export default function AiSettingsDialog(
-  props: AiSettingsDialogProps
-): JSX.Element {
+export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Element {
   const [aiCli, setAiCli] = useState<'claude' | 'codex'>(props.initial.ai_cli ?? 'claude')
   const [command, setCommand] = useState<string>(props.initial.command ?? '')
   const [argsText, setArgsText] = useState<string>((props.initial.args ?? []).join(' '))
@@ -216,6 +302,9 @@ export default function AiSettingsDialog(
   const [screenshotShortcut, setScreenshotShortcut] = useState<string>(
     props.initialAppSettings.screenshotShortcut
   )
+  const [screenshotShortcutCustomExpanded, setScreenshotShortcutCustomExpanded] = useState<boolean>(
+    createScreenshotShortcutState(props.initialAppSettings.screenshotShortcut).customExpanded
+  )
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const lastSyncedAppSettingsRef = useRef<AppSettings>(props.initialAppSettings)
@@ -232,12 +321,29 @@ export default function AiSettingsDialog(
     }
     setScreenshotShortcutEnabled(props.initialAppSettings.screenshotShortcutEnabled)
     setScreenshotShortcut(props.initialAppSettings.screenshotShortcut)
+    setScreenshotShortcutCustomExpanded(
+      createScreenshotShortcutState(props.initialAppSettings.screenshotShortcut).customExpanded
+    )
     lastSyncedAppSettingsRef.current = props.initialAppSettings
   }, [props.initialAppSettings, saving])
 
-  const restoreDefaultShortcut = (): void => {
+  const handleRestoreDefaultShortcut = (): void => {
+    const next = restoreDefaultScreenshotShortcut()
     setScreenshotShortcutEnabled(true)
-    setScreenshotShortcut(DEFAULT_SCREENSHOT_SHORTCUT)
+    setScreenshotShortcut(next.screenshotShortcut)
+    setScreenshotShortcutCustomExpanded(next.customExpanded)
+  }
+
+  const handlePresetSelect = (nextShortcut: string): void => {
+    const next = selectScreenshotShortcutPreset(nextShortcut)
+    setScreenshotShortcut(next.screenshotShortcut)
+    setScreenshotShortcutCustomExpanded(next.customExpanded)
+  }
+
+  const handleCustomOpen = (): void => {
+    const next = openCustomScreenshotShortcut(screenshotShortcut)
+    setScreenshotShortcut(next.screenshotShortcut)
+    setScreenshotShortcutCustomExpanded(next.customExpanded)
   }
 
   const handleSave = async (): Promise<void> => {
@@ -264,11 +370,17 @@ export default function AiSettingsDialog(
       if (appRes.value) {
         setScreenshotShortcutEnabled(appOutcome.appSettings.screenshotShortcutEnabled)
         setScreenshotShortcut(appOutcome.appSettings.screenshotShortcut)
+        setScreenshotShortcutCustomExpanded(
+          createScreenshotShortcutState(appOutcome.appSettings.screenshotShortcut).customExpanded
+        )
         lastSyncedAppSettingsRef.current = appOutcome.appSettings
         props.onSavedAppSettings(appOutcome.appSettings)
       } else if (appRes.ok) {
         setScreenshotShortcutEnabled(appOutcome.appSettings.screenshotShortcutEnabled)
         setScreenshotShortcut(appOutcome.appSettings.screenshotShortcut)
+        setScreenshotShortcutCustomExpanded(
+          createScreenshotShortcutState(appOutcome.appSettings.screenshotShortcut).customExpanded
+        )
         lastSyncedAppSettingsRef.current = appOutcome.appSettings
         props.onSavedAppSettings(appOutcome.appSettings)
       }
@@ -278,12 +390,16 @@ export default function AiSettingsDialog(
       }
 
       if (props.projectId) {
-        const [mainRes, repoRes] = await Promise.all([
-          window.api.project.setAiSettings(props.projectId, nextMain),
-          window.api.project.setRepoViewAiSettings(props.projectId, nextRepoView)
-        ])
+        // Both endpoints persist into the same project.json file, so save them
+        // sequentially to avoid overlapping writes that can re-corrupt metadata.
+        const mainRes = await window.api.project.setAiSettings(props.projectId, nextMain)
         if (!mainRes.ok) throw new Error(mainRes.error ?? 'save main settings failed')
+        const repoRes = await window.api.project.setRepoViewAiSettings(props.projectId, nextRepoView)
         if (!repoRes.ok) throw new Error(repoRes.error ?? 'save repo-view settings failed')
+        const repairToast = getProjectSettingsRepairToastMessage(mainRes, repoRes)
+        if (repairToast) {
+          showToast(repairToast, { level: 'success' })
+        }
         props.onSaved(nextMain)
         props.onSavedRepoView(nextRepoView)
       }
@@ -309,10 +425,13 @@ export default function AiSettingsDialog(
           <ScreenshotSettingsSection
             enabled={screenshotShortcutEnabled}
             shortcut={screenshotShortcut}
+            customExpanded={screenshotShortcutCustomExpanded}
             disabled={saving}
             onEnabledChange={setScreenshotShortcutEnabled}
+            onPresetSelect={handlePresetSelect}
+            onCustomOpen={handleCustomOpen}
             onShortcutChange={setScreenshotShortcut}
-            onRestoreDefaults={restoreDefaultShortcut}
+            onRestoreDefaults={handleRestoreDefaultShortcut}
           />
           {props.projectId ? (
             <SettingsSection

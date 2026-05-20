@@ -35,6 +35,8 @@ export default function RepoViewerWindow({
   const [selectedSize, setSelectedSize] = useState(0)
   const [loadingFile, setLoadingFile] = useState(false)
   const [repoViewSettings, setRepoViewSettings] = useState<AiSettings>({ ai_cli: 'claude' })
+  const [repoViewSettingsReady, setRepoViewSettingsReady] = useState(false)
+  const [repoViewSettingsLoadError, setRepoViewSettingsLoadError] = useState<string | null>(null)
   const [annotations, setAnnotations] = useState<RepoCodeAnnotation[]>([])
   const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null)
   const [activeAnnotationId, setActiveAnnotationId] = useState<string | null>(null)
@@ -58,8 +60,21 @@ export default function RepoViewerWindow({
         }))
       )
     })
-    void window.api.project.getRepoViewAiSettings(projectId).then((settings) => {
-      setRepoViewSettings(settings)
+    setRepoViewSettingsReady(false)
+    setRepoViewSettingsLoadError(null)
+    void window.api.project.getRepoViewAiSettings(projectId).then((result) => {
+      if (!result.ok) {
+        setRepoViewSettingsReady(false)
+        setRepoViewSettingsLoadError(result.error ?? '读取仓库查看 AI 设置失败')
+        showToast(result.error ?? '读取仓库查看 AI 设置失败', { level: 'error' })
+        return
+      }
+      setRepoViewSettings(result.value ?? { ai_cli: 'claude' })
+      setRepoViewSettingsReady(true)
+      setRepoViewSettingsLoadError(null)
+      if (result.repaired) {
+        showToast('项目设置文件已自动修复', { level: 'success' })
+      }
     })
   }, [projectId])
 
@@ -138,6 +153,14 @@ export default function RepoViewerWindow({
 
   const onStartCli = useCallback(async (): Promise<boolean> => {
     if (!project) return false
+    if (!repoViewSettingsReady) {
+      showToast(repoViewSettingsLoadError ?? '仓库查看 AI 设置尚未加载完成', { level: 'warn' })
+      return false
+    }
+    if (repoViewSettingsLoadError) {
+      showToast(repoViewSettingsLoadError, { level: 'error' })
+      return false
+    }
     const command = repoViewSettings.command ?? repoViewSettings.ai_cli
     const args = buildCliLaunchArgs(
       repoViewSettings.ai_cli,
@@ -156,7 +179,7 @@ export default function RepoViewerWindow({
       return true
     }
     return false
-  }, [project, projectId, repoViewSettings])
+  }, [project, projectId, repoViewSettings, repoViewSettingsReady, repoViewSettingsLoadError])
 
   const onStopCli = useCallback(() => {
     void window.api.repoView.analysisStop().then(() => {

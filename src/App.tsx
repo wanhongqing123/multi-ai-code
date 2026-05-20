@@ -42,6 +42,8 @@ export default function App() {
   const [repoViewAiSettings, setRepoViewAiSettings] = useState<AiSettings>({
     ai_cli: 'claude'
   })
+  const [aiSettingsReady, setAiSettingsReady] = useState(false)
+  const [aiSettingsLoadError, setAiSettingsLoadError] = useState<string | null>(null)
   const [appSettings, setAppSettings] = useState<AppSettings>({
     screenshotShortcutEnabled: true,
     screenshotShortcut: 'CommandOrControl+Shift+A'
@@ -324,11 +326,15 @@ export default function App() {
       setMsysEnabled(false)
       setAiSettings({ ai_cli: 'claude' })
       setRepoViewAiSettings({ ai_cli: 'claude' })
+      setAiSettingsReady(false)
+      setAiSettingsLoadError(null)
       return
     }
     localStorage.setItem(LAST_PROJECT_KEY, currentProjectId)
     void window.api.project.touch(currentProjectId)
     let cancelled = false
+    setAiSettingsReady(false)
+    setAiSettingsLoadError(null)
     void window.api.project.getStageConfigs(currentProjectId).then((cfg) => {
       if (cancelled) return
       setStageConfigs(cfg)
@@ -337,14 +343,31 @@ export default function App() {
       if (cancelled) return
       setMsysEnabled(enabled)
     })
-    void window.api.project.getAiSettings(currentProjectId).then((settings) => {
+    void (async () => {
+      const aiResult = await window.api.project.getAiSettings(currentProjectId)
       if (cancelled) return
-      setAiSettings(settings)
-    })
-    void window.api.project.getRepoViewAiSettings(currentProjectId).then((settings) => {
+      if (!aiResult.ok) {
+        setAiSettingsReady(false)
+        setAiSettingsLoadError(aiResult.error ?? '读取主会话 AI 设置失败')
+        showToast(aiResult.error ?? '读取主会话 AI 设置失败', { level: 'error' })
+        return
+      }
+      setAiSettings(aiResult.value ?? { ai_cli: 'claude' })
+      setAiSettingsReady(true)
+      setAiSettingsLoadError(null)
+
+      const repoResult = await window.api.project.getRepoViewAiSettings(currentProjectId)
       if (cancelled) return
-      setRepoViewAiSettings(settings)
-    })
+      if (!repoResult.ok) {
+        showToast(repoResult.error ?? '读取仓库查看 AI 设置失败', { level: 'error' })
+        return
+      }
+      setRepoViewAiSettings(repoResult.value ?? { ai_cli: 'claude' })
+
+      if (aiResult.repaired || repoResult.repaired) {
+        showToast('项目设置文件已自动修复', { level: 'success' })
+      }
+    })()
     return () => {
       cancelled = true
     }
@@ -418,6 +441,14 @@ export default function App() {
 
   const handleStart = useCallback(async () => {
     if (!currentProjectId || !planName.trim()) return
+    if (!aiSettingsReady) {
+      showToast(aiSettingsLoadError ?? '主会话 AI 设置尚未加载完成', { level: 'warn' })
+      return
+    }
+    if (aiSettingsLoadError) {
+      showToast(aiSettingsLoadError, { level: 'error' })
+      return
+    }
     const proj = projects.find((p) => p.id === currentProjectId)
     if (!proj?.target_repo) {
       showToast('当前项目未设置 target_repo，请先在项目选择器里选一个代码仓库', { level: 'warn' })
@@ -460,7 +491,7 @@ export default function App() {
       setSessionStatus('idle')
       setSessionId(null)
     }
-  }, [currentProjectId, planName, planList, projects, aiSettings, getPlanAbsPath])
+  }, [currentProjectId, planName, planList, projects, aiSettings, aiSettingsReady, aiSettingsLoadError, getPlanAbsPath])
 
   const handleStop = useCallback(async () => {
     if (!sessionId) return

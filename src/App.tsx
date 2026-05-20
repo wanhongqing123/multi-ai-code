@@ -14,6 +14,7 @@ import AiSettingsDialog, {
   type AiSettings,
   type AppSettings
 } from './components/AiSettingsDialog'
+import ProjectBuildPanel, { getBuildStartBlockedReason } from './components/ProjectBuildPanel'
 import TemplatesDialog from './components/TemplatesDialog'
 import SkillStudioDialog from './habit/SkillStudioDialog'
 import FirstRunNoticeDialog from './habit/FirstRunNoticeDialog'
@@ -28,10 +29,29 @@ import PlanReviewDialog, { type Annotation } from './components/PlanReviewDialog
 import DiffViewerDialog, { type DiffAnnotation } from './components/DiffViewerDialog'
 import type { DiffMode } from './components/diffViewerConfig'
 import type { ExternalReviewSuggestion } from './components/externalAiReview'
-import type { ProjectBuildConfig } from '../electron/preload'
+import type { BuildRuntimeState, ProjectBuildConfig } from '../electron/preload'
 
 const LAST_PROJECT_KEY = 'multi-ai-code.lastProjectId'
 const DEFAULT_PROJECT_BUILD_CONFIG: ProjectBuildConfig = { enabled: false, steps: [] }
+const BUILD_LOG_LIMIT = 200_000
+const DEFAULT_BUILD_RUNTIME_STATE: BuildRuntimeState = {
+  status: 'idle',
+  projectId: null,
+  projectName: null,
+  targetRepo: null,
+  startedAt: null,
+  finishedAt: null,
+  activeStepId: null,
+  steps: [],
+  log: '',
+  lastFailure: null
+}
+
+function appendBuildLog(current: string, chunk: string): string {
+  const next = current + chunk
+  if (next.length <= BUILD_LOG_LIMIT) return next
+  return `...[build log truncated]...\n${next.slice(-BUILD_LOG_LIMIT)}`
+}
 
 export default function App() {
   const [version, setVersion] = useState<string>('')
@@ -64,6 +84,7 @@ export default function App() {
   const [showDoctor, setShowDoctor] = useState(false)
   const [showCmdk, setShowCmdk] = useState(false)
   const [showGlobalSearch, setShowGlobalSearch] = useState(false)
+  const [showBuildPanel, setShowBuildPanel] = useState(false)
   const [theme, setThemeState] = useState<'light' | 'dark'>(() => getTheme())
 
   const visibleProjectBuildConfig =
@@ -121,6 +142,7 @@ export default function App() {
   const [diffMode, setDiffMode] = useState<DiffMode>('working')
   const [diffSelectedCommit, setDiffSelectedCommit] = useState('')
   const [diffSelectedFile, setDiffSelectedFile] = useState('')
+  const [buildState, setBuildState] = useState<BuildRuntimeState>(DEFAULT_BUILD_RUNTIME_STATE)
   // Remember which (project, planName) combos have already seen the starter
   // "import from file?" toast so it's not shown repeatedly on each start.
   const shownStarterHintsRef = useRef<Set<string>>(new Set())
@@ -188,9 +210,36 @@ export default function App() {
     }
   }, [sessionId, sessionStatus])
 
+  useEffect(() => {
+    let cancelled = false
+    void window.api.build.getState().then((state) => {
+      if (cancelled) return
+      setBuildState(state)
+    })
+    const offStatus = window.api.build.onStatus((state) => {
+      if (cancelled) return
+      setBuildState(state)
+    })
+    const offData = window.api.build.onData((event) => {
+      if (cancelled || !event.chunk) return
+      setBuildState((prev) => ({
+        ...prev,
+        projectId: event.projectId ?? prev.projectId,
+        activeStepId: event.stepId ?? prev.activeStepId,
+        log: appendBuildLog(prev.log, event.chunk)
+      }))
+    })
+    return () => {
+      cancelled = true
+      offStatus()
+      offData()
+    }
+  }, [])
+
   /** Clear UI state tied to a specific project (drawers, dialogs, plan name). */
   const clearProjectScopedState = useCallback(() => {
     setShowGlobalSearch(false)
+    setShowBuildPanel(false)
     setPlanName('')
     setPreviewImport(null)
     setPlanReview(null)
@@ -298,6 +347,10 @@ export default function App() {
   const projectDir = currentProject?.dir ?? ''
   const targetRepo = currentProject?.target_repo ?? ''
   const projectName = currentProject?.name ?? ''
+  const buildStateForCurrentProject =
+    currentProjectId !== null && buildState.projectId === currentProjectId
+      ? buildState
+      : DEFAULT_BUILD_RUNTIME_STATE
   const hasProject = currentProject !== null
 
   // Track plan names we've ever observed in the list. If `planName` was
@@ -570,6 +623,76 @@ export default function App() {
     setSessionStatus('idle')
     setTimeout(() => void handleStart(), 50)
   }, [sessionId, handleStart])
+
+  const handleStartBuild = useCallback(async () => {
+    if (
+      buildState.projectId !== null &&
+      buildState.projectId !== currentProjectId &&
+      buildState.status === 'running'
+    ) {
+      showToast('另一个项目的构建仍在运行，请先停止后再启动当前项目构建', {
+        level: 'warn'
+      })
+      setShowBuildPanel(true)
+      return
+    }
+    const blockedReason = getBuildStartBlockedReason(
+      currentProjectId,
+      projectBuildConfigReady,
+      visibleProjectBuildConfig
+    )
+    if (blockedReason) {
+      showToast(blockedReason, { level: 'warn' })
+      setShowBuildPanel(true)
+      return
+    }
+    if (!currentProjectId) return
+
+    const result = await window.api.build.start(currentProjectId)
+    setBuildState(result.state)
+    setShowBuildPanel(true)
+    if (!result.ok) {
+      showToast(result.error ?? '启动构建失败', { level: 'error' })
+    }
+  }, [currentProjectId, projectBuildConfigReady, visibleProjectBuildConfig])
+
+  const handleStopBuild = useCallback(async () => {
+    const result = await window.api.build.stop()
+    if (!result.ok) {
+      showToast(result.error ?? '停止构建失败', { level: 'error' })
+    }
+  }, [])
+
+  const handleAnalyzeBuildFailure = useCallback(async () => {
+    if (buildState.status !== 'failed' || !buildState.lastFailure) {
+      showToast('当前没有可分析的构建失败上下文', { level: 'warn' })
+      return
+    }
+    if (!currentProjectId || buildState.projectId !== currentProjectId) {
+      showToast('当前失败上下文不属于所选项目，请切回对应项目后再分析', {
+        level: 'warn'
+      })
+      return
+    }
+    if (!sessionId || sessionStatus !== 'running') {
+      showToast('主会话未运行，无法发送失败分析请求，请先启动主会话', { level: 'warn' })
+      return
+    }
+
+    const promptResult = await window.api.build.getFailureAnalysisPrompt()
+    if (!promptResult.ok) {
+      showToast(promptResult.error ?? '获取失败分析提示失败', { level: 'error' })
+      return
+    }
+
+    const sendResult = await window.api.cc.sendUser(sessionId, promptResult.prompt)
+    if (!sendResult.ok) {
+      showToast(sendResult.error ?? '发送失败分析请求失败', { level: 'error' })
+      return
+    }
+
+    showToast('已将构建失败原因分析请求发送到主会话', { level: 'success' })
+  }, [buildState, currentProjectId, sessionId, sessionStatus])
 
   /**
    * Kill the current main session (if any) and return the UI to the boot
@@ -987,6 +1110,14 @@ export default function App() {
           >
             📥 导入外部方案
           </button>
+          <button
+            className="topbar-btn"
+            onClick={() => setShowBuildPanel(true)}
+            disabled={!currentProjectId}
+            title="打开项目构建面板"
+          >
+            构建
+          </button>
           {planName.trim() && (
             <button
               className="topbar-btn"
@@ -1084,6 +1215,7 @@ export default function App() {
             { id: 'settings', label: '⚙️ 设置', keywords: 'settings command ai cli', action: () => setShowAiSettings(true) },
             { id: 'tpl', label: '📋 Prompt 模板', keywords: 'templates prompt snippets', action: () => setShowTemplates(true) },
             { id: 'search', label: '🔍 全局搜索', hint: 'Ctrl+Shift+F', keywords: 'find search', action: () => setShowGlobalSearch(true), disabled: !hasProject },
+            { id: 'build-panel', label: '🏗️ 项目构建', keywords: 'build compile msys visual studio', action: () => setShowBuildPanel(true), disabled: !hasProject },
             { id: 'logs', label: '📣 错误与通知', keywords: 'errors log notifications', action: () => setShowErrors(true) },
             { id: 'toggle-theme', label: theme === 'dark' ? '切换到浅色主题' : '切换到暗色主题', keywords: 'theme dark light color', action: handleToggleTheme },
             { id: 'plan-review', label: '📝 审阅当前方案', keywords: 'plan review annotate', action: () => void openPlanReview(), disabled: !hasProject || !planName.trim() },
@@ -1250,6 +1382,22 @@ export default function App() {
             setProjectBuildConfig(next)
             setProjectBuildConfigProjectId(currentProjectId)
           }}
+        />
+      )}
+      {showBuildPanel && (
+        <ProjectBuildPanel
+          open={showBuildPanel}
+          currentProjectId={currentProjectId}
+          currentProjectName={projectName || null}
+          buildConfig={visibleProjectBuildConfig}
+          buildConfigReady={projectBuildConfigReady}
+          state={buildStateForCurrentProject}
+          sessionId={sessionId}
+          sessionStatus={sessionStatus}
+          onClose={() => setShowBuildPanel(false)}
+          onStartBuild={() => void handleStartBuild()}
+          onStopBuild={() => void handleStopBuild()}
+          onAnalyzeFailure={() => void handleAnalyzeBuildFailure()}
         />
       )}
       {showErrors && <ErrorPanel onClose={() => setShowErrors(false)} />}

@@ -90,7 +90,7 @@ describe('createBuildRunner', () => {
     expect(spawn).toHaveBeenNthCalledWith(
       1,
       'C:\\msys64\\usr\\bin\\bash.exe',
-      ['-lc', 'cmake -S . -B build'],
+      ['-lc', "cd '/e/repo' && cmake -S . -B build"],
       expect.objectContaining({
         cwd: 'E:\\repo',
         shell: false,

@@ -131,6 +131,22 @@ function prependPath(env: NodeJS.ProcessEnv, segment: string): NodeJS.ProcessEnv
   return next
 }
 
+function buildMsysEnv(baseEnv: NodeJS.ProcessEnv, usrBinDir: string | null): NodeJS.ProcessEnv {
+  return usrBinDir ? prependPath(baseEnv, usrBinDir) : { ...baseEnv }
+}
+
+function toMsysPath(absPath: string): string {
+  const normalized = absPath.replace(/\\/g, '/')
+  const driveMatch = /^([A-Za-z]):(\/.*)?$/.exec(normalized)
+  if (!driveMatch) return normalized
+  const [, drive, rest = ''] = driveMatch
+  return `/${drive.toLowerCase()}${rest}`
+}
+
+function quoteForBash(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`
+}
+
 function markPendingStepsSkipped(steps: BuildStepRuntime[]): void {
   for (const step of steps) {
     if (step.status === 'pending' || step.status === 'running') {
@@ -235,9 +251,10 @@ export function createBuildRunner(partialDeps?: Partial<BuildRunnerDeps>): Build
         throw new Error('msys environment is unavailable')
       }
 
-      const child = deps.spawn(info.bashPath, ['-lc', step.command], {
+      const command = `cd ${quoteForBash(toMsysPath(resolvedCwd))} && ${step.command}`
+      const child = deps.spawn(info.bashPath, ['-lc', command], {
         cwd: resolvedCwd,
-        env: info.usrBinDir ? prependPath(process.env, info.usrBinDir) : { ...process.env },
+        env: buildMsysEnv(process.env, info.usrBinDir),
         shell: false,
         windowsHide: true,
         stdio: 'pipe',

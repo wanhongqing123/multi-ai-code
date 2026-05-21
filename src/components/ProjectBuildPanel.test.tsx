@@ -5,6 +5,7 @@ import ProjectBuildPanel, {
   canAnalyzeBuildFailure,
   canStartBuild,
   canStopBuild,
+  getBuildLogStatusLabel,
   getBuildStartBlockedReason,
   getBuildStatusLabel
 } from './ProjectBuildPanel.js'
@@ -90,6 +91,31 @@ describe('ProjectBuildPanel', () => {
 
     expect(canAnalyzeBuildFailure(failedState)).toBe(true)
     expect(canAnalyzeBuildFailure(baseState)).toBe(false)
+  })
+
+  it('uses the overall build state for the log header after a failure', () => {
+    const failedState: BuildRuntimeState = {
+      ...baseState,
+      status: 'failed',
+      activeStepId: null,
+      lastFailure: {
+        projectId: 'project-1',
+        projectName: 'Demo',
+        targetRepo: 'E:/demo',
+        stepId: 'configure',
+        stepName: 'Configure',
+        envType: 'msys',
+        cwd: '.',
+        command: 'cmake -S . -B build',
+        exitCode: 127,
+        signal: null,
+        reason: 'process exited with code 127',
+        logTail: 'not found'
+      }
+    }
+
+    expect(getBuildLogStatusLabel(failedState)).toContain('Configure')
+    expect(getBuildLogStatusLabel(failedState)).not.toContain('等待中')
   })
 
   it('renders the panel body only when open', () => {

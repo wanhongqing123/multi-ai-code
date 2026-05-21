@@ -52,6 +52,7 @@ describe('ProjectBuildSettingsSection', () => {
     expect(markup).toContain('MSYS2')
     expect(markup).toContain('Visual Studio Developer Command Prompt')
     expect(markup).toContain('project-build-step-card')
+    expect(markup).toContain('仓库根目录')
   })
 
   it('appends a default enabled step', () => {

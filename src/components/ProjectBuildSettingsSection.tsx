@@ -211,9 +211,10 @@ export default function ProjectBuildSettingsSection(
                         onChange={(event) =>
                           props.onChange(updateBuildStep(props.value, index, { cwd: event.target.value }))
                         }
-                        placeholder="."
+                        placeholder="仓库根目录（.）"
                         disabled={props.disabled}
                       />
+                      <div className="ai-settings-note">填“.”表示仓库根目录（target_repo）</div>
                     </label>
                     <label className="project-build-settings-grid-full">
                       命令

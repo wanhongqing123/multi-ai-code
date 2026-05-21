@@ -15,9 +15,7 @@ export interface ProjectBuildPanelProps {
   onAnalyzeFailure: () => void
 }
 
-export function getBuildStatusLabel(
-  status: BuildRuntimeState['status']
-): string {
+export function getBuildStatusLabel(status: BuildRuntimeState['status']): string {
   switch (status) {
     case 'running':
       return '构建中'
@@ -33,9 +31,7 @@ export function getBuildStatusLabel(
   }
 }
 
-export function getBuildStepStatusLabel(
-  status: BuildStepRuntime['status']
-): string {
+export function getBuildStepStatusLabel(status: BuildStepRuntime['status']): string {
   switch (status) {
     case 'running':
       return '进行中'
@@ -79,6 +75,26 @@ export function canStopBuild(status: BuildRuntimeState['status']): boolean {
 
 export function canAnalyzeBuildFailure(state: BuildRuntimeState): boolean {
   return state.status === 'failed' && state.lastFailure !== null
+}
+
+export function getBuildLogStatusLabel(state: BuildRuntimeState): string {
+  if (state.activeStepId) return `当前步骤：${state.activeStepId}`
+
+  switch (state.status) {
+    case 'failed':
+      return state.lastFailure?.stepName
+        ? `失败步骤：${state.lastFailure.stepName}`
+        : '构建失败'
+    case 'succeeded':
+      return '构建完成'
+    case 'stopped':
+      return '构建已停止'
+    case 'running':
+      return '准备执行'
+    case 'idle':
+    default:
+      return '等待中'
+  }
 }
 
 function formatDateTime(value: string | null): string {
@@ -216,7 +232,7 @@ export default function ProjectBuildPanel(props: ProjectBuildPanelProps): JSX.El
         <section className="build-panel-section">
           <div className="build-panel-section-head">
             <h3>实时日志</h3>
-            <span>{props.state.activeStepId ? `当前步骤：${props.state.activeStepId}` : '等待中'}</span>
+            <span>{getBuildLogStatusLabel(props.state)}</span>
           </div>
           <pre className="build-panel-log">{logText}</pre>
         </section>

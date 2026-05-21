@@ -1,10 +1,25 @@
+import { EventEmitter } from 'events'
+import { mkdirSync, writeFileSync } from 'fs'
 import iconv from 'iconv-lite'
+import { tmpdir } from 'os'
+import { join } from 'path'
+import { PassThrough } from 'stream'
 import { describe, expect, it, vi } from 'vitest'
 import {
   listVisualStudioInstallations,
   parseVisualStudioEnvironmentBlock,
+  runWindowsCommandVerbatim,
   resolveVisualStudioEnvironment,
 } from './visualStudio.js'
+
+class FakeSpawnChild extends EventEmitter {
+  stdout = new PassThrough()
+  stderr = new PassThrough()
+
+  kill(): boolean {
+    return true
+  }
+}
 
 describe('parseVisualStudioEnvironmentBlock', () => {
   it('parses cmd.exe set output into an env object', () => {
@@ -123,6 +138,21 @@ describe('listVisualStudioInstallations', () => {
 })
 
 describe('resolveVisualStudioEnvironment', () => {
+  it('runs a batch file under a spaced path with verbatim cmd arguments', async () => {
+    const scriptDir = join(tmpdir(), `codex-vs-${Date.now()}`, 'Visual Studio 2022', 'Common7', 'Tools')
+    mkdirSync(scriptDir, { recursive: true })
+    const batPath = join(scriptDir, 'VsDevCmd.bat')
+    writeFileSync(batPath, '@echo off\r\necho BAT_OK\r\n')
+
+    const result = await runWindowsCommandVerbatim(`call "${batPath}"`, {
+      env: { SystemRoot: process.env.SystemRoot ?? 'C:\\Windows' },
+      timeout: 5000,
+      maxBuffer: 1024 * 1024,
+    })
+
+    expect(result.stdout.toString('utf8')).toContain('BAT_OK')
+  })
+
   it('fails cleanly on non-Windows platforms', async () => {
     const result = await resolveVisualStudioEnvironment({
       platform: 'linux',
@@ -146,6 +176,17 @@ describe('resolveVisualStudioEnvironment', () => {
       ) => Promise<{ stdout: string; stderr: string }>
     >()
 
+    const child = new FakeSpawnChild()
+    const spawn = vi.fn(() => {
+      setImmediate(() => {
+        child.stdout.write(Buffer.from('Path=C:\\VS\\bin\r\nVSCMD_VER=17.9.0\r\n', 'utf8'))
+        child.stdout.end()
+        child.stderr.end()
+        child.emit('close', 0, null)
+      })
+      return child as never
+    })
+
     execFile.mockImplementationOnce(async () => ({
       stdout: JSON.stringify([
         {
@@ -165,15 +206,12 @@ describe('resolveVisualStudioEnvironment', () => {
       ]),
       stderr: '',
     }))
-    execFile.mockImplementationOnce(async () => ({
-      stdout: 'Path=C:\\VS\\bin\r\nVSCMD_VER=17.9.0\r\n',
-      stderr: '',
-    }))
 
     const result = await resolveVisualStudioEnvironment({
       platform: 'win32',
       baseEnv: { Path: 'C:\\Windows\\System32', FOO: 'bar' },
       execFile,
+      spawn,
       instanceId: 'b2',
     })
 
@@ -207,8 +245,8 @@ describe('resolveVisualStudioEnvironment', () => {
         env: { Path: 'C:\\Windows\\System32', FOO: 'bar' },
       })
     )
-    expect(execFile).toHaveBeenNthCalledWith(
-      2,
+    expect(execFile).toHaveBeenCalledTimes(1)
+    expect(spawn).toHaveBeenCalledWith(
       'cmd.exe',
       [
         '/d',
@@ -217,6 +255,9 @@ describe('resolveVisualStudioEnvironment', () => {
         'call "C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\Common7\\Tools\\VsDevCmd.bat" -no_logo && set',
       ],
       expect.objectContaining({
+        windowsHide: true,
+        windowsVerbatimArguments: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
         env: { Path: 'C:\\Windows\\System32', FOO: 'bar' },
       })
     )
@@ -270,20 +311,27 @@ describe('resolveVisualStudioEnvironment', () => {
       ]),
       stderr: '',
     }))
-    execFile.mockRejectedValueOnce(
-      Object.assign(new Error('Command failed'), {
-        stdout: Buffer.alloc(0),
-        stderr: iconv.encode(
-          `'"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\Common7\\Tools\\VsDevCmd.bat"' 不是内部或外部命令，也不是可运行的程序或批处理文件。`,
-          'gbk'
-        ),
+    const child = new FakeSpawnChild()
+    const spawn = vi.fn(() => {
+      setImmediate(() => {
+        child.stderr.write(
+          iconv.encode(
+            `'"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\Common7\\Tools\\VsDevCmd.bat"' 不是内部或外部命令，也不是可运行的程序或批处理文件。`,
+            'gbk'
+          )
+        )
+        child.stderr.end()
+        child.stdout.end()
+        child.emit('close', 1, null)
       })
-    )
+      return child as never
+    })
 
     const result = await resolveVisualStudioEnvironment({
       platform: 'win32',
       baseEnv: { Path: 'C:\\Windows\\System32' },
       execFile,
+      spawn,
       instanceId: 'a1',
     })
 

@@ -1,4 +1,4 @@
-import { execFile } from 'child_process'
+import { execFile, spawn } from 'child_process'
 import iconv from 'iconv-lite'
 import { join } from 'path'
 
@@ -59,6 +59,8 @@ type ExecFileError = Error & {
   stderr?: string | Buffer
 }
 
+export type SpawnLike = typeof spawn
+
 function defaultExecFile(
   file: string,
   args: string[],
@@ -102,6 +104,96 @@ function formatExecFileError(error: unknown, encoding: 'utf8' | 'gbk'): string {
   if (stdout) return stdout
 
   return error.message
+}
+
+export async function runWindowsCommandVerbatim(
+  command: string,
+  options?: {
+    cwd?: string
+    env?: NodeJS.ProcessEnv
+    timeout?: number
+    maxBuffer?: number
+    spawn?: SpawnLike
+  }
+): Promise<ExecFileResult> {
+  const runSpawn = options?.spawn ?? spawn
+  const timeout = options?.timeout ?? 0
+  const maxBuffer = options?.maxBuffer ?? 1024 * 1024
+
+  return new Promise((resolve, reject) => {
+    const child = runSpawn('cmd.exe', ['/d', '/s', '/c', command], {
+      cwd: options?.cwd,
+      env: options?.env,
+      windowsHide: true,
+      windowsVerbatimArguments: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+
+    let stdoutLength = 0
+    let stderrLength = 0
+    const stdoutChunks: Buffer[] = []
+    const stderrChunks: Buffer[] = []
+    let settled = false
+    let timeoutHandle: NodeJS.Timeout | null = null
+
+    const cleanup = () => {
+      if (timeoutHandle) clearTimeout(timeoutHandle)
+    }
+
+    const rejectWithBuffers = (error: Error) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      const nextError = error as ExecFileError
+      nextError.stdout = Buffer.concat(stdoutChunks)
+      nextError.stderr = Buffer.concat(stderrChunks)
+      reject(nextError)
+    }
+
+    const appendChunk = (target: Buffer[], chunk: Buffer, stream: 'stdout' | 'stderr') => {
+      target.push(chunk)
+      if (stream === 'stdout') stdoutLength += chunk.length
+      else stderrLength += chunk.length
+      if (stdoutLength > maxBuffer || stderrLength > maxBuffer) {
+        child.kill()
+        rejectWithBuffers(new Error(`Command failed: ${stream} maxBuffer exceeded`))
+      }
+    }
+
+    child.stdout?.on('data', (chunk: Buffer | string) => {
+      appendChunk(stdoutChunks, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk), 'stdout')
+    })
+    child.stderr?.on('data', (chunk: Buffer | string) => {
+      appendChunk(stderrChunks, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk), 'stderr')
+    })
+    child.on('error', (error) => {
+      rejectWithBuffers(error)
+    })
+    child.on('close', (code, signal) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      const stdout = Buffer.concat(stdoutChunks)
+      const stderr = Buffer.concat(stderrChunks)
+      if (code === 0) {
+        resolve({ stdout, stderr })
+        return
+      }
+      const error = new Error(
+        `Command failed: cmd.exe /d /s /c ${command}${signal ? ` (signal: ${signal})` : ''}`
+      ) as ExecFileError
+      error.stdout = stdout
+      error.stderr = stderr
+      reject(error)
+    })
+
+    if (timeout > 0) {
+      timeoutHandle = setTimeout(() => {
+        child.kill()
+        rejectWithBuffers(new Error(`Command failed: timed out after ${timeout}ms`))
+      }, timeout)
+    }
+  })
 }
 
 function copyDefinedEnv(input: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -202,6 +294,7 @@ export async function resolveVisualStudioEnvironment(options: {
   platform?: NodeJS.Platform
   baseEnv?: NodeJS.ProcessEnv
   execFile?: ExecFileLike
+  spawn?: SpawnLike
   vswherePath?: string
 }): Promise<VisualStudioEnvironmentResult> {
   const installationsResult = await listVisualStudioInstallations(options)
@@ -217,14 +310,12 @@ export async function resolveVisualStudioEnvironment(options: {
   }
 
   const baseEnv = copyDefinedEnv(options.baseEnv ?? process.env)
-  const runExecFile: ExecFileLike = options.execFile ?? defaultExecFile
-
   try {
     const devCmdPath = join(installation.installationPath, 'Common7', 'Tools', 'VsDevCmd.bat')
-    const { stdout } = await runExecFile(
-      'cmd.exe',
-      ['/d', '/s', '/c', `call "${devCmdPath}" -no_logo && set`],
+    const { stdout } = await runWindowsCommandVerbatim(
+      `call "${devCmdPath}" -no_logo && set`,
       {
+        spawn: options.spawn,
         env: baseEnv,
         timeout: 15000,
         maxBuffer: 8 * 1024 * 1024,

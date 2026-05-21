@@ -16,6 +16,7 @@ function evt(id: number, ts: number, kind: HabitEventRow['kind'], text: string, 
     ts,
     kind,
     payload: JSON.stringify({ text }),
+    source: null,
     project_id: projectId,
     repo_path: null,
     source_window: null
@@ -97,6 +98,7 @@ describe('eventText', () => {
         ts: 1,
         kind: 'pty_cmd',
         payload: '{not-json',
+        source: null,
         project_id: null,
         repo_path: null,
         source_window: null
@@ -111,6 +113,7 @@ describe('eventText', () => {
         ts: 1,
         kind: 'pty_cmd',
         payload: '{}',
+        source: null,
         project_id: null,
         repo_path: null,
         source_window: null
@@ -120,6 +123,18 @@ describe('eventText', () => {
 })
 
 describe('aggregateHabitEvents: clustering', () => {
+  it('keeps site visits grouped by stable host/path instead of collapsing all URLs together', () => {
+    const rows: HabitEventRow[] = [
+      evt(1, 1, 'site_visit', 'Visit https://example.test/builds?from=nav'),
+      evt(2, 2, 'site_visit', 'Visit https://example.test/builds?from=menu'),
+      evt(3, 3, 'site_visit', 'Visit https://other.test/builds?from=nav')
+    ]
+    const clusters = aggregateHabitEvents(rows, { now: 4, minClusterSize: 2 })
+    expect(clusters).toHaveLength(1)
+    expect(clusters[0].kind).toBe('site_visit')
+    expect(clusters[0].sourceEventIds).toEqual([1, 2])
+  })
+
   it('merges near-identical prompts into one cluster', () => {
     const rows: HabitEventRow[] = [
       evt(1, 1, 'ai_prompt_main', 'please explain the implementation of foo.ts in detail'),
@@ -198,6 +213,7 @@ describe('aggregateHabitEvents: clustering', () => {
         ts: 1,
         kind: 'ai_prompt_main',
         payload: 'not-json',
+        source: null,
         project_id: 'p1',
         repo_path: null,
         source_window: null

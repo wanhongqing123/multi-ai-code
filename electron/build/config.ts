@@ -1,9 +1,14 @@
 import { randomUUID } from 'crypto'
 import { isAbsolute } from 'path'
 import { readProjectMetaFile, writeProjectMetaFile } from '../store/projectMeta.js'
-import type { BuildStepConfig, BuildStepEnvType, ProjectBuildConfig } from './types.js'
+import type {
+  BuildOutputEncoding,
+  BuildStepConfig,
+  BuildStepEnvType,
+  ProjectBuildConfig,
+} from './types.js'
 
-export type { BuildStepConfig, BuildStepEnvType, ProjectBuildConfig } from './types.js'
+export type { BuildOutputEncoding, BuildStepConfig, BuildStepEnvType, ProjectBuildConfig } from './types.js'
 
 export interface BuildConfigValidationIssue {
   path: string
@@ -24,8 +29,11 @@ interface NormalizeBuildConfigOptions {
   createId?: () => string
 }
 
-interface NormalizedBuildStep extends BuildStepConfig {
+interface NormalizedBuildStep extends Omit<BuildStepConfig, 'visualStudioInstanceId' | 'outputEncoding'> {
   rawEnvType?: unknown
+  rawOutputEncoding?: unknown
+  visualStudioInstanceId: string
+  outputEncoding: BuildOutputEncoding
 }
 
 interface NormalizedBuildConfig {
@@ -39,6 +47,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isBuildStepEnvType(value: unknown): value is BuildStepEnvType {
   return value === 'msys' || value === 'visual-studio'
+}
+
+function isBuildOutputEncoding(value: unknown): value is BuildOutputEncoding {
+  return value === 'auto' || value === 'utf8' || value === 'gbk'
 }
 
 function hasParentTraversal(cwd: string): boolean {
@@ -56,6 +68,11 @@ function normalizeBuildStep(
   const command = typeof value.command === 'string' ? value.command.trim() : ''
   const enabled = typeof value.enabled === 'boolean' ? value.enabled : false
   const envType = isBuildStepEnvType(value.envType) ? value.envType : 'msys'
+  const visualStudioInstanceId =
+    typeof value.visualStudioInstanceId === 'string' ? value.visualStudioInstanceId.trim() : ''
+  const outputEncoding = value.outputEncoding === 'utf8' || value.outputEncoding === 'gbk'
+    ? value.outputEncoding
+    : 'auto'
 
   return {
     id: id || (options?.createId ?? randomUUID)(),
@@ -64,7 +81,10 @@ function normalizeBuildStep(
     cwd,
     command,
     enabled,
+    visualStudioInstanceId,
+    outputEncoding,
     rawEnvType: isBuildStepEnvType(value.envType) ? undefined : value.envType,
+    rawOutputEncoding: isBuildOutputEncoding(value.outputEncoding) ? undefined : value.outputEncoding,
   }
 }
 
@@ -73,7 +93,7 @@ function normalizeBuildConfigInternal(
   options?: NormalizeBuildConfigOptions
 ): NormalizedBuildConfig {
   if (!isRecord(value) || !Array.isArray(value.steps)) {
-    return { ...DEFAULT_BUILD_CONFIG }
+    return { enabled: false, steps: [] }
   }
 
   const steps: NormalizedBuildStep[] = []
@@ -97,7 +117,9 @@ export function normalizeBuildConfig(
   const normalized = normalizeBuildConfigInternal(value, options)
   return {
     enabled: normalized.enabled,
-    steps: normalized.steps.map(({ rawEnvType: _rawEnvType, ...step }) => step),
+    steps: normalized.steps.map(
+      ({ rawEnvType: _rawEnvType, rawOutputEncoding: _rawOutputEncoding, ...step }) => step
+    ),
   }
 }
 
@@ -113,6 +135,18 @@ function validateBuildStep(step: NormalizedBuildStep, index: number): BuildConfi
     issues.push({
       path: `build_config.steps[${index}].envType`,
       message: 'envType must be one of: msys, visual-studio',
+    })
+  }
+  if (step.envType === 'visual-studio' && !step.visualStudioInstanceId.trim()) {
+    issues.push({
+      path: `build_config.steps[${index}].visualStudioInstanceId`,
+      message: 'visualStudioInstanceId must be selected for visual-studio steps',
+    })
+  }
+  if (step.rawOutputEncoding !== undefined) {
+    issues.push({
+      path: `build_config.steps[${index}].outputEncoding`,
+      message: 'outputEncoding must be one of: auto, utf8, gbk',
     })
   }
   if (!step.cwd.trim()) {

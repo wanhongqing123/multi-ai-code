@@ -1,12 +1,16 @@
 import { aggregateHabitEvents, type AggregatedCluster } from './aggregator.js'
 import {
+  clearAllHabitFlows,
   insertSkillCandidate,
+  insertHabitFlow,
   listHabitEventsSince,
+  listHabitFlows,
   listSkillCandidates,
   type SkillCandidateRow
 } from './db.js'
 import { loadHabitSettings, updateHabitSettings } from './settings.js'
 import { deleteHabitEventsBefore } from './db.js'
+import { generateFlowsFromClusters, type GeneratedFlow } from './flowEngine.js'
 
 /** 24h between full aggregation passes. */
 export const AGGREGATION_INTERVAL_MS = 24 * 60 * 60 * 1000
@@ -22,10 +26,58 @@ export interface RunOutcome {
   ran: boolean
   reason: 'disabled' | 'too-soon' | 'no-events' | 'completed' | 'no-clusters'
   clustersFound?: number
+  flowsGenerated?: number
   candidatesInserted?: number
   skippedExistingClusterIds?: string[]
   startedAt: number
   finishedAt: number
+}
+
+function flowSignatureFromGenerated(flow: GeneratedFlow): string {
+  return `${flow.kind}|${flow.riskLevel}|${JSON.stringify(flow.payload)}`
+}
+
+function flowSignatureFromRow(row: {
+  kind: string
+  risk_level: string
+  payload: string
+}): string {
+  return `${row.kind}|${row.risk_level}|${row.payload}`
+}
+
+function statusForGeneratedFlow(
+  flow: GeneratedFlow,
+  existingBySignature: Map<string, { status: 'candidate' | 'active' | 'disabled' }>
+): 'candidate' | 'active' | 'disabled' {
+  const existing = existingBySignature.get(flowSignatureFromGenerated(flow))
+  if (existing) return existing.status
+  return flow.enabledByDefault ? 'active' : 'candidate'
+}
+
+function replaceHabitFlows(flows: GeneratedFlow[]): number {
+  const existingBySignature = new Map(
+    listHabitFlows({ limit: 500 }).map((row) => [
+      flowSignatureFromRow(row),
+      { status: row.status }
+    ])
+  )
+
+  clearAllHabitFlows()
+
+  for (const flow of flows) {
+    insertHabitFlow({
+      kind: flow.kind,
+      title: flow.title,
+      summary: flow.summary,
+      evidenceCount: flow.evidenceCount,
+      riskLevel: flow.riskLevel,
+      enabledByDefault: flow.enabledByDefault,
+      status: statusForGeneratedFlow(flow, existingBySignature),
+      payload: flow.payload
+    })
+  }
+
+  return flows.length
 }
 
 /**
@@ -115,11 +167,13 @@ export async function runAggregationOnce(
   }
 
   if (rows.length === 0) {
+    clearAllHabitFlows()
     await updateHabitSettings({ lastAggregatedAt: startedAt })
     return {
       ran: true,
       reason: 'no-events',
       clustersFound: 0,
+      flowsGenerated: 0,
       candidatesInserted: 0,
       startedAt,
       finishedAt: Date.now()
@@ -128,16 +182,20 @@ export async function runAggregationOnce(
 
   const clusters = aggregateHabitEvents(rows, { now: startedAt })
   if (clusters.length === 0) {
+    clearAllHabitFlows()
     await updateHabitSettings({ lastAggregatedAt: startedAt })
     return {
       ran: true,
       reason: 'no-clusters',
       clustersFound: 0,
+      flowsGenerated: 0,
       candidatesInserted: 0,
       startedAt,
       finishedAt: Date.now()
     }
   }
+
+  const flowsGenerated = replaceHabitFlows(generateFlowsFromClusters(clusters))
 
   const existing = listSkillCandidates({ limit: 500 })
   const fresh = pickNewClusters(clusters, existing)
@@ -193,6 +251,7 @@ export async function runAggregationOnce(
     ran: true,
     reason: 'completed',
     clustersFound: clusters.length,
+    flowsGenerated,
     candidatesInserted: inserted,
     startedAt,
     finishedAt: Date.now()

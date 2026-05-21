@@ -34,7 +34,6 @@ CREATE TABLE IF NOT EXISTS events (
   created_at   TEXT NOT NULL,
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 );
-CREATE INDEX IF NOT EXISTS idx_events_project ON events(project_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS artifacts (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -45,19 +44,17 @@ CREATE TABLE IF NOT EXISTS artifacts (
   created_at   TEXT NOT NULL,
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 );
-CREATE INDEX IF NOT EXISTS idx_artifacts_project ON artifacts(project_id, stage_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS habit_events (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   ts            INTEGER NOT NULL,
   kind          TEXT NOT NULL,
   payload       TEXT NOT NULL,
+  source        TEXT,
   project_id    TEXT,
   repo_path     TEXT,
   source_window TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_habit_events_ts ON habit_events(ts);
-CREATE INDEX IF NOT EXISTS idx_habit_events_kind ON habit_events(kind);
 
 CREATE TABLE IF NOT EXISTS skill_candidates (
   id                     INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -74,8 +71,58 @@ CREATE TABLE IF NOT EXISTS skill_candidates (
   snoozed_until          INTEGER,
   error_message          TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_skill_candidates_status ON skill_candidates(status);
+
+CREATE TABLE IF NOT EXISTS habit_flows (
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind               TEXT NOT NULL,
+  title              TEXT NOT NULL,
+  summary            TEXT NOT NULL,
+  evidence_count     INTEGER NOT NULL,
+  risk_level         TEXT NOT NULL,
+  enabled_by_default INTEGER NOT NULL DEFAULT 0,
+  status             TEXT NOT NULL DEFAULT 'candidate',
+  payload            TEXT NOT NULL,
+  created_at         INTEGER NOT NULL,
+  updated_at         INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS managed_chrome_sessions (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  port            INTEGER NOT NULL,
+  profile_dir     TEXT NOT NULL,
+  started_at      INTEGER NOT NULL,
+  last_active_at  INTEGER NOT NULL,
+  running         INTEGER NOT NULL DEFAULT 1,
+  last_active_url TEXT
+);
 `
+
+const INDEXES = `
+CREATE INDEX IF NOT EXISTS idx_events_project ON events(project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_artifacts_project ON artifacts(project_id, stage_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_habit_events_ts ON habit_events(ts);
+CREATE INDEX IF NOT EXISTS idx_habit_events_kind ON habit_events(kind);
+CREATE INDEX IF NOT EXISTS idx_habit_events_source ON habit_events(source);
+CREATE INDEX IF NOT EXISTS idx_skill_candidates_status ON skill_candidates(status);
+CREATE INDEX IF NOT EXISTS idx_habit_flows_status ON habit_flows(status);
+CREATE INDEX IF NOT EXISTS idx_habit_flows_kind ON habit_flows(kind);
+CREATE INDEX IF NOT EXISTS idx_managed_chrome_sessions_running ON managed_chrome_sessions(running);
+`
+
+function ensureColumn(
+  db: Database.Database,
+  tableName: string,
+  columnName: string,
+  columnDefinition: string
+): void {
+  const columns = db
+    .prepare(`PRAGMA table_info(${tableName})`)
+    .all() as Array<{ name: string }>
+  if (columns.some((column) => column.name === columnName)) {
+    return
+  }
+  db.prepare(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDefinition}`).run()
+}
 
 export function initDb(): Database.Database {
   if (db) return db
@@ -83,6 +130,11 @@ export function initDb(): Database.Database {
   db.pragma('journal_mode = WAL')
   db.pragma('foreign_keys = ON')
   db.exec(SCHEMA)
+  ensureColumn(db, 'habit_events', 'source', 'TEXT')
+  ensureColumn(db, 'habit_events', 'project_id', 'TEXT')
+  ensureColumn(db, 'habit_events', 'repo_path', 'TEXT')
+  ensureColumn(db, 'habit_events', 'source_window', 'TEXT')
+  db.exec(INDEXES)
 
   // One-shot migration: single-stage architecture retires stages 2/3/4.
   // Drop any orphaned rows so UI filters and aggregates stay clean.

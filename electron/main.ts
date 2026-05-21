@@ -27,6 +27,7 @@ import {
 import { registerPtyIpc, killAllSessions } from './cc/ptyManager.js'
 import { registerHabitIpc } from './habit/ipc.js'
 import { recordHabitEvent } from './habit/collector.js'
+import { createManagedChromeManager } from './habit/managedChrome.js'
 import { registerScreenshotIpc } from './screenshot/manager.js'
 import {
   applyScreenshotHotkeySettings,
@@ -67,6 +68,7 @@ import {
 } from './build/config.js'
 import { createBuildRunner } from './build/runner.js'
 import { getFailureAnalysisPrompt as getBuildFailureAnalysisPrompt } from './build/analysisPrompt.js'
+import { listVisualStudioInstallations } from './build/visualStudio.js'
 import {
   hasRepoAnalysisSession,
   resizeRepoAnalysisSession,
@@ -81,6 +83,7 @@ import { ensureAnalysisCacheDir } from './repo-view/analysisCache.js'
 const isDev = !app.isPackaged
 const repoViewWindows = new Map<string, BrowserWindow>()
 const appIconPath = join(__dirname, '../../build/icon-256.png')
+let managedChromeManager: ReturnType<typeof createManagedChromeManager> | null = null
 
 interface AppSettings {
   screenshotShortcutEnabled: boolean
@@ -846,6 +849,10 @@ app.whenReady().then(async () => {
   ipcMain.handle('project:get-build-config', async (_e, { id }: { id: string }) => {
     const metaPath = join(projectDirFn(id), 'project.json')
     return await getProjectBuildConfig(metaPath)
+  })
+
+  ipcMain.handle('project:list-visual-studio-installations', async () => {
+    return await listVisualStudioInstallations()
   })
 
   ipcMain.handle(
@@ -1749,8 +1756,10 @@ app.whenReady().then(async () => {
     }
   )
 
+  managedChromeManager = createManagedChromeManager()
+
   registerPtyIpc()
-  registerHabitIpc()
+  registerHabitIpc({ managedChromeManager })
   registerScreenshotIpc()
   const screenshotHotkeyInit = await initializeScreenshotHotkey({
     registrar: globalShortcut
@@ -1771,12 +1780,14 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => {
   killAllSessions()
+  void managedChromeManager?.stop()
   closeDb()
   if (process.platform !== 'darwin') app.quit()
 })
 
 app.on('before-quit', () => {
   killAllSessions()
+  void managedChromeManager?.stop()
   stopScheduler()
   disposeScreenshotHotkey(globalShortcut)
 })

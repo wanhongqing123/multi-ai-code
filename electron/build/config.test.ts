@@ -31,6 +31,38 @@ describe('normalizeBuildConfig', () => {
     expect(normalizeBuildConfig({ steps: 'nope' })).toEqual<ProjectBuildConfig>(DEFAULT_BUILD_CONFIG)
   })
 
+  it('backfills visual-studio selection and output encoding defaults', () => {
+    expect(
+      normalizeBuildConfig({
+        enabled: true,
+        steps: [
+          {
+            id: 'compile',
+            name: ' Build ',
+            envType: 'visual-studio',
+            cwd: ' build ',
+            command: ' cmake --build . ',
+            enabled: true,
+          },
+        ],
+      })
+    ).toEqual({
+      enabled: true,
+      steps: [
+        {
+          id: 'compile',
+          name: 'Build',
+          envType: 'visual-studio',
+          cwd: 'build',
+          command: 'cmake --build .',
+          enabled: true,
+          visualStudioInstanceId: '',
+          outputEncoding: 'auto',
+        },
+      ],
+    })
+  })
+
   it('trims fields, keeps root enabled, defaults step enabled to false, and backfills missing ids', () => {
     expect(
       normalizeBuildConfig({
@@ -63,6 +95,8 @@ describe('normalizeBuildConfig', () => {
           cwd: '.',
           command: 'cmake -S . -B build',
           enabled: true,
+          visualStudioInstanceId: '',
+          outputEncoding: 'auto',
         },
         {
           id: 'generated-step-id',
@@ -71,6 +105,8 @@ describe('normalizeBuildConfig', () => {
           cwd: 'build',
           command: 'cmake --build .',
           enabled: false,
+          visualStudioInstanceId: '',
+          outputEncoding: 'auto',
         },
       ],
     })
@@ -103,6 +139,8 @@ describe('normalizeBuildConfig', () => {
           cwd: '..\\broken',
           command: '',
           enabled: false,
+          visualStudioInstanceId: '',
+          outputEncoding: 'auto',
         },
       ],
     })
@@ -140,6 +178,8 @@ describe('getProjectBuildConfig', () => {
             cwd: 'build',
             command: 'cmake --build .',
             enabled: true,
+            visualStudioInstanceId: '',
+            outputEncoding: 'auto',
           },
         ],
       },
@@ -215,6 +255,8 @@ describe('setProjectBuildConfig', () => {
           cwd: '.',
           command: 'cmake -S . -B build',
           enabled: true,
+          visualStudioInstanceId: '',
+          outputEncoding: 'auto',
         },
       ],
     }
@@ -239,7 +281,9 @@ describe('setProjectBuildConfig', () => {
         '        "envType": "msys",\n' +
         '        "cwd": ".",\n' +
         '        "command": "cmake -S . -B build",\n' +
-        '        "enabled": true\n' +
+        '        "enabled": true,\n' +
+        '        "visualStudioInstanceId": "",\n' +
+        '        "outputEncoding": "auto"\n' +
         '      }\n' +
         '    ]\n' +
         '  }\n' +
@@ -260,6 +304,8 @@ describe('setProjectBuildConfig', () => {
           cwd: '.',
           command: '',
           enabled: true,
+          visualStudioInstanceId: '',
+          outputEncoding: 'auto',
         },
       ],
     })
@@ -289,6 +335,8 @@ describe('setProjectBuildConfig', () => {
           cwd: '.',
           command: 'echo hi',
           enabled: true,
+          visualStudioInstanceId: '',
+          outputEncoding: 'auto',
         },
       ],
     })
@@ -300,6 +348,74 @@ describe('setProjectBuildConfig', () => {
         {
           path: 'build_config.steps[0].envType',
           message: 'envType must be one of: msys, visual-studio',
+        },
+      ],
+    })
+  })
+
+  it('rejects visual-studio steps with an empty visualStudioInstanceId on save', async () => {
+    await fs.writeFile(metaPath, JSON.stringify({ id: 'p5a', name: 'demo' }, null, 2), 'utf8')
+
+    const result = await setProjectBuildConfig(
+      metaPath,
+      {
+        enabled: true,
+        steps: [
+          {
+            id: 'compile',
+            name: 'Compile',
+            envType: 'visual-studio',
+            cwd: 'build',
+            command: 'cmake --build .',
+            enabled: true,
+            visualStudioInstanceId: '   ',
+            outputEncoding: 'auto',
+          },
+        ],
+      } as ProjectBuildConfig
+    )
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'invalid build config',
+      details: [
+        {
+          path: 'build_config.steps[0].visualStudioInstanceId',
+          message: 'visualStudioInstanceId must be selected for visual-studio steps',
+        },
+      ],
+    })
+  })
+
+  it('rejects invalid outputEncoding values on save', async () => {
+    await fs.writeFile(metaPath, JSON.stringify({ id: 'p5b', name: 'demo' }, null, 2), 'utf8')
+
+    const result = await setProjectBuildConfig(
+      metaPath,
+      {
+        enabled: true,
+        steps: [
+          {
+            id: 'compile',
+            name: 'Compile',
+            envType: 'msys',
+            cwd: '.',
+            command: 'cmake -S . -B build',
+            enabled: true,
+            visualStudioInstanceId: '',
+            outputEncoding: 'latin1',
+          },
+        ],
+      } as unknown as ProjectBuildConfig
+    )
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'invalid build config',
+      details: [
+        {
+          path: 'build_config.steps[0].outputEncoding',
+          message: 'outputEncoding must be one of: auto, utf8, gbk',
         },
       ],
     })
@@ -318,6 +434,8 @@ describe('setProjectBuildConfig', () => {
           cwd: '.',
           command: 'cmake -S . -B build',
           enabled: true,
+          visualStudioInstanceId: '',
+          outputEncoding: 'auto',
         },
       ],
     })
@@ -342,6 +460,8 @@ describe('setProjectBuildConfig', () => {
           cwd: 'C:\\outside',
           command: 'cmake -S . -B build',
           enabled: true,
+          visualStudioInstanceId: '',
+          outputEncoding: 'auto',
         },
       ],
     })
@@ -371,6 +491,8 @@ describe('setProjectBuildConfig', () => {
           cwd: '..\\..\\outside',
           command: 'cmake -S . -B build',
           enabled: true,
+          visualStudioInstanceId: '',
+          outputEncoding: 'auto',
         },
       ],
     })

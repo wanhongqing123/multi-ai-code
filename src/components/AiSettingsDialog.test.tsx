@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
+import type { VisualStudioInstallation } from '../../electron/preload'
 import AiSettingsDialog, {
   deriveAppSettingsSaveOutcome,
   getProjectSettingsRepairToastMessage,
@@ -11,6 +12,12 @@ import AiSettingsDialog, {
 const defaultBuildConfig = {
   enabled: false,
   steps: []
+}
+
+const defaultDialogProps = {
+  visualStudioInstallations: [] as VisualStudioInstallation[],
+  visualStudioInstallationsLoading: false,
+  onRefreshVisualStudioInstallations: vi.fn()
 }
 
 describe('AiSettingsDialog', () => {
@@ -26,6 +33,7 @@ describe('AiSettingsDialog', () => {
         }}
         initialBuildConfig={defaultBuildConfig}
         buildConfigReady={true}
+        {...defaultDialogProps}
         onClose={vi.fn()}
         onSaved={vi.fn()}
         onSavedRepoView={vi.fn()}
@@ -52,6 +60,7 @@ describe('AiSettingsDialog', () => {
         }}
         initialBuildConfig={defaultBuildConfig}
         buildConfigReady={true}
+        {...defaultDialogProps}
         onClose={vi.fn()}
         onSaved={vi.fn()}
         onSavedRepoView={vi.fn()}
@@ -91,6 +100,7 @@ describe('AiSettingsDialog', () => {
         }}
         initialBuildConfig={defaultBuildConfig}
         buildConfigReady={true}
+        {...defaultDialogProps}
         onClose={vi.fn()}
         onSaved={vi.fn()}
         onSavedRepoView={vi.fn()}
@@ -129,6 +139,7 @@ describe('AiSettingsDialog', () => {
         }}
         initialBuildConfig={defaultBuildConfig}
         buildConfigReady={false}
+        {...defaultDialogProps}
         onClose={vi.fn()}
         onSaved={vi.fn()}
         onSavedRepoView={vi.fn()}

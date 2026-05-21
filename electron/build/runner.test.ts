@@ -30,6 +30,12 @@ describe('createBuildRunner', () => {
       children.push(child)
       return child
     })
+    const resolveVisualStudioEnvironment = vi.fn().mockResolvedValue({
+      ok: true,
+      installationPath: 'C:\\VS',
+      devCmdPath: 'C:\\VS\\Common7\\Tools\\VsDevCmd.bat',
+      env: { Path: 'C:\\VS\\bin' },
+    })
     const runner = createBuildRunner({
       platform: 'win32',
       spawn,
@@ -40,12 +46,7 @@ describe('createBuildRunner', () => {
         variant: 'msys2',
         candidates: [],
       }),
-      resolveVisualStudioEnvironment: vi.fn().mockResolvedValue({
-        ok: true,
-        installationPath: 'C:\\VS',
-        devCmdPath: 'C:\\VS\\Common7\\Tools\\VsDevCmd.bat',
-        env: { Path: 'C:\\VS\\bin' },
-      }),
+      resolveVisualStudioEnvironment,
       now: () => '2026-05-20T10:00:00.000Z',
     })
 
@@ -59,6 +60,8 @@ describe('createBuildRunner', () => {
           cwd: '.',
           command: 'cmake -S . -B build',
           enabled: true,
+          visualStudioInstanceId: '',
+          outputEncoding: 'auto',
         },
         {
           id: 'compile',
@@ -67,6 +70,8 @@ describe('createBuildRunner', () => {
           cwd: 'build',
           command: 'cmake --build .',
           enabled: true,
+          visualStudioInstanceId: 'vs-1',
+          outputEncoding: 'auto',
         },
         {
           id: 'package',
@@ -75,6 +80,8 @@ describe('createBuildRunner', () => {
           cwd: 'build',
           command: 'cpack',
           enabled: true,
+          visualStudioInstanceId: 'vs-1',
+          outputEncoding: 'auto',
         },
       ],
     }
@@ -102,6 +109,12 @@ describe('createBuildRunner', () => {
     children[0].emit('close', 0, null)
     await flush()
 
+    expect(resolveVisualStudioEnvironment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instanceId: 'vs-1',
+        platform: 'win32',
+      })
+    )
     expect(spawn).toHaveBeenNthCalledWith(
       2,
       'cmd.exe',
@@ -170,6 +183,8 @@ describe('createBuildRunner', () => {
             cwd: '.',
             command: 'cmake -S . -B build',
             enabled: true,
+            visualStudioInstanceId: '',
+            outputEncoding: 'auto',
           },
         ],
       },
@@ -219,6 +234,8 @@ describe('createBuildRunner', () => {
             cwd: '.',
             command: 'cmake -S . -B build',
             enabled: true,
+            visualStudioInstanceId: '',
+            outputEncoding: 'auto',
           },
         ],
       },
@@ -288,6 +305,8 @@ describe('createBuildRunner', () => {
             cwd: '.',
             command: 'cmake -S . -B build',
             enabled: true,
+            visualStudioInstanceId: '',
+            outputEncoding: 'auto',
           },
           {
             id: 'compile',
@@ -296,6 +315,8 @@ describe('createBuildRunner', () => {
             cwd: 'build',
             command: 'cmake --build .',
             enabled: true,
+            visualStudioInstanceId: 'vs-1',
+            outputEncoding: 'auto',
           },
         ],
       },
@@ -355,6 +376,8 @@ describe('createBuildRunner', () => {
             cwd: '.',
             command: 'cmake -S . -B build',
             enabled: true,
+            visualStudioInstanceId: '',
+            outputEncoding: 'auto',
           },
           {
             id: 'compile',
@@ -363,6 +386,8 @@ describe('createBuildRunner', () => {
             cwd: 'build',
             command: 'cmake --build .',
             enabled: true,
+            visualStudioInstanceId: 'vs-1',
+            outputEncoding: 'auto',
           },
         ],
       },
@@ -411,6 +436,8 @@ describe('createBuildRunner', () => {
             cwd: '.',
             command: 'cmake -S . -B build',
             enabled: true,
+            visualStudioInstanceId: '',
+            outputEncoding: 'auto',
           },
         ],
       },
@@ -450,6 +477,8 @@ describe('createBuildRunner', () => {
             cwd: '..\\outside',
             command: 'echo nope',
             enabled: true,
+            visualStudioInstanceId: '',
+            outputEncoding: 'auto',
           },
         ],
       },
@@ -498,6 +527,8 @@ describe('createBuildRunner', () => {
             cwd: '.',
             command: 'cmake -S . -B build',
             enabled: true,
+            visualStudioInstanceId: '',
+            outputEncoding: 'auto',
           },
         ],
       },
@@ -506,5 +537,473 @@ describe('createBuildRunner', () => {
     expect(runner.stop()).toEqual({ ok: true })
     expect(child.kill).toHaveBeenCalledWith('SIGTERM')
     expect(killProcessTree).not.toHaveBeenCalled()
+  })
+
+  it('decodes stdout/stderr as gbk when the step requests gbk output', async () => {
+    const child = new FakeChild()
+    const runner = createBuildRunner({
+      platform: 'win32',
+      spawn: vi.fn(() => child),
+      detectMsys: vi.fn().mockResolvedValue({
+        available: true,
+        bashPath: 'C:\\msys64\\usr\\bin\\bash.exe',
+        usrBinDir: 'C:\\msys64\\usr\\bin',
+        variant: 'msys2',
+        candidates: [],
+      }),
+      resolveVisualStudioEnvironment: vi.fn(),
+      now: () => '2026-05-20T10:00:00.000Z',
+    })
+
+    await runner.start({
+      projectId: 'p-gbk',
+      projectName: 'Demo',
+      targetRepo: 'E:\\repo',
+      config: {
+        enabled: true,
+        steps: [
+          {
+            id: 'configure',
+            name: 'Configure',
+            envType: 'msys',
+            cwd: '.',
+            command: 'echo hi',
+            enabled: true,
+            visualStudioInstanceId: '',
+            outputEncoding: 'gbk',
+          },
+        ],
+      },
+    })
+
+    child.stdout.write(Buffer.from([0xd6, 0xd0, 0xce, 0xc4, 0x0a]))
+    child.stderr.write(Buffer.from([0xb4, 0xed, 0xce, 0xf3, 0x0a]))
+    child.emit('close', 0, null)
+    await flush()
+
+    expect(runner.getState().log).toContain('中文')
+    expect(runner.getState().log).toContain('错误')
+  })
+
+  it('uses gbk decoding for visual-studio steps when outputEncoding is auto', async () => {
+    const child = new FakeChild()
+    const runner = createBuildRunner({
+      platform: 'win32',
+      spawn: vi.fn(() => child),
+      detectMsys: vi.fn(),
+      resolveVisualStudioEnvironment: vi.fn().mockResolvedValue({
+        ok: true,
+        displayName: 'Visual Studio 2022',
+        installationPath: 'C:\\VS',
+        devCmdPath: 'C:\\VS\\Common7\\Tools\\VsDevCmd.bat',
+        env: { Path: 'C:\\VS\\bin' },
+      }),
+      now: () => '2026-05-20T10:00:00.000Z',
+    })
+
+    await runner.start({
+      projectId: 'p-auto-vs',
+      projectName: 'Demo',
+      targetRepo: 'E:\\repo',
+      config: {
+        enabled: true,
+        steps: [
+          {
+            id: 'compile',
+            name: 'Compile',
+            envType: 'visual-studio',
+            cwd: 'build',
+            command: 'cmake --build .',
+            enabled: true,
+            visualStudioInstanceId: 'vs-1',
+            outputEncoding: 'auto',
+          },
+        ],
+      },
+    })
+
+    child.stdout.write(Buffer.from([0xd6, 0xd0, 0xce, 0xc4, 0x0a]))
+    child.emit('close', 0, null)
+    await flush()
+
+    expect(runner.getState().log).toContain('中文')
+  })
+
+  it('uses utf8 decoding for msys steps when outputEncoding is auto', async () => {
+    const child = new FakeChild()
+    const runner = createBuildRunner({
+      platform: 'win32',
+      spawn: vi.fn(() => child),
+      detectMsys: vi.fn().mockResolvedValue({
+        available: true,
+        bashPath: 'C:\\msys64\\usr\\bin\\bash.exe',
+        usrBinDir: 'C:\\msys64\\usr\\bin',
+        variant: 'msys2',
+        candidates: [],
+      }),
+      resolveVisualStudioEnvironment: vi.fn(),
+      now: () => '2026-05-20T10:00:00.000Z',
+    })
+
+    await runner.start({
+      projectId: 'p-auto-msys',
+      projectName: 'Demo',
+      targetRepo: 'E:\\repo',
+      config: {
+        enabled: true,
+        steps: [
+          {
+            id: 'configure',
+            name: 'Configure',
+            envType: 'msys',
+            cwd: '.',
+            command: 'echo hi',
+            enabled: true,
+            visualStudioInstanceId: '',
+            outputEncoding: 'auto',
+          },
+        ],
+      },
+    })
+
+    child.stdout.write(Buffer.from('héllo\n', 'utf8'))
+    child.emit('close', 0, null)
+    await flush()
+
+    expect(runner.getState().log).toContain('héllo')
+  })
+
+  it('fails with a missing visual studio instance error when the selected instance cannot be resolved', async () => {
+    const resolveVisualStudioEnvironment = vi.fn().mockResolvedValue({
+      ok: false,
+      error: 'visual studio instance not found: vs-missing',
+    })
+    const runner = createBuildRunner({
+      platform: 'win32',
+      spawn: vi.fn(),
+      detectMsys: vi.fn(),
+      resolveVisualStudioEnvironment,
+      now: () => '2026-05-20T10:00:00.000Z',
+    })
+
+    await runner.start({
+      projectId: 'p-vs-missing',
+      projectName: 'Demo',
+      targetRepo: 'E:\\repo',
+      config: {
+        enabled: true,
+        steps: [
+          {
+            id: 'compile',
+            name: 'Compile',
+            envType: 'visual-studio',
+            cwd: 'build',
+            command: 'cmake --build .',
+            enabled: true,
+            visualStudioInstanceId: 'vs-missing',
+            outputEncoding: 'auto',
+          },
+        ],
+      },
+    })
+
+    await flush()
+
+    expect(resolveVisualStudioEnvironment).toHaveBeenCalledWith({
+      instanceId: 'vs-missing',
+      platform: 'win32',
+      baseEnv: process.env,
+    })
+    expect(runner.getState()).toMatchObject({
+      status: 'failed',
+      lastFailure: {
+        stepId: 'compile',
+        reason: 'visual studio instance not found: vs-missing',
+        visualStudioInstanceId: 'vs-missing',
+      },
+    })
+  })
+
+  it('threads the resolved visual studio display name into failure context', async () => {
+    const child = new FakeChild()
+    const runner = createBuildRunner({
+      platform: 'win32',
+      spawn: vi.fn(() => child),
+      detectMsys: vi.fn(),
+      resolveVisualStudioEnvironment: vi.fn().mockResolvedValue({
+        ok: true,
+        displayName: 'Visual Studio 2022 Enterprise',
+        installationPath: 'C:\\VS',
+        devCmdPath: 'C:\\VS\\Common7\\Tools\\VsDevCmd.bat',
+        env: { Path: 'C:\\VS\\bin' },
+      }),
+      now: () => '2026-05-20T10:00:00.000Z',
+    })
+
+    await runner.start({
+      projectId: 'p-vs-display',
+      projectName: 'Demo',
+      targetRepo: 'E:\\repo',
+      config: {
+        enabled: true,
+        steps: [
+          {
+            id: 'compile',
+            name: 'Compile',
+            envType: 'visual-studio',
+            cwd: 'build',
+            command: 'cmake --build .',
+            enabled: true,
+            visualStudioInstanceId: 'vs-1',
+            outputEncoding: 'auto',
+          },
+        ],
+      },
+    })
+
+    child.stderr.write('fatal error\n')
+    child.emit('close', 2, null)
+    await flush()
+
+    expect(runner.getState()).toMatchObject({
+      status: 'failed',
+      lastFailure: {
+        stepId: 'compile',
+        visualStudioInstanceId: 'vs-1',
+        visualStudioDisplayName: 'Visual Studio 2022 Enterprise',
+        outputEncoding: 'auto',
+      },
+    })
+  })
+
+  it('uses utf8 decoding when the step explicitly requests utf8 output', async () => {
+    const child = new FakeChild()
+    const runner = createBuildRunner({
+      platform: 'win32',
+      spawn: vi.fn(() => child),
+      detectMsys: vi.fn().mockResolvedValue({
+        available: true,
+        bashPath: 'C:\\msys64\\usr\\bin\\bash.exe',
+        usrBinDir: 'C:\\msys64\\usr\\bin',
+        variant: 'msys2',
+        candidates: [],
+      }),
+      resolveVisualStudioEnvironment: vi.fn(),
+      now: () => '2026-05-20T10:00:00.000Z',
+    })
+
+    await runner.start({
+      projectId: 'p-utf8',
+      projectName: 'Demo',
+      targetRepo: 'E:\\repo',
+      config: {
+        enabled: true,
+        steps: [
+          {
+            id: 'configure',
+            name: 'Configure',
+            envType: 'msys',
+            cwd: '.',
+            command: 'echo hi',
+            enabled: true,
+            visualStudioInstanceId: '',
+            outputEncoding: 'utf8',
+          },
+        ],
+      },
+    })
+
+    child.stdout.write(Buffer.from([0xe4, 0xbd, 0xa0, 0xe5, 0xa5, 0xbd, 0x0a]))
+    child.emit('close', 0, null)
+    await flush()
+
+    expect(runner.getState().log).toContain('\u4f60\u597d')
+  })
+
+  it('passes string chunks through without decoding', async () => {
+    const child = new FakeChild()
+    const runner = createBuildRunner({
+      platform: 'win32',
+      spawn: vi.fn(() => child),
+      detectMsys: vi.fn().mockResolvedValue({
+        available: true,
+        bashPath: 'C:\\msys64\\usr\\bin\\bash.exe',
+        usrBinDir: 'C:\\msys64\\usr\\bin',
+        variant: 'msys2',
+        candidates: [],
+      }),
+      resolveVisualStudioEnvironment: vi.fn(),
+      now: () => '2026-05-20T10:00:00.000Z',
+    })
+
+    await runner.start({
+      projectId: 'p-string',
+      projectName: 'Demo',
+      targetRepo: 'E:\\repo',
+      config: {
+        enabled: true,
+        steps: [
+          {
+            id: 'configure',
+            name: 'Configure',
+            envType: 'msys',
+            cwd: '.',
+            command: 'echo hi',
+            enabled: true,
+            visualStudioInstanceId: '',
+            outputEncoding: 'gbk',
+          },
+        ],
+      },
+    })
+
+    child.stdout.write('stdout text\n')
+    child.stderr.write('stderr text\n')
+    child.emit('close', 0, null)
+    await flush()
+
+    expect(runner.getState().log).toContain('stdout text')
+    expect(runner.getState().log).toContain('stderr text')
+  })
+
+  it('preserves utf8 multibyte characters split across chunks', async () => {
+    const child = new FakeChild()
+    const runner = createBuildRunner({
+      platform: 'win32',
+      spawn: vi.fn(() => child),
+      detectMsys: vi.fn().mockResolvedValue({
+        available: true,
+        bashPath: 'C:\\msys64\\usr\\bin\\bash.exe',
+        usrBinDir: 'C:\\msys64\\usr\\bin',
+        variant: 'msys2',
+        candidates: [],
+      }),
+      resolveVisualStudioEnvironment: vi.fn(),
+      now: () => '2026-05-20T10:00:00.000Z',
+    })
+
+    await runner.start({
+      projectId: 'p-utf8-split',
+      projectName: 'Demo',
+      targetRepo: 'E:\\repo',
+      config: {
+        enabled: true,
+        steps: [
+          {
+            id: 'configure',
+            name: 'Configure',
+            envType: 'msys',
+            cwd: '.',
+            command: 'echo hi',
+            enabled: true,
+            visualStudioInstanceId: '',
+            outputEncoding: 'utf8',
+          },
+        ],
+      },
+    })
+
+    child.stdout.write(Buffer.from([0xe4, 0xbd]))
+    child.stdout.write(Buffer.from([0xa0, 0xe5, 0xa5, 0xbd, 0x0a]))
+    child.emit('close', 0, null)
+    await flush()
+
+    expect(runner.getState().log).toContain('\u4f60\u597d')
+  })
+
+  it('preserves gbk multibyte characters split across chunks for explicit gbk output', async () => {
+    const child = new FakeChild()
+    const runner = createBuildRunner({
+      platform: 'win32',
+      spawn: vi.fn(() => child),
+      detectMsys: vi.fn().mockResolvedValue({
+        available: true,
+        bashPath: 'C:\\msys64\\usr\\bin\\bash.exe',
+        usrBinDir: 'C:\\msys64\\usr\\bin',
+        variant: 'msys2',
+        candidates: [],
+      }),
+      resolveVisualStudioEnvironment: vi.fn(),
+      now: () => '2026-05-20T10:00:00.000Z',
+    })
+
+    await runner.start({
+      projectId: 'p-gbk-split',
+      projectName: 'Demo',
+      targetRepo: 'E:\\repo',
+      config: {
+        enabled: true,
+        steps: [
+          {
+            id: 'configure',
+            name: 'Configure',
+            envType: 'msys',
+            cwd: '.',
+            command: 'echo hi',
+            enabled: true,
+            visualStudioInstanceId: '',
+            outputEncoding: 'gbk',
+          },
+        ],
+      },
+    })
+
+    child.stdout.write(Buffer.from([0xd6]))
+    child.stdout.write(Buffer.from([0xd0, 0xce, 0xc4, 0x0a]))
+    child.emit('close', 0, null)
+    await flush()
+
+    expect(runner.getState().log).toContain('\u4e2d\u6587')
+  })
+
+  it('keeps visual studio fields null in failure context for non-VS steps', async () => {
+    const child = new FakeChild()
+    const runner = createBuildRunner({
+      platform: 'win32',
+      spawn: vi.fn(() => child),
+      detectMsys: vi.fn().mockResolvedValue({
+        available: true,
+        bashPath: 'C:\\msys64\\usr\\bin\\bash.exe',
+        usrBinDir: 'C:\\msys64\\usr\\bin',
+        variant: 'msys2',
+        candidates: [],
+      }),
+      resolveVisualStudioEnvironment: vi.fn(),
+      now: () => '2026-05-20T10:00:00.000Z',
+    })
+
+    await runner.start({
+      projectId: 'p-non-vs-failure',
+      projectName: 'Demo',
+      targetRepo: 'E:\\repo',
+      config: {
+        enabled: true,
+        steps: [
+          {
+            id: 'configure',
+            name: 'Configure',
+            envType: 'msys',
+            cwd: '.',
+            command: 'echo hi',
+            enabled: true,
+            visualStudioInstanceId: '',
+            outputEncoding: 'auto',
+          },
+        ],
+      },
+    })
+
+    child.stderr.write('failure\n')
+    child.emit('close', 1, null)
+    await flush()
+
+    expect(runner.getState()).toMatchObject({
+      status: 'failed',
+      lastFailure: {
+        stepId: 'configure',
+        visualStudioInstanceId: null,
+        visualStudioDisplayName: null,
+      },
+    })
   })
 })

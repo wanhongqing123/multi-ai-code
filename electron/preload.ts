@@ -39,6 +39,7 @@ export interface ProjectAiSettingsResponse {
 // here pulls node-side files into the web program and fails with TS6307, so these
 // types intentionally mirror the shared build contracts.
 export type BuildStepEnvType = 'msys' | 'visual-studio'
+export type BuildOutputEncoding = 'auto' | 'utf8' | 'gbk'
 
 export interface BuildStepConfig {
   id: string
@@ -47,6 +48,8 @@ export interface BuildStepConfig {
   cwd: string
   command: string
   enabled: boolean
+  visualStudioInstanceId: string
+  outputEncoding: BuildOutputEncoding
 }
 
 export interface ProjectBuildConfig {
@@ -57,6 +60,14 @@ export interface ProjectBuildConfig {
 export interface BuildConfigValidationIssue {
   path: string
   message: string
+}
+
+export interface VisualStudioInstallation {
+  instanceId: string
+  displayName: string
+  installationPath: string
+  productLineVersion: string | null
+  isPrerelease: boolean
 }
 
 export type ProjectBuildConfigReadResult =
@@ -74,6 +85,9 @@ export interface BuildFailureContext {
   stepId: string
   stepName: string
   envType: BuildStepEnvType
+  visualStudioInstanceId: string | null
+  visualStudioDisplayName: string | null
+  outputEncoding: BuildOutputEncoding
   cwd: string
   command: string
   exitCode: number | null
@@ -82,7 +96,16 @@ export interface BuildFailureContext {
   logTail: string
 }
 
+export interface ManagedChromeState {
+  running: boolean
+  port: number | null
+  profileDir: string | null
+  pid: number | null
+  lastActiveUrl: string | null
+}
+
 export interface BuildStepRuntime extends BuildStepConfig {
+  visualStudioDisplayName: string | null
   status: 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped'
   resolvedCwd: string | null
   startedAt: string | null
@@ -419,6 +442,10 @@ const api = {
       ipcRenderer.invoke('project:set-stage-configs', { id, configs }) as Promise<{ ok: boolean }>,
     getBuildConfig: (id: string) =>
       ipcRenderer.invoke('project:get-build-config', { id }) as Promise<ProjectBuildConfigReadResult>,
+    listVisualStudioInstallations: () =>
+      ipcRenderer.invoke('project:list-visual-studio-installations') as Promise<
+        { ok: true; value: VisualStudioInstallation[] } | { ok: false; error: string }
+      >,
     setBuildConfig: (id: string, config: ProjectBuildConfig) =>
       ipcRenderer.invoke('project:set-build-config', {
         id,
@@ -820,7 +847,14 @@ const api = {
         | 'repo_view_annotation'
         | 'template_used'
         | 'plan_imported'
+        | 'panel_open'
+        | 'action_triggered'
+        | 'site_visit'
+        | 'site_click'
+        | 'site_input_hint'
+        | 'tab_switch'
       text: string
+      source?: 'app_ui' | 'managed_chrome'
       projectId?: string
       repoPath?: string
       sourceWindow?: string
@@ -834,6 +868,47 @@ const api = {
       update: (patch: unknown) =>
         ipcRenderer.invoke('habit:settings:update', patch) as Promise<unknown>
     },
+    chrome: {
+      getState: () =>
+        ipcRenderer.invoke('habit:chrome:get-state') as Promise<ManagedChromeState>,
+      start: () =>
+        ipcRenderer.invoke('habit:chrome:start') as Promise<
+          { ok: true; value?: ManagedChromeState } | { ok: false; error: string }
+        >,
+      stop: () =>
+        ipcRenderer.invoke('habit:chrome:stop') as Promise<
+          { ok: true } | { ok: false; error: string }
+        >,
+      focus: () =>
+        ipcRenderer.invoke('habit:chrome:focus') as Promise<
+          { ok: true } | { ok: false; error: string }
+        >
+    },
+    flows: {
+      list: (opts?: { statuses?: Array<'candidate' | 'active' | 'disabled'>; limit?: number }) =>
+        ipcRenderer.invoke('habit:flows:list', opts) as Promise<
+          Array<{
+            id: number
+            kind: 'app-flow' | 'site-flow' | 'ui-adjustment'
+            title: string
+            summary: string
+            evidence_count: number
+            risk_level: 'low' | 'high'
+            enabled_by_default: number
+            status: 'candidate' | 'active' | 'disabled'
+            payload: string
+            created_at: number
+            updated_at: number
+          }>
+        >,
+      updateStatus: (req: { id: number; status: 'candidate' | 'active' | 'disabled' }) =>
+        ipcRenderer.invoke('habit:flows:update-status', req) as Promise<{ ok: boolean }>,
+      clear: () =>
+        ipcRenderer.invoke('habit:flows:clear') as Promise<{
+          ok: boolean
+          removed: number
+        }>
+    },
     events: {
       recent: (limit?: number) =>
         ipcRenderer.invoke('habit:events:recent', { limit }) as Promise<{
@@ -842,6 +917,7 @@ const api = {
             ts: number
             kind: string
             payload: string
+            source: 'app_ui' | 'managed_chrome' | null
             project_id: string | null
             repo_path: string | null
             source_window: string | null
@@ -859,6 +935,7 @@ const api = {
               ran: boolean
               reason: string
               clustersFound?: number
+              flowsGenerated?: number
               candidatesInserted?: number
               startedAt: number
               finishedAt: number

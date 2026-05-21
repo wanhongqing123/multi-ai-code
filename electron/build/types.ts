@@ -1,4 +1,5 @@
 export type BuildStepEnvType = 'msys' | 'visual-studio'
+export type BuildOutputEncoding = 'auto' | 'utf8' | 'gbk'
 
 export interface BuildStepConfig {
   id: string
@@ -7,6 +8,8 @@ export interface BuildStepConfig {
   cwd: string
   command: string
   enabled: boolean
+  visualStudioInstanceId: string
+  outputEncoding: BuildOutputEncoding
 }
 
 export interface ProjectBuildConfig {
@@ -18,6 +21,7 @@ export type BuildStepStatus = 'pending' | 'running' | 'succeeded' | 'failed' | '
 export type BuildOverallStatus = 'idle' | 'running' | 'succeeded' | 'failed' | 'stopped'
 
 export interface BuildStepRuntime extends BuildStepConfig {
+  visualStudioDisplayName: string | null
   status: BuildStepStatus
   resolvedCwd: string | null
   startedAt: string | null
@@ -33,6 +37,9 @@ export interface BuildFailureContext {
   stepId: string
   stepName: string
   envType: BuildStepEnvType
+  visualStudioInstanceId: string | null
+  visualStudioDisplayName: string | null
+  outputEncoding: BuildOutputEncoding
   cwd: string
   command: string
   exitCode: number | null

@@ -14,6 +14,12 @@ export interface HabitSettings {
   firstRunNoticeShownAt: number
   /** Last time the aggregator ran a full pass (epoch ms). 0 = never. */
   lastAggregatedAt: number
+  /** Collect website habits from managed Chrome sessions. */
+  collectManagedChrome: boolean
+  /** Auto-enable low-risk flows by default. */
+  autoEnableLowRiskFlows: boolean
+  /** Allow light UI personalization such as hiding low-frequency entries. */
+  autoPersonalizeUi: boolean
 }
 
 export const DEFAULT_HABIT_SETTINGS: HabitSettings = {
@@ -24,7 +30,10 @@ export const DEFAULT_HABIT_SETTINGS: HabitSettings = {
   >,
   retentionDays: 90,
   firstRunNoticeShownAt: 0,
-  lastAggregatedAt: 0
+  lastAggregatedAt: 0,
+  collectManagedChrome: true,
+  autoEnableLowRiskFlows: true,
+  autoPersonalizeUi: true
 }
 
 export const ALLOWED_RETENTION_DAYS = [30, 60, 90, 180] as const
@@ -110,6 +119,18 @@ export function mergeWithDefaults(input: Partial<HabitSettings>): HabitSettings 
     firstRunNoticeShownAt:
       typeof input.firstRunNoticeShownAt === 'number' ? input.firstRunNoticeShownAt : 0,
     lastAggregatedAt:
-      typeof input.lastAggregatedAt === 'number' ? input.lastAggregatedAt : 0
+      typeof input.lastAggregatedAt === 'number' ? input.lastAggregatedAt : 0,
+    collectManagedChrome:
+      typeof input.collectManagedChrome === 'boolean'
+        ? input.collectManagedChrome
+        : DEFAULT_HABIT_SETTINGS.collectManagedChrome,
+    autoEnableLowRiskFlows:
+      typeof input.autoEnableLowRiskFlows === 'boolean'
+        ? input.autoEnableLowRiskFlows
+        : DEFAULT_HABIT_SETTINGS.autoEnableLowRiskFlows,
+    autoPersonalizeUi:
+      typeof input.autoPersonalizeUi === 'boolean'
+        ? input.autoPersonalizeUi
+        : DEFAULT_HABIT_SETTINGS.autoPersonalizeUi
   }
 }

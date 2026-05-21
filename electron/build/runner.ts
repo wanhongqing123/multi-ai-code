@@ -1,5 +1,7 @@
 import { execFile, spawn } from 'child_process'
+import iconv from 'iconv-lite'
 import { isAbsolute, relative, resolve, sep } from 'path'
+import { StringDecoder } from 'string_decoder'
 import { detectMsys, type MsysInfo } from '../util/msys.js'
 import { resolveVisualStudioEnvironment } from './visualStudio.js'
 import type {
@@ -44,6 +46,11 @@ interface BuildRunnerDeps {
   killProcessTree: (pid: number) => void
   logLimit: number
   now: () => string
+}
+
+interface ChunkDecoder {
+  write(chunk: Buffer): string
+  end(): string
 }
 
 export interface BuildRunner {
@@ -156,6 +163,38 @@ function markPendingStepsSkipped(steps: BuildStepRuntime[]): void {
   }
 }
 
+function resolveOutputEncoding(step: BuildStepRuntime): 'utf8' | 'gbk' {
+  if (step.outputEncoding === 'utf8' || step.outputEncoding === 'gbk') {
+    return step.outputEncoding
+  }
+
+  return step.envType === 'visual-studio' ? 'gbk' : 'utf8'
+}
+
+function createChunkDecoder(step: BuildStepRuntime): ChunkDecoder {
+  if (resolveOutputEncoding(step) === 'gbk') {
+    const decoder = iconv.getDecoder('gbk')
+    return {
+      write(chunk: Buffer): string {
+        return decoder.write(chunk)
+      },
+      end(): string {
+        return decoder.end() ?? ''
+      },
+    }
+  }
+
+  const decoder = new StringDecoder('utf8')
+  return {
+    write(chunk: Buffer): string {
+      return decoder.write(chunk)
+    },
+    end(): string {
+      return decoder.end()
+    },
+  }
+}
+
 export function createBuildRunner(partialDeps?: Partial<BuildRunnerDeps>): BuildRunner {
   const deps: BuildRunnerDeps = {
     platform: partialDeps?.platform ?? process.platform,
@@ -228,6 +267,10 @@ export function createBuildRunner(partialDeps?: Partial<BuildRunnerDeps>): Build
       stepId: step.id,
       stepName: step.name,
       envType: step.envType,
+      visualStudioInstanceId: step.envType === 'visual-studio' ? step.visualStudioInstanceId : null,
+      visualStudioDisplayName:
+        step.envType === 'visual-studio' ? step.visualStudioDisplayName : null,
+      outputEncoding: step.outputEncoding,
       cwd: step.resolvedCwd ?? step.cwd,
       command: step.command,
       exitCode: step.exitCode,
@@ -246,6 +289,7 @@ export function createBuildRunner(partialDeps?: Partial<BuildRunnerDeps>): Build
     step.resolvedCwd = resolvedCwd
 
     if (step.envType === 'msys') {
+      step.visualStudioDisplayName = null
       const info = await deps.detectMsys()
       if (!info.available || !info.bashPath) {
         throw new Error('msys environment is unavailable')
@@ -263,12 +307,14 @@ export function createBuildRunner(partialDeps?: Partial<BuildRunnerDeps>): Build
     }
 
     const result = await deps.resolveVisualStudioEnvironment({
+      instanceId: step.visualStudioInstanceId,
       platform: deps.platform,
       baseEnv: process.env,
     })
     if (!result.ok) {
       throw new Error(result.error)
     }
+    step.visualStudioDisplayName = result.displayName
 
     const child = deps.spawn('cmd.exe', ['/d', '/s', '/c', step.command], {
       cwd: resolvedCwd,
@@ -310,6 +356,8 @@ export function createBuildRunner(partialDeps?: Partial<BuildRunnerDeps>): Build
 
       try {
         const { child } = await spawnForStep(step)
+        const stdoutDecoder = createChunkDecoder(step)
+        const stderrDecoder = createChunkDecoder(step)
         activeChild = child
         currentStepControl = { hasSettled: false }
         stopCurrentStepRequested = false
@@ -319,12 +367,12 @@ export function createBuildRunner(partialDeps?: Partial<BuildRunnerDeps>): Build
         }
 
         child.stdout?.on('data', (chunk: Buffer | string) => {
-          const text = chunk.toString()
+          const text = typeof chunk === 'string' ? chunk : stdoutDecoder.write(chunk)
           logTail = appendTail(logTail, text)
           appendLog(step.id, 'stdout', text)
         })
         child.stderr?.on('data', (chunk: Buffer | string) => {
-          const text = chunk.toString()
+          const text = typeof chunk === 'string' ? chunk : stderrDecoder.write(chunk)
           logTail = appendTail(logTail, text)
           appendLog(step.id, 'stderr', text)
         })
@@ -333,6 +381,16 @@ export function createBuildRunner(partialDeps?: Partial<BuildRunnerDeps>): Build
           (resolvePromise, rejectPromise) => {
             child.on('error', rejectPromise)
             child.on('close', (code, signal) => {
+              const stdoutRemainder = stdoutDecoder.end()
+              if (stdoutRemainder) {
+                logTail = appendTail(logTail, stdoutRemainder)
+                appendLog(step.id, 'stdout', stdoutRemainder)
+              }
+              const stderrRemainder = stderrDecoder.end()
+              if (stderrRemainder) {
+                logTail = appendTail(logTail, stderrRemainder)
+                appendLog(step.id, 'stderr', stderrRemainder)
+              }
               if (currentStepControl) currentStepControl.hasSettled = true
               resolvePromise({ code, signal })
             })
@@ -431,6 +489,7 @@ export function createBuildRunner(partialDeps?: Partial<BuildRunnerDeps>): Build
         activeStepId: null,
         steps: request.config.steps.map((step) => ({
           ...step,
+          visualStudioDisplayName: null,
           status: step.enabled ? 'pending' : 'skipped',
           resolvedCwd: null,
           startedAt: null,

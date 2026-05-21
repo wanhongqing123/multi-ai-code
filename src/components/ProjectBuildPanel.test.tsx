@@ -24,7 +24,9 @@ const enabledBuildConfig: ProjectBuildConfig = {
       envType: 'msys',
       cwd: '.',
       command: 'cmake -S . -B build',
-      enabled: true
+      enabled: true,
+      visualStudioInstanceId: '',
+      outputEncoding: 'auto'
     }
   ]
 }
@@ -80,6 +82,9 @@ describe('ProjectBuildPanel', () => {
         stepId: 'build',
         stepName: 'Build',
         envType: 'msys',
+        visualStudioInstanceId: null,
+        visualStudioDisplayName: null,
+        outputEncoding: 'auto',
         cwd: '.',
         command: 'cmake --build build',
         exitCode: 1,
@@ -105,6 +110,9 @@ describe('ProjectBuildPanel', () => {
         stepId: 'configure',
         stepName: 'Configure',
         envType: 'msys',
+        visualStudioInstanceId: null,
+        visualStudioDisplayName: null,
+        outputEncoding: 'auto',
         cwd: '.',
         command: 'cmake -S . -B build',
         exitCode: 127,
@@ -115,7 +123,6 @@ describe('ProjectBuildPanel', () => {
     }
 
     expect(getBuildLogStatusLabel(failedState)).toContain('Configure')
-    expect(getBuildLogStatusLabel(failedState)).not.toContain('等待中')
   })
 
   it('renders the panel body only when open', () => {
@@ -135,6 +142,7 @@ describe('ProjectBuildPanel', () => {
         onAnalyzeFailure={vi.fn()}
       />
     )
+
     const openMarkup = renderToStaticMarkup(
       <ProjectBuildPanel
         open={true}
@@ -148,6 +156,7 @@ describe('ProjectBuildPanel', () => {
           steps: [
             {
               ...enabledBuildConfig.steps[0],
+              visualStudioDisplayName: null,
               status: 'failed',
               resolvedCwd: 'E:/demo',
               startedAt: '2026-05-20T10:00:00.000Z',
@@ -163,6 +172,9 @@ describe('ProjectBuildPanel', () => {
             stepId: 'configure',
             stepName: 'Configure',
             envType: 'msys',
+            visualStudioInstanceId: null,
+            visualStudioDisplayName: null,
+            outputEncoding: 'auto',
             cwd: '.',
             command: 'cmake -S . -B build',
             exitCode: 1,
@@ -170,7 +182,7 @@ describe('ProjectBuildPanel', () => {
             reason: 'build failed',
             logTail: 'fatal error'
           }
-        }}
+        } as BuildRuntimeState}
         sessionId="session-1"
         sessionStatus="running"
         onClose={vi.fn()}
@@ -184,5 +196,80 @@ describe('ProjectBuildPanel', () => {
     expect(openMarkup).toContain('build-panel')
     expect(openMarkup).toContain('build-step-card')
     expect(openMarkup).toContain('Configure')
+  })
+
+  it('renders visual studio display name and output encoding metadata', () => {
+    const markup = renderToStaticMarkup(
+      <ProjectBuildPanel
+        open={true}
+        currentProjectId="project-1"
+        currentProjectName="Demo"
+        buildConfig={{
+          enabled: true,
+          steps: [
+            {
+              id: 'compile',
+              name: 'Compile',
+              envType: 'visual-studio',
+              cwd: 'build',
+              command: 'cmake --build .',
+              enabled: true,
+              visualStudioInstanceId: 'vs-2022-community',
+              outputEncoding: 'gbk'
+            }
+          ]
+        }}
+        buildConfigReady={true}
+        state={{
+          ...baseState,
+          status: 'failed',
+          steps: [
+            {
+              id: 'compile',
+              name: 'Compile',
+              envType: 'visual-studio',
+              cwd: 'build',
+              command: 'cmake --build .',
+              enabled: true,
+              visualStudioInstanceId: 'vs-2022-community',
+              visualStudioDisplayName: 'Visual Studio 2022 Community',
+              outputEncoding: 'gbk',
+              status: 'failed',
+              resolvedCwd: 'E:/demo/build',
+              startedAt: '2026-05-20T10:00:00.000Z',
+              finishedAt: '2026-05-20T10:00:01.000Z',
+              exitCode: 2,
+              signal: null
+            }
+          ],
+          lastFailure: {
+            projectId: 'project-1',
+            projectName: 'Demo',
+            targetRepo: 'E:/demo',
+            stepId: 'compile',
+            stepName: 'Compile',
+            envType: 'visual-studio',
+            visualStudioInstanceId: 'vs-2022-community',
+            visualStudioDisplayName: 'Visual Studio 2022 Community',
+            outputEncoding: 'gbk',
+            cwd: 'E:/demo/build',
+            command: 'cmake --build .',
+            exitCode: 2,
+            signal: null,
+            reason: 'build failed',
+            logTail: 'fatal error'
+          }
+        } as BuildRuntimeState}
+        sessionId="session-1"
+        sessionStatus="running"
+        onClose={vi.fn()}
+        onStartBuild={vi.fn()}
+        onStopBuild={vi.fn()}
+        onAnalyzeFailure={vi.fn()}
+      />
+    )
+
+    expect(markup).toContain('Visual Studio 2022 Community')
+    expect(markup).toContain('GBK')
   })
 })

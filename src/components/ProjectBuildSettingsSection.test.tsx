@@ -1,12 +1,25 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import type { ProjectBuildConfig } from '../../electron/preload'
+import type {
+  ProjectBuildConfig,
+  VisualStudioInstallation
+} from '../../electron/preload'
 import ProjectBuildSettingsSection, {
   appendBuildStep,
   formatBuildConfigSaveError,
   moveBuildStep,
   removeBuildStep
 } from './ProjectBuildSettingsSection.js'
+
+const visualStudioInstallations: VisualStudioInstallation[] = [
+  {
+    instanceId: 'vs-2022-community',
+    displayName: 'Visual Studio 2022 Community',
+    installationPath: 'C:\\VS\\2022\\Community',
+    productLineVersion: '2022',
+    isPrerelease: false
+  }
+]
 
 describe('ProjectBuildSettingsSection', () => {
   it('renders a no-project hint when no project is selected', () => {
@@ -24,7 +37,7 @@ describe('ProjectBuildSettingsSection', () => {
     expect(markup).not.toContain('project-build-settings-toolbar')
   })
 
-  it('renders build steps and editing controls for the selected project', () => {
+  it('renders visual studio instance and output encoding controls for visual-studio steps', () => {
     const markup = renderToStaticMarkup(
       <ProjectBuildSettingsSection
         projectId="project-1"
@@ -33,26 +46,33 @@ describe('ProjectBuildSettingsSection', () => {
           enabled: true,
           steps: [
             {
-              id: 'configure',
-              name: 'Configure',
-              envType: 'msys',
-              cwd: '.',
-              command: 'cmake -S . -B build',
-              enabled: true
+              id: 'compile',
+              name: 'Compile',
+              envType: 'visual-studio',
+              cwd: 'build',
+              command: 'cmake --build .',
+              enabled: true,
+              visualStudioInstanceId: 'vs-2022-community',
+              outputEncoding: 'gbk'
             }
           ]
         }}
         disabled={false}
+        visualStudioInstallations={visualStudioInstallations}
         onChange={vi.fn()}
       />
     )
 
     expect(markup).toContain('project-build-settings-toolbar')
-    expect(markup).toContain('Configure')
-    expect(markup).toContain('MSYS2')
+    expect(markup).toContain('Compile')
     expect(markup).toContain('Visual Studio Developer Command Prompt')
+    expect(markup).toContain('Visual Studio 实例')
+    expect(markup).toContain('Visual Studio 2022 Community')
+    expect(markup).toContain('输出编码')
+    expect(markup).toContain('自动')
+    expect(markup).toContain('UTF-8')
+    expect(markup).toContain('GBK')
     expect(markup).toContain('project-build-step-card')
-    expect(markup).toContain('仓库根目录')
   })
 
   it('appends a default enabled step', () => {
@@ -67,7 +87,9 @@ describe('ProjectBuildSettingsSection', () => {
           envType: 'msys',
           cwd: '.',
           command: '',
-          enabled: true
+          enabled: true,
+          visualStudioInstanceId: '',
+          outputEncoding: 'auto'
         }
       ]
     })
@@ -88,18 +110,59 @@ describe('ProjectBuildSettingsSection', () => {
     expect(markup).not.toContain('project-build-settings-toolbar')
   })
 
+  it('shows a warning when the selected visual studio instance is no longer available', () => {
+    const markup = renderToStaticMarkup(
+      <ProjectBuildSettingsSection
+        projectId="project-1"
+        loading={false}
+        value={{
+          enabled: true,
+          steps: [
+            {
+              id: 'compile',
+              name: 'Compile',
+              envType: 'visual-studio',
+              cwd: 'build',
+              command: 'cmake --build .',
+              enabled: true,
+              visualStudioInstanceId: 'vs-missing',
+              outputEncoding: 'auto'
+            }
+          ]
+        }}
+        disabled={false}
+        visualStudioInstallations={visualStudioInstallations}
+        onChange={vi.fn()}
+      />
+    )
+
+    expect(markup).toContain('project-build-step-warning')
+    expect(markup).toContain('所选 Visual Studio 实例当前不可用')
+  })
+
   it('moves steps up and down without mutating the rest of the config', () => {
     const initial: ProjectBuildConfig = {
       enabled: true,
       steps: [
-        { id: 'one', name: 'One', envType: 'msys', cwd: '.', command: 'echo 1', enabled: true },
+        {
+          id: 'one',
+          name: 'One',
+          envType: 'msys',
+          cwd: '.',
+          command: 'echo 1',
+          enabled: true,
+          visualStudioInstanceId: '',
+          outputEncoding: 'auto'
+        },
         {
           id: 'two',
           name: 'Two',
           envType: 'visual-studio',
           cwd: 'build',
           command: 'echo 2',
-          enabled: false
+          enabled: false,
+          visualStudioInstanceId: 'vs-1',
+          outputEncoding: 'auto'
         }
       ]
     }
@@ -113,8 +176,26 @@ describe('ProjectBuildSettingsSection', () => {
       {
         enabled: false,
         steps: [
-          { id: 'one', name: 'One', envType: 'msys', cwd: '.', command: 'echo 1', enabled: true },
-          { id: 'two', name: 'Two', envType: 'msys', cwd: '.', command: 'echo 2', enabled: true }
+          {
+            id: 'one',
+            name: 'One',
+            envType: 'msys',
+            cwd: '.',
+            command: 'echo 1',
+            enabled: true,
+            visualStudioInstanceId: '',
+            outputEncoding: 'auto'
+          },
+          {
+            id: 'two',
+            name: 'Two',
+            envType: 'msys',
+            cwd: '.',
+            command: 'echo 2',
+            enabled: true,
+            visualStudioInstanceId: '',
+            outputEncoding: 'auto'
+          }
         ]
       },
       0

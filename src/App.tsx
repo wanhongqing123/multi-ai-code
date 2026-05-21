@@ -16,7 +16,7 @@ import AiSettingsDialog, {
 } from './components/AiSettingsDialog'
 import ProjectBuildPanel, { getBuildStartBlockedReason } from './components/ProjectBuildPanel'
 import TemplatesDialog from './components/TemplatesDialog'
-import SkillStudioDialog from './habit/SkillStudioDialog'
+import HabitMonitorDialog from './habit/HabitMonitorDialog'
 import FirstRunNoticeDialog from './habit/FirstRunNoticeDialog'
 import { getCliTargetLabel } from './components/cliTarget'
 import OnboardingWizard from './components/OnboardingWizard'
@@ -29,7 +29,13 @@ import PlanReviewDialog, { type Annotation } from './components/PlanReviewDialog
 import DiffViewerDialog, { type DiffAnnotation } from './components/DiffViewerDialog'
 import type { DiffMode } from './components/diffViewerConfig'
 import type { ExternalReviewSuggestion } from './components/externalAiReview'
-import type { BuildRuntimeState, ProjectBuildConfig } from '../electron/preload'
+import type {
+  BuildRuntimeState,
+  ManagedChromeState,
+  ProjectBuildConfig,
+  VisualStudioInstallation
+} from '../electron/preload'
+import type { HabitFlowRow, HabitSettings } from './habit/habitTypes'
 
 const LAST_PROJECT_KEY = 'multi-ai-code.lastProjectId'
 const DEFAULT_PROJECT_BUILD_CONFIG: ProjectBuildConfig = { enabled: false, steps: [] }
@@ -53,7 +59,78 @@ function appendBuildLog(current: string, chunk: string): string {
   return `...[build log truncated]...\n${next.slice(-BUILD_LOG_LIMIT)}`
 }
 
-export default function App() {
+const DEFAULT_MANAGED_CHROME_STATE: ManagedChromeState = {
+  running: false,
+  port: null,
+  profileDir: null,
+  pid: null,
+  lastActiveUrl: null
+}
+
+function parseHabitFlowAction(flow: HabitFlowRow): string | null {
+  try {
+    const payload = JSON.parse(flow.payload) as { action?: unknown }
+    return typeof payload.action === 'string' ? payload.action : null
+  } catch {
+    return null
+  }
+}
+
+export function deriveHabitUiFlags(input: {
+  autoPersonalizeUi: boolean
+  flows: HabitFlowRow[]
+}): { hideTemplatesEntry: boolean; hideWizardEntry: boolean } {
+  if (!input.autoPersonalizeUi) {
+    return {
+      hideTemplatesEntry: false,
+      hideWizardEntry: false
+    }
+  }
+
+  const actions = new Set(
+    input.flows
+      .filter((flow) => flow.status === 'active' && flow.kind === 'ui-adjustment')
+      .map(parseHabitFlowAction)
+      .filter((action): action is string => typeof action === 'string')
+  )
+
+  return {
+    hideTemplatesEntry: actions.has('hide-templates-entry') || input.autoPersonalizeUi,
+    hideWizardEntry: actions.has('hide-wizard-entry') || input.autoPersonalizeUi
+  }
+}
+
+export function shouldRenderElectronShell(): boolean {
+  return typeof window === 'undefined' || typeof window.api !== 'undefined'
+}
+
+function ElectronLaunchRequired(): JSX.Element {
+  return (
+    <div className="app">
+      <div
+        className="drawer-empty"
+        style={{ maxWidth: 560, margin: '96px auto', padding: '24px' }}
+      >
+        <strong>{'请通过 Electron 启动'}</strong>
+        <div style={{ marginTop: 8 }}>
+          {
+            '当前页面缺少 preload 注入的桌面 API，只能用于静态预览。请运行 npm run dev 或正式桌面应用。'
+          }
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export default function App(): JSX.Element {
+  if (!shouldRenderElectronShell()) {
+    return <ElectronLaunchRequired />
+  }
+
+  return <AppShell />
+}
+
+function AppShell() {
   const [version, setVersion] = useState<string>('')
   const [projects, setProjects] = useState<ProjectInfo[]>([])
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null)
@@ -77,8 +154,13 @@ export default function App() {
   const [projectBuildConfigProjectId, setProjectBuildConfigProjectId] = useState<string | null>(
     null
   )
+  const [visualStudioInstallations, setVisualStudioInstallations] = useState<
+    VisualStudioInstallation[]
+  >([])
+  const [visualStudioInstallationsLoading, setVisualStudioInstallationsLoading] =
+    useState(false)
   const [showTemplates, setShowTemplates] = useState(false)
-  const [showSkillStudio, setShowSkillStudio] = useState(false)
+  const [showHabitMonitor, setShowHabitMonitor] = useState(false)
   const [showHabitFirstRun, setShowHabitFirstRun] = useState(false)
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [showDoctor, setShowDoctor] = useState(false)
@@ -86,6 +168,12 @@ export default function App() {
   const [showGlobalSearch, setShowGlobalSearch] = useState(false)
   const [showBuildPanel, setShowBuildPanel] = useState(false)
   const [theme, setThemeState] = useState<'light' | 'dark'>(() => getTheme())
+  const [habitSettingsSnapshot, setHabitSettingsSnapshot] = useState<HabitSettings | null>(null)
+  const [habitFlowsSnapshot, setHabitFlowsSnapshot] = useState<HabitFlowRow[]>([])
+  const [managedChromeState, setManagedChromeState] = useState<ManagedChromeState>(
+    DEFAULT_MANAGED_CHROME_STATE
+  )
+  const [managedChromeBusy, setManagedChromeBusy] = useState(false)
 
   const visibleProjectBuildConfig =
     currentProjectId !== null && projectBuildConfigProjectId === currentProjectId
@@ -149,10 +237,47 @@ export default function App() {
 
   const [logs] = useLogs()
   const errorCount = logs.filter((l) => l.level === 'error' || l.level === 'warn').length
+  const habitUiFlags = deriveHabitUiFlags({
+    autoPersonalizeUi: habitSettingsSnapshot?.autoPersonalizeUi ?? true,
+    flows: habitFlowsSnapshot
+  })
 
   const reloadProjectsRef = useRef<() => Promise<ProjectInfo[]>>(
     async () => []
   )
+
+  const refreshVisualStudioInstallations = useCallback(async () => {
+    setVisualStudioInstallationsLoading(true)
+    try {
+      const result = await window.api.project.listVisualStudioInstallations()
+      if (!result.ok) {
+        setVisualStudioInstallations([])
+        showToast(result.error ?? '读取 Visual Studio 实例失败', { level: 'error' })
+        return
+      }
+      setVisualStudioInstallations(result.value ?? [])
+    } finally {
+      setVisualStudioInstallationsLoading(false)
+    }
+  }, [])
+
+  const refreshHabitMonitorSnapshot = useCallback(async () => {
+    try {
+      const [settings, flows, chromeState] = await Promise.all([
+        window.api.habit.settings.get() as Promise<HabitSettings>,
+        window.api.habit.flows.list({
+          statuses: ['active', 'candidate', 'disabled'],
+          limit: 200
+        }) as Promise<HabitFlowRow[]>,
+        window.api.habit.chrome.getState() as Promise<ManagedChromeState>
+      ])
+      setHabitSettingsSnapshot(settings)
+      setHabitFlowsSnapshot(flows)
+      setManagedChromeState(chromeState)
+    } catch {
+      /* ignore */
+    }
+  }, [])
 
   const reloadProjects = useCallback(async () => {
     const list = await window.api.project.list()
@@ -166,7 +291,7 @@ export default function App() {
     reloadProjectsRef.current = reloadProjects
   }, [reloadProjects])
 
-  // Show the first-run notice for the habit-learning agent exactly once per
+  // Show the first-run notice for the habit monitor exactly once per
   // install: settings.firstRunNoticeShownAt is 0 before the user has seen it.
   useEffect(() => {
     void (async () => {
@@ -181,7 +306,8 @@ export default function App() {
         /* ignore */
       }
     })()
-  }, [])
+    void refreshHabitMonitorSnapshot()
+  }, [refreshHabitMonitorSnapshot])
 
   // Screenshot delivery: when the editor finishes and main saves the image,
   // it broadcasts {path, prompt} here. Forward to the current main-session
@@ -236,6 +362,11 @@ export default function App() {
     }
   }, [])
 
+  useEffect(() => {
+    if (!showAiSettings || !currentProjectId) return
+    void refreshVisualStudioInstallations()
+  }, [showAiSettings, currentProjectId, refreshVisualStudioInstallations])
+
   /** Clear UI state tied to a specific project (drawers, dialogs, plan name). */
   const clearProjectScopedState = useCallback(() => {
     setShowGlobalSearch(false)
@@ -282,6 +413,28 @@ export default function App() {
     clearProjectScopedState()
     setCurrentProjectId(res.id)
   }, [projects, currentProjectId, clearProjectScopedState])
+
+  const handleManagedChromeAction = useCallback(async () => {
+    setManagedChromeBusy(true)
+    try {
+      if (managedChromeState.running) {
+        const result = await window.api.habit.chrome.focus()
+        if (!result.ok) {
+          showToast(result.error, { level: 'error' })
+        }
+      } else {
+        const result = await window.api.habit.chrome.start()
+        if (!result.ok) {
+          showToast(result.error, { level: 'error' })
+        } else if (result.value) {
+          setManagedChromeState(result.value)
+        }
+      }
+      await refreshHabitMonitorSnapshot()
+    } finally {
+      setManagedChromeBusy(false)
+    }
+  }, [managedChromeState.running, refreshHabitMonitorSnapshot])
 
   /** Open file picker, read content, and queue it in the preview dialog. */
   const pickExternalFileForPreview = useCallback(
@@ -466,6 +619,10 @@ export default function App() {
       cancelled = true
     }
   }, [currentProjectId])
+
+  useEffect(() => {
+    void refreshHabitMonitorSnapshot()
+  }, [currentProjectId, refreshHabitMonitorSnapshot])
 
   // Wire cc.onExit to flip sessionStatus to 'exited' when the active session exits.
   useEffect(() => {
@@ -984,6 +1141,143 @@ export default function App() {
     [sessionId, sessionStatus, getPlanAbsPath, planName]
   )
 
+  const globalSearchQuickActions = [
+    {
+      title: '习惯监控',
+      snippet: '打开习惯监控，查看托管 Chrome、活跃流程和采集设置。',
+      location: '快捷入口',
+      onOpen: () => setShowHabitMonitor(true)
+    },
+    {
+      title: '托管 Chrome',
+      snippet: managedChromeState.running
+        ? '聚焦当前托管 Chrome 会话。'
+        : '启动独立托管 Chrome 并开始网站行为采集。',
+      location: '快捷入口',
+      onOpen: () => {
+        void handleManagedChromeAction()
+      }
+    },
+    ...(!habitUiFlags.hideTemplatesEntry
+      ? [
+          {
+            title: 'Prompt 模板',
+            snippet: '管理和插入常用 prompt 模板。',
+            location: '次级入口',
+            onOpen: () => setShowTemplates(true)
+          }
+        ]
+      : []),
+    ...(!habitUiFlags.hideWizardEntry
+      ? [
+          {
+            title: '新手向导',
+            snippet: '重新打开新手上手向导。',
+            location: '次级入口',
+            onOpen: () => setShowOnboarding(true)
+          }
+        ]
+      : [])
+  ]
+
+  const commandPaletteCommands: Command[] = [
+    {
+      id: 'proj.picker',
+      label: '📁 项目管理（切换 / 新建 / 删除）',
+      keywords: 'project switch new',
+      action: () => setShowProjectPicker(true)
+    },
+    {
+      id: 'doctor',
+      label: '🩺 CLI 体检',
+      keywords: 'doctor check health',
+      action: () => setShowDoctor(true)
+    },
+    {
+      id: 'settings',
+      label: '⚙️ 设置',
+      keywords: 'settings command ai cli',
+      action: () => setShowAiSettings(true)
+    },
+    {
+      id: 'habit-monitor',
+      label: '🧠 习惯监控',
+      keywords: 'habit monitor flows automation',
+      action: () => setShowHabitMonitor(true)
+    },
+    {
+      id: 'managed-chrome',
+      label: managedChromeState.running
+        ? '🌐 聚焦托管 Chrome'
+        : '🌐 启动托管 Chrome',
+      keywords: 'managed chrome browser',
+      action: () => {
+        void handleManagedChromeAction()
+      }
+    },
+    ...(!habitUiFlags.hideTemplatesEntry
+      ? [
+          {
+            id: 'tpl',
+            label: '📋 Prompt 模板',
+            keywords: 'templates prompt snippets',
+            action: () => setShowTemplates(true)
+          }
+        ]
+      : []),
+    ...(!habitUiFlags.hideWizardEntry
+      ? [
+          {
+            id: 'onboard',
+            label: '❓ 新手向导',
+            keywords: 'help onboarding wizard',
+            action: () => setShowOnboarding(true)
+          }
+        ]
+      : []),
+    {
+      id: 'search',
+      label: '🔍 全局搜索',
+      hint: 'Ctrl+Shift+F',
+      keywords: 'find search',
+      action: () => setShowGlobalSearch(true),
+      disabled: !hasProject
+    },
+    {
+      id: 'build-panel',
+      label: '🏗️ 项目构建',
+      keywords: 'build compile msys visual studio',
+      action: () => setShowBuildPanel(true),
+      disabled: !hasProject
+    },
+    {
+      id: 'logs',
+      label: '📣 错误与通知',
+      keywords: 'errors log notifications',
+      action: () => setShowErrors(true)
+    },
+    {
+      id: 'toggle-theme',
+      label: theme === 'dark' ? '切换到浅色主题' : '切换到暗色主题',
+      keywords: 'theme dark light color',
+      action: handleToggleTheme
+    },
+    {
+      id: 'plan-review',
+      label: '📝 审阅当前方案',
+      keywords: 'plan review annotate',
+      action: () => void openPlanReview(),
+      disabled: !hasProject || !planName.trim()
+    },
+    {
+      id: 'diff-review',
+      label: '🔀 Diff 审查',
+      keywords: 'diff review code',
+      action: () => void openDiffReview(),
+      disabled: !hasProject
+    }
+  ]
+
 
   return (
     <div className="app">
@@ -1013,17 +1307,22 @@ export default function App() {
         </button>
         <button
           className="topbar-btn"
-          onClick={() => setShowTemplates(true)}
-          title="管理与插入常用 prompt 模板"
+          onClick={() => setShowHabitMonitor(true)}
+          title="查看习惯采集、托管 Chrome 和自动化流程"
         >
-          📋 模板
+          🧠 习惯监控
         </button>
         <button
           className="topbar-btn"
-          onClick={() => setShowSkillStudio(true)}
-          title="基于行为习惯自动建议 skill"
+          onClick={() => void handleManagedChromeAction()}
+          disabled={managedChromeBusy}
+          title={
+            managedChromeState.running
+              ? '聚焦当前托管 Chrome 会话'
+              : '启动托管 Chrome 并开始网站行为采集'
+          }
         >
-          🎓 Skill 学习
+          🌐 托管 Chrome
         </button>
         {mainPanelMounted && (
           <button
@@ -1040,13 +1339,6 @@ export default function App() {
           title="查看错误与通知日志"
         >
           {errorCount > 0 ? `⚠ ${errorCount}` : '📣 日志'}
-        </button>
-        <button
-          className="topbar-btn"
-          onClick={() => setShowOnboarding(true)}
-          title="新手上手引导"
-        >
-          ❓ 向导
         </button>
         <button
           className="topbar-btn"
@@ -1202,25 +1494,14 @@ export default function App() {
         <GlobalSearchDialog
           projectId={currentProjectId}
           projectDir={projectDir}
+          quickActions={globalSearchQuickActions}
           onClose={() => setShowGlobalSearch(false)}
         />
       )}
       {showCmdk && (
         <CommandPalette
           onClose={() => setShowCmdk(false)}
-          commands={[
-            { id: 'proj.picker', label: '📁 项目管理（切换 / 新建 / 删除）', keywords: 'project switch new', action: () => setShowProjectPicker(true) },
-            { id: 'onboard', label: '❓ 新手向导', keywords: 'help onboarding wizard', action: () => setShowOnboarding(true) },
-            { id: 'doctor', label: '🩺 CLI 体检', keywords: 'doctor check health', action: () => setShowDoctor(true) },
-            { id: 'settings', label: '⚙️ 设置', keywords: 'settings command ai cli', action: () => setShowAiSettings(true) },
-            { id: 'tpl', label: '📋 Prompt 模板', keywords: 'templates prompt snippets', action: () => setShowTemplates(true) },
-            { id: 'search', label: '🔍 全局搜索', hint: 'Ctrl+Shift+F', keywords: 'find search', action: () => setShowGlobalSearch(true), disabled: !hasProject },
-            { id: 'build-panel', label: '🏗️ 项目构建', keywords: 'build compile msys visual studio', action: () => setShowBuildPanel(true), disabled: !hasProject },
-            { id: 'logs', label: '📣 错误与通知', keywords: 'errors log notifications', action: () => setShowErrors(true) },
-            { id: 'toggle-theme', label: theme === 'dark' ? '切换到浅色主题' : '切换到暗色主题', keywords: 'theme dark light color', action: handleToggleTheme },
-            { id: 'plan-review', label: '📝 审阅当前方案', keywords: 'plan review annotate', action: () => void openPlanReview(), disabled: !hasProject || !planName.trim() },
-            { id: 'diff-review', label: '🔀 Diff 审查', keywords: 'diff review code', action: () => void openDiffReview(), disabled: !hasProject }
-          ] as Command[]}
+          commands={commandPaletteCommands}
         />
       )}
       {showDoctor && <DoctorDialog onClose={() => setShowDoctor(false)} />}
@@ -1328,11 +1609,14 @@ export default function App() {
           }}
         />
       )}
-      {showSkillStudio && (
-        <SkillStudioDialog
-          onClose={() => setShowSkillStudio(false)}
+      {showHabitMonitor && (
+        <HabitMonitorDialog
+          onClose={() => {
+            setShowHabitMonitor(false)
+            void refreshHabitMonitorSnapshot()
+          }}
           onOpenAiSettings={() => {
-            setShowSkillStudio(false)
+            setShowHabitMonitor(false)
             setShowAiSettings(true)
           }}
           mainCliLabel={getCliTargetLabel(aiSettings.ai_cli)}
@@ -1344,6 +1628,7 @@ export default function App() {
             void window.api.habit.settings.update({
               firstRunNoticeShownAt: Date.now()
             })
+            void refreshHabitMonitorSnapshot()
             setShowHabitFirstRun(false)
           }}
           onDisableCollection={() => {
@@ -1351,6 +1636,15 @@ export default function App() {
               enabled: false,
               firstRunNoticeShownAt: Date.now()
             })
+            setHabitSettingsSnapshot((current) =>
+              current
+                ? {
+                    ...current,
+                    enabled: false,
+                    firstRunNoticeShownAt: Date.now()
+                  }
+                : current
+            )
             setShowHabitFirstRun(false)
           }}
         />
@@ -1363,6 +1657,11 @@ export default function App() {
           initialAppSettings={appSettings}
           initialBuildConfig={visibleProjectBuildConfig}
           buildConfigReady={projectBuildConfigReady}
+          visualStudioInstallations={visualStudioInstallations}
+          visualStudioInstallationsLoading={visualStudioInstallationsLoading}
+          onRefreshVisualStudioInstallations={() => {
+            void refreshVisualStudioInstallations()
+          }}
           onClose={() => setShowAiSettings(false)}
           onSaved={(next) => {
             // If the main-session CLI binary changes while a session is

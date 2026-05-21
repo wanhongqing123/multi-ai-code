@@ -36,14 +36,20 @@ describe('habit settings defaults', () => {
     expect(DEFAULT_HABIT_SETTINGS.enabled).toBe(true)
   })
 
-  it('all 7 kinds default to enabled', () => {
+  it('all 13 kinds default to enabled', () => {
     const flags = Object.values(DEFAULT_HABIT_SETTINGS.kinds)
-    expect(flags).toHaveLength(7)
+    expect(flags).toHaveLength(13)
     expect(flags.every((v) => v === true)).toBe(true)
   })
 
   it('retention defaults to 90 days', () => {
     expect(DEFAULT_HABIT_SETTINGS.retentionDays).toBe(90)
+  })
+
+  it('managed Chrome collection and low-risk automation default to enabled', () => {
+    expect(DEFAULT_HABIT_SETTINGS.collectManagedChrome).toBe(true)
+    expect(DEFAULT_HABIT_SETTINGS.autoEnableLowRiskFlows).toBe(true)
+    expect(DEFAULT_HABIT_SETTINGS.autoPersonalizeUi).toBe(true)
   })
 })
 
@@ -53,6 +59,9 @@ describe('loadHabitSettings', () => {
     expect(s.enabled).toBe(true)
     expect(s.retentionDays).toBe(90)
     expect(s.firstRunNoticeShownAt).toBe(0)
+    expect(s.collectManagedChrome).toBe(true)
+    expect(s.autoEnableLowRiskFlows).toBe(true)
+    expect(s.autoPersonalizeUi).toBe(true)
   })
 
   it('falls back to defaults when settings file is corrupted', async () => {
@@ -67,13 +76,19 @@ describe('loadHabitSettings', () => {
       ...DEFAULT_HABIT_SETTINGS,
       enabled: false,
       retentionDays: 30,
-      firstRunNoticeShownAt: 12345
+      firstRunNoticeShownAt: 12345,
+      collectManagedChrome: false,
+      autoEnableLowRiskFlows: false,
+      autoPersonalizeUi: false
     })
     clearHabitSettingsCache()
     const s = await loadHabitSettings()
     expect(s.enabled).toBe(false)
     expect(s.retentionDays).toBe(30)
     expect(s.firstRunNoticeShownAt).toBe(12345)
+    expect(s.collectManagedChrome).toBe(false)
+    expect(s.autoEnableLowRiskFlows).toBe(false)
+    expect(s.autoPersonalizeUi).toBe(false)
   })
 })
 
@@ -97,6 +112,18 @@ describe('updateHabitSettings', () => {
       const updated = await updateHabitSettings({ retentionDays: days })
       expect(updated.retentionDays).toBe(days)
     }
+  })
+
+  it('updates the new managed Chrome and automation switches independently', async () => {
+    const updated = await updateHabitSettings({
+      collectManagedChrome: false,
+      autoEnableLowRiskFlows: false,
+      autoPersonalizeUi: false
+    })
+    expect(updated.collectManagedChrome).toBe(false)
+    expect(updated.autoEnableLowRiskFlows).toBe(false)
+    expect(updated.autoPersonalizeUi).toBe(false)
+    expect(updated.enabled).toBe(true)
   })
 })
 

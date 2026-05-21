@@ -110,6 +110,14 @@ function formatExitSummary(step: BuildStepRuntime): string | null {
   return `exit=${step.exitCode ?? 'null'}${step.signal ? ` signal=${step.signal}` : ''}`
 }
 
+function formatOutputEncodingLabel(
+  encoding: BuildStepRuntime['outputEncoding']
+): string {
+  if (encoding === 'auto') return '自动'
+  if (encoding === 'utf8') return 'UTF-8'
+  return 'GBK'
+}
+
 export default function ProjectBuildPanel(props: ProjectBuildPanelProps): JSX.Element | null {
   if (!props.open) return null
 
@@ -218,6 +226,10 @@ export default function ProjectBuildPanel(props: ProjectBuildPanelProps): JSX.El
                     </div>
                     <div className="build-step-meta">
                       <span>{step.envType === 'visual-studio' ? 'Visual Studio' : 'MSYS2'}</span>
+                      {step.envType === 'visual-studio' && step.visualStudioDisplayName ? (
+                        <span>VS: {step.visualStudioDisplayName}</span>
+                      ) : null}
+                      <span>编码: {formatOutputEncodingLabel(step.outputEncoding)}</span>
                       <span>cwd: {step.resolvedCwd ?? step.cwd}</span>
                     </div>
                     <code className="build-step-command">{step.command}</code>

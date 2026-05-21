@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  listVisualStudioInstallations,
   parseVisualStudioEnvironmentBlock,
   resolveVisualStudioEnvironment,
 } from './visualStudio.js'
@@ -15,12 +16,118 @@ describe('parseVisualStudioEnvironmentBlock', () => {
   })
 })
 
+describe('listVisualStudioInstallations', () => {
+  it('maps multiple Visual Studio installations from vswhere json and filters missing paths', async () => {
+    const execFile = vi.fn<
+      (
+        file: string,
+        args: string[],
+        options?: { cwd?: string; env?: NodeJS.ProcessEnv; timeout?: number; maxBuffer?: number }
+      ) => Promise<{ stdout: string; stderr: string }>
+    >()
+
+    execFile.mockResolvedValue({
+      stdout: JSON.stringify([
+        {
+          instanceId: 'a1',
+          displayName: 'Visual Studio Build Tools 2022',
+          installationPath: 'C:\\VS\\BuildTools',
+          productLineVersion: '2022',
+          catalog: {
+            productLineVersion: '2022',
+          },
+          isPrerelease: false,
+        },
+        {
+          instanceId: 'skip-me',
+          displayName: 'Broken Instance',
+          installationPath: '',
+          productLineVersion: '2019',
+          isPrerelease: false,
+        },
+        {
+          instanceId: 'b2',
+          displayName: 'Visual Studio Enterprise 2022 Preview',
+          installationPath: 'D:\\VS\\Enterprise',
+          catalog: {
+            productLineVersion: '2022',
+          },
+          isPrerelease: true,
+        },
+      ]),
+      stderr: '',
+    })
+
+    const result = await listVisualStudioInstallations({
+      platform: 'win32',
+      baseEnv: { SystemRoot: 'C:\\Windows' },
+      execFile,
+    })
+
+    expect(result).toEqual({
+      ok: true,
+      value: [
+        {
+          instanceId: 'a1',
+          displayName: 'Visual Studio Build Tools 2022',
+          installationPath: 'C:\\VS\\BuildTools',
+          productLineVersion: '2022',
+          isPrerelease: false,
+        },
+        {
+          instanceId: 'b2',
+          displayName: 'Visual Studio Enterprise 2022 Preview',
+          installationPath: 'D:\\VS\\Enterprise',
+          productLineVersion: '2022',
+          isPrerelease: true,
+        },
+      ],
+    })
+    expect(execFile).toHaveBeenCalledWith(
+      'C:\\Program Files (x86)\\Microsoft Visual Studio\\Installer\\vswhere.exe',
+      [
+        '-nologo',
+        '-utf8',
+        '-prerelease',
+        '-products',
+        '*',
+        '-requires',
+        'Microsoft.Component.MSBuild',
+        '-format',
+        'json',
+      ],
+      expect.objectContaining({
+        env: { SystemRoot: 'C:\\Windows' },
+      })
+    )
+  })
+
+  it('returns an error when vswhere output is valid json but not an array', async () => {
+    const execFile = vi.fn().mockResolvedValue({
+      stdout: JSON.stringify({ instanceId: 'a1' }),
+      stderr: '',
+    })
+
+    const result = await listVisualStudioInstallations({
+      platform: 'win32',
+      baseEnv: {},
+      execFile,
+    })
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'vswhere output was not an array',
+    })
+  })
+})
+
 describe('resolveVisualStudioEnvironment', () => {
   it('fails cleanly on non-Windows platforms', async () => {
     const result = await resolveVisualStudioEnvironment({
       platform: 'linux',
       baseEnv: {},
       execFile: vi.fn(),
+      instanceId: 'a1',
     })
 
     expect(result).toEqual({
@@ -29,7 +136,7 @@ describe('resolveVisualStudioEnvironment', () => {
     })
   })
 
-  it('uses vswhere + VsDevCmd.bat to materialize build env vars', async () => {
+  it('uses the selected Visual Studio instance to materialize build env vars', async () => {
     const execFile = vi.fn<
       (
         file: string,
@@ -39,7 +146,22 @@ describe('resolveVisualStudioEnvironment', () => {
     >()
 
     execFile.mockImplementationOnce(async () => ({
-      stdout: 'C:\\Program Files\\Microsoft Visual Studio\\2022\\BuildTools\r\n',
+      stdout: JSON.stringify([
+        {
+          instanceId: 'a1',
+          displayName: 'Visual Studio Build Tools 2022',
+          installationPath: 'C:\\Program Files\\Microsoft Visual Studio\\2022\\BuildTools',
+          productLineVersion: '2022',
+          isPrerelease: false,
+        },
+        {
+          instanceId: 'b2',
+          displayName: 'Visual Studio Enterprise 2022',
+          installationPath: 'D:\\VS\\Enterprise',
+          productLineVersion: '2022',
+          isPrerelease: false,
+        },
+      ]),
       stderr: '',
     }))
     execFile.mockImplementationOnce(async () => ({
@@ -51,13 +173,14 @@ describe('resolveVisualStudioEnvironment', () => {
       platform: 'win32',
       baseEnv: { Path: 'C:\\Windows\\System32', FOO: 'bar' },
       execFile,
+      instanceId: 'b2',
     })
 
     expect(result).toEqual({
       ok: true,
-      installationPath: 'C:\\Program Files\\Microsoft Visual Studio\\2022\\BuildTools',
-      devCmdPath:
-        'C:\\Program Files\\Microsoft Visual Studio\\2022\\BuildTools\\Common7\\Tools\\VsDevCmd.bat',
+      displayName: 'Visual Studio Enterprise 2022',
+      installationPath: 'D:\\VS\\Enterprise',
+      devCmdPath: 'D:\\VS\\Enterprise\\Common7\\Tools\\VsDevCmd.bat',
       env: {
         Path: 'C:\\VS\\bin',
         FOO: 'bar',
@@ -67,7 +190,17 @@ describe('resolveVisualStudioEnvironment', () => {
     expect(execFile).toHaveBeenNthCalledWith(
       1,
       'C:\\Program Files (x86)\\Microsoft Visual Studio\\Installer\\vswhere.exe',
-      ['-latest', '-products', '*', '-requires', 'Microsoft.Component.MSBuild', '-property', 'installationPath'],
+      [
+        '-nologo',
+        '-utf8',
+        '-prerelease',
+        '-products',
+        '*',
+        '-requires',
+        'Microsoft.Component.MSBuild',
+        '-format',
+        'json',
+      ],
       expect.objectContaining({
         env: { Path: 'C:\\Windows\\System32', FOO: 'bar' },
       })
@@ -79,7 +212,7 @@ describe('resolveVisualStudioEnvironment', () => {
         '/d',
         '/s',
         '/c',
-        '"C:\\Program Files\\Microsoft Visual Studio\\2022\\BuildTools\\Common7\\Tools\\VsDevCmd.bat" -no_logo && set',
+        '"D:\\VS\\Enterprise\\Common7\\Tools\\VsDevCmd.bat" -no_logo && set',
       ],
       expect.objectContaining({
         env: { Path: 'C:\\Windows\\System32', FOO: 'bar' },
@@ -87,18 +220,30 @@ describe('resolveVisualStudioEnvironment', () => {
     )
   })
 
-  it('reports a missing Visual Studio installation', async () => {
-    const execFile = vi.fn().mockResolvedValue({ stdout: '\r\n', stderr: '' })
+  it('reports a missing Visual Studio instance id', async () => {
+    const execFile = vi.fn().mockResolvedValue({
+      stdout: JSON.stringify([
+        {
+          instanceId: 'a1',
+          displayName: 'Visual Studio Build Tools 2022',
+          installationPath: 'C:\\VS\\BuildTools',
+          productLineVersion: '2022',
+          isPrerelease: false,
+        },
+      ]),
+      stderr: '',
+    })
 
     const result = await resolveVisualStudioEnvironment({
       platform: 'win32',
       baseEnv: {},
       execFile,
+      instanceId: 'b2',
     })
 
     expect(result).toEqual({
       ok: false,
-      error: 'visual studio installation not found',
+      error: 'visual studio instance not found: b2',
     })
   })
 })

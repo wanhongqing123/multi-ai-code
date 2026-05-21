@@ -1,7 +1,8 @@
 import type {
   BuildConfigValidationIssue,
   BuildStepConfig,
-  ProjectBuildConfig
+  ProjectBuildConfig,
+  VisualStudioInstallation
 } from '../../electron/preload'
 
 export interface ProjectBuildSettingsSectionProps {
@@ -9,6 +10,9 @@ export interface ProjectBuildSettingsSectionProps {
   loading: boolean
   value: ProjectBuildConfig
   disabled: boolean
+  visualStudioInstallations?: VisualStudioInstallation[]
+  visualStudioInstallationsLoading?: boolean
+  onRefreshVisualStudioInstallations?: () => void
   onChange: (next: ProjectBuildConfig) => void
 }
 
@@ -19,7 +23,9 @@ export function createBuildStep(id: string): BuildStepConfig {
     envType: 'msys',
     cwd: '.',
     command: '',
-    enabled: true
+    enabled: true,
+    visualStudioInstanceId: '',
+    outputEncoding: 'auto'
   }
 }
 
@@ -88,9 +94,21 @@ function createBuildStepId(): string {
   return `build-step-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`
 }
 
+function isMissingVisualStudioInstance(
+  step: BuildStepConfig,
+  installations: VisualStudioInstallation[]
+): boolean {
+  if (step.envType !== 'visual-studio') return false
+  if (!step.visualStudioInstanceId) return false
+  return !installations.some((item) => item.instanceId === step.visualStudioInstanceId)
+}
+
 export default function ProjectBuildSettingsSection(
   props: ProjectBuildSettingsSectionProps
 ): JSX.Element {
+  const visualStudioInstallations = props.visualStudioInstallations ?? []
+  const visualStudioInstallationsLoading = props.visualStudioInstallationsLoading ?? false
+
   const handleAddStep = (): void => {
     props.onChange(appendBuildStep(props.value, createBuildStepId()))
   }
@@ -115,6 +133,7 @@ export default function ProjectBuildSettingsSection(
             />
             <span>启用项目构建</span>
           </label>
+
           <div className="project-build-settings-toolbar">
             <button
               type="button"
@@ -125,6 +144,7 @@ export default function ProjectBuildSettingsSection(
               新增步骤
             </button>
           </div>
+
           {props.value.steps.length ? (
             <div className="project-build-settings-list">
               {props.value.steps.map((step, index) => (
@@ -161,17 +181,21 @@ export default function ProjectBuildSettingsSection(
                       </button>
                     </div>
                   </div>
+
                   <label className="ai-settings-checkbox">
                     <input
                       type="checkbox"
                       checked={step.enabled}
                       onChange={(event) =>
-                        props.onChange(updateBuildStep(props.value, index, { enabled: event.target.checked }))
+                        props.onChange(
+                          updateBuildStep(props.value, index, { enabled: event.target.checked })
+                        )
                       }
                       disabled={props.disabled}
                     />
                     <span>启用此步骤</span>
                   </label>
+
                   <div className="project-build-settings-grid">
                     <label>
                       名称
@@ -179,11 +203,14 @@ export default function ProjectBuildSettingsSection(
                         type="text"
                         value={step.name}
                         onChange={(event) =>
-                          props.onChange(updateBuildStep(props.value, index, { name: event.target.value }))
+                          props.onChange(
+                            updateBuildStep(props.value, index, { name: event.target.value })
+                          )
                         }
                         disabled={props.disabled}
                       />
                     </label>
+
                     <label>
                       环境
                       <select
@@ -203,19 +230,68 @@ export default function ProjectBuildSettingsSection(
                         </option>
                       </select>
                     </label>
+
+                    <label>
+                      输出编码
+                      <select
+                        value={step.outputEncoding}
+                        onChange={(event) =>
+                          props.onChange(
+                            updateBuildStep(props.value, index, {
+                              outputEncoding: event.target.value as BuildStepConfig['outputEncoding']
+                            })
+                          )
+                        }
+                        disabled={props.disabled}
+                      >
+                        <option value="auto">自动</option>
+                        <option value="utf8">UTF-8</option>
+                        <option value="gbk">GBK</option>
+                      </select>
+                    </label>
+
+                    {step.envType === 'visual-studio' ? (
+                      <label>
+                        Visual Studio 实例
+                        <select
+                          value={step.visualStudioInstanceId}
+                          onChange={(event) =>
+                            props.onChange(
+                              updateBuildStep(props.value, index, {
+                                visualStudioInstanceId: event.target.value
+                              })
+                            )
+                          }
+                          disabled={props.disabled}
+                        >
+                          <option value="">
+                            {visualStudioInstallationsLoading ? '正在读取实例...' : '请选择实例'}
+                          </option>
+                          {visualStudioInstallations.map((item) => (
+                            <option key={item.instanceId} value={item.instanceId}>
+                              {item.displayName}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : null}
+
                     <label className="project-build-settings-grid-full">
                       工作目录
                       <input
                         type="text"
                         value={step.cwd}
                         onChange={(event) =>
-                          props.onChange(updateBuildStep(props.value, index, { cwd: event.target.value }))
+                          props.onChange(
+                            updateBuildStep(props.value, index, { cwd: event.target.value })
+                          )
                         }
                         placeholder="仓库根目录（.）"
                         disabled={props.disabled}
                       />
                       <div className="ai-settings-note">填“.”表示仓库根目录（target_repo）</div>
                     </label>
+
                     <label className="project-build-settings-grid-full">
                       命令
                       <textarea
@@ -231,6 +307,12 @@ export default function ProjectBuildSettingsSection(
                       />
                     </label>
                   </div>
+
+                  {isMissingVisualStudioInstance(step, visualStudioInstallations) ? (
+                    <div className="ai-settings-note project-build-step-warning">
+                      所选 Visual Studio 实例当前不可用
+                    </div>
+                  ) : null}
                 </article>
               ))}
             </div>

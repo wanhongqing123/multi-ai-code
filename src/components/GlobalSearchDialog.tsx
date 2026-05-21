@@ -3,11 +3,17 @@ import { useEffect, useRef, useState } from 'react'
 export interface GlobalSearchDialogProps {
   projectId: string
   projectDir: string
+  quickActions?: {
+    title: string
+    snippet: string
+    location: string
+    onOpen: () => void
+  }[]
   onClose: () => void
 }
 
 interface Hit {
-  source: 'artifact' | 'template'
+  source: 'artifact' | 'template' | 'action'
   title: string
   snippet: string
   location: string
@@ -34,7 +40,12 @@ function highlight(text: string, q: string): JSX.Element[] {
   return parts
 }
 
-export default function GlobalSearchDialog({ projectId, projectDir, onClose }: GlobalSearchDialogProps) {
+export default function GlobalSearchDialog({
+  projectId,
+  projectDir,
+  quickActions = [],
+  onClose
+}: GlobalSearchDialogProps) {
   const [q, setQ] = useState('')
   const [results, setResults] = useState<Hit[]>([])
   const [searching, setSearching] = useState(false)
@@ -52,6 +63,18 @@ export default function GlobalSearchDialog({ projectId, projectDir, onClose }: G
       }
       setSearching(true)
       const hits: Hit[] = []
+      for (const action of quickActions) {
+        const haystack = `${action.title}\n${action.snippet}`.toLowerCase()
+        if (haystack.includes(q.toLowerCase())) {
+          hits.push({
+            source: 'action',
+            title: action.title,
+            snippet: action.snippet,
+            location: action.location,
+            open: action.onOpen
+          })
+        }
+      }
       // Artifacts
       const res = await window.api.search.artifacts(projectId, q)
       if (res.ok) {
@@ -87,7 +110,7 @@ export default function GlobalSearchDialog({ projectId, projectDir, onClose }: G
       setSearching(false)
     }, 220)
     return () => clearTimeout(id)
-  }, [q, projectId])
+  }, [q, projectId, quickActions])
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -95,7 +118,7 @@ export default function GlobalSearchDialog({ projectId, projectDir, onClose }: G
         <input
           ref={inputRef}
           className="gs-input"
-          placeholder="全局搜索：产物归档 + 模板（支持跨阶段 · 防抖 220ms）"
+          placeholder="全局搜索：产物归档 + 快捷入口 + 模板（支持跨阶段 · 防抖 220ms）"
           value={q}
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => {
@@ -111,10 +134,22 @@ export default function GlobalSearchDialog({ projectId, projectDir, onClose }: G
             <div className="drawer-empty">输入关键词开始搜索</div>
           ) : (
             results.map((h, i) => (
-              <div key={i} className="gs-hit">
+              <div
+                key={i}
+                className={`gs-hit ${h.open ? 'gs-hit-clickable' : ''}`}
+                onClick={() => {
+                  if (!h.open) return
+                  onClose()
+                  h.open()
+                }}
+              >
                 <div className="gs-hit-head">
                   <span className={`gs-hit-tag gs-tag-${h.source}`}>
-                    {h.source === 'artifact' ? '📦 产物' : '📋 模板'}
+                    {h.source === 'artifact'
+                      ? '📦 产物'
+                      : h.source === 'action'
+                        ? '⚡ 操作'
+                        : '📋 模板'}
                   </span>
                   <span className="gs-hit-title" title={h.title}>
                     {highlight(h.title, q)}

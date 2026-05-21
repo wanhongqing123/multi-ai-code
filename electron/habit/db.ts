@@ -8,6 +8,14 @@ export type HabitEventKind =
   | 'repo_view_annotation'
   | 'template_used'
   | 'plan_imported'
+  | 'panel_open'
+  | 'action_triggered'
+  | 'site_visit'
+  | 'site_click'
+  | 'site_input_hint'
+  | 'tab_switch'
+
+export type HabitEventSource = 'app_ui' | 'managed_chrome'
 
 export const ALL_HABIT_EVENT_KINDS: HabitEventKind[] = [
   'pty_cmd',
@@ -16,7 +24,13 @@ export const ALL_HABIT_EVENT_KINDS: HabitEventKind[] = [
   'diff_annotation',
   'repo_view_annotation',
   'template_used',
-  'plan_imported'
+  'plan_imported',
+  'panel_open',
+  'action_triggered',
+  'site_visit',
+  'site_click',
+  'site_input_hint',
+  'tab_switch'
 ]
 
 export interface HabitEventRow {
@@ -24,6 +38,7 @@ export interface HabitEventRow {
   ts: number
   kind: HabitEventKind
   payload: string
+  source: HabitEventSource | null
   project_id: string | null
   repo_path: string | null
   source_window: string | null
@@ -33,6 +48,7 @@ export interface InsertHabitEvent {
   ts: number
   kind: HabitEventKind
   payload: unknown
+  source?: HabitEventSource
   projectId?: string
   repoPath?: string
   sourceWindow?: string
@@ -41,13 +57,14 @@ export interface InsertHabitEvent {
 export function insertHabitEvent(e: InsertHabitEvent): number {
   const info = getDb()
     .prepare(
-      `INSERT INTO habit_events (ts, kind, payload, project_id, repo_path, source_window)
-       VALUES (?, ?, ?, ?, ?, ?)`
+      `INSERT INTO habit_events (ts, kind, payload, source, project_id, repo_path, source_window)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       e.ts,
       e.kind,
       JSON.stringify(e.payload ?? {}),
+      e.source ?? null,
       e.projectId ?? null,
       e.repoPath ?? null,
       e.sourceWindow ?? null
@@ -55,13 +72,29 @@ export function insertHabitEvent(e: InsertHabitEvent): number {
   return Number(info.lastInsertRowid)
 }
 
-export function listRecentHabitEvents(limit = 100): HabitEventRow[] {
+export function listRecentHabitEvents(
+  limit = 100,
+  source?: HabitEventSource
+): HabitEventRow[] {
+  if (source) {
+    return getDb()
+      .prepare(`SELECT * FROM habit_events WHERE source = ? ORDER BY ts DESC, id DESC LIMIT ?`)
+      .all(source, limit) as HabitEventRow[]
+  }
   return getDb()
     .prepare(`SELECT * FROM habit_events ORDER BY ts DESC, id DESC LIMIT ?`)
     .all(limit) as HabitEventRow[]
 }
 
-export function listHabitEventsSince(sinceTs: number): HabitEventRow[] {
+export function listHabitEventsSince(
+  sinceTs: number,
+  source?: HabitEventSource
+): HabitEventRow[] {
+  if (source) {
+    return getDb()
+      .prepare(`SELECT * FROM habit_events WHERE ts >= ? AND source = ? ORDER BY ts ASC`)
+      .all(sinceTs, source) as HabitEventRow[]
+  }
   return getDb()
     .prepare(`SELECT * FROM habit_events WHERE ts >= ? ORDER BY ts ASC`)
     .all(sinceTs) as HabitEventRow[]
@@ -192,5 +225,177 @@ export function updateSkillCandidateStatus(
 
 export function clearAllSkillCandidates(): number {
   const info = getDb().prepare(`DELETE FROM skill_candidates`).run()
+  return Number(info.changes)
+}
+
+// ----- Habit flows -----
+
+export type HabitFlowKind = 'app-flow' | 'site-flow' | 'ui-adjustment'
+export type HabitFlowRisk = 'low' | 'high'
+export type HabitFlowStatus = 'candidate' | 'active' | 'disabled'
+
+export interface HabitFlowRow {
+  id: number
+  kind: HabitFlowKind
+  title: string
+  summary: string
+  evidence_count: number
+  risk_level: HabitFlowRisk
+  enabled_by_default: number
+  status: HabitFlowStatus
+  payload: string
+  created_at: number
+  updated_at: number
+}
+
+export interface InsertHabitFlow {
+  kind: HabitFlowKind
+  title: string
+  summary: string
+  evidenceCount: number
+  riskLevel: HabitFlowRisk
+  enabledByDefault?: boolean
+  status?: HabitFlowStatus
+  payload: unknown
+  createdAt?: number
+  updatedAt?: number
+}
+
+export function insertHabitFlow(flow: InsertHabitFlow): number {
+  const createdAt = flow.createdAt ?? Date.now()
+  const updatedAt = flow.updatedAt ?? createdAt
+  const info = getDb()
+    .prepare(
+      `INSERT INTO habit_flows
+         (kind, title, summary, evidence_count, risk_level, enabled_by_default, status, payload, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      flow.kind,
+      flow.title,
+      flow.summary,
+      flow.evidenceCount,
+      flow.riskLevel,
+      flow.enabledByDefault ? 1 : 0,
+      flow.status ?? (flow.enabledByDefault ? 'active' : 'candidate'),
+      JSON.stringify(flow.payload ?? {}),
+      createdAt,
+      updatedAt
+    )
+  return Number(info.lastInsertRowid)
+}
+
+export function listHabitFlows(opts?: {
+  statuses?: HabitFlowStatus[]
+  limit?: number
+}): HabitFlowRow[] {
+  const statuses = opts?.statuses
+  const limit = opts?.limit ?? 200
+  if (statuses && statuses.length > 0) {
+    const placeholders = statuses.map(() => '?').join(',')
+    return getDb()
+      .prepare(
+        `SELECT * FROM habit_flows
+         WHERE status IN (${placeholders})
+         ORDER BY updated_at DESC, id DESC
+         LIMIT ?`
+      )
+      .all(...statuses, limit) as HabitFlowRow[]
+  }
+  return getDb()
+    .prepare(`SELECT * FROM habit_flows ORDER BY updated_at DESC, id DESC LIMIT ?`)
+    .all(limit) as HabitFlowRow[]
+}
+
+export function updateHabitFlowStatus(id: number, status: HabitFlowStatus): void {
+  getDb()
+    .prepare(`UPDATE habit_flows SET status = ?, updated_at = ? WHERE id = ?`)
+    .run(status, Date.now(), id)
+}
+
+export function clearAllHabitFlows(): number {
+  const info = getDb().prepare(`DELETE FROM habit_flows`).run()
+  return Number(info.changes)
+}
+
+// ----- Managed Chrome sessions -----
+
+export interface ManagedChromeSessionRow {
+  id: number
+  port: number
+  profile_dir: string
+  started_at: number
+  last_active_at: number
+  running: number
+  last_active_url: string | null
+}
+
+export interface UpsertManagedChromeSessionInput {
+  port: number
+  profileDir: string
+  startedAt: number
+  lastActiveAt?: number
+  running?: boolean
+  lastActiveUrl?: string | null
+}
+
+export function upsertManagedChromeSession(
+  session: UpsertManagedChromeSessionInput
+): ManagedChromeSessionRow {
+  const existing = getDb()
+    .prepare(
+      `SELECT * FROM managed_chrome_sessions
+       WHERE port = ? AND profile_dir = ?
+       ORDER BY id DESC
+       LIMIT 1`
+    )
+    .get(session.port, session.profileDir) as ManagedChromeSessionRow | undefined
+  const lastActiveAt = session.lastActiveAt ?? session.startedAt
+  const running = session.running === false ? 0 : 1
+  if (existing) {
+    getDb()
+      .prepare(
+        `UPDATE managed_chrome_sessions
+         SET started_at = ?, last_active_at = ?, running = ?, last_active_url = ?
+         WHERE id = ?`
+      )
+      .run(
+        session.startedAt,
+        lastActiveAt,
+        running,
+        session.lastActiveUrl ?? null,
+        existing.id
+      )
+    return getDb()
+      .prepare(`SELECT * FROM managed_chrome_sessions WHERE id = ?`)
+      .get(existing.id) as ManagedChromeSessionRow
+  }
+  const info = getDb()
+    .prepare(
+      `INSERT INTO managed_chrome_sessions
+         (port, profile_dir, started_at, last_active_at, running, last_active_url)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      session.port,
+      session.profileDir,
+      session.startedAt,
+      lastActiveAt,
+      running,
+      session.lastActiveUrl ?? null
+    )
+  return getDb()
+    .prepare(`SELECT * FROM managed_chrome_sessions WHERE id = ?`)
+    .get(info.lastInsertRowid) as ManagedChromeSessionRow
+}
+
+export function listManagedChromeSessions(limit = 20): ManagedChromeSessionRow[] {
+  return getDb()
+    .prepare(`SELECT * FROM managed_chrome_sessions ORDER BY last_active_at DESC, id DESC LIMIT ?`)
+    .all(limit) as ManagedChromeSessionRow[]
+}
+
+export function clearAllManagedChromeSessions(): number {
+  const info = getDb().prepare(`DELETE FROM managed_chrome_sessions`).run()
   return Number(info.changes)
 }

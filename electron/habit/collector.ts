@@ -1,9 +1,10 @@
-import { insertHabitEvent, type HabitEventKind } from './db.js'
+import { insertHabitEvent, type HabitEventKind, type HabitEventSource } from './db.js'
 import { isKindEnabled, loadHabitSettings } from './settings.js'
 
 export interface RecordHabitEventInput {
   kind: HabitEventKind
   text: string
+  source?: HabitEventSource
   projectId?: string
   repoPath?: string
   sourceWindow?: string
@@ -60,6 +61,7 @@ export async function recordHabitEvent(input: RecordHabitEventInput): Promise<vo
       ts: Date.now(),
       kind: input.kind,
       payload,
+      source: input.source ?? 'app_ui',
       projectId: input.projectId,
       repoPath: input.repoPath,
       sourceWindow: input.sourceWindow

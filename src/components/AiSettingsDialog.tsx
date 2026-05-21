@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import type { ProjectBuildConfig } from '../../electron/preload'
+import type {
+  ProjectBuildConfig,
+  VisualStudioInstallation
+} from '../../electron/preload'
 import ProjectBuildSettingsSection, {
   formatBuildConfigSaveError
 } from './ProjectBuildSettingsSection.js'
@@ -86,6 +89,9 @@ export interface AiSettingsDialogProps {
   initialAppSettings: AppSettings
   initialBuildConfig: ProjectBuildConfig
   buildConfigReady: boolean
+  visualStudioInstallations: VisualStudioInstallation[]
+  visualStudioInstallationsLoading: boolean
+  onRefreshVisualStudioInstallations: () => void
   onClose: () => void
   onSaved: (next: AiSettings) => void
   onSavedRepoView: (next: AiSettings) => void
@@ -536,6 +542,9 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
             loading={props.projectId !== null && !props.buildConfigReady}
             value={buildConfig}
             disabled={saving}
+            visualStudioInstallations={props.visualStudioInstallations}
+            visualStudioInstallationsLoading={props.visualStudioInstallationsLoading}
+            onRefreshVisualStudioInstallations={props.onRefreshVisualStudioInstallations}
             onChange={setBuildConfig}
           />
           {error && <div className="modal-error">⚠ {error}</div>}

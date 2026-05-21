@@ -1,11 +1,37 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { promises as fs } from 'fs'
+import { join } from 'path'
+import { tmpdir } from 'os'
 import type { AggregatedCluster } from './aggregator.js'
 import type { SkillCandidateRow } from './db.js'
+import { closeDb, initDb } from '../store/db.js'
+import { clearAllHabitFlows, insertHabitEvent, listHabitFlows } from './db.js'
 import {
   AGGREGATION_INTERVAL_MS,
   pickNewClusters,
+  runAggregationOnce,
   shouldRunAggregation
 } from './scheduler.js'
+
+let tempRoot: string | null = null
+
+beforeEach(async () => {
+  tempRoot = await fs.mkdtemp(join(tmpdir(), 'habit-scheduler-'))
+  process.env.MULTI_AI_ROOT = tempRoot
+  await fs.mkdir(tempRoot, { recursive: true })
+  closeDb()
+  initDb()
+})
+
+afterEach(async () => {
+  clearAllHabitFlows()
+  closeDb()
+  delete process.env.MULTI_AI_ROOT
+  if (tempRoot) {
+    await fs.rm(tempRoot, { recursive: true, force: true })
+    tempRoot = null
+  }
+})
 
 function mkCluster(
   ids: number[],
@@ -109,5 +135,54 @@ describe('pickNewClusters', () => {
 
   it('returns empty when input cluster list is empty', () => {
     expect(pickNewClusters([], [mkExisting([1])])).toEqual([])
+  })
+})
+
+describe('runAggregationOnce', () => {
+  it('persists generated habit flows from clustered site visits', async () => {
+    insertHabitEvent({
+      ts: 1_700_000_000_000,
+      kind: 'site_visit',
+      source: 'managed_chrome',
+      payload: {
+        text: 'Visit https://example.test/builds?from=nav',
+        origin: 'example.test',
+        path: '/builds'
+      }
+    })
+    insertHabitEvent({
+      ts: 1_700_000_000_100,
+      kind: 'site_visit',
+      source: 'managed_chrome',
+      payload: {
+        text: 'Visit https://example.test/builds?from=menu',
+        origin: 'example.test',
+        path: '/builds'
+      }
+    })
+    insertHabitEvent({
+      ts: 1_700_000_000_200,
+      kind: 'site_visit',
+      source: 'managed_chrome',
+      payload: {
+        text: 'Visit https://example.test/builds?from=search',
+        origin: 'example.test',
+        path: '/builds'
+      }
+    })
+
+    await runAggregationOnce(async () => ({ skip: true }), 1_700_000_001_000)
+
+    const flows = listHabitFlows()
+    expect(flows).toHaveLength(1)
+    expect(flows[0]).toMatchObject({
+      kind: 'site-flow',
+      risk_level: 'low',
+      status: 'active'
+    })
+    expect(JSON.parse(flows[0].payload)).toMatchObject({
+      action: 'open-managed-chrome-url',
+      url: 'https://example.test/builds'
+    })
   })
 })

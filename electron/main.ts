@@ -43,6 +43,8 @@ import { getSkillGenerator, setSkillGenerator } from './habit/generatorRegistry.
 import { createDefaultSkillGenerator } from './habit/generator.js'
 import { registerKbIpc, configureKbSettingsResolver } from './kb/ipc.js'
 import { startKbScheduler, stopKbScheduler, setProjectAiSettings } from './kb/runner.js'
+import { closeAllKbDbs } from './kb/connection.js'
+import { migrateSharedKbToPerRepo } from './kb/migrate.js'
 import {
   listPlans,
   registerExternalPlan,
@@ -1774,6 +1776,19 @@ app.whenReady().then(async () => {
   startScheduler(getSkillGenerator())
 
   registerKbIpc()
+  // One-shot migration: prior versions stored KB rows in the shared platform
+  // SQLite. Move them into per-repo kb.db files and drop the shared tables.
+  // Idempotent — no-op once the legacy tables are gone.
+  try {
+    const result = migrateSharedKbToPerRepo()
+    if (result.migrated) {
+      console.log(
+        `[kb] migrated ${result.entriesMoved} entries across ${result.reposTouched} repos to per-repo storage`
+      )
+    }
+  } catch (err) {
+    console.warn('[kb] migration failed:', err)
+  }
   // Resolver lets KB compaction read AI settings from project.json directly.
   configureKbSettingsResolver((repoPath) => {
     try {
@@ -1811,5 +1826,6 @@ app.on('before-quit', () => {
   void managedChromeManager?.stop()
   stopScheduler()
   stopKbScheduler()
+  closeAllKbDbs()
   disposeScreenshotHotkey(globalShortcut)
 })

@@ -230,7 +230,7 @@ export async function runCompaction(
       importance: Math.max(...group.map((g) => g.importance), 0.5),
       tier: target
     })
-    for (const e of group) deleteKbEntry(e.id)
+    for (const e of group) deleteKbEntry(repoPath, e.id)
     merged++
   }
 

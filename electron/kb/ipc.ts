@@ -64,13 +64,13 @@ export function registerKbIpc(): void {
     ) => {
       const results = searchKb(repoPath, query, limit ?? 20)
       // Touch access count for retrieved entries so importance scoring sees usage.
-      for (const r of results) touchKbAccess(r.entry.id)
+      for (const r of results) touchKbAccess(repoPath, r.entry.id)
       return results
     }
   )
 
-  ipcMain.handle('kb:get', async (_e, { id }: { id: number }) => {
-    return getKbEntry(id)
+  ipcMain.handle('kb:get', async (_e, { repoPath, id }: { repoPath: string; id: number }) => {
+    return getKbEntry(repoPath, id)
   })
 
   ipcMain.handle('kb:meta', async (_e, { repoPath }: { repoPath: string }) => {
@@ -86,6 +86,7 @@ export function registerKbIpc(): void {
     async (
       _e,
       req: {
+        repoPath: string
         id: number
         topic?: string
         summary?: string
@@ -93,7 +94,7 @@ export function registerKbIpc(): void {
         tier?: KbTier
       }
     ) => {
-      updateKbEntry(req.id, {
+      updateKbEntry(req.repoPath, req.id, {
         topic: req.topic,
         summary: req.summary,
         importance: req.importance,
@@ -103,24 +104,33 @@ export function registerKbIpc(): void {
     }
   )
 
-  ipcMain.handle('kb:pin', async (_e, { id }: { id: number }) => {
-    updateKbEntry(id, { tier: 'pinned' })
-    return { ok: true as const }
-  })
+  ipcMain.handle(
+    'kb:pin',
+    async (_e, { repoPath, id }: { repoPath: string; id: number }) => {
+      updateKbEntry(repoPath, id, { tier: 'pinned' })
+      return { ok: true as const }
+    }
+  )
 
-  ipcMain.handle('kb:unpin', async (_e, { id }: { id: number }) => {
-    // Unpinning drops the entry back to warm (its hot slot is gone by now).
-    updateKbEntry(id, { tier: 'warm' })
-    return { ok: true as const }
-  })
+  ipcMain.handle(
+    'kb:unpin',
+    async (_e, { repoPath, id }: { repoPath: string; id: number }) => {
+      // Unpinning drops the entry back to warm (its hot slot is gone by now).
+      updateKbEntry(repoPath, id, { tier: 'warm' })
+      return { ok: true as const }
+    }
+  )
 
-  ipcMain.handle('kb:delete', async (_e, { id }: { id: number }) => {
-    deleteKbEntry(id)
-    return { ok: true as const }
-  })
+  ipcMain.handle(
+    'kb:delete',
+    async (_e, { repoPath, id }: { repoPath: string; id: number }) => {
+      deleteKbEntry(repoPath, id)
+      return { ok: true as const }
+    }
+  )
 
   ipcMain.handle('kb:clear', async (_e, { repoPath }: { repoPath: string }) => {
-    const removed = clearKbForRepo(repoPath)
+    const removed = await clearKbForRepo(repoPath)
     return { ok: true as const, removed }
   })
 

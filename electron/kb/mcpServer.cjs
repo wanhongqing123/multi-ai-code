@@ -40,14 +40,10 @@ const ARGS = (() => {
   return out
 })()
 
-const REPO_PATH = ARGS.repo || process.env.MAC_KB_REPO_PATH || ''
+// --repo is accepted for backward-compatibility but ignored: each repo
+// now has its own kb.db file, passed via --db.
 const DB_PATH = ARGS.db || process.env.MAC_KB_DB_PATH || ''
 const DEFAULT_LIMIT = Number.parseInt(ARGS['limit-default'] || '10', 10) || 10
-
-if (!REPO_PATH || !DB_PATH) {
-  // Fatal — we can't serve anything without context. Stay alive but reply
-  // with errors so Claude Code shows a clean message instead of crashing.
-}
 
 // ---------- sqlite loader ----------
 
@@ -90,11 +86,11 @@ function queryKb(query, limit) {
                 e.access_count, e.last_accessed_at, e.updated_at, bm25(kb_fts) AS bm
            FROM kb_fts
            JOIN kb_entries e ON e.id = kb_fts.rowid
-          WHERE kb_fts MATCH ? AND e.repo_path = ?
+          WHERE kb_fts MATCH ?
           ORDER BY bm ASC
           LIMIT ?`
       )
-      .all(escapeFtsQuery(trimmed), REPO_PATH, lim)
+      .all(escapeFtsQuery(trimmed), lim)
     return { entries: rows.map(normalizeEntry) }
   } catch (err) {
     // FTS5 syntax errors fall through to LIKE
@@ -105,11 +101,11 @@ function queryKb(query, limit) {
           `SELECT id, topic, summary, evidence, importance, tier,
                   access_count, last_accessed_at, updated_at
              FROM kb_entries
-            WHERE repo_path = ? AND (topic LIKE ? ESCAPE '\\' OR summary LIKE ? ESCAPE '\\')
+            WHERE topic LIKE ? ESCAPE '\\' OR summary LIKE ? ESCAPE '\\'
             ORDER BY updated_at DESC
             LIMIT ?`
         )
-        .all(REPO_PATH, like, like, lim)
+        .all(like, like, lim)
       return { entries: rows.map(normalizeEntry) }
     } catch (err2) {
       return {
@@ -123,10 +119,8 @@ function listTopics() {
   if (!db) return { error: dbError || 'db not loaded' }
   try {
     const rows = db
-      .prepare(
-        `SELECT DISTINCT topic FROM kb_entries WHERE repo_path = ? ORDER BY topic ASC`
-      )
-      .all(REPO_PATH)
+      .prepare(`SELECT DISTINCT topic FROM kb_entries ORDER BY topic ASC`)
+      .all()
     return { topics: rows.map((r) => r.topic) }
   } catch (err) {
     return { error: err && err.message ? err.message : String(err) }
@@ -142,10 +136,10 @@ function getTopic(topic) {
         `SELECT id, topic, summary, evidence, importance, tier,
                 access_count, last_accessed_at, updated_at
            FROM kb_entries
-          WHERE repo_path = ? AND topic = ?
+          WHERE topic = ?
           ORDER BY updated_at DESC`
       )
-      .all(REPO_PATH, String(topic))
+      .all(String(topic))
     return { entries: rows.map(normalizeEntry) }
   } catch (err) {
     return { error: err && err.message ? err.message : String(err) }

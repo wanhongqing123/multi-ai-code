@@ -192,7 +192,7 @@ export function applySummaryToKb(
     for (const t of parsed.topics) {
       const existing = findKbEntryByTopic(repoPath, t.topic)
       if (existing) {
-        updateKbEntry(existing.id, {
+        updateKbEntry(repoPath, existing.id, {
           summary: t.summary,
           evidence: mergeEvidence(existing.evidence, t.evidence ?? {}),
           importance: Math.max(existing.importance, t.importance ?? 0.5)

@@ -167,10 +167,10 @@ export default function ProjectKbDialog({ repoPath, onClose }: Props): JSX.Eleme
 
   async function handlePin(id: number, currentTier: KbTier) {
     if (currentTier === 'pinned') {
-      await window.api.kb.unpin({ id })
+      await window.api.kb.unpin({ repoPath, id })
       flash('已取消 pin')
     } else {
-      await window.api.kb.pin({ id })
+      await window.api.kb.pin({ repoPath, id })
       flash('已 pin')
     }
     await refreshAll()
@@ -178,7 +178,7 @@ export default function ProjectKbDialog({ repoPath, onClose }: Props): JSX.Eleme
 
   async function handleDelete(id: number) {
     if (!confirm('确定要删除这条知识库条目吗？')) return
-    await window.api.kb.delete({ id })
+    await window.api.kb.delete({ repoPath, id })
     flash('已删除')
     await refreshAll()
   }
@@ -191,6 +191,7 @@ export default function ProjectKbDialog({ repoPath, onClose }: Props): JSX.Eleme
   async function commitEdit() {
     if (editingId == null) return
     await window.api.kb.update({
+      repoPath,
       id: editingId,
       topic: editForm.topic.trim(),
       summary: editForm.summary

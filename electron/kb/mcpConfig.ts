@@ -12,7 +12,7 @@ import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { tmpdir } from 'os'
 import { randomBytes } from 'crypto'
-import { dbPath } from '../store/paths.js'
+import { kbDbFilePath } from './connection.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -42,11 +42,14 @@ export async function writeKbMcpConfig(repoPath: string): Promise<string | null>
   const dir = join(tmpdir(), 'multi-ai-code', 'mcp-configs')
   await fs.mkdir(dir, { recursive: true })
   const file = join(dir, `kb-${randomBytes(6).toString('hex')}.json`)
+  // Point the MCP server at this repo's own kb.db file. The file may not
+  // exist yet on a brand-new repo; the server tolerates that and reports
+  // "db not loaded" through tool calls instead of crashing on startup.
   const config = {
     mcpServers: {
       'multi-ai-code-kb': {
         command: 'node',
-        args: [scriptPath, '--repo', repoPath, '--db', dbPath()]
+        args: [scriptPath, '--db', kbDbFilePath(repoPath)]
       }
     }
   }

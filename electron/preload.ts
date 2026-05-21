@@ -1033,7 +1033,7 @@ const api = {
       ipcRenderer.invoke('kb:topics', req) as Promise<string[]>,
     search: (req: { repoPath: string; query: string; limit?: number }) =>
       ipcRenderer.invoke('kb:search', req) as Promise<unknown[]>,
-    get: (req: { id: number }) =>
+    get: (req: { repoPath: string; id: number }) =>
       ipcRenderer.invoke('kb:get', req) as Promise<unknown>,
     meta: (req: { repoPath: string }) =>
       ipcRenderer.invoke('kb:meta', req) as Promise<{
@@ -1051,6 +1051,7 @@ const api = {
         lastCompactionAt: number
       }>,
     update: (req: {
+      repoPath: string
       id: number
       topic?: string
       summary?: string
@@ -1058,11 +1059,11 @@ const api = {
       tier?: string
     }) =>
       ipcRenderer.invoke('kb:update', req) as Promise<{ ok: boolean }>,
-    pin: (req: { id: number }) =>
+    pin: (req: { repoPath: string; id: number }) =>
       ipcRenderer.invoke('kb:pin', req) as Promise<{ ok: boolean }>,
-    unpin: (req: { id: number }) =>
+    unpin: (req: { repoPath: string; id: number }) =>
       ipcRenderer.invoke('kb:unpin', req) as Promise<{ ok: boolean }>,
-    delete: (req: { id: number }) =>
+    delete: (req: { repoPath: string; id: number }) =>
       ipcRenderer.invoke('kb:delete', req) as Promise<{ ok: boolean }>,
     clear: (req: { repoPath: string }) =>
       ipcRenderer.invoke('kb:clear', req) as Promise<{ ok: boolean; removed: number }>,

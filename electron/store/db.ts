@@ -122,48 +122,6 @@ CREATE INDEX IF NOT EXISTS idx_habit_flows_kind ON habit_flows(kind);
 CREATE INDEX IF NOT EXISTS idx_managed_chrome_sessions_running ON managed_chrome_sessions(running);
 CREATE INDEX IF NOT EXISTS idx_skills_trigger ON skills(trigger);
 CREATE INDEX IF NOT EXISTS idx_skills_last_used_at ON skills(last_used_at DESC);
-
-CREATE TABLE IF NOT EXISTS kb_entries (
-  id               INTEGER PRIMARY KEY AUTOINCREMENT,
-  repo_path        TEXT NOT NULL,
-  created_at       INTEGER NOT NULL,
-  updated_at       INTEGER NOT NULL,
-  topic            TEXT NOT NULL,
-  summary          TEXT NOT NULL,
-  evidence         TEXT,
-  importance       REAL NOT NULL DEFAULT 0.5,
-  tier             TEXT NOT NULL DEFAULT 'hot',
-  access_count     INTEGER NOT NULL DEFAULT 0,
-  last_accessed_at INTEGER
-);
-CREATE INDEX IF NOT EXISTS idx_kb_repo    ON kb_entries(repo_path);
-CREATE INDEX IF NOT EXISTS idx_kb_topic   ON kb_entries(repo_path, topic);
-CREATE INDEX IF NOT EXISTS idx_kb_tier    ON kb_entries(repo_path, tier);
-CREATE INDEX IF NOT EXISTS idx_kb_updated ON kb_entries(repo_path, updated_at DESC);
-
-CREATE VIRTUAL TABLE IF NOT EXISTS kb_fts USING fts5(
-  topic, summary,
-  content='kb_entries', content_rowid='id'
-);
-
--- Keep FTS in sync with kb_entries via triggers.
-CREATE TRIGGER IF NOT EXISTS kb_fts_ai AFTER INSERT ON kb_entries BEGIN
-  INSERT INTO kb_fts(rowid, topic, summary) VALUES (new.id, new.topic, new.summary);
-END;
-CREATE TRIGGER IF NOT EXISTS kb_fts_ad AFTER DELETE ON kb_entries BEGIN
-  INSERT INTO kb_fts(kb_fts, rowid, topic, summary) VALUES('delete', old.id, old.topic, old.summary);
-END;
-CREATE TRIGGER IF NOT EXISTS kb_fts_au AFTER UPDATE ON kb_entries BEGIN
-  INSERT INTO kb_fts(kb_fts, rowid, topic, summary) VALUES('delete', old.id, old.topic, old.summary);
-  INSERT INTO kb_fts(rowid, topic, summary) VALUES (new.id, new.topic, new.summary);
-END;
-
-CREATE TABLE IF NOT EXISTS kb_meta (
-  repo_path           TEXT PRIMARY KEY,
-  last_summary_at     INTEGER NOT NULL DEFAULT 0,
-  last_compaction_at  INTEGER NOT NULL DEFAULT 0,
-  digest              TEXT NOT NULL DEFAULT ''
-);
 `
 
 function ensureColumn(

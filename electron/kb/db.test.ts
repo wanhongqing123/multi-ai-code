@@ -43,7 +43,6 @@ describe('rowToEntry: evidence JSON', () => {
   function row(over: Record<string, unknown> = {}) {
     return {
       id: 1,
-      repo_path: '/r',
       created_at: 1,
       updated_at: 1,
       topic: 't',
@@ -59,29 +58,29 @@ describe('rowToEntry: evidence JSON', () => {
 
   it('parses valid evidence JSON into the camelCase shape', () => {
     const r = row({ evidence: '{"commits":["a1b2"],"files":["src/app.ts"]}' })
-    const e = rowToEntry(r)
+    const e = rowToEntry(r, '/r')
     expect(e.evidence.commits).toEqual(['a1b2'])
     expect(e.evidence.files).toEqual(['src/app.ts'])
   })
 
   it('returns empty evidence for null evidence', () => {
-    expect(rowToEntry(row({ evidence: null })).evidence).toEqual({})
+    expect(rowToEntry(row({ evidence: null }), '/r').evidence).toEqual({})
   })
 
   it('tolerates malformed JSON without throwing', () => {
-    expect(rowToEntry(row({ evidence: '{not json' })).evidence).toEqual({})
+    expect(rowToEntry(row({ evidence: '{not json' }), '/r').evidence).toEqual({})
   })
 
-  it('maps snake_case row fields to camelCase entry fields', () => {
+  it('attaches the supplied repoPath onto the entry (column no longer exists)', () => {
     const e = rowToEntry(
       row({
         id: 42,
-        repo_path: '/foo/bar',
         created_at: 1000,
         updated_at: 2000,
         access_count: 5,
         last_accessed_at: 3000
-      })
+      }),
+      '/foo/bar'
     )
     expect(e.id).toBe(42)
     expect(e.repoPath).toBe('/foo/bar')

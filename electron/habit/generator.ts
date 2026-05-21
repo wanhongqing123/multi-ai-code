@@ -7,6 +7,7 @@ import { projectDir as projectDirFn } from '../store/paths.js'
 import { getDb } from '../store/db.js'
 import { buildEnvWithPath, resolveCliSpawn } from './cliSpawn.js'
 import { isValidStep, type SkillStep } from './skills.js'
+import { enqueueCliJob } from '../util/cliQueue.js'
 
 export interface SkillTemplate {
   title: string
@@ -359,7 +360,11 @@ export function createDefaultSkillGenerator(): GenerateFn {
     if (settings) {
       try {
         const prompt = buildGenerationPrompt(cluster)
-        const result = await runCliGeneration(prompt, settings)
+        // Funnel through the shared CLI queue so the KB summarizer can't
+        // race for the same OAuth token / rate-limit budget.
+        const result = await enqueueCliJob('habit-skill-gen', () =>
+          runCliGeneration(prompt, settings)
+        )
         if (result.ok && result.template) {
           return templateToGenerateResult(result.template)
         }

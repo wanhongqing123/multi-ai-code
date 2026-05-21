@@ -41,6 +41,8 @@ import {
 import { startScheduler, stopScheduler } from './habit/scheduler.js'
 import { getSkillGenerator, setSkillGenerator } from './habit/generatorRegistry.js'
 import { createDefaultSkillGenerator } from './habit/generator.js'
+import { registerKbIpc, configureKbSettingsResolver } from './kb/ipc.js'
+import { startKbScheduler, stopKbScheduler, setProjectAiSettings } from './kb/runner.js'
 import {
   listPlans,
   registerExternalPlan,
@@ -48,7 +50,7 @@ import {
 } from './orchestrator/plans.js'
 import { detectMsys, buildOpenMsysTerminalCommand } from './util/msys.js'
 import { spawn as spawnChild } from 'child_process'
-import { promises as fs } from 'fs'
+import { promises as fs, readFileSync } from 'fs'
 import { snapshotArtifact } from './store/snapshot.js'
 import { resolvePlanArtifactAbs } from './orchestrator/prompts.js'
 import { buildRepoViewSearch } from './repo-view/windowMode.js'
@@ -1771,6 +1773,25 @@ app.whenReady().then(async () => {
   setSkillGenerator(createDefaultSkillGenerator())
   startScheduler(getSkillGenerator())
 
+  registerKbIpc()
+  // Resolver lets KB compaction read AI settings from project.json directly.
+  configureKbSettingsResolver((repoPath) => {
+    try {
+      const projects = listProjects()
+      const found = projects.find((p) => p.target_repo === repoPath)
+      if (!found) return null
+      const raw = readFileSync(
+        join(projectDirFn(found.id), 'project.json'),
+        'utf8'
+      )
+      const meta = JSON.parse(raw) as { ai_settings?: Record<string, unknown> }
+      return (meta.ai_settings as never) ?? null
+    } catch {
+      return null
+    }
+  })
+  startKbScheduler()
+
   createWindow()
 
   app.on('activate', () => {
@@ -1789,5 +1810,6 @@ app.on('before-quit', () => {
   killAllSessions()
   void managedChromeManager?.stop()
   stopScheduler()
+  stopKbScheduler()
   disposeScreenshotHotkey(globalShortcut)
 })

@@ -22,6 +22,7 @@ import SkillBar from './habit/SkillBar'
 import SkillRunDialog from './habit/SkillRunDialog'
 import { runSkill as runSkillFn } from './habit/skillRunner'
 import { collectSkillVariables, type Skill } from './habit/skillTypes'
+import ProjectKbDialog from './kb/ProjectKbDialog'
 import { getCliTargetLabel } from './components/cliTarget'
 import OnboardingWizard from './components/OnboardingWizard'
 import DoctorDialog from './components/DoctorDialog'
@@ -165,6 +166,7 @@ function AppShell() {
     useState(false)
   const [showTemplates, setShowTemplates] = useState(false)
   const [showHabitMonitor, setShowHabitMonitor] = useState(false)
+  const [showProjectKb, setShowProjectKb] = useState(false)
   const [showHabitFirstRun, setShowHabitFirstRun] = useState(false)
   /** Bumped whenever a skill is created/edited/deleted so SkillBar refetches. */
   const [skillsRefreshNonce, setSkillsRefreshNonce] = useState(0)
@@ -1384,6 +1386,14 @@ function AppShell() {
         >
           🌐 托管 Chrome
         </button>
+        <button
+          className="topbar-btn"
+          onClick={() => setShowProjectKb(true)}
+          disabled={!targetRepo}
+          title="本项目的知识库（自动积累 · 可搜索）"
+        >
+          🧠 项目记忆
+        </button>
         {mainPanelMounted && (
           <button
             className="topbar-btn"
@@ -1689,6 +1699,12 @@ function AppShell() {
             setShowAiSettings(true)
           }}
           mainCliLabel={getCliTargetLabel(aiSettings.ai_cli)}
+        />
+      )}
+      {showProjectKb && targetRepo && (
+        <ProjectKbDialog
+          repoPath={targetRepo}
+          onClose={() => setShowProjectKb(false)}
         />
       )}
       {pendingSkillRun && (

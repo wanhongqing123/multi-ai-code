@@ -21,6 +21,7 @@ import {
 } from '../components/terminalClipboard.js'
 import { buildDroppedFileInput } from '../components/terminalDragDrop.js'
 import { scheduleTerminalMeasurementRecovery } from '../components/terminalLayoutRecovery.js'
+import { stretchTerminalRootToHost } from '../components/terminalHostLayout.js'
 
 export interface RepoTerminalPanelProps {
   /** CLI label shown in the header (e.g. "claude"). */
@@ -58,6 +59,7 @@ export default function RepoTerminalPanel(
     const fit = new FitAddon()
     term.loadAddon(fit)
     term.open(containerRef.current)
+    stretchTerminalRootToHost(containerRef.current)
     if (shouldUseMainTerminalCanvasRenderer()) {
       term.loadAddon(new CanvasAddon())
     }

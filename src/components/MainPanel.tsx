@@ -23,6 +23,7 @@ import {
 } from './terminalClipboard.js'
 import { buildDroppedFileInput } from './terminalDragDrop.js'
 import { scheduleTerminalMeasurementRecovery } from './terminalLayoutRecovery.js'
+import { stretchTerminalRootToHost } from './terminalHostLayout.js'
 
 export interface MainPanelProps {
   sessionId: string
@@ -77,6 +78,7 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
     term.loadAddon(search)
     searchRef.current = search
     term.open(containerRef.current)
+    stretchTerminalRootToHost(containerRef.current)
     if (shouldUseMainTerminalCanvasRenderer()) {
       term.loadAddon(new CanvasAddon())
     }

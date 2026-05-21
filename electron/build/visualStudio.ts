@@ -1,8 +1,7 @@
 import { execFile } from 'child_process'
+import iconv from 'iconv-lite'
 import { join } from 'path'
-import { promisify } from 'util'
 
-const execFileAsync = promisify(execFile)
 const DEFAULT_VSWHERE_PATH = 'C:\\Program Files (x86)\\Microsoft Visual Studio\\Installer\\vswhere.exe'
 
 export interface VisualStudioInstallation {
@@ -44,11 +43,66 @@ export type VisualStudioEnvironmentResult =
   | VisualStudioEnvironmentResultOk
   | VisualStudioEnvironmentResultError
 
+interface ExecFileResult {
+  stdout: string | Buffer
+  stderr: string | Buffer
+}
+
 export type ExecFileLike = (
   file: string,
   args: string[],
   options?: { cwd?: string; env?: NodeJS.ProcessEnv; timeout?: number; maxBuffer?: number }
-) => Promise<{ stdout: string; stderr: string }>
+) => Promise<ExecFileResult>
+
+type ExecFileError = Error & {
+  stdout?: string | Buffer
+  stderr?: string | Buffer
+}
+
+function defaultExecFile(
+  file: string,
+  args: string[],
+  options?: { cwd?: string; env?: NodeJS.ProcessEnv; timeout?: number; maxBuffer?: number }
+): Promise<ExecFileResult> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      file,
+      args,
+      {
+        ...options,
+        encoding: 'buffer',
+      },
+      (error, stdout, stderr) => {
+        if (error) {
+          const nextError = error as ExecFileError
+          nextError.stdout = stdout
+          nextError.stderr = stderr
+          reject(nextError)
+          return
+        }
+        resolve({ stdout, stderr })
+      }
+    )
+  })
+}
+
+function decodeOutput(value: string | Buffer | undefined, encoding: 'utf8' | 'gbk'): string {
+  if (value === undefined) return ''
+  if (typeof value === 'string') return value
+  return iconv.decode(value, encoding)
+}
+
+function formatExecFileError(error: unknown, encoding: 'utf8' | 'gbk'): string {
+  if (!(error instanceof Error)) return String(error)
+
+  const stderr = decodeOutput((error as ExecFileError).stderr, encoding).trim()
+  if (stderr) return stderr
+
+  const stdout = decodeOutput((error as ExecFileError).stdout, encoding).trim()
+  if (stdout) return stdout
+
+  return error.message
+}
 
 function copyDefinedEnv(input: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const output: NodeJS.ProcessEnv = {}
@@ -109,10 +163,7 @@ export async function listVisualStudioInstallations(options?: {
   }
 
   const baseEnv = copyDefinedEnv(options?.baseEnv ?? process.env)
-  const runExecFile: ExecFileLike =
-    options?.execFile ??
-    ((file, args, execOptions) =>
-      execFileAsync(file, args, execOptions) as Promise<{ stdout: string; stderr: string }>)
+  const runExecFile: ExecFileLike = options?.execFile ?? defaultExecFile
 
   try {
     const { stdout: vswhereStdout } = await runExecFile(
@@ -131,7 +182,7 @@ export async function listVisualStudioInstallations(options?: {
       { env: baseEnv, timeout: 5000, maxBuffer: 1024 * 1024 }
     )
 
-    const parsed = JSON.parse(vswhereStdout) as unknown
+    const parsed = JSON.parse(decodeOutput(vswhereStdout, 'utf8')) as unknown
     if (!Array.isArray(parsed)) {
       return { ok: false, error: 'vswhere output was not an array' }
     }
@@ -142,7 +193,7 @@ export async function listVisualStudioInstallations(options?: {
 
     return { ok: true, value }
   } catch (error: unknown) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    return { ok: false, error: formatExecFileError(error, 'utf8') }
   }
 }
 
@@ -166,18 +217,21 @@ export async function resolveVisualStudioEnvironment(options: {
   }
 
   const baseEnv = copyDefinedEnv(options.baseEnv ?? process.env)
-  const runExecFile: ExecFileLike =
-    options.execFile ??
-    ((file, args, execOptions) =>
-      execFileAsync(file, args, execOptions) as Promise<{ stdout: string; stderr: string }>)
+  const runExecFile: ExecFileLike = options.execFile ?? defaultExecFile
 
   try {
     const devCmdPath = join(installation.installationPath, 'Common7', 'Tools', 'VsDevCmd.bat')
-    const { stdout } = await runExecFile('cmd.exe', ['/d', '/s', '/c', `"${devCmdPath}" -no_logo && set`], {
-      env: baseEnv,
-      timeout: 15000,
-      maxBuffer: 8 * 1024 * 1024,
-    })
+    const { stdout } = await runExecFile(
+      'cmd.exe',
+      ['/d', '/s', '/c', `call "${devCmdPath}" -no_logo && set`],
+      {
+        env: baseEnv,
+        timeout: 15000,
+        maxBuffer: 8 * 1024 * 1024,
+      }
+    )
+
+    const decodedStdout = decodeOutput(stdout, 'gbk')
 
     return {
       ok: true,
@@ -186,10 +240,10 @@ export async function resolveVisualStudioEnvironment(options: {
       devCmdPath,
       env: {
         ...baseEnv,
-        ...parseVisualStudioEnvironmentBlock(stdout),
+        ...parseVisualStudioEnvironmentBlock(decodedStdout),
       },
     }
   } catch (error: unknown) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    return { ok: false, error: formatExecFileError(error, 'gbk') }
   }
 }

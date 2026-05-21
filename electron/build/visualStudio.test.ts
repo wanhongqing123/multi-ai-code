@@ -1,3 +1,4 @@
+import iconv from 'iconv-lite'
 import { describe, expect, it, vi } from 'vitest'
 import {
   listVisualStudioInstallations,
@@ -157,7 +158,7 @@ describe('resolveVisualStudioEnvironment', () => {
         {
           instanceId: 'b2',
           displayName: 'Visual Studio Enterprise 2022',
-          installationPath: 'D:\\VS\\Enterprise',
+          installationPath: 'C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise',
           productLineVersion: '2022',
           isPrerelease: false,
         },
@@ -179,8 +180,9 @@ describe('resolveVisualStudioEnvironment', () => {
     expect(result).toEqual({
       ok: true,
       displayName: 'Visual Studio Enterprise 2022',
-      installationPath: 'D:\\VS\\Enterprise',
-      devCmdPath: 'D:\\VS\\Enterprise\\Common7\\Tools\\VsDevCmd.bat',
+      installationPath: 'C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise',
+      devCmdPath:
+        'C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\Common7\\Tools\\VsDevCmd.bat',
       env: {
         Path: 'C:\\VS\\bin',
         FOO: 'bar',
@@ -212,7 +214,7 @@ describe('resolveVisualStudioEnvironment', () => {
         '/d',
         '/s',
         '/c',
-        '"D:\\VS\\Enterprise\\Common7\\Tools\\VsDevCmd.bat" -no_logo && set',
+        'call "C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\Common7\\Tools\\VsDevCmd.bat" -no_logo && set',
       ],
       expect.objectContaining({
         env: { Path: 'C:\\Windows\\System32', FOO: 'bar' },
@@ -244,6 +246,52 @@ describe('resolveVisualStudioEnvironment', () => {
     expect(result).toEqual({
       ok: false,
       error: 'visual studio instance not found: b2',
+    })
+  })
+
+  it('decodes cmd.exe failures from gbk when VsDevCmd cannot be invoked', async () => {
+    const execFile = vi.fn<
+      (
+        file: string,
+        args: string[],
+        options?: { cwd?: string; env?: NodeJS.ProcessEnv; timeout?: number; maxBuffer?: number }
+      ) => Promise<{ stdout: string | Buffer; stderr: string | Buffer }>
+    >()
+
+    execFile.mockImplementationOnce(async () => ({
+      stdout: JSON.stringify([
+        {
+          instanceId: 'a1',
+          displayName: 'Visual Studio Community 2022',
+          installationPath: 'C:\\Program Files\\Microsoft Visual Studio\\2022\\Community',
+          productLineVersion: '2022',
+          isPrerelease: false,
+        },
+      ]),
+      stderr: '',
+    }))
+    execFile.mockRejectedValueOnce(
+      Object.assign(new Error('Command failed'), {
+        stdout: Buffer.alloc(0),
+        stderr: iconv.encode(
+          `'"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\Common7\\Tools\\VsDevCmd.bat"' 不是内部或外部命令，也不是可运行的程序或批处理文件。`,
+          'gbk'
+        ),
+      })
+    )
+
+    const result = await resolveVisualStudioEnvironment({
+      platform: 'win32',
+      baseEnv: { Path: 'C:\\Windows\\System32' },
+      execFile,
+      instanceId: 'a1',
+    })
+
+    expect(result).toEqual({
+      ok: false,
+      error:
+        `'"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\Common7\\Tools\\VsDevCmd.bat"' ` +
+        '不是内部或外部命令，也不是可运行的程序或批处理文件。',
     })
   })
 })

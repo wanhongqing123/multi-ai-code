@@ -20,6 +20,19 @@ export interface HabitSettings {
   autoEnableLowRiskFlows: boolean
   /** Allow light UI personalization such as hiding low-frequency entries. */
   autoPersonalizeUi: boolean
+  /**
+   * Phase 4 — screen sampler controls. Persisted alongside other habit
+   * settings so the topbar pause toggle / the (future) "屏幕采集" tab in
+   * habit-monitor share one source of truth.
+   */
+  screenSampler: {
+    /** Master switch for both L1 (window) and L2 (frame) sampling. */
+    enabled: boolean
+    /** When true, both samplers skip every tick but stay registered. */
+    paused: boolean
+    /** Substrings to drop (case-insensitive on title/appName/bundleId). */
+    appBlocklist: string[]
+  }
 }
 
 export const DEFAULT_HABIT_SETTINGS: HabitSettings = {
@@ -33,7 +46,14 @@ export const DEFAULT_HABIT_SETTINGS: HabitSettings = {
   lastAggregatedAt: 0,
   collectManagedChrome: true,
   autoEnableLowRiskFlows: true,
-  autoPersonalizeUi: true
+  autoPersonalizeUi: true,
+  screenSampler: {
+    enabled: true,
+    paused: false,
+    // The runtime appends DEFAULT_APP_BLOCKLIST to whatever is in here;
+    // this is the user-editable extension list (empty by default).
+    appBlocklist: []
+  }
 }
 
 export const ALLOWED_RETENTION_DAYS = [30, 60, 90, 180] as const
@@ -131,6 +151,21 @@ export function mergeWithDefaults(input: Partial<HabitSettings>): HabitSettings 
     autoPersonalizeUi:
       typeof input.autoPersonalizeUi === 'boolean'
         ? input.autoPersonalizeUi
-        : DEFAULT_HABIT_SETTINGS.autoPersonalizeUi
+        : DEFAULT_HABIT_SETTINGS.autoPersonalizeUi,
+    screenSampler: mergeScreenSamplerSettings(input.screenSampler)
+  }
+}
+
+function mergeScreenSamplerSettings(
+  input: Partial<HabitSettings['screenSampler']> | undefined
+): HabitSettings['screenSampler'] {
+  const d = DEFAULT_HABIT_SETTINGS.screenSampler
+  if (!input || typeof input !== 'object') return { ...d, appBlocklist: [...d.appBlocklist] }
+  return {
+    enabled: typeof input.enabled === 'boolean' ? input.enabled : d.enabled,
+    paused: typeof input.paused === 'boolean' ? input.paused : d.paused,
+    appBlocklist: Array.isArray(input.appBlocklist)
+      ? input.appBlocklist.filter((s): s is string => typeof s === 'string')
+      : [...d.appBlocklist]
   }
 }

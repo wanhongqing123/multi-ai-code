@@ -6338,3 +6338,55 @@ html, body, #root {
   overflow-x: auto;
   margin: 0;
 }
+
+/* ===== Screen sampler topbar indicator ===== */
+.screen-sampler-indicator {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--mac-border-subtle, #e0e0e0);
+  border-radius: 999px;
+  background: var(--mac-surface, #fafafa);
+  color: var(--mac-fg, #111);
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--mac-dur-fast, 120ms) ease;
+}
+.screen-sampler-indicator:hover:not(:disabled) {
+  background: var(--mac-surface-raised, #fff);
+}
+.screen-sampler-indicator:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+.screen-sampler-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #9aa0a6;
+  box-shadow: 0 0 0 0 rgba(154, 160, 166, 0);
+}
+.screen-sampler-dot.active {
+  background: #34a853;
+  animation: screen-sampler-pulse 1.6s infinite;
+}
+.screen-sampler-dot.paused {
+  background: #9aa0a6;
+}
+.screen-sampler-dot.error {
+  background: #ea4335;
+}
+.screen-sampler-text {
+  font-family: var(--mono-font, monospace);
+  font-size: 11px;
+  color: var(--mac-fg-muted, #555);
+}
+@keyframes screen-sampler-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(52, 168, 83, 0.55); }
+  70%  { box-shadow: 0 0 0 6px rgba(52, 168, 83, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(52, 168, 83, 0); }
+}

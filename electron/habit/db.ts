@@ -14,6 +14,9 @@ export type HabitEventKind =
   | 'site_click'
   | 'site_input_hint'
   | 'tab_switch'
+  // Phase 4 — screen sampler (L1 active window, L2 thumbnail frame).
+  | 'screen_window'
+  | 'screen_frame'
 
 export type HabitEventSource = 'app_ui' | 'managed_chrome'
 
@@ -30,7 +33,9 @@ export const ALL_HABIT_EVENT_KINDS: HabitEventKind[] = [
   'site_visit',
   'site_click',
   'site_input_hint',
-  'tab_switch'
+  'tab_switch',
+  'screen_window',
+  'screen_frame'
 ]
 
 export interface HabitEventRow {

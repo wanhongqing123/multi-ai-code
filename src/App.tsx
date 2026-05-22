@@ -17,6 +17,7 @@ import AiSettingsDialog, {
 import ProjectBuildPanel, { getBuildStartBlockedReason } from './components/ProjectBuildPanel'
 import TemplatesDialog from './components/TemplatesDialog'
 import HabitMonitorDialog from './habit/HabitMonitorDialog'
+import ScreenSamplerIndicator from './habit/ScreenSamplerIndicator'
 import FirstRunNoticeDialog from './habit/FirstRunNoticeDialog'
 import SkillBar from './habit/SkillBar'
 import SkillRunDialog from './habit/SkillRunDialog'
@@ -1394,6 +1395,7 @@ function AppShell() {
         >
           🧠 项目记忆
         </button>
+        <ScreenSamplerIndicator />
         {mainPanelMounted && (
           <button
             className="topbar-btn"

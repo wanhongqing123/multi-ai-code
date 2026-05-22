@@ -26,6 +26,10 @@ import {
 } from './store/paths.js'
 import { registerPtyIpc, killAllSessions } from './cc/ptyManager.js'
 import { registerHabitIpc } from './habit/ipc.js'
+import {
+  startScreenSamplerService,
+  stopScreenSamplerService
+} from './habit/screenSamplerService.js'
 import { recordHabitEvent } from './habit/collector.js'
 import { createManagedChromeManager } from './habit/managedChrome.js'
 import { registerScreenshotIpc } from './screenshot/manager.js'
@@ -1775,6 +1779,14 @@ app.whenReady().then(async () => {
   setSkillGenerator(createDefaultSkillGenerator())
   startScheduler(getSkillGenerator())
 
+  // Phase 4: screen sampler (L1 active window + L2 thumbnail). Reads its
+  // own pause flag live from habit settings; topbar dot reflects state.
+  try {
+    await startScreenSamplerService()
+  } catch (err) {
+    console.warn('[screen-sampler] failed to start:', err)
+  }
+
   registerKbIpc()
   // One-shot migration: prior versions stored KB rows in the shared platform
   // SQLite. Move them into per-repo kb.db files and drop the shared tables.
@@ -1826,6 +1838,7 @@ app.on('before-quit', () => {
   void managedChromeManager?.stop()
   stopScheduler()
   stopKbScheduler()
+  stopScreenSamplerService()
   closeAllKbDbs()
   disposeScreenshotHotkey(globalShortcut)
 })

@@ -927,6 +927,30 @@ const api = {
       clear: () =>
         ipcRenderer.invoke('habit:events:clear') as Promise<{ ok: boolean; removed: number }>
     },
+    screenSampler: {
+      state: () =>
+        ipcRenderer.invoke('habit:screen-sampler:state') as Promise<{
+          enabled: boolean
+          paused: boolean
+          runtime: {
+            running: boolean
+            lastL1At: number
+            lastL2At: number
+            lastError: { label: string; message: string; at: number } | null
+            lastWindowTitle: string | null
+            lastWindowApp: string | null
+          } | null
+          activeWinLoadError: string | null
+        }>,
+      togglePause: () =>
+        ipcRenderer.invoke('habit:screen-sampler:toggle-pause') as Promise<{
+          paused: boolean
+        }>,
+      setPaused: (paused: boolean) =>
+        ipcRenderer.invoke('habit:screen-sampler:set-paused', { paused }) as Promise<{
+          paused: boolean
+        }>
+    },
     runNow: () =>
       ipcRenderer.invoke('habit:run-now') as Promise<
         | {

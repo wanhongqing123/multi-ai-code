@@ -25,6 +25,12 @@ import { runAggregationCoalesced } from './scheduler.js'
 import { getSkillGenerator } from './generatorRegistry.js'
 import type { ManagedChromeManager, ManagedChromeState } from './managedChrome.js'
 import {
+  getScreenSamplerStatus,
+  refreshScreenSamplerLiveState,
+  setScreenSamplerPaused,
+  toggleScreenSamplerPause
+} from './screenSamplerService.js'
+import {
   createSkill,
   deleteSkill,
   getSkill,
@@ -74,8 +80,30 @@ export function registerHabitIpc(opts: { managedChromeManager?: ManagedChromeMan
   })
 
   ipcMain.handle('habit:settings:update', async (_e, patch: Partial<HabitSettings>) => {
-    return updateHabitSettings(patch)
+    const next = await updateHabitSettings(patch)
+    // If screen-sampler settings changed, refresh the live cache so the
+    // next tick reads the new blocklist / pause flag without restarting.
+    if (patch.screenSampler !== undefined) {
+      await refreshScreenSamplerLiveState()
+    }
+    return next
   })
+
+  // ----- screen sampler IPC -----
+  ipcMain.handle('habit:screen-sampler:state', async () => {
+    return getScreenSamplerStatus()
+  })
+
+  ipcMain.handle('habit:screen-sampler:toggle-pause', async () => {
+    return toggleScreenSamplerPause()
+  })
+
+  ipcMain.handle(
+    'habit:screen-sampler:set-paused',
+    async (_e, { paused }: { paused: boolean }) => {
+      return setScreenSamplerPaused(!!paused)
+    }
+  )
 
   ipcMain.handle('habit:events:recent', async (_e, { limit = 100 }: { limit?: number } = {}) => {
     return { events: listRecentHabitEvents(limit), total: countHabitEvents() }

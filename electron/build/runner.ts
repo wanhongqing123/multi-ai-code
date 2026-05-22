@@ -328,8 +328,9 @@ export function createBuildRunner(partialDeps?: Partial<BuildRunnerDeps>): Build
     return { child, resolvedCwd }
   }
 
-  async function runBuild(config: ProjectBuildConfig): Promise<void> {
-    if (!config.enabled) {
+  async function runBuild(request: StartBuildRequest): Promise<void> {
+    const scope = request.scope ?? 'all'
+    if (!request.config.enabled) {
       markPendingStepsSkipped(state.steps)
       state.status = 'stopped'
       state.finishedAt = deps.now()
@@ -337,7 +338,10 @@ export function createBuildRunner(partialDeps?: Partial<BuildRunnerDeps>): Build
       return
     }
 
-    const runnableSteps = state.steps.filter((step) => step.enabled)
+    const runnableSteps =
+      scope === 'single-step'
+        ? state.steps.filter((step) => step.id === request.stepId && step.enabled)
+        : state.steps.filter((step) => step.enabled)
     if (runnableSteps.length === 0) {
       state.status = 'succeeded'
       state.finishedAt = deps.now()
@@ -481,9 +485,10 @@ export function createBuildRunner(partialDeps?: Partial<BuildRunnerDeps>): Build
       stopCurrentStepRequested = false
       logTruncated = false
       currentStepControl = null
+      const scope = request.scope ?? 'all'
       state = {
         status: 'running',
-        scope: request.scope ?? 'all',
+        scope,
         requestedStepId: request.stepId ?? null,
         projectId: request.projectId,
         projectName: request.projectName,
@@ -494,7 +499,10 @@ export function createBuildRunner(partialDeps?: Partial<BuildRunnerDeps>): Build
         steps: request.config.steps.map((step) => ({
           ...step,
           visualStudioDisplayName: null,
-          status: step.enabled ? 'pending' : 'skipped',
+          status:
+            scope === 'all'
+              ? step.enabled ? 'pending' : 'skipped'
+              : step.enabled && step.id === request.stepId ? 'pending' : 'not-run',
           resolvedCwd: null,
           startedAt: null,
           finishedAt: null,
@@ -505,7 +513,7 @@ export function createBuildRunner(partialDeps?: Partial<BuildRunnerDeps>): Build
         lastFailure: null,
       }
       emitStatus()
-      void runBuild(request.config).finally(() => {
+      void runBuild(request).finally(() => {
         markStarted()
       })
       if (state.status !== 'running' || state.activeStepId !== null || !state.steps.some((step) => step.enabled)) {

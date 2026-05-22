@@ -66,6 +66,7 @@ import {
   setProjectBuildConfig,
   type ProjectBuildConfig
 } from './build/config.js'
+import { resolveBuildExecutionScope } from './build/executionScope.js'
 import { createBuildRunner } from './build/runner.js'
 import { getFailureAnalysisPrompt as getBuildFailureAnalysisPrompt } from './build/analysisPrompt.js'
 import { listVisualStudioInstallations } from './build/visualStudio.js'
@@ -871,64 +872,85 @@ app.whenReady().then(async () => {
     }
   )
 
-  ipcMain.handle('build:start', async (_e, { id }: { id: string }) => {
-    const row = getProject(id)
-    if (!row) {
-      return { ok: false as const, error: 'project not found', state: buildRunner.getState() }
-    }
-
-    const metaPath = join(projectDirFn(id), 'project.json')
-    const metaResult = await readProjectMetaFile(metaPath)
-    if (!metaResult.ok) {
-      return { ok: false as const, error: metaResult.error, state: buildRunner.getState() }
-    }
-
-    const configResult = await getProjectBuildConfig(metaPath)
-    if (!configResult.ok) {
-      return { ok: false as const, error: configResult.error, state: buildRunner.getState() }
-    }
-
-    const metaName =
-      typeof metaResult.meta.name === 'string' && metaResult.meta.name.trim()
-        ? metaResult.meta.name.trim()
-        : row.name
-    const targetRepo =
-      typeof metaResult.meta.target_repo === 'string' && metaResult.meta.target_repo.trim()
-        ? metaResult.meta.target_repo.trim()
-        : row.target_repo
-
-    if (!targetRepo) {
-      return {
-        ok: false as const,
-        error: 'project target_repo is not configured',
-        state: buildRunner.getState()
+  ipcMain.handle(
+    'build:start',
+    async (
+      _e,
+      {
+        id,
+        scope,
+        stepId
+      }: {
+        id: string
+        scope?: 'all' | 'single-step'
+        stepId?: string | null
       }
-    }
+    ) => {
+      const row = getProject(id)
+      if (!row) {
+        return { ok: false as const, error: 'project not found', state: buildRunner.getState() }
+      }
 
-    try {
-      const stat = await fs.stat(targetRepo)
-      if (!stat.isDirectory()) {
+      const metaPath = join(projectDirFn(id), 'project.json')
+      const metaResult = await readProjectMetaFile(metaPath)
+      if (!metaResult.ok) {
+        return { ok: false as const, error: metaResult.error, state: buildRunner.getState() }
+      }
+
+      const configResult = await getProjectBuildConfig(metaPath)
+      if (!configResult.ok) {
+        return { ok: false as const, error: configResult.error, state: buildRunner.getState() }
+      }
+
+      const metaName =
+        typeof metaResult.meta.name === 'string' && metaResult.meta.name.trim()
+          ? metaResult.meta.name.trim()
+          : row.name
+      const targetRepo =
+        typeof metaResult.meta.target_repo === 'string' && metaResult.meta.target_repo.trim()
+          ? metaResult.meta.target_repo.trim()
+          : row.target_repo
+
+      if (!targetRepo) {
         return {
           ok: false as const,
-          error: 'project target_repo is not a directory',
+          error: 'project target_repo is not configured',
           state: buildRunner.getState()
         }
       }
-    } catch (error: unknown) {
-      return {
-        ok: false as const,
-        error: error instanceof Error ? error.message : String(error),
-        state: buildRunner.getState()
-      }
-    }
 
-    return await buildRunner.start({
-      projectId: id,
-      projectName: metaName || id,
-      targetRepo,
-      config: configResult.value
-    })
-  })
+      try {
+        const stat = await fs.stat(targetRepo)
+        if (!stat.isDirectory()) {
+          return {
+            ok: false as const,
+            error: 'project target_repo is not a directory',
+            state: buildRunner.getState()
+          }
+        }
+      } catch (error: unknown) {
+        return {
+          ok: false as const,
+          error: error instanceof Error ? error.message : String(error),
+          state: buildRunner.getState()
+        }
+      }
+
+      const selection = resolveBuildExecutionScope(configResult.value, { scope, stepId })
+      if (!selection.ok) {
+        return { ok: false as const, error: selection.error, state: buildRunner.getState() }
+      }
+
+      return await buildRunner.start({
+        projectId: id,
+        projectName: metaName || id,
+        targetRepo,
+        config: configResult.value,
+        scope: selection.scope,
+        stepId: selection.requestedStepId
+      })
+    }
+  )
 
   ipcMain.handle('build:stop', () => buildRunner.stop())
 

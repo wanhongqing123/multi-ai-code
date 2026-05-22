@@ -144,6 +144,11 @@ export type BuildStartResult =
 
 export type BuildStopResult = { ok: true } | { ok: false; error: string }
 
+export interface BuildStartOptions {
+  scope?: BuildExecutionScope
+  stepId?: string | null
+}
+
 export type BuildFailureAnalysisPromptResult =
   | { ok: true; prompt: string }
   | { ok: false; error: string }
@@ -486,8 +491,12 @@ const api = {
   },
 
   build: {
-    start: (projectId: string) =>
-      ipcRenderer.invoke('build:start', { id: projectId }) as Promise<BuildStartResult>,
+    start: (projectId: string, options?: BuildStartOptions) =>
+      ipcRenderer.invoke('build:start', {
+        id: projectId,
+        scope: options?.scope ?? 'all',
+        stepId: options?.stepId ?? null
+      }) as Promise<BuildStartResult>,
     stop: () => ipcRenderer.invoke('build:stop') as Promise<BuildStopResult>,
     getState: () => ipcRenderer.invoke('build:get-state') as Promise<BuildRuntimeState>,
     getFailureAnalysisPrompt: () =>

@@ -783,7 +783,10 @@ function AppShell() {
     setTimeout(() => void handleStart(), 50)
   }, [sessionId, handleStart])
 
-  const handleStartBuild = useCallback(async () => {
+  const handleStartBuild = useCallback(async (
+    scope: 'all' | 'single-step',
+    stepId: string | null = null
+  ) => {
     if (
       buildState.projectId !== null &&
       buildState.projectId !== currentProjectId &&
@@ -798,7 +801,9 @@ function AppShell() {
     const blockedReason = getBuildStartBlockedReason(
       currentProjectId,
       projectBuildConfigReady,
-      visibleProjectBuildConfig
+      visibleProjectBuildConfig,
+      scope,
+      stepId
     )
     if (blockedReason) {
       showToast(blockedReason, { level: 'warn' })
@@ -807,13 +812,13 @@ function AppShell() {
     }
     if (!currentProjectId) return
 
-    const result = await window.api.build.start(currentProjectId)
+    const result = await window.api.build.start(currentProjectId, { scope, stepId })
     setBuildState(result.state)
     setShowBuildPanel(true)
     if (!result.ok) {
       showToast(result.error ?? '启动构建失败', { level: 'error' })
     }
-  }, [currentProjectId, projectBuildConfigReady, visibleProjectBuildConfig])
+  }, [buildState.projectId, buildState.status, currentProjectId, projectBuildConfigReady, visibleProjectBuildConfig])
 
   const handleStopBuild = useCallback(async () => {
     const result = await window.api.build.stop()
@@ -1696,7 +1701,8 @@ function AppShell() {
           sessionId={sessionId}
           sessionStatus={sessionStatus}
           onClose={() => setShowBuildPanel(false)}
-          onStartBuild={() => void handleStartBuild()}
+          onStartBuild={() => void handleStartBuild('all')}
+          onStartSingleBuild={(stepId) => void handleStartBuild('single-step', stepId)}
           onStopBuild={() => void handleStopBuild()}
           onAnalyzeFailure={() => void handleAnalyzeBuildFailure()}
         />

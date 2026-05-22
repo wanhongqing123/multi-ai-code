@@ -24,6 +24,8 @@ describe('buildFailureAnalysisPrompt', () => {
   it('builds a constrained prompt from the failed run context', () => {
     const prompt = buildFailureAnalysisPrompt({
       status: 'failed',
+      scope: 'all',
+      requestedStepId: null,
       projectId: 'p1',
       projectName: 'Demo',
       targetRepo: 'E:\\repo',
@@ -112,6 +114,8 @@ describe('getFailureAnalysisPrompt', () => {
   it('returns a structured error when there is no failed build context', () => {
     const state: BuildRuntimeState = {
       status: 'succeeded',
+      scope: 'all',
+      requestedStepId: null,
       projectId: 'p1',
       projectName: 'Demo',
       targetRepo: 'E:\\repo',
@@ -132,6 +136,8 @@ describe('getFailureAnalysisPrompt', () => {
   it('returns a prompt when failure context exists', () => {
     const state: BuildRuntimeState = {
       status: 'failed',
+      scope: 'all',
+      requestedStepId: null,
       projectId: 'p1',
       projectName: 'Demo',
       targetRepo: 'E:\\repo',

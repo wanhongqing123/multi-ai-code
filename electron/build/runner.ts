@@ -68,6 +68,8 @@ const TRUNCATED_LOG_MARKER = '[build] earlier log truncated...\n'
 function initialState(): BuildRuntimeState {
   return {
     status: 'idle',
+    scope: null,
+    requestedStepId: null,
     projectId: null,
     projectName: null,
     targetRepo: null,
@@ -481,6 +483,8 @@ export function createBuildRunner(partialDeps?: Partial<BuildRunnerDeps>): Build
       currentStepControl = null
       state = {
         status: 'running',
+        scope: request.scope ?? 'all',
+        requestedStepId: request.stepId ?? null,
         projectId: request.projectId,
         projectName: request.projectName,
         targetRepo: request.targetRepo,

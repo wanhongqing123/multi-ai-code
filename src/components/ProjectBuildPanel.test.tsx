@@ -33,6 +33,8 @@ const enabledBuildConfig: ProjectBuildConfig = {
 
 const baseState: BuildRuntimeState = {
   status: 'idle',
+  scope: null,
+  requestedStepId: null,
   projectId: null,
   projectName: null,
   targetRepo: null,

@@ -42,6 +42,8 @@ const DEFAULT_PROJECT_BUILD_CONFIG: ProjectBuildConfig = { enabled: false, steps
 const BUILD_LOG_LIMIT = 200_000
 const DEFAULT_BUILD_RUNTIME_STATE: BuildRuntimeState = {
   status: 'idle',
+  scope: null,
+  requestedStepId: null,
   projectId: null,
   projectName: null,
   targetRepo: null,

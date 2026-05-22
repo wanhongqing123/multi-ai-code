@@ -40,6 +40,7 @@ export interface ProjectAiSettingsResponse {
 // types intentionally mirror the shared build contracts.
 export type BuildStepEnvType = 'msys' | 'visual-studio'
 export type BuildOutputEncoding = 'auto' | 'utf8' | 'gbk'
+export type BuildExecutionScope = 'all' | 'single-step'
 
 export interface BuildStepConfig {
   id: string
@@ -106,7 +107,7 @@ export interface ManagedChromeState {
 
 export interface BuildStepRuntime extends BuildStepConfig {
   visualStudioDisplayName: string | null
-  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped'
+  status: 'not-run' | 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped'
   resolvedCwd: string | null
   startedAt: string | null
   finishedAt: string | null
@@ -116,6 +117,8 @@ export interface BuildStepRuntime extends BuildStepConfig {
 
 export interface BuildRuntimeState {
   status: 'idle' | 'running' | 'succeeded' | 'failed' | 'stopped'
+  scope: BuildExecutionScope | null
+  requestedStepId: string | null
   projectId: string | null
   projectName: string | null
   targetRepo: string | null

@@ -66,17 +66,17 @@ export default function ScreenSamplerIndicator(): JSX.Element | null {
 
   let label: string
   if (status.activeWinLoadError) {
-    label = `屏幕采集 · 加载失败：${status.activeWinLoadError}`
+    label = `学习 · 加载失败：${status.activeWinLoadError}`
   } else if (status.paused) {
-    label = '屏幕采集 · 已暂停（点击恢复）'
+    label = '点击开始学习'
   } else if (status.runtime?.lastError) {
-    label = `屏幕采集 · ${status.runtime.lastError.label} 错误（点击暂停）`
+    label = `学习 · ${status.runtime.lastError.label} 错误（点击停止）`
   } else if (status.runtime?.lastWindowApp) {
     const win = status.runtime.lastWindowTitle ?? ''
     const trimmed = win.length > 40 ? win.slice(0, 40) + '…' : win
-    label = `屏幕采集中 · ${status.runtime.lastWindowApp} · ${trimmed}（点击暂停）`
+    label = `学习中 · ${status.runtime.lastWindowApp} · ${trimmed}（点击停止）`
   } else {
-    label = '屏幕采集中（点击暂停）'
+    label = '学习中（点击停止）'
   }
 
   return (
@@ -89,7 +89,7 @@ export default function ScreenSamplerIndicator(): JSX.Element | null {
     >
       <span className={dotClass} aria-hidden />
       <span className="screen-sampler-text">
-        {status.paused ? '已暂停' : '采集中'}
+        {status.paused ? '开始学习' : '学习中'}
       </span>
     </button>
   )

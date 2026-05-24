@@ -39,7 +39,7 @@ export interface MainPanelProps {
   onStop: () => void
   /** Called when user clicks Restart. */
   onRestart: () => void
-  /** Called when user clicks "Diff 审查". */
+  /** Called when user clicks "代码审查". */
   onOpenDiff: () => void
   /** Called when user clicks "仓库查看". */
   onOpenRepoView: () => void
@@ -246,9 +246,9 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
             className="tile-btn"
             onClick={props.onOpenDiff}
             disabled={props.disabled || props.status !== 'running'}
-            title="打开 Diff 审查（把批注回灌给当前会话）"
+            title="打开代码审查（把批注回灌给当前会话）"
           >
-            Diff 审查
+            代码审查
           </button>
           {props.status === 'running' ? (
             <button

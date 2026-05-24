@@ -1027,7 +1027,7 @@ function AppShell() {
   /** Open the git diff viewer. */
   const openDiffReview = useCallback(() => {
     if (!targetRepo) {
-      showToast('本项目没有 target_repo 路径，无法打开 Diff 审查', { level: 'warn' })
+      showToast('本项目没有 target_repo 路径，无法打开代码审查', { level: 'warn' })
       return
     }
     setDiffReviewOpen(true)
@@ -1126,7 +1126,7 @@ function AppShell() {
           sourceWindow: 'diff-review'
         })
       }
-      // Sent successfully — clear the batch so the next Diff 审查 starts fresh.
+      // Sent successfully — clear the batch so the next 代码审查 starts fresh.
       setDiffAnnotations([])
       setDiffGeneralNote('')
       setDiffReviewOpen(false)
@@ -1334,8 +1334,8 @@ function AppShell() {
     },
     {
       id: 'diff-review',
-      label: '🔀 Diff 审查',
-      keywords: 'diff review code',
+      label: '🔀 代码审查',
+      keywords: 'code review diff annotate',
       action: () => void openDiffReview(),
       disabled: !hasProject
     }

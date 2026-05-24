@@ -1956,7 +1956,7 @@ export default function DiffViewerDialog({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="modal-head">
-          <h3>{title ?? 'Diff 审查 · 代码标注回灌给当前会话'}</h3>
+          <h3>{title ?? '代码审查 · 标注回灌给当前会话'}</h3>
           <button className="modal-close" onClick={handleSmoothClose}>
             ×
           </button>

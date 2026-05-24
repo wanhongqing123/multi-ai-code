@@ -127,11 +127,14 @@ export async function setScreenSamplerPaused(
 
 /**
  * Captures the primary display at the requested thumbnail size. Returns
- * the PNG bytes or null on any failure (permission denied, no display,
- * etc.). Uses desktopCapturer.thumbnailSize so Chromium does the resize
- * server-side, which is far cheaper than scaling a full-resolution image
- * in JS each tick.
+ * JPEG-encoded bytes (q=85 — visually lossless for UI text, ~5× smaller
+ * than equivalent PNG). Null on any failure (permission denied, no
+ * display, etc.). Uses desktopCapturer.thumbnailSize so Chromium does
+ * the resize server-side, which is far cheaper than scaling a
+ * full-resolution image in JS each tick.
  */
+const JPEG_QUALITY = 85
+
 async function capturePrimaryThumbnail(
   targetW: number,
   targetH: number
@@ -149,7 +152,7 @@ async function capturePrimaryThumbnail(
     const img: NativeImage = picked.thumbnail
     if (!img || img.isEmpty()) return null
     const size = img.getSize()
-    return { buf: img.toPNG(), w: size.width, h: size.height }
+    return { buf: img.toJPEG(JPEG_QUALITY), w: size.width, h: size.height }
   } catch {
     return null
   }

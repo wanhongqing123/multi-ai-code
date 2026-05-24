@@ -54,7 +54,17 @@ export async function listSampleFiles(root: string): Promise<FileEntry[]> {
     }
     for (const f of files) {
       if (!f.isFile()) continue
-      if (!f.name.endsWith('.png') && !f.name.endsWith('.webp')) continue
+      // Accept all formats we have ever written: PNG (pre-Phase-4 step 5
+      // refresh), JPEG (current), and WebP (planned). Old PNG samples on
+      // disk are kept walkable so the sweeper can clean them up.
+      if (
+        !f.name.endsWith('.png') &&
+        !f.name.endsWith('.jpg') &&
+        !f.name.endsWith('.jpeg') &&
+        !f.name.endsWith('.webp')
+      ) {
+        continue
+      }
       const full = join(dayPath, f.name)
       try {
         const st = await fs.stat(full)

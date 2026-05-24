@@ -17,7 +17,7 @@ import {
  *
  *   L1 (every 5s by default)  — active foreground window: title + appName.
  *   L2 (every 30s by default) — primary-display thumbnail 256×144, written
- *                                to `<rootDir>/screen-samples/<date>/*.png`.
+ *                                to `<rootDir>/screen-samples/<date>/*.jpg`.
  *
  * Designed to be **completely best-effort**: every IO and IPC call is
  * wrapped so the sampler never throws into the main process. If the user
@@ -105,8 +105,17 @@ export interface SamplerDeps {
   sampleRoot?: () => string
 }
 
-const THUMB_W = 256
-const THUMB_H = 144
+// L2 thumbnail dimensions. Sized for multi-modal AI vision (Claude /
+// GPT-4V) — readable for window titles, toolbar text, and medium-size
+// code; smaller than this and the model can identify the app but not
+// the on-screen content. Combined with JPEG q≈85 the per-frame size is
+// ~80–200 KB, which against the 1 GB hard cap gives ~2–3 days of
+// retention at the default 30 s sampling interval.
+const THUMB_W = 1280
+const THUMB_H = 720
+/** Filename extension used for new L2 frames. Older PNGs on disk are
+ *  still recognized by the retention sweeper for cleanup. */
+const FRAME_EXT = 'jpg'
 
 /**
  * Starts both samplers. Returns a handle for graceful shutdown. Safe to
@@ -204,8 +213,8 @@ export function startScreenSampler(
     const folder = dateFolderFor(capturedAt)
     const stamp = safeIsoStamp(capturedAt)
     const dir = join(root(), folder)
-    const absPath = join(dir, `${stamp}.png`)
-    const framePath = `screen-samples/${folder}/${stamp}.png`
+    const absPath = join(dir, `${stamp}.${FRAME_EXT}`)
+    const framePath = `screen-samples/${folder}/${stamp}.${FRAME_EXT}`
 
     try {
       await fs.mkdir(dir, { recursive: true })

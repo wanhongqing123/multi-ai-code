@@ -203,7 +203,7 @@ describe('startScreenSampler L2', () => {
       h: number
     }
     expect(arg.framePath).toMatch(
-      /^screen-samples\/\d{4}-\d{2}-\d{2}\/.+\.png$/
+      /^screen-samples\/\d{4}-\d{2}-\d{2}\/.+\.jpg$/
     )
     expect(arg.w).toBe(256)
     expect(arg.h).toBe(144)

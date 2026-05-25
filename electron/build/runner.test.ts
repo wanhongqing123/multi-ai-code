@@ -123,6 +123,7 @@ describe('createBuildRunner', () => {
         cwd: 'E:\\repo\\build',
         shell: false,
         windowsHide: true,
+        windowsVerbatimArguments: true,
         env: { Path: 'C:\\VS\\bin' },
       })
     )

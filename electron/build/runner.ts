@@ -34,6 +34,7 @@ type SpawnLike = (
     env?: NodeJS.ProcessEnv
     shell?: boolean
     windowsHide?: boolean
+    windowsVerbatimArguments?: boolean
     stdio?: 'pipe'
   }
 ) => SpawnedBuildProcess
@@ -323,6 +324,7 @@ export function createBuildRunner(partialDeps?: Partial<BuildRunnerDeps>): Build
       env: result.env,
       shell: false,
       windowsHide: true,
+      windowsVerbatimArguments: true,
       stdio: 'pipe',
     }) as SpawnedBuildProcess
     return { child, resolvedCwd }

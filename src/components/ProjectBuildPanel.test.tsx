@@ -7,6 +7,7 @@ import ProjectBuildPanel, {
   canStopBuild,
   getBuildLogStatusLabel,
   getBuildStartBlockedReason,
+  getBuildStepStatusLabel,
   getBuildStatusLabel
 } from './ProjectBuildPanel.js'
 
@@ -33,6 +34,8 @@ const enabledBuildConfig: ProjectBuildConfig = {
 
 const baseState: BuildRuntimeState = {
   status: 'idle',
+  scope: null,
+  requestedStepId: null,
   projectId: null,
   projectName: null,
   targetRepo: null,
@@ -62,7 +65,14 @@ describe('ProjectBuildPanel', () => {
     expect(getBuildStartBlockedReason(null, false, enabledBuildConfig)).toBeTruthy()
     expect(getBuildStartBlockedReason('project-1', false, enabledBuildConfig)).toBeTruthy()
     expect(getBuildStartBlockedReason('project-1', true, disabledBuildConfig)).toBeTruthy()
+    expect(
+      getBuildStartBlockedReason('project-1', true, enabledBuildConfig, 'single-step', 'missing-step')
+    ).toContain('missing-step')
     expect(canStartBuild('project-1', true, enabledBuildConfig)).toBe(true)
+  })
+
+  it('returns a dedicated label for not-run steps', () => {
+    expect(getBuildStepStatusLabel('not-run')).toBe('未执行')
   })
 
   it('only allows stop while a build is running', () => {
@@ -138,6 +148,7 @@ describe('ProjectBuildPanel', () => {
         sessionStatus="running"
         onClose={vi.fn()}
         onStartBuild={vi.fn()}
+        onStartSingleBuild={vi.fn()}
         onStopBuild={vi.fn()}
         onAnalyzeFailure={vi.fn()}
       />
@@ -187,6 +198,7 @@ describe('ProjectBuildPanel', () => {
         sessionStatus="running"
         onClose={vi.fn()}
         onStartBuild={vi.fn()}
+        onStartSingleBuild={vi.fn()}
         onStopBuild={vi.fn()}
         onAnalyzeFailure={vi.fn()}
       />
@@ -196,6 +208,30 @@ describe('ProjectBuildPanel', () => {
     expect(openMarkup).toContain('build-panel')
     expect(openMarkup).toContain('build-step-card')
     expect(openMarkup).toContain('Configure')
+  })
+
+  it('renders configured steps even before any build has run', () => {
+    const markup = renderToStaticMarkup(
+      <ProjectBuildPanel
+        open={true}
+        currentProjectId="project-1"
+        currentProjectName="Demo"
+        buildConfig={enabledBuildConfig}
+        buildConfigReady={true}
+        state={baseState}
+        sessionId="session-1"
+        sessionStatus="running"
+        onClose={vi.fn()}
+        onStartBuild={vi.fn()}
+        onStartSingleBuild={vi.fn()}
+        onStopBuild={vi.fn()}
+        onAnalyzeFailure={vi.fn()}
+      />
+    )
+
+    expect(markup).toContain('Configure')
+    expect(markup).toContain('单独构建')
+    expect(markup).not.toContain('当前还没有运行过构建步骤')
   })
 
   it('renders visual studio display name and output encoding metadata', () => {
@@ -264,6 +300,7 @@ describe('ProjectBuildPanel', () => {
         sessionStatus="running"
         onClose={vi.fn()}
         onStartBuild={vi.fn()}
+        onStartSingleBuild={vi.fn()}
         onStopBuild={vi.fn()}
         onAnalyzeFailure={vi.fn()}
       />
@@ -271,5 +308,43 @@ describe('ProjectBuildPanel', () => {
 
     expect(markup).toContain('Visual Studio 2022 Community')
     expect(markup).toContain('GBK')
+  })
+
+  it('renders the renamed sequential build button and per-step single-build buttons', () => {
+    const markup = renderToStaticMarkup(
+      <ProjectBuildPanel
+        open={true}
+        currentProjectId="project-1"
+        currentProjectName="Demo"
+        buildConfig={enabledBuildConfig}
+        buildConfigReady={true}
+        state={{
+          ...baseState,
+          steps: [
+            {
+              ...enabledBuildConfig.steps[0],
+              visualStudioDisplayName: null,
+              status: 'not-run',
+              resolvedCwd: null,
+              startedAt: null,
+              finishedAt: null,
+              exitCode: null,
+              signal: null
+            }
+          ]
+        }}
+        sessionId="session-1"
+        sessionStatus="running"
+        onClose={vi.fn()}
+        onStartBuild={vi.fn()}
+        onStartSingleBuild={vi.fn()}
+        onStopBuild={vi.fn()}
+        onAnalyzeFailure={vi.fn()}
+      />
+    )
+
+    expect(markup).toContain('顺序构建')
+    expect(markup).toContain('单独构建')
+    expect(markup).toContain('未执行')
   })
 })

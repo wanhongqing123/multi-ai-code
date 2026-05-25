@@ -152,6 +152,114 @@ describe('createBuildRunner', () => {
     expect(runner.getState().log).toContain('fatal error C1000')
   })
 
+  it('runs only the selected step for single-step builds', async () => {
+    const children: FakeChild[] = []
+    const spawn = vi.fn(() => {
+      const child = new FakeChild()
+      children.push(child)
+      return child
+    })
+    const resolveVisualStudioEnvironment = vi.fn().mockResolvedValue({
+      ok: true,
+      displayName: 'Visual Studio 2022 Community',
+      installationPath: 'C:\\VS',
+      devCmdPath: 'C:\\VS\\Common7\\Tools\\VsDevCmd.bat',
+      env: { Path: 'C:\\VS\\bin' },
+    })
+    const runner = createBuildRunner({
+      platform: 'win32',
+      spawn,
+      detectMsys: vi.fn().mockResolvedValue({
+        available: true,
+        bashPath: 'C:\\msys64\\usr\\bin\\bash.exe',
+        usrBinDir: 'C:\\msys64\\usr\\bin',
+        variant: 'msys2',
+        candidates: [],
+      }),
+      resolveVisualStudioEnvironment,
+      now: () => '2026-05-20T10:00:00.000Z',
+    })
+
+    const config: ProjectBuildConfig = {
+      enabled: true,
+      steps: [
+        {
+          id: 'configure',
+          name: 'Configure',
+          envType: 'msys',
+          cwd: '.',
+          command: 'cmake -S . -B build',
+          enabled: true,
+          visualStudioInstanceId: '',
+          outputEncoding: 'auto',
+        },
+        {
+          id: 'compile',
+          name: 'Compile',
+          envType: 'visual-studio',
+          cwd: 'build',
+          command: 'cmake --build .',
+          enabled: true,
+          visualStudioInstanceId: 'vs-1',
+          outputEncoding: 'auto',
+        },
+        {
+          id: 'package',
+          name: 'Package',
+          envType: 'visual-studio',
+          cwd: 'build',
+          command: 'cpack',
+          enabled: true,
+          visualStudioInstanceId: 'vs-1',
+          outputEncoding: 'auto',
+        },
+      ],
+    }
+
+    const start = await runner.start({
+      projectId: 'p-single',
+      projectName: 'Demo',
+      targetRepo: 'E:\\repo',
+      scope: 'single-step',
+      stepId: 'compile',
+      config,
+    })
+
+    expect(start.ok).toBe(true)
+    expect(spawn).toHaveBeenCalledTimes(1)
+    expect(resolveVisualStudioEnvironment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instanceId: 'vs-1',
+        platform: 'win32',
+      })
+    )
+    expect(runner.getState()).toMatchObject({
+      status: 'running',
+      scope: 'single-step',
+      requestedStepId: 'compile',
+      activeStepId: 'compile',
+      steps: [
+        { id: 'configure', status: 'not-run' },
+        { id: 'compile', status: 'running' },
+        { id: 'package', status: 'not-run' },
+      ],
+    })
+
+    children[0].stdout.write('compile ok\n')
+    children[0].emit('close', 0, null)
+    await flush()
+
+    expect(runner.getState()).toMatchObject({
+      status: 'succeeded',
+      activeStepId: null,
+      steps: [
+        { id: 'configure', status: 'not-run' },
+        { id: 'compile', status: 'succeeded' },
+        { id: 'package', status: 'not-run' },
+      ],
+    })
+  })
+
   it('truncates in-memory run log with a visible marker once the limit is exceeded', async () => {
     const child = new FakeChild()
     const runner = createBuildRunner({
@@ -251,6 +359,92 @@ describe('createBuildRunner', () => {
     expect(runner.getState()).toMatchObject({
       status: 'stopped',
       steps: [{ id: 'configure', status: 'skipped' }],
+    })
+  })
+
+  it('keeps out-of-scope steps as not-run when a single-step build is stopped', async () => {
+    const child = new FakeChild()
+    const spawn = vi.fn(() => child)
+    const killProcessTree = vi.fn()
+    const runner = createBuildRunner({
+      platform: 'win32',
+      spawn,
+      killProcessTree,
+      detectMsys: vi.fn().mockResolvedValue({
+        available: true,
+        bashPath: 'C:\\msys64\\usr\\bin\\bash.exe',
+        usrBinDir: 'C:\\msys64\\usr\\bin',
+        variant: 'msys2',
+        candidates: [],
+      }),
+      resolveVisualStudioEnvironment: vi.fn().mockResolvedValue({
+        ok: true,
+        displayName: 'Visual Studio 2022 Community',
+        installationPath: 'C:\\VS',
+        devCmdPath: 'C:\\VS\\Common7\\Tools\\VsDevCmd.bat',
+        env: { Path: 'C:\\VS\\bin' },
+      }),
+      now: () => '2026-05-20T10:00:00.000Z',
+    })
+
+    await runner.start({
+      projectId: 'p-single-stop',
+      projectName: 'Demo',
+      targetRepo: 'E:\\repo',
+      scope: 'single-step',
+      stepId: 'compile',
+      config: {
+        enabled: true,
+        steps: [
+          {
+            id: 'configure',
+            name: 'Configure',
+            envType: 'msys',
+            cwd: '.',
+            command: 'cmake -S . -B build',
+            enabled: true,
+            visualStudioInstanceId: '',
+            outputEncoding: 'auto',
+          },
+          {
+            id: 'compile',
+            name: 'Compile',
+            envType: 'visual-studio',
+            cwd: 'build',
+            command: 'cmake --build .',
+            enabled: true,
+            visualStudioInstanceId: 'vs-1',
+            outputEncoding: 'auto',
+          },
+          {
+            id: 'package',
+            name: 'Package',
+            envType: 'visual-studio',
+            cwd: 'build',
+            command: 'cpack',
+            enabled: true,
+            visualStudioInstanceId: 'vs-1',
+            outputEncoding: 'auto',
+          },
+        ],
+      },
+    })
+
+    expect(runner.stop()).toEqual({ ok: true })
+    expect(killProcessTree).toHaveBeenCalledWith(4321)
+
+    child.emit('close', null, 'SIGTERM')
+    await flush()
+
+    expect(runner.getState()).toMatchObject({
+      status: 'stopped',
+      scope: 'single-step',
+      requestedStepId: 'compile',
+      steps: [
+        { id: 'configure', status: 'not-run' },
+        { id: 'compile', status: 'skipped' },
+        { id: 'package', status: 'not-run' },
+      ],
     })
   })
 

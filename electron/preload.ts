@@ -40,6 +40,7 @@ export interface ProjectAiSettingsResponse {
 // types intentionally mirror the shared build contracts.
 export type BuildStepEnvType = 'msys' | 'visual-studio'
 export type BuildOutputEncoding = 'auto' | 'utf8' | 'gbk'
+export type BuildExecutionScope = 'all' | 'single-step'
 
 export interface BuildStepConfig {
   id: string
@@ -106,7 +107,7 @@ export interface ManagedChromeState {
 
 export interface BuildStepRuntime extends BuildStepConfig {
   visualStudioDisplayName: string | null
-  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped'
+  status: 'not-run' | 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped'
   resolvedCwd: string | null
   startedAt: string | null
   finishedAt: string | null
@@ -116,6 +117,8 @@ export interface BuildStepRuntime extends BuildStepConfig {
 
 export interface BuildRuntimeState {
   status: 'idle' | 'running' | 'succeeded' | 'failed' | 'stopped'
+  scope: BuildExecutionScope | null
+  requestedStepId: string | null
   projectId: string | null
   projectName: string | null
   targetRepo: string | null
@@ -140,6 +143,11 @@ export type BuildStartResult =
   | { ok: false; error: string; state: BuildRuntimeState }
 
 export type BuildStopResult = { ok: true } | { ok: false; error: string }
+
+export interface BuildStartOptions {
+  scope?: BuildExecutionScope
+  stepId?: string | null
+}
 
 export type BuildFailureAnalysisPromptResult =
   | { ok: true; prompt: string }
@@ -483,8 +491,12 @@ const api = {
   },
 
   build: {
-    start: (projectId: string) =>
-      ipcRenderer.invoke('build:start', { id: projectId }) as Promise<BuildStartResult>,
+    start: (projectId: string, options?: BuildStartOptions) =>
+      ipcRenderer.invoke('build:start', {
+        id: projectId,
+        scope: options?.scope ?? 'all',
+        stepId: options?.stepId ?? null
+      }) as Promise<BuildStartResult>,
     stop: () => ipcRenderer.invoke('build:stop') as Promise<BuildStopResult>,
     getState: () => ipcRenderer.invoke('build:get-state') as Promise<BuildRuntimeState>,
     getFailureAnalysisPrompt: () =>

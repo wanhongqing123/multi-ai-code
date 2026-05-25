@@ -11,6 +11,7 @@ export interface ProjectBuildPanelProps {
   sessionStatus: 'idle' | 'running' | 'exited'
   onClose: () => void
   onStartBuild: () => void
+  onStartSingleBuild: (stepId: string) => void
   onStopBuild: () => void
   onAnalyzeFailure: () => void
 }
@@ -33,6 +34,8 @@ export function getBuildStatusLabel(status: BuildRuntimeState['status']): string
 
 export function getBuildStepStatusLabel(status: BuildStepRuntime['status']): string {
   switch (status) {
+    case 'not-run':
+      return '未执行'
     case 'running':
       return '进行中'
     case 'succeeded':
@@ -50,13 +53,20 @@ export function getBuildStepStatusLabel(status: BuildStepRuntime['status']): str
 export function getBuildStartBlockedReason(
   projectId: string | null,
   buildConfigReady: boolean,
-  buildConfig: ProjectBuildConfig
+  buildConfig: ProjectBuildConfig,
+  scope: 'all' | 'single-step' = 'all',
+  stepId: string | null = null
 ): string | null {
   if (!projectId) return '请先选择项目'
   if (!buildConfigReady) return '正在读取该项目的构建配置，请稍后再试'
   if (!buildConfig.enabled) return '当前项目未启用构建配置，请先到设置中开启'
-  if (!buildConfig.steps.some((step) => step.enabled)) {
+  if (scope === 'all' && !buildConfig.steps.some((step) => step.enabled)) {
     return '当前项目没有启用的构建步骤，请先到设置中配置'
+  }
+  if (scope === 'single-step') {
+    const step = buildConfig.steps.find((item) => item.id === stepId)
+    if (!step) return `未找到构建步骤：${stepId ?? ''}`
+    if (!step.enabled) return `该构建步骤尚未启用：${step.name}`
   }
   return null
 }
@@ -64,9 +74,11 @@ export function getBuildStartBlockedReason(
 export function canStartBuild(
   projectId: string | null,
   buildConfigReady: boolean,
-  buildConfig: ProjectBuildConfig
+  buildConfig: ProjectBuildConfig,
+  scope: 'all' | 'single-step' = 'all',
+  stepId: string | null = null
 ): boolean {
-  return getBuildStartBlockedReason(projectId, buildConfigReady, buildConfig) === null
+  return getBuildStartBlockedReason(projectId, buildConfigReady, buildConfig, scope, stepId) === null
 }
 
 export function canStopBuild(status: BuildRuntimeState['status']): boolean {
@@ -121,10 +133,25 @@ function formatOutputEncodingLabel(
 export default function ProjectBuildPanel(props: ProjectBuildPanelProps): JSX.Element | null {
   if (!props.open) return null
 
+  const displaySteps =
+    props.state.steps.length > 0
+      ? props.state.steps
+      : props.buildConfig.steps.map((step) => ({
+          ...step,
+          visualStudioDisplayName: null,
+          status: 'not-run' as const,
+          resolvedCwd: null,
+          startedAt: null,
+          finishedAt: null,
+          exitCode: null,
+          signal: null
+        }))
   const startBlockedReason = getBuildStartBlockedReason(
     props.currentProjectId,
     props.buildConfigReady,
-    props.buildConfig
+    props.buildConfig,
+    'all',
+    null
   )
   const startEnabled = startBlockedReason === null && props.state.status !== 'running'
   const stopEnabled = canStopBuild(props.state.status)
@@ -172,9 +199,9 @@ export default function ProjectBuildPanel(props: ProjectBuildPanelProps): JSX.El
               className="tile-btn"
               onClick={props.onStartBuild}
               disabled={!startEnabled}
-              title={startEnabled ? '开始构建' : startBlockedReason ?? '构建正在运行中'}
+              title={startEnabled ? '顺序执行当前已启用步骤' : startBlockedReason ?? '构建正在运行中'}
             >
-              开始构建
+              顺序构建
             </button>
             <button
               className="tile-btn"
@@ -208,14 +235,25 @@ export default function ProjectBuildPanel(props: ProjectBuildPanelProps): JSX.El
         <section className="build-panel-section">
           <div className="build-panel-section-head">
             <h3>步骤</h3>
-            <span>{props.state.steps.length} 个步骤</span>
+            <span>{displaySteps.length} 个步骤</span>
           </div>
-          {props.state.steps.length === 0 ? (
+          {displaySteps.length === 0 ? (
             <div className="build-panel-empty">当前还没有运行过构建步骤。</div>
           ) : (
             <ol className="build-step-list">
-              {props.state.steps.map((step) => {
+              {displaySteps.map((step) => {
                 const exitSummary = formatExitSummary(step)
+                const singleBuildBlockedReason =
+                  props.state.status === 'running'
+                    ? '当前已有构建正在执行'
+                    : getBuildStartBlockedReason(
+                        props.currentProjectId,
+                        props.buildConfigReady,
+                        props.buildConfig,
+                        'single-step',
+                        step.id
+                      )
+                const singleBuildEnabled = singleBuildBlockedReason === null
                 return (
                   <li key={step.id} className="build-step-card">
                     <div className="build-step-head">
@@ -233,6 +271,16 @@ export default function ProjectBuildPanel(props: ProjectBuildPanelProps): JSX.El
                       <span>cwd: {step.resolvedCwd ?? step.cwd}</span>
                     </div>
                     <code className="build-step-command">{step.command}</code>
+                    <div className="build-step-actions">
+                      <button
+                        className="tile-btn"
+                        onClick={() => props.onStartSingleBuild(step.id)}
+                        disabled={!singleBuildEnabled}
+                        title={singleBuildEnabled ? `单独执行 ${step.name}` : singleBuildBlockedReason ?? '单独构建不可用'}
+                      >
+                        单独构建
+                      </button>
+                    </div>
                     {exitSummary ? <div className="build-step-exit">{exitSummary}</div> : null}
                   </li>
                 )

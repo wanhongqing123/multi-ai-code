@@ -1,5 +1,6 @@
 export type BuildStepEnvType = 'msys' | 'visual-studio'
 export type BuildOutputEncoding = 'auto' | 'utf8' | 'gbk'
+export type BuildExecutionScope = 'all' | 'single-step'
 
 export interface BuildStepConfig {
   id: string
@@ -17,7 +18,13 @@ export interface ProjectBuildConfig {
   steps: BuildStepConfig[]
 }
 
-export type BuildStepStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped'
+export type BuildStepStatus =
+  | 'not-run'
+  | 'pending'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'skipped'
 export type BuildOverallStatus = 'idle' | 'running' | 'succeeded' | 'failed' | 'stopped'
 
 export interface BuildStepRuntime extends BuildStepConfig {
@@ -50,6 +57,8 @@ export interface BuildFailureContext {
 
 export interface BuildRuntimeState {
   status: BuildOverallStatus
+  scope: BuildExecutionScope | null
+  requestedStepId: string | null
   projectId: string | null
   projectName: string | null
   targetRepo: string | null
@@ -74,6 +83,8 @@ export interface StartBuildRequest {
   projectName: string
   targetRepo: string
   config: ProjectBuildConfig
+  scope?: BuildExecutionScope
+  stepId?: string | null
 }
 
 export type BuildStartResult =

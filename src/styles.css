@@ -1779,6 +1779,21 @@ html, body, #root {
   color: var(--mac-warning);
 }
 
+.build-step-status-not-run {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--mac-r-pill);
+  background: rgba(148, 163, 184, 0.16);
+  color: #64748b;
+}
+
+.build-step-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--mac-sp-2);
+}
+
 .build-step-command,
 .build-panel-log {
   margin: 0;

@@ -5,6 +5,7 @@ import ProjectBuildPanel, {
   canAnalyzeBuildFailure,
   canStartBuild,
   canStopBuild,
+  getDisplayStepsForBuildPanel,
   getBuildLogStatusLabel,
   getBuildStartBlockedReason,
   getBuildStepStatusLabel,
@@ -346,5 +347,89 @@ describe('ProjectBuildPanel', () => {
     expect(markup).toContain('顺序构建')
     expect(markup).toContain('单独构建')
     expect(markup).toContain('未执行')
+  })
+  it('prefers current build config step identities when the last run is not active', () => {
+    const buildConfig: ProjectBuildConfig = {
+      enabled: true,
+      steps: [
+        {
+          id: 'demo',
+          name: 'DEMO',
+          envType: 'msys',
+          cwd: '.',
+          command: 'build-demo.cmd',
+          enabled: true,
+          visualStudioInstanceId: '',
+          outputEncoding: 'auto'
+        },
+        {
+          id: 'sdk',
+          name: 'SDK',
+          envType: 'msys',
+          cwd: '.',
+          command: 'build-sdk.cmd',
+          enabled: true,
+          visualStudioInstanceId: '',
+          outputEncoding: 'auto'
+        }
+      ]
+    }
+
+    const staleState: BuildRuntimeState = {
+      ...baseState,
+      status: 'failed',
+      steps: [
+        {
+          ...buildConfig.steps[1],
+          name: 'Old SDK Label',
+          visualStudioDisplayName: null,
+          status: 'succeeded',
+          resolvedCwd: 'E:/demo',
+          startedAt: '2026-05-20T10:00:00.000Z',
+          finishedAt: '2026-05-20T10:00:01.000Z',
+          exitCode: 0,
+          signal: null
+        },
+        {
+          ...buildConfig.steps[0],
+          name: 'Old Demo Label',
+          visualStudioDisplayName: null,
+          status: 'failed',
+          resolvedCwd: 'E:/demo',
+          startedAt: '2026-05-20T10:00:02.000Z',
+          finishedAt: '2026-05-20T10:00:03.000Z',
+          exitCode: 1,
+          signal: null
+        }
+      ],
+      lastFailure: {
+        projectId: 'project-1',
+        projectName: 'Demo',
+        targetRepo: 'E:/demo',
+        stepId: 'demo',
+        stepName: 'Old Demo Label',
+        envType: 'msys',
+        visualStudioInstanceId: null,
+        visualStudioDisplayName: null,
+        outputEncoding: 'auto',
+        cwd: '.',
+        command: 'build-demo.cmd',
+        exitCode: 1,
+        signal: null,
+        reason: 'build failed',
+        logTail: 'fatal error'
+      }
+    }
+
+    expect(
+      getDisplayStepsForBuildPanel(buildConfig, staleState).map((step) => ({
+        id: step.id,
+        name: step.name,
+        status: step.status
+      }))
+    ).toEqual([
+      { id: 'demo', name: 'DEMO', status: 'failed' },
+      { id: 'sdk', name: 'SDK', status: 'succeeded' }
+    ])
   })
 })

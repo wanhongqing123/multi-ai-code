@@ -927,6 +927,30 @@ const api = {
       clear: () =>
         ipcRenderer.invoke('habit:events:clear') as Promise<{ ok: boolean; removed: number }>
     },
+    screenSampler: {
+      state: () =>
+        ipcRenderer.invoke('habit:screen-sampler:state') as Promise<{
+          enabled: boolean
+          paused: boolean
+          runtime: {
+            running: boolean
+            lastL1At: number
+            lastL2At: number
+            lastError: { label: string; message: string; at: number } | null
+            lastWindowTitle: string | null
+            lastWindowApp: string | null
+          } | null
+          activeWinLoadError: string | null
+        }>,
+      togglePause: () =>
+        ipcRenderer.invoke('habit:screen-sampler:toggle-pause') as Promise<{
+          paused: boolean
+        }>,
+      setPaused: (paused: boolean) =>
+        ipcRenderer.invoke('habit:screen-sampler:set-paused', { paused }) as Promise<{
+          paused: boolean
+        }>
+    },
     runNow: () =>
       ipcRenderer.invoke('habit:run-now') as Promise<
         | {
@@ -973,8 +997,123 @@ const api = {
         ipcRenderer.invoke('habit:candidates:clear') as Promise<{
           ok: boolean
           removed: number
+        }>,
+      acceptAsSkill: (req: {
+        candidateId: number
+        name: string
+        description?: string | null
+        trigger?: string | null
+        steps: unknown[]
+      }) =>
+        ipcRenderer.invoke('habit:candidates:accept-as-skill', req) as Promise<{
+          ok: boolean
+          id: number
         }>
+    },
+    skills: {
+      list: () =>
+        ipcRenderer.invoke('habit:skills:list') as Promise<
+          Array<{
+            id: number
+            name: string
+            description: string | null
+            trigger: string | null
+            steps: unknown[]
+            source: string | null
+            candidateId: number | null
+            createdAt: number
+            updatedAt: number
+            lastUsedAt: number | null
+          }>
+        >,
+      get: (id: number) =>
+        ipcRenderer.invoke('habit:skills:get', { id }) as Promise<unknown>,
+      create: (input: {
+        name: string
+        description?: string | null
+        trigger?: string | null
+        steps: unknown[]
+        source?: string
+        candidateId?: number | null
+      }) =>
+        ipcRenderer.invoke('habit:skills:create', input) as Promise<{ ok: boolean; id: number }>,
+      update: (id: number, patch: {
+        name?: string
+        description?: string | null
+        trigger?: string | null
+        steps?: unknown[]
+      }) =>
+        ipcRenderer.invoke('habit:skills:update', { id, patch }) as Promise<{ ok: boolean }>,
+      delete: (id: number) =>
+        ipcRenderer.invoke('habit:skills:delete', { id }) as Promise<{ ok: boolean }>,
+      touchLastUsed: (id: number) =>
+        ipcRenderer.invoke('habit:skills:touch-last-used', { id }) as Promise<{ ok: boolean }>
     }
+  },
+  kb: {
+    list: (req: { repoPath: string; tier?: string; limit?: number }) =>
+      ipcRenderer.invoke('kb:list', req) as Promise<unknown[]>,
+    topics: (req: { repoPath: string }) =>
+      ipcRenderer.invoke('kb:topics', req) as Promise<string[]>,
+    search: (req: { repoPath: string; query: string; limit?: number }) =>
+      ipcRenderer.invoke('kb:search', req) as Promise<unknown[]>,
+    get: (req: { repoPath: string; id: number }) =>
+      ipcRenderer.invoke('kb:get', req) as Promise<unknown>,
+    meta: (req: { repoPath: string }) =>
+      ipcRenderer.invoke('kb:meta', req) as Promise<{
+        repo_path: string
+        last_summary_at: number
+        last_compaction_at: number
+        digest: string
+      }>,
+    stats: (req: { repoPath: string }) =>
+      ipcRenderer.invoke('kb:stats', req) as Promise<{
+        total: number
+        byTier: { hot: number; warm: number; cold: number; pinned: number }
+        approxBytes: number
+        lastSummaryAt: number
+        lastCompactionAt: number
+      }>,
+    update: (req: {
+      repoPath: string
+      id: number
+      topic?: string
+      summary?: string
+      importance?: number
+      tier?: string
+    }) =>
+      ipcRenderer.invoke('kb:update', req) as Promise<{ ok: boolean }>,
+    pin: (req: { repoPath: string; id: number }) =>
+      ipcRenderer.invoke('kb:pin', req) as Promise<{ ok: boolean }>,
+    unpin: (req: { repoPath: string; id: number }) =>
+      ipcRenderer.invoke('kb:unpin', req) as Promise<{ ok: boolean }>,
+    delete: (req: { repoPath: string; id: number }) =>
+      ipcRenderer.invoke('kb:delete', req) as Promise<{ ok: boolean }>,
+    clear: (req: { repoPath: string }) =>
+      ipcRenderer.invoke('kb:clear', req) as Promise<{ ok: boolean; removed: number }>,
+    runNow: (req: { repoPath: string }) =>
+      ipcRenderer.invoke('kb:run-now', req) as Promise<
+        | { ok: true; outcome: { ran: boolean; reason: string; topicsCreated?: number; topicsUpdated?: number; error?: string } }
+        | { ok: false; error: string }
+      >,
+    compactNow: (req: { repoPath: string }) =>
+      ipcRenderer.invoke('kb:compact-now', req) as Promise<
+        | { ok: true; result: { merged: number; demotedFromHot: number; demotedFromWarm: number } }
+        | { ok: false; error: string }
+      >,
+    schedulerStatus: (req: { repoPath: string }) =>
+      ipcRenderer.invoke('kb:scheduler-status', req) as Promise<{
+        signals: {
+          lastSummaryAt: number
+          lastAiActivityAt: number
+          lastUserPromptAt: number
+          pendingSignalCount: number
+          mainSessionRunning: boolean
+          cliConfigured: boolean
+        }
+        nextActionable: string | null
+        willRunReason: string | null
+      }>
   }
 }
 

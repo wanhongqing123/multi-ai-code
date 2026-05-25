@@ -21,6 +21,13 @@ import {
 import { detectMsys } from '../util/msys.js'
 import { rootDir } from '../store/paths.js'
 import { recordHabitEvent } from '../habit/collector.js'
+import {
+  noteAiActivity,
+  noteUserPrompt,
+  setMainSessionRunning,
+  setProjectAiSettings
+} from '../kb/runner.js'
+import { cleanupKbMcpConfig, writeKbMcpConfig } from '../kb/mcpConfig.js'
 
 /**
  * PTY chunk debug dumper. Enable by setting env var MULTI_AI_CODE_PTY_DUMP=1
@@ -111,6 +118,8 @@ interface Session {
   proc: PtyCCProcess
   projectId: string
   projectDir: string
+  /** Absolute path of the target repo — used to feed KB activity signals. */
+  targetRepo: string
   sessionId: string
   planName: string
   command: string
@@ -119,6 +128,8 @@ interface Session {
   codexBootText?: string
   /** Raw-chunk dump stream (only when PTY_DUMP_ENABLED). */
   dumpStream?: WriteStream | null
+  /** Temp file path of the KB MCP config (Claude Code only); null otherwise. */
+  kbMcpConfigPath?: string | null
 }
 
 interface ExternalReviewJudgeRequest {
@@ -261,9 +272,24 @@ export function registerPtyIpc(): void {
     const isResumeMode =
       req.mode === 'resume' &&
       (req.command === 'claude' || req.command === 'codex')
-    const effectiveArgs = isResumeMode
+    let effectiveArgs = isResumeMode
       ? buildResumeArgs(req.command as ResumeCommand, req.args)
       : req.args
+
+    // Inject the project-KB MCP server config for Claude Code sessions so
+    // the AI can call `query_kb` / `list_topics` / `get_topic` over stdio.
+    // Codex doesn't read MCP configs in v1 — it relies on digest injection.
+    let kbMcpConfigPath: string | null = null
+    if (req.command === 'claude') {
+      try {
+        kbMcpConfigPath = await writeKbMcpConfig(req.targetRepo)
+        if (kbMcpConfigPath) {
+          effectiveArgs = ['--mcp-config', kbMcpConfigPath, ...effectiveArgs]
+        }
+      } catch {
+        /* MCP setup is best-effort; the digest in system prompt still works */
+      }
+    }
 
     const proc = new PtyCCProcess({
       cwd: finalCwd,
@@ -283,10 +309,23 @@ export function registerPtyIpc(): void {
       proc,
       projectId: req.projectId,
       projectDir: req.projectDir,
+      targetRepo: req.targetRepo,
       sessionId: req.sessionId,
       planName: req.planName,
       command: req.command,
-      dumpStream
+      dumpStream,
+      kbMcpConfigPath
+    }
+    // KB scheduler: mark this repo as having an active main session and cache
+    // the AI settings so background summary jobs can use them.
+    setMainSessionRunning(req.targetRepo, true)
+    try {
+      const projMeta = JSON.parse(
+        await fs.readFile(join(req.projectDir, 'project.json'), 'utf8')
+      ) as { ai_settings?: { ai_cli?: 'claude' | 'codex'; command?: string; args?: string[]; env?: Record<string, string> } }
+      setProjectAiSettings(req.projectId, req.targetRepo, projMeta.ai_settings ?? null)
+    } catch {
+      setProjectAiSettings(req.projectId, req.targetRepo, null)
     }
 
     // Resume-failure detection: if the CLI exits with a non-zero code within
@@ -339,6 +378,8 @@ export function registerPtyIpc(): void {
       }
 
       writePtyDump(dumpStream, chunk)
+      // KB scheduler signal: AI is actively responding, defer summary jobs.
+      noteAiActivity(session.targetRepo)
       broadcast('cc:data', { sessionId: req.sessionId, chunk })
     })
     proc.on('exit', (info: { exitCode: number; signal?: number }) => {
@@ -357,6 +398,8 @@ export function registerPtyIpc(): void {
       )
       closePtyDump(dumpStream, `exit(code=${info.exitCode})`)
       broadcast('cc:exit', { sessionId: req.sessionId, ...info })
+      setMainSessionRunning(session.targetRepo, false)
+      void cleanupKbMcpConfig(session.kbMcpConfigPath ?? null)
       sessions.delete(req.sessionId)
     })
 
@@ -460,6 +503,8 @@ export function registerPtyIpc(): void {
       'external review session was terminated before a structured reply arrived'
     )
     closePtyDump(s.dumpStream, 'kill')
+    setMainSessionRunning(s.targetRepo, false)
+    void cleanupKbMcpConfig(s.kbMcpConfigPath ?? null)
     sessions.delete(sessionId)
     return { ok: true }
   })
@@ -499,6 +544,8 @@ export function registerPtyIpc(): void {
         projectId: s.projectId,
         sourceWindow: 'main'
       })
+      // KB scheduler signal: a new user prompt landed; cooldown + pending++.
+      noteUserPrompt(s.targetRepo)
       return { ok: true }
     }
   )

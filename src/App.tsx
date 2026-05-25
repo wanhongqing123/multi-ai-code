@@ -17,7 +17,13 @@ import AiSettingsDialog, {
 import ProjectBuildPanel, { getBuildStartBlockedReason } from './components/ProjectBuildPanel'
 import TemplatesDialog from './components/TemplatesDialog'
 import HabitMonitorDialog from './habit/HabitMonitorDialog'
+import ScreenSamplerIndicator from './habit/ScreenSamplerIndicator'
 import FirstRunNoticeDialog from './habit/FirstRunNoticeDialog'
+import SkillBar from './habit/SkillBar'
+import SkillRunDialog from './habit/SkillRunDialog'
+import { runSkill as runSkillFn } from './habit/skillRunner'
+import { collectSkillVariables, type Skill } from './habit/skillTypes'
+import ProjectKbDialog from './kb/ProjectKbDialog'
 import { getCliTargetLabel } from './components/cliTarget'
 import OnboardingWizard from './components/OnboardingWizard'
 import DoctorDialog from './components/DoctorDialog'
@@ -161,7 +167,15 @@ function AppShell() {
     useState(false)
   const [showTemplates, setShowTemplates] = useState(false)
   const [showHabitMonitor, setShowHabitMonitor] = useState(false)
+  const [showProjectKb, setShowProjectKb] = useState(false)
   const [showHabitFirstRun, setShowHabitFirstRun] = useState(false)
+  /** Bumped whenever a skill is created/edited/deleted so SkillBar refetches. */
+  const [skillsRefreshNonce, setSkillsRefreshNonce] = useState(0)
+  /** When a skill needs `{var}` values, this drives the SkillRunDialog. */
+  const [pendingSkillRun, setPendingSkillRun] = useState<{
+    skill: Skill
+    vars: string[]
+  } | null>(null)
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [showDoctor, setShowDoctor] = useState(false)
   const [showCmdk, setShowCmdk] = useState(false)
@@ -1013,7 +1027,7 @@ function AppShell() {
   /** Open the git diff viewer. */
   const openDiffReview = useCallback(() => {
     if (!targetRepo) {
-      showToast('本项目没有 target_repo 路径，无法打开 Diff 审查', { level: 'warn' })
+      showToast('本项目没有 target_repo 路径，无法打开代码审查', { level: 'warn' })
       return
     }
     setDiffReviewOpen(true)
@@ -1112,7 +1126,7 @@ function AppShell() {
           sourceWindow: 'diff-review'
         })
       }
-      // Sent successfully — clear the batch so the next Diff 审查 starts fresh.
+      // Sent successfully — clear the batch so the next 代码审查 starts fresh.
       setDiffAnnotations([])
       setDiffGeneralNote('')
       setDiffReviewOpen(false)
@@ -1139,6 +1153,55 @@ function AppShell() {
       })
     },
     [sessionId, sessionStatus, getPlanAbsPath, planName]
+  )
+
+  /**
+   * Executes a multi-step Skill against the current main session. Variables
+   * the user already filled in via the SkillRunDialog are passed in `vars`;
+   * any unfilled placeholders stay literal so the AI can see them.
+   */
+  const runSkill = useCallback(
+    async (skill: Skill, vars: Record<string, string>) => {
+      if (!sessionId || sessionStatus !== 'running') {
+        showToast('会话未启动，无法执行 skill', { level: 'warn' })
+        return
+      }
+      const outcome = await runSkillFn(
+        {
+          sendUser: (sid, text) => window.api.cc.sendUser(sid, text),
+          onData: window.api.cc.onData,
+          touchLastUsed: (id) =>
+            window.api.habit.skills.touchLastUsed(id).then(() => undefined)
+        },
+        { sessionId, skill, vars }
+      )
+      if (outcome.ok) {
+        showToast(`已运行 · ${skill.name}`, { level: 'success' })
+      } else {
+        showToast(
+          `Skill 执行失败 (step ${(outcome.failedStepIndex ?? 0) + 1}): ${outcome.failedReason ?? '未知错误'}`,
+          { level: 'error', duration: 4500 }
+        )
+      }
+      setSkillsRefreshNonce((n) => n + 1)
+    },
+    [sessionId, sessionStatus]
+  )
+
+  /**
+   * Entry point used by Skill Library "试运行" and SkillBar — decides whether
+   * to collect variables first or run immediately.
+   */
+  const handleRunSkillRequest = useCallback(
+    (skill: Skill) => {
+      const vars = collectSkillVariables(skill.steps)
+      if (vars.length > 0) {
+        setPendingSkillRun({ skill, vars })
+      } else {
+        void runSkill(skill, {})
+      }
+    },
+    [runSkill]
   )
 
   const globalSearchQuickActions = [
@@ -1271,8 +1334,8 @@ function AppShell() {
     },
     {
       id: 'diff-review',
-      label: '🔀 Diff 审查',
-      keywords: 'diff review code',
+      label: '🔀 代码审查',
+      keywords: 'code review diff annotate',
       action: () => void openDiffReview(),
       disabled: !hasProject
     }
@@ -1324,6 +1387,15 @@ function AppShell() {
         >
           🌐 托管 Chrome
         </button>
+        <button
+          className="topbar-btn"
+          onClick={() => setShowProjectKb(true)}
+          disabled={!targetRepo}
+          title="本项目的知识库（自动积累 · 可搜索）"
+        >
+          🧠 项目记忆
+        </button>
+        <ScreenSamplerIndicator />
         {mainPanelMounted && (
           <button
             className="topbar-btn"
@@ -1435,32 +1507,41 @@ function AppShell() {
       )}
 
       <div className="main-split">
-        {mainPanelMounted ? (
-          <MainPanel
-            sessionId={sessionId ?? ''}
-            projectId={currentProjectId ?? ''}
-            projectDir={projectDir}
-            cwd={targetRepo}
-            planName={planName}
-            status={sessionStatus}
-            onStart={() => void handleStart('new')}
-            onStop={handleStop}
-            onRestart={handleRestart}
-            onOpenRepoView={() => void openRepoView()}
-            onOpenDiff={() => setDiffReviewOpen(true)}
-            disabled={!currentProjectId || !planName.trim()}
-            repoViewDisabled={!currentProjectId}
+        <div className="main-column">
+          <SkillBar
+            sessionId={sessionId}
+            sessionRunning={sessionStatus === 'running'}
+            refreshNonce={skillsRefreshNonce}
+            onNeedsVariables={(skill, vars) => setPendingSkillRun({ skill, vars })}
+            onExecute={(skill) => runSkill(skill, {})}
           />
-        ) : (
-          <MainBootGate
-            phase={gatePhase}
-            command={aiSettings.command ?? aiSettings.ai_cli ?? 'claude'}
-            planName={planName}
-            disabled={!currentProjectId || !planName.trim()}
-            onChoose={(mode) => void handleStart(mode)}
-            onDismissFailure={() => setGatePhase({ kind: 'idle' })}
-          />
-        )}
+          {mainPanelMounted ? (
+            <MainPanel
+              sessionId={sessionId ?? ''}
+              projectId={currentProjectId ?? ''}
+              projectDir={projectDir}
+              cwd={targetRepo}
+              planName={planName}
+              status={sessionStatus}
+              onStart={() => void handleStart('new')}
+              onStop={handleStop}
+              onRestart={handleRestart}
+              onOpenRepoView={() => void openRepoView()}
+              onOpenDiff={() => setDiffReviewOpen(true)}
+              disabled={!currentProjectId || !planName.trim()}
+              repoViewDisabled={!currentProjectId}
+            />
+          ) : (
+            <MainBootGate
+              phase={gatePhase}
+              command={aiSettings.command ?? aiSettings.ai_cli ?? 'claude'}
+              planName={planName}
+              disabled={!currentProjectId || !planName.trim()}
+              onChoose={(mode) => void handleStart(mode)}
+              onDismissFailure={() => setGatePhase({ kind: 'idle' })}
+            />
+          )}
+        </div>
 
         {showProjectPicker && (
           <ProjectPicker
@@ -1620,6 +1701,23 @@ function AppShell() {
             setShowAiSettings(true)
           }}
           mainCliLabel={getCliTargetLabel(aiSettings.ai_cli)}
+        />
+      )}
+      {showProjectKb && targetRepo && (
+        <ProjectKbDialog
+          repoPath={targetRepo}
+          onClose={() => setShowProjectKb(false)}
+        />
+      )}
+      {pendingSkillRun && (
+        <SkillRunDialog
+          skill={pendingSkillRun.skill}
+          variables={pendingSkillRun.vars}
+          onCancel={() => setPendingSkillRun(null)}
+          onConfirm={async (vars) => {
+            await runSkill(pendingSkillRun.skill, vars)
+            setPendingSkillRun(null)
+          }}
         />
       )}
       {showHabitFirstRun && (

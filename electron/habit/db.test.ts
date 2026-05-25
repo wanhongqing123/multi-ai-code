@@ -41,9 +41,9 @@ afterEach(async () => {
 })
 
 describe('habit event kinds', () => {
-  it('declares exactly 13 distinct event kinds', () => {
-    expect(ALL_HABIT_EVENT_KINDS).toHaveLength(13)
-    expect(new Set(ALL_HABIT_EVENT_KINDS).size).toBe(13)
+  it('declares exactly 15 distinct event kinds', () => {
+    expect(ALL_HABIT_EVENT_KINDS).toHaveLength(15)
+    expect(new Set(ALL_HABIT_EVENT_KINDS).size).toBe(15)
   })
 
   it('keeps the agreed set of kinds in sync with the design doc', () => {
@@ -60,7 +60,9 @@ describe('habit event kinds', () => {
       'site_visit',
       'site_click',
       'site_input_hint',
-      'tab_switch'
+      'tab_switch',
+      'screen_window',
+      'screen_frame'
     ])
   })
 })

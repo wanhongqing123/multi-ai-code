@@ -1,46 +1,39 @@
 import { useCallback, useEffect, useState } from 'react'
 import CollectionSettingsPanel from './CollectionSettingsPanel'
 import SkillCandidatesPanel from './SkillCandidatesPanel'
+import SkillLibraryPanel from './SkillLibraryPanel'
 import type {
   HabitEventRow,
   HabitSettings,
   SkillCandidateRow
 } from './habitTypes'
-
-const TEMPLATES_STORAGE_KEY = 'multi-ai-code.templates'
+import type { Skill, SkillStep } from './skillTypes'
 
 interface Props {
   onClose: () => void
-  /** Used by 顶部说明 link — opens AI settings dialog so user can see the source CLI config. */
+  /** Opens the AI settings dialog so the user can verify the source CLI config. */
   onOpenAiSettings: () => void
-  /** Current main session AI CLI label, for the source hint. */
+  /** Current main-session CLI label for the source hint. */
   mainCliLabel: string
+  /** True when a main-session is alive — gates Skill Library "试运行". */
+  sessionRunning: boolean
+  /** Hook to actually run a skill (the parent owns the runtime deps). */
+  onRunSkill: (skill: Skill) => void
+  /** Bump after any skill list mutation so SkillBar refreshes. */
+  onSkillsChanged: () => void
 }
 
-type Tab = 'candidates' | 'collection'
-
-interface LocalTemplate {
-  id: string
-  name: string
-  body: string
-}
-
-function loadTemplates(): LocalTemplate[] {
-  try {
-    const raw = localStorage.getItem(TEMPLATES_STORAGE_KEY)
-    if (!raw) return []
-    return JSON.parse(raw) as LocalTemplate[]
-  } catch {
-    return []
-  }
-}
-
-function saveTemplates(list: LocalTemplate[]): void {
-  localStorage.setItem(TEMPLATES_STORAGE_KEY, JSON.stringify(list))
-}
+type Tab = 'candidates' | 'library' | 'collection'
 
 export default function SkillStudioDialog(props: Props): JSX.Element {
-  const { onClose, onOpenAiSettings, mainCliLabel } = props
+  const {
+    onClose,
+    onOpenAiSettings,
+    mainCliLabel,
+    sessionRunning,
+    onRunSkill,
+    onSkillsChanged
+  } = props
   const [tab, setTab] = useState<Tab>('candidates')
 
   const [settings, setSettings] = useState<HabitSettings | null>(null)
@@ -55,7 +48,6 @@ export default function SkillStudioDialog(props: Props): JSX.Element {
     setTimeout(() => setToast(null), 2500)
   }
 
-  // Initial settings load.
   useEffect(() => {
     void (async () => {
       const s = (await window.api.habit.settings.get()) as HabitSettings
@@ -88,26 +80,28 @@ export default function SkillStudioDialog(props: Props): JSX.Element {
   }, [refreshEvents])
 
   const handleAcceptCandidate = useCallback(
-    async (c: SkillCandidateRow, title: string, body: string) => {
-      if (!title.trim() || !body.trim()) {
-        flashToast('标题或正文为空，无法采纳')
-        return
+    async (
+      c: SkillCandidateRow,
+      payload: {
+        name: string
+        description?: string | null
+        trigger?: string | null
+        steps: SkillStep[]
       }
-      // Push into the existing localStorage-backed templates list.
-      const next: LocalTemplate[] = [
-        ...loadTemplates(),
-        {
-          id: `t_skill_${c.id}_${Date.now()}`,
-          name: title.trim(),
-          body
-        }
-      ]
-      saveTemplates(next)
-      await window.api.habit.candidates.updateStatus({ id: c.id, status: 'accepted' })
-      flashToast('已采纳并加入模板列表')
-      await refreshCandidates()
+    ) => {
+      const res = await window.api.habit.candidates.acceptAsSkill({
+        candidateId: c.id,
+        ...payload
+      })
+      if (res.ok) {
+        flashToast(`已采纳为 skill #${res.id}`)
+        onSkillsChanged()
+        await refreshCandidates()
+      } else {
+        flashToast('采纳失败')
+      }
     },
-    [refreshCandidates]
+    [refreshCandidates, onSkillsChanged]
   )
 
   const handleDiscardCandidate = useCallback(
@@ -121,7 +115,6 @@ export default function SkillStudioDialog(props: Props): JSX.Element {
 
   const handleSnoozeCandidate = useCallback(
     async (id: number) => {
-      // 7 day snooze.
       const snoozedUntil = Date.now() + 7 * 24 * 60 * 60 * 1000
       await window.api.habit.candidates.updateStatus({
         id,
@@ -174,8 +167,7 @@ export default function SkillStudioDialog(props: Props): JSX.Element {
         </div>
 
         <div className="habit-source-hint">
-          习惯学习智能体当前使用：<strong>{mainCliLabel}</strong>（与主会话 AI 同一份配置）。
-          {' '}
+          习惯学习智能体当前使用：<strong>{mainCliLabel}</strong>（与主会话 AI 同一份配置）。{' '}
           <button type="button" className="habit-source-link" onClick={onOpenAiSettings}>
             打开设置
           </button>
@@ -188,6 +180,13 @@ export default function SkillStudioDialog(props: Props): JSX.Element {
             onClick={() => setTab('candidates')}
           >
             候选
+          </button>
+          <button
+            type="button"
+            className={`habit-tab-btn ${tab === 'library' ? 'active' : ''}`}
+            onClick={() => setTab('library')}
+          >
+            Skill 库
           </button>
           <button
             type="button"
@@ -208,6 +207,13 @@ export default function SkillStudioDialog(props: Props): JSX.Element {
               onSnooze={handleSnoozeCandidate}
               onRunAnalysisNow={handleRunAnalysisNow}
               analysisRunning={analysisRunning}
+            />
+          )}
+          {tab === 'library' && (
+            <SkillLibraryPanel
+              sessionRunning={sessionRunning}
+              onTestRun={onRunSkill}
+              onChanged={onSkillsChanged}
             />
           )}
           {tab === 'collection' && settings && (

@@ -60,18 +60,44 @@ describe('buildGenerationPrompt: privacy invariants', () => {
 })
 
 describe('parseGenerationResponse', () => {
-  it('parses bare JSON with title and body', () => {
+  it('parses bare JSON with multi-step steps[]', () => {
+    const r = parseGenerationResponse(
+      '{"title":"看实现","trigger":"看实现","steps":[' +
+        '{"type":"prompt","text":"帮我看看 {file} 的实现"},' +
+        '{"type":"wait-response"}],"variables":["file"]}'
+    )
+    expect(r.ok).toBe(true)
+    expect(r.template?.title).toBe('看实现')
+    expect(r.template?.trigger).toBe('看实现')
+    expect(r.template?.steps).toHaveLength(2)
+    expect(r.template?.steps?.[0]).toMatchObject({ type: 'prompt' })
+    expect(r.template?.steps?.[1]).toMatchObject({ type: 'wait-response' })
+  })
+
+  it('still accepts legacy single-body JSON by wrapping it as one prompt step', () => {
     const r = parseGenerationResponse(
       '{"title":"看实现","body":"帮我看看 {file} 的实现","variables":["file"]}'
     )
     expect(r.ok).toBe(true)
-    expect(r.template?.title).toBe('看实现')
+    expect(r.template?.steps).toHaveLength(1)
+    expect(r.template?.steps?.[0]).toMatchObject({
+      type: 'prompt',
+      text: '帮我看看 {file} 的实现'
+    })
+    // Legacy body field is preserved for backward-compat consumers.
     expect(r.template?.body).toContain('{file}')
+  })
+
+  it('drops invalid step entries and rejects when nothing valid remains', () => {
+    const r = parseGenerationResponse(
+      '{"title":"x","steps":[{"type":"eval","cmd":"rm"},{"type":"prompt","text":""}]}'
+    )
+    expect(r.ok).toBe(false)
   })
 
   it('strips a ```json``` fence', () => {
     const r = parseGenerationResponse(
-      '```json\n{"title":"看","body":"帮我看 {x}","variables":["x"]}\n```'
+      '```json\n{"title":"看","steps":[{"type":"prompt","text":"帮我看 {x}"}]}\n```'
     )
     expect(r.ok).toBe(true)
     expect(r.template?.title).toBe('看')
@@ -79,7 +105,7 @@ describe('parseGenerationResponse', () => {
 
   it('extracts JSON when surrounded by chatter', () => {
     const r = parseGenerationResponse(
-      'Sure! Here is the template: {"title":"x","body":"y"} hope this helps'
+      'Sure! Here is the skill: {"title":"x","steps":[{"type":"prompt","text":"y"}]} hope this helps'
     )
     expect(r.ok).toBe(true)
     expect(r.template?.title).toBe('x')
@@ -95,24 +121,35 @@ describe('parseGenerationResponse', () => {
     expect(r.error).toBeDefined()
   })
 
-  it('rejects JSON missing required fields', () => {
+  it('rejects JSON missing title', () => {
+    const r = parseGenerationResponse('{"steps":[{"type":"prompt","text":"x"}]}')
+    expect(r.ok).toBe(false)
+  })
+
+  it('rejects JSON with no steps and no body', () => {
     const r = parseGenerationResponse('{"title":"only title"}')
     expect(r.ok).toBe(false)
   })
 
   it('tags parsed template with source=cli', () => {
-    const r = parseGenerationResponse('{"title":"x","body":"y"}')
+    const r = parseGenerationResponse(
+      '{"title":"x","steps":[{"type":"prompt","text":"y"}]}'
+    )
     expect(r.template?.meta?.source).toBe('cli')
   })
 })
 
 describe('buildLocalHeuristicCandidate', () => {
-  it('uses the longest sample as the body', () => {
+  it('wraps the longest sample into a single prompt step', () => {
     const cluster = mkCluster({
       representativeSamples: ['short', 'medium length one', 'this is by far the longest sample']
     })
     const c = buildLocalHeuristicCandidate(cluster)
-    expect(c.body).toBe('this is by far the longest sample')
+    expect(c.steps).toHaveLength(1)
+    expect(c.steps?.[0]).toMatchObject({
+      type: 'prompt',
+      text: 'this is by far the longest sample'
+    })
   })
 
   it('truncates title to 18 chars + ellipsis when sample is long', () => {
@@ -124,9 +161,20 @@ describe('buildLocalHeuristicCandidate', () => {
     expect(c.title.endsWith('…')).toBe(true)
   })
 
+  it('produces a non-empty trigger derived from the title', () => {
+    const cluster = mkCluster({
+      representativeSamples: ['这是一段够长的中文示例文本，用于触发字面截断']
+    })
+    const c = buildLocalHeuristicCandidate(cluster)
+    expect(c.trigger).toBeDefined()
+    expect(c.trigger?.length).toBeGreaterThan(0)
+    expect(c.trigger?.length).toBeLessThanOrEqual(6)
+  })
+
   it('handles empty samples gracefully', () => {
     const c = buildLocalHeuristicCandidate(mkCluster({ representativeSamples: [] }))
     expect(c.title).toContain('模板')
+    expect(c.steps).toEqual([])
     expect(c.meta?.source).toBe('heuristic')
   })
 

@@ -36,9 +36,9 @@ describe('habit settings defaults', () => {
     expect(DEFAULT_HABIT_SETTINGS.enabled).toBe(true)
   })
 
-  it('all 13 kinds default to enabled', () => {
+  it('all 15 kinds default to enabled', () => {
     const flags = Object.values(DEFAULT_HABIT_SETTINGS.kinds)
-    expect(flags).toHaveLength(13)
+    expect(flags).toHaveLength(15)
     expect(flags.every((v) => v === true)).toBe(true)
   })
 

@@ -125,7 +125,17 @@ export function pickNewClusters(
 export type GenerateFn = (
   cluster: AggregatedCluster
 ) => Promise<
-  | { ok: true; title: string; body: string; meta?: unknown }
+  | {
+      ok: true
+      title: string
+      /** Legacy single-prompt body. Optional now — steps is canonical. */
+      body?: string
+      /** Multi-step recipe. Persisted inside meta JSON for the candidate row. */
+      steps?: unknown[]
+      /** Short keyword used by the SkillBar autocomplete after the candidate is accepted. */
+      trigger?: string
+      meta?: unknown
+    }
   | { ok: false; error: string }
   /** Skip this cluster without inserting a candidate row. */
   | { skip: true }
@@ -208,6 +218,18 @@ export async function runAggregationOnce(
         continue
       }
       if ('ok' in result && result.ok) {
+        // Multi-step recipe and short trigger keyword live inside the meta
+        // JSON so the renderer can hydrate them when the user accepts a
+        // candidate (no schema migration needed).
+        const baseMeta =
+          result.meta && typeof result.meta === 'object'
+            ? (result.meta as Record<string, unknown>)
+            : {}
+        const enrichedMeta = {
+          ...baseMeta,
+          steps: result.steps,
+          trigger: result.trigger
+        }
         insertSkillCandidate({
           createdAt: Date.now(),
           clusterKind: cluster.kind,
@@ -216,7 +238,7 @@ export async function runAggregationOnce(
           representativeSamples: cluster.representativeSamples,
           generatedTitle: result.title,
           generatedBody: result.body,
-          generatedMeta: result.meta,
+          generatedMeta: enrichedMeta,
           status: 'pending'
         })
       } else if ('ok' in result && !result.ok) {

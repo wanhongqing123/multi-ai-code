@@ -211,6 +211,16 @@ html, body, #root {
   min-height: 0;
 }
 
+/* Column wrapper inside main-split so the SkillBar can sit ABOVE MainPanel
+   while preserving main-split's row-flex container for sibling overlays. */
+.main-column {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
 .main-panel {
   flex: 1;
   display: flex;
@@ -5824,4 +5834,559 @@ html, body, #root {
 .screenshot-send-error {
   color: #c33;
   font-size: 12px;
+}
+
+/* ===== Skill bar (top of main session) ===== */
+.skill-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--mac-border-subtle);
+  background: var(--mac-surface);
+}
+.skill-bar-icon {
+  font-family: var(--mono-font, monospace);
+  font-size: 14px;
+  color: var(--mac-fg-subtle);
+  width: 16px;
+  text-align: center;
+}
+.skill-bar-input {
+  flex: 1;
+  background: var(--mac-surface);
+  border: 1px solid transparent;
+  border-radius: var(--mac-r-sm);
+  padding: 5px 10px;
+  font-size: 13px;
+  color: var(--mac-fg);
+  outline: none;
+  transition: border-color var(--mac-dur-fast) var(--mac-ease),
+              background var(--mac-dur-fast) var(--mac-ease);
+}
+.skill-bar-input:focus {
+  border-color: var(--mac-primary);
+  background: var(--mac-surface-raised);
+  box-shadow: 0 0 0 3px var(--mac-focus-ring);
+}
+.skill-bar-input:disabled {
+  opacity: 0.6;
+}
+.skill-bar-hint {
+  font-size: 12px;
+  color: var(--mac-fg-subtle);
+  white-space: nowrap;
+}
+.skill-bar-dropdown {
+  position: absolute;
+  left: 32px;
+  right: 12px;
+  top: calc(100% - 2px);
+  z-index: 30;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--mac-surface-raised);
+  border: 1px solid var(--mac-border);
+  border-radius: var(--mac-r-md);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  max-height: 360px;
+  overflow-y: auto;
+}
+.skill-bar-item {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: var(--mac-r-sm);
+  cursor: pointer;
+  font-size: 13px;
+}
+.skill-bar-item.active,
+.skill-bar-item:hover {
+  background: var(--mac-primary-soft);
+}
+.skill-bar-item-trigger {
+  font-family: var(--mono-font, monospace);
+  color: var(--mac-primary);
+  font-weight: var(--mac-weight-medium);
+}
+.skill-bar-item-name {
+  color: var(--mac-fg);
+  font-weight: var(--mac-weight-medium);
+}
+.skill-bar-item-desc {
+  color: var(--mac-fg-subtle);
+  grid-column: 1 / -1;
+  font-size: 12px;
+}
+.skill-bar-item-meta {
+  color: var(--mac-fg-subtle);
+  font-size: 11px;
+  font-family: var(--mono-font, monospace);
+}
+
+/* ===== Skill run dialog (variable form) ===== */
+.skill-run-dialog {
+  width: 520px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+.skill-run-body {
+  padding: 16px 20px;
+  overflow-y: auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.skill-run-desc {
+  color: var(--mac-fg-subtle);
+  font-size: 13px;
+  margin: 0;
+}
+.skill-run-steps-preview {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  background: var(--mac-bg-subtle);
+  border-radius: var(--mac-r-md);
+  border: 1px solid var(--mac-border-subtle);
+  font-size: 12px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+.skill-run-steps-preview li {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px dashed var(--mac-border-subtle);
+}
+.skill-run-steps-preview li:last-child {
+  border-bottom: none;
+}
+.skill-run-step-tag {
+  color: var(--mac-primary);
+  font-family: var(--mono-font, monospace);
+}
+.skill-run-step-text {
+  color: var(--mac-fg);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.skill-run-vars {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.skill-run-var-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.skill-run-var-name {
+  font-family: var(--mono-font, monospace);
+  font-size: 12px;
+  color: var(--mac-primary);
+  min-width: 80px;
+}
+.skill-run-var-input {
+  flex: 1;
+  border: 1px solid var(--mac-border);
+  border-radius: var(--mac-r-sm);
+  padding: 6px 10px;
+  font-size: 13px;
+  background: var(--mac-surface);
+  color: var(--mac-fg);
+}
+.skill-run-var-input:focus {
+  outline: none;
+  border-color: var(--mac-primary);
+  box-shadow: 0 0 0 3px var(--mac-focus-ring);
+}
+.skill-run-error {
+  color: var(--mac-danger, #c33);
+  font-size: 12px;
+}
+
+/* ===== Multi-step editing (shared by Candidates panel + Skill library) ===== */
+.habit-step-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.habit-step-row {
+  display: grid;
+  grid-template-columns: 130px 1fr auto;
+  gap: 8px;
+  align-items: start;
+  padding: 8px;
+  border: 1px solid var(--mac-border-subtle);
+  border-radius: var(--mac-r-sm);
+  background: var(--mac-bg-subtle);
+}
+.habit-step-tag {
+  color: var(--mac-primary);
+  font-family: var(--mono-font, monospace);
+  font-size: 12px;
+  padding-top: 6px;
+}
+.habit-step-text {
+  border: 1px solid var(--mac-border);
+  border-radius: var(--mac-r-sm);
+  padding: 6px 8px;
+  font-size: 13px;
+  font-family: inherit;
+  background: var(--mac-surface);
+  color: var(--mac-fg);
+  resize: vertical;
+}
+.habit-step-actions {
+  display: flex;
+  gap: 4px;
+  flex-direction: column;
+}
+.habit-add-step-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+.habit-step-preview {
+  list-style: none;
+  counter-reset: step;
+  margin: 8px 0 0;
+  padding: 0;
+  font-size: 12px;
+  color: var(--mac-fg);
+}
+.habit-step-preview li {
+  counter-increment: step;
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px dashed var(--mac-border-subtle);
+}
+.habit-step-preview li::before {
+  content: counter(step) '.';
+  color: var(--mac-fg-subtle);
+  position: absolute;
+  margin-left: -16px;
+}
+.habit-candidate-trigger {
+  font-family: var(--mono-font, monospace);
+  color: var(--mac-primary);
+  background: var(--mac-primary-soft);
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+/* ===== Skill library panel ===== */
+.habit-skill-library {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.habit-skill-library-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.habit-skill-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--mac-primary);
+  border-radius: var(--mac-r-md);
+  background: var(--mac-surface-raised);
+}
+.habit-skill-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.habit-skill-item {
+  border: 1px solid var(--mac-border-subtle);
+  border-radius: var(--mac-r-md);
+  padding: 10px 12px;
+  background: var(--mac-surface);
+}
+.habit-skill-row-head {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+.habit-skill-name {
+  font-weight: var(--mac-weight-medium);
+  font-size: 14px;
+  color: var(--mac-fg);
+}
+.habit-skill-meta {
+  color: var(--mac-fg-subtle);
+  font-size: 11px;
+  font-family: var(--mono-font, monospace);
+  margin-left: auto;
+}
+.habit-skill-desc {
+  color: var(--mac-fg-subtle);
+  font-size: 12px;
+  margin: 4px 0;
+}
+
+/* ===== Project KB dialog ===== */
+.kb-source-hint {
+  padding: 8px 16px;
+  background: var(--mac-bg-subtle, #f5f5f7);
+  color: var(--mac-fg-subtle, #555);
+  font-size: 12px;
+  border-bottom: 1px solid var(--mac-border-subtle, #e0e0e0);
+}
+.kb-source-hint code {
+  font-family: var(--mono-font, monospace);
+  background: transparent;
+  color: var(--mac-fg, #111);
+}
+
+.kb-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.kb-overview-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--mac-border-subtle);
+  border-radius: var(--mac-r-md);
+  padding: 12px 14px;
+  background: var(--mac-surface-raised);
+}
+.kb-overview-block strong {
+  font-size: 13px;
+  color: var(--mac-fg);
+}
+.kb-digest {
+  font-family: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--mac-fg);
+  max-height: 200px;
+  overflow-y: auto;
+}
+.kb-tier-bars {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 16px;
+}
+.kb-tier-bar-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+}
+.kb-tier-label {
+  color: var(--mac-fg-subtle);
+}
+.kb-tier-count {
+  font-family: var(--mono-font, monospace);
+  color: var(--mac-fg);
+}
+.kb-stats-row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--mac-fg-subtle);
+}
+.kb-sched-line {
+  font-size: 13px;
+  color: var(--mac-fg-muted);
+}
+.kb-sched-will-run {
+  color: var(--mac-primary);
+}
+.kb-sched-skip {
+  color: var(--mac-fg-subtle);
+}
+
+.kb-topics {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.kb-tier-group h4 {
+  font-size: 13px;
+  margin: 0 0 8px;
+  color: var(--mac-fg);
+}
+.kb-entry-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.kb-entry-row {
+  border: 1px solid var(--mac-border-subtle);
+  border-radius: var(--mac-r-md);
+  padding: 10px 12px;
+  background: var(--mac-surface);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.kb-entry-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.kb-entry-topic {
+  font-weight: var(--mac-weight-medium);
+  font-size: 13px;
+  color: var(--mac-fg);
+}
+.kb-entry-meta {
+  font-size: 11px;
+  font-family: var(--mono-font, monospace);
+  color: var(--mac-fg-subtle);
+}
+.kb-entry-summary {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--mac-fg);
+  white-space: pre-wrap;
+}
+.kb-entry-evidence {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 11px;
+}
+.kb-entry-evidence code {
+  background: var(--mac-bg-subtle);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-family: var(--mono-font, monospace);
+  color: var(--mac-fg-muted);
+}
+.kb-entry-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+}
+.kb-entry-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--mac-surface);
+  border: 1px solid var(--mac-border-subtle);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 12px;
+  color: var(--mac-fg);
+  cursor: pointer;
+}
+.kb-entry-btn:hover {
+  background: var(--mac-surface-raised);
+}
+.kb-entry-btn.warn {
+  color: #c33;
+}
+.kb-entry-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.kb-search {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.kb-search-bar {
+  display: flex;
+  gap: 8px;
+}
+.kb-search-bar input {
+  flex: 1;
+}
+
+.kb-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.kb-debug-block {
+  font-family: var(--mono-font, monospace);
+  font-size: 12px;
+  background: var(--mac-bg-subtle);
+  padding: 8px 10px;
+  border-radius: var(--mac-r-sm);
+  overflow-x: auto;
+  margin: 0;
+}
+
+/* ===== Screen sampler topbar indicator ===== */
+.screen-sampler-indicator {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--mac-border-subtle, #e0e0e0);
+  border-radius: 999px;
+  background: var(--mac-surface, #fafafa);
+  color: var(--mac-fg, #111);
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--mac-dur-fast, 120ms) ease;
+}
+.screen-sampler-indicator:hover:not(:disabled) {
+  background: var(--mac-surface-raised, #fff);
+}
+.screen-sampler-indicator:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+.screen-sampler-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #9aa0a6;
+  box-shadow: 0 0 0 0 rgba(154, 160, 166, 0);
+}
+.screen-sampler-dot.active {
+  background: #34a853;
+  animation: screen-sampler-pulse 1.6s infinite;
+}
+.screen-sampler-dot.paused {
+  background: #9aa0a6;
+}
+.screen-sampler-dot.error {
+  background: #ea4335;
+}
+.screen-sampler-text {
+  font-family: var(--mono-font, monospace);
+  font-size: 11px;
+  color: var(--mac-fg-muted, #555);
+}
+@keyframes screen-sampler-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(52, 168, 83, 0.55); }
+  70%  { box-shadow: 0 0 0 6px rgba(52, 168, 83, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(52, 168, 83, 0); }
 }

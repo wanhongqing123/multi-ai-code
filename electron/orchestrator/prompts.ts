@@ -3,6 +3,7 @@ import { join, dirname, isAbsolute } from 'path'
 import { fileURLToPath } from 'url'
 import { joinWithRootStyle } from '../pathStyle.js'
 import { designArchiveDir } from '../store/paths.js'
+import { getKbMeta } from '../kb/db.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -146,8 +147,35 @@ function buildProjectContextBlock(ctx: RenderContext): string {
   ].join('\n')
 }
 
+/**
+ * Builds the project-KB digest block, appended to the system prompt so the
+ * AI starts the session already aware of what this codebase is and what's
+ * been discussed historically. Empty when no KB exists yet for this repo.
+ */
+function buildKbDigestBlock(targetRepo: string | null | undefined): string {
+  if (!targetRepo) return ''
+  let digest = ''
+  try {
+    digest = (getKbMeta(targetRepo).digest ?? '').trim()
+  } catch {
+    /* DB may not be ready (e.g., before initDb during tests) — skip silently */
+  }
+  if (!digest) return ''
+  return [
+    '',
+    '---',
+    '# 本项目知识库摘要（平台自动注入）',
+    '',
+    digest,
+    '',
+    '如需详情，可在主会话顶部 SkillBar 用关键词搜索，或调用 `query_kb` MCP 工具（仅 Claude Code 可用）。',
+    ''
+  ].join('\n')
+}
+
 export async function buildSystemPrompt(ctx: RenderContext): Promise<string> {
   const tpl = await loadMainPromptTemplate()
   const body = renderTemplate(tpl, ctx)
-  return buildProjectContextBlock(ctx) + body
+  const kbBlock = buildKbDigestBlock(ctx.targetRepo)
+  return buildProjectContextBlock(ctx) + body + kbBlock
 }

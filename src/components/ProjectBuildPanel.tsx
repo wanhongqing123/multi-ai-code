@@ -89,6 +89,31 @@ export function canAnalyzeBuildFailure(state: BuildRuntimeState): boolean {
   return state.status === 'failed' && state.lastFailure !== null
 }
 
+export function getDisplayStepsForBuildPanel(
+  buildConfig: ProjectBuildConfig,
+  state: BuildRuntimeState
+): BuildStepRuntime[] {
+  if (state.status === 'running') {
+    return state.steps
+  }
+
+  const runtimeStepById = new Map(state.steps.map((step) => [step.id, step]))
+  return buildConfig.steps.map((step) => {
+    const runtime = runtimeStepById.get(step.id)
+    return {
+      ...step,
+      visualStudioDisplayName:
+        step.envType === 'visual-studio' ? runtime?.visualStudioDisplayName ?? null : null,
+      status: runtime?.status ?? ('not-run' as const),
+      resolvedCwd: runtime?.resolvedCwd ?? null,
+      startedAt: runtime?.startedAt ?? null,
+      finishedAt: runtime?.finishedAt ?? null,
+      exitCode: runtime?.exitCode ?? null,
+      signal: runtime?.signal ?? null
+    }
+  })
+}
+
 export function getBuildLogStatusLabel(state: BuildRuntimeState): string {
   if (state.activeStepId) return `当前步骤：${state.activeStepId}`
 
@@ -133,19 +158,7 @@ function formatOutputEncodingLabel(
 export default function ProjectBuildPanel(props: ProjectBuildPanelProps): JSX.Element | null {
   if (!props.open) return null
 
-  const displaySteps =
-    props.state.steps.length > 0
-      ? props.state.steps
-      : props.buildConfig.steps.map((step) => ({
-          ...step,
-          visualStudioDisplayName: null,
-          status: 'not-run' as const,
-          resolvedCwd: null,
-          startedAt: null,
-          finishedAt: null,
-          exitCode: null,
-          signal: null
-        }))
+  const displaySteps = getDisplayStepsForBuildPanel(props.buildConfig, props.state)
   const startBlockedReason = getBuildStartBlockedReason(
     props.currentProjectId,
     props.buildConfigReady,

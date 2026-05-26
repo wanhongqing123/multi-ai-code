@@ -67,6 +67,7 @@ import {
   readRepoMemory,
   writeRepoConversationHistory
 } from './repo-view/memory.js'
+import { startBackgroundServices } from './backgroundServices.js'
 import { readProjectMetaFile, writeProjectMetaFile } from './store/projectMeta.js'
 import {
   getProjectBuildConfig,
@@ -1795,15 +1796,14 @@ app.whenReady().then(async () => {
     console.warn('[screenshot] failed to initialize hotkey:', screenshotHotkeyInit.error)
   }
   setSkillGenerator(createDefaultSkillGenerator())
-  startScheduler(getSkillGenerator())
-
-  // Phase 4: screen sampler (L1 active window + L2 thumbnail). Reads its
-  // own pause flag live from habit settings; topbar dot reflects state.
-  try {
-    await startScreenSamplerService()
-  } catch (err) {
-    console.warn('[screen-sampler] failed to start:', err)
-  }
+  await startBackgroundServices({
+    startHabitAiScheduler: () => startScheduler(getSkillGenerator()),
+    startScreenSamplerService,
+    startKbAiScheduler: () => startKbScheduler(),
+    onScreenSamplerError: (err) => {
+      console.warn('[screen-sampler] failed to start:', err)
+    }
+  })
 
   registerKbIpc()
   // One-shot migration: prior versions stored KB rows in the shared platform
@@ -1835,7 +1835,6 @@ app.whenReady().then(async () => {
       return null
     }
   })
-  startKbScheduler()
 
   createWindow()
 

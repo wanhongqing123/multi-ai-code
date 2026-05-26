@@ -8,10 +8,8 @@ export type HabitEventKind =
   | 'plan_imported'
   | 'panel_open'
   | 'action_triggered'
-  | 'site_visit'
-  | 'site_click'
-  | 'site_input_hint'
-  | 'tab_switch'
+  | 'screen_window'
+  | 'screen_frame'
 
 export const ALL_HABIT_EVENT_KINDS: HabitEventKind[] = [
   'pty_cmd',
@@ -23,10 +21,8 @@ export const ALL_HABIT_EVENT_KINDS: HabitEventKind[] = [
   'plan_imported',
   'panel_open',
   'action_triggered',
-  'site_visit',
-  'site_click',
-  'site_input_hint',
-  'tab_switch'
+  'screen_window',
+  'screen_frame'
 ]
 
 export const HABIT_KIND_LABELS: Record<HabitEventKind, string> = {
@@ -39,10 +35,8 @@ export const HABIT_KIND_LABELS: Record<HabitEventKind, string> = {
   plan_imported: '方案导入',
   panel_open: '面板打开',
   action_triggered: '功能触发',
-  site_visit: '网站访问',
-  site_click: '网站点击',
-  site_input_hint: '网站输入提示',
-  tab_switch: '标签页切换'
+  screen_window: '前台窗口采样',
+  screen_frame: '屏幕截图采样'
 }
 
 export interface HabitSettings {
@@ -51,9 +45,13 @@ export interface HabitSettings {
   retentionDays: number
   firstRunNoticeShownAt: number
   lastAggregatedAt: number
-  collectManagedChrome: boolean
   autoEnableLowRiskFlows: boolean
   autoPersonalizeUi: boolean
+  screenSampler?: {
+    enabled: boolean
+    paused: boolean
+    appBlocklist: string[]
+  }
 }
 
 export interface HabitEventRow {
@@ -61,7 +59,7 @@ export interface HabitEventRow {
   ts: number
   kind: string
   payload: string
-  source: 'app_ui' | 'managed_chrome' | null
+  source: 'app_ui' | null
   project_id: string | null
   repo_path: string | null
   source_window: string | null
@@ -93,7 +91,7 @@ export interface SkillCandidateRow {
   error_message: string | null
 }
 
-export type HabitFlowKind = 'app-flow' | 'site-flow' | 'ui-adjustment'
+export type HabitFlowKind = 'app-flow' | 'ui-adjustment'
 export type HabitFlowRisk = 'low' | 'high'
 export type HabitFlowStatus = 'candidate' | 'active' | 'disabled'
 

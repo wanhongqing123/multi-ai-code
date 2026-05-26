@@ -10,15 +10,11 @@ export type HabitEventKind =
   | 'plan_imported'
   | 'panel_open'
   | 'action_triggered'
-  | 'site_visit'
-  | 'site_click'
-  | 'site_input_hint'
-  | 'tab_switch'
   // Phase 4 — screen sampler (L1 active window, L2 thumbnail frame).
   | 'screen_window'
   | 'screen_frame'
 
-export type HabitEventSource = 'app_ui' | 'managed_chrome'
+export type HabitEventSource = 'app_ui'
 
 export const ALL_HABIT_EVENT_KINDS: HabitEventKind[] = [
   'pty_cmd',
@@ -30,10 +26,6 @@ export const ALL_HABIT_EVENT_KINDS: HabitEventKind[] = [
   'plan_imported',
   'panel_open',
   'action_triggered',
-  'site_visit',
-  'site_click',
-  'site_input_hint',
-  'tab_switch',
   'screen_window',
   'screen_frame'
 ]
@@ -235,7 +227,7 @@ export function clearAllSkillCandidates(): number {
 
 // ----- Habit flows -----
 
-export type HabitFlowKind = 'app-flow' | 'site-flow' | 'ui-adjustment'
+export type HabitFlowKind = 'app-flow' | 'ui-adjustment'
 export type HabitFlowRisk = 'low' | 'high'
 export type HabitFlowStatus = 'candidate' | 'active' | 'disabled'
 
@@ -320,87 +312,5 @@ export function updateHabitFlowStatus(id: number, status: HabitFlowStatus): void
 
 export function clearAllHabitFlows(): number {
   const info = getDb().prepare(`DELETE FROM habit_flows`).run()
-  return Number(info.changes)
-}
-
-// ----- Managed Chrome sessions -----
-
-export interface ManagedChromeSessionRow {
-  id: number
-  port: number
-  profile_dir: string
-  started_at: number
-  last_active_at: number
-  running: number
-  last_active_url: string | null
-}
-
-export interface UpsertManagedChromeSessionInput {
-  port: number
-  profileDir: string
-  startedAt: number
-  lastActiveAt?: number
-  running?: boolean
-  lastActiveUrl?: string | null
-}
-
-export function upsertManagedChromeSession(
-  session: UpsertManagedChromeSessionInput
-): ManagedChromeSessionRow {
-  const existing = getDb()
-    .prepare(
-      `SELECT * FROM managed_chrome_sessions
-       WHERE port = ? AND profile_dir = ?
-       ORDER BY id DESC
-       LIMIT 1`
-    )
-    .get(session.port, session.profileDir) as ManagedChromeSessionRow | undefined
-  const lastActiveAt = session.lastActiveAt ?? session.startedAt
-  const running = session.running === false ? 0 : 1
-  if (existing) {
-    getDb()
-      .prepare(
-        `UPDATE managed_chrome_sessions
-         SET started_at = ?, last_active_at = ?, running = ?, last_active_url = ?
-         WHERE id = ?`
-      )
-      .run(
-        session.startedAt,
-        lastActiveAt,
-        running,
-        session.lastActiveUrl ?? null,
-        existing.id
-      )
-    return getDb()
-      .prepare(`SELECT * FROM managed_chrome_sessions WHERE id = ?`)
-      .get(existing.id) as ManagedChromeSessionRow
-  }
-  const info = getDb()
-    .prepare(
-      `INSERT INTO managed_chrome_sessions
-         (port, profile_dir, started_at, last_active_at, running, last_active_url)
-       VALUES (?, ?, ?, ?, ?, ?)`
-    )
-    .run(
-      session.port,
-      session.profileDir,
-      session.startedAt,
-      lastActiveAt,
-      running,
-      session.lastActiveUrl ?? null
-    )
-  return getDb()
-    .prepare(`SELECT * FROM managed_chrome_sessions WHERE id = ?`)
-    .get(info.lastInsertRowid) as ManagedChromeSessionRow
-}
-
-export function listManagedChromeSessions(limit = 20): ManagedChromeSessionRow[] {
-  return getDb()
-    .prepare(`SELECT * FROM managed_chrome_sessions ORDER BY last_active_at DESC, id DESC LIMIT ?`)
-    .all(limit) as ManagedChromeSessionRow[]
-}
-
-export function clearAllManagedChromeSessions(): number {
-  const info = getDb().prepare(`DELETE FROM managed_chrome_sessions`).run()
   return Number(info.changes)
 }

@@ -11,40 +11,8 @@ export interface GeneratedFlow {
   payload: Record<string, unknown>
 }
 
-const MUTATING_ACTION_RE =
-  /\b(submit|publish|delete|confirm|send|payment|checkout|login|logout)\b/i
-
 function firstSample(cluster: AggregatedCluster): string {
   return cluster.representativeSamples.find((sample) => sample.trim().length > 0) ?? ''
-}
-
-function extractUrl(text: string): string | null {
-  const match = text.match(/https?:\/\/[^\s)]+/i)
-  if (!match) return null
-  try {
-    const parsed = new URL(match[0])
-    parsed.search = ''
-    parsed.hash = ''
-    return parsed.toString()
-  } catch {
-    return match[0]
-  }
-}
-
-function hostFromUrl(url: string): string {
-  try {
-    return new URL(url).host
-  } catch {
-    return url
-  }
-}
-
-function pathFromUrl(url: string): string {
-  try {
-    return new URL(url).pathname || '/'
-  } catch {
-    return '/'
-  }
 }
 
 function detectPanelKey(sample: string): string {
@@ -92,25 +60,6 @@ function flowFromCluster(cluster: AggregatedCluster): GeneratedFlow | null {
   const uiAdjustment = detectUiAdjustment(cluster, sample)
   if (uiAdjustment) return uiAdjustment
 
-  if (cluster.kind === 'site_visit') {
-    const url = extractUrl(sample)
-    if (!url) return null
-    const host = hostFromUrl(url)
-    const path = pathFromUrl(url)
-    return {
-      kind: 'site-flow',
-      title: `Open ${host}`,
-      summary: `Repeated visit to ${path}`,
-      riskLevel: 'low',
-      enabledByDefault: true,
-      evidenceCount: cluster.size,
-      payload: {
-        action: 'open-managed-chrome-url',
-        url
-      }
-    }
-  }
-
   if (cluster.kind === 'panel_open') {
     const panelKey = detectPanelKey(sample)
     return {
@@ -123,21 +72,6 @@ function flowFromCluster(cluster: AggregatedCluster): GeneratedFlow | null {
       payload: {
         action: 'open-panel',
         panelKey
-      }
-    }
-  }
-
-  if (cluster.kind === 'site_click') {
-    return {
-      kind: 'site-flow',
-      title: sample || 'Repeat site action',
-      summary: 'Repeated site click pattern detected.',
-      riskLevel: MUTATING_ACTION_RE.test(sample) ? 'high' : 'low',
-      enabledByDefault: !MUTATING_ACTION_RE.test(sample),
-      evidenceCount: cluster.size,
-      payload: {
-        action: 'site-click-hint',
-        sample
       }
     }
   }

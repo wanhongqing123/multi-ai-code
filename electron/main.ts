@@ -31,7 +31,6 @@ import {
   stopScreenSamplerService
 } from './habit/screenSamplerService.js'
 import { recordHabitEvent } from './habit/collector.js'
-import { createManagedChromeManager } from './habit/managedChrome.js'
 import { registerScreenshotIpc } from './screenshot/manager.js'
 import {
   applyScreenshotHotkeySettings,
@@ -92,7 +91,6 @@ import { ensureAnalysisCacheDir } from './repo-view/analysisCache.js'
 const isDev = !app.isPackaged
 const repoViewWindows = new Map<string, BrowserWindow>()
 const appIconPath = join(__dirname, '../../build/icon-256.png')
-let managedChromeManager: ReturnType<typeof createManagedChromeManager> | null = null
 
 interface AppSettings {
   screenshotShortcutEnabled: boolean
@@ -1786,10 +1784,8 @@ app.whenReady().then(async () => {
     }
   )
 
-  managedChromeManager = createManagedChromeManager()
-
   registerPtyIpc()
-  registerHabitIpc({ managedChromeManager })
+  registerHabitIpc()
   registerScreenshotIpc()
   const screenshotHotkeyInit = await initializeScreenshotHotkey({
     registrar: globalShortcut
@@ -1850,14 +1846,12 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => {
   killAllSessions()
-  void managedChromeManager?.stop()
   closeDb()
   if (process.platform !== 'darwin') app.quit()
 })
 
 app.on('before-quit', () => {
   killAllSessions()
-  void managedChromeManager?.stop()
   stopScheduler()
   stopKbScheduler()
   stopScreenSamplerService()

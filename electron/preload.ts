@@ -97,14 +97,6 @@ export interface BuildFailureContext {
   logTail: string
 }
 
-export interface ManagedChromeState {
-  running: boolean
-  port: number | null
-  profileDir: string | null
-  pid: number | null
-  lastActiveUrl: string | null
-}
-
 export interface BuildStepRuntime extends BuildStepConfig {
   visualStudioDisplayName: string | null
   status: 'not-run' | 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped'
@@ -861,12 +853,10 @@ const api = {
         | 'plan_imported'
         | 'panel_open'
         | 'action_triggered'
-        | 'site_visit'
-        | 'site_click'
-        | 'site_input_hint'
-        | 'tab_switch'
+        | 'screen_window'
+        | 'screen_frame'
       text: string
-      source?: 'app_ui' | 'managed_chrome'
+      source?: 'app_ui'
       projectId?: string
       repoPath?: string
       sourceWindow?: string
@@ -880,28 +870,12 @@ const api = {
       update: (patch: unknown) =>
         ipcRenderer.invoke('habit:settings:update', patch) as Promise<unknown>
     },
-    chrome: {
-      getState: () =>
-        ipcRenderer.invoke('habit:chrome:get-state') as Promise<ManagedChromeState>,
-      start: () =>
-        ipcRenderer.invoke('habit:chrome:start') as Promise<
-          { ok: true; value?: ManagedChromeState } | { ok: false; error: string }
-        >,
-      stop: () =>
-        ipcRenderer.invoke('habit:chrome:stop') as Promise<
-          { ok: true } | { ok: false; error: string }
-        >,
-      focus: () =>
-        ipcRenderer.invoke('habit:chrome:focus') as Promise<
-          { ok: true } | { ok: false; error: string }
-        >
-    },
     flows: {
       list: (opts?: { statuses?: Array<'candidate' | 'active' | 'disabled'>; limit?: number }) =>
         ipcRenderer.invoke('habit:flows:list', opts) as Promise<
           Array<{
             id: number
-            kind: 'app-flow' | 'site-flow' | 'ui-adjustment'
+            kind: 'app-flow' | 'ui-adjustment'
             title: string
             summary: string
             evidence_count: number
@@ -929,7 +903,7 @@ const api = {
             ts: number
             kind: string
             payload: string
-            source: 'app_ui' | 'managed_chrome' | null
+            source: 'app_ui' | null
             project_id: string | null
             repo_path: string | null
             source_window: string | null

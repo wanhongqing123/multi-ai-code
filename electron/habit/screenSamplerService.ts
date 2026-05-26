@@ -14,6 +14,7 @@ import { createRequire } from 'module'
 import {
   desktopCapturer,
   screen as electronScreen,
+  type Display,
   type NativeImage
 } from 'electron'
 import { applyRetentionSweep } from './screenSampleRetention.js'
@@ -133,19 +134,32 @@ export async function setScreenSamplerPaused(
  * the resize server-side, which is far cheaper than scaling a
  * full-resolution image in JS each tick.
  */
-const JPEG_QUALITY = 85
+const JPEG_QUALITY = 92
+
+export function resolveCaptureRequestSize(
+  display: Pick<Display, 'size' | 'scaleFactor'>,
+  targetW: number,
+  targetH: number
+): { width: number; height: number } {
+  const scaleFactor = Math.max(display.scaleFactor || 1, 1)
+  return {
+    width: Math.max(Math.round(display.size.width * scaleFactor), targetW),
+    height: Math.max(Math.round(display.size.height * scaleFactor), targetH)
+  }
+}
 
 async function capturePrimaryThumbnail(
   targetW: number,
   targetH: number
 ): Promise<{ buf: Buffer; w: number; h: number } | null> {
   try {
+    const primary = electronScreen.getPrimaryDisplay()
+    const requestSize = resolveCaptureRequestSize(primary, targetW, targetH)
     const sources = await desktopCapturer.getSources({
       types: ['screen'],
-      thumbnailSize: { width: targetW, height: targetH }
+      thumbnailSize: requestSize
     })
     if (sources.length === 0) return null
-    const primary = electronScreen.getPrimaryDisplay()
     const primaryId = String(primary.id)
     const picked =
       sources.find((s) => s.display_id === primaryId) ?? sources[0]

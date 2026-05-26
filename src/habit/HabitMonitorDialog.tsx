@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { ManagedChromeState } from '../../electron/preload'
 import CollectionSettingsPanel from './CollectionSettingsPanel'
 import FlowsPanel from './FlowsPanel'
-import ManagedChromePanel from './ManagedChromePanel'
 import type { HabitEventRow, HabitFlowRow, HabitSettings } from './habitTypes'
 
 type HabitFlowStatus = 'candidate' | 'active' | 'disabled'
@@ -11,12 +9,6 @@ export interface HabitMonitorApi {
   settings: {
     get: () => Promise<HabitSettings>
     update: (patch: Partial<HabitSettings>) => Promise<HabitSettings>
-  }
-  chrome: {
-    getState: () => Promise<ManagedChromeState>
-    start: () => Promise<{ ok: true; value?: ManagedChromeState } | { ok: false; error: string }>
-    stop: () => Promise<{ ok: true } | { ok: false; error: string }>
-    focus: () => Promise<{ ok: true } | { ok: false; error: string }>
   }
   flows: {
     list: (opts?: { statuses?: HabitFlowStatus[]; limit?: number }) => Promise<HabitFlowRow[]>
@@ -30,7 +22,6 @@ export interface HabitMonitorApi {
 
 export interface HabitMonitorDialogData {
   settings: HabitSettings
-  chromeState: ManagedChromeState
   flows: HabitFlowRow[]
   recent: HabitEventRow[]
   totalEventCount: number
@@ -46,14 +37,6 @@ interface Props {
 
 type Tab = 'overview' | 'collection'
 
-const EMPTY_CHROME_STATE: ManagedChromeState = {
-  running: false,
-  port: null,
-  profileDir: null,
-  pid: null,
-  lastActiveUrl: null
-}
-
 function getDefaultApi(): HabitMonitorApi {
   return window.api.habit as HabitMonitorApi
 }
@@ -62,29 +45,18 @@ export async function loadHabitMonitorDialogData(
   api: HabitMonitorApi,
   recentLimit = 60
 ): Promise<HabitMonitorDialogData> {
-  const [settings, chromeState, flows, recentResult] = await Promise.all([
+  const [settings, flows, recentResult] = await Promise.all([
     api.settings.get(),
-    api.chrome.getState(),
     api.flows.list({ statuses: ['active', 'candidate', 'disabled'], limit: 200 }),
     api.events.recent(recentLimit)
   ])
 
   return {
     settings,
-    chromeState,
     flows,
     recent: recentResult.events,
     totalEventCount: recentResult.total
   }
-}
-
-export async function toggleManagedChromeCollection(
-  api: HabitMonitorApi,
-  settings: HabitSettings
-): Promise<HabitSettings> {
-  return api.settings.update({
-    collectManagedChrome: !settings.collectManagedChrome
-  })
 }
 
 export async function disableHabitFlow(api: HabitMonitorApi, id: number): Promise<void> {
@@ -168,7 +140,6 @@ export default function HabitMonitorDialog(props: Props): JSX.Element {
   }, [initialData, loadAll])
 
   const settings = data?.settings ?? null
-  const chromeState = data?.chromeState ?? EMPTY_CHROME_STATE
   const flows = data?.flows ?? []
   const recent = data?.recent ?? []
   const totalEventCount = data?.totalEventCount ?? 0
@@ -204,68 +175,6 @@ export default function HabitMonitorDialog(props: Props): JSX.Element {
     }
   }, [habitApi, flashToast, refreshEvents])
 
-  const handleToggleManagedChrome = useCallback(async () => {
-    if (!habitApi || !settings) return
-    setBusy(true)
-    try {
-      const next = await toggleManagedChromeCollection(habitApi, settings)
-      setData((current) => (current ? { ...current, settings: next } : current))
-    } finally {
-      setBusy(false)
-    }
-  }, [habitApi, settings])
-
-  const handleChromeStart = useCallback(async () => {
-    if (!habitApi) return
-    setBusy(true)
-    try {
-      const result = await habitApi.chrome.start()
-      if (!result.ok) {
-        flashToast(result.error)
-        return
-      }
-      setData((current) =>
-        current
-          ? { ...current, chromeState: result.value ?? current.chromeState }
-          : current
-      )
-    } finally {
-      setBusy(false)
-    }
-  }, [habitApi, flashToast])
-
-  const handleChromeStop = useCallback(async () => {
-    if (!habitApi) return
-    setBusy(true)
-    try {
-      const result = await habitApi.chrome.stop()
-      if (!result.ok) {
-        flashToast(result.error)
-        return
-      }
-      setData((current) =>
-        current
-          ? { ...current, chromeState: { ...EMPTY_CHROME_STATE } }
-          : current
-      )
-    } finally {
-      setBusy(false)
-    }
-  }, [habitApi, flashToast])
-
-  const handleChromeFocus = useCallback(async () => {
-    if (!habitApi) return
-    setBusy(true)
-    try {
-      const result = await habitApi.chrome.focus()
-      if (!result.ok) {
-        flashToast(result.error)
-      }
-    } finally {
-      setBusy(false)
-    }
-  }, [habitApi, flashToast])
-
   const handleDisableFlow = useCallback(
     async (id: number) => {
       if (!habitApi) return
@@ -282,7 +191,10 @@ export default function HabitMonitorDialog(props: Props): JSX.Element {
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal templates-modal habit-monitor-modal" onClick={(event) => event.stopPropagation()}>
+      <div
+        className="modal templates-modal habit-monitor-modal"
+        onClick={(event) => event.stopPropagation()}
+      >
         <div className="modal-head">
           <h3>🧠 习惯监控</h3>
           <button className="modal-close" onClick={onClose}>
@@ -317,7 +229,7 @@ export default function HabitMonitorDialog(props: Props): JSX.Element {
 
         <div className="habit-tab-body">
           {loading || !settings ? (
-            <div className="drawer-empty">加载习惯监控状态中…</div>
+            <div className="drawer-empty">加载习惯监控状态中...</div>
           ) : null}
 
           {!loading && settings && tab === 'overview' ? (
@@ -333,13 +245,6 @@ export default function HabitMonitorDialog(props: Props): JSX.Element {
                 </header>
 
                 <div className="habit-overview-toggle-list">
-                  <ToggleRow
-                    label="采集托管 Chrome 行为"
-                    hint="只监控本应用拉起的 Chrome，不读取你的默认浏览器资料。"
-                    checked={settings.collectManagedChrome}
-                    disabled={busy}
-                    onChange={handleToggleManagedChrome}
-                  />
                   <ToggleRow
                     label="自动启用低风险流程"
                     hint="如打开常用页面、切换面板这类低风险动作会直接进入活跃列表。"
@@ -364,14 +269,6 @@ export default function HabitMonitorDialog(props: Props): JSX.Element {
                   />
                 </div>
               </section>
-
-              <ManagedChromePanel
-                state={chromeState}
-                busy={busy}
-                onStart={handleChromeStart}
-                onFocus={handleChromeFocus}
-                onStop={handleChromeStop}
-              />
 
               <FlowsPanel flows={flows} busy={busy} onDisable={handleDisableFlow} />
             </div>

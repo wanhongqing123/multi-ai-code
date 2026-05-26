@@ -129,58 +129,9 @@ function eventPayload(row: HabitEventRow): Record<string, unknown> {
   }
 }
 
-function extractUrlBits(raw: string): { origin: string; path: string } | null {
-  const match = raw.match(/https?:\/\/[^\s)]+/i)
-  const candidate = match?.[0] ?? raw
-  try {
-    const parsed = new URL(candidate)
-    return {
-      origin: parsed.host,
-      path: parsed.pathname || '/'
-    }
-  } catch {
-    return null
-  }
-}
-
 function clusteringText(row: HabitEventRow): string {
   const payload = eventPayload(row)
   const rawText = eventText(row)
-
-  if (row.kind === 'site_visit') {
-    const fromPayload =
-      typeof payload.origin === 'string' && typeof payload.path === 'string'
-        ? { origin: payload.origin, path: payload.path }
-        : typeof payload.url === 'string'
-          ? extractUrlBits(payload.url)
-          : extractUrlBits(rawText)
-    if (fromPayload) {
-      return `visit ${fromPayload.origin} ${fromPayload.path}`
-    }
-  }
-
-  if (row.kind === 'site_click' || row.kind === 'site_input_hint') {
-    const urlBits =
-      typeof payload.origin === 'string' && typeof payload.path === 'string'
-        ? { origin: payload.origin, path: payload.path }
-        : typeof payload.url === 'string'
-          ? extractUrlBits(payload.url)
-          : extractUrlBits(rawText)
-    const elementHint =
-      typeof payload.elementHint === 'string'
-        ? payload.elementHint
-        : rawText
-    return [
-      row.kind === 'site_click' ? 'click' : 'input',
-      urlBits?.origin,
-      urlBits?.path,
-      typeof payload.role === 'string' ? payload.role : undefined,
-      typeof payload.inputType === 'string' ? payload.inputType : undefined,
-      elementHint
-    ]
-      .filter((part): part is string => typeof part === 'string' && part.trim().length > 0)
-      .join(' ')
-  }
 
   if (row.kind === 'panel_open') {
     const panelId =

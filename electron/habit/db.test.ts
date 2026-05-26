@@ -9,16 +9,13 @@ import {
   ALL_HABIT_EVENT_KINDS,
   clearAllHabitEvents,
   clearAllHabitFlows,
-  clearAllManagedChromeSessions,
   insertHabitEvent,
   insertHabitFlow,
   listHabitFlows,
-  listManagedChromeSessions,
   listRecentHabitEvents,
   type HabitEventKind,
   type SkillCandidateStatus,
-  updateHabitFlowStatus,
-  upsertManagedChromeSession
+  updateHabitFlowStatus
 } from './db.js'
 
 let tempRoot: string | null = null
@@ -41,9 +38,9 @@ afterEach(async () => {
 })
 
 describe('habit event kinds', () => {
-  it('declares exactly 15 distinct event kinds', () => {
-    expect(ALL_HABIT_EVENT_KINDS).toHaveLength(15)
-    expect(new Set(ALL_HABIT_EVENT_KINDS).size).toBe(15)
+  it('declares exactly 11 distinct event kinds', () => {
+    expect(ALL_HABIT_EVENT_KINDS).toHaveLength(11)
+    expect(new Set(ALL_HABIT_EVENT_KINDS).size).toBe(11)
   })
 
   it('keeps the agreed set of kinds in sync with the design doc', () => {
@@ -57,10 +54,6 @@ describe('habit event kinds', () => {
       'plan_imported',
       'panel_open',
       'action_triggered',
-      'site_visit',
-      'site_click',
-      'site_input_hint',
-      'tab_switch',
       'screen_window',
       'screen_frame'
     ])
@@ -88,31 +81,31 @@ describe('habit flow persistence', () => {
 
   it('inserts and lists habit flows', () => {
     insertHabitFlow({
-      kind: 'site-flow',
-      title: '打开构建站点',
-      summary: '经常访问构建仪表盘',
+      kind: 'app-flow',
+      title: 'Open Build Panel',
+      summary: 'Frequently opens the build panel',
       evidenceCount: 5,
       riskLevel: 'low',
       enabledByDefault: true,
-      payload: { action: 'open-managed-chrome-url', url: 'https://example.test/build' }
+      payload: { action: 'open-panel', panelKey: 'build' }
     })
 
     const flows = listHabitFlows()
     expect(flows).toHaveLength(1)
-    expect(flows[0].kind).toBe('site-flow')
+    expect(flows[0].kind).toBe('app-flow')
     expect(flows[0].risk_level).toBe('low')
     expect(flows[0].status).toBe('active')
     expect(JSON.parse(flows[0].payload)).toEqual({
-      action: 'open-managed-chrome-url',
-      url: 'https://example.test/build'
+      action: 'open-panel',
+      panelKey: 'build'
     })
   })
 
   it('updates a flow status from active to disabled', () => {
     const id = insertHabitFlow({
       kind: 'ui-adjustment',
-      title: '隐藏模板入口',
-      summary: '低频入口自动隐藏',
+      title: 'Hide Templates Entry',
+      summary: 'Demote low-frequency templates entry',
       evidenceCount: 4,
       riskLevel: 'low',
       enabledByDefault: true,
@@ -126,55 +119,6 @@ describe('habit flow persistence', () => {
   })
 })
 
-describe('managed Chrome session persistence', () => {
-  afterEach(() => {
-    clearAllManagedChromeSessions()
-  })
-
-  it('inserts and lists managed Chrome sessions', () => {
-    const row = upsertManagedChromeSession({
-      port: 9222,
-      profileDir: 'C:/tmp/managed-profile',
-      startedAt: 1_700_000_000_000,
-      lastActiveAt: 1_700_000_000_500,
-      running: true,
-      lastActiveUrl: 'https://example.test/dashboard'
-    })
-
-    expect(row.running).toBe(1)
-
-    const sessions = listManagedChromeSessions()
-    expect(sessions).toHaveLength(1)
-    expect(sessions[0].port).toBe(9222)
-    expect(sessions[0].last_active_url).toBe('https://example.test/dashboard')
-  })
-
-  it('updates an existing managed Chrome session with the same port/profile', () => {
-    upsertManagedChromeSession({
-      port: 9333,
-      profileDir: 'C:/tmp/managed-profile-2',
-      startedAt: 10,
-      running: true
-    })
-
-    const updated = upsertManagedChromeSession({
-      port: 9333,
-      profileDir: 'C:/tmp/managed-profile-2',
-      startedAt: 20,
-      lastActiveAt: 30,
-      running: false,
-      lastActiveUrl: 'https://example.test/last'
-    })
-
-    expect(updated.running).toBe(0)
-    expect(updated.started_at).toBe(20)
-
-    const sessions = listManagedChromeSessions()
-    expect(sessions).toHaveLength(1)
-    expect(sessions[0].running).toBe(0)
-  })
-})
-
 describe('habit event source filtering', () => {
   afterEach(() => {
     clearAllHabitEvents()
@@ -185,19 +129,18 @@ describe('habit event source filtering', () => {
       ts: 1,
       kind: 'panel_open',
       source: 'app_ui',
-      payload: { text: '打开构建面板' }
+      payload: { text: 'Open build panel' }
     })
     insertHabitEvent({
       ts: 2,
-      kind: 'site_visit',
-      source: 'managed_chrome',
-      payload: { text: '访问 https://example.test/dashboard' }
+      kind: 'screen_window',
+      payload: { text: 'QQ - team chat' }
     })
 
-    const chromeOnly = listRecentHabitEvents(20, 'managed_chrome')
-    expect(chromeOnly).toHaveLength(1)
-    expect(chromeOnly[0].source).toBe('managed_chrome')
-    expect(chromeOnly[0].kind).toBe('site_visit')
+    const appOnly = listRecentHabitEvents(20, 'app_ui')
+    expect(appOnly).toHaveLength(1)
+    expect(appOnly[0].source).toBe('app_ui')
+    expect(appOnly[0].kind).toBe('panel_open')
   })
 
   it('migrates legacy habit_events tables before creating source indexes', () => {
@@ -228,15 +171,13 @@ describe('habit event source filtering', () => {
 
     insertHabitEvent({
       ts: 2,
-      kind: 'site_visit',
-      source: 'managed_chrome',
-      sourceWindow: 'managed-chrome',
+      kind: 'screen_window',
       payload: { text: 'post-migration row' }
     })
 
     const recent = listRecentHabitEvents(10)
     expect(recent).toHaveLength(2)
-    expect(recent[0].source).toBe('managed_chrome')
+    expect(recent[0].source).toBeNull()
     expect(recent[1].source).toBeNull()
   })
 })

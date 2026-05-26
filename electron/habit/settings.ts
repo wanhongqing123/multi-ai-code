@@ -4,33 +4,16 @@ import { rootDir } from '../store/paths.js'
 import { ALL_HABIT_EVENT_KINDS, type HabitEventKind } from './db.js'
 
 export interface HabitSettings {
-  /** Master switch. If false, all collection is a no-op. */
   enabled: boolean
-  /** Per-kind toggles. Missing entries default to true when master is on. */
   kinds: Partial<Record<HabitEventKind, boolean>>
-  /** Days to retain raw events. */
   retentionDays: number
-  /** When the first-run notice has been shown (epoch ms). 0 = never. */
   firstRunNoticeShownAt: number
-  /** Last time the aggregator ran a full pass (epoch ms). 0 = never. */
   lastAggregatedAt: number
-  /** Collect website habits from managed Chrome sessions. */
-  collectManagedChrome: boolean
-  /** Auto-enable low-risk flows by default. */
   autoEnableLowRiskFlows: boolean
-  /** Allow light UI personalization such as hiding low-frequency entries. */
   autoPersonalizeUi: boolean
-  /**
-   * Phase 4 — screen sampler controls. Persisted alongside other habit
-   * settings so the topbar pause toggle / the (future) "屏幕采集" tab in
-   * habit-monitor share one source of truth.
-   */
   screenSampler: {
-    /** Master switch for both L1 (window) and L2 (frame) sampling. */
     enabled: boolean
-    /** When true, both samplers skip every tick but stay registered. */
     paused: boolean
-    /** Substrings to drop (case-insensitive on title/appName/bundleId). */
     appBlocklist: string[]
   }
 }
@@ -44,14 +27,11 @@ export const DEFAULT_HABIT_SETTINGS: HabitSettings = {
   retentionDays: 90,
   firstRunNoticeShownAt: 0,
   lastAggregatedAt: 0,
-  collectManagedChrome: true,
   autoEnableLowRiskFlows: true,
   autoPersonalizeUi: true,
   screenSampler: {
     enabled: true,
     paused: false,
-    // The runtime appends DEFAULT_APP_BLOCKLIST to whatever is in here;
-    // this is the user-editable extension list (empty by default).
     appBlocklist: []
   }
 }
@@ -112,7 +92,7 @@ function safeParse(raw: string): Partial<HabitSettings> {
     const parsed = JSON.parse(raw)
     if (parsed && typeof parsed === 'object') return parsed as Partial<HabitSettings>
   } catch {
-    /* corrupted file — fall through to defaults */
+    /* ignore corrupted file and fall back to defaults */
   }
   return {}
 }
@@ -140,10 +120,6 @@ export function mergeWithDefaults(input: Partial<HabitSettings>): HabitSettings 
       typeof input.firstRunNoticeShownAt === 'number' ? input.firstRunNoticeShownAt : 0,
     lastAggregatedAt:
       typeof input.lastAggregatedAt === 'number' ? input.lastAggregatedAt : 0,
-    collectManagedChrome:
-      typeof input.collectManagedChrome === 'boolean'
-        ? input.collectManagedChrome
-        : DEFAULT_HABIT_SETTINGS.collectManagedChrome,
     autoEnableLowRiskFlows:
       typeof input.autoEnableLowRiskFlows === 'boolean'
         ? input.autoEnableLowRiskFlows

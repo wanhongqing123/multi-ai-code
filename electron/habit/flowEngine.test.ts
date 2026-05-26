@@ -5,10 +5,10 @@ import { generateFlowsFromClusters } from './flowEngine.js'
 function mkCluster(overrides: Partial<AggregatedCluster> = {}): AggregatedCluster {
   return {
     id: 'cluster-1',
-    kind: 'site_visit',
+    kind: 'panel_open',
     sourceEventIds: [1, 2, 3],
     size: 3,
-    representativeSamples: ['Visit https://example.test/builds'],
+    representativeSamples: ['Open Build Panel'],
     projectCount: 1,
     crossProject: false,
     firstTs: 1,
@@ -19,26 +19,6 @@ function mkCluster(overrides: Partial<AggregatedCluster> = {}): AggregatedCluste
 }
 
 describe('generateFlowsFromClusters', () => {
-  it('turns repeated site visits into active low-risk site flows', () => {
-    const [flow] = generateFlowsFromClusters([
-      mkCluster({
-        kind: 'site_visit',
-        representativeSamples: ['Visit https://example.test/builds']
-      })
-    ])
-
-    expect(flow).toMatchObject({
-      kind: 'site-flow',
-      riskLevel: 'low',
-      enabledByDefault: true
-    })
-    expect(flow.title).toContain('example.test')
-    expect(flow.payload).toMatchObject({
-      action: 'open-managed-chrome-url',
-      url: 'https://example.test/builds'
-    })
-  })
-
   it('turns repeated panel opens into active low-risk app flows', () => {
     const [flow] = generateFlowsFromClusters([
       mkCluster({
@@ -76,21 +56,21 @@ describe('generateFlowsFromClusters', () => {
     })
   })
 
-  it('marks mutating submit-like site actions as high risk and disabled by default', () => {
+  it('turns repeated app actions into app flows', () => {
     const [flow] = generateFlowsFromClusters([
       mkCluster({
-        kind: 'site_click',
-        representativeSamples: ['Click Submit deployment button']
+        kind: 'action_triggered',
+        representativeSamples: ['Repeat build and collect logs']
       })
     ])
 
     expect(flow).toMatchObject({
-      kind: 'site-flow',
-      riskLevel: 'high',
-      enabledByDefault: false
+      kind: 'app-flow',
+      riskLevel: 'low',
+      enabledByDefault: true
     })
     expect(flow.payload).toMatchObject({
-      action: 'site-click-hint'
+      action: 'repeat-app-action'
     })
   })
 })

@@ -32,13 +32,13 @@ afterEach(async () => {
 })
 
 describe('habit settings defaults', () => {
-  it('master switch defaults to true (collection opt-out, not opt-in)', () => {
+  it('master switch defaults to true', () => {
     expect(DEFAULT_HABIT_SETTINGS.enabled).toBe(true)
   })
 
-  it('all 15 kinds default to enabled', () => {
+  it('all 11 kinds default to enabled', () => {
     const flags = Object.values(DEFAULT_HABIT_SETTINGS.kinds)
-    expect(flags).toHaveLength(15)
+    expect(flags).toHaveLength(11)
     expect(flags.every((v) => v === true)).toBe(true)
   })
 
@@ -46,10 +46,11 @@ describe('habit settings defaults', () => {
     expect(DEFAULT_HABIT_SETTINGS.retentionDays).toBe(90)
   })
 
-  it('managed Chrome collection and low-risk automation default to enabled', () => {
-    expect(DEFAULT_HABIT_SETTINGS.collectManagedChrome).toBe(true)
+  it('automation and screen sampler default to enabled', () => {
     expect(DEFAULT_HABIT_SETTINGS.autoEnableLowRiskFlows).toBe(true)
     expect(DEFAULT_HABIT_SETTINGS.autoPersonalizeUi).toBe(true)
+    expect(DEFAULT_HABIT_SETTINGS.screenSampler.enabled).toBe(true)
+    expect(DEFAULT_HABIT_SETTINGS.screenSampler.paused).toBe(false)
   })
 })
 
@@ -59,7 +60,6 @@ describe('loadHabitSettings', () => {
     expect(s.enabled).toBe(true)
     expect(s.retentionDays).toBe(90)
     expect(s.firstRunNoticeShownAt).toBe(0)
-    expect(s.collectManagedChrome).toBe(true)
     expect(s.autoEnableLowRiskFlows).toBe(true)
     expect(s.autoPersonalizeUi).toBe(true)
   })
@@ -77,18 +77,26 @@ describe('loadHabitSettings', () => {
       enabled: false,
       retentionDays: 30,
       firstRunNoticeShownAt: 12345,
-      collectManagedChrome: false,
       autoEnableLowRiskFlows: false,
-      autoPersonalizeUi: false
+      autoPersonalizeUi: false,
+      screenSampler: {
+        enabled: false,
+        paused: true,
+        appBlocklist: ['qq']
+      }
     })
     clearHabitSettingsCache()
     const s = await loadHabitSettings()
     expect(s.enabled).toBe(false)
     expect(s.retentionDays).toBe(30)
     expect(s.firstRunNoticeShownAt).toBe(12345)
-    expect(s.collectManagedChrome).toBe(false)
     expect(s.autoEnableLowRiskFlows).toBe(false)
     expect(s.autoPersonalizeUi).toBe(false)
+    expect(s.screenSampler).toEqual({
+      enabled: false,
+      paused: true,
+      appBlocklist: ['qq']
+    })
   })
 })
 
@@ -114,15 +122,23 @@ describe('updateHabitSettings', () => {
     }
   })
 
-  it('updates the new managed Chrome and automation switches independently', async () => {
+  it('updates automation and screen sampler switches independently', async () => {
     const updated = await updateHabitSettings({
-      collectManagedChrome: false,
       autoEnableLowRiskFlows: false,
-      autoPersonalizeUi: false
+      autoPersonalizeUi: false,
+      screenSampler: {
+        enabled: false,
+        paused: true,
+        appBlocklist: ['wechat']
+      }
     })
-    expect(updated.collectManagedChrome).toBe(false)
     expect(updated.autoEnableLowRiskFlows).toBe(false)
     expect(updated.autoPersonalizeUi).toBe(false)
+    expect(updated.screenSampler).toEqual({
+      enabled: false,
+      paused: true,
+      appBlocklist: ['wechat']
+    })
     expect(updated.enabled).toBe(true)
   })
 })
@@ -152,7 +168,7 @@ describe('mergeWithDefaults', () => {
       '{ "kinds": { "pty_cmd": "yes", "bogus_kind": true }, "bogusField": "oops" }'
     )
     const s = mergeWithDefaults(raw)
-    expect(s.kinds.pty_cmd).toBe(true) // non-boolean -> default true
+    expect(s.kinds.pty_cmd).toBe(true)
     expect((s.kinds as Record<string, unknown>).bogus_kind).toBeUndefined()
   })
 })

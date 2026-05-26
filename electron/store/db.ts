@@ -86,16 +86,6 @@ CREATE TABLE IF NOT EXISTS habit_flows (
   updated_at         INTEGER NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS managed_chrome_sessions (
-  id              INTEGER PRIMARY KEY AUTOINCREMENT,
-  port            INTEGER NOT NULL,
-  profile_dir     TEXT NOT NULL,
-  started_at      INTEGER NOT NULL,
-  last_active_at  INTEGER NOT NULL,
-  running         INTEGER NOT NULL DEFAULT 1,
-  last_active_url TEXT
-);
-
 CREATE TABLE IF NOT EXISTS skills (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   created_at    INTEGER NOT NULL,
@@ -119,7 +109,6 @@ CREATE INDEX IF NOT EXISTS idx_habit_events_source ON habit_events(source);
 CREATE INDEX IF NOT EXISTS idx_skill_candidates_status ON skill_candidates(status);
 CREATE INDEX IF NOT EXISTS idx_habit_flows_status ON habit_flows(status);
 CREATE INDEX IF NOT EXISTS idx_habit_flows_kind ON habit_flows(kind);
-CREATE INDEX IF NOT EXISTS idx_managed_chrome_sessions_running ON managed_chrome_sessions(running);
 CREATE INDEX IF NOT EXISTS idx_skills_trigger ON skills(trigger);
 CREATE INDEX IF NOT EXISTS idx_skills_last_used_at ON skills(last_used_at DESC);
 `
@@ -149,6 +138,12 @@ export function initDb(): Database.Database {
   ensureColumn(db, 'habit_events', 'project_id', 'TEXT')
   ensureColumn(db, 'habit_events', 'repo_path', 'TEXT')
   ensureColumn(db, 'habit_events', 'source_window', 'TEXT')
+  try {
+    db.prepare('DROP INDEX IF EXISTS idx_managed_chrome_sessions_running').run()
+    db.prepare('DROP TABLE IF EXISTS managed_chrome_sessions').run()
+  } catch {
+    /* best-effort cleanup for retired managed Chrome storage */
+  }
   db.exec(INDEXES)
 
   // One-shot migration: single-stage architecture retires stages 2/3/4.

@@ -15,7 +15,6 @@ import {
   listHabitFlows,
   listRecentHabitEvents,
   listSkillCandidates,
-  upsertManagedChromeSession,
   updateHabitFlowStatus,
   updateSkillCandidateStatus,
   type HabitFlowStatus,
@@ -23,7 +22,6 @@ import {
 } from './db.js'
 import { runAggregationCoalesced } from './scheduler.js'
 import { getSkillGenerator } from './generatorRegistry.js'
-import type { ManagedChromeManager, ManagedChromeState } from './managedChrome.js'
 import {
   getScreenSamplerStatus,
   refreshScreenSamplerLiveState,
@@ -42,28 +40,7 @@ import {
   type UpdateSkillInput
 } from './skills.js'
 
-const IDLE_MANAGED_CHROME_STATE: ManagedChromeState = {
-  running: false,
-  port: null,
-  profileDir: null,
-  pid: null,
-  lastActiveUrl: null
-}
-
-function persistManagedChromeSession(state: ManagedChromeState, now: number, running: boolean): void {
-  if (state.port === null || state.profileDir === null) return
-  upsertManagedChromeSession({
-    port: state.port,
-    profileDir: state.profileDir,
-    startedAt: now,
-    lastActiveAt: now,
-    running,
-    lastActiveUrl: state.lastActiveUrl
-  })
-}
-
-export function registerHabitIpc(opts: { managedChromeManager?: ManagedChromeManager } = {}): void {
-  const managedChromeManager = opts.managedChromeManager
+export function registerHabitIpc(): void {
 
   ipcMain.handle('habit:record', async (_e, input: RecordHabitEventInput) => {
     await recordHabitEvent(input)
@@ -112,60 +89,6 @@ export function registerHabitIpc(opts: { managedChromeManager?: ManagedChromeMan
   ipcMain.handle('habit:events:clear', async () => {
     const removed = clearAllHabitEvents()
     return { ok: true, removed }
-  })
-
-  ipcMain.handle('habit:chrome:get-state', async () => {
-    return managedChromeManager?.getState() ?? IDLE_MANAGED_CHROME_STATE
-  })
-
-  ipcMain.handle('habit:chrome:start', async () => {
-    if (!managedChromeManager) {
-      return { ok: false as const, error: 'managed Chrome manager unavailable' }
-    }
-    try {
-      const state = await managedChromeManager.start()
-      persistManagedChromeSession(state, Date.now(), true)
-      return { ok: true as const, value: state }
-    } catch (err) {
-      return {
-        ok: false as const,
-        error: err instanceof Error ? err.message : String(err)
-      }
-    }
-  })
-
-  ipcMain.handle('habit:chrome:stop', async () => {
-    if (!managedChromeManager) {
-      return { ok: false as const, error: 'managed Chrome manager unavailable' }
-    }
-    const prev = managedChromeManager.getState()
-    try {
-      await managedChromeManager.stop()
-      persistManagedChromeSession(prev, Date.now(), false)
-      return { ok: true as const }
-    } catch (err) {
-      return {
-        ok: false as const,
-        error: err instanceof Error ? err.message : String(err)
-      }
-    }
-  })
-
-  ipcMain.handle('habit:chrome:focus', async () => {
-    if (!managedChromeManager) {
-      return { ok: false as const, error: 'managed Chrome manager unavailable' }
-    }
-    try {
-      await managedChromeManager.focus()
-      const state = managedChromeManager.getState()
-      persistManagedChromeSession(state, Date.now(), true)
-      return { ok: true as const }
-    } catch (err) {
-      return {
-        ok: false as const,
-        error: err instanceof Error ? err.message : String(err)
-      }
-    }
   })
 
   ipcMain.handle(

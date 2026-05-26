@@ -37,7 +37,6 @@ import type { DiffMode } from './components/diffViewerConfig'
 import type { ExternalReviewSuggestion } from './components/externalAiReview'
 import type {
   BuildRuntimeState,
-  ManagedChromeState,
   ProjectBuildConfig,
   VisualStudioInstallation
 } from '../electron/preload'
@@ -65,14 +64,6 @@ function appendBuildLog(current: string, chunk: string): string {
   const next = current + chunk
   if (next.length <= BUILD_LOG_LIMIT) return next
   return `...[build log truncated]...\n${next.slice(-BUILD_LOG_LIMIT)}`
-}
-
-const DEFAULT_MANAGED_CHROME_STATE: ManagedChromeState = {
-  running: false,
-  port: null,
-  profileDir: null,
-  pid: null,
-  lastActiveUrl: null
 }
 
 function parseHabitFlowAction(flow: HabitFlowRow): string | null {
@@ -186,10 +177,6 @@ function AppShell() {
   const [theme, setThemeState] = useState<'light' | 'dark'>(() => getTheme())
   const [habitSettingsSnapshot, setHabitSettingsSnapshot] = useState<HabitSettings | null>(null)
   const [habitFlowsSnapshot, setHabitFlowsSnapshot] = useState<HabitFlowRow[]>([])
-  const [managedChromeState, setManagedChromeState] = useState<ManagedChromeState>(
-    DEFAULT_MANAGED_CHROME_STATE
-  )
-  const [managedChromeBusy, setManagedChromeBusy] = useState(false)
 
   const visibleProjectBuildConfig =
     currentProjectId !== null && projectBuildConfigProjectId === currentProjectId
@@ -279,17 +266,15 @@ function AppShell() {
 
   const refreshHabitMonitorSnapshot = useCallback(async () => {
     try {
-      const [settings, flows, chromeState] = await Promise.all([
+      const [settings, flows] = await Promise.all([
         window.api.habit.settings.get() as Promise<HabitSettings>,
         window.api.habit.flows.list({
           statuses: ['active', 'candidate', 'disabled'],
           limit: 200
-        }) as Promise<HabitFlowRow[]>,
-        window.api.habit.chrome.getState() as Promise<ManagedChromeState>
+        }) as Promise<HabitFlowRow[]>
       ])
       setHabitSettingsSnapshot(settings)
       setHabitFlowsSnapshot(flows)
-      setManagedChromeState(chromeState)
     } catch {
       /* ignore */
     }
@@ -429,28 +414,6 @@ function AppShell() {
     clearProjectScopedState()
     setCurrentProjectId(res.id)
   }, [projects, currentProjectId, clearProjectScopedState])
-
-  const handleManagedChromeAction = useCallback(async () => {
-    setManagedChromeBusy(true)
-    try {
-      if (managedChromeState.running) {
-        const result = await window.api.habit.chrome.focus()
-        if (!result.ok) {
-          showToast(result.error, { level: 'error' })
-        }
-      } else {
-        const result = await window.api.habit.chrome.start()
-        if (!result.ok) {
-          showToast(result.error, { level: 'error' })
-        } else if (result.value) {
-          setManagedChromeState(result.value)
-        }
-      }
-      await refreshHabitMonitorSnapshot()
-    } finally {
-      setManagedChromeBusy(false)
-    }
-  }, [managedChromeState.running, refreshHabitMonitorSnapshot])
 
   /** Open file picker, read content, and queue it in the preview dialog. */
   const pickExternalFileForPreview = useCallback(
@@ -1214,19 +1177,9 @@ function AppShell() {
   const globalSearchQuickActions = [
     {
       title: '习惯监控',
-      snippet: '打开习惯监控，查看托管 Chrome、活跃流程和采集设置。',
+      snippet: '打开习惯监控，查看活跃流程和采集设置。',
       location: '快捷入口',
       onOpen: () => setShowHabitMonitor(true)
-    },
-    {
-      title: '托管 Chrome',
-      snippet: managedChromeState.running
-        ? '聚焦当前托管 Chrome 会话。'
-        : '启动独立托管 Chrome 并开始网站行为采集。',
-      location: '快捷入口',
-      onOpen: () => {
-        void handleManagedChromeAction()
-      }
     },
     ...(!habitUiFlags.hideTemplatesEntry
       ? [
@@ -1274,16 +1227,6 @@ function AppShell() {
       label: '🧠 习惯监控',
       keywords: 'habit monitor flows automation',
       action: () => setShowHabitMonitor(true)
-    },
-    {
-      id: 'managed-chrome',
-      label: managedChromeState.running
-        ? '🌐 聚焦托管 Chrome'
-        : '🌐 启动托管 Chrome',
-      keywords: 'managed chrome browser',
-      action: () => {
-        void handleManagedChromeAction()
-      }
     },
     ...(!habitUiFlags.hideTemplatesEntry
       ? [
@@ -1378,21 +1321,9 @@ function AppShell() {
         <button
           className="topbar-btn"
           onClick={() => setShowHabitMonitor(true)}
-          title="查看习惯采集、托管 Chrome 和自动化流程"
+          title="查看习惯采集和自动化流程"
         >
           🧠 习惯监控
-        </button>
-        <button
-          className="topbar-btn"
-          onClick={() => void handleManagedChromeAction()}
-          disabled={managedChromeBusy}
-          title={
-            managedChromeState.running
-              ? '聚焦当前托管 Chrome 会话'
-              : '启动托管 Chrome 并开始网站行为采集'
-          }
-        >
-          🌐 托管 Chrome
         </button>
         <button
           className="topbar-btn"

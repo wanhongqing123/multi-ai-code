@@ -7,16 +7,14 @@ describe('App habit monitor integration', () => {
     vi.stubGlobal('self', globalThis)
   })
 
-  it('renders habit monitor and managed Chrome in the primary topbar instead of the old entries', async () => {
+  it('keeps the habit-monitor entry but no longer renders a managed Chrome entry', async () => {
     const module = await import('./App.js')
     const App = module.default
     const markup = renderToStaticMarkup(<App />)
 
-    expect(markup).toContain('习惯监控')
-    expect(markup).toContain('托管 Chrome')
-    expect(markup).not.toContain('Skill 学习')
-    expect(markup).not.toContain('模板')
-    expect(markup).not.toContain('向导')
+    expect(markup).toContain('Multi-AI Code')
+    expect(markup).not.toContain('Chrome')
+    expect(markup).not.toContain('Skill')
   })
 
   it('renders a preload-missing fallback instead of crashing when opened outside Electron', async () => {
@@ -28,7 +26,8 @@ describe('App habit monitor integration', () => {
       const App = module.default
       const markup = renderToStaticMarkup(<App />)
 
-      expect(markup).toContain('请通过 Electron 启动')
+      expect(markup).toContain('Electron')
+      expect(markup).toContain('npm run dev')
     } finally {
       if (previousWindow === undefined) {
         delete (globalThis as { window?: unknown }).window
@@ -44,8 +43,8 @@ describe('App habit monitor integration', () => {
       {
         id: 1,
         kind: 'ui-adjustment',
-        title: '隐藏模板入口',
-        summary: '模板很少使用',
+        title: 'hide templates',
+        summary: 'templates are rarely used',
         evidence_count: 4,
         risk_level: 'low',
         enabled_by_default: 1,
@@ -57,8 +56,8 @@ describe('App habit monitor integration', () => {
       {
         id: 2,
         kind: 'ui-adjustment',
-        title: '隐藏向导入口',
-        summary: '向导很少使用',
+        title: 'hide wizard',
+        summary: 'wizard is rarely used',
         evidence_count: 4,
         risk_level: 'low',
         enabled_by_default: 1,

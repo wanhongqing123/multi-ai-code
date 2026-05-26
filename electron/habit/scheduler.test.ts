@@ -77,7 +77,7 @@ describe('shouldRunAggregation', () => {
     ).toBe(false)
   })
 
-  it('returns true on first ever run (lastAggregatedAt == 0)', () => {
+  it('returns true on first ever run', () => {
     expect(
       shouldRunAggregation({ enabled: true, lastAggregatedAt: 0 }, 1_000_000_000_000)
     ).toBe(true)
@@ -120,8 +120,6 @@ describe('pickNewClusters', () => {
   it('keeps a cluster that overlaps but extends beyond existing coverage', () => {
     const existing = [mkExisting([1, 2, 3])]
     const fresh = [mkCluster([1, 2, 3, 4, 5])]
-    // Cluster ids 1,2,3 are in existing but 4,5 are new, so cluster is NOT
-    // fully covered — should be kept.
     expect(pickNewClusters(fresh, existing)).toHaveLength(1)
   })
 
@@ -132,43 +130,27 @@ describe('pickNewClusters', () => {
     }
     expect(pickNewClusters([mkCluster([42])], [bad])).toHaveLength(1)
   })
-
-  it('returns empty when input cluster list is empty', () => {
-    expect(pickNewClusters([], [mkExisting([1])])).toEqual([])
-  })
 })
 
 describe('runAggregationOnce', () => {
-  it('persists generated habit flows from clustered site visits', async () => {
+  it('persists generated habit flows from repeated panel opens', async () => {
     insertHabitEvent({
       ts: 1_700_000_000_000,
-      kind: 'site_visit',
-      source: 'managed_chrome',
-      payload: {
-        text: 'Visit https://example.test/builds?from=nav',
-        origin: 'example.test',
-        path: '/builds'
-      }
+      kind: 'panel_open',
+      source: 'app_ui',
+      payload: { text: 'Open Build Panel', panelId: 'build' }
     })
     insertHabitEvent({
       ts: 1_700_000_000_100,
-      kind: 'site_visit',
-      source: 'managed_chrome',
-      payload: {
-        text: 'Visit https://example.test/builds?from=menu',
-        origin: 'example.test',
-        path: '/builds'
-      }
+      kind: 'panel_open',
+      source: 'app_ui',
+      payload: { text: 'Open Build Panel', panelId: 'build' }
     })
     insertHabitEvent({
       ts: 1_700_000_000_200,
-      kind: 'site_visit',
-      source: 'managed_chrome',
-      payload: {
-        text: 'Visit https://example.test/builds?from=search',
-        origin: 'example.test',
-        path: '/builds'
-      }
+      kind: 'panel_open',
+      source: 'app_ui',
+      payload: { text: 'Open Build Panel', panelId: 'build' }
     })
 
     await runAggregationOnce(async () => ({ skip: true }), 1_700_000_001_000)
@@ -176,13 +158,13 @@ describe('runAggregationOnce', () => {
     const flows = listHabitFlows()
     expect(flows).toHaveLength(1)
     expect(flows[0]).toMatchObject({
-      kind: 'site-flow',
+      kind: 'app-flow',
       risk_level: 'low',
       status: 'active'
     })
     expect(JSON.parse(flows[0].payload)).toMatchObject({
-      action: 'open-managed-chrome-url',
-      url: 'https://example.test/builds'
+      action: 'open-panel',
+      panelKey: 'build'
     })
   })
 })

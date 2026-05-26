@@ -123,16 +123,16 @@ describe('eventText', () => {
 })
 
 describe('aggregateHabitEvents: clustering', () => {
-  it('keeps site visits grouped by stable host/path instead of collapsing all URLs together', () => {
+  it('keeps repeated screen window samples in one cluster', () => {
     const rows: HabitEventRow[] = [
-      evt(1, 1, 'site_visit', 'Visit https://example.test/builds?from=nav'),
-      evt(2, 2, 'site_visit', 'Visit https://example.test/builds?from=menu'),
-      evt(3, 3, 'site_visit', 'Visit https://other.test/builds?from=nav')
+      evt(1, 1, 'screen_window', 'QQ - team chat'),
+      evt(2, 2, 'screen_window', 'QQ - team chat'),
+      evt(3, 3, 'screen_window', 'QQ - team chat')
     ]
     const clusters = aggregateHabitEvents(rows, { now: 4, minClusterSize: 2 })
     expect(clusters).toHaveLength(1)
-    expect(clusters[0].kind).toBe('site_visit')
-    expect(clusters[0].sourceEventIds).toEqual([1, 2])
+    expect(clusters[0].kind).toBe('screen_window')
+    expect(clusters[0].sourceEventIds).toEqual([1, 2, 3])
   })
 
   it('merges near-identical prompts into one cluster', () => {

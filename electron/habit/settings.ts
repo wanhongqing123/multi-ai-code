@@ -20,10 +20,9 @@ export interface HabitSettings {
 
 export const DEFAULT_HABIT_SETTINGS: HabitSettings = {
   enabled: true,
-  kinds: Object.fromEntries(ALL_HABIT_EVENT_KINDS.map((k) => [k, true])) as Record<
-    HabitEventKind,
-    boolean
-  >,
+  kinds: Object.fromEntries(
+    ALL_HABIT_EVENT_KINDS.map((k) => [k, k === 'screen_frame'])
+  ) as Record<HabitEventKind, boolean>,
   retentionDays: 90,
   firstRunNoticeShownAt: 0,
   lastAggregatedAt: 0,
@@ -83,6 +82,7 @@ export async function updateHabitSettings(
 
 export function isKindEnabled(settings: HabitSettings, kind: HabitEventKind): boolean {
   if (!settings.enabled) return false
+  if (kind !== 'screen_frame') return false
   const explicit = settings.kinds[kind]
   return explicit !== false
 }

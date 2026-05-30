@@ -1,7 +1,6 @@
 /**
  * Main-process service that wires `screenSampler` to:
- *   - active-win    → L1 window probes
- *   - desktopCapturer → L2 thumbnails
+ *   - desktopCapturer → screenshots
  *   - habit_events  → persisted samples
  *   - habit settings → live pause flag + blocklist
  *
@@ -10,7 +9,6 @@
  */
 
 import { promises as fs } from 'fs'
-import { createRequire } from 'module'
 import {
   desktopCapturer,
   screen as electronScreen,
@@ -25,36 +23,6 @@ import {
 } from './screenSampler.js'
 import { insertHabitEvent } from './db.js'
 import { loadHabitSettings, updateHabitSettings } from './settings.js'
-
-const require = createRequire(import.meta.url)
-
-interface ActiveWinResult {
-  title: string
-  owner: { name: string; processId: number; bundleId?: string; path?: string }
-}
-
-type ActiveWinFn = (opts?: {
-  accessibilityPermission?: boolean
-  screenRecordingPermission?: boolean
-}) => Promise<ActiveWinResult | undefined>
-
-let activeWinModule: ActiveWinFn | null = null
-let activeWinLoadError: string | null = null
-
-function loadActiveWin(): ActiveWinFn | null {
-  if (activeWinModule) return activeWinModule
-  if (activeWinLoadError) return null
-  try {
-    const mod = require('active-win') as ActiveWinFn | { default?: ActiveWinFn }
-    activeWinModule = (typeof mod === 'function' ? mod : mod.default) ?? null
-    if (!activeWinModule) {
-      activeWinLoadError = 'active-win module loaded but export is not callable'
-    }
-  } catch (err) {
-    activeWinLoadError = err instanceof Error ? err.message : String(err)
-  }
-  return activeWinModule
-}
 
 let handle: ScreenSamplerHandle | null = null
 
@@ -80,7 +48,7 @@ export interface ScreenSamplerStatus {
     lastWindowTitle: string | null
     lastWindowApp: string | null
   } | null
-  /** If active-win failed to load (e.g. native binding missing) — UI shows. */
+  /** Retained for renderer compatibility; active-window probing has been removed. */
   activeWinLoadError: string | null
 }
 
@@ -90,7 +58,7 @@ export function getScreenSamplerStatus(): ScreenSamplerStatus {
       enabled: liveState.enabled,
       paused: liveState.paused,
       runtime: null,
-      activeWinLoadError
+      activeWinLoadError: null
     }
   }
   const rt = handle.getStatus()
@@ -106,7 +74,7 @@ export function getScreenSamplerStatus(): ScreenSamplerStatus {
       lastWindowTitle: lastWin?.sample.title ?? null,
       lastWindowApp: lastWin?.sample.appName ?? null
     },
-    activeWinLoadError
+    activeWinLoadError: null
   }
 }
 
@@ -172,32 +140,6 @@ async function capturePrimaryThumbnail(
   }
 }
 
-/** Best-effort active-window probe; never throws. */
-async function probeActiveWindow(): Promise<{
-  title: string
-  appName: string
-  bundleId?: string
-  processId?: number
-} | null> {
-  const fn = loadActiveWin()
-  if (!fn) return null
-  try {
-    const r = await fn({
-      accessibilityPermission: false,
-      screenRecordingPermission: false
-    })
-    if (!r) return null
-    return {
-      title: r.title || '',
-      appName: r.owner?.name || '',
-      bundleId: r.owner?.bundleId,
-      processId: r.owner?.processId
-    }
-  } catch {
-    return null
-  }
-}
-
 let retentionTimer: NodeJS.Timeout | null = null
 
 async function runRetentionOnce(): Promise<void> {
@@ -223,25 +165,13 @@ export async function startScreenSamplerService(): Promise<void> {
   }
   handle = startScreenSampler(
     {
-      getActiveWindow: probeActiveWindow,
+      getActiveWindow: async () => null,
       captureThumbnail: capturePrimaryThumbnail
     },
     {
       paused: () => liveState.paused,
       appBlocklist: () => liveState.appBlocklist,
-      onWindow: (info, ts) => {
-        insertHabitEvent({
-          ts,
-          kind: 'screen_window',
-          payload: {
-            title: info.title,
-            appName: info.appName,
-            bundleId: info.bundleId,
-            processId: info.processId
-          },
-          sourceWindow: 'screen-sampler'
-        })
-      },
+      onWindow: () => {},
       onFrame: (info, ts) => {
         insertHabitEvent({
           ts,
@@ -249,8 +179,7 @@ export async function startScreenSamplerService(): Promise<void> {
           payload: {
             framePath: info.framePath,
             w: info.w,
-            h: info.h,
-            app: info.app
+            h: info.h
           },
           sourceWindow: 'screen-sampler'
         })

@@ -1,7 +1,6 @@
 export interface StartBackgroundServicesOptions {
   startHabitAiScheduler: () => void
   startScreenSamplerService: () => Promise<void>
-  startKbAiScheduler: () => void
   allowNonMainAiCliAutostart?: boolean
   onScreenSamplerError?: (err: unknown) => void
 }
@@ -12,7 +11,6 @@ export async function startBackgroundServices(
   const {
     startHabitAiScheduler,
     startScreenSamplerService,
-    startKbAiScheduler,
     allowNonMainAiCliAutostart = false,
     onScreenSamplerError
   } = options
@@ -27,7 +25,4 @@ export async function startBackgroundServices(
     onScreenSamplerError?.(err)
   }
 
-  if (allowNonMainAiCliAutostart) {
-    startKbAiScheduler()
-  }
 }

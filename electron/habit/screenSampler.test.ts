@@ -17,6 +17,18 @@ async function realWait(ms: number): Promise<void> {
   await new Promise((r) => setTimeout(r, ms))
 }
 
+async function waitFor(
+  predicate: () => boolean,
+  timeoutMs = 1000,
+  intervalMs = 20
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (predicate()) return
+    await realWait(intervalMs)
+  }
+}
+
 beforeEach(async () => {
   tempRoot = await fs.mkdtemp(join(tmpdir(), 'screen-sampler-'))
   handles = []
@@ -59,7 +71,7 @@ function makeDeps(
 }
 
 describe('startScreenSampler L1', () => {
-  it('fires onWindow on the immediate kickoff sample', async () => {
+  it('does not probe or emit active-window samples', async () => {
     const onWindow = vi.fn()
     const onFrame = vi.fn()
     const deps = makeDeps()
@@ -73,12 +85,8 @@ describe('startScreenSampler L1', () => {
       })
     )
     await flush()
-    expect(deps.getActiveWindow).toHaveBeenCalled()
-    expect(onWindow).toHaveBeenCalled()
-    expect(onWindow.mock.calls[0][0]).toMatchObject({
-      title: expect.stringContaining('VSCode'),
-      appName: 'VSCode'
-    })
+    expect(deps.getActiveWindow).not.toHaveBeenCalled()
+    expect(onWindow).not.toHaveBeenCalled()
   })
 
   it('skips when paused() returns true', async () => {
@@ -132,34 +140,29 @@ describe('startScreenSampler L1', () => {
     expect(onWindow).not.toHaveBeenCalled()
   })
 
-  it('dedupes identical title within 24h (real-timer interval)', async () => {
+  it('keeps active-window state empty even after timer ticks', async () => {
     const onWindow = vi.fn()
     const deps = makeDeps()
-    handles.push(
-      startScreenSampler(deps, {
-        paused: () => false,
-        onWindow,
-        onFrame: vi.fn(),
-        l1IntervalMs: 30,
-        l2IntervalMs: 60_000
-      })
-    )
-    // Allow multiple intervals to fire on the real clock
+    const h = startScreenSampler(deps, {
+      paused: () => false,
+      onWindow,
+      onFrame: vi.fn(),
+      l1IntervalMs: 30,
+      l2IntervalMs: 60_000
+    })
+    handles.push(h)
     await realWait(120)
-    // Should have called onWindow exactly once (the kickoff), even though
-    // the interval fired several times with the same title.
-    expect(onWindow).toHaveBeenCalledTimes(1)
+    expect(deps.getActiveWindow).not.toHaveBeenCalled()
+    expect(onWindow).not.toHaveBeenCalled()
+    expect(h.getLastWindow()).toBeNull()
   })
 
-  it('forwards errors to onError but keeps running', async () => {
+  it('does not surface active-window errors because window probing is disabled', async () => {
     const onWindow = vi.fn()
     const onError = vi.fn()
-    let calls = 0
     const deps = makeDeps({
       getActiveWindowOverride: async () => {
-        calls++
-        if (calls === 1) throw new Error('oh no')
-        return { title: `Window-${calls}`, appName: 'A' }
+        throw new Error('oh no')
       }
     })
     handles.push(
@@ -173,9 +176,9 @@ describe('startScreenSampler L1', () => {
       })
     )
     await realWait(80)
-    expect(onError).toHaveBeenCalled()
-    expect(onError.mock.calls[0][0]).toBe('l1')
-    expect(onWindow).toHaveBeenCalled()
+    expect(deps.getActiveWindow).not.toHaveBeenCalled()
+    expect(onError).not.toHaveBeenCalled()
+    expect(onWindow).not.toHaveBeenCalled()
   })
 })
 
@@ -193,8 +196,9 @@ describe('startScreenSampler L2', () => {
       })
     )
     await flush()
-    // The frame write is async (fs.mkdir + fs.writeFile) so give it real ticks.
-    await realWait(60)
+    // The frame write is async (fs.mkdir + fs.writeFile); wait for it instead
+    // of assuming a fixed scheduler slice under full-suite concurrency.
+    await waitFor(() => onFrame.mock.calls.length > 0)
     expect(onFrame).toHaveBeenCalled()
     const arg = onFrame.mock.calls[0][0] as {
       framePath: string
@@ -227,7 +231,7 @@ describe('startScreenSampler L2', () => {
     expect(onFrame).not.toHaveBeenCalled()
   })
 
-  it('attaches the last-known app name to the frame payload', async () => {
+  it('does not attach active-window app metadata to the frame payload', async () => {
     const onFrame = vi.fn()
     const deps = makeDeps()
     handles.push(
@@ -239,10 +243,10 @@ describe('startScreenSampler L2', () => {
         l2IntervalMs: 60_000
       })
     )
-    await realWait(60)
+    await waitFor(() => onFrame.mock.calls.length > 0)
     expect(onFrame).toHaveBeenCalled()
     const arg = onFrame.mock.calls[0][0] as { app?: string }
-    expect(arg.app).toBe('VSCode')
+    expect(arg.app).toBeUndefined()
   })
 })
 
@@ -266,7 +270,7 @@ describe('startScreenSampler handle', () => {
     expect(onWindow.mock.calls.length).toBe(callsBeforeStop)
   })
 
-  it('getLastWindow exposes the most recent observation', async () => {
+  it('getLastWindow remains null because only screenshots are sampled', async () => {
     const onWindow = vi.fn()
     const deps = makeDeps()
     const h = startScreenSampler(deps, {
@@ -278,18 +282,21 @@ describe('startScreenSampler handle', () => {
     })
     handles.push(h)
     await flush()
-    const last = h.getLastWindow()
-    expect(last).not.toBeNull()
-    expect(last!.sample.appName).toBe('VSCode')
+    expect(h.getLastWindow()).toBeNull()
   })
 
-  it('getStatus reports the lastError without throwing the sampler', async () => {
+  it('getStatus reports screenshot capture errors without throwing the sampler', async () => {
     const onError = vi.fn()
-    const deps = makeDeps({
-      getActiveWindowOverride: async () => {
+    const deps: SamplerDeps & {
+      getActiveWindow: ReturnType<typeof vi.fn>
+      captureThumbnail: ReturnType<typeof vi.fn>
+    } = {
+      getActiveWindow: vi.fn(async () => null),
+      captureThumbnail: vi.fn(async () => {
         throw new Error('permission denied')
-      }
-    })
+      }),
+      sampleRoot: () => tempRoot
+    }
     const h = startScreenSampler(deps, {
       paused: () => false,
       onWindow: vi.fn(),
@@ -301,7 +308,7 @@ describe('startScreenSampler handle', () => {
     handles.push(h)
     await flush()
     const status = h.getStatus()
-    expect(status.lastError?.label).toBe('l1')
+    expect(status.lastError?.label).toBe('l2')
     expect(status.lastError?.message).toContain('permission denied')
   })
 })

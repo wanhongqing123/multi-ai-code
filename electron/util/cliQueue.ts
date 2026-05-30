@@ -1,10 +1,10 @@
 /**
  * Process-wide serial queue for background CLI subprocess jobs.
  *
- * Both the habit-learning generator and the project-KB summarizer spawn the
- * user's main AI CLI in one-shot (`-p` / `exec`) mode. If they fire at the
- * same time they compete for the same OAuth refresh tokens and run into
- * rate limits, so we funnel both through a single FIFO here.
+ * Background jobs can spawn the user's main AI CLI in one-shot (`-p` / `exec`)
+ * mode. If several fire at the same time they compete for the same OAuth
+ * refresh tokens and run into rate limits, so we funnel them through a single
+ * FIFO here.
  *
  * The queue is intentionally simple: an internal promise chain, one job at
  * a time. Failures are isolated per-job (the chain's `.catch` swallows

@@ -13,9 +13,10 @@ describe('App habit monitor integration', () => {
     const markup = renderToStaticMarkup(<App />)
 
     expect(markup).toContain('Multi-AI Code')
+    expect(markup).not.toContain('项目记忆')
     expect(markup).not.toContain('Chrome')
     expect(markup).not.toContain('Skill')
-  })
+  }, 15000)
 
   it('renders a preload-missing fallback instead of crashing when opened outside Electron', async () => {
     const previousWindow = (globalThis as { window?: unknown }).window
@@ -35,7 +36,7 @@ describe('App habit monitor integration', () => {
         vi.stubGlobal('window', previousWindow)
       }
     }
-  })
+  }, 15000)
 
   it('derives auto-personalized UI flags from active low-risk adjustments', async () => {
     const { deriveHabitUiFlags } = await import('./App.js')

@@ -33,6 +33,7 @@ function truncate(text: string, max = 140): string {
 export default function CollectionSettingsPanel(props: Props): JSX.Element {
   const { settings, onUpdate, recent, totalEventCount, onRefresh, onClearEvents } = props
   const [working, setWorking] = useState(false)
+  const visibleRecent = recent.filter((event) => event.kind === 'screen_frame')
 
   useEffect(() => {
     void onRefresh()
@@ -161,14 +162,15 @@ export default function CollectionSettingsPanel(props: Props): JSX.Element {
           </span>
         </header>
 
-        {recent.length === 0 ? (
+        {visibleRecent.length === 0 ? (
           <div className="drawer-empty">还没有采集到任何事件。</div>
         ) : (
           <ul className="habit-event-list">
-            {recent.map((e) => {
+            {visibleRecent.map((e) => {
               let text = ''
               try {
-                text = (JSON.parse(e.payload) as { text?: string }).text ?? ''
+                const payload = JSON.parse(e.payload) as { text?: string; framePath?: string }
+                text = payload.text ?? payload.framePath ?? ''
               } catch {
                 /* ignore */
               }

@@ -15,12 +15,12 @@ interface SamplerStatus {
 }
 
 /**
- * Tiny topbar pill that shows whether the screen sampler is currently
+ * Tiny topbar pill that shows whether screenshot sampling is currently
  * recording, paused, or disabled. Click toggles pause.
  *
  * - Green pulsing dot: sampling
  * - Gray dot:          paused (or disabled)
- * - Red dot:           error (e.g., active-win failed to load)
+ * - Red dot:           capture error
  *
  * Polls the main-process status every 3s. Cheap (one IPC, fixed shape).
  */
@@ -71,12 +71,10 @@ export default function ScreenSamplerIndicator(): JSX.Element | null {
     label = '点击开始学习'
   } else if (status.runtime?.lastError) {
     label = `学习 · ${status.runtime.lastError.label} 错误（点击停止）`
-  } else if (status.runtime?.lastWindowApp) {
-    const win = status.runtime.lastWindowTitle ?? ''
-    const trimmed = win.length > 40 ? win.slice(0, 40) + '…' : win
-    label = `学习中 · ${status.runtime.lastWindowApp} · ${trimmed}（点击停止）`
+  } else if (status.runtime?.lastL2At) {
+    label = `截图采样中 · ${new Date(status.runtime.lastL2At).toLocaleTimeString()}（点击停止）`
   } else {
-    label = '学习中（点击停止）'
+    label = '截图采样中（点击停止）'
   }
 
   return (
@@ -89,7 +87,7 @@ export default function ScreenSamplerIndicator(): JSX.Element | null {
     >
       <span className={dotClass} aria-hidden />
       <span className="screen-sampler-text">
-        {status.paused ? '开始学习' : '学习中'}
+        {status.paused ? '开始采样' : '截图采样'}
       </span>
     </button>
   )

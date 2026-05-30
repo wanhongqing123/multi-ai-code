@@ -2,21 +2,16 @@ import { promises as fs } from 'fs'
 import { join } from 'path'
 import { rootDir } from '../store/paths.js'
 import {
-  DEFAULT_APP_BLOCKLIST,
-  SampleDedupe,
-  applyBlocklist,
   dateFolderFor,
-  redactSecrets,
   safeIsoStamp,
   type BlocklistRule,
   type WindowSample
 } from './screenSamplerLogic.js'
 
 /**
- * Lightweight, always-on screen sampler that feeds habit_events.
+ * Lightweight, always-on screenshot sampler that feeds habit_events.
  *
- *   L1 (every 5s by default)  — active foreground window: title + appName.
- *   L2 (every 30s by default) — primary-display thumbnail 256×144, written
+ *   Every 30s by default — primary-display thumbnail, written
  *                                to `<rootDir>/screen-samples/<date>/*.jpg`.
  *
  * Designed to be **completely best-effort**: every IO and IPC call is
@@ -26,20 +21,20 @@ import {
  * the tick.
  *
  * The sampler is intentionally decoupled from the writer: it emits via
- * callbacks (`onWindow`, `onFrame`) so wiring into habit_events lives in
+ * callbacks (`onFrame`) so wiring into habit_events lives in
  * `electron/main.ts` where the DB is already open.
  */
 
 export interface ScreenSamplerOptions {
-  /** Defaults to 5000 ms. */
+  /** Legacy option retained for callers/tests; active-window sampling is disabled. */
   l1IntervalMs?: number
   /** Defaults to 30000 ms. */
   l2IntervalMs?: number
   /** Live read each tick — returning true skips the tick. */
   paused: () => boolean
-  /** Live read each tick — used as override for DEFAULT_APP_BLOCKLIST. */
+  /** Legacy option retained for settings compatibility; screenshots are not app-filtered. */
   appBlocklist?: () => BlocklistRule[]
-  /** Receives a filtered L1 sample to persist. */
+  /** Legacy callback retained for compatibility; never called. */
   onWindow: (info: WindowSample, capturedAt: number) => void
   /**
    * Receives an L2 thumbnail. `framePath` is repo-rootDir-relative posix
@@ -65,7 +60,7 @@ export interface ScreenSamplerOptions {
 /** Returned handle for stopping / inspecting the running sampler. */
 export interface ScreenSamplerHandle {
   stop: () => void
-  /** Last successful L1 sample (for the topbar tooltip / UI). */
+  /** Always null because active-window sampling is disabled. */
   getLastWindow: () => { sample: WindowSample; capturedAt: number } | null
   /** Sampler state for IPC. */
   getStatus: () => {
@@ -82,12 +77,11 @@ export function screenSampleRoot(): string {
 }
 
 /**
- * Inject points for the dependencies we don't want to import statically
- * (active-win is CJS native, desktopCapturer is Electron-only). Tests
- * pass mocks; production wires the real modules from electron/main.ts.
+ * Inject points for Electron-only screenshot dependencies. Tests pass mocks;
+ * production wires the real modules from electron/main.ts.
  */
 export interface SamplerDeps {
-  /** Returns the active window info, or null when unavailable. */
+  /** Legacy dependency retained for compatibility; never called. */
   getActiveWindow: () => Promise<WindowSample | null>
   /**
    * Captures the primary display, returning a Buffer of PNG bytes already
@@ -127,13 +121,10 @@ export function startScreenSampler(
   deps: SamplerDeps,
   opts: ScreenSamplerOptions
 ): ScreenSamplerHandle {
-  const l1IntervalMs = opts.l1IntervalMs ?? 5_000
   const l2IntervalMs = opts.l2IntervalMs ?? 30_000
-  const dedupeL1 = new SampleDedupe()
   const now = deps.now ?? (() => Date.now())
   const root = deps.sampleRoot ?? screenSampleRoot
 
-  let lastWindow: { sample: WindowSample; capturedAt: number } | null = null
   let lastL1At = 0
   let lastL2At = 0
   let lastError: { label: string; message: string; at: number } | null = null
@@ -146,49 +137,6 @@ export function startScreenSampler(
       opts.onError?.(label, e)
     } catch {
       /* user-supplied callback swallows */
-    }
-  }
-
-  const blocklistOf = (): BlocklistRule[] => {
-    try {
-      const extra = opts.appBlocklist?.() ?? []
-      return [...DEFAULT_APP_BLOCKLIST, ...extra]
-    } catch {
-      return DEFAULT_APP_BLOCKLIST
-    }
-  }
-
-  // ---------- L1 tick ----------
-  const l1Tick = async (): Promise<void> => {
-    if (stopped) return
-    try {
-      if (opts.paused()) return
-    } catch {
-      /* pause callback bad — assume paused for safety */
-      return
-    }
-    let raw: WindowSample | null = null
-    try {
-      raw = await deps.getActiveWindow()
-    } catch (err) {
-      reportError('l1', err)
-      return
-    }
-    if (!raw) return
-    const filtered = applyBlocklist(raw, blocklistOf())
-    if (!filtered) return
-    const dedupeKey = `${filtered.appName}|${filtered.title}`
-    if (!dedupeL1.shouldKeep(dedupeKey, now())) {
-      lastL1At = now()
-      lastWindow = { sample: filtered, capturedAt: now() }
-      return
-    }
-    lastL1At = now()
-    lastWindow = { sample: filtered, capturedAt: lastL1At }
-    try {
-      opts.onWindow(filtered, lastL1At)
-    } catch (err) {
-      reportError('l1', err)
     }
   }
 
@@ -225,10 +173,9 @@ export function startScreenSampler(
     }
 
     lastL2At = capturedAt
-    const appName = lastWindow?.sample.appName
     try {
       opts.onFrame(
-        { framePath, absPath, w: cap.w, h: cap.h, app: appName },
+        { framePath, absPath, w: cap.w, h: cap.h },
         capturedAt
       )
     } catch (err) {
@@ -238,24 +185,19 @@ export function startScreenSampler(
 
   // ---------- schedule + handle ----------
   // unref() prevents the timers from holding the event loop open during quit.
-  const l1Timer = setInterval(() => void l1Tick(), l1IntervalMs)
   const l2Timer = setInterval(() => void l2Tick(), l2IntervalMs)
-  if (typeof l1Timer.unref === 'function') l1Timer.unref()
   if (typeof l2Timer.unref === 'function') l2Timer.unref()
-  // Fire one of each immediately so we don't wait a full interval for
-  // first signals on app start.
-  void l1Tick()
+  // Fire immediately so we don't wait a full interval for first signals on app start.
   void l2Tick()
 
   return {
     stop(): void {
       if (stopped) return
       stopped = true
-      clearInterval(l1Timer)
       clearInterval(l2Timer)
     },
     getLastWindow(): { sample: WindowSample; capturedAt: number } | null {
-      return lastWindow
+      return null
     },
     getStatus(): ScreenSamplerHandle['getStatus'] extends () => infer T
       ? T
@@ -269,6 +211,3 @@ export function startScreenSampler(
     }
   }
 }
-
-// Re-export the helpers so callers don't need to import from logic.ts too.
-export { redactSecrets, DEFAULT_APP_BLOCKLIST }

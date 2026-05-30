@@ -1,5 +1,4 @@
 import { ipcMain } from 'electron'
-import { recordHabitEvent, type RecordHabitEventInput } from './collector.js'
 import {
   loadHabitSettings,
   saveHabitSettings,
@@ -41,11 +40,6 @@ import {
 } from './skills.js'
 
 export function registerHabitIpc(): void {
-
-  ipcMain.handle('habit:record', async (_e, input: RecordHabitEventInput) => {
-    await recordHabitEvent(input)
-    return { ok: true }
-  })
 
   ipcMain.handle('habit:settings:get', async () => {
     return loadHabitSettings()

@@ -12,16 +12,6 @@ export type HabitEventKind =
   | 'screen_frame'
 
 export const ALL_HABIT_EVENT_KINDS: HabitEventKind[] = [
-  'pty_cmd',
-  'ai_prompt_main',
-  'ai_prompt_repo',
-  'diff_annotation',
-  'repo_view_annotation',
-  'template_used',
-  'plan_imported',
-  'panel_open',
-  'action_triggered',
-  'screen_window',
   'screen_frame'
 ]
 

@@ -1,6 +1,6 @@
 /**
- * Pure logic for the screen sampler — the bits that don't touch electron /
- * the filesystem / active-win. Kept separate so they can be unit tested
+ * Pure logic for the screen sampler — the bits that don't touch electron or
+ * the filesystem. Kept separate so they can be unit tested
  * without spinning up a window or stubbing native modules.
  */
 

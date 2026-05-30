@@ -36,10 +36,12 @@ describe('habit settings defaults', () => {
     expect(DEFAULT_HABIT_SETTINGS.enabled).toBe(true)
   })
 
-  it('all 11 kinds default to enabled', () => {
-    const flags = Object.values(DEFAULT_HABIT_SETTINGS.kinds)
-    expect(flags).toHaveLength(11)
-    expect(flags.every((v) => v === true)).toBe(true)
+  it('only screen frame sampling defaults to enabled', () => {
+    expect(DEFAULT_HABIT_SETTINGS.kinds.screen_frame).toBe(true)
+    for (const [kind, enabled] of Object.entries(DEFAULT_HABIT_SETTINGS.kinds)) {
+      if (kind === 'screen_frame') continue
+      expect(enabled).toBe(false)
+    }
   })
 
   it('retention defaults to 90 days', () => {
@@ -106,8 +108,9 @@ describe('updateHabitSettings', () => {
       kinds: { pty_cmd: false }
     })
     expect(updated.kinds.pty_cmd).toBe(false)
-    expect(updated.kinds.ai_prompt_main).toBe(true)
-    expect(updated.kinds.diff_annotation).toBe(true)
+    expect(updated.kinds.ai_prompt_main).toBe(false)
+    expect(updated.kinds.diff_annotation).toBe(false)
+    expect(updated.kinds.screen_frame).toBe(true)
   })
 
   it('rejects out-of-band retention days, keeps default instead', async () => {
@@ -150,15 +153,16 @@ describe('isKindEnabled', () => {
     expect(isKindEnabled(s, 'ai_prompt_main')).toBe(false)
   })
 
-  it('returns false when the specific kind is disabled even if master is on', () => {
-    const s = mergeWithDefaults({ enabled: true, kinds: { pty_cmd: false } })
+  it('returns false for non-screenshot kinds even if the persisted toggle is on', () => {
+    const s = mergeWithDefaults({ enabled: true, kinds: { pty_cmd: true, screen_window: true } })
     expect(isKindEnabled(s, 'pty_cmd')).toBe(false)
-    expect(isKindEnabled(s, 'ai_prompt_main')).toBe(true)
+    expect(isKindEnabled(s, 'screen_window')).toBe(false)
+    expect(isKindEnabled(s, 'screen_frame')).toBe(true)
   })
 
-  it('treats missing per-kind entries as enabled when master is on', () => {
+  it('treats missing screen frame toggle as enabled when master is on', () => {
     const s = mergeWithDefaults({ enabled: true, kinds: {} })
-    expect(isKindEnabled(s, 'plan_imported')).toBe(true)
+    expect(isKindEnabled(s, 'screen_frame')).toBe(true)
   })
 })
 
@@ -168,7 +172,8 @@ describe('mergeWithDefaults', () => {
       '{ "kinds": { "pty_cmd": "yes", "bogus_kind": true }, "bogusField": "oops" }'
     )
     const s = mergeWithDefaults(raw)
-    expect(s.kinds.pty_cmd).toBe(true)
+    expect(s.kinds.pty_cmd).toBe(false)
+    expect(s.kinds.screen_frame).toBe(true)
     expect((s.kinds as Record<string, unknown>).bogus_kind).toBeUndefined()
   })
 })

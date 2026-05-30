@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import type { HabitEventRow, HabitFlowRow, HabitSettings } from './habitTypes'
+import CollectionSettingsPanel from './CollectionSettingsPanel.js'
 import HabitMonitorDialog, {
   disableHabitFlow,
   loadHabitMonitorDialogData
@@ -117,6 +118,24 @@ describe('HabitMonitorDialog', () => {
 
     expect(markup).toContain('Open Build Panel')
     expect(markup).not.toContain('Chrome')
+  })
+
+  it('renders only the screenshot sampling kind in collection settings', () => {
+    const markup = renderToStaticMarkup(
+      <CollectionSettingsPanel
+        settings={settings}
+        onUpdate={vi.fn()}
+        recent={recent}
+        totalEventCount={recent.length}
+        onRefresh={vi.fn()}
+        onClearEvents={vi.fn()}
+      />
+    )
+
+    expect(markup).toContain('屏幕截图采样')
+    expect(markup).not.toContain('前台窗口采样')
+    expect(markup).not.toContain('主会话终端命令')
+    expect(markup).not.toContain('主会话 AI prompt')
   })
 
   it('disables a flow from the active list', async () => {

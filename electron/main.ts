@@ -30,7 +30,6 @@ import {
   startScreenSamplerService,
   stopScreenSamplerService
 } from './habit/screenSamplerService.js'
-import { recordHabitEvent } from './habit/collector.js'
 import { registerScreenshotIpc } from './screenshot/manager.js'
 import {
   applyScreenshotHotkeySettings,
@@ -44,10 +43,6 @@ import {
 import { startScheduler, stopScheduler } from './habit/scheduler.js'
 import { getSkillGenerator, setSkillGenerator } from './habit/generatorRegistry.js'
 import { createDefaultSkillGenerator } from './habit/generator.js'
-import { registerKbIpc, configureKbSettingsResolver } from './kb/ipc.js'
-import { startKbScheduler, stopKbScheduler, setProjectAiSettings } from './kb/runner.js'
-import { closeAllKbDbs } from './kb/connection.js'
-import { migrateSharedKbToPerRepo } from './kb/migrate.js'
 import {
   listPlans,
   registerExternalPlan,
@@ -55,7 +50,7 @@ import {
 } from './orchestrator/plans.js'
 import { detectMsys, buildOpenMsysTerminalCommand } from './util/msys.js'
 import { spawn as spawnChild } from 'child_process'
-import { promises as fs, readFileSync } from 'fs'
+import { promises as fs } from 'fs'
 import { snapshotArtifact } from './store/snapshot.js'
 import { resolvePlanArtifactAbs } from './orchestrator/prompts.js'
 import { buildRepoViewSearch } from './repo-view/windowMode.js'
@@ -498,13 +493,6 @@ app.whenReady().then(async () => {
       }
       try {
         await sendRepoAnalysisPrompt({ winId: win.id, text: req.text })
-        // Habit collection: repo-view AI prompt. Best-effort; never throws.
-        void recordHabitEvent({
-          kind: 'ai_prompt_repo',
-          text: req.text,
-          repoPath: req.repoRoot,
-          sourceWindow: 'repo-view'
-        })
         return { ok: true as const }
       } catch (err) {
         return { ok: false as const, error: (err as Error).message }
@@ -1799,40 +1787,8 @@ app.whenReady().then(async () => {
   await startBackgroundServices({
     startHabitAiScheduler: () => startScheduler(getSkillGenerator()),
     startScreenSamplerService,
-    startKbAiScheduler: () => startKbScheduler(),
     onScreenSamplerError: (err) => {
       console.warn('[screen-sampler] failed to start:', err)
-    }
-  })
-
-  registerKbIpc()
-  // One-shot migration: prior versions stored KB rows in the shared platform
-  // SQLite. Move them into per-repo kb.db files and drop the shared tables.
-  // Idempotent — no-op once the legacy tables are gone.
-  try {
-    const result = migrateSharedKbToPerRepo()
-    if (result.migrated) {
-      console.log(
-        `[kb] migrated ${result.entriesMoved} entries across ${result.reposTouched} repos to per-repo storage`
-      )
-    }
-  } catch (err) {
-    console.warn('[kb] migration failed:', err)
-  }
-  // Resolver lets KB compaction read AI settings from project.json directly.
-  configureKbSettingsResolver((repoPath) => {
-    try {
-      const projects = listProjects()
-      const found = projects.find((p) => p.target_repo === repoPath)
-      if (!found) return null
-      const raw = readFileSync(
-        join(projectDirFn(found.id), 'project.json'),
-        'utf8'
-      )
-      const meta = JSON.parse(raw) as { ai_settings?: Record<string, unknown> }
-      return (meta.ai_settings as never) ?? null
-    } catch {
-      return null
     }
   })
 
@@ -1852,8 +1808,6 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   killAllSessions()
   stopScheduler()
-  stopKbScheduler()
   stopScreenSamplerService()
-  closeAllKbDbs()
   disposeScreenshotHotkey(globalShortcut)
 })

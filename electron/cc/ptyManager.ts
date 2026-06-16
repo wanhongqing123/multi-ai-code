@@ -14,6 +14,7 @@ import {
 } from './structuredReply.js'
 import { planSystemPromptInjection } from './systemPromptInjection.js'
 import { buildResumeArgs, type ResumeCommand } from './resumeArgs.js'
+import { writeBracketedPasteMessage } from './ptyInput.js'
 
 import {
   buildSystemPrompt
@@ -440,6 +441,23 @@ export function registerPtyIpc(): void {
       } catch (err) {
         return {
           ok: false as const,
+          error: err instanceof Error ? err.message : String(err)
+        }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'cc:send-pasted-user',
+    async (_e, { sessionId, text }: { sessionId: string; text: string }) => {
+      const s = sessions.get(sessionId)
+      if (!s) return { ok: false, error: 'no session' }
+      try {
+        await writeBracketedPasteMessage(s.proc, text)
+        return { ok: true }
+      } catch (err) {
+        return {
+          ok: false,
           error: err instanceof Error ? err.message : String(err)
         }
       }

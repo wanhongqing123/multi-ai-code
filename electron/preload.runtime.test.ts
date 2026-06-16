@@ -97,4 +97,15 @@ describe('preload runtime api', () => {
     offStatus()
     expect(electronMock.removeListener).toHaveBeenCalledWith('runtime:status', statusHandler)
   })
+
+  it('exposes a pasted user-message route for large runtime log prompts', async () => {
+    const api = await loadApi()
+
+    await api.cc.sendPastedUser('session-1', 'large\nruntime\nlog')
+
+    expect(electronMock.invoke).toHaveBeenCalledWith('cc:send-pasted-user', {
+      sessionId: 'session-1',
+      text: 'large\nruntime\nlog',
+    })
+  })
 })

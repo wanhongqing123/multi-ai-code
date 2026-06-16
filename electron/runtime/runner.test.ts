@@ -98,6 +98,48 @@ describe('createRuntimeRunner', () => {
     expect(statuses).toContain('exited')
   })
 
+  it('prefers a PTY runtime process when available so console apps stream live output', async () => {
+    const pipeChild = new FakeChild()
+    const ptyChild = new FakeChild()
+    const spawn = vi.fn(() => pipeChild)
+    const spawnPty = vi.fn(() => ptyChild)
+    const runner = createRuntimeRunner({
+      platform: 'win32',
+      spawn,
+      spawnPty,
+      detectMsys: vi.fn().mockResolvedValue({
+        available: true,
+        bashPath: 'C:\\msys64\\usr\\bin\\bash.exe',
+        usrBinDir: 'C:\\msys64\\usr\\bin',
+        variant: 'msys2',
+        candidates: [],
+      }),
+      resolveVisualStudioEnvironment: vi.fn(),
+      now: () => '2026-06-12T10:00:00.000Z',
+    })
+
+    await runner.start({
+      projectId: 'p1',
+      projectName: 'Demo',
+      targetRepo: 'E:\\repo',
+      config: msysConfig,
+    })
+
+    expect(spawnPty).toHaveBeenCalledWith(
+      'C:\\msys64\\usr\\bin\\bash.exe',
+      ['-lc', "cd '/e/repo' && npm run dev"],
+      expect.objectContaining({
+        cwd: 'E:\\repo',
+      })
+    )
+    expect(spawn).not.toHaveBeenCalled()
+
+    ptyChild.stdout.write('demo tick\n')
+    await flush()
+
+    expect(runner.getState().log).toContain('demo tick')
+  })
+
   it('blocks disabled runtime configs and empty commands before spawning', async () => {
     const spawn = vi.fn()
     const runner = createRuntimeRunner({

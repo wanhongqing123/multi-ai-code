@@ -722,6 +722,11 @@ const api = {
         ok: boolean
         error?: string
       }>,
+    sendPastedUser: (sessionId: string, text: string) =>
+      ipcRenderer.invoke('cc:send-pasted-user', { sessionId, text }) as Promise<{
+        ok: boolean
+        error?: string
+      }>,
     judgeExternalReview: (req: JudgeExternalReviewRequest) =>
       ipcRenderer.invoke('cc:judge-external-review', req) as Promise<
         | { ok: true; result: ExternalReviewDecision }

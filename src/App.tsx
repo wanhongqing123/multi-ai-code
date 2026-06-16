@@ -938,7 +938,7 @@ function AppShell() {
       return
     }
 
-    const sendResult = await window.api.cc.sendUser(sessionId, promptResult.prompt)
+    const sendResult = await window.api.cc.sendPastedUser(sessionId, promptResult.prompt)
     if (!sendResult.ok) {
       showToast(sendResult.error ?? '发送运行日志失败', { level: 'error' })
       return

@@ -1,6 +1,9 @@
 import { execFile, spawn } from 'child_process'
 import iconv from 'iconv-lite'
+import { EventEmitter } from 'events'
+import { createRequire } from 'module'
 import { isAbsolute, relative, resolve, sep } from 'path'
+import { PassThrough } from 'stream'
 import { StringDecoder } from 'string_decoder'
 import { detectMsys, type MsysInfo } from '../util/msys.js'
 import { resolveVisualStudioEnvironment } from '../build/visualStudio.js'
@@ -43,9 +46,24 @@ type SpawnLike = (
   }
 ) => SpawnedRuntimeProcess
 
+interface RuntimePty {
+  pid: number
+  write(data: string): void
+  kill(signal?: string): void
+  onData(listener: (data: string) => void): void
+  onExit(listener: (event: { exitCode: number; signal?: number | string }) => void): void
+}
+
+type NodePtySpawn = (
+  command: string,
+  args: string[],
+  options: Record<string, unknown>
+) => RuntimePty
+
 interface RuntimeRunnerDeps {
   platform: NodeJS.Platform
   spawn: SpawnLike
+  spawnPty: SpawnLike | null
   detectMsys: () => Promise<MsysInfo>
   resolveVisualStudioEnvironment: typeof resolveVisualStudioEnvironment
   killProcessTree: (pid: number) => void
@@ -68,6 +86,71 @@ export interface RuntimeRunner {
 
 const ACTIVE_LOG_LIMIT = 200_000
 const TRUNCATED_LOG_MARKER = '[runtime] earlier log truncated...\n'
+const require = createRequire(import.meta.url)
+
+class PtyRuntimeProcess extends EventEmitter implements SpawnedRuntimeProcess {
+  readonly pid?: number
+  readonly stdout = new PassThrough()
+  readonly stderr = null
+  private readonly pty: RuntimePty
+
+  constructor(pty: RuntimePty) {
+    super()
+    this.pty = pty
+    this.pid = pty.pid
+    pty.onData((chunk) => this.stdout.write(chunk))
+    pty.onExit(({ exitCode, signal }) => {
+      this.stdout.end()
+      this.emit(
+        'close',
+        exitCode,
+        typeof signal === 'string' ? (signal as NodeJS.Signals) : null
+      )
+    })
+  }
+
+  kill(signal?: NodeJS.Signals | number): boolean {
+    try {
+      this.pty.kill(typeof signal === 'string' ? signal : undefined)
+      return true
+    } catch {
+      return false
+    }
+  }
+}
+
+function normalizePtyEnv(env: NodeJS.ProcessEnv | undefined): Record<string, string> {
+  const next: Record<string, string> = {}
+  for (const [key, value] of Object.entries(env ?? process.env)) {
+    if (typeof value === 'string') next[key] = value
+  }
+  next.TERM = next.TERM || 'xterm-256color'
+  next.COLORTERM = next.COLORTERM || 'truecolor'
+  return next
+}
+
+function loadNodePtySpawn(): NodePtySpawn {
+  const mod = require('node-pty') as { spawn?: NodePtySpawn }
+  if (typeof mod.spawn !== 'function') {
+    throw new Error('node-pty module loaded but `spawn` is missing')
+  }
+  return mod.spawn
+}
+
+function createPtyRuntimeProcess(
+  command: string,
+  args: readonly string[] = [],
+  options: Parameters<SpawnLike>[2] = {}
+): SpawnedRuntimeProcess {
+  const pty = loadNodePtySpawn()(command, [...args], {
+    name: 'xterm-256color',
+    cols: 120,
+    rows: 30,
+    cwd: options.cwd,
+    env: normalizePtyEnv(options.env),
+  })
+  return new PtyRuntimeProcess(pty)
+}
 
 function initialState(): RuntimeState {
   return {
@@ -203,9 +286,11 @@ function validateStartRequest(request: StartRuntimeRequest): string | null {
 }
 
 export function createRuntimeRunner(partialDeps?: Partial<RuntimeRunnerDeps>): RuntimeRunner {
+  const customSpawnProvided = Object.prototype.hasOwnProperty.call(partialDeps ?? {}, 'spawn')
   const deps: RuntimeRunnerDeps = {
     platform: partialDeps?.platform ?? process.platform,
     spawn: partialDeps?.spawn ?? spawn,
+    spawnPty: partialDeps?.spawnPty ?? (customSpawnProvided ? null : createPtyRuntimeProcess),
     detectMsys: partialDeps?.detectMsys ?? detectMsys,
     resolveVisualStudioEnvironment:
       partialDeps?.resolveVisualStudioEnvironment ?? resolveVisualStudioEnvironment,
@@ -281,7 +366,8 @@ export function createRuntimeRunner(partialDeps?: Partial<RuntimeRunnerDeps>): R
       }
 
       const command = `cd ${quoteForBash(toMsysPath(resolvedCwd))} && ${request.config.command}`
-      return deps.spawn(info.bashPath, ['-lc', command], {
+      const runtimeSpawn = deps.spawnPty ?? deps.spawn
+      return runtimeSpawn(info.bashPath, ['-lc', command], {
         cwd: resolvedCwd,
         env: buildMsysEnv(process.env, info.usrBinDir),
         shell: false,
@@ -300,7 +386,8 @@ export function createRuntimeRunner(partialDeps?: Partial<RuntimeRunnerDeps>): R
     }
 
     state.visualStudioDisplayName = result.displayName
-    return deps.spawn('cmd.exe', ['/d', '/s', '/c', request.config.command], {
+    const runtimeSpawn = deps.spawnPty ?? deps.spawn
+    return runtimeSpawn('cmd.exe', ['/d', '/s', '/c', request.config.command], {
       cwd: resolvedCwd,
       env: result.env,
       shell: false,

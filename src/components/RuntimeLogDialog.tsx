@@ -1,5 +1,7 @@
+import { useEffect, useRef } from 'react'
 import type { RuntimeState } from '../../electron/preload'
 import { canSendRuntimeLog, getRuntimeStatusLabel } from './ProjectBuildPanel.js'
+import { scrollRuntimeLogToBottom } from '../utils/runtimeLogViewport.js'
 
 export interface RuntimeLogDialogProps {
   open: boolean
@@ -25,6 +27,12 @@ function formatRuntimeMeta(state: RuntimeState): string {
 }
 
 export default function RuntimeLogDialog(props: RuntimeLogDialogProps): JSX.Element | null {
+  const logRef = useRef<HTMLPreElement | null>(null)
+
+  useEffect(() => {
+    scrollRuntimeLogToBottom(logRef.current)
+  }, [props.runtimeState.log])
+
   if (!props.open) return null
 
   const sendEnabled = canSendRuntimeLog(
@@ -66,7 +74,7 @@ export default function RuntimeLogDialog(props: RuntimeLogDialogProps): JSX.Elem
           <span>{formatRuntimeMeta(props.runtimeState)}</span>
         </div>
 
-        <pre className="runtime-log-dialog-log">{logText}</pre>
+        <pre ref={logRef} className="runtime-log-dialog-log">{logText}</pre>
 
         <div className="runtime-log-dialog-comment">
           <label htmlFor="runtime-log-comment">补充问题</label>

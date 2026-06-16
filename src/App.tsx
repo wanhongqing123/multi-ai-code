@@ -7,7 +7,11 @@ import {
 } from './utils/session-message-format'
 import { buildCliLaunchArgs } from './utils/cliLaunchArgs'
 import { buildRuntimeLogAnalysisMessage } from './utils/runtimeLogAnalysisMessage'
-import { nextRuntimeLogDialogOpenAfterSendResult } from './utils/runtimeLogDialogState'
+import {
+  nextRuntimeLogCommentAfterSendResult,
+  nextRuntimeLogDialogOpenAfterSendResult
+} from './utils/runtimeLogDialogState'
+import { selectVisibleRuntimeState } from './utils/runtimeStateSelection'
 import MainPanel from './components/MainPanel'
 import MainBootGate, { type BootGatePhase } from './components/MainBootGate'
 import ProjectPicker, { type ProjectInfo } from './components/ProjectPicker'
@@ -564,14 +568,19 @@ function AppShell() {
     currentProjectId !== null && runtimeState.projectId === currentProjectId
       ? runtimeState
       : DEFAULT_RUNTIME_STATE
+  const visibleRuntimeState = selectVisibleRuntimeState(
+    currentProjectId,
+    runtimeState,
+    DEFAULT_RUNTIME_STATE
+  )
   const hasProject = currentProject !== null
   const runtimeStartBlockedReason = getRuntimeStartBlockedReason(
     currentProjectId,
     projectRuntimeConfigReady,
     visibleProjectRuntimeConfig,
-    runtimeStateForCurrentProject
+    visibleRuntimeState
   )
-  const runtimeTopbarRunning = runtimeStateForCurrentProject.status === 'running'
+  const runtimeTopbarRunning = visibleRuntimeState.status === 'running'
   const runtimeTopbarDisabled = !runtimeTopbarRunning && runtimeStartBlockedReason !== null
 
   // Track plan names we've ever observed in the list. If `planName` was
@@ -939,8 +948,8 @@ function AppShell() {
   }, [])
 
   const handleSendRuntimeLog = useCallback(async (comment = '') => {
-    if (!currentProjectId || runtimeState.projectId !== currentProjectId) {
-      showToast('当前运行日志不属于所选项目，请切回对应项目后再发送', { level: 'warn' })
+    if (!runtimeState.projectId || !runtimeState.log.trim()) {
+      showToast('当前没有可发送的运行日志', { level: 'warn' })
       return
     }
     if (!sessionId || sessionStatus !== 'running') {
@@ -961,9 +970,14 @@ function AppShell() {
       return
     }
 
-    setShowRuntimeLogDialog((currentOpen) => nextRuntimeLogDialogOpenAfterSendResult(currentOpen, sendResult.ok))
+    setRuntimeLogComment((currentComment) =>
+      nextRuntimeLogCommentAfterSendResult(currentComment, sendResult.ok)
+    )
+    setShowRuntimeLogDialog((currentOpen) =>
+      nextRuntimeLogDialogOpenAfterSendResult(currentOpen, sendResult.ok)
+    )
     showToast('已将运行日志分析请求发送到主会话', { level: 'success' })
-  }, [currentProjectId, runtimeState.projectId, sessionId, sessionStatus])
+  }, [runtimeState.log, runtimeState.projectId, sessionId, sessionStatus])
 
   const handleAnalyzeBuildFailure = useCallback(async () => {
     if (buildState.status !== 'failed' || !buildState.lastFailure) {
@@ -1879,9 +1893,9 @@ function AppShell() {
       {showRuntimeLogDialog && (
         <RuntimeLogDialog
           open={showRuntimeLogDialog}
-          currentProjectId={currentProjectId}
-          currentProjectName={projectName || null}
-          runtimeState={runtimeStateForCurrentProject}
+          currentProjectId={visibleRuntimeState.projectId ?? currentProjectId}
+          currentProjectName={visibleRuntimeState.projectName ?? (projectName || null)}
+          runtimeState={visibleRuntimeState}
           sessionId={sessionId}
           sessionStatus={sessionStatus}
           comment={runtimeLogComment}

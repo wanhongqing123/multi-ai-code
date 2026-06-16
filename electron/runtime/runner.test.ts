@@ -134,10 +134,11 @@ describe('createRuntimeRunner', () => {
     )
     expect(spawn).not.toHaveBeenCalled()
 
-    ptyChild.stdout.write('demo tick\n')
+    ptyChild.stdout.write('\x1b[29;120Hdemo tick\n')
     await flush()
 
     expect(runner.getState().log).toContain('demo tick')
+    expect(runner.getState().log).not.toContain('[29;120H')
   })
 
   it('blocks disabled runtime configs and empty commands before spawning', async () => {

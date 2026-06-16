@@ -932,19 +932,19 @@ function AppShell() {
       return
     }
 
-    const promptResult = await window.api.runtime.getAnalysisPrompt()
+    const promptResult = await window.api.runtime.getAnalysisPromptFile()
     if (!promptResult.ok) {
       showToast(promptResult.error ?? '获取运行日志分析提示失败', { level: 'error' })
       return
     }
 
-    const sendResult = await window.api.cc.sendPastedUser(sessionId, promptResult.prompt)
+    const sendResult = await window.api.cc.sendUser(sessionId, promptResult.message)
     if (!sendResult.ok) {
       showToast(sendResult.error ?? '发送运行日志失败', { level: 'error' })
       return
     }
 
-    showToast('已将运行日志发送到主会话', { level: 'success' })
+    showToast('已将运行日志文件发送到主会话', { level: 'success' })
   }, [currentProjectId, runtimeState.projectId, sessionId, sessionStatus])
 
   const handleAnalyzeBuildFailure = useCallback(async () => {

@@ -272,13 +272,16 @@ export default function ProjectBuildPanel(props: ProjectBuildPanelProps): JSX.El
       props.sessionId,
       props.sessionStatus
     ) && !!props.onSendRuntimeLog
-  const runtimeLogText =
-    runtimeState.log.trim().length > 0 ? runtimeState.log : '暂无运行日志输出'
-  const runtimeExitSummary =
-    runtimeState.exitCode !== null || runtimeState.signal
-      ? `exit=${runtimeState.exitCode ?? 'null'}${runtimeState.signal ? ` signal=${runtimeState.signal}` : ''}`
-      : null
-  const logText = props.state.log.trim().length > 0 ? props.state.log : '暂无日志输出'
+  const runtimeHasLog = runtimeState.log.trim().length > 0
+  const buildHasLog = props.state.log.trim().length > 0
+  const logText = runtimeHasLog
+    ? runtimeState.log
+    : buildHasLog
+      ? props.state.log
+      : '暂无日志输出'
+  const logStatus = runtimeHasLog
+    ? `运行 · ${getRuntimeStatusLabel(runtimeState.status)}`
+    : getBuildLogStatusLabel(props.state)
 
   return (
     <div className="build-panel-overlay" role="presentation" onClick={props.onClose}>
@@ -451,22 +454,12 @@ export default function ProjectBuildPanel(props: ProjectBuildPanelProps): JSX.El
           {runtimeState.log.trim() && (!props.sessionId || props.sessionStatus !== 'running') ? (
             <p className="build-panel-note">主会话未运行，无法发送运行日志。</p>
           ) : null}
-          <div className="build-panel-meta-grid">
-            <span>开始时间：{formatDateTime(runtimeState.startedAt)}</span>
-            <span>结束时间：{formatDateTime(runtimeState.finishedAt)}</span>
-            {runtimeExitSummary ? <span>{runtimeExitSummary}</span> : null}
-          </div>
-          <div className="build-step-meta">
-            <span>cwd: {runtimeState.cwd ?? runtimeConfig.cwd}</span>
-            <span>命令: {runtimeState.command ?? runtimeConfig.command}</span>
-          </div>
-          <pre className="build-panel-log">{runtimeLogText}</pre>
         </section>
 
         <section className="build-panel-section">
           <div className="build-panel-section-head">
             <h3>实时日志</h3>
-            <span>{getBuildLogStatusLabel(props.state)}</span>
+            <span>{logStatus}</span>
           </div>
           <pre className="build-panel-log">{logText}</pre>
         </section>

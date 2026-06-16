@@ -79,6 +79,10 @@ import { createBuildRunner } from './build/runner.js'
 import { getFailureAnalysisPrompt as getBuildFailureAnalysisPrompt } from './build/analysisPrompt.js'
 import { createRuntimeRunner } from './runtime/runner.js'
 import { getRuntimeAnalysisPrompt } from './runtime/analysisPrompt.js'
+import {
+  buildRuntimeAnalysisPromptFileMessage,
+  writeRuntimeAnalysisPromptFile
+} from './runtime/analysisPromptFile.js'
 import { listVisualStudioInstallations } from './build/visualStudio.js'
 import {
   hasRepoAnalysisSession,
@@ -1057,6 +1061,25 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('runtime:get-analysis-prompt', () => {
     return getRuntimeAnalysisPrompt(runtimeRunner.getState())
+  })
+
+  ipcMain.handle('runtime:get-analysis-prompt-file', async () => {
+    const promptResult = getRuntimeAnalysisPrompt(runtimeRunner.getState())
+    if (!promptResult.ok) return promptResult
+
+    try {
+      const filePath = await writeRuntimeAnalysisPromptFile(promptResult.prompt)
+      return {
+        ok: true as const,
+        filePath,
+        message: buildRuntimeAnalysisPromptFileMessage(filePath)
+      }
+    } catch (error: unknown) {
+      return {
+        ok: false as const,
+        error: error instanceof Error ? error.message : String(error)
+      }
+    }
   })
 
   interface AiSettings {

@@ -447,6 +447,7 @@ describe('ProjectBuildPanel', () => {
     expect(markup).toContain('发送运行日志')
     expect(markup).toContain('server started')
     expect(markup).toContain('实时日志')
+    expect(markup).not.toContain('npm run dev')
   })
 
   it('warns when runtime log cannot be sent without a running main session', () => {

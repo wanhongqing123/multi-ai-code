@@ -87,6 +87,9 @@ export interface RuntimeRunner {
 const ACTIVE_LOG_LIMIT = 200_000
 const TRUNCATED_LOG_MARKER = '[runtime] earlier log truncated...\n'
 const require = createRequire(import.meta.url)
+const ANSI_CONTROL_PATTERN =
+  // eslint-disable-next-line no-control-regex
+  /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))/g
 
 class PtyRuntimeProcess extends EventEmitter implements SpawnedRuntimeProcess {
   readonly pid?: number
@@ -150,6 +153,10 @@ function createPtyRuntimeProcess(
     env: normalizePtyEnv(options.env),
   })
   return new PtyRuntimeProcess(pty)
+}
+
+function stripAnsiControls(text: string): string {
+  return text.replace(ANSI_CONTROL_PATTERN, '')
 }
 
 function initialState(): RuntimeState {
@@ -333,14 +340,16 @@ export function createRuntimeRunner(partialDeps?: Partial<RuntimeRunnerDeps>): R
   }
 
   function appendLog(stream: RuntimeDataEvent['stream'], chunk: string): void {
-    const next = appendWindowedLog(state.log, chunk, deps.logLimit, logTruncated)
+    const cleanChunk = stripAnsiControls(chunk)
+    if (!cleanChunk) return
+    const next = appendWindowedLog(state.log, cleanChunk, deps.logLimit, logTruncated)
     state.log = next.nextLog
     logTruncated = next.truncated
     emitData({
       at: deps.now(),
       projectId: state.projectId,
       stream,
-      chunk,
+      chunk: cleanChunk,
     })
   }
 

@@ -71,6 +71,7 @@ describe('preload runtime api', () => {
     await api.runtime.stop()
     await api.runtime.getState()
     await api.runtime.getAnalysisPrompt()
+    await api.runtime.getAnalysisPromptFile()
 
     expect(electronMock.invoke).toHaveBeenNthCalledWith(1, 'runtime:start', {
       id: 'project-1',
@@ -78,6 +79,7 @@ describe('preload runtime api', () => {
     expect(electronMock.invoke).toHaveBeenNthCalledWith(2, 'runtime:stop')
     expect(electronMock.invoke).toHaveBeenNthCalledWith(3, 'runtime:get-state')
     expect(electronMock.invoke).toHaveBeenNthCalledWith(4, 'runtime:get-analysis-prompt')
+    expect(electronMock.invoke).toHaveBeenNthCalledWith(5, 'runtime:get-analysis-prompt-file')
 
     const offData = api.runtime.onData(dataCb)
     const dataHandler = electronMock.on.mock.calls.find((call) => call[0] === 'runtime:data')?.[1]
@@ -98,14 +100,4 @@ describe('preload runtime api', () => {
     expect(electronMock.removeListener).toHaveBeenCalledWith('runtime:status', statusHandler)
   })
 
-  it('exposes a pasted user-message route for large runtime log prompts', async () => {
-    const api = await loadApi()
-
-    await api.cc.sendPastedUser('session-1', 'large\nruntime\nlog')
-
-    expect(electronMock.invoke).toHaveBeenCalledWith('cc:send-pasted-user', {
-      sessionId: 'session-1',
-      text: 'large\nruntime\nlog',
-    })
-  })
 })

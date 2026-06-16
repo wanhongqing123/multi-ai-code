@@ -200,6 +200,10 @@ export type RuntimeAnalysisPromptResult =
   | { ok: true; prompt: string }
   | { ok: false; error: string }
 
+export type RuntimeAnalysisPromptFileResult =
+  | { ok: true; filePath: string; message: string }
+  | { ok: false; error: string }
+
 export interface SpawnRequest {
   sessionId: string
   projectId: string
@@ -576,6 +580,8 @@ const api = {
     getState: () => ipcRenderer.invoke('runtime:get-state') as Promise<RuntimeState>,
     getAnalysisPrompt: () =>
       ipcRenderer.invoke('runtime:get-analysis-prompt') as Promise<RuntimeAnalysisPromptResult>,
+    getAnalysisPromptFile: () =>
+      ipcRenderer.invoke('runtime:get-analysis-prompt-file') as Promise<RuntimeAnalysisPromptFileResult>,
     onData: (cb: (evt: RuntimeDataEvent) => void) => {
       const handler = (_event: IpcRendererEvent, evt: RuntimeDataEvent) => cb(evt)
       ipcRenderer.on('runtime:data', handler)
@@ -719,11 +725,6 @@ const api = {
       ipcRenderer.invoke('cc:kill', { sessionId }) as Promise<{ ok: boolean; error?: string }>,
     sendUser: (sessionId: string, text: string) =>
       ipcRenderer.invoke('cc:send-user', { sessionId, text }) as Promise<{
-        ok: boolean
-        error?: string
-      }>,
-    sendPastedUser: (sessionId: string, text: string) =>
-      ipcRenderer.invoke('cc:send-pasted-user', { sessionId, text }) as Promise<{
         ok: boolean
         error?: string
       }>,

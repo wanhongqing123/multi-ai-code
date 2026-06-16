@@ -37,12 +37,21 @@ import type { ExternalReviewSuggestion } from './components/externalAiReview'
 import type {
   BuildRuntimeState,
   ProjectBuildConfig,
+  ProjectRuntimeConfig,
   VisualStudioInstallation
 } from '../electron/preload'
 import type { HabitFlowRow, HabitSettings } from './habit/habitTypes'
 
 const LAST_PROJECT_KEY = 'multi-ai-code.lastProjectId'
 const DEFAULT_PROJECT_BUILD_CONFIG: ProjectBuildConfig = { enabled: false, steps: [] }
+const DEFAULT_PROJECT_RUNTIME_CONFIG: ProjectRuntimeConfig = {
+  enabled: false,
+  cwd: '.',
+  command: '',
+  envType: 'msys',
+  visualStudioInstanceId: '',
+  outputEncoding: 'auto'
+}
 const BUILD_LOG_LIMIT = 200_000
 const DEFAULT_BUILD_RUNTIME_STATE: BuildRuntimeState = {
   status: 'idle',
@@ -152,6 +161,12 @@ function AppShell() {
   const [projectBuildConfigProjectId, setProjectBuildConfigProjectId] = useState<string | null>(
     null
   )
+  const [projectRuntimeConfig, setProjectRuntimeConfig] = useState<ProjectRuntimeConfig>(
+    DEFAULT_PROJECT_RUNTIME_CONFIG
+  )
+  const [projectRuntimeConfigProjectId, setProjectRuntimeConfigProjectId] = useState<
+    string | null
+  >(null)
   const [visualStudioInstallations, setVisualStudioInstallations] = useState<
     VisualStudioInstallation[]
   >([])
@@ -182,6 +197,12 @@ function AppShell() {
       : DEFAULT_PROJECT_BUILD_CONFIG
   const projectBuildConfigReady =
     currentProjectId !== null && projectBuildConfigProjectId === currentProjectId
+  const visibleProjectRuntimeConfig =
+    currentProjectId !== null && projectRuntimeConfigProjectId === currentProjectId
+      ? projectRuntimeConfig
+      : DEFAULT_PROJECT_RUNTIME_CONFIG
+  const projectRuntimeConfigReady =
+    currentProjectId !== null && projectRuntimeConfigProjectId === currentProjectId
 
   // Single-stage session state
   const [sessionId, setSessionId] = useState<string | null>(null)
@@ -536,6 +557,8 @@ function AppShell() {
       setRepoViewAiSettings({ ai_cli: 'claude' })
       setProjectBuildConfig(DEFAULT_PROJECT_BUILD_CONFIG)
       setProjectBuildConfigProjectId(null)
+      setProjectRuntimeConfig(DEFAULT_PROJECT_RUNTIME_CONFIG)
+      setProjectRuntimeConfigProjectId(null)
       setAiSettingsReady(false)
       setAiSettingsLoadError(null)
       return
@@ -545,6 +568,8 @@ function AppShell() {
     let cancelled = false
     setProjectBuildConfig(DEFAULT_PROJECT_BUILD_CONFIG)
     setProjectBuildConfigProjectId(null)
+    setProjectRuntimeConfig(DEFAULT_PROJECT_RUNTIME_CONFIG)
+    setProjectRuntimeConfigProjectId(null)
     setAiSettingsReady(false)
     setAiSettingsLoadError(null)
     void window.api.project.getStageConfigs(currentProjectId).then((cfg) => {
@@ -568,6 +593,18 @@ function AppShell() {
       }
       const buildConfigRepaired = buildResult.ok && buildResult.repaired === true
 
+      const runtimeResult = await window.api.project.getRuntimeConfig(currentProjectId)
+      if (cancelled) return
+      if (!runtimeResult.ok) {
+        setProjectRuntimeConfig(DEFAULT_PROJECT_RUNTIME_CONFIG)
+        setProjectRuntimeConfigProjectId(currentProjectId)
+        showToast(runtimeResult.error ?? '读取项目运行配置失败', { level: 'error' })
+      } else {
+        setProjectRuntimeConfig(runtimeResult.value ?? DEFAULT_PROJECT_RUNTIME_CONFIG)
+        setProjectRuntimeConfigProjectId(currentProjectId)
+      }
+      const runtimeConfigRepaired = runtimeResult.ok && runtimeResult.repaired === true
+
       const aiResult = await window.api.project.getAiSettings(currentProjectId)
       if (cancelled) return
       if (!aiResult.ok) {
@@ -588,7 +625,7 @@ function AppShell() {
       }
       setRepoViewAiSettings(repoResult.value ?? { ai_cli: 'claude' })
 
-      if (aiResult.repaired || repoResult.repaired || buildConfigRepaired) {
+      if (aiResult.repaired || repoResult.repaired || buildConfigRepaired || runtimeConfigRepaired) {
         showToast('项目设置文件已自动修复', { level: 'success' })
       }
     })()
@@ -1645,6 +1682,9 @@ function AppShell() {
           initialAppSettings={appSettings}
           initialBuildConfig={visibleProjectBuildConfig}
           buildConfigReady={projectBuildConfigReady}
+          initialRuntimeConfig={visibleProjectRuntimeConfig}
+          runtimeConfigReady={projectRuntimeConfigReady}
+          runtimeConfigDisabled={false}
           visualStudioInstallations={visualStudioInstallations}
           visualStudioInstallationsLoading={visualStudioInstallationsLoading}
           onRefreshVisualStudioInstallations={() => {
@@ -1668,6 +1708,10 @@ function AppShell() {
           onSavedBuildConfig={(next) => {
             setProjectBuildConfig(next)
             setProjectBuildConfigProjectId(currentProjectId)
+          }}
+          onSavedRuntimeConfig={(next) => {
+            setProjectRuntimeConfig(next)
+            setProjectRuntimeConfigProjectId(currentProjectId)
           }}
         />
       )}

@@ -1,11 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import type {
   ProjectBuildConfig,
+  ProjectRuntimeConfig,
   VisualStudioInstallation
 } from '../../electron/preload'
 import ProjectBuildSettingsSection, {
   formatBuildConfigSaveError
 } from './ProjectBuildSettingsSection.js'
+import ProjectRuntimeSettingsSection, {
+  formatRuntimeConfigSaveError
+} from './ProjectRuntimeSettingsSection.js'
 import { showToast } from './Toast.js'
 
 export const DEFAULT_SCREENSHOT_SHORTCUT = 'CommandOrControl+Shift+A'
@@ -82,6 +86,10 @@ interface BuildConfigSaveResponse extends ProjectSettingsSaveResponse {
   details?: Array<{ path: string; message: string }>
 }
 
+interface RuntimeConfigSaveResponse extends ProjectSettingsSaveResponse {
+  details?: Array<{ path: string; message: string }>
+}
+
 export interface AiSettingsDialogProps {
   projectId: string | null
   initial: AiSettings
@@ -89,6 +97,9 @@ export interface AiSettingsDialogProps {
   initialAppSettings: AppSettings
   initialBuildConfig: ProjectBuildConfig
   buildConfigReady: boolean
+  initialRuntimeConfig: ProjectRuntimeConfig
+  runtimeConfigReady: boolean
+  runtimeConfigDisabled?: boolean
   visualStudioInstallations: VisualStudioInstallation[]
   visualStudioInstallationsLoading: boolean
   onRefreshVisualStudioInstallations: () => void
@@ -97,6 +108,7 @@ export interface AiSettingsDialogProps {
   onSavedRepoView: (next: AiSettings) => void
   onSavedAppSettings: (next: AppSettings) => void
   onSavedBuildConfig: (next: ProjectBuildConfig) => void
+  onSavedRuntimeConfig: (next: ProjectRuntimeConfig) => void
 }
 
 export function resolveSavedAppSettings(
@@ -131,9 +143,13 @@ export function shouldApplyIncomingAppSettings(
 export function getProjectSettingsRepairToastMessage(
   mainResponse: ProjectSettingsSaveResponse,
   repoResponse: ProjectSettingsSaveResponse,
-  buildResponse?: ProjectSettingsSaveResponse
+  buildResponse?: ProjectSettingsSaveResponse,
+  runtimeResponse?: ProjectSettingsSaveResponse
 ): string | null {
-  return mainResponse.repaired || repoResponse.repaired || buildResponse?.repaired
+  return mainResponse.repaired ||
+    repoResponse.repaired ||
+    buildResponse?.repaired ||
+    runtimeResponse?.repaired
     ? '项目设置文件已自动修复并保存'
     : null
 }
@@ -143,6 +159,7 @@ export interface SaveProjectScopedSettingsParams {
   nextMain: AiSettings
   nextRepoView: AiSettings
   nextBuildConfig?: ProjectBuildConfig
+  nextRuntimeConfig?: ProjectRuntimeConfig
   setAiSettings: (
     projectId: string,
     next: AiSettings
@@ -155,9 +172,14 @@ export interface SaveProjectScopedSettingsParams {
     projectId: string,
     next: ProjectBuildConfig
   ) => Promise<BuildConfigSaveResponse>
+  setRuntimeConfig?: (
+    projectId: string,
+    next: ProjectRuntimeConfig
+  ) => Promise<RuntimeConfigSaveResponse>
   onMainSaved: (next: AiSettings) => void
   onRepoViewSaved: (next: AiSettings) => void
   onBuildConfigSaved?: (next: ProjectBuildConfig) => void
+  onRuntimeConfigSaved?: (next: ProjectRuntimeConfig) => void
 }
 
 export async function saveProjectScopedSettings(
@@ -186,7 +208,22 @@ export async function saveProjectScopedSettings(
     buildRes = nextBuildRes
   }
 
-  return getProjectSettingsRepairToastMessage(mainRes, repoRes, buildRes)
+  let runtimeRes: ProjectSettingsSaveResponse | undefined
+  if (params.nextRuntimeConfig && params.setRuntimeConfig && params.onRuntimeConfigSaved) {
+    const nextRuntimeRes = await params.setRuntimeConfig(params.projectId, params.nextRuntimeConfig)
+    if (!nextRuntimeRes.ok) {
+      throw new Error(
+        formatRuntimeConfigSaveError(
+          nextRuntimeRes.error ?? 'save runtime config failed',
+          nextRuntimeRes.details
+        )
+      )
+    }
+    params.onRuntimeConfigSaved(params.nextRuntimeConfig)
+    runtimeRes = nextRuntimeRes
+  }
+
+  return getProjectSettingsRepairToastMessage(mainRes, repoRes, buildRes, runtimeRes)
 }
 
 function toEnvText(env: Record<string, string> | undefined): string {
@@ -374,6 +411,9 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
     createScreenshotShortcutState(props.initialAppSettings.screenshotShortcut).customExpanded
   )
   const [buildConfig, setBuildConfig] = useState<ProjectBuildConfig>(props.initialBuildConfig)
+  const [runtimeConfig, setRuntimeConfig] = useState<ProjectRuntimeConfig>(
+    props.initialRuntimeConfig
+  )
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const lastSyncedAppSettingsRef = useRef<AppSettings>(props.initialAppSettings)
@@ -417,6 +457,11 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
     setBuildConfig(props.initialBuildConfig)
   }, [props.initialBuildConfig, saving])
 
+  useEffect(() => {
+    if (saving) return
+    setRuntimeConfig(props.initialRuntimeConfig)
+  }, [props.initialRuntimeConfig, saving])
+
   const handleRestoreDefaultShortcut = (): void => {
     const next = restoreDefaultScreenshotShortcut()
     setScreenshotShortcutEnabled(true)
@@ -453,6 +498,7 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
     const nextMain = fromForm(aiCli, command, argsText, envText)
     const nextRepoView = fromForm(repoAiCli, repoCommand, repoArgsText, repoEnvText)
     const nextBuildConfig = props.buildConfigReady ? buildConfig : undefined
+    const nextRuntimeConfig = props.runtimeConfigReady ? runtimeConfig : undefined
 
     try {
       const appRes = await window.api.settings.setAppSettings(requestedAppSettings)
@@ -478,12 +524,15 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
           nextMain,
           nextRepoView,
           nextBuildConfig,
+          nextRuntimeConfig,
           setAiSettings: window.api.project.setAiSettings,
           setRepoViewAiSettings: window.api.project.setRepoViewAiSettings,
           setBuildConfig: props.buildConfigReady ? window.api.project.setBuildConfig : undefined,
+          setRuntimeConfig: props.runtimeConfigReady ? window.api.project.setRuntimeConfig : undefined,
           onMainSaved: props.onSaved,
           onRepoViewSaved: props.onSavedRepoView,
-          onBuildConfigSaved: props.buildConfigReady ? props.onSavedBuildConfig : undefined
+          onBuildConfigSaved: props.buildConfigReady ? props.onSavedBuildConfig : undefined,
+          onRuntimeConfigSaved: props.runtimeConfigReady ? props.onSavedRuntimeConfig : undefined
         })
         if (repairToast) {
           showToast(repairToast, { level: 'success' })
@@ -546,6 +595,16 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
             visualStudioInstallationsLoading={props.visualStudioInstallationsLoading}
             onRefreshVisualStudioInstallations={props.onRefreshVisualStudioInstallations}
             onChange={setBuildConfig}
+          />
+          <ProjectRuntimeSettingsSection
+            projectId={props.projectId}
+            loading={props.projectId !== null && !props.runtimeConfigReady}
+            value={runtimeConfig}
+            disabled={saving || props.runtimeConfigDisabled === true}
+            visualStudioInstallations={props.visualStudioInstallations}
+            visualStudioInstallationsLoading={props.visualStudioInstallationsLoading}
+            onRefreshVisualStudioInstallations={props.onRefreshVisualStudioInstallations}
+            onChange={setRuntimeConfig}
           />
           {error && <div className="modal-error">⚠ {error}</div>}
         </div>

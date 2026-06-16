@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import type { VisualStudioInstallation } from '../../electron/preload'
+import type { ProjectRuntimeConfig, VisualStudioInstallation } from '../../electron/preload'
 import AiSettingsDialog, {
   deriveAppSettingsSaveOutcome,
   getProjectSettingsRepairToastMessage,
@@ -14,10 +14,23 @@ const defaultBuildConfig = {
   steps: []
 }
 
+const defaultRuntimeConfig: ProjectRuntimeConfig = {
+  enabled: false,
+  cwd: '.',
+  command: '',
+  envType: 'msys',
+  visualStudioInstanceId: '',
+  outputEncoding: 'auto'
+}
+
 const defaultDialogProps = {
   visualStudioInstallations: [] as VisualStudioInstallation[],
   visualStudioInstallationsLoading: false,
-  onRefreshVisualStudioInstallations: vi.fn()
+  onRefreshVisualStudioInstallations: vi.fn(),
+  initialRuntimeConfig: defaultRuntimeConfig,
+  runtimeConfigReady: true,
+  runtimeConfigDisabled: false,
+  onSavedRuntimeConfig: vi.fn()
 }
 
 describe('AiSettingsDialog', () => {
@@ -46,6 +59,31 @@ describe('AiSettingsDialog', () => {
     expect(markup).toContain('截图快捷键（全局）')
     expect(markup).toContain('恢复默认')
     expect(markup).toContain('Alt+Shift+S')
+  })
+
+  it('renders the project runtime settings section', () => {
+    const markup = renderToStaticMarkup(
+      <AiSettingsDialog
+        projectId="project-1"
+        initial={{ ai_cli: 'claude' }}
+        initialRepoView={{ ai_cli: 'codex' }}
+        initialAppSettings={{
+          screenshotShortcutEnabled: true,
+          screenshotShortcut: 'Alt+Shift+S'
+        }}
+        initialBuildConfig={defaultBuildConfig}
+        buildConfigReady={true}
+        {...defaultDialogProps}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+        onSavedRepoView={vi.fn()}
+        onSavedAppSettings={vi.fn()}
+        onSavedBuildConfig={vi.fn()}
+      />
+    )
+
+    expect(markup).toContain('项目运行')
+    expect(markup).toContain('project-runtime-settings-grid')
   })
 
   it('renders preset shortcut buttons and hides the custom input until custom mode is needed', () => {
@@ -298,6 +336,57 @@ describe('AiSettingsDialog', () => {
     ).resolves.toBe(expectedToast)
 
     expect(onBuildConfigSaved).toHaveBeenCalledWith(defaultBuildConfig)
+  })
+
+  it('saves runtime config after the other project settings succeed', async () => {
+    const onRuntimeConfigSaved = vi.fn()
+    const setRuntimeConfig = vi.fn().mockResolvedValue({ ok: true })
+
+    await expect(
+      saveProjectScopedSettings({
+        projectId: 'project-1',
+        nextMain: { ai_cli: 'claude' },
+        nextRepoView: { ai_cli: 'codex' },
+        nextBuildConfig: defaultBuildConfig,
+        nextRuntimeConfig: defaultRuntimeConfig,
+        setAiSettings: vi.fn().mockResolvedValue({ ok: true, repaired: false }),
+        setRepoViewAiSettings: vi.fn().mockResolvedValue({ ok: true, repaired: false }),
+        setBuildConfig: vi.fn().mockResolvedValue({ ok: true, repaired: false }),
+        setRuntimeConfig,
+        onMainSaved: vi.fn(),
+        onRepoViewSaved: vi.fn(),
+        onBuildConfigSaved: vi.fn(),
+        onRuntimeConfigSaved
+      })
+    ).resolves.toBeNull()
+
+    expect(setRuntimeConfig).toHaveBeenCalledWith('project-1', defaultRuntimeConfig)
+    expect(onRuntimeConfigSaved).toHaveBeenCalledWith(defaultRuntimeConfig)
+  })
+
+  it('reports runtime config validation failures without calling the runtime saved callback', async () => {
+    const onRuntimeConfigSaved = vi.fn()
+
+    await expect(
+      saveProjectScopedSettings({
+        projectId: 'project-1',
+        nextMain: { ai_cli: 'claude' },
+        nextRepoView: { ai_cli: 'codex' },
+        nextRuntimeConfig: { ...defaultRuntimeConfig, enabled: true, command: '' },
+        setAiSettings: vi.fn().mockResolvedValue({ ok: true, repaired: false }),
+        setRepoViewAiSettings: vi.fn().mockResolvedValue({ ok: true, repaired: false }),
+        setRuntimeConfig: vi.fn().mockResolvedValue({
+          ok: false,
+          error: 'invalid runtime config',
+          details: [{ path: 'runtime_config.command', message: 'command must be a non-empty string' }]
+        }),
+        onMainSaved: vi.fn(),
+        onRepoViewSaved: vi.fn(),
+        onRuntimeConfigSaved
+      })
+    ).rejects.toThrow('invalid runtime config')
+
+    expect(onRuntimeConfigSaved).not.toHaveBeenCalled()
   })
 
   it('skips build-config persistence when the current project config is still loading', async () => {

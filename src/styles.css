@@ -1557,7 +1557,8 @@ html, body, #root {
   background: var(--mac-danger-soft);
 }
 
-.project-build-settings-grid {
+.project-build-settings-grid,
+.project-runtime-settings-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--mac-sp-3);
@@ -1576,7 +1577,8 @@ html, body, #root {
     justify-content: flex-start;
   }
 
-  .project-build-settings-grid {
+  .project-build-settings-grid,
+  .project-runtime-settings-grid {
     grid-template-columns: 1fr;
   }
 

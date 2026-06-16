@@ -410,7 +410,7 @@ describe('ProjectBuildPanel', () => {
     expect(markup).toContain('GBK')
   })
 
-  it('renders runtime controls separately from build logs', () => {
+  it('does not render runtime controls inside the build panel', () => {
     const markup = renderToStaticMarkup(
       <ProjectBuildPanel
         open={true}
@@ -418,16 +418,6 @@ describe('ProjectBuildPanel', () => {
         currentProjectName="Demo"
         buildConfig={enabledBuildConfig}
         buildConfigReady={true}
-        runtimeConfig={enabledRuntimeConfig}
-        runtimeConfigReady={true}
-        runtimeState={{
-          ...baseRuntimeState,
-          status: 'running',
-          projectId: 'project-1',
-          cwd: 'E:/demo',
-          command: 'npm run dev',
-          log: 'server started'
-        }}
         state={baseState}
         sessionId="session-1"
         sessionStatus="running"
@@ -436,51 +426,14 @@ describe('ProjectBuildPanel', () => {
         onStartSingleBuild={vi.fn()}
         onStopBuild={vi.fn()}
         onAnalyzeFailure={vi.fn()}
-        onStartRuntime={vi.fn()}
-        onStopRuntime={vi.fn()}
-        onSendRuntimeLog={vi.fn()}
       />
     )
 
-    expect(markup).toContain('运行')
-    expect(markup).toContain('停止运行')
-    expect(markup).toContain('发送运行日志')
-    expect(markup).toContain('server started')
     expect(markup).toContain('实时日志')
+    expect(markup).not.toContain('停止运行')
+    expect(markup).not.toContain('发送运行日志')
+    expect(markup).not.toContain('server started')
     expect(markup).not.toContain('npm run dev')
-  })
-
-  it('warns when runtime log cannot be sent without a running main session', () => {
-    const markup = renderToStaticMarkup(
-      <ProjectBuildPanel
-        open={true}
-        currentProjectId="project-1"
-        currentProjectName="Demo"
-        buildConfig={enabledBuildConfig}
-        buildConfigReady={true}
-        runtimeConfig={enabledRuntimeConfig}
-        runtimeConfigReady={true}
-        runtimeState={{
-          ...baseRuntimeState,
-          status: 'failed',
-          projectId: 'project-1',
-          log: 'fatal runtime error'
-        }}
-        state={baseState}
-        sessionId={null}
-        sessionStatus="idle"
-        onClose={vi.fn()}
-        onStartBuild={vi.fn()}
-        onStartSingleBuild={vi.fn()}
-        onStopBuild={vi.fn()}
-        onAnalyzeFailure={vi.fn()}
-        onStartRuntime={vi.fn()}
-        onStopRuntime={vi.fn()}
-        onSendRuntimeLog={vi.fn()}
-      />
-    )
-
-    expect(markup).toContain('主会话未运行')
   })
 
   it('renders the renamed sequential build button and per-step single-build buttons', () => {

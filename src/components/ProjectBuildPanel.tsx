@@ -23,36 +23,6 @@ export interface ProjectBuildPanelProps {
   onStartSingleBuild: (stepId: string) => void
   onStopBuild: () => void
   onAnalyzeFailure: () => void
-  onStartRuntime?: () => void
-  onStopRuntime?: () => void
-  onSendRuntimeLog?: () => void
-}
-
-const DEFAULT_RUNTIME_CONFIG: ProjectRuntimeConfig = {
-  enabled: false,
-  cwd: '.',
-  command: '',
-  envType: 'msys',
-  visualStudioInstanceId: '',
-  outputEncoding: 'auto'
-}
-
-const DEFAULT_RUNTIME_STATE: RuntimeState = {
-  status: 'idle',
-  projectId: null,
-  projectName: null,
-  targetRepo: null,
-  cwd: null,
-  command: null,
-  envType: null,
-  visualStudioInstanceId: null,
-  visualStudioDisplayName: null,
-  outputEncoding: null,
-  startedAt: null,
-  finishedAt: null,
-  exitCode: null,
-  signal: null,
-  log: ''
 }
 
 export function getBuildStatusLabel(status: BuildRuntimeState['status']): string {
@@ -254,34 +224,9 @@ export default function ProjectBuildPanel(props: ProjectBuildPanelProps): JSX.El
   const stopEnabled = canStopBuild(props.state.status)
   const analyzeVisible = canAnalyzeBuildFailure(props.state)
   const failure = props.state.lastFailure
-  const runtimeConfig = props.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG
-  const runtimeConfigReady = props.runtimeConfigReady ?? false
-  const runtimeState = props.runtimeState ?? DEFAULT_RUNTIME_STATE
-  const runtimeStartBlockedReason = getRuntimeStartBlockedReason(
-    props.currentProjectId,
-    runtimeConfigReady,
-    runtimeConfig,
-    runtimeState
-  )
-  const runtimeStartEnabled = runtimeStartBlockedReason === null && !!props.onStartRuntime
-  const runtimeStopEnabled = runtimeState.status === 'running' && !!props.onStopRuntime
-  const sendRuntimeEnabled =
-    canSendRuntimeLog(
-      props.currentProjectId,
-      runtimeState,
-      props.sessionId,
-      props.sessionStatus
-    ) && !!props.onSendRuntimeLog
-  const runtimeHasLog = runtimeState.log.trim().length > 0
   const buildHasLog = props.state.log.trim().length > 0
-  const logText = runtimeHasLog
-    ? runtimeState.log
-    : buildHasLog
-      ? props.state.log
-      : '暂无日志输出'
-  const logStatus = runtimeHasLog
-    ? `运行 · ${getRuntimeStatusLabel(runtimeState.status)}`
-    : getBuildLogStatusLabel(props.state)
+  const logText = buildHasLog ? props.state.log : '暂无日志输出'
+  const logStatus = getBuildLogStatusLabel(props.state)
 
   return (
     <div className="build-panel-overlay" role="presentation" onClick={props.onClose}>
@@ -411,49 +356,6 @@ export default function ProjectBuildPanel(props: ProjectBuildPanelProps): JSX.El
               })}
             </ol>
           )}
-        </section>
-
-        <section className="build-panel-section">
-          <div className="build-panel-section-head">
-            <h3>运行</h3>
-            <span>{getRuntimeStatusLabel(runtimeState.status)}</span>
-          </div>
-          <div className="build-panel-actions">
-            <button
-              className="tile-btn"
-              onClick={props.onStartRuntime}
-              disabled={!runtimeStartEnabled}
-              title={runtimeStartEnabled ? '启动项目运行命令' : runtimeStartBlockedReason ?? undefined}
-            >
-              运行
-            </button>
-            <button
-              className="tile-btn"
-              onClick={props.onStopRuntime}
-              disabled={!runtimeStopEnabled}
-              title={runtimeStopEnabled ? '停止当前运行进程' : '当前没有正在运行的进程'}
-            >
-              停止运行
-            </button>
-            <button
-              className="tile-btn"
-              onClick={props.onSendRuntimeLog}
-              disabled={!sendRuntimeEnabled}
-              title={
-                sendRuntimeEnabled
-                  ? '将当前运行日志发送给主会话 AI CLI'
-                  : '需要运行日志和正在运行的主会话'
-              }
-            >
-              发送运行日志
-            </button>
-          </div>
-          {runtimeStartBlockedReason ? (
-            <p className="build-panel-note">{runtimeStartBlockedReason}</p>
-          ) : null}
-          {runtimeState.log.trim() && (!props.sessionId || props.sessionStatus !== 'running') ? (
-            <p className="build-panel-note">主会话未运行，无法发送运行日志。</p>
-          ) : null}
         </section>
 
         <section className="build-panel-section">

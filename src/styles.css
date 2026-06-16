@@ -738,6 +738,16 @@ html, body, #root {
   cursor: not-allowed;
 }
 
+.tile-btn.primary {
+  background: var(--mac-primary);
+  color: var(--mac-primary-on);
+  border-color: var(--mac-primary);
+}
+
+.tile-btn.primary:hover:not(:disabled) {
+  background: var(--mac-primary-hover);
+}
+
 .project-modal {
   width: 720px;
   max-width: 90vw;
@@ -1813,6 +1823,107 @@ html, body, #root {
 .build-panel-log {
   max-height: 280px;
   overflow: auto;
+}
+
+.runtime-log-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1040;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--mac-sp-5);
+  background: rgba(12, 18, 28, 0.28);
+  backdrop-filter: blur(4px);
+}
+
+.runtime-log-dialog {
+  width: min(920px, 94vw);
+  max-height: min(760px, 92vh);
+  background: var(--mac-surface);
+  border: 1px solid var(--mac-border);
+  border-radius: var(--mac-r-lg);
+  box-shadow: var(--mac-elev-3);
+  color: var(--mac-fg);
+  display: grid;
+  grid-template-rows: auto auto minmax(220px, 1fr) auto auto auto;
+  overflow: hidden;
+}
+
+.runtime-log-dialog-head,
+.runtime-log-dialog-status,
+.runtime-log-dialog-comment,
+.runtime-log-dialog-actions {
+  padding: var(--mac-sp-4) var(--mac-sp-5);
+}
+
+.runtime-log-dialog-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--mac-sp-3);
+  border-bottom: 1px solid var(--mac-border-subtle);
+}
+
+.runtime-log-dialog-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--mac-sp-3);
+  color: var(--mac-fg-subtle);
+  font-size: var(--mac-text-xs);
+  border-bottom: 1px solid var(--mac-border-subtle);
+}
+
+.runtime-log-dialog-log {
+  margin: 0;
+  padding: var(--mac-sp-4) var(--mac-sp-5);
+  min-height: 220px;
+  overflow: auto;
+  font-family: var(--mac-font-mono);
+  font-size: var(--mac-text-mono);
+  line-height: var(--mac-line-normal);
+  color: var(--mac-fg-muted);
+  background: var(--mac-bg);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.runtime-log-dialog-comment {
+  display: grid;
+  gap: var(--mac-sp-2);
+  border-top: 1px solid var(--mac-border-subtle);
+}
+
+.runtime-log-dialog-comment label {
+  color: var(--mac-fg-subtle);
+  font-size: var(--mac-text-xs);
+  font-weight: var(--mac-weight-medium);
+}
+
+.runtime-log-dialog-comment textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 76px;
+  border: 1px solid var(--mac-border);
+  border-radius: var(--mac-r-md);
+  padding: var(--mac-sp-3);
+  background: var(--mac-bg);
+  color: var(--mac-fg);
+  font: inherit;
+  line-height: var(--mac-line-normal);
+}
+
+.runtime-log-dialog-comment textarea:focus {
+  outline: 2px solid var(--mac-primary-soft);
+  border-color: var(--mac-primary);
+}
+
+.runtime-log-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--mac-sp-2);
+  border-top: 1px solid var(--mac-border-subtle);
 }
 
 .build-step-exit,

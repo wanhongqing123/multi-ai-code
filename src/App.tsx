@@ -6,6 +6,7 @@ import {
   planNameToFilename
 } from './utils/session-message-format'
 import { buildCliLaunchArgs } from './utils/cliLaunchArgs'
+import { buildRuntimeLogAnalysisMessage } from './utils/runtimeLogAnalysisMessage'
 import MainPanel from './components/MainPanel'
 import MainBootGate, { type BootGatePhase } from './components/MainBootGate'
 import ProjectPicker, { type ProjectInfo } from './components/ProjectPicker'
@@ -14,7 +15,11 @@ import AiSettingsDialog, {
   type AiSettings,
   type AppSettings
 } from './components/AiSettingsDialog'
-import ProjectBuildPanel, { getBuildStartBlockedReason } from './components/ProjectBuildPanel'
+import ProjectBuildPanel, {
+  getBuildStartBlockedReason,
+  getRuntimeStartBlockedReason,
+} from './components/ProjectBuildPanel'
+import RuntimeLogDialog from './components/RuntimeLogDialog'
 import TemplatesDialog from './components/TemplatesDialog'
 import HabitMonitorDialog from './habit/HabitMonitorDialog'
 import ScreenSamplerIndicator from './habit/ScreenSamplerIndicator'
@@ -211,6 +216,8 @@ function AppShell() {
   const [showCmdk, setShowCmdk] = useState(false)
   const [showGlobalSearch, setShowGlobalSearch] = useState(false)
   const [showBuildPanel, setShowBuildPanel] = useState(false)
+  const [showRuntimeLogDialog, setShowRuntimeLogDialog] = useState(false)
+  const [runtimeLogComment, setRuntimeLogComment] = useState('')
   const [theme, setThemeState] = useState<'light' | 'dark'>(() => getTheme())
   const [habitSettingsSnapshot, setHabitSettingsSnapshot] = useState<HabitSettings | null>(null)
   const [habitFlowsSnapshot, setHabitFlowsSnapshot] = useState<HabitFlowRow[]>([])
@@ -557,6 +564,14 @@ function AppShell() {
       ? runtimeState
       : DEFAULT_RUNTIME_STATE
   const hasProject = currentProject !== null
+  const runtimeStartBlockedReason = getRuntimeStartBlockedReason(
+    currentProjectId,
+    projectRuntimeConfigReady,
+    visibleProjectRuntimeConfig,
+    runtimeStateForCurrentProject
+  )
+  const runtimeTopbarRunning = runtimeStateForCurrentProject.status === 'running'
+  const runtimeTopbarDisabled = !runtimeTopbarRunning && runtimeStartBlockedReason !== null
 
   // Track plan names we've ever observed in the list. If `planName` was
   // in a previous list but is gone from the current one, that's a
@@ -902,14 +917,14 @@ function AppShell() {
       showToast('另一个项目的运行进程仍在运行，请先停止后再启动当前项目运行', {
         level: 'warn'
       })
-      setShowBuildPanel(true)
+      setShowRuntimeLogDialog(true)
       return
     }
     if (!currentProjectId) return
 
+    setShowRuntimeLogDialog(true)
     const result = await window.api.runtime.start(currentProjectId)
     setRuntimeState(result.state)
-    setShowBuildPanel(true)
     if (!result.ok) {
       showToast(result.error ?? '启动运行失败', { level: 'error' })
     }
@@ -922,7 +937,7 @@ function AppShell() {
     }
   }, [])
 
-  const handleSendRuntimeLog = useCallback(async () => {
+  const handleSendRuntimeLog = useCallback(async (comment = '') => {
     if (!currentProjectId || runtimeState.projectId !== currentProjectId) {
       showToast('当前运行日志不属于所选项目，请切回对应项目后再发送', { level: 'warn' })
       return
@@ -938,13 +953,14 @@ function AppShell() {
       return
     }
 
-    const sendResult = await window.api.cc.sendUser(sessionId, promptResult.message)
+    const message = buildRuntimeLogAnalysisMessage(promptResult.message, comment)
+    const sendResult = await window.api.cc.sendUser(sessionId, message)
     if (!sendResult.ok) {
       showToast(sendResult.error ?? '发送运行日志失败', { level: 'error' })
       return
     }
 
-    showToast('已将运行日志文件发送到主会话', { level: 'success' })
+    showToast('已将运行日志分析请求发送到主会话', { level: 'success' })
   }, [currentProjectId, runtimeState.projectId, sessionId, sessionStatus])
 
   const handleAnalyzeBuildFailure = useCallback(async () => {
@@ -1533,6 +1549,24 @@ function AppShell() {
           >
             构建
           </button>
+          <button
+            className="topbar-btn"
+            onClick={() => {
+              if (runtimeTopbarRunning) {
+                setShowRuntimeLogDialog(true)
+              } else {
+                void handleStartRuntime()
+              }
+            }}
+            disabled={runtimeTopbarDisabled}
+            title={
+              runtimeTopbarRunning
+                ? '打开运行日志'
+                : runtimeStartBlockedReason ?? '启动项目运行并打开实时日志'
+            }
+          >
+            {runtimeTopbarRunning ? '运行中' : '运行'}
+          </button>
           {planName.trim() && (
             <button
               className="topbar-btn"
@@ -1830,10 +1864,7 @@ function AppShell() {
           currentProjectName={projectName || null}
           buildConfig={visibleProjectBuildConfig}
           buildConfigReady={projectBuildConfigReady}
-          runtimeConfig={visibleProjectRuntimeConfig}
-          runtimeConfigReady={projectRuntimeConfigReady}
           state={buildStateForCurrentProject}
-          runtimeState={runtimeStateForCurrentProject}
           sessionId={sessionId}
           sessionStatus={sessionStatus}
           onClose={() => setShowBuildPanel(false)}
@@ -1841,9 +1872,21 @@ function AppShell() {
           onStartSingleBuild={(stepId) => void handleStartBuild('single-step', stepId)}
           onStopBuild={() => void handleStopBuild()}
           onAnalyzeFailure={() => void handleAnalyzeBuildFailure()}
-          onStartRuntime={() => void handleStartRuntime()}
+        />
+      )}
+      {showRuntimeLogDialog && (
+        <RuntimeLogDialog
+          open={showRuntimeLogDialog}
+          currentProjectId={currentProjectId}
+          currentProjectName={projectName || null}
+          runtimeState={runtimeStateForCurrentProject}
+          sessionId={sessionId}
+          sessionStatus={sessionStatus}
+          comment={runtimeLogComment}
+          onCommentChange={setRuntimeLogComment}
+          onClose={() => setShowRuntimeLogDialog(false)}
           onStopRuntime={() => void handleStopRuntime()}
-          onSendRuntimeLog={() => void handleSendRuntimeLog()}
+          onSendRuntimeLog={(comment) => void handleSendRuntimeLog(comment)}
         />
       )}
       {showErrors && <ErrorPanel onClose={() => setShowErrors(false)} />}

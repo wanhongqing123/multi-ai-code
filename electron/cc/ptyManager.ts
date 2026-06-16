@@ -4,7 +4,8 @@ import { join } from 'path'
 import { PtyCCProcess } from './PtyCCProcess.js'
 import {
   shouldAutoAcceptCodexTrustPrompt,
-  isCodexReadyForPromptInjection
+  isCodexReadyForPromptInjection,
+  isClaudeReadyForPromptInjection
 } from './codexTrust.js'
 import {
   buildExternalReviewPrompt,
@@ -118,6 +119,8 @@ interface Session {
   codexTrustAccepted?: boolean
   codexPromptReady?: boolean
   codexBootText?: string
+  claudePromptReady?: boolean
+  claudeBootText?: string
   /** Raw-chunk dump stream (only when PTY_DUMP_ENABLED). */
   dumpStream?: WriteStream | null
 }
@@ -163,6 +166,19 @@ async function waitForCodexReady(
     const s = sessions.get(sessionId)
     if (!s) return
     if (s.codexPromptReady) return
+    await sleep(120)
+  }
+}
+
+async function waitForClaudeReady(
+  sessionId: string,
+  timeoutMs: number
+): Promise<void> {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const s = sessions.get(sessionId)
+    if (!s) return
+    if (s.claudePromptReady) return
     await sleep(120)
   }
 }
@@ -319,6 +335,12 @@ export function registerPtyIpc(): void {
         if (!session.codexPromptReady && isCodexReadyForPromptInjection(boot)) {
           session.codexPromptReady = true
         }
+      } else if (session.command === 'claude') {
+        const boot = ((session.claudeBootText ?? '') + chunk).slice(-16000)
+        session.claudeBootText = boot
+        if (!session.claudePromptReady && isClaudeReadyForPromptInjection(boot)) {
+          session.claudePromptReady = true
+        }
       }
 
       const pending = pendingExternalReviews.get(req.sessionId)
@@ -383,6 +405,11 @@ export function registerPtyIpc(): void {
           // Startup time varies heavily (trust gate / update banner / MCP boot).
           // Wait until Codex home UI appears, then inject prompt text.
           await waitForCodexReady(req.sessionId, 10000)
+        } else if (req.command === 'claude') {
+          // Claude can redraw its TUI after process start. Typing before the
+          // input box is interactive can be lost, leaving the prompt file
+          // written but never read by the session.
+          await waitForClaudeReady(req.sessionId, 15000)
         }
         // Pull project metadata for the prompt
         let projectName: string | undefined

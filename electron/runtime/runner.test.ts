@@ -275,6 +275,101 @@ describe('createRuntimeRunner', () => {
     expect(runner.getState().log).toContain('\u4e2d\u6587')
   })
 
+  it('captures Windows debug output while the runtime process is active', async () => {
+    const child = new FakeChild()
+    const stopDebugOutputCapture = vi.fn()
+    let emitDebugOutput: ((chunk: string) => void) | null = null
+    const startDebugOutputCapture = vi.fn((options: { onData: (chunk: string) => void }) => {
+      emitDebugOutput = options.onData
+      return { stop: stopDebugOutputCapture }
+    })
+    const resolveVisualStudioEnvironment = vi.fn().mockResolvedValue({
+      ok: true,
+      displayName: 'Visual Studio 2022',
+      installationPath: 'C:\\VS',
+      devCmdPath: 'C:\\VS\\Common7\\Tools\\VsDevCmd.bat',
+      env: { Path: 'C:\\VS\\bin' },
+    })
+    const runner = createRuntimeRunner({
+      platform: 'win32',
+      spawn: vi.fn(() => child),
+      startDebugOutputCapture,
+      detectMsys: vi.fn(),
+      resolveVisualStudioEnvironment,
+      now: () => '2026-06-12T10:00:00.000Z',
+    })
+
+    await runner.start({
+      projectId: 'p-vs-debug',
+      projectName: 'Demo',
+      targetRepo: 'E:\\repo',
+      config: {
+        enabled: true,
+        cwd: 'app',
+        command: 'demo.exe',
+        envType: 'visual-studio',
+        visualStudioInstanceId: 'vs-1',
+        outputEncoding: 'gbk',
+      },
+    })
+
+    expect(startDebugOutputCapture).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rootPid: 4321,
+        env: { Path: 'C:\\VS\\bin' },
+      })
+    )
+
+    const debugOutput = emitDebugOutput as unknown as ((chunk: string) => void) | null
+    if (!debugOutput) throw new Error('debug output emitter was not registered')
+    debugOutput('[debug:4322] [DLManager.cpp:3132] createDLTask\n')
+    await flush()
+
+    expect(runner.getState().log).toContain('[DLManager.cpp:3132] createDLTask')
+
+    child.emit('close', 0, null)
+    await flush()
+
+    expect(stopDebugOutputCapture).toHaveBeenCalled()
+  })
+
+  it('adds a diagnostic when a running process produces no captured output', async () => {
+    vi.useFakeTimers()
+    try {
+      const child = new FakeChild()
+      const runner = createRuntimeRunner({
+        platform: 'win32',
+        spawn: vi.fn(() => child),
+        detectMsys: vi.fn().mockResolvedValue({
+          available: true,
+          bashPath: 'C:\\msys64\\usr\\bin\\bash.exe',
+          usrBinDir: 'C:\\msys64\\usr\\bin',
+          variant: 'msys2',
+          candidates: [],
+        }),
+        resolveVisualStudioEnvironment: vi.fn(),
+        now: () => '2026-06-12T10:00:00.000Z',
+        noOutputNoticeMs: 10,
+      })
+
+      await runner.start({
+        projectId: 'p-silent',
+        projectName: 'Demo',
+        targetRepo: 'E:\\repo',
+        config: msysConfig,
+      })
+
+      expect(runner.getState().log).not.toContain('no stdout/stderr/debug output captured')
+      vi.advanceTimersByTime(10)
+
+      expect(runner.getState().log).toContain('no stdout/stderr/debug output captured')
+
+      child.emit('close', 0, null)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('truncates the runtime log with a visible marker once the limit is exceeded', async () => {
     const child = new FakeChild()
     const runner = createRuntimeRunner({

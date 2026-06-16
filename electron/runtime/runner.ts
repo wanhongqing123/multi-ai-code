@@ -7,6 +7,11 @@ import { PassThrough } from 'stream'
 import { StringDecoder } from 'string_decoder'
 import { detectMsys, type MsysInfo } from '../util/msys.js'
 import { resolveVisualStudioEnvironment } from '../build/visualStudio.js'
+import {
+  startWindowsDebugOutputCapture,
+  type RuntimeDebugOutputCapture,
+  type StartDebugOutputCaptureOptions,
+} from './debugOutputCapture.js'
 import type {
   RuntimeDataEvent,
   RuntimeOutputEncoding,
@@ -60,14 +65,25 @@ type NodePtySpawn = (
   options: Record<string, unknown>
 ) => RuntimePty
 
+type StartDebugOutputCapture = (
+  options: StartDebugOutputCaptureOptions
+) => Promise<RuntimeDebugOutputCapture | null> | RuntimeDebugOutputCapture | null
+
+interface SpawnedRuntime {
+  child: SpawnedRuntimeProcess
+  env: NodeJS.ProcessEnv
+}
+
 interface RuntimeRunnerDeps {
   platform: NodeJS.Platform
   spawn: SpawnLike
   spawnPty: SpawnLike | null
+  startDebugOutputCapture: StartDebugOutputCapture | null
   detectMsys: () => Promise<MsysInfo>
   resolveVisualStudioEnvironment: typeof resolveVisualStudioEnvironment
   killProcessTree: (pid: number) => void
   logLimit: number
+  noOutputNoticeMs: number
   now: () => string
 }
 
@@ -294,10 +310,19 @@ function validateStartRequest(request: StartRuntimeRequest): string | null {
 
 export function createRuntimeRunner(partialDeps?: Partial<RuntimeRunnerDeps>): RuntimeRunner {
   const customSpawnProvided = Object.prototype.hasOwnProperty.call(partialDeps ?? {}, 'spawn')
+  const customDebugOutputCaptureProvided = Object.prototype.hasOwnProperty.call(
+    partialDeps ?? {},
+    'startDebugOutputCapture'
+  )
   const deps: RuntimeRunnerDeps = {
     platform: partialDeps?.platform ?? process.platform,
     spawn: partialDeps?.spawn ?? spawn,
     spawnPty: partialDeps?.spawnPty ?? (customSpawnProvided ? null : createPtyRuntimeProcess),
+    startDebugOutputCapture: customDebugOutputCaptureProvided
+      ? partialDeps?.startDebugOutputCapture ?? null
+      : customSpawnProvided
+        ? null
+        : startWindowsDebugOutputCapture,
     detectMsys: partialDeps?.detectMsys ?? detectMsys,
     resolveVisualStudioEnvironment:
       partialDeps?.resolveVisualStudioEnvironment ?? resolveVisualStudioEnvironment,
@@ -309,11 +334,15 @@ export function createRuntimeRunner(partialDeps?: Partial<RuntimeRunnerDeps>): R
         })
       }),
     logLimit: partialDeps?.logLimit ?? ACTIVE_LOG_LIMIT,
+    noOutputNoticeMs: partialDeps?.noOutputNoticeMs ?? 3000,
     now: partialDeps?.now ?? (() => new Date().toISOString()),
   }
 
   let state = initialState()
   let activeChild: SpawnedRuntimeProcess | null = null
+  let activeDebugOutputCapture: RuntimeDebugOutputCapture | null = null
+  let noOutputNoticeTimer: ReturnType<typeof setTimeout> | null = null
+  let receivedRuntimeOutput = false
   let stopRequested = false
   let childSettled = false
   let logTruncated = false
@@ -353,9 +382,42 @@ export function createRuntimeRunner(partialDeps?: Partial<RuntimeRunnerDeps>): R
     })
   }
 
+  function stopDebugOutputCapture(): void {
+    if (!activeDebugOutputCapture) return
+    activeDebugOutputCapture.stop()
+    activeDebugOutputCapture = null
+  }
+
+  function clearNoOutputNotice(): void {
+    if (!noOutputNoticeTimer) return
+    clearTimeout(noOutputNoticeTimer)
+    noOutputNoticeTimer = null
+  }
+
+  function markRuntimeOutputReceived(): void {
+    receivedRuntimeOutput = true
+    clearNoOutputNotice()
+  }
+
+  function scheduleNoOutputNotice(): void {
+    clearNoOutputNotice()
+    if (deps.noOutputNoticeMs <= 0 || receivedRuntimeOutput) return
+
+    noOutputNoticeTimer = setTimeout(() => {
+      noOutputNoticeTimer = null
+      if (state.status !== 'running' || receivedRuntimeOutput) return
+      appendLog(
+        'system',
+        '[runtime] no stdout/stderr/debug output captured after 3s; this process may be writing logs to another channel.\n'
+      )
+    }, deps.noOutputNoticeMs)
+  }
+
   function finish(status: RuntimeState['status'], code: number | null, signal: NodeJS.Signals | null): void {
     childSettled = true
     activeChild = null
+    stopDebugOutputCapture()
+    clearNoOutputNotice()
     state.status = status
     state.finishedAt = deps.now()
     state.exitCode = code
@@ -363,7 +425,7 @@ export function createRuntimeRunner(partialDeps?: Partial<RuntimeRunnerDeps>): R
     emitStatus()
   }
 
-  async function spawnRuntime(request: StartRuntimeRequest): Promise<SpawnedRuntimeProcess> {
+  async function spawnRuntime(request: StartRuntimeRequest): Promise<SpawnedRuntime> {
     const resolvedCwd = resolveRuntimeCwd(request.targetRepo, request.config.cwd)
     state.cwd = resolvedCwd
 
@@ -376,13 +438,17 @@ export function createRuntimeRunner(partialDeps?: Partial<RuntimeRunnerDeps>): R
 
       const command = `cd ${quoteForBash(toMsysPath(resolvedCwd))} && ${request.config.command}`
       const runtimeSpawn = deps.spawnPty ?? deps.spawn
-      return runtimeSpawn(info.bashPath, ['-lc', command], {
-        cwd: resolvedCwd,
-        env: buildMsysEnv(process.env, info.usrBinDir),
-        shell: false,
-        windowsHide: true,
-        stdio: 'pipe',
-      })
+      const env = buildMsysEnv(process.env, info.usrBinDir)
+      return {
+        child: runtimeSpawn(info.bashPath, ['-lc', command], {
+          cwd: resolvedCwd,
+          env,
+          shell: false,
+          windowsHide: true,
+          stdio: 'pipe',
+        }),
+        env,
+      }
     }
 
     const result = await deps.resolveVisualStudioEnvironment({
@@ -396,14 +462,17 @@ export function createRuntimeRunner(partialDeps?: Partial<RuntimeRunnerDeps>): R
 
     state.visualStudioDisplayName = result.displayName
     const runtimeSpawn = deps.spawnPty ?? deps.spawn
-    return runtimeSpawn('cmd.exe', ['/d', '/s', '/c', request.config.command], {
-      cwd: resolvedCwd,
+    return {
+      child: runtimeSpawn('cmd.exe', ['/d', '/s', '/c', request.config.command], {
+        cwd: resolvedCwd,
+        env: result.env,
+        shell: false,
+        windowsHide: true,
+        windowsVerbatimArguments: true,
+        stdio: 'pipe',
+      }),
       env: result.env,
-      shell: false,
-      windowsHide: true,
-      windowsVerbatimArguments: true,
-      stdio: 'pipe',
-    })
+    }
   }
 
   function attachChild(child: SpawnedRuntimeProcess): void {
@@ -412,10 +481,12 @@ export function createRuntimeRunner(partialDeps?: Partial<RuntimeRunnerDeps>): R
 
     child.stdout?.on('data', (chunk: Buffer | string) => {
       const text = typeof chunk === 'string' ? chunk : stdoutDecoder.write(chunk)
+      markRuntimeOutputReceived()
       appendLog('stdout', text)
     })
     child.stderr?.on('data', (chunk: Buffer | string) => {
       const text = typeof chunk === 'string' ? chunk : stderrDecoder.write(chunk)
+      markRuntimeOutputReceived()
       appendLog('stderr', text)
     })
     child.on('error', (error) => {
@@ -437,6 +508,38 @@ export function createRuntimeRunner(partialDeps?: Partial<RuntimeRunnerDeps>): R
     })
   }
 
+  async function attachDebugOutputCapture(child: SpawnedRuntimeProcess, env: NodeJS.ProcessEnv): Promise<void> {
+    if (deps.platform !== 'win32' || !deps.startDebugOutputCapture) return
+
+    try {
+      const capture = await deps.startDebugOutputCapture({
+        rootPid: typeof child.pid === 'number' ? child.pid : null,
+        env,
+        onData: (chunk) => {
+          markRuntimeOutputReceived()
+          appendLog('stdout', chunk)
+        },
+        onDiagnostic: (message) => {
+          appendLog('system', message.endsWith('\n') ? message : `${message}\n`)
+        },
+      })
+
+      if (!capture) return
+      if (state.status !== 'running' || activeChild !== child) {
+        capture.stop()
+        return
+      }
+      activeDebugOutputCapture = capture
+    } catch (error: unknown) {
+      appendLog(
+        'system',
+        `[runtime] debug-output capture failed: ${
+          error instanceof Error ? error.message : String(error)
+        }\n`
+      )
+    }
+  }
+
   return {
     async start(request: StartRuntimeRequest): Promise<RuntimeStartResult> {
       if (state.status === 'running') {
@@ -451,6 +554,9 @@ export function createRuntimeRunner(partialDeps?: Partial<RuntimeRunnerDeps>): R
       stopRequested = false
       childSettled = false
       logTruncated = false
+      receivedRuntimeOutput = false
+      clearNoOutputNotice()
+      stopDebugOutputCapture()
       state = {
         status: 'running',
         projectId: request.projectId,
@@ -473,9 +579,12 @@ export function createRuntimeRunner(partialDeps?: Partial<RuntimeRunnerDeps>): R
       }
 
       try {
-        activeChild = await spawnRuntime(request)
+        const runtime = await spawnRuntime(request)
+        activeChild = runtime.child
         attachChild(activeChild)
+        await attachDebugOutputCapture(activeChild, runtime.env)
         appendLog('system', `[runtime] started: ${request.config.command.trim()}\n`)
+        scheduleNoOutputNotice()
         emitStatus()
         return { ok: true, state: cloneState(state) }
       } catch (error: unknown) {

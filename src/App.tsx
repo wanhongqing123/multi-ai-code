@@ -38,6 +38,7 @@ import type {
   BuildRuntimeState,
   ProjectBuildConfig,
   ProjectRuntimeConfig,
+  RuntimeState,
   VisualStudioInstallation
 } from '../electron/preload'
 import type { HabitFlowRow, HabitSettings } from './habit/habitTypes'
@@ -67,11 +68,34 @@ const DEFAULT_BUILD_RUNTIME_STATE: BuildRuntimeState = {
   log: '',
   lastFailure: null
 }
+const DEFAULT_RUNTIME_STATE: RuntimeState = {
+  status: 'idle',
+  projectId: null,
+  projectName: null,
+  targetRepo: null,
+  cwd: null,
+  command: null,
+  envType: null,
+  visualStudioInstanceId: null,
+  visualStudioDisplayName: null,
+  outputEncoding: null,
+  startedAt: null,
+  finishedAt: null,
+  exitCode: null,
+  signal: null,
+  log: ''
+}
 
 function appendBuildLog(current: string, chunk: string): string {
   const next = current + chunk
   if (next.length <= BUILD_LOG_LIMIT) return next
   return `...[build log truncated]...\n${next.slice(-BUILD_LOG_LIMIT)}`
+}
+
+function appendRuntimeLog(current: string, chunk: string): string {
+  const next = current + chunk
+  if (next.length <= BUILD_LOG_LIMIT) return next
+  return `...[runtime log truncated]...\n${next.slice(-BUILD_LOG_LIMIT)}`
 }
 
 function parseHabitFlowAction(flow: HabitFlowRow): string | null {
@@ -253,6 +277,7 @@ function AppShell() {
   const [diffSelectedCommit, setDiffSelectedCommit] = useState('')
   const [diffSelectedFile, setDiffSelectedFile] = useState('')
   const [buildState, setBuildState] = useState<BuildRuntimeState>(DEFAULT_BUILD_RUNTIME_STATE)
+  const [runtimeState, setRuntimeState] = useState<RuntimeState>(DEFAULT_RUNTIME_STATE)
   // Remember which (project, planName) combos have already seen the starter
   // "import from file?" toast so it's not shown repeatedly on each start.
   const shownStarterHintsRef = useRef<Set<string>>(new Set())
@@ -383,6 +408,31 @@ function AppShell() {
   }, [])
 
   useEffect(() => {
+    let cancelled = false
+    void window.api.runtime.getState().then((state) => {
+      if (cancelled) return
+      setRuntimeState(state)
+    })
+    const offStatus = window.api.runtime.onStatus((state) => {
+      if (cancelled) return
+      setRuntimeState(state)
+    })
+    const offData = window.api.runtime.onData((event) => {
+      if (cancelled || !event.chunk) return
+      setRuntimeState((prev) => ({
+        ...prev,
+        projectId: event.projectId ?? prev.projectId,
+        log: appendRuntimeLog(prev.log, event.chunk)
+      }))
+    })
+    return () => {
+      cancelled = true
+      offStatus()
+      offData()
+    }
+  }, [])
+
+  useEffect(() => {
     if (!showAiSettings || !currentProjectId) return
     void refreshVisualStudioInstallations()
   }, [showAiSettings, currentProjectId, refreshVisualStudioInstallations])
@@ -502,6 +552,10 @@ function AppShell() {
     currentProjectId !== null && buildState.projectId === currentProjectId
       ? buildState
       : DEFAULT_BUILD_RUNTIME_STATE
+  const runtimeStateForCurrentProject =
+    currentProjectId !== null && runtimeState.projectId === currentProjectId
+      ? runtimeState
+      : DEFAULT_RUNTIME_STATE
   const hasProject = currentProject !== null
 
   // Track plan names we've ever observed in the list. If `planName` was
@@ -838,6 +892,60 @@ function AppShell() {
       showToast(result.error ?? '停止构建失败', { level: 'error' })
     }
   }, [])
+
+  const handleStartRuntime = useCallback(async () => {
+    if (
+      runtimeState.projectId !== null &&
+      runtimeState.projectId !== currentProjectId &&
+      runtimeState.status === 'running'
+    ) {
+      showToast('另一个项目的运行进程仍在运行，请先停止后再启动当前项目运行', {
+        level: 'warn'
+      })
+      setShowBuildPanel(true)
+      return
+    }
+    if (!currentProjectId) return
+
+    const result = await window.api.runtime.start(currentProjectId)
+    setRuntimeState(result.state)
+    setShowBuildPanel(true)
+    if (!result.ok) {
+      showToast(result.error ?? '启动运行失败', { level: 'error' })
+    }
+  }, [currentProjectId, runtimeState.projectId, runtimeState.status])
+
+  const handleStopRuntime = useCallback(async () => {
+    const result = await window.api.runtime.stop()
+    if (!result.ok) {
+      showToast(result.error ?? '停止运行失败', { level: 'error' })
+    }
+  }, [])
+
+  const handleSendRuntimeLog = useCallback(async () => {
+    if (!currentProjectId || runtimeState.projectId !== currentProjectId) {
+      showToast('当前运行日志不属于所选项目，请切回对应项目后再发送', { level: 'warn' })
+      return
+    }
+    if (!sessionId || sessionStatus !== 'running') {
+      showToast('主会话未运行，无法发送运行日志，请先启动主会话', { level: 'warn' })
+      return
+    }
+
+    const promptResult = await window.api.runtime.getAnalysisPrompt()
+    if (!promptResult.ok) {
+      showToast(promptResult.error ?? '获取运行日志分析提示失败', { level: 'error' })
+      return
+    }
+
+    const sendResult = await window.api.cc.sendUser(sessionId, promptResult.prompt)
+    if (!sendResult.ok) {
+      showToast(sendResult.error ?? '发送运行日志失败', { level: 'error' })
+      return
+    }
+
+    showToast('已将运行日志发送到主会话', { level: 'success' })
+  }, [currentProjectId, runtimeState.projectId, sessionId, sessionStatus])
 
   const handleAnalyzeBuildFailure = useCallback(async () => {
     if (buildState.status !== 'failed' || !buildState.lastFailure) {
@@ -1684,7 +1792,7 @@ function AppShell() {
           buildConfigReady={projectBuildConfigReady}
           initialRuntimeConfig={visibleProjectRuntimeConfig}
           runtimeConfigReady={projectRuntimeConfigReady}
-          runtimeConfigDisabled={false}
+          runtimeConfigDisabled={runtimeStateForCurrentProject.status === 'running'}
           visualStudioInstallations={visualStudioInstallations}
           visualStudioInstallationsLoading={visualStudioInstallationsLoading}
           onRefreshVisualStudioInstallations={() => {
@@ -1722,7 +1830,10 @@ function AppShell() {
           currentProjectName={projectName || null}
           buildConfig={visibleProjectBuildConfig}
           buildConfigReady={projectBuildConfigReady}
+          runtimeConfig={visibleProjectRuntimeConfig}
+          runtimeConfigReady={projectRuntimeConfigReady}
           state={buildStateForCurrentProject}
+          runtimeState={runtimeStateForCurrentProject}
           sessionId={sessionId}
           sessionStatus={sessionStatus}
           onClose={() => setShowBuildPanel(false)}
@@ -1730,6 +1841,9 @@ function AppShell() {
           onStartSingleBuild={(stepId) => void handleStartBuild('single-step', stepId)}
           onStopBuild={() => void handleStopBuild()}
           onAnalyzeFailure={() => void handleAnalyzeBuildFailure()}
+          onStartRuntime={() => void handleStartRuntime()}
+          onStopRuntime={() => void handleStopRuntime()}
+          onSendRuntimeLog={() => void handleSendRuntimeLog()}
         />
       )}
       {showErrors && <ErrorPanel onClose={() => setShowErrors(false)} />}

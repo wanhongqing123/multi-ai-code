@@ -1,4 +1,10 @@
-import type { BuildRuntimeState, BuildStepRuntime, ProjectBuildConfig } from '../../electron/preload'
+import type {
+  BuildRuntimeState,
+  BuildStepRuntime,
+  ProjectBuildConfig,
+  ProjectRuntimeConfig,
+  RuntimeState
+} from '../../electron/preload'
 
 export interface ProjectBuildPanelProps {
   open: boolean
@@ -6,6 +12,9 @@ export interface ProjectBuildPanelProps {
   currentProjectName: string | null
   buildConfig: ProjectBuildConfig
   buildConfigReady: boolean
+  runtimeConfig?: ProjectRuntimeConfig
+  runtimeConfigReady?: boolean
+  runtimeState?: RuntimeState
   state: BuildRuntimeState
   sessionId: string | null
   sessionStatus: 'idle' | 'running' | 'exited'
@@ -14,6 +23,36 @@ export interface ProjectBuildPanelProps {
   onStartSingleBuild: (stepId: string) => void
   onStopBuild: () => void
   onAnalyzeFailure: () => void
+  onStartRuntime?: () => void
+  onStopRuntime?: () => void
+  onSendRuntimeLog?: () => void
+}
+
+const DEFAULT_RUNTIME_CONFIG: ProjectRuntimeConfig = {
+  enabled: false,
+  cwd: '.',
+  command: '',
+  envType: 'msys',
+  visualStudioInstanceId: '',
+  outputEncoding: 'auto'
+}
+
+const DEFAULT_RUNTIME_STATE: RuntimeState = {
+  status: 'idle',
+  projectId: null,
+  projectName: null,
+  targetRepo: null,
+  cwd: null,
+  command: null,
+  envType: null,
+  visualStudioInstanceId: null,
+  visualStudioDisplayName: null,
+  outputEncoding: null,
+  startedAt: null,
+  finishedAt: null,
+  exitCode: null,
+  signal: null,
+  log: ''
 }
 
 export function getBuildStatusLabel(status: BuildRuntimeState['status']): string {
@@ -24,6 +63,22 @@ export function getBuildStatusLabel(status: BuildRuntimeState['status']): string
       return '已成功'
     case 'failed':
       return '已失败'
+    case 'stopped':
+      return '已停止'
+    case 'idle':
+    default:
+      return '空闲'
+  }
+}
+
+export function getRuntimeStatusLabel(status: RuntimeState['status']): string {
+  switch (status) {
+    case 'running':
+      return '运行中'
+    case 'exited':
+      return '已退出'
+    case 'failed':
+      return '运行失败'
     case 'stopped':
       return '已停止'
     case 'idle':
@@ -87,6 +142,35 @@ export function canStopBuild(status: BuildRuntimeState['status']): boolean {
 
 export function canAnalyzeBuildFailure(state: BuildRuntimeState): boolean {
   return state.status === 'failed' && state.lastFailure !== null
+}
+
+export function getRuntimeStartBlockedReason(
+  projectId: string | null,
+  runtimeConfigReady: boolean,
+  runtimeConfig: ProjectRuntimeConfig,
+  runtimeState: RuntimeState
+): string | null {
+  if (!projectId) return '请先选择项目'
+  if (!runtimeConfigReady) return '正在读取项目运行配置，请稍后再试'
+  if (!runtimeConfig.enabled) return '当前项目未启用运行配置，请先到设置中开启'
+  if (!runtimeConfig.command.trim()) return '运行命令不能为空'
+  if (runtimeState.status === 'running') return '当前已有运行进程'
+  return null
+}
+
+export function canSendRuntimeLog(
+  projectId: string | null,
+  runtimeState: RuntimeState,
+  sessionId: string | null,
+  sessionStatus: 'idle' | 'running' | 'exited'
+): boolean {
+  return (
+    !!projectId &&
+    runtimeState.projectId === projectId &&
+    runtimeState.log.trim().length > 0 &&
+    !!sessionId &&
+    sessionStatus === 'running'
+  )
 }
 
 export function getDisplayStepsForBuildPanel(
@@ -170,6 +254,30 @@ export default function ProjectBuildPanel(props: ProjectBuildPanelProps): JSX.El
   const stopEnabled = canStopBuild(props.state.status)
   const analyzeVisible = canAnalyzeBuildFailure(props.state)
   const failure = props.state.lastFailure
+  const runtimeConfig = props.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG
+  const runtimeConfigReady = props.runtimeConfigReady ?? false
+  const runtimeState = props.runtimeState ?? DEFAULT_RUNTIME_STATE
+  const runtimeStartBlockedReason = getRuntimeStartBlockedReason(
+    props.currentProjectId,
+    runtimeConfigReady,
+    runtimeConfig,
+    runtimeState
+  )
+  const runtimeStartEnabled = runtimeStartBlockedReason === null && !!props.onStartRuntime
+  const runtimeStopEnabled = runtimeState.status === 'running' && !!props.onStopRuntime
+  const sendRuntimeEnabled =
+    canSendRuntimeLog(
+      props.currentProjectId,
+      runtimeState,
+      props.sessionId,
+      props.sessionStatus
+    ) && !!props.onSendRuntimeLog
+  const runtimeLogText =
+    runtimeState.log.trim().length > 0 ? runtimeState.log : '暂无运行日志输出'
+  const runtimeExitSummary =
+    runtimeState.exitCode !== null || runtimeState.signal
+      ? `exit=${runtimeState.exitCode ?? 'null'}${runtimeState.signal ? ` signal=${runtimeState.signal}` : ''}`
+      : null
   const logText = props.state.log.trim().length > 0 ? props.state.log : '暂无日志输出'
 
   return (
@@ -300,6 +408,59 @@ export default function ProjectBuildPanel(props: ProjectBuildPanelProps): JSX.El
               })}
             </ol>
           )}
+        </section>
+
+        <section className="build-panel-section">
+          <div className="build-panel-section-head">
+            <h3>运行</h3>
+            <span>{getRuntimeStatusLabel(runtimeState.status)}</span>
+          </div>
+          <div className="build-panel-actions">
+            <button
+              className="tile-btn"
+              onClick={props.onStartRuntime}
+              disabled={!runtimeStartEnabled}
+              title={runtimeStartEnabled ? '启动项目运行命令' : runtimeStartBlockedReason ?? undefined}
+            >
+              运行
+            </button>
+            <button
+              className="tile-btn"
+              onClick={props.onStopRuntime}
+              disabled={!runtimeStopEnabled}
+              title={runtimeStopEnabled ? '停止当前运行进程' : '当前没有正在运行的进程'}
+            >
+              停止运行
+            </button>
+            <button
+              className="tile-btn"
+              onClick={props.onSendRuntimeLog}
+              disabled={!sendRuntimeEnabled}
+              title={
+                sendRuntimeEnabled
+                  ? '将当前运行日志发送给主会话 AI CLI'
+                  : '需要运行日志和正在运行的主会话'
+              }
+            >
+              发送运行日志
+            </button>
+          </div>
+          {runtimeStartBlockedReason ? (
+            <p className="build-panel-note">{runtimeStartBlockedReason}</p>
+          ) : null}
+          {runtimeState.log.trim() && (!props.sessionId || props.sessionStatus !== 'running') ? (
+            <p className="build-panel-note">主会话未运行，无法发送运行日志。</p>
+          ) : null}
+          <div className="build-panel-meta-grid">
+            <span>开始时间：{formatDateTime(runtimeState.startedAt)}</span>
+            <span>结束时间：{formatDateTime(runtimeState.finishedAt)}</span>
+            {runtimeExitSummary ? <span>{runtimeExitSummary}</span> : null}
+          </div>
+          <div className="build-step-meta">
+            <span>cwd: {runtimeState.cwd ?? runtimeConfig.cwd}</span>
+            <span>命令: {runtimeState.command ?? runtimeConfig.command}</span>
+          </div>
+          <pre className="build-panel-log">{runtimeLogText}</pre>
         </section>
 
         <section className="build-panel-section">

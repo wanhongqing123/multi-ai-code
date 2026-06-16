@@ -1,15 +1,23 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import type { BuildRuntimeState, ProjectBuildConfig } from '../../electron/preload'
+import type {
+  BuildRuntimeState,
+  ProjectBuildConfig,
+  ProjectRuntimeConfig,
+  RuntimeState
+} from '../../electron/preload'
 import ProjectBuildPanel, {
   canAnalyzeBuildFailure,
+  canSendRuntimeLog,
   canStartBuild,
   canStopBuild,
   getDisplayStepsForBuildPanel,
   getBuildLogStatusLabel,
   getBuildStartBlockedReason,
   getBuildStepStatusLabel,
-  getBuildStatusLabel
+  getBuildStatusLabel,
+  getRuntimeStartBlockedReason,
+  getRuntimeStatusLabel
 } from './ProjectBuildPanel.js'
 
 const disabledBuildConfig: ProjectBuildConfig = {
@@ -46,6 +54,33 @@ const baseState: BuildRuntimeState = {
   steps: [],
   log: '',
   lastFailure: null
+}
+
+const enabledRuntimeConfig: ProjectRuntimeConfig = {
+  enabled: true,
+  cwd: '.',
+  command: 'npm run dev',
+  envType: 'msys',
+  visualStudioInstanceId: '',
+  outputEncoding: 'auto'
+}
+
+const baseRuntimeState: RuntimeState = {
+  status: 'idle',
+  projectId: null,
+  projectName: null,
+  targetRepo: null,
+  cwd: null,
+  command: null,
+  envType: null,
+  visualStudioInstanceId: null,
+  visualStudioDisplayName: null,
+  outputEncoding: null,
+  startedAt: null,
+  finishedAt: null,
+  exitCode: null,
+  signal: null,
+  log: ''
 }
 
 describe('ProjectBuildPanel', () => {
@@ -107,6 +142,70 @@ describe('ProjectBuildPanel', () => {
 
     expect(canAnalyzeBuildFailure(failedState)).toBe(true)
     expect(canAnalyzeBuildFailure(baseState)).toBe(false)
+  })
+
+  it('returns non-empty labels and blocked reasons for runtime controls', () => {
+    const labels = [
+      getRuntimeStatusLabel('idle'),
+      getRuntimeStatusLabel('running'),
+      getRuntimeStatusLabel('exited'),
+      getRuntimeStatusLabel('failed'),
+      getRuntimeStatusLabel('stopped')
+    ]
+
+    expect(labels.every((label) => label.length > 0)).toBe(true)
+    expect(getRuntimeStartBlockedReason(null, true, enabledRuntimeConfig, baseRuntimeState)).toBeTruthy()
+    expect(getRuntimeStartBlockedReason('project-1', false, enabledRuntimeConfig, baseRuntimeState)).toBeTruthy()
+    expect(
+      getRuntimeStartBlockedReason(
+        'project-1',
+        true,
+        { ...enabledRuntimeConfig, enabled: false },
+        baseRuntimeState
+      )
+    ).toBeTruthy()
+    expect(
+      getRuntimeStartBlockedReason(
+        'project-1',
+        true,
+        { ...enabledRuntimeConfig, command: '' },
+        baseRuntimeState
+      )
+    ).toBeTruthy()
+    expect(
+      getRuntimeStartBlockedReason('project-1', true, enabledRuntimeConfig, {
+        ...baseRuntimeState,
+        status: 'running'
+      })
+    ).toBeTruthy()
+    expect(getRuntimeStartBlockedReason('project-1', true, enabledRuntimeConfig, baseRuntimeState)).toBeNull()
+  })
+
+  it('only allows sending runtime logs to a running main session for the current project', () => {
+    expect(
+      canSendRuntimeLog(
+        'project-1',
+        { ...baseRuntimeState, projectId: 'project-1', log: 'server started' },
+        'session-1',
+        'running'
+      )
+    ).toBe(true)
+    expect(
+      canSendRuntimeLog(
+        'project-1',
+        { ...baseRuntimeState, projectId: 'other', log: 'server started' },
+        'session-1',
+        'running'
+      )
+    ).toBe(false)
+    expect(
+      canSendRuntimeLog(
+        'project-1',
+        { ...baseRuntimeState, projectId: 'project-1', log: 'server started' },
+        null,
+        'idle'
+      )
+    ).toBe(false)
   })
 
   it('uses the overall build state for the log header after a failure', () => {
@@ -309,6 +408,78 @@ describe('ProjectBuildPanel', () => {
 
     expect(markup).toContain('Visual Studio 2022 Community')
     expect(markup).toContain('GBK')
+  })
+
+  it('renders runtime controls separately from build logs', () => {
+    const markup = renderToStaticMarkup(
+      <ProjectBuildPanel
+        open={true}
+        currentProjectId="project-1"
+        currentProjectName="Demo"
+        buildConfig={enabledBuildConfig}
+        buildConfigReady={true}
+        runtimeConfig={enabledRuntimeConfig}
+        runtimeConfigReady={true}
+        runtimeState={{
+          ...baseRuntimeState,
+          status: 'running',
+          projectId: 'project-1',
+          cwd: 'E:/demo',
+          command: 'npm run dev',
+          log: 'server started'
+        }}
+        state={baseState}
+        sessionId="session-1"
+        sessionStatus="running"
+        onClose={vi.fn()}
+        onStartBuild={vi.fn()}
+        onStartSingleBuild={vi.fn()}
+        onStopBuild={vi.fn()}
+        onAnalyzeFailure={vi.fn()}
+        onStartRuntime={vi.fn()}
+        onStopRuntime={vi.fn()}
+        onSendRuntimeLog={vi.fn()}
+      />
+    )
+
+    expect(markup).toContain('运行')
+    expect(markup).toContain('停止运行')
+    expect(markup).toContain('发送运行日志')
+    expect(markup).toContain('server started')
+    expect(markup).toContain('实时日志')
+  })
+
+  it('warns when runtime log cannot be sent without a running main session', () => {
+    const markup = renderToStaticMarkup(
+      <ProjectBuildPanel
+        open={true}
+        currentProjectId="project-1"
+        currentProjectName="Demo"
+        buildConfig={enabledBuildConfig}
+        buildConfigReady={true}
+        runtimeConfig={enabledRuntimeConfig}
+        runtimeConfigReady={true}
+        runtimeState={{
+          ...baseRuntimeState,
+          status: 'failed',
+          projectId: 'project-1',
+          log: 'fatal runtime error'
+        }}
+        state={baseState}
+        sessionId={null}
+        sessionStatus="idle"
+        onClose={vi.fn()}
+        onStartBuild={vi.fn()}
+        onStartSingleBuild={vi.fn()}
+        onStopBuild={vi.fn()}
+        onAnalyzeFailure={vi.fn()}
+        onStartRuntime={vi.fn()}
+        onStopRuntime={vi.fn()}
+        onSendRuntimeLog={vi.fn()}
+      />
+    )
+
+    expect(markup).toContain('主会话未运行')
   })
 
   it('renders the renamed sequential build button and per-step single-build buttons', () => {

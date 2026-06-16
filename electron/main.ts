@@ -69,9 +69,16 @@ import {
   setProjectBuildConfig,
   type ProjectBuildConfig
 } from './build/config.js'
+import {
+  getProjectRuntimeConfig,
+  setProjectRuntimeConfig,
+  type ProjectRuntimeConfig
+} from './runtime/config.js'
 import { resolveBuildExecutionScope } from './build/executionScope.js'
 import { createBuildRunner } from './build/runner.js'
 import { getFailureAnalysisPrompt as getBuildFailureAnalysisPrompt } from './build/analysisPrompt.js'
+import { createRuntimeRunner } from './runtime/runner.js'
+import { getRuntimeAnalysisPrompt } from './runtime/analysisPrompt.js'
 import { listVisualStudioInstallations } from './build/visualStudio.js'
 import {
   hasRepoAnalysisSession,
@@ -95,6 +102,7 @@ interface AppSettings {
 
 let effectiveAppSettings: AppSettings | null = null
 const buildRunner = createBuildRunner()
+const runtimeRunner = createRuntimeRunner()
 
 function broadcastToAllWindows(channel: string, payload: unknown): void {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -110,6 +118,14 @@ buildRunner.onData((event) => {
 
 buildRunner.onStatus((nextState) => {
   broadcastToAllWindows('build:status', nextState)
+})
+
+runtimeRunner.onData((event) => {
+  broadcastToAllWindows('runtime:data', event)
+})
+
+runtimeRunner.onStatus((nextState) => {
+  broadcastToAllWindows('runtime:status', nextState)
 })
 
 function toRendererAppSettings(settings: ScreenshotHotkeySettings): AppSettings {
@@ -847,6 +863,11 @@ app.whenReady().then(async () => {
     return await getProjectBuildConfig(metaPath)
   })
 
+  ipcMain.handle('project:get-runtime-config', async (_e, { id }: { id: string }) => {
+    const metaPath = join(projectDirFn(id), 'project.json')
+    return await getProjectRuntimeConfig(metaPath)
+  })
+
   ipcMain.handle('project:list-visual-studio-installations', async () => {
     return await listVisualStudioInstallations()
   })
@@ -864,6 +885,22 @@ app.whenReady().then(async () => {
     }> => {
       const metaPath = join(projectDirFn(id), 'project.json')
       return await setProjectBuildConfig(metaPath, config)
+    }
+  )
+
+  ipcMain.handle(
+    'project:set-runtime-config',
+    async (
+      _e,
+      { id, config }: { id: string; config: ProjectRuntimeConfig }
+    ): Promise<{
+      ok: boolean
+      repaired?: boolean
+      error?: string
+      details?: Array<{ path: string; message: string }>
+    }> => {
+      const metaPath = join(projectDirFn(id), 'project.json')
+      return await setProjectRuntimeConfig(metaPath, config)
     }
   )
 
@@ -953,6 +990,73 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('build:get-failure-analysis-prompt', () => {
     return getBuildFailureAnalysisPrompt(buildRunner.getState())
+  })
+
+  ipcMain.handle('runtime:start', async (_e, { id }: { id: string }) => {
+    const row = getProject(id)
+    if (!row) {
+      return { ok: false as const, error: 'project not found', state: runtimeRunner.getState() }
+    }
+
+    const metaPath = join(projectDirFn(id), 'project.json')
+    const metaResult = await readProjectMetaFile(metaPath)
+    if (!metaResult.ok) {
+      return { ok: false as const, error: metaResult.error, state: runtimeRunner.getState() }
+    }
+
+    const configResult = await getProjectRuntimeConfig(metaPath)
+    if (!configResult.ok) {
+      return { ok: false as const, error: configResult.error, state: runtimeRunner.getState() }
+    }
+
+    const metaName =
+      typeof metaResult.meta.name === 'string' && metaResult.meta.name.trim()
+        ? metaResult.meta.name.trim()
+        : row.name
+    const targetRepo =
+      typeof metaResult.meta.target_repo === 'string' && metaResult.meta.target_repo.trim()
+        ? metaResult.meta.target_repo.trim()
+        : row.target_repo
+
+    if (!targetRepo) {
+      return {
+        ok: false as const,
+        error: 'project target_repo is not configured',
+        state: runtimeRunner.getState()
+      }
+    }
+
+    try {
+      const stat = await fs.stat(targetRepo)
+      if (!stat.isDirectory()) {
+        return {
+          ok: false as const,
+          error: 'project target_repo is not a directory',
+          state: runtimeRunner.getState()
+        }
+      }
+    } catch (error: unknown) {
+      return {
+        ok: false as const,
+        error: error instanceof Error ? error.message : String(error),
+        state: runtimeRunner.getState()
+      }
+    }
+
+    return await runtimeRunner.start({
+      projectId: id,
+      projectName: metaName || id,
+      targetRepo,
+      config: configResult.value
+    })
+  })
+
+  ipcMain.handle('runtime:stop', () => runtimeRunner.stop())
+
+  ipcMain.handle('runtime:get-state', () => runtimeRunner.getState())
+
+  ipcMain.handle('runtime:get-analysis-prompt', () => {
+    return getRuntimeAnalysisPrompt(runtimeRunner.getState())
   })
 
   interface AiSettings {

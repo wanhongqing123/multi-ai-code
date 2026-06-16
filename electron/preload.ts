@@ -41,6 +41,9 @@ export interface ProjectAiSettingsResponse {
 export type BuildStepEnvType = 'msys' | 'visual-studio'
 export type BuildOutputEncoding = 'auto' | 'utf8' | 'gbk'
 export type BuildExecutionScope = 'all' | 'single-step'
+export type RuntimeEnvType = BuildStepEnvType
+export type RuntimeOutputEncoding = BuildOutputEncoding
+export type RuntimeStatus = 'idle' | 'running' | 'exited' | 'failed' | 'stopped'
 
 export interface BuildStepConfig {
   id: string
@@ -56,6 +59,15 @@ export interface BuildStepConfig {
 export interface ProjectBuildConfig {
   enabled: boolean
   steps: BuildStepConfig[]
+}
+
+export interface ProjectRuntimeConfig {
+  enabled: boolean
+  cwd: string
+  command: string
+  envType: RuntimeEnvType
+  visualStudioInstanceId: string
+  outputEncoding: RuntimeOutputEncoding
 }
 
 export interface BuildConfigValidationIssue {
@@ -76,6 +88,14 @@ export type ProjectBuildConfigReadResult =
   | { ok: false; error: string }
 
 export type ProjectBuildConfigWriteResult =
+  | { ok: true; repaired?: true }
+  | { ok: false; error: string; details?: BuildConfigValidationIssue[] }
+
+export type ProjectRuntimeConfigReadResult =
+  | { ok: true; value: ProjectRuntimeConfig; repaired?: true }
+  | { ok: false; error: string }
+
+export type ProjectRuntimeConfigWriteResult =
   | { ok: true; repaired?: true }
   | { ok: false; error: string; details?: BuildConfigValidationIssue[] }
 
@@ -142,6 +162,41 @@ export interface BuildStartOptions {
 }
 
 export type BuildFailureAnalysisPromptResult =
+  | { ok: true; prompt: string }
+  | { ok: false; error: string }
+
+export interface RuntimeState {
+  status: RuntimeStatus
+  projectId: string | null
+  projectName: string | null
+  targetRepo: string | null
+  cwd: string | null
+  command: string | null
+  envType: RuntimeEnvType | null
+  visualStudioInstanceId: string | null
+  visualStudioDisplayName: string | null
+  outputEncoding: RuntimeOutputEncoding | null
+  startedAt: string | null
+  finishedAt: string | null
+  exitCode: number | null
+  signal: NodeJS.Signals | null
+  log: string
+}
+
+export interface RuntimeDataEvent {
+  at: string
+  projectId: string | null
+  stream: 'stdout' | 'stderr' | 'system'
+  chunk: string
+}
+
+export type RuntimeStartResult =
+  | { ok: true; state: RuntimeState }
+  | { ok: false; error: string; state: RuntimeState }
+
+export type RuntimeStopResult = { ok: true } | { ok: false; error: string }
+
+export type RuntimeAnalysisPromptResult =
   | { ok: true; prompt: string }
   | { ok: false; error: string }
 
@@ -442,6 +497,8 @@ const api = {
       ipcRenderer.invoke('project:set-stage-configs', { id, configs }) as Promise<{ ok: boolean }>,
     getBuildConfig: (id: string) =>
       ipcRenderer.invoke('project:get-build-config', { id }) as Promise<ProjectBuildConfigReadResult>,
+    getRuntimeConfig: (id: string) =>
+      ipcRenderer.invoke('project:get-runtime-config', { id }) as Promise<ProjectRuntimeConfigReadResult>,
     listVisualStudioInstallations: () =>
       ipcRenderer.invoke('project:list-visual-studio-installations') as Promise<
         { ok: true; value: VisualStudioInstallation[] } | { ok: false; error: string }
@@ -451,6 +508,11 @@ const api = {
         id,
         config
       }) as Promise<ProjectBuildConfigWriteResult>,
+    setRuntimeConfig: (id: string, config: ProjectRuntimeConfig) =>
+      ipcRenderer.invoke('project:set-runtime-config', {
+        id,
+        config
+      }) as Promise<ProjectRuntimeConfigWriteResult>,
     getAiSettings: (id: string) =>
       ipcRenderer.invoke('project:get-ai-settings', { id }) as Promise<ProjectAiSettingsResponse>,
     setAiSettings: (id: string, settings: AiSettings) =>
@@ -502,6 +564,27 @@ const api = {
       const handler = (_event: IpcRendererEvent, state: BuildRuntimeState) => cb(state)
       ipcRenderer.on('build:status', handler)
       return () => ipcRenderer.removeListener('build:status', handler)
+    }
+  },
+
+  runtime: {
+    start: (projectId: string) =>
+      ipcRenderer.invoke('runtime:start', {
+        id: projectId
+      }) as Promise<RuntimeStartResult>,
+    stop: () => ipcRenderer.invoke('runtime:stop') as Promise<RuntimeStopResult>,
+    getState: () => ipcRenderer.invoke('runtime:get-state') as Promise<RuntimeState>,
+    getAnalysisPrompt: () =>
+      ipcRenderer.invoke('runtime:get-analysis-prompt') as Promise<RuntimeAnalysisPromptResult>,
+    onData: (cb: (evt: RuntimeDataEvent) => void) => {
+      const handler = (_event: IpcRendererEvent, evt: RuntimeDataEvent) => cb(evt)
+      ipcRenderer.on('runtime:data', handler)
+      return () => ipcRenderer.removeListener('runtime:data', handler)
+    },
+    onStatus: (cb: (state: RuntimeState) => void) => {
+      const handler = (_event: IpcRendererEvent, state: RuntimeState) => cb(state)
+      ipcRenderer.on('runtime:status', handler)
+      return () => ipcRenderer.removeListener('runtime:status', handler)
     }
   },
 

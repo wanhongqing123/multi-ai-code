@@ -7,6 +7,7 @@ import {
 } from './utils/session-message-format'
 import { buildCliLaunchArgs } from './utils/cliLaunchArgs'
 import { buildRuntimeLogAnalysisMessage } from './utils/runtimeLogAnalysisMessage'
+import { nextRuntimeLogDialogOpenAfterSendResult } from './utils/runtimeLogDialogState'
 import MainPanel from './components/MainPanel'
 import MainBootGate, { type BootGatePhase } from './components/MainBootGate'
 import ProjectPicker, { type ProjectInfo } from './components/ProjectPicker'
@@ -960,6 +961,7 @@ function AppShell() {
       return
     }
 
+    setShowRuntimeLogDialog((currentOpen) => nextRuntimeLogDialogOpenAfterSendResult(currentOpen, sendResult.ok))
     showToast('已将运行日志分析请求发送到主会话', { level: 'success' })
   }, [currentProjectId, runtimeState.projectId, sessionId, sessionStatus])
 

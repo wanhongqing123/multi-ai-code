@@ -37,13 +37,12 @@ export default function RuntimeLogDialog(props: RuntimeLogDialogProps): JSX.Elem
   const logText = props.runtimeState.log.trim().length > 0 ? props.runtimeState.log : '暂无运行日志输出'
 
   return (
-    <div className="runtime-log-dialog-overlay" role="presentation" onClick={props.onClose}>
+    <div className="runtime-log-dialog-layer" role="presentation">
       <section
         className="runtime-log-dialog"
         role="dialog"
-        aria-modal="true"
+        aria-modal="false"
         aria-label="运行日志"
-        onClick={(event) => event.stopPropagation()}
       >
         <div className="runtime-log-dialog-head">
           <div>

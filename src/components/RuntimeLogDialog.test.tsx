@@ -22,6 +22,28 @@ const runtimeState: RuntimeState = {
 }
 
 describe('RuntimeLogDialog', () => {
+  it('renders as a non-modal floating panel so the page behind remains interactive', () => {
+    const markup = renderToStaticMarkup(
+      <RuntimeLogDialog
+        open={true}
+        currentProjectName="Demo"
+        currentProjectId="project-1"
+        runtimeState={runtimeState}
+        sessionId="session-1"
+        sessionStatus="running"
+        comment=""
+        onCommentChange={vi.fn()}
+        onClose={vi.fn()}
+        onStopRuntime={vi.fn()}
+        onSendRuntimeLog={vi.fn()}
+      />
+    )
+
+    expect(markup).toContain('runtime-log-dialog-layer')
+    expect(markup).not.toContain('runtime-log-dialog-overlay')
+    expect(markup).toContain('aria-modal="false"')
+  })
+
   it('renders live runtime logs and a comment box for analysis requests', () => {
     const markup = renderToStaticMarkup(
       <RuntimeLogDialog

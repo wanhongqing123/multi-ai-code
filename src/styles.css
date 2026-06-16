@@ -1825,29 +1825,31 @@ html, body, #root {
   overflow: auto;
 }
 
-.runtime-log-dialog-overlay {
+.runtime-log-dialog-layer {
   position: fixed;
   inset: 0;
   z-index: 1040;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--mac-sp-5);
-  background: rgba(12, 18, 28, 0.28);
-  backdrop-filter: blur(4px);
+  align-items: flex-end;
+  justify-content: flex-end;
+  padding: 84px var(--mac-sp-5) var(--mac-sp-5);
+  pointer-events: none;
 }
 
 .runtime-log-dialog {
-  width: min(920px, 94vw);
-  max-height: min(760px, 92vh);
+  width: min(720px, calc(100vw - 32px));
+  min-width: min(420px, calc(100vw - 32px));
+  max-height: min(680px, calc(100vh - 108px));
   background: var(--mac-surface);
   border: 1px solid var(--mac-border);
   border-radius: var(--mac-r-lg);
   box-shadow: var(--mac-elev-3);
   color: var(--mac-fg);
   display: grid;
-  grid-template-rows: auto auto minmax(220px, 1fr) auto auto auto;
+  grid-template-rows: auto auto minmax(180px, 1fr) auto auto auto;
   overflow: hidden;
+  pointer-events: auto;
+  resize: both;
 }
 
 .runtime-log-dialog-head,

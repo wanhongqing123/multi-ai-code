@@ -1,7 +1,11 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { RuntimeState } from '../../electron/preload'
 import { canSendRuntimeLog, getRuntimeStatusLabel } from './ProjectBuildPanel.js'
 import { scrollRuntimeLogToBottom } from '../utils/runtimeLogViewport.js'
+import {
+  filterRuntimeLogLines,
+  formatRuntimeLogFilterSummary,
+} from '../utils/runtimeLogFilter.js'
 
 export interface RuntimeLogDialogProps {
   open: boolean
@@ -28,10 +32,18 @@ function formatRuntimeMeta(state: RuntimeState): string {
 
 export default function RuntimeLogDialog(props: RuntimeLogDialogProps): JSX.Element | null {
   const logRef = useRef<HTMLPreElement | null>(null)
+  const [logFilter, setLogFilter] = useState('')
+  const filteredLog = filterRuntimeLogLines(props.runtimeState.log, logFilter)
+  const logText = props.runtimeState.log.trim().length > 0
+    ? filteredLog.active && filteredLog.text.trim().length === 0
+      ? '没有匹配的运行日志'
+      : filteredLog.text
+    : '暂无运行日志输出'
+  const filterSummary = formatRuntimeLogFilterSummary(filteredLog)
 
   useEffect(() => {
     scrollRuntimeLogToBottom(logRef.current)
-  }, [props.runtimeState.log])
+  }, [logText])
 
   if (!props.open) return null
 
@@ -42,7 +54,6 @@ export default function RuntimeLogDialog(props: RuntimeLogDialogProps): JSX.Elem
     props.sessionStatus
   )
   const stopEnabled = props.runtimeState.status === 'running'
-  const logText = props.runtimeState.log.trim().length > 0 ? props.runtimeState.log : '暂无运行日志输出'
 
   return (
     <div className="runtime-log-dialog-layer" role="presentation">
@@ -72,6 +83,17 @@ export default function RuntimeLogDialog(props: RuntimeLogDialogProps): JSX.Elem
             {getRuntimeStatusLabel(props.runtimeState.status)}
           </span>
           <span>{formatRuntimeMeta(props.runtimeState)}</span>
+        </div>
+
+        <div className="runtime-log-filter">
+          <label htmlFor="runtime-log-filter">过滤日志</label>
+          <input
+            id="runtime-log-filter"
+            value={logFilter}
+            onChange={(event) => setLogFilter(event.target.value)}
+            placeholder="输入关键字，空格分隔"
+          />
+          <span>{filterSummary}</span>
         </div>
 
         <pre ref={logRef} className="runtime-log-dialog-log">{logText}</pre>

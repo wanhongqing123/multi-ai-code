@@ -1838,15 +1838,13 @@ html, body, #root {
 
 .runtime-log-dialog {
   width: min(720px, calc(100vw - 32px));
-  min-width: min(420px, calc(100vw - 32px));
-  max-height: min(680px, calc(100vh - 108px));
   background: var(--mac-surface);
   border: 1px solid var(--mac-border);
   border-radius: var(--mac-r-lg);
   box-shadow: var(--mac-elev-3);
   color: var(--mac-fg);
   display: grid;
-  grid-template-rows: auto auto minmax(180px, 1fr) auto auto auto;
+  grid-template-rows: auto auto auto minmax(180px, 1fr) auto auto auto;
   overflow: hidden;
   pointer-events: auto;
   resize: both;
@@ -1854,6 +1852,7 @@ html, body, #root {
 
 .runtime-log-dialog-head,
 .runtime-log-dialog-status,
+.runtime-log-filter,
 .runtime-log-dialog-comment,
 .runtime-log-dialog-actions {
   padding: var(--mac-sp-4) var(--mac-sp-5);
@@ -1875,6 +1874,37 @@ html, body, #root {
   color: var(--mac-fg-subtle);
   font-size: var(--mac-text-xs);
   border-bottom: 1px solid var(--mac-border-subtle);
+}
+
+.runtime-log-filter {
+  display: grid;
+  grid-template-columns: auto minmax(160px, 1fr) auto;
+  align-items: center;
+  gap: var(--mac-sp-3);
+  border-bottom: 1px solid var(--mac-border-subtle);
+  color: var(--mac-fg-subtle);
+  font-size: var(--mac-text-xs);
+}
+
+.runtime-log-filter label {
+  color: var(--mac-fg-muted);
+  font-weight: var(--mac-weight-medium);
+}
+
+.runtime-log-filter input {
+  min-width: 0;
+  width: 100%;
+  border: 1px solid var(--mac-border);
+  border-radius: var(--mac-r-md);
+  padding: var(--mac-sp-2) var(--mac-sp-3);
+  background: var(--mac-bg);
+  color: var(--mac-fg);
+  font: inherit;
+}
+
+.runtime-log-filter input:focus {
+  outline: 2px solid var(--mac-primary-soft);
+  border-color: var(--mac-primary);
 }
 
 .runtime-log-dialog-log {

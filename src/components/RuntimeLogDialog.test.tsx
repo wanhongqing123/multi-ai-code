@@ -69,6 +69,31 @@ describe('RuntimeLogDialog', () => {
     expect(markup).toContain('停止运行')
   })
 
+  it('renders a runtime log filter control with a line summary', () => {
+    const markup = renderToStaticMarkup(
+      <RuntimeLogDialog
+        open={true}
+        currentProjectName="Demo"
+        currentProjectId="project-1"
+        runtimeState={{
+          ...runtimeState,
+          log: '[apollo] video open failed\n[DLManager] create task'
+        }}
+        sessionId="session-1"
+        sessionStatus="running"
+        comment=""
+        onCommentChange={vi.fn()}
+        onClose={vi.fn()}
+        onStopRuntime={vi.fn()}
+        onSendRuntimeLog={vi.fn()}
+      />
+    )
+
+    expect(markup).toContain('runtime-log-filter')
+    expect(markup).toContain('过滤日志')
+    expect(markup).toContain('共 2 行')
+  })
+
   it('does not render when closed', () => {
     const markup = renderToStaticMarkup(
       <RuntimeLogDialog

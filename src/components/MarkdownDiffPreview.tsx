@@ -1,6 +1,9 @@
-import { useId } from 'react'
+import { Children, isValidElement, useId } from 'react'
+import type { ReactElement, ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import MarkdownMermaidDiagram from './MarkdownMermaidDiagram.js'
+import { isMermaidCodeBlock } from './markdownMermaid.js'
 
 /**
  * Tiny rehype plugin that copies each element's source `position` (carried
@@ -43,6 +46,29 @@ export interface MarkdownDiffPreviewProps {
 }
 
 type Side = 'old' | 'new'
+
+interface CodeBlockPayload {
+  code: string
+  className?: string
+}
+
+function getCodeBlockPayload(children: ReactNode): CodeBlockPayload | null {
+  const child = Children.toArray(children).find((item) => isValidElement(item))
+  if (!isValidElement(child) || child.type !== 'code') return null
+
+  const props = (child as ReactElement<{
+    className?: string
+    children?: ReactNode
+  }>).props
+  const rawChildren = Array.isArray(props.children)
+    ? props.children.join('')
+    : String(props.children ?? '')
+
+  return {
+    code: rawChildren.replace(/\n$/, ''),
+    className: props.className
+  }
+}
 
 /**
  * Builds the scoped CSS that highlights the changed lines for one side. We
@@ -106,6 +132,28 @@ function renderMarkdownBody(
             const safe =
               typeof src === 'string' && /^(https?:|data:image\/)/i.test(src)
             return safe ? <img src={src} alt={alt ?? ''} /> : <span>[image: {alt}]</span>
+          },
+          pre: ({ children, node: _node, className, ref: _ref, ...rest }) => {
+            const payload = getCodeBlockPayload(children)
+            if (payload && isMermaidCodeBlock(payload.code, payload.className)) {
+              const wrapClassName = ['markdown-mermaid-diagram-wrap', className]
+                .filter(Boolean)
+                .join(' ')
+              const sourcePos = (rest as Record<string, unknown>)['data-sourcepos']
+              return (
+                <div
+                  className={wrapClassName}
+                  data-sourcepos={typeof sourcePos === 'string' ? sourcePos : undefined}
+                >
+                  <MarkdownMermaidDiagram chart={payload.code} />
+                </div>
+              )
+            }
+            return (
+              <pre className={className} {...rest}>
+                {children}
+              </pre>
+            )
           }
         }}
       >

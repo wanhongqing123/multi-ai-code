@@ -3018,6 +3018,43 @@ html, body, #root {
 }
 
 /* GFM — tables */
+.md-rendered .markdown-mermaid-diagram-wrap {
+  margin: 12px 0;
+  padding: var(--mac-sp-3);
+  background: var(--mac-bg);
+  border: 1px solid var(--mac-border-subtle);
+  border-radius: var(--mac-r-md);
+  overflow: auto;
+}
+
+.md-rendered .markdown-mermaid-diagram {
+  min-width: 360px;
+}
+
+.md-rendered .markdown-mermaid-svg {
+  display: flex;
+  justify-content: center;
+  min-width: max-content;
+}
+
+.md-rendered .markdown-mermaid-svg svg {
+  max-width: none;
+  height: auto;
+}
+
+.md-rendered .markdown-mermaid-loading,
+.md-rendered .markdown-mermaid-error {
+  font-size: var(--mac-text-xs);
+  color: var(--mac-fg-subtle);
+  line-height: var(--mac-line-normal);
+}
+
+.md-rendered .markdown-mermaid-error {
+  color: var(--mac-danger);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .md-rendered table {
   border-collapse: collapse;
   margin: 12px 0;

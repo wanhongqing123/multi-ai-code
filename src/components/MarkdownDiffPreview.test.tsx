@@ -119,4 +119,24 @@ describe('MarkdownDiffPreview', () => {
     expect(newMatch).not.toBeNull()
     expect(oldMatch![1]).not.toBe(newMatch![1])
   })
+
+  it('renders mermaid sequenceDiagram fences as diagrams in preview mode', () => {
+    const diagram = `\`\`\`mermaid
+sequenceDiagram
+    participant C as GLVideoConsumer
+    participant F as PlatformObjectFactory
+    C->>F: createVideoRenderer(buffer)
+    F-->>C: new GLSwVideoRenderer(Windows)
+\`\`\``
+    const html = renderToStaticMarkup(
+      <MarkdownDiffPreview filePath="docs/guide.md" oldText="" newText={diagram} />
+    )
+
+    expect(html).toContain('markdown-mermaid-diagram')
+    expect(html).toContain('markdown-mermaid-loading')
+    expect(html).not.toContain('<pre')
+    expect(html).not.toContain('GLVideoConsumer')
+    expect(html).not.toContain('createVideoRenderer(buffer)')
+    expect(html).not.toContain('sequenceDiagram')
+  })
 })

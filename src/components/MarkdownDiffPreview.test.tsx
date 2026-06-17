@@ -147,6 +147,7 @@ sequenceDiagram
     participant C as GLVideoConsumer
     participant R as GLSwVideoRenderer
     C->>R: init(buffer)
+    activate R
     deactivate R
 
 关键: 初始化放在 init()。`

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   firstMeaningfulMermaidLine,
+  getRenderableMermaidChart,
   isMermaidCodeBlock,
   isMermaidSequenceDiagram,
   normalizeMixedMermaidMarkdown,
@@ -36,6 +37,17 @@ describe('markdownMermaid', () => {
       trailing: '\n关键: this should stay markdown',
       diagramLineCount: 3
     })
+  })
+
+  it('extracts a renderable chart from mixed mermaid text', () => {
+    const mixed = `sequenceDiagram
+    participant A
+    A->>A: render
+关键: this should stay markdown`
+
+    expect(getRenderableMermaidChart(mixed)).toBe(
+      'sequenceDiagram\n    participant A\n    A->>A: render'
+    )
   })
 
   it('normalizes bare sequence diagrams inside mixed markdown', () => {

@@ -75,6 +75,11 @@ export function splitSequenceDiagramMixedContent(source: string): SequenceDiagra
   }
 }
 
+export function getRenderableMermaidChart(source: string): string {
+  if (!isMermaidSequenceDiagram(source, 'language-mermaid')) return source
+  return splitSequenceDiagramMixedContent(source).diagram
+}
+
 interface MarkdownFence {
   marker: string
   info: string

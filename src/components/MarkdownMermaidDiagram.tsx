@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useState } from 'react'
+import { getRenderableMermaidChart } from './markdownMermaid.js'
 
 function hashSource(source: string): string {
   let hash = 0
@@ -21,9 +22,10 @@ export default function MarkdownMermaidDiagram({
   chart
 }: MarkdownMermaidDiagramProps): JSX.Element {
   const reactId = useId()
+  const renderChart = useMemo(() => getRenderableMermaidChart(chart), [chart])
   const diagramId = useMemo(
-    () => `md-mermaid-${reactId.replace(/:/g, '')}-${hashSource(chart)}`,
-    [chart, reactId]
+    () => `md-mermaid-${reactId.replace(/:/g, '')}-${hashSource(renderChart)}`,
+    [renderChart, reactId]
   )
   const [svg, setSvg] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -42,10 +44,12 @@ export default function MarkdownMermaidDiagram({
         mermaid.initialize({
           startOnLoad: false,
           securityLevel: 'strict',
+          suppressErrorRendering: true,
           theme: dark ? 'dark' : 'default',
           fontFamily: 'Inter, Noto Sans SC, sans-serif'
         })
-        const result = await mermaid.render(diagramId, chart)
+        await mermaid.parse(renderChart)
+        const result = await mermaid.render(diagramId, renderChart)
         if (!cancelled) {
           setSvg(result.svg)
         }
@@ -61,7 +65,7 @@ export default function MarkdownMermaidDiagram({
     return () => {
       cancelled = true
     }
-  }, [chart, diagramId])
+  }, [renderChart, diagramId])
 
   return (
     <div className="markdown-mermaid-diagram" data-diagram-id={diagramId}>

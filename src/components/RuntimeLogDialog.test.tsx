@@ -94,6 +94,29 @@ describe('RuntimeLogDialog', () => {
     expect(markup).toContain('共 2 行')
   })
 
+  it('renders move and edge resize handles for the floating window', () => {
+    const markup = renderToStaticMarkup(
+      <RuntimeLogDialog
+        open={true}
+        currentProjectName="Demo"
+        currentProjectId="project-1"
+        runtimeState={runtimeState}
+        sessionId="session-1"
+        sessionStatus="running"
+        comment=""
+        onCommentChange={vi.fn()}
+        onClose={vi.fn()}
+        onStopRuntime={vi.fn()}
+        onSendRuntimeLog={vi.fn()}
+      />
+    )
+
+    expect(markup).toContain('data-drag-handle="runtime-log-dialog"')
+    for (const edge of ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']) {
+      expect(markup).toContain(`runtime-log-resize-handle-${edge}`)
+    }
+  })
+
   it('does not render when closed', () => {
     const markup = renderToStaticMarkup(
       <RuntimeLogDialog

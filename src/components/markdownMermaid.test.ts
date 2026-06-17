@@ -50,6 +50,38 @@ describe('markdownMermaid', () => {
     )
   })
 
+  it('keeps sequence metadata lines inside the renderable chart', () => {
+    const mixed = `sequenceDiagram
+    title Renderer setup
+    accTitle: Renderer setup sequence
+    accDescr: Shows renderer init order
+    participant A
+    note over A: lower-case note stays in the diagram
+    A->>A: render
+plain prose: this should stay markdown`
+
+    expect(getRenderableMermaidChart(mixed)).toBe(`sequenceDiagram
+    title Renderer setup
+    accTitle: Renderer setup sequence
+    accDescr: Shows renderer init order
+    participant A
+    note over A: lower-case note stays in the diagram
+    A->>A: render`)
+  })
+
+  it('escapes semicolons in sequence text labels before rendering', () => {
+    const mixed = `sequenceDiagram
+    participant R
+    Note over R: branch one; branch two
+    R->>R: upload Y; upload U
+plain prose: this should stay markdown`
+
+    expect(getRenderableMermaidChart(mixed)).toBe(`sequenceDiagram
+    participant R
+    Note over R: branch one#59; branch two
+    R->>R: upload Y#59; upload U`)
+  })
+
   it('normalizes bare sequence diagrams inside mixed markdown', () => {
     const markdown = `# Review
 

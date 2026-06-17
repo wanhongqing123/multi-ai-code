@@ -10,8 +10,37 @@ function hashSource(source: string): string {
   return Math.abs(hash).toString(36)
 }
 
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+interface MermaidParseErrorDetails {
+  hash?: {
+    loc?: {
+      first_line?: number
+      first_column?: number
+    }
+    token?: string
+  }
+}
+
+function isMermaidParseErrorDetails(error: unknown): error is MermaidParseErrorDetails {
+  return typeof error === 'object' && error !== null && 'hash' in error
+}
+
+export function formatMermaidErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error)
+  if (!isMermaidParseErrorDetails(error)) return message
+
+  const details: string[] = []
+  const loc = error.hash?.loc
+  if (typeof loc?.first_line === 'number') {
+    details.push(`line ${loc.first_line}`)
+  }
+  if (typeof loc?.first_column === 'number') {
+    details.push(`column ${loc.first_column}`)
+  }
+  if (error.hash?.token) {
+    details.push(`token ${error.hash.token}`)
+  }
+
+  return details.length > 0 ? `${message} (${details.join(', ')})` : message
 }
 
 export interface MarkdownMermaidDiagramProps {
@@ -55,7 +84,7 @@ export default function MarkdownMermaidDiagram({
         }
       } catch (err) {
         if (!cancelled) {
-          setError(getErrorMessage(err))
+          setError(formatMermaidErrorMessage(err))
         }
       }
     }

@@ -32,10 +32,13 @@ function isSequenceDiagramSyntaxLine(line: string): boolean {
   if (trimmed.startsWith('%%')) return true
   if (/^sequenceDiagram\b/.test(trimmed)) return true
   if (/^autonumber\b/.test(trimmed)) return true
+  if (/^title\s+\S/.test(trimmed)) return true
+  if (/^accTitle\s*:/i.test(trimmed)) return true
+  if (/^accDescr\s*:/i.test(trimmed)) return true
   if (/^(participant|actor)\s+\S+/.test(trimmed)) return true
   if (/^create\s+(participant|actor)\s+\S+/.test(trimmed)) return true
   if (/^(activate|deactivate|destroy)\s+\S+/.test(trimmed)) return true
-  if (/^Note\s+(?:over|right of|left of)\s+.+:/.test(trimmed)) return true
+  if (/^note\s+(?:over|right of|left of)\s+.+:/i.test(trimmed)) return true
   if (/^(loop|alt|else|opt|par|and|critical|option|break|rect)\b/.test(trimmed)) {
     return true
   }
@@ -43,6 +46,37 @@ function isSequenceDiagramSyntaxLine(line: string): boolean {
   if (/^end\b/.test(trimmed)) return true
   if (/^(link|links|properties)\s+\S+/.test(trimmed)) return true
   return isSequenceMessageLine(trimmed)
+}
+
+function escapeMermaidLabelSemicolons(label: string): string {
+  return label.replace(/(?<!#59);/g, '#59;')
+}
+
+function escapeSequenceDiagramLineForRender(line: string): string {
+  const trimmed = line.trim()
+  const colonIndex = line.indexOf(':')
+  if (colonIndex !== -1) {
+    if (
+      /^note\s+/i.test(trimmed) ||
+      /^acc(?:Title|Descr)\s*:/i.test(trimmed) ||
+      isSequenceMessageLine(trimmed)
+    ) {
+      return `${line.slice(0, colonIndex + 1)}${escapeMermaidLabelSemicolons(
+        line.slice(colonIndex + 1)
+      )}`
+    }
+  }
+
+  const titleMatch = line.match(/^(\s*title\s+)(.*)$/)
+  if (titleMatch) {
+    return `${titleMatch[1]}${escapeMermaidLabelSemicolons(titleMatch[2])}`
+  }
+
+  return line
+}
+
+function escapeSequenceDiagramForRender(source: string): string {
+  return splitLines(source).map(escapeSequenceDiagramLineForRender).join('\n')
 }
 
 export interface SequenceDiagramSplit {
@@ -77,7 +111,7 @@ export function splitSequenceDiagramMixedContent(source: string): SequenceDiagra
 
 export function getRenderableMermaidChart(source: string): string {
   if (!isMermaidSequenceDiagram(source, 'language-mermaid')) return source
-  return splitSequenceDiagramMixedContent(source).diagram
+  return escapeSequenceDiagramForRender(splitSequenceDiagramMixedContent(source).diagram)
 }
 
 interface MarkdownFence {

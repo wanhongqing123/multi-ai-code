@@ -139,4 +139,26 @@ sequenceDiagram
     expect(html).not.toContain('createVideoRenderer(buffer)')
     expect(html).not.toContain('sequenceDiagram')
   })
+
+  it('renders mixed prose and bare sequenceDiagram blocks', () => {
+    const markdown = `# Review
+
+sequenceDiagram
+    participant C as GLVideoConsumer
+    participant R as GLSwVideoRenderer
+    C->>R: init(buffer)
+    deactivate R
+
+关键: 初始化放在 init()。`
+    const html = renderToStaticMarkup(
+      <MarkdownDiffPreview filePath="docs/guide.md" oldText="" newText={markdown} />
+    )
+
+    expect(html).toMatch(/<h1[^>]*>Review<\/h1>/)
+    expect(html).toContain('markdown-mermaid-diagram')
+    expect(html).toContain('关键: 初始化放在 init()。')
+    expect(html).not.toContain('<pre')
+    expect(html).not.toContain('sequenceDiagram')
+    expect(html).not.toContain('GLVideoConsumer')
+  })
 })

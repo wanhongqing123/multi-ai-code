@@ -3,7 +3,7 @@ import type { ReactElement, ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import MarkdownMermaidDiagram from './MarkdownMermaidDiagram.js'
-import { isMermaidCodeBlock } from './markdownMermaid.js'
+import { isMermaidCodeBlock, normalizeMixedMermaidMarkdown } from './markdownMermaid.js'
 
 /**
  * Tiny rehype plugin that copies each element's source `position` (carried
@@ -109,6 +109,7 @@ function renderMarkdownBody(
   }
 
   const css = buildHighlightCss(rootId, side, changedLines)
+  const markdownText = normalizeMixedMermaidMarkdown(text)
 
   return (
     <div className={`dv-md-preview-body md-rendered md-side-${side}`} id={rootId}>
@@ -157,7 +158,7 @@ function renderMarkdownBody(
           }
         }}
       >
-        {text}
+        {markdownText}
       </ReactMarkdown>
     </div>
   )

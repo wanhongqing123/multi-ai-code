@@ -11,6 +11,7 @@ function makeSkill(overrides: Partial<Skill> = {}): Skill {
     steps: [],
     source: 'manual',
     candidateId: null,
+    enabled: true,
     createdAt: 0,
     updatedAt: 0,
     lastUsedAt: null,
@@ -121,6 +122,30 @@ describe('runSkill', () => {
     await vi.runAllTimersAsync()
     await p
     expect(bus.listenerCount()).toBe(0)
+  })
+
+  it('captures response chunks during wait-response for pipeline handoff', async () => {
+    const { deps, bus } = makeDeps()
+    const skill = makeSkill({
+      steps: [
+        { type: 'prompt', text: 'find root cause' },
+        { type: 'wait-response', timeoutMs: 600 }
+      ]
+    })
+    const p = runSkill(deps, {
+      sessionId: 's1',
+      skill,
+      vars: {},
+      defaultWaitMs: 100,
+      captureResponse: true
+    })
+    await vi.advanceTimersByTimeAsync(300)
+    bus.fireChunk('s1', 'root cause: missing import')
+    await vi.runAllTimersAsync()
+    const out = await p
+
+    expect(out.ok).toBe(true)
+    expect(out.capturedResponse).toContain('root cause: missing import')
   })
 
   it('touches last_used_at exactly once on a successful run', async () => {

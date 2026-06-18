@@ -1065,8 +1065,8 @@ const api = {
         }>
     },
     skills: {
-      list: () =>
-        ipcRenderer.invoke('habit:skills:list') as Promise<
+      list: (options?: { includeDisabled?: boolean }) =>
+        ipcRenderer.invoke('habit:skills:list', options ?? {}) as Promise<
           Array<{
             id: number
             name: string
@@ -1075,6 +1075,7 @@ const api = {
             steps: unknown[]
             source: string | null
             candidateId: number | null
+            enabled: boolean
             createdAt: number
             updatedAt: number
             lastUsedAt: number | null
@@ -1089,6 +1090,7 @@ const api = {
         steps: unknown[]
         source?: string
         candidateId?: number | null
+        enabled?: boolean
       }) =>
         ipcRenderer.invoke('habit:skills:create', input) as Promise<{ ok: boolean; id: number }>,
       update: (id: number, patch: {
@@ -1096,12 +1098,97 @@ const api = {
         description?: string | null
         trigger?: string | null
         steps?: unknown[]
+        enabled?: boolean
       }) =>
         ipcRenderer.invoke('habit:skills:update', { id, patch }) as Promise<{ ok: boolean }>,
       delete: (id: number) =>
         ipcRenderer.invoke('habit:skills:delete', { id }) as Promise<{ ok: boolean }>,
       touchLastUsed: (id: number) =>
-        ipcRenderer.invoke('habit:skills:touch-last-used', { id }) as Promise<{ ok: boolean }>
+        ipcRenderer.invoke('habit:skills:touch-last-used', { id }) as Promise<{ ok: boolean }>,
+      importDir: (sourceDir?: string) =>
+        ipcRenderer.invoke('habit:skills:import-dir', { sourceDir }) as Promise<{
+          ok: boolean
+          canceled?: boolean
+          imported: number
+          skillIds: number[]
+          error?: string
+        }>
+    },
+    localSkills: {
+      scan: () =>
+        ipcRenderer.invoke('habit:local-skills:scan') as Promise<{
+          sources: Array<{
+            id: string
+            name: string
+            path: string
+            kind: 'default' | 'custom'
+            skillCount: number
+            enabledCount: number
+          }>
+          skills: Array<{
+            id: string
+            name: string
+            description: string | null
+            version: string | null
+            dir: string
+            skillFile: string
+            sourceId: string
+            sourceName: string
+            sourcePath: string
+            enabled: boolean
+            health: 'ok' | 'missing-file' | 'invalid'
+            frontmatter: Record<string, string>
+            markdown: string
+            preview: string
+            updatedAt: string | null
+          }>
+          totals: {
+            discovered: number
+            enabled: number
+            disabled: number
+          }
+          scannedAt: string
+        }>,
+      addSource: (sourceDir?: string) =>
+        ipcRenderer.invoke('habit:local-skills:add-source', { sourceDir }) as Promise<{
+          ok: boolean
+          canceled?: boolean
+          snapshot: unknown
+        }>,
+      setEnabled: (id: string, enabled: boolean) =>
+        ipcRenderer.invoke('habit:local-skills:set-enabled', { id, enabled }) as Promise<{
+          ok: boolean
+          snapshot: unknown
+        }>,
+      openPath: (path: string) =>
+        ipcRenderer.invoke('habit:local-skills:open-path', { path }) as Promise<{
+          ok: boolean
+          error?: string
+        }>
+    },
+    skillPipelines: {
+      list: (targetRepo: string) =>
+        ipcRenderer.invoke('habit:skill-pipelines:list', { targetRepo }) as Promise<
+          Array<{
+            id: string
+            name: string
+            description: string | null
+            nodeCount: number
+            edgeCount: number
+            updatedAt: string
+          }>
+        >,
+      read: (targetRepo: string, id: string) =>
+        ipcRenderer.invoke('habit:skill-pipelines:read', { targetRepo, id }) as Promise<unknown>,
+      save: (targetRepo: string, pipeline: unknown) =>
+        ipcRenderer.invoke('habit:skill-pipelines:save', { targetRepo, pipeline }) as Promise<
+          | { ok: true; pipeline: unknown }
+          | { ok: false; error: string; errors?: string[] }
+        >,
+      delete: (targetRepo: string, id: string) =>
+        ipcRenderer.invoke('habit:skill-pipelines:delete', { targetRepo, id }) as Promise<{
+          ok: boolean
+        }>
     }
   }
 }

@@ -21,6 +21,8 @@ import {
 } from '../orchestrator/prompts.js'
 import { detectMsys } from '../util/msys.js'
 import { rootDir } from '../store/paths.js'
+import { scanLocalSkills } from '../habit/localSkillRegistry.js'
+import { decorateUserMessageWithSkillContext } from '../habit/skillConversationContext.js'
 
 /**
  * PTY chunk debug dumper. Enable by setting env var MULTI_AI_CODE_PTY_DUMP=1
@@ -197,6 +199,15 @@ async function sendMessage(proc: PtyCCProcess, text: string): Promise<void> {
   proc.write('\r')
   await sleep(150)
   proc.write('\r')
+}
+
+async function buildUserMessageForModel(text: string): Promise<string> {
+  try {
+    const snapshot = await scanLocalSkills()
+    return decorateUserMessageWithSkillContext(text, snapshot)
+  } catch {
+    return text
+  }
 }
 
 /** Stream raw input into PTY in small chunks to avoid large-paste truncation. */
@@ -519,7 +530,7 @@ export function registerPtyIpc(): void {
     async (_e, { sessionId, text }: { sessionId: string; text: string }) => {
       const s = sessions.get(sessionId)
       if (!s) return { ok: false, error: 'no session' }
-      await sendMessage(s.proc, text)
+      await sendMessage(s.proc, await buildUserMessageForModel(text))
       return { ok: true }
     }
   )

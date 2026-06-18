@@ -27,12 +27,10 @@ import ProjectBuildPanel, {
 import RuntimeLogDialog from './components/RuntimeLogDialog'
 import TemplatesDialog from './components/TemplatesDialog'
 import HabitMonitorDialog from './habit/HabitMonitorDialog'
+import SkillGraphDialog from './habit/SkillGraphDialog'
+import SkillStudioDialog from './habit/SkillStudioDialog'
 import ScreenSamplerIndicator from './habit/ScreenSamplerIndicator'
 import FirstRunNoticeDialog from './habit/FirstRunNoticeDialog'
-import SkillBar from './habit/SkillBar'
-import SkillRunDialog from './habit/SkillRunDialog'
-import { runSkill as runSkillFn } from './habit/skillRunner'
-import { collectSkillVariables, type Skill } from './habit/skillTypes'
 import { getCliTargetLabel } from './components/cliTarget'
 import OnboardingWizard from './components/OnboardingWizard'
 import DoctorDialog from './components/DoctorDialog'
@@ -208,14 +206,10 @@ function AppShell() {
     useState(false)
   const [showTemplates, setShowTemplates] = useState(false)
   const [showHabitMonitor, setShowHabitMonitor] = useState(false)
+  const [showSkillStudio, setShowSkillStudio] = useState(false)
+  const [showSkillGraphStudio, setShowSkillGraphStudio] = useState(false)
   const [showHabitFirstRun, setShowHabitFirstRun] = useState(false)
-  /** Bumped whenever a skill is created/edited/deleted so SkillBar refetches. */
   const [skillsRefreshNonce, setSkillsRefreshNonce] = useState(0)
-  /** When a skill needs `{var}` values, this drives the SkillRunDialog. */
-  const [pendingSkillRun, setPendingSkillRun] = useState<{
-    skill: Skill
-    vars: string[]
-  } | null>(null)
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [showDoctor, setShowDoctor] = useState(false)
   const [showCmdk, setShowCmdk] = useState(false)
@@ -1278,55 +1272,6 @@ function AppShell() {
     [sessionId, sessionStatus, getPlanAbsPath, planName]
   )
 
-  /**
-   * Executes a multi-step Skill against the current main session. Variables
-   * the user already filled in via the SkillRunDialog are passed in `vars`;
-   * any unfilled placeholders stay literal so the AI can see them.
-   */
-  const runSkill = useCallback(
-    async (skill: Skill, vars: Record<string, string>) => {
-      if (!sessionId || sessionStatus !== 'running') {
-        showToast('会话未启动，无法执行 skill', { level: 'warn' })
-        return
-      }
-      const outcome = await runSkillFn(
-        {
-          sendUser: (sid, text) => window.api.cc.sendUser(sid, text),
-          onData: window.api.cc.onData,
-          touchLastUsed: (id) =>
-            window.api.habit.skills.touchLastUsed(id).then(() => undefined)
-        },
-        { sessionId, skill, vars }
-      )
-      if (outcome.ok) {
-        showToast(`已运行 · ${skill.name}`, { level: 'success' })
-      } else {
-        showToast(
-          `Skill 执行失败 (step ${(outcome.failedStepIndex ?? 0) + 1}): ${outcome.failedReason ?? '未知错误'}`,
-          { level: 'error', duration: 4500 }
-        )
-      }
-      setSkillsRefreshNonce((n) => n + 1)
-    },
-    [sessionId, sessionStatus]
-  )
-
-  /**
-   * Entry point used by Skill Library "试运行" and SkillBar — decides whether
-   * to collect variables first or run immediately.
-   */
-  const handleRunSkillRequest = useCallback(
-    (skill: Skill) => {
-      const vars = collectSkillVariables(skill.steps)
-      if (vars.length > 0) {
-        setPendingSkillRun({ skill, vars })
-      } else {
-        void runSkill(skill, {})
-      }
-    },
-    [runSkill]
-  )
-
   const globalSearchQuickActions = [
     {
       title: '习惯监控',
@@ -1478,6 +1423,13 @@ function AppShell() {
         >
           🧠 习惯监控
         </button>
+        <button
+          className="topbar-btn"
+          onClick={() => setShowSkillStudio(true)}
+          title="扫描本机 Skill，并启用或关闭可用 Skill"
+        >
+          Skill 管理
+        </button>
         <ScreenSamplerIndicator />
         {mainPanelMounted && (
           <button
@@ -1511,7 +1463,6 @@ function AppShell() {
           {theme === 'dark' ? '☀' : '☾'}
         </button>
       </header>
-
       {hasProject && (
         <div className="plan-name-bar">
           <span className="plan-progress-label">📋 方案：</span>
@@ -1556,6 +1507,13 @@ function AppShell() {
             title="导入外部方案 md 文件（会归档到外部原路径）"
           >
             📥 导入外部方案
+          </button>
+          <button
+            className="topbar-btn"
+            onClick={() => setShowSkillGraphStudio(true)}
+            title="拖拽连线编排项目级 Skill Pipeline"
+          >
+            Skill 编排
           </button>
           <button
             className="topbar-btn"
@@ -1609,13 +1567,6 @@ function AppShell() {
 
       <div className="main-split">
         <div className="main-column">
-          <SkillBar
-            sessionId={sessionId}
-            sessionRunning={sessionStatus === 'running'}
-            refreshNonce={skillsRefreshNonce}
-            onNeedsVariables={(skill, vars) => setPendingSkillRun({ skill, vars })}
-            onExecute={(skill) => runSkill(skill, {})}
-          />
           {mainPanelMounted ? (
             <MainPanel
               sessionId={sessionId ?? ''}
@@ -1794,15 +1745,23 @@ function AppShell() {
           mainCliLabel={getCliTargetLabel(aiSettings.ai_cli)}
         />
       )}
-      {pendingSkillRun && (
-        <SkillRunDialog
-          skill={pendingSkillRun.skill}
-          variables={pendingSkillRun.vars}
-          onCancel={() => setPendingSkillRun(null)}
-          onConfirm={async (vars) => {
-            await runSkill(pendingSkillRun.skill, vars)
-            setPendingSkillRun(null)
+      {showSkillStudio && (
+        <SkillStudioDialog
+          onClose={() => {
+            setShowSkillStudio(false)
+            setSkillsRefreshNonce((nonce) => nonce + 1)
           }}
+          sessionId={sessionId}
+          sessionRunning={sessionStatus === 'running'}
+          onSkillsChanged={() => setSkillsRefreshNonce((nonce) => nonce + 1)}
+        />
+      )}
+      {showSkillGraphStudio && (
+        <SkillGraphDialog
+          onClose={() => setShowSkillGraphStudio(false)}
+          targetRepo={targetRepo || null}
+          sessionId={sessionId}
+          sessionRunning={sessionStatus === 'running'}
         />
       )}
       {showHabitFirstRun && (

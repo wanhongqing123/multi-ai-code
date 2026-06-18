@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import {
   collectSkillVariables,
   isValidStep,
+  rowToSkill,
   substituteVariables,
+  type SkillRow,
   type SkillStep
 } from './skills.js'
 
@@ -79,5 +81,28 @@ describe('substituteVariables', () => {
 
   it('does not interpret braces inside replaced values', () => {
     expect(substituteVariables('{a}', { a: '{b}' })).toBe('{b}')
+  })
+})
+
+describe('rowToSkill enabled state', () => {
+  function row(enabled: number): SkillRow {
+    return {
+      id: 1,
+      created_at: 100,
+      updated_at: 200,
+      name: 'Review',
+      description: null,
+      trigger: 'review',
+      steps: JSON.stringify([{ type: 'prompt', text: 'review this' }]),
+      source: 'manual',
+      candidate_id: null,
+      last_used_at: null,
+      enabled
+    }
+  }
+
+  it('maps enabled integer values to booleans', () => {
+    expect(rowToSkill(row(1)).enabled).toBe(true)
+    expect(rowToSkill(row(0)).enabled).toBe(false)
   })
 })

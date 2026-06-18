@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { dialog, ipcMain, shell } from 'electron'
 import {
   loadHabitSettings,
   saveHabitSettings,
@@ -35,9 +35,23 @@ import {
   touchSkillLastUsed,
   updateSkill,
   type CreateSkillInput,
+  type ListSkillsOptions,
   type SkillStep,
   type UpdateSkillInput
 } from './skills.js'
+import { importSkillsFromDirectory } from './skillImportService.js'
+import {
+  deleteSkillPipeline,
+  listSkillPipelines,
+  readSkillPipeline,
+  saveSkillPipeline,
+  type SkillPipeline
+} from './skillGraphStore.js'
+import {
+  addLocalSkillSource,
+  scanLocalSkills,
+  setLocalSkillEnabled
+} from './localSkillRegistry.js'
 
 export function registerHabitIpc(): void {
 
@@ -159,8 +173,8 @@ export function registerHabitIpc(): void {
   })
 
   // ----- skills library -----
-  ipcMain.handle('habit:skills:list', async () => {
-    return listSkills()
+  ipcMain.handle('habit:skills:list', async (_e, options: ListSkillsOptions = {}) => {
+    return listSkills(options)
   })
 
   ipcMain.handle('habit:skills:get', async (_e, { id }: { id: number }) => {
@@ -189,6 +203,89 @@ export function registerHabitIpc(): void {
     'habit:skills:touch-last-used',
     async (_e, { id }: { id: number }) => {
       touchSkillLastUsed(id)
+      return { ok: true as const }
+    }
+  )
+
+  ipcMain.handle(
+    'habit:skills:import-dir',
+    async (_e, { sourceDir }: { sourceDir?: string } = {}) => {
+      let dir = sourceDir
+      if (!dir) {
+        const picked = await dialog.showOpenDialog({
+          title: '选择包含 SKILL.md 的文件夹',
+          properties: ['openDirectory']
+        })
+        if (picked.canceled || picked.filePaths.length === 0) {
+          return { ok: true as const, canceled: true as const, imported: 0, skillIds: [] }
+        }
+        dir = picked.filePaths[0]
+      }
+      return importSkillsFromDirectory(dir)
+    }
+  )
+
+  ipcMain.handle('habit:local-skills:scan', async () => {
+    return scanLocalSkills()
+  })
+
+  ipcMain.handle(
+    'habit:local-skills:add-source',
+    async (_e, { sourceDir }: { sourceDir?: string } = {}) => {
+      let dir = sourceDir
+      if (!dir) {
+        const picked = await dialog.showOpenDialog({
+          title: '选择 Skill 来源目录',
+          properties: ['openDirectory']
+        })
+        if (picked.canceled || picked.filePaths.length === 0) {
+          return { ok: true as const, canceled: true as const, snapshot: await scanLocalSkills() }
+        }
+        dir = picked.filePaths[0]
+      }
+      await addLocalSkillSource(dir)
+      return { ok: true as const, canceled: false as const, snapshot: await scanLocalSkills() }
+    }
+  )
+
+  ipcMain.handle(
+    'habit:local-skills:set-enabled',
+    async (_e, { id, enabled }: { id: string; enabled: boolean }) => {
+      await setLocalSkillEnabled(id, enabled)
+      return { ok: true as const, snapshot: await scanLocalSkills() }
+    }
+  )
+
+  ipcMain.handle('habit:local-skills:open-path', async (_e, { path }: { path: string }) => {
+    const error = await shell.openPath(path)
+    return error ? { ok: false as const, error } : { ok: true as const }
+  })
+
+  ipcMain.handle(
+    'habit:skill-pipelines:list',
+    async (_e, { targetRepo }: { targetRepo: string }) => {
+      return listSkillPipelines(targetRepo)
+    }
+  )
+
+  ipcMain.handle(
+    'habit:skill-pipelines:read',
+    async (_e, { targetRepo, id }: { targetRepo: string; id: string }) => {
+      return readSkillPipeline(targetRepo, id)
+    }
+  )
+
+  ipcMain.handle(
+    'habit:skill-pipelines:save',
+    async (_e, { targetRepo, pipeline }: { targetRepo: string; pipeline: SkillPipeline }) => {
+      return saveSkillPipeline(targetRepo, pipeline)
+    }
+  )
+
+  ipcMain.handle(
+    'habit:skill-pipelines:delete',
+    async (_e, { targetRepo, id }: { targetRepo: string; id: string }) => {
+      await deleteSkillPipeline(targetRepo, id)
       return { ok: true as const }
     }
   )

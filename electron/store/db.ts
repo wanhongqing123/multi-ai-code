@@ -96,6 +96,7 @@ CREATE TABLE IF NOT EXISTS skills (
   steps         TEXT NOT NULL,
   source        TEXT,
   candidate_id  INTEGER,
+  enabled       INTEGER NOT NULL DEFAULT 1,
   last_used_at  INTEGER
 );
 `
@@ -110,6 +111,7 @@ CREATE INDEX IF NOT EXISTS idx_skill_candidates_status ON skill_candidates(statu
 CREATE INDEX IF NOT EXISTS idx_habit_flows_status ON habit_flows(status);
 CREATE INDEX IF NOT EXISTS idx_habit_flows_kind ON habit_flows(kind);
 CREATE INDEX IF NOT EXISTS idx_skills_trigger ON skills(trigger);
+CREATE INDEX IF NOT EXISTS idx_skills_enabled ON skills(enabled);
 CREATE INDEX IF NOT EXISTS idx_skills_last_used_at ON skills(last_used_at DESC);
 `
 
@@ -138,6 +140,7 @@ export function initDb(): Database.Database {
   ensureColumn(db, 'habit_events', 'project_id', 'TEXT')
   ensureColumn(db, 'habit_events', 'repo_path', 'TEXT')
   ensureColumn(db, 'habit_events', 'source_window', 'TEXT')
+  ensureColumn(db, 'skills', 'enabled', 'INTEGER NOT NULL DEFAULT 1')
   try {
     db.prepare('DROP INDEX IF EXISTS idx_managed_chrome_sessions_running').run()
     db.prepare('DROP TABLE IF EXISTS managed_chrome_sessions').run()
@@ -337,4 +340,3 @@ export function recordEvent(e: {
       new Date().toISOString()
     )
 }
-

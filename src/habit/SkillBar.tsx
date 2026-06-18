@@ -126,6 +126,7 @@ export default function SkillBar(props: Props): JSX.Element {
           steps: skill.steps,
           source: null,
           candidateId: null,
+          enabled: true,
           createdAt: 0,
           updatedAt: 0,
           lastUsedAt: skill.lastUsedAt
@@ -147,6 +148,7 @@ export default function SkillBar(props: Props): JSX.Element {
         steps: skill.steps,
         source: null,
         candidateId: null,
+        enabled: true,
         createdAt: 0,
         updatedAt: 0,
         lastUsedAt: skill.lastUsedAt

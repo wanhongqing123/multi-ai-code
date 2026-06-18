@@ -19,16 +19,17 @@ export interface WaitResponseStep {
 
 export type SkillStep = PromptStep | WaitResponseStep
 
-export type SkillSource = 'manual' | 'candidate' | 'imported'
+export type SkillSource = 'manual' | 'candidate' | 'imported' | 'local'
 
 export interface Skill {
-  id: number
+  id: number | string
   name: string
   description: string | null
   trigger: string | null
   steps: SkillStep[]
   source: SkillSource | null
   candidateId: number | null
+  enabled: boolean
   createdAt: number
   updatedAt: number
   lastUsedAt: number | null

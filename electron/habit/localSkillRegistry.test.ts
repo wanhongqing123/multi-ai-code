@@ -1,9 +1,10 @@
-import { mkdtemp, writeFile } from 'fs/promises'
+import { mkdir, mkdtemp, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { describe, expect, it } from 'vitest'
 import {
   addLocalSkillSource,
+  defaultLocalSkillRoots,
   scanLocalSkills,
   setLocalSkillEnabled
 } from './localSkillRegistry.js'
@@ -13,6 +14,36 @@ async function writeSkill(dir: string, markdown: string): Promise<void> {
 }
 
 describe('local skill registry', () => {
+  it('discovers user-level Claude skills from .claude/skills by default', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'mac-local-claude-skills-'))
+    const skillDir = join(home, '.claude', 'skills', 'daily-review')
+    await mkdir(skillDir, { recursive: true })
+    await writeSkill(
+      skillDir,
+      [
+        '---',
+        'name: daily-review',
+        'description: Review daily work habits',
+        '---',
+        '',
+        '# Daily Review'
+      ].join('\n')
+    )
+
+    const snapshot = await scanLocalSkills({
+      defaultRoots: defaultLocalSkillRoots(home),
+      statePath: join(home, 'registry.json')
+    })
+
+    expect(snapshot.skills).toHaveLength(1)
+    expect(snapshot.skills[0]).toMatchObject({
+      name: 'daily-review',
+      description: 'Review daily work habits',
+      sourceName: 'Claude Skills',
+      sourcePath: join(home, '.claude', 'skills')
+    })
+  })
+
   it('discovers SKILL.md packages from roots and parses metadata', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mac-local-skills-'))
     const skillDir = join(root, 'claude-plugins-official', 'superpowers', '5.1.0', 'skills', 'brainstorming')

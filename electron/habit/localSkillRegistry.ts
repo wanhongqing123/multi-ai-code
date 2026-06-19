@@ -69,6 +69,7 @@ export function localSkillRegistryPath(): string {
 
 export function defaultLocalSkillRoots(home: string = homedir()): string[] {
   return [
+    join(home, '.claude', 'skills'),
     join(home, '.claude', 'plugins', 'cache'),
     join(home, '.codex', 'skills'),
     join(home, '.codex', 'superpowers', 'skills'),

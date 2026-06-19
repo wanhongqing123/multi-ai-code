@@ -152,9 +152,9 @@ export default function SkillGraphPanel(props: Props): JSX.Element {
   const skillById = useMemo(() => new Map(skills.map((skill) => [skill.id, skill])), [skills])
 
   const refreshSkills = useCallback(async () => {
-    const snapshot = (await window.api.habit.localSkills.scan()) as LocalSkillSnapshot
+    const snapshot = (await window.api.habit.localSkills.scan({ targetRepo: targetRepo ?? null })) as LocalSkillSnapshot
     setSkills(snapshot.skills.filter((skill) => skill.enabled).map(localSkillToRunnableSkill))
-  }, [])
+  }, [targetRepo])
 
   const refreshPipelines = useCallback(async () => {
     if (!targetRepo) {

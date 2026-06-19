@@ -225,13 +225,23 @@ export function registerHabitIpc(): void {
     }
   )
 
-  ipcMain.handle('habit:local-skills:scan', async () => {
-    return scanLocalSkills()
-  })
+  ipcMain.handle(
+    'habit:local-skills:scan',
+    async (_e, { targetRepo }: { targetRepo?: string | null } = {}) => {
+      return scanLocalSkillsForTarget(targetRepo)
+    }
+  )
+
+  function scanLocalSkillsForTarget(targetRepo?: string | null) {
+    return scanLocalSkills({ projectRoot: targetRepo ?? null })
+  }
 
   ipcMain.handle(
     'habit:local-skills:add-source',
-    async (_e, { sourceDir }: { sourceDir?: string } = {}) => {
+    async (
+      _e,
+      { sourceDir, targetRepo }: { sourceDir?: string; targetRepo?: string | null } = {}
+    ) => {
       let dir = sourceDir
       if (!dir) {
         const picked = await dialog.showOpenDialog({
@@ -239,20 +249,31 @@ export function registerHabitIpc(): void {
           properties: ['openDirectory']
         })
         if (picked.canceled || picked.filePaths.length === 0) {
-          return { ok: true as const, canceled: true as const, snapshot: await scanLocalSkills() }
+          return {
+            ok: true as const,
+            canceled: true as const,
+            snapshot: await scanLocalSkillsForTarget(targetRepo)
+          }
         }
         dir = picked.filePaths[0]
       }
       await addLocalSkillSource(dir)
-      return { ok: true as const, canceled: false as const, snapshot: await scanLocalSkills() }
+      return {
+        ok: true as const,
+        canceled: false as const,
+        snapshot: await scanLocalSkillsForTarget(targetRepo)
+      }
     }
   )
 
   ipcMain.handle(
     'habit:local-skills:set-enabled',
-    async (_e, { id, enabled }: { id: string; enabled: boolean }) => {
+    async (
+      _e,
+      { id, enabled, targetRepo }: { id: string; enabled: boolean; targetRepo?: string | null }
+    ) => {
       await setLocalSkillEnabled(id, enabled)
-      return { ok: true as const, snapshot: await scanLocalSkills() }
+      return { ok: true as const, snapshot: await scanLocalSkillsForTarget(targetRepo) }
     }
   )
 

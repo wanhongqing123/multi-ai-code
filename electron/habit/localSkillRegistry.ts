@@ -1,11 +1,12 @@
 import { createHash } from 'crypto'
+import type { Dirent } from 'fs'
 import { homedir } from 'os'
 import { basename, dirname, join, normalize, resolve } from 'path'
 import { promises as fs } from 'fs'
 import { rootDir } from '../store/paths.js'
 
 export type LocalSkillHealth = 'ok' | 'missing-file' | 'invalid'
-export type LocalSkillSourceKind = 'default' | 'custom'
+export type LocalSkillSourceKind = 'default' | 'project' | 'custom'
 
 export interface LocalSkillSource {
   id: string
@@ -53,6 +54,7 @@ interface LocalSkillRegistryState {
 
 export interface LocalSkillRegistryOptions {
   defaultRoots?: string[]
+  projectRoot?: string | null
   statePath?: string
   maxDepth?: number
 }
@@ -75,6 +77,14 @@ export function defaultLocalSkillRoots(home: string = homedir()): string[] {
     join(home, '.codex', 'superpowers', 'skills'),
     join(home, '.codex', 'plugins', 'cache'),
     join(home, '.agents', 'skills')
+  ]
+}
+
+export function projectLocalSkillRoots(projectRoot: string): string[] {
+  return [
+    join(projectRoot, '.claude', 'skills'),
+    join(projectRoot, '.codex', 'skills'),
+    join(projectRoot, '.multi-ai-code', 'skills')
   ]
 }
 
@@ -109,6 +119,20 @@ async function existsFile(path: string): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+async function directoryKey(path: string): Promise<string> {
+  try {
+    return normalize(await fs.realpath(path)).toLowerCase()
+  } catch {
+    return normalize(resolve(path)).toLowerCase()
+  }
+}
+
+async function isDirectoryLike(parent: string, entry: Dirent): Promise<boolean> {
+  if (entry.isDirectory()) return true
+  if (!entry.isSymbolicLink()) return false
+  return existsDir(join(parent, entry.name))
 }
 
 async function readState(statePath: string): Promise<LocalSkillRegistryState> {
@@ -154,6 +178,21 @@ function splitFrontmatter(markdown: string): {
 
 function sourceNameForRoot(root: string, kind: LocalSkillSourceKind): string {
   const normalized = normalize(root).toLowerCase()
+  if (kind === 'project') {
+    if (normalized.includes(`${normalize('.claude')}\\`) || normalized.includes('/.claude/')) {
+      return 'Project Claude Skills'
+    }
+    if (normalized.includes(`${normalize('.codex')}\\`) || normalized.includes('/.codex/')) {
+      return 'Project Codex Skills'
+    }
+    if (
+      normalized.includes(`${normalize('.multi-ai-code')}\\`) ||
+      normalized.includes('/.multi-ai-code/')
+    ) {
+      return 'Project Multi-AI Skills'
+    }
+    return `Project Skills - ${basename(root)}`
+  }
   if (normalized.includes(`${normalize('.claude')}\\`) || normalized.includes('/.claude/')) {
     return 'Claude Skills'
   }
@@ -174,7 +213,7 @@ async function findSkillDirs(root: string, maxDepth: number): Promise<string[]> 
 
   while (queue.length > 0) {
     const { dir, depth } = queue.shift()!
-    const key = normalize(resolve(dir)).toLowerCase()
+    const key = await directoryKey(dir)
     if (seen.has(key)) continue
     seen.add(key)
 
@@ -184,15 +223,15 @@ async function findSkillDirs(root: string, maxDepth: number): Promise<string[]> 
     }
     if (depth >= maxDepth) continue
 
-    let entries: Array<{ name: string; isDirectory: () => boolean }>
+    let entries: Dirent[]
     try {
       entries = await fs.readdir(dir, { withFileTypes: true })
     } catch {
       continue
     }
     for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-      if (!entry.isDirectory()) continue
       if (entry.name === 'node_modules' || entry.name === '.git') continue
+      if (!(await isDirectoryLike(dir, entry))) continue
       queue.push({ dir: join(dir, entry.name), depth: depth + 1 })
     }
   }
@@ -257,9 +296,11 @@ export async function scanLocalSkills(
   const state = await readState(statePath)
   const disabledIds = new Set(state.disabledSkillIds)
   const defaultRoots = uniquePaths(options.defaultRoots ?? defaultLocalSkillRoots())
+  const projectRoots = uniquePaths(options.projectRoot ? projectLocalSkillRoots(options.projectRoot) : [])
   const customRoots = uniquePaths(state.customRoots)
   const roots = [
     ...defaultRoots.map((path) => ({ path, kind: 'default' as const })),
+    ...projectRoots.map((path) => ({ path, kind: 'project' as const })),
     ...customRoots.map((path) => ({ path, kind: 'custom' as const }))
   ]
 
@@ -278,7 +319,7 @@ export async function scanLocalSkills(
     }
     const dirs = await findSkillDirs(root.path, options.maxDepth ?? 8)
     for (const dir of dirs) {
-      const key = normalize(resolve(dir)).toLowerCase()
+      const key = `${source.id}:${await directoryKey(dir)}`
       if (seenSkillDirs.has(key)) continue
       seenSkillDirs.add(key)
       const skill = await readSkillPackage(dir, source, disabledIds)

@@ -21,8 +21,6 @@ import {
 } from '../orchestrator/prompts.js'
 import { detectMsys } from '../util/msys.js'
 import { rootDir } from '../store/paths.js'
-import { scanLocalSkills } from '../habit/localSkillRegistry.js'
-import { decorateUserMessageWithSkillContext } from '../habit/skillConversationContext.js'
 
 /**
  * PTY chunk debug dumper. Enable by setting env var MULTI_AI_CODE_PTY_DUMP=1
@@ -87,13 +85,15 @@ export interface SpawnRequest {
   projectId: string
   projectDir: string
   targetRepo: string
-  planName: string
+  planName?: string
+  /** 'none' starts a raw project CLI session without plan prompt injection. */
+  planMode?: 'plan' | 'none'
   /** Absolute path resolved via resolvePlanArtifactAbs. */
-  planAbsPath: string
+  planAbsPath?: string
   /** true when plan file does not yet exist on disk. */
-  planPending: boolean
+  planPending?: boolean
   /** First user message to feed after kickoff. */
-  initialUserMessage: string
+  initialUserMessage?: string
   /** CLI binary (claude | codex). */
   command: string
   /** CLI args. */
@@ -201,15 +201,6 @@ async function sendMessage(proc: PtyCCProcess, text: string): Promise<void> {
   proc.write('\r')
 }
 
-async function buildUserMessageForModel(text: string): Promise<string> {
-  try {
-    const snapshot = await scanLocalSkills()
-    return decorateUserMessageWithSkillContext(text, snapshot)
-  } catch {
-    return text
-  }
-}
-
 export function getSessionForProject(projectId: string): {
   sessionId: string
   targetRepo: string
@@ -231,7 +222,7 @@ export async function sendUserMessageToSession(
 ): Promise<{ ok: boolean; error?: string }> {
   const session = sessions.get(sessionId)
   if (!session) return { ok: false, error: 'no session' }
-  await sendMessage(session.proc, await buildUserMessageForModel(text))
+  await sendMessage(session.proc, text)
   return { ok: true }
 }
 
@@ -270,7 +261,12 @@ function rejectPendingExternalReview(sessionId: string, message: string): void {
 
 export function registerPtyIpc(): void {
   ipcMain.handle('cc:spawn', async (_e, req: SpawnRequest) => {
-    if (!req.targetRepo || !req.planAbsPath || typeof req.initialUserMessage !== 'string') {
+    const planMode = req.planMode ?? 'plan'
+    const hasPlan = planMode !== 'none'
+    if (
+      !req.targetRepo ||
+      (hasPlan && (!req.planAbsPath || typeof req.initialUserMessage !== 'string'))
+    ) {
       return {
         ok: false,
         error:
@@ -338,7 +334,7 @@ export function registerPtyIpc(): void {
       projectDir: req.projectDir,
       targetRepo: req.targetRepo,
       sessionId: req.sessionId,
-      planName: req.planName,
+      planName: req.planName ?? '',
       command: req.command,
       dumpStream
     }
@@ -434,6 +430,10 @@ export function registerPtyIpc(): void {
       return { ok: true }
     }
 
+    if (!hasPlan) {
+      return { ok: true }
+    }
+
     // Inject system prompt after CC TUI boots.
     setTimeout(async () => {
       try {
@@ -460,18 +460,18 @@ export function registerPtyIpc(): void {
 
         const sysPrompt = await buildSystemPrompt({
           projectDir: req.projectDir,
-          artifactPath: req.planAbsPath,
+          artifactPath: req.planAbsPath ?? '',
           projectName,
           targetRepo: req.targetRepo,
           stageCwd: finalCwd,
-          planPending: req.planPending
+          planPending: req.planPending ?? false
         })
 
         const injection = planSystemPromptInjection({
           command: req.command === 'codex' ? 'codex' : 'claude',
           cwd: finalCwd,
           systemPrompt: sysPrompt,
-          initialUserMessage: req.initialUserMessage
+          initialUserMessage: req.initialUserMessage ?? ''
         })
         await fs.mkdir(injection.writeDir, { recursive: true })
         await fs.writeFile(injection.writePath, injection.fileContents, 'utf8')

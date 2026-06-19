@@ -58,17 +58,16 @@ describe('skill conversation context', () => {
     expect(context).toContain('不要主动使用、加载或触发')
   })
 
-  it('decorates each user message without turning it into an apply command', () => {
+  it('does not inject skill availability into outgoing user messages', () => {
     const decorated = decorateUserMessageWithSkillContext(
       '请帮我检查这个项目',
       snapshot([skill({ name: 'brainstorming', enabled: true })])
     )
 
-    expect(decorated).toContain('Multi-AI Code Skill 可用性')
-    expect(decorated).toContain('<用户消息>')
-    expect(decorated).toContain('请帮我检查这个项目')
-    expect(decorated).not.toContain('请在当前 AICLI 会话中应用')
-    expect(decorated).not.toContain('请清空当前 AICLI 会话中的 Skill 禁用配置')
+    expect(decorated).toBe('请帮我检查这个项目')
+    expect(decorated).not.toContain('Multi-AI Code Skill 可用性')
+    expect(decorated).not.toContain('brainstorming')
+    expect(decorated).not.toContain('<用户消息>')
   })
 
   it('leaves user messages unchanged when no skills are discovered', () => {

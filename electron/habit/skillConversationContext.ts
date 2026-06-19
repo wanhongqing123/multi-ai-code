@@ -36,16 +36,7 @@ export function buildSkillAvailabilityContext(snapshot: LocalSkillSnapshot): str
 
 export function decorateUserMessageWithSkillContext(
   userMessage: string,
-  snapshot: LocalSkillSnapshot
+  _snapshot: LocalSkillSnapshot
 ): string {
-  const context = buildSkillAvailabilityContext(snapshot)
-  if (!context) return userMessage
-
-  return [
-    context,
-    '',
-    '<用户消息>',
-    userMessage,
-    '</用户消息>'
-  ].join('\n')
+  return userMessage
 }

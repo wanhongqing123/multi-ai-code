@@ -1,7 +1,7 @@
 import type { Skill } from './skillTypes'
 
 export type LocalSkillHealth = 'ok' | 'missing-file' | 'invalid'
-export type LocalSkillSourceKind = 'default' | 'custom'
+export type LocalSkillSourceKind = 'default' | 'project' | 'custom'
 
 export interface LocalSkillSource {
   id: string

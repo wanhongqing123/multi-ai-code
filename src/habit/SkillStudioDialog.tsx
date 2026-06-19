@@ -2,6 +2,7 @@ import SkillLibraryPanel from './SkillLibraryPanel'
 
 interface Props {
   onClose: () => void
+  targetRepo: string | null
   sessionId: string | null
   sessionRunning: boolean
   /** Bump after any skill list mutation so SkillBar refreshes. */
@@ -9,7 +10,7 @@ interface Props {
 }
 
 export default function SkillStudioDialog(props: Props): JSX.Element {
-  const { onClose, onSkillsChanged } = props
+  const { onClose, onSkillsChanged, targetRepo } = props
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -22,7 +23,7 @@ export default function SkillStudioDialog(props: Props): JSX.Element {
         </div>
 
         <div className="habit-tab-body">
-          <SkillLibraryPanel onChanged={onSkillsChanged} />
+          <SkillLibraryPanel targetRepo={targetRepo} onChanged={onSkillsChanged} />
         </div>
       </div>
     </div>

@@ -21,4 +21,15 @@ describe('SkillLibraryPanel structure', () => {
     expect(source).not.toContain('查看文件')
     expect(source).not.toContain('toggleSkill(detailSkill)')
   })
+
+  it('passes the current project root when scanning local skills', () => {
+    const source = readFileSync(
+      fileURLToPath(new URL('./SkillLibraryPanel.tsx', import.meta.url)),
+      'utf8'
+    )
+
+    expect(source).toContain('targetRepo: string | null')
+    expect(source).toContain('window.api.habit.localSkills.scan({ targetRepo: targetRepo ?? null })')
+    expect(source).toContain('window.api.habit.localSkills.setEnabled(skill.id, !skill.enabled, {')
+  })
 })

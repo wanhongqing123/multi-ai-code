@@ -290,13 +290,15 @@ export interface SpawnRequest {
   projectId: string
   projectDir: string
   targetRepo: string
-  planName: string
+  planName?: string
+  /** 'none' starts a raw project CLI session without plan prompt injection. */
+  planMode?: 'plan' | 'none'
   /** Absolute path resolved via resolvePlanArtifactAbs. */
-  planAbsPath: string
+  planAbsPath?: string
   /** true when plan file does not yet exist on disk. */
-  planPending: boolean
+  planPending?: boolean
   /** First user message to feed after kickoff. */
-  initialUserMessage: string
+  initialUserMessage?: string
   /** CLI binary (claude | codex). */
   command: string
   /** CLI args. */
@@ -1228,13 +1230,13 @@ const api = {
         }>
     },
     localSkills: {
-      scan: () =>
-        ipcRenderer.invoke('habit:local-skills:scan') as Promise<{
+      scan: (options?: { targetRepo?: string | null }) =>
+        ipcRenderer.invoke('habit:local-skills:scan', options ?? {}) as Promise<{
           sources: Array<{
             id: string
             name: string
             path: string
-            kind: 'default' | 'custom'
+            kind: 'default' | 'project' | 'custom'
             skillCount: number
             enabledCount: number
           }>
@@ -1262,14 +1264,21 @@ const api = {
           }
           scannedAt: string
         }>,
-      addSource: (sourceDir?: string) =>
-        ipcRenderer.invoke('habit:local-skills:add-source', { sourceDir }) as Promise<{
+      addSource: (sourceDir?: string, options?: { targetRepo?: string | null }) =>
+        ipcRenderer.invoke('habit:local-skills:add-source', {
+          sourceDir,
+          targetRepo: options?.targetRepo ?? null
+        }) as Promise<{
           ok: boolean
           canceled?: boolean
           snapshot: unknown
         }>,
-      setEnabled: (id: string, enabled: boolean) =>
-        ipcRenderer.invoke('habit:local-skills:set-enabled', { id, enabled }) as Promise<{
+      setEnabled: (id: string, enabled: boolean, options?: { targetRepo?: string | null }) =>
+        ipcRenderer.invoke('habit:local-skills:set-enabled', {
+          id,
+          enabled,
+          targetRepo: options?.targetRepo ?? null
+        }) as Promise<{
           ok: boolean
           snapshot: unknown
         }>,

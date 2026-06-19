@@ -1,4 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import ScheduledTaskEditorDialog from './ScheduledTaskEditorDialog'
 import { createDefaultScheduledTaskDraft } from './scheduledTaskViewModel'
@@ -30,5 +32,45 @@ describe('ScheduledTaskEditorDialog', () => {
     expect(markup).toContain('最终发送给 AICLI')
     expect(markup).toContain('任务名称：每日代码巡检')
     expect(markup).toContain('不要提交 git')
+  })
+
+  it('gives the create editor and AICLI goal input more working room', () => {
+    const draft = createDefaultScheduledTaskDraft('project-1')
+    const markup = renderToStaticMarkup(
+      <ScheduledTaskEditorDialog
+        mode="create"
+        draft={draft}
+        targetRepo="E:\\OpenSource\\multi-ai-code"
+        onChange={() => {}}
+        onCancel={() => {}}
+        onSave={() => {}}
+      />
+    )
+    const styles = readFileSync(
+      fileURLToPath(new URL('../styles.css', import.meta.url)),
+      'utf8'
+    )
+
+    expect(markup).toContain('class="scheduled-task-goal-input"')
+    expect(styles).toContain('width: min(1380px, calc(100vw - 40px));')
+    expect(styles).toContain('height: min(900px, calc(100vh - 32px));')
+    expect(styles).toContain('.scheduled-task-goal-input {\n  min-height: 168px;')
+  })
+
+  it('auto-resizes the AICLI goal textarea as content changes', () => {
+    const source = readFileSync(
+      fileURLToPath(new URL('./ScheduledTaskEditorDialog.tsx', import.meta.url)),
+      'utf8'
+    )
+    const styles = readFileSync(
+      fileURLToPath(new URL('../styles.css', import.meta.url)),
+      'utf8'
+    )
+
+    expect(source).toContain('goalTextareaRef')
+    expect(source).toContain('adjustGoalTextareaHeight')
+    expect(source).toContain('ref={goalTextareaRef}')
+    expect(source).toContain('onInput={adjustGoalTextareaHeight}')
+    expect(styles).toContain('.scheduled-task-goal-input {\n  min-height: 168px;\n  overflow: hidden;')
   })
 })

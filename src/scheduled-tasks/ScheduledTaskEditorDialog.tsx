@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useRef } from 'react'
 import type { CreateScheduledTaskInput, ScheduledTaskScheduleType } from '../../electron/preload'
 import {
   DEFAULT_SCHEDULED_TASK_INSTRUCTIONS,
@@ -23,6 +24,18 @@ const COMMON_INSTRUCTIONS = [
 export default function ScheduledTaskEditorDialog(props: Props): JSX.Element {
   const { draft, mode, targetRepo, onCancel, onChange, onSave } = props
   const preview = buildScheduledTaskPreviewPrompt(draft, targetRepo)
+  const goalTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+
+  const adjustGoalTextareaHeight = useCallback(() => {
+    const textarea = goalTextareaRef.current
+    if (!textarea) return
+    textarea.style.height = 'auto'
+    textarea.style.height = `${textarea.scrollHeight}px`
+  }, [])
+
+  useEffect(() => {
+    adjustGoalTextareaHeight()
+  }, [adjustGoalTextareaHeight, draft.goal])
 
   function toggleInstruction(instruction: string): void {
     const exists = draft.instructions.includes(instruction)
@@ -106,7 +119,10 @@ export default function ScheduledTaskEditorDialog(props: Props): JSX.Element {
             <label>
               <span>让 AICLI 做什么</span>
               <textarea
+                ref={goalTextareaRef}
+                className="scheduled-task-goal-input"
                 value={draft.goal}
+                onInput={adjustGoalTextareaHeight}
                 onChange={(event) => onChange({ goal: event.target.value })}
                 placeholder="检查当前项目最近的代码变更，找出潜在风险。"
               />

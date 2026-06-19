@@ -3,6 +3,7 @@ import type { LocalSkillPackage, LocalSkillSnapshot, LocalSkillSource } from './
 import SkillMarkdownPreview from './SkillMarkdownPreview'
 
 interface Props {
+  targetRepo: string | null
   /** Bump after any skill enable/disable mutation so downstream UI refreshes. */
   onChanged: () => void
 }
@@ -29,7 +30,7 @@ function shortPath(path: string): string {
 }
 
 export default function SkillLibraryPanel(props: Props): JSX.Element {
-  const { onChanged } = props
+  const { onChanged, targetRepo } = props
   const [snapshot, setSnapshot] = useState<LocalSkillSnapshot>(() => emptySnapshot())
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [detailSkillId, setDetailSkillId] = useState<string | null>(null)
@@ -42,14 +43,14 @@ export default function SkillLibraryPanel(props: Props): JSX.Element {
   const refresh = useCallback(async () => {
     setBusy(true)
     try {
-      const next = await window.api.habit.localSkills.scan()
+      const next = await window.api.habit.localSkills.scan({ targetRepo: targetRepo ?? null })
       setSnapshot(next as LocalSkillSnapshot)
       setSelectedId((current) => current ?? next.skills[0]?.id ?? null)
       setMessage(`已扫描到 ${next.totals.discovered} 个 Skill`)
     } finally {
       setBusy(false)
     }
-  }, [])
+  }, [targetRepo])
 
   useEffect(() => {
     void refresh()
@@ -98,7 +99,9 @@ export default function SkillLibraryPanel(props: Props): JSX.Element {
   async function toggleSkill(skill: LocalSkillPackage): Promise<void> {
     setBusy(true)
     try {
-      const result = await window.api.habit.localSkills.setEnabled(skill.id, !skill.enabled)
+      const result = await window.api.habit.localSkills.setEnabled(skill.id, !skill.enabled, {
+        targetRepo: targetRepo ?? null
+      })
       if (result.snapshot) {
         setSnapshot(result.snapshot as LocalSkillSnapshot)
         setMessage(`${skill.name} 已${skill.enabled ? '禁用' : '启用'}`)
@@ -119,7 +122,9 @@ export default function SkillLibraryPanel(props: Props): JSX.Element {
     try {
       let nextSnapshot: LocalSkillSnapshot | null = null
       for (const skill of targets) {
-        const result = await window.api.habit.localSkills.setEnabled(skill.id, enabled)
+        const result = await window.api.habit.localSkills.setEnabled(skill.id, enabled, {
+          targetRepo: targetRepo ?? null
+        })
         if (result.snapshot) nextSnapshot = result.snapshot as LocalSkillSnapshot
       }
       if (nextSnapshot) setSnapshot(nextSnapshot)
@@ -271,7 +276,7 @@ export default function SkillLibraryPanel(props: Props): JSX.Element {
 
       <div className="skill-manager-apply-bar">
         <span>
-          Skill 启用/禁用配置会自动附加到后续通过 Multi-AI Code 发送给 AICLI 的每条消息中，不再单独发送“应用”指令。
+          Skill 启用/禁用配置会保存在本地，暂时不会自动发送给 AICLI。
         </span>
       </div>
 

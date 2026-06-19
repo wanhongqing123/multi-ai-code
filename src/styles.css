@@ -7252,18 +7252,18 @@ html, body, #root {
   gap: 8px;
 }
 .scheduled-task-editor-modal {
-  width: min(1220px, calc(100vw - 64px));
-  height: min(820px, calc(100vh - 48px));
-  max-width: calc(100vw - 64px);
-  max-height: calc(100vh - 48px);
+  width: min(1380px, calc(100vw - 40px));
+  height: min(900px, calc(100vh - 32px));
+  max-width: calc(100vw - 40px);
+  max-height: calc(100vh - 32px);
 }
 .scheduled-task-editor {
   display: grid;
-  grid-template-columns: 246px minmax(420px, 1fr) 310px;
+  grid-template-columns: 260px minmax(520px, 1fr) 340px;
   gap: 20px;
   min-height: 0;
   overflow: hidden;
-  padding: 24px 30px 22px;
+  padding: 26px 32px 24px;
 }
 .scheduled-task-steps,
 .scheduled-task-preview {
@@ -7344,6 +7344,10 @@ html, body, #root {
 .scheduled-task-form textarea {
   min-height: 94px;
   resize: vertical;
+}
+.scheduled-task-goal-input {
+  min-height: 168px;
+  overflow: hidden;
 }
 .scheduled-task-check-grid {
   display: grid;

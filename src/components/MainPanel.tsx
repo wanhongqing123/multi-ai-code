@@ -47,6 +47,8 @@ export interface MainPanelProps {
   status: 'idle' | 'running' | 'exited'
   /** Disabled everything while session is spawning or no project. */
   disabled?: boolean
+  /** Disable code review actions while keeping terminal controls available. */
+  diffReviewDisabled?: boolean
   /** Disable only the repo-view button. */
   repoViewDisabled?: boolean
 }
@@ -245,7 +247,7 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
           <button
             className="tile-btn"
             onClick={props.onOpenDiff}
-            disabled={props.disabled || props.status !== 'running'}
+            disabled={props.disabled || props.diffReviewDisabled || props.status !== 'running'}
             title="打开代码审查（把批注回灌给当前会话）"
           >
             代码审查

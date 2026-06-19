@@ -12,6 +12,11 @@ import {
   nextRuntimeLogDialogOpenAfterSendResult
 } from './utils/runtimeLogDialogState'
 import { selectVisibleRuntimeState } from './utils/runtimeStateSelection'
+import {
+  canStartMainSession,
+  formatMainSessionPlanLabel,
+  NO_PLAN_SELECT_VALUE
+} from './utils/mainSessionPlanMode'
 import MainPanel from './components/MainPanel'
 import MainBootGate, { type BootGatePhase } from './components/MainBootGate'
 import ProjectPicker, { type ProjectInfo } from './components/ProjectPicker'
@@ -176,6 +181,7 @@ function AppShell() {
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null)
   const [showProjectPicker, setShowProjectPicker] = useState(false)
   const [planName, setPlanName] = useState('')
+  const [noPlanMode, setNoPlanMode] = useState(false)
   const [showErrors, setShowErrors] = useState(false)
   const [showAiSettings, setShowAiSettings] = useState(false)
   const [aiSettings, setAiSettings] = useState<AiSettings>({ ai_cli: 'claude' })
@@ -450,6 +456,7 @@ function AppShell() {
     setShowGlobalSearch(false)
     setShowBuildPanel(false)
     setPlanName('')
+    setNoPlanMode(false)
     setPreviewImport(null)
     setPlanReview(null)
     setDiffReviewOpen(false)
@@ -570,6 +577,12 @@ function AppShell() {
     DEFAULT_RUNTIME_STATE
   )
   const hasProject = currentProject !== null
+  const canStartCurrentMainSession = canStartMainSession(
+    currentProjectId,
+    noPlanMode,
+    planName
+  )
+  const mainSessionPlanLabel = formatMainSessionPlanLabel(noPlanMode, planName)
   const runtimeStartBlockedReason = getRuntimeStartBlockedReason(
     currentProjectId,
     projectRuntimeConfigReady,
@@ -796,7 +809,7 @@ function AppShell() {
   )
 
   const handleStart = useCallback(async (mode: 'new' | 'resume' = 'new') => {
-    if (!currentProjectId || !planName.trim()) return
+    if (!currentProjectId || !canStartMainSession(currentProjectId, noPlanMode, planName)) return
     if (!aiSettingsReady) {
       showToast(aiSettingsLoadError ?? '主会话 AI 设置尚未加载完成', { level: 'warn' })
       return
@@ -811,14 +824,18 @@ function AppShell() {
       return
     }
     setGatePhase({ kind: 'spawning', mode })
-    const normalizedPlanName = planName.trim()
-    const planAbsPath = getPlanAbsPath(normalizedPlanName)
-    const planExists = planList.some((p) => p.name === normalizedPlanName)
-    const initialUserMessage = formatInitialMessage({
-      planName: normalizedPlanName,
-      planAbsPath,
-      planExists
-    })
+    const hasPlan = !noPlanMode
+    const normalizedPlanName = hasPlan ? planName.trim() : ''
+    const planAbsPath = hasPlan ? getPlanAbsPath(normalizedPlanName) : undefined
+    const planExists = hasPlan && planList.some((p) => p.name === normalizedPlanName)
+    const initialUserMessage =
+      hasPlan && planAbsPath
+        ? formatInitialMessage({
+            planName: normalizedPlanName,
+            planAbsPath,
+            planExists
+          })
+        : undefined
     const command = aiSettings.command ?? aiSettings.ai_cli ?? 'claude'
     const args = buildCliLaunchArgs(
       aiSettings.ai_cli ?? 'claude',
@@ -836,8 +853,9 @@ function AppShell() {
       projectDir: pDir,
       targetRepo: proj.target_repo,
       planName: normalizedPlanName,
+      planMode: hasPlan ? 'plan' : 'none',
       planAbsPath,
-      planPending: !planExists,
+      planPending: hasPlan ? !planExists : false,
       initialUserMessage,
       command,
       args,
@@ -853,7 +871,7 @@ function AppShell() {
       return
     }
     setMainPanelMounted(true)
-  }, [currentProjectId, planName, planList, projects, aiSettings, aiSettingsReady, aiSettingsLoadError, getPlanAbsPath])
+  }, [currentProjectId, noPlanMode, planName, planList, projects, aiSettings, aiSettingsReady, aiSettingsLoadError, getPlanAbsPath])
 
   const handleStop = useCallback(async () => {
     if (!sessionId) return
@@ -1031,19 +1049,28 @@ function AppShell() {
 
   const onPlanSelect = useCallback(
     async (value: string) => {
+      const currentValue = noPlanMode ? NO_PLAN_SELECT_VALUE : planName
       // Block plan switching while session is running. The running CLI's
       // artifact path is baked at spawn time; a live switch would leave
       // the AI writing to the old target.
-      if (value !== planName && sessionStatus === 'running') {
+      if (value !== currentValue && sessionStatus === 'running') {
         alert('会话正在运行，请先停止（Kill）后再切换方案。')
         return
       }
       // Clear diff annotations when switching to a different plan — they
       // were gathered against the previous plan's diff context.
-      if (value !== planName) {
+      if (value !== currentValue) {
         setDiffAnnotations([])
         setDiffGeneralNote('')
       }
+      if (value === NO_PLAN_SELECT_VALUE) {
+        setNoPlanMode(true)
+        setPlanName('')
+        setPlanReview(null)
+        setDiffReviewOpen(false)
+        return
+      }
+      setNoPlanMode(false)
       if (value === '__NEW__') {
         setPlanName('')
         return
@@ -1060,7 +1087,7 @@ function AppShell() {
       setPlanName(value)
       setPlanReview({ path: r.path ?? value, content: r.content ?? '' })
     },
-    [projectDir, planName, sessionStatus]
+    [projectDir, noPlanMode, planName, sessionStatus]
   )
 
   const onImportExternal = useCallback(async () => {
@@ -1093,6 +1120,7 @@ function AppShell() {
     }
     const list = await window.api.plan.list(projectDir)
     if (list.ok) setPlanList(list.items)
+    setNoPlanMode(false)
     setPlanName(reg.name)
     const cur = await window.api.artifact.readCurrent(projectDir, 1, reg.name)
     if (cur.ok) {
@@ -1162,8 +1190,12 @@ function AppShell() {
       showToast('本项目没有 target_repo 路径，无法打开代码审查', { level: 'warn' })
       return
     }
+    if (noPlanMode) {
+      showToast('无方案模式下暂不支持代码审查批注，请先切换到具体方案。', { level: 'warn' })
+      return
+    }
     setDiffReviewOpen(true)
-  }, [targetRepo])
+  }, [targetRepo, noPlanMode])
 
   const openRepoView = useCallback(async () => {
     if (!currentProjectId || !targetRepo) {
@@ -1234,6 +1266,10 @@ function AppShell() {
         showToast('会话未启动，无法发送批注', { level: 'warn' })
         return
       }
+      if (noPlanMode) {
+        showToast('无方案模式下没有方案文件，无法发送代码审查批注。', { level: 'warn' })
+        return
+      }
       const planAbsPath = getPlanAbsPath(planName.trim())
       const text = formatAnnotationsForSession({
         annotations: anns,
@@ -1251,13 +1287,16 @@ function AppShell() {
       setDiffReviewOpen(false)
       showToast(`已发送 ${anns.length} 条批注到会话`, { level: 'info' })
     },
-    [sessionId, sessionStatus, planName, getPlanAbsPath, currentProjectId, targetRepo]
+    [sessionId, sessionStatus, noPlanMode, planName, getPlanAbsPath, currentProjectId, targetRepo]
   )
 
   const judgeExternalReviewItem = useCallback(
     async (suggestion: ExternalReviewSuggestion) => {
       if (!sessionId || sessionStatus !== 'running') {
         return { ok: false as const, error: 'session not running' }
+      }
+      if (noPlanMode) {
+        return { ok: false as const, error: 'no plan selected' }
       }
       const planAbsPath = getPlanAbsPath(planName.trim())
       return window.api.cc.judgeExternalReview({
@@ -1271,7 +1310,7 @@ function AppShell() {
         }
       })
     },
-    [sessionId, sessionStatus, getPlanAbsPath, planName]
+    [sessionId, sessionStatus, noPlanMode, getPlanAbsPath, planName]
   )
 
   const globalSearchQuickActions = [
@@ -1380,14 +1419,14 @@ function AppShell() {
       label: '📝 审阅当前方案',
       keywords: 'plan review annotate',
       action: () => void openPlanReview(),
-      disabled: !hasProject || !planName.trim()
+      disabled: !hasProject || noPlanMode || !planName.trim()
     },
     {
       id: 'diff-review',
       label: '🔀 代码审查',
       keywords: 'code review diff annotate',
       action: () => void openDiffReview(),
-      disabled: !hasProject
+      disabled: !hasProject || noPlanMode
     }
   ]
 
@@ -1471,7 +1510,9 @@ function AppShell() {
           <select
             className="plan-name-input"
             value={
-              planName && planList.some((p) => p.name === planName)
+              noPlanMode
+                ? NO_PLAN_SELECT_VALUE
+                : planName && planList.some((p) => p.name === planName)
                 ? planName
                 : '__NEW__'
             }
@@ -1484,6 +1525,7 @@ function AppShell() {
             }
           >
             <option value="__NEW__">+ 新建方案</option>
+            <option value={NO_PLAN_SELECT_VALUE}>无方案模式</option>
             {planList.map((p) => (
               <option key={p.name} value={p.name}>
                 {p.source === 'external' ? '📥 ' : ''}
@@ -1491,7 +1533,7 @@ function AppShell() {
               </option>
             ))}
           </select>
-          {!planList.some((p) => p.name === planName) && (
+          {!noPlanMode && !planList.some((p) => p.name === planName) && (
             <input
               type="text"
               className="plan-name-input"
@@ -1551,7 +1593,7 @@ function AppShell() {
           >
             {runtimeTopbarRunning ? '运行中' : '运行'}
           </button>
-          {planName.trim() && (
+          {!noPlanMode && planName.trim() && (
             <button
               className="topbar-btn"
               onClick={() => void openPlanReview()}
@@ -1583,22 +1625,23 @@ function AppShell() {
               projectId={currentProjectId ?? ''}
               projectDir={projectDir}
               cwd={targetRepo}
-              planName={planName}
+              planName={mainSessionPlanLabel}
               status={sessionStatus}
               onStart={() => void handleStart('new')}
               onStop={handleStop}
               onRestart={handleRestart}
               onOpenRepoView={() => void openRepoView()}
-              onOpenDiff={() => setDiffReviewOpen(true)}
-              disabled={!currentProjectId || !planName.trim()}
+              onOpenDiff={() => void openDiffReview()}
+              disabled={!canStartCurrentMainSession}
+              diffReviewDisabled={noPlanMode}
               repoViewDisabled={!currentProjectId}
             />
           ) : (
             <MainBootGate
               phase={gatePhase}
               command={aiSettings.command ?? aiSettings.ai_cli ?? 'claude'}
-              planName={planName}
-              disabled={!currentProjectId || !planName.trim()}
+              planName={mainSessionPlanLabel}
+              disabled={!canStartCurrentMainSession}
               onChoose={(mode) => void handleStart(mode)}
               onDismissFailure={() => setGatePhase({ kind: 'idle' })}
             />
@@ -1669,6 +1712,7 @@ function AppShell() {
             // (sans extension) as the plan name / archive filename.
             let effectiveLabel = planName
             if (stageId === 1) {
+              setNoPlanMode(false)
               const origName =
                 previewImport.path.split(/[\\/]/).pop() ?? ''
               const fromFile = origName.replace(/\.(md|markdown|txt)$/i, '').trim()
@@ -1761,6 +1805,7 @@ function AppShell() {
             setShowSkillStudio(false)
             setSkillsRefreshNonce((nonce) => nonce + 1)
           }}
+          targetRepo={targetRepo || null}
           sessionId={sessionId}
           sessionRunning={sessionStatus === 'running'}
           onSkillsChanged={() => setSkillsRefreshNonce((nonce) => nonce + 1)}

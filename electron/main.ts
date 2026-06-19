@@ -26,6 +26,11 @@ import {
 } from './store/paths.js'
 import { registerPtyIpc, killAllSessions } from './cc/ptyManager.js'
 import { registerHabitIpc } from './habit/ipc.js'
+import { registerScheduledTaskIpc } from './scheduledTasks/ipc.js'
+import {
+  startScheduledTaskScheduler,
+  stopScheduledTaskScheduler
+} from './scheduledTasks/scheduler.js'
 import {
   startScreenSamplerService,
   stopScreenSamplerService
@@ -1902,6 +1907,7 @@ app.whenReady().then(async () => {
 
   registerPtyIpc()
   registerHabitIpc()
+  registerScheduledTaskIpc()
   registerScreenshotIpc()
   const screenshotHotkeyInit = await initializeScreenshotHotkey({
     registrar: globalShortcut
@@ -1918,6 +1924,7 @@ app.whenReady().then(async () => {
       console.warn('[screen-sampler] failed to start:', err)
     }
   })
+  startScheduledTaskScheduler()
 
   createWindow()
 
@@ -1935,6 +1942,7 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   killAllSessions()
   stopScheduler()
+  stopScheduledTaskScheduler()
   stopScreenSamplerService()
   disposeScreenshotHotkey(globalShortcut)
 })

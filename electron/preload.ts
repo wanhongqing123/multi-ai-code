@@ -44,6 +44,16 @@ export type BuildExecutionScope = 'all' | 'single-step'
 export type RuntimeEnvType = BuildStepEnvType
 export type RuntimeOutputEncoding = BuildOutputEncoding
 export type RuntimeStatus = 'idle' | 'running' | 'exited' | 'failed' | 'stopped'
+export type ScheduledTaskScheduleType = 'once' | 'daily' | 'weekly'
+export type ScheduledTaskRunStatus =
+  | 'pending'
+  | 'queued'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'timed_out'
+  | 'cancelled'
+  | 'skipped'
 
 export interface BuildStepConfig {
   id: string
@@ -203,6 +213,77 @@ export type RuntimeAnalysisPromptResult =
 export type RuntimeAnalysisPromptFileResult =
   | { ok: true; filePath: string; message: string }
   | { ok: false; error: string }
+
+export interface ScheduledTaskRun {
+  id: number
+  taskId: number
+  status: ScheduledTaskRunStatus
+  scheduledAt: number
+  startedAt: number | null
+  finishedAt: number | null
+  prompt: string
+  outputExcerpt: string | null
+  error: string | null
+  timeoutMinutes: number
+}
+
+export interface ScheduledTask {
+  id: number
+  projectId: string
+  name: string
+  description: string
+  goal: string
+  instructions: string[]
+  enabled: boolean
+  scheduleType: ScheduledTaskScheduleType
+  scheduleTime: string
+  scheduleDays: number[]
+  nextRunAt: number | null
+  timeoutMinutes: number
+  allowCodeChanges: boolean
+  allowGitCommit: boolean
+  requireTestConfirmation: boolean
+  createdAt: number
+  updatedAt: number
+  lastRun: ScheduledTaskRun | null
+}
+
+export interface CreateScheduledTaskInput {
+  projectId: string
+  name: string
+  description: string
+  goal: string
+  instructions: string[]
+  enabled: boolean
+  scheduleType: ScheduledTaskScheduleType
+  scheduleTime: string
+  scheduleDays: number[]
+  timeoutMinutes: number
+  allowCodeChanges: boolean
+  allowGitCommit: boolean
+  requireTestConfirmation: boolean
+}
+
+export type UpdateScheduledTaskInput = Partial<Omit<CreateScheduledTaskInput, 'projectId'>>
+
+export interface ScheduledTaskQueueState {
+  running: {
+    taskId: number
+    taskName: string
+    projectId: string
+    runId: number
+    scheduledAt: number
+    prompt: string
+  } | null
+  waiting: Array<{
+    taskId: number
+    taskName: string
+    projectId: string
+    runId: number
+    scheduledAt: number
+    prompt: string
+  }>
+}
 
 export interface SpawnRequest {
   sessionId: string
@@ -592,6 +673,38 @@ const api = {
       ipcRenderer.on('runtime:status', handler)
       return () => ipcRenderer.removeListener('runtime:status', handler)
     }
+  },
+
+  scheduledTasks: {
+    list: (projectId: string) =>
+      ipcRenderer.invoke('scheduled-tasks:list', { projectId }) as Promise<ScheduledTask[]>,
+    create: (input: CreateScheduledTaskInput) =>
+      ipcRenderer.invoke('scheduled-tasks:create', input) as Promise<
+        { ok: true; task: ScheduledTask } | { ok: false; error: string }
+      >,
+    update: (id: number, patch: UpdateScheduledTaskInput) =>
+      ipcRenderer.invoke('scheduled-tasks:update', { id, patch }) as Promise<
+        { ok: true; task: ScheduledTask | null } | { ok: false; error: string }
+      >,
+    delete: (id: number) =>
+      ipcRenderer.invoke('scheduled-tasks:delete', { id }) as Promise<
+        { ok: true } | { ok: false; error: string }
+      >,
+    setEnabled: (id: number, enabled: boolean) =>
+      ipcRenderer.invoke('scheduled-tasks:set-enabled', { id, enabled }) as Promise<
+        { ok: true; task: ScheduledTask | null } | { ok: false; error: string }
+      >,
+    runNow: (req: { taskId: number; sessionId?: string | null; targetRepo?: string | null }) =>
+      ipcRenderer.invoke('scheduled-tasks:run-now', req) as Promise<
+        | { ok: true; queued: boolean; state: ScheduledTaskQueueState }
+        | { ok: false; error: string }
+      >,
+    scanNow: (projectId?: string) =>
+      ipcRenderer.invoke('scheduled-tasks:scan-now', { projectId }) as Promise<
+        { ok: true; state: ScheduledTaskQueueState } | { ok: false; error: string }
+      >,
+    queueState: () =>
+      ipcRenderer.invoke('scheduled-tasks:queue-state') as Promise<ScheduledTaskQueueState>
   },
 
   repoView: {

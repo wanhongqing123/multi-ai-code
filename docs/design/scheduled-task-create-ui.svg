@@ -1,0 +1,185 @@
+<svg width="1440" height="900" viewBox="0 0 1440 900" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="24" flood-color="#101828" flood-opacity="0.16"/>
+    </filter>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#101828" flood-opacity="0.08"/>
+    </filter>
+    <linearGradient id="bg" x1="0" y1="0" x2="1440" y2="900">
+      <stop stop-color="#F7FAFF"/>
+      <stop offset="1" stop-color="#EEF3FA"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#1677FF"/>
+      <stop offset="1" stop-color="#3B82F6"/>
+    </linearGradient>
+    <style>
+      .app-title { font: 700 23px "Inter", "Segoe UI", "Microsoft YaHei", sans-serif; fill: #101828; }
+      .title { font: 750 24px "Inter", "Segoe UI", "Microsoft YaHei", sans-serif; fill: #101828; }
+      .section { font: 750 18px "Inter", "Segoe UI", "Microsoft YaHei", sans-serif; fill: #101828; }
+      .card-title { font: 750 16px "Inter", "Segoe UI", "Microsoft YaHei", sans-serif; fill: #101828; }
+      .label { font: 650 13px "Inter", "Segoe UI", "Microsoft YaHei", sans-serif; fill: #344054; }
+      .txt { font: 400 13px "Inter", "Segoe UI", "Microsoft YaHei", sans-serif; fill: #475467; }
+      .muted { font: 400 12px "Inter", "Segoe UI", "Microsoft YaHei", sans-serif; fill: #667085; }
+      .tiny { font: 500 11px "Inter", "Segoe UI", "Microsoft YaHei", sans-serif; fill: #667085; }
+      .btn { font: 700 13px "Inter", "Segoe UI", "Microsoft YaHei", sans-serif; fill: #FFFFFF; }
+      .btn2 { font: 650 13px "Inter", "Segoe UI", "Microsoft YaHei", sans-serif; fill: #344054; }
+      .pill { font: 700 11px "Inter", "Segoe UI", "Microsoft YaHei", sans-serif; }
+      .mono { font: 400 12px "Cascadia Code", "Consolas", "Microsoft YaHei", monospace; fill: #344054; }
+    </style>
+  </defs>
+
+  <rect width="1440" height="900" fill="url(#bg)"/>
+
+  <!-- Background app shell -->
+  <rect x="36" y="28" width="1368" height="844" rx="22" fill="#FFFFFF" filter="url(#shadow)"/>
+  <rect x="36" y="28" width="1368" height="64" rx="22" fill="#F9FAFB"/>
+  <path d="M36 92H1404" stroke="#EAECF0"/>
+  <circle cx="67" cy="60" r="7" fill="#FF5F57"/>
+  <circle cx="91" cy="60" r="7" fill="#FFBD2E"/>
+  <circle cx="115" cy="60" r="7" fill="#28C840"/>
+  <text x="145" y="68" class="app-title">Multi-AI Code</text>
+  <rect x="360" y="44" width="330" height="32" rx="10" fill="#F2F4F7"/>
+  <text x="382" y="65" class="muted">v0.1.0 · E:\OpenSource\obs-studio</text>
+  <rect x="920" y="44" width="128" height="32" rx="10" fill="#EEF4FF"/>
+  <text x="946" y="65" class="label">定时任务</text>
+  <rect x="1060" y="44" width="118" height="32" rx="10" fill="#EEF4FF"/>
+  <text x="1084" y="65" class="label">Skill 管理</text>
+  <rect x="1206" y="44" width="96" height="32" rx="10" fill="#ECFDF3"/>
+  <circle cx="1228" cy="60" r="5" fill="#12B76A"/>
+  <text x="1240" y="65" class="label">运行中</text>
+
+  <rect x="70" y="125" width="620" height="54" rx="14" fill="#F2F4F7"/>
+  <text x="96" y="158" class="txt">方案：libobs-d3d12 对齐 d3d11 风格</text>
+  <rect x="70" y="210" width="1298" height="600" rx="18" fill="#F9FAFB"/>
+  <text x="100" y="255" class="section">主会话输出</text>
+  <path d="M100 290H1338" stroke="#EAECF0"/>
+  <text x="100" y="338" class="mono">&gt; 当前 AICLI 会话正在等待输入...</text>
+
+  <!-- Dim overlay -->
+  <rect width="1440" height="900" fill="#111827" opacity="0.35"/>
+
+  <!-- Create task modal -->
+  <rect x="122" y="50" width="1196" height="802" rx="28" fill="#FFFFFF" filter="url(#shadow)"/>
+  <rect x="122" y="50" width="1196" height="78" rx="28" fill="#FFFFFF"/>
+  <path d="M122 128H1318" stroke="#EAECF0"/>
+  <rect x="154" y="76" width="36" height="36" rx="12" fill="#EAF3FF"/>
+  <text x="164" y="101" style="font: 700 20px 'Segoe UI Emoji','Microsoft YaHei'; fill:#1677FF;">＋</text>
+  <text x="204" y="100" class="title">新建定时任务</text>
+  <text x="1218" y="100" style="font: 700 24px 'Segoe UI', sans-serif; fill:#667085;">×</text>
+
+  <!-- Left stepper -->
+  <rect x="154" y="160" width="246" height="650" rx="22" fill="#F8FAFC"/>
+  <text x="182" y="198" class="section">配置步骤</text>
+  <rect x="178" y="224" width="198" height="46" rx="14" fill="#EFF6FF" stroke="#B2DDFF"/>
+  <circle cx="202" cy="247" r="11" fill="#1677FF"/>
+  <text x="198" y="252" class="pill" fill="#FFFFFF">1</text>
+  <text x="226" y="252" class="label">基本信息</text>
+
+  <circle cx="202" cy="307" r="11" fill="#1677FF"/>
+  <text x="198" y="312" class="pill" fill="#FFFFFF">2</text>
+  <text x="226" y="312" class="label">AICLI 要做什么</text>
+
+  <circle cx="202" cy="367" r="11" fill="#D0D5DD"/>
+  <text x="198" y="372" class="pill" fill="#475467">3</text>
+  <text x="226" y="372" class="label">怎么干与限制</text>
+
+  <circle cx="202" cy="427" r="11" fill="#D0D5DD"/>
+  <text x="198" y="432" class="pill" fill="#475467">4</text>
+  <text x="226" y="432" class="label">执行时间</text>
+
+  <circle cx="202" cy="487" r="11" fill="#D0D5DD"/>
+  <text x="198" y="492" class="pill" fill="#475467">5</text>
+  <text x="226" y="492" class="label">Prompt 预览</text>
+
+  <rect x="178" y="604" width="198" height="150" rx="18" fill="#FFFFFF" stroke="#EAECF0"/>
+  <text x="198" y="636" class="label">安全策略</text>
+  <circle cx="202" cy="666" r="5" fill="#12B76A"/>
+  <text x="216" y="671" class="muted">默认不允许自动改代码</text>
+  <circle cx="202" cy="696" r="5" fill="#12B76A"/>
+  <text x="216" y="701" class="muted">默认不允许自动提交</text>
+  <circle cx="202" cy="726" r="5" fill="#F79009"/>
+  <text x="216" y="731" class="muted">AICLI 忙时排队等待</text>
+
+  <!-- Main form -->
+  <rect x="424" y="160" width="536" height="650" rx="22" fill="#FFFFFF" stroke="#EAECF0"/>
+  <text x="456" y="200" class="section">任务配置</text>
+
+  <text x="456" y="240" class="label">任务名称</text>
+  <rect x="456" y="254" width="472" height="44" rx="13" fill="#F9FAFB" stroke="#D0D5DD"/>
+  <text x="476" y="282" class="txt">每日代码巡检</text>
+
+  <text x="456" y="326" class="label">任务说明</text>
+  <rect x="456" y="340" width="472" height="44" rx="13" fill="#F9FAFB" stroke="#D0D5DD"/>
+  <text x="476" y="368" class="txt">每天检查当前项目最近代码风险，并给出建议。</text>
+
+  <text x="456" y="410" class="label">让 AICLI 做什么</text>
+  <rect x="456" y="424" width="472" height="106" rx="16" fill="#F9FAFB" stroke="#D0D5DD"/>
+  <text x="476" y="454" class="txt">检查当前项目最近的代码变更，找出潜在风险、</text>
+  <text x="476" y="480" class="txt">可疑实现和缺少测试的地方，并给出清晰的下一步</text>
+  <text x="476" y="506" class="txt">建议。</text>
+
+  <text x="456" y="568" class="label">具体要求</text>
+  <rect x="456" y="586" width="222" height="40" rx="12" fill="#ECFDF3" stroke="#ABEFC6"/>
+  <rect x="474" y="599" width="14" height="14" rx="4" fill="#12B76A"/>
+  <path d="M477 606L482 611L489 601" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="500" y="611" class="txt">分析代码风险</text>
+
+  <rect x="706" y="586" width="222" height="40" rx="12" fill="#ECFDF3" stroke="#ABEFC6"/>
+  <rect x="724" y="599" width="14" height="14" rx="4" fill="#12B76A"/>
+  <path d="M727 606L732 611L739 601" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="750" y="611" class="txt">给出修改建议</text>
+
+  <rect x="456" y="638" width="222" height="40" rx="12" fill="#ECFDF3" stroke="#ABEFC6"/>
+  <rect x="474" y="651" width="14" height="14" rx="4" fill="#12B76A"/>
+  <path d="M477 658L482 663L489 653" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="500" y="663" class="txt">不要直接修改代码</text>
+
+  <rect x="706" y="638" width="222" height="40" rx="12" fill="#F9FAFB" stroke="#D0D5DD"/>
+  <rect x="724" y="651" width="14" height="14" rx="4" fill="#FFFFFF" stroke="#98A2B3"/>
+  <text x="750" y="663" class="txt">运行测试前先说明</text>
+
+  <text x="456" y="720" class="label">执行方式</text>
+  <rect x="456" y="738" width="222" height="42" rx="13" fill="#EFF8FF" stroke="#B2DDFF"/>
+  <circle cx="478" cy="759" r="5" fill="#1677FF"/>
+  <text x="494" y="764" class="txt">使用当前 AICLI</text>
+  <rect x="706" y="738" width="222" height="42" rx="13" fill="#FFFAEB" stroke="#FEDF89"/>
+  <circle cx="728" cy="759" r="5" fill="#F79009"/>
+  <text x="744" y="764" class="txt">忙碌时排队等待</text>
+
+  <!-- Right preview panel -->
+  <rect x="984" y="160" width="302" height="650" rx="22" fill="#F8FAFC"/>
+  <text x="1012" y="200" class="section">最终发送给 AICLI</text>
+  <text x="1012" y="226" class="muted">保存前可确认真实 Prompt 内容</text>
+
+  <rect x="1012" y="254" width="246" height="402" rx="18" fill="#FFFFFF" stroke="#EAECF0"/>
+  <text x="1032" y="286" class="mono">你现在要执行一个定时任务。</text>
+  <text x="1032" y="322" class="mono">任务名称：</text>
+  <text x="1032" y="344" class="mono">每日代码巡检</text>
+  <text x="1032" y="382" class="mono">工作目录：</text>
+  <text x="1032" y="404" class="mono">E:\OpenSource\obs-studio</text>
+  <text x="1032" y="442" class="mono">任务目标：</text>
+  <text x="1032" y="464" class="mono">检查最近代码变更风险。</text>
+  <text x="1032" y="502" class="mono">执行要求：</text>
+  <text x="1032" y="524" class="mono">1. 分析代码风险。</text>
+  <text x="1032" y="546" class="mono">2. 给出修改建议。</text>
+  <text x="1032" y="568" class="mono">3. 不要直接修改代码。</text>
+  <text x="1032" y="590" class="mono">4. 不要提交 git。</text>
+  <text x="1032" y="628" class="mono">输出要求：中文总结。</text>
+
+  <text x="1012" y="698" class="label">执行时间</text>
+  <rect x="1012" y="714" width="116" height="52" rx="14" fill="#FFFFFF" stroke="#EAECF0"/>
+  <text x="1030" y="738" class="muted">频率</text>
+  <text x="1030" y="758" class="label">每天</text>
+  <rect x="1142" y="714" width="116" height="52" rx="14" fill="#FFFFFF" stroke="#EAECF0"/>
+  <text x="1160" y="738" class="muted">时间</text>
+  <text x="1160" y="758" class="label">21:30</text>
+
+  <!-- Footer -->
+  <path d="M122 832H1318" stroke="#EAECF0"/>
+  <rect x="1008" y="852" width="104" height="38" rx="12" fill="#F2F4F7"/>
+  <text x="1046" y="876" class="btn2">取消</text>
+  <rect x="1128" y="852" width="144" height="38" rx="12" fill="url(#accent)"/>
+  <text x="1173" y="876" class="btn">保存任务</text>
+</svg>

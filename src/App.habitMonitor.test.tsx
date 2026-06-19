@@ -17,6 +17,7 @@ describe('App habit monitor integration', () => {
     expect(markup).toContain('Multi-AI Code')
     expect(markup).not.toContain('项目记忆')
     expect(markup).not.toContain('Chrome')
+    expect(markup).not.toContain('定时任务')
     expect(markup).toContain('Skill 管理')
     expect(markup).not.toContain('Skill 编排')
     expect(markup).not.toContain('topbar-secondary-row')
@@ -27,12 +28,15 @@ describe('App habit monitor integration', () => {
   it('places skill orchestration in the same toolbar row as build', () => {
     const source = readFileSync(fileURLToPath(new URL('./App.tsx', import.meta.url)), 'utf8')
     const planRowIndex = source.indexOf('className="plan-name-bar"')
+    const scheduledTaskIndex = source.indexOf('setShowScheduledTaskDialog(true)', planRowIndex)
     const buildIndex = source.indexOf('setShowBuildPanel(true)', planRowIndex)
     const skillGraphIndex = source.indexOf('setShowSkillGraphStudio(true)', planRowIndex)
 
     expect(planRowIndex).toBeGreaterThan(-1)
+    expect(scheduledTaskIndex).toBeGreaterThan(planRowIndex)
     expect(buildIndex).toBeGreaterThan(planRowIndex)
     expect(skillGraphIndex).toBeGreaterThan(planRowIndex)
+    expect(scheduledTaskIndex).toBeLessThan(skillGraphIndex)
     expect(skillGraphIndex).toBeLessThan(buildIndex)
     expect(source).not.toContain('topbar-secondary-row')
   })

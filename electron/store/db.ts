@@ -99,6 +99,41 @@ CREATE TABLE IF NOT EXISTS skills (
   enabled       INTEGER NOT NULL DEFAULT 1,
   last_used_at  INTEGER
 );
+
+CREATE TABLE IF NOT EXISTS scheduled_tasks (
+  id                        INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id                TEXT NOT NULL,
+  name                      TEXT NOT NULL,
+  description               TEXT NOT NULL DEFAULT '',
+  goal                      TEXT NOT NULL,
+  instructions              TEXT NOT NULL,
+  enabled                   INTEGER NOT NULL DEFAULT 1,
+  schedule_type             TEXT NOT NULL,
+  schedule_time             TEXT NOT NULL,
+  schedule_days             TEXT NOT NULL DEFAULT '[]',
+  next_run_at               INTEGER,
+  timeout_minutes           INTEGER NOT NULL DEFAULT 30,
+  allow_code_changes        INTEGER NOT NULL DEFAULT 0,
+  allow_git_commit          INTEGER NOT NULL DEFAULT 0,
+  require_test_confirmation INTEGER NOT NULL DEFAULT 0,
+  created_at                INTEGER NOT NULL,
+  updated_at                INTEGER NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS scheduled_task_runs (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id         INTEGER NOT NULL,
+  status          TEXT NOT NULL,
+  scheduled_at    INTEGER NOT NULL,
+  started_at      INTEGER,
+  finished_at     INTEGER,
+  prompt          TEXT NOT NULL,
+  output_excerpt  TEXT,
+  error           TEXT,
+  timeout_minutes INTEGER NOT NULL,
+  FOREIGN KEY (task_id) REFERENCES scheduled_tasks(id) ON DELETE CASCADE
+);
 `
 
 const INDEXES = `
@@ -113,6 +148,10 @@ CREATE INDEX IF NOT EXISTS idx_habit_flows_kind ON habit_flows(kind);
 CREATE INDEX IF NOT EXISTS idx_skills_trigger ON skills(trigger);
 CREATE INDEX IF NOT EXISTS idx_skills_enabled ON skills(enabled);
 CREATE INDEX IF NOT EXISTS idx_skills_last_used_at ON skills(last_used_at DESC);
+CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_project ON scheduled_tasks(project_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_due ON scheduled_tasks(project_id, enabled, next_run_at);
+CREATE INDEX IF NOT EXISTS idx_scheduled_task_runs_task ON scheduled_task_runs(task_id, scheduled_at DESC);
+CREATE INDEX IF NOT EXISTS idx_scheduled_task_runs_status ON scheduled_task_runs(status);
 `
 
 function ensureColumn(

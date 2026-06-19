@@ -210,6 +210,31 @@ async function buildUserMessageForModel(text: string): Promise<string> {
   }
 }
 
+export function getSessionForProject(projectId: string): {
+  sessionId: string
+  targetRepo: string
+} | null {
+  for (const session of sessions.values()) {
+    if (session.projectId === projectId) {
+      return {
+        sessionId: session.sessionId,
+        targetRepo: session.targetRepo
+      }
+    }
+  }
+  return null
+}
+
+export async function sendUserMessageToSession(
+  sessionId: string,
+  text: string
+): Promise<{ ok: boolean; error?: string }> {
+  const session = sessions.get(sessionId)
+  if (!session) return { ok: false, error: 'no session' }
+  await sendMessage(session.proc, await buildUserMessageForModel(text))
+  return { ok: true }
+}
+
 /** Stream raw input into PTY in small chunks to avoid large-paste truncation. */
 async function streamInput(proc: PtyCCProcess, text: string): Promise<void> {
   const CHUNK = 64
@@ -528,10 +553,7 @@ export function registerPtyIpc(): void {
   ipcMain.handle(
     'cc:send-user',
     async (_e, { sessionId, text }: { sessionId: string; text: string }) => {
-      const s = sessions.get(sessionId)
-      if (!s) return { ok: false, error: 'no session' }
-      await sendMessage(s.proc, await buildUserMessageForModel(text))
-      return { ok: true }
+      return sendUserMessageToSession(sessionId, text)
     }
   )
 

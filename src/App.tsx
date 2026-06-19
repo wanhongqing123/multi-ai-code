@@ -29,6 +29,7 @@ import TemplatesDialog from './components/TemplatesDialog'
 import HabitMonitorDialog from './habit/HabitMonitorDialog'
 import SkillGraphDialog from './habit/SkillGraphDialog'
 import SkillStudioDialog from './habit/SkillStudioDialog'
+import ScheduledTaskDialog from './scheduled-tasks/ScheduledTaskDialog'
 import ScreenSamplerIndicator from './habit/ScreenSamplerIndicator'
 import FirstRunNoticeDialog from './habit/FirstRunNoticeDialog'
 import { getCliTargetLabel } from './components/cliTarget'
@@ -208,6 +209,7 @@ function AppShell() {
   const [showHabitMonitor, setShowHabitMonitor] = useState(false)
   const [showSkillStudio, setShowSkillStudio] = useState(false)
   const [showSkillGraphStudio, setShowSkillGraphStudio] = useState(false)
+  const [showScheduledTaskDialog, setShowScheduledTaskDialog] = useState(false)
   const [showHabitFirstRun, setShowHabitFirstRun] = useState(false)
   const [skillsRefreshNonce, setSkillsRefreshNonce] = useState(0)
   const [showOnboarding, setShowOnboarding] = useState(false)
@@ -1510,6 +1512,14 @@ function AppShell() {
           </button>
           <button
             className="topbar-btn"
+            onClick={() => setShowScheduledTaskDialog(true)}
+            disabled={!currentProjectId}
+            title="创建和管理到点后交给当前 AICLI 执行的定时任务"
+          >
+            ⏰ 定时任务
+          </button>
+          <button
+            className="topbar-btn"
             onClick={() => setShowSkillGraphStudio(true)}
             title="拖拽连线编排项目级 Skill Pipeline"
           >
@@ -1760,6 +1770,15 @@ function AppShell() {
         <SkillGraphDialog
           onClose={() => setShowSkillGraphStudio(false)}
           targetRepo={targetRepo || null}
+          sessionId={sessionId}
+          sessionRunning={sessionStatus === 'running'}
+        />
+      )}
+      {showScheduledTaskDialog && currentProjectId && (
+        <ScheduledTaskDialog
+          onClose={() => setShowScheduledTaskDialog(false)}
+          projectId={currentProjectId}
+          targetRepo={targetRepo}
           sessionId={sessionId}
           sessionRunning={sessionStatus === 'running'}
         />

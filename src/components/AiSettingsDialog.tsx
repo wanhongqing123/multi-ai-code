@@ -76,6 +76,8 @@ interface AppSettingsSaveResponse {
   error?: string
 }
 
+type SettingsSectionKey = 'shortcut' | 'ai' | 'build' | 'runtime'
+
 interface ProjectSettingsSaveResponse {
   ok: boolean
   repaired?: boolean
@@ -267,44 +269,53 @@ function SettingsSection(props: {
   onEnv: (next: string) => void
 }): JSX.Element {
   return (
-    <section className="ai-settings-card">
-      <div className="ai-settings-title">{props.title}</div>
-      <label>
-        AI CLI
-        <select
-          value={props.aiCli}
-          onChange={(event) => props.onAiCli(event.target.value as 'claude' | 'codex')}
-        >
-          <option value="claude">Claude Code (默认 acceptEdits)</option>
-          <option value="codex">Codex (workspace-write + never)</option>
-        </select>
-      </label>
-      <label>
-        Binary override (留空使用默认)
-        <input
-          type="text"
-          value={props.command}
-          onChange={(event) => props.onCommand(event.target.value)}
-          placeholder={props.aiCli === 'codex' ? 'codex' : 'claude'}
-        />
-      </label>
-      <label>
-        附加 args (空格分隔)
-        <input
-          type="text"
-          value={props.argsText}
-          onChange={(event) => props.onArgs(event.target.value)}
-          placeholder="--foo --bar"
-        />
-      </label>
-      <label>
-        环境变量 (每行 KEY=VALUE)
-        <textarea
-          value={props.envText}
-          onChange={(event) => props.onEnv(event.target.value)}
-          rows={4}
-        />
-      </label>
+    <section className="ai-settings-card ai-settings-ai-card">
+      <div className="ai-settings-card-head">
+        <span className="ai-settings-card-icon">AI</span>
+        <div>
+          <div className="ai-settings-title">{props.title}</div>
+          <div className="ai-settings-card-subtitle">控制主终端实际启动的 AI CLI。</div>
+        </div>
+      </div>
+      <div className="ai-settings-form-grid">
+        <label>
+          AI CLI
+          <select
+            value={props.aiCli}
+            onChange={(event) => props.onAiCli(event.target.value as 'claude' | 'codex')}
+          >
+            <option value="claude">Claude Code (默认 acceptEdits)</option>
+            <option value="codex">Codex (workspace-write + never)</option>
+          </select>
+        </label>
+        <label>
+          Binary override
+          <input
+            type="text"
+            value={props.command}
+            onChange={(event) => props.onCommand(event.target.value)}
+            placeholder={props.aiCli === 'codex' ? 'codex' : 'claude'}
+          />
+        </label>
+        <label>
+          附加 args
+          <input
+            type="text"
+            value={props.argsText}
+            onChange={(event) => props.onArgs(event.target.value)}
+            placeholder="--foo --bar"
+          />
+        </label>
+        <label className="ai-settings-grid-full">
+          环境变量
+          <textarea
+            value={props.envText}
+            onChange={(event) => props.onEnv(event.target.value)}
+            rows={4}
+            placeholder="KEY=VALUE"
+          />
+        </label>
+      </div>
     </section>
   )
 }
@@ -323,49 +334,62 @@ function ScreenshotSettingsSection(props: {
   const shouldShowCustomInput = props.customExpanded || !isPresetScreenshotShortcut(props.shortcut)
 
   return (
-    <section className="ai-settings-card">
-      <div className="ai-settings-title-row">
-        <div className="ai-settings-title">截图快捷键（全局）</div>
+    <section className="ai-settings-card ai-settings-hero-card">
+      <div className="ai-settings-hero-main">
+        <span className="ai-settings-hero-icon">＋</span>
+        <div>
+          <div className="ai-settings-hero-title">全局快捷键</div>
+          <div className="ai-settings-hero-copy">截图采样入口，保存后立即生效。</div>
+        </div>
+      </div>
+      <div className="ai-settings-hero-status">
+        <label className="ai-settings-checkbox ai-settings-hero-toggle">
+          <input
+            type="checkbox"
+            checked={props.enabled}
+            onChange={(event) => props.onEnabledChange(event.target.checked)}
+            disabled={props.disabled}
+          />
+          <span>{props.enabled ? '截图已启用' : '截图已关闭'}</span>
+        </label>
+        <span className="ai-settings-shortcut-current">{props.shortcut || DEFAULT_SCREENSHOT_SHORTCUT}</span>
         <button
           type="button"
-          className="drawer-btn"
+          className="drawer-btn ai-settings-restore-btn"
           onClick={props.onRestoreDefaults}
           disabled={props.disabled}
         >
           恢复默认
         </button>
       </div>
-      <label className="ai-settings-checkbox">
-        <input
-          type="checkbox"
-          checked={props.enabled}
-          onChange={(event) => props.onEnabledChange(event.target.checked)}
-          disabled={props.disabled}
-        />
-        <span>启用全局截图快捷键</span>
-      </label>
-      <div className="ai-settings-shortcut-presets">
-        {SCREENSHOT_SHORTCUT_PRESETS.map((preset) => (
+      <div className="ai-settings-shortcut-card">
+        <div>
+          <div className="ai-settings-title">快捷键预设</div>
+          <div className="ai-settings-card-subtitle">常用快捷键一键切换，自定义模式单独展开。</div>
+        </div>
+        <div className="ai-settings-shortcut-presets">
+          {SCREENSHOT_SHORTCUT_PRESETS.map((preset) => (
+            <button
+              key={preset.value}
+              type="button"
+              className="drawer-btn ai-settings-shortcut-preset"
+              aria-pressed={props.shortcut === preset.value}
+              onClick={() => props.onPresetSelect(preset.value)}
+              disabled={props.disabled}
+            >
+              {preset.label}
+            </button>
+          ))}
           <button
-            key={preset.value}
             type="button"
-            className="drawer-btn"
-            aria-pressed={props.shortcut === preset.value}
-            onClick={() => props.onPresetSelect(preset.value)}
+            className="drawer-btn ai-settings-shortcut-custom-toggle"
+            aria-pressed={shouldShowCustomInput}
+            onClick={props.onCustomOpen}
             disabled={props.disabled}
           >
-            {preset.label}
+            自定义
           </button>
-        ))}
-        <button
-          type="button"
-          className="drawer-btn"
-          aria-pressed={shouldShowCustomInput}
-          onClick={props.onCustomOpen}
-          disabled={props.disabled}
-        >
-          自定义
-        </button>
+        </div>
       </div>
       {shouldShowCustomInput && (
         <label className="ai-settings-shortcut-custom">
@@ -417,6 +441,23 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const lastSyncedAppSettingsRef = useRef<AppSettings>(props.initialAppSettings)
+  const [activeSettingsSection, setActiveSettingsSection] =
+    useState<SettingsSectionKey>('shortcut')
+  const shortcutSectionRef = useRef<HTMLDivElement | null>(null)
+  const aiSectionRef = useRef<HTMLDivElement | null>(null)
+  const buildSectionRef = useRef<HTMLDivElement | null>(null)
+  const runtimeSectionRef = useRef<HTMLDivElement | null>(null)
+
+  const scrollToSettingsSection = (section: SettingsSectionKey): void => {
+    setActiveSettingsSection(section)
+    const target = {
+      shortcut: shortcutSectionRef.current,
+      ai: aiSectionRef.current,
+      build: buildSectionRef.current,
+      runtime: runtimeSectionRef.current
+    }[section]
+    target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
 
   useEffect(() => {
     if (
@@ -550,72 +591,204 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
   return (
     <div className="modal-backdrop" onClick={props.onClose}>
       <div className="modal ai-settings-modal" onClick={(event) => event.stopPropagation()}>
-        <div className="modal-head">
-          <h3>设置</h3>
-          <button className="modal-close" onClick={props.onClose} aria-label="关闭">
-            ×
-          </button>
+        <header className="ai-settings-header">
+          <div className="ai-settings-header-main">
+            <span className="ai-settings-header-dot" />
+            <div>
+              <h3>设置中心</h3>
+              <p>快捷键 · AI CLI · 项目构建 · 项目运行</p>
+            </div>
+          </div>
+          <div className="ai-settings-header-actions">
+            <span className="ai-settings-project-badge">
+              <span className="ai-settings-project-badge-dot" />
+              项目级保存
+            </span>
+            <button className="modal-close" onClick={props.onClose} aria-label="关闭">
+              ×
+            </button>
+          </div>
+        </header>
+
+        <div className="ai-settings-shell">
+          <aside className="ai-settings-sidebar" aria-label="设置分组">
+            <div className="ai-settings-sidebar-label">CONFIG</div>
+            <div className="ai-settings-nav-list">
+              <button
+                type="button"
+                className={
+                  activeSettingsSection === 'shortcut'
+                    ? 'ai-settings-nav-item active'
+                    : 'ai-settings-nav-item'
+                }
+                aria-controls="ai-settings-shortcut-section"
+                aria-current={activeSettingsSection === 'shortcut' ? 'true' : undefined}
+                onClick={() => scrollToSettingsSection('shortcut')}
+              >
+                <span className="ai-settings-nav-icon">＋</span>
+                <span>
+                  <strong>全局快捷键</strong>
+                  <small>截图采样入口</small>
+                </span>
+              </button>
+              <button
+                type="button"
+                className={
+                  activeSettingsSection === 'ai'
+                    ? 'ai-settings-nav-item active'
+                    : 'ai-settings-nav-item'
+                }
+                aria-controls="ai-settings-ai-section"
+                aria-current={activeSettingsSection === 'ai' ? 'true' : undefined}
+                onClick={() => scrollToSettingsSection('ai')}
+              >
+                <span className="ai-settings-nav-icon">AI</span>
+                <span>
+                  <strong>主会话 AI</strong>
+                  <small>Claude / Codex</small>
+                </span>
+              </button>
+              <button
+                type="button"
+                className={
+                  activeSettingsSection === 'build'
+                    ? 'ai-settings-nav-item active'
+                    : 'ai-settings-nav-item'
+                }
+                aria-controls="ai-settings-build-section"
+                aria-current={activeSettingsSection === 'build' ? 'true' : undefined}
+                onClick={() => scrollToSettingsSection('build')}
+              >
+                <span className="ai-settings-nav-icon">▤</span>
+                <span>
+                  <strong>项目构建</strong>
+                  <small>步骤 / 环境 / 编码</small>
+                </span>
+              </button>
+              <button
+                type="button"
+                className={
+                  activeSettingsSection === 'runtime'
+                    ? 'ai-settings-nav-item active'
+                    : 'ai-settings-nav-item'
+                }
+                aria-controls="ai-settings-runtime-section"
+                aria-current={activeSettingsSection === 'runtime' ? 'true' : undefined}
+                onClick={() => scrollToSettingsSection('runtime')}
+              >
+                <span className="ai-settings-nav-icon">▶</span>
+                <span>
+                  <strong>项目运行</strong>
+                  <small>启动命令</small>
+                </span>
+              </button>
+            </div>
+            <div className="ai-settings-current-project">
+              <span>当前项目</span>
+              <strong>{props.projectId ?? '未选择项目'}</strong>
+              <small>{props.projectId ? '已选择' : '项目级配置不可编辑'}</small>
+            </div>
+          </aside>
+
+          <main className="ai-settings-content">
+            <div
+              id="ai-settings-shortcut-section"
+              ref={shortcutSectionRef}
+              className="ai-settings-section-anchor"
+            >
+              <ScreenshotSettingsSection
+                enabled={screenshotShortcutEnabled}
+                shortcut={screenshotShortcut}
+                customExpanded={screenshotShortcutCustomExpanded}
+                disabled={saving}
+                onEnabledChange={setScreenshotShortcutEnabled}
+                onPresetSelect={handlePresetSelect}
+                onCustomOpen={handleCustomOpen}
+                onShortcutChange={setScreenshotShortcut}
+                onRestoreDefaults={handleRestoreDefaultShortcut}
+              />
+            </div>
+
+            <div className="ai-settings-content-grid">
+              <div
+                id="ai-settings-ai-section"
+                ref={aiSectionRef}
+                className="ai-settings-section-anchor"
+              >
+                {props.projectId ? (
+                  <SettingsSection
+                    title="主会话 AI"
+                    aiCli={aiCli}
+                    command={command}
+                    argsText={argsText}
+                    envText={envText}
+                    onAiCli={setAiCli}
+                    onCommand={setCommand}
+                    onArgs={setArgsText}
+                    onEnv={setEnvText}
+                  />
+                ) : (
+                  <section className="ai-settings-card ai-settings-no-project-card">
+                    <div className="ai-settings-card-head">
+                      <span className="ai-settings-card-icon">AI</span>
+                      <div>
+                        <div className="ai-settings-title">AI CLI</div>
+                        <div className="ai-settings-note">选择项目后可编辑 AI CLI 配置</div>
+                      </div>
+                    </div>
+                  </section>
+                )}
+              </div>
+
+              <div
+                id="ai-settings-runtime-section"
+                ref={runtimeSectionRef}
+                className="ai-settings-panel ai-settings-runtime-panel ai-settings-section-anchor"
+              >
+                <ProjectRuntimeSettingsSection
+                  projectId={props.projectId}
+                  loading={props.projectId !== null && !props.runtimeConfigReady}
+                  value={runtimeConfig}
+                  disabled={saving || props.runtimeConfigDisabled === true}
+                  visualStudioInstallations={props.visualStudioInstallations}
+                  visualStudioInstallationsLoading={props.visualStudioInstallationsLoading}
+                  onRefreshVisualStudioInstallations={props.onRefreshVisualStudioInstallations}
+                  onChange={setRuntimeConfig}
+                />
+              </div>
+
+              <div
+                id="ai-settings-build-section"
+                ref={buildSectionRef}
+                className="ai-settings-panel ai-settings-build-panel ai-settings-grid-full ai-settings-section-anchor"
+              >
+                <ProjectBuildSettingsSection
+                  projectId={props.projectId}
+                  loading={props.projectId !== null && !props.buildConfigReady}
+                  value={buildConfig}
+                  disabled={saving}
+                  visualStudioInstallations={props.visualStudioInstallations}
+                  visualStudioInstallationsLoading={props.visualStudioInstallationsLoading}
+                  onRefreshVisualStudioInstallations={props.onRefreshVisualStudioInstallations}
+                  onChange={setBuildConfig}
+                />
+              </div>
+            </div>
+            {error && <div className="modal-error">⚠ {error}</div>}
+          </main>
         </div>
-        <div className="ai-settings-body">
-          <ScreenshotSettingsSection
-            enabled={screenshotShortcutEnabled}
-            shortcut={screenshotShortcut}
-            customExpanded={screenshotShortcutCustomExpanded}
-            disabled={saving}
-            onEnabledChange={setScreenshotShortcutEnabled}
-            onPresetSelect={handlePresetSelect}
-            onCustomOpen={handleCustomOpen}
-            onShortcutChange={setScreenshotShortcut}
-            onRestoreDefaults={handleRestoreDefaultShortcut}
-          />
-          {props.projectId ? (
-            <SettingsSection
-              title="主会话 AI"
-              aiCli={aiCli}
-              command={command}
-              argsText={argsText}
-              envText={envText}
-              onAiCli={setAiCli}
-              onCommand={setCommand}
-              onArgs={setArgsText}
-              onEnv={setEnvText}
-            />
-          ) : (
-            <section className="ai-settings-card">
-              <div className="ai-settings-title">AI CLI</div>
-              <div className="ai-settings-note">选择项目后可编辑 AI CLI 配置</div>
-            </section>
-          )}
-          <ProjectBuildSettingsSection
-            projectId={props.projectId}
-            loading={props.projectId !== null && !props.buildConfigReady}
-            value={buildConfig}
-            disabled={saving}
-            visualStudioInstallations={props.visualStudioInstallations}
-            visualStudioInstallationsLoading={props.visualStudioInstallationsLoading}
-            onRefreshVisualStudioInstallations={props.onRefreshVisualStudioInstallations}
-            onChange={setBuildConfig}
-          />
-          <ProjectRuntimeSettingsSection
-            projectId={props.projectId}
-            loading={props.projectId !== null && !props.runtimeConfigReady}
-            value={runtimeConfig}
-            disabled={saving || props.runtimeConfigDisabled === true}
-            visualStudioInstallations={props.visualStudioInstallations}
-            visualStudioInstallationsLoading={props.visualStudioInstallationsLoading}
-            onRefreshVisualStudioInstallations={props.onRefreshVisualStudioInstallations}
-            onChange={setRuntimeConfig}
-          />
-          {error && <div className="modal-error">⚠ {error}</div>}
-        </div>
-        <div className="modal-actions">
-          <button className="drawer-btn" onClick={props.onClose}>
-            取消
-          </button>
-          <button className="drawer-btn primary" onClick={handleSave} disabled={saving}>
-            {saving ? '保存中…' : '保存'}
-          </button>
-        </div>
+
+        <footer className="ai-settings-footer">
+          <span>变更点击“保存设置”后生效。</span>
+          <div className="ai-settings-footer-actions">
+            <button className="drawer-btn" onClick={props.onClose}>
+              取消
+            </button>
+            <button className="drawer-btn primary" onClick={handleSave} disabled={saving}>
+              {saving ? '保存中…' : '保存设置'}
+            </button>
+          </div>
+        </footer>
       </div>
     </div>
   )

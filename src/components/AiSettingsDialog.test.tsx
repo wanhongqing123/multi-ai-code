@@ -1,4 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
+import type { ComponentProps } from 'react'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 import type { ProjectRuntimeConfig, VisualStudioInstallation } from '../../electron/preload'
 import AiSettingsDialog, {
@@ -33,85 +36,85 @@ const defaultDialogProps = {
   onSavedRuntimeConfig: vi.fn()
 }
 
-describe('AiSettingsDialog', () => {
-  it('renders renamed settings title and screenshot controls', () => {
-    const markup = renderToStaticMarkup(
-      <AiSettingsDialog
-        projectId="project-1"
-        initial={{ ai_cli: 'claude' }}
-        initialRepoView={{ ai_cli: 'codex' }}
-        initialAppSettings={{
-          screenshotShortcutEnabled: true,
-          screenshotShortcut: 'Alt+Shift+S'
-        }}
-        initialBuildConfig={defaultBuildConfig}
-        buildConfigReady={true}
-        {...defaultDialogProps}
-        onClose={vi.fn()}
-        onSaved={vi.fn()}
-        onSavedRepoView={vi.fn()}
-        onSavedAppSettings={vi.fn()}
-        onSavedBuildConfig={vi.fn()}
-      />
-    )
+function renderDialog(overrides: Partial<ComponentProps<typeof AiSettingsDialog>> = {}) {
+  return renderToStaticMarkup(
+    <AiSettingsDialog
+      projectId="project-1"
+      initial={{ ai_cli: 'claude' }}
+      initialRepoView={{ ai_cli: 'codex' }}
+      initialAppSettings={{
+        screenshotShortcutEnabled: true,
+        screenshotShortcut: 'Alt+Shift+S'
+      }}
+      initialBuildConfig={defaultBuildConfig}
+      buildConfigReady={true}
+      {...defaultDialogProps}
+      onClose={vi.fn()}
+      onSaved={vi.fn()}
+      onSavedRepoView={vi.fn()}
+      onSavedAppSettings={vi.fn()}
+      onSavedBuildConfig={vi.fn()}
+      {...overrides}
+    />
+  )
+}
 
-    expect(markup).toContain('设置')
-    expect(markup).toContain('截图快捷键（全局）')
-    expect(markup).toContain('恢复默认')
+describe('AiSettingsDialog', () => {
+  it('renders the redesigned settings center shell and screenshot controls', () => {
+    const markup = renderDialog()
+
+    expect(markup).toContain('ai-settings-shell')
+    expect(markup).toContain('ai-settings-sidebar')
+    expect(markup).toContain('ai-settings-content')
+    expect(markup).toContain('ai-settings-footer')
+    expect(markup).toContain('ai-settings-hero-card')
     expect(markup).toContain('Alt+Shift+S')
   })
 
-  it('renders the project runtime settings section', () => {
-    const markup = renderToStaticMarkup(
-      <AiSettingsDialog
-        projectId="project-1"
-        initial={{ ai_cli: 'claude' }}
-        initialRepoView={{ ai_cli: 'codex' }}
-        initialAppSettings={{
-          screenshotShortcutEnabled: true,
-          screenshotShortcut: 'Alt+Shift+S'
-        }}
-        initialBuildConfig={defaultBuildConfig}
-        buildConfigReady={true}
-        {...defaultDialogProps}
-        onClose={vi.fn()}
-        onSaved={vi.fn()}
-        onSavedRepoView={vi.fn()}
-        onSavedAppSettings={vi.fn()}
-        onSavedBuildConfig={vi.fn()}
-      />
-    )
+  it('renders sidebar navigation as clickable section buttons', () => {
+    const markup = renderDialog()
 
-    expect(markup).toContain('项目运行')
+    expect(markup).toContain('type="button" class="ai-settings-nav-item active"')
+    expect(markup).toContain('aria-controls="ai-settings-shortcut-section"')
+    expect(markup).toContain('aria-controls="ai-settings-ai-section"')
+    expect(markup).toContain('aria-controls="ai-settings-build-section"')
+    expect(markup).toContain('aria-controls="ai-settings-runtime-section"')
+    expect(markup).toContain('id="ai-settings-shortcut-section"')
+    expect(markup).toContain('id="ai-settings-ai-section"')
+  })
+
+  it('keeps settings modal sizing stronger than the global modal rule', () => {
+    const css = readFileSync(fileURLToPath(new URL('../styles.css', import.meta.url)), 'utf8')
+    const globalModalIndex = css.lastIndexOf('\n.modal {')
+    const settingsModalIndex = css.lastIndexOf('.modal.ai-settings-modal')
+    const settingsModalRule = css.slice(settingsModalIndex, settingsModalIndex + 360)
+
+    expect(globalModalIndex).toBeGreaterThan(-1)
+    expect(settingsModalIndex).toBeGreaterThan(globalModalIndex)
+    expect(settingsModalRule).toContain('width: min(1000px')
+    expect(settingsModalRule).toContain('max-width: calc(100vw - 48px)')
+  })
+
+  it('renders the project runtime settings section', () => {
+    const markup = renderDialog()
+
+    expect(markup).toContain('ai-settings-runtime-panel')
     expect(markup).toContain('project-runtime-settings-grid')
   })
 
   it('renders preset shortcut buttons and hides the custom input until custom mode is needed', () => {
-    const markup = renderToStaticMarkup(
-      <AiSettingsDialog
-        projectId="project-1"
-        initial={{ ai_cli: 'claude' }}
-        initialRepoView={{ ai_cli: 'codex' }}
-        initialAppSettings={{
-          screenshotShortcutEnabled: true,
-          screenshotShortcut: 'CommandOrControl+Shift+S'
-        }}
-        initialBuildConfig={defaultBuildConfig}
-        buildConfigReady={true}
-        {...defaultDialogProps}
-        onClose={vi.fn()}
-        onSaved={vi.fn()}
-        onSavedRepoView={vi.fn()}
-        onSavedAppSettings={vi.fn()}
-        onSavedBuildConfig={vi.fn()}
-      />
-    )
+    const markup = renderDialog({
+      initialAppSettings: {
+        screenshotShortcutEnabled: true,
+        screenshotShortcut: 'CommandOrControl+Shift+S'
+      }
+    })
 
     expect(markup).toContain('Ctrl/Cmd + Shift + A')
     expect(markup).toContain('Ctrl/Cmd + Shift + S')
     expect(markup).toContain('Ctrl/Cmd + Alt + A')
     expect(markup).toContain('Alt + Shift + A')
-    expect(markup).toContain('自定义')
+    expect(markup).toContain('ai-settings-shortcut-custom-toggle')
     expect(markup).not.toContain('placeholder="CommandOrControl+Shift+A"')
   })
 
@@ -127,28 +130,15 @@ describe('AiSettingsDialog', () => {
   })
 
   it('keeps preset buttons visible when custom mode is expanded for a non-preset shortcut', () => {
-    const markup = renderToStaticMarkup(
-      <AiSettingsDialog
-        projectId="project-1"
-        initial={{ ai_cli: 'claude' }}
-        initialRepoView={{ ai_cli: 'codex' }}
-        initialAppSettings={{
-          screenshotShortcutEnabled: true,
-          screenshotShortcut: 'Shift+Meta+K'
-        }}
-        initialBuildConfig={defaultBuildConfig}
-        buildConfigReady={true}
-        {...defaultDialogProps}
-        onClose={vi.fn()}
-        onSaved={vi.fn()}
-        onSavedRepoView={vi.fn()}
-        onSavedAppSettings={vi.fn()}
-        onSavedBuildConfig={vi.fn()}
-      />
-    )
+    const markup = renderDialog({
+      initialAppSettings: {
+        screenshotShortcutEnabled: true,
+        screenshotShortcut: 'Shift+Meta+K'
+      }
+    })
 
     expect(markup).toContain('Ctrl/Cmd + Shift + A')
-    expect(markup).toContain('自定义')
+    expect(markup).toContain('ai-settings-shortcut-custom-toggle')
     expect(markup).toContain('placeholder="CommandOrControl+Shift+A"')
   })
 
@@ -166,28 +156,17 @@ describe('AiSettingsDialog', () => {
   })
 
   it('renders the no-project AI CLI hint when project is unavailable', () => {
-    const markup = renderToStaticMarkup(
-      <AiSettingsDialog
-        projectId={null}
-        initial={{ ai_cli: 'claude' }}
-        initialRepoView={{ ai_cli: 'codex' }}
-        initialAppSettings={{
-          screenshotShortcutEnabled: false,
-          screenshotShortcut: 'CommandOrControl+Shift+A'
-        }}
-        initialBuildConfig={defaultBuildConfig}
-        buildConfigReady={false}
-        {...defaultDialogProps}
-        onClose={vi.fn()}
-        onSaved={vi.fn()}
-        onSavedRepoView={vi.fn()}
-        onSavedAppSettings={vi.fn()}
-        onSavedBuildConfig={vi.fn()}
-      />
-    )
+    const markup = renderDialog({
+      projectId: null,
+      initialAppSettings: {
+        screenshotShortcutEnabled: false,
+        screenshotShortcut: 'CommandOrControl+Shift+A'
+      },
+      buildConfigReady: false
+    })
 
-    expect(markup).toContain('选择项目后可编辑 AI CLI 配置')
-    expect(markup).toContain('选择项目后可编辑项目构建配置')
+    expect(markup).toContain('ai-settings-no-project-card')
+    expect(markup).toContain('ai-settings-build-panel')
   })
 
   it('prefers authoritative saved app settings returned from the backend', () => {
@@ -280,6 +259,7 @@ describe('AiSettingsDialog', () => {
       )
     ).toBe('项目设置文件已自动修复并保存')
   })
+
   it('syncs main and repo AI settings even when build-config save fails', async () => {
     const onMainSaved = vi.fn()
     const onRepoViewSaved = vi.fn()

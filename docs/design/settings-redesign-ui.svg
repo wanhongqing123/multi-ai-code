@@ -1,0 +1,195 @@
+<svg width="1440" height="960" viewBox="0 0 1440 960" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="bgGlowA" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(310 180) rotate(38) scale(650 440)">
+      <stop stop-color="#60A5FA" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#60A5FA" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="bgGlowB" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(1110 770) rotate(-142) scale(600 420)">
+      <stop stop-color="#A78BFA" stop-opacity="0.42"/>
+      <stop offset="1" stop-color="#A78BFA" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="modal" x1="220" y1="78" x2="1218" y2="880" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#F7FAFF"/>
+    </linearGradient>
+    <linearGradient id="sidebar" x1="220" y1="80" x2="472" y2="880" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F8FBFF"/>
+      <stop offset="1" stop-color="#EFF5FF"/>
+    </linearGradient>
+    <linearGradient id="hero" x1="500" y1="180" x2="1188" y2="334" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2563EB"/>
+      <stop offset="0.52" stop-color="#4F46E5"/>
+      <stop offset="1" stop-color="#7C3AED"/>
+    </linearGradient>
+    <linearGradient id="cardSoft" x1="500" y1="356" x2="1188" y2="760" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#F8FAFC"/>
+    </linearGradient>
+    <filter id="modalShadow" x="164" y="34" width="1112" height="900" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+      <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+      <feOffset dy="24"/>
+      <feGaussianBlur stdDeviation="34"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 0.043 0 0 0 0 0.071 0 0 0 0 0.14 0 0 0 0.24 0"/>
+      <feBlend mode="normal" in2="BackgroundImageFix" result="effect1"/>
+      <feBlend mode="normal" in="SourceGraphic" in2="effect1" result="shape"/>
+    </filter>
+    <filter id="cardShadow" x="472" y="156" width="744" height="214" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+      <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+      <feOffset dy="18"/>
+      <feGaussianBlur stdDeviation="18"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 0.04 0 0 0 0 0.06 0 0 0 0 0.18 0 0 0 0.18 0"/>
+      <feBlend mode="normal" in2="BackgroundImageFix" result="effect1"/>
+      <feBlend mode="normal" in="SourceGraphic" in2="effect1" result="shape"/>
+    </filter>
+    <style>
+      .title { font: 800 24px "Inter", "Microsoft YaHei", sans-serif; fill: #0F172A; }
+      .subtitle { font: 500 12px "Inter", "Microsoft YaHei", sans-serif; fill: #64748B; }
+      .sideTitle { font: 700 12px "Inter", "Microsoft YaHei", sans-serif; fill: #94A3B8; letter-spacing: .08em; }
+      .nav { font: 700 14px "Inter", "Microsoft YaHei", sans-serif; fill: #1E293B; }
+      .navMuted { font: 500 12px "Inter", "Microsoft YaHei", sans-serif; fill: #94A3B8; }
+      .heroTitle { font: 800 25px "Inter", "Microsoft YaHei", sans-serif; fill: #FFFFFF; }
+      .heroText { font: 500 13px "Inter", "Microsoft YaHei", sans-serif; fill: #DBEAFE; }
+      .section { font: 800 18px "Inter", "Microsoft YaHei", sans-serif; fill: #0F172A; }
+      .body { font: 500 12px "Inter", "Microsoft YaHei", sans-serif; fill: #64748B; }
+      .label { font: 800 11px "Inter", "Microsoft YaHei", sans-serif; fill: #64748B; letter-spacing: .04em; }
+      .value { font: 650 13px "Inter", "Microsoft YaHei", sans-serif; fill: #111827; }
+      .mono { font: 650 12px "Cascadia Code", "Consolas", monospace; fill: #1E293B; }
+      .chipBlue { font: 800 11px "Inter", "Microsoft YaHei", sans-serif; fill: #1D4ED8; }
+      .chipWhite { font: 800 11px "Inter", "Microsoft YaHei", sans-serif; fill: #FFFFFF; }
+      .button { font: 800 13px "Inter", "Microsoft YaHei", sans-serif; fill: #FFFFFF; }
+      .buttonMuted { font: 800 13px "Inter", "Microsoft YaHei", sans-serif; fill: #334155; }
+      .small { font: 650 11px "Inter", "Microsoft YaHei", sans-serif; fill: #64748B; }
+    </style>
+  </defs>
+
+  <rect width="1440" height="960" fill="#CBD5E1"/>
+  <rect width="1440" height="960" fill="url(#bgGlowA)"/>
+  <rect width="1440" height="960" fill="url(#bgGlowB)"/>
+  <rect width="1440" height="960" fill="#0F172A" opacity="0.16"/>
+
+  <g filter="url(#modalShadow)">
+    <rect x="220" y="80" width="1000" height="800" rx="32" fill="url(#modal)"/>
+    <rect x="220.75" y="80.75" width="998.5" height="798.5" rx="31.25" stroke="#FFFFFF" stroke-opacity="0.72" stroke-width="1.5"/>
+
+    <rect x="220" y="80" width="1000" height="74" rx="32" fill="#FFFFFF" fill-opacity="0.78"/>
+    <path d="M220 154H1220" stroke="#E2E8F0"/>
+    <circle cx="250" cy="117" r="17" fill="#EAF3FF"/>
+    <path d="M244 117.5C244 114.5 246.5 112 249.5 112H250.5C253.5 112 256 114.5 256 117.5C256 120.5 253.5 123 250.5 123H249.5C246.5 123 244 120.5 244 117.5Z" fill="#2563EB"/>
+    <text x="276" y="116" class="title">设置中心</text>
+    <text x="276" y="139" class="subtitle">快捷键 · AI CLI · 项目构建 · 项目运行</text>
+    <rect x="1030" y="105" width="96" height="28" rx="14" fill="#ECFDF5" stroke="#BBF7D0"/>
+    <circle cx="1048" cy="119" r="5" fill="#22C55E"/>
+    <text x="1060" y="124" class="small">项目级保存</text>
+    <rect x="1144" y="98" width="40" height="40" rx="14" fill="#F8FAFC" stroke="#E2E8F0"/>
+    <path d="M1156 110L1172 126M1172 110L1156 126" stroke="#64748B" stroke-width="2.2" stroke-linecap="round"/>
+
+    <rect x="220" y="154" width="252" height="654" fill="url(#sidebar)"/>
+    <path d="M472 154V808" stroke="#E2E8F0"/>
+
+    <text x="252" y="196" class="sideTitle">CONFIG</text>
+
+    <rect x="244" y="216" width="204" height="64" rx="18" fill="#EAF3FF" stroke="#BFDBFE"/>
+    <rect x="260" y="232" width="32" height="32" rx="12" fill="#2563EB"/>
+    <path d="M270 248H282M276 242V254" stroke="white" stroke-width="2" stroke-linecap="round"/>
+    <text x="306" y="242" class="nav">全局快捷键</text>
+    <text x="306" y="262" class="navMuted">截图采样入口</text>
+    <rect x="432" y="238" width="4" height="20" rx="2" fill="#2563EB"/>
+
+    <rect x="244" y="296" width="204" height="64" rx="18" fill="#FFFFFF" stroke="#E5EAF1"/>
+    <rect x="260" y="312" width="32" height="32" rx="12" fill="#EEF2FF"/>
+    <text x="268" y="334" font-size="16">AI</text>
+    <text x="306" y="322" class="nav">主会话 AI</text>
+    <text x="306" y="342" class="navMuted">Claude / Codex</text>
+
+    <rect x="244" y="376" width="204" height="64" rx="18" fill="#FFFFFF" stroke="#E5EAF1"/>
+    <rect x="260" y="392" width="32" height="32" rx="12" fill="#ECFDF5"/>
+    <path d="M268 407H284M268 415H279" stroke="#16A34A" stroke-width="2" stroke-linecap="round"/>
+    <text x="306" y="402" class="nav">项目构建</text>
+    <text x="306" y="422" class="navMuted">步骤 / 环境 / 编码</text>
+
+    <rect x="244" y="456" width="204" height="64" rx="18" fill="#FFFFFF" stroke="#E5EAF1"/>
+    <rect x="260" y="472" width="32" height="32" rx="12" fill="#FFF7ED"/>
+    <path d="M272 480L284 488L272 496V480Z" fill="#F97316"/>
+    <text x="306" y="482" class="nav">项目运行</text>
+    <text x="306" y="502" class="navMuted">启动命令</text>
+
+    <rect x="244" y="680" width="204" height="96" rx="22" fill="#FFFFFF" stroke="#E5EAF1"/>
+    <text x="264" y="712" class="label">CURRENT PROJECT</text>
+    <text x="264" y="738" class="value">obs-studio</text>
+    <rect x="264" y="752" width="80" height="22" rx="11" fill="#EFF6FF"/>
+    <text x="280" y="767" class="chipBlue">已选择</text>
+
+    <rect x="472" y="154" width="748" height="654" fill="#FFFFFF" fill-opacity="0.35"/>
+
+    <g filter="url(#cardShadow)">
+      <rect x="500" y="184" width="688" height="150" rx="28" fill="url(#hero)"/>
+      <circle cx="1116" cy="194" r="82" fill="#FFFFFF" opacity="0.08"/>
+      <circle cx="1032" cy="316" r="96" fill="#FFFFFF" opacity="0.08"/>
+      <rect x="526" y="210" width="42" height="42" rx="16" fill="#FFFFFF" fill-opacity="0.18"/>
+      <path d="M538 231H556M547 222V240" stroke="#FFFFFF" stroke-width="2.4" stroke-linecap="round"/>
+      <text x="586" y="226" class="heroTitle">全局快捷键</text>
+      <text x="586" y="252" class="heroText">截图采样入口，保存后立即生效</text>
+      <rect x="526" y="282" width="110" height="30" rx="15" fill="#FFFFFF" fill-opacity="0.18"/>
+      <text x="552" y="302" class="chipWhite">截图已启用</text>
+      <rect x="650" y="282" width="176" height="30" rx="15" fill="#FFFFFF" fill-opacity="0.9"/>
+      <text x="674" y="302" class="mono">Ctrl/Cmd + Shift + A</text>
+      <rect x="1006" y="282" width="142" height="30" rx="15" fill="#FFFFFF" fill-opacity="0.16"/>
+      <text x="1032" y="302" class="chipWhite">全局配置</text>
+    </g>
+
+    <rect x="500" y="360" width="688" height="132" rx="24" fill="url(#cardSoft)" stroke="#E2E8F0"/>
+    <text x="528" y="396" class="section">快捷键预设</text>
+    <text x="528" y="419" class="body">常用快捷键一键切换，自定义模式单独展开。</text>
+    <rect x="528" y="444" width="136" height="36" rx="14" fill="#2563EB"/>
+    <text x="596" y="467" class="button" text-anchor="middle">Ctrl + Shift + A</text>
+    <rect x="676" y="444" width="136" height="36" rx="14" fill="#F8FAFC" stroke="#CBD5E1"/>
+    <text x="744" y="467" class="buttonMuted" text-anchor="middle">Ctrl + Shift + S</text>
+    <rect x="824" y="444" width="128" height="36" rx="14" fill="#F8FAFC" stroke="#CBD5E1"/>
+    <text x="888" y="467" class="buttonMuted" text-anchor="middle">Ctrl + Alt + A</text>
+    <rect x="964" y="444" width="112" height="36" rx="14" fill="#F8FAFC" stroke="#CBD5E1"/>
+    <text x="1020" y="467" class="buttonMuted" text-anchor="middle">自定义</text>
+    <rect x="1090" y="444" width="44" height="36" rx="14" fill="#F8FAFC" stroke="#CBD5E1"/>
+    <text x="1112" y="467" class="buttonMuted" text-anchor="middle">↺</text>
+
+    <rect x="500" y="516" width="328" height="214" rx="24" fill="#FFFFFF" stroke="#E2E8F0"/>
+    <rect x="528" y="544" width="38" height="38" rx="14" fill="#EEF2FF"/>
+    <text x="538" y="568" font-size="15" font-family="Inter, Microsoft YaHei" font-weight="800" fill="#4F46E5">AI</text>
+    <text x="580" y="558" class="section">主会话 AI</text>
+    <text x="580" y="580" class="body">控制主终端实际启动的 CLI。</text>
+    <text x="528" y="616" class="label">AI CLI</text>
+    <rect x="528" y="630" width="272" height="38" rx="14" fill="#F8FAFC" stroke="#CBD5E1"/>
+    <text x="544" y="654" class="value">Claude Code</text>
+    <text x="528" y="696" class="label">BINARY</text>
+    <rect x="592" y="682" width="208" height="38" rx="14" fill="#F8FAFC" stroke="#CBD5E1"/>
+    <text x="608" y="706" class="mono">claude</text>
+
+    <rect x="860" y="516" width="328" height="214" rx="24" fill="#FFFFFF" stroke="#E2E8F0"/>
+    <rect x="888" y="544" width="38" height="38" rx="14" fill="#FFF7ED"/>
+    <path d="M902 552L916 563L902 574V552Z" fill="#F97316"/>
+    <text x="940" y="558" class="section">项目运行</text>
+    <text x="940" y="580" class="body">定时任务、构建和运行共用。</text>
+    <text x="888" y="616" class="label">环境</text>
+    <rect x="888" y="630" width="126" height="38" rx="14" fill="#F8FAFC" stroke="#CBD5E1"/>
+    <text x="904" y="654" class="value">MSYS2</text>
+    <text x="1028" y="616" class="label">编码</text>
+    <rect x="1028" y="630" width="132" height="38" rx="14" fill="#F8FAFC" stroke="#CBD5E1"/>
+    <text x="1044" y="654" class="value">自动</text>
+    <text x="888" y="696" class="label">命令</text>
+    <rect x="936" y="682" width="224" height="38" rx="14" fill="#F8FAFC" stroke="#CBD5E1"/>
+    <text x="952" y="706" class="mono">npm run dev</text>
+
+    <rect x="500" y="750" width="688" height="34" rx="17" fill="#F8FAFC" stroke="#E2E8F0"/>
+    <circle cx="522" cy="767" r="5" fill="#2563EB"/>
+    <text x="538" y="771" class="small">项目构建保留为独立折叠卡片，真实界面中默认收起，避免设置页过长。</text>
+
+    <rect x="220" y="808" width="1000" height="72" rx="0" fill="#FFFFFF" fill-opacity="0.9"/>
+    <path d="M220 808H1220" stroke="#E2E8F0"/>
+    <text x="252" y="850" class="body">变更点击“保存设置”后生效。</text>
+    <rect x="962" y="826" width="90" height="38" rx="15" fill="#FFFFFF" stroke="#CBD5E1"/>
+    <text x="1007" y="850" class="buttonMuted" text-anchor="middle">取消</text>
+    <rect x="1064" y="826" width="124" height="38" rx="15" fill="#2563EB"/>
+    <text x="1126" y="850" class="button" text-anchor="middle">保存设置</text>
+  </g>
+</svg>

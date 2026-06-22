@@ -1,8 +1,13 @@
 import { ipcMain } from 'electron'
-import { getSessionForProject, sendUserMessageToSession } from '../cc/ptyManager.js'
 import {
+  addSessionDataListener,
+  getSessionForProject,
+  sendUserMessageToSession
+} from '../cc/ptyManager.js'
+import {
+  drainScheduledTaskQueue,
   enqueueScheduledTaskNow,
-  getScheduledTaskQueueState,
+  handleScheduledTaskSessionData,
   runScheduledTaskScanOnce,
   setScheduledTaskSendHandler
 } from './scheduler.js'
@@ -16,11 +21,19 @@ import {
 } from './taskStore.js'
 import type { CreateScheduledTaskInput, UpdateScheduledTaskInput } from './types.js'
 
+let removeSessionDataListener: (() => void) | null = null
+
 export function registerScheduledTaskIpc(): void {
   setScheduledTaskSendHandler({
     resolveSession: getSessionForProject,
     sendUser: sendUserMessageToSession
   })
+
+  if (!removeSessionDataListener) {
+    removeSessionDataListener = addSessionDataListener((evt) => {
+      handleScheduledTaskSessionData(evt.sessionId, evt.chunk)
+    })
+  }
 
   ipcMain.handle('scheduled-tasks:list', async (_event, { projectId }: { projectId: string }) => {
     return listScheduledTasks(projectId)
@@ -63,6 +76,7 @@ export function registerScheduledTaskIpc(): void {
       _event,
       {
         taskId,
+        sessionId,
         targetRepo
       }: {
         taskId: number
@@ -71,11 +85,21 @@ export function registerScheduledTaskIpc(): void {
       }
     ) => {
       const task = getScheduledTask(taskId)
-      if (!task) return { ok: false as const, error: '未找到定时任务' }
-      const session = getSessionForProject(task.projectId)
+      if (!task) return { ok: false as const, error: 'scheduled task not found' }
+
+      const projectSession = getSessionForProject(task.projectId)
+      const preferredSession = sessionId
+        ? {
+            sessionId,
+            targetRepo: targetRepo ?? projectSession?.targetRepo ?? 'current project'
+          }
+        : undefined
+      const session = preferredSession ?? projectSession
       const state = await enqueueScheduledTaskNow(
         task,
-        session?.targetRepo ?? targetRepo ?? '当前项目'
+        session?.targetRepo ?? targetRepo ?? 'current project',
+        Date.now(),
+        preferredSession
       )
       return {
         ok: true as const,
@@ -93,6 +117,6 @@ export function registerScheduledTaskIpc(): void {
   )
 
   ipcMain.handle('scheduled-tasks:queue-state', async () => {
-    return getScheduledTaskQueueState()
+    return drainScheduledTaskQueue()
   })
 }

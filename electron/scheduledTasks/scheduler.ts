@@ -1,3 +1,4 @@
+import { randomBytes } from 'crypto'
 import { buildScheduledTaskPrompt } from './promptBuilder.js'
 import {
   advanceScheduledTaskAfterQueue,
@@ -25,6 +26,9 @@ export interface ScheduledTaskQueueItem {
   runId: number
   scheduledAt: number
   prompt: string
+  completionToken: string
+  timeoutMinutes: number
+  preferredSession?: ScheduledTaskSessionInfo
 }
 
 export interface ScheduledTaskQueueState {
@@ -36,7 +40,12 @@ let sendHandler: ScheduledTaskSendHandler | null = null
 let timer: NodeJS.Timeout | null = null
 let draining = false
 let runningItem: ScheduledTaskQueueItem | null = null
+let runningSessionId: string | null = null
+let runningTimeout: NodeJS.Timeout | null = null
+let runningOutputBuffer = ''
 const waitingItems: ScheduledTaskQueueItem[] = []
+const SCHEDULED_TASK_OUTPUT_BUFFER_LIMIT = 65_536
+const SCHEDULED_TASK_OUTPUT_EXCERPT_LIMIT = 16_384
 
 function hasQueuedTask(taskId: number): boolean {
   return (
@@ -44,9 +53,19 @@ function hasQueuedTask(taskId: number): boolean {
   )
 }
 
-function enqueueTask(task: ScheduledTask, scheduledAt: number, targetRepo: string): void {
+function createCompletionToken(): string {
+  return randomBytes(12).toString('base64url')
+}
+
+function enqueueTask(
+  task: ScheduledTask,
+  scheduledAt: number,
+  targetRepo: string,
+  preferredSession?: ScheduledTaskSessionInfo
+): void {
   if (hasQueuedTask(task.id)) return
-  const prompt = buildScheduledTaskPrompt(task, { targetRepo })
+  const completionToken = createCompletionToken()
+  const prompt = buildScheduledTaskPrompt(task, { targetRepo, completionToken })
   const run = createScheduledTaskRun({
     taskId: task.id,
     status: 'queued',
@@ -60,7 +79,10 @@ function enqueueTask(task: ScheduledTask, scheduledAt: number, targetRepo: strin
     projectId: task.projectId,
     runId: run.id,
     scheduledAt,
-    prompt
+    prompt,
+    completionToken,
+    timeoutMinutes: task.timeoutMinutes,
+    preferredSession
   })
   advanceScheduledTaskAfterQueue(task, Date.now())
 }
@@ -68,24 +90,26 @@ function enqueueTask(task: ScheduledTask, scheduledAt: number, targetRepo: strin
 export async function enqueueScheduledTaskNow(
   task: ScheduledTask,
   targetRepo: string,
-  scheduledAt = Date.now()
+  scheduledAt = Date.now(),
+  preferredSession?: ScheduledTaskSessionInfo
 ): Promise<ScheduledTaskQueueState> {
-  enqueueTask(task, scheduledAt, targetRepo)
+  enqueueTask(task, scheduledAt, targetRepo, preferredSession)
   await drainQueue()
   return getScheduledTaskQueueState()
 }
 
 async function drainQueue(): Promise<void> {
-  if (draining) return
+  if (draining || runningItem) return
   draining = true
   try {
-    while (waitingItems.length > 0) {
-      const item = waitingItems[0]
-      const session = sendHandler?.resolveSession(item.projectId) ?? null
-      if (!session) return
+    while (!runningItem && waitingItems.length > 0) {
+      const next = takeNextRunnableItem()
+      if (!next) return
+      const { item, session } = next
 
       runningItem = item
-      waitingItems.shift()
+      runningSessionId = session.sessionId
+      runningOutputBuffer = ''
       updateScheduledTaskRun(item.runId, {
         status: 'running',
         startedAt: Date.now(),
@@ -101,18 +125,114 @@ async function drainQueue(): Promise<void> {
           error: err instanceof Error ? err.message : String(err)
         }
       }
-      updateScheduledTaskRun(item.runId, {
-        status: result.ok ? 'succeeded' : 'failed',
-        finishedAt: Date.now(),
-        outputExcerpt: result.ok ? '已发送到当前 AICLI。' : null,
-        error: result.ok ? null : result.error ?? '发送到当前 AICLI 失败'
-      })
-      runningItem = null
+
+      if (runningItem?.runId !== item.runId) continue
+
+      if (!result.ok) {
+        completeRunningItem('failed', {
+          error: result.error ?? 'Failed to send scheduled task to AICLI.',
+          drainNext: false
+        })
+        continue
+      }
+
+      startRunningTimeout(item)
+      return
     }
   } finally {
-    runningItem = null
     draining = false
   }
+}
+
+function startRunningTimeout(item: ScheduledTaskQueueItem): void {
+  clearRunningTimeout()
+  const timeoutMs = Math.max(1, item.timeoutMinutes) * 60_000
+  runningTimeout = setTimeout(() => {
+    completeRunningItem('timed_out', {
+      error: `Scheduled task timed out after ${item.timeoutMinutes} minutes.`
+    })
+  }, timeoutMs)
+  runningTimeout.unref?.()
+}
+
+function clearRunningTimeout(): void {
+  if (!runningTimeout) return
+  clearTimeout(runningTimeout)
+  runningTimeout = null
+}
+
+function completeRunningItem(
+  status: 'succeeded' | 'failed' | 'timed_out',
+  options: {
+    error?: string | null
+    outputExcerpt?: string | null
+    drainNext?: boolean
+  } = {}
+): boolean {
+  const item = runningItem
+  if (!item) return false
+  clearRunningTimeout()
+  updateScheduledTaskRun(item.runId, {
+    status,
+    finishedAt: Date.now(),
+    outputExcerpt:
+      options.outputExcerpt ??
+      (status === 'succeeded'
+        ? 'AICLI reported scheduled task completion.'
+        : null),
+    error: status === 'succeeded' ? null : options.error ?? 'Scheduled task failed.'
+  })
+  runningItem = null
+  runningSessionId = null
+  runningOutputBuffer = ''
+  if (options.drainNext !== false) {
+    void drainQueue()
+  }
+  return true
+}
+
+export function handleScheduledTaskSessionData(sessionId: string, chunk: string): void {
+  const item = runningItem
+  if (!item || sessionId !== runningSessionId) return
+  runningOutputBuffer = (runningOutputBuffer + chunk).slice(
+    -SCHEDULED_TASK_OUTPUT_BUFFER_LIMIT
+  )
+  const marker = `MULTI_AI_CODE_SCHEDULED_TASK_DONE:${item.completionToken}:`
+  const markerIndex = runningOutputBuffer.indexOf(marker)
+  if (markerIndex < 0) return
+  const statusText = runningOutputBuffer.slice(markerIndex + marker.length)
+  const statusMatch = /^(succeeded|failed)\b/.exec(statusText)
+  if (!statusMatch) return
+  const status = statusMatch[1] as 'succeeded' | 'failed'
+  completeRunningItem(status, {
+    error: status === 'failed' ? 'AICLI reported scheduled task failure.' : null,
+    outputExcerpt: runningOutputBuffer.slice(-SCHEDULED_TASK_OUTPUT_EXCERPT_LIMIT)
+  })
+}
+
+function publicQueueItem(item: ScheduledTaskQueueItem): ScheduledTaskQueueItem {
+  const { preferredSession: _preferredSession, ...publicItem } = item
+  return { ...publicItem }
+}
+
+function takeNextRunnableItem(): {
+  item: ScheduledTaskQueueItem
+  session: ScheduledTaskSessionInfo
+} | null {
+  if (!sendHandler) return null
+  for (let index = 0; index < waitingItems.length; index += 1) {
+    const item = waitingItems[index]
+    const session = item.preferredSession ?? sendHandler.resolveSession(item.projectId)
+    if (!session) continue
+    waitingItems.splice(index, 1)
+    return { item, session }
+  }
+  return null
+}
+
+export async function drainScheduledTaskQueue(): Promise<ScheduledTaskQueueState> {
+  await drainQueue()
+  return getScheduledTaskQueueState()
 }
 
 export function setScheduledTaskSendHandler(handler: ScheduledTaskSendHandler | null): void {
@@ -132,7 +252,7 @@ export async function runScheduledTaskScanOnce(options: {
     : listAllDueScheduledTasks(now)
   for (const task of tasks) {
     const session = sendHandler?.resolveSession(task.projectId) ?? null
-    enqueueTask(task, task.nextRunAt ?? now, session?.targetRepo ?? '当前项目')
+    enqueueTask(task, task.nextRunAt ?? now, session?.targetRepo ?? 'current project')
   }
   await drainQueue()
   return getScheduledTaskQueueState()
@@ -140,8 +260,8 @@ export async function runScheduledTaskScanOnce(options: {
 
 export function getScheduledTaskQueueState(): ScheduledTaskQueueState {
   return {
-    running: runningItem ? { ...runningItem } : null,
-    waiting: waitingItems.map((item) => ({ ...item }))
+    running: runningItem ? publicQueueItem(runningItem) : null,
+    waiting: waitingItems.map(publicQueueItem)
   }
 }
 
@@ -164,5 +284,8 @@ export function resetScheduledTaskSchedulerForTests(): void {
   sendHandler = null
   draining = false
   runningItem = null
+  runningSessionId = null
+  runningOutputBuffer = ''
+  clearRunningTimeout()
   waitingItems.splice(0)
 }

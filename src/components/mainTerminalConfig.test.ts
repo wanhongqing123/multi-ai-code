@@ -29,6 +29,10 @@ describe('buildMainTerminalOptions', () => {
     })
   })
 
+  it('keeps a large scrollback for long AICLI PTY transcripts', () => {
+    expect(buildMainTerminalOptions('light').scrollback).toBeGreaterThanOrEqual(50_000)
+  })
+
   it('uses heavier weights and larger size on Windows; lighter elsewhere', () => {
     const opts = buildMainTerminalOptions('light')
     const plat =

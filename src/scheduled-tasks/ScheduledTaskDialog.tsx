@@ -66,10 +66,8 @@ export default function ScheduledTaskDialog(props: Props): JSX.Element {
 
   async function refresh(): Promise<void> {
     if (typeof window === 'undefined' || !window.api?.scheduledTasks) return
-    const [nextTasks, nextQueue] = await Promise.all([
-      window.api.scheduledTasks.list(projectId),
-      window.api.scheduledTasks.queueState()
-    ])
+    const nextQueue = await window.api.scheduledTasks.queueState()
+    const nextTasks = await window.api.scheduledTasks.list(projectId)
     setTasks(nextTasks)
     setQueueState(nextQueue)
     setSelectedId((current) => current ?? nextTasks[0]?.id ?? null)
@@ -92,13 +90,20 @@ export default function ScheduledTaskDialog(props: Props): JSX.Element {
   }, [query, tasks])
 
   const selectedTask = tasks.find((task) => task.id === selectedId) ?? filteredTasks[0] ?? null
+  const projectQueueState = useMemo(
+    () => ({
+      running: queueState.running?.projectId === projectId ? queueState.running : null,
+      waiting: queueState.waiting.filter((item) => item.projectId === projectId)
+    }),
+    [projectId, queueState]
+  )
   const enabledCount = tasks.filter((task) => task.enabled).length
-  const runningCount = queueState.running ? 1 : 0
+  const runningCount = projectQueueState.running ? 1 : 0
   const aicliState = !sessionRunning
     ? '未启动'
     : runningCount > 0
       ? '运行中'
-      : queueState.waiting.length > 0
+      : projectQueueState.waiting.length > 0
         ? '排队中'
         : '空闲'
 
@@ -169,7 +174,7 @@ export default function ScheduledTaskDialog(props: Props): JSX.Element {
             </div>
             <div>
               <span>排队中</span>
-              <strong>{queueState.waiting.length}</strong>
+              <strong>{projectQueueState.waiting.length}</strong>
             </div>
             <div>
               <span>运行中</span>

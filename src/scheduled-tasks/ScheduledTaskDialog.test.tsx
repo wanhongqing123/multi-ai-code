@@ -7,10 +7,10 @@ function task(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
   return {
     id: 1,
     projectId: 'project-1',
-    name: '每日代码巡检',
-    description: '检查项目风险',
-    goal: '检查当前项目最近的代码变更。',
-    instructions: ['分析代码风险'],
+    name: 'Daily code review',
+    description: 'Check project risks',
+    goal: 'Check recent code changes in the current project.',
+    instructions: ['Analyze code risk'],
     enabled: true,
     scheduleType: 'daily',
     scheduleTime: '21:30',
@@ -41,15 +41,15 @@ describe('ScheduledTaskDialog', () => {
       />
     )
 
-    expect(markup).toContain('定时任务管理')
-    expect(markup).toContain('当前 AICLI：空闲')
-    expect(markup).toContain('+ 新建任务')
-    expect(markup).toContain('每日代码巡检')
-    expect(markup).toContain('任务内容')
-    expect(markup).toContain('AICLI 策略')
-    expect(markup).toContain('忙碌时排队等待')
-    expect(markup).toContain('关闭')
-    expect(markup).toContain('删除')
+    expect(markup).toContain('\u5b9a\u65f6\u4efb\u52a1\u7ba1\u7406')
+    expect(markup).toContain('\u5f53\u524d AICLI\uff1a\u7a7a\u95f2')
+    expect(markup).toContain('+ \u65b0\u5efa\u4efb\u52a1')
+    expect(markup).toContain('Daily code review')
+    expect(markup).toContain('\u4efb\u52a1\u5185\u5bb9')
+    expect(markup).toContain('AICLI \u7b56\u7565')
+    expect(markup).toContain('\u5fd9\u788c\u65f6\u6392\u961f\u7b49\u5f85')
+    expect(markup).toContain('\u5173\u95ed')
+    expect(markup).toContain('\u5220\u9664')
   })
 
   it('renders an empty state without hiding the create action', () => {
@@ -65,8 +65,38 @@ describe('ScheduledTaskDialog', () => {
       />
     )
 
-    expect(markup).toContain('还没有定时任务')
-    expect(markup).toContain('+ 新建任务')
-    expect(markup).toContain('当前 AICLI：未启动')
+    expect(markup).toContain('\u8fd8\u6ca1\u6709\u5b9a\u65f6\u4efb\u52a1')
+    expect(markup).toContain('+ \u65b0\u5efa\u4efb\u52a1')
+    expect(markup).toContain('\u5f53\u524d AICLI\uff1a\u672a\u542f\u52a8')
+  })
+
+  it('ignores queued items from other projects when rendering the current AICLI state', () => {
+    const markup = renderToStaticMarkup(
+      <ScheduledTaskDialog
+        projectId="project-1"
+        targetRepo="E:\\OpenSource\\multi-ai-code"
+        sessionId="session-1"
+        sessionRunning={true}
+        initialTasks={[task()]}
+        initialQueueState={{
+          running: null,
+          waiting: [
+            {
+              taskId: 2,
+              taskName: 'other project task',
+              projectId: 'project-2',
+              runId: 20,
+              scheduledAt: Date.now(),
+              prompt: 'run other project task'
+            }
+          ]
+        }}
+        onClose={() => {}}
+      />
+    )
+
+    expect(markup).toContain('\u6392\u961f\u4e2d</span><strong>0</strong>')
+    expect(markup).toContain('\u5f53\u524d AICLI\uff1a\u7a7a\u95f2')
+    expect(markup).not.toContain('\u5f53\u524d AICLI\uff1a\u6392\u961f\u4e2d')
   })
 })

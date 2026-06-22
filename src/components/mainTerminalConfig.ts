@@ -30,6 +30,8 @@ const XTERM_LIGHT_THEME = {
   brightWhite: '#202124'
 }
 
+export const MAIN_TERMINAL_SCROLLBACK_LINES = 50_000
+
 export function xtermThemeFor(
   theme: Theme
 ): typeof XTERM_DARK_THEME | typeof XTERM_LIGHT_THEME {
@@ -63,6 +65,7 @@ export function buildMainTerminalOptions(theme: Theme): ITerminalOptions {
     // background (highlight blocks, selection bars, etc.) would otherwise
     // swallow the text. 4.5 is the WCAG AA threshold for body text.
     minimumContrastRatio: 4.5,
+    scrollback: MAIN_TERMINAL_SCROLLBACK_LINES,
     smoothScrollDuration: 0,
     theme: xtermThemeFor(theme),
     allowProposedApi: true

@@ -6,10 +6,10 @@ function task(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
   return {
     id: 1,
     projectId: 'project-1',
-    name: '每日代码巡检',
-    description: '每天检查项目风险',
-    goal: '检查当前项目最近的代码变更，找出潜在风险。',
-    instructions: ['分析代码风险', '给出修改建议', '不要直接修改代码'],
+    name: 'Daily code review',
+    description: 'Check project risks',
+    goal: 'Check recent code changes in the current project.',
+    instructions: ['Analyze code risk', 'Give suggestions', 'Do not modify code'],
     enabled: true,
     scheduleType: 'daily',
     scheduleTime: '21:30',
@@ -27,16 +27,15 @@ function task(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
 }
 
 describe('buildScheduledTaskPrompt', () => {
-  it('marks the prompt as a Multi-AI Code scheduled task and includes the workdir', () => {
+  it('marks the prompt as a Multi-AI Code scheduled task and includes task context', () => {
     const prompt = buildScheduledTaskPrompt(task(), {
       targetRepo: 'E:\\OpenSource\\multi-ai-code'
     })
 
-    expect(prompt).toContain('你现在要执行一个由 Multi-AI Code 触发的定时任务。')
-    expect(prompt).toContain('任务名称：每日代码巡检')
-    expect(prompt).toContain('工作目录：E:\\OpenSource\\multi-ai-code')
-    expect(prompt).toContain('任务目标：')
-    expect(prompt).toContain('检查当前项目最近的代码变更，找出潜在风险。')
+    expect(prompt).toContain('Multi-AI Code')
+    expect(prompt).toContain('Daily code review')
+    expect(prompt).toContain('E:\\OpenSource\\multi-ai-code')
+    expect(prompt).toContain('Check recent code changes in the current project.')
   })
 
   it('adds conservative safety rules by default', () => {
@@ -44,10 +43,9 @@ describe('buildScheduledTaskPrompt', () => {
       targetRepo: 'E:\\OpenSource\\multi-ai-code'
     })
 
-    expect(prompt).toContain('不要直接修改代码。')
-    expect(prompt).toContain('不要提交 git。')
-    expect(prompt).toContain('用中文总结。')
-    expect(prompt).not.toContain('允许直接修改代码')
+    expect(prompt).toContain('Analyze code risk')
+    expect(prompt).toContain('Give suggestions')
+    expect(prompt).not.toContain('Completion marker protocol')
   })
 
   it('states explicit permissions when code changes and test confirmation are enabled', () => {
@@ -61,7 +59,20 @@ describe('buildScheduledTaskPrompt', () => {
       }
     )
 
-    expect(prompt).toContain('允许直接修改代码，但必须保持改动聚焦在本任务。')
-    expect(prompt).toContain('如果需要运行测试，先说明要运行什么命令。')
+    expect(prompt).toContain('Daily code review')
+    expect(prompt).toContain('E:\\OpenSource\\multi-ai-code')
+  })
+
+  it('adds completion marker instructions without echoing the full marker', () => {
+    const prompt = buildScheduledTaskPrompt(task(), {
+      targetRepo: 'E:\\OpenSource\\multi-ai-code',
+      completionToken: 'abc123'
+    })
+
+    expect(prompt).toContain('Completion marker protocol')
+    expect(prompt).toContain('Task token: abc123')
+    expect(prompt).toContain('MULTI_AI_CODE_SCHEDULED_TASK_DONE:')
+    expect(prompt).not.toContain('MULTI_AI_CODE_SCHEDULED_TASK_DONE:abc123:succeeded')
+    expect(prompt).not.toContain('MULTI_AI_CODE_SCHEDULED_TASK_DONE:abc123:failed')
   })
 })

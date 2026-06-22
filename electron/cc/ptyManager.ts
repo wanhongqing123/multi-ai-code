@@ -140,14 +140,35 @@ interface PendingExternalReview {
   timeout: NodeJS.Timeout
 }
 
+type SessionDataListener = (evt: { sessionId: string; chunk: string }) => void
+
 const sessions = new Map<string, Session>()
 const pendingExternalReviews = new Map<string, PendingExternalReview>()
+const sessionDataListeners = new Set<SessionDataListener>()
 
 const EXTERNAL_REVIEW_TIMEOUT_MS = 90_000
+const RESUME_BOOT_TAIL_LIMIT = 16_384
+const CLI_BOOT_TEXT_LIMIT = 65_536
+const EXTERNAL_REVIEW_BUFFER_LIMIT = 524_288
 
 function broadcast(channel: string, payload: unknown): void {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) win.webContents.send(channel, payload)
+  }
+}
+
+export function addSessionDataListener(listener: SessionDataListener): () => void {
+  sessionDataListeners.add(listener)
+  return () => sessionDataListeners.delete(listener)
+}
+
+function emitSessionData(evt: { sessionId: string; chunk: string }): void {
+  for (const listener of sessionDataListeners) {
+    try {
+      listener(evt)
+    } catch {
+      /* keep PTY data delivery isolated from observers */
+    }
   }
 }
 
@@ -342,7 +363,7 @@ export function registerPtyIpc(): void {
     // Resume-failure detection: if the CLI exits with a non-zero code within
     // this window, we treat it as "no conversation to resume" (or similar)
     // and broadcast cc:resume-failed so the renderer can return to the boot
-    // gate. `resumeBootTail` keeps the most recent ~2KB of output for the
+    // gate. `resumeBootTail` keeps the most recent output for the
     // failure event so the UI can show the CLI's own error message.
     const RESUME_FAIL_WINDOW_MS = 5000
     let resumeWindowOpen = isResumeMode
@@ -355,10 +376,10 @@ export function registerPtyIpc(): void {
 
     proc.on('data', (chunk: string) => {
       if (resumeWindowOpen) {
-        resumeBootTail = (resumeBootTail + chunk).slice(-2048)
+        resumeBootTail = (resumeBootTail + chunk).slice(-RESUME_BOOT_TAIL_LIMIT)
       }
       if (session.command === 'codex') {
-        const boot = ((session.codexBootText ?? '') + chunk).slice(-16000)
+        const boot = ((session.codexBootText ?? '') + chunk).slice(-CLI_BOOT_TEXT_LIMIT)
         session.codexBootText = boot
         if (!session.codexTrustAccepted && shouldAutoAcceptCodexTrustPrompt(boot)) {
           session.codexTrustAccepted = true
@@ -368,7 +389,7 @@ export function registerPtyIpc(): void {
           session.codexPromptReady = true
         }
       } else if (session.command === 'claude') {
-        const boot = ((session.claudeBootText ?? '') + chunk).slice(-16000)
+        const boot = ((session.claudeBootText ?? '') + chunk).slice(-CLI_BOOT_TEXT_LIMIT)
         session.claudeBootText = boot
         if (!session.claudePromptReady && isClaudeReadyForPromptInjection(boot)) {
           session.claudePromptReady = true
@@ -377,7 +398,7 @@ export function registerPtyIpc(): void {
 
       const pending = pendingExternalReviews.get(req.sessionId)
       if (pending) {
-        pending.buffer = (pending.buffer + chunk).slice(-128000)
+        pending.buffer = (pending.buffer + chunk).slice(-EXTERNAL_REVIEW_BUFFER_LIMIT)
         try {
           const parsed = extractTaggedJsonReply(pending.buffer)
           if (parsed) {
@@ -396,6 +417,7 @@ export function registerPtyIpc(): void {
 
       writePtyDump(dumpStream, chunk)
       broadcast('cc:data', { sessionId: req.sessionId, chunk })
+      emitSessionData({ sessionId: req.sessionId, chunk })
     })
     proc.on('exit', (info: { exitCode: number; signal?: number }) => {
       if (resumeWindowTimer) clearTimeout(resumeWindowTimer)

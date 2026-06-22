@@ -12,6 +12,7 @@ import type {
 interface ScheduledTaskRow {
   id: number
   project_id: string
+  target_repo: string | null
   name: string
   description: string
   goal: string
@@ -47,6 +48,10 @@ export interface ScheduleInput {
   scheduleTime: string
   scheduleDays: number[]
 }
+
+const SCHEDULED_TASK_SELECT = `scheduled_tasks.*, projects.target_repo AS target_repo`
+const SCHEDULED_TASK_JOIN = `FROM scheduled_tasks
+LEFT JOIN projects ON projects.id = scheduled_tasks.project_id`
 
 function parseJsonArray(value: string): unknown[] {
   try {
@@ -88,6 +93,7 @@ function rowToTask(row: ScheduledTaskRow): ScheduledTask {
   return {
     id: row.id,
     projectId: row.project_id,
+    targetRepo: row.target_repo,
     name: row.name,
     description: row.description,
     goal: row.goal,
@@ -169,9 +175,13 @@ export function computeNextRunAt(input: ScheduleInput, now = Date.now()): number
 export function listScheduledTasks(projectId: string): ScheduledTask[] {
   const rows = getDb()
     .prepare(
-      `SELECT * FROM scheduled_tasks
-       WHERE project_id = ?
-       ORDER BY enabled DESC, next_run_at IS NULL ASC, next_run_at ASC, updated_at DESC`
+      `SELECT ${SCHEDULED_TASK_SELECT}
+       ${SCHEDULED_TASK_JOIN}
+       WHERE scheduled_tasks.project_id = ?
+       ORDER BY scheduled_tasks.enabled DESC,
+                scheduled_tasks.next_run_at IS NULL ASC,
+                scheduled_tasks.next_run_at ASC,
+                scheduled_tasks.updated_at DESC`
     )
     .all(projectId) as ScheduledTaskRow[]
   return rows.map(rowToTask)
@@ -179,7 +189,11 @@ export function listScheduledTasks(projectId: string): ScheduledTask[] {
 
 export function getScheduledTask(id: number): ScheduledTask | null {
   const row = getDb()
-    .prepare(`SELECT * FROM scheduled_tasks WHERE id = ?`)
+    .prepare(
+      `SELECT ${SCHEDULED_TASK_SELECT}
+       ${SCHEDULED_TASK_JOIN}
+       WHERE scheduled_tasks.id = ?`
+    )
     .get(id) as ScheduledTaskRow | undefined
   return row ? rowToTask(row) : null
 }
@@ -297,12 +311,13 @@ export function deleteScheduledTask(id: number): void {
 export function listDueScheduledTasks(projectId: string, now = Date.now()): ScheduledTask[] {
   const rows = getDb()
     .prepare(
-      `SELECT * FROM scheduled_tasks
-       WHERE project_id = ?
-         AND enabled = 1
-         AND next_run_at IS NOT NULL
-         AND next_run_at <= ?
-       ORDER BY next_run_at ASC, id ASC`
+      `SELECT ${SCHEDULED_TASK_SELECT}
+       ${SCHEDULED_TASK_JOIN}
+       WHERE scheduled_tasks.project_id = ?
+         AND scheduled_tasks.enabled = 1
+         AND scheduled_tasks.next_run_at IS NOT NULL
+         AND scheduled_tasks.next_run_at <= ?
+       ORDER BY scheduled_tasks.next_run_at ASC, scheduled_tasks.id ASC`
     )
     .all(projectId, now) as ScheduledTaskRow[]
   return rows.map(rowToTask)
@@ -311,11 +326,12 @@ export function listDueScheduledTasks(projectId: string, now = Date.now()): Sche
 export function listAllDueScheduledTasks(now = Date.now()): ScheduledTask[] {
   const rows = getDb()
     .prepare(
-      `SELECT * FROM scheduled_tasks
-       WHERE enabled = 1
-         AND next_run_at IS NOT NULL
-         AND next_run_at <= ?
-       ORDER BY next_run_at ASC, id ASC`
+      `SELECT ${SCHEDULED_TASK_SELECT}
+       ${SCHEDULED_TASK_JOIN}
+       WHERE scheduled_tasks.enabled = 1
+         AND scheduled_tasks.next_run_at IS NOT NULL
+         AND scheduled_tasks.next_run_at <= ?
+       ORDER BY scheduled_tasks.next_run_at ASC, scheduled_tasks.id ASC`
     )
     .all(now) as ScheduledTaskRow[]
   return rows.map(rowToTask)
@@ -384,4 +400,18 @@ export function updateScheduledTaskRun(id: number, patch: UpdateScheduledTaskRun
       patch.error === undefined ? current.error : patch.error,
       id
     )
+}
+
+export function cancelInterruptedScheduledTaskRuns(now = Date.now()): number {
+  const result = getDb()
+    .prepare(
+      `UPDATE scheduled_task_runs
+       SET status = 'cancelled',
+           finished_at = ?,
+           error = 'App restarted before scheduled task completed.'
+       WHERE finished_at IS NULL
+         AND status IN ('queued', 'running')`
+    )
+    .run(now)
+  return result.changes
 }

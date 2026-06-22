@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type {
   CreateScheduledTaskInput,
-  ScheduledTask,
-  ScheduledTaskQueueState
+  ScheduledTask
 } from '../../electron/preload'
 import ScheduledTaskEditorDialog, { ensureDefaultInstructions } from './ScheduledTaskEditorDialog'
 import {
@@ -11,6 +10,7 @@ import {
   formatScheduleLabel,
   formatScheduledTaskStatus
 } from './scheduledTaskViewModel'
+import { showToast } from '../components/Toast'
 
 interface Props {
   projectId: string
@@ -18,15 +18,12 @@ interface Props {
   sessionId: string | null
   sessionRunning: boolean
   initialTasks?: ScheduledTask[]
-  initialQueueState?: ScheduledTaskQueueState
   onClose: () => void
 }
 
 type EditorState =
   | { mode: 'create'; draft: CreateScheduledTaskInput; taskId?: undefined }
   | { mode: 'edit'; draft: CreateScheduledTaskInput; taskId: number }
-
-const EMPTY_QUEUE: ScheduledTaskQueueState = { running: null, waiting: [] }
 
 function taskToDraft(task: ScheduledTask): CreateScheduledTaskInput {
   return {
@@ -53,23 +50,17 @@ export default function ScheduledTaskDialog(props: Props): JSX.Element {
     sessionId,
     sessionRunning,
     initialTasks,
-    initialQueueState,
     onClose
   } = props
   const [tasks, setTasks] = useState<ScheduledTask[]>(initialTasks ?? [])
-  const [queueState, setQueueState] = useState<ScheduledTaskQueueState>(
-    initialQueueState ?? EMPTY_QUEUE
-  )
   const [selectedId, setSelectedId] = useState<number | null>(initialTasks?.[0]?.id ?? null)
   const [query, setQuery] = useState('')
   const [editor, setEditor] = useState<EditorState | null>(null)
 
   async function refresh(): Promise<void> {
     if (typeof window === 'undefined' || !window.api?.scheduledTasks) return
-    const nextQueue = await window.api.scheduledTasks.queueState()
     const nextTasks = await window.api.scheduledTasks.list(projectId)
     setTasks(nextTasks)
-    setQueueState(nextQueue)
     setSelectedId((current) => current ?? nextTasks[0]?.id ?? null)
   }
 
@@ -90,22 +81,7 @@ export default function ScheduledTaskDialog(props: Props): JSX.Element {
   }, [query, tasks])
 
   const selectedTask = tasks.find((task) => task.id === selectedId) ?? filteredTasks[0] ?? null
-  const projectQueueState = useMemo(
-    () => ({
-      running: queueState.running?.projectId === projectId ? queueState.running : null,
-      waiting: queueState.waiting.filter((item) => item.projectId === projectId)
-    }),
-    [projectId, queueState]
-  )
-  const enabledCount = tasks.filter((task) => task.enabled).length
-  const runningCount = projectQueueState.running ? 1 : 0
-  const aicliState = !sessionRunning
-    ? '未启动'
-    : runningCount > 0
-      ? '运行中'
-      : projectQueueState.waiting.length > 0
-        ? '排队中'
-        : '空闲'
+  const aicliState = sessionRunning && sessionId ? '已启动' : '未启动'
 
   async function saveEditor(): Promise<void> {
     if (!editor || typeof window === 'undefined' || !window.api?.scheduledTasks) return
@@ -149,7 +125,17 @@ export default function ScheduledTaskDialog(props: Props): JSX.Element {
 
   async function runNow(task: ScheduledTask): Promise<void> {
     if (typeof window === 'undefined' || !window.api?.scheduledTasks) return
-    await window.api.scheduledTasks.runNow({ taskId: task.id, sessionId, targetRepo })
+    if (!sessionRunning || !sessionId) {
+      showToast('主会话未运行，无法发送定时任务，请先启动 AICLI。', { level: 'warn' })
+      return
+    }
+    const result = await window.api.scheduledTasks.runNow({ taskId: task.id, sessionId, targetRepo })
+    if (!result.ok) {
+      showToast(result.error ?? '发送定时任务到 AICLI 失败。', { level: 'error' })
+      await refresh()
+      return
+    }
+    showToast('已发送定时任务到 AICLI。', { level: 'success' })
     await refresh()
   }
 
@@ -158,7 +144,7 @@ export default function ScheduledTaskDialog(props: Props): JSX.Element {
       <div className="modal scheduled-task-modal" onClick={(event) => event.stopPropagation()}>
         <div className="modal-head">
           <h3>⏰ 定时任务管理</h3>
-          <span className={`scheduled-task-aicli ${aicliState === '空闲' ? 'idle' : ''}`}>
+          <span className={`scheduled-task-aicli ${aicliState === '已启动' ? 'idle' : ''}`}>
             当前 AICLI：{aicliState}
           </span>
           <button className="modal-close" onClick={onClose}>
@@ -167,25 +153,6 @@ export default function ScheduledTaskDialog(props: Props): JSX.Element {
         </div>
 
         <div className="scheduled-task-body">
-          <section className="scheduled-task-summary">
-            <div>
-              <span>已启用任务</span>
-              <strong>{enabledCount}</strong>
-            </div>
-            <div>
-              <span>排队中</span>
-              <strong>{projectQueueState.waiting.length}</strong>
-            </div>
-            <div>
-              <span>运行中</span>
-              <strong>{runningCount}</strong>
-            </div>
-            <div>
-              <span>当前 AICLI</span>
-              <strong>{aicliState === '空闲' ? '空闲 · 可执行定时任务' : aicliState}</strong>
-            </div>
-          </section>
-
           <section className="scheduled-task-toolbar">
             <button
               className="drawer-btn primary"
@@ -239,13 +206,8 @@ export default function ScheduledTaskDialog(props: Props): JSX.Element {
                       <span className={`scheduled-task-dot ${status.tone}`} />
                       <span className="scheduled-task-card-main">
                         <strong>{task.name}</strong>
-                        <small>{task.description || task.goal}</small>
-                        <em>
-                          下次执行：{formatDateTime(task.nextRunAt)} · 最近结果：
-                          {task.lastRun?.status ? status.label : '未运行'}
-                        </em>
+                        <small>开始时间：{formatDateTime(task.nextRunAt)}</small>
                       </span>
-                      <span className={`scheduled-task-state ${status.tone}`}>{status.label}</span>
                     </button>
                   )
                 })
@@ -258,7 +220,16 @@ export default function ScheduledTaskDialog(props: Props): JSX.Element {
                   <div className="scheduled-task-detail-head">
                     <h4>{selectedTask.name}</h4>
                     <span>
-                      <button className="drawer-btn" onClick={() => void runNow(selectedTask)}>
+                      <button
+                        className="drawer-btn"
+                        disabled={!sessionRunning || !sessionId}
+                        title={
+                          sessionRunning && sessionId
+                            ? '发送定时任务到当前 AICLI'
+                            : '主会话未运行，无法发送定时任务'
+                        }
+                        onClick={() => void runNow(selectedTask)}
+                      >
                         运行
                       </button>
                       <button
@@ -294,7 +265,7 @@ export default function ScheduledTaskDialog(props: Props): JSX.Element {
                   <h5>AICLI 策略</h5>
                   <div className="scheduled-task-info-row">
                     <span>使用当前 AICLI</span>
-                    <span>忙碌时排队等待</span>
+                    <span>已启动即可发送</span>
                   </div>
                   <h5>最近运行记录</h5>
                   <p className="scheduled-task-last-run">

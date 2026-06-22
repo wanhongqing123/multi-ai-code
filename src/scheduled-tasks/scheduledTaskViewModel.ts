@@ -32,9 +32,15 @@ export function buildScheduledTaskPreviewPrompt(
   draft: CreateScheduledTaskInput,
   targetRepo: string
 ): string {
-  const requirements = draft.instructions.length
-    ? draft.instructions.map((instruction, index) => `${index + 1}. ${instruction}`).join('\n')
-    : '1. 按任务目标执行，并保持输出清晰。'
+  const requirementItems = draft.instructions.length
+    ? [...draft.instructions]
+    : ['按任务目标执行，并保持输出清晰。']
+  requirementItems.push(
+    `任务开始执行时先记录当前时间；任务完成时在总结中写明本次任务的执行时间范围和实际执行时长；任务时长上限：${draft.timeoutMinutes} 分钟。`
+  )
+  const requirements = requirementItems
+    .map((instruction, index) => `${index + 1}. ${instruction}`)
+    .join('\n')
   const safetyRules = [
     draft.allowCodeChanges
       ? '允许直接修改代码，但必须保持改动聚焦在本任务。'
@@ -48,6 +54,8 @@ export function buildScheduledTaskPreviewPrompt(
     '',
     `任务名称：${draft.name || '未命名定时任务'}`,
     `工作目录：${targetRepo || '当前项目'}`,
+    `任务超时时间：${draft.timeoutMinutes} 分钟`,
+    `如果无法在 ${draft.timeoutMinutes} 分钟内完成，请停止继续展开，输出当前进展、阻塞点和建议的下一步。`,
     '',
     '任务目标：',
     draft.goal || '请按用户配置的任务目标执行。',

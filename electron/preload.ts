@@ -230,6 +230,7 @@ export interface ScheduledTaskRun {
 export interface ScheduledTask {
   id: number
   projectId: string
+  targetRepo: string | null
   name: string
   description: string
   goal: string
@@ -271,6 +272,7 @@ export interface ScheduledTaskQueueState {
     taskId: number
     taskName: string
     projectId: string
+    targetRepo: string | null
     runId: number
     scheduledAt: number
     prompt: string
@@ -279,6 +281,7 @@ export interface ScheduledTaskQueueState {
     taskId: number
     taskName: string
     projectId: string
+    targetRepo: string | null
     runId: number
     scheduledAt: number
     prompt: string
@@ -679,7 +682,9 @@ const api = {
 
   scheduledTasks: {
     list: (projectId: string) =>
-      ipcRenderer.invoke('scheduled-tasks:list', { projectId }) as Promise<ScheduledTask[]>,
+      ipcRenderer.invoke('scheduled-tasks:list', { projectId }) as Promise<
+        ScheduledTask[]
+      >,
     create: (input: CreateScheduledTaskInput) =>
       ipcRenderer.invoke('scheduled-tasks:create', input) as Promise<
         { ok: true; task: ScheduledTask } | { ok: false; error: string }
@@ -698,15 +703,26 @@ const api = {
       >,
     runNow: (req: { taskId: number; sessionId?: string | null; targetRepo?: string | null }) =>
       ipcRenderer.invoke('scheduled-tasks:run-now', req) as Promise<
-        | { ok: true; queued: boolean; state: ScheduledTaskQueueState }
-        | { ok: false; error: string }
+        | {
+            ok: true
+            delivery: 'sent' | 'queued' | 'failed'
+            queued: boolean
+            state: ScheduledTaskQueueState
+          }
+        | { ok: false; error: string; state?: ScheduledTaskQueueState }
       >,
     scanNow: (projectId?: string) =>
       ipcRenderer.invoke('scheduled-tasks:scan-now', { projectId }) as Promise<
         { ok: true; state: ScheduledTaskQueueState } | { ok: false; error: string }
       >,
     queueState: () =>
-      ipcRenderer.invoke('scheduled-tasks:queue-state') as Promise<ScheduledTaskQueueState>
+      ipcRenderer.invoke('scheduled-tasks:queue-state') as Promise<ScheduledTaskQueueState>,
+    cancelQueueRun: (runId?: number | null) =>
+      ipcRenderer.invoke('scheduled-tasks:cancel-queue-run', { runId }) as Promise<{
+        ok: true
+        cancelled: boolean
+        state: ScheduledTaskQueueState
+      }>
   },
 
   repoView: {

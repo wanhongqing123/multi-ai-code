@@ -82,7 +82,7 @@ export default function ScheduledTaskEditorDialog(props: Props): JSX.Element {
         <div className="scheduled-task-editor">
           <aside className="scheduled-task-steps">
             <h4>配置步骤</h4>
-            {['基本信息', 'AICLI 要做什么', '怎么干与限制', '执行时间', 'Prompt 预览'].map(
+            {['基本信息', '任务描述', '怎么干与限制', '执行时间', 'Prompt 预览'].map(
               (label, index) => (
                 <div className={`scheduled-task-step ${index < 2 ? 'active' : ''}`} key={label}>
                   <span>{index + 1}</span>
@@ -94,7 +94,6 @@ export default function ScheduledTaskEditorDialog(props: Props): JSX.Element {
               <strong>安全策略</strong>
               <span>● 默认不允许自动改代码</span>
               <span>● 默认不允许自动提交</span>
-              <span>● AICLI 忙时排队等待</span>
             </section>
           </aside>
 
@@ -109,15 +108,7 @@ export default function ScheduledTaskEditorDialog(props: Props): JSX.Element {
               />
             </label>
             <label>
-              <span>任务说明</span>
-              <input
-                value={draft.description}
-                onChange={(event) => onChange({ description: event.target.value })}
-                placeholder="每天检查当前项目最近代码风险，并给出建议。"
-              />
-            </label>
-            <label>
-              <span>让 AICLI 做什么</span>
+              <span>任务描述</span>
               <textarea
                 ref={goalTextareaRef}
                 className="scheduled-task-goal-input"
@@ -208,14 +199,6 @@ export default function ScheduledTaskEditorDialog(props: Props): JSX.Element {
                 </div>
               </section>
             )}
-
-            <section>
-              <span className="scheduled-task-field-title">执行方式</span>
-              <div className="scheduled-task-policy-row">
-                <span>● 使用当前 AICLI</span>
-                <span>● 忙碌时排队等待</span>
-              </div>
-            </section>
 
             <div className="scheduled-task-form-row">
               <label>

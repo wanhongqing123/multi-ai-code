@@ -1,4 +1,3 @@
-import { randomBytes } from 'crypto'
 import { buildScheduledTaskPrompt } from './promptBuilder.js'
 import {
   advanceScheduledTaskAfterQueue,
@@ -7,7 +6,7 @@ import {
   listDueScheduledTasks,
   updateScheduledTaskRun
 } from './taskStore.js'
-import type { ScheduledTask } from './types.js'
+import type { ScheduledTask, ScheduledTaskRunStatus } from './types.js'
 
 export interface ScheduledTaskSessionInfo {
   sessionId: string
@@ -23,10 +22,10 @@ export interface ScheduledTaskQueueItem {
   taskId: number
   taskName: string
   projectId: string
+  targetRepo: string | null
   runId: number
   scheduledAt: number
   prompt: string
-  completionToken: string
   timeoutMinutes: number
   preferredSession?: ScheduledTaskSessionInfo
 }
@@ -36,16 +35,29 @@ export interface ScheduledTaskQueueState {
   waiting: ScheduledTaskQueueItem[]
 }
 
+export type ScheduledTaskDelivery = 'sent' | 'queued' | 'failed'
+
+export interface ScheduledTaskEnqueueResult {
+  state: ScheduledTaskQueueState
+  delivery: ScheduledTaskDelivery
+  error?: string
+}
+
+export interface ScheduledTaskCancelResult {
+  cancelled: boolean
+  state: ScheduledTaskQueueState
+}
+
 let sendHandler: ScheduledTaskSendHandler | null = null
 let timer: NodeJS.Timeout | null = null
 let draining = false
 let runningItem: ScheduledTaskQueueItem | null = null
 let runningSessionId: string | null = null
-let runningTimeout: NodeJS.Timeout | null = null
-let runningOutputBuffer = ''
 const waitingItems: ScheduledTaskQueueItem[] = []
-const SCHEDULED_TASK_OUTPUT_BUFFER_LIMIT = 65_536
-const SCHEDULED_TASK_OUTPUT_EXCERPT_LIMIT = 16_384
+const deliveryResults = new Map<
+  number,
+  { delivery: 'sent' | 'failed'; error?: string }
+>()
 
 function hasQueuedTask(taskId: number): boolean {
   return (
@@ -53,19 +65,14 @@ function hasQueuedTask(taskId: number): boolean {
   )
 }
 
-function createCompletionToken(): string {
-  return randomBytes(12).toString('base64url')
-}
-
 function enqueueTask(
   task: ScheduledTask,
   scheduledAt: number,
   targetRepo: string,
   preferredSession?: ScheduledTaskSessionInfo
-): void {
-  if (hasQueuedTask(task.id)) return
-  const completionToken = createCompletionToken()
-  const prompt = buildScheduledTaskPrompt(task, { targetRepo, completionToken })
+): ScheduledTaskQueueItem | null {
+  if (hasQueuedTask(task.id)) return null
+  const prompt = buildScheduledTaskPrompt(task, { targetRepo })
   const run = createScheduledTaskRun({
     taskId: task.id,
     status: 'queued',
@@ -73,18 +80,20 @@ function enqueueTask(
     prompt,
     timeoutMinutes: task.timeoutMinutes
   })
-  waitingItems.push({
+  const item: ScheduledTaskQueueItem = {
     taskId: task.id,
     taskName: task.name,
     projectId: task.projectId,
+    targetRepo,
     runId: run.id,
     scheduledAt,
     prompt,
-    completionToken,
     timeoutMinutes: task.timeoutMinutes,
     preferredSession
-  })
+  }
+  waitingItems.push(item)
   advanceScheduledTaskAfterQueue(task, Date.now())
+  return item
 }
 
 export async function enqueueScheduledTaskNow(
@@ -92,10 +101,22 @@ export async function enqueueScheduledTaskNow(
   targetRepo: string,
   scheduledAt = Date.now(),
   preferredSession?: ScheduledTaskSessionInfo
-): Promise<ScheduledTaskQueueState> {
-  enqueueTask(task, scheduledAt, targetRepo, preferredSession)
+): Promise<ScheduledTaskEnqueueResult> {
+  const item = enqueueTask(task, scheduledAt, targetRepo, preferredSession)
   await drainQueue()
-  return getScheduledTaskQueueState()
+  const state = getScheduledTaskQueueState()
+  if (!item) {
+    return { state, delivery: 'queued' }
+  }
+  const delivery = deliveryResults.get(item.runId)
+  if (delivery) {
+    deliveryResults.delete(item.runId)
+    return { state, ...delivery }
+  }
+  if (state.running?.runId === item.runId) {
+    return { state, delivery: 'sent' }
+  }
+  return { state, delivery: 'queued' }
 }
 
 async function drainQueue(): Promise<void> {
@@ -109,7 +130,6 @@ async function drainQueue(): Promise<void> {
 
       runningItem = item
       runningSessionId = session.sessionId
-      runningOutputBuffer = ''
       updateScheduledTaskRun(item.runId, {
         status: 'running',
         startedAt: Date.now(),
@@ -129,40 +149,29 @@ async function drainQueue(): Promise<void> {
       if (runningItem?.runId !== item.runId) continue
 
       if (!result.ok) {
+        const error = result.error ?? 'Failed to send scheduled task to AICLI.'
+        deliveryResults.set(item.runId, { delivery: 'failed', error })
         completeRunningItem('failed', {
-          error: result.error ?? 'Failed to send scheduled task to AICLI.',
+          error,
           drainNext: false
         })
         continue
       }
 
-      startRunningTimeout(item)
-      return
+      deliveryResults.set(item.runId, { delivery: 'sent' })
+      completeRunningItem('succeeded', {
+        outputExcerpt: '已发送到当前 AICLI。',
+        drainNext: false
+      })
+      continue
     }
   } finally {
     draining = false
   }
 }
 
-function startRunningTimeout(item: ScheduledTaskQueueItem): void {
-  clearRunningTimeout()
-  const timeoutMs = Math.max(1, item.timeoutMinutes) * 60_000
-  runningTimeout = setTimeout(() => {
-    completeRunningItem('timed_out', {
-      error: `Scheduled task timed out after ${item.timeoutMinutes} minutes.`
-    })
-  }, timeoutMs)
-  runningTimeout.unref?.()
-}
-
-function clearRunningTimeout(): void {
-  if (!runningTimeout) return
-  clearTimeout(runningTimeout)
-  runningTimeout = null
-}
-
 function completeRunningItem(
-  status: 'succeeded' | 'failed' | 'timed_out',
+  status: Extract<ScheduledTaskRunStatus, 'succeeded' | 'failed' | 'timed_out' | 'cancelled'>,
   options: {
     error?: string | null
     outputExcerpt?: string | null
@@ -171,7 +180,6 @@ function completeRunningItem(
 ): boolean {
   const item = runningItem
   if (!item) return false
-  clearRunningTimeout()
   updateScheduledTaskRun(item.runId, {
     status,
     finishedAt: Date.now(),
@@ -184,30 +192,66 @@ function completeRunningItem(
   })
   runningItem = null
   runningSessionId = null
-  runningOutputBuffer = ''
   if (options.drainNext !== false) {
     void drainQueue()
   }
   return true
 }
 
+export function handleScheduledTaskSessionExit(sessionId: string): void {
+  let shouldDrain = false
+  if (runningItem && runningSessionId === sessionId) {
+    completeRunningItem('cancelled', {
+      error: 'AICLI session exited before scheduled task completed.',
+      drainNext: false
+    })
+    shouldDrain = true
+  }
+  for (let index = waitingItems.length - 1; index >= 0; index -= 1) {
+    const item = waitingItems[index]
+    if (item.preferredSession?.sessionId !== sessionId) continue
+    waitingItems.splice(index, 1)
+    updateScheduledTaskRun(item.runId, {
+      status: 'cancelled',
+      finishedAt: Date.now(),
+      error: 'AICLI session exited before scheduled task was sent.'
+    })
+    shouldDrain = true
+  }
+  if (shouldDrain) {
+    void drainQueue()
+  }
+}
+
+export async function cancelScheduledTaskQueueRun(
+  runId?: number
+): Promise<ScheduledTaskCancelResult> {
+  let cancelled = false
+  if (runningItem && (runId === undefined || runningItem.runId === runId)) {
+    completeRunningItem('cancelled', {
+      error: 'Scheduled task run was cancelled by the user.',
+      drainNext: false
+    })
+    cancelled = true
+  }
+  for (let index = waitingItems.length - 1; index >= 0; index -= 1) {
+    const item = waitingItems[index]
+    if (runId !== undefined && item.runId !== runId) continue
+    waitingItems.splice(index, 1)
+    updateScheduledTaskRun(item.runId, {
+      status: 'cancelled',
+      finishedAt: Date.now(),
+      error: 'Scheduled task run was cancelled by the user.'
+    })
+    cancelled = true
+  }
+  await drainQueue()
+  return { cancelled, state: getScheduledTaskQueueState() }
+}
+
 export function handleScheduledTaskSessionData(sessionId: string, chunk: string): void {
-  const item = runningItem
-  if (!item || sessionId !== runningSessionId) return
-  runningOutputBuffer = (runningOutputBuffer + chunk).slice(
-    -SCHEDULED_TASK_OUTPUT_BUFFER_LIMIT
-  )
-  const marker = `MULTI_AI_CODE_SCHEDULED_TASK_DONE:${item.completionToken}:`
-  const markerIndex = runningOutputBuffer.indexOf(marker)
-  if (markerIndex < 0) return
-  const statusText = runningOutputBuffer.slice(markerIndex + marker.length)
-  const statusMatch = /^(succeeded|failed)\b/.exec(statusText)
-  if (!statusMatch) return
-  const status = statusMatch[1] as 'succeeded' | 'failed'
-  completeRunningItem(status, {
-    error: status === 'failed' ? 'AICLI reported scheduled task failure.' : null,
-    outputExcerpt: runningOutputBuffer.slice(-SCHEDULED_TASK_OUTPUT_EXCERPT_LIMIT)
-  })
+  void sessionId
+  void chunk
 }
 
 function publicQueueItem(item: ScheduledTaskQueueItem): ScheduledTaskQueueItem {
@@ -252,7 +296,8 @@ export async function runScheduledTaskScanOnce(options: {
     : listAllDueScheduledTasks(now)
   for (const task of tasks) {
     const session = sendHandler?.resolveSession(task.projectId) ?? null
-    enqueueTask(task, task.nextRunAt ?? now, session?.targetRepo ?? 'current project')
+    if (!session) continue
+    enqueueTask(task, task.nextRunAt ?? now, session.targetRepo ?? task.targetRepo ?? 'current project')
   }
   await drainQueue()
   return getScheduledTaskQueueState()
@@ -285,7 +330,6 @@ export function resetScheduledTaskSchedulerForTests(): void {
   draining = false
   runningItem = null
   runningSessionId = null
-  runningOutputBuffer = ''
-  clearRunningTimeout()
   waitingItems.splice(0)
+  deliveryResults.clear()
 }

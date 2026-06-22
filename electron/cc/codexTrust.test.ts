@@ -3,6 +3,7 @@ import {
   normalizeTerminalText,
   shouldAutoAcceptCodexTrustPrompt,
   isCodexReadyForPromptInjection,
+  isClaudeReadyForPromptInjection,
   shouldAutoAcceptSessionEditPrompt
 } from './codexTrust.js'
 
@@ -37,6 +38,22 @@ describe('isCodexReadyForPromptInjection', () => {
   it('returns true once OpenAI Codex home screen is visible', () => {
     const raw = '\u001b[2m│ \u001b[22m\u001b[1mOpenAI Codex\u001b[22m\u001b[2m (v0.120.0) │\u001b[m'
     expect(isCodexReadyForPromptInjection(raw)).toBe(true)
+  })
+})
+
+describe('isClaudeReadyForPromptInjection', () => {
+  it('returns true when the Claude input footer shows bypass permissions and agents hint', () => {
+    const raw = [
+      'Claude Code v2.1.185',
+      'Opus 4.8 (1M context) with high effort · Claude Max',
+      'C:\\msys64\\home\\Administrator\\Apollo\\u3player',
+      '',
+      '> _',
+      'Administrator@WIN-21CP6RE13DK  C:\\msys64\\home\\Administrator\\Apollo\\u3player  Opus 4.8 (1M context)  ctx-  in:0 out:0',
+      '▸ bypass permissions on (shift+tab to cycle) · ← for agents'
+    ].join('\n')
+
+    expect(isClaudeReadyForPromptInjection(raw)).toBe(true)
   })
 })
 

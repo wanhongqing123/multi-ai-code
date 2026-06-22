@@ -152,11 +152,35 @@ describe('registerPtyIpc prompt injection timing', () => {
     buildSystemPromptMock.mockClear()
     const { proc } = await spawnNoPlanSession()
 
-    proc.emitData('ready\n? for shortcuts')
+    proc.emitData(
+      'ready\nAdministrator@WIN  C:\\repo  Opus 4.8\n▸ bypass permissions on (shift+tab to cycle) · ← for agents'
+    )
     await sleep(2_000)
 
     expect(proc.writes.join('')).toBe('')
     expect(buildSystemPromptMock).not.toHaveBeenCalled()
+  }, 10_000)
+
+  it('waits for no-plan Claude sessions to become interactive before sending user messages', async () => {
+    const { proc } = await spawnNoPlanSession()
+    const sendHandler = ipcHandlers.get('cc:send-user')
+    if (!sendHandler) throw new Error('cc:send-user handler was not registered')
+
+    const sendPromise = sendHandler(
+      {},
+      { sessionId: 'session-no-plan', text: 'scheduled task prompt' }
+    ) as Promise<{ ok: boolean; error?: string }>
+
+    await sleep(300)
+    expect(proc.writes.join('')).not.toContain('scheduled task prompt')
+
+    proc.emitData(
+      'ready\nAdministrator@WIN  C:\\repo  Opus 4.8\n▸ bypass permissions on (shift+tab to cycle) · ← for agents'
+    )
+    const result = await sendPromise
+
+    expect(result).toEqual({ ok: true })
+    expect(proc.writes.join('')).toContain('scheduled task prompt')
   }, 10_000)
 
   it('does not scan local skills when sending user messages', () => {

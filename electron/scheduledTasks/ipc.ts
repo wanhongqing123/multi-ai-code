@@ -1,17 +1,21 @@
 import { ipcMain } from 'electron'
 import {
   addSessionDataListener,
+  addSessionExitListener,
   getSessionForProject,
   sendUserMessageToSession
 } from '../cc/ptyManager.js'
 import {
+  cancelScheduledTaskQueueRun,
   drainScheduledTaskQueue,
   enqueueScheduledTaskNow,
   handleScheduledTaskSessionData,
+  handleScheduledTaskSessionExit,
   runScheduledTaskScanOnce,
   setScheduledTaskSendHandler
 } from './scheduler.js'
 import {
+  cancelInterruptedScheduledTaskRuns,
   createScheduledTask,
   deleteScheduledTask,
   getScheduledTask,
@@ -22,8 +26,11 @@ import {
 import type { CreateScheduledTaskInput, UpdateScheduledTaskInput } from './types.js'
 
 let removeSessionDataListener: (() => void) | null = null
+let removeSessionExitListener: (() => void) | null = null
 
 export function registerScheduledTaskIpc(): void {
+  cancelInterruptedScheduledTaskRuns()
+
   setScheduledTaskSendHandler({
     resolveSession: getSessionForProject,
     sendUser: sendUserMessageToSession
@@ -34,10 +41,18 @@ export function registerScheduledTaskIpc(): void {
       handleScheduledTaskSessionData(evt.sessionId, evt.chunk)
     })
   }
+  if (!removeSessionExitListener) {
+    removeSessionExitListener = addSessionExitListener((evt) => {
+      handleScheduledTaskSessionExit(evt.sessionId)
+    })
+  }
 
-  ipcMain.handle('scheduled-tasks:list', async (_event, { projectId }: { projectId: string }) => {
-    return listScheduledTasks(projectId)
-  })
+  ipcMain.handle(
+    'scheduled-tasks:list',
+    async (_event, { projectId }: { projectId: string }) => {
+      return listScheduledTasks(projectId)
+    }
+  )
 
   ipcMain.handle(
     'scheduled-tasks:create',
@@ -95,16 +110,31 @@ export function registerScheduledTaskIpc(): void {
           }
         : undefined
       const session = preferredSession ?? projectSession
-      const state = await enqueueScheduledTaskNow(
+      if (!session) {
+        return {
+          ok: false as const,
+          error: '主会话未运行，无法发送定时任务。请先启动 AICLI。',
+          state: await drainScheduledTaskQueue()
+        }
+      }
+      const result = await enqueueScheduledTaskNow(
         task,
         session?.targetRepo ?? targetRepo ?? 'current project',
         Date.now(),
         preferredSession
       )
+      if (result.delivery === 'failed') {
+        return {
+          ok: false as const,
+          error: result.error ?? '发送定时任务到 AICLI 失败。',
+          state: result.state
+        }
+      }
       return {
         ok: true as const,
-        queued: !session,
-        state
+        delivery: result.delivery,
+        queued: result.delivery === 'queued',
+        state: result.state
       }
     }
   )
@@ -112,11 +142,21 @@ export function registerScheduledTaskIpc(): void {
   ipcMain.handle(
     'scheduled-tasks:scan-now',
     async (_event, { projectId }: { projectId?: string } = {}) => {
-      return { ok: true as const, state: await runScheduledTaskScanOnce({ projectId }) }
+      return {
+        ok: true as const,
+        state: await runScheduledTaskScanOnce({ projectId })
+      }
     }
   )
 
   ipcMain.handle('scheduled-tasks:queue-state', async () => {
     return drainScheduledTaskQueue()
   })
+
+  ipcMain.handle(
+    'scheduled-tasks:cancel-queue-run',
+    async (_event, { runId }: { runId?: number | null } = {}) => {
+      return { ok: true as const, ...(await cancelScheduledTaskQueueRun(runId ?? undefined)) }
+    }
+  )
 }

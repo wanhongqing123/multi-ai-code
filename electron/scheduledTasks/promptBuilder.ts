@@ -1,17 +1,24 @@
 import type { ScheduledTask } from './types.js'
 
+function buildTimingRequirement(task: ScheduledTask): string {
+  return `任务开始执行时先记录当前时间；任务完成时在总结中写明本次任务的执行时间范围和实际执行时长；任务时长上限：${task.timeoutMinutes} 分钟。`
+}
+
 export interface ScheduledTaskPromptContext {
   targetRepo: string
-  completionToken?: string
 }
 
 export function buildScheduledTaskPrompt(
   task: ScheduledTask,
   context: ScheduledTaskPromptContext
 ): string {
-  const requirements = task.instructions.length
-    ? task.instructions.map((instruction, index) => `${index + 1}. ${instruction}`).join('\n')
-    : '1. 按任务目标执行，并保持输出清晰。'
+  const requirementItems = task.instructions.length
+    ? [...task.instructions]
+    : ['按任务目标执行，并保持输出清晰。']
+  requirementItems.push(buildTimingRequirement(task))
+  const requirements = requirementItems
+    .map((instruction, index) => `${index + 1}. ${instruction}`)
+    .join('\n')
   const safetyRules = [
     task.allowCodeChanges
       ? '允许直接修改代码，但必须保持改动聚焦在本任务。'
@@ -20,26 +27,14 @@ export function buildScheduledTaskPrompt(
     task.requireTestConfirmation ? '如果需要运行测试，先说明要运行什么命令。' : null
   ].filter((line): line is string => Boolean(line))
 
-  const completionRules = context.completionToken
-    ? [
-        'Completion marker protocol:',
-        `- Task token: ${context.completionToken}`,
-        '- When the task is fully finished, print exactly one final line assembled as:',
-        '  MULTI_AI_CODE_SCHEDULED_TASK_DONE:',
-        '  + the task token',
-        '  + :succeeded',
-        '- If the task cannot be completed, use :failed instead of :succeeded.',
-        '- Do not print the fully assembled marker before the final line.',
-        ''
-      ]
-    : []
-
   return [
-    ...completionRules,
     '你现在要执行一个由 Multi-AI Code 触发的定时任务。',
+    '如果你正在处理上一项任务，不要中断当前工作；请在上一项任务完成后继续执行下面的定时任务。如果当前没有正在处理的任务，请立即执行。',
     '',
     `任务名称：${task.name}`,
     `工作目录：${context.targetRepo}`,
+    `任务超时时间：${task.timeoutMinutes} 分钟`,
+    `如果无法在 ${task.timeoutMinutes} 分钟内完成，请停止继续展开，输出当前进展、阻塞点和建议的下一步。`,
     '',
     '任务目标：',
     task.goal,

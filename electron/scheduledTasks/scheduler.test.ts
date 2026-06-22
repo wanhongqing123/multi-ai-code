@@ -5,9 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { closeDb, createProject, initDb } from '../store/db.js'
 import { createScheduledTask, listScheduledTasks } from './taskStore.js'
 import {
-  drainScheduledTaskQueue,
   getScheduledTaskQueueState,
-  handleScheduledTaskSessionData,
   resetScheduledTaskSchedulerForTests,
   runScheduledTaskScanOnce,
   setScheduledTaskSendHandler
@@ -69,27 +67,8 @@ function createDueTask(name: string): number {
   return createDueTaskForProject('project-1', name)
 }
 
-function completionTokenFromPrompt(prompt: string): string {
-  const token = /Task token: ([A-Za-z0-9_-]+)/.exec(prompt)?.[1]
-  expect(token).toBeTruthy()
-  return token!
-}
-
-async function flushAsyncQueue(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 0))
-}
-
-async function completePrompt(prompt: string, sessionId = 'session-1'): Promise<void> {
-  const token = completionTokenFromPrompt(prompt)
-  handleScheduledTaskSessionData(
-    sessionId,
-    `done\nMULTI_AI_CODE_SCHEDULED_TASK_DONE:${token}:succeeded\n`
-  )
-  await flushAsyncQueue()
-}
-
 describe('scheduled task scheduler', () => {
-  it('keeps due tasks queued when no AICLI session is available', async () => {
+  it('leaves due tasks pending when no AICLI session is available', async () => {
     createDueTask('no session task')
     setScheduledTaskSendHandler({
       resolveSession: () => null,
@@ -101,9 +80,10 @@ describe('scheduled task scheduler', () => {
     })
 
     const state = getScheduledTaskQueueState()
-    expect(state.waiting).toHaveLength(1)
-    expect(state.waiting[0].taskName).toBe('no session task')
-    expect(listScheduledTasks('project-1')[0].lastRun?.status).toBe('queued')
+    expect(state.waiting).toEqual([])
+    const [task] = listScheduledTasks('project-1')
+    expect(task.lastRun).toBeNull()
+    expect(task.nextRunAt).toBe(new Date(2026, 5, 19, 9, 0).getTime())
   })
 
   it('sends queued tasks through the current AICLI session in FIFO order', async () => {
@@ -125,22 +105,16 @@ describe('scheduled task scheduler', () => {
       now: new Date(2026, 5, 19, 10, 0).getTime()
     })
 
-    expect(sent).toHaveLength(1)
-    expect(sent[0]).toContain('first task')
-
-    await completePrompt(sent[0])
-
     expect(sent).toHaveLength(2)
+    expect(sent[0]).toContain('first task')
     expect(sent[1]).toContain('second task')
-
-    await completePrompt(sent[1])
 
     const tasks = listScheduledTasks('project-1')
     expect(tasks.map((task) => task.lastRun?.status)).toEqual(['succeeded', 'succeeded'])
     expect(getScheduledTaskQueueState().waiting).toEqual([])
   })
 
-  it('drains already queued tasks when a matching AICLI session becomes available', async () => {
+  it('runs overdue pending tasks when a matching AICLI session becomes available', async () => {
     createDueTaskForProject('project-1', 'delayed task')
     let sessionAvailable = false
     const sent: string[] = []
@@ -161,14 +135,18 @@ describe('scheduled task scheduler', () => {
     await runScheduledTaskScanOnce({
       now: new Date(2026, 5, 19, 10, 0).getTime()
     })
-    expect(getScheduledTaskQueueState().waiting).toHaveLength(1)
+    expect(getScheduledTaskQueueState().waiting).toEqual([])
+    expect(listScheduledTasks('project-1')[0].lastRun).toBeNull()
 
     sessionAvailable = true
-    await drainScheduledTaskQueue()
+    await runScheduledTaskScanOnce({
+      now: new Date(2026, 5, 19, 10, 1).getTime()
+    })
 
     expect(sent).toHaveLength(1)
     expect(getScheduledTaskQueueState().waiting).toEqual([])
-    expect(listScheduledTasks('project-1')[0].lastRun?.status).toBe('running')
+    expect(getScheduledTaskQueueState().running).toBeNull()
+    expect(listScheduledTasks('project-1')[0].lastRun?.status).toBe('succeeded')
   })
 
   it('does not let a task without a session block runnable tasks for another project', async () => {
@@ -196,8 +174,9 @@ describe('scheduled task scheduler', () => {
     expect(sent).toHaveLength(1)
     expect(sent[0]).toContain('runnable project task')
     const state = getScheduledTaskQueueState()
-    expect(state.running?.projectId).toBe('project-2')
-    expect(state.waiting).toHaveLength(1)
-    expect(state.waiting[0].projectId).toBe('project-1')
+    expect(state.running).toBeNull()
+    expect(state.waiting).toEqual([])
+    expect(listScheduledTasks('project-1')[0].lastRun).toBeNull()
+    expect(listScheduledTasks('project-2')[0].lastRun?.status).toBe('succeeded')
   })
 })

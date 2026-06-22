@@ -8,10 +8,7 @@ const mockStore = vi.hoisted(() => ({
 }))
 
 vi.mock('./promptBuilder.js', () => ({
-  buildScheduledTaskPrompt: (
-    task: ScheduledTask,
-    context: { completionToken?: string }
-  ) => `prompt:${task.name}:token:${context.completionToken ?? ''}`
+  buildScheduledTaskPrompt: (task: ScheduledTask) => `prompt:${task.name}`
 }))
 
 vi.mock('./taskStore.js', () => ({
@@ -36,11 +33,13 @@ vi.mock('./taskStore.js', () => ({
   })
 }))
 
+import { advanceScheduledTaskAfterQueue } from './taskStore.js'
 import {
-  drainScheduledTaskQueue,
+  cancelScheduledTaskQueueRun,
   enqueueScheduledTaskNow,
   getScheduledTaskQueueState,
   handleScheduledTaskSessionData,
+  handleScheduledTaskSessionExit,
   resetScheduledTaskSchedulerForTests,
   runScheduledTaskScanOnce,
   setScheduledTaskSendHandler
@@ -50,6 +49,7 @@ function task(id: number, projectId: string, name: string): ScheduledTask {
   return {
     id,
     projectId,
+    targetRepo: null,
     name,
     description: '',
     goal: 'execute task',
@@ -75,9 +75,10 @@ describe('scheduled task queue draining', () => {
     mockStore.dueTasks = []
     mockStore.nextRunId = 1
     mockStore.runs.clear()
+    vi.mocked(advanceScheduledTaskAfterQueue).mockClear()
   })
 
-  it('drains already queued tasks when a matching AICLI session becomes available', async () => {
+  it('leaves automatic due tasks pending until a matching AICLI session is available', async () => {
     mockStore.dueTasks = [task(1, 'project-1', 'delayed task')]
     let sessionAvailable = false
     const sent: string[] = []
@@ -96,13 +97,17 @@ describe('scheduled task queue draining', () => {
     })
 
     await runScheduledTaskScanOnce({ now: 2 })
-    expect(getScheduledTaskQueueState().waiting).toHaveLength(1)
+    expect(getScheduledTaskQueueState().waiting).toEqual([])
+    expect(mockStore.runs.size).toBe(0)
+    expect(advanceScheduledTaskAfterQueue).not.toHaveBeenCalled()
 
     sessionAvailable = true
-    await drainScheduledTaskQueue()
+    await runScheduledTaskScanOnce({ now: 3 })
 
-    expect(sent[0]).toContain('prompt:delayed task:token:')
+    expect(sent[0]).toContain('prompt:delayed task')
     expect(getScheduledTaskQueueState().waiting).toEqual([])
+    expect(getScheduledTaskQueueState().running).toBeNull()
+    expect(mockStore.runs.get(1)?.status).toBe('succeeded')
   })
 
   it('does not let a task without a session block runnable tasks for another project', async () => {
@@ -127,13 +132,44 @@ describe('scheduled task queue draining', () => {
 
     await runScheduledTaskScanOnce({ now: 2 })
 
-    expect(sent[0]).toContain('prompt:runnable project task:token:')
+    expect(sent[0]).toContain('prompt:runnable project task')
     const state = getScheduledTaskQueueState()
-    expect(state.waiting).toHaveLength(1)
-    expect(state.waiting[0].projectId).toBe('project-1')
+    expect(state.running).toBeNull()
+    expect(state.waiting).toEqual([])
+    expect(mockStore.runs.size).toBe(1)
+    expect(mockStore.runs.get(1)?.status).toBe('succeeded')
   })
 
-  it('keeps a delivered task running until AICLI reports completion', async () => {
+  it('does not resolve automatic tasks by target repo when the project id changed', async () => {
+    mockStore.dueTasks = [
+      {
+        ...task(1, 'old-project-id', 'repo matched task'),
+        targetRepo: 'E:\\OpenSource\\stable-repo'
+      }
+    ]
+    const sent: string[] = []
+    setScheduledTaskSendHandler({
+      resolveSession: (_projectId: string, targetRepo?: string | null) =>
+        targetRepo === 'E:\\OpenSource\\stable-repo'
+          ? {
+              sessionId: 'session-1',
+              targetRepo: 'E:\\OpenSource\\stable-repo'
+            }
+          : null,
+      sendUser: async (_sessionId, prompt) => {
+        sent.push(prompt)
+        return { ok: true }
+      }
+    })
+
+    await runScheduledTaskScanOnce({ now: 2 })
+
+    expect(sent).toEqual([])
+    expect(getScheduledTaskQueueState().running).toBeNull()
+    expect(mockStore.runs.size).toBe(0)
+  })
+
+  it('marks a delivered task succeeded as soon as the prompt is sent', async () => {
     mockStore.dueTasks = [task(1, 'project-1', 'long task')]
     const sent: string[] = []
     setScheduledTaskSendHandler({
@@ -149,12 +185,12 @@ describe('scheduled task queue draining', () => {
 
     await runScheduledTaskScanOnce({ now: 2 })
 
-    expect(sent[0]).toContain('prompt:long task:token:')
-    expect(getScheduledTaskQueueState().running?.taskId).toBe(1)
-    expect(mockStore.runs.get(1)?.status).toBe('running')
+    expect(sent[0]).toContain('prompt:long task')
+    expect(getScheduledTaskQueueState().running).toBeNull()
+    expect(mockStore.runs.get(1)?.status).toBe('succeeded')
   })
 
-  it('marks a running task succeeded when its completion marker appears', async () => {
+  it('does not require a completion marker after delivery', async () => {
     mockStore.dueTasks = [task(1, 'project-1', 'marker task')]
     const sent: string[] = []
     setScheduledTaskSendHandler({
@@ -170,12 +206,29 @@ describe('scheduled task queue draining', () => {
 
     await runScheduledTaskScanOnce({ now: 2 })
 
-    const token = /token:([A-Za-z0-9_-]+)/.exec(sent[0])?.[1]
-    expect(token).toBeTruthy()
     handleScheduledTaskSessionData(
       'session-1',
-      `done\nMULTI_AI_CODE_SCHEDULED_TASK_DONE:${token}:succeeded\n`
+      'done\nMULTI_AI_CODE_SCHEDULED_TASK_DONE:ignored:succeeded\n'
     )
+
+    expect(getScheduledTaskQueueState().running).toBeNull()
+    expect(mockStore.runs.get(1)?.status).toBe('succeeded')
+  })
+
+  it('does not cancel an already delivered task when its AICLI session exits', async () => {
+    mockStore.dueTasks = [task(1, 'project-1', 'exited task')]
+    setScheduledTaskSendHandler({
+      resolveSession: () => ({
+        sessionId: 'session-1',
+        targetRepo: 'E:\\OpenSource\\project-1'
+      }),
+      sendUser: async () => ({ ok: true })
+    })
+
+    await runScheduledTaskScanOnce({ now: 2 })
+    expect(getScheduledTaskQueueState().running).toBeNull()
+
+    handleScheduledTaskSessionExit('session-1')
 
     expect(getScheduledTaskQueueState().running).toBeNull()
     expect(mockStore.runs.get(1)?.status).toBe('succeeded')
@@ -191,7 +244,7 @@ describe('scheduled task queue draining', () => {
       }
     })
 
-    await enqueueScheduledTaskNow(
+    const result = await enqueueScheduledTaskNow(
       task(1, 'project-1', 'manual task'),
       'E:\\OpenSource\\project-1',
       2,
@@ -201,7 +254,58 @@ describe('scheduled task queue draining', () => {
       }
     )
 
+    expect(result.delivery).toBe('sent')
     expect(sentSessions).toEqual(['manual-session'])
-    expect(getScheduledTaskQueueState().running?.taskId).toBe(1)
+    expect(getScheduledTaskQueueState().running).toBeNull()
+    expect(mockStore.runs.get(1)?.status).toBe('succeeded')
+  })
+
+  it('reports manual send failures instead of looking successful', async () => {
+    setScheduledTaskSendHandler({
+      resolveSession: () => null,
+      sendUser: async () => ({ ok: false, error: 'no session' })
+    })
+
+    const result = await enqueueScheduledTaskNow(
+      task(1, 'project-1', 'manual task'),
+      'E:\\OpenSource\\project-1',
+      2,
+      {
+        sessionId: 'stale-session',
+        targetRepo: 'E:\\OpenSource\\project-1'
+      }
+    )
+
+    expect(result.delivery).toBe('failed')
+    expect(result.error).toBe('no session')
+    expect(mockStore.runs.get(1)?.status).toBe('failed')
+  })
+
+  it('sends multiple runnable tasks without waiting for prior completion', async () => {
+    const sent: string[] = []
+    const session = {
+      sessionId: 'manual-session',
+      targetRepo: 'E:\\OpenSource\\project-1'
+    }
+    setScheduledTaskSendHandler({
+      resolveSession: () => session,
+      sendUser: async (_sessionId, prompt) => {
+        sent.push(prompt)
+        return { ok: true }
+      }
+    })
+
+    mockStore.dueTasks = [
+      task(1, 'project-1', 'first runnable task'),
+      task(2, 'project-1', 'second runnable task')
+    ]
+    await runScheduledTaskScanOnce({ now: 2 })
+
+    expect(sent).toHaveLength(2)
+    expect(sent[0]).toContain('prompt:first runnable task')
+    expect(sent[1]).toContain('prompt:second runnable task')
+    expect(getScheduledTaskQueueState().running).toBeNull()
+    expect(mockStore.runs.get(1)?.status).toBe('succeeded')
+    expect(mockStore.runs.get(2)?.status).toBe('succeeded')
   })
 })

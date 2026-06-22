@@ -54,6 +54,7 @@ import {
   removeExternalPlan
 } from './orchestrator/plans.js'
 import { detectMsys, buildOpenMsysTerminalCommand } from './util/msys.js'
+import { normalizePathForCompare } from './util/pathCompare.js'
 import { spawn as spawnChild } from 'child_process'
 import { promises as fs } from 'fs'
 import { snapshotArtifact } from './store/snapshot.js'
@@ -600,6 +601,20 @@ app.whenReady().then(async () => {
       } catch {
         return { ok: false, error: '目标仓库目录不存在' }
       }
+      const targetRepoKey = normalizePathForCompare(target_repo)
+      const existing = listProjects().find(
+        (project) => normalizePathForCompare(project.target_repo) === targetRepoKey
+      )
+      if (existing) {
+        return {
+          ok: true,
+          id: existing.id,
+          name: existing.name,
+          target_repo: existing.target_repo,
+          dir: projectDirFn(existing.id)
+        }
+      }
+
       const id = `p_${Date.now().toString(36)}_${randomBytes(3).toString('hex')}`
       try {
         await createProjectLayout(id, target_repo)

@@ -71,5 +71,5 @@ export function isCodexReadyForPromptInjection(raw: string): boolean {
  */
 export function isClaudeReadyForPromptInjection(raw: string): boolean {
   const text = normalizeTerminalText(raw).toLowerCase()
-  return text.includes('? for shortcuts')
+  return text.includes('? for shortcuts') || text.includes('bypass permissions on')
 }

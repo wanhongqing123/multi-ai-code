@@ -26,6 +26,7 @@ export interface ScheduledTaskRun {
 export interface ScheduledTask {
   id: number
   projectId: string
+  targetRepo: string | null
   name: string
   description: string
   goal: string

@@ -726,6 +726,11 @@ function AppShell() {
     void refreshHabitMonitorSnapshot()
   }, [currentProjectId, refreshHabitMonitorSnapshot])
 
+  useEffect(() => {
+    if (!currentProjectId) return
+    void window.api.scheduledTasks.scanNow(currentProjectId)
+  }, [currentProjectId])
+
   // Wire cc.onExit to flip sessionStatus to 'exited' when the active session exits.
   useEffect(() => {
     const off = window.api.cc.onExit((evt) => {
@@ -871,6 +876,7 @@ function AppShell() {
       return
     }
     setMainPanelMounted(true)
+    void window.api.scheduledTasks.scanNow(currentProjectId)
   }, [currentProjectId, noPlanMode, planName, planList, projects, aiSettings, aiSettingsReady, aiSettingsLoadError, getPlanAbsPath])
 
   const handleStop = useCallback(async () => {

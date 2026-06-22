@@ -23,7 +23,7 @@ describe('ScheduledTaskEditorDialog', () => {
     )
 
     expect(markup).toContain('新建定时任务')
-    expect(markup).toContain('AICLI 要做什么')
+    expect(markup).toContain('任务描述')
     expect(markup).toContain('怎么干与限制')
     expect(markup).toContain('默认不允许自动改代码')
     expect(markup).toContain('允许直接修改代码')
@@ -31,7 +31,18 @@ describe('ScheduledTaskEditorDialog', () => {
     expect(markup).toContain('运行测试前先说明')
     expect(markup).toContain('最终发送给 AICLI')
     expect(markup).toContain('任务名称：每日代码巡检')
+    expect(markup).toContain('任务超时时间：30 分钟')
+    expect(markup).toContain(
+      '4. 任务开始执行时先记录当前时间；任务完成时在总结中写明本次任务的执行时间范围和实际执行时长；任务时长上限：30 分钟。'
+    )
     expect(markup).toContain('不要提交 git')
+    expect(markup).not.toContain('执行方式')
+    expect(markup).not.toContain('使用当前 AICLI')
+    expect(markup).not.toContain('忙碌时排队等待')
+    expect(markup).not.toContain('AICLI 忙时排队等待')
+    expect(markup).not.toContain('任务说明')
+    expect(markup).not.toContain('让 AICLI 做什么')
+    expect(markup).not.toContain('AICLI 要做什么')
   })
 
   it('gives the create editor and AICLI goal input more working room', () => {

@@ -141,10 +141,16 @@ interface PendingExternalReview {
 }
 
 type SessionDataListener = (evt: { sessionId: string; chunk: string }) => void
+type SessionExitListener = (evt: {
+  sessionId: string
+  exitCode: number | null
+  signal?: number | string | null
+}) => void
 
 const sessions = new Map<string, Session>()
 const pendingExternalReviews = new Map<string, PendingExternalReview>()
 const sessionDataListeners = new Set<SessionDataListener>()
+const sessionExitListeners = new Set<SessionExitListener>()
 
 const EXTERNAL_REVIEW_TIMEOUT_MS = 90_000
 const RESUME_BOOT_TAIL_LIMIT = 16_384
@@ -162,12 +168,31 @@ export function addSessionDataListener(listener: SessionDataListener): () => voi
   return () => sessionDataListeners.delete(listener)
 }
 
+export function addSessionExitListener(listener: SessionExitListener): () => void {
+  sessionExitListeners.add(listener)
+  return () => sessionExitListeners.delete(listener)
+}
+
 function emitSessionData(evt: { sessionId: string; chunk: string }): void {
   for (const listener of sessionDataListeners) {
     try {
       listener(evt)
     } catch {
       /* keep PTY data delivery isolated from observers */
+    }
+  }
+}
+
+function emitSessionExit(evt: {
+  sessionId: string
+  exitCode: number | null
+  signal?: number | string | null
+}): void {
+  for (const listener of sessionExitListeners) {
+    try {
+      listener(evt)
+    } catch {
+      /* keep PTY exit observers isolated */
     }
   }
 }
@@ -183,27 +208,29 @@ const sleep = (ms: number): Promise<void> =>
 async function waitForCodexReady(
   sessionId: string,
   timeoutMs: number
-): Promise<void> {
+): Promise<boolean> {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
     const s = sessions.get(sessionId)
-    if (!s) return
-    if (s.codexPromptReady) return
+    if (!s) return false
+    if (s.codexPromptReady) return true
     await sleep(120)
   }
+  return sessions.get(sessionId)?.codexPromptReady === true
 }
 
 async function waitForClaudeReady(
   sessionId: string,
   timeoutMs: number
-): Promise<void> {
+): Promise<boolean> {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
     const s = sessions.get(sessionId)
-    if (!s) return
-    if (s.claudePromptReady) return
+    if (!s) return false
+    if (s.claudePromptReady) return true
     await sleep(120)
   }
+  return sessions.get(sessionId)?.claudePromptReady === true
 }
 
 /**
@@ -241,7 +268,16 @@ export async function sendUserMessageToSession(
   sessionId: string,
   text: string
 ): Promise<{ ok: boolean; error?: string }> {
-  const session = sessions.get(sessionId)
+  let session = sessions.get(sessionId)
+  if (!session) return { ok: false, error: 'no session' }
+  const ready =
+    session.command === 'codex'
+      ? await waitForCodexReady(sessionId, 10_000)
+      : session.command === 'claude'
+        ? await waitForClaudeReady(sessionId, 15_000)
+        : true
+  if (!ready) return { ok: false, error: 'session not ready for input' }
+  session = sessions.get(sessionId)
   if (!session) return { ok: false, error: 'no session' }
   await sendMessage(session.proc, text)
   return { ok: true }
@@ -435,6 +471,7 @@ export function registerPtyIpc(): void {
       )
       closePtyDump(dumpStream, `exit(code=${info.exitCode})`)
       broadcast('cc:exit', { sessionId: req.sessionId, ...info })
+      emitSessionExit({ sessionId: req.sessionId, ...info })
       sessions.delete(req.sessionId)
     })
 
@@ -547,6 +584,7 @@ export function registerPtyIpc(): void {
       'external review session was terminated before a structured reply arrived'
     )
     closePtyDump(s.dumpStream, 'kill')
+    emitSessionExit({ sessionId, exitCode: null, signal: 'kill' })
     sessions.delete(sessionId)
     return { ok: true }
   })
@@ -559,7 +597,10 @@ export function registerPtyIpc(): void {
         'external review session was terminated before a structured reply arrived'
       )
     }
-    for (const [, s] of sessions) s.proc.kill()
+    for (const [sessionId, s] of sessions) {
+      s.proc.kill()
+      emitSessionExit({ sessionId, exitCode: null, signal: 'kill-all' })
+    }
     pendingExternalReviews.clear()
     sessions.clear()
     return { ok: true, killed }

@@ -138,6 +138,14 @@ function dateAtLocalTime(base: Date, scheduleTime: string): Date {
   )
 }
 
+function parseIntervalMinutes(scheduleTime: string): number {
+  const normalized = scheduleTime.trim()
+  if (!/^\d+$/.test(normalized)) return 60
+  const minutes = Number.parseInt(normalized, 10)
+  if (!Number.isFinite(minutes) || minutes < 1) return 60
+  return minutes
+}
+
 export function computeNextRunAt(input: ScheduleInput, now = Date.now()): number | null {
   const current = new Date(now)
   if (input.scheduleType === 'once') {
@@ -151,6 +159,10 @@ export function computeNextRunAt(input: ScheduleInput, now = Date.now()): number
     const tomorrow = new Date(today)
     tomorrow.setDate(tomorrow.getDate() + 1)
     return tomorrow.getTime()
+  }
+
+  if (input.scheduleType === 'interval') {
+    return now + parseIntervalMinutes(input.scheduleTime) * 60 * 1000
   }
 
   const selectedDays = input.scheduleDays.filter((day) => day >= 0 && day <= 6)

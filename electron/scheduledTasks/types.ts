@@ -1,4 +1,4 @@
-export type ScheduledTaskScheduleType = 'once' | 'daily' | 'weekly'
+export type ScheduledTaskScheduleType = 'once' | 'daily' | 'weekly' | 'interval'
 
 export type ScheduledTaskRunStatus =
   | 'pending'

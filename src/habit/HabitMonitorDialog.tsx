@@ -35,6 +35,13 @@ interface Props {
   initialData?: HabitMonitorDialogData
 }
 
+export interface HabitMonitorPanelProps {
+  onOpenAiSettings?: () => void
+  mainCliLabel: string
+  api?: HabitMonitorApi
+  initialData?: HabitMonitorDialogData
+}
+
 type Tab = 'overview' | 'collection'
 
 function getDefaultApi(): HabitMonitorApi {
@@ -87,8 +94,8 @@ function ToggleRow(props: {
   )
 }
 
-export default function HabitMonitorDialog(props: Props): JSX.Element {
-  const { onClose, onOpenAiSettings, mainCliLabel, api, initialData } = props
+export function HabitMonitorPanel(props: HabitMonitorPanelProps): JSX.Element {
+  const { onOpenAiSettings, mainCliLabel, api, initialData } = props
   const habitApi = api ?? (typeof window !== 'undefined' ? getDefaultApi() : null)
   const [tab, setTab] = useState<Tab>('overview')
   const [data, setData] = useState<HabitMonitorDialogData | null>(initialData ?? null)
@@ -190,6 +197,102 @@ export default function HabitMonitorDialog(props: Props): JSX.Element {
   )
 
   return (
+    <section className="habit-monitor-settings-panel habit-monitor-panel">
+      <div className="habit-source-hint">
+        当前主会话 AI CLI：<strong>{mainCliLabel}</strong>。监控和自动化都沿用这套主配置。
+        {' '}
+        {onOpenAiSettings ? (
+          <button type="button" className="habit-source-link" onClick={onOpenAiSettings}>
+            打开设置
+          </button>
+        ) : null}
+      </div>
+
+      <div className="habit-tabs">
+        <button
+          type="button"
+          className={`habit-tab-btn ${tab === 'overview' ? 'active' : ''}`}
+          onClick={() => setTab('overview')}
+        >
+          总览
+        </button>
+        <button
+          type="button"
+          className={`habit-tab-btn ${tab === 'collection' ? 'active' : ''}`}
+          onClick={() => setTab('collection')}
+        >
+          原始采集
+        </button>
+      </div>
+
+      <div className="habit-tab-body">
+        {loading || !settings ? (
+          <div className="drawer-empty">加载习惯监控状态中...</div>
+        ) : null}
+
+        {!loading && settings && tab === 'overview' ? (
+          <div className="habit-monitor-panel">
+            <section className="habit-settings-section">
+              <header className="habit-settings-section-head">
+                <div>
+                  <strong>监控策略</strong>
+                  <div className="habit-settings-hint">
+                    当前共有 {activeCount} 条活跃流程，原始事件 {totalEventCount} 条。
+                  </div>
+                </div>
+              </header>
+
+              <div className="habit-overview-toggle-list">
+                <ToggleRow
+                  label="自动启用低风险流程"
+                  hint="如打开常用页面、切换面板这类低风险动作会直接进入活跃列表。"
+                  checked={settings.autoEnableLowRiskFlows}
+                  disabled={busy}
+                  onChange={() =>
+                    void handleSettingsUpdate({
+                      autoEnableLowRiskFlows: !settings.autoEnableLowRiskFlows
+                    })
+                  }
+                />
+                <ToggleRow
+                  label="自动个性化界面"
+                  hint="低频入口会从主导航淡出，但仍保留在次级入口里。"
+                  checked={settings.autoPersonalizeUi}
+                  disabled={busy}
+                  onChange={() =>
+                    void handleSettingsUpdate({
+                      autoPersonalizeUi: !settings.autoPersonalizeUi
+                    })
+                  }
+                />
+              </div>
+            </section>
+
+            <FlowsPanel flows={flows} busy={busy} onDisable={handleDisableFlow} />
+          </div>
+        ) : null}
+
+        {!loading && settings && tab === 'collection' ? (
+          <CollectionSettingsPanel
+            settings={settings}
+            onUpdate={handleSettingsUpdate}
+            recent={recent}
+            totalEventCount={totalEventCount}
+            onRefresh={refreshEvents}
+            onClearEvents={handleClearEvents}
+          />
+        ) : null}
+      </div>
+
+      {toast ? <div className="habit-toast">{toast}</div> : null}
+    </section>
+  )
+}
+
+export default function HabitMonitorDialog(props: Props): JSX.Element {
+  const { onClose, ...panelProps } = props
+
+  return (
     <div className="modal-backdrop" onClick={onClose}>
       <div
         className="modal templates-modal habit-monitor-modal"
@@ -202,91 +305,7 @@ export default function HabitMonitorDialog(props: Props): JSX.Element {
           </button>
         </div>
 
-        <div className="habit-source-hint">
-          当前主会话 AI CLI：<strong>{mainCliLabel}</strong>。监控和自动化都沿用这套主配置。
-          {' '}
-          <button type="button" className="habit-source-link" onClick={onOpenAiSettings}>
-            打开设置
-          </button>
-        </div>
-
-        <div className="habit-tabs">
-          <button
-            type="button"
-            className={`habit-tab-btn ${tab === 'overview' ? 'active' : ''}`}
-            onClick={() => setTab('overview')}
-          >
-            总览
-          </button>
-          <button
-            type="button"
-            className={`habit-tab-btn ${tab === 'collection' ? 'active' : ''}`}
-            onClick={() => setTab('collection')}
-          >
-            原始采集
-          </button>
-        </div>
-
-        <div className="habit-tab-body">
-          {loading || !settings ? (
-            <div className="drawer-empty">加载习惯监控状态中...</div>
-          ) : null}
-
-          {!loading && settings && tab === 'overview' ? (
-            <div className="habit-monitor-panel">
-              <section className="habit-settings-section">
-                <header className="habit-settings-section-head">
-                  <div>
-                    <strong>监控策略</strong>
-                    <div className="habit-settings-hint">
-                      当前共有 {activeCount} 条活跃流程，原始事件 {totalEventCount} 条。
-                    </div>
-                  </div>
-                </header>
-
-                <div className="habit-overview-toggle-list">
-                  <ToggleRow
-                    label="自动启用低风险流程"
-                    hint="如打开常用页面、切换面板这类低风险动作会直接进入活跃列表。"
-                    checked={settings.autoEnableLowRiskFlows}
-                    disabled={busy}
-                    onChange={() =>
-                      void handleSettingsUpdate({
-                        autoEnableLowRiskFlows: !settings.autoEnableLowRiskFlows
-                      })
-                    }
-                  />
-                  <ToggleRow
-                    label="自动个性化界面"
-                    hint="低频入口会从主导航淡出，但仍保留在次级入口里。"
-                    checked={settings.autoPersonalizeUi}
-                    disabled={busy}
-                    onChange={() =>
-                      void handleSettingsUpdate({
-                        autoPersonalizeUi: !settings.autoPersonalizeUi
-                      })
-                    }
-                  />
-                </div>
-              </section>
-
-              <FlowsPanel flows={flows} busy={busy} onDisable={handleDisableFlow} />
-            </div>
-          ) : null}
-
-          {!loading && settings && tab === 'collection' ? (
-            <CollectionSettingsPanel
-              settings={settings}
-              onUpdate={handleSettingsUpdate}
-              recent={recent}
-              totalEventCount={totalEventCount}
-              onRefresh={refreshEvents}
-              onClearEvents={handleClearEvents}
-            />
-          ) : null}
-        </div>
-
-        {toast ? <div className="habit-toast">{toast}</div> : null}
+        <HabitMonitorPanel {...panelProps} />
       </div>
     </div>
   )

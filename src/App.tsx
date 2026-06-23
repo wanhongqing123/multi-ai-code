@@ -14,8 +14,7 @@ import {
 import { selectVisibleRuntimeState } from './utils/runtimeStateSelection'
 import {
   canStartMainSession,
-  formatMainSessionPlanLabel,
-  NO_PLAN_SELECT_VALUE
+  formatMainSessionPlanLabel
 } from './utils/mainSessionPlanMode'
 import MainPanel from './components/MainPanel'
 import MainBootGate, { type BootGatePhase } from './components/MainBootGate'
@@ -23,7 +22,8 @@ import ProjectPicker, { type ProjectInfo } from './components/ProjectPicker'
 import ErrorPanel, { pushLog, useLogs } from './components/ErrorPanel'
 import AiSettingsDialog, {
   type AiSettings,
-  type AppSettings
+  type AppSettings,
+  type SettingsSectionKey
 } from './components/AiSettingsDialog'
 import ProjectBuildPanel, {
   getBuildStartBlockedReason,
@@ -31,7 +31,6 @@ import ProjectBuildPanel, {
 } from './components/ProjectBuildPanel'
 import RuntimeLogDialog from './components/RuntimeLogDialog'
 import TemplatesDialog from './components/TemplatesDialog'
-import HabitMonitorDialog from './habit/HabitMonitorDialog'
 import SkillGraphDialog from './habit/SkillGraphDialog'
 import SkillStudioDialog from './habit/SkillStudioDialog'
 import ScheduledTaskDialog from './scheduled-tasks/ScheduledTaskDialog'
@@ -99,6 +98,8 @@ const DEFAULT_RUNTIME_STATE: RuntimeState = {
   signal: null,
   log: ''
 }
+
+type WorkMode = 'task-watch' | 'plan-design'
 
 function appendBuildLog(current: string, chunk: string): string {
   const next = current + chunk
@@ -181,9 +182,14 @@ function AppShell() {
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null)
   const [showProjectPicker, setShowProjectPicker] = useState(false)
   const [planName, setPlanName] = useState('')
-  const [noPlanMode, setNoPlanMode] = useState(false)
+  const [workMode, setWorkMode] = useState<WorkMode>('plan-design')
+  const isTaskWatchMode = workMode === 'task-watch'
+  const isPlanDesignMode = workMode === 'plan-design'
+  const noPlanMode = isTaskWatchMode
   const [showErrors, setShowErrors] = useState(false)
   const [showAiSettings, setShowAiSettings] = useState(false)
+  const [aiSettingsInitialSection, setAiSettingsInitialSection] =
+    useState<SettingsSectionKey>('shortcut')
   const [aiSettings, setAiSettings] = useState<AiSettings>({ ai_cli: 'claude' })
   const [repoViewAiSettings, setRepoViewAiSettings] = useState<AiSettings>({
     ai_cli: 'claude'
@@ -212,7 +218,6 @@ function AppShell() {
   const [visualStudioInstallationsLoading, setVisualStudioInstallationsLoading] =
     useState(false)
   const [showTemplates, setShowTemplates] = useState(false)
-  const [showHabitMonitor, setShowHabitMonitor] = useState(false)
   const [showSkillStudio, setShowSkillStudio] = useState(false)
   const [showSkillGraphStudio, setShowSkillGraphStudio] = useState(false)
   const [showScheduledTaskDialog, setShowScheduledTaskDialog] = useState(false)
@@ -302,6 +307,11 @@ function AppShell() {
     autoPersonalizeUi: habitSettingsSnapshot?.autoPersonalizeUi ?? true,
     flows: habitFlowsSnapshot
   })
+
+  const openAiSettingsSection = useCallback((section: SettingsSectionKey = 'shortcut') => {
+    setAiSettingsInitialSection(section)
+    setShowAiSettings(true)
+  }, [])
 
   const reloadProjectsRef = useRef<() => Promise<ProjectInfo[]>>(
     async () => []
@@ -456,7 +466,6 @@ function AppShell() {
     setShowGlobalSearch(false)
     setShowBuildPanel(false)
     setPlanName('')
-    setNoPlanMode(false)
     setPreviewImport(null)
     setPlanReview(null)
     setDiffReviewOpen(false)
@@ -727,9 +736,9 @@ function AppShell() {
   }, [currentProjectId, refreshHabitMonitorSnapshot])
 
   useEffect(() => {
-    if (!currentProjectId) return
+    if (!isTaskWatchMode || !currentProjectId) return
     void window.api.scheduledTasks.scanNow(currentProjectId)
-  }, [currentProjectId])
+  }, [isTaskWatchMode, currentProjectId])
 
   // Wire cc.onExit to flip sessionStatus to 'exited' when the active session exits.
   useEffect(() => {
@@ -861,6 +870,7 @@ function AppShell() {
       planMode: hasPlan ? 'plan' : 'none',
       planAbsPath,
       planPending: hasPlan ? !planExists : false,
+      allowScheduledTasks: isTaskWatchMode,
       initialUserMessage,
       command,
       args,
@@ -876,8 +886,10 @@ function AppShell() {
       return
     }
     setMainPanelMounted(true)
-    void window.api.scheduledTasks.scanNow(currentProjectId)
-  }, [currentProjectId, noPlanMode, planName, planList, projects, aiSettings, aiSettingsReady, aiSettingsLoadError, getPlanAbsPath])
+    if (isTaskWatchMode) {
+      void window.api.scheduledTasks.scanNow(currentProjectId)
+    }
+  }, [currentProjectId, noPlanMode, isTaskWatchMode, planName, planList, projects, aiSettings, aiSettingsReady, aiSettingsLoadError, getPlanAbsPath])
 
   const handleStop = useCallback(async () => {
     if (!sessionId) return
@@ -1053,9 +1065,29 @@ function AppShell() {
     setGatePhase({ kind: 'idle' })
   }, [sessionId, sessionStatus, mainPanelMounted])
 
+  const onWorkModeSelect = useCallback(
+    (value: WorkMode) => {
+      if (value === workMode) return
+      if (sessionStatus === 'running') {
+        alert('会话正在运行，请先停止（Kill）后再切换模式。')
+        return
+      }
+      setWorkMode(value)
+      setDiffAnnotations([])
+      setDiffGeneralNote('')
+      if (value === 'task-watch') {
+        setPlanReview(null)
+        setDiffReviewOpen(false)
+      } else {
+        setShowScheduledTaskDialog(false)
+      }
+    },
+    [workMode, sessionStatus]
+  )
+
   const onPlanSelect = useCallback(
     async (value: string) => {
-      const currentValue = noPlanMode ? NO_PLAN_SELECT_VALUE : planName
+      const currentValue = planName
       // Block plan switching while session is running. The running CLI's
       // artifact path is baked at spawn time; a live switch would leave
       // the AI writing to the old target.
@@ -1069,14 +1101,6 @@ function AppShell() {
         setDiffAnnotations([])
         setDiffGeneralNote('')
       }
-      if (value === NO_PLAN_SELECT_VALUE) {
-        setNoPlanMode(true)
-        setPlanName('')
-        setPlanReview(null)
-        setDiffReviewOpen(false)
-        return
-      }
-      setNoPlanMode(false)
       if (value === '__NEW__') {
         setPlanName('')
         return
@@ -1093,7 +1117,7 @@ function AppShell() {
       setPlanName(value)
       setPlanReview({ path: r.path ?? value, content: r.content ?? '' })
     },
-    [projectDir, noPlanMode, planName, sessionStatus]
+    [projectDir, planName, sessionStatus]
   )
 
   const onImportExternal = useCallback(async () => {
@@ -1126,7 +1150,6 @@ function AppShell() {
     }
     const list = await window.api.plan.list(projectDir)
     if (list.ok) setPlanList(list.items)
-    setNoPlanMode(false)
     setPlanName(reg.name)
     const cur = await window.api.artifact.readCurrent(projectDir, 1, reg.name)
     if (cur.ok) {
@@ -1197,7 +1220,7 @@ function AppShell() {
       return
     }
     if (noPlanMode) {
-      showToast('无方案模式下暂不支持代码审查批注，请先切换到具体方案。', { level: 'warn' })
+      showToast('任务值守模式下暂不支持代码审查批注，请先切换到方案设计模式。', { level: 'warn' })
       return
     }
     setDiffReviewOpen(true)
@@ -1273,7 +1296,7 @@ function AppShell() {
         return
       }
       if (noPlanMode) {
-        showToast('无方案模式下没有方案文件，无法发送代码审查批注。', { level: 'warn' })
+        showToast('任务值守模式下没有方案文件，无法发送代码审查批注。', { level: 'warn' })
         return
       }
       const planAbsPath = getPlanAbsPath(planName.trim())
@@ -1324,7 +1347,7 @@ function AppShell() {
       title: '习惯监控',
       snippet: '打开习惯监控，查看活跃流程和采集设置。',
       location: '快捷入口',
-      onOpen: () => setShowHabitMonitor(true)
+      onOpen: () => openAiSettingsSection('habit')
     },
     ...(!habitUiFlags.hideTemplatesEntry
       ? [
@@ -1365,13 +1388,13 @@ function AppShell() {
       id: 'settings',
       label: '⚙️ 设置',
       keywords: 'settings command ai cli',
-      action: () => setShowAiSettings(true)
+      action: () => openAiSettingsSection()
     },
     {
       id: 'habit-monitor',
       label: '🧠 习惯监控',
       keywords: 'habit monitor flows automation',
-      action: () => setShowHabitMonitor(true)
+      action: () => openAiSettingsSection('habit')
     },
     ...(!habitUiFlags.hideTemplatesEntry
       ? [
@@ -1440,186 +1463,211 @@ function AppShell() {
   return (
     <div className="app">
       <header className="topbar">
-        <button
-          className="topbar-btn topbar-btn-primary"
-          onClick={() => void openProjectDirPicker()}
-          title="浏览一个仓库目录作为当前项目（已注册的目录会直接切回，新目录自动注册）"
-        >
-          📁 {hasProject ? `项目：${projectName}` : '选择项目'}
-        </button>
-        <h1>Multi-AI Code</h1>
-        <span className="meta">
-          v{version} ·{' '}
-          {hasProject ? (
-            <code title={targetRepo}>{targetRepo}</code>
-          ) : (
-            <span className="meta-warn">⚠ 未选择项目（请点左上角「📁 选择项目」）</span>
-          )}
-        </span>
-        <button
-          className="topbar-btn"
-          onClick={() => setShowAiSettings(true)}
-          title="配置全局截图快捷键，以及 AI CLI 命令 / 参数 / 环境变量"
-        >
-          ⚙️ 设置
-        </button>
-        <button
-          className="topbar-btn"
-          onClick={() => setShowHabitMonitor(true)}
-          title="查看习惯采集和自动化流程"
-        >
-          🧠 习惯监控
-        </button>
-        <button
-          className="topbar-btn"
-          onClick={() => setShowSkillStudio(true)}
-          title="扫描本机 Skill，并启用或关闭可用 Skill"
-        >
-          Skill 管理
-        </button>
-        <ScreenSamplerIndicator />
-        {mainPanelMounted && (
+        <div className="topbar-left">
+          <button
+            className="topbar-btn topbar-btn-primary"
+            onClick={() => void openProjectDirPicker()}
+            title="浏览一个仓库目录作为当前项目（已注册的目录会直接切回，新目录自动注册）"
+          >
+            📁 {hasProject ? `项目：${projectName}` : '选择项目'}
+          </button>
+          <h1>Multi-AI Code</h1>
+          <span className="meta">
+            v{version} ·{' '}
+            {hasProject ? (
+              <code title={targetRepo}>{targetRepo}</code>
+            ) : (
+              <span className="meta-warn">⚠ 未选择项目（请点左上角「📁 选择项目」）</span>
+            )}
+          </span>
+        </div>
+        <div className="topbar-actions">
           <button
             className="topbar-btn"
-            onClick={() => void handleResetMainSession()}
-            title="结束当前主会话，回到选择界面"
+            onClick={() => openAiSettingsSection()}
+            title="配置全局截图快捷键，以及 AI CLI 命令 / 参数 / 环境变量"
           >
-            🔄 重置主会话
+            ⚙️ 设置
           </button>
-        )}
-        <button
-          className={`topbar-btn ${errorCount > 0 ? 'topbar-btn-danger' : ''}`}
-          onClick={() => setShowErrors((s) => !s)}
-          title="查看错误与通知日志"
-        >
-          {errorCount > 0 ? `⚠ ${errorCount}` : '📣 日志'}
-        </button>
-        <button
-          className="topbar-btn"
-          onClick={() => setShowDoctor(true)}
-          title="检查 claude / codex / git / node 是否就绪"
-        >
-          🩺 体检
-        </button>
-        <button
-          className="topbar-btn"
-          onClick={handleToggleTheme}
-          title={theme === 'dark' ? '切换到浅色' : '切换到暗色'}
-          aria-label="切换主题"
-        >
-          {theme === 'dark' ? '☀' : '☾'}
-        </button>
+          <button
+            className="topbar-btn"
+            onClick={() => setShowSkillStudio(true)}
+            title="扫描本机 Skill，并启用或关闭可用 Skill"
+          >
+            Skill 管理
+          </button>
+          <ScreenSamplerIndicator />
+          {mainPanelMounted && (
+            <button
+              className="topbar-btn"
+              onClick={() => void handleResetMainSession()}
+              title="结束当前主会话，回到选择界面"
+            >
+              🔄 重置主会话
+            </button>
+          )}
+          <button
+            className={`topbar-btn ${errorCount > 0 ? 'topbar-btn-danger' : ''}`}
+            onClick={() => setShowErrors((s) => !s)}
+            title="查看错误与通知日志"
+          >
+            {errorCount > 0 ? `⚠ ${errorCount}` : '📣 日志'}
+          </button>
+          <button
+            className="topbar-btn"
+            onClick={() => setShowDoctor(true)}
+            title="检查 claude / codex / git / node 是否就绪"
+          >
+            🩺 体检
+          </button>
+          <button
+            className="topbar-btn mode-toggle-btn"
+            onClick={() => onWorkModeSelect(isTaskWatchMode ? 'plan-design' : 'task-watch')}
+            title={
+              sessionStatus === 'running'
+                ? '运行中无法切换模式，请先停止'
+                : isTaskWatchMode
+                  ? '当前：任务值守模式，点击切换到方案设计模式'
+                  : '当前：方案设计模式，点击切换到任务值守模式'
+            }
+            aria-label={isTaskWatchMode ? '切换到方案设计模式' : '切换到任务值守模式'}
+            aria-pressed={isTaskWatchMode}
+          >
+            {isTaskWatchMode ? '⏰' : '📋'}
+          </button>
+          <button
+            className="topbar-btn"
+            onClick={handleToggleTheme}
+            title={theme === 'dark' ? '切换到浅色' : '切换到暗色'}
+            aria-label="切换主题"
+          >
+            {theme === 'dark' ? '☀' : '☾'}
+          </button>
+        </div>
       </header>
       {hasProject && (
         <div className="plan-name-bar">
-          <span className="plan-progress-label">📋 方案：</span>
-          <select
-            className="plan-name-input"
-            value={
-              noPlanMode
-                ? NO_PLAN_SELECT_VALUE
-                : planName && planList.some((p) => p.name === planName)
-                ? planName
-                : '__NEW__'
-            }
-            onChange={(e) => void onPlanSelect(e.target.value)}
-            disabled={sessionStatus === 'running'}
-            title={
-              sessionStatus === 'running'
-                ? '运行中无法切换方案，请先停止'
-                : '选择已有方案或新建'
-            }
-          >
-            <option value="__NEW__">+ 新建方案</option>
-            <option value={NO_PLAN_SELECT_VALUE}>无方案模式</option>
-            {planList.map((p) => (
-              <option key={p.name} value={p.name}>
-                {p.source === 'external' ? '📥 ' : ''}
-                {p.name}
-              </option>
-            ))}
-          </select>
-          {!noPlanMode && !planList.some((p) => p.name === planName) && (
-            <input
-              type="text"
-              className="plan-name-input"
-              placeholder="输入新方案名（例如 add-auth）"
-              value={planName}
-              onChange={(e) => setPlanName(e.target.value)}
-              disabled={sessionStatus === 'running'}
-              style={{ flex: 1 }}
-            />
-          )}
-          <button
-            className="topbar-btn"
-            onClick={() => void onImportExternal()}
-            disabled={sessionStatus === 'running' || !currentProjectId}
-            title="导入外部方案 md 文件（会归档到外部原路径）"
-          >
-            📥 导入外部方案
-          </button>
-          <button
-            className="topbar-btn"
-            onClick={() => setShowScheduledTaskDialog(true)}
-            disabled={!currentProjectId}
-            title="创建和管理到点后交给当前 AICLI 执行的定时任务"
-          >
-            ⏰ 定时任务
-          </button>
-          <button
-            className="topbar-btn"
-            onClick={() => setShowSkillGraphStudio(true)}
-            title="拖拽连线编排项目级 Skill Pipeline"
-          >
-            Skill 编排
-          </button>
-          <button
-            className="topbar-btn"
-            onClick={() => setShowBuildPanel(true)}
-            disabled={!currentProjectId}
-            title="打开项目构建面板"
-          >
-            构建
-          </button>
-          <button
-            className="topbar-btn"
-            onClick={() => {
-              if (runtimeTopbarRunning) {
-                setShowRuntimeLogDialog(true)
-              } else {
-                void handleStartRuntime()
-              }
-            }}
-            disabled={runtimeTopbarDisabled}
-            title={
-              runtimeTopbarRunning
-                ? '打开运行日志'
-                : runtimeStartBlockedReason ?? '启动项目运行并打开实时日志'
-            }
-          >
-            {runtimeTopbarRunning ? '运行中' : '运行'}
-          </button>
-          {!noPlanMode && planName.trim() && (
-            <button
-              className="topbar-btn"
-              onClick={() => void openPlanReview()}
-              disabled={!currentProjectId}
-              title="查看 / 编辑当前方案的 md"
-            >
-              👁 方案预览
-            </button>
-          )}
-          <span
-            className={`plan-progress-node ${sessionStatus === 'running' ? 'running' : sessionStatus === 'exited' ? 'done' : ''}`}
-            title={`会话状态：${sessionStatus}`}
-            style={{ marginLeft: 'auto' }}
-          >
-            {sessionStatus === 'running'
-              ? '⏳ 运行中'
-              : sessionStatus === 'exited'
-                ? '✅ 已完成'
-                : '─ 未启动'}
-          </span>
+          <div className="workspace-control-row">
+            <div className="workspace-control-left">
+              {isPlanDesignMode && (
+                <div className="plan-design-main">
+                  <span className="plan-progress-label">📋 方案：</span>
+                  <select
+                    className="plan-name-input plan-select-input"
+                    value={
+                      planName && planList.some((p) => p.name === planName)
+                        ? planName
+                        : '__NEW__'
+                    }
+                    onChange={(e) => void onPlanSelect(e.target.value)}
+                    disabled={sessionStatus === 'running'}
+                    title={
+                      sessionStatus === 'running'
+                        ? '运行中无法切换方案，请先停止'
+                        : '选择已有方案或新建'
+                    }
+                  >
+                    <option value="__NEW__">+ 新建方案</option>
+                    {planList.map((p) => (
+                      <option key={p.name} value={p.name}>
+                        {p.source === 'external' ? '📥 ' : ''}
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                  {!planList.some((p) => p.name === planName) && (
+                    <input
+                      type="text"
+                      className="plan-name-input"
+                      placeholder="输入新方案名（例如 add-auth）"
+                      value={planName}
+                      onChange={(e) => setPlanName(e.target.value)}
+                      disabled={sessionStatus === 'running'}
+                    />
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="workspace-control-actions">
+              {isTaskWatchMode && (
+                <button
+                  className="topbar-btn"
+                  onClick={() => setShowScheduledTaskDialog(true)}
+                  disabled={!currentProjectId}
+                  title="创建和管理到点后交给当前 AICLI 执行的定时任务"
+                >
+                  ⏰ 定时任务
+                </button>
+              )}
+              {isPlanDesignMode && (
+                <div className="plan-design-actions">
+                  <button
+                    className="topbar-btn"
+                    onClick={() => void onImportExternal()}
+                    disabled={sessionStatus === 'running' || !currentProjectId}
+                    title="导入外部方案 md 文件（会归档到外部原路径）"
+                  >
+                    📥 导入外部方案
+                  </button>
+                  {planName.trim() && (
+                    <button
+                      className="topbar-btn"
+                      onClick={() => void openPlanReview()}
+                      disabled={!currentProjectId}
+                      title="查看 / 编辑当前方案的 md"
+                    >
+                      👁 方案预览
+                    </button>
+                  )}
+                </div>
+              )}
+              <div className="plan-toolbar-actions">
+                <button
+                  className="topbar-btn"
+                  onClick={() => setShowSkillGraphStudio(true)}
+                  title="拖拽连线编排项目级 Skill Pipeline"
+                >
+                  Skill 编排
+                </button>
+                <button
+                  className="topbar-btn"
+                  onClick={() => setShowBuildPanel(true)}
+                  disabled={!currentProjectId}
+                  title="打开项目构建面板"
+                >
+                  构建
+                </button>
+                <button
+                  className="topbar-btn"
+                  onClick={() => {
+                    if (runtimeTopbarRunning) {
+                      setShowRuntimeLogDialog(true)
+                    } else {
+                      void handleStartRuntime()
+                    }
+                  }}
+                  disabled={runtimeTopbarDisabled}
+                  title={
+                    runtimeTopbarRunning
+                      ? '打开运行日志'
+                      : runtimeStartBlockedReason ?? '启动项目运行并打开实时日志'
+                  }
+                >
+                  {runtimeTopbarRunning ? '运行中' : '运行'}
+                </button>
+                <span
+                  className={`plan-progress-node ${sessionStatus === 'running' ? 'running' : sessionStatus === 'exited' ? 'done' : ''}`}
+                  title={`会话状态：${sessionStatus}`}
+                >
+                  {sessionStatus === 'running'
+                    ? '⏳ 运行中'
+                    : sessionStatus === 'exited'
+                      ? '✅ 已完成'
+                      : '─ 未启动'}
+                </span>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1718,7 +1766,6 @@ function AppShell() {
             // (sans extension) as the plan name / archive filename.
             let effectiveLabel = planName
             if (stageId === 1) {
-              setNoPlanMode(false)
               const origName =
                 previewImport.path.split(/[\\/]/).pop() ?? ''
               const fromFile = origName.replace(/\.(md|markdown|txt)$/i, '').trim()
@@ -1792,19 +1839,6 @@ function AppShell() {
           }}
         />
       )}
-      {showHabitMonitor && (
-        <HabitMonitorDialog
-          onClose={() => {
-            setShowHabitMonitor(false)
-            void refreshHabitMonitorSnapshot()
-          }}
-          onOpenAiSettings={() => {
-            setShowHabitMonitor(false)
-            setShowAiSettings(true)
-          }}
-          mainCliLabel={getCliTargetLabel(aiSettings.ai_cli)}
-        />
-      )}
       {showSkillStudio && (
         <SkillStudioDialog
           onClose={() => {
@@ -1825,7 +1859,7 @@ function AppShell() {
           sessionRunning={sessionStatus === 'running'}
         />
       )}
-      {showScheduledTaskDialog && currentProjectId && (
+      {showScheduledTaskDialog && isTaskWatchMode && currentProjectId && (
         <ScheduledTaskDialog
           onClose={() => setShowScheduledTaskDialog(false)}
           projectId={currentProjectId}
@@ -1877,6 +1911,8 @@ function AppShell() {
           onRefreshVisualStudioInstallations={() => {
             void refreshVisualStudioInstallations()
           }}
+          initialSection={aiSettingsInitialSection}
+          mainCliLabel={getCliTargetLabel(aiSettings.ai_cli)}
           onClose={() => setShowAiSettings(false)}
           onSaved={(next) => {
             // If the main-session CLI binary changes while a session is

@@ -2,7 +2,9 @@ import { useCallback, useEffect, useRef } from 'react'
 import type { CreateScheduledTaskInput, ScheduledTaskScheduleType } from '../../electron/preload'
 import {
   DEFAULT_SCHEDULED_TASK_INSTRUCTIONS,
-  buildScheduledTaskPreviewPrompt
+  buildScheduledTaskPreviewPrompt,
+  formatScheduleLabel,
+  parseScheduleIntervalMinutes
 } from './scheduledTaskViewModel'
 
 interface Props {
@@ -20,6 +22,14 @@ const COMMON_INSTRUCTIONS = [
   '不要直接修改代码',
   '运行测试前先说明'
 ]
+
+function isClockScheduleTime(value: string): boolean {
+  return /^\d{1,2}:\d{2}$/.test(value.trim())
+}
+
+function normalizeIntervalMinutes(value: string): number {
+  return parseScheduleIntervalMinutes(value)
+}
 
 export default function ScheduledTaskEditorDialog(props: Props): JSX.Element {
   const { draft, mode, targetRepo, onCancel, onChange, onSave } = props
@@ -60,7 +70,23 @@ export default function ScheduledTaskEditorDialog(props: Props): JSX.Element {
   }
 
   function setScheduleType(scheduleType: ScheduledTaskScheduleType): void {
-    onChange({ scheduleType })
+    const patch: Partial<CreateScheduledTaskInput> = { scheduleType }
+    if (scheduleType === 'interval') {
+      patch.scheduleTime = String(normalizeIntervalMinutes(draft.scheduleTime))
+      patch.scheduleDays = []
+    } else {
+      if (!isClockScheduleTime(draft.scheduleTime)) {
+        patch.scheduleTime = '21:30'
+      }
+      if (scheduleType !== 'weekly') {
+        patch.scheduleDays = []
+      }
+    }
+    onChange(patch)
+  }
+
+  function setIntervalMinutes(value: string): void {
+    onChange({ scheduleTime: String(normalizeIntervalMinutes(value)) })
   }
 
   return (
@@ -210,16 +236,30 @@ export default function ScheduledTaskEditorDialog(props: Props): JSX.Element {
                   <option value="once">一次性</option>
                   <option value="daily">每天</option>
                   <option value="weekly">每周</option>
+                  <option value="interval">每隔</option>
                 </select>
               </label>
-              <label>
-                <span>时间</span>
-                <input
-                  type="time"
-                  value={draft.scheduleTime}
-                  onChange={(event) => onChange({ scheduleTime: event.target.value })}
-                />
-              </label>
+              {draft.scheduleType === 'interval' ? (
+                <label>
+                  <span>间隔分钟</span>
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={String(parseScheduleIntervalMinutes(draft.scheduleTime))}
+                    onChange={(event) => setIntervalMinutes(event.target.value)}
+                  />
+                </label>
+              ) : (
+                <label>
+                  <span>时间</span>
+                  <input
+                    type="time"
+                    value={draft.scheduleTime}
+                    onChange={(event) => onChange({ scheduleTime: event.target.value })}
+                  />
+                </label>
+              )}
               <label>
                 <span>超时时间</span>
                 <input
@@ -237,8 +277,12 @@ export default function ScheduledTaskEditorDialog(props: Props): JSX.Element {
             <p>保存前可确认真实 Prompt 内容</p>
             <pre>{preview}</pre>
             <div className="scheduled-task-preview-mini">
-              <span>频率：{draft.scheduleType === 'daily' ? '每天' : draft.scheduleType === 'weekly' ? '每周' : '一次性'}</span>
-              <span>时间：{draft.scheduleTime}</span>
+              <span>频率：{formatScheduleLabel(draft.scheduleType, draft.scheduleTime, draft.scheduleDays)}</span>
+              <span>
+                {draft.scheduleType === 'interval'
+                  ? `间隔：${parseScheduleIntervalMinutes(draft.scheduleTime)} 分钟`
+                  : `时间：${draft.scheduleTime}`}
+              </span>
             </div>
           </aside>
         </div>

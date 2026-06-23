@@ -75,6 +75,14 @@ export function buildScheduledTaskPreviewPrompt(
 
 const WEEKDAY_LABELS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
 
+export function parseScheduleIntervalMinutes(scheduleTime: string): number {
+  const normalized = scheduleTime.trim()
+  if (!/^\d+$/.test(normalized)) return 60
+  const minutes = Number.parseInt(normalized, 10)
+  if (!Number.isFinite(minutes) || minutes < 1) return 60
+  return minutes
+}
+
 export function formatScheduleLabel(
   scheduleType: ScheduledTaskScheduleType,
   scheduleTime: string,
@@ -82,6 +90,7 @@ export function formatScheduleLabel(
 ): string {
   if (scheduleType === 'once') return `一次性 ${scheduleTime}`
   if (scheduleType === 'daily') return `每天 ${scheduleTime}`
+  if (scheduleType === 'interval') return `每隔 ${parseScheduleIntervalMinutes(scheduleTime)} 分钟`
   const labels = scheduleDays
     .filter((day) => day >= 0 && day <= 6)
     .map((day) => WEEKDAY_LABELS[day])

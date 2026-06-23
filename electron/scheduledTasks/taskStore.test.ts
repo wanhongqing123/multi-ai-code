@@ -17,33 +17,6 @@ import {
 
 let tempRoot: string | null = null
 
-beforeEach(async () => {
-  tempRoot = await fs.mkdtemp(join(tmpdir(), 'scheduled-task-store-'))
-  process.env.MULTI_AI_ROOT = tempRoot
-  await fs.mkdir(tempRoot, { recursive: true })
-  closeDb()
-  initDb()
-  createProject({
-    id: 'project-1',
-    name: 'Project 1',
-    target_repo: 'E:\\OpenSource\\project-1'
-  })
-  createProject({
-    id: 'project-2',
-    name: 'Project 2',
-    target_repo: 'E:\\OpenSource\\project-2'
-  })
-})
-
-afterEach(async () => {
-  closeDb()
-  delete process.env.MULTI_AI_ROOT
-  if (tempRoot) {
-    await fs.rm(tempRoot, { recursive: true, force: true })
-    tempRoot = null
-  }
-})
-
 describe('computeNextRunAt', () => {
   it('returns today when a daily task time is still ahead', () => {
     const now = new Date(2026, 5, 19, 10, 0).getTime()
@@ -84,9 +57,46 @@ describe('computeNextRunAt', () => {
     expect(nextDate.getHours()).toBe(9)
     expect(nextDate.getMinutes()).toBe(0)
   })
+
+  it('returns the next interval boundary for interval tasks', () => {
+    const now = new Date(2026, 5, 19, 10, 5).getTime()
+    const next = computeNextRunAt(
+      { scheduleType: 'interval', scheduleTime: '15', scheduleDays: [] },
+      now
+    )
+
+    expect(next).toBe(new Date(2026, 5, 19, 10, 20).getTime())
+  })
 })
 
 describe('scheduled task persistence', () => {
+  beforeEach(async () => {
+    tempRoot = await fs.mkdtemp(join(tmpdir(), 'scheduled-task-store-'))
+    process.env.MULTI_AI_ROOT = tempRoot
+    await fs.mkdir(tempRoot, { recursive: true })
+    closeDb()
+    initDb()
+    createProject({
+      id: 'project-1',
+      name: 'Project 1',
+      target_repo: 'E:\\OpenSource\\project-1'
+    })
+    createProject({
+      id: 'project-2',
+      name: 'Project 2',
+      target_repo: 'E:\\OpenSource\\project-2'
+    })
+  })
+
+  afterEach(async () => {
+    closeDb()
+    delete process.env.MULTI_AI_ROOT
+    if (tempRoot) {
+      await fs.rm(tempRoot, { recursive: true, force: true })
+      tempRoot = null
+    }
+  })
+
   it('creates, lists, updates, disables, and deletes a task', () => {
     const created = createScheduledTask({
       projectId: 'project-1',

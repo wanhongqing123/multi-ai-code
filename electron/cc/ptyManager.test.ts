@@ -122,6 +122,7 @@ describe('registerPtyIpc prompt injection timing', () => {
       targetRepo,
       planName: '',
       planMode: 'none',
+      allowScheduledTasks: true,
       command: 'claude',
       args: [],
       mode: 'new',
@@ -160,6 +161,44 @@ describe('registerPtyIpc prompt injection timing', () => {
     expect(proc.writes.join('')).toBe('')
     expect(buildSystemPromptMock).not.toHaveBeenCalled()
   }, 10_000)
+
+  it('only exposes task-watch sessions to the scheduled task scheduler', async () => {
+    await spawnClaudeSession()
+    const ptyManager = (await import('./ptyManager.js')) as typeof import('./ptyManager.js') & {
+      getScheduledTaskSessionForProject?: (projectId: string) => {
+        sessionId: string
+        targetRepo: string
+      } | null
+    }
+
+    expect(typeof ptyManager.getScheduledTaskSessionForProject).toBe('function')
+    expect(ptyManager.getScheduledTaskSessionForProject?.('project-1') ?? null).toBeNull()
+
+    const targetRepo = await fs.mkdtemp(join(tmpdir(), 'multi-ai-code-target-watch-'))
+    const projectDir = await fs.mkdtemp(join(tmpdir(), 'multi-ai-code-project-watch-'))
+    await fs.writeFile(join(projectDir, 'project.json'), JSON.stringify({ name: 'watch' }), 'utf8')
+    const handler = ipcHandlers.get('cc:spawn')
+    if (!handler) throw new Error('cc:spawn handler was not registered')
+
+    const result = await handler({}, {
+      sessionId: 'session-watch',
+      projectId: 'project-watch',
+      projectDir,
+      targetRepo,
+      planName: '',
+      planMode: 'none',
+      allowScheduledTasks: true,
+      command: 'claude',
+      args: [],
+      mode: 'new',
+    })
+
+    expect(result).toEqual({ ok: true })
+    expect(ptyManager.getScheduledTaskSessionForProject?.('project-watch')).toEqual({
+      sessionId: 'session-watch',
+      targetRepo
+    })
+  })
 
   it('waits for no-plan Claude sessions to become interactive before sending user messages', async () => {
     const { proc } = await spawnNoPlanSession()

@@ -5,6 +5,10 @@ import { describe, expect, it } from 'vitest'
 import ScheduledTaskEditorDialog from './ScheduledTaskEditorDialog'
 import { createDefaultScheduledTaskDraft } from './scheduledTaskViewModel'
 
+function normalizeNewlines(value: string): string {
+  return value.replace(/\r\n/g, '\n')
+}
+
 describe('ScheduledTaskEditorDialog', () => {
   it('shows task intent, execution constraints, and prompt preview', () => {
     const draft = createDefaultScheduledTaskDraft('project-1')
@@ -57,9 +61,8 @@ describe('ScheduledTaskEditorDialog', () => {
         onSave={() => {}}
       />
     )
-    const styles = readFileSync(
-      fileURLToPath(new URL('../styles.css', import.meta.url)),
-      'utf8'
+    const styles = normalizeNewlines(
+      readFileSync(fileURLToPath(new URL('../styles.css', import.meta.url)), 'utf8')
     )
 
     expect(markup).toContain('class="scheduled-task-goal-input"')
@@ -73,9 +76,8 @@ describe('ScheduledTaskEditorDialog', () => {
       fileURLToPath(new URL('./ScheduledTaskEditorDialog.tsx', import.meta.url)),
       'utf8'
     )
-    const styles = readFileSync(
-      fileURLToPath(new URL('../styles.css', import.meta.url)),
-      'utf8'
+    const styles = normalizeNewlines(
+      readFileSync(fileURLToPath(new URL('../styles.css', import.meta.url)), 'utf8')
     )
 
     expect(source).toContain('goalTextareaRef')
@@ -83,5 +85,29 @@ describe('ScheduledTaskEditorDialog', () => {
     expect(source).toContain('ref={goalTextareaRef}')
     expect(source).toContain('onInput={adjustGoalTextareaHeight}')
     expect(styles).toContain('.scheduled-task-goal-input {\n  min-height: 168px;\n  overflow: hidden;')
+  })
+
+  it('supports interval schedules with a minutes input', () => {
+    const draft = createDefaultScheduledTaskDraft('project-1')
+    draft.scheduleType = 'interval'
+    draft.scheduleTime = '15'
+
+    const markup = renderToStaticMarkup(
+      <ScheduledTaskEditorDialog
+        mode="create"
+        draft={draft}
+        targetRepo="E:\\OpenSource\\multi-ai-code"
+        onChange={() => {}}
+        onCancel={() => {}}
+        onSave={() => {}}
+      />
+    )
+
+    expect(markup).toContain('value="interval" selected=""')
+    expect(markup).toContain('每隔')
+    expect(markup).toContain('间隔分钟')
+    expect(markup).toContain('type="number"')
+    expect(markup).toContain('value="15"')
+    expect(markup).not.toContain('type="time"')
   })
 })

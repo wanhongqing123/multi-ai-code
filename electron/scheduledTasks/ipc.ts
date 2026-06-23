@@ -2,7 +2,7 @@ import { ipcMain } from 'electron'
 import {
   addSessionDataListener,
   addSessionExitListener,
-  getSessionForProject,
+  getScheduledTaskSessionForProject,
   sendUserMessageToSession
 } from '../cc/ptyManager.js'
 import {
@@ -32,7 +32,7 @@ export function registerScheduledTaskIpc(): void {
   cancelInterruptedScheduledTaskRuns()
 
   setScheduledTaskSendHandler({
-    resolveSession: getSessionForProject,
+    resolveSession: getScheduledTaskSessionForProject,
     sendUser: sendUserMessageToSession
   })
 
@@ -102,7 +102,7 @@ export function registerScheduledTaskIpc(): void {
       const task = getScheduledTask(taskId)
       if (!task) return { ok: false as const, error: 'scheduled task not found' }
 
-      const projectSession = getSessionForProject(task.projectId)
+      const projectSession = getScheduledTaskSessionForProject(task.projectId)
       const preferredSession = sessionId
         ? {
             sessionId,

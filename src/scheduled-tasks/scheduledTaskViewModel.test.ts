@@ -22,6 +22,7 @@ describe('scheduled task view model', () => {
     expect(formatScheduleLabel('once', '21:30', [])).toBe('一次性 21:30')
     expect(formatScheduleLabel('daily', '21:30', [])).toBe('每天 21:30')
     expect(formatScheduleLabel('weekly', '09:00', [1, 5])).toBe('每周一、周五 09:00')
+    expect(formatScheduleLabel('interval', '15', [])).toBe('每隔 15 分钟')
   })
 
   it('formats status labels', () => {

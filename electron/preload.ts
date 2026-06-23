@@ -44,7 +44,7 @@ export type BuildExecutionScope = 'all' | 'single-step'
 export type RuntimeEnvType = BuildStepEnvType
 export type RuntimeOutputEncoding = BuildOutputEncoding
 export type RuntimeStatus = 'idle' | 'running' | 'exited' | 'failed' | 'stopped'
-export type ScheduledTaskScheduleType = 'once' | 'daily' | 'weekly'
+export type ScheduledTaskScheduleType = 'once' | 'daily' | 'weekly' | 'interval'
 export type ScheduledTaskRunStatus =
   | 'pending'
   | 'queued'
@@ -300,6 +300,8 @@ export interface SpawnRequest {
   planAbsPath?: string
   /** true when plan file does not yet exist on disk. */
   planPending?: boolean
+  /** True when this session is allowed to receive scheduled task prompts. */
+  allowScheduledTasks?: boolean
   /** First user message to feed after kickoff. */
   initialUserMessage?: string
   /** CLI binary (claude | codex). */

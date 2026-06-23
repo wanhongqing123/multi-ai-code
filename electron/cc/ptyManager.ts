@@ -92,6 +92,8 @@ export interface SpawnRequest {
   planAbsPath?: string
   /** true when plan file does not yet exist on disk. */
   planPending?: boolean
+  /** True when this session is allowed to receive scheduled task prompts. */
+  allowScheduledTasks?: boolean
   /** First user message to feed after kickoff. */
   initialUserMessage?: string
   /** CLI binary (claude | codex). */
@@ -118,6 +120,7 @@ interface Session {
   sessionId: string
   planName: string
   command: string
+  allowScheduledTasks: boolean
   codexTrustAccepted?: boolean
   codexPromptReady?: boolean
   codexBootText?: string
@@ -264,6 +267,21 @@ export function getSessionForProject(projectId: string): {
   return null
 }
 
+export function getScheduledTaskSessionForProject(projectId: string): {
+  sessionId: string
+  targetRepo: string
+} | null {
+  for (const session of sessions.values()) {
+    if (session.projectId === projectId && session.allowScheduledTasks) {
+      return {
+        sessionId: session.sessionId,
+        targetRepo: session.targetRepo
+      }
+    }
+  }
+  return null
+}
+
 export async function sendUserMessageToSession(
   sessionId: string,
   text: string
@@ -393,6 +411,7 @@ export function registerPtyIpc(): void {
       sessionId: req.sessionId,
       planName: req.planName ?? '',
       command: req.command,
+      allowScheduledTasks: req.allowScheduledTasks === true,
       dumpStream
     }
 

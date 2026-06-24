@@ -3,7 +3,11 @@ import type { ComponentProps } from 'react'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
-import type { ProjectRuntimeConfig, VisualStudioInstallation } from '../../electron/preload'
+import type {
+  ProjectRuntimeConfig,
+  RemoteImConfig,
+  VisualStudioInstallation
+} from '../../electron/preload'
 import AiSettingsDialog, {
   deriveAppSettingsSaveOutcome,
   getProjectSettingsRepairToastMessage,
@@ -26,6 +30,17 @@ const defaultRuntimeConfig: ProjectRuntimeConfig = {
   outputEncoding: 'auto'
 }
 
+const defaultRemoteImConfig: RemoteImConfig = {
+  enabled: false,
+  provider: 'tencent-im',
+  sdkAppId: null,
+  desktopUserId: '',
+  userSigEndpoint: '',
+  allowedUserIds: [],
+  outputFlushIntervalMs: 2000,
+  outputMaxChunkChars: 1200
+}
+
 const defaultDialogProps = {
   visualStudioInstallations: [] as VisualStudioInstallation[],
   visualStudioInstallationsLoading: false,
@@ -34,7 +49,10 @@ const defaultDialogProps = {
   initialRuntimeConfig: defaultRuntimeConfig,
   runtimeConfigReady: true,
   runtimeConfigDisabled: false,
-  onSavedRuntimeConfig: vi.fn()
+  onSavedRuntimeConfig: vi.fn(),
+  initialRemoteImConfig: defaultRemoteImConfig,
+  remoteImConfigReady: true,
+  onSavedRemoteImConfig: vi.fn()
 }
 
 function renderDialog(overrides: Partial<ComponentProps<typeof AiSettingsDialog>> = {}) {
@@ -80,8 +98,17 @@ describe('AiSettingsDialog', () => {
     expect(markup).toContain('aria-controls="ai-settings-ai-section"')
     expect(markup).toContain('aria-controls="ai-settings-build-section"')
     expect(markup).toContain('aria-controls="ai-settings-runtime-section"')
+    expect(markup).toContain('aria-controls="ai-settings-remote-im-section"')
     expect(markup).toContain('id="ai-settings-shortcut-section"')
     expect(markup).toContain('id="ai-settings-ai-section"')
+  })
+
+  it('renders the remote IM settings section', () => {
+    const markup = renderDialog()
+
+    expect(markup).toContain('id="ai-settings-remote-im-section"')
+    expect(markup).toContain('UserSig 服务地址')
+    expect(markup).not.toContain('SECRETKEY')
   })
 
   it('renders habit monitor as an embedded settings section', () => {

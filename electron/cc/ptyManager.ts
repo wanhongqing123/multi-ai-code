@@ -282,6 +282,21 @@ export function getScheduledTaskSessionForProject(projectId: string): {
   return null
 }
 
+export function getActiveSessionForProject(projectId: string): {
+  sessionId: string
+  targetRepo: string
+} | null {
+  for (const session of sessions.values()) {
+    if (session.projectId === projectId) {
+      return {
+        sessionId: session.sessionId,
+        targetRepo: session.targetRepo
+      }
+    }
+  }
+  return null
+}
+
 export async function sendUserMessageToSession(
   sessionId: string,
   text: string

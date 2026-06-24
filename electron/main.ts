@@ -27,6 +27,7 @@ import {
 import { registerPtyIpc, killAllSessions } from './cc/ptyManager.js'
 import { registerHabitIpc } from './habit/ipc.js'
 import { registerScheduledTaskIpc } from './scheduledTasks/ipc.js'
+import { registerRemoteImIpc } from './remote-im/ipc.js'
 import {
   startScheduledTaskScheduler,
   stopScheduledTaskScheduler
@@ -1923,6 +1924,7 @@ app.whenReady().then(async () => {
   registerPtyIpc()
   registerHabitIpc()
   registerScheduledTaskIpc()
+  registerRemoteImIpc()
   registerScreenshotIpc()
   const screenshotHotkeyInit = await initializeScreenshotHotkey({
     registrar: globalShortcut

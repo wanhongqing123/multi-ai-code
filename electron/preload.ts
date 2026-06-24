@@ -28,6 +28,68 @@ export interface AppSettings {
   screenshotShortcut: string
 }
 
+export interface RemoteImConfig {
+  enabled: boolean
+  provider: 'tencent-im'
+  sdkAppId: number | null
+  desktopUserId: string
+  userSigEndpoint: string
+  allowedUserIds: string[]
+  outputFlushIntervalMs: number
+  outputMaxChunkChars: number
+}
+
+export type RemoteImConnectionState =
+  | 'disabled'
+  | 'disconnected'
+  | 'connecting'
+  | 'connected'
+  | 'error'
+
+export interface RemoteImStatus {
+  projectId: string | null
+  state: RemoteImConnectionState
+  detail: string | null
+  updatedAt: number
+}
+
+export type RemoteImMessageRole = 'remote-user' | 'system' | 'aicli'
+export type RemoteImMessageDirection = 'incoming' | 'outgoing' | 'internal'
+export type RemoteImMessageStatus =
+  | 'received'
+  | 'rejected'
+  | 'sent-to-aicli'
+  | 'streaming'
+  | 'sent-to-im'
+  | 'failed'
+
+export interface RemoteImMessage {
+  id: number
+  projectId: string | null
+  sessionId: string | null
+  provider: 'tencent-im'
+  remoteMessageId: string | null
+  fromUserId: string | null
+  toUserId: string | null
+  role: RemoteImMessageRole
+  direction: RemoteImMessageDirection
+  content: string
+  status: RemoteImMessageStatus
+  error: string | null
+  createdAt: number
+  sentToAicliAt: number | null
+  sentToImAt: number | null
+}
+
+export interface RemoteImIncomingTextMessage {
+  projectId: string
+  remoteMessageId?: string | null
+  fromUserId: string
+  toUserId?: string | null
+  text: string
+  createdAt?: number
+}
+
 export interface ProjectAiSettingsResponse {
   ok: boolean
   value?: AiSettings
@@ -474,6 +536,56 @@ const api = {
         value?: AppSettings
         error?: string
       }>
+  },
+  remoteIm: {
+    getConfig: (projectId: string) =>
+      ipcRenderer.invoke('remote-im:get-config', { projectId }) as Promise<
+        { ok: true; value: RemoteImConfig } | { ok: false; error: string }
+      >,
+    setConfig: (projectId: string, config: RemoteImConfig) =>
+      ipcRenderer.invoke('remote-im:set-config', { projectId, config }) as Promise<
+        | { ok: true; value: RemoteImConfig; repaired?: true }
+        | { ok: false; error: string; details?: Array<{ path: string; message: string }> }
+      >,
+    getStatus: (projectId: string) =>
+      ipcRenderer.invoke('remote-im:get-status', { projectId }) as Promise<RemoteImStatus>,
+    listMessages: (projectId: string, limit = 100) =>
+      ipcRenderer.invoke('remote-im:list-messages', { projectId, limit }) as Promise<
+        RemoteImMessage[]
+      >,
+    clearMessages: (projectId: string) =>
+      ipcRenderer.invoke('remote-im:clear-messages', { projectId }) as Promise<{ ok: true }>,
+    sendLocalMessage: (projectId: string, text: string) =>
+      ipcRenderer.invoke('remote-im:send-local-message', { projectId, text }) as Promise<
+        { ok: boolean; error?: string }
+      >,
+    deliverIncomingText: (message: RemoteImIncomingTextMessage) =>
+      ipcRenderer.invoke('remote-im:deliver-incoming-text', message) as Promise<{
+        ok: boolean
+        error?: string
+      }>,
+    updateSdkStatus: (status: Pick<RemoteImStatus, 'projectId' | 'state' | 'detail'>) =>
+      ipcRenderer.invoke('remote-im:update-sdk-status', status) as Promise<{ ok: true }>,
+    onStatus: (cb: (status: RemoteImStatus) => void) => {
+      const handler = (_event: IpcRendererEvent, status: RemoteImStatus) => cb(status)
+      ipcRenderer.on('remote-im:status', handler)
+      return () => ipcRenderer.removeListener('remote-im:status', handler)
+    },
+    onMessagesChanged: (cb: (evt: { projectId: string | null }) => void) => {
+      const handler = (_event: IpcRendererEvent, evt: { projectId: string | null }) => cb(evt)
+      ipcRenderer.on('remote-im:messages-changed', handler)
+      return () => ipcRenderer.removeListener('remote-im:messages-changed', handler)
+    },
+    onOutgoingText: (
+      cb: (evt: { projectId: string; toUserId: string; text: string }) => void
+    ) => {
+      const handler = (
+        _event: IpcRendererEvent,
+        evt: { projectId: string; toUserId: string; text: string }
+      ) => cb(evt)
+      ipcRenderer.on('remote-im:outgoing-text', handler)
+      return () => ipcRenderer.removeListener('remote-im:outgoing-text', handler)
+    }
   },
   git: {
     status: (cwd: string) =>

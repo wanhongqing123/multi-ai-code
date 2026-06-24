@@ -34,6 +34,8 @@ import TemplatesDialog from './components/TemplatesDialog'
 import SkillGraphDialog from './habit/SkillGraphDialog'
 import SkillStudioDialog from './habit/SkillStudioDialog'
 import ScheduledTaskDialog from './scheduled-tasks/ScheduledTaskDialog'
+import RemoteImDrawer from './remote-im/RemoteImDrawer'
+import RemoteImClientHost from './remote-im/RemoteImClientHost'
 import ScreenSamplerIndicator from './habit/ScreenSamplerIndicator'
 import FirstRunNoticeDialog from './habit/FirstRunNoticeDialog'
 import { getCliTargetLabel } from './components/cliTarget'
@@ -52,6 +54,9 @@ import type {
   ProjectBuildConfig,
   ProjectRuntimeConfig,
   RuntimeState,
+  RemoteImConfig,
+  RemoteImMessage,
+  RemoteImStatus,
   VisualStudioInstallation
 } from '../electron/preload'
 import type { HabitFlowRow, HabitSettings } from './habit/habitTypes'
@@ -97,6 +102,16 @@ const DEFAULT_RUNTIME_STATE: RuntimeState = {
   exitCode: null,
   signal: null,
   log: ''
+}
+const DEFAULT_REMOTE_IM_CONFIG: RemoteImConfig = {
+  enabled: false,
+  provider: 'tencent-im',
+  sdkAppId: null,
+  desktopUserId: '',
+  userSigEndpoint: '',
+  allowedUserIds: [],
+  outputFlushIntervalMs: 2000,
+  outputMaxChunkChars: 1200
 }
 
 type WorkMode = 'task-watch' | 'plan-design'
@@ -212,6 +227,12 @@ function AppShell() {
   const [projectRuntimeConfigProjectId, setProjectRuntimeConfigProjectId] = useState<
     string | null
   >(null)
+  const [remoteImConfig, setRemoteImConfig] =
+    useState<RemoteImConfig>(DEFAULT_REMOTE_IM_CONFIG)
+  const [remoteImConfigProjectId, setRemoteImConfigProjectId] = useState<string | null>(null)
+  const [remoteImStatus, setRemoteImStatus] = useState<RemoteImStatus | null>(null)
+  const [remoteImMessages, setRemoteImMessages] = useState<RemoteImMessage[]>([])
+  const [remoteImInput, setRemoteImInput] = useState('')
   const [visualStudioInstallations, setVisualStudioInstallations] = useState<
     VisualStudioInstallation[]
   >([])
@@ -221,6 +242,7 @@ function AppShell() {
   const [showSkillStudio, setShowSkillStudio] = useState(false)
   const [showSkillGraphStudio, setShowSkillGraphStudio] = useState(false)
   const [showScheduledTaskDialog, setShowScheduledTaskDialog] = useState(false)
+  const [showRemoteImDrawer, setShowRemoteImDrawer] = useState(false)
   const [showHabitFirstRun, setShowHabitFirstRun] = useState(false)
   const [skillsRefreshNonce, setSkillsRefreshNonce] = useState(0)
   const [showOnboarding, setShowOnboarding] = useState(false)
@@ -246,6 +268,8 @@ function AppShell() {
       : DEFAULT_PROJECT_RUNTIME_CONFIG
   const projectRuntimeConfigReady =
     currentProjectId !== null && projectRuntimeConfigProjectId === currentProjectId
+  const remoteImConfigReady =
+    currentProjectId !== null && remoteImConfigProjectId === currentProjectId
 
   // Single-stage session state
   const [sessionId, setSessionId] = useState<string | null>(null)
@@ -656,6 +680,10 @@ function AppShell() {
       setProjectBuildConfigProjectId(null)
       setProjectRuntimeConfig(DEFAULT_PROJECT_RUNTIME_CONFIG)
       setProjectRuntimeConfigProjectId(null)
+      setRemoteImConfig(DEFAULT_REMOTE_IM_CONFIG)
+      setRemoteImConfigProjectId(null)
+      setRemoteImStatus(null)
+      setRemoteImMessages([])
       setAiSettingsReady(false)
       setAiSettingsLoadError(null)
       return
@@ -667,6 +695,10 @@ function AppShell() {
     setProjectBuildConfigProjectId(null)
     setProjectRuntimeConfig(DEFAULT_PROJECT_RUNTIME_CONFIG)
     setProjectRuntimeConfigProjectId(null)
+    setRemoteImConfig(DEFAULT_REMOTE_IM_CONFIG)
+    setRemoteImConfigProjectId(null)
+    setRemoteImStatus(null)
+    setRemoteImMessages([])
     setAiSettingsReady(false)
     setAiSettingsLoadError(null)
     void window.api.project.getStageConfigs(currentProjectId).then((cfg) => {
@@ -702,6 +734,21 @@ function AppShell() {
       }
       const runtimeConfigRepaired = runtimeResult.ok && runtimeResult.repaired === true
 
+      const remoteImResult = await window.api.remoteIm.getConfig(currentProjectId)
+      if (cancelled) return
+      if (!remoteImResult.ok) {
+        setRemoteImConfig(DEFAULT_REMOTE_IM_CONFIG)
+        setRemoteImConfigProjectId(currentProjectId)
+        showToast(remoteImResult.error ?? '读取远程 IM 配置失败', { level: 'error' })
+      } else {
+        setRemoteImConfig(remoteImResult.value ?? DEFAULT_REMOTE_IM_CONFIG)
+        setRemoteImConfigProjectId(currentProjectId)
+      }
+      const status = await window.api.remoteIm.getStatus(currentProjectId)
+      if (!cancelled) setRemoteImStatus(status)
+      const messages = await window.api.remoteIm.listMessages(currentProjectId, 100)
+      if (!cancelled) setRemoteImMessages(messages)
+
       const aiResult = await window.api.project.getAiSettings(currentProjectId)
       if (cancelled) return
       if (!aiResult.ok) {
@@ -734,6 +781,22 @@ function AppShell() {
   useEffect(() => {
     void refreshHabitMonitorSnapshot()
   }, [currentProjectId, refreshHabitMonitorSnapshot])
+
+  useEffect(() => {
+    const offStatus = window.api.remoteIm.onStatus((status) => {
+      if (status.projectId === currentProjectId) setRemoteImStatus(status)
+    })
+    const offMessages = window.api.remoteIm.onMessagesChanged((evt) => {
+      if (!currentProjectId || evt.projectId !== currentProjectId) return
+      void window.api.remoteIm
+        .listMessages(currentProjectId, 100)
+        .then((messages) => setRemoteImMessages(messages))
+    })
+    return () => {
+      offStatus()
+      offMessages()
+    }
+  }, [currentProjectId])
 
   useEffect(() => {
     if (!isTaskWatchMode || !currentProjectId) return
@@ -978,6 +1041,20 @@ function AppShell() {
       showToast(result.error ?? '停止运行失败', { level: 'error' })
     }
   }, [])
+
+  const handleSendRemoteImLocalMessage = useCallback(async () => {
+    if (!currentProjectId) return
+    const text = remoteImInput.trim()
+    if (!text) return
+    const result = await window.api.remoteIm.sendLocalMessage(currentProjectId, text)
+    if (!result.ok) {
+      showToast(result.error ?? '发送远程 IM 消息失败', { level: 'error' })
+      return
+    }
+    setRemoteImInput('')
+    const messages = await window.api.remoteIm.listMessages(currentProjectId, 100)
+    setRemoteImMessages(messages)
+  }, [currentProjectId, remoteImInput])
 
   const handleSendRuntimeLog = useCallback(async (comment = '') => {
     if (!runtimeState.projectId || !runtimeState.log.trim()) {
@@ -1490,6 +1567,15 @@ function AppShell() {
             ⚙️ 设置
           </button>
           <button
+            className={`topbar-btn ${remoteImStatus?.state === 'connected' ? 'remote-im-topbar-connected' : ''}`}
+            onClick={() => setShowRemoteImDrawer(true)}
+            disabled={!currentProjectId}
+            title="打开远程 IM 会话"
+          >
+            <span className="remote-im-topbar-dot" />
+            远程 IM
+          </button>
+          <button
             className="topbar-btn"
             onClick={() => setShowSkillStudio(true)}
             title="扫描本机 Skill，并启用或关闭可用 Skill"
@@ -1906,6 +1992,8 @@ function AppShell() {
           initialRuntimeConfig={visibleProjectRuntimeConfig}
           runtimeConfigReady={projectRuntimeConfigReady}
           runtimeConfigDisabled={runtimeStateForCurrentProject.status === 'running'}
+          initialRemoteImConfig={remoteImConfig}
+          remoteImConfigReady={remoteImConfigReady}
           visualStudioInstallations={visualStudioInstallations}
           visualStudioInstallationsLoading={visualStudioInstallationsLoading}
           onRefreshVisualStudioInstallations={() => {
@@ -1936,8 +2024,24 @@ function AppShell() {
             setProjectRuntimeConfig(next)
             setProjectRuntimeConfigProjectId(currentProjectId)
           }}
+          onSavedRemoteImConfig={(next) => {
+            setRemoteImConfig(next)
+            setRemoteImConfigProjectId(currentProjectId)
+          }}
         />
       )}
+      <RemoteImClientHost projectId={currentProjectId} config={remoteImConfig} />
+      <RemoteImDrawer
+        open={showRemoteImDrawer}
+        projectId={currentProjectId}
+        sessionRunning={sessionStatus === 'running'}
+        status={remoteImStatus}
+        messages={remoteImMessages}
+        input={remoteImInput}
+        onInputChange={setRemoteImInput}
+        onSend={() => void handleSendRemoteImLocalMessage()}
+        onClose={() => setShowRemoteImDrawer(false)}
+      />
       {showBuildPanel && (
         <ProjectBuildPanel
           open={showBuildPanel}

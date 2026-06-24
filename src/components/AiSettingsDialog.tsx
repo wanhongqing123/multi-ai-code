@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type {
   ProjectBuildConfig,
   ProjectRuntimeConfig,
+  RemoteImConfig,
   VisualStudioInstallation
 } from '../../electron/preload'
 import ProjectBuildSettingsSection, {
@@ -12,6 +13,7 @@ import ProjectRuntimeSettingsSection, {
 } from './ProjectRuntimeSettingsSection.js'
 import { showToast } from './Toast.js'
 import { HabitMonitorPanel } from '../habit/HabitMonitorDialog.js'
+import RemoteImSettingsSection from '../remote-im/RemoteImSettingsSection.js'
 
 export const DEFAULT_SCREENSHOT_SHORTCUT = 'CommandOrControl+Shift+A'
 
@@ -77,7 +79,7 @@ interface AppSettingsSaveResponse {
   error?: string
 }
 
-export type SettingsSectionKey = 'shortcut' | 'ai' | 'build' | 'runtime' | 'habit'
+export type SettingsSectionKey = 'shortcut' | 'ai' | 'build' | 'runtime' | 'remote-im' | 'habit'
 
 interface ProjectSettingsSaveResponse {
   ok: boolean
@@ -103,6 +105,8 @@ export interface AiSettingsDialogProps {
   initialRuntimeConfig: ProjectRuntimeConfig
   runtimeConfigReady: boolean
   runtimeConfigDisabled?: boolean
+  initialRemoteImConfig: RemoteImConfig
+  remoteImConfigReady: boolean
   visualStudioInstallations: VisualStudioInstallation[]
   visualStudioInstallationsLoading: boolean
   onRefreshVisualStudioInstallations: () => void
@@ -114,6 +118,7 @@ export interface AiSettingsDialogProps {
   onSavedAppSettings: (next: AppSettings) => void
   onSavedBuildConfig: (next: ProjectBuildConfig) => void
   onSavedRuntimeConfig: (next: ProjectRuntimeConfig) => void
+  onSavedRemoteImConfig: (next: RemoteImConfig) => void
 }
 
 export function resolveSavedAppSettings(
@@ -441,6 +446,9 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
   const [runtimeConfig, setRuntimeConfig] = useState<ProjectRuntimeConfig>(
     props.initialRuntimeConfig
   )
+  const [remoteImConfig, setRemoteImConfig] = useState<RemoteImConfig>(
+    props.initialRemoteImConfig
+  )
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const lastSyncedAppSettingsRef = useRef<AppSettings>(props.initialAppSettings)
@@ -451,6 +459,7 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
   const aiSectionRef = useRef<HTMLDivElement | null>(null)
   const buildSectionRef = useRef<HTMLDivElement | null>(null)
   const runtimeSectionRef = useRef<HTMLDivElement | null>(null)
+  const remoteImSectionRef = useRef<HTMLDivElement | null>(null)
   const habitSectionRef = useRef<HTMLDivElement | null>(null)
 
   const scrollToSettingsSection = (section: SettingsSectionKey): void => {
@@ -460,6 +469,7 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
       ai: aiSectionRef.current,
       build: buildSectionRef.current,
       runtime: runtimeSectionRef.current,
+      'remote-im': remoteImSectionRef.current,
       habit: habitSectionRef.current
     }[section]
     target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -474,6 +484,7 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
         ai: aiSectionRef.current,
         build: buildSectionRef.current,
         runtime: runtimeSectionRef.current,
+        'remote-im': remoteImSectionRef.current,
         habit: habitSectionRef.current
       }[section]
       target?.scrollIntoView({ behavior: 'auto', block: 'start' })
@@ -523,6 +534,11 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
     if (saving) return
     setRuntimeConfig(props.initialRuntimeConfig)
   }, [props.initialRuntimeConfig, saving])
+
+  useEffect(() => {
+    if (saving) return
+    setRemoteImConfig(props.initialRemoteImConfig)
+  }, [props.initialRemoteImConfig, saving])
 
   const handleRestoreDefaultShortcut = (): void => {
     const next = restoreDefaultScreenshotShortcut()
@@ -598,6 +614,14 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
         })
         if (repairToast) {
           showToast(repairToast, { level: 'success' })
+        }
+        if (props.remoteImConfigReady) {
+          const remoteImRes = await window.api.remoteIm.setConfig(props.projectId, remoteImConfig)
+          if (!remoteImRes.ok) {
+            throw new Error(remoteImRes.error ?? 'save remote IM config failed')
+          }
+          setRemoteImConfig(remoteImRes.value)
+          props.onSavedRemoteImConfig(remoteImRes.value)
         }
       }
 
@@ -706,6 +730,23 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
               <button
                 type="button"
                 className={
+                  activeSettingsSection === 'remote-im'
+                    ? 'ai-settings-nav-item active'
+                    : 'ai-settings-nav-item'
+                }
+                aria-controls="ai-settings-remote-im-section"
+                aria-current={activeSettingsSection === 'remote-im' ? 'true' : undefined}
+                onClick={() => scrollToSettingsSection('remote-im')}
+              >
+                <span className="ai-settings-nav-icon">IM</span>
+                <span>
+                  <strong>远程 IM</strong>
+                  <small>手机消息接入 AICLI</small>
+                </span>
+              </button>
+              <button
+                type="button"
+                className={
                   activeSettingsSection === 'habit'
                     ? 'ai-settings-nav-item ai-settings-habit-entry active'
                     : 'ai-settings-nav-item ai-settings-habit-entry'
@@ -809,6 +850,18 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
                   visualStudioInstallationsLoading={props.visualStudioInstallationsLoading}
                   onRefreshVisualStudioInstallations={props.onRefreshVisualStudioInstallations}
                   onChange={setBuildConfig}
+                />
+              </div>
+
+              <div
+                id="ai-settings-remote-im-section"
+                ref={remoteImSectionRef}
+                className="ai-settings-panel ai-settings-remote-im-panel ai-settings-grid-full ai-settings-section-anchor"
+              >
+                <RemoteImSettingsSection
+                  config={remoteImConfig}
+                  disabled={saving || props.projectId === null || !props.remoteImConfigReady}
+                  onChange={setRemoteImConfig}
                 />
               </div>
 

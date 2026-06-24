@@ -134,6 +134,25 @@ CREATE TABLE IF NOT EXISTS scheduled_task_runs (
   timeout_minutes INTEGER NOT NULL,
   FOREIGN KEY (task_id) REFERENCES scheduled_tasks(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS remote_im_messages (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id        TEXT,
+  session_id        TEXT,
+  provider          TEXT NOT NULL,
+  remote_message_id TEXT,
+  from_user_id      TEXT,
+  to_user_id        TEXT,
+  role              TEXT NOT NULL,
+  direction         TEXT NOT NULL,
+  content           TEXT NOT NULL,
+  status            TEXT NOT NULL,
+  error             TEXT,
+  created_at        INTEGER NOT NULL,
+  sent_to_aicli_at  INTEGER,
+  sent_to_im_at     INTEGER,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+);
 `
 
 const INDEXES = `
@@ -152,6 +171,8 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_project ON scheduled_tasks(projec
 CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_due ON scheduled_tasks(project_id, enabled, next_run_at);
 CREATE INDEX IF NOT EXISTS idx_scheduled_task_runs_task ON scheduled_task_runs(task_id, scheduled_at DESC);
 CREATE INDEX IF NOT EXISTS idx_scheduled_task_runs_status ON scheduled_task_runs(status);
+CREATE INDEX IF NOT EXISTS idx_remote_im_messages_project ON remote_im_messages(project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_remote_im_messages_remote_id ON remote_im_messages(provider, remote_message_id);
 `
 
 function ensureColumn(

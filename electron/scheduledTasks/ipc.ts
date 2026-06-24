@@ -20,6 +20,7 @@ import {
   deleteScheduledTask,
   getScheduledTask,
   listScheduledTasks,
+  repairScheduledTaskNextRunAt,
   setScheduledTaskEnabled,
   updateScheduledTask
 } from './taskStore.js'
@@ -30,6 +31,7 @@ let removeSessionExitListener: (() => void) | null = null
 
 export function registerScheduledTaskIpc(): void {
   cancelInterruptedScheduledTaskRuns()
+  repairScheduledTaskNextRunAt()
 
   setScheduledTaskSendHandler({
     resolveSession: getScheduledTaskSessionForProject,

@@ -2,8 +2,6 @@ import { useCallback, useEffect, useRef } from 'react'
 import type { CreateScheduledTaskInput, ScheduledTaskScheduleType } from '../../electron/preload'
 import {
   DEFAULT_SCHEDULED_TASK_INSTRUCTIONS,
-  buildScheduledTaskPreviewPrompt,
-  formatScheduleLabel,
   parseScheduleIntervalMinutes
 } from './scheduledTaskViewModel'
 
@@ -32,8 +30,7 @@ function normalizeIntervalMinutes(value: string): number {
 }
 
 export default function ScheduledTaskEditorDialog(props: Props): JSX.Element {
-  const { draft, mode, targetRepo, onCancel, onChange, onSave } = props
-  const preview = buildScheduledTaskPreviewPrompt(draft, targetRepo)
+  const { draft, mode, onCancel, onChange, onSave } = props
   const goalTextareaRef = useRef<HTMLTextAreaElement | null>(null)
 
   const adjustGoalTextareaHeight = useCallback(() => {
@@ -108,7 +105,7 @@ export default function ScheduledTaskEditorDialog(props: Props): JSX.Element {
         <div className="scheduled-task-editor">
           <aside className="scheduled-task-steps">
             <h4>配置步骤</h4>
-            {['基本信息', '任务描述', '怎么干与限制', '执行时间', 'Prompt 预览'].map(
+            {['基本信息', '任务描述', '怎么干与限制', '执行时间'].map(
               (label, index) => (
                 <div className={`scheduled-task-step ${index < 2 ? 'active' : ''}`} key={label}>
                   <span>{index + 1}</span>
@@ -272,19 +269,6 @@ export default function ScheduledTaskEditorDialog(props: Props): JSX.Element {
             </div>
           </main>
 
-          <aside className="scheduled-task-preview">
-            <h4>最终发送给 AICLI</h4>
-            <p>保存前可确认真实 Prompt 内容</p>
-            <pre>{preview}</pre>
-            <div className="scheduled-task-preview-mini">
-              <span>频率：{formatScheduleLabel(draft.scheduleType, draft.scheduleTime, draft.scheduleDays)}</span>
-              <span>
-                {draft.scheduleType === 'interval'
-                  ? `间隔：${parseScheduleIntervalMinutes(draft.scheduleTime)} 分钟`
-                  : `时间：${draft.scheduleTime}`}
-              </span>
-            </div>
-          </aside>
         </div>
 
         <div className="modal-actions">

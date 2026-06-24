@@ -1,8 +1,14 @@
 import { renderToStaticMarkup } from 'react-dom/server'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import ScheduledTaskDialog from './ScheduledTaskDialog'
 import { formatDateTime } from './scheduledTaskViewModel'
 import type { ScheduledTask } from '../../electron/preload'
+
+function normalizeNewlines(value: string): string {
+  return value.replace(/\r\n/g, '\n')
+}
 
 function task(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
   return {
@@ -72,6 +78,15 @@ describe('ScheduledTaskDialog', () => {
     expect(markup).toContain('\u5f53\u524d AICLI\uff1a\u672a\u542f\u52a8')
   })
 
+  it('uses a larger manager modal close to the editor size', () => {
+    const styles = normalizeNewlines(
+      readFileSync(fileURLToPath(new URL('../styles.css', import.meta.url)), 'utf8')
+    )
+
+    expect(styles).toContain('.scheduled-task-modal {\n  width: min(1380px, calc(100vw - 40px));')
+    expect(styles).toContain('height: min(900px, calc(100vh - 32px));')
+  })
+
   it('does not render queue, running, or idle AICLI status cards', () => {
     const markup = renderToStaticMarkup(
       <ScheduledTaskDialog
@@ -136,9 +151,52 @@ describe('ScheduledTaskDialog', () => {
     )
 
     expect(markup).toContain('Hidden details task')
-    expect(markup).toContain(`开始时间：${formatDateTime(hiddenTaskStartTime)}`)
+    expect(markup).toContain(`下次执行：${formatDateTime(hiddenTaskStartTime)}`)
     expect(markup).not.toContain('Hidden card description with execution steps')
     expect(markup).not.toContain('Hidden card goal should only appear after selecting the task')
     expect(markup).not.toContain('Hidden step one')
+  })
+
+  it('renders run and enable controls inside task list cards only', () => {
+    const markup = renderToStaticMarkup(
+      <ScheduledTaskDialog
+        projectId="project-1"
+        targetRepo={'E:\\OpenSource\\multi-ai-code'}
+        sessionId="session-1"
+        sessionRunning={true}
+        initialTasks={[task()]}
+        onClose={() => {}}
+      />
+    )
+
+    const detailHead = markup.match(/<div class="scheduled-task-detail-head">[\s\S]*?<\/div>/)?.[0] ?? ''
+
+    expect(markup).toContain('class="scheduled-task-card-actions"')
+    expect(markup).toContain('data-task-action="run"')
+    expect(markup).toContain('data-task-action="toggle"')
+    expect(detailHead).not.toContain('data-task-action="run"')
+    expect(detailHead).not.toContain('data-task-action="toggle"')
+  })
+
+  it('renders the selected task content as markdown', () => {
+    const markup = renderToStaticMarkup(
+      <ScheduledTaskDialog
+        projectId="project-1"
+        targetRepo={'E:\\OpenSource\\multi-ai-code'}
+        sessionId="session-1"
+        sessionRunning={true}
+        initialTasks={[
+          task({
+            goal: '# Review plan\n\nCheck **risk** before release.\n\n- dependency updates'
+          })
+        ]}
+        onClose={() => {}}
+      />
+    )
+
+    expect(markup).toContain('scheduled-task-markdown')
+    expect(markup).toContain('<h1>Review plan</h1>')
+    expect(markup).toContain('<strong>risk</strong>')
+    expect(markup).toContain('<li>dependency updates</li>')
   })
 })

@@ -7692,10 +7692,10 @@ html, body, #root {
 
 /* ===== Scheduled task manager ===== */
 .scheduled-task-modal {
-  width: min(1180px, calc(100vw - 64px));
-  height: min(780px, calc(100vh - 64px));
-  max-width: calc(100vw - 64px);
-  max-height: calc(100vh - 64px);
+  width: min(1380px, calc(100vw - 40px));
+  height: min(900px, calc(100vh - 32px));
+  max-width: calc(100vw - 40px);
+  max-height: calc(100vh - 32px);
 }
 .scheduled-task-modal .modal-head,
 .scheduled-task-editor-modal .modal-head {
@@ -7734,7 +7734,6 @@ html, body, #root {
 }
 .scheduled-task-pane-head span,
 .scheduled-task-card-main small,
-.scheduled-task-preview p,
 .scheduled-task-last-run {
   color: var(--mac-fg-muted, #555);
   font-size: 12px;
@@ -7777,30 +7776,68 @@ html, body, #root {
 }
 .scheduled-task-pane-head h4,
 .scheduled-task-detail-head h4,
-.scheduled-task-editor h4,
-.scheduled-task-preview h4 {
+.scheduled-task-editor h4 {
   margin: 0;
   color: var(--mac-fg, #111);
   font-size: 17px;
 }
 .scheduled-task-card {
   display: grid;
-  grid-template-columns: 10px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   width: 100%;
   border: 1px solid var(--mac-border-subtle, #e0e0e0);
   border-radius: 16px;
   background: var(--mac-surface, #fafafa);
   color: var(--mac-fg, #111);
-  cursor: pointer;
   margin-bottom: 10px;
-  padding: 14px;
+  padding: 10px;
   text-align: left;
 }
 .scheduled-task-card.active {
   border-color: var(--mac-primary, #1a73e8);
   background: var(--mac-primary-soft, #e8f0fe);
+}
+.scheduled-task-card-select {
+  appearance: none;
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 4px;
+  text-align: left;
+}
+.scheduled-task-card-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.scheduled-task-card-action {
+  min-width: 48px;
+  border: 1px solid var(--mac-border-subtle, #e0e0e0);
+  border-radius: 10px;
+  background: var(--mac-bg, #fff);
+  color: var(--mac-fg, #111);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 7px 9px;
+}
+.scheduled-task-card-action:hover:not(:disabled) {
+  border-color: var(--mac-primary, #1a73e8);
+  color: var(--mac-primary, #1a73e8);
+}
+.scheduled-task-card-action:disabled {
+  cursor: not-allowed;
+  color: var(--mac-fg-disabled, #98a2b3);
+  background: var(--mac-bg-subtle, #f1f3f4);
 }
 .scheduled-task-card-main {
   display: flex;
@@ -7833,7 +7870,6 @@ html, body, #root {
   color: var(--mac-fg, #111);
   font-size: 13px;
 }
-.scheduled-task-goal,
 .scheduled-task-info-row,
 .scheduled-task-empty {
   border: 1px solid var(--mac-border-subtle, #e0e0e0);
@@ -7844,6 +7880,70 @@ html, body, #root {
   line-height: 1.55;
   margin: 0;
   padding: 14px;
+}
+.scheduled-task-markdown {
+  border: 1px solid var(--mac-border-subtle, #e0e0e0);
+  border-radius: 14px;
+  background: var(--mac-surface, #fafafa);
+  color: var(--mac-fg-muted, #555);
+  font-size: 13px;
+  line-height: 1.65;
+  margin: 0;
+  overflow: auto;
+  padding: 14px;
+}
+.scheduled-task-markdown > :first-child {
+  margin-top: 0;
+}
+.scheduled-task-markdown > :last-child {
+  margin-bottom: 0;
+}
+.scheduled-task-markdown h1,
+.scheduled-task-markdown h2,
+.scheduled-task-markdown h3 {
+  color: var(--mac-fg, #111);
+  line-height: 1.25;
+  margin: 14px 0 8px;
+}
+.scheduled-task-markdown h1 {
+  font-size: 18px;
+}
+.scheduled-task-markdown h2 {
+  font-size: 16px;
+}
+.scheduled-task-markdown h3 {
+  font-size: 14px;
+}
+.scheduled-task-markdown p,
+.scheduled-task-markdown ul,
+.scheduled-task-markdown ol,
+.scheduled-task-markdown blockquote,
+.scheduled-task-markdown table {
+  margin: 8px 0;
+}
+.scheduled-task-markdown ul,
+.scheduled-task-markdown ol {
+  padding-left: 22px;
+}
+.scheduled-task-markdown code {
+  border-radius: 5px;
+  background: var(--mac-bg, #fff);
+  color: var(--mac-fg, #111);
+  font-family: var(--mac-font-mono, monospace);
+  font-size: 12px;
+  padding: 1px 4px;
+}
+.scheduled-task-markdown pre {
+  overflow: auto;
+  border: 1px solid var(--mac-border-subtle, #e0e0e0);
+  border-radius: 10px;
+  background: var(--mac-bg, #fff);
+  color: var(--mac-fg, #111);
+  padding: 12px;
+}
+.scheduled-task-markdown pre code {
+  background: transparent;
+  padding: 0;
 }
 .scheduled-task-info-row {
   display: grid;
@@ -7870,14 +7970,13 @@ html, body, #root {
 }
 .scheduled-task-editor {
   display: grid;
-  grid-template-columns: 260px minmax(520px, 1fr) 340px;
+  grid-template-columns: 260px minmax(0, 1fr);
   gap: 20px;
   min-height: 0;
   overflow: hidden;
   padding: 26px 32px 24px;
 }
-.scheduled-task-steps,
-.scheduled-task-preview {
+.scheduled-task-steps {
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -8003,31 +8102,4 @@ html, body, #root {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
-}
-.scheduled-task-preview pre {
-  flex: 1;
-  overflow: auto;
-  border: 1px solid var(--mac-border-subtle, #e0e0e0);
-  border-radius: 16px;
-  background: var(--mac-bg, #fff);
-  color: var(--mac-fg, #111);
-  font-family: var(--mac-font-mono, monospace);
-  font-size: 12px;
-  line-height: 1.6;
-  margin: 0;
-  padding: 16px;
-  white-space: pre-wrap;
-}
-.scheduled-task-preview-mini {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-.scheduled-task-preview-mini span {
-  border: 1px solid var(--mac-border-subtle, #e0e0e0);
-  border-radius: 12px;
-  background: var(--mac-bg, #fff);
-  color: var(--mac-fg-muted, #555);
-  font-size: 12px;
-  padding: 10px;
 }

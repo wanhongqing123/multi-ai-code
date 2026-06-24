@@ -10,7 +10,7 @@ function normalizeNewlines(value: string): string {
 }
 
 describe('ScheduledTaskEditorDialog', () => {
-  it('shows task intent, execution constraints, and prompt preview', () => {
+  it('shows task intent and execution constraints without prompt preview', () => {
     const draft = createDefaultScheduledTaskDraft('project-1')
     draft.name = '每日代码巡检'
     draft.goal = '检查当前项目最近的代码变更。'
@@ -32,14 +32,11 @@ describe('ScheduledTaskEditorDialog', () => {
     expect(markup).toContain('默认不允许自动改代码')
     expect(markup).toContain('允许直接修改代码')
     expect(markup).toContain('允许提交 git')
+    expect(markup).not.toContain('scheduled-task-preview')
+    expect(markup).not.toContain('scheduled-task-preview-markdown')
+    expect(markup).not.toContain('E:\\OpenSource\\multi-ai-code')
+    expect(markup).not.toContain('Prompt ')
     expect(markup).toContain('运行测试前先说明')
-    expect(markup).toContain('最终发送给 AICLI')
-    expect(markup).toContain('任务名称：每日代码巡检')
-    expect(markup).toContain('任务超时时间：30 分钟')
-    expect(markup).toContain(
-      '4. 任务开始执行时先记录当前时间；任务完成时在总结中写明本次任务的执行时间范围和实际执行时长；任务时长上限：30 分钟。'
-    )
-    expect(markup).toContain('不要提交 git')
     expect(markup).not.toContain('执行方式')
     expect(markup).not.toContain('使用当前 AICLI')
     expect(markup).not.toContain('忙碌时排队等待')
@@ -109,5 +106,32 @@ describe('ScheduledTaskEditorDialog', () => {
     expect(markup).toContain('type="number"')
     expect(markup).toContain('value="15"')
     expect(markup).not.toContain('type="time"')
+  })
+
+  it('does not render the AICLI prompt preview in the editor', () => {
+    const draft = createDefaultScheduledTaskDraft('project-1')
+    draft.name = 'Markdown preview task'
+    draft.goal = '# Inspect changes\n\n- Review **risk**'
+
+    const markup = renderToStaticMarkup(
+      <ScheduledTaskEditorDialog
+        mode="create"
+        draft={draft}
+        targetRepo="E:\\OpenSource\\multi-ai-code"
+        onChange={() => {}}
+        onCancel={() => {}}
+        onSave={() => {}}
+      />
+    )
+    const source = readFileSync(
+      fileURLToPath(new URL('./ScheduledTaskEditorDialog.tsx', import.meta.url)),
+      'utf8'
+    )
+
+    expect(markup).not.toContain('scheduled-task-preview')
+    expect(markup).not.toContain('scheduled-task-preview-markdown')
+    expect(markup).not.toContain('<pre>')
+    expect(source).not.toContain('<ReactMarkdown')
+    expect(source).not.toContain('buildScheduledTaskPreviewPrompt')
   })
 })

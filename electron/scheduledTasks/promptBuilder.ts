@@ -14,7 +14,7 @@ export function buildScheduledTaskPrompt(
 ): string {
   const requirementItems = task.instructions.length
     ? [...task.instructions]
-    : ['按任务目标执行，并保持输出清晰。']
+    : ['按任务描述执行，并保持输出清晰。']
   requirementItems.push(buildTimingRequirement(task))
   const requirements = requirementItems
     .map((instruction, index) => `${index + 1}. ${instruction}`)
@@ -36,7 +36,7 @@ export function buildScheduledTaskPrompt(
     `任务超时时间：${task.timeoutMinutes} 分钟`,
     `如果无法在 ${task.timeoutMinutes} 分钟内完成，请停止继续展开，输出当前进展、阻塞点和建议的下一步。`,
     '',
-    '任务目标：',
+    '\u4efb\u52a1\u63cf\u8ff0\uff1a',
     task.goal,
     '',
     '执行要求：',

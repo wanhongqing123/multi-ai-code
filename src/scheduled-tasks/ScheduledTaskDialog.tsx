@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import type {
   CreateScheduledTaskInput,
   ScheduledTask
@@ -24,6 +26,17 @@ interface Props {
 type EditorState =
   | { mode: 'create'; draft: CreateScheduledTaskInput; taskId?: undefined }
   | { mode: 'edit'; draft: CreateScheduledTaskInput; taskId: number }
+
+function ScheduledTaskMarkdown(props: { markdown: string; className?: string }): JSX.Element {
+  const content = props.markdown.trim()
+  const className = ['scheduled-task-markdown', props.className].filter(Boolean).join(' ')
+
+  return (
+    <div className={className}>
+      {content ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown> : null}
+    </div>
+  )
+}
 
 function taskToDraft(task: ScheduledTask): CreateScheduledTaskInput {
   return {
@@ -197,18 +210,52 @@ export default function ScheduledTaskDialog(props: Props): JSX.Element {
                 filteredTasks.map((task) => {
                   const status = formatScheduledTaskStatus(task.enabled, task.lastRun?.status ?? null)
                   return (
-                    <button
-                      type="button"
+                    <div
                       className={`scheduled-task-card ${selectedTask?.id === task.id ? 'active' : ''}`}
                       key={task.id}
-                      onClick={() => setSelectedId(task.id)}
                     >
-                      <span className={`scheduled-task-dot ${status.tone}`} />
-                      <span className="scheduled-task-card-main">
-                        <strong>{task.name}</strong>
-                        <small>开始时间：{formatDateTime(task.nextRunAt)}</small>
+                      <button
+                        type="button"
+                        className="scheduled-task-card-select"
+                        onClick={() => setSelectedId(task.id)}
+                      >
+                        <span className={`scheduled-task-dot ${status.tone}`} />
+                        <span className="scheduled-task-card-main">
+                          <strong>{task.name}</strong>
+                          <small>下次执行：{formatDateTime(task.nextRunAt)}</small>
+                        </span>
+                      </button>
+                      <span className="scheduled-task-card-actions">
+                        <button
+                          type="button"
+                          className="scheduled-task-card-action"
+                          data-task-action="run"
+                          disabled={!sessionRunning || !sessionId}
+                          title={
+                            sessionRunning && sessionId
+                              ? '发送定时任务到当前 AICLI'
+                              : '主会话未运行，无法发送定时任务'
+                          }
+                          onClick={() => {
+                            setSelectedId(task.id)
+                            void runNow(task)
+                          }}
+                        >
+                          运行
+                        </button>
+                        <button
+                          type="button"
+                          className="scheduled-task-card-action"
+                          data-task-action="toggle"
+                          onClick={() => {
+                            setSelectedId(task.id)
+                            void setTaskEnabled(task, !task.enabled)
+                          }}
+                        >
+                          {task.enabled ? '关闭' : '启用'}
+                        </button>
                       </span>
-                    </button>
+                    </div>
                   )
                 })
               )}
@@ -220,24 +267,6 @@ export default function ScheduledTaskDialog(props: Props): JSX.Element {
                   <div className="scheduled-task-detail-head">
                     <h4>{selectedTask.name}</h4>
                     <span>
-                      <button
-                        className="drawer-btn"
-                        disabled={!sessionRunning || !sessionId}
-                        title={
-                          sessionRunning && sessionId
-                            ? '发送定时任务到当前 AICLI'
-                            : '主会话未运行，无法发送定时任务'
-                        }
-                        onClick={() => void runNow(selectedTask)}
-                      >
-                        运行
-                      </button>
-                      <button
-                        className="drawer-btn"
-                        onClick={() => void setTaskEnabled(selectedTask, !selectedTask.enabled)}
-                      >
-                        {selectedTask.enabled ? '关闭' : '启用'}
-                      </button>
                       <button
                         className="drawer-btn"
                         onClick={() =>
@@ -256,7 +285,7 @@ export default function ScheduledTaskDialog(props: Props): JSX.Element {
                     </span>
                   </div>
                   <h5>任务内容</h5>
-                  <p className="scheduled-task-goal">{selectedTask.goal}</p>
+                  <ScheduledTaskMarkdown className="scheduled-task-goal" markdown={selectedTask.goal} />
                   <h5>执行计划</h5>
                   <div className="scheduled-task-info-row">
                     <span>频率：{formatScheduleLabel(selectedTask.scheduleType, selectedTask.scheduleTime, selectedTask.scheduleDays)}</span>

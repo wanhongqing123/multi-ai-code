@@ -165,21 +165,23 @@ export function computeNextRunAt(input: ScheduleInput, now = Date.now()): number
     return now + parseIntervalMinutes(input.scheduleTime) * 60 * 1000
   }
 
-  const selectedDays = input.scheduleDays.filter((day) => day >= 0 && day <= 6)
-  const days = selectedDays.length > 0 ? selectedDays : [current.getDay()]
-  for (let offset = 0; offset <= 7; offset += 1) {
-    const candidateBase = new Date(
-      current.getFullYear(),
-      current.getMonth(),
-      current.getDate() + offset,
-      0,
-      0,
-      0,
-      0
-    )
-    if (!days.includes(candidateBase.getDay())) continue
-    const candidate = dateAtLocalTime(candidateBase, input.scheduleTime)
-    if (candidate.getTime() > now) return candidate.getTime()
+  if (input.scheduleType === 'weekly') {
+    const selectedDays = input.scheduleDays.filter((day) => day >= 0 && day <= 6)
+    const days = selectedDays.length > 0 ? selectedDays : [current.getDay()]
+    for (let offset = 0; offset <= 7; offset += 1) {
+      const candidateBase = new Date(
+        current.getFullYear(),
+        current.getMonth(),
+        current.getDate() + offset,
+        0,
+        0,
+        0,
+        0
+      )
+      if (!days.includes(candidateBase.getDay())) continue
+      const candidate = dateAtLocalTime(candidateBase, input.scheduleTime)
+      if (candidate.getTime() > now) return candidate.getTime()
+    }
   }
   return null
 }
@@ -347,6 +349,46 @@ export function listAllDueScheduledTasks(now = Date.now()): ScheduledTask[] {
     )
     .all(now) as ScheduledTaskRow[]
   return rows.map(rowToTask)
+}
+
+function shouldRepairIntervalNextRun(task: ScheduledTask, now: number): boolean {
+  if (!task.enabled || task.scheduleType !== 'interval') return false
+  const intervalMs = parseIntervalMinutes(task.scheduleTime) * 60 * 1000
+  if (task.nextRunAt === null) return true
+  if (task.nextRunAt <= now) return false
+  return task.nextRunAt - now > intervalMs + 60_000
+}
+
+export function repairScheduledTaskNextRunAt(now = Date.now()): number {
+  const rows = getDb()
+    .prepare(
+      `SELECT ${SCHEDULED_TASK_SELECT}
+       ${SCHEDULED_TASK_JOIN}
+       WHERE scheduled_tasks.enabled = 1
+         AND scheduled_tasks.schedule_type = 'interval'`
+    )
+    .all() as ScheduledTaskRow[]
+  let repaired = 0
+  const update = getDb().prepare(
+    `UPDATE scheduled_tasks
+     SET next_run_at = ?, updated_at = ?
+     WHERE id = ?`
+  )
+  for (const row of rows) {
+    const task = rowToTask(row)
+    if (!shouldRepairIntervalNextRun(task, now)) continue
+    const nextRunAt = computeNextRunAt(
+      {
+        scheduleType: task.scheduleType,
+        scheduleTime: task.scheduleTime,
+        scheduleDays: task.scheduleDays
+      },
+      now
+    )
+    update.run(nextRunAt, now, task.id)
+    repaired += 1
+  }
+  return repaired
 }
 
 export function advanceScheduledTaskAfterQueue(task: ScheduledTask, now = Date.now()): void {

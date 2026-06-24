@@ -39,6 +39,24 @@ describe('buildScheduledTaskPrompt', () => {
     expect(prompt).toContain('Check recent code changes in the current project.')
   })
 
+  it('labels the task body as description instead of goal in the sent prompt', () => {
+    const prompt = buildScheduledTaskPrompt(task(), {
+      targetRepo: 'E:\\OpenSource\\multi-ai-code'
+    })
+
+    expect(prompt).toContain('\u4efb\u52a1\u63cf\u8ff0\uff1a\nCheck recent code changes in the current project.')
+    expect(prompt).not.toContain('\u4efb\u52a1\u76ee\u6807\uff1a')
+  })
+
+  it('uses description wording for the fallback execution requirement', () => {
+    const prompt = buildScheduledTaskPrompt(task({ instructions: [] }), {
+      targetRepo: 'E:\\OpenSource\\multi-ai-code'
+    })
+
+    expect(prompt).toContain('\u6309\u4efb\u52a1\u63cf\u8ff0\u6267\u884c')
+    expect(prompt).not.toContain('\u6309\u4efb\u52a1\u76ee\u6807\u6267\u884c')
+  })
+
   it('includes the task timeout so AICLI can bound the work', () => {
     const prompt = buildScheduledTaskPrompt(task({ timeoutMinutes: 45 }), {
       targetRepo: 'E:\\OpenSource\\multi-ai-code'

@@ -39,6 +39,8 @@ describe('scheduled task view model', () => {
 
     const preview = buildScheduledTaskPreviewPrompt(draft, 'E:\\OpenSource\\multi-ai-code')
 
+    expect(preview).toContain('\u4efb\u52a1\u63cf\u8ff0\uff1a\n')
+    expect(preview).not.toContain('\u4efb\u52a1\u76ee\u6807\uff1a')
     expect(preview).toContain('你现在要执行一个由 Multi-AI Code 触发的定时任务。')
     expect(preview).toContain('任务名称：每日代码巡检')
     expect(preview).toContain('工作目录：E:\\OpenSource\\multi-ai-code')

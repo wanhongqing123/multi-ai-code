@@ -67,6 +67,16 @@ describe('computeNextRunAt', () => {
 
     expect(next).toBe(new Date(2026, 5, 19, 10, 20).getTime())
   })
+
+  it('does not treat unknown schedule types as weekly tasks', () => {
+    const now = new Date(2026, 5, 23, 20, 33).getTime()
+    const next = computeNextRunAt(
+      { scheduleType: 'interval-old-main' as never, scheduleTime: '6', scheduleDays: [] },
+      now
+    )
+
+    expect(next).toBeNull()
+  })
 })
 
 describe('scheduled task persistence', () => {

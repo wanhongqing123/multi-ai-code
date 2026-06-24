@@ -34,7 +34,7 @@ export function buildScheduledTaskPreviewPrompt(
 ): string {
   const requirementItems = draft.instructions.length
     ? [...draft.instructions]
-    : ['按任务目标执行，并保持输出清晰。']
+    : ['按任务描述执行，并保持输出清晰。']
   requirementItems.push(
     `任务开始执行时先记录当前时间；任务完成时在总结中写明本次任务的执行时间范围和实际执行时长；任务时长上限：${draft.timeoutMinutes} 分钟。`
   )
@@ -57,8 +57,8 @@ export function buildScheduledTaskPreviewPrompt(
     `任务超时时间：${draft.timeoutMinutes} 分钟`,
     `如果无法在 ${draft.timeoutMinutes} 分钟内完成，请停止继续展开，输出当前进展、阻塞点和建议的下一步。`,
     '',
-    '任务目标：',
-    draft.goal || '请按用户配置的任务目标执行。',
+    '\u4efb\u52a1\u63cf\u8ff0\uff1a',
+    draft.goal || '请按用户配置的任务描述执行。',
     '',
     '执行要求：',
     requirements,

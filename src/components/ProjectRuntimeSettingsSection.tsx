@@ -9,10 +9,33 @@ export interface ProjectRuntimeSettingsSectionProps {
   loading: boolean
   value: ProjectRuntimeConfig
   disabled: boolean
+  hostPlatform?: string
   visualStudioInstallations?: VisualStudioInstallation[]
   visualStudioInstallationsLoading?: boolean
   onRefreshVisualStudioInstallations?: () => void
   onChange: (next: ProjectRuntimeConfig) => void
+}
+
+function resolveHostPlatform(hostPlatform?: string): string {
+  if (hostPlatform !== undefined) return hostPlatform
+  if (typeof window === 'undefined') return ''
+  return window.navigator?.platform ?? ''
+}
+
+export function isMacRuntimeSettingsPlatform(hostPlatform?: string): boolean {
+  return resolveHostPlatform(hostPlatform).toLowerCase().includes('mac')
+}
+
+export function normalizeRuntimeConfigForHost(
+  config: ProjectRuntimeConfig,
+  hostPlatform?: string
+): ProjectRuntimeConfig {
+  if (!isMacRuntimeSettingsPlatform(hostPlatform)) return config
+  return {
+    ...config,
+    envType: 'system',
+    visualStudioInstanceId: '',
+  }
 }
 
 export function formatRuntimeConfigSaveError(
@@ -38,10 +61,13 @@ function isMissingVisualStudioInstance(
 export default function ProjectRuntimeSettingsSection(
   props: ProjectRuntimeSettingsSectionProps
 ): JSX.Element {
+  const hostPlatform = resolveHostPlatform(props.hostPlatform)
+  const usesSystemEnvironmentOnly = isMacRuntimeSettingsPlatform(hostPlatform)
+  const value = normalizeRuntimeConfigForHost(props.value, hostPlatform)
   const visualStudioInstallations = props.visualStudioInstallations ?? []
   const visualStudioInstallationsLoading = props.visualStudioInstallationsLoading ?? false
   const update = (patch: Partial<ProjectRuntimeConfig>) =>
-    props.onChange({ ...props.value, ...patch })
+    props.onChange({ ...value, ...patch })
 
   return (
     <section className="ai-settings-card">
@@ -55,7 +81,7 @@ export default function ProjectRuntimeSettingsSection(
           <label className="ai-settings-checkbox">
             <input
               type="checkbox"
-              checked={props.value.enabled}
+              checked={value.enabled}
               onChange={(event) => update({ enabled: event.target.checked })}
               disabled={props.disabled}
             />
@@ -63,24 +89,31 @@ export default function ProjectRuntimeSettingsSection(
           </label>
 
           <div className="project-runtime-settings-grid">
-            <label>
-              环境
-              <select
-                value={props.value.envType}
-                onChange={(event) =>
-                  update({ envType: event.target.value as ProjectRuntimeConfig['envType'] })
-                }
-                disabled={props.disabled}
-              >
-                <option value="msys">MSYS2</option>
-                <option value="visual-studio">Visual Studio Developer Command Prompt</option>
-              </select>
-            </label>
+            {usesSystemEnvironmentOnly ? (
+              <label>
+                环境
+                <input type="text" value="原始环境" disabled readOnly />
+              </label>
+            ) : (
+              <label>
+                环境
+                <select
+                  value={value.envType}
+                  onChange={(event) =>
+                    update({ envType: event.target.value as ProjectRuntimeConfig['envType'] })
+                  }
+                  disabled={props.disabled}
+                >
+                  <option value="msys">MSYS2</option>
+                  <option value="visual-studio">Visual Studio Developer Command Prompt</option>
+                </select>
+              </label>
+            )}
 
             <label>
               输出编码
               <select
-                value={props.value.outputEncoding}
+                value={value.outputEncoding}
                 onChange={(event) =>
                   update({
                     outputEncoding: event.target.value as ProjectRuntimeConfig['outputEncoding'],
@@ -94,11 +127,11 @@ export default function ProjectRuntimeSettingsSection(
               </select>
             </label>
 
-            {props.value.envType === 'visual-studio' ? (
+            {value.envType === 'visual-studio' ? (
               <label>
                 Visual Studio 实例
                 <select
-                  value={props.value.visualStudioInstanceId}
+                  value={value.visualStudioInstanceId}
                   onChange={(event) => update({ visualStudioInstanceId: event.target.value })}
                   disabled={props.disabled}
                 >
@@ -118,7 +151,7 @@ export default function ProjectRuntimeSettingsSection(
               工作目录
               <input
                 type="text"
-                value={props.value.cwd}
+                value={value.cwd}
                 onChange={(event) => update({ cwd: event.target.value })}
                 placeholder="."
                 disabled={props.disabled}
@@ -129,7 +162,7 @@ export default function ProjectRuntimeSettingsSection(
             <label className="project-build-settings-grid-full">
               运行命令
               <textarea
-                value={props.value.command}
+                value={value.command}
                 onChange={(event) => update({ command: event.target.value })}
                 rows={3}
                 placeholder="npm run dev"
@@ -138,7 +171,7 @@ export default function ProjectRuntimeSettingsSection(
             </label>
           </div>
 
-          {isMissingVisualStudioInstance(props.value, visualStudioInstallations) ? (
+          {isMissingVisualStudioInstance(value, visualStudioInstallations) ? (
             <div className="ai-settings-note project-build-step-warning">
               所选 Visual Studio 实例当前不可用
             </div>

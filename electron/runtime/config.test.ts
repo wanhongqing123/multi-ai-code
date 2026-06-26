@@ -50,6 +50,24 @@ describe('normalizeRuntimeConfig', () => {
       outputEncoding: 'auto',
     })
   })
+
+  it('keeps original-system environment when normalizing', () => {
+    expect(
+      normalizeRuntimeConfig({
+        enabled: true,
+        cwd: '.',
+        command: 'npm run dev',
+        envType: 'system',
+      })
+    ).toEqual<ProjectRuntimeConfig>({
+      enabled: true,
+      cwd: '.',
+      command: 'npm run dev',
+      envType: 'system',
+      visualStudioInstanceId: '',
+      outputEncoding: 'auto',
+    })
+  })
 })
 
 describe('getProjectRuntimeConfig', () => {

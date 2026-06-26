@@ -6,10 +6,12 @@ import type {
   VisualStudioInstallation
 } from '../../electron/preload'
 import ProjectBuildSettingsSection, {
-  formatBuildConfigSaveError
+  formatBuildConfigSaveError,
+  normalizeBuildConfigForHost
 } from './ProjectBuildSettingsSection.js'
 import ProjectRuntimeSettingsSection, {
-  formatRuntimeConfigSaveError
+  formatRuntimeConfigSaveError,
+  normalizeRuntimeConfigForHost
 } from './ProjectRuntimeSettingsSection.js'
 import { showToast } from './Toast.js'
 import { HabitMonitorPanel } from '../habit/HabitMonitorDialog.js'
@@ -575,8 +577,12 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
     }
     const nextMain = fromForm(aiCli, command, argsText, envText)
     const nextRepoView = fromForm(repoAiCli, repoCommand, repoArgsText, repoEnvText)
-    const nextBuildConfig = props.buildConfigReady ? buildConfig : undefined
-    const nextRuntimeConfig = props.runtimeConfigReady ? runtimeConfig : undefined
+    const nextBuildConfig = props.buildConfigReady
+      ? normalizeBuildConfigForHost(buildConfig)
+      : undefined
+    const nextRuntimeConfig = props.runtimeConfigReady
+      ? normalizeRuntimeConfigForHost(runtimeConfig)
+      : undefined
 
     try {
       const appRes = await window.api.settings.setAppSettings(requestedAppSettings)

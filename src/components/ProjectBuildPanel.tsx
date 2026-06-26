@@ -168,6 +168,17 @@ export function getDisplayStepsForBuildPanel(
   })
 }
 
+function formatBuildStepEnvLabel(envType: BuildStepRuntime['envType']): string {
+  switch (envType) {
+    case 'system':
+      return '原始环境'
+    case 'visual-studio':
+      return 'Visual Studio'
+    case 'msys':
+      return 'MSYS2'
+  }
+}
+
 export function getBuildLogStatusLabel(state: BuildRuntimeState): string {
   if (state.activeStepId) return `当前步骤：${state.activeStepId}`
 
@@ -332,7 +343,7 @@ export default function ProjectBuildPanel(props: ProjectBuildPanelProps): JSX.El
                       </span>
                     </div>
                     <div className="build-step-meta">
-                      <span>{step.envType === 'visual-studio' ? 'Visual Studio' : 'MSYS2'}</span>
+                      <span>{formatBuildStepEnvLabel(step.envType)}</span>
                       {step.envType === 'visual-studio' && step.visualStudioDisplayName ? (
                         <span>VS: {step.visualStudioDisplayName}</span>
                       ) : null}

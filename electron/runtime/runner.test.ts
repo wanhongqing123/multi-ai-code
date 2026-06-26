@@ -32,6 +32,62 @@ afterEach(() => {
 })
 
 describe('createRuntimeRunner', () => {
+  it('starts system runtime commands in the host shell without resolving Windows environments', async () => {
+    const child = new FakeChild()
+    const spawn = vi.fn(() => child)
+    const spawnPty = vi.fn()
+    const detectMsys = vi.fn()
+    const resolveVisualStudioEnvironment = vi.fn()
+    const runner = createRuntimeRunner({
+      platform: 'darwin',
+      spawn,
+      spawnPty,
+      detectMsys,
+      resolveVisualStudioEnvironment,
+      now: () => '2026-06-12T10:00:00.000Z',
+    })
+
+    const start = await runner.start({
+      projectId: 'p-system',
+      projectName: 'Demo',
+      targetRepo: '/repo',
+      config: {
+        ...msysConfig,
+        envType: 'system',
+      },
+    })
+
+    expect(start.ok).toBe(true)
+    expect(detectMsys).not.toHaveBeenCalled()
+    expect(resolveVisualStudioEnvironment).not.toHaveBeenCalled()
+    expect(spawnPty).not.toHaveBeenCalled()
+    expect(spawn).toHaveBeenCalledWith(
+      'npm run dev',
+      [],
+      expect.objectContaining({
+        cwd: '/repo',
+        env: process.env,
+        shell: true,
+        windowsHide: true,
+        stdio: 'pipe',
+      })
+    )
+    expect(runner.getState()).toMatchObject({
+      status: 'running',
+      cwd: '/repo',
+      command: 'npm run dev',
+      envType: 'system',
+    })
+
+    child.emit('close', 0, null)
+    await flush()
+
+    expect(runner.getState()).toMatchObject({
+      status: 'exited',
+      exitCode: 0,
+    })
+  })
+
   it('starts an msys runtime, captures logs, and transitions to exited on code zero', async () => {
     const child = new FakeChild()
     const dataEvents: string[] = []

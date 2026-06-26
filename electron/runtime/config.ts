@@ -44,7 +44,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isRuntimeEnvType(value: unknown): value is RuntimeEnvType {
-  return value === 'msys' || value === 'visual-studio'
+  return value === 'system' || value === 'msys' || value === 'visual-studio'
 }
 
 function isRuntimeOutputEncoding(value: unknown): value is RuntimeOutputEncoding {
@@ -53,6 +53,10 @@ function isRuntimeOutputEncoding(value: unknown): value is RuntimeOutputEncoding
 
 function hasParentTraversal(cwd: string): boolean {
   return cwd.split(/[\\/]+/).some((segment) => segment === '..')
+}
+
+function isAbsolutePath(cwd: string): boolean {
+  return isAbsolute(cwd) || /^[A-Za-z]:[\\/]/.test(cwd) || /^\\\\/.test(cwd)
 }
 
 function normalizeRuntimeConfigInternal(value: unknown): NormalizedRuntimeConfig {
@@ -95,7 +99,7 @@ function validateRuntimeConfig(config: NormalizedRuntimeConfig): RuntimeConfigVa
   if (config.rawEnvType !== undefined) {
     issues.push({
       path: 'runtime_config.envType',
-      message: 'envType must be one of: msys, visual-studio',
+      message: 'envType must be one of: system, msys, visual-studio',
     })
   }
   if (config.rawOutputEncoding !== undefined) {
@@ -106,7 +110,7 @@ function validateRuntimeConfig(config: NormalizedRuntimeConfig): RuntimeConfigVa
   }
   if (!config.cwd.trim()) {
     issues.push({ path: 'runtime_config.cwd', message: 'cwd must be a non-empty string' })
-  } else if (isAbsolute(config.cwd)) {
+  } else if (isAbsolutePath(config.cwd)) {
     issues.push({
       path: 'runtime_config.cwd',
       message: 'cwd must be a relative path within target_repo',

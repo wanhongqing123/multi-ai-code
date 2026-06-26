@@ -2,7 +2,7 @@ import { execFile, spawn } from 'child_process'
 import iconv from 'iconv-lite'
 import { EventEmitter } from 'events'
 import { createRequire } from 'module'
-import { isAbsolute, relative, resolve, sep } from 'path'
+import { isAbsolute, relative, resolve, sep, win32 } from 'path'
 import { PassThrough } from 'stream'
 import { StringDecoder } from 'string_decoder'
 import { detectMsys, type MsysInfo } from '../util/msys.js'
@@ -220,9 +220,24 @@ function appendWindowedLog(
   }
 }
 
+function isWindowsAbsolutePath(value: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(value) || /^\\\\/.test(value)
+}
+
 function resolveRuntimeCwd(targetRepo: string, cwd: string): string {
-  if (isAbsolute(cwd)) {
+  if (isAbsolute(cwd) || isWindowsAbsolutePath(cwd)) {
     throw new Error('cwd must be a relative path within target_repo')
+  }
+
+  if (isWindowsAbsolutePath(targetRepo)) {
+    const resolvedTargetRepo = win32.resolve(targetRepo)
+    const resolvedCwd = win32.resolve(resolvedTargetRepo, cwd)
+    const rel = win32.relative(resolvedTargetRepo, resolvedCwd)
+    if (rel === '..' || rel.startsWith('..\\') || win32.isAbsolute(rel)) {
+      throw new Error('cwd must stay within target_repo')
+    }
+
+    return resolvedCwd
   }
 
   const resolvedTargetRepo = resolve(targetRepo)
@@ -428,6 +443,20 @@ export function createRuntimeRunner(partialDeps?: Partial<RuntimeRunnerDeps>): R
   async function spawnRuntime(request: StartRuntimeRequest): Promise<SpawnedRuntime> {
     const resolvedCwd = resolveRuntimeCwd(request.targetRepo, request.config.cwd)
     state.cwd = resolvedCwd
+
+    if (request.config.envType === 'system') {
+      state.visualStudioDisplayName = null
+      return {
+        child: deps.spawn(request.config.command, [], {
+          cwd: resolvedCwd,
+          env: process.env,
+          shell: true,
+          windowsHide: true,
+          stdio: 'pipe',
+        }),
+        env: process.env,
+      }
+    }
 
     if (request.config.envType === 'msys') {
       state.visualStudioDisplayName = null

@@ -100,10 +100,10 @@ export interface ProjectAiSettingsResponse {
 // NOTE: tsconfig.web only includes electron/preload.ts. Importing electron/build/*
 // here pulls node-side files into the web program and fails with TS6307, so these
 // types intentionally mirror the shared build contracts.
-export type BuildStepEnvType = 'msys' | 'visual-studio'
+export type BuildStepEnvType = 'system' | 'msys' | 'visual-studio'
 export type BuildOutputEncoding = 'auto' | 'utf8' | 'gbk'
 export type BuildExecutionScope = 'all' | 'single-step'
-export type RuntimeEnvType = BuildStepEnvType
+export type RuntimeEnvType = 'system' | 'msys' | 'visual-studio'
 export type RuntimeOutputEncoding = BuildOutputEncoding
 export type RuntimeStatus = 'idle' | 'running' | 'exited' | 'failed' | 'stopped'
 export type ScheduledTaskScheduleType = 'once' | 'daily' | 'weekly' | 'interval'

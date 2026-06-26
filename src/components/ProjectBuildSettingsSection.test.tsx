@@ -75,6 +75,39 @@ describe('ProjectBuildSettingsSection', () => {
     expect(markup).toContain('project-build-step-card')
   })
 
+  it('uses the original environment on macOS without rendering Windows environment choices', () => {
+    const markup = renderToStaticMarkup(
+      <ProjectBuildSettingsSection
+        projectId="project-1"
+        loading={false}
+        value={{
+          enabled: true,
+          steps: [
+            {
+              id: 'compile',
+              name: 'Compile',
+              envType: 'msys',
+              cwd: '.',
+              command: 'npm run build',
+              enabled: true,
+              visualStudioInstanceId: '',
+              outputEncoding: 'auto'
+            }
+          ]
+        }}
+        disabled={false}
+        hostPlatform="MacIntel"
+        visualStudioInstallations={visualStudioInstallations}
+        onChange={vi.fn()}
+      />
+    )
+
+    expect(markup).toContain('原始环境')
+    expect(markup).not.toContain('MSYS2')
+    expect(markup).not.toContain('Visual Studio Developer Command Prompt')
+    expect(markup).not.toContain('Visual Studio 实例')
+  })
+
   it('appends a default enabled step', () => {
     const next = appendBuildStep({ enabled: true, steps: [] }, 'step-1')
 
@@ -93,6 +126,12 @@ describe('ProjectBuildSettingsSection', () => {
         }
       ]
     })
+  })
+
+  it('appends macOS build steps with the original environment', () => {
+    const next = appendBuildStep({ enabled: true, steps: [] }, 'step-1', 'MacIntel')
+
+    expect(next.steps[0].envType).toBe('system')
   })
 
   it('renders a loading hint while the current project build config is still loading', () => {

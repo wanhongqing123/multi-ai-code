@@ -23,6 +23,66 @@ afterEach(() => {
 })
 
 describe('createBuildRunner', () => {
+  it('runs system steps in the host shell without resolving Windows environments', async () => {
+    const child = new FakeChild()
+    const spawn = vi.fn(() => child)
+    const detectMsys = vi.fn()
+    const resolveVisualStudioEnvironment = vi.fn()
+    const runner = createBuildRunner({
+      platform: 'darwin',
+      spawn,
+      detectMsys,
+      resolveVisualStudioEnvironment,
+      now: () => '2026-05-20T10:00:00.000Z',
+    })
+
+    const config: ProjectBuildConfig = {
+      enabled: true,
+      steps: [
+        {
+          id: 'build',
+          name: 'Build',
+          envType: 'system',
+          cwd: '.',
+          command: 'npm run build',
+          enabled: true,
+          visualStudioInstanceId: '',
+          outputEncoding: 'auto',
+        },
+      ],
+    }
+
+    const start = await runner.start({
+      projectId: 'p-system',
+      projectName: 'Demo',
+      targetRepo: '/repo',
+      config,
+    })
+
+    expect(start.ok).toBe(true)
+    expect(detectMsys).not.toHaveBeenCalled()
+    expect(resolveVisualStudioEnvironment).not.toHaveBeenCalled()
+    expect(spawn).toHaveBeenCalledWith(
+      'npm run build',
+      [],
+      expect.objectContaining({
+        cwd: '/repo',
+        env: process.env,
+        shell: true,
+        windowsHide: true,
+        stdio: 'pipe',
+      })
+    )
+
+    child.emit('close', 0, null)
+    await flush()
+
+    expect(runner.getState()).toMatchObject({
+      status: 'succeeded',
+      steps: [{ id: 'build', status: 'succeeded' }],
+    })
+  })
+
   it('runs enabled steps sequentially and stops on the first failure', async () => {
     const children: FakeChild[] = []
     const spawn = vi.fn(() => {

@@ -1,6 +1,6 @@
-import type { BuildOutputEncoding, BuildStepEnvType } from '../build/types.js'
+import type { BuildOutputEncoding } from '../build/types.js'
 
-export type RuntimeEnvType = BuildStepEnvType
+export type RuntimeEnvType = 'system' | 'msys' | 'visual-studio'
 export type RuntimeOutputEncoding = BuildOutputEncoding
 export type RuntimeStatus = 'idle' | 'running' | 'exited' | 'failed' | 'stopped'
 

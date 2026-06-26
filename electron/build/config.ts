@@ -46,7 +46,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isBuildStepEnvType(value: unknown): value is BuildStepEnvType {
-  return value === 'msys' || value === 'visual-studio'
+  return value === 'system' || value === 'msys' || value === 'visual-studio'
 }
 
 function isBuildOutputEncoding(value: unknown): value is BuildOutputEncoding {
@@ -55,6 +55,10 @@ function isBuildOutputEncoding(value: unknown): value is BuildOutputEncoding {
 
 function hasParentTraversal(cwd: string): boolean {
   return cwd.split(/[\\/]+/).some((segment) => segment === '..')
+}
+
+function isAbsolutePath(cwd: string): boolean {
+  return isAbsolute(cwd) || /^[A-Za-z]:[\\/]/.test(cwd) || /^\\\\/.test(cwd)
 }
 
 function normalizeBuildStep(
@@ -134,7 +138,7 @@ function validateBuildStep(step: NormalizedBuildStep, index: number): BuildConfi
   if (step.rawEnvType !== undefined) {
     issues.push({
       path: `build_config.steps[${index}].envType`,
-      message: 'envType must be one of: msys, visual-studio',
+      message: 'envType must be one of: system, msys, visual-studio',
     })
   }
   if (step.envType === 'visual-studio' && !step.visualStudioInstanceId.trim()) {
@@ -151,7 +155,7 @@ function validateBuildStep(step: NormalizedBuildStep, index: number): BuildConfi
   }
   if (!step.cwd.trim()) {
     issues.push({ path: `build_config.steps[${index}].cwd`, message: 'cwd must be a non-empty string' })
-  } else if (isAbsolute(step.cwd)) {
+  } else if (isAbsolutePath(step.cwd)) {
     issues.push({
       path: `build_config.steps[${index}].cwd`,
       message: 'cwd must be a relative path within target_repo',

@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'child_process'
 import iconv from 'iconv-lite'
-import { isAbsolute, relative, resolve, sep } from 'path'
+import { isAbsolute, relative, resolve, sep, win32 } from 'path'
 import { StringDecoder } from 'string_decoder'
 import { detectMsys, type MsysInfo } from '../util/msys.js'
 import { resolveVisualStudioEnvironment } from './visualStudio.js'
@@ -117,9 +117,24 @@ function appendWindowedLog(
   }
 }
 
+function isWindowsAbsolutePath(value: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(value) || /^\\\\/.test(value)
+}
+
 function resolveStepCwd(targetRepo: string, cwd: string): string {
-  if (isAbsolute(cwd)) {
+  if (isAbsolute(cwd) || isWindowsAbsolutePath(cwd)) {
     throw new Error('cwd must be a relative path within target_repo')
+  }
+
+  if (isWindowsAbsolutePath(targetRepo)) {
+    const resolvedTargetRepo = win32.resolve(targetRepo)
+    const resolvedCwd = win32.resolve(resolvedTargetRepo, cwd)
+    const rel = win32.relative(resolvedTargetRepo, resolvedCwd)
+    if (rel === '..' || rel.startsWith('..\\') || win32.isAbsolute(rel)) {
+      throw new Error('cwd must stay within target_repo')
+    }
+
+    return resolvedCwd
   }
 
   const resolvedTargetRepo = resolve(targetRepo)
@@ -290,6 +305,18 @@ export function createBuildRunner(partialDeps?: Partial<BuildRunnerDeps>): Build
   }> {
     const resolvedCwd = resolveStepCwd(state.targetRepo ?? '', step.cwd)
     step.resolvedCwd = resolvedCwd
+
+    if (step.envType === 'system') {
+      step.visualStudioDisplayName = null
+      const child = deps.spawn(step.command, [], {
+        cwd: resolvedCwd,
+        env: process.env,
+        shell: true,
+        windowsHide: true,
+        stdio: 'pipe',
+      }) as SpawnedBuildProcess
+      return { child, resolvedCwd }
+    }
 
     if (step.envType === 'msys') {
       step.visualStudioDisplayName = null

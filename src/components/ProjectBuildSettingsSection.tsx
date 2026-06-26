@@ -10,17 +10,47 @@ export interface ProjectBuildSettingsSectionProps {
   loading: boolean
   value: ProjectBuildConfig
   disabled: boolean
+  hostPlatform?: string
   visualStudioInstallations?: VisualStudioInstallation[]
   visualStudioInstallationsLoading?: boolean
   onRefreshVisualStudioInstallations?: () => void
   onChange: (next: ProjectBuildConfig) => void
 }
 
-export function createBuildStep(id: string): BuildStepConfig {
+function resolveHostPlatform(hostPlatform?: string): string {
+  if (hostPlatform !== undefined) return hostPlatform
+  if (typeof window === 'undefined') return ''
+  return window.navigator?.platform ?? ''
+}
+
+export function isMacBuildSettingsPlatform(hostPlatform?: string): boolean {
+  return resolveHostPlatform(hostPlatform).toLowerCase().includes('mac')
+}
+
+function getDefaultBuildStepEnvType(hostPlatform?: string): BuildStepConfig['envType'] {
+  return isMacBuildSettingsPlatform(hostPlatform) ? 'system' : 'msys'
+}
+
+export function normalizeBuildConfigForHost(
+  config: ProjectBuildConfig,
+  hostPlatform?: string
+): ProjectBuildConfig {
+  if (!isMacBuildSettingsPlatform(hostPlatform)) return config
+  return {
+    ...config,
+    steps: config.steps.map((step) => ({
+      ...step,
+      envType: 'system',
+      visualStudioInstanceId: ''
+    }))
+  }
+}
+
+export function createBuildStep(id: string, hostPlatform?: string): BuildStepConfig {
   return {
     id,
     name: 'New Step',
-    envType: 'msys',
+    envType: getDefaultBuildStepEnvType(hostPlatform),
     cwd: '.',
     command: '',
     enabled: true,
@@ -29,10 +59,14 @@ export function createBuildStep(id: string): BuildStepConfig {
   }
 }
 
-export function appendBuildStep(config: ProjectBuildConfig, id: string): ProjectBuildConfig {
+export function appendBuildStep(
+  config: ProjectBuildConfig,
+  id: string,
+  hostPlatform?: string
+): ProjectBuildConfig {
   return {
     ...config,
-    steps: [...config.steps, createBuildStep(id)]
+    steps: [...config.steps, createBuildStep(id, hostPlatform)]
   }
 }
 
@@ -106,11 +140,14 @@ function isMissingVisualStudioInstance(
 export default function ProjectBuildSettingsSection(
   props: ProjectBuildSettingsSectionProps
 ): JSX.Element {
+  const hostPlatform = resolveHostPlatform(props.hostPlatform)
+  const usesSystemEnvironmentOnly = isMacBuildSettingsPlatform(hostPlatform)
+  const value = normalizeBuildConfigForHost(props.value, hostPlatform)
   const visualStudioInstallations = props.visualStudioInstallations ?? []
   const visualStudioInstallationsLoading = props.visualStudioInstallationsLoading ?? false
 
   const handleAddStep = (): void => {
-    props.onChange(appendBuildStep(props.value, createBuildStepId()))
+    props.onChange(appendBuildStep(value, createBuildStepId(), hostPlatform))
   }
 
   return (
@@ -125,9 +162,9 @@ export default function ProjectBuildSettingsSection(
           <label className="ai-settings-checkbox">
             <input
               type="checkbox"
-              checked={props.value.enabled}
+              checked={value.enabled}
               onChange={(event) =>
-                props.onChange({ ...props.value, enabled: event.target.checked })
+                props.onChange({ ...value, enabled: event.target.checked })
               }
               disabled={props.disabled}
             />
@@ -145,9 +182,9 @@ export default function ProjectBuildSettingsSection(
             </button>
           </div>
 
-          {props.value.steps.length ? (
+          {value.steps.length ? (
             <div className="project-build-settings-list">
-              {props.value.steps.map((step, index) => (
+              {value.steps.map((step, index) => (
                 <article key={step.id} className="project-build-step-card">
                   <div className="project-build-step-head">
                     <div className="project-build-step-title">
@@ -158,7 +195,7 @@ export default function ProjectBuildSettingsSection(
                       <button
                         type="button"
                         className="drawer-btn"
-                        onClick={() => props.onChange(moveBuildStep(props.value, index, 'up'))}
+                        onClick={() => props.onChange(moveBuildStep(value, index, 'up'))}
                         disabled={props.disabled || index === 0}
                       >
                         上移
@@ -166,15 +203,15 @@ export default function ProjectBuildSettingsSection(
                       <button
                         type="button"
                         className="drawer-btn"
-                        onClick={() => props.onChange(moveBuildStep(props.value, index, 'down'))}
-                        disabled={props.disabled || index === props.value.steps.length - 1}
+                        onClick={() => props.onChange(moveBuildStep(value, index, 'down'))}
+                        disabled={props.disabled || index === value.steps.length - 1}
                       >
                         下移
                       </button>
                       <button
                         type="button"
                         className="drawer-btn danger"
-                        onClick={() => props.onChange(removeBuildStep(props.value, index))}
+                        onClick={() => props.onChange(removeBuildStep(value, index))}
                         disabled={props.disabled}
                       >
                         删除
@@ -188,7 +225,7 @@ export default function ProjectBuildSettingsSection(
                       checked={step.enabled}
                       onChange={(event) =>
                         props.onChange(
-                          updateBuildStep(props.value, index, { enabled: event.target.checked })
+                          updateBuildStep(value, index, { enabled: event.target.checked })
                         )
                       }
                       disabled={props.disabled}
@@ -204,32 +241,39 @@ export default function ProjectBuildSettingsSection(
                         value={step.name}
                         onChange={(event) =>
                           props.onChange(
-                            updateBuildStep(props.value, index, { name: event.target.value })
+                            updateBuildStep(value, index, { name: event.target.value })
                           )
                         }
                         disabled={props.disabled}
                       />
                     </label>
 
-                    <label>
-                      环境
-                      <select
-                        value={step.envType}
-                        onChange={(event) =>
-                          props.onChange(
-                            updateBuildStep(props.value, index, {
-                              envType: event.target.value as BuildStepConfig['envType']
-                            })
-                          )
-                        }
-                        disabled={props.disabled}
-                      >
-                        <option value="msys">MSYS2</option>
-                        <option value="visual-studio">
-                          Visual Studio Developer Command Prompt
-                        </option>
-                      </select>
-                    </label>
+                    {usesSystemEnvironmentOnly ? (
+                      <label>
+                        环境
+                        <input type="text" value="原始环境" disabled readOnly />
+                      </label>
+                    ) : (
+                      <label>
+                        环境
+                        <select
+                          value={step.envType}
+                          onChange={(event) =>
+                            props.onChange(
+                              updateBuildStep(value, index, {
+                                envType: event.target.value as BuildStepConfig['envType']
+                              })
+                            )
+                          }
+                          disabled={props.disabled}
+                        >
+                          <option value="msys">MSYS2</option>
+                          <option value="visual-studio">
+                            Visual Studio Developer Command Prompt
+                          </option>
+                        </select>
+                      </label>
+                    )}
 
                     <label>
                       输出编码
@@ -237,7 +281,7 @@ export default function ProjectBuildSettingsSection(
                         value={step.outputEncoding}
                         onChange={(event) =>
                           props.onChange(
-                            updateBuildStep(props.value, index, {
+                            updateBuildStep(value, index, {
                               outputEncoding: event.target.value as BuildStepConfig['outputEncoding']
                             })
                           )
@@ -257,7 +301,7 @@ export default function ProjectBuildSettingsSection(
                           value={step.visualStudioInstanceId}
                           onChange={(event) =>
                             props.onChange(
-                              updateBuildStep(props.value, index, {
+                              updateBuildStep(value, index, {
                                 visualStudioInstanceId: event.target.value
                               })
                             )
@@ -283,7 +327,7 @@ export default function ProjectBuildSettingsSection(
                         value={step.cwd}
                         onChange={(event) =>
                           props.onChange(
-                            updateBuildStep(props.value, index, { cwd: event.target.value })
+                            updateBuildStep(value, index, { cwd: event.target.value })
                           )
                         }
                         placeholder="仓库根目录（.）"
@@ -298,7 +342,7 @@ export default function ProjectBuildSettingsSection(
                         value={step.command}
                         onChange={(event) =>
                           props.onChange(
-                            updateBuildStep(props.value, index, { command: event.target.value })
+                            updateBuildStep(value, index, { command: event.target.value })
                           )
                         }
                         rows={3}

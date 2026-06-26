@@ -6,6 +6,7 @@ import type {
 } from '../../electron/preload'
 import ProjectRuntimeSettingsSection, {
   formatRuntimeConfigSaveError,
+  normalizeRuntimeConfigForHost,
 } from './ProjectRuntimeSettingsSection.js'
 
 const visualStudioInstallations: VisualStudioInstallation[] = [
@@ -61,6 +62,33 @@ describe('ProjectRuntimeSettingsSection', () => {
     expect(markup).toContain('UTF-8')
     expect(markup).toContain('GBK')
     expect(markup).toContain('npm run dev')
+  })
+
+  it('uses the original environment on macOS without rendering Windows runtime choices', () => {
+    const markup = renderToStaticMarkup(
+      <ProjectRuntimeSettingsSection
+        projectId="project-1"
+        loading={false}
+        value={config}
+        disabled={false}
+        hostPlatform="MacIntel"
+        visualStudioInstallations={visualStudioInstallations}
+        onChange={vi.fn()}
+      />
+    )
+
+    expect(markup).toContain('原始环境')
+    expect(markup).not.toContain('MSYS2')
+    expect(markup).not.toContain('Visual Studio Developer Command Prompt')
+    expect(markup).not.toContain('Visual Studio 实例')
+  })
+
+  it('normalizes macOS runtime configs to the original environment', () => {
+    expect(normalizeRuntimeConfigForHost(config, 'MacIntel')).toEqual({
+      ...config,
+      envType: 'system',
+      visualStudioInstanceId: '',
+    })
   })
 
   it('renders a loading hint while runtime config is still loading', () => {

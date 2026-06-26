@@ -1,4 +1,4 @@
-export type BuildStepEnvType = 'msys' | 'visual-studio'
+export type BuildStepEnvType = 'system' | 'msys' | 'visual-studio'
 export type BuildOutputEncoding = 'auto' | 'utf8' | 'gbk'
 export type BuildExecutionScope = 'all' | 'single-step'
 

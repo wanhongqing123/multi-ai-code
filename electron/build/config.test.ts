@@ -63,6 +63,38 @@ describe('normalizeBuildConfig', () => {
     })
   })
 
+  it('keeps original-system environment steps when normalizing', () => {
+    expect(
+      normalizeBuildConfig({
+        enabled: true,
+        steps: [
+          {
+            id: 'build',
+            name: 'Build',
+            envType: 'system',
+            cwd: '.',
+            command: 'npm run build',
+            enabled: true,
+          },
+        ],
+      })
+    ).toEqual<ProjectBuildConfig>({
+      enabled: true,
+      steps: [
+        {
+          id: 'build',
+          name: 'Build',
+          envType: 'system',
+          cwd: '.',
+          command: 'npm run build',
+          enabled: true,
+          visualStudioInstanceId: '',
+          outputEncoding: 'auto',
+        },
+      ],
+    })
+  })
+
   it('trims fields, keeps root enabled, defaults step enabled to false, and backfills missing ids', () => {
     expect(
       normalizeBuildConfig({
@@ -347,7 +379,7 @@ describe('setProjectBuildConfig', () => {
       details: [
         {
           path: 'build_config.steps[0].envType',
-          message: 'envType must be one of: msys, visual-studio',
+          message: 'envType must be one of: system, msys, visual-studio',
         },
       ],
     })

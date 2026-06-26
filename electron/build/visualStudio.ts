@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'child_process'
 import iconv from 'iconv-lite'
-import { join } from 'path'
+import { win32 } from 'path'
 
 const DEFAULT_VSWHERE_PATH = 'C:\\Program Files (x86)\\Microsoft Visual Studio\\Installer\\vswhere.exe'
 
@@ -311,7 +311,12 @@ export async function resolveVisualStudioEnvironment(options: {
 
   const baseEnv = copyDefinedEnv(options.baseEnv ?? process.env)
   try {
-    const devCmdPath = join(installation.installationPath, 'Common7', 'Tools', 'VsDevCmd.bat')
+    const devCmdPath = win32.join(
+      installation.installationPath,
+      'Common7',
+      'Tools',
+      'VsDevCmd.bat'
+    )
     const { stdout } = await runWindowsCommandVerbatim(
       `call "${devCmdPath}" -no_logo && set`,
       {

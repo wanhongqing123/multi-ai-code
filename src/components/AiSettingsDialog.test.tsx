@@ -35,7 +35,13 @@ const defaultRemoteImConfig: RemoteImConfig = {
   provider: 'tencent-im',
   sdkAppId: null,
   desktopUserId: '',
+  desktopRole: 'master',
+  userSigMode: 'endpoint',
   userSigEndpoint: '',
+  userSigSecretKey: '',
+  friendUserIds: [],
+  masterUserIds: [],
+  slaveUserIds: [],
   allowedUserIds: [],
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 1200

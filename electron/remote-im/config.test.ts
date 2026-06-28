@@ -17,7 +17,9 @@ describe('remote IM config', () => {
         provider: 'tencent-im',
         sdkAppId: '1400000000',
         desktopUserId: ' desktop_bot ',
+        userSigMode: 'secret-key',
         userSigEndpoint: ' https://example.test/sig ',
+        userSigSecretKey: ' test_secret ',
         allowedUserIds: [' phone_admin ', '', 'phone_admin'],
         outputFlushIntervalMs: 500,
         outputMaxChunkChars: 10
@@ -27,24 +29,78 @@ describe('remote IM config', () => {
       provider: 'tencent-im',
       sdkAppId: 1400000000,
       desktopUserId: 'desktop_bot',
+      userSigMode: 'secret-key',
       userSigEndpoint: 'https://example.test/sig',
+      userSigSecretKey: 'test_secret',
       allowedUserIds: ['phone_admin'],
       outputFlushIntervalMs: 1000,
       outputMaxChunkChars: 200
     })
   })
 
-  it('rejects enabled configs without required Tencent IM fields', () => {
+  it('migrates legacy allowed users to master peers when role lists are missing', () => {
+    expect(
+      normalizeRemoteImConfig({
+        allowedUserIds: [' master-a ', '', 'master-a']
+      })
+    ).toMatchObject({
+      desktopRole: 'master',
+      masterUserIds: ['master-a'],
+      slaveUserIds: [],
+      allowedUserIds: ['master-a']
+    })
+  })
+
+  it('normalizes explicit friend, master, and slave contact lists', () => {
+    expect(
+      normalizeRemoteImConfig({
+        desktopRole: 'slave',
+        friendUserIds: [' friend-a ', '', 'friend-a'],
+        masterUserIds: [' master-a ', 'master-a'],
+        slaveUserIds: [' slave-b ', '']
+      })
+    ).toMatchObject({
+      desktopRole: 'slave',
+      friendUserIds: ['friend-a'],
+      masterUserIds: ['master-a'],
+      slaveUserIds: ['slave-b'],
+      allowedUserIds: ['friend-a', 'master-a', 'slave-b']
+    })
+  })
+
+  it('allows enabled project configs without account fields because login is user-level', () => {
     const result = validateRemoteImConfig({
       ...DEFAULT_REMOTE_IM_CONFIG,
       enabled: true
     })
-    expect(result.ok).toBe(false)
-    expect(result.issues.map((issue) => issue.path)).toEqual([
-      'sdkAppId',
-      'desktopUserId',
-      'userSigEndpoint',
-      'allowedUserIds'
-    ])
+
+    expect(result.ok).toBe(true)
+  })
+
+  it('allows enabled test configs without contacts so contacts can be added from the IM panel', () => {
+    const result = validateRemoteImConfig({
+      ...DEFAULT_REMOTE_IM_CONFIG,
+      enabled: true,
+      sdkAppId: 1400704311,
+      desktopUserId: 'desktop_bot',
+      userSigMode: 'secret-key',
+      userSigSecretKey: 'secret-for-local-test'
+    })
+
+    expect(result.ok).toBe(true)
+  })
+
+  it('allows enabled slave configs without a master peer until contacts are added', () => {
+    const result = validateRemoteImConfig({
+      ...DEFAULT_REMOTE_IM_CONFIG,
+      enabled: true,
+      sdkAppId: 1400704311,
+      desktopUserId: 'desktop_bot',
+      desktopRole: 'slave',
+      userSigMode: 'secret-key',
+      userSigSecretKey: 'secret-for-local-test'
+    })
+
+    expect(result.ok).toBe(true)
   })
 })

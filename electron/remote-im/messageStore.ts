@@ -80,6 +80,10 @@ function mapRow(row: RemoteImMessageRow): RemoteImMessage {
   }
 }
 
+function hasInputKey<T extends object, K extends keyof T>(input: T, key: K): boolean {
+  return Object.prototype.hasOwnProperty.call(input, key)
+}
+
 export function createRemoteImMessageStore(database: RemoteImDatabase) {
   function listById(id: number): RemoteImMessage | null {
     const row = database
@@ -136,10 +140,14 @@ export function createRemoteImMessageStore(database: RemoteImDatabase) {
       .prepare(
         `
         SELECT *
-        FROM remote_im_messages
-        WHERE project_id = ?
+        FROM (
+          SELECT *
+          FROM remote_im_messages
+          WHERE project_id = ?
+          ORDER BY created_at DESC, id DESC
+          LIMIT ?
+        )
         ORDER BY created_at ASC, id ASC
-        LIMIT ?
         `
       )
       .all(projectId, Math.max(1, Math.min(500, Math.round(limit)))) as RemoteImMessageRow[]
@@ -165,14 +173,25 @@ export function createRemoteImMessageStore(database: RemoteImDatabase) {
         `
       )
       .run(
-        input.sessionId ?? current.sessionId,
+        hasInputKey(input, 'sessionId') ? input.sessionId ?? null : current.sessionId,
         input.status,
-        input.error ?? current.error,
-        input.sentToAicliAt ?? current.sentToAicliAt,
-        input.sentToImAt ?? current.sentToImAt,
+        hasInputKey(input, 'error') ? input.error ?? null : current.error,
+        hasInputKey(input, 'sentToAicliAt')
+          ? input.sentToAicliAt ?? null
+          : current.sentToAicliAt,
+        hasInputKey(input, 'sentToImAt') ? input.sentToImAt ?? null : current.sentToImAt,
         id
       )
     return listById(id)
+  }
+
+  function failIfStreaming(id: number, error: string): RemoteImMessage | null {
+    const current = listById(id)
+    if (!current || current.status !== 'streaming') return current
+    return updateStatus(id, {
+      status: 'failed',
+      error: error || 'Remote IM message delivery was not confirmed'
+    })
   }
 
   function clear(projectId: string): void {
@@ -184,6 +203,7 @@ export function createRemoteImMessageStore(database: RemoteImDatabase) {
     listById,
     list,
     updateStatus,
+    failIfStreaming,
     clear
   }
 }
@@ -209,6 +229,10 @@ export function updateRemoteImMessageStatus(
   input: UpdateRemoteImMessageStatusInput
 ): RemoteImMessage | null {
   return defaultStore().updateStatus(id, input)
+}
+
+export function failRemoteImMessageIfStreaming(id: number, error: string): RemoteImMessage | null {
+  return defaultStore().failIfStreaming(id, error)
 }
 
 export function clearRemoteImMessages(projectId: string): void {

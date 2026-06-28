@@ -6,6 +6,7 @@ import {
   isCodexReadyForPromptInjection,
   isClaudeReadyForPromptInjection
 } from '../cc/codexTrust.js'
+import { withEmbeddedClaudeSettings } from '../cc/claudeLaunchSettings.js'
 
 interface RepoAnalysisSession {
   winId: number
@@ -152,7 +153,7 @@ export async function startRepoAnalysisSession(input: {
   const proc = new PtyCCProcess({
     cwd: input.targetRepo,
     command: input.command,
-    args: input.args,
+    args: withEmbeddedClaudeSettings(input.command, input.args),
     env: input.env
   })
   const session: RepoAnalysisSession = {

@@ -15,6 +15,7 @@ import {
 } from './structuredReply.js'
 import { planSystemPromptInjection } from './systemPromptInjection.js'
 import { buildResumeArgs, type ResumeCommand } from './resumeArgs.js'
+import { withEmbeddedClaudeSettings } from './claudeLaunchSettings.js'
 
 import {
   buildSystemPrompt
@@ -403,6 +404,7 @@ export function registerPtyIpc(): void {
     let effectiveArgs = isResumeMode
       ? buildResumeArgs(req.command as ResumeCommand, req.args)
       : req.args
+    effectiveArgs = withEmbeddedClaudeSettings(req.command, effectiveArgs)
 
     const proc = new PtyCCProcess({
       cwd: finalCwd,

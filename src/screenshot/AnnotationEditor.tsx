@@ -340,18 +340,25 @@ export default function AnnotationEditor({ sessionToken }: Props): JSX.Element {
   async function handleSend() {
     if (!payload || sending) return
     const canvas = canvasRef.current
-    if (!canvas) return
+    const hasPendingText = Boolean(pendingText?.value.trim())
+    const useOriginal = annotations.length === 0 && !hasPendingText
+    if (!canvas && !useOriginal) return
     setSending(true)
     setError(null)
     try {
       // Flatten any uncommitted text first.
       if (pendingText) commitText()
-      const blob: Blob | null = await new Promise((r) => canvas.toBlob(r, 'image/png'))
-      if (!blob) throw new Error('canvas.toBlob returned null')
-      const bytes = new Uint8Array(await blob.arrayBuffer())
+      let bytes: Uint8Array | null = null
+      if (!useOriginal) {
+        if (!canvas) throw new Error('canvas is unavailable')
+        const blob: Blob | null = await new Promise((r) => canvas.toBlob(r, 'image/png'))
+        if (!blob) throw new Error('canvas.toBlob returned null')
+        bytes = new Uint8Array(await blob.arrayBuffer())
+      }
       const res = await window.api.screenshot.editorSend({
         token: sessionToken,
         pngBytes: bytes,
+        useOriginal,
         prompt
       })
       if (!res.ok) throw new Error(res.error)

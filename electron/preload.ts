@@ -28,15 +28,42 @@ export interface AppSettings {
   screenshotShortcut: string
 }
 
+export type RemoteImContactRelation = 'friend' | 'master' | 'slave'
+
 export interface RemoteImConfig {
   enabled: boolean
   provider: 'tencent-im'
   sdkAppId: number | null
   desktopUserId: string
+  desktopRole: 'master' | 'slave'
+  userSigMode: 'endpoint' | 'secret-key'
   userSigEndpoint: string
+  userSigSecretKey: string
+  friendUserIds: string[]
+  masterUserIds: string[]
+  slaveUserIds: string[]
   allowedUserIds: string[]
   outputFlushIntervalMs: number
   outputMaxChunkChars: number
+}
+
+export interface RemoteImAccountConfig {
+  provider: 'tencent-im'
+  sdkAppId: number | null
+  desktopUserId: string
+  desktopRole: 'master' | 'slave'
+  userSigMode: 'endpoint' | 'secret-key'
+  userSigEndpoint: string
+  userSigSecretKey: string
+  friendUserIds: string[]
+  masterUserIds: string[]
+  slaveUserIds: string[]
+  allowedUserIds: string[]
+}
+
+export interface RemoteImLoginState {
+  profileId: string | null
+  account: RemoteImAccountConfig
 }
 
 export type RemoteImConnectionState =
@@ -87,6 +114,17 @@ export interface RemoteImIncomingTextMessage {
   fromUserId: string
   toUserId?: string | null
   text: string
+  createdAt?: number
+}
+
+export interface RemoteImRuntimeLogEntryInput {
+  projectId?: string | null
+  sdkAppId?: number | null
+  desktopUserId?: string | null
+  peerUserId?: string | null
+  messageId?: number | null
+  event: string
+  detail?: unknown
   createdAt?: number
 }
 
@@ -542,6 +580,18 @@ const api = {
       ipcRenderer.invoke('remote-im:get-config', { projectId }) as Promise<
         { ok: true; value: RemoteImConfig } | { ok: false; error: string }
       >,
+    getLoginState: () =>
+      ipcRenderer.invoke('remote-im:get-login-state') as Promise<
+        { ok: true; value: RemoteImLoginState } | { ok: false; error: string }
+      >,
+    getAccountByUserId: (userId: string) =>
+      ipcRenderer.invoke('remote-im:get-account-by-user-id', { userId }) as Promise<
+        { ok: true; value: RemoteImLoginState | null } | { ok: false; error: string }
+      >,
+    setAccount: (account: RemoteImAccountConfig) =>
+      ipcRenderer.invoke('remote-im:set-account', { account }) as Promise<
+        { ok: true; value: RemoteImLoginState } | { ok: false; error: string }
+      >,
     setConfig: (projectId: string, config: RemoteImConfig) =>
       ipcRenderer.invoke('remote-im:set-config', { projectId, config }) as Promise<
         | { ok: true; value: RemoteImConfig; repaired?: true }
@@ -559,6 +609,10 @@ const api = {
       ipcRenderer.invoke('remote-im:send-local-message', { projectId, text }) as Promise<
         { ok: boolean; error?: string }
       >,
+    sendPeerMessage: (projectId: string, text: string, toUserId?: string | null) =>
+      ipcRenderer.invoke('remote-im:send-peer-message', { projectId, text, toUserId }) as Promise<
+        { ok: boolean; error?: string; toUserId?: string }
+      >,
     deliverIncomingText: (message: RemoteImIncomingTextMessage) =>
       ipcRenderer.invoke('remote-im:deliver-incoming-text', message) as Promise<{
         ok: boolean
@@ -566,6 +620,21 @@ const api = {
       }>,
     updateSdkStatus: (status: Pick<RemoteImStatus, 'projectId' | 'state' | 'detail'>) =>
       ipcRenderer.invoke('remote-im:update-sdk-status', status) as Promise<{ ok: true }>,
+    markOutgoingMessageSent: (projectId: string, messageId: number) =>
+      ipcRenderer.invoke('remote-im:mark-outgoing-message-sent', {
+        projectId,
+        messageId
+      }) as Promise<{ ok: true }>,
+    markOutgoingMessageFailed: (projectId: string, messageId: number, error: string) =>
+      ipcRenderer.invoke('remote-im:mark-outgoing-message-failed', {
+        projectId,
+        messageId,
+        error
+      }) as Promise<{ ok: true }>,
+    writeRuntimeLog: (entry: RemoteImRuntimeLogEntryInput) =>
+      ipcRenderer.invoke('remote-im:write-runtime-log', { entry }) as Promise<
+        { ok: true } | { ok: false; error: string }
+      >,
     onStatus: (cb: (status: RemoteImStatus) => void) => {
       const handler = (_event: IpcRendererEvent, status: RemoteImStatus) => cb(status)
       ipcRenderer.on('remote-im:status', handler)
@@ -577,11 +646,11 @@ const api = {
       return () => ipcRenderer.removeListener('remote-im:messages-changed', handler)
     },
     onOutgoingText: (
-      cb: (evt: { projectId: string; toUserId: string; text: string }) => void
+      cb: (evt: { projectId: string; toUserId: string; text: string; messageId?: number | null }) => void
     ) => {
       const handler = (
         _event: IpcRendererEvent,
-        evt: { projectId: string; toUserId: string; text: string }
+        evt: { projectId: string; toUserId: string; text: string; messageId?: number | null }
       ) => cb(evt)
       ipcRenderer.on('remote-im:outgoing-text', handler)
       return () => ipcRenderer.removeListener('remote-im:outgoing-text', handler)
@@ -1157,7 +1226,12 @@ const api = {
       >,
     editorCancel: (token: string) =>
       ipcRenderer.invoke('screenshot:editor-cancel', token) as Promise<{ ok: boolean }>,
-    editorSend: (req: { token: string; pngBytes: Uint8Array; prompt: string }) =>
+    editorSend: (req: {
+      token: string
+      pngBytes?: Uint8Array | null
+      useOriginal?: boolean
+      prompt: string
+    }) =>
       ipcRenderer.invoke('screenshot:editor-send', req) as Promise<
         { ok: true; path: string } | { ok: false; error: string }
       >,

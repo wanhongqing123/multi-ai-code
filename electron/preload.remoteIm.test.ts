@@ -46,18 +46,35 @@ describe('preload remote IM api', () => {
       provider: 'tencent-im',
       sdkAppId: 1400000000,
       desktopUserId: 'desktop_bot',
+      desktopRole: 'master',
+      userSigMode: 'endpoint',
       userSigEndpoint: 'https://example.test/sig',
+      userSigSecretKey: '',
+      friendUserIds: [],
+      masterUserIds: ['phone_admin'],
+      slaveUserIds: [],
       allowedUserIds: ['phone_admin'],
       outputFlushIntervalMs: 2000,
       outputMaxChunkChars: 1200
     }
 
     await api.remoteIm.getConfig('project-1')
+    await api.remoteIm.getLoginState()
+    await api.remoteIm.getAccountByUserId('desktop_slave')
+    await api.remoteIm.setAccount(config)
     await api.remoteIm.setConfig('project-1', config)
     await api.remoteIm.getStatus('project-1')
     await api.remoteIm.listMessages('project-1', 50)
     await api.remoteIm.clearMessages('project-1')
     await api.remoteIm.sendLocalMessage('project-1', 'hello')
+    await api.remoteIm.sendPeerMessage('project-1', 'hello peer', 'desktop_slave')
+    await api.remoteIm.markOutgoingMessageSent('project-1', 42)
+    await api.remoteIm.markOutgoingMessageFailed('project-1', 43, 'send failed')
+    await api.remoteIm.writeRuntimeLog({
+      projectId: 'project-1',
+      event: 'send:start',
+      desktopUserId: 'desktop_bot'
+    })
     await api.remoteIm.deliverIncomingText({
       projectId: 'project-1',
       fromUserId: 'phone_admin',
@@ -72,30 +89,59 @@ describe('preload remote IM api', () => {
     expect(electronMock.invoke).toHaveBeenNthCalledWith(1, 'remote-im:get-config', {
       projectId: 'project-1'
     })
-    expect(electronMock.invoke).toHaveBeenNthCalledWith(2, 'remote-im:set-config', {
+    expect(electronMock.invoke).toHaveBeenNthCalledWith(2, 'remote-im:get-login-state')
+    expect(electronMock.invoke).toHaveBeenNthCalledWith(3, 'remote-im:get-account-by-user-id', {
+      userId: 'desktop_slave'
+    })
+    expect(electronMock.invoke).toHaveBeenNthCalledWith(4, 'remote-im:set-account', {
+      account: config
+    })
+    expect(api.remoteIm.switchProfile).toBeUndefined()
+    expect(electronMock.invoke).toHaveBeenNthCalledWith(5, 'remote-im:set-config', {
       projectId: 'project-1',
       config
     })
-    expect(electronMock.invoke).toHaveBeenNthCalledWith(3, 'remote-im:get-status', {
+    expect(electronMock.invoke).toHaveBeenNthCalledWith(6, 'remote-im:get-status', {
       projectId: 'project-1'
     })
-    expect(electronMock.invoke).toHaveBeenNthCalledWith(4, 'remote-im:list-messages', {
+    expect(electronMock.invoke).toHaveBeenNthCalledWith(7, 'remote-im:list-messages', {
       projectId: 'project-1',
       limit: 50
     })
-    expect(electronMock.invoke).toHaveBeenNthCalledWith(5, 'remote-im:clear-messages', {
+    expect(electronMock.invoke).toHaveBeenNthCalledWith(8, 'remote-im:clear-messages', {
       projectId: 'project-1'
     })
-    expect(electronMock.invoke).toHaveBeenNthCalledWith(6, 'remote-im:send-local-message', {
+    expect(electronMock.invoke).toHaveBeenNthCalledWith(9, 'remote-im:send-local-message', {
       projectId: 'project-1',
       text: 'hello'
     })
-    expect(electronMock.invoke).toHaveBeenNthCalledWith(7, 'remote-im:deliver-incoming-text', {
+    expect(electronMock.invoke).toHaveBeenNthCalledWith(10, 'remote-im:send-peer-message', {
+      projectId: 'project-1',
+      text: 'hello peer',
+      toUserId: 'desktop_slave'
+    })
+    expect(electronMock.invoke).toHaveBeenNthCalledWith(11, 'remote-im:mark-outgoing-message-sent', {
+      projectId: 'project-1',
+      messageId: 42
+    })
+    expect(electronMock.invoke).toHaveBeenNthCalledWith(12, 'remote-im:mark-outgoing-message-failed', {
+      projectId: 'project-1',
+      messageId: 43,
+      error: 'send failed'
+    })
+    expect(electronMock.invoke).toHaveBeenNthCalledWith(13, 'remote-im:write-runtime-log', {
+      entry: {
+        projectId: 'project-1',
+        event: 'send:start',
+        desktopUserId: 'desktop_bot'
+      }
+    })
+    expect(electronMock.invoke).toHaveBeenNthCalledWith(14, 'remote-im:deliver-incoming-text', {
       projectId: 'project-1',
       fromUserId: 'phone_admin',
       text: 'hello'
     })
-    expect(electronMock.invoke).toHaveBeenNthCalledWith(8, 'remote-im:update-sdk-status', {
+    expect(electronMock.invoke).toHaveBeenNthCalledWith(15, 'remote-im:update-sdk-status', {
       projectId: 'project-1',
       state: 'connected',
       detail: null
@@ -135,7 +181,7 @@ describe('preload remote IM api', () => {
     const outgoingHandler = electronMock.on.mock.calls.find(
       (call) => call[0] === 'remote-im:outgoing-text'
     )?.[1]
-    const outgoing = { projectId: 'project-1', toUserId: 'phone_admin', text: 'hello' }
+    const outgoing = { projectId: 'project-1', toUserId: 'phone_admin', text: 'hello', messageId: 42 }
     outgoingHandler({}, outgoing)
     expect(outgoingCb).toHaveBeenCalledWith(outgoing)
     offOutgoing()

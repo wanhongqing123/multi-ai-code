@@ -6,20 +6,13 @@ export interface RemoteImSettingsSectionProps {
   onChange: (next: RemoteImConfig) => void
 }
 
-function parseAllowedUsers(value: string): string[] {
-  return value
-    .split(/[,\n]/)
-    .map((item) => item.trim())
-    .filter(Boolean)
-}
-
 export default function RemoteImSettingsSection(props: RemoteImSettingsSectionProps): JSX.Element {
   const { config, disabled, onChange } = props
   return (
     <section className="ai-settings-card remote-im-settings-section">
       <div className="ai-settings-title">远程 IM</div>
       <div className="ai-settings-note">
-        开启后，白名单手机消息会自动发送到当前 AICLI。UserSig 由服务端签发。
+        这里仅配置当前项目是否接收远程 IM 任务；账号、凭证和联系人请在远程 IM 面板登录后管理。
       </div>
 
       <label className="ai-settings-checkbox">
@@ -29,56 +22,36 @@ export default function RemoteImSettingsSection(props: RemoteImSettingsSectionPr
           checked={config.enabled}
           onChange={(event) => onChange({ ...config, enabled: event.currentTarget.checked })}
         />
-        启用腾讯 IM
+        启用远程 IM
       </label>
 
       <div className="remote-im-settings-grid">
         <label>
-          SDKAppID
+          输出刷新间隔(ms)
           <input
             disabled={disabled}
-            value={config.sdkAppId ?? ''}
+            value={config.outputFlushIntervalMs}
             onChange={(event) =>
               onChange({
                 ...config,
-                sdkAppId: event.currentTarget.value ? Number(event.currentTarget.value) : null
+                outputFlushIntervalMs: Number(event.currentTarget.value)
               })
             }
-            placeholder="1400000000"
+            placeholder="2000"
           />
         </label>
         <label>
-          桌面端 UserID
+          单次回传字符数
           <input
             disabled={disabled}
-            value={config.desktopUserId}
+            value={config.outputMaxChunkChars}
             onChange={(event) =>
-              onChange({ ...config, desktopUserId: event.currentTarget.value })
+              onChange({
+                ...config,
+                outputMaxChunkChars: Number(event.currentTarget.value)
+              })
             }
-            placeholder="desktop_bot"
-          />
-        </label>
-        <label className="remote-im-settings-grid-full">
-          UserSig 服务地址
-          <input
-            disabled={disabled}
-            value={config.userSigEndpoint}
-            onChange={(event) =>
-              onChange({ ...config, userSigEndpoint: event.currentTarget.value })
-            }
-            placeholder="https://example.com/tencent-im/usersig"
-          />
-        </label>
-        <label className="remote-im-settings-grid-full">
-          允许控制的 UserID
-          <textarea
-            disabled={disabled}
-            value={config.allowedUserIds.join('\n')}
-            onChange={(event) =>
-              onChange({ ...config, allowedUserIds: parseAllowedUsers(event.currentTarget.value) })
-            }
-            placeholder="phone_admin"
-            rows={3}
+            placeholder="1200"
           />
         </label>
       </div>

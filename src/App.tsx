@@ -36,6 +36,13 @@ import SkillStudioDialog from './habit/SkillStudioDialog'
 import ScheduledTaskDialog from './scheduled-tasks/ScheduledTaskDialog'
 import RemoteImDrawer from './remote-im/RemoteImDrawer'
 import RemoteImClientHost from './remote-im/RemoteImClientHost'
+import RemoteImLoginDialog, {
+  type RemoteImLoginSubmitInput
+} from './remote-im/RemoteImLoginDialog'
+import {
+  addRemoteImContact,
+  getRemoteImConversations
+} from './remote-im/remoteImViewModel'
 import ScreenSamplerIndicator from './habit/ScreenSamplerIndicator'
 import FirstRunNoticeDialog from './habit/FirstRunNoticeDialog'
 import { getCliTargetLabel } from './components/cliTarget'
@@ -54,7 +61,10 @@ import type {
   ProjectBuildConfig,
   ProjectRuntimeConfig,
   RuntimeState,
+  RemoteImAccountConfig,
   RemoteImConfig,
+  RemoteImContactRelation,
+  RemoteImLoginState,
   RemoteImMessage,
   RemoteImStatus,
   VisualStudioInstallation
@@ -108,7 +118,13 @@ const DEFAULT_REMOTE_IM_CONFIG: RemoteImConfig = {
   provider: 'tencent-im',
   sdkAppId: null,
   desktopUserId: '',
+  desktopRole: 'master',
+  userSigMode: 'endpoint',
   userSigEndpoint: '',
+  userSigSecretKey: '',
+  friendUserIds: [],
+  masterUserIds: [],
+  slaveUserIds: [],
   allowedUserIds: [],
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 1200
@@ -232,7 +248,13 @@ function AppShell() {
   const [remoteImConfigProjectId, setRemoteImConfigProjectId] = useState<string | null>(null)
   const [remoteImStatus, setRemoteImStatus] = useState<RemoteImStatus | null>(null)
   const [remoteImMessages, setRemoteImMessages] = useState<RemoteImMessage[]>([])
+  const [remoteImSelectedPeerUserId, setRemoteImSelectedPeerUserId] = useState<string | null>(null)
   const [remoteImInput, setRemoteImInput] = useState('')
+  const [remoteImLoginState, setRemoteImLoginState] = useState<RemoteImLoginState | null>(null)
+  const [remoteImLoginRequested, setRemoteImLoginRequested] = useState(false)
+  const [showRemoteImLogin, setShowRemoteImLogin] = useState(false)
+  const [remoteImLoginSaving, setRemoteImLoginSaving] = useState(false)
+  const [remoteImLoginError, setRemoteImLoginError] = useState<string | null>(null)
   const [visualStudioInstallations, setVisualStudioInstallations] = useState<
     VisualStudioInstallation[]
   >([])
@@ -684,6 +706,7 @@ function AppShell() {
       setRemoteImConfigProjectId(null)
       setRemoteImStatus(null)
       setRemoteImMessages([])
+      setRemoteImSelectedPeerUserId(null)
       setAiSettingsReady(false)
       setAiSettingsLoadError(null)
       return
@@ -699,6 +722,7 @@ function AppShell() {
     setRemoteImConfigProjectId(null)
     setRemoteImStatus(null)
     setRemoteImMessages([])
+    setRemoteImSelectedPeerUserId(null)
     setAiSettingsReady(false)
     setAiSettingsLoadError(null)
     void window.api.project.getStageConfigs(currentProjectId).then((cfg) => {
@@ -783,6 +807,21 @@ function AppShell() {
   }, [currentProjectId, refreshHabitMonitorSnapshot])
 
   useEffect(() => {
+    let cancelled = false
+    void window.api.remoteIm.getLoginState().then((result) => {
+      if (cancelled) return
+      if (result.ok) {
+        setRemoteImLoginState(result.value)
+      } else {
+        setRemoteImLoginError(result.error ?? '读取远程 IM 登录状态失败')
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
     const offStatus = window.api.remoteIm.onStatus((status) => {
       if (status.projectId === currentProjectId) setRemoteImStatus(status)
     })
@@ -797,6 +836,18 @@ function AppShell() {
       offMessages()
     }
   }, [currentProjectId])
+
+  useEffect(() => {
+    if (!remoteImConfigReady) return
+    const conversations = getRemoteImConversations(remoteImConfig, remoteImMessages)
+    if (
+      remoteImSelectedPeerUserId &&
+      conversations.some((conversation) => conversation.userId === remoteImSelectedPeerUserId)
+    ) {
+      return
+    }
+    setRemoteImSelectedPeerUserId(conversations[0]?.userId ?? null)
+  }, [remoteImConfigReady, remoteImConfig, remoteImMessages, remoteImSelectedPeerUserId])
 
   useEffect(() => {
     if (!isTaskWatchMode || !currentProjectId) return
@@ -1042,19 +1093,109 @@ function AppShell() {
     }
   }, [])
 
-  const handleSendRemoteImLocalMessage = useCallback(async () => {
+  const handleSendRemoteImLocalMessage = useCallback(async (toUserId?: string | null) => {
     if (!currentProjectId) return
     const text = remoteImInput.trim()
     if (!text) return
-    const result = await window.api.remoteIm.sendLocalMessage(currentProjectId, text)
+    const peerUserId = toUserId?.trim() || remoteImSelectedPeerUserId?.trim() || ''
+    if (!peerUserId) {
+      showToast('请选择要发送的联系人', { level: 'warn' })
+      return
+    }
+    const result = await window.api.remoteIm.sendPeerMessage(currentProjectId, text, peerUserId)
     if (!result.ok) {
       showToast(result.error ?? '发送远程 IM 消息失败', { level: 'error' })
       return
     }
+    setRemoteImSelectedPeerUserId(result.toUserId ?? peerUserId)
     setRemoteImInput('')
     const messages = await window.api.remoteIm.listMessages(currentProjectId, 100)
     setRemoteImMessages(messages)
-  }, [currentProjectId, remoteImInput])
+  }, [currentProjectId, remoteImInput, remoteImSelectedPeerUserId])
+
+  const handleSubmitRemoteImLogin = useCallback(async (input: RemoteImLoginSubmitInput) => {
+    setRemoteImLoginSaving(true)
+    setRemoteImLoginError(null)
+    try {
+      const accountResult = await window.api.remoteIm.setAccount(input.account)
+      if (!accountResult.ok) {
+        throw new Error(accountResult.error ?? '保存远程 IM 账号失败')
+      }
+      setRemoteImLoginState(accountResult.value)
+
+      if (currentProjectId) {
+        const configResult = await window.api.remoteIm.getConfig(currentProjectId)
+        if (configResult.ok) {
+          setRemoteImConfig(configResult.value)
+          setRemoteImConfigProjectId(currentProjectId)
+        } else {
+          throw new Error(configResult.error ?? '读取远程 IM 配置失败')
+        }
+        const status = await window.api.remoteIm.getStatus(currentProjectId)
+        setRemoteImStatus(status)
+      }
+      setRemoteImLoginRequested(true)
+
+      setShowRemoteImLogin(false)
+      showToast('远程 IM 账号已保存', { level: 'success' })
+    } catch (err) {
+      setRemoteImLoginError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRemoteImLoginSaving(false)
+    }
+  }, [currentProjectId])
+
+  const handleLookupRemoteImAccount = useCallback(async (userId: string) => {
+    const result = await window.api.remoteIm.getAccountByUserId(userId)
+    return result.ok ? result.value?.account ?? null : null
+  }, [])
+
+  const handleAddRemoteImContact = useCallback(async (
+    relation: RemoteImContactRelation,
+    userId: string
+  ) => {
+    const cleanUserId = userId.trim()
+    if (!cleanUserId) return
+    const nextConfig = addRemoteImContact(remoteImConfig, relation, cleanUserId)
+    const account: RemoteImAccountConfig = {
+      provider: nextConfig.provider,
+      sdkAppId: nextConfig.sdkAppId,
+      desktopUserId: nextConfig.desktopUserId,
+      desktopRole: nextConfig.desktopRole,
+      userSigMode: nextConfig.userSigMode,
+      userSigEndpoint: nextConfig.userSigEndpoint,
+      userSigSecretKey: nextConfig.userSigSecretKey,
+      friendUserIds: nextConfig.friendUserIds,
+      masterUserIds: nextConfig.masterUserIds,
+      slaveUserIds: nextConfig.slaveUserIds,
+      allowedUserIds: nextConfig.allowedUserIds
+    }
+    const result = await window.api.remoteIm.setAccount(account)
+    if (!result.ok) {
+      showToast(result.error ?? '保存远程 IM 联系人失败', { level: 'error' })
+      return
+    }
+    setRemoteImLoginState(result.value)
+    setRemoteImConfig(nextConfig)
+    if (currentProjectId) {
+      setRemoteImConfigProjectId(currentProjectId)
+    }
+    setRemoteImSelectedPeerUserId(cleanUserId)
+  }, [currentProjectId, remoteImConfig])
+
+  const handleClearRemoteImMessages = useCallback(async () => {
+    if (!currentProjectId) return
+    try {
+      await window.api.remoteIm.clearMessages(currentProjectId)
+      setRemoteImInput('')
+      setRemoteImMessages([])
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : '清空远程 IM 消息失败',
+        { level: 'error' }
+      )
+    }
+  }, [currentProjectId])
 
   const handleSendRuntimeLog = useCallback(async (comment = '') => {
     if (!runtimeState.projectId || !runtimeState.log.trim()) {
@@ -2030,17 +2171,39 @@ function AppShell() {
           }}
         />
       )}
-      <RemoteImClientHost projectId={currentProjectId} config={remoteImConfig} />
+      <RemoteImClientHost
+        projectId={currentProjectId}
+        config={remoteImConfig}
+        loginRequested={remoteImLoginRequested}
+      />
       <RemoteImDrawer
         open={showRemoteImDrawer}
         projectId={currentProjectId}
         sessionRunning={sessionStatus === 'running'}
         status={remoteImStatus}
+        config={remoteImConfig}
         messages={remoteImMessages}
+        selectedPeerUserId={remoteImSelectedPeerUserId}
         input={remoteImInput}
         onInputChange={setRemoteImInput}
-        onSend={() => void handleSendRemoteImLocalMessage()}
+        onSelectPeer={setRemoteImSelectedPeerUserId}
+        onSend={(toUserId) => void handleSendRemoteImLocalMessage(toUserId)}
+        onAddContact={(relation, userId) => void handleAddRemoteImContact(relation, userId)}
+        onClear={() => void handleClearRemoteImMessages()}
+        onLoginClick={() => {
+          setRemoteImLoginError(null)
+          setShowRemoteImLogin(true)
+        }}
         onClose={() => setShowRemoteImDrawer(false)}
+      />
+      <RemoteImLoginDialog
+        open={showRemoteImLogin}
+        loginState={remoteImLoginState}
+        saving={remoteImLoginSaving}
+        error={remoteImLoginError}
+        onLookupAccount={handleLookupRemoteImAccount}
+        onClose={() => setShowRemoteImLogin(false)}
+        onSubmit={(input) => void handleSubmitRemoteImLogin(input)}
       />
       {showBuildPanel && (
         <ProjectBuildPanel

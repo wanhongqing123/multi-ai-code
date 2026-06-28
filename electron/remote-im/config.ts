@@ -9,7 +9,13 @@ export const DEFAULT_REMOTE_IM_CONFIG: RemoteImConfig = {
   provider: 'tencent-im',
   sdkAppId: null,
   desktopUserId: '',
+  desktopRole: 'master',
+  userSigMode: 'endpoint',
   userSigEndpoint: '',
+  userSigSecretKey: '',
+  friendUserIds: [],
+  masterUserIds: [],
+  slaveUserIds: [],
   allowedUserIds: [],
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 1200
@@ -42,16 +48,43 @@ function normalizeAllowedUserIds(value: unknown): string[] {
   return Array.from(new Set(ids))
 }
 
+function mergeUserIds(...lists: string[][]): string[] {
+  return Array.from(new Set(lists.flat()))
+}
+
 export function normalizeRemoteImConfig(value: unknown): RemoteImConfig {
   if (!value || typeof value !== 'object') return { ...DEFAULT_REMOTE_IM_CONFIG }
   const raw = value as Partial<Record<keyof RemoteImConfig, unknown>>
+  const userSigEndpoint = normalizeString(raw.userSigEndpoint)
+  const userSigSecretKey = normalizeString(raw.userSigSecretKey)
+  const userSigMode =
+    raw.userSigMode === 'secret-key' || (!raw.userSigMode && userSigSecretKey && !userSigEndpoint)
+      ? 'secret-key'
+      : 'endpoint'
+  const legacyAllowedUserIds = normalizeAllowedUserIds(raw.allowedUserIds)
+  const hasRoleLists =
+    Array.isArray(raw.friendUserIds) ||
+    Array.isArray(raw.masterUserIds) ||
+    Array.isArray(raw.slaveUserIds)
+  const friendUserIds = hasRoleLists ? normalizeAllowedUserIds(raw.friendUserIds) : []
+  const masterUserIds = hasRoleLists
+    ? normalizeAllowedUserIds(raw.masterUserIds)
+    : legacyAllowedUserIds
+  const slaveUserIds = hasRoleLists ? normalizeAllowedUserIds(raw.slaveUserIds) : []
+  const allowedUserIds = mergeUserIds(friendUserIds, masterUserIds, slaveUserIds)
   return {
     enabled: raw.enabled === true,
     provider: 'tencent-im',
     sdkAppId: normalizeSdkAppId(raw.sdkAppId),
     desktopUserId: normalizeString(raw.desktopUserId),
-    userSigEndpoint: normalizeString(raw.userSigEndpoint),
-    allowedUserIds: normalizeAllowedUserIds(raw.allowedUserIds),
+    desktopRole: raw.desktopRole === 'slave' ? 'slave' : 'master',
+    userSigMode,
+    userSigEndpoint,
+    userSigSecretKey,
+    friendUserIds,
+    masterUserIds,
+    slaveUserIds,
+    allowedUserIds,
     outputFlushIntervalMs: normalizeNumber(raw.outputFlushIntervalMs, 2000, 1000, 30_000),
     outputMaxChunkChars: normalizeNumber(raw.outputMaxChunkChars, 1200, 200, 4000)
   }
@@ -60,26 +93,14 @@ export function normalizeRemoteImConfig(value: unknown): RemoteImConfig {
 export function validateRemoteImConfig(config: RemoteImConfig): RemoteImValidationResult {
   const issues: RemoteImValidationIssue[] = []
   if (!config.enabled) return { ok: true, issues: [] }
-  if (!config.sdkAppId) {
-    issues.push({ path: 'sdkAppId', message: 'SDKAppID is required when remote IM is enabled' })
-  }
-  if (!config.desktopUserId) {
-    issues.push({
-      path: 'desktopUserId',
-      message: 'desktop UserID is required when remote IM is enabled'
-    })
-  }
-  if (!config.userSigEndpoint) {
-    issues.push({
-      path: 'userSigEndpoint',
-      message: 'UserSig endpoint is required when remote IM is enabled'
-    })
-  }
-  if (config.allowedUserIds.length === 0) {
-    issues.push({
-      path: 'allowedUserIds',
-      message: 'at least one allowed mobile UserID is required'
-    })
-  }
   return issues.length === 0 ? { ok: true, issues: [] } : { ok: false, issues }
+}
+
+export function toRemoteImProjectConfig(config: RemoteImConfig): RemoteImConfig {
+  return {
+    ...DEFAULT_REMOTE_IM_CONFIG,
+    enabled: config.enabled,
+    outputFlushIntervalMs: config.outputFlushIntervalMs,
+    outputMaxChunkChars: config.outputMaxChunkChars
+  }
 }

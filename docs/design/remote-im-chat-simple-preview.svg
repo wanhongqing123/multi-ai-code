@@ -1,0 +1,161 @@
+<svg width="1440" height="900" viewBox="0 0 1440 900" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="18" flood-color="#0f172a" flood-opacity="0.12"/>
+    </filter>
+    <style>
+      .bg { fill: #f3f6fa; }
+      .surface { fill: #ffffff; }
+      .panel { fill: #ffffff; stroke: #dbe5f1; stroke-width: 1; }
+      .soft { fill: #f8fafc; stroke: #e2e8f0; stroke-width: 1; }
+      .selected { fill: #e8f2ff; stroke: #2f80ed; stroke-width: 1.5; }
+      .text { fill: #0f172a; font-family: "Noto Sans SC", "Microsoft YaHei UI", "Segoe UI", sans-serif; }
+      .muted { fill: #64748b; font-family: "Noto Sans SC", "Microsoft YaHei UI", "Segoe UI", sans-serif; }
+      .subtle { fill: #94a3b8; font-family: "Noto Sans SC", "Microsoft YaHei UI", "Segoe UI", sans-serif; }
+      .mono { fill: #334155; font-family: "Cascadia Code", Consolas, monospace; }
+      .h1 { font-size: 21px; font-weight: 850; }
+      .h2 { font-size: 18px; font-weight: 850; }
+      .label { font-size: 13px; font-weight: 750; }
+      .body { font-size: 14px; font-weight: 500; }
+      .small { font-size: 12px; font-weight: 600; }
+      .chipText { font-size: 12px; font-weight: 850; font-family: "Noto Sans SC", "Microsoft YaHei UI", sans-serif; }
+      .buttonText { font-size: 14px; font-weight: 850; font-family: "Noto Sans SC", "Microsoft YaHei UI", sans-serif; }
+    </style>
+  </defs>
+
+  <rect class="bg" width="1440" height="900"/>
+  <rect x="18" y="18" width="1404" height="864" rx="18" class="surface" filter="url(#shadow)"/>
+
+  <rect x="18" y="18" width="1404" height="64" rx="18" fill="#ffffff"/>
+  <path d="M18 64H1422" stroke="#e2e8f0"/>
+  <rect x="42" y="36" width="28" height="28" rx="8" fill="#2f80ed"/>
+  <text x="56" y="56" text-anchor="middle" fill="#ffffff" font-family="Noto Sans SC, Microsoft YaHei UI, sans-serif" font-size="15" font-weight="900">M</text>
+  <text x="84" y="57" class="text" font-size="19" font-weight="850">Multi-AI Code</text>
+  <text x="254" y="56" class="subtle" font-size="13">远程 IM · 普通聊天 + 主从权限</text>
+  <text x="770" y="56" class="muted body">设置</text>
+  <rect x="835" y="30" width="104" height="38" rx="10" fill="#e8f2ff" stroke="#bfdbfe"/>
+  <circle cx="856" cy="49" r="5" fill="#22c55e"/>
+  <text x="874" y="55" fill="#1d4ed8" font-family="Noto Sans SC, Microsoft YaHei UI, sans-serif" font-size="14" font-weight="850">远程 IM</text>
+  <text x="970" y="56" class="muted body">Skill 管理</text>
+  <text x="1070" y="56" class="muted body">截图采样</text>
+  <text x="1180" y="56" class="muted body">日志</text>
+  <rect x="1315" y="31" width="76" height="36" rx="18" fill="#dcfce7" stroke="#86efac"/>
+  <text x="1353" y="55" text-anchor="middle" fill="#15803d" class="chipText">已连接</text>
+
+  <rect x="42" y="106" width="360" height="746" rx="16" class="panel"/>
+  <text x="66" y="143" class="text h1">会话</text>
+  <rect x="330" y="119" width="42" height="30" rx="15" fill="#2f80ed"/>
+  <text x="351" y="140" text-anchor="middle" fill="#ffffff" class="buttonText">+</text>
+  <rect x="66" y="166" width="306" height="38" rx="10" class="soft"/>
+  <text x="84" y="190" class="subtle body">搜索联系人 / UserID</text>
+  <rect x="66" y="220" width="306" height="38" rx="11" fill="#f1f5f9"/>
+  <rect x="70" y="224" width="76" height="30" rx="9" fill="#ffffff" stroke="#dbe5f1"/>
+  <text x="108" y="244" text-anchor="middle" class="text small">最近</text>
+  <text x="190" y="244" text-anchor="middle" class="muted small">好友</text>
+  <text x="272" y="244" text-anchor="middle" class="muted small">主人</text>
+  <text x="342" y="244" text-anchor="middle" class="muted small">奴隶</text>
+
+  <rect x="66" y="282" width="306" height="84" rx="14" class="selected"/>
+  <circle cx="96" cy="314" r="17" fill="#2f80ed"/>
+  <text x="96" y="320" text-anchor="middle" fill="#ffffff" font-family="Noto Sans SC, Microsoft YaHei UI, sans-serif" font-size="13" font-weight="900">奴</text>
+  <text x="124" y="311" class="text" font-size="15" font-weight="850">im-b</text>
+  <text x="124" y="336" class="muted small">收到，我开始处理。</text>
+  <rect x="276" y="296" width="52" height="23" rx="12" fill="#eff6ff" stroke="#bfdbfe"/>
+  <text x="302" y="312" text-anchor="middle" fill="#2563eb" class="chipText">奴隶</text>
+  <circle cx="346" cy="307" r="5" fill="#22c55e"/>
+  <text x="330" y="346" text-anchor="middle" class="subtle small">01:12</text>
+
+  <rect x="66" y="382" width="306" height="82" rx="14" class="soft"/>
+  <circle cx="96" cy="412" r="17" fill="#0ea5e9"/>
+  <text x="96" y="418" text-anchor="middle" fill="#ffffff" font-family="Noto Sans SC, Microsoft YaHei UI, sans-serif" font-size="13" font-weight="900">主</text>
+  <text x="124" y="410" class="text" font-size="15" font-weight="850">im-a</text>
+  <text x="124" y="435" class="muted small">主人消息记录</text>
+  <rect x="276" y="396" width="52" height="23" rx="12" fill="#dcfce7"/>
+  <text x="302" y="412" text-anchor="middle" fill="#15803d" class="chipText">主人</text>
+
+  <rect x="66" y="480" width="306" height="82" rx="14" class="soft"/>
+  <circle cx="96" cy="510" r="17" fill="#e2e8f0"/>
+  <text x="96" y="516" text-anchor="middle" class="muted" font-size="13" font-weight="900">友</text>
+  <text x="124" y="508" class="text" font-size="15" font-weight="850">手机端测试号</text>
+  <text x="124" y="533" class="muted small">普通好友聊天</text>
+  <rect x="276" y="494" width="52" height="23" rx="12" fill="#f1f5f9"/>
+  <text x="302" y="510" text-anchor="middle" class="muted chipText">好友</text>
+
+  <rect x="66" y="612" width="306" height="192" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+  <text x="86" y="644" class="text label">添加联系人</text>
+  <rect x="86" y="666" width="266" height="34" rx="10" fill="#ffffff" stroke="#dbe5f1"/>
+  <text x="104" y="688" class="text small">添加好友</text>
+  <rect x="86" y="712" width="266" height="34" rx="10" fill="#ffffff" stroke="#dbe5f1"/>
+  <text x="104" y="734" class="text small">添加主人</text>
+  <rect x="86" y="758" width="266" height="34" rx="10" fill="#ffffff" stroke="#dbe5f1"/>
+  <text x="104" y="780" class="text small">添加奴隶</text>
+
+  <rect x="426" y="106" width="972" height="746" rx="16" class="panel"/>
+  <circle cx="458" cy="139" r="18" fill="#2f80ed"/>
+  <text x="458" y="145" text-anchor="middle" fill="#ffffff" font-family="Noto Sans SC, Microsoft YaHei UI, sans-serif" font-size="13" font-weight="900">奴</text>
+  <text x="486" y="134" class="text h2">im-b</text>
+  <text x="486" y="157" class="muted small">奴隶 · 在线 · 发给它的消息会作为任务进入 AICLI</text>
+  <rect x="1216" y="121" width="64" height="28" rx="14" fill="#dcfce7"/>
+  <text x="1248" y="140" text-anchor="middle" fill="#15803d" class="chipText">在线</text>
+  <rect x="1292" y="121" width="50" height="28" rx="14" fill="#f8fafc" stroke="#dbe5f1"/>
+  <text x="1317" y="140" text-anchor="middle" class="muted chipText">清空</text>
+  <rect x="1354" y="121" width="28" height="28" rx="14" fill="#f8fafc" stroke="#dbe5f1"/>
+  <text x="1368" y="141" text-anchor="middle" class="muted chipText">···</text>
+
+  <rect x="454" y="178" width="916" height="548" rx="16" fill="#f8fafc" stroke="#e2e8f0"/>
+  <text x="912" y="211" text-anchor="middle" class="subtle small">今天 01:12</text>
+
+  <rect x="488" y="236" width="330" height="70" rx="16" fill="#ffffff" stroke="#e2e8f0"/>
+  <text x="512" y="264" class="text body">你好，确认一下链路是否正常。</text>
+  <text x="512" y="288" class="subtle small">im-b</text>
+
+  <rect x="1000" y="336" width="326" height="76" rx="16" fill="#e8f2ff" stroke="#bfdbfe"/>
+  <text x="1024" y="365" fill="#1e40af" font-family="Noto Sans SC, Microsoft YaHei UI, sans-serif" font-size="14" font-weight="800">我</text>
+  <text x="1024" y="390" class="text body">请检查当前项目构建并回传结果。</text>
+  <rect x="1238" y="420" width="66" height="24" rx="12" fill="#eff6ff" stroke="#bfdbfe"/>
+  <text x="1271" y="436" text-anchor="middle" fill="#2563eb" class="chipText">已发送</text>
+
+  <rect x="488" y="458" width="502" height="146" rx="16" fill="#ffffff" stroke="#fde68a"/>
+  <rect x="512" y="480" width="92" height="26" rx="13" fill="#fffbeb"/>
+  <text x="558" y="498" text-anchor="middle" fill="#b45309" class="chipText">AICLI 回传</text>
+  <text x="512" y="532" class="text body" font-weight="850">构建检查完成</text>
+  <circle cx="520" cy="560" r="3.5" fill="#64748b"/>
+  <text x="536" y="566" class="muted body">npm test 通过</text>
+  <circle cx="520" cy="590" r="3.5" fill="#64748b"/>
+  <text x="536" y="596" class="muted body">没有发现阻塞问题</text>
+  <rect x="896" y="566" width="70" height="26" rx="13" fill="#dcfce7"/>
+  <text x="931" y="584" text-anchor="middle" fill="#15803d" class="chipText">已回传</text>
+
+  <rect x="454" y="746" width="916" height="82" rx="16" fill="#ffffff" stroke="#e2e8f0"/>
+  <rect x="488" y="767" width="690" height="40" rx="12" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="508" y="792" class="subtle body">输入消息...</text>
+  <rect x="1192" y="767" width="104" height="40" rx="12" fill="#2f80ed"/>
+  <text x="1244" y="792" text-anchor="middle" fill="#ffffff" class="buttonText">发送</text>
+  <rect x="1308" y="767" width="38" height="40" rx="12" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="1327" y="792" text-anchor="middle" class="muted buttonText">+</text>
+
+  <rect x="500" y="210" width="520" height="458" rx="18" fill="#ffffff" stroke="#cbd5e1" filter="url(#shadow)"/>
+  <text x="532" y="252" class="text h2">添加联系人</text>
+  <text x="532" y="280" class="muted small">添加好友、主人或奴隶。这里不配置 SDKAppID。</text>
+  <text x="532" y="326" class="muted small">关系类型</text>
+  <rect x="532" y="342" width="424" height="42" rx="12" fill="#f1f5f9"/>
+  <rect x="540" y="350" width="120" height="26" rx="9" fill="#ffffff" stroke="#dbe5f1"/>
+  <text x="600" y="368" text-anchor="middle" class="text small">好友</text>
+  <rect x="672" y="350" width="120" height="26" rx="9" fill="#e8f2ff" stroke="#bfdbfe"/>
+  <text x="732" y="368" text-anchor="middle" fill="#2563eb" class="chipText">主人</text>
+  <rect x="804" y="350" width="120" height="26" rx="9" fill="#ffffff" stroke="#dbe5f1"/>
+  <text x="864" y="368" text-anchor="middle" class="text small">奴隶</text>
+
+  <text x="532" y="426" class="muted small">UserID</text>
+  <rect x="532" y="442" width="424" height="42" rx="11" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="552" y="469" class="mono" font-size="13">multi_ai_code_master_01</text>
+  <text x="532" y="516" class="muted small">昵称 / 备注</text>
+  <rect x="532" y="532" width="424" height="42" rx="11" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="552" y="559" class="text body">主控电脑</text>
+  <rect x="532" y="604" width="178" height="34" rx="17" fill="#dcfce7"/>
+  <text x="621" y="626" text-anchor="middle" fill="#15803d" class="chipText">允许控制当前 AICLI</text>
+  <rect x="784" y="602" width="82" height="38" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="825" y="626" text-anchor="middle" class="muted buttonText">取消</text>
+  <rect x="878" y="602" width="78" height="38" rx="12" fill="#2f80ed"/>
+  <text x="917" y="626" text-anchor="middle" fill="#ffffff" class="buttonText">添加</text>
+</svg>

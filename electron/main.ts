@@ -101,10 +101,17 @@ import {
   pasteRepoAnalysisInput
 } from './repo-view/repoAnalysisManager.js'
 import { ensureAnalysisCacheDir } from './repo-view/analysisCache.js'
+import { getRemoteImRuntimeProfileId, resolveRemoteImUserDataPath } from './remote-im/profile.js'
 
 const isDev = !app.isPackaged
 const repoViewWindows = new Map<string, BrowserWindow>()
 const appIconPath = join(__dirname, '../../build/icon-256.png')
+const remoteImRuntimeProfileId = getRemoteImRuntimeProfileId()
+
+app.setPath(
+  'userData',
+  resolveRemoteImUserDataPath(app.getPath('userData'), remoteImRuntimeProfileId)
+)
 
 interface AppSettings {
   screenshotShortcutEnabled: boolean

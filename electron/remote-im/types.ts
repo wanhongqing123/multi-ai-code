@@ -1,14 +1,41 @@
 export type RemoteImProvider = 'tencent-im'
+export type RemoteImDesktopRole = 'master' | 'slave'
+export type RemoteImContactRelation = 'friend' | 'master' | 'slave'
 
 export interface RemoteImConfig {
   enabled: boolean
   provider: RemoteImProvider
   sdkAppId: number | null
   desktopUserId: string
+  desktopRole: RemoteImDesktopRole
+  userSigMode: 'endpoint' | 'secret-key'
   userSigEndpoint: string
+  userSigSecretKey: string
+  friendUserIds: string[]
+  masterUserIds: string[]
+  slaveUserIds: string[]
   allowedUserIds: string[]
   outputFlushIntervalMs: number
   outputMaxChunkChars: number
+}
+
+export interface RemoteImAccountConfig {
+  provider: RemoteImProvider
+  sdkAppId: number | null
+  desktopUserId: string
+  desktopRole: RemoteImDesktopRole
+  userSigMode: 'endpoint' | 'secret-key'
+  userSigEndpoint: string
+  userSigSecretKey: string
+  friendUserIds: string[]
+  masterUserIds: string[]
+  slaveUserIds: string[]
+  allowedUserIds: string[]
+}
+
+export interface RemoteImLoginState {
+  profileId: string | null
+  account: RemoteImAccountConfig
 }
 
 export type RemoteImConnectionState =
@@ -60,6 +87,28 @@ export interface RemoteImIncomingTextMessage {
   toUserId?: string | null
   text: string
   createdAt?: number
+}
+
+export interface RemoteImRuntimeLogEntryInput {
+  projectId?: string | null
+  sdkAppId?: number | null
+  desktopUserId?: string | null
+  peerUserId?: string | null
+  messageId?: number | null
+  event: string
+  detail?: unknown
+  createdAt?: number
+}
+
+export interface RemoteImRuntimeLogEntry {
+  projectId: string | null
+  sdkAppId: number | null
+  desktopUserId: string | null
+  peerUserId: string | null
+  messageId: number | null
+  event: string
+  detail: unknown
+  createdAt: number
 }
 
 export interface RemoteImValidationIssue {

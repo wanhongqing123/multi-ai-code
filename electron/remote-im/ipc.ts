@@ -7,32 +7,57 @@ import {
   getActiveSessionForProject,
   sendUserMessageToSession
 } from '../cc/ptyManager.js'
-import { projectDir } from '../store/paths.js'
+import { projectDir, rootDir } from '../store/paths.js'
 import { readProjectMetaFile, writeProjectMetaFile, type ProjectMeta } from '../store/projectMeta.js'
-import { DEFAULT_REMOTE_IM_CONFIG, normalizeRemoteImConfig, validateRemoteImConfig } from './config.js'
+import {
+  DEFAULT_REMOTE_IM_CONFIG,
+  normalizeRemoteImConfig,
+  toRemoteImProjectConfig,
+  validateRemoteImConfig
+} from './config.js'
+import {
+  mergeRemoteImAccountIntoConfig,
+  normalizeRemoteImAccountConfig,
+  readRemoteImAccountConfig,
+  writeRemoteImAccountConfig
+} from './account.js'
 import {
   clearRemoteImMessages,
   createRemoteImMessage,
+  failRemoteImMessageIfStreaming,
   listRemoteImMessages,
   updateRemoteImMessageStatus
 } from './messageStore.js'
-import { createOutputChunks } from './outputBuffer.js'
+import {
+  completeRemoteImOutputSession,
+  flushRemoteImOutputSession,
+  type RemoteImOutputCompletionInfo,
+  type RemoteImOutputSessionState
+} from './outputForwarding.js'
+import { createPeerOutgoingMessageInput, resolvePeerUserId } from './peerMessage.js'
+import { getRemoteImAccountProfileId, getRemoteImProfileId } from './profile.js'
 import { createRemoteImRouter } from './router.js'
-import type { RemoteImConfig, RemoteImIncomingTextMessage, RemoteImStatus } from './types.js'
+import { appendRemoteImRuntimeLog } from './runtimeLog.js'
+import {
+  createRemoteImAccountChangedStatuses,
+  getRemoteImSendConnectionError
+} from './status.js'
+import type {
+  RemoteImAccountConfig,
+  RemoteImConfig,
+  RemoteImIncomingTextMessage,
+  RemoteImRuntimeLogEntryInput,
+  RemoteImLoginState,
+  RemoteImStatus
+} from './types.js'
 
 const REMOTE_IM_META_KEY = 'remote_im_config'
+const DEFAULT_REMOTE_IM_PROFILE_ID = 'default'
+const OUTGOING_DELIVERY_ACK_TIMEOUT_MS = 17_000
 
 const statuses = new Map<string, RemoteImStatus>()
-const outputSessions = new Map<
-  string,
-  {
-    projectId: string
-    toUserId: string
-    config: RemoteImConfig
-    buffer: string
-    timer: NodeJS.Timeout | null
-  }
->()
+const outputSessions = new Map<string, RemoteImOutputSessionState>()
+let activeRemoteImAccountProfileId: string | null = getRemoteImProfileId()
 
 function broadcast(channel: string, payload: unknown): void {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -45,12 +70,35 @@ function broadcastStatus(status: RemoteImStatus): void {
   broadcast('remote-im:status', status)
 }
 
+function resetRemoteImStatusesAfterAccountChange(): void {
+  for (const status of createRemoteImAccountChangedStatuses(statuses.values())) {
+    broadcastStatus(status)
+  }
+}
+
 function broadcastMessagesChanged(projectId: string | null): void {
   broadcast('remote-im:messages-changed', { projectId })
 }
 
-function broadcastOutgoingText(projectId: string, toUserId: string, text: string): void {
-  broadcast('remote-im:outgoing-text', { projectId, toUserId, text })
+function broadcastOutgoingText(
+  projectId: string,
+  toUserId: string,
+  text: string,
+  messageId?: number
+): void {
+  broadcast('remote-im:outgoing-text', { projectId, toUserId, text, messageId })
+}
+
+function scheduleOutgoingDeliveryAckTimeout(projectId: string, messageId: number): void {
+  setTimeout(() => {
+    const updated = failRemoteImMessageIfStreaming(
+      messageId,
+      'Remote IM sender window did not confirm delivery'
+    )
+    if (updated?.status === 'failed') {
+      broadcastMessagesChanged(projectId)
+    }
+  }, OUTGOING_DELIVERY_ACK_TIMEOUT_MS)
 }
 
 async function readProjectMeta(projectId: string): Promise<{ meta: ProjectMeta; repaired: boolean }> {
@@ -72,7 +120,57 @@ async function writeProjectMeta(projectId: string, meta: ProjectMeta): Promise<v
 
 async function getRemoteImConfig(projectId: string): Promise<RemoteImConfig> {
   const { meta } = await readProjectMeta(projectId)
-  return normalizeRemoteImConfig(meta[REMOTE_IM_META_KEY])
+  const projectConfig = normalizeRemoteImConfig(meta[REMOTE_IM_META_KEY])
+  const account = await getRemoteImAccountForProject(projectConfig)
+  return mergeRemoteImAccountIntoConfig(projectConfig, account)
+}
+
+async function getRemoteImAccountForProject(
+  projectConfig?: RemoteImConfig
+): Promise<RemoteImAccountConfig> {
+  const profileId = getCurrentRemoteImAccountProfileId()
+  if (profileId) {
+    const account = await readRemoteImAccountConfig(remoteImAccountDir(profileId))
+    if (
+      account.desktopUserId ||
+      account.sdkAppId ||
+      account.userSigEndpoint ||
+      account.userSigSecretKey
+    ) {
+      return account
+    }
+  }
+  return normalizeRemoteImAccountConfig(projectConfig)
+}
+
+async function getRemoteImLoginState(): Promise<RemoteImLoginState> {
+  const profileId = getCurrentRemoteImAccountProfileId()
+  return {
+    profileId,
+    account: profileId
+      ? await readRemoteImAccountConfig(remoteImAccountDir(profileId))
+      : normalizeRemoteImAccountConfig(null)
+  }
+}
+
+async function getRemoteImAccountByUserId(userId: string): Promise<RemoteImLoginState | null> {
+  const profileId = getRemoteImAccountProfileId(userId)
+  if (!profileId) return null
+  const account = await readRemoteImAccountConfig(remoteImAccountDir(profileId))
+  return account.desktopUserId
+    ? {
+        profileId,
+        account
+      }
+    : null
+}
+
+function getCurrentRemoteImAccountProfileId(): string | null {
+  return activeRemoteImAccountProfileId ?? getRemoteImProfileId()
+}
+
+function remoteImAccountDir(profileId: string): string {
+  return join(rootDir(), 'remote-im-profiles', profileId)
 }
 
 async function setRemoteImConfig(
@@ -82,7 +180,7 @@ async function setRemoteImConfig(
   | { ok: true; value: RemoteImConfig; repaired?: true }
   | { ok: false; error: string; details?: Array<{ path: string; message: string }> }
 > {
-  const config = normalizeRemoteImConfig(rawConfig)
+  const config = toRemoteImProjectConfig(normalizeRemoteImConfig(rawConfig))
   const validation = validateRemoteImConfig(config)
   if (!validation.ok) {
     return {
@@ -98,6 +196,10 @@ async function setRemoteImConfig(
   const { meta, repaired } = await readProjectMeta(projectId)
   meta[REMOTE_IM_META_KEY] = config
   await writeProjectMeta(projectId, meta)
+  const mergedConfig = mergeRemoteImAccountIntoConfig(
+    config,
+    await getRemoteImAccountForProject(config)
+  )
   const state = config.enabled ? 'disconnected' : 'disabled'
   broadcastStatus({
     projectId,
@@ -105,7 +207,7 @@ async function setRemoteImConfig(
     detail: null,
     updatedAt: Date.now()
   })
-  return { ok: true, value: config, ...(repaired ? { repaired: true as const } : {}) }
+  return { ok: true, value: mergedConfig, ...(repaired ? { repaired: true as const } : {}) }
 }
 
 async function getRemoteImStatus(projectId: string): Promise<RemoteImStatus> {
@@ -139,34 +241,35 @@ function startOutputForwarding(sessionId: string, projectId: string, toUserId: s
 
 function flushOutputSession(sessionId: string): void {
   const state = outputSessions.get(sessionId)
-  if (!state || !state.buffer.trim()) return
-  const buffer = state.buffer
-  state.buffer = ''
-  if (state.timer) {
-    clearTimeout(state.timer)
-    state.timer = null
-  }
-  const chunks = createOutputChunks(buffer, {
-    maxChunkChars: state.config.outputMaxChunkChars
+  if (!state) return
+  flushRemoteImOutputSession(sessionId, state, {
+    createMessage: (input) => {
+      createRemoteImMessage(input)
+    },
+    sendText: broadcastOutgoingText,
+    messagesChanged: broadcastMessagesChanged
   })
-  for (const chunk of chunks) {
-    createRemoteImMessage({
-      projectId: state.projectId,
-      sessionId,
-      provider: 'tencent-im',
-      remoteMessageId: null,
-      fromUserId: null,
-      toUserId: state.toUserId,
-      role: 'aicli',
-      direction: 'outgoing',
-      content: chunk,
-      status: 'sent-to-im',
-      createdAt: Date.now(),
-      sentToImAt: Date.now()
-    })
-    broadcastOutgoingText(state.projectId, state.toUserId, chunk)
-  }
-  if (chunks.length > 0) broadcastMessagesChanged(state.projectId)
+}
+
+function completeOutputSession(
+  sessionId: string,
+  info: RemoteImOutputCompletionInfo = {}
+): void {
+  const state = outputSessions.get(sessionId)
+  if (!state) return
+  completeRemoteImOutputSession(
+    sessionId,
+    state,
+    {
+      createMessage: (input) => {
+        createRemoteImMessage(input)
+      },
+      sendText: broadcastOutgoingText,
+      messagesChanged: broadcastMessagesChanged
+    },
+    info
+  )
+  outputSessions.delete(sessionId)
 }
 
 function scheduleOutputFlush(sessionId: string): void {
@@ -186,9 +289,8 @@ function ensureSessionListeners(): void {
     state.buffer += chunk
     scheduleOutputFlush(sessionId)
   })
-  addSessionExitListener(({ sessionId }) => {
-    flushOutputSession(sessionId)
-    outputSessions.delete(sessionId)
+  addSessionExitListener(({ sessionId, exitCode, signal }) => {
+    completeOutputSession(sessionId, { exitCode, signal })
   })
 }
 
@@ -202,6 +304,53 @@ export function registerRemoteImIpc(): void {
       return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
     }
   })
+
+  ipcMain.handle('remote-im:get-login-state', async () => {
+    try {
+      return { ok: true as const, value: await getRemoteImLoginState() }
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  ipcMain.handle(
+    'remote-im:get-account-by-user-id',
+    async (_event, { userId }: { userId: string }) => {
+      try {
+        return { ok: true as const, value: await getRemoteImAccountByUserId(userId) }
+      } catch (err) {
+        return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'remote-im:set-account',
+    async (_event, { account }: { account: RemoteImAccountConfig }) => {
+      try {
+        const normalizedAccount = normalizeRemoteImAccountConfig(account)
+        const profileId =
+          getRemoteImAccountProfileId(normalizedAccount.desktopUserId) ??
+          getRemoteImProfileId() ??
+          DEFAULT_REMOTE_IM_PROFILE_ID
+        activeRemoteImAccountProfileId = profileId
+        const value = await writeRemoteImAccountConfig(
+          remoteImAccountDir(profileId),
+          normalizedAccount
+        )
+        resetRemoteImStatusesAfterAccountChange()
+        return {
+          ok: true as const,
+          value: {
+            profileId,
+            account: value
+          }
+        }
+      } catch (err) {
+        return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+      }
+    }
+  )
 
   ipcMain.handle(
     'remote-im:set-config',
@@ -244,6 +393,46 @@ export function registerRemoteImIpc(): void {
   )
 
   ipcMain.handle(
+    'remote-im:mark-outgoing-message-sent',
+    (_event, { projectId, messageId }: { projectId: string; messageId: number }) => {
+      updateRemoteImMessageStatus(messageId, {
+        status: 'sent-to-im',
+        error: null,
+        sentToImAt: Date.now()
+      })
+      broadcastMessagesChanged(projectId)
+      return { ok: true as const }
+    }
+  )
+
+  ipcMain.handle(
+    'remote-im:mark-outgoing-message-failed',
+    (
+      _event,
+      { projectId, messageId, error }: { projectId: string; messageId: number; error: string }
+    ) => {
+      updateRemoteImMessageStatus(messageId, {
+        status: 'failed',
+        error: error || 'failed to send IM message'
+      })
+      broadcastMessagesChanged(projectId)
+      return { ok: true as const }
+    }
+  )
+
+  ipcMain.handle(
+    'remote-im:write-runtime-log',
+    async (_event, { entry }: { entry: RemoteImRuntimeLogEntryInput }) => {
+      try {
+        await appendRemoteImRuntimeLog(rootDir(), entry)
+        return { ok: true as const }
+      } catch (err) {
+        return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+      }
+    }
+  )
+
+  ipcMain.handle(
     'remote-im:deliver-incoming-text',
     async (_event, message: RemoteImIncomingTextMessage) => {
       const config = await getRemoteImConfig(message.projectId)
@@ -266,8 +455,8 @@ export function registerRemoteImIpc(): void {
         }
       })
       const result = await router.handleIncomingText(message)
-      if (result.ok && session) {
-        startOutputForwarding(session.sessionId, message.projectId, message.fromUserId, config)
+      if (result.ok && result.aicliSessionId) {
+        startOutputForwarding(result.aicliSessionId, message.projectId, message.fromUserId, config)
       }
       broadcastMessagesChanged(message.projectId)
       return result
@@ -295,6 +484,47 @@ export function registerRemoteImIpc(): void {
         broadcastMessagesChanged(projectId)
       }
       return result
+    }
+  )
+
+  ipcMain.handle(
+    'remote-im:send-peer-message',
+    async (
+      _event,
+      { projectId, text, toUserId }: { projectId: string; text: string; toUserId?: string | null }
+    ) => {
+      const config = await getRemoteImConfig(projectId)
+      if (!config.enabled) return { ok: false as const, error: 'remote IM disabled' }
+      const cleanText = text.trim()
+      if (!cleanText) return { ok: false as const, error: 'empty message' }
+      if (config.desktopRole === 'slave') {
+        return {
+          ok: false as const,
+          error: 'slave nodes cannot initiate Remote IM messages'
+        }
+      }
+      const peerUserId = resolvePeerUserId(config, toUserId)
+      if (!peerUserId) {
+        return { ok: false as const, error: 'No remote IM peer UserID configured' }
+      }
+      const connectionError = getRemoteImSendConnectionError(await getRemoteImStatus(projectId))
+      if (connectionError) {
+        return { ok: false as const, error: connectionError }
+      }
+
+      const message = createRemoteImMessage(
+        createPeerOutgoingMessageInput({
+          projectId,
+          config,
+          toUserId: peerUserId,
+          text: cleanText,
+          now: Date.now()
+        })
+      )
+      broadcastOutgoingText(projectId, peerUserId, cleanText, message.id)
+      scheduleOutgoingDeliveryAckTimeout(projectId, message.id)
+      broadcastMessagesChanged(projectId)
+      return { ok: true as const, toUserId: peerUserId }
     }
   )
 }

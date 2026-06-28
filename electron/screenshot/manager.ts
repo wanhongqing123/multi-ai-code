@@ -8,6 +8,7 @@ import { promises as fs } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { randomBytes } from 'crypto'
+import { chooseScreenshotPngBytes } from './exportImage.js'
 
 /**
  * Screenshot pipeline:
@@ -37,6 +38,7 @@ interface OverlayPayload {
 interface EditorPayload {
   imageDataUrl: string
   size: { w: number; h: number }
+  source: Electron.NativeImage
 }
 
 interface ScreenshotSession {
@@ -291,7 +293,8 @@ export function registerScreenshotIpc(): void {
       const cropped = s.overlayPayload.source.crop(physRect)
       s.editorPayload = {
         imageDataUrl: cropped.toDataURL(),
-        size: { w: physRect.width, h: physRect.height }
+        size: { w: physRect.width, h: physRect.height },
+        source: cropped
       }
       // Drop the overlay window now; we're done with the full screen.
       try {
@@ -315,7 +318,10 @@ export function registerScreenshotIpc(): void {
     if (!s || !s.editorPayload) return { ok: false as const, error: 'no session' }
     return {
       ok: true as const,
-      payload: s.editorPayload
+      payload: {
+        imageDataUrl: s.editorPayload.imageDataUrl,
+        size: s.editorPayload.size
+      }
     }
   })
 
@@ -328,15 +334,21 @@ export function registerScreenshotIpc(): void {
     'screenshot:editor-send',
     async (
       _e,
-      req: { token: string; pngBytes: Uint8Array | ArrayBuffer; prompt: string }
+      req: {
+        token: string
+        pngBytes?: Uint8Array | ArrayBuffer | null
+        useOriginal?: boolean
+        prompt: string
+      }
     ) => {
       const s = sessions.get(req.token)
-      if (!s) return { ok: false as const, error: 'no session' }
+      if (!s || !s.editorPayload) return { ok: false as const, error: 'no session' }
       try {
-        const bytes =
-          req.pngBytes instanceof Uint8Array
-            ? req.pngBytes
-            : new Uint8Array(req.pngBytes)
+        const bytes = chooseScreenshotPngBytes({
+          pngBytes: req.pngBytes,
+          useOriginal: req.useOriginal === true,
+          source: s.editorPayload.source
+        })
         const path = await saveAnnotatedImage(bytes)
         deliverToMainWindow(path, req.prompt ?? '')
         // Cleanly close the editor window.
@@ -359,4 +371,3 @@ export function registerScreenshotIpc(): void {
     return { ok: true as const }
   })
 }
-

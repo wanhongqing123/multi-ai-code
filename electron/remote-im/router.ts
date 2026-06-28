@@ -3,6 +3,12 @@ import type {
   RemoteImIncomingTextMessage,
   RemoteImMessage
 } from './types.js'
+import {
+  isRemoteImOperationFinishedText,
+  parseRemoteImAicliOutputText
+} from './outputForwarding.js'
+import { buildRemoteImAicliPrompt } from './replyProtocol.js'
+import { canRouteRemoteImTaskFrom, getRemoteImPeerRelation } from './rolePermissions.js'
 
 export interface RemoteImSessionInfo {
   sessionId: string
@@ -26,13 +32,36 @@ export interface RemoteImRouterDeps {
 export interface RemoteImRouteResult {
   ok: boolean
   error?: string
+  aicliSessionId?: string
+}
+
+const REMOTE_IM_SYSTEM_TEXTS = new Set([
+  '没有远程控制权限。',
+  '奴隶节点不能主动发起任务。',
+  '奴隶节点不能互相通信。',
+  '消息为空，未发送给 AICLI。',
+  '当前没有运行中的 AICLI。',
+  '已发送给当前 AICLI，开始处理。'
+])
+
+function isLikelyNestedRemoteImOutput(text: string): boolean {
+  return text.includes('[来自远程 IM：') || text.includes('[来自远程IM：')
+}
+
+function isRemoteImSystemText(text: string): boolean {
+  return (
+    REMOTE_IM_SYSTEM_TEXTS.has(text) ||
+    text.startsWith('发送给 AICLI 失败：') ||
+    isRemoteImOperationFinishedText(text)
+  )
 }
 
 function createIncomingRecord(
   message: RemoteImIncomingTextMessage,
   status: RemoteImMessage['status'],
   error: string | null,
-  now: number
+  now: number,
+  role: RemoteImMessage['role'] = 'remote-user'
 ): Omit<RemoteImMessage, 'id'> {
   return {
     projectId: message.projectId,
@@ -41,7 +70,7 @@ function createIncomingRecord(
     remoteMessageId: message.remoteMessageId ?? null,
     fromUserId: message.fromUserId,
     toUserId: message.toUserId ?? null,
-    role: 'remote-user',
+    role,
     direction: 'incoming',
     content: message.text,
     status,
@@ -113,16 +142,76 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       return { ok: false, error: 'remote IM disabled' }
     }
 
-    if (!config.allowedUserIds.includes(fromUserId)) {
-      deps.store.create(createIncomingRecord(message, 'rejected', 'sender not allowed', now))
-      await sendSystemText(deps, message.projectId, fromUserId, '没有远程控制权限。')
-      return { ok: false, error: `sender ${fromUserId} is not allowed` }
+    const peerRelation = getRemoteImPeerRelation(config, fromUserId)
+    if (!peerRelation || (config.desktopRole === 'slave' && peerRelation === 'slave')) {
+      const isSlaveToSlave = peerRelation === 'slave'
+      deps.store.create(
+        createIncomingRecord(
+          message,
+          'rejected',
+          isSlaveToSlave ? 'slave-to-slave blocked' : 'sender not allowed',
+          now
+        )
+      )
+      await sendSystemText(
+        deps,
+        message.projectId,
+        fromUserId,
+        isSlaveToSlave ? '奴隶节点不能互相通信。' : '没有远程控制权限。'
+      )
+      return {
+        ok: false,
+        error: isSlaveToSlave
+          ? 'slave nodes cannot route tasks to each other'
+          : `sender ${fromUserId} is not allowed`
+      }
+    }
+
+    if (isRemoteImSystemText(text)) {
+      deps.store.create(createIncomingRecord(message, 'received', null, now))
+      return { ok: true }
+    }
+
+    const remoteAicliOutput = parseRemoteImAicliOutputText(text)
+    if (remoteAicliOutput !== null) {
+      deps.store.create(
+        createIncomingRecord(
+          {
+            ...message,
+            text: remoteAicliOutput
+          },
+          'received',
+          null,
+          now,
+          'aicli'
+        )
+      )
+      return { ok: true }
+    }
+
+    if (isLikelyNestedRemoteImOutput(text)) {
+      deps.store.create(createIncomingRecord(message, 'received', null, now, 'aicli'))
+      return { ok: true }
+    }
+
+    if (peerRelation === 'friend') {
+      deps.store.create(createIncomingRecord(message, 'received', null, now))
+      return { ok: true }
     }
 
     if (!text) {
       deps.store.create(createIncomingRecord(message, 'rejected', 'empty message', now))
       await sendSystemText(deps, message.projectId, fromUserId, '消息为空，未发送给 AICLI。')
       return { ok: false, error: 'empty message' }
+    }
+
+    const routePermission = canRouteRemoteImTaskFrom(config, fromUserId)
+    if (!routePermission.ok) {
+      deps.store.create(
+        createIncomingRecord(message, 'rejected', 'slave cannot initiate task', now)
+      )
+      await sendSystemText(deps, message.projectId, fromUserId, '奴隶节点不能主动发起任务。')
+      return { ok: false, error: 'slave nodes cannot initiate tasks' }
     }
 
     const session = deps.resolveSession(message.projectId)
@@ -136,7 +225,7 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       return { ok: false, error: 'No running AICLI session' }
     }
 
-    const wrapped = `[来自远程 IM：${fromUserId}]\n${text}`
+    const wrapped = buildRemoteImAicliPrompt({ fromUserId, text })
     const sendResult = await deps.sendUser(session.sessionId, wrapped)
     if (!sendResult.ok) {
       const error = sendResult.error ?? 'failed to send message to AICLI'
@@ -155,7 +244,7 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       error: null
     })
     await sendSystemText(deps, message.projectId, fromUserId, '已发送给当前 AICLI，开始处理。')
-    return { ok: true }
+    return { ok: true, aicliSessionId: session.sessionId }
   }
 
   return {

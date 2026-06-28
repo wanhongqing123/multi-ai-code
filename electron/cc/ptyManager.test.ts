@@ -162,6 +162,12 @@ describe('registerPtyIpc prompt injection timing', () => {
     expect(buildSystemPromptMock).not.toHaveBeenCalled()
   }, 10_000)
 
+  it('starts embedded Claude sessions with the default TUI renderer', async () => {
+    const { proc } = await spawnNoPlanSession()
+
+    expect(proc.opts.args).toEqual(['--settings', JSON.stringify({ tui: 'default' })])
+  })
+
   it('only exposes task-watch sessions to the scheduled task scheduler', async () => {
     await spawnClaudeSession()
     const ptyManager = (await import('./ptyManager.js')) as typeof import('./ptyManager.js') & {

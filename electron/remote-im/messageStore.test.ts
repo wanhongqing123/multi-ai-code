@@ -93,8 +93,9 @@ function createFakeDatabase(): RemoteImDatabase {
           all: (projectId: unknown, limit: unknown) =>
             rows
               .filter((row) => row.project_id === projectId)
-              .sort((left, right) => left.created_at - right.created_at || left.id - right.id)
+              .sort((left, right) => right.created_at - left.created_at || right.id - left.id)
               .slice(0, Number(limit))
+              .sort((left, right) => left.created_at - right.created_at || left.id - right.id)
         }
       }
       throw new Error(`Unexpected SQL: ${sql}`)
@@ -153,6 +154,43 @@ describe('remote IM message store', () => {
     ])
   })
 
+  it('lists the latest messages when the project has more rows than the limit', () => {
+    const store = createRemoteImMessageStore(createFakeDatabase())
+    const first = store.create({
+      projectId: 'project-1',
+      provider: 'tencent-im',
+      role: 'remote-user',
+      direction: 'incoming',
+      content: 'oldest',
+      status: 'received',
+      createdAt: 100
+    })
+    const second = store.create({
+      projectId: 'project-1',
+      provider: 'tencent-im',
+      role: 'remote-user',
+      direction: 'incoming',
+      content: 'middle',
+      status: 'received',
+      createdAt: 200
+    })
+    const third = store.create({
+      projectId: 'project-1',
+      provider: 'tencent-im',
+      role: 'remote-user',
+      direction: 'incoming',
+      content: 'newest',
+      status: 'received',
+      createdAt: 300
+    })
+
+    expect(first.id).toBeGreaterThan(0)
+    expect(store.list('project-1', 2).map((message) => message.id)).toEqual([
+      second.id,
+      third.id
+    ])
+  })
+
   it('updates message status and clears project messages', () => {
     const store = createRemoteImMessageStore(createFakeDatabase())
     const message = store.create({
@@ -183,5 +221,35 @@ describe('remote IM message store', () => {
 
     store.clear('project-1')
     expect(store.list('project-1', 20)).toEqual([])
+  })
+
+  it('fails an outgoing message only while it is still streaming', () => {
+    const store = createRemoteImMessageStore(createFakeDatabase())
+    const message = store.create({
+      projectId: 'project-1',
+      provider: 'tencent-im',
+      role: 'remote-user',
+      direction: 'outgoing',
+      content: 'hello',
+      status: 'streaming',
+      createdAt: 200
+    })
+
+    expect(store.failIfStreaming(message.id, 'not confirmed')).toMatchObject({
+      id: message.id,
+      status: 'failed',
+      error: 'not confirmed'
+    })
+
+    store.updateStatus(message.id, {
+      status: 'sent-to-im',
+      error: null,
+      sentToImAt: 300
+    })
+    expect(store.failIfStreaming(message.id, 'late timeout')).toMatchObject({
+      id: message.id,
+      status: 'sent-to-im',
+      error: null
+    })
   })
 })

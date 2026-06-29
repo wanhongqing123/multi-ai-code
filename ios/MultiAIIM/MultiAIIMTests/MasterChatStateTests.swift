@@ -91,6 +91,38 @@ final class MasterChatStateTests: XCTestCase {
         )
     }
 
+    func testDefaultCredentialMatchesDesktopPreset() {
+        XCTAssertEqual(RemoteIMCredentialDefaults.sdkAppID, 1_400_704_311)
+        XCTAssertEqual(
+            RemoteIMCredentialDefaults.userSigSecretKey,
+            "8b897045d1ee4f067a745b1b6a3fb834d1bd4c5951de43282c21b945f98ec982"
+        )
+    }
+
+    func testDefaultCredentialFillsMissingCredentialPartsAsAPair() {
+        XCTAssertEqual(
+            RemoteIMCredentialDefaults.resolvedCredential(sdkAppID: nil, secretKey: ""),
+            RemoteIMCredential(
+                sdkAppID: RemoteIMCredentialDefaults.sdkAppID,
+                userSigSecretKey: RemoteIMCredentialDefaults.userSigSecretKey
+            )
+        )
+        XCTAssertEqual(
+            RemoteIMCredentialDefaults.resolvedCredential(sdkAppID: 123, secretKey: ""),
+            RemoteIMCredential(
+                sdkAppID: RemoteIMCredentialDefaults.sdkAppID,
+                userSigSecretKey: RemoteIMCredentialDefaults.userSigSecretKey
+            )
+        )
+    }
+
+    func testDefaultCredentialKeepsCompleteCustomCredential() {
+        XCTAssertEqual(
+            RemoteIMCredentialDefaults.resolvedCredential(sdkAppID: 123, secretKey: "custom-secret"),
+            RemoteIMCredential(sdkAppID: 123, userSigSecretKey: "custom-secret")
+        )
+    }
+
     func testRejectsBlankSlaveAndBlankOutgoingMessage() {
         var state = MasterChatState(ownerUserID: "ios-master")
 

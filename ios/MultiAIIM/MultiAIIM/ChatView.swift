@@ -42,7 +42,7 @@ private struct HeaderView: View {
                 Text("远程 IM")
                     .font(.system(size: 21, weight: .bold))
                     .foregroundStyle(RemoteIMStyle.textPrimary)
-                Text(appState.masterUserID.isEmpty ? "未设置主人 UserID" : appState.masterUserID)
+                Text(appState.masterUserID.isEmpty ? "未设置 UserID" : appState.masterUserID)
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
                     .foregroundStyle(RemoteIMStyle.textSecondary)
                     .lineLimit(1)
@@ -353,7 +353,9 @@ private struct MessageBubbleView: View {
                         .foregroundStyle(RemoteIMStyle.textPrimary)
                         .lineLimit(1)
                         .truncationMode(.middle)
-                    RelationBadge(text: relationText)
+                    if let relationText {
+                        RelationBadge(text: relationText)
+                    }
                     Text(message.createdAt.formatted(date: .omitted, time: .shortened))
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(RemoteIMStyle.textSecondary)
@@ -401,8 +403,8 @@ private struct MessageBubbleView: View {
         message.text.contains("|") || message.text.contains("```") || message.text.count > 400
     }
 
-    private var relationText: String {
-        message.direction == .outgoing ? "主人" : incomingRelation.displayName
+    private var relationText: String? {
+        message.direction == .outgoing ? nil : incomingRelation.displayName
     }
 
     private var bubbleBackground: Color {

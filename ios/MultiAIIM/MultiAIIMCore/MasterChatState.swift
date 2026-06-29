@@ -42,6 +42,32 @@ public enum RemoteIMDraftSubmitPolicy {
     }
 }
 
+public struct RemoteIMCredential: Equatable {
+    public let sdkAppID: Int
+    public let userSigSecretKey: String
+
+    public init(sdkAppID: Int, userSigSecretKey: String) {
+        self.sdkAppID = sdkAppID
+        self.userSigSecretKey = userSigSecretKey
+    }
+}
+
+public enum RemoteIMCredentialDefaults {
+    public static let sdkAppID = 1_400_704_311
+    public static let userSigSecretKey = "8b897045d1ee4f067a745b1b6a3fb834d1bd4c5951de43282c21b945f98ec982"
+
+    public static func resolvedCredential(sdkAppID: Int?, secretKey: String) -> RemoteIMCredential {
+        let cleanSecretKey = secretKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let sdkAppID, sdkAppID > 0, !cleanSecretKey.isEmpty else {
+            return RemoteIMCredential(
+                sdkAppID: Self.sdkAppID,
+                userSigSecretKey: Self.userSigSecretKey
+            )
+        }
+        return RemoteIMCredential(sdkAppID: sdkAppID, userSigSecretKey: cleanSecretKey)
+    }
+}
+
 public struct RemoteIMContact: Identifiable, Equatable, Hashable {
     public var id: String { userID }
     public let userID: String

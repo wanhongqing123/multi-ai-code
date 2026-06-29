@@ -37,6 +37,7 @@ final class RemoteIMAppState: ObservableObject {
 
         var settings = settingsStore.load()
         var loadedSecretKey = secretStore.readSecretKey()
+        Self.applyCredentialDefaults(settings: &settings, secretKey: &loadedSecretKey)
         self.autoConnectOnLaunch = Self.applyDebugLaunchOverrides(
             settings: &settings,
             secretKey: &loadedSecretKey
@@ -188,6 +189,18 @@ final class RemoteIMAppState: ObservableObject {
             )
         }
         chatState = nextState
+    }
+
+    private static func applyCredentialDefaults(
+        settings: inout StoredRemoteIMSettings,
+        secretKey: inout String
+    ) {
+        let credential = RemoteIMCredentialDefaults.resolvedCredential(
+            sdkAppID: settings.sdkAppID,
+            secretKey: secretKey
+        )
+        settings.sdkAppID = credential.sdkAppID
+        secretKey = credential.userSigSecretKey
     }
 
     private static func applyDebugLaunchOverrides(

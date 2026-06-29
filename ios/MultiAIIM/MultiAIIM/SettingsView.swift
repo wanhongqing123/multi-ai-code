@@ -9,7 +9,7 @@ struct SettingsView: View {
                 Section("Tencent IM") {
                     TextField("SDKAppID", text: $appState.sdkAppIDText)
                         .keyboardType(.numberPad)
-                    TextField("主人 UserID", text: $appState.masterUserID)
+                    TextField("UserID", text: $appState.masterUserID)
                         .textInputAutocapitalization(.never)
                     SecureField("UserSig SecretKey", text: $appState.secretKey)
                         .textInputAutocapitalization(.never)

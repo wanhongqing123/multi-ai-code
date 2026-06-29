@@ -11,6 +11,7 @@ function render(
       phase={{ kind: 'idle' }}
       command="claude"
       planName="项目后续规划"
+      workMode="normal-task"
       onChoose={vi.fn()}
       onDismissFailure={vi.fn()}
       {...overrides}
@@ -21,10 +22,18 @@ function render(
 describe('MainBootGate', () => {
   it('idle: renders two enabled choice buttons', () => {
     const html = render()
-    expect(html).toContain('新会话')
-    expect(html).toContain('继续上次')
+    expect(html).toContain('新普通任务会话')
+    expect(html).toContain('继续普通任务')
     // No failure block when idle.
     expect(html).not.toContain('boot-gate-failure')
+  })
+
+  it('idle in scheduled-task mode: makes the resume target explicit', () => {
+    const html = render({ workMode: 'scheduled-task', planName: '定时任务' })
+    expect(html).toContain('当前模式：')
+    expect(html).toContain('定时任务')
+    expect(html).toContain('新定时任务会话')
+    expect(html).toContain('继续定时任务')
   })
 
   it('spawning-new: marks the new button as in-progress and disables both', () => {
@@ -63,8 +72,8 @@ describe('MainBootGate', () => {
 
   it('unknown CLI: disables the resume button (only claude/codex supported)', () => {
     const html = render({ command: 'gemini' })
-    // The "继续上次" button should be present but disabled.
-    expect(html).toContain('继续上次')
+    // The resume button should be present but disabled.
+    expect(html).toContain('继续普通任务')
     expect(html).toContain('当前 CLI 不支持续聊')
   })
 

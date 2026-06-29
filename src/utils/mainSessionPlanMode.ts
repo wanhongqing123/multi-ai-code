@@ -10,6 +10,6 @@ export function formatMainSessionPlanLabel(
   noPlanMode: boolean,
   planName: string
 ): string {
-  if (noPlanMode) return '任务值守模式'
+  if (noPlanMode) return '定时任务'
   return planName.trim() || '(未选择方案)'
 }

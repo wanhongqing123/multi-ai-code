@@ -1263,7 +1263,7 @@ function AppShell() {
   /**
    * Kill the current main session (if any) and return the UI to the boot
    * gate. Differs from handleRestart in that it does not auto-spawn — the
-   * user is expected to pick "新会话 / 继续上次" again from the gate.
+   * user is expected to pick a new/resume action again from the gate.
    */
   const handleResetMainSession = useCallback(async () => {
     if (mainPanelMounted && sessionStatus === 'running') {
@@ -1438,7 +1438,7 @@ function AppShell() {
       return
     }
     if (noPlanMode) {
-      showToast('任务值守模式下暂不支持代码审查批注，请先切换到方案设计模式。', { level: 'warn' })
+      showToast('定时任务下暂不支持代码审查批注，请先切换到普通任务。', { level: 'warn' })
       return
     }
     setDiffReviewOpen(true)
@@ -1514,7 +1514,7 @@ function AppShell() {
         return
       }
       if (noPlanMode) {
-        showToast('任务值守模式下没有方案文件，无法发送代码审查批注。', { level: 'warn' })
+        showToast('定时任务下没有方案文件，无法发送代码审查批注。', { level: 'warn' })
         return
       }
       const planAbsPath = getPlanAbsPath(planName.trim())
@@ -1754,10 +1754,10 @@ function AppShell() {
               sessionStatus === 'running'
                 ? '运行中无法切换模式，请先停止'
                 : isTaskWatchMode
-                  ? '当前：任务值守模式，点击切换到方案设计模式'
-                  : '当前：方案设计模式，点击切换到任务值守模式'
+                  ? '当前：定时任务，点击切换到普通任务'
+                  : '当前：普通任务，点击切换到定时任务'
             }
-            aria-label={isTaskWatchMode ? '切换到方案设计模式' : '切换到任务值守模式'}
+            aria-label={isTaskWatchMode ? '切换到普通任务' : '切换到定时任务'}
             aria-pressed={isTaskWatchMode}
           >
             {isTaskWatchMode ? '⏰' : '📋'}
@@ -1921,6 +1921,7 @@ function AppShell() {
             <MainBootGate
               phase={gatePhase}
               command={aiSettings.command ?? aiSettings.ai_cli ?? 'claude'}
+              workMode={isTaskWatchMode ? 'scheduled-task' : 'normal-task'}
               planName={mainSessionPlanLabel}
               disabled={!canStartCurrentMainSession}
               onChoose={(mode) => void handleStart(mode)}

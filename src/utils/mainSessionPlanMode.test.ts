@@ -14,8 +14,8 @@ describe('main session plan mode', () => {
     expect(canStartMainSession('project-1', false, ' fix-crash ')).toBe(true)
   })
 
-  it('uses task-watch wording for no-plan session starts', () => {
-    expect(formatMainSessionPlanLabel(true, '')).toBe('\u4efb\u52a1\u503c\u5b88\u6a21\u5f0f')
+  it('uses scheduled-task wording for no-plan session starts', () => {
+    expect(formatMainSessionPlanLabel(true, '')).toBe('\u5b9a\u65f6\u4efb\u52a1')
     expect(formatMainSessionPlanLabel(false, ' fix-crash ')).toBe('fix-crash')
     expect(formatMainSessionPlanLabel(false, '')).toBe('(\u672a\u9009\u62e9\u65b9\u6848)')
   })

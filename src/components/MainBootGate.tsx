@@ -9,10 +9,14 @@ export type BootGatePhase =
   | { kind: 'spawning'; mode: 'new' | 'resume' }
   | { kind: 'failed'; reason: string; tail?: string }
 
+export type BootGateWorkMode = 'normal-task' | 'scheduled-task'
+
 export interface MainBootGateProps {
   phase: BootGatePhase
   /** Current CLI binary name (claude / codex / other custom). */
   command: string
+  /** User-facing work mode selected for this session start. */
+  workMode: BootGateWorkMode
   /** Plan name shown alongside the gate to mirror MainPanel's chrome. */
   planName: string
   /** Whether user can interact (false when no project / no plan). */
@@ -30,11 +34,20 @@ function describeCli(command: string): string {
 }
 
 export default function MainBootGate(props: MainBootGateProps): JSX.Element {
-  const { phase, command, planName, disabled = false, onChoose, onDismissFailure } = props
+  const {
+    phase,
+    command,
+    workMode,
+    planName,
+    disabled = false,
+    onChoose,
+    onDismissFailure
+  } = props
   const [showTail, setShowTail] = useState(false)
 
   const spawning = phase.kind === 'spawning'
   const spawningMode = phase.kind === 'spawning' ? phase.mode : null
+  const workModeLabel = workMode === 'scheduled-task' ? '定时任务' : '普通任务'
 
   return (
     <div className="main-panel">
@@ -49,7 +62,7 @@ export default function MainBootGate(props: MainBootGateProps): JSX.Element {
         <div className="boot-gate-card">
           <div className="boot-gate-title">选择本次主会话启动方式</div>
           <div className="boot-gate-subtitle">
-            当前 CLI：<b>{describeCli(command)}</b>
+            当前模式：<b>{workModeLabel}</b> · 当前 CLI：<b>{describeCli(command)}</b>
           </div>
 
           {phase.kind === 'failed' && (
@@ -84,7 +97,7 @@ export default function MainBootGate(props: MainBootGateProps): JSX.Element {
               disabled={disabled || spawning}
               autoFocus
             >
-              {spawningMode === 'new' ? '正在启动…' : '新会话'}
+              {spawningMode === 'new' ? '正在启动…' : `新${workModeLabel}会话`}
             </button>
             <button
               className="tile-btn boot-gate-btn"
@@ -92,11 +105,11 @@ export default function MainBootGate(props: MainBootGateProps): JSX.Element {
               disabled={disabled || spawning || command !== 'claude' && command !== 'codex'}
               title={
                 command === 'claude' || command === 'codex'
-                  ? '继续上次该项目下的对话（由 CLI 自身回放历史）'
+                  ? `继续上次${workModeLabel}会话（由 CLI 自身回放历史）`
                   : '当前 CLI 不支持续聊'
               }
             >
-              {spawningMode === 'resume' ? '正在续聊…' : '继续上次'}
+              {spawningMode === 'resume' ? '正在续聊…' : `继续${workModeLabel}`}
             </button>
           </div>
 

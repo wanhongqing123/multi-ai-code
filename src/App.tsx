@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getTheme, toggleTheme } from './utils/theme.js'
 import {
-  formatInitialMessage,
   formatAnnotationsForSession,
   planNameToFilename
 } from './utils/session-message-format'
@@ -34,7 +33,11 @@ import TemplatesDialog from './components/TemplatesDialog'
 import SkillGraphDialog from './habit/SkillGraphDialog'
 import SkillStudioDialog from './habit/SkillStudioDialog'
 import ScheduledTaskDialog from './scheduled-tasks/ScheduledTaskDialog'
-import NormalTaskDialog from './normal-tasks/NormalTaskDialog'
+import NormalTaskDialog, {
+  type NormalTaskEntry,
+  type NormalTaskMetadataDraft
+} from './normal-tasks/NormalTaskDialog'
+import { buildNormalTaskRunPrompt } from './normal-tasks/normalTaskPrompt'
 import RemoteImDrawer from './remote-im/RemoteImDrawer'
 import RemoteImClientHost from './remote-im/RemoteImClientHost'
 import RemoteImLoginDialog, {
@@ -142,6 +145,19 @@ function appendRuntimeLog(current: string, chunk: string): string {
   const next = current + chunk
   if (next.length <= BUILD_LOG_LIMIT) return next
   return `...[runtime log truncated]...\n${next.slice(-BUILD_LOG_LIMIT)}`
+}
+
+function verifyNormalTaskMetadataSaved(
+  items: NormalTaskEntry[],
+  name: string,
+  metadata: NormalTaskMetadataDraft
+): boolean {
+  const saved = items.find((item) => item.name === name)
+  if (!saved) return false
+  return (
+    (saved.description ?? '').trim() === metadata.description.trim() &&
+    (saved.details ?? '').trim() === metadata.details.trim()
+  )
 }
 
 function parseHabitFlowAction(flow: HabitFlowRow): string | null {
@@ -312,9 +328,7 @@ function AppShell() {
   const [stageConfigs, setStageConfigs] = useState<
     Record<string, { command?: string; args?: string[]; env?: Record<string, string>; skip?: boolean }>
   >({})
-  const [planList, setPlanList] = useState<
-    { name: string; abs: string; source: 'internal' | 'external' }[]
-  >([])
+  const [planList, setPlanList] = useState<NormalTaskEntry[]>([])
   const [msysEnabled, setMsysEnabled] = useState(false)
   // Plan-review state. When set, PlanReviewDialog renders the current
   // in-progress plan md; user annotates and the annotations get sent back to
@@ -632,7 +646,7 @@ function AppShell() {
   // planName (after switching projects or after the backend auto-prunes
   // a dead external mapping) without reading planName directly.
   const applyPlanList = useCallback(
-    (items: { name: string; abs: string; source: 'internal' | 'external' }[]) => {
+    (items: NormalTaskEntry[]) => {
       setPlanList(items)
       const currentNames = new Set(items.map((p) => p.name))
       setPlanName((prev) => {
@@ -919,18 +933,6 @@ function AppShell() {
       return
     }
     setGatePhase({ kind: 'spawning', mode })
-    const hasPlan = !noPlanMode
-    const normalizedPlanName = hasPlan ? planName.trim() : ''
-    const planAbsPath = hasPlan ? getPlanAbsPath(normalizedPlanName) : undefined
-    const planExists = hasPlan && planList.some((p) => p.name === normalizedPlanName)
-    const initialUserMessage =
-      hasPlan && planAbsPath
-        ? formatInitialMessage({
-            planName: normalizedPlanName,
-            planAbsPath,
-            planExists
-          })
-        : undefined
     const command = aiSettings.command ?? aiSettings.ai_cli ?? 'claude'
     const args = buildCliLaunchArgs(
       aiSettings.ai_cli ?? 'claude',
@@ -947,12 +949,12 @@ function AppShell() {
       projectId: currentProjectId,
       projectDir: pDir,
       targetRepo: proj.target_repo,
-      planName: normalizedPlanName,
-      planMode: hasPlan ? 'plan' : 'none',
-      planAbsPath,
-      planPending: hasPlan ? !planExists : false,
+      planName: '',
+      planMode: 'none',
+      planAbsPath: undefined,
+      planPending: false,
       allowScheduledTasks: isTaskWatchMode,
-      initialUserMessage,
+      initialUserMessage: undefined,
       command,
       args,
       env: aiSettings.env ?? {},
@@ -970,7 +972,7 @@ function AppShell() {
     if (isTaskWatchMode) {
       void window.api.scheduledTasks.scanNow(currentProjectId)
     }
-  }, [currentProjectId, noPlanMode, isTaskWatchMode, planName, planList, projects, aiSettings, aiSettingsReady, aiSettingsLoadError, getPlanAbsPath])
+  }, [currentProjectId, noPlanMode, isTaskWatchMode, planName, projects, aiSettings, aiSettingsReady, aiSettingsLoadError])
 
   const handleStop = useCallback(async () => {
     if (!sessionId) return
@@ -1271,46 +1273,144 @@ function AppShell() {
     [workMode, sessionStatus]
   )
 
-  const selectNormalTask = useCallback(
-    (name: string) => {
-      const currentValue = planName
-      if (name !== currentValue && sessionStatus === 'running') {
-        alert('会话正在运行，请先停止（Kill）后再切换普通任务。')
+  const runNormalTask = useCallback(
+    async (task: NormalTaskEntry): Promise<void> => {
+      if (!sessionId || sessionStatus !== 'running') {
+        showToast('请先启动 AICLI', { level: 'warn' })
         return
       }
-      if (name !== currentValue) {
+      if (!targetRepo) {
+        showToast('当前项目未设置 target_repo', { level: 'warn' })
+        return
+      }
+      if (task.name !== planName) {
         setDiffAnnotations([])
         setDiffGeneralNote('')
         setPlanReview(null)
+        setPlanName(task.name)
       }
-      setPlanName(name)
+
+      const prompt = buildNormalTaskRunPrompt(task, targetRepo)
+      const sendResult = await window.api.cc.sendUser(sessionId, prompt)
+      if (!sendResult.ok) {
+        showToast(sendResult.error ?? '发送普通任务失败', { level: 'error' })
+        return
+      }
+
+      showToast(`已发送普通任务「${task.name}」到 AICLI`, { level: 'success' })
     },
-    [planName, sessionStatus]
+    [planName, sessionId, sessionStatus, targetRepo]
+  )
+
+  const persistNormalTaskMetadata = useCallback(
+    async (
+      name: string,
+      metadata: NormalTaskMetadataDraft
+    ): Promise<{ ok: true } | { ok: false; error: string }> => {
+      if (!projectDir) return { ok: false, error: '请先打开一个项目' }
+      const request = {
+        projectDir,
+        name,
+        description: metadata.description,
+        details: metadata.details
+      }
+      if (typeof window.api.plan.updateMetadata === 'function') {
+        try {
+          return await window.api.plan.updateMetadata(request)
+        } catch (err: unknown) {
+          const fallback = await window.api.plan.updateDescription(request)
+          if (fallback.ok) return fallback
+          return {
+            ok: false,
+            error: err instanceof Error ? err.message : String(err)
+          }
+        }
+      }
+      return await window.api.plan.updateDescription(request)
+    },
+    [projectDir]
   )
 
   const createNormalTask = useCallback(
-    async (name: string) => {
+    async (name: string, description = '', details = ''): Promise<NormalTaskEntry | null> => {
       if (!projectDir) {
         showToast('请先打开一个项目', { level: 'warn' })
-        return
-      }
-      if (sessionStatus === 'running') {
-        showToast('会话正在运行，请先停止（Kill）后再新建普通任务。', { level: 'warn' })
-        return
+        return null
       }
       const result = await window.api.plan.createInternal({ projectDir, name })
       if (!result.ok) {
         showToast(result.error, { level: 'error' })
-        return
+        return null
       }
-      await refreshPlanList()
+      const created: NormalTaskEntry = {
+        name: result.name,
+        abs: result.abs,
+        source: 'internal'
+      }
+      const nextDescription = description.trim()
+      const nextDetails = details.trim()
+      if (nextDescription || nextDetails) {
+        const metadataResult = await persistNormalTaskMetadata(result.name, {
+          description: nextDescription,
+          details: nextDetails
+        })
+        if (metadataResult.ok) {
+          if (nextDescription) created.description = nextDescription
+          if (nextDetails) created.details = nextDetails
+        } else {
+          showToast(metadataResult.error, { level: 'error' })
+        }
+      }
+      knownPlanNamesRef.current.add(created.name)
+      setPlanList((current) =>
+        [...current.filter((task) => task.name !== created.name), created].sort((a, b) =>
+          a.name.localeCompare(b.name)
+        )
+      )
+      void refreshPlanList()
       setPlanName(result.name)
       setDiffAnnotations([])
       setDiffGeneralNote('')
       setPlanReview(null)
       showToast(`已创建普通任务「${result.name}」`, { level: 'success' })
+      return created
     },
-    [projectDir, refreshPlanList, sessionStatus]
+    [persistNormalTaskMetadata, projectDir, refreshPlanList]
+  )
+
+  const saveNormalTaskMetadata = useCallback(
+    async (name: string, metadata: NormalTaskMetadataDraft): Promise<boolean> => {
+      if (!projectDir) {
+        showToast('请先打开一个项目', { level: 'warn' })
+        return false
+      }
+      const result = await persistNormalTaskMetadata(name, metadata)
+      if (!result.ok) {
+        showToast(result.error, { level: 'error' })
+        return false
+      }
+      const nextDescription = metadata.description.trim()
+      const nextDetails = metadata.details.trim()
+      const refreshed = await refreshPlanList()
+      if (!verifyNormalTaskMetadataSaved(refreshed, name, metadata)) {
+        showToast('普通任务详情没有写入，请重启应用后重试。', { level: 'error' })
+        return false
+      }
+      setPlanList((current) =>
+        current.map((task) =>
+          task.name === name
+            ? {
+                ...task,
+                description: nextDescription || undefined,
+                details: nextDetails || undefined
+              }
+            : task
+        )
+      )
+      showToast('已保存普通任务信息', { level: 'success' })
+      return true
+    },
+    [persistNormalTaskMetadata, projectDir, refreshPlanList]
   )
 
   /** Load the current plan md and open the review + annotation dialog. */
@@ -1736,6 +1836,16 @@ function AppShell() {
                   普通任务
                 </button>
               )}
+              {isPlanDesignMode && planName.trim() && (
+                <button
+                  className="topbar-btn"
+                  onClick={() => void openPlanReview()}
+                  disabled={!currentProjectId}
+                  title="查看 / 标注当前普通任务的方案文档"
+                >
+                  方案预览
+                </button>
+              )}
               {isTaskWatchMode && (
                 <button
                   className="topbar-btn"
@@ -1946,8 +2056,9 @@ function AppShell() {
           selectedName={planName}
           sessionRunning={sessionStatus === 'running'}
           onCreate={createNormalTask}
-          onSelect={selectNormalTask}
+          onRun={runNormalTask}
           onPreview={(name) => void openPlanReview(name)}
+          onSaveMetadata={saveNormalTaskMetadata}
           onRefresh={async () => {
             await refreshPlanList()
           }}

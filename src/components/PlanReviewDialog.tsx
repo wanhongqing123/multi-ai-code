@@ -151,7 +151,7 @@ export default function PlanReviewDialog({
     !submitting && (annotations.length > 0 || generalNote.trim().length > 0)
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop plan-review-backdrop" onClick={onClose}>
       <div
         className="modal plan-review-modal"
         onClick={(e) => e.stopPropagation()}

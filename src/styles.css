@@ -3210,6 +3210,9 @@ html, body, #root {
   z-index: 1000;
   animation: mac-fade-in var(--mac-dur-fast) var(--mac-ease);
 }
+.plan-review-backdrop {
+  z-index: 1300;
+}
 
 :root.theme-dark .modal-backdrop {
   background: rgba(0, 0, 0, 0.6);
@@ -7762,6 +7765,55 @@ html, body, #root {
 .normal-task-name-input {
   min-width: 240px;
   margin-left: 0;
+}
+.normal-task-description-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 0 16px;
+}
+.normal-task-description-label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  color: var(--mac-fg, #111);
+  font-size: 13px;
+  font-weight: 700;
+}
+.normal-task-description-input {
+  width: 100%;
+  min-height: 110px;
+  border: 1px solid var(--mac-border-subtle, #dcdfe6);
+  border-radius: 12px;
+  background: var(--mac-surface, #fafafa);
+  color: var(--mac-fg, #111);
+  font-family: var(--mac-font-sans);
+  font-size: 13px;
+  line-height: 1.6;
+  padding: 10px 12px;
+  resize: vertical;
+}
+.normal-task-details-input {
+  min-height: 180px;
+}
+.normal-task-description-summary {
+  border: 1px solid var(--mac-border-subtle, #dcdfe6);
+  border-radius: 12px;
+  background: var(--mac-surface, #fafafa);
+  color: var(--mac-fg, #111);
+  font-size: 13px;
+  line-height: 1.6;
+  padding: 10px 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.normal-task-details {
+  min-height: 96px;
+}
+.normal-task-description-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 .scheduled-task-grid {
   display: grid;

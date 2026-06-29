@@ -2,7 +2,13 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { promises as fs } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { createInternalPlan, listPlans, registerExternalPlan } from './plans.js'
+import {
+  createInternalPlan,
+  listPlans,
+  registerExternalPlan,
+  updatePlanMetadata,
+  updatePlanDescription
+} from './plans.js'
 
 describe('listPlans', () => {
   let projectDir: string
@@ -303,6 +309,70 @@ describe('createInternalPlan', () => {
         source: 'internal'
       }
     ])
+  })
+
+  it('persists normal task descriptions in project metadata', async () => {
+    const created = await createInternalPlan(projectDir, 'Fix login flow')
+    expect(created.ok).toBe(true)
+
+    const updated = await updatePlanDescription(
+      projectDir,
+      'Fix_login_flow',
+      '## 登录修复\n\n- 补充重试策略'
+    )
+
+    expect(updated.ok).toBe(true)
+    const items = await listPlans(projectDir)
+    expect(items.find((item) => item.name === 'Fix_login_flow')?.description).toBe(
+      '## 登录修复\n\n- 补充重试策略'
+    )
+
+    const meta = JSON.parse(await fs.readFile(join(projectDir, 'project.json'), 'utf8'))
+    expect(meta.normal_task_descriptions.Fix_login_flow).toBe(
+      '## 登录修复\n\n- 补充重试策略'
+    )
+  })
+
+  it('persists normal task description and details independently', async () => {
+    const created = await createInternalPlan(projectDir, 'Fix login flow')
+    expect(created.ok).toBe(true)
+
+    const updated = await updatePlanMetadata(projectDir, 'Fix_login_flow', {
+      description: 'Login retry summary',
+      details: '## Login retry details\n\n- Keep the session alive'
+    })
+
+    expect(updated.ok).toBe(true)
+    const items = await listPlans(projectDir)
+    expect(items.find((item) => item.name === 'Fix_login_flow')).toMatchObject({
+      description: 'Login retry summary',
+      details: '## Login retry details\n\n- Keep the session alive'
+    })
+
+    const meta = JSON.parse(await fs.readFile(join(projectDir, 'project.json'), 'utf8'))
+    expect(meta.normal_task_descriptions.Fix_login_flow).toBe('Login retry summary')
+    expect(meta.normal_task_details.Fix_login_flow).toBe(
+      '## Login retry details\n\n- Keep the session alive'
+    )
+  })
+
+  it('allows the legacy description updater to persist details for preload compatibility', async () => {
+    const created = await createInternalPlan(projectDir, 'Fix login flow')
+    expect(created.ok).toBe(true)
+
+    const updated = await updatePlanDescription(
+      projectDir,
+      'Fix_login_flow',
+      'Legacy summary',
+      'Legacy detail body'
+    )
+
+    expect(updated.ok).toBe(true)
+    const items = await listPlans(projectDir)
+    expect(items.find((item) => item.name === 'Fix_login_flow')).toMatchObject({
+      description: 'Legacy summary',
+      details: 'Legacy detail body'
+    })
   })
 
   it('rejects duplicate internal normal task names', async () => {

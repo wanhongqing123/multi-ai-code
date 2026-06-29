@@ -82,6 +82,7 @@ describe('App habit monitor integration', () => {
     const controlRowIndex = source.indexOf('className="workspace-control-row"', planBarIndex)
     const actionsIndex = source.indexOf('className="workspace-control-actions"', controlRowIndex)
     const normalTaskIndex = source.indexOf('setShowNormalTaskDialog(true)', actionsIndex)
+    const planPreviewIndex = source.indexOf('方案预览', actionsIndex)
     const scheduledTaskIndex = source.indexOf('setShowScheduledTaskDialog(true)', actionsIndex)
     const buildIndex = source.indexOf('setShowBuildPanel(true)', actionsIndex)
     const runIndex = source.indexOf('handleStartRuntime()', actionsIndex)
@@ -90,6 +91,8 @@ describe('App habit monitor integration', () => {
     expect(controlRowIndex).toBeGreaterThan(planBarIndex)
     expect(actionsIndex).toBeGreaterThan(controlRowIndex)
     expect(normalTaskIndex).toBeGreaterThan(actionsIndex)
+    expect(planPreviewIndex).toBeGreaterThan(actionsIndex)
+    expect(planPreviewIndex).toBeLessThan(scheduledTaskIndex)
     expect(scheduledTaskIndex).toBeGreaterThan(actionsIndex)
     expect(buildIndex).toBeGreaterThan(actionsIndex)
     expect(runIndex).toBeGreaterThan(actionsIndex)
@@ -109,8 +112,58 @@ describe('App habit monitor integration', () => {
     expect(source).toContain('className="topbar-btn mode-toggle-btn"')
     expect(source).toContain('className="plan-toolbar-actions"')
     expect(source).toContain('setShowNormalTaskDialog(true)')
+    expect(source).toContain('方案预览')
     expect(source).not.toContain('className="plan-design-main"')
     expect(source).not.toContain('className="plan-design-actions"')
+  })
+
+  it('raises plan review above normal task management overlays', () => {
+    const dialogSource = readFileSync(
+      fileURLToPath(new URL('./components/PlanReviewDialog.tsx', import.meta.url)),
+      'utf8'
+    )
+    const styles = readFileSync(fileURLToPath(new URL('./styles.css', import.meta.url)), 'utf8')
+
+    expect(dialogSource).toContain('modal-backdrop plan-review-backdrop')
+    expect(styles).toContain('.plan-review-backdrop')
+  })
+
+  it('does not inject normal task content when starting the main session', () => {
+    const source = readFileSync(fileURLToPath(new URL('./App.tsx', import.meta.url)), 'utf8')
+
+    expect(source).toContain("planName: ''")
+    expect(source).toContain("planMode: 'none'")
+    expect(source).toContain('planAbsPath: undefined')
+    expect(source).toContain('planPending: false')
+    expect(source).toContain('initialUserMessage: undefined')
+    expect(source).not.toContain('formatInitialMessage')
+  })
+
+  it('runs normal tasks by sending the task prompt to the current AICLI session', () => {
+    const source = readFileSync(fileURLToPath(new URL('./App.tsx', import.meta.url)), 'utf8')
+
+    expect(source).toContain('buildNormalTaskRunPrompt')
+    expect(source).toContain("showToast('请先启动 AICLI'")
+    expect(source).toContain('const prompt = buildNormalTaskRunPrompt(task, targetRepo)')
+    expect(source).toContain('window.api.cc.sendUser(sessionId, prompt)')
+    expect(source).toContain('onRun={runNormalTask}')
+    expect(source).not.toContain('onSelect={selectNormalTask}')
+  })
+
+  it('wires normal task metadata saves through the plan api', () => {
+    const source = readFileSync(fileURLToPath(new URL('./App.tsx', import.meta.url)), 'utf8')
+
+    expect(source).toContain('window.api.plan.updateMetadata')
+    expect(source).toContain('onSaveMetadata={saveNormalTaskMetadata}')
+  })
+
+  it('verifies normal task metadata persisted before closing the editor', () => {
+    const source = readFileSync(fileURLToPath(new URL('./App.tsx', import.meta.url)), 'utf8')
+
+    expect(source).toContain('verifyNormalTaskMetadataSaved')
+    expect(source).toContain('typeof window.api.plan.updateMetadata ===')
+    expect(source).toContain('window.api.plan.updateDescription')
+    expect(source).toContain('普通任务详情没有写入')
   })
 
   it('renders a preload-missing fallback instead of crashing when opened outside Electron', async () => {

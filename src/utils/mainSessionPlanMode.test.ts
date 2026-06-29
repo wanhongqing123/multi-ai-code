@@ -9,8 +9,8 @@ describe('main session plan mode', () => {
     expect(canStartMainSession('project-1', true, '')).toBe(true)
   })
 
-  it('still requires a plan name outside no-plan mode', () => {
-    expect(canStartMainSession('project-1', false, '')).toBe(false)
+  it('allows starting normal task mode without selecting a task', () => {
+    expect(canStartMainSession('project-1', false, '')).toBe(true)
     expect(canStartMainSession('project-1', false, ' fix-crash ')).toBe(true)
   })
 

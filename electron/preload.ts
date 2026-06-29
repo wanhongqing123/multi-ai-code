@@ -1187,7 +1187,13 @@ const api = {
     list: (projectDir: string) =>
       ipcRenderer.invoke('plan:list', { projectDir }) as Promise<{
         ok: boolean
-        items: { name: string; abs: string; source: 'internal' | 'external' }[]
+        items: {
+          name: string
+          abs: string
+          source: 'internal' | 'external'
+          description?: string
+          details?: string
+        }[]
         error?: string
       }>,
     createInternal: (req: { projectDir: string; name: string }) =>
@@ -1199,6 +1205,24 @@ const api = {
       ipcRenderer.invoke('plan:registerExternal', req) as Promise<
         | { ok: true; name: string }
         | { ok: false; error: string }
+      >,
+    updateDescription: (req: {
+      projectDir: string
+      name: string
+      description: string
+      details?: string
+    }) =>
+      ipcRenderer.invoke('plan:updateDescription', req) as Promise<
+        { ok: true } | { ok: false; error: string }
+      >,
+    updateMetadata: (req: {
+      projectDir: string
+      name: string
+      description: string
+      details: string
+    }) =>
+      ipcRenderer.invoke('plan:updateMetadata', req) as Promise<
+        { ok: true } | { ok: false; error: string }
       >,
     removeExternal: (req: { projectDir: string; name: string }) =>
       ipcRenderer.invoke('plan:removeExternal', req) as Promise<

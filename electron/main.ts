@@ -53,7 +53,9 @@ import {
   createInternalPlan,
   listPlans,
   registerExternalPlan,
-  removeExternalPlan
+  removeExternalPlan,
+  updatePlanDescription,
+  updatePlanMetadata
 } from './orchestrator/plans.js'
 import { detectMsys, buildOpenMsysTerminalCommand } from './util/msys.js'
 import { normalizePathForCompare } from './util/pathCompare.js'
@@ -338,6 +340,44 @@ app.whenReady().then(async () => {
     async (_e, { projectDir, name }: { projectDir: string; name: string }) => {
       try {
         return await createInternalPlan(projectDir, name)
+      } catch (err) {
+        return { ok: false as const, error: (err as Error).message }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'plan:updateDescription',
+    async (
+      _e,
+      {
+        projectDir,
+        name,
+        description,
+        details
+      }: { projectDir: string; name: string; description: string; details?: string }
+    ) => {
+      try {
+        return await updatePlanDescription(projectDir, name, description, details)
+      } catch (err) {
+        return { ok: false as const, error: (err as Error).message }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'plan:updateMetadata',
+    async (
+      _e,
+      {
+        projectDir,
+        name,
+        description,
+        details
+      }: { projectDir: string; name: string; description: string; details: string }
+    ) => {
+      try {
+        return await updatePlanMetadata(projectDir, name, { description, details })
       } catch (err) {
         return { ok: false as const, error: (err as Error).message }
       }

@@ -10,11 +10,20 @@ export interface PlanEntry {
   name: string
   abs: string
   source: 'internal' | 'external'
+  description?: string
+  details?: string
 }
 
 interface ProjectMeta {
   target_repo?: string
   plan_sources?: Record<string, string>
+  normal_task_descriptions?: Record<string, string>
+  normal_task_details?: Record<string, string>
+}
+
+export interface NormalTaskMetadata {
+  description: string
+  details: string
 }
 
 async function readMeta(projectDir: string): Promise<ProjectMeta> {
@@ -30,6 +39,42 @@ async function readMeta(projectDir: string): Promise<ProjectMeta> {
 // System/auto-generated files that live alongside design md files but are
 // not user plans.
 const RESERVED_DESIGN_NAMES = new Set<string>(['claude', 'codex', 'agents'])
+
+function normalizeDescriptionMap(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const out: Record<string, string> = {}
+  for (const [key, description] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof description === 'string') out[key] = description
+  }
+  return out
+}
+
+function descriptionFor(
+  descriptions: Record<string, string>,
+  name: string
+): string | undefined {
+  const description = descriptions[name]
+  return description?.trim() ? description : undefined
+}
+
+function updateMetadataMap(
+  meta: Record<string, unknown>,
+  key: 'normal_task_descriptions' | 'normal_task_details',
+  name: string,
+  value: string
+): void {
+  const prev = normalizeDescriptionMap(meta[key])
+  const next = { ...prev }
+  const trimmed = value.trim()
+
+  if (trimmed) {
+    next[name] = trimmed
+  } else {
+    delete next[name]
+  }
+
+  meta[key] = next
+}
 
 async function readDesignNames(targetRepo: string): Promise<string[]> {
   const dir = join(targetRepo, '.multi-ai-code', 'designs')
@@ -48,6 +93,8 @@ export async function listPlans(projectDir: string): Promise<PlanEntry[]> {
   const meta = await readMeta(projectDir)
   const targetRepo = meta.target_repo
   const planSources = meta.plan_sources ?? {}
+  const descriptions = normalizeDescriptionMap(meta.normal_task_descriptions)
+  const details = normalizeDescriptionMap(meta.normal_task_details)
 
   // Filter out dead external mappings. The user may have moved or deleted
   // the original file since registering it. Hide them in the UI and prune
@@ -57,7 +104,13 @@ export async function listPlans(projectDir: string): Promise<PlanEntry[]> {
   for (const [name, abs] of Object.entries(planSources)) {
     try {
       await fs.access(abs)
-      externalEntries.push({ name, abs, source: 'external' })
+      externalEntries.push({
+        name,
+        abs,
+        source: 'external',
+        description: descriptionFor(descriptions, name),
+        details: descriptionFor(details, name)
+      })
     } catch {
       deadNames.push(name)
     }
@@ -75,7 +128,9 @@ export async function listPlans(projectDir: string): Promise<PlanEntry[]> {
       internalEntries.push({
         name,
         abs: join(targetRepo, '.multi-ai-code', 'designs', `${name}.md`),
-        source: 'internal'
+        source: 'internal',
+        description: descriptionFor(descriptions, name),
+        details: descriptionFor(details, name)
       })
     }
   }
@@ -115,6 +170,95 @@ export async function createInternalPlan(
   await fs.mkdir(dirname(abs), { recursive: true })
   await fs.writeFile(abs, `# ${displayName}\n\n`, 'utf8')
   return { ok: true, name: safeName, abs }
+}
+
+export async function updatePlanDescription(
+  projectDir: string,
+  name: string,
+  description: string,
+  details?: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (typeof details === 'string') {
+    return updatePlanMetadata(projectDir, name, { description, details })
+  }
+
+  const trimmedName = name.trim()
+  if (!trimmedName) {
+    return { ok: false, error: '任务名不能为空' }
+  }
+
+  try {
+    const existing = await listPlans(projectDir)
+    if (!existing.some((plan) => plan.name === trimmedName)) {
+      return { ok: false, error: `普通任务不存在：${trimmedName}` }
+    }
+
+    const metaPath = join(projectDir, 'project.json')
+    const raw = await fs.readFile(metaPath, 'utf8')
+    const meta = JSON.parse(raw) as Record<string, unknown>
+    const prev = normalizeDescriptionMap(meta.normal_task_descriptions)
+    const next = { ...prev }
+    const nextDescription = description.trim()
+
+    if (nextDescription) {
+      next[trimmedName] = nextDescription
+    } else {
+      delete next[trimmedName]
+    }
+
+    meta.normal_task_descriptions = next
+    meta.updated_at = new Date().toISOString()
+    await fs.writeFile(metaPath, JSON.stringify(meta, null, 2))
+    return { ok: true }
+  } catch (err: unknown) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err)
+    }
+  }
+}
+
+export async function updatePlanMetadata(
+  projectDir: string,
+  name: string,
+  metadata: Partial<NormalTaskMetadata>
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const trimmedName = name.trim()
+  if (!trimmedName) {
+    return { ok: false, error: 'Normal task name cannot be empty' }
+  }
+
+  try {
+    const existing = await listPlans(projectDir)
+    if (!existing.some((plan) => plan.name === trimmedName)) {
+      return { ok: false, error: `Normal task does not exist: ${trimmedName}` }
+    }
+
+    const metaPath = join(projectDir, 'project.json')
+    const raw = await fs.readFile(metaPath, 'utf8')
+    const meta = JSON.parse(raw) as Record<string, unknown>
+
+    if (Object.prototype.hasOwnProperty.call(metadata, 'description')) {
+      updateMetadataMap(
+        meta,
+        'normal_task_descriptions',
+        trimmedName,
+        metadata.description ?? ''
+      )
+    }
+    if (Object.prototype.hasOwnProperty.call(metadata, 'details')) {
+      updateMetadataMap(meta, 'normal_task_details', trimmedName, metadata.details ?? '')
+    }
+
+    meta.updated_at = new Date().toISOString()
+    await fs.writeFile(metaPath, JSON.stringify(meta, null, 2))
+    return { ok: true }
+  } catch (err: unknown) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err)
+    }
+  }
 }
 
 // Remove the given names from project.json.plan_sources. Best effort only.

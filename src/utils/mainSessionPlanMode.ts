@@ -1,9 +1,9 @@
 export function canStartMainSession(
   projectId: string | null,
-  noPlanMode: boolean,
-  planName: string
+  _noPlanMode: boolean,
+  _planName: string
 ): boolean {
-  return projectId !== null && (noPlanMode || planName.trim().length > 0)
+  return projectId !== null
 }
 
 export function formatMainSessionPlanLabel(

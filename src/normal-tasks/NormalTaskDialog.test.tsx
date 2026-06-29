@@ -239,6 +239,25 @@ describe('NormalTaskDialog', () => {
     expect(source).toContain('normal-task-description-input scheduled-task-goal-input')
   })
 
+  it('renders run actions in the normal task list instead of the detail header', () => {
+    const source = readFileSync(
+      fileURLToPath(new URL('./NormalTaskDialog.tsx', import.meta.url)),
+      'utf8'
+    )
+
+    const listMapIndex = source.indexOf('filteredTasks.map((task) => (')
+    const listRunIndex = source.indexOf('onClick={() => void onRun(task)}', listMapIndex)
+    const detailHeaderIndex = source.indexOf('<div className="scheduled-task-detail-head">')
+    const detailHeaderEndIndex = source.indexOf('</div>', detailHeaderIndex)
+    const detailHeaderSource = source.slice(detailHeaderIndex, detailHeaderEndIndex)
+
+    expect(listMapIndex).toBeGreaterThan(-1)
+    expect(listRunIndex).toBeGreaterThan(listMapIndex)
+    expect(listRunIndex).toBeLessThan(detailHeaderIndex)
+    expect(source).toContain("data-task-action=\"run\"")
+    expect(detailHeaderSource).not.toContain('onRun')
+  })
+
   it('keeps list selection local until the user explicitly runs a task', () => {
     const source = readFileSync(
       fileURLToPath(new URL('./NormalTaskDialog.tsx', import.meta.url)),
@@ -248,7 +267,7 @@ describe('NormalTaskDialog', () => {
     expect(source).toContain('const [localSelectedName, setLocalSelectedName]')
     expect(source).toContain('setCreatingTask(false)')
     expect(source).toContain('setLocalSelectedName(task.name)')
-    expect(source).toContain('onClick={() => void onRun(selectedTask)}')
+    expect(source).toContain('onClick={() => void onRun(task)}')
     expect(source).not.toContain('onSelect')
   })
 

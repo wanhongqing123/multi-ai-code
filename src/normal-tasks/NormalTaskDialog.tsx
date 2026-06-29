@@ -249,9 +249,20 @@ export default function NormalTaskDialog(props: Props): JSX.Element {
                         <small>{task.abs}</small>
                       </span>
                     </button>
-                    {task.source === 'external' && (
-                      <span className="scheduled-task-card-action">外部方案</span>
-                    )}
+                    <span className="scheduled-task-card-actions">
+                      {task.source === 'external' && (
+                        <span className="scheduled-task-card-action">外部方案</span>
+                      )}
+                      <button
+                        type="button"
+                        className="scheduled-task-card-action"
+                        data-task-action="run"
+                        title={sessionRunning ? '发送普通任务到当前 AICLI' : '请先启动 AICLI'}
+                        onClick={() => void onRun(task)}
+                      >
+                        运行
+                      </button>
+                    </span>
                   </div>
                 ))
               )}
@@ -327,14 +338,6 @@ export default function NormalTaskDialog(props: Props): JSX.Element {
                         disabled={editingMetadata}
                       >
                         编辑
-                      </button>
-                      <button
-                        type="button"
-                        className="drawer-btn primary"
-                        title={sessionRunning ? '发送普通任务到当前 AICLI' : '请先启动 AICLI'}
-                        onClick={() => void onRun(selectedTask)}
-                      >
-                        运行
                       </button>
                       <button
                         type="button"

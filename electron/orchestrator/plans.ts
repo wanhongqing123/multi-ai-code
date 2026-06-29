@@ -1,5 +1,6 @@
 import { promises as fs } from 'fs'
-import { basename, extname, isAbsolute, join } from 'path'
+import { basename, dirname, extname, isAbsolute, join } from 'path'
+import { planArtifactPath } from './prompts.js'
 
 function nameFromMdPath(absPath: string): string {
   return basename(absPath).replace(/\.md$/i, '')
@@ -82,6 +83,38 @@ export async function listPlans(projectDir: string): Promise<PlanEntry[]> {
   return [...internalEntries, ...externalEntries].sort((a, b) =>
     a.name.localeCompare(b.name)
   )
+}
+
+export async function createInternalPlan(
+  projectDir: string,
+  name: string
+): Promise<{ ok: true; name: string; abs: string } | { ok: false; error: string }> {
+  const displayName = name.trim()
+  if (!displayName) {
+    return { ok: false, error: '任务名不能为空' }
+  }
+
+  const meta = await readMeta(projectDir)
+  if (!meta.target_repo) {
+    return { ok: false, error: 'project.json missing target_repo' }
+  }
+
+  const abs = planArtifactPath(displayName, meta.target_repo)
+  if (!abs) {
+    return { ok: false, error: '无法创建普通任务文档路径' }
+  }
+  const safeName = nameFromMdPath(abs)
+
+  try {
+    await fs.access(abs)
+    return { ok: false, error: `普通任务 "${safeName}" 已存在` }
+  } catch {
+    // Missing is the expected path for a new task.
+  }
+
+  await fs.mkdir(dirname(abs), { recursive: true })
+  await fs.writeFile(abs, `# ${displayName}\n\n`, 'utf8')
+  return { ok: true, name: safeName, abs }
 }
 
 // Remove the given names from project.json.plan_sources. Best effort only.

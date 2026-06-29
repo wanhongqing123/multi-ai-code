@@ -7753,6 +7753,16 @@ html, body, #root {
   color: var(--mac-fg, #111);
   padding: 9px 12px;
 }
+.normal-task-create-form {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.normal-task-name-input {
+  min-width: 240px;
+  margin-left: 0;
+}
 .scheduled-task-grid {
   display: grid;
   grid-template-columns: 460px minmax(0, 1fr);

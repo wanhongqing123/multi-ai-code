@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { promises as fs } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { listPlans, registerExternalPlan } from './plans.js'
+import { createInternalPlan, listPlans, registerExternalPlan } from './plans.js'
 
 describe('listPlans', () => {
   let projectDir: string
@@ -265,5 +265,60 @@ describe('registerExternalPlan', () => {
     await fs.rm(existingExt)
     await fs.rm(incomingExt)
     await fs.rm(incomingDir, { recursive: true, force: true })
+  })
+})
+
+describe('createInternalPlan', () => {
+  let projectDir: string
+  let targetRepo: string
+
+  beforeEach(async () => {
+    projectDir = await fs.mkdtemp(join(tmpdir(), 'mac-create-plan-pdir-'))
+    targetRepo = await fs.mkdtemp(join(tmpdir(), 'mac-create-plan-repo-'))
+    await fs.writeFile(
+      join(projectDir, 'project.json'),
+      JSON.stringify({ id: 'p', name: 'p', target_repo: targetRepo })
+    )
+  })
+
+  afterEach(async () => {
+    await fs.rm(projectDir, { recursive: true, force: true })
+    await fs.rm(targetRepo, { recursive: true, force: true })
+  })
+
+  it('creates an internal normal task markdown file and lists it', async () => {
+    const result = await createInternalPlan(projectDir, 'Fix login flow')
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.name).toBe('Fix_login_flow')
+    expect(result.abs).toBe(join(targetRepo, '.multi-ai-code', 'designs', 'Fix_login_flow.md'))
+    expect(await fs.readFile(result.abs, 'utf8')).toContain('# Fix login flow')
+
+    const items = await listPlans(projectDir)
+    expect(items).toEqual([
+      {
+        name: 'Fix_login_flow',
+        abs: result.abs,
+        source: 'internal'
+      }
+    ])
+  })
+
+  it('rejects duplicate internal normal task names', async () => {
+    const first = await createInternalPlan(projectDir, 'Fix login flow')
+    expect(first.ok).toBe(true)
+
+    const second = await createInternalPlan(projectDir, 'Fix login flow')
+
+    expect(second.ok).toBe(false)
+    if (!second.ok) expect(second.error).toContain('已存在')
+  })
+
+  it('rejects blank names', async () => {
+    const result = await createInternalPlan(projectDir, '  ')
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error).toContain('任务名')
   })
 })

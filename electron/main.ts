@@ -50,6 +50,7 @@ import { startScheduler, stopScheduler } from './habit/scheduler.js'
 import { getSkillGenerator, setSkillGenerator } from './habit/generatorRegistry.js'
 import { createDefaultSkillGenerator } from './habit/generator.js'
 import {
+  createInternalPlan,
   listPlans,
   registerExternalPlan,
   removeExternalPlan
@@ -326,6 +327,17 @@ app.whenReady().then(async () => {
     ) => {
       try {
         return await registerExternalPlan(projectDir, externalPath)
+      } catch (err) {
+        return { ok: false as const, error: (err as Error).message }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'plan:createInternal',
+    async (_e, { projectDir, name }: { projectDir: string; name: string }) => {
+      try {
+        return await createInternalPlan(projectDir, name)
       } catch (err) {
         return { ok: false as const, error: (err as Error).message }
       }

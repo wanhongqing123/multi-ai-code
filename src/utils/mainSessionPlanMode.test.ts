@@ -17,6 +17,6 @@ describe('main session plan mode', () => {
   it('uses scheduled-task wording for no-plan session starts', () => {
     expect(formatMainSessionPlanLabel(true, '')).toBe('\u5b9a\u65f6\u4efb\u52a1')
     expect(formatMainSessionPlanLabel(false, ' fix-crash ')).toBe('fix-crash')
-    expect(formatMainSessionPlanLabel(false, '')).toBe('(\u672a\u9009\u62e9\u65b9\u6848)')
+    expect(formatMainSessionPlanLabel(false, '')).toBe('(未选择普通任务)')
   })
 })

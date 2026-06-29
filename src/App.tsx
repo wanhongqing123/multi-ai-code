@@ -34,6 +34,7 @@ import TemplatesDialog from './components/TemplatesDialog'
 import SkillGraphDialog from './habit/SkillGraphDialog'
 import SkillStudioDialog from './habit/SkillStudioDialog'
 import ScheduledTaskDialog from './scheduled-tasks/ScheduledTaskDialog'
+import NormalTaskDialog from './normal-tasks/NormalTaskDialog'
 import RemoteImDrawer from './remote-im/RemoteImDrawer'
 import RemoteImClientHost from './remote-im/RemoteImClientHost'
 import RemoteImLoginDialog, {
@@ -51,7 +52,6 @@ import DoctorDialog from './components/DoctorDialog'
 import CommandPalette, { type Command } from './components/CommandPalette'
 import ToastHost, { showToast } from './components/Toast'
 import GlobalSearchDialog from './components/GlobalSearchDialog'
-import FilePreviewDialog from './components/FilePreviewDialog'
 import PlanReviewDialog, { type Annotation } from './components/PlanReviewDialog'
 import DiffViewerDialog, { type DiffAnnotation } from './components/DiffViewerDialog'
 import type { DiffMode } from './components/diffViewerConfig'
@@ -263,6 +263,7 @@ function AppShell() {
   const [showTemplates, setShowTemplates] = useState(false)
   const [showSkillStudio, setShowSkillStudio] = useState(false)
   const [showSkillGraphStudio, setShowSkillGraphStudio] = useState(false)
+  const [showNormalTaskDialog, setShowNormalTaskDialog] = useState(false)
   const [showScheduledTaskDialog, setShowScheduledTaskDialog] = useState(false)
   const [showRemoteImDrawer, setShowRemoteImDrawer] = useState(false)
   const [showHabitFirstRun, setShowHabitFirstRun] = useState(false)
@@ -315,13 +316,6 @@ function AppShell() {
     { name: string; abs: string; source: 'internal' | 'external' }[]
   >([])
   const [msysEnabled, setMsysEnabled] = useState(false)
-  // Stage-1 external-file preview state. When set, FilePreviewDialog is shown
-  // and the user can confirm/cancel before the content becomes the stage artifact.
-  const [previewImport, setPreviewImport] = useState<{
-    path: string
-    content: string
-    stageId: number
-  } | null>(null)
   // Plan-review state. When set, PlanReviewDialog renders the current
   // in-progress plan md; user annotates and the annotations get sent back to
   // the session CLI so it can revise the plan.
@@ -343,10 +337,6 @@ function AppShell() {
   const [diffSelectedFile, setDiffSelectedFile] = useState('')
   const [buildState, setBuildState] = useState<BuildRuntimeState>(DEFAULT_BUILD_RUNTIME_STATE)
   const [runtimeState, setRuntimeState] = useState<RuntimeState>(DEFAULT_RUNTIME_STATE)
-  // Remember which (project, planName) combos have already seen the starter
-  // "import from file?" toast so it's not shown repeatedly on each start.
-  const shownStarterHintsRef = useRef<Set<string>>(new Set())
-
   const [logs] = useLogs()
   const errorCount = logs.filter((l) => l.level === 'error' || l.level === 'warn').length
   const habitUiFlags = deriveHabitUiFlags({
@@ -512,7 +502,6 @@ function AppShell() {
     setShowGlobalSearch(false)
     setShowBuildPanel(false)
     setPlanName('')
-    setPreviewImport(null)
     setPlanReview(null)
     setDiffReviewOpen(false)
     setDiffAnnotations([])
@@ -524,7 +513,6 @@ function AppShell() {
     setSessionStatus('idle')
     setMainPanelMounted(false)
     setGatePhase({ kind: 'idle' })
-    shownStarterHintsRef.current.clear()
   }, [])
 
   /** One-click "switch project" flow: native directory picker. If the
@@ -553,22 +541,6 @@ function AppShell() {
     clearProjectScopedState()
     setCurrentProjectId(res.id)
   }, [projects, currentProjectId, clearProjectScopedState])
-
-  /** Open file picker, read content, and queue it in the preview dialog. */
-  const pickExternalFileForPreview = useCallback(
-    async (stageId: number) => {
-      const pick = await window.api.dialog.pickTextFile({
-        title: stageId === 1 ? '选择方案设计文档' : '选择要导入的文件'
-      })
-      if (pick.canceled) return
-      if (pick.error || !pick.path || pick.content === undefined) {
-        alert(`读取文件失败：${pick.error ?? '未知错误'}`)
-        return
-      }
-      setPreviewImport({ path: pick.path, content: pick.content, stageId })
-    },
-    []
-  )
 
   // Global keyboard shortcuts
   useEffect(() => {
@@ -659,6 +631,41 @@ function AppShell() {
   // input. Use functional setState so we can still prune a stale
   // planName (after switching projects or after the backend auto-prunes
   // a dead external mapping) without reading planName directly.
+  const applyPlanList = useCallback(
+    (items: { name: string; abs: string; source: 'internal' | 'external' }[]) => {
+      setPlanList(items)
+      const currentNames = new Set(items.map((p) => p.name))
+      setPlanName((prev) => {
+        if (!prev) return prev
+        if (currentNames.has(prev)) return prev
+        // Not in current list — was it in a previous list?
+        if (knownPlanNamesRef.current.has(prev)) {
+          // Was known, now gone → stale selection, clear it.
+          return ''
+        }
+        return prev
+      })
+      // Update "ever seen" set AFTER the prune check.
+      for (const n of currentNames) knownPlanNamesRef.current.add(n)
+    },
+    []
+  )
+
+  const refreshPlanList = useCallback(async () => {
+    if (!currentProjectId || !projectDir) {
+      setPlanList([])
+      knownPlanNamesRef.current = new Set()
+      return []
+    }
+    const planRes = await window.api.plan.list(projectDir)
+    if (!planRes.ok) {
+      showToast(planRes.error ?? '读取普通任务列表失败', { level: 'error' })
+      return planList
+    }
+    applyPlanList(planRes.items)
+    return planRes.items
+  }, [applyPlanList, currentProjectId, projectDir, planList])
+
   useEffect(() => {
     if (!currentProjectId || !projectDir) {
       setPlanList([])
@@ -670,27 +677,12 @@ function AppShell() {
       const planRes = await window.api.plan.list(projectDir)
       if (cancelled) return
       if (!planRes.ok) return
-      const items = planRes.items
-      setPlanList(items)
-      const currentNames = new Set(items.map((p) => p.name))
-      setPlanName((prev) => {
-        if (!prev) return prev
-        if (currentNames.has(prev)) return prev
-        // Not in current list — was it in a previous list?
-        if (knownPlanNamesRef.current.has(prev)) {
-          // Was known, now gone → stale selection, clear it.
-          return ''
-        }
-        // Never seen → user is typing a new plan name, keep it.
-        return prev
-      })
-      // Update "ever seen" set AFTER the prune check.
-      for (const n of currentNames) knownPlanNamesRef.current.add(n)
+      applyPlanList(planRes.items)
     })()
     return () => {
       cancelled = true
     }
-  }, [currentProjectId, projectDir])
+  }, [applyPlanList, currentProjectId, projectDir])
 
   useEffect(() => {
     if (!currentProjectId) {
@@ -899,31 +891,6 @@ function AppShell() {
       offExit()
     }
   }, [])
-
-  // When session starts running with a brand-new plan (not in planList),
-  // offer a one-shot import shortcut so the user isn't forced into a fresh design.
-  // Shown once per (project, planName) combo per session.
-  useEffect(() => {
-    if (!currentProjectId || !planName.trim()) return
-    if (sessionStatus !== 'running') return
-    if (planList.some((p) => p.name === planName.trim())) return
-    const key = `${currentProjectId}:${planName.trim()}`
-    if (shownStarterHintsRef.current.has(key)) return
-    shownStarterHintsRef.current.add(key)
-    showToast(
-      `本次方案「${planName.trim()}」尚无设计稿，可直接对话设计，或从文件导入已有方案`,
-      {
-        level: 'info',
-        duration: 0,
-        action: {
-          label: '📁 从文件导入',
-          onClick: () => {
-            void pickExternalFileForPreview(1)
-          }
-        }
-      }
-    )
-  }, [currentProjectId, planName, sessionStatus, planList, pickExternalFileForPreview])
 
   /** Derive the absolute plan path from planList or construct a default. */
   const getPlanAbsPath = useCallback(
@@ -1296,6 +1263,7 @@ function AppShell() {
       if (value === 'task-watch') {
         setPlanReview(null)
         setDiffReviewOpen(false)
+        setShowNormalTaskDialog(false)
       } else {
         setShowScheduledTaskDialog(false)
       }
@@ -1303,98 +1271,73 @@ function AppShell() {
     [workMode, sessionStatus]
   )
 
-  const onPlanSelect = useCallback(
-    async (value: string) => {
+  const selectNormalTask = useCallback(
+    (name: string) => {
       const currentValue = planName
-      // Block plan switching while session is running. The running CLI's
-      // artifact path is baked at spawn time; a live switch would leave
-      // the AI writing to the old target.
-      if (value !== currentValue && sessionStatus === 'running') {
-        alert('会话正在运行，请先停止（Kill）后再切换方案。')
+      if (name !== currentValue && sessionStatus === 'running') {
+        alert('会话正在运行，请先停止（Kill）后再切换普通任务。')
         return
       }
-      // Clear diff annotations when switching to a different plan — they
-      // were gathered against the previous plan's diff context.
-      if (value !== currentValue) {
+      if (name !== currentValue) {
         setDiffAnnotations([])
         setDiffGeneralNote('')
+        setPlanReview(null)
       }
-      if (value === '__NEW__') {
-        setPlanName('')
-        return
-      }
-      const r = await window.api.artifact.readCurrent(projectDir, 1, value)
-      if (!r.ok) {
-        if (r.error && /ENOENT|no such file|找不到|not.*exist/i.test(r.error)) {
-          setPlanName(value)
-          return
-        }
-        alert(`读取方案失败：${r.error ?? '未知错误'}`)
-        return
-      }
-      setPlanName(value)
-      setPlanReview({ path: r.path ?? value, content: r.content ?? '' })
+      setPlanName(name)
     },
-    [projectDir, planName, sessionStatus]
+    [planName, sessionStatus]
   )
 
-  const onImportExternal = useCallback(async () => {
-    if (!projectDir) {
-      alert('请先打开一个项目')
-      return
-    }
-    // Block import while session is running — the running CLI's artifact
-    // path is baked at spawn time; swapping the plan under it would write
-    // the revisions to the wrong file.
-    if (sessionStatus === 'running') {
-      alert('会话正在运行，请先停止（Kill）后再导入外部方案。')
-      return
-    }
-    const pick = await window.api.dialog.pickTextFile({
-      title: '选择要导入的外部方案文件 (.md)'
-    })
-    if (pick.canceled) return
-    if (pick.error || !pick.path) {
-      alert(`读取文件失败：${pick.error ?? '未知错误'}`)
-      return
-    }
-    const reg = await window.api.plan.registerExternal({
-      projectDir,
-      externalPath: pick.path
-    })
-    if (!reg.ok) {
-      alert(`导入失败：${reg.error}`)
-      return
-    }
-    const list = await window.api.plan.list(projectDir)
-    if (list.ok) setPlanList(list.items)
-    setPlanName(reg.name)
-    const cur = await window.api.artifact.readCurrent(projectDir, 1, reg.name)
-    if (cur.ok) {
-      setPlanReview({ path: cur.path ?? reg.name, content: cur.content ?? '' })
-    }
-  }, [projectDir, sessionStatus])
+  const createNormalTask = useCallback(
+    async (name: string) => {
+      if (!projectDir) {
+        showToast('请先打开一个项目', { level: 'warn' })
+        return
+      }
+      if (sessionStatus === 'running') {
+        showToast('会话正在运行，请先停止（Kill）后再新建普通任务。', { level: 'warn' })
+        return
+      }
+      const result = await window.api.plan.createInternal({ projectDir, name })
+      if (!result.ok) {
+        showToast(result.error, { level: 'error' })
+        return
+      }
+      await refreshPlanList()
+      setPlanName(result.name)
+      setDiffAnnotations([])
+      setDiffGeneralNote('')
+      setPlanReview(null)
+      showToast(`已创建普通任务「${result.name}」`, { level: 'success' })
+    },
+    [projectDir, refreshPlanList, sessionStatus]
+  )
 
   /** Load the current plan md and open the review + annotation dialog. */
-  const openPlanReview = useCallback(async () => {
+  const openPlanReview = useCallback(async (name = planName) => {
     if (!projectDir) return
+    const currentName = name.trim()
+    if (!currentName) {
+      showToast('请先选择普通任务', { level: 'warn' })
+      return
+    }
     const res = await window.api.artifact.readCurrent(
       projectDir,
       1,
-      planName || undefined
+      currentName
     )
     if (!res.ok || res.content === undefined) {
       // Special case: the current plan is external (registered via import)
       // but its source file was deleted. Offer to remove the stale mapping
       // instead of the generic "let AI design" hint.
-      const currentPlan = planList.find((p) => p.name === planName)
+      const currentPlan = planList.find((p) => p.name === currentName)
       const isDeadExternal =
         currentPlan?.source === 'external' && res.path
           ? /ENOENT|no such file|不存在|找不到|not.*exist/i.test(
               res.error ?? ''
             )
           : false
-      if (isDeadExternal && currentProjectId && planName) {
+      if (isDeadExternal && currentProjectId && currentName) {
         showToast(
           `外部方案文件已丢失（${res.path}）。`,
           {
@@ -1406,16 +1349,16 @@ function AppShell() {
                 if (!projectDir) return
                 const rm = await window.api.plan.removeExternal({
                   projectDir,
-                  name: planName
+                  name: currentName
                 })
                 if (!rm.ok) {
                   showToast(`移除失败：${rm.error}`, { level: 'error' })
                   return
                 }
                 setPlanName('')
-                setPlanList((prev) => prev.filter((p) => p.name !== planName))
-                knownPlanNamesRef.current.delete(planName)
-                showToast('已从方案列表移除', { level: 'info' })
+                setPlanList((prev) => prev.filter((p) => p.name !== currentName))
+                knownPlanNamesRef.current.delete(currentName)
+                showToast('已从普通任务列表移除', { level: 'info' })
               }
             }
           }
@@ -1423,7 +1366,7 @@ function AppShell() {
         return
       }
       showToast(
-        `暂无可预览的方案文件${res.path ? `（${res.path}）` : ''}。请先让 AI 开始对话设计。`,
+        `暂无可预览的普通任务文档${res.path ? `（${res.path}）` : ''}。`,
         { level: 'warn' }
       )
       return
@@ -1777,45 +1720,22 @@ function AppShell() {
           <div className="workspace-control-row">
             <div className="workspace-control-left">
               {isPlanDesignMode && (
-                <div className="plan-design-main">
-                  <span className="plan-progress-label">📋 方案：</span>
-                  <select
-                    className="plan-name-input plan-select-input"
-                    value={
-                      planName && planList.some((p) => p.name === planName)
-                        ? planName
-                        : '__NEW__'
-                    }
-                    onChange={(e) => void onPlanSelect(e.target.value)}
-                    disabled={sessionStatus === 'running'}
-                    title={
-                      sessionStatus === 'running'
-                        ? '运行中无法切换方案，请先停止'
-                        : '选择已有方案或新建'
-                    }
-                  >
-                    <option value="__NEW__">+ 新建方案</option>
-                    {planList.map((p) => (
-                      <option key={p.name} value={p.name}>
-                        {p.source === 'external' ? '📥 ' : ''}
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
-                  {!planList.some((p) => p.name === planName) && (
-                    <input
-                      type="text"
-                      className="plan-name-input"
-                      placeholder="输入新方案名（例如 add-auth）"
-                      value={planName}
-                      onChange={(e) => setPlanName(e.target.value)}
-                      disabled={sessionStatus === 'running'}
-                    />
-                  )}
-                </div>
+                <span className="plan-progress-label">
+                  普通任务：{planName.trim() || '未选择'}
+                </span>
               )}
             </div>
             <div className="workspace-control-actions">
+              {isPlanDesignMode && (
+                <button
+                  className="topbar-btn"
+                  onClick={() => setShowNormalTaskDialog(true)}
+                  disabled={!currentProjectId}
+                  title="创建、选择和查看普通任务"
+                >
+                  普通任务
+                </button>
+              )}
               {isTaskWatchMode && (
                 <button
                   className="topbar-btn"
@@ -1825,28 +1745,6 @@ function AppShell() {
                 >
                   ⏰ 定时任务
                 </button>
-              )}
-              {isPlanDesignMode && (
-                <div className="plan-design-actions">
-                  <button
-                    className="topbar-btn"
-                    onClick={() => void onImportExternal()}
-                    disabled={sessionStatus === 'running' || !currentProjectId}
-                    title="导入外部方案 md 文件（会归档到外部原路径）"
-                  >
-                    📥 导入外部方案
-                  </button>
-                  {planName.trim() && (
-                    <button
-                      className="topbar-btn"
-                      onClick={() => void openPlanReview()}
-                      disabled={!currentProjectId}
-                      title="查看 / 编辑当前方案的 md"
-                    >
-                      👁 方案预览
-                    </button>
-                  )}
-                </div>
               )}
               <div className="plan-toolbar-actions">
                 <button
@@ -1973,51 +1871,6 @@ function AppShell() {
         />
       )}
       {showDoctor && <DoctorDialog onClose={() => setShowDoctor(false)} />}
-      {previewImport && (
-        <FilePreviewDialog
-          path={previewImport.path}
-          content={previewImport.content}
-          title={
-            previewImport.stageId === 1
-              ? '预览外部方案文件 · 方案设计'
-              : '预览外部文件'
-          }
-          confirmLabel="✓ 确认使用此方案"
-          onCancel={() => setPreviewImport(null)}
-          onConfirm={async () => {
-            if (!currentProjectId || !projectDir) {
-              setPreviewImport(null)
-              return
-            }
-            const stageId = previewImport.stageId
-            // When importing from file, use the ORIGINAL filename
-            // (sans extension) as the plan name / archive filename.
-            let effectiveLabel = planName
-            if (stageId === 1) {
-              const origName =
-                previewImport.path.split(/[\\/]/).pop() ?? ''
-              const fromFile = origName.replace(/\.(md|markdown|txt)$/i, '').trim()
-              if (fromFile) {
-                effectiveLabel = fromFile
-                setPlanName(fromFile)
-              }
-            }
-            const res = await window.api.artifact.commitContent({
-              projectId: currentProjectId,
-              projectDir,
-              stageId,
-              content: previewImport.content,
-              sourcePath: previewImport.path,
-              sessionId: sessionId ?? undefined,
-              label: effectiveLabel
-            })
-            setPreviewImport(null)
-            if (!res.ok) {
-              alert(`导入失败：${res.error}`)
-            }
-          }}
-        />
-      )}
       {planReview && (
         <PlanReviewDialog
           path={planReview.path}
@@ -2085,6 +1938,20 @@ function AppShell() {
           targetRepo={targetRepo || null}
           sessionId={sessionId}
           sessionRunning={sessionStatus === 'running'}
+        />
+      )}
+      {showNormalTaskDialog && isPlanDesignMode && currentProjectId && (
+        <NormalTaskDialog
+          tasks={planList}
+          selectedName={planName}
+          sessionRunning={sessionStatus === 'running'}
+          onCreate={createNormalTask}
+          onSelect={selectNormalTask}
+          onPreview={(name) => void openPlanReview(name)}
+          onRefresh={async () => {
+            await refreshPlanList()
+          }}
+          onClose={() => setShowNormalTaskDialog(false)}
         />
       )}
       {showScheduledTaskDialog && isTaskWatchMode && currentProjectId && (

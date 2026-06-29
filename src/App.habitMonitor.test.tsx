@@ -76,45 +76,41 @@ describe('App habit monitor integration', () => {
     expect(source).not.toContain('\u65e0\u65b9\u6848\u6a21\u5f0f')
   })
 
-  it('places mode, plan controls, and workspace actions in one control row', () => {
+  it('places mode, normal task entry, and workspace actions in one control row', () => {
     const source = readFileSync(fileURLToPath(new URL('./App.tsx', import.meta.url)), 'utf8')
     const planBarIndex = source.indexOf('className="plan-name-bar"')
     const controlRowIndex = source.indexOf('className="workspace-control-row"', planBarIndex)
-    const controlLeftIndex = source.indexOf('className="workspace-control-left"', controlRowIndex)
-    const designConditionIndex = source.indexOf('{isPlanDesignMode && (', controlLeftIndex)
-    const designMainIndex = source.indexOf('className="plan-design-main"', designConditionIndex)
-    const planLabelIndex = source.indexOf('\u65b9\u6848\uff1a', designMainIndex)
-    const planInputIndex = source.indexOf('placeholder="\u8f93\u5165\u65b0\u65b9\u6848\u540d', designMainIndex)
     const actionsIndex = source.indexOf('className="workspace-control-actions"', controlRowIndex)
-    const importIndex = source.indexOf('\u5bfc\u5165\u5916\u90e8\u65b9\u6848', actionsIndex)
+    const normalTaskIndex = source.indexOf('setShowNormalTaskDialog(true)', actionsIndex)
+    const scheduledTaskIndex = source.indexOf('setShowScheduledTaskDialog(true)', actionsIndex)
     const buildIndex = source.indexOf('setShowBuildPanel(true)', actionsIndex)
     const runIndex = source.indexOf('handleStartRuntime()', actionsIndex)
 
     expect(planBarIndex).toBeGreaterThan(-1)
     expect(controlRowIndex).toBeGreaterThan(planBarIndex)
-    expect(controlLeftIndex).toBeGreaterThan(controlRowIndex)
-    expect(designConditionIndex).toBeGreaterThan(controlLeftIndex)
-    expect(designMainIndex).toBeGreaterThan(designConditionIndex)
-    expect(planLabelIndex).toBeGreaterThan(designMainIndex)
-    expect(planInputIndex).toBeGreaterThan(designMainIndex)
     expect(actionsIndex).toBeGreaterThan(controlRowIndex)
-    expect(importIndex).toBeGreaterThan(actionsIndex)
+    expect(normalTaskIndex).toBeGreaterThan(actionsIndex)
+    expect(scheduledTaskIndex).toBeGreaterThan(actionsIndex)
     expect(buildIndex).toBeGreaterThan(actionsIndex)
     expect(runIndex).toBeGreaterThan(actionsIndex)
+    expect(source).not.toContain('className="plan-design-main"')
+    expect(source).not.toContain('className="plan-select-input"')
+    expect(source).not.toContain('placeholder="输入新方案名')
+    expect(source).not.toContain('导入外部方案')
   })
 
-  it('groups mode, toolbar, plan inputs, and plan actions into separate layout clusters', () => {
+  it('groups mode, workspace actions, and toolbar into separate layout clusters', () => {
     const source = readFileSync(fileURLToPath(new URL('./App.tsx', import.meta.url)), 'utf8')
 
     expect(source).toContain('className="topbar-left"')
     expect(source).toContain('className="topbar-actions"')
     expect(source).toContain('className="workspace-control-row"')
-    expect(source).toContain('className="workspace-control-left"')
     expect(source).toContain('className="workspace-control-actions"')
     expect(source).toContain('className="topbar-btn mode-toggle-btn"')
     expect(source).toContain('className="plan-toolbar-actions"')
-    expect(source).toContain('className="plan-design-main"')
-    expect(source).toContain('className="plan-design-actions"')
+    expect(source).toContain('setShowNormalTaskDialog(true)')
+    expect(source).not.toContain('className="plan-design-main"')
+    expect(source).not.toContain('className="plan-design-actions"')
   })
 
   it('renders a preload-missing fallback instead of crashing when opened outside Electron', async () => {

@@ -11,5 +11,5 @@ export function formatMainSessionPlanLabel(
   planName: string
 ): string {
   if (noPlanMode) return '定时任务'
-  return planName.trim() || '(未选择方案)'
+  return planName.trim() || '(未选择普通任务)'
 }

@@ -1190,6 +1190,11 @@ const api = {
         items: { name: string; abs: string; source: 'internal' | 'external' }[]
         error?: string
       }>,
+    createInternal: (req: { projectDir: string; name: string }) =>
+      ipcRenderer.invoke('plan:createInternal', req) as Promise<
+        | { ok: true; name: string; abs: string }
+        | { ok: false; error: string }
+      >,
     registerExternal: (req: { projectDir: string; externalPath: string }) =>
       ipcRenderer.invoke('plan:registerExternal', req) as Promise<
         | { ok: true; name: string }

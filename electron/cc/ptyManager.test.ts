@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const ipcHandlers = vi.hoisted(() => new Map<string, (...args: unknown[]) => unknown>())
 const buildSystemPromptMock = vi.hoisted(() => vi.fn(async () => 'system prompt'))
 const browserWindowSends = vi.hoisted(() => [] as Array<{ channel: string; payload: unknown }>)
+const interactionEvents = vi.hoisted(() => [] as string[])
 const ptyInstances = vi.hoisted(() => [] as Array<{
   writes: string[]
   opts: Record<string, unknown>
@@ -27,6 +28,15 @@ vi.mock('electron', () => ({
         isDestroyed: () => false,
         webContents: {
           send: (channel: string, payload: unknown) => {
+            const chunk =
+              channel === 'cc:data' && payload && typeof payload === 'object'
+                ? (payload as { chunk?: unknown }).chunk
+                : null
+            interactionEvents.push(
+              typeof chunk === 'string' && chunk.includes('[来自远程 IM：')
+                ? 'browser:remote-im-display'
+                : `browser:${channel}`
+            )
             browserWindowSends.push({ channel, payload })
           }
         }
@@ -55,6 +65,7 @@ vi.mock('./PtyCCProcess.js', () => ({
     }
 
     write(data: string): void {
+      interactionEvents.push(`pty:${data}`)
       this.writes.push(data)
     }
 
@@ -75,6 +86,7 @@ describe('registerPtyIpc prompt injection timing', () => {
     vi.resetModules()
     ipcHandlers.clear()
     browserWindowSends.length = 0
+    interactionEvents.length = 0
     ptyInstances.length = 0
   })
 
@@ -257,6 +269,14 @@ describe('registerPtyIpc prompt injection timing', () => {
     expect(result).toEqual({ ok: true })
     expect(proc.writes.join('')).toContain('full AICLI protocol prompt')
     expect(proc.writes.join('')).not.toContain('[来自远程 IM：mac-apollo-u3player]\n你好')
+    const firstDisplayIndex = interactionEvents.findIndex(
+      (event) => event === 'browser:remote-im-display'
+    )
+    const firstPtyInputIndex = interactionEvents.findIndex((event) =>
+      event.startsWith('pty:full AICLI protocol prompt')
+    )
+    expect(firstPtyInputIndex).toBeGreaterThan(-1)
+    expect(firstDisplayIndex).toBeGreaterThan(firstPtyInputIndex)
     expect(browserWindowSends).toContainEqual({
       channel: 'cc:data',
       payload: {

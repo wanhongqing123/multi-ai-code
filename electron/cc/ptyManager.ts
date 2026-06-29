@@ -346,8 +346,8 @@ export async function sendUserMessageToSession(
   if (!ready) return { ok: false, error: 'session not ready for input' }
   session = sessions.get(sessionId)
   if (!session) return { ok: false, error: 'no session' }
-  displayLocalTerminalText(sessionId, options.displayText)
   await sendMessage(session.proc, text)
+  displayLocalTerminalText(sessionId, options.displayText)
   return { ok: true }
 }
 

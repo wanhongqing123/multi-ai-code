@@ -1,10 +1,11 @@
 import { BrowserWindow, ipcMain } from 'electron'
 import { promises as fs } from 'fs'
-import { join } from 'path'
+import { basename, join } from 'path'
 import {
   addSessionDataListener,
   addSessionExitListener,
   getActiveSessionForProject,
+  getSessionRuntimeInfo,
   sendUserMessageToSession
 } from '../cc/ptyManager.js'
 import { projectDir, rootDir } from '../store/paths.js'
@@ -38,6 +39,7 @@ import { createPeerOutgoingMessageInput, resolvePeerUserId } from './peerMessage
 import { getRemoteImAccountProfileId, getRemoteImProfileId } from './profile.js'
 import { createRemoteImRouter } from './router.js'
 import { appendRemoteImRuntimeLog } from './runtimeLog.js'
+import { readLatestClaudeRemoteImReply } from './claudeTranscript.js'
 import {
   createRemoteImAccountChangedStatuses,
   getRemoteImSendConnectionError
@@ -227,15 +229,42 @@ function sendImText(projectId: string, toUserId: string, text: string): Promise<
   return Promise.resolve({ ok: true })
 }
 
+function readRemoteImTranscriptReply(source: NonNullable<RemoteImOutputSessionState['transcript']>): string | null {
+  return source.kind === 'claude'
+    ? readLatestClaudeRemoteImReply({
+        cwd: source.cwd,
+        sinceMs: source.sinceMs
+      })
+    : null
+}
+
+function isClaudeCommand(command: string): boolean {
+  const normalized = command
+    .trim()
+    .replace(/^["']|["']$/g, '')
+    .replace(/\\/g, '/')
+  const base = basename(normalized).toLowerCase()
+  return /^claude(\.(exe|cmd|bat|ps1))?$/.test(base)
+}
+
 function startOutputForwarding(sessionId: string, projectId: string, toUserId: string, config: RemoteImConfig): void {
   const current = outputSessions.get(sessionId)
   if (current?.timer) clearTimeout(current.timer)
+  const runtime = getSessionRuntimeInfo(sessionId)
   outputSessions.set(sessionId, {
     projectId,
     toUserId,
     config,
     buffer: current?.buffer ?? '',
-    timer: null
+    timer: null,
+    transcript:
+      runtime && isClaudeCommand(runtime.command)
+        ? {
+            kind: 'claude',
+            cwd: runtime.targetRepo,
+            sinceMs: Date.now()
+          }
+        : undefined
   })
 }
 
@@ -247,7 +276,8 @@ function flushOutputSession(sessionId: string): void {
       createRemoteImMessage(input)
     },
     sendText: broadcastOutgoingText,
-    messagesChanged: broadcastMessagesChanged
+    messagesChanged: broadcastMessagesChanged,
+    readTranscriptReply: readRemoteImTranscriptReply
   })
 }
 
@@ -265,7 +295,8 @@ function completeOutputSession(
         createRemoteImMessage(input)
       },
       sendText: broadcastOutgoingText,
-      messagesChanged: broadcastMessagesChanged
+      messagesChanged: broadcastMessagesChanged,
+      readTranscriptReply: readRemoteImTranscriptReply
     },
     info
   )

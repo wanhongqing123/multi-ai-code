@@ -179,6 +179,88 @@ describe('remote IM output forwarding', () => {
     expect(sentTexts).toEqual([])
   })
 
+  it('forwards only the assistant reply from prompt echo and TUI redraw noise', () => {
+    const state = createState(
+      [
+        '[IM_REPLY] Put final Markdown for IM between full-line ',
+        `${REMOTE_IM_REPLY_OPEN_TAG}\r\n`,
+        `and ${REMOTE_IM_REPLY_CLOSE_TAG}; text outside tags is ignored.\r\n`,
+        '\u001b[20;1HOpus | 5h:19% 7d:28% | ctx:3%/1M | cache:r15.8k+w2.6k | in:8.7k out:2\u001b[K',
+        '\u001b[10;1H⏺\r\n',
+        `${REMOTE_IM_REPLY_OPEN_TAG}\r\n`,
+        '  我是 Claude Code，Anthropic 出品的命令行编程助手。\r\n',
+        '  Opus |\r\n',
+        '  5h:19%\r\n',
+        '  ctx:3%/1M |\r\n',
+        '  cache:r15.8k+w2.6k |\r\n',
+        '  ● high · /effort\r\n',
+        '  ←\r\n',
+        '  for\r\n',
+        '  agents\r\n',
+        '  - 熟悉多语言代码库的查阅、修改与重构\r\n',
+        `  ${REMOTE_IM_REPLY_CLOSE_TAG}\r\n`
+      ].join(''),
+      { outputMaxChunkChars: 500 }
+    )
+    const messages: CreateRemoteImMessageInput[] = []
+    const sentTexts: string[] = []
+
+    const chunks = flushRemoteImOutputSession('session-1', state, {
+      createMessage: (input) => {
+        messages.push(input)
+      },
+      sendText: (_projectId, _toUserId, text) => {
+        sentTexts.push(text)
+      },
+      messagesChanged: () => undefined
+    })
+
+    const expected = ['我是 Claude Code，Anthropic 出品的命令行编程助手。', '- 熟悉多语言代码库的查阅、修改与重构'].join('\n')
+    expect(chunks).toBe(1)
+    expect(messages[0]?.content).toBe(expected)
+    expect(sentTexts).toEqual([createRemoteImAicliOutputText(expected)])
+  })
+
+  it('prefers raw Claude transcript Markdown over terminal-rendered table fragments', () => {
+    const terminalRenderedTable = [
+      `${REMOTE_IM_REPLY_OPEN_TAG}\r\n`,
+      '│ 目录 │ 作用 │ │ chrome/ │ 浏览器主体（UI、标签页、 │\r\n',
+      '目录 │ 作用 │ │ 浏览器主体（UI 标签页、扩展） │ │ content/ `third │ │\r\n',
+      `${REMOTE_IM_REPLY_CLOSE_TAG}\r\n`
+    ].join('')
+    const state = createState(terminalRenderedTable, { outputMaxChunkChars: 500 })
+    state.transcript = {
+      kind: 'claude',
+      cwd: '/Users/me/work/repo',
+      sinceMs: Date.parse('2026-06-29T00:00:05.000Z')
+    }
+    const transcriptMarkdown = [
+      '## 目录结构',
+      '| 目录 | 作用 |',
+      '|------|------|',
+      '| `chrome/` | 浏览器主体（UI、标签页、扩展） |',
+      '| `content/` | 核心渲染引擎 |'
+    ].join('\n')
+    const messages: CreateRemoteImMessageInput[] = []
+    const sentTexts: string[] = []
+
+    const chunks = flushRemoteImOutputSession('session-1', state, {
+      createMessage: (input) => {
+        messages.push(input)
+      },
+      sendText: (_projectId, _toUserId, text) => {
+        sentTexts.push(text)
+      },
+      messagesChanged: () => undefined,
+      readTranscriptReply: () => transcriptMarkdown
+    })
+
+    expect(chunks).toBe(1)
+    expect(messages[0]?.content).toBe(transcriptMarkdown)
+    expect(sentTexts).toEqual([createRemoteImAicliOutputText(transcriptMarkdown)])
+    expect(state.buffer).toBe('')
+  })
+
   it('keeps an incomplete tagged reply buffered until the close tag arrives', () => {
     const state = createState(`noise\n${REMOTE_IM_REPLY_OPEN_TAG}\nhello`, {
       outputMaxChunkChars: 100

@@ -161,6 +161,36 @@ describe('RemoteImDrawer', () => {
     expect(html).toContain('<li><code>npm test</code> passed</li>')
   })
 
+  it('shows sent message status as a compact check mark', () => {
+    const html = renderDrawer()
+
+    expect(html).toContain('class="remote-im-message-status" title="已发送">✓</span>')
+    expect(html).not.toContain('class="remote-im-message-status">已发送</span>')
+  })
+
+  it('renders GFM markdown tables in AICLI messages', () => {
+    const html = renderDrawer({
+      messages: [
+        {
+          ...messages[1],
+          role: 'aicli',
+          content: [
+            '## 目录结构',
+            '| 目录 | 作用 |',
+            '|------|------|',
+            '| `chrome/` | 浏览器主体 |',
+            '| `content/` | 核心渲染引擎 |'
+          ].join('\n')
+        }
+      ]
+    })
+
+    expect(html).toContain('<table>')
+    expect(html).toContain('<th>目录</th>')
+    expect(html).toContain('<td><code>chrome/</code></td>')
+    expect(html).toContain('<td>浏览器主体</td>')
+  })
+
   it('renders message UserID and relation labels instead of role avatars', () => {
     const html = renderDrawer({
       selectedPeerUserId: 'desktop_slave',

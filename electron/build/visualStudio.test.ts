@@ -138,7 +138,9 @@ describe('listVisualStudioInstallations', () => {
 })
 
 describe('resolveVisualStudioEnvironment', () => {
-  it('runs a batch file under a spaced path with verbatim cmd arguments', async () => {
+  const windowsIt = process.platform === 'win32' ? it : it.skip
+
+  windowsIt('runs a batch file under a spaced path with verbatim cmd arguments', async () => {
     const scriptDir = join(tmpdir(), `codex-vs-${Date.now()}`, 'Visual Studio 2022', 'Common7', 'Tools')
     mkdirSync(scriptDir, { recursive: true })
     const batPath = join(scriptDir, 'VsDevCmd.bat')

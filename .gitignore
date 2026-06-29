@@ -50,6 +50,11 @@ lerna-debug.log*
 *.swp
 *.swo
 
+# Xcode / CocoaPods local generated state
+ios/**/Pods/
+ios/**/xcuserdata/
+ios/**/*.xcuserstate
+
 # Env files
 .env
 .env.local

@@ -18,7 +18,8 @@ function normalizeReplyTerminalText(input: string): string {
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')
     .replace(/\n*\u001b\[[0-9]+;[0-9]+[Hf]/g, '\n')
-    .replace(/\n*\u001b\[[0-9]+[HfG]/g, '\n')
+    .replace(/\n*\u001b\[[0-9]+[Hf]/g, '\n')
+    .replace(/(\n*)\u001b\[[0-9]+G/g, (_match, lineBreaks: string) => (lineBreaks ? '\n' : ' '))
     .replace(/\u001b\[(\d+)C/g, ' ')
     .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
     .replace(/\u001b[=>]/g, '')
@@ -33,15 +34,12 @@ function trimReplyContent(input: string): string {
   return out.join('\n').trim()
 }
 
-function isPromptInstructionEcho(text: string, tagIndex: number): boolean {
-  const lineStart = text.lastIndexOf('\n', tagIndex) + 1
-  const lineEnd = text.indexOf('\n', tagIndex)
-  const line = text.slice(lineStart, lineEnd === -1 ? text.length : lineEnd)
-  return (
-    line.includes('[IM_REPLY]') ||
-    line.includes('Put final Markdown for IM') ||
-    line.includes('text outside tags is ignored')
-  )
+function isTagLine(line: string, tag: string): boolean {
+  return line.trim().replace(/^[\u23fa\u25CF\u2022]\s*/, '').trim() === tag
+}
+
+function buildPendingReplyBuffer(lines: string[]): string {
+  return [REMOTE_IM_REPLY_OPEN_TAG, ...lines].join('\n')
 }
 
 export function buildRemoteImAicliPrompt(input: RemoteImAicliPromptInput): string {
@@ -49,42 +47,48 @@ export function buildRemoteImAicliPrompt(input: RemoteImAicliPromptInput): strin
     `[来自远程 IM：${input.fromUserId.trim()}]`,
     input.text,
     '',
-    `[IM_REPLY] Put final Markdown for IM between full-line ${REMOTE_IM_REPLY_OPEN_TAG} and ${REMOTE_IM_REPLY_CLOSE_TAG}; text outside tags is ignored.`
+    '[IM_REPLY] Put final Markdown for IM between these full-line markers:',
+    REMOTE_IM_REPLY_OPEN_TAG,
+    REMOTE_IM_REPLY_CLOSE_TAG,
+    'Text outside markers is ignored.'
   ].join('\n')
+}
+
+export function buildRemoteImAicliDisplayText(input: RemoteImAicliPromptInput): string {
+  return [`[来自远程 IM：${input.fromUserId.trim()}]`, input.text].join('\n').trim()
 }
 
 export function extractRemoteImReplyOutput(input: string): RemoteImReplyExtraction {
   const clean = normalizeReplyTerminalText(input)
   const replies: string[] = []
-  let searchIndex = 0
+  const pendingLines: string[] = []
+  let pending = false
 
-  while (searchIndex < clean.length) {
-    const openIndex = clean.indexOf(REMOTE_IM_REPLY_OPEN_TAG, searchIndex)
-    if (openIndex === -1) break
-    const contentStart = openIndex + REMOTE_IM_REPLY_OPEN_TAG.length
-
-    if (isPromptInstructionEcho(clean, openIndex)) {
-      searchIndex = contentStart
+  for (const line of clean.split('\n')) {
+    if (isTagLine(line, REMOTE_IM_REPLY_OPEN_TAG)) {
+      pending = true
+      pendingLines.length = 0
       continue
     }
 
-    const closeIndex = clean.indexOf(REMOTE_IM_REPLY_CLOSE_TAG, contentStart)
-    if (closeIndex === -1) {
-      return {
-        content: replies.join('\n\n').trim(),
-        pending: true,
-        nextBuffer: REMOTE_IM_REPLY_OPEN_TAG + clean.slice(contentStart)
-      }
+    if (!pending) {
+      continue
     }
 
-    const content = trimReplyContent(clean.slice(contentStart, closeIndex))
-    if (content) replies.push(content)
-    searchIndex = closeIndex + REMOTE_IM_REPLY_CLOSE_TAG.length
+    if (isTagLine(line, REMOTE_IM_REPLY_CLOSE_TAG)) {
+      const content = trimReplyContent(pendingLines.join('\n'))
+      if (content) replies.push(content)
+      pending = false
+      pendingLines.length = 0
+      continue
+    }
+
+    pendingLines.push(line)
   }
 
   return {
     content: replies.join('\n\n').trim(),
-    pending: false,
-    nextBuffer: ''
+    pending,
+    nextBuffer: pending ? buildPendingReplyBuffer(pendingLines) : ''
   }
 }

@@ -8217,10 +8217,10 @@ html, body, #root {
 }
 
 .remote-im-panel {
-  position: absolute;
-  top: 92px;
-  right: 36px;
-  bottom: 36px;
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: min(720px, calc(100vh - 32px));
   width: min(560px, calc(100vw - 72px));
   display: flex;
   flex-direction: column;
@@ -8230,6 +8230,12 @@ html, body, #root {
   border-radius: 28px;
   background: #ffffff;
   box-shadow: 0 18px 64px rgba(15, 23, 42, 0.16);
+  transform: translate3d(calc(100vw - min(560px, calc(100vw - 72px)) - 36px), 92px, 0);
+  will-change: transform;
+}
+
+.remote-im-panel.dragging {
+  user-select: none;
 }
 
 .remote-im-header {
@@ -8237,6 +8243,24 @@ html, body, #root {
   align-items: center;
   gap: 12px;
   margin-bottom: 16px;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.remote-im-panel.dragging .remote-im-header {
+  cursor: grabbing;
+}
+
+.remote-im-header button,
+.remote-im-header a {
+  cursor: pointer;
+}
+
+.remote-im-header input,
+.remote-im-header select,
+.remote-im-header textarea {
+  cursor: text;
 }
 
 .remote-im-title {
@@ -8404,13 +8428,17 @@ html, body, #root {
 }
 
 .remote-im-bubble {
-  width: fit-content;
-  max-width: 390px;
-  padding: 13px 16px;
+  box-sizing: border-box;
+  position: relative;
+  width: min(920px, 92%);
+  max-width: min(920px, 92%);
+  padding: 11px 42px 12px 14px;
   border: 1px solid #dbeafe;
   border-radius: 16px;
   background: #ffffff;
   color: #0f172a;
+  font-size: 14px;
+  line-height: 1.55;
   overflow-wrap: anywhere;
 }
 
@@ -8428,6 +8456,25 @@ html, body, #root {
 .remote-im-markdown blockquote,
 .remote-im-markdown pre {
   margin: 0 0 8px;
+}
+
+.remote-im-markdown h1,
+.remote-im-markdown h2,
+.remote-im-markdown h3 {
+  margin: 0 0 10px;
+  line-height: 1.3;
+}
+
+.remote-im-markdown h1 {
+  font-size: 22px;
+}
+
+.remote-im-markdown h2 {
+  font-size: 18px;
+}
+
+.remote-im-markdown h3 {
+  font-size: 16px;
 }
 
 .remote-im-markdown ul,
@@ -8458,6 +8505,28 @@ html, body, #root {
   color: inherit;
 }
 
+.remote-im-markdown table {
+  display: block;
+  max-width: 100%;
+  margin: 0 0 10px;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.remote-im-markdown th,
+.remote-im-markdown td {
+  padding: 5px 7px;
+  border: 1px solid rgba(15, 23, 42, 0.18);
+  font-size: 13px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.remote-im-markdown th {
+  background: rgba(15, 23, 42, 0.06);
+  font-weight: 700;
+}
+
 .remote-im-message.role-system .remote-im-bubble {
   border-color: #bae6fd;
   background: #ecfeff;
@@ -8471,12 +8540,18 @@ html, body, #root {
 
 .remote-im-message-status {
   display: inline-flex;
-  margin-top: 8px;
-  padding: 4px 12px;
+  position: absolute;
+  right: 10px;
+  bottom: 8px;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
   border-radius: 999px;
   background: #dcfce7;
   color: #15803d;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 850;
 }
 

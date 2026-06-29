@@ -122,6 +122,7 @@ interface Session {
   planName: string
   command: string
   allowScheduledTasks: boolean
+  startedAtMs: number
   codexTrustAccepted?: boolean
   codexPromptReady?: boolean
   codexBootText?: string
@@ -209,6 +210,10 @@ const PRIMING_DELAY_MS_CODEX = 2500
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms))
 
+export interface SendUserMessageOptions {
+  displayText?: string
+}
+
 async function waitForCodexReady(
   sessionId: string,
   timeoutMs: number
@@ -251,6 +256,19 @@ async function sendMessage(proc: PtyCCProcess, text: string): Promise<void> {
   proc.write('\r')
   await sleep(150)
   proc.write('\r')
+}
+
+function createLocalTerminalDisplayChunk(text: string): string {
+  const clean = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim()
+  if (!clean) return ''
+  return `\r\n${clean.replace(/\n/g, '\r\n')}\r\n`
+}
+
+function displayLocalTerminalText(sessionId: string, text: string | undefined): void {
+  if (!text) return
+  const chunk = createLocalTerminalDisplayChunk(text)
+  if (!chunk) return
+  broadcast('cc:data', { sessionId, chunk })
 }
 
 export function getSessionForProject(projectId: string): {
@@ -298,9 +316,24 @@ export function getActiveSessionForProject(projectId: string): {
   return null
 }
 
+export function getSessionRuntimeInfo(sessionId: string): {
+  command: string
+  targetRepo: string
+  startedAtMs: number
+} | null {
+  const session = sessions.get(sessionId)
+  if (!session) return null
+  return {
+    command: session.command,
+    targetRepo: session.targetRepo,
+    startedAtMs: session.startedAtMs
+  }
+}
+
 export async function sendUserMessageToSession(
   sessionId: string,
-  text: string
+  text: string,
+  options: SendUserMessageOptions = {}
 ): Promise<{ ok: boolean; error?: string }> {
   let session = sessions.get(sessionId)
   if (!session) return { ok: false, error: 'no session' }
@@ -313,6 +346,7 @@ export async function sendUserMessageToSession(
   if (!ready) return { ok: false, error: 'session not ready for input' }
   session = sessions.get(sessionId)
   if (!session) return { ok: false, error: 'no session' }
+  displayLocalTerminalText(sessionId, options.displayText)
   await sendMessage(session.proc, text)
   return { ok: true }
 }
@@ -429,6 +463,7 @@ export function registerPtyIpc(): void {
       planName: req.planName ?? '',
       command: req.command,
       allowScheduledTasks: req.allowScheduledTasks === true,
+      startedAtMs: Date.now(),
       dumpStream
     }
 

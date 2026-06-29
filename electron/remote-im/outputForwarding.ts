@@ -1,5 +1,6 @@
 import type { CreateRemoteImMessageInput } from './messageStore.js'
 import { createOutputChunks } from './outputBuffer.js'
+import { sanitizeRemoteImAicliOutput } from './outputSanitizer.js'
 import { extractRemoteImReplyOutput } from './replyProtocol.js'
 import type { RemoteImConfig } from './types.js'
 
@@ -22,18 +23,27 @@ export interface RemoteImOutputCompletionInfo {
 
 export type RemoteImOutputFlushTimer = ReturnType<typeof setTimeout>
 
+export interface RemoteImTranscriptSource {
+  kind: 'claude'
+  cwd: string
+  sinceMs: number
+}
+
 export interface RemoteImOutputSessionState {
   projectId: string
   toUserId: string
   config: RemoteImConfig
   buffer: string
   timer: RemoteImOutputFlushTimer | null
+  transcript?: RemoteImTranscriptSource
+  forwardedTranscriptReply?: string
 }
 
 export interface RemoteImOutputForwardingDeps {
   createMessage(input: CreateRemoteImMessageInput): void
   sendText(projectId: string, toUserId: string, text: string): void
   messagesChanged(projectId: string | null): void
+  readTranscriptReply?: (source: RemoteImTranscriptSource) => string | null
   now?: () => number
   clearTimer?: (timer: RemoteImOutputFlushTimer) => void
 }
@@ -95,11 +105,19 @@ export function flushRemoteImOutputSession(
   state: RemoteImOutputSessionState,
   deps: RemoteImOutputForwardingDeps
 ): number {
-  const reply = extractRemoteImReplyOutput(state.buffer)
-  const buffer = reply.content
-  state.buffer = reply.nextBuffer
+  const transcriptReply =
+    state.transcript && deps.readTranscriptReply
+      ? deps.readTranscriptReply(state.transcript)
+      : null
+  const reply = transcriptReply === null ? extractRemoteImReplyOutput(state.buffer) : null
+  const buffer = sanitizeRemoteImAicliOutput(transcriptReply ?? reply?.content ?? '')
+  state.buffer = transcriptReply === null ? reply?.nextBuffer ?? '' : ''
   clearOutputTimer(state, deps)
   if (!buffer.trim()) return 0
+  if (transcriptReply !== null) {
+    if (state.forwardedTranscriptReply === transcriptReply) return 0
+    state.forwardedTranscriptReply = transcriptReply
+  }
 
   const chunks = createOutputChunks(buffer, {
     maxChunkChars: state.config.outputMaxChunkChars

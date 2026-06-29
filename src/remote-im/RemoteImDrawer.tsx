@@ -1,4 +1,13 @@
-import { type FormEvent, useMemo, useState } from 'react'
+import {
+  type CSSProperties,
+  type FormEvent,
+  type PointerEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type {
@@ -13,9 +22,17 @@ import {
   getRemoteImConversations,
   getRemoteImMessageDisplayMeta,
   getRemoteImMessageStatusLabel,
+  getRemoteImMessageStatusTitle,
   getRemoteImStatusLabel,
   isRemoteImSendDisabled
 } from './remoteImViewModel.js'
+import {
+  clampRemoteImPanelPosition,
+  getDraggedRemoteImPanelPosition,
+  getInitialRemoteImPanelPosition,
+  type RemoteImPanelFrame,
+  type RemoteImPanelPosition
+} from './remoteImDrag.js'
 
 export interface RemoteImDrawerProps {
   open: boolean
@@ -58,10 +75,30 @@ function RemoteImMarkdown(props: { content: string }): JSX.Element {
   )
 }
 
+function getRemoteImPanelFrame(panel: HTMLElement): RemoteImPanelFrame {
+  const rect = panel.getBoundingClientRect()
+  return {
+    viewportWidth: window.innerWidth,
+    viewportHeight: window.innerHeight,
+    panelWidth: rect.width,
+    panelHeight: rect.height
+  }
+}
+
+function isInteractiveDragTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && Boolean(target.closest('button, input, select, textarea, a'))
+}
+
 export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element | null {
   const [conversationFilter, setConversationFilter] = useState<ConversationFilter>('recent')
   const [newContactRelation, setNewContactRelation] = useState<RemoteImContactRelation>('friend')
   const [newContactUserId, setNewContactUserId] = useState('')
+  const panelRef = useRef<HTMLDivElement | null>(null)
+  const [panelPosition, setPanelPosition] = useState<RemoteImPanelPosition | null>(null)
+  const [dragState, setDragState] = useState<{
+    startPosition: RemoteImPanelPosition
+    startPointer: RemoteImPanelPosition
+  } | null>(null)
 
   const conversations = useMemo(
     () => getRemoteImConversations(props.config, props.messages),
@@ -93,6 +130,88 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
     }) || !selectedPeerUserId
   const loggedInUserId = props.config.desktopUserId.trim()
 
+  useEffect(() => {
+    if (!props.open) return
+    const panel = panelRef.current
+    if (!panel) return
+    setPanelPosition((current) => {
+      const frame = getRemoteImPanelFrame(panel)
+      return current
+        ? clampRemoteImPanelPosition(current, frame)
+        : getInitialRemoteImPanelPosition(frame)
+    })
+  }, [props.open])
+
+  useEffect(() => {
+    if (!props.open || !panelPosition) return
+
+    function handleResize(): void {
+      const panel = panelRef.current
+      if (!panel) return
+      setPanelPosition((current) =>
+        current ? clampRemoteImPanelPosition(current, getRemoteImPanelFrame(panel)) : current
+      )
+    }
+
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [props.open, panelPosition])
+
+  useEffect(() => {
+    if (!dragState) return
+    const activeDragState = dragState
+
+    function handlePointerMove(event: globalThis.PointerEvent): void {
+      const panel = panelRef.current
+      if (!panel) return
+      setPanelPosition(
+        getDraggedRemoteImPanelPosition({
+          startPosition: activeDragState.startPosition,
+          startPointer: activeDragState.startPointer,
+          currentPointer: { x: event.clientX, y: event.clientY },
+          frame: getRemoteImPanelFrame(panel)
+        })
+      )
+    }
+
+    function handlePointerUp(): void {
+      setDragState(null)
+    }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp)
+    window.addEventListener('pointercancel', handlePointerUp)
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
+      window.removeEventListener('pointercancel', handlePointerUp)
+    }
+  }, [dragState])
+
+  const handleDragStart = useCallback(
+    (event: PointerEvent<HTMLElement>) => {
+      if (event.button !== 0 || isInteractiveDragTarget(event.target)) return
+      const panel = panelRef.current
+      if (!panel) return
+      const frame = getRemoteImPanelFrame(panel)
+      const startPosition =
+        panelPosition ?? getInitialRemoteImPanelPosition(frame)
+      event.preventDefault()
+      setPanelPosition(startPosition)
+      setDragState({
+        startPosition,
+        startPointer: { x: event.clientX, y: event.clientY }
+      })
+    },
+    [panelPosition]
+  )
+
+  const panelStyle: CSSProperties | undefined = panelPosition
+    ? {
+        transform: `translate3d(${Math.round(panelPosition.x)}px, ${Math.round(panelPosition.y)}px, 0)`
+      }
+    : undefined
+
   if (!props.open) return null
 
   function handleSubmit(event: FormEvent): void {
@@ -110,8 +229,16 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
 
   return (
     <aside className="remote-im-drawer" aria-label="远程 IM">
-      <div className="remote-im-panel">
-        <header className="remote-im-header">
+      <div
+        ref={panelRef}
+        className={`remote-im-panel${dragState ? ' dragging' : ''}`}
+        style={panelStyle}
+      >
+        <header
+          className="remote-im-header"
+          onPointerDown={handleDragStart}
+          title="拖动移动远程 IM 窗口"
+        >
           <div className="remote-im-title">远程 IM</div>
           <div
             className={`remote-im-status status-${props.status?.state ?? 'disconnected'}`}
@@ -236,6 +363,7 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
               ) : (
                 selectedMessages.map((message) => {
                   const statusLabel = getRemoteImMessageStatusLabel(message)
+                  const statusTitle = getRemoteImMessageStatusTitle(message)
                   const displayMeta = getRemoteImMessageDisplayMeta(props.config, message)
                   return (
                     <article
@@ -253,7 +381,9 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
                         <div className="remote-im-bubble">
                           <RemoteImMarkdown content={message.content} />
                           {statusLabel ? (
-                            <span className="remote-im-message-status">{statusLabel}</span>
+                            <span className="remote-im-message-status" title={statusTitle}>
+                              {statusLabel}
+                            </span>
                           ) : null}
                         </div>
                       </div>

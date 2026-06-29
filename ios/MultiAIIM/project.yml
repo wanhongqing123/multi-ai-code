@@ -1,0 +1,58 @@
+name: MultiAIIM
+options:
+  bundleIdPrefix: com.multiaicode
+  deploymentTarget:
+    iOS: "16.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  MultiAIIM:
+    type: application
+    platform: iOS
+    sources:
+      - path: MultiAIIM
+    dependencies:
+      - target: MultiAIIMCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.multiaicode.remoteim
+        INFOPLIST_FILE: MultiAIIM/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+  MultiAIIMCore:
+    type: framework
+    platform: iOS
+    sources:
+      - path: MultiAIIMCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.multiaicode.remoteim.core
+        GENERATE_INFOPLIST_FILE: YES
+  MultiAIIMTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: MultiAIIMTests
+    dependencies:
+      - target: MultiAIIMCore
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  MultiAIIM:
+    build:
+      targets:
+        MultiAIIM: all
+        MultiAIIMCore: all
+    run:
+      config: Debug
+  MultiAIIMCoreTests:
+    build:
+      targets:
+        MultiAIIMCore: all
+        MultiAIIMTests: [test]
+    test:
+      targets:
+        - MultiAIIMTests

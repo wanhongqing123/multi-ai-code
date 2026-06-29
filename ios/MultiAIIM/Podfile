@@ -1,0 +1,9 @@
+platform :ios, '16.0'
+
+project 'MultiAIIM.xcodeproj'
+
+target 'MultiAIIM' do
+  use_frameworks!
+
+  pod 'TXIMSDK_Plus_iOS_XCFramework'
+end

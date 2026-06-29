@@ -7,7 +7,7 @@ import {
   isRemoteImOperationFinishedText,
   parseRemoteImAicliOutputText
 } from './outputForwarding.js'
-import { buildRemoteImAicliPrompt } from './replyProtocol.js'
+import { buildRemoteImAicliDisplayText, buildRemoteImAicliPrompt } from './replyProtocol.js'
 import { canRouteRemoteImTaskFrom, getRemoteImPeerRelation } from './rolePermissions.js'
 
 export interface RemoteImSessionInfo {
@@ -23,7 +23,11 @@ export interface RemoteImRouterStore {
 export interface RemoteImRouterDeps {
   getConfig(projectId: string): RemoteImConfig
   resolveSession(projectId: string): RemoteImSessionInfo | null
-  sendUser(sessionId: string, text: string): Promise<{ ok: boolean; error?: string }>
+  sendUser(
+    sessionId: string,
+    text: string,
+    options?: { displayText?: string }
+  ): Promise<{ ok: boolean; error?: string }>
   sendImText(projectId: string, toUserId: string, text: string): Promise<{ ok: boolean; error?: string }>
   store: RemoteImRouterStore
   now?: () => number
@@ -153,12 +157,6 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
           now
         )
       )
-      await sendSystemText(
-        deps,
-        message.projectId,
-        fromUserId,
-        isSlaveToSlave ? '奴隶节点不能互相通信。' : '没有远程控制权限。'
-      )
       return {
         ok: false,
         error: isSlaveToSlave
@@ -226,7 +224,8 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
     }
 
     const wrapped = buildRemoteImAicliPrompt({ fromUserId, text })
-    const sendResult = await deps.sendUser(session.sessionId, wrapped)
+    const displayText = buildRemoteImAicliDisplayText({ fromUserId, text })
+    const sendResult = await deps.sendUser(session.sessionId, wrapped, { displayText })
     if (!sendResult.ok) {
       const error = sendResult.error ?? 'failed to send message to AICLI'
       deps.store.updateStatus(incoming.id, {

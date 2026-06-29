@@ -7,6 +7,7 @@ import {
   getRemoteImConversations,
   getRemoteImMessageDisplayMeta,
   getRemoteImMessageAvatar,
+  getRemoteImMessageStatusLabel,
   getRemoteImStatusLabel,
   isRemoteImSendDisabled
 } from './remoteImViewModel.js'
@@ -69,6 +70,14 @@ describe('remote IM view model', () => {
     expect(getRemoteImMessageAvatar(message)).toBe('手')
     expect(getRemoteImMessageAvatar({ ...message, role: 'system' })).toBe('系')
     expect(getRemoteImMessageAvatar({ ...message, role: 'aicli' })).toBe('AI')
+  })
+
+  it('uses compact message delivery status labels', () => {
+    expect(getRemoteImMessageStatusLabel(message({ status: 'sent-to-aicli' }))).toBe('✓')
+    expect(getRemoteImMessageStatusLabel(message({ status: 'sent-to-im' }))).toBe('✓')
+    expect(getRemoteImMessageStatusLabel(message({ status: 'sent-to-im', role: 'aicli' }))).toBe('✓')
+    expect(getRemoteImMessageStatusLabel(message({ status: 'streaming' }))).toBe('回复中')
+    expect(getRemoteImMessageStatusLabel(message({ status: 'received' }))).toBe('')
   })
 
   it('disables sending without project, text, or a connected IM runtime', () => {

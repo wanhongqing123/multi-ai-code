@@ -32,6 +32,34 @@ describe('remote IM output sanitizer', () => {
     expect(sanitizeRemoteImAicliOutput(redraw)).toBe('')
   })
 
+  it('drops split Claude status redraws while preserving reply markdown', () => {
+    const noisy = [
+      '我是 Claude Code，Anthropic 出品的命令行编程助手。',
+      '',
+      'Opus |',
+      '5h:19%',
+      '7d:28% |',
+      'ctx:3%/1M |',
+      'cache:r15.8k+w2.6k |',
+      'in:8.7k',
+      'out:2',
+      '● high · /effort',
+      '←',
+      'for',
+      'agents',
+      '',
+      '- 熟悉多语言代码库的查阅、修改与重构'
+    ].join('\n')
+
+    expect(sanitizeRemoteImAicliOutput(noisy)).toBe(
+      [
+        '我是 Claude Code，Anthropic 出品的命令行编程助手。',
+        '',
+        '- 熟悉多语言代码库的查阅、修改与重构'
+      ].join('\n')
+    )
+  })
+
   it('strips inline terminal redraws and remote IM prompt echo from Claude output', () => {
     const noisy =
       '·4thinking with xhigh effort6thinking with xhigh effort ❯ [来自远程 IM：multi_ai_code_e2e_a] 你好 ●你好！我是ClaudeCode，很高兴和你交流。\n' +

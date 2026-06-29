@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const ipcHandlers = vi.hoisted(() => new Map<string, (...args: unknown[]) => unknown>())
 const buildSystemPromptMock = vi.hoisted(() => vi.fn(async () => 'system prompt'))
+const browserWindowSends = vi.hoisted(() => [] as Array<{ channel: string; payload: unknown }>)
 const ptyInstances = vi.hoisted(() => [] as Array<{
   writes: string[]
   opts: Record<string, unknown>
@@ -21,7 +22,16 @@ vi.mock('electron', () => ({
     on: vi.fn(),
   },
   BrowserWindow: {
-    getAllWindows: () => [],
+    getAllWindows: () => [
+      {
+        isDestroyed: () => false,
+        webContents: {
+          send: (channel: string, payload: unknown) => {
+            browserWindowSends.push({ channel, payload })
+          }
+        }
+      }
+    ],
   },
 }))
 
@@ -64,6 +74,7 @@ describe('registerPtyIpc prompt injection timing', () => {
   beforeEach(() => {
     vi.resetModules()
     ipcHandlers.clear()
+    browserWindowSends.length = 0
     ptyInstances.length = 0
   })
 
@@ -227,6 +238,33 @@ describe('registerPtyIpc prompt injection timing', () => {
     expect(result).toEqual({ ok: true })
     expect(proc.writes.join('')).toContain('scheduled task prompt')
   }, 10_000)
+
+  it('broadcasts remote IM display text to the local terminal without changing PTY input', async () => {
+    const { proc } = await spawnNoPlanSession()
+    proc.emitData(
+      'ready\nAdministrator@WIN  C:\\repo  Opus 4.8\n▸ bypass permissions on (shift+tab to cycle) · ← for agents'
+    )
+
+    const { sendUserMessageToSession } = await import('./ptyManager.js')
+    const result = await sendUserMessageToSession(
+      'session-no-plan',
+      'full AICLI protocol prompt',
+      {
+        displayText: '[来自远程 IM：mac-apollo-u3player]\n你好'
+      }
+    )
+
+    expect(result).toEqual({ ok: true })
+    expect(proc.writes.join('')).toContain('full AICLI protocol prompt')
+    expect(proc.writes.join('')).not.toContain('[来自远程 IM：mac-apollo-u3player]\n你好')
+    expect(browserWindowSends).toContainEqual({
+      channel: 'cc:data',
+      payload: {
+        sessionId: 'session-no-plan',
+        chunk: '\r\n[来自远程 IM：mac-apollo-u3player]\r\n你好\r\n'
+      }
+    })
+  })
 
   it('does not scan local skills when sending user messages', () => {
     const source = readFileSync(

@@ -70,19 +70,23 @@ describe('remote IM router', () => {
     expect(result.ok).toBe(false)
     expect(result.error).toContain('not allowed')
     expect(sentToAicli).toEqual([])
-    expect(sentToIm[0]).toContain('没有远程控制权限')
+    expect(sentToIm).toEqual([])
     expect(store.messages[0]).toMatchObject({ status: 'rejected', role: 'remote-user' })
   })
 
   it('wraps whitelisted text and sends it to the current AICLI session', async () => {
     const store = createMessageStore()
-    const sentToAicli: Array<{ sessionId: string; text: string }> = []
+    const sentToAicli: Array<{
+      sessionId: string
+      text: string
+      displayText: string | undefined
+    }> = []
     const sentToIm: string[] = []
     const router = createRemoteImRouter({
       getConfig: () => config,
       resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
-      sendUser: async (sessionId, text) => {
-        sentToAicli.push({ sessionId, text })
+      sendUser: async (sessionId, text, options) => {
+        sentToAicli.push({ sessionId, text, displayText: options?.displayText })
         return { ok: true }
       },
       sendImText: async (_projectId, _toUserId, text) => {
@@ -108,6 +112,8 @@ describe('remote IM router', () => {
     expect(sentToAicli[0]?.text).toContain('phone_admin')
     expect(sentToAicli[0]?.text).toContain(REMOTE_IM_REPLY_OPEN_TAG)
     expect(sentToAicli[0]?.text).toContain(REMOTE_IM_REPLY_CLOSE_TAG)
+    expect(sentToAicli[0]?.displayText).toBe('[来自远程 IM：phone_admin]\n检查构建')
+    expect(sentToAicli[0]?.displayText).not.toContain('[IM_REPLY]')
     expect(sentToIm[0]).toContain('已发送给当前 AICLI')
     expect(store.messages.map((message) => message.status)).toEqual([
       'sent-to-aicli',
@@ -309,7 +315,7 @@ describe('remote IM router', () => {
     expect(result.ok).toBe(false)
     expect(result.error).toContain('slave nodes cannot route tasks to each other')
     expect(sentToAicli).toEqual([])
-    expect(sentToIm[0]).toContain('奴隶节点不能互相通信')
+    expect(sentToIm).toEqual([])
     expect(store.messages[0]).toMatchObject({ status: 'rejected', error: 'slave-to-slave blocked' })
   })
 

@@ -61,15 +61,33 @@ export function getRemoteImMessageStatusLabel(message: RemoteImMessage): string 
     case 'received':
       return ''
     case 'sent-to-aicli':
-      return '已发送'
+      return '✓'
     case 'streaming':
       return '回复中'
     case 'sent-to-im':
-      return message.role === 'aicli' ? '已回发' : '已发送'
+      return '✓'
     case 'rejected':
       return '已拒绝'
     case 'failed':
       return '失败'
+    default:
+      return ''
+  }
+}
+
+export function getRemoteImMessageStatusTitle(message: RemoteImMessage): string {
+  switch (message.status) {
+    case 'sent-to-aicli':
+      return '已发送'
+    case 'sent-to-im':
+      return message.role === 'aicli' ? '已回发' : '已发送'
+    case 'streaming':
+      return '回复中'
+    case 'rejected':
+      return '已拒绝'
+    case 'failed':
+      return '失败'
+    case 'received':
     default:
       return ''
   }

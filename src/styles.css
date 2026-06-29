@@ -1411,8 +1411,8 @@ html, body, #root {
 }
 
 .ai-settings-modal {
-  width: min(1000px, calc(100vw - 48px));
-  height: min(800px, calc(100vh - 56px));
+  width: min(1180px, calc(100vw - 48px));
+  height: min(860px, calc(100vh - 56px));
   max-height: calc(100vh - 56px);
   display: flex;
   flex-direction: column;
@@ -1715,7 +1715,7 @@ html, body, #root {
   border-radius: var(--mac-r-md);
   padding: 8px var(--mac-sp-3);
   color: var(--mac-fg);
-  font-size: var(--mac-text-sm);
+  font-size: var(--mac-text-xs);
   font-family: var(--mac-font-sans);
   font-weight: var(--mac-weight-regular);
   transition: border-color var(--mac-dur-fast) var(--mac-ease),
@@ -2040,8 +2040,8 @@ html, body, #root {
 
 @media (max-width: 760px) {
   .ai-settings-modal {
-    width: min(96vw, 1000px);
-    height: min(92vh, 800px);
+    width: min(96vw, 1180px);
+    height: min(92vh, 860px);
   }
 
   .ai-settings-header {
@@ -3235,9 +3235,9 @@ html, body, #root {
 }
 
 .modal.ai-settings-modal {
-  width: min(1000px, calc(100vw - 48px));
+  width: min(1180px, calc(100vw - 48px));
   max-width: calc(100vw - 48px);
-  height: min(800px, calc(100vh - 56px));
+  height: min(860px, calc(100vh - 56px));
   max-height: calc(100vh - 56px);
   border-radius: 28px;
   background: linear-gradient(135deg, var(--mac-surface), var(--mac-bg-subtle));

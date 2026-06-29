@@ -113,7 +113,8 @@ describe('AiSettingsDialog', () => {
     const markup = renderDialog()
 
     expect(markup).toContain('id="ai-settings-remote-im-section"')
-    expect(markup).toContain('UserSig 服务地址')
+    expect(markup).toContain('启用远程 IM')
+    expect(markup).toContain('账号、凭证和联系人请在远程 IM 面板登录后管理')
     expect(markup).not.toContain('SECRETKEY')
   })
 
@@ -136,8 +137,18 @@ describe('AiSettingsDialog', () => {
 
     expect(globalModalIndex).toBeGreaterThan(-1)
     expect(settingsModalIndex).toBeGreaterThan(globalModalIndex)
-    expect(settingsModalRule).toContain('width: min(1000px')
+    expect(settingsModalRule).toContain('width: min(1180px')
     expect(settingsModalRule).toContain('max-width: calc(100vw - 48px)')
+    expect(settingsModalRule).toContain('height: min(860px')
+  })
+
+  it('uses compact form text inside the larger settings modal', () => {
+    const css = readFileSync(fileURLToPath(new URL('../styles.css', import.meta.url)), 'utf8')
+    const inputRuleIndex = css.indexOf(".ai-settings-card label > input:not([type='checkbox'])")
+    const inputRule = css.slice(inputRuleIndex, inputRuleIndex + 620)
+
+    expect(inputRuleIndex).toBeGreaterThan(-1)
+    expect(inputRule).toContain('font-size: var(--mac-text-xs)')
   })
 
   it('renders the project runtime settings section', () => {

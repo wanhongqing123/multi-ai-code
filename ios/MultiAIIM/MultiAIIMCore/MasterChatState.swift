@@ -37,6 +37,22 @@ public enum RemoteIMDraftSubmitPolicy {
     }
 }
 
+public enum ChatDetailSwipeBackPolicy {
+    public static let maxStartX: Double = 32
+    public static let minTranslationWidth: Double = 70
+    public static let maxVerticalTranslation: Double = 80
+
+    public static func shouldReturnToConversationList(
+        startX: Double,
+        translationWidth: Double,
+        translationHeight: Double
+    ) -> Bool {
+        startX <= maxStartX &&
+            translationWidth >= minTranslationWidth &&
+            abs(translationHeight) <= maxVerticalTranslation
+    }
+}
+
 public struct RemoteIMCredential: Equatable {
     public let sdkAppID: Int
     public let userSigSecretKey: String

@@ -62,6 +62,37 @@ final class MasterChatStateTests: XCTestCase {
         XCTAssertTrue(reply.text.contains("- **SDK 层**"))
     }
 
+    func testChatDetailSwipeBackOnlyAcceptsLeftEdgeRightDrag() {
+        XCTAssertTrue(
+            ChatDetailSwipeBackPolicy.shouldReturnToConversationList(
+                startX: 12,
+                translationWidth: 92,
+                translationHeight: 10
+            )
+        )
+        XCTAssertFalse(
+            ChatDetailSwipeBackPolicy.shouldReturnToConversationList(
+                startX: 54,
+                translationWidth: 120,
+                translationHeight: 8
+            )
+        )
+        XCTAssertFalse(
+            ChatDetailSwipeBackPolicy.shouldReturnToConversationList(
+                startX: 12,
+                translationWidth: 34,
+                translationHeight: 6
+            )
+        )
+        XCTAssertFalse(
+            ChatDetailSwipeBackPolicy.shouldReturnToConversationList(
+                startX: 12,
+                translationWidth: 110,
+                translationHeight: 96
+            )
+        )
+    }
+
     func testUpdatesQueuedMessageStatusAfterDelivery() throws {
         var state = MasterChatState(ownerUserID: "ios-master")
         try state.upsertSlave(userID: "mac-quark-pc", displayName: "Quark PC")

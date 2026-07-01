@@ -1,6 +1,7 @@
 import AVFoundation
 import MultiAIIMCore
 import SwiftUI
+import UIKit
 
 enum RemoteIMStyle {
     static let pageBackground = Color(red: 0.966, green: 0.976, blue: 0.988)
@@ -259,9 +260,26 @@ private struct ChatDetailView: View {
         }
         .background(RemoteIMStyle.pageBackground.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
+        .simultaneousGesture(edgeSwipeBackGesture)
         .onAppear {
             appState.selectContact(contact)
         }
+    }
+
+    private var edgeSwipeBackGesture: some Gesture {
+        DragGesture(minimumDistance: 20, coordinateSpace: .local)
+            .onEnded { value in
+                guard ChatDetailSwipeBackPolicy.shouldReturnToConversationList(
+                    startX: Double(value.startLocation.x),
+                    translationWidth: Double(value.translation.width),
+                    translationHeight: Double(value.translation.height)
+                ) else { return }
+
+                dismissKeyboard()
+                withAnimation(.easeOut(duration: 0.18)) {
+                    activeContact = nil
+                }
+            }
     }
 }
 
@@ -353,6 +371,11 @@ private struct MessageListView: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .background(RemoteIMStyle.panelBackground)
+            .simultaneousGesture(
+                TapGesture().onEnded {
+                    dismissKeyboard()
+                }
+            )
             .onChange(of: messages.count) { _ in
                 if let last = messages.last {
                     proxy.scrollTo(last.id, anchor: .bottom)
@@ -360,6 +383,16 @@ private struct MessageListView: View {
             }
         }
     }
+}
+
+@MainActor
+private func dismissKeyboard() {
+    UIApplication.shared.sendAction(
+        #selector(UIResponder.resignFirstResponder),
+        to: nil,
+        from: nil,
+        for: nil
+    )
 }
 
 private struct EmptyMessagesView: View {

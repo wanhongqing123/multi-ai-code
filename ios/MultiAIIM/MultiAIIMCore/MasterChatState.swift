@@ -108,7 +108,7 @@ public enum RemoteIMLoginCredentialPolicy {
     }
 }
 
-public struct RemoteIMContact: Identifiable, Equatable, Hashable {
+public struct RemoteIMContact: Identifiable, Codable, Equatable, Hashable {
     public var id: String { userID }
     public let userID: String
     public var displayName: String
@@ -125,19 +125,19 @@ public struct RemoteIMContact: Identifiable, Equatable, Hashable {
     }
 }
 
-public enum RemoteIMMessageDirection: String, Equatable {
+public enum RemoteIMMessageDirection: String, Codable, Equatable {
     case incoming
     case outgoing
 }
 
-public enum RemoteIMMessageStatus: String, Equatable {
+public enum RemoteIMMessageStatus: String, Codable, Equatable {
     case pending
     case sent
     case received
     case failed
 }
 
-public struct RemoteIMVoiceAttachment: Equatable {
+public struct RemoteIMVoiceAttachment: Codable, Equatable {
     public let localFilePath: String
     public let durationSeconds: Int
     public let remoteID: String?
@@ -153,7 +153,7 @@ public struct RemoteIMVoiceAttachment: Equatable {
     }
 }
 
-public struct RemoteIMMessage: Identifiable, Equatable {
+public struct RemoteIMMessage: Identifiable, Codable, Equatable {
     public let id: UUID
     public let fromUserID: String
     public let toUserID: String
@@ -199,6 +199,80 @@ public struct MasterChatState: Equatable {
         self.contacts = []
         self.messages = []
         self.selectedPeerID = nil
+    }
+
+    public init(
+        ownerUserID: String,
+        contacts: [RemoteIMContact],
+        messages: [RemoteIMMessage],
+        selectedPeerID: String? = nil
+    ) {
+        self.ownerUserID = ownerUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.contacts = Self.normalizedContacts(contacts)
+        self.messages = Self.normalizedMessages(messages, ownerUserID: self.ownerUserID)
+        Self.addMissingContacts(from: self.messages, ownerUserID: self.ownerUserID, contacts: &self.contacts)
+
+        let cleanSelectedPeerID = selectedPeerID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let cleanSelectedPeerID,
+           !cleanSelectedPeerID.isEmpty,
+           self.contacts.contains(where: { $0.userID == cleanSelectedPeerID })
+        {
+            self.selectedPeerID = cleanSelectedPeerID
+        } else {
+            self.selectedPeerID = self.contacts.first?.userID
+        }
+    }
+
+    private static func normalizedContacts(_ contacts: [RemoteIMContact]) -> [RemoteIMContact] {
+        var normalizedContacts: [RemoteIMContact] = []
+        for contact in contacts {
+            let cleanUserID = contact.userID.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleanUserID.isEmpty else { continue }
+            let cleanDisplayName = contact.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let normalizedContact = RemoteIMContact(
+                userID: cleanUserID,
+                displayName: cleanDisplayName.isEmpty ? cleanUserID : cleanDisplayName,
+                relation: .friend
+            )
+            if let index = normalizedContacts.firstIndex(where: { $0.userID == cleanUserID }) {
+                normalizedContacts[index] = normalizedContact
+            } else {
+                normalizedContacts.append(normalizedContact)
+            }
+        }
+        return normalizedContacts
+    }
+
+    private static func normalizedMessages(
+        _ messages: [RemoteIMMessage],
+        ownerUserID: String
+    ) -> [RemoteIMMessage] {
+        guard !ownerUserID.isEmpty else { return messages }
+        return messages
+            .filter { $0.fromUserID == ownerUserID || $0.toUserID == ownerUserID }
+            .sorted { $0.createdAt < $1.createdAt }
+    }
+
+    private static func addMissingContacts(
+        from messages: [RemoteIMMessage],
+        ownerUserID: String,
+        contacts: inout [RemoteIMContact]
+    ) {
+        guard !ownerUserID.isEmpty else { return }
+        for message in messages {
+            let peerID = message.fromUserID == ownerUserID ? message.toUserID : message.fromUserID
+            let cleanPeerID = peerID.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleanPeerID.isEmpty else { continue }
+            if !contacts.contains(where: { $0.userID == cleanPeerID }) {
+                contacts.append(
+                    RemoteIMContact(
+                        userID: cleanPeerID,
+                        displayName: cleanPeerID,
+                        relation: .friend
+                    )
+                )
+            }
+        }
     }
 
     public mutating func upsertContact(

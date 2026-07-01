@@ -159,6 +159,63 @@ final class MasterChatStateTests: XCTestCase {
         XCTAssertEqual(state.latestMessage(with: "mac-quark-pc"), quarkReply)
     }
 
+    func testRestoresPersistedConversationMessages() throws {
+        let incoming = RemoteIMMessage(
+            id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,
+            fromUserID: "mac-quark-pc",
+            toUserID: "ios-master",
+            text: "处理完成",
+            direction: .incoming,
+            status: .received,
+            createdAt: Date(timeIntervalSince1970: 200)
+        )
+        let outgoing = RemoteIMMessage(
+            id: UUID(uuidString: "22222222-2222-2222-2222-222222222222")!,
+            fromUserID: "ios-master",
+            toUserID: "mac-quark-pc",
+            text: "继续看一下",
+            direction: .outgoing,
+            status: .sent,
+            createdAt: Date(timeIntervalSince1970: 210)
+        )
+
+        let restored = MasterChatState(
+            ownerUserID: " ios-master ",
+            contacts: [
+                RemoteIMContact(userID: "mac-quark-pc", displayName: "Quark PC")
+            ],
+            messages: [incoming, outgoing],
+            selectedPeerID: "mac-quark-pc"
+        )
+
+        XCTAssertEqual(restored.ownerUserID, "ios-master")
+        XCTAssertEqual(restored.messages(with: "mac-quark-pc"), [incoming, outgoing])
+        XCTAssertEqual(restored.latestMessage(with: "mac-quark-pc"), outgoing)
+        XCTAssertEqual(restored.selectedPeerID, "mac-quark-pc")
+    }
+
+    func testMessageHistoryRoundTripsThroughJSON() throws {
+        let voiceMessage = RemoteIMMessage(
+            id: UUID(uuidString: "33333333-3333-3333-3333-333333333333")!,
+            fromUserID: "mac-quark-pc",
+            toUserID: "ios-master",
+            text: "[语音消息 4s]",
+            voiceAttachment: RemoteIMVoiceAttachment(
+                localFilePath: "/tmp/incoming-voice.m4a",
+                durationSeconds: 4,
+                remoteID: "voice-uuid"
+            ),
+            direction: .incoming,
+            status: .received,
+            createdAt: Date(timeIntervalSince1970: 220)
+        )
+
+        let data = try JSONEncoder().encode([voiceMessage])
+        let decoded = try JSONDecoder().decode([RemoteIMMessage].self, from: data)
+
+        XCTAssertEqual(decoded, [voiceMessage])
+    }
+
     func testLegacySlaveContactsAreStoredAsFriends() throws {
         var state = MasterChatState(ownerUserID: "ios-master")
 

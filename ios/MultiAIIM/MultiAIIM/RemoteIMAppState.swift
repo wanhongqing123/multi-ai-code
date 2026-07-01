@@ -23,6 +23,7 @@ final class RemoteIMAppState: ObservableObject {
 
     private let settingsStore: LocalSettingsStore
     private let secretStore: KeychainSecretStore
+    private let historyStore: LocalChatHistoryStore
     private let client: RemoteIMClient
     private let autoConnectOnLaunch: Bool
     private var didHandleLaunchAutoConnect = false
@@ -30,10 +31,12 @@ final class RemoteIMAppState: ObservableObject {
     init(
         settingsStore: LocalSettingsStore = LocalSettingsStore(),
         secretStore: KeychainSecretStore = KeychainSecretStore(),
+        historyStore: LocalChatHistoryStore = LocalChatHistoryStore(),
         client: RemoteIMClient = TencentIMClient()
     ) {
         self.settingsStore = settingsStore
         self.secretStore = secretStore
+        self.historyStore = historyStore
         self.client = client
 
         var settings = settingsStore.load()
@@ -47,13 +50,14 @@ final class RemoteIMAppState: ObservableObject {
         self.masterUserID = settings.masterUserID
         self.secretKey = loadedSecretKey
 
-        var loadedState = MasterChatState(ownerUserID: settings.masterUserID)
-        for friendUserID in settings.friendUserIDs {
-            try? loadedState.upsertFriend(userID: friendUserID)
-        }
-        for slaveUserID in settings.slaveUserIDs {
-            try? loadedState.upsertSlave(userID: slaveUserID)
-        }
+        let loadedState = MasterChatState(
+            ownerUserID: settings.masterUserID,
+            contacts: Self.contacts(from: settings),
+            messages: historyStore.load(
+                sdkAppID: settings.sdkAppID,
+                ownerUserID: settings.masterUserID
+            )
+        )
         self.chatState = loadedState
         self.client.onIncomingText = { [weak self] event in
             Task { @MainActor in
@@ -181,12 +185,15 @@ final class RemoteIMAppState: ObservableObject {
             let message = try chatState.queueOutgoingText(draftText)
             let textToSend = message.text
             draftText = ""
+            persistCurrentHistory()
             try await client.sendText(to: message.toUserID, text: textToSend)
             try chatState.updateMessageStatus(id: message.id, status: .sent)
+            persistCurrentHistory()
             errorMessage = nil
         } catch {
             if let lastMessage = chatState.messages.last, lastMessage.status == .pending {
                 try? chatState.updateMessageStatus(id: lastMessage.id, status: .failed)
+                persistCurrentHistory()
             }
             errorMessage = error.localizedDescription
         }
@@ -200,12 +207,15 @@ final class RemoteIMAppState: ObservableObject {
                 filePath: recording.fileURL.path,
                 durationSeconds: recording.durationSeconds
             )
+            persistCurrentHistory()
             try await client.sendVoice(to: message.toUserID, recording: recording)
             try chatState.updateMessageStatus(id: message.id, status: .sent)
+            persistCurrentHistory()
             errorMessage = nil
         } catch {
             if let lastMessage = chatState.messages.last, lastMessage.status == .pending {
                 try? chatState.updateMessageStatus(id: lastMessage.id, status: .failed)
+                persistCurrentHistory()
             }
             errorMessage = error.localizedDescription
         }
@@ -213,6 +223,7 @@ final class RemoteIMAppState: ObservableObject {
 
     private func receive(_ event: IncomingRemoteIMText) {
         _ = chatState.receiveText(event.text, fromUserID: event.fromUserID)
+        persistCurrentHistory()
         settingsStore.save(currentStoredSettings())
     }
 
@@ -223,6 +234,7 @@ final class RemoteIMAppState: ObservableObject {
             fromUserID: event.fromUserID,
             remoteID: event.remoteID
         )
+        persistCurrentHistory()
         settingsStore.save(currentStoredSettings())
     }
 
@@ -239,15 +251,39 @@ final class RemoteIMAppState: ObservableObject {
     private func rebuildChatStateForCurrentMaster() {
         let cleanMasterUserID = masterUserID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard chatState.ownerUserID != cleanMasterUserID else { return }
-        var nextState = MasterChatState(ownerUserID: cleanMasterUserID)
-        for contact in chatState.contacts {
-            try? nextState.upsertContact(
-                userID: contact.userID,
-                relation: contact.relation,
-                displayName: contact.displayName
-            )
-        }
+        persistCurrentHistory()
+        let nextState = MasterChatState(
+            ownerUserID: cleanMasterUserID,
+            contacts: chatState.contacts,
+            messages: historyStore.load(
+                sdkAppID: currentSDKAppID(),
+                ownerUserID: cleanMasterUserID
+            ),
+            selectedPeerID: chatState.selectedPeerID
+        )
         chatState = nextState
+    }
+
+    private func persistCurrentHistory() {
+        do {
+            try historyStore.save(
+                messages: chatState.messages,
+                sdkAppID: currentSDKAppID(),
+                ownerUserID: chatState.ownerUserID
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func currentSDKAppID() -> Int? {
+        Int(sdkAppIDText.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    private static func contacts(from settings: StoredRemoteIMSettings) -> [RemoteIMContact] {
+        (settings.friendUserIDs + settings.slaveUserIDs).map { userID in
+            RemoteIMContact(userID: userID, displayName: userID, relation: .friend)
+        }
     }
 
     private func applyFixedCredential() {

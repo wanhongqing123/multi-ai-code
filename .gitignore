@@ -75,12 +75,12 @@ ios/**/*.xcuserstate
 # Multi-AI Code local design/memory artifacts
 .multi-ai-code/
 
-# Local Whisper models are large runtime assets and should not be committed.
+# Local Whisper runtime binaries are generated during packaging.
+# The shared Whisper model under resources/asr/models is tracked by Git LFS.
 models/whisper/*.bin
 resources/asr/**/bin/*
 resources/asr/**/lib/*
 resources/asr/**/licenses/*
-resources/asr/models/*.bin
 !resources/asr/README.md
 !resources/asr/**/.gitkeep
 

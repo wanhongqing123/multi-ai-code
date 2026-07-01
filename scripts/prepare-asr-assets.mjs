@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process'
 import { constants } from 'node:fs'
-import { access, chmod, copyFile, cp, mkdir, mkdtemp, readdir, realpath, rm } from 'node:fs/promises'
+import { access, chmod, copyFile, cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat } from 'node:fs/promises'
 import { arch, platform, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -89,14 +89,25 @@ async function copyRuntimeFile(src, dest, mode = 0o755) {
 }
 
 async function copyModel() {
-  if (await exists(modelDest)) return
+  if ((await exists(modelDest)) && !(await isGitLfsPointer(modelDest))) return
   await mkdir(dirname(modelDest), { recursive: true })
-  if (await exists(modelSource)) {
+  if ((await exists(modelSource)) && !(await isGitLfsPointer(modelSource))) {
     await copyFile(modelSource, modelDest)
     return
   }
   console.log(`Downloading ${modelName} for packaged ASR runtime...`)
   await download(modelUrl, modelDest)
+}
+
+async function isGitLfsPointer(path) {
+  try {
+    const info = await stat(path)
+    if (info.size > 1024 * 1024) return false
+    const content = await readFile(path, 'utf8')
+    return content.startsWith('version https://git-lfs.github.com/spec/v1')
+  } catch {
+    return false
+  }
 }
 
 async function installNameTool(args) {

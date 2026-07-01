@@ -194,7 +194,7 @@ npm run prepare-asr
 
 ```text
 resources/asr/
-  models/ggml-base.bin
+  models/ggml-base.bin        # Git LFS
   darwin-arm64/bin/whisper-cli
   darwin-arm64/bin/libggml-*.so
   darwin-arm64/lib/*.dylib
@@ -202,7 +202,7 @@ resources/asr/
   win32-x64/bin/ffmpeg.exe
 ```
 
-这些二进制和模型文件体积较大，默认被 `.gitignore` 忽略，不提交到仓库；打包时会通过 Electron Builder 的 `extraResources` 放进最终安装包。
+`ggml-base.bin` 通过 Git LFS 进入仓库。其它平台运行时二进制体积较大，默认被 `.gitignore` 忽略，由 `npm run prepare-asr` 在打包前生成；最终都会通过 Electron Builder 的 `extraResources` 放进安装包。
 
 ## 安装与运行
 
@@ -313,6 +313,6 @@ xcodebuild test -workspace ios/MultiAIIM/MultiAIIM.xcworkspace -scheme MultiAIIM
 - AICLI 依赖本机真实安装的 `claude` 或 `codex`，不是内置模型。
 - 远程 IM 当前使用内置测试凭证，不适合作为正式上架 App Store 的生产配置。
 - 腾讯 IM SDK 自带的语音转文字属于增值能力；当前默认走本地 Whisper。
-- ASR 模型和二进制由 `npm run prepare-asr` 生成并随安装包携带，资源本身不进入 git。
+- ASR 模型通过 Git LFS 管理，平台运行时二进制由 `npm run prepare-asr` 生成并随安装包携带。
 - 本地私有记忆默认不进入 git，但如果手动调整 `.git/info/exclude`，仍需要自行确认。
 - README 以当前主分支实现为准；历史版本的界面和能力可能不同。

@@ -52,19 +52,16 @@ export interface RemoteImDrawerProps {
   onClose: () => void
 }
 
-type ConversationFilter = 'recent' | RemoteImContactRelation
+type ConversationFilter = 'recent' | 'friend'
 
 const RELATION_FILTERS: Array<{ value: ConversationFilter; label: string }> = [
   { value: 'recent', label: '最近' },
-  { value: 'friend', label: '好友' },
-  { value: 'master', label: '主人' },
-  { value: 'slave', label: '奴隶' }
+  { value: 'friend', label: '好友' }
 ]
 
 function getRelationLabel(relation: RemoteImContactRelation): string {
-  if (relation === 'friend') return '好友'
-  if (relation === 'master') return '主人'
-  return '奴隶'
+  void relation
+  return '好友'
 }
 
 function RemoteImMarkdown(props: { content: string }): JSX.Element {
@@ -91,7 +88,6 @@ function isInteractiveDragTarget(target: EventTarget | null): boolean {
 
 export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element | null {
   const [conversationFilter, setConversationFilter] = useState<ConversationFilter>('recent')
-  const [newContactRelation, setNewContactRelation] = useState<RemoteImContactRelation>('friend')
   const [newContactUserId, setNewContactUserId] = useState('')
   const panelRef = useRef<HTMLDivElement | null>(null)
   const [panelPosition, setPanelPosition] = useState<RemoteImPanelPosition | null>(null)
@@ -116,9 +112,8 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
   const selectedConversation = selectedPeerUserId
     ? conversations.find((conversation) => conversation.userId === selectedPeerUserId)
     : null
-  const slaveMode = props.config.desktopRole === 'slave'
   const inputDisabled =
-    slaveMode || !selectedPeerUserId || !props.projectId || props.status?.state !== 'connected'
+    !selectedPeerUserId || !props.projectId || props.status?.state !== 'connected'
   const clearDisabled = !props.projectId || props.messages.length === 0
   const sendDisabled =
     isRemoteImSendDisabled({
@@ -223,7 +218,7 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
     event.preventDefault()
     const userId = newContactUserId.trim()
     if (!userId) return
-    props.onAddContact(newContactRelation, userId)
+    props.onAddContact('friend', userId)
     setNewContactUserId('')
   }
 
@@ -325,17 +320,6 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
 
             <form className="remote-im-add-contact" aria-label="添加联系人" onSubmit={handleAddContact}>
               <div className="remote-im-add-title">添加联系人</div>
-              <select
-                name="relation"
-                value={newContactRelation}
-                onChange={(event) =>
-                  setNewContactRelation(event.currentTarget.value as RemoteImContactRelation)
-                }
-              >
-                <option value="friend">好友</option>
-                <option value="master">主人</option>
-                <option value="slave">奴隶</option>
-              </select>
               <input
                 name="userId"
                 value={newContactUserId}
@@ -399,11 +383,9 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
                 onChange={(event) => props.onInputChange(event.currentTarget.value)}
                 disabled={inputDisabled}
                 placeholder={
-                  slaveMode
-                    ? '奴隶模式：等待主人发送任务'
-                    : selectedPeerUserId
-                      ? '输入要发送给当前 UserID 的消息...'
-                      : '先选择一个联系人'
+                  selectedPeerUserId
+                    ? '输入要发送给当前 UserID 的消息...'
+                    : '先选择一个联系人'
                 }
               />
               <button type="submit" disabled={sendDisabled}>

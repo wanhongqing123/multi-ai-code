@@ -98,6 +98,9 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
           onIncomingText: (message) => {
             void window.api.remoteIm.deliverIncomingText(message)
           },
+          onIncomingAudio: (message) => {
+            void window.api.remoteIm.deliverIncomingAudio(message)
+          },
           onRuntimeLog: (entry) => {
             void window.api.remoteIm.writeRuntimeLog(entry)
           }

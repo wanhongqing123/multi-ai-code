@@ -80,6 +80,12 @@ describe('preload remote IM api', () => {
       fromUserId: 'phone_admin',
       text: 'hello'
     })
+    await api.remoteIm.deliverIncomingAudio({
+      projectId: 'project-1',
+      fromUserId: 'phone_admin',
+      audioUrl: 'https://cos.example.test/voice.amr',
+      durationSeconds: 4
+    })
     await api.remoteIm.updateSdkStatus({
       projectId: 'project-1',
       state: 'connected',
@@ -141,7 +147,13 @@ describe('preload remote IM api', () => {
       fromUserId: 'phone_admin',
       text: 'hello'
     })
-    expect(electronMock.invoke).toHaveBeenNthCalledWith(15, 'remote-im:update-sdk-status', {
+    expect(electronMock.invoke).toHaveBeenNthCalledWith(15, 'remote-im:deliver-incoming-audio', {
+      projectId: 'project-1',
+      fromUserId: 'phone_admin',
+      audioUrl: 'https://cos.example.test/voice.amr',
+      durationSeconds: 4
+    })
+    expect(electronMock.invoke).toHaveBeenNthCalledWith(16, 'remote-im:update-sdk-status', {
       projectId: 'project-1',
       state: 'connected',
       detail: null

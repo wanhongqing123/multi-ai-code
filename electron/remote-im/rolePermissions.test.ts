@@ -35,54 +35,60 @@ const slaveConfig: RemoteImConfig = {
   slaveUserIds: ['slave-c']
 }
 
-describe('remote IM role permissions', () => {
-  it('resolves configured peer relations', () => {
+describe('remote IM trusted-contact permissions', () => {
+  it('resolves legacy role lists as trusted friends', () => {
     expect(getRemoteImPeerRelation(masterConfig, 'friend-b')).toBe('friend')
-    expect(getRemoteImPeerRelation(masterConfig, 'master-b')).toBe('master')
-    expect(getRemoteImPeerRelation(masterConfig, 'slave-b')).toBe('slave')
+    expect(getRemoteImPeerRelation(masterConfig, 'master-b')).toBe('friend')
+    expect(getRemoteImPeerRelation(masterConfig, 'slave-b')).toBe('friend')
     expect(getRemoteImPeerRelation(masterConfig, 'unknown')).toBeNull()
   })
 
-  it('resolves configured peer roles', () => {
-    expect(getRemoteImPeerRole(masterConfig, 'master-b')).toBe('master')
-    expect(getRemoteImPeerRole(masterConfig, 'slave-b')).toBe('slave')
+  it('does not expose peer master/slave roles after trusted-contact migration', () => {
+    expect(getRemoteImPeerRole(masterConfig, 'master-b')).toBeNull()
+    expect(getRemoteImPeerRole(masterConfig, 'slave-b')).toBeNull()
     expect(getRemoteImPeerRole(masterConfig, 'friend-b')).toBeNull()
     expect(getRemoteImPeerRole(masterConfig, 'unknown')).toBeNull()
   })
 
-  it('allows task routing only from master peers', () => {
+  it('allows task routing from any trusted friend, including legacy role entries', () => {
+    expect(canRouteRemoteImTaskFrom(masterConfig, 'friend-b')).toMatchObject({ ok: true })
     expect(canRouteRemoteImTaskFrom(masterConfig, 'master-b')).toMatchObject({ ok: true })
-    expect(canRouteRemoteImTaskFrom(masterConfig, 'slave-b')).toMatchObject({
+    expect(canRouteRemoteImTaskFrom(masterConfig, 'slave-b')).toMatchObject({ ok: true })
+    expect(canRouteRemoteImTaskFrom(masterConfig, 'unknown')).toMatchObject({
       ok: false,
-      reason: 'slave-cannot-initiate'
+      reason: 'sender-not-allowed'
     })
   })
 
-  it('allows slaves to route tasks only from master peers', () => {
+  it('treats legacy local slave configs as regular accounts for inbound routing', () => {
+    expect(canRouteRemoteImTaskFrom(slaveConfig, 'friend-c')).toMatchObject({ ok: true })
     expect(canRouteRemoteImTaskFrom(slaveConfig, 'master-a')).toMatchObject({ ok: true })
-    expect(canRouteRemoteImTaskFrom(slaveConfig, 'slave-c')).toMatchObject({
-      ok: false,
-      reason: 'slave-to-slave-blocked'
-    })
+    expect(canRouteRemoteImTaskFrom(slaveConfig, 'slave-c')).toMatchObject({ ok: true })
     expect(canRouteRemoteImTaskFrom(slaveConfig, 'unknown')).toMatchObject({
       ok: false,
       reason: 'sender-not-allowed'
     })
   })
 
-  it('allows manual outbound messages only from masters', () => {
+  it('allows manual outbound messages from any local account to trusted friends', () => {
     expect(canManuallySendToRemoteImPeer(masterConfig, 'friend-b')).toMatchObject({ ok: true })
     expect(canManuallySendToRemoteImPeer(masterConfig, 'master-b')).toMatchObject({ ok: true })
     expect(canManuallySendToRemoteImPeer(masterConfig, 'slave-b')).toMatchObject({ ok: true })
-    expect(canManuallySendToRemoteImPeer(slaveConfig, 'master-a')).toMatchObject({
+    expect(canManuallySendToRemoteImPeer(slaveConfig, 'master-a')).toMatchObject({ ok: true })
+    expect(canManuallySendToRemoteImPeer(slaveConfig, 'unknown')).toMatchObject({
       ok: false,
-      reason: 'slave-cannot-initiate'
+      reason: 'peer-not-allowed'
     })
   })
 
-  it('chooses a master peer before a slave peer for default manual sends', () => {
-    expect(resolveDefaultRemoteImPeerUserId(masterConfig)).toBe('master-b')
-    expect(resolveDefaultRemoteImPeerUserId({ ...masterConfig, masterUserIds: [] })).toBe('slave-b')
-    expect(resolveDefaultRemoteImPeerUserId(slaveConfig)).toBeNull()
+  it('chooses configured trusted friends before legacy role entries for default manual sends', () => {
+    expect(resolveDefaultRemoteImPeerUserId(masterConfig)).toBe('friend-b')
+    expect(resolveDefaultRemoteImPeerUserId({ ...masterConfig, friendUserIds: [] })).toBe('master-b')
+    expect(resolveDefaultRemoteImPeerUserId({
+      ...masterConfig,
+      friendUserIds: [],
+      masterUserIds: []
+    })).toBe('slave-b')
+    expect(resolveDefaultRemoteImPeerUserId(slaveConfig)).toBe('friend-c')
   })
 })

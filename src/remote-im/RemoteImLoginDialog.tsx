@@ -1,9 +1,8 @@
 import { type FormEvent, useEffect, useRef, useState } from 'react'
 import type { RemoteImAccountConfig, RemoteImLoginState } from '../../electron/preload.js'
 import {
-  applyRemoteImCredentialPreset,
-  getSelectedRemoteImCredentialPresetId,
-  REMOTE_IM_CREDENTIAL_PRESETS
+  applyDefaultRemoteImCredential,
+  DEFAULT_REMOTE_IM_CREDENTIAL_PRESET
 } from './remoteImCredentials.js'
 
 export interface RemoteImLoginSubmitInput {
@@ -22,23 +21,32 @@ export interface RemoteImLoginDialogProps {
 
 const EMPTY_ACCOUNT: RemoteImAccountConfig = {
   provider: 'tencent-im',
-  sdkAppId: null,
+  sdkAppId: DEFAULT_REMOTE_IM_CREDENTIAL_PRESET.sdkAppId,
   desktopUserId: '',
   desktopRole: 'master',
   userSigMode: 'secret-key',
   userSigEndpoint: '',
-  userSigSecretKey: '',
+  userSigSecretKey: DEFAULT_REMOTE_IM_CREDENTIAL_PRESET.userSigSecretKey,
   friendUserIds: [],
   masterUserIds: [],
   slaveUserIds: [],
   allowedUserIds: []
 }
 
+function toFixedCredentialAccount(account: RemoteImAccountConfig): RemoteImAccountConfig {
+  return {
+    ...applyDefaultRemoteImCredential(account),
+    desktopRole: 'master'
+  }
+}
+
 export function applyLoadedRemoteImLoginAccount(
   draft: RemoteImAccountConfig,
   account: RemoteImAccountConfig
 ): RemoteImAccountConfig {
-  return account.desktopUserId.trim() === draft.desktopUserId.trim() ? account : draft
+  return account.desktopUserId.trim() === draft.desktopUserId.trim()
+    ? toFixedCredentialAccount(account)
+    : draft
 }
 
 export default function RemoteImLoginDialog(props: RemoteImLoginDialogProps): JSX.Element | null {
@@ -49,7 +57,7 @@ export default function RemoteImLoginDialog(props: RemoteImLoginDialogProps): JS
 
   useEffect(() => {
     if (!props.open) return
-    const account = props.loginState?.account ?? EMPTY_ACCOUNT
+    const account = toFixedCredentialAccount(props.loginState?.account ?? EMPTY_ACCOUNT)
     setDraft(account)
     loadedAccountUserIdRef.current = account.desktopUserId.trim()
   }, [props.open, props.loginState])
@@ -84,20 +92,20 @@ export default function RemoteImLoginDialog(props: RemoteImLoginDialogProps): JS
     const userId = draft.desktopUserId.trim()
     if (!userId) return
     props.onSubmit({
-      account: {
+      account: toFixedCredentialAccount({
         ...draft,
         desktopUserId: userId
-      }
+      })
     })
   }
 
   return (
-    <div className="modal-backdrop" onClick={props.onClose}>
+    <div className="modal-backdrop" data-close-on-backdrop="false">
       <form className="modal remote-im-login-modal" onSubmit={handleSubmit} onClick={(event) => event.stopPropagation()}>
         <header className="remote-im-login-header">
           <div>
             <h2>IM 登录</h2>
-            <p>填写 UserID 和凭证后点击登录，程序启动时不会自动连接 IM。</p>
+            <p>登录后可通过可信好友收发消息，并把好友消息交给当前 AICLI 处理。</p>
           </div>
           <button type="button" className="remote-im-close" onClick={props.onClose}>
             ×
@@ -105,7 +113,7 @@ export default function RemoteImLoginDialog(props: RemoteImLoginDialogProps): JS
         </header>
 
         <div className="remote-im-login-grid">
-          <label>
+          <label className="remote-im-login-full">
             UserID
             <input
               value={draft.desktopUserId}
@@ -116,80 +124,11 @@ export default function RemoteImLoginDialog(props: RemoteImLoginDialogProps): JS
               placeholder="test123"
             />
           </label>
-          <label>
-            角色
-            <select
-              value={draft.desktopRole}
-              onChange={(event) =>
-                update({ desktopRole: event.currentTarget.value as RemoteImAccountConfig['desktopRole'] })
-              }
-            >
-              <option value="master">主人</option>
-              <option value="slave">奴隶</option>
-            </select>
-          </label>
-          <label>
-            凭证预设
-            <select
-              value={getSelectedRemoteImCredentialPresetId(draft)}
-              onChange={(event) =>
-                setDraft(applyRemoteImCredentialPreset(draft, event.currentTarget.value))
-              }
-            >
-              <option value="">自定义</option>
-              {REMOTE_IM_CREDENTIAL_PRESETS.map((preset) => (
-                <option key={preset.id} value={preset.id}>
-                  {preset.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            SDKAppID
-            <input
-              value={draft.sdkAppId ?? ''}
-              onChange={(event) =>
-                update({
-                  sdkAppId: event.currentTarget.value ? Number(event.currentTarget.value) : null
-                })
-              }
-              placeholder="1400704311"
-            />
-          </label>
-          <label>
-            UserSig 方式
-            <select
-              value={draft.userSigMode}
-              onChange={(event) =>
-                update({
-                  userSigMode: event.currentTarget.value as RemoteImAccountConfig['userSigMode']
-                })
-              }
-            >
-              <option value="secret-key">本地 SecretKey(测试)</option>
-              <option value="endpoint">服务端 endpoint</option>
-            </select>
-          </label>
-          {draft.userSigMode === 'secret-key' ? (
-            <label className="remote-im-login-full">
-              SecretKey
-              <input
-                type="password"
-                value={draft.userSigSecretKey}
-                onChange={(event) => update({ userSigSecretKey: event.currentTarget.value })}
-                placeholder="填入 IM 应用 SecretKey"
-              />
-            </label>
-          ) : (
-            <label className="remote-im-login-full">
-              UserSig endpoint
-              <input
-                value={draft.userSigEndpoint}
-                onChange={(event) => update({ userSigEndpoint: event.currentTarget.value })}
-                placeholder="https://example.com/tencent-im/usersig"
-              />
-            </label>
-          )}
+          <div className="remote-im-login-fixed remote-im-login-full">
+            <span>基础 IM 配置固定</span>
+            <strong>SDKAppID {DEFAULT_REMOTE_IM_CREDENTIAL_PRESET.sdkAppId}</strong>
+            <small>SecretKey 使用内置测试凭证，不在设置界面修改。</small>
+          </div>
         </div>
 
         {props.error ? <div className="remote-im-login-error">{props.error}</div> : null}
@@ -199,7 +138,7 @@ export default function RemoteImLoginDialog(props: RemoteImLoginDialogProps): JS
             取消
           </button>
           <button type="submit" disabled={props.saving || !draft.desktopUserId.trim()}>
-            {props.saving ? '登录中...' : '登录并连接'}
+            {props.saving ? '登录中...' : '登录'}
           </button>
         </footer>
       </form>

@@ -18,9 +18,10 @@ describe('remote IM reply protocol', () => {
     expect(prompt).toContain('check build')
     expect(prompt).toContain(REMOTE_IM_REPLY_OPEN_TAG)
     expect(prompt).toContain(REMOTE_IM_REPLY_CLOSE_TAG)
+    expect(prompt).toContain('如果需要查询或操作 IM，请先运行 imcli help。')
     expect(prompt).not.toContain('Remote IM reply protocol:')
     expect(prompt).not.toContain(`${REMOTE_IM_REPLY_OPEN_TAG} and ${REMOTE_IM_REPLY_CLOSE_TAG}`)
-    expect(prompt.split('\n')).toHaveLength(7)
+    expect(prompt.split('\n')).toHaveLength(8)
   })
 
   it('builds a terminal display summary without reply protocol instructions', () => {

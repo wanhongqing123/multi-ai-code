@@ -89,6 +89,18 @@ export interface RemoteImIncomingTextMessage {
   createdAt?: number
 }
 
+export interface RemoteImIncomingAudioMessage {
+  projectId: string
+  remoteMessageId?: string | null
+  fromUserId: string
+  toUserId?: string | null
+  audioUrl: string
+  durationSeconds?: number | null
+  sizeBytes?: number | null
+  uuid?: string | null
+  createdAt?: number
+}
+
 export interface RemoteImRuntimeLogEntryInput {
   projectId?: string | null
   sdkAppId?: number | null

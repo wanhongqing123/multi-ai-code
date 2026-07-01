@@ -14,11 +14,12 @@ final class RemoteIMAppState: ObservableObject {
     @Published var masterUserID = ""
     @Published var secretKey = ""
     @Published var newContactUserID = ""
-    @Published var newContactRelation: RemoteIMContactRelation = .slave
+    @Published var newContactRelation: RemoteIMContactRelation = .friend
     @Published var draftText = ""
     @Published var errorMessage: String?
     @Published var connectionState: ConnectionState = .disconnected
     @Published var chatState: MasterChatState
+    @Published var hasCompletedInitialLogin = false
 
     private let settingsStore: LocalSettingsStore
     private let secretStore: KeychainSecretStore
@@ -54,8 +55,12 @@ final class RemoteIMAppState: ObservableObject {
             try? loadedState.upsertSlave(userID: slaveUserID)
         }
         self.chatState = loadedState
-
         self.client.onIncomingText = { [weak self] event in
+            Task { @MainActor in
+                self?.receive(event)
+            }
+        }
+        self.client.onIncomingVoice = { [weak self] event in
             Task { @MainActor in
                 self?.receive(event)
             }
@@ -67,20 +72,48 @@ final class RemoteIMAppState: ObservableObject {
         return chatState.contacts.first(where: { $0.userID == selectedPeerID })
     }
 
+    var shouldShowInitialLogin: Bool {
+        !hasCompletedInitialLogin
+    }
+
     var canSend: Bool {
         connectionState == .connected &&
         selectedContact != nil &&
         !draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    var canSendVoice: Bool {
+        connectionState == .connected && selectedContact != nil
+    }
+
+    static func hasCompleteLoginCredential(
+        sdkAppIDText: String,
+        userID: String,
+        secretKey: String
+    ) -> Bool {
+        RemoteIMLoginCredentialPolicy.isComplete(userID: userID)
+    }
+
     func saveSettings() {
         do {
+            applyFixedCredential()
             try secretStore.saveSecretKey(secretKey)
             settingsStore.save(currentStoredSettings())
             rebuildChatStateForCurrentMaster()
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    func submitInitialLogin() async {
+        if let validationError = RemoteIMLoginCredentialPolicy.validationError(userID: masterUserID) {
+            errorMessage = validationError
+            return
+        }
+        await connect()
+        if connectionState == .connected {
+            hasCompletedInitialLogin = true
         }
     }
 
@@ -159,8 +192,37 @@ final class RemoteIMAppState: ObservableObject {
         }
     }
 
+    func sendVoiceRecording(_ recording: RemoteIMVoiceRecording) async {
+        guard canSendVoice else { return }
+
+        do {
+            let message = try chatState.queueOutgoingVoice(
+                filePath: recording.fileURL.path,
+                durationSeconds: recording.durationSeconds
+            )
+            try await client.sendVoice(to: message.toUserID, recording: recording)
+            try chatState.updateMessageStatus(id: message.id, status: .sent)
+            errorMessage = nil
+        } catch {
+            if let lastMessage = chatState.messages.last, lastMessage.status == .pending {
+                try? chatState.updateMessageStatus(id: lastMessage.id, status: .failed)
+            }
+            errorMessage = error.localizedDescription
+        }
+    }
+
     private func receive(_ event: IncomingRemoteIMText) {
         _ = chatState.receiveText(event.text, fromUserID: event.fromUserID)
+        settingsStore.save(currentStoredSettings())
+    }
+
+    private func receive(_ event: IncomingRemoteIMVoice) {
+        _ = chatState.receiveVoice(
+            filePath: event.fileURL.path,
+            durationSeconds: event.durationSeconds,
+            fromUserID: event.fromUserID,
+            remoteID: event.remoteID
+        )
         settingsStore.save(currentStoredSettings())
     }
 
@@ -169,11 +231,8 @@ final class RemoteIMAppState: ObservableObject {
             sdkAppID: Int(sdkAppIDText.trimmingCharacters(in: .whitespacesAndNewlines)),
             masterUserID: masterUserID.trimmingCharacters(in: .whitespacesAndNewlines),
             friendUserIDs: chatState.contacts
-                .filter { $0.relation == .friend }
                 .map(\.userID),
-            slaveUserIDs: chatState.contacts
-                .filter { $0.relation == .slave }
-                .map(\.userID)
+            slaveUserIDs: []
         )
     }
 
@@ -189,6 +248,15 @@ final class RemoteIMAppState: ObservableObject {
             )
         }
         chatState = nextState
+    }
+
+    private func applyFixedCredential() {
+        let credential = RemoteIMCredentialDefaults.resolvedCredential(
+            sdkAppID: Int(sdkAppIDText.trimmingCharacters(in: .whitespacesAndNewlines)),
+            secretKey: secretKey
+        )
+        sdkAppIDText = String(credential.sdkAppID)
+        secretKey = credential.userSigSecretKey
     }
 
     private static func applyCredentialDefaults(

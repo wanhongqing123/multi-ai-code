@@ -22,16 +22,17 @@ const config: RemoteImConfig = {
 }
 
 describe('RemoteImSettingsSection', () => {
-  it('renders only project-level remote IM behavior settings', () => {
+  it('renders a read-only remote IM settings summary', () => {
     const html = renderToStaticMarkup(
       <RemoteImSettingsSection config={config} onChange={vi.fn()} disabled={false} />
     )
 
-    expect(html).toContain('启用远程 IM')
-    expect(html).toContain('输出刷新间隔')
-    expect(html).toContain('单次回传字符数')
-    expect(html).not.toContain('SDKAppID')
-    expect(html).not.toContain('SecretKey')
+    expect(html).toContain('当前状态')
+    expect(html).toContain('已开启')
+    expect(html).toContain('远程 IM 账号、SDKAppID、SecretKey 和连接动作由登录入口管理')
+    expect(html).not.toContain('type="checkbox"')
+    expect(html).not.toContain('<input')
+    expect(html).not.toContain('<select')
     expect(html).not.toContain('desktop_bot')
     expect(html).not.toContain('https://example.test/sig')
     expect(html).not.toContain('1400704311')

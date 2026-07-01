@@ -258,17 +258,18 @@ describe('NormalTaskDialog', () => {
     expect(detailHeaderSource).not.toContain('onRun')
   })
 
-  it('keeps list selection local until the user explicitly runs a task', () => {
+  it('syncs list selection to the parent so the main screen shows the selected task', () => {
     const source = readFileSync(
       fileURLToPath(new URL('./NormalTaskDialog.tsx', import.meta.url)),
       'utf8'
     )
 
+    expect(source).toContain('onSelect?: (name: string) => void')
     expect(source).toContain('const [localSelectedName, setLocalSelectedName]')
     expect(source).toContain('setCreatingTask(false)')
     expect(source).toContain('setLocalSelectedName(task.name)')
+    expect(source).toContain('onSelect?.(task.name)')
     expect(source).toContain('onClick={() => void onRun(task)}')
-    expect(source).not.toContain('onSelect')
   })
 
   it('only clears the create draft when creation succeeds', () => {

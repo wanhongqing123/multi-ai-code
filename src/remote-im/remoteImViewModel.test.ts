@@ -110,16 +110,14 @@ describe('remote IM view model', () => {
       text: 'hi',
       status,
       desktopRole: 'slave'
-    })).toBe(
-      true
-    )
+    })).toBe(false)
   })
 
-  it('derives contacts from friend, master, and slave UserID lists', () => {
+  it('derives trusted friend contacts from friend and legacy role UserID lists', () => {
     expect(getRemoteImContacts(config)).toEqual([
       { userId: 'friend-a', relation: 'friend' },
-      { userId: 'master-a', relation: 'master' },
-      { userId: 'slave-a', relation: 'slave' }
+      { userId: 'master-a', relation: 'friend' },
+      { userId: 'slave-a', relation: 'friend' }
     ])
   })
 
@@ -150,7 +148,7 @@ describe('remote IM view model', () => {
     ])
     expect(conversations[0]).toMatchObject({
       userId: 'slave-a',
-      relation: 'slave',
+      relation: 'friend',
       lastMessagePreview: 'task'
     })
     expect(conversations[1]).toMatchObject({
@@ -184,7 +182,7 @@ describe('remote IM view model', () => {
         config,
         message({ id: 1, fromUserId: 'master-a', toUserId: 'local-user' })
       )
-    ).toEqual({ userId: 'master-a', relation: 'master' })
+    ).toEqual({ userId: 'master-a', relation: 'friend' })
     expect(
       getRemoteImMessageDisplayMeta(
         config,
@@ -196,7 +194,7 @@ describe('remote IM view model', () => {
           toUserId: 'slave-a'
         })
       )
-    ).toEqual({ userId: 'local-user', relation: 'master' })
+    ).toEqual({ userId: 'local-user', relation: 'friend' })
     expect(
       getRemoteImMessageDisplayMeta(
         config,
@@ -206,14 +204,16 @@ describe('remote IM view model', () => {
           toUserId: 'local-user'
         })
       )
-    ).toEqual({ userId: 'slave-a', relation: 'slave' })
+    ).toEqual({ userId: 'slave-a', relation: 'friend' })
   })
 
-  it('adds contacts by relation while keeping allowed users in sync', () => {
+  it('adds trusted friends while keeping allowed users in sync and removing legacy duplicates', () => {
     const next = addRemoteImContact(config, 'slave', ' slave-b ')
 
-    expect(next.slaveUserIds).toEqual(['slave-a', 'slave-b'])
-    expect(next.allowedUserIds).toEqual(['friend-a', 'master-a', 'slave-a', 'slave-b'])
-    expect(addRemoteImContact(next, 'friend', 'slave-b').slaveUserIds).toEqual(['slave-a'])
+    expect(next.friendUserIds).toEqual(['friend-a', 'slave-b'])
+    expect(next.masterUserIds).toEqual(['master-a'])
+    expect(next.slaveUserIds).toEqual(['slave-a'])
+    expect(next.allowedUserIds).toEqual(['friend-a', 'slave-b', 'master-a', 'slave-a'])
+    expect(addRemoteImContact(next, 'friend', 'slave-a').slaveUserIds).toEqual([])
   })
 })

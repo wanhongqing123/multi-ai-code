@@ -1,5 +1,6 @@
 import type {
   RemoteImConfig,
+  RemoteImIncomingAudioMessage,
   RemoteImIncomingTextMessage,
   RemoteImRuntimeLogEntryInput
 } from '../../electron/preload.js'
@@ -9,6 +10,17 @@ export interface TencentImTextMessage {
   fromUserId: string
   toUserId: string | null
   text: string
+  createdAt?: number
+}
+
+export interface TencentImAudioMessage {
+  remoteMessageId: string | null
+  fromUserId: string
+  toUserId: string | null
+  audioUrl: string
+  durationSeconds: number | null
+  sizeBytes: number | null
+  uuid: string | null
   createdAt?: number
 }
 
@@ -100,6 +112,48 @@ function getTextPayload(message: Record<string, unknown>): string | null {
   return typeof text === 'string' && text.trim() ? text : null
 }
 
+function getStringField(source: Record<string, unknown>, keys: string[]): string | null {
+  for (const key of keys) {
+    const value = source[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return null
+}
+
+function getNumberField(source: Record<string, unknown>, keys: string[]): number | null {
+  for (const key of keys) {
+    const value = source[key]
+    if (typeof value === 'number' && Number.isFinite(value)) return value
+    if (typeof value === 'string') {
+      const parsed = Number(value.trim())
+      if (Number.isFinite(parsed)) return parsed
+    }
+  }
+  return null
+}
+
+function isTencentAudioMessage(message: Record<string, unknown>): boolean {
+  const type = typeof message.type === 'string' ? message.type : ''
+  return type === 'TIMSoundElem' || type === 'MSG_AUDIO'
+}
+
+function getAudioPayload(
+  message: Record<string, unknown>
+): Omit<TencentImAudioMessage, 'remoteMessageId' | 'fromUserId' | 'toUserId' | 'createdAt'> | null {
+  if (!isTencentAudioMessage(message)) return null
+  const payload = message.payload
+  if (!payload || typeof payload !== 'object') return null
+  const audio = payload as Record<string, unknown>
+  const audioUrl = getStringField(audio, ['url', 'URL', 'downloadUrl', 'downloadURL'])
+  if (!audioUrl) return null
+  return {
+    audioUrl,
+    durationSeconds: getNumberField(audio, ['duration', 'second', 'seconds', 'time']),
+    sizeBytes: getNumberField(audio, ['size', 'dataSize', 'fileSize']),
+    uuid: getStringField(audio, ['uuid', 'UUID', 'fileId', 'fileID'])
+  }
+}
+
 export function extractTencentImTextMessages(event: unknown): TencentImTextMessage[] {
   const data = event && typeof event === 'object' ? (event as { data?: unknown }).data : null
   if (!Array.isArray(data)) return []
@@ -116,6 +170,28 @@ export function extractTencentImTextMessages(event: unknown): TencentImTextMessa
         fromUserId: from,
         toUserId: typeof message.to === 'string' ? message.to : null,
         text,
+        createdAt: typeof message.time === 'number' ? message.time * 1000 : undefined
+      }
+    ]
+  })
+}
+
+export function extractTencentImAudioMessages(event: unknown): TencentImAudioMessage[] {
+  const data = event && typeof event === 'object' ? (event as { data?: unknown }).data : null
+  if (!Array.isArray(data)) return []
+  return data.flatMap((item) => {
+    if (!item || typeof item !== 'object') return []
+    const message = item as Record<string, unknown>
+    const audio = getAudioPayload(message)
+    if (!audio) return []
+    const from = typeof message.from === 'string' ? message.from : ''
+    if (!from) return []
+    return [
+      {
+        remoteMessageId: typeof message.ID === 'string' ? message.ID : null,
+        fromUserId: from,
+        toUserId: typeof message.to === 'string' ? message.to : null,
+        ...audio,
         createdAt: typeof message.time === 'number' ? message.time * 1000 : undefined
       }
     ]
@@ -276,6 +352,7 @@ export async function connectTencentImClient(input: {
   projectId: string
   config: RemoteImConfig
   onIncomingText: (message: RemoteImIncomingTextMessage) => void
+  onIncomingAudio?: (message: RemoteImIncomingAudioMessage) => void
   onRuntimeLog?: (entry: RemoteImRuntimeLogEntryInput) => void
 }): Promise<TencentImRuntime> {
   const emitRuntimeLog = (
@@ -302,8 +379,9 @@ export async function connectTencentImClient(input: {
 
   const onMessageReceived = (event: unknown): void => {
     const messages = extractTencentImTextMessages(event)
+    const audioMessages = extractTencentImAudioMessages(event)
     emitRuntimeLog('message:received', {
-      detail: { count: messages.length }
+      detail: { count: messages.length, audioCount: audioMessages.length }
     })
     for (const message of messages) {
       input.onIncomingText({
@@ -312,6 +390,19 @@ export async function connectTencentImClient(input: {
         fromUserId: message.fromUserId,
         toUserId: message.toUserId,
         text: message.text,
+        createdAt: message.createdAt
+      })
+    }
+    for (const message of audioMessages) {
+      input.onIncomingAudio?.({
+        projectId: input.projectId,
+        remoteMessageId: message.remoteMessageId,
+        fromUserId: message.fromUserId,
+        toUserId: message.toUserId,
+        audioUrl: message.audioUrl,
+        durationSeconds: message.durationSeconds,
+        sizeBytes: message.sizeBytes,
+        uuid: message.uuid,
         createdAt: message.createdAt
       })
     }

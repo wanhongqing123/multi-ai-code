@@ -3,6 +3,7 @@ import type {
   RemoteImValidationIssue,
   RemoteImValidationResult
 } from './types.js'
+import { migrateRemoteImCredential } from './credentials.js'
 
 export const DEFAULT_REMOTE_IM_CONFIG: RemoteImConfig = {
   enabled: false,
@@ -57,33 +58,34 @@ export function normalizeRemoteImConfig(value: unknown): RemoteImConfig {
   const raw = value as Partial<Record<keyof RemoteImConfig, unknown>>
   const userSigEndpoint = normalizeString(raw.userSigEndpoint)
   const userSigSecretKey = normalizeString(raw.userSigSecretKey)
+  const credential = migrateRemoteImCredential({
+    sdkAppId: normalizeSdkAppId(raw.sdkAppId),
+    userSigSecretKey
+  })
   const userSigMode =
     raw.userSigMode === 'secret-key' || (!raw.userSigMode && userSigSecretKey && !userSigEndpoint)
       ? 'secret-key'
       : 'endpoint'
   const legacyAllowedUserIds = normalizeAllowedUserIds(raw.allowedUserIds)
-  const hasRoleLists =
-    Array.isArray(raw.friendUserIds) ||
-    Array.isArray(raw.masterUserIds) ||
-    Array.isArray(raw.slaveUserIds)
-  const friendUserIds = hasRoleLists ? normalizeAllowedUserIds(raw.friendUserIds) : []
-  const masterUserIds = hasRoleLists
-    ? normalizeAllowedUserIds(raw.masterUserIds)
-    : legacyAllowedUserIds
-  const slaveUserIds = hasRoleLists ? normalizeAllowedUserIds(raw.slaveUserIds) : []
-  const allowedUserIds = mergeUserIds(friendUserIds, masterUserIds, slaveUserIds)
+  const friendUserIds = mergeUserIds(
+    normalizeAllowedUserIds(raw.friendUserIds),
+    normalizeAllowedUserIds(raw.masterUserIds),
+    normalizeAllowedUserIds(raw.slaveUserIds),
+    legacyAllowedUserIds
+  )
+  const allowedUserIds = [...friendUserIds]
   return {
     enabled: raw.enabled === true,
     provider: 'tencent-im',
-    sdkAppId: normalizeSdkAppId(raw.sdkAppId),
+    sdkAppId: credential.sdkAppId,
     desktopUserId: normalizeString(raw.desktopUserId),
-    desktopRole: raw.desktopRole === 'slave' ? 'slave' : 'master',
+    desktopRole: 'master',
     userSigMode,
     userSigEndpoint,
-    userSigSecretKey,
+    userSigSecretKey: credential.userSigSecretKey,
     friendUserIds,
-    masterUserIds,
-    slaveUserIds,
+    masterUserIds: [],
+    slaveUserIds: [],
     allowedUserIds,
     outputFlushIntervalMs: normalizeNumber(raw.outputFlushIntervalMs, 2000, 1000, 30_000),
     outputMaxChunkChars: normalizeNumber(raw.outputMaxChunkChars, 1200, 200, 4000)

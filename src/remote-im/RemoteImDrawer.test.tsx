@@ -116,8 +116,8 @@ describe('RemoteImDrawer', () => {
     expect(html).toContain('remote-im-relation-tabs')
     expect(html).toContain('data-relation="recent"')
     expect(html).toContain('data-relation="friend"')
-    expect(html).toContain('data-relation="master"')
-    expect(html).toContain('data-relation="slave"')
+    expect(html).not.toContain('data-relation="master"')
+    expect(html).not.toContain('data-relation="slave"')
     expect(html).toContain('friend_a')
     expect(html).toContain('phone_admin')
     expect(html).toContain('desktop_slave')
@@ -191,7 +191,7 @@ describe('RemoteImDrawer', () => {
     expect(html).toContain('<td>浏览器主体</td>')
   })
 
-  it('renders message UserID and relation labels instead of role avatars', () => {
+  it('renders message UserID and trusted-friend labels instead of role avatars', () => {
     const html = renderDrawer({
       selectedPeerUserId: 'desktop_slave',
       messages: [
@@ -217,8 +217,9 @@ describe('RemoteImDrawer', () => {
 
     expect(html).toContain('desktop_bot')
     expect(html).toContain('desktop_slave')
-    expect(html).toContain('data-message-relation="master"')
-    expect(html).toContain('data-message-relation="slave"')
+    expect(html).toContain('data-message-relation="friend"')
+    expect(html).not.toContain('data-message-relation="master"')
+    expect(html).not.toContain('data-message-relation="slave"')
     expect(html).not.toContain('remote-im-avatar')
     expect(html).not.toContain('AICLI 输出')
   })
@@ -227,11 +228,10 @@ describe('RemoteImDrawer', () => {
     const html = renderDrawer()
 
     expect(html).toContain('remote-im-add-contact')
-    expect(html).toContain('name="relation"')
     expect(html).toContain('name="userId"')
-    expect(html).toContain('option value="friend"')
-    expect(html).toContain('option value="master"')
-    expect(html).toContain('option value="slave"')
+    expect(html).not.toContain('name="relation"')
+    expect(html).not.toContain('option value="master"')
+    expect(html).not.toContain('option value="slave"')
     expect(html).not.toContain('name="sdkAppId"')
     expect(html).not.toContain('name="secretKey"')
   })
@@ -295,13 +295,14 @@ describe('RemoteImDrawer', () => {
     expect(noPeerHtml).toContain('<button type="submit" disabled=""')
   })
 
-  it('disables manual sending when this desktop is a slave', () => {
+  it('keeps manual sending available for legacy slave accounts', () => {
     const html = renderDrawer({
       config: { ...config, desktopRole: 'slave' },
       input: 'hello'
     })
 
-    expect(html).toContain('<button type="submit" disabled=""')
+    expect(html).not.toContain('<button type="submit" disabled=""')
+    expect(html).not.toContain('奴隶模式')
   })
 
   it('disables clearing when there is no project or no remote IM message', () => {

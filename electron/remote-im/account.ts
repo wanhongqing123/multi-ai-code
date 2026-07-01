@@ -1,6 +1,7 @@
 import { promises as fs } from 'fs'
 import { join } from 'path'
 import type { RemoteImAccountConfig, RemoteImConfig } from './types.js'
+import { migrateRemoteImCredential } from './credentials.js'
 
 const ACCOUNT_FILE = 'remote-im-account.json'
 
@@ -47,26 +48,33 @@ export function normalizeRemoteImAccountConfig(value: unknown): RemoteImAccountC
   const raw = value as Partial<Record<keyof RemoteImAccountConfig, unknown>>
   const userSigEndpoint = normalizeString(raw.userSigEndpoint)
   const userSigSecretKey = normalizeString(raw.userSigSecretKey)
+  const credential = migrateRemoteImCredential({
+    sdkAppId: normalizeSdkAppId(raw.sdkAppId),
+    userSigSecretKey
+  })
   const userSigMode =
     raw.userSigMode === 'secret-key' || (!raw.userSigMode && userSigSecretKey && !userSigEndpoint)
       ? 'secret-key'
       : 'endpoint'
-  const friendUserIds = normalizeUserIds(raw.friendUserIds)
-  const masterUserIds = normalizeUserIds(raw.masterUserIds)
-  const slaveUserIds = normalizeUserIds(raw.slaveUserIds)
+  const friendUserIds = mergeUserIds(
+    normalizeUserIds(raw.friendUserIds),
+    normalizeUserIds(raw.masterUserIds),
+    normalizeUserIds(raw.slaveUserIds),
+    normalizeUserIds(raw.allowedUserIds)
+  )
 
   return {
     provider: 'tencent-im',
-    sdkAppId: normalizeSdkAppId(raw.sdkAppId),
+    sdkAppId: credential.sdkAppId,
     desktopUserId: normalizeString(raw.desktopUserId),
-    desktopRole: raw.desktopRole === 'slave' ? 'slave' : 'master',
+    desktopRole: 'master',
     userSigMode,
     userSigEndpoint,
-    userSigSecretKey,
+    userSigSecretKey: credential.userSigSecretKey,
     friendUserIds,
-    masterUserIds,
-    slaveUserIds,
-    allowedUserIds: mergeUserIds(friendUserIds, masterUserIds, slaveUserIds)
+    masterUserIds: [],
+    slaveUserIds: [],
+    allowedUserIds: [...friendUserIds]
   }
 }
 
@@ -88,6 +96,22 @@ export function mergeRemoteImAccountIntoConfig(
     slaveUserIds: account.slaveUserIds,
     allowedUserIds: account.allowedUserIds
   }
+}
+
+export function hasRemoteImAccountConnectionChanged(
+  previous: RemoteImAccountConfig,
+  next: RemoteImAccountConfig
+): boolean {
+  const previousAccount = normalizeRemoteImAccountConfig(previous)
+  const nextAccount = normalizeRemoteImAccountConfig(next)
+  return (
+    previousAccount.provider !== nextAccount.provider ||
+    previousAccount.sdkAppId !== nextAccount.sdkAppId ||
+    previousAccount.desktopUserId !== nextAccount.desktopUserId ||
+    previousAccount.userSigMode !== nextAccount.userSigMode ||
+    previousAccount.userSigEndpoint !== nextAccount.userSigEndpoint ||
+    previousAccount.userSigSecretKey !== nextAccount.userSigSecretKey
+  )
 }
 
 export async function readRemoteImAccountConfig(

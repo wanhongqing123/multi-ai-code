@@ -17,6 +17,7 @@ import {
   validateRemoteImConfig
 } from './config.js'
 import {
+  hasRemoteImAccountConnectionChanged,
   mergeRemoteImAccountIntoConfig,
   normalizeRemoteImAccountConfig,
   readRemoteImAccountConfig,
@@ -40,13 +41,16 @@ import { getRemoteImAccountProfileId, getRemoteImProfileId } from './profile.js'
 import { createRemoteImRouter } from './router.js'
 import { appendRemoteImRuntimeLog } from './runtimeLog.js'
 import { readLatestClaudeRemoteImReply } from './claudeTranscript.js'
+import { startRemoteImCliServer } from './imcliServer.js'
 import {
   createRemoteImAccountChangedStatuses,
   getRemoteImSendConnectionError
 } from './status.js'
+import { transcribeRemoteImAudioWithLocalWhisper } from './localWhisper.js'
 import type {
   RemoteImAccountConfig,
   RemoteImConfig,
+  RemoteImIncomingAudioMessage,
   RemoteImIncomingTextMessage,
   RemoteImRuntimeLogEntryInput,
   RemoteImLoginState,
@@ -229,6 +233,39 @@ function sendImText(projectId: string, toUserId: string, text: string): Promise<
   return Promise.resolve({ ok: true })
 }
 
+async function sendRemoteImPeerMessage(
+  projectId: string,
+  text: string,
+  toUserId?: string | null
+): Promise<{ ok: boolean; error?: string; toUserId?: string }> {
+  const config = await getRemoteImConfig(projectId)
+  if (!config.enabled) return { ok: false, error: 'remote IM disabled' }
+  const cleanText = text.trim()
+  if (!cleanText) return { ok: false, error: 'empty message' }
+  const peerUserId = resolvePeerUserId(config, toUserId)
+  if (!peerUserId) {
+    return { ok: false, error: 'No remote IM peer UserID configured' }
+  }
+  const connectionError = getRemoteImSendConnectionError(await getRemoteImStatus(projectId))
+  if (connectionError) {
+    return { ok: false, error: connectionError }
+  }
+
+  const message = createRemoteImMessage(
+    createPeerOutgoingMessageInput({
+      projectId,
+      config,
+      toUserId: peerUserId,
+      text: cleanText,
+      now: Date.now()
+    })
+  )
+  broadcastOutgoingText(projectId, peerUserId, cleanText, message.id)
+  scheduleOutgoingDeliveryAckTimeout(projectId, message.id)
+  broadcastMessagesChanged(projectId)
+  return { ok: true, toUserId: peerUserId }
+}
+
 function readRemoteImTranscriptReply(source: NonNullable<RemoteImOutputSessionState['transcript']>): string | null {
   return source.kind === 'claude'
     ? readLatestClaudeRemoteImReply({
@@ -310,6 +347,7 @@ function scheduleOutputFlush(sessionId: string): void {
 }
 
 let sessionListenersRegistered = false
+let remoteImCliServerStarted = false
 
 function ensureSessionListeners(): void {
   if (sessionListenersRegistered) return
@@ -325,8 +363,27 @@ function ensureSessionListeners(): void {
   })
 }
 
+function ensureRemoteImCliServer(): void {
+  if (remoteImCliServerStarted) return
+  remoteImCliServerStarted = true
+  void startRemoteImCliServer({
+    rootDir: rootDir(),
+    getConfig: getRemoteImConfig,
+    getStatus: getRemoteImStatus,
+    listMessages: listRemoteImMessages,
+    sendPeerMessage: sendRemoteImPeerMessage
+  }).catch((err) => {
+    remoteImCliServerStarted = false
+    console.error(
+      '[remote-im] failed to start imcli bridge:',
+      err instanceof Error ? err.message : String(err)
+    )
+  })
+}
+
 export function registerRemoteImIpc(): void {
   ensureSessionListeners()
+  ensureRemoteImCliServer()
 
   ipcMain.handle('remote-im:get-config', async (_event, { projectId }: { projectId: string }) => {
     try {
@@ -360,6 +417,10 @@ export function registerRemoteImIpc(): void {
     async (_event, { account }: { account: RemoteImAccountConfig }) => {
       try {
         const normalizedAccount = normalizeRemoteImAccountConfig(account)
+        const previousProfileId = getCurrentRemoteImAccountProfileId()
+        const previousAccount = previousProfileId
+          ? await readRemoteImAccountConfig(remoteImAccountDir(previousProfileId))
+          : normalizeRemoteImAccountConfig(null)
         const profileId =
           getRemoteImAccountProfileId(normalizedAccount.desktopUserId) ??
           getRemoteImProfileId() ??
@@ -369,7 +430,9 @@ export function registerRemoteImIpc(): void {
           remoteImAccountDir(profileId),
           normalizedAccount
         )
-        resetRemoteImStatusesAfterAccountChange()
+        if (hasRemoteImAccountConnectionChanged(previousAccount, value)) {
+          resetRemoteImStatusesAfterAccountChange()
+        }
         return {
           ok: true as const,
           value: {
@@ -473,6 +536,7 @@ export function registerRemoteImIpc(): void {
         resolveSession: () => session,
         sendUser: sendUserMessageToSession,
         sendImText,
+        transcribeAudio: transcribeRemoteImAudioWithLocalWhisper,
         store: {
           create: (input) => createRemoteImMessage(input),
           updateStatus: (id, patch) =>
@@ -486,6 +550,38 @@ export function registerRemoteImIpc(): void {
         }
       })
       const result = await router.handleIncomingText(message)
+      if (result.ok && result.aicliSessionId) {
+        startOutputForwarding(result.aicliSessionId, message.projectId, message.fromUserId, config)
+      }
+      broadcastMessagesChanged(message.projectId)
+      return result
+    }
+  )
+
+  ipcMain.handle(
+    'remote-im:deliver-incoming-audio',
+    async (_event, message: RemoteImIncomingAudioMessage) => {
+      const config = await getRemoteImConfig(message.projectId)
+      const session = getActiveSessionForProject(message.projectId)
+      const router = createRemoteImRouter({
+        getConfig: () => config,
+        resolveSession: () => session,
+        sendUser: sendUserMessageToSession,
+        sendImText,
+        transcribeAudio: transcribeRemoteImAudioWithLocalWhisper,
+        store: {
+          create: (input) => createRemoteImMessage(input),
+          updateStatus: (id, patch) =>
+            updateRemoteImMessageStatus(id, {
+              status: patch.status ?? 'received',
+              sessionId: patch.sessionId,
+              error: patch.error,
+              sentToAicliAt: patch.sentToAicliAt,
+              sentToImAt: patch.sentToImAt
+            })
+        }
+      })
+      const result = await router.handleIncomingAudio(message)
       if (result.ok && result.aicliSessionId) {
         startOutputForwarding(result.aicliSessionId, message.projectId, message.fromUserId, config)
       }
@@ -524,38 +620,7 @@ export function registerRemoteImIpc(): void {
       _event,
       { projectId, text, toUserId }: { projectId: string; text: string; toUserId?: string | null }
     ) => {
-      const config = await getRemoteImConfig(projectId)
-      if (!config.enabled) return { ok: false as const, error: 'remote IM disabled' }
-      const cleanText = text.trim()
-      if (!cleanText) return { ok: false as const, error: 'empty message' }
-      if (config.desktopRole === 'slave') {
-        return {
-          ok: false as const,
-          error: 'slave nodes cannot initiate Remote IM messages'
-        }
-      }
-      const peerUserId = resolvePeerUserId(config, toUserId)
-      if (!peerUserId) {
-        return { ok: false as const, error: 'No remote IM peer UserID configured' }
-      }
-      const connectionError = getRemoteImSendConnectionError(await getRemoteImStatus(projectId))
-      if (connectionError) {
-        return { ok: false as const, error: connectionError }
-      }
-
-      const message = createRemoteImMessage(
-        createPeerOutgoingMessageInput({
-          projectId,
-          config,
-          toUserId: peerUserId,
-          text: cleanText,
-          now: Date.now()
-        })
-      )
-      broadcastOutgoingText(projectId, peerUserId, cleanText, message.id)
-      scheduleOutgoingDeliveryAckTimeout(projectId, message.id)
-      broadcastMessagesChanged(projectId)
-      return { ok: true as const, toUserId: peerUserId }
+      return await sendRemoteImPeerMessage(projectId, text, toUserId)
     }
   )
 }

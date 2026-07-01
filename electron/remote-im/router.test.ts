@@ -121,7 +121,99 @@ describe('remote IM router', () => {
     ])
   })
 
-  it('records configured friend messages as normal IM without routing them to AICLI', async () => {
+  it('transcribes trusted audio messages and sends the transcript to the current AICLI session', async () => {
+    const store = createMessageStore()
+    const sentToAicli: Array<{
+      sessionId: string
+      text: string
+      displayText: string | undefined
+    }> = []
+    const sentToIm: string[] = []
+    const router = createRemoteImRouter({
+      getConfig: () => config,
+      resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
+      sendUser: async (sessionId, text, options) => {
+        sentToAicli.push({ sessionId, text, displayText: options?.displayText })
+        return { ok: true }
+      },
+      sendImText: async (_projectId, _toUserId, text) => {
+        sentToIm.push(text)
+        return { ok: true }
+      },
+      transcribeAudio: async () => ({ ok: true, text: '检查一下构建失败原因' }),
+      store
+    })
+
+    const result = await router.handleIncomingAudio({
+      projectId: 'project-1',
+      remoteMessageId: 'voice-1',
+      fromUserId: 'phone_admin',
+      toUserId: 'desktop_bot',
+      audioUrl: 'https://cos.example.test/voice.amr',
+      durationSeconds: 4,
+      createdAt: 100
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.aicliSessionId).toBe('session-main')
+    expect(sentToAicli).toHaveLength(1)
+    expect(sentToAicli[0]?.text).toContain('[语音转文字]')
+    expect(sentToAicli[0]?.text).toContain('检查一下构建失败原因')
+    expect(sentToAicli[0]?.displayText).toBe(
+      '[来自远程 IM：phone_admin]\n[语音转文字]\n检查一下构建失败原因'
+    )
+    expect(sentToIm[0]).toContain('已发送给当前 AICLI')
+    expect(store.messages[0]).toMatchObject({
+      role: 'remote-user',
+      direction: 'incoming',
+      status: 'sent-to-aicli',
+      content: '[语音消息 4s]\n[语音转文字]\n检查一下构建失败原因'
+    })
+  })
+
+  it('records audio transcription failures without sending an empty task to AICLI', async () => {
+    const store = createMessageStore()
+    const sentToAicli: string[] = []
+    const sentToIm: string[] = []
+    const router = createRemoteImRouter({
+      getConfig: () => config,
+      resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
+      sendUser: async (_sessionId, text) => {
+        sentToAicli.push(text)
+        return { ok: true }
+      },
+      sendImText: async (_projectId, _toUserId, text) => {
+        sentToIm.push(text)
+        return { ok: true }
+      },
+      transcribeAudio: async () => ({
+        ok: false,
+        error: '本地 Whisper 未配置'
+      }),
+      store
+    })
+
+    const result = await router.handleIncomingAudio({
+      projectId: 'project-1',
+      remoteMessageId: 'voice-1',
+      fromUserId: 'phone_admin',
+      toUserId: 'desktop_bot',
+      audioUrl: 'https://cos.example.test/voice.amr',
+      durationSeconds: 4
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('本地 Whisper 未配置')
+    expect(sentToAicli).toEqual([])
+    expect(sentToIm[0]).toContain('语音转文字失败')
+    expect(store.messages[0]).toMatchObject({
+      status: 'failed',
+      error: '本地 Whisper 未配置',
+      content: '[语音消息 4s]'
+    })
+  })
+
+  it('routes configured friend messages to the current AICLI session', async () => {
     const store = createMessageStore()
     const sentToAicli: string[] = []
     const sentToIm: string[] = []
@@ -155,11 +247,13 @@ describe('remote IM router', () => {
     })
 
     expect(result.ok).toBe(true)
-    expect(sentToAicli).toEqual([])
-    expect(sentToIm).toEqual([])
+    expect(result.aicliSessionId).toBe('session-main')
+    expect(sentToAicli).toHaveLength(1)
+    expect(sentToAicli[0]).toContain('hello from friend')
+    expect(sentToIm[0]).toContain('已发送给当前 AICLI')
     expect(store.messages[0]).toMatchObject({
       role: 'remote-user',
-      status: 'received',
+      status: 'sent-to-aicli',
       content: 'hello from friend'
     })
   })
@@ -201,7 +295,7 @@ describe('remote IM router', () => {
     expect(store.messages[0]).toMatchObject({ status: 'sent-to-aicli' })
   })
 
-  it('rejects normal slave-to-master messages without sending them to AICLI', async () => {
+  it('routes legacy slave-to-master messages as trusted friend tasks', async () => {
     const store = createMessageStore()
     const sentToAicli: string[] = []
     const sentToIm: string[] = []
@@ -231,13 +325,13 @@ describe('remote IM router', () => {
       text: '主动发起一个任务'
     })
 
-    expect(result.ok).toBe(false)
-    expect(result.error).toContain('slave nodes cannot initiate tasks')
-    expect(sentToAicli).toEqual([])
-    expect(sentToIm[0]).toContain('奴隶节点不能主动发起任务')
+    expect(result.ok).toBe(true)
+    expect(result.aicliSessionId).toBe('session-main')
+    expect(sentToAicli).toHaveLength(1)
+    expect(sentToIm[0]).toContain('已发送给当前 AICLI')
     expect(store.messages[0]).toMatchObject({
-      status: 'rejected',
-      error: 'slave cannot initiate task'
+      status: 'sent-to-aicli',
+      error: null
     })
   })
 
@@ -281,7 +375,7 @@ describe('remote IM router', () => {
     })
   })
 
-  it('rejects slave-to-slave task routing without sending it to AICLI', async () => {
+  it('routes legacy slave-to-slave messages as trusted friend tasks', async () => {
     const store = createMessageStore()
     const sentToAicli: string[] = []
     const sentToIm: string[] = []
@@ -312,11 +406,11 @@ describe('remote IM router', () => {
       text: '互相处理一下'
     })
 
-    expect(result.ok).toBe(false)
-    expect(result.error).toContain('slave nodes cannot route tasks to each other')
-    expect(sentToAicli).toEqual([])
-    expect(sentToIm).toEqual([])
-    expect(store.messages[0]).toMatchObject({ status: 'rejected', error: 'slave-to-slave blocked' })
+    expect(result.ok).toBe(true)
+    expect(result.aicliSessionId).toBe('session-main')
+    expect(sentToAicli).toHaveLength(1)
+    expect(sentToIm[0]).toContain('已发送给当前 AICLI')
+    expect(store.messages[0]).toMatchObject({ status: 'sent-to-aicli', error: null })
   })
 
   it('reports missing AICLI session to the phone', async () => {

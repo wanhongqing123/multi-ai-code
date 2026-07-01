@@ -1,3 +1,4 @@
+import MultiAIIMCore
 import SwiftUI
 
 struct SettingsView: View {
@@ -6,13 +7,25 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section("账号") {
+                    LabeledContent("UserID") {
+                        Text(displayUserID)
+                            .foregroundStyle(appState.masterUserID.isEmpty ? .secondary : .primary)
+                    }
+                }
+
                 Section("Tencent IM") {
-                    TextField("SDKAppID", text: $appState.sdkAppIDText)
-                        .keyboardType(.numberPad)
-                    TextField("UserID", text: $appState.masterUserID)
-                        .textInputAutocapitalization(.never)
-                    SecureField("UserSig SecretKey", text: $appState.secretKey)
-                        .textInputAutocapitalization(.never)
+                    LabeledContent("SDKAppID") {
+                        Text(displaySDKAppID)
+                            .monospacedDigit()
+                    }
+                    LabeledContent("UserSig 凭证") {
+                        Text("使用内置凭证")
+                            .foregroundStyle(.secondary)
+                    }
+                    Text("基础 IM 配置由应用内置，设置页不再修改 SDKAppID 和凭证。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section("连接") {
@@ -22,9 +35,10 @@ struct SettingsView: View {
                         Text(appState.connectionState.rawValue)
                             .foregroundStyle(statusColor)
                     }
-                    Button("保存并连接") {
+                    Button(appState.connectionState == .connected ? "重新连接" : "连接") {
                         Task { await appState.connect() }
                     }
+                    .disabled(!canConnect)
                     Button("断开连接", role: .destructive) {
                         Task { await appState.disconnect() }
                     }
@@ -32,12 +46,22 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("远程 IM 设置")
-            .toolbar {
-                Button("保存") {
-                    appState.saveSettings()
-                }
-            }
         }
+    }
+
+    private var displayUserID: String {
+        let userID = appState.masterUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        return userID.isEmpty ? "未登录" : userID
+    }
+
+    private var displaySDKAppID: String {
+        let sdkAppIDText = appState.sdkAppIDText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return sdkAppIDText.isEmpty ? String(RemoteIMCredentialDefaults.sdkAppID) : sdkAppIDText
+    }
+
+    private var canConnect: Bool {
+        appState.connectionState != .connecting &&
+            !appState.masterUserID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var statusColor: Color {

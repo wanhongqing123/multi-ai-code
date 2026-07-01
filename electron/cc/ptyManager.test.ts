@@ -191,6 +191,16 @@ describe('registerPtyIpc prompt injection timing', () => {
     expect(proc.opts.args).toEqual(['--settings', JSON.stringify({ tui: 'default' })])
   })
 
+  it('exposes imcli environment to spawned AICLI sessions', async () => {
+    const { proc } = await spawnNoPlanSession()
+    const env = proc.opts.env as Record<string, string>
+    const pathValue = env.PATH ?? env.Path ?? ''
+
+    expect(env.MULTI_AI_CODE_PROJECT_ID).toBe('project-1')
+    expect(env.MULTI_AI_CODE_ROOT_DIR).toBeTruthy()
+    expect(pathValue.split(':').some((item) => item.endsWith('/bin'))).toBe(true)
+  })
+
   it('only exposes task-watch sessions to the scheduled task scheduler', async () => {
     await spawnClaudeSession()
     const ptyManager = (await import('./ptyManager.js')) as typeof import('./ptyManager.js') & {

@@ -7,53 +7,27 @@ export interface RemoteImSettingsSectionProps {
 }
 
 export default function RemoteImSettingsSection(props: RemoteImSettingsSectionProps): JSX.Element {
-  const { config, disabled, onChange } = props
+  const { config } = props
   return (
     <section className="ai-settings-card remote-im-settings-section">
       <div className="ai-settings-title">远程 IM</div>
       <div className="ai-settings-note">
-        这里仅配置当前项目是否接收远程 IM 任务；账号、凭证和联系人请在远程 IM 面板登录后管理。
+        远程 IM 账号、SDKAppID、SecretKey 和连接动作由登录入口管理，设置中心不再修改这些基础配置。
       </div>
 
-      <label className="ai-settings-checkbox">
-        <input
-          type="checkbox"
-          disabled={disabled}
-          checked={config.enabled}
-          onChange={(event) => onChange({ ...config, enabled: event.currentTarget.checked })}
-        />
-        启用远程 IM
-      </label>
-
-      <div className="remote-im-settings-grid">
-        <label>
-          输出刷新间隔(ms)
-          <input
-            disabled={disabled}
-            value={config.outputFlushIntervalMs}
-            onChange={(event) =>
-              onChange({
-                ...config,
-                outputFlushIntervalMs: Number(event.currentTarget.value)
-              })
-            }
-            placeholder="2000"
-          />
-        </label>
-        <label>
-          单次回传字符数
-          <input
-            disabled={disabled}
-            value={config.outputMaxChunkChars}
-            onChange={(event) =>
-              onChange({
-                ...config,
-                outputMaxChunkChars: Number(event.currentTarget.value)
-              })
-            }
-            placeholder="1200"
-          />
-        </label>
+      <div className="remote-im-settings-summary" aria-label="远程 IM 当前配置摘要">
+        <div>
+          <span>当前状态</span>
+          <strong>{config.enabled ? '已开启' : '未开启'}</strong>
+        </div>
+        <div>
+          <span>输出刷新</span>
+          <strong>{config.outputFlushIntervalMs} ms</strong>
+        </div>
+        <div>
+          <span>单次回传</span>
+          <strong>{config.outputMaxChunkChars} 字符</strong>
+        </div>
       </div>
     </section>
   )

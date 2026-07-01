@@ -1,3 +1,4 @@
+import AVFoundation
 import MultiAIIMCore
 import SwiftUI
 
@@ -197,11 +198,48 @@ private struct EmptyConversationListView: View {
             Text("暂无会话")
                 .font(.system(size: 16, weight: .bold))
                 .foregroundStyle(RemoteIMStyle.textPrimary)
-            Text("到通讯录添加好友或奴隶 UserID 后即可开始聊天。")
+            Text("到通讯录添加好友 UserID 后即可开始聊天。")
                 .font(.system(size: 13))
                 .foregroundStyle(RemoteIMStyle.textSecondary)
         }
         .frame(maxWidth: .infinity)
+    }
+}
+
+private final class VoiceMessagePlayer: NSObject, ObservableObject, AVAudioPlayerDelegate {
+    @Published var playingMessageID: UUID?
+
+    private var audioPlayer: AVAudioPlayer?
+
+    func toggle(message: RemoteIMMessage) {
+        guard let attachment = message.voiceAttachment else { return }
+        if playingMessageID == message.id {
+            stop()
+            return
+        }
+
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
+            try AVAudioSession.sharedInstance().setActive(true)
+            let nextPlayer = try AVAudioPlayer(contentsOf: URL(fileURLWithPath: attachment.localFilePath))
+            nextPlayer.delegate = self
+            nextPlayer.prepareToPlay()
+            audioPlayer = nextPlayer
+            playingMessageID = message.id
+            nextPlayer.play()
+        } catch {
+            stop()
+        }
+    }
+
+    func stop() {
+        audioPlayer?.stop()
+        audioPlayer = nil
+        playingMessageID = nil
+    }
+
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        stop()
     }
 }
 
@@ -287,6 +325,7 @@ struct RelationBadge: View {
 private struct MessageListView: View {
     let messages: [RemoteIMMessage]
     let peerRelation: RemoteIMContactRelation
+    @StateObject private var voicePlayer = VoiceMessagePlayer()
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -299,7 +338,11 @@ private struct MessageListView: View {
                         ForEach(messages) { message in
                             MessageBubbleView(
                                 message: message,
-                                incomingRelation: peerRelation
+                                incomingRelation: peerRelation,
+                                isVoicePlaying: voicePlayer.playingMessageID == message.id,
+                                playVoice: {
+                                    voicePlayer.toggle(message: message)
+                                }
                             )
                                 .id(message.id)
                         }
@@ -339,6 +382,8 @@ private struct EmptyMessagesView: View {
 private struct MessageBubbleView: View {
     let message: RemoteIMMessage
     let incomingRelation: RemoteIMContactRelation
+    let isVoicePlaying: Bool
+    let playVoice: () -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
@@ -363,16 +408,26 @@ private struct MessageBubbleView: View {
                 }
 
                 HStack(alignment: .bottom, spacing: 10) {
-                    MarkdownLikeText(message.text)
-                        .font(
-                            .system(
-                                size: 13,
-                                weight: .regular,
-                                design: usesMonospace ? .monospaced : .default
+                    if let voiceAttachment = message.voiceAttachment {
+                        Button(action: playVoice) {
+                            VoiceBubbleContent(
+                                attachment: voiceAttachment,
+                                isPlaying: isVoicePlaying
                             )
-                        )
-                        .lineSpacing(3)
-                        .foregroundStyle(RemoteIMStyle.textPrimary)
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        MarkdownLikeText(message.text)
+                            .font(
+                                .system(
+                                    size: 13,
+                                    weight: .regular,
+                                    design: usesMonospace ? .monospaced : .default
+                                )
+                            )
+                            .lineSpacing(3)
+                            .foregroundStyle(RemoteIMStyle.textPrimary)
+                    }
 
                     if message.direction == .outgoing {
                         StatusIcon(status: message.status)
@@ -413,6 +468,31 @@ private struct MessageBubbleView: View {
 
     private var bubbleBorder: Color {
         message.direction == .outgoing ? Color(red: 0.764, green: 0.873, blue: 0.996) : RemoteIMStyle.yellowBorder
+    }
+}
+
+private struct VoiceBubbleContent: View {
+    let attachment: RemoteIMVoiceAttachment
+    let isPlaying: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                .font(.system(size: 13, weight: .bold))
+                .frame(width: 18)
+            HStack(spacing: 3) {
+                ForEach(0..<7, id: \.self) { index in
+                    Capsule()
+                        .fill(RemoteIMStyle.textPrimary.opacity(isPlaying ? 0.85 : 0.55))
+                        .frame(width: 3, height: CGFloat([8, 14, 10, 18, 12, 15, 9][index]))
+                }
+            }
+            Text("\(attachment.durationSeconds)s")
+                .font(.system(size: 13, weight: .semibold))
+        }
+        .foregroundStyle(RemoteIMStyle.textPrimary)
+        .frame(minWidth: 116, alignment: .leading)
+        .contentShape(Rectangle())
     }
 }
 
@@ -483,31 +563,159 @@ private struct MarkdownLikeText: View {
     }
 }
 
+@MainActor
+private final class VoiceMessageRecorder: NSObject, ObservableObject {
+    @Published var isRecording = false
+
+    private var recorder: AVAudioRecorder?
+    private var startedAt: Date?
+    private var recordingURL: URL?
+
+    func start() async throws {
+        guard !isRecording else { return }
+        let granted = await requestRecordPermission()
+        guard granted else {
+            throw VoiceRecorderError.microphonePermissionDenied
+        }
+
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker])
+        try session.setActive(true)
+
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("remote-im-voice-\(UUID().uuidString)")
+            .appendingPathExtension("m4a")
+        let settings: [String: Any] = [
+            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+            AVSampleRateKey: 16_000,
+            AVNumberOfChannelsKey: 1,
+            AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue
+        ]
+        let nextRecorder = try AVAudioRecorder(url: url, settings: settings)
+        nextRecorder.prepareToRecord()
+        guard nextRecorder.record() else {
+            throw VoiceRecorderError.startFailed
+        }
+
+        recorder = nextRecorder
+        recordingURL = url
+        startedAt = Date()
+        isRecording = true
+    }
+
+    func stop() -> RemoteIMVoiceRecording? {
+        guard isRecording, let recorder, let recordingURL else { return nil }
+        recorder.stop()
+        self.recorder = nil
+        self.recordingURL = nil
+        isRecording = false
+        let duration = max(1, Int(ceil(Date().timeIntervalSince(startedAt ?? Date()))))
+        startedAt = nil
+        return RemoteIMVoiceRecording(fileURL: recordingURL, durationSeconds: duration)
+    }
+
+    func cancel() {
+        let url = recordingURL
+        recorder?.stop()
+        recorder = nil
+        recordingURL = nil
+        startedAt = nil
+        isRecording = false
+        if let url {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+
+    private func requestRecordPermission() async -> Bool {
+        await withCheckedContinuation { continuation in
+            AVAudioSession.sharedInstance().requestRecordPermission { granted in
+                continuation.resume(returning: granted)
+            }
+        }
+    }
+}
+
+private enum VoiceRecorderError: LocalizedError {
+    case microphonePermissionDenied
+    case startFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .microphonePermissionDenied:
+            return "没有麦克风权限"
+        case .startFailed:
+            return "录音启动失败"
+        }
+    }
+}
+
 private struct ComposerView: View {
     @EnvironmentObject private var appState: RemoteIMAppState
+    @StateObject private var voiceRecorder = VoiceMessageRecorder()
+    @State private var isVoiceMode = false
+    @State private var isPressingVoice = false
+    @State private var isCancellingVoice = false
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 0) {
-            TextField("输入要发送给当前 UserID 的消息...", text: $appState.draftText, axis: .vertical)
-                .font(.system(size: 14))
-                .lineLimit(1...5)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .submitLabel(.send)
-                .onSubmit {
-                    submitDraft()
+        VStack(spacing: 8) {
+            if voiceRecorder.isRecording {
+                VoiceRecordingHint(isCancelling: isCancellingVoice)
+            }
+
+            HStack(alignment: .bottom, spacing: 8) {
+                Button {
+                    isVoiceMode.toggle()
+                    if !isVoiceMode {
+                        voiceRecorder.cancel()
+                    }
+                } label: {
+                    Image(systemName: isVoiceMode ? "keyboard" : "speaker.wave.2.fill")
+                        .font(.system(size: 18, weight: .bold))
+                        .frame(width: 44, height: 44)
+                        .background(RemoteIMStyle.blueSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(RemoteIMStyle.border, lineWidth: 1)
+                        )
                 }
-                .onChange(of: appState.draftText) { newValue in
-                    submitWhenDraftEndsWithNewline(newValue)
+                .buttonStyle(.plain)
+                .foregroundStyle(RemoteIMStyle.blue)
+
+                if isVoiceMode {
+                    PressToTalkButton(
+                        isPressing: isPressingVoice,
+                        isCancelling: isCancellingVoice,
+                        isEnabled: appState.canSendVoice,
+                        onChanged: { translation in
+                            handleVoicePressChanged(translation: translation)
+                        },
+                        onEnded: { translation in
+                            Task { await handleVoicePressEnded(translation: translation) }
+                        }
+                    )
+                } else {
+                    TextField("输入要发送给当前 UserID 的消息...", text: $appState.draftText, axis: .vertical)
+                        .font(.system(size: 14))
+                        .lineLimit(1...5)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .submitLabel(.send)
+                        .onSubmit {
+                            submitDraft()
+                        }
+                        .onChange(of: appState.draftText) { newValue in
+                            submitWhenDraftEndsWithNewline(newValue)
+                        }
+                        .padding(.horizontal, 13)
+                        .padding(.vertical, 11)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.white, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(appState.canSend ? RemoteIMStyle.blue : RemoteIMStyle.border, lineWidth: appState.canSend ? 1.5 : 1)
+                        )
                 }
-                .padding(.horizontal, 13)
-                .padding(.vertical, 11)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.white, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(appState.canSend ? RemoteIMStyle.blue : RemoteIMStyle.border, lineWidth: appState.canSend ? 1.5 : 1)
-                )
+            }
         }
         .padding(.horizontal, 16)
         .padding(.top, 12)
@@ -530,5 +738,103 @@ private struct ComposerView: View {
 
         appState.draftText = draftWithoutReturn
         submitDraft()
+    }
+
+    private func handleVoicePressChanged(translation: CGSize) {
+        guard appState.canSendVoice else { return }
+        if !isPressingVoice {
+            isPressingVoice = true
+            Task { await startVoiceRecording() }
+        }
+        isCancellingVoice = translation.height < -70
+    }
+
+    private func handleVoicePressEnded(translation: CGSize) async {
+        guard isPressingVoice else { return }
+        let shouldCancel = translation.height < -70
+        isPressingVoice = false
+        isCancellingVoice = false
+        if shouldCancel {
+            voiceRecorder.cancel()
+            return
+        }
+
+        guard let recording = voiceRecorder.stop() else { return }
+        await appState.sendVoiceRecording(recording)
+    }
+
+    private func startVoiceRecording() async {
+        do {
+            try await voiceRecorder.start()
+        } catch {
+            isPressingVoice = false
+            isCancellingVoice = false
+            appState.errorMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct VoiceRecordingHint: View {
+    let isCancelling: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: isCancelling ? "xmark.circle.fill" : "mic.fill")
+            Text(isCancelling ? "松开取消" : "松开发送，上滑取消")
+                .font(.system(size: 13, weight: .semibold))
+        }
+        .foregroundStyle(isCancelling ? .red : RemoteIMStyle.textPrimary)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+        .background(Color.white, in: Capsule())
+        .overlay(Capsule().stroke(isCancelling ? Color.red.opacity(0.45) : RemoteIMStyle.border, lineWidth: 1))
+    }
+}
+
+private struct PressToTalkButton: View {
+    let isPressing: Bool
+    let isCancelling: Bool
+    let isEnabled: Bool
+    let onChanged: (CGSize) -> Void
+    let onEnded: (CGSize) -> Void
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(isEnabled ? RemoteIMStyle.textPrimary : RemoteIMStyle.textSecondary)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(backgroundColor, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(borderColor, lineWidth: isPressing ? 1.5 : 1)
+            )
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        onChanged(value.translation)
+                    }
+                    .onEnded { value in
+                        onEnded(value.translation)
+                    }
+            )
+            .allowsHitTesting(isEnabled)
+    }
+
+    private var title: String {
+        if !isEnabled { return "选择联系人后可发送语音" }
+        if isCancelling { return "松开取消" }
+        return isPressing ? "松开发送" : "按住 说话"
+    }
+
+    private var backgroundColor: Color {
+        if !isEnabled { return Color(.secondarySystemBackground) }
+        if isCancelling { return Color.red.opacity(0.08) }
+        return isPressing ? RemoteIMStyle.blueSoft : Color.white
+    }
+
+    private var borderColor: Color {
+        if isCancelling { return .red }
+        return isPressing ? RemoteIMStyle.blue : RemoteIMStyle.border
     }
 }

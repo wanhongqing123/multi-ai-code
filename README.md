@@ -1,185 +1,230 @@
 # Multi-AI Code
 
-> 面向本地仓库的 AI CLI 协作桌面工具。用 Claude Code 或 Codex 驱动主会话，在同一个界面里完成方案阅读、终端协作、代码审查、仓库查看与代码分析。
+> 面向本地仓库的 AI CLI 工作台。桌面端负责项目、任务、终端、代码审查、仓库查看和远程 IM；iOS 端作为移动 IM 入口，方便从手机把消息发给桌面端 AICLI。
 
 ![Multi-AI Code](build/icon-256.png)
 
-## 产品定位
+## 当前定位
 
-Multi-AI Code 不是传统的聊天壳，也不再是早期版本里的“四阶段流水线”。
+Multi-AI Code 当前是单阶段工作台，不再是早期的四阶段流水线。
 
-当前版本更接近一个面向真实代码仓库的 AI 工作台：
+核心目标：
 
-- 选择一个本地代码仓库作为当前项目
-- 选择或导入一个方案文件作为当前任务上下文
-- 用主会话 AI CLI 在终端里推进任务
-- 在 `代码审查` 里查看改动、做批注、把反馈回灌给当前会话
-- 在 `仓库查看` 窗口里浏览整个仓库、选中代码做标注，并交给独立 AI 分析或直接修改
+- 打开一个本地仓库作为项目。
+- 选择普通任务或定时任务，把任务交给 Claude Code / Codex 等 AICLI。
+- 在同一个桌面应用里完成终端协作、代码审查、仓库查看、项目构建和项目运行。
+- 通过远程 IM 从手机或另一台机器给当前 AICLI 发任务，并把 AICLI 输出回传给联系人。
 
-适合这几类场景：
+## 架构概览
 
-- 让 AI 根据方案文件继续落地实现
-- 对当前代码改动做针对性审查
-- 浏览大仓库时，针对某段代码让 AI 解释逻辑、排查问题、补测试或直接改代码
-- 为同一个仓库积累本地私有的分析记忆，减少每次重新解释上下文的成本
+```text
+Electron Desktop
+  src/                         React renderer
+  electron/                    Electron main / preload / 本地存储 / PTY / IM 路由
+  bin/imcli*                   给 AICLI 调用的 IM 命令行工具
 
-## 当前核心能力
+iOS Remote IM
+  ios/MultiAIIM/               SwiftUI iOS App
+  ios/MultiAIIM/MultiAIIMCore  IM 状态、联系人、消息模型
 
-### 1. 主会话终端
+Local Data
+  ~/MultiAICode/               桌面端全局数据目录
+  <target_repo>/.multi-ai-code 仓库级任务与记忆目录
+```
+
+桌面端是主控工作台；iOS 端只做远程 IM 客户端。AICLI 仍然是本机真实安装的 CLI，不是内置模型。
+
+## 核心能力
+
+### 主会话终端
 
 主界面中间是一个真实 PTY 终端，由 AI CLI 驱动。
 
-- 支持 `Claude Code` 或 `Codex`
-- 可切换当前仓库与当前方案
-- 支持拖拽文件到终端，直接插入路径
-- 会话状态明确区分为 `待启动 / 运行中 / 已退出`
-- 终端输出做了 markdown 风格格式化，适合长文本阅读
+- 支持 `Claude Code` 或 `Codex`。
+- 支持普通任务模式和定时任务模式。
+- 支持继续上一次 AICLI 会话。
+- 支持拖拽文件到终端插入路径。
+- 终端输出做了 Markdown 风格格式化，便于阅读长文本。
+- 远程 IM 消息会以受控 prompt 注入到当前会话。
 
-### 2. 方案选择、导入与预览
+### 普通任务
 
-你可以使用仓库内方案，也可以导入外部 Markdown 方案文件。
+普通任务是跟仓库走的任务文档。
 
-- 支持从当前项目中选择方案
-- 支持 `导入外部方案`
-- 支持 `方案预览`
-- 方案预览里可以直接做标注，再发送给当前配置的 AI CLI
-- 如果是外部方案，启动主会话时不会把整份文件内容直接灌进终端，而是把方案路径交给 AI CLI 自行读取
+- 内部任务保存在 `<target_repo>/.multi-ai-code/designs/`。
+- 可以创建、选择、预览、编辑任务描述和详情。
+- 可以导入外部 Markdown 文件作为任务来源。
+- 启动 AICLI 时会把任务路径交给 CLI，由 CLI 自行读取。
 
-### 3. 代码审查
+### 定时任务
 
-`代码审查` 是面向当前代码改动的双栏审查窗口。
+定时任务用于按时间触发 AICLI。
 
-- 查看工作区改动、最近一次提交或指定 commit
-- 左侧代码区域支持单行和多行标注
-- 右侧批注面板可逐条填写说明
-- 批注会回灌给当前主会话，适合让 AI 继续修正实现
-- 审查窗口尺寸更大，接近全屏使用
-- 代码区域字体与滚动体验针对程序员阅读做了优化
+- 任务列表按项目保存。
+- 支持启用、禁用、立即运行和查看运行状态。
+- 定时任务会进入专门允许接收定时任务 prompt 的会话，避免和普通任务混用。
 
-适合的操作方式：
+### 代码审查
 
-- 选中 diff 中的一段实现
-- 写明问题、风险或修改要求
-- 点击发送，让当前主会话继续处理
+`代码审查` 是面向当前改动的双栏审查窗口。
 
-### 4. 仓库查看
+- 查看工作区改动、最近一次提交或指定 commit。
+- 支持对 diff 单行或多行写批注。
+- 批注可以发送回当前主会话继续修正。
+- 定时任务模式下会限制部分审查批注行为，避免任务上下文混乱。
 
-`仓库查看` 是一个独立窗口，不替代 `代码审查`，两者并存。
+### 仓库查看
 
-- 左侧：文件树，接近编辑器式浏览体验
-- 中间：单文件源码查看
-- 右侧：分析对话区与标注列表
-- 过滤大目录：`.git`、`node_modules`、`dist`、`build`、`out`
-- 支持选中任意代码片段后添加标注说明
-- 标注可发送给独立的仓库查看 AI，而不是占用主会话
+`仓库查看` 是独立代码浏览与分析窗口。
 
-这个窗口更适合做“像代码浏览器一样”的工作：
+- 左侧文件树，中间源码，右侧分析对话和标注列表。
+- 自动过滤 `.git`、`node_modules`、`dist`、`build`、`out` 等大目录。
+- 支持选中代码片段后添加标注并发送给独立分析 AI。
+- 分析记忆可以写入仓库级目录，便于下次打开同一仓库时恢复上下文。
 
-- 看某个文件的实现细节
-- 让 AI 解释某段逻辑
-- 让 AI 分析问题根因
-- 让 AI 根据标注直接改代码或补测试
+### 项目构建和项目运行
 
-### 5. 独立 AI 配置
+项目可以配置构建流程和运行流程。
 
-软件现在支持两套 AI CLI 配置：
+- Windows 支持 MSYS / Visual Studio 相关环境。
+- macOS 直接使用原始环境，不展示 Windows 专用环境选项。
+- 构建和运行配置跟项目走，适合不同仓库维护不同命令。
 
-- `主会话 AI`
-- `仓库查看分析 AI`
+## 远程 IM
 
-两套配置可以独立设置，互不影响。默认建议：
+远程 IM 基于 Tencent IM。当前已经去掉显式主人 / 奴隶模型，统一为可信好友联系人。
 
-- 主会话：按你的习惯选择 `Claude Code` 或 `Codex`
-- 仓库查看分析 AI：默认 `Claude Code`
+桌面端行为：
 
-每套配置都支持：
+- 启动后先进入 IM 登录入口；登录成功或失败都可以进入主页。
+- 登录只要求 UserID，SDKAppID 和 UserSig SecretKey 使用内置测试凭证。
+- 当前默认 SDKAppID 是 `1600148979`。
+- 设置中心只展示远程 IM 摘要，不再修改基础账号配置。
+- 远程 IM 抽屉支持拖动、最近会话、好友列表、添加联系人、清空消息。
+- 好友发来的文本消息默认送入当前本机 AICLI。
+- AICLI 输出会被抽取成干净 Markdown，再回发给对应好友。
+- 发送状态用对勾图标显示，减少消息气泡里的文字噪声。
 
-- 选择 `Claude Code` 或 `Codex`
-- Binary override
-- 自定义附加参数
-- 自定义环境变量
+### iOS 端
 
-这意味着你可以：
+iOS App 是移动端远程 IM 客户端，主要用于手机上发消息给桌面端。
 
-- 主界面用 `Codex` 推进任务
-- 仓库查看窗口用 `Claude Code` 做代码解释或局部修改
+- 首屏是登录页，只需要输入 UserID。
+- 底部为 `消息 / 通讯录 / 我` 三栏。
+- `消息` 页展示会话列表，点击联系人进入聊天。
+- `通讯录` 页可以添加可信好友 UserID。
+- `我` 页展示账号、SDKAppID、连接状态，并支持连接 / 断开。
+- 文本输入支持回车发送。
+- 语音消息采用类似微信的按住说话交互，发送后本端和远端都可以播放。
 
-### 6. 习惯监控（仅屏幕截图采样）
+## imcli
 
-顶栏保留 `🧠 习惯监控` 入口。当前只保留后台屏幕截图采样：
-
-- 按周期保存主屏截图样本到本地
-- 不再采集主会话 prompt、仓库查看 prompt、Diff 批注、代码标注、模板调用、方案导入
-- 不再采集前台窗口标题、进程名或其他系统活动摘要
-- 「原始采集」tab 只显示屏幕截图采样开关、保留期、最近截图样本和清空入口
-
-首次升级到本版本时会弹一次告知面板，可在那里直接选「先关闭采集」。
-
-### 7. 仓库级本地记忆
-
-`仓库查看` 的分析结果可以写入当前仓库下的本地私有目录：
+`imcli` 是给 AICLI 使用的本地命令行工具。桌面端启动后会在本机开一个带 token 的本地 bridge，并写入：
 
 ```text
-<target_repo>/.multi-ai-code/repo-memory/
+~/MultiAICode/imcli-bridge.json
 ```
 
-目前会保存：
+AICLI 收到需要查询或操作 IM 的任务时，可以先运行：
 
-- `project-summary.md`：项目级压缩总结
-- `file-notes/<path>.md`：文件级笔记
-- `recent-topics.json`：最近分析主题
-- `repo-view-history.json`：仓库查看窗口的对话历史
+```bash
+imcli help
+```
 
-特点：
+常用命令：
 
-- 数据跟着仓库走，换机器或换分支时更容易一起迁移
-- 默认自动写入 `.git/info/exclude`，避免把这些私有记忆误提交进 git
-- 下次重新打开同一个仓库时，AI 能更快恢复上下文
+```bash
+imcli whoami --project <projectId>
+imcli contacts --project <projectId>
+imcli history --project <projectId> --peer <userId> --limit 20
+imcli last --project <projectId> --peer <userId>
+imcli send <userId> "消息内容" --project <projectId>
+imcli forward <userId> --message-id <id> --project <projectId>
+imcli broadcast <user1,user2> "消息内容" --project <projectId>
+```
 
-## 典型使用流程
+桌面端注入给 AICLI 的远程 IM prompt 中会提示：如果需要查询或操作 IM，请先运行 `imcli help`。
 
-### 流程 A：根据方案推进实现
+## 配置与数据归属
 
-1. 打开一个本地仓库
-2. 选择当前方案，或导入外部方案
-3. 点击 `启动`
-4. 在主会话里让 AI 阅读方案并继续推进实现
-5. 需要检查改动时，打开 `代码审查`
-6. 对具体改动写批注，再发回当前会话继续修改
+| 配置 / 数据 | 归属 | 位置 | 说明 |
+| --- | --- | --- | --- |
+| 项目列表、项目 ID、项目元数据 | 本机 | `~/MultiAICode/projects/<projectId>/project.json` | 记录项目名和目标仓库路径 |
+| SQLite 数据库 | 本机 | `~/MultiAICode/multi-ai-code.db` | 事件、消息、定时任务、运行记录等 |
+| IM 登录账号 | 本机账号配置 | `~/MultiAICode/remote-im-profiles/<profile>/remote-im-account.json` | UserID、SDKAppID、联系人等 |
+| 远程 IM 项目开关和输出参数 | 项目配置 | `project.json` 内的 `remote_im_config` | 是否启用、输出分片参数等 |
+| 普通任务文档 | 仓库 | `<target_repo>/.multi-ai-code/designs/` | 跟仓库走，可随仓库迁移 |
+| 普通任务描述 / 详情 | 项目元数据 | `project.json` | 用于 UI 列表展示 |
+| 定时任务 | 本机项目数据 | SQLite `scheduled_tasks` | 跟项目 ID 走，不写入仓库 |
+| 仓库查看记忆 | 仓库 | `<target_repo>/.multi-ai-code/repo-memory/` | 私有分析记忆 |
+| imcli bridge | 本机运行态 | `~/MultiAICode/imcli-bridge.json` | 当前桌面进程启动后生成 |
+| Whisper 模型 | 本机文件 | `models/whisper/*.bin` | 默认不提交到 git |
 
-### 流程 B：只分析某段代码逻辑
+原则：
 
-1. 点击 `仓库查看`
-2. 在左侧文件树里找到目标文件
-3. 选中需要分析的代码片段
-4. 点击标注，填写你想问的问题
-5. 发送给独立分析 AI
-6. 在右侧聊天流里持续追问，必要时让它直接修改代码
+- 任务文档和仓库分析记忆跟仓库走。
+- IM 账号、SDKAppID、UserSig 凭证和当前登录态跟本机用户走。
+- AICLI 会话运行态跟当前桌面进程和项目走。
+- 普通任务 / 定时任务是不同运行模式；继续上一次会话时，应用会尽量保持会话和当前项目、当前任务模式一致。
 
-### 流程 C：导入外部方案但不想刷屏
+## 远程 IM 语音转文字
 
-1. 导入外部 `.md` 方案
-2. 点击 `启动`
-3. 主会话只会把方案路径交给 AI CLI，自行读取文件
-4. 不会把整份方案正文直接打印到终端里
+手机或其它端发送语音消息给桌面端时，桌面端会尝试调用本机 Whisper 做语音转文字，再把转写文本发送给当前 AICLI。
 
-## 主要界面说明
+当前方案使用本地 `whisper.cpp`，不依赖腾讯 IM 付费语音转文字插件。
 
-### 顶栏
+### macOS
 
-- `AI 设置`：配置主会话与仓库查看的 AI CLI
-- `模板`：保存和复用常用 prompt
-- `时间线`：查看当前项目的重要事件轨迹
-- `体检`：检查本机 CLI 环境是否可用
+推荐安装：
 
-### 主工作区
+```bash
+brew install whisper-cpp ffmpeg
+```
 
-- `方案`：当前任务对应的方案文件
-- `导入外部方案`：从仓库外导入 Markdown 方案
-- `方案预览`：先看方案并批注
-- `启动 / 停止 / 重启`：控制主会话
-- `仓库查看`：打开独立代码浏览与分析窗口
-- `代码审查`：打开当前改动的双栏审查窗口
+模型文件放在仓库默认位置：
+
+```text
+models/whisper/ggml-base.bin
+```
+
+macOS 下会自动尝试查找：
+
+```text
+/opt/homebrew/bin/whisper-cli
+/usr/local/bin/whisper-cli
+/opt/homebrew/bin/ffmpeg
+/usr/local/bin/ffmpeg
+```
+
+### Windows
+
+Windows 端需要准备：
+
+- `whisper-cli.exe`
+- `ffmpeg.exe`
+- Whisper 模型文件，推荐放在仓库默认位置：
+
+```text
+<multi-ai-code>\models\whisper\ggml-base.bin
+```
+
+如果模型放在默认位置，通常只需要配置 `whisper-cli.exe` 和 `ffmpeg.exe` 的路径。PowerShell 示例：
+
+```powershell
+[Environment]::SetEnvironmentVariable("MULTI_AI_CODE_WHISPER_CMD", "C:\tools\whisper.cpp\whisper-cli.exe", "User")
+[Environment]::SetEnvironmentVariable("MULTI_AI_CODE_FFMPEG_CMD", "C:\tools\ffmpeg\bin\ffmpeg.exe", "User")
+[Environment]::SetEnvironmentVariable("MULTI_AI_CODE_WHISPER_LANGUAGE", "zh", "User")
+```
+
+如果模型没有放在仓库默认位置，需要额外指定模型路径：
+
+```powershell
+[Environment]::SetEnvironmentVariable("MULTI_AI_CODE_WHISPER_MODEL", "C:\path\to\ggml-base.bin", "User")
+```
+
+配置后需要重启整个 Multi-AI Code 桌面端进程。Electron 主进程只会在启动时读取这些环境变量，刷新页面不会让新配置生效。
+
+`ffmpeg.exe` 用于把 `m4a`、`amr` 等语音格式转成 Whisper 更稳定支持的音频格式，建议和 `whisper-cli.exe` 一起配置。
 
 ## 安装与运行
 
@@ -187,13 +232,13 @@ Multi-AI Code 不是传统的聊天壳，也不再是早期版本里的“四阶
 
 - Node.js 20+
 - macOS 或 Windows
-- 本机已安装至少一种 AI CLI：
+- 本机至少安装一种 AI CLI：
   - `claude`
   - `codex`
 
-如果使用 `Codex`，建议先确认命令行可直接运行；如果使用 `Claude Code`，也需要先保证本地 CLI 已安装并登录可用。
+如果使用 `Codex`，需要确认命令行可直接运行；如果使用 `Claude Code`，也需要保证本地 CLI 已安装并登录可用。
 
-### 本地启动
+### 桌面端本地启动
 
 ```bash
 npm install
@@ -202,12 +247,30 @@ npm run dev
 
 说明：
 
-- `npm install` 后会自动执行 `electron-rebuild`
-- 原生依赖包括 `better-sqlite3` 和 `node-pty`
+- `npm install` 后会自动执行 `electron-rebuild`。
+- 原生依赖包括 `better-sqlite3` 和 `node-pty`。
+- `npm run dev` 会启动 Electron 桌面端和 renderer dev server。
+
+### iOS 本地运行
+
+iOS 工程位于：
+
+```text
+ios/MultiAIIM/MultiAIIM.xcworkspace
+```
+
+常用命令：
+
+```bash
+xcodebuild build -workspace ios/MultiAIIM/MultiAIIM.xcworkspace -scheme MultiAIIM -destination 'platform=iOS Simulator,name=iPhone 17'
+xcodebuild test -workspace ios/MultiAIIM/MultiAIIM.xcworkspace -scheme MultiAIIMCoreTests -destination 'platform=iOS Simulator,name=iPhone 17'
+```
+
+安装到真机时需要本机 Xcode 已登录有效开发者账号，并指定 `DEVELOPMENT_TEAM`。
 
 ## 打包
 
-### 构建应用
+### 构建桌面端
 
 ```bash
 npm run build
@@ -231,6 +294,25 @@ npm run dist:win
 npm run dist:all
 ```
 
+## 测试
+
+```bash
+npm run typecheck
+npm test
+```
+
+常用局部验证：
+
+```bash
+npx vitest run electron/remote-im/localWhisper.test.ts electron/remote-im/router.test.ts src/remote-im/tencentImClient.test.ts
+```
+
+iOS 单元测试：
+
+```bash
+xcodebuild test -workspace ios/MultiAIIM/MultiAIIM.xcworkspace -scheme MultiAIIMCoreTests -destination 'platform=iOS Simulator,name=iPhone 17'
+```
+
 ## 技术栈
 
 - Electron 33
@@ -241,10 +323,16 @@ npm run dist:all
 - xterm.js
 - react-markdown + remark-gfm
 - better-sqlite3
+- Tencent IM Web SDK
+- SwiftUI iOS App
+- Tencent IM iOS SDK
+- whisper.cpp + ffmpeg
 
-## 当前版本的使用边界
+## 使用边界
 
-- 主会话依赖你本机真实安装的 AI CLI，不是内置模型
-- `仓库查看` 的分析能力取决于你配置的独立 AI CLI
-- 本地私有记忆默认不会进入 git，但如果你手动调整了 `.git/info/exclude`，仍需要自行确认
-- README 以当前主分支实现为准；如果你正在使用历史版本，界面与能力可能不同
+- AICLI 依赖本机真实安装的 `claude` 或 `codex`，不是内置模型。
+- 远程 IM 当前使用内置测试凭证，不适合作为正式上架 App Store 的生产配置。
+- 腾讯 IM SDK 自带的语音转文字属于增值能力；当前默认走本地 Whisper。
+- `models/whisper/*.bin` 默认被 `.gitignore` 忽略，需要在每台机器本地准备。
+- 本地私有记忆默认不进入 git，但如果手动调整 `.git/info/exclude`，仍需要自行确认。
+- README 以当前主分支实现为准；历史版本的界面和能力可能不同。

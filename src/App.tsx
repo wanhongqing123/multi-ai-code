@@ -45,8 +45,13 @@ import RemoteImLoginDialog, {
 } from './remote-im/RemoteImLoginDialog'
 import {
   addRemoteImContact,
-  getRemoteImConversations
+  getRemoteImConversations,
+  getRemoteImStatusLabel
 } from './remote-im/remoteImViewModel'
+import {
+  isRemoteImAccountReady,
+  shouldPromptRemoteImStartupLogin
+} from './remote-im/remoteImLoginFlow'
 import ScreenSamplerIndicator from './habit/ScreenSamplerIndicator'
 import FirstRunNoticeDialog from './habit/FirstRunNoticeDialog'
 import { getCliTargetLabel } from './components/cliTarget'
@@ -818,6 +823,10 @@ function AppShell() {
       if (cancelled) return
       if (result.ok) {
         setRemoteImLoginState(result.value)
+        setRemoteImLoginRequested(isRemoteImAccountReady(result.value?.account))
+        if (shouldPromptRemoteImStartupLogin(result.value)) {
+          setShowRemoteImLogin(true)
+        }
       } else {
         setRemoteImLoginError(result.error ?? '读取远程 IM 登录状态失败')
       }
@@ -1091,6 +1100,9 @@ function AppShell() {
         throw new Error(accountResult.error ?? '保存远程 IM 账号失败')
       }
       setRemoteImLoginState(accountResult.value)
+      setRemoteImLoginRequested(true)
+      setShowRemoteImLogin(false)
+      showToast('远程 IM 账号已保存，正在尝试连接', { level: 'success' })
 
       if (currentProjectId) {
         const configResult = await window.api.remoteIm.getConfig(currentProjectId)
@@ -1098,15 +1110,12 @@ function AppShell() {
           setRemoteImConfig(configResult.value)
           setRemoteImConfigProjectId(currentProjectId)
         } else {
-          throw new Error(configResult.error ?? '读取远程 IM 配置失败')
+          showToast(configResult.error ?? '读取远程 IM 配置失败', { level: 'error' })
+          return
         }
         const status = await window.api.remoteIm.getStatus(currentProjectId)
         setRemoteImStatus(status)
       }
-      setRemoteImLoginRequested(true)
-
-      setShowRemoteImLogin(false)
-      showToast('远程 IM 账号已保存', { level: 'success' })
     } catch (err) {
       setRemoteImLoginError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -1751,10 +1760,14 @@ function AppShell() {
             ⚙️ 设置
           </button>
           <button
-            className={`topbar-btn ${remoteImStatus?.state === 'connected' ? 'remote-im-topbar-connected' : ''}`}
+            className={`topbar-btn remote-im-topbar remote-im-topbar-${remoteImStatus?.state ?? 'disconnected'}`}
             onClick={() => setShowRemoteImDrawer(true)}
             disabled={!currentProjectId}
-            title="打开远程 IM 会话"
+            title={
+              remoteImStatus?.detail
+                ? `远程 IM：${getRemoteImStatusLabel(remoteImStatus)} - ${remoteImStatus.detail}`
+                : `远程 IM：${getRemoteImStatusLabel(remoteImStatus)}`
+            }
           >
             <span className="remote-im-topbar-dot" />
             远程 IM
@@ -2056,6 +2069,7 @@ function AppShell() {
           selectedName={planName}
           sessionRunning={sessionStatus === 'running'}
           onCreate={createNormalTask}
+          onSelect={setPlanName}
           onRun={runNormalTask}
           onPreview={(name) => void openPlanReview(name)}
           onSaveMetadata={saveNormalTaskMetadata}

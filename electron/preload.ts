@@ -117,6 +117,18 @@ export interface RemoteImIncomingTextMessage {
   createdAt?: number
 }
 
+export interface RemoteImIncomingAudioMessage {
+  projectId: string
+  remoteMessageId?: string | null
+  fromUserId: string
+  toUserId?: string | null
+  audioUrl: string
+  durationSeconds?: number | null
+  sizeBytes?: number | null
+  uuid?: string | null
+  createdAt?: number
+}
+
 export interface RemoteImRuntimeLogEntryInput {
   projectId?: string | null
   sdkAppId?: number | null
@@ -615,6 +627,11 @@ const api = {
       >,
     deliverIncomingText: (message: RemoteImIncomingTextMessage) =>
       ipcRenderer.invoke('remote-im:deliver-incoming-text', message) as Promise<{
+        ok: boolean
+        error?: string
+      }>,
+    deliverIncomingAudio: (message: RemoteImIncomingAudioMessage) =>
+      ipcRenderer.invoke('remote-im:deliver-incoming-audio', message) as Promise<{
         ok: boolean
         error?: string
       }>,

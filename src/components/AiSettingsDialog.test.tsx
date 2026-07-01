@@ -113,8 +113,9 @@ describe('AiSettingsDialog', () => {
     const markup = renderDialog()
 
     expect(markup).toContain('id="ai-settings-remote-im-section"')
-    expect(markup).toContain('启用远程 IM')
-    expect(markup).toContain('账号、凭证和联系人请在远程 IM 面板登录后管理')
+    expect(markup).toContain('当前状态')
+    expect(markup).toContain('远程 IM 账号、SDKAppID、SecretKey 和连接动作由登录入口管理')
+    expect(markup).not.toContain('启用远程 IM')
     expect(markup).not.toContain('SECRETKEY')
   })
 

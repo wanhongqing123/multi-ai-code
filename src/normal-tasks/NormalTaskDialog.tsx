@@ -30,6 +30,7 @@ interface Props {
     details?: string
   ) => Promise<NormalTaskEntry | null> | NormalTaskEntry | null
   onRun: (task: NormalTaskEntry) => Promise<void> | void
+  onSelect?: (name: string) => void
   onPreview: (name: string) => void
   onSaveMetadata?: (name: string, metadata: NormalTaskMetadataDraft) => Promise<boolean> | boolean
   onSaveDescription?: (name: string, description: string) => Promise<boolean> | boolean
@@ -44,6 +45,7 @@ export default function NormalTaskDialog(props: Props): JSX.Element {
     sessionRunning,
     onCreate,
     onRun,
+    onSelect,
     onPreview,
     onSaveMetadata,
     onSaveDescription,
@@ -123,6 +125,7 @@ export default function NormalTaskDialog(props: Props): JSX.Element {
         setQuery('')
         setCreatingTask(false)
         setLocalSelectedName(created.name)
+        onSelect?.(created.name)
       } else {
         setCreateError('创建普通任务失败，请查看错误提示后重试。')
       }
@@ -240,6 +243,7 @@ export default function NormalTaskDialog(props: Props): JSX.Element {
                       onClick={() => {
                         setCreatingTask(false)
                         setLocalSelectedName(task.name)
+                        onSelect?.(task.name)
                       }}
                       title="选择普通任务"
                     >

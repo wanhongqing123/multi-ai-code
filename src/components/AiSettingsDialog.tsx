@@ -621,14 +621,6 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
         if (repairToast) {
           showToast(repairToast, { level: 'success' })
         }
-        if (props.remoteImConfigReady) {
-          const remoteImRes = await window.api.remoteIm.setConfig(props.projectId, remoteImConfig)
-          if (!remoteImRes.ok) {
-            throw new Error(remoteImRes.error ?? 'save remote IM config failed')
-          }
-          setRemoteImConfig(remoteImRes.value)
-          props.onSavedRemoteImConfig(remoteImRes.value)
-        }
       }
 
       props.onClose()

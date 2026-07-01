@@ -26,7 +26,7 @@ private struct Header: View {
                 Text("通讯录")
                     .font(.system(size: 21, weight: .bold))
                     .foregroundStyle(RemoteIMStyle.textPrimary)
-                Text("好友和奴隶")
+                Text("可信好友")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(RemoteIMStyle.textSecondary)
             }
@@ -47,12 +47,6 @@ private struct AddContactBox: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            Picker("联系人类型", selection: $appState.newContactRelation) {
-                Text("好友").tag(RemoteIMContactRelation.friend)
-                Text("奴隶").tag(RemoteIMContactRelation.slave)
-            }
-            .pickerStyle(.segmented)
-
             HStack(spacing: 8) {
                 TextField("添加 UserID", text: $appState.newContactUserID)
                     .font(.system(size: 15))
@@ -172,7 +166,7 @@ private struct EmptyContacts: View {
             Text("暂无联系人")
                 .font(.system(size: 16, weight: .bold))
                 .foregroundStyle(RemoteIMStyle.textPrimary)
-            Text("添加好友或奴隶 UserID 后即可开始聊天。")
+            Text("添加好友 UserID 后即可开始聊天。")
                 .font(.system(size: 13))
                 .foregroundStyle(RemoteIMStyle.textSecondary)
         }

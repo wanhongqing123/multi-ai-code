@@ -24,7 +24,7 @@ const loginState: RemoteImLoginState = {
 }
 
 describe('RemoteImLoginDialog', () => {
-  it('renders plain IM login fields without profile switching', () => {
+  it('renders a user-only IM login form with fixed credential settings', () => {
     const html = renderToStaticMarkup(
       <RemoteImLoginDialog
         open
@@ -39,11 +39,18 @@ describe('RemoteImLoginDialog', () => {
     expect(html).toContain('IM 登录')
     expect(html).toContain('UserID')
     expect(html).toContain('test123')
+    expect(html).toContain('基础 IM 配置固定')
     expect(html).not.toContain('Profile')
     expect(html).not.toContain('切换')
-    expect(html).toContain('主人')
-    expect(html).toContain('测试凭证 1400704311')
-    expect(html).toContain('测试凭证 1600148979')
+    expect(html).not.toContain('角色')
+    expect(html).not.toContain('主人')
+    expect(html).not.toContain('奴隶')
+    expect(html).not.toContain('凭证预设')
+    expect(html).not.toContain('UserSig 方式')
+    expect(html).not.toContain('type="password"')
+    expect(html).not.toContain('填入 IM 应用 SecretKey')
+    expect(html).not.toContain('测试凭证 1400704311')
+    expect(html).toContain('SDKAppID 1600148979')
     expect(html).not.toContain('输出刷新间隔')
     expect(html).not.toContain('单次回传字符数')
   })
@@ -63,7 +70,23 @@ describe('RemoteImLoginDialog', () => {
     expect(html).toBe('')
   })
 
-  it('applies a saved account when it belongs to the typed UserID', () => {
+  it('keeps the login dialog open when clicking the backdrop', () => {
+    const html = renderToStaticMarkup(
+      <RemoteImLoginDialog
+        open
+        loginState={loginState}
+        saving={false}
+        error={null}
+        onClose={vi.fn()}
+        onSubmit={vi.fn()}
+      />
+    )
+
+    expect(html).toContain('modal-backdrop')
+    expect(html).toContain('data-close-on-backdrop="false"')
+  })
+
+  it('applies saved contacts without allowing saved credentials to override the fixed preset', () => {
     const draft = {
       ...account,
       desktopUserId: 'test12345',
@@ -83,7 +106,9 @@ describe('RemoteImLoginDialog', () => {
 
     expect(applyLoadedRemoteImLoginAccount(draft, saved)).toMatchObject({
       desktopUserId: 'test12345',
-      desktopRole: 'slave',
+      desktopRole: 'master',
+      sdkAppId: 1600148979,
+      userSigMode: 'secret-key',
       masterUserIds: ['test1234'],
       allowedUserIds: ['test1234']
     })

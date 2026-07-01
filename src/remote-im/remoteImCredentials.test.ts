@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { RemoteImAccountConfig } from '../../electron/preload.js'
 import {
+  applyDefaultRemoteImCredential,
   applyRemoteImCredentialPreset,
+  DEFAULT_REMOTE_IM_CREDENTIAL_PRESET,
   getSelectedRemoteImCredentialPresetId,
   REMOTE_IM_CREDENTIAL_PRESETS
 } from './remoteImCredentials.js'
@@ -21,10 +23,10 @@ const account: RemoteImAccountConfig = {
 }
 
 describe('remote IM credentials', () => {
-  it('keeps both built-in Tencent IM credential presets', () => {
+  it('keeps the current built-in Tencent IM credential preset first', () => {
     expect(REMOTE_IM_CREDENTIAL_PRESETS.map((item) => item.sdkAppId)).toEqual([
-      1400704311,
-      1600148979
+      1600148979,
+      1400704311
     ])
   })
 
@@ -47,5 +49,21 @@ describe('remote IM credentials', () => {
     const next = applyRemoteImCredentialPreset(account, 'tencent-im-1400704311')
 
     expect(getSelectedRemoteImCredentialPresetId(next)).toBe('tencent-im-1400704311')
+  })
+
+  it('uses the current production test credential as the fixed login default', () => {
+    const next = applyDefaultRemoteImCredential({
+      ...account,
+      sdkAppId: 1400704311,
+      userSigMode: 'endpoint',
+      userSigEndpoint: 'https://example.test/sig',
+      userSigSecretKey: 'old-secret'
+    })
+
+    expect(DEFAULT_REMOTE_IM_CREDENTIAL_PRESET.sdkAppId).toBe(1600148979)
+    expect(next.sdkAppId).toBe(1600148979)
+    expect(next.userSigMode).toBe('secret-key')
+    expect(next.userSigEndpoint).toBe('')
+    expect(next.userSigSecretKey).toBe(DEFAULT_REMOTE_IM_CREDENTIAL_PRESET.userSigSecretKey)
   })
 })

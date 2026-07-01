@@ -75,5 +75,8 @@ ios/**/*.xcuserstate
 # Multi-AI Code local design/memory artifacts
 .multi-ai-code/
 
+# Local Whisper models are large runtime assets and should not be committed.
+models/whisper/*.bin
+
 # Runtime AI CLI system-prompt injection files (never the user's content)
 .injections/

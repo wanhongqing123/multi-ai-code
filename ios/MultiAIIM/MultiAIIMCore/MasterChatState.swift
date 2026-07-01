@@ -13,7 +13,7 @@ public enum MasterChatStateError: Error, Equatable, LocalizedError {
         case .blankMessage:
             return "Message text is required"
         case .noSelectedPeer:
-            return "Select a slave before sending"
+            return "Select a contact before sending"
         case .messageNotFound:
             return "Message was not found"
         }
@@ -25,12 +25,7 @@ public enum RemoteIMContactRelation: String, Codable, Equatable, Hashable {
     case slave
 
     public var displayName: String {
-        switch self {
-        case .friend:
-            return "好友"
-        case .slave:
-            return "奴隶"
-        }
+        return "好友"
     }
 }
 
@@ -53,18 +48,47 @@ public struct RemoteIMCredential: Equatable {
 }
 
 public enum RemoteIMCredentialDefaults {
-    public static let sdkAppID = 1_400_704_311
-    public static let userSigSecretKey = "8b897045d1ee4f067a745b1b6a3fb834d1bd4c5951de43282c21b945f98ec982"
+    public static let sdkAppID = 1_600_148_979
+    public static let userSigSecretKey = "aa18d554f5e4a235640745e98145e187977f87770b812b2b4f10ef032bd73861"
 
-    public static func resolvedCredential(sdkAppID: Int?, secretKey: String) -> RemoteIMCredential {
-        let cleanSecretKey = secretKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let sdkAppID, sdkAppID > 0, !cleanSecretKey.isEmpty else {
-            return RemoteIMCredential(
-                sdkAppID: Self.sdkAppID,
-                userSigSecretKey: Self.userSigSecretKey
-            )
+    public static func resolvedCredential(sdkAppID _: Int?, secretKey _: String) -> RemoteIMCredential {
+        defaultCredential
+    }
+
+    private static var defaultCredential: RemoteIMCredential {
+        RemoteIMCredential(
+            sdkAppID: Self.sdkAppID,
+            userSigSecretKey: Self.userSigSecretKey
+        )
+    }
+}
+
+public enum RemoteIMLoginCredentialPolicy {
+    public static func validationError(userID: String) -> String? {
+        guard !userID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return "请填写 UserID"
         }
-        return RemoteIMCredential(sdkAppID: sdkAppID, userSigSecretKey: cleanSecretKey)
+        return nil
+    }
+
+    public static func validationError(
+        sdkAppIDText _: String,
+        userID: String,
+        secretKey _: String
+    ) -> String? {
+        validationError(userID: userID)
+    }
+
+    public static func isComplete(userID: String) -> Bool {
+        validationError(userID: userID) == nil
+    }
+
+    public static func isComplete(
+        sdkAppIDText _: String,
+        userID: String,
+        secretKey _: String
+    ) -> Bool {
+        validationError(userID: userID) == nil
     }
 }
 
@@ -77,11 +101,11 @@ public struct RemoteIMContact: Identifiable, Equatable, Hashable {
     public init(
         userID: String,
         displayName: String,
-        relation: RemoteIMContactRelation = .slave
+        relation: RemoteIMContactRelation = .friend
     ) {
         self.userID = userID
         self.displayName = displayName
-        self.relation = relation
+        self.relation = .friend
     }
 }
 
@@ -97,11 +121,28 @@ public enum RemoteIMMessageStatus: String, Equatable {
     case failed
 }
 
+public struct RemoteIMVoiceAttachment: Equatable {
+    public let localFilePath: String
+    public let durationSeconds: Int
+    public let remoteID: String?
+
+    public init(
+        localFilePath: String,
+        durationSeconds: Int,
+        remoteID: String? = nil
+    ) {
+        self.localFilePath = localFilePath
+        self.durationSeconds = max(1, durationSeconds)
+        self.remoteID = remoteID
+    }
+}
+
 public struct RemoteIMMessage: Identifiable, Equatable {
     public let id: UUID
     public let fromUserID: String
     public let toUserID: String
     public let text: String
+    public let voiceAttachment: RemoteIMVoiceAttachment?
     public let direction: RemoteIMMessageDirection
     public var status: RemoteIMMessageStatus
     public let createdAt: Date
@@ -111,6 +152,7 @@ public struct RemoteIMMessage: Identifiable, Equatable {
         fromUserID: String,
         toUserID: String,
         text: String,
+        voiceAttachment: RemoteIMVoiceAttachment? = nil,
         direction: RemoteIMMessageDirection,
         status: RemoteIMMessageStatus,
         createdAt: Date
@@ -119,9 +161,14 @@ public struct RemoteIMMessage: Identifiable, Equatable {
         self.fromUserID = fromUserID
         self.toUserID = toUserID
         self.text = text
+        self.voiceAttachment = voiceAttachment
         self.direction = direction
         self.status = status
         self.createdAt = createdAt
+    }
+
+    public var isVoiceMessage: Bool {
+        voiceAttachment != nil
     }
 }
 
@@ -166,7 +213,7 @@ public struct MasterChatState: Equatable {
     }
 
     public mutating func upsertSlave(userID: String, displayName: String? = nil) throws {
-        try upsertContact(userID: userID, relation: .slave, displayName: displayName)
+        try upsertContact(userID: userID, relation: .friend, displayName: displayName)
     }
 
     public mutating func selectPeer(userID: String) {
@@ -184,6 +231,10 @@ public struct MasterChatState: Equatable {
 
     public func latestMessage(with peerID: String) -> RemoteIMMessage? {
         messages(with: peerID).last
+    }
+
+    private static func voiceDisplayText(durationSeconds: Int) -> String {
+        "[语音消息 \(max(1, durationSeconds))s]"
     }
 
     @discardableResult
@@ -209,6 +260,34 @@ public struct MasterChatState: Equatable {
     }
 
     @discardableResult
+    public mutating func queueOutgoingVoice(
+        filePath: String,
+        durationSeconds: Int,
+        now: Date = Date()
+    ) throws -> RemoteIMMessage {
+        let cleanFilePath = filePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanFilePath.isEmpty else { throw MasterChatStateError.blankMessage }
+        guard let peerID = selectedPeerID, !peerID.isEmpty else {
+            throw MasterChatStateError.noSelectedPeer
+        }
+        let voiceAttachment = RemoteIMVoiceAttachment(
+            localFilePath: cleanFilePath,
+            durationSeconds: durationSeconds
+        )
+        let message = RemoteIMMessage(
+            fromUserID: ownerUserID,
+            toUserID: peerID,
+            text: Self.voiceDisplayText(durationSeconds: voiceAttachment.durationSeconds),
+            voiceAttachment: voiceAttachment,
+            direction: .outgoing,
+            status: .pending,
+            createdAt: now
+        )
+        messages.append(message)
+        return message
+    }
+
+    @discardableResult
     public mutating func receiveText(
         _ text: String,
         fromUserID: String,
@@ -219,6 +298,45 @@ public struct MasterChatState: Equatable {
             fromUserID: cleanFromUserID,
             toUserID: ownerUserID,
             text: text.trimmingCharacters(in: .whitespacesAndNewlines),
+            direction: .incoming,
+            status: .received,
+            createdAt: now
+        )
+        if !cleanFromUserID.isEmpty && !contacts.contains(where: { $0.userID == cleanFromUserID }) {
+            contacts.append(
+                RemoteIMContact(
+                    userID: cleanFromUserID,
+                    displayName: cleanFromUserID,
+                    relation: .friend
+                )
+            )
+        }
+        if selectedPeerID == nil && !cleanFromUserID.isEmpty {
+            selectedPeerID = cleanFromUserID
+        }
+        messages.append(message)
+        return message
+    }
+
+    @discardableResult
+    public mutating func receiveVoice(
+        filePath: String,
+        durationSeconds: Int,
+        fromUserID: String,
+        remoteID: String? = nil,
+        now: Date = Date()
+    ) -> RemoteIMMessage {
+        let cleanFromUserID = fromUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let voiceAttachment = RemoteIMVoiceAttachment(
+            localFilePath: filePath.trimmingCharacters(in: .whitespacesAndNewlines),
+            durationSeconds: durationSeconds,
+            remoteID: remoteID
+        )
+        let message = RemoteIMMessage(
+            fromUserID: cleanFromUserID,
+            toUserID: ownerUserID,
+            text: Self.voiceDisplayText(durationSeconds: voiceAttachment.durationSeconds),
+            voiceAttachment: voiceAttachment,
             direction: .incoming,
             status: .received,
             createdAt: now

@@ -1,6 +1,6 @@
 ﻿import { ipcMain, BrowserWindow } from 'electron'
-import { promises as fs, createWriteStream, WriteStream } from 'fs'
-import { join } from 'path'
+import { promises as fs, createWriteStream, existsSync, WriteStream } from 'fs'
+import { delimiter, join } from 'path'
 import { PtyCCProcess } from './PtyCCProcess.js'
 import {
   shouldAutoAcceptCodexTrustPrompt,
@@ -209,6 +209,46 @@ const PRIMING_DELAY_MS_CODEX = 2500
 
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms))
+
+function getPathKey(env: Record<string, string>): string {
+  return process.platform === 'win32'
+    ? Object.keys(env).find((key) => key.toLowerCase() === 'path') ?? 'Path'
+    : 'PATH'
+}
+
+function remoteImCliBinCandidates(): string[] {
+  const processWithResources = process as NodeJS.Process & { resourcesPath?: string }
+  return [
+    process.env.MULTI_AI_CODE_IMCLI_BIN,
+    join(process.cwd(), 'bin'),
+    join(__dirname, '..', '..', '..', 'bin'),
+    join(__dirname, '..', '..', 'bin'),
+    processWithResources.resourcesPath
+      ? join(processWithResources.resourcesPath, 'app.asar.unpacked', 'bin')
+      : '',
+    processWithResources.resourcesPath ? join(processWithResources.resourcesPath, 'bin') : ''
+  ].filter((item): item is string => Boolean(item && existsSync(item)))
+}
+
+function withRemoteImCliEnv(
+  env: Record<string, string> | undefined,
+  projectId: string
+): Record<string, string> {
+  const next: Record<string, string> = {
+    ...(env ?? {}),
+    MULTI_AI_CODE_PROJECT_ID: projectId,
+    MULTI_AI_CODE_ROOT_DIR: rootDir()
+  }
+  const pathKey = getPathKey(next)
+  const pathParts = (next[pathKey] ?? process.env[pathKey] ?? '')
+    .split(delimiter)
+    .filter(Boolean)
+  for (const candidate of remoteImCliBinCandidates().reverse()) {
+    if (!pathParts.includes(candidate)) pathParts.unshift(candidate)
+  }
+  next[pathKey] = pathParts.join(delimiter)
+  return next
+}
 
 export interface SendUserMessageOptions {
   displayText?: string
@@ -446,7 +486,7 @@ export function registerPtyIpc(): void {
       args: effectiveArgs,
       cols: req.cols,
       rows: req.rows,
-      env: req.env,
+      env: withRemoteImCliEnv(req.env, req.projectId),
       enableMsys,
       msysBashPath,
       msysUsrBinDir

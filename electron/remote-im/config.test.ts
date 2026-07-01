@@ -38,20 +38,35 @@ describe('remote IM config', () => {
     })
   })
 
-  it('migrates legacy allowed users to master peers when role lists are missing', () => {
+  it('migrates legacy allowed users to trusted friends when role lists are missing', () => {
     expect(
       normalizeRemoteImConfig({
         allowedUserIds: [' master-a ', '', 'master-a']
       })
     ).toMatchObject({
       desktopRole: 'master',
-      masterUserIds: ['master-a'],
+      friendUserIds: ['master-a'],
+      masterUserIds: [],
       slaveUserIds: [],
       allowedUserIds: ['master-a']
     })
   })
 
-  it('normalizes explicit friend, master, and slave contact lists', () => {
+  it('migrates the previous built-in credential in project configs', () => {
+    expect(
+      normalizeRemoteImConfig({
+        sdkAppId: 1400704311,
+        userSigMode: 'secret-key',
+        userSigSecretKey: '8b897045d1ee4f067a745b1b6a3fb834d1bd4c5951de43282c21b945f98ec982'
+      })
+    ).toMatchObject({
+      sdkAppId: 1600148979,
+      userSigMode: 'secret-key',
+      userSigSecretKey: 'aa18d554f5e4a235640745e98145e187977f87770b812b2b4f10ef032bd73861'
+    })
+  })
+
+  it('normalizes explicit legacy role contact lists into trusted friends', () => {
     expect(
       normalizeRemoteImConfig({
         desktopRole: 'slave',
@@ -60,10 +75,10 @@ describe('remote IM config', () => {
         slaveUserIds: [' slave-b ', '']
       })
     ).toMatchObject({
-      desktopRole: 'slave',
-      friendUserIds: ['friend-a'],
-      masterUserIds: ['master-a'],
-      slaveUserIds: ['slave-b'],
+      desktopRole: 'master',
+      friendUserIds: ['friend-a', 'master-a', 'slave-b'],
+      masterUserIds: [],
+      slaveUserIds: [],
       allowedUserIds: ['friend-a', 'master-a', 'slave-b']
     })
   })
@@ -90,13 +105,26 @@ describe('remote IM config', () => {
     expect(result.ok).toBe(true)
   })
 
-  it('allows enabled slave configs without a master peer until contacts are added', () => {
+  it('normalizes legacy slave configs as regular desktop accounts', () => {
+    const config = normalizeRemoteImConfig({
+      enabled: true,
+      sdkAppId: 1400704311,
+      desktopUserId: 'desktop_bot',
+      desktopRole: 'slave',
+      userSigMode: 'secret-key',
+      userSigSecretKey: 'secret-for-local-test'
+    })
+
+    expect(config.desktopRole).toBe('master')
+    expect(validateRemoteImConfig(config).ok).toBe(true)
+  })
+
+  it('allows enabled configs without contacts until trusted friends are added', () => {
     const result = validateRemoteImConfig({
       ...DEFAULT_REMOTE_IM_CONFIG,
       enabled: true,
       sdkAppId: 1400704311,
       desktopUserId: 'desktop_bot',
-      desktopRole: 'slave',
       userSigMode: 'secret-key',
       userSigSecretKey: 'secret-for-local-test'
     })

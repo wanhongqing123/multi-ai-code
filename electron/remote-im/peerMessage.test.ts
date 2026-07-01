@@ -20,11 +20,11 @@ const config: RemoteImConfig = {
 }
 
 describe('remote IM peer messages', () => {
-  it('uses the first allowed UserID as the default peer', () => {
-    expect(resolvePeerUserId(config)).toBe('desktop-b')
+  it('uses the first trusted friend UserID as the default peer', () => {
+    expect(resolvePeerUserId(config)).toBe('friend-a')
     expect(resolvePeerUserId(config, 'friend-a')).toBe('friend-a')
     expect(resolvePeerUserId({ ...config, friendUserIds: [], masterUserIds: [], slaveUserIds: [], allowedUserIds: [] })).toBeNull()
-    expect(resolvePeerUserId({ ...config, desktopRole: 'slave' })).toBeNull()
+    expect(resolvePeerUserId({ ...config, desktopRole: 'slave' })).toBe('friend-a')
   })
 
   it('creates an outgoing message record for a peer IM send', () => {

@@ -3,6 +3,7 @@ import { inflateSync } from 'node:zlib'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   connectTencentImClient,
+  extractTencentImAudioMessages,
   extractTencentImTextMessages,
   extractUserSig,
   generateTencentUserSig
@@ -101,6 +102,46 @@ describe('tencent IM client helpers', () => {
         fromUserId: 'phone_admin',
         toUserId: 'desktop_bot',
         text: 'hello',
+        createdAt: 1782238800000
+      }
+    ])
+  })
+
+  it('extracts C2C audio messages from Tencent message events', () => {
+    const messages = extractTencentImAudioMessages({
+      data: [
+        {
+          ID: 'voice-1',
+          from: 'phone_admin',
+          to: 'desktop_bot',
+          type: 'TIMSoundElem',
+          payload: {
+            url: 'https://cos.example.test/voice.amr',
+            uuid: 'sound-uuid-1',
+            duration: 4,
+            size: 2048
+          },
+          time: 1782238800
+        },
+        {
+          ID: 'msg-2',
+          from: 'phone_admin',
+          to: 'desktop_bot',
+          type: 'TIMTextElem',
+          payload: { text: 'hello' }
+        }
+      ]
+    })
+
+    expect(messages).toEqual([
+      {
+        remoteMessageId: 'voice-1',
+        fromUserId: 'phone_admin',
+        toUserId: 'desktop_bot',
+        audioUrl: 'https://cos.example.test/voice.amr',
+        durationSeconds: 4,
+        sizeBytes: 2048,
+        uuid: 'sound-uuid-1',
         createdAt: 1782238800000
       }
     ])

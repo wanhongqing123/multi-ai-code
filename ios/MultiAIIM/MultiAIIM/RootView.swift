@@ -14,28 +14,35 @@ struct RootView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Group {
-                switch selectedTab {
-                case .messages:
-                    ChatView(activeContact: $activeChatContact)
-                case .contacts:
-                    ContactsView(selectedTab: $selectedTab, activeContact: $activeChatContact)
-                case .me:
-                    SettingsView()
+            if appState.shouldShowInitialLogin {
+                InitialLoginView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                Group {
+                    switch selectedTab {
+                    case .messages:
+                        ChatView(activeContact: $activeChatContact)
+                    case .contacts:
+                        ContactsView(selectedTab: $selectedTab, activeContact: $activeChatContact)
+                    case .me:
+                        SettingsView()
+                    }
                 }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            if activeChatContact == nil {
-                CompactTabBar(selectedTab: $selectedTab)
+                if activeChatContact == nil {
+                    CompactTabBar(selectedTab: $selectedTab)
+                }
             }
         }
         .background(Color(red: 0.966, green: 0.976, blue: 0.988).ignoresSafeArea())
         .task {
-            await appState.connectIfRequestedByLaunchEnvironment()
+            if !appState.shouldShowInitialLogin {
+                await appState.connectIfRequestedByLaunchEnvironment()
+            }
         }
         .overlay(alignment: .top) {
-            if let errorMessage = appState.errorMessage {
+            if !appState.shouldShowInitialLogin, let errorMessage = appState.errorMessage {
                 Text(errorMessage)
                     .font(.footnote)
                     .foregroundStyle(.white)
@@ -45,6 +52,146 @@ struct RootView: View {
                     .padding(.top, 8)
                     .padding(.horizontal, 16)
             }
+        }
+    }
+}
+
+private struct InitialLoginView: View {
+    @EnvironmentObject private var appState: RemoteIMAppState
+
+    private var isConnecting: Bool {
+        appState.connectionState == .connecting
+    }
+
+    private var canSubmit: Bool {
+        !isConnecting &&
+            !appState.masterUserID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        VStack(spacing: 22) {
+            Spacer(minLength: 24)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("远程 IM 登录")
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundStyle(RemoteIMStyle.textPrimary)
+                Text("登录后再进入消息、通讯录和设置。")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(RemoteIMStyle.textSecondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            VStack(spacing: 12) {
+                LoginField(title: "UserID", systemImage: "person") {
+                    TextField("输入 IM UserID", text: $appState.masterUserID)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                }
+                FixedCredentialSummary(sdkAppIDText: appState.sdkAppIDText)
+            }
+
+            if let errorMessage = appState.errorMessage {
+                Text(errorMessage)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            Button {
+                Task { await appState.submitInitialLogin() }
+            } label: {
+                HStack(spacing: 8) {
+                    if appState.connectionState == .connecting {
+                        ProgressView()
+                            .tint(.white)
+                    }
+                    Text(appState.connectionState == .connecting ? "连接中..." : "登录并进入")
+                        .font(.system(size: 16, weight: .bold))
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 48)
+                .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.white)
+            .background(
+                canSubmit ? RemoteIMStyle.blue : Color(red: 0.69, green: 0.82, blue: 0.91),
+                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+            )
+            .disabled(!canSubmit)
+
+            Spacer(minLength: 16)
+        }
+        .padding(.horizontal, 28)
+        .background(RemoteIMStyle.pageBackground.ignoresSafeArea())
+    }
+}
+
+private struct FixedCredentialSummary: View {
+    let sdkAppIDText: String
+
+    private var displaySDKAppID: String {
+        let cleanSDKAppID = sdkAppIDText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleanSDKAppID.isEmpty ? String(RemoteIMCredentialDefaults.sdkAppID) : cleanSDKAppID
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("基础 IM 配置", systemImage: "lock.shield")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(RemoteIMStyle.textSecondary)
+            HStack {
+                Text("SDKAppID")
+                    .foregroundStyle(RemoteIMStyle.textSecondary)
+                Spacer()
+                Text(displaySDKAppID)
+                    .monospacedDigit()
+                    .fontWeight(.bold)
+            }
+            HStack {
+                Text("UserSig 凭证")
+                    .foregroundStyle(RemoteIMStyle.textSecondary)
+                Spacer()
+                Text("内置")
+                    .fontWeight(.bold)
+            }
+        }
+        .font(.system(size: 15))
+        .padding(12)
+        .background(Color.white, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(RemoteIMStyle.border, lineWidth: 1)
+        )
+    }
+}
+
+private struct LoginField<Content: View>: View {
+    let title: String
+    let systemImage: String
+    private let content: Content
+
+    init(title: String, systemImage: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.systemImage = systemImage
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Label(title, systemImage: systemImage)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(RemoteIMStyle.textSecondary)
+            content
+                .font(.system(size: 15))
+                .padding(.horizontal, 12)
+                .frame(height: 44)
+                .background(Color.white, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .stroke(RemoteIMStyle.border, lineWidth: 1)
+                )
         }
     }
 }

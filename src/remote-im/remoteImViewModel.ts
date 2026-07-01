@@ -131,8 +131,9 @@ export function getRemoteImContacts(config: RemoteImConfig): RemoteImContact[] {
   const contacts: RemoteImContact[] = []
   const seen = new Set<string>()
   addContactRows(contacts, seen, config.friendUserIds, 'friend')
-  addContactRows(contacts, seen, config.masterUserIds, 'master')
-  addContactRows(contacts, seen, config.slaveUserIds, 'slave')
+  addContactRows(contacts, seen, config.masterUserIds, 'friend')
+  addContactRows(contacts, seen, config.slaveUserIds, 'friend')
+  addContactRows(contacts, seen, config.allowedUserIds, 'friend')
   return contacts
 }
 
@@ -140,7 +141,7 @@ function getRemoteImContactRelation(
   config: RemoteImConfig,
   userId: string
 ): RemoteImContactRelation {
-  if (userId === config.desktopUserId) return config.desktopRole
+  if (userId === config.desktopUserId) return 'friend'
   return getRemoteImContacts(config).find((contact) => contact.userId === userId)?.relation ?? 'friend'
 }
 
@@ -247,13 +248,8 @@ export function addRemoteImContact(
   const nextFriendUserIds = uniqueUserIds(config.friendUserIds).filter((item) => item !== userId)
   const nextMasterUserIds = uniqueUserIds(config.masterUserIds).filter((item) => item !== userId)
   const nextSlaveUserIds = uniqueUserIds(config.slaveUserIds).filter((item) => item !== userId)
-  const target =
-    relation === 'friend'
-      ? nextFriendUserIds
-      : relation === 'master'
-        ? nextMasterUserIds
-        : nextSlaveUserIds
-  target.push(userId)
+  void relation
+  nextFriendUserIds.push(userId)
 
   const nextAllowedUserIds = uniqueUserIds([
     ...nextFriendUserIds,
@@ -285,8 +281,8 @@ export function isRemoteImSendDisabled(input: {
   status: RemoteImStatus | null
   desktopRole?: 'master' | 'slave'
 }): boolean {
+  void input.desktopRole
   return (
-    input.desktopRole === 'slave' ||
     !input.projectId ||
     input.status?.state !== 'connected' ||
     input.text.trim().length === 0

@@ -8193,20 +8193,41 @@ html, body, #root {
   padding: 10px;
 }
 
-.remote-im-topbar-connected {
-  background: #e0f2fe;
-  border-color: #7dd3fc;
-  color: #0369a1;
+.remote-im-topbar {
+  gap: 6px;
 }
 
 .remote-im-topbar-dot {
   display: inline-block;
   width: 8px;
   height: 8px;
-  margin-right: 6px;
   border-radius: 999px;
-  background: #22c55e;
+  background: #94a3b8;
   vertical-align: middle;
+}
+
+.remote-im-topbar-connected {
+  background: #e0f2fe;
+  border-color: #7dd3fc;
+  color: #0369a1;
+}
+
+.remote-im-topbar-connected .remote-im-topbar-dot {
+  background: #22c55e;
+}
+
+.remote-im-topbar-connecting .remote-im-topbar-dot {
+  background: #f59e0b;
+}
+
+.remote-im-topbar-error {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+
+.remote-im-topbar-error .remote-im-topbar-dot {
+  background: #ef4444;
 }
 
 .remote-im-drawer {
@@ -8769,7 +8790,7 @@ html, body, #root {
 
 .remote-im-add-contact {
   display: grid;
-  grid-template-columns: 92px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   padding: 12px;
   border-top: 1px solid #e2e8f0;
@@ -8800,6 +8821,7 @@ html, body, #root {
 }
 
 .remote-im-add-contact input {
+  width: 100%;
   padding: 0 10px;
 }
 
@@ -8923,6 +8945,38 @@ html, body, #root {
   grid-column: 1 / -1;
 }
 
+.remote-im-settings-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.remote-im-settings-summary div {
+  min-width: 0;
+  border: 1px solid #dbeafe;
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 12px;
+}
+
+.remote-im-settings-summary span,
+.remote-im-login-fixed span {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.remote-im-settings-summary strong,
+.remote-im-login-fixed strong {
+  display: block;
+  margin-top: 6px;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 900;
+}
+
 .remote-im-login-modal {
   width: min(620px, calc(100vw - 32px));
   padding: 0;
@@ -8980,6 +9034,21 @@ html, body, #root {
 
 .remote-im-login-full {
   grid-column: 1 / -1;
+}
+
+.remote-im-login-fixed {
+  border: 1px solid #dbeafe;
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 12px;
+}
+
+.remote-im-login-fixed small {
+  display: block;
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 650;
 }
 
 .remote-im-login-error {

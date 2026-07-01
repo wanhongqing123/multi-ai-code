@@ -1,5 +1,6 @@
 import type {
   RemoteImConfig,
+  RemoteImIncomingAudioMessage,
   RemoteImIncomingTextMessage,
   RemoteImMessage
 } from './types.js'
@@ -29,6 +30,9 @@ export interface RemoteImRouterDeps {
     options?: { displayText?: string }
   ): Promise<{ ok: boolean; error?: string }>
   sendImText(projectId: string, toUserId: string, text: string): Promise<{ ok: boolean; error?: string }>
+  transcribeAudio?: (
+    message: RemoteImIncomingAudioMessage
+  ) => Promise<{ ok: true; text: string } | { ok: false; error: string }>
   store: RemoteImRouterStore
   now?: () => number
 }
@@ -41,8 +45,6 @@ export interface RemoteImRouteResult {
 
 const REMOTE_IM_SYSTEM_TEXTS = new Set([
   '没有远程控制权限。',
-  '奴隶节点不能主动发起任务。',
-  '奴隶节点不能互相通信。',
   '消息为空，未发送给 AICLI。',
   '当前没有运行中的 AICLI。',
   '已发送给当前 AICLI，开始处理。'
@@ -77,6 +79,31 @@ function createIncomingRecord(
     role,
     direction: 'incoming',
     content: message.text,
+    status,
+    error,
+    createdAt: message.createdAt ?? now,
+    sentToAicliAt: null,
+    sentToImAt: null
+  }
+}
+
+function createIncomingAudioRecord(
+  message: RemoteImIncomingAudioMessage,
+  content: string,
+  status: RemoteImMessage['status'],
+  error: string | null,
+  now: number
+): Omit<RemoteImMessage, 'id'> {
+  return {
+    projectId: message.projectId,
+    sessionId: null,
+    provider: 'tencent-im',
+    remoteMessageId: message.remoteMessageId ?? null,
+    fromUserId: message.fromUserId,
+    toUserId: message.toUserId ?? null,
+    role: 'remote-user',
+    direction: 'incoming',
+    content,
     status,
     error,
     createdAt: message.createdAt ?? now,
@@ -131,7 +158,81 @@ async function sendSystemText(
   )
 }
 
+function formatRemoteImAudioPlaceholder(message: RemoteImIncomingAudioMessage): string {
+  const duration = message.durationSeconds
+  return typeof duration === 'number' && Number.isFinite(duration) && duration > 0
+    ? `[语音消息 ${Math.round(duration)}s]`
+    : '[语音消息]'
+}
+
 export function createRemoteImRouter(deps: RemoteImRouterDeps) {
+  async function routeTaskTextToAicli(input: {
+    message: RemoteImIncomingTextMessage
+    fromUserId: string
+    text: string
+    recordText: string
+    now: number
+  }): Promise<RemoteImRouteResult> {
+    const routePermission = canRouteRemoteImTaskFrom(
+      deps.getConfig(input.message.projectId),
+      input.fromUserId
+    )
+    if (!routePermission.ok) {
+      deps.store.create(
+        createIncomingRecord(
+          { ...input.message, text: input.recordText },
+          'rejected',
+          'sender not allowed',
+          input.now
+        )
+      )
+      return { ok: false, error: `sender ${input.fromUserId} is not allowed` }
+    }
+
+    const session = deps.resolveSession(input.message.projectId)
+    const incoming = deps.store.create(
+      createIncomingRecord(
+        { ...input.message, text: input.recordText },
+        'received',
+        null,
+        input.now
+      )
+    )
+    if (!session) {
+      deps.store.updateStatus(incoming.id, {
+        status: 'failed',
+        error: 'No running AICLI session'
+      })
+      await sendSystemText(deps, input.message.projectId, input.fromUserId, '当前没有运行中的 AICLI。')
+      return { ok: false, error: 'No running AICLI session' }
+    }
+
+    const wrapped = buildRemoteImAicliPrompt({ fromUserId: input.fromUserId, text: input.text })
+    const displayText = buildRemoteImAicliDisplayText({
+      fromUserId: input.fromUserId,
+      text: input.text
+    })
+    const sendResult = await deps.sendUser(session.sessionId, wrapped, { displayText })
+    if (!sendResult.ok) {
+      const error = sendResult.error ?? 'failed to send message to AICLI'
+      deps.store.updateStatus(incoming.id, {
+        status: 'failed',
+        error
+      })
+      await sendSystemText(deps, input.message.projectId, input.fromUserId, `发送给 AICLI 失败：${error}`)
+      return { ok: false, error }
+    }
+
+    deps.store.updateStatus(incoming.id, {
+      sessionId: session.sessionId,
+      status: 'sent-to-aicli',
+      sentToAicliAt: input.now,
+      error: null
+    })
+    await sendSystemText(deps, input.message.projectId, input.fromUserId, '已发送给当前 AICLI，开始处理。')
+    return { ok: true, aicliSessionId: session.sessionId }
+  }
+
   async function handleIncomingText(
     message: RemoteImIncomingTextMessage
   ): Promise<RemoteImRouteResult> {
@@ -147,21 +248,18 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
     }
 
     const peerRelation = getRemoteImPeerRelation(config, fromUserId)
-    if (!peerRelation || (config.desktopRole === 'slave' && peerRelation === 'slave')) {
-      const isSlaveToSlave = peerRelation === 'slave'
+    if (!peerRelation) {
       deps.store.create(
         createIncomingRecord(
           message,
           'rejected',
-          isSlaveToSlave ? 'slave-to-slave blocked' : 'sender not allowed',
+          'sender not allowed',
           now
         )
       )
       return {
         ok: false,
-        error: isSlaveToSlave
-          ? 'slave nodes cannot route tasks to each other'
-          : `sender ${fromUserId} is not allowed`
+        error: `sender ${fromUserId} is not allowed`
       }
     }
 
@@ -192,61 +290,79 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       return { ok: true }
     }
 
-    if (peerRelation === 'friend') {
-      deps.store.create(createIncomingRecord(message, 'received', null, now))
-      return { ok: true }
-    }
-
     if (!text) {
       deps.store.create(createIncomingRecord(message, 'rejected', 'empty message', now))
       await sendSystemText(deps, message.projectId, fromUserId, '消息为空，未发送给 AICLI。')
       return { ok: false, error: 'empty message' }
     }
 
-    const routePermission = canRouteRemoteImTaskFrom(config, fromUserId)
-    if (!routePermission.ok) {
-      deps.store.create(
-        createIncomingRecord(message, 'rejected', 'slave cannot initiate task', now)
+    return routeTaskTextToAicli({
+      message,
+      fromUserId,
+      text,
+      recordText: text,
+      now
+    })
+  }
+
+  async function handleIncomingAudio(
+    message: RemoteImIncomingAudioMessage
+  ): Promise<RemoteImRouteResult> {
+    const config = deps.getConfig(message.projectId)
+    const now = deps.now?.() ?? Date.now()
+    const fromUserId = message.fromUserId.trim()
+    const placeholder = formatRemoteImAudioPlaceholder(message)
+
+    if (!config.enabled) {
+      const record = deps.store.create(
+        createIncomingAudioRecord(message, placeholder, 'rejected', 'remote IM disabled', now)
       )
-      await sendSystemText(deps, message.projectId, fromUserId, '奴隶节点不能主动发起任务。')
-      return { ok: false, error: 'slave nodes cannot initiate tasks' }
+      deps.store.updateStatus(record.id, { status: 'rejected', error: 'remote IM disabled' })
+      return { ok: false, error: 'remote IM disabled' }
     }
 
-    const session = deps.resolveSession(message.projectId)
-    const incoming = deps.store.create(createIncomingRecord(message, 'received', null, now))
-    if (!session) {
-      deps.store.updateStatus(incoming.id, {
-        status: 'failed',
-        error: 'No running AICLI session'
-      })
-      await sendSystemText(deps, message.projectId, fromUserId, '当前没有运行中的 AICLI。')
-      return { ok: false, error: 'No running AICLI session' }
+    const peerRelation = getRemoteImPeerRelation(config, fromUserId)
+    if (!peerRelation) {
+      deps.store.create(
+        createIncomingAudioRecord(message, placeholder, 'rejected', 'sender not allowed', now)
+      )
+      return { ok: false, error: `sender ${fromUserId} is not allowed` }
     }
 
-    const wrapped = buildRemoteImAicliPrompt({ fromUserId, text })
-    const displayText = buildRemoteImAicliDisplayText({ fromUserId, text })
-    const sendResult = await deps.sendUser(session.sessionId, wrapped, { displayText })
-    if (!sendResult.ok) {
-      const error = sendResult.error ?? 'failed to send message to AICLI'
-      deps.store.updateStatus(incoming.id, {
-        status: 'failed',
-        error
-      })
-      await sendSystemText(deps, message.projectId, fromUserId, `发送给 AICLI 失败：${error}`)
+    if (!deps.transcribeAudio) {
+      const error = '本地 Whisper 转写模块未初始化，请重启桌面端或重新构建主进程'
+      deps.store.create(createIncomingAudioRecord(message, placeholder, 'failed', error, now))
+      await sendSystemText(deps, message.projectId, fromUserId, `语音转文字失败：${error}`)
       return { ok: false, error }
     }
 
-    deps.store.updateStatus(incoming.id, {
-      sessionId: session.sessionId,
-      status: 'sent-to-aicli',
-      sentToAicliAt: now,
-      error: null
+    const transcription = await deps.transcribeAudio(message)
+    if (!transcription.ok || !transcription.text.trim()) {
+      const error = transcription.ok ? '语音转文字结果为空' : transcription.error
+      deps.store.create(createIncomingAudioRecord(message, placeholder, 'failed', error, now))
+      await sendSystemText(deps, message.projectId, fromUserId, `语音转文字失败：${error}`)
+      return { ok: false, error }
+    }
+
+    const transcriptText = `[语音转文字]\n${transcription.text.trim()}`
+    return routeTaskTextToAicli({
+      message: {
+        projectId: message.projectId,
+        remoteMessageId: message.remoteMessageId,
+        fromUserId,
+        toUserId: message.toUserId,
+        text: transcriptText,
+        createdAt: message.createdAt
+      },
+      fromUserId,
+      text: transcriptText,
+      recordText: `${placeholder}\n${transcriptText}`,
+      now
     })
-    await sendSystemText(deps, message.projectId, fromUserId, '已发送给当前 AICLI，开始处理。')
-    return { ok: true, aicliSessionId: session.sessionId }
   }
 
   return {
-    handleIncomingText
+    handleIncomingText,
+    handleIncomingAudio
   }
 }

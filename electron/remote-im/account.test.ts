@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { DEFAULT_REMOTE_IM_CONFIG } from './config.js'
 import {
   DEFAULT_REMOTE_IM_ACCOUNT_CONFIG,
+  hasRemoteImAccountConnectionChanged,
   mergeRemoteImAccountIntoConfig,
   normalizeRemoteImAccountConfig,
   readRemoteImAccountConfig,
@@ -24,7 +25,7 @@ describe('remote IM account config', () => {
     tempDir = null
   })
 
-  it('normalizes account identity, credentials, and contacts independently from project settings', () => {
+  it('normalizes account identity, credentials, and legacy contacts as trusted friends', () => {
     const account = normalizeRemoteImAccountConfig({
       sdkAppId: '1600148979',
       desktopUserId: ' test123 ',
@@ -40,13 +41,31 @@ describe('remote IM account config', () => {
       ...DEFAULT_REMOTE_IM_ACCOUNT_CONFIG,
       sdkAppId: 1600148979,
       desktopUserId: 'test123',
-      desktopRole: 'slave',
+      desktopRole: 'master',
       userSigMode: 'secret-key',
       userSigSecretKey: 'secret',
-      friendUserIds: ['friend-a'],
-      masterUserIds: ['master-a'],
-      slaveUserIds: ['slave-a'],
+      friendUserIds: ['friend-a', 'master-a', 'slave-a'],
+      masterUserIds: [],
+      slaveUserIds: [],
       allowedUserIds: ['friend-a', 'master-a', 'slave-a']
+    })
+  })
+
+  it('migrates the previous built-in credential to the current credential', () => {
+    const account = normalizeRemoteImAccountConfig({
+      sdkAppId: 1400704311,
+      desktopUserId: 'mac-quark-pc',
+      desktopRole: 'slave',
+      userSigMode: 'secret-key',
+      userSigSecretKey: '8b897045d1ee4f067a745b1b6a3fb834d1bd4c5951de43282c21b945f98ec982'
+    })
+
+    expect(account).toMatchObject({
+      sdkAppId: 1600148979,
+      desktopUserId: 'mac-quark-pc',
+      desktopRole: 'master',
+      userSigMode: 'secret-key',
+      userSigSecretKey: 'aa18d554f5e4a235640745e98145e187977f87770b812b2b4f10ef032bd73861'
     })
   })
 
@@ -68,6 +87,56 @@ describe('remote IM account config', () => {
     })
   })
 
+  it('does not treat contact-only account edits as connection changes', () => {
+    const account = {
+      ...DEFAULT_REMOTE_IM_ACCOUNT_CONFIG,
+      sdkAppId: 1600148979,
+      desktopUserId: 'mac-quark-pc',
+      desktopRole: 'master' as const,
+      userSigMode: 'secret-key' as const,
+      userSigSecretKey: 'secret',
+      friendUserIds: ['mac-apollo-u3player'],
+      allowedUserIds: ['mac-apollo-u3player']
+    }
+
+    expect(
+      hasRemoteImAccountConnectionChanged(account, {
+        ...account,
+        friendUserIds: ['mac-apollo-u3player', 'friend-a', 'whq-iphone', 'slave-a'],
+        allowedUserIds: ['friend-a', 'mac-apollo-u3player', 'whq-iphone', 'slave-a']
+      })
+    ).toBe(false)
+  })
+
+  it('treats login identity and credential edits as connection changes', () => {
+    const account = {
+      ...DEFAULT_REMOTE_IM_ACCOUNT_CONFIG,
+      sdkAppId: 1600148979,
+      desktopUserId: 'mac-quark-pc',
+      userSigMode: 'secret-key' as const,
+      userSigSecretKey: 'secret'
+    }
+
+    expect(
+      hasRemoteImAccountConnectionChanged(account, {
+        ...account,
+        sdkAppId: 1400704311
+      })
+    ).toBe(true)
+    expect(
+      hasRemoteImAccountConnectionChanged(account, {
+        ...account,
+        desktopUserId: 'mac-apollo-u3player'
+      })
+    ).toBe(true)
+    expect(
+      hasRemoteImAccountConnectionChanged(account, {
+        ...account,
+        userSigSecretKey: 'next-secret'
+      })
+    ).toBe(true)
+  })
+
   it('merges user account identity into project-level remote IM behavior config', () => {
     const merged = mergeRemoteImAccountIntoConfig(
       {
@@ -83,7 +152,7 @@ describe('remote IM account config', () => {
         desktopRole: 'master',
         userSigMode: 'secret-key',
         userSigSecretKey: 'secret',
-        slaveUserIds: ['test321'],
+        friendUserIds: ['test321'],
         allowedUserIds: ['test321']
       }
     )
@@ -95,7 +164,9 @@ describe('remote IM account config', () => {
       desktopRole: 'master',
       userSigMode: 'secret-key',
       userSigSecretKey: 'secret',
-      slaveUserIds: ['test321'],
+      friendUserIds: ['test321'],
+      masterUserIds: [],
+      slaveUserIds: [],
       allowedUserIds: ['test321'],
       outputFlushIntervalMs: 5000,
       outputMaxChunkChars: 900

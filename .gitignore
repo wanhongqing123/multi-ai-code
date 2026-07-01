@@ -77,6 +77,12 @@ ios/**/*.xcuserstate
 
 # Local Whisper models are large runtime assets and should not be committed.
 models/whisper/*.bin
+resources/asr/**/bin/*
+resources/asr/**/lib/*
+resources/asr/**/licenses/*
+resources/asr/models/*.bin
+!resources/asr/README.md
+!resources/asr/**/.gitkeep
 
 # Runtime AI CLI system-prompt injection files (never the user's content)
 .injections/

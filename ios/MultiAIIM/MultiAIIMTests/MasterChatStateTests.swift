@@ -42,6 +42,26 @@ final class MasterChatStateTests: XCTestCase {
         XCTAssertEqual(state.messages, [reply])
     }
 
+    func testReceivesAICLIOutputWithoutProtocolLabel() throws {
+        var state = MasterChatState(ownerUserID: "ios-master")
+
+        let reply = state.receiveText(
+            """
+            【AICLI 输出】
+            ## 结果
+
+            - **SDK 层**：`sdk-ios`
+            - **核心层**：`MediaPlayer`
+            """,
+            fromUserID: "mac-quark-pc",
+            now: Date(timeIntervalSince1970: 121)
+        )
+
+        XCTAssertFalse(reply.text.contains("AICLI 输出"))
+        XCTAssertTrue(reply.text.hasPrefix("## 结果"))
+        XCTAssertTrue(reply.text.contains("- **SDK 层**"))
+    }
+
     func testUpdatesQueuedMessageStatusAfterDelivery() throws {
         var state = MasterChatState(ownerUserID: "ios-master")
         try state.upsertSlave(userID: "mac-quark-pc", displayName: "Quark PC")

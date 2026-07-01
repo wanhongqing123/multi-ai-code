@@ -158,7 +158,7 @@ imcli broadcast <user1,user2> "消息内容" --project <projectId>
 | 定时任务 | 本机项目数据 | SQLite `scheduled_tasks` | 跟项目 ID 走，不写入仓库 |
 | 仓库查看记忆 | 仓库 | `<target_repo>/.multi-ai-code/repo-memory/` | 私有分析记忆 |
 | imcli bridge | 本机运行态 | `~/MultiAICode/imcli-bridge.json` | 当前桌面进程启动后生成 |
-| Whisper 模型 | 本机文件 | `models/whisper/*.bin` | 默认不提交到 git |
+| 本地 ASR 运行资源 | 安装包资源 | `resources/asr` | 打包时生成，随安装包携带，不要求用户本机配置 |
 
 原则：
 
@@ -169,62 +169,40 @@ imcli broadcast <user1,user2> "消息内容" --project <projectId>
 
 ## 远程 IM 语音转文字
 
-手机或其它端发送语音消息给桌面端时，桌面端会尝试调用本机 Whisper 做语音转文字，再把转写文本发送给当前 AICLI。
+手机或其它端发送语音消息给桌面端时，桌面端会调用内置 Whisper 做语音转文字，再把转写文本发送给当前 AICLI。
 
 当前方案使用本地 `whisper.cpp`，不依赖腾讯 IM 付费语音转文字插件。
 
-### macOS
+### 运行时行为
 
-推荐安装：
+- 桌面端安装包会携带 `whisper-cli` 和 `ggml-base.bin` 模型。
+- Windows 安装包同时携带 `ffmpeg.exe`，用于把 `m4a`、`amr` 等语音格式转成 Whisper 更稳定支持的 `wav`。
+- macOS 优先使用安装包里的 ASR 资源，音频转码使用系统自带 `/usr/bin/afconvert`。
+- 用户侧不需要配置 `MULTI_AI_CODE_WHISPER_*`、`ffmpeg` 路径或模型路径。
+
+如果运行时找不到 ASR 组件或模型，桌面端会提示重新安装 Multi-AI Code。这通常说明安装包没有正确携带 `resources/asr`。
+
+### 开发和打包
+
+本地开发或打包前可以手动准备 ASR 资源：
 
 ```bash
-brew install whisper-cpp ffmpeg
+npm run prepare-asr
 ```
 
-模型文件放在仓库默认位置：
+`npm run dist`、`npm run dist:mac`、`npm run dist:win` 和 `npm run dist:all` 会自动执行这一步。生成后的资源目录结构为：
 
 ```text
-models/whisper/ggml-base.bin
+resources/asr/
+  models/ggml-base.bin
+  darwin-arm64/bin/whisper-cli
+  darwin-arm64/bin/libggml-*.so
+  darwin-arm64/lib/*.dylib
+  win32-x64/bin/whisper-cli.exe
+  win32-x64/bin/ffmpeg.exe
 ```
 
-macOS 下会自动尝试查找：
-
-```text
-/opt/homebrew/bin/whisper-cli
-/usr/local/bin/whisper-cli
-/opt/homebrew/bin/ffmpeg
-/usr/local/bin/ffmpeg
-```
-
-### Windows
-
-Windows 端需要准备：
-
-- `whisper-cli.exe`
-- `ffmpeg.exe`
-- Whisper 模型文件，推荐放在仓库默认位置：
-
-```text
-<multi-ai-code>\models\whisper\ggml-base.bin
-```
-
-如果模型放在默认位置，通常只需要配置 `whisper-cli.exe` 和 `ffmpeg.exe` 的路径。PowerShell 示例：
-
-```powershell
-[Environment]::SetEnvironmentVariable("MULTI_AI_CODE_WHISPER_CMD", "C:\tools\whisper.cpp\whisper-cli.exe", "User")
-[Environment]::SetEnvironmentVariable("MULTI_AI_CODE_FFMPEG_CMD", "C:\tools\ffmpeg\bin\ffmpeg.exe", "User")
-[Environment]::SetEnvironmentVariable("MULTI_AI_CODE_WHISPER_LANGUAGE", "zh", "User")
-```
-
-如果模型没有放在仓库默认位置，需要额外指定模型路径：
-
-```powershell
-[Environment]::SetEnvironmentVariable("MULTI_AI_CODE_WHISPER_MODEL", "C:\path\to\ggml-base.bin", "User")
-```
-
-配置后需要重启整个 Multi-AI Code 桌面端进程。Electron 主进程只会在启动时读取这些环境变量，刷新页面不会让新配置生效。
-
-`ffmpeg.exe` 用于把 `m4a`、`amr` 等语音格式转成 Whisper 更稳定支持的音频格式，建议和 `whisper-cli.exe` 一起配置。
+这些二进制和模型文件体积较大，默认被 `.gitignore` 忽略，不提交到仓库；打包时会通过 Electron Builder 的 `extraResources` 放进最终安装包。
 
 ## 安装与运行
 
@@ -288,6 +266,8 @@ npm run dist:mac
 npm run dist:win
 ```
 
+Windows 端安装包会携带语音转文字所需的 `whisper-cli.exe`、`ffmpeg.exe` 和模型文件，用户机器不需要额外配置环境变量。
+
 ### 同时构建多平台
 
 ```bash
@@ -333,6 +313,6 @@ xcodebuild test -workspace ios/MultiAIIM/MultiAIIM.xcworkspace -scheme MultiAIIM
 - AICLI 依赖本机真实安装的 `claude` 或 `codex`，不是内置模型。
 - 远程 IM 当前使用内置测试凭证，不适合作为正式上架 App Store 的生产配置。
 - 腾讯 IM SDK 自带的语音转文字属于增值能力；当前默认走本地 Whisper。
-- `models/whisper/*.bin` 默认被 `.gitignore` 忽略，需要在每台机器本地准备。
+- ASR 模型和二进制由 `npm run prepare-asr` 生成并随安装包携带，资源本身不进入 git。
 - 本地私有记忆默认不进入 git，但如果手动调整 `.git/info/exclude`，仍需要自行确认。
 - README 以当前主分支实现为准；历史版本的界面和能力可能不同。

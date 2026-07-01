@@ -1,5 +1,9 @@
 import { type FormEvent, useEffect, useRef, useState } from 'react'
-import type { RemoteImAccountConfig, RemoteImLoginState } from '../../electron/preload.js'
+import type {
+  RemoteImAccountConfig,
+  RemoteImConfig,
+  RemoteImLoginState
+} from '../../electron/preload.js'
 import {
   applyDefaultRemoteImCredential,
   DEFAULT_REMOTE_IM_CREDENTIAL_PRESET
@@ -7,11 +11,14 @@ import {
 
 export interface RemoteImLoginSubmitInput {
   account: RemoteImAccountConfig
+  projectConfig?: RemoteImConfig
 }
 
 export interface RemoteImLoginDialogProps {
   open: boolean
   loginState: RemoteImLoginState | null
+  projectConfig: RemoteImConfig | null
+  projectConfigReady: boolean
   saving: boolean
   error: string | null
   onLookupAccount?: (userId: string) => Promise<RemoteImAccountConfig | null>
@@ -40,6 +47,11 @@ function toFixedCredentialAccount(account: RemoteImAccountConfig): RemoteImAccou
   }
 }
 
+function readNumberInput(value: string, fallback: number): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
 export function applyLoadedRemoteImLoginAccount(
   draft: RemoteImAccountConfig,
   account: RemoteImAccountConfig
@@ -53,6 +65,9 @@ export default function RemoteImLoginDialog(props: RemoteImLoginDialogProps): JS
   const [draft, setDraft] = useState<RemoteImAccountConfig>(
     props.loginState?.account ?? EMPTY_ACCOUNT
   )
+  const [projectDraft, setProjectDraft] = useState<RemoteImConfig | null>(
+    props.projectConfig
+  )
   const loadedAccountUserIdRef = useRef<string>('')
 
   useEffect(() => {
@@ -61,6 +76,11 @@ export default function RemoteImLoginDialog(props: RemoteImLoginDialogProps): JS
     setDraft(account)
     loadedAccountUserIdRef.current = account.desktopUserId.trim()
   }, [props.open, props.loginState])
+
+  useEffect(() => {
+    if (!props.open) return
+    setProjectDraft(props.projectConfig)
+  }, [props.open, props.projectConfig])
 
   useEffect(() => {
     if (!props.open || !props.onLookupAccount) return
@@ -87,6 +107,10 @@ export default function RemoteImLoginDialog(props: RemoteImLoginDialogProps): JS
     setDraft((current) => ({ ...current, ...next }))
   }
 
+  function updateProject(next: Partial<RemoteImConfig>): void {
+    setProjectDraft((current) => current ? { ...current, ...next } : current)
+  }
+
   function handleSubmit(event: FormEvent): void {
     event.preventDefault()
     const userId = draft.desktopUserId.trim()
@@ -95,7 +119,8 @@ export default function RemoteImLoginDialog(props: RemoteImLoginDialogProps): JS
       account: toFixedCredentialAccount({
         ...draft,
         desktopUserId: userId
-      })
+      }),
+      projectConfig: projectDraft ? { ...projectDraft, enabled: true } : undefined
     })
   }
 
@@ -129,6 +154,59 @@ export default function RemoteImLoginDialog(props: RemoteImLoginDialogProps): JS
             <strong>SDKAppID {DEFAULT_REMOTE_IM_CREDENTIAL_PRESET.sdkAppId}</strong>
             <small>SecretKey 使用内置测试凭证，不在设置界面修改。</small>
           </div>
+          {projectDraft ? (
+            <section className="remote-im-login-project remote-im-login-full">
+              <div className="remote-im-login-project-head">
+                <div>
+                  <strong>当前项目 IM 配置</strong>
+                  <small>登录后好友消息会接入本机 AICLI，这里只配置 AICLI 输出回传频率。</small>
+                </div>
+              </div>
+
+              <div className="remote-im-login-project-grid">
+                <label>
+                  AI 输出回传间隔
+                  <input
+                    type="number"
+                    min={1000}
+                    max={30000}
+                    step={500}
+                    value={projectDraft.outputFlushIntervalMs}
+                    disabled={!props.projectConfigReady}
+                    onChange={(event) =>
+                      updateProject({
+                        outputFlushIntervalMs: readNumberInput(
+                          event.currentTarget.value,
+                          projectDraft.outputFlushIntervalMs
+                        )
+                      })
+                    }
+                  />
+                  <small>每隔这段时间合并一次 AICLI 新输出再发回 IM，避免刷屏。</small>
+                </label>
+                <label>
+                  单次回传字符数
+                  <input
+                    type="number"
+                    min={200}
+                    max={4000}
+                    step={100}
+                    value={projectDraft.outputMaxChunkChars}
+                    disabled={!props.projectConfigReady}
+                    onChange={(event) =>
+                      updateProject({
+                        outputMaxChunkChars: readNumberInput(
+                          event.currentTarget.value,
+                          projectDraft.outputMaxChunkChars
+                        )
+                      })
+                    }
+                  />
+                  <small>单条 IM 最多携带的 AICLI 输出长度，超出后会分段发送。</small>
+                </label>
+              </div>
+            </section>
+          ) : null}
         </div>
 
         {props.error ? <div className="remote-im-login-error">{props.error}</div> : null}

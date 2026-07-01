@@ -5,7 +5,6 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 import type {
   ProjectRuntimeConfig,
-  RemoteImConfig,
   VisualStudioInstallation
 } from '../../electron/preload'
 import AiSettingsDialog, {
@@ -30,23 +29,6 @@ const defaultRuntimeConfig: ProjectRuntimeConfig = {
   outputEncoding: 'auto'
 }
 
-const defaultRemoteImConfig: RemoteImConfig = {
-  enabled: false,
-  provider: 'tencent-im',
-  sdkAppId: null,
-  desktopUserId: '',
-  desktopRole: 'master',
-  userSigMode: 'endpoint',
-  userSigEndpoint: '',
-  userSigSecretKey: '',
-  friendUserIds: [],
-  masterUserIds: [],
-  slaveUserIds: [],
-  allowedUserIds: [],
-  outputFlushIntervalMs: 2000,
-  outputMaxChunkChars: 1200
-}
-
 const defaultDialogProps = {
   visualStudioInstallations: [] as VisualStudioInstallation[],
   visualStudioInstallationsLoading: false,
@@ -55,10 +37,7 @@ const defaultDialogProps = {
   initialRuntimeConfig: defaultRuntimeConfig,
   runtimeConfigReady: true,
   runtimeConfigDisabled: false,
-  onSavedRuntimeConfig: vi.fn(),
-  initialRemoteImConfig: defaultRemoteImConfig,
-  remoteImConfigReady: true,
-  onSavedRemoteImConfig: vi.fn()
+  onSavedRuntimeConfig: vi.fn()
 }
 
 function renderDialog(overrides: Partial<ComponentProps<typeof AiSettingsDialog>> = {}) {
@@ -104,17 +83,17 @@ describe('AiSettingsDialog', () => {
     expect(markup).toContain('aria-controls="ai-settings-ai-section"')
     expect(markup).toContain('aria-controls="ai-settings-build-section"')
     expect(markup).toContain('aria-controls="ai-settings-runtime-section"')
-    expect(markup).toContain('aria-controls="ai-settings-remote-im-section"')
+    expect(markup).not.toContain('aria-controls="ai-settings-remote-im-section"')
     expect(markup).toContain('id="ai-settings-shortcut-section"')
     expect(markup).toContain('id="ai-settings-ai-section"')
   })
 
-  it('renders the remote IM settings section', () => {
+  it('keeps remote IM configuration out of the settings center', () => {
     const markup = renderDialog()
 
-    expect(markup).toContain('id="ai-settings-remote-im-section"')
-    expect(markup).toContain('当前状态')
-    expect(markup).toContain('远程 IM 账号、SDKAppID、SecretKey 和连接动作由登录入口管理')
+    expect(markup).not.toContain('id="ai-settings-remote-im-section"')
+    expect(markup).not.toContain('手机消息接入 AICLI')
+    expect(markup).not.toContain('AI 输出回传间隔')
     expect(markup).not.toContain('启用远程 IM')
     expect(markup).not.toContain('SECRETKEY')
   })

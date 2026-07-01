@@ -8347,7 +8347,7 @@ html, body, #root {
   opacity: 0.45;
 }
 
-.remote-im-login-action {
+.remote-im-account-label {
   max-width: 220px;
   border: 1px solid #bae6fd;
   border-radius: 8px;
@@ -8359,7 +8359,6 @@ html, body, #root {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  cursor: pointer;
 }
 
 .remote-im-close {
@@ -8904,63 +8903,6 @@ html, body, #root {
   }
 }
 
-.remote-im-settings-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-  margin-top: 16px;
-}
-
-.remote-im-settings-grid label {
-  display: grid;
-  gap: 8px;
-  color: #334155;
-  font-weight: 750;
-}
-
-.remote-im-settings-grid input,
-.remote-im-settings-grid select,
-.remote-im-settings-grid textarea {
-  width: 100%;
-  border: 1px solid #cbd5e1;
-  border-radius: 12px;
-  background: #f8fafc;
-  color: #0f172a;
-  font: inherit;
-}
-
-.remote-im-settings-grid input,
-.remote-im-settings-grid select {
-  height: 38px;
-  padding: 0 12px;
-}
-
-.remote-im-settings-grid textarea {
-  min-height: 82px;
-  padding: 10px 12px;
-  resize: vertical;
-}
-
-.remote-im-settings-grid-full {
-  grid-column: 1 / -1;
-}
-
-.remote-im-settings-summary {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 16px;
-}
-
-.remote-im-settings-summary div {
-  min-width: 0;
-  border: 1px solid #dbeafe;
-  border-radius: 10px;
-  background: #f8fafc;
-  padding: 12px;
-}
-
-.remote-im-settings-summary span,
 .remote-im-login-fixed span {
   display: block;
   color: #64748b;
@@ -8968,7 +8910,6 @@ html, body, #root {
   font-weight: 800;
 }
 
-.remote-im-settings-summary strong,
 .remote-im-login-fixed strong {
   display: block;
   margin-top: 6px;
@@ -9049,6 +8990,44 @@ html, body, #root {
   color: #64748b;
   font-size: 12px;
   font-weight: 650;
+}
+
+.remote-im-login-project {
+  border: 1px solid #dbeafe;
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 12px;
+}
+
+.remote-im-login-project-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.remote-im-login-project-head strong {
+  display: block;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.remote-im-login-project-head small,
+.remote-im-login-project-grid small {
+  display: block;
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.remote-im-login-project-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
 }
 
 .remote-im-login-error {

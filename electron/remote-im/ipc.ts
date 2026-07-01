@@ -206,10 +206,9 @@ async function setRemoteImConfig(
     config,
     await getRemoteImAccountForProject(config)
   )
-  const state = config.enabled ? 'disconnected' : 'disabled'
   broadcastStatus({
     projectId,
-    state,
+    state: 'disconnected',
     detail: null,
     updatedAt: Date.now()
   })
@@ -219,10 +218,9 @@ async function setRemoteImConfig(
 async function getRemoteImStatus(projectId: string): Promise<RemoteImStatus> {
   const existing = statuses.get(projectId)
   if (existing) return existing
-  const config = await getRemoteImConfig(projectId)
   return {
     projectId,
-    state: config.enabled ? 'disconnected' : 'disabled',
+    state: 'disconnected',
     detail: null,
     updatedAt: Date.now()
   }
@@ -239,7 +237,6 @@ async function sendRemoteImPeerMessage(
   toUserId?: string | null
 ): Promise<{ ok: boolean; error?: string; toUserId?: string }> {
   const config = await getRemoteImConfig(projectId)
-  if (!config.enabled) return { ok: false, error: 'remote IM disabled' }
   const cleanText = text.trim()
   if (!cleanText) return { ok: false, error: 'empty message' }
   const peerUserId = resolvePeerUserId(config, toUserId)

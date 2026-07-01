@@ -33,7 +33,7 @@ describe('RemoteImClientHost', () => {
     ).toBe(false)
   })
 
-  it('connects only after manual login when the current project enables remote IM', () => {
+  it('connects after login when the current project is available', () => {
     expect(
       shouldConnectRemoteImClient({
         projectId: 'project-1',
@@ -54,7 +54,7 @@ describe('RemoteImClientHost', () => {
         config: { ...config, enabled: false },
         loginRequested: true
       })
-    ).toBe(false)
+    ).toBe(true)
   })
 
   it('does not connect with incomplete account credentials', () => {

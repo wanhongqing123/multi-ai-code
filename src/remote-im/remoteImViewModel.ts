@@ -34,7 +34,7 @@ export function getRemoteImStatusLabel(status: RemoteImStatus | null): string {
     case 'connecting':
       return '连接中'
     case 'disabled':
-      return '未开启'
+      return '未连接'
     case 'error':
       return '异常'
     case 'disconnected':

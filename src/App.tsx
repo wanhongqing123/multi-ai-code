@@ -122,7 +122,7 @@ const DEFAULT_RUNTIME_STATE: RuntimeState = {
   log: ''
 }
 const DEFAULT_REMOTE_IM_CONFIG: RemoteImConfig = {
-  enabled: false,
+  enabled: true,
   provider: 'tencent-im',
   sdkAppId: null,
   desktopUserId: '',
@@ -1101,11 +1101,14 @@ function AppShell() {
       }
       setRemoteImLoginState(accountResult.value)
       setRemoteImLoginRequested(true)
-      setShowRemoteImLogin(false)
-      showToast('远程 IM 账号已保存，正在尝试连接', { level: 'success' })
 
       if (currentProjectId) {
-        const configResult = await window.api.remoteIm.getConfig(currentProjectId)
+        const configResult = input.projectConfig
+          ? await window.api.remoteIm.setConfig(currentProjectId, {
+              ...input.projectConfig,
+              enabled: true
+            })
+          : await window.api.remoteIm.getConfig(currentProjectId)
         if (configResult.ok) {
           setRemoteImConfig(configResult.value)
           setRemoteImConfigProjectId(currentProjectId)
@@ -1116,6 +1119,8 @@ function AppShell() {
         const status = await window.api.remoteIm.getStatus(currentProjectId)
         setRemoteImStatus(status)
       }
+      setShowRemoteImLogin(false)
+      showToast('远程 IM 账号和项目配置已保存，正在尝试连接', { level: 'success' })
     } catch (err) {
       setRemoteImLoginError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -2126,8 +2131,6 @@ function AppShell() {
           initialRuntimeConfig={visibleProjectRuntimeConfig}
           runtimeConfigReady={projectRuntimeConfigReady}
           runtimeConfigDisabled={runtimeStateForCurrentProject.status === 'running'}
-          initialRemoteImConfig={remoteImConfig}
-          remoteImConfigReady={remoteImConfigReady}
           visualStudioInstallations={visualStudioInstallations}
           visualStudioInstallationsLoading={visualStudioInstallationsLoading}
           onRefreshVisualStudioInstallations={() => {
@@ -2158,10 +2161,6 @@ function AppShell() {
             setProjectRuntimeConfig(next)
             setProjectRuntimeConfigProjectId(currentProjectId)
           }}
-          onSavedRemoteImConfig={(next) => {
-            setRemoteImConfig(next)
-            setRemoteImConfigProjectId(currentProjectId)
-          }}
         />
       )}
       <RemoteImClientHost
@@ -2183,15 +2182,13 @@ function AppShell() {
         onSend={(toUserId) => void handleSendRemoteImLocalMessage(toUserId)}
         onAddContact={(relation, userId) => void handleAddRemoteImContact(relation, userId)}
         onClear={() => void handleClearRemoteImMessages()}
-        onLoginClick={() => {
-          setRemoteImLoginError(null)
-          setShowRemoteImLogin(true)
-        }}
         onClose={() => setShowRemoteImDrawer(false)}
       />
       <RemoteImLoginDialog
         open={showRemoteImLogin}
         loginState={remoteImLoginState}
+        projectConfig={currentProjectId && remoteImConfigReady ? remoteImConfig : null}
+        projectConfigReady={remoteImConfigReady}
         saving={remoteImLoginSaving}
         error={remoteImLoginError}
         onLookupAccount={handleLookupRemoteImAccount}

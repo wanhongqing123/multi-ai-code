@@ -237,6 +237,17 @@ public struct MasterChatState: Equatable {
         "[语音消息 \(max(1, durationSeconds))s]"
     }
 
+    private static func incomingDisplayText(_ text: String) -> String {
+        var cleanText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        for prefix in ["【AICLI 输出】", "[AICLI 输出]", "【AICLI输出】", "[AICLI输出]"] {
+            if cleanText.hasPrefix(prefix) {
+                cleanText.removeFirst(prefix.count)
+                return cleanText.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        return cleanText
+    }
+
     @discardableResult
     public mutating func queueOutgoingText(
         _ text: String,
@@ -297,7 +308,7 @@ public struct MasterChatState: Equatable {
         let message = RemoteIMMessage(
             fromUserID: cleanFromUserID,
             toUserID: ownerUserID,
-            text: text.trimmingCharacters(in: .whitespacesAndNewlines),
+            text: Self.incomingDisplayText(text),
             direction: .incoming,
             status: .received,
             createdAt: now

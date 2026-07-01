@@ -18,13 +18,13 @@ describe('remote IM status helpers', () => {
       {
         projectId: 'project-1',
         state: 'disconnected',
-        detail: 'Remote IM account changed; waiting for reconnect',
+        detail: 'Remote IM account changed; reconnecting',
         updatedAt: 1234
       }
     ])
   })
 
-  it('keeps disabled projects disabled when the active IM account changes', () => {
+  it('resets legacy disabled project statuses because IM no longer has an enabled switch', () => {
     expect(
       createRemoteImAccountChangedStatuses(
         [{ ...connectedStatus, state: 'disabled', detail: null }],
@@ -33,8 +33,8 @@ describe('remote IM status helpers', () => {
     ).toEqual([
       {
         projectId: 'project-1',
-        state: 'disabled',
-        detail: null,
+        state: 'disconnected',
+        detail: 'Remote IM account changed; reconnecting',
         updatedAt: 1234
       }
     ])

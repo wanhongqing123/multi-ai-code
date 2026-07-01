@@ -48,7 +48,6 @@ export interface RemoteImDrawerProps {
   onSend: (toUserId: string) => void
   onAddContact: (relation: RemoteImContactRelation, userId: string) => void
   onClear: () => void
-  onLoginClick: () => void
   onClose: () => void
 }
 
@@ -123,8 +122,6 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
       status: props.status,
       desktopRole: props.config.desktopRole
     }) || !selectedPeerUserId
-  const loggedInUserId = props.config.desktopUserId.trim()
-
   useEffect(() => {
     if (!props.open) return
     const panel = panelRef.current
@@ -245,16 +242,9 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
               <small className="remote-im-status-detail">{props.status.detail}</small>
             ) : null}
           </div>
-          <button
-            type="button"
-            className="remote-im-login-action"
-            onClick={props.onLoginClick}
-            title="登录远程 IM 账号"
-          >
-            {loggedInUserId
-              ? `${loggedInUserId} · ${props.status?.state === 'connected' ? '重新登录' : '登录'}`
-              : '登录'}
-          </button>
+          <span className="remote-im-account-label" title={props.config.desktopUserId || undefined}>
+            {props.config.desktopUserId || '未登录'}
+          </span>
           <button
             type="button"
             className="remote-im-clear"

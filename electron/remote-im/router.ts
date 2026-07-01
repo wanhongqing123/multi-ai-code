@@ -241,12 +241,6 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
     const fromUserId = message.fromUserId.trim()
     const text = message.text.trim()
 
-    if (!config.enabled) {
-      const record = deps.store.create(createIncomingRecord(message, 'rejected', 'remote IM disabled', now))
-      deps.store.updateStatus(record.id, { status: 'rejected', error: 'remote IM disabled' })
-      return { ok: false, error: 'remote IM disabled' }
-    }
-
     const peerRelation = getRemoteImPeerRelation(config, fromUserId)
     if (!peerRelation) {
       deps.store.create(
@@ -312,14 +306,6 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
     const now = deps.now?.() ?? Date.now()
     const fromUserId = message.fromUserId.trim()
     const placeholder = formatRemoteImAudioPlaceholder(message)
-
-    if (!config.enabled) {
-      const record = deps.store.create(
-        createIncomingAudioRecord(message, placeholder, 'rejected', 'remote IM disabled', now)
-      )
-      deps.store.updateStatus(record.id, { status: 'rejected', error: 'remote IM disabled' })
-      return { ok: false, error: 'remote IM disabled' }
-    }
 
     const peerRelation = getRemoteImPeerRelation(config, fromUserId)
     if (!peerRelation) {

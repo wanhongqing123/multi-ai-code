@@ -6,14 +6,14 @@ import {
 } from './config.js'
 
 describe('remote IM config', () => {
-  it('normalizes missing values to a disabled Tencent IM config', () => {
+  it('normalizes missing values to an always-on Tencent IM config', () => {
     expect(normalizeRemoteImConfig(undefined)).toEqual(DEFAULT_REMOTE_IM_CONFIG)
   })
 
-  it('trims user ids and removes empty whitelist entries', () => {
+  it('trims user ids, removes empty whitelist entries, and ignores legacy enabled=false', () => {
     expect(
       normalizeRemoteImConfig({
-        enabled: true,
+        enabled: false,
         provider: 'tencent-im',
         sdkAppId: '1400000000',
         desktopUserId: ' desktop_bot ',

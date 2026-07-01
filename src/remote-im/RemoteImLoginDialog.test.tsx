@@ -1,7 +1,11 @@
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import type { RemoteImAccountConfig, RemoteImLoginState } from '../../electron/preload.js'
+import type {
+  RemoteImAccountConfig,
+  RemoteImConfig,
+  RemoteImLoginState
+} from '../../electron/preload.js'
 import RemoteImLoginDialog, { applyLoadedRemoteImLoginAccount } from './RemoteImLoginDialog.js'
 
 const account: RemoteImAccountConfig = {
@@ -23,12 +27,31 @@ const loginState: RemoteImLoginState = {
   account
 }
 
+const projectConfig: RemoteImConfig = {
+  enabled: true,
+  provider: 'tencent-im',
+  sdkAppId: 1600148979,
+  desktopUserId: 'test123',
+  desktopRole: 'master',
+  userSigMode: 'secret-key',
+  userSigEndpoint: '',
+  userSigSecretKey: 'secret',
+  friendUserIds: ['test321'],
+  masterUserIds: [],
+  slaveUserIds: [],
+  allowedUserIds: ['test321'],
+  outputFlushIntervalMs: 2000,
+  outputMaxChunkChars: 1200
+}
+
 describe('RemoteImLoginDialog', () => {
-  it('renders a user-only IM login form with fixed credential settings', () => {
+  it('renders IM login with fixed credentials and project forwarding settings', () => {
     const html = renderToStaticMarkup(
       <RemoteImLoginDialog
         open
         loginState={loginState}
+        projectConfig={projectConfig}
+        projectConfigReady={true}
         saving={false}
         error={null}
         onClose={vi.fn()}
@@ -51,8 +74,10 @@ describe('RemoteImLoginDialog', () => {
     expect(html).not.toContain('填入 IM 应用 SecretKey')
     expect(html).not.toContain('测试凭证 1400704311')
     expect(html).toContain('SDKAppID 1600148979')
-    expect(html).not.toContain('输出刷新间隔')
-    expect(html).not.toContain('单次回传字符数')
+    expect(html).toContain('当前项目 IM 配置')
+    expect(html).toContain('AI 输出回传间隔')
+    expect(html).toContain('每隔这段时间合并一次 AICLI 新输出再发回 IM')
+    expect(html).toContain('单次回传字符数')
   })
 
   it('does not render when closed', () => {
@@ -60,6 +85,8 @@ describe('RemoteImLoginDialog', () => {
       <RemoteImLoginDialog
         open={false}
         loginState={loginState}
+        projectConfig={projectConfig}
+        projectConfigReady={true}
         saving={false}
         error={null}
         onClose={vi.fn()}
@@ -75,6 +102,8 @@ describe('RemoteImLoginDialog', () => {
       <RemoteImLoginDialog
         open
         loginState={loginState}
+        projectConfig={projectConfig}
+        projectConfigReady={true}
         saving={false}
         error={null}
         onClose={vi.fn()}

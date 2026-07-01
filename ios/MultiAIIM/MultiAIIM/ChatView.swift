@@ -418,13 +418,7 @@ private struct MessageBubbleView: View {
                         .buttonStyle(.plain)
                     } else {
                         MarkdownLikeText(message.text)
-                            .font(
-                                .system(
-                                    size: 13,
-                                    weight: .regular,
-                                    design: usesMonospace ? .monospaced : .default
-                                )
-                            )
+                            .font(.system(size: 13, weight: .regular))
                             .lineSpacing(3)
                             .foregroundStyle(RemoteIMStyle.textPrimary)
                     }
@@ -452,10 +446,6 @@ private struct MessageBubbleView: View {
 
     private var displayUserID: String {
         message.direction == .outgoing ? message.fromUserID : message.fromUserID
-    }
-
-    private var usesMonospace: Bool {
-        message.text.contains("|") || message.text.contains("```") || message.text.count > 400
     }
 
     private var relationText: String? {
@@ -543,23 +533,377 @@ private struct StatusIcon: View {
 }
 
 private struct MarkdownLikeText: View {
-    let text: String
+    private let blocks: [MarkdownBlock]
 
     init(_ text: String) {
-        self.text = text
+        self.blocks = parseMarkdownBlocks(text)
     }
 
     var body: some View {
-        if text.contains("|") || text.contains("```") {
-            Text(text)
-                .textSelection(.enabled)
-        } else if let attributed = try? AttributedString(markdown: text) {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(blocks) { block in
+                switch block.kind {
+                case .markdown(let text):
+                    MarkdownInlineText(text: text)
+                case .heading(let level, let text):
+                    MarkdownHeadingView(level: level, text: text)
+                case .unorderedList(let list):
+                    MarkdownListView(list: list)
+                case .code(let code):
+                    MarkdownCodeBlock(code: code)
+                case .table(let table):
+                    MarkdownTableView(table: table)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .textSelection(.enabled)
+    }
+}
+
+private struct MarkdownBlock: Identifiable {
+    let id = UUID()
+    let kind: MarkdownBlockKind
+}
+
+private enum MarkdownBlockKind {
+    case markdown(String)
+    case heading(level: Int, text: String)
+    case unorderedList(MarkdownList)
+    case code(String)
+    case table(MarkdownTable)
+}
+
+private struct MarkdownList {
+    let items: [MarkdownListItem]
+}
+
+private struct MarkdownListItem: Identifiable {
+    let id = UUID()
+    var text: String
+}
+
+private struct MarkdownTable {
+    let headers: [String]
+    let rows: [[String]]
+}
+
+private struct MarkdownInlineText: View {
+    let text: String
+
+    var body: some View {
+        if let attributed = try? AttributedString(markdown: text) {
             Text(attributed)
-                .textSelection(.enabled)
         } else {
             Text(text)
-                .textSelection(.enabled)
         }
+    }
+}
+
+private struct MarkdownHeadingView: View {
+    let level: Int
+    let text: String
+
+    var body: some View {
+        MarkdownInlineText(text: text)
+            .font(.system(size: fontSize, weight: .bold))
+            .foregroundStyle(RemoteIMStyle.textPrimary)
+            .padding(.top, level <= 2 ? 2 : 0)
+    }
+
+    private var fontSize: CGFloat {
+        switch level {
+        case 1:
+            return 17
+        case 2:
+            return 15
+        default:
+            return 14
+        }
+    }
+}
+
+private struct MarkdownListView: View {
+    let list: MarkdownList
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(list.items) { item in
+                HStack(alignment: .top, spacing: 7) {
+                    Text("•")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(RemoteIMStyle.textPrimary)
+                        .frame(width: 10, alignment: .center)
+                        .padding(.top, 1)
+                    MarkdownInlineText(text: item.text)
+                        .font(.system(size: 13, weight: .regular))
+                        .foregroundStyle(RemoteIMStyle.textPrimary)
+                        .lineSpacing(3)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+    }
+}
+
+private struct MarkdownCodeBlock: View {
+    let code: String
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            Text(code.isEmpty ? " " : code)
+                .font(.system(size: 12, weight: .regular, design: .monospaced))
+                .foregroundStyle(RemoteIMStyle.textPrimary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(Color(red: 0.945, green: 0.957, blue: 0.973), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .stroke(RemoteIMStyle.border, lineWidth: 1)
+        )
+    }
+}
+
+private struct MarkdownTableView: View {
+    let table: MarkdownTable
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
+                GridRow {
+                    ForEach(0..<columnCount, id: \.self) { column in
+                        tableCell(table.headers[safe: column] ?? "", isHeader: true)
+                    }
+                }
+                ForEach(Array(table.rows.enumerated()), id: \.offset) { _, row in
+                    GridRow {
+                        ForEach(0..<columnCount, id: \.self) { column in
+                            tableCell(row[safe: column] ?? "", isHeader: false)
+                        }
+                    }
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(RemoteIMStyle.border, lineWidth: 1)
+            )
+        }
+    }
+
+    private var columnCount: Int {
+        max(table.headers.count, table.rows.map(\.count).max() ?? 0)
+    }
+
+    private func tableCell(_ text: String, isHeader: Bool) -> some View {
+        MarkdownInlineText(text: text)
+            .font(.system(size: 12, weight: isHeader ? .semibold : .regular))
+            .foregroundStyle(RemoteIMStyle.textPrimary)
+            .lineLimit(nil)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 7)
+            .frame(minWidth: 78, maxWidth: 180, alignment: .leading)
+            .background(isHeader ? Color(red: 0.93, green: 0.945, blue: 0.965) : Color.white.opacity(0.72))
+            .overlay(
+                Rectangle()
+                    .stroke(RemoteIMStyle.border, lineWidth: 0.5)
+            )
+    }
+}
+
+private func parseMarkdownBlocks(_ source: String) -> [MarkdownBlock] {
+    let displayText = cleanRemoteIMMessageDisplayText(source)
+    let lines = displayText
+        .replacingOccurrences(of: "\r\n", with: "\n")
+        .replacingOccurrences(of: "\r", with: "\n")
+        .components(separatedBy: "\n")
+    var blocks: [MarkdownBlock] = []
+    var markdownLines: [String] = []
+    var index = 0
+
+    func flushMarkdown() {
+        let text = markdownLines
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        markdownLines.removeAll()
+        if !text.isEmpty {
+            blocks.append(MarkdownBlock(kind: .markdown(text)))
+        }
+    }
+
+    while index < lines.count {
+        let line = lines[index]
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if trimmed.hasPrefix("```") {
+            flushMarkdown()
+            index += 1
+            var codeLines: [String] = []
+            while index < lines.count {
+                let codeLine = lines[index]
+                if codeLine.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("```") {
+                    index += 1
+                    break
+                }
+                codeLines.append(codeLine)
+                index += 1
+            }
+            blocks.append(MarkdownBlock(kind: .code(codeLines.joined(separator: "\n"))))
+            continue
+        }
+
+        if let heading = parseMarkdownHeading(line) {
+            flushMarkdown()
+            blocks.append(MarkdownBlock(kind: .heading(level: heading.level, text: heading.text)))
+            index += 1
+            continue
+        }
+
+        if let parsed = parseMarkdownTable(lines: lines, startIndex: index) {
+            flushMarkdown()
+            blocks.append(MarkdownBlock(kind: .table(parsed.table)))
+            index = parsed.endIndex
+            continue
+        }
+
+        if let parsed = parseMarkdownList(lines: lines, startIndex: index) {
+            flushMarkdown()
+            blocks.append(MarkdownBlock(kind: .unorderedList(parsed.list)))
+            index = parsed.endIndex
+            continue
+        }
+
+        markdownLines.append(line)
+        index += 1
+    }
+
+    flushMarkdown()
+    return blocks.isEmpty ? [MarkdownBlock(kind: .markdown(displayText))] : blocks
+}
+
+private func cleanRemoteIMMessageDisplayText(_ source: String) -> String {
+    var text = source.trimmingCharacters(in: .whitespacesAndNewlines)
+    for prefix in ["【AICLI 输出】", "[AICLI 输出]", "【AICLI输出】", "[AICLI输出]"] {
+        if text.hasPrefix(prefix) {
+            text.removeFirst(prefix.count)
+            return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+    }
+    return text
+}
+
+private func parseMarkdownHeading(_ line: String) -> (level: Int, text: String)? {
+    let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+    var level = 0
+    for character in trimmed {
+        if character == "#" {
+            level += 1
+        } else {
+            break
+        }
+    }
+    guard level > 0, level <= 6 else { return nil }
+    let markerEnd = trimmed.index(trimmed.startIndex, offsetBy: level)
+    guard markerEnd < trimmed.endIndex, trimmed[markerEnd] == " " else { return nil }
+    let textStart = trimmed.index(after: markerEnd)
+    let headingText = String(trimmed[textStart...]).trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !headingText.isEmpty else { return nil }
+    return (level, headingText)
+}
+
+private func parseMarkdownList(lines: [String], startIndex: Int) -> (list: MarkdownList, endIndex: Int)? {
+    guard parseMarkdownListItem(lines[startIndex]) != nil else { return nil }
+    var items: [MarkdownListItem] = []
+    var index = startIndex
+
+    while index < lines.count {
+        let line = lines[index]
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { break }
+
+        if let itemText = parseMarkdownListItem(line) {
+            items.append(MarkdownListItem(text: itemText))
+            index += 1
+            continue
+        }
+
+        if line.first?.isWhitespace == true, !items.isEmpty {
+            items[items.count - 1].text += "\n" + trimmed
+            index += 1
+            continue
+        }
+
+        break
+    }
+
+    guard !items.isEmpty else { return nil }
+    return (MarkdownList(items: items), index)
+}
+
+private func parseMarkdownListItem(_ line: String) -> String? {
+    let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+    for marker in ["- ", "* ", "+ "] {
+        if trimmed.hasPrefix(marker) {
+            return String(trimmed.dropFirst(marker.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+    }
+    return nil
+}
+
+private func parseMarkdownTable(lines: [String], startIndex: Int) -> (table: MarkdownTable, endIndex: Int)? {
+    guard startIndex + 1 < lines.count else { return nil }
+    let headerLine = lines[startIndex]
+    let separatorLine = lines[startIndex + 1]
+    guard headerLine.contains("|"), isMarkdownTableSeparator(separatorLine) else { return nil }
+
+    let headers = splitMarkdownTableRow(headerLine)
+    guard !headers.isEmpty else { return nil }
+
+    var rows: [[String]] = []
+    var index = startIndex + 2
+    while index < lines.count {
+        let line = lines[index]
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, line.contains("|") else { break }
+        let cells = splitMarkdownTableRow(line)
+        guard !cells.isEmpty else { break }
+        rows.append(cells)
+        index += 1
+    }
+
+    return (MarkdownTable(headers: headers, rows: rows), index)
+}
+
+private func splitMarkdownTableRow(_ line: String) -> [String] {
+    var trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.hasPrefix("|") {
+        trimmed.removeFirst()
+    }
+    if trimmed.hasSuffix("|") {
+        trimmed.removeLast()
+    }
+    return trimmed
+        .split(separator: "|", omittingEmptySubsequences: false)
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+}
+
+private func isMarkdownTableSeparator(_ line: String) -> Bool {
+    let cells = splitMarkdownTableRow(line)
+    guard !cells.isEmpty else { return false }
+    return cells.allSatisfy { cell in
+        let compact = cell.replacingOccurrences(of: " ", with: "")
+        let hyphenCount = compact.filter { $0 == "-" }.count
+        return hyphenCount >= 3 && compact.allSatisfy { character in
+            character == "-" || character == ":"
+        }
+    }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }
 

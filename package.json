@@ -9,10 +9,11 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "icons": "node scripts/build-icons.mjs",
-    "dist": "npm run icons && electron-vite build && electron-builder",
-    "dist:mac": "npm run icons && electron-vite build && electron-builder --mac",
-    "dist:win": "npm run icons && electron-vite build && electron-builder --win",
-    "dist:all": "npm run icons && electron-vite build && electron-builder --mac --win",
+    "prepare-asr": "node scripts/prepare-asr-assets.mjs",
+    "dist": "npm run icons && npm run prepare-asr && electron-vite build && electron-builder",
+    "dist:mac": "npm run icons && npm run prepare-asr && electron-vite build && electron-builder --mac",
+    "dist:win": "npm run icons && npm run prepare-asr && electron-vite build && electron-builder --win",
+    "dist:all": "npm run icons && npm run prepare-asr && electron-vite build && electron-builder --mac --win",
     "typecheck": "node ./node_modules/typescript/bin/tsc --noEmit -p tsconfig.node.json && node ./node_modules/typescript/bin/tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "postinstall": "electron-rebuild -f -o better-sqlite3,node-pty"
@@ -67,6 +68,12 @@
       "node_modules/better-sqlite3/**",
       "node_modules/node-pty/**",
       "bin/**"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/asr",
+        "to": "asr"
+      }
     ],
     "mac": {
       "icon": "build/icon.png",

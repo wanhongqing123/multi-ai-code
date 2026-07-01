@@ -1,6 +1,6 @@
 import type { RemoteImStatus } from './types.js'
 
-const ACCOUNT_CHANGED_DETAIL = 'Remote IM account changed; waiting for reconnect'
+const ACCOUNT_CHANGED_DETAIL = 'Remote IM account changed; reconnecting'
 
 export function createRemoteImAccountChangedStatuses(
   statuses: Iterable<RemoteImStatus>,
@@ -9,13 +9,6 @@ export function createRemoteImAccountChangedStatuses(
   const nextStatuses: RemoteImStatus[] = []
   for (const status of statuses) {
     if (!status.projectId) continue
-    if (status.state === 'disabled') {
-      nextStatuses.push({
-        ...status,
-        updatedAt: now
-      })
-      continue
-    }
     nextStatuses.push({
       projectId: status.projectId,
       state: 'disconnected',

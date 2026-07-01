@@ -59,7 +59,7 @@ describe('remote IM view model', () => {
       updatedAt: 1
     }
     expect(getRemoteImStatusLabel(status)).toBe('已连接')
-    expect(getRemoteImStatusLabel({ ...status, state: 'disabled' })).toBe('未开启')
+    expect(getRemoteImStatusLabel({ ...status, state: 'disabled' })).toBe('未连接')
     expect(getRemoteImStatusLabel({ ...status, state: 'error', detail: 'login failed' })).toBe(
       '异常'
     )

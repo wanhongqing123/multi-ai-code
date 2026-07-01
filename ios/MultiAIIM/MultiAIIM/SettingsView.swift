@@ -35,14 +35,9 @@ struct SettingsView: View {
                         Text(appState.connectionState.rawValue)
                             .foregroundStyle(statusColor)
                     }
-                    Button(appState.connectionState == .connected ? "重新连接" : "连接") {
-                        Task { await appState.connect() }
-                    }
-                    .disabled(!canConnect)
-                    Button("断开连接", role: .destructive) {
-                        Task { await appState.disconnect() }
-                    }
-                    .disabled(appState.connectionState != .connected)
+                    Text("登录后会自动连接 IM；需要切换账号时重新进入登录页。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
             }
             .navigationTitle("远程 IM 设置")
@@ -57,11 +52,6 @@ struct SettingsView: View {
     private var displaySDKAppID: String {
         let sdkAppIDText = appState.sdkAppIDText.trimmingCharacters(in: .whitespacesAndNewlines)
         return sdkAppIDText.isEmpty ? String(RemoteIMCredentialDefaults.sdkAppID) : sdkAppIDText
-    }
-
-    private var canConnect: Bool {
-        appState.connectionState != .connecting &&
-            !appState.masterUserID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var statusColor: Color {

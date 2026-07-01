@@ -16,7 +16,6 @@ export function getRemoteImConnectionKey(props: RemoteImClientHostProps): string
   return JSON.stringify({
     projectId: props.projectId,
     loginRequested: props.loginRequested,
-    enabled: props.config.enabled,
     provider: props.config.provider,
     sdkAppId: props.config.sdkAppId,
     desktopUserId: props.config.desktopUserId.trim(),
@@ -42,7 +41,6 @@ export function shouldConnectRemoteImClient(props: RemoteImClientHostProps): boo
   return Boolean(
     props.loginRequested &&
       props.projectId &&
-      props.config.enabled &&
       !getRemoteImConnectionBlockReason(props.config)
   )
 }
@@ -72,13 +70,8 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
           const blockReason = getRemoteImConnectionBlockReason(props.config)
           await window.api.remoteIm.updateSdkStatus({
             projectId,
-            state: props.config.enabled ? 'disconnected' : 'disabled',
-            detail:
-              props.config.enabled && !props.loginRequested
-                ? '等待手动登录'
-                : props.config.enabled && props.loginRequested
-                  ? blockReason
-                  : null
+            state: 'disconnected',
+            detail: !props.loginRequested ? '等待登录' : blockReason
           })
         }
         return

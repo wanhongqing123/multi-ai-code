@@ -6,7 +6,7 @@ import type {
 import { migrateRemoteImCredential } from './credentials.js'
 
 export const DEFAULT_REMOTE_IM_CONFIG: RemoteImConfig = {
-  enabled: false,
+  enabled: true,
   provider: 'tencent-im',
   sdkAppId: null,
   desktopUserId: '',
@@ -75,7 +75,7 @@ export function normalizeRemoteImConfig(value: unknown): RemoteImConfig {
   )
   const allowedUserIds = [...friendUserIds]
   return {
-    enabled: raw.enabled === true,
+    enabled: true,
     provider: 'tencent-im',
     sdkAppId: credential.sdkAppId,
     desktopUserId: normalizeString(raw.desktopUserId),
@@ -93,15 +93,15 @@ export function normalizeRemoteImConfig(value: unknown): RemoteImConfig {
 }
 
 export function validateRemoteImConfig(config: RemoteImConfig): RemoteImValidationResult {
+  void config
   const issues: RemoteImValidationIssue[] = []
-  if (!config.enabled) return { ok: true, issues: [] }
   return issues.length === 0 ? { ok: true, issues: [] } : { ok: false, issues }
 }
 
 export function toRemoteImProjectConfig(config: RemoteImConfig): RemoteImConfig {
   return {
     ...DEFAULT_REMOTE_IM_CONFIG,
-    enabled: config.enabled,
+    enabled: true,
     outputFlushIntervalMs: config.outputFlushIntervalMs,
     outputMaxChunkChars: config.outputMaxChunkChars
   }

@@ -98,7 +98,6 @@ function renderDrawer(overrides: Partial<RemoteImDrawerProps> = {}): string {
       onSend={vi.fn()}
       onAddContact={vi.fn()}
       onClear={vi.fn()}
-      onLoginClick={vi.fn()}
       onClose={vi.fn()}
       {...overrides}
     />
@@ -132,16 +131,18 @@ describe('RemoteImDrawer', () => {
     expect(renderDrawer({ open: false })).toBe('')
   })
 
-  it('renders a login account action in the header', () => {
+  it('renders the current account as a non-login label in the header', () => {
     const html = renderDrawer()
 
-    expect(html).toContain('remote-im-login-action')
+    expect(html).toContain('remote-im-account-label')
     expect(html).toContain('desktop_bot')
-    expect(html).toContain('登录')
+    expect(html).not.toContain('登录')
+    expect(html).not.toContain('IM 登录')
     expect(html).not.toContain('切换账号')
+    expect(html).not.toContain('重新登录')
   })
 
-  it('prompts login when there is no UserID account', () => {
+  it('shows a passive account placeholder when there is no UserID account', () => {
     const html = renderDrawer({
       config: {
         ...config,
@@ -150,8 +151,9 @@ describe('RemoteImDrawer', () => {
       }
     })
 
-    expect(html).toContain('remote-im-login-action')
-    expect(html).toContain('登录')
+    expect(html).toContain('remote-im-account-label')
+    expect(html).toContain('未登录')
+    expect(html).not.toContain('IM 登录')
   })
 
   it('renders selected peer messages as markdown', () => {

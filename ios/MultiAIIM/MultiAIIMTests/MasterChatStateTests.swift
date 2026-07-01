@@ -159,6 +159,28 @@ final class MasterChatStateTests: XCTestCase {
         XCTAssertEqual(state.latestMessage(with: "mac-quark-pc"), quarkReply)
     }
 
+    func testRemovesContactAndConversationHistory() throws {
+        var state = MasterChatState(ownerUserID: "ios-master")
+        try state.upsertFriend(userID: "mac-quark-pc")
+        try state.upsertFriend(userID: "mac-apollo-u3player")
+
+        state.selectPeer(userID: "mac-quark-pc")
+        let quarkRequest = try state.queueOutgoingText("看一下 quark")
+        let quarkReply = state.receiveText("quark 已处理", fromUserID: "mac-quark-pc")
+
+        state.selectPeer(userID: "mac-apollo-u3player")
+        let apolloRequest = try state.queueOutgoingText("看一下 apollo")
+
+        state.removeContactAndMessages(userID: " mac-quark-pc ")
+
+        XCTAssertEqual(state.contacts.map(\.userID), ["mac-apollo-u3player"])
+        XCTAssertEqual(state.messages, [apolloRequest])
+        XCTAssertEqual(state.messages(with: "mac-quark-pc"), [])
+        XCTAssertFalse(state.messages.contains(quarkRequest))
+        XCTAssertFalse(state.messages.contains(quarkReply))
+        XCTAssertEqual(state.selectedPeerID, "mac-apollo-u3player")
+    }
+
     func testRestoresPersistedConversationMessages() throws {
         let incoming = RemoteIMMessage(
             id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,

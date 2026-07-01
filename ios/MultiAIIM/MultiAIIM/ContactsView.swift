@@ -86,29 +86,44 @@ private struct ContactList: View {
     @Binding var activeContact: RemoteIMContact?
 
     var body: some View {
-        ScrollView {
-            LazyVStack(spacing: 10) {
-                if appState.chatState.contacts.isEmpty {
-                    EmptyContacts()
-                        .padding(.top, 76)
-                } else {
-                    ForEach(appState.chatState.contacts) { contact in
-                        Button {
-                            appState.selectContact(contact)
-                            activeContact = contact
-                            selectedTab = .messages
+        List {
+            if appState.chatState.contacts.isEmpty {
+                EmptyContacts()
+                    .padding(.top, 76)
+                    .listRowInsets(EdgeInsets())
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(RemoteIMStyle.panelBackground)
+            } else {
+                ForEach(appState.chatState.contacts) { contact in
+                    Button {
+                        appState.selectContact(contact)
+                        activeContact = contact
+                        selectedTab = .messages
+                    } label: {
+                        ContactRow(
+                            contact: contact,
+                            selected: contact.userID == appState.chatState.selectedPeerID
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(RemoteIMStyle.panelBackground)
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button(role: .destructive) {
+                            appState.deleteContact(contact)
+                            if activeContact?.userID == contact.userID {
+                                activeContact = nil
+                            }
                         } label: {
-                            ContactRow(
-                                contact: contact,
-                                selected: contact.userID == appState.chatState.selectedPeerID
-                            )
+                            Label("删除", systemImage: "trash")
                         }
-                        .buttonStyle(.plain)
                     }
                 }
             }
-            .padding(16)
         }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
         .background(RemoteIMStyle.panelBackground)
     }
 }

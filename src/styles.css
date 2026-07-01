@@ -8710,10 +8710,26 @@ html, body, #root {
   padding: 4px 10px 12px;
 }
 
-.remote-im-conversation,
+.remote-im-conversation-row,
 .remote-im-conversation-empty {
   width: 100%;
   border-radius: 8px;
+}
+
+.remote-im-conversation-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+}
+
+.remote-im-conversation-row.active {
+  border-color: #bae6fd;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.07);
 }
 
 .remote-im-conversation {
@@ -8721,19 +8737,34 @@ html, body, #root {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
-  margin-bottom: 6px;
+  min-width: 0;
   padding: 10px;
-  border: 1px solid transparent;
+  border: 0;
   background: transparent;
   color: #0f172a;
   text-align: left;
   cursor: pointer;
 }
 
-.remote-im-conversation.active {
-  border-color: #bae6fd;
-  background: #ffffff;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.07);
+.remote-im-delete-contact {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.remote-im-delete-contact:hover {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #dc2626;
 }
 
 .remote-im-conversation strong,
@@ -8767,13 +8798,13 @@ html, body, #root {
   padding: 3px 8px;
 }
 
-.remote-im-conversation[data-relation='master'] em,
+.remote-im-conversation-row[data-relation='master'] em,
 .remote-im-chat-head em {
   background: #eff6ff;
   color: #1d4ed8;
 }
 
-.remote-im-conversation[data-relation='slave'] em {
+.remote-im-conversation-row[data-relation='slave'] em {
   background: #fffbeb;
   color: #b45309;
 }

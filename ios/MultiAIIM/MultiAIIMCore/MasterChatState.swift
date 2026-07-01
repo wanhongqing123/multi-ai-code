@@ -306,6 +306,20 @@ public struct MasterChatState: Equatable {
         try upsertContact(userID: userID, relation: .friend, displayName: displayName)
     }
 
+    public mutating func removeContactAndMessages(userID: String) {
+        let cleanUserID = userID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanUserID.isEmpty else { return }
+        contacts.removeAll { $0.userID == cleanUserID }
+        messages.removeAll { message in
+            message.fromUserID == cleanUserID || message.toUserID == cleanUserID
+        }
+        if selectedPeerID == cleanUserID ||
+            selectedPeerID.map({ selected in !contacts.contains(where: { $0.userID == selected }) }) == true
+        {
+            selectedPeerID = contacts.first?.userID
+        }
+    }
+
     public mutating func selectPeer(userID: String) {
         selectedPeerID = userID.trimmingCharacters(in: .whitespacesAndNewlines)
     }

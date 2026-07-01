@@ -174,6 +174,22 @@ final class RemoteIMAppState: ObservableObject {
         }
     }
 
+    func deleteContact(_ contact: RemoteIMContact) {
+        deleteContact(userID: contact.userID)
+    }
+
+    func deleteContact(userID: String) {
+        let cleanUserID = userID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanUserID.isEmpty else { return }
+        chatState.removeContactAndMessages(userID: cleanUserID)
+        if newContactUserID.trimmingCharacters(in: .whitespacesAndNewlines) == cleanUserID {
+            newContactUserID = ""
+        }
+        persistCurrentHistory()
+        settingsStore.save(currentStoredSettings())
+        errorMessage = nil
+    }
+
     func selectContact(_ contact: RemoteIMContact) {
         chatState.selectPeer(userID: contact.userID)
     }

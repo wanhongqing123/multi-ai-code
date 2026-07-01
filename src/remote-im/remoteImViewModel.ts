@@ -266,6 +266,31 @@ export function addRemoteImContact(
   }
 }
 
+export function removeRemoteImContact(
+  config: RemoteImConfig,
+  rawUserId: string
+): RemoteImConfig {
+  const userId = normalizeUserId(rawUserId)
+  if (!userId) return config
+
+  const nextFriendUserIds = uniqueUserIds(config.friendUserIds).filter((item) => item !== userId)
+  const nextMasterUserIds = uniqueUserIds(config.masterUserIds).filter((item) => item !== userId)
+  const nextSlaveUserIds = uniqueUserIds(config.slaveUserIds).filter((item) => item !== userId)
+  const nextAllowedUserIds = uniqueUserIds([
+    ...nextFriendUserIds,
+    ...nextMasterUserIds,
+    ...nextSlaveUserIds
+  ])
+
+  return {
+    ...config,
+    friendUserIds: nextFriendUserIds,
+    masterUserIds: nextMasterUserIds,
+    slaveUserIds: nextSlaveUserIds,
+    allowedUserIds: nextAllowedUserIds
+  }
+}
+
 export function formatRemoteImTime(timestamp: number): string {
   const date = new Date(timestamp)
   return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(

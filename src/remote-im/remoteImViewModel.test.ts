@@ -9,7 +9,8 @@ import {
   getRemoteImMessageAvatar,
   getRemoteImMessageStatusLabel,
   getRemoteImStatusLabel,
-  isRemoteImSendDisabled
+  isRemoteImSendDisabled,
+  removeRemoteImContact
 } from './remoteImViewModel.js'
 
 const config: RemoteImConfig = {
@@ -215,5 +216,14 @@ describe('remote IM view model', () => {
     expect(next.slaveUserIds).toEqual(['slave-a'])
     expect(next.allowedUserIds).toEqual(['friend-a', 'slave-b', 'master-a', 'slave-a'])
     expect(addRemoteImContact(next, 'friend', 'slave-a').slaveUserIds).toEqual([])
+  })
+
+  it('removes trusted friends from every contact list and keeps allowed users in sync', () => {
+    const next = removeRemoteImContact(config, ' master-a ')
+
+    expect(next.friendUserIds).toEqual(['friend-a'])
+    expect(next.masterUserIds).toEqual([])
+    expect(next.slaveUserIds).toEqual(['slave-a'])
+    expect(next.allowedUserIds).toEqual(['friend-a', 'slave-a'])
   })
 })

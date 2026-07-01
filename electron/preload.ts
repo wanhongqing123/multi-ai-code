@@ -617,6 +617,11 @@ const api = {
       >,
     clearMessages: (projectId: string) =>
       ipcRenderer.invoke('remote-im:clear-messages', { projectId }) as Promise<{ ok: true }>,
+    deleteContact: (projectId: string, userId: string) =>
+      ipcRenderer.invoke('remote-im:delete-contact', { projectId, userId }) as Promise<
+        | { ok: true; value: RemoteImConfig; loginState: RemoteImLoginState }
+        | { ok: false; error: string }
+      >,
     sendLocalMessage: (projectId: string, text: string) =>
       ipcRenderer.invoke('remote-im:send-local-message', { projectId, text }) as Promise<
         { ok: boolean; error?: string }

@@ -74,6 +74,23 @@ function createFakeDatabase(): RemoteImDatabase {
           all: () => []
         }
       }
+      if (sql.includes('DELETE FROM remote_im_messages') && sql.includes('from_user_id')) {
+        return {
+          run: (projectId: unknown, fromUserId: unknown, toUserId: unknown) => {
+            for (let index = rows.length - 1; index >= 0; index -= 1) {
+              if (
+                rows[index].project_id === projectId &&
+                (rows[index].from_user_id === fromUserId || rows[index].to_user_id === toUserId)
+              ) {
+                rows.splice(index, 1)
+              }
+            }
+            return {}
+          },
+          get: () => undefined,
+          all: () => []
+        }
+      }
       if (sql.includes('DELETE FROM remote_im_messages')) {
         return {
           run: (projectId: unknown) => {
@@ -221,6 +238,61 @@ describe('remote IM message store', () => {
 
     store.clear('project-1')
     expect(store.list('project-1', 20)).toEqual([])
+  })
+
+  it('clears only the selected peer conversation history in one project', () => {
+    const store = createRemoteImMessageStore(createFakeDatabase())
+    const deletedIncoming = store.create({
+      projectId: 'project-1',
+      provider: 'tencent-im',
+      fromUserId: 'friend-a',
+      toUserId: 'desktop-bot',
+      role: 'remote-user',
+      direction: 'incoming',
+      content: 'delete incoming',
+      status: 'received',
+      createdAt: 100
+    })
+    const deletedOutgoing = store.create({
+      projectId: 'project-1',
+      provider: 'tencent-im',
+      fromUserId: 'desktop-bot',
+      toUserId: 'friend-a',
+      role: 'remote-user',
+      direction: 'outgoing',
+      content: 'delete outgoing',
+      status: 'sent-to-im',
+      createdAt: 110
+    })
+    const kept = store.create({
+      projectId: 'project-1',
+      provider: 'tencent-im',
+      fromUserId: 'friend-b',
+      toUserId: 'desktop-bot',
+      role: 'remote-user',
+      direction: 'incoming',
+      content: 'keep',
+      status: 'received',
+      createdAt: 120
+    })
+    const keptOtherProject = store.create({
+      projectId: 'project-2',
+      provider: 'tencent-im',
+      fromUserId: 'friend-a',
+      toUserId: 'desktop-bot',
+      role: 'remote-user',
+      direction: 'incoming',
+      content: 'other project',
+      status: 'received',
+      createdAt: 130
+    })
+
+    store.clearPeer('project-1', ' friend-a ')
+
+    expect(store.list('project-1', 20).map((message) => message.id)).toEqual([kept.id])
+    expect(store.listById(deletedIncoming.id)).toBeNull()
+    expect(store.listById(deletedOutgoing.id)).toBeNull()
+    expect(store.listById(keptOtherProject.id)).toMatchObject({ id: keptOtherProject.id })
   })
 
   it('fails an outgoing message only while it is still streaming', () => {

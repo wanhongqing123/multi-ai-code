@@ -25,6 +25,7 @@ import {
 } from './account.js'
 import {
   clearRemoteImMessages,
+  clearRemoteImPeerMessages,
   createRemoteImMessage,
   failRemoteImMessageIfStreaming,
   listRemoteImMessages,
@@ -229,6 +230,56 @@ async function getRemoteImStatus(projectId: string): Promise<RemoteImStatus> {
 function sendImText(projectId: string, toUserId: string, text: string): Promise<{ ok: boolean }> {
   broadcastOutgoingText(projectId, toUserId, text)
   return Promise.resolve({ ok: true })
+}
+
+function removeRemoteImAccountContact(
+  account: RemoteImAccountConfig,
+  rawUserId: string
+): RemoteImAccountConfig {
+  const userId = rawUserId.trim()
+  if (!userId) return account
+  const removeUserId = (userIds: string[]) => userIds.filter((item) => item.trim() !== userId)
+  return normalizeRemoteImAccountConfig({
+    ...account,
+    friendUserIds: removeUserId(account.friendUserIds),
+    masterUserIds: removeUserId(account.masterUserIds),
+    slaveUserIds: removeUserId(account.slaveUserIds),
+    allowedUserIds: removeUserId(account.allowedUserIds)
+  })
+}
+
+async function deleteRemoteImContact(
+  projectId: string,
+  rawUserId: string
+): Promise<
+  | { ok: true; value: RemoteImConfig; loginState: RemoteImLoginState }
+  | { ok: false; error: string }
+> {
+  const userId = rawUserId.trim()
+  if (!userId) return { ok: false, error: 'UserID is required' }
+
+  const previousProfileId = getCurrentRemoteImAccountProfileId()
+  const previousAccount = previousProfileId
+    ? await readRemoteImAccountConfig(remoteImAccountDir(previousProfileId))
+    : normalizeRemoteImAccountConfig(null)
+  const nextAccount = removeRemoteImAccountContact(previousAccount, userId)
+  const profileId =
+    getRemoteImAccountProfileId(nextAccount.desktopUserId) ??
+    getRemoteImProfileId() ??
+    DEFAULT_REMOTE_IM_PROFILE_ID
+  activeRemoteImAccountProfileId = profileId
+  const account = await writeRemoteImAccountConfig(remoteImAccountDir(profileId), nextAccount)
+  clearRemoteImPeerMessages(projectId, userId)
+  const value = await getRemoteImConfig(projectId)
+  broadcastMessagesChanged(projectId)
+  return {
+    ok: true,
+    value,
+    loginState: {
+      profileId,
+      account
+    }
+  }
 }
 
 async function sendRemoteImPeerMessage(
@@ -469,6 +520,17 @@ export function registerRemoteImIpc(): void {
     broadcastMessagesChanged(projectId)
     return { ok: true as const }
   })
+
+  ipcMain.handle(
+    'remote-im:delete-contact',
+    async (_event, { projectId, userId }: { projectId: string; userId: string }) => {
+      try {
+        return await deleteRemoteImContact(projectId, userId)
+      } catch (err) {
+        return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+      }
+    }
+  )
 
   ipcMain.handle(
     'remote-im:update-sdk-status',

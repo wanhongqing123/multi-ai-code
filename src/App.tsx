@@ -1166,6 +1166,27 @@ function AppShell() {
     setRemoteImSelectedPeerUserId(cleanUserId)
   }, [currentProjectId, remoteImConfig])
 
+  const handleDeleteRemoteImContact = useCallback(async (userId: string) => {
+    if (!currentProjectId) return
+    const cleanUserId = userId.trim()
+    if (!cleanUserId) return
+    const result = await window.api.remoteIm.deleteContact(currentProjectId, cleanUserId)
+    if (!result.ok) {
+      showToast(result.error ?? '删除远程 IM 好友失败', { level: 'error' })
+      return
+    }
+    setRemoteImConfig(result.value)
+    setRemoteImLoginState(result.loginState)
+    setRemoteImConfigProjectId(currentProjectId)
+    setRemoteImInput('')
+    if (remoteImSelectedPeerUserId === cleanUserId) {
+      setRemoteImSelectedPeerUserId(null)
+    }
+    const messages = await window.api.remoteIm.listMessages(currentProjectId, 100)
+    setRemoteImMessages(messages)
+    showToast('已删除好友和聊天历史', { level: 'success' })
+  }, [currentProjectId, remoteImSelectedPeerUserId])
+
   const handleClearRemoteImMessages = useCallback(async () => {
     if (!currentProjectId) return
     try {
@@ -2181,6 +2202,7 @@ function AppShell() {
         onSelectPeer={setRemoteImSelectedPeerUserId}
         onSend={(toUserId) => void handleSendRemoteImLocalMessage(toUserId)}
         onAddContact={(relation, userId) => void handleAddRemoteImContact(relation, userId)}
+        onDeleteContact={(userId) => void handleDeleteRemoteImContact(userId)}
         onClear={() => void handleClearRemoteImMessages()}
         onClose={() => setShowRemoteImDrawer(false)}
       />

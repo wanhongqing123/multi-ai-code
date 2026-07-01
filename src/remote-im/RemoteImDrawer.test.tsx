@@ -97,6 +97,7 @@ function renderDrawer(overrides: Partial<RemoteImDrawerProps> = {}): string {
       onSelectPeer={vi.fn()}
       onSend={vi.fn()}
       onAddContact={vi.fn()}
+      onDeleteContact={vi.fn()}
       onClear={vi.fn()}
       onClose={vi.fn()}
       {...overrides}
@@ -236,6 +237,14 @@ describe('RemoteImDrawer', () => {
     expect(html).not.toContain('option value="slave"')
     expect(html).not.toContain('name="sdkAppId"')
     expect(html).not.toContain('name="secretKey"')
+  })
+
+  it('renders a delete action for each trusted contact conversation', () => {
+    const html = renderDrawer()
+
+    expect(html).toContain('class="remote-im-delete-contact"')
+    expect(html).toContain('aria-label="删除好友 desktop_slave 及聊天历史"')
+    expect(html).toContain('aria-label="删除好友 friend_a 及聊天历史"')
   })
 
   it('keeps peer IM sending available without a running AICLI session', () => {

@@ -47,6 +47,7 @@ export interface RemoteImDrawerProps {
   onSelectPeer: (userId: string) => void
   onSend: (toUserId: string) => void
   onAddContact: (relation: RemoteImContactRelation, userId: string) => void
+  onDeleteContact: (userId: string) => void
   onClear: () => void
   onClose: () => void
 }
@@ -289,21 +290,34 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
                 <div className="remote-im-conversation-empty">暂无会话</div>
               ) : (
                 filteredConversations.map((conversation) => (
-                  <button
+                  <div
                     key={conversation.userId}
-                    type="button"
                     data-relation={conversation.relation}
-                    className={`remote-im-conversation ${
+                    className={`remote-im-conversation-row ${
                       conversation.userId === selectedPeerUserId ? 'active' : ''
                     }`}
-                    onClick={() => props.onSelectPeer(conversation.userId)}
                   >
-                    <div>
-                      <strong>{conversation.userId}</strong>
-                      <span>{conversation.lastMessagePreview || '暂无消息'}</span>
-                    </div>
-                    <em>{getRelationLabel(conversation.relation)}</em>
-                  </button>
+                    <button
+                      type="button"
+                      className="remote-im-conversation"
+                      onClick={() => props.onSelectPeer(conversation.userId)}
+                    >
+                      <div>
+                        <strong>{conversation.userId}</strong>
+                        <span>{conversation.lastMessagePreview || '暂无消息'}</span>
+                      </div>
+                      <em>{getRelationLabel(conversation.relation)}</em>
+                    </button>
+                    <button
+                      type="button"
+                      className="remote-im-delete-contact"
+                      aria-label={`删除好友 ${conversation.userId} 及聊天历史`}
+                      title="删除好友及聊天历史"
+                      onClick={() => props.onDeleteContact(conversation.userId)}
+                    >
+                      ×
+                    </button>
+                  </div>
                 ))
               )}
             </div>

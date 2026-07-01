@@ -5,6 +5,7 @@ import { access, chmod, copyFile, cp, mkdir, mkdtemp, readFile, readdir, realpat
 import { arch, platform, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { extractZipArchive } from './archive.mjs'
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)))
 const asrRoot = join(repoRoot, 'resources', 'asr')
@@ -74,7 +75,7 @@ async function download(url, dest) {
 async function unzip(zipPath, destDir) {
   await rm(destDir, { recursive: true, force: true })
   await mkdir(destDir, { recursive: true })
-  await run('unzip', ['-q', zipPath, '-d', destDir])
+  await extractZipArchive(zipPath, destDir, { run })
 }
 
 async function copyExecutable(src, dest) {

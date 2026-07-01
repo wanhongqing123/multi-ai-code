@@ -1,7 +1,9 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { RemoteImConfig } from '../../electron/preload.js'
 import {
+  createRemoteImLifecycleQueue,
   getRemoteImConnectionKey,
+  scheduleRemoteImConnect,
   shouldConnectRemoteImClient
 } from './RemoteImClientHost.js'
 
@@ -139,5 +141,41 @@ describe('RemoteImClientHost', () => {
         loginRequested: true
       })
     ).not.toBe(key)
+  })
+
+  it('cancels a scheduled SDK connection before it starts', async () => {
+    vi.useFakeTimers()
+    const startConnect = vi.fn()
+
+    const cancel = scheduleRemoteImConnect(startConnect)
+    cancel()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(startConnect).not.toHaveBeenCalled()
+    vi.useRealTimers()
+  })
+
+  it('serializes SDK connect and disconnect lifecycle tasks', async () => {
+    const queue = createRemoteImLifecycleQueue()
+    const events: string[] = []
+    let finishFirst!: () => void
+
+    const first = queue(async () => {
+      events.push('connect:start')
+      await new Promise<void>((resolve) => {
+        finishFirst = resolve
+      })
+      events.push('connect:end')
+    })
+    const second = queue(async () => {
+      events.push('disconnect')
+    })
+
+    await Promise.resolve()
+    expect(events).toEqual(['connect:start'])
+    finishFirst()
+    await Promise.all([first, second])
+
+    expect(events).toEqual(['connect:start', 'connect:end', 'disconnect'])
   })
 })

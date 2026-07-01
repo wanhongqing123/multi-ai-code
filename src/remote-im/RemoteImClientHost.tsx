@@ -12,6 +12,26 @@ export interface RemoteImClientHostProps {
 
 const OUTGOING_RUNTIME_WAIT_TIMEOUT_MS = 15_000
 
+export function scheduleRemoteImConnect(startConnect: () => void): () => void {
+  let started = false
+  const timer = setTimeout(() => {
+    started = true
+    startConnect()
+  }, 0)
+  return () => {
+    if (!started) clearTimeout(timer)
+  }
+}
+
+export function createRemoteImLifecycleQueue() {
+  let queue = Promise.resolve()
+  return (task: () => Promise<void> | void): Promise<void> => {
+    const run = queue.then(task, task)
+    queue = run.catch(() => undefined)
+    return run
+  }
+}
+
 export function getRemoteImConnectionKey(props: RemoteImClientHostProps): string {
   return JSON.stringify({
     projectId: props.projectId,
@@ -47,6 +67,7 @@ export function shouldConnectRemoteImClient(props: RemoteImClientHostProps): boo
 
 export default function RemoteImClientHost(props: RemoteImClientHostProps): null {
   const runtimeSlotRef = useRef(createRemoteImRuntimeSlot<TencentImRuntime>())
+  const lifecycleQueueRef = useRef(createRemoteImLifecycleQueue())
   const connectionKey = getRemoteImConnectionKey(props)
 
   useEffect(() => {
@@ -118,7 +139,10 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
       }
     }
 
-    void connect()
+    const enqueueLifecycle = lifecycleQueueRef.current
+    const cancelScheduledConnect = scheduleRemoteImConnect(() => {
+      void enqueueLifecycle(connect).catch(() => undefined)
+    })
 
     const offOutgoing = window.api.remoteIm.onOutgoingText((evt) => {
       if (evt.projectId !== props.projectId) return
@@ -167,8 +191,9 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
 
     return () => {
       cancelled = true
+      cancelScheduledConnect()
       offOutgoing()
-      void disconnectOwned()
+      void enqueueLifecycle(disconnectOwned).catch(() => undefined)
     }
   }, [connectionKey])
 

@@ -1097,24 +1097,6 @@ private struct ComposerView: View {
             }
 
             HStack(alignment: .bottom, spacing: 8) {
-                PhotosPicker(
-                    selection: $selectedPhotoItem,
-                    matching: .images,
-                    photoLibrary: .shared()
-                ) {
-                    Image(systemName: "photo")
-                        .font(.system(size: 18, weight: .bold))
-                        .frame(width: 44, height: 44)
-                        .background(RemoteIMStyle.blueSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .stroke(RemoteIMStyle.border, lineWidth: 1)
-                        )
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(appState.canSendImage ? RemoteIMStyle.blue : RemoteIMStyle.textSecondary)
-                .disabled(!appState.canSendImage)
-
                 Button {
                     isVoiceMode.toggle()
                     if !isVoiceMode {
@@ -1167,6 +1149,25 @@ private struct ComposerView: View {
                                 .stroke(appState.canSend ? RemoteIMStyle.blue : RemoteIMStyle.border, lineWidth: appState.canSend ? 1.5 : 1)
                         )
                 }
+
+                PhotosPicker(
+                    selection: $selectedPhotoItem,
+                    matching: .images,
+                    photoLibrary: .shared()
+                ) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 20, weight: .semibold))
+                        .frame(width: 44, height: 44)
+                        .background(Color.white, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(RemoteIMStyle.border, lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(appState.canSendImage ? RemoteIMStyle.textPrimary : RemoteIMStyle.textSecondary)
+                .disabled(!appState.canSendImage)
+                .accessibilityLabel("选择图片")
             }
         }
         .padding(.horizontal, 16)

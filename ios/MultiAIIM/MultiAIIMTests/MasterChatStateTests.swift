@@ -142,6 +142,53 @@ final class MasterChatStateTests: XCTestCase {
         XCTAssertEqual(state.contacts.map(\.userID), ["mac-quark-pc"])
     }
 
+    func testQueuesOutgoingImageMessageWithLocalAttachment() throws {
+        var state = MasterChatState(ownerUserID: "ios-master")
+        try state.upsertFriend(userID: "mac-quark-pc")
+        state.selectPeer(userID: "mac-quark-pc")
+
+        let message = try state.queueOutgoingImage(
+            filePath: "/tmp/outgoing-photo.png",
+            width: 640,
+            height: 480,
+            sizeBytes: 4096,
+            now: Date(timeIntervalSince1970: 150)
+        )
+
+        XCTAssertEqual(message.text, "[图片消息] outgoing-photo.png")
+        XCTAssertEqual(message.imageAttachment?.localFilePath, "/tmp/outgoing-photo.png")
+        XCTAssertEqual(message.imageAttachment?.width, 640)
+        XCTAssertEqual(message.imageAttachment?.height, 480)
+        XCTAssertEqual(message.imageAttachment?.sizeBytes, 4096)
+        XCTAssertEqual(message.direction, .outgoing)
+        XCTAssertEqual(message.status, .pending)
+        XCTAssertEqual(state.messages, [message])
+    }
+
+    func testReceivesImageMessageWithLocalAttachment() throws {
+        var state = MasterChatState(ownerUserID: "ios-master")
+
+        let message = state.receiveImage(
+            filePath: "/tmp/incoming-photo.png",
+            fromUserID: "mac-quark-pc",
+            remoteID: "image-uuid",
+            width: 320,
+            height: 240,
+            sizeBytes: 2048,
+            now: Date(timeIntervalSince1970: 160)
+        )
+
+        XCTAssertEqual(message.text, "[图片消息] incoming-photo.png")
+        XCTAssertEqual(message.imageAttachment?.localFilePath, "/tmp/incoming-photo.png")
+        XCTAssertEqual(message.imageAttachment?.remoteID, "image-uuid")
+        XCTAssertEqual(message.imageAttachment?.width, 320)
+        XCTAssertEqual(message.imageAttachment?.height, 240)
+        XCTAssertEqual(message.imageAttachment?.sizeBytes, 2048)
+        XCTAssertEqual(message.direction, .incoming)
+        XCTAssertEqual(message.status, .received)
+        XCTAssertEqual(state.contacts.map(\.userID), ["mac-quark-pc"])
+    }
+
     func testFiltersMessagesByConversationPeer() throws {
         var state = MasterChatState(ownerUserID: "ios-master")
         try state.upsertSlave(userID: "mac-quark-pc")
@@ -236,6 +283,30 @@ final class MasterChatStateTests: XCTestCase {
         let decoded = try JSONDecoder().decode([RemoteIMMessage].self, from: data)
 
         XCTAssertEqual(decoded, [voiceMessage])
+    }
+
+    func testImageMessageHistoryRoundTripsThroughJSON() throws {
+        let imageMessage = RemoteIMMessage(
+            id: UUID(uuidString: "44444444-4444-4444-4444-444444444444")!,
+            fromUserID: "mac-quark-pc",
+            toUserID: "ios-master",
+            text: "[图片消息] incoming-photo.png",
+            imageAttachment: RemoteIMImageAttachment(
+                localFilePath: "/tmp/incoming-photo.png",
+                remoteID: "image-uuid",
+                width: 320,
+                height: 240,
+                sizeBytes: 2048
+            ),
+            direction: .incoming,
+            status: .received,
+            createdAt: Date(timeIntervalSince1970: 230)
+        )
+
+        let data = try JSONEncoder().encode([imageMessage])
+        let decoded = try JSONDecoder().decode([RemoteIMMessage].self, from: data)
+
+        XCTAssertEqual(decoded, [imageMessage])
     }
 
     func testLegacySlaveContactsAreStoredAsFriends() throws {

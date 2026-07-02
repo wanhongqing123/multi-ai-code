@@ -159,12 +159,35 @@ public struct RemoteIMVoiceAttachment: Codable, Equatable {
     }
 }
 
+public struct RemoteIMImageAttachment: Codable, Equatable {
+    public let localFilePath: String
+    public let remoteID: String?
+    public let width: Int?
+    public let height: Int?
+    public let sizeBytes: Int?
+
+    public init(
+        localFilePath: String,
+        remoteID: String? = nil,
+        width: Int? = nil,
+        height: Int? = nil,
+        sizeBytes: Int? = nil
+    ) {
+        self.localFilePath = localFilePath
+        self.remoteID = remoteID
+        self.width = width
+        self.height = height
+        self.sizeBytes = sizeBytes
+    }
+}
+
 public struct RemoteIMMessage: Identifiable, Codable, Equatable {
     public let id: UUID
     public let fromUserID: String
     public let toUserID: String
     public let text: String
     public let voiceAttachment: RemoteIMVoiceAttachment?
+    public let imageAttachment: RemoteIMImageAttachment?
     public let direction: RemoteIMMessageDirection
     public var status: RemoteIMMessageStatus
     public let createdAt: Date
@@ -175,6 +198,7 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable {
         toUserID: String,
         text: String,
         voiceAttachment: RemoteIMVoiceAttachment? = nil,
+        imageAttachment: RemoteIMImageAttachment? = nil,
         direction: RemoteIMMessageDirection,
         status: RemoteIMMessageStatus,
         createdAt: Date
@@ -184,6 +208,7 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable {
         self.toUserID = toUserID
         self.text = text
         self.voiceAttachment = voiceAttachment
+        self.imageAttachment = imageAttachment
         self.direction = direction
         self.status = status
         self.createdAt = createdAt
@@ -191,6 +216,10 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable {
 
     public var isVoiceMessage: Bool {
         voiceAttachment != nil
+    }
+
+    public var isImageMessage: Bool {
+        imageAttachment != nil
     }
 }
 
@@ -347,6 +376,11 @@ public struct MasterChatState: Equatable {
         "[语音消息 \(max(1, durationSeconds))s]"
     }
 
+    private static func imageDisplayText(filePath: String) -> String {
+        let fileName = URL(fileURLWithPath: filePath).lastPathComponent
+        return fileName.isEmpty ? "[图片消息]" : "[图片消息] \(fileName)"
+    }
+
     private static func incomingDisplayText(_ text: String) -> String {
         var cleanText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         for prefix in ["【AICLI 输出】", "[AICLI 输出]", "【AICLI输出】", "[AICLI输出]"] {
@@ -409,6 +443,38 @@ public struct MasterChatState: Equatable {
     }
 
     @discardableResult
+    public mutating func queueOutgoingImage(
+        filePath: String,
+        width: Int? = nil,
+        height: Int? = nil,
+        sizeBytes: Int? = nil,
+        now: Date = Date()
+    ) throws -> RemoteIMMessage {
+        let cleanFilePath = filePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanFilePath.isEmpty else { throw MasterChatStateError.blankMessage }
+        guard let peerID = selectedPeerID, !peerID.isEmpty else {
+            throw MasterChatStateError.noSelectedPeer
+        }
+        let imageAttachment = RemoteIMImageAttachment(
+            localFilePath: cleanFilePath,
+            width: width,
+            height: height,
+            sizeBytes: sizeBytes
+        )
+        let message = RemoteIMMessage(
+            fromUserID: ownerUserID,
+            toUserID: peerID,
+            text: Self.imageDisplayText(filePath: cleanFilePath),
+            imageAttachment: imageAttachment,
+            direction: .outgoing,
+            status: .pending,
+            createdAt: now
+        )
+        messages.append(message)
+        return message
+    }
+
+    @discardableResult
     public mutating func receiveText(
         _ text: String,
         fromUserID: String,
@@ -458,6 +524,50 @@ public struct MasterChatState: Equatable {
             toUserID: ownerUserID,
             text: Self.voiceDisplayText(durationSeconds: voiceAttachment.durationSeconds),
             voiceAttachment: voiceAttachment,
+            direction: .incoming,
+            status: .received,
+            createdAt: now
+        )
+        if !cleanFromUserID.isEmpty && !contacts.contains(where: { $0.userID == cleanFromUserID }) {
+            contacts.append(
+                RemoteIMContact(
+                    userID: cleanFromUserID,
+                    displayName: cleanFromUserID,
+                    relation: .friend
+                )
+            )
+        }
+        if selectedPeerID == nil && !cleanFromUserID.isEmpty {
+            selectedPeerID = cleanFromUserID
+        }
+        messages.append(message)
+        return message
+    }
+
+    @discardableResult
+    public mutating func receiveImage(
+        filePath: String,
+        fromUserID: String,
+        remoteID: String? = nil,
+        width: Int? = nil,
+        height: Int? = nil,
+        sizeBytes: Int? = nil,
+        now: Date = Date()
+    ) -> RemoteIMMessage {
+        let cleanFromUserID = fromUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanFilePath = filePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let imageAttachment = RemoteIMImageAttachment(
+            localFilePath: cleanFilePath,
+            remoteID: remoteID,
+            width: width,
+            height: height,
+            sizeBytes: sizeBytes
+        )
+        let message = RemoteIMMessage(
+            fromUserID: cleanFromUserID,
+            toUserID: ownerUserID,
+            text: Self.imageDisplayText(filePath: cleanFilePath),
+            imageAttachment: imageAttachment,
             direction: .incoming,
             status: .received,
             createdAt: now

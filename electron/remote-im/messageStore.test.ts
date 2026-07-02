@@ -12,6 +12,8 @@ interface FakeRow {
   role: 'remote-user' | 'system' | 'aicli'
   direction: 'incoming' | 'outgoing' | 'internal'
   content: string
+  kind?: 'text' | 'image'
+  attachment_json?: string | null
   status: 'received' | 'rejected' | 'sent-to-aicli' | 'streaming' | 'sent-to-im' | 'failed'
   error: string | null
   created_at: number
@@ -19,14 +21,15 @@ interface FakeRow {
   sent_to_im_at: number | null
 }
 
-function createFakeDatabase(): RemoteImDatabase {
-  const rows: FakeRow[] = []
+function createFakeDatabase(seedRows: FakeRow[] = []): RemoteImDatabase {
+  const rows: FakeRow[] = [...seedRows]
   let nextId = 1
   return {
     prepare(sql: string) {
       if (sql.includes('INSERT INTO remote_im_messages')) {
         return {
           run: (...args: unknown[]) => {
+            const hasAttachmentColumns = args.length >= 16
             rows.push({
               id: nextId,
               project_id: args[0] as string | null,
@@ -38,11 +41,13 @@ function createFakeDatabase(): RemoteImDatabase {
               role: args[6] as FakeRow['role'],
               direction: args[7] as FakeRow['direction'],
               content: args[8] as string,
-              status: args[9] as FakeRow['status'],
-              error: args[10] as string | null,
-              created_at: args[11] as number,
-              sent_to_aicli_at: args[12] as number | null,
-              sent_to_im_at: args[13] as number | null
+              kind: hasAttachmentColumns ? (args[9] as FakeRow['kind']) : 'text',
+              attachment_json: hasAttachmentColumns ? (args[10] as string | null) : null,
+              status: (hasAttachmentColumns ? args[11] : args[9]) as FakeRow['status'],
+              error: (hasAttachmentColumns ? args[12] : args[10]) as string | null,
+              created_at: (hasAttachmentColumns ? args[13] : args[11]) as number,
+              sent_to_aicli_at: (hasAttachmentColumns ? args[14] : args[12]) as number | null,
+              sent_to_im_at: (hasAttachmentColumns ? args[15] : args[13]) as number | null
             })
             return { lastInsertRowid: nextId++ }
           },
@@ -121,6 +126,88 @@ function createFakeDatabase(): RemoteImDatabase {
 }
 
 describe('remote IM message store', () => {
+  it('maps legacy text messages to text kind without attachment', () => {
+    const store = createRemoteImMessageStore(createFakeDatabase())
+    const message = store.create({
+      projectId: 'project-1',
+      provider: 'tencent-im',
+      role: 'remote-user',
+      direction: 'incoming',
+      content: 'hello',
+      status: 'received',
+      createdAt: 100
+    })
+
+    expect(message).toMatchObject({
+      content: 'hello',
+      kind: 'text',
+      attachment: null
+    })
+  })
+
+  it('persists image message attachments', () => {
+    const store = createRemoteImMessageStore(createFakeDatabase())
+    const attachment = {
+      type: 'image',
+      localPath: '/tmp/remote-im/image-1.png',
+      remoteUrl: 'https://example.com/image-1.png',
+      thumbnailUrl: 'https://example.com/thumb-1.png',
+      width: 320,
+      height: 240,
+      sizeBytes: 2048,
+      fileName: 'image-1.png',
+      mimeType: 'image/png',
+      sdkImageId: 'image-sdk-id'
+    }
+    const message = store.create({
+      projectId: 'project-1',
+      provider: 'tencent-im',
+      role: 'remote-user',
+      direction: 'incoming',
+      content: '[图片消息] image-1.png',
+      status: 'received',
+      createdAt: 100,
+      kind: 'image',
+      attachment
+    } as any)
+
+    expect(store.listById(message.id)).toMatchObject({
+      kind: 'image',
+      attachment
+    })
+  })
+
+  it('ignores malformed attachment json while preserving image kind', () => {
+    const store = createRemoteImMessageStore(
+      createFakeDatabase([
+        {
+          id: 1,
+          project_id: 'project-1',
+          session_id: null,
+          provider: 'tencent-im',
+          remote_message_id: null,
+          from_user_id: 'phone',
+          to_user_id: 'desktop',
+          role: 'remote-user',
+          direction: 'incoming',
+          content: '[图片消息]',
+          kind: 'image',
+          attachment_json: '{bad-json',
+          status: 'received',
+          error: null,
+          created_at: 100,
+          sent_to_aicli_at: null,
+          sent_to_im_at: null
+        }
+      ])
+    )
+
+    expect(store.listById(1)).toMatchObject({
+      kind: 'image',
+      attachment: null
+    })
+  })
+
   it('creates and lists messages for one project newest last', () => {
     const store = createRemoteImMessageStore(createFakeDatabase())
     store.create({

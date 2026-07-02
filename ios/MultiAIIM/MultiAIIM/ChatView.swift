@@ -1,7 +1,9 @@
 import AVFoundation
 import MultiAIIMCore
+import PhotosUI
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 enum RemoteIMStyle {
     static let pageBackground = Color(red: 0.966, green: 0.976, blue: 0.988)
@@ -462,7 +464,9 @@ private struct MessageBubbleView: View {
                 }
 
                 HStack(alignment: .bottom, spacing: 10) {
-                    if let voiceAttachment = message.voiceAttachment {
+                    if let imageAttachment = message.imageAttachment {
+                        ImageBubbleContent(attachment: imageAttachment)
+                    } else if let voiceAttachment = message.voiceAttachment {
                         Button(action: playVoice) {
                             VoiceBubbleContent(
                                 attachment: voiceAttachment,
@@ -512,6 +516,37 @@ private struct MessageBubbleView: View {
 
     private var bubbleBorder: Color {
         message.direction == .outgoing ? Color(red: 0.764, green: 0.873, blue: 0.996) : RemoteIMStyle.yellowBorder
+    }
+}
+
+private struct ImageBubbleContent: View {
+    let attachment: RemoteIMImageAttachment
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            if let image = UIImage(contentsOfFile: attachment.localFilePath) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: 220, maxHeight: 180)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .background(Color(red: 0.945, green: 0.957, blue: 0.973), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            } else {
+                HStack(spacing: 8) {
+                    Image(systemName: "photo")
+                    Text("图片暂不可预览")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .foregroundStyle(RemoteIMStyle.textSecondary)
+                .frame(width: 180, height: 120)
+                .background(Color(red: 0.945, green: 0.957, blue: 0.973), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+            Text(URL(fileURLWithPath: attachment.localFilePath).lastPathComponent)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(RemoteIMStyle.textSecondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
     }
 }
 
@@ -1053,6 +1088,7 @@ private struct ComposerView: View {
     @State private var isVoiceMode = false
     @State private var isPressingVoice = false
     @State private var isCancellingVoice = false
+    @State private var selectedPhotoItem: PhotosPickerItem?
 
     var body: some View {
         VStack(spacing: 8) {
@@ -1061,6 +1097,24 @@ private struct ComposerView: View {
             }
 
             HStack(alignment: .bottom, spacing: 8) {
+                PhotosPicker(
+                    selection: $selectedPhotoItem,
+                    matching: .images,
+                    photoLibrary: .shared()
+                ) {
+                    Image(systemName: "photo")
+                        .font(.system(size: 18, weight: .bold))
+                        .frame(width: 44, height: 44)
+                        .background(RemoteIMStyle.blueSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(RemoteIMStyle.border, lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(appState.canSendImage ? RemoteIMStyle.blue : RemoteIMStyle.textSecondary)
+                .disabled(!appState.canSendImage)
+
                 Button {
                     isVoiceMode.toggle()
                     if !isVoiceMode {
@@ -1122,6 +1176,10 @@ private struct ComposerView: View {
         .overlay(alignment: .top) {
             Divider().background(RemoteIMStyle.border)
         }
+        .onChange(of: selectedPhotoItem) { item in
+            guard let item else { return }
+            Task { await sendSelectedPhoto(item) }
+        }
     }
 
     private func submitDraft() {
@@ -1169,6 +1227,45 @@ private struct ComposerView: View {
             isCancellingVoice = false
             appState.errorMessage = error.localizedDescription
         }
+    }
+
+    private func sendSelectedPhoto(_ item: PhotosPickerItem) async {
+        defer { selectedPhotoItem = nil }
+        do {
+            guard let data = try await item.loadTransferable(type: Data.self) else {
+                appState.errorMessage = "图片读取失败"
+                return
+            }
+            let imageFile = try savePickedImage(data: data, contentTypes: item.supportedContentTypes)
+            await appState.sendImageFile(imageFile)
+        } catch {
+            appState.errorMessage = error.localizedDescription
+        }
+    }
+
+    private func savePickedImage(
+        data: Data,
+        contentTypes: [UTType]
+    ) throws -> RemoteIMImageFile {
+        let contentType = contentTypes.first(where: { $0.conforms(to: .image) })
+        let fileExtension = contentType?.preferredFilenameExtension ?? "jpg"
+        let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("RemoteIMPickedImage", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let fileURL = directory
+            .appendingPathComponent("remote-im-image-\(UUID().uuidString)")
+            .appendingPathExtension(fileExtension)
+        try data.write(to: fileURL, options: .atomic)
+
+        let image = UIImage(data: data)
+        let width = image.map { Int($0.size.width * $0.scale) }
+        let height = image.map { Int($0.size.height * $0.scale) }
+        return RemoteIMImageFile(
+            fileURL: fileURL,
+            width: width,
+            height: height,
+            sizeBytes: data.count
+        )
     }
 }
 

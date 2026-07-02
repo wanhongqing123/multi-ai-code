@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   connectTencentImClient,
   extractTencentImAudioMessages,
+  extractTencentImImageMessages,
   extractTencentImTextMessages,
   extractUserSig,
   generateTencentUserSig
@@ -28,6 +29,7 @@ const sdkMock = vi.hoisted(() => {
       loginUser = ''
     }),
     destroy: vi.fn(async () => undefined),
+    createImageMessage: vi.fn((message: unknown) => message),
     createTextMessage: vi.fn((message: unknown) => message),
     sendMessage: vi.fn(async () => ({ code: 0, message: 'OK' }))
   }
@@ -142,6 +144,63 @@ describe('tencent IM client helpers', () => {
         durationSeconds: 4,
         sizeBytes: 2048,
         uuid: 'sound-uuid-1',
+        createdAt: 1782238800000
+      }
+    ])
+  })
+
+  it('extracts C2C image messages from Tencent message events', () => {
+    const messages = extractTencentImImageMessages({
+      data: [
+        {
+          ID: 'image-1',
+          from: 'phone_admin',
+          to: 'desktop_bot',
+          type: 'TIMImageElem',
+          payload: {
+            uuid: 'image-uuid-1',
+            imageInfoArray: [
+              {
+                type: 1,
+                url: 'https://cos.example.test/thumb.png',
+                width: 160,
+                height: 120,
+                size: 512
+              },
+              {
+                type: 3,
+                url: 'https://cos.example.test/original.png',
+                width: 640,
+                height: 480,
+                size: 4096
+              }
+            ]
+          },
+          time: 1782238800
+        },
+        {
+          ID: 'msg-2',
+          from: 'phone_admin',
+          to: 'desktop_bot',
+          type: 'TIMTextElem',
+          payload: { text: 'hello' }
+        }
+      ]
+    })
+
+    expect(messages).toEqual([
+      {
+        remoteMessageId: 'image-1',
+        fromUserId: 'phone_admin',
+        toUserId: 'desktop_bot',
+        imageUrl: 'https://cos.example.test/original.png',
+        thumbnailUrl: 'https://cos.example.test/thumb.png',
+        width: 640,
+        height: 480,
+        sizeBytes: 4096,
+        uuid: 'image-uuid-1',
+        fileName: null,
+        mimeType: null,
         createdAt: 1782238800000
       }
     ])
@@ -262,6 +321,53 @@ describe('tencent IM client helpers', () => {
     await expect(runtime.sendText('desktop-b', 'hello')).rejects.toThrow(
       'IM 发送失败 (10017): not friends'
     )
+  })
+
+  it('sends image files through Tencent image messages', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ userSig: 'sig-1' })
+      }))
+    )
+
+    const runtimePromise = connectTencentImClient({
+      projectId: 'project-1',
+      config: {
+        enabled: true,
+        provider: 'tencent-im',
+        sdkAppId: 1400704311,
+        desktopUserId: 'desktop-a',
+        desktopRole: 'master',
+        userSigMode: 'endpoint',
+        userSigEndpoint: 'https://example.test/sig',
+        userSigSecretKey: '',
+        friendUserIds: [],
+        masterUserIds: ['desktop-b'],
+        slaveUserIds: [],
+        allowedUserIds: ['desktop-b'],
+        outputFlushIntervalMs: 1000,
+        outputMaxChunkChars: 1200
+      },
+      onIncomingText: vi.fn()
+    })
+
+    await vi.waitFor(() => expect(sdkMock.chat.login).toHaveBeenCalled())
+    sdkMock.chat.isReady.mockReturnValue(true)
+    sdkMock.handlers.get('sdkReady')?.()
+    const runtime = await runtimePromise
+    const file = new File([new Uint8Array([1, 2, 3])], 'photo.png', { type: 'image/png' })
+
+    expect(runtime.sendImage).toBeTypeOf('function')
+    await runtime.sendImage!('desktop-b', file, { messageId: 77 })
+
+    expect(sdkMock.chat.createImageMessage).toHaveBeenCalledWith({
+      to: 'desktop-b',
+      conversationType: 'C2C',
+      payload: { file }
+    })
+    expect(sdkMock.chat.sendMessage).toHaveBeenCalledTimes(1)
   })
 
   it('does not relogin before sending after SDK_READY only because isReady later reports false', async () => {

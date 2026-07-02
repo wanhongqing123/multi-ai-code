@@ -40,6 +40,8 @@ const messages: RemoteImMessage[] = [
     role: 'remote-user',
     direction: 'incoming',
     content: 'check build',
+    kind: 'text',
+    attachment: null,
     status: 'sent-to-aicli',
     error: null,
     createdAt: new Date('2026-06-23T14:18:04Z').getTime(),
@@ -57,6 +59,8 @@ const messages: RemoteImMessage[] = [
     role: 'remote-user',
     direction: 'outgoing',
     content: ['**Task**', '', '- `npm test` passed'].join('\n'),
+    kind: 'text',
+    attachment: null,
     status: 'sent-to-im',
     error: null,
     createdAt: new Date('2026-06-23T14:18:09Z').getTime(),
@@ -74,6 +78,8 @@ const messages: RemoteImMessage[] = [
     role: 'remote-user',
     direction: 'incoming',
     content: 'hello from friend',
+    kind: 'text',
+    attachment: null,
     status: 'received',
     error: null,
     createdAt: new Date('2026-06-23T14:18:12Z').getTime(),
@@ -96,6 +102,7 @@ function renderDrawer(overrides: Partial<RemoteImDrawerProps> = {}): string {
       onInputChange={vi.fn()}
       onSelectPeer={vi.fn()}
       onSend={vi.fn()}
+      onSendImage={vi.fn()}
       onAddContact={vi.fn()}
       onDeleteContact={vi.fn()}
       onClear={vi.fn()}
@@ -162,6 +169,44 @@ describe('RemoteImDrawer', () => {
 
     expect(html).toContain('<strong>Task</strong>')
     expect(html).toContain('<li><code>npm test</code> passed</li>')
+  })
+
+  it('renders an image picker button in the composer', () => {
+    const html = renderDrawer()
+
+    expect(html).toContain('class="remote-im-image-button"')
+    expect(html).toContain('aria-label="发送图片"')
+    expect(html).toContain('type="file"')
+    expect(html).toContain('accept="image/jpeg,image/png,image/gif,image/webp"')
+  })
+
+  it('renders image messages as image previews', () => {
+    const html = renderDrawer({
+      messages: [
+        {
+          ...messages[1],
+          id: 20,
+          content: '[图片消息] photo.png',
+          kind: 'image',
+          attachment: {
+            type: 'image',
+            localPath: '/tmp/photo.png',
+            remoteUrl: null,
+            thumbnailUrl: null,
+            width: 640,
+            height: 480,
+            sizeBytes: 4096,
+            fileName: 'photo.png',
+            mimeType: 'image/png',
+            sdkImageId: null
+          }
+        }
+      ]
+    })
+
+    expect(html).toContain('class="remote-im-image-preview"')
+    expect(html).toContain('src="file:///tmp/photo.png"')
+    expect(html).toContain('photo.png')
   })
 
   it('shows sent message status as a compact check mark', () => {

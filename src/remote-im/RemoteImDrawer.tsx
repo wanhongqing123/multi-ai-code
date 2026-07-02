@@ -1,5 +1,6 @@
 import {
   type CSSProperties,
+  type ChangeEvent,
   type FormEvent,
   type PointerEvent,
   useCallback,
@@ -46,6 +47,7 @@ export interface RemoteImDrawerProps {
   onInputChange: (value: string) => void
   onSelectPeer: (userId: string) => void
   onSend: (toUserId: string) => void
+  onSendImage: (toUserId: string, file: File) => void
   onAddContact: (relation: RemoteImContactRelation, userId: string) => void
   onDeleteContact: (userId: string) => void
   onClear: () => void
@@ -68,6 +70,38 @@ function RemoteImMarkdown(props: { content: string }): JSX.Element {
   return (
     <div className="remote-im-markdown">
       <ReactMarkdown remarkPlugins={[remarkGfm]}>{props.content.trim()}</ReactMarkdown>
+    </div>
+  )
+}
+
+function getRemoteImImageSource(value: string | null | undefined): string | null {
+  const source = value?.trim()
+  if (!source) return null
+  if (/^(https?:|data:image\/|blob:|file:)/i.test(source)) return source
+  if (source.startsWith('/')) return `file://${source}`
+  return source
+}
+
+function RemoteImImageMessage(props: { message: RemoteImMessage }): JSX.Element {
+  const attachment = props.message.attachment?.type === 'image' ? props.message.attachment : null
+  const imageSource = getRemoteImImageSource(
+    attachment?.localPath ?? attachment?.thumbnailUrl ?? attachment?.remoteUrl
+  )
+  const fileName = attachment?.fileName ?? props.message.content.replace(/^\[图片消息\]\s*/, '')
+
+  return (
+    <div className="remote-im-image-message">
+      {imageSource ? (
+        <img
+          className="remote-im-image-preview"
+          src={imageSource}
+          alt={fileName || '图片消息'}
+          loading="lazy"
+        />
+      ) : (
+        <div className="remote-im-image-placeholder">图片暂不可预览</div>
+      )}
+      <div className="remote-im-image-caption">{fileName || props.message.content}</div>
     </div>
   )
 }
@@ -104,6 +138,7 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
   const [conversationFilter, setConversationFilter] = useState<ConversationFilter>('recent')
   const [newContactUserId, setNewContactUserId] = useState('')
   const panelRef = useRef<HTMLDivElement | null>(null)
+  const imageInputRef = useRef<HTMLInputElement | null>(null)
   const [panelPosition, setPanelPosition] = useState<RemoteImPanelPosition | null>(null)
   const [dragState, setDragState] = useState<{
     startPosition: RemoteImPanelPosition
@@ -137,6 +172,8 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
       status: props.status,
       desktopRole: props.config.desktopRole
     }) || !selectedPeerUserId
+  const imageSendDisabled =
+    !selectedPeerUserId || !props.projectId || props.status?.state !== 'connected'
   const statusDetail = props.status?.detail
     ? sanitizeRemoteImDisplayText(props.status.detail)
     : null
@@ -235,6 +272,19 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
     if (!userId) return
     props.onAddContact('friend', userId)
     setNewContactUserId('')
+  }
+
+  function handleChooseImage(): void {
+    if (imageSendDisabled) return
+    imageInputRef.current?.click()
+  }
+
+  function handleImageInputChange(event: ChangeEvent<HTMLInputElement>): void {
+    const file = event.currentTarget.files?.[0]
+    event.currentTarget.value = ''
+    if (!file || !selectedPeerUserId || imageSendDisabled) return
+    if (!file.type.startsWith('image/')) return
+    props.onSendImage(selectedPeerUserId, file)
   }
 
   return (
@@ -384,7 +434,11 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
                           <span>{formatRemoteImTime(message.createdAt)}</span>
                         </div>
                         <div className="remote-im-bubble">
-                          <RemoteImMarkdown content={message.content} />
+                          {message.kind === 'image' ? (
+                            <RemoteImImageMessage message={message} />
+                          ) : (
+                            <RemoteImMarkdown content={message.content} />
+                          )}
                           {statusLabel ? (
                             <span className="remote-im-message-status" title={statusTitle}>
                               {statusLabel}
@@ -399,6 +453,25 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
             </div>
 
             <form className="remote-im-composer" onSubmit={handleSubmit}>
+              <button
+                type="button"
+                className="remote-im-image-button"
+                aria-label="发送图片"
+                title="发送图片"
+                disabled={imageSendDisabled}
+                onClick={handleChooseImage}
+              >
+                图
+              </button>
+              <input
+                ref={imageInputRef}
+                className="remote-im-image-input"
+                type="file"
+                accept="image/jpeg,image/png,image/gif,image/webp"
+                aria-label="选择图片"
+                disabled={imageSendDisabled}
+                onChange={handleImageInputChange}
+              />
               <input
                 value={props.input}
                 onChange={(event) => props.onInputChange(event.currentTarget.value)}

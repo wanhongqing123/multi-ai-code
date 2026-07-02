@@ -42,6 +42,8 @@ function message(overrides: Partial<RemoteImMessage>): RemoteImMessage {
     role: 'remote-user',
     direction: 'incoming',
     content: 'hello',
+    kind: 'text',
+    attachment: null,
     status: 'received',
     error: null,
     createdAt: 100,

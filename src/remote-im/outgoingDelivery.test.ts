@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { deliverRemoteImOutgoingText, type RemoteImOutgoingTextEvent } from './outgoingDelivery.js'
+import {
+  deliverRemoteImOutgoingImage,
+  deliverRemoteImOutgoingText,
+  type RemoteImOutgoingImageEvent,
+  type RemoteImOutgoingTextEvent
+} from './outgoingDelivery.js'
 import type { TencentImRuntime } from './tencentImClient.js'
 
 const event: RemoteImOutgoingTextEvent = {
@@ -76,5 +81,84 @@ describe('remote IM outgoing delivery', () => {
 
     expect(markSent).not.toHaveBeenCalled()
     expect(markFailed).toHaveBeenCalledWith(42, 'IM 发送超时')
+  })
+
+  it('marks an outgoing image as sent after SDK delivery succeeds', async () => {
+    const imageEvent: RemoteImOutgoingImageEvent = {
+      projectId: 'project-1',
+      messageId: 88,
+      toUserId: 'desktop-b',
+      fileToken: 'token-1'
+    }
+    const file = new File([new Uint8Array([1])], 'photo.png', { type: 'image/png' })
+    const runtime: TencentImRuntime = {
+      disconnect: vi.fn(),
+      sendText: vi.fn(async () => undefined),
+      sendImage: vi.fn(async () => undefined)
+    }
+    const markSent = vi.fn()
+    const markFailed = vi.fn()
+
+    await deliverRemoteImOutgoingImage({
+      runtime,
+      event: imageEvent,
+      resolveFile: () => file,
+      markSent,
+      markFailed
+    })
+
+    expect(runtime.sendImage).toHaveBeenCalledWith('desktop-b', file, { messageId: 88 })
+    expect(markSent).toHaveBeenCalledWith(88)
+    expect(markFailed).not.toHaveBeenCalled()
+  })
+
+  it('marks an outgoing image as failed when its file token is missing', async () => {
+    const imageEvent: RemoteImOutgoingImageEvent = {
+      projectId: 'project-1',
+      messageId: 88,
+      toUserId: 'desktop-b',
+      fileToken: 'missing-token'
+    }
+    const runtime: TencentImRuntime = {
+      disconnect: vi.fn(),
+      sendText: vi.fn(async () => undefined),
+      sendImage: vi.fn(async () => undefined)
+    }
+    const markSent = vi.fn()
+    const markFailed = vi.fn()
+
+    await deliverRemoteImOutgoingImage({
+      runtime,
+      event: imageEvent,
+      resolveFile: () => null,
+      markSent,
+      markFailed
+    })
+
+    expect(runtime.sendImage).not.toHaveBeenCalled()
+    expect(markSent).not.toHaveBeenCalled()
+    expect(markFailed).toHaveBeenCalledWith(88, '图片文件已失效，请重新选择')
+  })
+
+  it('marks an outgoing image as failed when no runtime is connected', async () => {
+    const imageEvent: RemoteImOutgoingImageEvent = {
+      projectId: 'project-1',
+      messageId: 88,
+      toUserId: 'desktop-b',
+      fileToken: 'token-1'
+    }
+    const markSent = vi.fn()
+    const markFailed = vi.fn()
+
+    await deliverRemoteImOutgoingImage({
+      runtime: null,
+      event: imageEvent,
+      resolveFile: vi.fn(),
+      markSent,
+      markFailed
+    })
+
+    expect(markSent).not.toHaveBeenCalled()
+    expect(markFailed).toHaveBeenCalledWith(88, 'IM 运行时未连接')
   })
 })

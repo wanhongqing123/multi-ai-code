@@ -82,6 +82,7 @@ export interface RemoteImStatus {
 
 export type RemoteImMessageRole = 'remote-user' | 'system' | 'aicli'
 export type RemoteImMessageDirection = 'incoming' | 'outgoing' | 'internal'
+export type RemoteImMessageKind = 'text' | 'image'
 export type RemoteImMessageStatus =
   | 'received'
   | 'rejected'
@@ -89,6 +90,21 @@ export type RemoteImMessageStatus =
   | 'streaming'
   | 'sent-to-im'
   | 'failed'
+
+export interface RemoteImImageAttachment {
+  type: 'image'
+  localPath: string | null
+  remoteUrl: string | null
+  thumbnailUrl: string | null
+  width: number | null
+  height: number | null
+  sizeBytes: number | null
+  fileName: string | null
+  mimeType: string | null
+  sdkImageId: string | null
+}
+
+export type RemoteImMessageAttachment = RemoteImImageAttachment
 
 export interface RemoteImMessage {
   id: number
@@ -101,6 +117,8 @@ export interface RemoteImMessage {
   role: RemoteImMessageRole
   direction: RemoteImMessageDirection
   content: string
+  kind: RemoteImMessageKind
+  attachment: RemoteImMessageAttachment | null
   status: RemoteImMessageStatus
   error: string | null
   createdAt: number
@@ -127,6 +145,31 @@ export interface RemoteImIncomingAudioMessage {
   sizeBytes?: number | null
   uuid?: string | null
   createdAt?: number
+}
+
+export interface RemoteImIncomingImageMessage {
+  projectId: string
+  remoteMessageId?: string | null
+  fromUserId: string
+  toUserId?: string | null
+  imageUrl: string
+  thumbnailUrl?: string | null
+  width?: number | null
+  height?: number | null
+  sizeBytes?: number | null
+  uuid?: string | null
+  fileName?: string | null
+  mimeType?: string | null
+  createdAt?: number
+}
+
+export interface RemoteImSendPeerImageInput {
+  fileToken: string
+  toUserId?: string | null
+  localPath?: string | null
+  fileName?: string | null
+  mimeType?: string | null
+  sizeBytes?: number | null
 }
 
 export interface RemoteImRuntimeLogEntryInput {
@@ -630,6 +673,10 @@ const api = {
       ipcRenderer.invoke('remote-im:send-peer-message', { projectId, text, toUserId }) as Promise<
         { ok: boolean; error?: string; toUserId?: string }
       >,
+    sendPeerImage: (projectId: string, image: RemoteImSendPeerImageInput) =>
+      ipcRenderer.invoke('remote-im:send-peer-image', { projectId, ...image }) as Promise<
+        { ok: boolean; error?: string; toUserId?: string }
+      >,
     deliverIncomingText: (message: RemoteImIncomingTextMessage) =>
       ipcRenderer.invoke('remote-im:deliver-incoming-text', message) as Promise<{
         ok: boolean
@@ -637,6 +684,11 @@ const api = {
       }>,
     deliverIncomingAudio: (message: RemoteImIncomingAudioMessage) =>
       ipcRenderer.invoke('remote-im:deliver-incoming-audio', message) as Promise<{
+        ok: boolean
+        error?: string
+      }>,
+    deliverIncomingImage: (message: RemoteImIncomingImageMessage) =>
+      ipcRenderer.invoke('remote-im:deliver-incoming-image', message) as Promise<{
         ok: boolean
         error?: string
       }>,
@@ -676,6 +728,16 @@ const api = {
       ) => cb(evt)
       ipcRenderer.on('remote-im:outgoing-text', handler)
       return () => ipcRenderer.removeListener('remote-im:outgoing-text', handler)
+    },
+    onOutgoingImage: (
+      cb: (evt: { projectId: string; toUserId: string; fileToken: string; messageId?: number | null }) => void
+    ) => {
+      const handler = (
+        _event: IpcRendererEvent,
+        evt: { projectId: string; toUserId: string; fileToken: string; messageId?: number | null }
+      ) => cb(evt)
+      ipcRenderer.on('remote-im:outgoing-image', handler)
+      return () => ipcRenderer.removeListener('remote-im:outgoing-image', handler)
     }
   },
   git: {

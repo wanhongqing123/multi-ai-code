@@ -37,7 +37,11 @@ import {
   type RemoteImOutputCompletionInfo,
   type RemoteImOutputSessionState
 } from './outputForwarding.js'
-import { createPeerOutgoingMessageInput, resolvePeerUserId } from './peerMessage.js'
+import {
+  createPeerOutgoingImageMessageInput,
+  createPeerOutgoingMessageInput,
+  resolvePeerUserId
+} from './peerMessage.js'
 import { getRemoteImAccountProfileId, getRemoteImProfileId } from './profile.js'
 import { createRemoteImRouter } from './router.js'
 import { appendRemoteImRuntimeLog } from './runtimeLog.js'
@@ -48,11 +52,14 @@ import {
   getRemoteImSendConnectionError
 } from './status.js'
 import { transcribeRemoteImAudioWithLocalWhisper } from './localWhisper.js'
+import { cacheRemoteImImage } from './imageCache.js'
 import type {
   RemoteImAccountConfig,
   RemoteImConfig,
   RemoteImIncomingAudioMessage,
+  RemoteImIncomingImageMessage,
   RemoteImIncomingTextMessage,
+  RemoteImImageAttachment,
   RemoteImRuntimeLogEntryInput,
   RemoteImLoginState,
   RemoteImStatus
@@ -94,6 +101,15 @@ function broadcastOutgoingText(
   messageId?: number
 ): void {
   broadcast('remote-im:outgoing-text', { projectId, toUserId, text, messageId })
+}
+
+function broadcastOutgoingImage(
+  projectId: string,
+  toUserId: string,
+  fileToken: string,
+  messageId?: number
+): void {
+  broadcast('remote-im:outgoing-image', { projectId, toUserId, fileToken, messageId })
 }
 
 function scheduleOutgoingDeliveryAckTimeout(projectId: string, messageId: number): void {
@@ -232,6 +248,24 @@ function sendImText(projectId: string, toUserId: string, text: string): Promise<
   return Promise.resolve({ ok: true })
 }
 
+function imageAttachmentFromIncoming(
+  message: RemoteImIncomingImageMessage,
+  patch: Partial<RemoteImImageAttachment> = {}
+): RemoteImImageAttachment {
+  return {
+    type: 'image',
+    localPath: patch.localPath ?? null,
+    remoteUrl: patch.remoteUrl ?? (message.imageUrl.trim() || null),
+    thumbnailUrl: patch.thumbnailUrl ?? message.thumbnailUrl?.trim() ?? null,
+    width: patch.width ?? message.width ?? null,
+    height: patch.height ?? message.height ?? null,
+    sizeBytes: patch.sizeBytes ?? message.sizeBytes ?? null,
+    fileName: patch.fileName ?? message.fileName?.trim() ?? null,
+    mimeType: patch.mimeType ?? message.mimeType?.trim() ?? null,
+    sdkImageId: patch.sdkImageId ?? message.uuid?.trim() ?? null
+  }
+}
+
 function removeRemoteImAccountContact(
   account: RemoteImAccountConfig,
   rawUserId: string
@@ -311,6 +345,54 @@ async function sendRemoteImPeerMessage(
   broadcastOutgoingText(projectId, peerUserId, cleanText, message.id)
   scheduleOutgoingDeliveryAckTimeout(projectId, message.id)
   broadcastMessagesChanged(projectId)
+  return { ok: true, toUserId: peerUserId }
+}
+
+async function sendRemoteImPeerImage(input: {
+  projectId: string
+  fileToken: string
+  toUserId?: string | null
+  localPath?: string | null
+  fileName?: string | null
+  mimeType?: string | null
+  sizeBytes?: number | null
+}): Promise<{ ok: boolean; error?: string; toUserId?: string }> {
+  const config = await getRemoteImConfig(input.projectId)
+  const fileToken = input.fileToken.trim()
+  if (!fileToken) return { ok: false, error: '图片文件已失效，请重新选择' }
+  const peerUserId = resolvePeerUserId(config, input.toUserId)
+  if (!peerUserId) {
+    return { ok: false, error: '未配置远程 IM 联系人账号' }
+  }
+  const connectionError = getRemoteImSendConnectionError(await getRemoteImStatus(input.projectId))
+  if (connectionError) {
+    return { ok: false, error: connectionError }
+  }
+
+  const attachment: RemoteImImageAttachment = {
+    type: 'image',
+    localPath: input.localPath?.trim() || null,
+    remoteUrl: null,
+    thumbnailUrl: null,
+    width: null,
+    height: null,
+    sizeBytes: input.sizeBytes ?? null,
+    fileName: input.fileName?.trim() || null,
+    mimeType: input.mimeType?.trim() || null,
+    sdkImageId: null
+  }
+  const message = createRemoteImMessage(
+    createPeerOutgoingImageMessageInput({
+      projectId: input.projectId,
+      config,
+      toUserId: peerUserId,
+      attachment,
+      now: Date.now()
+    })
+  )
+  broadcastOutgoingImage(input.projectId, peerUserId, fileToken, message.id)
+  scheduleOutgoingDeliveryAckTimeout(input.projectId, message.id)
+  broadcastMessagesChanged(input.projectId)
   return { ok: true, toUserId: peerUserId }
 }
 
@@ -650,6 +732,65 @@ export function registerRemoteImIpc(): void {
   )
 
   ipcMain.handle(
+    'remote-im:deliver-incoming-image',
+    async (_event, message: RemoteImIncomingImageMessage) => {
+      const config = await getRemoteImConfig(message.projectId)
+      const session = getActiveSessionForProject(message.projectId)
+      const router = createRemoteImRouter({
+        getConfig: () => config,
+        resolveSession: () => session,
+        sendUser: sendUserMessageToSession,
+        sendImText,
+        transcribeAudio: transcribeRemoteImAudioWithLocalWhisper,
+        cacheImage: async (incoming) => {
+          try {
+            const cached = await cacheRemoteImImage({
+              rootDir: rootDir(),
+              projectId: incoming.projectId,
+              remoteUrl: incoming.imageUrl,
+              remoteMessageId: incoming.remoteMessageId,
+              fileName: incoming.fileName,
+              mimeType: incoming.mimeType
+            })
+            return {
+              ok: true as const,
+              attachment: imageAttachmentFromIncoming(incoming, {
+                localPath: cached.localPath,
+                fileName: cached.fileName,
+                mimeType: cached.mimeType,
+                sizeBytes: cached.sizeBytes
+              })
+            }
+          } catch (err) {
+            return {
+              ok: false as const,
+              error: err instanceof Error ? err.message : String(err),
+              attachment: imageAttachmentFromIncoming(incoming)
+            }
+          }
+        },
+        store: {
+          create: (input) => createRemoteImMessage(input),
+          updateStatus: (id, patch) =>
+            updateRemoteImMessageStatus(id, {
+              status: patch.status ?? 'received',
+              sessionId: patch.sessionId,
+              error: patch.error,
+              sentToAicliAt: patch.sentToAicliAt,
+              sentToImAt: patch.sentToImAt
+            })
+        }
+      })
+      const result = await router.handleIncomingImage(message)
+      if (result.ok && result.aicliSessionId) {
+        startOutputForwarding(result.aicliSessionId, message.projectId, message.fromUserId, config)
+      }
+      broadcastMessagesChanged(message.projectId)
+      return result
+    }
+  )
+
+  ipcMain.handle(
     'remote-im:send-local-message',
     async (_event, { projectId, text }: { projectId: string; text: string }) => {
       const session = getActiveSessionForProject(projectId)
@@ -680,6 +821,24 @@ export function registerRemoteImIpc(): void {
       { projectId, text, toUserId }: { projectId: string; text: string; toUserId?: string | null }
     ) => {
       return await sendRemoteImPeerMessage(projectId, text, toUserId)
+    }
+  )
+
+  ipcMain.handle(
+    'remote-im:send-peer-image',
+    async (
+      _event,
+      input: {
+        projectId: string
+        fileToken: string
+        toUserId?: string | null
+        localPath?: string | null
+        fileName?: string | null
+        mimeType?: string | null
+        sizeBytes?: number | null
+      }
+    ) => {
+      return await sendRemoteImPeerImage(input)
     }
   )
 }

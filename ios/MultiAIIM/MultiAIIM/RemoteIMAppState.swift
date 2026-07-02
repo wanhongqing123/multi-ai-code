@@ -69,6 +69,11 @@ final class RemoteIMAppState: ObservableObject {
                 self?.receive(event)
             }
         }
+        self.client.onIncomingImage = { [weak self] event in
+            Task { @MainActor in
+                self?.receive(event)
+            }
+        }
     }
 
     var selectedContact: RemoteIMContact? {
@@ -87,6 +92,10 @@ final class RemoteIMAppState: ObservableObject {
     }
 
     var canSendVoice: Bool {
+        connectionState == .connected && selectedContact != nil
+    }
+
+    var canSendImage: Bool {
         connectionState == .connected && selectedContact != nil
     }
 
@@ -237,6 +246,30 @@ final class RemoteIMAppState: ObservableObject {
         }
     }
 
+    func sendImageFile(_ image: RemoteIMImageFile) async {
+        guard canSendImage else { return }
+
+        do {
+            let message = try chatState.queueOutgoingImage(
+                filePath: image.fileURL.path,
+                width: image.width,
+                height: image.height,
+                sizeBytes: image.sizeBytes
+            )
+            persistCurrentHistory()
+            try await client.sendImage(to: message.toUserID, image: image)
+            try chatState.updateMessageStatus(id: message.id, status: .sent)
+            persistCurrentHistory()
+            errorMessage = nil
+        } catch {
+            if let lastMessage = chatState.messages.last, lastMessage.status == .pending {
+                try? chatState.updateMessageStatus(id: lastMessage.id, status: .failed)
+                persistCurrentHistory()
+            }
+            errorMessage = error.localizedDescription
+        }
+    }
+
     private func receive(_ event: IncomingRemoteIMText) {
         _ = chatState.receiveText(event.text, fromUserID: event.fromUserID)
         persistCurrentHistory()
@@ -249,6 +282,19 @@ final class RemoteIMAppState: ObservableObject {
             durationSeconds: event.durationSeconds,
             fromUserID: event.fromUserID,
             remoteID: event.remoteID
+        )
+        persistCurrentHistory()
+        settingsStore.save(currentStoredSettings())
+    }
+
+    private func receive(_ event: IncomingRemoteIMImage) {
+        _ = chatState.receiveImage(
+            filePath: event.fileURL.path,
+            fromUserID: event.fromUserID,
+            remoteID: event.remoteID,
+            width: event.width,
+            height: event.height,
+            sizeBytes: event.sizeBytes
         )
         persistCurrentHistory()
         settingsStore.save(currentStoredSettings())

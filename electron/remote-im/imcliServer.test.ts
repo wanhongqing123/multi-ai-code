@@ -40,6 +40,8 @@ function message(overrides: Partial<RemoteImMessage>): RemoteImMessage {
     toUserId: 'agent-a',
     role: 'remote-user',
     direction: 'incoming',
+    kind: 'text',
+    attachment: null,
     content: 'hello',
     status: 'received',
     error: null,

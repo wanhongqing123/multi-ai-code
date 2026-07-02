@@ -12,9 +12,25 @@ struct IncomingRemoteIMVoice: Equatable {
     let remoteID: String?
 }
 
+struct IncomingRemoteIMImage: Equatable {
+    let fromUserID: String
+    let fileURL: URL
+    let remoteID: String?
+    let width: Int?
+    let height: Int?
+    let sizeBytes: Int?
+}
+
 struct RemoteIMVoiceRecording: Equatable {
     let fileURL: URL
     let durationSeconds: Int
+}
+
+struct RemoteIMImageFile: Equatable {
+    let fileURL: URL
+    let width: Int?
+    let height: Int?
+    let sizeBytes: Int?
 }
 
 enum RemoteIMClientError: Error, LocalizedError {
@@ -38,9 +54,11 @@ enum RemoteIMClientError: Error, LocalizedError {
 protocol RemoteIMClient: AnyObject {
     var onIncomingText: ((IncomingRemoteIMText) -> Void)? { get set }
     var onIncomingVoice: ((IncomingRemoteIMVoice) -> Void)? { get set }
+    var onIncomingImage: ((IncomingRemoteIMImage) -> Void)? { get set }
 
     func connect(sdkAppID: Int, userID: String, userSig: String) async throws
     func disconnect() async
     func sendText(to userID: String, text: String) async throws
     func sendVoice(to userID: String, recording: RemoteIMVoiceRecording) async throws
+    func sendImage(to userID: String, image: RemoteIMImageFile) async throws
 }

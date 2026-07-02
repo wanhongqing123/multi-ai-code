@@ -213,6 +213,154 @@ describe('remote IM router', () => {
     })
   })
 
+  it('routes trusted image messages to AICLI with the cached local image path', async () => {
+    const store = createMessageStore()
+    const sentToAicli: Array<{ sessionId: string; text: string; displayText: string | undefined }> = []
+    const sentToIm: string[] = []
+    const router = createRemoteImRouter({
+      getConfig: () => config,
+      resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
+      sendUser: async (sessionId, text, options) => {
+        sentToAicli.push({ sessionId, text, displayText: options?.displayText })
+        return { ok: true }
+      },
+      sendImText: async (_projectId, _toUserId, text) => {
+        sentToIm.push(text)
+        return { ok: true }
+      },
+      cacheImage: async () => ({
+        ok: true,
+        attachment: {
+          type: 'image',
+          localPath: '/tmp/remote-im/images/photo.png',
+          remoteUrl: 'https://example.test/photo.png',
+          thumbnailUrl: 'https://example.test/thumb.png',
+          width: 640,
+          height: 480,
+          sizeBytes: 4096,
+          fileName: 'photo.png',
+          mimeType: 'image/png',
+          sdkImageId: 'image-1'
+        }
+      }),
+      store
+    })
+
+    const result = await router.handleIncomingImage({
+      projectId: 'project-1',
+      remoteMessageId: 'image-remote-1',
+      fromUserId: 'phone_admin',
+      toUserId: 'desktop_bot',
+      imageUrl: 'https://example.test/photo.png',
+      thumbnailUrl: 'https://example.test/thumb.png',
+      width: 640,
+      height: 480,
+      fileName: 'photo.png',
+      mimeType: 'image/png',
+      uuid: 'image-1',
+      createdAt: 100
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.aicliSessionId).toBe('session-main')
+    expect(sentToAicli).toHaveLength(1)
+    expect(sentToAicli[0]?.text).toContain('本地路径: /tmp/remote-im/images/photo.png')
+    expect(sentToAicli[0]?.displayText).toContain('本地路径: /tmp/remote-im/images/photo.png')
+    expect(sentToIm[0]).toContain('已发送给当前 AICLI')
+    expect(store.messages[0]).toMatchObject({
+      kind: 'image',
+      status: 'sent-to-aicli',
+      content: '[图片消息] photo.png',
+      attachment: {
+        type: 'image',
+        localPath: '/tmp/remote-im/images/photo.png'
+      }
+    })
+  })
+
+  it('records image download failures without sending AICLI input', async () => {
+    const store = createMessageStore()
+    const sentToAicli: string[] = []
+    const sentToIm: string[] = []
+    const router = createRemoteImRouter({
+      getConfig: () => config,
+      resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
+      sendUser: async (_sessionId, text) => {
+        sentToAicli.push(text)
+        return { ok: true }
+      },
+      sendImText: async (_projectId, _toUserId, text) => {
+        sentToIm.push(text)
+        return { ok: true }
+      },
+      cacheImage: async () => ({
+        ok: false,
+        error: 'HTTP 404'
+      }),
+      store
+    })
+
+    const result = await router.handleIncomingImage({
+      projectId: 'project-1',
+      remoteMessageId: 'image-remote-1',
+      fromUserId: 'phone_admin',
+      toUserId: 'desktop_bot',
+      imageUrl: 'https://example.test/missing.png',
+      fileName: 'missing.png',
+      createdAt: 100
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('HTTP 404')
+    expect(sentToAicli).toEqual([])
+    expect(sentToIm[0]).toContain('图片下载失败')
+    expect(store.messages[0]).toMatchObject({
+      kind: 'image',
+      status: 'failed',
+      error: 'HTTP 404',
+      attachment: {
+        type: 'image',
+        localPath: null,
+        remoteUrl: 'https://example.test/missing.png'
+      }
+    })
+  })
+
+  it('rejects image messages from unknown senders before downloading', async () => {
+    const store = createMessageStore()
+    let downloadAttempted = false
+    const router = createRemoteImRouter({
+      getConfig: () => config,
+      resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
+      sendUser: async () => ({ ok: true }),
+      sendImText: async () => ({ ok: true }),
+      cacheImage: async () => {
+        downloadAttempted = true
+        return { ok: false, error: 'should not download' }
+      },
+      store
+    })
+
+    const result = await router.handleIncomingImage({
+      projectId: 'project-1',
+      remoteMessageId: 'image-remote-1',
+      fromUserId: 'intruder',
+      toUserId: 'desktop_bot',
+      imageUrl: 'https://example.test/photo.png',
+      fileName: 'photo.png',
+      createdAt: 100
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('not allowed')
+    expect(downloadAttempted).toBe(false)
+    expect(store.messages[0]).toMatchObject({
+      kind: 'image',
+      status: 'rejected',
+      error: 'sender not allowed'
+    })
+  })
+
   it('routes configured friend messages to the current AICLI session', async () => {
     const store = createMessageStore()
     const sentToAicli: string[] = []

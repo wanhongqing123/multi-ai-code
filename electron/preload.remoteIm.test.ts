@@ -69,6 +69,14 @@ describe('preload remote IM api', () => {
     await api.remoteIm.deleteContact('project-1', 'desktop_slave')
     await api.remoteIm.sendLocalMessage('project-1', 'hello')
     await api.remoteIm.sendPeerMessage('project-1', 'hello peer', 'desktop_slave')
+    await api.remoteIm.sendPeerImage('project-1', {
+      fileToken: 'file-token-1',
+      toUserId: 'desktop_slave',
+      localPath: '/tmp/photo.png',
+      fileName: 'photo.png',
+      mimeType: 'image/png',
+      sizeBytes: 123
+    })
     await api.remoteIm.markOutgoingMessageSent('project-1', 42)
     await api.remoteIm.markOutgoingMessageFailed('project-1', 43, 'send failed')
     await api.remoteIm.writeRuntimeLog({
@@ -86,6 +94,12 @@ describe('preload remote IM api', () => {
       fromUserId: 'phone_admin',
       audioUrl: 'https://cos.example.test/voice.amr',
       durationSeconds: 4
+    })
+    await api.remoteIm.deliverIncomingImage({
+      projectId: 'project-1',
+      fromUserId: 'phone_admin',
+      imageUrl: 'https://cos.example.test/photo.png',
+      fileName: 'photo.png'
     })
     await api.remoteIm.updateSdkStatus({
       projectId: 'project-1',
@@ -131,34 +145,49 @@ describe('preload remote IM api', () => {
       text: 'hello peer',
       toUserId: 'desktop_slave'
     })
-    expect(electronMock.invoke).toHaveBeenNthCalledWith(12, 'remote-im:mark-outgoing-message-sent', {
+    expect(electronMock.invoke).toHaveBeenNthCalledWith(12, 'remote-im:send-peer-image', {
+      projectId: 'project-1',
+      fileToken: 'file-token-1',
+      toUserId: 'desktop_slave',
+      localPath: '/tmp/photo.png',
+      fileName: 'photo.png',
+      mimeType: 'image/png',
+      sizeBytes: 123
+    })
+    expect(electronMock.invoke).toHaveBeenNthCalledWith(13, 'remote-im:mark-outgoing-message-sent', {
       projectId: 'project-1',
       messageId: 42
     })
-    expect(electronMock.invoke).toHaveBeenNthCalledWith(13, 'remote-im:mark-outgoing-message-failed', {
+    expect(electronMock.invoke).toHaveBeenNthCalledWith(14, 'remote-im:mark-outgoing-message-failed', {
       projectId: 'project-1',
       messageId: 43,
       error: 'send failed'
     })
-    expect(electronMock.invoke).toHaveBeenNthCalledWith(14, 'remote-im:write-runtime-log', {
+    expect(electronMock.invoke).toHaveBeenNthCalledWith(15, 'remote-im:write-runtime-log', {
       entry: {
         projectId: 'project-1',
         event: 'send:start',
         desktopUserId: 'desktop_bot'
       }
     })
-    expect(electronMock.invoke).toHaveBeenNthCalledWith(15, 'remote-im:deliver-incoming-text', {
+    expect(electronMock.invoke).toHaveBeenNthCalledWith(16, 'remote-im:deliver-incoming-text', {
       projectId: 'project-1',
       fromUserId: 'phone_admin',
       text: 'hello'
     })
-    expect(electronMock.invoke).toHaveBeenNthCalledWith(16, 'remote-im:deliver-incoming-audio', {
+    expect(electronMock.invoke).toHaveBeenNthCalledWith(17, 'remote-im:deliver-incoming-audio', {
       projectId: 'project-1',
       fromUserId: 'phone_admin',
       audioUrl: 'https://cos.example.test/voice.amr',
       durationSeconds: 4
     })
-    expect(electronMock.invoke).toHaveBeenNthCalledWith(17, 'remote-im:update-sdk-status', {
+    expect(electronMock.invoke).toHaveBeenNthCalledWith(18, 'remote-im:deliver-incoming-image', {
+      projectId: 'project-1',
+      fromUserId: 'phone_admin',
+      imageUrl: 'https://cos.example.test/photo.png',
+      fileName: 'photo.png'
+    })
+    expect(electronMock.invoke).toHaveBeenNthCalledWith(19, 'remote-im:update-sdk-status', {
       projectId: 'project-1',
       state: 'connected',
       detail: null
@@ -205,6 +234,25 @@ describe('preload remote IM api', () => {
     expect(electronMock.removeListener).toHaveBeenCalledWith(
       'remote-im:outgoing-text',
       outgoingHandler
+    )
+
+    const outgoingImageCb = vi.fn()
+    const offOutgoingImage = api.remoteIm.onOutgoingImage(outgoingImageCb)
+    const outgoingImageHandler = electronMock.on.mock.calls.find(
+      (call) => call[0] === 'remote-im:outgoing-image'
+    )?.[1]
+    const outgoingImage = {
+      projectId: 'project-1',
+      toUserId: 'phone_admin',
+      fileToken: 'file-token-1',
+      messageId: 43
+    }
+    outgoingImageHandler({}, outgoingImage)
+    expect(outgoingImageCb).toHaveBeenCalledWith(outgoingImage)
+    offOutgoingImage()
+    expect(electronMock.removeListener).toHaveBeenCalledWith(
+      'remote-im:outgoing-image',
+      outgoingImageHandler
     )
   })
 })

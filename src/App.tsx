@@ -52,6 +52,10 @@ import {
   isRemoteImAccountReady,
   shouldPromptRemoteImStartupLogin
 } from './remote-im/remoteImLoginFlow'
+import {
+  forgetRemoteImOutgoingImageFile,
+  registerRemoteImOutgoingImageFile
+} from './remote-im/outgoingImageRegistry'
 import ScreenSamplerIndicator from './habit/ScreenSamplerIndicator'
 import FirstRunNoticeDialog from './habit/FirstRunNoticeDialog'
 import { getCliTargetLabel } from './components/cliTarget'
@@ -1090,6 +1094,43 @@ function AppShell() {
     const messages = await window.api.remoteIm.listMessages(currentProjectId, 100)
     setRemoteImMessages(messages)
   }, [currentProjectId, remoteImInput, remoteImSelectedPeerUserId])
+
+  const handleSendRemoteImImage = useCallback(async (toUserId: string, file: File) => {
+    if (!currentProjectId) return
+    const peerUserId = toUserId.trim() || remoteImSelectedPeerUserId?.trim() || ''
+    if (!peerUserId) {
+      showToast('请选择要发送的联系人', { level: 'warn' })
+      return
+    }
+    if (!file.type.startsWith('image/')) {
+      showToast('请选择图片文件', { level: 'warn' })
+      return
+    }
+    const maxImageBytes = 20 * 1024 * 1024
+    if (file.size > maxImageBytes) {
+      showToast('图片不能超过 20 MB', { level: 'warn' })
+      return
+    }
+
+    const fileToken = registerRemoteImOutgoingImageFile(file)
+    const localPath = window.api.getPathForFile(file) || null
+    const result = await window.api.remoteIm.sendPeerImage(currentProjectId, {
+      fileToken,
+      toUserId: peerUserId,
+      localPath,
+      fileName: file.name || null,
+      mimeType: file.type || null,
+      sizeBytes: file.size
+    })
+    if (!result.ok) {
+      forgetRemoteImOutgoingImageFile(fileToken)
+      showToast(result.error ?? '发送远程 IM 图片失败', { level: 'error' })
+      return
+    }
+    setRemoteImSelectedPeerUserId(result.toUserId ?? peerUserId)
+    const messages = await window.api.remoteIm.listMessages(currentProjectId, 100)
+    setRemoteImMessages(messages)
+  }, [currentProjectId, remoteImSelectedPeerUserId])
 
   const handleSubmitRemoteImLogin = useCallback(async (input: RemoteImLoginSubmitInput) => {
     setRemoteImLoginSaving(true)
@@ -2201,6 +2242,7 @@ function AppShell() {
         onInputChange={setRemoteImInput}
         onSelectPeer={setRemoteImSelectedPeerUserId}
         onSend={(toUserId) => void handleSendRemoteImLocalMessage(toUserId)}
+        onSendImage={(toUserId, file) => void handleSendRemoteImImage(toUserId, file)}
         onAddContact={(relation, userId) => void handleAddRemoteImContact(relation, userId)}
         onDeleteContact={(userId) => void handleDeleteRemoteImContact(userId)}
         onClear={() => void handleClearRemoteImMessages()}

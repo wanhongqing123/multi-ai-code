@@ -1,6 +1,10 @@
 import { useEffect, useRef } from 'react'
 import type { RemoteImConfig } from '../../electron/preload.js'
-import { deliverRemoteImOutgoingText } from './outgoingDelivery.js'
+import { deliverRemoteImOutgoingImage, deliverRemoteImOutgoingText } from './outgoingDelivery.js'
+import {
+  forgetRemoteImOutgoingImageFile,
+  resolveRemoteImOutgoingImageFile
+} from './outgoingImageRegistry.js'
 import { createRemoteImRuntimeSlot } from './remoteImRuntimeSlot.js'
 import { connectTencentImClient, type TencentImRuntime } from './tencentImClient.js'
 
@@ -115,6 +119,9 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
           onIncomingAudio: (message) => {
             void window.api.remoteIm.deliverIncomingAudio(message)
           },
+          onIncomingImage: (message) => {
+            void window.api.remoteIm.deliverIncomingImage(message)
+          },
           onRuntimeLog: (entry) => {
             void window.api.remoteIm.writeRuntimeLog(entry)
           }
@@ -189,10 +196,59 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
       })()
     })
 
+    const offOutgoingImage = window.api.remoteIm.onOutgoingImage((evt) => {
+      if (evt.projectId !== props.projectId) return
+      const markFailed = (messageId: number, error: string) => {
+        void window.api.remoteIm.writeRuntimeLog({
+          projectId: evt.projectId,
+          sdkAppId: props.config.sdkAppId,
+          desktopUserId: props.config.desktopUserId,
+          peerUserId: evt.toUserId,
+          messageId,
+          event: 'send:image:delivery-failed',
+          detail: { error }
+        })
+        return window.api.remoteIm.markOutgoingMessageFailed(evt.projectId, messageId, error)
+      }
+      void (async () => {
+        try {
+          const runtime = await runtimeSlotRef.current.waitForCurrent(
+            OUTGOING_RUNTIME_WAIT_TIMEOUT_MS
+          )
+          await deliverRemoteImOutgoingImage({
+            runtime,
+            event: evt,
+            resolveFile: resolveRemoteImOutgoingImageFile,
+            markSent: (messageId) =>
+              window.api.remoteIm.markOutgoingMessageSent(evt.projectId, messageId),
+            markFailed
+          })
+        } catch (err) {
+          if (!evt.messageId) return
+          await markFailed(
+            evt.messageId,
+            err instanceof Error ? err.message : String(err)
+          )
+          void window.api.remoteIm.writeRuntimeLog({
+            projectId: evt.projectId,
+            sdkAppId: props.config.sdkAppId,
+            desktopUserId: props.config.desktopUserId,
+            peerUserId: evt.toUserId,
+            messageId: evt.messageId,
+            event: 'send:image:runtime-wait-failed',
+            detail: { error: err instanceof Error ? err.message : String(err) }
+          })
+        } finally {
+          forgetRemoteImOutgoingImageFile(evt.fileToken)
+        }
+      })()
+    })
+
     return () => {
       cancelled = true
       cancelScheduledConnect()
       offOutgoing()
+      offOutgoingImage()
       void enqueueLifecycle(disconnectOwned).catch(() => undefined)
     }
   }, [connectionKey])

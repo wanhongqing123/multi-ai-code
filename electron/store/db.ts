@@ -146,6 +146,8 @@ CREATE TABLE IF NOT EXISTS remote_im_messages (
   role              TEXT NOT NULL,
   direction         TEXT NOT NULL,
   content           TEXT NOT NULL,
+  kind              TEXT NOT NULL DEFAULT 'text',
+  attachment_json   TEXT,
   status            TEXT NOT NULL,
   error             TEXT,
   created_at        INTEGER NOT NULL,
@@ -201,6 +203,8 @@ export function initDb(): Database.Database {
   ensureColumn(db, 'habit_events', 'repo_path', 'TEXT')
   ensureColumn(db, 'habit_events', 'source_window', 'TEXT')
   ensureColumn(db, 'skills', 'enabled', 'INTEGER NOT NULL DEFAULT 1')
+  ensureColumn(db, 'remote_im_messages', 'kind', "TEXT NOT NULL DEFAULT 'text'")
+  ensureColumn(db, 'remote_im_messages', 'attachment_json', 'TEXT')
   try {
     db.prepare('DROP INDEX IF EXISTS idx_managed_chrome_sessions_running').run()
     db.prepare('DROP TABLE IF EXISTS managed_chrome_sessions').run()

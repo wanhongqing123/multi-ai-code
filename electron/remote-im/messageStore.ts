@@ -1,7 +1,10 @@
 import { getDb } from '../store/db.js'
 import type {
+  RemoteImImageAttachment,
   RemoteImMessage,
+  RemoteImMessageAttachment,
   RemoteImMessageDirection,
+  RemoteImMessageKind,
   RemoteImMessageRole,
   RemoteImMessageStatus,
   RemoteImProvider
@@ -28,6 +31,8 @@ interface RemoteImMessageRow {
   role: RemoteImMessageRole
   direction: RemoteImMessageDirection
   content: string
+  kind?: RemoteImMessageKind | string | null
+  attachment_json?: string | null
   status: RemoteImMessageStatus
   error: string | null
   created_at: number
@@ -45,6 +50,8 @@ export interface CreateRemoteImMessageInput {
   role: RemoteImMessageRole
   direction: RemoteImMessageDirection
   content: string
+  kind?: RemoteImMessageKind
+  attachment?: RemoteImMessageAttachment | null
   status: RemoteImMessageStatus
   error?: string | null
   createdAt?: number
@@ -60,7 +67,54 @@ export interface UpdateRemoteImMessageStatusInput {
   sentToImAt?: number | null
 }
 
+function normalizeMessageKind(value: unknown): RemoteImMessageKind {
+  return value === 'image' ? 'image' : 'text'
+}
+
+function nullableString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function nullableNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function parseImageAttachment(value: Record<string, unknown>): RemoteImImageAttachment {
+  return {
+    type: 'image',
+    localPath: nullableString(value.localPath),
+    remoteUrl: nullableString(value.remoteUrl),
+    thumbnailUrl: nullableString(value.thumbnailUrl),
+    width: nullableNumber(value.width),
+    height: nullableNumber(value.height),
+    sizeBytes: nullableNumber(value.sizeBytes),
+    fileName: nullableString(value.fileName),
+    mimeType: nullableString(value.mimeType),
+    sdkImageId: nullableString(value.sdkImageId)
+  }
+}
+
+function parseAttachmentJson(
+  kind: RemoteImMessageKind,
+  value: string | null | undefined
+): RemoteImMessageAttachment | null {
+  if (!value) return null
+  try {
+    const parsed = JSON.parse(value) as unknown
+    if (!parsed || typeof parsed !== 'object') return null
+    if (kind === 'image') return parseImageAttachment(parsed as Record<string, unknown>)
+    return null
+  } catch {
+    return null
+  }
+}
+
+function serializeAttachmentJson(attachment: RemoteImMessageAttachment | null | undefined): string | null {
+  return attachment ? JSON.stringify(attachment) : null
+}
+
 function mapRow(row: RemoteImMessageRow): RemoteImMessage {
+  const kind = normalizeMessageKind(row.kind)
   return {
     id: row.id,
     projectId: row.project_id,
@@ -72,6 +126,8 @@ function mapRow(row: RemoteImMessageRow): RemoteImMessage {
     role: row.role,
     direction: row.direction,
     content: row.content,
+    kind,
+    attachment: parseAttachmentJson(kind, row.attachment_json),
     status: row.status,
     error: row.error,
     createdAt: row.created_at,
@@ -107,13 +163,15 @@ export function createRemoteImMessageStore(database: RemoteImDatabase) {
           role,
           direction,
           content,
+          kind,
+          attachment_json,
           status,
           error,
           created_at,
           sent_to_aicli_at,
           sent_to_im_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `
       )
       .run(
@@ -126,6 +184,8 @@ export function createRemoteImMessageStore(database: RemoteImDatabase) {
         input.role,
         input.direction,
         input.content,
+        input.kind ?? 'text',
+        serializeAttachmentJson(input.attachment),
         input.status,
         input.error ?? null,
         createdAt,

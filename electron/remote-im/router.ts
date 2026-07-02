@@ -1,7 +1,9 @@
 import type {
   RemoteImConfig,
   RemoteImIncomingAudioMessage,
+  RemoteImIncomingImageMessage,
   RemoteImIncomingTextMessage,
+  RemoteImImageAttachment,
   RemoteImMessage
 } from './types.js'
 import {
@@ -33,6 +35,12 @@ export interface RemoteImRouterDeps {
   transcribeAudio?: (
     message: RemoteImIncomingAudioMessage
   ) => Promise<{ ok: true; text: string } | { ok: false; error: string }>
+  cacheImage?: (
+    message: RemoteImIncomingImageMessage
+  ) => Promise<
+    | { ok: true; attachment: RemoteImImageAttachment }
+    | { ok: false; error: string; attachment?: RemoteImImageAttachment | null }
+  >
   store: RemoteImRouterStore
   now?: () => number
 }
@@ -79,6 +87,8 @@ function createIncomingRecord(
     role,
     direction: 'incoming',
     content: message.text,
+    kind: 'text',
+    attachment: null,
     status,
     error,
     createdAt: message.createdAt ?? now,
@@ -104,6 +114,8 @@ function createIncomingAudioRecord(
     role: 'remote-user',
     direction: 'incoming',
     content,
+    kind: 'text',
+    attachment: null,
     status,
     error,
     createdAt: message.createdAt ?? now,
@@ -130,6 +142,8 @@ function createSystemRecord(
     role: 'system',
     direction: 'outgoing',
     content,
+    kind: 'text',
+    attachment: null,
     status,
     error,
     createdAt: now,
@@ -163,6 +177,80 @@ function formatRemoteImAudioPlaceholder(message: RemoteImIncomingAudioMessage): 
   return typeof duration === 'number' && Number.isFinite(duration) && duration > 0
     ? `[语音消息 ${Math.round(duration)}s]`
     : '[语音消息]'
+}
+
+function normalizeRemoteImString(value: string | null | undefined): string | null {
+  const cleanValue = value?.trim()
+  return cleanValue ? cleanValue : null
+}
+
+function normalizeRemoteImNumber(value: number | null | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function formatRemoteImImagePlaceholder(
+  message: RemoteImIncomingImageMessage,
+  attachment?: RemoteImImageAttachment | null
+): string {
+  const fileName = normalizeRemoteImString(attachment?.fileName) ?? normalizeRemoteImString(message.fileName)
+  return fileName ? `[图片消息] ${fileName}` : '[图片消息]'
+}
+
+function createImageAttachmentFromIncoming(
+  message: RemoteImIncomingImageMessage,
+  patch: Partial<RemoteImImageAttachment> = {}
+): RemoteImImageAttachment {
+  return {
+    type: 'image',
+    localPath: patch.localPath ?? null,
+    remoteUrl: patch.remoteUrl ?? normalizeRemoteImString(message.imageUrl),
+    thumbnailUrl: patch.thumbnailUrl ?? normalizeRemoteImString(message.thumbnailUrl),
+    width: patch.width ?? normalizeRemoteImNumber(message.width),
+    height: patch.height ?? normalizeRemoteImNumber(message.height),
+    sizeBytes: patch.sizeBytes ?? normalizeRemoteImNumber(message.sizeBytes),
+    fileName: patch.fileName ?? normalizeRemoteImString(message.fileName),
+    mimeType: patch.mimeType ?? normalizeRemoteImString(message.mimeType),
+    sdkImageId: patch.sdkImageId ?? normalizeRemoteImString(message.uuid)
+  }
+}
+
+function createIncomingImageRecord(
+  message: RemoteImIncomingImageMessage,
+  attachment: RemoteImImageAttachment | null,
+  status: RemoteImMessage['status'],
+  error: string | null,
+  now: number
+): Omit<RemoteImMessage, 'id'> {
+  return {
+    projectId: message.projectId,
+    sessionId: null,
+    provider: 'tencent-im',
+    remoteMessageId: message.remoteMessageId ?? null,
+    fromUserId: message.fromUserId,
+    toUserId: message.toUserId ?? null,
+    role: 'remote-user',
+    direction: 'incoming',
+    content: formatRemoteImImagePlaceholder(message, attachment),
+    kind: 'image',
+    attachment,
+    status,
+    error,
+    createdAt: message.createdAt ?? now,
+    sentToAicliAt: null,
+    sentToImAt: null
+  }
+}
+
+function buildRemoteImImageTaskText(input: {
+  fromUserId: string
+  localPath: string
+}): string {
+  return [
+    '[图片消息]',
+    `来自: ${input.fromUserId}`,
+    `本地路径: ${input.localPath}`,
+    '请根据图片内容和上下文继续处理。'
+  ].join('\n')
 }
 
 export function createRemoteImRouter(deps: RemoteImRouterDeps) {
@@ -347,8 +435,96 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
     })
   }
 
+  async function handleIncomingImage(
+    message: RemoteImIncomingImageMessage
+  ): Promise<RemoteImRouteResult> {
+    const config = deps.getConfig(message.projectId)
+    const now = deps.now?.() ?? Date.now()
+    const fromUserId = message.fromUserId.trim()
+    const peerRelation = getRemoteImPeerRelation(config, fromUserId)
+    const fallbackAttachment = createImageAttachmentFromIncoming(message)
+
+    if (!peerRelation) {
+      deps.store.create(
+        createIncomingImageRecord(message, fallbackAttachment, 'rejected', 'sender not allowed', now)
+      )
+      return { ok: false, error: `sender ${fromUserId} is not allowed` }
+    }
+
+    if (!deps.cacheImage) {
+      const error = '图片下载模块未初始化'
+      deps.store.create(createIncomingImageRecord(message, fallbackAttachment, 'failed', error, now))
+      await sendSystemText(deps, message.projectId, fromUserId, `图片下载失败：${error}`)
+      return { ok: false, error }
+    }
+
+    const cached = await deps.cacheImage(message)
+    if (!cached.ok) {
+      const error = cached.error || '图片下载失败'
+      deps.store.create(
+        createIncomingImageRecord(
+          message,
+          cached.attachment ?? fallbackAttachment,
+          'failed',
+          error,
+          now
+        )
+      )
+      await sendSystemText(deps, message.projectId, fromUserId, `图片下载失败：${error}`)
+      return { ok: false, error }
+    }
+
+    const attachment = cached.attachment
+    if (!attachment.localPath) {
+      const error = '图片本地路径为空'
+      deps.store.create(createIncomingImageRecord(message, attachment, 'failed', error, now))
+      await sendSystemText(deps, message.projectId, fromUserId, `图片下载失败：${error}`)
+      return { ok: false, error }
+    }
+
+    const session = deps.resolveSession(message.projectId)
+    const incoming = deps.store.create(
+      createIncomingImageRecord(message, attachment, 'received', null, now)
+    )
+    if (!session) {
+      deps.store.updateStatus(incoming.id, {
+        status: 'failed',
+        error: 'No running AICLI session'
+      })
+      await sendSystemText(deps, message.projectId, fromUserId, '当前没有运行中的 AICLI。')
+      return { ok: false, error: 'No running AICLI session' }
+    }
+
+    const taskText = buildRemoteImImageTaskText({
+      fromUserId,
+      localPath: attachment.localPath
+    })
+    const wrapped = buildRemoteImAicliPrompt({ fromUserId, text: taskText })
+    const displayText = buildRemoteImAicliDisplayText({ fromUserId, text: taskText })
+    const sendResult = await deps.sendUser(session.sessionId, wrapped, { displayText })
+    if (!sendResult.ok) {
+      const error = sendResult.error ?? 'failed to send image message to AICLI'
+      deps.store.updateStatus(incoming.id, {
+        status: 'failed',
+        error
+      })
+      await sendSystemText(deps, message.projectId, fromUserId, `发送给 AICLI 失败：${error}`)
+      return { ok: false, error }
+    }
+
+    deps.store.updateStatus(incoming.id, {
+      sessionId: session.sessionId,
+      status: 'sent-to-aicli',
+      sentToAicliAt: now,
+      error: null
+    })
+    await sendSystemText(deps, message.projectId, fromUserId, '已发送给当前 AICLI，开始处理。')
+    return { ok: true, aicliSessionId: session.sessionId }
+  }
+
   return {
     handleIncomingText,
-    handleIncomingAudio
+    handleIncomingAudio,
+    handleIncomingImage
   }
 }

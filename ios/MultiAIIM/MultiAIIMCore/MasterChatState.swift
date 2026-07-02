@@ -53,6 +53,12 @@ public enum ChatDetailSwipeBackPolicy {
     }
 }
 
+public enum MessageListAutoScrollPolicy {
+    public static func latestMessageID(from messages: [RemoteIMMessage]) -> RemoteIMMessage.ID? {
+        messages.last?.id
+    }
+}
+
 public struct RemoteIMCredential: Equatable {
     public let sdkAppID: Int
     public let userSigSecretKey: String

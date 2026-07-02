@@ -374,4 +374,36 @@ final class MasterChatStateTests: XCTestCase {
             )
         )
     }
+
+    func testMessageListAutoScrollPolicyTargetsLatestMessageID() {
+        let firstID = UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")!
+        let latestID = UUID(uuidString: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")!
+        let first = RemoteIMMessage(
+            id: firstID,
+            fromUserID: "ios-master",
+            toUserID: "mac-quark-pc",
+            text: "第一条",
+            direction: .outgoing,
+            status: .sent,
+            createdAt: Date(timeIntervalSince1970: 100)
+        )
+        let latest = RemoteIMMessage(
+            id: latestID,
+            fromUserID: "mac-quark-pc",
+            toUserID: "ios-master",
+            text: "最新回复",
+            direction: .incoming,
+            status: .received,
+            createdAt: Date(timeIntervalSince1970: 120)
+        )
+
+        XCTAssertEqual(
+            MessageListAutoScrollPolicy.latestMessageID(from: [first, latest]),
+            latestID
+        )
+    }
+
+    func testMessageListAutoScrollPolicyIgnoresEmptyMessages() {
+        XCTAssertNil(MessageListAutoScrollPolicy.latestMessageID(from: []))
+    }
 }

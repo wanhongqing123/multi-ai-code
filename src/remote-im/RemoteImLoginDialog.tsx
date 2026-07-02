@@ -139,7 +139,7 @@ export default function RemoteImLoginDialog(props: RemoteImLoginDialogProps): JS
 
         <div className="remote-im-login-grid">
           <label className="remote-im-login-full">
-            UserID
+            登录账号
             <input
               value={draft.desktopUserId}
               onChange={(event) => {
@@ -151,8 +151,8 @@ export default function RemoteImLoginDialog(props: RemoteImLoginDialogProps): JS
           </label>
           <div className="remote-im-login-fixed remote-im-login-full">
             <span>基础 IM 配置固定</span>
-            <strong>SDKAppID {DEFAULT_REMOTE_IM_CREDENTIAL_PRESET.sdkAppId}</strong>
-            <small>SecretKey 使用内置测试凭证，不在设置界面修改。</small>
+            <strong>通信配置已内置</strong>
+            <small>连接凭证使用内置测试配置，不在设置界面修改。</small>
           </div>
           {projectDraft ? (
             <section className="remote-im-login-project remote-im-login-full">

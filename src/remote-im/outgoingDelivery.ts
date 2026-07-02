@@ -20,7 +20,7 @@ const DEFAULT_SEND_TIMEOUT_MS = 15_000
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
-      reject(new Error('Tencent IM send timed out'))
+      reject(new Error('IM 发送超时'))
     }, timeoutMs)
     promise.then(
       (value) => {
@@ -46,7 +46,7 @@ export async function deliverRemoteImOutgoingText(
   }
 
   if (!input.runtime) {
-    await input.markFailed(input.event.messageId, 'Tencent IM runtime is not connected')
+    await input.markFailed(input.event.messageId, 'IM 运行时未连接')
     return
   }
 

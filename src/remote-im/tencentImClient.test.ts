@@ -72,7 +72,7 @@ describe('tencent IM client helpers', () => {
   it('extracts UserSig from supported endpoint response shapes', () => {
     expect(extractUserSig({ userSig: 'sig-1' })).toBe('sig-1')
     expect(extractUserSig({ ok: true, userSig: 'sig-2' })).toBe('sig-2')
-    expect(() => extractUserSig({ ok: false })).toThrow('UserSig')
+    expect(() => extractUserSig({ ok: false })).toThrow('凭证接口响应缺少有效凭证')
   })
 
   it('extracts C2C text messages from Tencent message events', () => {
@@ -260,7 +260,7 @@ describe('tencent IM client helpers', () => {
     sdkMock.chat.sendMessage.mockResolvedValueOnce({ code: 10017, message: 'not friends' })
 
     await expect(runtime.sendText('desktop-b', 'hello')).rejects.toThrow(
-      'Tencent IM send failed (10017): not friends'
+      'IM 发送失败 (10017): not friends'
     )
   })
 
@@ -380,7 +380,7 @@ describe('tencent IM client helpers', () => {
         },
         onIncomingText: vi.fn()
       })
-    ).rejects.toThrow('Tencent IM login failed (2024): 用户未登录')
+    ).rejects.toThrow('IM 登录失败 (2024): 用户未登录')
   })
 
   it('logs in with a locally generated UserSig when SecretKey mode is selected', async () => {

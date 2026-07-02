@@ -52,7 +52,7 @@ describe('remote IM outgoing delivery', () => {
     await deliverRemoteImOutgoingText({ runtime: null, event, markSent, markFailed })
 
     expect(markSent).not.toHaveBeenCalled()
-    expect(markFailed).toHaveBeenCalledWith(42, 'Tencent IM runtime is not connected')
+    expect(markFailed).toHaveBeenCalledWith(42, 'IM 运行时未连接')
   })
 
   it('marks an outgoing IM message as failed when Tencent SDK delivery does not settle', async () => {
@@ -75,6 +75,6 @@ describe('remote IM outgoing delivery', () => {
     await delivery
 
     expect(markSent).not.toHaveBeenCalled()
-    expect(markFailed).toHaveBeenCalledWith(42, 'Tencent IM send timed out')
+    expect(markFailed).toHaveBeenCalledWith(42, 'IM 发送超时')
   })
 })

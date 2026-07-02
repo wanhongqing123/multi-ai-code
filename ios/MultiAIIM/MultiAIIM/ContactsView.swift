@@ -48,7 +48,7 @@ private struct AddContactBox: View {
     var body: some View {
         VStack(spacing: 10) {
             HStack(spacing: 8) {
-                TextField("添加 UserID", text: $appState.newContactUserID)
+                TextField("添加好友账号", text: $appState.newContactUserID)
                     .font(.system(size: 15))
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -181,7 +181,7 @@ private struct EmptyContacts: View {
             Text("暂无联系人")
                 .font(.system(size: 16, weight: .bold))
                 .foregroundStyle(RemoteIMStyle.textPrimary)
-            Text("添加好友 UserID 后即可开始聊天。")
+            Text("添加好友账号后即可开始聊天。")
                 .font(.system(size: 13))
                 .foregroundStyle(RemoteIMStyle.textSecondary)
         }

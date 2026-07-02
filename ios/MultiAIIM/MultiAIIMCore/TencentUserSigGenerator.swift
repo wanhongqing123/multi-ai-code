@@ -11,13 +11,13 @@ public enum TencentUserSigError: Error, Equatable, LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .invalidSDKAppID:
-            return "SDKAppID is required to generate UserSig"
+            return "IM 应用配置无效"
         case .blankUserID:
-            return "UserID is required to generate UserSig"
+            return "请填写账号 ID"
         case .blankSecretKey:
-            return "SecretKey is required to generate UserSig"
+            return "内置连接凭证无效"
         case .compressionFailed:
-            return "Failed to deflate Tencent UserSig payload"
+            return "生成登录凭证失败"
         }
     }
 }

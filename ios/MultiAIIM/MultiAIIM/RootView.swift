@@ -83,12 +83,12 @@ private struct InitialLoginView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
             VStack(spacing: 12) {
-                LoginField(title: "UserID", systemImage: "person") {
-                    TextField("输入 IM UserID", text: $appState.masterUserID)
+                LoginField(title: "登录账号", systemImage: "person") {
+                    TextField("输入 IM 账号 ID", text: $appState.masterUserID)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                 }
-                FixedCredentialSummary(sdkAppIDText: appState.sdkAppIDText)
+                FixedCredentialSummary()
             }
 
             if let errorMessage = appState.errorMessage {
@@ -129,28 +129,20 @@ private struct InitialLoginView: View {
 }
 
 private struct FixedCredentialSummary: View {
-    let sdkAppIDText: String
-
-    private var displaySDKAppID: String {
-        let cleanSDKAppID = sdkAppIDText.trimmingCharacters(in: .whitespacesAndNewlines)
-        return cleanSDKAppID.isEmpty ? String(RemoteIMCredentialDefaults.sdkAppID) : cleanSDKAppID
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("基础 IM 配置", systemImage: "lock.shield")
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(RemoteIMStyle.textSecondary)
             HStack {
-                Text("SDKAppID")
+                Text("通信配置")
                     .foregroundStyle(RemoteIMStyle.textSecondary)
                 Spacer()
-                Text(displaySDKAppID)
-                    .monospacedDigit()
+                Text("内置")
                     .fontWeight(.bold)
             }
             HStack {
-                Text("UserSig 凭证")
+                Text("连接凭证")
                     .foregroundStyle(RemoteIMStyle.textSecondary)
                 Spacer()
                 Text("内置")

@@ -126,7 +126,7 @@ final class RemoteIMAppState: ObservableObject {
         guard let sdkAppID = Int(sdkAppIDText.trimmingCharacters(in: .whitespacesAndNewlines)),
               sdkAppID > 0
         else {
-            errorMessage = "请填写有效 SDKAppID"
+            errorMessage = "IM 应用配置无效"
             return
         }
         let cleanMasterUserID = masterUserID.trimmingCharacters(in: .whitespacesAndNewlines)

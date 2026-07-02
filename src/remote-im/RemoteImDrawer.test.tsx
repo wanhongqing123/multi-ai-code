@@ -326,7 +326,7 @@ describe('RemoteImDrawer', () => {
     expect(noProjectHtml).toContain('disabled="">Clear')
   })
 
-  it('shows remote IM status details when connection fails', () => {
+  it('shows neutral remote IM status details when connection fails', () => {
     const html = renderDrawer({
       status: {
         ...status,
@@ -336,6 +336,9 @@ describe('RemoteImDrawer', () => {
     })
 
     expect(html).toContain('异常')
-    expect(html).toContain('Tencent IM login failed')
+    expect(html).toContain('IM 登录失败')
+    expect(html).toContain('登录凭证无效')
+    expect(html).not.toContain('Tencent IM login failed')
+    expect(html).not.toContain('usersig')
   })
 })

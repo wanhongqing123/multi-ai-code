@@ -46,13 +46,13 @@ export function getRemoteImConnectionKey(props: RemoteImClientHostProps): string
 }
 
 export function getRemoteImConnectionBlockReason(config: RemoteImConfig): string | null {
-  if (!config.sdkAppId) return '请先选择 SDKAppID'
-  if (!config.desktopUserId.trim()) return '请先填写 UserID'
+  if (!config.sdkAppId) return '请先选择 IM 应用配置'
+  if (!config.desktopUserId.trim()) return '请先填写登录账号'
   if (config.userSigMode === 'secret-key' && !config.userSigSecretKey.trim()) {
-    return '请先选择凭证或填写 SecretKey'
+    return '请先选择或填写连接凭证'
   }
   if (config.userSigMode === 'endpoint' && !config.userSigEndpoint.trim()) {
-    return '请先填写 UserSig endpoint'
+    return '请先填写凭证接口'
   }
   return null
 }

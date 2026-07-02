@@ -9,13 +9,13 @@ public enum MasterChatStateError: Error, Equatable, LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .blankUserID:
-            return "UserID is required"
+            return "请填写账号 ID"
         case .blankMessage:
-            return "Message text is required"
+            return "请输入消息内容"
         case .noSelectedPeer:
-            return "Select a contact before sending"
+            return "请先选择联系人"
         case .messageNotFound:
-            return "Message was not found"
+            return "消息不存在"
         }
     }
 }
@@ -88,7 +88,7 @@ public enum RemoteIMCredentialDefaults {
 public enum RemoteIMLoginCredentialPolicy {
     public static func validationError(userID: String) -> String? {
         guard !userID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return "请填写 UserID"
+            return "请填写账号 ID"
         }
         return nil
     }

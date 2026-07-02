@@ -72,6 +72,20 @@ function RemoteImMarkdown(props: { content: string }): JSX.Element {
   )
 }
 
+export function sanitizeRemoteImDisplayText(text: string): string {
+  return text
+    .replace(/Tencent IM/g, 'IM')
+    .replace(/SDKAppID/g, 'IM 应用配置')
+    .replace(/UserSig endpoint/gi, '凭证接口')
+    .replace(/UserSig|usersig/gi, '登录凭证')
+    .replace(/SecretKey/g, '连接凭证')
+    .replace(/\bIM login failed\b/g, 'IM 登录失败')
+    .replace(/\bIM send failed\b/g, 'IM 发送失败')
+    .replace(/\bIM runtime is not connected\b/g, 'IM 运行时未连接')
+    .replace(/\bIM send timed out\b/g, 'IM 发送超时')
+    .replace(/invalid 登录凭证/g, '登录凭证无效')
+}
+
 function getRemoteImPanelFrame(panel: HTMLElement): RemoteImPanelFrame {
   const rect = panel.getBoundingClientRect()
   return {
@@ -123,6 +137,9 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
       status: props.status,
       desktopRole: props.config.desktopRole
     }) || !selectedPeerUserId
+  const statusDetail = props.status?.detail
+    ? sanitizeRemoteImDisplayText(props.status.detail)
+    : null
   useEffect(() => {
     if (!props.open) return
     const panel = panelRef.current
@@ -235,12 +252,12 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
           <div className="remote-im-title">远程 IM</div>
           <div
             className={`remote-im-status status-${props.status?.state ?? 'disconnected'}`}
-            title={props.status?.detail ?? undefined}
+            title={statusDetail ?? undefined}
           >
             <span />
             {getRemoteImStatusLabel(props.status)}
-            {props.status?.detail ? (
-              <small className="remote-im-status-detail">{props.status.detail}</small>
+            {statusDetail ? (
+              <small className="remote-im-status-detail">{statusDetail}</small>
             ) : null}
           </div>
           <span className="remote-im-account-label" title={props.config.desktopUserId || undefined}>
@@ -269,7 +286,7 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
           <section className="remote-im-sidebar" aria-label="会话">
             <div className="remote-im-sidebar-head">
               <strong>会话</strong>
-              <span>{props.config.desktopUserId || '未设置 UserID'}</span>
+              <span>{props.config.desktopUserId || '未设置账号'}</span>
             </div>
             <div className="remote-im-relation-tabs" role="tablist" aria-label="联系人关系">
               {RELATION_FILTERS.map((filter) => (
@@ -328,7 +345,7 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
                 name="userId"
                 value={newContactUserId}
                 onChange={(event) => setNewContactUserId(event.currentTarget.value)}
-                placeholder="UserID"
+                placeholder="账号 ID"
               />
               <button type="submit">添加</button>
             </form>
@@ -388,7 +405,7 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
                 disabled={inputDisabled}
                 placeholder={
                   selectedPeerUserId
-                    ? '输入要发送给当前 UserID 的消息...'
+                    ? '输入要发送给当前联系人的消息...'
                     : '先选择一个联系人'
                 }
               />

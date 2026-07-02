@@ -357,7 +357,7 @@ final class MasterChatStateTests: XCTestCase {
                 userID: "",
                 secretKey: RemoteIMCredentialDefaults.userSigSecretKey
             ),
-            "请填写 UserID"
+            "请填写账号 ID"
         )
         XCTAssertNil(
             RemoteIMLoginCredentialPolicy.validationError(

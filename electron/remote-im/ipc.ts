@@ -256,7 +256,7 @@ async function deleteRemoteImContact(
   | { ok: false; error: string }
 > {
   const userId = rawUserId.trim()
-  if (!userId) return { ok: false, error: 'UserID is required' }
+  if (!userId) return { ok: false, error: '请填写账号 ID' }
 
   const previousProfileId = getCurrentRemoteImAccountProfileId()
   const previousAccount = previousProfileId
@@ -292,7 +292,7 @@ async function sendRemoteImPeerMessage(
   if (!cleanText) return { ok: false, error: 'empty message' }
   const peerUserId = resolvePeerUserId(config, toUserId)
   if (!peerUserId) {
-    return { ok: false, error: 'No remote IM peer UserID configured' }
+    return { ok: false, error: '未配置远程 IM 联系人账号' }
   }
   const connectionError = getRemoteImSendConnectionError(await getRemoteImStatus(projectId))
   if (connectionError) {

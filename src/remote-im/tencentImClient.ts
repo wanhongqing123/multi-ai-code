@@ -31,7 +31,7 @@ export function extractUserSig(payload: unknown): string {
       return value.userSig.trim()
     }
   }
-  throw new Error('UserSig endpoint response must include userSig')
+  throw new Error('凭证接口响应缺少有效凭证')
 }
 
 export interface GenerateTencentUserSigInput {
@@ -71,7 +71,7 @@ async function hmacSha256Base64(secretKey: string, content: string): Promise<str
 
 async function deflateUtf8(input: string): Promise<Uint8Array> {
   if (typeof CompressionStream === 'undefined') {
-    throw new Error('CompressionStream is required to generate UserSig locally')
+    throw new Error('当前运行环境不支持生成本地登录凭证')
   }
   const stream = new Blob([input]).stream().pipeThrough(new CompressionStream('deflate'))
   return new Uint8Array(await new Response(stream).arrayBuffer())
@@ -81,10 +81,10 @@ export async function generateTencentUserSig(input: GenerateTencentUserSigInput)
   const userId = input.userId.trim()
   const secretKey = input.secretKey.trim()
   if (!Number.isInteger(input.sdkAppId) || input.sdkAppId <= 0) {
-    throw new Error('SDKAppID is required to generate UserSig')
+    throw new Error('IM 应用配置无效')
   }
-  if (!userId) throw new Error('UserID is required to generate UserSig')
-  if (!secretKey) throw new Error('SecretKey is required to generate UserSig')
+  if (!userId) throw new Error('请填写登录账号')
+  if (!secretKey) throw new Error('内置连接凭证无效')
 
   const expireSeconds = input.expireSeconds ?? 604800
   const nowSeconds = input.nowSeconds ?? Math.floor(Date.now() / 1000)
@@ -215,7 +215,7 @@ async function requestUserSig(config: RemoteImConfig): Promise<string> {
     })
   })
   if (!response.ok) {
-    throw new Error(`UserSig endpoint returned HTTP ${response.status}`)
+    throw new Error(`凭证接口返回 HTTP ${response.status}`)
   }
   return extractUserSig(await response.json())
 }
@@ -242,7 +242,7 @@ function waitForTencentImReady(chat: any, TencentCloudChat: any): Promise<void> 
     }
     const onReady = (): void => finish()
     const timer = setTimeout(
-      () => finish(new Error('Tencent IM SDK_READY timeout')),
+      () => finish(new Error('IM SDK 就绪超时')),
       15_000
     )
     chat.on(eventName, onReady)
@@ -259,7 +259,18 @@ function getTencentImApiFailure(action: string, result: unknown): string | null 
     typeof response.message === 'string' && response.message.trim()
       ? response.message.trim()
       : JSON.stringify(result)
-  return `Tencent IM ${action} failed (${code}): ${message}`
+  return `IM ${getTencentImApiActionLabel(action)}失败 (${code}): ${message}`
+}
+
+function getTencentImApiActionLabel(action: string): string {
+  switch (action) {
+    case 'login':
+      return '登录'
+    case 'send':
+      return '发送'
+    default:
+      return '操作'
+  }
 }
 
 function summarizeTencentImApiResult(result: unknown): { code: number | null; message: string | null } {
@@ -327,8 +338,8 @@ async function loginTencentImClient(
     if (loginUser !== null && loginUser !== config.desktopUserId) {
       throw new Error(
         loginUser
-          ? `Tencent IM logged in as ${loginUser}, expected ${config.desktopUserId}`
-          : 'Tencent IM login did not establish a user session'
+          ? `IM 已登录账号 ${loginUser}，预期 ${config.desktopUserId}`
+          : 'IM 登录未建立有效会话'
       )
     }
   } catch (err) {

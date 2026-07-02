@@ -18,7 +18,7 @@ describe('remote IM status helpers', () => {
       {
         projectId: 'project-1',
         state: 'disconnected',
-        detail: 'Remote IM account changed; reconnecting',
+        detail: '远程 IM 账号已变更，正在重新连接',
         updatedAt: 1234
       }
     ])
@@ -34,7 +34,7 @@ describe('remote IM status helpers', () => {
       {
         projectId: 'project-1',
         state: 'disconnected',
-        detail: 'Remote IM account changed; reconnecting',
+        detail: '远程 IM 账号已变更，正在重新连接',
         updatedAt: 1234
       }
     ])
@@ -43,7 +43,7 @@ describe('remote IM status helpers', () => {
   it('blocks manual peer sends until the current project is connected', () => {
     expect(getRemoteImSendConnectionError(connectedStatus)).toBeNull()
     expect(getRemoteImSendConnectionError({ ...connectedStatus, state: 'connecting' })).toBe(
-      'Remote IM is not connected'
+      '远程 IM 未连接'
     )
     expect(
       getRemoteImSendConnectionError({
@@ -51,6 +51,6 @@ describe('remote IM status helpers', () => {
         state: 'error',
         detail: 'Tencent IM login failed'
       })
-    ).toBe('Remote IM is not connected: Tencent IM login failed')
+    ).toBe('远程 IM 未连接：IM 登录失败')
   })
 })

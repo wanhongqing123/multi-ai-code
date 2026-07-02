@@ -8,22 +8,22 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section("账号") {
-                    LabeledContent("UserID") {
+                    LabeledContent("登录账号") {
                         Text(displayUserID)
                             .foregroundStyle(appState.masterUserID.isEmpty ? .secondary : .primary)
                     }
                 }
 
-                Section("Tencent IM") {
-                    LabeledContent("SDKAppID") {
-                        Text(displaySDKAppID)
-                            .monospacedDigit()
+                Section("IM 配置") {
+                    LabeledContent("通信配置") {
+                        Text("内置")
+                            .foregroundStyle(.secondary)
                     }
-                    LabeledContent("UserSig 凭证") {
+                    LabeledContent("连接凭证") {
                         Text("使用内置凭证")
                             .foregroundStyle(.secondary)
                     }
-                    Text("基础 IM 配置由应用内置，设置页不再修改 SDKAppID 和凭证。")
+                    Text("基础 IM 配置由应用内置，设置页不再修改。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -47,11 +47,6 @@ struct SettingsView: View {
     private var displayUserID: String {
         let userID = appState.masterUserID.trimmingCharacters(in: .whitespacesAndNewlines)
         return userID.isEmpty ? "未登录" : userID
-    }
-
-    private var displaySDKAppID: String {
-        let sdkAppIDText = appState.sdkAppIDText.trimmingCharacters(in: .whitespacesAndNewlines)
-        return sdkAppIDText.isEmpty ? String(RemoteIMCredentialDefaults.sdkAppID) : sdkAppIDText
     }
 
     private var statusColor: Color {

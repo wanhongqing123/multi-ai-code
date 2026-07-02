@@ -25,11 +25,11 @@ enum RemoteIMClientError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .sdkNotIntegrated:
-            return "Tencent IM SDK 未集成。请在 ios/MultiAIIM 下执行 pod install，并打开 MultiAIIM.xcworkspace。"
+            return "IM SDK 未集成。请在 ios/MultiAIIM 下执行 pod install，并打开 MultiAIIM.xcworkspace。"
         case .sdkInitializationFailed:
-            return "Tencent IM SDK 初始化失败"
+            return "IM SDK 初始化失败"
         case let .operationFailed(code, description):
-            return "Tencent IM 操作失败(\(code)): \(description)"
+            return "IM 操作失败(\(code)): \(description)"
         }
     }
 }

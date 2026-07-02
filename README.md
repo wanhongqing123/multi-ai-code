@@ -2,7 +2,7 @@
 
 > 本地优先的 AI CLI 工作台：围绕一个本地仓库组织任务、终端、代码审查、构建运行、Skill 编排和远程 IM，并调用你本机真实安装的 `claude` / `codex` 完成开发工作。
 
-![Multi-AI Code](build/icon-256.png)
+![Multi-AI Code](build/icon.svg)
 
 ## 它是什么
 
@@ -90,11 +90,11 @@ Skill 系统用于把可复用的工作方法显式沉淀下来。
 
 ### 远程 IM、iOS 与语音
 
-远程 IM 基于 Tencent IM，用于把手机或另一端的消息转发到桌面端当前 AICLI。
+远程 IM 基于应用内 IM 通道，用于把手机或另一端的消息转发到桌面端当前 AICLI。
 
 桌面端能力：
 
-- 使用 UserID 登录，当前默认测试 SDKAppID 为 `1600148979`。
+- 使用用户 ID 登录，当前使用应用内置测试通信配置。
 - 远程 IM 抽屉支持会话列表、联系人列表、添加联系人、删除联系人和清空消息。
 - 联系人发来的文本消息可以发送给当前 AICLI。
 - AICLI 输出会清理成更适合聊天阅读的 Markdown，再回传给对应联系人。
@@ -103,7 +103,7 @@ Skill 系统用于把可复用的工作方法显式沉淀下来。
 iOS 客户端能力：
 
 - SwiftUI App，底部为 `消息 / 通讯录 / 我` 三栏。
-- 登录时只需要填写 UserID，SDKAppID 和凭证使用应用内置测试配置。
+- 登录时只需要填写用户 ID，通信配置使用应用内置测试配置。
 - 支持文本消息、联系人管理、本地聊天历史和语音消息。
 - 进入已有会话时会自动定位到最新消息。
 - 语音消息可在本端播放；桌面端收到语音后可走本地 Whisper 转文字，再把文本交给 AICLI。
@@ -131,7 +131,7 @@ Electron Desktop
 
 iOS Remote IM
   SwiftUI App                 消息、通讯录、设置、文本和语音发送
-  Tencent IM iOS SDK          远程消息收发
+  IM iOS SDK                  远程消息收发
 
 Local Data
   ~/MultiAICode/              桌面端全局数据
@@ -155,7 +155,7 @@ Local Data
 | Skill 编排 | `<target_repo>/.multi-ai-code/skill-pipelines/` | 项目级流程定义 |
 | 项目级 Skills | `<target_repo>/.multi-ai-code/skills/` | 项目自带 Skill 来源 |
 | 仓库查看分析 | `<target_repo>/.multi-ai-code/repo-view/analyses/` | 仓库分析记忆和片段结果 |
-| 远程 IM 账号 | `~/MultiAICode/remote-im-profiles/<profile>/remote-im-account.json` | UserID、SDKAppID、联系人等本机配置 |
+| 远程 IM 账号 | `~/MultiAICode/remote-im-profiles/<profile>/remote-im-account.json` | 用户 ID、联系人等本机配置 |
 | imcli bridge | `~/MultiAICode/imcli-bridge.json` | 桌面端运行时生成，带本地访问 token |
 | ASR 运行资源 | `resources/asr` | 打包时写入安装包资源目录 |
 
@@ -291,7 +291,7 @@ npm test
 远程 IM 和本地 ASR 相关局部测试：
 
 ```bash
-npx vitest run electron/remote-im/localWhisper.test.ts electron/remote-im/router.test.ts src/remote-im/tencentImClient.test.ts
+npx vitest run electron/remote-im/localWhisper.test.ts electron/remote-im/router.test.ts src/remote-im/outgoingDelivery.test.ts
 ```
 
 iOS Core 测试：
@@ -313,9 +313,9 @@ xcodebuild test \
 - xterm.js
 - react-markdown + remark-gfm
 - better-sqlite3
-- Tencent IM Web SDK
+- IM Web SDK
 - SwiftUI iOS App
-- Tencent IM iOS SDK
+- IM iOS SDK
 - whisper.cpp + ffmpeg
 
 ## 当前边界
@@ -323,6 +323,6 @@ xcodebuild test \
 - 必须依赖本机真实安装的 `claude` 或 `codex`，项目本身不提供内置模型。
 - 远程 IM 当前使用内置测试凭证，不适合作为正式上架 App Store 的生产配置。
 - 远程消息只会作为 AICLI 输入进入当前会话，不提供远程任意命令执行入口。
-- 腾讯 IM SDK 自带语音转文字属于增值能力，当前默认走本地 Whisper。
+- 第三方 IM SDK 的语音转文字能力不作为默认依赖，当前默认走本地 Whisper。
 - ASR 模型和运行时资源需要在打包前准备好，否则安装包内不会包含完整语音转文字能力。
 - 本地私有数据默认不进入 git；如果你手动提交 `.multi-ai-code/`，需要自行确认里面是否包含私有任务、路径或分析内容。

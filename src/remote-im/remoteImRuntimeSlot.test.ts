@@ -64,7 +64,7 @@ describe('remote IM runtime slot', () => {
     try {
       const slot = createRemoteImRuntimeSlot()
       const waiting = slot.waitForCurrent(1000)
-      const assertion = expect(waiting).rejects.toThrow('Tencent IM runtime is not connected')
+      const assertion = expect(waiting).rejects.toThrow('IM 运行时未连接')
 
       await vi.advanceTimersByTimeAsync(1000)
 

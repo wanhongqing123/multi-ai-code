@@ -44,7 +44,7 @@ private struct HeaderView: View {
                 Text("远程 IM")
                     .font(.system(size: 21, weight: .bold))
                     .foregroundStyle(RemoteIMStyle.textPrimary)
-                Text(appState.masterUserID.isEmpty ? "未设置 UserID" : appState.masterUserID)
+                Text(appState.masterUserID.isEmpty ? "未设置账号" : appState.masterUserID)
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
                     .foregroundStyle(RemoteIMStyle.textSecondary)
                     .lineLimit(1)
@@ -210,7 +210,7 @@ private struct EmptyConversationListView: View {
             Text("暂无会话")
                 .font(.system(size: 16, weight: .bold))
                 .foregroundStyle(RemoteIMStyle.textPrimary)
-            Text("到通讯录添加好友 UserID 后即可开始聊天。")
+            Text("到通讯录添加好友账号后即可开始聊天。")
                 .font(.system(size: 13))
                 .foregroundStyle(RemoteIMStyle.textSecondary)
         }
@@ -1092,7 +1092,7 @@ private struct ComposerView: View {
                         }
                     )
                 } else {
-                    TextField("输入要发送给当前 UserID 的消息...", text: $appState.draftText, axis: .vertical)
+                    TextField("输入要发送给当前联系人的消息...", text: $appState.draftText, axis: .vertical)
                         .font(.system(size: 14))
                         .lineLimit(1...5)
                         .textInputAutocapitalization(.never)

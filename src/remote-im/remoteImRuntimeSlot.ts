@@ -43,7 +43,7 @@ export function createRemoteImRuntimeSlot<
           reject,
           timer: setTimeout(() => {
             waiters.delete(waiter)
-            reject(new Error('Tencent IM runtime is not connected'))
+            reject(new Error('IM 运行时未连接'))
           }, timeoutMs)
         }
         waiters.add(waiter)

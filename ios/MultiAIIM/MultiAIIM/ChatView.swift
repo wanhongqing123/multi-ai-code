@@ -1,5 +1,6 @@
 import AVFoundation
 import MultiAIIMCore
+import Photos
 import PhotosUI
 import SwiftUI
 import UIKit
@@ -1088,6 +1089,7 @@ private struct ComposerView: View {
     @State private var isVoiceMode = false
     @State private var isPressingVoice = false
     @State private var isCancellingVoice = false
+    @State private var isPhotoPickerPresented = false
     @State private var selectedPhotoItem: PhotosPickerItem?
 
     var body: some View {
@@ -1150,11 +1152,9 @@ private struct ComposerView: View {
                         )
                 }
 
-                PhotosPicker(
-                    selection: $selectedPhotoItem,
-                    matching: .images,
-                    photoLibrary: .shared()
-                ) {
+                Button {
+                    Task { await openPhotoPicker() }
+                } label: {
                     Image(systemName: "plus")
                         .font(.system(size: 20, weight: .semibold))
                         .frame(width: 44, height: 44)
@@ -1177,9 +1177,42 @@ private struct ComposerView: View {
         .overlay(alignment: .top) {
             Divider().background(RemoteIMStyle.border)
         }
+        .photosPicker(
+            isPresented: $isPhotoPickerPresented,
+            selection: $selectedPhotoItem,
+            matching: .images,
+            photoLibrary: .shared()
+        )
         .onChange(of: selectedPhotoItem) { item in
             guard let item else { return }
             Task { await sendSelectedPhoto(item) }
+        }
+    }
+
+    private func openPhotoPicker() async {
+        guard appState.canSendImage else { return }
+        guard await requestPhotoLibraryPermission() else {
+            appState.errorMessage = "没有相册权限，请在系统设置中允许访问照片"
+            return
+        }
+        isPhotoPickerPresented = true
+    }
+
+    private func requestPhotoLibraryPermission() async -> Bool {
+        switch PHPhotoLibrary.authorizationStatus(for: .readWrite) {
+        case .authorized, .limited:
+            return true
+        case .notDetermined:
+            let status = await withCheckedContinuation { continuation in
+                PHPhotoLibrary.requestAuthorization(for: .readWrite) { status in
+                    continuation.resume(returning: status)
+                }
+            }
+            return status == .authorized || status == .limited
+        case .denied, .restricted:
+            return false
+        @unknown default:
+            return false
         }
     }
 

@@ -387,11 +387,21 @@ private struct MessageListView: View {
                     dismissKeyboard()
                 }
             )
-            .onChange(of: messages.count) { _ in
-                if let last = messages.last {
-                    proxy.scrollTo(last.id, anchor: .bottom)
-                }
+            .onAppear {
+                scrollToLatestMessage(proxy: proxy)
             }
+            .onChange(of: messages.count) { _ in
+                scrollToLatestMessage(proxy: proxy)
+            }
+        }
+    }
+
+    private func scrollToLatestMessage(proxy: ScrollViewProxy) {
+        guard let latestMessageID = MessageListAutoScrollPolicy.latestMessageID(from: messages) else {
+            return
+        }
+        DispatchQueue.main.async {
+            proxy.scrollTo(latestMessageID, anchor: .bottom)
         }
     }
 }

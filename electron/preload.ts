@@ -172,6 +172,16 @@ export interface RemoteImSendPeerImageInput {
   sizeBytes?: number | null
 }
 
+export interface RemoteImOutgoingImageEvent {
+  projectId: string
+  toUserId: string
+  fileToken?: string | null
+  fileName?: string | null
+  mimeType?: string | null
+  fileBytes?: Uint8Array | ArrayBuffer | number[] | null
+  messageId?: number | null
+}
+
 export interface RemoteImRuntimeLogEntryInput {
   projectId?: string | null
   sdkAppId?: number | null
@@ -730,11 +740,11 @@ const api = {
       return () => ipcRenderer.removeListener('remote-im:outgoing-text', handler)
     },
     onOutgoingImage: (
-      cb: (evt: { projectId: string; toUserId: string; fileToken: string; messageId?: number | null }) => void
+      cb: (evt: RemoteImOutgoingImageEvent) => void
     ) => {
       const handler = (
         _event: IpcRendererEvent,
-        evt: { projectId: string; toUserId: string; fileToken: string; messageId?: number | null }
+        evt: RemoteImOutgoingImageEvent
       ) => cb(evt)
       ipcRenderer.on('remote-im:outgoing-image', handler)
       return () => ipcRenderer.removeListener('remote-im:outgoing-image', handler)

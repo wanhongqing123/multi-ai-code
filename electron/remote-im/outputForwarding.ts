@@ -1,8 +1,12 @@
 import type { CreateRemoteImMessageInput } from './messageStore.js'
+import {
+  createRemoteImImageAttachmentFromLocalPath,
+  extractRemoteImAicliImagePaths
+} from './aicliImageOutput.js'
 import { createOutputChunks } from './outputBuffer.js'
 import { sanitizeRemoteImAicliOutput } from './outputSanitizer.js'
 import { extractRemoteImReplyOutput } from './replyProtocol.js'
-import type { RemoteImConfig } from './types.js'
+import type { RemoteImConfig, RemoteImImageAttachment } from './types.js'
 
 export const REMOTE_IM_OPERATION_COMPLETE_TEXT = '操作已完成。'
 export const REMOTE_IM_AICLI_OUTPUT_PREFIX = '【AICLI 输出】\n'
@@ -29,6 +33,11 @@ export interface RemoteImTranscriptSource {
   sinceMs: number
 }
 
+export interface RemoteImAicliOutputImage {
+  localPath: string
+  attachment: RemoteImImageAttachment
+}
+
 export interface RemoteImOutputSessionState {
   projectId: string
   toUserId: string
@@ -42,6 +51,7 @@ export interface RemoteImOutputSessionState {
 export interface RemoteImOutputForwardingDeps {
   createMessage(input: CreateRemoteImMessageInput): void
   sendText(projectId: string, toUserId: string, text: string): void
+  sendImage?(projectId: string, toUserId: string, image: RemoteImAicliOutputImage): void
   messagesChanged(projectId: string | null): void
   readTranscriptReply?: (source: RemoteImTranscriptSource) => string | null
   now?: () => number
@@ -100,6 +110,31 @@ function createOutgoingMessage(input: {
   }
 }
 
+function createOutgoingImageMessage(input: {
+  sessionId: string
+  state: RemoteImOutputSessionState
+  attachment: RemoteImImageAttachment
+  now: number
+}): CreateRemoteImMessageInput {
+  const fileName = input.attachment.fileName?.trim()
+  return {
+    projectId: input.state.projectId,
+    sessionId: input.sessionId,
+    provider: 'tencent-im',
+    remoteMessageId: null,
+    fromUserId: null,
+    toUserId: input.state.toUserId,
+    role: 'aicli',
+    direction: 'outgoing',
+    content: fileName ? `[图片消息] ${fileName}` : '[图片消息]',
+    kind: 'image',
+    attachment: input.attachment,
+    status: 'sent-to-im',
+    createdAt: input.now,
+    sentToImAt: input.now
+  }
+}
+
 export function flushRemoteImOutputSession(
   sessionId: string,
   state: RemoteImOutputSessionState,
@@ -122,6 +157,7 @@ export function flushRemoteImOutputSession(
   const chunks = createOutputChunks(buffer, {
     maxChunkChars: state.config.outputMaxChunkChars
   })
+  const imagePaths = deps.sendImage ? extractRemoteImAicliImagePaths(buffer) : []
   const now = deps.now?.() ?? Date.now()
 
   for (const chunk of chunks) {
@@ -135,6 +171,21 @@ export function flushRemoteImOutputSession(
       })
     )
     deps.sendText(state.projectId, state.toUserId, createRemoteImAicliOutputText(chunk))
+  }
+
+  if (deps.sendImage) {
+    for (const localPath of imagePaths) {
+      const attachment = createRemoteImImageAttachmentFromLocalPath(localPath)
+      deps.createMessage(
+        createOutgoingImageMessage({
+          sessionId,
+          state,
+          attachment,
+          now
+        })
+      )
+      deps.sendImage(state.projectId, state.toUserId, { localPath, attachment })
+    }
   }
 
   if (chunks.length > 0) deps.messagesChanged(state.projectId)

@@ -34,6 +34,7 @@ import {
 import {
   completeRemoteImOutputSession,
   flushRemoteImOutputSession,
+  type RemoteImAicliOutputImage,
   type RemoteImOutputCompletionInfo,
   type RemoteImOutputSessionState
 } from './outputForwarding.js'
@@ -68,6 +69,7 @@ import type {
 const REMOTE_IM_META_KEY = 'remote_im_config'
 const DEFAULT_REMOTE_IM_PROFILE_ID = 'default'
 const OUTGOING_DELIVERY_ACK_TIMEOUT_MS = 17_000
+const MAX_AICLI_OUTPUT_IMAGE_BYTES = 20 * 1024 * 1024
 
 const statuses = new Map<string, RemoteImStatus>()
 const outputSessions = new Map<string, RemoteImOutputSessionState>()
@@ -110,6 +112,33 @@ function broadcastOutgoingImage(
   messageId?: number
 ): void {
   broadcast('remote-im:outgoing-image', { projectId, toUserId, fileToken, messageId })
+}
+
+function toTransferableArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const copy = new ArrayBuffer(bytes.byteLength)
+  new Uint8Array(copy).set(bytes)
+  return copy
+}
+
+async function broadcastOutgoingAicliImage(
+  projectId: string,
+  toUserId: string,
+  image: RemoteImAicliOutputImage
+): Promise<void> {
+  const stat = await fs.stat(image.localPath)
+  if (!stat.isFile()) throw new Error('图片路径不是文件')
+  if (stat.size > MAX_AICLI_OUTPUT_IMAGE_BYTES) {
+    throw new Error('图片超过 20MB，已跳过发送')
+  }
+  const bytes = await fs.readFile(image.localPath)
+  broadcast('remote-im:outgoing-image', {
+    projectId,
+    toUserId,
+    fileToken: null,
+    fileName: image.attachment.fileName,
+    mimeType: image.attachment.mimeType,
+    fileBytes: toTransferableArrayBuffer(bytes)
+  })
 }
 
 function scheduleOutgoingDeliveryAckTimeout(projectId: string, messageId: number): void {
@@ -443,6 +472,19 @@ function flushOutputSession(sessionId: string): void {
       createRemoteImMessage(input)
     },
     sendText: broadcastOutgoingText,
+    sendImage: (projectId, toUserId, image) => {
+      void broadcastOutgoingAicliImage(projectId, toUserId, image).catch((err) => {
+        void appendRemoteImRuntimeLog(rootDir(), {
+          projectId,
+          peerUserId: toUserId,
+          event: 'send:image:aicli-output-read-failed',
+          detail: {
+            localPath: image.localPath,
+            error: err instanceof Error ? err.message : String(err)
+          }
+        })
+      })
+    },
     messagesChanged: broadcastMessagesChanged,
     readTranscriptReply: readRemoteImTranscriptReply
   })
@@ -462,6 +504,19 @@ function completeOutputSession(
         createRemoteImMessage(input)
       },
       sendText: broadcastOutgoingText,
+      sendImage: (projectId, toUserId, image) => {
+        void broadcastOutgoingAicliImage(projectId, toUserId, image).catch((err) => {
+          void appendRemoteImRuntimeLog(rootDir(), {
+            projectId,
+            peerUserId: toUserId,
+            event: 'send:image:aicli-output-read-failed',
+            detail: {
+              localPath: image.localPath,
+              error: err instanceof Error ? err.message : String(err)
+            }
+          })
+        })
+      },
       messagesChanged: broadcastMessagesChanged,
       readTranscriptReply: readRemoteImTranscriptReply
     },

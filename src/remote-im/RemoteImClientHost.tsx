@@ -218,7 +218,8 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
           await deliverRemoteImOutgoingImage({
             runtime,
             event: evt,
-            resolveFile: resolveRemoteImOutgoingImageFile,
+            resolveFile: (event) =>
+              event.fileToken ? resolveRemoteImOutgoingImageFile(event.fileToken) : null,
             markSent: (messageId) =>
               window.api.remoteIm.markOutgoingMessageSent(evt.projectId, messageId),
             markFailed
@@ -239,7 +240,7 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
             detail: { error: err instanceof Error ? err.message : String(err) }
           })
         } finally {
-          forgetRemoteImOutgoingImageFile(evt.fileToken)
+          if (evt.fileToken) forgetRemoteImOutgoingImageFile(evt.fileToken)
         }
       })()
     })

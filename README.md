@@ -2,7 +2,9 @@
 
 > 本地优先的 AI CLI 工作台：围绕一个本地仓库组织任务、终端、代码审查、构建运行、Skill 编排和远程 IM，并调用你本机真实安装的 `claude` / `codex` 完成开发工作。
 
-![Multi-AI Code](build/icon.svg)
+<p align="center">
+  <img src="build/icon.png" alt="Multi-AI Code" width="112" />
+</p>
 
 ## 它是什么
 
@@ -17,7 +19,7 @@ Multi-AI Code 是一个面向个人开发者的桌面工作台。它不内置大
 - 管理普通任务和定时任务，让重复工作按项目沉淀下来。
 - 在桌面端完成代码审查、仓库查看、项目构建、项目运行和日志分析。
 - 管理本机 Skills，把多个 Skill 编排成可复用流程。
-- 通过 iOS 远程 IM 从手机把消息、语音或任务发送到桌面端当前 AICLI。
+- 通过 iOS 远程 IM 从手机把文本、图片、语音或任务发送到桌面端当前 AICLI。
 
 ## 为什么使用它
 
@@ -27,6 +29,20 @@ Multi-AI Code 是一个面向个人开发者的桌面工作台。它不内置大
 - Skill 可沉淀：本机已有 Skill 可以扫描、启用、查看，也可以通过编排面板组合成项目级流程。
 - 手机可接入：离开电脑时，可以用 iOS 客户端给桌面端当前会话发消息，并查看回传结果。
 - 数据本地优先：项目数据、消息记录、运行记录和 Skill 状态默认保存在本机或目标仓库目录。
+
+## 界面预览
+
+### 桌面工作台
+
+![Multi-AI Code 桌面工作台](docs/readme/desktop-workspace.png)
+
+### 远程 IM
+
+![Multi-AI Code 远程 IM 图片消息](docs/readme/remote-im-chat.png)
+
+### iOS 远程会话
+
+![Multi-AI Code iOS 远程会话](docs/readme/ios-remote-im.png)
 
 ## 核心工作流
 
@@ -96,15 +112,16 @@ Skill 系统用于把可复用的工作方法显式沉淀下来。
 
 - 使用用户 ID 登录，当前使用应用内置测试通信配置。
 - 远程 IM 抽屉支持会话列表、联系人列表、添加联系人、删除联系人和清空消息。
-- 联系人发来的文本消息可以发送给当前 AICLI。
+- 联系人发来的文本、图片和语音消息可以记录到当前会话，并按需发送给当前 AICLI。
 - AICLI 输出会清理成更适合聊天阅读的 Markdown，再回传给对应联系人。
+- AICLI 输出里的本地图片路径或 Markdown 图片引用会尽量转换成图片消息回传。
 - 本地 bridge 会生成带 token 的 `imcli` 配置，方便 AICLI 主动查询或发送 IM 消息。
 
 iOS 客户端能力：
 
 - SwiftUI App，底部为 `消息 / 通讯录 / 我` 三栏。
 - 登录时只需要填写用户 ID，通信配置使用应用内置测试配置。
-- 支持文本消息、联系人管理、本地聊天历史和语音消息。
+- 支持文本消息、图片消息、联系人管理、本地聊天历史和语音消息。
 - 进入已有会话时会自动定位到最新消息。
 - 语音消息可在本端播放；桌面端收到语音后可走本地 Whisper 转文字，再把文本交给 AICLI。
 
@@ -130,7 +147,7 @@ Electron Desktop
   bin/imcli*                  给 AICLI 调用的本地 IM 命令
 
 iOS Remote IM
-  SwiftUI App                 消息、通讯录、设置、文本和语音发送
+  SwiftUI App                 消息、通讯录、设置、文本、图片和语音发送
   IM iOS SDK                  远程消息收发
 
 Local Data

@@ -91,10 +91,11 @@ describe('remote IM outgoing delivery', () => {
       fileToken: 'token-1'
     }
     const file = new File([new Uint8Array([1])], 'photo.png', { type: 'image/png' })
+    const sendImage = vi.fn<NonNullable<TencentImRuntime['sendImage']>>(async () => undefined)
     const runtime: TencentImRuntime = {
       disconnect: vi.fn(),
       sendText: vi.fn(async () => undefined),
-      sendImage: vi.fn(async () => undefined)
+      sendImage
     }
     const markSent = vi.fn()
     const markFailed = vi.fn()
@@ -107,7 +108,43 @@ describe('remote IM outgoing delivery', () => {
       markFailed
     })
 
-    expect(runtime.sendImage).toHaveBeenCalledWith('desktop-b', file, { messageId: 88 })
+    expect(sendImage).toHaveBeenCalledWith('desktop-b', file, { messageId: 88 })
+    expect(markSent).toHaveBeenCalledWith(88)
+    expect(markFailed).not.toHaveBeenCalled()
+  })
+
+  it('delivers an outgoing image from an inline IPC file payload', async () => {
+    const imageEvent: RemoteImOutgoingImageEvent = {
+      projectId: 'project-1',
+      messageId: 88,
+      toUserId: 'desktop-b',
+      fileName: 'desktop_shot.png',
+      mimeType: 'image/png',
+      fileBytes: new Uint8Array([1, 2, 3])
+    }
+    const sendImage = vi.fn<NonNullable<TencentImRuntime['sendImage']>>(async () => undefined)
+    const runtime: TencentImRuntime = {
+      disconnect: vi.fn(),
+      sendText: vi.fn(async () => undefined),
+      sendImage
+    }
+    const markSent = vi.fn()
+    const markFailed = vi.fn()
+
+    await deliverRemoteImOutgoingImage({
+      runtime,
+      event: imageEvent,
+      resolveFile: () => null,
+      markSent,
+      markFailed
+    })
+
+    expect(sendImage).toHaveBeenCalledTimes(1)
+    const sentFile = sendImage.mock.calls[0]![1]
+    expect(sentFile).toBeInstanceOf(File)
+    expect(sentFile.name).toBe('desktop_shot.png')
+    expect(sentFile.type).toBe('image/png')
+    expect(sendImage).toHaveBeenCalledWith('desktop-b', sentFile, { messageId: 88 })
     expect(markSent).toHaveBeenCalledWith(88)
     expect(markFailed).not.toHaveBeenCalled()
   })

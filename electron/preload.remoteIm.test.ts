@@ -245,6 +245,9 @@ describe('preload remote IM api', () => {
       projectId: 'project-1',
       toUserId: 'phone_admin',
       fileToken: 'file-token-1',
+      fileName: 'photo.png',
+      mimeType: 'image/png',
+      fileBytes: new Uint8Array([1, 2, 3]),
       messageId: 43
     }
     outgoingImageHandler({}, outgoingImage)

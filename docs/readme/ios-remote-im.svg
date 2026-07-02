@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="960" viewBox="0 0 1200 960">
+  <defs>
+    <linearGradient id="page" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f7fbff"/>
+      <stop offset="1" stop-color="#eef4f8"/>
+    </linearGradient>
+    <linearGradient id="screen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f9fbff"/>
+      <stop offset="1" stop-color="#f1f5f9"/>
+    </linearGradient>
+    <filter id="phoneShadow" x="-30%" y="-20%" width="160%" height="150%">
+      <feDropShadow dx="0" dy="28" stdDeviation="30" flood-color="#0f172a" flood-opacity="0.18"/>
+    </filter>
+    <style>
+      .title{font:800 42px "Inter","PingFang SC","Noto Sans SC",Arial,sans-serif;fill:#0f172a}
+      .h1{font:800 26px "Inter","PingFang SC","Noto Sans SC",Arial,sans-serif;fill:#0f172a}
+      .h2{font:700 18px "Inter","PingFang SC","Noto Sans SC",Arial,sans-serif;fill:#172033}
+      .body{font:500 16px "Inter","PingFang SC","Noto Sans SC",Arial,sans-serif;fill:#475569}
+      .small{font:600 13px "Inter","PingFang SC","Noto Sans SC",Arial,sans-serif;fill:#64748b}
+      .chip{font:700 14px "Inter","PingFang SC","Noto Sans SC",Arial,sans-serif}
+      .mono{font:500 13px "Cascadia Code","SF Mono",Consolas,monospace;fill:#334155}
+    </style>
+  </defs>
+
+  <rect width="1200" height="960" fill="url(#page)"/>
+  <text x="88" y="124" class="title">手机远程接入 AICLI</text>
+  <text x="90" y="164" class="body">离开电脑时，用 iOS 端把文本、语音或图片发给桌面端当前会话。</text>
+
+  <rect x="88" y="220" width="360" height="132" rx="24" fill="#ffffff" stroke="#d9e4ef"/>
+  <rect x="118" y="252" width="54" height="54" rx="18" fill="#dbeafe"/>
+  <text x="145" y="287" text-anchor="middle" font-family="Inter,Arial" font-size="26" font-weight="800" fill="#2563eb">1</text>
+  <text x="196" y="270" class="h2">消息直达桌面</text>
+  <text x="196" y="301" class="body">当前联系人绑定到桌面端 AICLI。</text>
+  <rect x="88" y="384" width="360" height="132" rx="24" fill="#ffffff" stroke="#d9e4ef"/>
+  <rect x="118" y="416" width="54" height="54" rx="18" fill="#dcfce7"/>
+  <text x="145" y="451" text-anchor="middle" font-family="Inter,Arial" font-size="26" font-weight="800" fill="#16a34a">2</text>
+  <text x="196" y="434" class="h2">语音本地转写</text>
+  <text x="196" y="465" class="body">桌面端可走本地 Whisper 转文本。</text>
+  <rect x="88" y="548" width="360" height="132" rx="24" fill="#ffffff" stroke="#d9e4ef"/>
+  <rect x="118" y="580" width="54" height="54" rx="18" fill="#fef3c7"/>
+  <text x="145" y="615" text-anchor="middle" font-family="Inter,Arial" font-size="26" font-weight="800" fill="#b45309">3</text>
+  <text x="196" y="598" class="h2">图片消息</text>
+  <text x="196" y="629" class="body">从相册选择图片，用 + 发送。</text>
+
+  <g filter="url(#phoneShadow)">
+    <rect x="570" y="72" width="420" height="824" rx="56" fill="#111827"/>
+    <rect x="589" y="92" width="382" height="784" rx="42" fill="url(#screen)"/>
+    <rect x="720" y="106" width="120" height="26" rx="13" fill="#111827"/>
+  </g>
+
+  <rect x="589" y="92" width="382" height="92" rx="42" fill="#ffffff"/>
+  <text x="624" y="143" class="small">9:41</text>
+  <circle cx="930" cy="142" r="6" fill="#16a34a"/>
+  <text x="780" y="160" text-anchor="middle" class="h1">mac-office</text>
+  <text x="780" y="183" text-anchor="middle" class="small">已连接 · 好友</text>
+  <line x1="589" y1="184" x2="971" y2="184" stroke="#dbe7f3"/>
+
+  <rect x="617" y="214" width="270" height="74" rx="18" fill="#ffffff" stroke="#d9e4ef"/>
+  <text x="640" y="246" class="body">帮我检查 README 截图是否清晰。</text>
+  <text x="640" y="270" class="small">已发送 19:06</text>
+
+  <rect x="654" y="316" width="284" height="142" rx="18" fill="#e0f2fe" stroke="#7dd3fc"/>
+  <text x="680" y="350" class="h2">AICLI 输出</text>
+  <text x="680" y="383" class="body">已更新 3 张 README 截图：</text>
+  <text x="680" y="414" class="mono">desktop-workspace.png</text>
+  <text x="680" y="439" class="mono">remote-im-chat.png</text>
+
+  <rect x="617" y="488" width="250" height="136" rx="18" fill="#ffffff" stroke="#d9e4ef"/>
+  <rect x="642" y="518" width="88" height="72" rx="14" fill="#2563eb"/>
+  <path d="M657 574 L684 548 L704 568 L718 556 L718 590 L657 590 Z" fill="#bfdbfe"/>
+  <text x="748" y="548" class="h2">图片已发送</text>
+  <text x="748" y="578" class="small">readme-preview.png</text>
+  <text x="642" y="609" class="small">手机端可预览原图</text>
+
+  <rect x="674" y="650" width="236" height="54" rx="18" fill="#dcfce7"/>
+  <text x="700" y="683" class="body" fill="#166534">继续把改动推送到 main。</text>
+
+  <rect x="589" y="752" width="382" height="74" fill="#ffffff"/>
+  <rect x="616" y="766" width="54" height="48" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/>
+  <text x="643" y="797" text-anchor="middle" class="chip" fill="#0f172a">语音</text>
+  <rect x="682" y="766" width="184" height="48" rx="16" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+  <text x="704" y="797" class="small">输入消息...</text>
+  <rect x="878" y="766" width="48" height="48" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/>
+  <line x1="902" y1="781" x2="902" y2="801" stroke="#0f172a" stroke-width="4" stroke-linecap="round"/>
+  <line x1="892" y1="791" x2="912" y2="791" stroke="#0f172a" stroke-width="4" stroke-linecap="round"/>
+  <rect x="589" y="826" width="382" height="50" rx="0" fill="#ffffff"/>
+  <text x="652" y="858" text-anchor="middle" class="small" fill="#2563eb">消息</text>
+  <text x="780" y="858" text-anchor="middle" class="small">通讯录</text>
+  <text x="908" y="858" text-anchor="middle" class="small">我</text>
+</svg>

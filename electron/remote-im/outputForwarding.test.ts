@@ -261,6 +261,89 @@ describe('remote IM output forwarding', () => {
     expect(state.buffer).toBe('')
   })
 
+  it('forwards local image paths in AICLI output as image messages', () => {
+    const state = createState(
+      [
+        `${REMOTE_IM_REPLY_OPEN_TAG}\n`,
+        '截图如下：![desktop](/Users/me/MultiAICode/remote-im/images/desktop_shot.png)\n',
+        `${REMOTE_IM_REPLY_CLOSE_TAG}`
+      ].join(''),
+      { outputMaxChunkChars: 500 }
+    )
+    const messages: CreateRemoteImMessageInput[] = []
+    const sentTexts: string[] = []
+    const sentImages: Array<{ projectId: string; toUserId: string; localPath: string }> = []
+
+    const chunks = flushRemoteImOutputSession('session-1', state, {
+      now: () => 1234,
+      createMessage: (input) => {
+        messages.push(input)
+      },
+      sendText: (_projectId, _toUserId, text) => {
+        sentTexts.push(text)
+      },
+      sendImage: (projectId, toUserId, image) => {
+        sentImages.push({ projectId, toUserId, localPath: image.localPath })
+      },
+      messagesChanged: () => undefined
+    })
+
+    expect(chunks).toBe(1)
+    expect(sentTexts).toEqual([
+      createRemoteImAicliOutputText(
+        '截图如下：![desktop](/Users/me/MultiAICode/remote-im/images/desktop_shot.png)'
+      )
+    ])
+    expect(sentImages).toEqual([
+      {
+        projectId: 'project-1',
+        toUserId: 'master_desktop',
+        localPath: '/Users/me/MultiAICode/remote-im/images/desktop_shot.png'
+      }
+    ])
+    expect(messages).toHaveLength(2)
+    expect(messages[1]).toMatchObject({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      toUserId: 'master_desktop',
+      content: '[图片消息] desktop_shot.png',
+      kind: 'image',
+      attachment: {
+        type: 'image',
+        localPath: '/Users/me/MultiAICode/remote-im/images/desktop_shot.png',
+        fileName: 'desktop_shot.png',
+        mimeType: 'image/png'
+      },
+      status: 'sent-to-im',
+      sentToImAt: 1234
+    })
+  })
+
+  it('extracts image paths from the full AICLI output before text chunking', () => {
+    const localPath = '/Users/me/MultiAICode/remote-im/images/desktop_shot.png'
+    const state = createState(
+      [
+        `${REMOTE_IM_REPLY_OPEN_TAG}\n`,
+        `截图如下：![desktop](${localPath})\n`,
+        `${REMOTE_IM_REPLY_CLOSE_TAG}`
+      ].join(''),
+      { outputMaxChunkChars: 20 }
+    )
+    const sentImages: string[] = []
+
+    const chunks = flushRemoteImOutputSession('session-1', state, {
+      createMessage: () => undefined,
+      sendText: () => undefined,
+      sendImage: (_projectId, _toUserId, image) => {
+        sentImages.push(image.localPath)
+      },
+      messagesChanged: () => undefined
+    })
+
+    expect(chunks).toBeGreaterThan(1)
+    expect(sentImages).toEqual([localPath])
+  })
+
   it('keeps an incomplete tagged reply buffered until the close tag arrives', () => {
     const state = createState(`noise\n${REMOTE_IM_REPLY_OPEN_TAG}\nhello`, {
       outputMaxChunkChars: 100

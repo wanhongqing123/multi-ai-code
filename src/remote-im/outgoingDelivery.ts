@@ -10,7 +10,10 @@ export interface RemoteImOutgoingTextEvent {
 export interface RemoteImOutgoingImageEvent {
   projectId: string
   toUserId: string
-  fileToken: string
+  fileToken?: string | null
+  fileName?: string | null
+  mimeType?: string | null
+  fileBytes?: Uint8Array | ArrayBuffer | number[] | null
   messageId?: number | null
 }
 
@@ -25,7 +28,7 @@ export interface DeliverRemoteImOutgoingTextInput {
 export interface DeliverRemoteImOutgoingImageInput {
   runtime: TencentImRuntime | null
   event: RemoteImOutgoingImageEvent
-  resolveFile(fileToken: string): File | null
+  resolveFile(event: RemoteImOutgoingImageEvent): File | null
   markSent(messageId: number): Promise<unknown> | unknown
   markFailed(messageId: number, error: string): Promise<unknown> | unknown
   sendTimeoutMs?: number
@@ -86,7 +89,7 @@ export async function deliverRemoteImOutgoingImage(
   input: DeliverRemoteImOutgoingImageInput
 ): Promise<void> {
   if (!input.event.messageId) {
-    const file = input.resolveFile(input.event.fileToken)
+    const file = resolveOutgoingImageFile(input)
     if (file && input.runtime?.sendImage) {
       await input.runtime.sendImage(input.event.toUserId, file, {
         messageId: input.event.messageId
@@ -100,7 +103,7 @@ export async function deliverRemoteImOutgoingImage(
     return
   }
 
-  const file = input.resolveFile(input.event.fileToken)
+  const file = resolveOutgoingImageFile(input)
   if (!file) {
     await input.markFailed(input.event.messageId, '图片文件已失效，请重新选择')
     return
@@ -120,4 +123,22 @@ export async function deliverRemoteImOutgoingImage(
       err instanceof Error ? err.message : String(err)
     )
   }
+}
+
+function resolveOutgoingImageFile(input: DeliverRemoteImOutgoingImageInput): File | null {
+  const file = input.resolveFile(input.event)
+  if (file) return file
+  const bytes = input.event.fileBytes
+  if (!bytes) return null
+  const fileName = input.event.fileName?.trim() || 'remote-im-image.png'
+  const mimeType = input.event.mimeType?.trim() || 'application/octet-stream'
+  return new File([toFileArrayBuffer(bytes)], fileName, { type: mimeType })
+}
+
+function toFileArrayBuffer(bytes: Uint8Array | ArrayBuffer | number[]): ArrayBuffer {
+  if (bytes instanceof ArrayBuffer) return bytes.slice(0)
+  const view = Array.isArray(bytes) ? new Uint8Array(bytes) : bytes
+  const copy = new ArrayBuffer(view.byteLength)
+  new Uint8Array(copy).set(view)
+  return copy
 }

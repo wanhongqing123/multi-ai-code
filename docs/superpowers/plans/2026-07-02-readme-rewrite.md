@@ -22,7 +22,7 @@
 **Files:**
 - Modify: `README.md`
 
-- [ ] **Step 1: Replace the document structure**
+- [x] **Step 1: Replace the document structure**
 
 Use the structure approved in `docs/superpowers/specs/2026-07-02-readme-rewrite-design.md`:
 
@@ -39,7 +39,7 @@ Use the structure approved in `docs/superpowers/specs/2026-07-02-readme-rewrite-
 11. Tech Stack.
 12. Current Limits.
 
-- [ ] **Step 2: Refresh product content**
+- [x] **Step 2: Refresh product content**
 
 Cover the current product surfaces:
 
@@ -49,7 +49,7 @@ Cover the current product surfaces:
 - Remote IM desktop bridge, iOS client, voice messages, and local Whisper ASR.
 - Local-first data ownership and configuration boundaries.
 
-- [ ] **Step 3: Preserve useful commands**
+- [x] **Step 3: Preserve useful commands**
 
 Keep commands for:
 
@@ -65,7 +65,7 @@ Keep commands for:
 **Files:**
 - Inspect: `README.md`
 
-- [ ] **Step 1: Check Markdown whitespace**
+- [x] **Step 1: Check Markdown whitespace**
 
 Run:
 
@@ -75,7 +75,7 @@ git diff --check README.md
 
 Expected: no whitespace errors.
 
-- [ ] **Step 2: Check old/stale wording is gone**
+- [x] **Step 2: Check old/stale wording is gone**
 
 Run:
 
@@ -85,7 +85,7 @@ rg -n "四阶段|主奴|主人|奴隶|持续交付集成管理平台" README.md
 
 Expected: no matches.
 
-- [ ] **Step 3: Review the final diff**
+- [x] **Step 3: Review the final diff**
 
 Run:
 

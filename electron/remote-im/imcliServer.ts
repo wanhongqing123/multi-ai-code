@@ -18,6 +18,11 @@ export interface RemoteImCliServerDeps {
   getStatus(projectId: string): Promise<RemoteImStatus>
   listMessages(projectId: string, limit?: number): RemoteImMessage[]
   sendPeerMessage(projectId: string, text: string, toUserId?: string | null): Promise<RemoteImCliSendResult>
+  sendPeerImage?(
+    projectId: string,
+    localPath: string,
+    toUserId?: string | null
+  ): Promise<RemoteImCliSendResult>
 }
 
 export interface RemoteImCliServerHandle {
@@ -194,6 +199,25 @@ export async function startRemoteImCliServer(
           ...(result.ok
             ? { value: { toUserId: result.toUserId ?? toUserId } }
             : { error: result.error ?? 'failed to send IM message' })
+        })
+        return
+      }
+
+      if (req.method === 'POST' && url.pathname === '/send-image') {
+        const body = await readBody(req)
+        const projectId = getProjectId(url, body)
+        const raw = body && typeof body === 'object' ? (body as Record<string, unknown>) : {}
+        const toUserId = typeof raw.toUserId === 'string' ? raw.toUserId.trim() : ''
+        const localPath = typeof raw.localPath === 'string' ? raw.localPath.trim() : ''
+        if (!toUserId) throw new Error('toUserId is required')
+        if (!localPath) throw new Error('localPath is required')
+        if (!deps.sendPeerImage) throw new Error('image sending is not available')
+        const result = await deps.sendPeerImage(projectId, localPath, toUserId)
+        json(res, result.ok ? 200 : 400, {
+          ok: result.ok,
+          ...(result.ok
+            ? { value: { toUserId: result.toUserId ?? toUserId } }
+            : { error: result.error ?? 'failed to send IM image' })
         })
         return
       }

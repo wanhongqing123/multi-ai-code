@@ -54,6 +54,10 @@ import {
 } from './status.js'
 import { transcribeRemoteImAudioWithLocalWhisper } from './localWhisper.js'
 import { cacheRemoteImImage } from './imageCache.js'
+import {
+  loadRemoteImLocalImageForSend,
+  type RemoteImLocalImagePayload
+} from './localImageFile.js'
 import type {
   RemoteImAccountConfig,
   RemoteImConfig,
@@ -114,10 +118,21 @@ function broadcastOutgoingImage(
   broadcast('remote-im:outgoing-image', { projectId, toUserId, fileToken, messageId })
 }
 
-function toTransferableArrayBuffer(bytes: Uint8Array): ArrayBuffer {
-  const copy = new ArrayBuffer(bytes.byteLength)
-  new Uint8Array(copy).set(bytes)
-  return copy
+function broadcastOutgoingImagePayload(
+  projectId: string,
+  toUserId: string,
+  image: RemoteImLocalImagePayload,
+  messageId?: number
+): void {
+  broadcast('remote-im:outgoing-image', {
+    projectId,
+    toUserId,
+    messageId,
+    fileToken: null,
+    fileName: image.fileName,
+    mimeType: image.mimeType,
+    fileBytes: image.fileBytes
+  })
 }
 
 async function broadcastOutgoingAicliImage(
@@ -125,20 +140,10 @@ async function broadcastOutgoingAicliImage(
   toUserId: string,
   image: RemoteImAicliOutputImage
 ): Promise<void> {
-  const stat = await fs.stat(image.localPath)
-  if (!stat.isFile()) throw new Error('图片路径不是文件')
-  if (stat.size > MAX_AICLI_OUTPUT_IMAGE_BYTES) {
-    throw new Error('图片超过 20MB，已跳过发送')
-  }
-  const bytes = await fs.readFile(image.localPath)
-  broadcast('remote-im:outgoing-image', {
-    projectId,
-    toUserId,
-    fileToken: null,
-    fileName: image.attachment.fileName,
-    mimeType: image.attachment.mimeType,
-    fileBytes: toTransferableArrayBuffer(bytes)
+  const payload = await loadRemoteImLocalImageForSend(image.localPath, {
+    maxBytes: MAX_AICLI_OUTPUT_IMAGE_BYTES
   })
+  broadcastOutgoingImagePayload(projectId, toUserId, payload)
 }
 
 function scheduleOutgoingDeliveryAckTimeout(projectId: string, messageId: number): void {
@@ -425,6 +430,47 @@ async function sendRemoteImPeerImage(input: {
   return { ok: true, toUserId: peerUserId }
 }
 
+async function sendRemoteImPeerLocalImage(
+  projectId: string,
+  localPath: string,
+  toUserId?: string | null
+): Promise<{ ok: boolean; error?: string; toUserId?: string }> {
+  const config = await getRemoteImConfig(projectId)
+  const cleanPath = localPath.trim()
+  if (!cleanPath) return { ok: false, error: 'image path is required' }
+  const peerUserId = resolvePeerUserId(config, toUserId)
+  if (!peerUserId) {
+    return { ok: false, error: '未配置远程 IM 联系人账号' }
+  }
+  const connectionError = getRemoteImSendConnectionError(await getRemoteImStatus(projectId))
+  if (connectionError) {
+    return { ok: false, error: connectionError }
+  }
+
+  let payload: RemoteImLocalImagePayload
+  try {
+    payload = await loadRemoteImLocalImageForSend(cleanPath, {
+      maxBytes: MAX_AICLI_OUTPUT_IMAGE_BYTES
+    })
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+
+  const message = createRemoteImMessage(
+    createPeerOutgoingImageMessageInput({
+      projectId,
+      config,
+      toUserId: peerUserId,
+      attachment: payload.attachment,
+      now: Date.now()
+    })
+  )
+  broadcastOutgoingImagePayload(projectId, peerUserId, payload, message.id)
+  scheduleOutgoingDeliveryAckTimeout(projectId, message.id)
+  broadcastMessagesChanged(projectId)
+  return { ok: true, toUserId: peerUserId }
+}
+
 function readRemoteImTranscriptReply(source: NonNullable<RemoteImOutputSessionState['transcript']>): string | null {
   return source.kind === 'claude'
     ? readLatestClaudeRemoteImReply({
@@ -556,7 +602,8 @@ function ensureRemoteImCliServer(): void {
     getConfig: getRemoteImConfig,
     getStatus: getRemoteImStatus,
     listMessages: listRemoteImMessages,
-    sendPeerMessage: sendRemoteImPeerMessage
+    sendPeerMessage: sendRemoteImPeerMessage,
+    sendPeerImage: sendRemoteImPeerLocalImage
   }).catch((err) => {
     remoteImCliServerStarted = false
     console.error(

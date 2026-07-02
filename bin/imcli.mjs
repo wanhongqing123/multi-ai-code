@@ -7,13 +7,31 @@ const HELP = `imcli help
 
 Usage:
   imcli help
-  imcli whoami
-  imcli contacts
-  imcli history [--peer <user>] [--limit <n>]
-  imcli last [--peer <user>]
-  imcli send <user> <text>
-  imcli forward <user> --message-id <id>
-  imcli broadcast <user1,user2> <text>
+  imcli whoami [--project <projectId>]
+  imcli contacts [--project <projectId>]
+  imcli history [--peer <user>] [--limit <n>] [--project <projectId>]
+  imcli last [--peer <user>] [--project <projectId>]
+  imcli send <user> <text> [--project <projectId>]
+  imcli send-image <user> <imagePath> [--project <projectId>]
+  imcli forward <user> --message-id <id> [--project <projectId>]
+  imcli broadcast <user1,user2> <text> [--project <projectId>]
+
+Requirements:
+  Multi-AI Code desktop must be running with Remote IM connected.
+  Provide a project with --project <projectId> or MULTI_AI_CODE_PROJECT_ID.
+  AICLI sessions launched by Multi-AI Code usually already have the project env set.
+
+Image notes:
+  send-image accepts local png, jpg, jpeg, gif, and webp files up to 20MB.
+  forward sends the source message text only; it does not re-send image files.
+
+Examples:
+  imcli whoami --project project-1
+  imcli contacts --project project-1
+  imcli history --peer phone-user --limit 20 --project project-1
+  imcli send phone-user "build passed" --project project-1
+  imcli send-image phone-user C:\\temp\\screenshot.png --project project-1
+  imcli broadcast phone-user,desktop-b "ready" --project project-1
 
 Notes:
   imcli talks to the running Multi-AI Code app through a local authenticated bridge.
@@ -145,6 +163,15 @@ async function main(argv) {
     if (!toUserId || !text) throw new Error('usage: imcli send <user> <text>')
     const value = await requestJson('POST', '/send', { projectId, toUserId, text })
     console.log(`sent to ${value.toUserId}`)
+    return
+  }
+
+  if (command === 'send-image') {
+    const [toUserId, ...pathParts] = args
+    const localPath = pathParts.join(' ').trim()
+    if (!toUserId || !localPath) throw new Error('usage: imcli send-image <user> <imagePath>')
+    const value = await requestJson('POST', '/send-image', { projectId, toUserId, localPath })
+    console.log(`sent image to ${value.toUserId}`)
     return
   }
 

@@ -134,6 +134,7 @@ imcli contacts --project <projectId>
 imcli history --project <projectId> --peer <userId> --limit 20
 imcli last --project <projectId> --peer <userId>
 imcli send <userId> "消息内容" --project <projectId>
+imcli send-image <userId> /path/to/image.png --project <projectId>
 imcli forward <userId> --message-id <id> --project <projectId>
 imcli broadcast <user1,user2> "消息内容" --project <projectId>
 ```

@@ -47,7 +47,7 @@ export function buildRemoteImAicliPrompt(input: RemoteImAicliPromptInput): strin
     `[来自远程 IM：${input.fromUserId.trim()}]`,
     input.text,
     '',
-    '如果需要查询或操作 IM，请先运行 imcli help。',
+    '如果需要查询或操作 IM，请先运行 imcli help；如需把截图或本地图片发回 IM，可保存为 png/jpg/webp/gif 文件后使用 imcli send-image <user> <imagePath>。',
     '[IM_REPLY] Put final Markdown for IM between these full-line markers:',
     REMOTE_IM_REPLY_OPEN_TAG,
     REMOTE_IM_REPLY_CLOSE_TAG,

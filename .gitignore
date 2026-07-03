@@ -55,6 +55,12 @@ ios/**/Pods/
 ios/**/xcuserdata/
 ios/**/*.xcuserstate
 
+# Android / Gradle local generated state
+android/**/.gradle/
+android/**/build/
+android/**/*.iml
+android/**/local.properties
+
 # Env files
 .env
 .env.local

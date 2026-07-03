@@ -78,7 +78,7 @@
 
   <text x="438" y="500" class="small">AICLI 输出 · 19:08</text>
   <rect x="438" y="522" width="592" height="136" rx="17" fill="#f8fafc" stroke="#d9e4ef"/>
-  <text x="470" y="558" class="body">已完成 README 截图更新，并把本地图片路径转换成图片消息。</text>
+  <text x="470" y="558" class="body">已完成 README 截图更新，图片通过 imcli send-image 回传。</text>
   <text x="470" y="594" class="mono">/Users/me/MultiAICode/remote-im/images/desktop_shot.png</text>
   <rect x="470" y="613" width="104" height="28" rx="14" fill="#dcfce7"/>
   <text x="522" y="632" text-anchor="middle" class="small" fill="#15803d">已回传</text>
@@ -105,7 +105,7 @@
   <rect x="1212" y="456" width="234" height="146" rx="16" fill="#ffffff" stroke="#d9e4ef"/>
   <text x="1236" y="492" class="h2">AICLI 回传</text>
   <text x="1236" y="528" class="body">Markdown 输出</text>
-  <text x="1236" y="560" class="body">本地图片路径识别</text>
+  <text x="1236" y="560" class="body">imcli 图片发送</text>
   <rect x="1212" y="638" width="234" height="84" rx="16" fill="#ecfeff" stroke="#a5f3fc"/>
   <text x="1236" y="674" class="body" fill="#0f766e">消息记录保存在本机</text>
   <text x="1236" y="700" class="small">随项目独立管理</text>

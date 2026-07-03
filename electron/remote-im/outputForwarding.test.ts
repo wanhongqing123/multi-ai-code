@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { CreateRemoteImMessageInput } from './messageStore.js'
 import type { RemoteImConfig } from './types.js'
 import {
@@ -8,6 +8,7 @@ import {
   flushRemoteImOutputSession,
   parseRemoteImAicliOutputText,
   isRemoteImOperationFinishedText,
+  type RemoteImOutputForwardingDeps,
   type RemoteImOutputFlushTimer,
   type RemoteImOutputSessionState
 } from './outputForwarding.js'
@@ -261,7 +262,7 @@ describe('remote IM output forwarding', () => {
     expect(state.buffer).toBe('')
   })
 
-  it('forwards local image paths in AICLI output as image messages', () => {
+  it('does not infer image messages from AICLI text output', () => {
     const state = createState(
       [
         `${REMOTE_IM_REPLY_OPEN_TAG}\n`,
@@ -272,9 +273,9 @@ describe('remote IM output forwarding', () => {
     )
     const messages: CreateRemoteImMessageInput[] = []
     const sentTexts: string[] = []
-    const sentImages: Array<{ projectId: string; toUserId: string; localPath: string }> = []
+    const sendImage = vi.fn()
 
-    const chunks = flushRemoteImOutputSession('session-1', state, {
+    const deps: RemoteImOutputForwardingDeps & { sendImage: typeof sendImage } = {
       now: () => 1234,
       createMessage: (input) => {
         messages.push(input)
@@ -282,11 +283,11 @@ describe('remote IM output forwarding', () => {
       sendText: (_projectId, _toUserId, text) => {
         sentTexts.push(text)
       },
-      sendImage: (projectId, toUserId, image) => {
-        sentImages.push({ projectId, toUserId, localPath: image.localPath })
-      },
+      sendImage,
       messagesChanged: () => undefined
-    })
+    }
+
+    const chunks = flushRemoteImOutputSession('session-1', state, deps)
 
     expect(chunks).toBe(1)
     expect(sentTexts).toEqual([
@@ -294,54 +295,42 @@ describe('remote IM output forwarding', () => {
         '截图如下：![desktop](/Users/me/MultiAICode/remote-im/images/desktop_shot.png)'
       )
     ])
-    expect(sentImages).toEqual([
-      {
+    expect(messages).toEqual([
+      expect.objectContaining({
         projectId: 'project-1',
+        sessionId: 'session-1',
         toUserId: 'master_desktop',
-        localPath: '/Users/me/MultiAICode/remote-im/images/desktop_shot.png'
-      }
+        content: '截图如下：![desktop](/Users/me/MultiAICode/remote-im/images/desktop_shot.png)',
+        status: 'sent-to-im',
+        sentToImAt: 1234
+      })
     ])
-    expect(messages).toHaveLength(2)
-    expect(messages[1]).toMatchObject({
-      projectId: 'project-1',
-      sessionId: 'session-1',
-      toUserId: 'master_desktop',
-      content: '[图片消息] desktop_shot.png',
-      kind: 'image',
-      attachment: {
-        type: 'image',
-        localPath: '/Users/me/MultiAICode/remote-im/images/desktop_shot.png',
-        fileName: 'desktop_shot.png',
-        mimeType: 'image/png'
-      },
-      status: 'sent-to-im',
-      sentToImAt: 1234
-    })
+    expect(messages[0]).not.toHaveProperty('kind')
+    expect(sendImage).not.toHaveBeenCalled()
   })
 
-  it('extracts image paths from the full AICLI output before text chunking', () => {
-    const localPath = '/Users/me/MultiAICode/remote-im/images/desktop_shot.png'
+  it('keeps image-looking AICLI output as text when chunking', () => {
     const state = createState(
       [
         `${REMOTE_IM_REPLY_OPEN_TAG}\n`,
-        `截图如下：![desktop](${localPath})\n`,
+        '截图如下：![desktop](/Users/me/MultiAICode/remote-im/images/desktop_shot.png)\n',
         `${REMOTE_IM_REPLY_CLOSE_TAG}`
       ].join(''),
       { outputMaxChunkChars: 20 }
     )
-    const sentImages: string[] = []
+    const sendImage = vi.fn()
 
-    const chunks = flushRemoteImOutputSession('session-1', state, {
+    const deps: RemoteImOutputForwardingDeps & { sendImage: typeof sendImage } = {
       createMessage: () => undefined,
       sendText: () => undefined,
-      sendImage: (_projectId, _toUserId, image) => {
-        sentImages.push(image.localPath)
-      },
+      sendImage,
       messagesChanged: () => undefined
-    })
+    }
+
+    const chunks = flushRemoteImOutputSession('session-1', state, deps)
 
     expect(chunks).toBeGreaterThan(1)
-    expect(sentImages).toEqual([localPath])
+    expect(sendImage).not.toHaveBeenCalled()
   })
 
   it('keeps an incomplete tagged reply buffered until the close tag arrives', () => {

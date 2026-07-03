@@ -74,7 +74,7 @@
   <text x="552" y="294" class="monoDim">codex · mobile-app</text>
   <text x="468" y="350" class="mono">$ codex</text>
   <text x="468" y="386" class="monoDim">读取当前任务：支持 AICLI 图片消息回传</text>
-  <text x="468" y="426" class="mono">✓ 解析 Markdown 图片路径</text>
+  <text x="468" y="426" class="mono">✓ 使用 imcli send-image 回传图片</text>
   <text x="468" y="462" class="mono">✓ IPC 传递图片二进制</text>
   <text x="468" y="498" class="mono">✓ 前端构造 File 并调用 IM SDK</text>
   <text x="468" y="555" class="monoDim">npm run typecheck</text>

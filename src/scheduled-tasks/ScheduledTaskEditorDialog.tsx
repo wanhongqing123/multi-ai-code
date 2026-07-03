@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CreateScheduledTaskInput, ScheduledTaskScheduleType } from '../../electron/preload'
 import {
   DEFAULT_SCHEDULED_TASK_INSTRUCTIONS,
@@ -10,9 +10,12 @@ interface Props {
   draft: CreateScheduledTaskInput
   targetRepo: string
   onChange: (patch: Partial<CreateScheduledTaskInput>) => void
+  onAutoSave?: (draft: CreateScheduledTaskInput) => Promise<boolean> | boolean
   onCancel: () => void
   onSave: () => void
 }
+
+const SCHEDULED_TASK_GOAL_AUTOSAVE_DELAY_MS = 700
 
 const COMMON_INSTRUCTIONS = [
   '分析代码风险',
@@ -30,8 +33,12 @@ function normalizeIntervalMinutes(value: string): number {
 }
 
 export default function ScheduledTaskEditorDialog(props: Props): JSX.Element {
-  const { draft, mode, onCancel, onChange, onSave } = props
+  const { draft, mode, onAutoSave, onCancel, onChange, onSave } = props
   const goalTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const goalAutosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastAutosavedGoalRef = useRef(draft.goal)
+  const [autosavingGoal, setAutosavingGoal] = useState(false)
+  const [goalAutosaveError, setGoalAutosaveError] = useState<string | null>(null)
 
   const adjustGoalTextareaHeight = useCallback(() => {
     const textarea = goalTextareaRef.current
@@ -43,6 +50,50 @@ export default function ScheduledTaskEditorDialog(props: Props): JSX.Element {
   useEffect(() => {
     adjustGoalTextareaHeight()
   }, [adjustGoalTextareaHeight, draft.goal])
+
+  const flushGoalAutosave = useCallback(async (): Promise<boolean> => {
+    if (mode !== 'edit' || !onAutoSave || draft.goal === lastAutosavedGoalRef.current) {
+      return true
+    }
+    setAutosavingGoal(true)
+    setGoalAutosaveError(null)
+    try {
+      const saved = await onAutoSave(draft)
+      if (saved) {
+        lastAutosavedGoalRef.current = draft.goal
+        return true
+      }
+      setGoalAutosaveError('任务描述自动保存失败，请稍后重试。')
+      return false
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err)
+      setGoalAutosaveError(`任务描述自动保存失败：${message}`)
+      return false
+    } finally {
+      setAutosavingGoal(false)
+    }
+  }, [draft, mode, onAutoSave])
+
+  useEffect(() => {
+    if (mode !== 'edit' || !onAutoSave || draft.goal === lastAutosavedGoalRef.current) return
+    if (goalAutosaveTimerRef.current) {
+      clearTimeout(goalAutosaveTimerRef.current)
+    }
+    goalAutosaveTimerRef.current = setTimeout(() => {
+      void flushGoalAutosave()
+    }, SCHEDULED_TASK_GOAL_AUTOSAVE_DELAY_MS)
+    return () => {
+      if (goalAutosaveTimerRef.current) {
+        clearTimeout(goalAutosaveTimerRef.current)
+        goalAutosaveTimerRef.current = null
+      }
+    }
+  }, [draft.goal, flushGoalAutosave, mode, onAutoSave])
+
+  async function closeEditor(): Promise<void> {
+    const saved = await flushGoalAutosave()
+    if (saved) onCancel()
+  }
 
   function toggleInstruction(instruction: string): void {
     const exists = draft.instructions.includes(instruction)
@@ -91,13 +142,13 @@ export default function ScheduledTaskEditorDialog(props: Props): JSX.Element {
       className="modal-backdrop"
       onClick={(event) => {
         event.stopPropagation()
-        onCancel()
+        void closeEditor()
       }}
     >
       <div className="modal scheduled-task-editor-modal" onClick={(event) => event.stopPropagation()}>
         <div className="modal-head">
           <h3>{mode === 'create' ? '＋ 新建定时任务' : '编辑定时任务'}</h3>
-          <button className="modal-close" onClick={onCancel}>
+          <button className="modal-close" onClick={() => void closeEditor()}>
             ×
           </button>
         </div>
@@ -140,6 +191,12 @@ export default function ScheduledTaskEditorDialog(props: Props): JSX.Element {
                 onChange={(event) => onChange({ goal: event.target.value })}
                 placeholder="检查当前项目最近的代码变更，找出潜在风险。"
               />
+              {mode === 'edit' && autosavingGoal && (
+                <small className="scheduled-task-last-run">任务描述自动保存中...</small>
+              )}
+              {goalAutosaveError && (
+                <small className="scheduled-task-last-run">{goalAutosaveError}</small>
+              )}
             </label>
 
             <section>
@@ -272,8 +329,8 @@ export default function ScheduledTaskEditorDialog(props: Props): JSX.Element {
         </div>
 
         <div className="modal-actions">
-          <button className="drawer-btn" onClick={onCancel}>
-            取消
+          <button className="drawer-btn" onClick={() => void closeEditor()}>
+            {mode === 'edit' ? '关闭' : '取消'}
           </button>
           <button
             className="drawer-btn primary"

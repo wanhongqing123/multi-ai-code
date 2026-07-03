@@ -1489,6 +1489,29 @@ function AppShell() {
     [persistNormalTaskMetadata, projectDir, refreshPlanList]
   )
 
+  const autoSaveNormalTaskMetadata = useCallback(
+    async (name: string, metadata: NormalTaskMetadataDraft): Promise<boolean> => {
+      if (!projectDir) return false
+      const result = await persistNormalTaskMetadata(name, metadata)
+      if (!result.ok) return false
+      const nextDescription = metadata.description.trim()
+      const nextDetails = metadata.details.trim()
+      setPlanList((current) =>
+        current.map((task) =>
+          task.name === name
+            ? {
+                ...task,
+                description: nextDescription || undefined,
+                details: nextDetails || undefined
+              }
+            : task
+        )
+      )
+      return true
+    },
+    [persistNormalTaskMetadata, projectDir]
+  )
+
   /** Load the current plan md and open the review + annotation dialog. */
   const openPlanReview = useCallback(async (name = planName) => {
     if (!projectDir) return
@@ -2140,6 +2163,7 @@ function AppShell() {
           onRun={runNormalTask}
           onPreview={(name) => void openPlanReview(name)}
           onSaveMetadata={saveNormalTaskMetadata}
+          onAutoSaveMetadata={autoSaveNormalTaskMetadata}
           onRefresh={async () => {
             await refreshPlanList()
           }}

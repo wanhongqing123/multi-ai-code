@@ -201,7 +201,7 @@ describe('NormalTaskDialog', () => {
     expect(source).toContain(
       'onSaveMetadata?: (name: string, metadata: NormalTaskMetadataDraft) => Promise<boolean> | boolean'
     )
-    expect(source).toContain('const saved = await saveTaskMetadata')
+    expect(source).toContain('const saved = await save(selectedTask.name, metadata)')
     expect(source).toContain('if (saved)')
   })
 
@@ -266,9 +266,10 @@ describe('NormalTaskDialog', () => {
 
     expect(source).toContain('onSelect?: (name: string) => void')
     expect(source).toContain('const [localSelectedName, setLocalSelectedName]')
+    expect(source).toContain('async function selectTask(name: string)')
     expect(source).toContain('setCreatingTask(false)')
-    expect(source).toContain('setLocalSelectedName(task.name)')
-    expect(source).toContain('onSelect?.(task.name)')
+    expect(source).toContain('setLocalSelectedName(name)')
+    expect(source).toContain('onSelect?.(name)')
     expect(source).toContain('onClick={() => void onRun(task)}')
   })
 
@@ -283,8 +284,21 @@ describe('NormalTaskDialog', () => {
     expect(source).toContain('details?: string')
     expect(source).toContain('Promise<NormalTaskEntry | null> | NormalTaskEntry | null')
     expect(source).toContain('const [creatingTask, setCreatingTask]')
-    expect(source).toContain('onClick={openCreateTask}')
+    expect(source).toContain('onClick={() => void openCreateTask()}')
     expect(source).toContain('const created = await onCreate(name, createDescriptionDraft, createDetailsDraft)')
     expect(source).toContain('if (created)')
+  })
+
+  it('auto-saves normal task details while editing and flushes before close', () => {
+    const source = readFileSync(
+      fileURLToPath(new URL('./NormalTaskDialog.tsx', import.meta.url)),
+      'utf8'
+    )
+
+    expect(source).toContain('onAutoSaveMetadata?:')
+    expect(source).toContain('NORMAL_TASK_METADATA_AUTOSAVE_DELAY_MS')
+    expect(source).toContain("persistMetadataDraft('auto'")
+    expect(source).toContain('closeDialog')
+    expect(source).toContain('closeMetadataEditor')
   })
 })

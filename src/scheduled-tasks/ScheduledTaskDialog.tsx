@@ -96,6 +96,20 @@ export default function ScheduledTaskDialog(props: Props): JSX.Element {
   const selectedTask = tasks.find((task) => task.id === selectedId) ?? filteredTasks[0] ?? null
   const aicliState = sessionRunning && sessionId ? '已启动' : '未启动'
 
+  async function autoSaveEditorDraft(draft: CreateScheduledTaskInput): Promise<boolean> {
+    if (!editor || editor.mode !== 'edit' || typeof window === 'undefined' || !window.api?.scheduledTasks) {
+      return false
+    }
+    const result = await window.api.scheduledTasks.update(editor.taskId, { goal: draft.goal })
+    if (!result.ok || !result.task) return false
+    const updatedTask = result.task
+    setTasks((current) =>
+      current.map((task) => (task.id === updatedTask.id ? updatedTask : task))
+    )
+    setSelectedId(updatedTask.id)
+    return true
+  }
+
   async function saveEditor(): Promise<void> {
     if (!editor || typeof window === 'undefined' || !window.api?.scheduledTasks) return
     if (editor.mode === 'create') {
@@ -321,6 +335,7 @@ export default function ScheduledTaskDialog(props: Props): JSX.Element {
           onChange={(patch) =>
             setEditor((current) => (current ? { ...current, draft: { ...current.draft, ...patch } } : current))
           }
+          onAutoSave={autoSaveEditorDraft}
           onCancel={() => setEditor(null)}
           onSave={() => void saveEditor()}
         />

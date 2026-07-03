@@ -134,4 +134,22 @@ describe('ScheduledTaskEditorDialog', () => {
     expect(source).not.toContain('<ReactMarkdown')
     expect(source).not.toContain('buildScheduledTaskPreviewPrompt')
   })
+
+  it('auto-saves the scheduled task description while editing and flushes before close', () => {
+    const editorSource = readFileSync(
+      fileURLToPath(new URL('./ScheduledTaskEditorDialog.tsx', import.meta.url)),
+      'utf8'
+    )
+    const dialogSource = readFileSync(
+      fileURLToPath(new URL('./ScheduledTaskDialog.tsx', import.meta.url)),
+      'utf8'
+    )
+
+    expect(editorSource).toContain('onAutoSave?:')
+    expect(editorSource).toContain('SCHEDULED_TASK_GOAL_AUTOSAVE_DELAY_MS')
+    expect(editorSource).toContain('flushGoalAutosave')
+    expect(dialogSource).toContain('autoSaveEditorDraft')
+    expect(dialogSource).toContain('goal: draft.goal')
+    expect(dialogSource).toContain('onAutoSave={autoSaveEditorDraft}')
+  })
 })

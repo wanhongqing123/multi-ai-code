@@ -15,9 +15,15 @@ export interface NormalTaskMetadataDraft {
   details: string
 }
 
+const NORMAL_TASK_METADATA_AUTOSAVE_DELAY_MS = 700
+
 function formatSaveError(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err)
   return `保存任务信息失败：${message}`
+}
+
+function metadataDraftKey(name: string, metadata: NormalTaskMetadataDraft): string {
+  return JSON.stringify([name, metadata.description, metadata.details])
 }
 
 interface Props {
@@ -33,6 +39,7 @@ interface Props {
   onSelect?: (name: string) => void
   onPreview: (name: string) => void
   onSaveMetadata?: (name: string, metadata: NormalTaskMetadataDraft) => Promise<boolean> | boolean
+  onAutoSaveMetadata?: (name: string, metadata: NormalTaskMetadataDraft) => Promise<boolean> | boolean
   onSaveDescription?: (name: string, description: string) => Promise<boolean> | boolean
   onRefresh: () => Promise<void> | void
   onClose: () => void
@@ -48,6 +55,7 @@ export default function NormalTaskDialog(props: Props): JSX.Element {
     onSelect,
     onPreview,
     onSaveMetadata,
+    onAutoSaveMetadata,
     onSaveDescription,
     onRefresh,
     onClose
@@ -85,6 +93,8 @@ export default function NormalTaskDialog(props: Props): JSX.Element {
   const [metadataSaveError, setMetadataSaveError] = useState<string | null>(null)
   const descriptionTextareaRef = useRef<HTMLTextAreaElement | null>(null)
   const detailsTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const metadataAutosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastSavedMetadataKeyRef = useRef('')
   const aicliState = sessionRunning ? '已启动' : '未启动'
 
   const adjustMetadataTextareaHeight = useCallback(() => {
@@ -96,11 +106,17 @@ export default function NormalTaskDialog(props: Props): JSX.Element {
   }, [])
 
   useEffect(() => {
-    setDescriptionDraft(selectedDescription)
-    setDetailsDraft(selectedTask?.details ?? '')
-    setEditingMetadata(false)
-    setMetadataSaveError(null)
-  }, [selectedDescription, selectedTask?.details, selectedTask?.name])
+    if (!selectedTask) return
+    lastSavedMetadataKeyRef.current = metadataDraftKey(selectedTask.name, {
+      description: selectedDescription,
+      details: selectedTask.details ?? ''
+    })
+    if (!editingMetadata) {
+      setDescriptionDraft(selectedDescription)
+      setDetailsDraft(selectedTask.details ?? '')
+      setMetadataSaveError(null)
+    }
+  }, [editingMetadata, selectedDescription, selectedTask?.details, selectedTask?.name])
 
   useEffect(() => {
     if (selectedName) setLocalSelectedName(selectedName)
@@ -134,37 +150,112 @@ export default function NormalTaskDialog(props: Props): JSX.Element {
     }
   }
 
-  async function saveTaskMetadata(
+  const saveTaskMetadata = useCallback(async (
     name: string,
     metadata: NormalTaskMetadataDraft
-  ): Promise<boolean> {
+  ): Promise<boolean> => {
     if (onSaveMetadata) return await onSaveMetadata(name, metadata)
     if (onSaveDescription) return await onSaveDescription(name, metadata.description)
     return false
-  }
+  }, [onSaveDescription, onSaveMetadata])
 
-  async function saveMetadata(): Promise<void> {
-    if (!selectedTask || savingMetadata) return
+  const persistMetadataDraft = useCallback(async (
+    source: 'manual' | 'auto',
+    options: { closeEditor?: boolean } = {}
+  ): Promise<boolean> => {
+    if (!selectedTask || savingMetadata) return false
+    const metadata = {
+      description: descriptionDraft,
+      details: detailsDraft
+    }
+    const nextKey = metadataDraftKey(selectedTask.name, metadata)
+    if (nextKey === lastSavedMetadataKeyRef.current) {
+      if (options.closeEditor) setEditingMetadata(false)
+      return true
+    }
     setSavingMetadata(true)
     setMetadataSaveError(null)
     try {
-      const saved = await saveTaskMetadata(selectedTask.name, {
-        description: descriptionDraft,
-        details: detailsDraft
-      })
+      const save = source === 'auto' && onAutoSaveMetadata
+        ? onAutoSaveMetadata
+        : saveTaskMetadata
+      const saved = await save(selectedTask.name, metadata)
       if (saved) {
-        setEditingMetadata(false)
+        lastSavedMetadataKeyRef.current = nextKey
+        if (options.closeEditor) setEditingMetadata(false)
+        return true
       } else {
         setMetadataSaveError('保存任务信息失败，请查看错误提示后重试。')
+        return false
       }
     } catch (err: unknown) {
       setMetadataSaveError(formatSaveError(err))
+      return false
     } finally {
       setSavingMetadata(false)
     }
+  }, [
+    descriptionDraft,
+    detailsDraft,
+    onAutoSaveMetadata,
+    saveTaskMetadata,
+    savingMetadata,
+    selectedTask
+  ])
+
+  useEffect(() => {
+    if (!editingMetadata || !selectedTask) return
+    const nextKey = metadataDraftKey(selectedTask.name, {
+      description: descriptionDraft,
+      details: detailsDraft
+    })
+    if (nextKey === lastSavedMetadataKeyRef.current) return
+    if (metadataAutosaveTimerRef.current) {
+      clearTimeout(metadataAutosaveTimerRef.current)
+    }
+    metadataAutosaveTimerRef.current = setTimeout(() => {
+      void persistMetadataDraft('auto')
+    }, NORMAL_TASK_METADATA_AUTOSAVE_DELAY_MS)
+    return () => {
+      if (metadataAutosaveTimerRef.current) {
+        clearTimeout(metadataAutosaveTimerRef.current)
+        metadataAutosaveTimerRef.current = null
+      }
+    }
+  }, [descriptionDraft, detailsDraft, editingMetadata, persistMetadataDraft, selectedTask])
+
+  async function saveMetadata(): Promise<void> {
+    await persistMetadataDraft('manual', { closeEditor: true })
   }
 
-  function openCreateTask(): void {
+  async function closeMetadataEditor(): Promise<void> {
+    await persistMetadataDraft('auto', { closeEditor: true })
+  }
+
+  async function closeDialog(): Promise<void> {
+    if (editingMetadata) {
+      const saved = await persistMetadataDraft('auto')
+      if (!saved) return
+    }
+    onClose()
+  }
+
+  async function selectTask(name: string): Promise<void> {
+    if (editingMetadata) {
+      const saved = await persistMetadataDraft('auto')
+      if (!saved) return
+    }
+    setCreatingTask(false)
+    setEditingMetadata(false)
+    setLocalSelectedName(name)
+    onSelect?.(name)
+  }
+
+  async function openCreateTask(): Promise<void> {
+    if (editingMetadata) {
+      const saved = await persistMetadataDraft('auto')
+      if (!saved) return
+    }
     setDraftName('')
     setCreateDescriptionDraft('')
     setCreateDetailsDraft('')
@@ -184,7 +275,7 @@ export default function NormalTaskDialog(props: Props): JSX.Element {
   }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop" onClick={() => void closeDialog()}>
       <div
         className="modal scheduled-task-modal normal-task-modal"
         onClick={(event) => event.stopPropagation()}
@@ -194,7 +285,7 @@ export default function NormalTaskDialog(props: Props): JSX.Element {
           <span className={`scheduled-task-aicli ${aicliState === '已启动' ? 'idle' : ''}`}>
             当前 AICLI：{aicliState}
           </span>
-          <button className="modal-close" onClick={onClose}>
+          <button className="modal-close" onClick={() => void closeDialog()}>
             ×
           </button>
         </div>
@@ -204,7 +295,7 @@ export default function NormalTaskDialog(props: Props): JSX.Element {
             <button
               type="button"
               className="drawer-btn primary"
-              onClick={openCreateTask}
+              onClick={() => void openCreateTask()}
               title="创建普通任务"
             >
               + 新建普通任务
@@ -240,11 +331,7 @@ export default function NormalTaskDialog(props: Props): JSX.Element {
                     <button
                       type="button"
                       className="scheduled-task-card-select"
-                      onClick={() => {
-                        setCreatingTask(false)
-                        setLocalSelectedName(task.name)
-                        onSelect?.(task.name)
-                      }}
+                      onClick={() => void selectTask(task.name)}
                       title="选择普通任务"
                     >
                       <span className={`scheduled-task-dot ${task.source === 'external' ? 'warning' : 'success'}`} />
@@ -387,12 +474,10 @@ export default function NormalTaskDialog(props: Props): JSX.Element {
                           className="drawer-btn"
                           disabled={savingMetadata}
                           onClick={() => {
-                            setDescriptionDraft(selectedDescription)
-                            setDetailsDraft(selectedTask.details ?? '')
-                            setEditingMetadata(false)
+                            void closeMetadataEditor()
                           }}
                         >
-                          取消
+                          关闭编辑
                         </button>
                         <button
                           type="button"

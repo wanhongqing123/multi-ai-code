@@ -10,7 +10,11 @@ import {
   isRemoteImOperationFinishedText,
   parseRemoteImAicliOutputText
 } from './outputForwarding.js'
-import { buildRemoteImAicliDisplayText, buildRemoteImAicliPrompt } from './replyProtocol.js'
+import {
+  buildRemoteImAicliDisplayText,
+  buildRemoteImAicliPrompt,
+  createRemoteImReplyId
+} from './replyProtocol.js'
 import { canRouteRemoteImTaskFrom, getRemoteImPeerRelation } from './rolePermissions.js'
 
 export interface RemoteImSessionInfo {
@@ -41,6 +45,7 @@ export interface RemoteImRouterDeps {
     | { ok: true; attachment: RemoteImImageAttachment }
     | { ok: false; error: string; attachment?: RemoteImImageAttachment | null }
   >
+  createReplyId?: () => string
   store: RemoteImRouterStore
   now?: () => number
 }
@@ -49,6 +54,7 @@ export interface RemoteImRouteResult {
   ok: boolean
   error?: string
   aicliSessionId?: string
+  replyId?: string
 }
 
 const REMOTE_IM_SYSTEM_TEXTS = new Set([
@@ -295,7 +301,12 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       return { ok: false, error: 'No running AICLI session' }
     }
 
-    const wrapped = buildRemoteImAicliPrompt({ fromUserId: input.fromUserId, text: input.text })
+    const replyId = deps.createReplyId?.() ?? createRemoteImReplyId()
+    const wrapped = buildRemoteImAicliPrompt({
+      fromUserId: input.fromUserId,
+      text: input.text,
+      replyId
+    })
     const displayText = buildRemoteImAicliDisplayText({
       fromUserId: input.fromUserId,
       text: input.text
@@ -318,7 +329,7 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       error: null
     })
     await sendSystemText(deps, input.message.projectId, input.fromUserId, '已发送给当前 AICLI，开始处理。')
-    return { ok: true, aicliSessionId: session.sessionId }
+    return { ok: true, aicliSessionId: session.sessionId, replyId }
   }
 
   async function handleIncomingText(
@@ -499,7 +510,8 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       fromUserId,
       localPath: attachment.localPath
     })
-    const wrapped = buildRemoteImAicliPrompt({ fromUserId, text: taskText })
+    const replyId = deps.createReplyId?.() ?? createRemoteImReplyId()
+    const wrapped = buildRemoteImAicliPrompt({ fromUserId, text: taskText, replyId })
     const displayText = buildRemoteImAicliDisplayText({ fromUserId, text: taskText })
     const sendResult = await deps.sendUser(session.sessionId, wrapped, { displayText })
     if (!sendResult.ok) {
@@ -519,7 +531,7 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       error: null
     })
     await sendSystemText(deps, message.projectId, fromUserId, '已发送给当前 AICLI，开始处理。')
-    return { ok: true, aicliSessionId: session.sessionId }
+    return { ok: true, aicliSessionId: session.sessionId, replyId }
   }
 
   return {

@@ -11,13 +11,16 @@ describe('remote IM reply protocol', () => {
   it('builds a compact AICLI prompt that avoids visible protocol echo fragments', () => {
     const prompt = buildRemoteImAicliPrompt({
       fromUserId: 'phone_admin',
-      text: 'check build'
+      text: 'check build',
+      replyId: 'reply-123'
     })
 
     expect(prompt).toContain('[来自远程 IM：phone_admin]')
     expect(prompt).toContain('check build')
-    expect(prompt).toContain(REMOTE_IM_REPLY_OPEN_TAG)
-    expect(prompt).toContain(REMOTE_IM_REPLY_CLOSE_TAG)
+    expect(prompt).toContain('<remote-im-reply id="reply-123">')
+    expect(prompt).toContain('</remote-im-reply id="reply-123">')
+    expect(prompt.split('\n')).not.toContain('<remote-im-reply id="reply-123">')
+    expect(prompt.split('\n')).not.toContain('</remote-im-reply id="reply-123">')
     expect(prompt).toContain('如果需要查询或操作 IM，请先运行 imcli help')
     expect(prompt).toContain('如需把截图或本地图片发回 IM')
     expect(prompt).toContain('imcli send-image <user> <imagePath>')
@@ -51,6 +54,45 @@ describe('remote IM reply protocol', () => {
 
     expect(extractRemoteImReplyOutput(output)).toEqual({
       content: '## Done\n\n- build passed',
+      pending: false,
+      nextBuffer: ''
+    })
+  })
+
+  it('extracts only the reply content matching the expected reply id', () => {
+    const output = [
+      '<remote-im-reply id="old-reply">',
+      'old result',
+      '</remote-im-reply id="old-reply">',
+      REMOTE_IM_REPLY_OPEN_TAG,
+      'legacy result',
+      REMOTE_IM_REPLY_CLOSE_TAG,
+      '<remote-im-reply id="reply-123">',
+      'current result',
+      '</remote-im-reply id="reply-123">'
+    ].join('\n')
+
+    expect(extractRemoteImReplyOutput(output, { replyId: 'reply-123' })).toEqual({
+      content: 'current result',
+      pending: false,
+      nextBuffer: ''
+    })
+  })
+
+  it('does not treat echoed prompt marker instructions as a reply', () => {
+    const promptEcho = buildRemoteImAicliPrompt({
+      fromUserId: 'phone_admin',
+      text: '检查构建',
+      replyId: 'reply-123'
+    })
+    const output = [
+      promptEcho,
+      'Find and fix a bug in @filename',
+      'Write tests for @filename'
+    ].join('\n')
+
+    expect(extractRemoteImReplyOutput(output, { replyId: 'reply-123' })).toEqual({
+      content: '',
       pending: false,
       nextBuffer: ''
     })

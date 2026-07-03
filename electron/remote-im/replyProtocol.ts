@@ -1,15 +1,47 @@
+import { randomUUID } from 'node:crypto'
+
 export const REMOTE_IM_REPLY_OPEN_TAG = '<remote-im-reply>'
 export const REMOTE_IM_REPLY_CLOSE_TAG = '</remote-im-reply>'
+const REMOTE_IM_REPLY_ID_RE = /^[A-Za-z0-9_-]{1,80}$/
 
 export interface RemoteImAicliPromptInput {
   fromUserId: string
   text: string
+  replyId?: string
 }
 
 export interface RemoteImReplyExtraction {
   content: string
   pending: boolean
   nextBuffer: string
+}
+
+export interface RemoteImReplyExtractionOptions {
+  replyId?: string
+}
+
+interface RemoteImReplyTag {
+  kind: 'open' | 'close'
+  replyId?: string
+}
+
+export function createRemoteImReplyId(): string {
+  return `rim-${randomUUID().replace(/-/g, '').slice(0, 16)}`
+}
+
+function normalizeReplyId(replyId: string | undefined): string | undefined {
+  const trimmed = replyId?.trim()
+  return trimmed && REMOTE_IM_REPLY_ID_RE.test(trimmed) ? trimmed : undefined
+}
+
+export function buildRemoteImReplyOpenTag(replyId?: string): string {
+  const normalized = normalizeReplyId(replyId)
+  return normalized ? `<remote-im-reply id="${normalized}">` : REMOTE_IM_REPLY_OPEN_TAG
+}
+
+export function buildRemoteImReplyCloseTag(replyId?: string): string {
+  const normalized = normalizeReplyId(replyId)
+  return normalized ? `</remote-im-reply id="${normalized}">` : REMOTE_IM_REPLY_CLOSE_TAG
 }
 
 function normalizeReplyTerminalText(input: string): string {
@@ -34,23 +66,35 @@ function trimReplyContent(input: string): string {
   return out.join('\n').trim()
 }
 
-function isTagLine(line: string, tag: string): boolean {
-  return line.trim().replace(/^[\u23fa\u25CF\u2022]\s*/, '').trim() === tag
+function parseTagLine(line: string): RemoteImReplyTag | null {
+  const text = line.trim().replace(/^[\u23fa\u25CF\u2022]\s*/, '').trim()
+  if (text === REMOTE_IM_REPLY_OPEN_TAG) return { kind: 'open' }
+  if (text === REMOTE_IM_REPLY_CLOSE_TAG) return { kind: 'close' }
+  const open = /^<remote-im-reply\s+id="([A-Za-z0-9_-]+)">$/.exec(text)
+  if (open) return { kind: 'open', replyId: normalizeReplyId(open[1]) }
+  const close = /^<\/remote-im-reply\s+id="([A-Za-z0-9_-]+)">$/.exec(text)
+  if (close) return { kind: 'close', replyId: normalizeReplyId(close[1]) }
+  return null
 }
 
-function buildPendingReplyBuffer(lines: string[]): string {
-  return [REMOTE_IM_REPLY_OPEN_TAG, ...lines].join('\n')
+function matchesExpectedReplyId(tag: RemoteImReplyTag, expectedReplyId: string | undefined): boolean {
+  return expectedReplyId ? tag.replyId === expectedReplyId : true
+}
+
+function buildPendingReplyBuffer(lines: string[], replyId?: string): string {
+  return [buildRemoteImReplyOpenTag(replyId), ...lines].join('\n')
 }
 
 export function buildRemoteImAicliPrompt(input: RemoteImAicliPromptInput): string {
+  const replyId = normalizeReplyId(input.replyId)
   return [
     `[来自远程 IM：${input.fromUserId.trim()}]`,
     input.text,
     '',
     '如果需要查询或操作 IM，请先运行 imcli help；如需把截图或本地图片发回 IM，可保存为 png/jpg/webp/gif 文件后使用 imcli send-image <user> <imagePath>。',
-    '[IM_REPLY] Put final Markdown for IM between these full-line markers:',
-    REMOTE_IM_REPLY_OPEN_TAG,
-    REMOTE_IM_REPLY_CLOSE_TAG,
+    '[IM_REPLY] Put final Markdown for IM between these exact markers, each on its own line in your reply:',
+    `Opening marker: ${buildRemoteImReplyOpenTag(replyId)}`,
+    `Closing marker: ${buildRemoteImReplyCloseTag(replyId)}`,
     'Text outside markers is ignored.'
   ].join('\n')
 }
@@ -59,16 +103,25 @@ export function buildRemoteImAicliDisplayText(input: RemoteImAicliPromptInput): 
   return [`[来自远程 IM：${input.fromUserId.trim()}]`, input.text].join('\n').trim()
 }
 
-export function extractRemoteImReplyOutput(input: string): RemoteImReplyExtraction {
+export function extractRemoteImReplyOutput(
+  input: string,
+  options: RemoteImReplyExtractionOptions = {}
+): RemoteImReplyExtraction {
   const clean = normalizeReplyTerminalText(input)
   const replies: string[] = []
   const pendingLines: string[] = []
+  const expectedReplyId = normalizeReplyId(options.replyId)
+  let pendingReplyId: string | undefined
   let pending = false
 
   for (const line of clean.split('\n')) {
-    if (isTagLine(line, REMOTE_IM_REPLY_OPEN_TAG)) {
-      pending = true
-      pendingLines.length = 0
+    const tag = parseTagLine(line)
+    if (tag?.kind === 'open') {
+      if (matchesExpectedReplyId(tag, expectedReplyId)) {
+        pending = true
+        pendingReplyId = tag.replyId
+        pendingLines.length = 0
+      }
       continue
     }
 
@@ -76,10 +129,15 @@ export function extractRemoteImReplyOutput(input: string): RemoteImReplyExtracti
       continue
     }
 
-    if (isTagLine(line, REMOTE_IM_REPLY_CLOSE_TAG)) {
+    if (
+      tag?.kind === 'close' &&
+      matchesExpectedReplyId(tag, expectedReplyId) &&
+      (!expectedReplyId || tag.replyId === pendingReplyId)
+    ) {
       const content = trimReplyContent(pendingLines.join('\n'))
       if (content) replies.push(content)
       pending = false
+      pendingReplyId = undefined
       pendingLines.length = 0
       continue
     }
@@ -90,6 +148,6 @@ export function extractRemoteImReplyOutput(input: string): RemoteImReplyExtracti
   return {
     content: replies.join('\n\n').trim(),
     pending,
-    nextBuffer: pending ? buildPendingReplyBuffer(pendingLines) : ''
+    nextBuffer: pending ? buildPendingReplyBuffer(pendingLines, pendingReplyId) : ''
   }
 }

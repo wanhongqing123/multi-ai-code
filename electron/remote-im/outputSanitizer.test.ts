@@ -21,6 +21,57 @@ describe('remote IM output sanitizer', () => {
     )
   })
 
+  it('drops Codex startup hints and model status while preserving idle greeting output', () => {
+    const noisy = [
+      'Use /skills to list available skills',
+      '',
+      'gpt-5.5 xhigh · ~/u4Quark/quarkpc/src · gpt-5.5 · src · Context 4% used · 5h 100% left · weekly 61% left',
+      '',
+      '你好，我在。有什么需要我处理的直接发我。',
+      '',
+      '## 处理结果',
+      '',
+      '- 已完成有效任务输出。'
+    ].join('\n')
+
+    expect(sanitizeRemoteImAicliOutput(noisy, { sourceKind: 'codex' })).toBe(
+      ['你好，我在。有什么需要我处理的直接发我。', '', '## 处理结果', '', '- 已完成有效任务输出。'].join('\n')
+    )
+  })
+
+  it('drops split Codex status blocks without dropping normal content lines', () => {
+    const noisy = [
+      'Use /skills to list available skills',
+      '',
+      'gpt-5.5 xhigh',
+      '~/u4Quark/quarkpc/src',
+      'gpt-5.5',
+      'src',
+      'Context 4% used',
+      '5h 100% left',
+      'weekly 61% left',
+      '',
+      '## 处理结果',
+      '',
+      'src',
+      '- Codex 已处理有效输出。'
+    ].join('\n')
+
+    expect(sanitizeRemoteImAicliOutput(noisy, { sourceKind: 'codex' })).toBe(
+      ['## 处理结果', '', 'src', '- Codex 已处理有效输出。'].join('\n')
+    )
+  })
+
+  it('does not apply Codex-only noise filters to Claude output', () => {
+    const output = [
+      'Use /skills to list available skills',
+      '你好，我在。有什么需要我处理的直接发我。'
+    ].join('\n')
+
+    expect(sanitizeRemoteImAicliOutput(output, { sourceKind: 'claude' })).toBe(output)
+    expect(sanitizeRemoteImAicliOutput(output)).toBe(output)
+  })
+
   it('returns an empty string for redraw-only terminal UI chunks', () => {
     const redraw = [
       '────────────────────────────────────────────────────────',

@@ -463,7 +463,8 @@ function readRemoteImTranscriptReply(source: NonNullable<RemoteImOutputSessionSt
   return source.kind === 'claude'
     ? readLatestClaudeRemoteImReply({
         cwd: source.cwd,
-        sinceMs: source.sinceMs
+        sinceMs: source.sinceMs,
+        replyId: source.replyId
       })
     : null
 }
@@ -477,14 +478,36 @@ function isClaudeCommand(command: string): boolean {
   return /^claude(\.(exe|cmd|bat|ps1))?$/.test(base)
 }
 
-function startOutputForwarding(sessionId: string, projectId: string, toUserId: string, config: RemoteImConfig): void {
+function isCodexCommand(command: string): boolean {
+  const normalized = command
+    .trim()
+    .replace(/^["']|["']$/g, '')
+    .replace(/\\/g, '/')
+  const base = basename(normalized).toLowerCase()
+  return /^codex(\.(exe|cmd|bat|ps1))?$/.test(base)
+}
+
+function startOutputForwarding(
+  sessionId: string,
+  projectId: string,
+  toUserId: string,
+  config: RemoteImConfig,
+  replyId?: string
+): void {
   const current = outputSessions.get(sessionId)
   if (current?.timer) clearTimeout(current.timer)
   const runtime = getSessionRuntimeInfo(sessionId)
+  const sourceKind = runtime && isCodexCommand(runtime.command)
+    ? 'codex'
+    : runtime && isClaudeCommand(runtime.command)
+      ? 'claude'
+      : 'unknown'
   outputSessions.set(sessionId, {
     projectId,
     toUserId,
     config,
+    replyId,
+    sourceKind,
     buffer: current?.buffer ?? '',
     timer: null,
     transcript:
@@ -492,7 +515,8 @@ function startOutputForwarding(sessionId: string, projectId: string, toUserId: s
         ? {
             kind: 'claude',
             cwd: runtime.targetRepo,
-            sinceMs: Date.now()
+            sinceMs: Date.now(),
+            replyId
           }
         : undefined
   })
@@ -756,7 +780,7 @@ export function registerRemoteImIpc(): void {
       })
       const result = await router.handleIncomingText(message)
       if (result.ok && result.aicliSessionId) {
-        startOutputForwarding(result.aicliSessionId, message.projectId, message.fromUserId, config)
+        startOutputForwarding(result.aicliSessionId, message.projectId, message.fromUserId, config, result.replyId)
       }
       broadcastMessagesChanged(message.projectId)
       return result
@@ -788,7 +812,7 @@ export function registerRemoteImIpc(): void {
       })
       const result = await router.handleIncomingAudio(message)
       if (result.ok && result.aicliSessionId) {
-        startOutputForwarding(result.aicliSessionId, message.projectId, message.fromUserId, config)
+        startOutputForwarding(result.aicliSessionId, message.projectId, message.fromUserId, config, result.replyId)
       }
       broadcastMessagesChanged(message.projectId)
       return result
@@ -847,7 +871,7 @@ export function registerRemoteImIpc(): void {
       })
       const result = await router.handleIncomingImage(message)
       if (result.ok && result.aicliSessionId) {
-        startOutputForwarding(result.aicliSessionId, message.projectId, message.fromUserId, config)
+        startOutputForwarding(result.aicliSessionId, message.projectId, message.fromUserId, config, result.replyId)
       }
       broadcastMessagesChanged(message.projectId)
       return result

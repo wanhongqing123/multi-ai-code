@@ -222,6 +222,40 @@ describe('remote IM output forwarding', () => {
     expect(sentTexts).toEqual([createRemoteImAicliOutputText(expected)])
   })
 
+  it('forwards only tagged output for the current reply id', () => {
+    const state = createState(
+      [
+        '<remote-im-reply id="old-reply">',
+        'old result',
+        '</remote-im-reply id="old-reply">',
+        REMOTE_IM_REPLY_OPEN_TAG,
+        'legacy result',
+        REMOTE_IM_REPLY_CLOSE_TAG,
+        '<remote-im-reply id="reply-current">',
+        'current result',
+        '</remote-im-reply id="reply-current">'
+      ].join('\n'),
+      { outputMaxChunkChars: 500 }
+    )
+    state.replyId = 'reply-current'
+    const messages: CreateRemoteImMessageInput[] = []
+    const sentTexts: string[] = []
+
+    const chunks = flushRemoteImOutputSession('session-1', state, {
+      createMessage: (input) => {
+        messages.push(input)
+      },
+      sendText: (_projectId, _toUserId, text) => {
+        sentTexts.push(text)
+      },
+      messagesChanged: () => undefined
+    })
+
+    expect(chunks).toBe(1)
+    expect(messages[0]?.content).toBe('current result')
+    expect(sentTexts).toEqual([createRemoteImAicliOutputText('current result')])
+  })
+
   it('prefers raw Claude transcript Markdown over terminal-rendered table fragments', () => {
     const terminalRenderedTable = [
       `${REMOTE_IM_REPLY_OPEN_TAG}\r\n`,

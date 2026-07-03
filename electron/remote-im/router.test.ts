@@ -93,6 +93,7 @@ describe('remote IM router', () => {
         sentToIm.push(text)
         return { ok: true }
       },
+      createReplyId: () => 'reply-fixed',
       store
     })
 
@@ -107,11 +108,12 @@ describe('remote IM router', () => {
 
     expect(result.ok).toBe(true)
     expect(result.aicliSessionId).toBe('session-main')
+    expect(result.replyId).toBe('reply-fixed')
     expect(sentToAicli).toHaveLength(1)
     expect(sentToAicli[0]?.sessionId).toBe('session-main')
     expect(sentToAicli[0]?.text).toContain('phone_admin')
-    expect(sentToAicli[0]?.text).toContain(REMOTE_IM_REPLY_OPEN_TAG)
-    expect(sentToAicli[0]?.text).toContain(REMOTE_IM_REPLY_CLOSE_TAG)
+    expect(sentToAicli[0]?.text).toContain('<remote-im-reply id="reply-fixed">')
+    expect(sentToAicli[0]?.text).toContain('</remote-im-reply id="reply-fixed">')
     expect(sentToAicli[0]?.displayText).toBe('[来自远程 IM：phone_admin]\n检查构建')
     expect(sentToAicli[0]?.displayText).not.toContain('[IM_REPLY]')
     expect(sentToIm[0]).toContain('已发送给当前 AICLI')

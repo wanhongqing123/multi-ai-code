@@ -6,6 +6,7 @@ import { extractRemoteImReplyOutput } from './replyProtocol.js'
 export interface ReadClaudeRemoteImReplyInput {
   cwd: string
   sinceMs: number
+  replyId?: string
   projectsRoot?: string
   maxFiles?: number
 }
@@ -94,8 +95,7 @@ export function readLatestClaudeRemoteImReply(
       if (timestampMs === null || timestampMs < input.sinceMs) continue
 
       const text = getAssistantText(entry)
-      if (!text.includes('<remote-im-reply>')) continue
-      const reply = extractRemoteImReplyOutput(text)
+      const reply = extractRemoteImReplyOutput(text, { replyId: input.replyId })
       if (reply.content.trim()) {
         candidates.push({
           content: reply.content,

@@ -1,6 +1,9 @@
 import type { CreateRemoteImMessageInput } from './messageStore.js'
 import { createOutputChunks } from './outputBuffer.js'
-import { sanitizeRemoteImAicliOutput } from './outputSanitizer.js'
+import {
+  sanitizeRemoteImAicliOutput,
+  type RemoteImAicliOutputSourceKind
+} from './outputSanitizer.js'
 import { extractRemoteImReplyOutput } from './replyProtocol.js'
 import type { RemoteImConfig } from './types.js'
 
@@ -27,12 +30,15 @@ export interface RemoteImTranscriptSource {
   kind: 'claude'
   cwd: string
   sinceMs: number
+  replyId?: string
 }
 
 export interface RemoteImOutputSessionState {
   projectId: string
   toUserId: string
   config: RemoteImConfig
+  replyId?: string
+  sourceKind?: RemoteImAicliOutputSourceKind
   buffer: string
   timer: RemoteImOutputFlushTimer | null
   transcript?: RemoteImTranscriptSource
@@ -109,8 +115,13 @@ export function flushRemoteImOutputSession(
     state.transcript && deps.readTranscriptReply
       ? deps.readTranscriptReply(state.transcript)
       : null
-  const reply = transcriptReply === null ? extractRemoteImReplyOutput(state.buffer) : null
-  const buffer = sanitizeRemoteImAicliOutput(transcriptReply ?? reply?.content ?? '')
+  const reply =
+    transcriptReply === null
+      ? extractRemoteImReplyOutput(state.buffer, { replyId: state.replyId })
+      : null
+  const buffer = sanitizeRemoteImAicliOutput(transcriptReply ?? reply?.content ?? '', {
+    sourceKind: state.sourceKind
+  })
   state.buffer = transcriptReply === null ? reply?.nextBuffer ?? '' : ''
   clearOutputTimer(state, deps)
   if (!buffer.trim()) return 0

@@ -1,0 +1,89 @@
+#include <QtTest/QtTest>
+
+#include "model/ChatState.h"
+
+class ChatStateTest : public QObject {
+    Q_OBJECT
+
+private slots:
+    void queuesOutgoingText();
+    void receivesIncomingImage();
+    void updatesMessageStatus();
+    void returnsPeerMessagesChronologically();
+};
+
+void ChatStateTest::queuesOutgoingText() {
+    ChatState state("desktop-user");
+    state.upsertContact(RemoteIMContact{"ios-user", "ios-user"});
+    state.selectPeer("ios-user");
+
+    const RemoteIMMessage message = state.queueOutgoingText("ping");
+
+    QCOMPARE(message.fromUserId, QString("desktop-user"));
+    QCOMPARE(message.toUserId, QString("ios-user"));
+    QCOMPARE(message.text, QString("ping"));
+    QCOMPARE(message.direction, RemoteIMMessageDirection::Outgoing);
+    QCOMPARE(message.status, RemoteIMMessageStatus::Pending);
+    QCOMPARE(state.messagesWith("ios-user").size(), 1);
+}
+
+void ChatStateTest::receivesIncomingImage() {
+    ChatState state("desktop-user");
+
+    const RemoteIMMessage message = state.receiveImage("ios-user", "/tmp/a.jpg", 640, 480, 1024);
+
+    QCOMPARE(message.fromUserId, QString("ios-user"));
+    QCOMPARE(message.toUserId, QString("desktop-user"));
+    QCOMPARE(message.text, QString("[图片消息] a.jpg"));
+    QCOMPARE(message.direction, RemoteIMMessageDirection::Incoming);
+    QCOMPARE(message.status, RemoteIMMessageStatus::Received);
+    QVERIFY(message.hasImage);
+    QCOMPARE(state.contacts().size(), 1);
+    QCOMPARE(state.selectedPeerId(), QString("ios-user"));
+}
+
+void ChatStateTest::updatesMessageStatus() {
+    ChatState state("desktop-user");
+    state.upsertContact(RemoteIMContact{"ios-user", "ios-user"});
+    state.selectPeer("ios-user");
+    const RemoteIMMessage message = state.queueOutgoingText("ping");
+
+    QVERIFY(state.updateMessageStatus(message.id, RemoteIMMessageStatus::Sent));
+
+    QCOMPARE(state.messagesWith("ios-user").first().status, RemoteIMMessageStatus::Sent);
+}
+
+void ChatStateTest::returnsPeerMessagesChronologically() {
+    ChatState state("desktop-user");
+
+    RemoteIMMessage newest;
+    newest.id = QStringLiteral("newest");
+    newest.fromUserId = QStringLiteral("ios-user");
+    newest.toUserId = QStringLiteral("desktop-user");
+    newest.text = QStringLiteral("30s");
+    newest.createdAtMillis = 30'000;
+
+    RemoteIMMessage oldest = newest;
+    oldest.id = QStringLiteral("oldest");
+    oldest.text = QStringLiteral("10s");
+    oldest.createdAtMillis = 10'000;
+
+    RemoteIMMessage middle = newest;
+    middle.id = QStringLiteral("middle");
+    middle.text = QStringLiteral("20s");
+    middle.createdAtMillis = 20'000;
+
+    state.appendMessageForRestore(newest);
+    state.appendMessageForRestore(oldest);
+    state.appendMessageForRestore(middle);
+
+    const QList<RemoteIMMessage> messages = state.messagesWith(QStringLiteral("ios-user"));
+
+    QCOMPARE(messages.size(), 3);
+    QCOMPARE(messages.at(0).text, QStringLiteral("10s"));
+    QCOMPARE(messages.at(1).text, QStringLiteral("20s"));
+    QCOMPARE(messages.at(2).text, QStringLiteral("30s"));
+}
+
+QTEST_MAIN(ChatStateTest)
+#include "ChatStateTest.moc"

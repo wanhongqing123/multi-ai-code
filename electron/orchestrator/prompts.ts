@@ -46,7 +46,7 @@ export async function resolvePlanArtifactAbs(
   return p
 }
 
-export const MAIN_COMMAND_DEFAULT = 'claude'
+export const MAIN_COMMAND_DEFAULT = 'codex'
 export type SupportedCli = 'claude' | 'codex'
 
 function hasAnyArg(args: readonly string[], flags: readonly string[]): boolean {

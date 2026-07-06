@@ -189,6 +189,44 @@ final class MasterChatStateTests: XCTestCase {
         XCTAssertEqual(state.contacts.map(\.userID), ["mac-quark-pc"])
     }
 
+    func testImagePreviewPolicyCreatesPreviewItemForImageMessage() {
+        let messageID = UUID(uuidString: "22222222-2222-2222-2222-222222222222")!
+        let message = RemoteIMMessage(
+            id: messageID,
+            fromUserID: "mac-quark-pc",
+            toUserID: "ios-master",
+            text: "[图片消息] incoming-photo.png",
+            imageAttachment: RemoteIMImageAttachment(
+                localFilePath: "/tmp/incoming-photo.png",
+                remoteID: "image-uuid",
+                width: 320,
+                height: 240,
+                sizeBytes: 2048
+            ),
+            direction: .incoming,
+            status: .received,
+            createdAt: Date(timeIntervalSince1970: 161)
+        )
+
+        let previewItem = RemoteIMImagePreviewPolicy.previewItem(for: message)
+
+        XCTAssertEqual(previewItem?.id, messageID)
+        XCTAssertEqual(previewItem?.localFilePath, "/tmp/incoming-photo.png")
+    }
+
+    func testImagePreviewPolicyIgnoresNonImageMessage() {
+        let message = RemoteIMMessage(
+            fromUserID: "mac-quark-pc",
+            toUserID: "ios-master",
+            text: "普通文本",
+            direction: .incoming,
+            status: .received,
+            createdAt: Date(timeIntervalSince1970: 162)
+        )
+
+        XCTAssertNil(RemoteIMImagePreviewPolicy.previewItem(for: message))
+    }
+
     func testFiltersMessagesByConversationPeer() throws {
         var state = MasterChatState(ownerUserID: "ios-master")
         try state.upsertSlave(userID: "mac-quark-pc")

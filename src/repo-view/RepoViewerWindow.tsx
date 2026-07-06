@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { type AiSettings } from '../components/AiSettingsDialog'
+import { DEFAULT_AI_CLI, type AiSettings } from '../components/AiSettingsDialog'
 import AnalysisPanel, { type RepoCodeAnnotation } from './AnalysisPanel'
 import CodePane, { type RepoSelection } from './CodePane'
 import FileTree from './FileTree'
@@ -34,7 +34,7 @@ export default function RepoViewerWindow({
   const [selectedContent, setSelectedContent] = useState('')
   const [selectedSize, setSelectedSize] = useState(0)
   const [loadingFile, setLoadingFile] = useState(false)
-  const [repoViewSettings, setRepoViewSettings] = useState<AiSettings>({ ai_cli: 'claude' })
+  const [repoViewSettings, setRepoViewSettings] = useState<AiSettings>({ ai_cli: DEFAULT_AI_CLI })
   const [repoViewSettingsReady, setRepoViewSettingsReady] = useState(false)
   const [repoViewSettingsLoadError, setRepoViewSettingsLoadError] = useState<string | null>(null)
   const [annotations, setAnnotations] = useState<RepoCodeAnnotation[]>([])
@@ -69,7 +69,7 @@ export default function RepoViewerWindow({
         showToast(result.error ?? '读取仓库查看 AI 设置失败', { level: 'error' })
         return
       }
-      setRepoViewSettings(result.value ?? { ai_cli: 'claude' })
+      setRepoViewSettings(result.value ?? { ai_cli: DEFAULT_AI_CLI })
       setRepoViewSettingsReady(true)
       setRepoViewSettingsLoadError(null)
       if (result.repaired) {

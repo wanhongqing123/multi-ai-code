@@ -33,6 +33,12 @@ function describeCli(command: string): string {
   return command || '(未配置)'
 }
 
+function isClaudeCliCommand(command: string): boolean {
+  const cleaned = command.trim().replace(/^['"]|['"]$/g, '')
+  const base = cleaned.split(/[\\/]/).pop()?.toLowerCase() ?? cleaned.toLowerCase()
+  return /^claude(\.(exe|cmd|bat|ps1))?$/.test(base)
+}
+
 export default function MainBootGate(props: MainBootGateProps): JSX.Element {
   const {
     phase,
@@ -48,6 +54,7 @@ export default function MainBootGate(props: MainBootGateProps): JSX.Element {
   const spawning = phase.kind === 'spawning'
   const spawningMode = phase.kind === 'spawning' ? phase.mode : null
   const workModeLabel = workMode === 'scheduled-task' ? '定时任务' : '普通任务'
+  const requiresClaudeRiskConfirmation = isClaudeCliCommand(command)
 
   return (
     <div className="main-panel">
@@ -90,28 +97,61 @@ export default function MainBootGate(props: MainBootGateProps): JSX.Element {
             </div>
           )}
 
-          <div className="boot-gate-buttons">
-            <button
-              className="tile-btn boot-gate-btn"
-              onClick={() => onChoose('new')}
-              disabled={disabled || spawning}
-              autoFocus
-            >
-              {spawningMode === 'new' ? '正在启动…' : `新${workModeLabel}会话`}
-            </button>
-            <button
-              className="tile-btn boot-gate-btn"
-              onClick={() => onChoose('resume')}
-              disabled={disabled || spawning || command !== 'claude' && command !== 'codex'}
-              title={
-                command === 'claude' || command === 'codex'
-                  ? `继续上次${workModeLabel}会话（由 CLI 自身回放历史）`
-                  : '当前 CLI 不支持续聊'
-              }
-            >
-              {spawningMode === 'resume' ? '正在续聊…' : `继续${workModeLabel}`}
-            </button>
-          </div>
+          {requiresClaudeRiskConfirmation ? (
+            <div className="boot-gate-claude-risk">
+              <div className="boot-gate-claude-risk-title">
+                Claude 目前风险很高，请谨慎使用
+              </div>
+              <div className="boot-gate-claude-risk-copy">
+                建议更换 Codex。只有在你明确接受风险时，才继续启动 Claude Code。
+              </div>
+              <div className="boot-gate-buttons boot-gate-claude-risk-actions">
+                <button
+                  className="tile-btn boot-gate-btn danger"
+                  onClick={() => onChoose('new')}
+                  disabled={disabled || spawning}
+                  autoFocus
+                >
+                  {spawningMode === 'new'
+                    ? '正在启动…'
+                    : `即使有风险也要继续使用 Claude · 新${workModeLabel}会话`}
+                </button>
+                <button
+                  className="tile-btn boot-gate-btn danger"
+                  onClick={() => onChoose('resume')}
+                  disabled={disabled || spawning}
+                  title={`即使有风险也要继续使用 Claude，并续聊上次${workModeLabel}会话`}
+                >
+                  {spawningMode === 'resume'
+                    ? '正在续聊…'
+                    : `即使有风险也要继续使用 Claude · 继续${workModeLabel}`}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="boot-gate-buttons">
+              <button
+                className="tile-btn boot-gate-btn"
+                onClick={() => onChoose('new')}
+                disabled={disabled || spawning}
+                autoFocus
+              >
+                {spawningMode === 'new' ? '正在启动…' : `新${workModeLabel}会话`}
+              </button>
+              <button
+                className="tile-btn boot-gate-btn"
+                onClick={() => onChoose('resume')}
+                disabled={disabled || spawning || command !== 'codex'}
+                title={
+                  command === 'codex'
+                    ? `继续上次${workModeLabel}会话（由 CLI 自身回放历史）`
+                    : '当前 CLI 不支持续聊'
+                }
+              >
+                {spawningMode === 'resume' ? '正在续聊…' : `继续${workModeLabel}`}
+              </button>
+            </div>
+          )}
 
           <div className="boot-gate-hint">
             续聊将由 CLI 自身加载历史，显示可能与上次不完全一致；

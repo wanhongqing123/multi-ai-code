@@ -59,6 +59,25 @@ public enum MessageListAutoScrollPolicy {
     }
 }
 
+public struct RemoteIMImagePreviewItem: Identifiable, Equatable {
+    public let id: UUID
+    public let localFilePath: String
+
+    public init(id: UUID, localFilePath: String) {
+        self.id = id
+        self.localFilePath = localFilePath
+    }
+}
+
+public enum RemoteIMImagePreviewPolicy {
+    public static func previewItem(for message: RemoteIMMessage) -> RemoteIMImagePreviewItem? {
+        guard let attachment = message.imageAttachment else {
+            return nil
+        }
+        return RemoteIMImagePreviewItem(id: message.id, localFilePath: attachment.localFilePath)
+    }
+}
+
 public struct RemoteIMCredential: Equatable {
     public let sdkAppID: Int
     public let userSigSecretKey: String

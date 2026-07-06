@@ -315,6 +315,8 @@ html, body, #root {
   padding: 12px;
   font-size: 14px;
   font-weight: 600;
+  white-space: normal;
+  line-height: 1.35;
 }
 
 .boot-gate-hint {
@@ -333,6 +335,43 @@ html, body, #root {
   display: flex;
   flex-direction: column;
   gap: var(--mac-sp-2);
+}
+
+.boot-gate-claude-risk {
+  border: 1px solid var(--mac-danger);
+  border-radius: 8px;
+  padding: var(--mac-sp-4);
+  background: var(--mac-danger-soft);
+  color: var(--mac-fg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--mac-sp-3);
+}
+
+.boot-gate-claude-risk-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--mac-danger);
+}
+
+.boot-gate-claude-risk-copy {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--mac-fg);
+}
+
+.boot-gate-claude-risk-actions {
+  align-items: stretch;
+}
+
+.boot-gate-btn.danger {
+  border-color: color-mix(in srgb, var(--mac-danger) 48%, var(--mac-border));
+  color: var(--mac-danger);
+  background: var(--mac-surface);
+}
+
+.boot-gate-btn.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--mac-danger-soft) 68%, var(--mac-surface));
 }
 
 .boot-gate-failure-head {

@@ -1182,8 +1182,8 @@ app.whenReady().then(async () => {
       const value = readResult.meta[field]
       if (!value || typeof value !== 'object') {
         return readResult.repaired
-          ? { ok: true, value: { ai_cli: 'claude' as const }, repaired: true }
-          : { ok: true, value: { ai_cli: 'claude' as const } }
+          ? { ok: true, value: { ai_cli: 'codex' as const }, repaired: true }
+          : { ok: true, value: { ai_cli: 'codex' as const } }
       }
       return readResult.repaired
         ? { ok: true, value: value as AiSettings, repaired: true }
@@ -1447,19 +1447,19 @@ app.whenReady().then(async () => {
         install: '安装 Git: https://git-scm.com/downloads'
       },
       {
-        name: 'claude',
-        required: true,
-        cmd: 'claude',
-        args: ['--version'],
-        install:
-          '安装 Claude Code CLI: `npm i -g @anthropic-ai/claude-code` （需 Node 18+）'
-      },
-      {
         name: 'codex',
         required: true,
         cmd: 'codex',
         args: ['--version'],
         install: '安装 OpenAI Codex CLI: `npm i -g @openai/codex`'
+      },
+      {
+        name: 'claude',
+        required: false,
+        cmd: 'claude',
+        args: ['--version'],
+        install:
+          'Claude Code 当前不建议作为默认 CLI；如仍需使用，可自行安装并确认风险。'
       }
     ]
     const results: {

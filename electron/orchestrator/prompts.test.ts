@@ -104,8 +104,11 @@ describe('renderTemplate', () => {
 })
 
 describe('mainCliArgs', () => {
-  it('default binary is claude', () => {
-    expect(MAIN_COMMAND_DEFAULT).toBe('claude')
+  it('default binary is codex', () => {
+    expect(MAIN_COMMAND_DEFAULT).toBe('codex')
+    expect(mainCliArgs()).toEqual([
+      '--dangerously-bypass-approvals-and-sandbox'
+    ])
   })
 
   it('claude produces full-permission args', () => {

@@ -20,6 +20,7 @@ import MainBootGate, { type BootGatePhase } from './components/MainBootGate'
 import ProjectPicker, { type ProjectInfo } from './components/ProjectPicker'
 import ErrorPanel, { pushLog, useLogs } from './components/ErrorPanel'
 import AiSettingsDialog, {
+  DEFAULT_AI_CLI,
   type AiSettings,
   type AppSettings,
   type SettingsSectionKey
@@ -246,9 +247,9 @@ function AppShell() {
   const [showAiSettings, setShowAiSettings] = useState(false)
   const [aiSettingsInitialSection, setAiSettingsInitialSection] =
     useState<SettingsSectionKey>('shortcut')
-  const [aiSettings, setAiSettings] = useState<AiSettings>({ ai_cli: 'claude' })
+  const [aiSettings, setAiSettings] = useState<AiSettings>({ ai_cli: DEFAULT_AI_CLI })
   const [repoViewAiSettings, setRepoViewAiSettings] = useState<AiSettings>({
-    ai_cli: 'claude'
+    ai_cli: DEFAULT_AI_CLI
   })
   const [aiSettingsReady, setAiSettingsReady] = useState(false)
   const [aiSettingsLoadError, setAiSettingsLoadError] = useState<string | null>(null)
@@ -711,8 +712,8 @@ function AppShell() {
     if (!currentProjectId) {
       setStageConfigs({})
       setMsysEnabled(false)
-      setAiSettings({ ai_cli: 'claude' })
-      setRepoViewAiSettings({ ai_cli: 'claude' })
+      setAiSettings({ ai_cli: DEFAULT_AI_CLI })
+      setRepoViewAiSettings({ ai_cli: DEFAULT_AI_CLI })
       setProjectBuildConfig(DEFAULT_PROJECT_BUILD_CONFIG)
       setProjectBuildConfigProjectId(null)
       setProjectRuntimeConfig(DEFAULT_PROJECT_RUNTIME_CONFIG)
@@ -796,7 +797,7 @@ function AppShell() {
         showToast(aiResult.error ?? '读取主会话 AI 设置失败', { level: 'error' })
         return
       }
-      setAiSettings(aiResult.value ?? { ai_cli: 'claude' })
+      setAiSettings(aiResult.value ?? { ai_cli: DEFAULT_AI_CLI })
       setAiSettingsReady(true)
       setAiSettingsLoadError(null)
 
@@ -806,7 +807,7 @@ function AppShell() {
         showToast(repoResult.error ?? '读取仓库查看 AI 设置失败', { level: 'error' })
         return
       }
-      setRepoViewAiSettings(repoResult.value ?? { ai_cli: 'claude' })
+      setRepoViewAiSettings(repoResult.value ?? { ai_cli: DEFAULT_AI_CLI })
 
       if (aiResult.repaired || repoResult.repaired || buildConfigRepaired || runtimeConfigRepaired) {
         showToast('项目设置文件已自动修复', { level: 'success' })
@@ -946,9 +947,9 @@ function AppShell() {
       return
     }
     setGatePhase({ kind: 'spawning', mode })
-    const command = aiSettings.command ?? aiSettings.ai_cli ?? 'claude'
+    const command = aiSettings.command ?? aiSettings.ai_cli ?? DEFAULT_AI_CLI
     const args = buildCliLaunchArgs(
-      aiSettings.ai_cli ?? 'claude',
+      aiSettings.ai_cli ?? DEFAULT_AI_CLI,
       proj.target_repo,
       aiSettings.args ?? []
     )
@@ -1889,7 +1890,7 @@ function AppShell() {
           <button
             className="topbar-btn"
             onClick={() => setShowDoctor(true)}
-            title="检查 claude / codex / git / node 是否就绪"
+            title="检查 codex / git / node，并提示可选的 claude 状态"
           >
             🩺 体检
           </button>
@@ -2031,7 +2032,7 @@ function AppShell() {
           ) : (
             <MainBootGate
               phase={gatePhase}
-              command={aiSettings.command ?? aiSettings.ai_cli ?? 'claude'}
+              command={aiSettings.command ?? aiSettings.ai_cli ?? DEFAULT_AI_CLI}
               workMode={isTaskWatchMode ? 'scheduled-task' : 'normal-task'}
               planName={mainSessionPlanLabel}
               disabled={!canStartCurrentMainSession}

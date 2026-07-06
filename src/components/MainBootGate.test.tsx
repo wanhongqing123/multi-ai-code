@@ -9,7 +9,7 @@ function render(
   return renderToStaticMarkup(
     <MainBootGate
       phase={{ kind: 'idle' }}
-      command="claude"
+      command="codex"
       planName="项目后续规划"
       workMode="normal-task"
       onChoose={vi.fn()}
@@ -86,5 +86,21 @@ describe('MainBootGate', () => {
     expect(render({ command: 'claude' })).toContain('Claude Code')
     expect(render({ command: 'codex' })).toContain('Codex')
     expect(render({ command: '' })).toContain('(未配置)')
+  })
+
+  it('shows an explicit risk confirmation when Claude is selected', () => {
+    const html = render({ command: 'claude' })
+
+    expect(html).toContain('Claude 目前风险很高，请谨慎使用')
+    expect(html).toContain('建议更换 Codex')
+    expect(html).toContain('即使有风险也要继续使用 Claude')
+    expect(html).toContain('boot-gate-claude-risk')
+  })
+
+  it('does not show the Claude risk confirmation for Codex', () => {
+    const html = render({ command: 'codex' })
+
+    expect(html).not.toContain('Claude 目前风险很高')
+    expect(html).not.toContain('boot-gate-claude-risk')
   })
 })

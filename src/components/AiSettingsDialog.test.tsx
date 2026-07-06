@@ -8,6 +8,7 @@ import type {
   VisualStudioInstallation
 } from '../../electron/preload'
 import AiSettingsDialog, {
+  DEFAULT_AI_CLI,
   deriveAppSettingsSaveOutcome,
   getProjectSettingsRepairToastMessage,
   resolveSavedAppSettings,
@@ -73,6 +74,20 @@ describe('AiSettingsDialog', () => {
     expect(markup).toContain('ai-settings-footer')
     expect(markup).toContain('ai-settings-hero-card')
     expect(markup).toContain('Alt+Shift+S')
+  })
+
+  it('puts Codex first and uses it as the default AI CLI', () => {
+    const markup = renderDialog({
+      initial: {} as ComponentProps<typeof AiSettingsDialog>['initial'],
+      initialRepoView: {} as ComponentProps<typeof AiSettingsDialog>['initialRepoView']
+    })
+    const codexOptionIndex = markup.indexOf('Codex (推荐)')
+    const claudeOptionIndex = markup.indexOf('Claude Code (不建议使用)')
+
+    expect(DEFAULT_AI_CLI).toBe('codex')
+    expect(codexOptionIndex).toBeGreaterThan(-1)
+    expect(claudeOptionIndex).toBeGreaterThan(-1)
+    expect(codexOptionIndex).toBeLessThan(claudeOptionIndex)
   })
 
   it('renders sidebar navigation as clickable section buttons', () => {

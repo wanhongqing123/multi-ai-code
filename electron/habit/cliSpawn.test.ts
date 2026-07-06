@@ -222,6 +222,12 @@ describe('buildCliArgs (cross-platform argument shape)', () => {
     expect(args[args.length - 1]).toBe('hello world')
   })
 
+  it('defaults to Codex when no AI CLI is configured', () => {
+    const { cmd, args } = buildCliArgs({}, 'hello world')
+    expect(cmd).toBe('codex')
+    expect(args[0]).toBe('exec')
+  })
+
   it('preserves user-supplied binary override', () => {
     const { cmd } = buildCliArgs(
       { ai_cli: 'claude', command: '/custom/path/claude' },

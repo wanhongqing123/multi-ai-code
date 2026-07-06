@@ -59,6 +59,21 @@ describe('App habit monitor integration', () => {
     expect(source).toContain("openAiSettingsSection('habit')")
   })
 
+  it('prefers Codex in CLI health checks and keeps Claude optional', () => {
+    const source = readFileSync(
+      fileURLToPath(new URL('../electron/main.ts', import.meta.url)),
+      'utf8'
+    )
+    const codexToolIndex = source.indexOf("name: 'codex'")
+    const claudeToolIndex = source.indexOf("name: 'claude'")
+    const claudeToolBlock = source.slice(claudeToolIndex, source.indexOf("cmd: 'claude'", claudeToolIndex))
+
+    expect(codexToolIndex).toBeGreaterThan(-1)
+    expect(claudeToolIndex).toBeGreaterThan(-1)
+    expect(codexToolIndex).toBeLessThan(claudeToolIndex)
+    expect(claudeToolBlock).toContain('required: false')
+  })
+
   it('uses explicit work modes and only loads scheduled tasks in task-watch mode', () => {
     const source = readFileSync(fileURLToPath(new URL('./App.tsx', import.meta.url)), 'utf8')
 

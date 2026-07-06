@@ -358,6 +358,7 @@ private struct MessageListView: View {
     let messages: [RemoteIMMessage]
     let peerRelation: RemoteIMContactRelation
     @StateObject private var voicePlayer = VoiceMessagePlayer()
+    @State private var imagePreviewItem: RemoteIMImagePreviewItem?
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -374,6 +375,9 @@ private struct MessageListView: View {
                                 isVoicePlaying: voicePlayer.playingMessageID == message.id,
                                 playVoice: {
                                     voicePlayer.toggle(message: message)
+                                },
+                                previewImage: {
+                                    imagePreviewItem = RemoteIMImagePreviewPolicy.previewItem(for: message)
                                 }
                             )
                                 .id(message.id)
@@ -395,6 +399,11 @@ private struct MessageListView: View {
             }
             .onChange(of: messages.count) { _ in
                 scrollToLatestMessage(proxy: proxy)
+            }
+        }
+        .fullScreenCover(item: $imagePreviewItem) { item in
+            FullScreenImagePreviewView(item: item) {
+                imagePreviewItem = nil
             }
         }
     }
@@ -441,6 +450,7 @@ private struct MessageBubbleView: View {
     let incomingRelation: RemoteIMContactRelation
     let isVoicePlaying: Bool
     let playVoice: () -> Void
+    let previewImage: () -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
@@ -466,7 +476,10 @@ private struct MessageBubbleView: View {
 
                 HStack(alignment: .bottom, spacing: 10) {
                     if let imageAttachment = message.imageAttachment {
-                        ImageBubbleContent(attachment: imageAttachment)
+                        Button(action: previewImage) {
+                            ImageBubbleContent(attachment: imageAttachment)
+                        }
+                        .buttonStyle(.plain)
                     } else if let voiceAttachment = message.voiceAttachment {
                         Button(action: playVoice) {
                             VoiceBubbleContent(
@@ -517,6 +530,127 @@ private struct MessageBubbleView: View {
 
     private var bubbleBorder: Color {
         message.direction == .outgoing ? Color(red: 0.764, green: 0.873, blue: 0.996) : RemoteIMStyle.yellowBorder
+    }
+}
+
+private struct FullScreenImagePreviewView: View {
+    let item: RemoteIMImagePreviewItem
+    let close: () -> Void
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Color.black.ignoresSafeArea()
+
+            if let image = UIImage(contentsOfFile: item.localFilePath) {
+                ZoomableImagePreview(image: image)
+                    .ignoresSafeArea()
+                    .accessibilityLabel("图片预览")
+            } else {
+                VStack(spacing: 12) {
+                    Image(systemName: "photo")
+                        .font(.system(size: 34, weight: .semibold))
+                    Text("图片暂不可预览")
+                        .font(.system(size: 15, weight: .semibold))
+                    Text(URL(fileURLWithPath: item.localFilePath).lastPathComponent)
+                        .font(.system(size: 12, weight: .medium))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                .foregroundStyle(.white.opacity(0.86))
+                .padding(.horizontal, 28)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+
+            Button(action: close) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+                    .background(.black.opacity(0.45), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 18)
+            .padding(.trailing, 18)
+            .accessibilityLabel("关闭图片预览")
+        }
+        .statusBarHidden(true)
+    }
+}
+
+private struct ZoomableImagePreview: UIViewRepresentable {
+    let image: UIImage
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeUIView(context: Context) -> UIScrollView {
+        let scrollView = UIScrollView()
+        scrollView.backgroundColor = .black
+        scrollView.delegate = context.coordinator
+        scrollView.minimumZoomScale = 1
+        scrollView.maximumZoomScale = 4
+        scrollView.bouncesZoom = true
+        scrollView.showsHorizontalScrollIndicator = false
+        scrollView.showsVerticalScrollIndicator = false
+
+        let imageView = UIImageView(image: image)
+        imageView.contentMode = .scaleAspectFit
+        imageView.isUserInteractionEnabled = true
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.addSubview(imageView)
+
+        NSLayoutConstraint.activate([
+            imageView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            imageView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            imageView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            imageView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            imageView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
+            imageView.heightAnchor.constraint(equalTo: scrollView.frameLayoutGuide.heightAnchor)
+        ])
+
+        let doubleTap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleDoubleTap(_:)))
+        doubleTap.numberOfTapsRequired = 2
+        scrollView.addGestureRecognizer(doubleTap)
+
+        context.coordinator.scrollView = scrollView
+        context.coordinator.imageView = imageView
+        return scrollView
+    }
+
+    func updateUIView(_ scrollView: UIScrollView, context: Context) {
+        context.coordinator.imageView?.image = image
+        if scrollView.zoomScale < scrollView.minimumZoomScale {
+            scrollView.setZoomScale(scrollView.minimumZoomScale, animated: false)
+        }
+    }
+
+    final class Coordinator: NSObject, UIScrollViewDelegate {
+        weak var scrollView: UIScrollView?
+        weak var imageView: UIImageView?
+
+        func viewForZooming(in scrollView: UIScrollView) -> UIView? {
+            imageView
+        }
+
+        @objc func handleDoubleTap(_ recognizer: UITapGestureRecognizer) {
+            guard let scrollView, let imageView else { return }
+
+            if scrollView.zoomScale > scrollView.minimumZoomScale {
+                scrollView.setZoomScale(scrollView.minimumZoomScale, animated: true)
+                return
+            }
+
+            let tapPoint = recognizer.location(in: imageView)
+            let targetScale = min(scrollView.maximumZoomScale, scrollView.minimumZoomScale * 2)
+            let zoomRect = CGRect(
+                x: tapPoint.x - scrollView.bounds.width / targetScale / 2,
+                y: tapPoint.y - scrollView.bounds.height / targetScale / 2,
+                width: scrollView.bounds.width / targetScale,
+                height: scrollView.bounds.height / targetScale
+            )
+            scrollView.zoom(to: zoomRect, animated: true)
+        }
     }
 }
 

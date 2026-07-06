@@ -243,7 +243,7 @@ export function buildCliArgs(
   settings: RawAiSettings,
   prompt: string
 ): { cmd: string; args: string[] } {
-  const cli = settings.ai_cli ?? 'claude'
+  const cli = settings.ai_cli ?? 'codex'
   const cmd = settings.command ?? cli
   const extras = settings.args ?? []
   if (cli === 'codex') {

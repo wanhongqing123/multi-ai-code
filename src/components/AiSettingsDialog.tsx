@@ -16,6 +16,18 @@ import { showToast } from './Toast.js'
 import { HabitMonitorPanel } from '../habit/HabitMonitorDialog.js'
 
 export const DEFAULT_SCREENSHOT_SHORTCUT = 'CommandOrControl+Shift+A'
+export const DEFAULT_AI_CLI = 'codex' as const
+
+const AI_CLI_OPTIONS = [
+  {
+    value: 'codex',
+    label: 'Codex (推荐)'
+  },
+  {
+    value: 'claude',
+    label: 'Claude Code (不建议使用)'
+  }
+] as const
 
 export const SCREENSHOT_SHORTCUT_PRESETS = [
   { value: 'CommandOrControl+Shift+A', label: 'Ctrl/Cmd + Shift + A' },
@@ -289,8 +301,11 @@ function SettingsSection(props: {
             value={props.aiCli}
             onChange={(event) => props.onAiCli(event.target.value as 'claude' | 'codex')}
           >
-            <option value="claude">Claude Code (默认 acceptEdits)</option>
-            <option value="codex">Codex (workspace-write + never)</option>
+            {AI_CLI_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
           </select>
         </label>
         <label>
@@ -416,13 +431,13 @@ function ScreenshotSettingsSection(props: {
 }
 
 export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Element {
-  const [aiCli, setAiCli] = useState<'claude' | 'codex'>(props.initial.ai_cli ?? 'claude')
+  const [aiCli, setAiCli] = useState<'claude' | 'codex'>(props.initial.ai_cli ?? DEFAULT_AI_CLI)
   const [command, setCommand] = useState<string>(props.initial.command ?? '')
   const [argsText, setArgsText] = useState<string>((props.initial.args ?? []).join(' '))
   const [envText, setEnvText] = useState<string>(toEnvText(props.initial.env))
 
   const [repoAiCli, setRepoAiCli] = useState<'claude' | 'codex'>(
-    props.initialRepoView.ai_cli ?? 'claude'
+    props.initialRepoView.ai_cli ?? DEFAULT_AI_CLI
   )
   const [repoCommand, setRepoCommand] = useState<string>(props.initialRepoView.command ?? '')
   const [repoArgsText, setRepoArgsText] = useState<string>(
@@ -502,7 +517,7 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
 
   useEffect(() => {
     if (saving) return
-    setAiCli(props.initial.ai_cli ?? 'claude')
+    setAiCli(props.initial.ai_cli ?? DEFAULT_AI_CLI)
     setCommand(props.initial.command ?? '')
     setArgsText((props.initial.args ?? []).join(' '))
     setEnvText(toEnvText(props.initial.env))
@@ -510,7 +525,7 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
 
   useEffect(() => {
     if (saving) return
-    setRepoAiCli(props.initialRepoView.ai_cli ?? 'claude')
+    setRepoAiCli(props.initialRepoView.ai_cli ?? DEFAULT_AI_CLI)
     setRepoCommand(props.initialRepoView.command ?? '')
     setRepoArgsText((props.initialRepoView.args ?? []).join(' '))
     setRepoEnvText(toEnvText(props.initialRepoView.env))
@@ -672,7 +687,7 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
                 <span className="ai-settings-nav-icon">AI</span>
                 <span>
                   <strong>主会话 AI</strong>
-                  <small>Claude / Codex</small>
+                  <small>Codex / Claude</small>
                 </span>
               </button>
               <button

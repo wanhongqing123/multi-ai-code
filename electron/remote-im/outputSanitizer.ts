@@ -16,6 +16,9 @@ const CLAUDE_BOOT_RE =
 const CODEX_BOOT_HINT_RE = /^Use\s+\/skills\s+to\s+list\s+available\s+skills\.?$/i
 const CODEX_MODEL_STATUS_RE =
   /^gpt-[\w.-]+\s+\w+\s*·\s*.+\s*·\s*gpt-[\w.-]+\s*·\s*.+\s*·\s*Context\s+\d+%\s+used\s*·\s*\d+h\s+\d+%\s+left\s*·\s*weekly\s+\d+%\s+left$/i
+const CODEX_COMPOSER_PROMPT_RE = /^›\s*\S.*$/
+const CODEX_STARTER_SUGGESTION_RE =
+  /^(?:Write tests for @filename|Find and fix a bug in @filename|Run \/review on my current changes)$/i
 const CODEX_MODEL_FRAGMENT_RE = /^gpt-[\w.-]+(?:\s+\w+)?$/i
 const CODEX_PATH_FRAGMENT_RE = /^(?:~|[A-Za-z]:)?[\\/][^\n]+$/
 const CODEX_CWD_FRAGMENT_RE = /^[\w.-]+$/
@@ -52,6 +55,8 @@ function normalizeContentLine(line: string): string {
 function isCodexNoiseLine(text: string): boolean {
   return (
     CODEX_BOOT_HINT_RE.test(text) ||
+    CODEX_COMPOSER_PROMPT_RE.test(text) ||
+    CODEX_STARTER_SUGGESTION_RE.test(text) ||
     CODEX_MODEL_STATUS_RE.test(text) ||
     CODEX_CONTEXT_FRAGMENT_RE.test(text) ||
     CODEX_HOURLY_BUDGET_FRAGMENT_RE.test(text) ||

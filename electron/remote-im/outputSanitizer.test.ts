@@ -62,6 +62,37 @@ describe('remote IM output sanitizer', () => {
     )
   })
 
+  it('drops Codex composer suggestion lines from tagged IM output', () => {
+    const noisy = [
+      '› Run /review on my current changes',
+      '',
+      '我撤回了刚才所有本地源码改动，确认 git diff 为空后，用原分支源码重跑：',
+      '',
+      './sonic_build_cxx.sh config_mac.ini'
+    ].join('\n')
+
+    expect(sanitizeRemoteImAicliOutput(noisy, { sourceKind: 'codex' })).toBe(
+      [
+        '我撤回了刚才所有本地源码改动，确认 git diff 为空后，用原分支源码重跑：',
+        '',
+        './sonic_build_cxx.sh config_mac.ini'
+      ].join('\n')
+    )
+  })
+
+  it('drops Codex starter suggestions even when the prompt glyph is not captured', () => {
+    const noisy = [
+      'Write tests for @filename',
+      'Find and fix a bug in @filename',
+      '',
+      '你好，我在。需要我帮你看代码、查日志、编译或处理 CR 都可以。'
+    ].join('\n')
+
+    expect(sanitizeRemoteImAicliOutput(noisy, { sourceKind: 'codex' })).toBe(
+      '你好，我在。需要我帮你看代码、查日志、编译或处理 CR 都可以。'
+    )
+  })
+
   it('does not apply Codex-only noise filters to Claude output', () => {
     const output = [
       'Use /skills to list available skills',

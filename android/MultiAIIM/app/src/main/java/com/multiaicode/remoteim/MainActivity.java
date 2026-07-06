@@ -341,7 +341,13 @@ public final class MainActivity extends Activity {
         bubble.setBackgroundColor(message.direction() == RemoteIMMessage.Direction.OUTGOING ? 0xFFFFFFFF : 0xFFFFFBEB);
 
         TextView meta = new TextView(this);
-        meta.setText(message.fromUserId() + " · " + statusText(message.status()));
+        meta.setText(
+            message.fromUserId()
+                + " · "
+                + RemoteIMTimestampFormatter.format(message.createdAtMillis())
+                + " · "
+                + statusText(message.status())
+        );
         meta.setTextColor(TEXT_SECONDARY);
         meta.setTextSize(12);
         bubble.addView(meta);

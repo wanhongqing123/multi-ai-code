@@ -3,6 +3,7 @@ package com.multiaicode.remoteim;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 
 public final class ChatState {
@@ -193,6 +194,7 @@ public final class ChatState {
                 result.add(message);
             }
         }
+        result.sort(Comparator.comparingLong(RemoteIMMessage::createdAtMillis));
         return Collections.unmodifiableList(result);
     }
 

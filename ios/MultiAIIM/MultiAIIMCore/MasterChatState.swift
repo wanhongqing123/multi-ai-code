@@ -59,6 +59,39 @@ public enum MessageListAutoScrollPolicy {
     }
 }
 
+public enum RemoteIMTimestampTextPolicy {
+    public static func displayText(
+        for date: Date,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> String {
+        if calendar.isDate(date, inSameDayAs: now) {
+            return formatted(date, dateFormat: "HH:mm", calendar: calendar)
+        }
+
+        if let yesterday = calendar.date(byAdding: .day, value: -1, to: now),
+           calendar.isDate(date, inSameDayAs: yesterday)
+        {
+            return "昨天 " + formatted(date, dateFormat: "HH:mm", calendar: calendar)
+        }
+
+        return formatted(date, dateFormat: "M 月 d 日 HH:mm", calendar: calendar)
+    }
+
+    private static func formatted(
+        _ date: Date,
+        dateFormat: String,
+        calendar: Calendar
+    ) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = dateFormat
+        return formatter.string(from: date)
+    }
+}
+
 public struct RemoteIMImagePreviewItem: Identifiable, Equatable {
     public let id: UUID
     public let localFilePath: String
@@ -384,6 +417,12 @@ public struct MasterChatState: Equatable {
         return messages.filter { message in
             (message.fromUserID == ownerUserID && message.toUserID == cleanPeerID) ||
                 (message.fromUserID == cleanPeerID && message.toUserID == ownerUserID)
+        }
+        .sorted {
+            if $0.createdAt == $1.createdAt {
+                return $0.id.uuidString < $1.id.uuidString
+            }
+            return $0.createdAt < $1.createdAt
         }
     }
 

@@ -190,7 +190,7 @@ private struct ConversationRow: View {
 
             VStack(alignment: .trailing, spacing: 7) {
                 if let latestMessage {
-                    Text(latestMessage.createdAt.formatted(date: .omitted, time: .shortened))
+                    Text(RemoteIMTimestampTextPolicy.displayText(for: latestMessage.createdAt))
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(RemoteIMStyle.textSecondary)
                 }
@@ -468,7 +468,7 @@ private struct MessageBubbleView: View {
                     if let relationText {
                         RelationBadge(text: relationText)
                     }
-                    Text(message.createdAt.formatted(date: .omitted, time: .shortened))
+                    Text(RemoteIMTimestampTextPolicy.displayText(for: message.createdAt))
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(RemoteIMStyle.textSecondary)
                     Spacer(minLength: 0)

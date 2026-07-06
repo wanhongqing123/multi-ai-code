@@ -244,6 +244,30 @@ final class MasterChatStateTests: XCTestCase {
         XCTAssertEqual(state.latestMessage(with: "mac-quark-pc"), quarkReply)
     }
 
+    func testConversationMessagesAreReturnedChronologicallyAfterLiveUpdates() throws {
+        var state = MasterChatState(ownerUserID: "ios-master")
+        try state.upsertFriend(userID: "mac-quark-pc")
+        state.selectPeer(userID: "mac-quark-pc")
+
+        let newest = try state.queueOutgoingText(
+            "最新消息",
+            now: Date(timeIntervalSince1970: 300)
+        )
+        let oldest = state.receiveText(
+            "最早消息",
+            fromUserID: "mac-quark-pc",
+            now: Date(timeIntervalSince1970: 100)
+        )
+        let middle = state.receiveText(
+            "中间消息",
+            fromUserID: "mac-quark-pc",
+            now: Date(timeIntervalSince1970: 200)
+        )
+
+        XCTAssertEqual(state.messages(with: "mac-quark-pc"), [oldest, middle, newest])
+        XCTAssertEqual(state.latestMessage(with: "mac-quark-pc"), newest)
+    }
+
     func testRemovesContactAndConversationHistory() throws {
         var state = MasterChatState(ownerUserID: "ios-master")
         try state.upsertFriend(userID: "mac-quark-pc")
@@ -366,6 +390,53 @@ final class MasterChatStateTests: XCTestCase {
         XCTAssertEqual(
             RemoteIMDraftSubmitPolicy.textByConsumingTrailingReturn(from: "hello\r\n"),
             "hello"
+        )
+    }
+
+    func testTimestampTextMatchesDesktopDateRules() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 8 * 60 * 60)!
+
+        let now = calendar.date(from: DateComponents(
+            year: 2026,
+            month: 7,
+            day: 6,
+            hour: 10,
+            minute: 0
+        ))!
+        let today = calendar.date(from: DateComponents(
+            year: 2026,
+            month: 7,
+            day: 6,
+            hour: 16,
+            minute: 13
+        ))!
+        let yesterday = calendar.date(from: DateComponents(
+            year: 2026,
+            month: 7,
+            day: 5,
+            hour: 23,
+            minute: 53
+        ))!
+        let older = calendar.date(from: DateComponents(
+            year: 2026,
+            month: 7,
+            day: 4,
+            hour: 14,
+            minute: 18
+        ))!
+
+        XCTAssertEqual(
+            RemoteIMTimestampTextPolicy.displayText(for: today, now: now, calendar: calendar),
+            "16:13"
+        )
+        XCTAssertEqual(
+            RemoteIMTimestampTextPolicy.displayText(for: yesterday, now: now, calendar: calendar),
+            "昨天 23:53"
+        )
+        XCTAssertEqual(
+            RemoteIMTimestampTextPolicy.displayText(for: older, now: now, calendar: calendar),
+            "7 月 4 日 14:18"
         )
     }
 

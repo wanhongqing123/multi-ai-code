@@ -83,4 +83,47 @@ public class ChatStateTest {
         assertEquals(RemoteIMMessage.Status.SENT, state.messagesWith("mac-office").get(0).status());
         assertFalse(state.updateMessageStatus("missing", RemoteIMMessage.Status.SENT));
     }
+
+    @Test
+    public void returnsPeerMessagesChronologically() {
+        ChatState state = new ChatState("android-user");
+        RemoteIMMessage newest = new RemoteIMMessage(
+            "newest",
+            "android-user",
+            "mac-office",
+            "最新消息",
+            RemoteIMMessage.Direction.OUTGOING,
+            RemoteIMMessage.Status.SENT,
+            300L,
+            null,
+            null
+        );
+        RemoteIMMessage oldest = new RemoteIMMessage(
+            "oldest",
+            "mac-office",
+            "android-user",
+            "最早消息",
+            RemoteIMMessage.Direction.INCOMING,
+            RemoteIMMessage.Status.RECEIVED,
+            100L,
+            null,
+            null
+        );
+        RemoteIMMessage middle = new RemoteIMMessage(
+            "middle",
+            "mac-office",
+            "android-user",
+            "中间消息",
+            RemoteIMMessage.Direction.INCOMING,
+            RemoteIMMessage.Status.RECEIVED,
+            200L,
+            null,
+            null
+        );
+        state.addRestoredMessage(newest);
+        state.addRestoredMessage(oldest);
+        state.addRestoredMessage(middle);
+
+        assertEquals(List.of(oldest, middle, newest), state.messagesWith("mac-office"));
+    }
 }

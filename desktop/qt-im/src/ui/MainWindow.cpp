@@ -7,7 +7,6 @@
 #include <QFileInfo>
 #include <QFrame>
 #include <QHBoxLayout>
-#include <QInputDialog>
 #include <QKeyEvent>
 #include <QLineEdit>
 #include <QMessageBox>
@@ -32,6 +31,7 @@
 
 #include "im/RemoteIMCredentialDefaults.h"
 #include "markdown/MarkdownRenderer.h"
+#include "ui/AddContactDialog.h"
 #include "ui/ImagePreviewDialog.h"
 
 namespace {
@@ -986,15 +986,10 @@ void MainWindow::refreshMessages() {
 }
 
 void MainWindow::openAddContactDialog() {
-    bool ok = false;
-    const QString userId = QInputDialog::getText(this,
-                                                QStringLiteral("添加联系人"),
-                                                QStringLiteral("账号 ID"),
-                                                QLineEdit::Normal,
-                                                QString(),
-                                                &ok)
-                               .trimmed();
-    if (!ok || userId.isEmpty()) return;
+    AddContactDialog dialog(this);
+    if (dialog.exec() != QDialog::Accepted) return;
+    const QString userId = dialog.userId();
+    if (userId.isEmpty()) return;
     app_.addContact(userId, userId);
 }
 

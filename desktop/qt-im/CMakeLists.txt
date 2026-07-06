@@ -46,6 +46,8 @@ target_include_directories(remote_im_desktop_app PUBLIC src)
 target_link_libraries(remote_im_desktop_app PUBLIC remote_im_core)
 
 add_library(remote_im_desktop_ui
+  src/ui/AddContactDialog.h
+  src/ui/AddContactDialog.cpp
   src/ui/LoginDialog.h
   src/ui/LoginDialog.cpp
   src/ui/MainWindow.h
@@ -68,11 +70,15 @@ add_executable(multi_ai_im_desktop
   src/platform/WindowsRemoteIMClient.cpp
 )
 if(APPLE)
+  set(APP_ICON_MACOS "${CMAKE_CURRENT_SOURCE_DIR}/resources/macos/AppIcon.icns")
+  set_source_files_properties("${APP_ICON_MACOS}" PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
+  target_sources(multi_ai_im_desktop PRIVATE "${APP_ICON_MACOS}")
   set_target_properties(multi_ai_im_desktop PROPERTIES
     MACOSX_BUNDLE TRUE
     OUTPUT_NAME "Multi-AI Code IM"
     MACOSX_BUNDLE_BUNDLE_NAME "Multi-AI Code IM"
     MACOSX_BUNDLE_GUI_IDENTIFIER "com.multi-ai-code.im.desktop"
+    MACOSX_BUNDLE_ICON_FILE "AppIcon.icns"
   )
 endif()
 target_link_libraries(multi_ai_im_desktop PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets)
@@ -104,6 +110,9 @@ target_link_libraries(remote_im_application_test PRIVATE remote_im_desktop_app r
 add_executable(login_dialog_test tests/LoginDialogTest.cpp)
 target_link_libraries(login_dialog_test PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets Qt5::Test)
 
+add_executable(add_contact_dialog_test tests/AddContactDialogTest.cpp)
+target_link_libraries(add_contact_dialog_test PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets Qt5::Test)
+
 add_executable(main_window_layout_test tests/MainWindowLayoutTest.cpp)
 target_link_libraries(main_window_layout_test PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets Qt5::Test)
 
@@ -116,4 +125,5 @@ add_test(NAME markdown_renderer_test COMMAND markdown_renderer_test)
 add_test(NAME local_chat_history_store_test COMMAND local_chat_history_store_test)
 add_test(NAME remote_im_application_test COMMAND remote_im_application_test)
 add_test(NAME login_dialog_test COMMAND login_dialog_test)
+add_test(NAME add_contact_dialog_test COMMAND add_contact_dialog_test)
 add_test(NAME main_window_layout_test COMMAND main_window_layout_test)

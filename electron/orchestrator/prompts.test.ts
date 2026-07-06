@@ -107,7 +107,9 @@ describe('mainCliArgs', () => {
   it('default binary is codex', () => {
     expect(MAIN_COMMAND_DEFAULT).toBe('codex')
     expect(mainCliArgs()).toEqual([
-      '--dangerously-bypass-approvals-and-sandbox'
+      '--dangerously-bypass-approvals-and-sandbox',
+      '-c',
+      'model_context_window=1000000'
     ])
   })
 
@@ -118,7 +120,9 @@ describe('mainCliArgs', () => {
 
   it('codex produces full-permission args', () => {
     expect(mainCliArgs('codex')).toEqual([
-      '--dangerously-bypass-approvals-and-sandbox'
+      '--dangerously-bypass-approvals-and-sandbox',
+      '-c',
+      'model_context_window=1000000'
     ])
   })
 })
@@ -132,7 +136,9 @@ describe('buildCliLaunchArgs', () => {
 
   it('adds codex full-permission arg', () => {
     expect(buildCliLaunchArgs('codex', '/repo/demo')).toEqual([
-      '--dangerously-bypass-approvals-and-sandbox'
+      '--dangerously-bypass-approvals-and-sandbox',
+      '-c',
+      'model_context_window=1000000'
     ])
   })
 
@@ -151,7 +157,12 @@ describe('buildCliLaunchArgs', () => {
         '--dangerously-bypass-approvals-and-sandbox',
         '--verbose'
       ])
-    ).toEqual(['--dangerously-bypass-approvals-and-sandbox', '--verbose'])
+    ).toEqual([
+      '-c',
+      'model_context_window=1000000',
+      '--dangerously-bypass-approvals-and-sandbox',
+      '--verbose'
+    ])
   })
 
   it('keeps extra args order after default claude dangerous arg', () => {
@@ -160,6 +171,19 @@ describe('buildCliLaunchArgs', () => {
     ).toEqual([
       '--dangerously-skip-permissions',
       '--verbose'
+    ])
+  })
+
+  it('does not duplicate codex context window config when user overrides it', () => {
+    expect(
+      buildCliLaunchArgs('codex', '/repo/demo', [
+        '-c',
+        'model_context_window=272000'
+      ])
+    ).toEqual([
+      '--dangerously-bypass-approvals-and-sandbox',
+      '-c',
+      'model_context_window=272000'
     ])
   })
 })

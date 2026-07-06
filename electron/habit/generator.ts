@@ -238,6 +238,23 @@ async function loadDefaultAiSettings(): Promise<RawAiSettings | null> {
 
 /** Hard cap on CLI subprocess wall time. */
 export const CLI_TIMEOUT_MS = 60 * 1000
+export const CODEX_CONTEXT_WINDOW_CONFIG = 'model_context_window=1000000'
+
+function hasCodexContextWindowConfig(args: readonly string[]): boolean {
+  return args.some((arg, index) => {
+    if (arg === '-c' || arg === '--config') {
+      return args[index + 1]?.startsWith('model_context_window=') === true
+    }
+    return arg.startsWith('-cmodel_context_window=') ||
+      arg.startsWith('--config=model_context_window=')
+  })
+}
+
+function codexDefaultArgs(extraArgs: readonly string[]): string[] {
+  return hasCodexContextWindowConfig(extraArgs)
+    ? []
+    : ['-c', CODEX_CONTEXT_WINDOW_CONFIG]
+}
 
 export function buildCliArgs(
   settings: RawAiSettings,
@@ -247,7 +264,7 @@ export function buildCliArgs(
   const cmd = settings.command ?? cli
   const extras = settings.args ?? []
   if (cli === 'codex') {
-    return { cmd, args: ['exec', ...extras, prompt] }
+    return { cmd, args: ['exec', ...codexDefaultArgs(extras), ...extras, prompt] }
   }
   return { cmd, args: ['-p', ...extras, prompt] }
 }

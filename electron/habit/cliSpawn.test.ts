@@ -219,6 +219,7 @@ describe('buildCliArgs (cross-platform argument shape)', () => {
     const { cmd, args } = buildCliArgs({ ai_cli: 'codex' }, 'hello world')
     expect(cmd).toBe('codex')
     expect(args[0]).toBe('exec')
+    expect(args.slice(1, 3)).toEqual(['-c', 'model_context_window=1000000'])
     expect(args[args.length - 1]).toBe('hello world')
   })
 
@@ -226,6 +227,7 @@ describe('buildCliArgs (cross-platform argument shape)', () => {
     const { cmd, args } = buildCliArgs({}, 'hello world')
     expect(cmd).toBe('codex')
     expect(args[0]).toBe('exec')
+    expect(args.slice(1, 3)).toEqual(['-c', 'model_context_window=1000000'])
   })
 
   it('preserves user-supplied binary override', () => {
@@ -242,5 +244,13 @@ describe('buildCliArgs (cross-platform argument shape)', () => {
       'hi'
     )
     expect(args).toEqual(['-p', '--model', 'sonnet', 'hi'])
+  })
+
+  it('does not duplicate codex context window config in one-shot mode', () => {
+    const { args } = buildCliArgs(
+      { ai_cli: 'codex', args: ['-c', 'model_context_window=272000'] },
+      'hi'
+    )
+    expect(args).toEqual(['exec', '-c', 'model_context_window=272000', 'hi'])
   })
 })

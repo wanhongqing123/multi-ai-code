@@ -48,15 +48,37 @@ export async function resolvePlanArtifactAbs(
 
 export const MAIN_COMMAND_DEFAULT = 'codex'
 export type SupportedCli = 'claude' | 'codex'
+export const CODEX_CONTEXT_WINDOW_CONFIG = 'model_context_window=1000000'
 
 function hasAnyArg(args: readonly string[], flags: readonly string[]): boolean {
   return args.some((arg) => flags.includes(arg))
 }
 
+function hasCodexContextWindowConfig(args: readonly string[]): boolean {
+  return args.some((arg, index) => {
+    if (arg === '-c' || arg === '--config') {
+      return args[index + 1]?.startsWith('model_context_window=') === true
+    }
+    return arg.startsWith('-cmodel_context_window=') ||
+      arg.startsWith('--config=model_context_window=')
+  })
+}
+
+function codexDefaultArgs(extraArgs: readonly string[] = []): string[] {
+  const args: string[] = []
+  if (!hasAnyArg(extraArgs, ['--dangerously-bypass-approvals-and-sandbox'])) {
+    args.push('--dangerously-bypass-approvals-and-sandbox')
+  }
+  if (!hasCodexContextWindowConfig(extraArgs)) {
+    args.push('-c', CODEX_CONTEXT_WINDOW_CONFIG)
+  }
+  return args
+}
+
 export function mainCliArgs(
   binary: SupportedCli = MAIN_COMMAND_DEFAULT
 ): string[] {
-  if (binary === 'codex') return ['--dangerously-bypass-approvals-and-sandbox']
+  if (binary === 'codex') return codexDefaultArgs()
   return ['--dangerously-skip-permissions']
 }
 
@@ -73,13 +95,7 @@ export function buildCliLaunchArgs(
     return [...args, ...extraArgs]
   }
 
-  if (
-    !hasAnyArg(extraArgs, [
-      '--dangerously-bypass-approvals-and-sandbox'
-    ])
-  ) {
-    args.push('--dangerously-bypass-approvals-and-sandbox')
-  }
+  args.push(...codexDefaultArgs(extraArgs))
   return [...args, ...extraArgs]
 }
 

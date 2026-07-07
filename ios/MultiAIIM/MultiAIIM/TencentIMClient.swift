@@ -1,13 +1,16 @@
 import Foundation
+import MultiAIIMCore
 
 #if canImport(ImSDK_Plus)
 import ImSDK_Plus
 
-final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V2TIMAdvancedMsgListener {
+final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V2TIMAdvancedMsgListener, V2TIMSDKListener {
     var onIncomingText: ((IncomingRemoteIMText) -> Void)?
     var onIncomingVoice: ((IncomingRemoteIMVoice) -> Void)?
     var onIncomingImage: ((IncomingRemoteIMImage) -> Void)?
+    var onPresenceStatusChanged: (([String: RemoteIMPresenceStatus]) -> Void)?
     private var initializedSDKAppID: Int?
+    private var hasRegisteredIMSDKListener = false
 
     func connect(sdkAppID: Int, userID: String, userSig: String) async throws {
         if initializedSDKAppID != sdkAppID {
@@ -18,6 +21,10 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
             )
             guard initialized else { throw RemoteIMClientError.sdkInitializationFailed }
             initializedSDKAppID = sdkAppID
+        }
+        if !hasRegisteredIMSDKListener {
+            V2TIMManager.sharedInstance().addIMSDKListener(listener: self)
+            hasRegisteredIMSDKListener = true
         }
         V2TIMManager.sharedInstance().addSimpleMsgListener(listener: self)
         V2TIMManager.sharedInstance().addAdvancedMsgListener(listener: self)
@@ -41,6 +48,10 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
     }
 
     func disconnect() async {
+        if hasRegisteredIMSDKListener {
+            V2TIMManager.sharedInstance().removeIMSDKListener(listener: self)
+            hasRegisteredIMSDKListener = false
+        }
         V2TIMManager.sharedInstance().removeSimpleMsgListener(listener: self)
         V2TIMManager.sharedInstance().removeAdvancedMsgListener(listener: self)
         await withCheckedContinuation { continuation in
@@ -51,6 +62,48 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
                 fail: { _, _ in
                     continuation.resume()
                 }
+            )
+        }
+    }
+
+    func refreshPresenceStatuses(userIDs: [String]) async throws -> [String: RemoteIMPresenceStatus] {
+        let cleanedUserIDs = Self.cleanUserIDs(userIDs)
+        guard !cleanedUserIDs.isEmpty else { return [:] }
+        return try await withCheckedThrowingContinuation { continuation in
+            V2TIMManager.sharedInstance().getUserStatus(
+                userIDList: cleanedUserIDs,
+                succ: { userStatusList in
+                    continuation.resume(returning: Self.statusMap(from: userStatusList ?? []))
+                },
+                fail: { code, desc in
+                    continuation.resume(
+                        throwing: RemoteIMClientError.operationFailed(
+                            code: code,
+                            description: desc ?? "getUserStatus failed"
+                        )
+                    )
+                }
+            )
+        }
+    }
+
+    func subscribePresenceStatuses(userIDs: [String]) async throws {
+        let cleanedUserIDs = Self.cleanUserIDs(userIDs)
+        guard !cleanedUserIDs.isEmpty else { return }
+        try await withCheckedThrowingContinuation { continuation in
+            V2TIMManager.sharedInstance().subscribeUserStatus(
+                userIDList: cleanedUserIDs,
+                succ: {
+                    continuation.resume()
+                },
+                fail: { code, desc in
+                    continuation.resume(
+                        throwing: RemoteIMClientError.operationFailed(
+                            code: code,
+                            description: desc ?? "subscribeUserStatus failed"
+                        )
+                    )
+                    }
             )
         }
     }
@@ -251,12 +304,55 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
             .appendingPathComponent(safeName)
             .appendingPathExtension(pathExtension?.isEmpty == false ? pathExtension! : "jpg")
     }
+
+    @objc nonisolated func onUserStatusChanged(userStatusList: [V2TIMUserStatus]!) {
+        guard let userStatusList else { return }
+        let updates = Self.statusMap(from: userStatusList)
+        guard !updates.isEmpty else { return }
+        Task { @MainActor [weak self, updates] in
+            self?.onPresenceStatusChanged?(updates)
+        }
+    }
+
+    private nonisolated static func cleanUserIDs(_ userIDs: [String]) -> [String] {
+        let normalized = userIDs
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        var deduped: [String] = []
+        var visited = Set<String>()
+        for userID in normalized where visited.insert(userID).inserted {
+            deduped.append(userID)
+        }
+        return deduped
+    }
+
+    private nonisolated static func statusMap(from userStatusList: [V2TIMUserStatus]) -> [String: RemoteIMPresenceStatus] {
+        userStatusList.reduce(into: [:]) { partialResult, item in
+            guard let userID = item.userID,
+                  !userID.isEmpty else { return }
+            partialResult[userID] = Self.presenceStatus(from: item.statusType)
+        }
+    }
+
+    private nonisolated static func presenceStatus(from sdkStatus: V2TIMUserStatusType) -> RemoteIMPresenceStatus {
+        let statusValue = Int(sdkStatus.rawValue)
+        switch statusValue {
+        case 1:
+            return .online
+        case 2, 3:
+            return .offline
+        default:
+            return .unknown
+        }
+    }
+
 }
 #else
 final class TencentIMClient: RemoteIMClient {
     var onIncomingText: ((IncomingRemoteIMText) -> Void)?
     var onIncomingVoice: ((IncomingRemoteIMVoice) -> Void)?
     var onIncomingImage: ((IncomingRemoteIMImage) -> Void)?
+    var onPresenceStatusChanged: (([String: RemoteIMPresenceStatus]) -> Void)?
 
     func connect(sdkAppID: Int, userID: String, userSig: String) async throws {
         throw RemoteIMClientError.sdkNotIntegrated
@@ -275,5 +371,14 @@ final class TencentIMClient: RemoteIMClient {
     func sendImage(to userID: String, image: RemoteIMImageFile) async throws {
         throw RemoteIMClientError.sdkNotIntegrated
     }
+
+    func refreshPresenceStatuses(userIDs: [String]) async throws -> [String: RemoteIMPresenceStatus] {
+        throw RemoteIMClientError.sdkNotIntegrated
+    }
+
+    func subscribePresenceStatuses(userIDs: [String]) async throws {
+        throw RemoteIMClientError.sdkNotIntegrated
+    }
+
 }
 #endif

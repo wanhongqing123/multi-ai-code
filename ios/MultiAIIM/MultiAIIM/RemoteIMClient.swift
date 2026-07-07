@@ -1,4 +1,5 @@
 import Foundation
+import MultiAIIMCore
 
 struct IncomingRemoteIMText: Equatable {
     let fromUserID: String
@@ -55,10 +56,13 @@ protocol RemoteIMClient: AnyObject {
     var onIncomingText: ((IncomingRemoteIMText) -> Void)? { get set }
     var onIncomingVoice: ((IncomingRemoteIMVoice) -> Void)? { get set }
     var onIncomingImage: ((IncomingRemoteIMImage) -> Void)? { get set }
+    var onPresenceStatusChanged: (([String: RemoteIMPresenceStatus]) -> Void)? { get set }
 
     func connect(sdkAppID: Int, userID: String, userSig: String) async throws
     func disconnect() async
     func sendText(to userID: String, text: String) async throws
     func sendVoice(to userID: String, recording: RemoteIMVoiceRecording) async throws
     func sendImage(to userID: String, image: RemoteIMImageFile) async throws
+    func refreshPresenceStatuses(userIDs: [String]) async throws -> [String: RemoteIMPresenceStatus]
+    func subscribePresenceStatuses(userIDs: [String]) async throws
 }

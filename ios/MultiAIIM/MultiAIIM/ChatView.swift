@@ -38,6 +38,71 @@ struct ChatView: View {
     }
 }
 
+struct RemoteIMContactAvatar: View {
+    let isSelected: Bool
+    let presenceStatus: RemoteIMPresenceStatus
+    let size: CGFloat
+    let iconSize: CGFloat
+
+    var body: some View {
+        ZStack(alignment: .bottomTrailing) {
+            Image(systemName: "desktopcomputer")
+                .font(.system(size: iconSize, weight: .semibold))
+                .foregroundStyle(isSelected ? Color(red: 0.035, green: 0.376, blue: 0.667) : RemoteIMStyle.textSecondary)
+                .frame(width: size, height: size)
+                .background(
+                    isSelected ? RemoteIMStyle.blueSoft : Color(red: 0.953, green: 0.961, blue: 0.973),
+                    in: RoundedRectangle(cornerRadius: size >= 40 ? 10 : 8, style: .continuous)
+                )
+                .overlay(
+                    RoundedRectangle(
+                        cornerRadius: size >= 40 ? 10 : 8,
+                        style: .continuous
+                    )
+                    .stroke(
+                        presenceStatus.isOnline
+                            ? Color(red: 0.118, green: 0.737, blue: 0.408)
+                            : Color.clear,
+                        lineWidth: presenceStatus.isOnline ? 2 : 0
+                    )
+                )
+
+            if presenceStatus.isOnline {
+                Circle()
+                    .fill(Color(red: 0.118, green: 0.737, blue: 0.408))
+                    .frame(width: 11, height: 11)
+                    .overlay(Circle().stroke(Color.white, lineWidth: 2))
+                    .offset(x: 2, y: 2)
+            }
+        }
+    }
+}
+
+struct RemoteIMPresenceBadge: View {
+    let status: RemoteIMPresenceStatus
+
+    var body: some View {
+        switch status {
+        case .online:
+            Text("在线")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Color(red: 0.047, green: 0.518, blue: 0.29))
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(RemoteIMStyle.greenSoft, in: Capsule())
+        case .offline:
+            Text("离线")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(RemoteIMStyle.textSecondary)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(Color(red: 0.945, green: 0.953, blue: 0.965), in: Capsule())
+        case .unknown:
+            EmptyView()
+        }
+    }
+}
+
 private struct HeaderView: View {
     @EnvironmentObject private var appState: RemoteIMAppState
 
@@ -128,7 +193,8 @@ private struct ConversationListView: View {
                         ConversationRow(
                             contact: contact,
                             latestMessage: appState.chatState.latestMessage(with: contact.userID),
-                            selected: contact.userID == appState.chatState.selectedPeerID
+                            selected: contact.userID == appState.chatState.selectedPeerID,
+                            presenceStatus: appState.presenceStatus(for: contact)
                         )
                     }
                     .buttonStyle(.plain)
@@ -158,17 +224,16 @@ private struct ConversationRow: View {
     let contact: RemoteIMContact
     let latestMessage: RemoteIMMessage?
     let selected: Bool
+    let presenceStatus: RemoteIMPresenceStatus
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "desktopcomputer")
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(selected ? Color(red: 0.035, green: 0.376, blue: 0.667) : RemoteIMStyle.textSecondary)
-                .frame(width: 42, height: 42)
-                .background(
-                    selected ? RemoteIMStyle.blueSoft : Color(red: 0.953, green: 0.961, blue: 0.973),
-                    in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-                )
+            RemoteIMContactAvatar(
+                isSelected: selected,
+                presenceStatus: presenceStatus,
+                size: 42,
+                iconSize: 18
+            )
 
             VStack(alignment: .leading, spacing: 5) {
                 Text(contact.displayName)
@@ -194,6 +259,7 @@ private struct ConversationRow: View {
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(RemoteIMStyle.textSecondary)
                 }
+                RemoteIMPresenceBadge(status: presenceStatus)
                 RelationBadge(text: contact.relation.displayName)
             }
         }

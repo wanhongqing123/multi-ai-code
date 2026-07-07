@@ -102,7 +102,8 @@ private struct ContactList: View {
                     } label: {
                         ContactRow(
                             contact: contact,
-                            selected: contact.userID == appState.chatState.selectedPeerID
+                            selected: contact.userID == appState.chatState.selectedPeerID,
+                            presenceStatus: appState.presenceStatus(for: contact)
                         )
                     }
                     .buttonStyle(.plain)
@@ -131,17 +132,16 @@ private struct ContactList: View {
 private struct ContactRow: View {
     let contact: RemoteIMContact
     let selected: Bool
+    let presenceStatus: RemoteIMPresenceStatus
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "desktopcomputer")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(selected ? Color(red: 0.035, green: 0.376, blue: 0.667) : RemoteIMStyle.textSecondary)
-                .frame(width: 30, height: 30)
-                .background(
-                    selected ? RemoteIMStyle.blueSoft : Color(red: 0.953, green: 0.961, blue: 0.973),
-                    in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-                )
+            RemoteIMContactAvatar(
+                isSelected: selected,
+                presenceStatus: presenceStatus,
+                size: 30,
+                iconSize: 16
+            )
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(contact.displayName)
@@ -158,7 +158,10 @@ private struct ContactRow: View {
 
             Spacer()
 
-            RelationBadge(text: contact.relation.displayName)
+            VStack(alignment: .trailing, spacing: 6) {
+                RemoteIMPresenceBadge(status: presenceStatus)
+                RelationBadge(text: contact.relation.displayName)
+            }
         }
         .padding(12)
         .background(

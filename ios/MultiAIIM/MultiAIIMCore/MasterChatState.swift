@@ -92,6 +92,45 @@ public enum RemoteIMTimestampTextPolicy {
     }
 }
 
+public enum RemoteIMPresenceStatus: String, Codable, Equatable, Hashable, Sendable {
+    case unknown
+    case online
+    case offline
+
+    public var isOnline: Bool {
+        self == .online
+    }
+}
+
+public enum RemoteIMPresenceStatusPolicy {
+    public static func merged(
+        current: [String: RemoteIMPresenceStatus],
+        updates: [String: RemoteIMPresenceStatus],
+        contactUserIDs: [String]
+    ) -> [String: RemoteIMPresenceStatus] {
+        let validUserIDs = Set(
+            contactUserIDs
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+        )
+
+        var nextStatusByUserID: [String: RemoteIMPresenceStatus] = [:]
+        for userID in validUserIDs {
+            if let currentStatus = current[userID] {
+                nextStatusByUserID[userID] = currentStatus
+            }
+        }
+
+        for (rawUserID, status) in updates {
+            let userID = rawUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard validUserIDs.contains(userID) else { continue }
+            nextStatusByUserID[userID] = status
+        }
+
+        return nextStatusByUserID
+    }
+}
+
 public struct RemoteIMImagePreviewItem: Identifiable, Equatable {
     public let id: UUID
     public let localFilePath: String

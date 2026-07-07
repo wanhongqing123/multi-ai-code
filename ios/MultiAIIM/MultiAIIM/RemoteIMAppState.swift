@@ -20,6 +20,7 @@ final class RemoteIMAppState: ObservableObject {
     @Published var connectionState: ConnectionState = .disconnected
     @Published var chatState: MasterChatState
     @Published var hasCompletedInitialLogin = false
+    @Published var presenceStatusByUserID: [String: RemoteIMPresenceStatus] = [:]
 
     private let settingsStore: LocalSettingsStore
     private let secretStore: KeychainSecretStore
@@ -74,6 +75,11 @@ final class RemoteIMAppState: ObservableObject {
                 self?.receive(event)
             }
         }
+        self.client.onPresenceStatusChanged = { [weak self] updates in
+            Task { @MainActor in
+                self?.applyPresenceStatusUpdates(updates)
+            }
+        }
     }
 
     var selectedContact: RemoteIMContact? {
@@ -97,6 +103,10 @@ final class RemoteIMAppState: ObservableObject {
 
     var canSendImage: Bool {
         connectionState == .connected && selectedContact != nil
+    }
+
+    func presenceStatus(for contact: RemoteIMContact) -> RemoteIMPresenceStatus {
+        presenceStatusByUserID[contact.userID] ?? .unknown
     }
 
     static func hasCompleteLoginCredential(
@@ -154,6 +164,7 @@ final class RemoteIMAppState: ObservableObject {
                 userSig: userSig
             )
             connectionState = .connected
+            await refreshPresenceForCurrentContacts()
             errorMessage = nil
         } catch {
             connectionState = .failed
@@ -169,6 +180,7 @@ final class RemoteIMAppState: ObservableObject {
 
     func disconnect() async {
         await client.disconnect()
+        presenceStatusByUserID = [:]
         connectionState = .disconnected
     }
 
@@ -178,6 +190,9 @@ final class RemoteIMAppState: ObservableObject {
             newContactUserID = ""
             settingsStore.save(currentStoredSettings())
             errorMessage = nil
+            Task {
+                await refreshPresenceForCurrentContacts()
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -196,6 +211,14 @@ final class RemoteIMAppState: ObservableObject {
         }
         persistCurrentHistory()
         settingsStore.save(currentStoredSettings())
+        presenceStatusByUserID = RemoteIMPresenceStatusPolicy.merged(
+            current: presenceStatusByUserID,
+            updates: [:],
+            contactUserIDs: chatState.contacts.map(\.userID)
+        )
+        Task {
+            await refreshPresenceForCurrentContacts()
+        }
         errorMessage = nil
     }
 
@@ -314,6 +337,7 @@ final class RemoteIMAppState: ObservableObject {
         let cleanMasterUserID = masterUserID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard chatState.ownerUserID != cleanMasterUserID else { return }
         persistCurrentHistory()
+        presenceStatusByUserID = [:]
         let nextState = MasterChatState(
             ownerUserID: cleanMasterUserID,
             contacts: chatState.contacts,
@@ -324,6 +348,9 @@ final class RemoteIMAppState: ObservableObject {
             selectedPeerID: chatState.selectedPeerID
         )
         chatState = nextState
+        Task {
+            await refreshPresenceForCurrentContacts()
+        }
     }
 
     private func persistCurrentHistory() {
@@ -336,6 +363,45 @@ final class RemoteIMAppState: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func refreshPresenceForCurrentContacts() async {
+        guard connectionState == .connected else { return }
+        let contactUserIDs = chatState.contacts.map(\.userID)
+        guard !contactUserIDs.isEmpty else {
+            presenceStatusByUserID = [:]
+            return
+        }
+
+        do {
+            let updates = try await client.refreshPresenceStatuses(userIDs: contactUserIDs)
+            applyPresenceStatusUpdates(updates)
+        } catch {
+            presenceStatusByUserID = RemoteIMPresenceStatusPolicy.merged(
+                current: presenceStatusByUserID,
+                updates: [:],
+                contactUserIDs: contactUserIDs
+            )
+            #if DEBUG
+            print("RemoteIM presence refresh failed: \(error.localizedDescription)")
+            #endif
+        }
+
+        do {
+            try await client.subscribePresenceStatuses(userIDs: contactUserIDs)
+        } catch {
+            #if DEBUG
+            print("RemoteIM presence subscribe failed: \(error.localizedDescription)")
+            #endif
+        }
+    }
+
+    private func applyPresenceStatusUpdates(_ updates: [String: RemoteIMPresenceStatus]) {
+        presenceStatusByUserID = RemoteIMPresenceStatusPolicy.merged(
+            current: presenceStatusByUserID,
+            updates: updates,
+            contactUserIDs: chatState.contacts.map(\.userID)
+        )
     }
 
     private func currentSDKAppID() -> Int? {

@@ -227,6 +227,33 @@ final class MasterChatStateTests: XCTestCase {
         XCTAssertNil(RemoteIMImagePreviewPolicy.previewItem(for: message))
     }
 
+    func testPresenceStatusPolicyKeepsOnlyCurrentContacts() {
+        let merged = RemoteIMPresenceStatusPolicy.merged(
+            current: [
+                "mac-online": .offline,
+                "stale-contact": .online
+            ],
+            updates: [
+                " mac-online ": .online,
+                "mac-offline": .offline,
+                "unknown-contact": .online,
+                "": .online
+            ],
+            contactUserIDs: [
+                "mac-online",
+                "mac-offline"
+            ]
+        )
+
+        XCTAssertEqual(merged, [
+            "mac-online": .online,
+            "mac-offline": .offline
+        ])
+        XCTAssertTrue(RemoteIMPresenceStatus.online.isOnline)
+        XCTAssertFalse(RemoteIMPresenceStatus.offline.isOnline)
+        XCTAssertFalse(RemoteIMPresenceStatus.unknown.isOnline)
+    }
+
     func testFiltersMessagesByConversationPeer() throws {
         var state = MasterChatState(ownerUserID: "ios-master")
         try state.upsertSlave(userID: "mac-quark-pc")

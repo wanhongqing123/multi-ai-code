@@ -79,6 +79,20 @@ describe('remote IM reply protocol', () => {
     })
   })
 
+  it('accepts a legacy close tag after a matching reply id open tag', () => {
+    const output = [
+      '<remote-im-reply id="rim-current">',
+      'Claude reply with id open and legacy close',
+      REMOTE_IM_REPLY_CLOSE_TAG
+    ].join('\n')
+
+    expect(extractRemoteImReplyOutput(output, { replyId: 'rim-current' })).toEqual({
+      content: 'Claude reply with id open and legacy close',
+      pending: false,
+      nextBuffer: ''
+    })
+  })
+
   it('does not treat echoed prompt marker instructions as a reply', () => {
     const promptEcho = buildRemoteImAicliPrompt({
       fromUserId: 'phone_admin',

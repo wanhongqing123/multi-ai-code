@@ -123,4 +123,43 @@ describe('Claude transcript remote IM replies', () => {
       })
     ).toBe('current transcript reply')
   })
+
+  it('reads a matching id reply when Claude emits a legacy close tag', () => {
+    const root = mkdtempSync(join(tmpdir(), 'multi-ai-code-claude-transcript-'))
+    const cwd = '/Users/me/work/repo'
+    const dir = getClaudeProjectTranscriptDir(cwd, root)
+    mkdirSync(dir, { recursive: true })
+    const transcript = join(dir, 'session.jsonl')
+
+    writeFileSync(
+      transcript,
+      JSON.stringify({
+        type: 'assistant',
+        timestamp: '2026-06-29T00:00:10.000Z',
+        message: {
+          role: 'assistant',
+          content: [
+            {
+              type: 'text',
+              text: [
+                '<remote-im-reply id="rim-current">',
+                'current transcript reply',
+                '</remote-im-reply>'
+              ].join('\n')
+            }
+          ]
+        }
+      }) + '\n',
+      'utf8'
+    )
+
+    expect(
+      readLatestClaudeRemoteImReply({
+        cwd,
+        projectsRoot: root,
+        sinceMs: Date.parse('2026-06-29T00:00:05.000Z'),
+        replyId: 'rim-current'
+      })
+    ).toBe('current transcript reply')
+  })
 })

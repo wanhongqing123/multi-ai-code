@@ -81,6 +81,17 @@ function matchesExpectedReplyId(tag: RemoteImReplyTag, expectedReplyId: string |
   return expectedReplyId ? tag.replyId === expectedReplyId : true
 }
 
+function matchesPendingCloseTag(
+  tag: RemoteImReplyTag,
+  expectedReplyId: string | undefined,
+  pendingReplyId: string | undefined
+): boolean {
+  if (tag.kind !== 'close') return false
+  if (!expectedReplyId) return true
+  if (tag.replyId === expectedReplyId && tag.replyId === pendingReplyId) return true
+  return tag.replyId === undefined && pendingReplyId === expectedReplyId
+}
+
 function buildPendingReplyBuffer(lines: string[], replyId?: string): string {
   return [buildRemoteImReplyOpenTag(replyId), ...lines].join('\n')
 }
@@ -131,8 +142,7 @@ export function extractRemoteImReplyOutput(
 
     if (
       tag?.kind === 'close' &&
-      matchesExpectedReplyId(tag, expectedReplyId) &&
-      (!expectedReplyId || tag.replyId === pendingReplyId)
+      matchesPendingCloseTag(tag, expectedReplyId, pendingReplyId)
     ) {
       const content = trimReplyContent(pendingLines.join('\n'))
       if (content) replies.push(content)

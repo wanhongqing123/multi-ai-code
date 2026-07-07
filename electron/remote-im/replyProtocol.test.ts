@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
   REMOTE_IM_REPLY_CLOSE_TAG,
@@ -6,6 +9,12 @@ import {
   buildRemoteImAicliDisplayText,
   extractRemoteImReplyOutput
 } from './replyProtocol.js'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+
+function readReplyFixture(name: string): string {
+  return readFileSync(join(__dirname, 'fixtures', 'reply-protocol', name), 'utf8')
+}
 
 describe('remote IM reply protocol', () => {
   it('builds a compact AICLI prompt that avoids visible protocol echo fragments', () => {
@@ -79,6 +88,55 @@ describe('remote IM reply protocol', () => {
     })
   })
 
+  it.each([
+    {
+      name: 'legacy markers without reply id',
+      output: [REMOTE_IM_REPLY_OPEN_TAG, 'legacy reply', REMOTE_IM_REPLY_CLOSE_TAG].join('\n'),
+      replyId: undefined,
+      expected: 'legacy reply'
+    },
+    {
+      name: 'matching id markers',
+      output: [
+        '<remote-im-reply id="rim-current">',
+        'current id reply',
+        '</remote-im-reply id="rim-current">'
+      ].join('\n'),
+      replyId: 'rim-current',
+      expected: 'current id reply'
+    },
+    {
+      name: 'matching id open marker with legacy close marker',
+      output: [
+        '<remote-im-reply id="rim-current">',
+        'current id reply with legacy close',
+        REMOTE_IM_REPLY_CLOSE_TAG
+      ].join('\n'),
+      replyId: 'rim-current',
+      expected: 'current id reply with legacy close'
+    }
+  ])('extracts reply protocol variant: $name', ({ output, replyId, expected }) => {
+    expect(extractRemoteImReplyOutput(output, { replyId })).toEqual({
+      content: expected,
+      pending: false,
+      nextBuffer: ''
+    })
+  })
+
+  it('does not close a current reply with a wrong reply id close tag', () => {
+    const output = [
+      '<remote-im-reply id="rim-current">',
+      'must not forward yet',
+      '</remote-im-reply id="rim-other">'
+    ].join('\n')
+
+    const reply = extractRemoteImReplyOutput(output, { replyId: 'rim-current' })
+
+    expect(reply.content).toBe('')
+    expect(reply.pending).toBe(true)
+    expect(reply.nextBuffer).toContain('must not forward yet')
+  })
+
   it('accepts a legacy close tag after a matching reply id open tag', () => {
     const output = [
       '<remote-im-reply id="rim-current">',
@@ -88,6 +146,18 @@ describe('remote IM reply protocol', () => {
 
     expect(extractRemoteImReplyOutput(output, { replyId: 'rim-current' })).toEqual({
       content: 'Claude reply with id open and legacy close',
+      pending: false,
+      nextBuffer: ''
+    })
+  })
+
+  it('replays the Claude id-open legacy-close incident fixture', () => {
+    expect(
+      extractRemoteImReplyOutput(readReplyFixture('claude-id-open-legacy-close.txt'), {
+        replyId: 'rim-current'
+      })
+    ).toEqual({
+      content: 'Claude transcript reply with an id-bearing opening marker and a legacy closing marker.',
       pending: false,
       nextBuffer: ''
     })

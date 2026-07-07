@@ -1,0 +1,3 @@
+<remote-im-reply id="rim-current">
+Claude transcript reply with an id-bearing opening marker and a legacy closing marker.
+</remote-im-reply>

@@ -1,0 +1,45 @@
+name: Remote IM Tests
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'electron/remote-im/**'
+      - 'src/remote-im/**'
+      - 'electron/preload.ts'
+      - 'electron/preload.remoteIm.test.ts'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/remote-im-tests.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'electron/remote-im/**'
+      - 'src/remote-im/**'
+      - 'electron/preload.ts'
+      - 'electron/preload.remoteIm.test.ts'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/remote-im-tests.yml'
+
+jobs:
+  remote-im:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Run Remote IM tests
+        run: npm run test:remote-im
+
+      - name: Typecheck
+        run: npm run typecheck

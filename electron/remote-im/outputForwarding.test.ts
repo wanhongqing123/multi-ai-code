@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 import type { CreateRemoteImMessageInput } from './messageStore.js'
 import type { RemoteImConfig } from './types.js'
@@ -13,6 +16,12 @@ import {
   type RemoteImOutputSessionState
 } from './outputForwarding.js'
 import { REMOTE_IM_REPLY_CLOSE_TAG, REMOTE_IM_REPLY_OPEN_TAG } from './replyProtocol.js'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+
+function readReplyFixture(name: string): string {
+  return readFileSync(join(__dirname, 'fixtures', 'reply-protocol', name), 'utf8')
+}
 
 const config: RemoteImConfig = {
   enabled: true,
@@ -254,6 +263,56 @@ describe('remote IM output forwarding', () => {
     expect(chunks).toBe(1)
     expect(messages[0]?.content).toBe('current result')
     expect(sentTexts).toEqual([createRemoteImAicliOutputText('current result')])
+  })
+
+  it('forwards Claude output when a matching id open tag is closed by a legacy close tag', () => {
+    const state = createState(readReplyFixture('claude-id-open-legacy-close.txt'), {
+      outputMaxChunkChars: 500
+    })
+    state.replyId = 'rim-current'
+    state.sourceKind = 'claude'
+    const messages: CreateRemoteImMessageInput[] = []
+    const sentTexts: string[] = []
+
+    const chunks = flushRemoteImOutputSession('session-1', state, {
+      createMessage: (input) => {
+        messages.push(input)
+      },
+      sendText: (_projectId, _toUserId, text) => {
+        sentTexts.push(text)
+      },
+      messagesChanged: () => undefined
+    })
+
+    const expected = 'Claude transcript reply with an id-bearing opening marker and a legacy closing marker.'
+    expect(chunks).toBe(1)
+    expect(messages[0]?.content).toBe(expected)
+    expect(sentTexts).toEqual([createRemoteImAicliOutputText(expected)])
+  })
+
+  it('replays a Codex current reply fixture with TUI noise before forwarding', () => {
+    const state = createState(readReplyFixture('codex-current-reply-with-tui-noise.txt'), {
+      outputMaxChunkChars: 500
+    })
+    state.replyId = 'rim-current'
+    state.sourceKind = 'codex'
+    const messages: CreateRemoteImMessageInput[] = []
+    const sentTexts: string[] = []
+
+    const chunks = flushRemoteImOutputSession('session-1', state, {
+      createMessage: (input) => {
+        messages.push(input)
+      },
+      sendText: (_projectId, _toUserId, text) => {
+        sentTexts.push(text)
+      },
+      messagesChanged: () => undefined
+    })
+
+    const expected = 'Codex reply after terminal UI redraw noise.'
+    expect(chunks).toBe(1)
+    expect(messages[0]?.content).toBe(expected)
+    expect(sentTexts).toEqual([createRemoteImAicliOutputText(expected)])
   })
 
   it('prefers raw Claude transcript Markdown over terminal-rendered table fragments', () => {

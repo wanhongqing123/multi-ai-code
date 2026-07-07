@@ -1,0 +1,6 @@
+Use /skills to list available skills
+gpt-5.5 xhigh · ~/repo/src · gpt-5.5 · src · Context 4% used · 5h 100% left · weekly 61% left
+<remote-im-reply id="rim-current">
+› Run /review on my current changes
+Codex reply after terminal UI redraw noise.
+</remote-im-reply id="rim-current">

@@ -16,6 +16,10 @@ import {
   formatMarkdownChunk
 } from './terminalMarkdown.js'
 import {
+  normalizeTerminalStyleForCli,
+  type TerminalStyleCli
+} from './terminalCodexStyle.js'
+import {
   copySelection,
   installCopyBinding,
   installPasteHandler,
@@ -51,6 +55,8 @@ export interface MainPanelProps {
   diffReviewDisabled?: boolean
   /** Disable only the repo-view button. */
   repoViewDisabled?: boolean
+  /** Active CLI for terminal presentation differences. */
+  aiCli?: TerminalStyleCli
 }
 
 export default function MainPanel(props: MainPanelProps): JSX.Element {
@@ -59,6 +65,7 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
   const fitRef = useRef<FitAddon | null>(null)
   const searchRef = useRef<SearchAddon | null>(null)
   const markdownStateRef = useRef(createTerminalMarkdownState())
+  const aiCliRef = useRef<TerminalStyleCli>(props.aiCli ?? 'unknown')
   const unsubRef = useRef<Array<() => void>>([])
   const [dragActive, setDragActive] = useState(false)
   const [menu, setMenu] = useState<{
@@ -66,6 +73,10 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
     y: number
     hasSelection: boolean
   } | null>(null)
+
+  useEffect(() => {
+    aiCliRef.current = props.aiCli ?? 'unknown'
+  }, [props.aiCli])
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -108,7 +119,8 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
 
     const offData = window.api.cc.onData((evt) => {
       if (evt.sessionId !== props.sessionId) return
-      const formatted = formatMarkdownChunk(evt.chunk, markdownStateRef.current)
+      const normalized = normalizeTerminalStyleForCli(evt.chunk, aiCliRef.current)
+      const formatted = formatMarkdownChunk(normalized, markdownStateRef.current)
       term.write(formatted.text)
     })
     unsubRef.current.push(offData)

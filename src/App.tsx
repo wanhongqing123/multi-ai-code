@@ -2020,6 +2020,7 @@ function AppShell() {
               cwd={targetRepo}
               planName={mainSessionPlanLabel}
               status={sessionStatus}
+              aiCli={aiSettings.ai_cli ?? DEFAULT_AI_CLI}
               onStart={() => void handleStart('new')}
               onStop={handleStop}
               onRestart={handleRestart}

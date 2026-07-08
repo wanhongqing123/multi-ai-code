@@ -13,6 +13,7 @@
 
 class QResizeEvent;
 class QShowEvent;
+class QLineEdit;
 
 class MainWindow final : public QMainWindow {
 public:
@@ -32,6 +33,7 @@ private:
     void refreshContactDirectory();
     void refreshSettings();
     void refreshMessages();
+    void applyConversationFilter();
     void showMessagesPage();
     void showContactsPage();
     void showSettingsPage();
@@ -51,6 +53,7 @@ private:
 
     RemoteIMApplication& app_;
     QWidget* navRail_ = nullptr;
+    QLineEdit* navSearchInput_ = nullptr;
     QPushButton* messageNavButton_ = nullptr;
     QPushButton* contactsNavButton_ = nullptr;
     QPushButton* settingsNavButton_ = nullptr;

@@ -201,6 +201,34 @@ describe('registerPtyIpc prompt injection timing', () => {
     expect(pathValue.split(':').some((item) => item.endsWith('/bin'))).toBe(true)
   })
 
+  it('enables OpenCode LSP for spawned AICLI sessions', async () => {
+    const targetRepo = await fs.mkdtemp(join(tmpdir(), 'multi-ai-code-target-opencode-'))
+    const projectDir = await fs.mkdtemp(join(tmpdir(), 'multi-ai-code-project-opencode-'))
+    await fs.writeFile(join(projectDir, 'project.json'), JSON.stringify({ name: 'demo' }), 'utf8')
+
+    const { registerPtyIpc } = await import('./ptyManager.js')
+    registerPtyIpc()
+
+    const handler = ipcHandlers.get('cc:spawn')
+    if (!handler) throw new Error('cc:spawn handler was not registered')
+
+    const result = await handler({}, {
+      sessionId: 'session-opencode',
+      projectId: 'project-1',
+      projectDir,
+      targetRepo,
+      planName: '',
+      planMode: 'none',
+      command: 'opencode',
+      args: [],
+      mode: 'new',
+    })
+
+    expect(result).toMatchObject({ ok: true })
+    const env = ptyInstances[0].opts.env as Record<string, string>
+    expect(JSON.parse(env.OPENCODE_CONFIG_CONTENT)).toMatchObject({ lsp: true })
+  })
+
   it('resolves Codex launch notice for the boot gate before spawning', async () => {
     const { registerPtyIpc } = await import('./ptyManager.js')
     registerPtyIpc()

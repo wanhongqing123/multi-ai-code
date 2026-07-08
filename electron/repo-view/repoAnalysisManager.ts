@@ -7,6 +7,7 @@ import {
   isClaudeReadyForPromptInjection
 } from '../cc/codexTrust.js'
 import { withEmbeddedClaudeSettings } from '../cc/claudeLaunchSettings.js'
+import { withOpenCodeLspEnv } from '../aicli/opencodeConfig.js'
 
 interface RepoAnalysisSession {
   winId: number
@@ -154,7 +155,7 @@ export async function startRepoAnalysisSession(input: {
     cwd: input.targetRepo,
     command: input.command,
     args: withEmbeddedClaudeSettings(input.command, input.args),
-    env: input.env
+    env: withOpenCodeLspEnv(input.command, input.env)
   })
   const session: RepoAnalysisSession = {
     winId: input.winId,

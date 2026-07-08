@@ -6,6 +6,7 @@ import type { GenerateFn } from './scheduler.js'
 import { projectDir as projectDirFn } from '../store/paths.js'
 import { getDb } from '../store/db.js'
 import { buildEnvWithPath, resolveCliSpawn } from './cliSpawn.js'
+import { withOpenCodeLspEnv } from '../aicli/opencodeConfig.js'
 import { isValidStep, type SkillStep } from './skills.js'
 import { enqueueCliJob } from '../util/cliQueue.js'
 
@@ -296,10 +297,13 @@ export function runCliGeneration(
   opts: { timeoutMs?: number } = {}
 ): Promise<ParsedResponse> {
   const { cmd, args } = buildCliArgs(settings, prompt)
-  const env = buildEnvWithPath({
-    ...process.env,
-    ...(settings.env ?? {})
-  })
+  const env = withOpenCodeLspEnv(
+    cmd,
+    buildEnvWithPath({
+      ...process.env,
+      ...(settings.env ?? {})
+    })
+  ) ?? {}
   const timeoutMs = opts.timeoutMs ?? CLI_TIMEOUT_MS
 
   const resolution = resolveCliSpawn(cmd, args, env)

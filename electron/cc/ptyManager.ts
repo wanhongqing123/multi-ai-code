@@ -17,6 +17,7 @@ import { planSystemPromptInjection } from './systemPromptInjection.js'
 import { buildResumeArgs, type ResumeCommand } from './resumeArgs.js'
 import { withEmbeddedClaudeSettings } from './claudeLaunchSettings.js'
 import { buildEnvWithPath, resolveCliSpawn } from '../habit/cliSpawn.js'
+import { withOpenCodeLspEnv } from '../aicli/opencodeConfig.js'
 
 import {
   buildSystemPrompt
@@ -531,7 +532,10 @@ export function registerPtyIpc(): void {
       args: effectiveArgs,
       cols: req.cols,
       rows: req.rows,
-      env: withRemoteImCliEnv(req.env, req.projectId),
+      env: withRemoteImCliEnv(
+        withOpenCodeLspEnv(req.command, req.env),
+        req.projectId
+      ),
       enableMsys,
       msysBashPath,
       msysUsrBinDir

@@ -47,6 +47,7 @@ import { getRemoteImAccountProfileId, getRemoteImProfileId } from './profile.js'
 import { createRemoteImRouter } from './router.js'
 import { appendRemoteImRuntimeLog } from './runtimeLog.js'
 import { readLatestClaudeRemoteImReply } from './claudeTranscript.js'
+import { readLatestOpenCodeRemoteImReply } from './opencodeTranscript.js'
 import { startRemoteImCliServer } from './imcliServer.js'
 import {
   createRemoteImAccountChangedStatuses,
@@ -461,13 +462,21 @@ async function sendRemoteImPeerLocalImage(
 }
 
 function readRemoteImTranscriptReply(source: NonNullable<RemoteImOutputSessionState['transcript']>): string | null {
-  return source.kind === 'claude'
-    ? readLatestClaudeRemoteImReply({
-        cwd: source.cwd,
-        sinceMs: source.sinceMs,
-        replyId: source.replyId
-      })
-    : null
+  if (source.kind === 'claude') {
+    return readLatestClaudeRemoteImReply({
+      cwd: source.cwd,
+      sinceMs: source.sinceMs,
+      replyId: source.replyId
+    })
+  }
+  if (source.kind === 'opencode') {
+    return readLatestOpenCodeRemoteImReply({
+      cwd: source.cwd,
+      sinceMs: source.sinceMs,
+      replyId: source.replyId
+    })
+  }
+  return null
 }
 
 function startOutputForwarding(
@@ -492,15 +501,18 @@ function startOutputForwarding(
     buffer: current?.buffer ?? '',
     timer: null,
     transcript:
-      sourceKind === 'claude' && runtime
+      (sourceKind === 'claude' || sourceKind === 'opencode') && runtime
         ? {
-            kind: 'claude',
+            kind: sourceKind,
             cwd: runtime.targetRepo,
             sinceMs: Date.now(),
             replyId
           }
         : undefined
   })
+  if (sourceKind === 'opencode') {
+    scheduleOutputFlush(sessionId)
+  }
 }
 
 function flushOutputSession(sessionId: string): void {

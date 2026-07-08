@@ -27,7 +27,7 @@ export interface RemoteImOutputCompletionInfo {
 export type RemoteImOutputFlushTimer = ReturnType<typeof setTimeout>
 
 export interface RemoteImTranscriptSource {
-  kind: 'claude'
+  kind: 'claude' | 'opencode'
   cwd: string
   sinceMs: number
   replyId?: string

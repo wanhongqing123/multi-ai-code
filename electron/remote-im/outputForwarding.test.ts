@@ -315,6 +315,39 @@ describe('remote IM output forwarding', () => {
     expect(sentTexts).toEqual([createRemoteImAicliOutputText(expected)])
   })
 
+  it('forwards OpenCode tagged replies through the normal terminal buffer path', () => {
+    const state = createState(
+      [
+        'opencode terminal chrome outside tags',
+        '<remote-im-reply id="rim-current">',
+        'OpenCode reply for IM.',
+        '</remote-im-reply id="rim-current">'
+      ].join('\n'),
+      { outputMaxChunkChars: 500 }
+    )
+    state.replyId = 'rim-current'
+    state.sourceKind = 'opencode'
+    const messages: CreateRemoteImMessageInput[] = []
+    const sentTexts: string[] = []
+
+    const chunks = flushRemoteImOutputSession('session-1', state, {
+      createMessage: (input) => {
+        messages.push(input)
+      },
+      sendText: (_projectId, _toUserId, text) => {
+        sentTexts.push(text)
+      },
+      messagesChanged: () => undefined,
+      readTranscriptReply: () => {
+        throw new Error('OpenCode should not use Claude transcript forwarding')
+      }
+    })
+
+    expect(chunks).toBe(1)
+    expect(messages[0]?.content).toBe('OpenCode reply for IM.')
+    expect(sentTexts).toEqual([createRemoteImAicliOutputText('OpenCode reply for IM.')])
+  })
+
   it('prefers raw Claude transcript Markdown over terminal-rendered table fragments', () => {
     const terminalRenderedTable = [
       `${REMOTE_IM_REPLY_OPEN_TAG}\r\n`,

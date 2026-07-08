@@ -201,6 +201,21 @@ describe('registerPtyIpc prompt injection timing', () => {
     expect(pathValue.split(':').some((item) => item.endsWith('/bin'))).toBe(true)
   })
 
+  it('resolves Codex launch notice for the boot gate before spawning', async () => {
+    const { registerPtyIpc } = await import('./ptyManager.js')
+    registerPtyIpc()
+
+    const handler = ipcHandlers.get('cc:resolve-launch')
+    if (!handler) throw new Error('cc:resolve-launch handler was not registered')
+
+    const result = await handler({}, { command: '/custom/bin/codex', env: {} })
+
+    expect(result).toMatchObject({
+      ok: true,
+      notice: '当前启动 Codex：自定义路径 /custom/bin/codex'
+    })
+  })
+
   it('only exposes task-watch sessions to the scheduled task scheduler', async () => {
     await spawnClaudeSession()
     const ptyManager = (await import('./ptyManager.js')) as typeof import('./ptyManager.js') & {

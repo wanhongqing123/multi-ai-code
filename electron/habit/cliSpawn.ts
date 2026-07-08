@@ -1,5 +1,9 @@
 import { basename, delimiter, dirname, extname, isAbsolute, join } from 'path'
 import { statSync } from 'fs'
+import {
+  describeAicliLaunchCommand,
+  resolveBundledCliCommand
+} from '../aicli/bundledCliResolver.js'
 
 /**
  * Platform-aware spawn helper for one-shot AI CLI invocations from the
@@ -169,6 +173,8 @@ export interface ResolvedSpawn {
   spawnArgs: string[]
   /** Whether to use `shell: true`. Always false here — we resolve explicitly. */
   shell: false
+  /** User-visible diagnostics for Codex/OpenCode launch source. */
+  launchNotice?: string
 }
 
 export interface ResolveSpawnResult {
@@ -192,25 +198,42 @@ export function resolveCliSpawn(
   env: Record<string, string>
 ): ResolveSpawnResult | ResolveSpawnError {
   const normalizedCommand = normalizeCliCommand(command)
+  const isCustomCommand =
+    isAbsolute(normalizedCommand) ||
+    normalizedCommand.includes('/') ||
+    normalizedCommand.includes('\\')
+  const bundledCommand = resolveBundledCliCommand(normalizedCommand)
+  const resolvedBundledCommand = bundledCommand ?? normalizedCommand
+  const pathKey = Object.keys(env).find((k) => k.toLowerCase() === 'path') ?? 'Path'
+  const envPath = env[pathKey] ?? ''
   if (!isWindows) {
+    const displayCommand =
+      bundledCommand ??
+      (isCustomCommand ? resolvedBundledCommand : resolveOnPath(normalizedCommand, envPath)) ??
+      resolvedBundledCommand
+    const launchNotice = describeAicliLaunchCommand(
+      normalizedCommand,
+      displayCommand,
+      bundledCommand
+    )?.notice
     return {
       ok: true,
       resolved: {
-        spawnCommand: normalizedCommand,
+        spawnCommand: resolvedBundledCommand,
         spawnArgs: args,
-        shell: false
+        shell: false,
+        launchNotice
       }
     }
   }
-  const pathKey = Object.keys(env).find((k) => k.toLowerCase() === 'path') ?? 'Path'
-  const envPath = env[pathKey] ?? ''
-  const resolved = resolveOnPath(normalizedCommand, envPath)
+  const resolved = resolveOnPath(resolvedBundledCommand, envPath)
   if (!resolved) {
     return {
       ok: false,
       error: `找不到可执行文件: ${command}（PATH 中没有匹配项）`
     }
   }
+  const launchNotice = describeAicliLaunchCommand(normalizedCommand, resolved, bundledCommand)?.notice
   const ext = extname(resolved).toLowerCase()
   if (ext === '.cmd' || ext === '.bat') {
     return {
@@ -218,7 +241,8 @@ export function resolveCliSpawn(
       resolved: {
         spawnCommand: process.env.ComSpec ?? 'cmd.exe',
         spawnArgs: ['/d', '/s', '/c', resolved, ...args],
-        shell: false
+        shell: false,
+        launchNotice
       }
     }
   }
@@ -227,7 +251,8 @@ export function resolveCliSpawn(
     resolved: {
       spawnCommand: resolved,
       spawnArgs: args,
-      shell: false
+      shell: false,
+      launchNotice
     }
   }
 }

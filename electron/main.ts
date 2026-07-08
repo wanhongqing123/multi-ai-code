@@ -1163,7 +1163,7 @@ app.whenReady().then(async () => {
   })
 
   interface AiSettings {
-    ai_cli: 'claude' | 'codex'
+    ai_cli: 'claude' | 'codex' | 'opencode'
     command?: string
     args?: string[]
     env?: Record<string, string>

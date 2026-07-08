@@ -38,4 +38,16 @@ describe('planSystemPromptInjection', () => {
     expect(plan.writePath.replace(/\\/g, '/')).toBe('E:/repo/.injections/codex-system.md')
     expect(plan.bootstrapMessage.replace(/\\/g, '/')).toContain('E:/repo/.injections/codex-system.md')
   })
+
+  it('uses a dedicated opencode injection file under .injections', () => {
+    const plan = planSystemPromptInjection({
+      command: 'opencode',
+      cwd: 'E:/repo',
+      systemPrompt: 'system prompt',
+      initialUserMessage: 'hello'
+    })
+
+    expect(plan.writePath.replace(/\\/g, '/')).toBe('E:/repo/.injections/opencode-system.md')
+    expect(plan.bootstrapMessage.replace(/\\/g, '/')).toContain('E:/repo/.injections/opencode-system.md')
+  })
 })

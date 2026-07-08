@@ -211,7 +211,7 @@ export function buildLocalHeuristicCandidate(cluster: AggregatedCluster): SkillT
 }
 
 interface RawAiSettings {
-  ai_cli?: 'claude' | 'codex'
+  ai_cli?: 'claude' | 'codex' | 'opencode'
   command?: string
   args?: string[]
   env?: Record<string, string>
@@ -256,6 +256,14 @@ function codexDefaultArgs(extraArgs: readonly string[]): string[] {
     : ['-c', CODEX_CONTEXT_WINDOW_CONFIG]
 }
 
+function opencodeDefaultArgs(extraArgs: readonly string[]): string[] {
+  return extraArgs.some((arg) =>
+    ['--dangerously-skip-permissions', '--yolo', '--auto'].includes(arg)
+  )
+    ? []
+    : ['--dangerously-skip-permissions']
+}
+
 export function buildCliArgs(
   settings: RawAiSettings,
   prompt: string
@@ -265,6 +273,9 @@ export function buildCliArgs(
   const extras = settings.args ?? []
   if (cli === 'codex') {
     return { cmd, args: ['exec', ...codexDefaultArgs(extras), ...extras, prompt] }
+  }
+  if (cli === 'opencode') {
+    return { cmd, args: ['run', ...opencodeDefaultArgs(extras), ...extras, prompt] }
   }
   return { cmd, args: ['-p', ...extras, prompt] }
 }
@@ -295,7 +306,10 @@ export function runCliGeneration(
   if (!resolution.ok) {
     return Promise.resolve({ ok: false, error: resolution.error })
   }
-  const { spawnCommand, spawnArgs } = resolution.resolved
+  const { spawnCommand, spawnArgs, launchNotice } = resolution.resolved
+  if (launchNotice) {
+    console.info(`[aicli] ${launchNotice}`)
+  }
 
   return new Promise<ParsedResponse>((resolve) => {
     let proc

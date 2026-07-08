@@ -154,6 +154,29 @@ describe('resolveCliSpawn', () => {
     }
   })
 
+  it('describes custom Codex launch paths for user-visible diagnostics', async () => {
+    const { full } = await mkBin(isWindows ? 'codex.exe' : 'codex')
+    const r = resolveCliSpawn(full, ['exec', 'hi'], { PATH: '', Path: '' })
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.resolved.launchNotice).toBe(`当前启动 Codex：自定义路径 ${full}`)
+    }
+  })
+
+  it('on POSIX, does not display PATH fallback when a custom Codex path is configured', () => {
+    if (isWindows) return
+    const custom = '/custom/bin/codex'
+    const r = resolveCliSpawn(custom, ['exec', 'hi'], {
+      PATH: '/Users/hongqingwan/.real/.bin/node/bin',
+      Path: ''
+    })
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.resolved.spawnCommand).toBe(custom)
+      expect(r.resolved.launchNotice).toBe(`当前启动 Codex：自定义路径 ${custom}`)
+    }
+  })
+
   it('on Windows, falls back to PATH shim when a stale quoted claude.exe path no longer exists', async () => {
     if (!isWindows) return
     const { dir, full } = await mkBin('claude.cmd')
@@ -223,6 +246,16 @@ describe('buildCliArgs (cross-platform argument shape)', () => {
     expect(args[args.length - 1]).toBe('hello world')
   })
 
+  it('opencode uses run subcommand for one-shot mode', () => {
+    const { cmd, args } = buildCliArgs({ ai_cli: 'opencode' }, 'hello world')
+    expect(cmd).toBe('opencode')
+    expect(args).toEqual([
+      'run',
+      '--dangerously-skip-permissions',
+      'hello world'
+    ])
+  })
+
   it('defaults to Codex when no AI CLI is configured', () => {
     const { cmd, args } = buildCliArgs({}, 'hello world')
     expect(cmd).toBe('codex')
@@ -252,5 +285,13 @@ describe('buildCliArgs (cross-platform argument shape)', () => {
       'hi'
     )
     expect(args).toEqual(['exec', '-c', 'model_context_window=272000', 'hi'])
+  })
+
+  it('does not duplicate opencode permission bypass in one-shot mode', () => {
+    const { args } = buildCliArgs(
+      { ai_cli: 'opencode', args: ['--auto'] },
+      'hi'
+    )
+    expect(args).toEqual(['run', '--auto', 'hi'])
   })
 })

@@ -1,4 +1,4 @@
-export type SupportedCli = 'claude' | 'codex'
+export type SupportedCli = 'claude' | 'codex' | 'opencode'
 export const CODEX_CONTEXT_WINDOW_CONFIG = 'model_context_window=1000000'
 
 function hasAnyArg(args: readonly string[], flags: readonly string[]): boolean {
@@ -26,6 +26,13 @@ function codexDefaultArgs(extraArgs: readonly string[]): string[] {
   return args
 }
 
+function opencodeDefaultArgs(extraArgs: readonly string[]): string[] {
+  if (hasAnyArg(extraArgs, ['--dangerously-skip-permissions', '--yolo', '--auto'])) {
+    return []
+  }
+  return ['--dangerously-skip-permissions']
+}
+
 export function buildCliLaunchArgs(
   binary: SupportedCli,
   _targetRepo: string,
@@ -36,6 +43,11 @@ export function buildCliLaunchArgs(
     if (!hasAnyArg(extraArgs, ['--dangerously-skip-permissions'])) {
       args.push('--dangerously-skip-permissions')
     }
+    return [...args, ...extraArgs]
+  }
+
+  if (binary === 'opencode') {
+    args.push(...opencodeDefaultArgs(extraArgs))
     return [...args, ...extraArgs]
   }
 

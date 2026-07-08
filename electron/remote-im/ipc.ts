@@ -1,6 +1,6 @@
 import { BrowserWindow, ipcMain } from 'electron'
 import { promises as fs } from 'fs'
-import { basename, join } from 'path'
+import { join } from 'path'
 import {
   addSessionDataListener,
   addSessionExitListener,
@@ -37,6 +37,7 @@ import {
   type RemoteImOutputCompletionInfo,
   type RemoteImOutputSessionState
 } from './outputForwarding.js'
+import { getRemoteImAicliOutputSourceKind } from './aicliSourceKind.js'
 import {
   createPeerOutgoingImageMessageInput,
   createPeerOutgoingMessageInput,
@@ -469,24 +470,6 @@ function readRemoteImTranscriptReply(source: NonNullable<RemoteImOutputSessionSt
     : null
 }
 
-function isClaudeCommand(command: string): boolean {
-  const normalized = command
-    .trim()
-    .replace(/^["']|["']$/g, '')
-    .replace(/\\/g, '/')
-  const base = basename(normalized).toLowerCase()
-  return /^claude(\.(exe|cmd|bat|ps1))?$/.test(base)
-}
-
-function isCodexCommand(command: string): boolean {
-  const normalized = command
-    .trim()
-    .replace(/^["']|["']$/g, '')
-    .replace(/\\/g, '/')
-  const base = basename(normalized).toLowerCase()
-  return /^codex(\.(exe|cmd|bat|ps1))?$/.test(base)
-}
-
 function startOutputForwarding(
   sessionId: string,
   projectId: string,
@@ -497,11 +480,9 @@ function startOutputForwarding(
   const current = outputSessions.get(sessionId)
   if (current?.timer) clearTimeout(current.timer)
   const runtime = getSessionRuntimeInfo(sessionId)
-  const sourceKind = runtime && isCodexCommand(runtime.command)
-    ? 'codex'
-    : runtime && isClaudeCommand(runtime.command)
-      ? 'claude'
-      : 'unknown'
+  const sourceKind = runtime
+    ? getRemoteImAicliOutputSourceKind(runtime.command)
+    : 'unknown'
   outputSessions.set(sessionId, {
     projectId,
     toUserId,
@@ -511,7 +492,7 @@ function startOutputForwarding(
     buffer: current?.buffer ?? '',
     timer: null,
     transcript:
-      runtime && isClaudeCommand(runtime.command)
+      sourceKind === 'claude' && runtime
         ? {
             kind: 'claude',
             cwd: runtime.targetRepo,

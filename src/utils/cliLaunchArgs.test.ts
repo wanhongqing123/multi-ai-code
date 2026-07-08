@@ -16,6 +16,12 @@ describe('buildCliLaunchArgs', () => {
     ])
   })
 
+  it('uses OpenCode permission bypass without Codex context config', () => {
+    expect(buildCliLaunchArgs('opencode', '/repo/demo')).toEqual([
+      '--dangerously-skip-permissions'
+    ])
+  })
+
   it('keeps user-supplied Codex context window override', () => {
     expect(
       buildCliLaunchArgs('codex', '/repo/demo', [
@@ -26,6 +32,12 @@ describe('buildCliLaunchArgs', () => {
       '--dangerously-bypass-approvals-and-sandbox',
       '-c',
       'model_context_window=272000'
+    ])
+  })
+
+  it('does not duplicate OpenCode permission bypass aliases', () => {
+    expect(buildCliLaunchArgs('opencode', '/repo/demo', ['--auto'])).toEqual([
+      '--auto'
     ])
   })
 })

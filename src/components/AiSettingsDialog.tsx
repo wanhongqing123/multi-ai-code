@@ -24,10 +24,16 @@ const AI_CLI_OPTIONS = [
     label: 'Codex (推荐)'
   },
   {
+    value: 'opencode',
+    label: 'OpenCode'
+  },
+  {
     value: 'claude',
     label: 'Claude Code (不建议使用)'
   }
 ] as const
+
+type AiCliKind = typeof AI_CLI_OPTIONS[number]['value']
 
 export const SCREENSHOT_SHORTCUT_PRESETS = [
   { value: 'CommandOrControl+Shift+A', label: 'Ctrl/Cmd + Shift + A' },
@@ -74,7 +80,7 @@ export function restoreDefaultScreenshotShortcut(): ScreenshotShortcutState {
 }
 
 export interface AiSettings {
-  ai_cli: 'claude' | 'codex'
+  ai_cli: AiCliKind
   command?: string
   args?: string[]
   env?: Record<string, string>
@@ -252,7 +258,7 @@ function toEnvText(env: Record<string, string> | undefined): string {
 }
 
 function fromForm(
-  aiCli: 'claude' | 'codex',
+  aiCli: AiCliKind,
   command: string,
   argsText: string,
   envText: string
@@ -276,11 +282,11 @@ function fromForm(
 
 function SettingsSection(props: {
   title: string
-  aiCli: 'claude' | 'codex'
+  aiCli: AiCliKind
   command: string
   argsText: string
   envText: string
-  onAiCli: (next: 'claude' | 'codex') => void
+  onAiCli: (next: AiCliKind) => void
   onCommand: (next: string) => void
   onArgs: (next: string) => void
   onEnv: (next: string) => void
@@ -299,7 +305,7 @@ function SettingsSection(props: {
           AI CLI
           <select
             value={props.aiCli}
-            onChange={(event) => props.onAiCli(event.target.value as 'claude' | 'codex')}
+            onChange={(event) => props.onAiCli(event.target.value as AiCliKind)}
           >
             {AI_CLI_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>
@@ -314,7 +320,7 @@ function SettingsSection(props: {
             type="text"
             value={props.command}
             onChange={(event) => props.onCommand(event.target.value)}
-            placeholder={props.aiCli === 'codex' ? 'codex' : 'claude'}
+            placeholder={props.aiCli}
           />
         </label>
         <label>
@@ -431,12 +437,12 @@ function ScreenshotSettingsSection(props: {
 }
 
 export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Element {
-  const [aiCli, setAiCli] = useState<'claude' | 'codex'>(props.initial.ai_cli ?? DEFAULT_AI_CLI)
+  const [aiCli, setAiCli] = useState<AiCliKind>(props.initial.ai_cli ?? DEFAULT_AI_CLI)
   const [command, setCommand] = useState<string>(props.initial.command ?? '')
   const [argsText, setArgsText] = useState<string>((props.initial.args ?? []).join(' '))
   const [envText, setEnvText] = useState<string>(toEnvText(props.initial.env))
 
-  const [repoAiCli, setRepoAiCli] = useState<'claude' | 'codex'>(
+  const [repoAiCli, setRepoAiCli] = useState<AiCliKind>(
     props.initialRepoView.ai_cli ?? DEFAULT_AI_CLI
   )
   const [repoCommand, setRepoCommand] = useState<string>(props.initialRepoView.command ?? '')

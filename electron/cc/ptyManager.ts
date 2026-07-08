@@ -16,6 +16,7 @@ import {
 import { planSystemPromptInjection } from './systemPromptInjection.js'
 import { buildResumeArgs, type ResumeCommand } from './resumeArgs.js'
 import { withEmbeddedClaudeSettings } from './claudeLaunchSettings.js'
+import { buildEnvWithPath, resolveCliSpawn } from '../habit/cliSpawn.js'
 
 import {
   buildSystemPrompt
@@ -29,6 +30,12 @@ import { rootDir } from '../store/paths.js'
  * <rootDir>/logs/pty-<sessionId>-<ts>.jsonl.
  */
 const PTY_DUMP_ENABLED = process.env.MULTI_AI_CODE_PTY_DUMP === '1'
+
+function systemPromptInjectionCommand(command: string): 'claude' | 'codex' | 'opencode' {
+  if (command === 'codex') return 'codex'
+  if (command === 'opencode') return 'opencode'
+  return 'claude'
+}
 
 async function openPtyDumpStream(
   sessionId: string,
@@ -110,6 +117,39 @@ export interface SpawnRequest {
    * system-prompt injection so the CLI's saved conversation stays clean.
    */
   mode?: 'new' | 'resume'
+}
+
+export interface ResolveLaunchRequest {
+  command: string
+  env?: Record<string, string>
+}
+
+export interface ResolveLaunchResponse {
+  ok: boolean
+  notice?: string
+  error?: string
+}
+
+function resolveLaunchNotice(
+  command: string,
+  envOverrides: Record<string, string> | undefined
+): ResolveLaunchResponse {
+  const env = buildEnvWithPath({
+    ...process.env,
+    ...(envOverrides ?? {})
+  })
+  const resolution = resolveCliSpawn(command, [], env)
+  if (!resolution.ok) {
+    return { ok: false, error: resolution.error }
+  }
+  return {
+    ok: true,
+    notice: resolution.resolved.launchNotice
+  }
+}
+
+function spawnOkResponse(launchNotice: string | undefined): { ok: true; launchNotice?: string } {
+  return launchNotice ? { ok: true, launchNotice } : { ok: true }
 }
 
 interface Session {
@@ -425,7 +465,12 @@ function rejectPendingExternalReview(sessionId: string, message: string): void {
 }
 
 export function registerPtyIpc(): void {
+  ipcMain.handle('cc:resolve-launch', async (_e, req: ResolveLaunchRequest) => {
+    return resolveLaunchNotice(req.command, req.env)
+  })
+
   ipcMain.handle('cc:spawn', async (_e, req: SpawnRequest) => {
+    const launchResolution = resolveLaunchNotice(req.command, req.env)
     const planMode = req.planMode ?? 'plan'
     const hasPlan = planMode !== 'none'
     if (
@@ -597,11 +642,11 @@ export function registerPtyIpc(): void {
     // entirely. The CLI is loading its own saved conversation; injecting a
     // fresh system prompt would pollute the resumed context.
     if (isResumeMode) {
-      return { ok: true }
+      return spawnOkResponse(launchResolution.notice)
     }
 
     if (!hasPlan) {
-      return { ok: true }
+      return spawnOkResponse(launchResolution.notice)
     }
 
     // Inject system prompt after CC TUI boots.
@@ -638,7 +683,7 @@ export function registerPtyIpc(): void {
         })
 
         const injection = planSystemPromptInjection({
-          command: req.command === 'codex' ? 'codex' : 'claude',
+          command: systemPromptInjectionCommand(req.command),
           cwd: finalCwd,
           systemPrompt: sysPrompt,
           initialUserMessage: req.initialUserMessage ?? ''
@@ -655,7 +700,7 @@ export function registerPtyIpc(): void {
       }
     }, req.command === 'codex' ? PRIMING_DELAY_MS_CODEX : PRIMING_DELAY_MS)
 
-    return { ok: true }
+    return spawnOkResponse(launchResolution.notice)
   })
 
   ipcMain.on('cc:input', (_e, { sessionId, data }: { sessionId: string; data: string }) => {

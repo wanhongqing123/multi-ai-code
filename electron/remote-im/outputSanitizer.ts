@@ -29,7 +29,7 @@ const REMOTE_IM_PROMPT_ECHO_RE = /\[\u6765\u81ea\u8fdc\u7a0b\s*IM[\uFF1A:][^\]\n
 const CLAUDE_ASSISTANT_MARKER_RE = /[\u25CF\u2022]\s*/
 const LEADING_CLAUDE_ASSISTANT_MARKER_RE = /^\s*[\u25CF\u2022]\s*/
 
-export type RemoteImAicliOutputSourceKind = 'claude' | 'codex' | 'unknown'
+export type RemoteImAicliOutputSourceKind = 'claude' | 'codex' | 'opencode' | 'unknown'
 
 export interface RemoteImAicliOutputSanitizerOptions {
   sourceKind?: RemoteImAicliOutputSourceKind

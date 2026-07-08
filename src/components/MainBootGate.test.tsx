@@ -10,6 +10,7 @@ function render(
     <MainBootGate
       phase={{ kind: 'idle' }}
       command="codex"
+      launchNotice={null}
       planName="项目后续规划"
       workMode="normal-task"
       onChoose={vi.fn()}
@@ -86,6 +87,15 @@ describe('MainBootGate', () => {
     expect(render({ command: 'claude' })).toContain('Claude Code')
     expect(render({ command: 'codex' })).toContain('Codex')
     expect(render({ command: '' })).toContain('(未配置)')
+  })
+
+  it('displays the resolved Codex/OpenCode launch path when available', () => {
+    const html = render({
+      launchNotice: '当前启动 Codex：内置版本 /repo/bin/aicli/codex/darwin-arm64/codex'
+    })
+
+    expect(html).toContain('AICLI 启动路径')
+    expect(html).toContain('/repo/bin/aicli/codex/darwin-arm64/codex')
   })
 
   it('shows an explicit risk confirmation when Claude is selected', () => {

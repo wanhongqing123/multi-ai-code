@@ -118,6 +118,10 @@ describe('mainCliArgs', () => {
     expect(args).toEqual(['--dangerously-skip-permissions'])
   })
 
+  it('opencode produces full-permission args without Codex context config', () => {
+    expect(mainCliArgs('opencode')).toEqual(['--dangerously-skip-permissions'])
+  })
+
   it('codex produces full-permission args', () => {
     expect(mainCliArgs('codex')).toEqual([
       '--dangerously-bypass-approvals-and-sandbox',
@@ -139,6 +143,12 @@ describe('buildCliLaunchArgs', () => {
       '--dangerously-bypass-approvals-and-sandbox',
       '-c',
       'model_context_window=1000000'
+    ])
+  })
+
+  it('adds opencode full-permission arg', () => {
+    expect(buildCliLaunchArgs('opencode', '/repo/demo')).toEqual([
+      '--dangerously-skip-permissions'
     ])
   })
 
@@ -185,5 +195,11 @@ describe('buildCliLaunchArgs', () => {
       '-c',
       'model_context_window=272000'
     ])
+  })
+
+  it('does not duplicate opencode permission bypass when user overrides it', () => {
+    expect(
+      buildCliLaunchArgs('opencode', '/repo/demo', ['--yolo'])
+    ).toEqual(['--yolo'])
   })
 })

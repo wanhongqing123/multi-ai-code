@@ -15,6 +15,8 @@ export interface MainBootGateProps {
   phase: BootGatePhase
   /** Current CLI binary name (claude / codex / other custom). */
   command: string
+  /** Resolved Codex/OpenCode launch path shown before the user starts a session. */
+  launchNotice?: string | null
   /** User-facing work mode selected for this session start. */
   workMode: BootGateWorkMode
   /** Plan name shown alongside the gate to mirror MainPanel's chrome. */
@@ -30,6 +32,7 @@ export interface MainBootGateProps {
 function describeCli(command: string): string {
   if (command === 'claude') return 'Claude Code'
   if (command === 'codex') return 'Codex'
+  if (command === 'opencode') return 'OpenCode'
   return command || '(未配置)'
 }
 
@@ -43,6 +46,7 @@ export default function MainBootGate(props: MainBootGateProps): JSX.Element {
   const {
     phase,
     command,
+    launchNotice,
     workMode,
     planName,
     disabled = false,
@@ -71,6 +75,12 @@ export default function MainBootGate(props: MainBootGateProps): JSX.Element {
           <div className="boot-gate-subtitle">
             当前模式：<b>{workModeLabel}</b> · 当前 CLI：<b>{describeCli(command)}</b>
           </div>
+          {launchNotice && (
+            <div className="boot-gate-launch-path">
+              <span>AICLI 启动路径</span>
+              <code>{launchNotice}</code>
+            </div>
+          )}
 
           {phase.kind === 'failed' && (
             <div className="boot-gate-failure">

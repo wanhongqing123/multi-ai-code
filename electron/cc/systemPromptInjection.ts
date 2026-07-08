@@ -1,7 +1,7 @@
 import { join } from 'path'
 
 export function planSystemPromptInjection(input: {
-  command: 'claude' | 'codex'
+  command: 'claude' | 'codex' | 'opencode'
   cwd: string
   systemPrompt: string
   initialUserMessage: string
@@ -12,8 +12,7 @@ export function planSystemPromptInjection(input: {
   bootstrapMessage: string
 } {
   const writeDir = join(input.cwd, '.injections')
-  const filename =
-    input.command === 'claude' ? 'claude-system.md' : 'codex-system.md'
+  const filename = `${input.command}-system.md`
   const writePath = join(writeDir, filename)
   const bootstrapMessage = [
     `Please fully read ${writePath} as the system role and constraints for this task before doing any work.`,

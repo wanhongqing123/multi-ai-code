@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "build:aicli": "node scripts/build-aicli.mjs",
     "start": "electron-vite preview",
     "icons": "node scripts/build-icons.mjs",
     "prepare-asr": "node scripts/prepare-asr-assets.mjs",

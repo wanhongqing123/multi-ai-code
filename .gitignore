@@ -5,6 +5,7 @@ node_modules/
 out/
 dist/
 release/
+bin/aicli/
 *.dmg
 *.exe
 *.zip

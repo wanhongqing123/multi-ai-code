@@ -1,4 +1,4 @@
-export type TerminalStyleCli = 'claude' | 'codex' | 'unknown'
+export type TerminalStyleCli = 'claude' | 'codex' | 'opencode' | 'unknown'
 
 const SGR_PATTERN = /\x1b\[([0-9;]*)m/g
 

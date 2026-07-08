@@ -17,7 +17,7 @@ export interface ScreenshotDeliverEvent {
 }
 
 export interface AiSettings {
-  ai_cli: 'claude' | 'codex'
+  ai_cli: 'claude' | 'codex' | 'opencode'
   command?: string
   args?: string[]
   env?: Record<string, string>
@@ -483,6 +483,23 @@ export interface SpawnRequest {
    * the CLI's own saved conversation history stays clean.
    */
   mode?: 'new' | 'resume'
+}
+
+export interface ResolveLaunchRequest {
+  command: string
+  env?: Record<string, string>
+}
+
+export interface ResolveLaunchResponse {
+  ok: boolean
+  notice?: string
+  error?: string
+}
+
+export interface SpawnResponse {
+  ok: boolean
+  error?: string
+  launchNotice?: string
 }
 
 export interface ResumeFailedEvent {
@@ -1118,8 +1135,10 @@ const api = {
   },
 
   cc: {
+    resolveLaunch: (opts: ResolveLaunchRequest) =>
+      ipcRenderer.invoke('cc:resolve-launch', opts) as Promise<ResolveLaunchResponse>,
     spawn: (opts: SpawnRequest) =>
-      ipcRenderer.invoke('cc:spawn', opts) as Promise<{ ok: boolean; error?: string }>,
+      ipcRenderer.invoke('cc:spawn', opts) as Promise<SpawnResponse>,
     write: (sessionId: string, data: string) =>
       ipcRenderer.send('cc:input', { sessionId, data }),
     paste: (sessionId: string, data: string) =>

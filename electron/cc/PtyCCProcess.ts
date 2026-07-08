@@ -3,6 +3,10 @@ import { basename, delimiter, dirname, join, isAbsolute, extname } from 'path'
 import { statSync, readFileSync, writeFileSync } from 'fs'
 import { createRequire } from 'module'
 import type { IPty } from 'node-pty'
+import {
+  describeAicliLaunchCommand,
+  resolveBundledCliCommand
+} from '../aicli/bundledCliResolver.js'
 
 const isWindows = process.platform === 'win32'
 const require = createRequire(import.meta.url)
@@ -171,6 +175,8 @@ export class PtyCCProcess extends EventEmitter {
     }
 
     const command = normalizeCliCommand(this.opts.command ?? 'claude')
+    const bundledCommand = resolveBundledCliCommand(command)
+    const resolvedBundledCommand = bundledCommand ?? command
     const args = this.opts.args ?? []
 
     const env: Record<string, string> = {
@@ -192,7 +198,12 @@ export class PtyCCProcess extends EventEmitter {
     // Suppress Codex CLI upgrade prompts by dismissing the latest version.
     // version.json lives in ~/.codex/; we overwrite dismissed_version on
     // every spawn so codex never pauses to show the "update available" banner.
-    if (command === 'codex' || command.endsWith('/codex') || command.endsWith('\\codex')) {
+    if (
+      command === 'codex' ||
+      resolvedBundledCommand.endsWith('/codex') ||
+      resolvedBundledCommand.endsWith('\\codex') ||
+      resolvedBundledCommand.endsWith('\\codex.exe')
+    ) {
       try {
         const codexDir = isWindows
           ? join(process.env.USERPROFILE ?? '', '.codex')
@@ -286,15 +297,17 @@ export class PtyCCProcess extends EventEmitter {
     // On Windows, node-pty calls CreateProcessW directly — it won't resolve
     // bare names ("claude") or `.cmd` shims. Resolve against PATH+PATHEXT,
     // and wrap `.cmd`/`.bat` via cmd.exe.
-    let spawnCommand = command
+    let spawnCommand = resolvedBundledCommand
     let spawnArgs = args
+    let launchDisplayCommand = bundledCommand ?? resolveOnPath(command, env[pathKey] ?? '') ?? spawnCommand
     if (isWindows) {
-      const resolved = resolveOnPath(command, env[pathKey] ?? '')
+      const resolved = resolveOnPath(resolvedBundledCommand, env[pathKey] ?? '')
       if (!resolved) {
         throw new Error(
           `找不到可执行文件: ${command}。请确认已安装并在 PATH 中（当前 PATH: ${env[pathKey]}）`
         )
       }
+      launchDisplayCommand = resolved
       const ext = extname(resolved).toLowerCase()
       if (ext === '.cmd' || ext === '.bat') {
         spawnCommand = process.env.ComSpec ?? 'cmd.exe'
@@ -302,6 +315,17 @@ export class PtyCCProcess extends EventEmitter {
       } else {
         spawnCommand = resolved
       }
+    }
+
+    const launchDescription = describeAicliLaunchCommand(
+      command,
+      launchDisplayCommand,
+      bundledCommand
+    )
+    if (launchDescription) {
+      const notice = `${launchDescription.notice}\r\n`
+      this.emit('data', notice)
+      console.info(`[aicli] ${launchDescription.notice}`)
     }
 
     // Debug: on MULTI_AI_CODE_PTY_DUMP=1, dump a summary of the env we're

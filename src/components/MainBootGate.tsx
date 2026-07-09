@@ -151,9 +151,13 @@ export default function MainBootGate(props: MainBootGateProps): JSX.Element {
               <button
                 className="tile-btn boot-gate-btn"
                 onClick={() => onChoose('resume')}
-                disabled={disabled || spawning || command !== 'codex'}
+                disabled={
+                  disabled ||
+                  spawning ||
+                  (command !== 'codex' && command !== 'opencode')
+                }
                 title={
-                  command === 'codex'
+                  command === 'codex' || command === 'opencode'
                     ? `继续上次${workModeLabel}会话（由 CLI 自身回放历史）`
                     : '当前 CLI 不支持续聊'
                 }

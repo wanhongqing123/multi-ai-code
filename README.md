@@ -187,6 +187,9 @@ Local Data
 - 本机至少安装并登录一种 AI CLI：
   - `codex`
   - `claude`（可选，不建议默认使用）
+- 也可以从源码构建内置的 `codex` / `opencode`，见下文「内置 AICLI 编译」
+
+
 
 桌面端开发启动：
 
@@ -206,6 +209,59 @@ npm run build
 ```bash
 npm rebuild better-sqlite3 node-pty
 ```
+
+## 内置 AICLI 编译（codex / opencode）
+
+除了调用本机安装的 AI CLI，应用也可以使用从源码构建的内置 `codex` 和 `opencode`。两者以 git submodule 形式放在 `third_party/aicli/`，产物输出到 `bin/aicli/<工具>/<平台>/`，并在 `bin/aicli/manifest.json` 记录来源 commit 和版本。
+
+首次拉取代码后先初始化子模块：
+
+```bash
+git submodule update --init --recursive
+```
+
+### 工具链要求
+
+| 子模块 | 技术栈 | 需要安装 |
+| --- | --- | --- |
+| codex | Rust workspace（`codex-rs/`） | Rust 工具链（Windows 用 `stable-msvc`，需 VS Build Tools 提供链接器） |
+| opencode | Bun/TypeScript monorepo | Bun ≥ 1.3.14（脚本会自动回退到 `bunx bun@1.3.14`） |
+
+### 构建命令
+
+```bash
+# 一次构建两个：
+npm run build:aicli
+
+# 或者分别构建：
+node scripts/build-aicli-codex.mjs
+node scripts/build-aicli-opencode.mjs
+```
+
+- codex 走 `cargo build`（debug 档）。首次全量编译耗时较长，`codex-rs/target/` 缓存命中后增量重编只需数秒。
+- opencode 会先做 Web UI 生产构建并嵌入二进制，再用 `bun build --compile` 打成约 160MB 的自包含可执行文件，自带 `--version` 冒烟测试。
+- 内置构建的版本号形如 `0.0.0-dev-<时间戳>`；应用启动 opencode 时会自动注入 `OPENCODE_DISABLE_AUTOUPDATE=1`，不会因为版本号低于官方 release 弹升级提示。
+
+### Windows 已知问题与解法
+
+- **找不到 `cargo` / `bun`**：确认 `%USERPROFILE%\.cargo\bin` 在 PATH 里；npm 全局安装的 bun 是 `.cmd` 垫片，构建脚本的 `spawnSync` 无法直接执行，需要把真实 exe 所在目录（`%APPDATA%\npm\node_modules\bun\bin`）放到 PATH 前面。
+- **`bun build --compile` 长时间无进展**：它需要下载 `@oven/bun-windows-x64` 运行时（约 100MB）作为拼装模板，国内直连 npm 官方源可能极慢。设置镜像后重试，下载一次后即有缓存：
+
+  ```powershell
+  $env:NPM_CONFIG_REGISTRY = "https://registry.npmmirror.com"
+  ```
+
+- **`bun install` 报 `EPERM (NtSetInformationFile)`**：杀毒软件扫描新下载的 exe 时锁文件所致。失败的包（workerd / sst / pagefind 等）都是其他工作区的开发依赖，不影响 opencode 本体打包；也可以把 `%USERPROFILE%\.bun\install\cache` 加入杀软排除目录后重试。
+- **向 opencode 子模块推送时 pre-push typecheck 失败**（`custom-elements.d.ts` 报 TS1128）：该仓库包含 git symlink，Windows 默认把它们检出成路径文本文件。开启系统开发者模式后，在子模块里执行：
+
+  ```bash
+  git config core.symlinks true
+  # 删除受影响文件后重新检出即可恢复为真实符号链接
+  ```
+
+## 桌面 Qt IM 客户端编译
+
+独立的 Qt5 桌面 IM 客户端位于 `desktop/qt-im/`（CMake 工程，Windows/macOS）。构建、运行与原生 IM SDK 说明见 [desktop/qt-im/README.md](desktop/qt-im/README.md)。
 
 ## iOS 远程 IM
 

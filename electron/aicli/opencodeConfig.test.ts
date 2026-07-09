@@ -34,6 +34,14 @@ describe('OpenCode config env', () => {
     expect(env?.OPENCODE_THEME_MODE).toBe('light')
   })
 
+  it('disables the upgrade prompt via env flag (config autoupdate does not reach getGlobal)', () => {
+    const env = withOpenCodeLspEnv('opencode', { FOO: 'bar' })
+    expect(env?.OPENCODE_DISABLE_AUTOUPDATE).toBe('1')
+    // 用户显式设置优先（包括显式关闭 flag 的 '0'）。
+    const custom = withOpenCodeLspEnv('opencode', { OPENCODE_DISABLE_AUTOUPDATE: '0' })
+    expect(custom?.OPENCODE_DISABLE_AUTOUPDATE).toBe('0')
+  })
+
   it('respects a user-provided OPENCODE_THEME_MODE', () => {
     const env = withOpenCodeLspEnv('opencode', { OPENCODE_THEME_MODE: 'dark' })
     expect(env?.OPENCODE_THEME_MODE).toBe('dark')

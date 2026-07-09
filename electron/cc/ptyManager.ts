@@ -549,7 +549,7 @@ export function registerPtyIpc(): void {
     // for an unsupported binary.
     const isResumeMode =
       req.mode === 'resume' &&
-      (req.command === 'claude' || req.command === 'codex')
+      (req.command === 'claude' || req.command === 'codex' || req.command === 'opencode')
     let effectiveArgs = isResumeMode
       ? buildResumeArgs(req.command as ResumeCommand, req.args)
       : req.args

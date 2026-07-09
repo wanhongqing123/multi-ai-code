@@ -9,6 +9,10 @@ export const OPENCODE_LSP_CONFIG_CONTENT = JSON.stringify({
 export const OPENCODE_THEME_MODE_ENV = 'OPENCODE_THEME_MODE'
 export const OPENCODE_THEME_MODE_DEFAULT = 'light'
 
+// 升级检查读的是全局配置文件（Config.getGlobal），OPENCODE_CONFIG_CONTENT 里的
+// autoupdate:false 覆盖不到它；这个 env flag 是进程级开关，能彻底关掉升级弹窗。
+export const OPENCODE_DISABLE_AUTOUPDATE_ENV = 'OPENCODE_DISABLE_AUTOUPDATE'
+
 export interface OpenCodeProviderProfile {
   providerId?: string
   name?: string
@@ -141,6 +145,9 @@ export function withOpenCodeLspEnv(
   const next = { ...(env ?? {}) }
   if (!next[OPENCODE_THEME_MODE_ENV]) {
     next[OPENCODE_THEME_MODE_ENV] = OPENCODE_THEME_MODE_DEFAULT
+  }
+  if (!next[OPENCODE_DISABLE_AUTOUPDATE_ENV]) {
+    next[OPENCODE_DISABLE_AUTOUPDATE_ENV] = '1'
   }
   const existing = next.OPENCODE_CONFIG_CONTENT
   if (!existing) {

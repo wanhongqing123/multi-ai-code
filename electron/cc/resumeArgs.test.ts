@@ -104,3 +104,28 @@ describe('buildResumeArgs - codex', () => {
     ])
   })
 })
+
+describe('buildResumeArgs - opencode', () => {
+  it('prepends `--continue` and keeps unrelated args', () => {
+    expect(buildResumeArgs('opencode', ['--model', 'zhipu/glm-5.2'])).toEqual([
+      '--continue',
+      '--model',
+      'zhipu/glm-5.2'
+    ])
+  })
+
+  it('drops conflicting continue/fork flags', () => {
+    expect(
+      buildResumeArgs('opencode', ['--continue', '--fork', '--model', 'm'])
+    ).toEqual(['--continue', '--model', 'm'])
+    expect(buildResumeArgs('opencode', ['-c'])).toEqual(['--continue'])
+  })
+
+  it('drops a session flag together with its value', () => {
+    expect(
+      buildResumeArgs('opencode', ['--session', 'ses_123', '--model', 'm'])
+    ).toEqual(['--continue', '--model', 'm'])
+    expect(buildResumeArgs('opencode', ['-s', 'ses_123'])).toEqual(['--continue'])
+    expect(buildResumeArgs('opencode', ['--session=ses_123'])).toEqual(['--continue'])
+  })
+})

@@ -71,11 +71,17 @@ describe('MainBootGate', () => {
     expect(html).not.toContain('查看 CLI 输出')
   })
 
-  it('unknown CLI: disables the resume button (only claude/codex supported)', () => {
+  it('unknown CLI: disables the resume button (only claude/codex/opencode supported)', () => {
     const html = render({ command: 'gemini' })
     // The resume button should be present but disabled.
     expect(html).toContain('继续普通任务')
     expect(html).toContain('当前 CLI 不支持续聊')
+  })
+
+  it('opencode: keeps the resume button enabled (CLI supports --continue)', () => {
+    const html = render({ command: 'opencode' })
+    expect(html).toContain('继续普通任务')
+    expect(html).not.toContain('当前 CLI 不支持续聊')
   })
 
   it('disabled prop: disables both buttons even at idle', () => {

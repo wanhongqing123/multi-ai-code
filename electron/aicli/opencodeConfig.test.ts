@@ -24,8 +24,19 @@ describe('OpenCode config env', () => {
     })
     expect(JSON.parse(env?.OPENCODE_CONFIG_CONTENT ?? '{}')).toEqual({
       $schema: 'https://opencode.ai/config.json',
-      lsp: true
+      lsp: true,
+      autoupdate: false
     })
+  })
+
+  it('pins the OpenCode TUI theme mode to light for a unified look', () => {
+    const env = withOpenCodeLspEnv('opencode', { FOO: 'bar' })
+    expect(env?.OPENCODE_THEME_MODE).toBe('light')
+  })
+
+  it('respects a user-provided OPENCODE_THEME_MODE', () => {
+    const env = withOpenCodeLspEnv('opencode', { OPENCODE_THEME_MODE: 'dark' })
+    expect(env?.OPENCODE_THEME_MODE).toBe('dark')
   })
 
   it('does not inject OpenCode config for Claude or Codex', () => {
@@ -33,8 +44,22 @@ describe('OpenCode config env', () => {
     expect(withOpenCodeLspEnv('codex', { FOO: 'bar' })).toEqual({ FOO: 'bar' })
   })
 
-  it('preserves an explicit user LSP setting', () => {
+  it('preserves explicit user lsp/autoupdate values while filling in defaults', () => {
     const content = JSON.stringify({ model: 'zhipu/glm-4', lsp: false })
+    const env = withOpenCodeLspEnv('opencode', {
+      OPENCODE_CONFIG_CONTENT: content
+    })
+
+    expect(JSON.parse(env?.OPENCODE_CONFIG_CONTENT ?? '{}')).toEqual({
+      $schema: 'https://opencode.ai/config.json',
+      model: 'zhipu/glm-4',
+      lsp: false,
+      autoupdate: false
+    })
+  })
+
+  it('keeps config content untouched when lsp and autoupdate are both explicit', () => {
+    const content = JSON.stringify({ lsp: false, autoupdate: 'notify' })
     const env = withOpenCodeLspEnv('opencode', {
       OPENCODE_CONFIG_CONTENT: content
     })
@@ -50,7 +75,8 @@ describe('OpenCode config env', () => {
     expect(JSON.parse(env?.OPENCODE_CONFIG_CONTENT ?? '{}')).toEqual({
       $schema: 'https://opencode.ai/config.json',
       model: 'zhipu/glm-4',
-      lsp: true
+      lsp: true,
+      autoupdate: false
     })
   })
 

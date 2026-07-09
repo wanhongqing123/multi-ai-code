@@ -263,6 +263,16 @@ export function createTerminalMarkdownState(): TerminalMarkdownState {
   return { inFence: false }
 }
 
+/**
+ * opencode 的 opentui 渲染器以 60fps 增量重绘全屏 TUI，行宽被改写（• 替换、
+ * 剥 ## 前缀）甚至整行删除（表格分隔行）都会让后续光标定位错位，在终端里留下
+ * 残影碎片。对它必须原样直通；claude/codex 维持原有 Markdown 美化不变。
+ */
+export function shouldFormatMarkdownForCli(cli: string | undefined): boolean {
+  if (!cli) return true
+  return !/(^|[\\/])opencode(\.(exe|cmd|bat|ps1))?$/i.test(cli.trim())
+}
+
 export function stripAnsi(text: string): string {
   return text.replace(ANSI_ESCAPE_RE, '')
 }

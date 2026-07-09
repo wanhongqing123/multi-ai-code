@@ -18,6 +18,7 @@ import { buildResumeArgs, type ResumeCommand } from './resumeArgs.js'
 import { withEmbeddedClaudeSettings } from './claudeLaunchSettings.js'
 import { buildEnvWithPath, resolveCliSpawn } from '../habit/cliSpawn.js'
 import {
+  isOpenCodeCommand,
   withOpenCodeLspEnv,
   type OpenCodeProviderProfile
 } from '../aicli/opencodeConfig.js'
@@ -347,10 +348,17 @@ async function waitForClaudeReady(
  * without auto-submitting. To look like real typing we stream in small
  * chunks with a tiny delay between them.
  */
-async function sendMessage(proc: PtyCCProcess, text: string): Promise<void> {
+async function sendMessage(
+  proc: PtyCCProcess,
+  text: string,
+  options: { singleSubmit?: boolean } = {}
+): Promise<void> {
   await streamInput(proc, text)
   await sleep(500)
   proc.write('\r')
+  // 双回车是 claude/codex 的提交兜底；opencode 首个回车即提交，
+  // 第二个回车会把空编辑器再提交一次，在会话里留下一条空消息。
+  if (options.singleSubmit) return
   await sleep(150)
   proc.write('\r')
 }
@@ -443,8 +451,13 @@ export async function sendUserMessageToSession(
   if (!ready) return { ok: false, error: 'session not ready for input' }
   session = sessions.get(sessionId)
   if (!session) return { ok: false, error: 'no session' }
-  await sendMessage(session.proc, text)
-  displayLocalTerminalText(sessionId, options.displayText)
+  const openCodeSession = isOpenCodeCommand(session.command)
+  await sendMessage(session.proc, text, { singleSubmit: openCodeSession })
+  // opencode 的全屏 TUI 会在会话里展示已提交消息；合成的本地回显 chunk 会直接
+  // 画在 TUI 的编辑器/状态栏上，opentui 不感知这些格子被改过，形成永久残留。
+  if (!openCodeSession) {
+    displayLocalTerminalText(sessionId, options.displayText)
+  }
   return { ok: true }
 }
 
@@ -720,7 +733,9 @@ export function registerPtyIpc(): void {
         })
         await fs.mkdir(injection.writeDir, { recursive: true })
         await fs.writeFile(injection.writePath, injection.fileContents, 'utf8')
-        await sendMessage(proc, injection.bootstrapMessage)
+        await sendMessage(proc, injection.bootstrapMessage, {
+          singleSubmit: isOpenCodeCommand(req.command)
+        })
       } catch (err) {
         broadcast('cc:notice', {
           sessionId: req.sessionId,
@@ -839,7 +854,8 @@ export function registerPtyIpc(): void {
               buildExternalReviewPrompt({
                 planAbsPath: req.planAbsPath,
                 suggestion: req.suggestion
-              })
+              }),
+              { singleSubmit: isOpenCodeCommand(s.command) }
             )
           } catch (err) {
             settlePendingExternalReview(req.sessionId, {

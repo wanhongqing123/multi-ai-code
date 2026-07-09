@@ -13,7 +13,8 @@ import {
 } from './mainTerminalConfig.js'
 import {
   createTerminalMarkdownState,
-  formatMarkdownChunk
+  formatMarkdownChunk,
+  shouldFormatMarkdownForCli
 } from './terminalMarkdown.js'
 import {
   normalizeTerminalStyleForCli,
@@ -80,7 +81,7 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
 
   useEffect(() => {
     if (!containerRef.current) return
-    const term = new Terminal(buildMainTerminalOptions(getTheme()))
+    const term = new Terminal(buildMainTerminalOptions(getTheme(), aiCliRef.current))
     const onThemeChange = (e: Event) => {
       term.options.theme = xtermThemeFor((e as CustomEvent<Theme>).detail)
     }
@@ -120,8 +121,11 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
     const offData = window.api.cc.onData((evt) => {
       if (evt.sessionId !== props.sessionId) return
       const normalized = normalizeTerminalStyleForCli(evt.chunk, aiCliRef.current)
-      const formatted = formatMarkdownChunk(normalized, markdownStateRef.current)
-      term.write(formatted.text)
+      // opencode 的全屏 TUI 依赖精确列宽，Markdown 改写会造成重绘残影，须直通。
+      const text = shouldFormatMarkdownForCli(aiCliRef.current)
+        ? formatMarkdownChunk(normalized, markdownStateRef.current).text
+        : normalized
+      term.write(text)
     })
     unsubRef.current.push(offData)
 

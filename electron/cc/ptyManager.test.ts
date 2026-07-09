@@ -125,7 +125,7 @@ describe('registerPtyIpc prompt injection timing', () => {
     return { proc: ptyInstances[0], targetRepo }
   }
 
-  async function spawnNoPlanSession(): Promise<{
+  async function spawnNoPlanSession(command = 'claude'): Promise<{
     proc: (typeof ptyInstances)[number]
   }> {
     const targetRepo = await fs.mkdtemp(join(tmpdir(), 'multi-ai-code-target-'))
@@ -146,12 +146,13 @@ describe('registerPtyIpc prompt injection timing', () => {
       planName: '',
       planMode: 'none',
       allowScheduledTasks: true,
-      command: 'claude',
+      command,
       args: [],
       mode: 'new',
     })
 
-    expect(result).toEqual({ ok: true })
+    // opencode 会附带 launchNotice 字段，claude 不带；两者 ok 均为 true。
+    expect(result).toMatchObject({ ok: true })
     expect(ptyInstances).toHaveLength(1)
     return { proc: ptyInstances[0] }
   }
@@ -355,6 +356,27 @@ describe('registerPtyIpc prompt injection timing', () => {
         chunk: '\r\n[来自远程 IM：mac-apollo-u3player]\r\n你好\r\n'
       }
     })
+  })
+
+  it('skips the local display echo and double submit for opencode sessions', async () => {
+    const { proc } = await spawnNoPlanSession('opencode')
+
+    const { sendUserMessageToSession } = await import('./ptyManager.js')
+    const result = await sendUserMessageToSession(
+      'session-no-plan',
+      'full AICLI protocol prompt',
+      {
+        displayText: '[来自远程 IM：mac-apollo-u3player]\n你好'
+      }
+    )
+
+    expect(result).toEqual({ ok: true })
+    const written = proc.writes.join('')
+    expect(written).toContain('full AICLI protocol prompt')
+    // opencode 的 TUI 自己展示已提交消息，合成回显会画花 TUI，必须跳过。
+    expect(browserWindowSends.filter((send) => send.channel === 'cc:data')).toEqual([])
+    // 首个回车即提交；第二个回车会追加一条空消息，必须只发一次。
+    expect(written.match(/\r/g)).toHaveLength(1)
   })
 
   it('does not scan local skills when sending user messages', () => {

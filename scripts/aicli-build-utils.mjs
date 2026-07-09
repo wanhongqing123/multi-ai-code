@@ -77,7 +77,9 @@ export function readManifest(manifestPath) {
   if (!existsSync(manifestPath)) {
     return { generatedAt: null, entries: {} }
   }
-  return JSON.parse(readFileSync(manifestPath, 'utf8'))
+  // Windows 工具（如 PowerShell）可能给 JSON 写入 UTF-8 BOM，JSON.parse 无法解析，先剥离。
+  const raw = readFileSync(manifestPath, 'utf8')
+  return JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw)
 }
 
 export function writeManifestEntry(entry) {

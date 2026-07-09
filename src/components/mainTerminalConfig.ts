@@ -44,7 +44,18 @@ function isWindowsPlatform(): boolean {
   return plat.includes('win')
 }
 
-export function buildMainTerminalOptions(theme: Theme): ITerminalOptions {
+/**
+ * opencode 的 opentui 渲染器用裸 LF 表示"下移一行、列不变"（VT 标准语义，
+ * 实测字节流中侧栏刷新即如此）。convertEol 会把它改写成 CR+LF，光标被拽回
+ * 第 0 列后，后续相对定位全部错位，屏幕上留下残影碎片，因此必须关闭。
+ * claude/codex 维持原有 convertEol=true 行为不变。
+ */
+export function shouldConvertEolForCli(cli: string | undefined): boolean {
+  if (!cli) return true
+  return !/(^|[\\/])opencode(\.(exe|cmd|bat|ps1))?$/i.test(cli.trim())
+}
+
+export function buildMainTerminalOptions(theme: Theme, cli?: string): ITerminalOptions {
   // Windows 下 GDI/DirectWrite 渲染较瘦，保留较粗权重保证清晰度；
   // macOS / Linux 的字体平滑会让相同权重显得过粗，降到 normal/bold。
   const heavy = isWindowsPlatform()
@@ -60,7 +71,7 @@ export function buildMainTerminalOptions(theme: Theme): ITerminalOptions {
     cursorStyle: 'underline',
     cursorInactiveStyle: 'underline',
     cursorWidth: 1,
-    convertEol: true,
+    convertEol: shouldConvertEolForCli(cli),
     // Force xterm to auto-lighten/darken the foreground when a CLI-emitted
     // background (highlight blocks, selection bars, etc.) would otherwise
     // swallow the text. 4.5 is the WCAG AA threshold for body text.

@@ -2,8 +2,27 @@ import { describe, expect, it } from 'vitest'
 import {
   createTerminalMarkdownState,
   formatMarkdownChunk,
+  shouldFormatMarkdownForCli,
   stripAnsi
 } from './terminalMarkdown.js'
+
+describe('shouldFormatMarkdownForCli', () => {
+  it('bypasses markdown formatting for opencode in any command form', () => {
+    expect(shouldFormatMarkdownForCli('opencode')).toBe(false)
+    expect(shouldFormatMarkdownForCli('OpenCode')).toBe(false)
+    expect(shouldFormatMarkdownForCli('opencode.exe')).toBe(false)
+    expect(shouldFormatMarkdownForCli('C:\\Tools\\opencode.exe')).toBe(false)
+    expect(shouldFormatMarkdownForCli('/usr/local/bin/opencode')).toBe(false)
+  })
+
+  it('keeps markdown formatting for claude, codex and unknown CLIs', () => {
+    expect(shouldFormatMarkdownForCli('claude')).toBe(true)
+    expect(shouldFormatMarkdownForCli('codex')).toBe(true)
+    expect(shouldFormatMarkdownForCli('unknown')).toBe(true)
+    expect(shouldFormatMarkdownForCli(undefined)).toBe(true)
+    expect(shouldFormatMarkdownForCli('my-opencode-wrapper')).toBe(true)
+  })
+})
 
 describe('formatMarkdownChunk', () => {
   it('formats headings without showing markdown markers', () => {

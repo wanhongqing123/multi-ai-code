@@ -1,7 +1,13 @@
 export const OPENCODE_LSP_CONFIG_CONTENT = JSON.stringify({
   $schema: 'https://opencode.ai/config.json',
-  lsp: true
+  lsp: true,
+  // 自编译版本号是 0.0.0-dev-*，永远小于官方 release，不关掉会每次启动都弹升级提示。
+  autoupdate: false
 })
+
+// 统一双端 TUI 观感：锁定 opencode 主题模式（白底黑字），不再跟随宿主终端背景色探测。
+export const OPENCODE_THEME_MODE_ENV = 'OPENCODE_THEME_MODE'
+export const OPENCODE_THEME_MODE_DEFAULT = 'light'
 
 export interface OpenCodeProviderProfile {
   providerId?: string
@@ -97,14 +103,18 @@ function mergeOpenCodeConfigContent(
   const parsed = parseOpenCodeConfigContent(content)
   if (!parsed) return null
 
+  const hasLsp = Object.prototype.hasOwnProperty.call(parsed, 'lsp')
+  const hasAutoupdate = Object.prototype.hasOwnProperty.call(parsed, 'autoupdate')
   const normalizedProfile = normalizeProviderProfile(profile)
-  if (!normalizedProfile && Object.prototype.hasOwnProperty.call(parsed, 'lsp')) return content
+  if (!normalizedProfile && hasLsp && hasAutoupdate) return content
 
   const next: Record<string, unknown> = {
     $schema: 'https://opencode.ai/config.json',
-    ...parsed,
-    lsp: true
+    ...parsed
   }
+  if (!hasLsp) next.lsp = true
+  // 始终默认关闭自动升级（自编译版本 0.0.0 会每次触发升级提示），用户显式配置优先。
+  if (!hasAutoupdate) next.autoupdate = false
 
   if (normalizedProfile) {
     const provider =
@@ -117,9 +127,6 @@ function mergeOpenCodeConfigContent(
     next.small_model = `${normalizedProfile.providerId}/${
       normalizedProfile.smallModel || normalizedProfile.mainModel
     }`
-    if (!Object.prototype.hasOwnProperty.call(parsed, 'autoupdate')) {
-      next.autoupdate = false
-    }
   }
 
   return JSON.stringify(next)
@@ -132,6 +139,9 @@ export function withOpenCodeLspEnv(
 ): Record<string, string> | undefined {
   if (!isOpenCodeCommand(command)) return env
   const next = { ...(env ?? {}) }
+  if (!next[OPENCODE_THEME_MODE_ENV]) {
+    next[OPENCODE_THEME_MODE_ENV] = OPENCODE_THEME_MODE_DEFAULT
+  }
   const existing = next.OPENCODE_CONFIG_CONTENT
   if (!existing) {
     next.OPENCODE_CONFIG_CONTENT =

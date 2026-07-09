@@ -6,12 +6,14 @@ import '@xterm/xterm/css/xterm.css'
 import { getTheme, THEME_CHANGE_EVENT, type Theme } from '../utils/theme.js'
 import {
   buildMainTerminalOptions,
+  shouldConvertEolForCli,
   shouldUseMainTerminalCanvasRenderer,
   xtermThemeFor
 } from '../components/mainTerminalConfig.js'
 import {
   createTerminalMarkdownState,
-  formatMarkdownChunk
+  formatMarkdownChunk,
+  shouldFormatMarkdownForCli
 } from '../components/terminalMarkdown.js'
 import {
   copySelection,
@@ -41,6 +43,14 @@ export default function RepoTerminalPanel(
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
   const markdownStateRef = useRef(createTerminalMarkdownState())
+  const cliLabelRef = useRef(props.cliLabel)
+  useEffect(() => {
+    cliLabelRef.current = props.cliLabel
+    // 终端跨会话复用；切换 CLI 后同步换行语义（opencode 必须关 convertEol）。
+    if (termRef.current) {
+      termRef.current.options.convertEol = shouldConvertEolForCli(props.cliLabel)
+    }
+  }, [props.cliLabel])
   const unsubRef = useRef<Array<() => void>>([])
   const [dragActive, setDragActive] = useState(false)
   const [menu, setMenu] = useState<{
@@ -51,7 +61,7 @@ export default function RepoTerminalPanel(
 
   useEffect(() => {
     if (!containerRef.current) return
-    const term = new Terminal(buildMainTerminalOptions(getTheme()))
+    const term = new Terminal(buildMainTerminalOptions(getTheme(), cliLabelRef.current))
     const onThemeChange = (e: Event) => {
       term.options.theme = xtermThemeFor((e as CustomEvent<Theme>).detail)
     }
@@ -83,8 +93,11 @@ export default function RepoTerminalPanel(
     unsubRef.current.push(detachPaste)
 
     const offData = window.api.repoView.onAnalysisData((evt) => {
-      const formatted = formatMarkdownChunk(evt.chunk, markdownStateRef.current)
-      term.write(formatted.text)
+      // opencode 的全屏 TUI 依赖精确列宽，Markdown 改写会造成重绘残影，须直通。
+      const text = shouldFormatMarkdownForCli(cliLabelRef.current)
+        ? formatMarkdownChunk(evt.chunk, markdownStateRef.current).text
+        : evt.chunk
+      term.write(text)
     })
     unsubRef.current.push(offData)
 

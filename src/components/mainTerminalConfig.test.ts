@@ -1,10 +1,27 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildMainTerminalOptions,
+  shouldConvertEolForCli,
   shouldUseMainTerminalCanvasRenderer,
   shouldEnableMainTerminalGpuAcceleration,
   xtermThemeFor
 } from './mainTerminalConfig.js'
+
+describe('shouldConvertEolForCli', () => {
+  it('disables convertEol for opencode so bare LF keeps VT index semantics', () => {
+    expect(shouldConvertEolForCli('opencode')).toBe(false)
+    expect(shouldConvertEolForCli('opencode.exe')).toBe(false)
+    expect(shouldConvertEolForCli('C:\\Tools\\opencode.exe')).toBe(false)
+    expect(shouldConvertEolForCli('/usr/local/bin/opencode')).toBe(false)
+  })
+
+  it('keeps convertEol on for claude, codex and unknown CLIs', () => {
+    expect(shouldConvertEolForCli('claude')).toBe(true)
+    expect(shouldConvertEolForCli('codex')).toBe(true)
+    expect(shouldConvertEolForCli(undefined)).toBe(true)
+    expect(shouldConvertEolForCli('my-opencode-wrapper')).toBe(true)
+  })
+})
 
 describe('xtermThemeFor', () => {
   it('returns the light palette for light theme', () => {
@@ -27,6 +44,12 @@ describe('buildMainTerminalOptions', () => {
     expect(buildMainTerminalOptions('light')).toMatchObject({
       smoothScrollDuration: 0
     })
+  })
+
+  it('keeps convertEol for claude but turns it off for opencode', () => {
+    expect(buildMainTerminalOptions('light', 'claude').convertEol).toBe(true)
+    expect(buildMainTerminalOptions('light').convertEol).toBe(true)
+    expect(buildMainTerminalOptions('light', 'opencode').convertEol).toBe(false)
   })
 
   it('keeps a large scrollback for long AICLI PTY transcripts', () => {

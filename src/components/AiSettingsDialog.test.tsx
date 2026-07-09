@@ -98,7 +98,7 @@ describe('AiSettingsDialog', () => {
           providerId: 'multi-ai-deepseek-internal',
           name: '公司内网 DeepSeek',
           baseURL: 'https://llm.example.test/v1',
-          apiKeyEnvVar: 'DEEPSEEK_INTERNAL_API_KEY',
+          apiKey: 'test-api-key',
           mainModel: 'deepseek-v4-pro',
           smallModel: 'deepseek-v4-lite'
         }
@@ -109,7 +109,8 @@ describe('AiSettingsDialog', () => {
     expect(markup).toContain('Provider ID')
     expect(markup).toContain('multi-ai-deepseek-internal')
     expect(markup).toContain('https://llm.example.test/v1')
-    expect(markup).toContain('DEEPSEEK_INTERNAL_API_KEY')
+    expect(markup).toContain('API Key')
+    expect(markup).toContain('type="password"')
     expect(markup).toContain('deepseek-v4-pro')
     expect(markup).toContain('deepseek-v4-lite')
   })

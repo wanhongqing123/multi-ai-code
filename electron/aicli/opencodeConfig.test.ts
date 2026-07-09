@@ -67,7 +67,7 @@ describe('OpenCode config env', () => {
       providerId: 'multi-ai-deepseek-internal',
       name: '公司内网 DeepSeek',
       baseURL: 'https://llm.example.test/v1',
-      apiKeyEnvVar: 'DEEPSEEK_INTERNAL_API_KEY',
+      apiKey: 'test-api-key',
       mainModel: 'deepseek-v4-pro',
       smallModel: 'deepseek-v4-lite',
       timeoutMs: 600000,
@@ -89,7 +89,7 @@ describe('OpenCode config env', () => {
           name: '公司内网 DeepSeek',
           options: {
             baseURL: 'https://llm.example.test/v1',
-            apiKey: '{env:DEEPSEEK_INTERNAL_API_KEY}',
+            apiKey: 'test-api-key',
             timeout: 600000,
             chunkTimeout: 60000
           },
@@ -125,7 +125,7 @@ describe('OpenCode config env', () => {
         providerId: 'multi-ai-zhipu',
         name: '智谱 AI',
         baseURL: 'https://open.bigmodel.cn/api/coding/paas/v4',
-        apiKeyEnvVar: 'ZAI_API_KEY',
+        apiKey: 'zai-api-key',
         mainModel: 'glm-5.2'
       }
     )

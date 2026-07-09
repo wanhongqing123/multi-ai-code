@@ -28,7 +28,7 @@ export interface OpenCodeProviderProfile {
   providerId?: string
   name?: string
   baseURL?: string
-  apiKeyEnvVar?: string
+  apiKey?: string
   mainModel?: string
   smallModel?: string
   timeoutMs?: number

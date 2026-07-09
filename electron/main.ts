@@ -558,7 +558,7 @@ app.whenReady().then(async () => {
           providerId?: string
           name?: string
           baseURL?: string
-          apiKeyEnvVar?: string
+          apiKey?: string
           mainModel?: string
           smallModel?: string
           timeoutMs?: number
@@ -1181,7 +1181,7 @@ app.whenReady().then(async () => {
       providerId?: string
       name?: string
       baseURL?: string
-      apiKeyEnvVar?: string
+      apiKey?: string
       mainModel?: string
       smallModel?: string
       timeoutMs?: number

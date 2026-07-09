@@ -7,7 +7,7 @@ export interface OpenCodeProviderProfile {
   providerId?: string
   name?: string
   baseURL?: string
-  apiKeyEnvVar?: string
+  apiKey?: string
   mainModel?: string
   smallModel?: string
   timeoutMs?: number
@@ -36,7 +36,7 @@ export function isOpenCodeCommand(command: string): boolean {
 function normalizeProviderProfile(
   profile: OpenCodeProviderProfile | undefined
 ): Required<Pick<OpenCodeProviderProfile, 'providerId' | 'name' | 'baseURL' | 'mainModel'>> &
-  Pick<OpenCodeProviderProfile, 'apiKeyEnvVar' | 'smallModel' | 'timeoutMs' | 'chunkTimeoutMs'> | null {
+  Pick<OpenCodeProviderProfile, 'apiKey' | 'smallModel' | 'timeoutMs' | 'chunkTimeoutMs'> | null {
   const providerId = profile?.providerId?.trim()
   const baseURL = profile?.baseURL?.trim()
   const mainModel = profile?.mainModel?.trim()
@@ -46,7 +46,7 @@ function normalizeProviderProfile(
     name: profile?.name?.trim() || providerId,
     baseURL,
     mainModel,
-    apiKeyEnvVar: profile?.apiKeyEnvVar?.trim() || undefined,
+    apiKey: profile?.apiKey?.trim() || undefined,
     smallModel: profile?.smallModel?.trim() || undefined,
     timeoutMs: profile?.timeoutMs,
     chunkTimeoutMs: profile?.chunkTimeoutMs
@@ -74,7 +74,7 @@ function buildProviderConfig(profile: NonNullable<ReturnType<typeof normalizePro
   const options: Record<string, unknown> = {
     baseURL: profile.baseURL
   }
-  if (profile.apiKeyEnvVar) options.apiKey = `{env:${profile.apiKeyEnvVar}}`
+  if (profile.apiKey) options.apiKey = profile.apiKey
   if (typeof profile.timeoutMs === 'number' && Number.isFinite(profile.timeoutMs)) {
     options.timeout = profile.timeoutMs
   }

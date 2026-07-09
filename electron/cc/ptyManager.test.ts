@@ -225,7 +225,7 @@ describe('registerPtyIpc prompt injection timing', () => {
         providerId: 'multi-ai-deepseek-internal',
         name: '公司内网 DeepSeek',
         baseURL: 'https://llm.example.test/v1',
-        apiKeyEnvVar: 'DEEPSEEK_INTERNAL_API_KEY',
+        apiKey: 'test-api-key',
         mainModel: 'deepseek-v4-pro'
       },
       mode: 'new',
@@ -240,7 +240,7 @@ describe('registerPtyIpc prompt injection timing', () => {
         'multi-ai-deepseek-internal': {
           options: {
             baseURL: 'https://llm.example.test/v1',
-            apiKey: '{env:DEEPSEEK_INTERNAL_API_KEY}'
+            apiKey: 'test-api-key'
           }
         }
       }

@@ -91,7 +91,7 @@ export interface OpenCodeProviderProfile {
   providerId?: string
   name?: string
   baseURL?: string
-  apiKeyEnvVar?: string
+  apiKey?: string
   mainModel?: string
   smallModel?: string
   timeoutMs?: number
@@ -273,7 +273,7 @@ interface OpenCodeProviderForm {
   providerId: string
   name: string
   baseURL: string
-  apiKeyEnvVar: string
+  apiKey: string
   mainModel: string
   smallModel: string
 }
@@ -283,7 +283,7 @@ function toOpenCodeProviderForm(profile: OpenCodeProviderProfile | undefined): O
     providerId: profile?.providerId ?? '',
     name: profile?.name ?? '',
     baseURL: profile?.baseURL ?? '',
-    apiKeyEnvVar: profile?.apiKeyEnvVar ?? '',
+    apiKey: profile?.apiKey ?? '',
     mainModel: profile?.mainModel ?? '',
     smallModel: profile?.smallModel ?? ''
   }
@@ -298,7 +298,7 @@ function fromOpenCodeProviderForm(form: OpenCodeProviderForm): OpenCodeProviderP
     providerId: providerId || undefined,
     name: form.name.trim() || undefined,
     baseURL: baseURL || undefined,
-    apiKeyEnvVar: form.apiKeyEnvVar.trim() || undefined,
+    apiKey: form.apiKey.trim() || undefined,
     mainModel: mainModel || undefined,
     smallModel: form.smallModel.trim() || undefined
   }
@@ -438,12 +438,12 @@ function SettingsSection(props: {
                 />
               </label>
               <label>
-                API Key 环境变量名
+                API Key
                 <input
-                  type="text"
-                  value={props.openCodeForm.apiKeyEnvVar}
-                  onChange={(event) => updateOpenCodeForm({ apiKeyEnvVar: event.target.value })}
-                  placeholder="DEEPSEEK_INTERNAL_API_KEY"
+                  type="password"
+                  value={props.openCodeForm.apiKey}
+                  onChange={(event) => updateOpenCodeForm({ apiKey: event.target.value })}
+                  placeholder="sk-..."
                 />
               </label>
               <label>
@@ -466,7 +466,7 @@ function SettingsSection(props: {
               </label>
             </div>
             <div className="ai-settings-help">
-              这里不直接保存 API Key 明文。请在环境变量区或系统环境中提供对应变量值。
+              API Key 会随当前项目配置保存，只用于启动 OpenCode 时注入当前进程。
             </div>
           </div>
         ) : null}

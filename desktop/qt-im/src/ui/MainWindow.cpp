@@ -143,9 +143,9 @@ public:
 
         QFont nameFont = option.font;
         nameFont.setPixelSize(14);
-        nameFont.setBold(true);
+        nameFont.setWeight(QFont::Medium);
         painter->setFont(nameFont);
-        painter->setPen(QColor(QStringLiteral("#101828")));
+        painter->setPen(QColor(QStringLiteral("#1f2329")));
         painter->drawText(nameRect, Qt::AlignLeft | Qt::AlignVCenter,
                           QFontMetrics(nameFont).elidedText(name, Qt::ElideRight, nameRect.width()));
 
@@ -200,9 +200,9 @@ public:
 
         QFont nameFont = option.font;
         nameFont.setPixelSize(14);
-        nameFont.setBold(true);
+        nameFont.setWeight(QFont::Medium);
         painter->setFont(nameFont);
-        painter->setPen(QColor(QStringLiteral("#101828")));
+        painter->setPen(QColor(QStringLiteral("#1f2329")));
         painter->drawText(nameRect, Qt::AlignLeft | Qt::AlignVCenter,
                           QFontMetrics(nameFont).elidedText(name, Qt::ElideRight, nameRect.width()));
 
@@ -265,6 +265,8 @@ constexpr ushort kNavGlyphMessages = 0xE8BD;   // Message
 constexpr ushort kNavGlyphContacts = 0xE716;   // People
 constexpr ushort kNavGlyphSettings = 0xE713;   // Settings
 constexpr ushort kNavGlyphSearch = 0xE721;     // Search
+constexpr ushort kNavGlyphAdd = 0xE710;        // Add (+)
+constexpr ushort kHeaderGlyphMore = 0xE712;    // More (…)
 
 void applyNavButtonIcon(QPushButton* button, bool selected) {
     const QString glyph = button->property("navGlyph").toString();
@@ -273,9 +275,13 @@ void applyNavButtonIcon(QPushButton* button, bool selected) {
     button->setIcon(makeGlyphIcon(glyph.at(0), color));
 }
 
-QPushButton* makeHeaderButton(const QString& title, QWidget* parent) {
-    auto* button = new QPushButton(title, parent);
-    button->setObjectName(QStringLiteral("headerButton"));
+// Feishu-style borderless icon button for the chat header.
+QPushButton* makeHeaderIconButton(ushort glyph, const QString& tooltip, QWidget* parent) {
+    auto* button = new QPushButton(parent);
+    button->setObjectName(QStringLiteral("headerIconButton"));
+    button->setIcon(makeGlyphIcon(QChar(glyph), QColor(QStringLiteral("#4c5866"))));
+    button->setIconSize(QSize(17, 17));
+    button->setToolTip(tooltip);
     button->setCursor(Qt::PointingHandCursor);
     return button;
 }
@@ -372,7 +378,9 @@ void MainWindow::showEvent(QShowEvent* event) {
 }
 
 void MainWindow::buildUi() {
-    setWindowTitle(QString());
+    // 单个空格而不是空串：空标题时 Qt 会回退显示 applicationDisplayName
+    // （"Multi-AI Code IM"），飞书风格的标题栏不显示文字。
+    setWindowTitle(QStringLiteral(" "));
     resize(1280, 820);
     setMinimumSize(980, 640);
 
@@ -413,8 +421,10 @@ void MainWindow::buildUi() {
     auto* logo = new QLabel(QStringLiteral("M"), navRail_);
     logo->setObjectName(QStringLiteral("navLogo"));
     logo->setAlignment(Qt::AlignCenter);
-    addContactButton_ = new QPushButton(QStringLiteral("+"), navRail_);
+    addContactButton_ = new QPushButton(navRail_);
     addContactButton_->setObjectName(QStringLiteral("addConversationButton"));
+    addContactButton_->setIcon(makeGlyphIcon(QChar(kNavGlyphAdd), QColor(QStringLiteral("#4c5866"))));
+    addContactButton_->setIconSize(QSize(18, 18));
     addContactButton_->setToolTip(QStringLiteral("添加联系人"));
     addContactButton_->setCursor(Qt::PointingHandCursor);
 
@@ -494,8 +504,8 @@ void MainWindow::buildUi() {
     statusLabel_ = new QLabel(QStringLiteral("未连接"), header);
     statusLabel_->setObjectName(QStringLiteral("statusBadge"));
     headerLayout->addWidget(titleLabel_, 1);
-    headerLayout->addWidget(makeHeaderButton(QStringLiteral("搜索"), header));
-    headerLayout->addWidget(makeHeaderButton(QStringLiteral("更多"), header));
+    headerLayout->addWidget(makeHeaderIconButton(kNavGlyphSearch, QStringLiteral("搜索"), header));
+    headerLayout->addWidget(makeHeaderIconButton(kHeaderGlyphMore, QStringLiteral("更多"), header));
     headerLayout->addWidget(statusLabel_);
 
     messageScroll_ = new QScrollArea(chatContentPane);
@@ -726,7 +736,7 @@ void MainWindow::applyStyle() {
             font-size: 16px;
             font-weight: 600;
         }
-        #addConversationButton, #headerButton, #toolIconButton {
+        #toolIconButton {
             min-width: 42px;
             max-width: 42px;
             min-height: 42px;
@@ -738,25 +748,30 @@ void MainWindow::applyStyle() {
             font-size: 18px;
             font-weight: 600;
         }
-        #headerButton {
-            min-width: 56px;
-            max-width: 56px;
-            font-size: 13px;
-            font-weight: 500;
-            color: #667085;
+        #toolIconButton:hover {
+            background: #edf7ff;
+            border-color: #8ed0ff;
+        }
+        #headerIconButton {
+            min-width: 34px;
+            max-width: 34px;
+            min-height: 34px;
+            max-height: 34px;
+            border: 0;
+            border-radius: 8px;
+            background: transparent;
         }
         #addConversationButton {
             min-width: 34px;
             max-width: 34px;
             min-height: 34px;
             max-height: 34px;
+            border: 0;
             border-radius: 17px;
-            font-size: 16px;
-            font-weight: 600;
+            background: transparent;
         }
-        #addConversationButton:hover, #headerButton:hover, #toolIconButton:hover {
-            background: #edf7ff;
-            border-color: #8ed0ff;
+        #headerIconButton:hover, #addConversationButton:hover {
+            background: #e9eef5;
         }
         #conversationList {
             background: transparent;
@@ -842,9 +857,9 @@ void MainWindow::applyStyle() {
             background: #e7f8ee;
             color: #087443;
             border-radius: 8px;
-            padding: 5px 12px;
+            padding: 4px 10px;
             font-size: 12px;
-            font-weight: 600;
+            font-weight: 500;
         }
         #messageScroll, #messageContainer {
             background: #ffffff;

@@ -340,7 +340,8 @@ void MainWindowLayoutTest::settingsNavigationShowsAccountAndSdkDefaults() {
     QCOMPARE(accountValue->text(), QStringLiteral("desktop-user"));
     QCOMPARE(connectionValue->text(), QStringLiteral("未连接"));
     QCOMPARE(sdkAppIdValue->text(), QStringLiteral("1600148979"));
-    QVERIFY(window.findChildren<QLineEdit*>().isEmpty());
+    // 设置页的值应是只读标签而非输入框；导航栏的搜索框是唯一合法的 QLineEdit。
+    QVERIFY(settingsPage->findChildren<QLineEdit*>().isEmpty());
 }
 
 void MainWindowLayoutTest::leftNavigationRailIsResizableAndWider() {

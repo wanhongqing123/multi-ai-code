@@ -19,7 +19,7 @@ export const DEFAULT_REMOTE_IM_CONFIG: RemoteImConfig = {
   slaveUserIds: [],
   allowedUserIds: [],
   outputFlushIntervalMs: 2000,
-  outputMaxChunkChars: 1200
+  outputMaxChunkChars: 4000
 }
 
 function normalizeString(value: unknown): string {
@@ -88,7 +88,7 @@ export function normalizeRemoteImConfig(value: unknown): RemoteImConfig {
     slaveUserIds: [],
     allowedUserIds,
     outputFlushIntervalMs: normalizeNumber(raw.outputFlushIntervalMs, 2000, 1000, 30_000),
-    outputMaxChunkChars: normalizeNumber(raw.outputMaxChunkChars, 1200, 200, 4000)
+    outputMaxChunkChars: normalizeNumber(raw.outputMaxChunkChars, 4000, 200, 4000)
   }
 }
 

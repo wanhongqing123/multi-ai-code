@@ -18,6 +18,11 @@ import { buildResumeArgs, type ResumeCommand } from './resumeArgs.js'
 import { withEmbeddedClaudeSettings } from './claudeLaunchSettings.js'
 import { buildEnvWithPath, resolveCliSpawn } from '../habit/cliSpawn.js'
 import { withOpenCodeLspEnv } from '../aicli/opencodeConfig.js'
+import {
+  createAicliStructuredOutputBridge,
+  type AicliStructuredOutputBridge,
+  type AicliStructuredOutputProvider
+} from '../aicli/structuredOutputBridge.js'
 
 import {
   buildSystemPrompt
@@ -36,6 +41,12 @@ function systemPromptInjectionCommand(command: string): 'claude' | 'codex' | 'op
   if (command === 'codex') return 'codex'
   if (command === 'opencode') return 'opencode'
   return 'claude'
+}
+
+function structuredOutputProvider(command: string): AicliStructuredOutputProvider | null {
+  if (command === 'codex') return 'codex'
+  if (command === 'opencode') return 'opencode'
+  return null
 }
 
 async function openPtyDumpStream(
@@ -171,6 +182,7 @@ interface Session {
   claudeBootText?: string
   /** Raw-chunk dump stream (only when PTY_DUMP_ENABLED). */
   dumpStream?: WriteStream | null
+  structuredOutputBridge?: AicliStructuredOutputBridge | null
 }
 
 interface ExternalReviewJudgeRequest {
@@ -525,6 +537,13 @@ export function registerPtyIpc(): void {
       ? buildResumeArgs(req.command as ResumeCommand, req.args)
       : req.args
     effectiveArgs = withEmbeddedClaudeSettings(req.command, effectiveArgs)
+    const structuredProvider = structuredOutputProvider(req.command)
+    const structuredOutputBridge = structuredProvider
+      ? await createAicliStructuredOutputBridge(req.sessionId, structuredProvider)
+      : null
+    if (structuredOutputBridge) {
+      effectiveArgs = [...effectiveArgs, ...structuredOutputBridge.args]
+    }
 
     const proc = new PtyCCProcess({
       cwd: finalCwd,
@@ -553,7 +572,8 @@ export function registerPtyIpc(): void {
       command: req.command,
       allowScheduledTasks: req.allowScheduledTasks === true,
       startedAtMs: Date.now(),
-      dumpStream
+      dumpStream,
+      structuredOutputBridge
     }
 
     // Resume-failure detection: if the CLI exits with a non-zero code within
@@ -630,6 +650,7 @@ export function registerPtyIpc(): void {
         `external review session ended before a structured reply arrived (exit ${info.exitCode})`
       )
       closePtyDump(dumpStream, `exit(code=${info.exitCode})`)
+      void session.structuredOutputBridge?.close()
       broadcast('cc:exit', { sessionId: req.sessionId, ...info })
       emitSessionExit({ sessionId: req.sessionId, ...info })
       sessions.delete(req.sessionId)
@@ -638,6 +659,7 @@ export function registerPtyIpc(): void {
     try {
       proc.start()
     } catch (err) {
+      void structuredOutputBridge?.close()
       return { ok: false, error: (err as Error).message }
     }
     sessions.set(req.sessionId, session)
@@ -744,6 +766,7 @@ export function registerPtyIpc(): void {
       'external review session was terminated before a structured reply arrived'
     )
     closePtyDump(s.dumpStream, 'kill')
+    void s.structuredOutputBridge?.close()
     emitSessionExit({ sessionId, exitCode: null, signal: 'kill' })
     sessions.delete(sessionId)
     return { ok: true }
@@ -759,6 +782,7 @@ export function registerPtyIpc(): void {
     }
     for (const [sessionId, s] of sessions) {
       s.proc.kill()
+      void s.structuredOutputBridge?.close()
       emitSessionExit({ sessionId, exitCode: null, signal: 'kill-all' })
     }
     pendingExternalReviews.clear()

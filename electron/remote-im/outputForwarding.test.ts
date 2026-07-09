@@ -265,6 +265,36 @@ describe('remote IM output forwarding', () => {
     expect(sentTexts).toEqual([createRemoteImAicliOutputText('current result')])
   })
 
+  it('does not forward the same reply id more than once', () => {
+    const taggedReply = [
+      '<remote-im-reply id="reply-current">',
+      'current result',
+      '</remote-im-reply id="reply-current">'
+    ].join('\n')
+    const state = createState(taggedReply, { outputMaxChunkChars: 500 })
+    state.replyId = 'reply-current'
+    const messages: CreateRemoteImMessageInput[] = []
+    const sentTexts: string[] = []
+
+    const deps: RemoteImOutputForwardingDeps = {
+      createMessage: (input) => {
+        messages.push(input)
+      },
+      sendText: (_projectId, _toUserId, text) => {
+        sentTexts.push(text)
+      },
+      messagesChanged: () => undefined
+    }
+
+    expect(flushRemoteImOutputSession('session-1', state, deps)).toBe(1)
+    state.buffer += taggedReply
+    expect(flushRemoteImOutputSession('session-1', state, deps)).toBe(0)
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.content).toBe('current result')
+    expect(sentTexts).toEqual([createRemoteImAicliOutputText('current result')])
+  })
+
   it('forwards Claude output when a matching id open tag is closed by a legacy close tag', () => {
     const state = createState(readReplyFixture('claude-id-open-legacy-close.txt'), {
       outputMaxChunkChars: 500
@@ -327,6 +357,12 @@ describe('remote IM output forwarding', () => {
     )
     state.replyId = 'rim-current'
     state.sourceKind = 'opencode'
+    state.transcript = {
+      kind: 'opencode' as 'claude',
+      cwd: '/Users/me/work/repo',
+      sinceMs: Date.parse('2026-07-09T00:00:00.000Z'),
+      replyId: 'rim-current'
+    }
     const messages: CreateRemoteImMessageInput[] = []
     const sentTexts: string[] = []
 
@@ -339,7 +375,7 @@ describe('remote IM output forwarding', () => {
       },
       messagesChanged: () => undefined,
       readTranscriptReply: () => {
-        throw new Error('OpenCode should not use Claude transcript forwarding')
+        throw new Error('OpenCode should not read transcript storage')
       }
     })
 

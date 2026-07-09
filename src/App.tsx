@@ -140,7 +140,7 @@ const DEFAULT_REMOTE_IM_CONFIG: RemoteImConfig = {
   slaveUserIds: [],
   allowedUserIds: [],
   outputFlushIntervalMs: 2000,
-  outputMaxChunkChars: 1200
+  outputMaxChunkChars: 4000
 }
 
 type WorkMode = 'task-watch' | 'plan-design'

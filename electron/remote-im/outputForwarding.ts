@@ -27,7 +27,7 @@ export interface RemoteImOutputCompletionInfo {
 export type RemoteImOutputFlushTimer = ReturnType<typeof setTimeout>
 
 export interface RemoteImTranscriptSource {
-  kind: 'claude' | 'opencode'
+  kind: 'claude'
   cwd: string
   sinceMs: number
   replyId?: string
@@ -43,6 +43,8 @@ export interface RemoteImOutputSessionState {
   timer: RemoteImOutputFlushTimer | null
   transcript?: RemoteImTranscriptSource
   forwardedTranscriptReply?: string
+  forwardedReplyId?: string
+  structuredOutput?: boolean
 }
 
 export interface RemoteImOutputForwardingDeps {
@@ -112,13 +114,18 @@ export function flushRemoteImOutputSession(
   deps: RemoteImOutputForwardingDeps
 ): number {
   const transcriptReply =
-    state.transcript && deps.readTranscriptReply
+    state.transcript?.kind === 'claude' && deps.readTranscriptReply
       ? deps.readTranscriptReply(state.transcript)
       : null
   const reply =
     transcriptReply === null
       ? extractRemoteImReplyOutput(state.buffer, { replyId: state.replyId })
       : null
+  if (reply && state.replyId && state.forwardedReplyId === state.replyId) {
+    state.buffer = reply.nextBuffer
+    clearOutputTimer(state, deps)
+    return 0
+  }
   const buffer = sanitizeRemoteImAicliOutput(transcriptReply ?? reply?.content ?? '', {
     sourceKind: state.sourceKind
   })
@@ -149,6 +156,7 @@ export function flushRemoteImOutputSession(
   }
 
   if (chunks.length > 0) deps.messagesChanged(state.projectId)
+  if (chunks.length > 0 && reply && state.replyId) state.forwardedReplyId = state.replyId
   return chunks.length
 }
 

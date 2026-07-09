@@ -10,6 +10,11 @@ describe('remote IM config', () => {
     expect(normalizeRemoteImConfig(undefined)).toEqual(DEFAULT_REMOTE_IM_CONFIG)
   })
 
+  it('uses a larger default IM output chunk limit to avoid splitting normal long replies', () => {
+    expect(DEFAULT_REMOTE_IM_CONFIG.outputMaxChunkChars).toBe(4000)
+    expect(normalizeRemoteImConfig({}).outputMaxChunkChars).toBe(4000)
+  })
+
   it('trims user ids, removes empty whitelist entries, and ignores legacy enabled=false', () => {
     expect(
       normalizeRemoteImConfig({

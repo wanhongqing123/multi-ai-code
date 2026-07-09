@@ -47,8 +47,8 @@ import { getRemoteImAccountProfileId, getRemoteImProfileId } from './profile.js'
 import { createRemoteImRouter } from './router.js'
 import { appendRemoteImRuntimeLog } from './runtimeLog.js'
 import { readLatestClaudeRemoteImReply } from './claudeTranscript.js'
-import { readLatestOpenCodeRemoteImReply } from './opencodeTranscript.js'
 import { startRemoteImCliServer } from './imcliServer.js'
+import { addAicliStructuredOutputListener } from '../aicli/structuredOutputBridge.js'
 import {
   createRemoteImAccountChangedStatuses,
   getRemoteImSendConnectionError
@@ -469,13 +469,6 @@ function readRemoteImTranscriptReply(source: NonNullable<RemoteImOutputSessionSt
       replyId: source.replyId
     })
   }
-  if (source.kind === 'opencode') {
-    return readLatestOpenCodeRemoteImReply({
-      cwd: source.cwd,
-      sinceMs: source.sinceMs,
-      replyId: source.replyId
-    })
-  }
   return null
 }
 
@@ -498,10 +491,11 @@ function startOutputForwarding(
     config,
     replyId,
     sourceKind,
-    buffer: current?.buffer ?? '',
+    buffer: sourceKind === 'codex' || sourceKind === 'opencode' ? '' : current?.buffer ?? '',
     timer: null,
+    structuredOutput: sourceKind === 'codex' || sourceKind === 'opencode',
     transcript:
-      (sourceKind === 'claude' || sourceKind === 'opencode') && runtime
+      sourceKind === 'claude' && runtime
         ? {
             kind: sourceKind,
             cwd: runtime.targetRepo,
@@ -510,9 +504,6 @@ function startOutputForwarding(
           }
         : undefined
   })
-  if (sourceKind === 'opencode') {
-    scheduleOutputFlush(sessionId)
-  }
 }
 
 function flushOutputSession(sessionId: string): void {
@@ -565,7 +556,15 @@ function ensureSessionListeners(): void {
   addSessionDataListener(({ sessionId, chunk }) => {
     const state = outputSessions.get(sessionId)
     if (!state) return
+    if (state.structuredOutput) return
     state.buffer += chunk
+    scheduleOutputFlush(sessionId)
+  })
+  addAicliStructuredOutputListener(({ sessionId, text }) => {
+    const state = outputSessions.get(sessionId)
+    if (!state) return
+    if (!state.structuredOutput) return
+    state.buffer += text
     scheduleOutputFlush(sessionId)
   })
   addSessionExitListener(({ sessionId, exitCode, signal }) => {

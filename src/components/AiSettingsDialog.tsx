@@ -84,6 +84,18 @@ export interface AiSettings {
   command?: string
   args?: string[]
   env?: Record<string, string>
+  opencode?: OpenCodeProviderProfile
+}
+
+export interface OpenCodeProviderProfile {
+  providerId?: string
+  name?: string
+  baseURL?: string
+  apiKeyEnvVar?: string
+  mainModel?: string
+  smallModel?: string
+  timeoutMs?: number
+  chunkTimeoutMs?: number
 }
 
 export interface AppSettings {
@@ -257,11 +269,47 @@ function toEnvText(env: Record<string, string> | undefined): string {
     .join('\n')
 }
 
+interface OpenCodeProviderForm {
+  providerId: string
+  name: string
+  baseURL: string
+  apiKeyEnvVar: string
+  mainModel: string
+  smallModel: string
+}
+
+function toOpenCodeProviderForm(profile: OpenCodeProviderProfile | undefined): OpenCodeProviderForm {
+  return {
+    providerId: profile?.providerId ?? '',
+    name: profile?.name ?? '',
+    baseURL: profile?.baseURL ?? '',
+    apiKeyEnvVar: profile?.apiKeyEnvVar ?? '',
+    mainModel: profile?.mainModel ?? '',
+    smallModel: profile?.smallModel ?? ''
+  }
+}
+
+function fromOpenCodeProviderForm(form: OpenCodeProviderForm): OpenCodeProviderProfile | undefined {
+  const providerId = form.providerId.trim()
+  const baseURL = form.baseURL.trim()
+  const mainModel = form.mainModel.trim()
+  if (!providerId && !baseURL && !mainModel) return undefined
+  return {
+    providerId: providerId || undefined,
+    name: form.name.trim() || undefined,
+    baseURL: baseURL || undefined,
+    apiKeyEnvVar: form.apiKeyEnvVar.trim() || undefined,
+    mainModel: mainModel || undefined,
+    smallModel: form.smallModel.trim() || undefined
+  }
+}
+
 function fromForm(
   aiCli: AiCliKind,
   command: string,
   argsText: string,
-  envText: string
+  envText: string,
+  openCodeForm?: OpenCodeProviderForm
 ): AiSettings {
   return {
     ai_cli: aiCli,
@@ -276,7 +324,11 @@ function fromForm(
           const index = line.indexOf('=')
           return [line.slice(0, index).trim(), line.slice(index + 1).trim()]
         })
-    )
+    ),
+    opencode:
+      aiCli === 'opencode' && openCodeForm
+        ? fromOpenCodeProviderForm(openCodeForm)
+        : undefined
   }
 }
 
@@ -286,11 +338,17 @@ function SettingsSection(props: {
   command: string
   argsText: string
   envText: string
+  openCodeForm: OpenCodeProviderForm
   onAiCli: (next: AiCliKind) => void
   onCommand: (next: string) => void
   onArgs: (next: string) => void
   onEnv: (next: string) => void
+  onOpenCodeForm: (next: OpenCodeProviderForm) => void
 }): JSX.Element {
+  const updateOpenCodeForm = (patch: Partial<OpenCodeProviderForm>): void => {
+    props.onOpenCodeForm({ ...props.openCodeForm, ...patch })
+  }
+
   return (
     <section className="ai-settings-card ai-settings-ai-card">
       <div className="ai-settings-card-head">
@@ -341,6 +399,77 @@ function SettingsSection(props: {
             placeholder="KEY=VALUE"
           />
         </label>
+        {props.aiCli === 'opencode' ? (
+          <div className="ai-settings-grid-full ai-settings-opencode-panel">
+            <div className="ai-settings-title-row">
+              <div>
+                <div className="ai-settings-title">OpenCode 模型服务</div>
+                <div className="ai-settings-card-subtitle">
+                  自定义 OpenAI 兼容服务地址，启动时按当前进程注入。
+                </div>
+              </div>
+            </div>
+            <div className="ai-settings-form-grid">
+              <label>
+                服务名称
+                <input
+                  type="text"
+                  value={props.openCodeForm.name}
+                  onChange={(event) => updateOpenCodeForm({ name: event.target.value })}
+                  placeholder="公司内网 DeepSeek"
+                />
+              </label>
+              <label>
+                Provider ID
+                <input
+                  type="text"
+                  value={props.openCodeForm.providerId}
+                  onChange={(event) => updateOpenCodeForm({ providerId: event.target.value })}
+                  placeholder="multi-ai-deepseek-internal"
+                />
+              </label>
+              <label className="ai-settings-grid-full">
+                Base URL
+                <input
+                  type="text"
+                  value={props.openCodeForm.baseURL}
+                  onChange={(event) => updateOpenCodeForm({ baseURL: event.target.value })}
+                  placeholder="https://your.gateway.example/v1"
+                />
+              </label>
+              <label>
+                API Key 环境变量名
+                <input
+                  type="text"
+                  value={props.openCodeForm.apiKeyEnvVar}
+                  onChange={(event) => updateOpenCodeForm({ apiKeyEnvVar: event.target.value })}
+                  placeholder="DEEPSEEK_INTERNAL_API_KEY"
+                />
+              </label>
+              <label>
+                主模型
+                <input
+                  type="text"
+                  value={props.openCodeForm.mainModel}
+                  onChange={(event) => updateOpenCodeForm({ mainModel: event.target.value })}
+                  placeholder="deepseek-v4-pro"
+                />
+              </label>
+              <label>
+                小模型
+                <input
+                  type="text"
+                  value={props.openCodeForm.smallModel}
+                  onChange={(event) => updateOpenCodeForm({ smallModel: event.target.value })}
+                  placeholder="默认同主模型"
+                />
+              </label>
+            </div>
+            <div className="ai-settings-help">
+              这里不直接保存 API Key 明文。请在环境变量区或系统环境中提供对应变量值。
+            </div>
+          </div>
+        ) : null}
       </div>
     </section>
   )
@@ -441,6 +570,9 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
   const [command, setCommand] = useState<string>(props.initial.command ?? '')
   const [argsText, setArgsText] = useState<string>((props.initial.args ?? []).join(' '))
   const [envText, setEnvText] = useState<string>(toEnvText(props.initial.env))
+  const [openCodeForm, setOpenCodeForm] = useState<OpenCodeProviderForm>(
+    toOpenCodeProviderForm(props.initial.opencode)
+  )
 
   const [repoAiCli, setRepoAiCli] = useState<AiCliKind>(
     props.initialRepoView.ai_cli ?? DEFAULT_AI_CLI
@@ -527,6 +659,7 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
     setCommand(props.initial.command ?? '')
     setArgsText((props.initial.args ?? []).join(' '))
     setEnvText(toEnvText(props.initial.env))
+    setOpenCodeForm(toOpenCodeProviderForm(props.initial.opencode))
   }, [props.initial, saving])
 
   useEffect(() => {
@@ -580,7 +713,7 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
       screenshotShortcutEnabled,
       screenshotShortcut: normalizedShortcut
     }
-    const nextMain = fromForm(aiCli, command, argsText, envText)
+    const nextMain = fromForm(aiCli, command, argsText, envText, openCodeForm)
     const nextRepoView = fromForm(repoAiCli, repoCommand, repoArgsText, repoEnvText)
     const nextBuildConfig = props.buildConfigReady
       ? normalizeBuildConfigForHost(buildConfig)
@@ -787,10 +920,12 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
                     command={command}
                     argsText={argsText}
                     envText={envText}
+                    openCodeForm={openCodeForm}
                     onAiCli={setAiCli}
                     onCommand={setCommand}
                     onArgs={setArgsText}
                     onEnv={setEnvText}
+                    onOpenCodeForm={setOpenCodeForm}
                   />
                 ) : (
                   <section className="ai-settings-card ai-settings-no-project-card">

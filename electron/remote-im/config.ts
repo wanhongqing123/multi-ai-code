@@ -22,6 +22,8 @@ export const DEFAULT_REMOTE_IM_CONFIG: RemoteImConfig = {
   outputMaxChunkChars: 4000
 }
 
+const LEGACY_DEFAULT_OUTPUT_MAX_CHUNK_CHARS = 1200
+
 function normalizeString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
 }
@@ -39,6 +41,11 @@ function normalizeNumber(value: unknown, fallback: number, min: number, max: num
   const parsed = typeof value === 'number' ? value : Number(value)
   if (!Number.isFinite(parsed)) return fallback
   return Math.min(max, Math.max(min, Math.round(parsed)))
+}
+
+function normalizeOutputMaxChunkChars(value: unknown): number {
+  const normalized = normalizeNumber(value, 4000, 200, 4000)
+  return normalized === LEGACY_DEFAULT_OUTPUT_MAX_CHUNK_CHARS ? 4000 : normalized
 }
 
 function normalizeAllowedUserIds(value: unknown): string[] {
@@ -88,7 +95,7 @@ export function normalizeRemoteImConfig(value: unknown): RemoteImConfig {
     slaveUserIds: [],
     allowedUserIds,
     outputFlushIntervalMs: normalizeNumber(raw.outputFlushIntervalMs, 2000, 1000, 30_000),
-    outputMaxChunkChars: normalizeNumber(raw.outputMaxChunkChars, 4000, 200, 4000)
+    outputMaxChunkChars: normalizeOutputMaxChunkChars(raw.outputMaxChunkChars)
   }
 }
 

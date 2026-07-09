@@ -15,6 +15,14 @@ describe('remote IM config', () => {
     expect(normalizeRemoteImConfig({}).outputMaxChunkChars).toBe(4000)
   })
 
+  it('migrates the old persisted default output chunk limit to the current default', () => {
+    expect(
+      normalizeRemoteImConfig({
+        outputMaxChunkChars: 1200
+      }).outputMaxChunkChars
+    ).toBe(4000)
+  })
+
   it('trims user ids, removes empty whitelist entries, and ignores legacy enabled=false', () => {
     expect(
       normalizeRemoteImConfig({

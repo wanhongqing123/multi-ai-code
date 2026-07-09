@@ -221,12 +221,30 @@ describe('registerPtyIpc prompt injection timing', () => {
       planMode: 'none',
       command: 'opencode',
       args: [],
+      opencode: {
+        providerId: 'multi-ai-deepseek-internal',
+        name: '公司内网 DeepSeek',
+        baseURL: 'https://llm.example.test/v1',
+        apiKeyEnvVar: 'DEEPSEEK_INTERNAL_API_KEY',
+        mainModel: 'deepseek-v4-pro'
+      },
       mode: 'new',
     })
 
     expect(result).toMatchObject({ ok: true })
     const env = ptyInstances[0].opts.env as Record<string, string>
-    expect(JSON.parse(env.OPENCODE_CONFIG_CONTENT)).toMatchObject({ lsp: true })
+    expect(JSON.parse(env.OPENCODE_CONFIG_CONTENT)).toMatchObject({
+      lsp: true,
+      model: 'multi-ai-deepseek-internal/deepseek-v4-pro',
+      provider: {
+        'multi-ai-deepseek-internal': {
+          options: {
+            baseURL: 'https://llm.example.test/v1',
+            apiKey: '{env:DEEPSEEK_INTERNAL_API_KEY}'
+          }
+        }
+      }
+    })
   })
 
   it('resolves Codex launch notice for the boot gate before spawning', async () => {

@@ -172,7 +172,8 @@ export default function RepoViewerWindow({
       targetRepo: project.target_repo,
       command,
       args,
-      env: repoViewSettings.env ?? {}
+      env: repoViewSettings.env ?? {},
+      opencode: repoViewSettings.opencode
     })
     if (res.ok) {
       setSessionRunning(true)

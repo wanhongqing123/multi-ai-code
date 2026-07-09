@@ -17,7 +17,10 @@ import { planSystemPromptInjection } from './systemPromptInjection.js'
 import { buildResumeArgs, type ResumeCommand } from './resumeArgs.js'
 import { withEmbeddedClaudeSettings } from './claudeLaunchSettings.js'
 import { buildEnvWithPath, resolveCliSpawn } from '../habit/cliSpawn.js'
-import { withOpenCodeLspEnv } from '../aicli/opencodeConfig.js'
+import {
+  withOpenCodeLspEnv,
+  type OpenCodeProviderProfile
+} from '../aicli/opencodeConfig.js'
 import {
   createAicliStructuredOutputBridge,
   type AicliStructuredOutputBridge,
@@ -121,6 +124,7 @@ export interface SpawnRequest {
   /** CLI args. */
   args: string[]
   env?: Record<string, string>
+  opencode?: OpenCodeProviderProfile
   cols?: number
   rows?: number
   /**
@@ -552,7 +556,7 @@ export function registerPtyIpc(): void {
       cols: req.cols,
       rows: req.rows,
       env: withRemoteImCliEnv(
-        withOpenCodeLspEnv(req.command, req.env),
+        withOpenCodeLspEnv(req.command, req.env, req.opencode),
         req.projectId
       ),
       enableMsys,

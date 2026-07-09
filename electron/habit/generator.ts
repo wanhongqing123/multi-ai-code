@@ -7,6 +7,7 @@ import { projectDir as projectDirFn } from '../store/paths.js'
 import { getDb } from '../store/db.js'
 import { buildEnvWithPath, resolveCliSpawn } from './cliSpawn.js'
 import { withOpenCodeLspEnv } from '../aicli/opencodeConfig.js'
+import type { OpenCodeProviderProfile } from '../aicli/opencodeConfig.js'
 import { isValidStep, type SkillStep } from './skills.js'
 import { enqueueCliJob } from '../util/cliQueue.js'
 
@@ -216,6 +217,7 @@ interface RawAiSettings {
   command?: string
   args?: string[]
   env?: Record<string, string>
+  opencode?: OpenCodeProviderProfile
 }
 
 /**
@@ -302,7 +304,8 @@ export function runCliGeneration(
     buildEnvWithPath({
       ...process.env,
       ...(settings.env ?? {})
-    })
+    }),
+    settings.opencode
   ) ?? {}
   const timeoutMs = opts.timeoutMs ?? CLI_TIMEOUT_MS
 

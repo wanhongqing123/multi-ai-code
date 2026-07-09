@@ -90,6 +90,30 @@ describe('AiSettingsDialog', () => {
     expect(codexOptionIndex).toBeLessThan(claudeOptionIndex)
   })
 
+  it('renders OpenCode provider profile fields when OpenCode is selected', () => {
+    const markup = renderDialog({
+      initial: {
+        ai_cli: 'opencode',
+        opencode: {
+          providerId: 'multi-ai-deepseek-internal',
+          name: '公司内网 DeepSeek',
+          baseURL: 'https://llm.example.test/v1',
+          apiKeyEnvVar: 'DEEPSEEK_INTERNAL_API_KEY',
+          mainModel: 'deepseek-v4-pro',
+          smallModel: 'deepseek-v4-lite'
+        }
+      }
+    })
+
+    expect(markup).toContain('OpenCode 模型服务')
+    expect(markup).toContain('Provider ID')
+    expect(markup).toContain('multi-ai-deepseek-internal')
+    expect(markup).toContain('https://llm.example.test/v1')
+    expect(markup).toContain('DEEPSEEK_INTERNAL_API_KEY')
+    expect(markup).toContain('deepseek-v4-pro')
+    expect(markup).toContain('deepseek-v4-lite')
+  })
+
   it('renders sidebar navigation as clickable section buttons', () => {
     const markup = renderDialog()
 

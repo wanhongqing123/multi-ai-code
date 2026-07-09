@@ -7,7 +7,10 @@ import {
   isClaudeReadyForPromptInjection
 } from '../cc/codexTrust.js'
 import { withEmbeddedClaudeSettings } from '../cc/claudeLaunchSettings.js'
-import { withOpenCodeLspEnv } from '../aicli/opencodeConfig.js'
+import {
+  withOpenCodeLspEnv,
+  type OpenCodeProviderProfile
+} from '../aicli/opencodeConfig.js'
 
 interface RepoAnalysisSession {
   winId: number
@@ -149,13 +152,14 @@ export async function startRepoAnalysisSession(input: {
   command: string
   args: string[]
   env?: Record<string, string>
+  opencode?: OpenCodeProviderProfile
 }): Promise<void> {
   if (sessions.has(input.winId)) return
   const proc = new PtyCCProcess({
     cwd: input.targetRepo,
     command: input.command,
     args: withEmbeddedClaudeSettings(input.command, input.args),
-    env: withOpenCodeLspEnv(input.command, input.env)
+    env: withOpenCodeLspEnv(input.command, input.env, input.opencode)
   })
   const session: RepoAnalysisSession = {
     winId: input.winId,

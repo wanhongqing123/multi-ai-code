@@ -554,6 +554,16 @@ app.whenReady().then(async () => {
         command: string
         args: string[]
         env?: Record<string, string>
+        opencode?: {
+          providerId?: string
+          name?: string
+          baseURL?: string
+          apiKeyEnvVar?: string
+          mainModel?: string
+          smallModel?: string
+          timeoutMs?: number
+          chunkTimeoutMs?: number
+        }
       }
     ) => {
       const win = BrowserWindow.fromWebContents(e.sender)
@@ -1167,6 +1177,16 @@ app.whenReady().then(async () => {
     command?: string
     args?: string[]
     env?: Record<string, string>
+    opencode?: {
+      providerId?: string
+      name?: string
+      baseURL?: string
+      apiKeyEnvVar?: string
+      mainModel?: string
+      smallModel?: string
+      timeoutMs?: number
+      chunkTimeoutMs?: number
+    }
   }
 
   async function readProjectSettingsField(

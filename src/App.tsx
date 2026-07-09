@@ -996,6 +996,7 @@ function AppShell() {
       command,
       args,
       env: aiSettings.env ?? {},
+      opencode: aiSettings.opencode,
       mode
     })
     if (!res.ok) {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   isOpenCodeCommand,
   OPENCODE_LSP_CONFIG_CONTENT,
+  type OpenCodeProviderProfile,
   withOpenCodeLspEnv
 } from './opencodeConfig.js'
 
@@ -59,5 +60,83 @@ describe('OpenCode config env', () => {
     })
 
     expect(env?.OPENCODE_CONFIG_CONTENT).toBe('{bad json')
+  })
+
+  it('injects a custom OpenCode provider profile with baseURL and selected models', () => {
+    const profile: OpenCodeProviderProfile = {
+      providerId: 'multi-ai-deepseek-internal',
+      name: '公司内网 DeepSeek',
+      baseURL: 'https://llm.example.test/v1',
+      apiKeyEnvVar: 'DEEPSEEK_INTERNAL_API_KEY',
+      mainModel: 'deepseek-v4-pro',
+      smallModel: 'deepseek-v4-lite',
+      timeoutMs: 600000,
+      chunkTimeoutMs: 60000
+    }
+
+    const env = withOpenCodeLspEnv('opencode', { FOO: 'bar' }, profile)
+    const config = JSON.parse(env?.OPENCODE_CONFIG_CONTENT ?? '{}')
+
+    expect(config).toMatchObject({
+      $schema: 'https://opencode.ai/config.json',
+      lsp: true,
+      autoupdate: false,
+      model: 'multi-ai-deepseek-internal/deepseek-v4-pro',
+      small_model: 'multi-ai-deepseek-internal/deepseek-v4-lite',
+      provider: {
+        'multi-ai-deepseek-internal': {
+          npm: '@ai-sdk/openai-compatible',
+          name: '公司内网 DeepSeek',
+          options: {
+            baseURL: 'https://llm.example.test/v1',
+            apiKey: '{env:DEEPSEEK_INTERNAL_API_KEY}',
+            timeout: 600000,
+            chunkTimeout: 60000
+          },
+          models: {
+            'deepseek-v4-pro': {
+              name: 'deepseek-v4-pro'
+            },
+            'deepseek-v4-lite': {
+              name: 'deepseek-v4-lite'
+            }
+          }
+        }
+      }
+    })
+  })
+
+  it('merges a custom provider profile into existing inline OpenCode config', () => {
+    const env = withOpenCodeLspEnv(
+      'opencode',
+      {
+        OPENCODE_CONFIG_CONTENT: JSON.stringify({
+          provider: {
+            existing: {
+              models: {
+                old: { name: 'old' }
+              }
+            }
+          },
+          share: 'disabled'
+        })
+      },
+      {
+        providerId: 'multi-ai-zhipu',
+        name: '智谱 AI',
+        baseURL: 'https://open.bigmodel.cn/api/coding/paas/v4',
+        apiKeyEnvVar: 'ZAI_API_KEY',
+        mainModel: 'glm-5.2'
+      }
+    )
+    const config = JSON.parse(env?.OPENCODE_CONFIG_CONTENT ?? '{}')
+
+    expect(config.provider.existing.models.old.name).toBe('old')
+    expect(config.provider['multi-ai-zhipu'].options.baseURL).toBe(
+      'https://open.bigmodel.cn/api/coding/paas/v4'
+    )
+    expect(config.model).toBe('multi-ai-zhipu/glm-5.2')
+    expect(config.small_model).toBe('multi-ai-zhipu/glm-5.2')
+    expect(config.share).toBe('disabled')
   })
 })

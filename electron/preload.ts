@@ -21,6 +21,18 @@ export interface AiSettings {
   command?: string
   args?: string[]
   env?: Record<string, string>
+  opencode?: OpenCodeProviderProfile
+}
+
+export interface OpenCodeProviderProfile {
+  providerId?: string
+  name?: string
+  baseURL?: string
+  apiKeyEnvVar?: string
+  mainModel?: string
+  smallModel?: string
+  timeoutMs?: number
+  chunkTimeoutMs?: number
 }
 
 export interface AppSettings {
@@ -474,6 +486,7 @@ export interface SpawnRequest {
   /** CLI args. */
   args: string[]
   env?: Record<string, string>
+  opencode?: OpenCodeProviderProfile
   cols?: number
   rows?: number
   /**
@@ -1080,6 +1093,7 @@ const api = {
       command: string
       args: string[]
       env?: Record<string, string>
+      opencode?: OpenCodeProviderProfile
     }) =>
       ipcRenderer.invoke('repo-view:analysis-start', req) as Promise<{
         ok: boolean

@@ -1,6 +1,8 @@
 [submodule "third_party/aicli/codex"]
 	path = third_party/aicli/codex
 	url = https://github.com/wanhongqing123/codex
+	branch = multi-ai/im-bridge
 [submodule "third_party/aicli/opencode"]
 	path = third_party/aicli/opencode
 	url = https://github.com/wanhongqing123/opencode
+	branch = multi-ai/im-bridge

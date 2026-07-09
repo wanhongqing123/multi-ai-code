@@ -126,14 +126,14 @@ Codex 建议分支：
 
 ```text
 main              跟随 upstream/main
-multi-ai/main     Multi-AI 定制分支
+multi-ai/im-bridge Multi-AI 定制分支
 ```
 
 OpenCode 建议分支：
 
 ```text
 dev               跟随 upstream/dev
-multi-ai/dev      Multi-AI 定制分支
+multi-ai/im-bridge Multi-AI 定制分支
 ```
 
 同步流程：
@@ -144,12 +144,13 @@ git fetch upstream
 git reset --hard upstream/main
 git push origin main --force-with-lease
 
-git checkout multi-ai/main
+git checkout multi-ai/im-bridge
 git rebase main
-git push origin multi-ai/main --force-with-lease
+git push origin multi-ai/im-bridge --force-with-lease
 ```
 
-OpenCode 将 `main` 替换为 `dev`。主仓 submodule 始终锁定 `multi-ai/*` 上的具体 commit，而不是浮动分支。
+OpenCode 同步官方代码时将 `main` 替换为 `dev`。主仓 submodule 始终锁定
+`multi-ai/im-bridge` 上的具体 commit，而不是浮动分支。
 
 ## 错误处理
 

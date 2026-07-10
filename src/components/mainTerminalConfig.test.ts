@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import {
   buildMainTerminalOptions,
   shouldConvertEolForCli,
@@ -6,6 +6,36 @@ import {
   shouldEnableMainTerminalGpuAcceleration,
   xtermThemeFor
 } from './mainTerminalConfig.js'
+
+const originalPlatform =
+  typeof navigator !== 'undefined' ? navigator.platform : undefined
+
+function mockNavigatorPlatform(platform: string): void {
+  if (typeof navigator === 'undefined') {
+    Object.defineProperty(globalThis, 'navigator', {
+      value: { platform },
+      configurable: true
+    })
+    return
+  }
+
+  Object.defineProperty(navigator, 'platform', {
+    value: platform,
+    configurable: true
+  })
+}
+
+afterEach(() => {
+  if (originalPlatform === undefined) {
+    Reflect.deleteProperty(globalThis, 'navigator')
+    return
+  }
+
+  Object.defineProperty(navigator, 'platform', {
+    value: originalPlatform,
+    configurable: true
+  })
+})
 
 describe('shouldConvertEolForCli', () => {
   it('disables convertEol for opencode so bare LF keeps VT index semantics', () => {
@@ -70,23 +100,44 @@ describe('buildMainTerminalOptions', () => {
       expect(opts).toMatchObject({
         fontWeight: 400,
         fontWeightBold: 700,
-        fontSize: 11
+        fontSize: 12
       })
     }
   })
 
   it('keeps the programmer-friendly mono stack', () => {
-    expect(buildMainTerminalOptions('light').fontFamily).toContain(
-      'JetBrains Mono'
-    )
+    const fontFamily = String(buildMainTerminalOptions('light').fontFamily)
+    expect(fontFamily).toContain('SF Mono')
+    expect(fontFamily).toContain('Menlo')
+    expect(fontFamily).toContain('JetBrains Mono')
   })
 
-  it('uses the leaner render profile for long transcript scrolling', () => {
+  it('uses a native-terminal-like render profile without extra spacing', () => {
     expect(buildMainTerminalOptions('light')).toMatchObject({
-      lineHeight: 1.45,
+      lineHeight: 1.15,
       letterSpacing: 0,
       minimumContrastRatio: 4.5,
       cursorBlink: false
+    })
+  })
+
+  it('uses a tighter Windows profile only for codex and opencode', () => {
+    mockNavigatorPlatform('Win32')
+
+    expect(buildMainTerminalOptions('light', 'codex')).toMatchObject({
+      lineHeight: 1.25,
+      fontWeight: 500,
+      fontWeightBold: 700
+    })
+    expect(buildMainTerminalOptions('light', 'C:\\Tools\\opencode.exe')).toMatchObject({
+      lineHeight: 1.25,
+      fontWeight: 500,
+      fontWeightBold: 700
+    })
+    expect(buildMainTerminalOptions('light', 'claude')).toMatchObject({
+      lineHeight: 1.45,
+      fontWeight: 600,
+      fontWeightBold: 800
     })
   })
 })

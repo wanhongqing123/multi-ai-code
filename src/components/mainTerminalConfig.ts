@@ -44,6 +44,15 @@ function isWindowsPlatform(): boolean {
   return plat.includes('win')
 }
 
+function isCliExecutable(cli: string | undefined, names: readonly string[]): boolean {
+  if (!cli) return false
+  const escapedNames = names.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  return new RegExp(
+    `(^|[\\\\/])(${escapedNames.join('|')})(\\.(exe|cmd|bat|ps1))?$`,
+    'i'
+  ).test(cli.trim())
+}
+
 /**
  * opencode 的 opentui 渲染器用裸 LF 表示"下移一行、列不变"（VT 标准语义，
  * 实测字节流中侧栏刷新即如此）。convertEol 会把它改写成 CR+LF，光标被拽回
@@ -51,22 +60,24 @@ function isWindowsPlatform(): boolean {
  * claude/codex 维持原有 convertEol=true 行为不变。
  */
 export function shouldConvertEolForCli(cli: string | undefined): boolean {
-  if (!cli) return true
-  return !/(^|[\\/])opencode(\.(exe|cmd|bat|ps1))?$/i.test(cli.trim())
+  return !isCliExecutable(cli, ['opencode'])
 }
 
 export function buildMainTerminalOptions(theme: Theme, cli?: string): ITerminalOptions {
   // Windows 下 GDI/DirectWrite 渲染较瘦，保留较粗权重保证清晰度；
-  // macOS / Linux 的字体平滑会让相同权重显得过粗，降到 normal/bold。
+  // macOS / Linux 对齐系统终端的紧凑行距和常用字体，避免 TUI 被撑高、显得松散。
   const heavy = isWindowsPlatform()
+  const tunedWindowsAicli = heavy && isCliExecutable(cli, ['codex', 'opencode'])
   return {
-    fontSize: heavy ? 13 : 11,
-    lineHeight: 1.45,
+    fontSize: heavy ? 13 : 12,
+    lineHeight: tunedWindowsAicli ? 1.25 : heavy ? 1.45 : 1.15,
     letterSpacing: 0,
     fontFamily:
-      'Monaco, Menlo, "JetBrains Mono", "SF Mono", Consolas, monospace',
-    fontWeight: heavy ? 600 : 400,
-    fontWeightBold: heavy ? 800 : 700,
+      tunedWindowsAicli
+        ? '"Cascadia Mono", Consolas, "JetBrains Mono", monospace'
+        : '"SF Mono", Menlo, Monaco, "JetBrains Mono", Consolas, monospace',
+    fontWeight: tunedWindowsAicli ? 500 : heavy ? 600 : 400,
+    fontWeightBold: tunedWindowsAicli ? 700 : heavy ? 800 : 700,
     cursorBlink: false,
     cursorStyle: 'underline',
     cursorInactiveStyle: 'underline',

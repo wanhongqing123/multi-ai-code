@@ -23,6 +23,10 @@ import {
   type OpenCodeProviderProfile
 } from '../aicli/opencodeConfig.js'
 import {
+  withCodexTerminalEnv,
+  type TerminalThemeMode
+} from '../aicli/codexConfig.js'
+import {
   createAicliStructuredOutputBridge,
   type AicliStructuredOutputBridge,
   type AicliStructuredOutputProvider
@@ -126,6 +130,11 @@ export interface SpawnRequest {
   args: string[]
   env?: Record<string, string>
   opencode?: OpenCodeProviderProfile
+  /**
+   * 宿主终端当前的明暗主题。用于给 codex 注入 CODEX_DEFAULT_TERMINAL_BG/FG，
+   * 让 codex 的明暗判定与我们实际的终端背景一致（Windows ConPTY 无法探测）。
+   */
+  terminalTheme?: TerminalThemeMode
   cols?: number
   rows?: number
   /**
@@ -569,7 +578,11 @@ export function registerPtyIpc(): void {
       cols: req.cols,
       rows: req.rows,
       env: withRemoteImCliEnv(
-        withOpenCodeLspEnv(req.command, req.env, req.opencode),
+        withCodexTerminalEnv(
+          req.command,
+          withOpenCodeLspEnv(req.command, req.env, req.opencode),
+          req.terminalTheme
+        ),
         req.projectId
       ),
       enableMsys,

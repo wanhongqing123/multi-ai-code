@@ -16,10 +16,10 @@ import {
   formatMarkdownChunk,
   shouldFormatMarkdownForCli
 } from './terminalMarkdown.js'
-import {
-  normalizeTerminalStyleForCli,
-  type TerminalStyleCli
-} from './terminalCodexStyle.js'
+
+// 归一化的 AI CLI 种类。codex 的浅色/背景样式问题已从根源解决（fork 版按宿主终端
+// 主题注入 CODEX_DEFAULT_TERMINAL_BG/FG），不再需要在渲染侧剥离 SGR。
+export type TerminalStyleCli = 'claude' | 'codex' | 'opencode' | 'unknown'
 import {
   copySelection,
   installCopyBinding,
@@ -120,11 +120,10 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
 
     const offData = window.api.cc.onData((evt) => {
       if (evt.sessionId !== props.sessionId) return
-      const normalized = normalizeTerminalStyleForCli(evt.chunk, aiCliRef.current)
       // opencode 的全屏 TUI 依赖精确列宽，Markdown 改写会造成重绘残影，须直通。
       const text = shouldFormatMarkdownForCli(aiCliRef.current)
-        ? formatMarkdownChunk(normalized, markdownStateRef.current).text
-        : normalized
+        ? formatMarkdownChunk(evt.chunk, markdownStateRef.current).text
+        : evt.chunk
       term.write(text)
     })
     unsubRef.current.push(offData)

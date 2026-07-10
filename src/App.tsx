@@ -997,6 +997,7 @@ function AppShell() {
       args,
       env: aiSettings.env ?? {},
       opencode: aiSettings.opencode,
+      terminalTheme: theme,
       mode
     })
     if (!res.ok) {

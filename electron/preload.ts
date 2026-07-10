@@ -487,6 +487,8 @@ export interface SpawnRequest {
   args: string[]
   env?: Record<string, string>
   opencode?: OpenCodeProviderProfile
+  /** 宿主终端当前明暗主题，用于给 codex 注入正确的默认背景/前景色。 */
+  terminalTheme?: 'light' | 'dark'
   cols?: number
   rows?: number
   /**

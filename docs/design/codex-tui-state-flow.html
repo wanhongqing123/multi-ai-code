@@ -1,0 +1,1244 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Codex TUI 状态流转与模型交互时序</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --paper: #ffffff;
+      --ink: #111827;
+      --muted: #64748b;
+      --line: #dbe3ee;
+      --soft-line: #eef2f7;
+      --blue: #2563eb;
+      --green: #059669;
+      --amber: #d97706;
+      --red: #dc2626;
+      --violet: #7c3aed;
+      --code-bg: #0f172a;
+      --code-ink: #e5e7eb;
+      --sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", Helvetica, "Microsoft YaHei", Arial, sans-serif;
+      --mono: "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--bg);
+      font-family: var(--sans);
+      line-height: 1.65;
+    }
+
+    a {
+      color: var(--blue);
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 280px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    aside {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 28px 24px;
+      border-right: 1px solid var(--line);
+      background: #eef6ff;
+      overflow: auto;
+    }
+
+    aside h1 {
+      margin: 0 0 10px;
+      font-size: 24px;
+      line-height: 1.2;
+    }
+
+    aside p {
+      margin: 0 0 22px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    nav {
+      display: grid;
+      gap: 8px;
+    }
+
+    nav a {
+      display: block;
+      padding: 8px 10px;
+      border-radius: 6px;
+      color: #1f2937;
+      font-size: 14px;
+    }
+
+    nav a:hover {
+      background: rgba(37, 99, 235, 0.1);
+      text-decoration: none;
+    }
+
+    main {
+      padding: 40px 48px 72px;
+      max-width: 1320px;
+      width: 100%;
+    }
+
+    .hero {
+      margin-bottom: 28px;
+      padding: 32px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--paper);
+    }
+
+    .hero h2 {
+      margin: 0 0 10px;
+      font-size: 34px;
+      line-height: 1.22;
+    }
+
+    .hero p {
+      margin: 0;
+      max-width: 980px;
+      color: var(--muted);
+      font-size: 17px;
+    }
+
+    section {
+      margin-top: 24px;
+      padding: 28px 32px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--paper);
+    }
+
+    h2 {
+      margin: 0 0 18px;
+      font-size: 26px;
+      line-height: 1.3;
+    }
+
+    h3 {
+      margin: 24px 0 10px;
+      font-size: 18px;
+    }
+
+    p {
+      margin: 10px 0;
+    }
+
+    ul {
+      margin: 10px 0 0;
+      padding-left: 22px;
+    }
+
+    li {
+      margin: 6px 0;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .note {
+      padding: 14px 16px;
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--blue);
+      border-radius: 6px;
+      background: #f8fbff;
+    }
+
+    .note strong {
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    .card {
+      padding: 16px;
+      border: 1px solid var(--soft-line);
+      border-radius: 8px;
+      background: #fbfdff;
+    }
+
+    .card h3 {
+      margin-top: 0;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: #fff;
+      font-family: var(--mono);
+      font-size: 12px;
+      color: #334155;
+      vertical-align: middle;
+    }
+
+    .tag.turn { border-color: rgba(37, 99, 235, 0.35); color: var(--blue); }
+    .tag.cell { border-color: rgba(5, 150, 105, 0.35); color: var(--green); }
+    .tag.model { border-color: rgba(124, 58, 237, 0.35); color: var(--violet); }
+    .tag.warn { border-color: rgba(217, 119, 6, 0.38); color: var(--amber); }
+
+    .diagram {
+      margin: 16px 0 0;
+      padding: 18px;
+      border: 1px solid var(--soft-line);
+      border-radius: 8px;
+      background: #fbfdff;
+      overflow-x: auto;
+    }
+
+    .mermaid {
+      min-width: 680px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 12px;
+      font-size: 14px;
+    }
+
+    th,
+    td {
+      padding: 12px 12px;
+      border-bottom: 1px solid var(--soft-line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      color: #334155;
+      background: #f8fafc;
+      font-weight: 700;
+    }
+
+    code {
+      font-family: var(--mono);
+      font-size: 0.92em;
+      color: #0f766e;
+      background: #ecfdf5;
+      border-radius: 4px;
+      padding: 1px 5px;
+    }
+
+    pre {
+      margin: 12px 0 0;
+      padding: 16px;
+      border-radius: 8px;
+      background: var(--code-bg);
+      color: var(--code-ink);
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.55;
+      overflow-x: auto;
+    }
+
+    .source-list {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .source-list a {
+      font-family: var(--mono);
+      font-size: 13px;
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      align-items: start;
+    }
+
+    @media (max-width: 980px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      aside {
+        position: static;
+        height: auto;
+      }
+
+      main {
+        padding: 24px 18px 48px;
+      }
+
+      .grid,
+      .split {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs";
+
+    mermaid.initialize({
+      startOnLoad: true,
+      securityLevel: "loose",
+      theme: "base",
+      themeVariables: {
+        fontFamily: "-apple-system, BlinkMacSystemFont, PingFang SC, Helvetica Neue, Arial, sans-serif",
+        primaryColor: "#eff6ff",
+        primaryTextColor: "#111827",
+        primaryBorderColor: "#93c5fd",
+        lineColor: "#64748b",
+        secondaryColor: "#ecfdf5",
+        tertiaryColor: "#fff7ed",
+        noteBkgColor: "#fefce8",
+        noteTextColor: "#111827"
+      }
+    });
+  </script>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <h1>Codex TUI 状态流转</h1>
+      <p>解释 TUI 状态显示、内部 Turn 生命周期、模型交互循环，以及 IM 转发为什么不能依赖终端可见文本。</p>
+      <nav>
+        <a href="#summary">核心结论</a>
+        <a href="#overview">总览图</a>
+        <a href="#turn-sequence">Turn 时序</a>
+        <a href="#tool-sequence">工具时序</a>
+        <a href="#model-loop">模型交互循环</a>
+        <a href="#model-sync">新模型同步策略</a>
+        <a href="#state-machine">状态机图</a>
+        <a href="#display-map">TUI 显示状态</a>
+        <a href="#interrupt">任务插入与 steer</a>
+        <a href="#im-hook">IM 消息钩子</a>
+        <a href="#im-forward">IM 转发边界</a>
+        <a href="#sources">源码入口</a>
+      </nav>
+    </aside>
+
+    <main>
+      <div class="hero">
+        <h2>Codex TUI 状态显示与内部模型交互</h2>
+        <p>
+          Codex 的状态不是由一个单一 enum 控制，而是由 Turn 生命周期、模型流式事件、工具执行事件和 TUI transcript cell 共同驱动。
+          因此 <code>Working</code>、<code>Ran</code>、<code>Explored</code>、<code>Thought</code> 这些展示状态不能混为一个任务完成状态。
+        </p>
+      </div>
+
+      <section id="summary">
+        <h2>核心结论</h2>
+        <div class="grid">
+          <div class="card">
+            <h3><span class="tag turn">Turn 级状态</span></h3>
+            <p><code>Working</code> 表示当前用户轮次还在运行。真正的完成边界是 <code>TurnCompleted</code>，不是某条消息或某条命令显示完成。</p>
+          </div>
+          <div class="card">
+            <h3><span class="tag cell">Cell 级状态</span></h3>
+            <p><code>Running</code>、<code>Ran</code>、<code>Exploring</code>、<code>Explored</code> 是 transcript 里的工具/命令展示状态，只代表某个动作的生命周期。</p>
+          </div>
+          <div class="card">
+            <h3><span class="tag model">模型事件</span></h3>
+            <p><code>Thought</code> / reasoning 是模型推理摘要或 TUI 渲染出来的思考块，不应该当成最终回复转发到 IM。</p>
+          </div>
+        </div>
+        <div class="note">
+          <strong>最重要的边界</strong>
+          IM 转发不能抓 TUI 可见文本。终端可见文本里会混入用户输入、状态栏、推理摘要、工具执行记录、prompt echo 和最终回复。稳定方案必须只转发协议层最终内容，或者只转发当前 <code>replyId</code> 标记内的内容。
+        </div>
+      </section>
+
+      <section id="overview">
+        <h2>总览图</h2>
+        <p>
+          先看整体分层：用户输入进入 Core，Core 驱动模型和工具，TUI 只负责把事件渲染成不同状态。
+          这张图只保留主干，避免把所有细节挤在一张图里。
+        </p>
+        <div class="diagram">
+          <pre class="mermaid">
+flowchart LR
+    U[用户输入] --> TUI[Codex TUI]
+    TUI --> C[Core / Session]
+    C --> R[RegularTask / run_turn]
+    R --> M[大模型请求]
+    M -->|文本 / reasoning| R
+    M -->|工具调用| TOOL[工具/命令层]
+    TOOL -->|结果| R
+    R -->|事件| TUI
+    TUI --> W[Working]
+    TUI --> TH[Thought / reasoning]
+    TUI --> CMD[Running / Ran]
+    TUI --> EXP[Exploring / Explored]
+    R --> DONE[TurnCompleted]
+          </pre>
+        </div>
+      </section>
+
+      <section id="turn-sequence">
+        <h2>Turn 时序</h2>
+        <p>
+          Turn 可以理解成“用户发起的一轮任务”。用户输入一条消息后，Core 会创建一个 Turn，
+          这个 Turn 负责组织上下文、调用模型、处理模型请求的工具调用，并在模型最终停止后给 TUI 一个完成通知。
+          <code>Working</code> 是 Turn 级状态，它从 <code>TurnStarted</code> 开始，到 <code>TurnCompleted</code> 清理。
+        </p>
+        <h3>阶段说明</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>阶段</th>
+              <th>内部动作</th>
+              <th>TUI 显示</th>
+              <th>关键判断</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>1. 用户输入</td>
+              <td>用户在 TUI 输入任务，TUI 把输入提交给 Core / Session。</td>
+              <td>输入框内容进入 transcript。</td>
+              <td>此时还没有开始真正执行 Turn。</td>
+            </tr>
+            <tr>
+              <td>2. Turn 启动</td>
+              <td>Core 创建当前 Turn，并向 TUI 发出 <code>TurnStarted</code>。</td>
+              <td>进入 <code>Working</code>，状态栏和标题进入运行态。</td>
+              <td>这是“任务开始”的边界。</td>
+            </tr>
+            <tr>
+              <td>3. 模型请求</td>
+              <td>Turn 把用户输入、系统约束、历史消息、上一轮工具结果组装后发送给模型。</td>
+              <td>如果模型输出 reasoning，TUI 可能显示 <code>Thought</code>。</td>
+              <td><code>Thought</code> 不是最终回复，只是推理展示。</td>
+            </tr>
+            <tr>
+              <td>4. 模型流式输出</td>
+              <td>模型可能输出正文，也可能请求工具调用；如果请求工具，Turn 会暂停等待工具结果。</td>
+              <td>正文会流式显示；工具会进入 <code>Running</code> 或 <code>Exploring</code>。</td>
+              <td>正文出现不代表任务完成，模型后面仍可能继续调用工具。</td>
+            </tr>
+            <tr>
+              <td>5. 多轮循环</td>
+              <td>工具结果写回 history 后，Turn 再次请求模型，直到模型不再请求工具并给出最终停止信号。</td>
+              <td>可能反复出现 <code>Ran</code>、<code>Explored</code>、<code>Thought</code>、正文。</td>
+              <td><code>Ran</code> / <code>Explored</code> 只代表单个工具动作完成。</td>
+            </tr>
+            <tr>
+              <td>6. Turn 完成</td>
+              <td>Turn 返回 <code>Completed</code>、<code>Failed</code> 或 <code>Interrupted</code> 给 Core，Core 再通知 TUI。</td>
+              <td>TUI 清理 <code>Working</code>，必要时启动队列里的下一条输入。</td>
+              <td><code>TurnCompleted</code> 才是这一轮任务的结束边界。</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          因此看 TUI 时要区分两件事：<code>Working</code> 表示这一轮 Turn 还活着；
+          <code>Thought</code>、正文、<code>Running</code>、<code>Ran</code>、<code>Explored</code> 都只是这个 Turn 内部过程中的展示片段。
+        </p>
+        <h3>什么时候会调用大模型</h3>
+        <p>
+          一轮 Turn 里不一定只调用一次大模型。Codex 的核心循环是“模型请求 -> 解析模型输出 -> 如果有工具调用就执行工具 -> 把工具结果写回上下文 -> 再次请求模型”。
+          因此大模型调用点主要有三个：
+        </p>
+        <ul>
+          <li><strong>首次调用：</strong>用户输入进入 Turn 后，Core 组装系统提示、开发者约束、历史消息、当前用户消息，然后发起第一次模型请求。</li>
+          <li><strong>工具后续调用：</strong>模型要求执行命令、读文件、搜索、改文件等工具时，Turn 会先执行工具；工具完成后，工具结果会作为新的上下文追加回 history，然后再次调用模型。</li>
+          <li><strong>队列输入调用：</strong>如果当前 Turn 期间用户又输入了 B，B 会先进入 pending 队列；当前 Turn 结束后，Core 启动新的 Turn，再为 B 发起新的模型请求。</li>
+        </ul>
+        <p>
+          模型每次返回的内容会被分类处理：reasoning 会进入 <code>Thought</code> 展示；assistant 文本会进入正文展示；
+          tool call 会进入工具执行流程；如果模型不再请求工具并给出最终停止信号，这一轮 Turn 才会进入完成阶段。
+        </p>
+        <div class="diagram">
+          <pre class="mermaid">
+flowchart TD
+    A[用户输入任务] --> B[创建 Turn]
+    B --> C[TUI 显示 Working]
+    C --> D[组装模型输入]
+    D --> E[调用大模型]
+    E --> F{模型返回}
+    F -->|reasoning| G[TUI 显示 Thought]
+    G --> E
+    F -->|正文| H[TUI 显示正文]
+    H --> I{是否还要工具}
+    F -->|tool call| J[执行工具]
+    I -->|是| J
+    J --> K[工具结果写回 history]
+    K --> D
+    I -->|否| L[TurnCompleted]
+    L --> M[TUI 清理 Working]
+          </pre>
+        </div>
+      </section>
+
+      <section id="tool-sequence">
+        <h2>工具执行时序</h2>
+        <p>
+          这张图只看工具/命令 Cell。<code>Ran</code> 和 <code>Explored</code> 只代表工具动作完成，
+          不代表整轮任务完成。
+        </p>
+        <div class="diagram">
+          <pre class="mermaid">
+flowchart TD
+    A[模型请求工具] --> B{工具类型}
+    B -->|读文件 / 搜索 / 列目录| C[TUI 显示 Exploring]
+    B -->|build / test / git / 脚本| D[TUI 显示 Running]
+    C --> E[工具执行]
+    D --> E
+    E --> F[输出增量显示到 TUI]
+    F --> G[工具完成]
+    G --> H{原工具类型}
+    H -->|探索类| I[TUI 显示 Explored]
+    H -->|普通命令| J[TUI 显示 Ran]
+    I --> K[结果写回 history]
+    J --> K
+    K --> L[下一次模型调用带上工具结果]
+          </pre>
+        </div>
+      </section>
+
+      <section id="model-loop">
+        <h2>模型交互循环</h2>
+        <p>
+          这张图只描述 Turn 内部如何和大模型交互。关键是：模型不是直接“回答完就结束”，它可能先输出 reasoning，
+          再输出正文，或者请求工具。只要模型请求了工具，Turn 就必须把工具结果补回上下文，然后再次调用模型。
+        </p>
+        <div class="diagram">
+          <pre class="mermaid">
+flowchart TD
+    A[准备模型输入] --> B[调用大模型]
+    B --> C{模型返回内容}
+    C -->|reasoning| D[TUI 显示 Thought]
+    D --> B
+    C -->|assistant 文本| E[TUI 流式显示正文]
+    E --> F{是否还有工具调用}
+    F -->|有| G[执行工具]
+    C -->|tool call| G
+    G --> H[工具结果写回 history]
+    H --> B
+    F -->|没有| I[模型停止 / 最终回复完成]
+    I --> J[Turn 进入完成阶段]
+          </pre>
+        </div>
+        <p>
+          这里的“再次调用模型”发生在工具结果写回 history 之后。也就是说，工具执行本身不会自动产生最终答案；
+          最终答案通常要靠后续那次模型调用，模型看到工具结果后再组织回复。
+        </p>
+      </section>
+
+      <section id="model-sync">
+        <h2>新模型同步策略</h2>
+        <p>
+          “服务端发布新模型”和“本地编译的 Codex 需要同步上游源码”不是一回事。
+          Codex 本身有模型目录发现和缓存机制，会通过远端 <code>/v1/models</code> 获取模型列表，并把结果缓存在
+          <code>models_cache.json</code>。因此，如果服务端只是新增了一个模型 slug 或更新了普通模型元数据，本地 Codex
+          通常不需要立刻同步上游源码；它刷新模型目录后就应该能看到或使用新模型。
+        </p>
+        <p>
+          需要同步上游源码的情况，主要是新模型带来了客户端必须理解的新协议、新能力或新的默认策略。
+          例如返回事件结构变了、工具调用协议变了、reasoning 字段语义变了、模型能力标记本地无法解析，或者上游 Codex
+          为这个模型专门改了默认模型选择、模型迁移提示、service tier、上下文窗口等客户端逻辑。
+        </p>
+
+        <div class="diagram">
+          <pre class="mermaid">
+flowchart TD
+    A[服务端发布新模型] --> B{只是 /v1/models 新增或更新元数据?}
+    B -->|是| C[本地 Codex 刷新模型目录]
+    C --> D[写入 / 读取 models_cache.json]
+    D --> E{能选择模型并完成一次普通对话?}
+    E -->|是| F[不需要同步上游源码]
+    E -->|否| G[检查模型能力和客户端兼容性]
+
+    B -->|否| G
+    G --> H{是否涉及协议 / 事件 / 工具 / reasoning / 默认策略变化?}
+    H -->|是| I[同步上游 Codex]
+    I --> J[rebase Multi-AI Code IM patch]
+    J --> K[编译并跑 IM 回归测试]
+    H -->|否| L[优先调整本地配置或模型目录缓存]
+          </pre>
+        </div>
+
+        <h3>判断标准</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>变化类型</th>
+              <th>是否需要同步上游 Codex</th>
+              <th>原因</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>服务端只新增模型 ID，例如新模型出现在 <code>/v1/models</code>。</td>
+              <td>通常不需要。</td>
+              <td>Codex 的模型管理层会刷新远端模型目录，并缓存到 <code>models_cache.json</code>。</td>
+            </tr>
+            <tr>
+              <td>模型可用，但本地 UI 没有展示最新默认名称、排序或描述。</td>
+              <td>不一定需要。</td>
+              <td>如果只是展示问题，可以先看模型目录缓存和本地配置；不必为了文案或排序立即升级二进制。</td>
+            </tr>
+            <tr>
+              <td>新模型要求新的请求字段、响应事件、工具调用格式或 reasoning 解析方式。</td>
+              <td>需要。</td>
+              <td>这些是客户端协议兼容性问题，旧二进制可能无法正确解析模型输出。</td>
+            </tr>
+            <tr>
+              <td>上游 Codex 针对新模型改了默认模型、模型迁移、上下文窗口、service tier 或能力判断。</td>
+              <td>需要评估，通常建议同步。</td>
+              <td>这些逻辑会影响启动默认值、模型选择器和实际请求参数。</td>
+            </tr>
+            <tr>
+              <td>只是服务端灰度、限流、可用区域或账号权限变化。</td>
+              <td>通常不需要。</td>
+              <td>这是服务端或账号侧问题，同步源码不一定能解决。</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>建议流程</h3>
+        <p>
+          新模型发布后，先用当前本地 Codex 做兼容性验证：刷新模型目录，选择新模型，发一个普通问题，再跑一个最小工具调用任务。
+          如果这两类任务都能正常完成，并且 IM bridge 仍然只回传 <code>remote-im-reply</code> 内的最终内容，就不必马上同步上游。
+        </p>
+        <p>
+          如果验证失败，再看失败类型。模型不出现在列表里，优先检查 <code>/v1/models</code>、认证和缓存；
+          模型能选但回复解析异常、工具调用异常、TUI 状态错乱或 IM hook 收不到 assistant message，则应同步上游 Codex，
+          然后把 Multi-AI Code 的 IM patch 重新 rebase 上去。
+        </p>
+        <div class="note">
+          <strong>本项目的同步原则</strong>
+          本地维护 Codex fork 之后，不能把“模型发布”当成“必须升级源码”的硬规则。更稳的策略是：
+          模型目录变化靠 <code>/v1/models</code> 自动发现；协议和客户端能力变化才同步上游；同步后必须跑 Codex 启动、模型选择、工具调用和 IM 回传回归。
+        </div>
+
+        <h3>全局安装版和自编译版为什么可能不一致</h3>
+        <p>
+          本机可能同时存在多个 Codex。全局命令 <code>codex</code> 可能来自 npm 安装路径，例如
+          <code>/Users/hongqingwan/.real/.bin/node/bin/codex</code>；Multi-AI Code 启动的可能是
+          <code>third_party/aicli/codex/codex-rs/target/debug/codex</code> 或 release 产物。
+          这两个二进制即使名字一样，也可能来自不同源码版本。
+        </p>
+        <p>
+          如果全局安装版拿不到新模型，而自编译版可以拿到，优先看三个差异：第一，版本是否不同；
+          第二，是否读的是同一个 <code>CODEX_HOME</code> 和 <code>models_cache.json</code>；
+          第三，全局版本是否太旧，缺少新的模型目录刷新、模型能力解析或服务端 <code>X-Models-Etag</code> 处理逻辑。
+        </p>
+        <p>
+          即使账号完全相同，两个 Codex 也可能拿到不同模型列表，因为 Codex 拉取模型目录时会把
+          <code>client_version</code> 传给服务端。当前源码中 <code>fetch_and_update_models()</code>
+          会调用 <code>client_version_to_whole()</code>，然后执行 <code>endpoint_client.list_models(&amp;client_version)</code>。
+          模型缓存同样会校验 <code>client_version</code>，版本不匹配时不会复用旧缓存。
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>检查项</th>
+              <th>命令</th>
+              <th>用途</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>确认实际二进制</td>
+              <td><code>which -a codex</code></td>
+              <td>判断当前 shell 里的 <code>codex</code> 到底来自全局 npm，还是项目内置路径。</td>
+            </tr>
+            <tr>
+              <td>确认版本</td>
+              <td><code>codex --version</code></td>
+              <td>服务端可能根据这个客户端版本返回不同模型目录。</td>
+            </tr>
+            <tr>
+              <td>比较远端模型目录</td>
+              <td><code>codex debug models</code></td>
+              <td>直接看当前二进制实际拿到的服务端模型列表。</td>
+            </tr>
+            <tr>
+              <td>比较内置模型目录</td>
+              <td><code>codex debug models --bundled</code></td>
+              <td>排除二进制自带模型目录是否不同。</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          当前仓库的集成目标应该是固定使用内置路径下的 Codex，并在 UI 或日志里明确展示实际启动路径和版本。
+          这样用户机器上即使另外安装了一个 <code>codex</code>，也不会影响 Multi-AI Code 内部 AICLI 的模型列表和 IM 回传行为。
+        </p>
+      </section>
+
+      <section id="state-machine">
+        <h2>状态机图</h2>
+        <p>
+          这张图是对源码事件的抽象。实际代码里这些状态分布在 Turn 生命周期、命令生命周期、工具生命周期和 TUI 渲染层。
+        </p>
+        <div class="diagram">
+          <pre class="mermaid">
+stateDiagram-v2
+    [*] --> Idle: 没有正在执行的 Turn
+
+    Idle --> Starting: 用户输入任务
+    Starting --> Working: 收到 TurnStarted
+
+    Working --> ModelStreaming: 发起模型请求
+
+    ModelStreaming --> ReasoningVisible: 收到 reasoning / thought
+    ReasoningVisible --> ModelStreaming: reasoning 继续或结束
+
+    ModelStreaming --> AssistantStreaming: 收到 assistant 文本
+    AssistantStreaming --> ModelStreaming: 文本流未结束
+
+    ModelStreaming --> ToolRunning: 模型请求工具/命令
+
+    ToolRunning --> Exploring: read / list / search 类命令开始
+    Exploring --> Explored: 探索类命令完成
+    Explored --> ModelStreaming: 工具结果回填给模型
+
+    ToolRunning --> Running: 普通命令开始
+    Running --> Ran: 普通命令完成
+    Ran --> ModelStreaming: 工具结果回填给模型
+
+    ModelStreaming --> Completing: 模型没有更多工具调用，给出最终回复
+
+    Completing --> Completed: TurnCompleted(Completed)
+    Completing --> Failed: TurnCompleted(Failed)
+    Completing --> Interrupted: TurnCompleted(Interrupted)
+
+    Completed --> Idle
+    Failed --> Idle
+    Interrupted --> Idle
+          </pre>
+        </div>
+        <h3>状态说明</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>状态</th>
+              <th>含义</th>
+              <th>进入条件</th>
+              <th>离开条件</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>Idle</code></td>
+              <td>没有正在执行的 Turn。TUI 不应该显示 <code>Working</code>。</td>
+              <td>程序启动后无任务，或上一轮 Turn 已结束。</td>
+              <td>用户输入新任务，进入 <code>Starting</code>。</td>
+            </tr>
+            <tr>
+              <td><code>Starting</code></td>
+              <td>用户输入已经提交，Core 正在创建当前 Turn。</td>
+              <td>TUI 把用户消息提交给 Core / Session。</td>
+              <td>Core 发出 <code>TurnStarted</code> 后进入 <code>Working</code>。</td>
+            </tr>
+            <tr>
+              <td><code>Working</code></td>
+              <td>当前 Turn 正在运行，是 TUI 顶部/标题的任务级状态。</td>
+              <td>收到 <code>TurnStarted</code>。</td>
+              <td>开始模型请求后进入 <code>ModelStreaming</code>；整个 Turn 完成后最终回到 <code>Idle</code>。</td>
+            </tr>
+            <tr>
+              <td><code>ModelStreaming</code></td>
+              <td>Codex 正在等待或处理模型的流式返回。</td>
+              <td>Turn 组装上下文后发起模型调用，或者工具结果写回 history 后再次调用模型。</td>
+              <td>根据模型返回内容进入 reasoning、assistant 文本、工具执行，或者完成阶段。</td>
+            </tr>
+            <tr>
+              <td><code>ReasoningVisible</code></td>
+              <td>模型返回 reasoning / thought 类事件，TUI 显示 <code>Thought</code>。</td>
+              <td>模型流中出现 reasoning 事件。</td>
+              <td>reasoning 片段处理完后回到 <code>ModelStreaming</code>，继续等待模型后续输出。</td>
+            </tr>
+            <tr>
+              <td><code>AssistantStreaming</code></td>
+              <td>模型返回 assistant 正文，TUI 流式显示文本。</td>
+              <td>模型流中出现 assistant text。</td>
+              <td>文本片段结束后回到 <code>ModelStreaming</code>；如果没有工具调用且模型停止，则进入 <code>Completing</code>。</td>
+            </tr>
+            <tr>
+              <td><code>ToolRunning</code></td>
+              <td>模型请求执行工具，Turn 暂停下一次模型调用，先等待工具结果。</td>
+              <td>模型返回 tool call / command request。</td>
+              <td>根据工具类型进入 <code>Exploring</code> 或 <code>Running</code>。</td>
+            </tr>
+            <tr>
+              <td><code>Exploring</code> / <code>Explored</code></td>
+              <td>探索类工具状态。读文件、列目录、搜索时显示 <code>Exploring</code>，完成后显示 <code>Explored</code>。</td>
+              <td>工具被识别为 read / list / search。</td>
+              <td>工具结果写回 history 后回到 <code>ModelStreaming</code>，触发下一次模型调用。</td>
+            </tr>
+            <tr>
+              <td><code>Running</code> / <code>Ran</code></td>
+              <td>普通命令状态。build、test、git、脚本运行时显示 <code>Running</code>，完成后显示 <code>Ran</code>。</td>
+              <td>工具不是纯探索类命令。</td>
+              <td>命令结果写回 history 后回到 <code>ModelStreaming</code>，触发下一次模型调用。</td>
+            </tr>
+            <tr>
+              <td><code>Completing</code></td>
+              <td>模型没有继续请求工具，当前 Turn 准备收尾。</td>
+              <td>模型给出最终停止信号，或者当前流程进入错误/中断收尾。</td>
+              <td>Core 发出 <code>TurnCompleted(Completed/Failed/Interrupted)</code>。</td>
+            </tr>
+            <tr>
+              <td><code>Completed</code> / <code>Failed</code> / <code>Interrupted</code></td>
+              <td>Turn 的终态。分别表示正常完成、失败、被中断。</td>
+              <td>Core 通知 TUI 当前 Turn 完成。</td>
+              <td>TUI 清理 <code>Working</code>，必要时启动 pending 队列里的下一条输入，然后回到 <code>Idle</code> 或进入下一轮 <code>Starting</code>。</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="note">
+          <strong>判断任务是否完成</strong>
+          看 <code>TurnCompleted</code>，不要看 <code>Ran</code>、<code>Explored</code> 或正文是否已经出现。
+          后三者都只是当前 Turn 内部的局部展示状态。
+        </div>
+      </section>
+
+      <section id="display-map">
+        <h2>TUI 显示状态对应表</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>显示状态</th>
+              <th>所属层级</th>
+              <th>触发来源</th>
+              <th>含义</th>
+              <th>是否代表任务完成</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>Working</code></td>
+              <td>Turn 级</td>
+              <td><code>TurnStarted</code></td>
+              <td>当前一轮用户请求正在处理，TUI header / title 会进入运行状态。</td>
+              <td>否</td>
+            </tr>
+            <tr>
+              <td><code>Thought</code> / reasoning</td>
+              <td>模型展示层</td>
+              <td>模型 reasoning 事件或推理摘要</td>
+              <td>模型思考、推理摘要、耗时等展示信息，不是最终回复正文。</td>
+              <td>否</td>
+            </tr>
+            <tr>
+              <td><code>Running</code></td>
+              <td>命令 Cell</td>
+              <td><code>CommandExecutionStarted</code></td>
+              <td>普通命令正在执行，例如 build、test、git、脚本。</td>
+              <td>否</td>
+            </tr>
+            <tr>
+              <td><code>Ran</code></td>
+              <td>命令 Cell</td>
+              <td><code>CommandExecutionCompleted</code></td>
+              <td>普通命令执行完成。它只是工具动作结束，不代表模型已经完成回答。</td>
+              <td>否</td>
+            </tr>
+            <tr>
+              <td><code>Exploring</code></td>
+              <td>探索 Cell</td>
+              <td>read / list / search 类命令开始</td>
+              <td>模型正在读取文件、列目录、搜索文本。多个探索命令可能合并到一个 cell。</td>
+              <td>否</td>
+            </tr>
+            <tr>
+              <td><code>Explored</code></td>
+              <td>探索 Cell</td>
+              <td>探索类命令完成</td>
+              <td>读取/搜索动作完成，结果会回填给模型，模型可能继续下一轮推理。</td>
+              <td>否</td>
+            </tr>
+            <tr>
+              <td><code>Edited</code></td>
+              <td>工具 Cell</td>
+              <td>patch / 文件编辑成功</td>
+              <td>文件修改动作完成，但后面可能还要继续跑测试或修复问题。</td>
+              <td>否</td>
+            </tr>
+            <tr>
+              <td><code>TurnCompleted</code></td>
+              <td>内部 Turn 级</td>
+              <td>Core 通知 TUI</td>
+              <td>本轮用户请求结束，可能是 Completed、Failed 或 Interrupted。</td>
+              <td>是，作为本轮边界</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="interrupt">
+        <h2>任务 A 过程中插入任务 B</h2>
+        <p>
+          当任务 A 还在执行时，用户又输入 B，这类输入本质上是一次 steer。它不是立刻打断当前正在进行的模型请求，
+          也不是直接插入到当前正在执行的工具调用里，而是先进入 pending 输入队列。等当前 Turn 到达可切换边界后，
+          TUI / Core 再把 B 作为下一条用户输入送入新的 Turn。
+        </p>
+        <h3>阶段说明</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>阶段</th>
+              <th>内部动作</th>
+              <th>对模型调用的影响</th>
+              <th>TUI 表现</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>1. A 已经启动</td>
+              <td>任务 A 已经进入当前 Turn，并且已经触发一次或多次模型请求。</td>
+              <td>A 的当前模型请求仍然按原上下文执行。</td>
+              <td>仍显示 <code>Working</code>，可能继续出现正文、<code>Thought</code> 或工具状态。</td>
+            </tr>
+            <tr>
+              <td>2. 用户输入 B</td>
+              <td>TUI 收到 B，但不会把 B 直接写进正在飞行中的模型请求。</td>
+              <td>B 不会改变当前这次已经发出去的模型请求。</td>
+              <td>用户能看到自己输入了 B，但 A 的执行状态仍在继续。</td>
+            </tr>
+            <tr>
+              <td>3. B 进入 pending 队列</td>
+              <td>Core / TUI 把 B 记录为下一条待处理输入。</td>
+              <td>B 等待 A 的当前 Turn 结束或到达可安全切换点。</td>
+              <td>当前 Turn 仍然属于 A。</td>
+            </tr>
+            <tr>
+              <td>4. A 完成</td>
+              <td>A 的 Turn 收到 <code>TurnCompleted</code>，TUI 清理 A 的运行态。</td>
+              <td>A 的模型交互闭环结束。</td>
+              <td><code>Working</code> 会短暂清理，随后可能因为 B 再次进入运行态。</td>
+            </tr>
+            <tr>
+              <td>5. 启动 B</td>
+              <td>TUI 调用 <code>maybe_send_next_queued_input()</code>，把 B 送入新的 Turn。</td>
+              <td>这时才会为 B 组装上下文并发起新的模型请求。B 可以看到 A 已经写入 history 的上下文。</td>
+              <td>进入新的 <code>TurnStarted(B)</code> 和 <code>Working</code>。</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          这套机制的核心目标是避免破坏当前正在执行的模型请求或工具调用。也就是说，B 是“排队接管下一轮”，不是“强行插入当前请求”。
+          如果需要真正中断 A，那是另一个中断流程，不等同于这里说的 steer / pending input。
+        </p>
+        <div class="diagram">
+          <pre class="mermaid">
+sequenceDiagram
+    autonumber
+
+    participant User as 用户
+    participant TUI as TUI
+    participant Core as Core / Session
+    participant TurnA as Turn A
+    participant Model as 大模型
+    participant TurnB as Turn B
+
+    User->>TUI: 输入任务 A
+    TUI->>Core: submit A
+    Core-->>TUI: TurnStarted(A)
+    TUI->>TUI: 显示 Working
+    TurnA->>Model: 请求模型处理 A
+
+    User->>TUI: A 未完成时输入 B
+    TUI->>Core: steer / pending_input(B)
+    Note over Core,TUI: B 被排队，不改写 A 已经发出的模型请求
+
+    Model-->>TurnA: A 的当前模型响应结束
+    TurnA->>Core: TurnCompleted(A)
+    Core-->>TUI: TurnCompleted(A)
+
+    TUI->>TUI: maybe_send_next_queued_input()
+    Core->>TurnB: 启动 B
+    Core-->>TUI: TurnStarted(B)
+    TurnB->>Model: 带上 A 的上下文和 B 请求模型
+          </pre>
+        </div>
+        <div class="note">
+          <strong>状态判断</strong>
+          如果模型已经给了一段回复，但还没有 <code>TurnCompleted</code>，那仍然不是完成态。它只是模型流式输出到了某个阶段。
+        </div>
+      </section>
+
+      <section id="im-hook">
+        <h2>IM 消息钩子接入点</h2>
+        <p>
+          Remote IM 的链路分成两个方向：一是“IM 消息进入 AICLI”，二是“AICLI 回复回传 IM”。
+          这份文档只讨论 Codex：Codex 因为已经接入源码，所以不再只依赖终端可见文本，而是通过隐藏启动参数接入结构化输出桥。
+          Claude 仍然走 transcript 读取路径，这部分不要和 Codex 混在一起改。
+        </p>
+        <p>
+          这个 hook 嵌入在两个流程里：第一个是“Codex 会话启动流程”，主仓在启动 Codex PTY 时把 bridge endpoint 通过隐藏参数传进去；
+          第二个是“assistant message 完成流程”，Codex 在 assistant message item 完成时把正文发回主仓 bridge。
+          也就是说，hook 不是单独跑的后台任务，而是分别挂在 Codex 启动和 Codex assistant 输出完成这两个关键点上。
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>嵌入流程</th>
+              <th>钩子位置</th>
+              <th>作用</th>
+              <th>为什么放这里</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Codex 启动流程</td>
+              <td><code>ptyManager.ts</code> 创建 TCP bridge，并给 Codex 追加 <code>--multi-ai-code-im-ipc</code>。</td>
+              <td>把主仓的结构化输出接收地址传给 Codex。</td>
+              <td>Codex 进程启动后才能知道往哪里回传 assistant text。</td>
+            </tr>
+            <tr>
+              <td>Codex TUI 初始化流程</td>
+              <td><code>tui/src/lib.rs</code> 调用 <code>multi_ai_code_im_bridge::init()</code>。</td>
+              <td>Codex 解析并保存 bridge endpoint。</td>
+              <td>后续任意 assistant message 完成时都可以复用这个连接配置。</td>
+            </tr>
+            <tr>
+              <td>assistant message 完成流程</td>
+              <td><code>on_agent_message_item_completed()</code> 调用 <code>send_assistant_text()</code>。</td>
+              <td>把完成的 assistant text 以 JSON line 发回主仓。</td>
+              <td>这里已经避开了 reasoning、状态栏、工具日志，比抓 TUI 可见文本稳定。</td>
+            </tr>
+            <tr>
+              <td>Remote IM 输出转发流程</td>
+              <td><code>addAicliStructuredOutputListener</code> 追加 buffer，<code>flushRemoteImOutputSession()</code> 提取 marker。</td>
+              <td>只把当前 <code>replyId</code> marker 内的内容发给 IM。</td>
+              <td>避免旧输出、prompt echo、状态噪音被误发。</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>1. 主仓启动 AICLI 时注入结构化输出桥</h3>
+        <p>
+          Electron 的 PTY 管理层会判断当前启动的是哪个 AICLI。对于 <code>codex</code>，
+          主仓会创建结构化输出桥；<code>claude</code> 不走这条链路。
+        </p>
+        <ul>
+          <li><code>electron/cc/ptyManager.ts</code> 里的 <code>structuredOutputProvider(command)</code> 会识别 <code>codex</code>。</li>
+          <li>如果命中 <code>codex</code>，会调用 <code>createAicliStructuredOutputBridge(sessionId, 'codex')</code>。</li>
+          <li>这个 bridge 会在本机开一个 <code>127.0.0.1</code> TCP server，生成带 token 的 endpoint。</li>
+          <li>PTY 启动参数追加隐藏参数：<code>--multi-ai-code-im-ipc tcp://127.0.0.1:port?token=xxx</code>。</li>
+        </ul>
+        <p>
+          这一步的作用是给 Codex 一个“专用回传通道”。Codex TUI 仍然正常显示，IM 回传则通过 TCP bridge
+          进入主仓，不再从终端屏幕文本里硬抓。
+        </p>
+        <div class="diagram">
+          <pre class="mermaid">
+flowchart TD
+    A[用户启动 Codex 会话] --> B[ptyManager 判断命令是 codex]
+    B --> C[主仓创建 StructuredOutputBridge]
+    C --> D[本机监听 127.0.0.1 TCP 端口]
+    D --> E[生成 endpoint + token]
+    E --> F[启动参数追加 --multi-ai-code-im-ipc]
+    F --> G[Codex 进程启动]
+    G --> H[tui/src/lib.rs 初始化 bridge]
+    H --> I[Codex 保存 endpoint，等待 assistant 输出完成]
+          </pre>
+        </div>
+
+        <h3>2. IM 消息进入 AICLI 的顺序</h3>
+        <p>
+          手机端收到消息后，Electron IPC 会进入 <code>remote-im:deliver-incoming-text</code> /
+          <code>remote-im:deliver-incoming-audio</code> / <code>remote-im:deliver-incoming-image</code>。
+          Router 会把消息包装成 AICLI prompt，并调用 <code>sendUserMessageToSession()</code> 注入当前 PTY 会话。
+        </p>
+        <p>
+          这里的顺序很重要：必须先把用户消息发给 AICLI，等 <code>sendUserMessageToSession()</code> 返回成功后，
+          再调用 <code>startOutputForwarding()</code> 建立本轮输出监听状态。这样可以避免把历史输出、启动噪音或上一轮残留误算成本轮回复。
+        </p>
+
+        <h3>3. Codex 源码里的钩子位置</h3>
+        <p>
+          Codex 子仓新增的是一个隐藏参数加一个 TUI 侧 bridge 模块：
+        </p>
+        <ul>
+          <li><code>tui/src/cli.rs</code> 定义隐藏参数 <code>--multi-ai-code-im-ipc</code>。</li>
+          <li><code>tui/src/lib.rs</code> 在 TUI 启动时调用 <code>multi_ai_code_im_bridge::init(multi_ai_code_im_ipc)</code> 保存 endpoint。</li>
+          <li><code>tui/src/multi_ai_code_im_bridge.rs</code> 解析 endpoint，校验 token，并通过 TCP 发送 JSON line。</li>
+          <li><code>tui/src/chatwidget/streaming.rs</code> 在 <code>on_agent_message_item_completed()</code> 里拿到最终 assistant message，调用 <code>send_assistant_text()</code>。</li>
+        </ul>
+        <p>
+          所以 Codex 的 IM hook 不是挂在 <code>Ran</code>、<code>Thought</code> 或终端输出上，而是挂在 assistant message item 完成的位置。
+          这比抓 TUI 屏幕文本更稳，因为它避开了大部分状态栏、工具日志、reasoning 和 prompt echo。
+        </p>
+        <div class="note">
+          <strong>不是等到 TurnCompleted 才发送</strong>
+          Codex 侧触发点是 <code>on_agent_message_item_completed()</code>，含义是某个 assistant message item 已经完成。
+          这通常发生在本轮 Turn 结束前后，但它不是 <code>TurnCompleted</code> 事件本身。
+          主仓收到这段结构化输出后，还要继续经过当前 <code>replyId</code> marker 提取和 flush，只有 marker 闭合且内容有效时才会真正发回 IM。
+        </div>
+
+        <h3>4. 主仓收到结构化输出后的转发</h3>
+        <p>
+          Codex 发回的 JSON line 不会直接发给 IM。主仓 <code>electron/aicli/structuredOutputBridge.ts</code>
+          会先校验 token，然后触发 <code>addAicliStructuredOutputListener</code> 注册的监听器。
+        </p>
+        <p>
+          <code>electron/remote-im/ipc.ts</code> 中的监听器把结构化文本追加到当前 session buffer，再按配置延迟 flush。
+          最终仍然走 <code>flushRemoteImOutputSession()</code>：
+        </p>
+        <ul>
+          <li>通过 <code>extractRemoteImReplyOutput(buffer, { replyId })</code> 只提取当前 <code>replyId</code> marker 内的内容。</li>
+          <li>通过 <code>sanitizeRemoteImAicliOutput()</code> 做来源相关的兜底清洗。</li>
+          <li>通过 <code>createOutputChunks()</code> 按单条长度分段。</li>
+          <li>通过 <code>broadcastOutgoingText()</code> 发回 IM。</li>
+          <li>通过 <code>forwardedReplyId</code> 防止同一个 replyId 被重复转发。</li>
+        </ul>
+        <p>
+          因此完整判断是：<code>assistant message item completed</code> 只是“有一段候选回复可以进入 IM bridge”；
+          <code>extractRemoteImReplyOutput()</code> 成功提取当前 <code>replyId</code> 内的闭合内容，才是“可以发 IM”的条件。
+          <code>TurnCompleted</code> 只是整轮任务生命周期的结束边界，不是当前 IM 转发链路的唯一发送触发点。
+        </p>
+
+        <h3>5. 一次 IM 消息的完整 hook 嵌入时序</h3>
+        <p>
+          下面这张图只描述一次手机 IM 消息进入 Codex 后，hook 在哪里发挥作用。
+          注意两个关键点：<code>startOutputForwarding()</code> 是在用户消息写入 Codex 之后启动；
+          <code>send_assistant_text()</code> 是在 Codex assistant message item 完成时触发，而不是在 <code>TurnCompleted</code> 触发。
+        </p>
+        <div class="diagram">
+          <pre class="mermaid">
+sequenceDiagram
+    autonumber
+
+    participant IM as 手机 IM
+    participant IPC as Electron Remote IM
+    participant PTY as PTY Manager
+    participant CLI as Codex
+    participant Bridge as Structured Bridge
+    participant Flush as Output Forwarding
+
+    IM->>IPC: 收到好友消息
+    IPC->>PTY: sendUserMessageToSession(prompt + replyId)
+    PTY->>CLI: 写入当前 AICLI 会话
+    IPC->>Flush: startOutputForwarding(replyId)
+
+    CLI->>CLI: 模型处理并生成 assistant message
+    CLI->>Bridge: on_agent_message_item_completed()
+    Bridge->>Bridge: send_assistant_text(JSON line)
+    Bridge->>IPC: addAicliStructuredOutputListener
+    IPC->>Flush: 追加到当前 session buffer
+    Flush->>Flush: extractRemoteImReplyOutput(replyId)
+    alt 当前 replyId marker 已闭合且内容有效
+        Flush->>IM: 发送 AICLI 回复
+    else marker 未闭合或内容为空
+        Flush->>Flush: 保留 pending / 不发送
+    end
+          </pre>
+        </div>
+      </section>
+
+      <section id="im-forward">
+        <h2>IM 转发边界</h2>
+        <p>
+          Remote IM 的转发逻辑必须绕开 TUI 展示层。原因是 TUI 可见区域天然包含大量非回复内容：
+        </p>
+        <ul>
+          <li>用户输入和 prompt echo。</li>
+          <li><code>Working</code>、状态栏、模型名、上下文额度等状态信息。</li>
+          <li><code>Thought</code> / reasoning 摘要。</li>
+          <li><code>Running</code>、<code>Ran</code>、<code>Exploring</code>、<code>Explored</code> 等工具执行展示。</li>
+          <li>命令输出、错误日志、测试日志。</li>
+        </ul>
+        <p>
+          因此 IM 只应该认当前请求的 reply marker：
+        </p>
+        <pre>&lt;remote-im-reply id="rim-当前请求"&gt;
+需要发回 IM 的最终内容
+&lt;/remote-im-reply id="rim-当前请求"&gt;</pre>
+        <p>
+          marker 外的任何内容，包括 reasoning、工具日志、状态栏、历史残留，都应该被视为噪音。
+        </p>
+      </section>
+
+      <section id="sources">
+        <h2>源码入口</h2>
+        <p>下面这些位置是当前结论对应的主要源码入口。</p>
+        <div class="split">
+          <div class="card">
+            <h3>Turn 生命周期</h3>
+            <div class="source-list">
+              <a href="../../third_party/aicli/codex/codex-rs/tui/src/chatwidget/protocol.rs">tui/src/chatwidget/protocol.rs</a>
+              <a href="../../third_party/aicli/codex/codex-rs/tui/src/chatwidget/turn_runtime.rs">tui/src/chatwidget/turn_runtime.rs</a>
+              <a href="../../third_party/aicli/codex/codex-rs/tui/src/chatwidget/status_state.rs">tui/src/chatwidget/status_state.rs</a>
+              <a href="../../third_party/aicli/codex/codex-rs/tui/src/chatwidget/status_controls.rs">tui/src/chatwidget/status_controls.rs</a>
+            </div>
+          </div>
+          <div class="card">
+            <h3>命令与工具展示</h3>
+            <div class="source-list">
+              <a href="../../third_party/aicli/codex/codex-rs/tui/src/chatwidget/command_lifecycle.rs">tui/src/chatwidget/command_lifecycle.rs</a>
+              <a href="../../third_party/aicli/codex/codex-rs/tui/src/chatwidget/tool_lifecycle.rs">tui/src/chatwidget/tool_lifecycle.rs</a>
+              <a href="../../third_party/aicli/codex/codex-rs/tui/src/exec_cell/model.rs">tui/src/exec_cell/model.rs</a>
+              <a href="../../third_party/aicli/codex/codex-rs/tui/src/exec_cell/render.rs">tui/src/exec_cell/render.rs</a>
+            </div>
+          </div>
+        </div>
+        <div class="split" style="margin-top: 16px;">
+          <div class="card">
+            <h3>主仓 IM 转发</h3>
+            <div class="source-list">
+              <a href="../../electron/cc/ptyManager.ts">electron/cc/ptyManager.ts</a>
+              <a href="../../electron/aicli/structuredOutputBridge.ts">electron/aicli/structuredOutputBridge.ts</a>
+              <a href="../../electron/remote-im/ipc.ts">electron/remote-im/ipc.ts</a>
+              <a href="../../electron/remote-im/outputForwarding.ts">electron/remote-im/outputForwarding.ts</a>
+              <a href="../../electron/remote-im/replyProtocol.ts">electron/remote-im/replyProtocol.ts</a>
+            </div>
+          </div>
+          <div class="card">
+            <h3>Codex 源码钩子</h3>
+            <div class="source-list">
+              <a href="../../third_party/aicli/codex/codex-rs/tui/src/cli.rs">codex/tui/src/cli.rs</a>
+              <a href="../../third_party/aicli/codex/codex-rs/tui/src/lib.rs">codex/tui/src/lib.rs</a>
+              <a href="../../third_party/aicli/codex/codex-rs/tui/src/multi_ai_code_im_bridge.rs">codex/tui/src/multi_ai_code_im_bridge.rs</a>
+              <a href="../../third_party/aicli/codex/codex-rs/tui/src/chatwidget/streaming.rs">codex/tui/src/chatwidget/streaming.rs</a>
+            </div>
+          </div>
+        </div>
+        <div class="split" style="margin-top: 16px;">
+          <div class="card">
+            <h3>模型目录与缓存</h3>
+            <div class="source-list">
+              <a href="../../third_party/aicli/codex/codex-rs/models-manager/src/manager.rs">codex/models-manager/src/manager.rs</a>
+              <a href="../../third_party/aicli/codex/codex-rs/core/tests/suite/models_etag_responses.rs">codex/core/tests/suite/models_etag_responses.rs</a>
+              <a href="../../third_party/aicli/codex/codex-rs/core/tests/suite/models_cache_ttl.rs">codex/core/tests/suite/models_cache_ttl.rs</a>
+              <a href="../../third_party/aicli/codex/codex-rs/tui/src/model_catalog.rs">codex/tui/src/model_catalog.rs</a>
+              <a href="../../third_party/aicli/codex/codex-rs/tui/src/chatwidget/service_tiers.rs">codex/tui/src/chatwidget/service_tiers.rs</a>
+            </div>
+          </div>
+          <div class="card">
+            <h3>主仓 Codex 启动配置</h3>
+            <div class="source-list">
+              <a href="../../electron/orchestrator/prompts.ts">electron/orchestrator/prompts.ts</a>
+              <a href="../../electron/aicli/codexConfig.ts">electron/aicli/codexConfig.ts</a>
+              <a href="../../electron/aicli/bundledCliResolver.ts">electron/aicli/bundledCliResolver.ts</a>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

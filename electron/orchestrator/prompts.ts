@@ -49,6 +49,7 @@ export async function resolvePlanArtifactAbs(
 export const MAIN_COMMAND_DEFAULT = 'codex'
 export type SupportedCli = 'claude' | 'codex' | 'opencode'
 export const CODEX_CONTEXT_WINDOW_CONFIG = 'model_context_window=1000000'
+const CODEX_NO_ALT_SCREEN_ARG = '--no-alt-screen'
 
 function hasAnyArg(args: readonly string[], flags: readonly string[]): boolean {
   return args.some((arg) => flags.includes(arg))
@@ -66,6 +67,9 @@ function hasCodexContextWindowConfig(args: readonly string[]): boolean {
 
 function codexDefaultArgs(extraArgs: readonly string[] = []): string[] {
   const args: string[] = []
+  if (!hasAnyArg(extraArgs, [CODEX_NO_ALT_SCREEN_ARG])) {
+    args.push(CODEX_NO_ALT_SCREEN_ARG)
+  }
   if (!hasAnyArg(extraArgs, ['--dangerously-bypass-approvals-and-sandbox'])) {
     args.push('--dangerously-bypass-approvals-and-sandbox')
   }

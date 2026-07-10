@@ -107,6 +107,7 @@ describe('mainCliArgs', () => {
   it('default binary is codex', () => {
     expect(MAIN_COMMAND_DEFAULT).toBe('codex')
     expect(mainCliArgs()).toEqual([
+      '--no-alt-screen',
       '--dangerously-bypass-approvals-and-sandbox',
       '-c',
       'model_context_window=1000000'
@@ -124,6 +125,7 @@ describe('mainCliArgs', () => {
 
   it('codex produces full-permission args', () => {
     expect(mainCliArgs('codex')).toEqual([
+      '--no-alt-screen',
       '--dangerously-bypass-approvals-and-sandbox',
       '-c',
       'model_context_window=1000000'
@@ -140,6 +142,7 @@ describe('buildCliLaunchArgs', () => {
 
   it('adds codex full-permission arg', () => {
     expect(buildCliLaunchArgs('codex', '/repo/demo')).toEqual([
+      '--no-alt-screen',
       '--dangerously-bypass-approvals-and-sandbox',
       '-c',
       'model_context_window=1000000'
@@ -168,6 +171,7 @@ describe('buildCliLaunchArgs', () => {
         '--verbose'
       ])
     ).toEqual([
+      '--no-alt-screen',
       '-c',
       'model_context_window=1000000',
       '--dangerously-bypass-approvals-and-sandbox',
@@ -191,9 +195,25 @@ describe('buildCliLaunchArgs', () => {
         'model_context_window=272000'
       ])
     ).toEqual([
+      '--no-alt-screen',
       '--dangerously-bypass-approvals-and-sandbox',
       '-c',
       'model_context_window=272000'
+    ])
+  })
+
+  it('does not duplicate codex no-alt-screen when user supplies it', () => {
+    expect(
+      buildCliLaunchArgs('codex', '/repo/demo', [
+        '--no-alt-screen',
+        '--verbose'
+      ])
+    ).toEqual([
+      '--dangerously-bypass-approvals-and-sandbox',
+      '-c',
+      'model_context_window=1000000',
+      '--no-alt-screen',
+      '--verbose'
     ])
   })
 

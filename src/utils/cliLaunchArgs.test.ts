@@ -4,6 +4,7 @@ import { buildCliLaunchArgs } from './cliLaunchArgs.js'
 describe('buildCliLaunchArgs', () => {
   it('adds Codex 1M context window config by default', () => {
     expect(buildCliLaunchArgs('codex', '/repo/demo')).toEqual([
+      '--no-alt-screen',
       '--dangerously-bypass-approvals-and-sandbox',
       '-c',
       'model_context_window=1000000'
@@ -29,9 +30,25 @@ describe('buildCliLaunchArgs', () => {
         'model_context_window=272000'
       ])
     ).toEqual([
+      '--no-alt-screen',
       '--dangerously-bypass-approvals-and-sandbox',
       '-c',
       'model_context_window=272000'
+    ])
+  })
+
+  it('does not duplicate Codex no-alt-screen when user supplies it', () => {
+    expect(
+      buildCliLaunchArgs('codex', '/repo/demo', [
+        '--no-alt-screen',
+        '--verbose'
+      ])
+    ).toEqual([
+      '--dangerously-bypass-approvals-and-sandbox',
+      '-c',
+      'model_context_window=1000000',
+      '--no-alt-screen',
+      '--verbose'
     ])
   })
 

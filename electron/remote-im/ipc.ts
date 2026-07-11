@@ -6,7 +6,9 @@ import {
   addSessionExitListener,
   getActiveSessionForProject,
   getSessionRuntimeInfo,
-  sendUserMessageToSession
+  requestAicliStatusForSession,
+  sendUserMessageToSession,
+  switchAicliModeForSession
 } from '../cc/ptyManager.js'
 import { projectDir, rootDir } from '../store/paths.js'
 import { readProjectMetaFile, writeProjectMetaFile, type ProjectMeta } from '../store/projectMeta.js'
@@ -49,6 +51,7 @@ import { appendRemoteImRuntimeLog } from './runtimeLog.js'
 import { readLatestClaudeRemoteImReply } from './claudeTranscript.js'
 import { startRemoteImCliServer } from './imcliServer.js'
 import { addAicliStructuredOutputListener } from '../aicli/structuredOutputBridge.js'
+import { executeRemoteImControlCommand } from './controlBridge.js'
 import {
   createRemoteImAccountChangedStatuses,
   getRemoteImSendConnectionError
@@ -267,8 +270,16 @@ async function getRemoteImStatus(projectId: string): Promise<RemoteImStatus> {
   }
 }
 
-function sendImText(projectId: string, toUserId: string, text: string): Promise<{ ok: boolean }> {
-  broadcastOutgoingText(projectId, toUserId, text)
+function sendImText(
+  projectId: string,
+  toUserId: string,
+  text: string,
+  options: { messageId?: number } = {}
+): Promise<{ ok: boolean }> {
+  broadcastOutgoingText(projectId, toUserId, text, options.messageId)
+  if (options.messageId) {
+    scheduleOutgoingDeliveryAckTimeout(projectId, options.messageId)
+  }
   return Promise.resolve({ ok: true })
 }
 
@@ -760,6 +771,32 @@ export function registerRemoteImIpc(): void {
         resolveSession: () => session,
         sendUser: sendUserMessageToSession,
         sendImText,
+        handleControlCommand: async ({ command }) => {
+          const runtime = session ? getSessionRuntimeInfo(session.sessionId) : null
+          const sourceKind = runtime
+            ? getRemoteImAicliOutputSourceKind(runtime.command)
+            : 'unknown'
+          return executeRemoteImControlCommand({
+            command,
+            sourceKind,
+            session: runtime
+              ? {
+                  sessionId: session?.sessionId ?? '',
+                  targetRepo: runtime.targetRepo,
+                  command: runtime.command,
+                  startedAtMs: runtime.startedAtMs
+                }
+              : null,
+            switchMode: async ({ sessionId, mode }) =>
+              switchAicliModeForSession(sessionId, mode),
+            executeCommand: async ({ sessionId, command }) => {
+              if (command !== 'status') {
+                return { ok: false as const, error: 'unsupported AICLI control command' }
+              }
+              return requestAicliStatusForSession(sessionId)
+            }
+          })
+        },
         transcribeAudio: transcribeRemoteImAudioWithLocalWhisper,
         store: {
           create: (input) => createRemoteImMessage(input),

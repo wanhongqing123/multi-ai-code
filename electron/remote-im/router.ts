@@ -16,6 +16,11 @@ import {
   createRemoteImReplyId
 } from './replyProtocol.js'
 import { canRouteRemoteImTaskFrom, getRemoteImPeerRelation } from './rolePermissions.js'
+import {
+  formatRemoteImControlCommandHelp,
+  parseRemoteImControlCommand,
+  type RemoteImControlCommandName
+} from './controlCommands.js'
 
 export interface RemoteImSessionInfo {
   sessionId: string
@@ -35,7 +40,12 @@ export interface RemoteImRouterDeps {
     text: string,
     options?: { displayText?: string }
   ): Promise<{ ok: boolean; error?: string }>
-  sendImText(projectId: string, toUserId: string, text: string): Promise<{ ok: boolean; error?: string }>
+  sendImText(
+    projectId: string,
+    toUserId: string,
+    text: string,
+    options?: { messageId?: number }
+  ): Promise<{ ok: boolean; error?: string }>
   transcribeAudio?: (
     message: RemoteImIncomingAudioMessage
   ) => Promise<{ ok: true; text: string } | { ok: false; error: string }>
@@ -46,6 +56,11 @@ export interface RemoteImRouterDeps {
     | { ok: false; error: string; attachment?: RemoteImImageAttachment | null }
   >
   createReplyId?: () => string
+  handleControlCommand?: (input: {
+    projectId: string
+    fromUserId: string
+    command: RemoteImControlCommandName
+  }) => Promise<{ ok: boolean; text: string }>
   store: RemoteImRouterStore
   now?: () => number
 }
@@ -66,6 +81,14 @@ const REMOTE_IM_SYSTEM_TEXTS = new Set([
 
 function isLikelyNestedRemoteImOutput(text: string): boolean {
   return text.includes('[来自远程 IM：') || text.includes('[来自远程IM：')
+}
+
+function formatUnknownControlCommand(commandText: string): string {
+  return [
+    `不支持的 IM 控制命令：${commandText}`,
+    '',
+    formatRemoteImControlCommandHelp()
+  ].join('\n')
 }
 
 function isRemoteImSystemText(text: string): boolean {
@@ -165,17 +188,18 @@ async function sendSystemText(
   text: string
 ): Promise<void> {
   const now = deps.now?.() ?? Date.now()
-  const result = await deps.sendImText(projectId, toUserId, text)
-  deps.store.create(
-    createSystemRecord(
-      projectId,
-      toUserId,
-      text,
-      result.ok ? 'sent-to-im' : 'failed',
-      result.ok ? null : result.error ?? 'failed to send IM message',
-      now
-    )
+  const outgoing = deps.store.create(
+    createSystemRecord(projectId, toUserId, text, 'streaming', null, now)
   )
+  const result = await deps.sendImText(projectId, toUserId, text, {
+    messageId: outgoing.id
+  })
+  if (!result.ok) {
+    deps.store.updateStatus(outgoing.id, {
+      status: 'failed',
+      error: result.error ?? 'failed to send IM message'
+    })
+  }
 }
 
 function formatRemoteImAudioPlaceholder(message: RemoteImIncomingAudioMessage): string {
@@ -381,6 +405,49 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
     if (isLikelyNestedRemoteImOutput(text)) {
       deps.store.create(createIncomingRecord(message, 'received', null, now, 'aicli'))
       return { ok: true }
+    }
+
+    const controlCommand = parseRemoteImControlCommand(text)
+    if (controlCommand.type === 'unknown-command') {
+      const routePermission = canRouteRemoteImTaskFrom(config, fromUserId)
+      if (!routePermission.ok) {
+        deps.store.create(createIncomingRecord(message, 'rejected', 'sender not allowed', now))
+        return { ok: false, error: `sender ${fromUserId} is not allowed` }
+      }
+      deps.store.create(createIncomingRecord(message, 'rejected', 'unsupported control command', now))
+      await sendSystemText(
+        deps,
+        message.projectId,
+        fromUserId,
+        formatUnknownControlCommand(controlCommand.commandText)
+      )
+      return {
+        ok: false,
+        error: `unsupported remote IM control command: ${controlCommand.commandText}`
+      }
+    }
+
+    if (controlCommand.type === 'command') {
+      const routePermission = canRouteRemoteImTaskFrom(config, fromUserId)
+      if (!routePermission.ok) {
+        deps.store.create(createIncomingRecord(message, 'rejected', 'sender not allowed', now))
+        return { ok: false, error: `sender ${fromUserId} is not allowed` }
+      }
+      deps.store.create(createIncomingRecord(message, 'received', null, now))
+      const result = deps.handleControlCommand
+        ? await deps.handleControlCommand({
+            projectId: message.projectId,
+            fromUserId,
+            command: controlCommand.command
+          })
+        : {
+            ok: false,
+            text: '当前桌面端未接入 IM 控制命令。'
+          }
+      await sendSystemText(deps, message.projectId, fromUserId, result.text)
+      return result.ok
+        ? { ok: true }
+        : { ok: false, error: `remote IM control command failed: ${controlCommand.command}` }
     }
 
     if (!text) {

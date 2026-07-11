@@ -28,6 +28,8 @@ import {
 } from '../aicli/codexConfig.js'
 import {
   createAicliStructuredOutputBridge,
+  type AicliControlMode,
+  type AicliControlCommandResult,
   type AicliStructuredOutputBridge,
   type AicliStructuredOutputProvider
 } from '../aicli/structuredOutputBridge.js'
@@ -468,6 +470,33 @@ export async function sendUserMessageToSession(
     displayLocalTerminalText(sessionId, options.displayText)
   }
   return { ok: true }
+}
+
+export function switchAicliModeForSession(
+  sessionId: string,
+  mode: AicliControlMode
+): { ok: true } | { ok: false; error: string } {
+  const session = sessions.get(sessionId)
+  if (!session) return { ok: false, error: 'no session' }
+  if (!session.structuredOutputBridge) {
+    return { ok: false, error: 'AICLI control bridge is not available' }
+  }
+  const result = session.structuredOutputBridge.sendControlCommand({
+    command: 'switch_mode',
+    mode
+  })
+  return result.ok ? { ok: true } : { ok: false, error: result.error ?? 'switch mode failed' }
+}
+
+export function requestAicliStatusForSession(
+  sessionId: string
+): Promise<AicliControlCommandResult> {
+  const session = sessions.get(sessionId)
+  if (!session) return Promise.resolve({ ok: false, error: 'no session' })
+  if (!session.structuredOutputBridge) {
+    return Promise.resolve({ ok: false, error: 'AICLI control bridge is not available' })
+  }
+  return session.structuredOutputBridge.requestControlCommand({ command: 'status' })
 }
 
 /** Stream raw input into PTY in small chunks to avoid large-paste truncation. */

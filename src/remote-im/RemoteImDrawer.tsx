@@ -61,6 +61,13 @@ const RELATION_FILTERS: Array<{ value: ConversationFilter; label: string }> = [
   { value: 'friend', label: '好友' }
 ]
 
+const REMOTE_IM_COMMAND_SUGGESTIONS = [
+  { command: '/status', label: '查看状态' },
+  { command: '/plan', label: '切换 Plan' },
+  { command: '/build', label: '切换 Build' },
+  { command: '/help', label: '命令帮助' }
+]
+
 function getRelationLabel(relation: RemoteImContactRelation): string {
   void relation
   return '好友'
@@ -174,6 +181,10 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
     }) || !selectedPeerUserId
   const imageSendDisabled =
     !selectedPeerUserId || !props.projectId || props.status?.state !== 'connected'
+  const commandQuery = props.input.trimStart()
+  const commandSuggestions = commandQuery.startsWith('/')
+    ? REMOTE_IM_COMMAND_SUGGESTIONS.filter((item) => item.command.startsWith(commandQuery))
+    : []
   const statusDetail = props.status?.detail
     ? sanitizeRemoteImDisplayText(props.status.detail)
     : null
@@ -453,6 +464,21 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
             </div>
 
             <form className="remote-im-composer" onSubmit={handleSubmit}>
+              {commandSuggestions.length > 0 ? (
+                <div className="remote-im-command-suggestions" aria-label="IM 控制命令候选">
+                  {commandSuggestions.map((item) => (
+                    <button
+                      key={item.command}
+                      type="button"
+                      className="remote-im-command-suggestion"
+                      onClick={() => props.onInputChange(item.command)}
+                    >
+                      <strong>{item.command}</strong>
+                      <span>{item.label}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
               <button
                 type="button"
                 className="remote-im-image-button"

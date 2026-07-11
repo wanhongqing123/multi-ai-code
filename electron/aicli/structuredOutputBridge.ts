@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import net from 'node:net'
 
 export type AicliStructuredOutputProvider = 'codex' | 'opencode'
+export type AicliControlMode = 'plan' | 'build'
 
 export interface AicliStructuredOutputEvent {
   sessionId: string
@@ -15,6 +16,11 @@ export interface AicliStructuredOutputEvent {
 export interface AicliStructuredOutputBridge {
   endpoint: string
   args: string[]
+  sendControlCommand(input: AicliControlCommand): { ok: boolean; error?: string }
+  requestControlCommand(
+    input: AicliRequestControlCommand,
+    timeoutMs?: number
+  ): Promise<AicliControlCommandResult>
   close(): Promise<void>
 }
 
@@ -26,7 +32,25 @@ interface WireEvent {
   text?: unknown
   messageId?: unknown
   partId?: unknown
+  command?: unknown
+  mode?: unknown
+  requestId?: unknown
+  ok?: unknown
+  error?: unknown
 }
+
+export type AicliControlCommand = {
+  command: 'switch_mode'
+  mode: AicliControlMode
+}
+
+export type AicliRequestControlCommand = {
+  command: 'status'
+}
+
+export type AicliControlCommandResult =
+  | { ok: true; text: string }
+  | { ok: false; error: string; text?: string }
 
 const listeners = new Set<AicliStructuredOutputListener>()
 
@@ -56,9 +80,23 @@ export async function createAicliStructuredOutputBridge(
   provider: AicliStructuredOutputProvider
 ): Promise<AicliStructuredOutputBridge> {
   const token = randomUUID()
+  const controlSockets = new Set<net.Socket>()
+  const pendingControlRequests = new Map<
+    string,
+    {
+      resolve: (result: AicliControlCommandResult) => void
+      timeout: NodeJS.Timeout
+    }
+  >()
   const server = net.createServer((socket) => {
     socket.setEncoding('utf8')
     let buffer = ''
+    socket.on('close', () => {
+      controlSockets.delete(socket)
+    })
+    socket.on('error', () => {
+      controlSockets.delete(socket)
+    })
 
     socket.on('data', (chunk) => {
       buffer += chunk
@@ -75,7 +113,33 @@ export async function createAicliStructuredOutputBridge(
         } catch {
           continue
         }
-        if (parsed.token !== token || typeof parsed.text !== 'string') continue
+        if (parsed.token !== token) continue
+        if (parsed.kind === 'control_ready') {
+          controlSockets.add(socket)
+          continue
+        }
+        if (parsed.kind === 'control_result') {
+          const requestId = asOptionalString(parsed.requestId)
+          const pending = requestId ? pendingControlRequests.get(requestId) : undefined
+          if (!requestId || !pending) continue
+          pendingControlRequests.delete(requestId)
+          clearTimeout(pending.timeout)
+          const text = typeof parsed.text === 'string' ? parsed.text : ''
+          if (parsed.ok === true) {
+            pending.resolve({ ok: true, text })
+          } else {
+            pending.resolve({
+              ok: false,
+              error:
+                typeof parsed.error === 'string' && parsed.error.trim()
+                  ? parsed.error
+                  : 'AICLI control command failed',
+              ...(text ? { text } : {})
+            })
+          }
+          continue
+        }
+        if (typeof parsed.text !== 'string') continue
         if (!parsed.text) continue
 
         emitStructuredOutput({
@@ -112,11 +176,59 @@ export async function createAicliStructuredOutputBridge(
 
   const endpoint = `tcp://127.0.0.1:${address.port}?token=${encodeURIComponent(token)}`
 
+  function writeControlPayload(payload: object): number {
+    const line = `${JSON.stringify({ token, kind: 'control', ...payload })}\n`
+    let sent = 0
+    for (const socket of Array.from(controlSockets)) {
+      if (socket.destroyed) {
+        controlSockets.delete(socket)
+        continue
+      }
+      socket.write(line)
+      sent += 1
+    }
+    return sent
+  }
+
   return {
     endpoint,
     args: ['--multi-ai-code-im-ipc', endpoint],
+    sendControlCommand: (input) => {
+      const sent = writeControlPayload({
+        command: input.command,
+        mode: input.mode
+      })
+      return sent > 0
+        ? { ok: true }
+        : { ok: false, error: 'AICLI control bridge is not connected' }
+    },
+    requestControlCommand: (input, timeoutMs = 5000) => {
+      const requestId = randomUUID()
+      return new Promise<AicliControlCommandResult>((resolve) => {
+        const timeout = setTimeout(() => {
+          pendingControlRequests.delete(requestId)
+          resolve({ ok: false, error: 'AICLI control command timed out' })
+        }, timeoutMs)
+        pendingControlRequests.set(requestId, { resolve, timeout })
+        const sent = writeControlPayload({
+          requestId,
+          command: input.command
+        })
+        if (sent > 0) return
+        clearTimeout(timeout)
+        pendingControlRequests.delete(requestId)
+        resolve({ ok: false, error: 'AICLI control bridge is not connected' })
+      })
+    },
     close: () =>
       new Promise<void>((resolve) => {
+        for (const pending of pendingControlRequests.values()) {
+          clearTimeout(pending.timeout)
+          pending.resolve({ ok: false, error: 'AICLI control bridge closed' })
+        }
+        pendingControlRequests.clear()
+        for (const socket of controlSockets) socket.destroy()
+        controlSockets.clear()
         server.close(() => resolve())
       })
   }

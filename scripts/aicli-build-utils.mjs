@@ -1,4 +1,13 @@
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync
+} from 'fs'
 import { dirname, join, relative, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { spawnSync } from 'child_process'
@@ -69,8 +78,15 @@ export function copyExecutable(source, destination) {
     throw new Error(`构建产物不存在：${source}`)
   }
   ensureDir(dirname(destination))
-  copyFileSync(source, destination)
-  if (process.platform !== 'win32') chmodSync(destination, 0o755)
+  const tempDestination = `${destination}.${process.pid}.${Date.now()}.tmp`
+  try {
+    copyFileSync(source, tempDestination)
+    if (process.platform !== 'win32') chmodSync(tempDestination, 0o755)
+    renameSync(tempDestination, destination)
+  } catch (error) {
+    rmSync(tempDestination, { force: true })
+    throw error
+  }
 }
 
 export function readManifest(manifestPath) {

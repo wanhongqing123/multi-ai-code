@@ -351,6 +351,17 @@ describe('RemoteImDrawer', () => {
     expect(noPeerHtml).toContain('<button type="submit" disabled=""')
   })
 
+  it('shows slash command suggestions without destructive commands', () => {
+    const html = renderDrawer({ input: '/' })
+
+    expect(html).toContain('remote-im-command-suggestions')
+    expect(html).toContain('/status')
+    expect(html).toContain('/plan')
+    expect(html).toContain('/build')
+    expect(html).toContain('/help')
+    expect(html).not.toContain('/stop')
+  })
+
   it('keeps manual sending available for legacy slave accounts', () => {
     const html = renderDrawer({
       config: { ...config, desktopRole: 'slave' },

@@ -8699,6 +8699,35 @@ html, body, #root {
   font: inherit;
 }
 
+.remote-im-command-suggestions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.remote-im-command-suggestion {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px !important;
+  padding: 0 12px;
+  border: 1px solid #bfdbfe !important;
+  border-radius: 999px !important;
+  background: #eff6ff !important;
+  color: #0f172a !important;
+  font-size: 12px;
+}
+
+.remote-im-command-suggestion strong {
+  font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  color: #0369a1;
+}
+
+.remote-im-command-suggestion span {
+  color: #64748b;
+}
+
 .remote-im-image-input {
   display: none;
 }

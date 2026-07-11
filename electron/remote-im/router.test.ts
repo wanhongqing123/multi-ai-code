@@ -119,8 +119,96 @@ describe('remote IM router', () => {
     expect(sentToIm[0]).toContain('已发送给当前 AICLI')
     expect(store.messages.map((message) => message.status)).toEqual([
       'sent-to-aicli',
-      'sent-to-im'
+      'streaming'
     ])
+  })
+
+  it('handles supported slash commands without sending text to AICLI', async () => {
+    const store = createMessageStore()
+    const sentToAicli: string[] = []
+    const sentToIm: Array<{
+      projectId: string
+      toUserId: string
+      text: string
+      messageId: number | undefined
+    }> = []
+    const router = createRemoteImRouter({
+      getConfig: () => config,
+      resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
+      sendUser: async (_sessionId, text) => {
+        sentToAicli.push(text)
+        return { ok: true }
+      },
+      sendImText: async (projectId, toUserId, text, options) => {
+        sentToIm.push({ projectId, toUserId, text, messageId: options?.messageId })
+        return { ok: true }
+      },
+      handleControlCommand: async ({ command }) => ({
+        ok: true,
+        text: `handled ${command}`
+      }),
+      store
+    })
+
+    const result = await router.handleIncomingText({
+      projectId: 'project-1',
+      remoteMessageId: 'remote-command-1',
+      fromUserId: 'phone_admin',
+      toUserId: 'desktop_bot',
+      text: '/status',
+      createdAt: 100
+    })
+
+    expect(result.ok).toBe(true)
+    expect(sentToAicli).toEqual([])
+    expect(sentToIm).toEqual([
+      {
+        projectId: 'project-1',
+        toUserId: 'phone_admin',
+        text: 'handled status',
+        messageId: 2
+      }
+    ])
+    expect(store.messages.map((message) => message.content)).toEqual(['/status', 'handled status'])
+    expect(store.messages[1]).toMatchObject({
+      direction: 'outgoing',
+      status: 'streaming',
+      sentToImAt: null
+    })
+  })
+
+  it('keeps unknown slash commands out of the normal AICLI task channel', async () => {
+    const store = createMessageStore()
+    const sentToAicli: string[] = []
+    const sentToIm: string[] = []
+    const router = createRemoteImRouter({
+      getConfig: () => config,
+      resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
+      sendUser: async (_sessionId, text) => {
+        sentToAicli.push(text)
+        return { ok: true }
+      },
+      sendImText: async (_projectId, _toUserId, text) => {
+        sentToIm.push(text)
+        return { ok: true }
+      },
+      store
+    })
+
+    const result = await router.handleIncomingText({
+      projectId: 'project-1',
+      remoteMessageId: 'remote-command-2',
+      fromUserId: 'phone_admin',
+      toUserId: 'desktop_bot',
+      text: '/review',
+      createdAt: 100
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('unsupported remote IM control command')
+    expect(sentToAicli).toEqual([])
+    expect(sentToIm[0]).toContain('不支持的 IM 控制命令：/review')
+    expect(sentToIm[0]).toContain('/status')
   })
 
   it('transcribes trusted audio messages and sends the transcript to the current AICLI session', async () => {

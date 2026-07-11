@@ -12,6 +12,8 @@ import android.media.MediaRecorder;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -41,6 +43,12 @@ public final class MainActivity extends Activity {
     private static final int REQUEST_PICK_IMAGE = 1001;
     private static final int REQUEST_IMAGE_PERMISSION = 1002;
     private static final int REQUEST_RECORD_AUDIO = 1003;
+    private static final String[][] CONTROL_COMMANDS = new String[][]{
+        {"/status", "查看状态"},
+        {"/plan", "切换 Plan"},
+        {"/build", "切换 Build"},
+        {"/help", "命令帮助"}
+    };
 
     private RemoteIMSessionController session;
     private RemoteIMMediaStore mediaStore;
@@ -286,6 +294,21 @@ public final class MainActivity extends Activity {
     }
 
     private View composer() {
+        LinearLayout wrapper = new LinearLayout(this);
+        wrapper.setOrientation(LinearLayout.VERTICAL);
+        wrapper.setBackgroundColor(0xFFFFFFFF);
+
+        HorizontalScrollView commandScroller = new HorizontalScrollView(this);
+        commandScroller.setHorizontalScrollBarEnabled(false);
+        commandScroller.setVisibility(View.GONE);
+
+        LinearLayout commandRow = new LinearLayout(this);
+        commandRow.setOrientation(LinearLayout.HORIZONTAL);
+        commandRow.setGravity(Gravity.CENTER_VERTICAL);
+        commandRow.setPadding(dp(12), dp(8), dp(12), 0);
+        commandScroller.addView(commandRow);
+        wrapper.addView(commandScroller, matchWrap());
+
         LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
         bar.setGravity(Gravity.CENTER_VERTICAL);
@@ -307,6 +330,20 @@ public final class MainActivity extends Activity {
         messageInput = new EditText(this);
         messageInput.setSingleLine(true);
         messageInput.setHint("输入消息...");
+        messageInput.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+                updateCommandSuggestions(commandScroller, commandRow, messageInput);
+            }
+        });
         bar.addView(messageInput, new LinearLayout.LayoutParams(0, dp(52), 1));
 
         ImageButton image = new ImageButton(this);
@@ -327,7 +364,40 @@ public final class MainActivity extends Activity {
         send.setAllCaps(false);
         send.setOnClickListener(view -> sendText());
         bar.addView(send, new LinearLayout.LayoutParams(dp(72), dp(52)));
-        return bar;
+        wrapper.addView(bar, matchWrap());
+        return wrapper;
+    }
+
+    private void updateCommandSuggestions(
+        HorizontalScrollView scroller,
+        LinearLayout row,
+        EditText input
+    ) {
+        row.removeAllViews();
+        String query = input.getText().toString().trim();
+        if (!query.startsWith("/")) {
+            scroller.setVisibility(View.GONE);
+            return;
+        }
+
+        int count = 0;
+        for (String[] command : CONTROL_COMMANDS) {
+            if (!command[0].startsWith(query)) continue;
+            Button button = new Button(this);
+            button.setAllCaps(false);
+            button.setText(command[0] + "  " + command[1]);
+            button.setTextColor(TEXT_PRIMARY);
+            button.setBackgroundColor(0xFFEFF6FF);
+            button.setOnClickListener(view -> {
+                input.setText(command[0]);
+                input.setSelection(input.getText().length());
+            });
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(132), dp(38));
+            params.setMargins(0, 0, dp(8), 0);
+            row.addView(button, params);
+            count++;
+        }
+        scroller.setVisibility(count > 0 ? View.VISIBLE : View.GONE);
     }
 
     private View messageBubble(RemoteIMMessage message) {

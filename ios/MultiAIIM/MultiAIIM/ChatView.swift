@@ -1283,6 +1283,55 @@ private enum VoiceRecorderError: LocalizedError {
     }
 }
 
+private struct RemoteIMSlashCommand: Identifiable {
+    let command: String
+    let label: String
+
+    var id: String { command }
+}
+
+private let remoteIMSlashCommands: [RemoteIMSlashCommand] = [
+    .init(command: "/status", label: "查看状态"),
+    .init(command: "/plan", label: "切换 Plan"),
+    .init(command: "/build", label: "切换 Build"),
+    .init(command: "/help", label: "命令帮助")
+]
+
+private struct RemoteIMSlashCommandBar: View {
+    let commands: [RemoteIMSlashCommand]
+    let onSelect: (RemoteIMSlashCommand) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(commands) { command in
+                    Button {
+                        onSelect(command)
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text(command.command)
+                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(RemoteIMStyle.blue)
+                            Text(command.label)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(RemoteIMStyle.textSecondary)
+                        }
+                        .padding(.horizontal, 11)
+                        .frame(height: 32)
+                        .background(RemoteIMStyle.blueSoft, in: Capsule())
+                        .overlay(
+                            Capsule()
+                                .stroke(Color(red: 0.745, green: 0.87, blue: 1.0), lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 2)
+        }
+    }
+}
+
 private struct ComposerView: View {
     @EnvironmentObject private var appState: RemoteIMAppState
     @StateObject private var voiceRecorder = VoiceMessageRecorder()
@@ -1296,6 +1345,12 @@ private struct ComposerView: View {
         VStack(spacing: 8) {
             if voiceRecorder.isRecording {
                 VoiceRecordingHint(isCancelling: isCancellingVoice)
+            }
+
+            if !isVoiceMode && !commandSuggestions.isEmpty {
+                RemoteIMSlashCommandBar(commands: commandSuggestions) { command in
+                    appState.draftText = command.command
+                }
             }
 
             HStack(alignment: .bottom, spacing: 8) {
@@ -1387,6 +1442,12 @@ private struct ComposerView: View {
             guard let item else { return }
             Task { await sendSelectedPhoto(item) }
         }
+    }
+
+    private var commandSuggestions: [RemoteIMSlashCommand] {
+        let query = appState.draftText.trimmingCharacters(in: .whitespaces)
+        guard query.hasPrefix("/") else { return [] }
+        return remoteIMSlashCommands.filter { $0.command.hasPrefix(query) }
     }
 
     private func openPhotoPicker() async {

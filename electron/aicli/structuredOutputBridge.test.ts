@@ -76,4 +76,78 @@ describe('AICLI structured output bridge', () => {
 
     expect(events).toEqual([])
   })
+
+  it('sends control commands only to token-verified control sockets', async () => {
+    const bridge = await createAicliStructuredOutputBridge('session-1', 'opencode')
+    const { port, token } = parseTcpEndpoint(bridge.endpoint)
+    const receivedLines: string[] = []
+
+    const socket = await new Promise<net.Socket>((resolve, reject) => {
+      const client = net.createConnection({ host: '127.0.0.1', port }, () => {
+        client.write(`${JSON.stringify({ token, kind: 'control_ready' })}\n`)
+        resolve(client)
+      })
+      client.setEncoding('utf8')
+      client.on('data', (chunk) => {
+        receivedLines.push(String(chunk))
+      })
+      client.once('error', reject)
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const result = bridge.sendControlCommand({
+      command: 'switch_mode',
+      mode: 'plan'
+    })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    socket.destroy()
+    await bridge.close()
+
+    expect(result.ok).toBe(true)
+    expect(receivedLines.join('')).toContain('"kind":"control"')
+    expect(receivedLines.join('')).toContain('"command":"switch_mode"')
+    expect(receivedLines.join('')).toContain('"mode":"plan"')
+  })
+
+  it('resolves request/response control commands from token-verified sockets', async () => {
+    const bridge = await createAicliStructuredOutputBridge('session-1', 'codex')
+    const { port, token } = parseTcpEndpoint(bridge.endpoint)
+    const receivedLines: string[] = []
+
+    const socket = await new Promise<net.Socket>((resolve, reject) => {
+      const client = net.createConnection({ host: '127.0.0.1', port }, () => {
+        client.write(`${JSON.stringify({ token, kind: 'control_ready' })}\n`)
+        resolve(client)
+      })
+      client.setEncoding('utf8')
+      client.on('data', (chunk) => {
+        receivedLines.push(String(chunk))
+        const requestId = String(chunk).match(/"requestId":"([^"]+)"/)?.[1]
+        if (requestId) {
+          client.write(
+            `${JSON.stringify({
+              token,
+              kind: 'control_result',
+              requestId,
+              ok: true,
+              text: 'OpenAI Codex\nModel gpt-5.6-sol'
+            })}\n`
+          )
+        }
+      })
+      client.once('error', reject)
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const result = await bridge.requestControlCommand({ command: 'status' }, 500)
+
+    socket.destroy()
+    await bridge.close()
+
+    expect(result).toEqual({ ok: true, text: 'OpenAI Codex\nModel gpt-5.6-sol' })
+    expect(receivedLines.join('')).toContain('"kind":"control"')
+    expect(receivedLines.join('')).toContain('"command":"status"')
+    expect(receivedLines.join('')).toContain('"requestId"')
+  })
 })

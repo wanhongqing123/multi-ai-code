@@ -556,6 +556,26 @@ sequenceDiagram
           与 Turn 阶段、显示状态的四维对照另见 <a href="#task-walkthrough">任务全过程示例</a>。
         </p>
 
+        <h3>5 段正文 ↔ 5 次模型调用</h3>
+        <p>
+          这 5 段 <code>agent_message</code> <strong>全部是大模型亲口说的 assistant 正文</strong>——不是工具输出，也不是
+          reasoning（<code>Thought</code> 走 <code>Reasoning</code> item，根本不进 <code>agent_message</code>）。但按性质分：
+          <strong>前 4 段（9/12/17/20）是伴随工具调用的中间旁白</strong>（概念上即 <code>Commentary</code>，本次 phase 为 None），
+          <strong>第 5 段（23）不是“中间”回复，而是最终答复</strong>（对应 <code>FinalAnswer</code>）。
+          结合 run_turn 循环看，<strong>每一段正文大致对应一次模型调用</strong>——这一轮 Turn 里模型被调了约 5 次：
+        </p>
+        <pre>模型调用① → 正文9 「先用技能、只读」      + 要求读 skill → 工具10–11
+模型调用② → 正文12「搜索定位文件」        + 要求跑命令   → 工具13–16
+模型调用③ → 正文17「rg 不可用改 PowerShell」+ 要求跑命令   → 工具18–19
+模型调用④ → 正文20「已定位，开始读取」    + 要求读文件   → 工具21–22
+模型调用⑤ → 正文23【最终答复，带 marker】（不再要工具）  → turn.completed</pre>
+        <p>
+          每次调用的固定模式：<strong>先说一句旁白 + 附带工具调用请求</strong>；工具结果回填 history 后再调下一次；
+          直到某次调用<strong>只说话、不要工具</strong>——那段就是最终答复，Turn 随之收口。
+          这也正是 IM 侧不能“见正文就转发”的原因：中间旁白同样是模型说的话、同样触发 <code>agent_message</code> Completed、
+          同样发到 bridge——<strong>只有靠 marker 才能把最终答复挑出来</strong>。
+        </p>
+
         <h3>顺序与保证</h3>
         <ul>
           <li><strong>Turn 级：</strong><code>TurnStarted</code> 最先、<code>TurnComplete</code> 最后（携带 <code>last_agent_message</code>）。</li>

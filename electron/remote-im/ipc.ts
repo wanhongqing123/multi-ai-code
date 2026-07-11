@@ -564,7 +564,10 @@ function ensureSessionListeners(): void {
     const state = outputSessions.get(sessionId)
     if (!state) return
     if (!state.structuredOutput) return
-    state.buffer += text
+    // 结构化输出的每个 text 是一段完整 assistant 正文，段间必须补换行：
+    // marker 提取按行匹配，若旁白与最终答复落在同一个防抖窗口被无分隔拼接，
+    // open 标签会失去独立行导致提取为空，且 flush 会把整个 buffer（含回复）清掉。
+    state.buffer += (state.buffer !== '' && !state.buffer.endsWith('\n') ? '\n' : '') + text
     scheduleOutputFlush(sessionId)
   })
   addSessionExitListener(({ sessionId, exitCode, signal }) => {

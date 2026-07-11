@@ -140,6 +140,12 @@
       font-size: 18px;
     }
 
+    h4 {
+      margin: 20px 0 8px;
+      font-size: 15px;
+      color: #334155;
+    }
+
     p {
       margin: 10px 0;
     }
@@ -324,12 +330,14 @@
       <nav>
         <a href="#summary">核心结论</a>
         <a href="#overview">总览图</a>
+        <a href="#architecture">端到端调用流程</a>
         <a href="#turn-sequence">Turn 时序</a>
         <a href="#tool-sequence">工具时序</a>
         <a href="#model-loop">模型交互循环</a>
         <a href="#model-sync">新模型同步策略</a>
         <a href="#state-machine">状态机图</a>
         <a href="#display-map">TUI 显示状态</a>
+        <a href="#task-walkthrough">任务全过程示例</a>
         <a href="#interrupt">任务插入与 steer</a>
         <a href="#im-hook">IM 消息钩子</a>
         <a href="#im-forward">IM 转发边界</a>
@@ -392,6 +400,170 @@ flowchart LR
     R --> DONE[TurnCompleted]
           </pre>
         </div>
+      </section>
+
+      <section id="architecture">
+        <h2>端到端架构与调用流程</h2>
+        <p>
+          本节把 <strong>大模型、Core（Turn/Item 引擎）、TUI、IM bridge、主仓 Electron</strong> 五个角色串成一条完整链路：
+          消息怎么进、引擎怎么转、TUI 每一行输出从哪个事件来、IM 回复在哪一步发出去。后面各节都是这条链路上某个环节的放大图。
+        </p>
+
+        <h3>五个角色</h3>
+        <table>
+          <thead><tr><th>角色</th><th>职责</th><th>代码入口</th></tr></thead>
+          <tbody>
+            <tr><td>大模型</td><td>流式产出：reasoning token、assistant 正文、工具调用请求</td><td>—（服务端）</td></tr>
+            <tr><td>Core / Session</td><td><strong>唯一引擎</strong>。run_turn 循环：组上下文 → 调模型 → 切成 item → 跑工具 → 回填 → 再调；对外发事件</td><td><code>core/src/tasks/regular.rs</code>、<code>core/src/session/turn.rs</code></td></tr>
+            <tr><td>TUI / ChatWidget</td><td>Core 的客户端：把事件渲染成 transcript 与状态区；把用户输入提交回 Core</td><td><code>tui/src/chatwidget/protocol.rs</code>、<code>streaming.rs</code></td></tr>
+            <tr><td>IM bridge（本仓 fork 加）</td><td>挂在“正文完成”点，把 assistant 正文 TCP 发给主仓；<strong>非 codex 原生</strong></td><td><code>tui/src/multi_ai_code_im_bridge.rs</code></td></tr>
+            <tr><td>主仓 Electron</td><td>起 codex PTY、注入 IM 消息、收结构化输出、抽 marker、发回手机</td><td><code>electron/cc/ptyManager.ts</code>、<code>electron/remote-im/*</code></td></tr>
+          </tbody>
+        </table>
+        <div class="note">
+          <strong>分层要点</strong>
+          Core 是唯一引擎；TUI 只做两件事——把 Core 的事件画出来、把输入提交回去；IM bridge 是搭在 TUI 上的旁路，不参与引擎决策。
+        </div>
+
+        <h3>输入链路：IM 消息 → codex 的“用户输入”</h3>
+        <pre>手机 IM
+ └► ipcMain 'remote-im:deliver-incoming-text'           electron/remote-im/ipc.ts
+     └► router.handleIncomingText(msg)
+         ├─ buildRemoteImAicliPrompt(...)               文本尾部拼上 replyId 的 marker 指令
+         └─ sendUserMessageToSession(sessionId, prompt)  electron/cc/ptyManager.ts
+              └► 往 codex PTY 分块写入 prompt + 回车（= 用户在 codex 里打字）
+     └► 成功后 startOutputForwarding(replyId)           从这一刻起按 replyId 监听本轮输出
+codex 进程内：TUI composer 收到输入 → 提交 Core → Core 建 Turn</pre>
+        <p>
+          顺序不可倒：必须先 <code>sendUserMessageToSession()</code> 成功、再 <code>startOutputForwarding()</code>，
+          否则上一轮残留会被算进本轮。
+        </p>
+
+        <h3>引擎：run_turn 的一圈</h3>
+        <pre>run_turn loop（session/turn.rs）：
+  ├─ 取 pending_input（steer 注入的消息在这里被吸进当前 Turn）
+  ├─ 组装上下文（系统提示 + history + 本步输入）
+  ├─ 调大模型（流式）
+  ├─ 边收边分类：reasoning / assistant 正文 / tool call
+  │    tool call → 立刻执行工具，结果写回 history
+  ├─ 本步每个 item 发 ItemStarted / Delta / ItemCompleted 给 TUI
+  └─ 模型还要工具？→ 下一圈；否则退出
+外层 RegularTask：run_turn 返回后若仍有 pending_input → 再跑（tasks/regular.rs）
+Turn 收口 → 发 TurnComplete（携带 last_agent_message，本轮最后一个事件）</pre>
+
+        <h3>一个 item 的流式三段式生命周期</h3>
+        <p>每个 item 都走 <strong>Started → Delta×N → Completed</strong>，TUI 在每段做不同的事：</p>
+        <table>
+          <thead><tr><th>阶段</th><th>Core 发的事件</th><th>TUI 屏幕效果</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Started</strong></td><td><code>ItemStarted</code></td><td>建占位 cell：命令 → <code>Running</code>/<code>Exploring</code>，patch → 编辑中</td></tr>
+            <tr><td rowspan="3"><strong>Delta</strong>（反复）</td><td><code>AgentMessageDelta</code></td><td>正文<strong>逐字追加</strong>（打字机）</td></tr>
+            <tr><td><code>ReasoningSummaryTextDelta</code></td><td><code>Thought</code> 块逐字滚动</td></tr>
+            <tr><td><code>CommandExecOutputDelta</code></td><td>命令输出逐行滚动</td></tr>
+            <tr><td><strong>Completed</strong></td><td><code>ItemCompleted</code></td><td>cell 定稿：命令 → <code>Ran</code>/<code>Explored</code>、patch → <code>Edited</code>、正文成块；<strong><code>AgentMessage</code> 完成这一刻触发 IM bridge</strong></td></tr>
+          </tbody>
+        </table>
+        <p>
+          以一段正文为例：模型吐字 → 一串 <code>AgentMessageDelta</code>（TUI 一个字一个字显示）→ 最后
+          <code>ItemCompleted{AgentMessage, text=完整正文}</code>（TUI 定稿，同时 <code>send_assistant_text()</code>
+          把<strong>整段</strong>发 bridge）。<strong>IM 只吃 Completed 的整段，不吃 Delta。</strong>
+        </p>
+
+        <h3>输出链路：一段正文 → 手机上的一条消息</h3>
+        <pre>codex: on_agent_message_item_completed()        tui/src/chatwidget/streaming.rs
+   └► send_assistant_text(text, id)             multi_ai_code_im_bridge.rs
+        └► TCP JSON line {token, kind:"assistant_text", text, messageId}
+主仓: structuredOutputBridge 校验 token          electron/aicli/structuredOutputBridge.ts
+   └► addAicliStructuredOutputListener 回调      electron/remote-im/ipc.ts
+        └► buffer += text；scheduleOutputFlush()（防抖）
+             └► flushRemoteImOutputSession()     electron/remote-im/outputForwarding.ts
+                  ├─ extractRemoteImReplyOutput(buffer, {replyId})
+                  │    · 没抓到闭合 marker → 内容为空，本次不发
+                  │    · 抓到 → 返回 marker 内内容（标签剥掉）
+                  ├─ sanitizeRemoteImAicliOutput() 清洗
+                  ├─ createOutputChunks() 分段
+                  ├─ broadcastOutgoingText() 发回手机 IM
+                  └─ forwardedReplyId = replyId（该 replyId 不再重复发）</pre>
+        <p>
+          两道闸缺一不可：① codex 侧<strong>每段正文都发</strong>（含旁白）；② 主仓侧只有<strong>闭合 marker + 未发过</strong>才真正发。
+        </p>
+
+        <h3>完整回环时序图</h3>
+        <div class="diagram">
+          <pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant IM as 手机 IM
+    participant Host as 主仓 Electron
+    participant TUI as codex TUI
+    participant Core as Core / Session
+    participant M as 大模型
+
+    Note over IM,M: ① 输入：IM 消息变成 codex 的用户输入
+    IM->>Host: 好友消息
+    Host->>Host: 组 prompt（附 replyId 的 marker 指令）
+    Host->>TUI: 写入 PTY（= 用户输入）
+    Host->>Host: startOutputForwarding(replyId)
+    TUI->>Core: 提交用户输入，建 Turn
+    Core-->>TUI: TurnStarted → 显示 Working
+
+    Note over IM,M: ② 引擎循环（模型还要工具就再来一圈）
+    loop run_turn
+        Core->>M: 组上下文，流式请求
+        M-->>Core: reasoning / 正文 delta / 工具调用
+        Core-->>TUI: Delta 事件（Thought、正文逐字、命令输出滚动）
+        Core->>Core: 执行工具，结果回填 history
+        Core-->>TUI: ItemCompleted（Ran / Explored / 正文定稿）
+        TUI->>Host: 正文完成 → send_assistant_text（每段都发）
+        Host->>Host: buffer 累积；无闭合 marker → 不发
+    end
+
+    Note over IM,M: ③ 最终答复（模型按指令包 marker）
+    Core-->>TUI: ItemCompleted（最终正文，含 marker）
+    TUI->>Host: send_assistant_text（含 marker）
+    Host->>Host: 抽到闭合 marker → 清洗、分段
+    Host->>IM: 发送最终回复（每 replyId 仅一次）
+
+    Note over IM,M: ④ 收口
+    Core-->>TUI: TurnComplete → Working 清理（本轮最后一个事件）
+          </pre>
+        </div>
+
+        <h3>真实 trace 逐条对照（带 marker 那次，24 条事件）</h3>
+        <p>
+          任务：“搜索 <code>electron/aicli/codexConfig.ts</code> 并解读其作用”，prompt 按 IM 路径附 marker 指令
+          （<code>replyId = rim-demo0001</code>）。每行：事件 → Core/模型在做什么 → TUI 屏幕显示 → IM 侧动作。
+        </p>
+        <table>
+          <thead><tr><th>#</th><th>事件</th><th>Core / 大模型</th><th>TUI 屏幕</th><th>IM 侧</th></tr></thead>
+          <tbody>
+            <tr><td>1–2</td><td><code>thread.started</code>、<code>turn.started</code></td><td>建线程、建 Turn</td><td>状态栏 → <code>Working</code></td><td>已按 replyId 监听</td></tr>
+            <tr><td>3–8</td><td><code>error</code>×5 + error item</td><td>网络超时重连（WS→HTTPS）</td><td>（瞬时，无常态显示）</td><td>—</td></tr>
+            <tr><td>9</td><td><code>agent_message</code> Completed</td><td>旁白①“先用技能、只读”</td><td>正文块①</td><td>发 bridge → 累积，无 marker 不发</td></tr>
+            <tr><td>10–11</td><td>command Started→Completed</td><td>读 skill 文件</td><td><code>Exploring</code>→<code>Explored</code></td><td>—</td></tr>
+            <tr><td>12</td><td><code>agent_message</code> Completed</td><td>旁白②“搜索定位文件”</td><td>正文块②</td><td>累积，不发</td></tr>
+            <tr><td>13–16</td><td>command ×2（一成一败）</td><td>读文件成功、<code>rg</code> 失败</td><td><code>Running</code>→<code>Ran</code>（一条标红）</td><td>—</td></tr>
+            <tr><td>17</td><td><code>agent_message</code> Completed</td><td>旁白③“rg 不可用，改 PowerShell”</td><td>正文块③</td><td>累积，不发</td></tr>
+            <tr><td>18–19</td><td>command Started→Completed</td><td>PowerShell 查找文件</td><td><code>Exploring</code>→<code>Explored</code></td><td>—</td></tr>
+            <tr><td>20</td><td><code>agent_message</code> Completed</td><td>旁白④“已定位，开始读取”</td><td>正文块④</td><td>累积，不发</td></tr>
+            <tr><td>21–22</td><td>command Started→Completed</td><td>读取文件内容</td><td><code>Exploring</code>→<code>Explored</code></td><td>—</td></tr>
+            <tr><td><strong>23</strong></td><td><strong><code>agent_message</code> Completed</strong></td><td><strong>最终答复，包进 marker</strong></td><td><strong>正文块⑤（最终答复）</strong></td><td><strong>抽到闭合 marker → 发手机（仅一次）</strong></td></tr>
+            <tr><td><strong>24</strong></td><td><strong><code>turn.completed</code></strong></td><td>Turn 收口</td><td><code>Working</code> 清理</td><td>—</td></tr>
+          </tbody>
+        </table>
+        <p>
+          屏幕上能看到 <strong>5 段正文 + 5 条命令</strong>；手机只收到<strong>第 23 段那一条</strong>干净回复。
+          与 Turn 阶段、显示状态的四维对照另见 <a href="#task-walkthrough">任务全过程示例</a>。
+        </p>
+
+        <h3>顺序与保证</h3>
+        <ul>
+          <li><strong>Turn 级：</strong><code>TurnStarted</code> 最先、<code>TurnComplete</code> 最后（携带 <code>last_agent_message</code>）。</li>
+          <li><strong>item 级：</strong>每个 item 必然 Started → Delta×N → Completed；所有 Completed 都在 <code>TurnComplete</code> 之前。</li>
+          <li><strong>正文：</strong>Delta 喂 TUI 打字机；Completed 喂 IM bridge（整段）。</li>
+          <li><strong>IM：</strong>每 replyId 只发一次，发的是带闭合 marker 的最终答复，通常紧邻 <code>TurnComplete</code> 之前。</li>
+          <li><strong>steer：</strong>运行中新来的输入在 run_turn 下一圈开头被吸进当前 Turn（详见“任务插入与 steer”）。</li>
+        </ul>
       </section>
 
       <section id="turn-sequence">
@@ -462,7 +634,7 @@ flowchart LR
         <ul>
           <li><strong>首次调用：</strong>用户输入进入 Turn 后，Core 组装系统提示、开发者约束、历史消息、当前用户消息，然后发起第一次模型请求。</li>
           <li><strong>工具后续调用：</strong>模型要求执行命令、读文件、搜索、改文件等工具时，Turn 会先执行工具；工具完成后，工具结果会作为新的上下文追加回 history，然后再次调用模型。</li>
-          <li><strong>队列输入调用：</strong>如果当前 Turn 期间用户又输入了 B，B 会先进入 pending 队列；当前 Turn 结束后，Core 启动新的 Turn，再为 B 发起新的模型请求。</li>
+          <li><strong>中途 steer 调用：</strong>如果当前 Turn 期间用户又输入了 B，默认会作为 steer 立即注入正在跑的 Turn，在下一个步骤边界随该 Turn 的下一次模型请求一起送出（详见“任务插入与 steer”一节）；只有 Plan 流式 / 被拒 steer 等特例才排队、结束后另起新 Turn。</li>
         </ul>
         <p>
           模型每次返回的内容会被分类处理：reasoning 会进入 <code>Thought</code> 展示；assistant 文本会进入正文展示；
@@ -888,12 +1060,106 @@ stateDiagram-v2
         </table>
       </section>
 
+      <section id="task-walkthrough">
+        <h2>综合示例：一次真实任务的全过程</h2>
+        <p>
+          把前面的抽象图（<a href="#turn-sequence">Turn 时序</a>、<a href="#display-map">TUI 显示状态对应表</a>）落到一条<strong>真实 trace</strong> 上：
+          用本仓库自编译的 Codex（<code>gpt-5.5</code>）跑任务“搜索 <code>electron/aicli/codexConfig.ts</code> 并解读其作用”，
+          用 <code>codex exec --json</code> 抓下完整事件流。下表把<strong>真实事件 → item 类型/状态 → 对应显示状态 → 对应 Turn 阶段</strong>四维并排，
+          三者一眼对齐。
+        </p>
+        <div class="note">
+          <strong>怎么复现（只读沙箱，不改任何文件）</strong>
+          <code>codex exec --json --sandbox read-only -C &lt;repo&gt; "搜索 electron/aicli/codexConfig.ts 并解读其作用" &lt; /dev/null</code>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>真实事件（exec --json）</th>
+              <th>item 类型 · 状态</th>
+              <th>对应 TUI 显示状态</th>
+              <th>对应 Turn 阶段</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>1</td><td><code>thread.started</code></td><td>—</td><td>（会话线程创建）</td><td>—</td></tr>
+            <tr><td>2</td><td><code>turn.started</code></td><td>—</td><td><code>Working</code></td><td>2. Turn 启动（<code>TurnStarted</code>）</td></tr>
+            <tr><td>3–8</td><td><code>error</code> ×5 → <code>item.completed(error)</code></td><td>error item</td><td>（无：网络重连，非常态）</td><td>3. 模型请求（超时重连后恢复）</td></tr>
+            <tr><td>9</td><td><code>item.completed</code></td><td>agent_message · phase=None</td><td><strong>正文</strong>（前导旁白）</td><td>4. 模型流式输出</td></tr>
+            <tr><td>10→11</td><td><code>item.started</code>→<code>completed</code></td><td>command_execution ✓</td><td><code>Running</code>→<code>Ran</code></td><td>5. 多轮循环（工具）</td></tr>
+            <tr><td>12</td><td><code>item.completed</code></td><td>agent_message</td><td><strong>正文</strong>（前导）</td><td>5. 多轮循环</td></tr>
+            <tr><td>13–16</td><td><code>item.started</code> ×2 → <code>completed</code>（含 1 次 failed）</td><td>command_execution ✓/✗</td><td><code>Running</code>→<code>Ran</code></td><td>5. 多轮循环（<code>rg</code> 失败后自绕开）</td></tr>
+            <tr><td>17</td><td><code>item.completed</code></td><td>agent_message</td><td><strong>正文</strong>（前导：改用 UTF-8 重读）</td><td>5. 多轮循环</td></tr>
+            <tr><td>18→19</td><td><code>item.started</code>→<code>completed</code></td><td>command_execution ✓</td><td><code>Running</code>→<code>Ran</code></td><td>5. 多轮循环（重读文件）</td></tr>
+            <tr><td>20</td><td><code>item.completed</code></td><td><strong>agent_message（最终答案）</strong></td><td><strong>正文 · 最终答复</strong></td><td>5→6. 最终答复</td></tr>
+            <tr><td>21</td><td><code>turn.completed</code></td><td>—</td><td><code>Working</code> 清理</td><td>6. Turn 完成（<code>TurnCompleted</code>，<strong>最后一条</strong>）</td></tr>
+          </tbody>
+        </table>
+        <div class="note">
+          <strong>Codex 给出的最终答复（第 20 条正文，原文）</strong>
+          找到了：<code>electron/aicli/codexConfig.ts</code>。这个文件用于识别当前启动的命令是否是 <code>codex</code>，如果是，就给它注入
+          <code>CODEX_DEFAULT_TERMINAL_BG</code> 和 <code>CODEX_DEFAULT_TERMINAL_FG</code> 环境变量。作用是绕过 Windows ConPTY 下 Codex 无法正确
+          探测终端前景/背景色的问题，让 Codex 按真实的 light/dark 终端主题选择合适的颜色，避免亮色终端里出现低对比度文本。
+        </div>
+        <h3>三点读法</h3>
+        <ul>
+          <li><strong><code>turn.completed</code> 永远最后：</strong>所有 <code>item.completed</code> 都排在它前面，最终答复（20）紧邻 <code>turn.completed</code>（21）——这就是 <code>ItemCompleted</code> 与 <code>TurnCompleted</code> 的顺序。</li>
+          <li><strong>一轮内 <code>agent_message</code> 出现多次</strong>（9 / 12 / 17 前导 + 20 最终），只有最终那段是答复，对应 <code>on_agent_message_item_completed</code> 一轮触发多次。</li>
+          <li><strong>真实里 <code>phase</code> 可能全是 <code>None</code>：</strong>本次 <code>gpt-5.5</code> 未打 <code>Commentary</code>/<code>FinalAnswer</code> 标，只能靠位置/内容区分最终答案——也印证了 IM 侧“靠 marker 而非 phase”的设计。</li>
+        </ul>
+
+        <h3>带 IM marker 的同一任务：回复从哪条正文发出</h3>
+        <p>
+          把同一任务改成走 IM 路径——在 prompt 末尾按 <code>buildRemoteImAicliPrompt</code> 附上 reply marker 指令
+          （<code>replyId = rim-demo0001</code>），再跑一次 <code>codex exec --json</code>。这轮出现 <strong>5 段 <code>agent_message</code></strong>，逐条看谁带 marker：
+        </p>
+        <table>
+          <thead>
+            <tr><th>#</th><th>agent_message</th><th>含 <code>&lt;remote-im-reply id="rim-demo0001"&gt;</code>？</th><th>内容</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>9</td><td>前导旁白①</td><td>否</td><td>“先用 superpowers 技能，只解读不改动”</td></tr>
+            <tr><td>12</td><td>前导旁白②</td><td>否</td><td>“已加载技能，用快速搜索定位文件”</td></tr>
+            <tr><td>17</td><td>前导旁白③</td><td>否</td><td>“rg 不可用，改用 PowerShell 查找”</td></tr>
+            <tr><td>20</td><td>前导旁白④</td><td>否</td><td>“已定位文件，开始读取内容”</td></tr>
+            <tr><td><strong>23</strong></td><td><strong>最终答复</strong></td><td><strong>是（open + close）</strong></td><td><strong>解读 codexConfig.ts 作用（见下）</strong></td></tr>
+          </tbody>
+        </table>
+        <p>第 23 条正文原文（含 marker，位于 <code>turn.completed</code> 前一条）：</p>
+        <pre>&lt;remote-im-reply id="rim-demo0001"&gt;
+`electron/aicli/codexConfig.ts` 负责识别当前启动的命令是否是 `codex`，并在是 Codex 会话时为其
+注入终端前景色/背景色环境变量。它根据 light/dark 主题设置 CODEX_DEFAULT_TERMINAL_BG 和
+CODEX_DEFAULT_TERMINAL_FG，同时保留调用方已显式传入的同名环境变量……
+&lt;/remote-im-reply id="rim-demo0001"&gt;</pre>
+        <p>
+          把这 5 段正文按主仓 buffer 方式拼接，跑<strong>真实的</strong> <code>extractRemoteImReplyOutput(buffer, { replyId: 'rim-demo0001' })</code>，结论：
+        </p>
+        <ul>
+          <li><strong>只提取到第 23 条 marker 内的内容</strong>（4 条前导旁白没有 marker，被全部忽略），标签被剥掉，得到干净的约 230 字回复——这才是发回 IM 的内容。</li>
+          <li><strong>发送点</strong>：marker 落在最终答复那条 <code>agent_message</code> 的 <code>item.completed</code>（第 23 条）上，紧邻 <code>turn.completed</code>（第 24 条）之前——不是 <code>TurnCompleted</code> 触发。</li>
+          <li><strong>每 replyId 只发一次</strong>：<code>forwardedReplyId</code> 去重，后续再 flush 也不会重复发。</li>
+          <li><strong>提取是逐行匹配的</strong>：marker 标签必须独占一行（模型按指令照做了）。实测若把多段 <code>agent_message</code> <strong>无换行</strong>直接拼接，open 标签失去独立行会导致<strong>提取为空</strong>。生产链路（<code>ipc.ts</code> 的 <code>state.buffer += text</code>）正是无分隔拼接——实际靠“中间 flush 会把不含 marker 的旁白 buffer 清空”兜底：旁白先到、flush 清掉，最终答复再来时 open 标签就在行首。若旁白与最终答复落在<strong>同一个防抖窗口</strong>内被拼在一起，提取会失败，防御性改法是监听器拼接时补一个换行。</li>
+        </ul>
+        <div class="note">
+          <strong>结论（marker 版）</strong>
+          Codex 对每段正文都发 bridge（本例 5 段），但<strong>只有带闭合 marker 的最终答复（第 23 条）被 <code>extractRemoteImReplyOutput</code> 提取并发回 IM，且每 replyId 仅一次</strong>。
+          本次 <code>phase</code> 全是 <code>None</code> 无法区分——<strong>marker 才是判定“最终回复”的唯一可靠依据</strong>。
+        </div>
+      </section>
+
       <section id="interrupt">
         <h2>任务 A 过程中插入任务 B</h2>
         <p>
-          当任务 A 还在执行时，用户又输入 B，这类输入本质上是一次 steer。它不是立刻打断当前正在进行的模型请求，
-          也不是直接插入到当前正在执行的工具调用里，而是先进入 pending 输入队列。等当前 Turn 到达可切换边界后，
-          TUI / Core 再把 B 作为下一条用户输入送入新的 Turn。
+          当任务 A 还在执行时用户又输入 B，codex 默认走的是 <strong>steer（中途注入）</strong>，而不是“排队等下一轮”。
+          TUI 判定当前 agent turn 正在运行，就把 B <strong>立即提交给 Core</strong>（不进队列）；Core 把 B 注入正在跑的 Turn A 的
+          pending input。它<strong>不会打断已经发出的那一次模型请求，也不会打断正在执行的工具</strong>，而是在<strong>当前步骤结束、
+          下一次调用模型之前</strong>把 B 取出来一起送进去。也就是说，B 被折进同一个 Turn A 继续执行，通常不会新开一个 Turn B。
+        </p>
+        <p>
+          只有少数特例才退回“排队 → 结束后开新 Turn”：例如 Plan 流式输出中（<code>is_plan_streaming_in_tui()</code>）、Plan 模式，
+          或 B 想 steer 一个<strong>不可 steer 的轮次</strong>（review / compact）被拒后进 <code>rejected_steers_queue</code> 重试。
+          这些情况才由 <code>maybe_send_next_queued_input()</code> 在 turn 空闲后送出，成为新的 Turn。
         </p>
         <h3>阶段说明</h3>
         <table>
@@ -907,71 +1173,72 @@ stateDiagram-v2
           </thead>
           <tbody>
             <tr>
-              <td>1. A 已经启动</td>
-              <td>任务 A 已经进入当前 Turn，并且已经触发一次或多次模型请求。</td>
-              <td>A 的当前模型请求仍然按原上下文执行。</td>
-              <td>仍显示 <code>Working</code>，可能继续出现正文、<code>Thought</code> 或工具状态。</td>
+              <td>1. A 正在执行</td>
+              <td>Turn A 已在运行，正处于某个“模型请求 → 工具执行”的步骤中。</td>
+              <td>已经发出的这一步不受影响，照常跑完。</td>
+              <td>显示 <code>Working</code>，可能出现正文、<code>Thought</code> 或工具状态。</td>
             </tr>
             <tr>
-              <td>2. 用户输入 B</td>
-              <td>TUI 收到 B，但不会把 B 直接写进正在飞行中的模型请求。</td>
-              <td>B 不会改变当前这次已经发出去的模型请求。</td>
-              <td>用户能看到自己输入了 B，但 A 的执行状态仍在继续。</td>
+              <td>2. 用户输入 B（当作 steer）</td>
+              <td>TUI 见 <code>agent_turn_running == true</code>，把 B 当 steer <strong>立即提交给 Core</strong>（<code>submit_op</code>），不进 pending 队列。</td>
+              <td>不改写正在飞行中的那次模型请求。</td>
+              <td>B 显示为本轮的 pending steer。</td>
             </tr>
             <tr>
-              <td>3. B 进入 pending 队列</td>
-              <td>Core / TUI 把 B 记录为下一条待处理输入。</td>
-              <td>B 等待 A 的当前 Turn 结束或到达可安全切换点。</td>
-              <td>当前 Turn 仍然属于 A。</td>
+              <td>3. Core 注入当前 Turn</td>
+              <td><code>inject_if_running()</code> 把 B 追加进 Turn A 的 pending input。</td>
+              <td>B 暂存于 Turn A，等下一个步骤边界。</td>
+              <td>仍是同一个 Turn A，不新开 Turn。</td>
             </tr>
             <tr>
-              <td>4. A 完成</td>
-              <td>A 的 Turn 收到 <code>TurnCompleted</code>，TUI 清理 A 的运行态。</td>
-              <td>A 的模型交互闭环结束。</td>
-              <td><code>Working</code> 会短暂清理，随后可能因为 B 再次进入运行态。</td>
+              <td>4. 当前步骤结束，B 生效</td>
+              <td><code>run_turn</code> 循环在下一步开头 <code>get_pending_input()</code> 取走 B。</td>
+              <td>下一次调用模型时带上“A 的工具结果 + B”，A 与 B 合流。</td>
+              <td>继续 <code>Working</code>，仍属于 Turn A。</td>
             </tr>
             <tr>
-              <td>5. 启动 B</td>
-              <td>TUI 调用 <code>maybe_send_next_queued_input()</code>，把 B 送入新的 Turn。</td>
-              <td>这时才会为 B 组装上下文并发起新的模型请求。B 可以看到 A 已经写入 history 的上下文。</td>
-              <td>进入新的 <code>TurnStarted(B)</code> 和 <code>Working</code>。</td>
+              <td>5. 整轮收尾</td>
+              <td>模型不再请求工具、给出最终停止信号，Turn A 结束。</td>
+              <td>A 与 B 在同一轮里一起完成。</td>
+              <td><code>TurnCompleted(A)</code>，清理 <code>Working</code>。</td>
             </tr>
           </tbody>
         </table>
         <p>
-          这套机制的核心目标是避免破坏当前正在执行的模型请求或工具调用。也就是说，B 是“排队接管下一轮”，不是“强行插入当前请求”。
-          如果需要真正中断 A，那是另一个中断流程，不等同于这里说的 steer / pending input。
+          核心目标是：既不打断已经发出的那一步（模型请求 / 工具执行），又能让 B 尽快生效——于是选在<strong>步骤与步骤之间</strong>
+          把 B 折进当前 Turn。所以 B 是“注入当前这一轮的下一步”，不是“排队等下一轮”，更不是“强行改写正在飞行的请求”。
+          真正打断 A 是另一条中断流程，不等同于这里的 steer。
         </p>
         <div class="diagram">
           <pre class="mermaid">
 sequenceDiagram
     autonumber
+    participant U as 用户
+    participant TUI as TUI（会话界面）
+    participant Core as Core（执行 Turn A）
+    participant M as 大模型
 
-    participant User as 用户
-    participant TUI as TUI
-    participant Core as Core / Session
-    participant TurnA as Turn A
-    participant Model as 大模型
-    participant TurnB as Turn B
+    Note over U,M: ① Turn A 正在执行（某个步骤进行中）
+    U->>TUI: 输入任务 A
+    TUI->>Core: 提交 A，开始 Turn A
+    Core->>M: 第 1 步：请求模型
+    M-->>Core: 请求执行工具
+    Core->>Core: 执行工具（这一步还没结束）
 
-    User->>TUI: 输入任务 A
-    TUI->>Core: submit A
-    Core-->>TUI: TurnStarted(A)
-    TUI->>TUI: 显示 Working
-    TurnA->>Model: 请求模型处理 A
+    Note over U,M: ② A 没结束时又输入 B（当作 steer）
+    U->>TUI: 输入任务 B
+    Note over TUI: turn 在跑 → B 当 steer<br/>不排队、也不打断已发出的这一步
+    TUI->>Core: 立即提交 B（submit_op）
+    Core->>Core: inject_if_running() 注入 Turn A 的 pending input
 
-    User->>TUI: A 未完成时输入 B
-    TUI->>Core: steer / pending_input(B)
-    Note over Core,TUI: B 被排队，不改写 A 已经发出的模型请求
+    Note over U,M: ③ 当前步骤结束后，B 才生效
+    Core->>Core: 下一步开头 get_pending_input() 取走 B
+    Core->>M: 第 2 步：带上 A 的工具结果 + B 一起请求模型
+    Note over Core,M: A 与 B 合流，仍在同一个 Turn A 内
 
-    Model-->>TurnA: A 的当前模型响应结束
-    TurnA->>Core: TurnCompleted(A)
-    Core-->>TUI: TurnCompleted(A)
-
-    TUI->>TUI: maybe_send_next_queued_input()
-    Core->>TurnB: 启动 B
-    Core-->>TUI: TurnStarted(B)
-    TurnB->>Model: 带上 A 的上下文和 B 请求模型
+    Note over U,M: ④ 模型不再需要工具
+    M-->>Core: 给出最终回复
+    Core-->>TUI: TurnCompleted(A)，清理 Working
           </pre>
         </div>
         <div class="note">
@@ -992,6 +1259,77 @@ sequenceDiagram
           第二个是“assistant message 完成流程”，Codex 在 assistant message item 完成时把正文发回主仓 bridge。
           也就是说，hook 不是单独跑的后台任务，而是分别挂在 Codex 启动和 Codex assistant 输出完成这两个关键点上。
         </p>
+
+        <h3>IM 回复到底在哪个阶段发出（对照状态区）</h3>
+        <div class="note">
+          <strong>一句话结论</strong>
+          IM 回复既<strong>不</strong>在 <code>Working</code> / <code>Thought</code> / <code>Ran</code> / <code>Explored</code> 这些状态区元素上发出，
+          也<strong>不</strong>严格在 <code>TurnCompleted</code> 发出，而是在“Codex 写完一段 <strong>assistant 正文（AgentMessage）</strong>”这个点上；
+          并且只有那段正文里带着<strong>闭合的 <code>&lt;remote-im-reply id="…"&gt;</code> marker</strong> 时，主仓才真正把它发给 IM。
+        </div>
+        <p>两层门控，缺一不可：</p>
+        <ul>
+          <li><strong>Codex 侧（发给 bridge）：</strong>每完成一段 assistant 正文（<code>on_agent_message_item_completed</code>）就无条件 <code>send_assistant_text()</code>。
+            它对 <code>MessagePhase::Commentary</code>（工具调用之间的前导/旁白）和 <code>MessagePhase::FinalAnswer</code>（最终答案）<strong>都发</strong>，
+            所以一轮里可能发好几次，而不只发最终答案。reasoning / <code>Thought</code> 不是 AgentMessage，不会进 bridge。</li>
+          <li><strong>主仓侧（真正发给 IM）：</strong>所有 assistant 正文先累积进 buffer，只有出现<strong>当前 <code>replyId</code> 的闭合 marker</strong> 时
+            <code>extractRemoteImReplyOutput()</code> 才返回内容，经防抖 flush 后发出；<code>forwardedReplyId</code> 保证<strong>每个 replyId 只发一次</strong>。</li>
+        </ul>
+        <p>
+          注入提示（<code>buildRemoteImAicliPrompt</code>）要求 Codex 只把<strong>最终回复</strong>包进 marker、marker 外文本忽略。
+          所以实际效果是：Commentary 旁白虽然也发到了 bridge，但没有 marker，累积后被忽略；<strong>只有“最终答案”那段正文（带闭合 marker）经 flush 后才发一次</strong>。
+          这段正文完成通常在 <code>TurnCompleted</code> 之前一点，所以“等 TurnCompleted 才发”并不准确。
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>状态区元素</th>
+              <th>Codex 是否发 bridge</th>
+              <th>是否触发 IM 发送</th>
+              <th>说明</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>Working</code> / 状态栏</td>
+              <td>否</td>
+              <td>否</td>
+              <td>轮次级运行态，不是 assistant 正文。</td>
+            </tr>
+            <tr>
+              <td><code>Thought</code> / reasoning</td>
+              <td>否</td>
+              <td>否</td>
+              <td>推理摘要不是 AgentMessage，不进 bridge。</td>
+            </tr>
+            <tr>
+              <td><code>Running</code>/<code>Ran</code>/<code>Exploring</code>/<code>Explored</code></td>
+              <td>否</td>
+              <td>否</td>
+              <td>工具/命令展示，不是 assistant 正文。</td>
+            </tr>
+            <tr>
+              <td>assistant 正文 · <code>Commentary</code>（旁白/前导）</td>
+              <td>是</td>
+              <td>否</td>
+              <td>发到 bridge 但没有 marker，累积后被忽略。</td>
+            </tr>
+            <tr>
+              <td>assistant 正文 · <code>FinalAnswer</code>（最终答案，带 marker）</td>
+              <td>是</td>
+              <td><strong>是</strong>（每 replyId 一次）</td>
+              <td>buffer 出现闭合 marker → flush → 发 IM。</td>
+            </tr>
+            <tr>
+              <td><code>TurnCompleted</code></td>
+              <td>—</td>
+              <td>否（不是触发点）</td>
+              <td>只是轮次结束边界；发送已由 marker 触发，通常更早。</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>hook 位置一览</h3>
         <table>
           <thead>
             <tr>
@@ -1077,17 +1415,99 @@ flowchart TD
           <li><code>tui/src/cli.rs</code> 定义隐藏参数 <code>--multi-ai-code-im-ipc</code>。</li>
           <li><code>tui/src/lib.rs</code> 在 TUI 启动时调用 <code>multi_ai_code_im_bridge::init(multi_ai_code_im_ipc)</code> 保存 endpoint。</li>
           <li><code>tui/src/multi_ai_code_im_bridge.rs</code> 解析 endpoint，校验 token，并通过 TCP 发送 JSON line。</li>
-          <li><code>tui/src/chatwidget/streaming.rs</code> 在 <code>on_agent_message_item_completed()</code> 里拿到最终 assistant message，调用 <code>send_assistant_text()</code>。</li>
+          <li><code>tui/src/chatwidget/streaming.rs</code> 在 <code>on_agent_message_item_completed()</code> 里对<strong>每一段</strong>完成的 assistant 正文（含 <code>Commentary</code> 旁白与 <code>FinalAnswer</code> 最终答案）都调用 <code>send_assistant_text()</code>。</li>
         </ul>
         <p>
           所以 Codex 的 IM hook 不是挂在 <code>Ran</code>、<code>Thought</code> 或终端输出上，而是挂在 assistant message item 完成的位置。
           这比抓 TUI 屏幕文本更稳，因为它避开了大部分状态栏、工具日志、reasoning 和 prompt echo。
         </p>
+
+        <h4>什么是 assistant message item</h4>
+        <p>
+          codex 把一次会话（thread / turn）表示成<strong>一串 item</strong>（<code>ThreadItem</code> 枚举，
+          <code>app-server-protocol/src/protocol/v2/item.rs</code>）。每种 item 是时间线上的一类条目，彼此并列：
+          <code>UserMessage</code>（用户输入）、<strong><code>AgentMessage</code>（assistant 正文/回复）</strong>、
+          <code>Reasoning</code>（推理，对应 <code>Thought</code>）、<code>CommandExecution</code>（命令）、<code>FileChange</code>（patch）、
+          <code>McpToolCall</code> / <code>WebSearch</code> / <code>Plan</code> 等。
+        </p>
+        <p>
+          <strong>“assistant message item” 就是其中的 <code>AgentMessage</code>（TUI 侧类型名 <code>AgentMessageItem</code>）</strong>——
+          专门承载“模型说给用户看的自然语言正文”，与 reasoning、工具调用、命令、文件改动是<strong>不同的 item</strong>。结构（<code>protocol/src/items.rs</code>）：
+        </p>
+        <pre>pub struct AgentMessageItem {
+    pub id: String,                        // 这段正文块的唯一 id
+    pub content: Vec&lt;AgentMessageContent&gt;, // 内容，目前只有 Text { text }
+    pub phase: Option&lt;MessagePhase&gt;,       // Commentary | FinalAnswer | None
+    pub memory_citation: Option&lt;MemoryCitation&gt;,
+}</pre>
+        <ul>
+          <li><strong><code>phase</code> 区分正文类型：</strong><code>Commentary</code>（轮次中途的旁白/前导，后面还会有工具或输出）、
+            <code>FinalAnswer</code>（本轮最终答复）、<code>None</code>（老模型不发 phase，按 legacy 语义，通常只在轮末给一段）。
+            源码注释原意：供 TUI 区分“中途旁白 vs 最终答案”，避免状态指示器抖动。</li>
+          <li><strong>流式两段式：</strong>先 <code>AgentMessageDelta</code>（增量 token，边下边显），最后 <code>ItemCompleted{AgentMessage}</code>（这段正文定稿）。</li>
+          <li><strong>作用：</strong>它是“纯正文”的载体（不含 reasoning / 工具日志 / 状态栏），所以 IM 桥把 hook 挂在它的完成点上，比抓终端文本稳；
+            带闭合 marker 的那段（通常 <code>FinalAnswer</code>）就是要发回 IM 的内容。</li>
+        </ul>
+
+        <h4>它挂在哪个状态：事件链与状态区对应</h4>
+        <p>
+          <code>on_agent_message_item_completed()</code> 不是自己触发的，而是 Codex core 发来 <code>ItemCompleted</code> 通知、
+          且 item 类型是 <code>AgentMessage</code> 时分发进来的——也就是 <strong>display-map 里的“正文”层完成</strong>，
+          与 <code>Thought</code> / <code>Ran</code> / <code>Edited</code> 等状态层是不同的 item / 通知，干净隔开：
+        </p>
+        <pre>core: ServerNotification::ItemCompleted { item: AgentMessage { phase, .. } }
+  → protocol.rs   handle_item_completed_notification()
+  → replay.rs     handle_thread_item()            // 实时与 replay 共用同一分发
+  → replay.rs     match ThreadItem::AgentMessage
+  → streaming.rs  on_agent_message_item_completed(item, from_replay)
+  → streaming.rs  send_assistant_text()           // from_replay=false 才发 bridge</pre>
+        <table>
+          <thead>
+            <tr>
+              <th>状态区元素（display-map）</th>
+              <th>触发它的 core 事件 / item</th>
+              <th>TUI 分发函数</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>正文（← IM hook 在这里）</strong></td>
+              <td><code>ItemCompleted { AgentMessage, phase }</code></td>
+              <td><code>on_agent_message_item_completed()</code> → <code>send_assistant_text()</code></td>
+            </tr>
+            <tr>
+              <td><code>Thought</code> / reasoning</td>
+              <td><code>ReasoningSummaryTextDelta</code></td>
+              <td><code>on_agent_reasoning_delta()</code></td>
+            </tr>
+            <tr>
+              <td><code>Running</code> / <code>Ran</code></td>
+              <td><code>CommandExecution</code> item（started / completed）</td>
+              <td><code>on_command_execution_started()</code> 等</td>
+            </tr>
+            <tr>
+              <td><code>Edited</code></td>
+              <td><code>FileChange</code>（patch）item</td>
+              <td><code>on_patch_apply_begin()</code> 等</td>
+            </tr>
+            <tr>
+              <td><code>Exploring</code> / <code>Explored</code> / 工具</td>
+              <td><code>WebSearch</code> / <code>McpToolCall</code> item</td>
+              <td><code>on_web_search_begin()</code> / <code>on_mcp_tool_call_started()</code></td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          <code>AgentMessage</code> 的 <code>phase</code> 再细分正文类型：<code>Commentary</code>（工具间前导/旁白）、
+          <code>FinalAnswer</code>（最终答案）、<code>None</code>（老模型只在轮末给一段）。所以它在一轮 Turn 内可能触发多次，
+          且都发生在 <code>TurnCompleted</code>（另一个 <code>TurnStatus::Completed</code> 通知）之前。
+        </p>
+
         <div class="note">
           <strong>不是等到 TurnCompleted 才发送</strong>
-          Codex 侧触发点是 <code>on_agent_message_item_completed()</code>，含义是某个 assistant message item 已经完成。
-          这通常发生在本轮 Turn 结束前后，但它不是 <code>TurnCompleted</code> 事件本身。
-          主仓收到这段结构化输出后，还要继续经过当前 <code>replyId</code> marker 提取和 flush，只有 marker 闭合且内容有效时才会真正发回 IM。
+          Codex 侧触发点是 <code>on_agent_message_item_completed()</code>：<strong>每</strong>完成一段 assistant 正文就发一次（含 <code>Commentary</code> 旁白），并不是只发最终答案，也不是 <code>TurnCompleted</code> 事件本身。
+          主仓把这些正文累积进 buffer，只有出现当前 <code>replyId</code> 的<strong>闭合 marker</strong> 时才经 flush 真正发回 IM；<code>forwardedReplyId</code> 保证每个 replyId 只发一次。
+          由于注入提示只让 Codex 把最终回复包进 marker，实际就是“带 marker 的最终答案那段完成后”发出——通常略早于 <code>TurnCompleted</code>。
         </div>
 
         <h3>4. 主仓收到结构化输出后的转发</h3>
@@ -1135,17 +1555,18 @@ sequenceDiagram
     PTY->>CLI: 写入当前 AICLI 会话
     IPC->>Flush: startOutputForwarding(replyId)
 
-    CLI->>CLI: 模型处理并生成 assistant message
-    CLI->>Bridge: on_agent_message_item_completed()
-    Bridge->>Bridge: send_assistant_text(JSON line)
-    Bridge->>IPC: addAicliStructuredOutputListener
-    IPC->>Flush: 追加到当前 session buffer
-    Flush->>Flush: extractRemoteImReplyOutput(replyId)
-    alt 当前 replyId marker 已闭合且内容有效
-        Flush->>IM: 发送 AICLI 回复
-    else marker 未闭合或内容为空
-        Flush->>Flush: 保留 pending / 不发送
+    loop 每完成一段 assistant 正文（可能多次）
+        CLI->>Bridge: on_agent_message_item_completed() → send_assistant_text()
+        Bridge->>IPC: addAicliStructuredOutputListener（追加 buffer）
+        IPC->>Flush: scheduleOutputFlush（防抖）
+        Flush->>Flush: extractRemoteImReplyOutput(replyId)
+        alt buffer 出现当前 replyId 的闭合 marker
+            Flush->>IM: 发送 AICLI 回复（forwardedReplyId 去重，仅一次）
+        else 无 marker（如 Commentary 旁白）或 marker 未闭合
+            Flush->>Flush: 累积 / 不发送
+        end
     end
+    Note over CLI,Flush: 只有带闭合 marker 的“最终答案”那段才真正发出；<br/>TurnCompleted 不是发送触发点
           </pre>
         </div>
       </section>

@@ -576,6 +576,62 @@ sequenceDiagram
           同样发到 bridge——<strong>只有靠 marker 才能把最终答复挑出来</strong>。
         </p>
 
+        <h3>任务结束是如何判定的（needs_follow_up 机制）</h3>
+        <p>
+          直觉上“只要给模型发消息它就会回复”，所以结束一定是 Codex 侧的决定——方向正确，但要修正一个前提：
+          <strong>每次模型调用本身是有界的</strong>，流式吐完必然以 <code>ResponseEvent::Completed</code> 结束（API 层面的“这次说完了”，
+          <code>turn.rs</code>）。模型看起来“一直在干活”，只是因为 Codex 在循环里不断再次调用它。
+          所以真正的问题是：<strong>Codex 依据什么决定不再调下一次</strong>——依据是模型自己输出里的信号，这是双方配合的协议，不是单方面掐断。
+        </p>
+        <p>每次模型调用返回 <code>SamplingRequestResult { needs_follow_up, last_agent_message }</code>，其中 <code>needs_follow_up</code> 由三个来源置真：</p>
+        <table>
+          <thead><tr><th>来源</th><th>代码依据</th><th>含义</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><strong>响应里有工具调用</strong></td>
+              <td><code>handle_output_item_done</code> → <code>needs_follow_up = true</code></td>
+              <td>模型要工具 → 必须跑完工具、把结果喂回去再调一次</td>
+            </tr>
+            <tr>
+              <td><strong>模型显式声明“没说完”</strong></td>
+              <td><code>Completed { end_turn: Some(false) }</code> → true</td>
+              <td>协议里的 <code>end_turn</code> 字段，模型可主动要求“再调我一次”</td>
+            </tr>
+            <tr>
+              <td><strong>Codex 侧有 pending input</strong></td>
+              <td><code>needs_follow_up = model_needs_follow_up || has_pending_input</code></td>
+              <td>steer 进来的新消息也强制再来一圈</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>出口逻辑（<code>core/src/session/turn.rs</code>，简化）：</p>
+        <pre>if !needs_follow_up {
+    last_agent_message = sampling_request_last_agent_message;
+    // stop hooks 有机会拦截：可注入提示强制模型继续
+    break;   // ← 内圈结束
+}
+continue;    // 否则回填工具结果，再调一次模型
+
+// 外层 RegularTask 再确认没有 pending_input → 任务 run() 返回
+// → Session::on_task_finished → 发 TurnComplete(last_agent_message)</pre>
+        <div class="note">
+          <strong>准确定义</strong>
+          “任务结束” = 模型的最新一次响应<strong>既没有请求任何工具、也没有声明 end_turn=false</strong>，且 Codex 侧没有排队/注入的新输入
+          → Codex 判定“它说的就是最终答案”，不再发起下一次请求，发 <code>TurnComplete</code> 收口。
+          模型用<strong>“不再要工具”隐式表达“我做完了”</strong>，Codex 把这个信号变成正式的轮次结束事件。
+        </div>
+        <p>
+          对照上面的真实 trace：调用①~④每次都带工具请求（<code>needs_follow_up=true</code>）→ 循环继续；
+          调用⑤只输出纯正文、不带 tool call → <code>needs_follow_up=false</code> → break → <code>turn.completed</code>。
+        </p>
+        <p>其它几条结束路径：</p>
+        <ul>
+          <li><strong>stop hooks</strong>：<code>!needs_follow_up</code> 之后 hooks 还能拦一道——可注入 prompt 强制继续（<code>should_block</code>），也可放行。</li>
+          <li><strong>用户中断</strong>（Esc）→ <code>TurnAborted</code>，不走正常出口。</li>
+          <li><strong>错误</strong>（API 失败、安全拦截）→ <code>TurnFailed</code> / 错误收尾。</li>
+          <li><strong>token 触顶</strong> → 不结束：mid-turn 自动 compact 后 <code>continue</code> 继续跑。</li>
+        </ul>
+
         <h3>顺序与保证</h3>
         <ul>
           <li><strong>Turn 级：</strong><code>TurnStarted</code> 最先、<code>TurnComplete</code> 最后（携带 <code>last_agent_message</code>）。</li>

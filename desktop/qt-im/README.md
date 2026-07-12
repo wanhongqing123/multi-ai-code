@@ -104,7 +104,7 @@ desktop/qt-im/scripts/package-macos.sh
 产出的 zip 不提交进仓库，通过 GitHub Releases 发布下载：
 
 ```bash
-gh release upload qt-im-$(date +%Y%m%d) \
-  desktop/qt-im/dist/MultiAIIM-macos-arm64-$(date +%Y%m%d)-*.zip \
-  --clobber
+npm run release:mac
 ```
+
+该命令需要在仓库根目录执行，并依赖已登录的 GitHub CLI。

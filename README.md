@@ -374,21 +374,19 @@ resources/asr/
 - Electron 桌面端安装包：tag 形如 `electron-<日期>`（NSIS 安装器，内置 AICLI 与 ASR 资源，安装即用）。
 - Qt IM 客户端免安装包：tag 形如 `qt-im-<日期>`（见 `desktop/qt-im/scripts/package-windows.ps1` 和 `desktop/qt-im/scripts/package-macos.sh`）。
 
-macOS Electron 产物上传示例：
+macOS 产物上传可以使用脚本：
 
 ```bash
-gh release upload electron-$(date +%Y%m%d) \
-  release/MultiAICode-*-arm64.dmg \
-  release/MultiAICode-*-arm64.dmg.blockmap \
-  --clobber
+npm run release:mac
 ```
 
-macOS Qt IM 产物上传示例：
+脚本会把 `release/MultiAICode-*-arm64.dmg`、对应 `.blockmap` 和
+`desktop/qt-im/dist/MultiAIIM-macos-arm64-<日期>-*.zip` 上传到
+`electron-<日期>`、`qt-im-<日期>`。上传依赖已登录的 GitHub CLI；本机首次使用前需执行：
 
 ```bash
-gh release upload qt-im-$(date +%Y%m%d) \
-  desktop/qt-im/dist/MultiAIIM-macos-arm64-$(date +%Y%m%d)-*.zip \
-  --clobber
+brew install gh
+gh auth login
 ```
 
 Windows 安装包未做代码签名，SmartScreen 提示时选择「仍要运行」。macOS 包未做

@@ -15,6 +15,8 @@
     "dist:mac": "npm run icons && npm run prepare-asr && electron-vite build && electron-builder --mac",
     "dist:win": "npm run icons && npm run prepare-asr && electron-vite build && electron-builder --win",
     "dist:all": "npm run icons && npm run prepare-asr && electron-vite build && electron-builder --mac --win",
+    "package:mac:electron": "scripts/package-macos-electron.sh",
+    "package:mac:qt-im": "desktop/qt-im/scripts/package-macos.sh",
     "typecheck": "node ./node_modules/typescript/bin/tsc --noEmit -p tsconfig.node.json && node ./node_modules/typescript/bin/tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "test:remote-im": "vitest run --exclude '.worktrees/**' electron/remote-im/*.test.ts src/remote-im/*.test.ts electron/preload.remoteIm.test.ts",

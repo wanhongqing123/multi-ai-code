@@ -75,3 +75,36 @@ powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1
 
 产出的 zip 不提交进仓库（`dist/` 已被 gitignore），通过 GitHub Releases 发布下载：
 <https://github.com/wanhongqing123/multi-ai-code/releases>（tag 形如 `qt-im-<日期>`）。
+
+## macOS 免安装包
+
+先完成 Release 构建：
+
+```bash
+cmake -S desktop/qt-im -B desktop/qt-im/build \
+  -DCMAKE_PREFIX_PATH=/opt/homebrew/opt/qt@5 \
+  -DCMAKE_BUILD_TYPE=Release
+cmake --build desktop/qt-im/build --target multi_ai_im_desktop --config Release
+```
+
+然后打包：
+
+```bash
+desktop/qt-im/scripts/package-macos.sh
+```
+
+产出 `dist/MultiAIIM-macos-arm64/` 和
+`dist/MultiAIIM-macos-arm64-<日期>-<git短哈希>.zip`。脚本会：
+
+- 使用 `macdeployqt` 旁挂 Qt framework；
+- 把原生 IM SDK framework 放进应用内置 vendor 目录；
+- 对 `.app` 做 ad-hoc codesign，避免嵌入 framework 因未签名无法加载；
+- 生成 `使用说明.txt` 并压缩打包。
+
+产出的 zip 不提交进仓库，通过 GitHub Releases 发布下载：
+
+```bash
+gh release upload qt-im-$(date +%Y%m%d) \
+  desktop/qt-im/dist/MultiAIIM-macos-arm64-$(date +%Y%m%d)-*.zip \
+  --clobber
+```

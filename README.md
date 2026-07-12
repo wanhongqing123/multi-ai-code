@@ -334,6 +334,20 @@ npm run dist:win
 npm run dist:all
 ```
 
+macOS Electron 发布包可以使用脚本统一打包：
+
+```bash
+npm run package:mac:electron
+```
+
+脚本默认会先构建内置 `codex` / `opencode`，再生成
+`release/MultiAICode-<版本>-arm64.dmg` 和对应 `.blockmap`。如果只想复用已有
+AICLI 二进制，可以执行：
+
+```bash
+scripts/package-macos-electron.sh --skip-aicli
+```
+
 ASR 资源结构：
 
 ```text
@@ -358,9 +372,27 @@ resources/asr/
 [GitHub Releases](https://github.com/wanhongqing123/multi-ai-code/releases)：
 
 - Electron 桌面端安装包：tag 形如 `electron-<日期>`（NSIS 安装器，内置 AICLI 与 ASR 资源，安装即用）。
-- Qt IM 客户端免安装包：tag 形如 `qt-im-<日期>`（见 `desktop/qt-im/scripts/package-windows.ps1`）。
+- Qt IM 客户端免安装包：tag 形如 `qt-im-<日期>`（见 `desktop/qt-im/scripts/package-windows.ps1` 和 `desktop/qt-im/scripts/package-macos.sh`）。
 
-Windows 安装包未做代码签名，SmartScreen 提示时选择「仍要运行」。
+macOS Electron 产物上传示例：
+
+```bash
+gh release upload electron-$(date +%Y%m%d) \
+  release/MultiAICode-*-arm64.dmg \
+  release/MultiAICode-*-arm64.dmg.blockmap \
+  --clobber
+```
+
+macOS Qt IM 产物上传示例：
+
+```bash
+gh release upload qt-im-$(date +%Y%m%d) \
+  desktop/qt-im/dist/MultiAIIM-macos-arm64-$(date +%Y%m%d)-*.zip \
+  --clobber
+```
+
+Windows 安装包未做代码签名，SmartScreen 提示时选择「仍要运行」。macOS 包未做
+Developer ID 签名，首次打开如果被系统拦截，可在 Finder 中右键应用并选择「打开」。
 
 ## 测试命令
 

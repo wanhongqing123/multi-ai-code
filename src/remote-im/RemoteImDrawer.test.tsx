@@ -351,15 +351,13 @@ describe('RemoteImDrawer', () => {
     expect(noPeerHtml).toContain('<button type="submit" disabled=""')
   })
 
-  it('shows slash command suggestions without destructive commands', () => {
+  it('does not offer control-command suggestions in the Electron drawer', () => {
+    // 控制命令入口只保留在远端客户端（Qt 桌面 IM / iOS / Android）；
+    // Electron 抽屉发出的消息是发给手机好友的，不会进入命令解析，
+    // 在这里提示 /status 等命令只会误导。
     const html = renderDrawer({ input: '/' })
 
-    expect(html).toContain('remote-im-command-suggestions')
-    expect(html).toContain('/status')
-    expect(html).toContain('/plan')
-    expect(html).toContain('/build')
-    expect(html).toContain('/help')
-    expect(html).not.toContain('/stop')
+    expect(html).not.toContain('remote-im-command-suggestions')
   })
 
   it('keeps manual sending available for legacy slave accounts', () => {

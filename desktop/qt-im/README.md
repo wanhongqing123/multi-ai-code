@@ -72,3 +72,6 @@ powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1
 - 生成 `使用说明.txt` 并压缩打包。
 
 验证方式：用只含 `C:\Windows\System32` 的裸 PATH 启动包内 exe，进程存活即依赖完整（缺 DLL 会立即以 0xc0000135 退出）。
+
+产出的 zip 不提交进仓库（`dist/` 已被 gitignore），通过 GitHub Releases 发布下载：
+<https://github.com/wanhongqing123/multi-ai-code/releases>（tag 形如 `qt-im-<日期>`）。

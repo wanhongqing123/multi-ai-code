@@ -211,6 +211,35 @@ describe('remote IM router', () => {
     expect(sentToIm[0]).toContain('/status')
   })
 
+  it('routes slash-leading path messages to the AICLI as normal tasks', async () => {
+    const store = createMessageStore()
+    const sentToAicli: string[] = []
+    const router = createRemoteImRouter({
+      getConfig: () => config,
+      resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
+      sendUser: async (_sessionId, text) => {
+        sentToAicli.push(text)
+        return { ok: true }
+      },
+      sendImText: async () => ({ ok: true }),
+      store
+    })
+
+    const result = await router.handleIncomingText({
+      projectId: 'project-1',
+      remoteMessageId: 'remote-path-1',
+      fromUserId: 'phone_admin',
+      toUserId: 'desktop_bot',
+      text: '/etc/hosts 这个文件怎么改',
+      createdAt: 100
+    })
+
+    // 路径开头的消息是普通任务，不能被未知命令分支拒收。
+    expect(result.ok).toBe(true)
+    expect(sentToAicli).toHaveLength(1)
+    expect(sentToAicli[0]).toContain('/etc/hosts 这个文件怎么改')
+  })
+
   it('transcribes trusted audio messages and sends the transcript to the current AICLI session', async () => {
     const store = createMessageStore()
     const sentToAicli: Array<{

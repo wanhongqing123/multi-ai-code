@@ -16,7 +16,6 @@ export interface AicliStructuredOutputEvent {
 export interface AicliStructuredOutputBridge {
   endpoint: string
   args: string[]
-  sendControlCommand(input: AicliControlCommand): { ok: boolean; error?: string }
   requestControlCommand(
     input: AicliRequestControlCommand,
     timeoutMs?: number
@@ -39,14 +38,11 @@ interface WireEvent {
   error?: unknown
 }
 
-export type AicliControlCommand = {
-  command: 'switch_mode'
-  mode: AicliControlMode
-}
-
-export type AicliRequestControlCommand = {
-  command: 'status'
-}
+// 所有控制命令统一走 requestId RPC：switch_mode 也等待 AICLI 回 control_result，
+// 避免“字节写进 socket 就报成功”而 TUI 侧实际拒绝（协作模式未启用等）的假成功。
+export type AicliRequestControlCommand =
+  | { command: 'status' }
+  | { command: 'switch_mode'; mode: AicliControlMode }
 
 export type AicliControlCommandResult =
   | { ok: true; text: string }
@@ -193,15 +189,6 @@ export async function createAicliStructuredOutputBridge(
   return {
     endpoint,
     args: ['--multi-ai-code-im-ipc', endpoint],
-    sendControlCommand: (input) => {
-      const sent = writeControlPayload({
-        command: input.command,
-        mode: input.mode
-      })
-      return sent > 0
-        ? { ok: true }
-        : { ok: false, error: 'AICLI control bridge is not connected' }
-    },
     requestControlCommand: (input, timeoutMs = 5000) => {
       const requestId = randomUUID()
       return new Promise<AicliControlCommandResult>((resolve) => {
@@ -212,7 +199,8 @@ export async function createAicliStructuredOutputBridge(
         pendingControlRequests.set(requestId, { resolve, timeout })
         const sent = writeControlPayload({
           requestId,
-          command: input.command
+          command: input.command,
+          ...(input.command === 'switch_mode' ? { mode: input.mode } : {})
         })
         if (sent > 0) return
         clearTimeout(timeout)

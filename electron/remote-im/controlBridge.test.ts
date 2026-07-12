@@ -67,6 +67,50 @@ describe('remote IM control bridge', () => {
     })
   })
 
+  it('reports the AICLI rejection instead of a fake success', async () => {
+    const switchMode = vi.fn(async () => ({
+      ok: false as const,
+      error: 'Collaboration modes are disabled.'
+    }))
+    const result = await executeRemoteImControlCommand({
+      command: 'plan',
+      session: {
+        sessionId: 'session-codex',
+        targetRepo: '/repo',
+        command: 'codex',
+        startedAtMs: 0
+      },
+      sourceKind: 'codex',
+      switchMode
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.text).toContain('切换到计划模式失败')
+    expect(result.text).toContain('Collaboration modes are disabled.')
+  })
+
+  it('distinguishes a timeout from an explicit AICLI rejection', async () => {
+    const switchMode = vi.fn(async () => ({
+      ok: false as const,
+      error: 'AICLI control command timed out'
+    }))
+    const result = await executeRemoteImControlCommand({
+      command: 'build',
+      session: {
+        sessionId: 'session-codex',
+        targetRepo: '/repo',
+        command: 'codex',
+        startedAtMs: 0
+      },
+      sourceKind: 'codex',
+      switchMode
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.text).toContain('未收到 AICLI 确认')
+    expect(result.text).toContain('/status')
+  })
+
   it('does not simulate slash commands when source-level bridge is missing', async () => {
     const result = await executeRemoteImControlCommand({
       command: 'build',

@@ -36,6 +36,19 @@ describe('remote IM control commands', () => {
     })
   })
 
+  it('lets slash-leading paths and non-word tokens through as normal text', () => {
+    // 以路径开头的日常开发消息不能被当成敲错的命令拒收。
+    expect(parseRemoteImControlCommand('/etc/hosts 这个文件怎么改')).toEqual({ type: 'text' })
+    expect(parseRemoteImControlCommand('/tmp/app.log 看下这个日志')).toEqual({ type: 'text' })
+    expect(parseRemoteImControlCommand('/v2 接口返回什么')).toEqual({ type: 'text' })
+    expect(parseRemoteImControlCommand('/.env 里加个变量')).toEqual({ type: 'text' })
+    // 纯字母单词仍按未知命令拒收提示。
+    expect(parseRemoteImControlCommand('/stauts')).toEqual({
+      type: 'unknown-command',
+      commandText: '/stauts'
+    })
+  })
+
   it('does not expose stop as a supported command', () => {
     expect(REMOTE_IM_CONTROL_COMMANDS.map((command) => command.name)).toEqual([
       'status',

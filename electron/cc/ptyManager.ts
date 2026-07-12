@@ -475,17 +475,15 @@ export async function sendUserMessageToSession(
 export function switchAicliModeForSession(
   sessionId: string,
   mode: AicliControlMode
-): { ok: true } | { ok: false; error: string } {
+): Promise<AicliControlCommandResult> {
   const session = sessions.get(sessionId)
-  if (!session) return { ok: false, error: 'no session' }
+  if (!session) return Promise.resolve({ ok: false, error: 'no session' })
   if (!session.structuredOutputBridge) {
-    return { ok: false, error: 'AICLI control bridge is not available' }
+    return Promise.resolve({ ok: false, error: 'AICLI control bridge is not available' })
   }
-  const result = session.structuredOutputBridge.sendControlCommand({
-    command: 'switch_mode',
-    mode
-  })
-  return result.ok ? { ok: true } : { ok: false, error: result.error ?? 'switch mode failed' }
+  // 等 AICLI 回 control_result 再定成败：TUI 侧可能拒绝（协作模式未启用、
+  // 任务执行中等），fire-and-forget 会把这些失败误报成“已切换”。
+  return session.structuredOutputBridge.requestControlCommand({ command: 'switch_mode', mode })
 }
 
 export function requestAicliStatusForSession(

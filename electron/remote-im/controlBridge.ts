@@ -19,7 +19,7 @@ export interface RemoteImSwitchAicliModeRequest {
 
 export type RemoteImSwitchAicliMode = (
   request: RemoteImSwitchAicliModeRequest
-) => Promise<{ ok: true } | { ok: false; error: string }>
+) => Promise<{ ok: true; text?: string } | { ok: false; error: string; text?: string }>
 
 export interface RemoteImExecuteAicliCommandRequest {
   sessionId: string
@@ -121,15 +121,23 @@ async function switchMode(
     mode
   })
   if (!result.ok) {
+    // 超时单独说清楚：命令已发出但没等到 AICLI 确认（可能任务繁忙或版本过旧），
+    // 与“AICLI 明确拒绝”区分开，避免误导。
+    if (result.error.includes('timed out')) {
+      return {
+        ok: false,
+        text: `已发送切换到${displayMode(mode)}的命令，但未收到 AICLI 确认，请稍后用 /status 核实。`
+      }
+    }
     return {
       ok: false,
-      text: `切换到${displayMode(mode)}失败：${result.error}`
+      text: `切换到${displayMode(mode)}失败：${result.text?.trim() || result.error}`
     }
   }
 
   return {
     ok: true,
-    text: `已切换到${displayMode(mode)}。`
+    text: result.text?.trim() || `已切换到${displayMode(mode)}。`
   }
 }
 

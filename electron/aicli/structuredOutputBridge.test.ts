@@ -77,7 +77,7 @@ describe('AICLI structured output bridge', () => {
     expect(events).toEqual([])
   })
 
-  it('sends control commands only to token-verified control sockets', async () => {
+  it('switches mode via request/response and reports the AICLI verdict', async () => {
     const bridge = await createAicliStructuredOutputBridge('session-1', 'opencode')
     const { port, token } = parseTcpEndpoint(bridge.endpoint)
     const receivedLines: string[] = []
@@ -90,24 +90,37 @@ describe('AICLI structured output bridge', () => {
       client.setEncoding('utf8')
       client.on('data', (chunk) => {
         receivedLines.push(String(chunk))
+        const requestId = String(chunk).match(/"requestId":"([^"]+)"/)?.[1]
+        if (requestId) {
+          client.write(
+            `${JSON.stringify({
+              token,
+              kind: 'control_result',
+              requestId,
+              ok: false,
+              error: 'Collaboration modes are disabled.'
+            })}\n`
+          )
+        }
       })
       client.once('error', reject)
     })
 
     await new Promise((resolve) => setTimeout(resolve, 20))
-    const result = bridge.sendControlCommand({
-      command: 'switch_mode',
-      mode: 'plan'
-    })
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    const result = await bridge.requestControlCommand(
+      { command: 'switch_mode', mode: 'plan' },
+      500
+    )
 
     socket.destroy()
     await bridge.close()
 
-    expect(result.ok).toBe(true)
+    // TUI 拒绝切换时，主仓要拿到真实失败而不是“写入即成功”。
+    expect(result).toEqual({ ok: false, error: 'Collaboration modes are disabled.' })
     expect(receivedLines.join('')).toContain('"kind":"control"')
     expect(receivedLines.join('')).toContain('"command":"switch_mode"')
     expect(receivedLines.join('')).toContain('"mode":"plan"')
+    expect(receivedLines.join('')).toContain('"requestId"')
   })
 
   it('resolves request/response control commands from token-verified sockets', async () => {

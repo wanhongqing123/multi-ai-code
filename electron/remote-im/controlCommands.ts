@@ -65,10 +65,17 @@ export function parseRemoteImControlCommand(
     }
   }
 
-  return {
-    type: 'unknown-command',
-    commandText: trimmed
+  // 只有“/ + 纯字母单词”才按敲错的控制命令拒收提示；首词含路径分隔符、
+  // 点号、数字等形态（如 /etc/hosts、/tmp/a.log、/v2 接口）是日常开发消息，
+  // 一律当普通文本放行给 AICLI，避免误杀。
+  if (/^[a-zA-Z]+$/.test(normalizedName)) {
+    return {
+      type: 'unknown-command',
+      commandText: trimmed
+    }
   }
+
+  return { type: 'text' }
 }
 
 export function formatRemoteImControlCommandHelp(): string {

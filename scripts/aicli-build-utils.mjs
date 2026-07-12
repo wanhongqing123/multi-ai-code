@@ -73,6 +73,29 @@ export function binaryName(tool) {
   return process.platform === 'win32' ? `${tool}.exe` : tool
 }
 
+/**
+ * 解析 bun/bunx 的真实可执行文件路径。
+ * Windows 上 npm 全局安装的 bun 在 PATH 里只有 .cmd shim（%APPDATA%\npm\bunx.cmd），
+ * 而本仓脚本统一 spawnSync(shell:false)，无法执行 .cmd —— 会直接 ENOENT。
+ * 因此按常见安装位置探测真实 .exe：官方安装器（BUN_INSTALL / ~/.bun）与 npm 全局包目录；
+ * 都不存在时回退裸命令名，交给 PATH（如用户把 exe 目录加进了 PATH 或非 Windows 平台）。
+ */
+export function resolveBunExecutable(
+  name = 'bun',
+  { platform = process.platform, env = process.env, exists = existsSync } = {}
+) {
+  if (platform !== 'win32') return name
+  const candidates = [
+    env.BUN_INSTALL ? join(env.BUN_INSTALL, 'bin', `${name}.exe`) : null,
+    env.USERPROFILE ? join(env.USERPROFILE, '.bun', 'bin', `${name}.exe`) : null,
+    env.APPDATA ? join(env.APPDATA, 'npm', 'node_modules', 'bun', 'bin', `${name}.exe`) : null
+  ].filter(Boolean)
+  for (const candidate of candidates) {
+    if (exists(candidate)) return candidate
+  }
+  return name
+}
+
 export function copyExecutable(source, destination) {
   if (!existsSync(source)) {
     throw new Error(`构建产物不存在：${source}`)

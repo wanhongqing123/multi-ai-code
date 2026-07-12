@@ -8,6 +8,7 @@ import {
   platformArch,
   repoRoot,
   requireDir,
+  resolveBunExecutable,
   run,
   tryVersion,
   writeManifestEntry
@@ -31,13 +32,23 @@ function satisfiesBun(raw) {
 }
 
 function bunCommand() {
+  // 先解析真实 exe（Windows 上 npm shim 是 .cmd，spawnSync(shell:false) 执行不了）。
+  const bunBinary = resolveBunExecutable('bun')
   try {
-    const version = capture('bun', ['--version'])
-    if (satisfiesBun(version)) return { command: 'bun', prefixArgs: [] }
+    const version = capture(bunBinary, ['--version'])
+    if (satisfiesBun(version)) return { command: bunBinary, prefixArgs: [] }
+    // bun 存在但版本过旧：用它的 `bun x` 跑固定版本，等价 bunx 且不依赖 bunx.exe。
+    return { command: bunBinary, prefixArgs: ['x', `bun@${REQUIRED_BUN}`] }
   } catch {
-    // fall through to bunx
+    // 完全找不到 bun，再试 bunx
   }
-  return { command: 'bunx', prefixArgs: [`bun@${REQUIRED_BUN}`] }
+  const bunxBinary = resolveBunExecutable('bunx')
+  if (bunxBinary !== 'bunx' || process.platform !== 'win32') {
+    return { command: bunxBinary, prefixArgs: [`bun@${REQUIRED_BUN}`] }
+  }
+  throw new Error(
+    '未找到可用的 bun/bunx 可执行文件。请安装 bun（npm install -g bun 或 https://bun.sh 官方安装器）后重试。'
+  )
 }
 
 function opencodeDistName(platform) {

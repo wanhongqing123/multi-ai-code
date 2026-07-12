@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, statSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { describe, expect, it } from 'vitest'
-import { copyExecutable } from './aicli-build-utils.mjs'
+import { copyExecutable, resolveBunExecutable } from './aicli-build-utils.mjs'
 
 describe('AICLI build utilities', () => {
   it('replaces an existing executable instead of overwriting the same inode', () => {
@@ -23,5 +23,39 @@ describe('AICLI build utilities', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+
+  it('resolves the real bun exe from npm global install on Windows', () => {
+    const appData = 'C:\\Users\\tester\\AppData\\Roaming'
+    const realExe = join(appData, 'npm', 'node_modules', 'bun', 'bin', 'bunx.exe')
+    const resolved = resolveBunExecutable('bunx', {
+      platform: 'win32',
+      env: { APPDATA: appData },
+      exists: (path) => path === realExe
+    })
+    expect(resolved).toBe(realExe)
+  })
+
+  it('prefers the official bun installer location when both exist', () => {
+    const resolved = resolveBunExecutable('bun', {
+      platform: 'win32',
+      env: {
+        BUN_INSTALL: 'D:\\bun',
+        APPDATA: 'C:\\Users\\tester\\AppData\\Roaming'
+      },
+      exists: () => true
+    })
+    expect(resolved).toBe(join('D:\\bun', 'bin', 'bun.exe'))
+  })
+
+  it('falls back to the bare command when no candidate exists or off Windows', () => {
+    expect(
+      resolveBunExecutable('bun', {
+        platform: 'win32',
+        env: { APPDATA: 'C:\\Users\\tester\\AppData\\Roaming' },
+        exists: () => false
+      })
+    ).toBe('bun')
+    expect(resolveBunExecutable('bun', { platform: 'darwin' })).toBe('bun')
   })
 })

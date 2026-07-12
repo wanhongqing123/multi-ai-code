@@ -352,6 +352,16 @@ resources/asr/
 - macOS 语音转码优先使用系统 `/usr/bin/afconvert`。
 - 用户侧不需要额外配置 Whisper、ffmpeg 或模型路径。
 
+### 安装包发布（GitHub Releases）
+
+打包产物（`release/MultiAICode-<版本>-x64.exe` 等）不提交进仓库，统一挂到
+[GitHub Releases](https://github.com/wanhongqing123/multi-ai-code/releases)：
+
+- Electron 桌面端安装包：tag 形如 `electron-<日期>`（NSIS 安装器，内置 AICLI 与 ASR 资源，安装即用）。
+- Qt IM 客户端免安装包：tag 形如 `qt-im-<日期>`（见 `desktop/qt-im/scripts/package-windows.ps1`）。
+
+Windows 安装包未做代码签名，SmartScreen 提示时选择「仍要运行」。
+
 ## 测试命令
 
 完整 TypeScript 检查和单元测试：

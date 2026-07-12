@@ -151,9 +151,15 @@ iOS Remote IM
   IM iOS SDK                  远程消息收发
 
 Local Data
-  ~/MultiAICode/              桌面端全局数据
-  <target_repo>/.multi-ai-code 仓库级任务、Skill、分析记忆
+  ~/multi-ai-code/                    全局基目录（账号无关）
+    accounts/<账号>/                  每个 IM 账号一套隔离数据（登录后才创建）
+      multi-ai-code.db                该账号的 SQLite、projects、imcli-bridge.json 等
+  <target_repo>/.multi-ai-code        仓库级任务、Skill、分析记忆
 ```
+
+桌面端启动即显示登录页，登录（填 IM 账号 ID）后才进入主界面。数据按账号隔离到
+`~/multi-ai-code/accounts/<账号>/` 下：不同账号完全独立，同一账号任一时刻只允许一个
+窗口打开（每账号单实例锁）。基目录可用 `MULTI_AI_ROOT` 环境变量覆盖。
 
 几个关键原则：
 
@@ -164,16 +170,18 @@ Local Data
 
 ## 数据归属
 
+下表中 `<账号根>` 指 `~/multi-ai-code/accounts/<登录账号>/`（每个 IM 账号一套，登录后创建；基目录可用 `MULTI_AI_ROOT` 覆盖）。
+
 | 数据 | 默认位置 | 说明 |
 | --- | --- | --- |
-| 项目列表和项目元数据 | `~/MultiAICode/projects/<projectId>/project.json` | 项目名、目标仓库、构建运行配置、远程 IM 开关等 |
-| SQLite 数据库 | `~/MultiAICode/multi-ai-code.db` | 消息、定时任务、运行记录、习惯事件、候选流程等 |
+| 项目列表和项目元数据 | `<账号根>/projects/<projectId>/project.json` | 项目名、目标仓库、构建运行配置、远程 IM 开关等 |
+| SQLite 数据库 | `<账号根>/multi-ai-code.db` | 消息、定时任务、运行记录、习惯事件、候选流程等 |
 | 普通任务文档 | `<target_repo>/.multi-ai-code/designs/` | 跟仓库走，便于随项目迁移 |
 | Skill 编排 | `<target_repo>/.multi-ai-code/skill-pipelines/` | 项目级流程定义 |
 | 项目级 Skills | `<target_repo>/.multi-ai-code/skills/` | 项目自带 Skill 来源 |
 | 仓库查看分析 | `<target_repo>/.multi-ai-code/repo-view/analyses/` | 仓库分析记忆和片段结果 |
-| 远程 IM 账号 | `~/MultiAICode/remote-im-profiles/<profile>/remote-im-account.json` | 用户 ID、联系人等本机配置 |
-| imcli bridge | `~/MultiAICode/imcli-bridge.json` | 桌面端运行时生成，带本地访问 token |
+| 远程 IM 账号 | `<账号根>/remote-im-profiles/<profile>/remote-im-account.json` | 用户 ID、联系人等本机配置 |
+| imcli bridge | `<账号根>/imcli-bridge.json` | 桌面端运行时生成，带本地访问 token |
 | ASR 运行资源 | `resources/asr` | 打包时写入安装包资源目录 |
 
 建议把目标仓库里的 `.multi-ai-code/` 加入忽略规则，除非你明确希望把任务文档、Skill 或分析记忆提交到仓库。

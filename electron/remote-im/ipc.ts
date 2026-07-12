@@ -605,9 +605,83 @@ function ensureRemoteImCliServer(): void {
   })
 }
 
-export function registerRemoteImIpc(): void {
-  ensureSessionListeners()
+export interface RegisterRemoteImIpcOptions {
+  /**
+   * 账号绑定成功后初始化账号作用域数据层（rootDir/DB/单实例锁/后台服务）。
+   * 返回 alreadyLocked 表示该账号已在另一个窗口打开。
+   */
+  activateDataLayer?: (
+    userId: string
+  ) => Promise<{ ok: true } | { ok: false; alreadyLocked?: boolean; error?: string }>
+}
+
+/** 账号绑定后启动 imcli 桥接服务（依赖账号作用域 rootDir，不能在登录前跑）。 */
+export function activateRemoteImDataLayer(): void {
   ensureRemoteImCliServer()
+}
+
+/**
+ * 绑定 IM 账号配置：切 active profile、写账号配置、连接变更时重置状态。set-account 与
+ * bind-account 共用。注意：依赖账号作用域 rootDir，调用前须已 setActiveAccount。
+ */
+async function bindRemoteImAccountConfig(
+  account: RemoteImAccountConfig
+): Promise<{ profileId: string; account: RemoteImAccountConfig }> {
+  const normalizedAccount = normalizeRemoteImAccountConfig(account)
+  const previousProfileId = getCurrentRemoteImAccountProfileId()
+  const previousAccount = previousProfileId
+    ? await readRemoteImAccountConfig(remoteImAccountDir(previousProfileId))
+    : normalizeRemoteImAccountConfig(null)
+  const profileId =
+    getRemoteImAccountProfileId(normalizedAccount.desktopUserId) ??
+    getRemoteImProfileId() ??
+    DEFAULT_REMOTE_IM_PROFILE_ID
+  activeRemoteImAccountProfileId = profileId
+  const value = await writeRemoteImAccountConfig(remoteImAccountDir(profileId), normalizedAccount)
+  if (hasRemoteImAccountConnectionChanged(previousAccount, value)) {
+    resetRemoteImStatusesAfterAccountChange()
+  }
+  return { profileId, account: value }
+}
+
+export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): void {
+  // ensureSessionListeners 只挂 PTY 输出/退出监听，登录前也安全；imcli 桥接服务
+  // （ensureRemoteImCliServer）依赖账号作用域 rootDir，移到 activateRemoteImDataLayer。
+  ensureSessionListeners()
+
+  ipcMain.handle(
+    'remote-im:bind-account',
+    async (
+      _event,
+      { account }: { account: RemoteImAccountConfig }
+    ) => {
+      try {
+        const normalized = normalizeRemoteImAccountConfig(account)
+        const userId = normalized.desktopUserId?.trim()
+        if (!userId) return { ok: false as const, error: '请填写 IM 账号（desktopUserId）' }
+        // 1) 用账号初始化数据层并抢单实例锁
+        const activated = options.activateDataLayer
+          ? await options.activateDataLayer(userId)
+          : ({ ok: true } as const)
+        if (!activated.ok) {
+          return {
+            ok: false as const,
+            alreadyLocked: activated.alreadyLocked === true,
+            error:
+              activated.alreadyLocked === true
+                ? '该账号已在另一个 Multi-AI Code 窗口打开'
+                : activated.error ?? '账号数据层初始化失败'
+          }
+        }
+        // 2) 写账号配置（此时 rootDir 已按账号作用域就绪）
+        await bindRemoteImAccountConfig(normalized)
+        // 3) 读回登录态供渲染层解锁登录门
+        return { ok: true as const, value: await getRemoteImLoginState() }
+      } catch (err) {
+        return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+      }
+    }
+  )
 
   ipcMain.handle('remote-im:get-config', async (_event, { projectId }: { projectId: string }) => {
     try {
@@ -640,30 +714,7 @@ export function registerRemoteImIpc(): void {
     'remote-im:set-account',
     async (_event, { account }: { account: RemoteImAccountConfig }) => {
       try {
-        const normalizedAccount = normalizeRemoteImAccountConfig(account)
-        const previousProfileId = getCurrentRemoteImAccountProfileId()
-        const previousAccount = previousProfileId
-          ? await readRemoteImAccountConfig(remoteImAccountDir(previousProfileId))
-          : normalizeRemoteImAccountConfig(null)
-        const profileId =
-          getRemoteImAccountProfileId(normalizedAccount.desktopUserId) ??
-          getRemoteImProfileId() ??
-          DEFAULT_REMOTE_IM_PROFILE_ID
-        activeRemoteImAccountProfileId = profileId
-        const value = await writeRemoteImAccountConfig(
-          remoteImAccountDir(profileId),
-          normalizedAccount
-        )
-        if (hasRemoteImAccountConnectionChanged(previousAccount, value)) {
-          resetRemoteImStatusesAfterAccountChange()
-        }
-        return {
-          ok: true as const,
-          value: {
-            profileId,
-            account: value
-          }
-        }
+        return { ok: true as const, value: await bindRemoteImAccountConfig(account) }
       } catch (err) {
         return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
       }

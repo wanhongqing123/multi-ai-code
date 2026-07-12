@@ -108,6 +108,16 @@ function createFakeDatabase(seedRows: FakeRow[] = []): RemoteImDatabase {
           all: () => []
         }
       }
+      if (sql.includes('WHERE provider = ?') && sql.includes('remote_message_id = ?')) {
+        return {
+          run: () => ({}),
+          get: (provider: unknown, remoteMessageId: unknown) =>
+            rows.find(
+              (row) => row.provider === provider && row.remote_message_id === remoteMessageId
+            ),
+          all: () => []
+        }
+      }
       if (sql.includes('WHERE project_id = ?')) {
         return {
           run: () => ({}),
@@ -143,6 +153,27 @@ describe('remote IM message store', () => {
       kind: 'text',
       attachment: null
     })
+  })
+
+  it('dedupes incoming messages by (provider, remoteMessageId) but not null-id messages', () => {
+    const store = createRemoteImMessageStore(createFakeDatabase())
+    const base = {
+      projectId: 'project-1',
+      provider: 'tencent-im' as const,
+      role: 'remote-user' as const,
+      direction: 'incoming' as const,
+      status: 'received' as const
+    }
+    const first = store.create({ ...base, remoteMessageId: 'rm-1', content: '你好', createdAt: 100 })
+    // 同一 remoteMessageId 再次入库（模拟 SDK 漫游重放）→ 返回已存在行，不新增
+    const dup = store.create({ ...base, remoteMessageId: 'rm-1', content: '你好', createdAt: 200 })
+    expect(dup.id).toBe(first.id)
+    expect(store.list('project-1')).toHaveLength(1)
+
+    // remoteMessageId 为空（出站/系统消息）不去重，允许多条
+    store.create({ ...base, direction: 'outgoing', content: 'a', createdAt: 300 })
+    store.create({ ...base, direction: 'outgoing', content: 'b', createdAt: 400 })
+    expect(store.list('project-1')).toHaveLength(3)
   })
 
   it('persists image message attachments', () => {

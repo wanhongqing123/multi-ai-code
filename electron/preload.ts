@@ -689,6 +689,13 @@ const api = {
       ipcRenderer.invoke('remote-im:set-account', { account }) as Promise<
         { ok: true; value: RemoteImLoginState } | { ok: false; error: string }
       >,
+    // 登录门专用：绑定账号 = 用它初始化账号作用域数据层 + 抢每账号单实例锁 + 写账号配置。
+    // alreadyLocked 表示该账号已在另一个窗口打开。成功后 value 是登录态，渲染层据此放行主界面。
+    bindAccount: (account: RemoteImAccountConfig) =>
+      ipcRenderer.invoke('remote-im:bind-account', { account }) as Promise<
+        | { ok: true; value: RemoteImLoginState }
+        | { ok: false; error: string; alreadyLocked?: boolean }
+      >,
     setConfig: (projectId: string, config: RemoteImConfig) =>
       ipcRenderer.invoke('remote-im:set-config', { projectId, config }) as Promise<
         | { ok: true; value: RemoteImConfig; repaired?: true }

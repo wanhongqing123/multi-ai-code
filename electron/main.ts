@@ -22,12 +22,14 @@ import {
   createProjectLayout,
   projectDir as projectDirFn,
   artifactsDir,
-  rootDir
+  rootDir,
+  setActiveAccount
 } from './store/paths.js'
+import { acquireInstanceLock, releaseInstanceLock } from './store/instanceLock.js'
 import { registerPtyIpc, killAllSessions } from './cc/ptyManager.js'
 import { registerHabitIpc } from './habit/ipc.js'
 import { registerScheduledTaskIpc } from './scheduledTasks/ipc.js'
-import { registerRemoteImIpc } from './remote-im/ipc.js'
+import { registerRemoteImIpc, activateRemoteImDataLayer } from './remote-im/ipc.js'
 import {
   startScheduledTaskScheduler,
   stopScheduledTaskScheduler
@@ -168,12 +170,17 @@ function setEffectiveAppSettings(settings: ScreenshotHotkeySettings): AppSetting
   return effectiveAppSettings
 }
 
+let mainWindow: BrowserWindow | null = null
+
 function createWindow(): void {
   const win = new BrowserWindow({
-    width: 1400,
-    height: 900,
-    minWidth: 1100,
-    minHeight: 700,
+    // 登录阶段是一个小窗口，只装得下登录表单（钉钉/微信式）。登录成功后由
+    // activateAccountDataLayer() 放大成主界面窗口，避免登录内容悬在大窗口里。
+    width: 640,
+    height: 720,
+    resizable: false,
+    maximizable: false,
+    fullscreenable: false,
     show: false,
     autoHideMenuBar: true,
     icon: appIconPath,
@@ -185,7 +192,14 @@ function createWindow(): void {
     }
   })
 
-  win.on('ready-to-show', () => win.show())
+  mainWindow = win
+  win.on('ready-to-show', () => {
+    win.center()
+    win.show()
+  })
+  win.on('closed', () => {
+    if (mainWindow === win) mainWindow = null
+  })
 
   win.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
@@ -266,18 +280,9 @@ app.whenReady().then(async () => {
     }
   }
 
-  await ensureRootDir()
-  initDb()
-
-  if (process.env.MULTI_AI_CODE_PTY_DUMP === '1') {
-    console.log(
-      `[pty-dump] enabled. Raw PTY chunks for every session will be written to ${join(
-        rootDir(),
-        'logs'
-      )}\\pty-*.jsonl`
-    )
-  }
-
+  // 数据层（DB / rootDir / 后台服务）不在启动即初始化——rootDir 现在按账号作用域，
+  // 账号要在登录页选定后才知道。这里只注册纯 IPC handler 并显示登录门；真正的数据层
+  // 初始化在账号绑定成功后由 activateAccountDataLayer() 触发。
   ipcMain.handle('app:ping', () => 'pong')
   ipcMain.handle('app:version', () => app.getVersion())
   ipcMain.handle('settings:get-app-settings', async () => {
@@ -398,17 +403,6 @@ app.whenReady().then(async () => {
     }
   )
 
-  // Migration: if an old hardcoded "demo" project dir exists but no DB row,
-  // register it so users don't lose historical data.
-  const legacyDemoDir = projectDirFn('demo')
-  try {
-    await fs.access(legacyDemoDir)
-    if (!getProject('demo')) {
-      createProject({ id: 'demo', name: 'Demo', target_repo: legacyDemoDir })
-    }
-  } catch {
-    /* no legacy data */
-  }
 
   async function readProjectMeta(pdir: string): Promise<{ target_repo?: string; name?: string }> {
     try {
@@ -2000,14 +1994,47 @@ app.whenReady().then(async () => {
     }
   )
 
+  // 纯注册（不碰 DB/rootDir）可在登录前完成；handler 体内触库的那些（project/artifact
+  // 等）在登录页阶段不会被调用。
   registerPtyIpc()
   registerHabitIpc()
-  registerScheduledTaskIpc()
-  registerRemoteImIpc()
+  registerRemoteImIpc({ activateDataLayer: activateAccountDataLayer })
   registerScreenshotIpc()
-  const screenshotHotkeyInit = await initializeScreenshotHotkey({
-    registrar: globalShortcut
+
+  createWindow()
+
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+})
+
+/**
+ * 账号绑定成功后初始化数据层：解析账号作用域 rootDir、抢每账号单实例锁、开库、起后台
+ * 服务。一次性（同一进程只服务一个账号）。返回 alreadyLocked 表示该账号已在别处打开。
+ */
+let dataLayerActivated = false
+async function activateAccountDataLayer(
+  userId: string
+): Promise<{ ok: true } | { ok: false; alreadyLocked?: boolean; error?: string }> {
+  if (dataLayerActivated) return { ok: true }
+
+  setActiveAccount(userId)
+  const lock = acquireInstanceLock(rootDir())
+  if (!lock.ok) {
+    setActiveAccount(null)
+    return { ok: false, alreadyLocked: lock.alreadyLocked, error: lock.error }
+  }
+
+  if (process.env.MULTI_AI_CODE_PTY_DUMP === '1') {
+    console.log(
+      `[pty-dump] enabled. Raw PTY chunks will be written to ${join(rootDir(), 'logs')}\\pty-*.jsonl`
+    )
+  }
+
+  await ensureRootDir()
+  initDb()
+  registerScheduledTaskIpc()
+  const screenshotHotkeyInit = await initializeScreenshotHotkey({ registrar: globalShortcut })
   setEffectiveAppSettings(screenshotHotkeyInit.settings)
   if (!screenshotHotkeyInit.ok) {
     console.warn('[screenshot] failed to initialize hotkey:', screenshotHotkeyInit.error)
@@ -2021,17 +2048,26 @@ app.whenReady().then(async () => {
     }
   })
   startScheduledTaskScheduler()
+  activateRemoteImDataLayer()
 
-  createWindow()
+  // 登录成功：把登录小窗口放大成主界面窗口。
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setResizable(true)
+    mainWindow.setMaximizable(true)
+    mainWindow.setFullScreenable(true)
+    mainWindow.setMinimumSize(1100, 700)
+    mainWindow.setSize(1400, 900)
+    mainWindow.center()
+  }
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
-  })
-})
+  dataLayerActivated = true
+  return { ok: true }
+}
 
 app.on('window-all-closed', () => {
   killAllSessions()
   closeDb()
+  releaseInstanceLock()
   if (process.platform !== 'darwin') app.quit()
 })
 
@@ -2041,4 +2077,5 @@ app.on('before-quit', () => {
   stopScheduledTaskScheduler()
   stopScreenSamplerService()
   disposeScreenshotHotkey(globalShortcut)
+  releaseInstanceLock()
 })

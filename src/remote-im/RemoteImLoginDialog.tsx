@@ -24,6 +24,11 @@ export interface RemoteImLoginDialogProps {
   onLookupAccount?: (userId: string) => Promise<RemoteImAccountConfig | null>
   onClose: () => void
   onSubmit: (input: RemoteImLoginSubmitInput) => void
+  /**
+   * 'modal'（默认）：浮在应用之上的弹窗，带遮罩与取消/关闭。
+   * 'gate'：作为启动首屏的独立全屏登录页，无遮罩、无取消/关闭（登录是进入应用的前置）。
+   */
+  variant?: 'modal' | 'gate'
 }
 
 const EMPTY_ACCOUNT: RemoteImAccountConfig = {
@@ -124,17 +129,21 @@ export default function RemoteImLoginDialog(props: RemoteImLoginDialogProps): JS
     })
   }
 
+  const isGate = props.variant === 'gate'
+
   return (
-    <div className="modal-backdrop" data-close-on-backdrop="false">
+    <div className={isGate ? 'remote-im-login-gate' : 'modal-backdrop'} data-close-on-backdrop="false">
       <form className="modal remote-im-login-modal" onSubmit={handleSubmit} onClick={(event) => event.stopPropagation()}>
         <header className="remote-im-login-header">
           <div>
             <h2>IM 登录</h2>
             <p>登录后可通过可信好友收发消息，并把好友消息交给当前 AICLI 处理。</p>
           </div>
-          <button type="button" className="remote-im-close" onClick={props.onClose}>
-            ×
-          </button>
+          {isGate ? null : (
+            <button type="button" className="remote-im-close" onClick={props.onClose}>
+              ×
+            </button>
+          )}
         </header>
 
         <div className="remote-im-login-grid">
@@ -212,9 +221,11 @@ export default function RemoteImLoginDialog(props: RemoteImLoginDialogProps): JS
         {props.error ? <div className="remote-im-login-error">{props.error}</div> : null}
 
         <footer className="remote-im-login-actions">
-          <button type="button" onClick={props.onClose} disabled={props.saving}>
-            取消
-          </button>
+          {isGate ? null : (
+            <button type="button" onClick={props.onClose} disabled={props.saving}>
+              取消
+            </button>
+          )}
           <button type="submit" disabled={props.saving || !draft.desktopUserId.trim()}>
             {props.saving ? '登录中...' : '登录'}
           </button>

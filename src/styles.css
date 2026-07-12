@@ -1,3 +1,24 @@
+/* 登录门（首屏独立登录页，非弹窗）：整窗口纯白，登录内容居中直接坐在页面上——
+   去掉卡片的阴影/边框/异色背景，消除“卡片浮在背景上=两个窗口”的观感。 */
+.remote-im-login-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: #ffffff;
+}
+
+.remote-im-login-gate .remote-im-login-modal {
+  box-shadow: none;
+  border: none;
+  background: transparent;
+  width: min(560px, 100%);
+  max-height: none;
+}
+
 /* ==========================================================================
    Bundled Windows-style fonts
    - Inter (OFL) replaces Segoe UI for Latin

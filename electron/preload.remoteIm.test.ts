@@ -106,6 +106,10 @@ describe('preload remote IM api', () => {
       state: 'connected',
       detail: null
     })
+    await api.remoteIm.bindAccount(config)
+
+    // 顺序无关：登录门用 bind-account 一次完成“绑定账号 + 初始化账号作用域数据层”。
+    expect(electronMock.invoke).toHaveBeenCalledWith('remote-im:bind-account', { account: config })
 
     expect(electronMock.invoke).toHaveBeenNthCalledWith(1, 'remote-im:get-config', {
       projectId: 'project-1'

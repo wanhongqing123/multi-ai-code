@@ -496,6 +496,9 @@ export async function connectTencentImClient(input: {
   chat.setLogLevel?.(1)
   let sdkReady = false
   let loggedInUserId: string | null = null
+  // 被同账号在别处登录顶下线后置真：阻断 ensureLoggedIn 的自动重登，避免与另一端
+  // 互踢死循环。只有重新 connect（disconnect 后再连）才复位。
+  let kickedOut = false
 
   const onMessageReceived = (event: unknown): void => {
     const messages = extractTencentImTextMessages(event)
@@ -561,14 +564,33 @@ export async function connectTencentImClient(input: {
     sdkReady = false
     emitRuntimeLog('sdk:not-ready')
   }
+  const kickedOutEventName = TencentCloudChat.EVENT?.KICKED_OUT ?? 'kickedOut'
+  const onKickedOut = (event: { data?: { type?: string } } | undefined): void => {
+    const type = event?.data?.type
+    kickedOut = true
+    sdkReady = false
+    loggedInUserId = null
+    emitRuntimeLog('kicked-out', {
+      detail: {
+        type,
+        multipleAccount:
+          type === (TencentCloudChat.TYPES?.KICKED_OUT_MULTI_ACCOUNT ?? 'multipleAccount')
+      }
+    })
+  }
   chat.on?.(eventName, onMessageReceived)
   chat.on?.(sdkReadyEventName, onSdkReady)
   chat.on?.(sdkNotReadyEventName, onSdkNotReady)
+  chat.on?.(kickedOutEventName, onKickedOut)
   await loginTencentImClient(chat, TencentCloudChat, input.config, emitRuntimeLog)
   sdkReady = true
   loggedInUserId = input.config.desktopUserId
 
   async function ensureLoggedIn(): Promise<void> {
+    if (kickedOut) {
+      emitRuntimeLog('login:skip-kicked-out')
+      throw new Error('IM 账号已在别处登录，本端已被踢下线，已停止自动重登')
+    }
     if (loggedInUserId === input.config.desktopUserId && sdkReady) return
     emitRuntimeLog('login:refresh-required', {
       detail: { sdkReady, loggedInUserId }
@@ -584,8 +606,10 @@ export async function connectTencentImClient(input: {
       chat.off?.(eventName, onMessageReceived)
       chat.off?.(sdkReadyEventName, onSdkReady)
       chat.off?.(sdkNotReadyEventName, onSdkNotReady)
+      chat.off?.(kickedOutEventName, onKickedOut)
       sdkReady = false
       loggedInUserId = null
+      kickedOut = false
       await chat.logout?.()
       await chat.destroy?.()
       emitRuntimeLog('disconnect:complete')

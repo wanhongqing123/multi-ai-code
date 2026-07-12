@@ -150,6 +150,16 @@ export function createRemoteImMessageStore(database: RemoteImDatabase) {
 
   function create(input: CreateRemoteImMessageInput): RemoteImMessage {
     const createdAt = input.createdAt ?? Date.now()
+    // 去重：入站消息带 provider 级的 remoteMessageId，SDK 断线重连会下发漫游历史、
+    // 对同一条消息再次触发 onMessageReceived；裸 INSERT 会重复入库 → 重复路由执行。
+    // remoteMessageId 为 NULL（出站/系统消息）不去重，照常插入。
+    const remoteMessageId = input.remoteMessageId ?? null
+    if (remoteMessageId !== null) {
+      const existed = database
+        .prepare('SELECT * FROM remote_im_messages WHERE provider = ? AND remote_message_id = ?')
+        .get(input.provider, remoteMessageId) as RemoteImMessageRow | undefined
+      if (existed) return mapRow(existed)
+    }
     const result = database
       .prepare(
         `

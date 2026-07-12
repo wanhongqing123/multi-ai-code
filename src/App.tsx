@@ -230,7 +230,60 @@ export default function App(): JSX.Element {
     return <ElectronLaunchRequired />
   }
 
-  return <AppShell />
+  return <AccountGate />
+}
+
+/**
+ * 登录门（首屏）：账号绑定成功前只渲染登录表单，绑定后才挂载 AppShell。
+ *
+ * 关键——把 AppShell 做成“绑定后才挂载的子组件”，而不是仅用视图分支遮挡：AppShell 里
+ * 加载项目/触库的 useEffect 只有在它被挂载时才运行，从而保证登录前不会用错误的（未按
+ * 账号作用域解析的）rootDir 打开数据库。账号 = 用户输入的 desktopUserId，数据按账号隔离
+ * 到 <base>/accounts/<账号>/，同账号第二个窗口会被单实例锁挡回。
+ */
+function AccountGate(): JSX.Element {
+  const [bound, setBound] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const handleSubmit = async (input: RemoteImLoginSubmitInput): Promise<void> => {
+    setSaving(true)
+    setError(null)
+    try {
+      const res = await window.api.remoteIm.bindAccount(input.account)
+      if (res.ok) {
+        setBound(true)
+      } else {
+        setError(
+          res.alreadyLocked
+            ? '该账号已在另一个 Multi-AI Code 窗口打开，请切换到那个窗口。'
+            : res.error || '登录失败，请重试。'
+        )
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (bound) return <AppShell />
+
+  return (
+    <RemoteImLoginDialog
+      open
+      variant="gate"
+      loginState={null}
+      projectConfig={null}
+      projectConfigReady={false}
+      saving={saving}
+      error={error}
+      onClose={() => {
+        /* 登录门不可关闭：账号是进入应用的前置条件 */
+      }}
+      onSubmit={handleSubmit}
+    />
+  )
 }
 
 function AppShell() {

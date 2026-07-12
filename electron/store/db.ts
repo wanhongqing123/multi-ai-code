@@ -189,7 +189,14 @@ function ensureColumn(
   if (columns.some((column) => column.name === columnName)) {
     return
   }
-  db.prepare(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDefinition}`).run()
+  try {
+    db.prepare(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDefinition}`).run()
+  } catch (err) {
+    // PRAGMA 预检与 ALTER 之间若发生并发/重入，列可能已被另一路径加上；只吞
+    // "duplicate column name"，其它错误（表不存在/语法）仍抛出。
+    const message = err instanceof Error ? err.message : String(err)
+    if (!/duplicate column name/i.test(message)) throw err
+  }
 }
 
 export function initDb(): Database.Database {

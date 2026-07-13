@@ -382,6 +382,19 @@ resources/asr/
 - Electron 桌面端安装包：tag 形如 `electron-<日期>`（NSIS 安装器，内置 AICLI 与 ASR 资源，安装即用）。
 - Qt IM 客户端免安装包：tag 形如 `qt-im-<日期>`（见 `desktop/qt-im/scripts/package-windows.ps1` 和 `desktop/qt-im/scripts/package-macos.sh`）。
 
+最新发布（截至 2026-07-13，主仓 `f882f11`，内置 codex `90cec48` / opencode `9c97112`）：
+
+- Windows Electron 安装包：[`electron-20260713-imfix`](https://github.com/wanhongqing123/multi-ai-code/releases/tag/electron-20260713-imfix)（含 IM 回传 ack + 重连补发修复）。
+- Windows Qt IM 绿色包：[`qt-im-20260713`](https://github.com/wanhongqing123/multi-ai-code/releases/tag/qt-im-20260713)。
+
+Windows 产物上传（需已安装并登录 GitHub CLI，见下）：
+
+```bash
+# 先构建：npm run dist:win 和 desktop/qt-im/scripts/package-windows.ps1
+gh release upload electron-<日期> release/MultiAICode-0.1.0-x64.exe release/MultiAICode-0.1.0-x64.exe.blockmap --clobber
+gh release upload qt-im-<日期> desktop/qt-im/dist/MultiAIIM-win64-<日期>-<git短哈希>.zip --clobber
+```
+
 macOS 产物上传可以使用脚本：
 
 ```bash
@@ -390,10 +403,10 @@ npm run release:mac
 
 脚本会把 `release/MultiAICode-*-arm64.dmg`、对应 `.blockmap` 和
 `desktop/qt-im/dist/MultiAIIM-macos-arm64-<日期>-*.zip` 上传到
-`electron-<日期>`、`qt-im-<日期>`。上传依赖已登录的 GitHub CLI；本机首次使用前需执行：
+`electron-<日期>`、`qt-im-<日期>`。上传依赖已登录的 GitHub CLI；首次使用前需安装并登录：
 
 ```bash
-brew install gh
+# macOS：brew install gh    Windows：winget install --id GitHub.cli -e
 gh auth login
 ```
 

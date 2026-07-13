@@ -98,6 +98,13 @@ export interface OpenCodeProviderProfile {
   chunkTimeoutMs?: number
 }
 
+export const DEFAULT_OPENCODE_PROVIDER_PROFILE: OpenCodeProviderProfile = {
+  providerId: 'idealab',
+  name: 'Alibaba ideaLAB',
+  baseURL: 'https://idealab.alibaba-inc.com/api/openai/v1',
+  mainModel: 'Qwen3.7-Max-DogFooding'
+}
+
 export interface AppSettings {
   screenshotShortcutEnabled: boolean
   screenshotShortcut: string
@@ -278,14 +285,31 @@ interface OpenCodeProviderForm {
   smallModel: string
 }
 
+function hasOpenCodeProviderProfile(profile: OpenCodeProviderProfile | undefined): boolean {
+  return Boolean(
+    profile &&
+      [
+        profile.providerId,
+        profile.name,
+        profile.baseURL,
+        profile.apiKey,
+        profile.mainModel,
+        profile.smallModel
+      ].some((value) => value?.trim())
+  )
+}
+
 function toOpenCodeProviderForm(profile: OpenCodeProviderProfile | undefined): OpenCodeProviderForm {
+  const resolvedProfile = hasOpenCodeProviderProfile(profile)
+    ? profile
+    : DEFAULT_OPENCODE_PROVIDER_PROFILE
   return {
-    providerId: profile?.providerId ?? '',
-    name: profile?.name ?? '',
-    baseURL: profile?.baseURL ?? '',
-    apiKey: profile?.apiKey ?? '',
-    mainModel: profile?.mainModel ?? '',
-    smallModel: profile?.smallModel ?? ''
+    providerId: resolvedProfile?.providerId ?? '',
+    name: resolvedProfile?.name ?? '',
+    baseURL: resolvedProfile?.baseURL ?? '',
+    apiKey: resolvedProfile?.apiKey ?? '',
+    mainModel: resolvedProfile?.mainModel ?? '',
+    smallModel: resolvedProfile?.smallModel ?? ''
   }
 }
 
@@ -466,7 +490,16 @@ function SettingsSection(props: {
               </label>
             </div>
             <div className="ai-settings-help">
-              API Key 会随当前项目配置保存，只用于启动 OpenCode 时注入当前进程。
+              API Key 会随当前项目配置保存，只用于启动 OpenCode 时注入当前进程。APIKEY
+              的获取请参考：
+              <a
+                href="https://aistudio.alibaba-inc.com/#/aistudio/manage/accountManage"
+                target="_blank"
+                rel="noreferrer"
+              >
+                ideaLAB 账号管理
+              </a>
+              。
             </div>
           </div>
         ) : null}

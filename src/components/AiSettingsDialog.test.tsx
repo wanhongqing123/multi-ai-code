@@ -113,6 +113,22 @@ describe('AiSettingsDialog', () => {
     expect(markup).toContain('type="password"')
     expect(markup).toContain('deepseek-v4-pro')
     expect(markup).toContain('deepseek-v4-lite')
+    expect(markup).not.toContain('Alibaba ideaLAB')
+  })
+
+  it('prefills Alibaba ideaLAB defaults for new OpenCode settings without an API key', () => {
+    const markup = renderDialog({
+      initial: {
+        ai_cli: 'opencode'
+      }
+    })
+
+    expect(markup).toContain('Alibaba ideaLAB')
+    expect(markup).toContain('idealab')
+    expect(markup).toContain('https://idealab.alibaba-inc.com/api/openai/v1')
+    expect(markup).toContain('Qwen3.7-Max-DogFooding')
+    expect(markup).toContain('https://aistudio.alibaba-inc.com/#/aistudio/manage/accountManage')
+    expect(markup).toContain('<input type="password" placeholder="sk-..." value=""/>')
   })
 
   it('renders sidebar navigation as clickable section buttons', () => {

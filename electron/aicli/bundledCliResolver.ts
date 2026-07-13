@@ -108,13 +108,28 @@ function defaultRoots(): string[] {
     resolve(__dirname, '..', '..', '..', 'bin', 'aicli')
   ]
   if (process.resourcesPath) {
+    // Packaged app: native CLI binaries are asar-unpacked, so the real files
+    // live under `app.asar.unpacked/bin/aicli`. A path *inside* app.asar is not
+    // executable by native launchers (node-pty bypasses Electron's asar path
+    // translation), which is why launching produced
+    // "File not found: ...\\app.asar\\bin\\aicli\\...\\opencode.exe".
+    // Prefer the on-disk unpacked location. In dev these two candidates do not
+    // exist (resourcesPath points at the prebuilt Electron), so resolution
+    // still falls through to cwd/__dirname → the repo's own bin/aicli.
     roots.unshift(join(process.resourcesPath, 'bin', 'aicli'))
+    roots.unshift(join(process.resourcesPath, 'app.asar.unpacked', 'bin', 'aicli'))
   }
   return Array.from(new Set(roots))
 }
 
 function defaultExistsFile(path: string): boolean {
   try {
+    // A path inside the packed asar archive (but not the unpacked sibling) is
+    // not spawnable by native launchers, so never treat it as a valid bundled
+    // binary even though Electron's asar-aware fs would report it as existing.
+    if (/[\\/]app\.asar[\\/]/.test(path) && !/[\\/]app\.asar\.unpacked[\\/]/.test(path)) {
+      return false
+    }
     return existsSync(path) && statSync(path).isFile()
   } catch {
     return false

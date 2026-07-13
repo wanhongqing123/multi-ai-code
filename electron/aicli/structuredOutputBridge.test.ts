@@ -25,7 +25,7 @@ function sendLine(port: number, payload: unknown): Promise<void> {
 }
 
 describe('AICLI structured output bridge', () => {
-  it('accepts token-matched JSONL output for one session', async () => {
+  it('accepts token-matched JSONL output and acks it on the same socket', async () => {
     const bridge = await createAicliStructuredOutputBridge('session-1', 'opencode')
     const { port, token } = parseTcpEndpoint(bridge.endpoint)
     const events: AicliStructuredOutputEvent[] = []
@@ -33,15 +33,30 @@ describe('AICLI structured output bridge', () => {
       events.push(event)
     })
 
-    await sendLine(port, {
-      token,
-      kind: 'assistant_text',
-      text: '<remote-im-reply id="rim-1">\nhello\n</remote-im-reply id="rim-1">',
-      messageId: 'm1',
-      partId: 'p1'
+    // 生产环境的数据 socket 是持久、双向的：AICLI 发 assistant_text，宿主在同一条
+    // socket 上回 ack。用持久 socket 测试并断言拿到 ack。
+    let acked = ''
+    const socket = await new Promise<net.Socket>((resolve, reject) => {
+      const client = net.createConnection({ host: '127.0.0.1', port }, () => resolve(client))
+      client.setEncoding('utf8')
+      client.on('data', (chunk) => {
+        acked += String(chunk)
+      })
+      client.once('error', reject)
     })
-    await new Promise((resolve) => setTimeout(resolve, 20))
 
+    socket.write(
+      `${JSON.stringify({
+        token,
+        kind: 'assistant_text',
+        text: '<remote-im-reply id="rim-1">\nhello\n</remote-im-reply id="rim-1">',
+        messageId: 'm1',
+        partId: 'p1'
+      })}\n`
+    )
+    await new Promise((resolve) => setTimeout(resolve, 30))
+
+    socket.destroy()
     removeListener()
     await bridge.close()
 
@@ -56,6 +71,8 @@ describe('AICLI structured output bridge', () => {
         partId: 'p1'
       }
     ])
+    expect(acked).toContain('"kind":"ack"')
+    expect(acked).toContain('"messageId":"m1"')
   })
 
   it('ignores invalid tokens and malformed payloads', async () => {

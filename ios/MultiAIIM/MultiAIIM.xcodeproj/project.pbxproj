@@ -8,20 +8,20 @@
 
 /* Begin PBXBuildFile section */
 		01D0F56D2570EFCB2F9E1970 /* ContactsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A21AEEDEF3E938F8C28D791 /* ContactsView.swift */; };
-			14115934A912AC45275B81CB /* MultiAIIMCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1B6804F89BDC3CF478FF062D /* MultiAIIMCore.framework */; };
-			1B6B11173C9F4E5E8F527901 /* LocalChatHistoryStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C7B018F54C54F5AB1E12B8D /* LocalChatHistoryStoreTests.swift */; };
-			2D096CCEDE5C3A5C2C2345A2 /* KeychainSecretStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0322628AD719AA8091B48035 /* KeychainSecretStore.swift */; };
-			3054F8A8B9474264E18F6CA5 /* UserSigGeneratorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74BEA4EE61CA1B44BF6F8DFB /* UserSigGeneratorTests.swift */; };
-			33DF1CF7B27DB82ADDAF60BF /* MasterChatStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D0308A44026D2B47490836A /* MasterChatStateTests.swift */; };
-			3BACCEB4E2ED9B0C0EDBB14A /* MultiAIIMCore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 1B6804F89BDC3CF478FF062D /* MultiAIIMCore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
-			3BD1F69ADAD14F34BE71B50C /* LocalChatHistoryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2E40E1A98DF478A8BA406F7 /* LocalChatHistoryStore.swift */; };
-			3C07CA2D884A70D8C12DADED /* LocalSettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BA565F71AA3A5253ED533CD /* LocalSettingsStore.swift */; };
+		14115934A912AC45275B81CB /* MultiAIIMCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1B6804F89BDC3CF478FF062D /* MultiAIIMCore.framework */; };
+		1B6B11173C9F4E5E8F527901 /* LocalChatHistoryStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C7B018F54C54F5AB1E12B8D /* LocalChatHistoryStoreTests.swift */; };
+		2D096CCEDE5C3A5C2C2345A2 /* KeychainSecretStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0322628AD719AA8091B48035 /* KeychainSecretStore.swift */; };
+		3054F8A8B9474264E18F6CA5 /* UserSigGeneratorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74BEA4EE61CA1B44BF6F8DFB /* UserSigGeneratorTests.swift */; };
+		33DF1CF7B27DB82ADDAF60BF /* MasterChatStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D0308A44026D2B47490836A /* MasterChatStateTests.swift */; };
+		3BACCEB4E2ED9B0C0EDBB14A /* MultiAIIMCore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 1B6804F89BDC3CF478FF062D /* MultiAIIMCore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		3BD1F69ADAD14F34BE71B50C /* LocalChatHistoryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2E40E1A98DF478A8BA406F7 /* LocalChatHistoryStore.swift */; };
+		3C07CA2D884A70D8C12DADED /* LocalSettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BA565F71AA3A5253ED533CD /* LocalSettingsStore.swift */; };
 		3F8918522571F81113E7CB66 /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF7E07C37B99162122D43342 /* ChatView.swift */; };
 		4099932B26C5B902E8B02AB9 /* Pods_MultiAIIM.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FCFA6AC0FFA4B78F7B60F47E /* Pods_MultiAIIM.framework */; };
-			424A1F3534D270220B895970 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57BABC78E13816EA38CDF35 /* RootView.swift */; };
-			519F33583054F8E73ECF5113 /* TencentIMClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA1537AB16102D8C1671314F /* TencentIMClient.swift */; };
-			6F8A104C96EA493A9256A839 /* LocalChatHistoryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2E40E1A98DF478A8BA406F7 /* LocalChatHistoryStore.swift */; };
-			72471911E6CABC0FE2A796B1 /* RemoteIMAppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67FB0EED7C034D9E5A43B52C /* RemoteIMAppState.swift */; };
+		424A1F3534D270220B895970 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57BABC78E13816EA38CDF35 /* RootView.swift */; };
+		519F33583054F8E73ECF5113 /* TencentIMClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA1537AB16102D8C1671314F /* TencentIMClient.swift */; };
+		6F8A104C96EA493A9256A839 /* LocalChatHistoryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2E40E1A98DF478A8BA406F7 /* LocalChatHistoryStore.swift */; };
+		72471911E6CABC0FE2A796B1 /* RemoteIMAppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67FB0EED7C034D9E5A43B52C /* RemoteIMAppState.swift */; };
 		9C44F3384B6455C64BDF6449 /* MultiAIIMApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31103ED5247858C70BCA66A7 /* MultiAIIMApp.swift */; };
 		A0AF7026F5F4B6A41E9011D5 /* MasterChatState.swift in Sources */ = {isa = PBXBuildFile; fileRef = E81FFD8CDF2D9DF951089236 /* MasterChatState.swift */; };
 		A34656B128814C4C6E3E0A27 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C9732A2E9202C30B920A151D /* Assets.xcassets */; };
@@ -85,12 +85,12 @@
 		67FB0EED7C034D9E5A43B52C /* RemoteIMAppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteIMAppState.swift; sourceTree = "<group>"; };
 		6A21AEEDEF3E938F8C28D791 /* ContactsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactsView.swift; sourceTree = "<group>"; };
 		74BEA4EE61CA1B44BF6F8DFB /* UserSigGeneratorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserSigGeneratorTests.swift; sourceTree = "<group>"; };
-			8112D17CB35941575EA0D9D9 /* MultiAIIM.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = MultiAIIM.app; sourceTree = BUILT_PRODUCTS_DIR; };
-			8C7B018F54C54F5AB1E12B8D /* LocalChatHistoryStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalChatHistoryStoreTests.swift; sourceTree = "<group>"; };
-			9BA565F71AA3A5253ED533CD /* LocalSettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalSettingsStore.swift; sourceTree = "<group>"; };
-			A57BABC78E13816EA38CDF35 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
-			B2E40E1A98DF478A8BA406F7 /* LocalChatHistoryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalChatHistoryStore.swift; sourceTree = "<group>"; };
-			C9732A2E9202C30B920A151D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		8112D17CB35941575EA0D9D9 /* MultiAIIM.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MultiAIIM.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		8C7B018F54C54F5AB1E12B8D /* LocalChatHistoryStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalChatHistoryStoreTests.swift; sourceTree = "<group>"; };
+		9BA565F71AA3A5253ED533CD /* LocalSettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalSettingsStore.swift; sourceTree = "<group>"; };
+		A57BABC78E13816EA38CDF35 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		B2E40E1A98DF478A8BA406F7 /* LocalChatHistoryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalChatHistoryStore.swift; sourceTree = "<group>"; };
+		C9732A2E9202C30B920A151D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		CE473C8D07308E1BC74DD036 /* TencentUserSigGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TencentUserSigGenerator.swift; sourceTree = "<group>"; };
 		CF7E07C37B99162122D43342 /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
 		DDDCE3C682C19DC98F9CCD03 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -131,12 +131,12 @@
 			path = MultiAIIMCore;
 			sourceTree = "<group>";
 		};
-			8AE8D818C54FF890A8601D23 /* MultiAIIMTests */ = {
-				isa = PBXGroup;
-				children = (
-					8C7B018F54C54F5AB1E12B8D /* LocalChatHistoryStoreTests.swift */,
-					3D0308A44026D2B47490836A /* MasterChatStateTests.swift */,
-					74BEA4EE61CA1B44BF6F8DFB /* UserSigGeneratorTests.swift */,
+		8AE8D818C54FF890A8601D23 /* MultiAIIMTests */ = {
+			isa = PBXGroup;
+			children = (
+				8C7B018F54C54F5AB1E12B8D /* LocalChatHistoryStoreTests.swift */,
+				3D0308A44026D2B47490836A /* MasterChatStateTests.swift */,
+				74BEA4EE61CA1B44BF6F8DFB /* UserSigGeneratorTests.swift */,
 			);
 			path = MultiAIIMTests;
 			sourceTree = "<group>";
@@ -157,10 +157,10 @@
 				C9732A2E9202C30B920A151D /* Assets.xcassets */,
 				CF7E07C37B99162122D43342 /* ChatView.swift */,
 				6A21AEEDEF3E938F8C28D791 /* ContactsView.swift */,
-					DDDCE3C682C19DC98F9CCD03 /* Info.plist */,
-					0322628AD719AA8091B48035 /* KeychainSecretStore.swift */,
-					B2E40E1A98DF478A8BA406F7 /* LocalChatHistoryStore.swift */,
-					9BA565F71AA3A5253ED533CD /* LocalSettingsStore.swift */,
+				DDDCE3C682C19DC98F9CCD03 /* Info.plist */,
+				0322628AD719AA8091B48035 /* KeychainSecretStore.swift */,
+				B2E40E1A98DF478A8BA406F7 /* LocalChatHistoryStore.swift */,
+				9BA565F71AA3A5253ED533CD /* LocalSettingsStore.swift */,
 				31103ED5247858C70BCA66A7 /* MultiAIIMApp.swift */,
 				67FB0EED7C034D9E5A43B52C /* RemoteIMAppState.swift */,
 				4CA5659DC276D9184FD98BE7 /* RemoteIMClient.swift */,
@@ -177,7 +177,6 @@
 				0F7734B0ADD1F0133E776A39 /* Pods-MultiAIIM.debug.xcconfig */,
 				2EBD75F61333DF3048CFBFA4 /* Pods-MultiAIIM.release.xcconfig */,
 			);
-			name = Pods;
 			path = Pods;
 			sourceTree = "<group>";
 		};
@@ -267,8 +266,6 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
-				TargetAttributes = {
-				};
 			};
 			buildConfigurationList = 4F90523B9E4E92ADF46C93A8 /* Build configuration list for PBXProject "MultiAIIM" */;
 			developmentRegion = en;
@@ -311,9 +308,13 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-MultiAIIM/Pods-MultiAIIM-resources-${CONFIGURATION}-input-files.xcfilelist",
 			);
+			inputPaths = (
+			);
 			name = "[CP] Copy Pods Resources";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-MultiAIIM/Pods-MultiAIIM-resources-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -328,9 +329,13 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-MultiAIIM/Pods-MultiAIIM-frameworks-${CONFIGURATION}-input-files.xcfilelist",
 			);
+			inputPaths = (
+			);
 			name = "[CP] Embed Pods Frameworks";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-MultiAIIM/Pods-MultiAIIM-frameworks-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -374,11 +379,11 @@
 		89D5914E2732584E1DAC7BA9 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
-				files = (
-					1B6B11173C9F4E5E8F527901 /* LocalChatHistoryStoreTests.swift in Sources */,
-					3BD1F69ADAD14F34BE71B50C /* LocalChatHistoryStore.swift in Sources */,
-					33DF1CF7B27DB82ADDAF60BF /* MasterChatStateTests.swift in Sources */,
-					3054F8A8B9474264E18F6CA5 /* UserSigGeneratorTests.swift in Sources */,
+			files = (
+				1B6B11173C9F4E5E8F527901 /* LocalChatHistoryStoreTests.swift in Sources */,
+				3BD1F69ADAD14F34BE71B50C /* LocalChatHistoryStore.swift in Sources */,
+				33DF1CF7B27DB82ADDAF60BF /* MasterChatStateTests.swift in Sources */,
+				3054F8A8B9474264E18F6CA5 /* UserSigGeneratorTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -386,11 +391,11 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-					3F8918522571F81113E7CB66 /* ChatView.swift in Sources */,
-					01D0F56D2570EFCB2F9E1970 /* ContactsView.swift in Sources */,
-					2D096CCEDE5C3A5C2C2345A2 /* KeychainSecretStore.swift in Sources */,
-					6F8A104C96EA493A9256A839 /* LocalChatHistoryStore.swift in Sources */,
-					3C07CA2D884A70D8C12DADED /* LocalSettingsStore.swift in Sources */,
+				3F8918522571F81113E7CB66 /* ChatView.swift in Sources */,
+				01D0F56D2570EFCB2F9E1970 /* ContactsView.swift in Sources */,
+				2D096CCEDE5C3A5C2C2345A2 /* KeychainSecretStore.swift in Sources */,
+				6F8A104C96EA493A9256A839 /* LocalChatHistoryStore.swift in Sources */,
+				3C07CA2D884A70D8C12DADED /* LocalSettingsStore.swift in Sources */,
 				9C44F3384B6455C64BDF6449 /* MultiAIIMApp.swift in Sources */,
 				72471911E6CABC0FE2A796B1 /* RemoteIMAppState.swift in Sources */,
 				C204F8BE910FD7BF36145756 /* RemoteIMClient.swift in Sources */,
@@ -422,6 +427,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = 4Q834X9ZC6;
 				INFOPLIST_FILE = MultiAIIM/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -566,6 +572,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = 4Q834X9ZC6;
 				INFOPLIST_FILE = MultiAIIM/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

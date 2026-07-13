@@ -12,8 +12,8 @@
     "icons": "node scripts/build-icons.mjs",
     "prepare-asr": "node scripts/prepare-asr-assets.mjs",
     "dist": "npm run icons && npm run prepare-asr && electron-vite build && electron-builder",
-    "dist:mac": "npm run icons && npm run prepare-asr && electron-vite build && electron-builder --mac",
-    "dist:win": "npm run icons && npm run prepare-asr && electron-vite build && electron-builder --win",
+    "dist:mac": "npm run icons && node scripts/prepare-asr-assets.mjs --target darwin-arm64 && electron-vite build && electron-builder --mac",
+    "dist:win": "npm run icons && node scripts/prepare-asr-assets.mjs --target win32-x64 && electron-vite build && electron-builder --win",
     "dist:all": "npm run icons && npm run prepare-asr && electron-vite build && electron-builder --mac --win",
     "package:mac:electron": "scripts/package-macos-electron.sh",
     "package:mac:qt-im": "desktop/qt-im/scripts/package-macos.sh",
@@ -80,6 +80,7 @@
         "to": "asr"
       }
     ],
+    "afterPack": "scripts/electron-builder-after-pack.cjs",
     "mac": {
       "icon": "build/icon.png",
       "target": [

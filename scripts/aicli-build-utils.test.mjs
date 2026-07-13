@@ -2,7 +2,12 @@ import { mkdtempSync, rmSync, statSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { describe, expect, it } from 'vitest'
-import { copyExecutable, resolveBunExecutable } from './aicli-build-utils.mjs'
+import {
+  copyExecutable,
+  resolveBunExecutable,
+  stripArgsForPlatform,
+  stripReleaseExecutable
+} from './aicli-build-utils.mjs'
 
 describe('AICLI build utilities', () => {
   it('replaces an existing executable instead of overwriting the same inode', () => {
@@ -57,5 +62,25 @@ describe('AICLI build utilities', () => {
       })
     ).toBe('bun')
     expect(resolveBunExecutable('bun', { platform: 'darwin' })).toBe('bun')
+  })
+
+  it('selects platform-specific strip flags for release binaries', () => {
+    expect(stripArgsForPlatform('darwin')).toEqual(['-S', '-x'])
+    expect(stripArgsForPlatform('linux')).toEqual(['--strip-unneeded'])
+    expect(stripArgsForPlatform('win32')).toBeNull()
+  })
+
+  it('strips release executables only on supported platforms', () => {
+    const calls = []
+    const stripped = stripReleaseExecutable('/tmp/codex', {
+      platform: 'darwin',
+      runCommand: (command, args) => calls.push([command, args])
+    })
+
+    expect(stripped).toBe(true)
+    expect(calls).toEqual([['strip', ['-S', '-x', '/tmp/codex']]])
+    expect(stripReleaseExecutable('/tmp/codex.exe', { platform: 'win32', runCommand: () => {} })).toBe(
+      false
+    )
   })
 })

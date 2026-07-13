@@ -8,6 +8,7 @@ import {
   requireCommand,
   requireDir,
   run,
+  stripReleaseExecutable,
   tryVersion,
   writeManifestEntry
 } from './aicli-build-utils.mjs'
@@ -35,6 +36,9 @@ requireCommand('cargo')
 const cargoArgs = profile === 'dev' ? ['build'] : ['build', '--release']
 run('cargo', cargoArgs, { cwd: codexRsRoot })
 copyExecutable(builtBinary, outputBinary)
+if (profile === 'release' && stripReleaseExecutable(outputBinary)) {
+  console.log(`Codex release binary stripped：${outputBinary}`)
+}
 
 writeManifestEntry({
   tool: 'codex',

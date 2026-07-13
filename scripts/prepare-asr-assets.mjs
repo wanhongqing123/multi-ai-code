@@ -6,6 +6,7 @@ import { arch, platform, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { extractZipArchive } from './archive.mjs'
+import { parseAsrTargets } from './asr-packaging.mjs'
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)))
 const asrRoot = join(repoRoot, 'resources', 'asr')
@@ -289,10 +290,16 @@ async function prepareWindowsFfmpeg() {
 }
 
 async function main() {
+  const targets = parseAsrTargets(process.argv.slice(2))
+  const prepareAll = targets.includes('all')
   await copyModel()
-  await prepareDarwinWhisper()
-  await prepareWindowsWhisper()
-  await prepareWindowsFfmpeg()
+  if (prepareAll || targets.some((target) => target.startsWith('darwin-'))) {
+    await prepareDarwinWhisper()
+  }
+  if (prepareAll || targets.includes('win32-x64')) {
+    await prepareWindowsWhisper()
+    await prepareWindowsFfmpeg()
+  }
   console.log('ASR runtime assets are ready.')
 }
 

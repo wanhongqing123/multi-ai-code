@@ -50,6 +50,22 @@ export function run(command, args, options = {}) {
   }
 }
 
+export function stripArgsForPlatform(platform = process.platform) {
+  if (platform === 'darwin') return ['-S', '-x']
+  if (platform === 'linux') return ['--strip-unneeded']
+  return null
+}
+
+export function stripReleaseExecutable(
+  binaryPath,
+  { platform = process.platform, runCommand = run } = {}
+) {
+  const stripArgs = stripArgsForPlatform(platform)
+  if (!stripArgs) return false
+  runCommand('strip', [...stripArgs, binaryPath])
+  return true
+}
+
 export function capture(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: options.cwd ?? repoRoot,

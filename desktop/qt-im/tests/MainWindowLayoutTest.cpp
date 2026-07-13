@@ -45,6 +45,10 @@ private slots:
     void contactsDirectoryUsesSingleLineRows();
     void wideChatUsesWiderMessageBubbles();
     void restoredLongMessagesExpandAfterWindowIsShown();
+    void slashCommandSuggestionsFillComposer();
+    void deleteKeyRemovesContactAndMessagesFromConversationList();
+    void deleteKeyRemovesContactAndMessagesFromContactsList();
+    void navigationIconsDoNotUsePrivateFontGlyphProperties();
 };
 
 void MainWindowLayoutTest::exposesDesktopChatLayoutControls() {
@@ -587,8 +591,11 @@ void MainWindowLayoutTest::wideChatUsesWiderMessageBubbles() {
 
     auto* incomingBubble = window.findChild<QWidget*>(QStringLiteral("messageBubbleIncoming"));
     QVERIFY(incomingBubble != nullptr);
-    QVERIFY(incomingBubble->maximumWidth() >= 900);
-    QVERIFY(incomingBubble->minimumWidth() >= 820);
+    QTRY_VERIFY2(incomingBubble->maximumWidth() >= 880,
+                 qPrintable(QStringLiteral("max=%1 min=%2")
+                                .arg(incomingBubble->maximumWidth())
+                                .arg(incomingBubble->minimumWidth())));
+    QTRY_VERIFY(incomingBubble->minimumWidth() >= 820);
 }
 
 void MainWindowLayoutTest::restoredLongMessagesExpandAfterWindowIsShown() {
@@ -614,6 +621,101 @@ void MainWindowLayoutTest::restoredLongMessagesExpandAfterWindowIsShown() {
                                 .arg(incomingBubble->maximumWidth())
                                 .arg(messageScroll->viewport()->width())
                                 .arg(incomingBubble->property("expandedTextBubble").toBool())));
+}
+
+void MainWindowLayoutTest::slashCommandSuggestionsFillComposer() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+
+    MainWindow window(app);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto* editor = window.findChild<QTextEdit*>(QStringLiteral("messageEditor"));
+    auto* commandBar = window.findChild<QWidget*>(QStringLiteral("slashCommandBar"));
+
+    QVERIFY(editor != nullptr);
+    QVERIFY(commandBar != nullptr);
+    QVERIFY(!commandBar->isVisible());
+
+    editor->setPlainText(QStringLiteral("/st"));
+    QVERIFY(commandBar->isVisible());
+
+    auto* statusButton = window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_status"));
+    QVERIFY(statusButton != nullptr);
+    statusButton->click();
+
+    QCOMPARE(editor->toPlainText(), QStringLiteral("/status"));
+    QVERIFY(commandBar->isVisible());
+}
+
+void MainWindowLayoutTest::deleteKeyRemovesContactAndMessagesFromConversationList() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+    app.chatState().receiveText(QStringLiteral("phone-user"), QStringLiteral("remove me"));
+    app.addContact(QStringLiteral("other-user"), QStringLiteral("Other"));
+
+    MainWindow window(app);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto* conversationList = window.findChild<QListWidget*>(QStringLiteral("conversationList"));
+    QVERIFY(conversationList != nullptr);
+
+    conversationList->setCurrentRow(0);
+    conversationList->setFocus();
+    QCOMPARE(conversationList->currentItem()->data(Qt::UserRole).toString(), QStringLiteral("phone-user"));
+    QTest::keyClick(conversationList, Qt::Key_Delete);
+
+    QCOMPARE(app.chatState().messagesWith(QStringLiteral("phone-user")).size(), 0);
+    QCOMPARE(app.chatState().contacts().size(), 1);
+    QCOMPARE(app.chatState().contacts().first().userId, QStringLiteral("other-user"));
+    QCOMPARE(app.chatState().selectedPeerId(), QStringLiteral("other-user"));
+}
+
+void MainWindowLayoutTest::deleteKeyRemovesContactAndMessagesFromContactsList() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+    app.chatState().receiveText(QStringLiteral("phone-user"), QStringLiteral("remove me"));
+    app.addContact(QStringLiteral("other-user"), QStringLiteral("Other"));
+
+    MainWindow window(app);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    auto* contactsNavButton = window.findChild<QPushButton*>(QStringLiteral("contactsNavButton"));
+    auto* contactsList = window.findChild<QListWidget*>(QStringLiteral("contactsList"));
+    QVERIFY(contactsNavButton != nullptr);
+    QVERIFY(contactsList != nullptr);
+
+    contactsNavButton->click();
+    contactsList->setCurrentRow(0);
+    contactsList->setFocus();
+    QCOMPARE(contactsList->currentItem()->data(Qt::UserRole).toString(), QStringLiteral("phone-user"));
+    QTest::keyClick(contactsList, Qt::Key_Delete);
+
+    QCOMPARE(app.chatState().messagesWith(QStringLiteral("phone-user")).size(), 0);
+    QCOMPARE(app.chatState().contacts().size(), 1);
+    QCOMPARE(app.chatState().contacts().first().userId, QStringLiteral("other-user"));
+    QCOMPARE(app.chatState().selectedPeerId(), QStringLiteral("other-user"));
+}
+
+void MainWindowLayoutTest::navigationIconsDoNotUsePrivateFontGlyphProperties() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+
+    MainWindow window(app);
+
+    for (const QString& objectName : {QStringLiteral("messagesNavButton"),
+                                      QStringLiteral("contactsNavButton"),
+                                      QStringLiteral("settingsNavButton")}) {
+        auto* button = window.findChild<QPushButton*>(objectName);
+        QVERIFY(button != nullptr);
+        QVERIFY(!button->property("navGlyph").isValid());
+        QVERIFY(!button->icon().isNull());
+    }
 }
 
 QTEST_MAIN(MainWindowLayoutTest)

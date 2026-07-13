@@ -16,6 +16,7 @@ public:
     QList<RemoteIMMessage> messages() const;
 
     void upsertContact(const RemoteIMContact& contact);
+    void removeContactAndMessages(const QString& userId);
     void selectPeer(const QString& userId);
     RemoteIMMessage queueOutgoingText(const QString& text);
     RemoteIMMessage queueOutgoingImage(const QString& localPath, int width, int height, qint64 sizeBytes);

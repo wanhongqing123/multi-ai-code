@@ -33,6 +33,24 @@ void ChatState::upsertContact(const RemoteIMContact& contact) {
     contacts_.append(RemoteIMContact{userId, displayName});
 }
 
+void ChatState::removeContactAndMessages(const QString& userId) {
+    const QString cleanUserId = clean(userId);
+    if (cleanUserId.isEmpty()) return;
+    contacts_.erase(std::remove_if(contacts_.begin(), contacts_.end(), [&cleanUserId](const RemoteIMContact& contact) {
+        return contact.userId == cleanUserId;
+    }), contacts_.end());
+    messages_.erase(std::remove_if(messages_.begin(), messages_.end(), [&cleanUserId](const RemoteIMMessage& message) {
+        return message.fromUserId == cleanUserId || message.toUserId == cleanUserId;
+    }), messages_.end());
+    const bool selectedMissing = !selectedPeerId_.isEmpty()
+        && std::none_of(contacts_.cbegin(), contacts_.cend(), [this](const RemoteIMContact& contact) {
+               return contact.userId == selectedPeerId_;
+           });
+    if (selectedPeerId_ == cleanUserId || selectedMissing) {
+        selectedPeerId_ = contacts_.isEmpty() ? QString() : contacts_.first().userId;
+    }
+}
+
 void ChatState::selectPeer(const QString& userId) {
     const QString peerId = clean(userId);
     if (peerId.isEmpty()) return;

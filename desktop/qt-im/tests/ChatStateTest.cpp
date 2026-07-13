@@ -10,6 +10,7 @@ private slots:
     void receivesIncomingImage();
     void updatesMessageStatus();
     void returnsPeerMessagesChronologically();
+    void removesContactAndMessages();
 };
 
 void ChatStateTest::queuesOutgoingText() {
@@ -83,6 +84,23 @@ void ChatStateTest::returnsPeerMessagesChronologically() {
     QCOMPARE(messages.at(0).text, QStringLiteral("10s"));
     QCOMPARE(messages.at(1).text, QStringLiteral("20s"));
     QCOMPARE(messages.at(2).text, QStringLiteral("30s"));
+}
+
+void ChatStateTest::removesContactAndMessages() {
+    ChatState state("desktop-user");
+    state.upsertContact(RemoteIMContact{"ios-user", "iPhone"});
+    state.upsertContact(RemoteIMContact{"other-user", "Other"});
+    state.selectPeer("ios-user");
+    state.receiveText("ios-user", "hello");
+    state.receiveText("other-user", "keep");
+
+    state.removeContactAndMessages(" ios-user ");
+
+    QCOMPARE(state.contacts().size(), 1);
+    QCOMPARE(state.contacts().first().userId, QString("other-user"));
+    QCOMPARE(state.messagesWith("ios-user").size(), 0);
+    QCOMPARE(state.messagesWith("other-user").size(), 1);
+    QCOMPARE(state.selectedPeerId(), QString("other-user"));
 }
 
 QTEST_MAIN(ChatStateTest)

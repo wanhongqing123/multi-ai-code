@@ -14,6 +14,9 @@
 class QResizeEvent;
 class QShowEvent;
 class QLineEdit;
+class QHBoxLayout;
+class QListWidgetItem;
+class QPoint;
 
 class MainWindow final : public QMainWindow {
 public:
@@ -49,6 +52,11 @@ private:
     QWidget* createSettingsRow(const QString& title, QLabel* valueLabel, const QString& helperText);
     void sendCurrentText();
     void updateComposerState();
+    void updateSlashCommandSuggestions();
+    void selectSlashCommand(const QString& command);
+    void showContactContextMenu(QListWidget* list, const QPoint& pos);
+    void deleteContactFromItem(QListWidgetItem* item);
+    void deleteSelectedContactFromList(QListWidget* list);
     QString contactName(const QString& userId) const;
 
     RemoteIMApplication& app_;
@@ -76,4 +84,6 @@ private:
     QPushButton* imageButton_ = nullptr;
     QPushButton* sendButton_ = nullptr;
     QTextEdit* messageEditor_ = nullptr;
+    QWidget* slashCommandBar_ = nullptr;
+    QHBoxLayout* slashCommandLayout_ = nullptr;
 };

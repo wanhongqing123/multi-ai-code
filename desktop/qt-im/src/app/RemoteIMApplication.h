@@ -20,6 +20,7 @@ public:
 
     void connectToService(int sdkAppId, const QString& userSig);
     void addContact(const QString& userId, const QString& displayName);
+    void deleteContact(const QString& userId);
     void selectPeer(const QString& userId);
     void sendText(const QString& text);
     void sendImage(const QString& localPath);

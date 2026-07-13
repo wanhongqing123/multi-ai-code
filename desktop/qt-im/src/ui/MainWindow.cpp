@@ -1,17 +1,18 @@
 #include "ui/MainWindow.h"
 
 #include <QCoreApplication>
+#include <QAction>
 #include <QDateTime>
 #include <QEvent>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFont>
-#include <QFontInfo>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QKeyEvent>
 #include <QLineEdit>
+#include <QMenu>
 #include <QPixmap>
 #include <QMessageBox>
 #include <QMouseEvent>
@@ -29,6 +30,7 @@
 #include <QTextDocument>
 #include <QTextOption>
 #include <QTimer>
+#include <QVariant>
 #include <QtMath>
 #include <functional>
 #include <utility>
@@ -231,24 +233,82 @@ private:
     std::function<void(const QString&)> onClick_;
 };
 
-// Render a single monochrome icon glyph from the Windows icon font (Segoe Fluent
-// Icons on Win11, falling back to Segoe MDL2 Assets) into a QIcon tinted to the
-// given color. Rendered oversized so it stays crisp when scaled for high DPI.
-QIcon makeGlyphIcon(QChar glyph, const QColor& color) {
+enum class LineIconKind {
+    Messages = 1,
+    Contacts,
+    Settings,
+    Search,
+    Add,
+    More,
+};
+
+int lineIconKindValue(LineIconKind kind) {
+    return static_cast<int>(kind);
+}
+
+LineIconKind lineIconKindFromValue(int value) {
+    switch (static_cast<LineIconKind>(value)) {
+        case LineIconKind::Messages:
+        case LineIconKind::Contacts:
+        case LineIconKind::Settings:
+        case LineIconKind::Search:
+        case LineIconKind::Add:
+        case LineIconKind::More:
+            return static_cast<LineIconKind>(value);
+    }
+    return LineIconKind::Messages;
+}
+
+QIcon makeLineIcon(LineIconKind kind, const QColor& color) {
     constexpr int kRender = 48;
     QPixmap pixmap(kRender, kRender);
     pixmap.fill(Qt::transparent);
     QPainter painter(&pixmap);
     painter.setRenderHint(QPainter::Antialiasing, true);
-    painter.setRenderHint(QPainter::TextAntialiasing, true);
-    QFont iconFont(QStringLiteral("Segoe Fluent Icons"));
-    if (!QFontInfo(iconFont).family().contains(QLatin1String("Fluent"), Qt::CaseInsensitive)) {
-        iconFont.setFamily(QStringLiteral("Segoe MDL2 Assets"));
+    QPen pen(color, 4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    painter.setPen(pen);
+    painter.setBrush(Qt::NoBrush);
+
+    switch (kind) {
+        case LineIconKind::Messages:
+            painter.drawRoundedRect(QRectF(10, 12, 28, 22), 6, 6);
+            painter.drawLine(QPointF(17, 20), QPointF(31, 20));
+            painter.drawLine(QPointF(17, 27), QPointF(27, 27));
+            painter.drawLine(QPointF(18, 34), QPointF(14, 40));
+            break;
+        case LineIconKind::Contacts:
+            painter.drawEllipse(QRectF(18, 10, 12, 12));
+            painter.drawArc(QRectF(13, 21, 22, 18), 28 * 16, 124 * 16);
+            painter.drawEllipse(QRectF(30, 15, 8, 8));
+            painter.drawArc(QRectF(27, 24, 16, 13), 20 * 16, 105 * 16);
+            break;
+        case LineIconKind::Settings:
+            painter.drawEllipse(QRectF(17, 17, 14, 14));
+            painter.drawLine(QPointF(24, 7), QPointF(24, 12));
+            painter.drawLine(QPointF(24, 36), QPointF(24, 41));
+            painter.drawLine(QPointF(7, 24), QPointF(12, 24));
+            painter.drawLine(QPointF(36, 24), QPointF(41, 24));
+            painter.drawLine(QPointF(12, 12), QPointF(16, 16));
+            painter.drawLine(QPointF(32, 32), QPointF(36, 36));
+            painter.drawLine(QPointF(36, 12), QPointF(32, 16));
+            painter.drawLine(QPointF(16, 32), QPointF(12, 36));
+            break;
+        case LineIconKind::Search:
+            painter.drawEllipse(QRectF(11, 11, 20, 20));
+            painter.drawLine(QPointF(29, 29), QPointF(38, 38));
+            break;
+        case LineIconKind::Add:
+            painter.drawLine(QPointF(24, 13), QPointF(24, 35));
+            painter.drawLine(QPointF(13, 24), QPointF(35, 24));
+            break;
+        case LineIconKind::More:
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(color);
+            painter.drawEllipse(QRectF(13, 21, 6, 6));
+            painter.drawEllipse(QRectF(21, 21, 6, 6));
+            painter.drawEllipse(QRectF(29, 21, 6, 6));
+            break;
     }
-    iconFont.setPixelSize(kRender - 10);
-    painter.setFont(iconFont);
-    painter.setPen(color);
-    painter.drawText(pixmap.rect(), Qt::AlignCenter, QString(glyph));
     painter.end();
     return QIcon(pixmap);
 }
@@ -260,30 +320,37 @@ QPushButton* makeNavButton(const QString& title, const QString& objectName, QWid
     return button;
 }
 
-// Nav rail icon glyphs (Segoe Fluent Icons / MDL2 private-use codepoints).
-constexpr ushort kNavGlyphMessages = 0xE8BD;   // Message
-constexpr ushort kNavGlyphContacts = 0xE716;   // People
-constexpr ushort kNavGlyphSettings = 0xE713;   // Settings
-constexpr ushort kNavGlyphSearch = 0xE721;     // Search
-constexpr ushort kNavGlyphAdd = 0xE710;        // Add (+)
-constexpr ushort kHeaderGlyphMore = 0xE712;    // More (…)
-
 void applyNavButtonIcon(QPushButton* button, bool selected) {
-    const QString glyph = button->property("navGlyph").toString();
-    if (glyph.isEmpty()) return;
+    const QVariant rawKind = button->property("navIconKind");
+    if (!rawKind.isValid()) return;
     const QColor color = selected ? QColor(QStringLiteral("#0b67b7")) : QColor(QStringLiteral("#62728a"));
-    button->setIcon(makeGlyphIcon(glyph.at(0), color));
+    button->setIcon(makeLineIcon(lineIconKindFromValue(rawKind.toInt()), color));
 }
 
 // Feishu-style borderless icon button for the chat header.
-QPushButton* makeHeaderIconButton(ushort glyph, const QString& tooltip, QWidget* parent) {
+QPushButton* makeHeaderIconButton(LineIconKind kind, const QString& tooltip, QWidget* parent) {
     auto* button = new QPushButton(parent);
     button->setObjectName(QStringLiteral("headerIconButton"));
-    button->setIcon(makeGlyphIcon(QChar(glyph), QColor(QStringLiteral("#4c5866"))));
+    button->setIcon(makeLineIcon(kind, QColor(QStringLiteral("#4c5866"))));
     button->setIconSize(QSize(17, 17));
     button->setToolTip(tooltip);
     button->setCursor(Qt::PointingHandCursor);
     return button;
+}
+
+struct SlashCommandDefinition {
+    QString command;
+    QString label;
+    QString objectName;
+};
+
+QList<SlashCommandDefinition> slashCommandDefinitions() {
+    return {
+        {QStringLiteral("/status"), QStringLiteral("查看状态"), QStringLiteral("slashCommandButton_status")},
+        {QStringLiteral("/plan"), QStringLiteral("切换 Plan"), QStringLiteral("slashCommandButton_plan")},
+        {QStringLiteral("/build"), QStringLiteral("切换 Build"), QStringLiteral("slashCommandButton_build")},
+        {QStringLiteral("/help"), QStringLiteral("命令帮助"), QStringLiteral("slashCommandButton_help")},
+    };
 }
 
 QString deliveryStatusIndicator(RemoteIMMessageStatus status) {
@@ -349,6 +416,13 @@ MainWindow::MainWindow(RemoteIMApplication& app, QWidget* parent) : QMainWindow(
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+    if ((watched == conversationList_ || watched == contactsList_) && event->type() == QEvent::KeyPress) {
+        auto* keyEvent = static_cast<QKeyEvent*>(event);
+        if (keyEvent->key() == Qt::Key_Delete || keyEvent->key() == Qt::Key_Backspace) {
+            deleteSelectedContactFromList(qobject_cast<QListWidget*>(watched));
+            return true;
+        }
+    }
     if (watched == messageEditor_ && event->type() == QEvent::KeyPress) {
         auto* keyEvent = static_cast<QKeyEvent*>(event);
         const bool isReturn = keyEvent->key() == Qt::Key_Return || keyEvent->key() == Qt::Key_Enter;
@@ -423,7 +497,7 @@ void MainWindow::buildUi() {
     logo->setAlignment(Qt::AlignCenter);
     addContactButton_ = new QPushButton(navRail_);
     addContactButton_->setObjectName(QStringLiteral("addConversationButton"));
-    addContactButton_->setIcon(makeGlyphIcon(QChar(kNavGlyphAdd), QColor(QStringLiteral("#4c5866"))));
+    addContactButton_->setIcon(makeLineIcon(LineIconKind::Add, QColor(QStringLiteral("#4c5866"))));
     addContactButton_->setIconSize(QSize(18, 18));
     addContactButton_->setToolTip(QStringLiteral("添加联系人"));
     addContactButton_->setCursor(Qt::PointingHandCursor);
@@ -440,7 +514,7 @@ void MainWindow::buildUi() {
     navSearchInput_->setObjectName(QStringLiteral("navSearchBox"));
     navSearchInput_->setPlaceholderText(QStringLiteral("搜索"));
     navSearchInput_->setClearButtonEnabled(true);
-    navSearchInput_->addAction(makeGlyphIcon(QChar(kNavGlyphSearch), QColor(QStringLiteral("#98a2b3"))),
+    navSearchInput_->addAction(makeLineIcon(LineIconKind::Search, QColor(QStringLiteral("#98a2b3"))),
                                QLineEdit::LeadingPosition);
     navLayout->addWidget(navSearchInput_);
     navLayout->addSpacing(8);
@@ -448,9 +522,9 @@ void MainWindow::buildUi() {
     messageNavButton_ = makeNavButton(QStringLiteral("消息"), QStringLiteral("messagesNavButton"), navRail_);
     contactsNavButton_ = makeNavButton(QStringLiteral("通讯录"), QStringLiteral("contactsNavButton"), navRail_);
     settingsNavButton_ = makeNavButton(QStringLiteral("设置"), QStringLiteral("settingsNavButton"), navRail_);
-    messageNavButton_->setProperty("navGlyph", QString(QChar(kNavGlyphMessages)));
-    contactsNavButton_->setProperty("navGlyph", QString(QChar(kNavGlyphContacts)));
-    settingsNavButton_->setProperty("navGlyph", QString(QChar(kNavGlyphSettings)));
+    messageNavButton_->setProperty("navIconKind", lineIconKindValue(LineIconKind::Messages));
+    contactsNavButton_->setProperty("navIconKind", lineIconKindValue(LineIconKind::Contacts));
+    settingsNavButton_->setProperty("navIconKind", lineIconKindValue(LineIconKind::Settings));
     messageNavButton_->setProperty("selected", true);
     for (QPushButton* navButton : {messageNavButton_, contactsNavButton_, settingsNavButton_}) {
         navButton->setIconSize(QSize(18, 18));
@@ -504,8 +578,8 @@ void MainWindow::buildUi() {
     statusLabel_ = new QLabel(QStringLiteral("未连接"), header);
     statusLabel_->setObjectName(QStringLiteral("statusBadge"));
     headerLayout->addWidget(titleLabel_, 1);
-    headerLayout->addWidget(makeHeaderIconButton(kNavGlyphSearch, QStringLiteral("搜索"), header));
-    headerLayout->addWidget(makeHeaderIconButton(kHeaderGlyphMore, QStringLiteral("更多"), header));
+    headerLayout->addWidget(makeHeaderIconButton(LineIconKind::Search, QStringLiteral("搜索"), header));
+    headerLayout->addWidget(makeHeaderIconButton(LineIconKind::More, QStringLiteral("更多"), header));
     headerLayout->addWidget(statusLabel_);
 
     messageScroll_ = new QScrollArea(chatContentPane);
@@ -528,6 +602,13 @@ void MainWindow::buildUi() {
     auto* composerLayout = new QVBoxLayout(composer);
     composerLayout->setContentsMargins(24, 12, 24, 14);
     composerLayout->setSpacing(8);
+
+    slashCommandBar_ = new QWidget(composer);
+    slashCommandBar_->setObjectName(QStringLiteral("slashCommandBar"));
+    slashCommandBar_->setVisible(false);
+    slashCommandLayout_ = new QHBoxLayout(slashCommandBar_);
+    slashCommandLayout_->setContentsMargins(0, 0, 0, 0);
+    slashCommandLayout_->setSpacing(8);
 
     messageEditor_ = new QTextEdit(composer);
     messageEditor_->setObjectName(QStringLiteral("messageEditor"));
@@ -560,6 +641,7 @@ void MainWindow::buildUi() {
     toolBar->addStretch(1);
     toolBar->addWidget(sendButton_);
 
+    composerLayout->addWidget(slashCommandBar_);
     composerLayout->addWidget(messageEditor_, 1);
     composerLayout->addLayout(toolBar);
 
@@ -927,7 +1009,20 @@ void MainWindow::bindSignals() {
     connect(imageButton_, &QPushButton::clicked, this, [this] { openImagePicker(); });
     connect(voiceButton_, &QPushButton::clicked, this, [this] { app_.sendVoicePlaceholder(); });
     connect(sendButton_, &QPushButton::clicked, this, [this] { sendCurrentText(); });
-    connect(messageEditor_, &QTextEdit::textChanged, this, [this] { updateComposerState(); });
+    connect(messageEditor_, &QTextEdit::textChanged, this, [this] {
+        updateComposerState();
+        updateSlashCommandSuggestions();
+    });
+    conversationList_->installEventFilter(this);
+    contactsList_->installEventFilter(this);
+    conversationList_->setContextMenuPolicy(Qt::CustomContextMenu);
+    contactsList_->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(conversationList_, &QListWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
+        showContactContextMenu(conversationList_, pos);
+    });
+    connect(contactsList_, &QListWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
+        showContactContextMenu(contactsList_, pos);
+    });
     connect(conversationList_, &QListWidget::currentItemChanged, this, [this](QListWidgetItem* current) {
         if (!current) return;
         const QString userId = current->data(Qt::UserRole).toString();
@@ -1110,6 +1205,7 @@ void MainWindow::refreshMessages() {
     }
 
     QTimer::singleShot(0, this, [this] {
+        updateMessageBubbleWidths();
         messageScroll_->verticalScrollBar()->setValue(messageScroll_->verticalScrollBar()->maximum());
     });
 }
@@ -1320,6 +1416,7 @@ void MainWindow::sendCurrentText() {
     app_.sendText(text);
     messageEditor_->clear();
     updateComposerState();
+    updateSlashCommandSuggestions();
 }
 
 void MainWindow::updateComposerState() {
@@ -1329,6 +1426,93 @@ void MainWindow::updateComposerState() {
     messageEditor_->setEnabled(hasPeer);
     voiceButton_->setEnabled(hasPeer);
     sendButton_->setEnabled(hasPeer && hasText);
+}
+
+void MainWindow::updateSlashCommandSuggestions() {
+    if (!slashCommandBar_ || !slashCommandLayout_ || !messageEditor_) return;
+
+    while (QLayoutItem* item = slashCommandLayout_->takeAt(0)) {
+        if (QWidget* widget = item->widget()) delete widget;
+        delete item;
+    }
+
+    const QString query = messageEditor_->toPlainText().trimmed();
+    if (query.isEmpty() || !query.startsWith(QLatin1Char('/')) || app_.chatState().selectedPeerId().isEmpty()) {
+        slashCommandBar_->setVisible(false);
+        return;
+    }
+
+    bool hasMatch = false;
+    for (const SlashCommandDefinition& definition : slashCommandDefinitions()) {
+        if (!definition.command.startsWith(query, Qt::CaseInsensitive)) continue;
+        auto* button = new QPushButton(definition.command + QStringLiteral("  ") + definition.label, slashCommandBar_);
+        button->setObjectName(definition.objectName);
+        button->setCursor(Qt::PointingHandCursor);
+        button->setStyleSheet(QStringLiteral(R"(
+            QPushButton {
+                min-height: 28px;
+                border: 1px solid #b8def7;
+                border-radius: 14px;
+                background: #eff9ff;
+                color: #0b67b7;
+                padding: 0 12px;
+                font-size: 12px;
+                font-weight: 600;
+                text-align: left;
+            }
+            QPushButton:hover {
+                background: #dff1ff;
+                border-color: #58b7ff;
+            }
+        )"));
+        connect(button, &QPushButton::clicked, this, [this, command = definition.command] {
+            selectSlashCommand(command);
+        });
+        slashCommandLayout_->addWidget(button, 0, Qt::AlignLeft);
+        hasMatch = true;
+    }
+
+    if (hasMatch) {
+        slashCommandLayout_->addStretch(1);
+    }
+    slashCommandBar_->setVisible(hasMatch);
+}
+
+void MainWindow::selectSlashCommand(const QString& command) {
+    if (!messageEditor_) return;
+    messageEditor_->setPlainText(command);
+    QTextCursor cursor = messageEditor_->textCursor();
+    cursor.movePosition(QTextCursor::End);
+    messageEditor_->setTextCursor(cursor);
+    messageEditor_->setFocus();
+    updateComposerState();
+    updateSlashCommandSuggestions();
+}
+
+void MainWindow::showContactContextMenu(QListWidget* list, const QPoint& pos) {
+    if (!list) return;
+    QListWidgetItem* item = list->itemAt(pos);
+    if (!item) return;
+    list->setCurrentItem(item);
+
+    QMenu menu(this);
+    QAction* deleteAction = menu.addAction(QStringLiteral("删除联系人"));
+    QAction* selectedAction = menu.exec(list->viewport()->mapToGlobal(pos));
+    if (selectedAction == deleteAction) {
+        deleteContactFromItem(item);
+    }
+}
+
+void MainWindow::deleteContactFromItem(QListWidgetItem* item) {
+    if (!item) return;
+    const QString userId = item->data(UserIdRole).toString().trimmed();
+    if (userId.isEmpty()) return;
+    app_.deleteContact(userId);
+}
+
+void MainWindow::deleteSelectedContactFromList(QListWidget* list) {
+    if (!list) return;
+    deleteContactFromItem(list->currentItem());
 }
 
 QString MainWindow::contactName(const QString& userId) const {

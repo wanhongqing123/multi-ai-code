@@ -32,6 +32,11 @@ void RemoteIMApplication::addContact(const QString& userId, const QString& displ
     emit stateChanged();
 }
 
+void RemoteIMApplication::deleteContact(const QString& userId) {
+    state_.removeContactAndMessages(userId);
+    emit stateChanged();
+}
+
 void RemoteIMApplication::selectPeer(const QString& userId) {
     state_.selectPeer(userId);
     emit stateChanged();

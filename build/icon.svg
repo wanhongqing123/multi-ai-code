@@ -1,55 +1,49 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
   <defs>
-    <linearGradient id="bg" x1="8%" y1="6%" x2="94%" y2="94%">
-      <stop offset="0%" stop-color="#0f2233"/>
-      <stop offset="100%" stop-color="#07131f"/>
+    <linearGradient id="outer" x1="12%" y1="8%" x2="88%" y2="92%">
+      <stop offset="0%" stop-color="#f8fcff"/>
+      <stop offset="100%" stop-color="#eaf5ff"/>
     </linearGradient>
-    <linearGradient id="frame" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#2ed6b5"/>
-      <stop offset="100%" stop-color="#2ea8ff"/>
+    <linearGradient id="mark" x1="18%" y1="10%" x2="88%" y2="92%">
+      <stop offset="0%" stop-color="#12c8ff"/>
+      <stop offset="55%" stop-color="#1396f2"/>
+      <stop offset="100%" stop-color="#2563eb"/>
     </linearGradient>
-    <linearGradient id="surface" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#eef7ff"/>
-      <stop offset="100%" stop-color="#d8ebfa"/>
+    <linearGradient id="chip" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#e9fbff"/>
+      <stop offset="100%" stop-color="#d8edff"/>
     </linearGradient>
-    <linearGradient id="symbol" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#00b89f"/>
-      <stop offset="100%" stop-color="#0078d9"/>
-    </linearGradient>
-    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur stdDeviation="14" result="blur"/>
-      <feOffset in="blur" dy="10" result="offset"/>
-      <feColorMatrix
-        in="offset"
-        type="matrix"
-        values="0 0 0 0 0.02 0 0 0 0 0.07 0 0 0 0 0.12 0 0 0 0.5 0"
-      />
-      <feMerge>
-        <feMergeNode />
-        <feMergeNode in="SourceGraphic" />
-      </feMerge>
-    </filter>
   </defs>
 
-  <rect x="0" y="0" width="1024" height="1024" rx="224" ry="224" fill="url(#bg)" />
-  <rect x="6" y="6" width="1012" height="1012" rx="218" ry="218" fill="none" stroke="url(#frame)" stroke-width="3" opacity="0.3" />
+  <rect x="60" y="60" width="904" height="904" rx="222" ry="222" fill="url(#outer)" />
+  <rect
+    x="72"
+    y="72"
+    width="880"
+    height="880"
+    rx="210"
+    ry="210"
+    fill="none"
+    stroke="#d7e8f8"
+    stroke-width="12"
+  />
 
-  <g filter="url(#shadow)">
-    <rect x="186" y="210" width="652" height="604" rx="74" ry="74" fill="url(#surface)" />
-    <rect x="186" y="210" width="652" height="118" rx="74" ry="74" fill="#c7e1f7" />
-    <circle cx="256" cy="270" r="14" fill="#ff7b7b" />
-    <circle cx="304" cy="270" r="14" fill="#ffca63" />
-    <circle cx="352" cy="270" r="14" fill="#34d399" />
-  </g>
+  <rect x="184" y="180" width="656" height="656" rx="172" ry="172" fill="url(#mark)" />
+  <path
+    d="M306 684V340h110l96 166 96-166h110v344H604V526l-62 108h-60l-62-108v158H306Z"
+    fill="#ffffff"
+  />
 
-  <g fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="52">
-    <polyline points="360,474 282,552 360,630" stroke="url(#symbol)" />
-    <line x1="432" y1="640" x2="552" y2="640" stroke="#0f2233" />
-  </g>
-
-  <g fill="none" stroke="#1d5b88" stroke-linecap="round" stroke-linejoin="round" stroke-width="18" opacity="0.55">
-    <polyline points="596,448 552,512 596,576" />
-    <line x1="648" y1="444" x2="620" y2="580" />
-    <polyline points="672,448 716,512 672,576" />
-  </g>
+  <rect x="638" y="626" width="188" height="132" rx="48" ry="48" fill="url(#chip)" />
+  <path
+    d="M694 716l-42-42 42-42M764 632l42 42-42 42"
+    fill="none"
+    stroke="#1677d2"
+    stroke-width="26"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <circle cx="618" cy="408" r="20" fill="#b7ecff" opacity="0.9" />
+  <circle cx="684" cy="408" r="20" fill="#b7ecff" opacity="0.72" />
+  <circle cx="750" cy="408" r="20" fill="#b7ecff" opacity="0.54" />
 </svg>

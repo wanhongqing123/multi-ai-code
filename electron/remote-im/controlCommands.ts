@@ -1,4 +1,10 @@
-export type RemoteImControlCommandName = 'status' | 'plan' | 'build' | 'model' | 'help'
+export type RemoteImControlCommandName =
+  | 'status'
+  | 'plan'
+  | 'build'
+  | 'models'
+  | 'model'
+  | 'help'
 
 export interface RemoteImControlCommandDefinition {
   name: RemoteImControlCommandName
@@ -38,9 +44,14 @@ export const REMOTE_IM_CONTROL_COMMANDS: RemoteImControlCommandDefinition[] = [
     description: '切换到执行模式'
   },
   {
+    name: 'models',
+    usage: '/models',
+    description: '查看可用模型列表'
+  },
+  {
     name: 'model',
-    usage: '/model [模型ID或序号]',
-    description: '查看或切换模型'
+    usage: '/model <序号或模型ID>',
+    description: '切换到指定模型'
   },
   {
     name: 'help',

@@ -185,7 +185,8 @@ async function status(
 }
 
 async function model(
-  input: ExecuteRemoteImControlCommandInput
+  input: ExecuteRemoteImControlCommandInput,
+  options: { forceList?: boolean } = {}
 ): Promise<ExecuteRemoteImControlCommandResult> {
   if (!input.session) {
     return {
@@ -219,7 +220,7 @@ async function model(
     sessionId: input.session.sessionId,
     sourceKind: input.sourceKind,
     command: 'model',
-    model: input.args?.trim() || undefined
+    ...(options.forceList ? {} : { model: input.args?.trim() || undefined })
   })
   if (!result.ok) {
     return {
@@ -242,6 +243,10 @@ export async function executeRemoteImControlCommand(
 
   if (input.command === 'status') {
     return status(input)
+  }
+
+  if (input.command === 'models') {
+    return model(input, { forceList: true })
   }
 
   if (input.command === 'model') {

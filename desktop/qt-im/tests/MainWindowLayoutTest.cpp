@@ -651,6 +651,16 @@ void MainWindowLayoutTest::slashCommandSuggestionsFillComposer() {
     editor->setPlainText(QStringLiteral("/mo"));
     QVERIFY(commandBar->isVisible());
 
+    auto* modelsButton = window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_models"));
+    QVERIFY(modelsButton != nullptr);
+    modelsButton->click();
+
+    QCOMPARE(editor->toPlainText(), QStringLiteral("/models"));
+    QVERIFY(commandBar->isVisible());
+
+    editor->setPlainText(QStringLiteral("/mod"));
+    QVERIFY(commandBar->isVisible());
+
     auto* modelButton = window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_model"));
     QVERIFY(modelButton != nullptr);
     modelButton->click();

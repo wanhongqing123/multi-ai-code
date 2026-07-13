@@ -73,6 +73,32 @@ describe('remote IM control bridge', () => {
     })
   })
 
+  it('maps /models to the source-level model list command without a selection', async () => {
+    const executeCommand = vi.fn(async () => ({
+      ok: true as const,
+      text: '当前模型：gpt-5.6-sol\n可用模型：\n1. GPT-5.6 Sol (gpt-5.6-sol)'
+    }))
+    const result = await executeRemoteImControlCommand({
+      command: 'models',
+      session: {
+        sessionId: 'session-1',
+        targetRepo: '/repo',
+        command: '/bundled/codex',
+        startedAtMs: 1000
+      },
+      sourceKind: 'codex',
+      executeCommand
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.text).toContain('可用模型')
+    expect(executeCommand).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      sourceKind: 'codex',
+      command: 'model'
+    })
+  })
+
   it('switches OpenCode mode through an injected source-level bridge', async () => {
     const switchMode = vi.fn(async () => ({ ok: true as const }))
     const result = await executeRemoteImControlCommand({

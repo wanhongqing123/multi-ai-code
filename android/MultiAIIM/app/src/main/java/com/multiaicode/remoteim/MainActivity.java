@@ -47,6 +47,7 @@ public final class MainActivity extends Activity {
         {"/status", "查看状态"},
         {"/plan", "切换 Plan"},
         {"/build", "切换 Build"},
+        {"/models", "模型列表"},
         {"/model ", "切换模型"},
         {"/help", "命令帮助"}
     };

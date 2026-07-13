@@ -647,6 +647,16 @@ void MainWindowLayoutTest::slashCommandSuggestionsFillComposer() {
 
     QCOMPARE(editor->toPlainText(), QStringLiteral("/status"));
     QVERIFY(commandBar->isVisible());
+
+    editor->setPlainText(QStringLiteral("/mo"));
+    QVERIFY(commandBar->isVisible());
+
+    auto* modelButton = window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_model"));
+    QVERIFY(modelButton != nullptr);
+    modelButton->click();
+
+    QCOMPARE(editor->toPlainText(), QStringLiteral("/model "));
+    QVERIFY(commandBar->isVisible());
 }
 
 void MainWindowLayoutTest::deleteKeyRemovesContactAndMessagesFromConversationList() {

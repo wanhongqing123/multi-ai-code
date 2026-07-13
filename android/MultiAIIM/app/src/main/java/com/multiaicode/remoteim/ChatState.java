@@ -127,7 +127,7 @@ public final class ChatState {
         RemoteIMMessage message = new RemoteIMMessage(
             peerId,
             ownerUserId,
-            clean(text),
+            incomingDisplayText(text),
             RemoteIMMessage.Direction.INCOMING,
             RemoteIMMessage.Status.RECEIVED,
             System.currentTimeMillis(),
@@ -221,6 +221,26 @@ public final class ChatState {
 
     private static String clean(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    private static String incomingDisplayText(String value) {
+        String cleanText = clean(value);
+        String invisibleAicliPrefix = "\u2063\u200B\u200C\u200D\u2063";
+        if (cleanText.startsWith(invisibleAicliPrefix)) {
+            return clean(cleanText.substring(invisibleAicliPrefix.length()));
+        }
+        String[] legacyPrefixes = new String[]{
+            "【AICLI 输出】",
+            "[AICLI 输出]",
+            "【AICLI输出】",
+            "[AICLI输出]"
+        };
+        for (String prefix : legacyPrefixes) {
+            if (cleanText.startsWith(prefix)) {
+                return clean(cleanText.substring(prefix.length()));
+            }
+        }
+        return cleanText;
     }
 
     private static String fileName(String path) {

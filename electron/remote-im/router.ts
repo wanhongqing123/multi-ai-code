@@ -60,6 +60,8 @@ export interface RemoteImRouterDeps {
     projectId: string
     fromUserId: string
     command: RemoteImControlCommandName
+    args: string
+    raw: string
   }) => Promise<{ ok: boolean; text: string }>
   store: RemoteImRouterStore
   now?: () => number
@@ -438,7 +440,9 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
         ? await deps.handleControlCommand({
             projectId: message.projectId,
             fromUserId,
-            command: controlCommand.command
+            command: controlCommand.command,
+            args: controlCommand.args,
+            raw: controlCommand.raw
           })
         : {
             ok: false,

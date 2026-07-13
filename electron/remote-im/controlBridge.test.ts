@@ -13,6 +13,7 @@ describe('remote IM control bridge', () => {
     expect(result.text).toContain('/status')
     expect(result.text).toContain('/plan')
     expect(result.text).toContain('/build')
+    expect(result.text).toContain('/model')
     expect(result.text).not.toContain('/stop')
   })
 
@@ -41,6 +42,34 @@ describe('remote IM control bridge', () => {
       sessionId: 'session-1',
       sourceKind: 'codex',
       command: 'status'
+    })
+  })
+
+  it('requests model listing and switching through the source-level bridge', async () => {
+    const executeCommand = vi.fn(async () => ({
+      ok: true as const,
+      text: '当前模型：gpt-5.6-sol\n可用模型：\n1. gpt-5.6-sol'
+    }))
+    const result = await executeRemoteImControlCommand({
+      command: 'model',
+      args: '2',
+      session: {
+        sessionId: 'session-1',
+        targetRepo: '/repo',
+        command: '/bundled/codex',
+        startedAtMs: 1000
+      },
+      sourceKind: 'codex',
+      executeCommand
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.text).toContain('当前模型')
+    expect(executeCommand).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      sourceKind: 'codex',
+      command: 'model',
+      model: '2'
     })
   })
 

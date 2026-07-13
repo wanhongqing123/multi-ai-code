@@ -113,6 +113,8 @@ describe('remote IM output forwarding', () => {
     const text = createRemoteImAicliOutputText('build passed')
 
     expect(parseRemoteImAicliOutputText(text)).toBe('build passed')
+    expect(text).not.toContain('AICLI 输出')
+    expect(parseRemoteImAicliOutputText('【AICLI 输出】\nbuild passed')).toBe('build passed')
     expect(parseRemoteImAicliOutputText('检查构建')).toBeNull()
   })
 

@@ -480,6 +480,11 @@ public struct MasterChatState: Equatable {
 
     private static func incomingDisplayText(_ text: String) -> String {
         var cleanText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let invisibleAICLIPrefix = "\u{2063}\u{200B}\u{200C}\u{200D}\u{2063}"
+        if cleanText.hasPrefix(invisibleAICLIPrefix) {
+            cleanText.removeFirst(invisibleAICLIPrefix.count)
+            return cleanText.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         for prefix in ["【AICLI 输出】", "[AICLI 输出]", "【AICLI输出】", "[AICLI输出]"] {
             if cleanText.hasPrefix(prefix) {
                 cleanText.removeFirst(prefix.count)

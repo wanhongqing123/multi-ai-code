@@ -559,6 +559,10 @@ private struct MessageBubbleView: View {
                             .font(.system(size: 13, weight: .regular))
                             .lineSpacing(3)
                             .foregroundStyle(RemoteIMStyle.textPrimary)
+                            .lineLimit(nil)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .layoutPriority(1)
                     }
 
                     if message.direction == .outgoing {
@@ -847,6 +851,9 @@ private struct MarkdownLikeText: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .lineLimit(nil)
+        .multilineTextAlignment(.leading)
+        .fixedSize(horizontal: false, vertical: true)
         .textSelection(.enabled)
     }
 }
@@ -882,11 +889,16 @@ private struct MarkdownInlineText: View {
     let text: String
 
     var body: some View {
-        if let attributed = try? AttributedString(markdown: text) {
-            Text(attributed)
-        } else {
-            Text(text)
+        Group {
+            if let attributed = try? AttributedString(markdown: text) {
+                Text(attributed)
+            } else {
+                Text(text)
+            }
         }
+        .lineLimit(nil)
+        .multilineTextAlignment(.leading)
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -1075,6 +1087,11 @@ private func parseMarkdownBlocks(_ source: String) -> [MarkdownBlock] {
 
 private func cleanRemoteIMMessageDisplayText(_ source: String) -> String {
     var text = source.trimmingCharacters(in: .whitespacesAndNewlines)
+    let invisibleAICLIPrefix = "\u{2063}\u{200B}\u{200C}\u{200D}\u{2063}"
+    if text.hasPrefix(invisibleAICLIPrefix) {
+        text.removeFirst(invisibleAICLIPrefix.count)
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
     for prefix in ["【AICLI 输出】", "[AICLI 输出]", "【AICLI输出】", "[AICLI输出]"] {
         if text.hasPrefix(prefix) {
             text.removeFirst(prefix.count)
@@ -1294,6 +1311,7 @@ private let remoteIMSlashCommands: [RemoteIMSlashCommand] = [
     .init(command: "/status", label: "查看状态"),
     .init(command: "/plan", label: "切换 Plan"),
     .init(command: "/build", label: "切换 Build"),
+    .init(command: "/model ", label: "切换模型"),
     .init(command: "/help", label: "命令帮助")
 ]
 

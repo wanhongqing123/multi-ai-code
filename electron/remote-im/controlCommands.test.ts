@@ -10,17 +10,26 @@ describe('remote IM control commands', () => {
     expect(parseRemoteImControlCommand('/status')).toEqual({
       type: 'command',
       command: 'status',
-      raw: '/status'
+      raw: '/status',
+      args: ''
     })
     expect(parseRemoteImControlCommand('  /plan  ')).toEqual({
       type: 'command',
       command: 'plan',
-      raw: '/plan'
+      raw: '/plan',
+      args: ''
     })
     expect(parseRemoteImControlCommand('/build 请继续')).toEqual({
       type: 'command',
       command: 'build',
-      raw: '/build 请继续'
+      raw: '/build 请继续',
+      args: '请继续'
+    })
+    expect(parseRemoteImControlCommand('/model 2')).toEqual({
+      type: 'command',
+      command: 'model',
+      raw: '/model 2',
+      args: '2'
     })
     expect(parseRemoteImControlCommand('请执行 /status')).toEqual({ type: 'text' })
   })
@@ -54,6 +63,7 @@ describe('remote IM control commands', () => {
       'status',
       'plan',
       'build',
+      'model',
       'help'
     ])
     expect(formatRemoteImControlCommandHelp()).not.toContain('/stop')

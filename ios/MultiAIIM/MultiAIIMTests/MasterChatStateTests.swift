@@ -62,6 +62,19 @@ final class MasterChatStateTests: XCTestCase {
         XCTAssertTrue(reply.text.contains("- **SDK 层**"))
     }
 
+    func testReceivesHiddenMarkedAICLIOutputWithoutProtocolMarker() throws {
+        var state = MasterChatState(ownerUserID: "ios-master")
+        let hiddenPrefix = "\u{2063}\u{200B}\u{200C}\u{200D}\u{2063}"
+
+        let reply = state.receiveText(
+            hiddenPrefix + "构建已通过",
+            fromUserID: "mac-quark-pc",
+            now: Date(timeIntervalSince1970: 122)
+        )
+
+        XCTAssertEqual(reply.text, "构建已通过")
+    }
+
     func testChatDetailSwipeBackOnlyAcceptsLeftEdgeRightDrag() {
         XCTAssertTrue(
             ChatDetailSwipeBackPolicy.shouldReturnToConversationList(

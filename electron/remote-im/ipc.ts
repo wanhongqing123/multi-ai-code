@@ -6,6 +6,7 @@ import {
   addSessionExitListener,
   getActiveSessionForProject,
   getSessionRuntimeInfo,
+  requestAicliModelForSession,
   requestAicliStatusForSession,
   sendUserMessageToSession,
   switchAicliModeForSession
@@ -822,7 +823,7 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
         resolveSession: () => session,
         sendUser: sendUserMessageToSession,
         sendImText,
-        handleControlCommand: async ({ command }) => {
+        handleControlCommand: async ({ command, args }) => {
           const runtime = session ? getSessionRuntimeInfo(session.sessionId) : null
           const sourceKind = runtime
             ? getRemoteImAicliOutputSourceKind(runtime.command)
@@ -840,12 +841,16 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
               : null,
             switchMode: async ({ sessionId, mode }) =>
               switchAicliModeForSession(sessionId, mode),
-            executeCommand: async ({ sessionId, command }) => {
-              if (command !== 'status') {
-                return { ok: false as const, error: 'unsupported AICLI control command' }
+            executeCommand: async ({ sessionId, command, model }) => {
+              if (command === 'status') {
+                return requestAicliStatusForSession(sessionId)
               }
-              return requestAicliStatusForSession(sessionId)
-            }
+              if (command === 'model') {
+                return requestAicliModelForSession(sessionId, model)
+              }
+              return { ok: false as const, error: 'unsupported AICLI control command' }
+            },
+            args
           })
         },
         transcribeAudio: transcribeRemoteImAudioWithLocalWhisper,

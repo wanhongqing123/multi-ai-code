@@ -8,15 +8,32 @@ import { extractRemoteImReplyOutput } from './replyProtocol.js'
 import type { RemoteImConfig } from './types.js'
 
 export const REMOTE_IM_OPERATION_COMPLETE_TEXT = '操作已完成。'
-export const REMOTE_IM_AICLI_OUTPUT_PREFIX = '【AICLI 输出】\n'
+// Invisible protocol marker: forwarded AICLI output must still be distinguishable
+// from user input, but the marker should not appear in IM clients.
+export const REMOTE_IM_AICLI_OUTPUT_PREFIX = '\u2063\u200B\u200C\u200D\u2063'
+const LEGACY_REMOTE_IM_AICLI_OUTPUT_PREFIXES = [
+  '【AICLI 输出】\n',
+  '【AICLI 输出】',
+  '[AICLI 输出]\n',
+  '[AICLI 输出]',
+  '【AICLI输出】\n',
+  '【AICLI输出】',
+  '[AICLI输出]\n',
+  '[AICLI输出]'
+]
 
 export function createRemoteImAicliOutputText(text: string): string {
   return `${REMOTE_IM_AICLI_OUTPUT_PREFIX}${text}`
 }
 
 export function parseRemoteImAicliOutputText(text: string): string | null {
-  if (!text.startsWith(REMOTE_IM_AICLI_OUTPUT_PREFIX)) return null
-  return text.slice(REMOTE_IM_AICLI_OUTPUT_PREFIX.length).trim()
+  if (text.startsWith(REMOTE_IM_AICLI_OUTPUT_PREFIX)) {
+    return text.slice(REMOTE_IM_AICLI_OUTPUT_PREFIX.length).trim()
+  }
+  for (const prefix of LEGACY_REMOTE_IM_AICLI_OUTPUT_PREFIXES) {
+    if (text.startsWith(prefix)) return text.slice(prefix.length).trim()
+  }
+  return null
 }
 
 export interface RemoteImOutputCompletionInfo {

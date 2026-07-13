@@ -36,12 +36,14 @@ interface WireEvent {
   requestId?: unknown
   ok?: unknown
   error?: unknown
+  model?: unknown
 }
 
 // 所有控制命令统一走 requestId RPC：switch_mode 也等待 AICLI 回 control_result，
 // 避免“字节写进 socket 就报成功”而 TUI 侧实际拒绝（协作模式未启用等）的假成功。
 export type AicliRequestControlCommand =
   | { command: 'status' }
+  | { command: 'model'; model?: string }
   | { command: 'switch_mode'; mode: AicliControlMode }
 
 export type AicliControlCommandResult =
@@ -200,7 +202,8 @@ export async function createAicliStructuredOutputBridge(
         const sent = writeControlPayload({
           requestId,
           command: input.command,
-          ...(input.command === 'switch_mode' ? { mode: input.mode } : {})
+          ...(input.command === 'switch_mode' ? { mode: input.mode } : {}),
+          ...(input.command === 'model' && input.model ? { model: input.model } : {})
         })
         if (sent > 0) return
         clearTimeout(timeout)

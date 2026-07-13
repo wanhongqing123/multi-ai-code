@@ -1,4 +1,4 @@
-export type RemoteImControlCommandName = 'status' | 'plan' | 'build' | 'help'
+export type RemoteImControlCommandName = 'status' | 'plan' | 'build' | 'model' | 'help'
 
 export interface RemoteImControlCommandDefinition {
   name: RemoteImControlCommandName
@@ -14,6 +14,7 @@ export type RemoteImControlCommandParseResult =
       type: 'command'
       command: RemoteImControlCommandName
       raw: string
+      args: string
     }
   | {
       type: 'unknown-command'
@@ -37,6 +38,11 @@ export const REMOTE_IM_CONTROL_COMMANDS: RemoteImControlCommandDefinition[] = [
     description: '切换到执行模式'
   },
   {
+    name: 'model',
+    usage: '/model [模型ID或序号]',
+    description: '查看或切换模型'
+  },
+  {
     name: 'help',
     usage: '/help',
     description: '查看可用 IM 控制命令'
@@ -58,10 +64,12 @@ export function parseRemoteImControlCommand(
   const [rawName] = trimmed.slice(1).split(/\s+/, 1)
   const normalizedName = rawName?.toLowerCase() ?? ''
   if (CONTROL_COMMAND_BY_NAME.has(normalizedName as RemoteImControlCommandName)) {
+    const args = trimmed.slice((rawName ?? '').length + 1).trim()
     return {
       type: 'command',
       command: normalizedName as RemoteImControlCommandName,
-      raw: trimmed
+      raw: trimmed,
+      args
     }
   }
 

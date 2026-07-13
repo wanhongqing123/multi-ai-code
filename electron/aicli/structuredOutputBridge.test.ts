@@ -163,4 +163,48 @@ describe('AICLI structured output bridge', () => {
     expect(receivedLines.join('')).toContain('"command":"status"')
     expect(receivedLines.join('')).toContain('"requestId"')
   })
+
+  it('sends model control commands with the selected model payload', async () => {
+    const bridge = await createAicliStructuredOutputBridge('session-1', 'codex')
+    const { port, token } = parseTcpEndpoint(bridge.endpoint)
+    const receivedLines: string[] = []
+
+    const socket = await new Promise<net.Socket>((resolve, reject) => {
+      const client = net.createConnection({ host: '127.0.0.1', port }, () => {
+        client.write(`${JSON.stringify({ token, kind: 'control_ready' })}\n`)
+        resolve(client)
+      })
+      client.setEncoding('utf8')
+      client.on('data', (chunk) => {
+        receivedLines.push(String(chunk))
+        const requestId = String(chunk).match(/"requestId":"([^"]+)"/)?.[1]
+        if (requestId) {
+          client.write(
+            `${JSON.stringify({
+              token,
+              kind: 'control_result',
+              requestId,
+              ok: true,
+              text: '已切换模型：gpt-next'
+            })}\n`
+          )
+        }
+      })
+      client.once('error', reject)
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const result = await bridge.requestControlCommand(
+      { command: 'model', model: 'gpt-next' },
+      500
+    )
+
+    socket.destroy()
+    await bridge.close()
+
+    expect(result).toEqual({ ok: true, text: '已切换模型：gpt-next' })
+    expect(receivedLines.join('')).toContain('"command":"model"')
+    expect(receivedLines.join('')).toContain('"model":"gpt-next"')
+    expect(receivedLines.join('')).toContain('"requestId"')
+  })
 })

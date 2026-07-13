@@ -24,7 +24,8 @@ export type RemoteImSwitchAicliMode = (
 export interface RemoteImExecuteAicliCommandRequest {
   sessionId: string
   sourceKind: Extract<RemoteImAicliOutputSourceKind, 'codex' | 'opencode'>
-  command: 'status'
+  command: 'status' | 'model'
+  model?: string
 }
 
 export type RemoteImExecuteAicliCommand = (
@@ -33,6 +34,7 @@ export type RemoteImExecuteAicliCommand = (
 
 export interface ExecuteRemoteImControlCommandInput {
   command: RemoteImControlCommandName
+  args?: string
   session: RemoteImControlSessionInfo | null
   sourceKind: RemoteImAicliOutputSourceKind
   switchMode?: RemoteImSwitchAicliMode
@@ -182,6 +184,55 @@ async function status(
   }
 }
 
+async function model(
+  input: ExecuteRemoteImControlCommandInput
+): Promise<ExecuteRemoteImControlCommandResult> {
+  if (!input.session) {
+    return {
+      ok: false,
+      text: '当前没有运行中的 AICLI，无法查看或切换模型。'
+    }
+  }
+
+  if (input.sourceKind === 'claude') {
+    return {
+      ok: false,
+      text: 'Claude 暂不接入 IM 源码级模型切换命令。'
+    }
+  }
+
+  if (input.sourceKind !== 'codex' && input.sourceKind !== 'opencode') {
+    return {
+      ok: false,
+      text: '当前 AICLI 类型未知，无法安全查看或切换模型。'
+    }
+  }
+
+  if (!input.executeCommand) {
+    return {
+      ok: false,
+      text: `${displaySourceKind(input.sourceKind)} 源码级控制通道尚未接入，无法执行 /model。`
+    }
+  }
+
+  const result = await input.executeCommand({
+    sessionId: input.session.sessionId,
+    sourceKind: input.sourceKind,
+    command: 'model',
+    model: input.args?.trim() || undefined
+  })
+  if (!result.ok) {
+    return {
+      ok: false,
+      text: result.text || `执行 ${displaySourceKind(input.sourceKind)} /model 失败：${result.error}`
+    }
+  }
+  return {
+    ok: true,
+    text: result.text
+  }
+}
+
 export async function executeRemoteImControlCommand(
   input: ExecuteRemoteImControlCommandInput
 ): Promise<ExecuteRemoteImControlCommandResult> {
@@ -191,6 +242,10 @@ export async function executeRemoteImControlCommand(
 
   if (input.command === 'status') {
     return status(input)
+  }
+
+  if (input.command === 'model') {
+    return model(input)
   }
 
   if (input.command === 'plan') {

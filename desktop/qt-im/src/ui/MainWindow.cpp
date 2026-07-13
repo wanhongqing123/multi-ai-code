@@ -349,6 +349,7 @@ QList<SlashCommandDefinition> slashCommandDefinitions() {
         {QStringLiteral("/status"), QStringLiteral("查看状态"), QStringLiteral("slashCommandButton_status")},
         {QStringLiteral("/plan"), QStringLiteral("切换 Plan"), QStringLiteral("slashCommandButton_plan")},
         {QStringLiteral("/build"), QStringLiteral("切换 Build"), QStringLiteral("slashCommandButton_build")},
+        {QStringLiteral("/model "), QStringLiteral("切换模型"), QStringLiteral("slashCommandButton_model")},
         {QStringLiteral("/help"), QStringLiteral("命令帮助"), QStringLiteral("slashCommandButton_help")},
     };
 }

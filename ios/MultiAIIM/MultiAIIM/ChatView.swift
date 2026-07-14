@@ -1319,11 +1319,16 @@ private let remoteIMSlashCommands: [RemoteIMSlashCommand] = [
 
 private struct RemoteIMSlashCommandBar: View {
     let commands: [RemoteIMSlashCommand]
+    let visibleHeight: CGFloat
     let onSelect: (RemoteIMSlashCommand) -> Void
 
+    private let rowHeight: CGFloat = 44
+    private let rowSpacing: CGFloat = 8
+    private let verticalPadding: CGFloat = 16
+
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
+        ScrollView(.vertical, showsIndicators: commands.count > 4) {
+            VStack(spacing: 8) {
                 ForEach(commands) { command in
                     Button {
                         onSelect(command)
@@ -1335,12 +1340,14 @@ private struct RemoteIMSlashCommandBar: View {
                             Text(command.label)
                                 .font(.system(size: 12, weight: .medium))
                                 .foregroundStyle(RemoteIMStyle.textSecondary)
+                            Spacer(minLength: 0)
                         }
                         .padding(.horizontal, 11)
-                        .frame(height: 32)
-                        .background(RemoteIMStyle.blueSoft, in: Capsule())
+                        .frame(height: rowHeight)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(RemoteIMStyle.blueSoft, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                         .overlay(
-                            Capsule()
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
                                 .stroke(Color(red: 0.745, green: 0.87, blue: 1.0), lineWidth: 1)
                         )
                     }
@@ -1348,7 +1355,16 @@ private struct RemoteIMSlashCommandBar: View {
                 }
             }
             .padding(.horizontal, 2)
+            .padding(.vertical, verticalPadding / 2)
         }
+        .frame(height: panelHeight)
+    }
+
+    private var panelHeight: CGFloat {
+        let spacingHeight = CGFloat(max(commands.count - 1, 0)) * rowSpacing
+        let contentHeight = CGFloat(commands.count) * rowHeight + spacingHeight + verticalPadding
+        let availableHeight = max(160, visibleHeight * 0.68)
+        return min(contentHeight, availableHeight)
     }
 }
 
@@ -1360,6 +1376,7 @@ private struct ComposerView: View {
     @State private var isCancellingVoice = false
     @State private var isPhotoPickerPresented = false
     @State private var selectedPhotoItem: PhotosPickerItem?
+    @State private var keyboardVisibleHeight = UIScreen.main.bounds.height
 
     var body: some View {
         VStack(spacing: 8) {
@@ -1368,7 +1385,10 @@ private struct ComposerView: View {
             }
 
             if !isVoiceMode && !commandSuggestions.isEmpty {
-                RemoteIMSlashCommandBar(commands: commandSuggestions) { command in
+                RemoteIMSlashCommandBar(
+                    commands: commandSuggestions,
+                    visibleHeight: keyboardVisibleHeight
+                ) { command in
                     appState.draftText = command.command
                 }
             }
@@ -1462,6 +1482,12 @@ private struct ComposerView: View {
             guard let item else { return }
             Task { await sendSelectedPhoto(item) }
         }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
+            updateKeyboardVisibleHeight(from: notification)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            keyboardVisibleHeight = UIScreen.main.bounds.height
+        }
     }
 
     private var commandSuggestions: [RemoteIMSlashCommand] {
@@ -1509,6 +1535,18 @@ private struct ComposerView: View {
 
         appState.draftText = draftWithoutReturn
         submitDraft()
+    }
+
+    private func updateKeyboardVisibleHeight(from notification: Notification) {
+        guard
+            let endFrame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect
+        else {
+            keyboardVisibleHeight = UIScreen.main.bounds.height
+            return
+        }
+
+        let screenHeight = UIScreen.main.bounds.height
+        keyboardVisibleHeight = max(0, min(screenHeight, endFrame.minY))
     }
 
     private func handleVoicePressChanged(translation: CGSize) {

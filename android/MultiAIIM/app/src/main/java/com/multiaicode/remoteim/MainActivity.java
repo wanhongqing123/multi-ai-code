@@ -32,6 +32,7 @@ import android.widget.Toast;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.List;
 
 public final class MainActivity extends Activity {
     private static final int BLUE = 0xFF2563EB;
@@ -43,16 +44,6 @@ public final class MainActivity extends Activity {
     private static final int REQUEST_PICK_IMAGE = 1001;
     private static final int REQUEST_IMAGE_PERMISSION = 1002;
     private static final int REQUEST_RECORD_AUDIO = 1003;
-    private static final String[][] CONTROL_COMMANDS = new String[][]{
-        {"/status", "查看状态"},
-        {"/plan", "切换 Plan"},
-        {"/build", "切换 Build"},
-        {"/models", "模型列表"},
-        {"/model ", "切换模型"},
-        {"/goal ", "管理 Goal"},
-        {"/help", "命令帮助"}
-    };
-
     private RemoteIMSessionController session;
     private RemoteIMMediaStore mediaStore;
     private RemoteIMTab activeTab = RemoteIMTab.MESSAGES;
@@ -301,15 +292,14 @@ public final class MainActivity extends Activity {
         wrapper.setOrientation(LinearLayout.VERTICAL);
         wrapper.setBackgroundColor(0xFFFFFFFF);
 
-        HorizontalScrollView commandScroller = new HorizontalScrollView(this);
-        commandScroller.setHorizontalScrollBarEnabled(false);
+        ScrollView commandScroller = new ScrollView(this);
+        commandScroller.setVerticalScrollBarEnabled(true);
         commandScroller.setVisibility(View.GONE);
 
-        LinearLayout commandRow = new LinearLayout(this);
-        commandRow.setOrientation(LinearLayout.HORIZONTAL);
-        commandRow.setGravity(Gravity.CENTER_VERTICAL);
-        commandRow.setPadding(dp(12), dp(8), dp(12), 0);
-        commandScroller.addView(commandRow);
+        LinearLayout commandColumn = new LinearLayout(this);
+        commandColumn.setOrientation(LinearLayout.VERTICAL);
+        commandColumn.setPadding(dp(12), dp(8), dp(12), dp(2));
+        commandScroller.addView(commandColumn);
         wrapper.addView(commandScroller, matchWrap());
 
         LinearLayout bar = new LinearLayout(this);
@@ -344,7 +334,7 @@ public final class MainActivity extends Activity {
 
             @Override
             public void afterTextChanged(Editable s) {
-                updateCommandSuggestions(commandScroller, commandRow, messageInput);
+                updateCommandSuggestions(commandScroller, commandColumn, messageInput);
             }
         });
         bar.addView(messageInput, new LinearLayout.LayoutParams(0, dp(52), 1));
@@ -372,35 +362,44 @@ public final class MainActivity extends Activity {
     }
 
     private void updateCommandSuggestions(
-        HorizontalScrollView scroller,
-        LinearLayout row,
+        ScrollView scroller,
+        LinearLayout column,
         EditText input
     ) {
-        row.removeAllViews();
-        String query = input.getText().toString().trim();
-        if (!query.startsWith("/")) {
+        column.removeAllViews();
+        List<RemoteIMSlashCommand> commands = RemoteIMSlashCommandCatalog.suggestions(
+            input.getText().toString()
+        );
+        if (commands.isEmpty()) {
             scroller.setVisibility(View.GONE);
             return;
         }
 
-        int count = 0;
-        for (String[] command : CONTROL_COMMANDS) {
-            if (!command[0].startsWith(query)) continue;
+        for (RemoteIMSlashCommand command : commands) {
             Button button = new Button(this);
             button.setAllCaps(false);
-            button.setText(command[0] + "  " + command[1]);
+            button.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+            button.setText(command.command() + "  " + command.label());
             button.setTextColor(TEXT_PRIMARY);
             button.setBackgroundColor(0xFFEFF6FF);
             button.setOnClickListener(view -> {
-                input.setText(command[0]);
+                input.setText(command.command());
                 input.setSelection(input.getText().length());
             });
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(132), dp(38));
-            params.setMargins(0, 0, dp(8), 0);
-            row.addView(button, params);
-            count++;
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(50)
+            );
+            params.setMargins(0, 0, 0, dp(6));
+            column.addView(button, params);
         }
-        scroller.setVisibility(count > 0 ? View.VISIBLE : View.GONE);
+
+        ViewGroup.LayoutParams params = scroller.getLayoutParams();
+        int contentHeight = dp(12) + commands.size() * dp(56);
+        int availableHeight = Math.max(dp(180), (int) (getResources().getDisplayMetrics().heightPixels * 0.58f));
+        params.height = Math.min(contentHeight, availableHeight);
+        scroller.setLayoutParams(params);
+        scroller.setVisibility(View.VISIBLE);
     }
 
     private View messageBubble(RemoteIMMessage message) {

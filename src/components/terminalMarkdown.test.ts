@@ -15,12 +15,22 @@ describe('shouldFormatMarkdownForCli', () => {
     expect(shouldFormatMarkdownForCli('/usr/local/bin/opencode')).toBe(false)
   })
 
-  it('keeps markdown formatting for claude, codex and unknown CLIs', () => {
+  it('bypasses markdown formatting for codex (full-screen ratatui TUI) in any command form', () => {
+    // codex 也是全屏 TUI，改写行宽/删行会让它的光标定位错位（任务执行时光标乱跳、
+    // 无法打字），必须与 opencode 一样原样直通。
+    expect(shouldFormatMarkdownForCli('codex')).toBe(false)
+    expect(shouldFormatMarkdownForCli('Codex')).toBe(false)
+    expect(shouldFormatMarkdownForCli('codex.exe')).toBe(false)
+    expect(shouldFormatMarkdownForCli('C:\\Tools\\codex.exe')).toBe(false)
+    expect(shouldFormatMarkdownForCli('/usr/local/bin/codex')).toBe(false)
+  })
+
+  it('keeps markdown formatting for claude and unknown CLIs', () => {
     expect(shouldFormatMarkdownForCli('claude')).toBe(true)
-    expect(shouldFormatMarkdownForCli('codex')).toBe(true)
     expect(shouldFormatMarkdownForCli('unknown')).toBe(true)
     expect(shouldFormatMarkdownForCli(undefined)).toBe(true)
     expect(shouldFormatMarkdownForCli('my-opencode-wrapper')).toBe(true)
+    expect(shouldFormatMarkdownForCli('my-codex-wrapper')).toBe(true)
   })
 })
 

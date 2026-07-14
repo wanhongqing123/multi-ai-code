@@ -264,13 +264,19 @@ export function createTerminalMarkdownState(): TerminalMarkdownState {
 }
 
 /**
- * opencode 的 opentui 渲染器以 60fps 增量重绘全屏 TUI，行宽被改写（• 替换、
- * 剥 ## 前缀）甚至整行删除（表格分隔行）都会让后续光标定位错位，在终端里留下
- * 残影碎片。对它必须原样直通；claude/codex 维持原有 Markdown 美化不变。
+ * codex（ratatui）与 opencode（opentui）都是按精确列宽增量重绘的全屏 TUI。
+ * Markdown 改写会改行宽（• 替换、剥 ## 前缀、**加粗**→SGR）甚至整行删除（表格
+ * 分隔行），使这两种渲染器内部记录的屏幕状态与实际显示错位：任务流式输出时表现
+ * 为光标乱跳、底部输入框被顶走、无法打字，屏幕上还会留下残影碎片。因此对 codex
+ * 和 opencode 都必须原样直通。claude（Ink）自己把 markdown 渲染成 ANSI，字节流里
+ * 没有可命中的裸 markdown，维持美化不变。
+ *
+ * 注意：这里只影响 xterm 本地显示。IM 回传走独立的结构化输出桥（assistant_text），
+ * 与此函数无关，改动不影响 IM 消息发送。
  */
 export function shouldFormatMarkdownForCli(cli: string | undefined): boolean {
   if (!cli) return true
-  return !/(^|[\\/])opencode(\.(exe|cmd|bat|ps1))?$/i.test(cli.trim())
+  return !/(^|[\\/])(opencode|codex)(\.(exe|cmd|bat|ps1))?$/i.test(cli.trim())
 }
 
 export function stripAnsi(text: string): string {

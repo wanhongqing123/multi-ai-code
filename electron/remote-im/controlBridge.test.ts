@@ -14,6 +14,7 @@ describe('remote IM control bridge', () => {
     expect(result.text).toContain('/plan')
     expect(result.text).toContain('/build')
     expect(result.text).toContain('/model')
+    expect(result.text).toContain('/goal')
     expect(result.text).not.toContain('/stop')
   })
 
@@ -96,6 +97,34 @@ describe('remote IM control bridge', () => {
       sessionId: 'session-1',
       sourceKind: 'codex',
       command: 'model'
+    })
+  })
+
+  it('requests goal management through the source-level bridge', async () => {
+    const executeCommand = vi.fn(async () => ({
+      ok: true as const,
+      text: 'Goal active\nObjective: 修复 IM 回传'
+    }))
+    const result = await executeRemoteImControlCommand({
+      command: 'goal',
+      args: '修复 IM 回传',
+      session: {
+        sessionId: 'session-1',
+        targetRepo: '/repo',
+        command: '/bundled/codex',
+        startedAtMs: 1000
+      },
+      sourceKind: 'codex',
+      executeCommand
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.text).toContain('Goal active')
+    expect(executeCommand).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      sourceKind: 'codex',
+      command: 'goal',
+      goal: '修复 IM 回传'
     })
   })
 

@@ -49,6 +49,7 @@ public final class MainActivity extends Activity {
         {"/build", "切换 Build"},
         {"/models", "模型列表"},
         {"/model ", "切换模型"},
+        {"/goal ", "管理 Goal"},
         {"/help", "命令帮助"}
     };
 

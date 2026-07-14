@@ -37,6 +37,7 @@ interface WireEvent {
   ok?: unknown
   error?: unknown
   model?: unknown
+  goal?: unknown
 }
 
 // 所有控制命令统一走 requestId RPC：switch_mode 也等待 AICLI 回 control_result，
@@ -44,6 +45,7 @@ interface WireEvent {
 export type AicliRequestControlCommand =
   | { command: 'status' }
   | { command: 'model'; model?: string }
+  | { command: 'goal'; goal?: string }
   | { command: 'switch_mode'; mode: AicliControlMode }
 
 export type AicliControlCommandResult =
@@ -211,7 +213,8 @@ export async function createAicliStructuredOutputBridge(
           requestId,
           command: input.command,
           ...(input.command === 'switch_mode' ? { mode: input.mode } : {}),
-          ...(input.command === 'model' && input.model ? { model: input.model } : {})
+          ...(input.command === 'model' && input.model ? { model: input.model } : {}),
+          ...(input.command === 'goal' && input.goal ? { goal: input.goal } : {})
         })
         if (sent > 0) return
         clearTimeout(timeout)

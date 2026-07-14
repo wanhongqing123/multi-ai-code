@@ -37,6 +37,12 @@ describe('remote IM control commands', () => {
       raw: '/models',
       args: ''
     })
+    expect(parseRemoteImControlCommand('/goal 修复 IM 回传')).toEqual({
+      type: 'command',
+      command: 'goal',
+      raw: '/goal 修复 IM 回传',
+      args: '修复 IM 回传'
+    })
     expect(parseRemoteImControlCommand('请执行 /status')).toEqual({ type: 'text' })
   })
 
@@ -71,10 +77,12 @@ describe('remote IM control commands', () => {
       'build',
       'models',
       'model',
+      'goal',
       'help'
     ])
     expect(formatRemoteImControlCommandHelp()).not.toContain('/stop')
     expect(formatRemoteImControlCommandHelp()).toContain('/models')
     expect(formatRemoteImControlCommandHelp()).toContain('/model <序号或模型ID>')
+    expect(formatRemoteImControlCommandHelp()).toContain('/goal [目标|clear|pause|resume]')
   })
 })

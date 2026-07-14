@@ -4,6 +4,7 @@ export type RemoteImControlCommandName =
   | 'build'
   | 'models'
   | 'model'
+  | 'goal'
   | 'help'
 
 export interface RemoteImControlCommandDefinition {
@@ -52,6 +53,11 @@ export const REMOTE_IM_CONTROL_COMMANDS: RemoteImControlCommandDefinition[] = [
     name: 'model',
     usage: '/model <序号或模型ID>',
     description: '切换到指定模型'
+  },
+  {
+    name: 'goal',
+    usage: '/goal [目标|clear|pause|resume]',
+    description: '查看、设置或管理当前 AICLI Goal'
   },
   {
     name: 'help',

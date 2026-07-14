@@ -24,8 +24,9 @@ export type RemoteImSwitchAicliMode = (
 export interface RemoteImExecuteAicliCommandRequest {
   sessionId: string
   sourceKind: Extract<RemoteImAicliOutputSourceKind, 'codex' | 'opencode'>
-  command: 'status' | 'model'
+  command: 'status' | 'model' | 'goal'
   model?: string
+  goal?: string
 }
 
 export type RemoteImExecuteAicliCommand = (
@@ -234,6 +235,55 @@ async function model(
   }
 }
 
+async function goal(
+  input: ExecuteRemoteImControlCommandInput
+): Promise<ExecuteRemoteImControlCommandResult> {
+  if (!input.session) {
+    return {
+      ok: false,
+      text: '当前没有运行中的 AICLI，无法执行 /goal。'
+    }
+  }
+
+  if (input.sourceKind === 'claude') {
+    return {
+      ok: false,
+      text: 'Claude 暂不接入 IM 源码级 Goal 控制命令。'
+    }
+  }
+
+  if (input.sourceKind !== 'codex' && input.sourceKind !== 'opencode') {
+    return {
+      ok: false,
+      text: '当前 AICLI 类型未知，无法安全执行 /goal。'
+    }
+  }
+
+  if (!input.executeCommand) {
+    return {
+      ok: false,
+      text: `${displaySourceKind(input.sourceKind)} 源码级控制通道尚未接入，无法执行 /goal。`
+    }
+  }
+
+  const result = await input.executeCommand({
+    sessionId: input.session.sessionId,
+    sourceKind: input.sourceKind,
+    command: 'goal',
+    goal: input.args?.trim() || undefined
+  })
+  if (!result.ok) {
+    return {
+      ok: false,
+      text: result.text || `执行 ${displaySourceKind(input.sourceKind)} /goal 失败：${result.error}`
+    }
+  }
+  return {
+    ok: true,
+    text: result.text
+  }
+}
+
 export async function executeRemoteImControlCommand(
   input: ExecuteRemoteImControlCommandInput
 ): Promise<ExecuteRemoteImControlCommandResult> {
@@ -251,6 +301,10 @@ export async function executeRemoteImControlCommand(
 
   if (input.command === 'model') {
     return model(input)
+  }
+
+  if (input.command === 'goal') {
+    return goal(input)
   }
 
   if (input.command === 'plan') {

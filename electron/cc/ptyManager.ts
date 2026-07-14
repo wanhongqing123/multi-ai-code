@@ -509,6 +509,18 @@ export function requestAicliModelForSession(
   return session.structuredOutputBridge.requestControlCommand({ command: 'model', model })
 }
 
+export function requestAicliGoalForSession(
+  sessionId: string,
+  goal?: string
+): Promise<AicliControlCommandResult> {
+  const session = sessions.get(sessionId)
+  if (!session) return Promise.resolve({ ok: false, error: 'no session' })
+  if (!session.structuredOutputBridge) {
+    return Promise.resolve({ ok: false, error: 'AICLI control bridge is not available' })
+  }
+  return session.structuredOutputBridge.requestControlCommand({ command: 'goal', goal })
+}
+
 /** Stream raw input into PTY in small chunks to avoid large-paste truncation. */
 async function streamInput(proc: PtyCCProcess, text: string): Promise<void> {
   const CHUNK = 64

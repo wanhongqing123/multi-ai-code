@@ -970,7 +970,7 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
         resolveSession: () => session,
         sendUser: sendUserMessageToSession,
         sendImText,
-        handleControlCommand: async ({ command, args }) => {
+        handleControlCommand: async ({ command, args, replyId }) => {
           const runtime = session ? getSessionRuntimeInfo(session.sessionId) : null
           const sourceKind = runtime
             ? getRemoteImAicliOutputSourceKind(runtime.command)
@@ -988,7 +988,7 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
               : null,
             switchMode: async ({ sessionId, mode }) =>
               switchAicliModeForSession(sessionId, mode),
-            executeCommand: async ({ sessionId, command, model, reasoning, goal, task }) => {
+            executeCommand: async ({ sessionId, command, model, reasoning, goal, task, replyId }) => {
               if (command === 'status') {
                 return requestAicliStatusForSession(sessionId)
               }
@@ -999,7 +999,7 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
                 return requestAicliGoalForSession(sessionId, goal)
               }
               if (command === 'btw') {
-                return requestAicliBtwForSession(sessionId, task ?? '')
+                return requestAicliBtwForSession(sessionId, task ?? '', replyId)
               }
               if (command === 'interrupt') {
                 return requestAicliInterruptForSession(sessionId)
@@ -1012,7 +1012,8 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
               }
               return { ok: false as const, error: 'unsupported AICLI control command' }
             },
-            args
+            args,
+            ...(replyId ? { replyId } : {})
           })
         },
         transcribeAudio: transcribeRemoteImAudioWithLocalWhisper,

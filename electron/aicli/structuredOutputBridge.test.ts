@@ -300,7 +300,7 @@ describe('AICLI structured output bridge', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 20))
     const result = await bridge.requestControlCommand(
-      { command: 'btw', task: '检查构建日志' },
+      { command: 'btw', task: '检查构建日志', replyId: 'reply-btw-fixed' },
       500
     )
 
@@ -310,6 +310,7 @@ describe('AICLI structured output bridge', () => {
     expect(result).toEqual({ ok: true, text: '已提交 /btw 子任务，完成后会通过 IM 回传。' })
     expect(receivedLines.join('')).toContain('"command":"btw"')
     expect(receivedLines.join('')).toContain('"task":"检查构建日志"')
+    expect(receivedLines.join('')).toContain('"replyId":"reply-btw-fixed"')
     expect(receivedLines.join('')).toContain('"requestId"')
   })
 

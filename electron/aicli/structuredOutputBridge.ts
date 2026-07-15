@@ -40,6 +40,7 @@ interface WireEvent {
   reasoning?: unknown
   goal?: unknown
   task?: unknown
+  replyId?: unknown
 }
 
 // 所有控制命令统一走 requestId RPC：switch_mode 也等待 AICLI 回 control_result，
@@ -48,7 +49,7 @@ export type AicliRequestControlCommand =
   | { command: 'status' }
   | { command: 'model'; model?: string; reasoning?: string }
   | { command: 'goal'; goal?: string }
-  | { command: 'btw'; task: string }
+  | { command: 'btw'; task: string; replyId?: string }
   | { command: 'interrupt' }
   | { command: 'compact' }
   | { command: 'clear' }
@@ -221,7 +222,9 @@ export async function createAicliStructuredOutputBridge(
           ...(input.command === 'switch_mode' ? { mode: input.mode } : {}),
           ...(input.command === 'model' && input.model ? { model: input.model } : {}),
           ...(input.command === 'model' && input.reasoning ? { reasoning: input.reasoning } : {}),
-          ...(input.command === 'btw' ? { task: input.task } : {}),
+          ...(input.command === 'btw'
+            ? { task: input.task, ...(input.replyId ? { replyId: input.replyId } : {}) }
+            : {}),
           ...(input.command === 'goal' && input.goal ? { goal: input.goal } : {})
         })
         if (sent > 0) return

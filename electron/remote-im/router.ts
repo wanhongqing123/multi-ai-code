@@ -70,6 +70,7 @@ export interface RemoteImRouterDeps {
     command: RemoteImControlCommandName
     args: string
     raw: string
+    replyId?: string
   }) => Promise<{ ok: boolean; text: string }>
   store: RemoteImRouterStore
   now?: () => number
@@ -494,19 +495,28 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
         return { ok: false, error: `sender ${fromUserId} is not allowed` }
       }
       deps.store.create(createIncomingRecord(message, 'received', null, now))
+      const session = controlCommand.command === 'btw' ? deps.resolveSession(message.projectId) : null
+      const replyId =
+        controlCommand.command === 'btw'
+          ? deps.createReplyId?.() ?? createRemoteImReplyId()
+          : undefined
       const result = deps.handleControlCommand
         ? await deps.handleControlCommand({
             projectId: message.projectId,
             fromUserId,
             command: controlCommand.command,
             args: controlCommand.args,
-            raw: controlCommand.raw
+            raw: controlCommand.raw,
+            ...(replyId ? { replyId } : {})
           })
         : {
             ok: false,
             text: '当前桌面端未接入 IM 控制命令。'
           }
       await sendSystemText(deps, message.projectId, fromUserId, result.text)
+      if (result.ok && controlCommand.command === 'btw' && session && replyId) {
+        return { ok: true, aicliSessionId: session.sessionId, replyId }
+      }
       return result.ok
         ? { ok: true }
         : { ok: false, error: `remote IM control command failed: ${controlCommand.command}` }

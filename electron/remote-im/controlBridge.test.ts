@@ -90,7 +90,8 @@ describe('remote IM control bridge', () => {
         startedAtMs: 1000
       },
       sourceKind: 'codex',
-      executeCommand
+      executeCommand,
+      replyId: 'reply-btw-fixed'
     })
 
     expect(result.ok).toBe(true)
@@ -172,7 +173,8 @@ describe('remote IM control bridge', () => {
         startedAtMs: 1000
       },
       sourceKind: 'codex',
-      executeCommand
+      executeCommand,
+      replyId: 'reply-btw-fixed'
     })
 
     expect(result.ok).toBe(true)
@@ -181,7 +183,8 @@ describe('remote IM control bridge', () => {
       sessionId: 'session-1',
       sourceKind: 'codex',
       command: 'btw',
-      task: '检查最近一次失败日志'
+      task: '检查最近一次失败日志',
+      replyId: 'reply-btw-fixed'
     })
   })
 

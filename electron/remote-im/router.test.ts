@@ -177,6 +177,58 @@ describe('remote IM router', () => {
     })
   })
 
+  it('returns forwarding ids for /btw control commands', async () => {
+    const store = createMessageStore()
+    const sentToAicli: string[] = []
+    const sentToIm: string[] = []
+    const handled: Array<{ command: string; args: string; replyId?: string }> = []
+    const router = createRemoteImRouter({
+      getConfig: () => config,
+      resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
+      sendUser: async (_sessionId, text) => {
+        sentToAicli.push(text)
+        return { ok: true }
+      },
+      sendImText: async (_projectId, _toUserId, text) => {
+        sentToIm.push(text)
+        return { ok: true }
+      },
+      createReplyId: () => 'reply-btw-fixed',
+      handleControlCommand: async ({ command, args, replyId }) => {
+        handled.push({ command, args, replyId })
+        return {
+          ok: true,
+          text: '已提交 /btw 子任务，完成后会通过 IM 回传。'
+        }
+      },
+      store
+    })
+
+    const result = await router.handleIncomingText({
+      projectId: 'project-1',
+      remoteMessageId: 'remote-btw-1',
+      fromUserId: 'phone_admin',
+      toUserId: 'desktop_bot',
+      text: '/btw 检查最近一次失败日志',
+      createdAt: 100
+    })
+
+    expect(result).toEqual({
+      ok: true,
+      aicliSessionId: 'session-main',
+      replyId: 'reply-btw-fixed'
+    })
+    expect(sentToAicli).toEqual([])
+    expect(sentToIm).toEqual(['已提交 /btw 子任务，完成后会通过 IM 回传。'])
+    expect(handled).toEqual([
+      {
+        command: 'btw',
+        args: '检查最近一次失败日志',
+        replyId: 'reply-btw-fixed'
+      }
+    ])
+  })
+
   it('keeps unknown slash commands out of the normal AICLI task channel', async () => {
     const store = createMessageStore()
     const sentToAicli: string[] = []

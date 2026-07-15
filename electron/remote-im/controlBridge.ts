@@ -29,6 +29,7 @@ export interface RemoteImExecuteAicliCommandRequest {
   reasoning?: string
   goal?: string
   task?: string
+  replyId?: string
 }
 
 export type RemoteImExecuteAicliCommand = (
@@ -43,6 +44,7 @@ export interface ExecuteRemoteImControlCommandInput {
   switchMode?: RemoteImSwitchAicliMode
   executeCommand?: RemoteImExecuteAicliCommand
   now?: () => number
+  replyId?: string
 }
 
 export interface ExecuteRemoteImControlCommandResult {
@@ -292,7 +294,8 @@ async function btw(
     sessionId: input.session.sessionId,
     sourceKind: input.sourceKind,
     command: 'btw',
-    task
+    task,
+    ...(input.replyId ? { replyId: input.replyId } : {})
   })
   if (!result.ok) {
     return {

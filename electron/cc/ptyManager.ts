@@ -524,14 +524,19 @@ export function requestAicliGoalForSession(
 
 export function requestAicliBtwForSession(
   sessionId: string,
-  task: string
+  task: string,
+  replyId?: string
 ): Promise<AicliControlCommandResult> {
   const session = sessions.get(sessionId)
   if (!session) return Promise.resolve({ ok: false, error: 'no session' })
   if (!session.structuredOutputBridge) {
     return Promise.resolve({ ok: false, error: 'AICLI control bridge is not available' })
   }
-  return session.structuredOutputBridge.requestControlCommand({ command: 'btw', task })
+  return session.structuredOutputBridge.requestControlCommand({
+    command: 'btw',
+    task,
+    ...(replyId ? { replyId } : {})
+  })
 }
 
 export function requestAicliInterruptForSession(

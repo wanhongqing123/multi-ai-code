@@ -92,6 +92,42 @@ describe('imcli command', () => {
     }
   })
 
+  it('repairs text that was decoded as GBK before imcli receives it', async () => {
+    const rootDir = await createTempDir()
+    const sendPeerMessage = vi.fn(async () => ({ ok: true as const, toUserId: 'agent-b' }))
+    const bridge = await startRemoteImCliServer({
+      rootDir,
+      getConfig: async () => config,
+      getStatus: async () => status,
+      listMessages: () => [],
+      sendPeerMessage
+    })
+
+    try {
+      const garbled =
+        '銆怉pollo win/mac 姣忓懆 Crash 鏍瑰洜鍒嗘瀽 + 淇鏂规銆?鐗堟湰: 6.9.8.899 | 绐楀彛: 07-07~07-15'
+      const expected =
+        '【Apollo win/mac 每周 Crash 根因分析 + 修复方案】版本: 6.9.8.899 | 窗口: 07-07~07-15'
+      const { stdout } = await execFileAsync(
+        process.execPath,
+        [imcliPath, 'send', 'agent-b', garbled],
+        {
+          env: {
+            ...process.env,
+            MULTI_AI_CODE_IMCLI_URL: bridge.url,
+            MULTI_AI_CODE_IMCLI_TOKEN: bridge.token,
+            MULTI_AI_CODE_PROJECT_ID: 'project-1'
+          }
+        }
+      )
+
+      expect(stdout).toContain('sent to agent-b')
+      expect(sendPeerMessage).toHaveBeenCalledWith('project-1', expected, 'agent-b')
+    } finally {
+      await bridge.close()
+    }
+  })
+
   it('sends an image path through the local app bridge using project environment', async () => {
     const rootDir = await createTempDir()
     const imagePath = join(rootDir, 'photo.png')

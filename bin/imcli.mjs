@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 import { readFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+
+const require = createRequire(import.meta.url)
+const iconv = require('iconv-lite')
 
 const HELP = `imcli help
 
@@ -74,6 +78,63 @@ function withoutProjectArgs(args) {
   const index = args.indexOf('--project')
   if (index < 0) return args
   return args.filter((_item, itemIndex) => itemIndex !== index && itemIndex !== index + 1)
+}
+
+const MOJIBAKE_MARKERS = [
+  '銆',
+  '锛',
+  '鈥',
+  '涓',
+  '鍙',
+  '姣',
+  '鏍',
+  '鍒',
+  '淇',
+  '鏂',
+  '鐗',
+  '绐',
+  '洜',
+  '瑰',
+  '堟',
+  '忓',
+  '楀'
+]
+
+function countOccurrences(text, needle) {
+  if (!needle) return 0
+  let count = 0
+  let index = text.indexOf(needle)
+  while (index >= 0) {
+    count += 1
+    index = text.indexOf(needle, index + needle.length)
+  }
+  return count
+}
+
+function mojibakeScore(text) {
+  let score = 0
+  for (const marker of MOJIBAKE_MARKERS) score += countOccurrences(text, marker)
+  score += countOccurrences(text, '\uFFFD') * 3
+  score += /銆[?�]/.test(text) ? 3 : 0
+  return score
+}
+
+function encodeGb18030(text) {
+  return Buffer.concat([...text].map((char) => iconv.encode(char, 'gb18030')))
+}
+
+function repairLikelyUtf8DecodedAsGbk(text) {
+  const originalScore = mojibakeScore(text)
+  if (originalScore < 4) return text
+
+  const repaired = encodeGb18030(text)
+    .toString('utf8')
+    .replace(/\uFFFD\?/g, '】')
+  return mojibakeScore(repaired) < originalScore ? repaired : text
+}
+
+function normalizeOutgoingText(text) {
+  return repairLikelyUtf8DecodedAsGbk(text.trim())
 }
 
 async function requestJson(method, path, body) {
@@ -159,7 +220,7 @@ async function main(argv) {
 
   if (command === 'send') {
     const [toUserId, ...textParts] = args
-    const text = textParts.join(' ').trim()
+    const text = normalizeOutgoingText(textParts.join(' '))
     if (!toUserId || !text) throw new Error('usage: imcli send <user> <text>')
     const value = await requestJson('POST', '/send', { projectId, toUserId, text })
     console.log(`sent to ${value.toUserId}`)
@@ -177,7 +238,7 @@ async function main(argv) {
 
   if (command === 'broadcast') {
     const [targets, ...textParts] = args
-    const text = textParts.join(' ').trim()
+    const text = normalizeOutgoingText(textParts.join(' '))
     if (!targets || !text) throw new Error('usage: imcli broadcast <user1,user2> <text>')
     for (const toUserId of targets.split(',').map((item) => item.trim()).filter(Boolean)) {
       const value = await requestJson('POST', '/send', { projectId, toUserId, text })

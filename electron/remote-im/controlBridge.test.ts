@@ -15,6 +15,7 @@ describe('remote IM control bridge', () => {
     expect(result.text).toContain('/build')
     expect(result.text).toContain('/model')
     expect(result.text).toContain('/goal')
+    expect(result.text).toContain('/btw')
     expect(result.text).not.toContain('/stop')
   })
 
@@ -74,6 +75,34 @@ describe('remote IM control bridge', () => {
     })
   })
 
+  it('forwards Codex reasoning selection through the source-level model command', async () => {
+    const executeCommand = vi.fn(async () => ({
+      ok: true as const,
+      text: '已切换推理档位：High'
+    }))
+    const result = await executeRemoteImControlCommand({
+      command: 'model',
+      args: 'reasoning high',
+      session: {
+        sessionId: 'session-1',
+        targetRepo: '/repo',
+        command: '/bundled/codex',
+        startedAtMs: 1000
+      },
+      sourceKind: 'codex',
+      executeCommand
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.text).toContain('High')
+    expect(executeCommand).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      sourceKind: 'codex',
+      command: 'model',
+      reasoning: 'high'
+    })
+  })
+
   it('maps /models to the source-level model list command without a selection', async () => {
     const executeCommand = vi.fn(async () => ({
       ok: true as const,
@@ -126,6 +155,54 @@ describe('remote IM control bridge', () => {
       command: 'goal',
       goal: '修复 IM 回传'
     })
+  })
+
+  it('submits /btw tasks through the source-level control bridge', async () => {
+    const executeCommand = vi.fn(async () => ({
+      ok: true as const,
+      text: '已提交 /btw 子任务，完成后会通过 IM 回传。'
+    }))
+    const result = await executeRemoteImControlCommand({
+      command: 'btw',
+      args: '检查最近一次失败日志',
+      session: {
+        sessionId: 'session-1',
+        targetRepo: '/repo',
+        command: '/bundled/codex',
+        startedAtMs: 1000
+      },
+      sourceKind: 'codex',
+      executeCommand
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.text).toContain('/btw')
+    expect(executeCommand).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      sourceKind: 'codex',
+      command: 'btw',
+      task: '检查最近一次失败日志'
+    })
+  })
+
+  it('requires a task body for /btw', async () => {
+    const executeCommand = vi.fn()
+    const result = await executeRemoteImControlCommand({
+      command: 'btw',
+      args: '   ',
+      session: {
+        sessionId: 'session-1',
+        targetRepo: '/repo',
+        command: '/bundled/codex',
+        startedAtMs: 1000
+      },
+      sourceKind: 'codex',
+      executeCommand
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.text).toContain('/btw <任务>')
+    expect(executeCommand).not.toHaveBeenCalled()
   })
 
   it('switches OpenCode mode through an injected source-level bridge', async () => {

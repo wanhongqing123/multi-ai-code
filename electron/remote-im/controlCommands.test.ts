@@ -43,6 +43,12 @@ describe('remote IM control commands', () => {
       raw: '/goal 修复 IM 回传',
       args: '修复 IM 回传'
     })
+    expect(parseRemoteImControlCommand('/btw 检查构建日志')).toEqual({
+      type: 'command',
+      command: 'btw',
+      raw: '/btw 检查构建日志',
+      args: '检查构建日志'
+    })
     expect(parseRemoteImControlCommand('请执行 /status')).toEqual({ type: 'text' })
   })
 
@@ -78,11 +84,13 @@ describe('remote IM control commands', () => {
       'models',
       'model',
       'goal',
+      'btw',
       'help'
     ])
     expect(formatRemoteImControlCommandHelp()).not.toContain('/stop')
     expect(formatRemoteImControlCommandHelp()).toContain('/models')
-    expect(formatRemoteImControlCommandHelp()).toContain('/model <序号或模型ID>')
+    expect(formatRemoteImControlCommandHelp()).toContain('/model <序号|模型ID|reasoning 档位>')
     expect(formatRemoteImControlCommandHelp()).toContain('/goal [目标|clear|pause|resume]')
+    expect(formatRemoteImControlCommandHelp()).toContain('/btw <任务>')
   })
 })

@@ -5,6 +5,7 @@ export type RemoteImControlCommandName =
   | 'models'
   | 'model'
   | 'goal'
+  | 'btw'
   | 'help'
 
 export interface RemoteImControlCommandDefinition {
@@ -51,13 +52,18 @@ export const REMOTE_IM_CONTROL_COMMANDS: RemoteImControlCommandDefinition[] = [
   },
   {
     name: 'model',
-    usage: '/model <序号或模型ID>',
-    description: '切换到指定模型'
+    usage: '/model <序号|模型ID|reasoning 档位>',
+    description: '切换到指定模型或 Codex 推理档位'
   },
   {
     name: 'goal',
     usage: '/goal [目标|clear|pause|resume]',
     description: '查看、设置或管理当前 AICLI Goal'
+  },
+  {
+    name: 'btw',
+    usage: '/btw <任务>',
+    description: '启动子 Agent 处理任务，完成后通过 IM 回传'
   },
   {
     name: 'help',

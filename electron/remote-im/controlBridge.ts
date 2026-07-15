@@ -24,9 +24,11 @@ export type RemoteImSwitchAicliMode = (
 export interface RemoteImExecuteAicliCommandRequest {
   sessionId: string
   sourceKind: Extract<RemoteImAicliOutputSourceKind, 'codex' | 'opencode'>
-  command: 'status' | 'model' | 'goal'
+  command: 'status' | 'model' | 'goal' | 'btw'
   model?: string
+  reasoning?: string
   goal?: string
+  task?: string
 }
 
 export type RemoteImExecuteAicliCommand = (
@@ -84,6 +86,18 @@ function formatStatus(
     `命令：${session.command}`,
     `运行时长：${formatDuration(now() - session.startedAtMs)}`
   ].join('\n')
+}
+
+function parseModelArgs(args?: string): { model?: string; reasoning?: string } {
+  const trimmed = args?.trim() ?? ''
+  if (!trimmed) return {}
+
+  const reasoningMatch = /^(?:reasoning|reason|r|推理)\s+(.+)$/i.exec(trimmed)
+  if (reasoningMatch?.[1]?.trim()) {
+    return { reasoning: reasoningMatch[1].trim() }
+  }
+
+  return { model: trimmed }
 }
 
 async function switchMode(
@@ -221,12 +235,69 @@ async function model(
     sessionId: input.session.sessionId,
     sourceKind: input.sourceKind,
     command: 'model',
-    ...(options.forceList ? {} : { model: input.args?.trim() || undefined })
+    ...(options.forceList ? {} : parseModelArgs(input.args))
   })
   if (!result.ok) {
     return {
       ok: false,
       text: result.text || `执行 ${displaySourceKind(input.sourceKind)} /model 失败：${result.error}`
+    }
+  }
+  return {
+    ok: true,
+    text: result.text
+  }
+}
+
+async function btw(
+  input: ExecuteRemoteImControlCommandInput
+): Promise<ExecuteRemoteImControlCommandResult> {
+  if (!input.session) {
+    return {
+      ok: false,
+      text: '当前没有运行中的 AICLI，无法执行 /btw。'
+    }
+  }
+
+  if (input.sourceKind === 'claude') {
+    return {
+      ok: false,
+      text: 'Claude 暂不接入 IM 源码级 /btw 控制命令。'
+    }
+  }
+
+  if (input.sourceKind !== 'codex' && input.sourceKind !== 'opencode') {
+    return {
+      ok: false,
+      text: '当前 AICLI 类型未知，无法安全执行 /btw。'
+    }
+  }
+
+  const task = input.args?.trim()
+  if (!task) {
+    return {
+      ok: false,
+      text: '用法：/btw <任务>'
+    }
+  }
+
+  if (!input.executeCommand) {
+    return {
+      ok: false,
+      text: `${displaySourceKind(input.sourceKind)} 源码级控制通道尚未接入，无法执行 /btw。`
+    }
+  }
+
+  const result = await input.executeCommand({
+    sessionId: input.session.sessionId,
+    sourceKind: input.sourceKind,
+    command: 'btw',
+    task
+  })
+  if (!result.ok) {
+    return {
+      ok: false,
+      text: result.text || `执行 ${displaySourceKind(input.sourceKind)} /btw 失败：${result.error}`
     }
   }
   return {
@@ -305,6 +376,10 @@ export async function executeRemoteImControlCommand(
 
   if (input.command === 'goal') {
     return goal(input)
+  }
+
+  if (input.command === 'btw') {
+    return btw(input)
   }
 
   if (input.command === 'plan') {

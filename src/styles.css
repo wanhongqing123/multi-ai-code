@@ -3584,28 +3584,6 @@ html, body, #root {
   overflow: auto;
 }
 
-.pipeline {
-  display: flex;
-  align-items: center;
-  gap: var(--mac-sp-2);
-  padding: var(--mac-sp-2) var(--mac-sp-4);
-  background: var(--mac-surface-raised);
-  border-top: 1px solid var(--mac-border-subtle);
-  font-size: var(--mac-text-xs);
-}
-
-.pipe-node {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--mac-sp-2);
-  color: var(--mac-fg-muted);
-}
-
-.pipe-arrow {
-  color: var(--mac-fg-disabled);
-  margin: 0 var(--mac-sp-1);
-}
-
 /* ---------- StageSettings · project-wide MSYS card ---------- */
 .project-wide-card {
   border: 1px solid var(--mac-info);

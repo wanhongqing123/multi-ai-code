@@ -6,6 +6,7 @@ import {
   addSessionExitListener,
   getActiveSessionForProject,
   getSessionRuntimeInfo,
+  requestAicliBtwForSession,
   requestAicliGoalForSession,
   requestAicliModelForSession,
   requestAicliStatusForSession,
@@ -941,15 +942,18 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
               : null,
             switchMode: async ({ sessionId, mode }) =>
               switchAicliModeForSession(sessionId, mode),
-            executeCommand: async ({ sessionId, command, model, goal }) => {
+            executeCommand: async ({ sessionId, command, model, reasoning, goal, task }) => {
               if (command === 'status') {
                 return requestAicliStatusForSession(sessionId)
               }
               if (command === 'model') {
-                return requestAicliModelForSession(sessionId, model)
+                return requestAicliModelForSession(sessionId, model, reasoning)
               }
               if (command === 'goal') {
                 return requestAicliGoalForSession(sessionId, goal)
+              }
+              if (command === 'btw') {
+                return requestAicliBtwForSession(sessionId, task ?? '')
               }
               return { ok: false as const, error: 'unsupported AICLI control command' }
             },

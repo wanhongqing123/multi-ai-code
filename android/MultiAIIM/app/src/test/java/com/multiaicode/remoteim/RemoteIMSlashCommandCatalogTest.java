@@ -11,21 +11,24 @@ public class RemoteIMSlashCommandCatalogTest {
     public void returnsAllCommandsForSlash() {
         List<RemoteIMSlashCommand> commands = RemoteIMSlashCommandCatalog.suggestions("/");
 
-        assertEquals(7, commands.size());
+        assertEquals(8, commands.size());
         assertEquals("/status", commands.get(0).command());
-        assertEquals("/help", commands.get(6).command());
+        assertEquals("/help", commands.get(7).command());
     }
 
     @Test
     public void filtersCommandsByPrefix() {
         List<RemoteIMSlashCommand> modelCommands = RemoteIMSlashCommandCatalog.suggestions("/mo");
         List<RemoteIMSlashCommand> goalCommands = RemoteIMSlashCommandCatalog.suggestions("/go");
+        List<RemoteIMSlashCommand> btwCommands = RemoteIMSlashCommandCatalog.suggestions("/bt");
 
         assertEquals(2, modelCommands.size());
         assertEquals("/models", modelCommands.get(0).command());
         assertEquals("/model ", modelCommands.get(1).command());
         assertEquals(1, goalCommands.size());
         assertEquals("/goal ", goalCommands.get(0).command());
+        assertEquals(1, btwCommands.size());
+        assertEquals("/btw ", btwCommands.get(0).command());
     }
 
     @Test

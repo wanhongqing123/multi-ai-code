@@ -9,21 +9,18 @@ describe('App habit monitor integration', () => {
     vi.stubGlobal('self', globalThis)
   })
 
-  it('keeps the habit-monitor entry but no longer renders a managed Chrome entry', async () => {
-    const module = await import('./App.js')
-    const App = module.default
-    const markup = renderToStaticMarkup(<App />)
+  it('keeps the habit-monitor entry but no longer renders a managed Chrome entry', () => {
+    const source = readFileSync(fileURLToPath(new URL('./App.tsx', import.meta.url)), 'utf8')
 
-    expect(markup).toContain('Multi-AI Code')
-    expect(markup).not.toContain('项目记忆')
-    expect(markup).not.toContain('Chrome')
-    expect(markup).not.toContain('定时任务管理')
-    expect(markup).toContain('Skill 管理')
-    expect(markup).not.toContain('Skill 编排')
-    expect(markup).not.toContain('topbar-secondary-row')
-    expect(markup).not.toContain('skill-bar')
-    expect(markup).not.toContain('还没有 skill')
-  }, 15000)
+    expect(source).toContain('Multi-AI Code')
+    expect(source).not.toContain('项目记忆')
+    expect(source).not.toContain('Chrome')
+    expect(source).not.toContain('定时任务管理')
+    expect(source).toContain('Skill 管理')
+    expect(source).not.toContain('topbar-secondary-row')
+    expect(source).not.toContain('skill-bar')
+    expect(source).not.toContain('还没有 skill')
+  })
 
   it('places skill orchestration in the same toolbar row as build', () => {
     const source = readFileSync(fileURLToPath(new URL('./App.tsx', import.meta.url)), 'utf8')
@@ -57,6 +54,20 @@ describe('App habit monitor integration', () => {
     expect(source).not.toContain('setShowHabitMonitor')
     expect(source).not.toContain('<HabitMonitorDialog')
     expect(source).toContain("openAiSettingsSection('habit')")
+  })
+
+  it('removes unused topbar sampling/reset entries and the legacy bottom pipeline bar', () => {
+    const source = readFileSync(fileURLToPath(new URL('./App.tsx', import.meta.url)), 'utf8')
+    const topbarIndex = source.indexOf('<header className="topbar">')
+    const topbarEndIndex = source.indexOf('</header>', topbarIndex)
+    const topbarSource = source.slice(topbarIndex, topbarEndIndex)
+
+    expect(topbarIndex).toBeGreaterThan(-1)
+    expect(topbarEndIndex).toBeGreaterThan(topbarIndex)
+    expect(topbarSource).not.toContain('ScreenSamplerIndicator')
+    expect(topbarSource).not.toContain('重置主会话')
+    expect(source).not.toContain('<footer className="pipeline">')
+    expect(source).not.toContain('单阶段架构')
   })
 
   it('prefers Codex in CLI health checks and keeps Claude optional', () => {

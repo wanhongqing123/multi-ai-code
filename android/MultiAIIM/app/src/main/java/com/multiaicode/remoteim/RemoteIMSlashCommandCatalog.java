@@ -10,8 +10,9 @@ public final class RemoteIMSlashCommandCatalog {
         new RemoteIMSlashCommand("/plan", "切换 Plan"),
         new RemoteIMSlashCommand("/build", "切换 Build"),
         new RemoteIMSlashCommand("/models", "模型列表"),
-        new RemoteIMSlashCommand("/model ", "切换模型"),
+        new RemoteIMSlashCommand("/model ", "模型/推理"),
         new RemoteIMSlashCommand("/goal ", "管理 Goal"),
+        new RemoteIMSlashCommand("/btw ", "子任务"),
         new RemoteIMSlashCommand("/help", "命令帮助")
     );
 

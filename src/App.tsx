@@ -57,7 +57,6 @@ import {
   forgetRemoteImOutgoingImageFile,
   registerRemoteImOutgoingImageFile
 } from './remote-im/outgoingImageRegistry'
-import ScreenSamplerIndicator from './habit/ScreenSamplerIndicator'
 import FirstRunNoticeDialog from './habit/FirstRunNoticeDialog'
 import { getCliTargetLabel } from './components/cliTarget'
 import OnboardingWizard from './components/OnboardingWizard'
@@ -377,7 +376,7 @@ function AppShell() {
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [sessionStatus, setSessionStatus] = useState<'idle' | 'running' | 'exited'>('idle')
   // MainPanel is mounted (true) or the boot gate is shown (false). Toggled
-  // by spawn success (→ true) and by "重置主会话" / resume-failure (→ false).
+  // by spawn success (→ true) and by CLI/config reset paths or resume-failure (→ false).
   // sessionStatus === 'exited' deliberately keeps mainPanelMounted=true so
   // the previous terminal scrollback and the existing 重启 button still work.
   const [mainPanelMounted, setMainPanelMounted] = useState(false)
@@ -1953,16 +1952,6 @@ function AppShell() {
           >
             Skill 管理
           </button>
-          <ScreenSamplerIndicator />
-          {mainPanelMounted && (
-            <button
-              className="topbar-btn"
-              onClick={() => void handleResetMainSession()}
-              title="结束当前主会话，回到选择界面"
-            >
-              🔄 重置主会话
-            </button>
-          )}
           <button
             className={`topbar-btn ${errorCount > 0 ? 'topbar-btn-danger' : ''}`}
             onClick={() => setShowErrors((s) => !s)}
@@ -2405,18 +2394,6 @@ function AppShell() {
 
       <ToastHost />
 
-      <footer className="pipeline">
-        <span>Multi-AI Code · 单阶段架构</span>
-        {hasProject && (
-          <span style={{ marginLeft: 8, opacity: 0.7 }}>
-            {sessionStatus === 'running'
-              ? '● 运行中'
-              : sessionStatus === 'exited'
-              ? '○ 已退出'
-              : '○ 空闲'}
-          </span>
-        )}
-      </footer>
     </div>
   )
 }

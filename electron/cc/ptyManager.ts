@@ -499,14 +499,15 @@ export function requestAicliStatusForSession(
 
 export function requestAicliModelForSession(
   sessionId: string,
-  model?: string
+  model?: string,
+  reasoning?: string
 ): Promise<AicliControlCommandResult> {
   const session = sessions.get(sessionId)
   if (!session) return Promise.resolve({ ok: false, error: 'no session' })
   if (!session.structuredOutputBridge) {
     return Promise.resolve({ ok: false, error: 'AICLI control bridge is not available' })
   }
-  return session.structuredOutputBridge.requestControlCommand({ command: 'model', model })
+  return session.structuredOutputBridge.requestControlCommand({ command: 'model', model, reasoning })
 }
 
 export function requestAicliGoalForSession(
@@ -519,6 +520,18 @@ export function requestAicliGoalForSession(
     return Promise.resolve({ ok: false, error: 'AICLI control bridge is not available' })
   }
   return session.structuredOutputBridge.requestControlCommand({ command: 'goal', goal })
+}
+
+export function requestAicliBtwForSession(
+  sessionId: string,
+  task: string
+): Promise<AicliControlCommandResult> {
+  const session = sessions.get(sessionId)
+  if (!session) return Promise.resolve({ ok: false, error: 'no session' })
+  if (!session.structuredOutputBridge) {
+    return Promise.resolve({ ok: false, error: 'AICLI control bridge is not available' })
+  }
+  return session.structuredOutputBridge.requestControlCommand({ command: 'btw', task })
 }
 
 /** Stream raw input into PTY in small chunks to avoid large-paste truncation. */

@@ -224,4 +224,92 @@ describe('AICLI structured output bridge', () => {
     expect(receivedLines.join('')).toContain('"model":"gpt-next"')
     expect(receivedLines.join('')).toContain('"requestId"')
   })
+
+  it('sends model reasoning control commands with the selected reasoning payload', async () => {
+    const bridge = await createAicliStructuredOutputBridge('session-1', 'codex')
+    const { port, token } = parseTcpEndpoint(bridge.endpoint)
+    const receivedLines: string[] = []
+
+    const socket = await new Promise<net.Socket>((resolve, reject) => {
+      const client = net.createConnection({ host: '127.0.0.1', port }, () => {
+        client.write(`${JSON.stringify({ token, kind: 'control_ready' })}\n`)
+        resolve(client)
+      })
+      client.setEncoding('utf8')
+      client.on('data', (chunk) => {
+        receivedLines.push(String(chunk))
+        const requestId = String(chunk).match(/"requestId":"([^"]+)"/)?.[1]
+        if (requestId) {
+          client.write(
+            `${JSON.stringify({
+              token,
+              kind: 'control_result',
+              requestId,
+              ok: true,
+              text: '已切换推理档位：High'
+            })}\n`
+          )
+        }
+      })
+      client.once('error', reject)
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const result = await bridge.requestControlCommand(
+      { command: 'model', reasoning: 'high' },
+      500
+    )
+
+    socket.destroy()
+    await bridge.close()
+
+    expect(result).toEqual({ ok: true, text: '已切换推理档位：High' })
+    expect(receivedLines.join('')).toContain('"command":"model"')
+    expect(receivedLines.join('')).toContain('"reasoning":"high"')
+    expect(receivedLines.join('')).toContain('"requestId"')
+  })
+
+  it('sends /btw control commands with the task payload', async () => {
+    const bridge = await createAicliStructuredOutputBridge('session-1', 'codex')
+    const { port, token } = parseTcpEndpoint(bridge.endpoint)
+    const receivedLines: string[] = []
+
+    const socket = await new Promise<net.Socket>((resolve, reject) => {
+      const client = net.createConnection({ host: '127.0.0.1', port }, () => {
+        client.write(`${JSON.stringify({ token, kind: 'control_ready' })}\n`)
+        resolve(client)
+      })
+      client.setEncoding('utf8')
+      client.on('data', (chunk) => {
+        receivedLines.push(String(chunk))
+        const requestId = String(chunk).match(/"requestId":"([^"]+)"/)?.[1]
+        if (requestId) {
+          client.write(
+            `${JSON.stringify({
+              token,
+              kind: 'control_result',
+              requestId,
+              ok: true,
+              text: '已提交 /btw 子任务，完成后会通过 IM 回传。'
+            })}\n`
+          )
+        }
+      })
+      client.once('error', reject)
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const result = await bridge.requestControlCommand(
+      { command: 'btw', task: '检查构建日志' },
+      500
+    )
+
+    socket.destroy()
+    await bridge.close()
+
+    expect(result).toEqual({ ok: true, text: '已提交 /btw 子任务，完成后会通过 IM 回传。' })
+    expect(receivedLines.join('')).toContain('"command":"btw"')
+    expect(receivedLines.join('')).toContain('"task":"检查构建日志"')
+    expect(receivedLines.join('')).toContain('"requestId"')
+  })
 })

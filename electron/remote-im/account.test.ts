@@ -8,7 +8,9 @@ import {
   hasRemoteImAccountConnectionChanged,
   mergeRemoteImAccountIntoConfig,
   normalizeRemoteImAccountConfig,
+  preserveRemoteImAccountContacts,
   readRemoteImAccountConfig,
+  syncRemoteImAccountContactsFromSdk,
   writeRemoteImAccountConfig
 } from './account.js'
 
@@ -106,6 +108,87 @@ describe('remote IM account config', () => {
         allowedUserIds: ['friend-a', 'mac-apollo-u3player', 'whq-iphone', 'slave-a']
       })
     ).toBe(false)
+  })
+
+  it('preserves saved contacts when login rebinds the same account without contact fields', () => {
+    const existing = normalizeRemoteImAccountConfig({
+      sdkAppId: 1600148979,
+      desktopUserId: 'mac-quarkpc',
+      userSigMode: 'secret-key',
+      userSigSecretKey: 'secret',
+      friendUserIds: ['whq-iphone'],
+      allowedUserIds: ['whq-iphone']
+    })
+
+    const incoming = normalizeRemoteImAccountConfig({
+      sdkAppId: 1600148979,
+      desktopUserId: 'mac-quarkpc',
+      userSigMode: 'secret-key',
+      userSigSecretKey: 'secret'
+    })
+
+    expect(preserveRemoteImAccountContacts(incoming, existing)).toMatchObject({
+      desktopUserId: 'mac-quarkpc',
+      friendUserIds: ['whq-iphone'],
+      allowedUserIds: ['whq-iphone']
+    })
+  })
+
+  it('uses explicitly provided contacts instead of preserving old contacts', () => {
+    const existing = normalizeRemoteImAccountConfig({
+      sdkAppId: 1600148979,
+      desktopUserId: 'mac-quarkpc',
+      userSigMode: 'secret-key',
+      userSigSecretKey: 'secret',
+      friendUserIds: ['whq-iphone']
+    })
+
+    const incoming = normalizeRemoteImAccountConfig({
+      sdkAppId: 1600148979,
+      desktopUserId: 'mac-quarkpc',
+      userSigMode: 'secret-key',
+      userSigSecretKey: 'secret',
+      friendUserIds: ['whq-android']
+    })
+
+    expect(preserveRemoteImAccountContacts(incoming, existing).friendUserIds).toEqual([
+      'whq-android'
+    ])
+  })
+
+  it('syncs SDK friend list into account contacts and route allow-list', () => {
+    const account = normalizeRemoteImAccountConfig({
+      sdkAppId: 1600148979,
+      desktopUserId: 'mac-quarkpc',
+      userSigMode: 'secret-key',
+      userSigSecretKey: 'secret',
+      friendUserIds: ['stale-friend']
+    })
+
+    expect(
+      syncRemoteImAccountContactsFromSdk(account, [' whq-iphone ', 'whq-android', 'whq-iphone'])
+    ).toMatchObject({
+      desktopUserId: 'mac-quarkpc',
+      friendUserIds: ['whq-iphone', 'whq-android'],
+      masterUserIds: [],
+      slaveUserIds: [],
+      allowedUserIds: ['whq-iphone', 'whq-android']
+    })
+  })
+
+  it('keeps existing account contacts when SDK sync returns no usable friends', () => {
+    const account = normalizeRemoteImAccountConfig({
+      sdkAppId: 1600148979,
+      desktopUserId: 'mac-quarkpc',
+      userSigMode: 'secret-key',
+      userSigSecretKey: 'secret',
+      friendUserIds: ['whq-iphone']
+    })
+
+    expect(syncRemoteImAccountContactsFromSdk(account, ['', '   '])).toMatchObject({
+      friendUserIds: ['whq-iphone'],
+      allowedUserIds: ['whq-iphone']
+    })
   })
 
   it('treats login identity and credential edits as connection changes', () => {

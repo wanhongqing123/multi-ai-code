@@ -11,9 +11,9 @@ public class RemoteIMSlashCommandCatalogTest {
     public void returnsAllCommandsForSlash() {
         List<RemoteIMSlashCommand> commands = RemoteIMSlashCommandCatalog.suggestions("/");
 
-        assertEquals(8, commands.size());
+        assertEquals(11, commands.size());
         assertEquals("/status", commands.get(0).command());
-        assertEquals("/help", commands.get(7).command());
+        assertEquals("/help", commands.get(10).command());
     }
 
     @Test
@@ -21,6 +21,9 @@ public class RemoteIMSlashCommandCatalogTest {
         List<RemoteIMSlashCommand> modelCommands = RemoteIMSlashCommandCatalog.suggestions("/mo");
         List<RemoteIMSlashCommand> goalCommands = RemoteIMSlashCommandCatalog.suggestions("/go");
         List<RemoteIMSlashCommand> btwCommands = RemoteIMSlashCommandCatalog.suggestions("/bt");
+        List<RemoteIMSlashCommand> interruptCommands = RemoteIMSlashCommandCatalog.suggestions("/in");
+        List<RemoteIMSlashCommand> compactCommands = RemoteIMSlashCommandCatalog.suggestions("/co");
+        List<RemoteIMSlashCommand> clearCommands = RemoteIMSlashCommandCatalog.suggestions("/cl");
 
         assertEquals(2, modelCommands.size());
         assertEquals("/models", modelCommands.get(0).command());
@@ -29,6 +32,12 @@ public class RemoteIMSlashCommandCatalogTest {
         assertEquals("/goal ", goalCommands.get(0).command());
         assertEquals(1, btwCommands.size());
         assertEquals("/btw ", btwCommands.get(0).command());
+        assertEquals(1, interruptCommands.size());
+        assertEquals("/interrupt", interruptCommands.get(0).command());
+        assertEquals(1, compactCommands.size());
+        assertEquals("/compact", compactCommands.get(0).command());
+        assertEquals(1, clearCommands.size());
+        assertEquals("/clear", clearCommands.get(0).command());
     }
 
     @Test

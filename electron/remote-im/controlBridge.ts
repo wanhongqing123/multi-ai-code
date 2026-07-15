@@ -24,7 +24,7 @@ export type RemoteImSwitchAicliMode = (
 export interface RemoteImExecuteAicliCommandRequest {
   sessionId: string
   sourceKind: Extract<RemoteImAicliOutputSourceKind, 'codex' | 'opencode'>
-  command: 'status' | 'model' | 'goal' | 'btw'
+  command: 'status' | 'model' | 'goal' | 'btw' | 'interrupt' | 'compact' | 'clear'
   model?: string
   reasoning?: string
   goal?: string
@@ -355,6 +355,62 @@ async function goal(
   }
 }
 
+function lifecycleCommandLabel(command: 'interrupt' | 'compact' | 'clear'): string {
+  if (command === 'interrupt') return '中断当前任务'
+  if (command === 'compact') return '压缩上下文'
+  return '清空上下文'
+}
+
+async function lifecycleCommand(
+  input: ExecuteRemoteImControlCommandInput,
+  command: 'interrupt' | 'compact' | 'clear'
+): Promise<ExecuteRemoteImControlCommandResult> {
+  const label = lifecycleCommandLabel(command)
+  if (!input.session) {
+    return {
+      ok: false,
+      text: `当前没有运行中的 AICLI，无法${label}。`
+    }
+  }
+
+  if (input.sourceKind === 'claude') {
+    return {
+      ok: false,
+      text: `Claude 暂不接入 IM 源码级${label}命令。`
+    }
+  }
+
+  if (input.sourceKind !== 'codex' && input.sourceKind !== 'opencode') {
+    return {
+      ok: false,
+      text: `当前 AICLI 类型未知，无法安全${label}。`
+    }
+  }
+
+  if (!input.executeCommand) {
+    return {
+      ok: false,
+      text: `${displaySourceKind(input.sourceKind)} 源码级控制通道尚未接入，无法${label}。`
+    }
+  }
+
+  const result = await input.executeCommand({
+    sessionId: input.session.sessionId,
+    sourceKind: input.sourceKind,
+    command
+  })
+  if (!result.ok) {
+    return {
+      ok: false,
+      text: result.text || `执行 ${displaySourceKind(input.sourceKind)} /${command} 失败：${result.error}`
+    }
+  }
+  return {
+    ok: true,
+    text: result.text
+  }
+}
+
 export async function executeRemoteImControlCommand(
   input: ExecuteRemoteImControlCommandInput
 ): Promise<ExecuteRemoteImControlCommandResult> {
@@ -380,6 +436,10 @@ export async function executeRemoteImControlCommand(
 
   if (input.command === 'btw') {
     return btw(input)
+  }
+
+  if (input.command === 'interrupt' || input.command === 'compact' || input.command === 'clear') {
+    return lifecycleCommand(input, input.command)
   }
 
   if (input.command === 'plan') {

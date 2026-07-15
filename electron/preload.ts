@@ -751,6 +751,11 @@ const api = {
         | { ok: true; value: RemoteImConfig; loginState: RemoteImLoginState }
         | { ok: false; error: string }
       >,
+    syncContacts: (projectId: string, userIds: string[]) =>
+      ipcRenderer.invoke('remote-im:sync-contacts', { projectId, userIds }) as Promise<
+        | { ok: true; value: RemoteImConfig; loginState: RemoteImLoginState }
+        | { ok: false; error: string }
+      >,
     sendLocalMessage: (projectId: string, text: string) =>
       ipcRenderer.invoke('remote-im:send-local-message', { projectId, text }) as Promise<
         { ok: boolean; error?: string }

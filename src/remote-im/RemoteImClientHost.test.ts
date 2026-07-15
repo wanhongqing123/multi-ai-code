@@ -4,7 +4,8 @@ import {
   createRemoteImLifecycleQueue,
   getRemoteImConnectionKey,
   scheduleRemoteImConnect,
-  shouldConnectRemoteImClient
+  shouldConnectRemoteImClient,
+  syncRemoteImContactsFromRuntime
 } from './RemoteImClientHost.js'
 
 const config: RemoteImConfig = {
@@ -177,5 +178,50 @@ describe('RemoteImClientHost', () => {
     await Promise.all([first, second])
 
     expect(events).toEqual(['connect:start', 'connect:end', 'disconnect'])
+  })
+
+  it('syncs runtime friend list into Electron account state after SDK connect', async () => {
+    const nextConfig = {
+      ...config,
+      friendUserIds: ['whq-iphone'],
+      allowedUserIds: ['whq-iphone']
+    }
+    const nextLoginState = {
+      profileId: 'mac-quarkpc',
+      account: {
+        provider: nextConfig.provider,
+        sdkAppId: nextConfig.sdkAppId,
+        desktopUserId: nextConfig.desktopUserId,
+        desktopRole: nextConfig.desktopRole,
+        userSigMode: nextConfig.userSigMode,
+        userSigEndpoint: nextConfig.userSigEndpoint,
+        userSigSecretKey: nextConfig.userSigSecretKey,
+        friendUserIds: nextConfig.friendUserIds,
+        masterUserIds: nextConfig.masterUserIds,
+        slaveUserIds: nextConfig.slaveUserIds,
+        allowedUserIds: nextConfig.allowedUserIds
+      }
+    }
+    const syncContacts = vi.fn(async () => ({
+      ok: true as const,
+      value: nextConfig,
+      loginState: nextLoginState
+    }))
+    const onContactsSynced = vi.fn()
+
+    await syncRemoteImContactsFromRuntime({
+      projectId: 'project-1',
+      runtime: {
+        listFriendUserIds: async () => [' whq-iphone ', 'whq-iphone']
+      },
+      syncContacts,
+      onContactsSynced
+    })
+
+    expect(syncContacts).toHaveBeenCalledWith('project-1', ['whq-iphone'])
+    expect(onContactsSynced).toHaveBeenCalledWith({
+      config: nextConfig,
+      loginState: nextLoginState
+    })
   })
 })

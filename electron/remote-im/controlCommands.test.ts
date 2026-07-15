@@ -49,6 +49,24 @@ describe('remote IM control commands', () => {
       raw: '/btw 检查构建日志',
       args: '检查构建日志'
     })
+    expect(parseRemoteImControlCommand('/interrupt')).toEqual({
+      type: 'command',
+      command: 'interrupt',
+      raw: '/interrupt',
+      args: ''
+    })
+    expect(parseRemoteImControlCommand('/compact')).toEqual({
+      type: 'command',
+      command: 'compact',
+      raw: '/compact',
+      args: ''
+    })
+    expect(parseRemoteImControlCommand('/clear')).toEqual({
+      type: 'command',
+      command: 'clear',
+      raw: '/clear',
+      args: ''
+    })
     expect(parseRemoteImControlCommand('请执行 /status')).toEqual({ type: 'text' })
   })
 
@@ -85,6 +103,9 @@ describe('remote IM control commands', () => {
       'model',
       'goal',
       'btw',
+      'interrupt',
+      'compact',
+      'clear',
       'help'
     ])
     expect(formatRemoteImControlCommandHelp()).not.toContain('/stop')
@@ -92,5 +113,8 @@ describe('remote IM control commands', () => {
     expect(formatRemoteImControlCommandHelp()).toContain('/model <序号|模型ID|reasoning 档位>')
     expect(formatRemoteImControlCommandHelp()).toContain('/goal [目标|clear|pause|resume]')
     expect(formatRemoteImControlCommandHelp()).toContain('/btw <任务>')
+    expect(formatRemoteImControlCommandHelp()).toContain('/interrupt')
+    expect(formatRemoteImControlCommandHelp()).toContain('/compact')
+    expect(formatRemoteImControlCommandHelp()).toContain('/clear')
   })
 })

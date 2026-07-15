@@ -1428,6 +1428,9 @@ private let remoteIMSlashCommands: [RemoteIMSlashCommand] = [
     .init(command: "/model ", label: "模型/推理"),
     .init(command: "/goal ", label: "管理 Goal"),
     .init(command: "/btw ", label: "子任务"),
+    .init(command: "/interrupt", label: "中断任务"),
+    .init(command: "/compact", label: "压缩上下文"),
+    .init(command: "/clear", label: "清空上下文"),
     .init(command: "/help", label: "命令帮助")
 ]
 

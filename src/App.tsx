@@ -1257,6 +1257,20 @@ function AppShell() {
     return result.ok ? result.value?.account ?? null : null
   }, [])
 
+  const handleRemoteImContactsSynced = useCallback((payload: {
+    config: RemoteImConfig
+    loginState: RemoteImLoginState
+  }) => {
+    setRemoteImConfig(payload.config)
+    setRemoteImLoginState(payload.loginState)
+    if (currentProjectId) {
+      setRemoteImConfigProjectId(currentProjectId)
+    }
+    if (!remoteImSelectedPeerUserId && payload.config.friendUserIds.length === 1) {
+      setRemoteImSelectedPeerUserId(payload.config.friendUserIds[0])
+    }
+  }, [currentProjectId, remoteImSelectedPeerUserId])
+
   const handleAddRemoteImContact = useCallback(async (
     relation: RemoteImContactRelation,
     userId: string
@@ -2328,6 +2342,7 @@ function AppShell() {
         projectId={currentProjectId}
         config={remoteImConfig}
         loginRequested={remoteImLoginRequested}
+        onContactsSynced={handleRemoteImContactsSynced}
       />
       <RemoteImDrawer
         open={showRemoteImDrawer}

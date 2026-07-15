@@ -185,6 +185,44 @@ describe('remote IM control bridge', () => {
     })
   })
 
+  it('forwards lifecycle commands through the source-level control bridge', async () => {
+    const executeCommand = vi.fn(async ({ command }: { command: string }) => ({
+      ok: true as const,
+      text: `ok:${command}`
+    }))
+    for (const command of ['interrupt', 'compact', 'clear'] as const) {
+      const result = await executeRemoteImControlCommand({
+        command,
+        session: {
+          sessionId: 'session-1',
+          targetRepo: '/repo',
+          command: '/bundled/codex',
+          startedAtMs: 1000
+        },
+        sourceKind: 'codex',
+        executeCommand
+      })
+
+      expect(result).toEqual({ ok: true, text: `ok:${command}` })
+    }
+
+    expect(executeCommand).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      sourceKind: 'codex',
+      command: 'interrupt'
+    })
+    expect(executeCommand).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      sourceKind: 'codex',
+      command: 'compact'
+    })
+    expect(executeCommand).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      sourceKind: 'codex',
+      command: 'clear'
+    })
+  })
+
   it('requires a task body for /btw', async () => {
     const executeCommand = vi.fn()
     const result = await executeRemoteImControlCommand({

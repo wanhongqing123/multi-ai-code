@@ -30,6 +30,12 @@ const sdkMock = vi.hoisted(() => {
       loginUser = ''
     }),
     destroy: vi.fn(async () => undefined),
+    getFriendList: vi.fn(async () => ({
+      data: [
+        { userID: 'friend-a' },
+        { userID: 'friend-b' }
+      ]
+    })),
     createFileMessage: vi.fn((message: unknown) => message),
     createImageMessage: vi.fn((message: unknown) => message),
     createTextMessage: vi.fn((message: unknown) => message),
@@ -40,7 +46,8 @@ const sdkMock = vi.hoisted(() => {
     EVENT: {
       MESSAGE_RECEIVED: 'messageReceived',
       SDK_READY: 'sdkReady',
-      SDK_NOT_READY: 'sdkNotReady'
+      SDK_NOT_READY: 'sdkNotReady',
+      FRIEND_LIST_UPDATED: 'friendListUpdated'
     },
     TYPES: {
       CONV_C2C: 'C2C'
@@ -69,6 +76,12 @@ describe('tencent IM client helpers', () => {
     sdkMock.chat.login.mockImplementation(async ({ userID }: { userID: string }) => {
       sdkMock.setLoginUser(userID)
       return { code: 0, message: 'OK' }
+    })
+    sdkMock.chat.getFriendList.mockResolvedValue({
+      data: [
+        { userID: 'friend-a' },
+        { userID: 'friend-b' }
+      ]
     })
     sdkMock.chat.sendMessage.mockResolvedValue({ code: 0, message: 'OK' })
   })
@@ -374,6 +387,97 @@ describe('tencent IM client helpers', () => {
     await expect(runtime.sendText('desktop-b', 'hello')).rejects.toThrow(
       'IM 发送失败 (10017): not friends'
     )
+  })
+
+  it('lists friend user ids from Tencent IM SDK after login', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ userSig: 'sig-1' })
+      }))
+    )
+    sdkMock.chat.getFriendList.mockResolvedValueOnce({
+      data: {
+        friendList: [
+          { userID: ' whq-iphone ' },
+          { profile: { userID: 'whq-android' } },
+          { userID: 'whq-iphone' }
+        ]
+      }
+    } as any)
+
+    const runtimePromise = connectTencentImClient({
+      projectId: 'project-1',
+      config: {
+        enabled: true,
+        provider: 'tencent-im',
+        sdkAppId: 1400704311,
+        desktopUserId: 'desktop-a',
+        desktopRole: 'master',
+        userSigMode: 'endpoint',
+        userSigEndpoint: 'https://example.test/sig',
+        userSigSecretKey: '',
+        friendUserIds: [],
+        masterUserIds: [],
+        slaveUserIds: [],
+        allowedUserIds: [],
+        outputFlushIntervalMs: 1000,
+        outputMaxChunkChars: 1200
+      },
+      onIncomingText: vi.fn()
+    })
+
+    await vi.waitFor(() => expect(sdkMock.chat.login).toHaveBeenCalled())
+    sdkMock.chat.isReady.mockReturnValue(true)
+    sdkMock.handlers.get('sdkReady')?.()
+    const runtime = await runtimePromise
+
+    expect(runtime.listFriendUserIds).toBeTypeOf('function')
+    await expect(runtime.listFriendUserIds!()).resolves.toEqual(['whq-iphone', 'whq-android'])
+    expect(sdkMock.chat.getFriendList).toHaveBeenCalledOnce()
+  })
+
+  it('notifies when Tencent IM SDK pushes a friend list update', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ userSig: 'sig-1' })
+      }))
+    )
+    const onFriendListUpdated = vi.fn()
+    const runtimePromise = connectTencentImClient({
+      projectId: 'project-1',
+      config: {
+        enabled: true,
+        provider: 'tencent-im',
+        sdkAppId: 1400704311,
+        desktopUserId: 'desktop-a',
+        desktopRole: 'master',
+        userSigMode: 'endpoint',
+        userSigEndpoint: 'https://example.test/sig',
+        userSigSecretKey: '',
+        friendUserIds: [],
+        masterUserIds: [],
+        slaveUserIds: [],
+        allowedUserIds: [],
+        outputFlushIntervalMs: 1000,
+        outputMaxChunkChars: 1200
+      },
+      onIncomingText: vi.fn(),
+      onFriendListUpdated
+    })
+
+    await vi.waitFor(() => expect(sdkMock.chat.login).toHaveBeenCalled())
+    sdkMock.chat.isReady.mockReturnValue(true)
+    sdkMock.handlers.get('sdkReady')?.()
+    await runtimePromise
+    sdkMock.handlers.get('friendListUpdated')?.({
+      data: [{ userID: 'whq-iphone' }, { profile: { userID: 'whq-android' } }]
+    })
+
+    expect(onFriendListUpdated).toHaveBeenCalledWith(['whq-iphone', 'whq-android'])
   })
 
   it('sends image files through Tencent image messages', async () => {

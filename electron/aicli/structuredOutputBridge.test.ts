@@ -312,4 +312,51 @@ describe('AICLI structured output bridge', () => {
     expect(receivedLines.join('')).toContain('"task":"检查构建日志"')
     expect(receivedLines.join('')).toContain('"requestId"')
   })
+
+  it('sends lifecycle control commands without leaking them into normal text input', async () => {
+    const bridge = await createAicliStructuredOutputBridge('session-1', 'codex')
+    const { port, token } = parseTcpEndpoint(bridge.endpoint)
+    const receivedLines: string[] = []
+
+    const socket = await new Promise<net.Socket>((resolve, reject) => {
+      const client = net.createConnection({ host: '127.0.0.1', port }, () => {
+        client.write(`${JSON.stringify({ token, kind: 'control_ready' })}\n`)
+        resolve(client)
+      })
+      client.setEncoding('utf8')
+      client.on('data', (chunk) => {
+        receivedLines.push(String(chunk))
+        const requestId = String(chunk).match(/"requestId":"([^"]+)"/)?.[1]
+        const command = String(chunk).match(/"command":"([^"]+)"/)?.[1]
+        if (requestId) {
+          client.write(
+            `${JSON.stringify({
+              token,
+              kind: 'control_result',
+              requestId,
+              ok: true,
+              text: `ok:${command}`
+            })}\n`
+          )
+        }
+      })
+      client.once('error', reject)
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const interrupt = await bridge.requestControlCommand({ command: 'interrupt' }, 500)
+    const compact = await bridge.requestControlCommand({ command: 'compact' }, 500)
+    const clear = await bridge.requestControlCommand({ command: 'clear' }, 500)
+
+    socket.destroy()
+    await bridge.close()
+
+    expect(interrupt).toEqual({ ok: true, text: 'ok:interrupt' })
+    expect(compact).toEqual({ ok: true, text: 'ok:compact' })
+    expect(clear).toEqual({ ok: true, text: 'ok:clear' })
+    expect(receivedLines.join('')).toContain('"command":"interrupt"')
+    expect(receivedLines.join('')).toContain('"command":"compact"')
+    expect(receivedLines.join('')).toContain('"command":"clear"')
+    expect(receivedLines.join('')).not.toContain('"text":"/interrupt"')
+  })
 })

@@ -677,6 +677,46 @@ void MainWindowLayoutTest::slashCommandSuggestionsFillComposer() {
 
     QCOMPARE(editor->toPlainText(), QStringLiteral("/goal "));
     QVERIFY(commandBar->isVisible());
+
+    editor->setPlainText(QStringLiteral("/bt"));
+    QVERIFY(commandBar->isVisible());
+
+    auto* btwButton = window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_btw"));
+    QVERIFY(btwButton != nullptr);
+    btwButton->click();
+
+    QCOMPARE(editor->toPlainText(), QStringLiteral("/btw "));
+    QVERIFY(commandBar->isVisible());
+
+    editor->setPlainText(QStringLiteral("/in"));
+    QVERIFY(commandBar->isVisible());
+
+    auto* interruptButton = window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_interrupt"));
+    QVERIFY(interruptButton != nullptr);
+    interruptButton->click();
+
+    QCOMPARE(editor->toPlainText(), QStringLiteral("/interrupt"));
+    QVERIFY(commandBar->isVisible());
+
+    editor->setPlainText(QStringLiteral("/co"));
+    QVERIFY(commandBar->isVisible());
+
+    auto* compactButton = window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_compact"));
+    QVERIFY(compactButton != nullptr);
+    compactButton->click();
+
+    QCOMPARE(editor->toPlainText(), QStringLiteral("/compact"));
+    QVERIFY(commandBar->isVisible());
+
+    editor->setPlainText(QStringLiteral("/cl"));
+    QVERIFY(commandBar->isVisible());
+
+    auto* clearButton = window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_clear"));
+    QVERIFY(clearButton != nullptr);
+    clearButton->click();
+
+    QCOMPARE(editor->toPlainText(), QStringLiteral("/clear"));
+    QVERIFY(commandBar->isVisible());
 }
 
 void MainWindowLayoutTest::deleteKeyRemovesContactAndMessagesFromConversationList() {

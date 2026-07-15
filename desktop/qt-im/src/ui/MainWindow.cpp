@@ -354,6 +354,10 @@ QList<SlashCommandDefinition> slashCommandDefinitions() {
         {QStringLiteral("/models"), QStringLiteral("模型列表"), QStringLiteral("slashCommandButton_models")},
         {QStringLiteral("/model "), QStringLiteral("切换模型"), QStringLiteral("slashCommandButton_model")},
         {QStringLiteral("/goal "), QStringLiteral("管理 Goal"), QStringLiteral("slashCommandButton_goal")},
+        {QStringLiteral("/btw "), QStringLiteral("子任务"), QStringLiteral("slashCommandButton_btw")},
+        {QStringLiteral("/interrupt"), QStringLiteral("中断任务"), QStringLiteral("slashCommandButton_interrupt")},
+        {QStringLiteral("/compact"), QStringLiteral("压缩上下文"), QStringLiteral("slashCommandButton_compact")},
+        {QStringLiteral("/clear"), QStringLiteral("清空上下文"), QStringLiteral("slashCommandButton_clear")},
         {QStringLiteral("/help"), QStringLiteral("命令帮助"), QStringLiteral("slashCommandButton_help")},
     };
 }

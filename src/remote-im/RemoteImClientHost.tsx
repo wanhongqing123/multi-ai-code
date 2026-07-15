@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import type { RemoteImConfig } from '../../electron/preload.js'
+import type { RemoteImConfig, RemoteImLoginState } from '../../electron/preload.js'
 import {
   deliverRemoteImOutgoingFile,
   deliverRemoteImOutgoingImage,
@@ -16,6 +16,10 @@ export interface RemoteImClientHostProps {
   projectId: string | null
   config: RemoteImConfig
   loginRequested: boolean
+  onContactsSynced?: (payload: {
+    config: RemoteImConfig
+    loginState: RemoteImLoginState
+  }) => void
 }
 
 const OUTGOING_RUNTIME_WAIT_TIMEOUT_MS = 15_000
@@ -73,10 +77,68 @@ export function shouldConnectRemoteImClient(props: RemoteImClientHostProps): boo
   )
 }
 
+function normalizeRuntimeFriendUserIds(userIds: string[]): string[] {
+  return Array.from(new Set(userIds.map((userId) => userId.trim()).filter(Boolean)))
+}
+
+export async function syncRemoteImContactUserIds(input: {
+  projectId: string
+  userIds: string[]
+  syncContacts: (
+    projectId: string,
+    userIds: string[]
+  ) => Promise<
+    | { ok: true; value: RemoteImConfig; loginState: RemoteImLoginState }
+    | { ok: false; error: string }
+  >
+  onContactsSynced?: (payload: {
+    config: RemoteImConfig
+    loginState: RemoteImLoginState
+  }) => void
+}): Promise<void> {
+  const userIds = normalizeRuntimeFriendUserIds(input.userIds)
+  if (userIds.length === 0) return
+  const result = await input.syncContacts(input.projectId, userIds)
+  if (!result.ok) return
+  input.onContactsSynced?.({
+    config: result.value,
+    loginState: result.loginState
+  })
+}
+
+export async function syncRemoteImContactsFromRuntime(input: {
+  projectId: string
+  runtime: Pick<TencentImRuntime, 'listFriendUserIds'>
+  syncContacts: (
+    projectId: string,
+    userIds: string[]
+  ) => Promise<
+    | { ok: true; value: RemoteImConfig; loginState: RemoteImLoginState }
+    | { ok: false; error: string }
+  >
+  onContactsSynced?: (payload: {
+    config: RemoteImConfig
+    loginState: RemoteImLoginState
+  }) => void
+}): Promise<void> {
+  if (!input.runtime.listFriendUserIds) return
+  await syncRemoteImContactUserIds({
+    projectId: input.projectId,
+    userIds: await input.runtime.listFriendUserIds(),
+    syncContacts: input.syncContacts,
+    onContactsSynced: input.onContactsSynced
+  })
+}
+
 export default function RemoteImClientHost(props: RemoteImClientHostProps): null {
   const runtimeSlotRef = useRef(createRemoteImRuntimeSlot<TencentImRuntime>())
   const lifecycleQueueRef = useRef(createRemoteImLifecycleQueue())
+  const onContactsSyncedRef = useRef(props.onContactsSynced)
   const connectionKey = getRemoteImConnectionKey(props)
+
+  useEffect(() => {
+    onContactsSyncedRef.current = props.onContactsSynced
+  }, [props.onContactsSynced])
 
   useEffect(() => {
     let cancelled = false
@@ -129,6 +191,22 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
           onIncomingFile: (message) => {
             void window.api.remoteIm.deliverIncomingFile(message)
           },
+          onFriendListUpdated: (userIds) => {
+            void syncRemoteImContactUserIds({
+              projectId,
+              userIds,
+              syncContacts: window.api.remoteIm.syncContacts,
+              onContactsSynced: onContactsSyncedRef.current
+            }).catch((err) => {
+              void window.api.remoteIm.writeRuntimeLog({
+                projectId,
+                sdkAppId: props.config.sdkAppId,
+                desktopUserId: props.config.desktopUserId,
+                event: 'friend-list:update-sync-failed',
+                detail: { error: err instanceof Error ? err.message : String(err) }
+              })
+            })
+          },
           onRuntimeLog: (entry) => {
             void window.api.remoteIm.writeRuntimeLog(entry)
           }
@@ -139,6 +217,20 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
         }
         ownedRuntime = runtime
         runtimeSlotRef.current.setCurrent(runtime)
+        await syncRemoteImContactsFromRuntime({
+          projectId,
+          runtime,
+          syncContacts: window.api.remoteIm.syncContacts,
+          onContactsSynced: onContactsSyncedRef.current
+        }).catch((err) => {
+          void window.api.remoteIm.writeRuntimeLog({
+            projectId,
+            sdkAppId: props.config.sdkAppId,
+            desktopUserId: props.config.desktopUserId,
+            event: 'friend-list:sync-failed',
+            detail: { error: err instanceof Error ? err.message : String(err) }
+          })
+        })
         await window.api.remoteIm.updateSdkStatus({
           projectId,
           state: 'connected',

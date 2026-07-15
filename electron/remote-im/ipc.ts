@@ -7,7 +7,10 @@ import {
   getActiveSessionForProject,
   getSessionRuntimeInfo,
   requestAicliBtwForSession,
+  requestAicliClearForSession,
+  requestAicliCompactForSession,
   requestAicliGoalForSession,
+  requestAicliInterruptForSession,
   requestAicliModelForSession,
   requestAicliStatusForSession,
   sendUserMessageToSession,
@@ -25,7 +28,9 @@ import {
   hasRemoteImAccountConnectionChanged,
   mergeRemoteImAccountIntoConfig,
   normalizeRemoteImAccountConfig,
+  preserveRemoteImAccountContacts,
   readRemoteImAccountConfig,
+  syncRemoteImAccountContactsFromSdk,
   writeRemoteImAccountConfig
 } from './account.js'
 import {
@@ -370,6 +375,32 @@ async function deleteRemoteImContact(
   clearRemoteImPeerMessages(projectId, userId)
   const value = await getRemoteImConfig(projectId)
   broadcastMessagesChanged(projectId)
+  return {
+    ok: true,
+    value,
+    loginState: {
+      profileId,
+      account
+    }
+  }
+}
+
+async function syncRemoteImContactsFromSdk(
+  projectId: string,
+  rawUserIds: string[]
+): Promise<
+  | { ok: true; value: RemoteImConfig; loginState: RemoteImLoginState }
+  | { ok: false; error: string }
+> {
+  const profileId = getCurrentRemoteImAccountProfileId()
+  if (!profileId) return { ok: false, error: '远程 IM 账号未登录' }
+  const previousAccount = await readRemoteImAccountConfig(remoteImAccountDir(profileId))
+  if (!previousAccount.desktopUserId) return { ok: false, error: '远程 IM 账号未登录' }
+  const account = await writeRemoteImAccountConfig(
+    remoteImAccountDir(profileId),
+    syncRemoteImAccountContactsFromSdk(previousAccount, rawUserIds)
+  )
+  const value = await getRemoteImConfig(projectId)
   return {
     ok: true,
     value,
@@ -739,7 +770,11 @@ async function bindRemoteImAccountConfig(
     getRemoteImProfileId() ??
     DEFAULT_REMOTE_IM_PROFILE_ID
   activeRemoteImAccountProfileId = profileId
-  const value = await writeRemoteImAccountConfig(remoteImAccountDir(profileId), normalizedAccount)
+  const targetAccount = await readRemoteImAccountConfig(remoteImAccountDir(profileId))
+  const value = await writeRemoteImAccountConfig(
+    remoteImAccountDir(profileId),
+    preserveRemoteImAccountContacts(normalizedAccount, targetAccount)
+  )
   if (hasRemoteImAccountConnectionChanged(previousAccount, value)) {
     resetRemoteImStatusesAfterAccountChange()
   }
@@ -862,6 +897,17 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
   )
 
   ipcMain.handle(
+    'remote-im:sync-contacts',
+    async (_event, { projectId, userIds }: { projectId: string; userIds: string[] }) => {
+      try {
+        return await syncRemoteImContactsFromSdk(projectId, Array.isArray(userIds) ? userIds : [])
+      } catch (err) {
+        return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+      }
+    }
+  )
+
+  ipcMain.handle(
     'remote-im:update-sdk-status',
     (_event, status: Pick<RemoteImStatus, 'projectId' | 'state' | 'detail'>) => {
       broadcastStatus({
@@ -954,6 +1000,15 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
               }
               if (command === 'btw') {
                 return requestAicliBtwForSession(sessionId, task ?? '')
+              }
+              if (command === 'interrupt') {
+                return requestAicliInterruptForSession(sessionId)
+              }
+              if (command === 'compact') {
+                return requestAicliCompactForSession(sessionId)
+              }
+              if (command === 'clear') {
+                return requestAicliClearForSession(sessionId)
               }
               return { ok: false as const, error: 'unsupported AICLI control command' }
             },

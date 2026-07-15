@@ -49,6 +49,9 @@ export type AicliRequestControlCommand =
   | { command: 'model'; model?: string; reasoning?: string }
   | { command: 'goal'; goal?: string }
   | { command: 'btw'; task: string }
+  | { command: 'interrupt' }
+  | { command: 'compact' }
+  | { command: 'clear' }
   | { command: 'switch_mode'; mode: AicliControlMode }
 
 export type AicliControlCommandResult =

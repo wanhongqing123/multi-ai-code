@@ -43,6 +43,15 @@ function mergeUserIds(...lists: string[][]): string[] {
   return Array.from(new Set(lists.flat()))
 }
 
+function hasAccountContacts(account: RemoteImAccountConfig): boolean {
+  return (
+    account.friendUserIds.length > 0 ||
+    account.masterUserIds.length > 0 ||
+    account.slaveUserIds.length > 0 ||
+    account.allowedUserIds.length > 0
+  )
+}
+
 export function normalizeRemoteImAccountConfig(value: unknown): RemoteImAccountConfig {
   if (!value || typeof value !== 'object') return { ...DEFAULT_REMOTE_IM_ACCOUNT_CONFIG }
   const raw = value as Partial<Record<keyof RemoteImAccountConfig, unknown>>
@@ -76,6 +85,38 @@ export function normalizeRemoteImAccountConfig(value: unknown): RemoteImAccountC
     slaveUserIds: [],
     allowedUserIds: [...friendUserIds]
   }
+}
+
+export function preserveRemoteImAccountContacts(
+  incoming: RemoteImAccountConfig,
+  existing: RemoteImAccountConfig
+): RemoteImAccountConfig {
+  const next = normalizeRemoteImAccountConfig(incoming)
+  const previous = normalizeRemoteImAccountConfig(existing)
+  if (!next.desktopUserId || next.desktopUserId !== previous.desktopUserId) return next
+  if (hasAccountContacts(next) || !hasAccountContacts(previous)) return next
+  return normalizeRemoteImAccountConfig({
+    ...next,
+    friendUserIds: previous.friendUserIds,
+    masterUserIds: previous.masterUserIds,
+    slaveUserIds: previous.slaveUserIds,
+    allowedUserIds: previous.allowedUserIds
+  })
+}
+
+export function syncRemoteImAccountContactsFromSdk(
+  account: RemoteImAccountConfig,
+  sdkFriendUserIds: string[]
+): RemoteImAccountConfig {
+  const friendUserIds = normalizeUserIds(sdkFriendUserIds)
+  if (friendUserIds.length === 0) return normalizeRemoteImAccountConfig(account)
+  return normalizeRemoteImAccountConfig({
+    ...account,
+    friendUserIds,
+    masterUserIds: [],
+    slaveUserIds: [],
+    allowedUserIds: friendUserIds
+  })
 }
 
 export function mergeRemoteImAccountIntoConfig(

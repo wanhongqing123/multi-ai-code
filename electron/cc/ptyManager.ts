@@ -534,6 +534,39 @@ export function requestAicliBtwForSession(
   return session.structuredOutputBridge.requestControlCommand({ command: 'btw', task })
 }
 
+export function requestAicliInterruptForSession(
+  sessionId: string
+): Promise<AicliControlCommandResult> {
+  const session = sessions.get(sessionId)
+  if (!session) return Promise.resolve({ ok: false, error: 'no session' })
+  if (!session.structuredOutputBridge) {
+    return Promise.resolve({ ok: false, error: 'AICLI control bridge is not available' })
+  }
+  return session.structuredOutputBridge.requestControlCommand({ command: 'interrupt' })
+}
+
+export function requestAicliCompactForSession(
+  sessionId: string
+): Promise<AicliControlCommandResult> {
+  const session = sessions.get(sessionId)
+  if (!session) return Promise.resolve({ ok: false, error: 'no session' })
+  if (!session.structuredOutputBridge) {
+    return Promise.resolve({ ok: false, error: 'AICLI control bridge is not available' })
+  }
+  return session.structuredOutputBridge.requestControlCommand({ command: 'compact' })
+}
+
+export function requestAicliClearForSession(
+  sessionId: string
+): Promise<AicliControlCommandResult> {
+  const session = sessions.get(sessionId)
+  if (!session) return Promise.resolve({ ok: false, error: 'no session' })
+  if (!session.structuredOutputBridge) {
+    return Promise.resolve({ ok: false, error: 'AICLI control bridge is not available' })
+  }
+  return session.structuredOutputBridge.requestControlCommand({ command: 'clear' })
+}
+
 /** Stream raw input into PTY in small chunks to avoid large-paste truncation. */
 async function streamInput(proc: PtyCCProcess, text: string): Promise<void> {
   const CHUNK = 64

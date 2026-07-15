@@ -6,6 +6,9 @@ export type RemoteImControlCommandName =
   | 'model'
   | 'goal'
   | 'btw'
+  | 'interrupt'
+  | 'compact'
+  | 'clear'
   | 'help'
 
 export interface RemoteImControlCommandDefinition {
@@ -64,6 +67,21 @@ export const REMOTE_IM_CONTROL_COMMANDS: RemoteImControlCommandDefinition[] = [
     name: 'btw',
     usage: '/btw <任务>',
     description: '启动子 Agent 处理任务，完成后通过 IM 回传'
+  },
+  {
+    name: 'interrupt',
+    usage: '/interrupt',
+    description: '中断当前正在执行的 AICLI 任务'
+  },
+  {
+    name: 'compact',
+    usage: '/compact',
+    description: '压缩当前 AICLI 上下文'
+  },
+  {
+    name: 'clear',
+    usage: '/clear',
+    description: '清空当前 AICLI 上下文并开启新会话'
   },
   {
     name: 'help',

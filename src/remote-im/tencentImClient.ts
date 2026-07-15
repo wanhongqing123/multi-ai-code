@@ -149,6 +149,50 @@ function getStringField(source: Record<string, unknown>, keys: string[]): string
   return null
 }
 
+function getTencentImFriendListPayload(payload: unknown): unknown[] {
+  if (Array.isArray(payload)) return payload
+  if (!payload || typeof payload !== 'object') return []
+  const raw = payload as Record<string, unknown>
+  for (const key of ['data', 'friendList', 'friends', 'list', 'items']) {
+    const nested = getTencentImFriendListPayload(raw[key])
+    if (nested.length > 0) return nested
+  }
+  return []
+}
+
+function getTencentImFriendUserId(friend: unknown): string | null {
+  if (typeof friend === 'string') return friend.trim() || null
+  if (!friend || typeof friend !== 'object') return null
+  const raw = friend as Record<string, unknown>
+  const direct = getStringField(raw, [
+    'userID',
+    'userId',
+    'userIDList',
+    'identifier',
+    'friendUserID',
+    'friendUserId'
+  ])
+  if (direct) return direct
+  for (const key of ['profile', 'friendProfile', 'userProfile', 'friendInfo', 'userInfo']) {
+    const nested = raw[key]
+    if (nested && typeof nested === 'object') {
+      const userId = getTencentImFriendUserId(nested)
+      if (userId) return userId
+    }
+  }
+  return null
+}
+
+export function extractTencentImFriendUserIds(payload: unknown): string[] {
+  return Array.from(
+    new Set(
+      getTencentImFriendListPayload(payload)
+        .map((friend) => getTencentImFriendUserId(friend))
+        .filter((userId): userId is string => Boolean(userId))
+    )
+  )
+}
+
 function getNumberField(source: Record<string, unknown>, keys: string[]): number | null {
   for (const key of keys) {
     const value = source[key]
@@ -449,6 +493,8 @@ function getTencentImApiActionLabel(action: string): string {
       return '登录'
     case 'send':
       return '发送'
+    case 'friend-list':
+      return '好友列表同步'
     default:
       return '操作'
   }
@@ -540,6 +586,7 @@ export type TencentImSendFileOptions = TencentImSendTextOptions
 
 export interface TencentImRuntime {
   disconnect(): Promise<void>
+  listFriendUserIds?(): Promise<string[]>
   sendText(toUserId: string, text: string, options?: TencentImSendTextOptions): Promise<void>
   sendImage?(toUserId: string, file: File, options?: TencentImSendImageOptions): Promise<void>
   sendFile?(toUserId: string, file: File, options?: TencentImSendFileOptions): Promise<void>
@@ -552,6 +599,7 @@ export async function connectTencentImClient(input: {
   onIncomingAudio?: (message: RemoteImIncomingAudioMessage) => void
   onIncomingImage?: (message: RemoteImIncomingImageMessage) => void
   onIncomingFile?: (message: RemoteImIncomingFileMessage) => void
+  onFriendListUpdated?: (userIds: string[]) => void
   onRuntimeLog?: (entry: RemoteImRuntimeLogEntryInput) => void
 }): Promise<TencentImRuntime> {
   const emitRuntimeLog = (
@@ -651,6 +699,8 @@ export async function connectTencentImClient(input: {
   const eventName = TencentCloudChat.EVENT?.MESSAGE_RECEIVED ?? 'messageReceived'
   const sdkReadyEventName = TencentCloudChat.EVENT?.SDK_READY ?? 'sdkStateReady'
   const sdkNotReadyEventName = TencentCloudChat.EVENT?.SDK_NOT_READY ?? 'sdkStateNotReady'
+  const friendListUpdatedEventName =
+    TencentCloudChat.EVENT?.FRIEND_LIST_UPDATED ?? 'onFriendListUpdated'
   const onSdkReady = (): void => {
     sdkReady = true
     emitRuntimeLog('sdk:ready')
@@ -673,10 +723,18 @@ export async function connectTencentImClient(input: {
       }
     })
   }
+  const onFriendListUpdated = (event: unknown): void => {
+    const userIds = extractTencentImFriendUserIds(event)
+    emitRuntimeLog('friend-list:updated', {
+      detail: { count: userIds.length }
+    })
+    if (userIds.length > 0) input.onFriendListUpdated?.(userIds)
+  }
   chat.on?.(eventName, onMessageReceived)
   chat.on?.(sdkReadyEventName, onSdkReady)
   chat.on?.(sdkNotReadyEventName, onSdkNotReady)
   chat.on?.(kickedOutEventName, onKickedOut)
+  chat.on?.(friendListUpdatedEventName, onFriendListUpdated)
   await loginTencentImClient(chat, TencentCloudChat, input.config, emitRuntimeLog)
   sdkReady = true
   loggedInUserId = input.config.desktopUserId
@@ -702,12 +760,38 @@ export async function connectTencentImClient(input: {
       chat.off?.(sdkReadyEventName, onSdkReady)
       chat.off?.(sdkNotReadyEventName, onSdkNotReady)
       chat.off?.(kickedOutEventName, onKickedOut)
+      chat.off?.(friendListUpdatedEventName, onFriendListUpdated)
       sdkReady = false
       loggedInUserId = null
       kickedOut = false
       await chat.logout?.()
       await chat.destroy?.()
       emitRuntimeLog('disconnect:complete')
+    },
+    async listFriendUserIds() {
+      await ensureLoggedIn()
+      if (typeof chat.getFriendList !== 'function') {
+        emitRuntimeLog('friend-list:unsupported')
+        return []
+      }
+      emitRuntimeLog('friend-list:start')
+      try {
+        const result = await chat.getFriendList()
+        const failure = getTencentImApiFailure('friend-list', result)
+        if (failure) throw new Error(failure)
+        const userIds = extractTencentImFriendUserIds(result)
+        emitRuntimeLog('friend-list:resolved', {
+          detail: {
+            count: userIds.length
+          }
+        })
+        return userIds
+      } catch (err) {
+        emitRuntimeLog('friend-list:failed', {
+          detail: { error: err instanceof Error ? err.message : String(err) }
+        })
+        throw err
+      }
     },
     async sendText(toUserId: string, text: string, options: TencentImSendTextOptions = {}) {
       emitRuntimeLog('send:start', {

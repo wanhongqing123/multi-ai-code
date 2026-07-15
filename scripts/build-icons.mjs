@@ -30,30 +30,38 @@ for (const size of [256, 512]) {
   console.log('generated', out)
 }
 
-const iconsetDir = join(buildDir, 'icon.iconset')
-await fs.rm(iconsetDir, { recursive: true, force: true })
-await fs.mkdir(iconsetDir, { recursive: true })
+// .icns is only consumable by (and only buildable on) macOS: `iconutil` ships
+// with macOS and does not exist on Windows/Linux. Guard it so `npm run icons`
+// works cross-platform — the Windows build uses build/icon.png (see the "win"
+// icon in package.json), so skipping .icns here is harmless off macOS.
+if (process.platform === 'darwin') {
+  const iconsetDir = join(buildDir, 'icon.iconset')
+  await fs.rm(iconsetDir, { recursive: true, force: true })
+  await fs.mkdir(iconsetDir, { recursive: true })
 
-const macIconSizes = [
-  ['icon_16x16.png', 16],
-  ['icon_16x16@2x.png', 32],
-  ['icon_32x32.png', 32],
-  ['icon_32x32@2x.png', 64],
-  ['icon_128x128.png', 128],
-  ['icon_128x128@2x.png', 256],
-  ['icon_256x256.png', 256],
-  ['icon_256x256@2x.png', 512],
-  ['icon_512x512.png', 512],
-  ['icon_512x512@2x.png', 1024]
-]
+  const macIconSizes = [
+    ['icon_16x16.png', 16],
+    ['icon_16x16@2x.png', 32],
+    ['icon_32x32.png', 32],
+    ['icon_32x32@2x.png', 64],
+    ['icon_128x128.png', 128],
+    ['icon_128x128@2x.png', 256],
+    ['icon_256x256.png', 256],
+    ['icon_256x256@2x.png', 512],
+    ['icon_512x512.png', 512],
+    ['icon_512x512@2x.png', 1024]
+  ]
 
-for (const [name, size] of macIconSizes) {
-  await sharp(srcSvg, { density: 512 })
-    .resize(size, size)
-    .png({ compressionLevel: 9 })
-    .toFile(join(iconsetDir, name))
+  for (const [name, size] of macIconSizes) {
+    await sharp(srcSvg, { density: 512 })
+      .resize(size, size)
+      .png({ compressionLevel: 9 })
+      .toFile(join(iconsetDir, name))
+  }
+
+  await execFileAsync('iconutil', ['-c', 'icns', iconsetDir, '-o', join(buildDir, 'icon.icns')])
+  await fs.rm(iconsetDir, { recursive: true, force: true })
+  console.log('generated', join(buildDir, 'icon.icns'))
+} else {
+  console.log('skipped icon.icns (macOS-only; iconutil unavailable on this platform)')
 }
-
-await execFileAsync('iconutil', ['-c', 'icns', iconsetDir, '-o', join(buildDir, 'icon.icns')])
-await fs.rm(iconsetDir, { recursive: true, force: true })
-console.log('generated', join(buildDir, 'icon.icns'))

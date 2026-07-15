@@ -80,6 +80,10 @@ private:
     QScrollArea* messageScroll_ = nullptr;
     QWidget* messageContainer_ = nullptr;
     QVBoxLayout* messageLayout_ = nullptr;
+    // One-shot connection used to jump to the latest message once the message
+    // list layout has settled (bubble heights depend on width / word wrap, so
+    // the scrollbar range is only correct after a later layout pass).
+    QMetaObject::Connection messageScrollToBottomConn_;
     QPushButton* addContactButton_ = nullptr;
     QPushButton* voiceButton_ = nullptr;
     QPushButton* imageButton_ = nullptr;

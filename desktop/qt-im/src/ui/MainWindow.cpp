@@ -1227,7 +1227,20 @@ void MainWindow::refreshMessages() {
 
     QTimer::singleShot(0, this, [this] {
         updateMessageBubbleWidths();
-        messageScroll_->verticalScrollBar()->setValue(messageScroll_->verticalScrollBar()->maximum());
+        // 气泡高度依赖刚设好的宽度（自动换行），滚动条范围要到下一轮布局才正确；
+        // 此刻直接读 maximum() 常拿到旧值 0，setValue(0) 就停在了顶部——这正是
+        // “每次打开会话都停在开头”的原因。改为等 rangeChanged（范围随布局算完而
+        // 更新时）再跳到底，一次性触发；先断开上一次挂起的连接，避免快速切换会话
+        // 时处理器堆叠。
+        QScrollBar* bar = messageScroll_->verticalScrollBar();
+        QObject::disconnect(messageScrollToBottomConn_);
+        messageScrollToBottomConn_ = connect(
+            bar, &QAbstractSlider::rangeChanged, this, [this, bar](int, int max) {
+                bar->setValue(max);
+                QObject::disconnect(messageScrollToBottomConn_);
+            });
+        // 内容本就放得下、不会触发 rangeChanged 时的兜底：此时 maximum() 已正确。
+        bar->setValue(bar->maximum());
     });
 }
 

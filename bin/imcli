@@ -1,3 +1,9 @@
 #!/usr/bin/env sh
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+PACKAGED_ELECTRON="$SCRIPT_DIR/../../../MacOS/Multi-AI Code"
+if [ -x "$PACKAGED_ELECTRON" ]; then
+  ELECTRON_RUN_AS_NODE=1 exec "$PACKAGED_ELECTRON" "$SCRIPT_DIR/imcli.mjs" "$@"
+fi
+
 exec node "$SCRIPT_DIR/imcli.mjs" "$@"

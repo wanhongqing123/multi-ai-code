@@ -1,13 +1,14 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { join } from 'node:path'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { RemoteImConfig, RemoteImStatus } from './types.js'
 import { startRemoteImCliServer } from './imcliServer.js'
 
 const execFileAsync = promisify(execFile)
+const imcliWrapperPath = join(process.cwd(), 'bin', 'imcli')
 const imcliPath = join(process.cwd(), 'bin', 'imcli.mjs')
 
 const config: RemoteImConfig = {
@@ -67,6 +68,51 @@ describe('imcli command', () => {
     expect(stdout).toContain('Examples:')
     expect(stdout).toContain('imcli send-image phone-user C:\\temp\\screenshot.png --project project-1')
     expect(stdout).toContain('imcli send-file phone-user ./report.md --project project-1')
+  })
+
+  it('prefers the packaged Electron runtime before falling back to host node', async () => {
+    const rootDir = await createTempDir()
+    const binDir = join(
+      rootDir,
+      'Multi-AI Code.app',
+      'Contents',
+      'Resources',
+      'app.asar.unpacked',
+      'bin'
+    )
+    const macosDir = join(rootDir, 'Multi-AI Code.app', 'Contents', 'MacOS')
+    const wrapperPath = join(binDir, 'imcli')
+    const fakeElectronPath = join(macosDir, 'Multi-AI Code')
+
+    await mkdir(binDir, { recursive: true })
+    await mkdir(macosDir, { recursive: true })
+    await copyFile(imcliWrapperPath, wrapperPath)
+    await chmod(wrapperPath, 0o755)
+    await writeFile(join(binDir, 'imcli.mjs'), 'throw new Error("fake electron should receive this path")\n')
+    await writeFile(
+      fakeElectronPath,
+      [
+        '#!/usr/bin/env sh',
+        'echo "run_as_node=$ELECTRON_RUN_AS_NODE"',
+        'echo "script=$1"',
+        'shift',
+        'echo "args=$*"'
+      ].join('\n')
+    )
+    await chmod(fakeElectronPath, 0o755)
+
+    const { stdout } = await execFileAsync(wrapperPath, ['help'])
+    const wrapper = await readFile(imcliWrapperPath, 'utf8')
+    const packagedRuntimeIndex = wrapper.indexOf('ELECTRON_RUN_AS_NODE=1')
+    const hostNodeFallbackIndex = wrapper.lastIndexOf('exec node')
+
+    expect(wrapper).toContain('../../../MacOS/Multi-AI Code')
+    expect(packagedRuntimeIndex).toBeGreaterThan(-1)
+    expect(hostNodeFallbackIndex).toBeGreaterThan(-1)
+    expect(packagedRuntimeIndex).toBeLessThan(hostNodeFallbackIndex)
+    expect(stdout).toContain('run_as_node=1')
+    expect(stdout).toContain(`script=${join(binDir, 'imcli.mjs')}`)
+    expect(stdout).toContain('args=help')
   })
 
   it('sends a message through the local app bridge using project environment', async () => {

@@ -84,7 +84,7 @@
     ],
     "afterPack": "scripts/electron-builder-after-pack.cjs",
     "mac": {
-      "icon": "build/icon.png",
+      "icon": "build/icon.icns",
       "target": [
         {
           "target": "dmg",
@@ -100,6 +100,7 @@
     },
     "dmg": {
       "title": "Multi-AI Code ${version}",
+      "icon": "build/icon.icns",
       "artifactName": "MultiAICode-${version}-${arch}.dmg"
     },
     "win": {

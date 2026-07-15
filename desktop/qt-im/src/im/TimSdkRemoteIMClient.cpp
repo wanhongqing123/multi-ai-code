@@ -20,6 +20,7 @@ namespace {
 constexpr int kConversationTypeC2C = 1;
 constexpr int kElemText = 0;
 constexpr int kElemImage = 1;
+constexpr int kElemFile = 4;
 constexpr int kImageLevelOriginal = 0;
 
 QString appDataDir(const QString& child) {
@@ -34,6 +35,28 @@ QString cacheImagePathForUrl(const QString& url) {
     const QByteArray hash = QCryptographicHash::hash(url.toUtf8(), QCryptographicHash::Sha1).toHex();
     const QString suffix = QFileInfo(QUrl(url).path()).suffix().isEmpty() ? QStringLiteral("jpg") : QFileInfo(QUrl(url).path()).suffix();
     return QDir(appDataDir(QStringLiteral("RemoteIMImages"))).filePath(QString::fromUtf8(hash) + "." + suffix);
+}
+
+QString cacheFilePathForUrl(const QString& url, const QString& fileName) {
+    const QByteArray hash = QCryptographicHash::hash(url.toUtf8(), QCryptographicHash::Sha1).toHex();
+    QString suffix = QFileInfo(fileName).suffix();
+    if (suffix.isEmpty()) suffix = QFileInfo(QUrl(url).path()).suffix();
+    if (suffix.isEmpty()) suffix = QStringLiteral("md");
+    return QDir(appDataDir(QStringLiteral("RemoteIMFiles"))).filePath(QString::fromUtf8(hash) + "." + suffix);
+}
+
+QString mimeTypeForFileName(const QString& fileName) {
+    const QString suffix = QFileInfo(fileName).suffix().toLower();
+    if (suffix == QStringLiteral("html") || suffix == QStringLiteral("htm")) return QStringLiteral("text/html");
+    return QStringLiteral("text/markdown");
+}
+
+bool isSupportedPreviewFileName(const QString& fileName) {
+    const QString suffix = QFileInfo(fileName).suffix().toLower();
+    return suffix == QStringLiteral("md")
+        || suffix == QStringLiteral("markdown")
+        || suffix == QStringLiteral("html")
+        || suffix == QStringLiteral("htm");
 }
 
 QString firstNonEmpty(const QJsonObject& object, std::initializer_list<QString> keys) {
@@ -299,6 +322,35 @@ void TimSdkRemoteIMClient::handleHistoryMessagesPayload(const QString& jsonPaylo
                     static_cast<qint64>(elem.value(QStringLiteral("image_elem_orig_pic_size")).toDouble(0))
                 };
                 messages.append(message);
+                continue;
+            }
+            if (elemType == kElemFile) {
+                const QString fileName = firstNonEmpty(elem, {
+                    QStringLiteral("file_elem_file_name"),
+                    QStringLiteral("file_elem_file_path")
+                });
+                if (!isSupportedPreviewFileName(fileName)) continue;
+                const QString localPath = elem.value(QStringLiteral("file_elem_file_path")).toString().trimmed();
+                const qint64 sizeBytes = static_cast<qint64>(elem.value(QStringLiteral("file_elem_file_size")).toDouble(0));
+                const QString url = elem.value(QStringLiteral("file_elem_url")).toString().trimmed();
+                if (localPath.isEmpty() && !url.isEmpty()) {
+                    const QString cachedPath = cacheFilePathForUrl(url, fileName);
+                    if (QFile::exists(cachedPath)) {
+                        message.text = QStringLiteral("[文件消息] ") + QFileInfo(fileName).fileName();
+                        message.hasFile = true;
+                        message.file = RemoteIMFileAttachment{cachedPath, QFileInfo(fileName).fileName(), mimeTypeForFileName(fileName), sizeBytes};
+                        messages.append(message);
+                    } else {
+                        handleIncomingFileUrl(peerId, url, QFileInfo(fileName).fileName(), sizeBytes);
+                    }
+                    continue;
+                }
+                if (!localPath.isEmpty()) {
+                    message.text = QStringLiteral("[文件消息] ") + QFileInfo(fileName).fileName();
+                    message.hasFile = true;
+                    message.file = RemoteIMFileAttachment{localPath, QFileInfo(fileName).fileName(), mimeTypeForFileName(fileName), sizeBytes};
+                    messages.append(message);
+                }
             }
         }
     }
@@ -349,6 +401,23 @@ void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
                 QStringLiteral("image_elem_thumb_url")
             });
             if (!url.isEmpty()) handleIncomingImageUrl(fromUserId, url, width, height, sizeBytes);
+            continue;
+        }
+        if (elemType == kElemFile) {
+            const QString fileName = firstNonEmpty(elem, {
+                QStringLiteral("file_elem_file_name"),
+                QStringLiteral("file_elem_file_path")
+            });
+            if (!isSupportedPreviewFileName(fileName)) continue;
+            const QString displayName = QFileInfo(fileName).fileName();
+            const QString localPath = elem.value(QStringLiteral("file_elem_file_path")).toString().trimmed();
+            const qint64 sizeBytes = static_cast<qint64>(elem.value(QStringLiteral("file_elem_file_size")).toDouble(0));
+            if (!localPath.isEmpty()) {
+                emit incomingFile(fromUserId, localPath, displayName, mimeTypeForFileName(displayName), sizeBytes);
+                continue;
+            }
+            const QString url = elem.value(QStringLiteral("file_elem_url")).toString().trimmed();
+            if (!url.isEmpty()) handleIncomingFileUrl(fromUserId, url, displayName, sizeBytes);
         }
     }
 }
@@ -371,6 +440,27 @@ void TimSdkRemoteIMClient::handleIncomingImageUrl(const QString& fromUserId, con
         file.write(data);
         file.close();
         emit incomingImage(fromUserId, targetPath, width, height, sizeBytes);
+    });
+}
+
+void TimSdkRemoteIMClient::handleIncomingFileUrl(const QString& fromUserId, const QString& url, const QString& fileName, qint64 sizeBytes) {
+    const QString targetPath = cacheFilePathForUrl(url, fileName);
+    if (QFile::exists(targetPath)) {
+        emit incomingFile(fromUserId, targetPath, fileName, mimeTypeForFileName(fileName), sizeBytes);
+        return;
+    }
+
+    QNetworkReply* reply = network_.get(QNetworkRequest(QUrl(url)));
+    connect(reply, &QNetworkReply::finished, this, [this, reply, fromUserId, targetPath, fileName, sizeBytes] {
+        const QByteArray data = reply->readAll();
+        const bool ok = reply->error() == QNetworkReply::NoError && !data.isEmpty();
+        reply->deleteLater();
+        if (!ok) return;
+        QFile file(targetPath);
+        if (!file.open(QIODevice::WriteOnly)) return;
+        file.write(data);
+        file.close();
+        emit incomingFile(fromUserId, targetPath, fileName, mimeTypeForFileName(fileName), sizeBytes);
     });
 }
 

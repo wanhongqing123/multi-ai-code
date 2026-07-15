@@ -17,17 +17,75 @@ Usage:
   imcli last [--peer <user>] [--project <projectId>]
   imcli send <user> <text> [--project <projectId>]
   imcli send-image <user> <imagePath> [--project <projectId>]
+  imcli send-file <user> <filePath> [--project <projectId>]
   imcli forward <user> --message-id <id> [--project <projectId>]
   imcli broadcast <user1,user2> <text> [--project <projectId>]
+
+Command details:
+  imcli whoami
+    Print the desktop IM account, SDKAppID, and connection state.
+    Use this first when you are unsure whether Remote IM is logged in.
+    Output fields are UserID, SDKAppID, and Status.
+
+  imcli contacts
+    List configured peer user IDs that the current desktop account can message.
+    The output is one user ID per line so AICLI can parse it safely.
+    Use one of these user IDs as the <user> argument for send, send-image, send-file, or forward.
+
+  imcli history
+    Print recent IM messages. Use --peer <user> to narrow to one conversation.
+    Message lines include the local store id. Use that id with imcli forward.
+    Default limit is 20. Use --limit <n> for a larger or smaller window.
+    Output format: #<id> <role>/<direction> <from> -> <to>: <content>
+    Newlines inside message content are escaped as \\n to keep one message per line.
+
+  imcli last
+    Print only the last AICLI reply from history when available.
+    This is useful when a task wants to inspect the previous IM answer.
+    Use --peer <user> to avoid reading the wrong conversation.
+    If no AICLI reply exists, it falls back to the last message in the selected history window.
+
+  imcli send <user> <text>
+    Send a plain text IM message to one user.
+    Use quotes around multi-line or spaced text in shell commands.
+    Use this for short text answers. For long Markdown/HTML reports, prefer send-file.
+    The command repairs common GBK/UTF-8 mojibake before sending.
+
+  imcli send-image <user> <imagePath>
+    Send a local image file to one user.
+    Use this for screenshots and visual results.
+    The file path may contain spaces when quoted by the shell.
+    Supported extensions: png, jpg, jpeg, gif, webp.
+
+  imcli send-file <user> <filePath>
+    Send a local Markdown or HTML document to one user.
+    Use this when the answer is better as a report, checklist, design note, or rendered preview.
+    The receiver can tap the file card in iOS, Android, or Desktop IM to preview it.
+    Supported extensions: md, markdown, html, htm.
+
+  imcli forward <user> --message-id <id>
+    Forward the stored text content of one local history message to another user.
+    It does not re-send image or file attachments.
+    First run imcli history to find the numeric #<id>.
+    This is for forwarding text already stored in the local Remote IM history.
+
+  imcli broadcast <user1,user2> <text>
+    Send the same plain text message to multiple comma-separated users.
+    This is text-only. Use send-image or send-file separately for attachments.
+    The command prints one sent line per target.
 
 Requirements:
   Multi-AI Code desktop must be running with Remote IM connected.
   Provide a project with --project <projectId> or MULTI_AI_CODE_PROJECT_ID.
   AICLI sessions launched by Multi-AI Code usually already have the project env set.
 
-Image notes:
+File notes:
+  Use send-image for png/jpg/jpeg/gif/webp image files.
   send-image accepts local png, jpg, jpeg, gif, and webp files up to 20MB.
-  forward sends the source message text only; it does not re-send image files.
+  Markdown and HTML files should be sent with send-file, not send.
+  send-file accepts local md, markdown, html, and htm files up to 5MB.
+  forward sends the source message text only; it does not re-send image or file attachments.
+  If a file is too large or the extension is unsupported, imcli fails before sending.
 
 Examples:
   imcli whoami --project project-1
@@ -35,6 +93,7 @@ Examples:
   imcli history --peer phone-user --limit 20 --project project-1
   imcli send phone-user "build passed" --project project-1
   imcli send-image phone-user C:\\temp\\screenshot.png --project project-1
+  imcli send-file phone-user ./report.md --project project-1
   imcli broadcast phone-user,desktop-b "ready" --project project-1
 
 Notes:
@@ -233,6 +292,15 @@ async function main(argv) {
     if (!toUserId || !localPath) throw new Error('usage: imcli send-image <user> <imagePath>')
     const value = await requestJson('POST', '/send-image', { projectId, toUserId, localPath })
     console.log(`sent image to ${value.toUserId}`)
+    return
+  }
+
+  if (command === 'send-file') {
+    const [toUserId, ...pathParts] = args
+    const localPath = pathParts.join(' ').trim()
+    if (!toUserId || !localPath) throw new Error('usage: imcli send-file <user> <filePath>')
+    const value = await requestJson('POST', '/send-file', { projectId, toUserId, localPath })
+    console.log(`sent file to ${value.toUserId}`)
     return
   }
 

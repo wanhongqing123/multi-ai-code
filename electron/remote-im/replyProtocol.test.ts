@@ -33,6 +33,7 @@ describe('remote IM reply protocol', () => {
     expect(prompt).toContain('如果需要查询或操作 IM，请先运行 imcli help')
     expect(prompt).toContain('如需把截图或本地图片发回 IM')
     expect(prompt).toContain('imcli send-image <user> <imagePath>')
+    expect(prompt).toContain('imcli send-file <user> <filePath>')
     expect(prompt).not.toContain('Remote IM reply protocol:')
     expect(prompt).not.toContain(`${REMOTE_IM_REPLY_OPEN_TAG} and ${REMOTE_IM_REPLY_CLOSE_TAG}`)
     expect(prompt.split('\n')).toHaveLength(8)

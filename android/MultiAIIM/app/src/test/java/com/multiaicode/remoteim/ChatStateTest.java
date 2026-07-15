@@ -72,6 +72,28 @@ public class ChatStateTest {
     }
 
     @Test
+    public void receivesMarkdownFileWithAttachment() {
+        ChatState state = new ChatState("android-user");
+
+        RemoteIMMessage message = state.receiveFile(
+            "/tmp/remote-im/report.md",
+            "mac-office",
+            "report.md",
+            "text/markdown",
+            4096
+        );
+
+        assertEquals("[文件消息] report.md", message.text());
+        assertEquals(RemoteIMMessage.Direction.INCOMING, message.direction());
+        assertEquals(RemoteIMMessage.Status.RECEIVED, message.status());
+        assertNotNull(message.fileAttachment());
+        assertEquals("/tmp/remote-im/report.md", message.fileAttachment().localPath());
+        assertEquals("report.md", message.fileAttachment().fileName());
+        assertEquals("text/markdown", message.fileAttachment().mimeType());
+        assertEquals(4096, message.fileAttachment().sizeBytes());
+    }
+
+    @Test
     public void messageStatusCanBeUpdated() {
         ChatState state = new ChatState("android-user");
         state.upsertContact(new RemoteIMContact("mac-office", "Mac Office"));

@@ -12,7 +12,7 @@ interface FakeRow {
   role: 'remote-user' | 'system' | 'aicli'
   direction: 'incoming' | 'outgoing' | 'internal'
   content: string
-  kind?: 'text' | 'image'
+  kind?: 'text' | 'image' | 'file'
   attachment_json?: string | null
   status: 'received' | 'rejected' | 'sent-to-aicli' | 'streaming' | 'sent-to-im' | 'failed'
   error: string | null
@@ -204,6 +204,35 @@ describe('remote IM message store', () => {
 
     expect(store.listById(message.id)).toMatchObject({
       kind: 'image',
+      attachment
+    })
+  })
+
+  it('persists markdown/html file message attachments', () => {
+    const store = createRemoteImMessageStore(createFakeDatabase())
+    const attachment = {
+      type: 'file',
+      localPath: '/tmp/remote-im/report.md',
+      remoteUrl: 'https://example.com/report.md',
+      sizeBytes: 2048,
+      fileName: 'report.md',
+      mimeType: 'text/markdown',
+      sdkFileId: 'file-sdk-id'
+    }
+    const message = store.create({
+      projectId: 'project-1',
+      provider: 'tencent-im',
+      role: 'remote-user',
+      direction: 'incoming',
+      content: '[文件消息] report.md',
+      status: 'received',
+      createdAt: 100,
+      kind: 'file',
+      attachment
+    } as any)
+
+    expect(store.listById(message.id)).toMatchObject({
+      kind: 'file',
       attachment
     })
   })

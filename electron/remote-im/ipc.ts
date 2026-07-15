@@ -1,6 +1,6 @@
 import { BrowserWindow, ipcMain } from 'electron'
 import { promises as fs } from 'fs'
-import { join } from 'path'
+import { basename, join } from 'path'
 import {
   addSessionDataListener,
   addSessionExitListener,
@@ -43,6 +43,7 @@ import {
 } from './outputForwarding.js'
 import { getRemoteImAicliOutputSourceKind } from './aicliSourceKind.js'
 import {
+  createPeerOutgoingFileMessageInput,
   createPeerOutgoingImageMessageInput,
   createPeerOutgoingMessageInput,
   resolvePeerUserId
@@ -64,12 +65,20 @@ import {
   loadRemoteImLocalImageForSend,
   type RemoteImLocalImagePayload
 } from './localImageFile.js'
+import {
+  loadRemoteImLocalFileForSend,
+  mimeTypeFromRemoteImFilePath,
+  type RemoteImLocalFilePayload
+} from './localFile.js'
+import { cacheRemoteImFile, fileAttachmentFromIncoming } from './fileCache.js'
 import type {
   RemoteImAccountConfig,
   RemoteImConfig,
   RemoteImIncomingAudioMessage,
+  RemoteImIncomingFileMessage,
   RemoteImIncomingImageMessage,
   RemoteImIncomingTextMessage,
+  RemoteImFileAttachment,
   RemoteImImageAttachment,
   RemoteImRuntimeLogEntryInput,
   RemoteImLoginState,
@@ -80,6 +89,7 @@ const REMOTE_IM_META_KEY = 'remote_im_config'
 const DEFAULT_REMOTE_IM_PROFILE_ID = 'default'
 const OUTGOING_DELIVERY_ACK_TIMEOUT_MS = 17_000
 const MAX_REMOTE_IM_IMAGE_BYTES = 20 * 1024 * 1024
+const MAX_REMOTE_IM_FILE_BYTES = 5 * 1024 * 1024
 
 const statuses = new Map<string, RemoteImStatus>()
 const outputSessions = new Map<string, RemoteImOutputSessionState>()
@@ -138,6 +148,22 @@ function broadcastOutgoingImagePayload(
     fileName: image.fileName,
     mimeType: image.mimeType,
     fileBytes: image.fileBytes
+  })
+}
+
+function broadcastOutgoingFilePayload(
+  projectId: string,
+  toUserId: string,
+  file: RemoteImLocalFilePayload,
+  messageId?: number
+): void {
+  broadcast('remote-im:outgoing-file', {
+    projectId,
+    toUserId,
+    messageId,
+    fileName: file.fileName,
+    mimeType: file.mimeType,
+    fileBytes: file.fileBytes
   })
 }
 
@@ -474,6 +500,78 @@ async function sendRemoteImPeerLocalImage(
   return { ok: true, toUserId: peerUserId }
 }
 
+async function sendRemoteImPeerLocalFile(
+  projectId: string,
+  localPath: string,
+  toUserId?: string | null
+): Promise<{ ok: boolean; error?: string; toUserId?: string }> {
+  const config = await getRemoteImConfig(projectId)
+  const cleanPath = localPath.trim()
+  if (!cleanPath) return { ok: false, error: 'file path is required' }
+  const peerUserId = resolvePeerUserId(config, toUserId)
+  if (!peerUserId) {
+    return { ok: false, error: '未配置远程 IM 联系人账号' }
+  }
+  const connectionError = getRemoteImSendConnectionError(await getRemoteImStatus(projectId))
+  if (connectionError) {
+    return { ok: false, error: connectionError }
+  }
+
+  let payload: RemoteImLocalFilePayload
+  try {
+    payload = await loadRemoteImLocalFileForSend(cleanPath, {
+      maxBytes: MAX_REMOTE_IM_FILE_BYTES
+    })
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+
+  const message = createRemoteImMessage(
+    createPeerOutgoingFileMessageInput({
+      projectId,
+      config,
+      toUserId: peerUserId,
+      attachment: payload.attachment,
+      now: Date.now()
+    })
+  )
+  broadcastOutgoingFilePayload(projectId, peerUserId, payload, message.id)
+  scheduleOutgoingDeliveryAckTimeout(projectId, message.id)
+  broadcastMessagesChanged(projectId)
+  return { ok: true, toUserId: peerUserId }
+}
+
+async function readRemoteImFilePreview(input: {
+  localPath?: string | null
+  mimeType?: string | null
+}): Promise<
+  | { ok: true; value: { content: string; mimeType: string; fileName: string } }
+  | { ok: false; error: string }
+> {
+  const localPath = input.localPath?.trim()
+  if (!localPath) return { ok: false, error: '文件暂不可预览' }
+  const mimeType = input.mimeType?.trim() || mimeTypeFromRemoteImFilePath(localPath)
+  if (mimeType !== 'text/markdown' && mimeType !== 'text/html') {
+    return { ok: false, error: 'unsupported file type' }
+  }
+  try {
+    const stat = await fs.stat(localPath)
+    if (!stat.isFile()) return { ok: false, error: 'file path is not a file' }
+    if (stat.size > MAX_REMOTE_IM_FILE_BYTES) return { ok: false, error: 'file is too large' }
+    const content = await fs.readFile(localPath, 'utf8')
+    return {
+      ok: true,
+      value: {
+        content,
+        mimeType,
+        fileName: basename(localPath)
+      }
+    }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
 function readRemoteImTranscriptReply(source: NonNullable<RemoteImOutputSessionState['transcript']>): string | null {
   if (source.kind === 'claude') {
     return readLatestClaudeRemoteImReply({
@@ -597,7 +695,8 @@ function ensureRemoteImCliServer(): void {
     getStatus: getRemoteImStatus,
     listMessages: listRemoteImMessages,
     sendPeerMessage: sendRemoteImPeerMessage,
-    sendPeerImage: sendRemoteImPeerLocalImage
+    sendPeerImage: sendRemoteImPeerLocalImage,
+    sendPeerFile: sendRemoteImPeerLocalFile
   }).catch((err) => {
     remoteImCliServerStarted = false
     console.error(
@@ -971,6 +1070,63 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
   )
 
   ipcMain.handle(
+    'remote-im:deliver-incoming-file',
+    async (_event, message: RemoteImIncomingFileMessage) => {
+      const config = await getRemoteImConfig(message.projectId)
+      const session = getActiveSessionForProject(message.projectId)
+      const router = createRemoteImRouter({
+        getConfig: () => config,
+        resolveSession: () => session,
+        sendUser: sendUserMessageToSession,
+        sendImText,
+        transcribeAudio: transcribeRemoteImAudioWithLocalWhisper,
+        cacheFile: async (incoming) => {
+          const fallbackAttachment = fileAttachmentFromIncoming(incoming)
+          try {
+            const cached = await cacheRemoteImFile({
+              rootDir: rootDir(),
+              projectId: incoming.projectId,
+              remoteUrl: incoming.fileUrl,
+              remoteMessageId: incoming.remoteMessageId,
+              fileName: incoming.fileName,
+              mimeType: incoming.mimeType,
+              maxBytes: MAX_REMOTE_IM_FILE_BYTES
+            })
+            const attachment: RemoteImFileAttachment = {
+              ...fallbackAttachment,
+              localPath: cached.localPath,
+              fileName: cached.fileName,
+              mimeType: cached.mimeType,
+              sizeBytes: cached.sizeBytes
+            }
+            return { ok: true as const, attachment }
+          } catch (err) {
+            return {
+              ok: false as const,
+              error: err instanceof Error ? err.message : String(err),
+              attachment: fallbackAttachment
+            }
+          }
+        },
+        store: {
+          create: (input) => createRemoteImMessage(input),
+          updateStatus: (id, patch) =>
+            updateRemoteImMessageStatus(id, {
+              status: patch.status ?? 'received',
+              sessionId: patch.sessionId,
+              error: patch.error,
+              sentToAicliAt: patch.sentToAicliAt,
+              sentToImAt: patch.sentToImAt
+            })
+        }
+      })
+      const result = await router.handleIncomingFile(message)
+      broadcastMessagesChanged(message.projectId)
+      return result
+    }
+  )
+
+  ipcMain.handle(
     'remote-im:send-local-message',
     async (_event, { projectId, text }: { projectId: string; text: string }) => {
       const session = getActiveSessionForProject(projectId)
@@ -1019,6 +1175,33 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
       }
     ) => {
       return await sendRemoteImPeerImage(input)
+    }
+  )
+
+  ipcMain.handle(
+    'remote-im:send-peer-file',
+    async (
+      _event,
+      input: {
+        projectId: string
+        localPath: string
+        toUserId?: string | null
+      }
+    ) => {
+      return await sendRemoteImPeerLocalFile(input.projectId, input.localPath, input.toUserId)
+    }
+  )
+
+  ipcMain.handle(
+    'remote-im:read-file-preview',
+    async (
+      _event,
+      input: {
+        localPath?: string | null
+        mimeType?: string | null
+      }
+    ) => {
+      return await readRemoteImFilePreview(input)
     }
   )
 }

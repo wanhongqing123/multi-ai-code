@@ -1,8 +1,10 @@
 import type {
   RemoteImConfig,
   RemoteImIncomingAudioMessage,
+  RemoteImIncomingFileMessage,
   RemoteImIncomingImageMessage,
   RemoteImIncomingTextMessage,
+  RemoteImFileAttachment,
   RemoteImImageAttachment,
   RemoteImMessage
 } from './types.js'
@@ -54,6 +56,12 @@ export interface RemoteImRouterDeps {
   ) => Promise<
     | { ok: true; attachment: RemoteImImageAttachment }
     | { ok: false; error: string; attachment?: RemoteImImageAttachment | null }
+  >
+  cacheFile?: (
+    message: RemoteImIncomingFileMessage
+  ) => Promise<
+    | { ok: true; attachment: RemoteImFileAttachment }
+    | { ok: false; error: string; attachment?: RemoteImFileAttachment | null }
   >
   createReplyId?: () => string
   handleControlCommand?: (input: {
@@ -264,6 +272,56 @@ function createIncomingImageRecord(
     direction: 'incoming',
     content: formatRemoteImImagePlaceholder(message, attachment),
     kind: 'image',
+    attachment,
+    status,
+    error,
+    createdAt: message.createdAt ?? now,
+    sentToAicliAt: null,
+    sentToImAt: null
+  }
+}
+
+function formatRemoteImFilePlaceholder(
+  message: RemoteImIncomingFileMessage,
+  attachment?: RemoteImFileAttachment | null
+): string {
+  const fileName = normalizeRemoteImString(attachment?.fileName) ?? normalizeRemoteImString(message.fileName)
+  return fileName ? `[文件消息] ${fileName}` : '[文件消息]'
+}
+
+function createFileAttachmentFromIncoming(
+  message: RemoteImIncomingFileMessage,
+  patch: Partial<RemoteImFileAttachment> = {}
+): RemoteImFileAttachment {
+  return {
+    type: 'file',
+    localPath: patch.localPath ?? null,
+    remoteUrl: patch.remoteUrl ?? normalizeRemoteImString(message.fileUrl),
+    sizeBytes: patch.sizeBytes ?? normalizeRemoteImNumber(message.sizeBytes),
+    fileName: patch.fileName ?? normalizeRemoteImString(message.fileName),
+    mimeType: patch.mimeType ?? normalizeRemoteImString(message.mimeType),
+    sdkFileId: patch.sdkFileId ?? normalizeRemoteImString(message.uuid)
+  }
+}
+
+function createIncomingFileRecord(
+  message: RemoteImIncomingFileMessage,
+  attachment: RemoteImFileAttachment | null,
+  status: RemoteImMessage['status'],
+  error: string | null,
+  now: number
+): Omit<RemoteImMessage, 'id'> {
+  return {
+    projectId: message.projectId,
+    sessionId: null,
+    provider: 'tencent-im',
+    remoteMessageId: message.remoteMessageId ?? null,
+    fromUserId: message.fromUserId,
+    toUserId: message.toUserId ?? null,
+    role: 'remote-user',
+    direction: 'incoming',
+    content: formatRemoteImFilePlaceholder(message, attachment),
+    kind: 'file',
     attachment,
     status,
     error,
@@ -605,9 +663,53 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
     return { ok: true, aicliSessionId: session.sessionId, replyId }
   }
 
+  async function handleIncomingFile(
+    message: RemoteImIncomingFileMessage
+  ): Promise<RemoteImRouteResult> {
+    const config = deps.getConfig(message.projectId)
+    const now = deps.now?.() ?? Date.now()
+    const fromUserId = message.fromUserId.trim()
+    const peerRelation = getRemoteImPeerRelation(config, fromUserId)
+    const fallbackAttachment = createFileAttachmentFromIncoming(message)
+
+    if (!peerRelation) {
+      deps.store.create(
+        createIncomingFileRecord(message, fallbackAttachment, 'rejected', 'sender not allowed', now)
+      )
+      return { ok: false, error: `sender ${fromUserId} is not allowed` }
+    }
+
+    if (!deps.cacheFile) {
+      const error = '文件下载模块未初始化'
+      deps.store.create(createIncomingFileRecord(message, fallbackAttachment, 'failed', error, now))
+      await sendSystemText(deps, message.projectId, fromUserId, `文件下载失败：${error}`)
+      return { ok: false, error }
+    }
+
+    const cached = await deps.cacheFile(message)
+    if (!cached.ok) {
+      const error = cached.error || '文件下载失败'
+      deps.store.create(
+        createIncomingFileRecord(
+          message,
+          cached.attachment ?? fallbackAttachment,
+          'failed',
+          error,
+          now
+        )
+      )
+      await sendSystemText(deps, message.projectId, fromUserId, `文件下载失败：${error}`)
+      return { ok: false, error }
+    }
+
+    deps.store.create(createIncomingFileRecord(message, cached.attachment, 'received', null, now))
+    return { ok: true }
+  }
+
   return {
     handleIncomingText,
     handleIncomingAudio,
-    handleIncomingImage
+    handleIncomingImage,
+    handleIncomingFile
   }
 }

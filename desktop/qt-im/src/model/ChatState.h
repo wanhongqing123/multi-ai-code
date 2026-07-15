@@ -21,9 +21,11 @@ public:
     RemoteIMMessage queueOutgoingText(const QString& text);
     RemoteIMMessage queueOutgoingImage(const QString& localPath, int width, int height, qint64 sizeBytes);
     RemoteIMMessage queueOutgoingVoice(const QString& localPath, int durationSeconds);
+    RemoteIMMessage queueOutgoingFile(const QString& localPath, const QString& fileName, const QString& mimeType, qint64 sizeBytes);
     RemoteIMMessage receiveText(const QString& fromUserId, const QString& text);
     RemoteIMMessage receiveImage(const QString& fromUserId, const QString& localPath, int width, int height, qint64 sizeBytes);
     RemoteIMMessage receiveVoice(const QString& fromUserId, const QString& localPath, int durationSeconds);
+    RemoteIMMessage receiveFile(const QString& fromUserId, const QString& localPath, const QString& fileName, const QString& mimeType, qint64 sizeBytes);
     QList<RemoteIMMessage> messagesWith(const QString& peerId) const;
     bool updateMessageStatus(const QString& messageId, RemoteIMMessageStatus status);
     void appendMessageForRestore(const RemoteIMMessage& message);

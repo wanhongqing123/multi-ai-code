@@ -8,6 +8,7 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
     var onIncomingText: ((IncomingRemoteIMText) -> Void)?
     var onIncomingVoice: ((IncomingRemoteIMVoice) -> Void)?
     var onIncomingImage: ((IncomingRemoteIMImage) -> Void)?
+    var onIncomingFile: ((IncomingRemoteIMFile) -> Void)?
     var onPresenceStatusChanged: (([String: RemoteIMPresenceStatus]) -> Void)?
     private var initializedSDKAppID: Int?
     private var hasRegisteredIMSDKListener = false
@@ -203,6 +204,11 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
 
         if let imageElem = msg.imageElem {
             handleIncomingImage(msg: msg, imageElem: imageElem, fromUserID: fromUserID)
+            return
+        }
+
+        if let fileElem = msg.fileElem {
+            handleIncomingFile(msg: msg, fileElem: fileElem, fromUserID: fromUserID)
         }
     }
 
@@ -227,6 +233,38 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
                         remoteID: remoteID
                     )
                     self?.onIncomingVoice?(event)
+                }
+            },
+            fail: { _, _ in }
+        )
+    }
+
+    private nonisolated func handleIncomingFile(
+        msg: V2TIMMessage,
+        fileElem: V2TIMFileElem,
+        fromUserID: String
+    ) {
+        let fileName = Self.cleanFileName(fileElem.filename)
+        guard Self.isSupportedPreviewFileName(fileName) else { return }
+        let remoteID = fileElem.uuid ?? msg.msgID
+        let targetURL = Self.fileCacheURL(remoteID: remoteID, messageID: msg.msgID, fileName: fileName)
+        let mimeType = Self.mimeType(for: fileName)
+        let sizeBytes = fileElem.fileSize > 0 ? Int(fileElem.fileSize) : nil
+
+        fileElem.downloadFile(
+            path: targetURL.path,
+            progress: nil,
+            succ: {
+                Task { @MainActor [weak self, fromUserID, targetURL, fileName, mimeType, remoteID, sizeBytes] in
+                    let event = IncomingRemoteIMFile(
+                        fromUserID: fromUserID,
+                        fileURL: targetURL,
+                        fileName: fileName,
+                        mimeType: mimeType,
+                        remoteID: remoteID,
+                        sizeBytes: sizeBytes
+                    )
+                    self?.onIncomingFile?(event)
                 }
             },
             fail: { _, _ in }
@@ -305,6 +343,47 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
             .appendingPathExtension(pathExtension?.isEmpty == false ? pathExtension! : "jpg")
     }
 
+    private nonisolated static func fileCacheURL(
+        remoteID: String?,
+        messageID: String?,
+        fileName: String
+    ) -> URL {
+        let rawName = remoteID ?? messageID ?? UUID().uuidString
+        let safeName = rawName
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: ":", with: "_")
+        let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("RemoteIMFile", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let fileExtension = URL(fileURLWithPath: fileName).pathExtension
+        return directory
+            .appendingPathComponent(safeName)
+            .appendingPathExtension(fileExtension.isEmpty ? "md" : fileExtension)
+    }
+
+    private nonisolated static func cleanFileName(_ value: String?) -> String {
+        let cleanValue = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return cleanValue.isEmpty ? "remote-im-file.md" : cleanValue
+    }
+
+    private nonisolated static func isSupportedPreviewFileName(_ fileName: String) -> Bool {
+        switch URL(fileURLWithPath: fileName).pathExtension.lowercased() {
+        case "md", "markdown", "html", "htm":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private nonisolated static func mimeType(for fileName: String) -> String {
+        switch URL(fileURLWithPath: fileName).pathExtension.lowercased() {
+        case "html", "htm":
+            return "text/html"
+        default:
+            return "text/markdown"
+        }
+    }
+
     @objc nonisolated func onUserStatusChanged(userStatusList: [V2TIMUserStatus]!) {
         guard let userStatusList else { return }
         let updates = Self.statusMap(from: userStatusList)
@@ -352,6 +431,7 @@ final class TencentIMClient: RemoteIMClient {
     var onIncomingText: ((IncomingRemoteIMText) -> Void)?
     var onIncomingVoice: ((IncomingRemoteIMVoice) -> Void)?
     var onIncomingImage: ((IncomingRemoteIMImage) -> Void)?
+    var onIncomingFile: ((IncomingRemoteIMFile) -> Void)?
     var onPresenceStatusChanged: (([String: RemoteIMPresenceStatus]) -> Void)?
 
     func connect(sdkAppID: Int, userID: String, userSig: String) async throws {

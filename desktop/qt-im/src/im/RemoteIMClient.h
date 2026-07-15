@@ -29,5 +29,6 @@ signals:
     void incomingText(const QString& fromUserId, const QString& text);
     void incomingImage(const QString& fromUserId, const QString& localPath, int width, int height, qint64 sizeBytes);
     void incomingVoice(const QString& fromUserId, const QString& localPath, int durationSeconds);
+    void incomingFile(const QString& fromUserId, const QString& localPath, const QString& fileName, const QString& mimeType, qint64 sizeBytes);
     void disconnected();
 };

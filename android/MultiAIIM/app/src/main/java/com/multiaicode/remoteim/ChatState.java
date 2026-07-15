@@ -121,6 +121,33 @@ public final class ChatState {
         return message;
     }
 
+    public RemoteIMMessage queueOutgoingFile(String localPath, String fileName, String mimeType, long sizeBytes) {
+        String cleanPath = clean(localPath);
+        if (cleanPath.isEmpty()) {
+            throw new IllegalArgumentException("localPath is required");
+        }
+        String peerId = requireSelectedPeer();
+        RemoteIMFileAttachment attachment = new RemoteIMFileAttachment(
+            cleanPath,
+            fileName,
+            mimeType,
+            sizeBytes
+        );
+        RemoteIMMessage message = new RemoteIMMessage(
+            ownerUserId,
+            peerId,
+            fileDisplayText(attachment.fileName(), cleanPath),
+            RemoteIMMessage.Direction.OUTGOING,
+            RemoteIMMessage.Status.PENDING,
+            System.currentTimeMillis(),
+            null,
+            null,
+            attachment
+        );
+        messages.add(message);
+        return message;
+    }
+
     public RemoteIMMessage receiveText(String text, String fromUserId) {
         String peerId = clean(fromUserId);
         upsertContact(new RemoteIMContact(peerId, peerId));
@@ -179,6 +206,36 @@ public final class ChatState {
             RemoteIMMessage.Direction.INCOMING,
             RemoteIMMessage.Status.RECEIVED,
             System.currentTimeMillis(),
+            null,
+            attachment
+        );
+        messages.add(message);
+        return message;
+    }
+
+    public RemoteIMMessage receiveFile(
+        String localPath,
+        String fromUserId,
+        String fileName,
+        String mimeType,
+        long sizeBytes
+    ) {
+        String peerId = clean(fromUserId);
+        upsertContact(new RemoteIMContact(peerId, peerId));
+        RemoteIMFileAttachment attachment = new RemoteIMFileAttachment(
+            clean(localPath),
+            fileName,
+            mimeType,
+            sizeBytes
+        );
+        RemoteIMMessage message = new RemoteIMMessage(
+            peerId,
+            ownerUserId,
+            fileDisplayText(attachment.fileName(), attachment.localPath()),
+            RemoteIMMessage.Direction.INCOMING,
+            RemoteIMMessage.Status.RECEIVED,
+            System.currentTimeMillis(),
+            null,
             null,
             attachment
         );
@@ -246,5 +303,13 @@ public final class ChatState {
     private static String fileName(String path) {
         String name = new File(path).getName();
         return name.isEmpty() ? "image" : name;
+    }
+
+    private static String fileDisplayText(String fileName, String path) {
+        String cleanName = clean(fileName);
+        if (cleanName.isEmpty()) {
+            cleanName = new File(path).getName();
+        }
+        return cleanName.isEmpty() ? "[文件消息]" : "[文件消息] " + cleanName;
     }
 }

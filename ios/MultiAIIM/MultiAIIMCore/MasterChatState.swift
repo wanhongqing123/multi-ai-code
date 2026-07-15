@@ -272,6 +272,29 @@ public struct RemoteIMImageAttachment: Codable, Equatable {
     }
 }
 
+public struct RemoteIMFileAttachment: Codable, Equatable {
+    public let localFilePath: String
+    public let fileName: String
+    public let mimeType: String
+    public let remoteID: String?
+    public let sizeBytes: Int?
+
+    public init(
+        localFilePath: String,
+        fileName: String,
+        mimeType: String,
+        remoteID: String? = nil,
+        sizeBytes: Int? = nil
+    ) {
+        self.localFilePath = localFilePath
+        let cleanFileName = fileName.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.fileName = cleanFileName.isEmpty ? URL(fileURLWithPath: localFilePath).lastPathComponent : cleanFileName
+        self.mimeType = mimeType.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.remoteID = remoteID
+        self.sizeBytes = sizeBytes
+    }
+}
+
 public struct RemoteIMMessage: Identifiable, Codable, Equatable {
     public let id: UUID
     public let fromUserID: String
@@ -279,6 +302,7 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable {
     public let text: String
     public let voiceAttachment: RemoteIMVoiceAttachment?
     public let imageAttachment: RemoteIMImageAttachment?
+    public let fileAttachment: RemoteIMFileAttachment?
     public let direction: RemoteIMMessageDirection
     public var status: RemoteIMMessageStatus
     public let createdAt: Date
@@ -290,6 +314,7 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable {
         text: String,
         voiceAttachment: RemoteIMVoiceAttachment? = nil,
         imageAttachment: RemoteIMImageAttachment? = nil,
+        fileAttachment: RemoteIMFileAttachment? = nil,
         direction: RemoteIMMessageDirection,
         status: RemoteIMMessageStatus,
         createdAt: Date
@@ -300,6 +325,7 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable {
         self.text = text
         self.voiceAttachment = voiceAttachment
         self.imageAttachment = imageAttachment
+        self.fileAttachment = fileAttachment
         self.direction = direction
         self.status = status
         self.createdAt = createdAt
@@ -311,6 +337,10 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable {
 
     public var isImageMessage: Bool {
         imageAttachment != nil
+    }
+
+    public var isFileMessage: Bool {
+        fileAttachment != nil
     }
 }
 
@@ -476,6 +506,13 @@ public struct MasterChatState: Equatable {
     private static func imageDisplayText(filePath: String) -> String {
         let fileName = URL(fileURLWithPath: filePath).lastPathComponent
         return fileName.isEmpty ? "[图片消息]" : "[图片消息] \(fileName)"
+    }
+
+    private static func fileDisplayText(fileName: String, filePath: String) -> String {
+        let cleanFileName = fileName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallbackName = URL(fileURLWithPath: filePath).lastPathComponent
+        let displayName = cleanFileName.isEmpty ? fallbackName : cleanFileName
+        return displayName.isEmpty ? "[文件消息]" : "[文件消息] \(displayName)"
     }
 
     private static func incomingDisplayText(_ text: String) -> String {
@@ -670,6 +707,50 @@ public struct MasterChatState: Equatable {
             toUserID: ownerUserID,
             text: Self.imageDisplayText(filePath: cleanFilePath),
             imageAttachment: imageAttachment,
+            direction: .incoming,
+            status: .received,
+            createdAt: now
+        )
+        if !cleanFromUserID.isEmpty && !contacts.contains(where: { $0.userID == cleanFromUserID }) {
+            contacts.append(
+                RemoteIMContact(
+                    userID: cleanFromUserID,
+                    displayName: cleanFromUserID,
+                    relation: .friend
+                )
+            )
+        }
+        if selectedPeerID == nil && !cleanFromUserID.isEmpty {
+            selectedPeerID = cleanFromUserID
+        }
+        messages.append(message)
+        return message
+    }
+
+    @discardableResult
+    public mutating func receiveFile(
+        filePath: String,
+        fromUserID: String,
+        fileName: String,
+        mimeType: String,
+        remoteID: String? = nil,
+        sizeBytes: Int? = nil,
+        now: Date = Date()
+    ) -> RemoteIMMessage {
+        let cleanFromUserID = fromUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanFilePath = filePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fileAttachment = RemoteIMFileAttachment(
+            localFilePath: cleanFilePath,
+            fileName: fileName,
+            mimeType: mimeType,
+            remoteID: remoteID,
+            sizeBytes: sizeBytes
+        )
+        let message = RemoteIMMessage(
+            fromUserID: cleanFromUserID,
+            toUserID: ownerUserID,
+            text: Self.fileDisplayText(fileName: fileAttachment.fileName, filePath: cleanFilePath),
+            fileAttachment: fileAttachment,
             direction: .incoming,
             status: .received,
             createdAt: now

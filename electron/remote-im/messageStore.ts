@@ -1,6 +1,7 @@
 import { getDb } from '../store/db.js'
 import type {
   RemoteImImageAttachment,
+  RemoteImFileAttachment,
   RemoteImMessage,
   RemoteImMessageAttachment,
   RemoteImMessageDirection,
@@ -68,7 +69,7 @@ export interface UpdateRemoteImMessageStatusInput {
 }
 
 function normalizeMessageKind(value: unknown): RemoteImMessageKind {
-  return value === 'image' ? 'image' : 'text'
+  return value === 'image' || value === 'file' ? value : 'text'
 }
 
 function nullableString(value: unknown): string | null {
@@ -94,6 +95,18 @@ function parseImageAttachment(value: Record<string, unknown>): RemoteImImageAtta
   }
 }
 
+function parseFileAttachment(value: Record<string, unknown>): RemoteImFileAttachment {
+  return {
+    type: 'file',
+    localPath: nullableString(value.localPath),
+    remoteUrl: nullableString(value.remoteUrl),
+    sizeBytes: nullableNumber(value.sizeBytes),
+    fileName: nullableString(value.fileName),
+    mimeType: nullableString(value.mimeType),
+    sdkFileId: nullableString(value.sdkFileId)
+  }
+}
+
 function parseAttachmentJson(
   kind: RemoteImMessageKind,
   value: string | null | undefined
@@ -103,6 +116,7 @@ function parseAttachmentJson(
     const parsed = JSON.parse(value) as unknown
     if (!parsed || typeof parsed !== 'object') return null
     if (kind === 'image') return parseImageAttachment(parsed as Record<string, unknown>)
+    if (kind === 'file') return parseFileAttachment(parsed as Record<string, unknown>)
     return null
   } catch {
     return null

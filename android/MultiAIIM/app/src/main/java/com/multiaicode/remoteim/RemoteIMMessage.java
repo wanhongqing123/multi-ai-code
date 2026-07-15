@@ -25,6 +25,7 @@ public final class RemoteIMMessage {
     private final long createdAtMillis;
     private final RemoteIMImageAttachment imageAttachment;
     private final RemoteIMVoiceAttachment voiceAttachment;
+    private final RemoteIMFileAttachment fileAttachment;
 
     public RemoteIMMessage(
         String fromUserId,
@@ -45,7 +46,33 @@ public final class RemoteIMMessage {
             status,
             createdAtMillis,
             imageAttachment,
-            voiceAttachment
+            voiceAttachment,
+            null
+        );
+    }
+
+    public RemoteIMMessage(
+        String fromUserId,
+        String toUserId,
+        String text,
+        Direction direction,
+        Status status,
+        long createdAtMillis,
+        RemoteIMImageAttachment imageAttachment,
+        RemoteIMVoiceAttachment voiceAttachment,
+        RemoteIMFileAttachment fileAttachment
+    ) {
+        this(
+            UUID.randomUUID().toString(),
+            fromUserId,
+            toUserId,
+            text,
+            direction,
+            status,
+            createdAtMillis,
+            imageAttachment,
+            voiceAttachment,
+            fileAttachment
         );
     }
 
@@ -60,6 +87,32 @@ public final class RemoteIMMessage {
         RemoteIMImageAttachment imageAttachment,
         RemoteIMVoiceAttachment voiceAttachment
     ) {
+        this(
+            id,
+            fromUserId,
+            toUserId,
+            text,
+            direction,
+            status,
+            createdAtMillis,
+            imageAttachment,
+            voiceAttachment,
+            null
+        );
+    }
+
+    RemoteIMMessage(
+        String id,
+        String fromUserId,
+        String toUserId,
+        String text,
+        Direction direction,
+        Status status,
+        long createdAtMillis,
+        RemoteIMImageAttachment imageAttachment,
+        RemoteIMVoiceAttachment voiceAttachment,
+        RemoteIMFileAttachment fileAttachment
+    ) {
         this.id = clean(id).isEmpty() ? UUID.randomUUID().toString() : clean(id);
         this.fromUserId = clean(fromUserId);
         this.toUserId = clean(toUserId);
@@ -69,6 +122,7 @@ public final class RemoteIMMessage {
         this.createdAtMillis = createdAtMillis;
         this.imageAttachment = imageAttachment;
         this.voiceAttachment = voiceAttachment;
+        this.fileAttachment = fileAttachment;
     }
 
     public String id() {
@@ -111,6 +165,10 @@ public final class RemoteIMMessage {
         return voiceAttachment;
     }
 
+    public RemoteIMFileAttachment fileAttachment() {
+        return fileAttachment;
+    }
+
     private static String clean(String value) {
         return value == null ? "" : value.trim();
     }
@@ -128,7 +186,8 @@ public final class RemoteIMMessage {
             && direction == that.direction
             && status == that.status
             && Objects.equals(imageAttachment, that.imageAttachment)
-            && Objects.equals(voiceAttachment, that.voiceAttachment);
+            && Objects.equals(voiceAttachment, that.voiceAttachment)
+            && Objects.equals(fileAttachment, that.fileAttachment);
     }
 
     @Override
@@ -142,7 +201,8 @@ public final class RemoteIMMessage {
             status,
             createdAtMillis,
             imageAttachment,
-            voiceAttachment
+            voiceAttachment,
+            fileAttachment
         );
     }
 }

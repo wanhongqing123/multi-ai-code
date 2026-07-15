@@ -22,6 +22,15 @@ struct IncomingRemoteIMImage: Equatable {
     let sizeBytes: Int?
 }
 
+struct IncomingRemoteIMFile: Equatable {
+    let fromUserID: String
+    let fileURL: URL
+    let fileName: String
+    let mimeType: String
+    let remoteID: String?
+    let sizeBytes: Int?
+}
+
 struct RemoteIMVoiceRecording: Equatable {
     let fileURL: URL
     let durationSeconds: Int
@@ -56,6 +65,7 @@ protocol RemoteIMClient: AnyObject {
     var onIncomingText: ((IncomingRemoteIMText) -> Void)? { get set }
     var onIncomingVoice: ((IncomingRemoteIMVoice) -> Void)? { get set }
     var onIncomingImage: ((IncomingRemoteIMImage) -> Void)? { get set }
+    var onIncomingFile: ((IncomingRemoteIMFile) -> Void)? { get set }
     var onPresenceStatusChanged: (([String: RemoteIMPresenceStatus]) -> Void)? { get set }
 
     func connect(sdkAppID: Int, userID: String, userSig: String) async throws

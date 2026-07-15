@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   connectTencentImClient,
   extractTencentImAudioMessages,
+  extractTencentImFileMessages,
   extractTencentImImageMessages,
   extractTencentImTextMessages,
   extractUserSig,
@@ -29,6 +30,7 @@ const sdkMock = vi.hoisted(() => {
       loginUser = ''
     }),
     destroy: vi.fn(async () => undefined),
+    createFileMessage: vi.fn((message: unknown) => message),
     createImageMessage: vi.fn((message: unknown) => message),
     createTextMessage: vi.fn((message: unknown) => message),
     sendMessage: vi.fn(async () => ({ code: 0, message: 'OK' }))
@@ -206,6 +208,57 @@ describe('tencent IM client helpers', () => {
     ])
   })
 
+  it('extracts C2C markdown/html file messages from Tencent message events', () => {
+    const messages = extractTencentImFileMessages({
+      data: [
+        {
+          ID: 'file-1',
+          from: 'phone_admin',
+          to: 'desktop_bot',
+          type: 'TIMFileElem',
+          payload: {
+            url: 'https://cos.example.test/report.md',
+            uuid: 'file-uuid-1',
+            fileName: 'report.md',
+            size: 4096
+          },
+          time: 1782238800
+        },
+        {
+          ID: 'file-2',
+          from: 'phone_admin',
+          to: 'desktop_bot',
+          type: 'TIMFileElem',
+          payload: {
+            url: 'https://cos.example.test/report.pdf',
+            fileName: 'report.pdf'
+          }
+        },
+        {
+          ID: 'msg-2',
+          from: 'phone_admin',
+          to: 'desktop_bot',
+          type: 'TIMTextElem',
+          payload: { text: 'hello' }
+        }
+      ]
+    })
+
+    expect(messages).toEqual([
+      {
+        remoteMessageId: 'file-1',
+        fromUserId: 'phone_admin',
+        toUserId: 'desktop_bot',
+        fileUrl: 'https://cos.example.test/report.md',
+        sizeBytes: 4096,
+        uuid: 'file-uuid-1',
+        fileName: 'report.md',
+        mimeType: 'text/markdown',
+        createdAt: 1782238800000
+      }
+    ])
+  })
+
   it('generates a Tencent UserSig locally from SDKAppID, UserID, and SecretKey', async () => {
     const userSig = await generateTencentUserSig({
       sdkAppId: 1400704311,
@@ -363,6 +416,55 @@ describe('tencent IM client helpers', () => {
     await runtime.sendImage!('desktop-b', file, { messageId: 77 })
 
     expect(sdkMock.chat.createImageMessage).toHaveBeenCalledWith({
+      to: 'desktop-b',
+      conversationType: 'C2C',
+      payload: { file }
+    })
+    expect(sdkMock.chat.sendMessage).toHaveBeenCalledTimes(1)
+  })
+
+  it('sends markdown/html files through Tencent file messages', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ userSig: 'sig-1' })
+      }))
+    )
+
+    const runtimePromise = connectTencentImClient({
+      projectId: 'project-1',
+      config: {
+        enabled: true,
+        provider: 'tencent-im',
+        sdkAppId: 1400704311,
+        desktopUserId: 'desktop-a',
+        desktopRole: 'master',
+        userSigMode: 'endpoint',
+        userSigEndpoint: 'https://example.test/sig',
+        userSigSecretKey: '',
+        friendUserIds: [],
+        masterUserIds: ['desktop-b'],
+        slaveUserIds: [],
+        allowedUserIds: ['desktop-b'],
+        outputFlushIntervalMs: 1000,
+        outputMaxChunkChars: 1200
+      },
+      onIncomingText: vi.fn()
+    })
+
+    await vi.waitFor(() => expect(sdkMock.chat.login).toHaveBeenCalled())
+    sdkMock.chat.isReady.mockReturnValue(true)
+    sdkMock.handlers.get('sdkReady')?.()
+    const runtime = await runtimePromise
+    const file = new File([new TextEncoder().encode('# Report')], 'report.md', {
+      type: 'text/markdown'
+    })
+
+    expect(runtime.sendFile).toBeTypeOf('function')
+    await runtime.sendFile!('desktop-b', file, { messageId: 78 })
+
+    expect(sdkMock.chat.createFileMessage).toHaveBeenCalledWith({
       to: 'desktop-b',
       conversationType: 'C2C',
       payload: { file }

@@ -65,6 +65,7 @@ public final class LocalChatHistoryStore {
     private void writeMessage(BufferedWriter writer, RemoteIMMessage message) throws IOException {
         RemoteIMImageAttachment image = message.imageAttachment();
         RemoteIMVoiceAttachment voice = message.voiceAttachment();
+        RemoteIMFileAttachment file = message.fileAttachment();
         writer.write("MESSAGE");
         writer.write('\t');
         writer.write(encode(message.id()));
@@ -92,6 +93,14 @@ public final class LocalChatHistoryStore {
         writer.write(encode(voice == null ? "" : voice.localPath()));
         writer.write('\t');
         writer.write(Integer.toString(voice == null ? 0 : voice.durationSeconds()));
+        writer.write('\t');
+        writer.write(encode(file == null ? "" : file.localPath()));
+        writer.write('\t');
+        writer.write(encode(file == null ? "" : file.fileName()));
+        writer.write('\t');
+        writer.write(encode(file == null ? "" : file.mimeType()));
+        writer.write('\t');
+        writer.write(Long.toString(file == null ? 0 : file.sizeBytes()));
         writer.newLine();
     }
 
@@ -113,6 +122,19 @@ public final class LocalChatHistoryStore {
             voice = new RemoteIMVoiceAttachment(voicePath, parseInt(parts[13]));
         }
 
+        RemoteIMFileAttachment file = null;
+        if (parts.length >= 18) {
+            String filePath = decode(parts[14]);
+            if (!filePath.isEmpty()) {
+                file = new RemoteIMFileAttachment(
+                    filePath,
+                    decode(parts[15]),
+                    decode(parts[16]),
+                    parseLong(parts[17])
+                );
+            }
+        }
+
         return new RemoteIMMessage(
             decode(parts[1]),
             decode(parts[2]),
@@ -122,7 +144,8 @@ public final class LocalChatHistoryStore {
             RemoteIMMessage.Status.valueOf(parts[6]),
             parseLong(parts[7]),
             image,
-            voice
+            voice,
+            file
         );
     }
 

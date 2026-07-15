@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   deliverRemoteImOutgoingImage,
+  deliverRemoteImOutgoingFile,
   deliverRemoteImOutgoingText,
+  type RemoteImOutgoingFileEvent,
   type RemoteImOutgoingImageEvent,
   type RemoteImOutgoingTextEvent
 } from './outgoingDelivery.js'
@@ -197,5 +199,63 @@ describe('remote IM outgoing delivery', () => {
 
     expect(markSent).not.toHaveBeenCalled()
     expect(markFailed).toHaveBeenCalledWith(88, 'IM 运行时未连接')
+  })
+
+  it('delivers an outgoing markdown/html file from an inline IPC file payload', async () => {
+    const fileEvent: RemoteImOutgoingFileEvent = {
+      projectId: 'project-1',
+      messageId: 89,
+      toUserId: 'desktop-b',
+      fileName: 'report.md',
+      mimeType: 'text/markdown',
+      fileBytes: new TextEncoder().encode('# Report')
+    }
+    const sendFile = vi.fn<NonNullable<TencentImRuntime['sendFile']>>(async () => undefined)
+    const runtime: TencentImRuntime = {
+      disconnect: vi.fn(),
+      sendText: vi.fn(async () => undefined),
+      sendFile
+    }
+    const markSent = vi.fn()
+    const markFailed = vi.fn()
+
+    await deliverRemoteImOutgoingFile({
+      runtime,
+      event: fileEvent,
+      markSent,
+      markFailed
+    })
+
+    expect(sendFile).toHaveBeenCalledTimes(1)
+    const sentFile = sendFile.mock.calls[0]![1]
+    expect(sentFile).toBeInstanceOf(File)
+    expect(sentFile.name).toBe('report.md')
+    expect(sentFile.type).toBe('text/markdown')
+    expect(sendFile).toHaveBeenCalledWith('desktop-b', sentFile, { messageId: 89 })
+    expect(markSent).toHaveBeenCalledWith(89)
+    expect(markFailed).not.toHaveBeenCalled()
+  })
+
+  it('marks an outgoing file as failed when no runtime is connected', async () => {
+    const fileEvent: RemoteImOutgoingFileEvent = {
+      projectId: 'project-1',
+      messageId: 89,
+      toUserId: 'desktop-b',
+      fileName: 'report.md',
+      mimeType: 'text/markdown',
+      fileBytes: new TextEncoder().encode('# Report')
+    }
+    const markSent = vi.fn()
+    const markFailed = vi.fn()
+
+    await deliverRemoteImOutgoingFile({
+      runtime: null,
+      event: fileEvent,
+      markSent,
+      markFailed
+    })
+
+    expect(markSent).not.toHaveBeenCalled()
+    expect(markFailed).toHaveBeenCalledWith(89, 'IM 运行时未连接')
   })
 })

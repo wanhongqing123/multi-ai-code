@@ -44,6 +44,11 @@ QJsonObject messageToJson(const RemoteIMMessage& message) {
     object["hasVoice"] = message.hasVoice;
     object["voicePath"] = message.voice.localPath;
     object["voiceDurationSeconds"] = message.voice.durationSeconds;
+    object["hasFile"] = message.hasFile;
+    object["filePath"] = message.file.localPath;
+    object["fileName"] = message.file.fileName;
+    object["fileMimeType"] = message.file.mimeType;
+    object["fileSizeBytes"] = QString::number(message.file.sizeBytes);
     return object;
 }
 
@@ -67,6 +72,13 @@ RemoteIMMessage messageFromJson(const QJsonObject& object) {
     message.voice = RemoteIMVoiceAttachment{
         object["voicePath"].toString(),
         object["voiceDurationSeconds"].toInt()
+    };
+    message.hasFile = object["hasFile"].toBool();
+    message.file = RemoteIMFileAttachment{
+        object["filePath"].toString(),
+        object["fileName"].toString(),
+        object["fileMimeType"].toString(),
+        object["fileSizeBytes"].toString().toLongLong()
     };
     return message;
 }

@@ -32,6 +32,7 @@ private:
     void handleIncomingMessages(const QString& jsonMessages);
     void handleIncomingMessage(const QJsonObject& message);
     void handleIncomingImageUrl(const QString& fromUserId, const QString& url, int width, int height, qint64 sizeBytes);
+    void handleIncomingFileUrl(const QString& fromUserId, const QString& url, const QString& fileName, qint64 sizeBytes);
     static void complete(RemoteIMCompletion completion, int code, const QString& description);
     static QString compactJson(const QJsonObject& object);
 

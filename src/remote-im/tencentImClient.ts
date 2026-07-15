@@ -1,6 +1,7 @@
 import type {
   RemoteImConfig,
   RemoteImIncomingAudioMessage,
+  RemoteImIncomingFileMessage,
   RemoteImIncomingImageMessage,
   RemoteImIncomingTextMessage,
   RemoteImRuntimeLogEntryInput
@@ -33,6 +34,18 @@ export interface TencentImImageMessage {
   thumbnailUrl: string | null
   width: number | null
   height: number | null
+  sizeBytes: number | null
+  uuid: string | null
+  fileName: string | null
+  mimeType: string | null
+  createdAt?: number
+}
+
+export interface TencentImFileMessage {
+  remoteMessageId: string | null
+  fromUserId: string
+  toUserId: string | null
+  fileUrl: string
   sizeBytes: number | null
   uuid: string | null
   fileName: string | null
@@ -158,6 +171,25 @@ function isTencentImageMessage(message: Record<string, unknown>): boolean {
   return type === 'TIMImageElem' || type === 'MSG_IMAGE'
 }
 
+function isTencentFileMessage(message: Record<string, unknown>): boolean {
+  const type = typeof message.type === 'string' ? message.type : ''
+  return type === 'TIMFileElem' || type === 'MSG_FILE'
+}
+
+function mimeTypeFromFileName(fileName: string | null): string | null {
+  const ext = fileName?.split('.').pop()?.trim().toLowerCase()
+  switch (ext) {
+    case 'md':
+    case 'markdown':
+      return 'text/markdown'
+    case 'html':
+    case 'htm':
+      return 'text/html'
+    default:
+      return null
+  }
+}
+
 function getAudioPayload(
   message: Record<string, unknown>
 ): Omit<TencentImAudioMessage, 'remoteMessageId' | 'fromUserId' | 'toUserId' | 'createdAt'> | null {
@@ -237,6 +269,28 @@ function getImagePayload(
   }
 }
 
+function getFilePayload(
+  message: Record<string, unknown>
+): Omit<TencentImFileMessage, 'remoteMessageId' | 'fromUserId' | 'toUserId' | 'createdAt'> | null {
+  if (!isTencentFileMessage(message)) return null
+  const payload = message.payload
+  if (!payload || typeof payload !== 'object') return null
+  const file = payload as Record<string, unknown>
+  const fileUrl = getStringField(file, ['url', 'URL', 'downloadUrl', 'downloadURL'])
+  if (!fileUrl) return null
+  const fileName = getStringField(file, ['fileName', 'filename', 'name'])
+  const mimeType =
+    getStringField(file, ['mimeType', 'contentType']) ?? mimeTypeFromFileName(fileName)
+  if (mimeType !== 'text/markdown' && mimeType !== 'text/html') return null
+  return {
+    fileUrl,
+    sizeBytes: getNumberField(file, ['size', 'dataSize', 'fileSize']),
+    uuid: getStringField(file, ['uuid', 'UUID', 'fileId', 'fileID']),
+    fileName,
+    mimeType
+  }
+}
+
 export function extractTencentImTextMessages(event: unknown): TencentImTextMessage[] {
   const data = event && typeof event === 'object' ? (event as { data?: unknown }).data : null
   if (!Array.isArray(data)) return []
@@ -275,6 +329,28 @@ export function extractTencentImImageMessages(event: unknown): TencentImImageMes
         fromUserId: from,
         toUserId: typeof message.to === 'string' ? message.to : null,
         ...image,
+        createdAt: typeof message.time === 'number' ? message.time * 1000 : undefined
+      }
+    ]
+  })
+}
+
+export function extractTencentImFileMessages(event: unknown): TencentImFileMessage[] {
+  const data = event && typeof event === 'object' ? (event as { data?: unknown }).data : null
+  if (!Array.isArray(data)) return []
+  return data.flatMap((item) => {
+    if (!item || typeof item !== 'object') return []
+    const message = item as Record<string, unknown>
+    const file = getFilePayload(message)
+    if (!file) return []
+    const from = typeof message.from === 'string' ? message.from : ''
+    if (!from) return []
+    return [
+      {
+        remoteMessageId: typeof message.ID === 'string' ? message.ID : null,
+        fromUserId: from,
+        toUserId: typeof message.to === 'string' ? message.to : null,
+        ...file,
         createdAt: typeof message.time === 'number' ? message.time * 1000 : undefined
       }
     ]
@@ -460,11 +536,13 @@ export interface TencentImSendTextOptions {
 }
 
 export type TencentImSendImageOptions = TencentImSendTextOptions
+export type TencentImSendFileOptions = TencentImSendTextOptions
 
 export interface TencentImRuntime {
   disconnect(): Promise<void>
   sendText(toUserId: string, text: string, options?: TencentImSendTextOptions): Promise<void>
   sendImage?(toUserId: string, file: File, options?: TencentImSendImageOptions): Promise<void>
+  sendFile?(toUserId: string, file: File, options?: TencentImSendFileOptions): Promise<void>
 }
 
 export async function connectTencentImClient(input: {
@@ -473,6 +551,7 @@ export async function connectTencentImClient(input: {
   onIncomingText: (message: RemoteImIncomingTextMessage) => void
   onIncomingAudio?: (message: RemoteImIncomingAudioMessage) => void
   onIncomingImage?: (message: RemoteImIncomingImageMessage) => void
+  onIncomingFile?: (message: RemoteImIncomingFileMessage) => void
   onRuntimeLog?: (entry: RemoteImRuntimeLogEntryInput) => void
 }): Promise<TencentImRuntime> {
   const emitRuntimeLog = (
@@ -504,11 +583,13 @@ export async function connectTencentImClient(input: {
     const messages = extractTencentImTextMessages(event)
     const audioMessages = extractTencentImAudioMessages(event)
     const imageMessages = extractTencentImImageMessages(event)
+    const fileMessages = extractTencentImFileMessages(event)
     emitRuntimeLog('message:received', {
       detail: {
         count: messages.length,
         audioCount: audioMessages.length,
-        imageCount: imageMessages.length
+        imageCount: imageMessages.length,
+        fileCount: fileMessages.length
       }
     })
     for (const message of messages) {
@@ -544,6 +625,20 @@ export async function connectTencentImClient(input: {
         thumbnailUrl: message.thumbnailUrl,
         width: message.width,
         height: message.height,
+        sizeBytes: message.sizeBytes,
+        uuid: message.uuid,
+        fileName: message.fileName,
+        mimeType: message.mimeType,
+        createdAt: message.createdAt
+      })
+    }
+    for (const message of fileMessages) {
+      input.onIncomingFile?.({
+        projectId: input.projectId,
+        remoteMessageId: message.remoteMessageId,
+        fromUserId: message.fromUserId,
+        toUserId: message.toUserId,
+        fileUrl: message.fileUrl,
         sizeBytes: message.sizeBytes,
         uuid: message.uuid,
         fileName: message.fileName,
@@ -688,6 +783,48 @@ export async function connectTencentImClient(input: {
         if (failure) throw new Error(failure)
       } catch (err) {
         emitRuntimeLog('send:image:rejected', {
+          peerUserId: toUserId,
+          messageId: options.messageId,
+          detail: { error: err instanceof Error ? err.message : String(err) }
+        })
+        throw err
+      }
+    },
+    async sendFile(toUserId: string, file: File, options: TencentImSendFileOptions = {}) {
+      emitRuntimeLog('send:file:start', {
+        peerUserId: toUserId,
+        messageId: options.messageId,
+        detail: {
+          sdkReady,
+          loginUser: getTencentImLoginUser(chat),
+          isReady: typeof chat.isReady === 'function' ? Boolean(chat.isReady()) : null,
+          fileName: file.name,
+          fileSize: file.size,
+          fileType: file.type
+        }
+      })
+      await ensureLoggedIn()
+      const message = chat.createFileMessage({
+        to: toUserId,
+        conversationType: TencentCloudChat.TYPES?.CONV_C2C ?? 'C2C',
+        payload: { file }
+      })
+      emitRuntimeLog('send:file:created', {
+        peerUserId: toUserId,
+        messageId: options.messageId,
+        detail: summarizeTencentImMessage(message)
+      })
+      try {
+        const result = await chat.sendMessage(message)
+        emitRuntimeLog('send:file:resolved', {
+          peerUserId: toUserId,
+          messageId: options.messageId,
+          detail: summarizeTencentImApiResult(result)
+        })
+        const failure = getTencentImApiFailure('send', result)
+        if (failure) throw new Error(failure)
+      } catch (err) {
+        emitRuntimeLog('send:file:rejected', {
           peerUserId: toUserId,
           messageId: options.messageId,
           detail: { error: err instanceof Error ? err.message : String(err) }

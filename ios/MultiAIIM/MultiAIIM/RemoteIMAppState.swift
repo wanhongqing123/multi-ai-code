@@ -75,6 +75,11 @@ final class RemoteIMAppState: ObservableObject {
                 self?.receive(event)
             }
         }
+        self.client.onIncomingFile = { [weak self] event in
+            Task { @MainActor in
+                self?.receive(event)
+            }
+        }
         self.client.onPresenceStatusChanged = { [weak self] updates in
             Task { @MainActor in
                 self?.applyPresenceStatusUpdates(updates)
@@ -317,6 +322,19 @@ final class RemoteIMAppState: ObservableObject {
             remoteID: event.remoteID,
             width: event.width,
             height: event.height,
+            sizeBytes: event.sizeBytes
+        )
+        persistCurrentHistory()
+        settingsStore.save(currentStoredSettings())
+    }
+
+    private func receive(_ event: IncomingRemoteIMFile) {
+        _ = chatState.receiveFile(
+            filePath: event.fileURL.path,
+            fromUserID: event.fromUserID,
+            fileName: event.fileName,
+            mimeType: event.mimeType,
+            remoteID: event.remoteID,
             sizeBytes: event.sizeBytes
         )
         persistCurrentHistory()

@@ -30,6 +30,13 @@ struct RemoteIMVoiceAttachment {
     int durationSeconds = 1;
 };
 
+struct RemoteIMFileAttachment {
+    QString localPath;
+    QString fileName;
+    QString mimeType;
+    qint64 sizeBytes = 0;
+};
+
 struct RemoteIMMessage {
     QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     QString fromUserId;
@@ -40,8 +47,10 @@ struct RemoteIMMessage {
     qint64 createdAtMillis = QDateTime::currentMSecsSinceEpoch();
     RemoteIMImageAttachment image;
     RemoteIMVoiceAttachment voice;
+    RemoteIMFileAttachment file;
     bool hasImage = false;
     bool hasVoice = false;
+    bool hasFile = false;
 };
 
 Q_DECLARE_METATYPE(RemoteIMMessage)

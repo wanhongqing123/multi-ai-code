@@ -17,6 +17,15 @@ export interface RemoteImOutgoingImageEvent {
   messageId?: number | null
 }
 
+export interface RemoteImOutgoingFileEvent {
+  projectId: string
+  toUserId: string
+  fileName?: string | null
+  mimeType?: string | null
+  fileBytes?: Uint8Array | ArrayBuffer | number[] | null
+  messageId?: number | null
+}
+
 export interface DeliverRemoteImOutgoingTextInput {
   runtime: TencentImRuntime | null
   event: RemoteImOutgoingTextEvent
@@ -29,6 +38,14 @@ export interface DeliverRemoteImOutgoingImageInput {
   runtime: TencentImRuntime | null
   event: RemoteImOutgoingImageEvent
   resolveFile(event: RemoteImOutgoingImageEvent): File | null
+  markSent(messageId: number): Promise<unknown> | unknown
+  markFailed(messageId: number, error: string): Promise<unknown> | unknown
+  sendTimeoutMs?: number
+}
+
+export interface DeliverRemoteImOutgoingFileInput {
+  runtime: TencentImRuntime | null
+  event: RemoteImOutgoingFileEvent
   markSent(messageId: number): Promise<unknown> | unknown
   markFailed(messageId: number, error: string): Promise<unknown> | unknown
   sendTimeoutMs?: number
@@ -125,6 +142,46 @@ export async function deliverRemoteImOutgoingImage(
   }
 }
 
+export async function deliverRemoteImOutgoingFile(
+  input: DeliverRemoteImOutgoingFileInput
+): Promise<void> {
+  if (!input.event.messageId) {
+    const file = resolveOutgoingFile(input.event)
+    if (file && input.runtime?.sendFile) {
+      await input.runtime.sendFile(input.event.toUserId, file, {
+        messageId: input.event.messageId
+      })
+    }
+    return
+  }
+
+  if (!input.runtime?.sendFile) {
+    await input.markFailed(input.event.messageId, 'IM 运行时未连接')
+    return
+  }
+
+  const file = resolveOutgoingFile(input.event)
+  if (!file) {
+    await input.markFailed(input.event.messageId, '文件已失效，请重新选择')
+    return
+  }
+
+  try {
+    await withTimeout(
+      input.runtime.sendFile(input.event.toUserId, file, {
+        messageId: input.event.messageId
+      }),
+      input.sendTimeoutMs ?? DEFAULT_SEND_TIMEOUT_MS
+    )
+    await input.markSent(input.event.messageId)
+  } catch (err) {
+    await input.markFailed(
+      input.event.messageId,
+      err instanceof Error ? err.message : String(err)
+    )
+  }
+}
+
 function resolveOutgoingImageFile(input: DeliverRemoteImOutgoingImageInput): File | null {
   const file = input.resolveFile(input.event)
   if (file) return file
@@ -141,4 +198,12 @@ function toFileArrayBuffer(bytes: Uint8Array | ArrayBuffer | number[]): ArrayBuf
   const copy = new ArrayBuffer(view.byteLength)
   new Uint8Array(copy).set(view)
   return copy
+}
+
+function resolveOutgoingFile(event: RemoteImOutgoingFileEvent): File | null {
+  const bytes = event.fileBytes
+  if (!bytes) return null
+  const fileName = event.fileName?.trim() || 'remote-im-file.md'
+  const mimeType = event.mimeType?.trim() || 'application/octet-stream'
+  return new File([toFileArrayBuffer(bytes)], fileName, { type: mimeType })
 }

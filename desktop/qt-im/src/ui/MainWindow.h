@@ -45,6 +45,7 @@ private:
     void openAddContactDialog();
     void openImagePicker();
     void openImagePreview(const QString& imagePath);
+    void openFilePreview(const RemoteIMFileAttachment& attachment);
     QWidget* createMessageBubble(const RemoteIMMessage& message);
     int messageBubbleMaximumWidth() const;
     void applyMessageBubbleWidth(QWidget* bubble, bool expanded) const;

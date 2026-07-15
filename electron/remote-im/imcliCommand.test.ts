@@ -51,13 +51,22 @@ describe('imcli command', () => {
     const { stdout } = await execFileAsync(process.execPath, [imcliPath, 'help'])
 
     expect(stdout).toContain('imcli help')
+    expect(stdout).toContain('Command details:')
     expect(stdout).toContain('imcli send <user> <text>')
     expect(stdout).toContain('imcli send-image <user> <imagePath>')
+    expect(stdout).toContain('imcli send-file <user> <filePath>')
     expect(stdout).toContain('imcli history')
+    expect(stdout).toContain('Output format: #<id> <role>/<direction> <from> -> <to>: <content>')
+    expect(stdout).toContain('Use one of these user IDs as the <user> argument')
+    expect(stdout).toContain('The receiver can tap the file card in iOS, Android, or Desktop IM to preview it.')
+    expect(stdout).toContain('This is text-only. Use send-image or send-file separately for attachments.')
     expect(stdout).toContain('Requirements:')
     expect(stdout).toContain('MULTI_AI_CODE_PROJECT_ID')
+    expect(stdout).toContain('Markdown and HTML files')
+    expect(stdout).toContain('Use send-image for png/jpg/jpeg/gif/webp image files.')
     expect(stdout).toContain('Examples:')
     expect(stdout).toContain('imcli send-image phone-user C:\\temp\\screenshot.png --project project-1')
+    expect(stdout).toContain('imcli send-file phone-user ./report.md --project project-1')
   })
 
   it('sends a message through the local app bridge using project environment', async () => {
@@ -158,6 +167,41 @@ describe('imcli command', () => {
 
       expect(stdout).toContain('sent image to agent-b')
       expect(sendPeerImage).toHaveBeenCalledWith('project-1', imagePath, 'agent-b')
+    } finally {
+      await bridge.close()
+    }
+  })
+
+  it('sends a markdown/html file path through the local app bridge using project environment', async () => {
+    const rootDir = await createTempDir()
+    const filePath = join(rootDir, 'report.md')
+    await writeFile(filePath, '# Report\n')
+    const sendPeerFile = vi.fn(async () => ({ ok: true as const, toUserId: 'agent-b' }))
+    const bridge = await startRemoteImCliServer({
+      rootDir,
+      getConfig: async () => config,
+      getStatus: async () => status,
+      listMessages: () => [],
+      sendPeerMessage: async () => ({ ok: true as const, toUserId: 'agent-b' }),
+      sendPeerFile
+    })
+
+    try {
+      const { stdout } = await execFileAsync(
+        process.execPath,
+        [imcliPath, 'send-file', 'agent-b', filePath],
+        {
+          env: {
+            ...process.env,
+            MULTI_AI_CODE_IMCLI_URL: bridge.url,
+            MULTI_AI_CODE_IMCLI_TOKEN: bridge.token,
+            MULTI_AI_CODE_PROJECT_ID: 'project-1'
+          }
+        }
+      )
+
+      expect(stdout).toContain('sent file to agent-b')
+      expect(sendPeerFile).toHaveBeenCalledWith('project-1', filePath, 'agent-b')
     } finally {
       await bridge.close()
     }

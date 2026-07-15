@@ -108,6 +108,22 @@ RemoteIMMessage ChatState::queueOutgoingVoice(const QString& localPath, int dura
     return message;
 }
 
+RemoteIMMessage ChatState::queueOutgoingFile(const QString& localPath, const QString& fileName, const QString& mimeType, qint64 sizeBytes) {
+    const QString cleanPath = clean(localPath);
+    if (cleanPath.isEmpty()) throw std::invalid_argument("localPath is required");
+    const QString cleanFileName = clean(fileName).isEmpty() ? ChatState::fileName(cleanPath) : clean(fileName);
+    RemoteIMMessage message;
+    message.fromUserId = ownerUserId_;
+    message.toUserId = requireSelectedPeer();
+    message.text = QString("[文件消息] %1").arg(cleanFileName.isEmpty() ? QStringLiteral("file") : cleanFileName);
+    message.direction = RemoteIMMessageDirection::Outgoing;
+    message.status = RemoteIMMessageStatus::Pending;
+    message.hasFile = true;
+    message.file = RemoteIMFileAttachment{cleanPath, cleanFileName, clean(mimeType), sizeBytes};
+    messages_.append(message);
+    return message;
+}
+
 RemoteIMMessage ChatState::receiveText(const QString& fromUserId, const QString& text) {
     const QString peerId = clean(fromUserId);
     if (peerId.isEmpty()) throw std::invalid_argument("fromUserId is required");
@@ -138,6 +154,26 @@ RemoteIMMessage ChatState::receiveImage(const QString& fromUserId, const QString
     message.status = RemoteIMMessageStatus::Received;
     message.hasImage = true;
     message.image = RemoteIMImageAttachment{cleanPath, width, height, sizeBytes};
+    messages_.append(message);
+    return message;
+}
+
+RemoteIMMessage ChatState::receiveFile(const QString& fromUserId, const QString& localPath, const QString& fileName, const QString& mimeType, qint64 sizeBytes) {
+    const QString peerId = clean(fromUserId);
+    const QString cleanPath = clean(localPath);
+    if (peerId.isEmpty()) throw std::invalid_argument("fromUserId is required");
+    if (cleanPath.isEmpty()) throw std::invalid_argument("localPath is required");
+    const QString cleanFileName = clean(fileName).isEmpty() ? ChatState::fileName(cleanPath) : clean(fileName);
+    upsertContact(RemoteIMContact{peerId, peerId});
+    if (selectedPeerId_.isEmpty()) selectedPeerId_ = peerId;
+    RemoteIMMessage message;
+    message.fromUserId = peerId;
+    message.toUserId = ownerUserId_;
+    message.text = QString("[文件消息] %1").arg(cleanFileName.isEmpty() ? QStringLiteral("file") : cleanFileName);
+    message.direction = RemoteIMMessageDirection::Incoming;
+    message.status = RemoteIMMessageStatus::Received;
+    message.hasFile = true;
+    message.file = RemoteIMFileAttachment{cleanPath, cleanFileName, clean(mimeType), sizeBytes};
     messages_.append(message);
     return message;
 }

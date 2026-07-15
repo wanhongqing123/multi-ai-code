@@ -19,6 +19,7 @@ void LocalChatHistoryStoreTest::savesAndLoadsMessagesAndContacts() {
     state.selectPeer("ios-user");
     state.queueOutgoingText("ping");
     state.receiveImage("ios-user", "/tmp/a.jpg", 640, 480, 1024);
+    state.receiveFile("ios-user", "/tmp/report.html", "report.html", "text/html", 2048);
 
     QVERIFY(store.save(state));
     ChatState restored("desktop-user");
@@ -26,9 +27,11 @@ void LocalChatHistoryStoreTest::savesAndLoadsMessagesAndContacts() {
 
     QCOMPARE(restored.contacts().size(), 1);
     QCOMPARE(restored.contacts().first().displayName, QString("iPhone"));
-    QCOMPARE(restored.messagesWith("ios-user").size(), 2);
+    QCOMPARE(restored.messagesWith("ios-user").size(), 3);
     QCOMPARE(restored.messagesWith("ios-user").at(0).text, QString("ping"));
     QVERIFY(restored.messagesWith("ios-user").at(1).hasImage);
+    QVERIFY(restored.messagesWith("ios-user").at(2).hasFile);
+    QCOMPARE(restored.messagesWith("ios-user").at(2).file.fileName, QString("report.html"));
     QCOMPARE(restored.selectedPeerId(), QString("ios-user"));
 }
 

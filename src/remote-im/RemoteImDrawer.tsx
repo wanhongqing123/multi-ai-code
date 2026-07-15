@@ -56,6 +56,29 @@ export interface RemoteImDrawerProps {
 
 type ConversationFilter = 'recent' | 'friend'
 
+type FilePreviewState =
+  | {
+      status: 'loading'
+      fileName: string
+      mimeType: string | null
+      content: string
+      error: string | null
+    }
+  | {
+      status: 'ready'
+      fileName: string
+      mimeType: string
+      content: string
+      error: null
+    }
+  | {
+      status: 'error'
+      fileName: string
+      mimeType: string | null
+      content: string
+      error: string
+    }
+
 const RELATION_FILTERS: Array<{ value: ConversationFilter; label: string }> = [
   { value: 'recent', label: '最近' },
   { value: 'friend', label: '好友' }
@@ -106,6 +129,32 @@ function RemoteImImageMessage(props: { message: RemoteImMessage }): JSX.Element 
   )
 }
 
+function RemoteImFileMessage(props: {
+  message: RemoteImMessage
+  onPreview: (message: RemoteImMessage) => void
+}): JSX.Element {
+  const attachment = props.message.attachment?.type === 'file' ? props.message.attachment : null
+  const fileName = attachment?.fileName ?? props.message.content.replace(/^\[文件消息\]\s*/, '')
+  const mimeType = attachment?.mimeType
+  const canPreview = Boolean(attachment?.localPath && (mimeType === 'text/markdown' || mimeType === 'text/html'))
+
+  return (
+    <button
+      type="button"
+      className="remote-im-file-message"
+      disabled={!canPreview}
+      onClick={() => props.onPreview(props.message)}
+      title={canPreview ? '点击预览文件' : '文件暂不可预览'}
+    >
+      <span className="remote-im-file-icon">文</span>
+      <span className="remote-im-file-info">
+        <strong>{fileName || '文件消息'}</strong>
+        <em>{mimeType === 'text/html' ? 'HTML 文件' : 'Markdown 文件'}</em>
+      </span>
+    </button>
+  )
+}
+
 export function sanitizeRemoteImDisplayText(text: string): string {
   return text
     .replace(/Tencent IM/g, 'IM')
@@ -144,6 +193,7 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
     startPosition: RemoteImPanelPosition
     startPointer: RemoteImPanelPosition
   } | null>(null)
+  const [filePreview, setFilePreview] = useState<FilePreviewState | null>(null)
 
   const conversations = useMemo(
     () => getRemoteImConversations(props.config, props.messages),
@@ -285,6 +335,39 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
     if (!file || !selectedPeerUserId || imageSendDisabled) return
     if (!file.type.startsWith('image/')) return
     props.onSendImage(selectedPeerUserId, file)
+  }
+
+  async function handlePreviewFile(message: RemoteImMessage): Promise<void> {
+    const attachment = message.attachment?.type === 'file' ? message.attachment : null
+    const fileName = (attachment?.fileName ?? message.content.replace(/^\[文件消息\]\s*/, '')) || '文件预览'
+    setFilePreview({
+      status: 'loading',
+      fileName,
+      mimeType: attachment?.mimeType ?? null,
+      content: '',
+      error: null
+    })
+    const result = await window.api.remoteIm.readFilePreview({
+      localPath: attachment?.localPath ?? null,
+      mimeType: attachment?.mimeType ?? null
+    })
+    if (!result.ok) {
+      setFilePreview({
+        status: 'error',
+        fileName,
+        mimeType: attachment?.mimeType ?? null,
+        content: '',
+        error: sanitizeRemoteImDisplayText(result.error)
+      })
+      return
+    }
+    setFilePreview({
+      status: 'ready',
+      fileName: result.value.fileName || fileName,
+      mimeType: result.value.mimeType,
+      content: result.value.content,
+      error: null
+    })
   }
 
   return (
@@ -436,6 +519,8 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
                         <div className="remote-im-bubble">
                           {message.kind === 'image' ? (
                             <RemoteImImageMessage message={message} />
+                          ) : message.kind === 'file' ? (
+                            <RemoteImFileMessage message={message} onPreview={handlePreviewFile} />
                           ) : (
                             <RemoteImMarkdown content={message.content} />
                           )}
@@ -488,6 +573,39 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
             </form>
           </section>
         </div>
+        {filePreview ? (
+          <div className="remote-im-file-preview-backdrop" role="dialog" aria-modal="true">
+            <div className="remote-im-file-preview-modal">
+              <header>
+                <strong>{filePreview.fileName}</strong>
+                <button
+                  type="button"
+                  aria-label="关闭文件预览"
+                  onClick={() => setFilePreview(null)}
+                >
+                  ×
+                </button>
+              </header>
+              <div className="remote-im-file-preview-body">
+                {filePreview.status === 'loading' ? (
+                  <div className="remote-im-file-preview-empty">正在加载...</div>
+                ) : filePreview.status === 'error' ? (
+                  <div className="remote-im-file-preview-empty">{filePreview.error}</div>
+                ) : filePreview.mimeType === 'text/html' ? (
+                  <iframe
+                    title={filePreview.fileName}
+                    sandbox=""
+                    srcDoc={filePreview.content}
+                  />
+                ) : (
+                  <div className="remote-im-file-preview-markdown">
+                    <RemoteImMarkdown content={filePreview.content} />
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     </aside>
   )

@@ -21,15 +21,18 @@ public class LocalChatHistoryStoreTest {
         state.updateMessageStatus(text.id(), RemoteIMMessage.Status.SENT);
         state.queueOutgoingImage("/tmp/photo.png", 640, 480, 4096);
         state.receiveVoice("/tmp/reply.m4a", 4, "mac-office");
+        state.receiveFile("/tmp/report.html", "mac-office", "report.html", "text/html", 2048);
 
         store.save(state);
 
         ChatState restored = store.load("android-user");
         assertEquals(state.contacts(), restored.contacts());
-        assertEquals(3, restored.messagesWith("mac-office").size());
+        assertEquals(4, restored.messagesWith("mac-office").size());
         assertEquals(RemoteIMMessage.Status.SENT, restored.messagesWith("mac-office").get(0).status());
         assertNotNull(restored.messagesWith("mac-office").get(1).imageAttachment());
         assertNotNull(restored.messagesWith("mac-office").get(2).voiceAttachment());
+        assertNotNull(restored.messagesWith("mac-office").get(3).fileAttachment());
+        assertEquals("report.html", restored.messagesWith("mac-office").get(3).fileAttachment().fileName());
     }
 
     @Test

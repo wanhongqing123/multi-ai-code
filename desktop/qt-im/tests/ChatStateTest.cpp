@@ -8,6 +8,7 @@ class ChatStateTest : public QObject {
 private slots:
     void queuesOutgoingText();
     void receivesIncomingImage();
+    void receivesIncomingFile();
     void updatesMessageStatus();
     void returnsPeerMessagesChronologically();
     void removesContactAndMessages();
@@ -41,6 +42,29 @@ void ChatStateTest::receivesIncomingImage() {
     QVERIFY(message.hasImage);
     QCOMPARE(state.contacts().size(), 1);
     QCOMPARE(state.selectedPeerId(), QString("ios-user"));
+}
+
+void ChatStateTest::receivesIncomingFile() {
+    ChatState state("desktop-user");
+
+    const RemoteIMMessage message = state.receiveFile(
+        "ios-user",
+        "/tmp/report.md",
+        "report.md",
+        "text/markdown",
+        4096
+    );
+
+    QCOMPARE(message.fromUserId, QString("ios-user"));
+    QCOMPARE(message.toUserId, QString("desktop-user"));
+    QCOMPARE(message.text, QString("[文件消息] report.md"));
+    QCOMPARE(message.direction, RemoteIMMessageDirection::Incoming);
+    QCOMPARE(message.status, RemoteIMMessageStatus::Received);
+    QVERIFY(message.hasFile);
+    QCOMPARE(message.file.localPath, QString("/tmp/report.md"));
+    QCOMPARE(message.file.fileName, QString("report.md"));
+    QCOMPARE(message.file.mimeType, QString("text/markdown"));
+    QCOMPARE(message.file.sizeBytes, qint64(4096));
 }
 
 void ChatStateTest::updatesMessageStatus() {

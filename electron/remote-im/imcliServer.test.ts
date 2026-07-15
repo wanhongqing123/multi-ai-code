@@ -155,4 +155,40 @@ describe('remote IM CLI bridge server', () => {
       await bridge.close()
     }
   })
+
+  it('sends peer markdown/html files through the app runtime', async () => {
+    const rootDir = await createTempDir()
+    const sendPeerFile = vi.fn(async () => ({ ok: true as const, toUserId: 'agent-b' }))
+    const bridge = await startRemoteImCliServer({
+      rootDir,
+      getConfig: async () => config,
+      getStatus: async () => status,
+      listMessages: () => [],
+      sendPeerMessage: async () => ({ ok: true as const, toUserId: 'agent-b' }),
+      sendPeerFile
+    })
+
+    try {
+      const response = await fetch(`${bridge.url}/send-file`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${bridge.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          projectId: 'project-1',
+          toUserId: 'agent-b',
+          localPath: '/tmp/report.md'
+        })
+      })
+
+      await expect(response.json()).resolves.toMatchObject({
+        ok: true,
+        value: { toUserId: 'agent-b' }
+      })
+      expect(sendPeerFile).toHaveBeenCalledWith('project-1', '/tmp/report.md', 'agent-b')
+    } finally {
+      await bridge.close()
+    }
+  })
 })

@@ -118,6 +118,14 @@ void RemoteIMApplication::bindClientSignals() {
         state_.receiveVoice(fromUserId, localPath, durationSeconds);
         emit stateChanged();
     });
+    connect(client_.get(), &RemoteIMClient::incomingFile, this, [this](const QString& fromUserId,
+                                                                       const QString& localPath,
+                                                                       const QString& fileName,
+                                                                       const QString& mimeType,
+                                                                       qint64 sizeBytes) {
+        state_.receiveFile(fromUserId, localPath, fileName, mimeType, sizeBytes);
+        emit stateChanged();
+    });
     connect(client_.get(), &RemoteIMClient::disconnected, this, [this] {
         connected_ = false;
         emit connectionChanged(false);

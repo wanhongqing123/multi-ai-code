@@ -28,10 +28,14 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.webkit.WebView;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 public final class MainActivity extends Activity {
@@ -426,6 +430,8 @@ public final class MainActivity extends Activity {
 
         if (message.imageAttachment() != null) {
             bubble.addView(imagePreview(message.imageAttachment()));
+        } else if (message.fileAttachment() != null) {
+            bubble.addView(filePreview(message.fileAttachment()));
         } else if (message.voiceAttachment() != null) {
             TextView voice = bodyText("▶ " + message.text());
             bubble.addView(voice);
@@ -457,6 +463,98 @@ public final class MainActivity extends Activity {
         TextView name = smallText(new File(attachment.localPath()).getName());
         box.addView(name);
         return box;
+    }
+
+    private View filePreview(RemoteIMFileAttachment attachment) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(0, dp(8), 0, 0);
+        box.setOnClickListener(view -> showFilePreview(attachment));
+
+        TextView title = bodyText(attachment.fileName());
+        title.setTextColor(BLUE);
+        title.setTextSize(15);
+        box.addView(title);
+
+        TextView subtitle = smallText(isHtmlFile(attachment) ? "HTML 文件，点击预览" : "Markdown 文件，点击预览");
+        box.addView(subtitle);
+        return box;
+    }
+
+    private void showFilePreview(RemoteIMFileAttachment attachment) {
+        Dialog dialog = new Dialog(this);
+        LinearLayout frame = new LinearLayout(this);
+        frame.setOrientation(LinearLayout.VERTICAL);
+        frame.setPadding(dp(16), dp(14), dp(16), dp(14));
+        frame.setBackgroundColor(0xFFFFFFFF);
+
+        TextView title = bodyText(attachment.fileName());
+        title.setTextSize(18);
+        title.setTextColor(TEXT_PRIMARY);
+        frame.addView(title, matchWrap());
+
+        if (isHtmlFile(attachment)) {
+            WebView webView = new WebView(this);
+            webView.getSettings().setJavaScriptEnabled(false);
+            webView.loadDataWithBaseURL(
+                new File(attachment.localPath()).getParentFile().toURI().toString(),
+                readTextFile(attachment.localPath()),
+                "text/html",
+                "utf-8",
+                null
+            );
+            frame.addView(webView, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            ));
+        } else {
+            ScrollView scrollView = new ScrollView(this);
+            TextView textView = bodyText(readTextFile(attachment.localPath()));
+            textView.setTextSize(14);
+            scrollView.addView(textView, matchWrap());
+            frame.addView(scrollView, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            ));
+        }
+
+        Button close = new Button(this);
+        close.setText("关闭");
+        close.setAllCaps(false);
+        close.setOnClickListener(view -> dialog.dismiss());
+        frame.addView(close, matchWrap());
+
+        dialog.setContentView(frame);
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setLayout(
+                (int) (getResources().getDisplayMetrics().widthPixels * 0.92f),
+                (int) (getResources().getDisplayMetrics().heightPixels * 0.86f)
+            );
+        }
+    }
+
+    private boolean isHtmlFile(RemoteIMFileAttachment attachment) {
+        String mimeType = attachment.mimeType().toLowerCase();
+        String name = attachment.fileName().toLowerCase();
+        return mimeType.contains("html") || name.endsWith(".html") || name.endsWith(".htm");
+    }
+
+    private String readTextFile(String path) {
+        try (InputStream input = new FileInputStream(path)) {
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = input.read(buffer)) >= 0) {
+                output.write(buffer, 0, read);
+            }
+            return output.toString(StandardCharsets.UTF_8.name());
+        } catch (IOException err) {
+            return "文件暂不可预览";
+        }
     }
 
     private void showFullScreenImage(String path) {

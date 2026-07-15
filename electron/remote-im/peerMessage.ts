@@ -1,5 +1,5 @@
 import type { CreateRemoteImMessageInput } from './messageStore.js'
-import type { RemoteImConfig, RemoteImImageAttachment } from './types.js'
+import type { RemoteImConfig, RemoteImFileAttachment, RemoteImImageAttachment } from './types.js'
 import {
   canManuallySendToRemoteImPeer,
   resolveDefaultRemoteImPeerUserId
@@ -55,6 +55,32 @@ export function createPeerOutgoingImageMessageInput(input: {
     direction: 'outgoing',
     content: fileName ? `[图片消息] ${fileName}` : '[图片消息]',
     kind: 'image',
+    attachment: input.attachment,
+    status: 'streaming',
+    createdAt: input.now,
+    sentToImAt: null
+  }
+}
+
+export function createPeerOutgoingFileMessageInput(input: {
+  projectId: string
+  config: RemoteImConfig
+  toUserId: string
+  attachment: RemoteImFileAttachment
+  now: number
+}): CreateRemoteImMessageInput {
+  const fileName = input.attachment.fileName?.trim()
+  return {
+    projectId: input.projectId,
+    sessionId: null,
+    provider: 'tencent-im',
+    remoteMessageId: null,
+    fromUserId: input.config.desktopUserId,
+    toUserId: input.toUserId,
+    role: 'remote-user',
+    direction: 'outgoing',
+    content: fileName ? `[文件消息] ${fileName}` : '[文件消息]',
+    kind: 'file',
     attachment: input.attachment,
     status: 'streaming',
     createdAt: input.now,

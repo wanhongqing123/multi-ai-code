@@ -3,7 +3,9 @@
 #include <QCoreApplication>
 #include <QAction>
 #include <QDateTime>
+#include <QDialog>
 #include <QEvent>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFont>
@@ -407,6 +409,22 @@ QString latestMessageTime(const QList<RemoteIMMessage>& messages) {
 
 QString messageTimeText(const RemoteIMMessage& message) {
     return relativeMessageTimeText(message.createdAtMillis);
+}
+
+bool isHtmlFile(const RemoteIMFileAttachment& attachment) {
+    const QString mimeType = attachment.mimeType.toLower();
+    const QString fileName = attachment.fileName.toLower();
+    return mimeType.contains(QStringLiteral("html"))
+        || fileName.endsWith(QStringLiteral(".html"))
+        || fileName.endsWith(QStringLiteral(".htm"));
+}
+
+QString readTextFile(const QString& path) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return QStringLiteral("文件暂不可预览");
+    }
+    return QString::fromUtf8(file.readAll());
 }
 
 }  // namespace
@@ -1235,6 +1253,53 @@ void MainWindow::openImagePreview(const QString& imagePath) {
     dialog.exec();
 }
 
+void MainWindow::openFilePreview(const RemoteIMFileAttachment& attachment) {
+    QDialog dialog(this);
+    const QString displayName = attachment.fileName.isEmpty() ? QFileInfo(attachment.localPath).fileName() : attachment.fileName;
+    dialog.setWindowTitle(displayName.isEmpty() ? QStringLiteral("文件预览") : displayName);
+    dialog.resize(qMax(720, width() / 2), qMax(520, height() / 2));
+
+    auto* layout = new QVBoxLayout(&dialog);
+    layout->setContentsMargins(18, 16, 18, 16);
+    layout->setSpacing(12);
+
+    auto* title = new QLabel(dialog.windowTitle(), &dialog);
+    title->setObjectName(QStringLiteral("filePreviewTitle"));
+    layout->addWidget(title);
+
+    auto* preview = new QTextBrowser(&dialog);
+    preview->setObjectName(QStringLiteral("filePreviewContent"));
+    preview->setOpenExternalLinks(true);
+    preview->setReadOnly(true);
+    if (isHtmlFile(attachment)) {
+        preview->setHtml(readTextFile(attachment.localPath));
+    } else {
+        preview->setHtml(MarkdownRenderer::renderToHtml(readTextFile(attachment.localPath)));
+    }
+    layout->addWidget(preview, 1);
+
+    auto* closeButton = new QPushButton(QStringLiteral("关闭"), &dialog);
+    connect(closeButton, &QPushButton::clicked, &dialog, &QDialog::accept);
+    layout->addWidget(closeButton, 0, Qt::AlignRight);
+
+    dialog.setStyleSheet(QStringLiteral(R"(
+        QLabel#filePreviewTitle {
+            color: #101828;
+            font-size: 18px;
+            font-weight: 800;
+        }
+        QTextBrowser#filePreviewContent {
+            border: 1px solid #d9e4ef;
+            border-radius: 8px;
+            padding: 12px;
+            background: #ffffff;
+            color: #172033;
+            font-size: 14px;
+        }
+    )"));
+    dialog.exec();
+}
+
 QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
     const bool outgoing = message.direction == RemoteIMMessageDirection::Outgoing;
     auto* row = new QWidget(messageContainer_);
@@ -1246,7 +1311,7 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
 
     auto* bubble = new QWidget(row);
     bubble->setObjectName(outgoing ? QStringLiteral("messageBubbleOutgoing") : QStringLiteral("messageBubbleIncoming"));
-    const bool expandedTextBubble = !message.hasImage && (message.text.size() >= 50 || message.text.contains(QLatin1Char('\n')));
+    const bool expandedTextBubble = !message.hasImage && !message.hasFile && (message.text.size() >= 50 || message.text.contains(QLatin1Char('\n')));
     bubble->setProperty("expandedTextBubble", expandedTextBubble);
     applyMessageBubbleWidth(bubble, expandedTextBubble);
     bubble->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
@@ -1295,6 +1360,38 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
             missingLabel->setWordWrap(true);
             contentRow->addWidget(missingLabel);
         }
+    } else if (message.hasFile) {
+        auto* fileButton = new QPushButton(bubble);
+        fileButton->setObjectName(QStringLiteral("messageFileButton"));
+        fileButton->setCursor(Qt::PointingHandCursor);
+        const QString displayName = message.file.fileName.isEmpty()
+            ? QFileInfo(message.file.localPath).fileName()
+            : message.file.fileName;
+        fileButton->setText(QStringLiteral("📄 %1\n%2")
+            .arg(displayName.isEmpty() ? QStringLiteral("file") : displayName)
+            .arg(isHtmlFile(message.file) ? QStringLiteral("HTML 文件，点击预览") : QStringLiteral("Markdown 文件，点击预览")));
+        fileButton->setMinimumWidth(220);
+        fileButton->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+        fileButton->setStyleSheet(QStringLiteral(R"(
+            QPushButton#messageFileButton {
+                background: #f8fafc;
+                border: 1px solid #d9e4ef;
+                border-radius: 8px;
+                color: #172033;
+                font-size: 13px;
+                font-weight: 700;
+                padding: 10px 12px;
+                text-align: left;
+            }
+            QPushButton#messageFileButton:hover {
+                border-color: #1aa7ec;
+                background: #edf8ff;
+            }
+        )"));
+        connect(fileButton, &QPushButton::clicked, this, [this, attachment = message.file]() {
+            openFilePreview(attachment);
+        });
+        contentRow->addWidget(fileButton);
     } else {
         auto* markdownView = new MarkdownMessageView(bubble);
         markdownView->setMessageMarkdown(message.text);

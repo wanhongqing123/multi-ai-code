@@ -202,6 +202,31 @@ final class MasterChatStateTests: XCTestCase {
         XCTAssertEqual(state.contacts.map(\.userID), ["mac-quark-pc"])
     }
 
+    func testReceivesMarkdownFileMessageWithLocalAttachment() throws {
+        var state = MasterChatState(ownerUserID: "ios-master")
+
+        let message = state.receiveFile(
+            filePath: "/tmp/remote-im/report.md",
+            fromUserID: "mac-quark-pc",
+            fileName: "report.md",
+            mimeType: "text/markdown",
+            remoteID: "file-uuid",
+            sizeBytes: 4096,
+            now: Date(timeIntervalSince1970: 163)
+        )
+
+        XCTAssertEqual(message.text, "[文件消息] report.md")
+        XCTAssertEqual(message.fileAttachment?.localFilePath, "/tmp/remote-im/report.md")
+        XCTAssertEqual(message.fileAttachment?.fileName, "report.md")
+        XCTAssertEqual(message.fileAttachment?.mimeType, "text/markdown")
+        XCTAssertEqual(message.fileAttachment?.remoteID, "file-uuid")
+        XCTAssertEqual(message.fileAttachment?.sizeBytes, 4096)
+        XCTAssertTrue(message.isFileMessage)
+        XCTAssertEqual(message.direction, .incoming)
+        XCTAssertEqual(message.status, .received)
+        XCTAssertEqual(state.contacts.map(\.userID), ["mac-quark-pc"])
+    }
+
     func testImagePreviewPolicyCreatesPreviewItemForImageMessage() {
         let messageID = UUID(uuidString: "22222222-2222-2222-2222-222222222222")!
         let message = RemoteIMMessage(

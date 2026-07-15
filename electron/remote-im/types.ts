@@ -54,7 +54,7 @@ export interface RemoteImStatus {
 
 export type RemoteImMessageRole = 'remote-user' | 'system' | 'aicli'
 export type RemoteImMessageDirection = 'incoming' | 'outgoing' | 'internal'
-export type RemoteImMessageKind = 'text' | 'image'
+export type RemoteImMessageKind = 'text' | 'image' | 'file'
 export type RemoteImMessageStatus =
   | 'received'
   | 'rejected'
@@ -76,7 +76,17 @@ export interface RemoteImImageAttachment {
   sdkImageId: string | null
 }
 
-export type RemoteImMessageAttachment = RemoteImImageAttachment
+export interface RemoteImFileAttachment {
+  type: 'file'
+  localPath: string | null
+  remoteUrl: string | null
+  sizeBytes: number | null
+  fileName: string | null
+  mimeType: string | null
+  sdkFileId: string | null
+}
+
+export type RemoteImMessageAttachment = RemoteImImageAttachment | RemoteImFileAttachment
 
 export interface RemoteImMessage {
   id: number
@@ -128,6 +138,19 @@ export interface RemoteImIncomingImageMessage {
   thumbnailUrl?: string | null
   width?: number | null
   height?: number | null
+  sizeBytes?: number | null
+  uuid?: string | null
+  fileName?: string | null
+  mimeType?: string | null
+  createdAt?: number
+}
+
+export interface RemoteImIncomingFileMessage {
+  projectId: string
+  remoteMessageId?: string | null
+  fromUserId: string
+  toUserId?: string | null
+  fileUrl: string
   sizeBytes?: number | null
   uuid?: string | null
   fileName?: string | null

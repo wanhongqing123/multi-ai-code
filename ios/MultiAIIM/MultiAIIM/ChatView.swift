@@ -5,6 +5,7 @@ import PhotosUI
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
+import WebKit
 
 enum RemoteIMStyle {
     static let pageBackground = Color(red: 0.966, green: 0.976, blue: 0.988)
@@ -425,6 +426,7 @@ private struct MessageListView: View {
     let peerRelation: RemoteIMContactRelation
     @StateObject private var voicePlayer = VoiceMessagePlayer()
     @State private var imagePreviewItem: RemoteIMImagePreviewItem?
+    @State private var filePreviewItem: RemoteIMFilePreviewItem?
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -444,6 +446,9 @@ private struct MessageListView: View {
                                 },
                                 previewImage: {
                                     imagePreviewItem = RemoteIMImagePreviewPolicy.previewItem(for: message)
+                                },
+                                previewFile: {
+                                    filePreviewItem = RemoteIMFilePreviewItem(message: message)
                                 }
                             )
                                 .id(message.id)
@@ -470,6 +475,11 @@ private struct MessageListView: View {
         .fullScreenCover(item: $imagePreviewItem) { item in
             FullScreenImagePreviewView(item: item) {
                 imagePreviewItem = nil
+            }
+        }
+        .fullScreenCover(item: $filePreviewItem) { item in
+            FullScreenFilePreviewView(item: item) {
+                filePreviewItem = nil
             }
         }
     }
@@ -517,6 +527,7 @@ private struct MessageBubbleView: View {
     let isVoicePlaying: Bool
     let playVoice: () -> Void
     let previewImage: () -> Void
+    let previewFile: () -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
@@ -544,6 +555,11 @@ private struct MessageBubbleView: View {
                     if let imageAttachment = message.imageAttachment {
                         Button(action: previewImage) {
                             ImageBubbleContent(attachment: imageAttachment)
+                        }
+                        .buttonStyle(.plain)
+                    } else if let fileAttachment = message.fileAttachment {
+                        Button(action: previewFile) {
+                            FileBubbleContent(attachment: fileAttachment)
                         }
                         .buttonStyle(.plain)
                     } else if let voiceAttachment = message.voiceAttachment {
@@ -644,6 +660,76 @@ private struct FullScreenImagePreviewView: View {
             .accessibilityLabel("关闭图片预览")
         }
         .statusBarHidden(true)
+    }
+}
+
+private struct RemoteIMFilePreviewItem: Identifiable {
+    let id: UUID
+    let attachment: RemoteIMFileAttachment
+
+    init?(message: RemoteIMMessage) {
+        guard let attachment = message.fileAttachment else { return nil }
+        self.id = message.id
+        self.attachment = attachment
+    }
+}
+
+private struct FullScreenFilePreviewView: View {
+    let item: RemoteIMFilePreviewItem
+    let close: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if item.attachment.mimeType == "text/html" {
+                    RemoteIMHTMLPreview(filePath: item.attachment.localFilePath)
+                } else {
+                    RemoteIMMarkdownFilePreview(filePath: item.attachment.localFilePath)
+                }
+            }
+            .navigationTitle(item.attachment.fileName)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("关闭", action: close)
+                }
+            }
+        }
+    }
+}
+
+private struct RemoteIMMarkdownFilePreview: View {
+    let filePath: String
+
+    var body: some View {
+        ScrollView {
+            MarkdownLikeText(previewText)
+                .font(.system(size: 14))
+                .padding(18)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(RemoteIMStyle.panelBackground)
+    }
+
+    private var previewText: String {
+        (try? String(contentsOfFile: filePath, encoding: .utf8)) ?? "文件暂不可预览"
+    }
+}
+
+private struct RemoteIMHTMLPreview: UIViewRepresentable {
+    let filePath: String
+
+    func makeUIView(context _: Context) -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.preferences.javaScriptEnabled = false
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.backgroundColor = .white
+        return webView
+    }
+
+    func updateUIView(_ webView: WKWebView, context _: Context) {
+        let html = (try? String(contentsOfFile: filePath, encoding: .utf8)) ?? "<p>文件暂不可预览</p>"
+        webView.loadHTMLString(html, baseURL: URL(fileURLWithPath: filePath).deletingLastPathComponent())
     }
 }
 
@@ -752,6 +838,33 @@ private struct ImageBubbleContent: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
+    }
+}
+
+private struct FileBubbleContent: View {
+    let attachment: RemoteIMFileAttachment
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: attachment.mimeType == "text/html" ? "safari" : "doc.text")
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(RemoteIMStyle.blue)
+                .frame(width: 38, height: 38)
+                .background(RemoteIMStyle.blueSoft, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(attachment.fileName)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(RemoteIMStyle.textPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text(attachment.mimeType == "text/html" ? "HTML 文件" : "Markdown 文件")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(RemoteIMStyle.textSecondary)
+            }
+        }
+        .frame(minWidth: 190, alignment: .leading)
+        .contentShape(Rectangle())
     }
 }
 

@@ -1,5 +1,6 @@
 #include <QApplication>
 #include <QCoreApplication>
+#include <QFont>
 #include <QTimer>
 #include <memory>
 
@@ -25,6 +26,18 @@ int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("Multi-AI Code IM"));
     QApplication::setOrganizationName(QStringLiteral("Multi-AI Code"));
+
+#ifdef Q_OS_WIN
+    // 对齐 Electron 端（--mac-font-sans：Inter/Segoe UI + Noto Sans SC/微软雅黑）：
+    // Qt 在中文 Windows 上默认落到宋体（衬线观感），与远程 IM 抽屉的无衬线风格
+    // 不一致。用 Segoe UI + 微软雅黑组合，像素字号与全局 QSS 的 px 体系保持一致。
+    QFont appFont;
+    appFont.setFamilies({QStringLiteral("Segoe UI"),
+                         QStringLiteral("Microsoft YaHei UI"),
+                         QStringLiteral("Microsoft YaHei")});
+    appFont.setPixelSize(13);
+    app.setFont(appFont);
+#endif
 
     const bool smokeMode = QCoreApplication::arguments().contains(QStringLiteral("--smoke"));
 

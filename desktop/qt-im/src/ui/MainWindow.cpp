@@ -61,22 +61,33 @@ public:
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         setWordWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
         document()->setDocumentMargin(0);
+        // 对齐 Electron .remote-im-markdown ul/ol 的 padding-left:20px——Qt 列表
+        // 缩进来自 indentWidth（默认 40px 太深），CSS margin-left 对列表无效。
+        document()->setIndentWidth(20);
         viewport()->setAutoFillBackground(false);
+        // 对齐 Electron 端 .remote-im-bubble 正文：14px / #0f172a，链接 #2563eb。
         setStyleSheet(QStringLiteral(R"(
             QTextBrowser {
-                color: #172033;
+                color: #0f172a;
                 background: transparent;
                 border: 0;
-                font-size: 13px;
+                font-size: 14px;
             }
             QTextBrowser a {
-                color: #0b67b7;
+                color: #2563eb;
             }
         )"));
     }
 
     void setMessageMarkdown(const QString& markdown) {
         setHtml(MarkdownRenderer::renderToHtml(markdown));
+        // Qt 富文本 CSS 子集不支持 line-height，setHtml 后统一用块格式补上，
+        // 对齐 Electron .remote-im-bubble 的 line-height:1.55（含代码块，两端一致）。
+        QTextCursor cursor(document());
+        cursor.select(QTextCursor::Document);
+        QTextBlockFormat lineHeight;
+        lineHeight.setLineHeight(155, QTextBlockFormat::ProportionalHeight);
+        cursor.mergeBlockFormat(lineHeight);
         updateContentHeight();
     }
 
@@ -1346,12 +1357,14 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
     bubble->setProperty("expandedTextBubble", expandedTextBubble);
     applyMessageBubbleWidth(bubble, expandedTextBubble);
     bubble->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    // 配色/圆角对齐 Electron 端 .remote-im-bubble：本方(用户)白底 #dbeafe 边，
+    // 对方(aicli)米黄底 #fffbeb + #fde68a 边，圆角 16px。
     bubble->setStyleSheet(outgoing
-                              ? QStringLiteral("#messageBubbleOutgoing{background:#ffffff;border:1px solid #c3dffd;border-radius:8px;}")
-                              : QStringLiteral("#messageBubbleIncoming{background:#fffbed;border:1px solid #fdd058;border-radius:8px;}"));
+                              ? QStringLiteral("#messageBubbleOutgoing{background:#ffffff;border:1px solid #dbeafe;border-radius:16px;}")
+                              : QStringLiteral("#messageBubbleIncoming{background:#fffbeb;border:1px solid #fde68a;border-radius:16px;}"));
 
     auto* bubbleLayout = new QVBoxLayout(bubble);
-    bubbleLayout->setContentsMargins(13, 10, 13, 10);
+    bubbleLayout->setContentsMargins(14, 11, 14, 12);
     bubbleLayout->setSpacing(7);
 
     auto* metaRow = new QHBoxLayout();
@@ -1449,27 +1462,29 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
         contentRow->addWidget(statusLabel, 0, Qt::AlignVCenter);
     }
     bubbleLayout->addLayout(contentRow);
+    // meta 行对齐 Electron 端 .remote-im-message-meta：作者 #334155/700、
+    // 时间 #94a3b8、好友徽章 #ecfdf5 底 #047857 字 11px 胶囊。
     bubble->setStyleSheet(bubble->styleSheet() + QStringLiteral(R"(
         #messageAuthorLabel {
-            color: #101828;
+            color: #334155;
             font-size: 13px;
-            font-weight: 800;
+            font-weight: 700;
             background: transparent;
         }
         #messageTimeLabel {
-            color: #667085;
+            color: #94a3b8;
             font-size: 12px;
             font-weight: 600;
             background: transparent;
         }
         #messageRelationBadge {
-            background: #e7f8ee;
+            background: #ecfdf5;
             border: 0;
-            border-radius: 7px;
-            color: #087443;
-            padding: 2px 7px;
-            font-size: 12px;
-            font-weight: 700;
+            border-radius: 9px;
+            color: #047857;
+            padding: 2px 8px;
+            font-size: 11px;
+            font-weight: 800;
         }
     )"));
 

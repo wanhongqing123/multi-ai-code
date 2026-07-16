@@ -382,10 +382,10 @@ resources/asr/
 - Electron 桌面端安装包：tag 形如 `electron-<日期>`（NSIS 安装器，内置 AICLI 与 ASR 资源，安装即用）。
 - Qt IM 客户端免安装包：tag 形如 `qt-im-<日期>`（见 `desktop/qt-im/scripts/package-windows.ps1` 和 `desktop/qt-im/scripts/package-macos.sh`）。
 
-最新发布（截至 2026-07-14，主仓 `315c396`，内置 codex `90cec48` / opencode `9c97112`）：
+最新发布（截至 2026-07-16，主仓 `0be6d8a`，内置 codex `231a136` / opencode `c87efa2`）：
 
-- Windows Electron 安装包：[`electron-20260714`](https://github.com/wanhongqing123/multi-ai-code/releases/tag/electron-20260714)（修复 codex TUI 本地终端光标乱跳、任务执行时无法打字；上一版 IM 回传修复见 `electron-20260713-imfix`）。
-- Windows Qt IM 绿色包：[`qt-im-20260713`](https://github.com/wanhongqing123/multi-ai-code/releases/tag/qt-im-20260713)。
+- Windows Electron 安装包：[`electron-20260716`](https://github.com/wanhongqing123/multi-ai-code/releases/tag/electron-20260716)（修复 IM `/btw` 子任务完成后卡在侧线程、后续消息被困，现自动退回主线程；上一版光标修复见 `electron-20260714`）。
+- Windows Qt IM 绿色包：[`qt-im-20260715`](https://github.com/wanhongqing123/multi-ai-code/releases/tag/qt-im-20260715)。
 
 Windows 产物上传（需已安装并登录 GitHub CLI，见下）：
 

@@ -61,7 +61,16 @@ export function shouldAutoAcceptSessionEditPrompt(raw: string): boolean {
 export function isCodexReadyForPromptInjection(raw: string): boolean {
   const text = normalizeTerminalText(raw).toLowerCase()
   if (shouldAutoAcceptCodexTrustPrompt(raw)) return false
-  return text.includes('openai codex')
+  if (text.includes('openai codex')) return true
+  if (text.includes('› find and fix a bug in @filename')) return true
+  if (
+    /gpt-[^\s]+/.test(text) &&
+    text.includes('context') &&
+    (text.includes('weekly') || text.includes('left'))
+  ) {
+    return true
+  }
+  return false
 }
 
 /**

@@ -16,6 +16,8 @@ export interface AicliStructuredOutputEvent {
 export interface AicliStructuredOutputBridge {
   endpoint: string
   args: string[]
+  isReady(): boolean
+  waitUntilReady(timeoutMs?: number): Promise<boolean>
   requestControlCommand(
     input: AicliRequestControlCommand,
     timeoutMs?: number
@@ -88,6 +90,8 @@ export async function createAicliStructuredOutputBridge(
 ): Promise<AicliStructuredOutputBridge> {
   const token = randomUUID()
   const controlSockets = new Set<net.Socket>()
+  let ready = false
+  const readyWaiters = new Set<(ready: boolean) => void>()
   const pendingControlRequests = new Map<
     string,
     {
@@ -123,6 +127,9 @@ export async function createAicliStructuredOutputBridge(
         if (parsed.token !== token) continue
         if (parsed.kind === 'control_ready') {
           controlSockets.add(socket)
+          ready = true
+          for (const resolve of readyWaiters) resolve(true)
+          readyWaiters.clear()
           continue
         }
         if (parsed.kind === 'control_result') {
@@ -208,6 +215,19 @@ export async function createAicliStructuredOutputBridge(
   return {
     endpoint,
     args: ['--multi-ai-code-im-ipc', endpoint],
+    isReady: () => ready,
+    waitUntilReady: (timeoutMs = 5000) => {
+      if (ready) return Promise.resolve(true)
+      return new Promise<boolean>((resolve) => {
+        const finish = (value: boolean) => {
+          clearTimeout(timeout)
+          readyWaiters.delete(finish)
+          resolve(value)
+        }
+        const timeout = setTimeout(() => finish(false), timeoutMs)
+        readyWaiters.add(finish)
+      })
+    },
     requestControlCommand: (input, timeoutMs = 5000) => {
       const requestId = randomUUID()
       return new Promise<AicliControlCommandResult>((resolve) => {
@@ -240,6 +260,8 @@ export async function createAicliStructuredOutputBridge(
           pending.resolve({ ok: false, error: 'AICLI control bridge closed' })
         }
         pendingControlRequests.clear()
+        for (const resolve of readyWaiters) resolve(false)
+        readyWaiters.clear()
         for (const socket of controlSockets) socket.destroy()
         controlSockets.clear()
         server.close(() => resolve())

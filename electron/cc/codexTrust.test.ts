@@ -39,6 +39,15 @@ describe('isCodexReadyForPromptInjection', () => {
     const raw = '\u001b[2m│ \u001b[22m\u001b[1mOpenAI Codex\u001b[22m\u001b[2m (v0.120.0) │\u001b[m'
     expect(isCodexReadyForPromptInjection(raw)).toBe(true)
   })
+
+  it('returns true when Codex has already redrawn into the active session view', () => {
+    const raw = [
+      '› Find and fix a bug in @filename',
+      '',
+      'gpt-5.6-sol high · ~/Apollo/u3player · gpt-5.6-sol · u3player · Context 6% used · weekly 46% left'
+    ].join('\n')
+    expect(isCodexReadyForPromptInjection(raw)).toBe(true)
+  })
 })
 
 describe('isClaudeReadyForPromptInjection', () => {

@@ -83,6 +83,14 @@ export interface RemoteImRouteResult {
   replyId?: string
 }
 
+function isIncomingAlreadySentToAicli(message: RemoteImMessage): boolean {
+  return (
+    message.direction === 'incoming' &&
+    message.remoteMessageId !== null &&
+    (message.status === 'sent-to-aicli' || message.sentToAicliAt !== null)
+  )
+}
+
 const REMOTE_IM_SYSTEM_TEXTS = new Set([
   '没有远程控制权限。',
   '消息为空，未发送给 AICLI。',
@@ -377,6 +385,12 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
         input.now
       )
     )
+    if (isIncomingAlreadySentToAicli(incoming)) {
+      return {
+        ok: true,
+        ...(incoming.sessionId ? { aicliSessionId: incoming.sessionId } : {})
+      }
+    }
     if (!session) {
       deps.store.updateStatus(incoming.id, {
         status: 'failed',
@@ -636,6 +650,12 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
     const incoming = deps.store.create(
       createIncomingImageRecord(message, attachment, 'received', null, now)
     )
+    if (isIncomingAlreadySentToAicli(incoming)) {
+      return {
+        ok: true,
+        ...(incoming.sessionId ? { aicliSessionId: incoming.sessionId } : {})
+      }
+    }
     if (!session) {
       deps.store.updateStatus(incoming.id, {
         status: 'failed',

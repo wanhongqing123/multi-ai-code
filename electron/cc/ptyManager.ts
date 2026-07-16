@@ -55,7 +55,7 @@ function systemPromptInjectionCommand(command: string): 'claude' | 'codex' | 'op
 
 function structuredOutputProvider(command: string): AicliStructuredOutputProvider | null {
   if (command === 'codex') return 'codex'
-  if (command === 'opencode') return 'opencode'
+  if (isOpenCodeCommand(command)) return 'opencode'
   return null
 }
 
@@ -199,6 +199,7 @@ interface Session {
   /** Raw-chunk dump stream (only when PTY_DUMP_ENABLED). */
   dumpStream?: WriteStream | null
   structuredOutputBridge?: AicliStructuredOutputBridge | null
+  inputQueue?: Promise<void>
 }
 
 interface ExternalReviewJudgeRequest {
@@ -331,10 +332,33 @@ async function waitForCodexReady(
   while (Date.now() - startedAt < timeoutMs) {
     const s = sessions.get(sessionId)
     if (!s) return false
-    if (s.codexPromptReady) return true
+    if (s.codexPromptReady || s.structuredOutputBridge?.isReady()) {
+      s.codexPromptReady = true
+      return true
+    }
     await sleep(120)
   }
-  return sessions.get(sessionId)?.codexPromptReady === true
+  const s = sessions.get(sessionId)
+  if (s?.structuredOutputBridge?.isReady()) {
+    s.codexPromptReady = true
+    return true
+  }
+  return s?.codexPromptReady === true
+}
+
+async function waitForOpenCodeReady(
+  sessionId: string,
+  timeoutMs: number
+): Promise<boolean> {
+  const session = sessions.get(sessionId)
+  if (!session) return false
+  if (!session.structuredOutputBridge) return true
+
+  // OpenCode historically accepted input immediately. Prefer the source-level
+  // bridge readiness when available, but keep old binaries usable if they do
+  // not emit control_ready.
+  const ready = await session.structuredOutputBridge.waitUntilReady(timeoutMs)
+  return ready || sessions.has(sessionId)
 }
 
 async function waitForClaudeReady(
@@ -446,6 +470,31 @@ export function getSessionRuntimeInfo(sessionId: string): {
   }
 }
 
+async function enqueueSessionInput<T>(
+  sessionId: string,
+  task: (session: Session) => Promise<T>
+): Promise<T> {
+  const session = sessions.get(sessionId)
+  if (!session) throw new Error('no session')
+
+  const previous = session.inputQueue ?? Promise.resolve()
+  const next = previous
+    .catch(() => {
+      /* keep later input delivery from inheriting a previous failure */
+    })
+    .then(async () => {
+      const current = sessions.get(sessionId)
+      if (!current) throw new Error('no session')
+      return task(current)
+    })
+
+  session.inputQueue = next.then(
+    () => undefined,
+    () => undefined
+  )
+  return next
+}
+
 export async function sendUserMessageToSession(
   sessionId: string,
   text: string,
@@ -458,18 +507,26 @@ export async function sendUserMessageToSession(
       ? await waitForCodexReady(sessionId, 10_000)
       : session.command === 'claude'
         ? await waitForClaudeReady(sessionId, 15_000)
-        : true
+        : isOpenCodeCommand(session.command)
+          ? await waitForOpenCodeReady(sessionId, 10_000)
+          : true
   if (!ready) return { ok: false, error: 'session not ready for input' }
   session = sessions.get(sessionId)
   if (!session) return { ok: false, error: 'no session' }
-  const openCodeSession = isOpenCodeCommand(session.command)
-  await sendMessage(session.proc, text, { singleSubmit: openCodeSession })
-  // opencode 的全屏 TUI 会在会话里展示已提交消息；合成的本地回显 chunk 会直接
-  // 画在 TUI 的编辑器/状态栏上，opentui 不感知这些格子被改过，形成永久残留。
-  if (!openCodeSession) {
-    displayLocalTerminalText(sessionId, options.displayText)
+  try {
+    await enqueueSessionInput(sessionId, async (current) => {
+      const openCodeSession = isOpenCodeCommand(current.command)
+      await sendMessage(current.proc, text, { singleSubmit: openCodeSession })
+      // opencode 的全屏 TUI 会在会话里展示已提交消息；合成的本地回显 chunk 会直接
+      // 画在 TUI 的编辑器/状态栏上，opentui 不感知这些格子被改过，形成永久残留。
+      if (!openCodeSession) {
+        displayLocalTerminalText(sessionId, options.displayText)
+      }
+    })
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
   }
-  return { ok: true }
 }
 
 export function switchAicliModeForSession(
@@ -812,8 +869,11 @@ export function registerPtyIpc(): void {
       try {
         if (req.command === 'codex') {
           // Startup time varies heavily (trust gate / update banner / MCP boot).
-          // Wait until Codex home UI appears, then inject prompt text.
+          // Prefer the source-level control_ready bridge; keep TUI text as a
+          // fallback for older Codex builds.
           await waitForCodexReady(req.sessionId, 10000)
+        } else if (isOpenCodeCommand(req.command)) {
+          await waitForOpenCodeReady(req.sessionId, 10000)
         } else if (req.command === 'claude') {
           // Claude can redraw its TUI after process start. Typing before the
           // input box is interactive can be lost, leaving the prompt file
@@ -848,8 +908,10 @@ export function registerPtyIpc(): void {
         })
         await fs.mkdir(injection.writeDir, { recursive: true })
         await fs.writeFile(injection.writePath, injection.fileContents, 'utf8')
-        await sendMessage(proc, injection.bootstrapMessage, {
-          singleSubmit: isOpenCodeCommand(req.command)
+        await enqueueSessionInput(req.sessionId, async (current) => {
+          await sendMessage(current.proc, injection.bootstrapMessage, {
+            singleSubmit: isOpenCodeCommand(current.command)
+          })
         })
       } catch (err) {
         broadcast('cc:notice', {
@@ -873,7 +935,9 @@ export function registerPtyIpc(): void {
       const s = sessions.get(sessionId)
       if (!s) return { ok: false as const, error: 'no session' }
       try {
-        await streamInput(s.proc, data)
+        await enqueueSessionInput(sessionId, async (current) => {
+          await streamInput(current.proc, data)
+        })
         return { ok: true as const }
       } catch (err) {
         return {
@@ -964,14 +1028,16 @@ export function registerPtyIpc(): void {
           })
 
           try {
-            await sendMessage(
-              s.proc,
-              buildExternalReviewPrompt({
-                planAbsPath: req.planAbsPath,
-                suggestion: req.suggestion
-              }),
-              { singleSubmit: isOpenCodeCommand(s.command) }
-            )
+            await enqueueSessionInput(req.sessionId, async (current) => {
+              await sendMessage(
+                current.proc,
+                buildExternalReviewPrompt({
+                  planAbsPath: req.planAbsPath,
+                  suggestion: req.suggestion
+                }),
+                { singleSubmit: isOpenCodeCommand(current.command) }
+              )
+            })
           } catch (err) {
             settlePendingExternalReview(req.sessionId, {
               kind: 'reject',

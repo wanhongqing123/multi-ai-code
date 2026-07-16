@@ -140,6 +140,28 @@ describe('AICLI structured output bridge', () => {
     expect(receivedLines.join('')).toContain('"requestId"')
   })
 
+  it('reports source-level readiness after the AICLI control bridge connects', async () => {
+    const bridge = await createAicliStructuredOutputBridge('session-1', 'codex')
+    const { port, token } = parseTcpEndpoint(bridge.endpoint)
+
+    expect(bridge.isReady()).toBe(false)
+    await expect(bridge.waitUntilReady(20)).resolves.toBe(false)
+
+    const socket = await new Promise<net.Socket>((resolve, reject) => {
+      const client = net.createConnection({ host: '127.0.0.1', port }, () => {
+        client.write(`${JSON.stringify({ token, kind: 'control_ready' })}\n`)
+        resolve(client)
+      })
+      client.once('error', reject)
+    })
+
+    await expect(bridge.waitUntilReady(500)).resolves.toBe(true)
+    expect(bridge.isReady()).toBe(true)
+
+    socket.destroy()
+    await bridge.close()
+  })
+
   it('resolves request/response control commands from token-verified sockets', async () => {
     const bridge = await createAicliStructuredOutputBridge('session-1', 'codex')
     const { port, token } = parseTcpEndpoint(bridge.endpoint)

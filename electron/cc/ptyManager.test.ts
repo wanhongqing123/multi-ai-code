@@ -1,5 +1,6 @@
 import { promises as fs } from 'fs'
 import { readFileSync } from 'fs'
+import net from 'net'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { fileURLToPath } from 'url'
@@ -92,6 +93,30 @@ describe('registerPtyIpc prompt injection timing', () => {
 
   const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
+  async function connectAicliControlBridge(
+    proc: (typeof ptyInstances)[number]
+  ): Promise<net.Socket> {
+    const args = proc.opts.args as string[]
+    const endpoint = args[args.indexOf('--multi-ai-code-im-ipc') + 1]
+    if (!endpoint) throw new Error('AICLI bridge endpoint was not passed to the process')
+    const url = new URL(endpoint)
+    const token = url.searchParams.get('token')
+    if (!token) throw new Error('AICLI bridge endpoint did not include a token')
+
+    const socket = await new Promise<net.Socket>((resolve, reject) => {
+      const client = net.createConnection(
+        { host: url.hostname, port: Number(url.port) },
+        () => {
+          client.write(`${JSON.stringify({ token, kind: 'control_ready' })}\n`)
+          resolve(client)
+        }
+      )
+      client.once('error', reject)
+    })
+    await sleep(20)
+    return socket
+  }
+
   async function spawnClaudeSession(): Promise<{
     proc: (typeof ptyInstances)[number]
     targetRepo: string
@@ -100,6 +125,8 @@ describe('registerPtyIpc prompt injection timing', () => {
     const projectDir = await fs.mkdtemp(join(tmpdir(), 'multi-ai-code-project-'))
     await fs.writeFile(join(projectDir, 'project.json'), JSON.stringify({ name: 'demo' }), 'utf8')
 
+    const { setActiveAccount } = await import('../store/paths.js')
+    setActiveAccount('test-account')
     const { registerPtyIpc } = await import('./ptyManager.js')
     registerPtyIpc()
 
@@ -132,6 +159,8 @@ describe('registerPtyIpc prompt injection timing', () => {
     const projectDir = await fs.mkdtemp(join(tmpdir(), 'multi-ai-code-project-'))
     await fs.writeFile(join(projectDir, 'project.json'), JSON.stringify({ name: 'demo' }), 'utf8')
 
+    const { setActiveAccount } = await import('../store/paths.js')
+    setActiveAccount('test-account')
     const { registerPtyIpc } = await import('./ptyManager.js')
     registerPtyIpc()
 
@@ -207,6 +236,8 @@ describe('registerPtyIpc prompt injection timing', () => {
     const projectDir = await fs.mkdtemp(join(tmpdir(), 'multi-ai-code-project-opencode-'))
     await fs.writeFile(join(projectDir, 'project.json'), JSON.stringify({ name: 'demo' }), 'utf8')
 
+    const { setActiveAccount } = await import('../store/paths.js')
+    setActiveAccount('test-account')
     const { registerPtyIpc } = await import('./ptyManager.js')
     registerPtyIpc()
 
@@ -323,6 +354,37 @@ describe('registerPtyIpc prompt injection timing', () => {
     expect(proc.writes.join('')).toContain('scheduled task prompt')
   }, 10_000)
 
+  it('accepts Codex messages after the active session status line is visible', async () => {
+    const { proc } = await spawnNoPlanSession('codex')
+
+    proc.emitData(
+      [
+        '› Find and fix a bug in @filename',
+        '',
+        'gpt-5.6-sol high · ~/Apollo/u3player · gpt-5.6-sol · u3player · Context 6% used · weekly 46% left'
+      ].join('\n')
+    )
+
+    const { sendUserMessageToSession } = await import('./ptyManager.js')
+    const result = await sendUserMessageToSession('session-no-plan', 'remote im text')
+
+    expect(result).toEqual({ ok: true })
+    expect(proc.writes.join('')).toContain('remote im text')
+  })
+
+  it('accepts Codex messages after the source-level control bridge is ready', async () => {
+    const { proc } = await spawnNoPlanSession('codex')
+    const socket = await connectAicliControlBridge(proc)
+
+    const { sendUserMessageToSession } = await import('./ptyManager.js')
+    const result = await sendUserMessageToSession('session-no-plan', 'remote im text')
+
+    socket.destroy()
+
+    expect(result).toEqual({ ok: true })
+    expect(proc.writes.join('')).toContain('remote im text')
+  })
+
   it('broadcasts remote IM display text to the local terminal without changing PTY input', async () => {
     const { proc } = await spawnNoPlanSession()
     proc.emitData(
@@ -360,6 +422,7 @@ describe('registerPtyIpc prompt injection timing', () => {
 
   it('skips the local display echo and double submit for opencode sessions', async () => {
     const { proc } = await spawnNoPlanSession('opencode')
+    const socket = await connectAicliControlBridge(proc)
 
     const { sendUserMessageToSession } = await import('./ptyManager.js')
     const result = await sendUserMessageToSession(
@@ -369,6 +432,7 @@ describe('registerPtyIpc prompt injection timing', () => {
         displayText: '[来自远程 IM：mac-apollo-u3player]\n你好'
       }
     )
+    socket.destroy()
 
     expect(result).toEqual({ ok: true })
     const written = proc.writes.join('')
@@ -377,6 +441,25 @@ describe('registerPtyIpc prompt injection timing', () => {
     expect(browserWindowSends.filter((send) => send.channel === 'cc:data')).toEqual([])
     // 首个回车即提交；第二个回车会追加一条空消息，必须只发一次。
     expect(written.match(/\r/g)).toHaveLength(1)
+  })
+
+  it('serializes concurrent programmatic messages to the same AICLI session', async () => {
+    const { proc } = await spawnNoPlanSession('opencode')
+    const socket = await connectAicliControlBridge(proc)
+
+    const { sendUserMessageToSession } = await import('./ptyManager.js')
+    const firstMessage = `first:${'A'.repeat(160)}`
+    const secondMessage = `second:${'B'.repeat(160)}`
+
+    const [firstResult, secondResult] = await Promise.all([
+      sendUserMessageToSession('session-no-plan', firstMessage),
+      sendUserMessageToSession('session-no-plan', secondMessage)
+    ])
+    socket.destroy()
+
+    expect(firstResult).toEqual({ ok: true })
+    expect(secondResult).toEqual({ ok: true })
+    expect(proc.writes.join('')).toBe(`${firstMessage}\r${secondMessage}\r`)
   })
 
   it('does not scan local skills when sending user messages', () => {

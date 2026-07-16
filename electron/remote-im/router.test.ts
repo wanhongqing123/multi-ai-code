@@ -27,6 +27,14 @@ function createMessageStore() {
   return {
     messages,
     create(input: Omit<RemoteImMessage, 'id'>): RemoteImMessage {
+      if (input.remoteMessageId !== null) {
+        const existing = messages.find(
+          (message) =>
+            message.provider === input.provider &&
+            message.remoteMessageId === input.remoteMessageId
+        )
+        if (existing) return existing
+      }
       const message = { ...input, id: nextId++ }
       messages.push(message)
       return message
@@ -121,6 +129,44 @@ describe('remote IM router', () => {
       'sent-to-aicli',
       'streaming'
     ])
+  })
+
+  it('does not route the same remote IM message to AICLI twice', async () => {
+    const store = createMessageStore()
+    const sentToAicli: string[] = []
+    const sentToIm: string[] = []
+    const router = createRemoteImRouter({
+      getConfig: () => config,
+      resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
+      sendUser: async (_sessionId, text) => {
+        sentToAicli.push(text)
+        return { ok: true }
+      },
+      sendImText: async (_projectId, _toUserId, text) => {
+        sentToIm.push(text)
+        return { ok: true }
+      },
+      createReplyId: () => 'reply-fixed',
+      store
+    })
+
+    const message = {
+      projectId: 'project-1',
+      remoteMessageId: 'remote-dup-1',
+      fromUserId: 'phone_admin',
+      toUserId: 'desktop_bot',
+      text: '同一条 SDK 消息重放',
+      createdAt: 100
+    }
+
+    const first = await router.handleIncomingText(message)
+    const second = await router.handleIncomingText(message)
+
+    expect(first.ok).toBe(true)
+    expect(second.ok).toBe(true)
+    expect(sentToAicli).toHaveLength(1)
+    expect(sentToIm).toEqual(['已发送给当前 AICLI，开始处理。'])
+    expect(store.messages.filter((item) => item.direction === 'incoming')).toHaveLength(1)
   })
 
   it('handles supported slash commands without sending text to AICLI', async () => {

@@ -69,7 +69,6 @@ private slots:
     void slashCommandSuggestionsFillComposer();
     void deleteKeyRemovesContactAndMessagesFromConversationList();
     void deleteKeyRemovesContactAndMessagesFromContactsList();
-    void contactRowDeleteButtonRemovesFriend();
     void navigationIconsDoNotUsePrivateFontGlyphProperties();
 };
 
@@ -843,30 +842,6 @@ void MainWindowLayoutTest::deleteKeyRemovesContactAndMessagesFromContactsList() 
     QCOMPARE(app.chatState().contacts().size(), 1);
     QCOMPARE(app.chatState().contacts().first().userId, QStringLiteral("other-user"));
     QCOMPARE(app.chatState().selectedPeerId(), QStringLiteral("other-user"));
-}
-
-void MainWindowLayoutTest::contactRowDeleteButtonRemovesFriend() {
-    auto client = std::make_unique<FakeRemoteIMClient>();
-    auto* fakeClient = client.get();
-    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
-    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
-
-    MainWindow window(app);
-    window.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&window));
-    auto* contactsNavButton = window.findChild<QPushButton*>(QStringLiteral("contactsNavButton"));
-    auto* contactsList = window.findChild<QListWidget*>(QStringLiteral("contactsList"));
-    QVERIFY(contactsNavButton != nullptr);
-    QVERIFY(contactsList != nullptr);
-    contactsNavButton->click();
-
-    const QRect itemRect = contactsList->visualItemRect(contactsList->item(0));
-    const QPoint deleteButtonCenter(itemRect.right() - 23, itemRect.center().y());
-    confirmNextContactDeletion();
-    QTest::mouseClick(contactsList->viewport(), Qt::LeftButton, Qt::NoModifier, deleteButtonCenter);
-
-    QCOMPARE(fakeClient->lastDeletedContactId(), QStringLiteral("phone-user"));
-    QVERIFY(app.chatState().contacts().isEmpty());
 }
 
 void MainWindowLayoutTest::navigationIconsDoNotUsePrivateFontGlyphProperties() {

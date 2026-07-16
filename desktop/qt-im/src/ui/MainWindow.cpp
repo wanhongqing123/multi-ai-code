@@ -1,6 +1,5 @@
 #include "ui/MainWindow.h"
 
-#include <QApplication>
 #include <QCoreApplication>
 #include <QAction>
 #include <QDateTime>
@@ -171,8 +170,7 @@ public:
 
 class ContactListDelegate final : public QStyledItemDelegate {
 public:
-    explicit ContactListDelegate(std::function<void(const QModelIndex&)> onDelete, QObject* parent = nullptr)
-        : QStyledItemDelegate(parent), onDelete_(std::move(onDelete)) {}
+    explicit ContactListDelegate(QObject* parent = nullptr) : QStyledItemDelegate(parent) {}
 
     QSize sizeHint(const QStyleOptionViewItem&, const QModelIndex&) const override {
         return QSize(0, 54);
@@ -200,8 +198,7 @@ public:
         painter->drawText(avatarRect, Qt::AlignCenter, QStringLiteral("IM"));
 
         const int textLeft = avatarRect.right() + 14;
-        const QRect deleteRect = deleteButtonRect(option.rect);
-        const QRect nameRect(textLeft, rowRect.top(), deleteRect.left() - textLeft - 8, rowRect.height());
+        const QRect nameRect(textLeft, rowRect.top(), rowRect.right() - textLeft - 12, rowRect.height());
 
         const QString name = index.data(DisplayNameRole).toString();
 
@@ -213,31 +210,8 @@ public:
         painter->drawText(nameRect, Qt::AlignLeft | Qt::AlignVCenter,
                           QFontMetrics(nameFont).elidedText(name, Qt::ElideRight, nameRect.width()));
 
-        QApplication::style()->standardIcon(QStyle::SP_TrashIcon).paint(painter, deleteRect.adjusted(5, 5, -5, -5));
-
         painter->restore();
     }
-
-    bool editorEvent(QEvent* event,
-                     QAbstractItemModel* model,
-                     const QStyleOptionViewItem& option,
-                     const QModelIndex& index) override {
-        if (event->type() == QEvent::MouseButtonRelease) {
-            auto* mouseEvent = static_cast<QMouseEvent*>(event);
-            if (mouseEvent->button() == Qt::LeftButton && deleteButtonRect(option.rect).contains(mouseEvent->pos())) {
-                if (onDelete_) onDelete_(index);
-                return true;
-            }
-        }
-        return QStyledItemDelegate::editorEvent(event, model, option, index);
-    }
-
-private:
-    static QRect deleteButtonRect(const QRect& itemRect) {
-        return QRect(itemRect.right() - 38, itemRect.top() + 10, 30, 30);
-    }
-
-    std::function<void(const QModelIndex&)> onDelete_;
 };
 
 class ClickableImageLabel final : public QLabel {
@@ -755,9 +729,7 @@ void MainWindow::buildUi() {
     contactsList_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     contactsList_->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
     contactsList_->setUniformItemSizes(true);
-    contactsList_->setItemDelegate(new ContactListDelegate([this](const QModelIndex& index) {
-        deleteContactFromItem(contactsList_->item(index.row()));
-    }, contactsList_));
+    contactsList_->setItemDelegate(new ContactListDelegate(contactsList_));
     contactsDirectoryLayout->addLayout(contactsHeader);
     contactsDirectoryLayout->addWidget(contactsList_, 1);
 
@@ -1158,7 +1130,6 @@ void MainWindow::refreshContactDirectory() {
         item->setSizeHint(QSize(0, 54));
         item->setData(UserIdRole, contact.userId);
         item->setData(DisplayNameRole, contact.displayName.isEmpty() ? contact.userId : contact.displayName);
-        item->setToolTip(QStringLiteral("打开会话；点击行尾垃圾桶可删除好友及聊天历史"));
         contactsList_->addItem(item);
     }
     contactsList_->blockSignals(false);

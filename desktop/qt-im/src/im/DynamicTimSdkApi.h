@@ -24,6 +24,10 @@ public:
                     TimSdkCompletion completion) override;
     int getConversationList(TimSdkCompletion completion) override;
     int getFriendList(TimSdkCompletion completion) override;
+    int deleteFriend(const QString& jsonRequest, TimSdkCompletion completion) override;
+    int deleteConversation(const QString& conversationId,
+                           int conversationType,
+                           TimSdkCompletion completion) override;
     int getMessageList(const QString& conversationId,
                        int conversationType,
                        const QString& jsonRequest,
@@ -46,6 +50,11 @@ private:
                                   const void* userData);
     using GetConversationListFn = int (*)(NativeCompletion completion, const void* userData);
     using GetFriendListFn = int (*)(NativeCompletion completion, const void* userData);
+    using DeleteFriendFn = int (*)(const char* jsonRequest, NativeCompletion completion, const void* userData);
+    using DeleteConversationFn = int (*)(const char* conversationId,
+                                         int conversationType,
+                                         NativeCompletion completion,
+                                         const void* userData);
     using GetMessageListFn = int (*)(const char* conversationId,
                                      int conversationType,
                                      const char* jsonRequest,
@@ -70,6 +79,8 @@ private:
     SendMessageFn sendMessage_ = nullptr;
     GetConversationListFn getConversationList_ = nullptr;
     GetFriendListFn getFriendList_ = nullptr;
+    DeleteFriendFn deleteFriend_ = nullptr;
+    DeleteConversationFn deleteConversation_ = nullptr;
     GetMessageListFn getMessageList_ = nullptr;
     AddReceiveMessagesFn addReceiveMessages_ = nullptr;
     RemoveReceiveMessagesFn removeReceiveMessages_ = nullptr;

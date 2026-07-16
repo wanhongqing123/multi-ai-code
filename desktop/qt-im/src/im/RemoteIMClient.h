@@ -19,6 +19,7 @@ public:
 
     virtual void connectToService(int sdkAppId, const QString& userId, const QString& userSig, RemoteIMCompletion completion) = 0;
     virtual void disconnectFromService(RemoteIMCompletion completion) = 0;
+    virtual void deleteContact(const QString& userId, RemoteIMCompletion completion) = 0;
     virtual void sendText(const QString& peerId, const QString& text, RemoteIMCompletion completion) = 0;
     virtual void sendImage(const QString& peerId, const QString& localPath, RemoteIMCompletion completion) = 0;
     virtual void sendVoice(const QString& peerId, const QString& localPath, int durationSeconds, RemoteIMCompletion completion) = 0;

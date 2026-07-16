@@ -12,6 +12,11 @@ void FakeRemoteIMClient::disconnectFromService(RemoteIMCompletion completion) {
     complete(std::move(completion));
 }
 
+void FakeRemoteIMClient::deleteContact(const QString& userId, RemoteIMCompletion completion) {
+    lastDeletedContactId_ = userId.trimmed();
+    complete(std::move(completion));
+}
+
 void FakeRemoteIMClient::sendText(const QString& peerId, const QString& text, RemoteIMCompletion completion) {
     lastTextPeerId_ = peerId.trimmed();
     lastText_ = text.trimmed();
@@ -29,6 +34,7 @@ void FakeRemoteIMClient::sendVoice(const QString&, const QString&, int, RemoteIM
 }
 
 QString FakeRemoteIMClient::connectedUserId() const { return connectedUserId_; }
+QString FakeRemoteIMClient::lastDeletedContactId() const { return lastDeletedContactId_; }
 QString FakeRemoteIMClient::lastTextPeerId() const { return lastTextPeerId_; }
 QString FakeRemoteIMClient::lastText() const { return lastText_; }
 QString FakeRemoteIMClient::lastImagePeerId() const { return lastImagePeerId_; }

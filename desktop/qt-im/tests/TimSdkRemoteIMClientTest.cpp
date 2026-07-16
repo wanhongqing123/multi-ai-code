@@ -56,6 +56,27 @@ public:
         return 0;
     }
 
+    int deleteFriend(const QString& jsonRequest, TimSdkCompletion completion) override {
+        operations.append(QStringLiteral("deleteFriend"));
+        deleteFriendRequest = jsonRequest;
+        if (completion) completion(deleteFriendCode,
+                                   deleteFriendCode == 0 ? QString() : QStringLiteral("delete friend failed"),
+                                   QString());
+        return deleteFriendCode;
+    }
+
+    int deleteConversation(const QString& conversationId,
+                           int conversationType,
+                           TimSdkCompletion completion) override {
+        operations.append(QStringLiteral("deleteConversation"));
+        deletedConversationId = conversationId;
+        deletedConversationType = conversationType;
+        if (completion) completion(deleteConversationCode,
+                                   deleteConversationCode == 0 ? QString() : QStringLiteral("delete conversation failed"),
+                                   QString());
+        return deleteConversationCode;
+    }
+
     int getMessageList(const QString& conversationId,
                        int conversationType,
                        const QString& jsonRequest,
@@ -93,6 +114,12 @@ public:
     QString lastJsonMessage;
     bool conversationListRequested = false;
     bool friendListRequested = false;
+    int deleteFriendCode = 0;
+    int deleteConversationCode = 0;
+    QString deleteFriendRequest;
+    QString deletedConversationId;
+    int deletedConversationType = 0;
+    QStringList operations;
     QString conversationListPayload;
     QString friendListPayload;
     QString historyConversationId;
@@ -116,6 +143,7 @@ class TimSdkRemoteIMClientTest : public QObject {
 
 private slots:
     void connectsThroughSdkAndSendsTextAndImage();
+    void deletesFriendAndConversationThroughSdk();
     void fetchesContactsConversationsAndHistoryAfterLogin();
     void emitsIncomingTextAndImageFromSdkMessages();
     void rejectsMissingCredentials();
@@ -158,6 +186,27 @@ void TimSdkRemoteIMClientTest::connectsThroughSdkAndSendsTextAndImage() {
     QCOMPARE(elem.value(QStringLiteral("elem_type")).toInt(), 1);
     QCOMPARE(elem.value(QStringLiteral("image_elem_orig_path")).toString(), QStringLiteral("/tmp/outgoing.png"));
     QCOMPARE(elem.value(QStringLiteral("image_elem_level")).toInt(), 0);
+}
+
+void TimSdkRemoteIMClientTest::deletesFriendAndConversationThroughSdk() {
+    auto api = std::make_unique<FakeTimSdkApi>();
+    auto* fake = api.get();
+    TimSdkRemoteIMClient client(std::move(api));
+    client.connectToService(123456, QStringLiteral("desktop-user"), QStringLiteral("sig-value"), nullptr);
+
+    bool deleted = false;
+    client.deleteContact(QStringLiteral(" phone-user "), [&](bool ok, const QString&) {
+        deleted = ok;
+    });
+
+    QVERIFY(deleted);
+    QCOMPARE(fake->operations, QStringList({QStringLiteral("deleteFriend"), QStringLiteral("deleteConversation")}));
+    const QJsonObject request = QJsonDocument::fromJson(fake->deleteFriendRequest.toUtf8()).object();
+    QCOMPARE(request.value(QStringLiteral("friendship_delete_friend_param_friend_type")).toInt(), 1);
+    QCOMPARE(request.value(QStringLiteral("friendship_delete_friend_param_identifier_array")).toArray(),
+             QJsonArray({QStringLiteral("phone-user")}));
+    QCOMPARE(fake->deletedConversationId, QStringLiteral("phone-user"));
+    QCOMPARE(fake->deletedConversationType, 1);
 }
 
 void TimSdkRemoteIMClientTest::fetchesContactsConversationsAndHistoryAfterLogin() {

@@ -11,6 +11,8 @@ class RemoteIMApplicationTest : public QObject {
 private slots:
     void sendsTextThroughClientAndMarksSent();
     void receivesIncomingTextIntoSelectedConversation();
+    void deletesContactThroughClientAfterRemoteSuccess();
+    void keepsContactWhenRemoteDeletionFails();
 };
 
 void RemoteIMApplicationTest::sendsTextThroughClientAndMarksSent() {
@@ -44,6 +46,34 @@ void RemoteIMApplicationTest::receivesIncomingTextIntoSelectedConversation() {
     QCOMPARE(messages.first().direction, RemoteIMMessageDirection::Incoming);
 }
 
+void RemoteIMApplicationTest::deletesContactThroughClientAfterRemoteSuccess() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    auto* fakeClient = client.get();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+    app.chatState().receiveText(QStringLiteral("phone-user"), QStringLiteral("remove me"));
+
+    app.deleteContact(QStringLiteral(" phone-user "));
+
+    QCOMPARE(fakeClient->lastDeletedContactId(), QStringLiteral("phone-user"));
+    QVERIFY(app.chatState().contacts().isEmpty());
+    QVERIFY(app.chatState().messagesWith(QStringLiteral("phone-user")).isEmpty());
+}
+
+void RemoteIMApplicationTest::keepsContactWhenRemoteDeletionFails() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    auto* fakeClient = client.get();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+    fakeClient->failNext(QStringLiteral("network failed"));
+    QSignalSpy errorSpy(&app, &RemoteIMApplication::errorMessage);
+
+    app.deleteContact(QStringLiteral("phone-user"));
+
+    QCOMPARE(app.chatState().contacts().size(), 1);
+    QCOMPARE(errorSpy.count(), 1);
+    QCOMPARE(errorSpy.takeFirst().at(0).toString(), QStringLiteral("network failed"));
+}
+
 QTEST_MAIN(RemoteIMApplicationTest)
 #include "RemoteIMApplicationTest.moc"
-

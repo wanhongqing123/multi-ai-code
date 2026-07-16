@@ -33,8 +33,16 @@ void RemoteIMApplication::addContact(const QString& userId, const QString& displ
 }
 
 void RemoteIMApplication::deleteContact(const QString& userId) {
-    state_.removeContactAndMessages(userId);
-    emit stateChanged();
+    const QString cleanUserId = userId.trimmed();
+    if (cleanUserId.isEmpty()) return;
+    client_->deleteContact(cleanUserId, [this, cleanUserId](bool ok, const QString& error) {
+        if (!ok) {
+            emit errorMessage(error.isEmpty() ? QStringLiteral("删除好友失败") : error);
+            return;
+        }
+        state_.removeContactAndMessages(cleanUserId);
+        emit stateChanged();
+    });
 }
 
 void RemoteIMApplication::selectPeer(const QString& userId) {

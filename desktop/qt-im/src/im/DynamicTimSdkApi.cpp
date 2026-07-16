@@ -84,6 +84,8 @@ DynamicTimSdkApi::DynamicTimSdkApi(QString libraryPath) : library_(std::move(lib
     sendMessage_ = resolve<SendMessageFn>("TIMMsgSendMessage");
     getConversationList_ = resolve<GetConversationListFn>("TIMConvGetConvList");
     getFriendList_ = resolve<GetFriendListFn>("TIMFriendshipGetFriendProfileList");
+    deleteFriend_ = resolve<DeleteFriendFn>("TIMFriendshipDeleteFriend");
+    deleteConversation_ = resolve<DeleteConversationFn>("TIMConvDelete");
     getMessageList_ = resolve<GetMessageListFn>("TIMMsgGetMsgList");
     addReceiveMessages_ = resolve<AddReceiveMessagesFn>("TIMAddRecvNewMsgCallback");
     removeReceiveMessages_ = resolve<RemoveReceiveMessagesFn>("TIMRemoveRecvNewMsgCallback");
@@ -101,7 +103,7 @@ QString DynamicTimSdkApi::libraryPathFromEnvironment() {
 
 bool DynamicTimSdkApi::isReady() const {
     return init_ && uninit_ && login_ && logout_ && sendMessage_ && getConversationList_ && getFriendList_ &&
-           getMessageList_ && addReceiveMessages_ && removeReceiveMessages_;
+           deleteFriend_ && deleteConversation_ && getMessageList_ && addReceiveMessages_ && removeReceiveMessages_;
 }
 
 QString DynamicTimSdkApi::diagnosticError() const {
@@ -180,6 +182,35 @@ int DynamicTimSdkApi::getFriendList(TimSdkCompletion completion) {
     if (!getFriendList_) return completeIfImmediateFailure(-1, std::move(completion));
     auto* heapCompletion = new TimSdkCompletion(std::move(completion));
     const int result = getFriendList_(completeOnce, heapCompletion);
+    if (result != 0) {
+        TimSdkCompletion failedCompletion = std::move(*heapCompletion);
+        delete heapCompletion;
+        return completeIfImmediateFailure(result, std::move(failedCompletion));
+    }
+    return result;
+}
+
+int DynamicTimSdkApi::deleteFriend(const QString& jsonRequest, TimSdkCompletion completion) {
+    if (!deleteFriend_) return completeIfImmediateFailure(-1, std::move(completion));
+    auto* heapCompletion = new TimSdkCompletion(std::move(completion));
+    const int result = deleteFriend_(jsonRequest.toUtf8().constData(), completeOnce, heapCompletion);
+    if (result != 0) {
+        TimSdkCompletion failedCompletion = std::move(*heapCompletion);
+        delete heapCompletion;
+        return completeIfImmediateFailure(result, std::move(failedCompletion));
+    }
+    return result;
+}
+
+int DynamicTimSdkApi::deleteConversation(const QString& conversationId,
+                                         int conversationType,
+                                         TimSdkCompletion completion) {
+    if (!deleteConversation_) return completeIfImmediateFailure(-1, std::move(completion));
+    auto* heapCompletion = new TimSdkCompletion(std::move(completion));
+    const int result = deleteConversation_(conversationId.toUtf8().constData(),
+                                           conversationType,
+                                           completeOnce,
+                                           heapCompletion);
     if (result != 0) {
         TimSdkCompletion failedCompletion = std::move(*heapCompletion);
         delete heapCompletion;

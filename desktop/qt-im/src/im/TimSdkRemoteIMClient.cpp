@@ -22,6 +22,7 @@ constexpr int kElemText = 0;
 constexpr int kElemImage = 1;
 constexpr int kElemFile = 4;
 constexpr int kImageLevelOriginal = 0;
+constexpr int kFriendTypeBoth = 1;
 
 QString appDataDir(const QString& child) {
     QString root = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
@@ -163,6 +164,38 @@ void TimSdkRemoteIMClient::disconnectFromService(RemoteIMCompletion completion) 
         api_->uninit();
         complete(std::move(completion), code, description);
         emit disconnected();
+    });
+}
+
+void TimSdkRemoteIMClient::deleteContact(const QString& userId, RemoteIMCompletion completion) {
+    const QString cleanUserId = userId.trimmed();
+    if (cleanUserId.isEmpty()) {
+        if (completion) completion(false, QStringLiteral("好友账号不能为空"));
+        return;
+    }
+    if (!connected_ || !api_) {
+        if (completion) completion(false, QStringLiteral("IM 未连接，无法删除好友"));
+        return;
+    }
+
+    QJsonObject request;
+    request[QStringLiteral("friendship_delete_friend_param_friend_type")] = kFriendTypeBoth;
+    request[QStringLiteral("friendship_delete_friend_param_identifier_array")] = QJsonArray{cleanUserId};
+    api_->deleteFriend(compactJson(request), [this, cleanUserId, completion = std::move(completion)](
+                                                   int code,
+                                                   const QString& description,
+                                                   const QString&) mutable {
+        if (code != 0) {
+            complete(std::move(completion), code, description);
+            return;
+        }
+        api_->deleteConversation(cleanUserId,
+                                 kConversationTypeC2C,
+                                 [completion = std::move(completion)](int conversationCode,
+                                                                      const QString& conversationDescription,
+                                                                      const QString&) mutable {
+            complete(std::move(completion), conversationCode, conversationDescription);
+        });
     });
 }
 

@@ -23,6 +23,10 @@ public:
                             TimSdkCompletion completion) = 0;
     virtual int getConversationList(TimSdkCompletion completion) = 0;
     virtual int getFriendList(TimSdkCompletion completion) = 0;
+    virtual int deleteFriend(const QString& jsonRequest, TimSdkCompletion completion) = 0;
+    virtual int deleteConversation(const QString& conversationId,
+                                   int conversationType,
+                                   TimSdkCompletion completion) = 0;
     virtual int getMessageList(const QString& conversationId,
                                int conversationType,
                                const QString& jsonRequest,

@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
-project(MultiAIIMDesktop LANGUAGES CXX)
+# C 用于 third_party/md4c（Markdown 解析，纯 C 实现）。
+project(MultiAIIMDesktop LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -9,6 +10,18 @@ option(MULTI_AI_IM_USE_FAKE_CLIENT "Use the fake IM client for desktop UI develo
 
 find_package(Qt5 REQUIRED COMPONENTS Core Network Widgets Test)
 find_package(ZLIB REQUIRED)
+
+# md4c：CommonMark + GFM 扩展的 Markdown 解析器（与 Qt 内嵌同源，MIT）。
+# 来源 https://github.com/mity/md4c release-0.5.2，见 third_party/md4c/LICENSE.md。
+add_library(md4c STATIC
+  third_party/md4c/md4c.c
+  third_party/md4c/md4c.h
+  third_party/md4c/md4c-html.c
+  third_party/md4c/md4c-html.h
+  third_party/md4c/entity.c
+  third_party/md4c/entity.h
+)
+target_include_directories(md4c PUBLIC third_party/md4c)
 
 add_library(remote_im_core
   src/model/RemoteIMContact.h
@@ -36,7 +49,7 @@ add_library(remote_im_core
   src/storage/RemoteIMMediaStore.cpp
 )
 target_include_directories(remote_im_core PUBLIC src)
-target_link_libraries(remote_im_core PUBLIC Qt5::Core Qt5::Network ZLIB::ZLIB)
+target_link_libraries(remote_im_core PUBLIC Qt5::Core Qt5::Network ZLIB::ZLIB PRIVATE md4c)
 
 add_library(remote_im_desktop_app
   src/app/RemoteIMApplication.h

@@ -352,7 +352,7 @@ QList<SlashCommandDefinition> slashCommandDefinitions() {
         {QStringLiteral("/plan"), QStringLiteral("切换 Plan"), QStringLiteral("slashCommandButton_plan")},
         {QStringLiteral("/build"), QStringLiteral("切换 Build"), QStringLiteral("slashCommandButton_build")},
         {QStringLiteral("/models"), QStringLiteral("模型列表"), QStringLiteral("slashCommandButton_models")},
-        {QStringLiteral("/model "), QStringLiteral("切换模型"), QStringLiteral("slashCommandButton_model")},
+        {QStringLiteral("/model "), QStringLiteral("模型/推理"), QStringLiteral("slashCommandButton_model")},
         {QStringLiteral("/goal "), QStringLiteral("管理 Goal"), QStringLiteral("slashCommandButton_goal")},
         {QStringLiteral("/btw "), QStringLiteral("子任务"), QStringLiteral("slashCommandButton_btw")},
         {QStringLiteral("/interrupt"), QStringLiteral("中断任务"), QStringLiteral("slashCommandButton_interrupt")},
@@ -628,12 +628,25 @@ void MainWindow::buildUi() {
     composerLayout->setContentsMargins(24, 12, 24, 14);
     composerLayout->setSpacing(8);
 
-    slashCommandBar_ = new QWidget(composer);
+    auto* slashCommandScroll = new QScrollArea(composer);
+    slashCommandBar_ = slashCommandScroll;
     slashCommandBar_->setObjectName(QStringLiteral("slashCommandBar"));
     slashCommandBar_->setVisible(false);
-    slashCommandLayout_ = new QHBoxLayout(slashCommandBar_);
+    slashCommandScroll->setFrameShape(QFrame::NoFrame);
+    slashCommandScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    slashCommandScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    slashCommandScroll->setWidgetResizable(false);
+    slashCommandScroll->setMinimumHeight(36);
+    slashCommandScroll->setMaximumHeight(44);
+    slashCommandScroll->viewport()->setAutoFillBackground(false);
+    slashCommandScroll->setStyleSheet(QStringLiteral("QScrollArea { border: 0; background: transparent; }"));
+
+    auto* slashCommandContent = new QWidget(slashCommandScroll);
+    slashCommandContent->setObjectName(QStringLiteral("slashCommandContent"));
+    slashCommandLayout_ = new QHBoxLayout(slashCommandContent);
     slashCommandLayout_->setContentsMargins(0, 0, 0, 0);
     slashCommandLayout_->setSpacing(8);
+    slashCommandScroll->setWidget(slashCommandContent);
 
     messageEditor_ = new QTextEdit(composer);
     messageEditor_->setObjectName(QStringLiteral("messageEditor"));
@@ -1562,7 +1575,8 @@ void MainWindow::updateSlashCommandSuggestions() {
     bool hasMatch = false;
     for (const SlashCommandDefinition& definition : slashCommandDefinitions()) {
         if (!definition.command.startsWith(query, Qt::CaseInsensitive)) continue;
-        auto* button = new QPushButton(definition.command + QStringLiteral("  ") + definition.label, slashCommandBar_);
+        QWidget* commandContent = qobject_cast<QWidget*>(slashCommandLayout_->parentWidget());
+        auto* button = new QPushButton(definition.command + QStringLiteral("  ") + definition.label, commandContent ? commandContent : slashCommandBar_);
         button->setObjectName(definition.objectName);
         button->setCursor(Qt::PointingHandCursor);
         button->setStyleSheet(QStringLiteral(R"(
@@ -1589,8 +1603,10 @@ void MainWindow::updateSlashCommandSuggestions() {
         hasMatch = true;
     }
 
-    if (hasMatch) {
-        slashCommandLayout_->addStretch(1);
+    if (QWidget* commandContent = qobject_cast<QWidget*>(slashCommandLayout_->parentWidget())) {
+        const QSize contentSize = slashCommandLayout_->sizeHint();
+        commandContent->setMinimumSize(contentSize);
+        commandContent->resize(contentSize);
     }
     slashCommandBar_->setVisible(hasMatch);
 }

@@ -6,6 +6,7 @@ export type RemoteImControlCommandName =
   | 'model'
   | 'goal'
   | 'btw'
+  | 'diff'
   | 'interrupt'
   | 'compact'
   | 'clear'
@@ -67,6 +68,11 @@ export const REMOTE_IM_CONTROL_COMMANDS: RemoteImControlCommandDefinition[] = [
     name: 'btw',
     usage: '/btw <任务>',
     description: '启动子 Agent 处理任务，完成后通过 IM 回传'
+  },
+  {
+    name: 'diff',
+    usage: '/diff [--stat] [文件或目录]',
+    description: '查看当前仓库未提交改动并发送 Diff'
   },
   {
     name: 'interrupt',

@@ -43,6 +43,13 @@ export interface ExecuteRemoteImControlCommandInput {
   sourceKind: RemoteImAicliOutputSourceKind
   switchMode?: RemoteImSwitchAicliMode
   executeCommand?: RemoteImExecuteAicliCommand
+  createDiffReport?: (input: {
+    targetRepo: string
+    args?: string
+  }) => Promise<
+    | { ok: true; text: string; attachmentPath?: string }
+    | { ok: false; error: string; text: string }
+  >
   now?: () => number
   replyId?: string
 }
@@ -50,6 +57,7 @@ export interface ExecuteRemoteImControlCommandInput {
 export interface ExecuteRemoteImControlCommandResult {
   ok: boolean
   text: string
+  attachmentPath?: string
 }
 
 function displaySourceKind(sourceKind: RemoteImAicliOutputSourceKind): string {
@@ -358,6 +366,34 @@ async function goal(
   }
 }
 
+async function diff(
+  input: ExecuteRemoteImControlCommandInput
+): Promise<ExecuteRemoteImControlCommandResult> {
+  if (!input.session) {
+    return {
+      ok: false,
+      text: '当前没有运行中的 AICLI，无法确定要查看的仓库。'
+    }
+  }
+  if (!input.createDiffReport) {
+    return {
+      ok: false,
+      text: '当前桌面端未接入 Git Diff 收集模块。'
+    }
+  }
+
+  const result = await input.createDiffReport({
+    targetRepo: input.session.targetRepo,
+    ...(input.args?.trim() ? { args: input.args.trim() } : {})
+  })
+  if (!result.ok) return { ok: false, text: result.text }
+  return {
+    ok: true,
+    text: result.text,
+    ...(result.attachmentPath ? { attachmentPath: result.attachmentPath } : {})
+  }
+}
+
 function lifecycleCommandLabel(command: 'interrupt' | 'compact' | 'clear'): string {
   if (command === 'interrupt') return '中断当前任务'
   if (command === 'compact') return '压缩上下文'
@@ -439,6 +475,10 @@ export async function executeRemoteImControlCommand(
 
   if (input.command === 'btw') {
     return btw(input)
+  }
+
+  if (input.command === 'diff') {
+    return diff(input)
   }
 
   if (input.command === 'interrupt' || input.command === 'compact' || input.command === 'clear') {

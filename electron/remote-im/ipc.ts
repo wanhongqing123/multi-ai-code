@@ -61,6 +61,7 @@ import { readLatestClaudeRemoteImReply } from './claudeTranscript.js'
 import { startRemoteImCliServer } from './imcliServer.js'
 import { addAicliStructuredOutputListener } from '../aicli/structuredOutputBridge.js'
 import { executeRemoteImControlCommand } from './controlBridge.js'
+import { createGitDiffReport } from './gitDiffReport.js'
 import {
   createRemoteImAccountChangedStatuses,
   getRemoteImSendConnectionError
@@ -970,6 +971,8 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
         resolveSession: () => session,
         sendUser: sendUserMessageToSession,
         sendImText,
+        sendImFile: (projectId, toUserId, localPath) =>
+          sendRemoteImPeerLocalFile(projectId, localPath, toUserId),
         handleControlCommand: async ({ command, args, replyId }) => {
           const runtime = session ? getSessionRuntimeInfo(session.sessionId) : null
           const sourceKind = runtime
@@ -1012,6 +1015,12 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
               }
               return { ok: false as const, error: 'unsupported AICLI control command' }
             },
+            createDiffReport: ({ targetRepo, args: diffArgs }) =>
+              createGitDiffReport({
+                targetRepo,
+                ...(diffArgs ? { args: diffArgs } : {}),
+                outputDir: join(rootDir(), 'remote-im-diff-reports')
+              }),
             args,
             ...(replyId ? { replyId } : {})
           })

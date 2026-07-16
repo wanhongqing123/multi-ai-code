@@ -13,6 +13,7 @@ public final class RemoteIMSlashCommandCatalog {
         new RemoteIMSlashCommand("/model ", "模型/推理"),
         new RemoteIMSlashCommand("/goal ", "管理 Goal"),
         new RemoteIMSlashCommand("/btw ", "子任务"),
+        new RemoteIMSlashCommand("/diff ", "仓库 Diff"),
         new RemoteIMSlashCommand("/interrupt", "中断任务"),
         new RemoteIMSlashCommand("/compact", "压缩上下文"),
         new RemoteIMSlashCommand("/clear", "清空上下文"),

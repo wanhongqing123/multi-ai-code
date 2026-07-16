@@ -223,6 +223,50 @@ describe('remote IM router', () => {
     })
   })
 
+  it('sends a generated /diff report as an IM file attachment', async () => {
+    const store = createMessageStore()
+    const sentToIm: string[] = []
+    const sentFiles: Array<{ projectId: string; toUserId: string; localPath: string }> = []
+    const router = createRemoteImRouter({
+      getConfig: () => config,
+      resolveSession: () => ({ sessionId: 'session-main', targetRepo: '/repo' }),
+      sendUser: async () => ({ ok: true }),
+      sendImText: async (_projectId, _toUserId, text) => {
+        sentToIm.push(text)
+        return { ok: true }
+      },
+      sendImFile: async (projectId, toUserId, localPath) => {
+        sentFiles.push({ projectId, toUserId, localPath })
+        return { ok: true }
+      },
+      handleControlCommand: async () => ({
+        ok: true,
+        text: '完整 Diff 已生成。',
+        attachmentPath: '/tmp/remote-im-diff.md'
+      }),
+      store
+    })
+
+    const result = await router.handleIncomingText({
+      projectId: 'project-1',
+      remoteMessageId: 'remote-diff-1',
+      fromUserId: 'phone_admin',
+      toUserId: 'desktop_bot',
+      text: '/diff',
+      createdAt: 100
+    })
+
+    expect(result.ok).toBe(true)
+    expect(sentToIm).toEqual(['完整 Diff 已生成。'])
+    expect(sentFiles).toEqual([
+      {
+        projectId: 'project-1',
+        toUserId: 'phone_admin',
+        localPath: '/tmp/remote-im-diff.md'
+      }
+    ])
+  })
+
   it('returns forwarding ids for /btw control commands', async () => {
     const store = createMessageStore()
     const sentToAicli: string[] = []

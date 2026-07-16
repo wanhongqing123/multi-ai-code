@@ -670,6 +670,7 @@ void MainWindowLayoutTest::slashCommandSuggestionsFillComposer() {
         QStringLiteral("slashCommandButton_model"),
         QStringLiteral("slashCommandButton_goal"),
         QStringLiteral("slashCommandButton_btw"),
+        QStringLiteral("slashCommandButton_diff"),
         QStringLiteral("slashCommandButton_interrupt"),
         QStringLiteral("slashCommandButton_compact"),
         QStringLiteral("slashCommandButton_clear"),
@@ -747,6 +748,16 @@ void MainWindowLayoutTest::slashCommandSuggestionsFillComposer() {
     btwButton->click();
 
     QCOMPARE(editor->toPlainText(), QStringLiteral("/btw "));
+    QVERIFY(commandBar->isVisible());
+
+    editor->setPlainText(QStringLiteral("/di"));
+    QVERIFY(commandBar->isVisible());
+
+    auto* diffButton = window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_diff"));
+    QVERIFY(diffButton != nullptr);
+    diffButton->click();
+
+    QCOMPARE(editor->toPlainText(), QStringLiteral("/diff "));
     QVERIFY(commandBar->isVisible());
 
     editor->setPlainText(QStringLiteral("/in"));

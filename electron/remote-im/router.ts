@@ -48,6 +48,11 @@ export interface RemoteImRouterDeps {
     text: string,
     options?: { messageId?: number }
   ): Promise<{ ok: boolean; error?: string }>
+  sendImFile?: (
+    projectId: string,
+    toUserId: string,
+    localPath: string
+  ) => Promise<{ ok: boolean; error?: string }>
   transcribeAudio?: (
     message: RemoteImIncomingAudioMessage
   ) => Promise<{ ok: true; text: string } | { ok: false; error: string }>
@@ -71,7 +76,7 @@ export interface RemoteImRouterDeps {
     args: string
     raw: string
     replyId?: string
-  }) => Promise<{ ok: boolean; text: string }>
+  }) => Promise<{ ok: boolean; text: string; attachmentPath?: string }>
   store: RemoteImRouterStore
   now?: () => number
 }
@@ -528,6 +533,22 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
             text: '当前桌面端未接入 IM 控制命令。'
           }
       await sendSystemText(deps, message.projectId, fromUserId, result.text)
+      if (result.ok && result.attachmentPath) {
+        if (!deps.sendImFile) {
+          await sendSystemText(deps, message.projectId, fromUserId, 'Diff 附件发送模块未初始化。')
+          return { ok: false, error: 'remote IM file sender is not available' }
+        }
+        const fileResult = await deps.sendImFile(
+          message.projectId,
+          fromUserId,
+          result.attachmentPath
+        )
+        if (!fileResult.ok) {
+          const error = fileResult.error ?? 'failed to send Diff attachment'
+          await sendSystemText(deps, message.projectId, fromUserId, `Diff 附件发送失败：${error}`)
+          return { ok: false, error }
+        }
+      }
       if (result.ok && controlCommand.command === 'btw' && session && replyId) {
         return { ok: true, aicliSessionId: session.sessionId, replyId }
       }

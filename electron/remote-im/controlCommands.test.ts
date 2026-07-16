@@ -49,6 +49,12 @@ describe('remote IM control commands', () => {
       raw: '/btw 检查构建日志',
       args: '检查构建日志'
     })
+    expect(parseRemoteImControlCommand('/diff --stat electron')).toEqual({
+      type: 'command',
+      command: 'diff',
+      raw: '/diff --stat electron',
+      args: '--stat electron'
+    })
     expect(parseRemoteImControlCommand('/interrupt')).toEqual({
       type: 'command',
       command: 'interrupt',
@@ -103,6 +109,7 @@ describe('remote IM control commands', () => {
       'model',
       'goal',
       'btw',
+      'diff',
       'interrupt',
       'compact',
       'clear',
@@ -113,6 +120,7 @@ describe('remote IM control commands', () => {
     expect(formatRemoteImControlCommandHelp()).toContain('/model <序号|模型ID|reasoning 档位>')
     expect(formatRemoteImControlCommandHelp()).toContain('/goal [目标|clear|pause|resume]')
     expect(formatRemoteImControlCommandHelp()).toContain('/btw <任务>')
+    expect(formatRemoteImControlCommandHelp()).toContain('/diff [--stat] [文件或目录]')
     expect(formatRemoteImControlCommandHelp()).toContain('/interrupt')
     expect(formatRemoteImControlCommandHelp()).toContain('/compact')
     expect(formatRemoteImControlCommandHelp()).toContain('/clear')

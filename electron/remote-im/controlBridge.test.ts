@@ -16,6 +16,7 @@ describe('remote IM control bridge', () => {
     expect(result.text).toContain('/model')
     expect(result.text).toContain('/goal')
     expect(result.text).toContain('/btw')
+    expect(result.text).toContain('/diff')
     expect(result.text).not.toContain('/stop')
   })
 
@@ -186,6 +187,39 @@ describe('remote IM control bridge', () => {
       task: '检查最近一次失败日志',
       replyId: 'reply-btw-fixed'
     })
+  })
+
+  it('collects /diff from the session repository without calling AICLI', async () => {
+    const createDiffReport = vi.fn(async () => ({
+      ok: true as const,
+      text: '2 files, +3 / -1',
+      attachmentPath: '/tmp/repo-diff.md'
+    }))
+    const executeCommand = vi.fn()
+    const result = await executeRemoteImControlCommand({
+      command: 'diff',
+      args: '--stat src',
+      session: {
+        sessionId: 'session-1',
+        targetRepo: '/repo',
+        command: '/bundled/codex',
+        startedAtMs: 1000
+      },
+      sourceKind: 'codex',
+      createDiffReport,
+      executeCommand
+    })
+
+    expect(result).toEqual({
+      ok: true,
+      text: '2 files, +3 / -1',
+      attachmentPath: '/tmp/repo-diff.md'
+    })
+    expect(createDiffReport).toHaveBeenCalledWith({
+      targetRepo: '/repo',
+      args: '--stat src'
+    })
+    expect(executeCommand).not.toHaveBeenCalled()
   })
 
   it('forwards lifecycle commands through the source-level control bridge', async () => {

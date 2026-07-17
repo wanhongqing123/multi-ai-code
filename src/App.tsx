@@ -1851,7 +1851,6 @@ function AppShell() {
           >
             📁 {hasProject ? `项目：${projectName}` : '选择项目'}
           </button>
-          <h1>Multi-AI Code</h1>
           <span className="meta">
             v{version} ·{' '}
             {hasProject ? (
@@ -1862,6 +1861,66 @@ function AppShell() {
           </span>
         </div>
         <div className="topbar-actions">
+          {hasProject && isPlanDesignMode && (
+            <button
+              className="topbar-btn"
+              onClick={() => setShowNormalTaskDialog(true)}
+              disabled={!currentProjectId}
+              title="创建、选择和查看普通任务"
+            >
+              普通任务
+            </button>
+          )}
+          {hasProject && isPlanDesignMode && planName.trim() && (
+            <button
+              className="topbar-btn"
+              onClick={() => void openPlanReview()}
+              disabled={!currentProjectId}
+              title="查看 / 标注当前普通任务的方案文档"
+            >
+              方案预览
+            </button>
+          )}
+          {hasProject && isTaskWatchMode && (
+            <button
+              className="topbar-btn"
+              onClick={() => setShowScheduledTaskDialog(true)}
+              disabled={!currentProjectId}
+              title="创建和管理到点后交给当前 AICLI 执行的定时任务"
+            >
+              ⏰ 定时任务
+            </button>
+          )}
+          {hasProject && (
+            <button
+              className="topbar-btn"
+              onClick={() => setShowBuildPanel(true)}
+              disabled={!currentProjectId}
+              title="打开项目构建面板"
+            >
+              构建
+            </button>
+          )}
+          {hasProject && (
+            <button
+              className="topbar-btn"
+              onClick={() => {
+                if (runtimeTopbarRunning) {
+                  setShowRuntimeLogDialog(true)
+                } else {
+                  void handleStartRuntime()
+                }
+              }}
+              disabled={runtimeTopbarDisabled}
+              title={
+                runtimeTopbarRunning
+                  ? '打开运行日志'
+                  : runtimeStartBlockedReason ?? '启动项目运行并打开实时日志'
+              }
+            >
+              {runtimeTopbarRunning ? '运行中' : '运行'}
+            </button>
+          )}
           <button
             className="topbar-btn"
             onClick={() => openAiSettingsSection()}
@@ -1921,73 +1980,6 @@ function AppShell() {
           </button>
         </div>
       </header>
-      {hasProject && (
-        <div className="plan-name-bar">
-          <div className="workspace-control-row">
-            <div className="workspace-control-left" />
-            <div className="workspace-control-actions">
-              {isPlanDesignMode && (
-                <button
-                  className="topbar-btn"
-                  onClick={() => setShowNormalTaskDialog(true)}
-                  disabled={!currentProjectId}
-                  title="创建、选择和查看普通任务"
-                >
-                  普通任务
-                </button>
-              )}
-              {isPlanDesignMode && planName.trim() && (
-                <button
-                  className="topbar-btn"
-                  onClick={() => void openPlanReview()}
-                  disabled={!currentProjectId}
-                  title="查看 / 标注当前普通任务的方案文档"
-                >
-                  方案预览
-                </button>
-              )}
-              {isTaskWatchMode && (
-                <button
-                  className="topbar-btn"
-                  onClick={() => setShowScheduledTaskDialog(true)}
-                  disabled={!currentProjectId}
-                  title="创建和管理到点后交给当前 AICLI 执行的定时任务"
-                >
-                  ⏰ 定时任务
-                </button>
-              )}
-              <div className="plan-toolbar-actions">
-                <button
-                  className="topbar-btn"
-                  onClick={() => setShowBuildPanel(true)}
-                  disabled={!currentProjectId}
-                  title="打开项目构建面板"
-                >
-                  构建
-                </button>
-                <button
-                  className="topbar-btn"
-                  onClick={() => {
-                    if (runtimeTopbarRunning) {
-                      setShowRuntimeLogDialog(true)
-                    } else {
-                      void handleStartRuntime()
-                    }
-                  }}
-                  disabled={runtimeTopbarDisabled}
-                  title={
-                    runtimeTopbarRunning
-                      ? '打开运行日志'
-                      : runtimeStartBlockedReason ?? '启动项目运行并打开实时日志'
-                  }
-                >
-                  {runtimeTopbarRunning ? '运行中' : '运行'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       <div className="main-split">
         <div className="main-column">

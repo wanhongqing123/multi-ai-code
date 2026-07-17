@@ -468,35 +468,6 @@ html, body, #root {
   flex-wrap: wrap;
 }
 
-.topbar h1 {
-  font-size: var(--mac-text-md);
-  margin: 0;
-  font-weight: var(--mac-weight-medium);
-  letter-spacing: normal;
-  color: var(--mac-fg);
-  background: none;
-  -webkit-background-clip: unset;
-  background-clip: unset;
-  -webkit-text-fill-color: currentColor;
-  display: flex;
-  align-items: center;
-  gap: var(--mac-sp-2);
-}
-
-.topbar h1::before {
-  content: 'M';
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: var(--mac-r-md);
-  background: var(--mac-primary);
-  color: var(--mac-primary-on);
-  font-size: var(--mac-text-sm);
-  font-weight: var(--mac-weight-bold);
-}
-
 .topbar .meta {
   flex: 1 1 auto;
   min-width: 120px;
@@ -2721,44 +2692,6 @@ html, body, #root {
   color: var(--mac-danger);
 }
 
-.plan-name-bar {
-  display: flex;
-  align-items: center;
-  padding: 10px var(--mac-sp-5);
-  background: var(--mac-surface-raised);
-  border-bottom: 1px solid var(--mac-border-subtle);
-}
-
-.workspace-control-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--mac-sp-4);
-  width: 100%;
-  min-width: 0;
-}
-
-.workspace-control-left,
-.workspace-control-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--mac-sp-3);
-  min-width: 0;
-}
-
-.workspace-control-left {
-  flex: 1 1 auto;
-}
-
-.workspace-control-actions {
-  flex: 0 0 auto;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  padding-left: var(--mac-sp-3);
-  border-left: 1px solid var(--mac-border-subtle);
-}
-
-.plan-toolbar-actions,
 .plan-design-main,
 .plan-design-actions {
   display: flex;
@@ -2771,7 +2704,6 @@ html, body, #root {
   min-width: 0;
 }
 
-.plan-toolbar-actions,
 .plan-design-actions {
   flex: 0 0 auto;
   justify-content: flex-end;
@@ -2804,26 +2736,7 @@ html, body, #root {
   box-shadow: 0 0 0 3px var(--mac-focus-ring);
 }
 
-@media (max-width: 1280px) {
-  .workspace-control-row {
-    align-items: stretch;
-    flex-wrap: wrap;
-  }
-
-  .workspace-control-left,
-  .workspace-control-actions {
-    flex: 1 1 100%;
-  }
-
-  .workspace-control-actions {
-    justify-content: flex-start;
-    padding-left: 0;
-    border-left: 0;
-  }
-}
-
 @media (max-width: 760px) {
-  .workspace-control-left,
   .plan-design-main {
     flex-wrap: wrap;
   }

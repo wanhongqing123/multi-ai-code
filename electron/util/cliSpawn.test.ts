@@ -3,7 +3,6 @@ import { promises as fs } from 'fs'
 import { dirname, join } from 'path'
 import { tmpdir } from 'os'
 import { buildEnvWithPath, resolveCliSpawn, resolveOnPath } from './cliSpawn.js'
-import { buildCliArgs } from './generator.js'
 
 const isWindows = process.platform === 'win32'
 
@@ -227,71 +226,5 @@ describe('resolveCliSpawn', () => {
   it('always returns shell:false so prompt content is never shell-parsed', () => {
     const r = resolveCliSpawn('echo', ['hi'], { PATH: '/usr/bin', Path: '' })
     if (r.ok) expect(r.resolved.shell).toBe(false)
-  })
-})
-
-describe('buildCliArgs (cross-platform argument shape)', () => {
-  it('claude uses -p flag for one-shot non-interactive mode', () => {
-    const { cmd, args } = buildCliArgs({ ai_cli: 'claude' }, 'hello world')
-    expect(cmd).toBe('claude')
-    expect(args[0]).toBe('-p')
-    expect(args[args.length - 1]).toBe('hello world')
-  })
-
-  it('codex uses exec subcommand for one-shot mode', () => {
-    const { cmd, args } = buildCliArgs({ ai_cli: 'codex' }, 'hello world')
-    expect(cmd).toBe('codex')
-    expect(args[0]).toBe('exec')
-    expect(args.slice(1, 3)).toEqual(['-c', 'model_context_window=1000000'])
-    expect(args[args.length - 1]).toBe('hello world')
-  })
-
-  it('opencode uses run subcommand for one-shot mode', () => {
-    const { cmd, args } = buildCliArgs({ ai_cli: 'opencode' }, 'hello world')
-    expect(cmd).toBe('opencode')
-    expect(args).toEqual([
-      'run',
-      '--dangerously-skip-permissions',
-      'hello world'
-    ])
-  })
-
-  it('defaults to Codex when no AI CLI is configured', () => {
-    const { cmd, args } = buildCliArgs({}, 'hello world')
-    expect(cmd).toBe('codex')
-    expect(args[0]).toBe('exec')
-    expect(args.slice(1, 3)).toEqual(['-c', 'model_context_window=1000000'])
-  })
-
-  it('preserves user-supplied binary override', () => {
-    const { cmd } = buildCliArgs(
-      { ai_cli: 'claude', command: '/custom/path/claude' },
-      'hi'
-    )
-    expect(cmd).toBe('/custom/path/claude')
-  })
-
-  it('appends user-supplied extra args before the prompt', () => {
-    const { args } = buildCliArgs(
-      { ai_cli: 'claude', args: ['--model', 'sonnet'] },
-      'hi'
-    )
-    expect(args).toEqual(['-p', '--model', 'sonnet', 'hi'])
-  })
-
-  it('does not duplicate codex context window config in one-shot mode', () => {
-    const { args } = buildCliArgs(
-      { ai_cli: 'codex', args: ['-c', 'model_context_window=272000'] },
-      'hi'
-    )
-    expect(args).toEqual(['exec', '-c', 'model_context_window=272000', 'hi'])
-  })
-
-  it('does not duplicate opencode permission bypass in one-shot mode', () => {
-    const { args } = buildCliArgs(
-      { ai_cli: 'opencode', args: ['--auto'] },
-      'hi'
-    )
-    expect(args).toEqual(['run', '--auto', 'hi'])
   })
 })

@@ -16,7 +16,7 @@ import {
 import { planSystemPromptInjection } from './systemPromptInjection.js'
 import { buildResumeArgs, type ResumeCommand } from './resumeArgs.js'
 import { withEmbeddedClaudeSettings } from './claudeLaunchSettings.js'
-import { buildEnvWithPath, resolveCliSpawn } from '../habit/cliSpawn.js'
+import { buildEnvWithPath, resolveCliSpawn } from '../util/cliSpawn.js'
 import {
   isOpenCodeCommand,
   withOpenCodeLspEnv,

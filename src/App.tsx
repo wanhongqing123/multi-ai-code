@@ -31,8 +31,6 @@ import ProjectBuildPanel, {
 } from './components/ProjectBuildPanel'
 import RuntimeLogDialog from './components/RuntimeLogDialog'
 import TemplatesDialog from './components/TemplatesDialog'
-import SkillGraphDialog from './habit/SkillGraphDialog'
-import SkillStudioDialog from './habit/SkillStudioDialog'
 import ScheduledTaskDialog from './scheduled-tasks/ScheduledTaskDialog'
 import NormalTaskDialog, {
   type NormalTaskEntry,
@@ -58,8 +56,6 @@ import {
   forgetRemoteImOutgoingImageFile,
   registerRemoteImOutgoingImageFile
 } from './remote-im/outgoingImageRegistry'
-import FirstRunNoticeDialog from './habit/FirstRunNoticeDialog'
-import { getCliTargetLabel } from './components/cliTarget'
 import OnboardingWizard from './components/OnboardingWizard'
 import DoctorDialog from './components/DoctorDialog'
 import CommandPalette, { type Command } from './components/CommandPalette'
@@ -82,7 +78,6 @@ import type {
   RemoteImStatus,
   VisualStudioInstallation
 } from '../electron/preload'
-import type { HabitFlowRow, HabitSettings } from './habit/habitTypes'
 
 const LAST_PROJECT_KEY = 'multi-ai-code.lastProjectId'
 const DEFAULT_PROJECT_BUILD_CONFIG: ProjectBuildConfig = { enabled: false, steps: [] }
@@ -168,39 +163,6 @@ function verifyNormalTaskMetadataSaved(
     (saved.description ?? '').trim() === metadata.description.trim() &&
     (saved.details ?? '').trim() === metadata.details.trim()
   )
-}
-
-function parseHabitFlowAction(flow: HabitFlowRow): string | null {
-  try {
-    const payload = JSON.parse(flow.payload) as { action?: unknown }
-    return typeof payload.action === 'string' ? payload.action : null
-  } catch {
-    return null
-  }
-}
-
-export function deriveHabitUiFlags(input: {
-  autoPersonalizeUi: boolean
-  flows: HabitFlowRow[]
-}): { hideTemplatesEntry: boolean; hideWizardEntry: boolean } {
-  if (!input.autoPersonalizeUi) {
-    return {
-      hideTemplatesEntry: false,
-      hideWizardEntry: false
-    }
-  }
-
-  const actions = new Set(
-    input.flows
-      .filter((flow) => flow.status === 'active' && flow.kind === 'ui-adjustment')
-      .map(parseHabitFlowAction)
-      .filter((action): action is string => typeof action === 'string')
-  )
-
-  return {
-    hideTemplatesEntry: actions.has('hide-templates-entry') || input.autoPersonalizeUi,
-    hideWizardEntry: actions.has('hide-wizard-entry') || input.autoPersonalizeUi
-  }
 }
 
 export function shouldRenderElectronShell(): boolean {
@@ -342,13 +304,9 @@ function AppShell() {
   const [visualStudioInstallationsLoading, setVisualStudioInstallationsLoading] =
     useState(false)
   const [showTemplates, setShowTemplates] = useState(false)
-  const [showSkillStudio, setShowSkillStudio] = useState(false)
-  const [showSkillGraphStudio, setShowSkillGraphStudio] = useState(false)
   const [showNormalTaskDialog, setShowNormalTaskDialog] = useState(false)
   const [showScheduledTaskDialog, setShowScheduledTaskDialog] = useState(false)
   const [showRemoteImDrawer, setShowRemoteImDrawer] = useState(false)
-  const [showHabitFirstRun, setShowHabitFirstRun] = useState(false)
-  const [skillsRefreshNonce, setSkillsRefreshNonce] = useState(0)
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [showDoctor, setShowDoctor] = useState(false)
   const [showCmdk, setShowCmdk] = useState(false)
@@ -357,8 +315,6 @@ function AppShell() {
   const [showRuntimeLogDialog, setShowRuntimeLogDialog] = useState(false)
   const [runtimeLogComment, setRuntimeLogComment] = useState('')
   const [theme, setThemeState] = useState<'light' | 'dark'>(() => getTheme())
-  const [habitSettingsSnapshot, setHabitSettingsSnapshot] = useState<HabitSettings | null>(null)
-  const [habitFlowsSnapshot, setHabitFlowsSnapshot] = useState<HabitFlowRow[]>([])
 
   const visibleProjectBuildConfig =
     currentProjectId !== null && projectBuildConfigProjectId === currentProjectId
@@ -419,10 +375,6 @@ function AppShell() {
   const [runtimeState, setRuntimeState] = useState<RuntimeState>(DEFAULT_RUNTIME_STATE)
   const [logs] = useLogs()
   const errorCount = logs.filter((l) => l.level === 'error' || l.level === 'warn').length
-  const habitUiFlags = deriveHabitUiFlags({
-    autoPersonalizeUi: habitSettingsSnapshot?.autoPersonalizeUi ?? true,
-    flows: habitFlowsSnapshot
-  })
 
   const openAiSettingsSection = useCallback((section: SettingsSectionKey = 'shortcut') => {
     setAiSettingsInitialSection(section)
@@ -448,22 +400,6 @@ function AppShell() {
     }
   }, [])
 
-  const refreshHabitMonitorSnapshot = useCallback(async () => {
-    try {
-      const [settings, flows] = await Promise.all([
-        window.api.habit.settings.get() as Promise<HabitSettings>,
-        window.api.habit.flows.list({
-          statuses: ['active', 'candidate', 'disabled'],
-          limit: 200
-        }) as Promise<HabitFlowRow[]>
-      ])
-      setHabitSettingsSnapshot(settings)
-      setHabitFlowsSnapshot(flows)
-    } catch {
-      /* ignore */
-    }
-  }, [])
-
   const reloadProjects = useCallback(async () => {
     const list = await window.api.project.list()
     setProjects(list)
@@ -475,24 +411,6 @@ function AppShell() {
   useEffect(() => {
     reloadProjectsRef.current = reloadProjects
   }, [reloadProjects])
-
-  // Show the first-run notice for the habit monitor exactly once per
-  // install: settings.firstRunNoticeShownAt is 0 before the user has seen it.
-  useEffect(() => {
-    void (async () => {
-      try {
-        const s = (await window.api.habit.settings.get()) as {
-          firstRunNoticeShownAt?: number
-        }
-        if (!s.firstRunNoticeShownAt || s.firstRunNoticeShownAt <= 0) {
-          setShowHabitFirstRun(true)
-        }
-      } catch {
-        /* ignore */
-      }
-    })()
-    void refreshHabitMonitorSnapshot()
-  }, [refreshHabitMonitorSnapshot])
 
   // Screenshot delivery: when the editor finishes and main saves the image,
   // it broadcasts {path, prompt} here. Forward to the current main-session
@@ -896,10 +814,6 @@ function AppShell() {
       cancelled = true
     }
   }, [currentProjectId])
-
-  useEffect(() => {
-    void refreshHabitMonitorSnapshot()
-  }, [currentProjectId, refreshHabitMonitorSnapshot])
 
   useEffect(() => {
     let cancelled = false
@@ -1838,31 +1752,17 @@ function AppShell() {
 
   const globalSearchQuickActions = [
     {
-      title: '习惯监控',
-      snippet: '打开习惯监控，查看活跃流程和采集设置。',
-      location: '快捷入口',
-      onOpen: () => openAiSettingsSection('habit')
+      title: 'Prompt 模板',
+      snippet: '管理和插入常用 prompt 模板。',
+      location: '次级入口',
+      onOpen: () => setShowTemplates(true)
     },
-    ...(!habitUiFlags.hideTemplatesEntry
-      ? [
-          {
-            title: 'Prompt 模板',
-            snippet: '管理和插入常用 prompt 模板。',
-            location: '次级入口',
-            onOpen: () => setShowTemplates(true)
-          }
-        ]
-      : []),
-    ...(!habitUiFlags.hideWizardEntry
-      ? [
-          {
-            title: '新手向导',
-            snippet: '重新打开新手上手向导。',
-            location: '次级入口',
-            onOpen: () => setShowOnboarding(true)
-          }
-        ]
-      : [])
+    {
+      title: '新手向导',
+      snippet: '重新打开新手上手向导。',
+      location: '次级入口',
+      onOpen: () => setShowOnboarding(true)
+    }
   ]
 
   const commandPaletteCommands: Command[] = [
@@ -1885,31 +1785,17 @@ function AppShell() {
       action: () => openAiSettingsSection()
     },
     {
-      id: 'habit-monitor',
-      label: '🧠 习惯监控',
-      keywords: 'habit monitor flows automation',
-      action: () => openAiSettingsSection('habit')
+      id: 'tpl',
+      label: '📋 Prompt 模板',
+      keywords: 'templates prompt snippets',
+      action: () => setShowTemplates(true)
     },
-    ...(!habitUiFlags.hideTemplatesEntry
-      ? [
-          {
-            id: 'tpl',
-            label: '📋 Prompt 模板',
-            keywords: 'templates prompt snippets',
-            action: () => setShowTemplates(true)
-          }
-        ]
-      : []),
-    ...(!habitUiFlags.hideWizardEntry
-      ? [
-          {
-            id: 'onboard',
-            label: '❓ 新手向导',
-            keywords: 'help onboarding wizard',
-            action: () => setShowOnboarding(true)
-          }
-        ]
-      : []),
+    {
+      id: 'onboard',
+      label: '❓ 新手向导',
+      keywords: 'help onboarding wizard',
+      action: () => setShowOnboarding(true)
+    },
     {
       id: 'search',
       label: '🔍 全局搜索',
@@ -1997,13 +1883,6 @@ function AppShell() {
             远程 IM
           </button>
           <button
-            className="topbar-btn"
-            onClick={() => setShowSkillStudio(true)}
-            title="扫描本机 Skill，并启用或关闭可用 Skill"
-          >
-            Skill 管理
-          </button>
-          <button
             className={`topbar-btn ${errorCount > 0 ? 'topbar-btn-danger' : ''}`}
             onClick={() => setShowErrors((s) => !s)}
             title="查看错误与通知日志"
@@ -2084,13 +1963,6 @@ function AppShell() {
                 </button>
               )}
               <div className="plan-toolbar-actions">
-                <button
-                  className="topbar-btn"
-                  onClick={() => setShowSkillGraphStudio(true)}
-                  title="拖拽连线编排项目级 Skill Pipeline"
-                >
-                  Skill 编排
-                </button>
                 <button
                   className="topbar-btn"
                   onClick={() => setShowBuildPanel(true)}
@@ -2259,26 +2131,6 @@ function AppShell() {
           }}
         />
       )}
-      {showSkillStudio && (
-        <SkillStudioDialog
-          onClose={() => {
-            setShowSkillStudio(false)
-            setSkillsRefreshNonce((nonce) => nonce + 1)
-          }}
-          targetRepo={targetRepo || null}
-          sessionId={sessionId}
-          sessionRunning={sessionStatus === 'running'}
-          onSkillsChanged={() => setSkillsRefreshNonce((nonce) => nonce + 1)}
-        />
-      )}
-      {showSkillGraphStudio && (
-        <SkillGraphDialog
-          onClose={() => setShowSkillGraphStudio(false)}
-          targetRepo={targetRepo || null}
-          sessionId={sessionId}
-          sessionRunning={sessionStatus === 'running'}
-        />
-      )}
       {showNormalTaskDialog && isPlanDesignMode && currentProjectId && (
         <NormalTaskDialog
           tasks={planList}
@@ -2305,33 +2157,6 @@ function AppShell() {
           sessionRunning={sessionStatus === 'running'}
         />
       )}
-      {showHabitFirstRun && (
-        <FirstRunNoticeDialog
-          onAcknowledge={() => {
-            void window.api.habit.settings.update({
-              firstRunNoticeShownAt: Date.now()
-            })
-            void refreshHabitMonitorSnapshot()
-            setShowHabitFirstRun(false)
-          }}
-          onDisableCollection={() => {
-            void window.api.habit.settings.update({
-              enabled: false,
-              firstRunNoticeShownAt: Date.now()
-            })
-            setHabitSettingsSnapshot((current) =>
-              current
-                ? {
-                    ...current,
-                    enabled: false,
-                    firstRunNoticeShownAt: Date.now()
-                  }
-                : current
-            )
-            setShowHabitFirstRun(false)
-          }}
-        />
-      )}
       {showAiSettings && (
         <AiSettingsDialog
           projectId={currentProjectId}
@@ -2349,7 +2174,6 @@ function AppShell() {
             void refreshVisualStudioInstallations()
           }}
           initialSection={aiSettingsInitialSection}
-          mainCliLabel={getCliTargetLabel(aiSettings.ai_cli)}
           onClose={() => setShowAiSettings(false)}
           onSaved={(next) => {
             // If the main-session CLI binary changes while a session is

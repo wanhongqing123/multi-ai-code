@@ -27,17 +27,12 @@ import {
 } from './store/paths.js'
 import { acquireInstanceLock, releaseInstanceLock } from './store/instanceLock.js'
 import { registerPtyIpc, killAllSessions } from './cc/ptyManager.js'
-import { registerHabitIpc } from './habit/ipc.js'
 import { registerScheduledTaskIpc } from './scheduledTasks/ipc.js'
 import { registerRemoteImIpc, activateRemoteImDataLayer } from './remote-im/ipc.js'
 import {
   startScheduledTaskScheduler,
   stopScheduledTaskScheduler
 } from './scheduledTasks/scheduler.js'
-import {
-  startScreenSamplerService,
-  stopScreenSamplerService
-} from './habit/screenSamplerService.js'
 import { registerScreenshotIpc } from './screenshot/manager.js'
 import {
   applyScreenshotHotkeySettings,
@@ -48,9 +43,6 @@ import {
   loadScreenshotHotkeySettings,
   type ScreenshotHotkeySettings
 } from './screenshot/hotkeySettings.js'
-import { startScheduler, stopScheduler } from './habit/scheduler.js'
-import { getSkillGenerator, setSkillGenerator } from './habit/generatorRegistry.js'
-import { createDefaultSkillGenerator } from './habit/generator.js'
 import {
   createInternalPlan,
   listPlans,
@@ -74,7 +66,6 @@ import {
   readRepoMemory,
   writeRepoConversationHistory
 } from './repo-view/memory.js'
-import { startBackgroundServices } from './backgroundServices.js'
 import { readProjectMetaFile, writeProjectMetaFile } from './store/projectMeta.js'
 import {
   getProjectBuildConfig,
@@ -1997,7 +1988,6 @@ app.whenReady().then(async () => {
   // 纯注册（不碰 DB/rootDir）可在登录前完成；handler 体内触库的那些（project/artifact
   // 等）在登录页阶段不会被调用。
   registerPtyIpc()
-  registerHabitIpc()
   registerRemoteImIpc({ activateDataLayer: activateAccountDataLayer })
   registerScreenshotIpc()
 
@@ -2007,6 +1997,19 @@ app.whenReady().then(async () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 })
+
+/**
+ * 已移除的「习惯监控」功能的遗留数据清理：屏幕采样图片（每账号可达数 GB）与
+ * 设置文件。尽力而为、异步后台执行；等所有老账号都清过一轮后可删除本函数。
+ */
+function cleanupLegacyHabitData(): void {
+  const targets = [join(rootDir(), 'screen-samples'), join(rootDir(), 'habit-settings.json')]
+  for (const target of targets) {
+    void fs.rm(target, { recursive: true, force: true }).catch((err) => {
+      console.warn('[habit-cleanup] failed to remove', target, err)
+    })
+  }
+}
 
 /**
  * 账号绑定成功后初始化数据层：解析账号作用域 rootDir、抢每账号单实例锁、开库、起后台
@@ -2033,20 +2036,13 @@ async function activateAccountDataLayer(
 
   await ensureRootDir()
   initDb()
+  cleanupLegacyHabitData()
   registerScheduledTaskIpc()
   const screenshotHotkeyInit = await initializeScreenshotHotkey({ registrar: globalShortcut })
   setEffectiveAppSettings(screenshotHotkeyInit.settings)
   if (!screenshotHotkeyInit.ok) {
     console.warn('[screenshot] failed to initialize hotkey:', screenshotHotkeyInit.error)
   }
-  setSkillGenerator(createDefaultSkillGenerator())
-  await startBackgroundServices({
-    startHabitAiScheduler: () => startScheduler(getSkillGenerator()),
-    startScreenSamplerService,
-    onScreenSamplerError: (err) => {
-      console.warn('[screen-sampler] failed to start:', err)
-    }
-  })
   startScheduledTaskScheduler()
   activateRemoteImDataLayer()
 
@@ -2073,9 +2069,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   killAllSessions()
-  stopScheduler()
   stopScheduledTaskScheduler()
-  stopScreenSamplerService()
   disposeScreenshotHotkey(globalShortcut)
   releaseInstanceLock()
 })

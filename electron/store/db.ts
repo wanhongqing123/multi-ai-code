@@ -45,61 +45,6 @@ CREATE TABLE IF NOT EXISTS artifacts (
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS habit_events (
-  id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  ts            INTEGER NOT NULL,
-  kind          TEXT NOT NULL,
-  payload       TEXT NOT NULL,
-  source        TEXT,
-  project_id    TEXT,
-  repo_path     TEXT,
-  source_window TEXT
-);
-
-CREATE TABLE IF NOT EXISTS skill_candidates (
-  id                     INTEGER PRIMARY KEY AUTOINCREMENT,
-  created_at             INTEGER NOT NULL,
-  cluster_kind           TEXT NOT NULL,
-  cluster_size           INTEGER NOT NULL,
-  source_event_ids       TEXT NOT NULL,
-  representative_samples TEXT NOT NULL,
-  generated_title        TEXT,
-  generated_body         TEXT,
-  generated_meta         TEXT,
-  status                 TEXT NOT NULL DEFAULT 'pending',
-  reviewed_at            INTEGER,
-  snoozed_until          INTEGER,
-  error_message          TEXT
-);
-
-CREATE TABLE IF NOT EXISTS habit_flows (
-  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-  kind               TEXT NOT NULL,
-  title              TEXT NOT NULL,
-  summary            TEXT NOT NULL,
-  evidence_count     INTEGER NOT NULL,
-  risk_level         TEXT NOT NULL,
-  enabled_by_default INTEGER NOT NULL DEFAULT 0,
-  status             TEXT NOT NULL DEFAULT 'candidate',
-  payload            TEXT NOT NULL,
-  created_at         INTEGER NOT NULL,
-  updated_at         INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS skills (
-  id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  created_at    INTEGER NOT NULL,
-  updated_at    INTEGER NOT NULL,
-  name          TEXT NOT NULL,
-  description   TEXT,
-  trigger       TEXT,
-  steps         TEXT NOT NULL,
-  source        TEXT,
-  candidate_id  INTEGER,
-  enabled       INTEGER NOT NULL DEFAULT 1,
-  last_used_at  INTEGER
-);
-
 CREATE TABLE IF NOT EXISTS scheduled_tasks (
   id                        INTEGER PRIMARY KEY AUTOINCREMENT,
   project_id                TEXT NOT NULL,
@@ -160,15 +105,6 @@ CREATE TABLE IF NOT EXISTS remote_im_messages (
 const INDEXES = `
 CREATE INDEX IF NOT EXISTS idx_events_project ON events(project_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_artifacts_project ON artifacts(project_id, stage_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_habit_events_ts ON habit_events(ts);
-CREATE INDEX IF NOT EXISTS idx_habit_events_kind ON habit_events(kind);
-CREATE INDEX IF NOT EXISTS idx_habit_events_source ON habit_events(source);
-CREATE INDEX IF NOT EXISTS idx_skill_candidates_status ON skill_candidates(status);
-CREATE INDEX IF NOT EXISTS idx_habit_flows_status ON habit_flows(status);
-CREATE INDEX IF NOT EXISTS idx_habit_flows_kind ON habit_flows(kind);
-CREATE INDEX IF NOT EXISTS idx_skills_trigger ON skills(trigger);
-CREATE INDEX IF NOT EXISTS idx_skills_enabled ON skills(enabled);
-CREATE INDEX IF NOT EXISTS idx_skills_last_used_at ON skills(last_used_at DESC);
 CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_project ON scheduled_tasks(project_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_due ON scheduled_tasks(project_id, enabled, next_run_at);
 CREATE INDEX IF NOT EXISTS idx_scheduled_task_runs_task ON scheduled_task_runs(task_id, scheduled_at DESC);
@@ -205,18 +141,18 @@ export function initDb(): Database.Database {
   db.pragma('journal_mode = WAL')
   db.pragma('foreign_keys = ON')
   db.exec(SCHEMA)
-  ensureColumn(db, 'habit_events', 'source', 'TEXT')
-  ensureColumn(db, 'habit_events', 'project_id', 'TEXT')
-  ensureColumn(db, 'habit_events', 'repo_path', 'TEXT')
-  ensureColumn(db, 'habit_events', 'source_window', 'TEXT')
-  ensureColumn(db, 'skills', 'enabled', 'INTEGER NOT NULL DEFAULT 1')
   ensureColumn(db, 'remote_im_messages', 'kind', "TEXT NOT NULL DEFAULT 'text'")
   ensureColumn(db, 'remote_im_messages', 'attachment_json', 'TEXT')
   try {
     db.prepare('DROP INDEX IF EXISTS idx_managed_chrome_sessions_running').run()
     db.prepare('DROP TABLE IF EXISTS managed_chrome_sessions').run()
+    // 已下线的「习惯监控 / Skill 管理」存储：老库里可能残留大量屏幕采样事件。
+    db.prepare('DROP TABLE IF EXISTS habit_events').run()
+    db.prepare('DROP TABLE IF EXISTS habit_flows').run()
+    db.prepare('DROP TABLE IF EXISTS skill_candidates').run()
+    db.prepare('DROP TABLE IF EXISTS skills').run()
   } catch {
-    /* best-effort cleanup for retired managed Chrome storage */
+    /* best-effort cleanup for retired feature storage */
   }
   db.exec(INDEXES)
 

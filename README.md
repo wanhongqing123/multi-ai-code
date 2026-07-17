@@ -1,6 +1,6 @@
 # Multi-AI Code
 
-> 本地优先的 AI CLI 工作台：围绕一个本地仓库组织任务、终端、代码审查、构建运行、Skill 编排和远程 IM，并调用你本机真实安装的 `codex` / `claude` 完成开发工作。
+> 本地优先的 AI CLI 工作台：围绕一个本地仓库组织任务、终端、代码审查、构建运行和远程 IM，并调用你本机真实安装的 `codex` / `claude` 完成开发工作。
 
 <p align="center">
   <img src="build/icon.png" alt="Multi-AI Code" width="112" />
@@ -18,7 +18,6 @@ Multi-AI Code 是一个面向个人开发者的桌面工作台。它不内置大
 - 在真实 PTY 终端里启动 AICLI，并向当前会话发送任务、文件路径、审查意见或远程消息。
 - 管理普通任务和定时任务，让重复工作按项目沉淀下来。
 - 在桌面端完成代码审查、仓库查看、项目构建、项目运行和日志分析。
-- 管理本机 Skills，把多个 Skill 编排成可复用流程。
 - 通过 iOS 远程 IM 从手机把文本、图片、语音或任务发送到桌面端当前 AICLI。
 
 ## 为什么使用它
@@ -26,9 +25,8 @@ Multi-AI Code 是一个面向个人开发者的桌面工作台。它不内置大
 - 仓库上下文集中：任务文档、构建命令、运行命令、审查批注和分析记忆都围绕当前仓库组织。
 - AI CLI 不被封装黑盒：应用启动的仍然是你本机真实安装、已登录的 `codex` 或 `claude`。
 - 开发工作流闭环：从任务描述、AI 会话、diff 审查到构建运行，都能在一个桌面应用内衔接。
-- Skill 可沉淀：本机已有 Skill 可以扫描、启用、查看，也可以通过编排面板组合成项目级流程。
 - 手机可接入：离开电脑时，可以用 iOS 客户端给桌面端当前会话发消息，并查看回传结果。
-- 数据本地优先：项目数据、消息记录、运行记录和 Skill 状态默认保存在本机或目标仓库目录。
+- 数据本地优先：项目数据、消息记录和运行记录默认保存在本机或目标仓库目录。
 
 ## 界面预览
 
@@ -94,15 +92,9 @@ Multi-AI Code 是一个面向个人开发者的桌面工作台。它不内置大
 - 运行配置和构建配置跟项目走。
 - 运行日志可以在桌面端查看，并交给 AICLI 分析。
 
-### Skill、编排与习惯沉淀
+### Prompt 模板
 
-Skill 系统用于把可复用的工作方法显式沉淀下来。
-
-- Skill 管理可以扫描本机 Skill 来源，展示名称、描述、来源路径和启用状态。
-- Prompt 模板用于保存常用输入片段。
-- Skill 编排可以把多个 Skill 组合成项目级流程，并保存到 `<target_repo>/.multi-ai-code/skill-pipelines/`。
-- 习惯监控会采集应用内操作事件，聚合出候选流程和可复用线索，帮助把重复操作沉淀成 Skill 或编排流程。
-- 项目级 Skills 可以放在 `<target_repo>/.multi-ai-code/skills/`，随项目一起管理。
+Prompt 模板用于保存常用输入片段，可在会话中快速插入。
 
 ### 远程 IM、iOS 与语音
 
@@ -142,7 +134,7 @@ imcli broadcast <user1,user2> "消息内容" --project <projectId>
 
 ```text
 Electron Desktop
-  React renderer              桌面 UI、终端、任务、审查、仓库查看、Skill 面板
+  React renderer              桌面 UI、终端、任务、审查、仓库查看
   Electron main / preload     SQLite、PTY、任务队列、构建运行、IM 路由、ASR
   bin/imcli*                  给 AICLI 调用的本地 IM 命令
 
@@ -154,7 +146,7 @@ Local Data
   ~/multi-ai-code/                    全局基目录（账号无关）
     accounts/<账号>/                  每个 IM 账号一套隔离数据（登录后才创建）
       multi-ai-code.db                该账号的 SQLite、projects、imcli-bridge.json 等
-  <target_repo>/.multi-ai-code        仓库级任务、Skill、分析记忆
+  <target_repo>/.multi-ai-code        仓库级任务、分析记忆
 ```
 
 桌面端启动即显示登录页，登录（填 IM 账号 ID）后才进入主界面。数据按账号隔离到
@@ -166,7 +158,7 @@ Local Data
 - AICLI 是外部工具，必须由用户在本机安装和登录。
 - 桌面端只把任务、上下文和远程消息送入当前 AI 会话，不直接执行远程发来的 shell 命令。
 - IM 账号、消息记录、定时任务和运行记录默认保存在本机。
-- 仓库级任务、Skill 编排和仓库分析记忆放在目标仓库的 `.multi-ai-code` 目录。
+- 仓库级任务和仓库分析记忆放在目标仓库的 `.multi-ai-code` 目录。
 
 ## 数据归属
 
@@ -175,16 +167,14 @@ Local Data
 | 数据 | 默认位置 | 说明 |
 | --- | --- | --- |
 | 项目列表和项目元数据 | `<账号根>/projects/<projectId>/project.json` | 项目名、目标仓库、构建运行配置、远程 IM 开关等 |
-| SQLite 数据库 | `<账号根>/multi-ai-code.db` | 消息、定时任务、运行记录、习惯事件、候选流程等 |
+| SQLite 数据库 | `<账号根>/multi-ai-code.db` | 消息、定时任务、运行记录等 |
 | 普通任务文档 | `<target_repo>/.multi-ai-code/designs/` | 跟仓库走，便于随项目迁移 |
-| Skill 编排 | `<target_repo>/.multi-ai-code/skill-pipelines/` | 项目级流程定义 |
-| 项目级 Skills | `<target_repo>/.multi-ai-code/skills/` | 项目自带 Skill 来源 |
 | 仓库查看分析 | `<target_repo>/.multi-ai-code/repo-view/analyses/` | 仓库分析记忆和片段结果 |
 | 远程 IM 账号 | `<账号根>/remote-im-profiles/<profile>/remote-im-account.json` | 用户 ID、联系人等本机配置 |
 | imcli bridge | `<账号根>/imcli-bridge.json` | 桌面端运行时生成，带本地访问 token |
 | ASR 运行资源 | `resources/asr` | 打包时写入安装包资源目录 |
 
-建议把目标仓库里的 `.multi-ai-code/` 加入忽略规则，除非你明确希望把任务文档、Skill 或分析记忆提交到仓库。
+建议把目标仓库里的 `.multi-ai-code/` 加入忽略规则，除非你明确希望把任务文档或分析记忆提交到仓库。
 
 ## 快速开始
 

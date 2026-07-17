@@ -34,7 +34,6 @@ const defaultDialogProps = {
   visualStudioInstallations: [] as VisualStudioInstallation[],
   visualStudioInstallationsLoading: false,
   onRefreshVisualStudioInstallations: vi.fn(),
-  mainCliLabel: 'Claude Code',
   initialRuntimeConfig: defaultRuntimeConfig,
   runtimeConfigReady: true,
   runtimeConfigDisabled: false,
@@ -152,17 +151,6 @@ describe('AiSettingsDialog', () => {
     expect(markup).not.toContain('AI 输出回传间隔')
     expect(markup).not.toContain('启用远程 IM')
     expect(markup).not.toContain('SECRETKEY')
-  })
-
-  it('renders habit monitor as an embedded settings section', () => {
-    const markup = renderDialog()
-
-    expect(markup).toContain('ai-settings-habit-entry')
-    expect(markup).toContain('aria-controls="ai-settings-habit-section"')
-    expect(markup).toContain('id="ai-settings-habit-section"')
-    expect(markup).toContain('habit-monitor-panel')
-    expect(markup).toContain('习惯监控')
-    expect(markup).toContain('查看活跃流程和采集设置')
   })
 
   it('keeps settings modal sizing stronger than the global modal rule', () => {

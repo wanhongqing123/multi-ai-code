@@ -13,7 +13,6 @@ import ProjectRuntimeSettingsSection, {
   normalizeRuntimeConfigForHost
 } from './ProjectRuntimeSettingsSection.js'
 import { showToast } from './Toast.js'
-import { HabitMonitorPanel } from '../habit/HabitMonitorDialog.js'
 
 export const DEFAULT_SCREENSHOT_SHORTCUT = 'CommandOrControl+Shift+A'
 export const DEFAULT_AI_CLI = 'codex' as const
@@ -116,7 +115,7 @@ interface AppSettingsSaveResponse {
   error?: string
 }
 
-export type SettingsSectionKey = 'shortcut' | 'ai' | 'build' | 'runtime' | 'habit'
+export type SettingsSectionKey = 'shortcut' | 'ai' | 'build' | 'runtime'
 
 interface ProjectSettingsSaveResponse {
   ok: boolean
@@ -146,7 +145,6 @@ export interface AiSettingsDialogProps {
   visualStudioInstallationsLoading: boolean
   onRefreshVisualStudioInstallations: () => void
   initialSection?: SettingsSectionKey
-  mainCliLabel: string
   onClose: () => void
   onSaved: (next: AiSettings) => void
   onSavedRepoView: (next: AiSettings) => void
@@ -639,7 +637,6 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
   const aiSectionRef = useRef<HTMLDivElement | null>(null)
   const buildSectionRef = useRef<HTMLDivElement | null>(null)
   const runtimeSectionRef = useRef<HTMLDivElement | null>(null)
-  const habitSectionRef = useRef<HTMLDivElement | null>(null)
 
   const scrollToSettingsSection = (section: SettingsSectionKey): void => {
     setActiveSettingsSection(section)
@@ -647,8 +644,7 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
       shortcut: shortcutSectionRef.current,
       ai: aiSectionRef.current,
       build: buildSectionRef.current,
-      runtime: runtimeSectionRef.current,
-      habit: habitSectionRef.current
+      runtime: runtimeSectionRef.current
     }[section]
     target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
@@ -661,8 +657,7 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
         shortcut: shortcutSectionRef.current,
         ai: aiSectionRef.current,
         build: buildSectionRef.current,
-        runtime: runtimeSectionRef.current,
-        habit: habitSectionRef.current
+        runtime: runtimeSectionRef.current
       }[section]
       target?.scrollIntoView({ behavior: 'auto', block: 'start' })
     }, 0)
@@ -896,23 +891,6 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
                   <small>启动命令</small>
                 </span>
               </button>
-              <button
-                type="button"
-                className={
-                  activeSettingsSection === 'habit'
-                    ? 'ai-settings-nav-item ai-settings-habit-entry active'
-                    : 'ai-settings-nav-item ai-settings-habit-entry'
-                }
-                aria-controls="ai-settings-habit-section"
-                aria-current={activeSettingsSection === 'habit' ? 'true' : undefined}
-                onClick={() => scrollToSettingsSection('habit')}
-              >
-                <span className="ai-settings-nav-icon">🧠</span>
-                <span>
-                  <strong>习惯监控</strong>
-                  <small>查看活跃流程和采集设置</small>
-                </span>
-              </button>
             </div>
             <div className="ai-settings-current-project">
               <span>当前项目</span>
@@ -1007,13 +985,6 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
                 />
               </div>
 
-              <div
-                id="ai-settings-habit-section"
-                ref={habitSectionRef}
-                className="ai-settings-panel ai-settings-habit-panel ai-settings-grid-full ai-settings-section-anchor"
-              >
-                <HabitMonitorPanel mainCliLabel={props.mainCliLabel} />
-              </div>
             </div>
             {error && <div className="modal-error">⚠ {error}</div>}
           </main>

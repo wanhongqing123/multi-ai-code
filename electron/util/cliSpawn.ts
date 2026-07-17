@@ -6,16 +6,15 @@ import {
 } from '../aicli/bundledCliResolver.js'
 
 /**
- * Platform-aware spawn helper for one-shot AI CLI invocations from the
- * habit-learning generator.
+ * Platform-aware spawn helper for one-shot AI CLI invocations.
  *
  * Why this exists separately from electron/cc/PtyCCProcess.ts:
  *   - PtyCCProcess targets an interactive PTY (node-pty); it scrubs MSYS env
  *     vars and CLAUDE_CODE_* vars aggressively, which is necessary for a
- *     long-running TUI session. The habit generator runs a *one-shot*
- *     subprocess with stdout capture and short timeout — it does not need
- *     the full TUI env, but does need correct binary resolution + a PATH
- *     augmented with the usual install locations (npm/.local/bin, brew).
+ *     long-running TUI session. A *one-shot* subprocess with stdout capture
+ *     and short timeout does not need the full TUI env, but does need
+ *     correct binary resolution + a PATH augmented with the usual install
+ *     locations (npm/.local/bin, brew).
  *   - Bundling all that into PtyCCProcess would either over-scrub our
  *     subprocess env or leak PTY-specific state into the generator.
  *

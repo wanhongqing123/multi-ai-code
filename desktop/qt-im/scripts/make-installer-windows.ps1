@@ -60,12 +60,17 @@ if (-not $MakeNsis -or -not (Test-Path $MakeNsis)) {
 Write-Host "makensis: $MakeNsis"
 
 # 4) 编译安装程序
+# 版本号取仓库根 package.json 的 version——Electron 与 qt-im 共用同一版本源，
+# 每次发布前通过 `npm version patch` 递增，两端安装包版本一致。
+$repoRoot = (Resolve-Path (Join-Path $projectRoot '..\..')).Path
+$pkgJsonPath = Join-Path $repoRoot 'package.json'
+$appSemver = (Get-Content $pkgJsonPath -Raw -Encoding UTF8 | ConvertFrom-Json).version
+if (-not $appSemver) { throw "无法从 $pkgJsonPath 读取 version" }
 $gitHash = (& git -C $projectRoot rev-parse --short HEAD 2>$null)
 if (-not $gitHash) { $gitHash = 'unknown' }
-$dateTag = Get-Date -Format yyyyMMdd
-$appVersion = "$(Get-Date -Format yyyy.MM.dd)-$gitHash"
-$versionNum = "$(Get-Date -Format yyyy.M.d).0"
-$outFile = Join-Path (Join-Path $projectRoot $OutDir) "MultiAIIM-Setup-win64-$dateTag-$gitHash.exe"
+$appVersion = "$appSemver-$gitHash"   # 显示版本，如 0.1.1-abc1234
+$versionNum = "$appSemver.0"          # NSIS VIProductVersion 需要 x.x.x.x
+$outFile = Join-Path (Join-Path $projectRoot $OutDir) "MultiAIIM-Setup-win64-v$appSemver-$gitHash.exe"
 if (Test-Path $outFile) { Remove-Item $outFile -Force }
 
 $nsiScript = Join-Path $projectRoot 'installer\windows-installer.nsi'

@@ -7,6 +7,8 @@ class ChatStateTest : public QObject {
 
 private slots:
     void queuesOutgoingText();
+    void removesAicliProtocolPrefixFromIncomingText();
+    void removesAicliProtocolPrefixFromRestoredIncomingText();
     void receivesIncomingImage();
     void receivesIncomingFile();
     void updatesMessageStatus();
@@ -27,6 +29,38 @@ void ChatStateTest::queuesOutgoingText() {
     QCOMPARE(message.direction, RemoteIMMessageDirection::Outgoing);
     QCOMPARE(message.status, RemoteIMMessageStatus::Pending);
     QCOMPARE(state.messagesWith("ios-user").size(), 1);
+}
+
+void ChatStateTest::removesAicliProtocolPrefixFromIncomingText() {
+    ChatState state("desktop-user");
+    const QString hiddenPrefix = QStringLiteral("\u2063\u200B\u200C\u200D\u2063");
+
+    const RemoteIMMessage hiddenMarked = state.receiveText(
+        "electron-user",
+        hiddenPrefix + QStringLiteral("## 结论\n\nMarkdown 正文")
+    );
+    const RemoteIMMessage legacyMarked = state.receiveText(
+        "electron-user",
+        QStringLiteral("【AICLI 输出】\n## 结果")
+    );
+
+    QCOMPARE(hiddenMarked.text, QStringLiteral("## 结论\n\nMarkdown 正文"));
+    QCOMPARE(legacyMarked.text, QStringLiteral("## 结果"));
+}
+
+void ChatStateTest::removesAicliProtocolPrefixFromRestoredIncomingText() {
+    ChatState state("desktop-user");
+    const QString hiddenPrefix = QStringLiteral("\u2063\u200B\u200C\u200D\u2063");
+    RemoteIMMessage message;
+    message.fromUserId = QStringLiteral("electron-user");
+    message.toUserId = QStringLiteral("desktop-user");
+    message.text = hiddenPrefix + QStringLiteral("# Win/Mac 每周 Crash 详细报表");
+    message.direction = RemoteIMMessageDirection::Incoming;
+
+    state.appendMessageForRestore(message);
+
+    QCOMPARE(state.messagesWith(QStringLiteral("electron-user")).first().text,
+             QStringLiteral("# Win/Mac 每周 Crash 详细报表"));
 }
 
 void ChatStateTest::receivesIncomingImage() {

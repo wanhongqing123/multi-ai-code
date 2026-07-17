@@ -33,6 +33,7 @@ public:
 private:
     QString requireSelectedPeer() const;
     static QString clean(const QString& value);
+    static QString incomingDisplayText(const QString& value);
     static QString fileName(const QString& path);
 
     QString ownerUserId_;

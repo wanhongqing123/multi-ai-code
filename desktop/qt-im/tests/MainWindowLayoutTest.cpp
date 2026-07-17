@@ -432,12 +432,20 @@ void MainWindowLayoutTest::rendersMarkdownMessageContent() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
     app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
-    app.chatState().receiveText(QStringLiteral("phone-user"),
-                                QStringLiteral("**重点**\n\n- 第一条\n- [链接](https://example.com)"));
+    const QString hiddenPrefix = QStringLiteral("\u2063\u200B\u200C\u200D\u2063");
+    RemoteIMMessage restoredMessage;
+    restoredMessage.fromUserId = QStringLiteral("phone-user");
+    restoredMessage.toUserId = QStringLiteral("desktop-user");
+    restoredMessage.text = hiddenPrefix
+        + QStringLiteral("# Win/Mac 每周 Crash 详细报表\n\n**重点**\n\n- 第一条\n- [链接](https://example.com)");
+    restoredMessage.direction = RemoteIMMessageDirection::Incoming;
+    app.chatState().appendMessageForRestore(restoredMessage);
 
     MainWindow window(app);
     auto* markdownView = window.findChild<QTextBrowser*>(QStringLiteral("messageMarkdownView"));
     QVERIFY(markdownView != nullptr);
+    QVERIFY(markdownView->toHtml().contains(QStringLiteral("<h1")));
+    QVERIFY(!markdownView->toPlainText().contains(QStringLiteral("# Win/Mac")));
     QVERIFY(markdownView->toPlainText().contains(QStringLiteral("重点")));
     QVERIFY(markdownView->toHtml().contains(QStringLiteral("href=\"https://example.com\"")));
 }

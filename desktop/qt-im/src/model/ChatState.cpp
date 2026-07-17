@@ -1,6 +1,7 @@
 #include "model/ChatState.h"
 
 #include <QFileInfo>
+#include <QStringList>
 #include <QtGlobal>
 #include <algorithm>
 #include <stdexcept>
@@ -132,7 +133,7 @@ RemoteIMMessage ChatState::receiveText(const QString& fromUserId, const QString&
     RemoteIMMessage message;
     message.fromUserId = peerId;
     message.toUserId = ownerUserId_;
-    message.text = clean(text);
+    message.text = incomingDisplayText(text);
     message.direction = RemoteIMMessageDirection::Incoming;
     message.status = RemoteIMMessageStatus::Received;
     messages_.append(message);
@@ -220,7 +221,11 @@ bool ChatState::updateMessageStatus(const QString& messageId, RemoteIMMessageSta
 }
 
 void ChatState::appendMessageForRestore(const RemoteIMMessage& message) {
-    messages_.append(message);
+    RemoteIMMessage restored = message;
+    if (restored.direction == RemoteIMMessageDirection::Incoming) {
+        restored.text = incomingDisplayText(restored.text);
+    }
+    messages_.append(restored);
 }
 
 QString ChatState::requireSelectedPeer() const {
@@ -230,6 +235,27 @@ QString ChatState::requireSelectedPeer() const {
 
 QString ChatState::clean(const QString& value) {
     return value.trimmed();
+}
+
+QString ChatState::incomingDisplayText(const QString& value) {
+    QString text = clean(value);
+    static const QString invisibleAicliPrefix = QStringLiteral("\u2063\u200B\u200C\u200D\u2063");
+    if (text.startsWith(invisibleAicliPrefix)) {
+        return clean(text.mid(invisibleAicliPrefix.size()));
+    }
+
+    static const QStringList legacyPrefixes = {
+        QStringLiteral("【AICLI 输出】"),
+        QStringLiteral("[AICLI 输出]"),
+        QStringLiteral("【AICLI输出】"),
+        QStringLiteral("[AICLI输出]")
+    };
+    for (const QString& prefix : legacyPrefixes) {
+        if (text.startsWith(prefix)) {
+            return clean(text.mid(prefix.size()));
+        }
+    }
+    return text;
 }
 
 QString ChatState::fileName(const QString& path) {

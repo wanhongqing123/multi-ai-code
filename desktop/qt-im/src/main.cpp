@@ -1,6 +1,8 @@
 #include <QApplication>
 #include <QCoreApplication>
+#include <QDir>
 #include <QFont>
+#include <QStandardPaths>
 #include <QTimer>
 #include <memory>
 
@@ -8,8 +10,21 @@
 #include "im/RemoteIMCredentialDefaults.h"
 #include "im/TencentUserSigGenerator.h"
 #include "platform/DesktopRemoteIMClientFactory.h"
+#include "storage/LocalMessageDatabase.h"
 #include "ui/LoginDialog.h"
 #include "ui/MainWindow.h"
+
+namespace {
+
+// 每账号一个本地消息库：登录后先从这里恢复全部历史（SDK 漫游只有几条，
+// 降级为补充源）。目录约定与 TimSdk 缓存一致（AppDataLocation）。
+QString messageDatabasePath(const QString& userId) {
+    QString root = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    if (root.isEmpty()) root = QDir::homePath() + QStringLiteral("/.multi-ai-code-im");
+    return QDir(root).filePath(QStringLiteral("RemoteIMHistory/") + userId + QStringLiteral("/messages.db"));
+}
+
+}  // namespace
 
 int main(int argc, char* argv[]) {
     // High-DPI 支持：必须在构造 QApplication 之前设置，否则平台插件初始化时读不到。
@@ -50,7 +65,9 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    RemoteIMApplication remoteIM(loginDialog.userId(), createDesktopRemoteIMClient());
+    RemoteIMApplication remoteIM(loginDialog.userId(),
+                                 createDesktopRemoteIMClient(),
+                                 std::make_unique<LocalMessageDatabase>(messageDatabasePath(loginDialog.userId())));
     MainWindow window(remoteIM);
     window.show();
     const QString userSig = TencentUserSigGenerator::generate(

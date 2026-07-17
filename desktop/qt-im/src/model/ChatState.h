@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QList>
+#include <QSet>
 #include <QString>
 
 #include "model/RemoteIMContact.h"
@@ -32,6 +33,8 @@ public:
 
 private:
     QString requireSelectedPeer() const;
+    // 统一的消息追加入口：登记 id（供恢复/漫游合并去重）后追加。
+    void appendTracked(const RemoteIMMessage& message);
     static QString clean(const QString& value);
     static QString incomingDisplayText(const QString& value);
     static QString fileName(const QString& path);
@@ -40,4 +43,5 @@ private:
     QString selectedPeerId_;
     QList<RemoteIMContact> contacts_;
     QList<RemoteIMMessage> messages_;
+    QSet<QString> messageIds_;
 };

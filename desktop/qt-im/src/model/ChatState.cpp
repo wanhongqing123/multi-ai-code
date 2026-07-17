@@ -40,8 +40,10 @@ void ChatState::removeContactAndMessages(const QString& userId) {
     contacts_.erase(std::remove_if(contacts_.begin(), contacts_.end(), [&cleanUserId](const RemoteIMContact& contact) {
         return contact.userId == cleanUserId;
     }), contacts_.end());
-    messages_.erase(std::remove_if(messages_.begin(), messages_.end(), [&cleanUserId](const RemoteIMMessage& message) {
-        return message.fromUserId == cleanUserId || message.toUserId == cleanUserId;
+    messages_.erase(std::remove_if(messages_.begin(), messages_.end(), [this, &cleanUserId](const RemoteIMMessage& message) {
+        const bool removing = message.fromUserId == cleanUserId || message.toUserId == cleanUserId;
+        if (removing) messageIds_.remove(message.id);
+        return removing;
     }), messages_.end());
     const bool selectedMissing = !selectedPeerId_.isEmpty()
         && std::none_of(contacts_.cbegin(), contacts_.cend(), [this](const RemoteIMContact& contact) {
@@ -75,7 +77,7 @@ RemoteIMMessage ChatState::queueOutgoingText(const QString& text) {
     message.text = cleanText;
     message.direction = RemoteIMMessageDirection::Outgoing;
     message.status = RemoteIMMessageStatus::Pending;
-    messages_.append(message);
+    appendTracked(message);
     return message;
 }
 
@@ -90,7 +92,7 @@ RemoteIMMessage ChatState::queueOutgoingImage(const QString& localPath, int widt
     message.status = RemoteIMMessageStatus::Pending;
     message.hasImage = true;
     message.image = RemoteIMImageAttachment{cleanPath, width, height, sizeBytes};
-    messages_.append(message);
+    appendTracked(message);
     return message;
 }
 
@@ -105,7 +107,7 @@ RemoteIMMessage ChatState::queueOutgoingVoice(const QString& localPath, int dura
     message.status = RemoteIMMessageStatus::Pending;
     message.hasVoice = true;
     message.voice = RemoteIMVoiceAttachment{cleanPath, qMax(1, durationSeconds)};
-    messages_.append(message);
+    appendTracked(message);
     return message;
 }
 
@@ -121,7 +123,7 @@ RemoteIMMessage ChatState::queueOutgoingFile(const QString& localPath, const QSt
     message.status = RemoteIMMessageStatus::Pending;
     message.hasFile = true;
     message.file = RemoteIMFileAttachment{cleanPath, cleanFileName, clean(mimeType), sizeBytes};
-    messages_.append(message);
+    appendTracked(message);
     return message;
 }
 
@@ -136,7 +138,7 @@ RemoteIMMessage ChatState::receiveText(const QString& fromUserId, const QString&
     message.text = incomingDisplayText(text);
     message.direction = RemoteIMMessageDirection::Incoming;
     message.status = RemoteIMMessageStatus::Received;
-    messages_.append(message);
+    appendTracked(message);
     return message;
 }
 
@@ -155,7 +157,7 @@ RemoteIMMessage ChatState::receiveImage(const QString& fromUserId, const QString
     message.status = RemoteIMMessageStatus::Received;
     message.hasImage = true;
     message.image = RemoteIMImageAttachment{cleanPath, width, height, sizeBytes};
-    messages_.append(message);
+    appendTracked(message);
     return message;
 }
 
@@ -175,7 +177,7 @@ RemoteIMMessage ChatState::receiveFile(const QString& fromUserId, const QString&
     message.status = RemoteIMMessageStatus::Received;
     message.hasFile = true;
     message.file = RemoteIMFileAttachment{cleanPath, cleanFileName, clean(mimeType), sizeBytes};
-    messages_.append(message);
+    appendTracked(message);
     return message;
 }
 
@@ -192,7 +194,7 @@ RemoteIMMessage ChatState::receiveVoice(const QString& fromUserId, const QString
     message.status = RemoteIMMessageStatus::Received;
     message.hasVoice = true;
     message.voice = RemoteIMVoiceAttachment{clean(localPath), qMax(1, durationSeconds)};
-    messages_.append(message);
+    appendTracked(message);
     return message;
 }
 
@@ -221,11 +223,19 @@ bool ChatState::updateMessageStatus(const QString& messageId, RemoteIMMessageSta
 }
 
 void ChatState::appendMessageForRestore(const RemoteIMMessage& message) {
+    // 本地库加载与 SDK 漫游补充共用此入口：按消息 id 去重，重复直接丢弃
+    // （展示顺序由 messagesWith 的稳定排序保证，无需在此排序）。
+    if (messageIds_.contains(message.id)) return;
     RemoteIMMessage restored = message;
     if (restored.direction == RemoteIMMessageDirection::Incoming) {
         restored.text = incomingDisplayText(restored.text);
     }
-    messages_.append(restored);
+    appendTracked(restored);
+}
+
+void ChatState::appendTracked(const RemoteIMMessage& message) {
+    messageIds_.insert(message.id);
+    messages_.append(message);
 }
 
 QString ChatState::requireSelectedPeer() const {

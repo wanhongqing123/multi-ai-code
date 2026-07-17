@@ -98,6 +98,27 @@ qint64 messageTimeMillis(const QJsonObject& message) {
     return seconds > 0 ? seconds * 1000 : QDateTime::currentMSecsSinceEpoch();
 }
 
+QString jsonValueAsString(const QJsonValue& value) {
+    if (value.isString()) return value.toString().trimmed();
+    if (value.isDouble() && value.toDouble() != 0) return QString::number(static_cast<qint64>(value.toDouble()));
+    return QString();
+}
+
+// SDK 消息 id：漫游与实时是同一条消息的两次投递，取相同的 SDK id 才能让
+// 本地库按主键去重（此前两条路径都落到随机 UUID，重复消息无从识别）。
+QString sdkMessageId(const QJsonObject& message) {
+    QString id = jsonValueAsString(message.value(QStringLiteral("message_msg_id")));
+    if (id.isEmpty()) id = jsonValueAsString(message.value(QStringLiteral("message_unique_id")));
+    return id;
+}
+
+// 一条 SDK 消息可含多个 elem（拆成多条 RemoteIMMessage），按 elem 下标编号，
+// 两条路径的编号规则一致。SDK id 缺失时返回空串，调用方保留默认 UUID。
+QString sdkElemMessageId(const QString& sdkId, int elemIndex) {
+    if (sdkId.isEmpty()) return QString();
+    return sdkId + QLatin1Char('#') + QString::number(elemIndex);
+}
+
 }  // namespace
 
 TimSdkRemoteIMClient::TimSdkRemoteIMClient(QObject* parent)
@@ -327,10 +348,13 @@ void TimSdkRemoteIMClient::handleHistoryMessagesPayload(const QString& jsonPaylo
         if (peerId.isEmpty()) continue;
 
         const qint64 createdAtMillis = messageTimeMillis(sdkMessage);
+        const QString sdkId = sdkMessageId(sdkMessage);
         const QJsonArray elems = sdkMessage.value(QStringLiteral("message_elem_array")).toArray();
-        for (const QJsonValue& elemValue : elems) {
-            const QJsonObject elem = elemValue.toObject();
+        for (int elemIndex = 0; elemIndex < elems.size(); ++elemIndex) {
+            const QJsonObject elem = elems.at(elemIndex).toObject();
             RemoteIMMessage message;
+            const QString stableId = sdkElemMessageId(sdkId, elemIndex);
+            if (!stableId.isEmpty()) message.id = stableId;
             message.fromUserId = isFromSelf ? currentUserId_ : peerId;
             message.toUserId = isFromSelf ? peerId : currentUserId_;
             message.direction = isFromSelf ? RemoteIMMessageDirection::Outgoing : RemoteIMMessageDirection::Incoming;
@@ -374,7 +398,10 @@ void TimSdkRemoteIMClient::handleHistoryMessagesPayload(const QString& jsonPaylo
                         message.file = RemoteIMFileAttachment{cachedPath, QFileInfo(fileName).fileName(), mimeTypeForFileName(fileName), sizeBytes};
                         messages.append(message);
                     } else {
-                        handleIncomingFileUrl(peerId, url, QFileInfo(fileName).fileName(), sizeBytes);
+                        message.hasFile = true;
+                        message.text = QStringLiteral("[文件消息] ") + QFileInfo(fileName).fileName();
+                        message.file = RemoteIMFileAttachment{QString(), QFileInfo(fileName).fileName(), mimeTypeForFileName(fileName), sizeBytes};
+                        handleIncomingFileUrl(message, url);
                     }
                     continue;
                 }
@@ -410,13 +437,34 @@ void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
     const QString fromUserId = firstNonEmpty(message, {QStringLiteral("message_sender"), QStringLiteral("message_conv_id")});
     if (fromUserId.isEmpty()) return;
 
+    // 实时消息与漫游是同一条消息的两次投递：构造与漫游路径完全一致的
+    // RemoteIMMessage（含稳定 SDK id 与服务器时间），经 messagesReceived 通道
+    // 送出，本地库据 id 去重，重登时不会与漫游重复。
+    const QString sdkId = sdkMessageId(message);
+    const qint64 createdAtMillis = messageTimeMillis(message);
+    const auto baseMessage = [this, &fromUserId, &sdkId, createdAtMillis](int elemIndex) {
+        RemoteIMMessage result;
+        const QString stableId = sdkElemMessageId(sdkId, elemIndex);
+        if (!stableId.isEmpty()) result.id = stableId;
+        result.fromUserId = fromUserId;
+        result.toUserId = currentUserId_;
+        result.direction = RemoteIMMessageDirection::Incoming;
+        result.status = RemoteIMMessageStatus::Received;
+        result.createdAtMillis = createdAtMillis;
+        return result;
+    };
+
+    QList<RemoteIMMessage> received;
     const QJsonArray elems = message.value(QStringLiteral("message_elem_array")).toArray();
-    for (const QJsonValue& value : elems) {
-        const QJsonObject elem = value.toObject();
+    for (int elemIndex = 0; elemIndex < elems.size(); ++elemIndex) {
+        const QJsonObject elem = elems.at(elemIndex).toObject();
         const int elemType = elem.value(QStringLiteral("elem_type")).toInt(-1);
         if (elemType == kElemText) {
             const QString text = elem.value(QStringLiteral("text_elem_content")).toString();
-            if (!text.trimmed().isEmpty()) emit incomingText(fromUserId, text);
+            if (text.trimmed().isEmpty()) continue;
+            RemoteIMMessage textMessage = baseMessage(elemIndex);
+            textMessage.text = text;
+            received.append(textMessage);
             continue;
         }
         if (elemType == kElemImage) {
@@ -424,8 +472,12 @@ void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
             const int width = elem.value(QStringLiteral("image_elem_orig_pic_width")).toInt(0);
             const int height = elem.value(QStringLiteral("image_elem_orig_pic_height")).toInt(0);
             const qint64 sizeBytes = static_cast<qint64>(elem.value(QStringLiteral("image_elem_orig_pic_size")).toDouble(0));
+            RemoteIMMessage imageMessage = baseMessage(elemIndex);
+            imageMessage.hasImage = true;
+            imageMessage.image = RemoteIMImageAttachment{localPath, width, height, sizeBytes};
             if (!localPath.isEmpty()) {
-                emit incomingImage(fromUserId, localPath, width, height, sizeBytes);
+                imageMessage.text = QStringLiteral("[图片消息] ") + QFileInfo(localPath).fileName();
+                received.append(imageMessage);
                 continue;
             }
             const QString url = firstNonEmpty(elem, {
@@ -433,7 +485,7 @@ void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
                 QStringLiteral("image_elem_orig_url"),
                 QStringLiteral("image_elem_thumb_url")
             });
-            if (!url.isEmpty()) handleIncomingImageUrl(fromUserId, url, width, height, sizeBytes);
+            if (!url.isEmpty()) handleIncomingImageUrl(imageMessage, url);
             continue;
         }
         if (elemType == kElemFile) {
@@ -445,55 +497,66 @@ void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
             const QString displayName = QFileInfo(fileName).fileName();
             const QString localPath = elem.value(QStringLiteral("file_elem_file_path")).toString().trimmed();
             const qint64 sizeBytes = static_cast<qint64>(elem.value(QStringLiteral("file_elem_file_size")).toDouble(0));
+            RemoteIMMessage fileMessage = baseMessage(elemIndex);
+            fileMessage.hasFile = true;
+            fileMessage.text = QStringLiteral("[文件消息] ") + displayName;
             if (!localPath.isEmpty()) {
-                emit incomingFile(fromUserId, localPath, displayName, mimeTypeForFileName(displayName), sizeBytes);
+                fileMessage.file = RemoteIMFileAttachment{localPath, displayName, mimeTypeForFileName(displayName), sizeBytes};
+                received.append(fileMessage);
                 continue;
             }
             const QString url = elem.value(QStringLiteral("file_elem_url")).toString().trimmed();
-            if (!url.isEmpty()) handleIncomingFileUrl(fromUserId, url, displayName, sizeBytes);
+            if (!url.isEmpty()) {
+                fileMessage.file = RemoteIMFileAttachment{QString(), displayName, mimeTypeForFileName(displayName), sizeBytes};
+                handleIncomingFileUrl(fileMessage, url);
+            }
         }
     }
+    if (!received.isEmpty()) emit messagesReceived(received);
 }
 
-void TimSdkRemoteIMClient::handleIncomingImageUrl(const QString& fromUserId, const QString& url, int width, int height, qint64 sizeBytes) {
+void TimSdkRemoteIMClient::handleIncomingImageUrl(RemoteIMMessage message, const QString& url) {
     const QString targetPath = cacheImagePathForUrl(url);
+    message.image.localPath = targetPath;
+    message.text = QStringLiteral("[图片消息] ") + QFileInfo(targetPath).fileName();
     if (QFile::exists(targetPath)) {
-        emit incomingImage(fromUserId, targetPath, width, height, sizeBytes);
+        emit messagesReceived({message});
         return;
     }
 
     QNetworkReply* reply = network_.get(QNetworkRequest(QUrl(url)));
-    connect(reply, &QNetworkReply::finished, this, [this, reply, fromUserId, targetPath, width, height, sizeBytes] {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, message] {
         const QByteArray data = reply->readAll();
         const bool ok = reply->error() == QNetworkReply::NoError && !data.isEmpty();
         reply->deleteLater();
         if (!ok) return;
-        QFile file(targetPath);
+        QFile file(message.image.localPath);
         if (!file.open(QIODevice::WriteOnly)) return;
         file.write(data);
         file.close();
-        emit incomingImage(fromUserId, targetPath, width, height, sizeBytes);
+        emit messagesReceived({message});
     });
 }
 
-void TimSdkRemoteIMClient::handleIncomingFileUrl(const QString& fromUserId, const QString& url, const QString& fileName, qint64 sizeBytes) {
-    const QString targetPath = cacheFilePathForUrl(url, fileName);
+void TimSdkRemoteIMClient::handleIncomingFileUrl(RemoteIMMessage message, const QString& url) {
+    const QString targetPath = cacheFilePathForUrl(url, message.file.fileName);
+    message.file.localPath = targetPath;
     if (QFile::exists(targetPath)) {
-        emit incomingFile(fromUserId, targetPath, fileName, mimeTypeForFileName(fileName), sizeBytes);
+        emit messagesReceived({message});
         return;
     }
 
     QNetworkReply* reply = network_.get(QNetworkRequest(QUrl(url)));
-    connect(reply, &QNetworkReply::finished, this, [this, reply, fromUserId, targetPath, fileName, sizeBytes] {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, message] {
         const QByteArray data = reply->readAll();
         const bool ok = reply->error() == QNetworkReply::NoError && !data.isEmpty();
         reply->deleteLater();
         if (!ok) return;
-        QFile file(targetPath);
+        QFile file(message.file.localPath);
         if (!file.open(QIODevice::WriteOnly)) return;
         file.write(data);
         file.close();
-        emit incomingFile(fromUserId, targetPath, fileName, mimeTypeForFileName(fileName), sizeBytes);
+        emit messagesReceived({message});
     });
 }
 

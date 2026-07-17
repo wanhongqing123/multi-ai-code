@@ -290,13 +290,16 @@ void TimSdkRemoteIMClientTest::emitsIncomingTextAndImageFromSdkMessages() {
     auto api = std::make_unique<FakeTimSdkApi>();
     auto* fake = api.get();
     TimSdkRemoteIMClient client(std::move(api));
-    QSignalSpy textSpy(&client, &RemoteIMClient::incomingText);
-    QSignalSpy imageSpy(&client, &RemoteIMClient::incomingImage);
+    // 实时消息改经 messagesReceived 通道送出：与漫游同构、携带稳定 SDK 消息 id
+    //（<msg_id>#<elem下标>），本地消息库据此去重。
+    QSignalSpy messagesSpy(&client, &RemoteIMClient::messagesReceived);
 
     client.connectToService(123456, QStringLiteral("desktop-user"), QStringLiteral("sig-value"), nullptr);
     fake->emitMessages(QJsonArray{QJsonObject{
         {QStringLiteral("message_is_from_self"), false},
         {QStringLiteral("message_sender"), QStringLiteral("phone-user")},
+        {QStringLiteral("message_msg_id"), QStringLiteral("sdk-msg-1")},
+        {QStringLiteral("message_server_time"), 1700000000},
         {QStringLiteral("message_elem_array"), QJsonArray{
             QJsonObject{
                 {QStringLiteral("elem_type"), 0},
@@ -312,15 +315,25 @@ void TimSdkRemoteIMClientTest::emitsIncomingTextAndImageFromSdkMessages() {
         }}
     }});
 
-    QCOMPARE(textSpy.count(), 1);
-    QCOMPARE(textSpy.takeFirst().at(0).toString(), QStringLiteral("phone-user"));
-    QCOMPARE(imageSpy.count(), 1);
-    const QList<QVariant> imageArgs = imageSpy.takeFirst();
-    QCOMPARE(imageArgs.at(0).toString(), QStringLiteral("phone-user"));
-    QCOMPARE(imageArgs.at(1).toString(), QStringLiteral("/tmp/incoming.png"));
-    QCOMPARE(imageArgs.at(2).toInt(), 640);
-    QCOMPARE(imageArgs.at(3).toInt(), 480);
-    QCOMPARE(imageArgs.at(4).toLongLong(), 128);
+    QCOMPARE(messagesSpy.count(), 1);
+    const auto messages = messagesSpy.takeFirst().at(0).value<QList<RemoteIMMessage>>();
+    QCOMPARE(messages.size(), 2);
+
+    const RemoteIMMessage& text = messages.at(0);
+    QCOMPARE(text.id, QStringLiteral("sdk-msg-1#0"));
+    QCOMPARE(text.fromUserId, QStringLiteral("phone-user"));
+    QCOMPARE(text.toUserId, QStringLiteral("desktop-user"));
+    QCOMPARE(text.direction, RemoteIMMessageDirection::Incoming);
+    QCOMPARE(text.text, QStringLiteral("hi"));
+    QCOMPARE(text.createdAtMillis, Q_INT64_C(1700000000) * 1000);
+
+    const RemoteIMMessage& image = messages.at(1);
+    QCOMPARE(image.id, QStringLiteral("sdk-msg-1#1"));
+    QVERIFY(image.hasImage);
+    QCOMPARE(image.image.localPath, QStringLiteral("/tmp/incoming.png"));
+    QCOMPARE(image.image.width, 640);
+    QCOMPARE(image.image.height, 480);
+    QCOMPARE(image.image.sizeBytes, static_cast<qint64>(128));
 }
 
 void TimSdkRemoteIMClientTest::rejectsMissingCredentials() {

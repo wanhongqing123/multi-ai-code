@@ -8,7 +8,7 @@ set(CMAKE_AUTOMOC ON)
 
 option(MULTI_AI_IM_USE_FAKE_CLIENT "Use the fake IM client for desktop UI development" OFF)
 
-find_package(Qt5 REQUIRED COMPONENTS Core Network Widgets Test)
+find_package(Qt5 REQUIRED COMPONENTS Core Network Sql Widgets Test)
 find_package(ZLIB REQUIRED)
 
 # md4c：CommonMark + GFM 扩展的 Markdown 解析器（与 Qt 内嵌同源，MIT）。
@@ -41,15 +41,15 @@ add_library(remote_im_core
   src/im/TimSdkRemoteIMClient.cpp
   src/im/FakeRemoteIMClient.h
   src/im/FakeRemoteIMClient.cpp
-  src/storage/LocalChatHistoryStore.h
-  src/storage/LocalChatHistoryStore.cpp
+  src/storage/LocalMessageDatabase.h
+  src/storage/LocalMessageDatabase.cpp
   src/storage/LocalSettingsStore.h
   src/storage/LocalSettingsStore.cpp
   src/storage/RemoteIMMediaStore.h
   src/storage/RemoteIMMediaStore.cpp
 )
 target_include_directories(remote_im_core PUBLIC src)
-target_link_libraries(remote_im_core PUBLIC Qt5::Core Qt5::Network ZLIB::ZLIB PRIVATE md4c)
+target_link_libraries(remote_im_core PUBLIC Qt5::Core Qt5::Network Qt5::Sql ZLIB::ZLIB PRIVATE md4c)
 
 add_library(remote_im_desktop_app
   src/app/RemoteIMApplication.h
@@ -120,8 +120,8 @@ target_link_libraries(tim_sdk_remote_im_client_test PRIVATE remote_im_core Qt5::
 add_executable(markdown_renderer_test tests/MarkdownRendererTest.cpp)
 target_link_libraries(markdown_renderer_test PRIVATE remote_im_core Qt5::Test)
 
-add_executable(local_chat_history_store_test tests/LocalChatHistoryStoreTest.cpp)
-target_link_libraries(local_chat_history_store_test PRIVATE remote_im_core Qt5::Test)
+add_executable(local_message_database_test tests/LocalMessageDatabaseTest.cpp)
+target_link_libraries(local_message_database_test PRIVATE remote_im_core Qt5::Test)
 
 add_executable(remote_im_application_test tests/RemoteIMApplicationTest.cpp)
 target_link_libraries(remote_im_application_test PRIVATE remote_im_desktop_app remote_im_core Qt5::Test)
@@ -141,7 +141,7 @@ add_test(NAME fake_remote_im_client_test COMMAND fake_remote_im_client_test)
 add_test(NAME tencent_user_sig_generator_test COMMAND tencent_user_sig_generator_test)
 add_test(NAME tim_sdk_remote_im_client_test COMMAND tim_sdk_remote_im_client_test)
 add_test(NAME markdown_renderer_test COMMAND markdown_renderer_test)
-add_test(NAME local_chat_history_store_test COMMAND local_chat_history_store_test)
+add_test(NAME local_message_database_test COMMAND local_message_database_test)
 add_test(NAME remote_im_application_test COMMAND remote_im_application_test)
 add_test(NAME login_dialog_test COMMAND login_dialog_test)
 add_test(NAME add_contact_dialog_test COMMAND add_contact_dialog_test)

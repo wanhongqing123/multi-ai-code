@@ -32,8 +32,10 @@ private:
     QString sdkConfigJson() const;
     void handleIncomingMessages(const QString& jsonMessages);
     void handleIncomingMessage(const QJsonObject& message);
-    void handleIncomingImageUrl(const QString& fromUserId, const QString& url, int width, int height, qint64 sizeBytes);
-    void handleIncomingFileUrl(const QString& fromUserId, const QString& url, const QString& fileName, qint64 sizeBytes);
+    // message 需预填 id/方向/时间等字段（附件 localPath 由下载完成后补上），
+    // 下载完经 messagesReceived 通道送出，保持稳定 id 供本地库去重。
+    void handleIncomingImageUrl(RemoteIMMessage message, const QString& url);
+    void handleIncomingFileUrl(RemoteIMMessage message, const QString& url);
     static void complete(RemoteIMCompletion completion, int code, const QString& description);
     static QString compactJson(const QJsonObject& object);
 

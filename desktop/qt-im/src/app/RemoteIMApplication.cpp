@@ -4,13 +4,29 @@
 #include <stdexcept>
 #include <utility>
 
-RemoteIMApplication::RemoteIMApplication(QString ownerUserId, std::unique_ptr<RemoteIMClient> client, QObject* parent)
-    : QObject(parent), state_(std::move(ownerUserId)), client_(std::move(client)) {
+namespace {
+
+QString peerOf(const RemoteIMMessage& message) {
+    return message.direction == RemoteIMMessageDirection::Outgoing ? message.toUserId : message.fromUserId;
+}
+
+}  // namespace
+
+RemoteIMApplication::RemoteIMApplication(QString ownerUserId,
+                                         std::unique_ptr<RemoteIMClient> client,
+                                         std::unique_ptr<LocalMessageDatabase> database,
+                                         QObject* parent)
+    : QObject(parent), state_(std::move(ownerUserId)), client_(std::move(client)), database_(std::move(database)) {
     if (!client_) {
         throw std::invalid_argument("RemoteIMClient is required");
     }
     client_->setParent(this);
     bindClientSignals();
+    // 登录前先把本地库的全部历史恢复进内存：消息列表不再依赖 SDK 漫游
+    //（只有几条），漫游随后按 id 去重合并进来。
+    if (database_ && database_->isOpen()) {
+        database_->loadInto(state_);
+    }
 }
 
 const ChatState& RemoteIMApplication::chatState() const { return state_; }
@@ -29,6 +45,7 @@ void RemoteIMApplication::connectToService(int sdkAppId, const QString& userSig)
 void RemoteIMApplication::addContact(const QString& userId, const QString& displayName) {
     state_.upsertContact(RemoteIMContact{userId, displayName});
     state_.selectPeer(userId);
+    if (database_) database_->upsertContact(RemoteIMContact{userId, displayName});
     emit stateChanged();
 }
 
@@ -41,6 +58,7 @@ void RemoteIMApplication::deleteContact(const QString& userId) {
             return;
         }
         state_.removeContactAndMessages(cleanUserId);
+        if (database_) database_->removeContactCascade(cleanUserId);
         emit stateChanged();
     });
 }
@@ -53,6 +71,7 @@ void RemoteIMApplication::selectPeer(const QString& userId) {
 void RemoteIMApplication::sendText(const QString& text) {
     if (text.trimmed().isEmpty() || state_.selectedPeerId().isEmpty()) return;
     RemoteIMMessage message = state_.queueOutgoingText(text);
+    persistMessage(message);
     emit stateChanged();
 
     client_->sendText(message.toUserId, message.text, [this, messageId = message.id](bool ok, const QString& error) {
@@ -67,6 +86,7 @@ void RemoteIMApplication::sendImage(const QString& localPath) {
 
     QFileInfo info(cleanPath);
     RemoteIMMessage message = state_.queueOutgoingImage(cleanPath, 0, 0, info.size());
+    persistMessage(message);
     emit stateChanged();
 
     client_->sendImage(message.toUserId, cleanPath, [this, messageId = message.id](bool ok, const QString& error) {
@@ -81,7 +101,14 @@ void RemoteIMApplication::sendVoicePlaceholder() {
 
 void RemoteIMApplication::markMessage(const QString& messageId, RemoteIMMessageStatus status) {
     state_.updateMessageStatus(messageId, status);
+    if (database_) database_->updateMessageStatus(messageId, status);
     emit stateChanged();
+}
+
+void RemoteIMApplication::persistMessage(const RemoteIMMessage& message) {
+    if (!database_) return;
+    database_->upsertContact(RemoteIMContact{peerOf(message), peerOf(message)});
+    database_->insertMessageIfAbsent(message, peerOf(message));
 }
 
 void RemoteIMApplication::bindClientSignals() {
@@ -89,27 +116,34 @@ void RemoteIMApplication::bindClientSignals() {
         const bool shouldSelectFirstContact = state_.selectedPeerId().isEmpty();
         for (const RemoteIMContact& contact : contacts) {
             state_.upsertContact(contact);
+            if (database_) database_->upsertContact(contact);
         }
         if (shouldSelectFirstContact && !contacts.isEmpty()) {
             state_.selectPeer(contacts.first().userId);
         }
         emit stateChanged();
     });
+    // SDK 漫游历史 + TimSdk 实时消息（带 SDK 消息 id）共用此通道：
+    // 本地库按 id INSERT OR IGNORE 去重，只有真正的新消息才进 ChatState。
     connect(client_.get(), &RemoteIMClient::messagesReceived, this, [this](const QList<RemoteIMMessage>& messages) {
         const bool shouldSelectFirstPeer = state_.selectedPeerId().isEmpty();
         QString firstPeerId;
         for (const RemoteIMMessage& message : messages) {
-            const QString peerId = message.direction == RemoteIMMessageDirection::Outgoing ? message.toUserId : message.fromUserId;
+            const QString peerId = peerOf(message);
             if (peerId.isEmpty()) continue;
             if (firstPeerId.isEmpty()) firstPeerId = peerId;
             state_.upsertContact(RemoteIMContact{peerId, peerId});
+            if (database_) {
+                database_->upsertContact(RemoteIMContact{peerId, peerId});
+                database_->insertMessageIfAbsent(message, peerId);
+            }
             state_.appendMessageForRestore(message);
         }
         if (shouldSelectFirstPeer && !firstPeerId.isEmpty()) state_.selectPeer(firstPeerId);
         emit stateChanged();
     });
     connect(client_.get(), &RemoteIMClient::incomingText, this, [this](const QString& fromUserId, const QString& text) {
-        state_.receiveText(fromUserId, text);
+        persistMessage(state_.receiveText(fromUserId, text));
         emit stateChanged();
     });
     connect(client_.get(), &RemoteIMClient::incomingImage, this, [this](const QString& fromUserId,
@@ -117,13 +151,13 @@ void RemoteIMApplication::bindClientSignals() {
                                                                         int width,
                                                                         int height,
                                                                         qint64 sizeBytes) {
-        state_.receiveImage(fromUserId, localPath, width, height, sizeBytes);
+        persistMessage(state_.receiveImage(fromUserId, localPath, width, height, sizeBytes));
         emit stateChanged();
     });
     connect(client_.get(), &RemoteIMClient::incomingVoice, this, [this](const QString& fromUserId,
                                                                         const QString& localPath,
                                                                         int durationSeconds) {
-        state_.receiveVoice(fromUserId, localPath, durationSeconds);
+        persistMessage(state_.receiveVoice(fromUserId, localPath, durationSeconds));
         emit stateChanged();
     });
     connect(client_.get(), &RemoteIMClient::incomingFile, this, [this](const QString& fromUserId,
@@ -131,7 +165,7 @@ void RemoteIMApplication::bindClientSignals() {
                                                                        const QString& fileName,
                                                                        const QString& mimeType,
                                                                        qint64 sizeBytes) {
-        state_.receiveFile(fromUserId, localPath, fileName, mimeType, sizeBytes);
+        persistMessage(state_.receiveFile(fromUserId, localPath, fileName, mimeType, sizeBytes));
         emit stateChanged();
     });
     connect(client_.get(), &RemoteIMClient::disconnected, this, [this] {

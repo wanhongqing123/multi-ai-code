@@ -59,6 +59,7 @@ private:
     void sendCurrentText();
     void updateComposerState();
     void updateSlashCommandSuggestions();
+    void positionSlashCommandBar();
     void selectSlashCommand(const QString& command);
     void showContactContextMenu(QListWidget* list, const QPoint& pos);
     void deleteContactFromItem(QListWidgetItem* item);
@@ -103,5 +104,5 @@ private:
     QPushButton* sendButton_ = nullptr;
     QTextEdit* messageEditor_ = nullptr;
     QWidget* slashCommandBar_ = nullptr;
-    QHBoxLayout* slashCommandLayout_ = nullptr;
+    QVBoxLayout* slashCommandLayout_ = nullptr;
 };

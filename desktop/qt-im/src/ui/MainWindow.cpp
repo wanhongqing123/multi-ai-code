@@ -352,6 +352,8 @@ QPushButton* makeHeaderIconButton(LineIconKind kind, const QString& tooltip, QWi
     return button;
 }
 
+constexpr int kSlashCommandRowHeight = 32;
+
 struct SlashCommandDefinition {
     QString command;
     QString label;
@@ -481,7 +483,10 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
 
 void MainWindow::resizeEvent(QResizeEvent* event) {
     QMainWindow::resizeEvent(event);
-    QTimer::singleShot(0, this, [this] { updateMessageBubbleWidths(); });
+    QTimer::singleShot(0, this, [this] {
+        updateMessageBubbleWidths();
+        if (slashCommandBar_ && slashCommandBar_->isVisible()) positionSlashCommandBar();
+    });
 }
 
 void MainWindow::showEvent(QShowEvent* event) {
@@ -641,24 +646,24 @@ void MainWindow::buildUi() {
     composerLayout->setContentsMargins(24, 12, 24, 14);
     composerLayout->setSpacing(8);
 
-    auto* slashCommandScroll = new QScrollArea(composer);
+    // 命令提示条：悬浮在输入框上方的纵向列表，不占 composer 布局空间。
+    auto* slashCommandScroll = new QScrollArea(chatContentPane);
     slashCommandBar_ = slashCommandScroll;
     slashCommandBar_->setObjectName(QStringLiteral("slashCommandBar"));
     slashCommandBar_->setVisible(false);
     slashCommandScroll->setFrameShape(QFrame::NoFrame);
-    slashCommandScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    slashCommandScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    slashCommandScroll->setWidgetResizable(false);
-    slashCommandScroll->setMinimumHeight(36);
-    slashCommandScroll->setMaximumHeight(44);
-    slashCommandScroll->viewport()->setAutoFillBackground(false);
-    slashCommandScroll->setStyleSheet(QStringLiteral("QScrollArea { border: 0; background: transparent; }"));
+    slashCommandScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    slashCommandScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    slashCommandScroll->setWidgetResizable(true);
+    slashCommandScroll->setStyleSheet(QStringLiteral(
+        "QScrollArea { border: 1px solid #dbe4ef; border-radius: 10px; background: #ffffff; }"));
 
     auto* slashCommandContent = new QWidget(slashCommandScroll);
     slashCommandContent->setObjectName(QStringLiteral("slashCommandContent"));
-    slashCommandLayout_ = new QHBoxLayout(slashCommandContent);
-    slashCommandLayout_->setContentsMargins(0, 0, 0, 0);
-    slashCommandLayout_->setSpacing(8);
+    slashCommandContent->setStyleSheet(QStringLiteral("#slashCommandContent { background: #ffffff; }"));
+    slashCommandLayout_ = new QVBoxLayout(slashCommandContent);
+    slashCommandLayout_->setContentsMargins(8, 8, 8, 8);
+    slashCommandLayout_->setSpacing(4);
     slashCommandScroll->setWidget(slashCommandContent);
 
     messageEditor_ = new QTextEdit(composer);
@@ -692,7 +697,6 @@ void MainWindow::buildUi() {
     toolBar->addStretch(1);
     toolBar->addWidget(sendButton_);
 
-    composerLayout->addWidget(slashCommandBar_);
     composerLayout->addWidget(messageEditor_, 1);
     composerLayout->addLayout(toolBar);
 
@@ -705,6 +709,9 @@ void MainWindow::buildUi() {
     messageComposerSplitter->setStretchFactor(0, 1);
     messageComposerSplitter->setStretchFactor(1, 0);
     messageComposerSplitter->setSizes(QList<int>() << 620 << 166);
+    connect(messageComposerSplitter, &QSplitter::splitterMoved, this, [this] {
+        if (slashCommandBar_ && slashCommandBar_->isVisible()) positionSlashCommandBar();
+    });
 
     chatLayout->addWidget(header);
     chatLayout->addWidget(messageComposerSplitter, 1);
@@ -1737,11 +1744,12 @@ void MainWindow::updateSlashCommandSuggestions() {
         auto* button = new QPushButton(definition.command + QStringLiteral("  ") + definition.label, commandContent ? commandContent : slashCommandBar_);
         button->setObjectName(definition.objectName);
         button->setCursor(Qt::PointingHandCursor);
+        button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        button->setFixedHeight(kSlashCommandRowHeight);
         button->setStyleSheet(QStringLiteral(R"(
             QPushButton {
-                min-height: 28px;
                 border: 1px solid #b8def7;
-                border-radius: 14px;
+                border-radius: 8px;
                 background: #eff9ff;
                 color: #0b67b7;
                 padding: 0 12px;
@@ -1757,16 +1765,36 @@ void MainWindow::updateSlashCommandSuggestions() {
         connect(button, &QPushButton::clicked, this, [this, command = definition.command] {
             selectSlashCommand(command);
         });
-        slashCommandLayout_->addWidget(button, 0, Qt::AlignLeft);
+        slashCommandLayout_->addWidget(button);
         hasMatch = true;
     }
 
-    if (QWidget* commandContent = qobject_cast<QWidget*>(slashCommandLayout_->parentWidget())) {
-        const QSize contentSize = slashCommandLayout_->sizeHint();
-        commandContent->setMinimumSize(contentSize);
-        commandContent->resize(contentSize);
+    if (hasMatch) {
+        positionSlashCommandBar();
+        slashCommandBar_->raise();
     }
     slashCommandBar_->setVisible(hasMatch);
+}
+
+void MainWindow::positionSlashCommandBar() {
+    if (!slashCommandBar_ || !slashCommandLayout_ || !messageEditor_) return;
+    QWidget* overlayParent = slashCommandBar_->parentWidget();
+    if (!overlayParent) return;
+
+    // 内容高度按行数直接推算（按钮定高），不依赖布局 sizeHint 的刷新时机；
+    // 超出约 5 行转纵向滚动，再按输入框上方的可用空间收缩。
+    const int rowCount = slashCommandLayout_->count();
+    if (rowCount <= 0) return;
+    const QMargins margins = slashCommandLayout_->contentsMargins();
+    const int contentHeight = rowCount * kSlashCommandRowHeight
+        + (rowCount - 1) * slashCommandLayout_->spacing()
+        + margins.top() + margins.bottom() + 2;
+    const int kMaxBarHeight = 190;
+    const QPoint editorTopLeft = messageEditor_->mapTo(overlayParent, QPoint(0, 0));
+    int barHeight = qMin(contentHeight, kMaxBarHeight);
+    barHeight = qMin(barHeight, qMax(60, editorTopLeft.y() - 16));
+    const int barWidth = messageEditor_->width();
+    slashCommandBar_->setGeometry(editorTopLeft.x(), editorTopLeft.y() - barHeight - 8, barWidth, barHeight);
 }
 
 void MainWindow::selectSlashCommand(const QString& command) {

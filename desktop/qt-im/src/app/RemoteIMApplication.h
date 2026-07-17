@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QHash>
 #include <QObject>
 #include <QString>
 #include <memory>
@@ -25,6 +26,11 @@ public:
     RemoteIMClient& client();
     bool isConnected() const;
 
+    // 会话是否还有未加载进内存的更早消息（分页启动只载每会话最近一页）。
+    bool hasEarlierMessages(const QString& peerId) const;
+    // 向上翻一页：从本地库取更早消息并入内存，返回本次加载条数。
+    int loadEarlierMessages(const QString& peerId);
+
     void connectToService(int sdkAppId, const QString& userSig);
     void addContact(const QString& userId, const QString& displayName);
     void deleteContact(const QString& userId);
@@ -46,6 +52,7 @@ private:
     QString adoptRemoteMessageId(const QString& localId, const QString& remoteMessageId);
 
     ChatState state_;
+    QHash<QString, bool> hasEarlierMessages_;
     std::unique_ptr<RemoteIMClient> client_;
     std::unique_ptr<LocalMessageDatabase> database_;
     bool connected_ = false;

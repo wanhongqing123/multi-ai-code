@@ -1,5 +1,7 @@
 #pragma once
 
+#include <QHash>
+#include <QList>
 #include <QSqlDatabase>
 #include <QString>
 
@@ -23,6 +25,15 @@ public:
 
     // 联系人 + 全部消息（按 created_at 升序）恢复进 ChatState。
     void loadInto(ChatState& state) const;
+    // 分页启动加载：联系人 + 每个会话最近 perPeerLimit 条。返回各会话是否还有
+    // 更早的消息（供 UI 决定是否显示「加载更早」）。大历史下避免全量进内存。
+    QHash<QString, bool> loadRecentInto(ChatState& state, int perPeerLimit) const;
+    // 键集分页取更早的消息：严格早于 (beforeCreatedAt, beforeId)，按时间升序返回，
+    // 最多 limit 条。
+    QList<RemoteIMMessage> loadMessagesBefore(const QString& peer,
+                                              qint64 beforeCreatedAt,
+                                              const QString& beforeId,
+                                              int limit) const;
 
     void upsertContact(const RemoteIMContact& contact);
     // 删除联系人并级联删除与该 peer 的全部消息。

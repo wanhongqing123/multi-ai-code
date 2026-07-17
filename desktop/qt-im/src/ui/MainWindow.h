@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QHash>
 #include <QLabel>
 #include <QListWidget>
 #include <QMainWindow>
@@ -36,6 +37,10 @@ private:
     void refreshContactDirectory();
     void refreshSettings();
     void refreshMessages();
+    void rebuildMessageList(const QString& peerId, const QList<RemoteIMMessage>& messages);
+    void applyIncrementalMessageUpdate(const QList<RemoteIMMessage>& messages);
+    void updateLoadEarlierVisibility();
+    void scrollMessagesToBottom();
     void applyConversationFilter();
     void showMessagesPage();
     void showContactsPage();
@@ -84,6 +89,14 @@ private:
     // list layout has settled (bubble heights depend on width / word wrap, so
     // the scrollbar range is only correct after a later layout pass).
     QMetaObject::Connection messageScrollToBottomConn_;
+    // 增量渲染状态：只有切换会话/空态变化才全量重建；平时新消息 append、
+    // 翻页 prepend、状态变化原位替换，避免大历史下整屏重建气泡。
+    QString renderedPeerId_;
+    QStringList renderedMessageIds_;
+    QHash<QString, QWidget*> messageRowById_;
+    QHash<QString, RemoteIMMessageStatus> renderedStatusById_;
+    QPushButton* loadEarlierButton_ = nullptr;
+    bool renderedEmptyView_ = false;
     QPushButton* addContactButton_ = nullptr;
     QPushButton* voiceButton_ = nullptr;
     QPushButton* imageButton_ = nullptr;

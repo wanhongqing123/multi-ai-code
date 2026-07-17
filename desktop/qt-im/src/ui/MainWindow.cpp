@@ -21,6 +21,7 @@
 #include <QPainter>
 #include <QResizeEvent>
 #include <QScrollBar>
+#include <QSet>
 #include <QShowEvent>
 #include <QSizePolicy>
 #include <QSplitter>
@@ -1202,12 +1203,29 @@ void MainWindow::refreshMessages() {
     statusLabel_->setText(app_.isConnected() ? QStringLiteral("● 已连接") : QStringLiteral("● 未连接"));
     updateComposerState();
 
+    const QList<RemoteIMMessage> messages = app_.chatState().messagesWith(selectedPeer);
+    const bool needFullRebuild = selectedPeer != renderedPeerId_
+        || renderedEmptyView_ != messages.isEmpty()
+        || messageLayout_->count() == 0;
+    if (needFullRebuild) {
+        rebuildMessageList(selectedPeer, messages);
+        return;
+    }
+    applyIncrementalMessageUpdate(messages);
+}
+
+void MainWindow::rebuildMessageList(const QString& peerId, const QList<RemoteIMMessage>& messages) {
     while (QLayoutItem* item = messageLayout_->takeAt(0)) {
         if (QWidget* widget = item->widget()) delete widget;
         delete item;
     }
+    renderedPeerId_ = peerId;
+    renderedMessageIds_.clear();
+    messageRowById_.clear();
+    renderedStatusById_.clear();
+    loadEarlierButton_ = nullptr;
+    renderedEmptyView_ = messages.isEmpty();
 
-    const QList<RemoteIMMessage> messages = app_.chatState().messagesWith(selectedPeer);
     if (messages.isEmpty()) {
         auto* emptyView = new QWidget(messageContainer_);
         emptyView->setObjectName(QStringLiteral("emptyMessagesView"));
@@ -1247,30 +1265,154 @@ void MainWindow::refreshMessages() {
             }
         )"));
         messageLayout_->addWidget(emptyView);
-    } else {
-        for (const RemoteIMMessage& message : messages) {
-            messageLayout_->addWidget(createMessageBubble(message));
-        }
-        messageLayout_->addStretch(1);
+        return;
     }
+
+    // 布局固定结构：[0]=加载更早按钮（无更早时隐藏），随后消息行，末尾弹簧。
+    loadEarlierButton_ = new QPushButton(QStringLiteral("加载更早的消息"), messageContainer_);
+    loadEarlierButton_->setObjectName(QStringLiteral("loadEarlierButton"));
+    loadEarlierButton_->setCursor(Qt::PointingHandCursor);
+    loadEarlierButton_->setStyleSheet(QStringLiteral(R"(
+        QPushButton#loadEarlierButton {
+            background: #f1f5f9;
+            border: 1px solid #e2e8f0;
+            border-radius: 14px;
+            color: #475569;
+            font-size: 12px;
+            font-weight: 700;
+            padding: 5px 14px;
+        }
+        QPushButton#loadEarlierButton:hover {
+            background: #e2e8f0;
+        }
+    )"));
+    connect(loadEarlierButton_, &QPushButton::clicked, this, [this] {
+        app_.loadEarlierMessages(app_.chatState().selectedPeerId());
+    });
+    auto* buttonRow = new QWidget(messageContainer_);
+    auto* buttonRowLayout = new QHBoxLayout(buttonRow);
+    buttonRowLayout->setContentsMargins(0, 0, 0, 0);
+    buttonRowLayout->addStretch(1);
+    buttonRowLayout->addWidget(loadEarlierButton_);
+    buttonRowLayout->addStretch(1);
+    messageLayout_->addWidget(buttonRow);
+
+    for (const RemoteIMMessage& message : messages) {
+        QWidget* row = createMessageBubble(message);
+        messageLayout_->addWidget(row);
+        renderedMessageIds_.append(message.id);
+        messageRowById_.insert(message.id, row);
+        renderedStatusById_.insert(message.id, message.status);
+    }
+    messageLayout_->addStretch(1);
+    updateLoadEarlierVisibility();
 
     QTimer::singleShot(0, this, [this] {
         updateMessageBubbleWidths();
-        // 气泡高度依赖刚设好的宽度（自动换行），滚动条范围要到下一轮布局才正确；
-        // 此刻直接读 maximum() 常拿到旧值 0，setValue(0) 就停在了顶部——这正是
-        // “每次打开会话都停在开头”的原因。改为等 rangeChanged（范围随布局算完而
-        // 更新时）再跳到底，一次性触发；先断开上一次挂起的连接，避免快速切换会话
-        // 时处理器堆叠。
+        scrollMessagesToBottom();
+    });
+}
+
+void MainWindow::applyIncrementalMessageUpdate(const QList<RemoteIMMessage>& messages) {
+    QSet<QString> newIds;
+    newIds.reserve(messages.size());
+    for (const RemoteIMMessage& message : messages) newIds.insert(message.id);
+
+    // 移除已消失的消息（如临时 UUID 被 SDK 稳定 id 采纳后旧行退场）。
+    for (const QString& id : renderedMessageIds_) {
+        if (newIds.contains(id)) continue;
+        if (QWidget* row = messageRowById_.take(id)) {
+            messageLayout_->removeWidget(row);
+            row->deleteLater();
+        }
+        renderedStatusById_.remove(id);
+    }
+
+    // 首个仍在的旧消息在新列表中的位置：其前方的新增视为「向上翻页」，
+    // 其后方的新增视为实时追加。
+    int firstKeptIndex = messages.size();
+    for (int i = 0; i < messages.size(); ++i) {
+        if (messageRowById_.contains(messages.at(i).id)) {
+            firstKeptIndex = i;
+            break;
+        }
+    }
+
+    QScrollBar* bar = messageScroll_->verticalScrollBar();
+    const int oldMax = bar->maximum();
+    const int oldValue = bar->value();
+    const bool wasNearBottom = oldValue >= oldMax - 60;
+
+    bool prepended = false;
+    bool appended = false;
+    constexpr int kLayoutBase = 1;  // [0] 是加载更早按钮行
+    QStringList resultIds;
+    resultIds.reserve(messages.size());
+    for (int i = 0; i < messages.size(); ++i) {
+        const RemoteIMMessage& message = messages.at(i);
+        resultIds.append(message.id);
+        if (QWidget* existing = messageRowById_.value(message.id)) {
+            if (renderedStatusById_.value(message.id) != message.status) {
+                // 状态徽标在气泡内部：原位替换单个气泡，代价 O(1)。
+                const int layoutIndex = messageLayout_->indexOf(existing);
+                QWidget* fresh = createMessageBubble(message);
+                messageLayout_->removeWidget(existing);
+                existing->deleteLater();
+                messageLayout_->insertWidget(layoutIndex, fresh);
+                messageRowById_.insert(message.id, fresh);
+                renderedStatusById_.insert(message.id, message.status);
+            }
+            continue;
+        }
+        QWidget* row = createMessageBubble(message);
+        messageLayout_->insertWidget(kLayoutBase + i, row);
+        messageRowById_.insert(message.id, row);
+        renderedStatusById_.insert(message.id, message.status);
+        if (i < firstKeptIndex) prepended = true;
+        else appended = true;
+    }
+    renderedMessageIds_ = resultIds;
+    updateLoadEarlierVisibility();
+
+    QTimer::singleShot(0, this, [this, prepended, appended, wasNearBottom, oldMax, oldValue] {
+        updateMessageBubbleWidths();
         QScrollBar* bar = messageScroll_->verticalScrollBar();
         QObject::disconnect(messageScrollToBottomConn_);
-        messageScrollToBottomConn_ = connect(
-            bar, &QAbstractSlider::rangeChanged, this, [this, bar](int, int max) {
-                bar->setValue(max);
-                QObject::disconnect(messageScrollToBottomConn_);
-            });
-        // 内容本就放得下、不会触发 rangeChanged 时的兜底：此时 maximum() 已正确。
-        bar->setValue(bar->maximum());
+        if (prepended) {
+            // 向上翻页：锚定原可视位置（新内容顶入的高度差补偿到滚动值）。
+            messageScrollToBottomConn_ = connect(
+                bar, &QAbstractSlider::rangeChanged, this,
+                [this, bar, oldMax, oldValue](int, int max) {
+                    bar->setValue(oldValue + (max - oldMax));
+                    QObject::disconnect(messageScrollToBottomConn_);
+                });
+            bar->setValue(oldValue + (bar->maximum() - oldMax));
+            return;
+        }
+        if (appended && wasNearBottom) {
+            scrollMessagesToBottom();
+        }
     });
+}
+
+void MainWindow::updateLoadEarlierVisibility() {
+    if (!loadEarlierButton_) return;
+    loadEarlierButton_->setVisible(app_.hasEarlierMessages(app_.chatState().selectedPeerId()));
+}
+
+void MainWindow::scrollMessagesToBottom() {
+    // 气泡高度依赖刚设好的宽度（自动换行），滚动条范围要到下一轮布局才正确；
+    // 此刻直接读 maximum() 常拿到旧值，改为等 rangeChanged 再跳到底，一次性触发；
+    // 先断开上一次挂起的连接，避免快速切换会话时处理器堆叠。
+    QScrollBar* bar = messageScroll_->verticalScrollBar();
+    QObject::disconnect(messageScrollToBottomConn_);
+    messageScrollToBottomConn_ = connect(
+        bar, &QAbstractSlider::rangeChanged, this, [this, bar](int, int max) {
+            bar->setValue(max);
+            QObject::disconnect(messageScrollToBottomConn_);
+        });
+    // 内容本就放得下、不会触发 rangeChanged 时的兜底：此时 maximum() 已正确。
+    bar->setValue(bar->maximum());
 }
 
 void MainWindow::openAddContactDialog() {

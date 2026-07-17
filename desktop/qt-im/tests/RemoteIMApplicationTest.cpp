@@ -19,6 +19,7 @@ private slots:
     void mergesRoamingMessagesWithoutDuplicates();
     void cascadesLocalHistoryOnContactDeletion();
     void adoptsSentRemoteIdSoRoamingDoesNotDuplicate();
+    void loadsRecentPageOnStartAndPagesEarlier();
 };
 
 void RemoteIMApplicationTest::sendsTextThroughClientAndMarksSent() {
@@ -189,6 +190,45 @@ void RemoteIMApplicationTest::adoptsSentRemoteIdSoRoamingDoesNotDuplicate() {
     roamed.text = QStringLiteral("hello");
     emit fakeClient->messagesReceived({roamed});
     QCOMPARE(restarted.chatState().messagesWith(QStringLiteral("phone-user")).size(), 1);
+}
+
+void RemoteIMApplicationTest::loadsRecentPageOnStartAndPagesEarlier() {
+    QTemporaryDir dir;
+    const QString dbPath = dir.filePath("messages.db");
+    {
+        // 预置 450 条历史（超过一页 200）。
+        LocalMessageDatabase db(dbPath);
+        db.upsertContact(RemoteIMContact{"phone-user", "iPhone"});
+        for (int i = 1; i <= 450; ++i) {
+            RemoteIMMessage message;
+            message.id = QStringLiteral("m%1").arg(i);
+            message.fromUserId = "phone-user";
+            message.toUserId = "desktop-user";
+            message.direction = RemoteIMMessageDirection::Incoming;
+            message.status = RemoteIMMessageStatus::Received;
+            message.createdAtMillis = i;
+            message.text = QStringLiteral("msg-%1").arg(i);
+            db.insertMessageIfAbsent(message, "phone-user");
+        }
+    }
+
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::make_unique<FakeRemoteIMClient>(),
+                            std::make_unique<LocalMessageDatabase>(dbPath));
+    // 启动只载最近一页 200 条（m251..m450）。
+    QCOMPARE(app.chatState().messagesWith(QStringLiteral("phone-user")).size(), 200);
+    QCOMPARE(app.chatState().messagesWith(QStringLiteral("phone-user")).first().id, QStringLiteral("m251"));
+    QVERIFY(app.hasEarlierMessages(QStringLiteral("phone-user")));
+
+    // 翻一页：+200（m51..m250）。
+    QCOMPARE(app.loadEarlierMessages(QStringLiteral("phone-user")), 200);
+    QCOMPARE(app.chatState().messagesWith(QStringLiteral("phone-user")).size(), 400);
+    QVERIFY(app.hasEarlierMessages(QStringLiteral("phone-user")));
+
+    // 再翻：只剩 50，翻完后没有更早了。
+    QCOMPARE(app.loadEarlierMessages(QStringLiteral("phone-user")), 50);
+    QCOMPARE(app.chatState().messagesWith(QStringLiteral("phone-user")).size(), 450);
+    QVERIFY(!app.hasEarlierMessages(QStringLiteral("phone-user")));
+    QCOMPARE(app.loadEarlierMessages(QStringLiteral("phone-user")), 0);
 }
 
 QTEST_MAIN(RemoteIMApplicationTest)

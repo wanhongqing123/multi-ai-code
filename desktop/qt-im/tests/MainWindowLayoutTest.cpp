@@ -222,9 +222,13 @@ void MainWindowLayoutTest::rendersSentMessageFromTopWithMetadata() {
     editor->setPlainText(QStringLiteral("hello from desktop"));
     sendButton->click();
 
-    QTRY_VERIFY(messageLayout->count() > 0);
-    QVERIFY(messageLayout->itemAt(0)->widget() != nullptr);
-    QCOMPARE(messageLayout->itemAt(0)->widget()->objectName(), QStringLiteral("messageRowOutgoing"));
+    // 布局 [0] 是「加载更早」按钮行（无更早历史时隐藏），消息行从 [1] 开始。
+    QTRY_VERIFY(messageLayout->count() > 1);
+    auto* loadEarlierButton = window.findChild<QPushButton*>(QStringLiteral("loadEarlierButton"));
+    QVERIFY(loadEarlierButton != nullptr);
+    QVERIFY(loadEarlierButton->isHidden());
+    QVERIFY(messageLayout->itemAt(1)->widget() != nullptr);
+    QCOMPARE(messageLayout->itemAt(1)->widget()->objectName(), QStringLiteral("messageRowOutgoing"));
     QVERIFY(window.findChild<QWidget*>(QStringLiteral("messageBubbleOutgoing")) != nullptr);
 
     auto* authorLabel = window.findChild<QLabel*>(QStringLiteral("messageAuthorLabel"));

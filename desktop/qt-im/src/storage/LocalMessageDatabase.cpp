@@ -109,6 +109,64 @@ void LocalMessageDatabase::loadInto(ChatState& state) const {
     }
 }
 
+QHash<QString, bool> LocalMessageDatabase::loadRecentInto(ChatState& state, int perPeerLimit) const {
+    QHash<QString, bool> hasEarlier;
+    if (!db_.isOpen() || perPeerLimit <= 0) return hasEarlier;
+
+    QSqlQuery contactQuery(db_);
+    contactQuery.exec(QStringLiteral("SELECT user_id, display_name FROM contacts ORDER BY user_id"));
+    while (contactQuery.next()) {
+        state.upsertContact(RemoteIMContact{
+            contactQuery.value(0).toString(),
+            contactQuery.value(1).toString()
+        });
+    }
+
+    // 每会话总量：> perPeerLimit 即还有更早消息可翻。
+    QSqlQuery countQuery(db_);
+    countQuery.exec(QStringLiteral("SELECT peer, COUNT(*) FROM messages GROUP BY peer"));
+    while (countQuery.next()) {
+        hasEarlier.insert(countQuery.value(0).toString(), countQuery.value(1).toInt() > perPeerLimit);
+    }
+
+    // 窗口函数按会话取最近 N 条（Qt 内置 SQLite ≥3.25 支持）。
+    QSqlQuery messageQuery(db_);
+    messageQuery.prepare(QStringLiteral(
+        "SELECT * FROM ("
+        "  SELECT m.*, ROW_NUMBER() OVER (PARTITION BY peer ORDER BY created_at DESC, id DESC) AS rn"
+        "  FROM messages m"
+        ") WHERE rn <= ? ORDER BY created_at, id"));
+    messageQuery.addBindValue(perPeerLimit);
+    messageQuery.exec();
+    while (messageQuery.next()) {
+        state.appendMessageForRestore(messageFromQuery(messageQuery));
+    }
+    return hasEarlier;
+}
+
+QList<RemoteIMMessage> LocalMessageDatabase::loadMessagesBefore(const QString& peer,
+                                                                qint64 beforeCreatedAt,
+                                                                const QString& beforeId,
+                                                                int limit) const {
+    QList<RemoteIMMessage> result;
+    if (!db_.isOpen() || peer.isEmpty() || limit <= 0) return result;
+    QSqlQuery query(db_);
+    query.prepare(QStringLiteral(
+        "SELECT * FROM messages"
+        " WHERE peer = ? AND (created_at < ? OR (created_at = ? AND id < ?))"
+        " ORDER BY created_at DESC, id DESC LIMIT ?"));
+    query.addBindValue(peer);
+    query.addBindValue(beforeCreatedAt);
+    query.addBindValue(beforeCreatedAt);
+    query.addBindValue(beforeId);
+    query.addBindValue(limit);
+    query.exec();
+    while (query.next()) {
+        result.prepend(messageFromQuery(query));  // DESC 取出，prepend 还原为升序
+    }
+    return result;
+}
+
 void LocalMessageDatabase::upsertContact(const RemoteIMContact& contact) {
     if (!db_.isOpen() || contact.userId.trimmed().isEmpty()) return;
     QSqlQuery query(db_);

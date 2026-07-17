@@ -33,6 +33,7 @@ private slots:
     void updatesMessageStatus();
     void cascadesContactDeletion();
     void adoptsMessageIdAndResolvesConflict();
+    void loadsRecentPagePerPeerAndPagesBackward();
 };
 
 void LocalMessageDatabaseTest::insertsAndDeduplicatesById() {
@@ -150,6 +151,42 @@ void LocalMessageDatabaseTest::adoptsMessageIdAndResolvesConflict() {
     ChatState reloaded("me");
     db.loadInto(reloaded);
     QCOMPARE(reloaded.messages().size(), 2);
+}
+
+void LocalMessageDatabaseTest::loadsRecentPagePerPeerAndPagesBackward() {
+    QTemporaryDir dir;
+    LocalMessageDatabase db(dir.filePath("messages.db"));
+    // peer-a 5 条、peer-b 2 条；每会话页大小 3。
+    for (int i = 1; i <= 5; ++i) {
+        db.insertMessageIfAbsent(makeTextMessage(QStringLiteral("a%1").arg(i), "peer-a", "me",
+                                                 RemoteIMMessageDirection::Incoming, i * 100,
+                                                 QStringLiteral("a-msg-%1").arg(i)),
+                                 "peer-a");
+    }
+    for (int i = 1; i <= 2; ++i) {
+        db.insertMessageIfAbsent(makeTextMessage(QStringLiteral("b%1").arg(i), "peer-b", "me",
+                                                 RemoteIMMessageDirection::Incoming, i * 100,
+                                                 QStringLiteral("b-msg-%1").arg(i)),
+                                 "peer-b");
+    }
+
+    ChatState state("me");
+    const QHash<QString, bool> hasEarlier = db.loadRecentInto(state, 3);
+    // peer-a 只载最近 3 条（a3..a5），peer-b 全量 2 条。
+    QCOMPARE(state.messagesWith("peer-a").size(), 3);
+    QCOMPARE(state.messagesWith("peer-a").first().id, QStringLiteral("a3"));
+    QCOMPARE(state.messagesWith("peer-b").size(), 2);
+    QCOMPARE(hasEarlier.value("peer-a"), true);
+    QCOMPARE(hasEarlier.value("peer-b"), false);
+
+    // 键集向上翻页：严格早于 (300, "a3") 的是 a1、a2，升序返回。
+    const QList<RemoteIMMessage> earlier = db.loadMessagesBefore("peer-a", 300, "a3", 3);
+    QCOMPARE(earlier.size(), 2);
+    QCOMPARE(earlier.first().id, QStringLiteral("a1"));
+    QCOMPARE(earlier.last().id, QStringLiteral("a2"));
+
+    // 已到最早：不再返回。
+    QCOMPARE(db.loadMessagesBefore("peer-a", 100, "a1", 3).size(), 0);
 }
 
 QTEST_MAIN(LocalMessageDatabaseTest)

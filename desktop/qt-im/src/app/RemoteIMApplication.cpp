@@ -6,6 +6,9 @@
 
 namespace {
 
+// 分页启动：每会话只载最近一页，避免大历史全量进内存/上屏。
+constexpr int kMessagesPageSize = 200;
+
 QString peerOf(const RemoteIMMessage& message) {
     return message.direction == RemoteIMMessageDirection::Outgoing ? message.toUserId : message.fromUserId;
 }
@@ -25,7 +28,7 @@ RemoteIMApplication::RemoteIMApplication(QString ownerUserId,
     // 登录前先把本地库的全部历史恢复进内存：消息列表不再依赖 SDK 漫游
     //（只有几条），漫游随后按 id 去重合并进来。
     if (database_ && database_->isOpen()) {
-        database_->loadInto(state_);
+        hasEarlierMessages_ = database_->loadRecentInto(state_, kMessagesPageSize);
     }
 }
 
@@ -33,6 +36,26 @@ const ChatState& RemoteIMApplication::chatState() const { return state_; }
 ChatState& RemoteIMApplication::chatState() { return state_; }
 RemoteIMClient& RemoteIMApplication::client() { return *client_; }
 bool RemoteIMApplication::isConnected() const { return connected_; }
+
+bool RemoteIMApplication::hasEarlierMessages(const QString& peerId) const {
+    return hasEarlierMessages_.value(peerId.trimmed(), false);
+}
+
+int RemoteIMApplication::loadEarlierMessages(const QString& peerId) {
+    const QString peer = peerId.trimmed();
+    if (peer.isEmpty() || !database_ || !hasEarlierMessages_.value(peer, false)) return 0;
+    const QList<RemoteIMMessage> visible = state_.messagesWith(peer);
+    if (visible.isEmpty()) return 0;
+    const RemoteIMMessage& oldest = visible.first();
+    const QList<RemoteIMMessage> earlier =
+        database_->loadMessagesBefore(peer, oldest.createdAtMillis, oldest.id, kMessagesPageSize);
+    for (const RemoteIMMessage& message : earlier) {
+        state_.appendMessageForRestore(message);  // 展示顺序由 messagesWith 排序保证
+    }
+    hasEarlierMessages_.insert(peer, earlier.size() == kMessagesPageSize);
+    if (!earlier.isEmpty()) emit stateChanged();
+    return earlier.size();
+}
 
 void RemoteIMApplication::connectToService(int sdkAppId, const QString& userSig) {
     client_->connectToService(sdkAppId, state_.ownerUserId(), userSig, [this](bool ok, const QString& error) {

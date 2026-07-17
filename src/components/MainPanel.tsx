@@ -36,24 +36,8 @@ export interface MainPanelProps {
   projectDir: string
   /** cwd = target_repo. */
   cwd: string
-  /** Current plan name. */
-  planName: string
-  /** Called when user clicks Start. */
-  onStart: () => void
-  /** Called when user clicks Stop. */
-  onStop: () => void
-  /** Called when user clicks Restart. */
-  onRestart: () => void
-  /** Called when user clicks "代码审查". */
-  onOpenDiff: () => void
   /** Called when user clicks "仓库查看". */
   onOpenRepoView: () => void
-  /** Session running state (driven from App.tsx). */
-  status: 'idle' | 'running' | 'exited'
-  /** Disabled everything while session is spawning or no project. */
-  disabled?: boolean
-  /** Disable code review actions while keeping terminal controls available. */
-  diffReviewDisabled?: boolean
   /** Disable only the repo-view button. */
   repoViewDisabled?: boolean
   /** Active CLI for terminal presentation differences. */
@@ -242,56 +226,8 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
     }
   }, [menu, closeMenu])
 
-  const statusLabel =
-    props.status === 'running'
-      ? '运行中'
-      : props.status === 'exited'
-        ? '已退出'
-        : '待启动'
-
   return (
     <div className="main-panel">
-      <div className="main-panel-head">
-        <div className="main-panel-title">
-          <span className="main-panel-plan">
-            {props.planName || '(未选择方案)'}
-          </span>
-          <span
-            className={`main-session-dot ${props.status}`}
-            title={`会话状态：${statusLabel}`}
-            aria-label={statusLabel}
-          />
-        </div>
-        <div className="main-panel-actions">
-          <button
-            className="tile-btn"
-            onClick={props.onOpenDiff}
-            disabled={props.disabled || props.diffReviewDisabled || props.status !== 'running'}
-            title="打开代码审查（把批注回灌给当前会话）"
-          >
-            代码审查
-          </button>
-          {props.status === 'running' ? (
-            <button
-              className="tile-btn"
-              onClick={props.onStop}
-              disabled={props.disabled}
-            >
-              停止
-            </button>
-          ) : (
-            <button
-              className="tile-btn"
-              onClick={
-                props.status === 'exited' ? props.onRestart : props.onStart
-              }
-              disabled={props.disabled}
-            >
-              {props.status === 'exited' ? '重启' : '启动'}
-            </button>
-          )}
-        </div>
-      </div>
       <div
         className="main-panel-body term-host"
         ref={containerRef}

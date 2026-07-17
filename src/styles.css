@@ -256,38 +256,6 @@ html, body, #root {
   min-height: 0;
 }
 
-.main-panel-head {
-  display: flex;
-  align-items: center;
-  gap: var(--mac-sp-3);
-  padding: var(--mac-sp-3) var(--mac-sp-4);
-  background: var(--mac-surface-raised);
-  border-bottom: 1px solid var(--mac-border-subtle);
-}
-
-.main-panel-title {
-  display: flex;
-  align-items: center;
-  gap: var(--mac-sp-2);
-  flex: 1;
-  min-width: 0;
-  font-size: var(--mac-text-md);
-  font-weight: var(--mac-weight-medium);
-  color: var(--mac-fg);
-}
-
-.main-panel-plan {
-  color: var(--mac-fg);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.main-panel-actions {
-  display: flex;
-  gap: var(--mac-sp-2);
-}
-
 .main-panel-body {
   flex: 1;
   position: relative;
@@ -1006,6 +974,25 @@ html, body, #root {
 .main-session-dot.running {
   background: var(--mac-success);
   box-shadow: 0 0 0 3px var(--mac-success-soft);
+}
+
+/* 会话身份（状态圆点 + 当前方案名），并入顶栏左侧，与项目/路径同一行。 */
+.topbar-session {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--mac-sp-2);
+  min-width: 0;
+  padding-left: var(--mac-sp-2);
+  border-left: 1px solid var(--mac-border-subtle);
+}
+
+.topbar-session-plan {
+  font-size: var(--mac-text-xs);
+  color: var(--mac-fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
 }
 
 .global-search-modal {

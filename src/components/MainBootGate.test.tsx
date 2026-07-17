@@ -11,7 +11,6 @@ function render(
       phase={{ kind: 'idle' }}
       command="codex"
       launchNotice={null}
-      planName="项目后续规划"
       workMode="normal-task"
       onChoose={vi.fn()}
       onDismissFailure={vi.fn()}
@@ -30,7 +29,7 @@ describe('MainBootGate', () => {
   })
 
   it('idle in scheduled-task mode: makes the resume target explicit', () => {
-    const html = render({ workMode: 'scheduled-task', planName: '定时任务' })
+    const html = render({ workMode: 'scheduled-task' })
     expect(html).toContain('当前模式：')
     expect(html).toContain('定时任务')
     expect(html).toContain('新定时任务会话')

@@ -19,8 +19,6 @@ export interface MainBootGateProps {
   launchNotice?: string | null
   /** User-facing work mode selected for this session start. */
   workMode: BootGateWorkMode
-  /** Plan name shown alongside the gate to mirror MainPanel's chrome. */
-  planName: string
   /** Whether user can interact (false when no project / no plan). */
   disabled?: boolean
   /** Called when user picks how to start the session. */
@@ -48,7 +46,6 @@ export default function MainBootGate(props: MainBootGateProps): JSX.Element {
     command,
     launchNotice,
     workMode,
-    planName,
     disabled = false,
     onChoose,
     onDismissFailure
@@ -62,13 +59,6 @@ export default function MainBootGate(props: MainBootGateProps): JSX.Element {
 
   return (
     <div className="main-panel">
-      <div className="main-panel-head">
-        <div className="main-panel-title">
-          <span className="main-panel-plan">{planName || '(未选择方案)'}</span>
-          <span className="main-session-dot idle" title="会话状态：待启动" aria-label="待启动" />
-        </div>
-      </div>
-
       <div className="main-panel-body boot-gate-body">
         <div className="boot-gate-card">
           <div className="boot-gate-title">选择本次主会话启动方式</div>

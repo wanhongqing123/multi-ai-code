@@ -610,6 +610,8 @@ function AppShell() {
     planName
   )
   const mainSessionPlanLabel = formatMainSessionPlanLabel(noPlanMode, planName)
+  const mainSessionStatusLabel =
+    sessionStatus === 'running' ? '运行中' : sessionStatus === 'exited' ? '已退出' : '待启动'
   useEffect(() => {
     if (!aiSettingsReady || aiSettingsLoadError) {
       setAicliLaunchNotice(null)
@@ -1860,6 +1862,18 @@ function AppShell() {
               <span className="meta-warn">⚠ 未选择项目（请点左上角「📁 选择项目」）</span>
             )}
           </span>
+          {hasProject && (
+            <span
+              className="topbar-session"
+              title={`会话状态：${mainSessionStatusLabel}`}
+            >
+              <span
+                className={`main-session-dot ${sessionStatus}`}
+                aria-label={mainSessionStatusLabel}
+              />
+              <span className="topbar-session-plan">{mainSessionPlanLabel}</span>
+            </span>
+          )}
         </div>
         <div className="topbar-actions">
           {hasProject && isPlanDesignMode && (
@@ -1922,6 +1936,38 @@ function AppShell() {
               {runtimeTopbarRunning ? '运行中' : '运行'}
             </button>
           )}
+          {mainPanelMounted && (
+            <button
+              className="topbar-btn"
+              onClick={() => void openDiffReview()}
+              disabled={!canStartCurrentMainSession || noPlanMode || sessionStatus !== 'running'}
+              title="打开代码审查（把批注回灌给当前会话）"
+            >
+              代码审查
+            </button>
+          )}
+          {mainPanelMounted &&
+            (sessionStatus === 'running' ? (
+              <button
+                className="topbar-btn"
+                onClick={handleStop}
+                disabled={!canStartCurrentMainSession}
+                title="停止当前主会话"
+              >
+                停止
+              </button>
+            ) : (
+              <button
+                className="topbar-btn"
+                onClick={
+                  sessionStatus === 'exited' ? handleRestart : () => void handleStart('new')
+                }
+                disabled={!canStartCurrentMainSession}
+                title={sessionStatus === 'exited' ? '重启主会话' : '启动主会话'}
+              >
+                {sessionStatus === 'exited' ? '重启' : '启动'}
+              </button>
+            ))}
           <button
             className="topbar-btn"
             onClick={() => openAiSettingsSection()}
@@ -1990,16 +2036,8 @@ function AppShell() {
               projectId={currentProjectId ?? ''}
               projectDir={projectDir}
               cwd={targetRepo}
-              planName={mainSessionPlanLabel}
-              status={sessionStatus}
               aiCli={aiSettings.ai_cli ?? DEFAULT_AI_CLI}
-              onStart={() => void handleStart('new')}
-              onStop={handleStop}
-              onRestart={handleRestart}
               onOpenRepoView={() => void openRepoView()}
-              onOpenDiff={() => void openDiffReview()}
-              disabled={!canStartCurrentMainSession}
-              diffReviewDisabled={noPlanMode}
               repoViewDisabled={!currentProjectId}
             />
           ) : (
@@ -2008,7 +2046,6 @@ function AppShell() {
               command={aiSettings.command ?? aiSettings.ai_cli ?? DEFAULT_AI_CLI}
               launchNotice={aicliLaunchNotice}
               workMode={isTaskWatchMode ? 'scheduled-task' : 'normal-task'}
-              planName={mainSessionPlanLabel}
               disabled={!canStartCurrentMainSession}
               onChoose={(mode) => void handleStart(mode)}
               onDismissFailure={() => setGatePhase({ kind: 'idle' })}

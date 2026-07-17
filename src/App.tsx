@@ -249,7 +249,6 @@ function AccountGate(): JSX.Element {
 }
 
 function AppShell() {
-  const [version, setVersion] = useState<string>('')
   const [projects, setProjects] = useState<ProjectInfo[]>([])
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null)
   const [showProjectPicker, setShowProjectPicker] = useState(false)
@@ -565,7 +564,10 @@ function AppShell() {
         }
       }
     })
-    window.api.version().then(setVersion)
+    // 版本号展示在原生窗口标题栏，主界面 meta 里不再重复。
+    window.api.version().then((v) => {
+      document.title = v ? `Multi-AI Code v${v}` : 'Multi-AI Code'
+    })
     void window.api.settings.getAppSettings().then(setAppSettings)
     void (async () => {
       const list = await reloadProjects()
@@ -1852,7 +1854,6 @@ function AppShell() {
             📁 {hasProject ? `项目：${projectName}` : '选择项目'}
           </button>
           <span className="meta">
-            v{version} ·{' '}
             {hasProject ? (
               <code title={targetRepo}>{targetRepo}</code>
             ) : (

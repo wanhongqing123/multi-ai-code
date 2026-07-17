@@ -62,6 +62,29 @@ function createFakeDatabase(seedRows: FakeRow[] = []): RemoteImDatabase {
           all: () => []
         }
       }
+      if (sql.includes('(from_user_id = ? OR to_user_id = ?)') && sql.includes('created_at < ?')) {
+        return {
+          run: () => ({}),
+          get: () => undefined,
+          all: (...args: unknown[]) => {
+            const projectId = args[0] as string
+            const peer = args[1] as string
+            const beforeCreatedAt = args[3] as number
+            const beforeId = args[5] as number
+            const limit = args[6] as number
+            return rows
+              .filter(
+                (row) =>
+                  row.project_id === projectId &&
+                  (row.from_user_id === peer || row.to_user_id === peer) &&
+                  (row.created_at < beforeCreatedAt ||
+                    (row.created_at === beforeCreatedAt && row.id < beforeId))
+              )
+              .sort((a, b) => b.created_at - a.created_at || b.id - a.id)
+              .slice(0, limit)
+          }
+        }
+      }
       if (sql.includes('UPDATE remote_im_messages')) {
         return {
           run: (...args: unknown[]) => {
@@ -526,5 +549,38 @@ describe('remote IM message store', () => {
       sentToImAt: 2
     })
     expect(duplicate.id).toBe(message.id)
+  })
+
+  it('pages backward per peer with a keyset anchor', () => {
+    const store = createRemoteImMessageStore(createFakeDatabase())
+    for (let index = 1; index <= 5; index += 1) {
+      store.create({
+        projectId: 'project-1',
+        sessionId: null,
+        provider: 'tencent-im',
+        remoteMessageId: `roam-${index}`,
+        fromUserId: 'phone_admin',
+        toUserId: 'desktop_bot',
+        role: 'remote-user',
+        direction: 'incoming',
+        content: `msg-${index}`,
+        kind: 'text',
+        attachment: null,
+        status: 'received',
+        error: null,
+        createdAt: index * 100,
+        sentToAicliAt: null,
+        sentToImAt: null
+      })
+    }
+
+    // 锚点 = 第 4 条（createdAt 400, id 4）：严格早于它的是前 3 条，取 2 条为最近两条（升序返回）。
+    const page = store.listPeerBefore('project-1', 'phone_admin', 400, 4, 2)
+    expect(page.map((message) => message.content)).toEqual(['msg-2', 'msg-3'])
+
+    // 翻到最早之前：没有更多。
+    expect(store.listPeerBefore('project-1', 'phone_admin', 100, 1, 2)).toEqual([])
+    // 其他会话不可见。
+    expect(store.listPeerBefore('project-1', 'someone_else', 400, 4, 2)).toEqual([])
   })
 })

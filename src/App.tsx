@@ -40,6 +40,7 @@ import NormalTaskDialog, {
 } from './normal-tasks/NormalTaskDialog'
 import { buildNormalTaskRunPrompt } from './normal-tasks/normalTaskPrompt'
 import RemoteImDrawer from './remote-im/RemoteImDrawer'
+import { mergeRemoteImMessages } from './remote-im/messageMerge'
 import RemoteImClientHost from './remote-im/RemoteImClientHost'
 import RemoteImLoginDialog, {
   type RemoteImLoginSubmitInput
@@ -326,6 +327,8 @@ function AppShell() {
   const [remoteImConfigProjectId, setRemoteImConfigProjectId] = useState<string | null>(null)
   const [remoteImStatus, setRemoteImStatus] = useState<RemoteImStatus | null>(null)
   const [remoteImMessages, setRemoteImMessages] = useState<RemoteImMessage[]>([])
+  // 各会话「向上翻页」是否已翻到最早（true=没有更早了，隐藏加载更早按钮）。
+  const [remoteImEarlierExhausted, setRemoteImEarlierExhausted] = useState<Record<string, boolean>>({})
   const [remoteImSelectedPeerUserId, setRemoteImSelectedPeerUserId] = useState<string | null>(null)
   const [remoteImInput, setRemoteImInput] = useState('')
   const [remoteImLoginState, setRemoteImLoginState] = useState<RemoteImLoginState | null>(null)
@@ -1324,6 +1327,40 @@ function AppShell() {
     setRemoteImMessages(messages)
     showToast('已删除好友和聊天历史', { level: 'success' })
   }, [currentProjectId, remoteImSelectedPeerUserId])
+
+  const handleLoadEarlierRemoteImMessages = useCallback(
+    async (peerUserId: string) => {
+      if (!currentProjectId || !peerUserId) return
+      // 锚点 = 当前列表里该会话最早的一条；严格早于它的才是下一页。
+      const peerMessages = remoteImMessages.filter(
+        (message) => message.fromUserId === peerUserId || message.toUserId === peerUserId
+      )
+      if (peerMessages.length === 0) {
+        setRemoteImEarlierExhausted((prev) => ({ ...prev, [peerUserId]: true }))
+        return
+      }
+      const oldest = peerMessages.reduce((current, next) =>
+        next.createdAt < current.createdAt ||
+        (next.createdAt === current.createdAt && next.id < current.id)
+          ? next
+          : current
+      )
+      const limit = 200
+      const earlier = await window.api.remoteIm.listPeerMessagesBefore(
+        currentProjectId,
+        peerUserId,
+        { createdAt: oldest.createdAt, id: oldest.id },
+        limit
+      )
+      if (earlier.length < limit) {
+        setRemoteImEarlierExhausted((prev) => ({ ...prev, [peerUserId]: true }))
+      }
+      if (earlier.length > 0) {
+        setRemoteImMessages((prev) => mergeRemoteImMessages(prev, earlier))
+      }
+    },
+    [currentProjectId, remoteImMessages]
+  )
 
   const handleClearRemoteImMessages = useCallback(async () => {
     if (!currentProjectId) return
@@ -2345,6 +2382,12 @@ function AppShell() {
         onContactsSynced={handleRemoteImContactsSynced}
       />
       <RemoteImDrawer
+        canLoadEarlier={
+          remoteImSelectedPeerUserId
+            ? !remoteImEarlierExhausted[remoteImSelectedPeerUserId]
+            : false
+        }
+        onLoadEarlier={(peerUserId) => handleLoadEarlierRemoteImMessages(peerUserId)}
         open={showRemoteImDrawer}
         projectId={currentProjectId}
         sessionRunning={sessionStatus === 'running'}

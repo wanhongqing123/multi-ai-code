@@ -275,6 +275,41 @@ export function createRemoteImMessageStore(database: RemoteImDatabase) {
     return listById(id)
   }
 
+  // 键集分页取某会话更早的消息：严格早于 (beforeCreatedAt, beforeId)，
+  // 升序返回，最多 limit 条。大历史下配合前端「加载更早」按需翻页。
+  function listPeerBefore(
+    projectId: string,
+    rawPeerUserId: string,
+    beforeCreatedAt: number,
+    beforeId: number,
+    limit: number
+  ): RemoteImMessage[] {
+    const peerUserId = rawPeerUserId.trim()
+    if (!peerUserId || limit <= 0) return []
+    const rows = database
+      .prepare(
+        `
+        SELECT *
+        FROM remote_im_messages
+        WHERE project_id = ?
+          AND (from_user_id = ? OR to_user_id = ?)
+          AND (created_at < ? OR (created_at = ? AND id < ?))
+        ORDER BY created_at DESC, id DESC
+        LIMIT ?
+        `
+      )
+      .all(
+        projectId,
+        peerUserId,
+        peerUserId,
+        beforeCreatedAt,
+        beforeCreatedAt,
+        beforeId,
+        Math.max(1, Math.min(500, Math.round(limit)))
+      ) as RemoteImMessageRow[]
+    return rows.map(mapRow).reverse()
+  }
+
   function findByRemoteMessageId(
     provider: RemoteImProvider,
     remoteMessageId: string
@@ -320,6 +355,7 @@ export function createRemoteImMessageStore(database: RemoteImDatabase) {
     failIfStreaming,
     clear,
     clearPeer,
+    listPeerBefore,
     findByRemoteMessageId
   }
 }
@@ -357,6 +393,16 @@ export function clearRemoteImMessages(projectId: string): void {
 
 export function clearRemoteImPeerMessages(projectId: string, peerUserId: string): void {
   defaultStore().clearPeer(projectId, peerUserId)
+}
+
+export function listRemoteImPeerMessagesBefore(
+  projectId: string,
+  peerUserId: string,
+  beforeCreatedAt: number,
+  beforeId: number,
+  limit = 200
+): RemoteImMessage[] {
+  return defaultStore().listPeerBefore(projectId, peerUserId, beforeCreatedAt, beforeId, limit)
 }
 
 export function findRemoteImMessageByRemoteId(

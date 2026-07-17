@@ -754,6 +754,19 @@ const api = {
       ipcRenderer.invoke('remote-im:list-messages', { projectId, limit }) as Promise<
         RemoteImMessage[]
       >,
+    listPeerMessagesBefore: (
+      projectId: string,
+      peerUserId: string,
+      before: { createdAt: number; id: number },
+      limit = 200
+    ) =>
+      ipcRenderer.invoke('remote-im:list-peer-messages-before', {
+        projectId,
+        peerUserId,
+        beforeCreatedAt: before.createdAt,
+        beforeId: before.id,
+        limit
+      }) as Promise<RemoteImMessage[]>,
     clearMessages: (projectId: string) =>
       ipcRenderer.invoke('remote-im:clear-messages', { projectId }) as Promise<{ ok: true }>,
     deleteContact: (projectId: string, userId: string) =>

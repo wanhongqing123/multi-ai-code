@@ -8436,6 +8436,32 @@ html, body, #root {
   background: #f8fafc;
 }
 
+.remote-im-load-earlier-row {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 14px;
+}
+
+.remote-im-load-earlier {
+  padding: 5px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.remote-im-load-earlier:hover {
+  background: #e2e8f0;
+}
+
+.remote-im-load-earlier:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .remote-im-empty {
   display: grid;
   min-height: 180px;

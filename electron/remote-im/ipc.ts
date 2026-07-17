@@ -40,6 +40,7 @@ import {
   failRemoteImMessageIfStreaming,
   findRemoteImMessageByRemoteId,
   listRemoteImMessages,
+  listRemoteImPeerMessagesBefore,
   updateRemoteImMessageStatus
 } from './messageStore.js'
 import {
@@ -1203,6 +1204,36 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
       const result = await router.handleIncomingFile(message)
       broadcastMessagesChanged(message.projectId)
       return result
+    }
+  )
+
+  // 按会话向上翻页：取严格早于给定锚点的更早消息（键集分页）。
+  ipcMain.handle(
+    'remote-im:list-peer-messages-before',
+    (
+      _event,
+      {
+        projectId,
+        peerUserId,
+        beforeCreatedAt,
+        beforeId,
+        limit
+      }: {
+        projectId: string
+        peerUserId: string
+        beforeCreatedAt: number
+        beforeId: number
+        limit?: number
+      }
+    ) => {
+      if (!projectId || !peerUserId?.trim()) return []
+      return listRemoteImPeerMessagesBefore(
+        projectId,
+        peerUserId,
+        beforeCreatedAt,
+        beforeId,
+        limit ?? 200
+      )
     }
   )
 

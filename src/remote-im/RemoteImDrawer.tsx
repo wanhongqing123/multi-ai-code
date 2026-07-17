@@ -52,6 +52,9 @@ export interface RemoteImDrawerProps {
   onDeleteContact: (userId: string) => void
   onClear: () => void
   onClose: () => void
+  // 会话是否还可能有更早的历史（分页翻完置 false 后隐藏按钮）。
+  canLoadEarlier?: boolean
+  onLoadEarlier?: (peerUserId: string) => Promise<void> | void
 }
 
 type ConversationFilter = 'recent' | 'friend'
@@ -186,6 +189,7 @@ function isInteractiveDragTarget(target: EventTarget | null): boolean {
 export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element | null {
   const [conversationFilter, setConversationFilter] = useState<ConversationFilter>('recent')
   const [newContactUserId, setNewContactUserId] = useState('')
+  const [loadingEarlier, setLoadingEarlier] = useState(false)
   const panelRef = useRef<HTMLDivElement | null>(null)
   const imageInputRef = useRef<HTMLInputElement | null>(null)
   const [panelPosition, setPanelPosition] = useState<RemoteImPanelPosition | null>(null)
@@ -496,6 +500,24 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
             </div>
 
             <div className="remote-im-messages">
+              {selectedPeerUserId && selectedMessages.length > 0 && props.canLoadEarlier ? (
+                <div className="remote-im-load-earlier-row">
+                  <button
+                    type="button"
+                    className="remote-im-load-earlier"
+                    disabled={loadingEarlier}
+                    onClick={() => {
+                      if (!selectedPeerUserId || loadingEarlier) return
+                      setLoadingEarlier(true)
+                      void Promise.resolve(props.onLoadEarlier?.(selectedPeerUserId)).finally(() =>
+                        setLoadingEarlier(false)
+                      )
+                    }}
+                  >
+                    {loadingEarlier ? '加载中…' : '加载更早的消息'}
+                  </button>
+                </div>
+              ) : null}
               {selectedMessages.length === 0 ? (
                 <div className="remote-im-empty">还没有远程 IM 消息。</div>
               ) : (

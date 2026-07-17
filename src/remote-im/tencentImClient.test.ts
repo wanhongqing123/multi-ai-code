@@ -8,7 +8,9 @@ import {
   extractTencentImImageMessages,
   extractTencentImTextMessages,
   extractUserSig,
-  generateTencentUserSig
+  generateTencentUserSig,
+  extractTencentImRoamedTextMessages,
+  getSentRemoteMessageId
 } from './tencentImClient.js'
 
 const sdkMock = vi.hoisted(() => {
@@ -789,5 +791,63 @@ describe('tencent IM client helpers', () => {
       })
     )
     expect(JSON.stringify(onRuntimeLog.mock.calls)).not.toContain('local-test-secret')
+  })
+})
+
+describe('tencent IM roamed history helpers', () => {
+  it('extracts roamed text messages with flow and drops entries without ID', () => {
+    const messages = extractTencentImRoamedTextMessages([
+      {
+        ID: 'roam-1',
+        from: 'phone_admin',
+        to: 'desktop_bot',
+        time: 1700000000,
+        flow: 'in',
+        payload: { text: '离线消息' }
+      },
+      {
+        ID: 'roam-2',
+        from: 'desktop_bot',
+        to: 'phone_admin',
+        time: 1700000100,
+        flow: 'out',
+        payload: { text: '我发的' }
+      },
+      // 无 ID：无法与库中消息去重，必须丢弃
+      { from: 'phone_admin', flow: 'in', payload: { text: 'no id' } },
+      // 非文本 payload：忽略
+      { ID: 'roam-3', from: 'phone_admin', flow: 'in', payload: {} }
+    ])
+
+    expect(messages).toEqual([
+      {
+        remoteMessageId: 'roam-1',
+        fromUserId: 'phone_admin',
+        toUserId: 'desktop_bot',
+        text: '离线消息',
+        createdAt: 1700000000000,
+        flow: 'in'
+      },
+      {
+        remoteMessageId: 'roam-2',
+        fromUserId: 'desktop_bot',
+        toUserId: 'phone_admin',
+        text: '我发的',
+        createdAt: 1700000100000,
+        flow: 'out'
+      }
+    ])
+  })
+
+  it('returns empty for non-array roamed input', () => {
+    expect(extractTencentImRoamedTextMessages(null)).toEqual([])
+    expect(extractTencentImRoamedTextMessages({})).toEqual([])
+  })
+
+  it('reads the sent remote message id from sendMessage result', () => {
+    expect(getSentRemoteMessageId({ data: { message: { ID: 'tim-msg-9' } } })).toBe('tim-msg-9')
+    expect(getSentRemoteMessageId({ data: { message: {} } })).toBeNull()
+    expect(getSentRemoteMessageId({})).toBeNull()
+    expect(getSentRemoteMessageId(null)).toBeNull()
   })
 })

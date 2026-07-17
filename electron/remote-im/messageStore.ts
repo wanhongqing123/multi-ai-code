@@ -66,6 +66,9 @@ export interface UpdateRemoteImMessageStatusInput {
   error?: string | null
   sentToAicliAt?: number | null
   sentToImAt?: number | null
+  // 出站消息发送成功后回填 SDK 确认的消息 id：漫游重投同一条消息时才能按
+  // (provider, remote_message_id) 去重。不传则保持原值。
+  remoteMessageId?: string | null
 }
 
 function normalizeMessageKind(value: unknown): RemoteImMessageKind {
@@ -252,7 +255,8 @@ export function createRemoteImMessageStore(database: RemoteImDatabase) {
             status = ?,
             error = ?,
             sent_to_aicli_at = ?,
-            sent_to_im_at = ?
+            sent_to_im_at = ?,
+            remote_message_id = ?
         WHERE id = ?
         `
       )
@@ -264,9 +268,21 @@ export function createRemoteImMessageStore(database: RemoteImDatabase) {
           ? input.sentToAicliAt ?? null
           : current.sentToAicliAt,
         hasInputKey(input, 'sentToImAt') ? input.sentToImAt ?? null : current.sentToImAt,
+        // remoteMessageId 只增不清：传 null/未传都保持原值，避免误抹掉已有 id。
+        input.remoteMessageId ?? current.remoteMessageId ?? null,
         id
       )
     return listById(id)
+  }
+
+  function findByRemoteMessageId(
+    provider: RemoteImProvider,
+    remoteMessageId: string
+  ): RemoteImMessage | null {
+    const row = database
+      .prepare('SELECT * FROM remote_im_messages WHERE provider = ? AND remote_message_id = ?')
+      .get(provider, remoteMessageId) as RemoteImMessageRow | undefined
+    return row ? mapRow(row) : null
   }
 
   function failIfStreaming(id: number, error: string): RemoteImMessage | null {
@@ -303,7 +319,8 @@ export function createRemoteImMessageStore(database: RemoteImDatabase) {
     updateStatus,
     failIfStreaming,
     clear,
-    clearPeer
+    clearPeer,
+    findByRemoteMessageId
   }
 }
 
@@ -340,4 +357,11 @@ export function clearRemoteImMessages(projectId: string): void {
 
 export function clearRemoteImPeerMessages(projectId: string, peerUserId: string): void {
   defaultStore().clearPeer(projectId, peerUserId)
+}
+
+export function findRemoteImMessageByRemoteId(
+  provider: RemoteImProvider,
+  remoteMessageId: string
+): RemoteImMessage | null {
+  return defaultStore().findByRemoteMessageId(provider, remoteMessageId)
 }

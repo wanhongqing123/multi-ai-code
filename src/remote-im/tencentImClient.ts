@@ -357,6 +357,45 @@ export function extractTencentImTextMessages(event: unknown): TencentImTextMessa
   })
 }
 
+export interface TencentImRoamedTextMessage {
+  remoteMessageId: string
+  fromUserId: string
+  toUserId: string | null
+  text: string
+  createdAt: number | undefined
+  flow: 'in' | 'out'
+}
+
+// 漫游历史（getMessageList 返回的 messageList）里的文本消息：与实时事件不同，
+// 双向消息（flow in/out）都在，且必须带 SDK 消息 ID 才能与已入库的消息去重——
+// 没有 ID 的条目直接丢弃（无法安全合并）。
+export function extractTencentImRoamedTextMessages(
+  messageList: unknown
+): TencentImRoamedTextMessage[] {
+  if (!Array.isArray(messageList)) return []
+  return messageList.flatMap((item) => {
+    if (!item || typeof item !== 'object') return []
+    const message = item as Record<string, unknown>
+    const text = getTextPayload(message)
+    if (!text) return []
+    const remoteMessageId = typeof message.ID === 'string' && message.ID.trim() ? message.ID : null
+    if (!remoteMessageId) return []
+    const from = typeof message.from === 'string' ? message.from : ''
+    if (!from) return []
+    const flow = message.flow === 'out' ? 'out' : 'in'
+    return [
+      {
+        remoteMessageId,
+        fromUserId: from,
+        toUserId: typeof message.to === 'string' ? message.to : null,
+        text,
+        createdAt: typeof message.time === 'number' ? message.time * 1000 : undefined,
+        flow
+      } as TencentImRoamedTextMessage
+    ]
+  })
+}
+
 export function extractTencentImImageMessages(event: unknown): TencentImImageMessage[] {
   const data = event && typeof event === 'object' ? (event as { data?: unknown }).data : null
   if (!Array.isArray(data)) return []
@@ -584,12 +623,43 @@ export interface TencentImSendTextOptions {
 export type TencentImSendImageOptions = TencentImSendTextOptions
 export type TencentImSendFileOptions = TencentImSendTextOptions
 
+export interface TencentImSendResult {
+  remoteMessageId: string | null
+}
+
 export interface TencentImRuntime {
   disconnect(): Promise<void>
   listFriendUserIds?(): Promise<string[]>
-  sendText(toUserId: string, text: string, options?: TencentImSendTextOptions): Promise<void>
-  sendImage?(toUserId: string, file: File, options?: TencentImSendImageOptions): Promise<void>
-  sendFile?(toUserId: string, file: File, options?: TencentImSendFileOptions): Promise<void>
+  // 登录后补拉各 C2C 会话的漫游文本消息（离线期间的消息只能从这里拿到），
+  // 供宿主按 remoteMessageId 去重后补入本地消息库。
+  listRoamedTextMessages?(options?: {
+    perConversationCount?: number
+  }): Promise<TencentImRoamedTextMessage[]>
+  sendText(
+    toUserId: string,
+    text: string,
+    options?: TencentImSendTextOptions
+  ): Promise<TencentImSendResult | void>
+  sendImage?(
+    toUserId: string,
+    file: File,
+    options?: TencentImSendImageOptions
+  ): Promise<TencentImSendResult | void>
+  sendFile?(
+    toUserId: string,
+    file: File,
+    options?: TencentImSendFileOptions
+  ): Promise<TencentImSendResult | void>
+}
+
+// sendMessage resolve 结果里带服务端确认的消息（含 ID）。取出来回填到本地
+// 出站记录，漫游重投同一条消息时才能按 remote_message_id 去重。
+export function getSentRemoteMessageId(result: unknown): string | null {
+  if (!result || typeof result !== 'object') return null
+  const message = (result as { data?: { message?: unknown } }).data?.message
+  if (!message || typeof message !== 'object') return null
+  const id = (message as { ID?: unknown }).ID
+  return typeof id === 'string' && id.trim() ? id : null
 }
 
 export async function connectTencentImClient(input: {
@@ -793,6 +863,55 @@ export async function connectTencentImClient(input: {
         throw err
       }
     },
+    async listRoamedTextMessages(options = {}) {
+      await ensureLoggedIn()
+      if (typeof chat.getConversationList !== 'function' || typeof chat.getMessageList !== 'function') {
+        emitRuntimeLog('roam:unsupported')
+        return []
+      }
+      const perConversationCount = options.perConversationCount ?? 15
+      emitRuntimeLog('roam:start')
+      const roamed: TencentImRoamedTextMessage[] = []
+      try {
+        const conversationsResult = await chat.getConversationList()
+        const conversationList =
+          (conversationsResult as { data?: { conversationList?: unknown } })?.data
+            ?.conversationList ?? []
+        const c2cType = TencentCloudChat.TYPES?.CONV_C2C ?? 'C2C'
+        for (const item of Array.isArray(conversationList) ? conversationList : []) {
+          if (!item || typeof item !== 'object') continue
+          const conversation = item as { conversationID?: unknown; type?: unknown }
+          if (conversation.type !== c2cType) continue
+          const conversationID =
+            typeof conversation.conversationID === 'string' ? conversation.conversationID : ''
+          if (!conversationID) continue
+          try {
+            const listResult = await chat.getMessageList({
+              conversationID,
+              count: perConversationCount
+            })
+            const messageList =
+              (listResult as { data?: { messageList?: unknown } })?.data?.messageList ?? []
+            roamed.push(...extractTencentImRoamedTextMessages(messageList))
+          } catch (err) {
+            // 单个会话拉取失败不阻断其他会话的补拉。
+            emitRuntimeLog('roam:conversation-failed', {
+              detail: {
+                conversationID,
+                error: err instanceof Error ? err.message : String(err)
+              }
+            })
+          }
+        }
+        emitRuntimeLog('roam:resolved', { detail: { count: roamed.length } })
+        return roamed
+      } catch (err) {
+        emitRuntimeLog('roam:failed', {
+          detail: { error: err instanceof Error ? err.message : String(err) }
+        })
+        return roamed
+      }
+    },
     async sendText(toUserId: string, text: string, options: TencentImSendTextOptions = {}) {
       emitRuntimeLog('send:start', {
         peerUserId: toUserId,
@@ -823,6 +942,7 @@ export async function connectTencentImClient(input: {
         })
         const failure = getTencentImApiFailure('send', result)
         if (failure) throw new Error(failure)
+        return { remoteMessageId: getSentRemoteMessageId(result) }
       } catch (err) {
         emitRuntimeLog('send:rejected', {
           peerUserId: toUserId,
@@ -865,6 +985,7 @@ export async function connectTencentImClient(input: {
         })
         const failure = getTencentImApiFailure('send', result)
         if (failure) throw new Error(failure)
+        return { remoteMessageId: getSentRemoteMessageId(result) }
       } catch (err) {
         emitRuntimeLog('send:image:rejected', {
           peerUserId: toUserId,
@@ -907,6 +1028,7 @@ export async function connectTencentImClient(input: {
         })
         const failure = getTencentImApiFailure('send', result)
         if (failure) throw new Error(failure)
+        return { remoteMessageId: getSentRemoteMessageId(result) }
       } catch (err) {
         emitRuntimeLog('send:file:rejected', {
           peerUserId: toUserId,

@@ -231,6 +231,23 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
             detail: { error: err instanceof Error ? err.message : String(err) }
           })
         })
+        // 漫游补拉：把离线期间的历史消息补进本地库（按 remoteMessageId 去重，
+        // 只入库展示、不路由 AICLI）。后台进行，失败不影响连接可用性。
+        void runtime
+          .listRoamedTextMessages?.()
+          .then((messages) => {
+            if (!messages.length) return
+            return window.api.remoteIm.backfillRoamedText({ projectId, messages })
+          })
+          .catch((err) => {
+            void window.api.remoteIm.writeRuntimeLog({
+              projectId,
+              sdkAppId: props.config.sdkAppId,
+              desktopUserId: props.config.desktopUserId,
+              event: 'roam:backfill-failed',
+              detail: { error: err instanceof Error ? err.message : String(err) }
+            })
+          })
         await window.api.remoteIm.updateSdkStatus({
           projectId,
           state: 'connected',
@@ -272,8 +289,8 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
           await deliverRemoteImOutgoingText({
             runtime,
             event: evt,
-            markSent: (messageId) =>
-              window.api.remoteIm.markOutgoingMessageSent(evt.projectId, messageId),
+            markSent: (messageId, remoteMessageId) =>
+              window.api.remoteIm.markOutgoingMessageSent(evt.projectId, messageId, remoteMessageId),
             markFailed
           })
         } catch (err) {
@@ -319,8 +336,8 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
             event: evt,
             resolveFile: (event) =>
               event.fileToken ? resolveRemoteImOutgoingImageFile(event.fileToken) : null,
-            markSent: (messageId) =>
-              window.api.remoteIm.markOutgoingMessageSent(evt.projectId, messageId),
+            markSent: (messageId, remoteMessageId) =>
+              window.api.remoteIm.markOutgoingMessageSent(evt.projectId, messageId, remoteMessageId),
             markFailed
           })
         } catch (err) {
@@ -366,8 +383,8 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
           await deliverRemoteImOutgoingFile({
             runtime,
             event: evt,
-            markSent: (messageId) =>
-              window.api.remoteIm.markOutgoingMessageSent(evt.projectId, messageId),
+            markSent: (messageId, remoteMessageId) =>
+              window.api.remoteIm.markOutgoingMessageSent(evt.projectId, messageId, remoteMessageId),
             markFailed
           })
         } catch (err) {

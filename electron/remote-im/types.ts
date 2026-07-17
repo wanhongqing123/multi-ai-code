@@ -108,6 +108,16 @@ export interface RemoteImMessage {
   sentToImAt: number | null
 }
 
+// SDK 漫游补拉的文本消息（登录后补充离线期间的历史，只入库展示、不路由 AICLI）。
+export interface RemoteImRoamedTextMessage {
+  remoteMessageId: string
+  fromUserId: string
+  toUserId?: string | null
+  text: string
+  createdAt?: number
+  flow: 'in' | 'out'
+}
+
 export interface RemoteImIncomingTextMessage {
   projectId: string
   remoteMessageId?: string | null

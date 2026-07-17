@@ -65,13 +65,14 @@ function createFakeDatabase(seedRows: FakeRow[] = []): RemoteImDatabase {
       if (sql.includes('UPDATE remote_im_messages')) {
         return {
           run: (...args: unknown[]) => {
-            const row = rows.find((item) => item.id === args[5])
+            const row = rows.find((item) => item.id === args[6])
             if (row) {
               row.session_id = args[0] as string | null
               row.status = args[1] as FakeRow['status']
               row.error = args[2] as string | null
               row.sent_to_aicli_at = args[3] as number | null
               row.sent_to_im_at = args[4] as number | null
+              row.remote_message_id = args[5] as string | null
             }
             return {}
           },
@@ -470,5 +471,60 @@ describe('remote IM message store', () => {
       status: 'sent-to-im',
       error: null
     })
+  })
+
+  it('backfills remoteMessageId on updateStatus and keeps it when omitted', () => {
+    const store = createRemoteImMessageStore(createFakeDatabase())
+    const message = store.create({
+      projectId: 'project-1',
+      sessionId: null,
+      provider: 'tencent-im',
+      remoteMessageId: null,
+      fromUserId: 'desktop_bot',
+      toUserId: 'phone_admin',
+      role: 'remote-user',
+      direction: 'outgoing',
+      content: 'hello',
+      kind: 'text',
+      attachment: null,
+      status: 'streaming',
+      error: null,
+      createdAt: 1,
+      sentToAicliAt: null,
+      sentToImAt: null
+    })
+
+    // 发送成功：SDK 确认的消息 id 回填，漫游重投可据此去重。
+    const sent = store.updateStatus(message.id, {
+      status: 'sent-to-im',
+      sentToImAt: 2,
+      remoteMessageId: 'tim-msg-1'
+    })
+    expect(sent).toMatchObject({ status: 'sent-to-im', remoteMessageId: 'tim-msg-1' })
+
+    // 后续不带 remoteMessageId 的状态更新不能抹掉已回填的 id。
+    const touched = store.updateStatus(message.id, { status: 'sent-to-im' })
+    expect(touched).toMatchObject({ remoteMessageId: 'tim-msg-1' })
+
+    // 回填后，同 id 的漫游消息 create 命中去重，不再重复入库。
+    const duplicate = store.create({
+      projectId: 'project-1',
+      sessionId: null,
+      provider: 'tencent-im',
+      remoteMessageId: 'tim-msg-1',
+      fromUserId: 'desktop_bot',
+      toUserId: 'phone_admin',
+      role: 'remote-user',
+      direction: 'outgoing',
+      content: 'hello',
+      kind: 'text',
+      attachment: null,
+      status: 'sent-to-im',
+      error: null,
+      createdAt: 1,
+      sentToAicliAt: null,
+      sentToImAt: 2
+    })
+    expect(duplicate.id).toBe(message.id)
   })
 })

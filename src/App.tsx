@@ -862,7 +862,7 @@ function AppShell() {
       }
       const status = await window.api.remoteIm.getStatus(currentProjectId)
       if (!cancelled) setRemoteImStatus(status)
-      const messages = await window.api.remoteIm.listMessages(currentProjectId, 100)
+      const messages = await window.api.remoteIm.listMessages(currentProjectId, 500)
       if (!cancelled) setRemoteImMessages(messages)
 
       const aiResult = await window.api.project.getAiSettings(currentProjectId)
@@ -924,7 +924,7 @@ function AppShell() {
     const offMessages = window.api.remoteIm.onMessagesChanged((evt) => {
       if (!currentProjectId || evt.projectId !== currentProjectId) return
       void window.api.remoteIm
-        .listMessages(currentProjectId, 100)
+        .listMessages(currentProjectId, 500)
         .then((messages) => setRemoteImMessages(messages))
     })
     return () => {
@@ -1174,7 +1174,7 @@ function AppShell() {
     }
     setRemoteImSelectedPeerUserId(result.toUserId ?? peerUserId)
     setRemoteImInput('')
-    const messages = await window.api.remoteIm.listMessages(currentProjectId, 100)
+    const messages = await window.api.remoteIm.listMessages(currentProjectId, 500)
     setRemoteImMessages(messages)
   }, [currentProjectId, remoteImInput, remoteImSelectedPeerUserId])
 
@@ -1211,7 +1211,7 @@ function AppShell() {
       return
     }
     setRemoteImSelectedPeerUserId(result.toUserId ?? peerUserId)
-    const messages = await window.api.remoteIm.listMessages(currentProjectId, 100)
+    const messages = await window.api.remoteIm.listMessages(currentProjectId, 500)
     setRemoteImMessages(messages)
   }, [currentProjectId, remoteImSelectedPeerUserId])
 
@@ -1320,7 +1320,7 @@ function AppShell() {
     if (remoteImSelectedPeerUserId === cleanUserId) {
       setRemoteImSelectedPeerUserId(null)
     }
-    const messages = await window.api.remoteIm.listMessages(currentProjectId, 100)
+    const messages = await window.api.remoteIm.listMessages(currentProjectId, 500)
     setRemoteImMessages(messages)
     showToast('已删除好友和聊天历史', { level: 'success' })
   }, [currentProjectId, remoteImSelectedPeerUserId])

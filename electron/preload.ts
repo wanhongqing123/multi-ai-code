@@ -157,6 +157,16 @@ export interface RemoteImIncomingTextMessage {
   createdAt?: number
 }
 
+// SDK 漫游补拉的文本消息（登录后补充离线期间的历史，只入库展示、不路由 AICLI）。
+export interface RemoteImRoamedTextMessage {
+  remoteMessageId: string
+  fromUserId: string
+  toUserId?: string | null
+  text: string
+  createdAt?: number
+  flow: 'in' | 'out'
+}
+
 export interface RemoteImIncomingAudioMessage {
   projectId: string
   remoteMessageId?: string | null
@@ -740,7 +750,7 @@ const api = {
       >,
     getStatus: (projectId: string) =>
       ipcRenderer.invoke('remote-im:get-status', { projectId }) as Promise<RemoteImStatus>,
-    listMessages: (projectId: string, limit = 100) =>
+    listMessages: (projectId: string, limit = 500) =>
       ipcRenderer.invoke('remote-im:list-messages', { projectId, limit }) as Promise<
         RemoteImMessage[]
       >,
@@ -797,12 +807,26 @@ const api = {
         ok: boolean
         error?: string
       }>,
+    backfillRoamedText: (payload: {
+      projectId: string
+      messages: RemoteImRoamedTextMessage[]
+    }) =>
+      ipcRenderer.invoke('remote-im:backfill-roamed-text', payload) as Promise<{
+        ok: boolean
+        inserted?: number
+        error?: string
+      }>,
     updateSdkStatus: (status: Pick<RemoteImStatus, 'projectId' | 'state' | 'detail'>) =>
       ipcRenderer.invoke('remote-im:update-sdk-status', status) as Promise<{ ok: true }>,
-    markOutgoingMessageSent: (projectId: string, messageId: number) =>
+    markOutgoingMessageSent: (
+      projectId: string,
+      messageId: number,
+      remoteMessageId?: string | null
+    ) =>
       ipcRenderer.invoke('remote-im:mark-outgoing-message-sent', {
         projectId,
-        messageId
+        messageId,
+        remoteMessageId: remoteMessageId ?? null
       }) as Promise<{ ok: true }>,
     markOutgoingMessageFailed: (projectId: string, messageId: number, error: string) =>
       ipcRenderer.invoke('remote-im:mark-outgoing-message-failed', {

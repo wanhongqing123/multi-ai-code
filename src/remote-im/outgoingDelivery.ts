@@ -29,7 +29,7 @@ export interface RemoteImOutgoingFileEvent {
 export interface DeliverRemoteImOutgoingTextInput {
   runtime: TencentImRuntime | null
   event: RemoteImOutgoingTextEvent
-  markSent(messageId: number): Promise<unknown> | unknown
+  markSent(messageId: number, remoteMessageId?: string | null): Promise<unknown> | unknown
   markFailed(messageId: number, error: string): Promise<unknown> | unknown
   sendTimeoutMs?: number
 }
@@ -38,7 +38,7 @@ export interface DeliverRemoteImOutgoingImageInput {
   runtime: TencentImRuntime | null
   event: RemoteImOutgoingImageEvent
   resolveFile(event: RemoteImOutgoingImageEvent): File | null
-  markSent(messageId: number): Promise<unknown> | unknown
+  markSent(messageId: number, remoteMessageId?: string | null): Promise<unknown> | unknown
   markFailed(messageId: number, error: string): Promise<unknown> | unknown
   sendTimeoutMs?: number
 }
@@ -46,7 +46,7 @@ export interface DeliverRemoteImOutgoingImageInput {
 export interface DeliverRemoteImOutgoingFileInput {
   runtime: TencentImRuntime | null
   event: RemoteImOutgoingFileEvent
-  markSent(messageId: number): Promise<unknown> | unknown
+  markSent(messageId: number, remoteMessageId?: string | null): Promise<unknown> | unknown
   markFailed(messageId: number, error: string): Promise<unknown> | unknown
   sendTimeoutMs?: number
 }
@@ -87,13 +87,14 @@ export async function deliverRemoteImOutgoingText(
   }
 
   try {
-    await withTimeout(
+    const sendResult = await withTimeout(
       input.runtime.sendText(input.event.toUserId, input.event.text, {
         messageId: input.event.messageId
       }),
       input.sendTimeoutMs ?? DEFAULT_SEND_TIMEOUT_MS
     )
-    await input.markSent(input.event.messageId)
+    // SDK 确认的消息 ID 回填出站记录：漫游重投同一条消息时按 remote_message_id 去重。
+    await input.markSent(input.event.messageId, sendResult?.remoteMessageId ?? null)
   } catch (err) {
     await input.markFailed(
       input.event.messageId,
@@ -127,13 +128,14 @@ export async function deliverRemoteImOutgoingImage(
   }
 
   try {
-    await withTimeout(
+    const sendResult = await withTimeout(
       input.runtime.sendImage(input.event.toUserId, file, {
         messageId: input.event.messageId
       }),
       input.sendTimeoutMs ?? DEFAULT_SEND_TIMEOUT_MS
     )
-    await input.markSent(input.event.messageId)
+    // SDK 确认的消息 ID 回填出站记录：漫游重投同一条消息时按 remote_message_id 去重。
+    await input.markSent(input.event.messageId, sendResult?.remoteMessageId ?? null)
   } catch (err) {
     await input.markFailed(
       input.event.messageId,
@@ -167,13 +169,14 @@ export async function deliverRemoteImOutgoingFile(
   }
 
   try {
-    await withTimeout(
+    const sendResult = await withTimeout(
       input.runtime.sendFile(input.event.toUserId, file, {
         messageId: input.event.messageId
       }),
       input.sendTimeoutMs ?? DEFAULT_SEND_TIMEOUT_MS
     )
-    await input.markSent(input.event.messageId)
+    // SDK 确认的消息 ID 回填出站记录：漫游重投同一条消息时按 remote_message_id 去重。
+    await input.markSent(input.event.messageId, sendResult?.remoteMessageId ?? null)
   } catch (err) {
     await input.markFailed(
       input.event.messageId,

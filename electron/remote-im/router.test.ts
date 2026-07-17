@@ -43,6 +43,14 @@ function createMessageStore() {
       const message = messages.find((item) => item.id === id)
       if (message) Object.assign(message, patch)
       return message ?? null
+    },
+    findByRemoteMessageId(provider: RemoteImMessage['provider'], remoteMessageId: string) {
+      return (
+        messages.find(
+          (message) =>
+            message.provider === provider && message.remoteMessageId === remoteMessageId
+        ) ?? null
+      )
     }
   }
 }
@@ -982,6 +990,143 @@ describe('remote IM router', () => {
     expect(store.messages[0]).toMatchObject({
       status: 'received',
       content: '操作已完成。'
+    })
+  })
+
+  it('backfills roamed text into the store without routing to AICLI', async () => {
+    const store = createMessageStore()
+    const sentToAicli: string[] = []
+    const sentToIm: string[] = []
+    const router = createRemoteImRouter({
+      getConfig: () => config,
+      resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
+      sendUser: async (_sessionId, text) => {
+        sentToAicli.push(text)
+        return { ok: true }
+      },
+      sendImText: async (_projectId, _toUserId, text) => {
+        sentToIm.push(text)
+        return { ok: true }
+      },
+      store
+    })
+
+    const result = await router.backfillRoamedText('project-1', [
+      {
+        remoteMessageId: 'roam-1',
+        fromUserId: 'phone_admin',
+        toUserId: 'desktop_bot',
+        text: '离线期间发的任务',
+        createdAt: 100,
+        flow: 'in'
+      },
+      {
+        remoteMessageId: 'roam-2',
+        fromUserId: 'desktop_bot',
+        toUserId: 'phone_admin',
+        text: '我发出的历史回复',
+        createdAt: 200,
+        flow: 'out'
+      }
+    ])
+
+    expect(result).toEqual({ ok: true, inserted: 2 })
+    // 关键：漫游是历史，绝不重新路由 AICLI，也不触发回执发送。
+    expect(sentToAicli).toEqual([])
+    expect(sentToIm).toEqual([])
+    expect(store.messages[0]).toMatchObject({
+      remoteMessageId: 'roam-1',
+      direction: 'incoming',
+      status: 'received',
+      content: '离线期间发的任务',
+      createdAt: 100
+    })
+    expect(store.messages[1]).toMatchObject({
+      remoteMessageId: 'roam-2',
+      direction: 'outgoing',
+      status: 'sent-to-im',
+      content: '我发出的历史回复',
+      sentToImAt: 200
+    })
+  })
+
+  it('skips roamed messages that already exist and disallowed senders', async () => {
+    const store = createMessageStore()
+    store.create({
+      projectId: 'project-1',
+      sessionId: null,
+      provider: 'tencent-im',
+      remoteMessageId: 'roam-known',
+      fromUserId: 'phone_admin',
+      toUserId: 'desktop_bot',
+      role: 'remote-user',
+      direction: 'incoming',
+      content: '实时链路已经入库过',
+      kind: 'text',
+      attachment: null,
+      status: 'received',
+      error: null,
+      createdAt: 50,
+      sentToAicliAt: null,
+      sentToImAt: null
+    })
+    const router = createRemoteImRouter({
+      getConfig: () => config,
+      resolveSession: () => null,
+      sendUser: async () => ({ ok: true }),
+      sendImText: async () => ({ ok: true }),
+      store
+    })
+
+    const result = await router.backfillRoamedText('project-1', [
+      {
+        remoteMessageId: 'roam-known',
+        fromUserId: 'phone_admin',
+        toUserId: 'desktop_bot',
+        text: '实时链路已经入库过',
+        createdAt: 50,
+        flow: 'in'
+      },
+      {
+        remoteMessageId: 'roam-intruder',
+        fromUserId: 'intruder',
+        toUserId: 'desktop_bot',
+        text: '陌生人的漫游消息',
+        createdAt: 60,
+        flow: 'in'
+      }
+    ])
+
+    expect(result).toEqual({ ok: true, inserted: 0 })
+    expect(store.messages).toHaveLength(1)
+  })
+
+  it('classifies roamed AICLI output text as aicli role for display', async () => {
+    const store = createMessageStore()
+    const router = createRemoteImRouter({
+      getConfig: () => config,
+      resolveSession: () => null,
+      sendUser: async () => ({ ok: true }),
+      sendImText: async () => ({ ok: true }),
+      store
+    })
+
+    const result = await router.backfillRoamedText('project-1', [
+      {
+        remoteMessageId: 'roam-aicli',
+        fromUserId: 'phone_admin',
+        toUserId: 'desktop_bot',
+        text: createRemoteImAicliOutputText('AICLI 的历史输出'),
+        createdAt: 300,
+        flow: 'in'
+      }
+    ])
+
+    expect(result).toEqual({ ok: true, inserted: 1 })
+    expect(store.messages[0]).toMatchObject({
+      role: 'aicli',
+      content: 'AICLI 的历史输出',
+      status: 'received'
     })
   })
 })

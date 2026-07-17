@@ -77,7 +77,7 @@ describe('preload remote IM api', () => {
       mimeType: 'image/png',
       sizeBytes: 123
     })
-    await api.remoteIm.markOutgoingMessageSent('project-1', 42)
+    await api.remoteIm.markOutgoingMessageSent('project-1', 42, 'tim-msg-42')
     await api.remoteIm.markOutgoingMessageFailed('project-1', 43, 'send failed')
     await api.remoteIm.writeRuntimeLog({
       projectId: 'project-1',
@@ -165,7 +165,8 @@ describe('preload remote IM api', () => {
     })
     expect(electronMock.invoke).toHaveBeenNthCalledWith(13, 'remote-im:mark-outgoing-message-sent', {
       projectId: 'project-1',
-      messageId: 42
+      messageId: 42,
+      remoteMessageId: 'tim-msg-42'
     })
     expect(electronMock.invoke).toHaveBeenNthCalledWith(14, 'remote-im:mark-outgoing-message-failed', {
       projectId: 'project-1',

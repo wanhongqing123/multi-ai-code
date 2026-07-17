@@ -6,7 +6,8 @@ import type {
   RemoteImIncomingTextMessage,
   RemoteImFileAttachment,
   RemoteImImageAttachment,
-  RemoteImMessage
+  RemoteImMessage,
+  RemoteImRoamedTextMessage
 } from './types.js'
 import {
   isRemoteImOperationFinishedText,
@@ -32,6 +33,11 @@ export interface RemoteImSessionInfo {
 export interface RemoteImRouterStore {
   create(input: Omit<RemoteImMessage, 'id'>): RemoteImMessage
   updateStatus(id: number, patch: Partial<RemoteImMessage>): RemoteImMessage | null | undefined
+  // 漫游补拉用：按 provider + remoteMessageId 查已入库消息（去重与插入计数）。
+  findByRemoteMessageId?(
+    provider: RemoteImMessage['provider'],
+    remoteMessageId: string
+  ): RemoteImMessage | null
 }
 
 export interface RemoteImRouterDeps {
@@ -757,10 +763,78 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
     return { ok: true }
   }
 
+  // SDK 漫游补拉（登录后补充离线期间的历史）：只入库展示、绝不路由——漫游是
+  // 历史消息，重放 /控制命令 或转发 AICLI 都会造成误触发。返回真实插入条数，
+  // 供调用方决定是否广播 messages-changed。
+  async function backfillRoamedText(
+    projectId: string,
+    messages: RemoteImRoamedTextMessage[]
+  ): Promise<{ ok: true; inserted: number }> {
+    const config = deps.getConfig(projectId)
+    const now = deps.now?.() ?? Date.now()
+    let inserted = 0
+    for (const roamed of messages) {
+      const remoteMessageId = roamed.remoteMessageId?.trim()
+      const text = roamed.text?.trim()
+      if (!remoteMessageId || !text) continue
+      if (deps.store.findByRemoteMessageId?.('tencent-im', remoteMessageId)) continue
+
+      if (roamed.flow === 'out') {
+        // 本端（master 账号）发出的历史：按已送达出站补录。
+        deps.store.create({
+          projectId,
+          sessionId: null,
+          provider: 'tencent-im',
+          remoteMessageId,
+          fromUserId: roamed.fromUserId,
+          toUserId: roamed.toUserId ?? null,
+          role: 'remote-user',
+          direction: 'outgoing',
+          content: roamed.text,
+          kind: 'text',
+          attachment: null,
+          status: 'sent-to-im',
+          error: null,
+          createdAt: roamed.createdAt ?? now,
+          sentToAicliAt: null,
+          sentToImAt: roamed.createdAt ?? now
+        })
+        inserted += 1
+        continue
+      }
+
+      const fromUserId = roamed.fromUserId.trim()
+      if (!fromUserId || !getRemoteImPeerRelation(config, fromUserId)) continue
+
+      const incoming: RemoteImIncomingTextMessage = {
+        projectId,
+        remoteMessageId,
+        fromUserId,
+        toUserId: roamed.toUserId ?? null,
+        text: roamed.text,
+        ...(roamed.createdAt !== undefined ? { createdAt: roamed.createdAt } : {})
+      }
+      // 与实时链路一致的展示分类（AICLI 输出识别决定气泡角色），但不执行任何路由。
+      const aicliOutput = parseRemoteImAicliOutputText(text)
+      if (aicliOutput !== null) {
+        deps.store.create(
+          createIncomingRecord({ ...incoming, text: aicliOutput }, 'received', null, now, 'aicli')
+        )
+      } else if (isLikelyNestedRemoteImOutput(text)) {
+        deps.store.create(createIncomingRecord(incoming, 'received', null, now, 'aicli'))
+      } else {
+        deps.store.create(createIncomingRecord(incoming, 'received', null, now))
+      }
+      inserted += 1
+    }
+    return { ok: true, inserted }
+  }
+
   return {
     handleIncomingText,
     handleIncomingAudio,
     handleIncomingImage,
-    handleIncomingFile
+    handleIncomingFile,
+    backfillRoamedText
   }
 }

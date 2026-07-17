@@ -32,7 +32,7 @@ describe('remote IM outgoing delivery', () => {
     await deliverRemoteImOutgoingText({ runtime, event, markSent, markFailed })
 
     expect(runtime.sendText).toHaveBeenCalledWith('desktop-b', 'hello', { messageId: 42 })
-    expect(markSent).toHaveBeenCalledWith(42)
+    expect(markSent).toHaveBeenCalledWith(42, null)
     expect(markFailed).not.toHaveBeenCalled()
   })
 
@@ -111,7 +111,7 @@ describe('remote IM outgoing delivery', () => {
     })
 
     expect(sendImage).toHaveBeenCalledWith('desktop-b', file, { messageId: 88 })
-    expect(markSent).toHaveBeenCalledWith(88)
+    expect(markSent).toHaveBeenCalledWith(88, null)
     expect(markFailed).not.toHaveBeenCalled()
   })
 
@@ -147,7 +147,7 @@ describe('remote IM outgoing delivery', () => {
     expect(sentFile.name).toBe('desktop_shot.png')
     expect(sentFile.type).toBe('image/png')
     expect(sendImage).toHaveBeenCalledWith('desktop-b', sentFile, { messageId: 88 })
-    expect(markSent).toHaveBeenCalledWith(88)
+    expect(markSent).toHaveBeenCalledWith(88, null)
     expect(markFailed).not.toHaveBeenCalled()
   })
 
@@ -232,7 +232,7 @@ describe('remote IM outgoing delivery', () => {
     expect(sentFile.name).toBe('report.md')
     expect(sentFile.type).toBe('text/markdown')
     expect(sendFile).toHaveBeenCalledWith('desktop-b', sentFile, { messageId: 89 })
-    expect(markSent).toHaveBeenCalledWith(89)
+    expect(markSent).toHaveBeenCalledWith(89, null)
     expect(markFailed).not.toHaveBeenCalled()
   })
 
@@ -257,5 +257,24 @@ describe('remote IM outgoing delivery', () => {
 
     expect(markSent).not.toHaveBeenCalled()
     expect(markFailed).toHaveBeenCalledWith(89, 'IM 运行时未连接')
+  })
+
+  it('passes the SDK-confirmed remote message id to markSent for dedup backfill', async () => {
+    const runtime = {
+      disconnect: vi.fn(async () => undefined),
+      sendText: vi.fn(async () => ({ remoteMessageId: 'tim-msg-42' }))
+    }
+    const markSent = vi.fn()
+    const markFailed = vi.fn()
+
+    await deliverRemoteImOutgoingText({
+      runtime,
+      event: { projectId: 'p1', toUserId: 'desktop-b', text: 'hello', messageId: 42 },
+      markSent,
+      markFailed
+    })
+
+    expect(markSent).toHaveBeenCalledWith(42, 'tim-msg-42')
+    expect(markFailed).not.toHaveBeenCalled()
   })
 })

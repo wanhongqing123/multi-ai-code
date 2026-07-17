@@ -38,6 +38,7 @@ import {
   clearRemoteImPeerMessages,
   createRemoteImMessage,
   failRemoteImMessageIfStreaming,
+  findRemoteImMessageByRemoteId,
   listRemoteImMessages,
   updateRemoteImMessageStatus
 } from './messageStore.js'
@@ -87,6 +88,7 @@ import type {
   RemoteImIncomingTextMessage,
   RemoteImFileAttachment,
   RemoteImImageAttachment,
+  RemoteImRoamedTextMessage,
   RemoteImRuntimeLogEntryInput,
   RemoteImLoginState,
   RemoteImStatus
@@ -923,11 +925,20 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
 
   ipcMain.handle(
     'remote-im:mark-outgoing-message-sent',
-    (_event, { projectId, messageId }: { projectId: string; messageId: number }) => {
+    (
+      _event,
+      {
+        projectId,
+        messageId,
+        remoteMessageId
+      }: { projectId: string; messageId: number; remoteMessageId?: string | null }
+    ) => {
       updateRemoteImMessageStatus(messageId, {
         status: 'sent-to-im',
         error: null,
-        sentToImAt: Date.now()
+        sentToImAt: Date.now(),
+        // SDK 确认的消息 id 回填：漫游重投同一条消息时按 remote_message_id 去重。
+        ...(remoteMessageId ? { remoteMessageId } : {})
       })
       broadcastMessagesChanged(projectId)
       return { ok: true as const }
@@ -1191,6 +1202,45 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
       })
       const result = await router.handleIncomingFile(message)
       broadcastMessagesChanged(message.projectId)
+      return result
+    }
+  )
+
+  // SDK 漫游补拉：登录后补充离线期间的历史消息，只入库展示、不路由 AICLI。
+  ipcMain.handle(
+    'remote-im:backfill-roamed-text',
+    async (
+      _event,
+      {
+        projectId,
+        messages
+      }: { projectId: string; messages: RemoteImRoamedTextMessage[] }
+    ) => {
+      if (!projectId || !Array.isArray(messages) || messages.length === 0) {
+        return { ok: true as const, inserted: 0 }
+      }
+      const config = await getRemoteImConfig(projectId)
+      const router = createRemoteImRouter({
+        getConfig: () => config,
+        resolveSession: () => null,
+        sendUser: async () => ({ ok: false, error: 'backfill does not route' }),
+        sendImText: async () => ({ ok: false, error: 'backfill does not send' }),
+        store: {
+          create: (input) => createRemoteImMessage(input),
+          updateStatus: (id, patch) =>
+            updateRemoteImMessageStatus(id, {
+              status: patch.status ?? 'received',
+              sessionId: patch.sessionId,
+              error: patch.error,
+              sentToAicliAt: patch.sentToAicliAt,
+              sentToImAt: patch.sentToImAt
+            }),
+          findByRemoteMessageId: (provider, remoteMessageId) =>
+            findRemoteImMessageByRemoteId(provider, remoteMessageId)
+        }
+      })
+      const result = await router.backfillRoamedText(projectId, messages)
+      if (result.inserted > 0) broadcastMessagesChanged(projectId)
       return result
     }
   )

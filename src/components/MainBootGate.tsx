@@ -65,7 +65,7 @@ export default function MainBootGate(props: MainBootGateProps): JSX.Element {
       <div className="main-panel-head">
         <div className="main-panel-title">
           <span className="main-panel-plan">{planName || '(未选择方案)'}</span>
-          <span className="tile-badge idle">待启动</span>
+          <span className="main-session-dot idle" title="会话状态：待启动" aria-label="待启动" />
         </div>
       </div>
 

@@ -1989,16 +1989,6 @@ function AppShell() {
                 >
                   {runtimeTopbarRunning ? '运行中' : '运行'}
                 </button>
-                <span
-                  className={`plan-progress-node ${sessionStatus === 'running' ? 'running' : sessionStatus === 'exited' ? 'done' : ''}`}
-                  title={`会话状态：${sessionStatus}`}
-                >
-                  {sessionStatus === 'running'
-                    ? '⏳ 运行中'
-                    : sessionStatus === 'exited'
-                      ? '✅ 已完成'
-                      : '─ 未启动'}
-                </span>
               </div>
             </div>
           </div>

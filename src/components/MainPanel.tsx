@@ -256,7 +256,11 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
           <span className="main-panel-plan">
             {props.planName || '(未选择方案)'}
           </span>
-          <span className={`tile-badge ${props.status}`}>{statusLabel}</span>
+          <span
+            className={`main-session-dot ${props.status}`}
+            title={`会话状态：${statusLabel}`}
+            aria-label={statusLabel}
+          />
         </div>
         <div className="main-panel-actions">
           <button

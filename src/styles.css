@@ -1021,61 +1021,24 @@ html, body, #root {
   box-shadow: 0 0 0 3px var(--mac-focus-ring);
 }
 
-.plan-progress-bar {
-  display: flex;
-  align-items: center;
-  gap: var(--mac-sp-2);
-  padding: var(--mac-sp-2) var(--mac-sp-4);
-  background: var(--mac-surface-raised);
-  border-bottom: 1px solid var(--mac-border-subtle);
-  font-size: var(--mac-text-xs);
-  color: var(--mac-fg-subtle);
-}
-
 .plan-progress-label {
   font-weight: var(--mac-weight-medium);
   color: var(--mac-fg-muted);
 }
 
-.plan-progress-sep {
-  color: var(--mac-border-strong);
+/* 会话状态圆点：绿色=运行中，灰色=未运行/已退出（悬停 title 提示具体状态）。 */
+.main-session-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--mac-fg-disabled);
+  flex: none;
 }
 
-.plan-progress-node {
-  padding: 2px var(--mac-sp-2);
-  border-radius: var(--mac-r-pill);
-  background: var(--mac-bg-subtle);
-  border: 1px solid var(--mac-border);
-  color: var(--mac-fg-subtle);
-  font-size: var(--mac-text-xs);
-}
-
-.plan-progress-node.done,
-.plan-progress-node.plan-progress-done {
-  background: var(--mac-success-soft);
-  border-color: var(--mac-success);
-  color: var(--mac-success);
-}
-
-.plan-progress-node.running,
-.plan-progress-node.plan-progress-current {
-  background: var(--mac-primary-soft);
-  border-color: var(--mac-primary);
-  color: var(--mac-primary);
-  box-shadow: 0 0 0 2px var(--mac-primary-soft);
-}
-
-.plan-progress-node.awaiting {
-  background: var(--mac-warning-soft);
-  border-color: var(--mac-warning);
-  color: var(--mac-warning);
-}
-
-.plan-progress-node.skipped {
-  background: var(--mac-bg-subtle);
-  border-color: var(--mac-border-subtle);
-  color: var(--mac-fg-disabled);
-  text-decoration: line-through;
+.main-session-dot.running {
+  background: var(--mac-success);
+  box-shadow: 0 0 0 3px var(--mac-success-soft);
 }
 
 .global-search-modal {

@@ -14,6 +14,7 @@ private slots:
     void updatesMessageStatus();
     void returnsPeerMessagesChronologically();
     void removesContactAndMessages();
+    void adoptsRemoteMessageIdAndDropsDuplicateTemp();
 };
 
 void ChatStateTest::queuesOutgoingText() {
@@ -159,6 +160,35 @@ void ChatStateTest::removesContactAndMessages() {
     QCOMPARE(state.messagesWith("ios-user").size(), 0);
     QCOMPARE(state.messagesWith("other-user").size(), 1);
     QCOMPARE(state.selectedPeerId(), QString("other-user"));
+}
+
+void ChatStateTest::adoptsRemoteMessageIdAndDropsDuplicateTemp() {
+    ChatState state("me");
+    state.upsertContact(RemoteIMContact{"peer", "peer"});
+    state.selectPeer("peer");
+
+    // 常规采纳：临时 UUID 换成 SDK 稳定 id，状态更新按新 id 生效。
+    const RemoteIMMessage queued = state.queueOutgoingText("hello");
+    QVERIFY(state.adoptMessageId(queued.id, "sdk-1#0"));
+    QVERIFY(state.updateMessageStatus("sdk-1#0", RemoteIMMessageStatus::Sent));
+    QCOMPARE(state.messagesWith("peer").first().id, QStringLiteral("sdk-1#0"));
+
+    // 稳定 id 已存在（漫游先到）：采纳失败并移除临时重复项。
+    RemoteIMMessage roamed;
+    roamed.id = "sdk-2#0";
+    roamed.fromUserId = "me";
+    roamed.toUserId = "peer";
+    roamed.direction = RemoteIMMessageDirection::Outgoing;
+    roamed.status = RemoteIMMessageStatus::Sent;
+    roamed.text = "dup";
+    state.appendMessageForRestore(roamed);
+    const RemoteIMMessage temp = state.queueOutgoingText("dup");
+    QVERIFY(!state.adoptMessageId(temp.id, "sdk-2#0"));
+    int dupCount = 0;
+    for (const RemoteIMMessage& message : state.messagesWith("peer")) {
+        if (message.text == QStringLiteral("dup")) ++dupCount;
+    }
+    QCOMPARE(dupCount, 1);
 }
 
 QTEST_MAIN(ChatStateTest)

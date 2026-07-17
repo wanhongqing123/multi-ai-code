@@ -17,16 +17,16 @@ void FakeRemoteIMClient::deleteContact(const QString& userId, RemoteIMCompletion
     complete(std::move(completion));
 }
 
-void FakeRemoteIMClient::sendText(const QString& peerId, const QString& text, RemoteIMCompletion completion) {
+void FakeRemoteIMClient::sendText(const QString& peerId, const QString& text, RemoteIMSendCompletion completion) {
     lastTextPeerId_ = peerId.trimmed();
     lastText_ = text.trimmed();
-    complete(std::move(completion));
+    completeSend(std::move(completion));
 }
 
-void FakeRemoteIMClient::sendImage(const QString& peerId, const QString& localPath, RemoteIMCompletion completion) {
+void FakeRemoteIMClient::sendImage(const QString& peerId, const QString& localPath, RemoteIMSendCompletion completion) {
     lastImagePeerId_ = peerId.trimmed();
     lastImagePath_ = localPath.trimmed();
-    complete(std::move(completion));
+    completeSend(std::move(completion));
 }
 
 void FakeRemoteIMClient::sendVoice(const QString&, const QString&, int, RemoteIMCompletion completion) {
@@ -61,4 +61,16 @@ void FakeRemoteIMClient::complete(RemoteIMCompletion completion) {
     const QString error = nextError_;
     nextError_.clear();
     completion(false, error);
+}
+
+void FakeRemoteIMClient::completeSend(RemoteIMSendCompletion completion) {
+    if (!completion) return;
+    if (nextError_.isEmpty()) {
+        // 模拟 SDK 回执的稳定消息 id（与真实实现的 <msg_id>#<elem> 结构对齐）。
+        completion(true, QString(), QStringLiteral("fake-remote-%1#0").arg(++sentSequence_));
+        return;
+    }
+    const QString error = nextError_;
+    nextError_.clear();
+    completion(false, error, QString());
 }

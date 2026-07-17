@@ -119,6 +119,14 @@ QString sdkElemMessageId(const QString& sdkId, int elemIndex) {
     return sdkId + QLatin1Char('#') + QString::number(elemIndex);
 }
 
+// TIMMsgSendMessage 回调的 json_param 是服务端确认后的消息对象：取其 msg id
+// 并按首个 elem 编号，供出站记录把临时 UUID 换成稳定 id（与漫游投递去重）。
+QString sentMessageElemId(const QString& jsonPayload) {
+    const QJsonDocument doc = QJsonDocument::fromJson(jsonPayload.toUtf8());
+    const QJsonObject object = doc.isArray() ? doc.array().at(0).toObject() : doc.object();
+    return sdkElemMessageId(sdkMessageId(object), 0);
+}
+
 }  // namespace
 
 TimSdkRemoteIMClient::TimSdkRemoteIMClient(QObject* parent)
@@ -220,11 +228,11 @@ void TimSdkRemoteIMClient::deleteContact(const QString& userId, RemoteIMCompleti
     });
 }
 
-void TimSdkRemoteIMClient::sendText(const QString& peerId, const QString& text, RemoteIMCompletion completion) {
+void TimSdkRemoteIMClient::sendText(const QString& peerId, const QString& text, RemoteIMSendCompletion completion) {
     const QString cleanPeerId = peerId.trimmed();
     const QString cleanText = text.trimmed();
     if (cleanPeerId.isEmpty() || cleanText.isEmpty()) {
-        if (completion) completion(false, QStringLiteral("文本消息缺少接收人或内容"));
+        if (completion) completion(false, QStringLiteral("文本消息缺少接收人或内容"), QString());
         return;
     }
 
@@ -235,16 +243,20 @@ void TimSdkRemoteIMClient::sendText(const QString& peerId, const QString& text, 
     message[QStringLiteral("message_elem_array")] = QJsonArray{elem};
     api_->sendMessage(cleanPeerId, kConversationTypeC2C, compactJson(message), [completion = std::move(completion)](int code,
                                                                                                                     const QString& description,
-                                                                                                                    const QString&) mutable {
-        complete(std::move(completion), code, description);
+                                                                                                                    const QString& jsonPayload) mutable {
+        if (!completion) return;
+        const bool ok = code == 0;
+        completion(ok,
+                   ok ? QString() : (description.isEmpty() ? QStringLiteral("IM SDK 操作失败：%1").arg(code) : description),
+                   ok ? sentMessageElemId(jsonPayload) : QString());
     });
 }
 
-void TimSdkRemoteIMClient::sendImage(const QString& peerId, const QString& localPath, RemoteIMCompletion completion) {
+void TimSdkRemoteIMClient::sendImage(const QString& peerId, const QString& localPath, RemoteIMSendCompletion completion) {
     const QString cleanPeerId = peerId.trimmed();
     const QString cleanPath = localPath.trimmed();
     if (cleanPeerId.isEmpty() || cleanPath.isEmpty()) {
-        if (completion) completion(false, QStringLiteral("图片消息缺少接收人或图片路径"));
+        if (completion) completion(false, QStringLiteral("图片消息缺少接收人或图片路径"), QString());
         return;
     }
 
@@ -256,8 +268,12 @@ void TimSdkRemoteIMClient::sendImage(const QString& peerId, const QString& local
     message[QStringLiteral("message_elem_array")] = QJsonArray{elem};
     api_->sendMessage(cleanPeerId, kConversationTypeC2C, compactJson(message), [completion = std::move(completion)](int code,
                                                                                                                     const QString& description,
-                                                                                                                    const QString&) mutable {
-        complete(std::move(completion), code, description);
+                                                                                                                    const QString& jsonPayload) mutable {
+        if (!completion) return;
+        const bool ok = code == 0;
+        completion(ok,
+                   ok ? QString() : (description.isEmpty() ? QStringLiteral("IM SDK 操作失败：%1").arg(code) : description),
+                   ok ? sentMessageElemId(jsonPayload) : QString());
     });
 }
 

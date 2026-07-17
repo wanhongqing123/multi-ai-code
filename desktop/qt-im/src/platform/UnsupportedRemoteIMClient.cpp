@@ -14,12 +14,16 @@ void UnsupportedRemoteIMClient::deleteContact(const QString&, RemoteIMCompletion
     fail(std::move(completion), QStringLiteral("删除好友"));
 }
 
-void UnsupportedRemoteIMClient::sendText(const QString&, const QString&, RemoteIMCompletion completion) {
-    fail(std::move(completion), QStringLiteral("发送文本"));
+void UnsupportedRemoteIMClient::sendText(const QString&, const QString&, RemoteIMSendCompletion completion) {
+    fail([completion = std::move(completion)](bool ok, const QString& error) {
+        if (completion) completion(ok, error, QString());
+    }, QStringLiteral("发送文本"));
 }
 
-void UnsupportedRemoteIMClient::sendImage(const QString&, const QString&, RemoteIMCompletion completion) {
-    fail(std::move(completion), QStringLiteral("发送图片"));
+void UnsupportedRemoteIMClient::sendImage(const QString&, const QString&, RemoteIMSendCompletion completion) {
+    fail([completion = std::move(completion)](bool ok, const QString& error) {
+        if (completion) completion(ok, error, QString());
+    }, QStringLiteral("发送图片"));
 }
 
 void UnsupportedRemoteIMClient::sendVoice(const QString&, const QString&, int, RemoteIMCompletion completion) {

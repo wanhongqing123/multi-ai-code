@@ -74,8 +74,12 @@ void RemoteIMApplication::sendText(const QString& text) {
     persistMessage(message);
     emit stateChanged();
 
-    client_->sendText(message.toUserId, message.text, [this, messageId = message.id](bool ok, const QString& error) {
-        markMessage(messageId, ok ? RemoteIMMessageStatus::Sent : RemoteIMMessageStatus::Failed);
+    client_->sendText(message.toUserId, message.text,
+                      [this, messageId = message.id](bool ok, const QString& error, const QString& remoteMessageId) {
+        // 发送成功且 SDK 给了稳定 id：内存与库同步换 id，漫游重投同一条消息
+        // 时按主键去重（否则临时 UUID 与漫游 id 对不上，重启后会重复显示）。
+        const QString effectiveId = adoptRemoteMessageId(messageId, ok ? remoteMessageId : QString());
+        markMessage(effectiveId, ok ? RemoteIMMessageStatus::Sent : RemoteIMMessageStatus::Failed);
         if (!ok) emit errorMessage(error.isEmpty() ? QStringLiteral("文本消息发送失败") : error);
     });
 }
@@ -89,8 +93,10 @@ void RemoteIMApplication::sendImage(const QString& localPath) {
     persistMessage(message);
     emit stateChanged();
 
-    client_->sendImage(message.toUserId, cleanPath, [this, messageId = message.id](bool ok, const QString& error) {
-        markMessage(messageId, ok ? RemoteIMMessageStatus::Sent : RemoteIMMessageStatus::Failed);
+    client_->sendImage(message.toUserId, cleanPath,
+                       [this, messageId = message.id](bool ok, const QString& error, const QString& remoteMessageId) {
+        const QString effectiveId = adoptRemoteMessageId(messageId, ok ? remoteMessageId : QString());
+        markMessage(effectiveId, ok ? RemoteIMMessageStatus::Sent : RemoteIMMessageStatus::Failed);
         if (!ok) emit errorMessage(error.isEmpty() ? QStringLiteral("图片消息发送失败") : error);
     });
 }
@@ -103,6 +109,13 @@ void RemoteIMApplication::markMessage(const QString& messageId, RemoteIMMessageS
     state_.updateMessageStatus(messageId, status);
     if (database_) database_->updateMessageStatus(messageId, status);
     emit stateChanged();
+}
+
+QString RemoteIMApplication::adoptRemoteMessageId(const QString& localId, const QString& remoteMessageId) {
+    if (remoteMessageId.isEmpty() || remoteMessageId == localId) return localId;
+    state_.adoptMessageId(localId, remoteMessageId);
+    if (database_) database_->adoptMessageId(localId, remoteMessageId);
+    return remoteMessageId;
 }
 
 void RemoteIMApplication::persistMessage(const RemoteIMMessage& message) {

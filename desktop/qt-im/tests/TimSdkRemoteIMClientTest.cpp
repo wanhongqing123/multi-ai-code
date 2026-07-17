@@ -40,7 +40,7 @@ public:
         lastConversationId = conversationId;
         lastConversationType = conversationType;
         lastJsonMessage = jsonMessage;
-        if (completion) completion(sendCode, sendCode == 0 ? QString() : QStringLiteral("send failed"), QString());
+        if (completion) completion(sendCode, sendCode == 0 ? QString() : QStringLiteral("send failed"), sendPayload);
         return sendResult;
     }
 
@@ -112,6 +112,7 @@ public:
     QString lastConversationId;
     int lastConversationType = 0;
     QString lastJsonMessage;
+    QString sendPayload;
     bool conversationListRequested = false;
     bool friendListRequested = false;
     int deleteFriendCode = 0;
@@ -166,10 +167,15 @@ void TimSdkRemoteIMClientTest::connectsThroughSdkAndSendsTextAndImage() {
     QVERIFY(fake->receiveCallback != nullptr);
 
     bool textSent = false;
-    client.sendText(QStringLiteral("phone-user"), QStringLiteral("hello\nworld"), [&](bool ok, const QString&) {
+    QString sentRemoteId;
+    fake->sendPayload = QStringLiteral("{\"message_msg_id\":\"sdk-sent-1\"}");
+    client.sendText(QStringLiteral("phone-user"), QStringLiteral("hello\nworld"), [&](bool ok, const QString&, const QString& remoteMessageId) {
         textSent = ok;
+        sentRemoteId = remoteMessageId;
     });
     QVERIFY(textSent);
+    // 发送回执带 SDK 稳定 id（与漫游/实时投递同一 <msg_id>#<elem> 编号规则）。
+    QCOMPARE(sentRemoteId, QStringLiteral("sdk-sent-1#0"));
     QCOMPARE(fake->lastConversationId, QStringLiteral("phone-user"));
     QCOMPARE(fake->lastConversationType, 1);
     QJsonObject elem = firstElement(fake->lastJsonMessage);
@@ -177,7 +183,7 @@ void TimSdkRemoteIMClientTest::connectsThroughSdkAndSendsTextAndImage() {
     QCOMPARE(elem.value(QStringLiteral("text_elem_content")).toString(), QStringLiteral("hello\nworld"));
 
     bool imageSent = false;
-    client.sendImage(QStringLiteral("phone-user"), QStringLiteral("/tmp/outgoing.png"), [&](bool ok, const QString&) {
+    client.sendImage(QStringLiteral("phone-user"), QStringLiteral("/tmp/outgoing.png"), [&](bool ok, const QString&, const QString&) {
         imageSent = ok;
     });
     QVERIFY(imageSent);

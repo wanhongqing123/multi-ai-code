@@ -32,6 +32,9 @@ public:
     // 供 SDK 漫游合并去重）。peer 为会话对端（按方向由调用方计算）。
     bool insertMessageIfAbsent(const RemoteIMMessage& message, const QString& peer);
     void updateMessageStatus(const QString& messageId, RemoteIMMessageStatus status);
+    // 出站消息发送成功后把临时 UUID 主键换成 SDK 稳定 id；若稳定 id 已存在
+    //（漫游先落库），删除旧临时行。
+    void adoptMessageId(const QString& oldId, const QString& newId);
 
 private:
     void migrate();

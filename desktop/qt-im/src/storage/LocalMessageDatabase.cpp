@@ -168,6 +168,20 @@ bool LocalMessageDatabase::insertMessageIfAbsent(const RemoteIMMessage& message,
     return query.numRowsAffected() > 0;
 }
 
+void LocalMessageDatabase::adoptMessageId(const QString& oldId, const QString& newId) {
+    if (!db_.isOpen() || oldId.isEmpty() || newId.isEmpty() || oldId == newId) return;
+    QSqlQuery rename(db_);
+    rename.prepare(QStringLiteral("UPDATE OR IGNORE messages SET id = ? WHERE id = ?"));
+    rename.addBindValue(newId);
+    rename.addBindValue(oldId);
+    rename.exec();
+    // 稳定 id 已存在（漫游先落库）时上面被 IGNORE，旧临时行是重复项，清掉。
+    QSqlQuery cleanup(db_);
+    cleanup.prepare(QStringLiteral("DELETE FROM messages WHERE id = ?"));
+    cleanup.addBindValue(oldId);
+    cleanup.exec();
+}
+
 void LocalMessageDatabase::updateMessageStatus(const QString& messageId, RemoteIMMessageStatus status) {
     if (!db_.isOpen()) return;
     QSqlQuery query(db_);

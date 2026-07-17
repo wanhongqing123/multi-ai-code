@@ -42,6 +42,8 @@ private:
     void markMessage(const QString& messageId, RemoteIMMessageStatus status);
     void bindClientSignals();
     void persistMessage(const RemoteIMMessage& message);
+    // 发送成功后用 SDK 稳定 id 替换本地临时 UUID（内存+库），返回生效的 id。
+    QString adoptRemoteMessageId(const QString& localId, const QString& remoteMessageId);
 
     ChatState state_;
     std::unique_ptr<RemoteIMClient> client_;

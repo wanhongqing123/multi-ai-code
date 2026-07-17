@@ -222,6 +222,27 @@ bool ChatState::updateMessageStatus(const QString& messageId, RemoteIMMessageSta
     return false;
 }
 
+bool ChatState::adoptMessageId(const QString& oldId, const QString& newId) {
+    if (oldId.isEmpty() || newId.isEmpty() || oldId == newId) return false;
+    if (messageIds_.contains(newId)) {
+        // 漫游副本已先入内存：临时消息是重复项，移除之。
+        messages_.erase(std::remove_if(messages_.begin(), messages_.end(), [&oldId](const RemoteIMMessage& message) {
+            return message.id == oldId;
+        }), messages_.end());
+        messageIds_.remove(oldId);
+        return false;
+    }
+    for (RemoteIMMessage& message : messages_) {
+        if (message.id == oldId) {
+            message.id = newId;
+            messageIds_.remove(oldId);
+            messageIds_.insert(newId);
+            return true;
+        }
+    }
+    return false;
+}
+
 void ChatState::appendMessageForRestore(const RemoteIMMessage& message) {
     // 本地库加载与 SDK 漫游补充共用此入口：按消息 id 去重，重复直接丢弃
     // （展示顺序由 messagesWith 的稳定排序保证，无需在此排序）。

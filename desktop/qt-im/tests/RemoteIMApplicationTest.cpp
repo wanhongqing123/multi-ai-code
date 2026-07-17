@@ -18,6 +18,7 @@ private slots:
     void persistsMessagesAcrossRestart();
     void mergesRoamingMessagesWithoutDuplicates();
     void cascadesLocalHistoryOnContactDeletion();
+    void adoptsSentRemoteIdSoRoamingDoesNotDuplicate();
 };
 
 void RemoteIMApplicationTest::sendsTextThroughClientAndMarksSent() {
@@ -153,6 +154,41 @@ void RemoteIMApplicationTest::cascadesLocalHistoryOnContactDeletion() {
                                   std::make_unique<LocalMessageDatabase>(dbPath));
     QVERIFY(restarted.chatState().messagesWith(QStringLiteral("phone-user")).isEmpty());
     QVERIFY(restarted.chatState().contacts().isEmpty());
+}
+
+void RemoteIMApplicationTest::adoptsSentRemoteIdSoRoamingDoesNotDuplicate() {
+    QTemporaryDir dir;
+    const QString dbPath = dir.filePath("messages.db");
+    QString adoptedId;
+    {
+        auto client = std::make_unique<FakeRemoteIMClient>();
+        RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client),
+                                std::make_unique<LocalMessageDatabase>(dbPath));
+        app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+        app.sendText(QStringLiteral("hello"));
+        const QList<RemoteIMMessage> messages = app.chatState().messagesWith(QStringLiteral("phone-user"));
+        QCOMPARE(messages.size(), 1);
+        adoptedId = messages.first().id;
+        // Fake 客户端回执 fake-remote-<n>#0：临时 UUID 已被替换成稳定 id。
+        QVERIFY(adoptedId.startsWith(QStringLiteral("fake-remote-")));
+        QCOMPARE(messages.first().status, RemoteIMMessageStatus::Sent);
+    }
+
+    // 重启后 SDK 漫游重投同一条已发消息（相同稳定 id）：不重复显示。
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    auto* fakeClient = client.get();
+    RemoteIMApplication restarted(QStringLiteral("desktop-user"), std::move(client),
+                                  std::make_unique<LocalMessageDatabase>(dbPath));
+    RemoteIMMessage roamed;
+    roamed.id = adoptedId;
+    roamed.fromUserId = QStringLiteral("desktop-user");
+    roamed.toUserId = QStringLiteral("phone-user");
+    roamed.direction = RemoteIMMessageDirection::Outgoing;
+    roamed.status = RemoteIMMessageStatus::Sent;
+    roamed.createdAtMillis = 1;
+    roamed.text = QStringLiteral("hello");
+    emit fakeClient->messagesReceived({roamed});
+    QCOMPARE(restarted.chatState().messagesWith(QStringLiteral("phone-user")).size(), 1);
 }
 
 QTEST_MAIN(RemoteIMApplicationTest)

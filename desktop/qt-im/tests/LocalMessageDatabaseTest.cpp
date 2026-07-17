@@ -32,6 +32,7 @@ private slots:
     void loadsMessagesSortedByTime();
     void updatesMessageStatus();
     void cascadesContactDeletion();
+    void adoptsMessageIdAndResolvesConflict();
 };
 
 void LocalMessageDatabaseTest::insertsAndDeduplicatesById() {
@@ -125,6 +126,30 @@ void LocalMessageDatabaseTest::cascadesContactDeletion() {
     QCOMPARE(state.contacts().first().userId, QStringLiteral("peer-b"));
     QCOMPARE(state.messages().size(), 1);
     QCOMPARE(state.messages().first().id, QStringLiteral("b1"));
+}
+
+void LocalMessageDatabaseTest::adoptsMessageIdAndResolvesConflict() {
+    QTemporaryDir dir;
+    LocalMessageDatabase db(dir.filePath("messages.db"));
+    db.insertMessageIfAbsent(
+        makeTextMessage("temp-uuid", "me", "peer", RemoteIMMessageDirection::Outgoing, 1000, "hi"), "peer");
+
+    // 常规采纳：主键换成 SDK 稳定 id。
+    db.adoptMessageId("temp-uuid", "sdk-1#0");
+    ChatState state("me");
+    db.loadInto(state);
+    QCOMPARE(state.messages().size(), 1);
+    QCOMPARE(state.messages().first().id, QStringLiteral("sdk-1#0"));
+
+    // 稳定 id 已被漫游占用：旧临时行按重复项清除。
+    db.insertMessageIfAbsent(
+        makeTextMessage("temp-2", "me", "peer", RemoteIMMessageDirection::Outgoing, 2000, "hi2"), "peer");
+    db.insertMessageIfAbsent(
+        makeTextMessage("sdk-2#0", "me", "peer", RemoteIMMessageDirection::Outgoing, 2000, "hi2"), "peer");
+    db.adoptMessageId("temp-2", "sdk-2#0");
+    ChatState reloaded("me");
+    db.loadInto(reloaded);
+    QCOMPARE(reloaded.messages().size(), 2);
 }
 
 QTEST_MAIN(LocalMessageDatabaseTest)

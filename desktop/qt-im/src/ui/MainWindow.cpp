@@ -1782,16 +1782,17 @@ void MainWindow::positionSlashCommandBar() {
     if (!overlayParent) return;
 
     // 内容高度按行数直接推算（按钮定高），不依赖布局 sizeHint 的刷新时机；
-    // 超出约 5 行转纵向滚动，再按输入框上方的可用空间收缩。
+    // 最多显示 kMaxVisibleRows 行，更多时转纵向滚动，再按输入框上方的可用空间收缩。
     const int rowCount = slashCommandLayout_->count();
     if (rowCount <= 0) return;
+    constexpr int kMaxVisibleRows = 10;
+    const int visibleRows = qMin(rowCount, kMaxVisibleRows);
     const QMargins margins = slashCommandLayout_->contentsMargins();
-    const int contentHeight = rowCount * kSlashCommandRowHeight
-        + (rowCount - 1) * slashCommandLayout_->spacing()
+    const int barHeightForRows = visibleRows * kSlashCommandRowHeight
+        + (visibleRows - 1) * slashCommandLayout_->spacing()
         + margins.top() + margins.bottom() + 2;
-    const int kMaxBarHeight = 190;
     const QPoint editorTopLeft = messageEditor_->mapTo(overlayParent, QPoint(0, 0));
-    int barHeight = qMin(contentHeight, kMaxBarHeight);
+    int barHeight = barHeightForRows;
     barHeight = qMin(barHeight, qMax(60, editorTopLeft.y() - 16));
     const int barWidth = messageEditor_->width();
     slashCommandBar_->setGeometry(editorTopLeft.x(), editorTopLeft.y() - barHeight - 8, barWidth, barHeight);

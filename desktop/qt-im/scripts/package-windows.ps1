@@ -11,7 +11,9 @@
 
 param(
     [string]$BuildDir = 'build-msvc2019_64',
-    [string]$OutDir = 'dist'
+    [string]$OutDir = 'dist',
+    # 只组装 staging 目录不出 zip（供安装程序脚本 make-installer-windows.ps1 复用）。
+    [switch]$SkipZip
 )
 
 $ErrorActionPreference = 'Stop'
@@ -91,6 +93,13 @@ Multi-AI IM 桌面客户端（Windows 免安装版）
     $readme,
     [System.Text.UTF8Encoding]::new($true)
 )
+
+if ($SkipZip) {
+    Write-Host ""
+    Write-Host "staging 组装完成（跳过 zip）："
+    Write-Host "  目录: $staging"
+    return
+}
 
 # 压缩，文件名带日期与 git 短哈希便于追溯
 $gitHash = (& git -C $projectRoot rev-parse --short HEAD 2>$null)

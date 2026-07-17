@@ -1,0 +1,2 @@
+// Application icon resource: taskbar / Explorer / shortcut icon of the exe.
+IDI_ICON1 ICON "AppIcon.ico"

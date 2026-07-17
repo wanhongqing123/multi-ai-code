@@ -87,6 +87,9 @@ if(WIN32)
   # 黑色控制台窗口再出界面。Qt5::Core 会对 WIN32_EXECUTABLE 目标自动链接
   # Qt5::WinMain（qtmain.lib 提供 WinMain → main 转发），main() 无需改动。
   set_target_properties(multi_ai_im_desktop PROPERTIES WIN32_EXECUTABLE TRUE)
+  # 应用图标（任务栏/资源管理器/快捷方式）。
+  enable_language(RC)
+  target_sources(multi_ai_im_desktop PRIVATE resources/windows/app.rc)
 endif()
 if(APPLE)
   set(APP_ICON_MACOS "${CMAKE_CURRENT_SOURCE_DIR}/resources/macos/AppIcon.icns")

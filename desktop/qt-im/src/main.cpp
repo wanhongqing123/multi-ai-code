@@ -25,23 +25,24 @@ QString messageDatabasePath(const QString& userId) {
     return QDir(root).filePath(QStringLiteral("RemoteIMHistory/") + userId + QStringLiteral("/messages.db"));
 }
 
-#ifdef Q_OS_WIN
-// 早期版本把数据存在 %APPDATA%\Multi-AI Code\Multi-AI Code IM——与 Electron
-// 主程序（productName "Multi-AI Code"）的品牌目录混在一起。两者是独立应用
-//（Electron 内置 IM 以后也要有自己的消息存储），Desktop IM 迁到独立的
-// %APPDATA%\Multi-AI IM\Desktop IM，老目录整体搬迁一次（含 SDK 缓存与消息库）。
+// 早期版本以 "Multi-AI Code/Multi-AI Code IM" 身份存数据——与 Electron 主程序
+//（productName "Multi-AI Code"）的品牌目录混在一起。两者是独立应用（Electron
+// 内置 IM 以后也要有自己的消息存储），Desktop IM 迁到独立的
+// "Multi-AI IM/Desktop IM"，老目录整体搬迁一次（含 SDK 缓存与消息库）。
+// 跨平台：基准目录取自当前 AppDataLocation 的上两级（Windows=%APPDATA%，
+// macOS=~/Library/Application Support），两端老数据都能搬。
 void migrateLegacyAppData() {
-    const QString appData = qEnvironmentVariable("APPDATA");
-    if (appData.isEmpty()) return;
-    const QString legacy = appData + QStringLiteral("/Multi-AI Code/Multi-AI Code IM");
     const QString current = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    if (current.isEmpty() || !QDir(legacy).exists() || QDir(current).exists()) return;
-    QDir().mkpath(QFileInfo(current).absolutePath());
+    if (current.isEmpty() || QDir(current).exists()) return;
+    const QString orgDir = QFileInfo(current).absolutePath();          // <base>/Multi-AI IM
+    const QString base = QFileInfo(orgDir).absolutePath();             // <base>
+    const QString legacy = base + QStringLiteral("/Multi-AI Code/Multi-AI Code IM");
+    if (!QDir(legacy).exists()) return;
+    QDir().mkpath(orgDir);
     QDir().rename(legacy, current);
-    // 老的组织目录若因此清空则顺手移除；Electron 若在用则 rmdir 失败，无副作用。
-    QDir(appData).rmdir(QStringLiteral("Multi-AI Code"));
+    // 老的组织目录若因此清空则顺手移除；他人（如 Electron）在用则 rmdir 失败，无副作用。
+    QDir(base).rmdir(QStringLiteral("Multi-AI Code"));
 }
-#endif
 
 }  // namespace
 
@@ -62,9 +63,7 @@ int main(int argc, char* argv[]) {
     // 分开，落在 %APPDATA%\Multi-AI IM\Desktop IM。
     QApplication::setApplicationName(QStringLiteral("Desktop IM"));
     QApplication::setOrganizationName(QStringLiteral("Multi-AI IM"));
-#ifdef Q_OS_WIN
     migrateLegacyAppData();
-#endif
 
 #ifdef Q_OS_WIN
     // 对齐 Electron 端（--mac-font-sans：Inter/Segoe UI + Noto Sans SC/微软雅黑）：

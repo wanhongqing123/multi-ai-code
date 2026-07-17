@@ -1924,13 +1924,7 @@ function AppShell() {
       {hasProject && (
         <div className="plan-name-bar">
           <div className="workspace-control-row">
-            <div className="workspace-control-left">
-              {isPlanDesignMode && (
-                <span className="plan-progress-label">
-                  普通任务：{planName.trim() || '未选择'}
-                </span>
-              )}
-            </div>
+            <div className="workspace-control-left" />
             <div className="workspace-control-actions">
               {isPlanDesignMode && (
                 <button

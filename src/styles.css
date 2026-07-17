@@ -1021,10 +1021,6 @@ html, body, #root {
   box-shadow: 0 0 0 3px var(--mac-focus-ring);
 }
 
-.plan-progress-label {
-  font-weight: var(--mac-weight-medium);
-  color: var(--mac-fg-muted);
-}
 
 /* 会话状态圆点：绿色=运行中，灰色=未运行/已退出（悬停 title 提示具体状态）。 */
 .main-session-dot {

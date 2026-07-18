@@ -739,7 +739,7 @@ export function registerPtyIpc(): void {
       env: withRemoteImCliEnv(
         withCodexTerminalEnv(
           req.command,
-          withOpenCodeLspEnv(req.command, req.env, req.opencode),
+          withOpenCodeLspEnv(req.command, req.env, req.opencode, req.terminalTheme),
           req.terminalTheme
         ),
         req.projectId

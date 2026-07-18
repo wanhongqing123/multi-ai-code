@@ -29,9 +29,16 @@ describe('OpenCode config env', () => {
     })
   })
 
-  it('pins the OpenCode TUI theme mode to light for a unified look', () => {
-    const env = withOpenCodeLspEnv('opencode', { FOO: 'bar' })
-    expect(env?.OPENCODE_THEME_MODE).toBe('light')
+  it('follows the host app theme for the OpenCode TUI mode', () => {
+    // 缺省（未传 theme）回退 light，与旧行为一致。
+    expect(withOpenCodeLspEnv('opencode', { FOO: 'bar' })?.OPENCODE_THEME_MODE).toBe('light')
+    // 暗色 app → 暗色 TUI。
+    expect(
+      withOpenCodeLspEnv('opencode', { FOO: 'bar' }, undefined, 'dark')?.OPENCODE_THEME_MODE
+    ).toBe('dark')
+    expect(
+      withOpenCodeLspEnv('opencode', { FOO: 'bar' }, undefined, 'light')?.OPENCODE_THEME_MODE
+    ).toBe('light')
   })
 
   it('disables the upgrade prompt via env flag (config autoupdate does not reach getGlobal)', () => {

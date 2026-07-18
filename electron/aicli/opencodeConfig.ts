@@ -5,9 +5,13 @@ export const OPENCODE_LSP_CONFIG_CONTENT = JSON.stringify({
   autoupdate: false
 })
 
-// 统一双端 TUI 观感：锁定 opencode 主题模式（白底黑字），不再跟随宿主终端背景色探测。
+// opencode fork 会把 OPENCODE_THEME_MODE 当成明暗模式的锁定值（见 fork 的
+// packages/tui/src/context/theme.tsx），不跟随宿主终端背景探测（ConPTY 下探测不可靠）。
+// 这里按宿主 app 的明暗主题传入，让 TUI 与我们的终端主题一致；未知主题回退 light。
 export const OPENCODE_THEME_MODE_ENV = 'OPENCODE_THEME_MODE'
 export const OPENCODE_THEME_MODE_DEFAULT = 'light'
+
+export type OpenCodeThemeMode = 'light' | 'dark'
 
 // 升级检查读的是全局配置文件（Config.getGlobal），OPENCODE_CONFIG_CONTENT 里的
 // autoupdate:false 覆盖不到它；这个 env flag 是进程级开关，能彻底关掉升级弹窗。
@@ -139,12 +143,14 @@ function mergeOpenCodeConfigContent(
 export function withOpenCodeLspEnv(
   command: string,
   env: Record<string, string> | undefined,
-  profile?: OpenCodeProviderProfile
+  profile?: OpenCodeProviderProfile,
+  theme?: OpenCodeThemeMode
 ): Record<string, string> | undefined {
   if (!isOpenCodeCommand(command)) return env
   const next = { ...(env ?? {}) }
+  // 用户显式设置的 OPENCODE_THEME_MODE 优先；否则跟随宿主 app 主题（缺省 light）。
   if (!next[OPENCODE_THEME_MODE_ENV]) {
-    next[OPENCODE_THEME_MODE_ENV] = OPENCODE_THEME_MODE_DEFAULT
+    next[OPENCODE_THEME_MODE_ENV] = theme === 'dark' ? 'dark' : OPENCODE_THEME_MODE_DEFAULT
   }
   if (!next[OPENCODE_DISABLE_AUTOUPDATE_ENV]) {
     next[OPENCODE_DISABLE_AUTOUPDATE_ENV] = '1'

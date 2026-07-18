@@ -336,6 +336,54 @@ describe('AICLI structured output bridge', () => {
     expect(receivedLines.join('')).toContain('"requestId"')
   })
 
+  it('submits ordinary messages with separate model and TUI display text', async () => {
+    const bridge = await createAicliStructuredOutputBridge('session-1', 'codex')
+    const { port, token } = parseTcpEndpoint(bridge.endpoint)
+    const receivedLines: string[] = []
+
+    const socket = await new Promise<net.Socket>((resolve, reject) => {
+      const client = net.createConnection({ host: '127.0.0.1', port }, () => {
+        client.write(`${JSON.stringify({ token, kind: 'control_ready' })}\n`)
+        resolve(client)
+      })
+      client.setEncoding('utf8')
+      client.on('data', (chunk) => {
+        receivedLines.push(String(chunk))
+        const requestId = String(chunk).match(/"requestId":"([^"]+)"/)?.[1]
+        if (requestId) {
+          client.write(
+            `${JSON.stringify({
+              token,
+              kind: 'control_result',
+              requestId,
+              ok: true,
+              text: 'queued'
+            })}\n`
+          )
+        }
+      })
+      client.once('error', reject)
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const result = await bridge.requestControlCommand(
+      {
+        command: 'submit_user_message',
+        text: 'wrapped model prompt',
+        displayText: '[来自远程 IM：phone]\n你好'
+      },
+      500
+    )
+
+    socket.destroy()
+    await bridge.close()
+
+    expect(result).toEqual({ ok: true, text: 'queued' })
+    expect(receivedLines.join('')).toContain('"command":"submit_user_message"')
+    expect(receivedLines.join('')).toContain('"text":"wrapped model prompt"')
+    expect(receivedLines.join('')).toContain('"displayText":"[来自远程 IM：phone]\\n你好"')
+  })
+
   it('sends lifecycle control commands without leaking them into normal text input', async () => {
     const bridge = await createAicliStructuredOutputBridge('session-1', 'codex')
     const { port, token } = parseTcpEndpoint(bridge.endpoint)

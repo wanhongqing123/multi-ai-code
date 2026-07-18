@@ -4,7 +4,16 @@
 
 Remote IM 会把手机端消息注入当前 AICLI，并要求 AICLI 把需要回传到 IM 的内容包在回复标记内。
 
-协议解析由 `electron/remote-im/replyProtocol.ts` 统一负责。Claude 和 Codex 必须共用这层协议解析；不同 AICLI 只允许在输出来源和噪音清洗上做适配。
+协议解析由 `electron/remote-im/replyProtocol.ts` 统一负责。Claude、Codex 和 OpenCode 必须共用这层协议解析；不同 AICLI 只允许在输出来源、提交方式和界面显示上做适配。
+
+## 消息提交与显示
+
+- Codex 和 OpenCode 的普通 IM 消息必须通过源码控制桥提交，不能依赖 PTY 模拟输入。
+- `text` 是包含回复协议的模型输入，`displayText` 是 AICLI TUI 中展示给用户的文本。
+- Codex 通过历史显示覆盖保存 `displayText`，但向核心提交 `text`。
+- OpenCode 标准 TUI 把 `text` 保存为 `synthetic` part，把 `displayText` 保存为 `ignored` part：模型只读取前者，TUI 只显示后者。
+- Claude 保持现有 PTY 输入和 transcript 读取方式。
+- AICLI 回给 Electron 的结构化输出保留完整回复标记；Codex/OpenCode TUI 渲染时只显示标记内正文，且不能在流式输出阶段闪现半截标记。
 
 ## 标记格式
 
@@ -45,7 +54,7 @@ Remote IM 会把手机端消息注入当前 AICLI，并要求 AICLI 把需要回
 5. 未闭合内容保持 pending，不转发到 IM。
 6. 旧回复、prompt echo、上一轮残留不能被当前 `replyId` 误收。
 
-## Claude 与 Codex 边界
+## AICLI 边界
 
 共享层：
 
@@ -64,6 +73,12 @@ Codex 专属：
 
 - 过滤 Codex TUI 的启动提示、模型状态栏、输入框建议。
 - Codex 噪音过滤不能替代协议解析。
+
+OpenCode 专属：
+
+- 标准 TUI 从已完成的 assistant text part 回传原始 Markdown。
+- `--mini` 运行时在 turn 完成后回传原始 assistant text。
+- 两种 TUI 都只渲染回复标记内正文，不能修改发送给 Electron 的原始文本。
 
 ## 固定测试
 

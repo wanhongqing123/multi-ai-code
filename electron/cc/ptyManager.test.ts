@@ -94,7 +94,8 @@ describe('registerPtyIpc prompt injection timing', () => {
   const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
   async function connectAicliControlBridge(
-    proc: (typeof ptyInstances)[number]
+    proc: (typeof ptyInstances)[number],
+    receivedLines: string[] = []
   ): Promise<net.Socket> {
     const args = proc.opts.args as string[]
     const endpoint = args[args.indexOf('--multi-ai-code-im-ipc') + 1]
@@ -104,6 +105,7 @@ describe('registerPtyIpc prompt injection timing', () => {
     if (!token) throw new Error('AICLI bridge endpoint did not include a token')
 
     const socket = await new Promise<net.Socket>((resolve, reject) => {
+      let buffer = ''
       const client = net.createConnection(
         { host: url.hostname, port: Number(url.port) },
         () => {
@@ -111,6 +113,32 @@ describe('registerPtyIpc prompt injection timing', () => {
           resolve(client)
         }
       )
+      client.setEncoding('utf8')
+      client.on('data', (chunk) => {
+        buffer += String(chunk)
+        for (;;) {
+          const lineEnd = buffer.indexOf('\n')
+          if (lineEnd < 0) break
+          const line = buffer.slice(0, lineEnd).trim()
+          buffer = buffer.slice(lineEnd + 1)
+          if (!line) continue
+          receivedLines.push(line)
+          const payload = JSON.parse(line) as {
+            command?: string
+            requestId?: string
+          }
+          if (payload.command !== 'submit_user_message' || !payload.requestId) continue
+          client.write(
+            `${JSON.stringify({
+              token,
+              kind: 'control_result',
+              requestId: payload.requestId,
+              ok: true,
+              text: 'queued'
+            })}\n`
+          )
+        }
+      })
       client.once('error', reject)
     })
     await sleep(20)
@@ -354,7 +382,7 @@ describe('registerPtyIpc prompt injection timing', () => {
     expect(proc.writes.join('')).toContain('scheduled task prompt')
   }, 10_000)
 
-  it('accepts Codex messages after the active session status line is visible', async () => {
+  it('does not fall back to PTY typing when the Codex source bridge is disconnected', async () => {
     const { proc } = await spawnNoPlanSession('codex')
 
     proc.emitData(
@@ -368,8 +396,8 @@ describe('registerPtyIpc prompt injection timing', () => {
     const { sendUserMessageToSession } = await import('./ptyManager.js')
     const result = await sendUserMessageToSession('session-no-plan', 'remote im text')
 
-    expect(result).toEqual({ ok: true })
-    expect(proc.writes.join('')).toContain('remote im text')
+    expect(result).toEqual({ ok: false, error: 'AICLI control bridge is not connected' })
+    expect(proc.writes.join('')).not.toContain('remote im text')
   })
 
   it('accepts Codex messages after the source-level control bridge is ready', async () => {
@@ -382,7 +410,7 @@ describe('registerPtyIpc prompt injection timing', () => {
     socket.destroy()
 
     expect(result).toEqual({ ok: true })
-    expect(proc.writes.join('')).toContain('remote im text')
+    expect(proc.writes.join('')).not.toContain('remote im text')
   })
 
   it('broadcasts remote IM display text to the local terminal without changing PTY input', async () => {
@@ -420,7 +448,7 @@ describe('registerPtyIpc prompt injection timing', () => {
     })
   })
 
-  it('skips the local display echo and double submit for opencode sessions', async () => {
+  it('submits OpenCode messages through the source bridge without PTY input or local echo', async () => {
     const { proc } = await spawnNoPlanSession('opencode')
     const socket = await connectAicliControlBridge(proc)
 
@@ -436,16 +464,15 @@ describe('registerPtyIpc prompt injection timing', () => {
 
     expect(result).toEqual({ ok: true })
     const written = proc.writes.join('')
-    expect(written).toContain('full AICLI protocol prompt')
-    // opencode 的 TUI 自己展示已提交消息，合成回显会画花 TUI，必须跳过。
+    expect(written).not.toContain('full AICLI protocol prompt')
     expect(browserWindowSends.filter((send) => send.channel === 'cc:data')).toEqual([])
-    // 首个回车即提交；第二个回车会追加一条空消息，必须只发一次。
-    expect(written.match(/\r/g)).toHaveLength(1)
+    expect(written).not.toContain('\r')
   })
 
   it('serializes concurrent programmatic messages to the same AICLI session', async () => {
     const { proc } = await spawnNoPlanSession('opencode')
-    const socket = await connectAicliControlBridge(proc)
+    const receivedLines: string[] = []
+    const socket = await connectAicliControlBridge(proc, receivedLines)
 
     const { sendUserMessageToSession } = await import('./ptyManager.js')
     const firstMessage = `first:${'A'.repeat(160)}`
@@ -459,7 +486,11 @@ describe('registerPtyIpc prompt injection timing', () => {
 
     expect(firstResult).toEqual({ ok: true })
     expect(secondResult).toEqual({ ok: true })
-    expect(proc.writes.join('')).toBe(`${firstMessage}\r${secondMessage}\r`)
+    expect(proc.writes.join('')).toBe('')
+    expect(receivedLines.map((line) => JSON.parse(line).text)).toEqual([
+      firstMessage,
+      secondMessage
+    ])
   })
 
   it('does not scan local skills when sending user messages', () => {

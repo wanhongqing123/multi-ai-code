@@ -58,6 +58,7 @@ export type AicliRequestControlCommand =
   | { command: 'model'; model?: string; reasoning?: string }
   | { command: 'goal'; goal?: string }
   | { command: 'btw'; task: string; replyId?: string }
+  | { command: 'submit_user_message'; text: string; displayText: string }
   | { command: 'interrupt' }
   | { command: 'compact' }
   | { command: 'clear' }
@@ -257,6 +258,9 @@ export async function createAicliStructuredOutputBridge(
           ...(input.command === 'model' && input.reasoning ? { reasoning: input.reasoning } : {}),
           ...(input.command === 'btw'
             ? { task: input.task, ...(input.replyId ? { replyId: input.replyId } : {}) }
+            : {}),
+          ...(input.command === 'submit_user_message'
+            ? { text: input.text, displayText: input.displayText }
             : {}),
           ...(input.command === 'goal' && input.goal ? { goal: input.goal } : {})
         })

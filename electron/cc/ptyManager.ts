@@ -530,15 +530,29 @@ export async function sendUserMessageToSession(
   session = sessions.get(sessionId)
   if (!session) return { ok: false, error: 'no session' }
   try {
+    let sourceResult: AicliControlCommandResult | undefined
     await enqueueSessionInput(sessionId, async (current) => {
-      const openCodeSession = isOpenCodeCommand(current.command)
-      await sendMessage(current.proc, text, { singleSubmit: openCodeSession })
-      // opencode 的全屏 TUI 会在会话里展示已提交消息；合成的本地回显 chunk 会直接
-      // 画在 TUI 的编辑器/状态栏上，opentui 不感知这些格子被改过，形成永久残留。
-      if (!openCodeSession) {
-        displayLocalTerminalText(sessionId, options.displayText)
+      const sourceSubmitted = current.command === 'codex' || isOpenCodeCommand(current.command)
+      if (sourceSubmitted) {
+        if (!current.structuredOutputBridge) {
+          sourceResult = { ok: false, error: 'AICLI source bridge is not available' }
+          return
+        }
+        sourceResult = await current.structuredOutputBridge.requestControlCommand(
+          {
+            command: 'submit_user_message',
+            text,
+            displayText: options.displayText?.trim() || text
+          },
+          10_000
+        )
+        return
       }
+
+      await sendMessage(current.proc, text)
+      displayLocalTerminalText(sessionId, options.displayText)
     })
+    if (sourceResult && !sourceResult.ok) return sourceResult
     return { ok: true }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) }

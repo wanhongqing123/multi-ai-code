@@ -637,6 +637,7 @@ export interface JudgeExternalReviewRequest {
 
 
 const api = {
+  platform: process.platform,
   /** Resolve a DataTransfer File to its absolute filesystem path (Electron 32+). */
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
   clipboard: {
@@ -943,6 +944,7 @@ const api = {
   },
   ping: () => ipcRenderer.invoke('app:ping'),
   version: () => ipcRenderer.invoke('app:version'),
+  launchNewInstance: () => ipcRenderer.send('app:launch-new-instance'),
   project: {
     list: () =>
       ipcRenderer.invoke('project:list') as Promise<

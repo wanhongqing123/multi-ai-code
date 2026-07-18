@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, dialog, globalShortcut } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, dialog, globalShortcut, Menu } from 'electron'
 import { join, isAbsolute, dirname } from 'path'
 import { tmpdir } from 'os'
 import { randomBytes } from 'crypto'
@@ -163,6 +163,22 @@ function setEffectiveAppSettings(settings: ScreenshotHotkeySettings): AppSetting
 
 let mainWindow: BrowserWindow | null = null
 
+function launchMacAppInstance(): void {
+  if (process.platform !== 'darwin') return
+  try {
+    const child = spawnChild(process.execPath, app.isPackaged ? [] : [app.getAppPath()], {
+      detached: true,
+      stdio: 'ignore'
+    })
+    child.unref()
+  } catch (error) {
+    dialog.showErrorBox(
+      '新建应用实例失败',
+      error instanceof Error ? error.message : String(error)
+    )
+  }
+}
+
 function createWindow(): void {
   const win = new BrowserWindow({
     // 登录阶段是一个小窗口，只装得下登录表单（钉钉/微信式）。登录成功后由
@@ -266,6 +282,14 @@ app.whenReady().then(async () => {
   if (process.platform === 'darwin' && app.dock) {
     try {
       app.dock.setIcon(appIconPath)
+      app.dock.setMenu(
+        Menu.buildFromTemplate([
+          {
+            label: '新建应用实例',
+            click: launchMacAppInstance
+          }
+        ])
+      )
     } catch {
       /* ignore — icon file missing in some dev configurations */
     }
@@ -276,6 +300,9 @@ app.whenReady().then(async () => {
   // 初始化在账号绑定成功后由 activateAccountDataLayer() 触发。
   ipcMain.handle('app:ping', () => 'pong')
   ipcMain.handle('app:version', () => app.getVersion())
+  if (process.platform === 'darwin') {
+    ipcMain.on('app:launch-new-instance', launchMacAppInstance)
+  }
   ipcMain.handle('settings:get-app-settings', async () => {
     if (effectiveAppSettings) return effectiveAppSettings
     const settings = await loadScreenshotHotkeySettings()

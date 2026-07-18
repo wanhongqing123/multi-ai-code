@@ -1992,6 +1992,16 @@ function AppShell() {
           >
             ⚙️
           </button>
+          {window.api.platform === 'darwin' && (
+            <button
+              className="topbar-btn topbar-btn-icon"
+              onClick={() => window.api.launchNewInstance()}
+              title="新建应用实例：打开一个相互隔离的 Multi-AI Code 窗口"
+              aria-label="新建应用实例"
+            >
+              ＋
+            </button>
+          )}
           <button
             className={`topbar-btn remote-im-topbar remote-im-topbar-${remoteImStatus?.state ?? 'disconnected'}`}
             onClick={() => setShowRemoteImDrawer(true)}

@@ -91,6 +91,27 @@ describe('remote IM reply protocol', () => {
 
   it.each([
     {
+      name: 'markers and reply body on the same line',
+      output:
+        '<remote-im-reply id="rim-0123456789abcdef">你好</remote-im-reply id="rim-0123456789abcdef">'
+    },
+    {
+      name: 'model omitted marker quote and angle bracket',
+      output: [
+        '<remote-im-reply id="rim-0123456789abcdef你好',
+        '</remote-im-reply id="rim-0123456789abcdef'
+      ].join('\n')
+    }
+  ])('extracts Codex reply when $name', ({ output }) => {
+    expect(extractRemoteImReplyOutput(output, { replyId: 'rim-0123456789abcdef' })).toEqual({
+      content: '你好',
+      pending: false,
+      nextBuffer: ''
+    })
+  })
+
+  it.each([
+    {
       name: 'legacy markers without reply id',
       output: [REMOTE_IM_REPLY_OPEN_TAG, 'legacy reply', REMOTE_IM_REPLY_CLOSE_TAG].join('\n'),
       replyId: undefined,

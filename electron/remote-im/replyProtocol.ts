@@ -96,6 +96,84 @@ function buildPendingReplyBuffer(lines: string[], replyId?: string): string {
   return [buildRemoteImReplyOpenTag(replyId), ...lines].join('\n')
 }
 
+function markerCandidateText(line: string): string {
+  return line.trimStart().replace(/^[\u23fa\u25CF\u2022]\s*/, '').trimStart()
+}
+
+function stripExpectedOpenMarker(line: string, replyId: string): string | null {
+  const text = markerCandidateText(line)
+  const exact = buildRemoteImReplyOpenTag(replyId)
+  if (text.startsWith(exact)) return text.slice(exact.length)
+
+  const malformedPrefix = `<remote-im-reply id="${replyId}`
+  if (!text.startsWith(malformedPrefix)) return null
+  let remainder = text.slice(malformedPrefix.length)
+  if (remainder.startsWith('"')) remainder = remainder.slice(1)
+  if (remainder.startsWith('>')) remainder = remainder.slice(1)
+  return remainder
+}
+
+function expectedCloseMarkerIndex(line: string, replyId: string): number {
+  const text = markerCandidateText(line)
+  const exactIndex = text.indexOf(buildRemoteImReplyCloseTag(replyId))
+  const legacyIndex = text.indexOf(REMOTE_IM_REPLY_CLOSE_TAG)
+  const malformedPrefix = `</remote-im-reply id="${replyId}`
+  const malformedIndex = text.indexOf(malformedPrefix)
+  const validMalformedIndex =
+    malformedIndex >= 0 &&
+    (() => {
+      const tail = text.slice(malformedIndex + malformedPrefix.length)
+      return !tail || /^[">\s]/.test(tail)
+    })()
+      ? malformedIndex
+      : -1
+  const indexes = [exactIndex, legacyIndex, validMalformedIndex].filter((index) => index >= 0)
+  return indexes.length > 0 ? Math.min(...indexes) : -1
+}
+
+function extractExpectedRemoteImReply(clean: string, replyId: string): RemoteImReplyExtraction {
+  const replies: string[] = []
+  const pendingLines: string[] = []
+  let pending = false
+
+  for (const line of clean.split('\n')) {
+    const openingRemainder = stripExpectedOpenMarker(line, replyId)
+    if (openingRemainder !== null) {
+      pending = true
+      pendingLines.length = 0
+      const closeIndex = expectedCloseMarkerIndex(openingRemainder, replyId)
+      if (closeIndex >= 0) {
+        if (closeIndex > 0) pendingLines.push(openingRemainder.slice(0, closeIndex))
+        const content = trimReplyContent(pendingLines.join('\n'))
+        if (content) replies.push(content)
+        pending = false
+      } else if (openingRemainder) {
+        pendingLines.push(openingRemainder)
+      }
+      continue
+    }
+    if (!pending) continue
+
+    const candidate = markerCandidateText(line)
+    const closeIndex = expectedCloseMarkerIndex(line, replyId)
+    if (closeIndex >= 0) {
+      if (closeIndex > 0) pendingLines.push(candidate.slice(0, closeIndex))
+      const content = trimReplyContent(pendingLines.join('\n'))
+      if (content) replies.push(content)
+      pending = false
+      pendingLines.length = 0
+      continue
+    }
+    pendingLines.push(line)
+  }
+
+  return {
+    content: replies.join('\n\n').trim(),
+    pending,
+    nextBuffer: pending ? buildPendingReplyBuffer(pendingLines, replyId) : ''
+  }
+}
+
 export function buildRemoteImAicliPrompt(input: RemoteImAicliPromptInput): string {
   const replyId = normalizeReplyId(input.replyId)
   return [
@@ -122,6 +200,7 @@ export function extractRemoteImReplyOutput(
   const replies: string[] = []
   const pendingLines: string[] = []
   const expectedReplyId = normalizeReplyId(options.replyId)
+  if (expectedReplyId) return extractExpectedRemoteImReply(clean, expectedReplyId)
   let pendingReplyId: string | undefined
   let pending = false
 

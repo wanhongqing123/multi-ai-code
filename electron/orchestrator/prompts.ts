@@ -50,6 +50,7 @@ export const MAIN_COMMAND_DEFAULT = 'codex'
 export type SupportedCli = 'claude' | 'codex' | 'opencode'
 export const CODEX_CONTEXT_WINDOW_CONFIG = 'model_context_window=1000000'
 const CODEX_NO_ALT_SCREEN_ARG = '--no-alt-screen'
+const CODEX_BYPASS_HOOK_TRUST_ARG = '--dangerously-bypass-hook-trust'
 
 function hasAnyArg(args: readonly string[], flags: readonly string[]): boolean {
   return args.some((arg) => flags.includes(arg))
@@ -72,6 +73,9 @@ function codexDefaultArgs(extraArgs: readonly string[] = []): string[] {
   }
   if (!hasAnyArg(extraArgs, ['--dangerously-bypass-approvals-and-sandbox'])) {
     args.push('--dangerously-bypass-approvals-and-sandbox')
+  }
+  if (!hasAnyArg(extraArgs, [CODEX_BYPASS_HOOK_TRUST_ARG])) {
+    args.push(CODEX_BYPASS_HOOK_TRUST_ARG)
   }
   if (!hasCodexContextWindowConfig(extraArgs)) {
     args.push('-c', CODEX_CONTEXT_WINDOW_CONFIG)

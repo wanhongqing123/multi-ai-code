@@ -109,6 +109,7 @@ describe('mainCliArgs', () => {
     expect(mainCliArgs()).toEqual([
       '--no-alt-screen',
       '--dangerously-bypass-approvals-and-sandbox',
+      '--dangerously-bypass-hook-trust',
       '-c',
       'model_context_window=1000000'
     ])
@@ -127,6 +128,7 @@ describe('mainCliArgs', () => {
     expect(mainCliArgs('codex')).toEqual([
       '--no-alt-screen',
       '--dangerously-bypass-approvals-and-sandbox',
+      '--dangerously-bypass-hook-trust',
       '-c',
       'model_context_window=1000000'
     ])
@@ -144,6 +146,7 @@ describe('buildCliLaunchArgs', () => {
     expect(buildCliLaunchArgs('codex', '/repo/demo')).toEqual([
       '--no-alt-screen',
       '--dangerously-bypass-approvals-and-sandbox',
+      '--dangerously-bypass-hook-trust',
       '-c',
       'model_context_window=1000000'
     ])
@@ -172,6 +175,7 @@ describe('buildCliLaunchArgs', () => {
       ])
     ).toEqual([
       '--no-alt-screen',
+      '--dangerously-bypass-hook-trust',
       '-c',
       'model_context_window=1000000',
       '--dangerously-bypass-approvals-and-sandbox',
@@ -197,6 +201,7 @@ describe('buildCliLaunchArgs', () => {
     ).toEqual([
       '--no-alt-screen',
       '--dangerously-bypass-approvals-and-sandbox',
+      '--dangerously-bypass-hook-trust',
       '-c',
       'model_context_window=272000'
     ])
@@ -210,9 +215,26 @@ describe('buildCliLaunchArgs', () => {
       ])
     ).toEqual([
       '--dangerously-bypass-approvals-and-sandbox',
+      '--dangerously-bypass-hook-trust',
       '-c',
       'model_context_window=1000000',
       '--no-alt-screen',
+      '--verbose'
+    ])
+  })
+
+  it('does not duplicate codex hook trust bypass when user supplies it', () => {
+    expect(
+      buildCliLaunchArgs('codex', '/repo/demo', [
+        '--dangerously-bypass-hook-trust',
+        '--verbose'
+      ])
+    ).toEqual([
+      '--no-alt-screen',
+      '--dangerously-bypass-approvals-and-sandbox',
+      '-c',
+      'model_context_window=1000000',
+      '--dangerously-bypass-hook-trust',
       '--verbose'
     ])
   })

@@ -267,6 +267,30 @@ describe('remote IM output forwarding', () => {
     expect(sentTexts).toEqual([createRemoteImAicliOutputText('current result')])
   })
 
+  it('forwards a Codex inline reply without leaking malformed markers', () => {
+    const state = createState(
+      [
+        '<remote-im-reply id="rim-0123456789abcdef你好，有什么需要我帮忙的？',
+        '</remote-im-reply id="rim-0123456789abcdef'
+      ].join('\n'),
+      { outputMaxChunkChars: 500 }
+    )
+    state.replyId = 'rim-0123456789abcdef'
+    state.sourceKind = 'codex'
+    const messages: CreateRemoteImMessageInput[] = []
+    const sentTexts: string[] = []
+
+    const chunks = flushRemoteImOutputSession('session-1', state, {
+      createMessage: (input) => messages.push(input),
+      sendText: (_projectId, _toUserId, text) => sentTexts.push(text),
+      messagesChanged: () => undefined
+    })
+
+    expect(chunks).toBe(1)
+    expect(messages[0]?.content).toBe('你好，有什么需要我帮忙的？')
+    expect(sentTexts).toEqual([createRemoteImAicliOutputText('你好，有什么需要我帮忙的？')])
+  })
+
   it('does not forward the same reply id more than once', () => {
     const taggedReply = [
       '<remote-im-reply id="reply-current">',

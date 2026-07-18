@@ -507,11 +507,20 @@ html, body, #root {
   box-shadow: 0 0 0 3px var(--mac-focus-ring);
 }
 
-.topbar-btn.mode-toggle-btn {
+.topbar-btn.mode-toggle-btn,
+.topbar-btn.topbar-btn-icon {
   width: 34px;
   min-width: 34px;
   padding-inline: 0;
   text-align: center;
+  font-size: 15px;
+  line-height: 1;
+}
+
+/* 「运行中」高亮：绿色描边，让图标化后的运行按钮仍能一眼看出在跑。 */
+.topbar-btn.is-active {
+  border-color: var(--mac-success);
+  color: var(--mac-success);
 }
 
 .topbar-btn.topbar-btn-primary {

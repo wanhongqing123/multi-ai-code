@@ -23,6 +23,7 @@ import {
   type OpenCodeProviderProfile
 } from '../aicli/opencodeConfig.js'
 import {
+  codexTerminalColors,
   withCodexTerminalEnv,
   type TerminalThemeMode
 } from '../aicli/codexConfig.js'
@@ -495,6 +496,21 @@ async function enqueueSessionInput<T>(
   return next
 }
 
+/**
+ * 把宿主的明暗主题广播给所有运行中、且带 im-bridge 控制通道的 AICLI 会话，让 TUI
+ * 运行时重绘（codex 用 bg/fg 判定明暗、opencode 用 mode），不必重启会话。fire-and-forget。
+ */
+export function setSessionsTerminalTheme(theme: TerminalThemeMode): void {
+  const colors = codexTerminalColors(theme)
+  for (const session of sessions.values()) {
+    session.structuredOutputBridge?.notifyTheme({
+      mode: theme,
+      bg: colors.bg,
+      fg: colors.fg
+    })
+  }
+}
+
 export async function sendUserMessageToSession(
   sessionId: string,
   text: string,
@@ -927,6 +943,12 @@ export function registerPtyIpc(): void {
 
   ipcMain.on('cc:input', (_e, { sessionId, data }: { sessionId: string; data: string }) => {
     sessions.get(sessionId)?.proc.write(data)
+  })
+
+  // 宿主切换明暗主题时，把新主题广播给所有运行中的 AICLI 会话，让 TUI 运行时重绘
+  // （通过既有的 im-bridge 控制通道；codex 用 bg/fg、opencode 用 mode），不必重启会话。
+  ipcMain.on('cc:set-terminal-theme', (_e, { theme }: { theme: TerminalThemeMode }) => {
+    setSessionsTerminalTheme(theme === 'dark' ? 'dark' : 'light')
   })
 
   ipcMain.handle(

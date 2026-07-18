@@ -15,6 +15,14 @@ const CODEX_TERMINAL_COLORS: Record<TerminalThemeMode, { bg: string; fg: string 
   dark: { bg: '1e1e1e', fg: 'e6e6e6' }
 }
 
+/** 宿主终端的 bg/fg（不带 #），供启动注入与运行时主题广播共用。缺省按 light。 */
+export function codexTerminalColors(theme: TerminalThemeMode | undefined): {
+  bg: string
+  fg: string
+} {
+  return CODEX_TERMINAL_COLORS[theme === 'dark' ? 'dark' : 'light']
+}
+
 function basenameLike(command: string): string {
   let normalized = command.trim()
   while (normalized.length >= 2) {

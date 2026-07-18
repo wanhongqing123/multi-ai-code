@@ -1267,6 +1267,9 @@ const api = {
       ipcRenderer.invoke('cc:spawn', opts) as Promise<SpawnResponse>,
     write: (sessionId: string, data: string) =>
       ipcRenderer.send('cc:input', { sessionId, data }),
+    // 广播明暗主题给所有运行中的 AICLI 会话，TUI 运行时重绘、无需重启。
+    setTerminalTheme: (theme: 'light' | 'dark') =>
+      ipcRenderer.send('cc:set-terminal-theme', { theme }),
     paste: (sessionId: string, data: string) =>
       ipcRenderer.invoke('cc:paste', { sessionId, data }) as Promise<{
         ok: boolean

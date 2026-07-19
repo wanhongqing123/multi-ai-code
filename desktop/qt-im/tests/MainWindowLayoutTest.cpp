@@ -671,7 +671,16 @@ void MainWindowLayoutTest::slashCommandSuggestionsFillComposer() {
     QVERIFY(commandBar != nullptr);
     QVERIFY(!commandBar->isVisible());
 
-    editor->setPlainText(QStringLiteral("/st"));
+    // 命令栏重建被刻意延后到事件循环下一轮：若在按键事件派发内同步增删控件、隐藏/抬升
+    // 悬浮层，会吞掉紧随其后的 KeyRelease，令 Windows 认为按键仍按住而狂发自动重复
+    //（输入 /g 变成一长串 g）。因此每次改动输入框后放行一次事件循环，等 0ms 单次定时器
+    // 触发、命令栏完成重建，再做同步断言。
+    auto typeQuery = [&](const QString& text) {
+        editor->setPlainText(text);
+        QTest::qWait(1);
+    };
+
+    typeQuery(QStringLiteral("/st"));
     QVERIFY(commandBar->isVisible());
 
     const QStringList expectedCommandObjectNames = {
@@ -689,7 +698,7 @@ void MainWindowLayoutTest::slashCommandSuggestionsFillComposer() {
         QStringLiteral("slashCommandButton_help"),
     };
 
-    editor->setPlainText(QStringLiteral("/"));
+    typeQuery(QStringLiteral("/"));
     QVERIFY(commandBar->isVisible());
     for (const QString& objectName : expectedCommandObjectNames) {
         QVERIFY2(window.findChild<QPushButton*>(objectName) != nullptr, qPrintable(objectName));
@@ -702,7 +711,7 @@ void MainWindowLayoutTest::slashCommandSuggestionsFillComposer() {
     QCOMPARE(editor->toPlainText(), QStringLiteral("/status"));
     QVERIFY(commandBar->isVisible());
 
-    editor->setPlainText(QStringLiteral("/pl"));
+    typeQuery(QStringLiteral("/pl"));
     QVERIFY(commandBar->isVisible());
 
     auto* planButton = window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_plan"));
@@ -712,7 +721,7 @@ void MainWindowLayoutTest::slashCommandSuggestionsFillComposer() {
     QCOMPARE(editor->toPlainText(), QStringLiteral("/plan"));
     QVERIFY(commandBar->isVisible());
 
-    editor->setPlainText(QStringLiteral("/bu"));
+    typeQuery(QStringLiteral("/bu"));
     QVERIFY(commandBar->isVisible());
 
     auto* buildButton = window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_build"));
@@ -722,7 +731,7 @@ void MainWindowLayoutTest::slashCommandSuggestionsFillComposer() {
     QCOMPARE(editor->toPlainText(), QStringLiteral("/build"));
     QVERIFY(commandBar->isVisible());
 
-    editor->setPlainText(QStringLiteral("/mo"));
+    typeQuery(QStringLiteral("/mo"));
     QVERIFY(commandBar->isVisible());
 
     auto* modelsButton = window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_models"));
@@ -732,7 +741,7 @@ void MainWindowLayoutTest::slashCommandSuggestionsFillComposer() {
     QCOMPARE(editor->toPlainText(), QStringLiteral("/models"));
     QVERIFY(commandBar->isVisible());
 
-    editor->setPlainText(QStringLiteral("/mod"));
+    typeQuery(QStringLiteral("/mod"));
     QVERIFY(commandBar->isVisible());
 
     auto* modelButton = window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_model"));
@@ -742,7 +751,7 @@ void MainWindowLayoutTest::slashCommandSuggestionsFillComposer() {
     QCOMPARE(editor->toPlainText(), QStringLiteral("/model "));
     QVERIFY(commandBar->isVisible());
 
-    editor->setPlainText(QStringLiteral("/go"));
+    typeQuery(QStringLiteral("/go"));
     QVERIFY(commandBar->isVisible());
 
     auto* goalButton = window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_goal"));
@@ -752,7 +761,7 @@ void MainWindowLayoutTest::slashCommandSuggestionsFillComposer() {
     QCOMPARE(editor->toPlainText(), QStringLiteral("/goal "));
     QVERIFY(commandBar->isVisible());
 
-    editor->setPlainText(QStringLiteral("/bt"));
+    typeQuery(QStringLiteral("/bt"));
     QVERIFY(commandBar->isVisible());
 
     auto* btwButton = window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_btw"));
@@ -762,7 +771,7 @@ void MainWindowLayoutTest::slashCommandSuggestionsFillComposer() {
     QCOMPARE(editor->toPlainText(), QStringLiteral("/btw "));
     QVERIFY(commandBar->isVisible());
 
-    editor->setPlainText(QStringLiteral("/di"));
+    typeQuery(QStringLiteral("/di"));
     QVERIFY(commandBar->isVisible());
 
     auto* diffButton = window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_diff"));
@@ -772,7 +781,7 @@ void MainWindowLayoutTest::slashCommandSuggestionsFillComposer() {
     QCOMPARE(editor->toPlainText(), QStringLiteral("/diff "));
     QVERIFY(commandBar->isVisible());
 
-    editor->setPlainText(QStringLiteral("/in"));
+    typeQuery(QStringLiteral("/in"));
     QVERIFY(commandBar->isVisible());
 
     auto* interruptButton = window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_interrupt"));
@@ -782,7 +791,7 @@ void MainWindowLayoutTest::slashCommandSuggestionsFillComposer() {
     QCOMPARE(editor->toPlainText(), QStringLiteral("/interrupt"));
     QVERIFY(commandBar->isVisible());
 
-    editor->setPlainText(QStringLiteral("/co"));
+    typeQuery(QStringLiteral("/co"));
     QVERIFY(commandBar->isVisible());
 
     auto* compactButton = window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_compact"));
@@ -792,7 +801,7 @@ void MainWindowLayoutTest::slashCommandSuggestionsFillComposer() {
     QCOMPARE(editor->toPlainText(), QStringLiteral("/compact"));
     QVERIFY(commandBar->isVisible());
 
-    editor->setPlainText(QStringLiteral("/cl"));
+    typeQuery(QStringLiteral("/cl"));
     QVERIFY(commandBar->isVisible());
 
     auto* clearButton = window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_clear"));
@@ -802,7 +811,7 @@ void MainWindowLayoutTest::slashCommandSuggestionsFillComposer() {
     QCOMPARE(editor->toPlainText(), QStringLiteral("/clear"));
     QVERIFY(commandBar->isVisible());
 
-    editor->setPlainText(QStringLiteral("/he"));
+    typeQuery(QStringLiteral("/he"));
     QVERIFY(commandBar->isVisible());
 
     auto* helpButton = window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_help"));

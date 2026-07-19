@@ -1067,9 +1067,18 @@ void MainWindow::bindSignals() {
     connect(imageButton_, &QPushButton::clicked, this, [this] { openImagePicker(); });
     connect(voiceButton_, &QPushButton::clicked, this, [this] { app_.sendVoicePlaceholder(); });
     connect(sendButton_, &QPushButton::clicked, this, [this] { sendCurrentText(); });
+    // 命令提示条的重建（删除全部按钮、隐藏/抬升悬浮层）必须延后到事件循环下一轮，
+    // 不能在 textChanged 里同步做——textChanged 是在 QTextEdit 的按键事件派发内部发出的，
+    // 若此刻销毁 12 个按钮并隐藏被 raise() 的悬浮层，会吞掉紧随其后的 KeyRelease，
+    // 让 Windows 认为按键仍按住而持续自动重复（输入 /g 变成 /gggggg……）。
+    slashCommandUpdateTimer_ = new QTimer(this);
+    slashCommandUpdateTimer_->setSingleShot(true);
+    slashCommandUpdateTimer_->setInterval(0);
+    connect(slashCommandUpdateTimer_, &QTimer::timeout, this, [this] { updateSlashCommandSuggestions(); });
     connect(messageEditor_, &QTextEdit::textChanged, this, [this] {
         updateComposerState();
-        updateSlashCommandSuggestions();
+        // 重启 0ms 单次定时器：连续输入天然合并成一次重建，且始终在按键派发之外执行。
+        slashCommandUpdateTimer_->start();
     });
     conversationList_->installEventFilter(this);
     contactsList_->installEventFilter(this);
@@ -1711,7 +1720,9 @@ void MainWindow::sendCurrentText() {
     app_.sendText(text);
     messageEditor_->clear();
     updateComposerState();
-    updateSlashCommandSuggestions();
+    // 同样延后重建：sendCurrentText 可能由 Enter 键在事件过滤器里触发，走的是按键派发路径，
+    // 不能在这里同步销毁按钮/隐藏悬浮层（否则会吞掉 Enter 的 KeyRelease）。
+    slashCommandUpdateTimer_->start();
 }
 
 void MainWindow::updateComposerState() {

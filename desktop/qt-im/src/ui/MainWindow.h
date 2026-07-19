@@ -18,6 +18,7 @@ class QLineEdit;
 class QHBoxLayout;
 class QListWidgetItem;
 class QPoint;
+class QTimer;
 
 class MainWindow final : public QMainWindow {
 public:
@@ -105,4 +106,8 @@ private:
     QTextEdit* messageEditor_ = nullptr;
     QWidget* slashCommandBar_ = nullptr;
     QVBoxLayout* slashCommandLayout_ = nullptr;
+    // 命令提示条重建从 textChanged（键盘事件派发内）里剥离出来，改由 0ms 单次定时器
+    // 延后到事件循环下一轮执行。否则在按键派发中同步删除全部按钮并隐藏/抬升悬浮层，
+    // 会在 Windows 上吞掉紧随其后的 KeyRelease，导致按键“卡住”自动重复（输入 /g 变成一长串 g）。
+    QTimer* slashCommandUpdateTimer_ = nullptr;
 };

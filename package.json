@@ -24,6 +24,7 @@
     "postinstall": "electron-rebuild -f -o better-sqlite3,node-pty"
   },
   "dependencies": {
+    "@primer/octicons-react": "^19.29.2",
     "@tencentcloud/lite-chat": "^4.4.0",
     "@xterm/addon-canvas": "^0.7.0",
     "@xterm/addon-search": "^0.16.0",

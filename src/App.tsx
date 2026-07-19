@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { FileDiffIcon } from '@primer/octicons-react'
 import { getTheme, toggleTheme } from './utils/theme.js'
 import {
   formatAnnotationsForSession,
@@ -1997,7 +1998,7 @@ function AppShell() {
               title="代码审查：打开 diff 并把批注回灌给当前会话"
               aria-label="代码审查"
             >
-              ±
+              <FileDiffIcon size={18} verticalAlign="middle" />
             </button>
           )}
           {mainPanelMounted &&

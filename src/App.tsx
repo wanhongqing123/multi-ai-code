@@ -1848,7 +1848,7 @@ function AppShell() {
 
 
   return (
-    <div className="app">
+    <div className={`app platform-${window.api.platform}`}>
       <header className="topbar">
         <div className="topbar-left">
           <button
@@ -1887,6 +1887,7 @@ function AppShell() {
           {hasProject && isPlanDesignMode && (
             <button
               className="topbar-btn topbar-btn-icon"
+              data-tone="blue"
               onClick={() => setShowNormalTaskDialog(true)}
               disabled={!currentProjectId}
               title="普通任务：创建、选择和查看"
@@ -1898,6 +1899,7 @@ function AppShell() {
           {hasProject && isPlanDesignMode && planName.trim() && (
             <button
               className="topbar-btn topbar-btn-icon"
+              data-tone="blue"
               onClick={() => void openPlanReview()}
               disabled={!currentProjectId}
               title="方案预览：查看 / 标注当前普通任务的方案文档"
@@ -1909,6 +1911,7 @@ function AppShell() {
           {hasProject && isTaskWatchMode && (
             <button
               className="topbar-btn topbar-btn-icon"
+              data-tone="amber"
               onClick={() => setShowScheduledTaskDialog(true)}
               disabled={!currentProjectId}
               title="定时任务：创建和管理到点后交给当前 AICLI 执行的任务"
@@ -1920,6 +1923,7 @@ function AppShell() {
           {hasProject && (
             <button
               className="topbar-btn topbar-btn-icon"
+              data-tone="amber"
               onClick={() => setShowBuildPanel(true)}
               disabled={!currentProjectId}
               title="构建：打开项目构建面板"
@@ -1931,6 +1935,7 @@ function AppShell() {
           {hasProject && (
             <button
               className={`topbar-btn topbar-btn-icon${runtimeTopbarRunning ? ' is-active' : ''}`}
+              data-tone="success"
               onClick={() => {
                 if (runtimeTopbarRunning) {
                   setShowRuntimeLogDialog(true)
@@ -1952,6 +1957,7 @@ function AppShell() {
           {mainPanelMounted && (
             <button
               className="topbar-btn topbar-btn-icon"
+              data-tone="blue"
               onClick={() => void openDiffReview()}
               disabled={!canStartCurrentMainSession || noPlanMode || sessionStatus !== 'running'}
               title="代码审查：打开 diff 并把批注回灌给当前会话"
@@ -1964,6 +1970,7 @@ function AppShell() {
             (sessionStatus === 'running' ? (
               <button
                 className="topbar-btn topbar-btn-icon"
+                data-tone="danger"
                 onClick={handleStop}
                 disabled={!canStartCurrentMainSession}
                 title="停止当前主会话"
@@ -1974,6 +1981,7 @@ function AppShell() {
             ) : (
               <button
                 className="topbar-btn topbar-btn-icon"
+                data-tone="success"
                 onClick={
                   sessionStatus === 'exited' ? handleRestart : () => void handleStart('new')
                 }
@@ -1986,6 +1994,7 @@ function AppShell() {
             ))}
           <button
             className="topbar-btn topbar-btn-icon"
+            data-tone="blue"
             onClick={() => openAiSettingsSection()}
             title="设置：全局截图快捷键、AI CLI 命令 / 参数 / 环境变量"
             aria-label="设置"
@@ -1995,6 +2004,7 @@ function AppShell() {
           {window.api.platform === 'darwin' && (
             <button
               className="topbar-btn topbar-btn-icon"
+              data-tone="violet"
               onClick={() => window.api.launchNewInstance()}
               title="新建应用实例：打开一个相互隔离的 Multi-AI Code 窗口"
               aria-label="新建应用实例"
@@ -2026,6 +2036,7 @@ function AppShell() {
           </button>
           <button
             className="topbar-btn topbar-btn-icon"
+            data-tone="teal"
             onClick={() => setShowDoctor(true)}
             title="体检：检查 codex / git / node，并提示可选的 claude 状态"
             aria-label="体检"
@@ -2034,6 +2045,7 @@ function AppShell() {
           </button>
           <button
             className="topbar-btn mode-toggle-btn"
+            data-tone="violet"
             onClick={() => onWorkModeSelect(isTaskWatchMode ? 'plan-design' : 'task-watch')}
             title={
               sessionStatus === 'running'
@@ -2049,6 +2061,7 @@ function AppShell() {
           </button>
           <button
             className="topbar-btn topbar-btn-icon"
+            data-tone="amber"
             onClick={handleToggleTheme}
             title={theme === 'dark' ? '切换到浅色' : '切换到暗色'}
             aria-label="切换主题"

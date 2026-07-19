@@ -393,7 +393,7 @@ npm run release:mac
 ```
 
 脚本会把 `release/MultiAICode-*-arm64.dmg`、对应 `.blockmap` 和
-`desktop/qt-im/dist/MultiAIIM-macos-arm64-<日期>-*.zip` 上传到
+`desktop/qt-im/dist/MultiAIIM-macos-arm64-<日期>-*.dmg` 上传到
 `electron-<日期>`、`qt-im-<日期>`。上传依赖已登录的 GitHub CLI；首次使用前需安装并登录：
 
 ```bash

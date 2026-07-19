@@ -559,6 +559,76 @@ html, body, #root {
   box-shadow: none;
 }
 
+/* macOS often renders the toolbar's Unicode symbols as muted text glyphs,
+   while Windows falls back to fuller Segoe UI Emoji glyphs. Keep Windows
+   unchanged and restore visual hierarchy on macOS with restrained action
+   tones and softly tinted button surfaces. */
+.platform-darwin {
+  --topbar-tone-blue: #2563eb;
+  --topbar-tone-success: #15803d;
+  --topbar-tone-danger: #dc2626;
+  --topbar-tone-amber: #b45309;
+  --topbar-tone-teal: #0f766e;
+  --topbar-tone-violet: #7c3aed;
+}
+
+:root.theme-dark .platform-darwin {
+  --topbar-tone-blue: #8ab4f8;
+  --topbar-tone-success: #81c995;
+  --topbar-tone-danger: #f28b82;
+  --topbar-tone-amber: #fdd663;
+  --topbar-tone-teal: #78d9cf;
+  --topbar-tone-violet: #c4a7ff;
+}
+
+.platform-darwin .topbar-actions .topbar-btn[data-tone='blue'] {
+  --topbar-tone: var(--topbar-tone-blue);
+}
+
+.platform-darwin .topbar-actions .topbar-btn[data-tone='success'] {
+  --topbar-tone: var(--topbar-tone-success);
+}
+
+.platform-darwin .topbar-actions .topbar-btn[data-tone='danger'] {
+  --topbar-tone: var(--topbar-tone-danger);
+}
+
+.platform-darwin .topbar-actions .topbar-btn[data-tone='amber'] {
+  --topbar-tone: var(--topbar-tone-amber);
+}
+
+.platform-darwin .topbar-actions .topbar-btn[data-tone='teal'] {
+  --topbar-tone: var(--topbar-tone-teal);
+}
+
+.platform-darwin .topbar-actions .topbar-btn[data-tone='violet'] {
+  --topbar-tone: var(--topbar-tone-violet);
+}
+
+.platform-darwin .topbar-actions .topbar-btn[data-tone] {
+  color: var(--topbar-tone);
+  background: color-mix(in srgb, var(--topbar-tone) 8%, var(--mac-surface));
+  border-color: color-mix(in srgb, var(--topbar-tone) 30%, var(--mac-border));
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--topbar-tone) 14%, transparent);
+}
+
+.platform-darwin .topbar-actions .topbar-btn[data-tone]:hover:not(:disabled) {
+  color: var(--topbar-tone);
+  background: color-mix(in srgb, var(--topbar-tone) 15%, var(--mac-surface));
+  border-color: color-mix(in srgb, var(--topbar-tone) 48%, var(--mac-border));
+}
+
+.platform-darwin .topbar-actions .topbar-btn[data-tone]:active:not(:disabled) {
+  background: color-mix(in srgb, var(--topbar-tone) 22%, var(--mac-surface));
+}
+
+.platform-darwin .topbar-actions .topbar-btn[data-tone]:disabled {
+  color: color-mix(in srgb, var(--topbar-tone) 48%, var(--mac-fg-disabled));
+  background: color-mix(in srgb, var(--topbar-tone) 4%, var(--mac-bg-subtle));
+  border-color: color-mix(in srgb, var(--topbar-tone) 16%, var(--mac-border-subtle));
+  box-shadow: none;
+}
+
 .tile {
   background: var(--mac-surface);
   border: 1px solid var(--mac-border);

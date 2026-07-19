@@ -70,14 +70,14 @@ latest_file() {
 
 electron_dmg="$(latest_file './release/MultiAICode-*-arm64.dmg')"
 electron_blockmap="$(latest_file './release/MultiAICode-*-arm64.dmg.blockmap')"
-qt_im_zip="$(latest_file "./desktop/qt-im/dist/MultiAIIM-macos-arm64-$release_date-*.zip")"
+qt_im_dmg="$(latest_file "./desktop/qt-im/dist/MultiAIIM-macos-arm64-$release_date-*.dmg")"
 
 if [[ -z "$electron_dmg" || -z "$electron_blockmap" ]]; then
   echo "Missing Electron macOS artifacts under release/." >&2
   exit 1
 fi
 
-if [[ -z "$qt_im_zip" ]]; then
+if [[ -z "$qt_im_dmg" ]]; then
   echo "Missing Qt IM macOS artifact for $release_date under desktop/qt-im/dist/." >&2
   exit 1
 fi
@@ -85,7 +85,7 @@ fi
 if [[ "$dry_run" -eq 1 ]]; then
   echo "Dry run:"
   echo "  gh release upload $electron_tag $electron_dmg $electron_blockmap --clobber"
-  echo "  gh release upload $qt_im_tag $qt_im_zip --clobber"
+  echo "  gh release upload $qt_im_tag $qt_im_dmg --clobber"
   exit 0
 fi
 
@@ -100,9 +100,9 @@ if ! gh auth status >/dev/null 2>&1; then
 fi
 
 gh release upload "$electron_tag" "$electron_dmg" "$electron_blockmap" --clobber
-gh release upload "$qt_im_tag" "$qt_im_zip" --clobber
+gh release upload "$qt_im_tag" "$qt_im_dmg" --clobber
 
 echo
 echo "Uploaded macOS release artifacts:"
 echo "  $electron_tag: $electron_dmg, $electron_blockmap"
-echo "  $qt_im_tag: $qt_im_zip"
+echo "  $qt_im_tag: $qt_im_dmg"

@@ -94,7 +94,8 @@ desktop/qt-im/scripts/package-macos.sh
 ```
 
 产出 `dist/MultiAIIM-macos-arm64/` 和
-`dist/MultiAIIM-macos-arm64-<日期>-<git短哈希>.zip`。脚本会：
+`dist/MultiAIIM-macos-arm64-<日期>-<git短哈希>.dmg`。DMG 内包含应用和
+`Applications` 快捷入口，脚本会：
 
 - 使用 `macdeployqt` 旁挂 Qt framework；
 - 把原生 IM SDK framework 放进应用内置 vendor 目录；

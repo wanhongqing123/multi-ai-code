@@ -13,7 +13,7 @@ The script expects a built macOS bundle:
 
 Outputs:
   <out-dir>/MultiAIIM-macos-arm64/
-  <out-dir>/MultiAIIM-macos-arm64-<date>-<git-short-hash>.zip
+  <out-dir>/MultiAIIM-macos-arm64-<date>-<git-short-hash>.dmg
 USAGE
 }
 
@@ -119,6 +119,9 @@ Multi-AI Code IM 桌面客户端（macOS）
 - 未签名应用首次打开如被 macOS 拦截，可在 Finder 中右键应用并选择“打开”。
 README
 
+# Standard drag-to-install layout: users can drag the app onto Applications.
+ln -s /Applications "$staging/Applications"
+
 # Ad-hoc signing keeps embedded frameworks loadable without requiring a Developer ID.
 if command -v codesign >/dev/null 2>&1; then
   codesign --force --deep --sign - "$staged_app"
@@ -130,14 +133,19 @@ if [[ -z "$git_hash" ]]; then
   git_hash="unknown"
 fi
 
-zip_name="MultiAIIM-macos-arm64-$(date +%Y%m%d)-$git_hash.zip"
-zip_path="$dist_root/$zip_name"
-rm -f "$zip_path"
-ditto -c -k --sequesterRsrc --keepParent "$staging" "$zip_path"
+dmg_name="MultiAIIM-macos-arm64-$(date +%Y%m%d)-$git_hash.dmg"
+dmg_path="$dist_root/$dmg_name"
+rm -f "$dmg_path"
+hdiutil create \
+  -volname "Multi-AI Code IM" \
+  -srcfolder "$staging" \
+  -ov \
+  -format UDZO \
+  -fs APFS \
+  "$dmg_path"
 
-size="$(du -h "$zip_path" | awk '{print $1}')"
+size="$(du -h "$dmg_path" | awk '{print $1}')"
 echo
-echo "Qt IM macOS package:"
+echo "Qt IM macOS DMG:"
 echo "  Directory: $staging"
-echo "  Archive:   $zip_path ($size)"
-
+echo "  Image:     $dmg_path ($size)"

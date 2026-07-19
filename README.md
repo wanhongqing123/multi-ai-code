@@ -372,11 +372,11 @@ resources/asr/
 - Electron 桌面端安装包：tag 形如 `electron-<日期>`（NSIS 安装器，内置 AICLI 与 ASR 资源，安装即用）。
 - Qt IM 客户端免安装包：tag 形如 `qt-im-<日期>`（见 `desktop/qt-im/scripts/package-windows.ps1` 和 `desktop/qt-im/scripts/package-macos.sh`）。
 
-最新发布（截至 2026-07-19，v0.1.2，主仓 `027094b`，内置 codex `9964b83d` / opencode `7d7cb5d8`）：
+最新发布（截至 2026-07-20，v0.1.3，主仓 `6e386e5`，内置 codex `9964b83d` / opencode `7d7cb5d8`）：
 
-- Windows Electron 安装包：[`electron-20260719-win`](https://github.com/wanhongqing123/multi-ai-code/releases/tag/electron-20260719-win)（`MultiAICode-0.1.2-x64.exe`；重新编译内置 AICLI，含 codex/opencode 远程 IM TUI 显示修复、Codex 启动不再被 Hook 信任页阻塞、普通 IM 消息改用 AICLI 源码桥）。
-- Windows Qt IM 安装程序：[`qt-im-20260719-win`](https://github.com/wanhongqing123/multi-ai-code/releases/tag/qt-im-20260719-win)（`MultiAIIM-Setup-win64-v0.1.2-027094b.exe`，NSIS 安装器）。
-- 同日 macOS ARM64 版见 [`electron-20260719`](https://github.com/wanhongqing123/multi-ai-code/releases/tag/electron-20260719) / [`qt-im-20260719`](https://github.com/wanhongqing123/multi-ai-code/releases/tag/qt-im-20260719)。
+- Windows Electron 安装包：[`electron-20260720-win`](https://github.com/wanhongqing123/multi-ai-code/releases/tag/electron-20260720-win)（`MultiAICode-0.1.3-x64.exe`；沿用 v0.1.2 内置 AICLI，顶部工具栏图标与操作顺序调整、代码审查改用 GitHub 文件 Diff 图标）。
+- Windows Qt IM 安装程序：[`qt-im-20260720-win`](https://github.com/wanhongqing123/multi-ai-code/releases/tag/qt-im-20260720-win)（`MultiAIIM-Setup-win64-v0.1.3-6e386e5.exe`，NSIS 安装器；修复输入框输入斜杠命令时按键卡住、被放大成一长串字符的问题）。
+- 同日 macOS ARM64 版见 [`electron-20260720`](https://github.com/wanhongqing123/multi-ai-code/releases/tag/electron-20260720)。
 
 Windows 产物上传（需已安装并登录 GitHub CLI，见下）：
 

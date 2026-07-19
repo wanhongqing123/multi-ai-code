@@ -1851,6 +1851,17 @@ function AppShell() {
     <div className={`app platform-${window.api.platform}`}>
       <header className="topbar">
         <div className="topbar-left">
+          {window.api.platform === 'darwin' && (
+            <button
+              className="topbar-btn topbar-btn-icon"
+              data-tone="violet"
+              onClick={() => window.api.launchNewInstance()}
+              title="新建应用实例：打开一个相互隔离的 Multi-AI Code 窗口"
+              aria-label="新建应用实例"
+            >
+              ＋
+            </button>
+          )}
           <button
             className="topbar-btn topbar-btn-primary topbar-btn-icon"
             onClick={() => void openProjectDirPicker()}
@@ -1884,42 +1895,29 @@ function AppShell() {
           )}
         </div>
         <div className="topbar-actions">
-          {hasProject && isPlanDesignMode && (
-            <button
-              className="topbar-btn topbar-btn-icon"
-              data-tone="blue"
-              onClick={() => setShowNormalTaskDialog(true)}
-              disabled={!currentProjectId}
-              title="普通任务：创建、选择和查看"
-              aria-label="普通任务"
-            >
-              📋
-            </button>
-          )}
-          {hasProject && isPlanDesignMode && planName.trim() && (
-            <button
-              className="topbar-btn topbar-btn-icon"
-              data-tone="blue"
-              onClick={() => void openPlanReview()}
-              disabled={!currentProjectId}
-              title="方案预览：查看 / 标注当前普通任务的方案文档"
-              aria-label="方案预览"
-            >
-              📄
-            </button>
-          )}
-          {hasProject && isTaskWatchMode && (
-            <button
-              className="topbar-btn topbar-btn-icon"
-              data-tone="amber"
-              onClick={() => setShowScheduledTaskDialog(true)}
-              disabled={!currentProjectId}
-              title="定时任务：创建和管理到点后交给当前 AICLI 执行的任务"
-              aria-label="定时任务"
-            >
-              ⏰
-            </button>
-          )}
+          <button
+            className="topbar-btn topbar-btn-icon"
+            data-tone="blue"
+            onClick={() => openAiSettingsSection()}
+            title="设置：全局截图快捷键、AI CLI 命令 / 参数 / 环境变量"
+            aria-label="设置"
+          >
+            ⚙️
+          </button>
+          <button
+            className={`topbar-btn remote-im-topbar remote-im-topbar-${remoteImStatus?.state ?? 'disconnected'}`}
+            onClick={() => setShowRemoteImDrawer(true)}
+            disabled={!currentProjectId}
+            title={
+              remoteImStatus?.detail
+                ? `远程 IM：${getRemoteImStatusLabel(remoteImStatus)} - ${remoteImStatus.detail}`
+                : `远程 IM：${getRemoteImStatusLabel(remoteImStatus)}`
+            }
+            aria-label={`远程 IM：${getRemoteImStatusLabel(remoteImStatus)}`}
+          >
+            <span className="remote-im-topbar-dot" />
+            💬
+          </button>
           {hasProject && (
             <button
               className="topbar-btn topbar-btn-icon"
@@ -1954,6 +1952,42 @@ function AppShell() {
               ▶
             </button>
           )}
+          {hasProject && isPlanDesignMode && (
+            <button
+              className="topbar-btn topbar-btn-icon"
+              data-tone="blue"
+              onClick={() => setShowNormalTaskDialog(true)}
+              disabled={!currentProjectId}
+              title="普通任务：创建、选择和查看"
+              aria-label="普通任务"
+            >
+              📋
+            </button>
+          )}
+          {hasProject && isTaskWatchMode && (
+            <button
+              className="topbar-btn topbar-btn-icon"
+              data-tone="amber"
+              onClick={() => setShowScheduledTaskDialog(true)}
+              disabled={!currentProjectId}
+              title="定时任务：创建和管理到点后交给当前 AICLI 执行的任务"
+              aria-label="定时任务"
+            >
+              ⏰
+            </button>
+          )}
+          {hasProject && isPlanDesignMode && planName.trim() && (
+            <button
+              className="topbar-btn topbar-btn-icon"
+              data-tone="blue"
+              onClick={() => void openPlanReview()}
+              disabled={!currentProjectId}
+              title="方案预览：查看 / 标注当前普通任务的方案文档"
+              aria-label="方案预览"
+            >
+              📄
+            </button>
+          )}
           {mainPanelMounted && (
             <button
               className="topbar-btn topbar-btn-icon"
@@ -1963,7 +1997,7 @@ function AppShell() {
               title="代码审查：打开 diff 并把批注回灌给当前会话"
               aria-label="代码审查"
             >
-              🔍
+              ±
             </button>
           )}
           {mainPanelMounted &&
@@ -1993,57 +2027,6 @@ function AppShell() {
               </button>
             ))}
           <button
-            className="topbar-btn topbar-btn-icon"
-            data-tone="blue"
-            onClick={() => openAiSettingsSection()}
-            title="设置：全局截图快捷键、AI CLI 命令 / 参数 / 环境变量"
-            aria-label="设置"
-          >
-            ⚙️
-          </button>
-          {window.api.platform === 'darwin' && (
-            <button
-              className="topbar-btn topbar-btn-icon"
-              data-tone="violet"
-              onClick={() => window.api.launchNewInstance()}
-              title="新建应用实例：打开一个相互隔离的 Multi-AI Code 窗口"
-              aria-label="新建应用实例"
-            >
-              ＋
-            </button>
-          )}
-          <button
-            className={`topbar-btn remote-im-topbar remote-im-topbar-${remoteImStatus?.state ?? 'disconnected'}`}
-            onClick={() => setShowRemoteImDrawer(true)}
-            disabled={!currentProjectId}
-            title={
-              remoteImStatus?.detail
-                ? `远程 IM：${getRemoteImStatusLabel(remoteImStatus)} - ${remoteImStatus.detail}`
-                : `远程 IM：${getRemoteImStatusLabel(remoteImStatus)}`
-            }
-            aria-label={`远程 IM：${getRemoteImStatusLabel(remoteImStatus)}`}
-          >
-            <span className="remote-im-topbar-dot" />
-            💬
-          </button>
-          <button
-            className={`topbar-btn ${errorCount > 0 ? 'topbar-btn-danger' : 'topbar-btn-icon'}`}
-            onClick={() => setShowErrors((s) => !s)}
-            title="日志：查看错误与通知"
-            aria-label={errorCount > 0 ? `日志（${errorCount} 条错误/警告）` : '日志'}
-          >
-            {errorCount > 0 ? `⚠ ${errorCount}` : '📣'}
-          </button>
-          <button
-            className="topbar-btn topbar-btn-icon"
-            data-tone="teal"
-            onClick={() => setShowDoctor(true)}
-            title="体检：检查 codex / git / node，并提示可选的 claude 状态"
-            aria-label="体检"
-          >
-            🩺
-          </button>
-          <button
             className="topbar-btn mode-toggle-btn"
             data-tone="violet"
             onClick={() => onWorkModeSelect(isTaskWatchMode ? 'plan-design' : 'task-watch')}
@@ -2067,6 +2050,23 @@ function AppShell() {
             aria-label="切换主题"
           >
             {theme === 'dark' ? '☀' : '☾'}
+          </button>
+          <button
+            className="topbar-btn topbar-btn-icon"
+            data-tone="teal"
+            onClick={() => setShowDoctor(true)}
+            title="体检：检查 codex / git / node，并提示可选的 claude 状态"
+            aria-label="体检"
+          >
+            🩺
+          </button>
+          <button
+            className={`topbar-btn ${errorCount > 0 ? 'topbar-btn-danger' : 'topbar-btn-icon'}`}
+            onClick={() => setShowErrors((s) => !s)}
+            title="日志：查看错误与通知"
+            aria-label={errorCount > 0 ? `日志（${errorCount} 条错误/警告）` : '日志'}
+          >
+            {errorCount > 0 ? `⚠ ${errorCount}` : '📣'}
           </button>
         </div>
       </header>

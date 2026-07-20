@@ -9,6 +9,7 @@
 #include <QSplitter>
 #include <QStringList>
 #include <QStackedWidget>
+#include <QInputMethodEvent>
 #include <QTest>
 #include <QTextBrowser>
 #include <QTextEdit>
@@ -67,6 +68,7 @@ private slots:
     void wideChatUsesWiderMessageBubbles();
     void restoredLongMessagesExpandAfterWindowIsShown();
     void slashCommandSuggestionsFillComposer();
+    void slashCommandBarLeavesImeCompositionUndisturbed();
     void deleteKeyRemovesContactAndMessagesFromConversationList();
     void deleteKeyRemovesContactAndMessagesFromContactsList();
     void navigationIconsDoNotUsePrivateFontGlyphProperties();
@@ -677,7 +679,7 @@ void MainWindowLayoutTest::slashCommandSuggestionsFillComposer() {
     // 触发、命令栏完成重建，再做同步断言。
     auto typeQuery = [&](const QString& text) {
         editor->setPlainText(text);
-        QTest::qWait(1);
+        QTest::qWait(200);  // 命令栏重建有 150ms 防抖，等它触发再断言
     };
 
     typeQuery(QStringLiteral("/st"));
@@ -820,6 +822,52 @@ void MainWindowLayoutTest::slashCommandSuggestionsFillComposer() {
 
     QCOMPARE(editor->toPlainText(), QStringLiteral("/help"));
     QVERIFY(commandBar->isVisible());
+}
+
+void MainWindowLayoutTest::slashCommandBarLeavesImeCompositionUndisturbed() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+
+    MainWindow window(app);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto* editor = window.findChild<QTextEdit*>(QStringLiteral("messageEditor"));
+    auto* commandBar = window.findChild<QWidget*>(QStringLiteral("slashCommandBar"));
+    QVERIFY(editor != nullptr);
+    QVERIFY(commandBar != nullptr);
+    editor->setFocus();
+
+    // 输入 "/goal " 让命令栏显示（含 /goal 按钮）。setPlainText 会把光标留在开头，
+    // 手动移到末尾，模拟真实输入后的光标位置（组词上屏要接在末尾）。
+    editor->setPlainText(QStringLiteral("/goal "));
+    {
+        QTextCursor cursor = editor->textCursor();
+        cursor.movePosition(QTextCursor::End);
+        editor->setTextCursor(cursor);
+    }
+    QTRY_VERIFY(commandBar->isVisible());
+    QVERIFY(window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_goal")) != nullptr);
+
+    // 模拟输入法开始组词（预编辑串 "n"，未上屏）。命令栏不得在组词期间被重建/隐藏，
+    // 否则会打断输入法上下文、把首个拼音键漏成普通字符。预编辑不入文档，已提交文本不变。
+    {
+        QInputMethodEvent ime(QStringLiteral("n"), {});
+        QApplication::sendEvent(editor, &ime);
+    }
+    QTest::qWait(200);  // 若有未取消的防抖重建会在此触发——不应发生
+    QVERIFY(commandBar->isVisible());
+    QVERIFY(window.findChild<QPushButton*>(QStringLiteral("slashCommandButton_goal")) != nullptr);
+    QCOMPARE(editor->toPlainText(), QStringLiteral("/goal "));
+
+    // 组词上屏 "你好"：组词结束后命令栏才刷新，"/goal 你好" 不匹配任何命令 → 隐藏。
+    {
+        QInputMethodEvent ime(QString(), {});
+        ime.setCommitString(QStringLiteral("你好"));
+        QApplication::sendEvent(editor, &ime);
+    }
+    QCOMPARE(editor->toPlainText(), QStringLiteral("/goal 你好"));
+    QTRY_VERIFY(!commandBar->isVisible());
 }
 
 void MainWindowLayoutTest::deleteKeyRemovesContactAndMessagesFromConversationList() {

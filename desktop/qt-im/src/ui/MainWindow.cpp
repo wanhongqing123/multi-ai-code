@@ -12,6 +12,7 @@
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QIcon>
+#include <QInputMethodEvent>
 #include <QKeyEvent>
 #include <QLineEdit>
 #include <QMenu>
@@ -473,6 +474,21 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
         if (isReturn && !(keyEvent->modifiers() & Qt::ShiftModifier)) {
             sendCurrentText();
             return true;
+        }
+    }
+    if (watched == messageEditor_ && event->type() == QEvent::InputMethod) {
+        // 输入法组词期间绝不重建命令提示条：组词从按下第一个拼音键开始，此刻若销毁/新建
+        // 按钮、隐藏或抬升悬浮层，会打断编辑器的输入法上下文，导致首个拼音键被当作普通
+        // 字符漏进输入框（如 /goal 后打 nihao 变成字面 n + 组词 ihao）。取消待执行的重建，
+        // 组词结束（上屏或取消）后再刷新命令栏。事件不拦截，交给 QTextEdit 正常处理。
+        auto* imeEvent = static_cast<QInputMethodEvent*>(event);
+        const bool composing = !imeEvent->preeditString().isEmpty();
+        if (composing) {
+            imeComposing_ = true;
+            if (slashCommandUpdateTimer_) slashCommandUpdateTimer_->stop();
+        } else if (imeComposing_) {
+            imeComposing_ = false;
+            if (slashCommandUpdateTimer_) slashCommandUpdateTimer_->start();
         }
     }
     if (messageScroll_ && watched == messageScroll_->viewport() && event->type() == QEvent::Resize) {
@@ -1073,11 +1089,13 @@ void MainWindow::bindSignals() {
     // 让 Windows 认为按键仍按住而持续自动重复（输入 /g 变成 /gggggg……）。
     slashCommandUpdateTimer_ = new QTimer(this);
     slashCommandUpdateTimer_->setSingleShot(true);
-    slashCommandUpdateTimer_->setInterval(0);
+    slashCommandUpdateTimer_->setInterval(150);  // 防抖：只在停顿后重建，避开按键前后那一瞬间
     connect(slashCommandUpdateTimer_, &QTimer::timeout, this, [this] { updateSlashCommandSuggestions(); });
     connect(messageEditor_, &QTextEdit::textChanged, this, [this] {
         updateComposerState();
-        // 重启 0ms 单次定时器：连续输入天然合并成一次重建，且始终在按键派发之外执行。
+        // 组词期间不触发重建（由 InputMethod 事件在组词结束时再拉起）；否则重启防抖定时器：
+        // 连续输入天然合并成一次重建，且始终落在按键/组词之外。
+        if (imeComposing_) return;
         slashCommandUpdateTimer_->start();
     });
     conversationList_->installEventFilter(this);
@@ -1736,6 +1754,7 @@ void MainWindow::updateComposerState() {
 
 void MainWindow::updateSlashCommandSuggestions() {
     if (!slashCommandBar_ || !slashCommandLayout_ || !messageEditor_) return;
+    if (imeComposing_) return;  // 组词进行中，绝不动命令栏控件，避免打断输入法
 
     while (QLayoutItem* item = slashCommandLayout_->takeAt(0)) {
         if (QWidget* widget = item->widget()) delete widget;

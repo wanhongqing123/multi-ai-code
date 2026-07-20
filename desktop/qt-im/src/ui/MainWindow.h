@@ -106,8 +106,12 @@ private:
     QTextEdit* messageEditor_ = nullptr;
     QWidget* slashCommandBar_ = nullptr;
     QVBoxLayout* slashCommandLayout_ = nullptr;
-    // 命令提示条重建从 textChanged（键盘事件派发内）里剥离出来，改由 0ms 单次定时器
-    // 延后到事件循环下一轮执行。否则在按键派发中同步删除全部按钮并隐藏/抬升悬浮层，
-    // 会在 Windows 上吞掉紧随其后的 KeyRelease，导致按键“卡住”自动重复（输入 /g 变成一长串 g）。
+    // 命令提示条重建从 textChanged（键盘事件派发内）里剥离出来，改由防抖单次定时器
+    // 延后执行——只在停顿时重建，绝不在按键前后那一瞬间动控件。否则在按键派发/输入法
+    // 组词期间同步删除全部按钮并隐藏/抬升悬浮层，会在 Windows 上吞掉 KeyRelease（按键
+    // 卡住自动重复，/g 变成一长串 g），或打断输入法上下文（首个拼音键被当普通字符漏进
+    // 输入框，/goal 后打 nihao 变成字面 n + 组词 ihao）。
     QTimer* slashCommandUpdateTimer_ = nullptr;
+    // 输入法是否正在组词（预编辑串非空）。组词期间一律不重建命令栏，组词结束再刷新。
+    bool imeComposing_ = false;
 };

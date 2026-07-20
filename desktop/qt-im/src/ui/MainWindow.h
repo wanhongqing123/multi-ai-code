@@ -49,7 +49,10 @@ private:
     void syncNavigationSelection();
     void updateNavigationSelection(QPushButton* selectedButton);
     void openAddContactDialog();
-    void openImagePicker();
+    // 处理消息框里的 Ctrl+V：剪贴板有文件/图片则直接发送，返回 true 表示已消费；
+    // 否则返回 false 交给 QTextEdit 默认粘贴文本。
+    bool handleComposerPaste();
+    void sendPastedFile(const QString& localPath);
     void openImagePreview(const QString& imagePath);
     void openFilePreview(const RemoteIMFileAttachment& attachment);
     QWidget* createMessageBubble(const RemoteIMMessage& message);
@@ -101,7 +104,6 @@ private:
     bool renderedEmptyView_ = false;
     QPushButton* addContactButton_ = nullptr;
     QPushButton* voiceButton_ = nullptr;
-    QPushButton* imageButton_ = nullptr;
     QPushButton* sendButton_ = nullptr;
     QTextEdit* messageEditor_ = nullptr;
     QWidget* slashCommandBar_ = nullptr;

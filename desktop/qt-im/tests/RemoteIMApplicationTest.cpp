@@ -1,3 +1,4 @@
+#include <QFile>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
@@ -13,6 +14,7 @@ class RemoteIMApplicationTest : public QObject {
 
 private slots:
     void sendsTextThroughClientAndMarksSent();
+    void sendsFileThroughClientAndMarksSent();
     void receivesIncomingTextIntoSelectedConversation();
     void deletesContactThroughClientAfterRemoteSuccess();
     void keepsContactWhenRemoteDeletionFails();
@@ -38,6 +40,34 @@ void RemoteIMApplicationTest::sendsTextThroughClientAndMarksSent() {
     QCOMPARE(messages.size(), 1);
     QCOMPARE(messages.first().status, RemoteIMMessageStatus::Sent);
     QVERIFY(stateSpy.count() >= 2);
+}
+
+void RemoteIMApplicationTest::sendsFileThroughClientAndMarksSent() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    auto* fakeClient = client.get();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+    app.selectPeer(QStringLiteral("phone-user"));
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString filePath = dir.filePath(QStringLiteral("report.md"));
+    QFile file(filePath);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("# hello");
+    file.close();
+
+    app.sendFile(filePath);
+
+    QCOMPARE(fakeClient->lastFilePeerId(), QStringLiteral("phone-user"));
+    QCOMPARE(fakeClient->lastFilePath(), filePath);
+    QCOMPARE(fakeClient->lastFileName(), QStringLiteral("report.md"));
+    const QList<RemoteIMMessage> messages = app.chatState().messagesWith(QStringLiteral("phone-user"));
+    QCOMPARE(messages.size(), 1);
+    QVERIFY(messages.first().hasFile);
+    QCOMPARE(messages.first().file.fileName, QStringLiteral("report.md"));
+    QCOMPARE(messages.first().status, RemoteIMMessageStatus::Sent);
 }
 
 void RemoteIMApplicationTest::receivesIncomingTextIntoSelectedConversation() {

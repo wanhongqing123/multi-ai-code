@@ -295,6 +295,33 @@ void TimSdkRemoteIMClient::sendImage(const QString& peerId, const QString& local
     });
 }
 
+void TimSdkRemoteIMClient::sendFile(const QString& peerId, const QString& localPath, const QString& fileName, RemoteIMSendCompletion completion) {
+    const QString cleanPeerId = peerId.trimmed();
+    const QString cleanPath = localPath.trimmed();
+    if (cleanPeerId.isEmpty() || cleanPath.isEmpty()) {
+        if (completion) completion(false, QStringLiteral("文件消息缺少接收人或文件路径"), {});
+        return;
+    }
+    const QString displayName = fileName.trimmed().isEmpty() ? QFileInfo(cleanPath).fileName() : fileName.trimmed();
+
+    QJsonObject elem;
+    elem[QStringLiteral("elem_type")] = kElemFile;
+    elem[QStringLiteral("file_elem_file_path")] = cleanPath;
+    elem[QStringLiteral("file_elem_file_name")] = displayName;
+    QJsonObject message;
+    message[QStringLiteral("message_elem_array")] = QJsonArray{elem};
+    api_->sendMessage(cleanPeerId, kConversationTypeC2C, compactJson(message), [completion = std::move(completion)](int code,
+                                                                                                                    const QString& description,
+                                                                                                                    const QString& jsonPayload) mutable {
+        if (!completion) return;
+        const bool ok = code == 0;
+        RemoteIMSendReceipt receipt = ok ? sentMessageReceipt(jsonPayload) : RemoteIMSendReceipt{};
+        completion(ok,
+                   ok ? QString() : (description.isEmpty() ? QStringLiteral("IM SDK 操作失败：%1").arg(code) : description),
+                   receipt);
+    });
+}
+
 void TimSdkRemoteIMClient::sendVoice(const QString&, const QString&, int, RemoteIMCompletion completion) {
     if (completion) completion(false, QStringLiteral("桌面端语音消息还未接入原生录音与 SDK 声音元素"));
 }

@@ -14,6 +14,7 @@ public:
     void sendText(const QString& peerId, const QString& text, RemoteIMSendCompletion completion) override;
     void sendImage(const QString& peerId, const QString& localPath, RemoteIMSendCompletion completion) override;
     void sendVoice(const QString& peerId, const QString& localPath, int durationSeconds, RemoteIMCompletion completion) override;
+    void sendFile(const QString& peerId, const QString& localPath, const QString& fileName, RemoteIMSendCompletion completion) override;
 
     QString connectedUserId() const;
     QString lastDeletedContactId() const;
@@ -21,6 +22,9 @@ public:
     QString lastText() const;
     QString lastImagePeerId() const;
     QString lastImagePath() const;
+    QString lastFilePeerId() const;
+    QString lastFilePath() const;
+    QString lastFileName() const;
     void failNext(const QString& error);
     void emitIncomingText(const QString& fromUserId, const QString& text);
     void emitIncomingImage(const QString& fromUserId, const QString& localPath, int width, int height, qint64 sizeBytes);
@@ -35,6 +39,9 @@ private:
     QString lastText_;
     QString lastImagePeerId_;
     QString lastImagePath_;
+    QString lastFilePeerId_;
+    QString lastFilePath_;
+    QString lastFileName_;
     QString nextError_;
     int sentSequence_ = 0;
 };

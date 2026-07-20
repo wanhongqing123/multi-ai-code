@@ -32,6 +32,13 @@ public:
     virtual void sendText(const QString& peerId, const QString& text, RemoteIMSendCompletion completion) = 0;
     virtual void sendImage(const QString& peerId, const QString& localPath, RemoteIMSendCompletion completion) = 0;
     virtual void sendVoice(const QString& peerId, const QString& localPath, int durationSeconds, RemoteIMCompletion completion) = 0;
+    // 发送任意文件。默认不支持（Fake/Unsupported 客户端据此优雅降级），仅 TimSdk 真正实现。
+    virtual void sendFile(const QString& peerId, const QString& localPath, const QString& fileName, RemoteIMSendCompletion completion) {
+        Q_UNUSED(peerId);
+        Q_UNUSED(localPath);
+        Q_UNUSED(fileName);
+        if (completion) completion(false, QStringLiteral("当前 IM 客户端不支持发送文件"), {});
+    }
 
 signals:
     void contactsReceived(const QList<RemoteIMContact>& contacts);

@@ -1,6 +1,7 @@
 #include "app/RemoteIMApplication.h"
 
 #include <QFileInfo>
+#include <QMimeDatabase>
 #include <stdexcept>
 #include <utility>
 
@@ -129,6 +130,33 @@ void RemoteIMApplication::sendImage(const QString& localPath) {
         }
         markMessage(effectiveId, ok ? RemoteIMMessageStatus::Sent : RemoteIMMessageStatus::Failed);
         if (!ok) emit errorMessage(error.isEmpty() ? QStringLiteral("图片消息发送失败") : error);
+    });
+}
+
+void RemoteIMApplication::sendFile(const QString& localPath) {
+    const QString cleanPath = localPath.trimmed();
+    if (cleanPath.isEmpty() || state_.selectedPeerId().isEmpty()) return;
+
+    QFileInfo info(cleanPath);
+    if (!info.exists() || !info.isFile()) {
+        emit errorMessage(QStringLiteral("文件不存在或不可读：%1").arg(cleanPath));
+        return;
+    }
+    const QString fileName = info.fileName();
+    const QString mimeType = QMimeDatabase().mimeTypeForFile(info).name();
+    RemoteIMMessage message = state_.queueOutgoingFile(cleanPath, fileName, mimeType, info.size());
+    persistMessage(message);
+    emit stateChanged();
+
+    client_->sendFile(message.toUserId, cleanPath, fileName,
+                      [this, messageId = message.id](bool ok, const QString& error, const RemoteIMSendReceipt& receipt) {
+        const QString effectiveId = adoptRemoteMessageId(messageId, ok ? receipt.remoteMessageId : QString());
+        if (ok) {
+            state_.updateMessageTime(effectiveId, receipt.createdAtMillis);
+            if (database_) database_->updateMessageTime(effectiveId, receipt.createdAtMillis);
+        }
+        markMessage(effectiveId, ok ? RemoteIMMessageStatus::Sent : RemoteIMMessageStatus::Failed);
+        if (!ok) emit errorMessage(error.isEmpty() ? QStringLiteral("文件消息发送失败") : error);
     });
 }
 

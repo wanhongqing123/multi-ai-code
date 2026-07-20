@@ -1,8 +1,15 @@
 #include "ui/MainWindow.h"
 
 #include <QCoreApplication>
+#include <QApplication>
+#include <QClipboard>
 #include <QAction>
 #include <QDateTime>
+#include <QDir>
+#include <QImage>
+#include <QMimeData>
+#include <QStandardPaths>
+#include <QUrl>
 #include <QDialog>
 #include <QEvent>
 #include <QFile>
@@ -475,6 +482,12 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
             sendCurrentText();
             return true;
         }
+        // Ctrl+V：剪贴板里有图片/文件则直接发送（消费按键）；否则交给默认粘贴文本。
+        if (keyEvent->key() == Qt::Key_V
+            && (keyEvent->modifiers() & Qt::ControlModifier)
+            && !(keyEvent->modifiers() & (Qt::ShiftModifier | Qt::AltModifier))) {
+            if (handleComposerPaste()) return true;
+        }
     }
     if (watched == messageEditor_ && event->type() == QEvent::InputMethod) {
         // 输入法组词期间绝不重建命令提示条：组词从按下第一个拼音键开始，此刻若销毁/新建
@@ -684,7 +697,7 @@ void MainWindow::buildUi() {
 
     messageEditor_ = new QTextEdit(composer);
     messageEditor_->setObjectName(QStringLiteral("messageEditor"));
-    messageEditor_->setPlaceholderText(QStringLiteral("输入消息"));
+    messageEditor_->setPlaceholderText(QStringLiteral("输入消息（可 Ctrl+V 粘贴图片或文件直接发送）"));
     messageEditor_->setAcceptRichText(false);
     messageEditor_->setMinimumHeight(64);
     messageEditor_->installEventFilter(this);
@@ -699,17 +712,11 @@ void MainWindow::buildUi() {
     voiceButton_->setToolTip(QStringLiteral("语音消息"));
     voiceButton_->setCursor(Qt::PointingHandCursor);
 
-    imageButton_ = new QPushButton(QStringLiteral("+"), composer);
-    imageButton_->setObjectName(QStringLiteral("toolIconButton"));
-    imageButton_->setToolTip(QStringLiteral("发送图片"));
-    imageButton_->setCursor(Qt::PointingHandCursor);
-
     sendButton_ = new QPushButton(QStringLiteral("发送"), composer);
     sendButton_->setObjectName(QStringLiteral("sendButton"));
     sendButton_->setCursor(Qt::PointingHandCursor);
 
     toolBar->addWidget(voiceButton_);
-    toolBar->addWidget(imageButton_);
     toolBar->addStretch(1);
     toolBar->addWidget(sendButton_);
 
@@ -1080,7 +1087,6 @@ void MainWindow::bindSignals() {
     connect(contactsNavButton_, &QPushButton::clicked, this, [this] { showContactsPage(); });
     connect(settingsNavButton_, &QPushButton::clicked, this, [this] { showSettingsPage(); });
     connect(contentStack_, &QStackedWidget::currentChanged, this, [this] { syncNavigationSelection(); });
-    connect(imageButton_, &QPushButton::clicked, this, [this] { openImagePicker(); });
     connect(voiceButton_, &QPushButton::clicked, this, [this] { app_.sendVoicePlaceholder(); });
     connect(sendButton_, &QPushButton::clicked, this, [this] { sendCurrentText(); });
     // 命令提示条的重建（删除全部按钮、隐藏/抬升悬浮层）必须延后到事件循环下一轮，
@@ -1471,12 +1477,52 @@ void MainWindow::openAddContactDialog() {
     app_.addContact(userId, userId);
 }
 
-void MainWindow::openImagePicker() {
-    const QString path = QFileDialog::getOpenFileName(this,
-                                                      QStringLiteral("选择图片"),
-                                                      QString(),
-                                                      QStringLiteral("Images (*.png *.jpg *.jpeg *.webp *.bmp *.gif)"));
-    if (!path.isEmpty()) app_.sendImage(path);
+bool MainWindow::handleComposerPaste() {
+    if (app_.chatState().selectedPeerId().isEmpty()) return false;
+    const QMimeData* mime = QApplication::clipboard()->mimeData();
+    if (!mime) return false;
+
+    // 1) 剪贴板里的本地文件（资源管理器复制的文件）：图片按图片发，其它按文件发。
+    if (mime->hasUrls()) {
+        QStringList files;
+        for (const QUrl& url : mime->urls()) {
+            if (!url.isLocalFile()) continue;
+            const QString path = url.toLocalFile();
+            if (QFileInfo(path).isFile()) files << path;
+        }
+        if (!files.isEmpty()) {
+            for (const QString& path : files) sendPastedFile(path);
+            return true;
+        }
+    }
+
+    // 2) 剪贴板里的图像数据（截图工具、复制的图片）：存成临时 PNG 再发。
+    if (mime->hasImage()) {
+        const QImage image = qvariant_cast<QImage>(mime->imageData());
+        if (!image.isNull()) {
+            const QString dir = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
+                                    .filePath(QStringLiteral("multi-ai-im-paste"));
+            QDir().mkpath(dir);
+            const QString path = QDir(dir).filePath(
+                QStringLiteral("paste-%1.png").arg(QDateTime::currentMSecsSinceEpoch()));
+            if (image.save(path, "PNG")) {
+                app_.sendImage(path);
+                return true;
+            }
+        }
+    }
+    return false;  // 交给 QTextEdit 默认粘贴（文本）
+}
+
+void MainWindow::sendPastedFile(const QString& localPath) {
+    static const QStringList kImageExts = {
+        QStringLiteral("png"), QStringLiteral("jpg"), QStringLiteral("jpeg"),
+        QStringLiteral("gif"), QStringLiteral("webp"), QStringLiteral("bmp")};
+    if (kImageExts.contains(QFileInfo(localPath).suffix().toLower())) {
+        app_.sendImage(localPath);
+    } else {
+        app_.sendFile(localPath);
+    }
 }
 
 void MainWindow::openImagePreview(const QString& imagePath) {
@@ -1760,7 +1806,6 @@ void MainWindow::sendCurrentText() {
 void MainWindow::updateComposerState() {
     const bool hasPeer = !app_.chatState().selectedPeerId().isEmpty();
     const bool hasText = messageEditor_ && !messageEditor_->toPlainText().trimmed().isEmpty();
-    imageButton_->setEnabled(hasPeer);
     messageEditor_->setEnabled(hasPeer);
     voiceButton_->setEnabled(hasPeer);
     sendButton_->setEnabled(hasPeer && hasText);

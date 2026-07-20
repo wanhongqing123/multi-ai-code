@@ -21,6 +21,7 @@ public:
     void sendText(const QString& peerId, const QString& text, RemoteIMSendCompletion completion) override;
     void sendImage(const QString& peerId, const QString& localPath, RemoteIMSendCompletion completion) override;
     void sendVoice(const QString& peerId, const QString& localPath, int durationSeconds, RemoteIMCompletion completion) override;
+    void sendFile(const QString& peerId, const QString& localPath, const QString& fileName, RemoteIMSendCompletion completion) override;
 
 private:
     void syncInitialData();

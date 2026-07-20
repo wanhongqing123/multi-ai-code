@@ -37,6 +37,7 @@ public:
     void selectPeer(const QString& userId);
     void sendText(const QString& text);
     void sendImage(const QString& localPath);
+    void sendFile(const QString& localPath);
     void sendVoicePlaceholder();
 
 signals:

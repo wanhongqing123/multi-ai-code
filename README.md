@@ -4,6 +4,8 @@
 
 **核心是 IM + AICLI**：它不内置大模型，而是启动你本机真实安装的 AI CLI；每台机器登录一个 IM 身份，你把它当聊天联系人，发消息即可驱动它的当前 AICLI，结果清成 Markdown 回传。多台机器就是多个联系人，各自独立驱动。
 
+![Qt 桌面 IM 客户端：多台机器作为联系人，AICLI 回传控制命令结果](docs/readme/qt-im-remote.png)
+
 ## IM 控制命令
 
 任意 IM 客户端（iOS App、Qt 桌面 IM，或 AICLI 通过 `imcli`）给目标机器发消息即可。除直接发任务文本外：

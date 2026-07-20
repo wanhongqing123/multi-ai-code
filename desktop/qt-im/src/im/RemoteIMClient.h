@@ -9,11 +9,15 @@
 #include "model/RemoteIMMessage.h"
 
 using RemoteIMCompletion = std::function<void(bool ok, const QString& error)>;
-// 发送类操作的回执：成功时带 SDK 确认的消息 id（<msg_id>#<elem下标>，与漫游/
-// 实时投递同一编号规则）。本地库把出站消息的临时 UUID 换成它，漫游重投同一条
-// 消息时才能按主键去重。SDK 未返回 id 时为空串。
+struct RemoteIMSendReceipt {
+    QString remoteMessageId;
+    qint64 createdAtMillis = 0;
+};
+
+// 发送类操作的回执：成功时带 SDK 确认的消息 id 和规范化时间。本地库据此
+// 替换临时 UUID，并与漫游/实时消息使用同一排序键。
 using RemoteIMSendCompletion =
-    std::function<void(bool ok, const QString& error, const QString& remoteMessageId)>;
+    std::function<void(bool ok, const QString& error, const RemoteIMSendReceipt& receipt)>;
 
 class RemoteIMClient : public QObject {
     Q_OBJECT

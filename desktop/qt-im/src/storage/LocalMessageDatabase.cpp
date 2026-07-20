@@ -223,7 +223,15 @@ bool LocalMessageDatabase::insertMessageIfAbsent(const RemoteIMMessage& message,
     query.addBindValue(message.file.mimeType);
     query.addBindValue(message.file.sizeBytes);
     if (!query.exec()) return false;
-    return query.numRowsAffected() > 0;
+    const bool inserted = query.numRowsAffected() > 0;
+    if (!inserted && message.createdAtMillis > 0) {
+        QSqlQuery enrich(db_);
+        enrich.prepare(QStringLiteral("UPDATE messages SET created_at = ? WHERE id = ?"));
+        enrich.addBindValue(message.createdAtMillis);
+        enrich.addBindValue(message.id);
+        enrich.exec();
+    }
+    return inserted;
 }
 
 void LocalMessageDatabase::adoptMessageId(const QString& oldId, const QString& newId) {
@@ -246,5 +254,15 @@ void LocalMessageDatabase::updateMessageStatus(const QString& messageId, RemoteI
     query.prepare(QStringLiteral("UPDATE messages SET status = ? WHERE id = ?"));
     query.addBindValue(static_cast<int>(status));
     query.addBindValue(messageId);
+    query.exec();
+}
+
+void LocalMessageDatabase::updateMessageTime(const QString& messageId, qint64 createdAtMillis) {
+    if (!db_.isOpen() || messageId.isEmpty()) return;
+    QSqlQuery query(db_);
+    query.prepare(QStringLiteral("UPDATE messages SET created_at = ? WHERE id = ? AND ? > 0"));
+    query.addBindValue(createdAtMillis);
+    query.addBindValue(messageId);
+    query.addBindValue(createdAtMillis);
     query.exec();
 }

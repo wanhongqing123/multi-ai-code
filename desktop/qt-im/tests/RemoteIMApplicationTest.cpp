@@ -1,6 +1,7 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
+#include <algorithm>
 #include <memory>
 
 #include "app/RemoteIMApplication.h"
@@ -100,9 +101,15 @@ void RemoteIMApplicationTest::persistsMessagesAcrossRestart() {
                                   std::make_unique<LocalMessageDatabase>(dbPath));
     const QList<RemoteIMMessage> messages = restarted.chatState().messagesWith(QStringLiteral("phone-user"));
     QCOMPARE(messages.size(), 2);
-    QCOMPARE(messages.first().text, QStringLiteral("hello"));
-    QCOMPARE(messages.first().status, RemoteIMMessageStatus::Sent);
-    QCOMPARE(messages.last().text, QStringLiteral("from phone"));
+    const auto sent = std::find_if(messages.cbegin(), messages.cend(), [](const RemoteIMMessage& message) {
+        return message.text == QStringLiteral("hello");
+    });
+    const auto received = std::find_if(messages.cbegin(), messages.cend(), [](const RemoteIMMessage& message) {
+        return message.text == QStringLiteral("from phone");
+    });
+    QVERIFY(sent != messages.cend());
+    QVERIFY(received != messages.cend());
+    QCOMPARE(sent->status, RemoteIMMessageStatus::Sent);
     QCOMPARE(restarted.chatState().contacts().size(), 1);
 }
 

@@ -29,6 +29,7 @@ public:
     RemoteIMMessage receiveFile(const QString& fromUserId, const QString& localPath, const QString& fileName, const QString& mimeType, qint64 sizeBytes);
     QList<RemoteIMMessage> messagesWith(const QString& peerId) const;
     bool updateMessageStatus(const QString& messageId, RemoteIMMessageStatus status);
+    bool updateMessageTime(const QString& messageId, qint64 createdAtMillis);
     // 出站消息发送成功后，把本地临时 UUID 换成 SDK 确认的稳定 id（漫游重投可
     // 据此去重）。新 id 已存在（漫游先到）时删除旧临时消息，返回 false。
     bool adoptMessageId(const QString& oldId, const QString& newId);

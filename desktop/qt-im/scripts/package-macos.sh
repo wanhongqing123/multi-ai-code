@@ -111,7 +111,8 @@ cat > "$staging/使用说明.txt" <<'README'
 Multi-AI Code IM 桌面客户端（macOS）
 ===================================
 
-运行：双击 Multi-AI Code IM.app。
+安装：将 Multi-AI Code IM.app 拖到右侧 Applications 文件夹。
+运行：复制完成后，从“应用程序”或 Launchpad 打开 Multi-AI Code IM。
 
 - 无需在目标机器安装 Qt，Qt 运行时已随 .app 旁挂。
 - 原生 IM SDK 已随包放在 .app 内部，请不要手动移动 .app 内的 vendor 目录。
@@ -128,6 +129,13 @@ if command -v codesign >/dev/null 2>&1; then
   codesign --verify --deep --strict "$staged_app"
 fi
 
+bundle_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$staged_app/Contents/Info.plist" 2>/dev/null || true)"
+short_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$staged_app/Contents/Info.plist" 2>/dev/null || true)"
+if [[ -z "$bundle_version" || -z "$short_version" ]]; then
+  echo "Invalid app bundle: CFBundleVersion and CFBundleShortVersionString must be set." >&2
+  exit 1
+fi
+
 git_hash="$(git -C "$repo_root" rev-parse --short HEAD 2>/dev/null || true)"
 if [[ -z "$git_hash" ]]; then
   git_hash="unknown"
@@ -135,17 +143,69 @@ fi
 
 dmg_name="MultiAIIM-macos-arm64-$(date +%Y%m%d)-$git_hash.dmg"
 dmg_path="$dist_root/$dmg_name"
-rm -f "$dmg_path"
+rw_dmg="$dist_root/.${dmg_name%.dmg}-rw.dmg"
+mount_dir=""
+mounted_device=""
+dmgbuild_script="$repo_root/node_modules/dmg-builder/vendor/dmgbuild/core.py"
+
+cleanup() {
+  if [[ -n "$mounted_device" ]]; then
+    hdiutil detach "$mounted_device" -quiet || true
+  fi
+  rm -f "$rw_dmg"
+}
+trap cleanup EXIT
+
+rm -f "$dmg_path" "$rw_dmg"
 hdiutil create \
   -volname "Multi-AI Code IM" \
   -srcfolder "$staging" \
   -ov \
-  -format UDZO \
-  -fs APFS \
-  "$dmg_path"
+  -format UDRW \
+  -fs HFS+ \
+  "$rw_dmg"
+
+attach_output="$(hdiutil attach "$rw_dmg" -readwrite -noverify -noautoopen)"
+mounted_device="$(printf '%s\n' "$attach_output" | awk '/Apple_HFS/ {print $1; exit}')"
+mount_dir="$(printf '%s\n' "$attach_output" | sed -nE 's|^/dev/[^[:space:]]+[[:space:]]+Apple_HFS[[:space:]]+||p' | head -1)"
+if [[ -z "$mounted_device" || -z "$mount_dir" || ! -d "$mount_dir" ]]; then
+  echo "Unable to mount writable DMG." >&2
+  exit 1
+fi
+
+if [[ ! -f "$dmgbuild_script" ]]; then
+  echo "Missing DMG layout helper: $dmgbuild_script" >&2
+  echo "Install the repository's Node dependencies before packaging." >&2
+  exit 1
+fi
+
+# Write Finder metadata directly so the install layout does not depend on the
+# packaging machine allowing Finder to persist .DS_Store files.
+env \
+  volumePath="$mount_dir" \
+  iconSize=96 \
+  iconTextSize=13 \
+  windowX=120 \
+  windowY=120 \
+  windowWidth=580 \
+  windowHeight=380 \
+  backgroundColor="#ffffff" \
+  iconLocations="'Multi-AI Code IM.app': (150, 165), 'Applications': (430, 165), '使用说明.txt': (290, 315)" \
+  python3 "$dmgbuild_script"
+
+sync
+if [[ ! -f "$mount_dir/.DS_Store" ]]; then
+  echo "Unable to create the DMG Finder layout." >&2
+  exit 1
+fi
+hdiutil detach "$mounted_device" -quiet
+mounted_device=""
+hdiutil convert "$rw_dmg" -format UDZO -imagekey zlib-level=9 -ov -o "$dmg_path"
+rm -f "$rw_dmg"
 
 size="$(du -h "$dmg_path" | awk '{print $1}')"
 echo
 echo "Qt IM macOS DMG:"
 echo "  Directory: $staging"
 echo "  Image:     $dmg_path ($size)"
+echo "  Version:   $short_version ($bundle_version)"

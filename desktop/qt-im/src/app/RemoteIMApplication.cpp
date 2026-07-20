@@ -98,10 +98,14 @@ void RemoteIMApplication::sendText(const QString& text) {
     emit stateChanged();
 
     client_->sendText(message.toUserId, message.text,
-                      [this, messageId = message.id](bool ok, const QString& error, const QString& remoteMessageId) {
+                      [this, messageId = message.id](bool ok, const QString& error, const RemoteIMSendReceipt& receipt) {
         // 发送成功且 SDK 给了稳定 id：内存与库同步换 id，漫游重投同一条消息
         // 时按主键去重（否则临时 UUID 与漫游 id 对不上，重启后会重复显示）。
-        const QString effectiveId = adoptRemoteMessageId(messageId, ok ? remoteMessageId : QString());
+        const QString effectiveId = adoptRemoteMessageId(messageId, ok ? receipt.remoteMessageId : QString());
+        if (ok) {
+            state_.updateMessageTime(effectiveId, receipt.createdAtMillis);
+            if (database_) database_->updateMessageTime(effectiveId, receipt.createdAtMillis);
+        }
         markMessage(effectiveId, ok ? RemoteIMMessageStatus::Sent : RemoteIMMessageStatus::Failed);
         if (!ok) emit errorMessage(error.isEmpty() ? QStringLiteral("文本消息发送失败") : error);
     });
@@ -117,8 +121,12 @@ void RemoteIMApplication::sendImage(const QString& localPath) {
     emit stateChanged();
 
     client_->sendImage(message.toUserId, cleanPath,
-                       [this, messageId = message.id](bool ok, const QString& error, const QString& remoteMessageId) {
-        const QString effectiveId = adoptRemoteMessageId(messageId, ok ? remoteMessageId : QString());
+                       [this, messageId = message.id](bool ok, const QString& error, const RemoteIMSendReceipt& receipt) {
+        const QString effectiveId = adoptRemoteMessageId(messageId, ok ? receipt.remoteMessageId : QString());
+        if (ok) {
+            state_.updateMessageTime(effectiveId, receipt.createdAtMillis);
+            if (database_) database_->updateMessageTime(effectiveId, receipt.createdAtMillis);
+        }
         markMessage(effectiveId, ok ? RemoteIMMessageStatus::Sent : RemoteIMMessageStatus::Failed);
         if (!ok) emit errorMessage(error.isEmpty() ? QStringLiteral("图片消息发送失败") : error);
     });

@@ -67,10 +67,14 @@ void FakeRemoteIMClient::completeSend(RemoteIMSendCompletion completion) {
     if (!completion) return;
     if (nextError_.isEmpty()) {
         // 模拟 SDK 回执的稳定消息 id（与真实实现的 <msg_id>#<elem> 结构对齐）。
-        completion(true, QString(), QStringLiteral("fake-remote-%1#0").arg(++sentSequence_));
+        const qint64 sequence = ++sentSequence_;
+        completion(true, QString(), RemoteIMSendReceipt{
+            QStringLiteral("fake-remote-%1#0").arg(sequence),
+            QDateTime::currentMSecsSinceEpoch()
+        });
         return;
     }
     const QString error = nextError_;
     nextError_.clear();
-    completion(false, error, QString());
+    completion(false, error, {});
 }

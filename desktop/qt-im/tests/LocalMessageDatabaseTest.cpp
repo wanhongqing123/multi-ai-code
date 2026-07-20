@@ -30,6 +30,7 @@ private slots:
     void insertsAndDeduplicatesById();
     void persistsAcrossReopen();
     void loadsMessagesSortedByTime();
+    void correctsExistingMessageTimeFromSdkDuplicate();
     void updatesMessageStatus();
     void cascadesContactDeletion();
     void adoptsMessageIdAndResolvesConflict();
@@ -95,6 +96,31 @@ void LocalMessageDatabaseTest::loadsMessagesSortedByTime() {
     QCOMPARE(state.messages().size(), 2);
     QCOMPARE(state.messages().first().id, QStringLiteral("early"));
     QCOMPARE(state.messages().last().id, QStringLiteral("late"));
+}
+
+void LocalMessageDatabaseTest::correctsExistingMessageTimeFromSdkDuplicate() {
+    QTemporaryDir dir;
+    LocalMessageDatabase db(dir.filePath("messages.db"));
+
+    const RemoteIMMessage legacyAck = makeTextMessage(
+        "a-ack", "me", "peer", RemoteIMMessageDirection::Outgoing, 1001, "ack");
+    const RemoteIMMessage legacyRequest = makeTextMessage(
+        "z-request", "peer", "me", RemoteIMMessageDirection::Incoming, 1482, "request");
+    QVERIFY(db.insertMessageIfAbsent(legacyAck, "peer"));
+    QVERIFY(db.insertMessageIfAbsent(legacyRequest, "peer"));
+
+    // 漫游命中旧记录时不重复插入，但会用 SDK 会话顺序生成的规范化时间
+    // 替换本机乐观发送时间。
+    RemoteIMMessage correctedRequest = legacyRequest;
+    correctedRequest.createdAtMillis = 1000;
+    QVERIFY(!db.insertMessageIfAbsent(correctedRequest, "peer"));
+
+    ChatState state("me");
+    db.loadInto(state);
+    const QList<RemoteIMMessage> messages = state.messagesWith("peer");
+    QCOMPARE(messages.size(), 2);
+    QCOMPARE(messages.at(0).id, QStringLiteral("z-request"));
+    QCOMPARE(messages.at(1).id, QStringLiteral("a-ack"));
 }
 
 void LocalMessageDatabaseTest::updatesMessageStatus() {

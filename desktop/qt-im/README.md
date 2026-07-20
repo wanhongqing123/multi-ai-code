@@ -99,6 +99,8 @@ desktop/qt-im/scripts/package-macos.sh
 
 - 使用 `macdeployqt` 旁挂 Qt framework；
 - 把原生 IM SDK framework 放进应用内置 vendor 目录；
+- 生成标准 Finder 安装窗口，提示把应用拖到 `Applications`；
+- 校验 `CFBundleVersion` 与 `CFBundleShortVersionString`，确保 Launchpad 可索引；
 - 对 `.app` 做 ad-hoc codesign，避免嵌入 framework 因未签名无法加载；
 - 生成 `使用说明.txt` 并压缩打包。
 

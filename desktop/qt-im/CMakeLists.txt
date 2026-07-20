@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 # C 用于 third_party/md4c（Markdown 解析，纯 C 实现）。
-project(MultiAIIMDesktop LANGUAGES C CXX)
+project(MultiAIIMDesktop VERSION 0.1.4 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -101,6 +101,8 @@ if(APPLE)
     MACOSX_BUNDLE_BUNDLE_NAME "Multi-AI Code IM"
     MACOSX_BUNDLE_GUI_IDENTIFIER "com.multi-ai-code.im.desktop"
     MACOSX_BUNDLE_ICON_FILE "AppIcon.icns"
+    MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+    MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
   )
 endif()
 target_link_libraries(multi_ai_im_desktop PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets)

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QHash>
 #include <QNetworkAccessManager>
 #include <memory>
 
@@ -29,6 +30,7 @@ private:
     void handleFriendListPayload(const QString& jsonPayload);
     void handleConversationListPayload(const QString& jsonPayload);
     void handleHistoryMessagesPayload(const QString& jsonPayload);
+    qint64 orderedMessageTime(const QString& peerId, qint64 sdkTimeMillis);
     QString sdkConfigJson() const;
     void handleIncomingMessages(const QString& jsonMessages);
     void handleIncomingMessage(const QJsonObject& message);
@@ -42,5 +44,7 @@ private:
     std::unique_ptr<TimSdkApi> api_;
     QNetworkAccessManager network_;
     QString currentUserId_;
+    QHash<QString, qint64> orderedSecondByPeer_;
+    QHash<QString, int> nextOrderInSecondByPeer_;
     bool connected_ = false;
 };

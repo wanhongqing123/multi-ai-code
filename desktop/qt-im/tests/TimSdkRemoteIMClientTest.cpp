@@ -167,15 +167,17 @@ void TimSdkRemoteIMClientTest::connectsThroughSdkAndSendsTextAndImage() {
     QVERIFY(fake->receiveCallback != nullptr);
 
     bool textSent = false;
-    QString sentRemoteId;
-    fake->sendPayload = QStringLiteral("{\"message_msg_id\":\"sdk-sent-1\"}");
-    client.sendText(QStringLiteral("phone-user"), QStringLiteral("hello\nworld"), [&](bool ok, const QString&, const QString& remoteMessageId) {
+    RemoteIMSendReceipt sentReceipt;
+    fake->sendPayload = QStringLiteral(
+        "{\"message_msg_id\":\"sdk-sent-1\",\"message_server_time\":1700000001}");
+    client.sendText(QStringLiteral("phone-user"), QStringLiteral("hello\nworld"), [&](bool ok, const QString&, const RemoteIMSendReceipt& receipt) {
         textSent = ok;
-        sentRemoteId = remoteMessageId;
+        sentReceipt = receipt;
     });
     QVERIFY(textSent);
-    // 发送回执带 SDK 稳定 id（与漫游/实时投递同一 <msg_id>#<elem> 编号规则）。
-    QCOMPARE(sentRemoteId, QStringLiteral("sdk-sent-1#0"));
+    // 发送回执带 SDK 稳定 id 与服务端顺序（和漫游/实时投递使用同一排序键）。
+    QCOMPARE(sentReceipt.remoteMessageId, QStringLiteral("sdk-sent-1#0"));
+    QCOMPARE(sentReceipt.createdAtMillis, Q_INT64_C(1700000001) * 1000);
     QCOMPARE(fake->lastConversationId, QStringLiteral("phone-user"));
     QCOMPARE(fake->lastConversationType, 1);
     QJsonObject elem = firstElement(fake->lastJsonMessage);
@@ -183,7 +185,7 @@ void TimSdkRemoteIMClientTest::connectsThroughSdkAndSendsTextAndImage() {
     QCOMPARE(elem.value(QStringLiteral("text_elem_content")).toString(), QStringLiteral("hello\nworld"));
 
     bool imageSent = false;
-    client.sendImage(QStringLiteral("phone-user"), QStringLiteral("/tmp/outgoing.png"), [&](bool ok, const QString&, const QString&) {
+    client.sendImage(QStringLiteral("phone-user"), QStringLiteral("/tmp/outgoing.png"), [&](bool ok, const QString&, const RemoteIMSendReceipt&) {
         imageSent = ok;
     });
     QVERIFY(imageSent);
@@ -235,24 +237,26 @@ void TimSdkRemoteIMClientTest::fetchesContactsConversationsAndHistoryAfterLogin(
     }).toJson(QJsonDocument::Compact));
     fake->historyPayload = QString::fromUtf8(QJsonDocument(QJsonArray{
         QJsonObject{
-            {QStringLiteral("message_is_from_self"), false},
-            {QStringLiteral("message_sender"), QStringLiteral("phone-user")},
-            {QStringLiteral("message_conv_id"), QStringLiteral("phone-user")},
-            {QStringLiteral("message_elem_array"), QJsonArray{
-                QJsonObject{
-                    {QStringLiteral("elem_type"), 0},
-                    {QStringLiteral("text_elem_content"), QStringLiteral("历史消息")}
-                }
-            }}
-        },
-        QJsonObject{
             {QStringLiteral("message_is_from_self"), true},
             {QStringLiteral("message_sender"), QStringLiteral("desktop-user")},
             {QStringLiteral("message_conv_id"), QStringLiteral("phone-user")},
+            {QStringLiteral("message_server_time"), 1700000000},
             {QStringLiteral("message_elem_array"), QJsonArray{
                 QJsonObject{
                     {QStringLiteral("elem_type"), 0},
                     {QStringLiteral("text_elem_content"), QStringLiteral("我发过的历史")}
+                }
+            }}
+        },
+        QJsonObject{
+            {QStringLiteral("message_is_from_self"), false},
+            {QStringLiteral("message_sender"), QStringLiteral("phone-user")},
+            {QStringLiteral("message_conv_id"), QStringLiteral("phone-user")},
+            {QStringLiteral("message_server_time"), 1700000000},
+            {QStringLiteral("message_elem_array"), QJsonArray{
+                QJsonObject{
+                    {QStringLiteral("elem_type"), 0},
+                    {QStringLiteral("text_elem_content"), QStringLiteral("历史消息")}
                 }
             }}
         }
@@ -290,6 +294,7 @@ void TimSdkRemoteIMClientTest::fetchesContactsConversationsAndHistoryAfterLogin(
     QCOMPARE(messages.at(1).fromUserId, QStringLiteral("desktop-user"));
     QCOMPARE(messages.at(1).toUserId, QStringLiteral("phone-user"));
     QCOMPARE(messages.at(1).text, QStringLiteral("我发过的历史"));
+    QVERIFY(messages.at(0).createdAtMillis < messages.at(1).createdAtMillis);
 }
 
 void TimSdkRemoteIMClientTest::emitsIncomingTextAndImageFromSdkMessages() {

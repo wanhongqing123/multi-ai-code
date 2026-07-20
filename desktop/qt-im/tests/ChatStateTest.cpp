@@ -13,6 +13,7 @@ private slots:
     void receivesIncomingFile();
     void updatesMessageStatus();
     void returnsPeerMessagesChronologically();
+    void reordersSameSecondMessagesAfterTimeCorrection();
     void removesContactAndMessages();
     void adoptsRemoteMessageIdAndDropsDuplicateTemp();
 };
@@ -29,6 +30,7 @@ void ChatStateTest::queuesOutgoingText() {
     QCOMPARE(message.text, QString("ping"));
     QCOMPARE(message.direction, RemoteIMMessageDirection::Outgoing);
     QCOMPARE(message.status, RemoteIMMessageStatus::Pending);
+    QCOMPARE(message.createdAtMillis % 1000, Q_INT64_C(0));
     QCOMPARE(state.messagesWith("ios-user").size(), 1);
 }
 
@@ -143,6 +145,39 @@ void ChatStateTest::returnsPeerMessagesChronologically() {
     QCOMPARE(messages.at(0).text, QStringLiteral("10s"));
     QCOMPARE(messages.at(1).text, QStringLiteral("20s"));
     QCOMPARE(messages.at(2).text, QStringLiteral("30s"));
+}
+
+void ChatStateTest::reordersSameSecondMessagesAfterTimeCorrection() {
+    ChatState state("desktop-user");
+
+    RemoteIMMessage request;
+    request.id = QStringLiteral("z-request");
+    request.fromUserId = QStringLiteral("ios-user");
+    request.toUserId = QStringLiteral("desktop-user");
+    request.text = QStringLiteral("检查编译流程");
+    request.direction = RemoteIMMessageDirection::Incoming;
+    request.createdAtMillis = 10'482;
+
+    RemoteIMMessage ack = request;
+    ack.id = QStringLiteral("a-ack");
+    ack.fromUserId = QStringLiteral("desktop-user");
+    ack.toUserId = QStringLiteral("ios-user");
+    ack.text = QStringLiteral("已发送给当前 AICLI，开始处理。");
+    ack.direction = RemoteIMMessageDirection::Outgoing;
+    ack.createdAtMillis = 10'000;
+
+    // 本机乐观消息带毫秒，随后收到的 SDK 消息只有秒级时间：确认信息回写前
+    // 会错误地把后发回执排在用户消息前面。
+    state.appendMessageForRestore(request);
+    state.appendMessageForRestore(ack);
+    QCOMPARE(state.messagesWith(QStringLiteral("ios-user")).first().id, QStringLiteral("a-ack"));
+
+    QVERIFY(state.updateMessageTime(QStringLiteral("z-request"), 10'000));
+
+    const QList<RemoteIMMessage> messages = state.messagesWith(QStringLiteral("ios-user"));
+    QCOMPARE(messages.size(), 2);
+    QCOMPARE(messages.at(0).id, QStringLiteral("z-request"));
+    QCOMPARE(messages.at(1).id, QStringLiteral("a-ack"));
 }
 
 void ChatStateTest::removesContactAndMessages() {

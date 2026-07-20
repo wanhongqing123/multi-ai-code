@@ -1238,9 +1238,23 @@ void MainWindow::refreshMessages() {
     updateComposerState();
 
     const QList<RemoteIMMessage> messages = app_.chatState().messagesWith(selectedPeer);
-    const bool needFullRebuild = selectedPeer != renderedPeerId_
+    bool needFullRebuild = selectedPeer != renderedPeerId_
         || renderedEmptyView_ != messages.isEmpty()
         || messageLayout_->count() == 0;
+    if (!needFullRebuild && renderedMessageIds_.size() == messages.size()) {
+        QStringList nextIds;
+        nextIds.reserve(messages.size());
+        for (const RemoteIMMessage& message : messages) nextIds.append(message.id);
+        if (nextIds != renderedMessageIds_) {
+            QSet<QString> renderedIds;
+            QSet<QString> nextIdSet;
+            for (const QString& id : renderedMessageIds_) renderedIds.insert(id);
+            for (const QString& id : nextIds) nextIdSet.insert(id);
+            // 漫游记录为旧消息补齐规范化时间后，同一批消息可能需要原位重排。
+            // 增删仍走增量路径；仅集合相同但顺序变化时完整重建。
+            needFullRebuild = renderedIds == nextIdSet;
+        }
+    }
     if (needFullRebuild) {
         rebuildMessageList(selectedPeer, messages);
         return;

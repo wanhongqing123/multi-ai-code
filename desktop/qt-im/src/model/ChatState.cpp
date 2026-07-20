@@ -77,6 +77,7 @@ RemoteIMMessage ChatState::queueOutgoingText(const QString& text) {
     message.text = cleanText;
     message.direction = RemoteIMMessageDirection::Outgoing;
     message.status = RemoteIMMessageStatus::Pending;
+    message.createdAtMillis = (message.createdAtMillis / 1000) * 1000;
     appendTracked(message);
     return message;
 }
@@ -91,6 +92,7 @@ RemoteIMMessage ChatState::queueOutgoingImage(const QString& localPath, int widt
     message.direction = RemoteIMMessageDirection::Outgoing;
     message.status = RemoteIMMessageStatus::Pending;
     message.hasImage = true;
+    message.createdAtMillis = (message.createdAtMillis / 1000) * 1000;
     message.image = RemoteIMImageAttachment{cleanPath, width, height, sizeBytes};
     appendTracked(message);
     return message;
@@ -222,6 +224,15 @@ bool ChatState::updateMessageStatus(const QString& messageId, RemoteIMMessageSta
     return false;
 }
 
+bool ChatState::updateMessageTime(const QString& messageId, qint64 createdAtMillis) {
+    for (RemoteIMMessage& message : messages_) {
+        if (message.id != messageId) continue;
+        if (createdAtMillis > 0) message.createdAtMillis = createdAtMillis;
+        return true;
+    }
+    return false;
+}
+
 bool ChatState::adoptMessageId(const QString& oldId, const QString& newId) {
     if (oldId.isEmpty() || newId.isEmpty() || oldId == newId) return false;
     if (messageIds_.contains(newId)) {
@@ -246,7 +257,16 @@ bool ChatState::adoptMessageId(const QString& oldId, const QString& newId) {
 void ChatState::appendMessageForRestore(const RemoteIMMessage& message) {
     // 本地库加载与 SDK 漫游补充共用此入口：按消息 id 去重，重复直接丢弃
     // （展示顺序由 messagesWith 的稳定排序保证，无需在此排序）。
-    if (messageIds_.contains(message.id)) return;
+    if (messageIds_.contains(message.id)) {
+        // SDK 漫游命中同一消息时，用规范化时间替换旧版保存的本机毫秒时间，
+        // 使同一秒内的消息无需清库也能恢复真实先后顺序。
+        for (RemoteIMMessage& existing : messages_) {
+            if (existing.id != message.id) continue;
+            if (message.createdAtMillis > 0) existing.createdAtMillis = message.createdAtMillis;
+            break;
+        }
+        return;
+    }
     RemoteIMMessage restored = message;
     if (restored.direction == RemoteIMMessageDirection::Incoming) {
         restored.text = incomingDisplayText(restored.text);

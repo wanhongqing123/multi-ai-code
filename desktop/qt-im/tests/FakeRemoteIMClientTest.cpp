@@ -21,7 +21,7 @@ void FakeRemoteIMClientTest::sendsTextAndEmitsIncomingText() {
     });
 
     bool sent = false;
-    client.sendText("ios-user", "ping", [&](bool ok, const QString&, const QString&) {
+    client.sendText("ios-user", "ping", [&](bool ok, const QString&, const RemoteIMSendReceipt&) {
         sent = ok;
     });
     client.emitIncomingText("ios-user", "done");
@@ -39,7 +39,7 @@ void FakeRemoteIMClientTest::canFailNextOperation() {
 
     bool sent = true;
     QString error;
-    client.sendText("ios-user", "ping", [&](bool ok, const QString& message, const QString&) {
+    client.sendText("ios-user", "ping", [&](bool ok, const QString& message, const RemoteIMSendReceipt&) {
         sent = ok;
         error = message;
     });

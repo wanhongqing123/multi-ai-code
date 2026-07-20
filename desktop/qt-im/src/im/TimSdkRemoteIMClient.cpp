@@ -119,12 +119,17 @@ QString sdkElemMessageId(const QString& sdkId, int elemIndex) {
     return sdkId + QLatin1Char('#') + QString::number(elemIndex);
 }
 
-// TIMMsgSendMessage 回调的 json_param 是服务端确认后的消息对象：取其 msg id
-// 并按首个 elem 编号，供出站记录把临时 UUID 换成稳定 id（与漫游投递去重）。
-QString sentMessageElemId(const QString& jsonPayload) {
+// TIMMsgSendMessage 回调的 json_param 是服务端确认后的消息对象。出站记录采纳
+// 同一稳定 id 和服务端时间，避免本地毫秒时间与 SDK 秒级时间混排。
+RemoteIMSendReceipt sentMessageReceipt(const QString& jsonPayload) {
     const QJsonDocument doc = QJsonDocument::fromJson(jsonPayload.toUtf8());
     const QJsonObject object = doc.isArray() ? doc.array().at(0).toObject() : doc.object();
-    return sdkElemMessageId(sdkMessageId(object), 0);
+    RemoteIMSendReceipt receipt;
+    receipt.remoteMessageId = sdkElemMessageId(sdkMessageId(object), 0);
+    const qint64 seconds = static_cast<qint64>(object.value(QStringLiteral("message_server_time")).toDouble(
+        object.value(QStringLiteral("message_client_time")).toDouble(0)));
+    if (seconds > 0) receipt.createdAtMillis = seconds * 1000;
+    return receipt;
 }
 
 }  // namespace
@@ -134,6 +139,17 @@ TimSdkRemoteIMClient::TimSdkRemoteIMClient(QObject* parent)
 
 TimSdkRemoteIMClient::TimSdkRemoteIMClient(std::unique_ptr<TimSdkApi> api, QObject* parent)
     : RemoteIMClient(parent), api_(std::move(api)) {}
+
+qint64 TimSdkRemoteIMClient::orderedMessageTime(const QString& peerId, qint64 sdkTimeMillis) {
+    const qint64 second = sdkTimeMillis / 1000;
+    if (orderedSecondByPeer_.value(peerId, -1) != second) {
+        orderedSecondByPeer_.insert(peerId, second);
+        nextOrderInSecondByPeer_.insert(peerId, 0);
+    }
+    const int orderInSecond = nextOrderInSecondByPeer_.value(peerId, 0);
+    nextOrderInSecondByPeer_.insert(peerId, orderInSecond + 1);
+    return second * 1000 + orderInSecond;
+}
 
 TimSdkRemoteIMClient::~TimSdkRemoteIMClient() {
     if (api_) {
@@ -232,7 +248,7 @@ void TimSdkRemoteIMClient::sendText(const QString& peerId, const QString& text, 
     const QString cleanPeerId = peerId.trimmed();
     const QString cleanText = text.trimmed();
     if (cleanPeerId.isEmpty() || cleanText.isEmpty()) {
-        if (completion) completion(false, QStringLiteral("文本消息缺少接收人或内容"), QString());
+        if (completion) completion(false, QStringLiteral("文本消息缺少接收人或内容"), {});
         return;
     }
 
@@ -246,9 +262,10 @@ void TimSdkRemoteIMClient::sendText(const QString& peerId, const QString& text, 
                                                                                                                     const QString& jsonPayload) mutable {
         if (!completion) return;
         const bool ok = code == 0;
+        RemoteIMSendReceipt receipt = ok ? sentMessageReceipt(jsonPayload) : RemoteIMSendReceipt{};
         completion(ok,
                    ok ? QString() : (description.isEmpty() ? QStringLiteral("IM SDK 操作失败：%1").arg(code) : description),
-                   ok ? sentMessageElemId(jsonPayload) : QString());
+                   receipt);
     });
 }
 
@@ -256,7 +273,7 @@ void TimSdkRemoteIMClient::sendImage(const QString& peerId, const QString& local
     const QString cleanPeerId = peerId.trimmed();
     const QString cleanPath = localPath.trimmed();
     if (cleanPeerId.isEmpty() || cleanPath.isEmpty()) {
-        if (completion) completion(false, QStringLiteral("图片消息缺少接收人或图片路径"), QString());
+        if (completion) completion(false, QStringLiteral("图片消息缺少接收人或图片路径"), {});
         return;
     }
 
@@ -271,9 +288,10 @@ void TimSdkRemoteIMClient::sendImage(const QString& peerId, const QString& local
                                                                                                                     const QString& jsonPayload) mutable {
         if (!completion) return;
         const bool ok = code == 0;
+        RemoteIMSendReceipt receipt = ok ? sentMessageReceipt(jsonPayload) : RemoteIMSendReceipt{};
         completion(ok,
                    ok ? QString() : (description.isEmpty() ? QStringLiteral("IM SDK 操作失败：%1").arg(code) : description),
-                   ok ? sentMessageElemId(jsonPayload) : QString());
+                   receipt);
     });
 }
 
@@ -355,15 +373,17 @@ void TimSdkRemoteIMClient::handleConversationListPayload(const QString& jsonPayl
 void TimSdkRemoteIMClient::handleHistoryMessagesPayload(const QString& jsonPayload) {
     QList<RemoteIMMessage> messages;
     const QJsonArray sdkMessages = arrayPayload(jsonPayload);
-    for (const QJsonValue& value : sdkMessages) {
-        const QJsonObject sdkMessage = value.toObject();
+    // is_forward=false 的历史结果按“新到旧”返回；反向遍历后为同一秒消息分配
+    // 递增毫秒，保留 SDK 已确定的会话顺序。
+    for (int messageIndex = sdkMessages.size() - 1; messageIndex >= 0; --messageIndex) {
+        const QJsonObject sdkMessage = sdkMessages.at(messageIndex).toObject();
         const bool isFromSelf = sdkMessage.value(QStringLiteral("message_is_from_self")).toBool(false);
         const QString peerId = isFromSelf
                                    ? sdkMessage.value(QStringLiteral("message_conv_id")).toString().trimmed()
                                    : firstNonEmpty(sdkMessage, {QStringLiteral("message_sender"), QStringLiteral("message_conv_id")});
         if (peerId.isEmpty()) continue;
 
-        const qint64 createdAtMillis = messageTimeMillis(sdkMessage);
+        const qint64 sdkTimeMillis = messageTimeMillis(sdkMessage);
         const QString sdkId = sdkMessageId(sdkMessage);
         const QJsonArray elems = sdkMessage.value(QStringLiteral("message_elem_array")).toArray();
         for (int elemIndex = 0; elemIndex < elems.size(); ++elemIndex) {
@@ -375,7 +395,7 @@ void TimSdkRemoteIMClient::handleHistoryMessagesPayload(const QString& jsonPaylo
             message.toUserId = isFromSelf ? peerId : currentUserId_;
             message.direction = isFromSelf ? RemoteIMMessageDirection::Outgoing : RemoteIMMessageDirection::Incoming;
             message.status = isFromSelf ? RemoteIMMessageStatus::Sent : RemoteIMMessageStatus::Received;
-            message.createdAtMillis = createdAtMillis;
+            message.createdAtMillis = orderedMessageTime(peerId, sdkTimeMillis);
 
             const int elemType = elem.value(QStringLiteral("elem_type")).toInt(-1);
             if (elemType == kElemText) {
@@ -457,8 +477,8 @@ void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
     // RemoteIMMessage（含稳定 SDK id 与服务器时间），经 messagesReceived 通道
     // 送出，本地库据 id 去重，重登时不会与漫游重复。
     const QString sdkId = sdkMessageId(message);
-    const qint64 createdAtMillis = messageTimeMillis(message);
-    const auto baseMessage = [this, &fromUserId, &sdkId, createdAtMillis](int elemIndex) {
+    const qint64 sdkTimeMillis = messageTimeMillis(message);
+    const auto baseMessage = [this, &fromUserId, &sdkId, sdkTimeMillis](int elemIndex) {
         RemoteIMMessage result;
         const QString stableId = sdkElemMessageId(sdkId, elemIndex);
         if (!stableId.isEmpty()) result.id = stableId;
@@ -466,7 +486,7 @@ void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
         result.toUserId = currentUserId_;
         result.direction = RemoteIMMessageDirection::Incoming;
         result.status = RemoteIMMessageStatus::Received;
-        result.createdAtMillis = createdAtMillis;
+        result.createdAtMillis = orderedMessageTime(fromUserId, sdkTimeMillis);
         return result;
     };
 

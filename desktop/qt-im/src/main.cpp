@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QFont>
+#include <QSslSocket>
 #include <QStandardPaths>
 #include <QTimer>
 #include <memory>
@@ -64,6 +65,18 @@ int main(int argc, char* argv[]) {
     QApplication::setApplicationName(QStringLiteral("Desktop IM"));
     QApplication::setOrganizationName(QStringLiteral("Multi-AI IM"));
     migrateLegacyAppData();
+
+    // 接收图片/文件需要走 HTTPS 下载（QNetworkAccessManager），Qt 5.15 依赖 OpenSSL 1.1。
+    // 未随包携带 libssl/libcrypto 时 supportsSsl() 为假，图片/文件下载会静默失败——
+    // 表现为“文字能收、图片收不到”。此处给出明确告警便于定位。
+    qInfo().noquote() << QStringLiteral("[remote-im] OpenSSL supportsSsl=%1 build=%2")
+                             .arg(QSslSocket::supportsSsl() ? QStringLiteral("true") : QStringLiteral("false"))
+                             .arg(QSslSocket::sslLibraryBuildVersionString());
+    if (!QSslSocket::supportsSsl()) {
+        qWarning().noquote() << QStringLiteral(
+            "[remote-im] OpenSSL 不可用：接收到的图片/文件将无法下载显示，请随应用携带 "
+            "libssl-1_1-x64.dll 与 libcrypto-1_1-x64.dll。");
+    }
 
 #ifdef Q_OS_WIN
     // 对齐 Electron 端（--mac-font-sans：Inter/Segoe UI + Noto Sans SC/微软雅黑）：

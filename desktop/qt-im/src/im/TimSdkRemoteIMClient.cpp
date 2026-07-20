@@ -561,11 +561,16 @@ void TimSdkRemoteIMClient::handleIncomingImageUrl(RemoteIMMessage message, const
     }
 
     QNetworkReply* reply = network_.get(QNetworkRequest(QUrl(url)));
-    connect(reply, &QNetworkReply::finished, this, [this, reply, message] {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, message, url] {
         const QByteArray data = reply->readAll();
         const bool ok = reply->error() == QNetworkReply::NoError && !data.isEmpty();
+        const QString err = reply->errorString();
         reply->deleteLater();
-        if (!ok) return;
+        if (!ok) {
+            // 常见原因：未携带 OpenSSL 1.1 导致 HTTPS 请求失败（supportsSsl()==false）。
+            qWarning().noquote() << QStringLiteral("[remote-im] 图片下载失败：%1 — %2").arg(err, url);
+            return;
+        }
         QFile file(message.image.localPath);
         if (!file.open(QIODevice::WriteOnly)) return;
         file.write(data);

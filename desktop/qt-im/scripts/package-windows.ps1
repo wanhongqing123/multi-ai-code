@@ -76,6 +76,17 @@ $imSdkTargetDir = Join-Path $staging 'vendor\tencent-im\windows\shared_lib\Win64
 New-Item -ItemType Directory -Force $imSdkTargetDir | Out-Null
 Copy-Item $imSdkSource $imSdkTargetDir
 
+# OpenSSL 1.1：Qt 5.15 的 QNetworkAccessManager 走 HTTPS 依赖它，windeployqt 不会携带。
+# 缺失时 QSslSocket::supportsSsl()==false，接收到的图片/文件（腾讯 IM 给的是 HTTPS URL，
+# 需本端下载）会静默失败——表现为"文字能收、图片收不到"。显式旁挂，缺失即报错。
+$opensslDir = Join-Path $projectRoot 'vendor\openssl\win64'
+foreach ($ssl in 'libssl-1_1-x64.dll', 'libcrypto-1_1-x64.dll') {
+    $sslSrc = Join-Path $opensslDir $ssl
+    if (-not (Test-Path $sslSrc)) { throw "未找到 $sslSrc（接收图片/文件的 HTTPS 下载需 OpenSSL 1.1）" }
+    Copy-Item $sslSrc $staging -Force
+}
+Write-Host 'OpenSSL 1.1 已旁挂（HTTPS 图片/文件下载所需）'
+
 # 使用说明
 $readme = @"
 Multi-AI IM 桌面客户端（Windows 免安装版）

@@ -10,7 +10,7 @@ export interface MsysInfo {
   bashPath: string | null
   usrBinDir: string | null
   variant: 'msys2' | 'git' | 'path' | null
-  /** Candidates probed (for UI debugging / doctor display). */
+  /** Candidates probed (for UI debugging / env detection display). */
   candidates: { path: string; exists: boolean; variant: 'msys2' | 'git' }[]
 }
 

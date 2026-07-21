@@ -679,19 +679,6 @@ const api = {
         error?: string
       }>
   },
-  doctor: {
-    check: () =>
-      ipcRenderer.invoke('doctor:check') as Promise<
-        Array<{
-          name: string
-          required: boolean
-          ok: boolean
-          version?: string
-          error?: string
-          install: string
-        }>
-      >
-  },
   env: {
     /** Detect MSYS2 / Git-for-Windows bash on the host. */
     detectMsys: () =>

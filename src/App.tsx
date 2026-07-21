@@ -58,7 +58,6 @@ import {
   registerRemoteImOutgoingImageFile
 } from './remote-im/outgoingImageRegistry'
 import OnboardingWizard from './components/OnboardingWizard'
-import DoctorDialog from './components/DoctorDialog'
 import CommandPalette, { type Command } from './components/CommandPalette'
 import ToastHost, { showToast } from './components/Toast'
 import GlobalSearchDialog from './components/GlobalSearchDialog'
@@ -308,7 +307,6 @@ function AppShell() {
   const [showScheduledTaskDialog, setShowScheduledTaskDialog] = useState(false)
   const [showRemoteImDrawer, setShowRemoteImDrawer] = useState(false)
   const [showOnboarding, setShowOnboarding] = useState(false)
-  const [showDoctor, setShowDoctor] = useState(false)
   const [showCmdk, setShowCmdk] = useState(false)
   const [showGlobalSearch, setShowGlobalSearch] = useState(false)
   const [showBuildPanel, setShowBuildPanel] = useState(false)
@@ -560,14 +558,6 @@ function AppShell() {
   }, [])
 
   useEffect(() => {
-    // One-shot Doctor on startup: log any missing CLI into the error panel
-    void window.api.doctor.check().then((results) => {
-      for (const r of results) {
-        if (!r.ok && r.required) {
-          pushLog('warn', `Doctor:${r.name}`, `${r.error ?? '未就绪'} — ${r.install}`)
-        }
-      }
-    })
     // 版本号展示在原生窗口标题栏，主界面 meta 里不再重复。
     window.api.version().then((v) => {
       document.title = v ? `Multi-AI Code v${v}` : 'Multi-AI Code'
@@ -1781,12 +1771,6 @@ function AppShell() {
       action: () => setShowProjectPicker(true)
     },
     {
-      id: 'doctor',
-      label: '🩺 CLI 体检',
-      keywords: 'doctor check health',
-      action: () => setShowDoctor(true)
-    },
-    {
       id: 'settings',
       label: '⚙️ 设置',
       keywords: 'settings command ai cli',
@@ -2053,15 +2037,6 @@ function AppShell() {
             {theme === 'dark' ? '☀' : '☾'}
           </button>
           <button
-            className="topbar-btn topbar-btn-icon"
-            data-tone="teal"
-            onClick={() => setShowDoctor(true)}
-            title="体检：检查 codex / git / node，并提示可选的 claude 状态"
-            aria-label="体检"
-          >
-            🩺
-          </button>
-          <button
             className={`topbar-btn ${errorCount > 0 ? 'topbar-btn-danger' : 'topbar-btn-icon'}`}
             onClick={() => setShowErrors((s) => !s)}
             title="日志：查看错误与通知"
@@ -2139,7 +2114,6 @@ function AppShell() {
           commands={commandPaletteCommands}
         />
       )}
-      {showDoctor && <DoctorDialog onClose={() => setShowDoctor(false)} />}
       {planReview && (
         <PlanReviewDialog
           path={planReview.path}

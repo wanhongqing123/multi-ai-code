@@ -1215,43 +1215,6 @@ html, body, #root {
   background: var(--mac-bg);
 }
 
-.doctor-modal {
-  width: 620px;
-  max-height: 80vh;
-  display: flex;
-  flex-direction: column;
-}
-.doctor-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: var(--mac-sp-3) var(--mac-sp-4);
-}
-.doctor-table {
-  width: 100%;
-  font-size: var(--mac-text-sm);
-  border-collapse: collapse;
-}
-.doctor-table th,
-.doctor-table td {
-  text-align: left;
-  padding: var(--mac-sp-2) var(--mac-sp-3);
-  border-bottom: 1px solid var(--mac-border-subtle);
-  vertical-align: top;
-  color: var(--mac-fg);
-}
-.doctor-table th {
-  color: var(--mac-fg-subtle);
-  font-weight: var(--mac-weight-medium);
-  font-size: var(--mac-text-xs);
-  text-transform: uppercase;
-  background: var(--mac-surface-raised);
-}
-.doctor-req {
-  margin-left: var(--mac-sp-2);
-  font-size: var(--mac-text-xs);
-  color: var(--mac-warning);
-}
-
 .onboarding-modal {
   width: 720px;
   max-width: 92vw;

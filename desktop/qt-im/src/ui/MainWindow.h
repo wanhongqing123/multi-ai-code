@@ -19,6 +19,7 @@ class QHBoxLayout;
 class QListWidgetItem;
 class QPoint;
 class QTimer;
+class QImage;
 
 class MainWindow final : public QMainWindow {
 public:
@@ -49,10 +50,20 @@ private:
     void syncNavigationSelection();
     void updateNavigationSelection(QPushButton* selectedButton);
     void openAddContactDialog();
-    // 处理消息框里的 Ctrl+V：剪贴板有文件/图片则直接发送，返回 true 表示已消费；
-    // 否则返回 false 交给 QTextEdit 默认粘贴文本。
+    // 处理消息框里的 Ctrl+V：把剪贴板里的图片/文件作为内联对象插入到输入框中（不立即发送），
+    // 返回 true 表示已消费；否则返回 false 交给 QTextEdit 默认粘贴文本。
     bool handleComposerPaste();
-    void sendPastedFile(const QString& localPath);
+    void insertComposerImage(const QImage& image);
+    void insertComposerFile(const QString& localPath);
+    // 输入框里一枚内联附件：isFile 区分文件卡（true）与图片（false），path 为本地原文件路径。
+    struct ComposerAttachment {
+        bool isFile;
+        QString path;
+    };
+    // 按文档顺序取出输入框里内联的图片/文件附件（发送时用于与配文合并）。
+    QList<ComposerAttachment> collectComposerAttachments() const;
+    // 输入框里是否有内联的图片/文件附件。
+    bool composerHasAttachments() const;
     void openImagePreview(const QString& imagePath);
     void openFilePreview(const RemoteIMFileAttachment& attachment);
     QWidget* createMessageBubble(const RemoteIMMessage& message);

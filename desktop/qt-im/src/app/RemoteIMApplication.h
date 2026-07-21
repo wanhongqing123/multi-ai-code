@@ -36,8 +36,9 @@ public:
     void deleteContact(const QString& userId);
     void selectPeer(const QString& userId);
     void sendText(const QString& text);
-    void sendImage(const QString& localPath);
-    void sendFile(const QString& localPath);
+    // text 非空时，图片/文件与配文合并成「一条」消息发送（气泡内图上文下）。
+    void sendImage(const QString& localPath, const QString& text = QString());
+    void sendFile(const QString& localPath, const QString& text = QString());
     void sendVoicePlaceholder();
 
 signals:

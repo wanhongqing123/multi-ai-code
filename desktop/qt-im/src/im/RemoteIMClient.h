@@ -39,6 +39,18 @@ public:
         Q_UNUSED(fileName);
         if (completion) completion(false, QStringLiteral("当前 IM 客户端不支持发送文件"), {});
     }
+    // 图片/文件 + 配文合并成「一条」多元素消息发送。默认降级为分两条发（图片/文件 + 文本），
+    // 仅 TimSdk 真正合并成一条。
+    virtual void sendImageWithText(const QString& peerId, const QString& imagePath, const QString& text, RemoteIMSendCompletion completion) {
+        if (text.trimmed().isEmpty()) { sendImage(peerId, imagePath, std::move(completion)); return; }
+        sendImage(peerId, imagePath, {});
+        sendText(peerId, text, std::move(completion));
+    }
+    virtual void sendFileWithText(const QString& peerId, const QString& localPath, const QString& fileName, const QString& text, RemoteIMSendCompletion completion) {
+        if (text.trimmed().isEmpty()) { sendFile(peerId, localPath, fileName, std::move(completion)); return; }
+        sendFile(peerId, localPath, fileName, {});
+        sendText(peerId, text, std::move(completion));
+    }
 
 signals:
     void contactsReceived(const QList<RemoteIMContact>& contacts);

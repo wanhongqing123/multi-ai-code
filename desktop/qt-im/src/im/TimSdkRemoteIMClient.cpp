@@ -322,6 +322,75 @@ void TimSdkRemoteIMClient::sendFile(const QString& peerId, const QString& localP
     });
 }
 
+void TimSdkRemoteIMClient::sendImageWithText(const QString& peerId, const QString& imagePath, const QString& text, RemoteIMSendCompletion completion) {
+    const QString cleanPeerId = peerId.trimmed();
+    const QString cleanPath = imagePath.trimmed();
+    const QString cleanText = text.trimmed();
+    if (cleanPeerId.isEmpty() || cleanPath.isEmpty()) {
+        if (completion) completion(false, QStringLiteral("图片消息缺少接收人或图片路径"), {});
+        return;
+    }
+    QJsonArray elems;
+    {
+        QJsonObject imageElem;
+        imageElem[QStringLiteral("elem_type")] = kElemImage;
+        imageElem[QStringLiteral("image_elem_orig_path")] = cleanPath;
+        imageElem[QStringLiteral("image_elem_level")] = kImageLevelOriginal;
+        elems.append(imageElem);
+    }
+    if (!cleanText.isEmpty()) {
+        QJsonObject textElem;
+        textElem[QStringLiteral("elem_type")] = kElemText;
+        textElem[QStringLiteral("text_elem_content")] = cleanText;
+        elems.append(textElem);
+    }
+    QJsonObject message;
+    message[QStringLiteral("message_elem_array")] = elems;
+    api_->sendMessage(cleanPeerId, kConversationTypeC2C, compactJson(message), [completion = std::move(completion)](int code,
+                                                                                                                    const QString& description,
+                                                                                                                    const QString& jsonPayload) mutable {
+        if (!completion) return;
+        const bool ok = code == 0;
+        RemoteIMSendReceipt receipt = ok ? sentMessageReceipt(jsonPayload) : RemoteIMSendReceipt{};
+        completion(ok, ok ? QString() : (description.isEmpty() ? QStringLiteral("IM SDK 操作失败：%1").arg(code) : description), receipt);
+    });
+}
+
+void TimSdkRemoteIMClient::sendFileWithText(const QString& peerId, const QString& localPath, const QString& fileName, const QString& text, RemoteIMSendCompletion completion) {
+    const QString cleanPeerId = peerId.trimmed();
+    const QString cleanPath = localPath.trimmed();
+    const QString cleanText = text.trimmed();
+    if (cleanPeerId.isEmpty() || cleanPath.isEmpty()) {
+        if (completion) completion(false, QStringLiteral("文件消息缺少接收人或文件路径"), {});
+        return;
+    }
+    const QString displayName = fileName.trimmed().isEmpty() ? QFileInfo(cleanPath).fileName() : fileName.trimmed();
+    QJsonArray elems;
+    {
+        QJsonObject fileElem;
+        fileElem[QStringLiteral("elem_type")] = kElemFile;
+        fileElem[QStringLiteral("file_elem_file_path")] = cleanPath;
+        fileElem[QStringLiteral("file_elem_file_name")] = displayName;
+        elems.append(fileElem);
+    }
+    if (!cleanText.isEmpty()) {
+        QJsonObject textElem;
+        textElem[QStringLiteral("elem_type")] = kElemText;
+        textElem[QStringLiteral("text_elem_content")] = cleanText;
+        elems.append(textElem);
+    }
+    QJsonObject message;
+    message[QStringLiteral("message_elem_array")] = elems;
+    api_->sendMessage(cleanPeerId, kConversationTypeC2C, compactJson(message), [completion = std::move(completion)](int code,
+                                                                                                                    const QString& description,
+                                                                                                                    const QString& jsonPayload) mutable {
+        if (!completion) return;
+        const bool ok = code == 0;
+        RemoteIMSendReceipt receipt = ok ? sentMessageReceipt(jsonPayload) : RemoteIMSendReceipt{};
+        completion(ok, ok ? QString() : (description.isEmpty() ? QStringLiteral("IM SDK 操作失败：%1").arg(code) : description), receipt);
+    });
+}
+
 void TimSdkRemoteIMClient::sendVoice(const QString&, const QString&, int, RemoteIMCompletion completion) {
     if (completion) completion(false, QStringLiteral("桌面端语音消息还未接入原生录音与 SDK 声音元素"));
 }
@@ -413,8 +482,31 @@ void TimSdkRemoteIMClient::handleHistoryMessagesPayload(const QString& jsonPaylo
         const qint64 sdkTimeMillis = messageTimeMillis(sdkMessage);
         const QString sdkId = sdkMessageId(sdkMessage);
         const QJsonArray elems = sdkMessage.value(QStringLiteral("message_elem_array")).toArray();
-        for (int elemIndex = 0; elemIndex < elems.size(); ++elemIndex) {
-            const QJsonObject elem = elems.at(elemIndex).toObject();
+
+        // 与实时接收（handleIncomingMessage）保持一致：图片/文件 + 配文合并成一条，
+        // 稳定 id 锚定在附件元素上，重登漫游拉取回来的 id 与实时投递一致，本地库去重不产生重复配文行。
+        int captionElemIndex = -1;
+        QString caption;
+        bool hasAttachment = false;
+        for (int i = 0; i < elems.size(); ++i) {
+            const QJsonObject elem = elems.at(i).toObject();
+            const int elemType = elem.value(QStringLiteral("elem_type")).toInt(-1);
+            if (elemType == kElemImage) {
+                if (!elem.value(QStringLiteral("image_elem_orig_path")).toString().trimmed().isEmpty()) hasAttachment = true;
+            } else if (elemType == kElemFile) {
+                const QString fn = firstNonEmpty(elem, {QStringLiteral("file_elem_file_name"), QStringLiteral("file_elem_file_path")});
+                if (isSupportedPreviewFileName(fn)) hasAttachment = true;
+            } else if (elemType == kElemText && captionElemIndex < 0) {
+                const QString content = elem.value(QStringLiteral("text_elem_content")).toString();
+                if (!content.trimmed().isEmpty()) {
+                    caption = content;
+                    captionElemIndex = i;
+                }
+            }
+        }
+        const QString attachmentCaption = hasAttachment ? caption : QString();
+
+        const auto makeBase = [&](int elemIndex) {
             RemoteIMMessage message;
             const QString stableId = sdkElemMessageId(sdkId, elemIndex);
             if (!stableId.isEmpty()) message.id = stableId;
@@ -423,9 +515,16 @@ void TimSdkRemoteIMClient::handleHistoryMessagesPayload(const QString& jsonPaylo
             message.direction = isFromSelf ? RemoteIMMessageDirection::Outgoing : RemoteIMMessageDirection::Incoming;
             message.status = isFromSelf ? RemoteIMMessageStatus::Sent : RemoteIMMessageStatus::Received;
             message.createdAtMillis = orderedMessageTime(peerId, sdkTimeMillis);
+            return message;
+        };
 
+        bool captionConsumed = false;
+        for (int elemIndex = 0; elemIndex < elems.size(); ++elemIndex) {
+            const QJsonObject elem = elems.at(elemIndex).toObject();
             const int elemType = elem.value(QStringLiteral("elem_type")).toInt(-1);
             if (elemType == kElemText) {
+                if (hasAttachment && elemIndex == captionElemIndex) continue;
+                RemoteIMMessage message = makeBase(elemIndex);
                 message.text = elem.value(QStringLiteral("text_elem_content")).toString();
                 if (!message.text.trimmed().isEmpty()) messages.append(message);
                 continue;
@@ -433,7 +532,7 @@ void TimSdkRemoteIMClient::handleHistoryMessagesPayload(const QString& jsonPaylo
             if (elemType == kElemImage) {
                 const QString localPath = elem.value(QStringLiteral("image_elem_orig_path")).toString().trimmed();
                 if (localPath.isEmpty()) continue;
-                message.text = QStringLiteral("[图片消息] ") + QFileInfo(localPath).fileName();
+                RemoteIMMessage message = makeBase(elemIndex);
                 message.hasImage = true;
                 message.image = RemoteIMImageAttachment{
                     localPath,
@@ -441,6 +540,12 @@ void TimSdkRemoteIMClient::handleHistoryMessagesPayload(const QString& jsonPaylo
                     elem.value(QStringLiteral("image_elem_orig_pic_height")).toInt(0),
                     static_cast<qint64>(elem.value(QStringLiteral("image_elem_orig_pic_size")).toDouble(0))
                 };
+                if (!attachmentCaption.isEmpty() && !captionConsumed) {
+                    message.text = attachmentCaption;
+                    captionConsumed = true;
+                } else {
+                    message.text = QStringLiteral("[图片消息] ") + QFileInfo(localPath).fileName();
+                }
                 messages.append(message);
                 continue;
             }
@@ -453,24 +558,29 @@ void TimSdkRemoteIMClient::handleHistoryMessagesPayload(const QString& jsonPaylo
                 const QString localPath = elem.value(QStringLiteral("file_elem_file_path")).toString().trimmed();
                 const qint64 sizeBytes = static_cast<qint64>(elem.value(QStringLiteral("file_elem_file_size")).toDouble(0));
                 const QString url = elem.value(QStringLiteral("file_elem_url")).toString().trimmed();
+                const QString captionText = (!attachmentCaption.isEmpty() && !captionConsumed)
+                                                ? attachmentCaption
+                                                : QStringLiteral("[文件消息] ") + QFileInfo(fileName).fileName();
                 if (localPath.isEmpty() && !url.isEmpty()) {
                     const QString cachedPath = cacheFilePathForUrl(url, fileName);
+                    RemoteIMMessage message = makeBase(elemIndex);
+                    message.hasFile = true;
+                    message.text = captionText;
+                    if (!attachmentCaption.isEmpty() && !captionConsumed) captionConsumed = true;
                     if (QFile::exists(cachedPath)) {
-                        message.text = QStringLiteral("[文件消息] ") + QFileInfo(fileName).fileName();
-                        message.hasFile = true;
                         message.file = RemoteIMFileAttachment{cachedPath, QFileInfo(fileName).fileName(), mimeTypeForFileName(fileName), sizeBytes};
                         messages.append(message);
                     } else {
-                        message.hasFile = true;
-                        message.text = QStringLiteral("[文件消息] ") + QFileInfo(fileName).fileName();
                         message.file = RemoteIMFileAttachment{QString(), QFileInfo(fileName).fileName(), mimeTypeForFileName(fileName), sizeBytes};
                         handleIncomingFileUrl(message, url);
                     }
                     continue;
                 }
                 if (!localPath.isEmpty()) {
-                    message.text = QStringLiteral("[文件消息] ") + QFileInfo(fileName).fileName();
+                    RemoteIMMessage message = makeBase(elemIndex);
                     message.hasFile = true;
+                    message.text = captionText;
+                    if (!attachmentCaption.isEmpty() && !captionConsumed) captionConsumed = true;
                     message.file = RemoteIMFileAttachment{localPath, QFileInfo(fileName).fileName(), mimeTypeForFileName(fileName), sizeBytes};
                     messages.append(message);
                 }
@@ -517,12 +627,40 @@ void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
         return result;
     };
 
-    QList<RemoteIMMessage> received;
     const QJsonArray elems = message.value(QStringLiteral("message_elem_array")).toArray();
+
+    // 图片/文件 + 配文合并成「一条」消息：先取第一条非空文本作为附件配文，
+    // 附件与配文共用同一条 RemoteIMMessage（稳定 id 锚定在附件元素上），
+    // 使实时与漫游两路投递出的 id 一致，本地库不会把配文当成独立文本重复入库。
+    int captionElemIndex = -1;
+    QString caption;
+    bool hasAttachment = false;
+    for (int i = 0; i < elems.size(); ++i) {
+        const QJsonObject elem = elems.at(i).toObject();
+        const int elemType = elem.value(QStringLiteral("elem_type")).toInt(-1);
+        if (elemType == kElemImage) {
+            hasAttachment = true;
+        } else if (elemType == kElemFile) {
+            const QString fn = firstNonEmpty(elem, {QStringLiteral("file_elem_file_name"), QStringLiteral("file_elem_file_path")});
+            if (isSupportedPreviewFileName(fn)) hasAttachment = true;
+        } else if (elemType == kElemText && captionElemIndex < 0) {
+            const QString content = elem.value(QStringLiteral("text_elem_content")).toString();
+            if (!content.trimmed().isEmpty()) {
+                caption = content;
+                captionElemIndex = i;
+            }
+        }
+    }
+    const QString attachmentCaption = hasAttachment ? caption : QString();
+
+    QList<RemoteIMMessage> received;
+    bool captionConsumed = false;
     for (int elemIndex = 0; elemIndex < elems.size(); ++elemIndex) {
         const QJsonObject elem = elems.at(elemIndex).toObject();
         const int elemType = elem.value(QStringLiteral("elem_type")).toInt(-1);
         if (elemType == kElemText) {
+            // 已并入附件的配文不再作为独立文本消息重复投递。
+            if (hasAttachment && elemIndex == captionElemIndex) continue;
             const QString text = elem.value(QStringLiteral("text_elem_content")).toString();
             if (text.trimmed().isEmpty()) continue;
             RemoteIMMessage textMessage = baseMessage(elemIndex);
@@ -538,8 +676,13 @@ void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
             RemoteIMMessage imageMessage = baseMessage(elemIndex);
             imageMessage.hasImage = true;
             imageMessage.image = RemoteIMImageAttachment{localPath, width, height, sizeBytes};
+            if (!attachmentCaption.isEmpty() && !captionConsumed) {
+                imageMessage.text = attachmentCaption;
+                captionConsumed = true;
+            }
             if (!localPath.isEmpty()) {
-                imageMessage.text = QStringLiteral("[图片消息] ") + QFileInfo(localPath).fileName();
+                if (imageMessage.text.trimmed().isEmpty())
+                    imageMessage.text = QStringLiteral("[图片消息] ") + QFileInfo(localPath).fileName();
                 received.append(imageMessage);
                 continue;
             }
@@ -562,7 +705,12 @@ void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
             const qint64 sizeBytes = static_cast<qint64>(elem.value(QStringLiteral("file_elem_file_size")).toDouble(0));
             RemoteIMMessage fileMessage = baseMessage(elemIndex);
             fileMessage.hasFile = true;
-            fileMessage.text = QStringLiteral("[文件消息] ") + displayName;
+            if (!attachmentCaption.isEmpty() && !captionConsumed) {
+                fileMessage.text = attachmentCaption;
+                captionConsumed = true;
+            } else {
+                fileMessage.text = QStringLiteral("[文件消息] ") + displayName;
+            }
             if (!localPath.isEmpty()) {
                 fileMessage.file = RemoteIMFileAttachment{localPath, displayName, mimeTypeForFileName(displayName), sizeBytes};
                 received.append(fileMessage);
@@ -581,7 +729,9 @@ void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
 void TimSdkRemoteIMClient::handleIncomingImageUrl(RemoteIMMessage message, const QString& url) {
     const QString targetPath = cacheImagePathForUrl(url);
     message.image.localPath = targetPath;
-    message.text = QStringLiteral("[图片消息] ") + QFileInfo(targetPath).fileName();
+    // 保留调用方合并进来的配文；只有真正无配文时才补占位文字。
+    if (message.text.trimmed().isEmpty())
+        message.text = QStringLiteral("[图片消息] ") + QFileInfo(targetPath).fileName();
     if (QFile::exists(targetPath)) {
         emit messagesReceived({message});
         return;

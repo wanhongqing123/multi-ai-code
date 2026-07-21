@@ -253,7 +253,9 @@ function formatRemoteImImagePlaceholder(
   attachment?: RemoteImImageAttachment | null
 ): string {
   const fileName = normalizeRemoteImString(attachment?.fileName) ?? normalizeRemoteImString(message.fileName)
-  return fileName ? `[图片消息] ${fileName}` : '[图片消息]'
+  const base = fileName ? `[图片消息] ${fileName}` : '[图片消息]'
+  const caption = normalizeRemoteImString(message.caption)
+  return caption ? `${base}\n${caption}` : base
 }
 
 function createImageAttachmentFromIncoming(
@@ -354,13 +356,18 @@ function createIncomingFileRecord(
 function buildRemoteImImageTaskText(input: {
   fromUserId: string
   localPath: string
+  caption?: string | null
 }): string {
-  return [
-    '[图片消息]',
-    `来自: ${input.fromUserId}`,
-    `本地路径: ${input.localPath}`,
-    '请根据图片内容和上下文继续处理。'
-  ].join('\n')
+  const caption = input.caption?.trim()
+  const lines = ['[图片消息]', `来自: ${input.fromUserId}`, `本地路径: ${input.localPath}`]
+  if (caption) {
+    // 图片与配文来自同一条消息，合并成一次输入：配文即用户随图发来的文字。
+    lines.push(`配文: ${caption}`)
+    lines.push('请结合配文与图片内容继续处理。')
+  } else {
+    lines.push('请根据图片内容和上下文继续处理。')
+  }
+  return lines.join('\n')
 }
 
 export function createRemoteImRouter(deps: RemoteImRouterDeps) {
@@ -694,7 +701,8 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
 
     const taskText = buildRemoteImImageTaskText({
       fromUserId,
-      localPath: attachment.localPath
+      localPath: attachment.localPath,
+      caption: message.caption ?? null
     })
     const replyId = deps.createReplyId?.() ?? createRemoteImReplyId()
     const wrapped = buildRemoteImAicliPrompt({ fromUserId, text: taskText, replyId })

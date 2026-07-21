@@ -112,17 +112,18 @@ void RemoteIMApplication::sendText(const QString& text) {
     });
 }
 
-void RemoteIMApplication::sendImage(const QString& localPath) {
+void RemoteIMApplication::sendImage(const QString& localPath, const QString& text) {
     const QString cleanPath = localPath.trimmed();
     if (cleanPath.isEmpty() || state_.selectedPeerId().isEmpty()) return;
 
     QFileInfo info(cleanPath);
-    RemoteIMMessage message = state_.queueOutgoingImage(cleanPath, 0, 0, info.size());
+    const QString caption = text.trimmed();
+    RemoteIMMessage message = state_.queueOutgoingImage(cleanPath, 0, 0, info.size(), caption);
     persistMessage(message);
     emit stateChanged();
 
-    client_->sendImage(message.toUserId, cleanPath,
-                       [this, messageId = message.id](bool ok, const QString& error, const RemoteIMSendReceipt& receipt) {
+    RemoteIMSendCompletion onDone =
+        [this, messageId = message.id](bool ok, const QString& error, const RemoteIMSendReceipt& receipt) {
         const QString effectiveId = adoptRemoteMessageId(messageId, ok ? receipt.remoteMessageId : QString());
         if (ok) {
             state_.updateMessageTime(effectiveId, receipt.createdAtMillis);
@@ -130,10 +131,15 @@ void RemoteIMApplication::sendImage(const QString& localPath) {
         }
         markMessage(effectiveId, ok ? RemoteIMMessageStatus::Sent : RemoteIMMessageStatus::Failed);
         if (!ok) emit errorMessage(error.isEmpty() ? QStringLiteral("图片消息发送失败") : error);
-    });
+    };
+    if (caption.isEmpty()) {
+        client_->sendImage(message.toUserId, cleanPath, std::move(onDone));
+    } else {
+        client_->sendImageWithText(message.toUserId, cleanPath, caption, std::move(onDone));
+    }
 }
 
-void RemoteIMApplication::sendFile(const QString& localPath) {
+void RemoteIMApplication::sendFile(const QString& localPath, const QString& text) {
     const QString cleanPath = localPath.trimmed();
     if (cleanPath.isEmpty() || state_.selectedPeerId().isEmpty()) return;
 
@@ -144,12 +150,13 @@ void RemoteIMApplication::sendFile(const QString& localPath) {
     }
     const QString fileName = info.fileName();
     const QString mimeType = QMimeDatabase().mimeTypeForFile(info).name();
-    RemoteIMMessage message = state_.queueOutgoingFile(cleanPath, fileName, mimeType, info.size());
+    const QString caption = text.trimmed();
+    RemoteIMMessage message = state_.queueOutgoingFile(cleanPath, fileName, mimeType, info.size(), caption);
     persistMessage(message);
     emit stateChanged();
 
-    client_->sendFile(message.toUserId, cleanPath, fileName,
-                      [this, messageId = message.id](bool ok, const QString& error, const RemoteIMSendReceipt& receipt) {
+    RemoteIMSendCompletion onDone =
+        [this, messageId = message.id](bool ok, const QString& error, const RemoteIMSendReceipt& receipt) {
         const QString effectiveId = adoptRemoteMessageId(messageId, ok ? receipt.remoteMessageId : QString());
         if (ok) {
             state_.updateMessageTime(effectiveId, receipt.createdAtMillis);
@@ -157,7 +164,12 @@ void RemoteIMApplication::sendFile(const QString& localPath) {
         }
         markMessage(effectiveId, ok ? RemoteIMMessageStatus::Sent : RemoteIMMessageStatus::Failed);
         if (!ok) emit errorMessage(error.isEmpty() ? QStringLiteral("文件消息发送失败") : error);
-    });
+    };
+    if (caption.isEmpty()) {
+        client_->sendFile(message.toUserId, cleanPath, fileName, std::move(onDone));
+    } else {
+        client_->sendFileWithText(message.toUserId, cleanPath, fileName, caption, std::move(onDone));
+    }
 }
 
 void RemoteIMApplication::sendVoicePlaceholder() {

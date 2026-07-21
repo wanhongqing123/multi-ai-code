@@ -6,6 +6,7 @@ import {
   extractTencentImAudioMessages,
   extractTencentImFileMessages,
   extractTencentImImageMessages,
+  extractTencentImMessageParts,
   extractTencentImTextMessages,
   extractUserSig,
   generateTencentUserSig,
@@ -221,6 +222,74 @@ describe('tencent IM client helpers', () => {
         createdAt: 1782238800000
       }
     ])
+  })
+
+  it('merges an image and its caption from a single multi-element message', () => {
+    // 腾讯 Web SDK 把多元素消息压成一条 Message：公开 type/payload 取首个元素（图片），
+    // 配文藏在 _elements[1]。extractTencentImMessageParts 应把图片与配文一并读出。
+    const imageElement = {
+      type: 'TIMImageElem',
+      content: {
+        uuid: 'image-uuid-1',
+        imageInfoArray: [{ type: 3, url: 'https://cos.example.test/original.png', width: 640, height: 480, size: 4096 }]
+      }
+    }
+    const textElement = { type: 'TIMTextElem', content: { text: '看这张图' } }
+
+    const parts = extractTencentImMessageParts({
+      ID: 'combo-1',
+      from: 'phone_admin',
+      to: 'desktop_bot',
+      type: 'TIMImageElem',
+      payload: imageElement.content,
+      _elements: [imageElement, textElement],
+      time: 1782238800
+    })
+
+    expect(parts.image?.imageUrl).toBe('https://cos.example.test/original.png')
+    expect(parts.caption).toBe('看这张图')
+    expect(parts.file).toBeNull()
+    expect(parts.audio).toBeNull()
+  })
+
+  it('merges caption and image regardless of element order', () => {
+    const textElement = { type: 'TIMTextElem', content: { text: '先文字后图片' } }
+    const imageElement = {
+      type: 'TIMImageElem',
+      content: { imageInfoArray: [{ type: 3, url: 'https://cos.example.test/pic.png', width: 100, height: 80, size: 900 }] }
+    }
+
+    // 文本元素在前：公开 type/payload 会是文本，仅靠公开字段会漏掉图片；靠 _elements 才完整。
+    const parts = extractTencentImMessageParts({
+      ID: 'combo-2',
+      from: 'phone_admin',
+      type: 'TIMTextElem',
+      payload: textElement.content,
+      _elements: [textElement, imageElement]
+    })
+
+    expect(parts.image?.imageUrl).toBe('https://cos.example.test/pic.png')
+    expect(parts.caption).toBe('先文字后图片')
+  })
+
+  it('falls back to the single public element when _elements is absent', () => {
+    const textOnly = extractTencentImMessageParts({
+      ID: 'text-1',
+      from: 'phone_admin',
+      type: 'TIMTextElem',
+      payload: { text: 'just text' }
+    })
+    expect(textOnly.caption).toBe('just text')
+    expect(textOnly.image).toBeNull()
+
+    const imageOnly = extractTencentImMessageParts({
+      ID: 'image-only',
+      from: 'phone_admin',
+      type: 'TIMImageElem',
+      payload: { imageInfoArray: [{ type: 3, url: 'https://cos.example.test/solo.png', size: 10 }] }
+    })
+    expect(imageOnly.image?.imageUrl).toBe('https://cos.example.test/solo.png')
+    expect(imageOnly.caption).toBeNull()
   })
 
   it('extracts C2C markdown/html file messages from Tencent message events', () => {

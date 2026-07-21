@@ -152,6 +152,8 @@ export interface RemoteImIncomingImageMessage {
   uuid?: string | null
   fileName?: string | null
   mimeType?: string | null
+  // 同一条多元素消息里随图片一起发来的配文。图片下载后与配文合并成「一次」AICLI 输入。
+  caption?: string | null
   createdAt?: number
 }
 

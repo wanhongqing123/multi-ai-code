@@ -547,6 +547,65 @@ describe('remote IM router', () => {
     })
   })
 
+  it('merges an image and its caption into a single AICLI input with one receipt', async () => {
+    const store = createMessageStore()
+    const sentToAicli: Array<{ sessionId: string; text: string; displayText: string | undefined }> = []
+    const sentToIm: string[] = []
+    const router = createRemoteImRouter({
+      getConfig: () => config,
+      resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
+      sendUser: async (sessionId, text, options) => {
+        sentToAicli.push({ sessionId, text, displayText: options?.displayText })
+        return { ok: true }
+      },
+      sendImText: async (_projectId, _toUserId, text) => {
+        sentToIm.push(text)
+        return { ok: true }
+      },
+      cacheImage: async () => ({
+        ok: true,
+        attachment: {
+          type: 'image',
+          localPath: '/tmp/remote-im/images/photo.png',
+          remoteUrl: 'https://example.test/photo.png',
+          thumbnailUrl: null,
+          width: 640,
+          height: 480,
+          sizeBytes: 4096,
+          fileName: 'photo.png',
+          mimeType: 'image/png',
+          sdkImageId: 'image-1'
+        }
+      }),
+      store
+    })
+
+    const result = await router.handleIncomingImage({
+      projectId: 'project-1',
+      remoteMessageId: 'image-remote-1',
+      fromUserId: 'phone_admin',
+      toUserId: 'desktop_bot',
+      imageUrl: 'https://example.test/photo.png',
+      fileName: 'photo.png',
+      mimeType: 'image/png',
+      caption: '帮我看看这张报错截图',
+      createdAt: 100
+    })
+
+    expect(result.ok).toBe(true)
+    // 合并成「一次」输入：只调用一次 sendUser，配文与图片路径同在一个 prompt 里。
+    expect(sentToAicli).toHaveLength(1)
+    expect(sentToAicli[0]?.text).toContain('本地路径: /tmp/remote-im/images/photo.png')
+    expect(sentToAicli[0]?.text).toContain('配文: 帮我看看这张报错截图')
+    // 合并后只回一次系统回执。
+    expect(sentToIm.filter((line) => line.includes('已发送给当前 AICLI'))).toHaveLength(1)
+    expect(store.messages[0]).toMatchObject({
+      kind: 'image',
+      status: 'sent-to-aicli',
+      content: '[图片消息] photo.png\n帮我看看这张报错截图'
+    })
+  })
+
   it('records image download failures without sending AICLI input', async () => {
     const store = createMessageStore()
     const sentToAicli: string[] = []

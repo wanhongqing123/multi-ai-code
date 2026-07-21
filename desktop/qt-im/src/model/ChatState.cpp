@@ -82,13 +82,14 @@ RemoteIMMessage ChatState::queueOutgoingText(const QString& text) {
     return message;
 }
 
-RemoteIMMessage ChatState::queueOutgoingImage(const QString& localPath, int width, int height, qint64 sizeBytes) {
+RemoteIMMessage ChatState::queueOutgoingImage(const QString& localPath, int width, int height, qint64 sizeBytes, const QString& text) {
     const QString cleanPath = clean(localPath);
     if (cleanPath.isEmpty()) throw std::invalid_argument("localPath is required");
     RemoteIMMessage message;
     message.fromUserId = ownerUserId_;
     message.toUserId = requireSelectedPeer();
-    message.text = "[图片消息] " + fileName(cleanPath);
+    // 有配文时 text 存配文（气泡里图下显示、会话列表预览也显示配文）；无配文回退占位摘要。
+    message.text = clean(text).isEmpty() ? (QStringLiteral("[图片消息] ") + fileName(cleanPath)) : clean(text);
     message.direction = RemoteIMMessageDirection::Outgoing;
     message.status = RemoteIMMessageStatus::Pending;
     message.hasImage = true;
@@ -113,14 +114,16 @@ RemoteIMMessage ChatState::queueOutgoingVoice(const QString& localPath, int dura
     return message;
 }
 
-RemoteIMMessage ChatState::queueOutgoingFile(const QString& localPath, const QString& fileName, const QString& mimeType, qint64 sizeBytes) {
+RemoteIMMessage ChatState::queueOutgoingFile(const QString& localPath, const QString& fileName, const QString& mimeType, qint64 sizeBytes, const QString& text) {
     const QString cleanPath = clean(localPath);
     if (cleanPath.isEmpty()) throw std::invalid_argument("localPath is required");
     const QString cleanFileName = clean(fileName).isEmpty() ? ChatState::fileName(cleanPath) : clean(fileName);
     RemoteIMMessage message;
     message.fromUserId = ownerUserId_;
     message.toUserId = requireSelectedPeer();
-    message.text = QString("[文件消息] %1").arg(cleanFileName.isEmpty() ? QStringLiteral("file") : cleanFileName);
+    message.text = clean(text).isEmpty()
+        ? QStringLiteral("[文件消息] %1").arg(cleanFileName.isEmpty() ? QStringLiteral("file") : cleanFileName)
+        : clean(text);
     message.direction = RemoteIMMessageDirection::Outgoing;
     message.status = RemoteIMMessageStatus::Pending;
     message.hasFile = true;

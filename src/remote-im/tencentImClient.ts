@@ -335,6 +335,76 @@ function getFilePayload(
   }
 }
 
+interface TencentImElement {
+  type: string
+  content: unknown
+}
+
+// 腾讯 Web SDK 的 Message 只暴露单一 type/payload（取自首个元素），多元素消息（如
+// 图片 + 配文）的其余元素藏在私有 _elements 里。这里把整条消息的元素列表取出来，
+// 逐元素解析，才能把随图片一起发来的配文一并读到（否则配文在接收层就被丢掉）。
+function getTencentImMessageElements(message: Record<string, unknown>): TencentImElement[] {
+  const raw = (message as { _elements?: unknown })._elements
+  if (Array.isArray(raw)) {
+    const list = raw
+      .filter((element): element is Record<string, unknown> => Boolean(element && typeof element === 'object'))
+      .map((element) => ({
+        type: typeof element.type === 'string' ? element.type : '',
+        content: (element as { content?: unknown }).content
+      }))
+    if (list.length > 0) return list
+  }
+  // 回退：SDK 未暴露 _elements（或为空）时退回单元素（公开的 type/payload）。
+  return [
+    {
+      type: typeof message.type === 'string' ? message.type : '',
+      content: (message as { payload?: unknown }).payload
+    }
+  ]
+}
+
+export interface TencentImMessageParts {
+  image: Omit<TencentImImageMessage, 'remoteMessageId' | 'fromUserId' | 'toUserId' | 'createdAt'> | null
+  file: Omit<TencentImFileMessage, 'remoteMessageId' | 'fromUserId' | 'toUserId' | 'createdAt'> | null
+  audio: Omit<TencentImAudioMessage, 'remoteMessageId' | 'fromUserId' | 'toUserId' | 'createdAt'> | null
+  caption: string | null
+}
+
+// 把一条（可能多元素的）消息拆成：首个图片/文件/语音附件 + 首条非空文本（作为附件配文）。
+// 复用既有的单元素 payload 解析器：为每个元素构造 { type, payload } 伪消息喂进去。
+export function extractTencentImMessageParts(message: Record<string, unknown>): TencentImMessageParts {
+  const parts: TencentImMessageParts = { image: null, file: null, audio: null, caption: null }
+  for (const element of getTencentImMessageElements(message)) {
+    const pseudo = { ...message, type: element.type, payload: element.content }
+    if (!parts.image) {
+      const image = getImagePayload(pseudo)
+      if (image) {
+        parts.image = image
+        continue
+      }
+    }
+    if (!parts.file) {
+      const file = getFilePayload(pseudo)
+      if (file) {
+        parts.file = file
+        continue
+      }
+    }
+    if (!parts.audio) {
+      const audio = getAudioPayload(pseudo)
+      if (audio) {
+        parts.audio = audio
+        continue
+      }
+    }
+    if (parts.caption === null) {
+      const text = getTextPayload(pseudo)
+      if (text) parts.caption = text
+    }
+  }
+  return parts
+}
+
 export function extractTencentImTextMessages(event: unknown): TencentImTextMessage[] {
   const data = event && typeof event === 'object' ? (event as { data?: unknown }).data : null
   if (!Array.isArray(data)) return []
@@ -698,72 +768,114 @@ export async function connectTencentImClient(input: {
   let kickedOut = false
 
   const onMessageReceived = (event: unknown): void => {
-    const messages = extractTencentImTextMessages(event)
-    const audioMessages = extractTencentImAudioMessages(event)
-    const imageMessages = extractTencentImImageMessages(event)
-    const fileMessages = extractTencentImFileMessages(event)
+    const data = event && typeof event === 'object' ? (event as { data?: unknown }).data : null
+    if (!Array.isArray(data)) return
+
+    let textCount = 0
+    let audioCount = 0
+    let imageCount = 0
+    let fileCount = 0
+
+    for (const item of data) {
+      if (!item || typeof item !== 'object') continue
+      const message = item as Record<string, unknown>
+      const fromUserId = typeof message.from === 'string' ? message.from : ''
+      if (!fromUserId) continue
+      const remoteMessageId = typeof message.ID === 'string' ? message.ID : null
+      const toUserId = typeof message.to === 'string' ? message.to : null
+      const createdAt = typeof message.time === 'number' ? message.time * 1000 : undefined
+
+      // 逐条消息按元素拆解：附件（图片/文件/语音）与配文来自「同一条」消息，
+      // 图片 + 配文合并成一次投递（后续只走一次 AICLI、只回一次系统回执）。
+      const parts = extractTencentImMessageParts(message)
+
+      if (parts.image) {
+        imageCount++
+        input.onIncomingImage?.({
+          projectId: input.projectId,
+          remoteMessageId,
+          fromUserId,
+          toUserId,
+          imageUrl: parts.image.imageUrl,
+          thumbnailUrl: parts.image.thumbnailUrl,
+          width: parts.image.width,
+          height: parts.image.height,
+          sizeBytes: parts.image.sizeBytes,
+          uuid: parts.image.uuid,
+          fileName: parts.image.fileName,
+          mimeType: parts.image.mimeType,
+          caption: parts.caption,
+          createdAt
+        })
+        continue
+      }
+
+      if (parts.file) {
+        fileCount++
+        input.onIncomingFile?.({
+          projectId: input.projectId,
+          remoteMessageId,
+          fromUserId,
+          toUserId,
+          fileUrl: parts.file.fileUrl,
+          sizeBytes: parts.file.sizeBytes,
+          uuid: parts.file.uuid,
+          fileName: parts.file.fileName,
+          mimeType: parts.file.mimeType,
+          createdAt
+        })
+        // 文件转发路径暂不合并配文；但配文（用户随文件发来的文字）不能丢，单独作为文本投递。
+        if (parts.caption) {
+          textCount++
+          input.onIncomingText({
+            projectId: input.projectId,
+            remoteMessageId,
+            fromUserId,
+            toUserId,
+            text: parts.caption,
+            createdAt
+          })
+        }
+        continue
+      }
+
+      if (parts.audio) {
+        audioCount++
+        input.onIncomingAudio?.({
+          projectId: input.projectId,
+          remoteMessageId,
+          fromUserId,
+          toUserId,
+          audioUrl: parts.audio.audioUrl,
+          durationSeconds: parts.audio.durationSeconds,
+          sizeBytes: parts.audio.sizeBytes,
+          uuid: parts.audio.uuid,
+          createdAt
+        })
+        continue
+      }
+
+      if (parts.caption) {
+        textCount++
+        input.onIncomingText({
+          projectId: input.projectId,
+          remoteMessageId,
+          fromUserId,
+          toUserId,
+          text: parts.caption,
+          createdAt
+        })
+      }
+    }
+
     emitRuntimeLog('message:received', {
       detail: {
-        count: messages.length,
-        audioCount: audioMessages.length,
-        imageCount: imageMessages.length,
-        fileCount: fileMessages.length
+        count: textCount,
+        audioCount,
+        imageCount,
+        fileCount
       }
     })
-    for (const message of messages) {
-      input.onIncomingText({
-        projectId: input.projectId,
-        remoteMessageId: message.remoteMessageId,
-        fromUserId: message.fromUserId,
-        toUserId: message.toUserId,
-        text: message.text,
-        createdAt: message.createdAt
-      })
-    }
-    for (const message of audioMessages) {
-      input.onIncomingAudio?.({
-        projectId: input.projectId,
-        remoteMessageId: message.remoteMessageId,
-        fromUserId: message.fromUserId,
-        toUserId: message.toUserId,
-        audioUrl: message.audioUrl,
-        durationSeconds: message.durationSeconds,
-        sizeBytes: message.sizeBytes,
-        uuid: message.uuid,
-        createdAt: message.createdAt
-      })
-    }
-    for (const message of imageMessages) {
-      input.onIncomingImage?.({
-        projectId: input.projectId,
-        remoteMessageId: message.remoteMessageId,
-        fromUserId: message.fromUserId,
-        toUserId: message.toUserId,
-        imageUrl: message.imageUrl,
-        thumbnailUrl: message.thumbnailUrl,
-        width: message.width,
-        height: message.height,
-        sizeBytes: message.sizeBytes,
-        uuid: message.uuid,
-        fileName: message.fileName,
-        mimeType: message.mimeType,
-        createdAt: message.createdAt
-      })
-    }
-    for (const message of fileMessages) {
-      input.onIncomingFile?.({
-        projectId: input.projectId,
-        remoteMessageId: message.remoteMessageId,
-        fromUserId: message.fromUserId,
-        toUserId: message.toUserId,
-        fileUrl: message.fileUrl,
-        sizeBytes: message.sizeBytes,
-        uuid: message.uuid,
-        fileName: message.fileName,
-        mimeType: message.mimeType,
-        createdAt: message.createdAt
-      })
-    }
   }
 
   const eventName = TencentCloudChat.EVENT?.MESSAGE_RECEIVED ?? 'messageReceived'

@@ -10,6 +10,11 @@
 #include <QMimeData>
 #include <QStandardPaths>
 #include <QUrl>
+#include <QColor>
+#include <QFontMetrics>
+#include <QTextBlock>
+#include <QTextFormat>
+#include <QTextFragment>
 #include <QDialog>
 #include <QEvent>
 #include <QFile>
@@ -697,7 +702,7 @@ void MainWindow::buildUi() {
 
     messageEditor_ = new QTextEdit(composer);
     messageEditor_->setObjectName(QStringLiteral("messageEditor"));
-    messageEditor_->setPlaceholderText(QStringLiteral("输入消息（可 Ctrl+V 粘贴图片或文件直接发送）"));
+    messageEditor_->setPlaceholderText(QStringLiteral("输入消息（可 Ctrl+V 粘贴图片或文件）"));
     messageEditor_->setAcceptRichText(false);
     messageEditor_->setMinimumHeight(64);
     messageEditor_->installEventFilter(this);
@@ -1117,12 +1122,16 @@ void MainWindow::bindSignals() {
     connect(conversationList_, &QListWidget::currentItemChanged, this, [this](QListWidgetItem* current) {
         if (!current) return;
         const QString userId = current->data(Qt::UserRole).toString();
-        if (!userId.isEmpty() && userId != app_.chatState().selectedPeerId()) app_.selectPeer(userId);
+        if (!userId.isEmpty() && userId != app_.chatState().selectedPeerId()) {
+            if (composerHasAttachments()) messageEditor_->clear();  // 丢弃属上一个会话的内联附件草稿
+            app_.selectPeer(userId);
+        }
     });
     auto openContactConversation = [this](QListWidgetItem* item) {
         if (!item) return;
         const QString userId = item->data(Qt::UserRole).toString();
         if (userId.isEmpty()) return;
+        if (userId != app_.chatState().selectedPeerId() && composerHasAttachments()) messageEditor_->clear();
         app_.selectPeer(userId);
         showMessagesPage();
     };
@@ -1482,7 +1491,7 @@ bool MainWindow::handleComposerPaste() {
     const QMimeData* mime = QApplication::clipboard()->mimeData();
     if (!mime) return false;
 
-    // 1) 剪贴板里的本地文件（资源管理器复制的文件）：图片按图片发，其它按文件发。
+    // 1) 剪贴板里的本地文件（资源管理器复制的文件）：内联插入到输入框。
     if (mime->hasUrls()) {
         QStringList files;
         for (const QUrl& url : mime->urls()) {
@@ -1491,38 +1500,109 @@ bool MainWindow::handleComposerPaste() {
             if (QFileInfo(path).isFile()) files << path;
         }
         if (!files.isEmpty()) {
-            for (const QString& path : files) sendPastedFile(path);
+            for (const QString& path : files) insertComposerFile(path);
             return true;
         }
     }
 
-    // 2) 剪贴板里的图像数据（截图工具、复制的图片）：存成临时 PNG 再发。
+    // 2) 剪贴板里的图像数据（截图工具、复制的图片）：内联插入到输入框。
     if (mime->hasImage()) {
         const QImage image = qvariant_cast<QImage>(mime->imageData());
         if (!image.isNull()) {
-            const QString dir = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
-                                    .filePath(QStringLiteral("multi-ai-im-paste"));
-            QDir().mkpath(dir);
-            const QString path = QDir(dir).filePath(
-                QStringLiteral("paste-%1.png").arg(QDateTime::currentMSecsSinceEpoch()));
-            if (image.save(path, "PNG")) {
-                app_.sendImage(path);
-                return true;
-            }
+            insertComposerImage(image);
+            return true;
         }
     }
     return false;  // 交给 QTextEdit 默认粘贴（文本）
 }
 
-void MainWindow::sendPastedFile(const QString& localPath) {
-    static const QStringList kImageExts = {
-        QStringLiteral("png"), QStringLiteral("jpg"), QStringLiteral("jpeg"),
-        QStringLiteral("gif"), QStringLiteral("webp"), QStringLiteral("bmp")};
-    if (kImageExts.contains(QFileInfo(localPath).suffix().toLower())) {
-        app_.sendImage(localPath);
-    } else {
-        app_.sendFile(localPath);
+void MainWindow::insertComposerImage(const QImage& image) {
+    // 原图存临时 PNG（发送用原图）；内联显示时按最大宽度缩放，资源名即文件路径，
+    // QTextEdit 会从磁盘加载渲染，发送时也从这个路径取原图。
+    const QString dir = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
+                            .filePath(QStringLiteral("multi-ai-im-paste"));
+    QDir().mkpath(dir);
+    const QString path = QDir(dir).filePath(
+        QStringLiteral("paste-%1.png").arg(QDateTime::currentMSecsSinceEpoch()));
+    if (!image.save(path, "PNG")) return;
+
+    QTextImageFormat fmt;
+    fmt.setName(path);
+    int w = image.width();
+    int h = image.height();
+    constexpr int kMaxWidth = 240;
+    if (w > kMaxWidth && w > 0) {
+        h = h * kMaxWidth / w;
+        w = kMaxWidth;
     }
+    fmt.setWidth(w);
+    fmt.setHeight(h);
+    QTextCursor cursor = messageEditor_->textCursor();
+    cursor.insertImage(fmt);
+    messageEditor_->setTextCursor(cursor);
+    messageEditor_->setFocus();
+    updateComposerState();
+}
+
+void MainWindow::insertComposerFile(const QString& localPath) {
+    // 文件在输入框里用一枚「文件卡」缩略图表示（📄 文件名），资源名带 pending-file:// 前缀，
+    // 发送时据此识别为文件（区别于图片路径）。
+    QString shown = QFileInfo(localPath).fileName();
+    if (shown.size() > 22) shown = shown.left(19) + QStringLiteral("…");
+    const QString label = QStringLiteral("📄 ") + shown;
+
+    const QFontMetrics fm(messageEditor_->font());
+    const int chipW = fm.horizontalAdvance(label) + 22;
+    const int chipH = 28;
+    QPixmap chip(chipW, chipH);
+    chip.fill(Qt::transparent);
+    {
+        QPainter p(&chip);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        p.setPen(QPen(QColor(QStringLiteral("#d9e4ef"))));
+        p.setBrush(QColor(QStringLiteral("#f1f6fb")));
+        p.drawRoundedRect(QRectF(0.5, 0.5, chipW - 1.0, chipH - 1.0), 6, 6);
+        p.setPen(QColor(QStringLiteral("#33475b")));
+        p.drawText(QRectF(11, 0, chipW - 14.0, chipH), Qt::AlignVCenter | Qt::AlignLeft, label);
+    }
+
+    const QString resourceName = QStringLiteral("pending-file://") + localPath;
+    messageEditor_->document()->addResource(QTextDocument::ImageResource, QUrl(resourceName), chip);
+    QTextImageFormat fmt;
+    fmt.setName(resourceName);
+    fmt.setWidth(chipW);
+    fmt.setHeight(chipH);
+    QTextCursor cursor = messageEditor_->textCursor();
+    cursor.insertImage(fmt);
+    messageEditor_->setTextCursor(cursor);
+    messageEditor_->setFocus();
+    updateComposerState();
+}
+
+bool MainWindow::composerHasAttachments() const {
+    // 内联的图片/文件在纯文本里表现为对象替换符（U+FFFC）。
+    return messageEditor_ && messageEditor_->toPlainText().contains(QChar(0xFFFC));
+}
+
+QList<MainWindow::ComposerAttachment> MainWindow::collectComposerAttachments() const {
+    QList<ComposerAttachment> attachments;
+    if (!messageEditor_) return attachments;
+    const QString filePrefix = QStringLiteral("pending-file://");
+    const QTextDocument* doc = messageEditor_->document();
+    // 按文档顺序取出所有内联对象（图片/文件）。
+    for (QTextBlock block = doc->begin(); block.isValid(); block = block.next()) {
+        for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+            const QTextFragment frag = it.fragment();
+            if (!frag.isValid() || !frag.charFormat().isImageFormat()) continue;
+            const QString name = frag.charFormat().toImageFormat().name();
+            if (name.startsWith(filePrefix)) {
+                attachments.append(ComposerAttachment{true, name.mid(filePrefix.size())});
+            } else {
+                attachments.append(ComposerAttachment{false, name});
+            }
+        }
+    }
+    return attachments;
 }
 
 void MainWindow::openImagePreview(const QString& imagePath) {
@@ -1698,6 +1778,17 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
         contentRow->addWidget(statusLabel, 0, Qt::AlignVCenter);
     }
     bubbleLayout->addLayout(contentRow);
+
+    // 图片/文件带配文时：配文渲染在附件下方，与附件同属一条气泡（微信式图上文下）。
+    // 占位文字（[图片消息]/[文件消息] …）不是真正配文，不再重复展示。
+    if ((message.hasImage || message.hasFile)
+            && !message.text.trimmed().isEmpty()
+            && !message.text.startsWith(QStringLiteral("[图片消息] "))
+            && !message.text.startsWith(QStringLiteral("[文件消息] "))) {
+        auto* captionView = new MarkdownMessageView(bubble);
+        captionView->setMessageMarkdown(message.text);
+        bubbleLayout->addWidget(captionView);
+    }
     // meta 行对齐 Electron 端 .remote-im-message-meta：作者 #334155/700、
     // 时间 #94a3b8、好友徽章 #ecfdf5 底 #047857 字 11px 胶囊。
     bubble->setStyleSheet(bubble->styleSheet() + QStringLiteral(R"(
@@ -1793,9 +1884,27 @@ QWidget* MainWindow::createSettingsRow(const QString& title, QLabel* valueLabel,
 }
 
 void MainWindow::sendCurrentText() {
-    const QString text = messageEditor_->toPlainText().trimmed();
-    if (text.isEmpty() || app_.chatState().selectedPeerId().isEmpty()) return;
-    app_.sendText(text);
+    if (app_.chatState().selectedPeerId().isEmpty()) return;
+    QString text = messageEditor_->toPlainText();
+    text.remove(QChar(0xFFFC));  // 去掉内联图片/文件的对象替换占位符
+    text = text.trimmed();
+    const QList<ComposerAttachment> attachments = collectComposerAttachments();
+    if (text.isEmpty() && attachments.isEmpty()) return;
+
+    if (attachments.isEmpty()) {
+        app_.sendText(text);
+    } else {
+        // 文字并入「第一个」附件，合并成一条消息发送（气泡内图上文下）；其余附件各自单独发。
+        for (int i = 0; i < attachments.size(); ++i) {
+            const QString caption = (i == 0) ? text : QString();
+            if (attachments.at(i).isFile) {
+                app_.sendFile(attachments.at(i).path, caption);
+            } else {
+                app_.sendImage(attachments.at(i).path, caption);
+            }
+        }
+    }
+
     messageEditor_->clear();
     updateComposerState();
     // 同样延后重建：sendCurrentText 可能由 Enter 键在事件过滤器里触发，走的是按键派发路径，
@@ -1805,10 +1914,13 @@ void MainWindow::sendCurrentText() {
 
 void MainWindow::updateComposerState() {
     const bool hasPeer = !app_.chatState().selectedPeerId().isEmpty();
-    const bool hasText = messageEditor_ && !messageEditor_->toPlainText().trimmed().isEmpty();
+    QString plain = messageEditor_ ? messageEditor_->toPlainText() : QString();
+    plain.remove(QChar(0xFFFC));
+    const bool hasText = !plain.trimmed().isEmpty();
+    const bool hasAttachments = composerHasAttachments();
     messageEditor_->setEnabled(hasPeer);
     voiceButton_->setEnabled(hasPeer);
-    sendButton_->setEnabled(hasPeer && hasText);
+    sendButton_->setEnabled(hasPeer && (hasText || hasAttachments));
 }
 
 void MainWindow::updateSlashCommandSuggestions() {

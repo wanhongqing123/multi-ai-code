@@ -20,9 +20,9 @@ public:
     void removeContactAndMessages(const QString& userId);
     void selectPeer(const QString& userId);
     RemoteIMMessage queueOutgoingText(const QString& text);
-    RemoteIMMessage queueOutgoingImage(const QString& localPath, int width, int height, qint64 sizeBytes);
+    RemoteIMMessage queueOutgoingImage(const QString& localPath, int width, int height, qint64 sizeBytes, const QString& text = QString());
     RemoteIMMessage queueOutgoingVoice(const QString& localPath, int durationSeconds);
-    RemoteIMMessage queueOutgoingFile(const QString& localPath, const QString& fileName, const QString& mimeType, qint64 sizeBytes);
+    RemoteIMMessage queueOutgoingFile(const QString& localPath, const QString& fileName, const QString& mimeType, qint64 sizeBytes, const QString& text = QString());
     RemoteIMMessage receiveText(const QString& fromUserId, const QString& text);
     RemoteIMMessage receiveImage(const QString& fromUserId, const QString& localPath, int width, int height, qint64 sizeBytes);
     RemoteIMMessage receiveVoice(const QString& fromUserId, const QString& localPath, int durationSeconds);

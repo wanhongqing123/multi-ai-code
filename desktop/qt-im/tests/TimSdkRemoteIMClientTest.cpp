@@ -144,6 +144,7 @@ class TimSdkRemoteIMClientTest : public QObject {
 
 private slots:
     void connectsThroughSdkAndSendsTextAndImage();
+    void sendsImageWithTextAsSingleMultiElemMessage();
     void deletesFriendAndConversationThroughSdk();
     void fetchesContactsConversationsAndHistoryAfterLogin();
     void emitsIncomingTextAndImageFromSdkMessages();
@@ -194,6 +195,33 @@ void TimSdkRemoteIMClientTest::connectsThroughSdkAndSendsTextAndImage() {
     QCOMPARE(elem.value(QStringLiteral("elem_type")).toInt(), 1);
     QCOMPARE(elem.value(QStringLiteral("image_elem_orig_path")).toString(), QStringLiteral("/tmp/outgoing.png"));
     QCOMPARE(elem.value(QStringLiteral("image_elem_level")).toInt(), 0);
+}
+
+void TimSdkRemoteIMClientTest::sendsImageWithTextAsSingleMultiElemMessage() {
+    auto api = std::make_unique<FakeTimSdkApi>();
+    auto* fake = api.get();
+    TimSdkRemoteIMClient client(std::move(api));
+
+    client.connectToService(123456, QStringLiteral("desktop-user"), QStringLiteral("sig-value"), nullptr);
+
+    bool sent = false;
+    client.sendImageWithText(QStringLiteral("phone-user"), QStringLiteral("/tmp/outgoing.png"), QStringLiteral("看这张图"),
+                             [&](bool ok, const QString&, const RemoteIMSendReceipt&) { sent = ok; });
+    QVERIFY(sent);
+    QCOMPARE(fake->lastConversationId, QStringLiteral("phone-user"));
+    QCOMPARE(fake->lastConversationType, 1);
+
+    // 图片 + 配文合并成一条多元素消息：message_elem_array = [图片元素, 文本元素]。
+    const QJsonObject message = QJsonDocument::fromJson(fake->lastJsonMessage.toUtf8()).object();
+    const QJsonArray elems = message.value(QStringLiteral("message_elem_array")).toArray();
+    QCOMPARE(elems.size(), 2);
+    const QJsonObject imageElem = elems.at(0).toObject();
+    QCOMPARE(imageElem.value(QStringLiteral("elem_type")).toInt(), 1);
+    QCOMPARE(imageElem.value(QStringLiteral("image_elem_orig_path")).toString(), QStringLiteral("/tmp/outgoing.png"));
+    QCOMPARE(imageElem.value(QStringLiteral("image_elem_level")).toInt(), 0);
+    const QJsonObject textElem = elems.at(1).toObject();
+    QCOMPARE(textElem.value(QStringLiteral("elem_type")).toInt(), 0);
+    QCOMPARE(textElem.value(QStringLiteral("text_elem_content")).toString(), QStringLiteral("看这张图"));
 }
 
 void TimSdkRemoteIMClientTest::deletesFriendAndConversationThroughSdk() {
@@ -328,23 +356,22 @@ void TimSdkRemoteIMClientTest::emitsIncomingTextAndImageFromSdkMessages() {
 
     QCOMPARE(messagesSpy.count(), 1);
     const auto messages = messagesSpy.takeFirst().at(0).value<QList<RemoteIMMessage>>();
-    QCOMPARE(messages.size(), 2);
+    // 图片 + 配文属于同一条 SDK 消息，合并成「一条」RemoteIMMessage（图片承载配文），
+    // 稳定 id 锚定在图片元素上（#1），配文文本不再单独成条。
+    QCOMPARE(messages.size(), 1);
 
-    const RemoteIMMessage& text = messages.at(0);
-    QCOMPARE(text.id, QStringLiteral("sdk-msg-1#0"));
-    QCOMPARE(text.fromUserId, QStringLiteral("phone-user"));
-    QCOMPARE(text.toUserId, QStringLiteral("desktop-user"));
-    QCOMPARE(text.direction, RemoteIMMessageDirection::Incoming);
-    QCOMPARE(text.text, QStringLiteral("hi"));
-    QCOMPARE(text.createdAtMillis, Q_INT64_C(1700000000) * 1000);
-
-    const RemoteIMMessage& image = messages.at(1);
+    const RemoteIMMessage& image = messages.at(0);
     QCOMPARE(image.id, QStringLiteral("sdk-msg-1#1"));
+    QCOMPARE(image.fromUserId, QStringLiteral("phone-user"));
+    QCOMPARE(image.toUserId, QStringLiteral("desktop-user"));
+    QCOMPARE(image.direction, RemoteIMMessageDirection::Incoming);
+    QCOMPARE(image.text, QStringLiteral("hi"));
     QVERIFY(image.hasImage);
     QCOMPARE(image.image.localPath, QStringLiteral("/tmp/incoming.png"));
     QCOMPARE(image.image.width, 640);
     QCOMPARE(image.image.height, 480);
     QCOMPARE(image.image.sizeBytes, static_cast<qint64>(128));
+    QCOMPARE(image.createdAtMillis, Q_INT64_C(1700000000) * 1000);
 }
 
 void TimSdkRemoteIMClientTest::rejectsMissingCredentials() {

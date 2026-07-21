@@ -1,8 +1,10 @@
 import { basename, delimiter, dirname, extname, isAbsolute, join } from 'path'
 import { statSync } from 'fs'
 import {
+  bundledCliMissingMessage,
   describeAicliLaunchCommand,
-  resolveBundledCliCommand
+  resolveAicliCommand,
+  type BundledCliResolverOptions
 } from '../aicli/bundledCliResolver.js'
 
 /**
@@ -194,14 +196,20 @@ export interface ResolveSpawnError {
 export function resolveCliSpawn(
   command: string,
   args: string[],
-  env: Record<string, string>
+  env: Record<string, string>,
+  bundledOptions: BundledCliResolverOptions = {}
 ): ResolveSpawnResult | ResolveSpawnError {
   const normalizedCommand = normalizeCliCommand(command)
   const isCustomCommand =
     isAbsolute(normalizedCommand) ||
     normalizedCommand.includes('/') ||
     normalizedCommand.includes('\\')
-  const bundledCommand = resolveBundledCliCommand(normalizedCommand)
+  // codex / opencode 只允许运行内置版本；找不到内置二进制直接失败，绝不回退宿主机版本。
+  const aicli = resolveAicliCommand(normalizedCommand, bundledOptions)
+  if (aicli.bundledMissing) {
+    return { ok: false, error: bundledCliMissingMessage(aicli) }
+  }
+  const bundledCommand = aicli.bundledCommand
   const resolvedBundledCommand = bundledCommand ?? normalizedCommand
   const pathKey = Object.keys(env).find((k) => k.toLowerCase() === 'path') ?? 'Path'
   const envPath = env[pathKey] ?? ''

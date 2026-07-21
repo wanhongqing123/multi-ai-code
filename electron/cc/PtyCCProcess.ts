@@ -4,8 +4,9 @@ import { statSync, readFileSync, writeFileSync } from 'fs'
 import { createRequire } from 'module'
 import type { IPty } from 'node-pty'
 import {
+  bundledCliMissingMessage,
   describeAicliLaunchCommand,
-  resolveBundledCliCommand
+  resolveAicliCommand
 } from '../aicli/bundledCliResolver.js'
 
 const isWindows = process.platform === 'win32'
@@ -175,7 +176,13 @@ export class PtyCCProcess extends EventEmitter {
     }
 
     const command = normalizeCliCommand(this.opts.command ?? 'claude')
-    const bundledCommand = resolveBundledCliCommand(command)
+    // codex / opencode 只允许运行内置版本（已深度定制）；找不到内置二进制就直接报错，
+    // 绝不回退宿主机上自行安装的版本。claude 等其它命令不受影响，仍按 PATH 解析。
+    const aicli = resolveAicliCommand(command)
+    if (aicli.bundledMissing) {
+      throw new Error(bundledCliMissingMessage(aicli))
+    }
+    const bundledCommand = aicli.bundledCommand
     const resolvedBundledCommand = bundledCommand ?? command
     const args = this.opts.args ?? []
 

@@ -307,19 +307,28 @@ describe('registerPtyIpc prompt injection timing', () => {
     })
   })
 
-  it('resolves Codex launch notice for the boot gate before spawning', async () => {
+  it('resolves Codex launch through the bundled policy, never a host/custom path', async () => {
     const { registerPtyIpc } = await import('./ptyManager.js')
     registerPtyIpc()
 
     const handler = ipcHandlers.get('cc:resolve-launch')
     if (!handler) throw new Error('cc:resolve-launch handler was not registered')
 
-    const result = await handler({}, { command: '/custom/bin/codex', env: {} })
+    // codex 已深度定制，只走内置版本：即便配置成宿主机上的自定义路径，也强制解析到内置，
+    // 找不到内置就直接报错——绝不再以「自定义路径 / 系统 PATH」启动宿主机上的 codex。
+    const result = (await handler({}, { command: '/custom/bin/codex', env: {} })) as {
+      ok: boolean
+      notice?: string
+      error?: string
+    }
 
-    expect(result).toMatchObject({
-      ok: true,
-      notice: '当前启动 Codex：自定义路径 /custom/bin/codex'
-    })
+    if (result.ok) {
+      expect(result.notice).toContain('内置版本')
+      expect(result.notice).not.toContain('自定义路径')
+      expect(result.notice).not.toContain('系统 PATH')
+    } else {
+      expect(result.error).toContain('内置')
+    }
   })
 
   it('only exposes task-watch sessions to the scheduled task scheduler', async () => {

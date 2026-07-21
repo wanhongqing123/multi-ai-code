@@ -136,13 +136,10 @@ function defaultExistsFile(path: string): boolean {
   }
 }
 
-export function resolveBundledCliCommand(
-  command: string,
+function resolveBundledCliForTool(
+  tool: BundledCli,
   options: BundledCliResolverOptions = {}
 ): string | null {
-  const tool = bundledCliFromCommand(command)
-  if (!tool) return null
-
   const platform = options.platform ?? process.platform
   const arch = options.arch ?? process.arch
   const existsFile = options.existsFile ?? defaultExistsFile
@@ -154,4 +151,55 @@ export function resolveBundledCliCommand(
     if (existsFile(candidate)) return candidate
   }
   return null
+}
+
+export function resolveBundledCliCommand(
+  command: string,
+  options: BundledCliResolverOptions = {}
+): string | null {
+  const tool = bundledCliFromCommand(command)
+  if (!tool) return null
+  return resolveBundledCliForTool(tool, options)
+}
+
+export interface AicliCommandResolution {
+  // codex / opencode 时非空；claude 及其它命令为 null（不受内置约束）。
+  tool: BundledCli | null
+  label: 'Codex' | 'OpenCode' | null
+  // 内置二进制的绝对路径；codex/opencode 解析到内置时非空。
+  bundledCommand: string | null
+  // codex/opencode 但没找到内置二进制：调用方必须报错，绝不回退宿主机版本。
+  bundledMissing: boolean
+}
+
+// codex / opencode 已随应用深度定制，策略：只允许运行随应用打包的「内置」版本。
+// 无论配置成裸命令 "codex"/"opencode" 还是宿主机上的 PATH / 自定义路径，一律解析到
+// 内置二进制；解析不到就置 bundledMissing（调用方据此报错，绝不回退到宿主机自行安装的版本）。
+// claude 及其它命令返回 tool=null，不受影响，仍按原来的 PATH / 自定义路径解析。
+export function resolveAicliCommand(
+  command: string,
+  options: BundledCliResolverOptions = {}
+): AicliCommandResolution {
+  const tool = aicliFromAnyCommand(command)
+  if (!tool) {
+    return { tool: null, label: null, bundledCommand: null, bundledMissing: false }
+  }
+  const bundledCommand = resolveBundledCliForTool(tool, options)
+  return {
+    tool,
+    label: bundledCliLabel(tool),
+    bundledCommand,
+    bundledMissing: bundledCommand === null
+  }
+}
+
+// codex/opencode 必须用内置版本时，找不到内置二进制的统一报错文案。
+export function bundledCliMissingMessage(resolution: AicliCommandResolution): string {
+  const label = resolution.label ?? 'AICLI'
+  const tool = resolution.tool ?? ''
+  return (
+    `未找到内置的 ${label} 可执行文件。${label}（codex / opencode）已随应用深度定制，` +
+    `仅支持随应用打包的内置版本，无法使用宿主机上自行安装的 ${tool}。` +
+    `请重新安装应用，或在源码仓库执行 \`npm run build:aicli\` 生成 bin/aicli 下的二进制。`
+  )
 }

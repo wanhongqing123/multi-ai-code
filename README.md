@@ -2,7 +2,9 @@
 
 > 本地优先的 AI CLI 工作台，支持从 IM 远程操控本机 AICLI。桌面端围绕本地仓库驱动 `codex` / `opencode` / `claude` 开发；离开电脑时，用手机或另一端 IM 直接给这台机器的 AICLI 发任务、切模型、看 diff、收结果。
 
-**核心是 IM + AICLI**：它不内置大模型，而是启动你本机真实安装的 AI CLI；每台机器登录一个 IM 身份，你把它当聊天联系人，发消息即可驱动它的当前 AICLI，结果清成 Markdown 回传。多台机器就是多个联系人，各自独立驱动。
+**核心是 IM + AICLI**：它不内置大模型，而是驱动 AI CLI 干活；每台机器登录一个 IM 身份，你把它当聊天联系人，发消息即可驱动它的当前 AICLI，结果清成 Markdown 回传。多台机器就是多个联系人，各自独立驱动。
+
+> **`codex` / `opencode` 只用随应用打包的内置版本**（已做大量定制，不再兼容宿主机上自行安装的版本）；缺少内置二进制会直接报错、绝不回退宿主机版本。`claude` 仍使用你本机安装并登录的版本。
 
 ![Qt 桌面 IM 客户端：多台机器作为联系人，AICLI 回传控制命令结果](docs/readme/qt-im-remote.png)
 
@@ -30,6 +32,6 @@ npm run dev      # 开发启动
 npm run build    # 构建
 ```
 
-需本机安装并登录一种 AI CLI（推荐 `codex`）。可选从源码构建内置 AICLI：`git submodule update --init --recursive && npm run build:aicli`。数据按 IM 账号隔离存本机。
+`codex` / `opencode` 用随应用打包的内置定制版——源码开发需先构建：`git submodule update --init --recursive && npm run build:aicli`（生成 `bin/aicli`），否则启动会报「未找到内置可执行文件」。`claude` 需本机安装并登录。数据按 IM 账号隔离存本机。
 
 安装包见 [Releases](https://github.com/wanhongqing123/multi-ai-code/releases)（Electron tag `electron-<日期>`、Qt IM tag `qt-im-<日期>`）。

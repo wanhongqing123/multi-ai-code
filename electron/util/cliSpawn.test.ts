@@ -23,6 +23,18 @@ async function mkBin(name: string): Promise<{ dir: string; full: string }> {
   return { dir, full }
 }
 
+// 在内置目录结构 <root>/<tool>/<platform-arch>/<tool>[.exe] 下造一个可执行文件，
+// 供 resolveCliSpawn 通过 bundledOptions.roots 解析到「内置版本」。
+async function mkBundledCli(tool: 'codex' | 'opencode'): Promise<{ root: string; full: string }> {
+  const root = await fs.mkdtemp(join(tmpdir(), 'cli-bundled-'))
+  tempRoots.push(root)
+  const binary = isWindows ? `${tool}.exe` : tool
+  const full = join(root, tool, `${process.platform}-${process.arch}`, binary)
+  await fs.mkdir(dirname(full), { recursive: true })
+  await fs.writeFile(full, '#!/bin/sh\necho hi\n', { mode: 0o755 })
+  return { root, full }
+}
+
 describe('resolveOnPath', () => {
   it('returns the absolute path when given an existing absolute path', async () => {
     const { full } = await mkBin(isWindows ? 'tool.exe' : 'tool')
@@ -153,26 +165,28 @@ describe('resolveCliSpawn', () => {
     }
   })
 
-  it('describes custom Codex launch paths for user-visible diagnostics', async () => {
-    const { full } = await mkBin(isWindows ? 'codex.exe' : 'codex')
-    const r = resolveCliSpawn(full, ['exec', 'hi'], { PATH: '', Path: '' })
+  it('launches codex from the bundled binary and labels it as the built-in version', async () => {
+    const { root, full } = await mkBundledCli('codex')
+    const r = resolveCliSpawn('codex', ['exec', 'hi'], { PATH: '', Path: '' }, { roots: [root] })
     expect(r.ok).toBe(true)
     if (r.ok) {
-      expect(r.resolved.launchNotice).toBe(`当前启动 Codex：自定义路径 ${full}`)
+      expect(r.resolved.spawnCommand).toBe(full)
+      expect(r.resolved.launchNotice).toBe(`当前启动 Codex：内置版本 ${full}`)
     }
   })
 
-  it('on POSIX, does not display PATH fallback when a custom Codex path is configured', () => {
-    if (isWindows) return
-    const custom = '/custom/bin/codex'
-    const r = resolveCliSpawn(custom, ['exec', 'hi'], {
-      PATH: '/Users/hongqingwan/.real/.bin/node/bin',
-      Path: ''
-    })
-    expect(r.ok).toBe(true)
-    if (r.ok) {
-      expect(r.resolved.spawnCommand).toBe(custom)
-      expect(r.resolved.launchNotice).toBe(`当前启动 Codex：自定义路径 ${custom}`)
+  it('refuses codex/opencode when no bundled binary exists instead of falling back to host PATH', () => {
+    // codex 已深度定制，只用内置版本；找不到内置就报错，不回退宿主机安装的 codex。
+    const r = resolveCliSpawn(
+      'codex',
+      ['exec', 'hi'],
+      { PATH: '/usr/bin', Path: 'C:\\tools' },
+      { existsFile: () => false }
+    )
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      expect(r.error).toContain('内置')
+      expect(r.error).toContain('Codex')
     }
   })
 

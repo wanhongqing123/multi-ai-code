@@ -4,6 +4,7 @@ import {
   bundledCliFromCommand,
   bundledPlatformArch,
   describeAicliLaunchCommand,
+  resolveAicliCommand,
   resolveBundledCliCommand
 } from './bundledCliResolver.js'
 
@@ -61,6 +62,41 @@ describe('bundledCliResolver', () => {
         existsFile
       })
     ).toBeNull()
+  })
+
+  it('forces codex/opencode to the bundled binary and reports when it is missing', () => {
+    const root = '/repo/bin/aicli'
+    const codexBundled = join(root, 'codex', 'darwin-arm64', 'codex')
+    const opts = { platform: 'darwin' as const, arch: 'arm64' as const, roots: [root] }
+
+    // 裸命令 codex：解析到内置。
+    expect(
+      resolveAicliCommand('codex', { ...opts, existsFile: (p) => p === codexBundled })
+    ).toEqual({ tool: 'codex', label: 'Codex', bundledCommand: codexBundled, bundledMissing: false })
+
+    // 宿主机自定义/PATH 路径 codex：仍强制解析到内置（无视传入路径）。
+    expect(
+      resolveAicliCommand('/usr/local/bin/codex', { ...opts, existsFile: (p) => p === codexBundled })
+    ).toMatchObject({ tool: 'codex', bundledCommand: codexBundled, bundledMissing: false })
+
+    // 内置二进制缺失：置 bundledMissing，调用方据此报错、绝不回退宿主机版本。
+    expect(
+      resolveAicliCommand('codex', { ...opts, existsFile: () => false })
+    ).toEqual({ tool: 'codex', label: 'Codex', bundledCommand: null, bundledMissing: true })
+    expect(
+      resolveAicliCommand('opencode', { ...opts, existsFile: () => false })
+    ).toEqual({ tool: 'opencode', label: 'OpenCode', bundledCommand: null, bundledMissing: true })
+  })
+
+  it('leaves claude and other commands unconstrained by the bundled policy', () => {
+    for (const command of ['claude', '/custom/bin/claude', 'echo', 'my-codex-wrapper']) {
+      expect(resolveAicliCommand(command, { existsFile: () => false })).toEqual({
+        tool: null,
+        label: null,
+        bundledCommand: null,
+        bundledMissing: false
+      })
+    }
   })
 
   it('describes bundled Codex launch paths for startup visibility', () => {

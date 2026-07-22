@@ -1,16 +1,11 @@
 import { execFile, spawn } from 'child_process'
 import iconv from 'iconv-lite'
 import { win32 } from 'path'
+import type { VisualStudioInstallation } from './types.js'
+
+export type { VisualStudioInstallation }
 
 const DEFAULT_VSWHERE_PATH = 'C:\\Program Files (x86)\\Microsoft Visual Studio\\Installer\\vswhere.exe'
-
-export interface VisualStudioInstallation {
-  instanceId: string
-  displayName: string
-  installationPath: string
-  productLineVersion: string | null
-  isPrerelease: boolean
-}
 
 export interface VisualStudioInstallationsResultOk {
   ok: true

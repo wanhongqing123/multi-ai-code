@@ -2,18 +2,20 @@ import { randomUUID } from 'crypto'
 import { isAbsolute } from 'path'
 import { readProjectMetaFile, writeProjectMetaFile } from '../store/projectMeta.js'
 import type {
+  BuildConfigValidationIssue,
   BuildOutputEncoding,
   BuildStepConfig,
   BuildStepEnvType,
   ProjectBuildConfig,
 } from './types.js'
 
-export type { BuildOutputEncoding, BuildStepConfig, BuildStepEnvType, ProjectBuildConfig } from './types.js'
-
-export interface BuildConfigValidationIssue {
-  path: string
-  message: string
-}
+export type {
+  BuildConfigValidationIssue,
+  BuildOutputEncoding,
+  BuildStepConfig,
+  BuildStepEnvType,
+  ProjectBuildConfig
+} from './types.js'
 
 export type ProjectBuildConfigReadResult =
   | { ok: true; value: ProjectBuildConfig; repaired?: true }

@@ -26,6 +26,9 @@
     "electron/remote-im/types.ts",
     "electron/settings/types.ts",
     "electron/aicli/opencodeConfig.ts",
+    "electron/build/types.ts",
+    "electron/runtime/types.ts",
+    "electron/scheduledTasks/types.ts",
     "tests/src/**/*.ts",
     "tests/src/**/*.tsx"
   ]

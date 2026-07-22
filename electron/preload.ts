@@ -1,5 +1,74 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent, webUtils } from 'electron'
 
+// 第二批类型去重：Build*/Runtime*/ScheduledTask* 的真源在各自 types.ts（均为纯类型模块）。
+import type {
+  BuildStepEnvType,
+  BuildOutputEncoding,
+  BuildExecutionScope,
+  BuildStepConfig,
+  ProjectBuildConfig,
+  BuildFailureContext,
+  BuildStepRuntime,
+  BuildRuntimeState,
+  BuildDataEvent,
+  BuildStartResult,
+  BuildStopResult,
+  BuildFailureAnalysisPromptResult,
+  VisualStudioInstallation,
+  BuildConfigValidationIssue
+} from './build/types.js'
+import type {
+  RuntimeEnvType,
+  RuntimeOutputEncoding,
+  RuntimeStatus,
+  ProjectRuntimeConfig,
+  RuntimeState,
+  RuntimeDataEvent,
+  RuntimeStartResult,
+  RuntimeStopResult,
+  RuntimeAnalysisPromptResult
+} from './runtime/types.js'
+import type {
+  ScheduledTaskScheduleType,
+  ScheduledTaskRunStatus,
+  ScheduledTaskRun,
+  ScheduledTask,
+  CreateScheduledTaskInput,
+  UpdateScheduledTaskInput
+} from './scheduledTasks/types.js'
+
+export type {
+  BuildStepEnvType,
+  BuildOutputEncoding,
+  BuildExecutionScope,
+  BuildStepConfig,
+  ProjectBuildConfig,
+  BuildFailureContext,
+  BuildStepRuntime,
+  BuildRuntimeState,
+  BuildDataEvent,
+  BuildStartResult,
+  BuildStopResult,
+  BuildFailureAnalysisPromptResult,
+  VisualStudioInstallation,
+  BuildConfigValidationIssue,
+  RuntimeEnvType,
+  RuntimeOutputEncoding,
+  RuntimeStatus,
+  ProjectRuntimeConfig,
+  RuntimeState,
+  RuntimeDataEvent,
+  RuntimeStartResult,
+  RuntimeStopResult,
+  RuntimeAnalysisPromptResult,
+  ScheduledTaskScheduleType,
+  ScheduledTaskRunStatus,
+  ScheduledTaskRun,
+  ScheduledTask,
+  CreateScheduledTaskInput,
+  UpdateScheduledTaskInput
+}
+
 // 以下类型的「真源」在各自模块（均为纯类型模块，无运行时/Node 依赖）。这里 import 供
 // preload 自身使用，并统一 re-export——渲染层继续从 preload 引类型即可，无需改动。
 import type { AppSettings, AiSettings } from './settings/types.js'
@@ -69,25 +138,6 @@ export interface ScreenshotDeliverEvent {
   prompt: string
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 export interface RemoteImSendPeerImageInput {
   fileToken: string
   toUserId?: string | null
@@ -121,70 +171,11 @@ export interface RemoteImOutgoingFileEvent {
   messageId?: number | null
 }
 
-
 export interface ProjectAiSettingsResponse {
   ok: boolean
   value?: AiSettings
   repaired?: boolean
   error?: string
-}
-
-// NOTE: tsconfig.web only includes electron/preload.ts. Importing electron/build/*
-// here pulls node-side files into the web program and fails with TS6307, so these
-// types intentionally mirror the shared build contracts.
-export type BuildStepEnvType = 'system' | 'msys' | 'visual-studio'
-export type BuildOutputEncoding = 'auto' | 'utf8' | 'gbk'
-export type BuildExecutionScope = 'all' | 'single-step'
-export type RuntimeEnvType = 'system' | 'msys' | 'visual-studio'
-export type RuntimeOutputEncoding = BuildOutputEncoding
-export type RuntimeStatus = 'idle' | 'running' | 'exited' | 'failed' | 'stopped'
-export type ScheduledTaskScheduleType = 'once' | 'daily' | 'weekly' | 'interval'
-export type ScheduledTaskRunStatus =
-  | 'pending'
-  | 'queued'
-  | 'running'
-  | 'succeeded'
-  | 'failed'
-  | 'timed_out'
-  | 'cancelled'
-  | 'skipped'
-
-export interface BuildStepConfig {
-  id: string
-  name: string
-  envType: BuildStepEnvType
-  cwd: string
-  command: string
-  enabled: boolean
-  visualStudioInstanceId: string
-  outputEncoding: BuildOutputEncoding
-}
-
-export interface ProjectBuildConfig {
-  enabled: boolean
-  steps: BuildStepConfig[]
-}
-
-export interface ProjectRuntimeConfig {
-  enabled: boolean
-  cwd: string
-  command: string
-  envType: RuntimeEnvType
-  visualStudioInstanceId: string
-  outputEncoding: RuntimeOutputEncoding
-}
-
-export interface BuildConfigValidationIssue {
-  path: string
-  message: string
-}
-
-export interface VisualStudioInstallation {
-  instanceId: string
-  displayName: string
-  installationPath: string
-  productLineVersion: string | null
-  isPrerelease: boolean
 }
 
 export type ProjectBuildConfigReadResult =
@@ -203,163 +194,14 @@ export type ProjectRuntimeConfigWriteResult =
   | { ok: true; repaired?: true }
   | { ok: false; error: string; details?: BuildConfigValidationIssue[] }
 
-export interface BuildFailureContext {
-  projectId: string
-  projectName: string | null
-  targetRepo: string
-  stepId: string
-  stepName: string
-  envType: BuildStepEnvType
-  visualStudioInstanceId: string | null
-  visualStudioDisplayName: string | null
-  outputEncoding: BuildOutputEncoding
-  cwd: string
-  command: string
-  exitCode: number | null
-  signal: NodeJS.Signals | null
-  reason: string
-  logTail: string
-}
-
-export interface BuildStepRuntime extends BuildStepConfig {
-  visualStudioDisplayName: string | null
-  status: 'not-run' | 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped'
-  resolvedCwd: string | null
-  startedAt: string | null
-  finishedAt: string | null
-  exitCode: number | null
-  signal: NodeJS.Signals | null
-}
-
-export interface BuildRuntimeState {
-  status: 'idle' | 'running' | 'succeeded' | 'failed' | 'stopped'
-  scope: BuildExecutionScope | null
-  requestedStepId: string | null
-  projectId: string | null
-  projectName: string | null
-  targetRepo: string | null
-  startedAt: string | null
-  finishedAt: string | null
-  activeStepId: string | null
-  steps: BuildStepRuntime[]
-  log: string
-  lastFailure: BuildFailureContext | null
-}
-
-export interface BuildDataEvent {
-  at: string
-  projectId: string | null
-  stepId: string | null
-  stream: 'stdout' | 'stderr' | 'system'
-  chunk: string
-}
-
-export type BuildStartResult =
-  | { ok: true; state: BuildRuntimeState }
-  | { ok: false; error: string; state: BuildRuntimeState }
-
-export type BuildStopResult = { ok: true } | { ok: false; error: string }
-
 export interface BuildStartOptions {
   scope?: BuildExecutionScope
   stepId?: string | null
 }
 
-export type BuildFailureAnalysisPromptResult =
-  | { ok: true; prompt: string }
-  | { ok: false; error: string }
-
-export interface RuntimeState {
-  status: RuntimeStatus
-  projectId: string | null
-  projectName: string | null
-  targetRepo: string | null
-  cwd: string | null
-  command: string | null
-  envType: RuntimeEnvType | null
-  visualStudioInstanceId: string | null
-  visualStudioDisplayName: string | null
-  outputEncoding: RuntimeOutputEncoding | null
-  startedAt: string | null
-  finishedAt: string | null
-  exitCode: number | null
-  signal: NodeJS.Signals | null
-  log: string
-}
-
-export interface RuntimeDataEvent {
-  at: string
-  projectId: string | null
-  stream: 'stdout' | 'stderr' | 'system'
-  chunk: string
-}
-
-export type RuntimeStartResult =
-  | { ok: true; state: RuntimeState }
-  | { ok: false; error: string; state: RuntimeState }
-
-export type RuntimeStopResult = { ok: true } | { ok: false; error: string }
-
-export type RuntimeAnalysisPromptResult =
-  | { ok: true; prompt: string }
-  | { ok: false; error: string }
-
 export type RuntimeAnalysisPromptFileResult =
   | { ok: true; filePath: string; message: string }
   | { ok: false; error: string }
-
-export interface ScheduledTaskRun {
-  id: number
-  taskId: number
-  status: ScheduledTaskRunStatus
-  scheduledAt: number
-  startedAt: number | null
-  finishedAt: number | null
-  prompt: string
-  outputExcerpt: string | null
-  error: string | null
-  timeoutMinutes: number
-}
-
-export interface ScheduledTask {
-  id: number
-  projectId: string
-  targetRepo: string | null
-  name: string
-  description: string
-  goal: string
-  instructions: string[]
-  enabled: boolean
-  scheduleType: ScheduledTaskScheduleType
-  scheduleTime: string
-  scheduleDays: number[]
-  nextRunAt: number | null
-  timeoutMinutes: number
-  allowCodeChanges: boolean
-  allowGitCommit: boolean
-  requireTestConfirmation: boolean
-  createdAt: number
-  updatedAt: number
-  lastRun: ScheduledTaskRun | null
-}
-
-export interface CreateScheduledTaskInput {
-  projectId: string
-  name: string
-  description: string
-  goal: string
-  instructions: string[]
-  enabled: boolean
-  scheduleType: ScheduledTaskScheduleType
-  scheduleTime: string
-  scheduleDays: number[]
-  timeoutMinutes: number
-  allowCodeChanges: boolean
-  allowGitCommit: boolean
-  requireTestConfirmation: boolean
-}
-
-export type UpdateScheduledTaskInput = Partial<Omit<CreateScheduledTaskInput, 'projectId'>>
 
 export interface ScheduledTaskQueueState {
   running: {
@@ -504,7 +346,6 @@ export interface JudgeExternalReviewRequest {
     linkedDiffFile: { path: string } | null
   }
 }
-
 
 const api = {
   platform: process.platform,

@@ -96,3 +96,18 @@ export type BuildStopResult = { ok: true } | { ok: false; error: string }
 export type BuildFailureAnalysisPromptResult =
   | { ok: true; prompt: string }
   | { ok: false; error: string }
+
+// Visual Studio 探测结果与构建配置校验问题：类型真源集中于此（纯类型），供 preload/渲染层引用；
+// 运行时模块 visualStudio.ts / config.ts 从这里 import 并 re-export 给各自的电子端消费方。
+export interface VisualStudioInstallation {
+  instanceId: string
+  displayName: string
+  installationPath: string
+  productLineVersion: string | null
+  isPrerelease: boolean
+}
+
+export interface BuildConfigValidationIssue {
+  path: string
+  message: string
+}

@@ -9,7 +9,7 @@ Usage:
   desktop/qt-im/scripts/package-macos.sh [--build-dir build] [--out-dir dist] [--macdeployqt /path/to/macdeployqt]
 
 The script expects a built macOS bundle:
-  <build-dir>/Multi-AI Code IM.app
+  <build-dir>/MaiChat.app
 
 Outputs:
   <out-dir>/MultiAIIM-macos-arm64/
@@ -51,7 +51,7 @@ done
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 repo_root="$(git -C "$project_root" rev-parse --show-toplevel)"
 build_path="$project_root/$build_dir"
-app_name="Multi-AI Code IM.app"
+app_name="MaiChat.app"
 source_app="$build_path/$app_name"
 
 if [[ ! -d "$source_app" ]]; then
@@ -108,11 +108,11 @@ mkdir -p "$sdk_target_dir"
 ditto "$sdk_source" "$sdk_target_dir/ImSDKForMac_Plus.framework"
 
 cat > "$staging/使用说明.txt" <<'README'
-Multi-AI Code IM 桌面客户端（macOS）
+MaiChat 桌面客户端（macOS）
 ===================================
 
-安装：将 Multi-AI Code IM.app 拖到右侧 Applications 文件夹。
-运行：复制完成后，从“应用程序”或 Launchpad 打开 Multi-AI Code IM。
+安装：将 MaiChat.app 拖到右侧 Applications 文件夹。
+运行：复制完成后，从“应用程序”或 Launchpad 打开 MaiChat。
 
 - 无需在目标机器安装 Qt，Qt 运行时已随 .app 旁挂。
 - 原生 IM SDK 已随包放在 .app 内部，请不要手动移动 .app 内的 vendor 目录。
@@ -158,7 +158,7 @@ trap cleanup EXIT
 
 rm -f "$dmg_path" "$rw_dmg"
 hdiutil create \
-  -volname "Multi-AI Code IM" \
+  -volname "MaiChat" \
   -srcfolder "$staging" \
   -ov \
   -format UDRW \
@@ -190,7 +190,7 @@ env \
   windowWidth=580 \
   windowHeight=380 \
   backgroundColor="#ffffff" \
-  iconLocations="'Multi-AI Code IM.app': (150, 165), 'Applications': (430, 165), '使用说明.txt': (290, 315)" \
+  iconLocations="'MaiChat.app': (150, 165), 'Applications': (430, 165), '使用说明.txt': (290, 315)" \
   python3 "$dmgbuild_script"
 
 sync

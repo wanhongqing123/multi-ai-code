@@ -1,4 +1,4 @@
-; Multi-AI IM Desktop Windows 安装程序（NSIS）。
+; MaiChat Windows 安装程序（NSIS）。
 ; 由 scripts\make-installer-windows.ps1 调用，需要以下命令行定义：
 ;   /DSTAGING_DIR=<staging 目录>   打包好的应用文件（package-windows.ps1 产出）
 ;   /DOUT_FILE=<输出 exe 路径>
@@ -7,8 +7,8 @@
 ;   /DICON_FILE=<安装程序图标 .ico>
 ;
 ; 设计要点：
-; - 按用户安装（无需管理员/UAC），装到 %LOCALAPPDATA%\Programs\Multi-AI IM Desktop
-; - 卸载保留用户数据（%APPDATA%\Multi-AI IM\Desktop IM 下的聊天库与设置）
+; - 按用户安装（无需管理员/UAC），装到 %LOCALAPPDATA%\Programs\MaiChat
+; - 卸载保留用户数据（%APPDATA%\MaiChat\Desktop IM 下的聊天库与设置）
 ; - 安装/卸载前结束运行中的实例，避免文件占用
 
 Unicode true
@@ -30,9 +30,9 @@ SetCompressor /SOLID lzma
   !define APP_VERSION_NUM "0.0.0.0"
 !endif
 
-!define APP_NAME "Multi-AI IM Desktop"
+!define APP_NAME "MaiChat"
 !define APP_EXE "multi_ai_im_desktop.exe"
-!define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\MultiAIIMDesktop"
+!define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\MaiChat"
 
 Name "${APP_NAME}"
 OutFile "${OUT_FILE}"
@@ -74,7 +74,7 @@ Section "安装"
 
   WriteRegStr HKCU "${UNINST_KEY}" "DisplayName" "${APP_NAME}"
   WriteRegStr HKCU "${UNINST_KEY}" "DisplayVersion" "${APP_VERSION}"
-  WriteRegStr HKCU "${UNINST_KEY}" "Publisher" "Multi-AI IM"
+  WriteRegStr HKCU "${UNINST_KEY}" "Publisher" "Kongshang"
   WriteRegStr HKCU "${UNINST_KEY}" "DisplayIcon" "$INSTDIR\${APP_EXE}"
   WriteRegStr HKCU "${UNINST_KEY}" "InstallLocation" "$INSTDIR"
   WriteRegStr HKCU "${UNINST_KEY}" "UninstallString" '"$INSTDIR\Uninstall.exe"'
@@ -96,5 +96,5 @@ Section "Uninstall"
   Delete "$DESKTOP\${APP_NAME}.lnk"
   RMDir /r "$INSTDIR"
   DeleteRegKey HKCU "${UNINST_KEY}"
-  ; 用户数据（%APPDATA%\Multi-AI IM\Desktop IM）与 Qt 设置保留，不随卸载删除。
+  ; 用户数据（%APPDATA%\MaiChat\Desktop IM）与 Qt 设置保留，不随卸载删除。
 SectionEnd

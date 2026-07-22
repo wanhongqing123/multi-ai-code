@@ -1,4 +1,4 @@
-package com.multiaicode.remoteim;
+package com.kongshang.maichat;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;

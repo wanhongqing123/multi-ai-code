@@ -433,7 +433,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.multiaicode.remoteim;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kongshang.maichat;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -454,7 +454,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.multiaicode.remoteim.core;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kongshang.maichat.core;
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -472,7 +472,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.multiaicode.MultiAIIMTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kongshang.maichat.tests;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -493,7 +493,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.multiaicode.remoteim.core;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kongshang.maichat.core;
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -578,7 +578,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.multiaicode.remoteim;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kongshang.maichat;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -652,7 +652,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.multiaicode.MultiAIIMTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kongshang.maichat.tests;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};

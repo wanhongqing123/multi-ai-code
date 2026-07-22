@@ -1,6 +1,6 @@
 name: MultiAIIM
 options:
-  bundleIdPrefix: com.multiaicode
+  bundleIdPrefix: com.kongshang.maichat
   deploymentTarget:
     iOS: "16.0"
 settings:
@@ -18,7 +18,7 @@ targets:
       - target: MultiAIIMCore
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.multiaicode.remoteim
+        PRODUCT_BUNDLE_IDENTIFIER: com.kongshang.maichat
         INFOPLIST_FILE: MultiAIIM/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
   MultiAIIMCore:
@@ -28,7 +28,7 @@ targets:
       - path: MultiAIIMCore
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.multiaicode.remoteim.core
+        PRODUCT_BUNDLE_IDENTIFIER: com.kongshang.maichat.core
         GENERATE_INFOPLIST_FILE: YES
   MultiAIIMTests:
     type: bundle.unit-test

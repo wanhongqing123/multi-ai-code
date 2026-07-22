@@ -1,4 +1,4 @@
-package com.multiaicode.remoteim;
+package com.kongshang.maichat;
 
 public final class RemoteIMSlashCommand {
     private final String command;

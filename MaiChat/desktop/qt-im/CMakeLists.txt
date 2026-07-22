@@ -97,9 +97,9 @@ if(APPLE)
   target_sources(multi_ai_im_desktop PRIVATE "${APP_ICON_MACOS}")
   set_target_properties(multi_ai_im_desktop PROPERTIES
     MACOSX_BUNDLE TRUE
-    OUTPUT_NAME "Multi-AI Code IM"
-    MACOSX_BUNDLE_BUNDLE_NAME "Multi-AI Code IM"
-    MACOSX_BUNDLE_GUI_IDENTIFIER "com.multi-ai-code.im.desktop"
+    OUTPUT_NAME "MaiChat"
+    MACOSX_BUNDLE_BUNDLE_NAME "MaiChat"
+    MACOSX_BUNDLE_GUI_IDENTIFIER "com.kongshang.maichat"
     MACOSX_BUNDLE_ICON_FILE "AppIcon.icns"
     MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
     MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"

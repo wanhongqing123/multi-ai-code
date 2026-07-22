@@ -26,23 +26,29 @@ QString messageDatabasePath(const QString& userId) {
     return QDir(root).filePath(QStringLiteral("RemoteIMHistory/") + userId + QStringLiteral("/messages.db"));
 }
 
-// 早期版本以 "Multi-AI Code/Multi-AI Code IM" 身份存数据——与 Electron 主程序
-//（productName "Multi-AI Code"）的品牌目录混在一起。两者是独立应用（Electron
-// 内置 IM 以后也要有自己的消息存储），Desktop IM 迁到独立的
-// "Multi-AI IM/Desktop IM"，老目录整体搬迁一次（含 SDK 缓存与消息库）。
-// 跨平台：基准目录取自当前 AppDataLocation 的上两级（Windows=%APPDATA%，
-// macOS=~/Library/Application Support），两端老数据都能搬。
+// 数据身份历史迁移：Desktop IM 早期以 "Multi-AI Code/Multi-AI Code IM" 存数据（与
+// Electron 主程序品牌目录混在一起），后独立为 "Multi-AI IM/Desktop IM"；本次品牌改为
+// MaiChat，落在 "MaiChat/Desktop IM"。启动时若当前目录还不存在，就按新→旧顺序找到历史
+// 目录整体搬迁一次（含 SDK 缓存与消息库），保住老数据。跨平台：基准目录取 AppDataLocation
+// 的上两级（Windows=%APPDATA%，macOS=~/Library/Application Support）。
 void migrateLegacyAppData() {
     const QString current = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     if (current.isEmpty() || QDir(current).exists()) return;
-    const QString orgDir = QFileInfo(current).absolutePath();          // <base>/Multi-AI IM
+    const QString orgDir = QFileInfo(current).absolutePath();          // <base>/MaiChat
     const QString base = QFileInfo(orgDir).absolutePath();             // <base>
-    const QString legacy = base + QStringLiteral("/Multi-AI Code/Multi-AI Code IM");
-    if (!QDir(legacy).exists()) return;
-    QDir().mkpath(orgDir);
-    QDir().rename(legacy, current);
-    // 老的组织目录若因此清空则顺手移除；他人（如 Electron）在用则 rmdir 失败，无副作用。
-    QDir(base).rmdir(QStringLiteral("Multi-AI Code"));
+    const QStringList legacyDirs = {
+        base + QStringLiteral("/Multi-AI IM/Desktop IM"),
+        base + QStringLiteral("/Multi-AI Code/Multi-AI Code IM")
+    };
+    for (const QString& legacy : legacyDirs) {
+        if (!QDir(legacy).exists()) continue;
+        QDir().mkpath(orgDir);
+        if (!QDir().rename(legacy, current)) continue;
+        // 老组织目录若因此清空则顺手移除；他人（如 Electron）仍在用则 rmdir 失败，无副作用。
+        QDir(base).rmdir(QStringLiteral("Multi-AI IM"));
+        QDir(base).rmdir(QStringLiteral("Multi-AI Code"));
+        break;
+    }
 }
 
 }  // namespace
@@ -61,9 +67,9 @@ int main(int argc, char* argv[]) {
 
     QApplication app(argc, argv);
     // 独立应用身份：数据树与 Electron 主程序（multi-ai-code / "Multi-AI Code"）
-    // 分开，落在 %APPDATA%\Multi-AI IM\Desktop IM。
+    // 分开，落在 %APPDATA%\MaiChat\Desktop IM（老 "Multi-AI IM" 数据由 migrateLegacyAppData 搬迁）。
     QApplication::setApplicationName(QStringLiteral("Desktop IM"));
-    QApplication::setOrganizationName(QStringLiteral("Multi-AI IM"));
+    QApplication::setOrganizationName(QStringLiteral("MaiChat"));
     migrateLegacyAppData();
 
     // 接收图片/文件需要走 HTTPS 下载（QNetworkAccessManager），Qt 5.15 依赖 OpenSSL 1.1。

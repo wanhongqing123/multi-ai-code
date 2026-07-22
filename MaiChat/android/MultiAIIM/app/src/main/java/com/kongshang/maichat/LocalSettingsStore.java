@@ -1,4 +1,4 @@
-package com.multiaicode.remoteim;
+package com.kongshang.maichat;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -32,7 +32,7 @@ public final class LocalSettingsStore {
         Properties properties = new Properties();
         properties.setProperty(LOGIN_USER_ID, settings.loginUserId());
         try (FileOutputStream output = new FileOutputStream(file)) {
-            properties.store(output, "Multi-AI Code Remote IM settings");
+            properties.store(output, "MaiChat Remote IM settings");
         }
     }
 }

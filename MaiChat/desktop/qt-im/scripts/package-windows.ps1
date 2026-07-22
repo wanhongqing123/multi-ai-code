@@ -89,7 +89,7 @@ Write-Host 'OpenSSL 1.1 已旁挂（HTTPS 图片/文件下载所需）'
 
 # 使用说明
 $readme = @"
-Multi-AI IM 桌面客户端（Windows 免安装版）
+MaiChat 桌面客户端（Windows 免安装版）
 ==========================================
 
 运行：双击 multi_ai_im_desktop.exe。

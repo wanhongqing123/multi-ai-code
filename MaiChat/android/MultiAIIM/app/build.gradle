@@ -3,11 +3,11 @@ plugins {
 }
 
 android {
-    namespace "com.multiaicode.remoteim"
+    namespace "com.kongshang.maichat"
     compileSdk 34
 
     defaultConfig {
-        applicationId "com.multiaicode.remoteim"
+        applicationId "com.kongshang.maichat"
         minSdk 26
         targetSdk 34
         versionCode 1

@@ -5,7 +5,7 @@
 #   可选参数：-BuildDir build-msvc2019_64   -OutDir dist   -MakeNsis <makensis.exe 路径>
 #
 # 产出：
-#   <OutDir>\MultiAIIM-Setup-win64-<日期>-<git短哈希>.exe
+#   <OutDir>\MaiChat-Setup-win64-<日期>-<git短哈希>.exe
 #
 # makensis 来源：优先用 -MakeNsis 指定；否则找 PATH，再退回 electron-builder
 # 的 NSIS 缓存（Electron 打包时下载的同一套 NSIS，本机无需另装）。
@@ -28,13 +28,13 @@ if (-not (Test-Path (Join-Path $staging 'multi_ai_im_desktop.exe'))) {
 
 # 2) 覆盖使用说明为安装版文案（staging 里默认是绿色版文案）
 $readme = @"
-Multi-AI IM 桌面客户端（Windows）
+MaiChat 桌面客户端（Windows）
 =================================
 
 - 从开始菜单或桌面快捷方式启动。
 - 首次启动在登录页输入账号 ID 后回车即可登录（UserSig 由内置密钥本地生成）。
-- 聊天记录等本地数据存放于 %APPDATA%\Multi-AI IM\Desktop IM，卸载时不会删除。
-- 卸载：设置 → 应用 → 已安装的应用 → Multi-AI IM Desktop。
+- 聊天记录等本地数据存放于 %APPDATA%\MaiChat\Desktop IM，卸载时不会删除。
+- 卸载：设置 → 应用 → 已安装的应用 → MaiChat。
 - vendor\ 目录存放腾讯 IM SDK 动态库，请勿移动或删除。
 "@
 [System.IO.File]::WriteAllText(
@@ -70,7 +70,7 @@ $gitHash = (& git -C $projectRoot rev-parse --short HEAD 2>$null)
 if (-not $gitHash) { $gitHash = 'unknown' }
 $appVersion = "$appSemver-$gitHash"   # 显示版本，如 0.1.1-abc1234
 $versionNum = "$appSemver.0"          # NSIS VIProductVersion 需要 x.x.x.x
-$outFile = Join-Path (Join-Path $projectRoot $OutDir) "MultiAIIM-Setup-win64-v$appSemver-$gitHash.exe"
+$outFile = Join-Path (Join-Path $projectRoot $OutDir) "MaiChat-Setup-win64-v$appSemver-$gitHash.exe"
 if (Test-Path $outFile) { Remove-Item $outFile -Force }
 
 $nsiScript = Join-Path $projectRoot 'installer\windows-installer.nsi'

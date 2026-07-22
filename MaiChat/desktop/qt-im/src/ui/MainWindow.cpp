@@ -530,7 +530,7 @@ void MainWindow::showEvent(QShowEvent* event) {
 
 void MainWindow::buildUi() {
     // 单个空格而不是空串：空标题时 Qt 会回退显示 applicationDisplayName
-    // （"Multi-AI Code IM"），飞书风格的标题栏不显示文字。
+    // （"MaiChat"），飞书风格的标题栏不显示文字。
     setWindowTitle(QStringLiteral(" "));
     resize(1280, 820);
     setMinimumSize(980, 640);

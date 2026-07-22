@@ -13,7 +13,7 @@ enum KeychainSecretStoreError: Error, LocalizedError {
 }
 
 final class KeychainSecretStore {
-    private let service = "com.multiaicode.remoteim"
+    private let service = "com.kongshang.maichat"
     private let account = "tencent-user-sig-secret-key"
 
     func readSecretKey() -> String {

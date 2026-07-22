@@ -1,4 +1,4 @@
-package com.multiaicode.remoteim;
+package com.kongshang.maichat;
 
 public enum RemoteIMTab {
     MESSAGES("消息"),

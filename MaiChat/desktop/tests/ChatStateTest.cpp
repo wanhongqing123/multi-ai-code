@@ -20,6 +20,7 @@ private slots:
     void selectPeerClearsUnread();
     void restoreDoesNotAffectUnread();
     void removingContactDropsItsUnread();
+    void liveAppendCountsUnreadAndDedupes();
 };
 
 void ChatStateTest::queuesOutgoingText() {
@@ -296,6 +297,42 @@ void ChatStateTest::removingContactDropsItsUnread() {
     QCOMPARE(state.unreadCount("peer-b"), 1);
     state.selectPeer("peer-b");
     QCOMPARE(state.unreadCount("peer-b"), 0);
+}
+
+void ChatStateTest::liveAppendCountsUnreadAndDedupes() {
+    ChatState state("desktop-user");
+    state.selectPeer("peer-a");
+
+    // 实时推送的新入站消息：非选中会话计红点。
+    RemoteIMMessage live;
+    live.id = QStringLiteral("sdk-live-1#0");
+    live.fromUserId = QStringLiteral("peer-b");
+    live.toUserId = QStringLiteral("desktop-user");
+    live.direction = RemoteIMMessageDirection::Incoming;
+    live.text = QStringLiteral("fresh");
+    QVERIFY(state.appendLiveMessage(live));
+    QCOMPARE(state.unreadCount("peer-b"), 1);
+
+    // 同 id 重复投递（实时重发或漫游先到）：不重复累计、消息也只保留一条。
+    QVERIFY(!state.appendLiveMessage(live));
+    QCOMPARE(state.unreadCount("peer-b"), 1);
+    QCOMPARE(state.messagesWith("peer-b").size(), 1);
+
+    // 选中会话的实时消息不计。
+    RemoteIMMessage onScreen = live;
+    onScreen.id = QStringLiteral("sdk-live-2#0");
+    onScreen.fromUserId = QStringLiteral("peer-a");
+    QVERIFY(state.appendLiveMessage(onScreen));
+    QCOMPARE(state.unreadCount("peer-a"), 0);
+
+    // 出站消息（自己在别端发的）经实时通道回投：不计红点。
+    RemoteIMMessage outgoingEcho = live;
+    outgoingEcho.id = QStringLiteral("sdk-live-3#0");
+    outgoingEcho.fromUserId = QStringLiteral("desktop-user");
+    outgoingEcho.toUserId = QStringLiteral("peer-b");
+    outgoingEcho.direction = RemoteIMMessageDirection::Outgoing;
+    QVERIFY(state.appendLiveMessage(outgoingEcho));
+    QCOMPARE(state.unreadCount("peer-b"), 1);
 }
 
 QTEST_MAIN(ChatStateTest)

@@ -39,8 +39,11 @@ private:
     void handleIncomingMessage(const QJsonObject& message);
     // message 需预填 id/方向/时间等字段（附件 localPath 由下载完成后补上），
     // 下载完经 messagesReceived 通道送出，保持稳定 id 供本地库去重。
-    void handleIncomingImageUrl(RemoteIMMessage message, const QString& url);
-    void handleIncomingFileUrl(RemoteIMMessage message, const QString& url);
+    // live=true 表示来自实时推送（RecvNewMsg），送 liveMessagesReceived（计未读红点）；
+    // false 表示漫游/历史解析，送 messagesReceived。下载助手被两条链路共用，须透传。
+    void handleIncomingImageUrl(RemoteIMMessage message, const QString& url, bool live);
+    void handleIncomingFileUrl(RemoteIMMessage message, const QString& url, bool live);
+    void emitReceivedMessages(const QList<RemoteIMMessage>& messages, bool live);
     static void complete(RemoteIMCompletion completion, int code, const QString& description);
     static QString compactJson(const QJsonObject& object);
 

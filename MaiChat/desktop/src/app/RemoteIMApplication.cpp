@@ -207,24 +207,13 @@ void RemoteIMApplication::bindClientSignals() {
         }
         emit stateChanged();
     });
-    // SDK 漫游历史 + TimSdk 实时消息（带 SDK 消息 id）共用此通道：
-    // 本地库按 id INSERT OR IGNORE 去重，只有真正的新消息才进 ChatState。
+    // 漫游/历史与实时推送分两条同构通道（都带稳定 SDK 消息 id、按 id 去重落库），
+    // 区别仅在实时通道的新入站消息会累计会话未读红点。
     connect(client_.get(), &RemoteIMClient::messagesReceived, this, [this](const QList<RemoteIMMessage>& messages) {
-        const bool shouldSelectFirstPeer = state_.selectedPeerId().isEmpty();
-        QString firstPeerId;
-        for (const RemoteIMMessage& message : messages) {
-            const QString peerId = peerOf(message);
-            if (peerId.isEmpty()) continue;
-            if (firstPeerId.isEmpty()) firstPeerId = peerId;
-            state_.upsertContact(RemoteIMContact{peerId, peerId});
-            if (database_) {
-                database_->upsertContact(RemoteIMContact{peerId, peerId});
-                database_->insertMessageIfAbsent(message, peerId);
-            }
-            state_.appendMessageForRestore(message);
-        }
-        if (shouldSelectFirstPeer && !firstPeerId.isEmpty()) state_.selectPeer(firstPeerId);
-        emit stateChanged();
+        ingestMessages(messages, /*live=*/false);
+    });
+    connect(client_.get(), &RemoteIMClient::liveMessagesReceived, this, [this](const QList<RemoteIMMessage>& messages) {
+        ingestMessages(messages, /*live=*/true);
     });
     connect(client_.get(), &RemoteIMClient::incomingText, this, [this](const QString& fromUserId, const QString& text) {
         persistMessage(state_.receiveText(fromUserId, text));
@@ -256,4 +245,26 @@ void RemoteIMApplication::bindClientSignals() {
         connected_ = false;
         emit connectionChanged(false);
     });
+}
+
+void RemoteIMApplication::ingestMessages(const QList<RemoteIMMessage>& messages, bool live) {
+    const bool shouldSelectFirstPeer = state_.selectedPeerId().isEmpty();
+    QString firstPeerId;
+    for (const RemoteIMMessage& message : messages) {
+        const QString peerId = peerOf(message);
+        if (peerId.isEmpty()) continue;
+        if (firstPeerId.isEmpty()) firstPeerId = peerId;
+        state_.upsertContact(RemoteIMContact{peerId, peerId});
+        if (database_) {
+            database_->upsertContact(RemoteIMContact{peerId, peerId});
+            database_->insertMessageIfAbsent(message, peerId);
+        }
+        if (live) {
+            state_.appendLiveMessage(message);
+        } else {
+            state_.appendMessageForRestore(message);
+        }
+    }
+    if (shouldSelectFirstPeer && !firstPeerId.isEmpty()) state_.selectPeer(firstPeerId);
+    emit stateChanged();
 }

@@ -38,6 +38,9 @@ public:
     // 据此去重）。新 id 已存在（漫游先到）时删除旧临时消息，返回 false。
     bool adoptMessageId(const QString& oldId, const QString& newId);
     void appendMessageForRestore(const RemoteIMMessage& message);
+    // 实时推送入口（liveMessagesReceived 通道）：复用恢复通道的 id 去重/时间校正，
+    // 区别是真正的新入站消息会计未读红点。返回是否为新消息。
+    bool appendLiveMessage(const RemoteIMMessage& message);
 
 private:
     QString requireSelectedPeer() const;

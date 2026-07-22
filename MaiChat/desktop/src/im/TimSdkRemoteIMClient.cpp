@@ -572,7 +572,7 @@ void TimSdkRemoteIMClient::handleHistoryMessagesPayload(const QString& jsonPaylo
                         messages.append(message);
                     } else {
                         message.file = RemoteIMFileAttachment{QString(), QFileInfo(fileName).fileName(), mimeTypeForFileName(fileName), sizeBytes};
-                        handleIncomingFileUrl(message, url);
+                        handleIncomingFileUrl(message, url, /*live=*/false);
                     }
                     continue;
                 }
@@ -587,7 +587,7 @@ void TimSdkRemoteIMClient::handleHistoryMessagesPayload(const QString& jsonPaylo
             }
         }
     }
-    if (!messages.isEmpty()) emit messagesReceived(messages);
+    emitReceivedMessages(messages, /*live=*/false);
 }
 
 QString TimSdkRemoteIMClient::sdkConfigJson() const {
@@ -691,7 +691,7 @@ void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
                 QStringLiteral("image_elem_orig_url"),
                 QStringLiteral("image_elem_thumb_url")
             });
-            if (!url.isEmpty()) handleIncomingImageUrl(imageMessage, url);
+            if (!url.isEmpty()) handleIncomingImageUrl(imageMessage, url, /*live=*/true);
             continue;
         }
         if (elemType == kElemFile) {
@@ -719,26 +719,26 @@ void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
             const QString url = elem.value(QStringLiteral("file_elem_url")).toString().trimmed();
             if (!url.isEmpty()) {
                 fileMessage.file = RemoteIMFileAttachment{QString(), displayName, mimeTypeForFileName(displayName), sizeBytes};
-                handleIncomingFileUrl(fileMessage, url);
+                handleIncomingFileUrl(fileMessage, url, /*live=*/true);
             }
         }
     }
-    if (!received.isEmpty()) emit messagesReceived(received);
+    emitReceivedMessages(received, /*live=*/true);
 }
 
-void TimSdkRemoteIMClient::handleIncomingImageUrl(RemoteIMMessage message, const QString& url) {
+void TimSdkRemoteIMClient::handleIncomingImageUrl(RemoteIMMessage message, const QString& url, bool live) {
     const QString targetPath = cacheImagePathForUrl(url);
     message.image.localPath = targetPath;
     // 保留调用方合并进来的配文；只有真正无配文时才补占位文字。
     if (message.text.trimmed().isEmpty())
         message.text = QStringLiteral("[图片消息] ") + QFileInfo(targetPath).fileName();
     if (QFile::exists(targetPath)) {
-        emit messagesReceived({message});
+        emitReceivedMessages({message}, live);
         return;
     }
 
     QNetworkReply* reply = network_.get(QNetworkRequest(QUrl(url)));
-    connect(reply, &QNetworkReply::finished, this, [this, reply, message, url] {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, message, url, live] {
         const QByteArray data = reply->readAll();
         const bool ok = reply->error() == QNetworkReply::NoError && !data.isEmpty();
         const QString err = reply->errorString();
@@ -752,20 +752,20 @@ void TimSdkRemoteIMClient::handleIncomingImageUrl(RemoteIMMessage message, const
         if (!file.open(QIODevice::WriteOnly)) return;
         file.write(data);
         file.close();
-        emit messagesReceived({message});
+        emitReceivedMessages({message}, live);
     });
 }
 
-void TimSdkRemoteIMClient::handleIncomingFileUrl(RemoteIMMessage message, const QString& url) {
+void TimSdkRemoteIMClient::handleIncomingFileUrl(RemoteIMMessage message, const QString& url, bool live) {
     const QString targetPath = cacheFilePathForUrl(url, message.file.fileName);
     message.file.localPath = targetPath;
     if (QFile::exists(targetPath)) {
-        emit messagesReceived({message});
+        emitReceivedMessages({message}, live);
         return;
     }
 
     QNetworkReply* reply = network_.get(QNetworkRequest(QUrl(url)));
-    connect(reply, &QNetworkReply::finished, this, [this, reply, message] {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, message, live] {
         const QByteArray data = reply->readAll();
         const bool ok = reply->error() == QNetworkReply::NoError && !data.isEmpty();
         reply->deleteLater();
@@ -774,8 +774,17 @@ void TimSdkRemoteIMClient::handleIncomingFileUrl(RemoteIMMessage message, const 
         if (!file.open(QIODevice::WriteOnly)) return;
         file.write(data);
         file.close();
-        emit messagesReceived({message});
+        emitReceivedMessages({message}, live);
     });
+}
+
+void TimSdkRemoteIMClient::emitReceivedMessages(const QList<RemoteIMMessage>& messages, bool live) {
+    if (messages.isEmpty()) return;
+    if (live) {
+        emit liveMessagesReceived(messages);
+    } else {
+        emit messagesReceived(messages);
+    }
 }
 
 void TimSdkRemoteIMClient::complete(RemoteIMCompletion completion, int code, const QString& description) {

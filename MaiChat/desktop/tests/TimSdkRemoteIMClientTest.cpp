@@ -329,9 +329,10 @@ void TimSdkRemoteIMClientTest::emitsIncomingTextAndImageFromSdkMessages() {
     auto api = std::make_unique<FakeTimSdkApi>();
     auto* fake = api.get();
     TimSdkRemoteIMClient client(std::move(api));
-    // 实时消息改经 messagesReceived 通道送出：与漫游同构、携带稳定 SDK 消息 id
-    //（<msg_id>#<elem下标>），本地消息库据此去重。
-    QSignalSpy messagesSpy(&client, &RemoteIMClient::messagesReceived);
+    // 实时消息经 liveMessagesReceived 通道送出：与漫游（messagesReceived）同构、
+    // 携带稳定 SDK 消息 id（<msg_id>#<elem下标>）供落库去重，但会累计未读红点。
+    QSignalSpy messagesSpy(&client, &RemoteIMClient::liveMessagesReceived);
+    QSignalSpy roamingSpy(&client, &RemoteIMClient::messagesReceived);
 
     client.connectToService(123456, QStringLiteral("desktop-user"), QStringLiteral("sig-value"), nullptr);
     fake->emitMessages(QJsonArray{QJsonObject{
@@ -372,6 +373,8 @@ void TimSdkRemoteIMClientTest::emitsIncomingTextAndImageFromSdkMessages() {
     QCOMPARE(image.image.height, 480);
     QCOMPARE(image.image.sizeBytes, static_cast<qint64>(128));
     QCOMPARE(image.createdAtMillis, Q_INT64_C(1700000000) * 1000);
+    // 实时推送不得串入漫游通道（否则未读红点永远不累计）。
+    QCOMPARE(roamingSpy.count(), 0);
 }
 
 void TimSdkRemoteIMClientTest::rejectsMissingCredentials() {

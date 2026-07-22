@@ -54,7 +54,11 @@ public:
 
 signals:
     void contactsReceived(const QList<RemoteIMContact>& contacts);
+    // 漫游/历史恢复通道：消息并入内存与本地库（按 id 去重），不产生未读红点。
     void messagesReceived(const QList<RemoteIMMessage>& messages);
+    // 实时推送通道（RecvNewMsg）：与 messagesReceived 同构（携带稳定 SDK 消息 id
+    // 供落库去重），区别是真正的新入站消息会累计会话未读红点。
+    void liveMessagesReceived(const QList<RemoteIMMessage>& messages);
     void incomingText(const QString& fromUserId, const QString& text);
     void incomingImage(const QString& fromUserId, const QString& localPath, int width, int height, qint64 sizeBytes);
     void incomingVoice(const QString& fromUserId, const QString& localPath, int durationSeconds);

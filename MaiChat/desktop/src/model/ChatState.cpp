@@ -290,6 +290,16 @@ void ChatState::appendMessageForRestore(const RemoteIMMessage& message) {
     appendTracked(restored);
 }
 
+bool ChatState::appendLiveMessage(const RemoteIMMessage& message) {
+    const bool isNew = !messageIds_.contains(message.id);
+    appendMessageForRestore(message);
+    // 只有真正首次入内存的入站消息计红点；漫游重投/去重命中不重复累计。
+    if (isNew && message.direction == RemoteIMMessageDirection::Incoming) {
+        bumpUnreadIfBackground(clean(message.fromUserId));
+    }
+    return isNew;
+}
+
 void ChatState::appendTracked(const RemoteIMMessage& message) {
     messageIds_.insert(message.id);
     messages_.append(message);

@@ -49,6 +49,9 @@ signals:
 private:
     void markMessage(const QString& messageId, RemoteIMMessageStatus status);
     void bindClientSignals();
+    // 漫游/历史（live=false，不计红点）与实时推送（live=true，新入站消息计红点）
+    // 的统一入库入口：upsert 联系人、按 id 去重落库、并入内存。
+    void ingestMessages(const QList<RemoteIMMessage>& messages, bool live);
     void persistMessage(const RemoteIMMessage& message);
     // 发送成功后用 SDK 稳定 id 替换本地临时 UUID（内存+库），返回生效的 id。
     QString adoptRemoteMessageId(const QString& localId, const QString& remoteMessageId);

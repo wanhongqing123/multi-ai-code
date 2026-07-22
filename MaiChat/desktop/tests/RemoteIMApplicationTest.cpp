@@ -23,6 +23,7 @@ private slots:
     void cascadesLocalHistoryOnContactDeletion();
     void adoptsSentRemoteIdSoRoamingDoesNotDuplicate();
     void loadsRecentPageOnStartAndPagesEarlier();
+    void liveChannelCountsUnreadRoamingDoesNot();
 };
 
 void RemoteIMApplicationTest::sendsTextThroughClientAndMarksSent() {
@@ -266,6 +267,48 @@ void RemoteIMApplicationTest::loadsRecentPageOnStartAndPagesEarlier() {
     QCOMPARE(app.chatState().messagesWith(QStringLiteral("phone-user")).size(), 450);
     QVERIFY(!app.hasEarlierMessages(QStringLiteral("phone-user")));
     QCOMPARE(app.loadEarlierMessages(QStringLiteral("phone-user")), 0);
+}
+
+void RemoteIMApplicationTest::liveChannelCountsUnreadRoamingDoesNot() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    auto* fakeClient = client.get();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+
+    // 漫游/历史恢复通道不产生红点。
+    RemoteIMMessage roamed;
+    roamed.id = QStringLiteral("sdk-1#0");
+    roamed.fromUserId = QStringLiteral("mac-user");
+    roamed.toUserId = QStringLiteral("desktop-user");
+    roamed.direction = RemoteIMMessageDirection::Incoming;
+    roamed.status = RemoteIMMessageStatus::Received;
+    roamed.createdAtMillis = 1000;
+    roamed.text = QStringLiteral("history");
+    emit fakeClient->messagesReceived({roamed});
+    QCOMPARE(app.chatState().unreadCount(QStringLiteral("mac-user")), 0);
+
+    // 实时推送的新消息计红点；同 id 重复投递（实时重发/漫游重投）不重复累计。
+    RemoteIMMessage live = roamed;
+    live.id = QStringLiteral("sdk-2#0");
+    live.text = QStringLiteral("fresh");
+    emit fakeClient->liveMessagesReceived({live});
+    QCOMPARE(app.chatState().unreadCount(QStringLiteral("mac-user")), 1);
+    emit fakeClient->liveMessagesReceived({live});
+    emit fakeClient->messagesReceived({live});
+    QCOMPARE(app.chatState().unreadCount(QStringLiteral("mac-user")), 1);
+    QCOMPARE(app.chatState().messagesWith(QStringLiteral("mac-user")).size(), 2);
+
+    // 当前选中会话（phone-user）的实时消息不计红点。
+    RemoteIMMessage onScreen = roamed;
+    onScreen.id = QStringLiteral("sdk-3#0");
+    onScreen.fromUserId = QStringLiteral("phone-user");
+    onScreen.text = QStringLiteral("on screen");
+    emit fakeClient->liveMessagesReceived({onScreen});
+    QCOMPARE(app.chatState().unreadCount(QStringLiteral("phone-user")), 0);
+
+    // 打开会话即清零。
+    app.selectPeer(QStringLiteral("mac-user"));
+    QCOMPARE(app.chatState().unreadCount(QStringLiteral("mac-user")), 0);
 }
 
 QTEST_MAIN(RemoteIMApplicationTest)

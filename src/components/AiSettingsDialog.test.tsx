@@ -48,7 +48,8 @@ function renderDialog(overrides: Partial<ComponentProps<typeof AiSettingsDialog>
       initialRepoView={{ ai_cli: 'codex' }}
       initialAppSettings={{
         screenshotShortcutEnabled: true,
-        screenshotShortcut: 'Alt+Shift+S'
+        screenshotShortcut: 'Alt+Shift+S',
+        showDevToolbarButtons: false
       }}
       initialBuildConfig={defaultBuildConfig}
       buildConfigReady={true}
@@ -186,7 +187,8 @@ describe('AiSettingsDialog', () => {
     const markup = renderDialog({
       initialAppSettings: {
         screenshotShortcutEnabled: true,
-        screenshotShortcut: 'CommandOrControl+Shift+S'
+        screenshotShortcut: 'CommandOrControl+Shift+S',
+        showDevToolbarButtons: false
       }
     })
 
@@ -213,7 +215,8 @@ describe('AiSettingsDialog', () => {
     const markup = renderDialog({
       initialAppSettings: {
         screenshotShortcutEnabled: true,
-        screenshotShortcut: 'Shift+Meta+K'
+        screenshotShortcut: 'Shift+Meta+K',
+        showDevToolbarButtons: false
       }
     })
 
@@ -240,7 +243,8 @@ describe('AiSettingsDialog', () => {
       projectId: null,
       initialAppSettings: {
         screenshotShortcutEnabled: false,
-        screenshotShortcut: 'CommandOrControl+Shift+A'
+        screenshotShortcut: 'CommandOrControl+Shift+A',
+        showDevToolbarButtons: false
       },
       buildConfigReady: false
     })
@@ -254,16 +258,19 @@ describe('AiSettingsDialog', () => {
       resolveSavedAppSettings(
         {
           screenshotShortcutEnabled: true,
-          screenshotShortcut: 'CommandOrControl+Shift+A'
+          screenshotShortcut: 'CommandOrControl+Shift+A',
+          showDevToolbarButtons: false
         },
         {
           screenshotShortcutEnabled: false,
-          screenshotShortcut: 'Alt+Shift+S'
+          screenshotShortcut: 'Alt+Shift+S',
+          showDevToolbarButtons: true
         }
       )
     ).toEqual({
       screenshotShortcutEnabled: false,
-      screenshotShortcut: 'Alt+Shift+S'
+      screenshotShortcut: 'Alt+Shift+S',
+      showDevToolbarButtons: true
     })
   })
 
@@ -272,13 +279,15 @@ describe('AiSettingsDialog', () => {
       deriveAppSettingsSaveOutcome(
         {
           screenshotShortcutEnabled: true,
-          screenshotShortcut: 'Attempted+Shortcut'
+          screenshotShortcut: 'Attempted+Shortcut',
+          showDevToolbarButtons: false
         },
         {
           ok: false,
           value: {
             screenshotShortcutEnabled: false,
-            screenshotShortcut: 'Fallback+Shortcut'
+            screenshotShortcut: 'Fallback+Shortcut',
+            showDevToolbarButtons: false
           },
           error: 'save failed'
         }
@@ -286,7 +295,8 @@ describe('AiSettingsDialog', () => {
     ).toEqual({
       appSettings: {
         screenshotShortcutEnabled: false,
-        screenshotShortcut: 'Fallback+Shortcut'
+        screenshotShortcut: 'Fallback+Shortcut',
+        showDevToolbarButtons: false
       },
       error: 'save failed'
     })
@@ -297,15 +307,35 @@ describe('AiSettingsDialog', () => {
       shouldApplyIncomingAppSettings(
         {
           screenshotShortcutEnabled: true,
-          screenshotShortcut: 'CommandOrControl+Shift+A'
+          screenshotShortcut: 'CommandOrControl+Shift+A',
+          showDevToolbarButtons: false
         },
         {
           screenshotShortcutEnabled: true,
-          screenshotShortcut: 'CommandOrControl+Shift+A'
+          screenshotShortcut: 'CommandOrControl+Shift+A',
+          showDevToolbarButtons: false
         },
         false
       )
     ).toBe(false)
+  })
+
+  it('applies incoming app settings when the dev-toolbar toggle changes externally', () => {
+    expect(
+      shouldApplyIncomingAppSettings(
+        {
+          screenshotShortcutEnabled: true,
+          screenshotShortcut: 'CommandOrControl+Shift+A',
+          showDevToolbarButtons: false
+        },
+        {
+          screenshotShortcutEnabled: true,
+          screenshotShortcut: 'CommandOrControl+Shift+A',
+          showDevToolbarButtons: true
+        },
+        false
+      )
+    ).toBe(true)
   })
 
   it('does not apply incoming app settings during an active save', () => {
@@ -313,11 +343,13 @@ describe('AiSettingsDialog', () => {
       shouldApplyIncomingAppSettings(
         {
           screenshotShortcutEnabled: true,
-          screenshotShortcut: 'CommandOrControl+Shift+A'
+          screenshotShortcut: 'CommandOrControl+Shift+A',
+          showDevToolbarButtons: false
         },
         {
           screenshotShortcutEnabled: false,
-          screenshotShortcut: 'Alt+Shift+S'
+          screenshotShortcut: 'Alt+Shift+S',
+          showDevToolbarButtons: false
         },
         true
       )

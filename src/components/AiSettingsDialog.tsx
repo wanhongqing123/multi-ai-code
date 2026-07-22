@@ -107,6 +107,8 @@ export const DEFAULT_OPENCODE_PROVIDER_PROFILE: OpenCodeProviderProfile = {
 export interface AppSettings {
   screenshotShortcutEnabled: boolean
   screenshotShortcut: string
+  // 顶栏「构建 / 运行 / 日志」按钮是否显示（默认隐藏）。
+  showDevToolbarButtons: boolean
 }
 
 interface AppSettingsSaveResponse {
@@ -178,7 +180,8 @@ export function shouldApplyIncomingAppSettings(
   if (saving) return false
   return (
     lastSyncedExternal.screenshotShortcutEnabled !== incoming.screenshotShortcutEnabled ||
-    lastSyncedExternal.screenshotShortcut !== incoming.screenshotShortcut
+    lastSyncedExternal.screenshotShortcut !== incoming.screenshotShortcut ||
+    lastSyncedExternal.showDevToolbarButtons !== incoming.showDevToolbarButtons
   )
 }
 
@@ -623,6 +626,9 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
   const [screenshotShortcutCustomExpanded, setScreenshotShortcutCustomExpanded] = useState<boolean>(
     createScreenshotShortcutState(props.initialAppSettings.screenshotShortcut).customExpanded
   )
+  const [showDevToolbarButtons, setShowDevToolbarButtons] = useState<boolean>(
+    props.initialAppSettings.showDevToolbarButtons
+  )
   const [buildConfig, setBuildConfig] = useState<ProjectBuildConfig>(props.initialBuildConfig)
   const [runtimeConfig, setRuntimeConfig] = useState<ProjectRuntimeConfig>(
     props.initialRuntimeConfig
@@ -678,6 +684,7 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
     setScreenshotShortcutCustomExpanded(
       createScreenshotShortcutState(props.initialAppSettings.screenshotShortcut).customExpanded
     )
+    setShowDevToolbarButtons(props.initialAppSettings.showDevToolbarButtons)
     lastSyncedAppSettingsRef.current = props.initialAppSettings
   }, [props.initialAppSettings, saving])
 
@@ -739,7 +746,8 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
 
     const requestedAppSettings: AppSettings = {
       screenshotShortcutEnabled,
-      screenshotShortcut: normalizedShortcut
+      screenshotShortcut: normalizedShortcut,
+      showDevToolbarButtons
     }
     const nextMain = fromForm(aiCli, command, argsText, envText, openCodeForm)
     const nextRepoView = fromForm(repoAiCli, repoCommand, repoArgsText, repoEnvText)
@@ -760,6 +768,7 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
         setScreenshotShortcutCustomExpanded(
           createScreenshotShortcutState(appOutcome.appSettings.screenshotShortcut).customExpanded
         )
+        setShowDevToolbarButtons(appOutcome.appSettings.showDevToolbarButtons)
         lastSyncedAppSettingsRef.current = appOutcome.appSettings
         props.onSavedAppSettings(appOutcome.appSettings)
       }
@@ -917,6 +926,31 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
                 onRestoreDefaults={handleRestoreDefaultShortcut}
               />
             </div>
+
+            <section className="ai-settings-card">
+              <div className="ai-settings-card-head">
+                <span className="ai-settings-card-icon">🧰</span>
+                <div>
+                  <div className="ai-settings-title">工具栏按钮</div>
+                  <div className="ai-settings-card-subtitle">
+                    顶栏「构建 / 运行 / 日志」三个按钮默认隐藏，需要时在此开启，保存后立即生效。
+                  </div>
+                </div>
+              </div>
+              <label className="ai-settings-checkbox">
+                <input
+                  type="checkbox"
+                  checked={showDevToolbarButtons}
+                  onChange={(event) => setShowDevToolbarButtons(event.target.checked)}
+                  disabled={saving}
+                />
+                <span>
+                  {showDevToolbarButtons
+                    ? '已显示「构建 / 运行 / 日志」按钮'
+                    : '已隐藏「构建 / 运行 / 日志」按钮'}
+                </span>
+              </label>
+            </section>
 
             <div className="ai-settings-content-grid">
               <div

@@ -269,7 +269,8 @@ function AppShell() {
   const [aiSettingsLoadError, setAiSettingsLoadError] = useState<string | null>(null)
   const [appSettings, setAppSettings] = useState<AppSettings>({
     screenshotShortcutEnabled: true,
-    screenshotShortcut: 'CommandOrControl+Shift+A'
+    screenshotShortcut: 'CommandOrControl+Shift+A',
+    showDevToolbarButtons: false
   })
   const [projectBuildConfig, setProjectBuildConfig] = useState<ProjectBuildConfig>(
     DEFAULT_PROJECT_BUILD_CONFIG
@@ -1903,7 +1904,7 @@ function AppShell() {
             <span className="remote-im-topbar-dot" />
             💬
           </button>
-          {hasProject && (
+          {hasProject && appSettings.showDevToolbarButtons && (
             <button
               className="topbar-btn topbar-btn-icon"
               data-tone="amber"
@@ -1915,7 +1916,7 @@ function AppShell() {
               🔨
             </button>
           )}
-          {hasProject && (
+          {hasProject && appSettings.showDevToolbarButtons && (
             <button
               className={`topbar-btn topbar-btn-icon${runtimeTopbarRunning ? ' is-active' : ''}`}
               data-tone="success"
@@ -2036,14 +2037,16 @@ function AppShell() {
           >
             {theme === 'dark' ? '☀' : '☾'}
           </button>
-          <button
-            className={`topbar-btn ${errorCount > 0 ? 'topbar-btn-danger' : 'topbar-btn-icon'}`}
-            onClick={() => setShowErrors((s) => !s)}
-            title="日志：查看错误与通知"
-            aria-label={errorCount > 0 ? `日志（${errorCount} 条错误/警告）` : '日志'}
-          >
-            {errorCount > 0 ? `⚠ ${errorCount}` : '📣'}
-          </button>
+          {appSettings.showDevToolbarButtons && (
+            <button
+              className={`topbar-btn ${errorCount > 0 ? 'topbar-btn-danger' : 'topbar-btn-icon'}`}
+              onClick={() => setShowErrors((s) => !s)}
+              title="日志：查看错误与通知"
+              aria-label={errorCount > 0 ? `日志（${errorCount} 条错误/警告）` : '日志'}
+            >
+              {errorCount > 0 ? `⚠ ${errorCount}` : '📣'}
+            </button>
+          )}
         </div>
       </header>
 

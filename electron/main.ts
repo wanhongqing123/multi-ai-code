@@ -40,9 +40,16 @@ import {
   initializeScreenshotHotkey
 } from './screenshot/hotkeyService.js'
 import {
+  DEFAULT_SCREENSHOT_HOTKEY_SETTINGS,
   loadScreenshotHotkeySettings,
   type ScreenshotHotkeySettings
 } from './screenshot/hotkeySettings.js'
+import {
+  DEFAULT_UI_PREFERENCES,
+  loadUiPreferences,
+  saveUiPreferences,
+  type UiPreferences
+} from './store/uiPreferences.js'
 import {
   createInternalPlan,
   listPlans,
@@ -112,9 +119,13 @@ app.setPath(
 interface AppSettings {
   screenshotShortcutEnabled: boolean
   screenshotShortcut: string
+  showDevToolbarButtons: boolean
 }
 
-let effectiveAppSettings: AppSettings | null = null
+// AppSettings 由两个独立持久化的部分组合而成：截图快捷键（hotkeySettings）
+// + 通用界面偏好（uiPreferences）。分别缓存，get/set 时组合。
+let effectiveScreenshotSettings: ScreenshotHotkeySettings | null = null
+let effectiveUiPreferences: UiPreferences | null = null
 const buildRunner = createBuildRunner()
 const runtimeRunner = createRuntimeRunner()
 
@@ -142,23 +153,21 @@ runtimeRunner.onStatus((nextState) => {
   broadcastToAllWindows('runtime:status', nextState)
 })
 
-function toRendererAppSettings(settings: ScreenshotHotkeySettings): AppSettings {
+function composeAppSettings(): AppSettings {
+  const screenshot = effectiveScreenshotSettings ?? DEFAULT_SCREENSHOT_HOTKEY_SETTINGS
+  const ui = effectiveUiPreferences ?? DEFAULT_UI_PREFERENCES
   return {
-    screenshotShortcutEnabled: settings.enabled,
-    screenshotShortcut: settings.shortcut
+    screenshotShortcutEnabled: screenshot.enabled,
+    screenshotShortcut: screenshot.shortcut,
+    showDevToolbarButtons: ui.showDevToolbarButtons
   }
 }
 
-function fromRendererAppSettings(settings: AppSettings): ScreenshotHotkeySettings {
+function fromRendererScreenshot(settings: AppSettings): ScreenshotHotkeySettings {
   return {
     enabled: settings.screenshotShortcutEnabled,
     shortcut: settings.screenshotShortcut
   }
-}
-
-function setEffectiveAppSettings(settings: ScreenshotHotkeySettings): AppSettings {
-  effectiveAppSettings = toRendererAppSettings(settings)
-  return effectiveAppSettings
 }
 
 let mainWindow: BrowserWindow | null = null
@@ -304,9 +313,9 @@ app.whenReady().then(async () => {
     ipcMain.on('app:launch-new-instance', launchMacAppInstance)
   }
   ipcMain.handle('settings:get-app-settings', async () => {
-    if (effectiveAppSettings) return effectiveAppSettings
-    const settings = await loadScreenshotHotkeySettings()
-    return setEffectiveAppSettings(settings)
+    if (!effectiveScreenshotSettings) effectiveScreenshotSettings = await loadScreenshotHotkeySettings()
+    if (!effectiveUiPreferences) effectiveUiPreferences = await loadUiPreferences()
+    return composeAppSettings()
   })
   ipcMain.handle(
     'settings:set-app-settings',
@@ -314,20 +323,25 @@ app.whenReady().then(async () => {
       _e,
       settings: AppSettings
     ): Promise<{ ok: boolean; value?: AppSettings; error?: string }> => {
+      // 界面偏好独立持久化（不受截图快捷键校验影响）。
+      effectiveUiPreferences = await saveUiPreferences({
+        showDevToolbarButtons: settings.showDevToolbarButtons
+      })
       const result = await applyScreenshotHotkeySettings(
-        fromRendererAppSettings(settings),
+        fromRendererScreenshot(settings),
         { registrar: globalShortcut }
       )
+      effectiveScreenshotSettings = result.settings
       if (!result.ok) {
         return {
           ok: false,
-          value: setEffectiveAppSettings(result.settings),
+          value: composeAppSettings(),
           error: result.error
         }
       }
       return {
         ok: true,
-        value: setEffectiveAppSettings(result.settings)
+        value: composeAppSettings()
       }
     }
   )
@@ -1980,7 +1994,8 @@ async function activateAccountDataLayer(
   cleanupLegacyHabitData()
   registerScheduledTaskIpc()
   const screenshotHotkeyInit = await initializeScreenshotHotkey({ registrar: globalShortcut })
-  setEffectiveAppSettings(screenshotHotkeyInit.settings)
+  effectiveScreenshotSettings = screenshotHotkeyInit.settings
+  effectiveUiPreferences = await loadUiPreferences()
   if (!screenshotHotkeyInit.ok) {
     console.warn('[screenshot] failed to initialize hotkey:', screenshotHotkeyInit.error)
   }

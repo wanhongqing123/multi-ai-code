@@ -38,6 +38,7 @@ export interface OpenCodeProviderProfile {
 export interface AppSettings {
   screenshotShortcutEnabled: boolean
   screenshotShortcut: string
+  showDevToolbarButtons: boolean
 }
 
 export type RemoteImContactRelation = 'friend' | 'master' | 'slave'

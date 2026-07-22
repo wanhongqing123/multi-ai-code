@@ -5,22 +5,22 @@ Qt5 Widgets based IM client for Windows and macOS.
 ## Build
 
 ```bash
-cmake -S desktop/qt-im -B desktop/qt-im/build -DCMAKE_PREFIX_PATH=/path/to/qt5
-cmake --build desktop/qt-im/build
-ctest --test-dir desktop/qt-im/build --output-on-failure
+cmake -S MaiChat/desktop -B MaiChat/desktop/build -DCMAKE_PREFIX_PATH=/path/to/qt5
+cmake --build MaiChat/desktop/build
+ctest --test-dir MaiChat/desktop/build --output-on-failure
 ```
 
 On local Homebrew macOS setups:
 
 ```bash
-cmake -S desktop/qt-im -B desktop/qt-im/build -DCMAKE_PREFIX_PATH=/opt/homebrew/opt/qt@5
-cmake --build desktop/qt-im/build
+cmake -S MaiChat/desktop -B MaiChat/desktop/build -DCMAKE_PREFIX_PATH=/opt/homebrew/opt/qt@5
+cmake --build MaiChat/desktop/build
 ```
 
 ## Run
 
 ```bash
-desktop/qt-im/build/maichat_desktop
+MaiChat/desktop/build/maichat_desktop
 ```
 
 ## Native IM SDK
@@ -37,7 +37,7 @@ You can override the library path when debugging:
 
 ```bash
 export MAICHAT_SDK_LIBRARY=/path/to/native/im/sdk/library
-desktop/qt-im/build/maichat_desktop
+MaiChat/desktop/build/maichat_desktop
 ```
 
 The login screen requires:
@@ -81,16 +81,16 @@ powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1
 先完成 Release 构建：
 
 ```bash
-cmake -S desktop/qt-im -B desktop/qt-im/build \
+cmake -S MaiChat/desktop -B MaiChat/desktop/build \
   -DCMAKE_PREFIX_PATH=/opt/homebrew/opt/qt@5 \
   -DCMAKE_BUILD_TYPE=Release
-cmake --build desktop/qt-im/build --target maichat_desktop --config Release
+cmake --build MaiChat/desktop/build --target maichat_desktop --config Release
 ```
 
 然后打包：
 
 ```bash
-desktop/qt-im/scripts/package-macos.sh
+MaiChat/desktop/scripts/package-macos.sh
 ```
 
 产出 `dist/MaiChat-macos-arm64/` 和

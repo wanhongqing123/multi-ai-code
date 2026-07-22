@@ -27,14 +27,14 @@ QStringList vendorRoots() {
         QDir(appDir).filePath(QStringLiteral("vendor/tencent-im")),
         QDir(appDir).filePath(QStringLiteral("../vendor/tencent-im")),
         QDir(appDir).filePath(QStringLiteral("../../vendor/tencent-im")),
-        QDir::current().filePath(QStringLiteral("desktop/qt-im/vendor/tencent-im")),
+        QDir::current().filePath(QStringLiteral("MaiChat/desktop/vendor/tencent-im")),
         QDir::current().filePath(QStringLiteral("vendor/tencent-im"))
     };
 
     QDir dir(appDir);
     for (int i = 0; i < 8; ++i) {
         roots.append(dir.filePath(QStringLiteral("vendor/tencent-im")));
-        roots.append(dir.filePath(QStringLiteral("desktop/qt-im/vendor/tencent-im")));
+        roots.append(dir.filePath(QStringLiteral("MaiChat/desktop/vendor/tencent-im")));
         if (!dir.cdUp()) break;
     }
 

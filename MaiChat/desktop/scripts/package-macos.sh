@@ -6,7 +6,7 @@ usage() {
 Package the Qt Desktop IM app for macOS.
 
 Usage:
-  desktop/qt-im/scripts/package-macos.sh [--build-dir build] [--out-dir dist] [--macdeployqt /path/to/macdeployqt]
+  MaiChat/desktop/scripts/package-macos.sh [--build-dir build] [--out-dir dist] [--macdeployqt /path/to/macdeployqt]
 
 The script expects a built macOS bundle:
   <build-dir>/MaiChat.app
@@ -59,8 +59,8 @@ if [[ ! -d "$source_app" ]]; then
 Missing app bundle: $source_app
 
 Build it first, for example:
-  cmake -S desktop/qt-im -B desktop/qt-im/$build_dir -DCMAKE_PREFIX_PATH=/opt/homebrew/opt/qt@5 -DCMAKE_BUILD_TYPE=Release
-  cmake --build desktop/qt-im/$build_dir --target maichat_desktop --config Release
+  cmake -S MaiChat/desktop -B MaiChat/desktop/$build_dir -DCMAKE_PREFIX_PATH=/opt/homebrew/opt/qt@5 -DCMAKE_BUILD_TYPE=Release
+  cmake --build MaiChat/desktop/$build_dir --target maichat_desktop --config Release
 EOF
   exit 1
 fi

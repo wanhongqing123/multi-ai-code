@@ -1,5 +1,58 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent, webUtils } from 'electron'
 
+// 以下类型的「真源」在各自模块（均为纯类型模块，无运行时/Node 依赖）。这里 import 供
+// preload 自身使用，并统一 re-export——渲染层继续从 preload 引类型即可，无需改动。
+import type { AppSettings, AiSettings } from './settings/types.js'
+import type { OpenCodeProviderProfile } from './aicli/opencodeConfig.js'
+import type {
+  RemoteImContactRelation,
+  RemoteImConfig,
+  RemoteImAccountConfig,
+  RemoteImLoginState,
+  RemoteImConnectionState,
+  RemoteImStatus,
+  RemoteImMessageRole,
+  RemoteImMessageDirection,
+  RemoteImMessageKind,
+  RemoteImMessageStatus,
+  RemoteImImageAttachment,
+  RemoteImFileAttachment,
+  RemoteImMessageAttachment,
+  RemoteImMessage,
+  RemoteImIncomingTextMessage,
+  RemoteImRoamedTextMessage,
+  RemoteImIncomingAudioMessage,
+  RemoteImIncomingImageMessage,
+  RemoteImIncomingFileMessage,
+  RemoteImRuntimeLogEntryInput
+} from './remote-im/types.js'
+
+export type {
+  AppSettings,
+  AiSettings,
+  OpenCodeProviderProfile,
+  RemoteImContactRelation,
+  RemoteImConfig,
+  RemoteImAccountConfig,
+  RemoteImLoginState,
+  RemoteImConnectionState,
+  RemoteImStatus,
+  RemoteImMessageRole,
+  RemoteImMessageDirection,
+  RemoteImMessageKind,
+  RemoteImMessageStatus,
+  RemoteImImageAttachment,
+  RemoteImFileAttachment,
+  RemoteImMessageAttachment,
+  RemoteImMessage,
+  RemoteImIncomingTextMessage,
+  RemoteImRoamedTextMessage,
+  RemoteImIncomingAudioMessage,
+  RemoteImIncomingImageMessage,
+  RemoteImIncomingFileMessage,
+  RemoteImRuntimeLogEntryInput
+}
+
 export interface ScreenshotOverlayPayload {
   imageDataUrl: string
   logicalSize: { w: number; h: number }
@@ -16,200 +69,24 @@ export interface ScreenshotDeliverEvent {
   prompt: string
 }
 
-export interface AiSettings {
-  ai_cli: 'claude' | 'codex' | 'opencode'
-  command?: string
-  args?: string[]
-  env?: Record<string, string>
-  opencode?: OpenCodeProviderProfile
-}
 
-export interface OpenCodeProviderProfile {
-  providerId?: string
-  name?: string
-  baseURL?: string
-  apiKey?: string
-  mainModel?: string
-  smallModel?: string
-  timeoutMs?: number
-  chunkTimeoutMs?: number
-}
 
-export interface AppSettings {
-  screenshotShortcutEnabled: boolean
-  screenshotShortcut: string
-  showDevToolbarButtons: boolean
-}
 
-export type RemoteImContactRelation = 'friend' | 'master' | 'slave'
 
-export interface RemoteImConfig {
-  enabled: boolean
-  provider: 'tencent-im'
-  sdkAppId: number | null
-  desktopUserId: string
-  desktopRole: 'master' | 'slave'
-  userSigMode: 'endpoint' | 'secret-key'
-  userSigEndpoint: string
-  userSigSecretKey: string
-  friendUserIds: string[]
-  masterUserIds: string[]
-  slaveUserIds: string[]
-  allowedUserIds: string[]
-  outputFlushIntervalMs: number
-  outputMaxChunkChars: number
-}
 
-export interface RemoteImAccountConfig {
-  provider: 'tencent-im'
-  sdkAppId: number | null
-  desktopUserId: string
-  desktopRole: 'master' | 'slave'
-  userSigMode: 'endpoint' | 'secret-key'
-  userSigEndpoint: string
-  userSigSecretKey: string
-  friendUserIds: string[]
-  masterUserIds: string[]
-  slaveUserIds: string[]
-  allowedUserIds: string[]
-}
 
-export interface RemoteImLoginState {
-  profileId: string | null
-  account: RemoteImAccountConfig
-}
 
-export type RemoteImConnectionState =
-  | 'disabled'
-  | 'disconnected'
-  | 'connecting'
-  | 'connected'
-  | 'error'
 
-export interface RemoteImStatus {
-  projectId: string | null
-  state: RemoteImConnectionState
-  detail: string | null
-  updatedAt: number
-}
 
-export type RemoteImMessageRole = 'remote-user' | 'system' | 'aicli'
-export type RemoteImMessageDirection = 'incoming' | 'outgoing' | 'internal'
-export type RemoteImMessageKind = 'text' | 'image' | 'file'
-export type RemoteImMessageStatus =
-  | 'received'
-  | 'rejected'
-  | 'sent-to-aicli'
-  | 'streaming'
-  | 'sent-to-im'
-  | 'failed'
 
-export interface RemoteImImageAttachment {
-  type: 'image'
-  localPath: string | null
-  remoteUrl: string | null
-  thumbnailUrl: string | null
-  width: number | null
-  height: number | null
-  sizeBytes: number | null
-  fileName: string | null
-  mimeType: string | null
-  sdkImageId: string | null
-}
 
-export interface RemoteImFileAttachment {
-  type: 'file'
-  localPath: string | null
-  remoteUrl: string | null
-  sizeBytes: number | null
-  fileName: string | null
-  mimeType: string | null
-  sdkFileId: string | null
-}
 
-export type RemoteImMessageAttachment = RemoteImImageAttachment | RemoteImFileAttachment
 
-export interface RemoteImMessage {
-  id: number
-  projectId: string | null
-  sessionId: string | null
-  provider: 'tencent-im'
-  remoteMessageId: string | null
-  fromUserId: string | null
-  toUserId: string | null
-  role: RemoteImMessageRole
-  direction: RemoteImMessageDirection
-  content: string
-  kind: RemoteImMessageKind
-  attachment: RemoteImMessageAttachment | null
-  status: RemoteImMessageStatus
-  error: string | null
-  createdAt: number
-  sentToAicliAt: number | null
-  sentToImAt: number | null
-}
 
-export interface RemoteImIncomingTextMessage {
-  projectId: string
-  remoteMessageId?: string | null
-  fromUserId: string
-  toUserId?: string | null
-  text: string
-  createdAt?: number
-}
 
-// SDK 漫游补拉的文本消息（登录后补充离线期间的历史，只入库展示、不路由 AICLI）。
-export interface RemoteImRoamedTextMessage {
-  remoteMessageId: string
-  fromUserId: string
-  toUserId?: string | null
-  text: string
-  createdAt?: number
-  flow: 'in' | 'out'
-}
 
-export interface RemoteImIncomingAudioMessage {
-  projectId: string
-  remoteMessageId?: string | null
-  fromUserId: string
-  toUserId?: string | null
-  audioUrl: string
-  durationSeconds?: number | null
-  sizeBytes?: number | null
-  uuid?: string | null
-  createdAt?: number
-}
 
-export interface RemoteImIncomingImageMessage {
-  projectId: string
-  remoteMessageId?: string | null
-  fromUserId: string
-  toUserId?: string | null
-  imageUrl: string
-  thumbnailUrl?: string | null
-  width?: number | null
-  height?: number | null
-  sizeBytes?: number | null
-  uuid?: string | null
-  fileName?: string | null
-  mimeType?: string | null
-  // 同一条多元素消息里随图片一起发来的配文（图片下载后与配文合并成一次 AICLI 输入）。
-  caption?: string | null
-  createdAt?: number
-}
 
-export interface RemoteImIncomingFileMessage {
-  projectId: string
-  remoteMessageId?: string | null
-  fromUserId: string
-  toUserId?: string | null
-  fileUrl: string
-  sizeBytes?: number | null
-  uuid?: string | null
-  fileName?: string | null
-  mimeType?: string | null
-  createdAt?: number
-}
 
 export interface RemoteImSendPeerImageInput {
   fileToken: string
@@ -244,16 +121,6 @@ export interface RemoteImOutgoingFileEvent {
   messageId?: number | null
 }
 
-export interface RemoteImRuntimeLogEntryInput {
-  projectId?: string | null
-  sdkAppId?: number | null
-  desktopUserId?: string | null
-  peerUserId?: string | null
-  messageId?: number | null
-  event: string
-  detail?: unknown
-  createdAt?: number
-}
 
 export interface ProjectAiSettingsResponse {
   ok: boolean

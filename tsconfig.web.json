@@ -19,5 +19,14 @@
       "@/*": ["src/*"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "electron/preload.ts", "tests/src/**/*.ts", "tests/src/**/*.tsx"]
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "electron/preload.ts",
+    "electron/remote-im/types.ts",
+    "electron/settings/types.ts",
+    "electron/aicli/opencodeConfig.ts",
+    "tests/src/**/*.ts",
+    "tests/src/**/*.tsx"
+  ]
 }

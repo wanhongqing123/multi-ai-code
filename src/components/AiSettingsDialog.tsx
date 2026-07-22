@@ -1,9 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import type {
+  AiSettings,
+  AppSettings,
+  OpenCodeProviderProfile,
   ProjectBuildConfig,
   ProjectRuntimeConfig,
   VisualStudioInstallation
 } from '../../electron/preload'
+// 这三个类型的真源在 electron 侧，这里 re-export 兼容既有从本组件引用它们的地方（App.tsx / RepoViewerWindow）。
+export type { AiSettings, AppSettings, OpenCodeProviderProfile }
 import ProjectBuildSettingsSection, {
   formatBuildConfigSaveError,
   normalizeBuildConfigForHost
@@ -78,37 +83,11 @@ export function restoreDefaultScreenshotShortcut(): ScreenshotShortcutState {
   }
 }
 
-export interface AiSettings {
-  ai_cli: AiCliKind
-  command?: string
-  args?: string[]
-  env?: Record<string, string>
-  opencode?: OpenCodeProviderProfile
-}
-
-export interface OpenCodeProviderProfile {
-  providerId?: string
-  name?: string
-  baseURL?: string
-  apiKey?: string
-  mainModel?: string
-  smallModel?: string
-  timeoutMs?: number
-  chunkTimeoutMs?: number
-}
-
 export const DEFAULT_OPENCODE_PROVIDER_PROFILE: OpenCodeProviderProfile = {
   providerId: 'idealab',
   name: 'Alibaba ideaLAB',
   baseURL: 'https://idealab.alibaba-inc.com/api/openai/v1',
   mainModel: 'Qwen3.7-Max-DogFooding'
-}
-
-export interface AppSettings {
-  screenshotShortcutEnabled: boolean
-  screenshotShortcut: string
-  // 顶栏「构建 / 运行 / 日志」按钮是否显示（默认隐藏）。
-  showDevToolbarButtons: boolean
 }
 
 interface AppSettingsSaveResponse {

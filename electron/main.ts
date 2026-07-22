@@ -50,6 +50,7 @@ import {
   saveUiPreferences,
   type UiPreferences
 } from './store/uiPreferences.js'
+import type { AppSettings } from './settings/types.js'
 import {
   createInternalPlan,
   listPlans,
@@ -116,11 +117,6 @@ app.setPath(
   resolveRemoteImUserDataPath(app.getPath('userData'), remoteImRuntimeProfileId)
 )
 
-interface AppSettings {
-  screenshotShortcutEnabled: boolean
-  screenshotShortcut: string
-  showDevToolbarButtons: boolean
-}
 
 // AppSettings 由两个独立持久化的部分组合而成：截图快捷键（hotkeySettings）
 // + 通用界面偏好（uiPreferences）。分别缓存，get/set 时组合。

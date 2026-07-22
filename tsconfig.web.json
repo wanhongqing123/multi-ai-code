@@ -19,5 +19,5 @@
       "@/*": ["src/*"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "electron/preload.ts"]
+  "include": ["src/**/*.ts", "src/**/*.tsx", "electron/preload.ts", "tests/src/**/*.ts", "tests/src/**/*.tsx"]
 }

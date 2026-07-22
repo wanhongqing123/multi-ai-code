@@ -17,5 +17,5 @@
       "@electron/*": ["electron/*"]
     }
   },
-  "include": ["electron/**/*.ts", "electron.vite.config.ts"]
+  "include": ["electron/**/*.ts", "electron.vite.config.ts", "tests/electron/**/*.ts"]
 }

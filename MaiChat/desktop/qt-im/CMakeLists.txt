@@ -1,12 +1,12 @@
 cmake_minimum_required(VERSION 3.21)
 # C 用于 third_party/md4c（Markdown 解析，纯 C 实现）。
-project(MultiAIIMDesktop VERSION 0.1.4 LANGUAGES C CXX)
+project(MaiChatDesktop VERSION 0.1.4 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-option(MULTI_AI_IM_USE_FAKE_CLIENT "Use the fake IM client for desktop UI development" OFF)
+option(MAICHAT_USE_FAKE_CLIENT "Use the fake IM client for desktop UI development" OFF)
 
 find_package(Qt5 REQUIRED COMPONENTS Core Network Sql Widgets Test)
 find_package(ZLIB REQUIRED)
@@ -71,7 +71,7 @@ add_library(remote_im_desktop_ui
 target_include_directories(remote_im_desktop_ui PUBLIC src)
 target_link_libraries(remote_im_desktop_ui PUBLIC remote_im_desktop_app remote_im_core Qt5::Widgets)
 
-add_executable(multi_ai_im_desktop
+add_executable(maichat_desktop
   src/main.cpp
   src/platform/DesktopRemoteIMClientFactory.h
   src/platform/DesktopRemoteIMClientFactory.cpp
@@ -86,16 +86,16 @@ if(WIN32)
   # GUI 子系统（/SUBSYSTEM:WINDOWS）：不加时 exe 是控制台程序，双击启动会先弹一个
   # 黑色控制台窗口再出界面。Qt5::Core 会对 WIN32_EXECUTABLE 目标自动链接
   # Qt5::WinMain（qtmain.lib 提供 WinMain → main 转发），main() 无需改动。
-  set_target_properties(multi_ai_im_desktop PROPERTIES WIN32_EXECUTABLE TRUE)
+  set_target_properties(maichat_desktop PROPERTIES WIN32_EXECUTABLE TRUE)
   # 应用图标（任务栏/资源管理器/快捷方式）。
   enable_language(RC)
-  target_sources(multi_ai_im_desktop PRIVATE resources/windows/app.rc)
+  target_sources(maichat_desktop PRIVATE resources/windows/app.rc)
 endif()
 if(APPLE)
   set(APP_ICON_MACOS "${CMAKE_CURRENT_SOURCE_DIR}/resources/macos/AppIcon.icns")
   set_source_files_properties("${APP_ICON_MACOS}" PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
-  target_sources(multi_ai_im_desktop PRIVATE "${APP_ICON_MACOS}")
-  set_target_properties(multi_ai_im_desktop PROPERTIES
+  target_sources(maichat_desktop PRIVATE "${APP_ICON_MACOS}")
+  set_target_properties(maichat_desktop PROPERTIES
     MACOSX_BUNDLE TRUE
     OUTPUT_NAME "MaiChat"
     MACOSX_BUNDLE_BUNDLE_NAME "MaiChat"
@@ -105,9 +105,9 @@ if(APPLE)
     MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
   )
 endif()
-target_link_libraries(multi_ai_im_desktop PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets)
-if(MULTI_AI_IM_USE_FAKE_CLIENT)
-  target_compile_definitions(multi_ai_im_desktop PRIVATE MULTI_AI_IM_USE_FAKE_CLIENT=1)
+target_link_libraries(maichat_desktop PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets)
+if(MAICHAT_USE_FAKE_CLIENT)
+  target_compile_definitions(maichat_desktop PRIVATE MAICHAT_USE_FAKE_CLIENT=1)
 endif()
 
 add_executable(chat_state_test tests/ChatStateTest.cpp)

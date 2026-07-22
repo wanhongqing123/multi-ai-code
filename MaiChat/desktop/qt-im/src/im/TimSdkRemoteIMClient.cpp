@@ -26,7 +26,7 @@ constexpr int kFriendTypeBoth = 1;
 
 QString appDataDir(const QString& child) {
     QString root = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    if (root.isEmpty()) root = QDir::homePath() + QStringLiteral("/.multi-ai-im-desktop");
+    if (root.isEmpty()) root = QDir::homePath() + QStringLiteral("/.maichat-desktop");
     QDir dir(root);
     dir.mkpath(child);
     return dir.filePath(child);

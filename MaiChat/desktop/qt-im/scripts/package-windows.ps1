@@ -6,8 +6,8 @@
 #   可选参数：-BuildDir build-msvc2019_64   -OutDir dist
 #
 # 产出：
-#   <OutDir>\MultiAIIM-win64\            解压即用目录
-#   <OutDir>\MultiAIIM-win64-<日期>-<git短哈希>.zip
+#   <OutDir>\MaiChat-win64\            解压即用目录
+#   <OutDir>\MaiChat-win64-<日期>-<git短哈希>.zip
 
 param(
     [string]$BuildDir = 'build-msvc2019_64',
@@ -20,9 +20,9 @@ $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 
 $buildPath = Join-Path $projectRoot $BuildDir
-$exePath = Join-Path $buildPath 'multi_ai_im_desktop.exe'
+$exePath = Join-Path $buildPath 'maichat_desktop.exe'
 if (-not (Test-Path $exePath)) {
-    throw "未找到 $exePath，请先构建：cmake --build $BuildDir --target multi_ai_im_desktop"
+    throw "未找到 $exePath，请先构建：cmake --build $BuildDir --target maichat_desktop"
 }
 
 # 从 CMakeCache 定位 Qt（避免依赖 PATH）
@@ -36,18 +36,18 @@ if (-not (Test-Path $windeployqt)) { throw "未找到 $windeployqt" }
 
 # 组装 staging 目录
 $distRoot = Join-Path $projectRoot $OutDir
-$staging = Join-Path $distRoot 'MultiAIIM-win64'
+$staging = Join-Path $distRoot 'MaiChat-win64'
 if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
 New-Item -ItemType Directory -Force $staging | Out-Null
 
-Copy-Item $exePath (Join-Path $staging 'multi_ai_im_desktop.exe')
+Copy-Item $exePath (Join-Path $staging 'maichat_desktop.exe')
 
 # windeployqt 旁挂 Qt 运行时；--no-translations 减小体积
 # （应用界面文案为中文硬编码，不依赖 Qt 翻译文件）。
 # 注意：不用 --compiler-runtime——它依赖 vcvars 环境变量定位 VC 运行库，
 # 环境不满足时会静默跳过，下面改为显式拷贝，缺失即报错。
 & $windeployqt --release --no-translations `
-    --dir $staging (Join-Path $staging 'multi_ai_im_desktop.exe')
+    --dir $staging (Join-Path $staging 'maichat_desktop.exe')
 if ($LASTEXITCODE -ne 0) { throw "windeployqt 失败，退出码 $LASTEXITCODE" }
 
 # 显式旁挂 VC++ 运行库（app-local 部署）：exe 与 Qt5*.dll 都依赖
@@ -92,7 +92,7 @@ $readme = @"
 MaiChat 桌面客户端（Windows 免安装版）
 ==========================================
 
-运行：双击 multi_ai_im_desktop.exe。
+运行：双击 maichat_desktop.exe。
 
 - 无需安装 Qt 或 VC++ 运行库，全部依赖已随包附带（需 Windows 10 及以上 64 位）。
 - 首次启动在登录页输入账号 ID 后回车即可登录（UserSig 由内置密钥本地生成）。
@@ -115,7 +115,7 @@ if ($SkipZip) {
 # 压缩，文件名带日期与 git 短哈希便于追溯
 $gitHash = (& git -C $projectRoot rev-parse --short HEAD 2>$null)
 if (-not $gitHash) { $gitHash = 'unknown' }
-$zipName = "MultiAIIM-win64-$(Get-Date -Format yyyyMMdd)-$gitHash.zip"
+$zipName = "MaiChat-win64-$(Get-Date -Format yyyyMMdd)-$gitHash.zip"
 $zipPath = Join-Path $distRoot $zipName
 if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
 Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $zipPath

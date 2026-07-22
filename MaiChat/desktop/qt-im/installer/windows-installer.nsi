@@ -31,7 +31,7 @@ SetCompressor /SOLID lzma
 !endif
 
 !define APP_NAME "MaiChat"
-!define APP_EXE "multi_ai_im_desktop.exe"
+!define APP_EXE "maichat_desktop.exe"
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\MaiChat"
 
 Name "${APP_NAME}"

@@ -12,8 +12,8 @@ The script expects a built macOS bundle:
   <build-dir>/MaiChat.app
 
 Outputs:
-  <out-dir>/MultiAIIM-macos-arm64/
-  <out-dir>/MultiAIIM-macos-arm64-<date>-<git-short-hash>.dmg
+  <out-dir>/MaiChat-macos-arm64/
+  <out-dir>/MaiChat-macos-arm64-<date>-<git-short-hash>.dmg
 USAGE
 }
 
@@ -60,7 +60,7 @@ Missing app bundle: $source_app
 
 Build it first, for example:
   cmake -S desktop/qt-im -B desktop/qt-im/$build_dir -DCMAKE_PREFIX_PATH=/opt/homebrew/opt/qt@5 -DCMAKE_BUILD_TYPE=Release
-  cmake --build desktop/qt-im/$build_dir --target multi_ai_im_desktop --config Release
+  cmake --build desktop/qt-im/$build_dir --target maichat_desktop --config Release
 EOF
   exit 1
 fi
@@ -88,7 +88,7 @@ if [[ -z "$macdeployqt" || ! -x "$macdeployqt" ]]; then
 fi
 
 dist_root="$project_root/$out_dir"
-staging="$dist_root/MultiAIIM-macos-arm64"
+staging="$dist_root/MaiChat-macos-arm64"
 staged_app="$staging/$app_name"
 rm -rf "$staging"
 mkdir -p "$staging"
@@ -141,7 +141,7 @@ if [[ -z "$git_hash" ]]; then
   git_hash="unknown"
 fi
 
-dmg_name="MultiAIIM-macos-arm64-$(date +%Y%m%d)-$git_hash.dmg"
+dmg_name="MaiChat-macos-arm64-$(date +%Y%m%d)-$git_hash.dmg"
 dmg_path="$dist_root/$dmg_name"
 rw_dmg="$dist_root/.${dmg_name%.dmg}-rw.dmg"
 mount_dir=""

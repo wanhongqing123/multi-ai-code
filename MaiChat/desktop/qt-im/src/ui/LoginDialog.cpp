@@ -87,7 +87,7 @@ void LoginDialog::buildUi() {
     rootLayout->addWidget(introPane, 3);
     rootLayout->addWidget(formPane, 4);
 
-    userIdInput_->setText(envValue(QStringLiteral("MULTI_AI_IM_USER_ID")));
+    userIdInput_->setText(envValue(QStringLiteral("MAICHAT_USER_ID")));
 
     connect(userIdInput_, &QLineEdit::textChanged, this, [this] { updateLoginButton(); });
     connect(loginButton_, &QPushButton::clicked, this, [this] {

@@ -1520,7 +1520,7 @@ void MainWindow::insertComposerImage(const QImage& image) {
     // 原图存临时 PNG（发送用原图）；内联显示时按最大宽度缩放，资源名即文件路径，
     // QTextEdit 会从磁盘加载渲染，发送时也从这个路径取原图。
     const QString dir = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
-                            .filePath(QStringLiteral("multi-ai-im-paste"));
+                            .filePath(QStringLiteral("maichat-paste"));
     QDir().mkpath(dir);
     const QString path = QDir(dir).filePath(
         QStringLiteral("paste-%1.png").arg(QDateTime::currentMSecsSinceEpoch()));

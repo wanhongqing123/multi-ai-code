@@ -20,7 +20,7 @@ cmake --build desktop/qt-im/build
 ## Run
 
 ```bash
-desktop/qt-im/build/multi_ai_im_desktop
+desktop/qt-im/build/maichat_desktop
 ```
 
 ## Native IM SDK
@@ -36,8 +36,8 @@ At runtime it loads the bundled native desktop IM SDK by default:
 You can override the library path when debugging:
 
 ```bash
-export MULTI_AI_IM_SDK_LIBRARY=/path/to/native/im/sdk/library
-desktop/qt-im/build/multi_ai_im_desktop
+export MAICHAT_SDK_LIBRARY=/path/to/native/im/sdk/library
+desktop/qt-im/build/maichat_desktop
 ```
 
 The login screen requires:
@@ -49,10 +49,10 @@ SDK AppID and SecretKey are bundled with the same defaults as the iOS app. The a
 For local development, these fields can be prefilled with:
 
 ```bash
-export MULTI_AI_IM_USER_ID=<user-id>
+export MAICHAT_USER_ID=<user-id>
 ```
 
-Set `MULTI_AI_IM_USE_FAKE_CLIENT=ON` only when developing the UI without a native SDK.
+Set `MAICHAT_USE_FAKE_CLIENT=ON` only when developing the UI without a native SDK.
 
 The bundled SDK files come from the domestic Tencent download host `im.sdk.qcloud.com`; see `vendor/tencent-im/README.md`.
 
@@ -64,7 +64,7 @@ The bundled SDK files come from the domestic Tencent download host `im.sdk.qclou
 powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1
 ```
 
-产出 `dist\MultiAIIM-win64\`（解压即用目录）和 `dist\MultiAIIM-win64-<日期>-<git短哈希>.zip`。脚本会：
+产出 `dist\MaiChat-win64\`（解压即用目录）和 `dist\MaiChat-win64-<日期>-<git短哈希>.zip`。脚本会：
 
 - `windeployqt` 旁挂 Qt 运行时（platforms/styles/imageformats 等）；
 - 从本机 VS Redist 显式拷贝最高版本的 VC++ CRT（`msvcp140.dll`、`vcruntime140*.dll` 等，app-local 部署）；
@@ -84,7 +84,7 @@ powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1
 cmake -S desktop/qt-im -B desktop/qt-im/build \
   -DCMAKE_PREFIX_PATH=/opt/homebrew/opt/qt@5 \
   -DCMAKE_BUILD_TYPE=Release
-cmake --build desktop/qt-im/build --target multi_ai_im_desktop --config Release
+cmake --build desktop/qt-im/build --target maichat_desktop --config Release
 ```
 
 然后打包：
@@ -93,8 +93,8 @@ cmake --build desktop/qt-im/build --target multi_ai_im_desktop --config Release
 desktop/qt-im/scripts/package-macos.sh
 ```
 
-产出 `dist/MultiAIIM-macos-arm64/` 和
-`dist/MultiAIIM-macos-arm64-<日期>-<git短哈希>.dmg`。DMG 内包含应用和
+产出 `dist/MaiChat-macos-arm64/` 和
+`dist/MaiChat-macos-arm64-<日期>-<git短哈希>.dmg`。DMG 内包含应用和
 `Applications` 快捷入口，脚本会：
 
 - 使用 `macdeployqt` 旁挂 Qt framework；

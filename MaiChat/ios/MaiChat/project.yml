@@ -1,0 +1,58 @@
+name: MaiChat
+options:
+  bundleIdPrefix: com.kongshang.maichat
+  deploymentTarget:
+    iOS: "16.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  MaiChat:
+    type: application
+    platform: iOS
+    sources:
+      - path: MaiChat
+    dependencies:
+      - target: MaiChatCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.kongshang.maichat
+        INFOPLIST_FILE: MaiChat/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+  MaiChatCore:
+    type: framework
+    platform: iOS
+    sources:
+      - path: MaiChatCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.kongshang.maichat.core
+        GENERATE_INFOPLIST_FILE: YES
+  MaiChatTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: MaiChatTests
+    dependencies:
+      - target: MaiChatCore
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  MaiChat:
+    build:
+      targets:
+        MaiChat: all
+        MaiChatCore: all
+    run:
+      config: Debug
+  MaiChatCoreTests:
+    build:
+      targets:
+        MaiChatCore: all
+        MaiChatTests: [test]
+    test:
+      targets:
+        - MaiChatTests

@@ -21,8 +21,8 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 
 # 1) 组装 staging（不出 zip）
 & (Join-Path $PSScriptRoot 'package-windows.ps1') -BuildDir $BuildDir -OutDir $OutDir -SkipZip
-$staging = Join-Path (Join-Path $projectRoot $OutDir) 'MultiAIIM-win64'
-if (-not (Test-Path (Join-Path $staging 'multi_ai_im_desktop.exe'))) {
+$staging = Join-Path (Join-Path $projectRoot $OutDir) 'MaiChat-win64'
+if (-not (Test-Path (Join-Path $staging 'maichat_desktop.exe'))) {
     throw "staging 目录异常：$staging"
 }
 

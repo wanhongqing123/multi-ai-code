@@ -22,7 +22,7 @@ namespace {
 // 降级为补充源）。目录约定与 TimSdk 缓存一致（AppDataLocation）。
 QString messageDatabasePath(const QString& userId) {
     QString root = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    if (root.isEmpty()) root = QDir::homePath() + QStringLiteral("/.multi-ai-im-desktop");
+    if (root.isEmpty()) root = QDir::homePath() + QStringLiteral("/.maichat-desktop");
     return QDir(root).filePath(QStringLiteral("RemoteIMHistory/") + userId + QStringLiteral("/messages.db"));
 }
 

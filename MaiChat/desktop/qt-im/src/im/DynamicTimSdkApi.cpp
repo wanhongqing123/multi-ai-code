@@ -69,7 +69,7 @@ QString textFromC(const char* value) {
 
 DynamicTimSdkApi::DynamicTimSdkApi(QString libraryPath) : library_(std::move(libraryPath)) {
     if (library_.fileName().trimmed().isEmpty()) {
-        diagnosticError_ = QStringLiteral("未配置桌面 IM SDK 动态库路径，请设置 MULTI_AI_IM_SDK_LIBRARY");
+        diagnosticError_ = QStringLiteral("未配置桌面 IM SDK 动态库路径，请设置 MAICHAT_SDK_LIBRARY");
         return;
     }
     if (!library_.load()) {
@@ -96,7 +96,7 @@ DynamicTimSdkApi::~DynamicTimSdkApi() {
 }
 
 QString DynamicTimSdkApi::libraryPathFromEnvironment() {
-    const QString configuredPath = cleanEnv(QStringLiteral("MULTI_AI_IM_SDK_LIBRARY"));
+    const QString configuredPath = cleanEnv(QStringLiteral("MAICHAT_SDK_LIBRARY"));
     if (!configuredPath.isEmpty()) return configuredPath;
     return firstExistingFile(defaultSdkLibraryCandidates());
 }

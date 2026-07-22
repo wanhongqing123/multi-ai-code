@@ -2,7 +2,7 @@
 
 #include <QtGlobal>
 
-#if defined(MULTI_AI_IM_USE_FAKE_CLIENT)
+#if defined(MAICHAT_USE_FAKE_CLIENT)
 #include "im/FakeRemoteIMClient.h"
 #elif defined(Q_OS_MACOS)
 #include "platform/MacRemoteIMClient.h"
@@ -13,7 +13,7 @@
 #endif
 
 std::unique_ptr<RemoteIMClient> createDesktopRemoteIMClient() {
-#if defined(MULTI_AI_IM_USE_FAKE_CLIENT)
+#if defined(MAICHAT_USE_FAKE_CLIENT)
     return std::make_unique<FakeRemoteIMClient>();
 #elif defined(Q_OS_MACOS)
     return std::make_unique<MacRemoteIMClient>();

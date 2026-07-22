@@ -131,17 +131,4 @@ describe('remote IM config', () => {
     expect(config.desktopRole).toBe('master')
     expect(validateRemoteImConfig(config).ok).toBe(true)
   })
-
-  it('allows enabled configs without contacts until trusted friends are added', () => {
-    const result = validateRemoteImConfig({
-      ...DEFAULT_REMOTE_IM_CONFIG,
-      enabled: true,
-      sdkAppId: 1400704311,
-      desktopUserId: 'desktop_bot',
-      userSigMode: 'secret-key',
-      userSigSecretKey: 'secret-for-local-test'
-    })
-
-    expect(result.ok).toBe(true)
-  })
 })

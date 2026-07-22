@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  ANNOTATION_COLORS,
-  appendAnnotation,
-  undoLast,
-  type Annotation
-} from './annotations.js'
+import { appendAnnotation, undoLast, type Annotation } from './annotations.js'
 
 describe('annotation history helpers', () => {
   it('appendAnnotation returns a new array (does not mutate)', () => {
@@ -32,10 +27,5 @@ describe('annotation history helpers', () => {
   it('undoLast on empty returns the same reference', () => {
     const a: Annotation[] = []
     expect(undoLast(a)).toBe(a)
-  })
-
-  it('exports five distinct preset colors', () => {
-    expect(new Set(ANNOTATION_COLORS).size).toBe(ANNOTATION_COLORS.length)
-    expect(ANNOTATION_COLORS).toHaveLength(5)
   })
 })

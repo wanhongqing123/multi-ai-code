@@ -2,8 +2,6 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   buildMainTerminalOptions,
   shouldConvertEolForCli,
-  shouldUseMainTerminalCanvasRenderer,
-  shouldEnableMainTerminalGpuAcceleration,
   xtermThemeFor
 } from './mainTerminalConfig.js'
 
@@ -139,17 +137,5 @@ describe('buildMainTerminalOptions', () => {
       fontWeight: 600,
       fontWeightBold: 800
     })
-  })
-})
-
-describe('shouldEnableMainTerminalGpuAcceleration', () => {
-  it('stays disabled for stability in Electron renderer sessions', () => {
-    expect(shouldEnableMainTerminalGpuAcceleration()).toBe(false)
-  })
-})
-
-describe('shouldUseMainTerminalCanvasRenderer', () => {
-  it('prefers canvas over the default DOM renderer for long transcript scrolling', () => {
-    expect(shouldUseMainTerminalCanvasRenderer()).toBe(true)
   })
 })

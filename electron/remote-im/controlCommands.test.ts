@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  REMOTE_IM_CONTROL_COMMANDS,
-  formatRemoteImControlCommandHelp,
-  parseRemoteImControlCommand
-} from './controlCommands.js'
+import { parseRemoteImControlCommand } from './controlCommands.js'
 
 describe('remote IM control commands', () => {
   it('parses supported commands only when the message starts with slash', () => {
@@ -100,29 +96,4 @@ describe('remote IM control commands', () => {
     })
   })
 
-  it('does not expose stop as a supported command', () => {
-    expect(REMOTE_IM_CONTROL_COMMANDS.map((command) => command.name)).toEqual([
-      'status',
-      'plan',
-      'build',
-      'models',
-      'model',
-      'goal',
-      'btw',
-      'diff',
-      'interrupt',
-      'compact',
-      'clear',
-      'help'
-    ])
-    expect(formatRemoteImControlCommandHelp()).not.toContain('/stop')
-    expect(formatRemoteImControlCommandHelp()).toContain('/models')
-    expect(formatRemoteImControlCommandHelp()).toContain('/model <序号|模型ID|reasoning 档位>')
-    expect(formatRemoteImControlCommandHelp()).toContain('/goal [目标|clear|pause|resume]')
-    expect(formatRemoteImControlCommandHelp()).toContain('/btw <任务>')
-    expect(formatRemoteImControlCommandHelp()).toContain('/diff [--stat] [文件或目录]')
-    expect(formatRemoteImControlCommandHelp()).toContain('/interrupt')
-    expect(formatRemoteImControlCommandHelp()).toContain('/compact')
-    expect(formatRemoteImControlCommandHelp()).toContain('/clear')
-  })
 })

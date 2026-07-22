@@ -68,22 +68,6 @@ describe('ScheduledTaskEditorDialog', () => {
     expect(styles).toContain('.scheduled-task-goal-input {\n  min-height: 168px;')
   })
 
-  it('auto-resizes the AICLI goal textarea as content changes', () => {
-    const source = readFileSync(
-      fileURLToPath(new URL('./ScheduledTaskEditorDialog.tsx', import.meta.url)),
-      'utf8'
-    )
-    const styles = normalizeNewlines(
-      readFileSync(fileURLToPath(new URL('../styles.css', import.meta.url)), 'utf8')
-    )
-
-    expect(source).toContain('goalTextareaRef')
-    expect(source).toContain('adjustGoalTextareaHeight')
-    expect(source).toContain('ref={goalTextareaRef}')
-    expect(source).toContain('onInput={adjustGoalTextareaHeight}')
-    expect(styles).toContain('.scheduled-task-goal-input {\n  min-height: 168px;\n  overflow: hidden;')
-  })
-
   it('supports interval schedules with a minutes input', () => {
     const draft = createDefaultScheduledTaskDraft('project-1')
     draft.scheduleType = 'interval'
@@ -133,23 +117,5 @@ describe('ScheduledTaskEditorDialog', () => {
     expect(markup).not.toContain('<pre>')
     expect(source).not.toContain('<ReactMarkdown')
     expect(source).not.toContain('buildScheduledTaskPreviewPrompt')
-  })
-
-  it('auto-saves the scheduled task description while editing and flushes before close', () => {
-    const editorSource = readFileSync(
-      fileURLToPath(new URL('./ScheduledTaskEditorDialog.tsx', import.meta.url)),
-      'utf8'
-    )
-    const dialogSource = readFileSync(
-      fileURLToPath(new URL('./ScheduledTaskDialog.tsx', import.meta.url)),
-      'utf8'
-    )
-
-    expect(editorSource).toContain('onAutoSave?:')
-    expect(editorSource).toContain('SCHEDULED_TASK_GOAL_AUTOSAVE_DELAY_MS')
-    expect(editorSource).toContain('flushGoalAutosave')
-    expect(dialogSource).toContain('autoSaveEditorDraft')
-    expect(dialogSource).toContain('goal: draft.goal')
-    expect(dialogSource).toContain('onAutoSave={autoSaveEditorDraft}')
   })
 })

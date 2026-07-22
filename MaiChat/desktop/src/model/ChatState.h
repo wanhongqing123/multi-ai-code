@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QHash>
 #include <QList>
 #include <QSet>
 #include <QString>
@@ -15,6 +16,9 @@ public:
     QString selectedPeerId() const;
     QList<RemoteIMContact> contacts() const;
     QList<RemoteIMMessage> messages() const;
+    // 会话未读数（红点）：仅统计「非当前选中会话」的实时新消息；打开会话即清零。
+    // 历史恢复/漫游补充（appendMessageForRestore）不计入。内存态，重启归零。
+    int unreadCount(const QString& peerId) const;
 
     void upsertContact(const RemoteIMContact& contact);
     void removeContactAndMessages(const QString& userId);
@@ -39,6 +43,8 @@ private:
     QString requireSelectedPeer() const;
     // 统一的消息追加入口：登记 id（供恢复/漫游合并去重）后追加。
     void appendTracked(const RemoteIMMessage& message);
+    // 实时收到 peer 的消息时计未读：会话未处于选中态才 +1（选中即视为已读）。
+    void bumpUnreadIfBackground(const QString& peerId);
     static QString clean(const QString& value);
     static QString incomingDisplayText(const QString& value);
     static QString fileName(const QString& path);
@@ -48,4 +54,5 @@ private:
     QList<RemoteIMContact> contacts_;
     QList<RemoteIMMessage> messages_;
     QSet<QString> messageIds_;
+    QHash<QString, int> unreadCounts_;
 };

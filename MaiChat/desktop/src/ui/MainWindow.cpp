@@ -62,6 +62,7 @@ constexpr int UserIdRole = Qt::UserRole;
 constexpr int DisplayNameRole = Qt::UserRole + 1;
 constexpr int PreviewRole = Qt::UserRole + 2;
 constexpr int TimeRole = Qt::UserRole + 3;
+constexpr int UnreadRole = Qt::UserRole + 4;
 
 class MarkdownMessageView final : public QTextBrowser {
 public:
@@ -182,12 +183,34 @@ public:
         painter->setPen(QColor(QStringLiteral("#98a2b3")));
         painter->drawText(timeRect, Qt::AlignRight | Qt::AlignVCenter, time);
 
+        // 未读红点（钉钉/飞书风格）：预览行右侧画红色圆角计数徽标，99+ 封顶；
+        // 打开会话即清零（ChatState::selectPeer），徽标随之消失。
+        QRect clippedPreviewRect = previewRect;
+        const int unread = index.data(UnreadRole).toInt();
+        if (unread > 0) {
+            const QString badgeText = unread > 99 ? QStringLiteral("99+") : QString::number(unread);
+            QFont badgeFont = option.font;
+            badgeFont.setPixelSize(11);
+            badgeFont.setBold(true);
+            const int badgeHeight = 18;
+            const int badgeWidth = qMax(badgeHeight,
+                                        QFontMetrics(badgeFont).horizontalAdvance(badgeText) + 10);
+            const QRect badgeRect(rowRect.right() - badgeWidth - 10, previewRect.top(), badgeWidth, badgeHeight);
+            painter->setPen(Qt::NoPen);
+            painter->setBrush(QColor(QStringLiteral("#f53f3f")));
+            painter->drawRoundedRect(badgeRect, badgeHeight / 2.0, badgeHeight / 2.0);
+            painter->setFont(badgeFont);
+            painter->setPen(Qt::white);
+            painter->drawText(badgeRect, Qt::AlignCenter, badgeText);
+            clippedPreviewRect.setRight(badgeRect.left() - 8);
+        }
+
         QFont previewFont = option.font;
         previewFont.setPixelSize(13);
         painter->setFont(previewFont);
         painter->setPen(QColor(QStringLiteral("#667085")));
-        painter->drawText(previewRect, Qt::AlignLeft | Qt::AlignVCenter,
-                          QFontMetrics(previewFont).elidedText(preview, Qt::ElideRight, previewRect.width()));
+        painter->drawText(clippedPreviewRect, Qt::AlignLeft | Qt::AlignVCenter,
+                          QFontMetrics(previewFont).elidedText(preview, Qt::ElideRight, clippedPreviewRect.width()));
 
         painter->restore();
     }
@@ -1161,6 +1184,7 @@ void MainWindow::refreshContacts() {
         item->setData(DisplayNameRole, contact.displayName.isEmpty() ? contact.userId : contact.displayName);
         item->setData(PreviewRole, latestMessageText(messages));
         item->setData(TimeRole, latestMessageTime(messages));
+        item->setData(UnreadRole, app_.chatState().unreadCount(contact.userId));
         conversationList_->addItem(item);
         if (contact.userId == selectedPeer) selectedRow = index;
     }

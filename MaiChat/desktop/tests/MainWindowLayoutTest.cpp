@@ -72,6 +72,7 @@ private slots:
     void deleteKeyRemovesContactAndMessagesFromConversationList();
     void deleteKeyRemovesContactAndMessagesFromContactsList();
     void navigationIconsDoNotUsePrivateFontGlyphProperties();
+    void conversationListShowsUnreadBadgeAndClearsOnOpen();
 };
 
 void MainWindowLayoutTest::exposesDesktopChatLayoutControls() {
@@ -939,6 +940,42 @@ void MainWindowLayoutTest::navigationIconsDoNotUsePrivateFontGlyphProperties() {
         QVERIFY(!button->property("navGlyph").isValid());
         QVERIFY(!button->icon().isNull());
     }
+}
+
+void MainWindowLayoutTest::conversationListShowsUnreadBadgeAndClearsOnOpen() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+    // 非选中会话收到两条实时消息 → 红点数 2；选中会话（phone-user）不计。
+    app.chatState().receiveText(QStringLiteral("phone-user"), QStringLiteral("已读消息"));
+    app.chatState().receiveText(QStringLiteral("mac-user"), QStringLiteral("未读一"));
+    app.chatState().receiveText(QStringLiteral("mac-user"), QStringLiteral("未读二"));
+
+    MainWindow window(app);
+    auto* conversationList = window.findChild<QListWidget*>(QStringLiteral("conversationList"));
+    QVERIFY(conversationList != nullptr);
+    QCOMPARE(conversationList->count(), 2);
+
+    int phoneRow = -1;
+    int macRow = -1;
+    for (int row = 0; row < conversationList->count(); ++row) {
+        const QString userId = conversationList->item(row)->data(Qt::UserRole).toString();
+        if (userId == QStringLiteral("phone-user")) phoneRow = row;
+        if (userId == QStringLiteral("mac-user")) macRow = row;
+    }
+    QVERIFY(phoneRow >= 0);
+    QVERIFY(macRow >= 0);
+    QCOMPARE(conversationList->item(phoneRow)->data(Qt::UserRole + 4).toInt(), 0);
+    QCOMPARE(conversationList->item(macRow)->data(Qt::UserRole + 4).toInt(), 2);
+
+    // 点开该会话（触发 selectPeer + stateChanged 重刷）：红点清零。
+    conversationList->setCurrentRow(macRow);
+    for (int row = 0; row < conversationList->count(); ++row) {
+        const QString userId = conversationList->item(row)->data(Qt::UserRole).toString();
+        if (userId == QStringLiteral("mac-user")) macRow = row;
+    }
+    QCOMPARE(conversationList->item(macRow)->data(Qt::UserRole + 4).toInt(), 0);
+    QCOMPARE(app.chatState().unreadCount(QStringLiteral("mac-user")), 0);
 }
 
 QTEST_MAIN(MainWindowLayoutTest)

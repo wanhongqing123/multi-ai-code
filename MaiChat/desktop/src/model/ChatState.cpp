@@ -18,6 +18,10 @@ QString ChatState::selectedPeerId() const { return selectedPeerId_; }
 QList<RemoteIMContact> ChatState::contacts() const { return contacts_; }
 QList<RemoteIMMessage> ChatState::messages() const { return messages_; }
 
+int ChatState::unreadCount(const QString& peerId) const {
+    return unreadCounts_.value(clean(peerId), 0);
+}
+
 void ChatState::upsertContact(const RemoteIMContact& contact) {
     const QString userId = clean(contact.userId);
     if (userId.isEmpty()) return;
@@ -45,12 +49,15 @@ void ChatState::removeContactAndMessages(const QString& userId) {
         if (removing) messageIds_.remove(message.id);
         return removing;
     }), messages_.end());
+    unreadCounts_.remove(cleanUserId);
     const bool selectedMissing = !selectedPeerId_.isEmpty()
         && std::none_of(contacts_.cbegin(), contacts_.cend(), [this](const RemoteIMContact& contact) {
                return contact.userId == selectedPeerId_;
            });
     if (selectedPeerId_ == cleanUserId || selectedMissing) {
         selectedPeerId_ = contacts_.isEmpty() ? QString() : contacts_.first().userId;
+        // 删除会话后选中焦点回落到首个会话，等同用户打开该会话，红点随之清零。
+        if (!selectedPeerId_.isEmpty()) unreadCounts_.remove(selectedPeerId_);
     }
 }
 
@@ -66,6 +73,8 @@ void ChatState::selectPeer(const QString& userId) {
     }
     if (!exists) upsertContact(RemoteIMContact{peerId, peerId});
     selectedPeerId_ = peerId;
+    // 打开（选中）会话即视为已读，红点清零。
+    unreadCounts_.remove(peerId);
 }
 
 RemoteIMMessage ChatState::queueOutgoingText(const QString& text) {
@@ -137,6 +146,7 @@ RemoteIMMessage ChatState::receiveText(const QString& fromUserId, const QString&
     if (peerId.isEmpty()) throw std::invalid_argument("fromUserId is required");
     upsertContact(RemoteIMContact{peerId, peerId});
     if (selectedPeerId_.isEmpty()) selectedPeerId_ = peerId;
+    bumpUnreadIfBackground(peerId);
     RemoteIMMessage message;
     message.fromUserId = peerId;
     message.toUserId = ownerUserId_;
@@ -154,6 +164,7 @@ RemoteIMMessage ChatState::receiveImage(const QString& fromUserId, const QString
     if (cleanPath.isEmpty()) throw std::invalid_argument("localPath is required");
     upsertContact(RemoteIMContact{peerId, peerId});
     if (selectedPeerId_.isEmpty()) selectedPeerId_ = peerId;
+    bumpUnreadIfBackground(peerId);
     RemoteIMMessage message;
     message.fromUserId = peerId;
     message.toUserId = ownerUserId_;
@@ -174,6 +185,7 @@ RemoteIMMessage ChatState::receiveFile(const QString& fromUserId, const QString&
     const QString cleanFileName = clean(fileName).isEmpty() ? ChatState::fileName(cleanPath) : clean(fileName);
     upsertContact(RemoteIMContact{peerId, peerId});
     if (selectedPeerId_.isEmpty()) selectedPeerId_ = peerId;
+    bumpUnreadIfBackground(peerId);
     RemoteIMMessage message;
     message.fromUserId = peerId;
     message.toUserId = ownerUserId_;
@@ -191,6 +203,7 @@ RemoteIMMessage ChatState::receiveVoice(const QString& fromUserId, const QString
     if (peerId.isEmpty()) throw std::invalid_argument("fromUserId is required");
     upsertContact(RemoteIMContact{peerId, peerId});
     if (selectedPeerId_.isEmpty()) selectedPeerId_ = peerId;
+    bumpUnreadIfBackground(peerId);
     RemoteIMMessage message;
     message.fromUserId = peerId;
     message.toUserId = ownerUserId_;
@@ -280,6 +293,10 @@ void ChatState::appendMessageForRestore(const RemoteIMMessage& message) {
 void ChatState::appendTracked(const RemoteIMMessage& message) {
     messageIds_.insert(message.id);
     messages_.append(message);
+}
+
+void ChatState::bumpUnreadIfBackground(const QString& peerId) {
+    if (peerId != selectedPeerId_) ++unreadCounts_[peerId];
 }
 
 QString ChatState::requireSelectedPeer() const {

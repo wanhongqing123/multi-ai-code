@@ -16,6 +16,10 @@ private slots:
     void reordersSameSecondMessagesAfterTimeCorrection();
     void removesContactAndMessages();
     void adoptsRemoteMessageIdAndDropsDuplicateTemp();
+    void countsUnreadOnlyForBackgroundPeers();
+    void selectPeerClearsUnread();
+    void restoreDoesNotAffectUnread();
+    void removingContactDropsItsUnread();
 };
 
 void ChatStateTest::queuesOutgoingText() {
@@ -224,6 +228,74 @@ void ChatStateTest::adoptsRemoteMessageIdAndDropsDuplicateTemp() {
         if (message.text == QStringLiteral("dup")) ++dupCount;
     }
     QCOMPARE(dupCount, 1);
+}
+
+void ChatStateTest::countsUnreadOnlyForBackgroundPeers() {
+    ChatState state("desktop-user");
+
+    // 首条消息自动选中该会话，视为已读：不计红点。
+    state.receiveText("peer-a", "hello");
+    QCOMPARE(state.selectedPeerId(), QString("peer-a"));
+    QCOMPARE(state.unreadCount("peer-a"), 0);
+
+    // 非选中会话的实时消息累计未读（文本/图片/文件/语音同规则）。
+    state.receiveText("peer-b", "one");
+    state.receiveImage("peer-b", "C:/tmp/pic.png", 10, 10, 100);
+    state.receiveFile("peer-b", "C:/tmp/report.pdf", "report.pdf", "application/pdf", 200);
+    state.receiveVoice("peer-b", "C:/tmp/voice.mp3", 3);
+    QCOMPARE(state.unreadCount("peer-b"), 4);
+    QCOMPARE(state.unreadCount("peer-a"), 0);
+
+    // 当前选中会话继续收消息不计未读（消息就在屏幕上）。
+    state.receiveText("peer-a", "again");
+    QCOMPARE(state.unreadCount("peer-a"), 0);
+}
+
+void ChatStateTest::selectPeerClearsUnread() {
+    ChatState state("desktop-user");
+    state.receiveText("peer-a", "hello");
+    state.receiveText("peer-b", "hi");
+    state.receiveText("peer-b", "there");
+    QCOMPARE(state.unreadCount("peer-b"), 2);
+
+    state.selectPeer("peer-b");
+
+    QCOMPARE(state.unreadCount("peer-b"), 0);
+    // 切走后新消息重新计数。
+    state.selectPeer("peer-a");
+    state.receiveText("peer-b", "back");
+    QCOMPARE(state.unreadCount("peer-b"), 1);
+}
+
+void ChatStateTest::restoreDoesNotAffectUnread() {
+    ChatState state("desktop-user");
+    state.selectPeer("peer-a");
+
+    // 本地库加载/SDK 漫游补充是历史消息，不产生红点。
+    RemoteIMMessage history;
+    history.fromUserId = QStringLiteral("peer-b");
+    history.toUserId = QStringLiteral("desktop-user");
+    history.text = QStringLiteral("yesterday");
+    history.direction = RemoteIMMessageDirection::Incoming;
+    state.appendMessageForRestore(history);
+
+    QCOMPARE(state.unreadCount("peer-b"), 0);
+}
+
+void ChatStateTest::removingContactDropsItsUnread() {
+    ChatState state("desktop-user");
+    state.receiveText("peer-a", "hello");
+    state.receiveText("peer-b", "hi");
+    QCOMPARE(state.unreadCount("peer-b"), 1);
+
+    state.removeContactAndMessages("peer-b");
+    QCOMPARE(state.unreadCount("peer-b"), 0);
+
+    // 再次加回联系人不携带历史红点。
+    state.receiveText("peer-b", "fresh");
+    QCOMPARE(state.unreadCount("peer-b"), 1);
+    state.selectPeer("peer-b");
+    QCOMPARE(state.unreadCount("peer-b"), 0);
 }
 
 QTEST_MAIN(ChatStateTest)

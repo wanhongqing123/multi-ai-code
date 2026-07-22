@@ -52,15 +52,15 @@ lerna-debug.log*
 *.swo
 
 # Xcode / CocoaPods local generated state
-ios/**/Pods/
-ios/**/xcuserdata/
-ios/**/*.xcuserstate
+MaiChat/ios/**/Pods/
+MaiChat/ios/**/xcuserdata/
+MaiChat/ios/**/*.xcuserstate
 
 # Android / Gradle local generated state
-android/**/.gradle/
-android/**/build/
-android/**/*.iml
-android/**/local.properties
+MaiChat/android/**/.gradle/
+MaiChat/android/**/build/
+MaiChat/android/**/*.iml
+MaiChat/android/**/local.properties
 
 # Env files
 .env

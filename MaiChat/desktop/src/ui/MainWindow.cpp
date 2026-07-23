@@ -4,6 +4,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QAction>
+#include <QContextMenuEvent>
 #include <QDateTime>
 #include <QDir>
 #include <QImage>
@@ -117,6 +118,10 @@ protected:
         QTextBrowser::resizeEvent(event);
         updateContentHeight();
     }
+
+    // 替换 QTextBrowser 原生英文右键菜单（Copy/Copy Link Location/Select All），
+    // 换成与图片/文件气泡一致的飞书式中文菜单。定义在辅助函数之后（见文件下方）。
+    void contextMenuEvent(QContextMenuEvent* event) override;
 
 private:
     void updateContentHeight() {
@@ -295,6 +300,8 @@ enum class LineIconKind {
     Copy,
     Preview,
     Download,
+    Link,
+    SelectAll,
 };
 
 int lineIconKindValue(LineIconKind kind) {
@@ -312,6 +319,8 @@ LineIconKind lineIconKindFromValue(int value) {
         case LineIconKind::Copy:
         case LineIconKind::Preview:
         case LineIconKind::Download:
+        case LineIconKind::Link:
+        case LineIconKind::SelectAll:
             return static_cast<LineIconKind>(value);
     }
     return LineIconKind::Messages;
@@ -390,6 +399,23 @@ QIcon makeLineIcon(LineIconKind kind, const QColor& color) {
             painter.drawLine(QPointF(32, 20), QPointF(24, 28));
             painter.drawPolyline(QPolygonF({QPointF(9, 30), QPointF(9, 37), QPointF(39, 37), QPointF(39, 30)}));
             break;
+        case LineIconKind::Link:
+            // 链接：斜向两节链环。
+            painter.save();
+            painter.translate(24, 24);
+            painter.rotate(-45);
+            painter.drawRoundedRect(QRectF(-17, -6, 19, 12), 6, 6);
+            painter.drawRoundedRect(QRectF(-2, -6, 19, 12), 6, 6);
+            painter.restore();
+            break;
+        case LineIconKind::SelectAll: {
+            // 全选：虚线选择框。
+            QPen dashPen(color, 4, Qt::CustomDashLine, Qt::RoundCap, Qt::RoundJoin);
+            dashPen.setDashPattern({2.4, 2.4});
+            painter.setPen(dashPen);
+            painter.drawRoundedRect(QRectF(11, 11, 26, 26), 6, 6);
+            break;
+        }
     }
     painter.end();
     return QIcon(pixmap);
@@ -455,6 +481,34 @@ void applyMessageContextMenuStyle(QMenu& menu) {
             margin: 5px 6px;
         }
     )"));
+}
+
+// 文本气泡右键菜单：复制（有选区复制选区，否则复制整条消息）/ 复制链接（点在
+// 链接上时出现）/ 全选。样式与图片/文件气泡的菜单一致。
+void MarkdownMessageView::contextMenuEvent(QContextMenuEvent* event) {
+    QMenu menu(this);
+    applyMessageContextMenuStyle(menu);
+    const QString anchor = anchorAt(event->pos());
+    QAction* copyAction = menu.addAction(makeLineIcon(LineIconKind::Copy, kMenuIconColor),
+                                         QStringLiteral("复制"));
+    QAction* copyLinkAction = anchor.isEmpty()
+        ? nullptr
+        : menu.addAction(makeLineIcon(LineIconKind::Link, kMenuIconColor), QStringLiteral("复制链接"));
+    menu.addSeparator();
+    QAction* selectAllAction = menu.addAction(makeLineIcon(LineIconKind::SelectAll, kMenuIconColor),
+                                              QStringLiteral("全选"));
+    QAction* chosen = menu.exec(event->globalPos());
+    if (chosen == copyAction) {
+        if (textCursor().hasSelection()) {
+            copy();
+        } else {
+            QApplication::clipboard()->setText(document()->toPlainText());
+        }
+    } else if (copyLinkAction != nullptr && chosen == copyLinkAction) {
+        QApplication::clipboard()->setText(anchor);
+    } else if (chosen == selectAllAction) {
+        selectAll();
+    }
 }
 
 constexpr int kSlashCommandRowHeight = 32;

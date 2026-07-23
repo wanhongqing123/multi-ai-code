@@ -11,6 +11,7 @@
 #include <QStackedWidget>
 #include <QDir>
 #include <QFile>
+#include <QImage>
 #include <QInputMethodEvent>
 #include <QTemporaryDir>
 #include <QTest>
@@ -77,6 +78,7 @@ private slots:
     void navigationIconsDoNotUsePrivateFontGlyphProperties();
     void conversationListShowsUnreadBadgeAndClearsOnOpen();
     void fileBubbleOffersContextMenu();
+    void imageBubbleOffersContextMenu();
     void copyAttachmentToPathCopiesOverwritesAndReportsErrors();
 };
 
@@ -1003,6 +1005,25 @@ void MainWindowLayoutTest::fileBubbleOffersContextMenu() {
     QVERIFY(fileButton != nullptr);
     // 自定义右键菜单（预览 / 保存到本地）挂在文件气泡按钮上。
     QCOMPARE(fileButton->contextMenuPolicy(), Qt::CustomContextMenu);
+}
+
+void MainWindowLayoutTest::imageBubbleOffersContextMenu() {
+    QTemporaryDir dir;
+    const QString imagePath = dir.filePath(QStringLiteral("shot.png"));
+    QImage image(8, 8, QImage::Format_RGB32);
+    image.fill(Qt::red);
+    QVERIFY(image.save(imagePath));
+
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+    app.chatState().receiveImage(QStringLiteral("phone-user"), imagePath, 8, 8, 100);
+
+    MainWindow window(app);
+    auto* imageLabel = window.findChild<QLabel*>(QStringLiteral("messageImageLabel"));
+    QVERIFY(imageLabel != nullptr);
+    // 自定义右键菜单（复制 / 预览 / 保存到本地）挂在图片缩略图上。
+    QCOMPARE(imageLabel->contextMenuPolicy(), Qt::CustomContextMenu);
 }
 
 void MainWindowLayoutTest::copyAttachmentToPathCopiesOverwritesAndReportsErrors() {

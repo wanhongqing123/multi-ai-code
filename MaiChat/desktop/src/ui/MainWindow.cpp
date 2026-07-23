@@ -32,6 +32,8 @@
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPainterPath>
+#include <QPolygon>
 #include <QResizeEvent>
 #include <QScrollBar>
 #include <QSet>
@@ -290,6 +292,9 @@ enum class LineIconKind {
     Search,
     Add,
     More,
+    Copy,
+    Preview,
+    Download,
 };
 
 int lineIconKindValue(LineIconKind kind) {
@@ -304,6 +309,9 @@ LineIconKind lineIconKindFromValue(int value) {
         case LineIconKind::Search:
         case LineIconKind::Add:
         case LineIconKind::More:
+        case LineIconKind::Copy:
+        case LineIconKind::Preview:
+        case LineIconKind::Download:
             return static_cast<LineIconKind>(value);
     }
     return LineIconKind::Messages;
@@ -358,6 +366,30 @@ QIcon makeLineIcon(LineIconKind kind, const QColor& color) {
             painter.drawEllipse(QRectF(21, 21, 6, 6));
             painter.drawEllipse(QRectF(29, 21, 6, 6));
             break;
+        case LineIconKind::Copy:
+            // 两张叠纸：先画后层，再用白底前层盖住重叠区（16px 下观感干净）。
+            painter.drawRoundedRect(QRectF(16, 9, 22, 22), 5, 5);
+            painter.setBrush(Qt::white);
+            painter.drawRoundedRect(QRectF(10, 16, 22, 22), 5, 5);
+            break;
+        case LineIconKind::Preview: {
+            // 眼睛：上下两条弧线 + 瞳孔。
+            QPainterPath eye;
+            eye.moveTo(8, 24);
+            eye.quadTo(24, 8, 40, 24);
+            eye.moveTo(8, 24);
+            eye.quadTo(24, 40, 40, 24);
+            painter.drawPath(eye);
+            painter.drawEllipse(QRectF(19, 19, 10, 10));
+            break;
+        }
+        case LineIconKind::Download:
+            // 下载：箭头落进托盘。
+            painter.drawLine(QPointF(24, 9), QPointF(24, 27));
+            painter.drawLine(QPointF(16, 20), QPointF(24, 28));
+            painter.drawLine(QPointF(32, 20), QPointF(24, 28));
+            painter.drawPolyline(QPolygonF({QPointF(9, 30), QPointF(9, 37), QPointF(39, 37), QPointF(39, 30)}));
+            break;
     }
     painter.end();
     return QIcon(pixmap);
@@ -386,6 +418,43 @@ QPushButton* makeHeaderIconButton(LineIconKind kind, const QString& tooltip, QWi
     button->setToolTip(tooltip);
     button->setCursor(Qt::PointingHandCursor);
     return button;
+}
+
+// 附件右键菜单统一图标色（与聊天头部图标一致）。
+const QColor kMenuIconColor(QStringLiteral("#4c5866"));
+
+// 飞书式消息右键菜单：白底圆角卡片、条目悬浮淡蓝高亮、分组分隔线。
+// QMenu 是原生弹窗，QSS 圆角需要无边框 + 透明底配合，否则圆角外露出直角底色。
+void applyMessageContextMenuStyle(QMenu& menu) {
+    menu.setWindowFlags(menu.windowFlags() | Qt::FramelessWindowHint | Qt::NoDropShadowWindowHint);
+    menu.setAttribute(Qt::WA_TranslucentBackground);
+    menu.setStyleSheet(QStringLiteral(R"(
+        QMenu {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 6px;
+        }
+        QMenu::item {
+            background: transparent;
+            color: #1f2329;
+            font-size: 13px;
+            padding: 8px 36px 8px 10px;
+            border-radius: 6px;
+        }
+        QMenu::item:selected {
+            background: #f2f6fb;
+            color: #1f2329;
+        }
+        QMenu::icon {
+            padding-left: 8px;
+        }
+        QMenu::separator {
+            height: 1px;
+            background: #eef2f6;
+            margin: 5px 6px;
+        }
+    )"));
 }
 
 constexpr int kSlashCommandRowHeight = 32;
@@ -1786,10 +1855,44 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
             auto* imageLabel = new ClickableImageLabel(message.image.localPath, [this](const QString& path) {
                 openImagePreview(path);
             }, bubble);
+            imageLabel->setObjectName(QStringLiteral("messageImageLabel"));
             const QPixmap thumbnail = pixmap.scaled(QSize(280, 200), Qt::KeepAspectRatio, Qt::SmoothTransformation);
             imageLabel->setPixmap(thumbnail);
             imageLabel->setAlignment(Qt::AlignCenter);
             imageLabel->setMinimumSize(thumbnail.size());
+            // 右键菜单（飞书式）：复制图片 / 预览 / 保存到本地。
+            imageLabel->setContextMenuPolicy(Qt::CustomContextMenu);
+            connect(imageLabel, &QLabel::customContextMenuRequested, this,
+                    [this, imageLabel, image = message.image](const QPoint& pos) {
+                QMenu menu(imageLabel);
+                applyMessageContextMenuStyle(menu);
+                QAction* copyAction = menu.addAction(makeLineIcon(LineIconKind::Copy, kMenuIconColor),
+                                                     QStringLiteral("复制"));
+                QAction* previewAction = menu.addAction(makeLineIcon(LineIconKind::Preview, kMenuIconColor),
+                                                        QStringLiteral("预览"));
+                menu.addSeparator();
+                QAction* saveAction = menu.addAction(makeLineIcon(LineIconKind::Download, kMenuIconColor),
+                                                     QStringLiteral("保存到本地…"));
+                QAction* chosen = menu.exec(imageLabel->mapToGlobal(pos));
+                if (chosen == copyAction) {
+                    // 位图 + 文件 URL 一起放剪贴板：贴到聊天/文档得到图片，贴到资源管理器得到文件。
+                    const QImage imageData(image.localPath);
+                    if (imageData.isNull()) {
+                        QMessageBox::warning(this, QStringLiteral("复制失败"),
+                                             QStringLiteral("图片缓存已不存在，无法复制。"));
+                        return;
+                    }
+                    auto* mimeData = new QMimeData();
+                    mimeData->setImageData(imageData);
+                    mimeData->setUrls({QUrl::fromLocalFile(image.localPath)});
+                    QApplication::clipboard()->setMimeData(mimeData);
+                } else if (chosen == previewAction) {
+                    openImagePreview(image.localPath);
+                } else if (chosen == saveAction) {
+                    saveFileAttachmentToLocal(RemoteIMFileAttachment{
+                        image.localPath, QFileInfo(image.localPath).fileName(), QString(), image.sizeBytes});
+                }
+            });
             contentRow->addWidget(imageLabel);
         } else {
             auto* missingLabel = new QLabel(QStringLiteral("图片无法加载"), bubble);
@@ -1827,16 +1930,35 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
         connect(fileButton, &QPushButton::clicked, this, [this, attachment = message.file]() {
             openFilePreview(attachment);
         });
-        // 右键菜单：把 IM 里的文件（Markdown/HTML 报告等）另存到本地。
+        // 右键菜单（飞书式）：复制文件 / 预览 / 保存到本地。
         fileButton->setContextMenuPolicy(Qt::CustomContextMenu);
         connect(fileButton, &QPushButton::customContextMenuRequested, this,
                 [this, fileButton, attachment = message.file](const QPoint& pos) {
             QMenu menu(fileButton);
-            QAction* previewAction = menu.addAction(QStringLiteral("预览"));
-            QAction* saveAction = menu.addAction(QStringLiteral("保存到本地…"));
+            applyMessageContextMenuStyle(menu);
+            QAction* copyAction = menu.addAction(makeLineIcon(LineIconKind::Copy, kMenuIconColor),
+                                                 QStringLiteral("复制"));
+            QAction* previewAction = menu.addAction(makeLineIcon(LineIconKind::Preview, kMenuIconColor),
+                                                    QStringLiteral("预览"));
+            menu.addSeparator();
+            QAction* saveAction = menu.addAction(makeLineIcon(LineIconKind::Download, kMenuIconColor),
+                                                 QStringLiteral("保存到本地…"));
             QAction* chosen = menu.exec(fileButton->mapToGlobal(pos));
-            if (chosen == previewAction) openFilePreview(attachment);
-            else if (chosen == saveAction) saveFileAttachmentToLocal(attachment);
+            if (chosen == copyAction) {
+                // 以文件形式放剪贴板：可直接粘贴到资源管理器/聊天窗口。
+                if (attachment.localPath.trimmed().isEmpty() || !QFile::exists(attachment.localPath)) {
+                    QMessageBox::warning(this, QStringLiteral("复制失败"),
+                                         QStringLiteral("文件尚未下载完成或本地缓存已被清理。"));
+                    return;
+                }
+                auto* mimeData = new QMimeData();
+                mimeData->setUrls({QUrl::fromLocalFile(attachment.localPath)});
+                QApplication::clipboard()->setMimeData(mimeData);
+            } else if (chosen == previewAction) {
+                openFilePreview(attachment);
+            } else if (chosen == saveAction) {
+                saveFileAttachmentToLocal(attachment);
+            }
         });
         contentRow->addWidget(fileButton);
     } else {

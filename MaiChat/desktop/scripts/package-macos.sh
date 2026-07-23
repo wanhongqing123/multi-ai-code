@@ -60,7 +60,7 @@ Missing app bundle: $source_app
 
 Build it first, for example:
   cmake -S MaiChat/desktop -B MaiChat/desktop/$build_dir -DCMAKE_PREFIX_PATH=/opt/homebrew/opt/qt@5 -DCMAKE_BUILD_TYPE=Release
-  cmake --build MaiChat/desktop/$build_dir --target maichat_desktop --config Release
+  cmake --build MaiChat/desktop/$build_dir --target maichat --config Release
 EOF
   exit 1
 fi

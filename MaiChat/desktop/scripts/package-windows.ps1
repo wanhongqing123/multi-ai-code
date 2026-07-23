@@ -20,9 +20,9 @@ $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 
 $buildPath = Join-Path $projectRoot $BuildDir
-$exePath = Join-Path $buildPath 'maichat_desktop.exe'
+$exePath = Join-Path $buildPath 'maichat.exe'
 if (-not (Test-Path $exePath)) {
-    throw "未找到 $exePath，请先构建：cmake --build $BuildDir --target maichat_desktop"
+    throw "未找到 $exePath，请先构建：cmake --build $BuildDir --target maichat"
 }
 
 # 从 CMakeCache 定位 Qt（避免依赖 PATH）
@@ -40,14 +40,14 @@ $staging = Join-Path $distRoot 'MaiChat-win64'
 if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
 New-Item -ItemType Directory -Force $staging | Out-Null
 
-Copy-Item $exePath (Join-Path $staging 'maichat_desktop.exe')
+Copy-Item $exePath (Join-Path $staging 'maichat.exe')
 
 # windeployqt 旁挂 Qt 运行时；--no-translations 减小体积
 # （应用界面文案为中文硬编码，不依赖 Qt 翻译文件）。
 # 注意：不用 --compiler-runtime——它依赖 vcvars 环境变量定位 VC 运行库，
 # 环境不满足时会静默跳过，下面改为显式拷贝，缺失即报错。
 & $windeployqt --release --no-translations `
-    --dir $staging (Join-Path $staging 'maichat_desktop.exe')
+    --dir $staging (Join-Path $staging 'maichat.exe')
 if ($LASTEXITCODE -ne 0) { throw "windeployqt 失败，退出码 $LASTEXITCODE" }
 
 # 显式旁挂 VC++ 运行库（app-local 部署）：exe 与 Qt5*.dll 都依赖
@@ -92,7 +92,7 @@ $readme = @"
 MaiChat 桌面客户端（Windows 免安装版）
 ==========================================
 
-运行：双击 maichat_desktop.exe。
+运行：双击 maichat.exe。
 
 - 无需安装 Qt 或 VC++ 运行库，全部依赖已随包附带（需 Windows 10 及以上 64 位）。
 - 首次启动在登录页输入账号 ID 后回车即可登录（UserSig 由内置密钥本地生成）。

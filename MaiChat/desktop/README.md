@@ -20,7 +20,7 @@ cmake --build MaiChat/desktop/build
 ## Run
 
 ```bash
-MaiChat/desktop/build/maichat_desktop
+MaiChat/desktop/build/maichat
 ```
 
 ## Native IM SDK
@@ -37,7 +37,7 @@ You can override the library path when debugging:
 
 ```bash
 export MAICHAT_SDK_LIBRARY=/path/to/native/im/sdk/library
-MaiChat/desktop/build/maichat_desktop
+MaiChat/desktop/build/maichat
 ```
 
 The login screen requires:
@@ -84,7 +84,7 @@ powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1
 cmake -S MaiChat/desktop -B MaiChat/desktop/build \
   -DCMAKE_PREFIX_PATH=/opt/homebrew/opt/qt@5 \
   -DCMAKE_BUILD_TYPE=Release
-cmake --build MaiChat/desktop/build --target maichat_desktop --config Release
+cmake --build MaiChat/desktop/build --target maichat --config Release
 ```
 
 然后打包：

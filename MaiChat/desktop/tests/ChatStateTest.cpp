@@ -21,6 +21,7 @@ private slots:
     void restoreDoesNotAffectUnread();
     void removingContactDropsItsUnread();
     void liveAppendCountsUnreadAndDedupes();
+    void removeMessagesWithKeepsContact();
 };
 
 void ChatStateTest::queuesOutgoingText() {
@@ -332,6 +333,32 @@ void ChatStateTest::liveAppendCountsUnreadAndDedupes() {
     outgoingEcho.toUserId = QStringLiteral("peer-b");
     outgoingEcho.direction = RemoteIMMessageDirection::Outgoing;
     QVERIFY(state.appendLiveMessage(outgoingEcho));
+    QCOMPARE(state.unreadCount("peer-b"), 1);
+}
+
+void ChatStateTest::removeMessagesWithKeepsContact() {
+    ChatState state("desktop-user");
+    state.receiveText("peer-a", "hello");
+    state.receiveText("peer-b", "one");
+    state.receiveText("peer-b", "two");
+    QCOMPARE(state.unreadCount("peer-b"), 2);
+
+    state.removeMessagesWith("peer-b");
+
+    // 聊天记录与红点清空；好友、选中态、其它会话均不受影响。
+    QCOMPARE(state.messagesWith("peer-b").size(), 0);
+    QCOMPARE(state.unreadCount("peer-b"), 0);
+    bool contactKept = false;
+    for (const RemoteIMContact& contact : state.contacts()) {
+        if (contact.userId == QStringLiteral("peer-b")) contactKept = true;
+    }
+    QVERIFY(contactKept);
+    QCOMPARE(state.selectedPeerId(), QString("peer-a"));
+    QCOMPARE(state.messagesWith("peer-a").size(), 1);
+
+    // 清空后再来消息：正常接收、正常计红点。
+    state.receiveText("peer-b", "fresh");
+    QCOMPARE(state.messagesWith("peer-b").size(), 1);
     QCOMPARE(state.unreadCount("peer-b"), 1);
 }
 

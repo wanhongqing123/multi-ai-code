@@ -302,6 +302,7 @@ enum class LineIconKind {
     Download,
     Link,
     SelectAll,
+    Trash,
 };
 
 int lineIconKindValue(LineIconKind kind) {
@@ -321,6 +322,7 @@ LineIconKind lineIconKindFromValue(int value) {
         case LineIconKind::Download:
         case LineIconKind::Link:
         case LineIconKind::SelectAll:
+        case LineIconKind::Trash:
             return static_cast<LineIconKind>(value);
     }
     return LineIconKind::Messages;
@@ -416,6 +418,14 @@ QIcon makeLineIcon(LineIconKind kind, const QColor& color) {
             painter.drawRoundedRect(QRectF(11, 11, 26, 26), 6, 6);
             break;
         }
+        case LineIconKind::Trash:
+            // 垃圾桶：提手 + 顶沿 + 桶身 + 两道内槽。
+            painter.drawPolyline(QPolygonF({QPointF(18, 12), QPointF(18, 8), QPointF(30, 8), QPointF(30, 12)}));
+            painter.drawLine(QPointF(9, 13), QPointF(39, 13));
+            painter.drawRoundedRect(QRectF(14, 13, 20, 26), 3, 3);
+            painter.drawLine(QPointF(21, 20), QPointF(21, 33));
+            painter.drawLine(QPointF(27, 20), QPointF(27, 33));
+            break;
     }
     painter.end();
     return QIcon(pixmap);
@@ -1260,7 +1270,7 @@ void MainWindow::bindSignals() {
     conversationList_->setContextMenuPolicy(Qt::CustomContextMenu);
     contactsList_->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(conversationList_, &QListWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
-        showContactContextMenu(conversationList_, pos);
+        showConversationContextMenu(pos);
     });
     connect(contactsList_, &QListWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
         showContactContextMenu(contactsList_, pos);
@@ -2273,6 +2283,22 @@ void MainWindow::selectSlashCommand(const QString& command) {
     updateSlashCommandSuggestions();
 }
 
+void MainWindow::showConversationContextMenu(const QPoint& pos) {
+    if (!conversationList_) return;
+    QListWidgetItem* item = conversationList_->itemAt(pos);
+    if (!item) return;
+    conversationList_->setCurrentItem(item);
+
+    QMenu menu(this);
+    applyMessageContextMenuStyle(menu);
+    QAction* clearAction = menu.addAction(makeLineIcon(LineIconKind::Trash, kMenuIconColor),
+                                          QStringLiteral("删除消息"));
+    QAction* selectedAction = menu.exec(conversationList_->viewport()->mapToGlobal(pos));
+    if (selectedAction == clearAction) {
+        clearMessagesFromItem(item);
+    }
+}
+
 void MainWindow::showContactContextMenu(QListWidget* list, const QPoint& pos) {
     if (!list) return;
     QListWidgetItem* item = list->itemAt(pos);
@@ -2280,11 +2306,29 @@ void MainWindow::showContactContextMenu(QListWidget* list, const QPoint& pos) {
     list->setCurrentItem(item);
 
     QMenu menu(this);
-    QAction* deleteAction = menu.addAction(QStringLiteral("删除好友及聊天历史"));
+    applyMessageContextMenuStyle(menu);
+    QAction* deleteAction = menu.addAction(makeLineIcon(LineIconKind::Trash, kMenuIconColor),
+                                           QStringLiteral("删除好友"));
     QAction* selectedAction = menu.exec(list->viewport()->mapToGlobal(pos));
     if (selectedAction == deleteAction) {
         deleteContactFromItem(item);
     }
+}
+
+void MainWindow::clearMessagesFromItem(QListWidgetItem* item) {
+    if (!item) return;
+    const QString userId = item->data(UserIdRole).toString().trimmed();
+    if (userId.isEmpty()) return;
+    const QString displayName = item->data(DisplayNameRole).toString().trimmed();
+    const QMessageBox::StandardButton choice = QMessageBox::question(
+        this,
+        QStringLiteral("删除消息"),
+        QStringLiteral("确定删除与“%1”的全部聊天记录吗？好友会保留，此操作不可恢复。")
+            .arg(displayName.isEmpty() ? userId : displayName),
+        QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::No);
+    if (choice != QMessageBox::Yes) return;
+    app_.clearMessagesWith(userId);
 }
 
 void MainWindow::deleteContactFromItem(QListWidgetItem* item) {
@@ -2305,6 +2349,11 @@ void MainWindow::deleteContactFromItem(QListWidgetItem* item) {
 
 void MainWindow::deleteSelectedContactFromList(QListWidget* list) {
     if (!list) return;
+    // 与右键菜单语义一致：会话列表 Delete 只清空聊天记录，删除好友走通讯录。
+    if (list == conversationList_) {
+        clearMessagesFromItem(list->currentItem());
+        return;
+    }
     deleteContactFromItem(list->currentItem());
 }
 

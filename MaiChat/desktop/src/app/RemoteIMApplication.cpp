@@ -87,6 +87,16 @@ void RemoteIMApplication::deleteContact(const QString& userId) {
     });
 }
 
+void RemoteIMApplication::clearMessagesWith(const QString& userId) {
+    const QString peerId = userId.trimmed();
+    if (peerId.isEmpty()) return;
+    state_.removeMessagesWith(peerId);
+    if (database_) database_->removeMessagesForPeer(peerId);
+    // 本地库已清空，该会话不再有「更早的消息」可翻。
+    hasEarlierMessages_[peerId] = false;
+    emit stateChanged();
+}
+
 void RemoteIMApplication::selectPeer(const QString& userId) {
     state_.selectPeer(userId);
     emit stateChanged();

@@ -85,8 +85,12 @@ private:
     void updateSlashCommandSuggestions();
     void positionSlashCommandBar();
     void selectSlashCommand(const QString& command);
+    // 会话列表右键：只提供「删除消息」（清空聊天记录、好友保留）。
+    // 「删除好友」是通讯录（contactsList_）的专属功能。
+    void showConversationContextMenu(const QPoint& pos);
     void showContactContextMenu(QListWidget* list, const QPoint& pos);
     void deleteContactFromItem(QListWidgetItem* item);
+    void clearMessagesFromItem(QListWidgetItem* item);
     void deleteSelectedContactFromList(QListWidget* list);
     QString contactName(const QString& userId) const;
 

@@ -22,6 +22,8 @@ public:
 
     void upsertContact(const RemoteIMContact& contact);
     void removeContactAndMessages(const QString& userId);
+    // 仅清空与该 peer 的聊天记录（好友保留、选中态不变），未读红点一并清零。
+    void removeMessagesWith(const QString& peerId);
     void selectPeer(const QString& userId);
     RemoteIMMessage queueOutgoingText(const QString& text);
     RemoteIMMessage queueOutgoingImage(const QString& localPath, int width, int height, qint64 sizeBytes, const QString& text = QString());

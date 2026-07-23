@@ -34,6 +34,8 @@ public:
     void connectToService(int sdkAppId, const QString& userSig);
     void addContact(const QString& userId, const QString& displayName);
     void deleteContact(const QString& userId);
+    // 清空与该 peer 的聊天记录（内存 + 本地库），好友保留。纯本地操作，不走远端。
+    void clearMessagesWith(const QString& userId);
     void selectPeer(const QString& userId);
     void sendText(const QString& text);
     // text 非空时，图片/文件与配文合并成「一条」消息发送（气泡内图上文下）。

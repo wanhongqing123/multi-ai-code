@@ -178,6 +178,14 @@ void LocalMessageDatabase::upsertContact(const RemoteIMContact& contact) {
     query.exec();
 }
 
+void LocalMessageDatabase::removeMessagesForPeer(const QString& userId) {
+    if (!db_.isOpen()) return;
+    QSqlQuery deleteMessages(db_);
+    deleteMessages.prepare(QStringLiteral("DELETE FROM messages WHERE peer = ?"));
+    deleteMessages.addBindValue(userId);
+    deleteMessages.exec();
+}
+
 void LocalMessageDatabase::removeContactCascade(const QString& userId) {
     if (!db_.isOpen()) return;
     QSqlQuery deleteMessages(db_);

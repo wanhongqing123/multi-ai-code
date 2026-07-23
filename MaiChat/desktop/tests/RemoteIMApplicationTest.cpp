@@ -24,6 +24,7 @@ private slots:
     void adoptsSentRemoteIdSoRoamingDoesNotDuplicate();
     void loadsRecentPageOnStartAndPagesEarlier();
     void liveChannelCountsUnreadRoamingDoesNot();
+    void clearMessagesKeepsContactAndPersists();
 };
 
 void RemoteIMApplicationTest::sendsTextThroughClientAndMarksSent() {
@@ -309,6 +310,32 @@ void RemoteIMApplicationTest::liveChannelCountsUnreadRoamingDoesNot() {
     // 打开会话即清零。
     app.selectPeer(QStringLiteral("mac-user"));
     QCOMPARE(app.chatState().unreadCount(QStringLiteral("mac-user")), 0);
+}
+
+void RemoteIMApplicationTest::clearMessagesKeepsContactAndPersists() {
+    QTemporaryDir dir;
+    const QString dbPath = dir.filePath("messages.db");
+    {
+        auto client = std::make_unique<FakeRemoteIMClient>();
+        auto* fakeClient = client.get();
+        RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client),
+                                std::make_unique<LocalMessageDatabase>(dbPath));
+        fakeClient->emitIncomingText(QStringLiteral("phone-user"), QStringLiteral("clear me"));
+        QCOMPARE(app.chatState().messagesWith(QStringLiteral("phone-user")).size(), 1);
+
+        app.clearMessagesWith(QStringLiteral("phone-user"));
+
+        QCOMPARE(app.chatState().messagesWith(QStringLiteral("phone-user")).size(), 0);
+        QCOMPARE(app.chatState().contacts().size(), 1);
+        QVERIFY(!app.hasEarlierMessages(QStringLiteral("phone-user")));
+    }
+
+    // 重启后本地库里的消息同样已删，联系人保留。
+    RemoteIMApplication restarted(QStringLiteral("desktop-user"), std::make_unique<FakeRemoteIMClient>(),
+                                  std::make_unique<LocalMessageDatabase>(dbPath));
+    QVERIFY(restarted.chatState().messagesWith(QStringLiteral("phone-user")).isEmpty());
+    QCOMPARE(restarted.chatState().contacts().size(), 1);
+    QCOMPARE(restarted.chatState().contacts().first().userId, QStringLiteral("phone-user"));
 }
 
 QTEST_MAIN(RemoteIMApplicationTest)

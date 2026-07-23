@@ -73,7 +73,7 @@ private slots:
     void restoredLongMessagesExpandAfterWindowIsShown();
     void slashCommandSuggestionsFillComposer();
     void slashCommandBarLeavesImeCompositionUndisturbed();
-    void deleteKeyRemovesContactAndMessagesFromConversationList();
+    void deleteKeyClearsMessagesButKeepsContactInConversationList();
     void deleteKeyRemovesContactAndMessagesFromContactsList();
     void navigationIconsDoNotUsePrivateFontGlyphProperties();
     void conversationListShowsUnreadBadgeAndClearsOnOpen();
@@ -878,7 +878,7 @@ void MainWindowLayoutTest::slashCommandBarLeavesImeCompositionUndisturbed() {
     QTRY_VERIFY(!commandBar->isVisible());
 }
 
-void MainWindowLayoutTest::deleteKeyRemovesContactAndMessagesFromConversationList() {
+void MainWindowLayoutTest::deleteKeyClearsMessagesButKeepsContactInConversationList() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
     app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
@@ -897,10 +897,10 @@ void MainWindowLayoutTest::deleteKeyRemovesContactAndMessagesFromConversationLis
     confirmNextContactDeletion();
     QTest::keyClick(conversationList, Qt::Key_Delete);
 
+    // 会话列表只清空聊天记录：好友保留（删除好友是通讯录的功能）。
     QCOMPARE(app.chatState().messagesWith(QStringLiteral("phone-user")).size(), 0);
-    QCOMPARE(app.chatState().contacts().size(), 1);
-    QCOMPARE(app.chatState().contacts().first().userId, QStringLiteral("other-user"));
-    QCOMPARE(app.chatState().selectedPeerId(), QStringLiteral("other-user"));
+    QCOMPARE(app.chatState().contacts().size(), 2);
+    QCOMPARE(app.chatState().contacts().first().userId, QStringLiteral("phone-user"));
 }
 
 void MainWindowLayoutTest::deleteKeyRemovesContactAndMessagesFromContactsList() {

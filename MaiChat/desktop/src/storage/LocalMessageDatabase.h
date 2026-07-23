@@ -38,6 +38,8 @@ public:
     void upsertContact(const RemoteIMContact& contact);
     // 删除联系人并级联删除与该 peer 的全部消息。
     void removeContactCascade(const QString& userId);
+    // 仅删除与该 peer 的全部消息（联系人保留）。
+    void removeMessagesForPeer(const QString& userId);
 
     // 以消息 id 为主键 INSERT OR IGNORE；返回是否真的插入（false=已存在，
     // 供 SDK 漫游合并去重）。peer 为会话对端（按方向由调用方计算）。

@@ -61,6 +61,17 @@ void ChatState::removeContactAndMessages(const QString& userId) {
     }
 }
 
+void ChatState::removeMessagesWith(const QString& peerId) {
+    const QString cleanPeerId = clean(peerId);
+    if (cleanPeerId.isEmpty()) return;
+    messages_.erase(std::remove_if(messages_.begin(), messages_.end(), [this, &cleanPeerId](const RemoteIMMessage& message) {
+        const bool removing = message.fromUserId == cleanPeerId || message.toUserId == cleanPeerId;
+        if (removing) messageIds_.remove(message.id);
+        return removing;
+    }), messages_.end());
+    unreadCounts_.remove(cleanPeerId);
+}
+
 void ChatState::selectPeer(const QString& userId) {
     const QString peerId = clean(userId);
     if (peerId.isEmpty()) return;

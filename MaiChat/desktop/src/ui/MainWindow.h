@@ -25,6 +25,13 @@ class MainWindow final : public QMainWindow {
 public:
     explicit MainWindow(RemoteIMApplication& app, QWidget* parent = nullptr);
 
+    // 把 IM 收/发的文件附件从本地缓存拷贝到 targetPath（存在则覆盖）。
+    // 纯文件操作、不弹 UI，供右键「保存到本地」与单测复用；失败时经
+    // errorMessage 返回原因。
+    static bool copyAttachmentToPath(const RemoteIMFileAttachment& attachment,
+                                     const QString& targetPath,
+                                     QString* errorMessage = nullptr);
+
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
@@ -66,6 +73,8 @@ private:
     bool composerHasAttachments() const;
     void openImagePreview(const QString& imagePath);
     void openFilePreview(const RemoteIMFileAttachment& attachment);
+    // 右键菜单入口：弹「另存为」对话框（默认下载目录 + 原文件名），把附件保存到用户选的位置。
+    void saveFileAttachmentToLocal(const RemoteIMFileAttachment& attachment);
     QWidget* createMessageBubble(const RemoteIMMessage& message);
     int messageBubbleMaximumWidth() const;
     void applyMessageBubbleWidth(QWidget* bubble, bool expanded) const;
@@ -127,4 +136,6 @@ private:
     QTimer* slashCommandUpdateTimer_ = nullptr;
     // 输入法是否正在组词（预编辑串非空）。组词期间一律不重建命令栏，组词结束再刷新。
     bool imeComposing_ = false;
+    // 「保存到本地」上次使用的目录：同一会话内多次保存不必每次从下载目录重新翻。
+    QString lastAttachmentSaveDir_;
 };

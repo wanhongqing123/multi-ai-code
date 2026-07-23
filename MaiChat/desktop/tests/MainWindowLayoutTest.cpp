@@ -9,7 +9,10 @@
 #include <QSplitter>
 #include <QStringList>
 #include <QStackedWidget>
+#include <QDir>
+#include <QFile>
 #include <QInputMethodEvent>
+#include <QTemporaryDir>
 #include <QTest>
 #include <QTextBrowser>
 #include <QTextEdit>
@@ -73,6 +76,8 @@ private slots:
     void deleteKeyRemovesContactAndMessagesFromContactsList();
     void navigationIconsDoNotUsePrivateFontGlyphProperties();
     void conversationListShowsUnreadBadgeAndClearsOnOpen();
+    void fileBubbleOffersContextMenu();
+    void copyAttachmentToPathCopiesOverwritesAndReportsErrors();
 };
 
 void MainWindowLayoutTest::exposesDesktopChatLayoutControls() {
@@ -976,6 +981,69 @@ void MainWindowLayoutTest::conversationListShowsUnreadBadgeAndClearsOnOpen() {
     }
     QCOMPARE(conversationList->item(macRow)->data(Qt::UserRole + 4).toInt(), 0);
     QCOMPARE(app.chatState().unreadCount(QStringLiteral("mac-user")), 0);
+}
+
+void MainWindowLayoutTest::fileBubbleOffersContextMenu() {
+    QTemporaryDir dir;
+    const QString sourcePath = dir.filePath(QStringLiteral("report.md"));
+    {
+        QFile source(sourcePath);
+        QVERIFY(source.open(QIODevice::WriteOnly));
+        source.write("# 报告\n正文");
+    }
+
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+    app.chatState().receiveFile(QStringLiteral("phone-user"), sourcePath,
+                                QStringLiteral("report.md"), QStringLiteral("text/markdown"), 10);
+
+    MainWindow window(app);
+    auto* fileButton = window.findChild<QPushButton*>(QStringLiteral("messageFileButton"));
+    QVERIFY(fileButton != nullptr);
+    // 自定义右键菜单（预览 / 保存到本地）挂在文件气泡按钮上。
+    QCOMPARE(fileButton->contextMenuPolicy(), Qt::CustomContextMenu);
+}
+
+void MainWindowLayoutTest::copyAttachmentToPathCopiesOverwritesAndReportsErrors() {
+    QTemporaryDir dir;
+    const QString sourcePath = dir.filePath(QStringLiteral("weekly.md"));
+    {
+        QFile source(sourcePath);
+        QVERIFY(source.open(QIODevice::WriteOnly));
+        source.write("# 周报内容");
+    }
+    RemoteIMFileAttachment attachment{sourcePath, QStringLiteral("weekly.md"), QStringLiteral("text/markdown"), 0};
+
+    // 正常保存：内容一致。
+    const QString targetPath = dir.filePath(QStringLiteral("saved/weekly.md"));
+    QVERIFY(QDir(dir.path()).mkpath(QStringLiteral("saved")));
+    QString error;
+    QVERIFY(MainWindow::copyAttachmentToPath(attachment, targetPath, &error));
+    QFile saved(targetPath);
+    QVERIFY(saved.open(QIODevice::ReadOnly));
+    QCOMPARE(saved.readAll(), QByteArray("# 周报内容"));
+    saved.close();
+
+    // 目标已存在：覆盖（「另存为」对话框已确认过覆盖语义）。
+    {
+        QFile source(sourcePath);
+        QVERIFY(source.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        source.write("# 更新后的周报");
+    }
+    QVERIFY(MainWindow::copyAttachmentToPath(attachment, targetPath, &error));
+    QVERIFY(saved.open(QIODevice::ReadOnly));
+    QCOMPARE(saved.readAll(), QByteArray("# 更新后的周报"));
+    saved.close();
+
+    // 源缓存缺失（未下载完成/被清理）：失败并给出原因。
+    RemoteIMFileAttachment missing{dir.filePath(QStringLiteral("gone.md")), QStringLiteral("gone.md"), QString(), 0};
+    QVERIFY(!MainWindow::copyAttachmentToPath(missing, dir.filePath(QStringLiteral("out.md")), &error));
+    QVERIFY(!error.isEmpty());
+
+    // 空目标路径：失败。
+    QVERIFY(!MainWindow::copyAttachmentToPath(attachment, QStringLiteral("  "), &error));
+    QVERIFY(!error.isEmpty());
 }
 
 QTEST_MAIN(MainWindowLayoutTest)

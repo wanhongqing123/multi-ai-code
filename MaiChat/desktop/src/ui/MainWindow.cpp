@@ -1682,6 +1682,58 @@ void MainWindow::openFilePreview(const RemoteIMFileAttachment& attachment) {
     dialog.exec();
 }
 
+bool MainWindow::copyAttachmentToPath(const RemoteIMFileAttachment& attachment,
+                                      const QString& targetPath,
+                                      QString* errorMessage) {
+    const auto fail = [errorMessage](const QString& reason) {
+        if (errorMessage) *errorMessage = reason;
+        return false;
+    };
+    const QString sourcePath = attachment.localPath.trimmed();
+    if (sourcePath.isEmpty() || !QFile::exists(sourcePath)) {
+        return fail(QStringLiteral("文件尚未下载完成或本地缓存已被清理。"));
+    }
+    if (targetPath.trimmed().isEmpty()) {
+        return fail(QStringLiteral("保存路径为空。"));
+    }
+    if (QFileInfo(sourcePath).canonicalFilePath() == QFileInfo(targetPath).canonicalFilePath()) {
+        return fail(QStringLiteral("目标位置与源文件相同。"));
+    }
+    // QFile::copy 遇到已存在的目标会失败；覆盖语义由调用方的「另存为」对话框确认过。
+    if (QFile::exists(targetPath) && !QFile::remove(targetPath)) {
+        return fail(QStringLiteral("无法覆盖已存在的文件：%1").arg(targetPath));
+    }
+    if (!QFile::copy(sourcePath, targetPath)) {
+        return fail(QStringLiteral("写入失败：%1").arg(targetPath));
+    }
+    return true;
+}
+
+void MainWindow::saveFileAttachmentToLocal(const RemoteIMFileAttachment& attachment) {
+    const QString suggestedName = attachment.fileName.isEmpty()
+        ? QFileInfo(attachment.localPath).fileName()
+        : attachment.fileName;
+    QString startDir = lastAttachmentSaveDir_;
+    if (startDir.isEmpty() || !QDir(startDir).exists()) {
+        startDir = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+    }
+    if (startDir.isEmpty()) startDir = QDir::homePath();
+    const QString targetPath = QFileDialog::getSaveFileName(
+        this,
+        QStringLiteral("保存到本地"),
+        QDir(startDir).filePath(suggestedName.isEmpty() ? QStringLiteral("file") : suggestedName));
+    if (targetPath.isEmpty()) return;  // 用户取消
+
+    QString error;
+    if (!copyAttachmentToPath(attachment, targetPath, &error)) {
+        QMessageBox::warning(this, QStringLiteral("保存失败"), error);
+        return;
+    }
+    lastAttachmentSaveDir_ = QFileInfo(targetPath).absolutePath();
+    QMessageBox::information(this, QStringLiteral("保存成功"),
+                             QStringLiteral("已保存到：\n%1").arg(QDir::toNativeSeparators(targetPath)));
+}
+
 QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
     const bool outgoing = message.direction == RemoteIMMessageDirection::Outgoing;
     auto* row = new QWidget(messageContainer_);
@@ -1774,6 +1826,17 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
         )"));
         connect(fileButton, &QPushButton::clicked, this, [this, attachment = message.file]() {
             openFilePreview(attachment);
+        });
+        // 右键菜单：把 IM 里的文件（Markdown/HTML 报告等）另存到本地。
+        fileButton->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(fileButton, &QPushButton::customContextMenuRequested, this,
+                [this, fileButton, attachment = message.file](const QPoint& pos) {
+            QMenu menu(fileButton);
+            QAction* previewAction = menu.addAction(QStringLiteral("预览"));
+            QAction* saveAction = menu.addAction(QStringLiteral("保存到本地…"));
+            QAction* chosen = menu.exec(fileButton->mapToGlobal(pos));
+            if (chosen == previewAction) openFilePreview(attachment);
+            else if (chosen == saveAction) saveFileAttachmentToLocal(attachment);
         });
         contentRow->addWidget(fileButton);
     } else {

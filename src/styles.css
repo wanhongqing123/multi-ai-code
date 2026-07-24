@@ -3228,6 +3228,9 @@ html, body, #root {
   justify-content: center;
   z-index: 1000;
   animation: mac-fade-in var(--mac-dur-fast) var(--mac-ease);
+  /* 拖拽区按布局矩形计算、无视层级：全屏遮罩显式 no-drag，把 topbar 的
+     拖拽带从命中区里减掉，否则弹窗顶到该区域的按钮（如 Diff 的 ×）点不到。 */
+  -webkit-app-region: no-drag;
 }
 .plan-review-backdrop {
   z-index: 1300;
@@ -7346,6 +7349,8 @@ html, body, #root {
   inset: 0;
   z-index: 80;
   pointer-events: none;
+  /* 同 modal-backdrop：抽屉覆盖 topbar 拖拽带时按钮要可点。 */
+  -webkit-app-region: no-drag;
 }
 
 .remote-im-panel {

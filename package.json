@@ -1,6 +1,6 @@
 {
   "name": "multi-ai-code",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Multi-AI Code — 持续交付集成管理平台",
   "main": "out/main/main.js",
   "type": "module",

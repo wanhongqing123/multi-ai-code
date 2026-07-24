@@ -25,6 +25,7 @@
 #include "app/RemoteIMApplication.h"
 #include "im/FakeRemoteIMClient.h"
 #include "ui/MainWindow.h"
+#include "ui/UiZoom.h"
 
 namespace {
 
@@ -81,6 +82,7 @@ private slots:
     void fileBubbleOffersContextMenu();
     void imageBubbleOffersContextMenu();
     void copyAttachmentToPathCopiesOverwritesAndReportsErrors();
+    void ctrlShortcutsZoomWholeUi();
 };
 
 void MainWindowLayoutTest::exposesDesktopChatLayoutControls() {
@@ -1078,6 +1080,34 @@ void MainWindowLayoutTest::copyAttachmentToPathCopiesOverwritesAndReportsErrors(
     // 空目标路径：失败。
     QVERIFY(!MainWindow::copyAttachmentToPath(attachment, QStringLiteral("  "), &error));
     QVERIFY(!error.isEmpty());
+}
+
+void MainWindowLayoutTest::ctrlShortcutsZoomWholeUi() {
+    UiZoom::setFactor(1.0);
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+
+    MainWindow window(app);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    // Ctrl+= 放大一档并弹出百分比浮层。
+    QTest::keyClick(&window, Qt::Key_Equal, Qt::ControlModifier);
+    QCOMPARE(qRound(UiZoom::factor() * 100), 110);
+    auto* toast = window.findChild<QLabel*>(QStringLiteral("zoomToast"));
+    QVERIFY(toast != nullptr);
+    QVERIFY(toast->isVisible());
+    QCOMPARE(toast->text(), QStringLiteral("110%"));
+
+    // Ctrl+- 缩回，Ctrl+0 复位。
+    QTest::keyClick(&window, Qt::Key_Minus, Qt::ControlModifier);
+    QCOMPARE(qRound(UiZoom::factor() * 100), 100);
+    QTest::keyClick(&window, Qt::Key_Equal, Qt::ControlModifier);
+    QTest::keyClick(&window, Qt::Key_0, Qt::ControlModifier);
+    QCOMPARE(qRound(UiZoom::factor() * 100), 100);
+
+    UiZoom::setFactor(1.0);
 }
 
 QTEST_MAIN(MainWindowLayoutTest)

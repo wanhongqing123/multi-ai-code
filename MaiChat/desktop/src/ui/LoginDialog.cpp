@@ -1,5 +1,7 @@
 #include "ui/LoginDialog.h"
 
+#include "ui/UiZoom.h"
+
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QProcessEnvironment>
@@ -96,7 +98,7 @@ void LoginDialog::buildUi() {
 }
 
 void LoginDialog::applyStyle() {
-    setStyleSheet(QStringLiteral(R"(
+    setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
         LoginDialog {
             background: #f6f9fc;
         }
@@ -143,7 +145,7 @@ void LoginDialog::applyStyle() {
             font-size: 17px;
             font-weight: 800;
         }
-    )"));
+    )")));
 }
 
 void LoginDialog::updateLoginButton() {

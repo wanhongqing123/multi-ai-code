@@ -67,6 +67,8 @@ add_library(remote_im_desktop_ui
   src/ui/MainWindow.cpp
   src/ui/ImagePreviewDialog.h
   src/ui/ImagePreviewDialog.cpp
+  src/ui/UiZoom.h
+  src/ui/UiZoom.cpp
 )
 target_include_directories(remote_im_desktop_ui PUBLIC src)
 target_link_libraries(remote_im_desktop_ui PUBLIC remote_im_desktop_app remote_im_core Qt5::Widgets)
@@ -140,6 +142,9 @@ target_link_libraries(add_contact_dialog_test PRIVATE remote_im_desktop_ui remot
 add_executable(main_window_layout_test tests/MainWindowLayoutTest.cpp)
 target_link_libraries(main_window_layout_test PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets Qt5::Test)
 
+add_executable(ui_zoom_test tests/UiZoomTest.cpp)
+target_link_libraries(ui_zoom_test PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets Qt5::Test)
+
 enable_testing()
 add_test(NAME chat_state_test COMMAND chat_state_test)
 add_test(NAME fake_remote_im_client_test COMMAND fake_remote_im_client_test)
@@ -151,3 +156,4 @@ add_test(NAME remote_im_application_test COMMAND remote_im_application_test)
 add_test(NAME login_dialog_test COMMAND login_dialog_test)
 add_test(NAME add_contact_dialog_test COMMAND add_contact_dialog_test)
 add_test(NAME main_window_layout_test COMMAND main_window_layout_test)
+add_test(NAME ui_zoom_test COMMAND ui_zoom_test)

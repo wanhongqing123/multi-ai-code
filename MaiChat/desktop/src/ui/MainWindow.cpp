@@ -39,6 +39,7 @@
 #include <QResizeEvent>
 #include <QScrollBar>
 #include <QSet>
+#include <QShortcut>
 #include <QShowEvent>
 #include <QSizePolicy>
 #include <QSplitter>
@@ -59,6 +60,7 @@
 #include "markdown/MarkdownRenderer.h"
 #include "ui/AddContactDialog.h"
 #include "ui/ImagePreviewDialog.h"
+#include "ui/UiZoom.h"
 
 namespace {
 
@@ -85,7 +87,7 @@ public:
         document()->setIndentWidth(20);
         viewport()->setAutoFillBackground(false);
         // 对齐 Electron 端 .remote-im-bubble 正文：14px / #0f172a，链接 #2563eb。
-        setStyleSheet(QStringLiteral(R"(
+        setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
             QTextBrowser {
                 color: #0f172a;
                 background: transparent;
@@ -95,7 +97,7 @@ public:
             QTextBrowser a {
                 color: #2563eb;
             }
-        )"));
+        )")));
     }
 
     void setMessageMarkdown(const QString& markdown) {
@@ -149,7 +151,7 @@ public:
     explicit ConversationListDelegate(QObject* parent = nullptr) : QStyledItemDelegate(parent) {}
 
     QSize sizeHint(const QStyleOptionViewItem&, const QModelIndex&) const override {
-        return QSize(0, 72);
+        return QSize(0, UiZoom::s(72));
     }
 
     void paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override {
@@ -163,7 +165,7 @@ public:
             painter->drawRoundedRect(rowRect, 0, 0);
         }
 
-        const QRect avatarRect(rowRect.left() + 12, rowRect.top() + 10, 40, 40);
+        const QRect avatarRect(rowRect.left() + UiZoom::s(12), rowRect.top() + UiZoom::s(10), UiZoom::s(40), UiZoom::s(40));
         painter->setPen(Qt::NoPen);
         painter->setBrush(brandAvatarBrush(avatarRect));
         painter->drawRoundedRect(avatarRect, 8, 8);
@@ -177,19 +179,19 @@ public:
         const QString preview = index.data(PreviewRole).toString();
         const QString time = index.data(TimeRole).toString();
 
-        const int textLeft = avatarRect.right() + 14;
+        const int textLeft = avatarRect.right() + UiZoom::s(14);
         // Size the time column to the actual text so short "HH:mm" stamps free up
         // room for the name and long dates never clip.
         QFont timeFont = option.font;
-        timeFont.setPixelSize(12);
+        timeFont.setPixelSize(UiZoom::s(12));
         const int timeWidth = time.isEmpty() ? 0 : QFontMetrics(timeFont).horizontalAdvance(time) + 2;
-        const QRect timeRect(rowRect.right() - timeWidth - 10, rowRect.top() + 12, timeWidth, 18);
-        const int nameRight = time.isEmpty() ? rowRect.right() - 12 : timeRect.left() - 10;
-        const QRect nameRect(textLeft, rowRect.top() + 12, qMax(0, nameRight - textLeft), 20);
-        const QRect previewRect(textLeft, rowRect.top() + 41, rowRect.right() - textLeft - 12, 18);
+        const QRect timeRect(rowRect.right() - timeWidth - UiZoom::s(10), rowRect.top() + UiZoom::s(12), timeWidth, UiZoom::s(18));
+        const int nameRight = time.isEmpty() ? rowRect.right() - UiZoom::s(12) : timeRect.left() - UiZoom::s(10);
+        const QRect nameRect(textLeft, rowRect.top() + UiZoom::s(12), qMax(0, nameRight - textLeft), UiZoom::s(20));
+        const QRect previewRect(textLeft, rowRect.top() + UiZoom::s(41), rowRect.right() - textLeft - UiZoom::s(12), UiZoom::s(18));
 
         QFont nameFont = option.font;
-        nameFont.setPixelSize(14);
+        nameFont.setPixelSize(UiZoom::s(14));
         nameFont.setWeight(QFont::Medium);
         painter->setFont(nameFont);
         painter->setPen(QColor(QStringLiteral("#1f2329")));
@@ -207,23 +209,23 @@ public:
         if (unread > 0) {
             const QString badgeText = unread > 99 ? QStringLiteral("99+") : QString::number(unread);
             QFont badgeFont = option.font;
-            badgeFont.setPixelSize(11);
+            badgeFont.setPixelSize(UiZoom::s(11));
             badgeFont.setBold(true);
-            const int badgeHeight = 18;
+            const int badgeHeight = UiZoom::s(18);
             const int badgeWidth = qMax(badgeHeight,
-                                        QFontMetrics(badgeFont).horizontalAdvance(badgeText) + 10);
-            const QRect badgeRect(rowRect.right() - badgeWidth - 10, previewRect.top(), badgeWidth, badgeHeight);
+                                        QFontMetrics(badgeFont).horizontalAdvance(badgeText) + UiZoom::s(10));
+            const QRect badgeRect(rowRect.right() - badgeWidth - UiZoom::s(10), previewRect.top(), badgeWidth, badgeHeight);
             painter->setPen(Qt::NoPen);
             painter->setBrush(QColor(QStringLiteral("#f53f3f")));
             painter->drawRoundedRect(badgeRect, badgeHeight / 2.0, badgeHeight / 2.0);
             painter->setFont(badgeFont);
             painter->setPen(Qt::white);
             painter->drawText(badgeRect, Qt::AlignCenter, badgeText);
-            clippedPreviewRect.setRight(badgeRect.left() - 8);
+            clippedPreviewRect.setRight(badgeRect.left() - UiZoom::s(8));
         }
 
         QFont previewFont = option.font;
-        previewFont.setPixelSize(13);
+        previewFont.setPixelSize(UiZoom::s(13));
         painter->setFont(previewFont);
         painter->setPen(QColor(QStringLiteral("#667085")));
         painter->drawText(clippedPreviewRect, Qt::AlignLeft | Qt::AlignVCenter,
@@ -238,7 +240,7 @@ public:
     explicit ContactListDelegate(QObject* parent = nullptr) : QStyledItemDelegate(parent) {}
 
     QSize sizeHint(const QStyleOptionViewItem&, const QModelIndex&) const override {
-        return QSize(0, 54);
+        return QSize(0, UiZoom::s(54));
     }
 
     void paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override {
@@ -252,7 +254,7 @@ public:
             painter->drawRoundedRect(rowRect, 0, 0);
         }
 
-        const QRect avatarRect(rowRect.left() + 12, rowRect.top() + 7, 36, 36);
+        const QRect avatarRect(rowRect.left() + UiZoom::s(12), rowRect.top() + UiZoom::s(7), UiZoom::s(36), UiZoom::s(36));
         painter->setPen(Qt::NoPen);
         painter->setBrush(brandAvatarBrush(avatarRect));
         painter->drawRoundedRect(avatarRect, 8, 8);
@@ -262,13 +264,13 @@ public:
         painter->setPen(Qt::white);
         painter->drawText(avatarRect, Qt::AlignCenter, QStringLiteral("IM"));
 
-        const int textLeft = avatarRect.right() + 14;
-        const QRect nameRect(textLeft, rowRect.top(), rowRect.right() - textLeft - 12, rowRect.height());
+        const int textLeft = avatarRect.right() + UiZoom::s(14);
+        const QRect nameRect(textLeft, rowRect.top(), rowRect.right() - textLeft - UiZoom::s(12), rowRect.height());
 
         const QString name = index.data(DisplayNameRole).toString();
 
         QFont nameFont = option.font;
-        nameFont.setPixelSize(14);
+        nameFont.setPixelSize(UiZoom::s(14));
         nameFont.setWeight(QFont::Medium);
         painter->setFont(nameFont);
         painter->setPen(QColor(QStringLiteral("#1f2329")));
@@ -474,7 +476,7 @@ const QColor kMenuIconColor(QStringLiteral("#4c5866"));
 void applyMessageContextMenuStyle(QMenu& menu) {
     menu.setWindowFlags(menu.windowFlags() | Qt::FramelessWindowHint | Qt::NoDropShadowWindowHint);
     menu.setAttribute(Qt::WA_TranslucentBackground);
-    menu.setStyleSheet(QStringLiteral(R"(
+    menu.setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
         QMenu {
             background: #ffffff;
             border: 1px solid #e2e8f0;
@@ -500,7 +502,7 @@ void applyMessageContextMenuStyle(QMenu& menu) {
             background: #eef2f6;
             margin: 5px 6px;
         }
-    )"));
+    )")));
 }
 
 // 文本气泡右键菜单：复制（有选区复制选区，否则复制整条消息）/ 复制链接（点在
@@ -1013,7 +1015,7 @@ void MainWindow::buildUi() {
 }
 
 void MainWindow::applyStyle() {
-    setStyleSheet(QStringLiteral(R"(
+    setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
         QMainWindow, #root {
             background: #f6f9fc;
             color: #172033;
@@ -1240,10 +1242,20 @@ void MainWindow::applyStyle() {
         QSplitter::handle:hover {
             background: #c7d8ea;
         }
-    )"));
+    )")));
 }
 
 void MainWindow::bindSignals() {
+    // 整体缩放（飞书式）：Ctrl+= / Ctrl++（小键盘）放大，Ctrl+- 缩小，Ctrl+0 复位。
+    connect(new QShortcut(QKeySequence(Qt::CTRL + Qt::Key_Equal), this), &QShortcut::activated,
+            this, [this] { changeUiZoom(UiZoom::step()); });
+    connect(new QShortcut(QKeySequence(Qt::CTRL + Qt::Key_Plus), this), &QShortcut::activated,
+            this, [this] { changeUiZoom(UiZoom::step()); });
+    connect(new QShortcut(QKeySequence(Qt::CTRL + Qt::Key_Minus), this), &QShortcut::activated,
+            this, [this] { changeUiZoom(-UiZoom::step()); });
+    connect(new QShortcut(QKeySequence(Qt::CTRL + Qt::Key_0), this), &QShortcut::activated,
+            this, [this] { resetUiZoom(); });
+
     connect(&app_, &RemoteIMApplication::stateChanged, this, [this] { refresh(); });
     connect(&app_, &RemoteIMApplication::connectionChanged, this, [this](bool connected) {
         statusLabel_->setText(connected ? QStringLiteral("● 已连接") : QStringLiteral("● 未连接"));
@@ -1322,7 +1334,7 @@ void MainWindow::refreshContacts() {
     for (int index = 0; index < contacts.size(); ++index) {
         const RemoteIMContact& contact = contacts[index];
         auto* item = new QListWidgetItem();
-        item->setSizeHint(QSize(0, 76));
+        item->setSizeHint(QSize(0, UiZoom::s(76)));
         const QList<RemoteIMMessage> messages = app_.chatState().messagesWith(contact.userId);
         item->setData(UserIdRole, contact.userId);
         item->setData(DisplayNameRole, contact.displayName.isEmpty() ? contact.userId : contact.displayName);
@@ -1357,7 +1369,7 @@ void MainWindow::refreshContactDirectory() {
     const QList<RemoteIMContact> contacts = app_.chatState().contacts();
     for (const RemoteIMContact& contact : contacts) {
         auto* item = new QListWidgetItem();
-        item->setSizeHint(QSize(0, 54));
+        item->setSizeHint(QSize(0, UiZoom::s(54)));
         item->setData(UserIdRole, contact.userId);
         item->setData(DisplayNameRole, contact.displayName.isEmpty() ? contact.userId : contact.displayName);
         contactsList_->addItem(item);
@@ -1477,7 +1489,7 @@ void MainWindow::rebuildMessageList(const QString& peerId, const QList<RemoteIMM
         emptyLayout->addWidget(title);
         emptyLayout->addWidget(subtitle);
         emptyLayout->addStretch(1);
-        emptyView->setStyleSheet(QStringLiteral(R"(
+        emptyView->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
             #emptyMessageIcon {
                 color: #98a2b3;
                 font-size: 28px;
@@ -1494,7 +1506,7 @@ void MainWindow::rebuildMessageList(const QString& peerId, const QList<RemoteIMM
                 font-size: 13px;
                 background: transparent;
             }
-        )"));
+        )")));
         messageLayout_->addWidget(emptyView);
         return;
     }
@@ -1503,7 +1515,7 @@ void MainWindow::rebuildMessageList(const QString& peerId, const QList<RemoteIMM
     loadEarlierButton_ = new QPushButton(QStringLiteral("加载更早的消息"), messageContainer_);
     loadEarlierButton_->setObjectName(QStringLiteral("loadEarlierButton"));
     loadEarlierButton_->setCursor(Qt::PointingHandCursor);
-    loadEarlierButton_->setStyleSheet(QStringLiteral(R"(
+    loadEarlierButton_->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
         QPushButton#loadEarlierButton {
             background: #f1f5f9;
             border: 1px solid #e2e8f0;
@@ -1516,7 +1528,7 @@ void MainWindow::rebuildMessageList(const QString& peerId, const QList<RemoteIMM
         QPushButton#loadEarlierButton:hover {
             background: #e2e8f0;
         }
-    )"));
+    )")));
     connect(loadEarlierButton_, &QPushButton::clicked, this, [this] {
         app_.loadEarlierMessages(app_.chatState().selectedPeerId());
     });
@@ -1808,7 +1820,7 @@ void MainWindow::openFilePreview(const RemoteIMFileAttachment& attachment) {
     connect(closeButton, &QPushButton::clicked, &dialog, &QDialog::accept);
     layout->addWidget(closeButton, 0, Qt::AlignRight);
 
-    dialog.setStyleSheet(QStringLiteral(R"(
+    dialog.setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
         QLabel#filePreviewTitle {
             color: #101828;
             font-size: 18px;
@@ -1822,7 +1834,7 @@ void MainWindow::openFilePreview(const RemoteIMFileAttachment& attachment) {
             color: #172033;
             font-size: 14px;
         }
-    )"));
+    )")));
     dialog.exec();
 }
 
@@ -1895,9 +1907,9 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
     bubble->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     // 配色/圆角对齐 Electron 端 .remote-im-bubble：本方(用户)白底 #dbeafe 边，
     // 对方(aicli)米黄底 #fffbeb + #fde68a 边，圆角 16px。
-    bubble->setStyleSheet(outgoing
+    bubble->setStyleSheet(UiZoom::scaleQss(outgoing
                               ? QStringLiteral("#messageBubbleOutgoing{background:#ffffff;border:1px solid #dbeafe;border-radius:16px;}")
-                              : QStringLiteral("#messageBubbleIncoming{background:#fffbeb;border:1px solid #fde68a;border-radius:16px;}"));
+                              : QStringLiteral("#messageBubbleIncoming{background:#fffbeb;border:1px solid #fde68a;border-radius:16px;}")));
 
     auto* bubbleLayout = new QVBoxLayout(bubble);
     bubbleLayout->setContentsMargins(14, 11, 14, 12);
@@ -1931,7 +1943,7 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
                 openImagePreview(path);
             }, bubble);
             imageLabel->setObjectName(QStringLiteral("messageImageLabel"));
-            const QPixmap thumbnail = pixmap.scaled(QSize(280, 200), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            const QPixmap thumbnail = pixmap.scaled(QSize(UiZoom::s(280), UiZoom::s(200)), Qt::KeepAspectRatio, Qt::SmoothTransformation);
             imageLabel->setPixmap(thumbnail);
             imageLabel->setAlignment(Qt::AlignCenter);
             imageLabel->setMinimumSize(thumbnail.size());
@@ -1984,9 +1996,9 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
         fileButton->setText(QStringLiteral("📄 %1\n%2")
             .arg(displayName.isEmpty() ? QStringLiteral("file") : displayName)
             .arg(isHtmlFile(message.file) ? QStringLiteral("HTML 文件，点击预览") : QStringLiteral("Markdown 文件，点击预览")));
-        fileButton->setMinimumWidth(220);
+        fileButton->setMinimumWidth(UiZoom::s(220));
         fileButton->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
-        fileButton->setStyleSheet(QStringLiteral(R"(
+        fileButton->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
             QPushButton#messageFileButton {
                 background: #f8fafc;
                 border: 1px solid #d9e4ef;
@@ -2001,7 +2013,7 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
                 border-color: #1aa7ec;
                 background: #edf8ff;
             }
-        )"));
+        )")));
         connect(fileButton, &QPushButton::clicked, this, [this, attachment = message.file]() {
             openFilePreview(attachment);
         });
@@ -2047,8 +2059,8 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
         auto* statusLabel = new QLabel(status, bubble);
         statusLabel->setObjectName(QStringLiteral("messageStatusLabel"));
         statusLabel->setAlignment(Qt::AlignCenter);
-        statusLabel->setFixedSize(16, 16);
-        statusLabel->setStyleSheet(QStringLiteral(R"(
+        statusLabel->setFixedSize(UiZoom::s(16), UiZoom::s(16));
+        statusLabel->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
             QLabel#messageStatusLabel {
                 border: 1px solid #12a150;
                 border-radius: 8px;
@@ -2058,7 +2070,7 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
                 font-weight: 800;
                 padding: 0;
             }
-        )"));
+        )")));
         contentRow->addWidget(statusLabel, 0, Qt::AlignVCenter);
     }
     bubbleLayout->addLayout(contentRow);
@@ -2075,7 +2087,7 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
     }
     // meta 行对齐 Electron 端 .remote-im-message-meta：作者 #334155/700、
     // 时间 #94a3b8、好友徽章 #ecfdf5 底 #047857 字 11px 胶囊。
-    bubble->setStyleSheet(bubble->styleSheet() + QStringLiteral(R"(
+    bubble->setStyleSheet(bubble->styleSheet() + UiZoom::scaleQss(QStringLiteral(R"(
         #messageAuthorLabel {
             color: #334155;
             font-size: 13px;
@@ -2097,7 +2109,7 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
             font-size: 11px;
             font-weight: 800;
         }
-    )"));
+    )")));
 
     if (outgoing) rowLayout->addSpacing(42);
     if (outgoing) rowLayout->addStretch(1);
@@ -2230,8 +2242,8 @@ void MainWindow::updateSlashCommandSuggestions() {
         button->setObjectName(definition.objectName);
         button->setCursor(Qt::PointingHandCursor);
         button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        button->setFixedHeight(kSlashCommandRowHeight);
-        button->setStyleSheet(QStringLiteral(R"(
+        button->setFixedHeight(UiZoom::s(kSlashCommandRowHeight));
+        button->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
             QPushButton {
                 border: 1px solid #b8def7;
                 border-radius: 8px;
@@ -2246,7 +2258,7 @@ void MainWindow::updateSlashCommandSuggestions() {
                 background: #dff1ff;
                 border-color: #58b7ff;
             }
-        )"));
+        )")));
         connect(button, &QPushButton::clicked, this, [this, command = definition.command] {
             selectSlashCommand(command);
         });
@@ -2273,7 +2285,7 @@ void MainWindow::positionSlashCommandBar() {
     constexpr int kMaxVisibleRows = 10;
     const int visibleRows = qMin(rowCount, kMaxVisibleRows);
     const QMargins margins = slashCommandLayout_->contentsMargins();
-    const int barHeightForRows = visibleRows * kSlashCommandRowHeight
+    const int barHeightForRows = visibleRows * UiZoom::s(kSlashCommandRowHeight)
         + (visibleRows - 1) * slashCommandLayout_->spacing()
         + margins.top() + margins.bottom() + 2;
     const QPoint editorTopLeft = messageEditor_->mapTo(overlayParent, QPoint(0, 0));
@@ -2292,6 +2304,57 @@ void MainWindow::selectSlashCommand(const QString& command) {
     messageEditor_->setFocus();
     updateComposerState();
     updateSlashCommandSuggestions();
+}
+
+void MainWindow::changeUiZoom(qreal delta) {
+    UiZoom::setFactor(UiZoom::factor() + delta);
+    applyUiZoom(true);
+}
+
+void MainWindow::resetUiZoom() {
+    UiZoom::setFactor(1.0);
+    applyUiZoom(true);
+}
+
+void MainWindow::applyUiZoom(bool showToastPopup) {
+    // 全局默认字体随倍率缩放（基准 13px，与 main.cpp 启动设置一致）。
+    QFont font = QApplication::font();
+    font.setPixelSize(UiZoom::s(13));
+    QApplication::setFont(font);
+    // 全局样式表按新倍率重放；列表条目行高/头像与气泡样式都依赖倍率，
+    // 清空渲染缓存强制消息全量重建。
+    applyStyle();
+    renderedPeerId_.clear();
+    refresh();
+    if (showToastPopup) showZoomToast();
+}
+
+void MainWindow::showZoomToast() {
+    if (!zoomToast_) {
+        zoomToast_ = new QLabel(this);
+        zoomToast_->setObjectName(QStringLiteral("zoomToast"));
+        zoomToast_->setAlignment(Qt::AlignCenter);
+        zoomToast_->setAttribute(Qt::WA_TransparentForMouseEvents);
+        zoomToastTimer_ = new QTimer(this);
+        zoomToastTimer_->setSingleShot(true);
+        connect(zoomToastTimer_, &QTimer::timeout, this, [this] { zoomToast_->hide(); });
+    }
+    zoomToast_->setText(QStringLiteral("%1%").arg(qRound(UiZoom::factor() * 100)));
+    zoomToast_->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
+        QLabel#zoomToast {
+            background: rgba(17, 24, 39, 0.88);
+            color: #ffffff;
+            border-radius: 10px;
+            font-size: 18px;
+            font-weight: 800;
+            padding: 12px 26px;
+        }
+    )")));
+    zoomToast_->adjustSize();
+    zoomToast_->move((width() - zoomToast_->width()) / 2, (height() - zoomToast_->height()) / 2);
+    zoomToast_->raise();
+    zoomToast_->show();
+    zoomToastTimer_->start(900);
 }
 
 void MainWindow::showConversationContextMenu(const QPoint& pos) {

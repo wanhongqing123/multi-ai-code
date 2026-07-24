@@ -87,6 +87,12 @@ private:
     void selectSlashCommand(const QString& command);
     // 会话列表右键：只提供「删除消息」（清空聊天记录、好友保留）。
     // 「删除好友」是通讯录（contactsList_）的专属功能。
+    // 整体缩放（飞书式 Ctrl+= / Ctrl+- / Ctrl+0）：改倍率 → 重放全局字体与样式表、
+    // 重建列表与消息气泡，并弹出百分比提示浮层。
+    void changeUiZoom(qreal delta);
+    void resetUiZoom();
+    void applyUiZoom(bool showToastPopup);
+    void showZoomToast();
     void showConversationContextMenu(const QPoint& pos);
     void showContactContextMenu(QListWidget* list, const QPoint& pos);
     void deleteContactFromItem(QListWidgetItem* item);
@@ -142,4 +148,7 @@ private:
     bool imeComposing_ = false;
     // 「保存到本地」上次使用的目录：同一会话内多次保存不必每次从下载目录重新翻。
     QString lastAttachmentSaveDir_;
+    // 缩放百分比提示浮层（飞书式居中黑色气泡），零点几秒后自动隐藏。
+    QLabel* zoomToast_ = nullptr;
+    QTimer* zoomToastTimer_ = nullptr;
 };

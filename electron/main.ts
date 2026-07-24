@@ -197,9 +197,10 @@ function createWindow(): void {
     autoHideMenuBar: true,
     // 去掉系统标题栏（钉钉式无边框）：Windows 画原生浮层按钮，标题/图标不再显示；
     // 拖拽区由页面自己提供（登录页顶部隐形拖拽条、主界面 topbar）。
-    // 浮层底色透明（不压色块在页面上），登录页与主界面都是浅色底，图标用深色。
+    // 浮层底色用白色（与登录页/主界面 topbar 同色，视觉无色块）：Windows 的按钮
+    // hover 高亮（最小化灰、关闭红）基于底色绘制，全透明底会连 hover 反馈一起丢失。
     titleBarStyle: 'hidden',
-    titleBarOverlay: { color: '#00000000', symbolColor: '#1f2329', height: 48 },
+    titleBarOverlay: { color: '#ffffff', symbolColor: '#1f2329', height: 48 },
     icon: appIconPath,
     webPreferences: {
       preload: join(__dirname, '../preload/preload.mjs'),

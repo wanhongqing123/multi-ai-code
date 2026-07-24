@@ -21,8 +21,8 @@ function render(
 describe('MainBootGate', () => {
   it('idle: renders two enabled choice buttons', () => {
     const html = render()
-    expect(html).toContain('新普通任务会话')
-    expect(html).toContain('继续普通任务')
+    expect(html).toContain('开始新会话')
+    expect(html).toContain('继续上次会话')
     // No failure block when idle.
     expect(html).not.toContain('boot-gate-failure')
     // 内置 CLI 时代不再展示的文案：标题、启动路径、续聊说明。
@@ -31,12 +31,14 @@ describe('MainBootGate', () => {
     expect(html).not.toContain('续聊将由')
   })
 
-  it('idle in scheduled-task mode: makes the resume target explicit', () => {
+  it('idle in scheduled-task mode: shows the mode in the subtitle', () => {
     const html = render({ workMode: 'scheduled-task' })
-    expect(html).toContain('当前模式：')
+    // 模式只在副标题行体现（无「当前模式/当前 CLI」标签前缀），按钮文案两种模式统一。
+    expect(html).not.toContain('当前模式')
+    expect(html).not.toContain('当前 CLI')
     expect(html).toContain('定时任务')
-    expect(html).toContain('新定时任务会话')
-    expect(html).toContain('继续定时任务')
+    expect(html).toContain('开始新会话')
+    expect(html).toContain('继续上次会话')
   })
 
   it('spawning-new: marks the new button as in-progress and disables both', () => {
@@ -76,13 +78,13 @@ describe('MainBootGate', () => {
   it('unknown CLI: disables the resume button (only claude/codex/opencode supported)', () => {
     const html = render({ command: 'gemini' })
     // The resume button should be present but disabled.
-    expect(html).toContain('继续普通任务')
+    expect(html).toContain('继续上次会话')
     expect(html).toContain('当前 CLI 不支持续聊')
   })
 
   it('opencode: keeps the resume button enabled (CLI supports --continue)', () => {
     const html = render({ command: 'opencode' })
-    expect(html).toContain('继续普通任务')
+    expect(html).toContain('继续上次会话')
     expect(html).not.toContain('当前 CLI 不支持续聊')
   })
 

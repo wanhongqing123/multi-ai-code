@@ -59,7 +59,7 @@ export default function MainBootGate(props: MainBootGateProps): JSX.Element {
       <div className="main-panel-body boot-gate-body">
         <div className="boot-gate-card">
           <div className="boot-gate-subtitle">
-            当前模式：<b>{workModeLabel}</b> · 当前 CLI：<b>{describeCli(command)}</b>
+            <b>{workModeLabel}</b> · <b>{describeCli(command)}</b>
           </div>
 
           {phase.kind === 'failed' && (
@@ -104,7 +104,7 @@ export default function MainBootGate(props: MainBootGateProps): JSX.Element {
                 >
                   {spawningMode === 'new'
                     ? '正在启动…'
-                    : `即使有风险也要继续使用 Claude · 新${workModeLabel}会话`}
+                    : '即使有风险也要继续使用 Claude · 开始新会话'}
                 </button>
                 <button
                   className="tile-btn boot-gate-btn danger"
@@ -114,7 +114,7 @@ export default function MainBootGate(props: MainBootGateProps): JSX.Element {
                 >
                   {spawningMode === 'resume'
                     ? '正在续聊…'
-                    : `即使有风险也要继续使用 Claude · 继续${workModeLabel}`}
+                    : '即使有风险也要继续使用 Claude · 继续上次会话'}
                 </button>
               </div>
             </div>
@@ -126,7 +126,7 @@ export default function MainBootGate(props: MainBootGateProps): JSX.Element {
                 disabled={disabled || spawning}
                 autoFocus
               >
-                {spawningMode === 'new' ? '正在启动…' : `新${workModeLabel}会话`}
+                {spawningMode === 'new' ? '正在启动…' : '开始新会话'}
               </button>
               <button
                 className="tile-btn boot-gate-btn"
@@ -142,7 +142,7 @@ export default function MainBootGate(props: MainBootGateProps): JSX.Element {
                     : '当前 CLI 不支持续聊'
                 }
               >
-                {spawningMode === 'resume' ? '正在续聊…' : `继续${workModeLabel}`}
+                {spawningMode === 'resume' ? '正在续聊…' : '继续上次会话'}
               </button>
             </div>
           )}

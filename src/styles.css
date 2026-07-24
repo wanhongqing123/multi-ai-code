@@ -1,5 +1,5 @@
-/* 登录门（首屏独立登录页，非弹窗）：整窗口纯白，登录内容居中直接坐在页面上——
-   去掉卡片的阴影/边框/异色背景，消除“卡片浮在背景上=两个窗口”的观感。 */
+/* 登录门（首屏独立登录页，非弹窗）：品牌蓝「极光」动效背景 + 毛玻璃白卡。
+   光斑只做 transform 漂移（GPU 合成），blur 在元素自身上一次成型，不重排。 */
 .remote-im-login-gate {
   position: fixed;
   inset: 0;
@@ -8,15 +8,80 @@
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: #ffffff;
+  background: linear-gradient(160deg, #f2f7ff 0%, #e9f1ff 45%, #f4fbff 100%);
+  overflow: hidden;
+}
+
+.remote-im-login-bg {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.remote-im-login-bg-blob {
+  position: absolute;
+  width: 560px;
+  height: 560px;
+  border-radius: 50%;
+  filter: blur(90px);
+  opacity: 0.55;
+  will-change: transform;
+}
+
+.remote-im-login-bg-blob-a {
+  top: -180px;
+  left: -140px;
+  background: radial-gradient(circle at 35% 35%, #7fb0ff 0%, rgba(127, 176, 255, 0) 70%);
+  animation: remote-im-login-drift-a 18s ease-in-out infinite alternate;
+}
+
+.remote-im-login-bg-blob-b {
+  right: -160px;
+  bottom: -200px;
+  background: radial-gradient(circle at 55% 45%, #7ee0f2 0%, rgba(126, 224, 242, 0) 70%);
+  animation: remote-im-login-drift-b 24s ease-in-out infinite alternate;
+}
+
+.remote-im-login-bg-blob-c {
+  top: 34%;
+  left: 52%;
+  width: 460px;
+  height: 460px;
+  background: radial-gradient(circle at 50% 50%, #b7cdff 0%, rgba(183, 205, 255, 0) 70%);
+  animation: remote-im-login-drift-c 28s ease-in-out infinite alternate;
+}
+
+@keyframes remote-im-login-drift-a {
+  from { transform: translate(0, 0) scale(1); }
+  to { transform: translate(140px, 90px) scale(1.18); }
+}
+
+@keyframes remote-im-login-drift-b {
+  from { transform: translate(0, 0) scale(1.1); }
+  to { transform: translate(-120px, -80px) scale(0.94); }
+}
+
+@keyframes remote-im-login-drift-c {
+  from { transform: translate(0, 0) scale(0.92); }
+  to { transform: translate(-90px, 70px) scale(1.12); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .remote-im-login-bg-blob {
+    animation: none;
+  }
 }
 
 .remote-im-login-gate .remote-im-login-modal {
-  box-shadow: none;
-  border: none;
-  background: transparent;
+  position: relative;
   width: min(420px, 100%);
   max-height: none;
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  border-radius: 20px;
+  box-shadow: 0 24px 60px rgba(31, 60, 120, 0.12);
 }
 
 /* ==========================================================================

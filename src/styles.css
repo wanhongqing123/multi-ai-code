@@ -8448,12 +8448,13 @@ html, body, #root {
   margin-bottom: 6px;
 }
 
+/* 对方（入站）紫罗兰、我方（出站）品牌蓝实底、AICLI/系统青绿：三方一眼分辨。 */
 .remote-im-summary-sender {
   display: inline-block;
   padding: 3px 11px;
   border-radius: 999px;
-  background: #eef2f7;
-  color: #475569;
+  background: #f2eeff;
+  color: #6d28d9;
   font-size: 12px;
   font-weight: 750;
 }

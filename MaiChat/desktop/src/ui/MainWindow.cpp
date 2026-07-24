@@ -32,6 +32,7 @@
 #include <QPixmap>
 #include <QMessageBox>
 #include <QMouseEvent>
+#include <QLinearGradient>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPolygon>
@@ -134,6 +135,15 @@ private:
     }
 };
 
+// 应用图标同款品牌渐变（MaiChat/brand/maichat-icon.svg：#5B9BFF → #1E40AF 对角），
+// 头像等品牌色块统一用它，保持与桌面图标一个色系。
+QBrush brandAvatarBrush(const QRectF& rect) {
+    QLinearGradient gradient(rect.topLeft(), rect.bottomRight());
+    gradient.setColorAt(0.0, QColor(QStringLiteral("#5B9BFF")));
+    gradient.setColorAt(1.0, QColor(QStringLiteral("#1E40AF")));
+    return QBrush(gradient);
+}
+
 class ConversationListDelegate final : public QStyledItemDelegate {
 public:
     explicit ConversationListDelegate(QObject* parent = nullptr) : QStyledItemDelegate(parent) {}
@@ -155,7 +165,7 @@ public:
 
         const QRect avatarRect(rowRect.left() + 12, rowRect.top() + 10, 40, 40);
         painter->setPen(Qt::NoPen);
-        painter->setBrush(QColor(QStringLiteral("#168eea")));
+        painter->setBrush(brandAvatarBrush(avatarRect));
         painter->drawRoundedRect(avatarRect, 8, 8);
         QFont avatarFont = option.font;
         avatarFont.setBold(true);
@@ -244,7 +254,7 @@ public:
 
         const QRect avatarRect(rowRect.left() + 12, rowRect.top() + 7, 36, 36);
         painter->setPen(Qt::NoPen);
-        painter->setBrush(QColor(QStringLiteral("#168eea")));
+        painter->setBrush(brandAvatarBrush(avatarRect));
         painter->drawRoundedRect(avatarRect, 8, 8);
         QFont avatarFont = option.font;
         avatarFont.setBold(true);
@@ -1018,7 +1028,8 @@ void MainWindow::applyStyle() {
             min-height: 34px;
             max-height: 34px;
             border-radius: 17px;
-            background: #168eea;
+            background: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 1,
+                                        stop: 0 #5B9BFF, stop: 1 #1E40AF);
             color: #ffffff;
             font-size: 15px;
             font-weight: 700;

@@ -77,6 +77,7 @@ private slots:
     void deleteKeyRemovesContactAndMessagesFromContactsList();
     void navigationIconsDoNotUsePrivateFontGlyphProperties();
     void conversationListShowsUnreadBadgeAndClearsOnOpen();
+    void navLogoUsesAppIconBrandGradient();
     void fileBubbleOffersContextMenu();
     void imageBubbleOffersContextMenu();
     void copyAttachmentToPathCopiesOverwritesAndReportsErrors();
@@ -983,6 +984,18 @@ void MainWindowLayoutTest::conversationListShowsUnreadBadgeAndClearsOnOpen() {
     }
     QCOMPARE(conversationList->item(macRow)->data(Qt::UserRole + 4).toInt(), 0);
     QCOMPARE(app.chatState().unreadCount(QStringLiteral("mac-user")), 0);
+}
+
+void MainWindowLayoutTest::navLogoUsesAppIconBrandGradient() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+
+    MainWindow window(app);
+    // 品牌色块与应用图标同款渐变（#5B9BFF → #1E40AF），不再用旧扁平蓝。
+    QVERIFY(window.styleSheet().contains(QStringLiteral("#5B9BFF")));
+    QVERIFY(window.styleSheet().contains(QStringLiteral("#1E40AF")));
+    QVERIFY(window.findChild<QLabel*>(QStringLiteral("navLogo")) != nullptr);
 }
 
 void MainWindowLayoutTest::fileBubbleOffersContextMenu() {

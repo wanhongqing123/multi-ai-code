@@ -8330,100 +8330,189 @@ html, body, #root {
 .remote-im-summary-body {
   flex: 1;
   overflow-y: auto;
-  padding: 18px 26px 28px;
-  background: #fbfcfe;
+  padding: 18px 26px 30px;
+  background: #f5f7fb;
 }
 
-/* 汇总文档排版：限制可读行宽、文档级字号行高，会话头做成蓝色卡片、
-   消息头（**[时间] 发送者**）渲染成灰色胶囊徽章，统计行是 callout 引用块。 */
-.remote-im-summary-body .remote-im-markdown {
-  max-width: 760px;
+/* 汇总文档（结构化视图）：统计徽章行 + 会话卡片 + 日期分隔 + 消息条目。 */
+.remote-im-summary-doc {
+  max-width: 780px;
   margin: 0 auto;
-  font-size: 13.5px;
-  line-height: 1.7;
-  color: #1f2933;
 }
 
-.remote-im-summary-body .remote-im-markdown h1 {
-  margin: 0 0 12px;
-  font-size: 21px;
+.remote-im-summary-stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.remote-im-summary-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 13px;
+  border: 1px solid #dfe7f3;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #5b6b84;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.remote-im-summary-stat b {
+  color: #1d4ed8;
+  font-size: 14px;
   font-weight: 850;
-  color: #0f172a;
 }
 
-.remote-im-summary-body .remote-im-markdown blockquote {
-  margin: 0 0 4px;
-  padding: 9px 14px;
-  border-left: 3px solid #7fb0ff;
-  border-radius: 8px;
-  background: #f0f6ff;
-  color: #47536b;
-  font-size: 12.5px;
+.remote-im-summary-stat-range {
+  color: #8a97ad;
+  font-weight: 650;
 }
 
-.remote-im-summary-body .remote-im-markdown blockquote p {
-  margin: 0;
+.remote-im-summary-session {
+  margin-top: 16px;
+  border: 1px solid #e3eaf5;
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(15, 40, 90, 0.04);
+  padding: 14px 18px 18px;
 }
 
-.remote-im-summary-body .remote-im-markdown h2 {
-  margin: 22px 0 4px;
-  padding: 9px 14px;
-  border: 1px solid #dbe7fb;
-  border-left: 3px solid #2f81f7;
-  border-radius: 10px;
-  background: linear-gradient(180deg, #f6faff 0%, #eef5ff 100%);
-  color: #16437e;
-  font-size: 15px;
+.remote-im-summary-session-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #eef2f8;
+}
+
+.remote-im-summary-avatar {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, #5b9bff, #1e40af);
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 850;
+  user-select: none;
+}
+
+.remote-im-summary-session-name {
+  color: #16233b;
+  font-size: 14.5px;
   font-weight: 800;
 }
 
-/* 会话内的日期分隔：居中小徽标。 */
-.remote-im-summary-body .remote-im-markdown h3 {
-  margin: 18px 0 2px;
-  text-align: center;
+.remote-im-summary-session-count {
+  margin-left: auto;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: #f0f5fd;
+  color: #6c7d99;
+  font-size: 11.5px;
+  font-weight: 750;
+}
+
+/* 日期分隔：两侧细线夹居中日期。 */
+.remote-im-summary-day {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0 2px;
+  color: #97a3b8;
   font-size: 11.5px;
   font-weight: 700;
-  color: #8a97ad;
 }
 
-.remote-im-summary-body .remote-im-markdown hr {
-  margin: 24px 0 0;
-  border: 0;
-  border-top: 1px dashed #dbe3ee;
+.remote-im-summary-day::before,
+.remote-im-summary-day::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #e8edf5;
 }
 
-/* 消息头行（**发送者** · `时:分`）：发送者渲染成品牌蓝胶囊、时间用等宽淡灰；
-   ⚠️ 发送失败等尾注琥珀色跟随。仅匹配文档顶层段落，不影响引用块与正文加粗。 */
-.remote-im-summary-body .remote-im-markdown > p:has(> strong:first-child + code) {
-  margin: 14px 0 6px;
-  color: #b45309;
-  font-size: 12px;
+.remote-im-summary-msg {
+  margin-top: 12px;
 }
 
-.remote-im-summary-body .remote-im-markdown > p:has(> strong:first-child + code) > strong {
+.remote-im-summary-msg-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.remote-im-summary-sender {
   display: inline-block;
   padding: 3px 11px;
   border-radius: 999px;
-  background: #e8f1ff;
-  color: #1d4ed8;
+  background: #eef2f7;
+  color: #475569;
   font-size: 12px;
   font-weight: 750;
 }
 
-.remote-im-summary-body .remote-im-markdown > p:has(> strong:first-child + code) > code {
-  background: transparent;
-  border: 0;
-  padding: 0 2px;
-  color: #94a3b8;
-  font-size: 11.5px;
+/* 出站（我方）胶囊用品牌蓝实底、AICLI/系统内部消息用青绿描边，一眼分辨方向。 */
+.remote-im-summary-msg[data-direction='outgoing'] .remote-im-summary-sender {
+  background: #2f81f7;
+  color: #ffffff;
 }
 
-/* 消息正文与下一条消息之间留出呼吸感。 */
-.remote-im-summary-body .remote-im-markdown > p,
-.remote-im-summary-body .remote-im-markdown > ul,
-.remote-im-summary-body .remote-im-markdown > ol,
-.remote-im-summary-body .remote-im-markdown > pre {
-  margin-bottom: 10px;
+.remote-im-summary-msg[data-direction='internal'] .remote-im-summary-sender {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.remote-im-summary-clock {
+  color: #a0abbe;
+  font-size: 11.5px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.remote-im-summary-failed {
+  color: #b45309;
+  font-size: 11.5px;
+  font-weight: 750;
+}
+
+.remote-im-summary-attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  padding: 6px 12px;
+  border: 1px solid #e3eaf5;
+  border-radius: 9px;
+  background: #f8fafd;
+  color: #47536b;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.remote-im-summary-attachment code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: #1d4ed8;
+  font-size: 12px;
+}
+
+/* 消息正文卡：浅底圆角，内部沿用 .remote-im-markdown 渲染。 */
+.remote-im-summary-content {
+  padding: 10px 14px;
+  border: 1px solid #e9eef6;
+  border-radius: 10px;
+  background: #fafbfd;
+  font-size: 13px;
+  line-height: 1.65;
+  color: #1f2933;
 }
 
 .remote-im-summary-loading,

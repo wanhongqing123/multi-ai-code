@@ -34,35 +34,52 @@ function peerOf(message: RemoteImMessage): string {
   return message.fromUserId?.trim() || message.toUserId?.trim() || '系统'
 }
 
-function senderLabel(message: RemoteImMessage, ownerUserId?: string | null): string {
+export function summarySenderLabel(message: RemoteImMessage, ownerUserId?: string | null): string {
   if (message.direction === 'incoming') return message.fromUserId?.trim() || '对方'
   if (message.direction === 'outgoing') return ownerUserId?.trim() || '我'
   return message.role === 'aicli' ? 'AICLI' : '系统'
 }
 
-function attachmentLine(message: RemoteImMessage): string | null {
+export interface RemoteImSummaryAttachmentParts {
+  icon: '📷' | '📄'
+  kindLabel: '图片' | '文件'
+  fileName: string | null
+}
+
+export function summaryAttachmentParts(message: RemoteImMessage): RemoteImSummaryAttachmentParts | null {
   if (message.kind === 'image') {
-    const fileName = message.attachment?.fileName ?? null
-    return `📷 图片${fileName ? `：\`${fileName}\`` : ''}`
+    return { icon: '📷', kindLabel: '图片', fileName: message.attachment?.fileName ?? null }
   }
   if (message.kind === 'file') {
-    const fileName = message.attachment?.fileName ?? null
-    return `📄 文件${fileName ? `：\`${fileName}\`` : ''}`
+    return { icon: '📄', kindLabel: '文件', fileName: message.attachment?.fileName ?? null }
   }
   return null
 }
 
-export function buildRemoteImMessageSummaryMarkdown(
-  messages: RemoteImMessage[],
-  options: RemoteImMessageSummaryOptions = {}
-): string {
-  if (!messages.length) {
-    return '# 消息记录汇总\n\n_暂无消息记录。_\n'
-  }
+function attachmentLine(message: RemoteImMessage): string | null {
+  const parts = summaryAttachmentParts(message)
+  if (!parts) return null
+  return `${parts.icon} ${parts.kindLabel}${parts.fileName ? `：\`${parts.fileName}\`` : ''}`
+}
 
-  const sorted = [...messages].sort(
-    (a, b) => a.createdAt - b.createdAt || a.id - b.id
-  )
+export interface RemoteImSummaryGroup {
+  peer: string
+  messages: RemoteImMessage[]
+}
+
+export interface RemoteImMessageSummaryData {
+  total: number
+  sessionCount: number
+  firstAt: number
+  lastAt: number
+  groups: RemoteImSummaryGroup[]
+}
+
+// 汇总的共享结构：按会话分组（最近活跃在前）、组内按时间升序。
+// Markdown 生成与弹窗的结构化展示共用同一份分组逻辑。
+export function summarizeRemoteImMessages(messages: RemoteImMessage[]): RemoteImMessageSummaryData | null {
+  if (!messages.length) return null
+  const sorted = [...messages].sort((a, b) => a.createdAt - b.createdAt || a.id - b.id)
   const groups = new Map<string, RemoteImMessage[]>()
   for (const message of sorted) {
     const peer = peerOf(message)
@@ -70,21 +87,35 @@ export function buildRemoteImMessageSummaryMarkdown(
     if (bucket) bucket.push(message)
     else groups.set(peer, [message])
   }
-  // 最近有消息的会话排前面。
-  const orderedPeers = [...groups.entries()].sort(
-    (a, b) => b[1][b[1].length - 1].createdAt - a[1][a[1].length - 1].createdAt
-  )
+  const orderedGroups = [...groups.entries()]
+    .sort((a, b) => b[1][b[1].length - 1].createdAt - a[1][a[1].length - 1].createdAt)
+    .map(([peer, peerMessages]) => ({ peer, messages: peerMessages }))
+  return {
+    total: sorted.length,
+    sessionCount: orderedGroups.length,
+    firstAt: sorted[0].createdAt,
+    lastAt: sorted[sorted.length - 1].createdAt,
+    groups: orderedGroups
+  }
+}
 
-  const first = sorted[0]
-  const last = sorted[sorted.length - 1]
+export function buildRemoteImMessageSummaryMarkdown(
+  messages: RemoteImMessage[],
+  options: RemoteImMessageSummaryOptions = {}
+): string {
+  const summary = summarizeRemoteImMessages(messages)
+  if (!summary) {
+    return '# 消息记录汇总\n\n_暂无消息记录。_\n'
+  }
+
   const lines: string[] = []
   lines.push('# 消息记录汇总')
   lines.push('')
   lines.push(
-    `> 📊 **共 ${sorted.length} 条消息 · ${groups.size} 个会话** · 时间范围：${formatSummaryTime(first.createdAt)} ~ ${formatSummaryTime(last.createdAt)}`
+    `> 📊 **共 ${summary.total} 条消息 · ${summary.sessionCount} 个会话** · 时间范围：${formatSummaryTime(summary.firstAt)} ~ ${formatSummaryTime(summary.lastAt)}`
   )
 
-  for (const [peer, peerMessages] of orderedPeers) {
+  for (const { peer, messages: peerMessages } of summary.groups) {
     lines.push('')
     lines.push('---')
     lines.push('')
@@ -100,7 +131,7 @@ export function buildRemoteImMessageSummaryMarkdown(
       }
       const failed = message.status === 'failed' ? ' ⚠️ 发送失败' : ''
       lines.push('')
-      lines.push(`**${senderLabel(message, options.ownerUserId)}** · \`${formatSummaryClock(message.createdAt)}\`${failed}`)
+      lines.push(`**${summarySenderLabel(message, options.ownerUserId)}** · \`${formatSummaryClock(message.createdAt)}\`${failed}`)
       const attachment = attachmentLine(message)
       if (attachment) {
         lines.push('')

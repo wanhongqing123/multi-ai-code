@@ -1,8 +1,16 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { RemoteImMessage } from '../../electron/preload.js'
-import { buildRemoteImMessageSummaryMarkdown } from './messageSummary.js'
+import {
+  buildRemoteImMessageSummaryMarkdown,
+  formatSummaryClock,
+  formatSummaryDay,
+  formatSummaryTime,
+  summarizeRemoteImMessages,
+  summaryAttachmentParts,
+  summarySenderLabel
+} from './messageSummary.js'
 
 export interface RemoteImSummaryDialogProps {
   open: boolean
@@ -14,8 +22,9 @@ export interface RemoteImSummaryDialogProps {
   onClose: () => void
 }
 
-// 消息记录汇总弹窗：取回项目全部消息 → 生成一份 Markdown 汇总文档渲染展示，
-// 支持一键复制原始 Markdown（便于贴到日报/文档里）。
+// 消息记录汇总弹窗：结构化文档视图（统计徽章、会话卡片、日期分隔、方向着色的
+// 发送者胶囊），消息正文仍用 Markdown 渲染（AICLI 输出的标题/列表/代码块不丢）。
+// 「发送给 AICLI」用共享生成器落成完整 .md 文件后把路径交给主会话。
 export default function RemoteImSummaryDialog(props: RemoteImSummaryDialogProps): JSX.Element | null {
   const [messages, setMessages] = useState<RemoteImMessage[] | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -42,6 +51,7 @@ export default function RemoteImSummaryDialog(props: RemoteImSummaryDialogProps)
     }
   }, [props.open, props.projectId])
 
+  const summary = useMemo(() => (messages ? summarizeRemoteImMessages(messages) : null), [messages])
   const markdown = useMemo(
     () =>
       messages
@@ -96,9 +106,76 @@ export default function RemoteImSummaryDialog(props: RemoteImSummaryDialogProps)
             <div className="remote-im-summary-error">{error}</div>
           ) : messages === null ? (
             <div className="remote-im-summary-loading">加载消息记录中…</div>
+          ) : !summary ? (
+            <div className="remote-im-summary-loading">暂无消息记录</div>
           ) : (
-            <div className="remote-im-markdown">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{markdown}</ReactMarkdown>
+            <div className="remote-im-summary-doc">
+              <div className="remote-im-summary-stats">
+                <span className="remote-im-summary-stat">
+                  <b>{summary.total}</b> 条消息
+                </span>
+                <span className="remote-im-summary-stat">
+                  <b>{summary.sessionCount}</b> 个会话
+                </span>
+                <span className="remote-im-summary-stat remote-im-summary-stat-range">
+                  {formatSummaryTime(summary.firstAt)} ~ {formatSummaryTime(summary.lastAt)}
+                </span>
+              </div>
+              {summary.groups.map((group) => {
+                let lastDay = ''
+                return (
+                  <section className="remote-im-summary-session" key={group.peer}>
+                    <header className="remote-im-summary-session-head">
+                      <span className="remote-im-summary-avatar" aria-hidden>
+                        {(group.peer[0] ?? '#').toUpperCase()}
+                      </span>
+                      <span className="remote-im-summary-session-name">{group.peer}</span>
+                      <span className="remote-im-summary-session-count">{group.messages.length} 条</span>
+                    </header>
+                    {group.messages.map((message) => {
+                      const day = formatSummaryDay(message.createdAt)
+                      const showDay = day !== lastDay
+                      if (showDay) lastDay = day
+                      const attachment = summaryAttachmentParts(message)
+                      const content = message.content.trim()
+                      return (
+                        <Fragment key={message.id}>
+                          {showDay ? (
+                            <div className="remote-im-summary-day">
+                              <span>{day}</span>
+                            </div>
+                          ) : null}
+                          <div className="remote-im-summary-msg" data-direction={message.direction}>
+                            <div className="remote-im-summary-msg-meta">
+                              <span className="remote-im-summary-sender">
+                                {summarySenderLabel(message, props.ownerUserId)}
+                              </span>
+                              <span className="remote-im-summary-clock">
+                                {formatSummaryClock(message.createdAt)}
+                              </span>
+                              {message.status === 'failed' ? (
+                                <span className="remote-im-summary-failed">⚠️ 发送失败</span>
+                              ) : null}
+                            </div>
+                            {attachment ? (
+                              <div className="remote-im-summary-attachment">
+                                <span aria-hidden>{attachment.icon}</span>
+                                <span>{attachment.kindLabel}</span>
+                                {attachment.fileName ? <code>{attachment.fileName}</code> : null}
+                              </div>
+                            ) : null}
+                            {content ? (
+                              <div className="remote-im-summary-content remote-im-markdown">
+                                <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+                              </div>
+                            ) : null}
+                          </div>
+                        </Fragment>
+                      )
+                    })}
+                  </section>
+                )
+              })}
             </div>
           )}
         </div>

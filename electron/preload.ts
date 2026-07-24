@@ -453,6 +453,11 @@ const api = {
       ipcRenderer.invoke('remote-im:list-messages', { projectId, limit }) as Promise<
         RemoteImMessage[]
       >,
+    // 消息汇总视图：取回项目最近的消息全集（默认 3000 条，服务端硬顶 5000）。
+    listMessagesForSummary: (projectId: string, limit = 3000) =>
+      ipcRenderer.invoke('remote-im:list-messages-for-summary', { projectId, limit }) as Promise<
+        RemoteImMessage[]
+      >,
     listPeerMessagesBefore: (
       projectId: string,
       peerUserId: string,

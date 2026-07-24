@@ -39,6 +39,7 @@ import {
   failRemoteImMessageIfStreaming,
   findRemoteImMessageByRemoteId,
   listRemoteImMessages,
+  listRemoteImMessagesForSummary,
   listRemoteImPeerMessagesBefore,
   updateRemoteImMessageStatus
 } from './messageStore.js'
@@ -880,6 +881,13 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
     'remote-im:list-messages',
     (_event, { projectId, limit }: { projectId: string; limit?: number }) =>
       listRemoteImMessages(projectId, limit ?? 100)
+  )
+
+  // 汇总视图：一次取回项目最近的消息全集（独立于普通列表的 500 上限）。
+  ipcMain.handle(
+    'remote-im:list-messages-for-summary',
+    (_event, { projectId, limit }: { projectId: string; limit?: number }) =>
+      listRemoteImMessagesForSummary(projectId, limit ?? 3000)
   )
 
   ipcMain.handle(

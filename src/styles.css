@@ -8273,6 +8273,80 @@ html, body, #root {
   cursor: not-allowed;
 }
 
+/* 消息记录汇总弹窗：宽幅滚动视图，正文复用 .remote-im-markdown 渲染。 */
+.remote-im-summary-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(880px, calc(100vw - 48px));
+  max-height: 84vh;
+  padding: 0;
+  overflow: hidden;
+}
+
+.remote-im-summary-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.remote-im-summary-header h2 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.remote-im-summary-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.remote-im-summary-copy {
+  height: 32px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #334155;
+  font-size: 12.5px;
+  font-weight: 750;
+  padding: 0 12px;
+  cursor: pointer;
+}
+
+.remote-im-summary-copy:hover:not(:disabled) {
+  border-color: #2f81f7;
+  color: #2f81f7;
+  background: #f4f9ff;
+}
+
+.remote-im-summary-copy:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.remote-im-summary-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px 22px;
+}
+
+.remote-im-summary-loading,
+.remote-im-summary-error {
+  padding: 32px 0;
+  text-align: center;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.remote-im-summary-error {
+  color: #b91c1c;
+}
+
 /* 项目级回传参数收进「高级」折叠区，不干扰主登录视觉。 */
 .remote-im-login-advanced {
   margin-top: 20px;

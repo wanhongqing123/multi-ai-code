@@ -241,6 +241,27 @@ export function createRemoteImMessageStore(database: RemoteImDatabase) {
     return rows.map(mapRow)
   }
 
+  // 汇总视图用：一次取回项目最近的消息全集（升序）。上限独立于 list() 的 500，
+  // 但仍设 5000 硬顶避免超大历史一次性拖爆 IPC。
+  function listRecent(projectId: string, limit = 3000): RemoteImMessage[] {
+    const rows = database
+      .prepare(
+        `
+        SELECT *
+        FROM (
+          SELECT *
+          FROM remote_im_messages
+          WHERE project_id = ?
+          ORDER BY created_at DESC, id DESC
+          LIMIT ?
+        )
+        ORDER BY created_at ASC, id ASC
+        `
+      )
+      .all(projectId, Math.max(1, Math.min(5000, Math.round(limit)))) as RemoteImMessageRow[]
+    return rows.map(mapRow)
+  }
+
   function updateStatus(
     id: number,
     input: UpdateRemoteImMessageStatusInput
@@ -347,6 +368,7 @@ export function createRemoteImMessageStore(database: RemoteImDatabase) {
     create,
     listById,
     list,
+    listRecent,
     updateStatus,
     failIfStreaming,
     clearPeer,
@@ -369,6 +391,10 @@ export function listRemoteImMessageById(id: number): RemoteImMessage | null {
 
 export function listRemoteImMessages(projectId: string, limit = 100): RemoteImMessage[] {
   return defaultStore().list(projectId, limit)
+}
+
+export function listRemoteImMessagesForSummary(projectId: string, limit = 3000): RemoteImMessage[] {
+  return defaultStore().listRecent(projectId, limit)
 }
 
 export function updateRemoteImMessageStatus(

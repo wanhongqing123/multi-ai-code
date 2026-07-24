@@ -39,6 +39,7 @@ import NormalTaskDialog, {
 } from './normal-tasks/NormalTaskDialog'
 import { buildNormalTaskRunPrompt } from './normal-tasks/normalTaskPrompt'
 import RemoteImDrawer from './remote-im/RemoteImDrawer'
+import RemoteImSummaryDialog from './remote-im/RemoteImSummaryDialog'
 import { mergeRemoteImMessages } from './remote-im/messageMerge'
 import RemoteImClientHost from './remote-im/RemoteImClientHost'
 import RemoteImLoginDialog, {
@@ -307,6 +308,7 @@ function AppShell() {
   const [showNormalTaskDialog, setShowNormalTaskDialog] = useState(false)
   const [showScheduledTaskDialog, setShowScheduledTaskDialog] = useState(false)
   const [showRemoteImDrawer, setShowRemoteImDrawer] = useState(false)
+  const [showRemoteImSummary, setShowRemoteImSummary] = useState(false)
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [showCmdk, setShowCmdk] = useState(false)
   const [showGlobalSearch, setShowGlobalSearch] = useState(false)
@@ -1890,6 +1892,16 @@ function AppShell() {
             <span className="remote-im-topbar-dot" />
             💬
           </button>
+          <button
+            className="topbar-btn topbar-btn-icon"
+            data-tone="blue"
+            onClick={() => setShowRemoteImSummary(true)}
+            disabled={!currentProjectId}
+            title="消息汇总：把当前项目的全部 IM 消息记录汇总为 Markdown 展示"
+            aria-label="消息汇总"
+          >
+            🗒
+          </button>
           {hasProject && appSettings.showDevToolbarButtons && (
             <button
               className="topbar-btn topbar-btn-icon"
@@ -2248,6 +2260,12 @@ function AppShell() {
         onAddContact={(relation, userId) => void handleAddRemoteImContact(relation, userId)}
         onDeleteContact={(userId) => void handleDeleteRemoteImContact(userId)}
         onClose={() => setShowRemoteImDrawer(false)}
+      />
+      <RemoteImSummaryDialog
+        open={showRemoteImSummary}
+        projectId={currentProjectId}
+        ownerUserId={remoteImLoginState?.account.desktopUserId ?? null}
+        onClose={() => setShowRemoteImSummary(false)}
       />
       <RemoteImLoginDialog
         open={showRemoteImLogin}

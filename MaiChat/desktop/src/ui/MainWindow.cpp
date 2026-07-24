@@ -702,8 +702,8 @@ void MainWindow::buildUi() {
     // 单个空格而不是空串：空标题时 Qt 会回退显示 applicationDisplayName
     // （"MaiChat"），飞书风格的标题栏不显示文字。
     setWindowTitle(QStringLiteral(" "));
-    resize(1280, 820);
-    setMinimumSize(980, 640);
+    resize(UiZoom::s(1280), UiZoom::s(820));
+    setMinimumSize(UiZoom::s(980), UiZoom::s(640));
 
     auto* root = new QWidget(this);
     root->setObjectName(QStringLiteral("root"));
@@ -733,8 +733,8 @@ void MainWindow::buildUi() {
 
     navRail_ = new QWidget(rootNavigationSplitter);
     navRail_->setObjectName(QStringLiteral("navRail"));
-    navRail_->setMinimumWidth(160);
-    navRail_->setMaximumWidth(260);
+    navRail_->setMinimumWidth(UiZoom::s(160));
+    navRail_->setMaximumWidth(UiZoom::s(260));
     auto* navLayout = new QVBoxLayout(navRail_);
     navLayout->setContentsMargins(16, 18, 16, 14);
     navLayout->setSpacing(12);
@@ -786,7 +786,7 @@ void MainWindow::buildUi() {
 
     auto* conversationPane = new QWidget(messagesPage_);
     conversationPane->setObjectName(QStringLiteral("conversationPane"));
-    conversationPane->setMinimumWidth(220);
+    conversationPane->setMinimumWidth(UiZoom::s(220));
     auto* conversationLayout = new QVBoxLayout(conversationPane);
     conversationLayout->setContentsMargins(20, 18, 16, 16);
     conversationLayout->setSpacing(14);
@@ -810,7 +810,7 @@ void MainWindow::buildUi() {
 
     auto* chatContentPane = new QWidget(messagesPage_);
     chatContentPane->setObjectName(QStringLiteral("chatContentPane"));
-    chatContentPane->setMinimumWidth(520);
+    chatContentPane->setMinimumWidth(UiZoom::s(520));
     auto* chatLayout = new QVBoxLayout(chatContentPane);
     chatLayout->setContentsMargins(0, 0, 0, 0);
     chatLayout->setSpacing(0);
@@ -845,7 +845,7 @@ void MainWindow::buildUi() {
 
     auto* composer = new QWidget(chatContentPane);
     composer->setObjectName(QStringLiteral("composerPanel"));
-    composer->setMinimumHeight(116);
+    composer->setMinimumHeight(UiZoom::s(116));
     auto* composerLayout = new QVBoxLayout(composer);
     composerLayout->setContentsMargins(24, 12, 24, 14);
     composerLayout->setSpacing(8);
@@ -874,7 +874,7 @@ void MainWindow::buildUi() {
     messageEditor_->setObjectName(QStringLiteral("messageEditor"));
     messageEditor_->setPlaceholderText(QStringLiteral("输入消息（可 Ctrl+V 粘贴图片或文件）"));
     messageEditor_->setAcceptRichText(false);
-    messageEditor_->setMinimumHeight(64);
+    messageEditor_->setMinimumHeight(UiZoom::s(64));
     messageEditor_->installEventFilter(this);
 
     auto* toolBar = new QHBoxLayout();
@@ -929,8 +929,8 @@ void MainWindow::buildUi() {
 
     auto* contactsDirectoryPane = new QWidget(contactsPage_);
     contactsDirectoryPane->setObjectName(QStringLiteral("contactsDirectoryPane"));
-    contactsDirectoryPane->setMinimumWidth(300);
-    contactsDirectoryPane->setMaximumWidth(420);
+    contactsDirectoryPane->setMinimumWidth(UiZoom::s(300));
+    contactsDirectoryPane->setMaximumWidth(UiZoom::s(420));
     auto* contactsDirectoryLayout = new QVBoxLayout(contactsDirectoryPane);
     contactsDirectoryLayout->setContentsMargins(24, 24, 20, 18);
     contactsDirectoryLayout->setSpacing(16);
@@ -2154,7 +2154,7 @@ void MainWindow::updateMessageBubbleWidths() {
 QWidget* MainWindow::createSettingsRow(const QString& title, QLabel* valueLabel, const QString& helperText) {
     auto* row = new QWidget(valueLabel ? valueLabel->parentWidget() : settingsPage_);
     row->setObjectName(QStringLiteral("settingsRow"));
-    row->setMinimumHeight(72);
+    row->setMinimumHeight(UiZoom::s(72));
     auto* layout = new QHBoxLayout(row);
     layout->setContentsMargins(18, 12, 18, 12);
     layout->setSpacing(20);
@@ -2173,7 +2173,7 @@ QWidget* MainWindow::createSettingsRow(const QString& title, QLabel* valueLabel,
     if (valueLabel) {
         valueLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         valueLabel->setTextFormat(Qt::PlainText);
-        valueLabel->setMinimumWidth(180);
+        valueLabel->setMinimumWidth(UiZoom::s(180));
     }
 
     layout->addLayout(textColumn, 1);

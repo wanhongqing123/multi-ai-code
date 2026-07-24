@@ -39,8 +39,9 @@ void LoginDialog::setUserId(const QString& userId) {
 void LoginDialog::buildUi() {
     setWindowTitle(QStringLiteral("远程 IM 登录"));
     setModal(true);
-    setMinimumSize(860, 520);
-    resize(920, 560);
+    // 窗口与布局尺寸随整体缩放倍率走，否则字体放大后文案被固定宽度截断。
+    setMinimumSize(UiZoom::s(860), UiZoom::s(520));
+    resize(UiZoom::s(920), UiZoom::s(560));
 
     auto* rootLayout = new QHBoxLayout(this);
     rootLayout->setContentsMargins(0, 0, 0, 0);
@@ -48,24 +49,26 @@ void LoginDialog::buildUi() {
 
     auto* introPane = new QWidget(this);
     introPane->setObjectName(QStringLiteral("introPane"));
-    introPane->setMinimumWidth(330);
+    introPane->setMinimumWidth(UiZoom::s(330));
     auto* introLayout = new QVBoxLayout(introPane);
-    introLayout->setContentsMargins(42, 44, 34, 44);
+    introLayout->setContentsMargins(UiZoom::s(42), UiZoom::s(44), UiZoom::s(34), UiZoom::s(44));
     introLayout->setSpacing(0);
     introLayout->addStretch(1);
 
     auto* title = makeTextLabel(QStringLiteral("远程 IM 登录"), QStringLiteral("loginTitle"), this);
     auto* subtitle = makeTextLabel(QStringLiteral("登录后再进入消息、通讯录和设置。"), QStringLiteral("loginSubtitle"), this);
+    // 高倍率下宽度不够时换行而不是截断。
+    subtitle->setWordWrap(true);
 
     introLayout->addWidget(title);
-    introLayout->addSpacing(10);
+    introLayout->addSpacing(UiZoom::s(10));
     introLayout->addWidget(subtitle);
     introLayout->addStretch(2);
 
     auto* formPane = new QWidget(this);
     formPane->setObjectName(QStringLiteral("formPane"));
     auto* formLayout = new QVBoxLayout(formPane);
-    formLayout->setContentsMargins(48, 42, 48, 42);
+    formLayout->setContentsMargins(UiZoom::s(48), UiZoom::s(42), UiZoom::s(48), UiZoom::s(42));
     formLayout->setSpacing(0);
     formLayout->addStretch(1);
 
@@ -75,9 +78,9 @@ void LoginDialog::buildUi() {
     userIdInput_->setPlaceholderText(QStringLiteral("输入 IM 账号 ID"));
     userIdInput_->setClearButtonEnabled(true);
     formLayout->addWidget(accountLabel);
-    formLayout->addSpacing(9);
+    formLayout->addSpacing(UiZoom::s(9));
     formLayout->addWidget(userIdInput_);
-    formLayout->addSpacing(26);
+    formLayout->addSpacing(UiZoom::s(26));
 
     loginButton_ = new QPushButton(QStringLiteral("登录并进入"), this);
     loginButton_->setObjectName(QStringLiteral("loginButton"));

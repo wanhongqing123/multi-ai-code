@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { RemoteImMessage } from '../../../electron/preload.js'
 import {
   buildRemoteImMessageSummaryMarkdown,
+  formatSummaryClock,
+  formatSummaryDay,
   formatSummaryTime
 } from '../../../src/remote-im/messageSummary.js'
 
@@ -71,9 +73,12 @@ describe('buildRemoteImMessageSummaryMarkdown', () => {
     expect(markdown).toContain('## 💬 mac-quarkpc · 1 条')
     // 最近活跃的会话排前面。
     expect(markdown.indexOf('## 💬 whq-iphone')).toBeLessThan(markdown.indexOf('## 💬 mac-quarkpc'))
-    // 入站显示对端名，出站显示本机账号名。
-    expect(markdown).toContain(`**[${formatSummaryTime(t2)}] whq-iphone**`)
-    expect(markdown).toContain(`**[${formatSummaryTime(t3)}] house-pc**`)
+    // 会话内按天插入日期分隔。
+    expect(markdown).toContain(`### 📅 ${formatSummaryDay(t2)}`)
+    expect(markdown).toContain(`### 📅 ${formatSummaryDay(t1)}`)
+    // 入站显示对端名，出站显示本机账号名；消息头为「发送者 + 时:分」。
+    expect(markdown).toContain(`**whq-iphone** · \`${formatSummaryClock(t2)}\``)
+    expect(markdown).toContain(`**house-pc** · \`${formatSummaryClock(t3)}\``)
     expect(markdown).toContain('执行的如何了？')
     expect(markdown).toContain('任务已完成。')
   })
@@ -122,6 +127,6 @@ describe('buildRemoteImMessageSummaryMarkdown', () => {
     expect(markdown).toContain('📄 文件：`weekly.md`')
     expect(markdown).toContain('⚠️ 发送失败')
     // 出站无 ownerUserId 时退化为「我」。
-    expect(markdown).toContain('] 我**')
+    expect(markdown).toContain('**我** ·')
   })
 })

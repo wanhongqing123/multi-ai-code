@@ -19,7 +19,6 @@ export interface RemoteImSummaryDialogProps {
 export default function RemoteImSummaryDialog(props: RemoteImSummaryDialogProps): JSX.Element | null {
   const [messages, setMessages] = useState<RemoteImMessage[] | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [copied, setCopied] = useState(false)
   const [sending, setSending] = useState(false)
   const [sent, setSent] = useState(false)
 
@@ -28,7 +27,6 @@ export default function RemoteImSummaryDialog(props: RemoteImSummaryDialogProps)
     let cancelled = false
     setMessages(null)
     setError(null)
-    setCopied(false)
     setSending(false)
     setSent(false)
     window.api.remoteIm
@@ -53,12 +51,6 @@ export default function RemoteImSummaryDialog(props: RemoteImSummaryDialogProps)
   )
 
   useEffect(() => {
-    if (!copied) return
-    const timer = window.setTimeout(() => setCopied(false), 1500)
-    return () => window.clearTimeout(timer)
-  }, [copied])
-
-  useEffect(() => {
     if (!sent) return
     const timer = window.setTimeout(() => setSent(false), 2000)
     return () => window.clearTimeout(timer)
@@ -72,16 +64,6 @@ export default function RemoteImSummaryDialog(props: RemoteImSummaryDialogProps)
         <header className="remote-im-summary-header">
           <h2>消息记录汇总</h2>
           <div className="remote-im-summary-actions">
-            <button
-              type="button"
-              className="remote-im-summary-copy"
-              disabled={!markdown}
-              onClick={() => {
-                void navigator.clipboard.writeText(markdown).then(() => setCopied(true))
-              }}
-            >
-              {copied ? '已复制' : '复制 Markdown'}
-            </button>
             <button
               type="button"
               className="remote-im-summary-send"

@@ -14,7 +14,17 @@ function pad2(value: number): string {
 
 export function formatSummaryTime(timestamp: number): string {
   const date = new Date(timestamp)
-  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`
+  return `${formatSummaryDay(timestamp)} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`
+}
+
+export function formatSummaryDay(timestamp: number): string {
+  const date = new Date(timestamp)
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
+}
+
+export function formatSummaryClock(timestamp: number): string {
+  const date = new Date(timestamp)
+  return `${pad2(date.getHours())}:${pad2(date.getMinutes())}`
 }
 
 // 会话对端：入站看发送者、出站看接收者；internal/system 归到有名字的一方，否则「系统」。
@@ -79,10 +89,18 @@ export function buildRemoteImMessageSummaryMarkdown(
     lines.push('---')
     lines.push('')
     lines.push(`## 💬 ${peer} · ${peerMessages.length} 条`)
+    let lastDay = ''
     for (const message of peerMessages) {
+      // 同一会话内按天插入日期分隔，消息头只留「发送者 + 时:分」，更清爽。
+      const day = formatSummaryDay(message.createdAt)
+      if (day !== lastDay) {
+        lastDay = day
+        lines.push('')
+        lines.push(`### 📅 ${day}`)
+      }
       const failed = message.status === 'failed' ? ' ⚠️ 发送失败' : ''
       lines.push('')
-      lines.push(`**[${formatSummaryTime(message.createdAt)}] ${senderLabel(message, options.ownerUserId)}**${failed}`)
+      lines.push(`**${senderLabel(message, options.ownerUserId)}** · \`${formatSummaryClock(message.createdAt)}\`${failed}`)
       const attachment = attachmentLine(message)
       if (attachment) {
         lines.push('')

@@ -8305,29 +8305,6 @@ html, body, #root {
   gap: 10px;
 }
 
-.remote-im-summary-copy {
-  height: 32px;
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  background: #ffffff;
-  color: #334155;
-  font-size: 12.5px;
-  font-weight: 750;
-  padding: 0 12px;
-  cursor: pointer;
-}
-
-.remote-im-summary-copy:hover:not(:disabled) {
-  border-color: #2f81f7;
-  color: #2f81f7;
-  background: #f4f9ff;
-}
-
-.remote-im-summary-copy:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
-
 .remote-im-summary-send {
   height: 32px;
   border: 0;
@@ -8389,38 +8366,64 @@ html, body, #root {
 }
 
 .remote-im-summary-body .remote-im-markdown h2 {
-  margin: 20px 0 4px;
-  padding: 8px 14px;
+  margin: 22px 0 4px;
+  padding: 9px 14px;
   border: 1px solid #dbe7fb;
+  border-left: 3px solid #2f81f7;
   border-radius: 10px;
-  background: #f4f8ff;
+  background: linear-gradient(180deg, #f6faff 0%, #eef5ff 100%);
   color: #16437e;
   font-size: 15px;
   font-weight: 800;
 }
 
+/* 会话内的日期分隔：居中小徽标。 */
+.remote-im-summary-body .remote-im-markdown h3 {
+  margin: 18px 0 2px;
+  text-align: center;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #8a97ad;
+}
+
 .remote-im-summary-body .remote-im-markdown hr {
-  margin: 22px 0 0;
+  margin: 24px 0 0;
   border: 0;
   border-top: 1px dashed #dbe3ee;
 }
 
-/* 消息头行：整段只有一个 <strong>（时间+发送者），渲染成胶囊徽章；
-   ⚠️ 发送失败等尾注跟在徽章后。 */
-.remote-im-summary-body .remote-im-markdown p:has(> strong:only-child) {
-  margin: 16px 0 6px;
+/* 消息头行（**发送者** · `时:分`）：发送者渲染成品牌蓝胶囊、时间用等宽淡灰；
+   ⚠️ 发送失败等尾注琥珀色跟随。仅匹配文档顶层段落，不影响引用块与正文加粗。 */
+.remote-im-summary-body .remote-im-markdown > p:has(> strong:first-child + code) {
+  margin: 14px 0 6px;
   color: #b45309;
   font-size: 12px;
 }
 
-.remote-im-summary-body .remote-im-markdown p:has(> strong:only-child) > strong {
+.remote-im-summary-body .remote-im-markdown > p:has(> strong:first-child + code) > strong {
   display: inline-block;
   padding: 3px 11px;
   border-radius: 999px;
-  background: #eef2f7;
-  color: #475569;
+  background: #e8f1ff;
+  color: #1d4ed8;
   font-size: 12px;
   font-weight: 750;
+}
+
+.remote-im-summary-body .remote-im-markdown > p:has(> strong:first-child + code) > code {
+  background: transparent;
+  border: 0;
+  padding: 0 2px;
+  color: #94a3b8;
+  font-size: 11.5px;
+}
+
+/* 消息正文与下一条消息之间留出呼吸感。 */
+.remote-im-summary-body .remote-im-markdown > p,
+.remote-im-summary-body .remote-im-markdown > ul,
+.remote-im-summary-body .remote-im-markdown > ol,
+.remote-im-summary-body .remote-im-markdown > pre {
+  margin-bottom: 10px;
 }
 
 .remote-im-summary-loading,

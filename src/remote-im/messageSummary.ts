@@ -77,9 +77,12 @@ export interface RemoteImMessageSummaryData {
 
 // 汇总的共享结构：按会话分组（最近活跃在前）、组内按时间升序。
 // Markdown 生成与弹窗的结构化展示共用同一份分组逻辑。
+// 系统回执（role='system'，如「已发送给当前 AICLI，开始处理。」）是流程噪音，
+// 对回顾对话与找回记忆都没有信息量，直接过滤。
 export function summarizeRemoteImMessages(messages: RemoteImMessage[]): RemoteImMessageSummaryData | null {
-  if (!messages.length) return null
-  const sorted = [...messages].sort((a, b) => a.createdAt - b.createdAt || a.id - b.id)
+  const meaningful = messages.filter((message) => message.role !== 'system')
+  if (!meaningful.length) return null
+  const sorted = [...meaningful].sort((a, b) => a.createdAt - b.createdAt || a.id - b.id)
   const groups = new Map<string, RemoteImMessage[]>()
   for (const message of sorted) {
     const peer = peerOf(message)

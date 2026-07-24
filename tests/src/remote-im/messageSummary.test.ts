@@ -39,6 +39,27 @@ describe('buildRemoteImMessageSummaryMarkdown', () => {
     expect(markdown).toContain('暂无消息记录')
   })
 
+  it('filters system receipts out of the summary', () => {
+    const messages = [
+      makeMessage({
+        fromUserId: 'whq-iphone',
+        direction: 'incoming',
+        content: '你好'
+      }),
+      makeMessage({
+        toUserId: 'whq-iphone',
+        direction: 'outgoing',
+        role: 'system',
+        content: '已发送给当前 AICLI，开始处理。'
+      })
+    ]
+
+    const markdown = buildRemoteImMessageSummaryMarkdown(messages)
+
+    expect(markdown).toContain('**共 1 条消息 · 1 个会话**')
+    expect(markdown).not.toContain('已发送给当前 AICLI')
+  })
+
   it('groups messages by peer with stats and chronological order', () => {
     const t1 = Date.UTC(2026, 6, 23, 2, 0, 0)
     const t2 = Date.UTC(2026, 6, 24, 2, 0, 0)

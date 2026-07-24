@@ -1299,7 +1299,7 @@ function AppShell() {
         showToast(sendResult.error ?? '时光胶囊开启失败', { level: 'error' })
         return false
       }
-      showToast('时光胶囊已开启，AICLI 正在找回记忆', { level: 'success' })
+      // 正常流程静默：不弹任何提示，AICLI 终端里能直接看到胶囊消息进入处理。
       return true
     },
     [currentProjectId, sessionId, sessionStatus]

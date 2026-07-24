@@ -15,7 +15,7 @@
   box-shadow: none;
   border: none;
   background: transparent;
-  width: min(560px, 100%);
+  width: min(420px, 100%);
   max-height: none;
 }
 
@@ -8161,68 +8161,152 @@ html, body, #root {
   }
 }
 
-.remote-im-login-fixed span {
-  display: block;
-  color: #64748b;
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.remote-im-login-fixed strong {
-  display: block;
-  margin-top: 6px;
-  color: #0f172a;
-  font-size: 14px;
-  font-weight: 900;
-}
-
+/* 登录卡片（钉钉式）：居中一列——logo、欢迎语、大输入框、整宽登录按钮、弱化脚注。 */
 .remote-im-login-modal {
-  width: min(620px, calc(100vw - 32px));
-  padding: 0;
-  overflow: hidden;
+  position: relative;
+  width: min(420px, calc(100vw - 32px));
+  padding: 44px 44px 30px;
 }
 
-.remote-im-login-header {
+.remote-im-login-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}
+
+.remote-im-login-brand {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 18px 20px;
-  border-bottom: 1px solid #e2e8f0;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 28px;
+  text-align: center;
 }
 
-.remote-im-login-header h2 {
+.remote-im-login-logo {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #3d95ff, #1b66e0);
+  color: #ffffff;
+  font-size: 30px;
+  font-weight: 900;
+  user-select: none;
+}
+
+.remote-im-login-brand h2 {
   margin: 0;
   color: #0f172a;
   font-size: 20px;
-}
-
-.remote-im-login-header p {
-  margin: 6px 0 0;
-  color: #64748b;
-  font-size: 13px;
-}
-
-.remote-im-login-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  padding: 18px 20px;
-}
-
-.remote-im-login-grid label {
-  display: grid;
-  gap: 6px;
-  color: #334155;
-  font-size: 13px;
   font-weight: 800;
 }
 
-.remote-im-login-grid input,
-.remote-im-login-grid select {
+.remote-im-login-brand p {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.remote-im-login-fields input {
+  width: 100%;
+  height: 46px;
+  border: 1px solid #d9e1ec;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #0f172a;
+  font: inherit;
+  font-size: 14px;
+  padding: 0 14px;
+}
+
+.remote-im-login-fields input:focus {
+  border-color: #2f81f7;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(47, 129, 247, 0.12);
+}
+
+.remote-im-login-error {
+  margin-top: 12px;
+  text-align: center;
+  color: #dc2626;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.remote-im-login-submit {
+  width: 100%;
+  height: 46px;
+  margin-top: 16px;
+  border: 0;
+  border-radius: 10px;
+  background: #2f81f7;
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.remote-im-login-submit:hover:not(:disabled) {
+  background: #256fe0;
+}
+
+.remote-im-login-submit:disabled {
+  background: #eef1f5;
+  color: #aab4c3;
+  cursor: not-allowed;
+}
+
+.remote-im-login-footnote {
+  margin: 18px 0 0;
+  text-align: center;
+  color: #b6bfcc;
+  font-size: 12px;
+}
+
+/* 项目级回传参数收进「高级」折叠区，不干扰主登录视觉。 */
+.remote-im-login-advanced {
+  margin-top: 20px;
+  border-top: 1px solid #eef2f7;
+  padding-top: 12px;
+}
+
+.remote-im-login-advanced summary {
+  color: #64748b;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  user-select: none;
+}
+
+.remote-im-login-advanced-hint {
+  margin: 8px 0 0;
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.remote-im-login-advanced-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.remote-im-login-advanced-grid label {
+  display: grid;
+  gap: 6px;
+  color: #334155;
+  font-size: 12.5px;
+  font-weight: 750;
+}
+
+.remote-im-login-advanced-grid input {
   min-width: 0;
-  height: 38px;
-  border: 1px solid #cbd5e1;
+  height: 34px;
+  border: 1px solid #d9e1ec;
   border-radius: 8px;
   background: #ffffff;
   color: #0f172a;
@@ -8231,101 +8315,9 @@ html, body, #root {
   padding: 0 10px;
 }
 
-.remote-im-login-full {
-  grid-column: 1 / -1;
-}
-
-.remote-im-login-fixed {
-  border: 1px solid #dbeafe;
-  border-radius: 10px;
-  background: #f8fafc;
-  padding: 12px;
-}
-
-.remote-im-login-fixed small {
-  display: block;
-  margin-top: 4px;
-  color: #64748b;
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.remote-im-login-project {
-  border: 1px solid #dbeafe;
-  border-radius: 10px;
-  background: #f8fafc;
-  padding: 12px;
-}
-
-.remote-im-login-project-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 14px;
-}
-
-.remote-im-login-project-head strong {
-  display: block;
-  color: #0f172a;
-  font-size: 14px;
-  font-weight: 900;
-}
-
-.remote-im-login-project-head small,
-.remote-im-login-project-grid small {
-  display: block;
-  margin-top: 4px;
-  color: #64748b;
-  font-size: 12px;
-  font-weight: 650;
+.remote-im-login-advanced-grid small {
+  color: #94a3b8;
+  font-size: 11.5px;
+  font-weight: 600;
   line-height: 1.45;
-}
-
-.remote-im-login-project-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 12px;
-}
-
-.remote-im-login-error {
-  margin: 0 20px 14px;
-  border-radius: 8px;
-  background: #fef2f2;
-  color: #b91c1c;
-  font-size: 13px;
-  font-weight: 750;
-  padding: 10px 12px;
-}
-
-.remote-im-login-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  padding: 14px 20px;
-  border-top: 1px solid #e2e8f0;
-  background: #f8fafc;
-}
-
-.remote-im-login-actions button {
-  height: 36px;
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  background: #ffffff;
-  color: #334155;
-  font-size: 13px;
-  font-weight: 850;
-  padding: 0 14px;
-  cursor: pointer;
-}
-
-.remote-im-login-actions button[type='submit'] {
-  border-color: #0284c7;
-  background: #0ea5e9;
-  color: #ffffff;
-}
-
-.remote-im-login-actions button:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
 }

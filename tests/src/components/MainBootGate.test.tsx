@@ -10,7 +10,6 @@ function render(
     <MainBootGate
       phase={{ kind: 'idle' }}
       command="codex"
-      launchNotice={null}
       workMode="normal-task"
       onChoose={vi.fn()}
       onDismissFailure={vi.fn()}
@@ -26,6 +25,10 @@ describe('MainBootGate', () => {
     expect(html).toContain('继续普通任务')
     // No failure block when idle.
     expect(html).not.toContain('boot-gate-failure')
+    // 内置 CLI 时代不再展示的文案：标题、启动路径、续聊说明。
+    expect(html).not.toContain('选择本次主会话启动方式')
+    expect(html).not.toContain('AICLI 启动路径')
+    expect(html).not.toContain('续聊将由')
   })
 
   it('idle in scheduled-task mode: makes the resume target explicit', () => {
@@ -92,15 +95,6 @@ describe('MainBootGate', () => {
     expect(render({ command: 'claude' })).toContain('Claude Code')
     expect(render({ command: 'codex' })).toContain('Codex')
     expect(render({ command: '' })).toContain('(未配置)')
-  })
-
-  it('displays the resolved Codex/OpenCode launch path when available', () => {
-    const html = render({
-      launchNotice: '当前启动 Codex：内置版本 /repo/bin/aicli/codex/darwin-arm64/codex'
-    })
-
-    expect(html).toContain('AICLI 启动路径')
-    expect(html).toContain('/repo/bin/aicli/codex/darwin-arm64/codex')
   })
 
   it('shows an explicit risk confirmation when Claude is selected', () => {

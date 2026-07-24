@@ -15,8 +15,6 @@ export interface MainBootGateProps {
   phase: BootGatePhase
   /** Current CLI binary name (claude / codex / other custom). */
   command: string
-  /** Resolved Codex/OpenCode launch path shown before the user starts a session. */
-  launchNotice?: string | null
   /** User-facing work mode selected for this session start. */
   workMode: BootGateWorkMode
   /** Whether user can interact (false when no project / no plan). */
@@ -44,7 +42,6 @@ export default function MainBootGate(props: MainBootGateProps): JSX.Element {
   const {
     phase,
     command,
-    launchNotice,
     workMode,
     disabled = false,
     onChoose,
@@ -61,16 +58,9 @@ export default function MainBootGate(props: MainBootGateProps): JSX.Element {
     <div className="main-panel">
       <div className="main-panel-body boot-gate-body">
         <div className="boot-gate-card">
-          <div className="boot-gate-title">选择本次主会话启动方式</div>
           <div className="boot-gate-subtitle">
             当前模式：<b>{workModeLabel}</b> · 当前 CLI：<b>{describeCli(command)}</b>
           </div>
-          {launchNotice && (
-            <div className="boot-gate-launch-path">
-              <span>AICLI 启动路径</span>
-              <code>{launchNotice}</code>
-            </div>
-          )}
 
           {phase.kind === 'failed' && (
             <div className="boot-gate-failure">
@@ -156,11 +146,6 @@ export default function MainBootGate(props: MainBootGateProps): JSX.Element {
               </button>
             </div>
           )}
-
-          <div className="boot-gate-hint">
-            续聊将由 CLI 自身加载历史，显示可能与上次不完全一致；
-            若该项目从未保存过对话，续聊会失败并提示重新选择。
-          </div>
         </div>
       </div>
     </div>

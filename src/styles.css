@@ -4120,6 +4120,12 @@ html, body, #root {
   display: flex;
   flex-direction: column;
   position: relative;
+}
+
+/* 无边框窗口：Diff 全屏弹窗顶到窗口右上角，头部给系统浮层按钮
+  （最小化/最大化/关闭，约 140px）留位，否则自己的关闭按钮被压住点不到。 */
+.diff-viewer-modal .modal-head {
+  padding-right: 150px;
   background: var(--mac-surface);
   color: var(--mac-fg);
   font-family: var(--mac-font-mono);

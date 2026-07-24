@@ -342,7 +342,6 @@ function AppShell() {
   const [mainPanelMounted, setMainPanelMounted] = useState(false)
   // Gate's internal display state when mainPanelMounted === false.
   const [gatePhase, setGatePhase] = useState<BootGatePhase>({ kind: 'idle' })
-  const [aicliLaunchNotice, setAicliLaunchNotice] = useState<string | null>(null)
 
   const handleToggleTheme = useCallback(() => {
     const next = toggleTheme()
@@ -609,29 +608,6 @@ function AppShell() {
   const mainSessionPlanLabel = formatMainSessionPlanLabel(noPlanMode, planName)
   const mainSessionStatusLabel =
     sessionStatus === 'running' ? '运行中' : sessionStatus === 'exited' ? '已退出' : '待启动'
-  useEffect(() => {
-    if (!aiSettingsReady || aiSettingsLoadError) {
-      setAicliLaunchNotice(null)
-      return
-    }
-    let cancelled = false
-    const command = aiSettings.command ?? aiSettings.ai_cli ?? DEFAULT_AI_CLI
-    void window.api.cc
-      .resolveLaunch({
-        command,
-        env: aiSettings.env ?? {}
-      })
-      .then((result) => {
-        if (cancelled) return
-        setAicliLaunchNotice(result.ok ? result.notice ?? null : null)
-      })
-      .catch(() => {
-        if (!cancelled) setAicliLaunchNotice(null)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [aiSettings, aiSettingsReady, aiSettingsLoadError])
   const runtimeStartBlockedReason = getRuntimeStartBlockedReason(
     currentProjectId,
     projectRuntimeConfigReady,
@@ -979,10 +955,6 @@ function AppShell() {
       return
     }
     setMainPanelMounted(true)
-    if (res.launchNotice) {
-      setAicliLaunchNotice(res.launchNotice)
-      showToast(res.launchNotice, { level: 'info' })
-    }
     if (isTaskWatchMode) {
       void window.api.scheduledTasks.scanNow(currentProjectId)
     }
@@ -2092,7 +2064,6 @@ function AppShell() {
             <MainBootGate
               phase={gatePhase}
               command={aiSettings.command ?? aiSettings.ai_cli ?? DEFAULT_AI_CLI}
-              launchNotice={aicliLaunchNotice}
               workMode={isTaskWatchMode ? 'scheduled-task' : 'normal-task'}
               disabled={!canStartCurrentMainSession}
               onChoose={(mode) => void handleStart(mode)}

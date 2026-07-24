@@ -15,7 +15,6 @@
 #include "storage/LocalMessageDatabase.h"
 #include "ui/LoginDialog.h"
 #include "ui/MainWindow.h"
-#include "ui/UiZoom.h"
 
 namespace {
 
@@ -67,8 +66,9 @@ int main(int argc, char* argv[]) {
     appFont.setFamilies({QStringLiteral("Segoe UI"),
                          QStringLiteral("Microsoft YaHei UI"),
                          QStringLiteral("Microsoft YaHei")});
-    // 基准 13px × 用户缩放倍率（Ctrl+=/- 调整并持久化，登录页也随之生效）。
-    appFont.setPixelSize(UiZoom::s(13));
+    // 登录窗保持设计尺寸（不随缩放倍率变化）：这里用基准 13px，
+    // 进入主界面时才由 MainWindow 把全局字体切到倍率值。
+    appFont.setPixelSize(13);
     app.setFont(appFont);
 #endif
 

@@ -632,6 +632,11 @@ QString readTextFile(const QString& path) {
 }  // namespace
 
 MainWindow::MainWindow(RemoteIMApplication& app, QWidget* parent) : QMainWindow(parent), app_(app) {
+    // 缩放只作用于主界面：登录窗（先于此构造）保持设计尺寸，
+    // 进入主界面时才把全局字体切到基准 13px × 倍率。
+    QFont scaledFont = QApplication::font();
+    scaledFont.setPixelSize(UiZoom::s(13));
+    QApplication::setFont(scaledFont);
     buildUi();
     applyStyle();
     bindSignals();

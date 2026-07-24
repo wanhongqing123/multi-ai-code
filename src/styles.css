@@ -8286,17 +8286,10 @@ html, body, #root {
 .remote-im-summary-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 12px;
-  padding: 14px 18px;
+  padding: 10px 14px;
   border-bottom: 1px solid #e2e8f0;
-}
-
-.remote-im-summary-header h2 {
-  margin: 0;
-  color: #0f172a;
-  font-size: 17px;
-  font-weight: 800;
 }
 
 .remote-im-summary-actions {

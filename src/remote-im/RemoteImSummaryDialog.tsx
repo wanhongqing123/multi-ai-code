@@ -72,7 +72,6 @@ export default function RemoteImSummaryDialog(props: RemoteImSummaryDialogProps)
     <div className="modal-backdrop" onClick={props.onClose}>
       <div className="modal remote-im-summary-modal" onClick={(event) => event.stopPropagation()}>
         <header className="remote-im-summary-header">
-          <h2>消息记录汇总</h2>
           <div className="remote-im-summary-actions">
             <button
               type="button"

@@ -349,6 +349,12 @@ export interface JudgeExternalReviewRequest {
 
 const api = {
   platform: process.platform,
+  /** 无边框窗口的页面内自绘窗口按钮（Windows；macOS 用系统红绿灯）。 */
+  windowControls: {
+    minimize: () => ipcRenderer.send('window-controls:minimize'),
+    toggleMaximize: () => ipcRenderer.send('window-controls:toggle-maximize'),
+    close: () => ipcRenderer.send('window-controls:close')
+  },
   /** Resolve a DataTransfer File to its absolute filesystem path (Electron 32+). */
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
   clipboard: {

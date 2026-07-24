@@ -413,13 +413,44 @@ html, body, #root {
   align-items: center;
   justify-content: space-between;
   gap: var(--mac-sp-4);
-  /* 无边框窗口：右侧给系统浮层按钮（最小化/最大化/关闭，约 140px）留位，
-     整条 topbar 兼作窗口拖拽区，交互控件单独取消拖拽。 */
-  padding: 10px 152px 10px var(--mac-sp-5);
+  /* 无边框窗口：整条 topbar 兼作窗口拖拽区，交互控件单独取消拖拽；
+     窗口按钮是页面内自绘的 WindowControls（右端普通子项），无需给系统浮层留位。 */
+  padding: 10px var(--mac-sp-4) 10px var(--mac-sp-5);
   background: var(--mac-surface);
   border-bottom: 1px solid var(--mac-border);
   color: var(--mac-fg);
   -webkit-app-region: drag;
+}
+
+/* 页面内自绘窗口按钮：DOM 正常层级，弹窗可以盖住它（对比系统浮层永远置顶）。 */
+.window-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  -webkit-app-region: no-drag;
+}
+
+.window-controls-btn {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 30px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mac-fg-muted, #5f6b7a);
+  padding: 0;
+  cursor: pointer;
+}
+
+.window-controls-btn:hover {
+  background: rgba(127, 140, 160, 0.18);
+  color: var(--mac-fg, #1f2329);
+}
+
+.window-controls-close:hover {
+  background: #e81123;
+  color: #ffffff;
 }
 
 .topbar button,
@@ -4121,12 +4152,6 @@ html, body, #root {
   display: flex;
   flex-direction: column;
   position: relative;
-}
-
-/* 无边框窗口：Diff 全屏弹窗顶到窗口右上角，头部给系统浮层按钮
-  （最小化/最大化/关闭，约 140px）留位，否则自己的关闭按钮被压住点不到。 */
-.diff-viewer-modal .modal-head {
-  padding-right: 150px;
   background: var(--mac-surface);
   color: var(--mac-fg);
   font-family: var(--mac-font-mono);
@@ -8221,14 +8246,22 @@ html, body, #root {
   font-weight: 800;
 }
 
-/* 无边框窗口的登录页顶部隐形拖拽条（高度与 titleBarOverlay 一致）。 */
+/* 无边框窗口的登录页顶部隐形拖拽条。 */
 .remote-im-login-drag {
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
-  height: 48px;
+  height: 44px;
   -webkit-app-region: drag;
+}
+
+/* 登录页的窗口按钮固定在右上角（页面内自绘，压在拖拽条上、可点击）。 */
+.remote-im-login-gate .window-controls {
+  position: fixed;
+  top: 7px;
+  right: 10px;
+  z-index: 10;
 }
 
 .remote-im-login-fields input {

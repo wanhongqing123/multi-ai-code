@@ -8,6 +8,7 @@ import {
   applyDefaultRemoteImCredential,
   DEFAULT_REMOTE_IM_CREDENTIAL_PRESET
 } from './remoteImCredentials.js'
+import WindowControls from '../components/WindowControls.js'
 
 export interface RemoteImLoginSubmitInput {
   account: RemoteImAccountConfig
@@ -141,6 +142,7 @@ export default function RemoteImLoginDialog(props: RemoteImLoginDialogProps): JS
         )}
 
         {isGate ? <div className="remote-im-login-drag" aria-hidden /> : null}
+        {isGate ? <WindowControls /> : null}
 
         <div className="remote-im-login-brand">
           <span className="remote-im-login-logo" aria-hidden>

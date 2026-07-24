@@ -40,6 +40,7 @@ import NormalTaskDialog, {
 import { buildNormalTaskRunPrompt } from './normal-tasks/normalTaskPrompt'
 import RemoteImDrawer from './remote-im/RemoteImDrawer'
 import RemoteImSummaryDialog from './remote-im/RemoteImSummaryDialog'
+import WindowControls from './components/WindowControls'
 import { mergeRemoteImMessages } from './remote-im/messageMerge'
 import RemoteImClientHost from './remote-im/RemoteImClientHost'
 import RemoteImLoginDialog, {
@@ -2046,6 +2047,7 @@ function AppShell() {
             </button>
           )}
         </div>
+        <WindowControls />
       </header>
 
       <div className="main-split">

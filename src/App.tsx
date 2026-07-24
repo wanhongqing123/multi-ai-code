@@ -1293,13 +1293,13 @@ function AppShell() {
       }
       const sendResult = await window.api.cc.sendUser(
         sessionId,
-        `请阅读这份 IM 消息记录汇总文件（Markdown），找回此前的对话记忆与背景：\n${saved.path}`
+        `这是一份「时光胶囊」——此前的 IM 消息记录汇总（Markdown 文件）。请阅读它，找回对话记忆与背景：\n${saved.path}`
       )
       if (!sendResult.ok) {
-        showToast(sendResult.error ?? '找回记忆失败', { level: 'error' })
+        showToast(sendResult.error ?? '时光胶囊开启失败', { level: 'error' })
         return false
       }
-      showToast('已交给当前 AICLI 找回记忆', { level: 'success' })
+      showToast('时光胶囊已开启，AICLI 正在找回记忆', { level: 'success' })
       return true
     },
     [currentProjectId, sessionId, sessionStatus]

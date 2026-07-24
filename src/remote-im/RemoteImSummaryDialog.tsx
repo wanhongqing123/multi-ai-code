@@ -79,7 +79,7 @@ export default function RemoteImSummaryDialog(props: RemoteImSummaryDialogProps)
               disabled={!markdown || sending || !props.canSendToAicli || !props.onSendToAicli}
               title={
                 props.canSendToAicli
-                  ? '把消息记录交给当前 AICLI 阅读，帮它找回此前的对话记忆与背景'
+                  ? '开启时光胶囊：把全部消息记录交给当前 AICLI，帮它找回此前的对话记忆与背景'
                   : '主会话未运行，先启动 AICLI 会话'
               }
               onClick={() => {
@@ -93,7 +93,7 @@ export default function RemoteImSummaryDialog(props: RemoteImSummaryDialogProps)
                   .finally(() => setSending(false))
               }}
             >
-              {sending ? '正在找回…' : sent ? '记忆已找回' : '找回记忆'}
+              {sending ? '胶囊开启中…' : sent ? '已开启' : '⏳ 时光胶囊'}
             </button>
             <button type="button" className="remote-im-close" onClick={props.onClose}>
               ×

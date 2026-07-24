@@ -140,12 +140,13 @@ export default function RemoteImLoginDialog(props: RemoteImLoginDialogProps): JS
           </button>
         )}
 
+        {isGate ? <div className="remote-im-login-drag" aria-hidden /> : null}
+
         <div className="remote-im-login-brand">
           <span className="remote-im-login-logo" aria-hidden>
             M
           </span>
           <h2>欢迎使用 Multi-AI Code</h2>
-          <p>IM 登录后可通过可信好友收发消息，并交给当前 AICLI 处理</p>
         </div>
 
         <div className="remote-im-login-fields">
@@ -165,8 +166,6 @@ export default function RemoteImLoginDialog(props: RemoteImLoginDialogProps): JS
         <button type="submit" className="remote-im-login-submit" disabled={props.saving || !draft.desktopUserId.trim()}>
           {props.saving ? '登录中...' : '登录'}
         </button>
-
-        <p className="remote-im-login-footnote">基础 IM 配置固定：通信配置已内置，连接凭证使用内置测试配置。</p>
 
         {projectDraft ? (
           <details className="remote-im-login-advanced">

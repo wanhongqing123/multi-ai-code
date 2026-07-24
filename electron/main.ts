@@ -195,6 +195,10 @@ function createWindow(): void {
     fullscreenable: false,
     show: false,
     autoHideMenuBar: true,
+    // 去掉系统标题栏（钉钉式无边框）：Windows 画原生浮层按钮，标题/图标不再显示；
+    // 拖拽区由页面自己提供（登录页顶部隐形拖拽条、主界面 topbar）。
+    titleBarStyle: 'hidden',
+    titleBarOverlay: { color: '#ffffff', symbolColor: '#1f2329', height: 48 },
     icon: appIconPath,
     webPreferences: {
       preload: join(__dirname, '../preload/preload.mjs'),

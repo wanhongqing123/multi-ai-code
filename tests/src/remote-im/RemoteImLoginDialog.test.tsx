@@ -59,10 +59,12 @@ describe('RemoteImLoginDialog', () => {
       />
     )
 
-    expect(html).toContain('IM 登录')
+    expect(html).toContain('欢迎使用 Multi-AI Code')
     expect(html).toContain('登录账号')
     expect(html).toContain('test123')
-    expect(html).toContain('基础 IM 配置固定')
+    // 副标题与「基础配置固定」脚注已按需求移除，只保留干净的登录卡片。
+    expect(html).not.toContain('IM 登录后可通过可信好友收发消息')
+    expect(html).not.toContain('基础 IM 配置固定')
     expect(html).not.toContain('Profile')
     expect(html).not.toContain('切换')
     expect(html).not.toContain('角色')
@@ -75,8 +77,8 @@ describe('RemoteImLoginDialog', () => {
     expect(html).not.toContain('测试凭证 1400704311')
     expect(html).not.toContain('SDKAppID')
     expect(html).not.toContain('SecretKey')
-    expect(html).toContain('通信配置已内置')
-    expect(html).toContain('连接凭证使用内置测试配置')
+    expect(html).not.toContain('通信配置已内置')
+    expect(html).not.toContain('连接凭证使用内置测试配置')
     expect(html).toContain('当前项目 IM 配置')
     expect(html).toContain('AI 输出回传间隔')
     expect(html).toContain('每隔这段时间合并一次 AICLI 新输出再发回 IM')

@@ -412,10 +412,21 @@ html, body, #root {
   align-items: center;
   justify-content: space-between;
   gap: var(--mac-sp-4);
-  padding: 10px var(--mac-sp-5);
+  /* 无边框窗口：右侧给系统浮层按钮（最小化/最大化/关闭，约 140px）留位，
+     整条 topbar 兼作窗口拖拽区，交互控件单独取消拖拽。 */
+  padding: 10px 152px 10px var(--mac-sp-5);
   background: var(--mac-surface);
   border-bottom: 1px solid var(--mac-border);
   color: var(--mac-fg);
+  -webkit-app-region: drag;
+}
+
+.topbar button,
+.topbar input,
+.topbar select,
+.topbar a,
+.topbar [role='button'] {
+  -webkit-app-region: no-drag;
 }
 
 .topbar-left,
@@ -8203,11 +8214,14 @@ html, body, #root {
   font-weight: 800;
 }
 
-.remote-im-login-brand p {
-  margin: 0;
-  color: #94a3b8;
-  font-size: 12.5px;
-  line-height: 1.5;
+/* 无边框窗口的登录页顶部隐形拖拽条（高度与 titleBarOverlay 一致）。 */
+.remote-im-login-drag {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 48px;
+  -webkit-app-region: drag;
 }
 
 .remote-im-login-fields input {
@@ -8257,13 +8271,6 @@ html, body, #root {
   background: #eef1f5;
   color: #aab4c3;
   cursor: not-allowed;
-}
-
-.remote-im-login-footnote {
-  margin: 18px 0 0;
-  text-align: center;
-  color: #b6bfcc;
-  font-size: 12px;
 }
 
 /* 项目级回传参数收进「高级」折叠区，不干扰主登录视觉。 */

@@ -1293,13 +1293,13 @@ function AppShell() {
       }
       const sendResult = await window.api.cc.sendUser(
         sessionId,
-        `请阅读这份 IM 消息记录汇总文件（Markdown）：\n${saved.path}`
+        `请阅读这份 IM 消息记录汇总文件（Markdown），找回此前的对话记忆与背景：\n${saved.path}`
       )
       if (!sendResult.ok) {
-        showToast(sendResult.error ?? '发送给 AICLI 失败', { level: 'error' })
+        showToast(sendResult.error ?? '找回记忆失败', { level: 'error' })
         return false
       }
-      showToast('消息汇总已发送给当前 AICLI', { level: 'success' })
+      showToast('已交给当前 AICLI 找回记忆', { level: 'success' })
       return true
     },
     [currentProjectId, sessionId, sessionStatus]

@@ -197,10 +197,9 @@ function createWindow(): void {
     autoHideMenuBar: true,
     // 去掉系统标题栏（钉钉式无边框）：Windows 画原生浮层按钮，标题/图标不再显示；
     // 拖拽区由页面自己提供（登录页顶部隐形拖拽条、主界面 topbar）。
-    // 浮层底色透明（不再压一块白色矩形在背景上）；登录页是深色夜空底，图标用浅色，
-    // 登录成功进入主界面（浅色 topbar）时由 activateAccountDataLayer 切回深色图标。
+    // 浮层底色透明（不压色块在页面上），登录页与主界面都是浅色底，图标用深色。
     titleBarStyle: 'hidden',
-    titleBarOverlay: { color: '#00000000', symbolColor: '#e8efff', height: 48 },
+    titleBarOverlay: { color: '#00000000', symbolColor: '#1f2329', height: 48 },
     icon: appIconPath,
     webPreferences: {
       preload: join(__dirname, '../preload/preload.mjs'),
@@ -2012,10 +2011,6 @@ async function activateAccountDataLayer(
     mainWindow.setMinimumSize(1100, 700)
     mainWindow.setSize(1400, 900)
     mainWindow.center()
-    // 深色登录页 → 浅色主界面：窗口浮层按钮图标同步换成深色。
-    if (process.platform === 'win32' && typeof mainWindow.setTitleBarOverlay === 'function') {
-      mainWindow.setTitleBarOverlay({ color: '#00000000', symbolColor: '#1f2329', height: 48 })
-    }
   }
 
   dataLayerActivated = true

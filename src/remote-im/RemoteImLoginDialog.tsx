@@ -133,13 +133,6 @@ export default function RemoteImLoginDialog(props: RemoteImLoginDialogProps): JS
 
   return (
     <div className={isGate ? 'remote-im-login-gate' : 'modal-backdrop'} data-close-on-backdrop="false">
-      {isGate ? (
-        <div className="remote-im-login-bg" aria-hidden>
-          <span className="remote-im-login-bg-blob remote-im-login-bg-blob-a" />
-          <span className="remote-im-login-bg-blob remote-im-login-bg-blob-b" />
-          <span className="remote-im-login-bg-blob remote-im-login-bg-blob-c" />
-        </div>
-      ) : null}
       <form className="modal remote-im-login-modal" onSubmit={handleSubmit} onClick={(event) => event.stopPropagation()}>
         {isGate ? null : (
           <button type="button" className="remote-im-close remote-im-login-close" onClick={props.onClose}>

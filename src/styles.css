@@ -1,6 +1,5 @@
-/* 登录门（首屏独立登录页，非弹窗）：深蓝夜空底 + 微闪星点 + 亮色极光（macOS 登录
-   质感）。光斑用 screen 混合在深底上发光；外层容器整体缓旋转 + 单个光斑漂移，
-   双层运动更有流动感。全部只动 transform/opacity（GPU 合成），不重排。 */
+/* 登录门（首屏独立登录页，非弹窗）：整窗口纯白，登录内容居中直接坐在页面上——
+   去掉卡片的阴影/边框/异色背景，消除“卡片浮在背景上=两个窗口”的观感。 */
 .remote-im-login-gate {
   position: fixed;
   inset: 0;
@@ -9,171 +8,15 @@
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background:
-    radial-gradient(1100px 760px at 82% -14%, rgba(64, 105, 255, 0.30), transparent 62%),
-    radial-gradient(900px 680px at -12% 116%, rgba(34, 211, 238, 0.14), transparent 62%),
-    linear-gradient(160deg, #0d1836 0%, #0a1229 55%, #060b1c 100%);
-  overflow: hidden;
+  background: #ffffff;
 }
 
-/* 星点层：几颗散布的小亮点平铺重复，整体缓慢明暗呼吸。 */
-.remote-im-login-gate::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background-image:
-    radial-gradient(1.6px 1.6px at 22% 26%, rgba(255, 255, 255, 0.8) 45%, transparent 60%),
-    radial-gradient(1.1px 1.1px at 67% 12%, rgba(255, 255, 255, 0.65) 45%, transparent 60%),
-    radial-gradient(1.4px 1.4px at 85% 44%, rgba(255, 255, 255, 0.5) 45%, transparent 60%),
-    radial-gradient(1px 1px at 41% 66%, rgba(255, 255, 255, 0.55) 45%, transparent 60%),
-    radial-gradient(1.2px 1.2px at 11% 54%, rgba(255, 255, 255, 0.45) 45%, transparent 60%),
-    radial-gradient(1px 1px at 56% 88%, rgba(255, 255, 255, 0.4) 45%, transparent 60%);
-  background-repeat: repeat;
-  background-size: 540px 470px;
-  animation: remote-im-login-twinkle 7s ease-in-out infinite alternate;
-}
-
-@keyframes remote-im-login-twinkle {
-  from { opacity: 0.45; }
-  to { opacity: 0.95; }
-}
-
-.remote-im-login-bg {
-  position: absolute;
-  /* 比视口大一圈：整体旋转时四角不露底。 */
-  inset: -22%;
-  overflow: hidden;
-  pointer-events: none;
-  animation: remote-im-login-orbit 80s linear infinite;
-  will-change: transform;
-}
-
-.remote-im-login-bg-blob {
-  position: absolute;
-  width: 620px;
-  height: 620px;
-  border-radius: 50%;
-  filter: blur(70px);
-  mix-blend-mode: screen;
-  will-change: transform;
-}
-
-.remote-im-login-bg-blob-a {
-  top: 2%;
-  left: 4%;
-  background: radial-gradient(circle at 40% 40%, rgba(76, 141, 255, 0.55) 0%, rgba(76, 141, 255, 0) 68%);
-  animation: remote-im-login-drift-a 16s ease-in-out infinite alternate;
-}
-
-.remote-im-login-bg-blob-b {
-  right: 2%;
-  bottom: 4%;
-  background: radial-gradient(circle at 55% 45%, rgba(34, 211, 238, 0.45) 0%, rgba(34, 211, 238, 0) 68%);
-  animation: remote-im-login-drift-b 20s ease-in-out infinite alternate;
-}
-
-.remote-im-login-bg-blob-c {
-  top: 12%;
-  right: 10%;
-  width: 480px;
-  height: 480px;
-  background: radial-gradient(circle at 50% 50%, rgba(139, 92, 246, 0.42) 0%, rgba(139, 92, 246, 0) 68%);
-  animation: remote-im-login-drift-c 24s ease-in-out infinite alternate;
-}
-
-@keyframes remote-im-login-orbit {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-@keyframes remote-im-login-drift-a {
-  from { transform: translate(0, 0) scale(1); }
-  to { transform: translate(130px, 90px) scale(1.16); }
-}
-
-@keyframes remote-im-login-drift-b {
-  from { transform: translate(0, 0) scale(1.08); }
-  to { transform: translate(-120px, -70px) scale(0.94); }
-}
-
-@keyframes remote-im-login-drift-c {
-  from { transform: translate(0, 0) scale(0.94); }
-  to { transform: translate(-90px, 110px) scale(1.12); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .remote-im-login-gate::before,
-  .remote-im-login-bg,
-  .remote-im-login-bg-blob {
-    animation: none;
-  }
-}
-
-/* 深色毛玻璃卡片：融进夜空而非压在上面（macOS 登录面板质感），内容配套浅色。 */
 .remote-im-login-gate .remote-im-login-modal {
-  position: relative;
+  box-shadow: none;
+  border: none;
+  background: transparent;
   width: min(420px, 100%);
   max-height: none;
-  background: rgba(15, 23, 48, 0.58);
-  backdrop-filter: blur(28px);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 20px;
-  box-shadow: 0 30px 80px rgba(2, 6, 20, 0.55);
-}
-
-.remote-im-login-gate .remote-im-login-brand h2 {
-  color: #f2f6ff;
-}
-
-.remote-im-login-gate .remote-im-login-fields input {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.16);
-  color: #eef2ff;
-}
-
-.remote-im-login-gate .remote-im-login-fields input::placeholder {
-  color: rgba(226, 235, 255, 0.45);
-}
-
-.remote-im-login-gate .remote-im-login-fields input:focus {
-  border-color: #5b9bff;
-  box-shadow: 0 0 0 3px rgba(91, 155, 255, 0.22);
-}
-
-.remote-im-login-gate .remote-im-login-error {
-  color: #fda4af;
-}
-
-.remote-im-login-gate .remote-im-login-submit:disabled {
-  background: rgba(255, 255, 255, 0.1);
-  color: rgba(233, 240, 255, 0.42);
-}
-
-.remote-im-login-gate .remote-im-login-advanced {
-  border-top-color: rgba(255, 255, 255, 0.1);
-}
-
-.remote-im-login-gate .remote-im-login-advanced summary {
-  color: rgba(226, 235, 255, 0.62);
-}
-
-.remote-im-login-gate .remote-im-login-advanced-hint {
-  color: rgba(203, 213, 235, 0.55);
-}
-
-.remote-im-login-gate .remote-im-login-advanced-grid label {
-  color: #c7d2e8;
-}
-
-.remote-im-login-gate .remote-im-login-advanced-grid input {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.16);
-  color: #eef2ff;
-}
-
-.remote-im-login-gate .remote-im-login-advanced-grid small {
-  color: rgba(148, 163, 190, 0.8);
 }
 
 /* ==========================================================================

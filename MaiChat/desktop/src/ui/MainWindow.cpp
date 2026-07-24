@@ -101,7 +101,9 @@ public:
     }
 
     void setMessageMarkdown(const QString& markdown) {
-        setHtml(MarkdownRenderer::renderToHtml(markdown));
+        // 渲染器输出的 HTML 内嵌固定 px 字号（正文 14px/h1 22px/code 13px…），
+        // 会盖过控件字体——整体缩放时须把这些 px 一并按倍率缩放。
+        setHtml(UiZoom::scaleQss(MarkdownRenderer::renderToHtml(markdown)));
         // Qt 富文本 CSS 子集不支持 line-height，setHtml 后统一用块格式补上，
         // 对齐 Electron .remote-im-bubble 的 line-height:1.55（含代码块，两端一致）。
         QTextCursor cursor(document());
@@ -1812,7 +1814,7 @@ void MainWindow::openFilePreview(const RemoteIMFileAttachment& attachment) {
     if (isHtmlFile(attachment)) {
         preview->setHtml(readTextFile(attachment.localPath));
     } else {
-        preview->setHtml(MarkdownRenderer::renderToHtml(readTextFile(attachment.localPath)));
+        preview->setHtml(UiZoom::scaleQss(MarkdownRenderer::renderToHtml(readTextFile(attachment.localPath))));
     }
     layout->addWidget(preview, 1);
 

@@ -41,6 +41,11 @@ void UiZoomTest::scalesPixelValuesInQss() {
     // 倍率 1.0 时原样返回。
     UiZoom::setFactor(1.0);
     QCOMPARE(UiZoom::scaleQss(QStringLiteral("margin: 7px;")), QStringLiteral("margin: 7px;"));
+
+    // Markdown 渲染器输出的 HTML 内嵌 <style> 也按同一套规则缩放（消息正文随整体缩放）。
+    UiZoom::setFactor(1.5);
+    QCOMPARE(UiZoom::scaleQss(QStringLiteral("<style>body{font-size:14px;}h1{font-size:22px;}</style>")),
+             QStringLiteral("<style>body{font-size:21px;}h1{font-size:33px;}</style>"));
 }
 
 QTEST_MAIN(UiZoomTest)

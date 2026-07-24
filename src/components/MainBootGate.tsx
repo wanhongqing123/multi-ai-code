@@ -104,7 +104,7 @@ export default function MainBootGate(props: MainBootGateProps): JSX.Element {
                 >
                   {spawningMode === 'new'
                     ? '正在启动…'
-                    : '即使有风险也要继续使用 Claude · 开始新会话'}
+                    : '即使有风险也要继续使用 Claude · 另起炉灶'}
                 </button>
                 <button
                   className="tile-btn boot-gate-btn danger"
@@ -114,7 +114,7 @@ export default function MainBootGate(props: MainBootGateProps): JSX.Element {
                 >
                   {spawningMode === 'resume'
                     ? '正在续聊…'
-                    : '即使有风险也要继续使用 Claude · 继续上次会话'}
+                    : '即使有风险也要继续使用 Claude · 接着唠'}
                 </button>
               </div>
             </div>
@@ -126,7 +126,7 @@ export default function MainBootGate(props: MainBootGateProps): JSX.Element {
                 disabled={disabled || spawning}
                 autoFocus
               >
-                {spawningMode === 'new' ? '正在启动…' : '开始新会话'}
+                {spawningMode === 'new' ? '正在启动…' : '另起炉灶'}
               </button>
               <button
                 className="tile-btn boot-gate-btn"
@@ -142,7 +142,7 @@ export default function MainBootGate(props: MainBootGateProps): JSX.Element {
                     : '当前 CLI 不支持续聊'
                 }
               >
-                {spawningMode === 'resume' ? '正在续聊…' : '继续上次会话'}
+                {spawningMode === 'resume' ? '正在续聊…' : '接着唠'}
               </button>
             </div>
           )}

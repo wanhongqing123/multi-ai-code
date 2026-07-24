@@ -21,8 +21,8 @@ function render(
 describe('MainBootGate', () => {
   it('idle: renders two enabled choice buttons', () => {
     const html = render()
-    expect(html).toContain('开始新会话')
-    expect(html).toContain('继续上次会话')
+    expect(html).toContain('另起炉灶')
+    expect(html).toContain('接着唠')
     // No failure block when idle.
     expect(html).not.toContain('boot-gate-failure')
     // 内置 CLI 时代不再展示的文案：标题、启动路径、续聊说明。
@@ -37,8 +37,8 @@ describe('MainBootGate', () => {
     expect(html).not.toContain('当前模式')
     expect(html).not.toContain('当前 CLI')
     expect(html).toContain('定时任务')
-    expect(html).toContain('开始新会话')
-    expect(html).toContain('继续上次会话')
+    expect(html).toContain('另起炉灶')
+    expect(html).toContain('接着唠')
   })
 
   it('spawning-new: marks the new button as in-progress and disables both', () => {
@@ -78,13 +78,13 @@ describe('MainBootGate', () => {
   it('unknown CLI: disables the resume button (only claude/codex/opencode supported)', () => {
     const html = render({ command: 'gemini' })
     // The resume button should be present but disabled.
-    expect(html).toContain('继续上次会话')
+    expect(html).toContain('接着唠')
     expect(html).toContain('当前 CLI 不支持续聊')
   })
 
   it('opencode: keeps the resume button enabled (CLI supports --continue)', () => {
     const html = render({ command: 'opencode' })
-    expect(html).toContain('继续上次会话')
+    expect(html).toContain('接着唠')
     expect(html).not.toContain('当前 CLI 不支持续聊')
   })
 

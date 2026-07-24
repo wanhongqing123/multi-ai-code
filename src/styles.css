@@ -292,6 +292,7 @@ html, body, #root {
 .boot-gate-subtitle {
   font-size: 13px;
   color: var(--mac-fg-muted, #6b7280);
+  text-align: center;
 }
 
 .boot-gate-launch-path {

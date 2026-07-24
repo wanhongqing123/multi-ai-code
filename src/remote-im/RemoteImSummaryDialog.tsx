@@ -8,6 +8,9 @@ export interface RemoteImSummaryDialogProps {
   open: boolean
   projectId: string | null
   ownerUserId?: string | null
+  // 主会话运行中才能发送；处理端把汇总落成 .md 文件并交给当前 AICLI 读取。
+  canSendToAicli: boolean
+  onSendToAicli?: (markdown: string) => Promise<boolean>
   onClose: () => void
 }
 
@@ -17,6 +20,8 @@ export default function RemoteImSummaryDialog(props: RemoteImSummaryDialogProps)
   const [messages, setMessages] = useState<RemoteImMessage[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  const [sending, setSending] = useState(false)
+  const [sent, setSent] = useState(false)
 
   useEffect(() => {
     if (!props.open || !props.projectId) return
@@ -24,6 +29,8 @@ export default function RemoteImSummaryDialog(props: RemoteImSummaryDialogProps)
     setMessages(null)
     setError(null)
     setCopied(false)
+    setSending(false)
+    setSent(false)
     window.api.remoteIm
       .listMessagesForSummary(props.projectId)
       .then((list) => {
@@ -51,6 +58,12 @@ export default function RemoteImSummaryDialog(props: RemoteImSummaryDialogProps)
     return () => window.clearTimeout(timer)
   }, [copied])
 
+  useEffect(() => {
+    if (!sent) return
+    const timer = window.setTimeout(() => setSent(false), 2000)
+    return () => window.clearTimeout(timer)
+  }, [sent])
+
   if (!props.open) return null
 
   return (
@@ -68,6 +81,28 @@ export default function RemoteImSummaryDialog(props: RemoteImSummaryDialogProps)
               }}
             >
               {copied ? '已复制' : '复制 Markdown'}
+            </button>
+            <button
+              type="button"
+              className="remote-im-summary-send"
+              disabled={!markdown || sending || !props.canSendToAicli || !props.onSendToAicli}
+              title={
+                props.canSendToAicli
+                  ? '把汇总保存为 .md 文件并发送给当前 AICLI 读取'
+                  : '主会话未运行，先启动 AICLI 会话'
+              }
+              onClick={() => {
+                if (!props.onSendToAicli || !markdown) return
+                setSending(true)
+                void props
+                  .onSendToAicli(markdown)
+                  .then((ok) => {
+                    if (ok) setSent(true)
+                  })
+                  .finally(() => setSending(false))
+              }}
+            >
+              {sending ? '发送中…' : sent ? '已发送' : '发送给 AICLI'}
             </button>
             <button type="button" className="remote-im-close" onClick={props.onClose}>
               ×

@@ -71,7 +71,7 @@ export function buildRemoteImMessageSummaryMarkdown(
   lines.push('# 消息记录汇总')
   lines.push('')
   lines.push(
-    `**共 ${sorted.length} 条消息 · ${groups.size} 个会话** · 时间范围：${formatSummaryTime(first.createdAt)} ~ ${formatSummaryTime(last.createdAt)}`
+    `> 📊 **共 ${sorted.length} 条消息 · ${groups.size} 个会话** · 时间范围：${formatSummaryTime(first.createdAt)} ~ ${formatSummaryTime(last.createdAt)}`
   )
 
   for (const [peer, peerMessages] of orderedPeers) {

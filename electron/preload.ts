@@ -458,6 +458,11 @@ const api = {
       ipcRenderer.invoke('remote-im:list-messages-for-summary', { projectId, limit }) as Promise<
         RemoteImMessage[]
       >,
+    // 消息汇总落盘为 .md 文件，返回绝对路径（供发送给 AICLI 读取）。
+    saveSummaryMarkdown: (projectId: string, markdown: string) =>
+      ipcRenderer.invoke('remote-im:save-summary-markdown', { projectId, markdown }) as Promise<
+        { ok: true; path: string } | { ok: false; error: string }
+      >,
     listPeerMessagesBefore: (
       projectId: string,
       peerUserId: string,

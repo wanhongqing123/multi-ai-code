@@ -890,6 +890,29 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
       listRemoteImMessagesForSummary(projectId, limit ?? 3000)
   )
 
+  // 消息汇总落盘为 .md 文件（发送给 AICLI 时把文件路径交给它读取）。
+  ipcMain.handle(
+    'remote-im:save-summary-markdown',
+    async (_event, { projectId, markdown }: { projectId: string; markdown: string }) => {
+      try {
+        const dir = join(rootDir(), 'remote-im-summaries')
+        await fs.mkdir(dir, { recursive: true })
+        const now = new Date()
+        const pad = (value: number) => String(value).padStart(2, '0')
+        const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+        const safeProjectId = projectId.replace(/[^\w-]/g, '_')
+        const filePath = join(dir, `messages-summary-${safeProjectId}-${stamp}.md`)
+        await fs.writeFile(filePath, markdown, 'utf8')
+        return { ok: true as const, path: filePath }
+      } catch (cause) {
+        return {
+          ok: false as const,
+          error: cause instanceof Error ? cause.message : '保存消息汇总文件失败'
+        }
+      }
+    }
+  )
+
   ipcMain.handle(
     'remote-im:delete-contact',
     async (_event, { projectId, userId }: { projectId: string; userId: string }) => {

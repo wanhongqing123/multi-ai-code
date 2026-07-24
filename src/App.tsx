@@ -1277,6 +1277,34 @@ function AppShell() {
     [currentProjectId, remoteImMessages]
   )
 
+  // 消息汇总 → AICLI：先把 Markdown 落成 .md 文件，再把文件路径发给当前主会话读取
+  //（汇总可能有几千条消息，发路径而不是全文，避免撑爆终端输入）。
+  const handleSendRemoteImSummaryToAicli = useCallback(
+    async (markdown: string): Promise<boolean> => {
+      if (!currentProjectId) return false
+      if (!sessionId || sessionStatus !== 'running') {
+        showToast('主会话未运行，无法发送给 AICLI，请先启动主会话', { level: 'warn' })
+        return false
+      }
+      const saved = await window.api.remoteIm.saveSummaryMarkdown(currentProjectId, markdown)
+      if (!saved.ok) {
+        showToast(saved.error ?? '保存消息汇总文件失败', { level: 'error' })
+        return false
+      }
+      const sendResult = await window.api.cc.sendUser(
+        sessionId,
+        `请阅读这份 IM 消息记录汇总文件（Markdown）：\n${saved.path}`
+      )
+      if (!sendResult.ok) {
+        showToast(sendResult.error ?? '发送给 AICLI 失败', { level: 'error' })
+        return false
+      }
+      showToast('消息汇总已发送给当前 AICLI', { level: 'success' })
+      return true
+    },
+    [currentProjectId, sessionId, sessionStatus]
+  )
+
   const handleSendRuntimeLog = useCallback(async (comment = '') => {
     if (!runtimeState.projectId || !runtimeState.log.trim()) {
       showToast('当前没有可发送的运行日志', { level: 'warn' })
@@ -2265,6 +2293,8 @@ function AppShell() {
         open={showRemoteImSummary}
         projectId={currentProjectId}
         ownerUserId={remoteImLoginState?.account.desktopUserId ?? null}
+        canSendToAicli={Boolean(sessionId) && sessionStatus === 'running'}
+        onSendToAicli={handleSendRemoteImSummaryToAicli}
         onClose={() => setShowRemoteImSummary(false)}
       />
       <RemoteImLoginDialog

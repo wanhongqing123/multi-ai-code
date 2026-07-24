@@ -29,7 +29,6 @@ export default function RemoteImSummaryDialog(props: RemoteImSummaryDialogProps)
   const [messages, setMessages] = useState<RemoteImMessage[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
-  const [sent, setSent] = useState(false)
 
   useEffect(() => {
     if (!props.open || !props.projectId) return
@@ -37,7 +36,6 @@ export default function RemoteImSummaryDialog(props: RemoteImSummaryDialogProps)
     setMessages(null)
     setError(null)
     setSending(false)
-    setSent(false)
     window.api.remoteIm
       .listMessagesForSummary(props.projectId)
       .then((list) => {
@@ -60,12 +58,6 @@ export default function RemoteImSummaryDialog(props: RemoteImSummaryDialogProps)
     [messages, props.ownerUserId]
   )
 
-  useEffect(() => {
-    if (!sent) return
-    const timer = window.setTimeout(() => setSent(false), 2000)
-    return () => window.clearTimeout(timer)
-  }, [sent])
-
   if (!props.open) return null
 
   return (
@@ -85,15 +77,11 @@ export default function RemoteImSummaryDialog(props: RemoteImSummaryDialogProps)
               onClick={() => {
                 if (!props.onSendToAicli || !markdown) return
                 setSending(true)
-                void props
-                  .onSendToAicli(markdown)
-                  .then((ok) => {
-                    if (ok) setSent(true)
-                  })
-                  .finally(() => setSending(false))
+                // 结果反馈交给 toast，按钮文案保持不变；sending 仅用于防连点。
+                void props.onSendToAicli(markdown).finally(() => setSending(false))
               }}
             >
-              {sending ? '胶囊开启中…' : sent ? '已开启' : '⏳ 时光胶囊'}
+              ⏳ 时光胶囊
             </button>
             <button type="button" className="remote-im-close" onClick={props.onClose}>
               ×

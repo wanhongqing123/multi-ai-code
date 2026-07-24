@@ -379,7 +379,7 @@ describe('remote IM message store', () => {
     ])
   })
 
-  it('updates message status and clears project messages', () => {
+  it('updates message status', () => {
     const store = createRemoteImMessageStore(createFakeDatabase())
     const message = store.create({
       projectId: 'project-1',
@@ -407,8 +407,6 @@ describe('remote IM message store', () => {
       error: null
     })
 
-    store.clear('project-1')
-    expect(store.list('project-1', 20)).toEqual([])
   })
 
   it('clears only the selected peer conversation history in one project', () => {

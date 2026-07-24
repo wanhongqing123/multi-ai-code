@@ -1275,20 +1275,6 @@ function AppShell() {
     [currentProjectId, remoteImMessages]
   )
 
-  const handleClearRemoteImMessages = useCallback(async () => {
-    if (!currentProjectId) return
-    try {
-      await window.api.remoteIm.clearMessages(currentProjectId)
-      setRemoteImInput('')
-      setRemoteImMessages([])
-    } catch (err) {
-      showToast(
-        err instanceof Error ? err.message : '清空远程 IM 消息失败',
-        { level: 'error' }
-      )
-    }
-  }, [currentProjectId])
-
   const handleSendRuntimeLog = useCallback(async (comment = '') => {
     if (!runtimeState.projectId || !runtimeState.log.trim()) {
       showToast('当前没有可发送的运行日志', { level: 'warn' })
@@ -2261,7 +2247,6 @@ function AppShell() {
         onSendImage={(toUserId, file) => void handleSendRemoteImImage(toUserId, file)}
         onAddContact={(relation, userId) => void handleAddRemoteImContact(relation, userId)}
         onDeleteContact={(userId) => void handleDeleteRemoteImContact(userId)}
-        onClear={() => void handleClearRemoteImMessages()}
         onClose={() => setShowRemoteImDrawer(false)}
       />
       <RemoteImLoginDialog

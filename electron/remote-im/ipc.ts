@@ -34,7 +34,6 @@ import {
   writeRemoteImAccountConfig
 } from './account.js'
 import {
-  clearRemoteImMessages,
   clearRemoteImPeerMessages,
   createRemoteImMessage,
   failRemoteImMessageIfStreaming,
@@ -882,12 +881,6 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
     (_event, { projectId, limit }: { projectId: string; limit?: number }) =>
       listRemoteImMessages(projectId, limit ?? 100)
   )
-
-  ipcMain.handle('remote-im:clear-messages', (_event, { projectId }: { projectId: string }) => {
-    clearRemoteImMessages(projectId)
-    broadcastMessagesChanged(projectId)
-    return { ok: true as const }
-  })
 
   ipcMain.handle(
     'remote-im:delete-contact',

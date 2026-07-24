@@ -50,7 +50,6 @@ export interface RemoteImDrawerProps {
   onSendImage: (toUserId: string, file: File) => void
   onAddContact: (relation: RemoteImContactRelation, userId: string) => void
   onDeleteContact: (userId: string) => void
-  onClear: () => void
   onClose: () => void
   // 会话是否还可能有更早的历史（分页翻完置 false 后隐藏按钮）。
   canLoadEarlier?: boolean
@@ -217,7 +216,6 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
     : null
   const inputDisabled =
     !selectedPeerUserId || !props.projectId || props.status?.state !== 'connected'
-  const clearDisabled = !props.projectId || props.messages.length === 0
   const sendDisabled =
     isRemoteImSendDisabled({
       projectId: props.projectId,
@@ -386,7 +384,6 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
           onPointerDown={handleDragStart}
           title="拖动移动远程 IM 窗口"
         >
-          <div className="remote-im-title">远程 IM</div>
           <div
             className={`remote-im-status status-${props.status?.state ?? 'disconnected'}`}
             title={statusDetail ?? undefined}
@@ -397,18 +394,6 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
               <small className="remote-im-status-detail">{statusDetail}</small>
             ) : null}
           </div>
-          <span className="remote-im-account-label" title={props.config.desktopUserId || undefined}>
-            {props.config.desktopUserId || '未登录'}
-          </span>
-          <button
-            type="button"
-            className="remote-im-clear"
-            aria-label="清空远程 IM 消息"
-            disabled={clearDisabled}
-            onClick={props.onClear}
-          >
-            Clear
-          </button>
           <button
             type="button"
             className="remote-im-close"
@@ -422,7 +407,6 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
         <div className="remote-im-shell">
           <section className="remote-im-sidebar" aria-label="会话">
             <div className="remote-im-sidebar-head">
-              <strong>会话</strong>
               <span>{props.config.desktopUserId || '未设置账号'}</span>
             </div>
             <div className="remote-im-relation-tabs" role="tablist" aria-label="联系人关系">

@@ -466,8 +466,6 @@ const api = {
         beforeId: before.id,
         limit
       }) as Promise<RemoteImMessage[]>,
-    clearMessages: (projectId: string) =>
-      ipcRenderer.invoke('remote-im:clear-messages', { projectId }) as Promise<{ ok: true }>,
     deleteContact: (projectId: string, userId: string) =>
       ipcRenderer.invoke('remote-im:delete-contact', { projectId, userId }) as Promise<
         | { ok: true; value: RemoteImConfig; loginState: RemoteImLoginState }

@@ -7352,17 +7352,11 @@ html, body, #root {
   cursor: text;
 }
 
-.remote-im-title {
-  flex: 1;
-  color: #0f172a;
-  font-size: 20px;
-  font-weight: 850;
-}
-
 .remote-im-status {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  margin-left: auto;
   min-width: 0;
   padding: 7px 14px;
   border-radius: 999px;
@@ -7395,36 +7389,6 @@ html, body, #root {
   color: inherit;
   font-size: 12px;
   font-weight: 700;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.remote-im-clear {
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  background: #ffffff;
-  color: #475569;
-  font-size: 12px;
-  font-weight: 800;
-  padding: 7px 10px;
-  cursor: pointer;
-}
-
-.remote-im-clear:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
-}
-
-.remote-im-account-label {
-  max-width: 220px;
-  border: 1px solid #bae6fd;
-  border-radius: 8px;
-  background: #f0f9ff;
-  color: #0369a1;
-  font-size: 12px;
-  font-weight: 850;
-  padding: 7px 10px;
-  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -7926,15 +7890,10 @@ html, body, #root {
 .remote-im-sidebar-head {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 12px;
   padding: 16px;
   color: #0f172a;
-}
-
-.remote-im-sidebar-head strong {
-  font-size: 16px;
-  font-weight: 850;
 }
 
 .remote-im-sidebar-head span {

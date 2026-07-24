@@ -105,7 +105,6 @@ function renderDrawer(overrides: Partial<RemoteImDrawerProps> = {}): string {
       onSendImage={vi.fn()}
       onAddContact={vi.fn()}
       onDeleteContact={vi.fn()}
-      onClear={vi.fn()}
       onClose={vi.fn()}
       {...overrides}
     />
@@ -139,29 +138,13 @@ describe('RemoteImDrawer', () => {
     expect(renderDrawer({ open: false })).toBe('')
   })
 
-  it('renders the current account as a non-login label in the header', () => {
+  it('uses the current account as the left sidebar heading', () => {
     const html = renderDrawer()
 
-    expect(html).toContain('remote-im-account-label')
-    expect(html).toContain('desktop_bot')
-    expect(html).not.toContain('登录')
-    expect(html).not.toContain('IM 登录')
-    expect(html).not.toContain('切换账号')
-    expect(html).not.toContain('重新登录')
-  })
-
-  it('shows a passive account placeholder when there is no UserID account', () => {
-    const html = renderDrawer({
-      config: {
-        ...config,
-        desktopUserId: '',
-        sdkAppId: null
-      }
-    })
-
-    expect(html).toContain('remote-im-account-label')
-    expect(html).toContain('未登录')
-    expect(html).not.toContain('IM 登录')
+    expect(html).not.toContain('remote-im-title')
+    expect(html).not.toContain('<strong>会话</strong>')
+    expect(html).not.toContain('remote-im-account-label')
+    expect(html).toContain('<div class="remote-im-sidebar-head"><span>desktop_bot</span></div>')
   })
 
   it('renders selected peer messages as markdown', () => {
@@ -370,14 +353,12 @@ describe('RemoteImDrawer', () => {
     expect(html).not.toContain('奴隶模式')
   })
 
-  it('disables clearing when there is no project or no remote IM message', () => {
-    const emptyHtml = renderDrawer({ messages: [] })
-    const noProjectHtml = renderDrawer({ projectId: null })
+  it('does not expose a global message clearing action', () => {
+    const html = renderDrawer()
 
-    expect(emptyHtml).toContain('class="remote-im-clear"')
-    expect(emptyHtml).toContain('disabled="">Clear')
-    expect(noProjectHtml).toContain('class="remote-im-clear"')
-    expect(noProjectHtml).toContain('disabled="">Clear')
+    expect(html).not.toContain('remote-im-clear')
+    expect(html).not.toContain('清空远程 IM 消息')
+    expect(html).not.toContain('>Clear</button>')
   })
 
   it('shows neutral remote IM status details when connection fails', () => {

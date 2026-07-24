@@ -329,10 +329,6 @@ export function createRemoteImMessageStore(database: RemoteImDatabase) {
     })
   }
 
-  function clear(projectId: string): void {
-    database.prepare('DELETE FROM remote_im_messages WHERE project_id = ?').run(projectId)
-  }
-
   function clearPeer(projectId: string, rawPeerUserId: string): void {
     const peerUserId = rawPeerUserId.trim()
     if (!peerUserId) return
@@ -353,7 +349,6 @@ export function createRemoteImMessageStore(database: RemoteImDatabase) {
     list,
     updateStatus,
     failIfStreaming,
-    clear,
     clearPeer,
     listPeerBefore,
     findByRemoteMessageId
@@ -385,10 +380,6 @@ export function updateRemoteImMessageStatus(
 
 export function failRemoteImMessageIfStreaming(id: number, error: string): RemoteImMessage | null {
   return defaultStore().failIfStreaming(id, error)
-}
-
-export function clearRemoteImMessages(projectId: string): void {
-  defaultStore().clear(projectId)
 }
 
 export function clearRemoteImPeerMessages(projectId: string, peerUserId: string): void {

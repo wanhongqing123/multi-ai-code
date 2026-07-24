@@ -1099,13 +1099,20 @@ void MainWindowLayoutTest::ctrlShortcutsZoomWholeUi() {
     QVERIFY(toast != nullptr);
     QVERIFY(toast->isVisible());
     QCOMPARE(toast->text(), QStringLiteral("110%"));
+    // 代码级最小宽高随倍率重放（520 × 1.1 = 572）。
+    auto* chatContentPane = window.findChild<QWidget*>(QStringLiteral("chatContentPane"));
+    QVERIFY(chatContentPane != nullptr);
+    QCOMPARE(chatContentPane->minimumWidth(), 572);
 
-    // Ctrl+- 缩回，Ctrl+0 复位。
+    // Ctrl+- 缩回，Ctrl+0 复位；最小宽高须一并还原，否则布局缩不回去。
     QTest::keyClick(&window, Qt::Key_Minus, Qt::ControlModifier);
     QCOMPARE(qRound(UiZoom::factor() * 100), 100);
+    QCOMPARE(chatContentPane->minimumWidth(), 520);
     QTest::keyClick(&window, Qt::Key_Equal, Qt::ControlModifier);
     QTest::keyClick(&window, Qt::Key_0, Qt::ControlModifier);
     QCOMPARE(qRound(UiZoom::factor() * 100), 100);
+    QCOMPARE(chatContentPane->minimumWidth(), 520);
+    QCOMPARE(window.minimumWidth(), 980);
 
     UiZoom::setFactor(1.0);
 }

@@ -92,6 +92,9 @@ private:
     void changeUiZoom(qreal delta);
     void resetUiZoom();
     void applyUiZoom(bool showToastPopup);
+    // 代码级最小宽高（不在样式表里）需要在每次倍率变化时重放，否则放大后
+    // 再缩小会被旧的大最小值卡住，布局缩不回去。
+    void applyScaledFixedGeometry();
     void showZoomToast();
     void showConversationContextMenu(const QPoint& pos);
     void showContactContextMenu(QListWidget* list, const QPoint& pos);

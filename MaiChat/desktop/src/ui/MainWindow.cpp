@@ -2179,6 +2179,8 @@ QWidget* MainWindow::createSettingsRow(const QString& title, QLabel* valueLabel,
         valueLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         valueLabel->setTextFormat(Qt::PlainText);
         valueLabel->setMinimumWidth(UiZoom::s(180));
+        // 供 applyScaledFixedGeometry 在倍率变化时重放最小宽度。
+        valueLabel->setProperty("settingsRowValue", true);
     }
 
     layout->addLayout(textColumn, 1);
@@ -2329,11 +2331,40 @@ void MainWindow::applyUiZoom(bool showToastPopup) {
     font.setPixelSize(UiZoom::s(13));
     QApplication::setFont(font);
     // 全局样式表按新倍率重放；列表条目行高/头像与气泡样式都依赖倍率，
-    // 清空渲染缓存强制消息全量重建。
+    // 清空渲染缓存强制消息全量重建。代码级最小宽高也须重放（否则缩不回去）。
+    applyScaledFixedGeometry();
     applyStyle();
     renderedPeerId_.clear();
     refresh();
     if (showToastPopup) showZoomToast();
+}
+
+void MainWindow::applyScaledFixedGeometry() {
+    setMinimumSize(UiZoom::s(980), UiZoom::s(640));
+    if (navRail_) {
+        navRail_->setMinimumWidth(UiZoom::s(160));
+        navRail_->setMaximumWidth(UiZoom::s(260));
+    }
+    if (auto* pane = findChild<QWidget*>(QStringLiteral("conversationPane"))) {
+        pane->setMinimumWidth(UiZoom::s(220));
+    }
+    if (auto* pane = findChild<QWidget*>(QStringLiteral("chatContentPane"))) {
+        pane->setMinimumWidth(UiZoom::s(520));
+    }
+    if (auto* pane = findChild<QWidget*>(QStringLiteral("composerPanel"))) {
+        pane->setMinimumHeight(UiZoom::s(116));
+    }
+    if (auto* pane = findChild<QWidget*>(QStringLiteral("contactsDirectoryPane"))) {
+        pane->setMinimumWidth(UiZoom::s(300));
+        pane->setMaximumWidth(UiZoom::s(420));
+    }
+    if (messageEditor_) messageEditor_->setMinimumHeight(UiZoom::s(64));
+    const QList<QWidget*> settingsRows = findChildren<QWidget*>(QStringLiteral("settingsRow"));
+    for (QWidget* row : settingsRows) row->setMinimumHeight(UiZoom::s(72));
+    const QList<QLabel*> labels = findChildren<QLabel*>();
+    for (QLabel* label : labels) {
+        if (label->property("settingsRowValue").toBool()) label->setMinimumWidth(UiZoom::s(180));
+    }
 }
 
 void MainWindow::showZoomToast() {

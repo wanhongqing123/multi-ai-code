@@ -186,10 +186,25 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
 
     nonisolated func onRecvC2CTextMessage(msgID: String, sender: V2TIMUserInfo, text: String?) {
         guard let userID = sender.userID, !userID.isEmpty, let text, !text.isEmpty else { return }
-        Task { @MainActor [weak self, userID, text] in
-            let event = IncomingRemoteIMText(fromUserID: userID, text: text)
-            self?.onIncomingText?(event)
-        }
+        let fallbackDate = Date()
+        V2TIMManager.sharedInstance().findMessages(
+            messageIDList: [msgID],
+            succ: { [weak self] messages in
+                let createdAt = messages?.first?.timestamp ?? fallbackDate
+                self?.emitIncomingText(
+                    fromUserID: userID,
+                    text: text,
+                    createdAt: createdAt
+                )
+            },
+            fail: { [weak self] _, _ in
+                self?.emitIncomingText(
+                    fromUserID: userID,
+                    text: text,
+                    createdAt: fallbackDate
+                )
+            }
+        )
     }
 
     nonisolated func onRecvNewMessage(msg: V2TIMMessage) {
@@ -217,6 +232,7 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
         soundElem: V2TIMSoundElem,
         fromUserID: String
     ) {
+        let createdAt = msg.timestamp ?? Date()
         let durationSeconds = max(1, Int(soundElem.duration))
         let remoteID = soundElem.uuid ?? msg.msgID
         let targetURL = Self.voiceCacheURL(remoteID: remoteID, messageID: msg.msgID)
@@ -225,12 +241,13 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
             path: targetURL.path,
             progress: nil,
             succ: {
-                Task { @MainActor [weak self, fromUserID, targetURL, durationSeconds, remoteID] in
+                Task { @MainActor [weak self, fromUserID, targetURL, durationSeconds, remoteID, createdAt] in
                     let event = IncomingRemoteIMVoice(
                         fromUserID: fromUserID,
                         fileURL: targetURL,
                         durationSeconds: durationSeconds,
-                        remoteID: remoteID
+                        remoteID: remoteID,
+                        createdAt: createdAt
                     )
                     self?.onIncomingVoice?(event)
                 }
@@ -246,6 +263,7 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
     ) {
         let fileName = Self.cleanFileName(fileElem.filename)
         guard Self.isSupportedPreviewFileName(fileName) else { return }
+        let createdAt = msg.timestamp ?? Date()
         let remoteID = fileElem.uuid ?? msg.msgID
         let targetURL = Self.fileCacheURL(remoteID: remoteID, messageID: msg.msgID, fileName: fileName)
         let mimeType = Self.mimeType(for: fileName)
@@ -255,14 +273,15 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
             path: targetURL.path,
             progress: nil,
             succ: {
-                Task { @MainActor [weak self, fromUserID, targetURL, fileName, mimeType, remoteID, sizeBytes] in
+                Task { @MainActor [weak self, fromUserID, targetURL, fileName, mimeType, remoteID, sizeBytes, createdAt] in
                     let event = IncomingRemoteIMFile(
                         fromUserID: fromUserID,
                         fileURL: targetURL,
                         fileName: fileName,
                         mimeType: mimeType,
                         remoteID: remoteID,
-                        sizeBytes: sizeBytes
+                        sizeBytes: sizeBytes,
+                        createdAt: createdAt
                     )
                     self?.onIncomingFile?(event)
                 }
@@ -277,6 +296,7 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
         fromUserID: String
     ) {
         guard let image = Self.preferredImage(from: imageElem.imageList) else { return }
+        let createdAt = msg.timestamp ?? Date()
         let remoteID = image.uuid ?? msg.msgID
         let targetURL = Self.imageCacheURL(remoteID: remoteID, messageID: msg.msgID, imageURL: image.url)
         let width = image.width > 0 ? Int(image.width) : nil
@@ -286,20 +306,36 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
             path: targetURL.path,
             progress: nil,
             succ: {
-                Task { @MainActor [weak self, fromUserID, targetURL, remoteID, width, height, sizeBytes] in
+                Task { @MainActor [weak self, fromUserID, targetURL, remoteID, width, height, sizeBytes, createdAt] in
                     let event = IncomingRemoteIMImage(
                         fromUserID: fromUserID,
                         fileURL: targetURL,
                         remoteID: remoteID,
                         width: width,
                         height: height,
-                        sizeBytes: sizeBytes
+                        sizeBytes: sizeBytes,
+                        createdAt: createdAt
                     )
                     self?.onIncomingImage?(event)
                 }
             },
             fail: { _, _ in }
         )
+    }
+
+    private nonisolated func emitIncomingText(
+        fromUserID: String,
+        text: String,
+        createdAt: Date
+    ) {
+        Task { @MainActor [weak self, fromUserID, text, createdAt] in
+            let event = IncomingRemoteIMText(
+                fromUserID: fromUserID,
+                text: text,
+                createdAt: createdAt
+            )
+            self?.onIncomingText?(event)
+        }
     }
 
     private nonisolated static func voiceCacheURL(remoteID: String?, messageID: String?) -> URL {

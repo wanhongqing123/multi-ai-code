@@ -299,7 +299,11 @@ final class RemoteIMAppState: ObservableObject {
     }
 
     private func receive(_ event: IncomingRemoteIMText) {
-        _ = chatState.receiveText(event.text, fromUserID: event.fromUserID)
+        _ = chatState.receiveText(
+            event.text,
+            fromUserID: event.fromUserID,
+            now: event.createdAt
+        )
         persistCurrentHistory()
         settingsStore.save(currentStoredSettings())
     }
@@ -309,7 +313,8 @@ final class RemoteIMAppState: ObservableObject {
             filePath: event.fileURL.path,
             durationSeconds: event.durationSeconds,
             fromUserID: event.fromUserID,
-            remoteID: event.remoteID
+            remoteID: event.remoteID,
+            now: event.createdAt
         )
         persistCurrentHistory()
         settingsStore.save(currentStoredSettings())
@@ -322,7 +327,8 @@ final class RemoteIMAppState: ObservableObject {
             remoteID: event.remoteID,
             width: event.width,
             height: event.height,
-            sizeBytes: event.sizeBytes
+            sizeBytes: event.sizeBytes,
+            now: event.createdAt
         )
         persistCurrentHistory()
         settingsStore.save(currentStoredSettings())
@@ -335,7 +341,8 @@ final class RemoteIMAppState: ObservableObject {
             fileName: event.fileName,
             mimeType: event.mimeType,
             remoteID: event.remoteID,
-            sizeBytes: event.sizeBytes
+            sizeBytes: event.sizeBytes,
+            now: event.createdAt
         )
         persistCurrentHistory()
         settingsStore.save(currentStoredSettings())

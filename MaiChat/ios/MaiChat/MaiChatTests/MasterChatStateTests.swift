@@ -38,6 +38,7 @@ final class MasterChatStateTests: XCTestCase {
         XCTAssertEqual(reply.fromUserID, "mac-quark-pc")
         XCTAssertEqual(reply.direction, .incoming)
         XCTAssertEqual(reply.status, .received)
+        XCTAssertEqual(reply.createdAt, Date(timeIntervalSince1970: 120))
         XCTAssertTrue(reply.text.contains("| 文件 | 状态 |"))
         XCTAssertEqual(state.messages, [reply])
     }
@@ -152,6 +153,7 @@ final class MasterChatStateTests: XCTestCase {
         XCTAssertEqual(message.voiceAttachment?.remoteID, "voice-uuid")
         XCTAssertEqual(message.direction, .incoming)
         XCTAssertEqual(message.status, .received)
+        XCTAssertEqual(message.createdAt, Date(timeIntervalSince1970: 140))
         XCTAssertEqual(state.contacts.map(\.userID), ["mac-quark-pc"])
     }
 
@@ -199,6 +201,7 @@ final class MasterChatStateTests: XCTestCase {
         XCTAssertEqual(message.imageAttachment?.sizeBytes, 2048)
         XCTAssertEqual(message.direction, .incoming)
         XCTAssertEqual(message.status, .received)
+        XCTAssertEqual(message.createdAt, Date(timeIntervalSince1970: 160))
         XCTAssertEqual(state.contacts.map(\.userID), ["mac-quark-pc"])
     }
 
@@ -224,6 +227,7 @@ final class MasterChatStateTests: XCTestCase {
         XCTAssertTrue(message.isFileMessage)
         XCTAssertEqual(message.direction, .incoming)
         XCTAssertEqual(message.status, .received)
+        XCTAssertEqual(message.createdAt, Date(timeIntervalSince1970: 163))
         XCTAssertEqual(state.contacts.map(\.userID), ["mac-quark-pc"])
     }
 

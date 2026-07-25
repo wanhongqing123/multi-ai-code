@@ -4,6 +4,7 @@ import MaiChatCore
 struct IncomingRemoteIMText: Equatable {
     let fromUserID: String
     let text: String
+    let createdAt: Date
 }
 
 struct IncomingRemoteIMVoice: Equatable {
@@ -11,6 +12,7 @@ struct IncomingRemoteIMVoice: Equatable {
     let fileURL: URL
     let durationSeconds: Int
     let remoteID: String?
+    let createdAt: Date
 }
 
 struct IncomingRemoteIMImage: Equatable {
@@ -20,6 +22,7 @@ struct IncomingRemoteIMImage: Equatable {
     let width: Int?
     let height: Int?
     let sizeBytes: Int?
+    let createdAt: Date
 }
 
 struct IncomingRemoteIMFile: Equatable {
@@ -29,6 +32,7 @@ struct IncomingRemoteIMFile: Equatable {
     let mimeType: String
     let remoteID: String?
     let sizeBytes: Int?
+    let createdAt: Date
 }
 
 struct RemoteIMVoiceRecording: Equatable {

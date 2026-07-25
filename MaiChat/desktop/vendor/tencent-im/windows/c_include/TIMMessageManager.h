@@ -2402,7 +2402,8 @@ static const char* kTIMMsgPinnerNameCard = "message_pinner_name_card";
 static const char* kTIMMsgPinnerFaceURL = "message_pinner_face_url";
 // bool, 读写, 是否忽略禁言，true: 忽略，false: 不忽略。从 8.6 版本开始对齐
 static const char* kTIMMsgExcludedFromMuting = "message_excluded_from_muting";
-
+// object @ref MessageQuoteInfo, 读写(选填), 消息引用信息，发送引用消息时需要填充该字段
+static const char* kTIMMsgQuoteInfo = "message_quote_info";
 
 //------------------------------------------------------------------------------
 // 7.14 MsgBatchSendParam (消息群发接口的参数)
@@ -2661,6 +2662,15 @@ static const char* kTIMMsgReactionUserResultIsFinished = "message_reaction_user_
 static const char* kTIMMsgReactionChangeInfoMsgId = "message_reaction_change_info_msg_id";
 // array @ref MessageReaction, 只读, 变更的消息回应列表
 static const char* kTIMMsgReactionChangeInfoReactionList = "message_reaction_change_info_reaction_list";
+
+//------------------------------------------------------------------------------
+// 10.9 MessageQuoteInfo (消息引用信息)
+// string, 读写, 被引用的消息 ID
+static const char* kTIMMessageQuoteInfoMsgID = "message_quote_info_msg_id";
+// uint64, 读写, 被引用的消息时间
+static const char* kTIMMessageQuoteInfoMessageTime = "message_quote_info_message_time";
+// uint64, 读写, 被引用的消息 sequence
+static const char* kTIMMessageQuoteInfoMessageSequence = "message_quote_info_message_sequence";
 
 
 /////////////////////////////////////////////////////////////////////////////////

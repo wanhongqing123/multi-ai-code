@@ -125,6 +125,10 @@ static const char* kTIMInternalOperationGetCustomVoiceList = "internal_operation
 static const char* kTIMInternalOperationDeleteCustomVoice = "internal_operation_delete_custom_voice";
 static const char* kTIMInternalOperationSetCustomUploadCallback = "internal_operation_set_custom_upload_callback";
 static const char* kTIMInternalOperationActivateConversation = "internal_operation_activate_conversation";
+static const char* kTIMInternalOperationGetCurrentLoginInfo = "internal_operation_get_current_login_info";
+static const char* kTIMInternalOperationSetRichStatus = "internal_operation_set_rich_status";
+static const char* kTIMInternalOperationDeleteRichStatus = "internal_operation_delete_rich_status";
+static const char* kTIMInternalOperationGetRichStatus = "internal_operation_get_rich_status";
 
 //------------------------------------------------------------------------------
 // 4.2 SSODataParam(发送 sso data 的参数)
@@ -384,6 +388,12 @@ static const char* kTIMRequestVoiceCloneLanguage = "request_voice_clone_language
 static const char* kTIMRequestDeleteCustomVoiceVoiceId = "request_delete_custom_voice_voice_id";
 // string, 只写(必填), 会话 ID (其中单聊格式为 "c2c_userID", 群聊会话格式为 "group_groupID"), 当 kTIMRequestInternalOperation 为 kTIMInternalOperationActivateConversation 时需要设置
 static const char* kTIMRequestActivateConversationConversationID = "request_activate_conversation_conversation_id";
+// string, 只写(必填), 富状态的群组 ID, 当 kTIMRequestInternalOperation 为 kTIMInternalOperationSetRichStatus / kTIMInternalOperationDeleteRichStatus / kTIMInternalOperationGetRichStatus 时需要设置
+static const char* kTIMRequestRichStatusGroupID = "request_rich_status_group_id";
+// object, 只写(必填), 富状态键值对, 当 kTIMRequestInternalOperation 为 kTIMInternalOperationSetRichStatus 时需要设置
+static const char* kTIMRequestSetRichStatusMap = "request_set_rich_status_map";
+// array string, 只写(必填), 要删除的富状态 key 列表, 当 kTIMRequestInternalOperation 为 kTIMInternalOperationDeleteRichStatus 时需要设置
+static const char* kTIMRequestDeleteRichStatusKeys = "request_delete_rich_status_keys";
 
 //------------------------------------------------------------------------------
 // 4.17 ResponseInfo(callExperimentalAPI 接口回调返回的数据)
@@ -427,6 +437,16 @@ static const char* kTIMResponseGetCustomVoiceListVoiceList = "response_get_custo
 static const char* kTIMCustomVoiceItemVoiceId = "custom_voice_item_voice_id";
 // string, 只读(必填), 声音克隆的名称
 static const char* kTIMCustomVoiceItemName = "custom_voice_item_name";
+// uint32, 只读(必填), 当前登录的 SDKAppID, 当 kTIMResponseInternalOperation 为 kTIMInternalOperationGetCurrentLoginInfo 时有值
+static const char* kTIMResponseGetCurrentLoginInfoSDKAppID = "response_get_current_login_info_sdk_app_id";
+// string, 只读(必填), 当前登录的 UserSig, 当 kTIMResponseInternalOperation 为 kTIMInternalOperationGetCurrentLoginInfo 时有值
+static const char* kTIMResponseGetCurrentLoginInfoUserSig = "response_get_current_login_info_user_sig";
+// string, 只读(必填), 当前登录的 UserID, 当 kTIMResponseInternalOperation 为 kTIMInternalOperationGetCurrentLoginInfo 时有值
+static const char* kTIMResponseGetCurrentLoginInfoUserID = "response_get_current_login_info_user_id";
+// uint32, 只读(必填), 当前登录的账号类型, 当 kTIMResponseInternalOperation 为 kTIMInternalOperationGetCurrentLoginInfo 时有值
+static const char* kTIMResponseGetCurrentLoginInfoAccountType = "response_get_current_login_info_account_type";
+// object, 只读(选填), 富状态键值对结果, 当 kTIMResponseInternalOperation 为 kTIMInternalOperationGetRichStatus 时有值
+static const char* kTIMResponseGetRichStatusMap = "response_get_rich_status_map";
 
 #ifdef __cplusplus
 }

@@ -203,6 +203,17 @@ public:
      */
     virtual V2TIMMessage CreateAtSignedGroupMessage(const V2TIMMessage &message, const V2TIMStringVector &atUserList) = 0;
 
+    /**
+     *  2.15 创建引用消息
+     *
+     *  如果您需要发送一条引用了其他消息的消息，可以调用该接口创建引用消息。
+     *
+     *  @param message 原始消息对象，需要通过对应的 CreateXXXMessage 接口进行创建。
+     *  @param quotedMessage 被引用的消息对象
+     *  @return 引用消息对象
+     */
+    virtual V2TIMMessage CreateQuoteMessage(const V2TIMMessage &message, const V2TIMMessage &quotedMessage) = 0;
+
 
     /////////////////////////////////////////////////////////////////////////////////
     //

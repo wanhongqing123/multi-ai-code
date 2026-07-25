@@ -5,7 +5,12 @@ This directory contains the native desktop IM SDK used by the standalone Qt IM a
 Sources:
 
 - macOS: `https://im.sdk.qcloud.com/download/plus/9.0.7652/ImSDKForMac_Plus_9.0.7652.framework.zip`
-- Windows: `https://im.sdk.qcloud.com/download/plus/8.9.7511/cross_platform/ImSDK_Windows_8.9.7511.zip`
+- Windows: `https://im.sdk.qcloud.com/download/plus/9.0.7652/cross_platform/ImSDK_Windows_9.0.7652.zip`
+
+Archive SHA-256:
+
+- macOS 9.0.7652: `6576b1e6f061f0a5a6cad4a915b2ab7d43ae0378a331034bd33055cb74e20945`
+- Windows 9.0.7652: `50deac884989d81d9246fc31d6a5e0ade76899ec64d05c7cf4ba477ddce0efd3`
 
 Runtime defaults:
 

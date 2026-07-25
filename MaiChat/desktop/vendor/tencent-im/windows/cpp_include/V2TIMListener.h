@@ -87,7 +87,7 @@ public:
     /**
      * 实验性事件通知
      */
-    virtual void onExperimentalNotify(const V2TIMString &key, const V2TIMBaseObject &param) {}
+    virtual void onExperimentalNotify(const V2TIMString &key, const V2TIMString &param) {}
 };
 
 /////////////////////////////////////////////////////////////////////////////////

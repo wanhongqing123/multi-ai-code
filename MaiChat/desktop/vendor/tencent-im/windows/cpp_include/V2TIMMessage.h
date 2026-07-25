@@ -293,6 +293,20 @@ struct TIM_API V2TIMOfflinePushInfo {
     ~V2TIMOfflinePushInfo();
 };
 
+/// 消息引用信息
+struct TIM_API V2TIMMessageQuoteInfo {
+    /// 被引用的消息 ID
+    V2TIMString msgID;
+    /// 被引用的消息时间
+    uint64_t messageTime;
+    /// 被引用的消息序号
+    uint64_t messageSequence;
+
+    V2TIMMessageQuoteInfo();
+    V2TIMMessageQuoteInfo(const V2TIMMessageQuoteInfo &);
+    ~V2TIMMessageQuoteInfo();
+};
+
 struct V2TIMElem;
 struct V2TIMTextElem;
 struct V2TIMCustomElem;
@@ -473,6 +487,9 @@ struct TIM_API V2TIMMessage : V2TIMBaseObject {
     /// 消息置顶者 （从 8.0 版本开始支持）
     /// 只有通过 GetPinnedGroupMessageList 获取到的置顶消息才包含该字段
     V2TIMGroupMemberInfo pinnerInfo;
+
+    /// 消息引用信息
+    V2TIMMessageQuoteInfo quoteInfo;
 
     V2TIMMessage();
     V2TIMMessage(const V2TIMMessage &);

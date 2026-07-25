@@ -98,6 +98,10 @@ enum TIMGroupTipType {
     KTIMGroupTip_PinnedMessageAdded,
     // 取消置顶群消息
     KTIMGroupTip_PinnedMessageDeleted,
+    // 成员离线（仅支持直播群）
+    kTIMGroupTip_MemberOffline,
+    // 成员上线（仅支持直播群）
+    kTIMGroupTip_MemberOnline,
 };
 
 // 1.3 群组类型

@@ -184,6 +184,28 @@ function launchMacAppInstance(): void {
   }
 }
 
+// 应用内点击链接不占用当前界面：window.open/target=_blank 与普通 <a> 同窗导航
+// 一律拦下，交给系统默认浏览器打开。仅放行自身地址（开发态 HMR 与生产 file://）。
+function openLinksInSystemBrowser(win: BrowserWindow): void {
+  win.webContents.setWindowOpenHandler((details) => {
+    if (/^https?:/i.test(details.url)) shell.openExternal(details.url)
+    return { action: 'deny' }
+  })
+  win.webContents.on('will-navigate', (event, url) => {
+    if (!/^https?:/i.test(url)) return
+    let sameOrigin = false
+    try {
+      sameOrigin = new URL(url).origin === new URL(win.webContents.getURL()).origin
+    } catch {
+      sameOrigin = false
+    }
+    if (!sameOrigin) {
+      event.preventDefault()
+      shell.openExternal(url)
+    }
+  })
+}
+
 function createWindow(): void {
   const win = new BrowserWindow({
     // 登录阶段是一个小窗口，只装得下登录表单（钉钉/微信式）。登录成功后由
@@ -220,10 +242,7 @@ function createWindow(): void {
     if (mainWindow === win) mainWindow = null
   })
 
-  win.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
-    return { action: 'deny' }
-  })
+  openLinksInSystemBrowser(win)
 
   if (isDev && process.env['ELECTRON_RENDERER_URL']) {
     win.loadURL(process.env['ELECTRON_RENDERER_URL'])
@@ -265,10 +284,7 @@ function createRepoViewWindow(projectId: string, title: string): BrowserWindow {
     repoViewWindows.delete(projectId)
   })
 
-  win.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
-    return { action: 'deny' }
-  })
+  openLinksInSystemBrowser(win)
 
   const search = buildRepoViewSearch(projectId)
   if (isDev && process.env['ELECTRON_RENDERER_URL']) {

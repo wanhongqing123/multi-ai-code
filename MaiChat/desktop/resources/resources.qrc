@@ -1,0 +1,5 @@
+<RCC>
+  <qresource prefix="/maichat">
+    <file alias="app-icon.png">macos/AppIcon-1024.png</file>
+  </qresource>
+</RCC>

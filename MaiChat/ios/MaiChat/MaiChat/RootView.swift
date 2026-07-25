@@ -1,5 +1,6 @@
 import MaiChatCore
 import SwiftUI
+import UIKit
 
 enum AppTab {
     case messages
@@ -58,6 +59,13 @@ struct RootView: View {
 
 private struct InitialLoginView: View {
     @EnvironmentObject private var appState: RemoteIMAppState
+    @FocusState private var isAccountFocused: Bool
+
+    private let loginBlue = Color(
+        red: 47.0 / 255.0,
+        green: 129.0 / 255.0,
+        blue: 247.0 / 255.0
+    )
 
     private var isConnecting: Bool {
         appState.connectionState == .connecting
@@ -69,33 +77,54 @@ private struct InitialLoginView: View {
     }
 
     var body: some View {
-        VStack(spacing: 22) {
-            Spacer(minLength: 24)
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("远程 IM 登录")
-                    .font(.system(size: 28, weight: .bold))
-                    .foregroundStyle(RemoteIMStyle.textPrimary)
-                Text("登录后再进入消息、通讯录和设置。")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(RemoteIMStyle.textSecondary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(spacing: 0) {
+            Spacer(minLength: 32)
 
             VStack(spacing: 12) {
-                LoginField(title: "登录账号", systemImage: "person") {
-                    TextField("输入 IM 账号 ID", text: $appState.masterUserID)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                }
-                FixedCredentialSummary()
+                Image(uiImage: Self.applicationIcon)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .frame(width: 64, height: 64)
+                    .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+
+                Text("欢迎使用 MaiChat")
+                    .font(.system(size: 20, weight: .heavy))
+                    .foregroundStyle(Color(red: 15.0 / 255.0, green: 23.0 / 255.0, blue: 42.0 / 255.0))
             }
+            .multilineTextAlignment(.center)
+            .padding(.bottom, 28)
+
+            TextField("请输入登录账号", text: $appState.masterUserID)
+                .font(.system(size: 15))
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .submitLabel(.go)
+                .focused($isAccountFocused)
+                .padding(.horizontal, 14)
+                .frame(height: 46)
+                .background(Color.white, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(
+                            isAccountFocused
+                                ? loginBlue
+                                : Color(red: 217.0 / 255.0, green: 225.0 / 255.0, blue: 236.0 / 255.0),
+                            lineWidth: isAccountFocused ? 1.5 : 1
+                        )
+                )
+                .onSubmit {
+                    guard canSubmit else { return }
+                    Task { await appState.submitInitialLogin() }
+                }
 
             if let errorMessage = appState.errorMessage {
                 Text(errorMessage)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(.red)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 12)
             }
 
             Button {
@@ -106,85 +135,42 @@ private struct InitialLoginView: View {
                         ProgressView()
                             .tint(.white)
                     }
-                    Text(appState.connectionState == .connecting ? "连接中..." : "登录并进入")
-                        .font(.system(size: 16, weight: .bold))
+                    Text(appState.connectionState == .connecting ? "登录中..." : "登录")
+                        .font(.system(size: 15, weight: .heavy))
                 }
                 .frame(maxWidth: .infinity)
-                .frame(height: 48)
-                .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .frame(height: 46)
+                .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
             .buttonStyle(.plain)
-            .foregroundStyle(.white)
+            .foregroundStyle(canSubmit ? Color.white : Color(red: 170.0 / 255.0, green: 180.0 / 255.0, blue: 195.0 / 255.0))
             .background(
-                canSubmit ? RemoteIMStyle.blue : Color(red: 0.69, green: 0.82, blue: 0.91),
-                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                canSubmit
+                    ? loginBlue
+                    : Color(red: 238.0 / 255.0, green: 241.0 / 255.0, blue: 245.0 / 255.0),
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
             )
             .disabled(!canSubmit)
+            .padding(.top, 16)
 
-            Spacer(minLength: 16)
+            Spacer(minLength: 32)
         }
         .padding(.horizontal, 28)
-        .background(RemoteIMStyle.pageBackground.ignoresSafeArea())
+        .frame(maxWidth: 420)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.white.ignoresSafeArea())
     }
-}
 
-private struct FixedCredentialSummary: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label("基础 IM 配置", systemImage: "lock.shield")
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(RemoteIMStyle.textSecondary)
-            HStack {
-                Text("通信配置")
-                    .foregroundStyle(RemoteIMStyle.textSecondary)
-                Spacer()
-                Text("内置")
-                    .fontWeight(.bold)
-            }
-            HStack {
-                Text("连接凭证")
-                    .foregroundStyle(RemoteIMStyle.textSecondary)
-                Spacer()
-                Text("内置")
-                    .fontWeight(.bold)
-            }
+    private static var applicationIcon: UIImage {
+        guard let icons = Bundle.main.object(forInfoDictionaryKey: "CFBundleIcons") as? [String: Any],
+              let primaryIcon = icons["CFBundlePrimaryIcon"] as? [String: Any],
+              let iconFiles = primaryIcon["CFBundleIconFiles"] as? [String],
+              let iconFile = iconFiles.last,
+              let image = UIImage(named: iconFile)
+        else {
+            return UIImage()
         }
-        .font(.system(size: 15))
-        .padding(12)
-        .background(Color.white, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(RemoteIMStyle.border, lineWidth: 1)
-        )
-    }
-}
-
-private struct LoginField<Content: View>: View {
-    let title: String
-    let systemImage: String
-    private let content: Content
-
-    init(title: String, systemImage: String, @ViewBuilder content: () -> Content) {
-        self.title = title
-        self.systemImage = systemImage
-        self.content = content()
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Label(title, systemImage: systemImage)
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(RemoteIMStyle.textSecondary)
-            content
-                .font(.system(size: 15))
-                .padding(.horizontal, 12)
-                .frame(height: 44)
-                .background(Color.white, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .stroke(RemoteIMStyle.border, lineWidth: 1)
-                )
-        }
+        return image
     }
 }
 

@@ -1,7 +1,7 @@
 #include "ui/LoginDialog.h"
 
-#include <QHBoxLayout>
 #include <QLabel>
+#include <QPixmap>
 #include <QProcessEnvironment>
 #include <QVBoxLayout>
 
@@ -20,6 +20,7 @@ QString envValue(const QString& name) {
 }  // namespace
 
 LoginDialog::LoginDialog(QWidget* parent) : QDialog(parent) {
+    Q_INIT_RESOURCE(resources);
     buildUi();
     applyStyle();
     updateLoginButton();
@@ -35,57 +36,54 @@ void LoginDialog::setUserId(const QString& userId) {
 }
 
 void LoginDialog::buildUi() {
-    setWindowTitle(QStringLiteral("远程 IM 登录"));
+    setWindowTitle(QStringLiteral("MaiChat"));
     setModal(true);
-    setMinimumSize(860, 520);
+    setMinimumSize(720, 480);
     resize(920, 560);
 
-    auto* rootLayout = new QHBoxLayout(this);
-    rootLayout->setContentsMargins(0, 0, 0, 0);
+    auto* rootLayout = new QVBoxLayout(this);
+    rootLayout->setContentsMargins(32, 32, 32, 32);
     rootLayout->setSpacing(0);
+    rootLayout->addStretch(1);
 
-    auto* introPane = new QWidget(this);
-    introPane->setObjectName(QStringLiteral("introPane"));
-    introPane->setMinimumWidth(330);
-    auto* introLayout = new QVBoxLayout(introPane);
-    introLayout->setContentsMargins(42, 44, 34, 44);
-    introLayout->setSpacing(0);
-    introLayout->addStretch(1);
+    auto* loginPanel = new QWidget(this);
+    loginPanel->setObjectName(QStringLiteral("loginPanel"));
+    loginPanel->setFixedWidth(420);
+    auto* loginLayout = new QVBoxLayout(loginPanel);
+    loginLayout->setContentsMargins(0, 0, 0, 0);
+    loginLayout->setSpacing(0);
 
-    auto* title = makeTextLabel(QStringLiteral("远程 IM 登录"), QStringLiteral("loginTitle"), this);
-    auto* subtitle = makeTextLabel(QStringLiteral("登录后再进入消息、通讯录和设置。"), QStringLiteral("loginSubtitle"), this);
+    auto* logo = makeTextLabel(QString(), QStringLiteral("loginLogo"), loginPanel);
+    logo->setAlignment(Qt::AlignCenter);
+    logo->setFixedSize(64, 64);
+    const QPixmap appIcon(QStringLiteral(":/maichat/app-icon.png"));
+    logo->setPixmap(appIcon.scaled(64, 64, Qt::KeepAspectRatio, Qt::SmoothTransformation));
 
-    introLayout->addWidget(title);
-    introLayout->addSpacing(10);
-    introLayout->addWidget(subtitle);
-    introLayout->addStretch(2);
+    auto* title = makeTextLabel(QStringLiteral("欢迎使用 MaiChat"), QStringLiteral("welcomeTitle"), loginPanel);
+    title->setAlignment(Qt::AlignCenter);
 
-    auto* formPane = new QWidget(this);
-    formPane->setObjectName(QStringLiteral("formPane"));
-    auto* formLayout = new QVBoxLayout(formPane);
-    formLayout->setContentsMargins(48, 42, 48, 42);
-    formLayout->setSpacing(0);
-    formLayout->addStretch(1);
+    loginLayout->addWidget(logo, 0, Qt::AlignHCenter);
+    loginLayout->addSpacing(12);
+    loginLayout->addWidget(title);
+    loginLayout->addSpacing(28);
 
-    auto* accountLabel = makeTextLabel(QStringLiteral("登录账号"), QStringLiteral("fieldLabel"), this);
-    userIdInput_ = new QLineEdit(this);
+    userIdInput_ = new QLineEdit(loginPanel);
     userIdInput_->setObjectName(QStringLiteral("userIdInput"));
-    userIdInput_->setPlaceholderText(QStringLiteral("输入 IM 账号 ID"));
+    userIdInput_->setPlaceholderText(QStringLiteral("请输入登录账号"));
     userIdInput_->setClearButtonEnabled(true);
-    formLayout->addWidget(accountLabel);
-    formLayout->addSpacing(9);
-    formLayout->addWidget(userIdInput_);
-    formLayout->addSpacing(26);
+    userIdInput_->setFixedHeight(46);
+    loginLayout->addWidget(userIdInput_);
+    loginLayout->addSpacing(16);
 
-    loginButton_ = new QPushButton(QStringLiteral("登录并进入"), this);
+    loginButton_ = new QPushButton(QStringLiteral("登录"), loginPanel);
     loginButton_->setObjectName(QStringLiteral("loginButton"));
     loginButton_->setCursor(Qt::PointingHandCursor);
-    formLayout->addWidget(loginButton_);
+    loginButton_->setDefault(true);
+    loginButton_->setFixedHeight(46);
+    loginLayout->addWidget(loginButton_);
 
-    formLayout->addStretch(1);
-
-    rootLayout->addWidget(introPane, 3);
-    rootLayout->addWidget(formPane, 4);
+    rootLayout->addWidget(loginPanel, 0, Qt::AlignHCenter);
+    rootLayout->addStretch(1);
 
     userIdInput_->setText(envValue(QStringLiteral("MAICHAT_USER_ID")));
 
@@ -98,58 +96,52 @@ void LoginDialog::buildUi() {
 void LoginDialog::applyStyle() {
     setStyleSheet(QStringLiteral(R"(
         LoginDialog {
-            background: #f6f9fc;
-        }
-        #introPane {
-            background: #f6f9fc;
-            border-right: 1px solid #d8e2f0;
-        }
-        #formPane {
             background: #ffffff;
         }
-        #loginTitle {
-            color: #0e1628;
-            font-size: 32px;
-            font-weight: 800;
+        #loginPanel {
+            background: transparent;
         }
-        #loginSubtitle {
-            color: #66758c;
-            font-size: 15px;
-            font-weight: 700;
+        #loginLogo {
+            background: transparent;
         }
-        #fieldLabel, #credentialHeader {
-            color: #66758c;
-            font-size: 15px;
+        #welcomeTitle {
+            color: #0f172a;
+            font-size: 20px;
             font-weight: 800;
         }
         #userIdInput {
-            min-height: 52px;
-            border: 1px solid #d8e2f0;
+            border: 1px solid #d9e1ec;
             border-radius: 10px;
             background: #ffffff;
-            color: #101828;
+            color: #0f172a;
             padding: 0 14px;
-            font-size: 17px;
+            font-size: 14px;
+            selection-background-color: #2f81f7;
         }
         #userIdInput:focus {
-            border-color: #9ad7ff;
-            background: #ffffff;
+            border: 2px solid #2f81f7;
         }
         #loginButton {
-            min-height: 56px;
             border: 0;
-            border-radius: 11px;
+            border-radius: 10px;
+            background: #2f81f7;
             color: #ffffff;
-            font-size: 17px;
+            font-size: 15px;
             font-weight: 800;
+        }
+        #loginButton:hover {
+            background: #256fe0;
+        }
+        #loginButton:pressed {
+            background: #1f63cf;
+        }
+        #loginButton:disabled {
+            background: #eef1f5;
+            color: #aab4c3;
         }
     )"));
 }
 
 void LoginDialog::updateLoginButton() {
-    const bool canSubmit = !userId().isEmpty();
-    loginButton_->setEnabled(canSubmit);
-    loginButton_->setStyleSheet(canSubmit
-                                    ? QStringLiteral("#loginButton { background: #0f8dde; color: #ffffff; } #loginButton:hover { background: #087fc9; }")
-                                    : QStringLiteral("#loginButton { background: #acd2ea; color: #e8f4fb; }"));
+    loginButton_->setEnabled(!userId().isEmpty());
 }

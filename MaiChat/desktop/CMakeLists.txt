@@ -5,6 +5,7 @@ project(MaiChatDesktop VERSION 0.1.4 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTORCC ON)
 
 option(MAICHAT_USE_FAKE_CLIENT "Use the fake IM client for desktop UI development" OFF)
 
@@ -59,6 +60,7 @@ target_include_directories(remote_im_desktop_app PUBLIC src)
 target_link_libraries(remote_im_desktop_app PUBLIC remote_im_core)
 
 add_library(remote_im_desktop_ui
+  resources/resources.qrc
   src/ui/AddContactDialog.h
   src/ui/AddContactDialog.cpp
   src/ui/LoginDialog.h

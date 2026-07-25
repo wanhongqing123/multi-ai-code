@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { CanvasAddon } from '@xterm/addon-canvas'
+import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
 import { getTheme, THEME_CHANGE_EVENT, type Theme } from '../utils/theme.js'
 import {
@@ -74,6 +75,11 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
     const search = new SearchAddon()
     term.loadAddon(fit)
     term.loadAddon(search)
+    // TUI 里的 URL 识别为可点链接；window.open 会被主进程拦截转交系统默认浏览器，
+    // 当前界面不受影响。
+    term.loadAddon(new WebLinksAddon((_event, uri) => {
+      window.open(uri, '_blank')
+    }))
     searchRef.current = search
     term.open(containerRef.current)
     stretchTerminalRootToHost(containerRef.current)

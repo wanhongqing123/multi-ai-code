@@ -1922,22 +1922,23 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
     bubbleLayout->setContentsMargins(14, 11, 14, 12);
     bubbleLayout->setSpacing(7);
 
+    // meta 行（作者/好友徽章/时间）放在气泡外部上方（飞书式），不与正文混在同一气泡里。
     auto* metaRow = new QHBoxLayout();
-    metaRow->setContentsMargins(0, 0, 0, 0);
+    metaRow->setContentsMargins(6, 0, 6, 0);
     metaRow->setSpacing(8);
-    auto* authorLabel = new QLabel(message.fromUserId, bubble);
+    auto* authorLabel = new QLabel(message.fromUserId, row);
     authorLabel->setObjectName(QStringLiteral("messageAuthorLabel"));
-    auto* timeLabel = new QLabel(messageTimeText(message), bubble);
+    auto* timeLabel = new QLabel(messageTimeText(message), row);
     timeLabel->setObjectName(QStringLiteral("messageTimeLabel"));
+    if (outgoing) metaRow->addStretch(1);
     metaRow->addWidget(authorLabel);
     if (!outgoing) {
-        auto* relationLabel = new QLabel(QStringLiteral("好友"), bubble);
+        auto* relationLabel = new QLabel(QStringLiteral("好友"), row);
         relationLabel->setObjectName(QStringLiteral("messageRelationBadge"));
         metaRow->addWidget(relationLabel);
     }
     metaRow->addWidget(timeLabel);
-    metaRow->addStretch(1);
-    bubbleLayout->addLayout(metaRow);
+    if (!outgoing) metaRow->addStretch(1);
 
     auto* contentRow = new QHBoxLayout();
     contentRow->setContentsMargins(0, 0, 0, 0);
@@ -2094,7 +2095,8 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
     }
     // meta 行对齐 Electron 端 .remote-im-message-meta：作者 #334155/700、
     // 时间 #94a3b8、好友徽章 #ecfdf5 底 #047857 字 11px 胶囊。
-    bubble->setStyleSheet(bubble->styleSheet() + UiZoom::scaleQss(QStringLiteral(R"(
+    // 样式挂在 row 上（meta 已移出气泡，不再随气泡背景）。
+    row->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
         #messageAuthorLabel {
             color: #334155;
             font-size: 13px;
@@ -2118,9 +2120,16 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
         }
     )")));
 
+    // meta 在上、气泡在下的纵向列；随消息方向靠左/靠右。
+    auto* column = new QVBoxLayout();
+    column->setContentsMargins(0, 0, 0, 0);
+    column->setSpacing(6);
+    column->addLayout(metaRow);
+    column->addWidget(bubble, 0, outgoing ? Qt::AlignRight : Qt::AlignLeft);
+
     if (outgoing) rowLayout->addSpacing(42);
     if (outgoing) rowLayout->addStretch(1);
-    rowLayout->addWidget(bubble);
+    rowLayout->addLayout(column);
     if (!outgoing) {
         rowLayout->addStretch(1);
         rowLayout->addSpacing(42);

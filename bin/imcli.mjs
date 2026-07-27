@@ -15,11 +15,27 @@ Usage:
   imcli contacts [--project <projectId>]
   imcli history [--peer <user>] [--limit <n>] [--project <projectId>]
   imcli last [--peer <user>] [--project <projectId>]
-  imcli send <user> <text> [--project <projectId>]
+  imcli send <user> <text | -> [--project <projectId>]
   imcli send-image <user> <imagePath> [--project <projectId>]
   imcli send-file <user> <filePath> [--project <projectId>]
   imcli forward <user> --message-id <id> [--project <projectId>]
-  imcli broadcast <user1,user2> <text> [--project <projectId>]
+  imcli broadcast <user1,user2> <text | -> [--project <projectId>]
+
+Multi-line text — READ THIS FIRST (prevents silent truncation):
+  On Windows, imcli runs through a .cmd batch wrapper parsed by cmd.exe, and cmd.exe
+  stops parsing arguments at the first real newline. A multi-line <text> argument is
+  therefore SILENTLY cut down to its first line — the command still prints
+  "sent to <user>" even though the body was lost before imcli ever saw it.
+  Safe patterns for send/broadcast, pick one:
+    1. Write literal \\n inside a single-line argument; imcli expands it to newlines:
+         imcli send phone-user "标题\\n第二行\\n第三行"
+    2. Pass - as <text> and pipe the body via stdin (newlines always survive pipes):
+         type msg.txt | imcli send phone-user -                 (cmd)
+         Get-Content msg.txt -Raw | imcli send phone-user -     (PowerShell)
+         imcli send phone-user - < msg.txt                      (bash)
+    3. Long reports: save as .md/.html and use imcli send-file instead of send.
+  After sending an important multi-line message, run imcli history and confirm the
+  stored content is complete — "sent to <user>" alone does not guarantee integrity.
 
 Command details:
   imcli whoami
@@ -45,10 +61,21 @@ Command details:
     Use --peer <user> to avoid reading the wrong conversation.
     If no AICLI reply exists, it falls back to the last message in the selected history window.
 
-  imcli send <user> <text>
+  imcli send <user> <text | ->
     Send a plain text IM message to one user.
-    Use quotes around multi-line or spaced text in shell commands.
+    IMPORTANT: multi-line text passed as a command-line argument is silently cut at the
+    first newline on Windows (the imcli.cmd batch wrapper cannot carry newlines in argv).
+    For multi-line text, write literal \\n inside a single-line argument; imcli expands
+    it to real newlines (only when the argument contains no real newline):
+      imcli send phone-user "标题\\n第二行\\n第三行"
+    If the text must keep a literal \\n (e.g. a Windows path like C:\\new), or is long,
+    pass - as <text> and pipe the body via stdin instead:
+      cmd:        type msg.txt | imcli send phone-user -
+      PowerShell: Get-Content msg.txt -Raw | imcli send phone-user -
+      bash:       imcli send phone-user - < msg.txt
     Use this for short text answers. For long Markdown/HTML reports, prefer send-file.
+    After sending important multi-line text, verify with imcli history that the stored
+    content is complete ("sent to <user>" only means the command reached the bridge).
     The command repairs common GBK/UTF-8 mojibake before sending.
 
   imcli send-image <user> <imagePath>
@@ -69,8 +96,9 @@ Command details:
     First run imcli history to find the numeric #<id>.
     This is for forwarding text already stored in the local Remote IM history.
 
-  imcli broadcast <user1,user2> <text>
+  imcli broadcast <user1,user2> <text | ->
     Send the same plain text message to multiple comma-separated users.
+    Pass - as <text> to read a multi-line body from stdin (same rule as imcli send).
     This is text-only. Use send-image or send-file separately for attachments.
     The command prints one sent line per target.
 
@@ -92,6 +120,7 @@ Examples:
   imcli contacts --project project-1
   imcli history --peer phone-user --limit 20 --project project-1
   imcli send phone-user "build passed" --project project-1
+  type msg.txt | imcli send phone-user - --project project-1
   imcli send-image phone-user C:\\temp\\screenshot.png --project project-1
   imcli send-file phone-user ./report.md --project project-1
   imcli broadcast phone-user,desktop-b "ready" --project project-1
@@ -196,6 +225,30 @@ function normalizeOutgoingText(text) {
   return repairLikelyUtf8DecodedAsGbk(text.trim())
 }
 
+async function readTextFromStdin() {
+  const chunks = []
+  for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk))
+  return Buffer.concat(chunks).toString('utf8')
+}
+
+// 参数通道的多行兼容：调用方在单行参数里写字面量 \n，imcli 展开成真实换行。
+// 仅当文本不含真实换行时才展开——含真实换行说明通道本身没截断问题，此时文本里的
+// \n 更可能是字面内容（如 Windows 路径 C:\new），保持原样。
+function expandEscapedNewlines(text) {
+  if (text.includes('\n')) return text
+  return text.replace(/\\n/g, '\n')
+}
+
+// `-` 独占文本参数时从 stdin 读取正文。Windows 上 imcli 经 imcli.cmd（批处理）转发，
+// cmd.exe 的命令行解析在第一个真实换行处终止——多行文本作为参数传入会被静默截断成
+// 首行；stdin 管道不经过 cmd 的参数解析，是多行文本最可靠的通道。
+async function resolveOutgoingText(textParts) {
+  if (textParts.length === 1 && textParts[0] === '-') {
+    return normalizeOutgoingText(await readTextFromStdin())
+  }
+  return expandEscapedNewlines(normalizeOutgoingText(textParts.join(' ')))
+}
+
 async function requestJson(method, path, body) {
   const bridge = await loadBridge()
   const response = await fetch(`${bridge.url}${path}`, {
@@ -279,8 +332,8 @@ async function main(argv) {
 
   if (command === 'send') {
     const [toUserId, ...textParts] = args
-    const text = normalizeOutgoingText(textParts.join(' '))
-    if (!toUserId || !text) throw new Error('usage: imcli send <user> <text>')
+    const text = await resolveOutgoingText(textParts)
+    if (!toUserId || !text) throw new Error('usage: imcli send <user> <text | ->')
     const value = await requestJson('POST', '/send', { projectId, toUserId, text })
     console.log(`sent to ${value.toUserId}`)
     return
@@ -306,8 +359,8 @@ async function main(argv) {
 
   if (command === 'broadcast') {
     const [targets, ...textParts] = args
-    const text = normalizeOutgoingText(textParts.join(' '))
-    if (!targets || !text) throw new Error('usage: imcli broadcast <user1,user2> <text>')
+    const text = await resolveOutgoingText(textParts)
+    if (!targets || !text) throw new Error('usage: imcli broadcast <user1,user2> <text | ->')
     for (const toUserId of targets.split(',').map((item) => item.trim()).filter(Boolean)) {
       const value = await requestJson('POST', '/send', { projectId, toUserId, text })
       console.log(`sent to ${value.toUserId}`)

@@ -204,6 +204,44 @@ describe('remote IM reply protocol', () => {
     })
   })
 
+  it('survives a redraw-split prompt echo without forwarding "Closing marker:" fragments', () => {
+    // Incident replay: a TUI redraw split the echoed "Opening marker: <tag>" line so the
+    // bare tag landed at a line start. The old indexOf close detection then matched the
+    // echoed "Closing marker: </tag>" line, forwarded the literal text "Closing marker:"
+    // and dropped the real reply via forwardedReplyId dedupe.
+    const output = [
+      '[IM_REPLY] Put final Markdown for IM between these exact markers, each on its own line in your reply:',
+      'Opening marker: ',
+      '<remote-im-reply id="rim-incident">',
+      'Closing marker: </remote-im-reply id="rim-incident">',
+      'Text outside markers is ignored.',
+      'terminal noise',
+      '<remote-im-reply id="rim-incident">',
+      '真实回复内容',
+      '</remote-im-reply id="rim-incident">'
+    ].join('\n')
+
+    expect(extractRemoteImReplyOutput(output, { replyId: 'rim-incident' })).toEqual({
+      content: '真实回复内容',
+      pending: false,
+      nextBuffer: ''
+    })
+  })
+
+  it('ignores intact echoed marker instruction lines even when a reply never arrives', () => {
+    const output = [
+      'Opening marker: <remote-im-reply id="rim-incident">',
+      'Closing marker: </remote-im-reply id="rim-incident">',
+      'Text outside markers is ignored.'
+    ].join('\n')
+
+    expect(extractRemoteImReplyOutput(output, { replyId: 'rim-incident' })).toEqual({
+      content: '',
+      pending: false,
+      nextBuffer: ''
+    })
+  })
+
   it('drops untagged output instead of forwarding terminal UI noise', () => {
     expect(extractRemoteImReplyOutput('Assistant text.│AddedCLAUDE_CODE_DISABLE_MOUSE_CLICKS')).toEqual({
       content: '',

@@ -100,6 +100,18 @@ function markerCandidateText(line: string): string {
   return line.trimStart().replace(/^[\u23fa\u25CF\u2022]\s*/, '').trimStart()
 }
 
+// The injected prompt echoes "Opening marker: <tag>" / "Closing marker: </tag>" lines back
+// through the TUI. A terminal redraw can split such a line so the bare tag lands at a line
+// start and false-opens a reply; the indexOf-based close detection then matches the example
+// close tag on the next echoed line, forwarding a "Closing marker:" fragment while the real
+// reply gets dropped by forwardedReplyId dedupe. Skip these lines entirely: they never
+// open/close a reply and never count as reply content.
+const PROMPT_MARKER_INSTRUCTION_LINE_RE = /^(?:Opening|Closing)\s+marker\s*[:\uff1a]/i
+
+function isPromptMarkerInstructionLine(line: string): boolean {
+  return PROMPT_MARKER_INSTRUCTION_LINE_RE.test(markerCandidateText(line))
+}
+
 function stripExpectedOpenMarker(line: string, replyId: string): string | null {
   const text = markerCandidateText(line)
   const exact = buildRemoteImReplyOpenTag(replyId)
@@ -137,6 +149,7 @@ function extractExpectedRemoteImReply(clean: string, replyId: string): RemoteImR
   let pending = false
 
   for (const line of clean.split('\n')) {
+    if (isPromptMarkerInstructionLine(line)) continue
     const openingRemainder = stripExpectedOpenMarker(line, replyId)
     if (openingRemainder !== null) {
       pending = true
@@ -180,7 +193,7 @@ export function buildRemoteImAicliPrompt(input: RemoteImAicliPromptInput): strin
     `[来自远程 IM：${input.fromUserId.trim()}]`,
     input.text,
     '',
-    '如果需要查询或操作 IM，请先运行 imcli help；如需把截图或本地图片发回 IM，可保存为 png/jpg/webp/gif 文件后使用 imcli send-image <user> <imagePath>；如需发送 Markdown/HTML 报告文件，使用 imcli send-file <user> <filePath>。',
+    '如果需要查询或操作 IM，请先运行 imcli help；如需把截图或本地图片发回 IM，可保存为 png/jpg/webp/gif 文件后使用 imcli send-image <user> <imagePath>；如需发送 Markdown/HTML 报告文件，使用 imcli send-file <user> <filePath>；多行文本不要把真实换行直接写进 imcli send 的命令行参数（Windows 下会在第一个换行处被截断），可在单行参数里写字面量 \\n（imcli 会展开为换行），或改用 stdin 管道：imcli send <user> -。',
     '[IM_REPLY] Put final Markdown for IM between these exact markers, each on its own line in your reply:',
     `Opening marker: ${buildRemoteImReplyOpenTag(replyId)}`,
     `Closing marker: ${buildRemoteImReplyCloseTag(replyId)}`,
@@ -205,6 +218,7 @@ export function extractRemoteImReplyOutput(
   let pending = false
 
   for (const line of clean.split('\n')) {
+    if (isPromptMarkerInstructionLine(line)) continue
     const tag = parseTagLine(line)
     if (tag?.kind === 'open') {
       if (matchesExpectedReplyId(tag, expectedReplyId)) {

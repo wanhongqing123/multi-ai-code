@@ -2184,10 +2184,16 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
                 openImagePreview(path);
             }, bubble);
             imageLabel->setObjectName(QStringLiteral("messageImageLabel"));
-            const QPixmap thumbnail = pixmap.scaled(QSize(UiZoom::s(280), UiZoom::s(200)), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            // 高分屏（DPR>1）按物理分辨率缩放并声明 DPR，否则缩略图被绘制层二次放大而发虚；
+            // 控件尺寸用逻辑值（物理尺寸 / DPR）。
+            const qreal thumbDpr = imageLabel->devicePixelRatioF();
+            QPixmap thumbnail = pixmap.scaled(
+                (QSizeF(UiZoom::s(280), UiZoom::s(200)) * thumbDpr).toSize(),
+                Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            thumbnail.setDevicePixelRatio(thumbDpr);
             imageLabel->setPixmap(thumbnail);
             imageLabel->setAlignment(Qt::AlignCenter);
-            imageLabel->setMinimumSize(thumbnail.size());
+            imageLabel->setMinimumSize((QSizeF(thumbnail.size()) / thumbDpr).toSize());
             // 右键菜单（飞书式）：复制图片 / 预览 / 保存到本地。
             imageLabel->setContextMenuPolicy(Qt::CustomContextMenu);
             connect(imageLabel, &QLabel::customContextMenuRequested, this,

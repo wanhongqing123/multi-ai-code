@@ -57,7 +57,13 @@ void LoginDialog::buildUi() {
     logo->setAlignment(Qt::AlignCenter);
     logo->setFixedSize(64, 64);
     const QPixmap appIcon(QStringLiteral(":/maichat/app-icon.png"));
-    logo->setPixmap(appIcon.scaled(64, 64, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    // 高分屏（DPR>1）按物理分辨率缩放并声明 DPR，否则 64 逻辑像素的位图会被
+    // 绘制层再放大一次，logo 发虚（源图 1024px，分辨率充足）。
+    const qreal logoDpr = devicePixelRatioF();
+    QPixmap logoPixmap = appIcon.scaled(QSize(64, 64) * logoDpr,
+                                        Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    logoPixmap.setDevicePixelRatio(logoDpr);
+    logo->setPixmap(logoPixmap);
 
     auto* title = makeTextLabel(QStringLiteral("欢迎使用 MaiChat"), QStringLiteral("welcomeTitle"), loginPanel);
     title->setAlignment(Qt::AlignCenter);

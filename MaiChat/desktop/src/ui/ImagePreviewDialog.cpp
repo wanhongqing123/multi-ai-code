@@ -46,6 +46,11 @@ void ImagePreviewDialog::updateImage() {
         imageLabel_->setText(QStringLiteral("图片无法加载"));
         return;
     }
-    imageLabel_->setPixmap(image_.scaled(imageLabel_->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    // 高分屏（DPR>1）按物理分辨率缩放并声明 DPR，否则预览图被绘制层二次放大而发虚。
+    const qreal dpr = devicePixelRatioF();
+    QPixmap scaled = image_.scaled((QSizeF(imageLabel_->size()) * dpr).toSize(),
+                                   Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    scaled.setDevicePixelRatio(dpr);
+    imageLabel_->setPixmap(scaled);
 }
 

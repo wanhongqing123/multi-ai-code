@@ -243,10 +243,16 @@ void requestAvatarPixmap(const QString& avatarUrl, QWidget* repaintTarget) {
 
 void drawAvatarPixmap(QPainter* painter, const QRectF& target, const QPixmap& source, qreal radius) {
     if (!painter || source.isNull()) return;
-    const QPixmap scaled = source.scaled(target.size().toSize(), Qt::KeepAspectRatioByExpanding,
-                                         Qt::SmoothTransformation);
-    const QPointF topLeft(target.center().x() - scaled.width() / 2.0,
-                          target.center().y() - scaled.height() / 2.0);
+    // 高分屏（DPR>1）下必须按物理分辨率缩放并声明 devicePixelRatio：
+    // 按逻辑尺寸缩放的位图会被绘制层再放大一次，头像整体发虚。
+    // 文字与 QSS 是矢量渲染不受影响，位图需要自己处理。
+    const qreal dpr = painter->device() ? painter->device()->devicePixelRatioF() : 1.0;
+    QPixmap scaled = source.scaled((target.size() * dpr).toSize(),
+                                   Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+    scaled.setDevicePixelRatio(dpr);
+    const QSizeF logicalSize = QSizeF(scaled.size()) / dpr;
+    const QPointF topLeft(target.center().x() - logicalSize.width() / 2.0,
+                          target.center().y() - logicalSize.height() / 2.0);
     QPainterPath clip;
     clip.addRoundedRect(target, radius, radius);
     painter->save();

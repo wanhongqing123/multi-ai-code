@@ -183,6 +183,61 @@ QString avatarMonogram(const QString& displayName, const QString& userId) {
     return (hasNonAscii ? source.right(2) : source.left(2)).toUpper();
 }
 
+// 白色 monogram 字母压在深色头像块上时，ClearType 亚像素渲染的粉/青彩边在
+// 纯色底上非常显眼，小字号下字形显脏（QFont::NoSubpixelAntialias 在 Windows
+// 字体引擎上并不可靠）。整块头像改为离屏生成：文字走 QPainterPath 填充
+// （纯灰度抗锯齿），按 DPR 物理分辨率渲染并缓存，导航/列表/消息区共用。
+QPixmap monogramAvatarPixmap(const QString& text,
+                             int logicalSize,
+                             qreal radius,
+                             const QColor& gradientFrom,
+                             const QColor& gradientTo,
+                             int fontPixelSize,
+                             qreal dpr) {
+    const QString key = QStringLiteral("monogram:%1:%2:%3:%4:%5:%6:%7")
+                            .arg(text)
+                            .arg(logicalSize)
+                            .arg(radius)
+                            .arg(gradientFrom.name())
+                            .arg(gradientTo.name())
+                            .arg(fontPixelSize)
+                            .arg(dpr);
+    static QHash<QString, QPixmap> cache;
+    const auto found = cache.constFind(key);
+    if (found != cache.cend()) return found.value();
+
+    const int physical = qMax(1, qRound(logicalSize * dpr));
+    QPixmap pixmap(physical, physical);
+    pixmap.setDevicePixelRatio(dpr);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    QLinearGradient gradient(0, 0, logicalSize, logicalSize);
+    gradient.setColorAt(0, gradientFrom);
+    gradient.setColorAt(1, gradientTo);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(gradient);
+    painter.drawRoundedRect(QRectF(0, 0, logicalSize, logicalSize), radius, radius);
+
+    QFont font = QApplication::font();
+    font.setPixelSize(fontPixelSize);
+    font.setBold(true);
+    const QFontMetricsF metrics(font);
+    QPainterPath textPath;
+    textPath.addText((logicalSize - metrics.horizontalAdvance(text)) / 2.0,
+                     (logicalSize + metrics.ascent() - metrics.descent()) / 2.0,
+                     font, text);
+    painter.fillPath(textPath, Qt::white);
+    painter.end();
+    cache.insert(key, pixmap);
+    return pixmap;
+}
+
+const QColor kBrandGradientFrom(0x5b, 0x9b, 0xff);
+const QColor kBrandGradientTo(0x1e, 0x40, 0xaf);
+const QColor kPeerGradientFrom(0x2d, 0xd4, 0xbf);
+const QColor kPeerGradientTo(0x0f, 0x76, 0x6e);
+
 QHash<QString, QPixmap>& avatarPixmapCache() {
     static QHash<QString, QPixmap> cache;
     return cache;
@@ -278,24 +333,30 @@ bool drawRemoteAvatar(QPainter* painter,
 
 class MessageAvatarLabel final : public QLabel {
 public:
-    explicit MessageAvatarLabel(QString avatarUrl, QWidget* parent)
-        : QLabel(parent), avatarUrl_(std::move(avatarUrl)) {}
+    MessageAvatarLabel(QString avatarUrl, bool outgoing, QWidget* parent)
+        : QLabel(parent), avatarUrl_(std::move(avatarUrl)), outgoing_(outgoing) {}
 
 protected:
-    void paintEvent(QPaintEvent* event) override {
-        const auto cached = avatarPixmapCache().constFind(avatarUrl_);
-        if (cached == avatarPixmapCache().cend()) {
-            QLabel::paintEvent(event);
-            requestAvatarPixmap(avatarUrl_, this);
-            return;
-        }
+    void paintEvent(QPaintEvent*) override {
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing, true);
-        drawAvatarPixmap(&painter, rect(), cached.value(), UiZoom::s(10));
+        const auto cached = avatarPixmapCache().constFind(avatarUrl_);
+        if (cached != avatarPixmapCache().cend()) {
+            drawAvatarPixmap(&painter, rect(), cached.value(), UiZoom::s(10));
+            return;
+        }
+        // 头像未下载（或没有头像）时显示生成的 monogram 块。
+        painter.drawPixmap(0, 0,
+                           monogramAvatarPixmap(text(), width(), UiZoom::s(10),
+                                                outgoing_ ? kBrandGradientFrom : kPeerGradientFrom,
+                                                outgoing_ ? kBrandGradientTo : kPeerGradientTo,
+                                                UiZoom::s(12), devicePixelRatioF()));
+        requestAvatarPixmap(avatarUrl_, this);
     }
 
 private:
     QString avatarUrl_;
+    bool outgoing_ = false;
 };
 
 QLabel* createMessageAvatarLabel(const QString& userId,
@@ -303,7 +364,7 @@ QLabel* createMessageAvatarLabel(const QString& userId,
                                  const QString& avatarUrl,
                                  bool outgoing,
                                  QWidget* parent) {
-    auto* avatar = new MessageAvatarLabel(avatarUrl.trimmed(), parent);
+    auto* avatar = new MessageAvatarLabel(avatarUrl.trimmed(), outgoing, parent);
     avatar->setText(avatarMonogram(displayName, userId));
     avatar->setObjectName(outgoing ? QStringLiteral("messageAvatarOutgoing")
                                    : QStringLiteral("messageAvatarIncoming"));
@@ -316,29 +377,8 @@ QLabel* createMessageAvatarLabel(const QString& userId,
                            ? userId
                            : QStringLiteral("%1 (%2)").arg(displayName, userId));
     avatar->setAccessibleName(QStringLiteral("%1 的头像").arg(displayName.isEmpty() ? userId : displayName));
-    avatar->setStyleSheet(UiZoom::scaleQss(outgoing
-        ? QStringLiteral(R"(
-            QLabel#messageAvatarOutgoing {
-                color: #ffffff;
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                                             stop:0 #5b9bff, stop:1 #1e40af);
-                border: 1px solid #dbeafe;
-                border-radius: 10px;
-                font-size: 12px;
-                font-weight: 800;
-            }
-        )")
-        : QStringLiteral(R"(
-            QLabel#messageAvatarIncoming {
-                color: #ffffff;
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                                             stop:0 #2dd4bf, stop:1 #0f766e);
-                border: 1px solid #ccfbf1;
-                border-radius: 10px;
-                font-size: 12px;
-                font-weight: 800;
-            }
-        )")));
+    // 背景/字母全部由 paintEvent 的生成位图绘制（QPainterPath 灰度抗锯齿、
+    // 无浅色描边光晕），不再使用 QSS 背景。
     avatar->setProperty("avatarUrl", avatarUrl.trimmed());
     return avatar;
 }
@@ -372,15 +412,12 @@ public:
                                UiZoom::s(40), UiZoom::s(40));
         if (!drawRemoteAvatar(painter, avatarRect, avatarUrl, UiZoom::s(8),
                               const_cast<QWidget*>(option.widget))) {
-            painter->setPen(Qt::NoPen);
-            painter->setBrush(brandAvatarBrush(avatarRect));
-            painter->drawRoundedRect(avatarRect, UiZoom::s(8), UiZoom::s(8));
-            QFont avatarFont = option.font;
-            avatarFont.setPixelSize(UiZoom::s(12));
-            avatarFont.setBold(true);
-            painter->setFont(avatarFont);
-            painter->setPen(Qt::white);
-            painter->drawText(avatarRect, Qt::AlignCenter, avatarMonogram(name, userId));
+            const qreal dpr = option.widget ? option.widget->devicePixelRatioF() : 1.0;
+            painter->drawPixmap(avatarRect.topLeft(),
+                                monogramAvatarPixmap(avatarMonogram(name, userId),
+                                                     avatarRect.width(), UiZoom::s(8),
+                                                     kBrandGradientFrom, kBrandGradientTo,
+                                                     UiZoom::s(12), dpr));
         }
 
         const int textLeft = avatarRect.right() + UiZoom::s(14);
@@ -465,15 +502,12 @@ public:
                                UiZoom::s(36), UiZoom::s(36));
         if (!drawRemoteAvatar(painter, avatarRect, avatarUrl, UiZoom::s(8),
                               const_cast<QWidget*>(option.widget))) {
-            painter->setPen(Qt::NoPen);
-            painter->setBrush(brandAvatarBrush(avatarRect));
-            painter->drawRoundedRect(avatarRect, UiZoom::s(8), UiZoom::s(8));
-            QFont avatarFont = option.font;
-            avatarFont.setPixelSize(UiZoom::s(11));
-            avatarFont.setBold(true);
-            painter->setFont(avatarFont);
-            painter->setPen(Qt::white);
-            painter->drawText(avatarRect, Qt::AlignCenter, avatarMonogram(name, userId));
+            const qreal dpr = option.widget ? option.widget->devicePixelRatioF() : 1.0;
+            painter->drawPixmap(avatarRect.topLeft(),
+                                monogramAvatarPixmap(avatarMonogram(name, userId),
+                                                     avatarRect.width(), UiZoom::s(8),
+                                                     kBrandGradientFrom, kBrandGradientTo,
+                                                     UiZoom::s(11), dpr));
         }
 
         const int textLeft = avatarRect.right() + UiZoom::s(14);
@@ -952,9 +986,12 @@ void MainWindow::buildUi() {
     navLayout->setContentsMargins(16, 18, 16, 14);
     navLayout->setSpacing(12);
 
-    auto* logo = new QLabel(QStringLiteral("M"), navRail_);
+    auto* logo = new QLabel(navRail_);
     logo->setObjectName(QStringLiteral("navLogo"));
     logo->setAlignment(Qt::AlignCenter);
+    logo->setPixmap(monogramAvatarPixmap(QStringLiteral("M"), UiZoom::s(34), UiZoom::s(17),
+                                         kBrandGradientFrom, kBrandGradientTo,
+                                         UiZoom::s(15), logo->devicePixelRatioF()));
     addContactButton_ = new QPushButton(navRail_);
     addContactButton_->setObjectName(QStringLiteral("addConversationButton"));
     addContactButton_->setIcon(makeLineIcon(LineIconKind::Add, QColor(QStringLiteral("#4c5866"))));
@@ -1244,12 +1281,7 @@ void MainWindow::applyStyle() {
             max-width: 34px;
             min-height: 34px;
             max-height: 34px;
-            border-radius: 17px;
-            background: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 1,
-                                        stop: 0 #5B9BFF, stop: 1 #1E40AF);
-            color: #ffffff;
-            font-size: 15px;
-            font-weight: 700;
+            background: transparent;
         }
         #navSearchBox {
             min-height: 34px;
@@ -2617,6 +2649,12 @@ void MainWindow::applyScaledFixedGeometry() {
     if (navRail_) {
         navRail_->setMinimumWidth(UiZoom::s(160));
         navRail_->setMaximumWidth(UiZoom::s(260));
+    }
+    // navLogo 是生成位图（QPainterPath 灰度抗锯齿），倍率变化时按新尺寸重生成。
+    if (auto* logo = findChild<QLabel*>(QStringLiteral("navLogo"))) {
+        logo->setPixmap(monogramAvatarPixmap(QStringLiteral("M"), UiZoom::s(34), UiZoom::s(17),
+                                             kBrandGradientFrom, kBrandGradientTo,
+                                             UiZoom::s(15), logo->devicePixelRatioF()));
     }
     if (auto* pane = findChild<QWidget*>(QStringLiteral("conversationPane"))) {
         pane->setMinimumWidth(UiZoom::s(220));

@@ -2349,11 +2349,16 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
 
     // meta 在上、气泡在下的纵向列；随消息方向靠左/靠右。
     auto* column = new QVBoxLayout();
-    // Let the avatar center sit between the metadata line and the bubble's top
-    // border. Deriving the inset from their shared gap keeps the alignment stable
-    // when UI zoom changes instead of introducing an unrelated pixel offset.
-    column->setContentsMargins(0, UiZoom::s(MessageMetaBubbleGap / 2), 0, 0);
-    column->setSpacing(UiZoom::s(MessageMetaBubbleGap));
+    // Let the avatar center sit midway between the metadata line's center and the
+    // bubble's top border. The meta row height depends on platform font metrics
+    // (Windows renders 13px labels shorter than macOS), so a fixed top inset cannot
+    // align both — solve 2*inset + 1.5*metaHeight + gap = avatarSize instead.
+    const int metaHeight = qMax(1, metaRow->sizeHint().height());
+    const int metaBubbleGap = UiZoom::s(MessageMetaBubbleGap);
+    const int columnTopInset = qMax(
+        0, (UiZoom::s(MessageAvatarLogicalSize) - metaBubbleGap) / 2 - (metaHeight * 3) / 4);
+    column->setContentsMargins(0, columnTopInset, 0, 0);
+    column->setSpacing(metaBubbleGap);
     column->addLayout(metaRow);
     column->addWidget(bubble, 0, outgoing ? Qt::AlignRight : Qt::AlignLeft);
 

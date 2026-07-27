@@ -681,13 +681,19 @@ void MainWindowLayoutTest::wideChatUsesWiderMessageBubbles() {
     auto* outgoingBubble = outgoingRow->findChild<QWidget*>(QStringLiteral("messageBubbleOutgoing"));
     QVERIFY(outgoingTime != nullptr);
     QVERIFY(outgoingBubble != nullptr);
-    QTRY_VERIFY(qAbs((outgoingAvatar->mapTo(outgoingRow, QPoint(0, 0)).y()
+    QTRY_VERIFY2(qAbs((outgoingAvatar->mapTo(outgoingRow, QPoint(0, 0)).y()
                        + outgoingAvatar->height() / 2)
                       - ((outgoingTime->mapTo(outgoingRow, QPoint(0, 0)).y()
                           + outgoingTime->height() / 2
                           + outgoingBubble->mapTo(outgoingRow, QPoint(0, 0)).y())
                          / 2))
-                <= 2);
+                <= 2,
+                qPrintable(QStringLiteral("avatarY=%1 avatarH=%2 timeY=%3 timeH=%4 bubbleY=%5")
+                               .arg(outgoingAvatar->mapTo(outgoingRow, QPoint(0, 0)).y())
+                               .arg(outgoingAvatar->height())
+                               .arg(outgoingTime->mapTo(outgoingRow, QPoint(0, 0)).y())
+                               .arg(outgoingTime->height())
+                               .arg(outgoingBubble->mapTo(outgoingRow, QPoint(0, 0)).y())));
     QTRY_VERIFY(incomingBubble->mapTo(messageContainer, QPoint(0, 0)).x()
                     + incomingBubble->width()
                 <= outgoingAvatar->mapTo(messageContainer, QPoint(0, 0)).x());

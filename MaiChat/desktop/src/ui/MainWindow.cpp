@@ -77,6 +77,7 @@ constexpr int UnreadRole = Qt::UserRole + 4;
 constexpr int AvatarUrlRole = Qt::UserRole + 5;
 constexpr int MessageAvatarLogicalSize = 40;
 constexpr int MessageAvatarGap = 10;
+constexpr int MessageMetaBubbleGap = 6;
 
 class MarkdownMessageView final : public QTextBrowser {
 public:
@@ -2348,8 +2349,11 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
 
     // meta 在上、气泡在下的纵向列；随消息方向靠左/靠右。
     auto* column = new QVBoxLayout();
-    column->setContentsMargins(0, 0, 0, 0);
-    column->setSpacing(6);
+    // Let the avatar center sit between the metadata line and the bubble's top
+    // border. Deriving the inset from their shared gap keeps the alignment stable
+    // when UI zoom changes instead of introducing an unrelated pixel offset.
+    column->setContentsMargins(0, UiZoom::s(MessageMetaBubbleGap / 2), 0, 0);
+    column->setSpacing(UiZoom::s(MessageMetaBubbleGap));
     column->addLayout(metaRow);
     column->addWidget(bubble, 0, outgoing ? Qt::AlignRight : Qt::AlignLeft);
 

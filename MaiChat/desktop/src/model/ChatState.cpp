@@ -26,16 +26,17 @@ void ChatState::upsertContact(const RemoteIMContact& contact) {
     const QString userId = clean(contact.userId);
     if (userId.isEmpty()) return;
     const QString displayName = clean(contact.displayName).isEmpty() ? userId : clean(contact.displayName);
+    const QString avatarUrl = clean(contact.avatarUrl);
     for (RemoteIMContact& existing : contacts_) {
         if (existing.userId == userId) {
-            if (displayName == userId && !existing.displayName.isEmpty() && existing.displayName != userId) {
-                return;
+            if (displayName != userId || existing.displayName.isEmpty() || existing.displayName == userId) {
+                existing.displayName = displayName;
             }
-            existing.displayName = displayName;
+            if (!avatarUrl.isEmpty()) existing.avatarUrl = avatarUrl;
             return;
         }
     }
-    contacts_.append(RemoteIMContact{userId, displayName});
+    contacts_.append(RemoteIMContact{userId, displayName, avatarUrl});
 }
 
 void ChatState::removeContactAndMessages(const QString& userId) {

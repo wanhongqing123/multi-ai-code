@@ -438,8 +438,12 @@ void TimSdkRemoteIMClient::handleFriendListPayload(const QString& jsonPayload) {
             QStringLiteral("friendship_friend_info_get_result_userid")
         });
         if (userId.isEmpty()) continue;
+        const QJsonObject userProfile = friendProfile.value(QStringLiteral("friend_profile_user_profile")).toObject();
         const QString displayName = friendDisplayName(friendProfile).trimmed();
-        contacts.append(RemoteIMContact{userId, displayName.isEmpty() ? userId : displayName});
+        const QString avatarUrl = firstNonEmpty(userProfile, {
+            QStringLiteral("user_profile_face_url")
+        });
+        contacts.append(RemoteIMContact{userId, displayName.isEmpty() ? userId : displayName, avatarUrl});
     }
     if (!contacts.isEmpty()) emit contactsReceived(contacts);
 }
@@ -459,7 +463,14 @@ void TimSdkRemoteIMClient::handleConversationListPayload(const QString& jsonPayl
             QStringLiteral("conv_id")
         });
         if (conversationType == kConversationTypeC2C) {
-            contacts.append(RemoteIMContact{conversationId, displayName.isEmpty() ? conversationId : displayName});
+            const QString avatarUrl = firstNonEmpty(conversation, {
+                QStringLiteral("conv_face_url")
+            });
+            contacts.append(RemoteIMContact{
+                conversationId,
+                displayName.isEmpty() ? conversationId : displayName,
+                avatarUrl
+            });
             fetchRecentMessages(conversationId, conversationType);
         }
     }

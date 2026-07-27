@@ -33,8 +33,12 @@
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QLinearGradient>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPointer>
 #include <QPolygon>
 #include <QResizeEvent>
 #include <QScrollBar>
@@ -53,6 +57,7 @@
 #include <QTimer>
 #include <QVariant>
 #include <QtMath>
+#include <algorithm>
 #include <functional>
 #include <utility>
 
@@ -69,6 +74,9 @@ constexpr int DisplayNameRole = Qt::UserRole + 1;
 constexpr int PreviewRole = Qt::UserRole + 2;
 constexpr int TimeRole = Qt::UserRole + 3;
 constexpr int UnreadRole = Qt::UserRole + 4;
+constexpr int AvatarUrlRole = Qt::UserRole + 5;
+constexpr int MessageAvatarLogicalSize = 40;
+constexpr int MessageAvatarGap = 10;
 
 class MarkdownMessageView final : public QTextBrowser {
 public:
@@ -148,6 +156,186 @@ QBrush brandAvatarBrush(const QRectF& rect) {
     return QBrush(gradient);
 }
 
+QString avatarMonogram(const QString& displayName, const QString& userId) {
+    const QString cleanUserId = userId.trimmed();
+    const QString cleanDisplayName = displayName.trimmed();
+    const bool hasNickname = !cleanDisplayName.isEmpty() && cleanDisplayName != cleanUserId;
+    const QString source = hasNickname ? cleanDisplayName : cleanUserId;
+    if (source.isEmpty()) return QStringLiteral("M");
+    if (!hasNickname) return source.left(1).toUpper();
+
+    QString separated = source;
+    separated.replace(QLatin1Char('-'), QLatin1Char(' '));
+    separated.replace(QLatin1Char('_'), QLatin1Char(' '));
+    const QStringList words = separated.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+    if (words.size() >= 2) {
+        return (words.first().left(1) + words.last().left(1)).toUpper();
+    }
+
+    bool hasNonAscii = false;
+    for (const QChar ch : source) {
+        if (ch.unicode() > 0x7f) {
+            hasNonAscii = true;
+            break;
+        }
+    }
+    return (hasNonAscii ? source.right(2) : source.left(2)).toUpper();
+}
+
+QHash<QString, QPixmap>& avatarPixmapCache() {
+    static QHash<QString, QPixmap> cache;
+    return cache;
+}
+
+QHash<QString, QList<QPointer<QWidget>>>& avatarRepaintWaiters() {
+    static QHash<QString, QList<QPointer<QWidget>>> waiters;
+    return waiters;
+}
+
+QSet<QString>& pendingAvatarUrls() {
+    static QSet<QString> urls;
+    return urls;
+}
+
+QSet<QString>& failedAvatarUrls() {
+    static QSet<QString> urls;
+    return urls;
+}
+
+void requestAvatarPixmap(const QString& avatarUrl, QWidget* repaintTarget) {
+    const QString url = avatarUrl.trimmed();
+    if (url.isEmpty() || avatarPixmapCache().contains(url) || failedAvatarUrls().contains(url)) return;
+
+    if (repaintTarget) {
+        QList<QPointer<QWidget>>& waiters = avatarRepaintWaiters()[url];
+        const auto alreadyWaiting = std::any_of(
+            waiters.cbegin(), waiters.cend(), [repaintTarget](const QPointer<QWidget>& item) {
+                return item.data() == repaintTarget;
+            });
+        if (!alreadyWaiting) waiters.append(QPointer<QWidget>(repaintTarget));
+    }
+    if (pendingAvatarUrls().contains(url)) return;
+    pendingAvatarUrls().insert(url);
+
+    static QNetworkAccessManager* network = new QNetworkAccessManager(qApp);
+    QNetworkRequest request{QUrl(url)};
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::NoLessSafeRedirectPolicy);
+    QNetworkReply* reply = network->get(request);
+    QObject::connect(reply, &QNetworkReply::finished, qApp, [reply, url] {
+        QPixmap source;
+        if (reply->error() == QNetworkReply::NoError) source.loadFromData(reply->readAll());
+        reply->deleteLater();
+
+        pendingAvatarUrls().remove(url);
+        if (source.isNull()) {
+            failedAvatarUrls().insert(url);
+        } else {
+            avatarPixmapCache().insert(url, source);
+        }
+        const QList<QPointer<QWidget>> targets = avatarRepaintWaiters().take(url);
+        for (const QPointer<QWidget>& target : targets) {
+            if (!target.isNull()) target->update();
+        }
+    });
+}
+
+void drawAvatarPixmap(QPainter* painter, const QRectF& target, const QPixmap& source, qreal radius) {
+    if (!painter || source.isNull()) return;
+    const QPixmap scaled = source.scaled(target.size().toSize(), Qt::KeepAspectRatioByExpanding,
+                                         Qt::SmoothTransformation);
+    const QPointF topLeft(target.center().x() - scaled.width() / 2.0,
+                          target.center().y() - scaled.height() / 2.0);
+    QPainterPath clip;
+    clip.addRoundedRect(target, radius, radius);
+    painter->save();
+    painter->setClipPath(clip);
+    painter->drawPixmap(topLeft, scaled);
+    painter->restore();
+}
+
+bool drawRemoteAvatar(QPainter* painter,
+                      const QRectF& target,
+                      const QString& avatarUrl,
+                      qreal radius,
+                      QWidget* repaintTarget) {
+    const QString url = avatarUrl.trimmed();
+    const auto cached = avatarPixmapCache().constFind(url);
+    if (cached != avatarPixmapCache().cend()) {
+        drawAvatarPixmap(painter, target, cached.value(), radius);
+        return true;
+    }
+    requestAvatarPixmap(url, repaintTarget);
+    return false;
+}
+
+class MessageAvatarLabel final : public QLabel {
+public:
+    explicit MessageAvatarLabel(QString avatarUrl, QWidget* parent)
+        : QLabel(parent), avatarUrl_(std::move(avatarUrl)) {}
+
+protected:
+    void paintEvent(QPaintEvent* event) override {
+        const auto cached = avatarPixmapCache().constFind(avatarUrl_);
+        if (cached == avatarPixmapCache().cend()) {
+            QLabel::paintEvent(event);
+            requestAvatarPixmap(avatarUrl_, this);
+            return;
+        }
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        drawAvatarPixmap(&painter, rect(), cached.value(), UiZoom::s(10));
+    }
+
+private:
+    QString avatarUrl_;
+};
+
+QLabel* createMessageAvatarLabel(const QString& userId,
+                                 const QString& displayName,
+                                 const QString& avatarUrl,
+                                 bool outgoing,
+                                 QWidget* parent) {
+    auto* avatar = new MessageAvatarLabel(avatarUrl.trimmed(), parent);
+    avatar->setText(avatarMonogram(displayName, userId));
+    avatar->setObjectName(outgoing ? QStringLiteral("messageAvatarOutgoing")
+                                   : QStringLiteral("messageAvatarIncoming"));
+    avatar->setProperty("avatarUserId", userId);
+    avatar->setProperty("avatarDisplayName", displayName);
+    avatar->setAlignment(Qt::AlignCenter);
+    avatar->setFixedSize(UiZoom::s(MessageAvatarLogicalSize),
+                         UiZoom::s(MessageAvatarLogicalSize));
+    avatar->setToolTip(displayName == userId || displayName.trimmed().isEmpty()
+                           ? userId
+                           : QStringLiteral("%1 (%2)").arg(displayName, userId));
+    avatar->setAccessibleName(QStringLiteral("%1 的头像").arg(displayName.isEmpty() ? userId : displayName));
+    avatar->setStyleSheet(UiZoom::scaleQss(outgoing
+        ? QStringLiteral(R"(
+            QLabel#messageAvatarOutgoing {
+                color: #ffffff;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                                             stop:0 #5b9bff, stop:1 #1e40af);
+                border: 1px solid #dbeafe;
+                border-radius: 10px;
+                font-size: 12px;
+                font-weight: 800;
+            }
+        )")
+        : QStringLiteral(R"(
+            QLabel#messageAvatarIncoming {
+                color: #ffffff;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                                             stop:0 #2dd4bf, stop:1 #0f766e);
+                border: 1px solid #ccfbf1;
+                border-radius: 10px;
+                font-size: 12px;
+                font-weight: 800;
+            }
+        )")));
+    avatar->setProperty("avatarUrl", avatarUrl.trimmed());
+    return avatar;
+}
+
 class ConversationListDelegate final : public QStyledItemDelegate {
 public:
     explicit ConversationListDelegate(QObject* parent = nullptr) : QStyledItemDelegate(parent) {}
@@ -167,19 +355,26 @@ public:
             painter->drawRoundedRect(rowRect, 0, 0);
         }
 
-        const QRect avatarRect(rowRect.left() + UiZoom::s(12), rowRect.top() + UiZoom::s(10), UiZoom::s(40), UiZoom::s(40));
-        painter->setPen(Qt::NoPen);
-        painter->setBrush(brandAvatarBrush(avatarRect));
-        painter->drawRoundedRect(avatarRect, 8, 8);
-        QFont avatarFont = option.font;
-        avatarFont.setBold(true);
-        painter->setFont(avatarFont);
-        painter->setPen(Qt::white);
-        painter->drawText(avatarRect, Qt::AlignCenter, QStringLiteral("IM"));
-
+        const QString userId = index.data(UserIdRole).toString();
         const QString name = index.data(DisplayNameRole).toString();
+        const QString avatarUrl = index.data(AvatarUrlRole).toString();
         const QString preview = index.data(PreviewRole).toString();
         const QString time = index.data(TimeRole).toString();
+
+        const QRect avatarRect(rowRect.left() + UiZoom::s(12), rowRect.top() + UiZoom::s(10),
+                               UiZoom::s(40), UiZoom::s(40));
+        if (!drawRemoteAvatar(painter, avatarRect, avatarUrl, UiZoom::s(8),
+                              const_cast<QWidget*>(option.widget))) {
+            painter->setPen(Qt::NoPen);
+            painter->setBrush(brandAvatarBrush(avatarRect));
+            painter->drawRoundedRect(avatarRect, UiZoom::s(8), UiZoom::s(8));
+            QFont avatarFont = option.font;
+            avatarFont.setPixelSize(UiZoom::s(12));
+            avatarFont.setBold(true);
+            painter->setFont(avatarFont);
+            painter->setPen(Qt::white);
+            painter->drawText(avatarRect, Qt::AlignCenter, avatarMonogram(name, userId));
+        }
 
         const int textLeft = avatarRect.right() + UiZoom::s(14);
         // Size the time column to the actual text so short "HH:mm" stamps free up
@@ -256,20 +451,26 @@ public:
             painter->drawRoundedRect(rowRect, 0, 0);
         }
 
-        const QRect avatarRect(rowRect.left() + UiZoom::s(12), rowRect.top() + UiZoom::s(7), UiZoom::s(36), UiZoom::s(36));
-        painter->setPen(Qt::NoPen);
-        painter->setBrush(brandAvatarBrush(avatarRect));
-        painter->drawRoundedRect(avatarRect, 8, 8);
-        QFont avatarFont = option.font;
-        avatarFont.setBold(true);
-        painter->setFont(avatarFont);
-        painter->setPen(Qt::white);
-        painter->drawText(avatarRect, Qt::AlignCenter, QStringLiteral("IM"));
+        const QString userId = index.data(UserIdRole).toString();
+        const QString name = index.data(DisplayNameRole).toString();
+        const QString avatarUrl = index.data(AvatarUrlRole).toString();
+        const QRect avatarRect(rowRect.left() + UiZoom::s(12), rowRect.top() + UiZoom::s(7),
+                               UiZoom::s(36), UiZoom::s(36));
+        if (!drawRemoteAvatar(painter, avatarRect, avatarUrl, UiZoom::s(8),
+                              const_cast<QWidget*>(option.widget))) {
+            painter->setPen(Qt::NoPen);
+            painter->setBrush(brandAvatarBrush(avatarRect));
+            painter->drawRoundedRect(avatarRect, UiZoom::s(8), UiZoom::s(8));
+            QFont avatarFont = option.font;
+            avatarFont.setPixelSize(UiZoom::s(11));
+            avatarFont.setBold(true);
+            painter->setFont(avatarFont);
+            painter->setPen(Qt::white);
+            painter->drawText(avatarRect, Qt::AlignCenter, avatarMonogram(name, userId));
+        }
 
         const int textLeft = avatarRect.right() + UiZoom::s(14);
         const QRect nameRect(textLeft, rowRect.top(), rowRect.right() - textLeft - UiZoom::s(12), rowRect.height());
-
-        const QString name = index.data(DisplayNameRole).toString();
 
         QFont nameFont = option.font;
         nameFont.setPixelSize(UiZoom::s(14));
@@ -1348,6 +1549,7 @@ void MainWindow::refreshContacts() {
         item->setData(PreviewRole, latestMessageText(messages));
         item->setData(TimeRole, latestMessageTime(messages));
         item->setData(UnreadRole, app_.chatState().unreadCount(contact.userId));
+        item->setData(AvatarUrlRole, contact.avatarUrl);
         conversationList_->addItem(item);
         if (contact.userId == selectedPeer) selectedRow = index;
     }
@@ -1379,6 +1581,7 @@ void MainWindow::refreshContactDirectory() {
         item->setSizeHint(QSize(0, UiZoom::s(54)));
         item->setData(UserIdRole, contact.userId);
         item->setData(DisplayNameRole, contact.displayName.isEmpty() ? contact.userId : contact.displayName);
+        item->setData(AvatarUrlRole, contact.avatarUrl);
         contactsList_->addItem(item);
     }
     contactsList_->blockSignals(false);
@@ -1455,6 +1658,29 @@ void MainWindow::refreshMessages() {
             // 漫游记录为旧消息补齐规范化时间后，同一批消息可能需要原位重排。
             // 增删仍走增量路径；仅集合相同但顺序变化时完整重建。
             needFullRebuild = renderedIds == nextIdSet;
+        }
+    }
+    // Friend/profile callbacks can arrive after history messages. Rebuild only when
+    // a rendered sender's display name or avatar URL changed, so existing bubbles
+    // adopt the real profile image without turning routine message updates into a
+    // full-list refresh.
+    if (!needFullRebuild) {
+        const QList<QLabel*> avatars = messageContainer_->findChildren<QLabel*>();
+        for (const QLabel* avatar : avatars) {
+            const QString userId = avatar->property("avatarUserId").toString();
+            if (userId.isEmpty()) continue;
+            QString avatarUrl;
+            for (const RemoteIMContact& contact : app_.chatState().contacts()) {
+                if (contact.userId == userId) {
+                    avatarUrl = contact.avatarUrl.trimmed();
+                    break;
+                }
+            }
+            if (avatar->property("avatarDisplayName").toString() != contactName(userId)
+                    || avatar->property("avatarUrl").toString() != avatarUrl) {
+                needFullRebuild = true;
+                break;
+            }
         }
     }
     if (needFullRebuild) {
@@ -1904,7 +2130,7 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
     row->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     auto* rowLayout = new QHBoxLayout(row);
     rowLayout->setContentsMargins(0, 0, 0, 0);
-    rowLayout->setSpacing(0);
+    rowLayout->setSpacing(UiZoom::s(MessageAvatarGap));
 
     auto* bubble = new QWidget(row);
     bubble->setObjectName(outgoing ? QStringLiteral("messageBubbleOutgoing") : QStringLiteral("messageBubbleIncoming"));
@@ -2127,12 +2353,25 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
     column->addLayout(metaRow);
     column->addWidget(bubble, 0, outgoing ? Qt::AlignRight : Qt::AlignLeft);
 
-    if (outgoing) rowLayout->addSpacing(42);
-    if (outgoing) rowLayout->addStretch(1);
-    rowLayout->addLayout(column);
-    if (!outgoing) {
+    const QString avatarUserId = message.fromUserId.trimmed();
+    const QString avatarDisplayName = contactName(avatarUserId);
+    QString avatarUrl;
+    for (const RemoteIMContact& contact : app_.chatState().contacts()) {
+        if (contact.userId == avatarUserId) {
+            avatarUrl = contact.avatarUrl;
+            break;
+        }
+    }
+    auto* avatar = createMessageAvatarLabel(
+        avatarUserId, avatarDisplayName, avatarUrl, outgoing, row);
+    if (outgoing) {
         rowLayout->addStretch(1);
-        rowLayout->addSpacing(42);
+        rowLayout->addLayout(column);
+        rowLayout->addWidget(avatar, 0, Qt::AlignTop);
+    } else {
+        rowLayout->addWidget(avatar, 0, Qt::AlignTop);
+        rowLayout->addLayout(column);
+        rowLayout->addStretch(1);
     }
     return row;
 }
@@ -2144,10 +2383,14 @@ int MainWindow::messageBubbleMaximumWidth() const {
         // once the window is shown/resized, so the real viewport width is authoritative.
         viewportWidth = qMax(360, width() / 2);
     }
-    // Leave room for the layout margins (28*2) plus the 42px gutter on the opposite
-    // side of each bubble, so a row never exceeds the viewport (which would otherwise
-    // clip content or force a horizontal scrollbar).
-    return qBound(280, viewportWidth - 110, 1280);
+    const QMargins margins = messageLayout_ ? messageLayout_->contentsMargins() : QMargins();
+    const int rowWidth = viewportWidth - margins.left() - margins.right();
+    const int avatarColumnWidth = UiZoom::s(MessageAvatarLogicalSize)
+        + UiZoom::s(MessageAvatarGap);
+    // Reserve a sender-avatar column at both ends of every row. The bubble starts
+    // after its own avatar and stops before the opposite sender's avatar; changing
+    // avatar size or UI zoom therefore updates the limit automatically.
+    return qBound(280, rowWidth - 2 * avatarColumnWidth, 1280);
 }
 
 void MainWindow::applyMessageBubbleWidth(QWidget* bubble, bool expanded) const {

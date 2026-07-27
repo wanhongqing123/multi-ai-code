@@ -247,10 +247,16 @@ void MainWindowLayoutTest::rendersSentMessageFromTopWithMetadata() {
     auto* authorLabel = window.findChild<QLabel*>(QStringLiteral("messageAuthorLabel"));
     auto* timeLabel = window.findChild<QLabel*>(QStringLiteral("messageTimeLabel"));
     auto* statusLabel = window.findChild<QLabel*>(QStringLiteral("messageStatusLabel"));
+    auto* avatarLabel = window.findChild<QLabel*>(QStringLiteral("messageAvatarOutgoing"));
     QVERIFY(authorLabel != nullptr);
     QVERIFY(timeLabel != nullptr);
     QVERIFY(statusLabel != nullptr);
+    QVERIFY(avatarLabel != nullptr);
     QCOMPARE(authorLabel->text(), QStringLiteral("desktop-user"));
+    QCOMPARE(avatarLabel->text(), QStringLiteral("D"));
+    QCOMPARE(avatarLabel->property("avatarUserId").toString(), QStringLiteral("desktop-user"));
+    QCOMPARE(avatarLabel->minimumSize(), QSize(40, 40));
+    QCOMPARE(avatarLabel->maximumSize(), QSize(40, 40));
     QVERIFY(!timeLabel->text().trimmed().isEmpty());
     QCOMPARE(statusLabel->text(), QStringLiteral("✓"));
     QCOMPARE(statusLabel->alignment(), Qt::AlignCenter);
@@ -425,12 +431,19 @@ void MainWindowLayoutTest::conversationListsUseDelegateItemsForSmoothScrolling()
     for (int index = 0; index < 80; ++index) {
         app.addContact(QStringLiteral("phone-user-%1").arg(index), QStringLiteral("iPhone %1").arg(index));
     }
+    app.chatState().upsertContact(RemoteIMContact{
+        QStringLiteral("phone-user-0"),
+        QStringLiteral("iPhone 0"),
+        QStringLiteral("https://example.com/iphone.png")
+    });
 
     MainWindow window(app);
     auto* conversationList = window.findChild<QListWidget*>(QStringLiteral("conversationList"));
     auto* contactsNavButton = window.findChild<QPushButton*>(QStringLiteral("contactsNavButton"));
     QVERIFY(conversationList != nullptr);
     QVERIFY(conversationList->uniformItemSizes());
+    QCOMPARE(conversationList->item(0)->data(Qt::UserRole + 5).toString(),
+             QStringLiteral("https://example.com/iphone.png"));
     for (int index = 0; index < conversationList->count(); ++index) {
         QVERIFY(conversationList->itemWidget(conversationList->item(index)) == nullptr);
     }
@@ -440,6 +453,8 @@ void MainWindowLayoutTest::conversationListsUseDelegateItemsForSmoothScrolling()
     auto* contactsList = window.findChild<QListWidget*>(QStringLiteral("contactsList"));
     QVERIFY(contactsList != nullptr);
     QVERIFY(contactsList->uniformItemSizes());
+    QCOMPARE(contactsList->item(0)->data(Qt::UserRole + 5).toString(),
+             QStringLiteral("https://example.com/iphone.png"));
     for (int index = 0; index < contactsList->count(); ++index) {
         QVERIFY(contactsList->itemWidget(contactsList->item(index)) == nullptr);
     }
@@ -625,6 +640,14 @@ void MainWindowLayoutTest::wideChatUsesWiderMessageBubbles() {
     auto* fakeClient = client.get();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
     app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+    RemoteIMMessage outgoingMessage;
+    outgoingMessage.id = QStringLiteral("outgoing-avatar-anchor");
+    outgoingMessage.fromUserId = QStringLiteral("desktop-user");
+    outgoingMessage.toUserId = QStringLiteral("phone-user");
+    outgoingMessage.direction = RemoteIMMessageDirection::Outgoing;
+    outgoingMessage.status = RemoteIMMessageStatus::Sent;
+    outgoingMessage.text = QStringLiteral("用于定位本方头像列");
+    app.chatState().appendMessageForRestore(outgoingMessage);
 
     MainWindow window(app);
     window.resize(1680, 900);
@@ -637,11 +660,24 @@ void MainWindowLayoutTest::wideChatUsesWiderMessageBubbles() {
 
     auto* incomingBubble = window.findChild<QWidget*>(QStringLiteral("messageBubbleIncoming"));
     QVERIFY(incomingBubble != nullptr);
-    QTRY_VERIFY2(incomingBubble->maximumWidth() >= 880,
+    auto* incomingAvatar = window.findChild<QLabel*>(QStringLiteral("messageAvatarIncoming"));
+    QVERIFY(incomingAvatar != nullptr);
+    QCOMPARE(incomingAvatar->text(), QStringLiteral("IP"));
+    QCOMPARE(incomingAvatar->property("avatarUserId").toString(), QStringLiteral("phone-user"));
+    QCOMPARE(incomingAvatar->minimumSize(), QSize(40, 40));
+    QTRY_VERIFY2(incomingBubble->maximumWidth() >= 820,
                  qPrintable(QStringLiteral("max=%1 min=%2")
                                 .arg(incomingBubble->maximumWidth())
                                 .arg(incomingBubble->minimumWidth())));
     QTRY_VERIFY(incomingBubble->minimumWidth() >= 820);
+
+    auto* messageContainer = window.findChild<QWidget*>(QStringLiteral("messageContainer"));
+    QVERIFY(messageContainer != nullptr);
+    auto* outgoingAvatar = window.findChild<QLabel*>(QStringLiteral("messageAvatarOutgoing"));
+    QVERIFY(outgoingAvatar != nullptr);
+    QTRY_VERIFY(incomingBubble->mapTo(messageContainer, QPoint(0, 0)).x()
+                    + incomingBubble->width()
+                <= outgoingAvatar->mapTo(messageContainer, QPoint(0, 0)).x());
 }
 
 void MainWindowLayoutTest::restoredLongMessagesExpandAfterWindowIsShown() {

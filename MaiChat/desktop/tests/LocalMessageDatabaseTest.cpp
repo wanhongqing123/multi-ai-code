@@ -59,7 +59,7 @@ void LocalMessageDatabaseTest::persistsAcrossReopen() {
     const QString path = dir.filePath("messages.db");
     {
         LocalMessageDatabase db(path);
-        db.upsertContact(RemoteIMContact{"peer", "Peer"});
+        db.upsertContact(RemoteIMContact{"peer", "Peer", "https://example.com/peer.png"});
         db.insertMessageIfAbsent(
             makeTextMessage("m1", "peer", "me", RemoteIMMessageDirection::Incoming, 1000, "first"),
             "peer");
@@ -76,6 +76,7 @@ void LocalMessageDatabaseTest::persistsAcrossReopen() {
     reopened.loadInto(state);
     QCOMPARE(state.contacts().size(), 1);
     QCOMPARE(state.contacts().first().displayName, QStringLiteral("Peer"));
+    QCOMPARE(state.contacts().first().avatarUrl, QStringLiteral("https://example.com/peer.png"));
     QCOMPARE(state.messages().size(), 2);
     const RemoteIMMessage restoredFile = state.messages().last();
     QVERIFY(restoredFile.hasFile);

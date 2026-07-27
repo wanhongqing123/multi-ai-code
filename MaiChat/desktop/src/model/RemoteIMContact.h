@@ -7,6 +7,7 @@
 struct RemoteIMContact {
     QString userId;
     QString displayName;
+    QString avatarUrl;
 };
 
 Q_DECLARE_METATYPE(RemoteIMContact)

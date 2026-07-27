@@ -67,8 +67,21 @@ void LocalMessageDatabase::migrate() {
     query.exec(QStringLiteral(
         "CREATE TABLE IF NOT EXISTS contacts ("
         "  user_id      TEXT PRIMARY KEY,"
-        "  display_name TEXT NOT NULL"
+        "  display_name TEXT NOT NULL,"
+        "  avatar_url   TEXT NOT NULL DEFAULT ''"
         ")"));
+    bool hasAvatarUrl = false;
+    query.exec(QStringLiteral("PRAGMA table_info(contacts)"));
+    while (query.next()) {
+        if (query.value(1).toString() == QStringLiteral("avatar_url")) {
+            hasAvatarUrl = true;
+            break;
+        }
+    }
+    if (!hasAvatarUrl) {
+        query.exec(QStringLiteral(
+            "ALTER TABLE contacts ADD COLUMN avatar_url TEXT NOT NULL DEFAULT ''"));
+    }
     query.exec(QStringLiteral(
         "CREATE TABLE IF NOT EXISTS messages ("
         "  id            TEXT PRIMARY KEY,"
@@ -94,11 +107,12 @@ void LocalMessageDatabase::loadInto(ChatState& state) const {
     if (!db_.isOpen()) return;
 
     QSqlQuery contactQuery(db_);
-    contactQuery.exec(QStringLiteral("SELECT user_id, display_name FROM contacts ORDER BY user_id"));
+    contactQuery.exec(QStringLiteral("SELECT user_id, display_name, avatar_url FROM contacts ORDER BY user_id"));
     while (contactQuery.next()) {
         state.upsertContact(RemoteIMContact{
             contactQuery.value(0).toString(),
-            contactQuery.value(1).toString()
+            contactQuery.value(1).toString(),
+            contactQuery.value(2).toString()
         });
     }
 
@@ -114,11 +128,12 @@ QHash<QString, bool> LocalMessageDatabase::loadRecentInto(ChatState& state, int 
     if (!db_.isOpen() || perPeerLimit <= 0) return hasEarlier;
 
     QSqlQuery contactQuery(db_);
-    contactQuery.exec(QStringLiteral("SELECT user_id, display_name FROM contacts ORDER BY user_id"));
+    contactQuery.exec(QStringLiteral("SELECT user_id, display_name, avatar_url FROM contacts ORDER BY user_id"));
     while (contactQuery.next()) {
         state.upsertContact(RemoteIMContact{
             contactQuery.value(0).toString(),
-            contactQuery.value(1).toString()
+            contactQuery.value(1).toString(),
+            contactQuery.value(2).toString()
         });
     }
 
@@ -171,10 +186,16 @@ void LocalMessageDatabase::upsertContact(const RemoteIMContact& contact) {
     if (!db_.isOpen() || contact.userId.trimmed().isEmpty()) return;
     QSqlQuery query(db_);
     query.prepare(QStringLiteral(
-        "INSERT INTO contacts(user_id, display_name) VALUES(?, ?) "
-        "ON CONFLICT(user_id) DO UPDATE SET display_name = excluded.display_name"));
+        "INSERT INTO contacts(user_id, display_name, avatar_url) VALUES(?, ?, ?) "
+        "ON CONFLICT(user_id) DO UPDATE SET "
+        "display_name = CASE "
+        "  WHEN excluded.display_name = excluded.user_id AND contacts.display_name <> contacts.user_id "
+        "  THEN contacts.display_name ELSE excluded.display_name END, "
+        "avatar_url = CASE WHEN excluded.avatar_url = '' THEN contacts.avatar_url ELSE excluded.avatar_url END"));
     query.addBindValue(contact.userId);
     query.addBindValue(contact.displayName.isEmpty() ? contact.userId : contact.displayName);
+    const QString avatarUrl = contact.avatarUrl.trimmed();
+    query.addBindValue(avatarUrl.isEmpty() ? QStringLiteral("") : avatarUrl);
     query.exec();
 }
 

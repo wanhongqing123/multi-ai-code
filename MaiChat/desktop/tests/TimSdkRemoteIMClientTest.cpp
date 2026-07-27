@@ -253,14 +253,16 @@ void TimSdkRemoteIMClientTest::fetchesContactsConversationsAndHistoryAfterLogin(
             {QStringLiteral("friend_profile_identifier"), QStringLiteral("phone-user")},
             {QStringLiteral("friend_profile_remark"), QStringLiteral("手机")},
             {QStringLiteral("friend_profile_user_profile"), QJsonObject{
-                {QStringLiteral("user_profile_nick_name"), QStringLiteral("iPhone")}
+                {QStringLiteral("user_profile_nick_name"), QStringLiteral("iPhone")},
+                {QStringLiteral("user_profile_face_url"), QStringLiteral("https://example.com/iphone.png")}
             }}
         }
     }).toJson(QJsonDocument::Compact));
     fake->conversationListPayload = QString::fromUtf8(QJsonDocument(QJsonArray{
         QJsonObject{
             {QStringLiteral("conv_id"), QStringLiteral("phone-user")},
-            {QStringLiteral("conv_type"), 1}
+            {QStringLiteral("conv_type"), 1},
+            {QStringLiteral("conv_face_url"), QStringLiteral("https://example.com/conversation.png")}
         }
     }).toJson(QJsonDocument::Compact));
     fake->historyPayload = QString::fromUtf8(QJsonDocument(QJsonArray{
@@ -309,9 +311,12 @@ void TimSdkRemoteIMClientTest::fetchesContactsConversationsAndHistoryAfterLogin(
     QCOMPARE(friendContacts.size(), 1);
     QCOMPARE(friendContacts.first().userId, QStringLiteral("phone-user"));
     QCOMPARE(friendContacts.first().displayName, QStringLiteral("手机"));
+    QCOMPARE(friendContacts.first().avatarUrl, QStringLiteral("https://example.com/iphone.png"));
     const QList<RemoteIMContact> conversationContacts = qvariant_cast<QList<RemoteIMContact>>(contactsSpy.takeFirst().at(0));
     QCOMPARE(conversationContacts.size(), 1);
     QCOMPARE(conversationContacts.first().userId, QStringLiteral("phone-user"));
+    QCOMPARE(conversationContacts.first().avatarUrl,
+             QStringLiteral("https://example.com/conversation.png"));
     QCOMPARE(messagesSpy.count(), 1);
     const QList<RemoteIMMessage> messages = qvariant_cast<QList<RemoteIMMessage>>(messagesSpy.takeFirst().at(0));
     QCOMPARE(messages.size(), 2);

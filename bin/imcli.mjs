@@ -85,10 +85,11 @@ Command details:
     Supported extensions: png, jpg, jpeg, gif, webp.
 
   imcli send-file <user> <filePath>
-    Send a local Markdown or HTML document to one user.
-    Use this when the answer is better as a report, checklist, design note, or rendered preview.
-    The receiver can tap the file card in iOS, Android, or Desktop IM to preview it.
-    Supported extensions: md, markdown, html, htm.
+    Send a local file of any type to one user (up to 100MB).
+    Markdown and HTML files render as documents: the receiver can tap the file card
+    in iOS, Android, or Desktop IM to preview it.
+    Any other file type (zip, pdf, txt, logs, binaries, ...) shows a file card that
+    the receiver taps to save locally.
 
   imcli forward <user> --message-id <id>
     Forward the stored text content of one local history message to another user.
@@ -108,12 +109,13 @@ Requirements:
   AICLI sessions launched by Multi-AI Code usually already have the project env set.
 
 File notes:
-  Use send-image for png/jpg/jpeg/gif/webp image files.
+  Use send-image for png/jpg/jpeg/gif/webp image files (renders as an inline picture).
   send-image accepts local png, jpg, jpeg, gif, and webp files up to 20MB.
   Markdown and HTML files should be sent with send-file, not send.
-  send-file accepts local md, markdown, html, and htm files up to 5MB.
+  send-file accepts any regular file up to 100MB; md/markdown/html/htm render with
+  tap-to-preview on receivers, other types show a save-to-local file card.
   forward sends the source message text only; it does not re-send image or file attachments.
-  If a file is too large or the extension is unsupported, imcli fails before sending.
+  If a file is too large, imcli fails before sending.
 
 Examples:
   imcli whoami --project project-1

@@ -99,7 +99,10 @@ const REMOTE_IM_META_KEY = 'remote_im_config'
 const DEFAULT_REMOTE_IM_PROFILE_ID = 'default'
 const OUTGOING_DELIVERY_ACK_TIMEOUT_MS = 17_000
 const MAX_REMOTE_IM_IMAGE_BYTES = 20 * 1024 * 1024
-const MAX_REMOTE_IM_FILE_BYTES = 5 * 1024 * 1024
+// send-file 支持任意普通文件，上限对齐腾讯 IM 文件消息的 100MB。
+const MAX_REMOTE_IM_FILE_BYTES = 100 * 1024 * 1024
+// md/html 预览要把全文读进内存渲染，保持独立的小上限。
+const MAX_REMOTE_IM_DOC_PREVIEW_BYTES = 5 * 1024 * 1024
 
 const statuses = new Map<string, RemoteImStatus>()
 const outputSessions = new Map<string, RemoteImOutputSessionState>()
@@ -593,7 +596,7 @@ async function readRemoteImFilePreview(input: {
   try {
     const stat = await fs.stat(localPath)
     if (!stat.isFile()) return { ok: false, error: 'file path is not a file' }
-    if (stat.size > MAX_REMOTE_IM_FILE_BYTES) return { ok: false, error: 'file is too large' }
+    if (stat.size > MAX_REMOTE_IM_DOC_PREVIEW_BYTES) return { ok: false, error: 'file is too large' }
     const content = await fs.readFile(localPath, 'utf8')
     return {
       ok: true,

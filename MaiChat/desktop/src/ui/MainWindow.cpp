@@ -863,6 +863,29 @@ bool isHtmlFile(const RemoteIMFileAttachment& attachment) {
         || fileName.endsWith(QStringLiteral(".htm"));
 }
 
+bool isMarkdownFile(const RemoteIMFileAttachment& attachment) {
+    const QString mimeType = attachment.mimeType.toLower();
+    const QString fileName = attachment.fileName.toLower();
+    return mimeType.contains(QStringLiteral("markdown"))
+        || fileName.endsWith(QStringLiteral(".md"))
+        || fileName.endsWith(QStringLiteral(".markdown"));
+}
+
+// 仅 md/html 文档支持内嵌预览；其余是普通文件，点击/菜单走「另存为」。
+bool isPreviewableDocument(const RemoteIMFileAttachment& attachment) {
+    return isHtmlFile(attachment) || isMarkdownFile(attachment);
+}
+
+QString fileSizeText(qint64 bytes) {
+    if (bytes <= 0) return QString();
+    if (bytes < 1024) return QStringLiteral("%1 B").arg(bytes);
+    if (bytes < 1024 * 1024) return QStringLiteral("%1 KB").arg(QString::number(bytes / 1024.0, 'f', 1));
+    if (bytes < qint64(1024) * 1024 * 1024) {
+        return QStringLiteral("%1 MB").arg(QString::number(bytes / (1024.0 * 1024.0), 'f', 1));
+    }
+    return QStringLiteral("%1 GB").arg(QString::number(bytes / (1024.0 * 1024.0 * 1024.0), 'f', 2));
+}
+
 QString readTextFile(const QString& path) {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
@@ -2064,6 +2087,11 @@ void MainWindow::openImagePreview(const QString& imagePath) {
 }
 
 void MainWindow::openFilePreview(const RemoteIMFileAttachment& attachment) {
+    // 非文档类型没有内嵌预览，转「另存为」。
+    if (!isPreviewableDocument(attachment)) {
+        saveFileAttachmentToLocal(attachment);
+        return;
+    }
     QDialog dialog(this);
     const QString displayName = attachment.fileName.isEmpty() ? QFileInfo(attachment.localPath).fileName() : attachment.fileName;
     dialog.setWindowTitle(displayName.isEmpty() ? QStringLiteral("文件预览") : displayName);
@@ -2272,9 +2300,20 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
         const QString displayName = message.file.fileName.isEmpty()
             ? QFileInfo(message.file.localPath).fileName()
             : message.file.fileName;
+        QString subtitle;
+        if (isHtmlFile(message.file)) {
+            subtitle = QStringLiteral("HTML 文件，点击预览");
+        } else if (isMarkdownFile(message.file)) {
+            subtitle = QStringLiteral("Markdown 文件，点击预览");
+        } else {
+            // 普通文件：无内嵌预览，点击直接另存为；有大小时一并展示。
+            const QString size = fileSizeText(message.file.sizeBytes);
+            subtitle = size.isEmpty() ? QStringLiteral("文件，点击另存为")
+                                      : QStringLiteral("文件 · %1，点击另存为").arg(size);
+        }
         fileButton->setText(QStringLiteral("📄 %1\n%2")
             .arg(displayName.isEmpty() ? QStringLiteral("file") : displayName)
-            .arg(isHtmlFile(message.file) ? QStringLiteral("HTML 文件，点击预览") : QStringLiteral("Markdown 文件，点击预览")));
+            .arg(subtitle));
         fileButton->setMinimumWidth(UiZoom::s(220));
         fileButton->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
         fileButton->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
@@ -2294,9 +2333,13 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
             }
         )")));
         connect(fileButton, &QPushButton::clicked, this, [this, attachment = message.file]() {
-            openFilePreview(attachment);
+            if (isPreviewableDocument(attachment)) {
+                openFilePreview(attachment);
+            } else {
+                saveFileAttachmentToLocal(attachment);
+            }
         });
-        // 右键菜单（飞书式）：复制文件 / 预览 / 保存到本地。
+        // 右键菜单（飞书式）：复制文件 / 预览（仅文档） / 保存到本地。
         fileButton->setContextMenuPolicy(Qt::CustomContextMenu);
         connect(fileButton, &QPushButton::customContextMenuRequested, this,
                 [this, fileButton, attachment = message.file](const QPoint& pos) {
@@ -2304,8 +2347,10 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
             applyMessageContextMenuStyle(menu);
             QAction* copyAction = menu.addAction(makeLineIcon(LineIconKind::Copy, kMenuIconColor),
                                                  QStringLiteral("复制"));
-            QAction* previewAction = menu.addAction(makeLineIcon(LineIconKind::Preview, kMenuIconColor),
-                                                    QStringLiteral("预览"));
+            QAction* previewAction = isPreviewableDocument(attachment)
+                ? menu.addAction(makeLineIcon(LineIconKind::Preview, kMenuIconColor),
+                                 QStringLiteral("预览"))
+                : nullptr;
             menu.addSeparator();
             QAction* saveAction = menu.addAction(makeLineIcon(LineIconKind::Download, kMenuIconColor),
                                                  QStringLiteral("保存到本地…"));
@@ -2320,7 +2365,7 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
                 auto* mimeData = new QMimeData();
                 mimeData->setUrls({QUrl::fromLocalFile(attachment.localPath)});
                 QApplication::clipboard()->setMimeData(mimeData);
-            } else if (chosen == previewAction) {
+            } else if (previewAction && chosen == previewAction) {
                 openFilePreview(attachment);
             } else if (chosen == saveAction) {
                 saveFileAttachmentToLocal(attachment);

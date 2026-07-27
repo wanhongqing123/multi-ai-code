@@ -61,7 +61,10 @@ function normalizeDocumentExtension(input: {
   const urlExtension = extensionFromUrl(input.remoteUrl)
   if (urlExtension && mimeTypeFromRemoteImFilePath(`x${urlExtension}`)) return urlExtension
   const mimeType = input.mimeType?.toLowerCase()
-  return mimeType === 'text/html' ? '.html' : '.md'
+  if (mimeType === 'text/html') return '.html'
+  if (mimeType === 'text/markdown' || !mimeType) return '.md'
+  // 普通文件（非文档 MIME）拿不到扩展名时落 .bin，避免误标成 Markdown。
+  return '.bin'
 }
 
 export function fileAttachmentFromIncoming(

@@ -10,6 +10,27 @@ const DOCUMENT_MIME_BY_EXTENSION: Record<string, string> = {
   md: 'text/markdown'
 }
 
+// 普通文件的常见 MIME；未知扩展名回退 application/octet-stream。
+// send-file 不再限制文件类型：md/html 走接收端预览，其余显示文件卡片供保存。
+const GENERIC_MIME_BY_EXTENSION: Record<string, string> = {
+  '7z': 'application/x-7z-compressed',
+  csv: 'text/csv',
+  gif: 'image/gif',
+  gz: 'application/gzip',
+  jpeg: 'image/jpeg',
+  jpg: 'image/jpeg',
+  json: 'application/json',
+  log: 'text/plain',
+  mp3: 'audio/mpeg',
+  mp4: 'video/mp4',
+  pdf: 'application/pdf',
+  png: 'image/png',
+  txt: 'text/plain',
+  webp: 'image/webp',
+  xml: 'application/xml',
+  zip: 'application/zip'
+}
+
 export interface RemoteImLocalFilePayload {
   attachment: RemoteImFileAttachment
   fileName: string
@@ -27,16 +48,16 @@ function toTransferableArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return copy
 }
 
-function documentExtension(path: string): string | null {
+function fileExtension(path: string): string | null {
   const match = /\.([A-Za-z0-9]+)$/.exec(path.trim())
-  if (!match) return null
-  const ext = match[1].toLowerCase()
-  return DOCUMENT_EXTENSIONS.has(ext) ? ext : null
+  return match ? match[1].toLowerCase() : null
 }
 
-export function mimeTypeFromRemoteImFilePath(path: string): string | null {
-  const ext = documentExtension(path)
-  return ext ? DOCUMENT_MIME_BY_EXTENSION[ext] ?? null : null
+export function mimeTypeFromRemoteImFilePath(path: string): string {
+  const ext = fileExtension(path)
+  if (!ext) return 'application/octet-stream'
+  if (DOCUMENT_EXTENSIONS.has(ext)) return DOCUMENT_MIME_BY_EXTENSION[ext]
+  return GENERIC_MIME_BY_EXTENSION[ext] ?? 'application/octet-stream'
 }
 
 function fileNameFromPath(path: string): string | null {
@@ -67,7 +88,6 @@ export async function loadRemoteImLocalFileForSend(
   if (!cleanPath) throw new Error('file path is required')
 
   const mimeType = mimeTypeFromRemoteImFilePath(cleanPath)
-  if (!mimeType) throw new Error('unsupported file type')
 
   const stat = await fs.stat(cleanPath)
   if (!stat.isFile()) throw new Error('file path is not a file')
@@ -77,7 +97,7 @@ export async function loadRemoteImLocalFileForSend(
   const bytes = await fs.readFile(cleanPath)
   return {
     attachment,
-    fileName: attachment.fileName ?? 'remote-im-file.md',
+    fileName: attachment.fileName ?? 'remote-im-file',
     mimeType,
     fileBytes: toTransferableArrayBuffer(bytes)
   }

@@ -52,13 +52,40 @@ describe('remote IM local document file loading', () => {
     })
   })
 
-  it('rejects unsupported document extensions before reading the file', async () => {
+  it('loads a generic file with a known mime type', async () => {
     const rootDir = await createTempDir()
-    const filePath = join(rootDir, 'report.pdf')
+    const filePath = join(rootDir, 'bundle.zip')
+    await writeFile(filePath, new Uint8Array([0x50, 0x4b, 3, 4]))
+
+    const result = await loadRemoteImLocalFileForSend(filePath, { maxBytes: 1024 })
+
+    expect(result.attachment).toMatchObject({
+      type: 'file',
+      fileName: 'bundle.zip',
+      mimeType: 'application/zip',
+      sizeBytes: 4
+    })
+    expect(result.mimeType).toBe('application/zip')
+  })
+
+  it('loads an unknown-extension file as application/octet-stream', async () => {
+    const rootDir = await createTempDir()
+    const filePath = join(rootDir, 'firmware.xyzdata')
     await writeFile(filePath, new Uint8Array([1, 2, 3]))
 
-    await expect(loadRemoteImLocalFileForSend(filePath, { maxBytes: 1024 })).rejects.toThrow(
-      'unsupported file type'
+    const result = await loadRemoteImLocalFileForSend(filePath, { maxBytes: 1024 })
+
+    expect(result.mimeType).toBe('application/octet-stream')
+    expect(result.attachment.fileName).toBe('firmware.xyzdata')
+  })
+
+  it('still rejects files above the size limit', async () => {
+    const rootDir = await createTempDir()
+    const filePath = join(rootDir, 'big.bin')
+    await writeFile(filePath, new Uint8Array(64))
+
+    await expect(loadRemoteImLocalFileForSend(filePath, { maxBytes: 16 })).rejects.toThrow(
+      'file is too large'
     )
   })
 })

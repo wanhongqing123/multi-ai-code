@@ -137,8 +137,16 @@ function RemoteImFileMessage(props: {
 }): JSX.Element {
   const attachment = props.message.attachment?.type === 'file' ? props.message.attachment : null
   const fileName = attachment?.fileName ?? props.message.content.replace(/^\[文件消息\]\s*/, '')
-  const mimeType = attachment?.mimeType
-  const canPreview = Boolean(attachment?.localPath && (mimeType === 'text/markdown' || mimeType === 'text/html'))
+  const lowerName = (fileName || '').toLowerCase()
+  // 仅 md/html 支持内嵌预览；普通文件显示为文件卡片。老消息可能没有 MIME，按扩展名兜底。
+  const isHtml =
+    attachment?.mimeType === 'text/html' || lowerName.endsWith('.html') || lowerName.endsWith('.htm')
+  const isMarkdown =
+    attachment?.mimeType === 'text/markdown' ||
+    lowerName.endsWith('.md') ||
+    lowerName.endsWith('.markdown')
+  const canPreview = Boolean(attachment?.localPath && (isHtml || isMarkdown))
+  const typeLabel = isHtml ? 'HTML 文件' : isMarkdown ? 'Markdown 文件' : '文件'
 
   return (
     <button
@@ -151,7 +159,7 @@ function RemoteImFileMessage(props: {
       <span className="remote-im-file-icon">文</span>
       <span className="remote-im-file-info">
         <strong>{fileName || '文件消息'}</strong>
-        <em>{mimeType === 'text/html' ? 'HTML 文件' : 'Markdown 文件'}</em>
+        <em>{typeLabel}</em>
       </span>
     </button>
   )

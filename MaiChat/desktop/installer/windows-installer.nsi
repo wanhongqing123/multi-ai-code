@@ -13,6 +13,9 @@
 
 Unicode true
 SetCompressor /SOLID lzma
+; 安装器自身声明 DPI-aware：高分屏下安装界面不发虚，也减少系统对
+; 未签名安装程序的兼容性 shim 干预。
+ManifestDPIAware true
 
 !include "MUI2.nsh"
 !include "FileFunc.nsh"
@@ -54,9 +57,18 @@ VIAddVersionKey /LANG=2052 "ProductVersion" "${APP_VERSION}"
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
-!define MUI_FINISHPAGE_RUN "$INSTDIR\${APP_EXE}"
+; 「立即运行」必须经 explorer.exe 转启：安装器进程可能被 SmartScreen/PCA
+; 套上兼容层（如 DPIUNAWARE，从浏览器下载的未签名安装包尤其常见），直接
+; Exec 的子进程会继承 __COMPAT_LAYER，导致应用整窗按 100% 渲染再被系统
+; 位图拉伸——全 UI 文字锯齿。经 explorer 转启后父进程与环境都是干净的。
+!define MUI_FINISHPAGE_RUN
 !define MUI_FINISHPAGE_RUN_TEXT "立即运行 ${APP_NAME}"
+!define MUI_FINISHPAGE_RUN_FUNCTION RunAppViaExplorer
 !insertmacro MUI_PAGE_FINISH
+
+Function RunAppViaExplorer
+  Exec '"$WINDIR\explorer.exe" "$INSTDIR\${APP_EXE}"'
+FunctionEnd
 
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES

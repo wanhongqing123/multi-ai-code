@@ -93,3 +93,6 @@ resources/asr/**/licenses/*
 
 # Runtime AI CLI system-prompt injection files (never the user's content)
 .injections/
+
+# Playwright MCP 浏览器工具的临时产物（页面快照/控制台日志）
+.playwright-mcp/

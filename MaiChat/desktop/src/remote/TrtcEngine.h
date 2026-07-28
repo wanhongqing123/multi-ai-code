@@ -1,0 +1,50 @@
+#pragma once
+
+#include <QString>
+#include <functional>
+
+// TRTC 的薄封装。
+//
+// 存在的意义有两个：
+//  1. 把 SDK 细节挡在一层接口后面，controller 与状态机可以用 fake 完整单测，
+//     不需要真实网络/房间/摄像头；
+//  2. 未 vendoring SDK 的平台（当前是 macOS/Linux）编译时自动落到空实现，
+//     其余功能不受影响。
+namespace RemoteDesktop {
+
+// 进房参数。UserSig 与 IM 共用同一套生成逻辑（TencentUserSigGenerator）。
+struct TrtcRoomParams {
+    int sdkAppId = 0;
+    QString userId;
+    QString userSig;
+    QString roomId;   // 字符串房间号，形如 mc-<发起方>-<随机>
+};
+
+class ITrtcEngine {
+public:
+    virtual ~ITrtcEngine() = default;
+
+    // SDK 版本号；取不到返回空串。用于启动自检与问题上报。
+    virtual QString sdkVersion() const = 0;
+
+    // 被控端：进房并开始推屏。windowHandle 传 nullptr 表示采集整个主屏。
+    virtual bool startScreenShare(const TrtcRoomParams& params) = 0;
+
+    // 控制端：进房并订阅远端屏幕流，渲染到给定原生窗口句柄。
+    virtual bool startViewing(const TrtcRoomParams& params, void* renderWindow) = 0;
+
+    // 两端通用：离房并停止一切采集/渲染。可重复调用。
+    virtual void stop() = 0;
+
+    virtual bool isActive() const = 0;
+};
+
+// 是否编译进了真实 TRTC 实现。false 时 createTrtcEngine 返回空实现，
+// UI 应据此隐藏或禁用远程桌面入口。
+bool isTrtcAvailable();
+
+// 创建引擎实例。SDK 不可用时返回一个所有操作都失败的空实现，
+// 而不是 nullptr——调用方不必到处判空。
+ITrtcEngine* createTrtcEngine();
+
+}  // namespace RemoteDesktop

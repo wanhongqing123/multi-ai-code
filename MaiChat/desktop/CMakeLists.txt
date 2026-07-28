@@ -8,6 +8,19 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
 option(MAICHAT_USE_FAKE_CLIENT "Use the fake IM client for desktop UI development" OFF)
+# 远程桌面依赖腾讯 TRTC C++ SDK（vendor/tencent-trtc）。仅 Windows 已 vendoring；
+# 其它平台先关掉，编译出的应用不含远程桌面能力但其余功能不受影响。
+option(MAICHAT_ENABLE_REMOTE_DESKTOP "Build remote desktop support (requires TRTC SDK)" ON)
+
+set(MAICHAT_TRTC_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/vendor/tencent-trtc/windows")
+if(MAICHAT_ENABLE_REMOTE_DESKTOP AND WIN32 AND EXISTS "${MAICHAT_TRTC_ROOT}/lib/x64/liteav.lib")
+  set(MAICHAT_TRTC_AVAILABLE ON)
+else()
+  set(MAICHAT_TRTC_AVAILABLE OFF)
+  if(MAICHAT_ENABLE_REMOTE_DESKTOP AND WIN32)
+    message(WARNING "TRTC SDK not found under ${MAICHAT_TRTC_ROOT}; remote desktop will be disabled")
+  endif()
+endif()
 
 find_package(Qt5 REQUIRED COMPONENTS Core Network Sql Widgets Test)
 find_package(ZLIB REQUIRED)
@@ -48,9 +61,24 @@ add_library(remote_im_core
   src/storage/LocalSettingsStore.cpp
   src/storage/RemoteIMMediaStore.h
   src/storage/RemoteIMMediaStore.cpp
+  src/remote/RemoteDesktopSignal.h
+  src/remote/RemoteDesktopSignal.cpp
+  src/remote/RemoteDesktopAuth.h
+  src/remote/RemoteDesktopAuth.cpp
+  src/remote/RemoteDesktopSession.h
+  src/remote/RemoteDesktopSession.cpp
+  src/remote/TrtcEngine.h
+  src/remote/TrtcEngine.cpp
 )
 target_include_directories(remote_im_core PUBLIC src)
 target_link_libraries(remote_im_core PUBLIC Qt5::Core Qt5::Network Qt5::Sql ZLIB::ZLIB PRIVATE md4c)
+if(MAICHAT_TRTC_AVAILABLE)
+  target_include_directories(remote_im_core PRIVATE
+    "${MAICHAT_TRTC_ROOT}/include"
+    "${MAICHAT_TRTC_ROOT}/include/TRTC")
+  target_link_libraries(remote_im_core PRIVATE "${MAICHAT_TRTC_ROOT}/lib/x64/liteav.lib")
+  target_compile_definitions(remote_im_core PRIVATE MAICHAT_HAVE_TRTC=1)
+endif()
 
 add_library(remote_im_desktop_app
   src/app/RemoteIMApplication.h
@@ -144,6 +172,30 @@ target_link_libraries(add_contact_dialog_test PRIVATE remote_im_desktop_ui remot
 add_executable(main_window_layout_test tests/MainWindowLayoutTest.cpp)
 target_link_libraries(main_window_layout_test PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets Qt5::Test)
 
+add_executable(remote_desktop_signal_test tests/RemoteDesktopSignalTest.cpp)
+target_link_libraries(remote_desktop_signal_test PRIVATE remote_im_core Qt5::Test)
+
+add_executable(remote_desktop_auth_test tests/RemoteDesktopAuthTest.cpp)
+target_link_libraries(remote_desktop_auth_test PRIVATE remote_im_core Qt5::Test)
+
+add_executable(remote_desktop_session_test tests/RemoteDesktopSessionTest.cpp)
+target_link_libraries(remote_desktop_session_test PRIVATE remote_im_core Qt5::Test)
+
+add_executable(trtc_engine_test tests/TrtcEngineTest.cpp)
+target_link_libraries(trtc_engine_test PRIVATE remote_im_core Qt5::Test)
+
+if(MAICHAT_TRTC_AVAILABLE)
+  # TRTC 运行时 DLL 必须与 exe 同目录才能加载。构建后自动拷贝，
+  # 避免"链接通过但一运行就找不到 SDK"这类只在本地复现的问题。
+  file(GLOB MAICHAT_TRTC_RUNTIME_DLLS "${MAICHAT_TRTC_ROOT}/lib/x64/*.dll")
+  foreach(target maichat trtc_engine_test)
+    add_custom_command(TARGET ${target} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+              ${MAICHAT_TRTC_RUNTIME_DLLS} "$<TARGET_FILE_DIR:${target}>"
+      COMMENT "Copying TRTC runtime DLLs next to ${target}")
+  endforeach()
+endif()
+
 add_executable(ui_zoom_test tests/UiZoomTest.cpp)
 target_link_libraries(ui_zoom_test PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets Qt5::Test)
 
@@ -158,4 +210,8 @@ add_test(NAME remote_im_application_test COMMAND remote_im_application_test)
 add_test(NAME login_dialog_test COMMAND login_dialog_test)
 add_test(NAME add_contact_dialog_test COMMAND add_contact_dialog_test)
 add_test(NAME main_window_layout_test COMMAND main_window_layout_test)
+add_test(NAME remote_desktop_signal_test COMMAND remote_desktop_signal_test)
+add_test(NAME remote_desktop_auth_test COMMAND remote_desktop_auth_test)
+add_test(NAME remote_desktop_session_test COMMAND remote_desktop_session_test)
+add_test(NAME trtc_engine_test COMMAND trtc_engine_test)
 add_test(NAME ui_zoom_test COMMAND ui_zoom_test)

@@ -51,6 +51,11 @@ public:
     // 两端通用：主动结束当前会话。
     void stopSession();
 
+    // 远端画面可用性 / 引擎错误的转发口。UI 据此绑定渲染窗口与提示。
+    void setRemoteVideoHandler(RemoteDesktop::ITrtcEngine::RemoteVideoCallback handler);
+    void setErrorHandler(RemoteDesktop::ITrtcEngine::ErrorCallback handler);
+    void bindRemoteView(const QString& userId, void* renderWindow);
+
     RemoteDesktop::HostState hostState() const;
     RemoteDesktop::ViewerState viewerState() const;
     const RemoteDesktopSettings& settings() const;

@@ -16,6 +16,7 @@
 #include "remote/RemoteDesktopSettings.h"
 
 class SharingIndicatorBar;
+class RemoteDesktopViewerDialog;
 class QResizeEvent;
 class QShowEvent;
 class QLineEdit;
@@ -105,6 +106,8 @@ private:
     void updateRemoteDesktopButton();
     void setupRemoteDesktop();
     void handleRemoteDesktopConsent(const QString& fromUserId);
+    void openRemoteDesktopViewer(const QString& peerUserId);
+    void closeRemoteDesktopViewer();
     void showConversationContextMenu(const QPoint& pos);
     void showContactContextMenu(QListWidget* list, const QPoint& pos);
     void deleteContactFromItem(QListWidgetItem* item);
@@ -128,6 +131,7 @@ private:
     QLabel* statusLabel_ = nullptr;
     QPushButton* remoteDesktopButton_ = nullptr;
     SharingIndicatorBar* sharingIndicator_ = nullptr;
+    RemoteDesktopViewerDialog* remoteDesktopViewer_ = nullptr;
     RemoteDesktopController* remoteDesktop_ = nullptr;
     std::unique_ptr<RemoteDesktopSettingsStore> remoteDesktopSettingsStore_;
     QLabel* settingsAccountValue_ = nullptr;

@@ -71,6 +71,7 @@
 #include "im/TencentUserSigGenerator.h"
 #include "remote/TrtcEngine.h"
 #include "ui/RemoteDesktopConsentDialog.h"
+#include "ui/RemoteDesktopViewerDialog.h"
 #include "ui/SharingIndicatorBar.h"
 #include "ui/UiZoom.h"
 
@@ -2858,10 +2859,62 @@ void MainWindow::setupRemoteDesktop() {
 
     connect(remoteDesktop_, &RemoteDesktopController::viewerStateChanged, this,
             [this](RemoteDesktop::ViewerState state, const QString& failureReason) {
-                if (state == RemoteDesktop::ViewerState::Failed && !failureReason.isEmpty()) {
-                    QMessageBox::information(this, QStringLiteral("远程桌面"), failureReason);
+                switch (state) {
+                    case RemoteDesktop::ViewerState::Connecting:
+                        // 对方已同意：先把观看窗开出来，渲染句柄要在窗口显示后才有效。
+                        openRemoteDesktopViewer(app_.chatState().selectedPeerId());
+                        break;
+                    case RemoteDesktop::ViewerState::Failed:
+                        closeRemoteDesktopViewer();
+                        if (!failureReason.isEmpty()) {
+                            QMessageBox::information(this, QStringLiteral("远程桌面"), failureReason);
+                        }
+                        break;
+                    case RemoteDesktop::ViewerState::Idle:
+                        closeRemoteDesktopViewer();
+                        break;
+                    case RemoteDesktop::ViewerState::Inviting:
+                    case RemoteDesktop::ViewerState::Viewing:
+                        break;
                 }
             });
+
+    // 远端画面到达才绑定渲染窗口：进房时对方可能还没开始推流。
+    remoteDesktop_->setRemoteVideoHandler(
+        [this](const QString& userId, bool available) {
+            if (!remoteDesktopViewer_) return;
+            remoteDesktopViewer_->setStreamActive(available);
+            if (available) {
+                remoteDesktop_->bindRemoteView(userId,
+                                               remoteDesktopViewer_->renderWindowHandle());
+            }
+        });
+    remoteDesktop_->setErrorHandler([this](int code, const QString& message) {
+        if (remoteDesktopViewer_) {
+            remoteDesktopViewer_->setStatusText(
+                QStringLiteral("连接异常（%1）：%2").arg(code).arg(message));
+        }
+    });
+}
+
+void MainWindow::openRemoteDesktopViewer(const QString& peerUserId) {
+    if (remoteDesktopViewer_) return;
+    remoteDesktopViewer_ = new RemoteDesktopViewerDialog(peerUserId, this);
+    connect(remoteDesktopViewer_, &RemoteDesktopViewerDialog::disconnectRequested, this,
+            [this] { remoteDesktop_->stopSession(); });
+    // 用户直接关窗等同于断开，不能留着后台还在收流。
+    connect(remoteDesktopViewer_, &QDialog::finished, this,
+            [this] { remoteDesktop_->stopSession(); });
+    remoteDesktopViewer_->show();
+}
+
+void MainWindow::closeRemoteDesktopViewer() {
+    if (!remoteDesktopViewer_) return;
+    RemoteDesktopViewerDialog* viewer = remoteDesktopViewer_;
+    // 先清指针再关窗：finished 回调会再次调用 stopSession，避免递归重入。
+    remoteDesktopViewer_ = nullptr;
+    viewer->close();
+    viewer->deleteLater();
 }
 
 void MainWindow::handleRemoteDesktopConsent(const QString& fromUserId) {

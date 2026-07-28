@@ -37,6 +37,18 @@ void RemoteDesktopController::setIdGenerator(IdGenerator generator) {
     if (generator) idGenerator_ = std::move(generator);
 }
 
+void RemoteDesktopController::setRemoteVideoHandler(ITrtcEngine::RemoteVideoCallback handler) {
+    if (engine_) engine_->setRemoteVideoCallback(std::move(handler));
+}
+
+void RemoteDesktopController::setErrorHandler(ITrtcEngine::ErrorCallback handler) {
+    if (engine_) engine_->setErrorCallback(std::move(handler));
+}
+
+void RemoteDesktopController::bindRemoteView(const QString& userId, void* renderWindow) {
+    if (engine_) engine_->bindRemoteView(userId, renderWindow);
+}
+
 HostState RemoteDesktopController::hostState() const { return hostState_; }
 ViewerState RemoteDesktopController::viewerState() const { return viewerState_; }
 const RemoteDesktopSettings& RemoteDesktopController::settings() const { return settings_; }

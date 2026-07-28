@@ -3,6 +3,7 @@
 #include <QSignalSpy>
 
 #include "ui/RemoteDesktopConsentDialog.h"
+#include "ui/RemoteDesktopViewerDialog.h"
 #include "ui/SharingIndicatorBar.h"
 
 class RemoteDesktopUiTest : public QObject {
@@ -17,6 +18,9 @@ private slots:
     void indicatorBarNamesPeerAndCountsTime();
     void indicatorBarEmitsStopRequest();
     void indicatorBarActuallyPaintsRedBackground();
+    void viewerShowsPlaceholderUntilStreamArrives();
+    void viewerEmitsDisconnectRequest();
+    void viewerExposesRenderHandle();
 };
 
 void RemoteDesktopUiTest::consentDialogShowsRequesterAndConsequence() {
@@ -114,6 +118,40 @@ void RemoteDesktopUiTest::indicatorBarActuallyPaintsRedBackground() {
     // 中部同样是红底（而不是只有边缘被画到）。
     QCOMPARE(painted.pixelColor(painted.width() / 2, painted.height() / 2),
              QColor(QStringLiteral("#b42318")));
+}
+
+void RemoteDesktopUiTest::viewerShowsPlaceholderUntilStreamArrives() {
+    RemoteDesktopViewerDialog viewer(QStringLiteral("host-pc"));
+    auto* placeholder = viewer.findChild<QLabel*>(QStringLiteral("viewerPlaceholder"));
+    QVERIFY(placeholder != nullptr);
+
+    QVERIFY(!viewer.isStreamActive());
+    QCOMPARE(viewer.statusText(), QStringLiteral("等待画面"));
+
+    viewer.setStreamActive(true);
+    QVERIFY(viewer.isStreamActive());
+    QCOMPARE(viewer.statusText(), QStringLiteral("画面已连接"));
+    // 占位文字必须撤下：它盖在渲染面上会挡住 SDK 画的画面。
+    QVERIFY(placeholder->isHidden());
+
+    viewer.setStreamActive(false);
+    QVERIFY(!placeholder->isHidden());
+}
+
+void RemoteDesktopUiTest::viewerEmitsDisconnectRequest() {
+    RemoteDesktopViewerDialog viewer(QStringLiteral("host-pc"));
+    auto* button = viewer.findChild<QPushButton*>(QStringLiteral("viewerDisconnect"));
+    QVERIFY(button != nullptr);
+
+    QSignalSpy spy(&viewer, &RemoteDesktopViewerDialog::disconnectRequested);
+    button->click();
+    QCOMPARE(spy.count(), 1);
+}
+
+void RemoteDesktopUiTest::viewerExposesRenderHandle() {
+    RemoteDesktopViewerDialog viewer(QStringLiteral("host-pc"));
+    // TRTC 需要一个真实的原生窗口句柄来渲染；拿不到句柄画面就出不来。
+    QVERIFY(viewer.renderWindowHandle() != nullptr);
 }
 
 QTEST_MAIN(RemoteDesktopUiTest)

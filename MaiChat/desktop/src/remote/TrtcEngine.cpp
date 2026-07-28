@@ -1,7 +1,11 @@
 #include "remote/TrtcEngine.h"
 
 #ifdef MAICHAT_HAVE_TRTC
+#include <QCoreApplication>
+#include <QMetaObject>
+
 #include "ITRTCCloud.h"
+#include "TRTCCloudCallback.h"
 #include "TRTCCloudDef.h"
 #endif
 
@@ -11,6 +15,9 @@ namespace {
 // SDK 不可用时的兜底：所有操作安全失败，调用方无需判空。
 class NullTrtcEngine final : public ITrtcEngine {
 public:
+    void setRemoteVideoCallback(RemoteVideoCallback) override {}
+    void setErrorCallback(ErrorCallback) override {}
+    void bindRemoteView(const QString&, void*) override {}
     QString sdkVersion() const override { return QString(); }
     bool startScreenShare(const TrtcRoomParams&) override { return false; }
     bool startViewing(const TrtcRoomParams&, void*) override { return false; }
@@ -20,14 +27,63 @@ public:
 
 #ifdef MAICHAT_HAVE_TRTC
 
-class TrtcEngine final : public ITrtcEngine {
+class TrtcEngine final : public ITrtcEngine, public liteav::ITRTCCloudCallback {
 public:
-    TrtcEngine() : cloud_(getTRTCShareInstance()) {}
+    TrtcEngine() : cloud_(getTRTCShareInstance()) {
+        if (cloud_) cloud_->addCallback(this);
+    }
 
     ~TrtcEngine() override {
         stop();
+        if (cloud_) cloud_->removeCallback(this);
         // 单例由 SDK 管理，必须走 destroy 而不是 delete。
         destroyTRTCShareInstance();
+    }
+
+    void setRemoteVideoCallback(RemoteVideoCallback callback) override {
+        remoteVideoCallback_ = std::move(callback);
+    }
+
+    void setErrorCallback(ErrorCallback callback) override {
+        errorCallback_ = std::move(callback);
+    }
+
+    void bindRemoteView(const QString& userId, void* renderWindow) override {
+        if (!cloud_ || userId.isEmpty()) return;
+        const QByteArray id = userId.toUtf8();
+        // 被控端推的是辅路（屏幕共享），这里必须订阅同一路，否则拿不到画面。
+        cloud_->startRemoteView(id.constData(), liteav::TRTCVideoStreamTypeSub,
+                                static_cast<liteav::TXView>(renderWindow));
+    }
+
+    // ---- ITRTCCloudCallback：回调来自 SDK 线程，一律切回主线程再交给上层 ----
+
+    void onError(TXLiteAVError code, const char* message, void*) override {
+        const int errorCode = static_cast<int>(code);
+        const QString text = message ? QString::fromUtf8(message) : QString();
+        postToMainThread([this, errorCode, text] {
+            if (errorCallback_) errorCallback_(errorCode, text);
+        });
+    }
+
+    // 警告不影响会话继续，记录即可，不打扰用户。
+    void onWarning(TXLiteAVWarning, const char*, void*) override {}
+
+    void onExitRoom(int) override {}
+
+    void onEnterRoom(int result) override {
+        if (result >= 0) return;
+        // 负值是错误码：进房失败要让上层知道，否则界面会一直停在"连接中"。
+        postToMainThread([this, result] {
+            if (errorCallback_) errorCallback_(result, QStringLiteral("进入房间失败"));
+        });
+    }
+
+    void onUserVideoAvailable(const char* userId, bool available) override {
+        const QString id = userId ? QString::fromUtf8(userId) : QString();
+        postToMainThread([this, id, available] {
+            if (remoteVideoCallback_) remoteVideoCallback_(id, available);
+        });
     }
 
     QString sdkVersion() const override {
@@ -89,9 +145,17 @@ private:
         return true;
     }
 
+    // SDK 回调在其内部线程触发，直接碰 Qt 控件会崩。统一投递到主线程。
+    static void postToMainThread(std::function<void()> work) {
+        QMetaObject::invokeMethod(qApp, [work = std::move(work)] { work(); },
+                                  Qt::QueuedConnection);
+    }
+
     liteav::ITRTCCloud* cloud_ = nullptr;
     void* renderWindow_ = nullptr;
     bool active_ = false;
+    RemoteVideoCallback remoteVideoCallback_;
+    ErrorCallback errorCallback_;
 };
 
 #endif  // MAICHAT_HAVE_TRTC

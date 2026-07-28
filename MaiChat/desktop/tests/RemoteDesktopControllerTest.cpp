@@ -16,6 +16,17 @@ namespace {
 // 而不是靠读代码推断。
 class FakeTrtcEngine final : public ITrtcEngine {
 public:
+    void setRemoteVideoCallback(RemoteVideoCallback callback) override {
+        remoteVideoCallback = std::move(callback);
+    }
+    void setErrorCallback(ErrorCallback callback) override {
+        errorCallback = std::move(callback);
+    }
+    void bindRemoteView(const QString& userId, void*) override {
+        bindCalls += 1;
+        lastBoundUserId = userId;
+    }
+
     QString sdkVersion() const override { return QStringLiteral("0.0.0-fake"); }
 
     bool startScreenShare(const TrtcRoomParams& params) override {
@@ -43,9 +54,13 @@ public:
     int shareCalls = 0;
     int viewCalls = 0;
     int stopCalls = 0;
+    int bindCalls = 0;
     bool active = false;
     bool failNextStart = false;
     QString lastRoomId;
+    QString lastBoundUserId;
+    RemoteVideoCallback remoteVideoCallback;
+    ErrorCallback errorCallback;
 };
 
 struct SentSignal {
@@ -127,6 +142,7 @@ private slots:
     void stopsSharingOnPeerStop();
     void reportsFailureWhenScreenShareCannotStart();
     void doesNotResendInviteWhileOneIsPending();
+    void forwardsRemoteVideoHandlerToEngine();
 };
 
 void RemoteDesktopControllerTest::ignoresPlainChatText() {
@@ -310,6 +326,27 @@ void RemoteDesktopControllerTest::doesNotResendInviteWhileOneIsPending() {
     h.controller->requestView(kPeerUser);
     QCOMPARE(h.sent.size(), 1);
     QCOMPARE(h.lastSent().sessionId, firstSessionId);
+}
+
+void RemoteDesktopControllerTest::forwardsRemoteVideoHandlerToEngine() {
+    Harness h(HostMode::Attended);
+
+    QString seenUser;
+    bool seenAvailable = false;
+    h.controller->setRemoteVideoHandler([&](const QString& userId, bool available) {
+        seenUser = userId;
+        seenAvailable = available;
+    });
+    QVERIFY(h.engine->remoteVideoCallback != nullptr);
+
+    // 模拟 SDK 通知远端画面到达 → UI 层据此才去绑渲染窗口。
+    h.engine->remoteVideoCallback(kPeerUser, true);
+    QCOMPARE(seenUser, kPeerUser);
+    QVERIFY(seenAvailable);
+
+    h.controller->bindRemoteView(kPeerUser, nullptr);
+    QCOMPARE(h.engine->bindCalls, 1);
+    QCOMPARE(h.engine->lastBoundUserId, kPeerUser);
 }
 
 QTEST_MAIN(RemoteDesktopControllerTest)

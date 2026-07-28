@@ -22,7 +22,20 @@ struct TrtcRoomParams {
 
 class ITrtcEngine {
 public:
+    // 远端画面可用性变化。SDK 回调来自其内部线程，实现方负责切回主线程，
+    // 调用方可以直接碰 UI。
+    using RemoteVideoCallback = std::function<void(const QString& userId, bool available)>;
+    // 进房/推流失败。空实现平台不会触发。
+    using ErrorCallback = std::function<void(int code, const QString& message)>;
+
     virtual ~ITrtcEngine() = default;
+
+    virtual void setRemoteVideoCallback(RemoteVideoCallback callback) = 0;
+    virtual void setErrorCallback(ErrorCallback callback) = 0;
+
+    // 把远端画面绑定到原生窗口句柄。收到 RemoteVideoCallback(available=true)
+    // 之后调用；渲染窗口可能晚于进房才创建，故与 startViewing 分开。
+    virtual void bindRemoteView(const QString& userId, void* renderWindow) = 0;
 
     // SDK 版本号；取不到返回空串。用于启动自检与问题上报。
     virtual QString sdkVersion() const = 0;

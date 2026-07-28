@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.21)
+﻿cmake_minimum_required(VERSION 3.21)
 # C 用于 third_party/md4c（Markdown 解析，纯 C 实现）。
 project(MaiChatDesktop VERSION 0.1.4 LANGUAGES C CXX)
 
@@ -105,6 +105,8 @@ add_library(remote_im_desktop_ui
   src/ui/RemoteDesktopConsentDialog.cpp
   src/ui/SharingIndicatorBar.h
   src/ui/SharingIndicatorBar.cpp
+  src/ui/RemoteDesktopViewerDialog.h
+  src/ui/RemoteDesktopViewerDialog.cpp
   src/ui/UiZoom.h
   src/ui/UiZoom.cpp
 )

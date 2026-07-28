@@ -108,6 +108,7 @@ private:
     void handleRemoteDesktopConsent(const QString& fromUserId);
     void openRemoteDesktopViewer(const QString& peerUserId);
     void closeRemoteDesktopViewer();
+    void promptRemoteDesktopPassword(const QString& peerUserId);
     void showConversationContextMenu(const QPoint& pos);
     void showContactContextMenu(QListWidget* list, const QPoint& pos);
     void deleteContactFromItem(QListWidgetItem* item);
@@ -134,6 +135,8 @@ private:
     RemoteDesktopViewerDialog* remoteDesktopViewer_ = nullptr;
     RemoteDesktopController* remoteDesktop_ = nullptr;
     std::unique_ptr<RemoteDesktopSettingsStore> remoteDesktopSettingsStore_;
+    // 对端设了访问密码时，本次运行内记住，避免每次重试都问。不落盘。
+    QHash<QString, QString> remoteDesktopPasswords_;
     QLabel* settingsAccountValue_ = nullptr;
     QLabel* settingsConnectionValue_ = nullptr;
     QLabel* settingsSdkAppIdValue_ = nullptr;

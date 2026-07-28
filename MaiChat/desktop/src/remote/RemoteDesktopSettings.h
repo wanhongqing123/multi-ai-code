@@ -17,18 +17,12 @@ struct RemoteDesktopSettings {
     // 无人值守连续校验失败次数；达到阈值后模式被降级，此计数随之清零。
     int consecutiveAuthFailures = 0;
 
-    // 无人值守要求必须配好密码。没有凭据时该模式不可用——
-    // 这是"空密码 = 任何白名单账号都能自动进"这一危险退化的最后一道闸。
-    bool canUseUnattended() const { return secret.isValid(); }
+    // 是否设了访问密码。密码是可选加固，不是无人值守的前提：
+    // 白名单本身即授权，密码只是想再加一道锁的人才设。
+    bool hasPassword() const { return secret.isValid(); }
 
-    // 落盘/读取时用的有效模式：配置成无人值守但凭据缺失（例如手工改过配置
-    // 文件）时，安全降级为有人值守而不是直接放行。
-    RemoteDesktop::HostMode effectiveMode() const {
-        if (mode == RemoteDesktop::HostMode::Unattended && !canUseUnattended()) {
-            return RemoteDesktop::HostMode::Attended;
-        }
-        return mode;
-    }
+    // 无人值守不再要求密码，模式即所选模式。
+    RemoteDesktop::HostMode effectiveMode() const { return mode; }
 
     bool isSenderAllowed(const QString& userId) const;
 };

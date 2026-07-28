@@ -122,7 +122,8 @@ void RemoteDesktopController::handleInvite(const QString& fromUserId, const Sign
     input.currentState = hostState_;
     input.senderAllowed = settings_.isSenderAllowed(fromUserId);
     input.consecutiveFailures = settings_.consecutiveAuthFailures;
-    // 密码校验只在无人值守模式下才有意义；proof 绑定本次会话参数。
+    input.passwordConfigured = settings_.hasPassword();
+    // 密码校验只在设了密码时才有意义；proof 绑定本次会话参数。
     input.authProofValid = RemoteDesktopAuth::verifyAuthProof(
         settings_.secret, signal.authProof, signal.sessionId, signal.roomId, fromUserId);
 
@@ -139,6 +140,7 @@ void RemoteDesktopController::recordAuthAttempt(const HostInviteInput& input,
     // 只有真正走到密码校验那一步才计数：有人值守模式没有密码这回事，
     // 非白名单/忙碌被挡下的请求也不该影响爆破计数。
     const bool passwordWasChecked = input.mode == HostMode::Unattended && input.senderAllowed
+                                    && input.passwordConfigured
                                     && input.currentState == HostState::Idle;
     if (!passwordWasChecked) return;
 

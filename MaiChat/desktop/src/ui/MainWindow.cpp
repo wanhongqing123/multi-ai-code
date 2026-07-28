@@ -2866,7 +2866,10 @@ void MainWindow::setupRemoteDesktop() {
                         break;
                     case RemoteDesktop::ViewerState::Failed:
                         closeRemoteDesktopViewer();
-                        if (!failureReason.isEmpty()) {
+                        if (failureReason == RemoteDesktop::reasonBadPassword()) {
+                            // 只有对方额外设了密码才会走到这里：此时才问，问一次记住。
+                            promptRemoteDesktopPassword(app_.chatState().selectedPeerId());
+                        } else if (!failureReason.isEmpty()) {
                             QMessageBox::information(this, QStringLiteral("远程桌面"), failureReason);
                         }
                         break;
@@ -2895,6 +2898,20 @@ void MainWindow::setupRemoteDesktop() {
                 QStringLiteral("连接异常（%1）：%2").arg(code).arg(message));
         }
     });
+}
+
+void MainWindow::promptRemoteDesktopPassword(const QString& peerUserId) {
+    if (peerUserId.isEmpty()) return;
+    bool ok = false;
+    const QString password = QInputDialog::getText(
+        this, QStringLiteral("远程桌面"),
+        QStringLiteral("%1 设置了访问密码，请输入后重试：").arg(peerUserId),
+        QLineEdit::Password, QString(), &ok);
+    if (!ok || password.isEmpty()) return;
+
+    // 记住本次会话内的密码，避免重试时反复询问。
+    remoteDesktopPasswords_.insert(peerUserId, password);
+    remoteDesktop_->requestView(peerUserId, password);
 }
 
 void MainWindow::openRemoteDesktopViewer(const QString& peerUserId) {
@@ -2927,17 +2944,9 @@ void MainWindow::requestRemoteDesktop() {
     const QString peerId = app_.chatState().selectedPeerId();
     if (peerId.isEmpty() || !remoteDesktop_) return;
 
-    // 对方可能是无人值守模式，需要访问密码；有人值守时留空即可。
-    bool ok = false;
-    const QString password = QInputDialog::getText(
-        this, QStringLiteral("远程桌面"),
-        QStringLiteral("请求查看 %1 的屏幕。\n若对方开启了无人值守，请输入其访问密码"
-                       "（对方为每次确认模式时可留空）：")
-            .arg(peerId),
-        QLineEdit::Password, QString(), &ok);
-    if (!ok) return;
-
-    remoteDesktop_->requestView(peerId, password);
+    // 直接发起，不打断用户。绝大多数情况对方靠白名单授权即可；
+    // 只有对方额外设了访问密码时才会被拒，那时再按需索取密码。
+    remoteDesktop_->requestView(peerId, remoteDesktopPasswords_.value(peerId));
 }
 
 void MainWindow::showConversationContextMenu(const QPoint& pos) {

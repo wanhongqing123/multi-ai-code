@@ -1,4 +1,4 @@
-#include <QtTest/QtTest>
+﻿#include <QtTest/QtTest>
 
 #include <QTemporaryDir>
 
@@ -22,7 +22,7 @@ private slots:
 void RemoteDesktopSettingsTest::defaultsToAttendedWithoutPassword() {
     const RemoteDesktopSettings settings;
     QCOMPARE(static_cast<int>(settings.mode), static_cast<int>(HostMode::Attended));
-    QVERIFY(!settings.canUseUnattended());
+    QVERIFY(!settings.hasPassword());
     QVERIFY(settings.allowedUserIds.isEmpty());
     QCOMPARE(settings.consecutiveAuthFailures, 0);
 }
@@ -46,7 +46,7 @@ void RemoteDesktopSettingsTest::roundTripsThroughDisk() {
     QCOMPARE(loaded.secret.hash, settings.secret.hash);
     QCOMPARE(loaded.allowedUserIds, settings.allowedUserIds);
     QCOMPARE(loaded.consecutiveAuthFailures, 2);
-    QVERIFY(loaded.canUseUnattended());
+    QVERIFY(loaded.hasPassword());
 }
 
 void RemoteDesktopSettingsTest::neverWritesPlaintextPassword() {
@@ -70,10 +70,11 @@ void RemoteDesktopSettingsTest::neverWritesPlaintextPassword() {
 
 void RemoteDesktopSettingsTest::fallsBackToAttendedWhenUnattendedHasNoPassword() {
     RemoteDesktopSettings settings;
-    settings.mode = HostMode::Unattended;  // 手工改配置文件也可能造出这种状态
-    QVERIFY(!settings.canUseUnattended());
-    // 缺凭据时必须收紧到有人值守，而不是无密码自动放行。
-    QCOMPARE(static_cast<int>(settings.effectiveMode()), static_cast<int>(HostMode::Attended));
+    settings.mode = HostMode::Unattended;
+    // 密码是可选加固，不是无人值守的前提：没设密码时模式保持不变，
+    // 授权由白名单承担（主场景是自己连自己的电脑，不该被密码挡住）。
+    QVERIFY(!settings.hasPassword());
+    QCOMPARE(static_cast<int>(settings.effectiveMode()), static_cast<int>(HostMode::Unattended));
 }
 
 void RemoteDesktopSettingsTest::recoversFromCorruptFileWithSafeDefaults() {
@@ -87,7 +88,7 @@ void RemoteDesktopSettingsTest::recoversFromCorruptFileWithSafeDefaults() {
     const RemoteDesktopSettings loaded = RemoteDesktopSettingsStore(path).load();
     // 解析失败不得放宽权限。
     QCOMPARE(static_cast<int>(loaded.mode), static_cast<int>(HostMode::Attended));
-    QVERIFY(!loaded.canUseUnattended());
+    QVERIFY(!loaded.hasPassword());
     QVERIFY(loaded.allowedUserIds.isEmpty());
 }
 

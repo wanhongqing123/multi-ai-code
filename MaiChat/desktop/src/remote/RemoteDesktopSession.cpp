@@ -44,7 +44,15 @@ HostDecision decideOnInvite(const HostInviteInput& input) {
         return decision;
     }
 
-    // 无人值守：密码是唯一的自动放行凭据，校验不过一律拒绝。
+    // 无人值守 + 未设密码：白名单即授权，直接放行。主场景是「自己在外面连
+    // 自己的电脑」，每次输密码的摩擦不值得——安全性由白名单与 IM 账号本身承担。
+    if (!input.passwordConfigured) {
+        decision.action = HostAction::AcceptAndShare;
+        decision.nextState = HostState::Sharing;
+        return decision;
+    }
+
+    // 设了密码就必须校验通过，否则拒绝。
     if (!input.authProofValid) {
         decision.action = HostAction::RejectInvite;
         decision.reason = reasonBadPassword();

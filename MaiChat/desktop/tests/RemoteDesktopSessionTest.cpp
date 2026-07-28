@@ -1,4 +1,4 @@
-#include <QtTest/QtTest>
+﻿#include <QtTest/QtTest>
 
 #include "remote/RemoteDesktopAuth.h"
 #include "remote/RemoteDesktopSession.h"
@@ -13,6 +13,7 @@ class RemoteDesktopSessionTest : public QObject {
 private slots:
     // 被控端
     void attendedModeAsksForConsent();
+    void unattendedModeAcceptsWhitelistedPeerWithoutPassword();
     void unattendedModeAutoAcceptsWithValidProof();
     void unattendedModeRejectsInvalidProof();
     void unattendedModeDowngradesAfterRepeatedFailures();
@@ -41,6 +42,8 @@ HostInviteInput inviteInput(HostMode mode, bool allowed = true, bool proofValid 
     HostInviteInput input;
     input.mode = mode;
     input.senderAllowed = allowed;
+    // 这些用例聚焦「设了密码」的分支；未设密码的放行单独用例覆盖。
+    input.passwordConfigured = true;
     input.authProofValid = proofValid;
     return input;
 }
@@ -59,6 +62,27 @@ void RemoteDesktopSessionTest::attendedModeAsksForConsent() {
     QCOMPARE(static_cast<int>(decision.action), static_cast<int>(HostAction::ShowConsentDialog));
     QCOMPARE(static_cast<int>(decision.nextState), static_cast<int>(HostState::AwaitingConsent));
     QVERIFY(!decision.downgradeToAttended);
+}
+
+void RemoteDesktopSessionTest::unattendedModeAcceptsWhitelistedPeerWithoutPassword() {
+    // 主场景：自己在外面连自己的电脑。没设密码时白名单即授权，直接放行，
+    // 不该因为「没配密码」而把用户挡在门外。
+    HostInviteInput input;
+    input.mode = HostMode::Unattended;
+    input.senderAllowed = true;
+    input.passwordConfigured = false;
+    input.authProofValid = false;
+
+    const HostDecision decision = decideOnInvite(input);
+    QCOMPARE(static_cast<int>(decision.action), static_cast<int>(HostAction::AcceptAndShare));
+    QCOMPARE(static_cast<int>(decision.nextState), static_cast<int>(HostState::Sharing));
+    QVERIFY(!decision.downgradeToAttended);
+
+    // 但白名单之外的账号依然进不来——没有密码不等于没有门禁。
+    input.senderAllowed = false;
+    const HostDecision rejected = decideOnInvite(input);
+    QCOMPARE(static_cast<int>(rejected.action), static_cast<int>(HostAction::RejectInvite));
+    QCOMPARE(rejected.reason, reasonNotAllowed());
 }
 
 void RemoteDesktopSessionTest::unattendedModeAutoAcceptsWithValidProof() {

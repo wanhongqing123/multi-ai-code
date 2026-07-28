@@ -202,10 +202,15 @@ void RemoteDesktopSessionTest::viewerStopsOnPeerStop() {
 void RemoteDesktopSessionTest::viewerDoesNotReinviteWhileActive() {
     for (ViewerState state : {ViewerState::Inviting, ViewerState::Connecting, ViewerState::Viewing}) {
         QCOMPARE(static_cast<int>(viewerOnInviteSent(state).nextState), static_cast<int>(state));
+        // canStartInvite 必须与 viewerOnInviteSent 的"原样返回"语义一致：
+        // Inviting 状态下二者都表示"不能再发"，调用方不能只看返回状态。
+        QVERIFY(!canStartInvite(state));
     }
     // 失败后允许重试。
     QCOMPARE(static_cast<int>(viewerOnInviteSent(ViewerState::Failed).nextState),
              static_cast<int>(ViewerState::Inviting));
+    QVERIFY(canStartInvite(ViewerState::Failed));
+    QVERIFY(canStartInvite(ViewerState::Idle));
 }
 
 QTEST_MAIN(RemoteDesktopSessionTest)

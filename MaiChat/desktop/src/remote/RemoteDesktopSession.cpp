@@ -92,12 +92,14 @@ HostDecision decideOnPeerGone(HostState currentState) {
     return decision;
 }
 
+bool canStartInvite(ViewerState current) {
+    // 只有空闲或上一次失败后才允许发起；进行中的会话不被覆盖。
+    return current == ViewerState::Idle || current == ViewerState::Failed;
+}
+
 ViewerTransition viewerOnInviteSent(ViewerState current) {
     ViewerTransition transition;
-    // 已有进行中的会话时不重复发起。
-    transition.nextState = current == ViewerState::Idle || current == ViewerState::Failed
-                               ? ViewerState::Inviting
-                               : current;
+    transition.nextState = canStartInvite(current) ? ViewerState::Inviting : current;
     return transition;
 }
 

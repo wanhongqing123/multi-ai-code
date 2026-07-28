@@ -73,6 +73,10 @@ signals:
 
 private:
     void send(const QString& peerId, const RemoteDesktopSignals::Signal& signal);
+    void handleInvite(const QString& fromUserId, const RemoteDesktopSignals::Signal& signal);
+    // 密码尝试的计数与降级。单独抽出来，避免这段安全语义混在信令分发里。
+    void recordAuthAttempt(const RemoteDesktop::HostInviteInput& input,
+                           const RemoteDesktop::HostDecision& decision);
     void applyHostDecision(const RemoteDesktop::HostDecision& decision, const QString& peerId);
     void setViewerState(RemoteDesktop::ViewerState state, const QString& failureReason = QString());
     RemoteDesktop::TrtcRoomParams roomParams(const QString& roomId) const;

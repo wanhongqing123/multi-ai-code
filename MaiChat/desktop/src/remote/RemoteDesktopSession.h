@@ -83,6 +83,11 @@ struct ViewerTransition {
     QString failureReason;
 };
 
+// 当前状态是否允许发起新邀请。把"能不能发"做成显式谓词，而不是让调用方
+// 去比对 viewerOnInviteSent 的返回值——后者在已是 Inviting 时会原样返回，
+// 极易被误读成"可以发"。
+bool canStartInvite(ViewerState current);
+
 ViewerTransition viewerOnInviteSent(ViewerState current);
 ViewerTransition viewerOnSignal(ViewerState current, const RemoteDesktopSignals::Signal& signal);
 ViewerTransition viewerOnFirstFrame(ViewerState current);

@@ -126,6 +126,7 @@ private slots:
     void reportsRejectionToViewer();
     void stopsSharingOnPeerStop();
     void reportsFailureWhenScreenShareCannotStart();
+    void doesNotResendInviteWhileOneIsPending();
 };
 
 void RemoteDesktopControllerTest::ignoresPlainChatText() {
@@ -296,6 +297,19 @@ void RemoteDesktopControllerTest::reportsFailureWhenScreenShareCannotStart() {
     // 进房失败必须如实回拒，否则对端会一直卡在"连接中"。
     QCOMPARE(static_cast<int>(h.lastSent().type), static_cast<int>(Type::Reject));
     QCOMPARE(static_cast<int>(h.controller->hostState()), static_cast<int>(HostState::Idle));
+}
+
+void RemoteDesktopControllerTest::doesNotResendInviteWhileOneIsPending() {
+    Harness h(HostMode::Attended);
+
+    h.controller->requestView(kPeerUser);
+    QCOMPARE(h.sent.size(), 1);
+
+    // 用户连点两下 🖥 不应该发两次邀请，也不能把已有会话的 sessionId 冲掉。
+    const QString firstSessionId = h.lastSent().sessionId;
+    h.controller->requestView(kPeerUser);
+    QCOMPARE(h.sent.size(), 1);
+    QCOMPARE(h.lastSent().sessionId, firstSessionId);
 }
 
 QTEST_MAIN(RemoteDesktopControllerTest)

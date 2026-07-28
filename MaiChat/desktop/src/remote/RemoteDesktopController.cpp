@@ -68,39 +68,9 @@ bool RemoteDesktopController::handleIncomingText(const QString& fromUserId, cons
     if (signal.type == Type::Unknown) return true;
 
     switch (signal.type) {
-        case Type::Invite: {
-            HostInviteInput input;
-            input.mode = settings_.effectiveMode();
-            input.currentState = hostState_;
-            input.senderAllowed = settings_.isSenderAllowed(fromUserId);
-            input.consecutiveFailures = settings_.consecutiveAuthFailures;
-            // 密码校验只在无人值守模式下才有意义；proof 绑定本次会话参数。
-            input.authProofValid = RemoteDesktopAuth::verifyAuthProof(
-                settings_.secret, signal.authProof, signal.sessionId, signal.roomId, fromUserId);
-
-            const HostDecision decision = decideOnInvite(input);
-
-            // 失败计数只在无人值守模式下累计/清零：有人值守时没有密码这回事。
-            if (input.mode == HostMode::Unattended && input.senderAllowed
-                && hostState_ == HostState::Idle) {
-                if (input.authProofValid) {
-                    settings_.consecutiveAuthFailures = 0;
-                } else {
-                    settings_.consecutiveAuthFailures += 1;
-                }
-                if (decision.downgradeToAttended) {
-                    settings_.mode = HostMode::Attended;
-                    settings_.consecutiveAuthFailures = 0;
-                    emit modeDowngraded();
-                }
-                emit settingsChanged(settings_);
-            }
-
-            hostSessionId_ = signal.sessionId;
-            hostRoomId_ = signal.roomId;
-            applyHostDecision(decision, fromUserId);
+        case Type::Invite:
+            handleInvite(fromUserId, signal);
             return true;
-        }
         case Type::Accept:
         case Type::Reject: {
             // 只认当前会话的响应，忽略过期会话的迟到信令。
@@ -132,6 +102,41 @@ bool RemoteDesktopController::handleIncomingText(const QString& fromUserId, cons
             break;
     }
     return true;
+}
+
+void RemoteDesktopController::handleInvite(const QString& fromUserId, const Signal& signal) {
+    HostInviteInput input;
+    input.mode = settings_.effectiveMode();
+    input.currentState = hostState_;
+    input.senderAllowed = settings_.isSenderAllowed(fromUserId);
+    input.consecutiveFailures = settings_.consecutiveAuthFailures;
+    // 密码校验只在无人值守模式下才有意义；proof 绑定本次会话参数。
+    input.authProofValid = RemoteDesktopAuth::verifyAuthProof(
+        settings_.secret, signal.authProof, signal.sessionId, signal.roomId, fromUserId);
+
+    const HostDecision decision = decideOnInvite(input);
+    recordAuthAttempt(input, decision);
+
+    hostSessionId_ = signal.sessionId;
+    hostRoomId_ = signal.roomId;
+    applyHostDecision(decision, fromUserId);
+}
+
+void RemoteDesktopController::recordAuthAttempt(const HostInviteInput& input,
+                                                const HostDecision& decision) {
+    // 只有真正走到密码校验那一步才计数：有人值守模式没有密码这回事，
+    // 非白名单/忙碌被挡下的请求也不该影响爆破计数。
+    const bool passwordWasChecked = input.mode == HostMode::Unattended && input.senderAllowed
+                                    && input.currentState == HostState::Idle;
+    if (!passwordWasChecked) return;
+
+    settings_.consecutiveAuthFailures = input.authProofValid ? 0 : input.consecutiveFailures + 1;
+    if (decision.downgradeToAttended) {
+        settings_.mode = HostMode::Attended;
+        settings_.consecutiveAuthFailures = 0;
+        emit modeDowngraded();
+    }
+    emit settingsChanged(settings_);
 }
 
 void RemoteDesktopController::applyHostDecision(const HostDecision& decision,
@@ -199,14 +204,7 @@ void RemoteDesktopController::applyHostDecision(const HostDecision& decision,
 }
 
 void RemoteDesktopController::requestView(const QString& peerId, const QString& password) {
-    const ViewerTransition transition = viewerOnInviteSent(viewerState_);
-    // 已有进行中的会话时状态机会原样返回，此时不重复发 invite。
-    if (transition.nextState != ViewerState::Inviting || viewerState_ == ViewerState::Inviting) {
-        if (viewerState_ == ViewerState::Inviting || viewerState_ == ViewerState::Connecting
-            || viewerState_ == ViewerState::Viewing) {
-            return;
-        }
-    }
+    if (!canStartInvite(viewerState_)) return;
 
     viewerPeerId_ = peerId;
     viewerSessionId_ = idGenerator_();

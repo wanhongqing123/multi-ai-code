@@ -67,6 +67,10 @@ add_library(remote_im_core
   src/remote/RemoteDesktopAuth.cpp
   src/remote/RemoteDesktopSession.h
   src/remote/RemoteDesktopSession.cpp
+  src/remote/RemoteDesktopSettings.h
+  src/remote/RemoteDesktopSettings.cpp
+  src/remote/RemoteDesktopController.h
+  src/remote/RemoteDesktopController.cpp
   src/remote/TrtcEngine.h
   src/remote/TrtcEngine.cpp
 )
@@ -181,6 +185,12 @@ target_link_libraries(remote_desktop_auth_test PRIVATE remote_im_core Qt5::Test)
 add_executable(remote_desktop_session_test tests/RemoteDesktopSessionTest.cpp)
 target_link_libraries(remote_desktop_session_test PRIVATE remote_im_core Qt5::Test)
 
+add_executable(remote_desktop_settings_test tests/RemoteDesktopSettingsTest.cpp)
+target_link_libraries(remote_desktop_settings_test PRIVATE remote_im_core Qt5::Test)
+
+add_executable(remote_desktop_controller_test tests/RemoteDesktopControllerTest.cpp)
+target_link_libraries(remote_desktop_controller_test PRIVATE remote_im_core Qt5::Test)
+
 add_executable(trtc_engine_test tests/TrtcEngineTest.cpp)
 target_link_libraries(trtc_engine_test PRIVATE remote_im_core Qt5::Test)
 
@@ -213,5 +223,7 @@ add_test(NAME main_window_layout_test COMMAND main_window_layout_test)
 add_test(NAME remote_desktop_signal_test COMMAND remote_desktop_signal_test)
 add_test(NAME remote_desktop_auth_test COMMAND remote_desktop_auth_test)
 add_test(NAME remote_desktop_session_test COMMAND remote_desktop_session_test)
+add_test(NAME remote_desktop_settings_test COMMAND remote_desktop_settings_test)
+add_test(NAME remote_desktop_controller_test COMMAND remote_desktop_controller_test)
 add_test(NAME trtc_engine_test COMMAND trtc_engine_test)
 add_test(NAME ui_zoom_test COMMAND ui_zoom_test)

@@ -101,6 +101,10 @@ add_library(remote_im_desktop_ui
   src/ui/MainWindow.cpp
   src/ui/ImagePreviewDialog.h
   src/ui/ImagePreviewDialog.cpp
+  src/ui/RemoteDesktopConsentDialog.h
+  src/ui/RemoteDesktopConsentDialog.cpp
+  src/ui/SharingIndicatorBar.h
+  src/ui/SharingIndicatorBar.cpp
   src/ui/UiZoom.h
   src/ui/UiZoom.cpp
 )
@@ -206,6 +210,9 @@ if(MAICHAT_TRTC_AVAILABLE)
   endforeach()
 endif()
 
+add_executable(remote_desktop_ui_test tests/RemoteDesktopUiTest.cpp)
+target_link_libraries(remote_desktop_ui_test PRIVATE remote_im_desktop_ui remote_im_core Qt5::Widgets Qt5::Test)
+
 add_executable(ui_zoom_test tests/UiZoomTest.cpp)
 target_link_libraries(ui_zoom_test PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets Qt5::Test)
 
@@ -226,4 +233,5 @@ add_test(NAME remote_desktop_session_test COMMAND remote_desktop_session_test)
 add_test(NAME remote_desktop_settings_test COMMAND remote_desktop_settings_test)
 add_test(NAME remote_desktop_controller_test COMMAND remote_desktop_controller_test)
 add_test(NAME trtc_engine_test COMMAND trtc_engine_test)
+add_test(NAME remote_desktop_ui_test COMMAND remote_desktop_ui_test)
 add_test(NAME ui_zoom_test COMMAND ui_zoom_test)

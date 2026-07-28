@@ -96,3 +96,6 @@ resources/asr/**/licenses/*
 
 # Playwright MCP 浏览器工具的临时产物（页面快照/控制台日志）
 .playwright-mcp/
+
+# Mac TRTC SDK 解包产物（归档已入库；解包目录含符号链接，不可在 Windows 上提交）
+MaiChat/desktop/vendor/tencent-trtc/macos/TXLiteAVSDK_TRTC_Mac/

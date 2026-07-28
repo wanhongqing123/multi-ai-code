@@ -97,9 +97,11 @@ describe('buildRemoteImMessageSummaryMarkdown', () => {
     // 会话内按天插入日期分隔。
     expect(markdown).toContain(`### 📅 ${formatSummaryDay(t2)}`)
     expect(markdown).toContain(`### 📅 ${formatSummaryDay(t1)}`)
-    // 入站显示对端名，出站显示本机账号名；消息头为「发送者 + 时:分」。
-    expect(markdown).toContain(`**whq-iphone** · \`${formatSummaryClock(t2)}\``)
-    expect(markdown).toContain(`**house-pc** · \`${formatSummaryClock(t3)}\``)
+    // 入站显示对端名，出站显示本机账号名；消息头带完整「日期 时:分」，
+    // 这样单条被摘录出去时也能确定时间，不必依赖上方的日期分隔行。
+    expect(markdown).toContain(`**whq-iphone** · \`${formatSummaryTime(t2)}\``)
+    expect(markdown).toContain(`**house-pc** · \`${formatSummaryTime(t3)}\``)
+    expect(markdown).toContain(`\`${formatSummaryDay(t2)} ${formatSummaryClock(t2)}\``)
     expect(markdown).toContain('执行的如何了？')
     expect(markdown).toContain('任务已完成。')
   })

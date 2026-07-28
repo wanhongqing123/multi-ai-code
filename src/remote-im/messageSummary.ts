@@ -125,7 +125,8 @@ export function buildRemoteImMessageSummaryMarkdown(
     lines.push(`## 💬 ${peer} · ${peerMessages.length} 条`)
     let lastDay = ''
     for (const message of peerMessages) {
-      // 同一会话内按天插入日期分隔，消息头只留「发送者 + 时:分」，更清爽。
+      // 同一会话内按天插入日期分隔；消息头带完整「日期 时:分」，
+      // 便于摘录单条时不依赖上方分隔行也能确定时间。
       const day = formatSummaryDay(message.createdAt)
       if (day !== lastDay) {
         lastDay = day
@@ -134,7 +135,7 @@ export function buildRemoteImMessageSummaryMarkdown(
       }
       const failed = message.status === 'failed' ? ' ⚠️ 发送失败' : ''
       lines.push('')
-      lines.push(`**${summarySenderLabel(message, options.ownerUserId)}** · \`${formatSummaryClock(message.createdAt)}\`${failed}`)
+      lines.push(`**${summarySenderLabel(message, options.ownerUserId)}** · \`${formatSummaryTime(message.createdAt)}\`${failed}`)
       const attachment = attachmentLine(message)
       if (attachment) {
         lines.push('')

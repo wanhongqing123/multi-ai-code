@@ -4,7 +4,6 @@ import remarkGfm from 'remark-gfm'
 import type { RemoteImMessage } from '../../electron/preload.js'
 import {
   buildRemoteImMessageSummaryMarkdown,
-  formatSummaryClock,
   formatSummaryDay,
   formatSummaryTime,
   summarizeRemoteImMessages,
@@ -138,7 +137,7 @@ export default function RemoteImSummaryDialog(props: RemoteImSummaryDialogProps)
                                 {summarySenderLabel(message, props.ownerUserId)}
                               </span>
                               <span className="remote-im-summary-clock">
-                                {formatSummaryClock(message.createdAt)}
+                                {formatSummaryTime(message.createdAt)}
                               </span>
                               {message.status === 'failed' ? (
                                 <span className="remote-im-summary-failed">⚠️ 发送失败</span>

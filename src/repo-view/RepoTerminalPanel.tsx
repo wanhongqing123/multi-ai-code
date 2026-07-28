@@ -7,6 +7,7 @@ import '@xterm/xterm/css/xterm.css'
 import { getTheme, THEME_CHANGE_EVENT, type Theme } from '../utils/theme.js'
 import {
   buildMainTerminalOptions,
+  openTerminalExternalLink,
   shouldConvertEolForCli,
   shouldUseMainTerminalCanvasRenderer,
   xtermThemeFor
@@ -71,7 +72,7 @@ export default function RepoTerminalPanel(
     term.loadAddon(fit)
     // 终端里的 URL 识别为可点链接，点击经主进程转交系统默认浏览器打开。
     term.loadAddon(new WebLinksAddon((_event, uri) => {
-      window.open(uri, '_blank')
+      openTerminalExternalLink(uri)
     }))
     term.open(containerRef.current)
     stretchTerminalRootToHost(containerRef.current)

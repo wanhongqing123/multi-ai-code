@@ -61,6 +61,7 @@ import {
 } from './orchestrator/plans.js'
 import { detectMsys, buildOpenMsysTerminalCommand } from './util/msys.js'
 import { normalizePathForCompare } from './util/pathCompare.js'
+import { normalizeExternalHttpUrl } from './util/externalUrl.js'
 import { spawn as spawnChild } from 'child_process'
 import { promises as fs } from 'fs'
 import { snapshotArtifact } from './store/snapshot.js'
@@ -188,20 +189,22 @@ function launchMacAppInstance(): void {
 // 一律拦下，交给系统默认浏览器打开。仅放行自身地址（开发态 HMR 与生产 file://）。
 function openLinksInSystemBrowser(win: BrowserWindow): void {
   win.webContents.setWindowOpenHandler((details) => {
-    if (/^https?:/i.test(details.url)) shell.openExternal(details.url)
+    const externalUrl = normalizeExternalHttpUrl(details.url)
+    if (externalUrl) void shell.openExternal(externalUrl)
     return { action: 'deny' }
   })
   win.webContents.on('will-navigate', (event, url) => {
-    if (!/^https?:/i.test(url)) return
+    const externalUrl = normalizeExternalHttpUrl(url)
+    if (!externalUrl) return
     let sameOrigin = false
     try {
-      sameOrigin = new URL(url).origin === new URL(win.webContents.getURL()).origin
+      sameOrigin = new URL(externalUrl).origin === new URL(win.webContents.getURL()).origin
     } catch {
       sameOrigin = false
     }
     if (!sameOrigin) {
       event.preventDefault()
-      shell.openExternal(url)
+      void shell.openExternal(externalUrl)
     }
   })
 }
@@ -977,6 +980,21 @@ app.whenReady().then(async () => {
       })
       child.unref()
       return { ok: true, variant: info.variant }
+    } catch (err) {
+      return { ok: false, error: (err as Error).message }
+    }
+  })
+
+  ipcMain.handle('shell:open-external', async (_e, request: { url?: unknown }) => {
+    const externalUrl = normalizeExternalHttpUrl(
+      typeof request?.url === 'string' ? request.url : ''
+    )
+    if (!externalUrl) {
+      return { ok: false, error: '仅支持通过系统浏览器打开 HTTP/HTTPS 链接' }
+    }
+    try {
+      await shell.openExternal(externalUrl)
+      return { ok: true }
     } catch (err) {
       return { ok: false, error: (err as Error).message }
     }

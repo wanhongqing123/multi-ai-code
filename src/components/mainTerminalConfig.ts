@@ -32,6 +32,18 @@ const XTERM_LIGHT_THEME = {
 
 export const MAIN_TERMINAL_SCROLLBACK_LINES = 50_000
 
+export function openTerminalExternalLink(uri: string): void {
+  const url = uri.trim()
+  if (!/^https?:\/\//i.test(url)) return
+  void window.api.shell.openExternal(url).then((result) => {
+    if (!result.ok) {
+      console.warn('Failed to open terminal link in the system browser:', result.error)
+    }
+  }).catch((error) => {
+    console.warn('Failed to open terminal link in the system browser:', error)
+  })
+}
+
 export function xtermThemeFor(
   theme: Theme
 ): typeof XTERM_DARK_THEME | typeof XTERM_LIGHT_THEME {
@@ -90,7 +102,12 @@ export function buildMainTerminalOptions(theme: Theme, cli?: string): ITerminalO
     scrollback: MAIN_TERMINAL_SCROLLBACK_LINES,
     smoothScrollDuration: 0,
     theme: xtermThemeFor(theme),
-    allowProposedApi: true
+    allowProposedApi: true,
+    // Codex and OpenCode emit OSC 8 hyperlinks. Handle them explicitly so
+    // xterm never navigates the Electron renderer for a terminal link.
+    linkHandler: {
+      activate: (_event, uri) => openTerminalExternalLink(uri)
+    }
   }
 }
 

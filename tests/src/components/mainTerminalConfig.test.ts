@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   buildMainTerminalOptions,
   shouldConvertEolForCli,
@@ -7,6 +7,7 @@ import {
 
 const originalPlatform =
   typeof navigator !== 'undefined' ? navigator.platform : undefined
+const originalWindow = typeof window !== 'undefined' ? window : undefined
 
 function mockNavigatorPlatform(platform: string): void {
   if (typeof navigator === 'undefined') {
@@ -26,13 +27,21 @@ function mockNavigatorPlatform(platform: string): void {
 afterEach(() => {
   if (originalPlatform === undefined) {
     Reflect.deleteProperty(globalThis, 'navigator')
-    return
+  } else {
+    Object.defineProperty(navigator, 'platform', {
+      value: originalPlatform,
+      configurable: true
+    })
   }
 
-  Object.defineProperty(navigator, 'platform', {
-    value: originalPlatform,
-    configurable: true
-  })
+  if (originalWindow === undefined) {
+    Reflect.deleteProperty(globalThis, 'window')
+  } else {
+    Object.defineProperty(globalThis, 'window', {
+      value: originalWindow,
+      configurable: true
+    })
+  }
 })
 
 describe('shouldConvertEolForCli', () => {
@@ -82,6 +91,27 @@ describe('buildMainTerminalOptions', () => {
 
   it('keeps a large scrollback for long AICLI PTY transcripts', () => {
     expect(buildMainTerminalOptions('light').scrollback).toBeGreaterThanOrEqual(50_000)
+  })
+
+  it('opens OSC 8 terminal links through the system-browser preload API', () => {
+    const openExternal = vi.fn().mockResolvedValue({ ok: true })
+    Object.defineProperty(globalThis, 'window', {
+      value: { api: { shell: { openExternal } } },
+      configurable: true
+    })
+
+    for (const cli of ['codex', 'opencode']) {
+      const linkHandler = buildMainTerminalOptions('light', cli).linkHandler
+      expect(linkHandler).toBeTruthy()
+      linkHandler?.activate(
+        {} as MouseEvent,
+        `https://example.com/${cli}`,
+        {} as Parameters<NonNullable<typeof linkHandler>['activate']>[2]
+      )
+    }
+
+    expect(openExternal).toHaveBeenNthCalledWith(1, 'https://example.com/codex')
+    expect(openExternal).toHaveBeenNthCalledWith(2, 'https://example.com/opencode')
   })
 
   it('uses heavier weights and larger size on Windows; lighter elsewhere', () => {

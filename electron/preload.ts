@@ -406,6 +406,12 @@ const api = {
       }>
   },
   shell: {
+    /** Open an HTTP/HTTPS URL with the operating system's default browser. */
+    openExternal: (url: string) =>
+      ipcRenderer.invoke('shell:open-external', { url }) as Promise<{
+        ok: boolean
+        error?: string
+      }>,
     /** Open an MSYS shell window with cwd set to the given dir. */
     openMsysTerminal: (cwd: string) =>
       ipcRenderer.invoke('shell:open-msys-terminal', { cwd }) as Promise<{

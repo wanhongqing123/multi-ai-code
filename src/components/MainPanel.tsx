@@ -8,6 +8,7 @@ import '@xterm/xterm/css/xterm.css'
 import { getTheme, THEME_CHANGE_EVENT, type Theme } from '../utils/theme.js'
 import {
   buildMainTerminalOptions,
+  openTerminalExternalLink,
   shouldUseMainTerminalCanvasRenderer,
   shouldEnableMainTerminalGpuAcceleration,
   xtermThemeFor
@@ -75,10 +76,9 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
     const search = new SearchAddon()
     term.loadAddon(fit)
     term.loadAddon(search)
-    // TUI 里的 URL 识别为可点链接；window.open 会被主进程拦截转交系统默认浏览器，
-    // 当前界面不受影响。
+    // Plain-text URLs and OSC 8 links use the same explicit system-browser IPC.
     term.loadAddon(new WebLinksAddon((_event, uri) => {
-      window.open(uri, '_blank')
+      openTerminalExternalLink(uri)
     }))
     searchRef.current = search
     term.open(containerRef.current)

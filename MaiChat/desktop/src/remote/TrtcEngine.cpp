@@ -79,7 +79,9 @@ public:
         });
     }
 
-    void onUserVideoAvailable(const char* userId, bool available) override {
+    // 屏幕共享推的是辅路（Sub），可用性通知走 onUserSubStreamAvailable；
+    // onUserVideoAvailable 只管主路摄像头，监听它永远等不到画面。
+    void onUserSubStreamAvailable(const char* userId, bool available) override {
         const QString id = userId ? QString::fromUtf8(userId) : QString();
         postToMainThread([this, id, available] {
             if (remoteVideoCallback_) remoteVideoCallback_(id, available);
@@ -102,7 +104,11 @@ public:
         encParam.videoFps = 10;
         encParam.videoBitrate = 1600;
         encParam.enableAdjustRes = true;
-        // TXView 传 nullptr：采集整个主屏（一期不做窗口选择）。
+
+        // 必须先选定采集目标，否则 startScreenCapture 不会产出任何画面
+        // （对端会一直停在"等待画面"）。这里选第一个「整屏」类型的源。
+        if (!selectPrimaryScreen()) return false;
+
         cloud_->startScreenCapture(nullptr, liteav::TRTCVideoStreamTypeSub, &encParam);
         active_ = true;
         return true;
@@ -126,6 +132,32 @@ public:
     bool isActive() const override { return active_; }
 
 private:
+    // 选定「整屏」作为共享源。TRTC 要求 startScreenCapture 前先 select 目标，
+    // 否则采集器没有源、不产出画面，对端会一直停在"等待画面"。
+    bool selectPrimaryScreen() {
+        if (!cloud_) return false;
+        liteav::ITRTCScreenCaptureSourceList* sources =
+            cloud_->getScreenCaptureSources(SIZE{0, 0}, SIZE{0, 0});
+        if (!sources) return false;
+
+        bool selected = false;
+        for (uint32_t i = 0; i < sources->getCount(); ++i) {
+            const liteav::TRTCScreenCaptureSourceInfo info = sources->getSourceInfo(i);
+            if (info.type != liteav::TRTCScreenCaptureSourceTypeScreen) continue;
+            // 空 RECT = 采集整个源，不做区域裁剪。
+            const RECT captureRect{0, 0, 0, 0};
+            liteav::TRTCScreenCaptureProperty property;
+            property.enableCaptureMouse = true;
+            // 不给被采集的屏幕加高亮描边：整屏共享时那圈边框只会干扰观看。
+            property.enableHighLight = false;
+            cloud_->selectScreenCaptureTarget(info, captureRect, property);
+            selected = true;
+            break;
+        }
+        sources->release();
+        return selected;
+    }
+
     bool enterRoom(const TrtcRoomParams& params) {
         if (!cloud_ || params.sdkAppId <= 0 || params.userId.isEmpty()
             || params.userSig.isEmpty() || params.roomId.isEmpty()) {

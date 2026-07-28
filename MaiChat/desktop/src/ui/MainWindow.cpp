@@ -65,6 +65,7 @@
 #include "markdown/MarkdownRenderer.h"
 #include "ui/AddContactDialog.h"
 #include "ui/ImagePreviewDialog.h"
+#include "remote/TrtcEngine.h"
 #include "ui/UiZoom.h"
 
 namespace {
@@ -559,6 +560,7 @@ enum class LineIconKind {
     Link,
     SelectAll,
     Trash,
+    Screen,  // 远程桌面：显示器轮廓 + 底座
 };
 
 int lineIconKindValue(LineIconKind kind) {
@@ -579,6 +581,7 @@ LineIconKind lineIconKindFromValue(int value) {
         case LineIconKind::Link:
         case LineIconKind::SelectAll:
         case LineIconKind::Trash:
+        case LineIconKind::Screen:
             return static_cast<LineIconKind>(value);
     }
     return LineIconKind::Messages;
@@ -621,6 +624,12 @@ QIcon makeLineIcon(LineIconKind kind, const QColor& color) {
         case LineIconKind::Search:
             painter.drawEllipse(QRectF(11, 11, 20, 20));
             painter.drawLine(QPointF(29, 29), QPointF(38, 38));
+            break;
+        case LineIconKind::Screen:
+            // 显示器：圆角屏幕 + 底座横杠，16px 下轮廓依然清晰。
+            painter.drawRoundedRect(QRectF(9, 12, 30, 21), 3, 3);
+            painter.drawLine(QPointF(24, 33), QPointF(24, 37));
+            painter.drawLine(QPointF(17, 38), QPointF(31, 38));
             break;
         case LineIconKind::Add:
             painter.drawLine(QPointF(24, 13), QPointF(24, 35));
@@ -1099,6 +1108,13 @@ void MainWindow::buildUi() {
     statusLabel_->setObjectName(QStringLiteral("statusBadge"));
     headerLayout->addWidget(titleLabel_, 1);
     headerLayout->addWidget(makeHeaderIconButton(LineIconKind::Search, QStringLiteral("搜索"), header));
+    // 远程桌面入口：跟着当前会话走——正在跟谁聊天就远程谁，无需另选设备。
+    remoteDesktopButton_ =
+        makeHeaderIconButton(LineIconKind::Screen, QStringLiteral("远程桌面"), header);
+    remoteDesktopButton_->setObjectName(QStringLiteral("remoteDesktopButton"));
+    connect(remoteDesktopButton_, &QPushButton::clicked, this,
+            &MainWindow::requestRemoteDesktop);
+    headerLayout->addWidget(remoteDesktopButton_);
     headerLayout->addWidget(makeHeaderIconButton(LineIconKind::More, QStringLiteral("更多"), header));
     headerLayout->addWidget(statusLabel_);
 
@@ -1593,6 +1609,7 @@ void MainWindow::refresh() {
     refreshContactDirectory();
     refreshSettings();
     refreshMessages();
+    updateRemoteDesktopButton();
 }
 
 void MainWindow::refreshContacts() {
@@ -2749,6 +2766,37 @@ void MainWindow::showZoomToast() {
     zoomToast_->raise();
     zoomToast_->show();
     zoomToastTimer_->start(900);
+}
+
+void MainWindow::updateRemoteDesktopButton() {
+    if (!remoteDesktopButton_) return;
+
+    const QString peerId = app_.chatState().selectedPeerId();
+    const bool hasPeer = !peerId.isEmpty();
+    const bool trtcReady = RemoteDesktop::isTrtcAvailable();
+    remoteDesktopButton_->setEnabled(hasPeer && trtcReady);
+
+    // 不可用时用 tooltip 说清原因，避免用户对着灰按钮猜。
+    if (!trtcReady) {
+        remoteDesktopButton_->setToolTip(QStringLiteral("当前版本未包含远程桌面组件"));
+    } else if (!hasPeer) {
+        remoteDesktopButton_->setToolTip(QStringLiteral("请先选择一个会话"));
+    } else {
+        remoteDesktopButton_->setToolTip(QStringLiteral("远程桌面 · 请求查看 %1 的屏幕").arg(peerId));
+    }
+}
+
+void MainWindow::requestRemoteDesktop() {
+    const QString peerId = app_.chatState().selectedPeerId();
+    if (peerId.isEmpty()) return;
+
+    // 控制器接线尚未完成，先如实告知而不是假装发起——静默无反应最难排查。
+    QMessageBox::information(
+        this,
+        QStringLiteral("远程桌面"),
+        QStringLiteral("即将请求查看 %1 的屏幕。\n\n会话协商与画面通道已完成，"
+                       "正在接入界面流程，下个版本可用。")
+            .arg(peerId));
 }
 
 void MainWindow::showConversationContextMenu(const QPoint& pos) {

@@ -96,6 +96,9 @@ private:
     // 再缩小会被旧的大最小值卡住，布局缩不回去。
     void applyScaledFixedGeometry();
     void showZoomToast();
+    // 远程桌面入口：可用性随会话选中状态与 TRTC 是否编译进来变化。
+    void requestRemoteDesktop();
+    void updateRemoteDesktopButton();
     void showConversationContextMenu(const QPoint& pos);
     void showContactContextMenu(QListWidget* list, const QPoint& pos);
     void deleteContactFromItem(QListWidgetItem* item);
@@ -117,6 +120,7 @@ private:
     QListWidget* contactsList_ = nullptr;
     QLabel* titleLabel_ = nullptr;
     QLabel* statusLabel_ = nullptr;
+    QPushButton* remoteDesktopButton_ = nullptr;
     QLabel* settingsAccountValue_ = nullptr;
     QLabel* settingsConnectionValue_ = nullptr;
     QLabel* settingsSdkAppIdValue_ = nullptr;

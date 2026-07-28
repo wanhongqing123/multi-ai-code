@@ -65,7 +65,13 @@
 #include "markdown/MarkdownRenderer.h"
 #include "ui/AddContactDialog.h"
 #include "ui/ImagePreviewDialog.h"
+#include <QInputDialog>
+
+#include "im/RemoteIMCredentialDefaults.h"
+#include "im/TencentUserSigGenerator.h"
 #include "remote/TrtcEngine.h"
+#include "ui/RemoteDesktopConsentDialog.h"
+#include "ui/SharingIndicatorBar.h"
 #include "ui/UiZoom.h"
 
 namespace {
@@ -914,6 +920,7 @@ MainWindow::MainWindow(RemoteIMApplication& app, QWidget* parent) : QMainWindow(
     buildUi();
     applyStyle();
     bindSignals();
+    setupRemoteDesktop();
     refresh();
 }
 
@@ -986,12 +993,24 @@ void MainWindow::buildUi() {
 
     auto* root = new QWidget(this);
     root->setObjectName(QStringLiteral("root"));
-    auto* rootLayout = new QHBoxLayout(root);
-    rootLayout->setContentsMargins(0, 0, 0, 0);
-    rootLayout->setSpacing(0);
+    // 纵向根布局：共享指示条常驻最顶部并横贯整宽，下方才是原有的横向主体。
+    // 指示条必须压在所有内容之上，不能被侧栏或会话区挤掉。
+    auto* rootColumn = new QVBoxLayout(root);
+    rootColumn->setContentsMargins(0, 0, 0, 0);
+    rootColumn->setSpacing(0);
     setCentralWidget(root);
 
-    auto* rootNavigationSplitter = new QSplitter(Qt::Horizontal, root);
+    sharingIndicator_ = new SharingIndicatorBar(root);
+    rootColumn->addWidget(sharingIndicator_);
+
+    auto* rootContent = new QWidget(root);
+    rootContent->setObjectName(QStringLiteral("rootContent"));
+    auto* rootLayout = new QHBoxLayout(rootContent);
+    rootLayout->setContentsMargins(0, 0, 0, 0);
+    rootLayout->setSpacing(0);
+    rootColumn->addWidget(rootContent, 1);
+
+    auto* rootNavigationSplitter = new QSplitter(Qt::Horizontal, rootContent);
     rootNavigationSplitter->setObjectName(QStringLiteral("rootNavigationSplitter"));
     rootNavigationSplitter->setChildrenCollapsible(false);
     rootNavigationSplitter->setHandleWidth(6);
@@ -2786,17 +2805,86 @@ void MainWindow::updateRemoteDesktopButton() {
     }
 }
 
+void MainWindow::setupRemoteDesktop() {
+    // 配置与本地消息库同级：每账号一份。
+    QString root = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    if (root.isEmpty()) root = QDir::homePath() + QStringLiteral("/.maichat-desktop");
+    const QString ownerId = app_.chatState().ownerUserId();
+    remoteDesktopSettingsStore_ = std::make_unique<RemoteDesktopSettingsStore>(
+        QDir(root).filePath(QStringLiteral("RemoteDesktop/") + ownerId
+                            + QStringLiteral("/settings.json")));
+
+    RemoteDesktopController::Config config;
+    config.sdkAppId = RemoteIMCredentialDefaults::sdkAppId;
+    config.localUserId = ownerId;
+    config.userSigProvider = [](const QString& userId) {
+        return TencentUserSigGenerator::generate(RemoteIMCredentialDefaults::sdkAppId, userId,
+                                                 RemoteIMCredentialDefaults::secretKey());
+    };
+
+    remoteDesktop_ = new RemoteDesktopController(
+        config, remoteDesktopSettingsStore_->load(),
+        std::unique_ptr<RemoteDesktop::ITrtcEngine>(RemoteDesktop::createTrtcEngine()),
+        [this](const QString& peerId, const QString& text) {
+            app_.client().sendText(peerId, text, {});
+        },
+        this);
+
+    connect(&app_, &RemoteIMApplication::remoteDesktopSignalReceived, this,
+            [this](const QString& fromUserId, const QString& text) {
+                remoteDesktop_->handleIncomingText(fromUserId, text);
+            });
+
+    connect(remoteDesktop_, &RemoteDesktopController::consentRequested, this,
+            [this](const QString& fromUserId) { handleRemoteDesktopConsent(fromUserId); });
+
+    connect(remoteDesktop_, &RemoteDesktopController::sharingStarted, this,
+            [this](const QString& peerUserId) { sharingIndicator_->startSharing(peerUserId); });
+    connect(remoteDesktop_, &RemoteDesktopController::sharingStopped, this,
+            [this] { sharingIndicator_->stopSharing(); });
+    connect(sharingIndicator_, &SharingIndicatorBar::stopRequested, this,
+            [this] { remoteDesktop_->stopSession(); });
+
+    // 控制器改写设置（失败计数、模式降级）后立即落盘，避免重启后计数丢失。
+    connect(remoteDesktop_, &RemoteDesktopController::settingsChanged, this,
+            [this](const RemoteDesktopSettings& settings) {
+                remoteDesktopSettingsStore_->save(settings);
+            });
+    connect(remoteDesktop_, &RemoteDesktopController::modeDowngraded, this, [this] {
+        QMessageBox::warning(this, QStringLiteral("远程桌面"),
+                             QStringLiteral("访问密码连续校验失败次数过多，"
+                                            "无人值守已自动关闭，现在改为每次弹窗确认。"));
+    });
+
+    connect(remoteDesktop_, &RemoteDesktopController::viewerStateChanged, this,
+            [this](RemoteDesktop::ViewerState state, const QString& failureReason) {
+                if (state == RemoteDesktop::ViewerState::Failed && !failureReason.isEmpty()) {
+                    QMessageBox::information(this, QStringLiteral("远程桌面"), failureReason);
+                }
+            });
+}
+
+void MainWindow::handleRemoteDesktopConsent(const QString& fromUserId) {
+    RemoteDesktopConsentDialog dialog(fromUserId, RemoteDesktop::kConsentTimeoutMs, this);
+    const bool accepted = dialog.exec() == QDialog::Accepted;
+    remoteDesktop_->resolveConsent(accepted);
+}
+
 void MainWindow::requestRemoteDesktop() {
     const QString peerId = app_.chatState().selectedPeerId();
-    if (peerId.isEmpty()) return;
+    if (peerId.isEmpty() || !remoteDesktop_) return;
 
-    // 控制器接线尚未完成，先如实告知而不是假装发起——静默无反应最难排查。
-    QMessageBox::information(
-        this,
-        QStringLiteral("远程桌面"),
-        QStringLiteral("即将请求查看 %1 的屏幕。\n\n会话协商与画面通道已完成，"
-                       "正在接入界面流程，下个版本可用。")
-            .arg(peerId));
+    // 对方可能是无人值守模式，需要访问密码；有人值守时留空即可。
+    bool ok = false;
+    const QString password = QInputDialog::getText(
+        this, QStringLiteral("远程桌面"),
+        QStringLiteral("请求查看 %1 的屏幕。\n若对方开启了无人值守，请输入其访问密码"
+                       "（对方为每次确认模式时可留空）：")
+            .arg(peerId),
+        QLineEdit::Password, QString(), &ok);
+    if (!ok) return;
+
+    remoteDesktop_->requestView(peerId, password);
 }
 
 void MainWindow::showConversationContextMenu(const QPoint& pos) {

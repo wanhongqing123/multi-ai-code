@@ -5,6 +5,8 @@
 #include <stdexcept>
 #include <utility>
 
+#include "remote/RemoteDesktopSignal.h"
+
 namespace {
 
 // 分页启动：每会话只载最近一页，避免大历史全量进内存/上屏。
@@ -226,6 +228,11 @@ void RemoteIMApplication::bindClientSignals() {
         ingestMessages(messages, /*live=*/true);
     });
     connect(client_.get(), &RemoteIMClient::incomingText, this, [this](const QString& fromUserId, const QString& text) {
+        // 远程桌面信令在入库前就分流出去：既不污染聊天记录，也不让房间号留在历史里。
+        if (RemoteDesktopSignals::isSignalText(text)) {
+            emit remoteDesktopSignalReceived(fromUserId, text);
+            return;
+        }
         persistMessage(state_.receiveText(fromUserId, text));
         emit stateChanged();
     });
@@ -261,6 +268,12 @@ void RemoteIMApplication::ingestMessages(const QList<RemoteIMMessage>& messages,
     const bool shouldSelectFirstPeer = state_.selectedPeerId().isEmpty();
     QString firstPeerId;
     for (const RemoteIMMessage& message : messages) {
+        // 实时推送通道同样可能带信令（TimSdk 走的是 liveMessagesReceived），
+        // 这里一并拦掉；漫游历史里理应没有信令，拦了也无害。
+        if (RemoteDesktopSignals::isSignalText(message.text)) {
+            if (live) emit remoteDesktopSignalReceived(message.fromUserId, message.text);
+            continue;
+        }
         const QString peerId = peerOf(message);
         if (peerId.isEmpty()) continue;
         if (firstPeerId.isEmpty()) firstPeerId = peerId;

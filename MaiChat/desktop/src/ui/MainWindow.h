@@ -9,9 +9,13 @@
 #include <QStackedWidget>
 #include <QTextEdit>
 #include <QVBoxLayout>
+#include <memory>
 
 #include "app/RemoteIMApplication.h"
+#include "remote/RemoteDesktopController.h"
+#include "remote/RemoteDesktopSettings.h"
 
+class SharingIndicatorBar;
 class QResizeEvent;
 class QShowEvent;
 class QLineEdit;
@@ -99,6 +103,8 @@ private:
     // 远程桌面入口：可用性随会话选中状态与 TRTC 是否编译进来变化。
     void requestRemoteDesktop();
     void updateRemoteDesktopButton();
+    void setupRemoteDesktop();
+    void handleRemoteDesktopConsent(const QString& fromUserId);
     void showConversationContextMenu(const QPoint& pos);
     void showContactContextMenu(QListWidget* list, const QPoint& pos);
     void deleteContactFromItem(QListWidgetItem* item);
@@ -121,6 +127,9 @@ private:
     QLabel* titleLabel_ = nullptr;
     QLabel* statusLabel_ = nullptr;
     QPushButton* remoteDesktopButton_ = nullptr;
+    SharingIndicatorBar* sharingIndicator_ = nullptr;
+    RemoteDesktopController* remoteDesktop_ = nullptr;
+    std::unique_ptr<RemoteDesktopSettingsStore> remoteDesktopSettingsStore_;
     QLabel* settingsAccountValue_ = nullptr;
     QLabel* settingsConnectionValue_ = nullptr;
     QLabel* settingsSdkAppIdValue_ = nullptr;

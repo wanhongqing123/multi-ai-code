@@ -47,6 +47,9 @@ signals:
     void stateChanged();
     void connectionChanged(bool connected);
     void errorMessage(const QString& message);
+    // 远程桌面信令：借道 IM 文本通道，但不入库、不进消息列表、不计未读。
+    // 由 UI 层转交给 RemoteDesktopController 处理。
+    void remoteDesktopSignalReceived(const QString& fromUserId, const QString& text);
 
 private:
     void markMessage(const QString& messageId, RemoteIMMessageStatus status);

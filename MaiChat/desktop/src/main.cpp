@@ -72,11 +72,22 @@ int main(int argc, char* argv[]) {
     app.setFont(appFont);
 #endif
 
-    const bool smokeMode = QCoreApplication::arguments().contains(QStringLiteral("--smoke"));
+    const QStringList arguments = QCoreApplication::arguments();
+    const bool smokeMode = arguments.contains(QStringLiteral("--smoke"));
+    // --login <userId>：跳过登录页直接以该账号进入。远程桌面等功能需要同机
+    // 双开两个账号联调，而 GUI 自动化填表在焦点竞争下并不可靠。
+    QString autoLoginUserId;
+    const int loginIndex = arguments.indexOf(QStringLiteral("--login"));
+    if (loginIndex >= 0 && loginIndex + 1 < arguments.size()) {
+        autoLoginUserId = arguments.at(loginIndex + 1).trimmed();
+    }
 
     LoginDialog loginDialog;
     if (smokeMode) {
         loginDialog.setUserId(QStringLiteral("desktop-im"));
+        QTimer::singleShot(0, &loginDialog, &QDialog::accept);
+    } else if (!autoLoginUserId.isEmpty()) {
+        loginDialog.setUserId(autoLoginUserId);
         QTimer::singleShot(0, &loginDialog, &QDialog::accept);
     }
     if (loginDialog.exec() != QDialog::Accepted) {

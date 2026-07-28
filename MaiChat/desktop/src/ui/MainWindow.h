@@ -17,6 +17,7 @@
 
 class SharingIndicatorBar;
 class RemoteDesktopViewerDialog;
+class QButtonGroup;
 class QResizeEvent;
 class QShowEvent;
 class QLineEdit;
@@ -109,6 +110,10 @@ private:
     void openRemoteDesktopViewer(const QString& peerUserId);
     void closeRemoteDesktopViewer();
     void promptRemoteDesktopPassword(const QString& peerUserId);
+    QWidget* buildRemoteDesktopSettingsPanel(QWidget* parent);
+    void refreshRemoteDesktopSettings();
+    void editRemoteDesktopPassword();
+    void editRemoteDesktopAllowList();
     void showConversationContextMenu(const QPoint& pos);
     void showContactContextMenu(QListWidget* list, const QPoint& pos);
     void deleteContactFromItem(QListWidgetItem* item);
@@ -137,6 +142,9 @@ private:
     std::unique_ptr<RemoteDesktopSettingsStore> remoteDesktopSettingsStore_;
     // 对端设了访问密码时，本次运行内记住，避免每次重试都问。不落盘。
     QHash<QString, QString> remoteDesktopPasswords_;
+    QButtonGroup* remoteDesktopModeGroup_ = nullptr;
+    QLabel* remoteDesktopPasswordValue_ = nullptr;
+    QLabel* remoteDesktopAllowValue_ = nullptr;
     QLabel* settingsAccountValue_ = nullptr;
     QLabel* settingsConnectionValue_ = nullptr;
     QLabel* settingsSdkAppIdValue_ = nullptr;

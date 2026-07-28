@@ -65,7 +65,10 @@
 #include "markdown/MarkdownRenderer.h"
 #include "ui/AddContactDialog.h"
 #include "ui/ImagePreviewDialog.h"
+#include <QButtonGroup>
 #include <QInputDialog>
+#include <QRadioButton>
+#include <QRegularExpression>
 
 #include "im/RemoteIMCredentialDefaults.h"
 #include "im/TencentUserSigGenerator.h"
@@ -921,7 +924,10 @@ MainWindow::MainWindow(RemoteIMApplication& app, QWidget* parent) : QMainWindow(
     buildUi();
     applyStyle();
     bindSignals();
+    // 必须在 buildUi 之后：设置页的控件已建好，这里创建控制器并把当前配置
+    // 回填到界面上。
     setupRemoteDesktop();
+    refreshRemoteDesktopSettings();
     refresh();
 }
 
@@ -1311,6 +1317,8 @@ void MainWindow::buildUi() {
     settingsLayout->addWidget(settingsTitle);
     settingsLayout->addWidget(settingsSubtitle);
     settingsLayout->addWidget(settingsPanel);
+    settingsLayout->addSpacing(UiZoom::s(24));
+    settingsLayout->addWidget(buildRemoteDesktopSettingsPanel(settingsPage_));
     settingsLayout->addStretch(1);
 
     contentStack_->addWidget(messagesPage_);
@@ -1465,6 +1473,29 @@ void MainWindow::applyStyle() {
             background: #ffffff;
             border: 1px solid #dae4f0;
             border-radius: 8px;
+        }
+        #settingsSectionTitle {
+            color: #0f172a;
+            font-size: 15px;
+            font-weight: 800;
+            padding: 0 0 10px 2px;
+        }
+        #settingsRadio {
+            color: #334155;
+            font-size: 13px;
+            spacing: 8px;
+        }
+        #settingsRowButton {
+            background: #f1f5f9;
+            border: 1px solid #d9e1ec;
+            border-radius: 8px;
+            color: #1e40af;
+            font-size: 13px;
+            font-weight: 700;
+            padding: 6px 16px;
+        }
+        #settingsRowButton:hover {
+            background: #e2e8f0;
         }
         #settingsRow {
             background: #ffffff;
@@ -2804,6 +2835,156 @@ void MainWindow::updateRemoteDesktopButton() {
     } else {
         remoteDesktopButton_->setToolTip(QStringLiteral("远程桌面 · 请求查看 %1 的屏幕").arg(peerId));
     }
+}
+
+QWidget* MainWindow::buildRemoteDesktopSettingsPanel(QWidget* parent) {
+    auto* panel = new QWidget(parent);
+    panel->setObjectName(QStringLiteral("settingsPanel"));
+    auto* layout = new QVBoxLayout(panel);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+
+    auto* heading = new QLabel(QStringLiteral("远程桌面"), panel);
+    heading->setObjectName(QStringLiteral("settingsSectionTitle"));
+    layout->addWidget(heading);
+
+    // 被控模式三选一。默认无人值守：主场景是自己在外面连自己的电脑，
+    // 每次都要人在电脑前点同意就失去意义了。
+    auto* modeRow = new QWidget(panel);
+    modeRow->setObjectName(QStringLiteral("settingsRow"));
+    auto* modeLayout = new QVBoxLayout(modeRow);
+    modeLayout->setContentsMargins(18, 14, 18, 14);
+    modeLayout->setSpacing(8);
+
+    auto* modeTitle = new QLabel(QStringLiteral("被控模式"), modeRow);
+    modeTitle->setObjectName(QStringLiteral("settingsRowTitle"));
+    modeLayout->addWidget(modeTitle);
+
+    remoteDesktopModeGroup_ = new QButtonGroup(this);
+    struct ModeOption {
+        RemoteDesktop::HostMode mode;
+        QString label;
+        QString hint;
+    };
+    const QVector<ModeOption> options{
+        {RemoteDesktop::HostMode::Unattended, QStringLiteral("无人值守"),
+         QStringLiteral("允许列表内的设备可直接连入，不打扰你")},
+        {RemoteDesktop::HostMode::Attended, QStringLiteral("每次确认"),
+         QStringLiteral("每次收到请求都弹窗，60 秒无应答自动拒绝")},
+        {RemoteDesktop::HostMode::Disabled, QStringLiteral("关闭"),
+         QStringLiteral("拒绝一切远程请求")}};
+    for (const ModeOption& option : options) {
+        auto* radio = new QRadioButton(
+            QStringLiteral("%1 · %2").arg(option.label, option.hint), modeRow);
+        radio->setObjectName(QStringLiteral("settingsRadio"));
+        radio->setCursor(Qt::PointingHandCursor);
+        remoteDesktopModeGroup_->addButton(radio, static_cast<int>(option.mode));
+        modeLayout->addWidget(radio);
+    }
+    connect(remoteDesktopModeGroup_,
+            QOverload<int>::of(&QButtonGroup::buttonClicked), this,
+            [this](int id) {
+                RemoteDesktopSettings settings = remoteDesktop_->settings();
+                settings.mode = static_cast<RemoteDesktop::HostMode>(id);
+                // 换模式即视为用户明确表态，清掉此前的失败计数。
+                settings.consecutiveAuthFailures = 0;
+                remoteDesktop_->updateSettings(settings);
+                remoteDesktopSettingsStore_->save(settings);
+                refreshRemoteDesktopSettings();
+            });
+    layout->addWidget(modeRow);
+
+    // 访问密码：可选加固，不是无人值守的前提。
+    remoteDesktopPasswordValue_ = new QLabel(panel);
+    remoteDesktopPasswordValue_->setObjectName(QStringLiteral("settingsRowValue"));
+    remoteDesktopPasswordValue_->setProperty("settingsRowValue", true);
+    auto* passwordRow = createSettingsRow(
+        QStringLiteral("访问密码"), remoteDesktopPasswordValue_,
+        QStringLiteral("可选。设置后，对方连入时还需输入此密码；不设则仅凭允许列表授权。"));
+    auto* passwordButton = new QPushButton(QStringLiteral("设置"), passwordRow);
+    passwordButton->setObjectName(QStringLiteral("settingsRowButton"));
+    passwordButton->setCursor(Qt::PointingHandCursor);
+    connect(passwordButton, &QPushButton::clicked, this,
+            &MainWindow::editRemoteDesktopPassword);
+    if (auto* rowLayout = qobject_cast<QHBoxLayout*>(passwordRow->layout())) {
+        rowLayout->addWidget(passwordButton);
+    }
+    layout->addWidget(passwordRow);
+
+    // 允许列表：谁能连入本机。
+    remoteDesktopAllowValue_ = new QLabel(panel);
+    remoteDesktopAllowValue_->setObjectName(QStringLiteral("settingsRowValue"));
+    remoteDesktopAllowValue_->setProperty("settingsRowValue", true);
+    auto* allowRow = createSettingsRow(
+        QStringLiteral("允许连入的设备"), remoteDesktopAllowValue_,
+        QStringLiteral("只有列表内的账号能远程本机，其余一律拒绝。"));
+    auto* allowButton = new QPushButton(QStringLiteral("编辑"), allowRow);
+    allowButton->setObjectName(QStringLiteral("settingsRowButton"));
+    allowButton->setCursor(Qt::PointingHandCursor);
+    connect(allowButton, &QPushButton::clicked, this, &MainWindow::editRemoteDesktopAllowList);
+    if (auto* rowLayout = qobject_cast<QHBoxLayout*>(allowRow->layout())) {
+        rowLayout->addWidget(allowButton);
+    }
+    layout->addWidget(allowRow);
+
+    return panel;
+}
+
+void MainWindow::refreshRemoteDesktopSettings() {
+    if (!remoteDesktop_ || !remoteDesktopModeGroup_) return;
+    const RemoteDesktopSettings& settings = remoteDesktop_->settings();
+
+    if (auto* button = remoteDesktopModeGroup_->button(static_cast<int>(settings.mode))) {
+        button->setChecked(true);
+    }
+    remoteDesktopPasswordValue_->setText(settings.hasPassword() ? QStringLiteral("已设置")
+                                                                : QStringLiteral("未设置"));
+    remoteDesktopAllowValue_->setText(settings.allowedUserIds.isEmpty()
+                                          ? QStringLiteral("尚未添加")
+                                          : settings.allowedUserIds.join(QStringLiteral("、")));
+}
+
+void MainWindow::editRemoteDesktopPassword() {
+    bool ok = false;
+    const QString password = QInputDialog::getText(
+        this, QStringLiteral("访问密码"),
+        QStringLiteral("留空表示不设密码（仅凭允许列表授权）："), QLineEdit::Password,
+        QString(), &ok);
+    if (!ok) return;
+
+    RemoteDesktopSettings settings = remoteDesktop_->settings();
+    settings.secret = password.isEmpty()
+                          ? RemoteDesktopAuth::StoredSecret{}
+                          : RemoteDesktopAuth::deriveSecret(
+                                password, settings.secret.salt.isEmpty()
+                                              ? RemoteDesktopAuth::generateSalt()
+                                              : settings.secret.salt);
+    settings.consecutiveAuthFailures = 0;
+    remoteDesktop_->updateSettings(settings);
+    remoteDesktopSettingsStore_->save(settings);
+    refreshRemoteDesktopSettings();
+}
+
+void MainWindow::editRemoteDesktopAllowList() {
+    const RemoteDesktopSettings current = remoteDesktop_->settings();
+    bool ok = false;
+    const QString text = QInputDialog::getText(
+        this, QStringLiteral("允许连入的设备"),
+        QStringLiteral("多个账号用逗号分隔："), QLineEdit::Normal,
+        current.allowedUserIds.join(QStringLiteral(",")), &ok);
+    if (!ok) return;
+
+    RemoteDesktopSettings settings = current;
+    settings.allowedUserIds.clear();
+    const QStringList parts = text.split(QRegularExpression(QStringLiteral("[,，]")),
+                                         Qt::SkipEmptyParts);
+    for (const QString& part : parts) {
+        const QString clean = part.trimmed();
+        if (!clean.isEmpty()) settings.allowedUserIds.append(clean);
+    }
+    remoteDesktop_->updateSettings(settings);
+    remoteDesktopSettingsStore_->save(settings);
+    refreshRemoteDesktopSettings();
 }
 
 void MainWindow::setupRemoteDesktop() {

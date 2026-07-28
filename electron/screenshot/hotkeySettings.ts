@@ -8,7 +8,7 @@ export interface ScreenshotHotkeySettings {
 }
 
 export const DEFAULT_SCREENSHOT_HOTKEY_SETTINGS: ScreenshotHotkeySettings = {
-  enabled: true,
+  enabled: false,
   shortcut: 'CommandOrControl+Shift+A'
 }
 

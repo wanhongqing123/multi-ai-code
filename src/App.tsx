@@ -270,7 +270,7 @@ function AppShell() {
   const [aiSettingsReady, setAiSettingsReady] = useState(false)
   const [aiSettingsLoadError, setAiSettingsLoadError] = useState<string | null>(null)
   const [appSettings, setAppSettings] = useState<AppSettings>({
-    screenshotShortcutEnabled: true,
+    screenshotShortcutEnabled: false,
     screenshotShortcut: 'CommandOrControl+Shift+A',
     showDevToolbarButtons: false
   })

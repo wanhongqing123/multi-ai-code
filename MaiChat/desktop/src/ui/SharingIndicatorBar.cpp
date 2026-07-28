@@ -19,6 +19,9 @@ QString formatElapsed(qint64 milliseconds) {
 
 SharingIndicatorBar::SharingIndicatorBar(QWidget* parent) : QWidget(parent) {
     setObjectName(QStringLiteral("sharingIndicatorBar"));
+    // QWidget 子类默认不绘制样式表背景（只有 QFrame 等内建类会）。不开这个属性，
+    // 红底不会被画出来，白字落在白底上 = 指示条肉眼不可见。
+    setAttribute(Qt::WA_StyledBackground, true);
 
     auto* layout = new QHBoxLayout(this);
     layout->setContentsMargins(20, 8, 16, 8);

@@ -16,6 +16,7 @@ private slots:
     void indicatorBarHiddenUntilSharing();
     void indicatorBarNamesPeerAndCountsTime();
     void indicatorBarEmitsStopRequest();
+    void indicatorBarActuallyPaintsRedBackground();
 };
 
 void RemoteDesktopUiTest::consentDialogShowsRequesterAndConsequence() {
@@ -95,6 +96,24 @@ void RemoteDesktopUiTest::indicatorBarEmitsStopRequest() {
     QSignalSpy stopSpy(&bar, &SharingIndicatorBar::stopRequested);
     stopButton->click();
     QCOMPARE(stopSpy.count(), 1);
+}
+
+void RemoteDesktopUiTest::indicatorBarActuallyPaintsRedBackground() {
+    // 这条断言的是"画出来了什么"，不是"控件在不在"。
+    // QWidget 子类默认忽略样式表背景，曾导致指示条占了 44px 却整条透明——
+    // 白字落白底肉眼全无，而只查文案/可见性的用例照样全绿。
+    SharingIndicatorBar bar;
+    bar.resize(600, 44);
+    bar.startSharing(QStringLiteral("whq-iphone"));
+
+    const QImage painted = bar.grab().toImage();
+    QVERIFY(!painted.isNull());
+
+    const QColor corner = painted.pixelColor(4, 4);
+    QCOMPARE(corner, QColor(QStringLiteral("#b42318")));
+    // 中部同样是红底（而不是只有边缘被画到）。
+    QCOMPARE(painted.pixelColor(painted.width() / 2, painted.height() / 2),
+             QColor(QStringLiteral("#b42318")));
 }
 
 QTEST_MAIN(RemoteDesktopUiTest)

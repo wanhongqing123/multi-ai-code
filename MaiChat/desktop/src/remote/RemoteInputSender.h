@@ -12,6 +12,12 @@
 //
 // 不碰 Qt 控件也不碰 TRTC，只吃归一化坐标与事件、吐出待发的包，便于单测。
 // 真正的 send 由调用方接到 ITrtcEngine 上。
+//
+// ⚠️ 调用方必须**固定在同一个线程**上调 sendCustomCmdMsg。SDK 的限流计数器
+// （trtc_message_sender.h:45 的 send_msg_count_ / send_msg_size_，以及那个
+// 懒创建的 Throtter）都是**裸成员，没有任何同步**，而限流检查跑在调用线程上
+// （只有真正的发送才 post 到主线程）。多线程调进去就是数据竞争，连 Throtter
+// 的 make_unique 都可能被并发执行。我们统一在 Qt 主线程的定时器里 flush。
 namespace RemoteInput {
 
 // Fit 模式下画面在控件里实际占的矩形（等比缩放 + 居中，短边留黑边）。

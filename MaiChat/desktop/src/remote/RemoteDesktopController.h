@@ -5,9 +5,15 @@
 #include <functional>
 #include <memory>
 
+#include "remote/DisplaySleepBlocker.h"
 #include "remote/RemoteDesktopSettings.h"
 #include "remote/RemoteDesktopSignal.h"
+#include "remote/RemoteInputInjector.h"
+#include "remote/RemoteInputSender.h"
+#include "remote/SecureDesktopMonitor.h"
 #include "remote/TrtcEngine.h"
+
+class QTimer;
 
 // 把信令、状态机、TRTC 引擎与设置粘起来的一层。
 //
@@ -63,6 +69,27 @@ public:
 
     void setIdGenerator(IdGenerator generator);
 
+    // ---- 远程控制 ----
+
+    // 控制端：把采集到的输入交进来。会话未建立时是空操作。
+    RemoteInput::RemoteInputSender& inputSender() { return inputSender_; }
+    // 控制端：定时把攒下的输入发出去。默认由内部定时器驱动，
+    // 测试可注入时刻直接调。
+    void flushPendingInput(qint64 nowMs);
+
+    // 被控端：注入器可替换，测试用 Fake 断言"到底动没动鼠标"。
+    void setInputSink(std::unique_ptr<RemoteInput::IRemoteInputSink> sink);
+    // 被控端：安全桌面探针可替换，测试无需真的弹 UAC。
+    void setSecureDesktopProbe(std::unique_ptr<RemoteDesktop::ISecureDesktopProbe> probe);
+    // 被控端：驱动看门狗与安全桌面轮询。默认由内部定时器驱动。
+    void tickHostWatchdogs(qint64 nowMs);
+
+    bool isRemoteControlAllowed() const { return settings_.allowRemoteControl; }
+
+signals:
+    // 控制端收到被控端的状态播报（当前只有安全桌面进出）。
+    void peerNoticeReceived(const QString& noticeCode);
+
 signals:
     // 被控端需要弹确认窗（有人值守）。
     void consentRequested(const QString& fromUserId);
@@ -85,6 +112,9 @@ private:
     void applyHostDecision(const RemoteDesktop::HostDecision& decision, const QString& peerId);
     void setViewerState(RemoteDesktop::ViewerState state, const QString& failureReason = QString());
     RemoteDesktop::TrtcRoomParams roomParams(const QString& roomId) const;
+    void handleCustomMessage(const QString& fromUserId, int cmdId, const QByteArray& payload);
+    void startHostControlSide();
+    void stopHostControlSide();
 
     Config config_;
     RemoteDesktopSettings settings_;
@@ -103,4 +133,14 @@ private:
     QString viewerPeerId_;
     QString viewerSessionId_;
     QString viewerRoomId_;
+
+    // 控制端：攒输入并按配额发出。
+    RemoteInput::RemoteInputSender inputSender_;
+    QTimer* inputFlushTimer_ = nullptr;
+
+    // 被控端：注入、看门狗、安全桌面播报、阻止锁屏。
+    std::unique_ptr<RemoteInput::RemoteInputInjector> injector_;
+    std::unique_ptr<RemoteDesktop::SecureDesktopMonitor> secureDesktopMonitor_;
+    QTimer* hostWatchdogTimer_ = nullptr;
+    DisplaySleepBlocker sleepBlocker_;
 };

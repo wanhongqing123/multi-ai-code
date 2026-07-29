@@ -1,5 +1,8 @@
 #include "remote/RemoteDesktopController.h"
 
+#include <QDateTime>
+#include <QTimer>
+
 #include <QUuid>
 
 #include "remote/RemoteDesktopAuth.h"
@@ -27,10 +30,98 @@ RemoteDesktopController::RemoteDesktopController(Config config,
       settings_(std::move(settings)),
       engine_(std::move(engine)),
       sendSignal_(std::move(sendSignal)),
-      idGenerator_(defaultId) {}
+      idGenerator_(defaultId) {
+    if (engine_) {
+        engine_->setCustomMessageCallback(
+            [this](const QString& userId, int cmdId, const QByteArray& payload) {
+                handleCustomMessage(userId, cmdId, payload);
+            });
+    }
+    // 被控端默认装上真实的注入器与探针；测试用 setInputSink / setSecureDesktopProbe
+    // 换成 Fake，免得跑一遍测试就真去动鼠标。
+    setInputSink(RemoteInput::createInputSink());
+    setSecureDesktopProbe(RemoteDesktop::createSecureDesktopProbe());
+}
 
 RemoteDesktopController::~RemoteDesktopController() {
+    // 析构也要走这条：进程退出前把按住的键抬干净，别把被控机留在 Ctrl 按住的
+    // 状态上。sleepBlocker_ 的析构会自己恢复休眠策略。
+    stopHostControlSide();
     if (engine_) engine_->stop();
+}
+
+void RemoteDesktopController::setInputSink(
+    std::unique_ptr<RemoteInput::IRemoteInputSink> sink) {
+    injector_ = std::make_unique<RemoteInput::RemoteInputInjector>(std::move(sink));
+}
+
+void RemoteDesktopController::setSecureDesktopProbe(
+    std::unique_ptr<RemoteDesktop::ISecureDesktopProbe> probe) {
+    secureDesktopMonitor_ =
+        std::make_unique<RemoteDesktop::SecureDesktopMonitor>(std::move(probe));
+}
+
+void RemoteDesktopController::startHostControlSide() {
+    if (injector_) injector_->beginSession(hostSessionId_);
+    // 共享期间别让系统自动锁屏：一锁就进安全桌面，远程彻底失联，
+    // 而人在外面没法自己解。
+    sleepBlocker_.acquire();
+}
+
+void RemoteDesktopController::stopHostControlSide() {
+    // endSession 内部会把按住的键鼠全部抬起。
+    if (injector_) injector_->endSession();
+    sleepBlocker_.release();
+}
+
+void RemoteDesktopController::tickHostWatchdogs(qint64 nowMs) {
+    if (injector_) injector_->tickWatchdog(nowMs);
+
+    if (!secureDesktopMonitor_ || hostState_ != HostState::Sharing) return;
+    const auto change = secureDesktopMonitor_->poll(nowMs);
+    if (change == RemoteDesktop::SecureDesktopMonitor::Change::None) return;
+
+    // 播报给控制端：让对面能区分"在等系统授权"和"断网/崩溃"，
+    // 而不是对着一块卡住的画面猜。
+    Signal notice;
+    notice.type = Type::Notice;
+    notice.sessionId = hostSessionId_;
+    notice.noticeCode = QString::fromLatin1(
+        change == RemoteDesktop::SecureDesktopMonitor::Change::Entered
+            ? RemoteDesktopSignals::NoticeCodes::kSecureDesktopEntered
+            : RemoteDesktopSignals::NoticeCodes::kSecureDesktopLeft);
+    send(hostPeerId_, notice);
+}
+
+void RemoteDesktopController::flushPendingInput(qint64 nowMs) {
+    if (!engine_ || viewerState_ != ViewerState::Viewing) return;
+    for (const auto& packet : inputSender_.flush(nowMs)) {
+        const bool reliable = packet.channel == RemoteInput::Channel::Reliable;
+        engine_->sendCustomMessage(
+            reliable ? RemoteInput::kCmdIdReliable : RemoteInput::kCmdIdUnreliable,
+            packet.payload, reliable, reliable);
+    }
+}
+
+void RemoteDesktopController::handleCustomMessage(const QString& fromUserId, int cmdId,
+                                                  const QByteArray& payload) {
+    if (injector_ == nullptr) return;
+    if (cmdId != RemoteInput::kCmdIdReliable && cmdId != RemoteInput::kCmdIdUnreliable) return;
+
+    RemoteInput::Packet packet;
+    if (!RemoteInput::decodePacket(payload, &packet)) return;
+
+    // 门禁在状态机里，这里只执行结论——"什么情况下别人能操作我的电脑"
+    // 必须只有一个地方需要读。
+    if (!RemoteDesktop::shouldAcceptRemoteInput(hostState_, settings_.allowRemoteControl,
+                                                hostSessionId_, hostPeerId_, packet.sessionId,
+                                                fromUserId)) {
+        return;
+    }
+
+    const auto channel = cmdId == RemoteInput::kCmdIdReliable ? RemoteInput::Channel::Reliable
+                                                             : RemoteInput::Channel::Unreliable;
+    injector_->handlePacket(packet, channel, QDateTime::currentMSecsSinceEpoch());
 }
 
 void RemoteDesktopController::setIdGenerator(IdGenerator generator) {
@@ -180,6 +271,7 @@ void RemoteDesktopController::applyHostDecision(const HostDecision& decision,
             accept.sessionId = hostSessionId_;
             accept.roomId = hostRoomId_;
             send(peerId, accept);
+            startHostControlSide();
             emit sharingStarted(peerId);
             break;
         }
@@ -199,6 +291,9 @@ void RemoteDesktopController::applyHostDecision(const HostDecision& decision,
             break;
         }
         case HostAction::StopSharing: {
+            // 先收控制侧再停引擎：注入器要在这里把按住的键全抬了，
+            // 否则会话没了而 Ctrl 还按着，人不在电脑旁没法自己解。
+            stopHostControlSide();
             engine_->stop();
             hostState_ = decision.nextState;
             Signal stop;

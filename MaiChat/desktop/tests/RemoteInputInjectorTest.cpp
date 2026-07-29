@@ -86,7 +86,56 @@ private slots:
     void watchdogReleasesAfterSilence();
     void blocksWinPlusLButKeepsOtherCombinations();
     void releaseAllEventClearsHeldState();
+    void mapsNormalizedCoordinatesOntoVirtualDesktop();
 };
+
+void RemoteInputInjectorTest::mapsNormalizedCoordinatesOntoVirtualDesktop() {
+    // 单屏 1920x1080：主屏即整个虚拟桌面。
+    VirtualDesktopRect screen{0, 0, 1920, 1080};
+    int x = 0;
+    int y = 0;
+
+    normalizedToVirtualDesktop(0.0, 0.0, screen, screen, &x, &y);
+    QCOMPARE(x, 0);
+    QCOMPARE(y, 0);
+
+    // 右下角必须能到 65535，否则最右/最下那一列永远点不到
+    // （拿 width 而不是 width-1 当分母就会差这一列）。
+    normalizedToVirtualDesktop(1.0, 1.0, screen, screen, &x, &y);
+    QCOMPARE(x, 65535);
+    QCOMPARE(y, 65535);
+
+    // 容差按"一个像素折合多少个 65535 单位"来算才有意义。用 width-1 作分母
+    // 会带来固定半像素的偏移，那是这个约定本身的代价（换来最后一列可达），
+    // 不是 bug——所以容差写死成 20 这种数字只会误报。
+    const int unitsPerPixelX = 65535 / screen.width;
+    const int unitsPerPixelY = 65535 / screen.height;
+    normalizedToVirtualDesktop(0.5, 0.5, screen, screen, &x, &y);
+    QVERIFY(qAbs(x - 32767) <= unitsPerPixelX);
+    QVERIFY(qAbs(y - 32767) <= unitsPerPixelY);
+
+    // 双屏：主屏在右、副屏在左，虚拟桌面从 -1920 起。我们只采主屏，
+    // 所以主屏的中点应落在整个虚拟桌面的 3/4 处，而不是正中间。
+    const VirtualDesktopRect primary{0, 0, 1920, 1080};
+    const VirtualDesktopRect virtualDesktop{-1920, 0, 3840, 1080};
+    normalizedToVirtualDesktop(0.5, 0.5, primary, virtualDesktop, &x, &y);
+    QVERIFY2(qAbs(x - static_cast<int>(65535 * 0.75)) <= 40,
+             qPrintable(QStringLiteral("双屏下主屏中点算到了 %1").arg(x)));
+
+    // 主屏左上角落在虚拟桌面的正中间（副屏占了左半边）。
+    normalizedToVirtualDesktop(0.0, 0.0, primary, virtualDesktop, &x, &y);
+    QVERIFY(qAbs(x - 32767) <= 40);
+
+    // 越界输入必须钳住，不能算出负数或超过 65535 的坐标。
+    normalizedToVirtualDesktop(-5.0, 9.0, screen, screen, &x, &y);
+    QCOMPARE(x, 0);
+    QCOMPARE(y, 65535);
+
+    // 虚拟桌面尺寸非法时不能除零。
+    normalizedToVirtualDesktop(0.5, 0.5, screen, VirtualDesktopRect{0, 0, 0, 0}, &x, &y);
+    QCOMPARE(x, 0);
+    QCOMPARE(y, 0);
+}
 
 void RemoteInputInjectorTest::rejectsInputWhenNoSessionActive() {
     auto sink = std::make_unique<RecordingSink>();

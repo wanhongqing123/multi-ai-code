@@ -78,4 +78,24 @@ private:
 // 它是注得进去的，所以必须主动拦。
 bool isBlockedKeyCombination(quint32 keyCode, const QSet<quint32>& heldKeys);
 
+// 被采集屏幕内的归一化坐标 → SendInput 的虚拟桌面绝对坐标（0..65535）。
+//
+// SendInput 带 MOUSEEVENTF_VIRTUALDESK 时收的就是这个 0..65535 的归一化值，
+// **不是像素**，所以多显示器与 DPI 缩放都由 Windows 自己处理。但归一化的
+// 基准是**整个虚拟桌面**，而我们只采集主屏，所以要先换算到虚拟桌面坐标系。
+//
+// 纯函数，单独抽出来是因为这段最容易算错，且不需要真的动鼠标才能测。
+struct VirtualDesktopRect {
+    int left = 0;
+    int top = 0;
+    int width = 0;
+    int height = 0;
+};
+void normalizedToVirtualDesktop(double normalizedX, double normalizedY,
+                                const VirtualDesktopRect& capturedScreen,
+                                const VirtualDesktopRect& virtualDesktop, int* outX, int* outY);
+
+// Windows 上返回 SendInput 实现；其它平台返回什么都不做的空实现。
+std::unique_ptr<IRemoteInputSink> createInputSink();
+
 }  // namespace RemoteInput

@@ -14,6 +14,30 @@ namespace {
 
 // 记录调用的假引擎：让"是否真的进房推流了"成为可断言的事实，
 // 而不是靠读代码推断。
+// 记录型注入 sink：断言"到底动没动鼠标"，而不是只看有没有报错。
+class RecordingInputSink final : public RemoteInput::IRemoteInputSink {
+public:
+    QStringList calls;
+
+    void moveTo(double x, double y) override {
+        calls << QStringLiteral("move %1,%2").arg(x).arg(y);
+    }
+    void mouseButton(RemoteInput::MouseButton button, bool pressed, double, double) override {
+        calls << QStringLiteral("btn %1 %2")
+                     .arg(static_cast<int>(button))
+                     .arg(pressed ? QStringLiteral("down") : QStringLiteral("up"));
+    }
+    void wheel(int delta, double, double) override {
+        calls << QStringLiteral("wheel %1").arg(delta);
+    }
+    void key(quint32 keyCode, bool pressed) override {
+        calls << QStringLiteral("key %1 %2")
+                     .arg(keyCode)
+                     .arg(pressed ? QStringLiteral("down") : QStringLiteral("up"));
+    }
+    void text(const QString& value) override { calls << QStringLiteral("text %1").arg(value); }
+};
+
 class FakeTrtcEngine final : public ITrtcEngine {
 public:
     struct SentMessage {
@@ -114,6 +138,25 @@ public:
                 sent.append({peerId, RemoteDesktopSignals::decodeSignal(text)});
             });
         controller->setIdGenerator([] { return QStringLiteral("fixed-id"); });
+
+        // 换掉真实注入器，否则跑一遍测试就真去动鼠标了。
+        auto sinkOwner = std::make_unique<RecordingInputSink>();
+        sink = sinkOwner.get();
+        controller->setInputSink(std::move(sinkOwner));
+    }
+
+    // 把一包输入按被控端收到的样子喂进去。
+    void deliverInput(const QString& sessionId, quint32 sequence,
+                      const QVector<RemoteInput::Event>& events,
+                      const QString& fromUserId = kPeerUser) {
+        RemoteInput::Packet packet;
+        packet.sessionId = sessionId;
+        packet.sequence = sequence;
+        packet.events = events;
+        if (engine->customMessageCallback) {
+            engine->customMessageCallback(fromUserId, RemoteInput::kCmdIdReliable,
+                                          RemoteInput::encodePacket(packet));
+        }
     }
 
     // 构造一条来自 kPeerUser 的 invite，proof 按需带上。
@@ -137,6 +180,7 @@ public:
 
     RemoteDesktopSettings settings;
     FakeTrtcEngine* engine = nullptr;
+    RecordingInputSink* sink = nullptr;
     std::unique_ptr<RemoteDesktopController> controller;
     QVector<SentSignal> sent;
 };
@@ -147,6 +191,10 @@ class RemoteDesktopControllerTest : public QObject {
     Q_OBJECT
 
 private slots:
+    void dropsRemoteInputWhenControlSwitchIsOff();
+    void injectsRemoteInputOnceControlIsAllowed();
+    void dropsRemoteInputFromNonPeerAndStaleSession();
+    void releasesHeldKeysWhenSessionStops();
     void ignoresPlainChatText();
     void consumesMalformedSignalWithoutActing();
     void attendedModeEmitsConsentAndSharesAfterAccept();
@@ -162,6 +210,85 @@ private slots:
     void doesNotResendInviteWhileOneIsPending();
     void forwardsRemoteVideoHandlerToEngine();
 };
+
+namespace {
+
+RemoteInput::Event keyDown(quint32 keyCode) {
+    RemoteInput::Event event;
+    event.type = RemoteInput::EventType::Key;
+    event.keyCode = keyCode;
+    event.pressed = true;
+    return event;
+}
+
+// 让被控端进入共享态。Harness 默认设了密码，所以 invite 必须带上 proof。
+void startSharing(Harness& h) {
+    h.controller->handleIncomingText(
+        kPeerUser, h.inviteText(QStringLiteral("s-1"), QStringLiteral("room-1"), kPassword));
+    QCOMPARE(h.controller->hostState(), HostState::Sharing);
+}
+
+}  // namespace
+
+void RemoteDesktopControllerTest::dropsRemoteInputWhenControlSwitchIsOff() {
+    Harness h(HostMode::Unattended);
+    QVERIFY(!h.controller->isRemoteControlAllowed());  // 默认关
+    startSharing(h);
+
+    // 能看不等于能操作：开关没开时，输入必须一条都注不进去。
+    h.deliverInput(QStringLiteral("s-1"), 1, {keyDown(0x41)});
+    QVERIFY2(h.sink->calls.isEmpty(),
+             qPrintable(QStringLiteral("控制开关关着却注入了：%1")
+                            .arg(h.sink->calls.join(QStringLiteral(", ")))));
+}
+
+void RemoteDesktopControllerTest::injectsRemoteInputOnceControlIsAllowed() {
+    Harness h(HostMode::Unattended);
+    h.settings.allowRemoteControl = true;
+    h.controller->updateSettings(h.settings);
+    startSharing(h);
+
+    h.deliverInput(QStringLiteral("s-1"), 1, {keyDown(0x41)});
+    QCOMPARE(h.sink->calls, QStringList({QStringLiteral("key 65 down")}));
+}
+
+void RemoteDesktopControllerTest::dropsRemoteInputFromNonPeerAndStaleSession() {
+    Harness h(HostMode::Unattended);
+    h.settings.allowRemoteControl = true;
+    h.controller->updateSettings(h.settings);
+    startSharing(h);
+
+    // 房间里混进第三方：它的输入一律不执行。
+    h.deliverInput(QStringLiteral("s-1"), 1, {keyDown(0x41)}, QStringLiteral("someone-else"));
+    QVERIFY(h.sink->calls.isEmpty());
+
+    // 上一场会话的残留包不该操作这一场的电脑。
+    h.deliverInput(QStringLiteral("s-0"), 2, {keyDown(0x42)});
+    QVERIFY(h.sink->calls.isEmpty());
+
+    // 对得上的照常放行，确认上面两条不是因为整条链路根本没通。
+    h.deliverInput(QStringLiteral("s-1"), 3, {keyDown(0x43)});
+    QCOMPARE(h.sink->calls, QStringList({QStringLiteral("key 67 down")}));
+}
+
+void RemoteDesktopControllerTest::releasesHeldKeysWhenSessionStops() {
+    Harness h(HostMode::Unattended);
+    h.settings.allowRemoteControl = true;
+    h.controller->updateSettings(h.settings);
+    startSharing(h);
+
+    h.deliverInput(QStringLiteral("s-1"), 1, {keyDown(0x11)});  // Ctrl 按下
+    QCOMPARE(h.sink->calls, QStringList({QStringLiteral("key 17 down")}));
+    h.sink->calls.clear();
+
+    // 会话结束必须把按住的键抬了：否则被控机一直是 Ctrl 按住状态，
+    // 点什么都变成 Ctrl+点击，而人不在电脑旁没法自己解。
+    h.controller->stopSession();
+    QCOMPARE(h.controller->hostState(), HostState::Idle);
+    QVERIFY2(h.sink->calls.contains(QStringLiteral("key 17 up")),
+             qPrintable(QStringLiteral("会话结束没抬键，实际调用：%1")
+                            .arg(h.sink->calls.join(QStringLiteral(", ")))));
+}
 
 void RemoteDesktopControllerTest::ignoresPlainChatText() {
     Harness h(HostMode::Attended);

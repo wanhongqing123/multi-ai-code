@@ -49,6 +49,7 @@ class MainWindowLayoutTest : public QObject {
 
 private slots:
     void exposesDesktopChatLayoutControls();
+    void composerUsesEmbeddedIconSendAction();
     void exposesResizableSplitters();
     void rendersEmptyConversationState();
     void sendsTextFromComposer();
@@ -97,6 +98,40 @@ void MainWindowLayoutTest::exposesDesktopChatLayoutControls() {
     QVERIFY(window.findChild<QWidget*>(QStringLiteral("chatContentPane")) != nullptr);
     QVERIFY(window.findChild<QTextEdit*>(QStringLiteral("messageEditor")) != nullptr);
     QVERIFY(window.findChild<QPushButton*>(QStringLiteral("sendButton")) != nullptr);
+}
+
+void MainWindowLayoutTest::composerUsesEmbeddedIconSendAction() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+
+    MainWindow window(app);
+    window.show();
+
+    auto* editor = window.findChild<QTextEdit*>(QStringLiteral("messageEditor"));
+    auto* sendButton = window.findChild<QPushButton*>(QStringLiteral("sendButton"));
+    QVERIFY(editor != nullptr);
+    QVERIFY(sendButton != nullptr);
+    QTRY_VERIFY(editor->width() > sendButton->width());
+
+    QCOMPARE(sendButton->parentWidget(), editor);
+    QCOMPARE(sendButton->text(), QString());
+    QVERIFY(!sendButton->icon().isNull());
+    QCOMPARE(sendButton->toolTip(), QStringLiteral("发送消息"));
+    QVERIFY(editor->rect().contains(sendButton->geometry().topLeft()));
+    QVERIFY(editor->rect().contains(sendButton->geometry().bottomRight()));
+
+    const int rightInset = editor->width() - sendButton->geometry().right() - 1;
+    const int bottomInset = editor->height() - sendButton->geometry().bottom() - 1;
+    QVERIFY(rightInset > 0);
+    QVERIFY(bottomInset > 0);
+    QVERIFY(rightInset <= sendButton->width() / 2);
+    QVERIFY(bottomInset <= sendButton->height() / 2);
+
+    const QList<QPushButton*> buttons = window.findChildren<QPushButton*>();
+    for (const QPushButton* button : buttons) {
+        QVERIFY(button->toolTip() != QStringLiteral("语音消息"));
+    }
 }
 
 void MainWindowLayoutTest::exposesResizableSplitters() {

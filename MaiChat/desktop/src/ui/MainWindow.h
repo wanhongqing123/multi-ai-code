@@ -164,7 +164,6 @@ private:
     QPushButton* loadEarlierButton_ = nullptr;
     bool renderedEmptyView_ = false;
     QPushButton* addContactButton_ = nullptr;
-    QPushButton* voiceButton_ = nullptr;
     QPushButton* sendButton_ = nullptr;
     QTextEdit* messageEditor_ = nullptr;
     QWidget* slashCommandBar_ = nullptr;

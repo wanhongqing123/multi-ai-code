@@ -557,6 +557,36 @@ private:
     std::function<void(const QString&)> onClick_;
 };
 
+class ComposerTextEdit final : public QTextEdit {
+public:
+    explicit ComposerTextEdit(QWidget* parent = nullptr) : QTextEdit(parent) {}
+
+    void setCornerAction(QWidget* action) {
+        cornerAction_ = action;
+        if (cornerAction_) {
+            cornerAction_->setParent(this);
+            positionCornerAction();
+        }
+    }
+
+    void positionCornerAction() {
+        if (!cornerAction_) return;
+        const int inset = qMax(UiZoom::s(6), cornerAction_->width() / 5);
+        cornerAction_->move(width() - cornerAction_->width() - inset,
+                            height() - cornerAction_->height() - inset);
+        cornerAction_->raise();
+    }
+
+protected:
+    void resizeEvent(QResizeEvent* event) override {
+        QTextEdit::resizeEvent(event);
+        positionCornerAction();
+    }
+
+private:
+    QWidget* cornerAction_ = nullptr;
+};
+
 enum class LineIconKind {
     Messages = 1,
     Contacts,
@@ -571,6 +601,7 @@ enum class LineIconKind {
     SelectAll,
     Trash,
     Screen,  // 远程桌面：显示器轮廓 + 底座
+    Send,
 };
 
 int lineIconKindValue(LineIconKind kind) {
@@ -592,6 +623,7 @@ LineIconKind lineIconKindFromValue(int value) {
         case LineIconKind::SelectAll:
         case LineIconKind::Trash:
         case LineIconKind::Screen:
+        case LineIconKind::Send:
             return static_cast<LineIconKind>(value);
     }
     return LineIconKind::Messages;
@@ -700,6 +732,17 @@ QIcon makeLineIcon(LineIconKind kind, const QColor& color) {
             painter.drawRoundedRect(QRectF(14, 13, 20, 26), 3, 3);
             painter.drawLine(QPointF(21, 20), QPointF(21, 33));
             painter.drawLine(QPointF(27, 20), QPointF(27, 33));
+            break;
+        case LineIconKind::Send:
+            // 纸飞机：常见的消息发送语义，缩小到按钮尺寸后仍保持清晰轮廓。
+            painter.drawPolygon(QPolygonF({
+                QPointF(8, 22),
+                QPointF(40, 8),
+                QPointF(30, 40),
+                QPointF(23, 28),
+            }));
+            painter.drawLine(QPointF(8, 22), QPointF(23, 28));
+            painter.drawLine(QPointF(23, 28), QPointF(40, 8));
             break;
     }
     painter.end();
@@ -1185,33 +1228,24 @@ void MainWindow::buildUi() {
     slashCommandLayout_->setSpacing(4);
     slashCommandScroll->setWidget(slashCommandContent);
 
-    messageEditor_ = new QTextEdit(composer);
+    messageEditor_ = new ComposerTextEdit(composer);
     messageEditor_->setObjectName(QStringLiteral("messageEditor"));
     messageEditor_->setPlaceholderText(QStringLiteral("输入消息（可 Ctrl+V 粘贴图片或文件）"));
     messageEditor_->setAcceptRichText(false);
     messageEditor_->setMinimumHeight(UiZoom::s(64));
     messageEditor_->installEventFilter(this);
 
-    auto* toolBar = new QHBoxLayout();
-    toolBar->setObjectName(QStringLiteral("composerToolbar"));
-    toolBar->setContentsMargins(0, 0, 0, 0);
-    toolBar->setSpacing(10);
-    voiceButton_ = new QPushButton(composer);
-    voiceButton_->setObjectName(QStringLiteral("toolIconButton"));
-    voiceButton_->setIcon(style()->standardIcon(QStyle::SP_MediaVolume));
-    voiceButton_->setToolTip(QStringLiteral("语音消息"));
-    voiceButton_->setCursor(Qt::PointingHandCursor);
-
-    sendButton_ = new QPushButton(QStringLiteral("发送"), composer);
+    sendButton_ = new QPushButton(messageEditor_);
     sendButton_->setObjectName(QStringLiteral("sendButton"));
+    sendButton_->setIcon(makeLineIcon(LineIconKind::Send, QColor(QStringLiteral("#ffffff"))));
+    sendButton_->setIconSize(QSize(UiZoom::s(18), UiZoom::s(18)));
+    sendButton_->setFixedSize(UiZoom::s(36), UiZoom::s(36));
+    sendButton_->setToolTip(QStringLiteral("发送消息"));
+    sendButton_->setAccessibleName(QStringLiteral("发送消息"));
     sendButton_->setCursor(Qt::PointingHandCursor);
-
-    toolBar->addWidget(voiceButton_);
-    toolBar->addStretch(1);
-    toolBar->addWidget(sendButton_);
+    static_cast<ComposerTextEdit*>(messageEditor_)->setCornerAction(sendButton_);
 
     composerLayout->addWidget(messageEditor_, 1);
-    composerLayout->addLayout(toolBar);
 
     auto* messageComposerSplitter = new QSplitter(Qt::Vertical, chatContentPane);
     messageComposerSplitter->setObjectName(QStringLiteral("messageComposerSplitter"));
@@ -1387,22 +1421,6 @@ void MainWindow::applyStyle() {
             font-size: 16px;
             font-weight: 600;
         }
-        #toolIconButton {
-            min-width: 42px;
-            max-width: 42px;
-            min-height: 42px;
-            max-height: 42px;
-            border-radius: 10px;
-            border: 1px solid #dae4f0;
-            background: #ffffff;
-            color: #172033;
-            font-size: 18px;
-            font-weight: 600;
-        }
-        #toolIconButton:hover {
-            background: #edf7ff;
-            border-color: #8ed0ff;
-        }
         #headerIconButton {
             min-width: 34px;
             max-width: 34px;
@@ -1547,25 +1565,26 @@ void MainWindow::applyStyle() {
             border-radius: 14px;
             background: #ffffff;
             color: #172033;
-            padding: 10px 13px;
+            padding: 10px 52px 46px 13px;
             font-size: 14px;
         }
         #messageEditor:focus {
             border-color: #58b7ff;
         }
         #sendButton {
-            min-width: 78px;
-            min-height: 34px;
-            border-radius: 7px;
+            border-radius: 8px;
             border: 0;
             background: #168eea;
-            color: #ffffff;
-            font-size: 14px;
-            font-weight: 800;
+            padding: 0;
+        }
+        #sendButton:hover {
+            background: #087ed2;
+        }
+        #sendButton:pressed {
+            background: #066db7;
         }
         #sendButton:disabled {
             background: #c4def0;
-            color: #f5fbff;
         }
         QSplitter::handle {
             background: #edf2f8;
@@ -1608,7 +1627,6 @@ void MainWindow::bindSignals() {
     connect(contactsNavButton_, &QPushButton::clicked, this, [this] { showContactsPage(); });
     connect(settingsNavButton_, &QPushButton::clicked, this, [this] { showSettingsPage(); });
     connect(contentStack_, &QStackedWidget::currentChanged, this, [this] { syncNavigationSelection(); });
-    connect(voiceButton_, &QPushButton::clicked, this, [this] { app_.sendVoicePlaceholder(); });
     connect(sendButton_, &QPushButton::clicked, this, [this] { sendCurrentText(); });
     // 命令提示条的重建（删除全部按钮、隐藏/抬升悬浮层）必须延后到事件循环下一轮，
     // 不能在 textChanged 里同步做——textChanged 是在 QTextEdit 的按键事件派发内部发出的，
@@ -2642,7 +2660,6 @@ void MainWindow::updateComposerState() {
     const bool hasText = !plain.trimmed().isEmpty();
     const bool hasAttachments = composerHasAttachments();
     messageEditor_->setEnabled(hasPeer);
-    voiceButton_->setEnabled(hasPeer);
     sendButton_->setEnabled(hasPeer && (hasText || hasAttachments));
 }
 
@@ -2783,6 +2800,11 @@ void MainWindow::applyScaledFixedGeometry() {
         pane->setMaximumWidth(UiZoom::s(420));
     }
     if (messageEditor_) messageEditor_->setMinimumHeight(UiZoom::s(64));
+    if (sendButton_) {
+        sendButton_->setFixedSize(UiZoom::s(36), UiZoom::s(36));
+        sendButton_->setIconSize(QSize(UiZoom::s(18), UiZoom::s(18)));
+        static_cast<ComposerTextEdit*>(messageEditor_)->positionCornerAction();
+    }
     const QList<QWidget*> settingsRows = findChildren<QWidget*>(QStringLiteral("settingsRow"));
     for (QWidget* row : settingsRows) row->setMinimumHeight(UiZoom::s(72));
     const QList<QLabel*> labels = findChildren<QLabel*>();

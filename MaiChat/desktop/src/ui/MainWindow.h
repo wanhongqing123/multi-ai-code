@@ -110,6 +110,7 @@ private:
     void handleRemoteDesktopConsent(const QString& fromUserId);
     void openRemoteDesktopViewer(const QString& peerUserId);
     void closeRemoteDesktopViewer();
+    void applyRemoteDesktopFullScreen(bool fullScreen);
     void promptRemoteDesktopPassword(const QString& peerUserId);
     QWidget* buildRemoteDesktopSettingsPanel(QWidget* parent);
     void refreshRemoteDesktopSettings();
@@ -139,6 +140,8 @@ private:
     QPushButton* remoteDesktopButton_ = nullptr;
     SharingIndicatorBar* sharingIndicator_ = nullptr;
     RemoteDesktopViewPanel* remoteDesktopView_ = nullptr;
+    // 进全屏前窗口是不是最大化的：退出时要还原成原样，不能一律 showNormal。
+    bool remoteFullScreenWasMaximized_ = false;
     QWidget* remotePage_ = nullptr;
     QPushButton* remoteNavButton_ = nullptr;
     RemoteDesktopController* remoteDesktop_ = nullptr;

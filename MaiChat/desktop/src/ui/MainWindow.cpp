@@ -1393,6 +1393,8 @@ void MainWindow::buildUi() {
     remoteLayout->setSpacing(0);
     remoteDesktopView_ = new RemoteDesktopViewPanel(remotePage_);
     remoteLayout->addWidget(remoteDesktopView_);
+    connect(remoteDesktopView_, &RemoteDesktopViewPanel::fullScreenChanged, this,
+            &MainWindow::applyRemoteDesktopFullScreen);
 
     contentStack_->addWidget(messagesPage_);
     contentStack_->addWidget(contactsPage_);
@@ -3209,6 +3211,24 @@ void MainWindow::openRemoteDesktopViewer(const QString& peerUserId) {
 void MainWindow::closeRemoteDesktopViewer() {
     if (!remoteDesktopView_) return;
     remoteDesktopView_->showIdle();
+}
+
+void MainWindow::applyRemoteDesktopFullScreen(bool fullScreen) {
+    // 只收窗口外壳，不动卡片自身层级：画面渲染在原生子窗口上，
+    // 一旦重新 parent 就可能重建 HWND，TRTC 手里的句柄失效直接黑屏。
+    if (fullScreen) {
+        remoteFullScreenWasMaximized_ = isMaximized();
+        showRemotePage();
+        if (navRail_) navRail_->hide();
+        showFullScreen();
+    } else {
+        if (navRail_) navRail_->show();
+        if (remoteFullScreenWasMaximized_) {
+            showMaximized();
+        } else {
+            showNormal();
+        }
+    }
 }
 
 void MainWindow::handleRemoteDesktopConsent(const QString& fromUserId) {

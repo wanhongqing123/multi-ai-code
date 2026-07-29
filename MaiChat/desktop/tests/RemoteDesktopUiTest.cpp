@@ -26,6 +26,10 @@ private slots:
     void viewerRoutesStreamStateToMatchingCard();
     void viewerFallsBackToSoleCardOnUserIdMismatch();
     void viewerGivesOneCardTheWholePageAndTilesTheRest();
+    void viewerFullScreenHidesOtherCardsAndReportsState();
+    void viewerFullScreenTogglesFromCardDoubleClickAndButton();
+    void viewerFullScreenExitsOnEscape();
+    void viewerFullScreenExitsWhenThatSessionEnds();
 };
 
 void RemoteDesktopUiTest::consentDialogShowsRequesterAndConsequence() {
@@ -244,6 +248,117 @@ void RemoteDesktopUiTest::viewerGivesOneCardTheWholePageAndTilesTheRest() {
     // 关掉一路，剩下那路要重新铺满，而不是继续占半边。
     panel.endSession(QStringLiteral("host-a"));
     QTRY_VERIFY(second->width() > panel.width() * 0.9);
+}
+
+void RemoteDesktopUiTest::viewerFullScreenHidesOtherCardsAndReportsState() {
+    RemoteDesktopViewPanel panel;
+    panel.resize(960, 600);
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    panel.beginSession(QStringLiteral("host-a"));
+    panel.beginSession(QStringLiteral("host-b"));
+
+    QSignalSpy fullScreenSpy(&panel, &RemoteDesktopViewPanel::fullScreenChanged);
+    panel.enterFullScreen(QStringLiteral("host-b"));
+
+    QCOMPARE(panel.isFullScreen(), true);
+    QCOMPARE(panel.fullScreenPeerId(), QStringLiteral("host-b"));
+    QCOMPARE(fullScreenSpy.count(), 1);
+    QCOMPARE(fullScreenSpy.takeFirst().at(0).toBool(), true);
+
+    auto* focused = panel.cardFor(QStringLiteral("host-b"));
+    auto* other = panel.cardFor(QStringLiteral("host-a"));
+    QVERIFY(other->isHidden());
+    QVERIFY(!focused->isHidden());
+    QVERIFY(focused->isFullScreenActive());
+    // 铺满且贴边：全屏时网格边距归零，画面不该还留着一圈白。
+    QTRY_COMPARE(focused->width(), panel.width());
+    QTRY_COMPARE(focused->height(), panel.height());
+
+    // 另一路只是藏起来，卡片和它的渲染句柄都还在——退出全屏画面要立刻回来，
+    // 不能因为销毁重建把 TRTC 手里的句柄弄失效。
+    QVERIFY(panel.cardFor(QStringLiteral("host-a")) != nullptr);
+    QVERIFY(panel.renderWindowHandle(QStringLiteral("host-a")) != nullptr);
+
+    panel.exitFullScreen();
+    QCOMPARE(panel.isFullScreen(), false);
+    QCOMPARE(fullScreenSpy.count(), 1);
+    QCOMPARE(fullScreenSpy.takeFirst().at(0).toBool(), false);
+    QTRY_VERIFY(!other->isHidden());
+    QVERIFY(!focused->isFullScreenActive());
+    QTRY_COMPARE(other->y(), focused->y());
+}
+
+void RemoteDesktopUiTest::viewerFullScreenTogglesFromCardDoubleClickAndButton() {
+    RemoteDesktopViewPanel panel;
+    panel.beginSession(QStringLiteral("host-a"));
+    auto* card = panel.cardFor(QStringLiteral("host-a"));
+    QVERIFY(card != nullptr);
+
+    // 双击画面进全屏，再双击退出。
+    QTest::mouseDClick(card, Qt::LeftButton);
+    QCOMPARE(panel.fullScreenPeerId(), QStringLiteral("host-a"));
+    QTest::mouseDClick(card, Qt::LeftButton);
+    QVERIFY(!panel.isFullScreen());
+
+    // 顶栏按钮是兜底入口：SDK 若在原生句柄上盖了自己的子窗口把鼠标吃掉，
+    // 双击会失灵，按钮必须照样能进出全屏。
+    auto* button = card->findChild<QPushButton*>(QStringLiteral("remoteCardFullScreen"));
+    QVERIFY(button != nullptr);
+    button->click();
+    QCOMPARE(panel.fullScreenPeerId(), QStringLiteral("host-a"));
+
+    // 图标是自绘的：断言真画出了东西、且进出全屏两态不同。
+    // 之前用 ⤢/⤡ 字符，Windows 上落到 fallback 字体细到几乎看不见，
+    // 而只查"按钮在不在"的用例照样全绿。
+    const QImage expanded = button->icon().pixmap(button->iconSize()).toImage();
+    QVERIFY(!expanded.isNull());
+    int inkedPixels = 0;
+    for (int y = 0; y < expanded.height(); ++y) {
+        for (int x = 0; x < expanded.width(); ++x) {
+            if (qAlpha(expanded.pixel(x, y)) > 32) ++inkedPixels;
+        }
+    }
+    QVERIFY(inkedPixels > 8);
+
+    button->click();
+    QVERIFY(!panel.isFullScreen());
+    QVERIFY(button->icon().pixmap(button->iconSize()).toImage() != expanded);
+}
+
+void RemoteDesktopUiTest::viewerFullScreenExitsOnEscape() {
+    RemoteDesktopViewPanel panel;
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    panel.beginSession(QStringLiteral("host-a"));
+    panel.enterFullScreen(QStringLiteral("host-a"));
+    QVERIFY(panel.isFullScreen());
+
+    // Esc 必须能退出：全屏后侧栏和窗口边框都没了，这是最直觉的退路。
+    QTest::keyClick(&panel, Qt::Key_Escape);
+    QVERIFY(!panel.isFullScreen());
+}
+
+void RemoteDesktopUiTest::viewerFullScreenExitsWhenThatSessionEnds() {
+    RemoteDesktopViewPanel panel;
+    panel.beginSession(QStringLiteral("host-a"));
+    panel.beginSession(QStringLiteral("host-b"));
+    panel.enterFullScreen(QStringLiteral("host-a"));
+
+    QSignalSpy fullScreenSpy(&panel, &RemoteDesktopViewPanel::fullScreenChanged);
+    // 正全屏看的那一路断了要自动退出，否则会剩一个没有内容的全屏窗口。
+    panel.endSession(QStringLiteral("host-a"));
+    QVERIFY(!panel.isFullScreen());
+    QCOMPARE(fullScreenSpy.count(), 1);
+    QCOMPARE(fullScreenSpy.takeFirst().at(0).toBool(), false);
+    // 剩下那一路要显示出来，不能因为之前被全屏藏了就一直不见。
+    QVERIFY(!panel.cardFor(QStringLiteral("host-b"))->isHidden());
+
+    // 另一路断开时正全屏的那路不受影响。
+    panel.enterFullScreen(QStringLiteral("host-b"));
+    panel.endSession(QStringLiteral("host-b"));
+    QVERIFY(!panel.isFullScreen());
+    QVERIFY(!panel.isSessionVisible());
 }
 
 QTEST_MAIN(RemoteDesktopUiTest)

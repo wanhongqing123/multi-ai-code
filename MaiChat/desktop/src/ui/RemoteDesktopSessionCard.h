@@ -2,6 +2,7 @@
 
 #include <QElapsedTimer>
 #include <QLabel>
+#include <QPushButton>
 #include <QTimer>
 #include <QWidget>
 
@@ -19,15 +20,26 @@ public:
 
     void setStreamActive(bool active);
     void setStatusText(const QString& text);
+    // 全屏态只影响本卡片的按钮外观，真正的进出全屏由 ViewPanel 统筹。
+    void setFullScreenActive(bool active);
 
     void* renderWindowHandle() const;
     QString statusText() const;
     bool isStreamActive() const;
+    bool isFullScreenActive() const;
+
+signals:
+    void fullScreenToggleRequested(const QString& peerUserId);
+
+protected:
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     void buildUi();
     void applyStyle();
     void refreshDuration();
+    void refreshFullScreenButton();
 
     QString peerUserId_;
     QWidget* renderSurface_ = nullptr;
@@ -35,7 +47,9 @@ private:
     QLabel* titleLabel_ = nullptr;
     QLabel* durationLabel_ = nullptr;
     QLabel* statusLabel_ = nullptr;
+    QPushButton* fullScreenButton_ = nullptr;
     QTimer* durationTimer_ = nullptr;
     QElapsedTimer elapsed_;
     bool streamActive_ = false;
+    bool fullScreenActive_ = false;
 };

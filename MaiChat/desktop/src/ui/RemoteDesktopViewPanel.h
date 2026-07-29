@@ -43,6 +43,20 @@ public:
     QVector<QString> sessionPeerIds() const;
     RemoteDesktopSessionCard* cardFor(const QString& peerUserId) const;
 
+    // 全屏：只留目标卡片并铺满，其余卡片藏起来（不销毁，画面不断流）。
+    void enterFullScreen(const QString& peerUserId);
+    void exitFullScreen();
+    void toggleFullScreen(const QString& peerUserId);
+    bool isFullScreen() const;
+    QString fullScreenPeerId() const;
+
+signals:
+    // 交给 MainWindow 收起侧栏、切窗口全屏；面板自己不碰窗口状态。
+    void fullScreenChanged(bool fullScreen);
+
+protected:
+    void keyPressEvent(QKeyEvent* event) override;
+
 private:
     void buildUi();
     void applyStyle();
@@ -57,4 +71,6 @@ private:
     QHash<QString, RemoteDesktopSessionCard*> cards_;
     // 保留插入顺序，避免 QHash 遍历导致卡片位置随机跳动。
     QVector<QString> order_;
+    // 非空表示正处于全屏，值是被放大的那一路。
+    QString fullScreenPeerId_;
 };

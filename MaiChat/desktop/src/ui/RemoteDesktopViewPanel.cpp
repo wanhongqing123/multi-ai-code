@@ -1,6 +1,7 @@
 #include "ui/RemoteDesktopViewPanel.h"
 
 #include <QGridLayout>
+#include <QKeyEvent>
 #include <QVBoxLayout>
 #include <QtMath>
 
@@ -9,6 +10,8 @@
 
 RemoteDesktopViewPanel::RemoteDesktopViewPanel(QWidget* parent) : QWidget(parent) {
     setObjectName(QStringLiteral("remoteDesktopViewPanel"));
+    // 需要能接键盘焦点，Esc 才退得出全屏。
+    setFocusPolicy(Qt::StrongFocus);
     buildUi();
     applyStyle();
     showIdle();
@@ -64,6 +67,7 @@ void RemoteDesktopViewPanel::applyStyle() {
 }
 
 void RemoteDesktopViewPanel::showIdle() {
+    exitFullScreen();
     for (auto* card : cards_) {
         gridLayout_->removeWidget(card);
         card->deleteLater();
@@ -77,6 +81,8 @@ void RemoteDesktopViewPanel::beginSession(const QString& peerUserId) {
     if (peerUserId.isEmpty()) return;
     if (!cards_.contains(peerUserId)) {
         auto* card = new RemoteDesktopSessionCard(peerUserId, gridPage_);
+        connect(card, &RemoteDesktopSessionCard::fullScreenToggleRequested, this,
+                &RemoteDesktopViewPanel::toggleFullScreen);
         cards_.insert(peerUserId, card);
         order_.append(peerUserId);
         relayoutCards();
@@ -87,12 +93,56 @@ void RemoteDesktopViewPanel::beginSession(const QString& peerUserId) {
 void RemoteDesktopViewPanel::endSession(const QString& peerUserId) {
     auto* card = cards_.take(peerUserId);
     if (card == nullptr) return;
+    // 全屏中的那一路断了就退出全屏，否则会剩一个空的全屏窗口。
+    if (fullScreenPeerId_ == peerUserId) exitFullScreen();
     order_.removeAll(peerUserId);
     gridLayout_->removeWidget(card);
     card->deleteLater();
     relayoutCards();
     // 最后一路结束就回空态，否则用户会对着一块黑屏以为还连着。
     if (cards_.isEmpty()) stack_->setCurrentWidget(idlePage_);
+}
+
+void RemoteDesktopViewPanel::enterFullScreen(const QString& peerUserId) {
+    if (!cards_.contains(peerUserId)) return;
+    if (fullScreenPeerId_ == peerUserId) return;
+    fullScreenPeerId_ = peerUserId;
+    relayoutCards();
+    // 全屏后键盘焦点要落在面板上，Esc 才退得出去。
+    setFocus(Qt::OtherFocusReason);
+    emit fullScreenChanged(true);
+}
+
+void RemoteDesktopViewPanel::exitFullScreen() {
+    if (fullScreenPeerId_.isEmpty()) return;
+    fullScreenPeerId_.clear();
+    relayoutCards();
+    emit fullScreenChanged(false);
+}
+
+void RemoteDesktopViewPanel::toggleFullScreen(const QString& peerUserId) {
+    if (fullScreenPeerId_ == peerUserId) {
+        exitFullScreen();
+    } else {
+        enterFullScreen(peerUserId);
+    }
+}
+
+bool RemoteDesktopViewPanel::isFullScreen() const {
+    return !fullScreenPeerId_.isEmpty();
+}
+
+QString RemoteDesktopViewPanel::fullScreenPeerId() const {
+    return fullScreenPeerId_;
+}
+
+void RemoteDesktopViewPanel::keyPressEvent(QKeyEvent* event) {
+    if (event->key() == Qt::Key_Escape && isFullScreen()) {
+        exitFullScreen();
+        event->accept();
+        return;
+    }
+    QWidget::keyPressEvent(event);
 }
 
 void RemoteDesktopViewPanel::relayoutCards() {
@@ -104,11 +154,27 @@ void RemoteDesktopViewPanel::relayoutCards() {
         gridLayout_->setRowStretch(row, 0);
     }
 
+    // 全屏：只摆目标那张，其余隐藏但不销毁——画面还在推，退出全屏立刻可见。
+    // 边距也一并归零，让画面真正贴边。
+    const bool fullScreen = isFullScreen();
+    const QVector<QString> visible =
+        fullScreen ? QVector<QString>{fullScreenPeerId_} : order_;
+    const int margin = fullScreen ? 0 : UiZoom::s(12);
+    gridLayout_->setContentsMargins(margin, margin, margin, margin);
+    gridLayout_->setSpacing(margin);
+    for (const auto& peerId : order_) {
+        auto* card = cards_.value(peerId);
+        if (card != nullptr) {
+            card->setVisible(!fullScreen || peerId == fullScreenPeerId_);
+            card->setFullScreenActive(fullScreen && peerId == fullScreenPeerId_);
+        }
+    }
+
     // 1 路占满，2 路并排，3~4 路两列，再多按平方根扩列。
-    const int count = order_.size();
+    const int count = visible.size();
     const int columns = count <= 1 ? 1 : qCeil(qSqrt(static_cast<qreal>(count)));
     for (int index = 0; index < count; ++index) {
-        auto* card = cards_.value(order_.at(index));
+        auto* card = cards_.value(visible.at(index));
         if (card == nullptr) continue;
         const int row = index / columns;
         const int column = index % columns;

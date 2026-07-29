@@ -1,4 +1,4 @@
-#include "remote/RemoteInputSender.h"
+﻿#include "remote/RemoteInputSender.h"
 
 namespace RemoteInput {
 
@@ -28,8 +28,7 @@ void RemoteInputSender::beginSession(const QString& sessionId) {
     sessionActive_ = true;
     unreliableSequence_ = 0;
     reliableSequence_ = 0;
-    tokens_ = static_cast<double>(kBudgetPerSecond);
-    lastRefillMs_ = 0;
+    sendTimestamps_.clear();
     lastMoveSentMs_ = 0;
     resetQueues();
 }
@@ -136,17 +135,9 @@ QVector<RemoteInputSender::OutgoingPacket> RemoteInputSender::flush(qint64 nowMs
     QVector<OutgoingPacket> outgoing;
     if (!sessionActive_) return outgoing;
 
-    if (lastRefillMs_ == 0) lastRefillMs_ = nowMs;
-    const qint64 elapsed = nowMs - lastRefillMs_;
-    if (elapsed > 0) {
-        tokens_ = qMin<double>(static_cast<double>(kBudgetPerSecond),
-                               tokens_ + elapsed * kBudgetPerSecond / 1000.0);
-        lastRefillMs_ = nowMs;
-    }
-
     // 按键优先：预算紧张时该牺牲的是移动（下一包就纠正回来），不是按键
     // （丢了会留下悬空状态）。所以先发可靠队列。
-    while (!reliableQueue_.isEmpty() && tokens_ >= 1.0) {
+    while (!reliableQueue_.isEmpty() && windowCount(nowMs) < kBudgetPerSecond) {
         Packet packet;
         packet.sessionId = sessionId_;
         packet.sequence = reliableSequence_ + 1;
@@ -169,14 +160,15 @@ QVector<RemoteInputSender::OutgoingPacket> RemoteInputSender::flush(qint64 nowMs
 
         reliableQueue_.remove(0, taken);
         reliableSequence_ = packet.sequence;
-        tokens_ -= 1.0;
+        recordSend(nowMs);
         outgoing.append({Channel::Reliable, encodePacket(packet)});
     }
 
-    // 移动用剩余令牌，且必须给按键留出爆发余量。
+    // 移动只用剩余名额，且必须给按键留出 kMoveReserveForKeys 个不许碰。
     const bool moveIntervalElapsed =
         lastMoveSentMs_ == 0 || nowMs - lastMoveSentMs_ >= kMoveIntervalMs;
-    if (hasPendingMove_ && moveIntervalElapsed && tokens_ >= kMoveMinTokens) {
+    if (hasPendingMove_ && moveIntervalElapsed
+        && windowCount(nowMs) < kBudgetPerSecond - kMoveReserveForKeys) {
         Event move;
         move.type = EventType::MouseMove;
         move.x = pendingMoveX_;
@@ -189,11 +181,22 @@ QVector<RemoteInputSender::OutgoingPacket> RemoteInputSender::flush(qint64 nowMs
 
         hasPendingMove_ = false;
         lastMoveSentMs_ = nowMs;
-        tokens_ -= 1.0;
+        recordSend(nowMs);
         outgoing.append({Channel::Unreliable, encodePacket(packet)});
     }
 
     return outgoing;
+}
+
+int RemoteInputSender::windowCount(qint64 nowMs) {
+    while (!sendTimestamps_.isEmpty() && nowMs - sendTimestamps_.first() >= kWindowMs) {
+        sendTimestamps_.removeFirst();
+    }
+    return sendTimestamps_.size();
+}
+
+void RemoteInputSender::recordSend(qint64 nowMs) {
+    sendTimestamps_.append(nowMs);
 }
 
 }  // namespace RemoteInput

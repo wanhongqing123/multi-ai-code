@@ -1,4 +1,4 @@
-# remote/ — 远程桌面模块
+﻿# remote/ — 远程桌面模块
 
 MaiChat ↔ MaiChat 的远程桌面。画面走腾讯 TRTC，信令借道现有 IM 文本通道，
 Electron 端不参与。
@@ -56,8 +56,10 @@ controller 不自己决定"要不要放行"，只把状态机的决策翻译成�
 3. **输入事件通道**：`ITrtcEngine` 增加
    `sendCustomMessage(QByteArray)` 与 `customMessageReceived` 回调
    （底层是 TRTC `sendCustomCmdMsg`。配额 **30 条/秒、16KB/秒，是整个客户端
-   的总量**，两个 cmdID 与 `sendSEIMsg` 共享，不是每通道各一份 ——
-   见 `ITRTCCloud.h:1378`，发送端据此做统一令牌桶 + 按键优先）。
+   的总量**：源码 `trtc_message_sender.cc` 里 `sendCustomCmdMsg` 与 `sendSEIMsg`
+   走同一个 `CheckIfCanSendMessage`、共用同一个计数器。实际阈值 40，文档写 30，
+   我们按 30 走留安全垫。被拒的消息照样计数，所以发送端用滑动窗口匀速发 +
+   按键优先，永不触发突发惩罚）。
    接口加方法后，Null 实现和 fake 各补一个空实现即可。
 
 4. **新增两个纯模块**（与现有同级，仍可完整单测）：

@@ -49,15 +49,20 @@ public:
     // 按配额吐出这一刻该发的包。调用方定时驱动（建议 20~25Hz）。
     QVector<OutgoingPacket> flush(qint64 nowMs);
 
-    // 30 条/秒是全客户端共享的总配额，留出余量按 24 用。
-    static constexpr int kBudgetPerSecond = 24;
-    // 桶里至少还剩这么多令牌才允许发移动，给按键留爆发余量。
-    static constexpr double kMoveMinTokens = 8.0;
-    // 移动最快 20Hz，剩下的额度留给按键。
-    static constexpr qint64 kMoveIntervalMs = 50;
+    // 文档配额 30 条/秒（全客户端共享），按 28 用留 2 条余量。
+    // SDK 源码实际按 40 放行，那 10 条不去吃，留作安全垫。
+    static constexpr int kBudgetPerSecond = 28;
+    // 任意 1 秒窗口里给按键留出的名额，移动不许占用。
+    static constexpr int kMoveReserveForKeys = 6;
+    // 移动最快 25Hz。再快对手感提升有限，却会挤掉按键的余量。
+    static constexpr qint64 kMoveIntervalMs = 40;
+    static constexpr qint64 kWindowMs = 1000;
 
 private:
     void resetQueues();
+    // 滑动窗口计数：丢掉 1 秒前的记录，返回窗口内已发条数。
+    int windowCount(qint64 nowMs);
+    void recordSend(qint64 nowMs);
 
     bool sessionActive_ = false;
     QString sessionId_;
@@ -70,8 +75,9 @@ private:
     double pendingMoveY_ = 0.0;
     QVector<Event> reliableQueue_;
 
-    double tokens_ = static_cast<double>(kBudgetPerSecond);
-    qint64 lastRefillMs_ = 0;
+    // 最近 1 秒内每次发送的时刻。用滑动窗口而不是令牌桶：令牌桶的容量本身
+    // 就是突发额度，满桶起步时"桶容量 + 一秒补充量"会超出上限。
+    QVector<qint64> sendTimestamps_;
     qint64 lastMoveSentMs_ = 0;
 };
 

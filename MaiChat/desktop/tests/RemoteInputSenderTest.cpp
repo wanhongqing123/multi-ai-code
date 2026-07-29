@@ -1,4 +1,4 @@
-#include <QtTest/QtTest>
+﻿#include <QtTest/QtTest>
 
 #include "remote/RemoteInputSender.h"
 
@@ -37,6 +37,7 @@ private slots:
     void sumsWheelDeltasWithinOneTick();
     void prioritisesKeysOverMovesWhenBudgetIsTight();
     void staysWithinTrtcMessageBudget();
+    void neverExceedsBudgetInAnySlidingWindow();
     void dropsOversizedEventInsteadOfBlockingQueue();
     void queuesNothingWithoutActiveSession();
 };
@@ -160,7 +161,7 @@ void RemoteInputSenderTest::prioritisesKeysOverMovesWhenBudgetIsTight() {
     RemoteInputSender sender;
     sender.beginSession(QStringLiteral("s1"));
 
-    // 先把令牌桶抽干：连续 tick 发移动。
+    // 先用移动把窗口名额占满。
     qint64 now = 1000;
     for (int i = 0; i < 40; ++i) {
         sender.queueMouseMove(0.5, 0.5);
@@ -168,7 +169,7 @@ void RemoteInputSenderTest::prioritisesKeysOverMovesWhenBudgetIsTight() {
         now += RemoteInputSender::kMoveIntervalMs;
     }
 
-    // 桶见底后同时排队按键与移动：按键必须出得去，移动可以牺牲。
+    // 名额吃紧时同时排队按键与移动：按键必须出得去，移动可以牺牲。
     // 移动丢了下一包就纠正回来，按键丢了会留下悬空状态。
     sender.queueMouseMove(0.9, 0.9);
     sender.queueKey(0x11, true);
@@ -204,6 +205,37 @@ void RemoteInputSenderTest::staysWithinTrtcMessageBudget() {
                             .arg(packets)
                             .arg(kMaxMessagesPerSecond)));
     QVERIFY(bytes <= kMaxBytesPerSecond);
+}
+
+void RemoteInputSenderTest::neverExceedsBudgetInAnySlidingWindow() {
+    RemoteInputSender sender;
+    sender.beginSession(QStringLiteral("s1"));
+
+    // 逐毫秒喂满 5 秒，把发送时刻全记下来。
+    QVector<qint64> sent;
+    for (qint64 now = 0; now < 5000; ++now) {
+        sender.queueMouseMove(0.5, 0.5);
+        sender.queueKey(0x41, true);
+        for (int i = 0; i < sender.flush(now).size(); ++i) sent.append(now);
+    }
+
+    // 关键是**任意**一秒窗口都不能超，不是"从零点开始的那一秒"。
+    // 令牌桶栽在这里：桶容量本身就是突发额度，满桶起步时
+    // "桶容量 + 一秒补充量"会一起挤进同一个窗口。
+    int worst = 0;
+    for (int start = 0; start < sent.size(); ++start) {
+        int count = 0;
+        for (int i = start; i < sent.size() && sent[i] - sent[start] < 1000; ++i) ++count;
+        worst = qMax(worst, count);
+    }
+    QVERIFY2(worst <= kMaxMessagesPerSecond,
+             qPrintable(QStringLiteral("最坏的一秒窗口发了 %1 个包，超过 %2")
+                            .arg(worst)
+                            .arg(kMaxMessagesPerSecond)));
+
+    // 同时别限过头：按键必须还能以可用的速率发出去。
+    QVERIFY2(sent.size() >= 5 * 20,
+             qPrintable(QStringLiteral("5 秒只发了 %1 个包，限得太狠").arg(sent.size())));
 }
 
 void RemoteInputSenderTest::dropsOversizedEventInsteadOfBlockingQueue() {

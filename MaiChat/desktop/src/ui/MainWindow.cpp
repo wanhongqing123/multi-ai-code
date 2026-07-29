@@ -30,7 +30,6 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QPixmap>
-#include <QMessageBox>
 #include <QMouseEvent>
 #include <QLinearGradient>
 #include <QNetworkAccessManager>
@@ -64,6 +63,7 @@
 #include "im/RemoteIMCredentialDefaults.h"
 #include "markdown/MarkdownRenderer.h"
 #include "ui/AddContactDialog.h"
+#include "ui/AppMessageDialog.h"
 #include "ui/AppTextInputDialog.h"
 #include "ui/ImagePreviewDialog.h"
 #include <QButtonGroup>
@@ -1689,7 +1689,7 @@ void MainWindow::bindSignals() {
     });
     connect(&app_, &RemoteIMApplication::errorMessage, this, [this](const QString& message) {
         if (QCoreApplication::arguments().contains(QStringLiteral("--smoke"))) return;
-        QMessageBox::warning(this, QStringLiteral("IM"), message);
+        AppMessageDialog::show(this, AppMessageDialog::Kind::Warning, QStringLiteral("IM"), message);
     });
     connect(addContactButton_, &QPushButton::clicked, this, [this] { openAddContactDialog(); });
     connect(navSearchInput_, &QLineEdit::textChanged, this, [this] { applyConversationFilter(); });
@@ -2366,12 +2366,12 @@ void MainWindow::saveFileAttachmentToLocal(const RemoteIMFileAttachment& attachm
 
     QString error;
     if (!copyAttachmentToPath(attachment, targetPath, &error)) {
-        QMessageBox::warning(this, QStringLiteral("保存失败"), error);
+        AppMessageDialog::show(this, AppMessageDialog::Kind::Warning, QStringLiteral("保存失败"), error);
         return;
     }
     lastAttachmentSaveDir_ = QFileInfo(targetPath).absolutePath();
-    QMessageBox::information(this, QStringLiteral("保存成功"),
-                             QStringLiteral("已保存到：\n%1").arg(QDir::toNativeSeparators(targetPath)));
+    AppMessageDialog::show(this, AppMessageDialog::Kind::Info, QStringLiteral("保存成功"),
+                           QStringLiteral("已保存到：\n%1").arg(QDir::toNativeSeparators(targetPath)));
 }
 
 QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
@@ -2456,8 +2456,9 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
                     // 位图 + 文件 URL 一起放剪贴板：贴到聊天/文档得到图片，贴到资源管理器得到文件。
                     const QImage imageData(image.localPath);
                     if (imageData.isNull()) {
-                        QMessageBox::warning(this, QStringLiteral("复制失败"),
-                                             QStringLiteral("图片缓存已不存在，无法复制。"));
+                        AppMessageDialog::show(this, AppMessageDialog::Kind::Warning,
+                                               QStringLiteral("复制失败"),
+                                               QStringLiteral("图片缓存已不存在，无法复制。"));
                         return;
                     }
                     auto* mimeData = new QMimeData();
@@ -2542,8 +2543,9 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
             if (chosen == copyAction) {
                 // 以文件形式放剪贴板：可直接粘贴到资源管理器/聊天窗口。
                 if (attachment.localPath.trimmed().isEmpty() || !QFile::exists(attachment.localPath)) {
-                    QMessageBox::warning(this, QStringLiteral("复制失败"),
-                                         QStringLiteral("文件尚未下载完成或本地缓存已被清理。"));
+                    AppMessageDialog::show(this, AppMessageDialog::Kind::Warning,
+                                           QStringLiteral("复制失败"),
+                                           QStringLiteral("文件尚未下载完成或本地缓存已被清理。"));
                     return;
                 }
                 auto* mimeData = new QMimeData();
@@ -3225,9 +3227,9 @@ void MainWindow::setupRemoteDesktop() {
                 remoteDesktopSettingsStore_->save(settings);
             });
     connect(remoteDesktop_, &RemoteDesktopController::modeDowngraded, this, [this] {
-        QMessageBox::warning(this, QStringLiteral("远程桌面"),
-                             QStringLiteral("访问密码连续校验失败次数过多，"
-                                            "无人值守已自动关闭，现在改为每次弹窗确认。"));
+        AppMessageDialog::show(this, AppMessageDialog::Kind::Warning, QStringLiteral("远程桌面"),
+                               QStringLiteral("访问密码连续校验失败次数过多，"
+                                              "无人值守已自动关闭，现在改为每次弹窗确认。"));
     });
 
     connect(remoteDesktop_, &RemoteDesktopController::viewerStateChanged, this,
@@ -3245,7 +3247,7 @@ void MainWindow::setupRemoteDesktop() {
                             // 只有对方额外设了密码才会走到这里：此时才问，问一次记住。
                             promptRemoteDesktopPassword(app_.chatState().selectedPeerId());
                         } else if (!failureReason.isEmpty()) {
-                            QMessageBox::information(this, QStringLiteral("远程桌面"), failureReason);
+                            AppMessageDialog::show(this, AppMessageDialog::Kind::Info, QStringLiteral("远程桌面"), failureReason);
                         }
                         break;
                     case RemoteDesktop::ViewerState::Idle:
@@ -3438,14 +3440,13 @@ void MainWindow::clearMessagesFromItem(QListWidgetItem* item) {
     const QString userId = item->data(UserIdRole).toString().trimmed();
     if (userId.isEmpty()) return;
     const QString displayName = item->data(DisplayNameRole).toString().trimmed();
-    const QMessageBox::StandardButton choice = QMessageBox::question(
-        this,
-        QStringLiteral("删除消息"),
-        QStringLiteral("确定删除与“%1”的全部聊天记录吗？好友会保留，此操作不可恢复。")
-            .arg(displayName.isEmpty() ? userId : displayName),
-        QMessageBox::Yes | QMessageBox::No,
-        QMessageBox::No);
-    if (choice != QMessageBox::Yes) return;
+    if (!AppMessageDialog::confirm(
+            this, QStringLiteral("删除消息"),
+            QStringLiteral("确定删除与“%1”的全部聊天记录吗？好友会保留，此操作不可恢复。")
+                .arg(displayName.isEmpty() ? userId : displayName),
+            QStringLiteral("删除"), /*destructive=*/true)) {
+        return;
+    }
     app_.clearMessagesWith(userId);
 }
 
@@ -3454,14 +3455,13 @@ void MainWindow::deleteContactFromItem(QListWidgetItem* item) {
     const QString userId = item->data(UserIdRole).toString().trimmed();
     if (userId.isEmpty()) return;
     const QString displayName = item->data(DisplayNameRole).toString().trimmed();
-    const QMessageBox::StandardButton choice = QMessageBox::question(
-        this,
-        QStringLiteral("删除好友"),
-        QStringLiteral("确定删除好友“%1”及全部聊天历史吗？此操作不可恢复。")
-            .arg(displayName.isEmpty() ? userId : displayName),
-        QMessageBox::Yes | QMessageBox::No,
-        QMessageBox::No);
-    if (choice != QMessageBox::Yes) return;
+    if (!AppMessageDialog::confirm(
+            this, QStringLiteral("删除好友"),
+            QStringLiteral("确定删除好友“%1”及全部聊天历史吗？此操作不可恢复。")
+                .arg(displayName.isEmpty() ? userId : displayName),
+            QStringLiteral("删除"), /*destructive=*/true)) {
+        return;
+    }
     app_.deleteContact(userId);
 }
 

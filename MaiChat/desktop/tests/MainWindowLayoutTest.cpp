@@ -25,19 +25,24 @@
 #include "app/RemoteIMApplication.h"
 #include "im/FakeRemoteIMClient.h"
 #include "ui/ImagePreviewDialog.h"
+#include "ui/AppMessageDialog.h"
 #include "ui/MainWindow.h"
 #include "ui/UiZoom.h"
 
 namespace {
 
+// 确认弹窗是模态的，exec() 会挡住测试线程；用定时器在其嵌套事件循环里点掉。
+// 删除类确认的主按钮是 appMessageDanger（红色），普通确认是 appMessageConfirm。
 void confirmNextContactDeletion() {
     QTimer::singleShot(100, [] {
         for (QWidget* widget : QApplication::topLevelWidgets()) {
-            auto* messageBox = qobject_cast<QMessageBox*>(widget);
-            if (!messageBox || !messageBox->isVisible()) continue;
-            if (QAbstractButton* yesButton = messageBox->button(QMessageBox::Yes)) {
-                yesButton->click();
+            auto* dialog = qobject_cast<AppMessageDialog*>(widget);
+            if (dialog == nullptr || !dialog->isVisible()) continue;
+            auto* confirm = dialog->findChild<QPushButton*>(QStringLiteral("appMessageDanger"));
+            if (confirm == nullptr) {
+                confirm = dialog->findChild<QPushButton*>(QStringLiteral("appMessageConfirm"));
             }
+            if (confirm != nullptr) confirm->click();
             return;
         }
     });

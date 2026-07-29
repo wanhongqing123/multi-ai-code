@@ -1,4 +1,4 @@
-﻿#include "remote/RemoteInputSender.h"
+#include "remote/RemoteInputSender.h"
 
 namespace RemoteInput {
 

@@ -1,4 +1,4 @@
-﻿#include <QtTest/QtTest>
+#include <QtTest/QtTest>
 
 #include "remote/RemoteDesktopAuth.h"
 #include "remote/RemoteDesktopSession.h"

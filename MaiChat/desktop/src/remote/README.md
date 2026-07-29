@@ -1,4 +1,4 @@
-﻿# remote/ — 远程桌面模块
+# remote/ — 远程桌面模块
 
 MaiChat ↔ MaiChat 的远程桌面。画面走腾讯 TRTC，信令借道现有 IM 文本通道，
 Electron 端不参与。

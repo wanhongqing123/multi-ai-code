@@ -1,4 +1,4 @@
-﻿#include "ui/RemoteInputCapture.h"
+#include "ui/RemoteInputCapture.h"
 
 #include <QEvent>
 #include <QKeyEvent>

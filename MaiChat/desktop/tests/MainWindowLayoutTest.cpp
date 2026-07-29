@@ -1,4 +1,4 @@
-﻿#include <QAbstractButton>
+#include <QAbstractButton>
 #include <QApplication>
 #include <QDateTime>
 #include <QLabel>

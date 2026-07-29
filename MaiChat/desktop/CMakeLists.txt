@@ -1,4 +1,4 @@
-﻿cmake_minimum_required(VERSION 3.21)
+cmake_minimum_required(VERSION 3.21)
 # C 用于 third_party/md4c（Markdown 解析，纯 C 实现）。
 project(MaiChatDesktop VERSION 0.1.4 LANGUAGES C CXX)
 

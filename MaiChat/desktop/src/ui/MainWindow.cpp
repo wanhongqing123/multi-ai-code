@@ -600,7 +600,9 @@ enum class LineIconKind {
     Link,
     SelectAll,
     Trash,
-    Screen,  // 远程桌面：显示器轮廓 + 底座
+    Screen,            // 远程桌面：显示器轮廓 + 底座
+    ScreenConnecting,  // 连接中：显示器内三点
+    ScreenDisconnect,  // 已连接，点击断开：显示器内叉
     Send,
 };
 
@@ -623,6 +625,8 @@ LineIconKind lineIconKindFromValue(int value) {
         case LineIconKind::SelectAll:
         case LineIconKind::Trash:
         case LineIconKind::Screen:
+        case LineIconKind::ScreenConnecting:
+        case LineIconKind::ScreenDisconnect:
         case LineIconKind::Send:
             return static_cast<LineIconKind>(value);
     }
@@ -672,6 +676,26 @@ QIcon makeLineIcon(LineIconKind kind, const QColor& color) {
             painter.drawRoundedRect(QRectF(9, 12, 30, 21), 3, 3);
             painter.drawLine(QPointF(24, 33), QPointF(24, 37));
             painter.drawLine(QPointF(17, 38), QPointF(31, 38));
+            break;
+        case LineIconKind::ScreenConnecting:
+            // 同一台显示器 + 屏内三点：与就绪态形状一致，只有内部符号变化，
+            // 避免图标整体跳动造成"换了个按钮"的错觉。
+            painter.drawRoundedRect(QRectF(9, 12, 30, 21), 3, 3);
+            painter.drawLine(QPointF(24, 33), QPointF(24, 37));
+            painter.drawLine(QPointF(17, 38), QPointF(31, 38));
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(color);
+            painter.drawEllipse(QRectF(16, 20, 5, 5));
+            painter.drawEllipse(QRectF(21.5, 20, 5, 5));
+            painter.drawEllipse(QRectF(27, 20, 5, 5));
+            break;
+        case LineIconKind::ScreenDisconnect:
+            // 屏内打叉 = 点击断开。
+            painter.drawRoundedRect(QRectF(9, 12, 30, 21), 3, 3);
+            painter.drawLine(QPointF(24, 33), QPointF(24, 37));
+            painter.drawLine(QPointF(17, 38), QPointF(31, 38));
+            painter.drawLine(QPointF(18, 17), QPointF(30, 28));
+            painter.drawLine(QPointF(30, 17), QPointF(18, 28));
             break;
         case LineIconKind::Add:
             painter.drawLine(QPointF(24, 13), QPointF(24, 35));
@@ -2845,18 +2869,47 @@ void MainWindow::updateRemoteDesktopButton() {
     if (!remoteDesktopButton_) return;
 
     const QString peerId = app_.chatState().selectedPeerId();
-    const bool hasPeer = !peerId.isEmpty();
     const bool trtcReady = RemoteDesktop::isTrtcAvailable();
-    remoteDesktopButton_->setEnabled(hasPeer && trtcReady);
+    const RemoteDesktop::ViewerState state =
+        remoteDesktop_ ? remoteDesktop_->viewerState() : RemoteDesktop::ViewerState::Idle;
 
-    // 不可用时用 tooltip 说清原因，避免用户对着灰按钮猜。
-    if (!trtcReady) {
-        remoteDesktopButton_->setToolTip(QStringLiteral("当前版本未包含远程桌面组件"));
-    } else if (!hasPeer) {
-        remoteDesktopButton_->setToolTip(QStringLiteral("请先选择一个会话"));
-    } else {
-        remoteDesktopButton_->setToolTip(QStringLiteral("远程桌面 · 请求查看 %1 的屏幕").arg(peerId));
+    // 同一个按钮承载三态：发起 / 连接中 / 断开。会话进行中时按钮即出口，
+    // 观看窗被最小化也能从主界面掐断。
+    LineIconKind icon = LineIconKind::Screen;
+    QColor color(QStringLiteral("#4c5866"));
+    QString tooltip;
+    bool enabled = trtcReady && !peerId.isEmpty();
+
+    switch (state) {
+        case RemoteDesktop::ViewerState::Inviting:
+        case RemoteDesktop::ViewerState::Connecting:
+            icon = LineIconKind::ScreenConnecting;
+            color = QColor(QStringLiteral("#b45309"));
+            tooltip = QStringLiteral("正在连接远程桌面…点击取消");
+            enabled = true;
+            break;
+        case RemoteDesktop::ViewerState::Viewing:
+            icon = LineIconKind::ScreenDisconnect;
+            color = QColor(QStringLiteral("#b42318"));
+            tooltip = QStringLiteral("远程桌面已连接 · 点击断开");
+            enabled = true;
+            break;
+        case RemoteDesktop::ViewerState::Idle:
+        case RemoteDesktop::ViewerState::Failed:
+            // 不可用时用 tooltip 说清原因，避免用户对着灰按钮猜。
+            if (!trtcReady) {
+                tooltip = QStringLiteral("当前版本未包含远程桌面组件");
+            } else if (peerId.isEmpty()) {
+                tooltip = QStringLiteral("请先选择一个会话");
+            } else {
+                tooltip = QStringLiteral("远程桌面 · 请求查看 %1 的屏幕").arg(peerId);
+            }
+            break;
     }
+
+    remoteDesktopButton_->setIcon(makeLineIcon(icon, color));
+    remoteDesktopButton_->setToolTip(tooltip);
+    remoteDesktopButton_->setEnabled(enabled);
 }
 
 QWidget* MainWindow::buildRemoteDesktopSettingsPanel(QWidget* parent) {
@@ -3062,6 +3115,8 @@ void MainWindow::setupRemoteDesktop() {
 
     connect(remoteDesktop_, &RemoteDesktopController::viewerStateChanged, this,
             [this](RemoteDesktop::ViewerState state, const QString& failureReason) {
+                // 按钮三态跟着会话状态走，必须先刷新再处理窗口开关。
+                updateRemoteDesktopButton();
                 switch (state) {
                     case RemoteDesktop::ViewerState::Connecting:
                         // 对方已同意：先把观看窗开出来，渲染句柄要在窗口显示后才有效。
@@ -3144,8 +3199,17 @@ void MainWindow::handleRemoteDesktopConsent(const QString& fromUserId) {
 }
 
 void MainWindow::requestRemoteDesktop() {
+    if (!remoteDesktop_) return;
+
+    // 会话进行中时同一个按钮就是断开入口（连接中点击则取消）。
+    if (remoteDesktop_->viewerState() != RemoteDesktop::ViewerState::Idle
+        && remoteDesktop_->viewerState() != RemoteDesktop::ViewerState::Failed) {
+        remoteDesktop_->stopSession();
+        return;
+    }
+
     const QString peerId = app_.chatState().selectedPeerId();
-    if (peerId.isEmpty() || !remoteDesktop_) return;
+    if (peerId.isEmpty()) return;
 
     // 直接发起，不打断用户。绝大多数情况对方靠白名单授权即可；
     // 只有对方额外设了访问密码时才会被拒，那时再按需索取密码。

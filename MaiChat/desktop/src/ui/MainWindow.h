@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <QHash>
 #include <QLabel>
@@ -16,7 +16,7 @@
 #include "remote/RemoteDesktopSettings.h"
 
 class SharingIndicatorBar;
-class RemoteDesktopViewerDialog;
+class RemoteDesktopViewPanel;
 class QButtonGroup;
 class QResizeEvent;
 class QShowEvent;
@@ -60,6 +60,7 @@ private:
     void showMessagesPage();
     void showContactsPage();
     void showSettingsPage();
+    void showRemotePage();
     void syncNavigationSelection();
     void updateNavigationSelection(QPushButton* selectedButton);
     void openAddContactDialog();
@@ -137,7 +138,9 @@ private:
     QLabel* statusLabel_ = nullptr;
     QPushButton* remoteDesktopButton_ = nullptr;
     SharingIndicatorBar* sharingIndicator_ = nullptr;
-    RemoteDesktopViewerDialog* remoteDesktopViewer_ = nullptr;
+    RemoteDesktopViewPanel* remoteDesktopView_ = nullptr;
+    QWidget* remotePage_ = nullptr;
+    QPushButton* remoteNavButton_ = nullptr;
     RemoteDesktopController* remoteDesktop_ = nullptr;
     std::unique_ptr<RemoteDesktopSettingsStore> remoteDesktopSettingsStore_;
     // 对端设了访问密码时，本次运行内记住，避免每次重试都问。不落盘。

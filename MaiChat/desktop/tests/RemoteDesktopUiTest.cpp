@@ -3,7 +3,7 @@
 #include <QSignalSpy>
 
 #include "ui/RemoteDesktopConsentDialog.h"
-#include "ui/RemoteDesktopViewerDialog.h"
+#include "ui/RemoteDesktopViewPanel.h"
 #include "ui/SharingIndicatorBar.h"
 
 class RemoteDesktopUiTest : public QObject {
@@ -121,44 +121,45 @@ void RemoteDesktopUiTest::indicatorBarActuallyPaintsRedBackground() {
 }
 
 void RemoteDesktopUiTest::viewerShowsPlaceholderUntilStreamArrives() {
-    RemoteDesktopViewerDialog viewer(QStringLiteral("host-pc"));
-    auto* placeholder = viewer.findChild<QLabel*>(QStringLiteral("viewerPlaceholder"));
+    RemoteDesktopViewPanel panel;
+    panel.showConnecting(QStringLiteral("host-pc"));
+
+    auto* placeholder = panel.findChild<QLabel*>(QStringLiteral("remoteViewPlaceholder"));
     QVERIFY(placeholder != nullptr);
 
-    QVERIFY(!viewer.isStreamActive());
-    QCOMPARE(viewer.statusText(), QStringLiteral("等待画面"));
+    QVERIFY(!panel.isStreamActive());
+    QCOMPARE(panel.statusText(), QStringLiteral("等待画面"));
 
-    viewer.setStreamActive(true);
-    QVERIFY(viewer.isStreamActive());
-    QCOMPARE(viewer.statusText(), QStringLiteral("画面已连接"));
+    panel.setStreamActive(true);
+    QVERIFY(panel.isStreamActive());
+    QCOMPARE(panel.statusText(), QStringLiteral("画面已连接"));
     // 占位文字必须撤下：它盖在渲染面上会挡住 SDK 画的画面。
     QVERIFY(placeholder->isHidden());
 
-    viewer.setStreamActive(false);
+    panel.setStreamActive(false);
     QVERIFY(!placeholder->isHidden());
 }
 
 void RemoteDesktopUiTest::viewerHasNoDisconnectButtonAndClosesCleanly() {
-    RemoteDesktopViewerDialog viewer(QStringLiteral("host-pc"));
+    RemoteDesktopViewPanel panel;
 
-    // 窗内不再放断开按钮：出口收敛到聊天顶栏的三态按钮，关窗即断开。
-    QVERIFY(viewer.findChild<QPushButton*>(QStringLiteral("viewerDisconnect")) == nullptr);
+    // 页面内不放断开按钮：出口收敛到聊天顶栏的三态按钮。
+    QVERIFY(panel.findChild<QPushButton*>(QStringLiteral("viewerDisconnect")) == nullptr);
 
-    // 关窗必须发出 finished —— 宿主据此停止会话，否则会留下后台收流。
-    // 必须先 show：QDialog 对从未显示过的实例调用 close() 不会发 finished，
-    // 而真实场景里窗口总是显示过的。
-    viewer.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&viewer));
-
-    QSignalSpy finishedSpy(&viewer, &QDialog::finished);
-    viewer.close();
-    QCOMPARE(finishedSpy.count(), 1);
+    // 无会话时是空态；发起后切到画面区；结束后必须切回空态，
+    // 否则用户会对着一块黑屏以为还连着。
+    QVERIFY(!panel.isSessionVisible());
+    panel.showConnecting(QStringLiteral("host-pc"));
+    QVERIFY(panel.isSessionVisible());
+    panel.showIdle();
+    QVERIFY(!panel.isSessionVisible());
+    QVERIFY(!panel.isStreamActive());
 }
 
 void RemoteDesktopUiTest::viewerExposesRenderHandle() {
-    RemoteDesktopViewerDialog viewer(QStringLiteral("host-pc"));
+    RemoteDesktopViewPanel panel;
     // TRTC 需要一个真实的原生窗口句柄来渲染；拿不到句柄画面就出不来。
-    QVERIFY(viewer.renderWindowHandle() != nullptr);
+    QVERIFY(panel.renderWindowHandle() != nullptr);
 }
 
 QTEST_MAIN(RemoteDesktopUiTest)

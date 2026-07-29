@@ -1,4 +1,4 @@
-#include "ui/MainWindow.h"
+﻿#include "ui/MainWindow.h"
 
 #include <QCoreApplication>
 #include <QApplication>
@@ -74,7 +74,7 @@
 #include "im/TencentUserSigGenerator.h"
 #include "remote/TrtcEngine.h"
 #include "ui/RemoteDesktopConsentDialog.h"
-#include "ui/RemoteDesktopViewerDialog.h"
+#include "ui/RemoteDesktopViewPanel.h"
 #include "ui/SharingIndicatorBar.h"
 #include "ui/UiZoom.h"
 
@@ -1143,19 +1143,25 @@ void MainWindow::buildUi() {
 
     messageNavButton_ = makeNavButton(QStringLiteral("消息"), QStringLiteral("messagesNavButton"), navRail_);
     contactsNavButton_ = makeNavButton(QStringLiteral("通讯录"), QStringLiteral("contactsNavButton"), navRail_);
+    // 远程桌面画面在应用内成页展示，不再弹独立窗口。
+    remoteNavButton_ = makeNavButton(QStringLiteral("远程"), QStringLiteral("remoteNavButton"), navRail_);
     settingsNavButton_ = makeNavButton(QStringLiteral("设置"), QStringLiteral("settingsNavButton"), navRail_);
     messageNavButton_->setProperty("navIconKind", lineIconKindValue(LineIconKind::Messages));
     contactsNavButton_->setProperty("navIconKind", lineIconKindValue(LineIconKind::Contacts));
+    remoteNavButton_->setProperty("navIconKind", lineIconKindValue(LineIconKind::Screen));
     settingsNavButton_->setProperty("navIconKind", lineIconKindValue(LineIconKind::Settings));
     messageNavButton_->setProperty("selected", true);
-    for (QPushButton* navButton : {messageNavButton_, contactsNavButton_, settingsNavButton_}) {
+    for (QPushButton* navButton :
+         {messageNavButton_, contactsNavButton_, remoteNavButton_, settingsNavButton_}) {
         navButton->setIconSize(QSize(18, 18));
     }
     applyNavButtonIcon(messageNavButton_, true);
     applyNavButtonIcon(contactsNavButton_, false);
+    applyNavButtonIcon(remoteNavButton_, false);
     applyNavButtonIcon(settingsNavButton_, false);
     navLayout->addWidget(messageNavButton_);
     navLayout->addWidget(contactsNavButton_);
+    navLayout->addWidget(remoteNavButton_);
     navLayout->addWidget(settingsNavButton_);
     navLayout->addStretch(1);
 
@@ -1379,8 +1385,18 @@ void MainWindow::buildUi() {
     settingsLayout->addWidget(buildRemoteDesktopSettingsPanel(settingsPage_));
     settingsLayout->addStretch(1);
 
+    // 远程桌面页：画面在应用内展示，不弹独立窗口。
+    remotePage_ = new QWidget(contentStack_);
+    remotePage_->setObjectName(QStringLiteral("remotePage"));
+    auto* remoteLayout = new QVBoxLayout(remotePage_);
+    remoteLayout->setContentsMargins(0, 0, 0, 0);
+    remoteLayout->setSpacing(0);
+    remoteDesktopView_ = new RemoteDesktopViewPanel(remotePage_);
+    remoteLayout->addWidget(remoteDesktopView_);
+
     contentStack_->addWidget(messagesPage_);
     contentStack_->addWidget(contactsPage_);
+    contentStack_->addWidget(remotePage_);
     contentStack_->addWidget(settingsPage_);
 
     rootNavigationSplitter->addWidget(navRail_);
@@ -1649,6 +1665,7 @@ void MainWindow::bindSignals() {
     connect(navSearchInput_, &QLineEdit::textChanged, this, [this] { applyConversationFilter(); });
     connect(messageNavButton_, &QPushButton::clicked, this, [this] { showMessagesPage(); });
     connect(contactsNavButton_, &QPushButton::clicked, this, [this] { showContactsPage(); });
+    connect(remoteNavButton_, &QPushButton::clicked, this, [this] { showRemotePage(); });
     connect(settingsNavButton_, &QPushButton::clicked, this, [this] { showSettingsPage(); });
     connect(contentStack_, &QStackedWidget::currentChanged, this, [this] { syncNavigationSelection(); });
     connect(sendButton_, &QPushButton::clicked, this, [this] { sendCurrentText(); });
@@ -1783,9 +1800,18 @@ void MainWindow::showSettingsPage() {
     syncNavigationSelection();
 }
 
+void MainWindow::showRemotePage() {
+    contentStack_->setCurrentWidget(remotePage_);
+    syncNavigationSelection();
+}
+
 void MainWindow::syncNavigationSelection() {
     if (contentStack_->currentWidget() == contactsPage_) {
         updateNavigationSelection(contactsNavButton_);
+        return;
+    }
+    if (contentStack_->currentWidget() == remotePage_) {
+        updateNavigationSelection(remoteNavButton_);
         return;
     }
     if (contentStack_->currentWidget() == settingsPage_) {
@@ -1796,7 +1822,8 @@ void MainWindow::syncNavigationSelection() {
 }
 
 void MainWindow::updateNavigationSelection(QPushButton* selectedButton) {
-    const QList<QPushButton*> buttons = {messageNavButton_, contactsNavButton_, settingsNavButton_};
+    const QList<QPushButton*> buttons = {messageNavButton_, contactsNavButton_, remoteNavButton_,
+                                         settingsNavButton_};
     for (QPushButton* button : buttons) {
         if (!button) continue;
         const bool isSelected = button == selectedButton;
@@ -3143,16 +3170,16 @@ void MainWindow::setupRemoteDesktop() {
     // 远端画面到达才绑定渲染窗口：进房时对方可能还没开始推流。
     remoteDesktop_->setRemoteVideoHandler(
         [this](const QString& userId, bool available) {
-            if (!remoteDesktopViewer_) return;
-            remoteDesktopViewer_->setStreamActive(available);
+            if (!remoteDesktopView_ || !remoteDesktopView_->isSessionVisible()) return;
+            remoteDesktopView_->setStreamActive(available);
             if (available) {
                 remoteDesktop_->bindRemoteView(userId,
-                                               remoteDesktopViewer_->renderWindowHandle());
+                                               remoteDesktopView_->renderWindowHandle());
             }
         });
     remoteDesktop_->setErrorHandler([this](int code, const QString& message) {
-        if (remoteDesktopViewer_) {
-            remoteDesktopViewer_->setStatusText(
+        if (remoteDesktopView_) {
+            remoteDesktopView_->setStatusText(
                 QStringLiteral("连接异常（%1）：%2").arg(code).arg(message));
         }
     });
@@ -3173,21 +3200,15 @@ void MainWindow::promptRemoteDesktopPassword(const QString& peerUserId) {
 }
 
 void MainWindow::openRemoteDesktopViewer(const QString& peerUserId) {
-    if (remoteDesktopViewer_) return;
-    remoteDesktopViewer_ = new RemoteDesktopViewerDialog(peerUserId, this);
-    // 关窗等同于断开，不能留着后台还在收流。断开也可从聊天顶栏的三态按钮发起。
-    connect(remoteDesktopViewer_, &QDialog::finished, this,
-            [this] { remoteDesktop_->stopSession(); });
-    remoteDesktopViewer_->show();
+    if (!remoteDesktopView_) return;
+    remoteDesktopView_->showConnecting(peerUserId);
+    // 自动切到远程页：用户刚点了发起，画面理应立刻可见，不必再手动找。
+    showRemotePage();
 }
 
 void MainWindow::closeRemoteDesktopViewer() {
-    if (!remoteDesktopViewer_) return;
-    RemoteDesktopViewerDialog* viewer = remoteDesktopViewer_;
-    // 先清指针再关窗：finished 回调会再次调用 stopSession，避免递归重入。
-    remoteDesktopViewer_ = nullptr;
-    viewer->close();
-    viewer->deleteLater();
+    if (!remoteDesktopView_) return;
+    remoteDesktopView_->showIdle();
 }
 
 void MainWindow::handleRemoteDesktopConsent(const QString& fromUserId) {

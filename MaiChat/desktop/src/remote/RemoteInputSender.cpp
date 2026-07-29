@@ -28,7 +28,7 @@ void RemoteInputSender::beginSession(const QString& sessionId) {
     sessionActive_ = true;
     unreliableSequence_ = 0;
     reliableSequence_ = 0;
-    sendTimestamps_.clear();
+    sendHistory_.clear();
     lastMoveSentMs_ = 0;
     resetQueues();
 }
@@ -40,7 +40,7 @@ void RemoteInputSender::endSession() {
 }
 
 void RemoteInputSender::resetQueues() {
-    hasPendingMove_ = false;
+    pendingMovePath_.clear();
     reliableQueue_.clear();
 }
 
@@ -69,10 +69,14 @@ bool RemoteInputSender::mapToNormalizedClamped(const QPointF& widgetPos, double*
 
 void RemoteInputSender::queueMouseMove(double x, double y) {
     if (!sessionActive_) return;
-    // 只留最新位置：中间点发过去也会被立刻覆盖，白占配额。
-    hasPendingMove_ = true;
-    pendingMoveX_ = clampNormalized(x);
-    pendingMoveY_ = clampNormalized(y);
+    // 攒的是整段轨迹而不是最后一点：拖拽画线、框选时中间点就是内容本身，
+    // 只留终点会把曲线拉成直线。一个包能带十几个点，不额外占配额。
+    pendingMovePath_.append(QPointF(clampNormalized(x), clampNormalized(y)));
+    if (pendingMovePath_.size() > kMaxMovePointsPerPacket) {
+        // 超出单包容量时抽稀中间点，但**终点必须保留**——终点才是光标最终
+        // 该停的位置，丢了会让光标停在半路。
+        pendingMovePath_.remove(pendingMovePath_.size() / 2);
+    }
 }
 
 void RemoteInputSender::queueMouseButton(MouseButton button, bool pressed, double x, double y) {
@@ -84,8 +88,8 @@ void RemoteInputSender::queueMouseButton(MouseButton button, bool pressed, doubl
     event.x = clampNormalized(x);
     event.y = clampNormalized(y);
     reliableQueue_.append(event);
-    // 按键自带坐标，等于顺带把位置也同步了，待发的移动就没必要再占一个包。
-    hasPendingMove_ = false;
+    // 按键自带坐标，等于顺带把位置也同步了，待发的轨迹就没必要再占一个包。
+    pendingMovePath_.clear();
 }
 
 void RemoteInputSender::queueWheel(int delta, double x, double y) {
@@ -137,7 +141,7 @@ QVector<RemoteInputSender::OutgoingPacket> RemoteInputSender::flush(qint64 nowMs
 
     // 按键优先：预算紧张时该牺牲的是移动（下一包就纠正回来），不是按键
     // （丢了会留下悬空状态）。所以先发可靠队列。
-    while (!reliableQueue_.isEmpty() && windowCount(nowMs) < kBudgetPerSecond) {
+    while (!reliableQueue_.isEmpty()) {
         Packet packet;
         packet.sessionId = sessionId_;
         packet.sequence = reliableSequence_ + 1;
@@ -158,45 +162,69 @@ QVector<RemoteInputSender::OutgoingPacket> RemoteInputSender::flush(qint64 nowMs
             continue;
         }
 
+        const QByteArray payload = encodePacket(packet);
+        if (!canSend(nowMs, payload.size(), kBudgetPerSecond)) break;
+
         reliableQueue_.remove(0, taken);
         reliableSequence_ = packet.sequence;
-        recordSend(nowMs);
-        outgoing.append({Channel::Reliable, encodePacket(packet)});
+        recordSend(nowMs, payload.size());
+        outgoing.append({Channel::Reliable, payload});
     }
 
     // 移动只用剩余名额，且必须给按键留出 kMoveReserveForKeys 个不许碰。
     const bool moveIntervalElapsed =
         lastMoveSentMs_ == 0 || nowMs - lastMoveSentMs_ >= kMoveIntervalMs;
-    if (hasPendingMove_ && moveIntervalElapsed
-        && windowCount(nowMs) < kBudgetPerSecond - kMoveReserveForKeys) {
-        Event move;
-        move.type = EventType::MouseMove;
-        move.x = pendingMoveX_;
-        move.y = pendingMoveY_;
-
+    if (!pendingMovePath_.isEmpty() && moveIntervalElapsed) {
         Packet packet;
         packet.sessionId = sessionId_;
-        packet.sequence = ++unreliableSequence_;
-        packet.events = {move};
+        packet.sequence = unreliableSequence_ + 1;
+        for (const auto& point : pendingMovePath_) {
+            Event move;
+            move.type = EventType::MouseMove;
+            move.x = point.x();
+            move.y = point.y();
+            packet.events.append(move);
+        }
 
-        hasPendingMove_ = false;
-        lastMoveSentMs_ = nowMs;
-        recordSend(nowMs);
-        outgoing.append({Channel::Unreliable, encodePacket(packet)});
+        const QByteArray payload = encodePacket(packet);
+        if (canSend(nowMs, payload.size(), kBudgetPerSecond - kMoveReserveForKeys)) {
+            pendingMovePath_.clear();
+            unreliableSequence_ = packet.sequence;
+            lastMoveSentMs_ = nowMs;
+            recordSend(nowMs, payload.size());
+            outgoing.append({Channel::Unreliable, payload});
+        }
     }
 
     return outgoing;
 }
 
-int RemoteInputSender::windowCount(qint64 nowMs) {
-    while (!sendTimestamps_.isEmpty() && nowMs - sendTimestamps_.first() >= kWindowMs) {
-        sendTimestamps_.removeFirst();
+void RemoteInputSender::pruneHistory(qint64 nowMs) {
+    while (!sendHistory_.isEmpty() && nowMs - sendHistory_.first().first >= kWindowMs) {
+        sendHistory_.removeFirst();
     }
-    return sendTimestamps_.size();
 }
 
-void RemoteInputSender::recordSend(qint64 nowMs) {
-    sendTimestamps_.append(nowMs);
+int RemoteInputSender::windowCount(qint64 nowMs) {
+    pruneHistory(nowMs);
+    return sendHistory_.size();
+}
+
+int RemoteInputSender::windowBytes(qint64 nowMs) {
+    pruneHistory(nowMs);
+    int total = 0;
+    for (const auto& entry : sendHistory_) total += entry.second;
+    return total;
+}
+
+bool RemoteInputSender::canSend(qint64 nowMs, int payloadBytes, int countLimit) {
+    if (windowCount(nowMs) >= countLimit) return false;
+    // 字节配额和条数配额是两个独立的闸门，SDK 任一超了都拒发。
+    return windowBytes(nowMs) + payloadBytes <= kMaxBytesPerSecond;
+}
+
+void RemoteInputSender::recordSend(qint64 nowMs, int payloadBytes) {
+    sendHistory_.append(qMakePair(nowMs, payloadBytes));
 }
 
 }  // namespace RemoteInput

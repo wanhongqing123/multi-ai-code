@@ -54,15 +54,23 @@ public:
     static constexpr int kBudgetPerSecond = 28;
     // 任意 1 秒窗口里给按键留出的名额，移动不许占用。
     static constexpr int kMoveReserveForKeys = 6;
-    // 移动最快 25Hz。再快对手感提升有限，却会挤掉按键的余量。
+    // 移动最快 25Hz。限的是**包数**不是事件数——一个包里带整段轨迹，
+    // 所以 25Hz 的发包频率照样能还原上百 Hz 的移动轨迹。
     static constexpr qint64 kMoveIntervalMs = 40;
     static constexpr qint64 kWindowMs = 1000;
+    // 单包最多带几个轨迹点。上限由 16KB/秒的字节配额倒推：
+    // 每点约 32 字节，12 点约 400 字节，25 包/秒约 10KB/秒，留足余量。
+    static constexpr int kMaxMovePointsPerPacket = 12;
 
 private:
     void resetQueues();
-    // 滑动窗口计数：丢掉 1 秒前的记录，返回窗口内已发条数。
+    // 滑动窗口：丢掉 1 秒前的记录后，返回窗口内已发条数 / 字节数。
+    void pruneHistory(qint64 nowMs);
     int windowCount(qint64 nowMs);
-    void recordSend(qint64 nowMs);
+    int windowBytes(qint64 nowMs);
+    // 条数与字节数两个配额都得留得下这个包。
+    bool canSend(qint64 nowMs, int payloadBytes, int countLimit);
+    void recordSend(qint64 nowMs, int payloadBytes);
 
     bool sessionActive_ = false;
     QString sessionId_;
@@ -70,14 +78,14 @@ private:
     quint32 unreliableSequence_ = 0;
     quint32 reliableSequence_ = 0;
 
-    bool hasPendingMove_ = false;
-    double pendingMoveX_ = 0.0;
-    double pendingMoveY_ = 0.0;
+    // 待发的移动轨迹（而不是只留最后一点）：拖拽画线时中间点就是内容本身，
+    // 丢掉会把曲线拉成直线。整段塞进一个包，不额外占配额。
+    QVector<QPointF> pendingMovePath_;
     QVector<Event> reliableQueue_;
 
-    // 最近 1 秒内每次发送的时刻。用滑动窗口而不是令牌桶：令牌桶的容量本身
-    // 就是突发额度，满桶起步时"桶容量 + 一秒补充量"会超出上限。
-    QVector<qint64> sendTimestamps_;
+    // 最近 1 秒内每次发送的时刻与字节数。用滑动窗口而不是令牌桶：令牌桶的
+    // 容量本身就是突发额度，满桶起步时"桶容量 + 一秒补充量"会超出上限。
+    QVector<QPair<qint64, int>> sendHistory_;
     qint64 lastMoveSentMs_ = 0;
 };
 

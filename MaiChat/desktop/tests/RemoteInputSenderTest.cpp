@@ -32,7 +32,8 @@ private slots:
     void computesLetterboxRectForBothOrientations();
     void mapsWidgetCoordinatesIgnoringLetterbox();
     void rejectsPointsOnLetterboxButClampsWhenAsked();
-    void coalescesMovesToLatestPositionOnly();
+    void batchesMovePathIntoOnePacketKeepingEndpoint();
+    void respectsByteBudgetNotJustMessageCount();
     void batchesReliableEventsIntoOnePacket();
     void sumsWheelDeltasWithinOneTick();
     void prioritisesKeysOverMovesWhenBudgetIsTight();
@@ -107,7 +108,7 @@ void RemoteInputSenderTest::rejectsPointsOnLetterboxButClampsWhenAsked() {
     QVERIFY(!fresh.mapToNormalizedClamped(QPointF(1, 1), &x, &y));
 }
 
-void RemoteInputSenderTest::coalescesMovesToLatestPositionOnly() {
+void RemoteInputSenderTest::batchesMovePathIntoOnePacketKeepingEndpoint() {
     RemoteInputSender sender;
     sender.beginSession(QStringLiteral("s1"));
 
@@ -115,13 +116,37 @@ void RemoteInputSenderTest::coalescesMovesToLatestPositionOnly() {
 
     const auto outgoing = sender.flush(1000);
     const auto moves = decodeAll(outgoing, Channel::Unreliable);
-    // 50 次移动只发一个包：中间点发过去也会被立刻覆盖，白占配额。
+    // 50 次移动合成**一个包**，但里面带的是整段轨迹而不是一个点：
+    // 限的是包数不是事件数，中间点几乎白送。
     QCOMPARE(moves.size(), 1);
-    QCOMPARE(moves[0].events.size(), 1);
-    QCOMPARE(moves[0].events[0].x, 0.49);
+    QVERIFY(moves[0].events.size() > 1);
+    QVERIFY(moves[0].events.size() <= RemoteInputSender::kMaxMovePointsPerPacket);
+    // 轨迹必须保序，否则被控端会画出乱线。
+    for (int i = 1; i < moves[0].events.size(); ++i) {
+        QVERIFY(moves[0].events[i].x >= moves[0].events[i - 1].x);
+    }
+    // 抽稀可以丢中间点，但**终点必须在**——终点才是光标最终该停的位置。
+    QCOMPARE(moves[0].events.last().x, 0.49);
 
-    // 发完就没了，下一 tick 不该重发同一个位置。
+    // 发完就没了，下一 tick 不该重发。
     QVERIFY(decodeAll(sender.flush(1100), Channel::Unreliable).isEmpty());
+}
+
+void RemoteInputSenderTest::respectsByteBudgetNotJustMessageCount() {
+    RemoteInputSender sender;
+    sender.beginSession(QStringLiteral("s1"));
+
+    // 条数和字节数是两个独立的闸门，SDK 任一超了都拒发。光数包数不够：
+    // 28 个接近 1KB 的包只有 28 条，却是 28KB，早就爆了 16KB/秒。
+    int bytes = 0;
+    for (qint64 now = 0; now < 1000; now += 5) {
+        sender.queueText(QString(700, QLatin1Char('x')));
+        for (const auto& item : sender.flush(now)) bytes += item.payload.size();
+    }
+    QVERIFY2(bytes <= kMaxBytesPerSecond,
+             qPrintable(QStringLiteral("一秒发了 %1 字节，超过 %2")
+                            .arg(bytes)
+                            .arg(kMaxBytesPerSecond)));
 }
 
 void RemoteInputSenderTest::batchesReliableEventsIntoOnePacket() {
@@ -213,10 +238,15 @@ void RemoteInputSenderTest::neverExceedsBudgetInAnySlidingWindow() {
 
     // 逐毫秒喂满 5 秒，把发送时刻全记下来。
     QVector<qint64> sent;
+    int deliveredEvents = 0;
     for (qint64 now = 0; now < 5000; ++now) {
         sender.queueMouseMove(0.5, 0.5);
         sender.queueKey(0x41, true);
-        for (int i = 0; i < sender.flush(now).size(); ++i) sent.append(now);
+        for (const auto& item : sender.flush(now)) {
+            sent.append(now);
+            Packet packet;
+            if (decodePacket(item.payload, &packet)) deliveredEvents += packet.events.size();
+        }
     }
 
     // 关键是**任意**一秒窗口都不能超，不是"从零点开始的那一秒"。
@@ -233,9 +263,36 @@ void RemoteInputSenderTest::neverExceedsBudgetInAnySlidingWindow() {
                             .arg(worst)
                             .arg(kMaxMessagesPerSecond)));
 
-    // 同时别限过头：按键必须还能以可用的速率发出去。
-    QVERIFY2(sent.size() >= 5 * 20,
-             qPrintable(QStringLiteral("5 秒只发了 %1 个包，限得太狠").arg(sent.size())));
+    // 同时别限过头。这里要量的是**送达的事件数**而不是包数：合批本来就会
+    // 让包数变少、吞吐变高，拿包数当吞吐指标会把优化误判成退化
+    // （改成轨迹合批后就在这条上栽过一次）。
+    //
+    // 上面是每毫秒一个按键的极端压测（1000 次/秒），已经超过通道的物理上限
+    // ——1KB/包装约 30 条、28 包/秒，天花板约 840 条/秒。这里只要求没被限成
+    // 涓流；真实输入速率远在天花板之下，由下面那段验证。
+    QVERIFY2(deliveredEvents >= 2000,
+             qPrintable(QStringLiteral("5 秒只送出 %1 个事件，限得太狠").arg(deliveredEvents)));
+
+    // 真实速率：按键 20 次/秒（打字很快了）+ 鼠标 125Hz。这个量级必须一条不丢。
+    RemoteInputSender realistic;
+    realistic.beginSession(QStringLiteral("s2"));
+    int queuedKeys = 0;
+    int deliveredKeys = 0;
+    for (qint64 now = 0; now < 5000; ++now) {
+        if (now % 8 == 0) realistic.queueMouseMove(0.5, 0.5);
+        if (now % 50 == 0) {
+            realistic.queueKey(0x41, true);
+            ++queuedKeys;
+        }
+        for (const auto& item : realistic.flush(now)) {
+            Packet packet;
+            if (!decodePacket(item.payload, &packet)) continue;
+            for (const auto& event : packet.events) {
+                if (event.type == EventType::Key) ++deliveredKeys;
+            }
+        }
+    }
+    QCOMPARE(deliveredKeys, queuedKeys);
 }
 
 void RemoteInputSenderTest::dropsOversizedEventInsteadOfBlockingQueue() {

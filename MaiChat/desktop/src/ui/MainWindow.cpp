@@ -1578,8 +1578,11 @@ void MainWindow::applyStyle() {
         #settingsRowButton:hover {
             background: #e2e8f0;
         }
+        /* 背景必须透明：面板布局边距为 0，行控件正好铺在面板那 1px 边框上，
+           行一旦有不透明背景就会把左右竖边整段盖掉（只剩标题区那一小截还在）。
+           白底由 #settingsPanel 提供，行只负责底部分隔线。 */
         #settingsRow {
-            background: #ffffff;
+            background: transparent;
             border-bottom: 1px solid #edf2f7;
         }
         #settingsRowTitle {

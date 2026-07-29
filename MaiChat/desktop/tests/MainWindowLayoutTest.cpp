@@ -87,7 +87,48 @@ private slots:
     void maximizedImageBubbleOpensOnlyOnePreview();
     void copyAttachmentToPathCopiesOverwritesAndReportsErrors();
     void ctrlShortcutsZoomWholeUi();
+    void settingsPanelBorderIsNotCoveredByRows();
 };
+
+void MainWindowLayoutTest::settingsPanelBorderIsNotCoveredByRows() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    MainWindow window(app);
+
+    auto* panel = window.findChild<QWidget*>(QStringLiteral("settingsPanel"));
+    QVERIFY(panel != nullptr);
+    panel->resize(600, 400);
+    const QImage painted = panel->grab().toImage();
+    QVERIFY(!painted.isNull());
+
+    // 面板布局边距为 0，行控件正好铺在那 1px 边框上。行只要有不透明背景，
+    // 就会把左右竖边整段盖掉——只剩标题区一小截还在，看着像"线断了"。
+    // 所以这里断言的是"画出来了什么"：沿高度多点采样，左右边框都得在。
+    const QRgb border = qRgb(0xda, 0xe4, 0xf0);
+    const auto nearBorder = [](QRgb c) {
+        // 抗锯齿会让边框像素略有出入，允许小幅偏差但必须明显不是白色。
+        return qAbs(qRed(c) - 0xda) < 24 && qAbs(qGreen(c) - 0xe4) < 24
+               && qAbs(qBlue(c) - 0xf0) < 24;
+    };
+    Q_UNUSED(border);
+
+    int leftHits = 0;
+    int rightHits = 0;
+    int sampled = 0;
+    for (int y = 8; y < painted.height() - 8; y += 12) {
+        ++sampled;
+        if (nearBorder(painted.pixel(0, y)) || nearBorder(painted.pixel(1, y))) ++leftHits;
+        const int w = painted.width();
+        if (nearBorder(painted.pixel(w - 1, y)) || nearBorder(painted.pixel(w - 2, y))) {
+            ++rightHits;
+        }
+    }
+    QVERIFY(sampled > 5);
+    QVERIFY2(leftHits == sampled,
+             qPrintable(QStringLiteral("左边框只在 %1/%2 个采样点上存在").arg(leftHits).arg(sampled)));
+    QVERIFY2(rightHits == sampled,
+             qPrintable(QStringLiteral("右边框只在 %1/%2 个采样点上存在").arg(rightHits).arg(sampled)));
+}
 
 void MainWindowLayoutTest::exposesDesktopChatLayoutControls() {
     auto client = std::make_unique<FakeRemoteIMClient>();

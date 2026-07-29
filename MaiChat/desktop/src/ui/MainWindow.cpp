@@ -1380,7 +1380,9 @@ void MainWindow::buildUi() {
     auto* settingsPanel = new QWidget(settingsContent);
     settingsPanel->setObjectName(QStringLiteral("settingsPanel"));
     auto* settingsPanelLayout = new QVBoxLayout(settingsPanel);
-    settingsPanelLayout->setContentsMargins(0, 0, 0, 0);
+    // 上下留白：边距为 0 时首行标题会紧贴面板上边框，末行也贴着下边框。
+    // 左右仍为 0，让行的分隔线横贯整个面板宽度。
+    settingsPanelLayout->setContentsMargins(0, UiZoom::s(8), 0, UiZoom::s(8));
     settingsPanelLayout->setSpacing(0);
 
     settingsAccountValue_ = new QLabel(settingsPanel);
@@ -1555,11 +1557,13 @@ void MainWindow::applyStyle() {
             border: 1px solid #dae4f0;
             border-radius: 8px;
         }
+        /* 左边距跟各行标题（行内边距 18px）对齐；上边距不能是 0，
+           否则标题直接贴在面板上边框上，看着像挤在线上。 */
         #settingsSectionTitle {
             color: #0f172a;
             font-size: 15px;
             font-weight: 800;
-            padding: 0 0 10px 2px;
+            padding: 6px 0 12px 18px;
         }
         #settingsRadio {
             color: #334155;
@@ -2986,7 +2990,8 @@ QWidget* MainWindow::buildRemoteDesktopSettingsPanel(QWidget* parent) {
     auto* panel = new QWidget(parent);
     panel->setObjectName(QStringLiteral("settingsPanel"));
     auto* layout = new QVBoxLayout(panel);
-    layout->setContentsMargins(0, 0, 0, 0);
+    // 同上：上下留白，左右保持 0 以便分隔线横贯整宽。
+    layout->setContentsMargins(0, UiZoom::s(8), 0, UiZoom::s(8));
     layout->setSpacing(0);
 
     auto* heading = new QLabel(QStringLiteral("远程桌面"), panel);

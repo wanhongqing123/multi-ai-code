@@ -18,6 +18,7 @@
 class SharingIndicatorBar;
 class RemoteDesktopViewPanel;
 class QButtonGroup;
+class QCheckBox;
 class QResizeEvent;
 class QShowEvent;
 class QLineEdit;
@@ -152,6 +153,8 @@ private:
     QButtonGroup* remoteDesktopModeGroup_ = nullptr;
     QLabel* remoteDesktopPasswordValue_ = nullptr;
     QLabel* remoteDesktopAllowValue_ = nullptr;
+    QLabel* remoteDesktopControlValue_ = nullptr;
+    QCheckBox* remoteDesktopControlToggle_ = nullptr;
     QLabel* settingsAccountValue_ = nullptr;
     QLabel* settingsConnectionValue_ = nullptr;
     QLabel* settingsSdkAppIdValue_ = nullptr;

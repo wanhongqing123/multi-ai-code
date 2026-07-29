@@ -113,8 +113,16 @@ void RemoteDesktopSessionCard::buildUi() {
     statusLabel_ = new QLabel(QStringLiteral("等待画面"), this);
     statusLabel_->setObjectName(QStringLiteral("remoteCardStatus"));
 
+    // 状态播报条：平时藏着，只有对端报了事才现身（如弹出 UAC）。
+    // 放在画面下方而不是盖在画面上，免得挡住正要看的内容。
+    noticeLabel_ = new QLabel(this);
+    noticeLabel_->setObjectName(QStringLiteral("remoteCardNotice"));
+    noticeLabel_->setWordWrap(true);
+    noticeLabel_->hide();
+
     layout->addWidget(header);
     layout->addWidget(renderSurface_, 1);
+    layout->addWidget(noticeLabel_);
     layout->addWidget(statusLabel_);
 
     // 画面区是原生窗口，双击不一定冒泡到卡片，这里直接盯住它自己的事件。
@@ -168,7 +176,26 @@ void RemoteDesktopSessionCard::applyStyle() {
         #remoteCardFullScreen:hover {
             color: #e2e8f0;
         }
+        #remoteCardNotice {
+            background: #7c2d12;
+            color: #fed7aa;
+            font-size: 13px;
+            font-weight: 600;
+            padding: 8px 14px;
+        }
     )")));
+}
+
+void RemoteDesktopSessionCard::setNoticeText(const QString& text) {
+    noticeLabel_->setText(text);
+    // 空串即撤下：对端恢复正常后不能还挂着"正在等待授权"。
+    noticeLabel_->setVisible(!text.isEmpty());
+}
+
+QString RemoteDesktopSessionCard::noticeText() const {
+    // 用 isHidden 而不是 isVisible：顶层窗口没 show 时 isVisible 恒为 false，
+    // 会把"设过提示"误报成"没提示"。isHidden 反映的是显式的隐藏状态。
+    return noticeLabel_->isHidden() ? QString() : noticeLabel_->text();
 }
 
 void RemoteDesktopSessionCard::refreshFullScreenButton() {

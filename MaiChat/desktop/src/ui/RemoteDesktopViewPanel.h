@@ -27,6 +27,8 @@ public:
 
     void setStreamActive(const QString& peerUserId, bool active);
     void setStatusText(const QString& peerUserId, const QString& text);
+    // 被控端播报的状态。空串撤下提示。
+    void setNoticeText(const QString& peerUserId, const QString& text);
     // 交给 TRTC 的渲染目标；未知 peer 返回 nullptr。
     void* renderWindowHandle(const QString& peerUserId) const;
 

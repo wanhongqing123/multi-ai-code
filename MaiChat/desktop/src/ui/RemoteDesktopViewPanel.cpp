@@ -206,6 +206,12 @@ void RemoteDesktopViewPanel::setStatusText(const QString& peerUserId, const QStr
     if (card != nullptr) card->setStatusText(text);
 }
 
+void RemoteDesktopViewPanel::setNoticeText(const QString& peerUserId, const QString& text) {
+    auto* card = cardFor(peerUserId);
+    if (card == nullptr) card = soleCard();
+    if (card != nullptr) card->setNoticeText(text);
+}
+
 void* RemoteDesktopViewPanel::renderWindowHandle(const QString& peerUserId) const {
     auto* card = cardFor(peerUserId);
     if (card == nullptr) card = soleCard();

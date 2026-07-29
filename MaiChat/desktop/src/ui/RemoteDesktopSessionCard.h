@@ -20,6 +20,9 @@ public:
 
     void setStreamActive(bool active);
     void setStatusText(const QString& text);
+    // 被控端的状态播报（当前只有安全桌面进出）。空串表示撤下提示。
+    void setNoticeText(const QString& text);
+    QString noticeText() const;
     // 全屏态只影响本卡片的按钮外观，真正的进出全屏由 ViewPanel 统筹。
     void setFullScreenActive(bool active);
 
@@ -47,6 +50,7 @@ private:
     QLabel* titleLabel_ = nullptr;
     QLabel* durationLabel_ = nullptr;
     QLabel* statusLabel_ = nullptr;
+    QLabel* noticeLabel_ = nullptr;
     QPushButton* fullScreenButton_ = nullptr;
     QTimer* durationTimer_ = nullptr;
     QElapsedTimer elapsed_;

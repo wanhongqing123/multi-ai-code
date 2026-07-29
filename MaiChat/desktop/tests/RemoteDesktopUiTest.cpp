@@ -30,7 +30,42 @@ private slots:
     void viewerFullScreenTogglesFromCardDoubleClickAndButton();
     void viewerFullScreenExitsOnEscape();
     void viewerFullScreenExitsWhenThatSessionEnds();
+    void noticeBannerHiddenUntilPeerReportsSomething();
+    void noticeRoutesToMatchingCardOnly();
 };
+
+void RemoteDesktopUiTest::noticeBannerHiddenUntilPeerReportsSomething() {
+    RemoteDesktopViewPanel panel;
+    panel.beginSession(QStringLiteral("host-pc"));
+    auto* card = panel.cardFor(QStringLiteral("host-pc"));
+    QVERIFY(card != nullptr);
+
+    // 平时不该占地方，更不该显示空白条。
+    auto* banner = card->findChild<QLabel*>(QStringLiteral("remoteCardNotice"));
+    QVERIFY(banner != nullptr);
+    QVERIFY(banner->isHidden());
+    QVERIFY(card->noticeText().isEmpty());
+
+    card->setNoticeText(QStringLiteral("对方电脑弹出了系统授权框"));
+    QVERIFY(!banner->isHidden());
+    QVERIFY(card->noticeText().contains(QStringLiteral("系统授权框")));
+
+    // 对端恢复正常后必须撤下，不能一直挂着"正在等待授权"。
+    card->setNoticeText(QString());
+    QVERIFY(banner->isHidden());
+    QVERIFY(card->noticeText().isEmpty());
+}
+
+void RemoteDesktopUiTest::noticeRoutesToMatchingCardOnly() {
+    RemoteDesktopViewPanel panel;
+    panel.beginSession(QStringLiteral("host-a"));
+    panel.beginSession(QStringLiteral("host-b"));
+
+    // 一台机器弹 UAC 不该在另一台的卡片上也挂提示。
+    panel.setNoticeText(QStringLiteral("host-b"), QStringLiteral("对方电脑弹出了系统授权框"));
+    QVERIFY(panel.cardFor(QStringLiteral("host-a"))->noticeText().isEmpty());
+    QVERIFY(!panel.cardFor(QStringLiteral("host-b"))->noticeText().isEmpty());
+}
 
 void RemoteDesktopUiTest::consentDialogShowsRequesterAndConsequence() {
     RemoteDesktopConsentDialog dialog(QStringLiteral("whq-iphone"), 60000);

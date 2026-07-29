@@ -32,7 +32,60 @@ private slots:
     void viewerFullScreenExitsWhenThatSessionEnds();
     void noticeBannerHiddenUntilPeerReportsSomething();
     void noticeRoutesToMatchingCardOnly();
+    void controlButtonRequestsToggleAndReflectsState();
+    void escapeGoesToRemoteWhileControlling();
 };
+
+void RemoteDesktopUiTest::controlButtonRequestsToggleAndReflectsState() {
+    RemoteDesktopViewPanel panel;
+    panel.beginSession(QStringLiteral("host-a"));
+    auto* card = panel.cardFor(QStringLiteral("host-a"));
+    QVERIFY(card != nullptr);
+
+    auto* button = card->findChild<QPushButton*>(QStringLiteral("remoteCardControl"));
+    QVERIFY(button != nullptr);
+    QVERIFY(!card->isControlActive());
+
+    // 按钮只发请求，不自己改状态：真正的开关在上层（要先确认对方允许控制）。
+    QSignalSpy toggleSpy(&panel, &RemoteDesktopViewPanel::controlToggleRequested);
+    button->click();
+    QCOMPARE(toggleSpy.count(), 1);
+    QCOMPARE(toggleSpy.takeFirst().at(0).toString(), QStringLiteral("host-a"));
+    QVERIFY2(!card->isControlActive(),
+             "按钮不该自己进入控制态——上层还没确认对方是否允许");
+
+    panel.setControlActive(QStringLiteral("host-a"), true);
+    QVERIFY(card->isControlActive());
+    QVERIFY(panel.isAnyControlActive());
+
+    panel.setControlActive(QStringLiteral("host-a"), false);
+    QVERIFY(!panel.isAnyControlActive());
+}
+
+void RemoteDesktopUiTest::escapeGoesToRemoteWhileControlling() {
+    RemoteDesktopViewPanel panel;
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    panel.beginSession(QStringLiteral("host-a"));
+    panel.enterFullScreen(QStringLiteral("host-a"));
+    QVERIFY(panel.isFullScreen());
+
+    // 没在控制时 Esc 退出全屏（保持原行为）。
+    QTest::keyClick(&panel, Qt::Key_Escape);
+    QVERIFY(!panel.isFullScreen());
+
+    panel.enterFullScreen(QStringLiteral("host-a"));
+    panel.setControlActive(QStringLiteral("host-a"), true);
+    // 控制态下 Esc 属于远端——远程那头也要用它。本地不能抢走，
+    // 否则按 Esc 永远退的是本地全屏，远端根本收不到。
+    QTest::keyClick(&panel, Qt::Key_Escape);
+    QVERIFY2(panel.isFullScreen(), "控制态下 Esc 被本地抢走了");
+
+    // 本地退出改走 Ctrl+Alt+Shift+Q。
+    QTest::keyClick(&panel, Qt::Key_Q,
+                    Qt::ControlModifier | Qt::AltModifier | Qt::ShiftModifier);
+    QVERIFY(!panel.isFullScreen());
+}
 
 void RemoteDesktopUiTest::noticeBannerHiddenUntilPeerReportsSomething() {
     RemoteDesktopViewPanel panel;

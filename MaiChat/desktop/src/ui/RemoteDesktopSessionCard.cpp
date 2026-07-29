@@ -84,6 +84,14 @@ void RemoteDesktopSessionCard::buildUi() {
     titleLabel_->setObjectName(QStringLiteral("remoteCardTitle"));
     durationLabel_ = new QLabel(header);
     durationLabel_->setObjectName(QStringLiteral("remoteCardDuration"));
+    controlButton_ = new QPushButton(header);
+    controlButton_->setObjectName(QStringLiteral("remoteCardControl"));
+    controlButton_->setCursor(Qt::PointingHandCursor);
+    controlButton_->setFocusPolicy(Qt::NoFocus);
+    controlButton_->setCheckable(true);
+    connect(controlButton_, &QPushButton::clicked, this,
+            [this] { emit controlToggleRequested(peerUserId_); });
+
     fullScreenButton_ = new QPushButton(header);
     fullScreenButton_->setObjectName(QStringLiteral("remoteCardFullScreen"));
     fullScreenButton_->setCursor(Qt::PointingHandCursor);
@@ -92,6 +100,7 @@ void RemoteDesktopSessionCard::buildUi() {
             [this] { emit fullScreenToggleRequested(peerUserId_); });
     headerLayout->addWidget(titleLabel_, 1);
     headerLayout->addWidget(durationLabel_);
+    headerLayout->addWidget(controlButton_);
     headerLayout->addWidget(fullScreenButton_);
 
     renderSurface_ = new QWidget(this);
@@ -132,6 +141,7 @@ void RemoteDesktopSessionCard::buildUi() {
     placeholderLabel_->installEventFilter(this);
     header->installEventFilter(this);
     refreshFullScreenButton();
+    refreshControlButton();
 }
 
 void RemoteDesktopSessionCard::applyStyle() {
@@ -176,6 +186,24 @@ void RemoteDesktopSessionCard::applyStyle() {
         #remoteCardFullScreen:hover {
             color: #e2e8f0;
         }
+        #remoteCardControl {
+            background: transparent;
+            border: 1px solid #334155;
+            border-radius: 4px;
+            color: #94a3b8;
+            font-size: 12px;
+            font-weight: 600;
+            padding: 3px 10px;
+        }
+        #remoteCardControl:hover {
+            color: #e2e8f0;
+            border-color: #64748b;
+        }
+        #remoteCardControl:checked {
+            background: #b42318;
+            border-color: #b42318;
+            color: #ffffff;
+        }
         #remoteCardNotice {
             background: #7c2d12;
             color: #fed7aa;
@@ -207,6 +235,22 @@ void RemoteDesktopSessionCard::refreshFullScreenButton() {
     fullScreenButton_->setToolTip(fullScreenActive_
                                       ? QStringLiteral("退出全屏（双击画面或按 Esc）")
                                       : QStringLiteral("全屏（双击画面）"));
+}
+
+void RemoteDesktopSessionCard::refreshControlButton() {
+    controlButton_->setText(controlActive_ ? QStringLiteral("控制中")
+                                           : QStringLiteral("控制"));
+    controlButton_->setToolTip(
+        controlActive_
+            ? QStringLiteral("正在操作对方电脑。点此交还控制权（本地退出全屏用 Ctrl+Alt+Shift+Q）")
+            : QStringLiteral("接管对方的鼠标键盘。需要对方在设置里开启「允许远程控制」"));
+    QSignalBlocker blocker(controlButton_);
+    controlButton_->setChecked(controlActive_);
+}
+
+void RemoteDesktopSessionCard::setControlActive(bool active) {
+    controlActive_ = active;
+    refreshControlButton();
 }
 
 void RemoteDesktopSessionCard::setFullScreenActive(bool active) {

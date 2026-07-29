@@ -14,6 +14,7 @@
 #include "app/RemoteIMApplication.h"
 #include "remote/RemoteDesktopController.h"
 #include "remote/RemoteDesktopSettings.h"
+#include "ui/RemoteInputCapture.h"
 
 class SharingIndicatorBar;
 class RemoteDesktopViewPanel;
@@ -113,6 +114,7 @@ private:
     void openRemoteDesktopViewer(const QString& peerUserId);
     void closeRemoteDesktopViewer();
     void applyRemoteDesktopFullScreen(bool fullScreen);
+    void toggleRemoteDesktopControl(const QString& peerUserId);
     void promptRemoteDesktopPassword(const QString& peerUserId);
     QWidget* buildRemoteDesktopSettingsPanel(QWidget* parent);
     void refreshRemoteDesktopSettings();
@@ -144,6 +146,9 @@ private:
     RemoteDesktopViewPanel* remoteDesktopView_ = nullptr;
     // 进全屏前窗口是不是最大化的：退出时要还原成原样，不能一律 showNormal。
     bool remoteFullScreenWasMaximized_ = false;
+    std::unique_ptr<RemoteInputCapture> remoteInputCapture_;
+    // 远端画面分辨率，用于算黑边。未知时按 16:9 兜底，拿到真实值再覆盖。
+    QSize remoteDesktopRemoteVideoSize_ = QSize(1920, 1080);
     QWidget* remotePage_ = nullptr;
     QPushButton* remoteNavButton_ = nullptr;
     RemoteDesktopController* remoteDesktop_ = nullptr;

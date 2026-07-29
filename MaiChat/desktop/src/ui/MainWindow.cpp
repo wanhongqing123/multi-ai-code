@@ -75,6 +75,7 @@
 #include "im/TencentUserSigGenerator.h"
 #include "remote/TrtcEngine.h"
 #include "ui/RemoteDesktopConsentDialog.h"
+#include "ui/RemoteDesktopSessionCard.h"
 #include "ui/RemoteDesktopViewPanel.h"
 #include "ui/SharingIndicatorBar.h"
 #include "ui/UiZoom.h"
@@ -1397,6 +1398,8 @@ void MainWindow::buildUi() {
     remoteLayout->addWidget(remoteDesktopView_);
     connect(remoteDesktopView_, &RemoteDesktopViewPanel::fullScreenChanged, this,
             &MainWindow::applyRemoteDesktopFullScreen);
+    connect(remoteDesktopView_, &RemoteDesktopViewPanel::controlToggleRequested, this,
+            &MainWindow::toggleRemoteDesktopControl);
 
     contentStack_->addWidget(messagesPage_);
     contentStack_->addWidget(contactsPage_);
@@ -3283,6 +3286,34 @@ void MainWindow::openRemoteDesktopViewer(const QString& peerUserId) {
 void MainWindow::closeRemoteDesktopViewer() {
     if (!remoteDesktopView_) return;
     remoteDesktopView_->showIdle();
+}
+
+void MainWindow::toggleRemoteDesktopControl(const QString& peerUserId) {
+    if (!remoteDesktop_ || !remoteDesktopView_) return;
+    auto* card = remoteDesktopView_->cardFor(peerUserId);
+    if (card == nullptr) return;
+
+    const bool turningOn = !card->isControlActive();
+    if (turningOn) {
+        if (!remoteInputCapture_) {
+            remoteInputCapture_ =
+                std::make_unique<RemoteInputCapture>(remoteDesktop_->inputSender(), this);
+        }
+        // 一次只控一台：换目标前先把上一台的采集停掉并让它全部放开。
+        for (const QString& peerId : remoteDesktopView_->sessionPeerIds()) {
+            if (peerId != peerUserId) remoteDesktopView_->setControlActive(peerId, false);
+        }
+        remoteInputCapture_->attachTo(card->renderSurface());
+        // 远端画面尺寸暂按被采集屏幕的实际比例给；拿到 onUserVideoSizeChanged
+        // 之后会被更精确的值覆盖。
+        remoteInputCapture_->setRemoteVideoSize(remoteDesktopRemoteVideoSize_);
+        remoteInputCapture_->setEnabled(true);
+    } else if (remoteInputCapture_) {
+        // 关掉时 capture 会自动发一次"全部抬起"，不留悬空按键。
+        remoteInputCapture_->setEnabled(false);
+        remoteInputCapture_->attachTo(nullptr);
+    }
+    remoteDesktopView_->setControlActive(peerUserId, turningOn);
 }
 
 void MainWindow::applyRemoteDesktopFullScreen(bool fullScreen) {

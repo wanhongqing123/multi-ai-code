@@ -52,9 +52,15 @@ public:
     bool isFullScreen() const;
     QString fullScreenPeerId() const;
 
+    // 控制态：只改卡片外观，采集开关由 MainWindow 掌管。
+    void setControlActive(const QString& peerUserId, bool active);
+    bool isControlActive(const QString& peerUserId) const;
+    bool isAnyControlActive() const;
+
 signals:
     // 交给 MainWindow 收起侧栏、切窗口全屏；面板自己不碰窗口状态。
     void fullScreenChanged(bool fullScreen);
+    void controlToggleRequested(const QString& peerUserId);
 
 protected:
     void keyPressEvent(QKeyEvent* event) override;

@@ -83,6 +83,8 @@ void RemoteDesktopViewPanel::beginSession(const QString& peerUserId) {
         auto* card = new RemoteDesktopSessionCard(peerUserId, gridPage_);
         connect(card, &RemoteDesktopSessionCard::fullScreenToggleRequested, this,
                 &RemoteDesktopViewPanel::toggleFullScreen);
+        connect(card, &RemoteDesktopSessionCard::controlToggleRequested, this,
+                &RemoteDesktopViewPanel::controlToggleRequested);
         cards_.insert(peerUserId, card);
         order_.append(peerUserId);
         relayoutCards();
@@ -136,8 +138,37 @@ QString RemoteDesktopViewPanel::fullScreenPeerId() const {
     return fullScreenPeerId_;
 }
 
+void RemoteDesktopViewPanel::setControlActive(const QString& peerUserId, bool active) {
+    if (auto* card = cardFor(peerUserId)) card->setControlActive(active);
+}
+
+bool RemoteDesktopViewPanel::isControlActive(const QString& peerUserId) const {
+    auto* card = cardFor(peerUserId);
+    return card != nullptr && card->isControlActive();
+}
+
+bool RemoteDesktopViewPanel::isAnyControlActive() const {
+    for (auto* card : cards_) {
+        if (card->isControlActive()) return true;
+    }
+    return false;
+}
+
 void RemoteDesktopViewPanel::keyPressEvent(QKeyEvent* event) {
-    if (event->key() == Qt::Key_Escape && isFullScreen()) {
+    // 控制态下 Esc 属于远端——远程那头也要用它。此时本地退出全屏改走
+    // Ctrl+Alt+Shift+Q，否则两边抢同一个键，按 Esc 永远退的是本地全屏。
+    const bool localExitCombo =
+        event->key() == Qt::Key_Q
+        && event->modifiers().testFlag(Qt::ControlModifier)
+        && event->modifiers().testFlag(Qt::AltModifier)
+        && event->modifiers().testFlag(Qt::ShiftModifier);
+
+    if (localExitCombo && isFullScreen()) {
+        exitFullScreen();
+        event->accept();
+        return;
+    }
+    if (event->key() == Qt::Key_Escape && isFullScreen() && !isAnyControlActive()) {
         exitFullScreen();
         event->accept();
         return;

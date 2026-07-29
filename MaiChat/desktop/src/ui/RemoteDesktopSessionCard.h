@@ -25,6 +25,11 @@ public:
     QString noticeText() const;
     // 全屏态只影响本卡片的按钮外观，真正的进出全屏由 ViewPanel 统筹。
     void setFullScreenActive(bool active);
+    // 控制态同理：这里只管按钮外观，真正的采集开关在上层。
+    void setControlActive(bool active);
+    bool isControlActive() const { return controlActive_; }
+    // 交给采集器安装事件过滤器的那块画面控件。
+    QWidget* renderSurface() const { return renderSurface_; }
 
     void* renderWindowHandle() const;
     QString statusText() const;
@@ -33,6 +38,7 @@ public:
 
 signals:
     void fullScreenToggleRequested(const QString& peerUserId);
+    void controlToggleRequested(const QString& peerUserId);
 
 protected:
     void mouseDoubleClickEvent(QMouseEvent* event) override;
@@ -43,6 +49,7 @@ private:
     void applyStyle();
     void refreshDuration();
     void refreshFullScreenButton();
+    void refreshControlButton();
 
     QString peerUserId_;
     QWidget* renderSurface_ = nullptr;
@@ -52,8 +59,10 @@ private:
     QLabel* statusLabel_ = nullptr;
     QLabel* noticeLabel_ = nullptr;
     QPushButton* fullScreenButton_ = nullptr;
+    QPushButton* controlButton_ = nullptr;
     QTimer* durationTimer_ = nullptr;
     QElapsedTimer elapsed_;
     bool streamActive_ = false;
     bool fullScreenActive_ = false;
+    bool controlActive_ = false;
 };

@@ -24,6 +24,7 @@
 
 #include "app/RemoteIMApplication.h"
 #include "im/FakeRemoteIMClient.h"
+#include "ui/ImagePreviewDialog.h"
 #include "ui/MainWindow.h"
 #include "ui/UiZoom.h"
 
@@ -83,6 +84,7 @@ private slots:
     void navLogoUsesAppIconBrandGradient();
     void fileBubbleOffersContextMenu();
     void imageBubbleOffersContextMenu();
+    void maximizedImageBubbleOpensOnlyOnePreview();
     void copyAttachmentToPathCopiesOverwritesAndReportsErrors();
     void ctrlShortcutsZoomWholeUi();
 };
@@ -1169,6 +1171,45 @@ void MainWindowLayoutTest::imageBubbleOffersContextMenu() {
     QVERIFY(imageLabel != nullptr);
     // 自定义右键菜单（复制 / 预览 / 保存到本地）挂在图片缩略图上。
     QCOMPARE(imageLabel->contextMenuPolicy(), Qt::CustomContextMenu);
+}
+
+void MainWindowLayoutTest::maximizedImageBubbleOpensOnlyOnePreview() {
+    QTemporaryDir dir;
+    const QString imagePath = dir.filePath(QStringLiteral("shot.png"));
+    const QSize originalSize(320, 180);
+    QImage image(originalSize, QImage::Format_RGB32);
+    image.fill(Qt::red);
+    QVERIFY(image.save(imagePath));
+
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+    app.chatState().receiveImage(QStringLiteral("phone-user"), imagePath,
+                                 originalSize.width(), originalSize.height(), 100);
+
+    MainWindow window(app);
+    window.showMaximized();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto* imageLabel = window.findChild<QLabel*>(QStringLiteral("messageImageLabel"));
+    QVERIFY(imageLabel != nullptr);
+
+    // 连续到达的点击事件也只能复用当前预览，不能叠出多个预览窗口。
+    QTest::mouseClick(imageLabel, Qt::LeftButton);
+    QTest::mouseClick(imageLabel, Qt::LeftButton);
+    QTRY_COMPARE(window.findChildren<ImagePreviewDialog*>().size(), 1);
+    auto* preview = window.findChild<ImagePreviewDialog*>(QStringLiteral("imagePreviewDialog"));
+    QVERIFY(preview != nullptr);
+    QVERIFY(preview->isVisible());
+    QVERIFY(!(preview->windowState() & Qt::WindowFullScreen));
+    QVERIFY(!preview->windowFlags().testFlag(Qt::FramelessWindowHint));
+    QCOMPARE(preview->size(), originalSize);
+
+    const QSize resizedPreview(420, 260);
+    preview->resize(resizedPreview);
+    QTRY_COMPARE(preview->size(), resizedPreview);
+
+    preview->accept();
+    QTRY_VERIFY(window.findChildren<ImagePreviewDialog*>().isEmpty());
 }
 
 void MainWindowLayoutTest::copyAttachmentToPathCopiesOverwritesAndReportsErrors() {

@@ -26,6 +26,7 @@ class QListWidgetItem;
 class QPoint;
 class QTimer;
 class QImage;
+class ImagePreviewDialog;
 
 class MainWindow final : public QMainWindow {
 public:
@@ -184,6 +185,8 @@ private:
     bool imeComposing_ = false;
     // 「保存到本地」上次使用的目录：同一会话内多次保存不必每次从下载目录重新翻。
     QString lastAttachmentSaveDir_;
+    // 图片预览只允许存在一个实例，避免重复点击或平台窗口事件重入后叠出多个预览。
+    ImagePreviewDialog* imagePreviewDialog_ = nullptr;
     // 缩放百分比提示浮层（飞书式居中黑色气泡），零点几秒后自动隐藏。
     QLabel* zoomToast_ = nullptr;
     QTimer* zoomToastTimer_ = nullptr;

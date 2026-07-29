@@ -544,12 +544,13 @@ public:
     }
 
 protected:
-    void mousePressEvent(QMouseEvent* event) override {
+    void mouseReleaseEvent(QMouseEvent* event) override {
         if (event->button() == Qt::LeftButton && onClick_) {
             onClick_(imagePath_);
+            event->accept();
             return;
         }
-        QLabel::mousePressEvent(event);
+        QLabel::mouseReleaseEvent(event);
     }
 
 private:
@@ -2220,9 +2221,26 @@ QList<MainWindow::ComposerAttachment> MainWindow::collectComposerAttachments() c
 }
 
 void MainWindow::openImagePreview(const QString& imagePath) {
-    ImagePreviewDialog dialog(imagePath, this);
-    dialog.showFullScreen();
-    dialog.exec();
+    if (imagePreviewDialog_) {
+        imagePreviewDialog_->raise();
+        imagePreviewDialog_->activateWindow();
+        return;
+    }
+
+    auto* dialog = new ImagePreviewDialog(imagePath, this);
+    imagePreviewDialog_ = dialog;
+    dialog->setObjectName(QStringLiteral("imagePreviewDialog"));
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setWindowModality(Qt::ApplicationModal);
+    connect(dialog, &QObject::destroyed, this, [this, dialog] {
+        if (imagePreviewDialog_ == dialog) imagePreviewDialog_ = nullptr;
+    });
+
+    // 普通可缩放窗口只 show 一次。避免 macOS 最大化主窗口时进入原生全屏
+    // Space，也避免 showFullScreen() + exec() 组合造成预览反复闪现。
+    dialog->show();
+    dialog->raise();
+    dialog->activateWindow();
 }
 
 void MainWindow::openFilePreview(const RemoteIMFileAttachment& attachment) {

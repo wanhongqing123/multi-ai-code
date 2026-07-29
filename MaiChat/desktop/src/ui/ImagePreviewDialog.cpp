@@ -1,22 +1,45 @@
 #include "ui/ImagePreviewDialog.h"
 
+#include <QGuiApplication>
 #include <QKeyEvent>
 #include <QMouseEvent>
+#include <QScreen>
+#include <QSizePolicy>
 #include <QVBoxLayout>
+#include <QWindow>
 
 ImagePreviewDialog::ImagePreviewDialog(const QString& imagePath, QWidget* parent)
     : QDialog(parent), image_(imagePath) {
     setWindowTitle(QStringLiteral("图片预览"));
     setModal(true);
+    setSizeGripEnabled(true);
     setStyleSheet(QStringLiteral("QDialog { background: #08090b; } QLabel { color: white; }"));
 
     imageLabel_ = new QLabel(this);
     imageLabel_->setAlignment(Qt::AlignCenter);
-    imageLabel_->setMinimumSize(320, 240);
+    imageLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+    // 图片只是展示内容；让点击直接落到对话框，由对话框统一关闭预览。
+    imageLabel_->setAttribute(Qt::WA_TransparentForMouseEvents);
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(imageLabel_);
+
+    if (!image_.isNull()) {
+        QSize initialSize = (QSizeF(image_.size()) / image_.devicePixelRatioF()).toSize();
+        QScreen* targetScreen = parent && parent->windowHandle()
+            ? parent->windowHandle()->screen()
+            : QGuiApplication::primaryScreen();
+        if (targetScreen) {
+            const QSize available = targetScreen->availableGeometry().size() - QSize(80, 100);
+            if (initialSize.width() > available.width() || initialSize.height() > available.height()) {
+                initialSize.scale(available, Qt::KeepAspectRatio);
+            }
+        }
+        resize(initialSize);
+    } else {
+        resize(320, 240);
+    }
     updateImage();
 }
 
@@ -53,4 +76,3 @@ void ImagePreviewDialog::updateImage() {
     scaled.setDevicePixelRatio(dpr);
     imageLabel_->setPixmap(scaled);
 }
-

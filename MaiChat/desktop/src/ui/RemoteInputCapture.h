@@ -28,6 +28,10 @@ public:
     void setEnabled(bool enabled);
     bool isEnabled() const { return enabled_; }
 
+signals:
+    // 急停热键被按下（Ctrl+Alt+Shift+Q）。上层应立刻关闭控制。
+    void releaseControlRequested();
+
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 

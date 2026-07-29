@@ -127,6 +127,18 @@ bool RemoteInputCapture::eventFilter(QObject* watched, QEvent* event) {
         case QEvent::KeyPress:
         case QEvent::KeyRelease: {
             auto* key = static_cast<QKeyEvent*>(event);
+
+            // 急停热键：本地吞掉，绝不转发给远端。
+            // 控制期间鼠标可能被注入的动作带偏（同机自测时尤其明显），
+            // 那时候连"控制"按钮都点不中，必须留一条纯键盘的退路。
+            if (key->key() == Qt::Key_Q
+                && key->modifiers().testFlag(Qt::ControlModifier)
+                && key->modifiers().testFlag(Qt::AltModifier)
+                && key->modifiers().testFlag(Qt::ShiftModifier)) {
+                if (event->type() == QEvent::KeyPress) emit releaseControlRequested();
+                return true;
+            }
+
             if (key->isAutoRepeat()) {
                 // 自动重复由远端系统自己产生，转发只会翻倍。
                 return true;

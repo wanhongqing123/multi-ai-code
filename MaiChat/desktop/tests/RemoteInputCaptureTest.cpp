@@ -40,7 +40,31 @@ private slots:
     void alwaysSendsReleaseEvenOutsideContent();
     void releasesEverythingWhenDisabledOrFocusLost();
     void recomputesContentRectOnResize();
+    void emergencyHotkeyStopsControlAndIsNotForwarded();
 };
+
+void RemoteInputCaptureTest::emergencyHotkeyStopsControlAndIsNotForwarded() {
+    RemoteInputSender sender;
+    sender.beginSession(QStringLiteral("s1"));
+    QWidget surface;
+    surface.resize(800, 450);
+
+    RemoteInputCapture capture(sender);
+    capture.attachTo(&surface);
+    capture.setRemoteVideoSize(QSize(1920, 1080));
+    capture.setEnabled(true);
+    drain(sender, 1000);
+
+    QSignalSpy releaseSpy(&capture, &RemoteInputCapture::releaseControlRequested);
+    QTest::keyClick(&surface, Qt::Key_Q,
+                    Qt::ControlModifier | Qt::AltModifier | Qt::ShiftModifier);
+    QCOMPARE(releaseSpy.count(), 1);
+
+    // 急停键必须被本地吞掉：转发过去的话，远端会莫名其妙收到 Ctrl+Alt+Shift+Q，
+    // 而本地这条退路的意义正是"不经过远端"。
+    const auto events = allEvents(drain(sender, 1100));
+    QVERIFY2(!hasType(events, EventType::Key), "急停热键被转发给了远端");
+}
 
 void RemoteInputCaptureTest::capturesNothingUntilEnabled() {
     RemoteInputSender sender;

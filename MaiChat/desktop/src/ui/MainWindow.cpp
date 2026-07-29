@@ -3298,6 +3298,16 @@ void MainWindow::toggleRemoteDesktopControl(const QString& peerUserId) {
         if (!remoteInputCapture_) {
             remoteInputCapture_ =
                 std::make_unique<RemoteInputCapture>(remoteDesktop_->inputSender(), this);
+            // 急停：鼠标被注入动作带偏时，键盘是唯一还点得中的退路。
+            connect(remoteInputCapture_.get(), &RemoteInputCapture::releaseControlRequested, this,
+                    [this] {
+                        if (!remoteDesktopView_) return;
+                        for (const QString& peerId : remoteDesktopView_->sessionPeerIds()) {
+                            if (remoteDesktopView_->isControlActive(peerId)) {
+                                toggleRemoteDesktopControl(peerId);
+                            }
+                        }
+                    });
         }
         // 一次只控一台：换目标前先把上一台的采集停掉并让它全部放开。
         for (const QString& peerId : remoteDesktopView_->sessionPeerIds()) {

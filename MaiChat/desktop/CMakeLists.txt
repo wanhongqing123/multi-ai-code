@@ -120,6 +120,8 @@ add_library(remote_im_desktop_ui
   src/ui/RemoteDesktopViewPanel.cpp
   src/ui/RemoteDesktopSessionCard.h
   src/ui/RemoteDesktopSessionCard.cpp
+  src/ui/RemoteInputCapture.h
+  src/ui/RemoteInputCapture.cpp
   src/ui/UiZoom.h
   src/ui/UiZoom.cpp
 )
@@ -237,6 +239,9 @@ if(MAICHAT_TRTC_AVAILABLE)
   endforeach()
 endif()
 
+add_executable(remote_input_capture_test tests/RemoteInputCaptureTest.cpp)
+target_link_libraries(remote_input_capture_test PRIVATE remote_im_desktop_ui remote_im_core Qt5::Widgets Qt5::Test)
+
 add_executable(remote_desktop_ui_test tests/RemoteDesktopUiTest.cpp)
 target_link_libraries(remote_desktop_ui_test PRIVATE remote_im_desktop_ui remote_im_core Qt5::Widgets Qt5::Test)
 
@@ -264,5 +269,6 @@ add_test(NAME remote_desktop_session_test COMMAND remote_desktop_session_test)
 add_test(NAME remote_desktop_settings_test COMMAND remote_desktop_settings_test)
 add_test(NAME remote_desktop_controller_test COMMAND remote_desktop_controller_test)
 add_test(NAME trtc_engine_test COMMAND trtc_engine_test)
+add_test(NAME remote_input_capture_test COMMAND remote_input_capture_test)
 add_test(NAME remote_desktop_ui_test COMMAND remote_desktop_ui_test)
 add_test(NAME ui_zoom_test COMMAND ui_zoom_test)

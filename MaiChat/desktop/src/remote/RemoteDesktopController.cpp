@@ -41,6 +41,20 @@ RemoteDesktopController::RemoteDesktopController(Config config,
     // 换成 Fake，免得跑一遍测试就真去动鼠标。
     setInputSink(RemoteInput::createInputSink());
     setSecureDesktopProbe(RemoteDesktop::createSecureDesktopProbe());
+
+    // 两个定时器都跑在主线程：SDK 的限流计数器无同步，发送必须固定单线程。
+    inputFlushTimer_ = new QTimer(this);
+    inputFlushTimer_->setInterval(RemoteInput::RemoteInputSender::kMoveIntervalMs);
+    connect(inputFlushTimer_, &QTimer::timeout, this,
+            [this] { flushPendingInput(QDateTime::currentMSecsSinceEpoch()); });
+    inputFlushTimer_->start();
+
+    hostWatchdogTimer_ = new QTimer(this);
+    // 500ms 足够：看门狗超时是 5 秒，安全桌面判定有 600ms 防抖。
+    hostWatchdogTimer_->setInterval(500);
+    connect(hostWatchdogTimer_, &QTimer::timeout, this,
+            [this] { tickHostWatchdogs(QDateTime::currentMSecsSinceEpoch()); });
+    hostWatchdogTimer_->start();
 }
 
 RemoteDesktopController::~RemoteDesktopController() {
@@ -185,6 +199,12 @@ bool RemoteDesktopController::handleIncomingText(const QString& fromUserId, cons
                 engine_->startViewing(roomParams(viewerRoomId_), nullptr);
             }
             setViewerState(transition.nextState, transition.failureReason);
+            return true;
+        }
+        case Type::Notice: {
+            // 只认当前会话的播报，忽略过期会话的迟到消息。
+            if (signal.sessionId.isEmpty() || signal.sessionId != viewerSessionId_) return true;
+            emit peerNoticeReceived(signal.noticeCode);
             return true;
         }
         case Type::Stop: {
@@ -360,5 +380,14 @@ void RemoteDesktopController::stopSession() {
 void RemoteDesktopController::setViewerState(ViewerState state, const QString& failureReason) {
     if (state == viewerState_ && failureReason.isEmpty()) return;
     viewerState_ = state;
+
+    // 输入会话跟着观看状态走：画面到了才开始收输入，会话一结束立刻清空
+    // 攒着没发的事件——否则下一场会话会把上一场的残留输入吐出去。
+    if (state == ViewerState::Viewing) {
+        inputSender_.beginSession(viewerSessionId_);
+    } else {
+        inputSender_.endSession();
+    }
+
     emit viewerStateChanged(state, failureReason);
 }

@@ -14,8 +14,19 @@ enum class Type {
     Invite,    // 控制端 → 被控端：请求查看屏幕
     Accept,    // 被控端 → 控制端：同意，附房间号
     Reject,    // 被控端 → 控制端：拒绝，附原因
-    Stop       // 任一端 → 对端：结束会话
+    Stop,      // 任一端 → 对端：结束会话
+    Notice     // 被控端 → 控制端：会话中的状态播报，附 noticeCode
 };
+
+// Notice 的取值。传码不传文案：文案属于展示层，控制端可以自己决定怎么呈现，
+// 而且将来改文案不必要求两端同时升级。
+namespace NoticeCodes {
+// 被控端切到了安全桌面（UAC 提权框 / 锁屏 / Ctrl+Alt+Del）。
+// 此时画面采不到、输入注不进，远程表现为"卡住 + 点不动"——必须告诉控制端
+// 这是在等人操作，而不是断网或崩溃。
+extern const char kSecureDesktopEntered[];
+extern const char kSecureDesktopLeft[];
+}  // namespace NoticeCodes
 
 struct Signal {
     Type type = Type::Unknown;
@@ -24,6 +35,8 @@ struct Signal {
     // 无人值守模式下的密码证明；有人值守模式可空。明文密码永不出现在信令里。
     QString authProof;
     QString reason;
+    // 仅 Notice 使用，取 NoticeCodes 里的常量。
+    QString noticeCode;
     int protocolVersion = 0;
 };
 

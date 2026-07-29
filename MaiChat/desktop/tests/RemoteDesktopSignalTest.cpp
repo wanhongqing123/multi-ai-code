@@ -16,15 +16,32 @@ private slots:
     void rejectsUnknownSignalType();
     void encodesNothingForUnknownType();
     void keepsSignalOutOfPlainSight();
+    void roundTripsNoticeWithCode();
+    void rejectsNoticeWithoutCode();
 };
 
 void RemoteDesktopSignalTest::roundTripsEverySignalType() {
-    const QVector<Type> types{Type::Invite, Type::Accept, Type::Reject, Type::Stop};
+    const QVector<Type> types{Type::Invite, Type::Accept, Type::Reject, Type::Stop, Type::Notice};
+
+    // 这个列表是手写的，新增枚举值时极易漏——漏了这条用例照样全绿，
+    // 名字却还叫"每一种类型"（加 Notice 时就漏过一次）。
+    // 所以反过来问编码器认识几种，两边对不上就直接挂。
+    int recognisedByEncoder = 0;
+    for (int raw = 1; raw < 32; ++raw) {
+        Signal probe;
+        probe.type = static_cast<Type>(raw);
+        probe.noticeCode = QStringLiteral("probe");
+        if (!encodeSignal(probe).isEmpty()) ++recognisedByEncoder;
+    }
+    QCOMPARE(types.size(), recognisedByEncoder);
+
     for (Type type : types) {
         Signal source;
         source.type = type;
         source.sessionId = QStringLiteral("s-123");
         source.roomId = QStringLiteral("mc-whq-iphone-a1b2c3d4");
+        // Notice 必须带 code 才是合法信令。
+        source.noticeCode = QString::fromLatin1(NoticeCodes::kSecureDesktopEntered);
 
         const QString encoded = encodeSignal(source);
         QVERIFY(!encoded.isEmpty());
@@ -113,6 +130,43 @@ void RemoteDesktopSignalTest::keepsSignalOutOfPlainSight() {
     // 前缀首字符必须是不可见字符：万一信令被误当普通消息渲染，用户不会看到乱码开头。
     QVERIFY(!encoded.isEmpty());
     QVERIFY(!encoded.at(0).isPrint() || encoded.at(0).category() == QChar::Other_Format);
+}
+
+void RemoteDesktopSignalTest::roundTripsNoticeWithCode() {
+    Signal notice;
+    notice.type = Type::Notice;
+    notice.sessionId = QStringLiteral("sess-1");
+    notice.noticeCode = QString::fromLatin1(NoticeCodes::kSecureDesktopEntered);
+
+    const Signal decoded = decodeSignal(encodeSignal(notice));
+    QCOMPARE(decoded.type, Type::Notice);
+    QCOMPARE(decoded.sessionId, QStringLiteral("sess-1"));
+    QCOMPARE(decoded.noticeCode, QString::fromLatin1(NoticeCodes::kSecureDesktopEntered));
+
+    // 播报同样不该出现在聊天记录里。
+    QVERIFY(isSignalText(encodeSignal(notice)));
+
+    Signal left = notice;
+    left.noticeCode = QString::fromLatin1(NoticeCodes::kSecureDesktopLeft);
+    QCOMPARE(decodeSignal(encodeSignal(left)).noticeCode,
+             QString::fromLatin1(NoticeCodes::kSecureDesktopLeft));
+    // 进入与离开必须是两个不同的码，否则控制端分不清该显示还是该收起。
+    QVERIFY(QString::fromLatin1(NoticeCodes::kSecureDesktopEntered)
+            != QString::fromLatin1(NoticeCodes::kSecureDesktopLeft));
+}
+
+void RemoteDesktopSignalTest::rejectsNoticeWithoutCode() {
+    // 不带 code 的播报没有任何意义，控制端不知道该显示什么，按不认识丢弃。
+    Signal notice;
+    notice.type = Type::Notice;
+    notice.sessionId = QStringLiteral("sess-1");
+    QCOMPARE(decodeSignal(encodeSignal(notice)).type, Type::Unknown);
+
+    // 其它类型不受这条约束影响，别误伤。
+    Signal stop;
+    stop.type = Type::Stop;
+    stop.sessionId = QStringLiteral("sess-1");
+    QCOMPARE(decodeSignal(encodeSignal(stop)).type, Type::Stop);
 }
 
 QTEST_MAIN(RemoteDesktopSignalTest)

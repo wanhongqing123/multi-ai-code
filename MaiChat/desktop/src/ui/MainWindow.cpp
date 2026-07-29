@@ -1352,16 +1352,32 @@ void MainWindow::buildUi() {
 
     settingsPage_ = new QWidget(contentStack_);
     settingsPage_->setObjectName(QStringLiteral("settingsPage"));
-    auto* settingsLayout = new QVBoxLayout(settingsPage_);
+    // 设置项只会越加越多。不套滚动区的话，内容一超过页面高度 Qt 就按比例
+    // 压扁各行——「被控模式」那三个单选会叠在一起糊成一团（加「允许远程控制」
+    // 那行时就压过线了）。
+    auto* settingsPageLayout = new QVBoxLayout(settingsPage_);
+    settingsPageLayout->setContentsMargins(0, 0, 0, 0);
+    settingsPageLayout->setSpacing(0);
+    auto* settingsScroll = new QScrollArea(settingsPage_);
+    settingsScroll->setObjectName(QStringLiteral("settingsScroll"));
+    settingsScroll->setWidgetResizable(true);
+    settingsScroll->setFrameShape(QFrame::NoFrame);
+    settingsScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    settingsPageLayout->addWidget(settingsScroll);
+
+    auto* settingsContent = new QWidget(settingsScroll);
+    settingsContent->setObjectName(QStringLiteral("settingsContent"));
+    settingsScroll->setWidget(settingsContent);
+    auto* settingsLayout = new QVBoxLayout(settingsContent);
     settingsLayout->setContentsMargins(36, 30, 36, 30);
     settingsLayout->setSpacing(18);
 
-    auto* settingsTitle = new QLabel(QStringLiteral("设置"), settingsPage_);
+    auto* settingsTitle = new QLabel(QStringLiteral("设置"), settingsContent);
     settingsTitle->setObjectName(QStringLiteral("pageTitle"));
-    auto* settingsSubtitle = new QLabel(QStringLiteral("桌面端 IM 使用和移动端一致的内置连接配置。"), settingsPage_);
+    auto* settingsSubtitle = new QLabel(QStringLiteral("桌面端 IM 使用和移动端一致的内置连接配置。"), settingsContent);
     settingsSubtitle->setObjectName(QStringLiteral("settingsSubtitle"));
 
-    auto* settingsPanel = new QWidget(settingsPage_);
+    auto* settingsPanel = new QWidget(settingsContent);
     settingsPanel->setObjectName(QStringLiteral("settingsPanel"));
     auto* settingsPanelLayout = new QVBoxLayout(settingsPanel);
     settingsPanelLayout->setContentsMargins(0, 0, 0, 0);
@@ -1385,7 +1401,7 @@ void MainWindow::buildUi() {
     settingsLayout->addWidget(settingsSubtitle);
     settingsLayout->addWidget(settingsPanel);
     settingsLayout->addSpacing(UiZoom::s(24));
-    settingsLayout->addWidget(buildRemoteDesktopSettingsPanel(settingsPage_));
+    settingsLayout->addWidget(buildRemoteDesktopSettingsPanel(settingsContent));
     settingsLayout->addStretch(1);
 
     // 远程桌面页：画面在应用内展示，不弹独立窗口。
@@ -1502,7 +1518,7 @@ void MainWindow::applyStyle() {
             background: #e1f5ff;
             border: 0;
         }
-        #contactsPage, #settingsPage {
+        #contactsPage, #settingsPage, #settingsContent, #settingsScroll {
             background: #ffffff;
         }
         #contactsDirectoryPane {

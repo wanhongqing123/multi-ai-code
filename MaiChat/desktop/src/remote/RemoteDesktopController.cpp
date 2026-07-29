@@ -143,7 +143,15 @@ void RemoteDesktopController::setIdGenerator(IdGenerator generator) {
 }
 
 void RemoteDesktopController::setRemoteVideoHandler(ITrtcEngine::RemoteVideoCallback handler) {
-    if (engine_) engine_->setRemoteVideoCallback(std::move(handler));
+    remoteVideoHandler_ = std::move(handler);
+    if (!engine_) return;
+    // 不能把 handler 直接塞给引擎：首帧到达是「Connecting → Viewing」的唯一
+    // 触发点，而输入会话正是跟着 Viewing 开的。直接转发的话状态机永远停在
+    // Connecting，画面照常显示、控制却一个包都发不出去（实测踩过）。
+    engine_->setRemoteVideoCallback([this](const QString& userId, bool available) {
+        if (available) setViewerState(viewerOnFirstFrame(viewerState_).nextState);
+        if (remoteVideoHandler_) remoteVideoHandler_(userId, available);
+    });
 }
 
 void RemoteDesktopController::setErrorHandler(ITrtcEngine::ErrorCallback handler) {

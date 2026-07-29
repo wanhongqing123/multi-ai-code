@@ -191,6 +191,7 @@ class RemoteDesktopControllerTest : public QObject {
     Q_OBJECT
 
 private slots:
+    void firstFrameEnablesInputSending();
     void dropsRemoteInputWhenControlSwitchIsOff();
     void injectsRemoteInputOnceControlIsAllowed();
     void dropsRemoteInputFromNonPeerAndStaleSession();
@@ -229,6 +230,34 @@ void startSharing(Harness& h) {
 }
 
 }  // namespace
+
+void RemoteDesktopControllerTest::firstFrameEnablesInputSending() {
+    Harness h(HostMode::Attended);
+    // UI 会挂自己的画面回调；控制器必须先截一道再转交，不能被覆盖掉。
+    int forwarded = 0;
+    h.controller->setRemoteVideoHandler(
+        [&forwarded](const QString&, bool) { ++forwarded; });
+
+    h.controller->requestView(kPeerUser);
+    Signal accept;
+    accept.type = Type::Accept;
+    accept.sessionId = h.lastSent().sessionId;
+    accept.roomId = QStringLiteral("room-1");
+    h.controller->handleIncomingText(kPeerUser, RemoteDesktopSignals::encodeSignal(accept));
+    QCOMPARE(h.controller->viewerState(), ViewerState::Connecting);
+
+    // 首帧到达是 Connecting → Viewing 的唯一触发点，而输入会话正是跟着
+    // Viewing 开的。少了这一步，画面照常显示、控制却一个包都发不出去。
+    QVERIFY(h.engine->remoteVideoCallback);
+    h.engine->remoteVideoCallback(kPeerUser, true);
+    QCOMPARE(h.controller->viewerState(), ViewerState::Viewing);
+    QCOMPARE(forwarded, 1);
+
+    h.engine->sentMessages.clear();
+    h.controller->inputSender().queueKey(0x41, true);
+    h.controller->flushPendingInput(1000);
+    QVERIFY2(!h.engine->sentMessages.isEmpty(), "首帧之后仍然发不出输入包");
+}
 
 void RemoteDesktopControllerTest::dropsRemoteInputWhenControlSwitchIsOff() {
     Harness h(HostMode::Unattended);

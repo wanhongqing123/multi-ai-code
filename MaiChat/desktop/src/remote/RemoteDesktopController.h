@@ -121,6 +121,8 @@ private:
     std::unique_ptr<RemoteDesktop::ITrtcEngine> engine_;
     SendSignal sendSignal_;
     IdGenerator idGenerator_;
+    // UI 侧的远端画面回调。控制器要先截一道（首帧驱动状态机），再转交。
+    RemoteDesktop::ITrtcEngine::RemoteVideoCallback remoteVideoHandler_;
 
     RemoteDesktop::HostState hostState_ = RemoteDesktop::HostState::Idle;
     RemoteDesktop::ViewerState viewerState_ = RemoteDesktop::ViewerState::Idle;

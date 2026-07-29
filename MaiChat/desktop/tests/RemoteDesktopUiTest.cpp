@@ -3,6 +3,7 @@
 #include <QSignalSpy>
 
 #include "ui/RemoteDesktopConsentDialog.h"
+#include "ui/RemoteDesktopSessionCard.h"
 #include "ui/RemoteDesktopViewPanel.h"
 #include "ui/SharingIndicatorBar.h"
 
@@ -21,6 +22,10 @@ private slots:
     void viewerShowsPlaceholderUntilStreamArrives();
     void viewerHasNoDisconnectButtonAndClosesCleanly();
     void viewerExposesRenderHandle();
+    void viewerKeepsOneCardPerPeer();
+    void viewerRoutesStreamStateToMatchingCard();
+    void viewerFallsBackToSoleCardOnUserIdMismatch();
+    void viewerGivesOneCardTheWholePageAndTilesTheRest();
 };
 
 void RemoteDesktopUiTest::consentDialogShowsRequesterAndConsequence() {
@@ -122,9 +127,9 @@ void RemoteDesktopUiTest::indicatorBarActuallyPaintsRedBackground() {
 
 void RemoteDesktopUiTest::viewerShowsPlaceholderUntilStreamArrives() {
     RemoteDesktopViewPanel panel;
-    panel.showConnecting(QStringLiteral("host-pc"));
+    panel.beginSession(QStringLiteral("host-pc"));
 
-    auto* placeholder = panel.findChild<QLabel*>(QStringLiteral("remoteViewPlaceholder"));
+    auto* placeholder = panel.findChild<QLabel*>(QStringLiteral("remoteCardPlaceholder"));
     QVERIFY(placeholder != nullptr);
 
     QVERIFY(!panel.isStreamActive());
@@ -149,7 +154,7 @@ void RemoteDesktopUiTest::viewerHasNoDisconnectButtonAndClosesCleanly() {
     // 无会话时是空态；发起后切到画面区；结束后必须切回空态，
     // 否则用户会对着一块黑屏以为还连着。
     QVERIFY(!panel.isSessionVisible());
-    panel.showConnecting(QStringLiteral("host-pc"));
+    panel.beginSession(QStringLiteral("host-pc"));
     QVERIFY(panel.isSessionVisible());
     panel.showIdle();
     QVERIFY(!panel.isSessionVisible());
@@ -158,8 +163,87 @@ void RemoteDesktopUiTest::viewerHasNoDisconnectButtonAndClosesCleanly() {
 
 void RemoteDesktopUiTest::viewerExposesRenderHandle() {
     RemoteDesktopViewPanel panel;
+    panel.beginSession(QStringLiteral("host-pc"));
     // TRTC 需要一个真实的原生窗口句柄来渲染；拿不到句柄画面就出不来。
     QVERIFY(panel.renderWindowHandle() != nullptr);
+    QVERIFY(panel.renderWindowHandle(QStringLiteral("host-pc")) != nullptr);
+}
+
+void RemoteDesktopUiTest::viewerKeepsOneCardPerPeer() {
+    RemoteDesktopViewPanel panel;
+
+    // 重复发起同一个人不应堆出第二张卡片。
+    panel.beginSession(QStringLiteral("host-a"));
+    panel.beginSession(QStringLiteral("host-a"));
+    QCOMPARE(panel.sessionCount(), 1);
+
+    panel.beginSession(QStringLiteral("host-b"));
+    QCOMPARE(panel.sessionCount(), 2);
+    QCOMPARE(panel.sessionPeerIds(),
+             QVector<QString>({QStringLiteral("host-a"), QStringLiteral("host-b")}));
+
+    // 结束其中一路，另一路必须留在页面上，且不能掉回空态。
+    panel.endSession(QStringLiteral("host-a"));
+    QCOMPARE(panel.sessionCount(), 1);
+    QVERIFY(panel.isSessionVisible());
+    QVERIFY(panel.cardFor(QStringLiteral("host-a")) == nullptr);
+    QVERIFY(panel.cardFor(QStringLiteral("host-b")) != nullptr);
+
+    panel.endSession(QStringLiteral("host-b"));
+    QCOMPARE(panel.sessionCount(), 0);
+    QVERIFY(!panel.isSessionVisible());
+}
+
+void RemoteDesktopUiTest::viewerRoutesStreamStateToMatchingCard() {
+    RemoteDesktopViewPanel panel;
+    panel.beginSession(QStringLiteral("host-a"));
+    panel.beginSession(QStringLiteral("host-b"));
+
+    // 一路来画面不能把另一路也点亮，否则多路时状态会串。
+    panel.setStreamActive(QStringLiteral("host-b"), true);
+    QVERIFY(!panel.cardFor(QStringLiteral("host-a"))->isStreamActive());
+    QVERIFY(panel.cardFor(QStringLiteral("host-b"))->isStreamActive());
+
+    QVERIFY(panel.renderWindowHandle(QStringLiteral("host-a")) !=
+            panel.renderWindowHandle(QStringLiteral("host-b")));
+}
+
+void RemoteDesktopUiTest::viewerFallsBackToSoleCardOnUserIdMismatch() {
+    RemoteDesktopViewPanel panel;
+    panel.beginSession(QStringLiteral("host-pc"));
+
+    // TRTC 侧 userId 理论上等于 IM userId；万一对不上而此刻只有一路，
+    // 应落到那一路上——宁可画面照常出来，也不要退回黑屏（之前踩过）。
+    panel.setStreamActive(QStringLiteral("someone-else"), true);
+    QVERIFY(panel.cardFor(QStringLiteral("host-pc"))->isStreamActive());
+    QVERIFY(panel.renderWindowHandle(QStringLiteral("someone-else")) != nullptr);
+}
+
+void RemoteDesktopUiTest::viewerGivesOneCardTheWholePageAndTilesTheRest() {
+    RemoteDesktopViewPanel panel;
+    panel.resize(960, 600);
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+
+    // 单路必须铺满整页，观感等同"全屏看对方屏幕"——否则用户会觉得画面莫名缩水。
+    panel.beginSession(QStringLiteral("host-a"));
+    auto* first = panel.cardFor(QStringLiteral("host-a"));
+    QVERIFY(first != nullptr);
+    QTRY_VERIFY(first->width() > panel.width() * 0.9);
+    QTRY_VERIFY(first->height() > panel.height() * 0.9);
+
+    // 两路并排且等分：网格重排要真的生效，不能把第二张摞在第一张上。
+    panel.beginSession(QStringLiteral("host-b"));
+    auto* second = panel.cardFor(QStringLiteral("host-b"));
+    QVERIFY(second != nullptr);
+    QTRY_COMPARE(first->y(), second->y());
+    QTRY_COMPARE(first->width(), second->width());
+    QVERIFY(first->x() < second->x());
+    QVERIFY(second->width() < panel.width() * 0.6);
+
+    // 关掉一路，剩下那路要重新铺满，而不是继续占半边。
+    panel.endSession(QStringLiteral("host-a"));
+    QTRY_VERIFY(second->width() > panel.width() * 0.9);
 }
 
 QTEST_MAIN(RemoteDesktopUiTest)

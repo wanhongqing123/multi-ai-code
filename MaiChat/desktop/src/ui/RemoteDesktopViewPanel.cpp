@@ -1,29 +1,16 @@
 #include "ui/RemoteDesktopViewPanel.h"
 
-#include <QHBoxLayout>
+#include <QGridLayout>
 #include <QVBoxLayout>
+#include <QtMath>
 
+#include "ui/RemoteDesktopSessionCard.h"
 #include "ui/UiZoom.h"
-
-namespace {
-
-QString formatDuration(qint64 milliseconds) {
-    const qint64 totalSeconds = qMax<qint64>(0, milliseconds / 1000);
-    return QStringLiteral("%1:%2")
-        .arg(totalSeconds / 60, 2, 10, QLatin1Char('0'))
-        .arg(totalSeconds % 60, 2, 10, QLatin1Char('0'));
-}
-
-}  // namespace
 
 RemoteDesktopViewPanel::RemoteDesktopViewPanel(QWidget* parent) : QWidget(parent) {
     setObjectName(QStringLiteral("remoteDesktopViewPanel"));
     buildUi();
     applyStyle();
-
-    durationTimer_ = new QTimer(this);
-    durationTimer_->setInterval(1000);
-    connect(durationTimer_, &QTimer::timeout, this, &RemoteDesktopViewPanel::refreshDuration);
     showIdle();
 }
 
@@ -51,46 +38,12 @@ void RemoteDesktopViewPanel::buildUi() {
     idleLayout->addWidget(idleHint);
     stack_->addWidget(idlePage_);
 
-    // 会话页：顶部信息条 + 画面 + 状态条。断开入口统一在聊天顶栏的三态按钮。
-    sessionPage_ = new QWidget(stack_);
-    auto* sessionLayout = new QVBoxLayout(sessionPage_);
-    sessionLayout->setContentsMargins(0, 0, 0, 0);
-    sessionLayout->setSpacing(0);
-
-    auto* header = new QWidget(sessionPage_);
-    header->setObjectName(QStringLiteral("remoteViewHeader"));
-    auto* headerLayout = new QHBoxLayout(header);
-    headerLayout->setContentsMargins(18, 10, 18, 10);
-    headerLayout->setSpacing(12);
-    titleLabel_ = new QLabel(header);
-    titleLabel_->setObjectName(QStringLiteral("remoteViewTitle"));
-    durationLabel_ = new QLabel(header);
-    durationLabel_->setObjectName(QStringLiteral("remoteViewDuration"));
-    headerLayout->addWidget(titleLabel_, 1);
-    headerLayout->addWidget(durationLabel_);
-
-    renderSurface_ = new QWidget(sessionPage_);
-    renderSurface_->setObjectName(QStringLiteral("remoteViewSurface"));
-    // 需要独立原生句柄交给 TRTC；关掉 Qt 自身背景绘制避免与 SDK 渲染互相覆盖。
-    renderSurface_->setAttribute(Qt::WA_NativeWindow, true);
-    renderSurface_->setAttribute(Qt::WA_DontCreateNativeAncestors, true);
-    renderSurface_->setAttribute(Qt::WA_OpaquePaintEvent, true);
-    renderSurface_->setAttribute(Qt::WA_StyledBackground, true);
-
-    auto* surfaceLayout = new QVBoxLayout(renderSurface_);
-    surfaceLayout->setContentsMargins(0, 0, 0, 0);
-    placeholderLabel_ = new QLabel(QStringLiteral("正在连接对方屏幕…"), renderSurface_);
-    placeholderLabel_->setObjectName(QStringLiteral("remoteViewPlaceholder"));
-    placeholderLabel_->setAlignment(Qt::AlignCenter);
-    surfaceLayout->addWidget(placeholderLabel_);
-
-    statusLabel_ = new QLabel(QStringLiteral("等待画面"), sessionPage_);
-    statusLabel_->setObjectName(QStringLiteral("remoteViewStatus"));
-
-    sessionLayout->addWidget(header);
-    sessionLayout->addWidget(renderSurface_, 1);
-    sessionLayout->addWidget(statusLabel_);
-    stack_->addWidget(sessionPage_);
+    // 画面页：卡片网格。断开入口统一在聊天顶栏的三态按钮，这里不放按钮。
+    gridPage_ = new QWidget(stack_);
+    gridLayout_ = new QGridLayout(gridPage_);
+    gridLayout_->setContentsMargins(UiZoom::s(12), UiZoom::s(12), UiZoom::s(12), UiZoom::s(12));
+    gridLayout_->setSpacing(UiZoom::s(12));
+    stack_->addWidget(gridPage_);
 }
 
 void RemoteDesktopViewPanel::applyStyle() {
@@ -107,80 +60,124 @@ void RemoteDesktopViewPanel::applyStyle() {
             color: #94a3b8;
             font-size: 13px;
         }
-        #remoteViewHeader {
-            background: #111c33;
-        }
-        #remoteViewTitle {
-            color: #e2e8f0;
-            font-size: 14px;
-            font-weight: 700;
-            background: transparent;
-        }
-        #remoteViewDuration {
-            color: #94a3b8;
-            font-size: 13px;
-            font-weight: 600;
-            background: transparent;
-        }
-        #remoteViewSurface {
-            background: #000000;
-        }
-        #remoteViewPlaceholder {
-            color: #94a3b8;
-            font-size: 15px;
-            background: transparent;
-        }
-        #remoteViewStatus {
-            background: #111c33;
-            color: #64748b;
-            font-size: 12px;
-            padding: 6px 18px;
-        }
     )")));
 }
 
 void RemoteDesktopViewPanel::showIdle() {
-    durationTimer_->stop();
-    streamActive_ = false;
+    for (auto* card : cards_) {
+        gridLayout_->removeWidget(card);
+        card->deleteLater();
+    }
+    cards_.clear();
+    order_.clear();
     stack_->setCurrentWidget(idlePage_);
 }
 
-void RemoteDesktopViewPanel::showConnecting(const QString& peerUserId) {
-    titleLabel_->setText(QStringLiteral("远程桌面 · %1").arg(peerUserId));
-    setStreamActive(false);
-    elapsed_.start();
-    refreshDuration();
-    durationTimer_->start();
-    stack_->setCurrentWidget(sessionPage_);
+void RemoteDesktopViewPanel::beginSession(const QString& peerUserId) {
+    if (peerUserId.isEmpty()) return;
+    if (!cards_.contains(peerUserId)) {
+        auto* card = new RemoteDesktopSessionCard(peerUserId, gridPage_);
+        cards_.insert(peerUserId, card);
+        order_.append(peerUserId);
+        relayoutCards();
+    }
+    stack_->setCurrentWidget(gridPage_);
+}
+
+void RemoteDesktopViewPanel::endSession(const QString& peerUserId) {
+    auto* card = cards_.take(peerUserId);
+    if (card == nullptr) return;
+    order_.removeAll(peerUserId);
+    gridLayout_->removeWidget(card);
+    card->deleteLater();
+    relayoutCards();
+    // 最后一路结束就回空态，否则用户会对着一块黑屏以为还连着。
+    if (cards_.isEmpty()) stack_->setCurrentWidget(idlePage_);
+}
+
+void RemoteDesktopViewPanel::relayoutCards() {
+    for (auto* card : cards_) gridLayout_->removeWidget(card);
+    for (int column = 0; column < gridLayout_->columnCount(); ++column) {
+        gridLayout_->setColumnStretch(column, 0);
+    }
+    for (int row = 0; row < gridLayout_->rowCount(); ++row) {
+        gridLayout_->setRowStretch(row, 0);
+    }
+
+    // 1 路占满，2 路并排，3~4 路两列，再多按平方根扩列。
+    const int count = order_.size();
+    const int columns = count <= 1 ? 1 : qCeil(qSqrt(static_cast<qreal>(count)));
+    for (int index = 0; index < count; ++index) {
+        auto* card = cards_.value(order_.at(index));
+        if (card == nullptr) continue;
+        const int row = index / columns;
+        const int column = index % columns;
+        gridLayout_->addWidget(card, row, column);
+        gridLayout_->setColumnStretch(column, 1);
+        gridLayout_->setRowStretch(row, 1);
+    }
+}
+
+RemoteDesktopSessionCard* RemoteDesktopViewPanel::cardFor(const QString& peerUserId) const {
+    return cards_.value(peerUserId, nullptr);
+}
+
+RemoteDesktopSessionCard* RemoteDesktopViewPanel::soleCard() const {
+    return order_.size() == 1 ? cards_.value(order_.first(), nullptr) : nullptr;
+}
+
+void RemoteDesktopViewPanel::setStreamActive(const QString& peerUserId, bool active) {
+    auto* card = cardFor(peerUserId);
+    // TRTC 侧的 userId 理论上等于 IM userId；万一对不上而此刻只有一路，
+    // 就落到那一路上 —— 宁可画面照常出来，也不要退回黑屏。
+    if (card == nullptr) card = soleCard();
+    if (card != nullptr) card->setStreamActive(active);
+}
+
+void RemoteDesktopViewPanel::setStatusText(const QString& peerUserId, const QString& text) {
+    auto* card = cardFor(peerUserId);
+    if (card == nullptr) card = soleCard();
+    if (card != nullptr) card->setStatusText(text);
+}
+
+void* RemoteDesktopViewPanel::renderWindowHandle(const QString& peerUserId) const {
+    auto* card = cardFor(peerUserId);
+    if (card == nullptr) card = soleCard();
+    return card != nullptr ? card->renderWindowHandle() : nullptr;
 }
 
 void RemoteDesktopViewPanel::setStreamActive(bool active) {
-    streamActive_ = active;
-    // 画面到达后必须撤下占位文字：它盖在渲染面上会挡住 SDK 画的内容。
-    placeholderLabel_->setVisible(!active);
-    setStatusText(active ? QStringLiteral("画面已连接") : QStringLiteral("等待画面"));
+    if (auto* card = soleCard()) card->setStreamActive(active);
 }
 
 void RemoteDesktopViewPanel::setStatusText(const QString& text) {
-    statusLabel_->setText(text);
+    // 出错提示要让每一路都看见，不能只落在第一张卡片上。
+    for (auto* card : cards_) card->setStatusText(text);
 }
 
 void* RemoteDesktopViewPanel::renderWindowHandle() const {
-    return reinterpret_cast<void*>(renderSurface_->winId());
+    auto* card = soleCard();
+    return card != nullptr ? card->renderWindowHandle() : nullptr;
 }
 
 QString RemoteDesktopViewPanel::statusText() const {
-    return statusLabel_->text();
+    auto* card = soleCard();
+    return card != nullptr ? card->statusText() : QString();
 }
 
 bool RemoteDesktopViewPanel::isStreamActive() const {
-    return streamActive_;
+    auto* card = soleCard();
+    return card != nullptr && card->isStreamActive();
 }
 
 bool RemoteDesktopViewPanel::isSessionVisible() const {
-    return stack_->currentWidget() == sessionPage_;
+    return stack_->currentWidget() == gridPage_;
 }
 
-void RemoteDesktopViewPanel::refreshDuration() {
-    durationLabel_->setText(formatDuration(elapsed_.elapsed()));
+int RemoteDesktopViewPanel::sessionCount() const {
+    return order_.size();
+}
+
+QVector<QString> RemoteDesktopViewPanel::sessionPeerIds() const {
+    return order_;
 }

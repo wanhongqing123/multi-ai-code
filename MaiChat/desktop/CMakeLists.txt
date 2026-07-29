@@ -107,6 +107,8 @@ add_library(remote_im_desktop_ui
   src/ui/SharingIndicatorBar.cpp
   src/ui/RemoteDesktopViewPanel.h
   src/ui/RemoteDesktopViewPanel.cpp
+  src/ui/RemoteDesktopSessionCard.h
+  src/ui/RemoteDesktopSessionCard.cpp
   src/ui/UiZoom.h
   src/ui/UiZoom.cpp
 )

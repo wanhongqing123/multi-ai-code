@@ -3171,10 +3171,10 @@ void MainWindow::setupRemoteDesktop() {
     remoteDesktop_->setRemoteVideoHandler(
         [this](const QString& userId, bool available) {
             if (!remoteDesktopView_ || !remoteDesktopView_->isSessionVisible()) return;
-            remoteDesktopView_->setStreamActive(available);
+            remoteDesktopView_->setStreamActive(userId, available);
             if (available) {
                 remoteDesktop_->bindRemoteView(userId,
-                                               remoteDesktopView_->renderWindowHandle());
+                                               remoteDesktopView_->renderWindowHandle(userId));
             }
         });
     remoteDesktop_->setErrorHandler([this](int code, const QString& message) {
@@ -3201,7 +3201,7 @@ void MainWindow::promptRemoteDesktopPassword(const QString& peerUserId) {
 
 void MainWindow::openRemoteDesktopViewer(const QString& peerUserId) {
     if (!remoteDesktopView_) return;
-    remoteDesktopView_->showConnecting(peerUserId);
+    remoteDesktopView_->beginSession(peerUserId);
     // 自动切到远程页：用户刚点了发起，画面理应立刻可见，不必再手动找。
     showRemotePage();
 }

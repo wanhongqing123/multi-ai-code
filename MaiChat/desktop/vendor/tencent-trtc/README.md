@@ -31,21 +31,18 @@ CMake 通过 `MAICHAT_TRTC_AVAILABLE` 自动接入，构建后把 4 个 DLL 拷�
 
 ## macos/
 
-**以原始 tar.bz2 归档形式入库**，未解包。
+版本 **13.4.21067**，已在 macOS 上展开并完整入库：
 
-原因：Mac SDK 是 xcframework，内部依赖符号链接
-（`Framework/Headers -> Versions/Current/Headers` 等）。在 Windows 上解包会丢失
-这些链接，framework 随即失效；重新打包同样丢。保留归档是唯一能在 Windows 检出
-的仓库里安全携带它的方式。
-
-Mac 侧构建前先解包：
-
-```bash
-cd MaiChat/desktop/vendor/tencent-trtc/macos
-tar -xjf TXLiteAVSDK_TRTC_Mac.tar.bz2
-# 得到 TXLiteAVSDK_TRTC_Mac/{TXLiteAVSDK_TRTC_Mac,TXFFmpeg,TXSoundTouch}.xcframework
+```
+macos/TXLiteAVSDK_TRTC_Mac/
+  ├── TXLiteAVSDK_TRTC_Mac.xcframework
+  ├── TXFFmpeg.xcframework
+  ├── TXSoundTouch.xcframework
+  └── dSYMs/
 ```
 
-包含 arm64 + x86_64 通用二进制，另含 dSYMs 调试符号（构建不需要，可自行删除以省空间）。
-
-解包产物已在 .gitignore 中忽略，避免误把丢了符号链接的目录提交上来。
+三个 xcframework 都包含 arm64 + x86_64 通用二进制。framework 内部依赖
+`Headers -> Versions/Current/Headers` 等符号链接，因此 SDK 必须在 macOS 上展开
+后提交，Git 索引以 symlink 模式保存这些链接。解压目录已完整入库，原始
+`TXLiteAVSDK_TRTC_Mac.tar.bz2` 归档不再保留。其他 macOS 环境拉取仓库后可直接
+获得完整 SDK，无需手动解压；Windows 构建不使用此目录。

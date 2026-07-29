@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QByteArray>
 #include <QString>
 #include <functional>
 
@@ -27,11 +28,23 @@ public:
     using RemoteVideoCallback = std::function<void(const QString& userId, bool available)>;
     // 进房/推流失败。空实现平台不会触发。
     using ErrorCallback = std::function<void(int code, const QString& message)>;
+    // 收到对端自定义消息（远程输入）。同样已切回主线程。
+    using CustomMessageCallback =
+        std::function<void(const QString& userId, int cmdId, const QByteArray& payload)>;
 
     virtual ~ITrtcEngine() = default;
 
     virtual void setRemoteVideoCallback(RemoteVideoCallback callback) = 0;
     virtual void setErrorCallback(ErrorCallback callback) = 0;
+    virtual void setCustomMessageCallback(CustomMessageCallback callback) = 0;
+
+    // 发送自定义消息（远程输入）。返回 false 表示 SDK 拒发——多半是撞了
+    // 配额，调用方自己已按更严的滑动窗口约束过，正常不该出现。
+    //
+    // ⚠️ 必须固定在同一线程调用：SDK 的限流计数器是裸成员、无任何同步
+    //（trtc_message_sender.h:45），多线程调进去是数据竞争。统一走主线程。
+    virtual bool sendCustomMessage(int cmdId, const QByteArray& payload, bool reliable,
+                                   bool ordered) = 0;
 
     // 把远端画面绑定到原生窗口句柄。收到 RemoteVideoCallback(available=true)
     // 之后调用；渲染窗口可能晚于进房才创建，故与 startViewing 分开。

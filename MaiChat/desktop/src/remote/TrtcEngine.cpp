@@ -17,6 +17,8 @@ class NullTrtcEngine final : public ITrtcEngine {
 public:
     void setRemoteVideoCallback(RemoteVideoCallback) override {}
     void setErrorCallback(ErrorCallback) override {}
+    void setCustomMessageCallback(CustomMessageCallback) override {}
+    bool sendCustomMessage(int, const QByteArray&, bool, bool) override { return false; }
     void bindRemoteView(const QString&, void*) override {}
     QString sdkVersion() const override { return QString(); }
     bool startScreenShare(const TrtcRoomParams&) override { return false; }
@@ -46,6 +48,18 @@ public:
 
     void setErrorCallback(ErrorCallback callback) override {
         errorCallback_ = std::move(callback);
+    }
+
+    void setCustomMessageCallback(CustomMessageCallback callback) override {
+        customMessageCallback_ = std::move(callback);
+    }
+
+    bool sendCustomMessage(int cmdId, const QByteArray& payload, bool reliable,
+                           bool ordered) override {
+        if (!cloud_ || payload.isEmpty()) return false;
+        return cloud_->sendCustomCmdMsg(static_cast<uint32_t>(cmdId),
+                                        reinterpret_cast<const uint8_t*>(payload.constData()),
+                                        static_cast<uint32_t>(payload.size()), reliable, ordered);
     }
 
     void bindRemoteView(const QString& userId, void* renderWindow) override {
@@ -177,6 +191,18 @@ private:
         return true;
     }
 
+    void onRecvCustomCmdMsg(const char* userId, int32_t cmdId, uint32_t seq,
+                            const uint8_t* message, uint32_t messageSize) override {
+        Q_UNUSED(seq);  // 我们在自己的协议里带了序号，SDK 的序号不参与判定。
+        if (message == nullptr || messageSize == 0) return;
+        const QString id = userId ? QString::fromUtf8(userId) : QString();
+        const QByteArray payload(reinterpret_cast<const char*>(message),
+                                 static_cast<int>(messageSize));
+        postToMainThread([this, id, cmdId, payload] {
+            if (customMessageCallback_) customMessageCallback_(id, cmdId, payload);
+        });
+    }
+
     // SDK 回调在其内部线程触发，直接碰 Qt 控件会崩。统一投递到主线程。
     static void postToMainThread(std::function<void()> work) {
         QMetaObject::invokeMethod(qApp, [work = std::move(work)] { work(); },
@@ -188,6 +214,7 @@ private:
     bool active_ = false;
     RemoteVideoCallback remoteVideoCallback_;
     ErrorCallback errorCallback_;
+    CustomMessageCallback customMessageCallback_;
 };
 
 #endif  // MAICHAT_HAVE_TRTC

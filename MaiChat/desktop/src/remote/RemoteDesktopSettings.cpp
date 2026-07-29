@@ -55,6 +55,9 @@ RemoteDesktopSettings RemoteDesktopSettingsStore::load() const {
     settings.mode = modeFromString(object.value(QStringLiteral("mode")).toString());
     settings.consecutiveAuthFailures =
         qMax(0, object.value(QStringLiteral("consecutiveAuthFailures")).toInt(0));
+    // 缺字段一律按 false：老配置文件升级上来时，绝不能因为没写而默认放开控制。
+    settings.allowRemoteControl =
+        object.value(QStringLiteral("allowRemoteControl")).toBool(false);
 
     settings.secret.salt =
         QByteArray::fromBase64(object.value(QStringLiteral("salt")).toString().toLatin1());
@@ -75,6 +78,7 @@ bool RemoteDesktopSettingsStore::save(const RemoteDesktopSettings& settings) con
     QJsonObject object;
     object.insert(QStringLiteral("mode"), modeToString(settings.mode));
     object.insert(QStringLiteral("consecutiveAuthFailures"), settings.consecutiveAuthFailures);
+    object.insert(QStringLiteral("allowRemoteControl"), settings.allowRemoteControl);
     // 只写哈希与 salt；明文密码从不落盘。
     object.insert(QStringLiteral("salt"),
                   QString::fromLatin1(settings.secret.salt.toBase64()));

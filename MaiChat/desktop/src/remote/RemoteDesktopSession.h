@@ -74,6 +74,20 @@ QString reasonTimeout();
 // 被控端：收到 invite 后该怎么办。
 HostDecision decideOnInvite(const HostInviteInput& input);
 
+// 被控端：这一包远程输入该不该执行。
+//
+// 放在这里而不是注入器里，是为了守住"所有安全判断只在本文件"的约定——
+// "什么情况下别人能操作我的电脑"必须只有一个地方需要读。
+//
+// 四个条件全部满足才放行：
+//   1. 正在共享（没在共享就不该有输入）
+//   2. 设置里开了「允许远程控制」（默认关，独立于观看权限）
+//   3. 会话 ID 对得上（拒收上一场会话的残留包）
+//   4. 发来的人就是当前会话的对端
+bool shouldAcceptRemoteInput(HostState currentState, bool allowRemoteControl,
+                             const QString& currentSessionId, const QString& currentPeerUserId,
+                             const QString& packetSessionId, const QString& fromUserId);
+
 // 被控端：有人值守弹窗的用户选择 / 超时。
 HostDecision decideOnConsentResult(HostState currentState, bool accepted);
 

@@ -14,6 +14,20 @@ QString reasonBadPassword() { return QStringLiteral("访问密码错误"); }
 QString reasonDeclined()    { return QStringLiteral("对方拒绝了请求"); }
 QString reasonTimeout()     { return QStringLiteral("对方未在规定时间内响应"); }
 
+bool shouldAcceptRemoteInput(HostState currentState, bool allowRemoteControl,
+                             const QString& currentSessionId, const QString& currentPeerUserId,
+                             const QString& packetSessionId, const QString& fromUserId) {
+    // 没在共享就不该有输入进来。
+    if (currentState != HostState::Sharing) return false;
+    // 控制权限是独立开关，默认关：能看不等于能操作。
+    if (!allowRemoteControl) return false;
+    // 会话 ID 必须对得上，挡掉上一场会话的残留包。
+    if (currentSessionId.isEmpty() || packetSessionId != currentSessionId) return false;
+    // 只认当前会话的对端。房间里若混进第三方，它的输入一律不执行。
+    if (currentPeerUserId.isEmpty() || fromUserId != currentPeerUserId) return false;
+    return true;
+}
+
 HostDecision decideOnInvite(const HostInviteInput& input) {
     HostDecision decision;
     decision.nextState = input.currentState;

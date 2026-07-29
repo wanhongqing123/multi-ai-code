@@ -69,6 +69,8 @@ add_library(remote_im_core
   src/remote/RemoteInputInjector.cpp
   src/remote/RemoteInputSender.h
   src/remote/RemoteInputSender.cpp
+  src/remote/DisplaySleepBlocker.h
+  src/remote/DisplaySleepBlocker.cpp
   src/remote/SecureDesktopMonitor.h
   src/remote/SecureDesktopMonitor.cpp
   src/remote/RemoteDesktopAuth.h

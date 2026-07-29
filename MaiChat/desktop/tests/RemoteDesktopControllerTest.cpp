@@ -16,11 +16,29 @@ namespace {
 // 而不是靠读代码推断。
 class FakeTrtcEngine final : public ITrtcEngine {
 public:
+    struct SentMessage {
+        int cmdId = 0;
+        QByteArray payload;
+        bool reliable = false;
+        bool ordered = false;
+    };
+    QVector<SentMessage> sentMessages;
+    CustomMessageCallback customMessageCallback;
+
     void setRemoteVideoCallback(RemoteVideoCallback callback) override {
         remoteVideoCallback = std::move(callback);
     }
     void setErrorCallback(ErrorCallback callback) override {
         errorCallback = std::move(callback);
+    }
+    void setCustomMessageCallback(CustomMessageCallback callback) override {
+        customMessageCallback = std::move(callback);
+    }
+    bool sendCustomMessage(int cmdId, const QByteArray& payload, bool reliable,
+                           bool ordered) override {
+        if (!active) return false;
+        sentMessages.append({cmdId, payload, reliable, ordered});
+        return true;
     }
     void bindRemoteView(const QString& userId, void*) override {
         bindCalls += 1;

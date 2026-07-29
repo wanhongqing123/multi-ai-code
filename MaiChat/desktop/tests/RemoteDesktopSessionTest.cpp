@@ -11,6 +11,8 @@ class RemoteDesktopSessionTest : public QObject {
     Q_OBJECT
 
 private slots:
+    // 远程控制门禁
+    void remoteInputRejectedUnlessEverythingLinesUp();
     // 被控端
     void attendedModeAsksForConsent();
     void unattendedModeAcceptsWhitelistedPeerWithoutPassword();
@@ -56,6 +58,35 @@ Signal signalOf(Type type, const QString& reason = QString()) {
 }
 
 }  // namespace
+
+void RemoteDesktopSessionTest::remoteInputRejectedUnlessEverythingLinesUp() {
+    const QString session = QStringLiteral("sess-1");
+    const QString peer = QStringLiteral("whq-iphone");
+
+    // 基准：四个条件全满足才放行。
+    QVERIFY(shouldAcceptRemoteInput(HostState::Sharing, true, session, peer, session, peer));
+
+    // 控制开关关着——能看不等于能操作，这是与观看权限独立的一道闸。
+    QVERIFY(!shouldAcceptRemoteInput(HostState::Sharing, false, session, peer, session, peer));
+
+    // 没在共享时收到输入，一律不执行。
+    QVERIFY(!shouldAcceptRemoteInput(HostState::Idle, true, session, peer, session, peer));
+    QVERIFY(!shouldAcceptRemoteInput(HostState::AwaitingConsent, true, session, peer, session,
+                                     peer));
+
+    // 上一场会话的残留包不该操作这一场的电脑。
+    QVERIFY(!shouldAcceptRemoteInput(HostState::Sharing, true, session, peer,
+                                     QStringLiteral("sess-0"), peer));
+
+    // 房间里若混进第三方，它的输入一律不执行。
+    QVERIFY(!shouldAcceptRemoteInput(HostState::Sharing, true, session, peer, session,
+                                     QStringLiteral("someone-else")));
+
+    // 空值不能当通配符：会话 ID 或对端为空时必须拒绝，否则畸形包反而畅通。
+    QVERIFY(!shouldAcceptRemoteInput(HostState::Sharing, true, QString(), peer, QString(), peer));
+    QVERIFY(!shouldAcceptRemoteInput(HostState::Sharing, true, session, QString(), session,
+                                     QString()));
+}
 
 void RemoteDesktopSessionTest::attendedModeAsksForConsent() {
     const HostDecision decision = decideOnInvite(inviteInput(HostMode::Attended));

@@ -53,13 +53,10 @@ void RemoteDesktopViewerDialog::buildUi(const QString& peerUserId) {
     durationLabel_ = new QLabel(header);
     durationLabel_->setObjectName(QStringLiteral("viewerDuration"));
 
-    disconnectButton_ = new QPushButton(QStringLiteral("断开"), header);
-    disconnectButton_->setObjectName(QStringLiteral("viewerDisconnect"));
-    disconnectButton_->setCursor(Qt::PointingHandCursor);
-
+    // 不放断开按钮：断开出口统一收敛到聊天顶栏那个三态按钮，
+    // 关掉本窗口同样等同断开，窗内再放一个只是冗余。
     headerLayout->addWidget(title, 1);
     headerLayout->addWidget(durationLabel_);
-    headerLayout->addWidget(disconnectButton_);
 
     // 渲染面：交给 TRTC 的原生窗口。开 WA_NativeWindow 保证有独立句柄，
     // 并关掉 Qt 自身绘制背景，避免与 SDK 的渲染互相覆盖导致闪烁。
@@ -83,9 +80,6 @@ void RemoteDesktopViewerDialog::buildUi(const QString& peerUserId) {
     rootLayout->addWidget(header);
     rootLayout->addWidget(renderSurface_, 1);
     rootLayout->addWidget(statusLabel_);
-
-    connect(disconnectButton_, &QPushButton::clicked, this,
-            &RemoteDesktopViewerDialog::disconnectRequested);
 }
 
 void RemoteDesktopViewerDialog::applyStyle() {
@@ -107,18 +101,6 @@ void RemoteDesktopViewerDialog::applyStyle() {
             font-size: 13px;
             font-weight: 600;
             background: transparent;
-        }
-        #viewerDisconnect {
-            background: #b42318;
-            border: 0;
-            border-radius: 8px;
-            color: #ffffff;
-            font-size: 13px;
-            font-weight: 700;
-            padding: 6px 16px;
-        }
-        #viewerDisconnect:hover {
-            background: #912018;
         }
         #viewerRenderSurface {
             background: #000000;

@@ -27,9 +27,6 @@ public:
     QString statusText() const;
     bool isStreamActive() const;
 
-signals:
-    void disconnectRequested();
-
 private:
     void buildUi(const QString& peerUserId);
     void applyStyle();
@@ -39,7 +36,6 @@ private:
     QLabel* placeholderLabel_ = nullptr;
     QLabel* durationLabel_ = nullptr;
     QLabel* statusLabel_ = nullptr;
-    QPushButton* disconnectButton_ = nullptr;
     QTimer* durationTimer_ = nullptr;
     QElapsedTimer elapsed_;
     bool streamActive_ = false;

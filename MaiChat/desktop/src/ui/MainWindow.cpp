@@ -3175,9 +3175,7 @@ void MainWindow::promptRemoteDesktopPassword(const QString& peerUserId) {
 void MainWindow::openRemoteDesktopViewer(const QString& peerUserId) {
     if (remoteDesktopViewer_) return;
     remoteDesktopViewer_ = new RemoteDesktopViewerDialog(peerUserId, this);
-    connect(remoteDesktopViewer_, &RemoteDesktopViewerDialog::disconnectRequested, this,
-            [this] { remoteDesktop_->stopSession(); });
-    // 用户直接关窗等同于断开，不能留着后台还在收流。
+    // 关窗等同于断开，不能留着后台还在收流。断开也可从聊天顶栏的三态按钮发起。
     connect(remoteDesktopViewer_, &QDialog::finished, this,
             [this] { remoteDesktop_->stopSession(); });
     remoteDesktopViewer_->show();

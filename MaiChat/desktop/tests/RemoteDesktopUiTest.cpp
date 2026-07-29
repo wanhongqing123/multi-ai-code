@@ -1,4 +1,4 @@
-#include <QtTest/QtTest>
+﻿#include <QtTest/QtTest>
 
 #include <QSignalSpy>
 
@@ -19,7 +19,7 @@ private slots:
     void indicatorBarEmitsStopRequest();
     void indicatorBarActuallyPaintsRedBackground();
     void viewerShowsPlaceholderUntilStreamArrives();
-    void viewerEmitsDisconnectRequest();
+    void viewerHasNoDisconnectButtonAndClosesCleanly();
     void viewerExposesRenderHandle();
 };
 
@@ -138,14 +138,21 @@ void RemoteDesktopUiTest::viewerShowsPlaceholderUntilStreamArrives() {
     QVERIFY(!placeholder->isHidden());
 }
 
-void RemoteDesktopUiTest::viewerEmitsDisconnectRequest() {
+void RemoteDesktopUiTest::viewerHasNoDisconnectButtonAndClosesCleanly() {
     RemoteDesktopViewerDialog viewer(QStringLiteral("host-pc"));
-    auto* button = viewer.findChild<QPushButton*>(QStringLiteral("viewerDisconnect"));
-    QVERIFY(button != nullptr);
 
-    QSignalSpy spy(&viewer, &RemoteDesktopViewerDialog::disconnectRequested);
-    button->click();
-    QCOMPARE(spy.count(), 1);
+    // 窗内不再放断开按钮：出口收敛到聊天顶栏的三态按钮，关窗即断开。
+    QVERIFY(viewer.findChild<QPushButton*>(QStringLiteral("viewerDisconnect")) == nullptr);
+
+    // 关窗必须发出 finished —— 宿主据此停止会话，否则会留下后台收流。
+    // 必须先 show：QDialog 对从未显示过的实例调用 close() 不会发 finished，
+    // 而真实场景里窗口总是显示过的。
+    viewer.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&viewer));
+
+    QSignalSpy finishedSpy(&viewer, &QDialog::finished);
+    viewer.close();
+    QCOMPARE(finishedSpy.count(), 1);
 }
 
 void RemoteDesktopUiTest::viewerExposesRenderHandle() {

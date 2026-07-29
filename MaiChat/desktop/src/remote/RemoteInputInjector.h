@@ -18,12 +18,8 @@
 // 平台相关的部分被压缩到 Sink 那一层，薄到不需要测。
 namespace RemoteInput {
 
-// 注入包从哪条通道来。两条通道的丢包语义完全不同，兜底策略也不同，
-// 所以必须让 Injector 知道，不能混为一谈。
-enum class Channel {
-    Unreliable,  // 移动/滚轮：丢包是设计的一部分，只需丢弃过期包
-    Reliable     // 按下/抬起：本不该丢，一旦跳号说明出事了，先全抬再继续
-};
+// Channel 定义在 RemoteInputProtocol.h：收发两端都要按通道分开处理，
+// 它是协议层的概念，不属于注入器。
 
 class IRemoteInputSink {
 public:

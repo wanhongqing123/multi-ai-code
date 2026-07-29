@@ -55,7 +55,9 @@ controller 不自己决定"要不要放行"，只把状态机的决策翻译成�
 
 3. **输入事件通道**：`ITrtcEngine` 增加
    `sendCustomMessage(QByteArray)` 与 `customMessageReceived` 回调
-   （底层是 TRTC `sendCustomCmdMsg`，40 条/秒、16KB/秒，够鼠标事件用）。
+   （底层是 TRTC `sendCustomCmdMsg`。配额 **30 条/秒、16KB/秒，是整个客户端
+   的总量**，两个 cmdID 与 `sendSEIMsg` 共享，不是每通道各一份 ——
+   见 `ITRTCCloud.h:1378`，发送端据此做统一令牌桶 + 按键优先）。
    接口加方法后，Null 实现和 fake 各补一个空实现即可。
 
 4. **新增两个纯模块**（与现有同级，仍可完整单测）：

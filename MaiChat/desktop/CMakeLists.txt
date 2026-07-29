@@ -67,6 +67,8 @@ add_library(remote_im_core
   src/remote/RemoteInputProtocol.cpp
   src/remote/RemoteInputInjector.h
   src/remote/RemoteInputInjector.cpp
+  src/remote/RemoteInputSender.h
+  src/remote/RemoteInputSender.cpp
   src/remote/RemoteDesktopAuth.h
   src/remote/RemoteDesktopAuth.cpp
   src/remote/RemoteDesktopSession.h
@@ -197,6 +199,9 @@ target_link_libraries(remote_input_protocol_test PRIVATE remote_im_core Qt5::Tes
 add_executable(remote_input_injector_test tests/RemoteInputInjectorTest.cpp)
 target_link_libraries(remote_input_injector_test PRIVATE remote_im_core Qt5::Test)
 
+add_executable(remote_input_sender_test tests/RemoteInputSenderTest.cpp)
+target_link_libraries(remote_input_sender_test PRIVATE remote_im_core Qt5::Test)
+
 add_executable(remote_desktop_auth_test tests/RemoteDesktopAuthTest.cpp)
 target_link_libraries(remote_desktop_auth_test PRIVATE remote_im_core Qt5::Test)
 
@@ -244,6 +249,7 @@ add_test(NAME main_window_layout_test COMMAND main_window_layout_test)
 add_test(NAME remote_desktop_signal_test COMMAND remote_desktop_signal_test)
 add_test(NAME remote_input_protocol_test COMMAND remote_input_protocol_test)
 add_test(NAME remote_input_injector_test COMMAND remote_input_injector_test)
+add_test(NAME remote_input_sender_test COMMAND remote_input_sender_test)
 add_test(NAME remote_desktop_auth_test COMMAND remote_desktop_auth_test)
 add_test(NAME remote_desktop_session_test COMMAND remote_desktop_session_test)
 add_test(NAME remote_desktop_settings_test COMMAND remote_desktop_settings_test)

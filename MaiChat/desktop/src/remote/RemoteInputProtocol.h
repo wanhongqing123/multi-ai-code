@@ -15,14 +15,29 @@ namespace RemoteInput {
 
 constexpr int kProtocolVersion = 1;
 
-// 移动/滚轮走不可靠不有序（丢了下一包就纠正回来）；按下抬起走可靠有序
+// 移动走不可靠不有序（丢了下一包就纠正回来）；按键/滚轮/文本走可靠有序
 // （丢一条会留下"按下没抬起"的悬空状态）。同一 cmdID 内 reliable/ordered
-// 必须前后一致，这是 TRTC 的硬约束，所以只能拆成两个 ID。
+// 必须前后一致，这是 TRTC 的硬约束（ITRTCCloud.h:1381），所以只能拆成两个 ID。
 constexpr int kCmdIdUnreliable = 2;
 constexpr int kCmdIdReliable = 3;
 
-// TRTC 单包上限 1KB。超出的包发不出去，编码方必须自己拆分。
+// TRTC 单包上限 1KB（ITRTCCloud.h:1379）。超出的包会被中间路由丢弃，
+// 编码方必须自己拆分。
 constexpr int kMaxPacketBytes = 1024;
+
+// 30 条/秒是**整个客户端**的总配额，两个 cmdID 共享，还与 sendSEIMsg 共享
+// （ITRTCCloud.h:1378）——不是每个 cmdID 各 30 条。移动事件若按 30Hz 发就会
+// 吃光全部预算，按键一条都挤不出去。发送端必须用统一预算并让按键优先。
+constexpr int kMaxMessagesPerSecond = 30;
+// 另有 16KB/秒的总字节配额（ITRTCCloud.h:1380）。
+constexpr int kMaxBytesPerSecond = 16 * 1024;
+
+// 包从哪条通道走。两条通道的丢包语义完全不同（不可靠通道丢包是设计的一部分，
+// 可靠通道丢包说明出事了），收发两端的处理策略都要据此分开，所以放协议层。
+enum class Channel {
+    Unreliable,  // 移动：丢了下一包就纠正回来
+    Reliable     // 按键/滚轮/文本：丢了会留下悬空状态
+};
 
 enum class EventType {
     Unknown,      // 解析不出来的事件：跳过，不让整包报废

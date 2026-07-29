@@ -79,6 +79,7 @@ private slots:
     void deleteKeyRemovesContactAndMessagesFromContactsList();
     void navigationIconsDoNotUsePrivateFontGlyphProperties();
     void conversationListShowsUnreadBadgeAndClearsOnOpen();
+    void everyNavButtonIsStyledConsistently();
     void navLogoUsesAppIconBrandGradient();
     void fileBubbleOffersContextMenu();
     void imageBubbleOffersContextMenu();
@@ -1076,6 +1077,36 @@ void MainWindowLayoutTest::conversationListShowsUnreadBadgeAndClearsOnOpen() {
     }
     QCOMPARE(conversationList->item(macRow)->data(Qt::UserRole + 4).toInt(), 0);
     QCOMPARE(app.chatState().unreadCount(QStringLiteral("mac-user")), 0);
+}
+
+void MainWindowLayoutTest::everyNavButtonIsStyledConsistently() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    MainWindow window(app);
+
+    // 导航按钮样式是按 objectName 逐个列举的，新增一项时极易漏进选择器——
+    // 漏了就掉回 QPushButton 默认居中布局，与其余项对不齐（远程页上线时就踩过）。
+    // 这里断言每个导航按钮都出现在样式表里，且共用同一条左对齐规则。
+    const QString styleSheet = window.styleSheet();
+    const QStringList navObjectNames{
+        QStringLiteral("messagesNavButton"), QStringLiteral("contactsNavButton"),
+        QStringLiteral("remoteNavButton"), QStringLiteral("settingsNavButton")};
+
+    for (const QString& name : navObjectNames) {
+        auto* button = window.findChild<QPushButton*>(name);
+        QVERIFY2(button != nullptr, qPrintable(name));
+        QVERIFY2(styleSheet.contains(QStringLiteral("#%1 ").arg(name))
+                     || styleSheet.contains(QStringLiteral("#%1,").arg(name)),
+                 qPrintable(QStringLiteral("%1 缺少基础样式规则").arg(name)));
+        QVERIFY2(styleSheet.contains(QStringLiteral("#%1[selected=\"true\"]").arg(name)),
+                 qPrintable(QStringLiteral("%1 缺少选中态样式规则").arg(name)));
+    }
+
+    // 所有导航按钮左边缘应当一致（同在导航栏布局里，宽度相同）。
+    const int width = window.findChild<QPushButton*>(navObjectNames.first())->width();
+    for (const QString& name : navObjectNames) {
+        QCOMPARE(window.findChild<QPushButton*>(name)->width(), width);
+    }
 }
 
 void MainWindowLayoutTest::navLogoUsesAppIconBrandGradient() {

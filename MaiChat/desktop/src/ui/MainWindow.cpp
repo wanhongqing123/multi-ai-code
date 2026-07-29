@@ -1436,7 +1436,7 @@ void MainWindow::applyStyle() {
         #navSearchBox:focus {
             border-color: #8ed0ff;
         }
-        #messagesNavButton, #contactsNavButton, #settingsNavButton {
+        #messagesNavButton, #contactsNavButton, #remoteNavButton, #settingsNavButton {
             min-height: 40px;
             border: 0;
             border-radius: 8px;
@@ -1448,7 +1448,7 @@ void MainWindow::applyStyle() {
             padding-left: 12px;
             padding-right: 12px;
         }
-        #messagesNavButton[selected="true"], #contactsNavButton[selected="true"], #settingsNavButton[selected="true"] {
+        #messagesNavButton[selected="true"], #contactsNavButton[selected="true"], #remoteNavButton[selected="true"], #settingsNavButton[selected="true"] {
             background: #dff1ff;
             color: #0b67b7;
         }

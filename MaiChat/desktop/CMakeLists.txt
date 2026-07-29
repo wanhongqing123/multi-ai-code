@@ -104,6 +104,8 @@ target_link_libraries(remote_im_desktop_app PUBLIC remote_im_core)
 
 add_library(remote_im_desktop_ui
   resources/resources.qrc
+  src/ui/AppTextInputDialog.h
+  src/ui/AppTextInputDialog.cpp
   src/ui/AddContactDialog.h
   src/ui/AddContactDialog.cpp
   src/ui/LoginDialog.h
@@ -191,6 +193,9 @@ target_link_libraries(remote_im_application_test PRIVATE remote_im_desktop_app r
 add_executable(login_dialog_test tests/LoginDialogTest.cpp)
 target_link_libraries(login_dialog_test PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets Qt5::Test)
 
+add_executable(app_text_input_dialog_test tests/AppTextInputDialogTest.cpp)
+target_link_libraries(app_text_input_dialog_test PRIVATE remote_im_desktop_ui remote_im_core Qt5::Widgets Qt5::Test)
+
 add_executable(add_contact_dialog_test tests/AddContactDialogTest.cpp)
 target_link_libraries(add_contact_dialog_test PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets Qt5::Test)
 
@@ -257,6 +262,7 @@ add_test(NAME markdown_renderer_test COMMAND markdown_renderer_test)
 add_test(NAME local_message_database_test COMMAND local_message_database_test)
 add_test(NAME remote_im_application_test COMMAND remote_im_application_test)
 add_test(NAME login_dialog_test COMMAND login_dialog_test)
+add_test(NAME app_text_input_dialog_test COMMAND app_text_input_dialog_test)
 add_test(NAME add_contact_dialog_test COMMAND add_contact_dialog_test)
 add_test(NAME main_window_layout_test COMMAND main_window_layout_test)
 add_test(NAME remote_desktop_signal_test COMMAND remote_desktop_signal_test)

@@ -64,10 +64,10 @@
 #include "im/RemoteIMCredentialDefaults.h"
 #include "markdown/MarkdownRenderer.h"
 #include "ui/AddContactDialog.h"
+#include "ui/AppTextInputDialog.h"
 #include "ui/ImagePreviewDialog.h"
 #include <QButtonGroup>
 #include <QCheckBox>
-#include <QInputDialog>
 #include <QRadioButton>
 #include <QRegularExpression>
 
@@ -3132,11 +3132,14 @@ void MainWindow::refreshRemoteDesktopSettings() {
 }
 
 void MainWindow::editRemoteDesktopPassword() {
+    AppTextInputDialog::Options options;
+    options.title = QStringLiteral("访问密码");
+    options.description =
+        QStringLiteral("留空表示不设密码，仅凭允许列表授权。设置后对方连入时还需输入此密码。");
+    options.placeholder = QStringLiteral("留空即不设密码");
+    options.password = true;
     bool ok = false;
-    const QString password = QInputDialog::getText(
-        this, QStringLiteral("访问密码"),
-        QStringLiteral("留空表示不设密码（仅凭允许列表授权）："), QLineEdit::Password,
-        QString(), &ok);
+    const QString password = AppTextInputDialog::getText(this, options, &ok);
     if (!ok) return;
 
     RemoteDesktopSettings settings = remoteDesktop_->settings();
@@ -3154,11 +3157,13 @@ void MainWindow::editRemoteDesktopPassword() {
 
 void MainWindow::editRemoteDesktopAllowList() {
     const RemoteDesktopSettings current = remoteDesktop_->settings();
+    AppTextInputDialog::Options options;
+    options.title = QStringLiteral("允许连入的设备");
+    options.description = QStringLiteral("只有列表内的账号能远程本机，多个账号用逗号分隔。");
+    options.placeholder = QStringLiteral("例如：whq-iphone, mac-air");
+    options.initialText = current.allowedUserIds.join(QStringLiteral(","));
     bool ok = false;
-    const QString text = QInputDialog::getText(
-        this, QStringLiteral("允许连入的设备"),
-        QStringLiteral("多个账号用逗号分隔："), QLineEdit::Normal,
-        current.allowedUserIds.join(QStringLiteral(",")), &ok);
+    const QString text = AppTextInputDialog::getText(this, options, &ok);
     if (!ok) return;
 
     RemoteDesktopSettings settings = current;
@@ -3288,11 +3293,15 @@ void MainWindow::setupRemoteDesktop() {
 
 void MainWindow::promptRemoteDesktopPassword(const QString& peerUserId) {
     if (peerUserId.isEmpty()) return;
+    AppTextInputDialog::Options options;
+    options.title = QStringLiteral("需要访问密码");
+    options.description =
+        QStringLiteral("%1 为远程桌面设置了访问密码，输入后即可连接。").arg(peerUserId);
+    options.placeholder = QStringLiteral("对方设置的访问密码");
+    options.password = true;
+    options.confirmText = QStringLiteral("连接");
     bool ok = false;
-    const QString password = QInputDialog::getText(
-        this, QStringLiteral("远程桌面"),
-        QStringLiteral("%1 设置了访问密码，请输入后重试：").arg(peerUserId),
-        QLineEdit::Password, QString(), &ok);
+    const QString password = AppTextInputDialog::getText(this, options, &ok);
     if (!ok || password.isEmpty()) return;
 
     // 记住本次会话内的密码，避免重试时反复询问。

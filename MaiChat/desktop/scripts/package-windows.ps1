@@ -87,6 +87,25 @@ foreach ($ssl in 'libssl-1_1-x64.dll', 'libcrypto-1_1-x64.dll') {
 }
 Write-Host 'OpenSSL 1.1 已旁挂（HTTPS 图片/文件下载所需）'
 
+# TRTC 运行时（远程桌面）：liteav.dll 等必须与 exe 同目录，否则应用启动时
+# 直接弹「找不到 liteav.dll」而根本进不去——不是远程桌面不可用而已，是整个
+# 程序起不来（隐式链接，加载期就要求）。
+# 以构建产物为准判断是否需要：CMake 只在 TRTC 可用时才把这些 DLL 拷到 exe
+# 旁边，所以构建目录里有就说明 exe 真的依赖它们；关掉远程桌面编译时则跳过。
+$trtcBuildDlls = @(Get-ChildItem (Join-Path $buildPath '*.dll') -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -in 'liteav.dll', 'liteav_screen.dll', 'txffmpeg.dll', 'txsoundtouch.dll' })
+if ($trtcBuildDlls.Count -gt 0) {
+    $trtcDir = Join-Path $projectRoot 'vendor\tencent-trtc\windows\lib\x64'
+    foreach ($dll in 'liteav.dll', 'liteav_screen.dll', 'txffmpeg.dll', 'txsoundtouch.dll') {
+        $trtcSrc = Join-Path $trtcDir $dll
+        if (-not (Test-Path $trtcSrc)) { throw "未找到 $trtcSrc（远程桌面所需的 TRTC 运行时）" }
+        Copy-Item $trtcSrc $staging -Force
+    }
+    Write-Host 'TRTC 运行时已旁挂（远程桌面所需）'
+} else {
+    Write-Host 'TRTC 运行时未参与构建，跳过旁挂（本包不含远程桌面）'
+}
+
 # 使用说明
 $readme = @"
 MaiChat 桌面客户端（Windows 免安装版）

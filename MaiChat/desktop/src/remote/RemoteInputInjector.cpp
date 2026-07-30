@@ -85,6 +85,9 @@ void RemoteInputInjector::applyEvent(const Event& event) {
     switch (event.type) {
         case EventType::MouseMove:
             sink_->moveTo(event.x, event.y);
+            lastMoveX_ = event.x;
+            lastMoveY_ = event.y;
+            hasLastMove_ = true;
             break;
         case EventType::MouseButton:
             sink_->mouseButton(event.button, event.pressed, event.x, event.y);

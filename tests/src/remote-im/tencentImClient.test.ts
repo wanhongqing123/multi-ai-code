@@ -292,7 +292,7 @@ describe('tencent IM client helpers', () => {
     expect(imageOnly.caption).toBeNull()
   })
 
-  it('extracts C2C markdown/html file messages from Tencent message events', () => {
+  it('extracts C2C file messages of any type from Tencent message events', () => {
     const messages = extractTencentImFileMessages({
       data: [
         {
@@ -328,6 +328,9 @@ describe('tencent IM client helpers', () => {
       ]
     })
 
+    // 关键：pdf 必须也能收到。以前这里按 MIME 白名单只放行 md/html，用户发来的
+    // pdf/zip/docx 在解析阶段就被丢掉，连一条"收到但不支持"都没有——看起来就是
+    // 消息凭空消失。发送侧（send-file）早就不限类型，接收侧必须对称。
     expect(messages).toEqual([
       {
         remoteMessageId: 'file-1',
@@ -339,8 +342,40 @@ describe('tencent IM client helpers', () => {
         fileName: 'report.md',
         mimeType: 'text/markdown',
         createdAt: 1782238800000
+      },
+      {
+        remoteMessageId: 'file-2',
+        fromUserId: 'phone_admin',
+        toUserId: 'desktop_bot',
+        fileUrl: 'https://cos.example.test/report.pdf',
+        sizeBytes: null,
+        uuid: null,
+        fileName: 'report.pdf',
+        mimeType: null,
+        createdAt: undefined
       }
     ])
+  })
+
+  it('merges a caption sent together with a file into one delivery', () => {
+    const parts = extractTencentImMessageParts({
+      ID: 'file-3',
+      from: 'phone_admin',
+      type: 'TIMFileElem',
+      payload: { url: 'https://cos.example.test/spec.docx', fileName: 'spec.docx', size: 2048 },
+      _elements: [
+        {
+          type: 'TIMFileElem',
+          content: { url: 'https://cos.example.test/spec.docx', fileName: 'spec.docx', size: 2048 }
+        },
+        { type: 'TIMTextElem', content: { text: '按这个文档改' } }
+      ]
+    })
+
+    // 配文必须跟文件走同一次投递。以前配文被单独当成一条文本发出去，AICLI 会
+    // 收到一次文本、一次文件，还各回一次系统回执，而用户明明只发了一条消息。
+    expect(parts.file?.fileName).toBe('spec.docx')
+    expect(parts.caption).toBe('按这个文档改')
   })
 
   it('generates a Tencent UserSig locally from SDKAppID, UserID, and SecretKey', async () => {

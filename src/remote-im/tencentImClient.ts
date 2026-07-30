@@ -323,9 +323,11 @@ function getFilePayload(
   const fileUrl = getStringField(file, ['url', 'URL', 'downloadUrl', 'downloadURL'])
   if (!fileUrl) return null
   const fileName = getStringField(file, ['fileName', 'filename', 'name'])
+  // 不再按 MIME 过滤。以前只放行 md/html，其余类型在这里就被丢掉，用户发来的
+  // pdf/zip/docx 会**静默消失**——连一条"收到但不支持"都没有。发送侧
+  // （send-file）早就不限类型了，接收侧没跟上是不对称。
   const mimeType =
     getStringField(file, ['mimeType', 'contentType']) ?? mimeTypeFromFileName(fileName)
-  if (mimeType !== 'text/markdown' && mimeType !== 'text/html') return null
   return {
     fileUrl,
     sizeBytes: getNumberField(file, ['size', 'dataSize', 'fileSize']),
@@ -812,6 +814,8 @@ export async function connectTencentImClient(input: {
 
       if (parts.file) {
         fileCount++
+        // 配文与文件合并成一次投递，与图片一致：拆成两条会让 AICLI 收到一次
+        // 文本、一次文件，还各回一次系统回执，而用户明明只发了一条消息。
         input.onIncomingFile?.({
           projectId: input.projectId,
           remoteMessageId,
@@ -822,20 +826,9 @@ export async function connectTencentImClient(input: {
           uuid: parts.file.uuid,
           fileName: parts.file.fileName,
           mimeType: parts.file.mimeType,
+          caption: parts.caption,
           createdAt
         })
-        // 文件转发路径暂不合并配文；但配文（用户随文件发来的文字）不能丢，单独作为文本投递。
-        if (parts.caption) {
-          textCount++
-          input.onIncomingText({
-            projectId: input.projectId,
-            remoteMessageId,
-            fromUserId,
-            toUserId,
-            text: parts.caption,
-            createdAt
-          })
-        }
         continue
       }
 

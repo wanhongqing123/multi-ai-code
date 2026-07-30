@@ -107,13 +107,21 @@ public:
     void onError(TXLiteAVError code, const char* message, void*) override {
         const int errorCode = static_cast<int>(code);
         const QString text = message ? QString::fromUtf8(message) : QString();
+        // SDK 的错误此前只走 UI 弹窗，弹完就没了。落盘才追得回来。
+        qWarning().noquote()
+            << QStringLiteral("[trtc] error %1: %2").arg(errorCode).arg(text);
         postToMainThread([this, errorCode, text] {
             if (errorCallback_) errorCallback_(errorCode, text);
         });
     }
 
     // 警告不影响会话继续，记录即可，不打扰用户。
-    void onWarning(TXLiteAVWarning, const char*, void*) override {}
+    void onWarning(TXLiteAVWarning code, const char* message, void*) override {
+        qWarning().noquote()
+            << QStringLiteral("[trtc] warning %1: %2")
+                   .arg(static_cast<int>(code))
+                   .arg(message ? QString::fromUtf8(message) : QString());
+    }
 
     void onExitRoom(int) override {}
 
@@ -208,6 +216,23 @@ public:
     bool isActive() const override { return active_; }
 
 private:
+    // 采集源的几何是排查坐标偏移的起点：被采集屏幕的宽高比决定了对端画面的
+    // 宽高比，而注入又是按主屏像素算的。三者只要有一处对不上，鼠标就偏。
+    static void logCaptureSource(const liteav::TRTCScreenCaptureSourceInfo& info,
+                                 const QString& how) {
+        qInfo().noquote()
+            << QStringLiteral("[remote-input] host capture source: %1 name=\"%2\" "
+                              "origin=(%3,%4) size=%5x%6 isMainScreen=%7")
+                   .arg(how)
+                   .arg(info.sourceName ? QString::fromUtf8(info.sourceName)
+                                        : QStringLiteral("<null>"))
+                   .arg(info.x)
+                   .arg(info.y)
+                   .arg(info.width)
+                   .arg(info.height)
+                   .arg(info.isMainScreen ? QStringLiteral("true") : QStringLiteral("false"));
+    }
+
     // 只认辅路：被控端推的是屏幕共享（Sub），主路是摄像头，尺寸完全不相干，
     // 拿它去算黑边会把映射彻底带偏。
     void reportRemoteVideoSize(const char* userId, liteav::TRTCVideoStreamType streamType,
@@ -302,6 +327,7 @@ private:
             // 不给被采集的屏幕加高亮描边：整屏共享时那圈边框只会干扰观看。
             property.enableHighLight = false;
             cloud_->selectScreenCaptureTarget(info, captureRect, property);
+            logCaptureSource(info, QStringLiteral("main-screen"));
             selected = true;
             break;
         }
@@ -313,6 +339,9 @@ private:
             property.enableCaptureMouse = true;
             property.enableHighLight = false;
             cloud_->selectScreenCaptureTarget(info, captureRect, property);
+            // 没找到主屏而退到第一个屏：注入是按主屏坐标算的，这两者不一致
+            // 就必然偏，必须在日志里显式点出来。
+            logCaptureSource(info, QStringLiteral("FALLBACK-not-main-screen"));
             selected = true;
         }
         sources->release();

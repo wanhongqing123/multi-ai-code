@@ -88,6 +88,12 @@ void RemoteDesktopController::setSecureDesktopProbe(
 }
 
 void RemoteDesktopController::startHostControlSide() {
+    // 会话一开始就把被控端的屏幕几何写下来。它和控制端的 contentRect 是一对
+    // 必须能对上的数字，缺任何一半都没法判断偏移出在哪一端。
+    qInfo().noquote() << QStringLiteral("[remote-input] host geometry: %1  allowRemoteControl=%2")
+                             .arg(RemoteInput::describeInjectionGeometry())
+                             .arg(settings_.allowRemoteControl ? QStringLiteral("true")
+                                                               : QStringLiteral("false"));
     if (injector_) injector_->beginSession(hostSessionId_);
     if (hostWatchdogTimer_) hostWatchdogTimer_->start();
     // 共享期间别让系统自动锁屏：一锁就进安全桌面，远程彻底失联，
@@ -190,16 +196,25 @@ void RemoteDesktopController::flushInputTrace(qint64 nowMs) {
                    .arg(QLatin1String(RemoteDesktop::viewerStateName(viewerState_)));
     }
     if (hostBusy) {
+        // 带上最后注入的归一化坐标：和控制端同一秒的样本一比，就知道是传输
+        // 途中变了、还是两端算法不一致。
+        QString sample;
+        if (injector_ && injector_->hasLastMove()) {
+            sample = QStringLiteral(" last-move=(%1,%2)")
+                         .arg(injector_->lastMoveX(), 0, 'f', 4)
+                         .arg(injector_->lastMoveY(), 0, 'f', 4);
+        }
         qInfo().noquote()
             << QStringLiteral(
                    "[remote-input] host: received=%1 malformed=%2 denied=%3(%4) "
-                   "injected-events=%5 state=%6")
+                   "injected-events=%5 state=%6%7")
                    .arg(traceRecvPackets_)
                    .arg(traceRecvBadPayload_)
                    .arg(traceRecvDenied_)
                    .arg(QLatin1String(RemoteDesktop::inputVerdictName(traceLastVerdict_)))
                    .arg(traceInjectedEvents_)
-                   .arg(QLatin1String(RemoteDesktop::hostStateName(hostState_)));
+                   .arg(QLatin1String(RemoteDesktop::hostStateName(hostState_)))
+                   .arg(sample);
     }
 
     traceSentOk_ = 0;

@@ -51,19 +51,24 @@ function extensionFromUrl(remoteUrl: string): string | null {
   }
 }
 
+// 扩展名以发送方给的文件名为准。以前只认能映射回已知 MIME 的扩展名，
+// 于是 .xlsx / .dwg / .parquet 这类会被丢掉，最后统一落成 .md 或 .bin——
+// 用户拿到手的文件双击打不开。任何形似扩展名的后缀都直接沿用。
+const EXTENSION_PATTERN = /^\.[A-Za-z0-9]{1,16}$/
+
 function normalizeDocumentExtension(input: {
   fileName?: string | null
   remoteUrl: string
   mimeType?: string | null
 }): string {
   const fileExtension = input.fileName ? extname(input.fileName).toLowerCase() : ''
-  if (fileExtension && mimeTypeFromRemoteImFilePath(`x${fileExtension}`)) return fileExtension
+  if (EXTENSION_PATTERN.test(fileExtension)) return fileExtension
   const urlExtension = extensionFromUrl(input.remoteUrl)
-  if (urlExtension && mimeTypeFromRemoteImFilePath(`x${urlExtension}`)) return urlExtension
+  if (urlExtension && EXTENSION_PATTERN.test(urlExtension)) return urlExtension
   const mimeType = input.mimeType?.toLowerCase()
   if (mimeType === 'text/html') return '.html'
-  if (mimeType === 'text/markdown' || !mimeType) return '.md'
-  // 普通文件（非文档 MIME）拿不到扩展名时落 .bin，避免误标成 Markdown。
+  if (mimeType === 'text/markdown') return '.md'
+  // 既没有扩展名也认不出 MIME：落 .bin，别猜成 .md 把二进制标成文本。
   return '.bin'
 }
 
@@ -86,10 +91,9 @@ export async function cacheRemoteImFile(input: CacheRemoteImFileInput): Promise<
   const fetchImpl = input.fetchImpl ?? (globalThis.fetch as unknown as RemoteImFileFetch)
   if (!fetchImpl) throw new Error('当前运行环境不支持下载文件')
 
+  // 不再按 MIME 拒收。接收任意普通文件与发送侧（send-file，100MB 上限）对齐；
+  // 真正的护栏是体积上限，而不是类型白名单。
   const declaredMimeType = input.mimeType?.split(';')[0]?.trim() || null
-  if (declaredMimeType && declaredMimeType !== 'text/markdown' && declaredMimeType !== 'text/html') {
-    throw new Error('unsupported file type')
-  }
 
   const response = await fetchImpl(input.remoteUrl)
   if (!response.ok) {
@@ -101,10 +105,12 @@ export async function cacheRemoteImFile(input: CacheRemoteImFileInput): Promise<
   if (bytes.byteLength > maxBytes) throw new Error('file is too large')
 
   const responseMimeType = response.headers?.get('content-type')?.split(';')[0]?.trim() || null
-  const mimeType = responseMimeType || declaredMimeType || null
-  if (mimeType && mimeType !== 'text/markdown' && mimeType !== 'text/html') {
-    throw new Error('unsupported file type')
-  }
+  // 声明的 MIME 优先于响应头：对象存储对未知类型常年回 application/octet-stream，
+  // 用它覆盖发送方声明的类型只会把信息变少。两个都没有时按文件名推。
+  const mimeType =
+    declaredMimeType ||
+    responseMimeType ||
+    (input.fileName ? mimeTypeFromRemoteImFilePath(input.fileName) : null)
 
   const extension = normalizeDocumentExtension({
     fileName: input.fileName,

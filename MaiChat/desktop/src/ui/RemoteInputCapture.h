@@ -47,6 +47,9 @@ private:
     void endMouseTracking();
     // 每秒往应用日志写一条采集汇总。只在控制期间跑。
     void flushTrace();
+    // 把控件尺寸、远端画面尺寸、算出来的内容区一起打出来。坐标偏移只可能来自
+    // 这三个数的关系，原样记下就能手算复核，不必再让人重试一轮去猜。
+    void logGeometry(const QString& reason) const;
 
     RemoteInput::RemoteInputSender& sender_;
     QPointer<QWidget> surface_;
@@ -67,4 +70,11 @@ private:
     int traceButtonSeen_ = 0;
     int traceWheelSeen_ = 0;
     int traceKeySeen_ = 0;
+    // 每秒留一个坐标样本：光有计数说明不了映射对不对，得能拿原始像素点和
+    // 归一化结果去手算。被判成黑边丢掉的那个点单独留，用来判断是真黑边还是
+    // 内容区算小了。
+    QPointF traceLastLocal_;
+    QPointF traceLastDroppedLocal_;
+    double traceLastNormX_ = 0.0;
+    double traceLastNormY_ = 0.0;
 };

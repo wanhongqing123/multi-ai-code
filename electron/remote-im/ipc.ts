@@ -1229,6 +1229,11 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
         }
       })
       const result = await router.handleIncomingFile(message)
+      // 文件现在也会转给 AICLI，所以同样要接上输出转发——否则 AICLI 处理完
+      // 的回复回不到 IM，用户只会看到"已发送给当前 AICLI"然后再无下文。
+      if (result.ok && result.aicliSessionId) {
+        startOutputForwarding(result.aicliSessionId, message.projectId, message.fromUserId, config, result.replyId)
+      }
       broadcastMessagesChanged(message.projectId)
       return result
     }

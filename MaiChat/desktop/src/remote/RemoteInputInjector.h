@@ -53,6 +53,12 @@ public:
     QVector<MouseButton> heldButtons() const;
     bool hasAnythingHeld() const;
 
+    // 最后一次真正注入的归一化坐标，供日志取样。和控制端记的那个样本对起来
+    // 看，就能判断偏差是在传输途中丢的、还是两端算法本身不一致。
+    bool hasLastMove() const { return hasLastMove_; }
+    double lastMoveX() const { return lastMoveX_; }
+    double lastMoveY() const { return lastMoveY_; }
+
     // 静默多久后认定链路已断，把按住的键全抬了。
     static constexpr qint64 kSilenceTimeoutMs = 5000;
     // 可靠通道允许的最大跳号。超过就先全抬——中间那些抬起包大概率已经丢了。
@@ -72,6 +78,9 @@ private:
     bool hasReliableSequence_ = false;
     quint32 lastReliableSequence_ = 0;
     qint64 lastPacketMs_ = 0;
+    bool hasLastMove_ = false;
+    double lastMoveX_ = 0.0;
+    double lastMoveY_ = 0.0;
 };
 
 // Win+L 会让被控机立刻进入安全桌面，SendInput 够不着，远程直接失联且再也解不开。
@@ -103,5 +112,12 @@ bool isInputInjectionSupported();
 bool hasInputInjectionPermission();
 // macOS 弹出系统授权引导；其它平台为空操作。
 void requestInputInjectionPermission();
+
+// 注入端的屏幕几何，一行英文摘要，写进日志。
+//
+// 排查坐标偏移必须有这个：控制端算的是「画面在控件里的位置」，被控端算的是
+// 「归一化坐标落在哪块屏幕上」，两边各对一半也会偏。把被控端的实际数字打出来，
+// 才能和控制端的 contentRect 对起来手算。
+QString describeInjectionGeometry();
 
 }  // namespace RemoteInput

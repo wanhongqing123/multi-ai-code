@@ -389,4 +389,50 @@ void requestInputInjectionPermission() {
 #endif
 }
 
+QString describeInjectionGeometry() {
+#ifdef Q_OS_WIN
+    const VirtualDesktopRect primary = primaryScreenRect();
+    const VirtualDesktopRect virtualDesktop = virtualDesktopRect();
+
+    // GetSystemMetrics 返回的是**逻辑**分辨率：进程若不是 DPI 感知的，
+    // 2560x1600 会被报成 1707x1067。EnumDisplaySettings 拿的是真实物理模式，
+    // 两个都打出来，一眼就能看出当前进程处在哪种状态——这个歧义在排查里
+    // 已经误导过一次，不能只留一个数。
+    QString physical = QStringLiteral("unknown");
+    DEVMODEW mode{};
+    mode.dmSize = sizeof(mode);
+    if (EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &mode)) {
+        physical = QStringLiteral("%1x%2").arg(mode.dmPelsWidth).arg(mode.dmPelsHeight);
+    }
+
+    return QStringLiteral("primary=%1x%2 physical=%3 virtualDesktop=(%4,%5 %6x%7) "
+                          "aspect=%8 monitors=%9 dpiAware=%10")
+        .arg(primary.width)
+        .arg(primary.height)
+        .arg(physical)
+        .arg(virtualDesktop.left)
+        .arg(virtualDesktop.top)
+        .arg(virtualDesktop.width)
+        .arg(virtualDesktop.height)
+        .arg(primary.height > 0 ? QString::number(
+                                      static_cast<double>(primary.width) / primary.height, 'f', 4)
+                                : QStringLiteral("n/a"))
+        .arg(GetSystemMetrics(SM_CMONITORS))
+        .arg(physical == QStringLiteral("%1x%2").arg(primary.width).arg(primary.height)
+                 ? QStringLiteral("true")
+                 : QStringLiteral("false"));
+#elif defined(Q_OS_MAC)
+    const CGRect bounds = CGDisplayBounds(CGMainDisplayID());
+    return QStringLiteral("primary=%1x%2 aspect=%3 accessibility=%4")
+        .arg(static_cast<int>(CGRectGetWidth(bounds)))
+        .arg(static_cast<int>(CGRectGetHeight(bounds)))
+        .arg(CGRectGetHeight(bounds) > 0
+                 ? QString::number(CGRectGetWidth(bounds) / CGRectGetHeight(bounds), 'f', 4)
+                 : QStringLiteral("n/a"))
+        .arg(hasInputInjectionPermission() ? QStringLiteral("granted") : QStringLiteral("DENIED"));
+#else
+    return QStringLiteral("input injection not supported on this platform");
+#endif
+}
+
 }  // namespace RemoteInput

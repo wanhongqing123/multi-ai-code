@@ -101,6 +101,7 @@ void RemoteInputCapture::setEnabled(bool enabled) {
                    .arg(sender_.contentRect().isEmpty()
                             ? QStringLiteral("empty (all coordinate mapping will fail)")
                             : QStringLiteral("ok"));
+        logGeometry(QStringLiteral("control started"));
         traceTimer_->start();
     } else {
         flushTrace();
@@ -121,16 +122,36 @@ void RemoteInputCapture::flushTrace() {
             "is swallowing the events before Qt sees them)");
         return;
     }
+    QString sample;
+    if (traceMoveQueued_ > 0) {
+        sample = QStringLiteral(" last=(%1,%2)px->(%3,%4)")
+                     .arg(traceLastLocal_.x(), 0, 'f', 0)
+                     .arg(traceLastLocal_.y(), 0, 'f', 0)
+                     .arg(traceLastNormX_, 0, 'f', 4)
+                     .arg(traceLastNormY_, 0, 'f', 4);
+    }
+    if (traceMoveSeen_ > traceMoveQueued_) {
+        // 丢弃样本 + 当前内容区一起打，好判断到底是真黑边还是算错了。
+        const QRectF rect = sender_.contentRect();
+        sample += QStringLiteral(" dropped-at=(%1,%2)px contentRect=(%3,%4 %5x%6)")
+                      .arg(traceLastDroppedLocal_.x(), 0, 'f', 0)
+                      .arg(traceLastDroppedLocal_.y(), 0, 'f', 0)
+                      .arg(rect.x(), 0, 'f', 1)
+                      .arg(rect.y(), 0, 'f', 1)
+                      .arg(rect.width(), 0, 'f', 1)
+                      .arg(rect.height(), 0, 'f', 1);
+    }
     qInfo().noquote()
         << QStringLiteral(
                "[remote-input] capture: moves seen=%1 queued=%2 dropped-letterbox=%3 | "
-               "buttons=%4 wheel=%5 keys=%6")
+               "buttons=%4 wheel=%5 keys=%6%7")
                .arg(traceMoveSeen_)
                .arg(traceMoveQueued_)
                .arg(traceMoveSeen_ - traceMoveQueued_)
                .arg(traceButtonSeen_)
                .arg(traceWheelSeen_)
-               .arg(traceKeySeen_);
+               .arg(traceKeySeen_)
+               .arg(sample);
     traceMoveSeen_ = 0;
     traceMoveQueued_ = 0;
     traceButtonSeen_ = 0;
@@ -145,6 +166,31 @@ void RemoteInputCapture::refreshContentRect() {
     }
     sender_.setContentRect(
         RemoteInput::fitContentRect(QSizeF(surface_->size()), QSizeF(remoteVideoSize_)));
+    logGeometry(QStringLiteral("content rect"));
+}
+
+// 坐标偏移只可能来自这三个数的关系，把它们原样打出来就能手算复核，
+// 不用再让人重试一轮去猜。
+void RemoteInputCapture::logGeometry(const QString& reason) const {
+    if (!surface_) return;
+    const QRectF rect = sender_.contentRect();
+    qInfo().noquote()
+        << QStringLiteral("[remote-input] capture geometry (%1): widget=%2x%3 video=%4x%5 "
+                          "(aspect %6) contentRect=(%7,%8 %9x%10)")
+               .arg(reason)
+               .arg(surface_->width())
+               .arg(surface_->height())
+               .arg(remoteVideoSize_.width())
+               .arg(remoteVideoSize_.height())
+               .arg(remoteVideoSize_.height() > 0
+                        ? QString::number(static_cast<double>(remoteVideoSize_.width())
+                                              / remoteVideoSize_.height(),
+                                          'f', 4)
+                        : QStringLiteral("n/a"))
+               .arg(rect.x(), 0, 'f', 1)
+               .arg(rect.y(), 0, 'f', 1)
+               .arg(rect.width(), 0, 'f', 1)
+               .arg(rect.height(), 0, 'f', 1);
 }
 
 bool RemoteInputCapture::mapPosition(const QPointF& pos, double* x, double* y) const {
@@ -172,6 +218,13 @@ bool RemoteInputCapture::eventFilter(QObject* watched, QEvent* event) {
             if (mapPosition(mouse->localPos(), &x, &y)) {
                 sender_.queueMouseMove(x, y);
                 ++traceMoveQueued_;
+                traceLastLocal_ = mouse->localPos();
+                traceLastNormX_ = x;
+                traceLastNormY_ = y;
+            } else {
+                // 被判成黑边而丢弃的点也要留一个样本：黑边算错时，正是这些点
+                // 能证明"我明明在画面上"。
+                traceLastDroppedLocal_ = mouse->localPos();
             }
             return true;
         }

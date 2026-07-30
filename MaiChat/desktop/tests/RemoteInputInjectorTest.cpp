@@ -87,7 +87,39 @@ private slots:
     void blocksWinPlusLButKeepsOtherCombinations();
     void releaseAllEventClearsHeldState();
     void mapsNormalizedCoordinatesOntoVirtualDesktop();
+    void reportsInjectionGeometryForDiagnostics();
+    void remembersLastInjectedMoveForDiagnostics();
 };
+
+void RemoteInputInjectorTest::reportsInjectionGeometryForDiagnostics() {
+    const QString description = describeInjectionGeometry();
+    QVERIFY2(!description.isEmpty(), "注入端几何摘要为空，被控端日志会缺一半信息");
+#if defined(Q_OS_WIN) || defined(Q_OS_MAC)
+    // 排查坐标偏移时，被控端的主屏尺寸是必须能和控制端 contentRect 对起来的
+    // 那个数；缺了它日志就只能看出"有偏差"，看不出偏多少。
+    QVERIFY2(description.contains(QLatin1String("primary=")),
+             qPrintable(QStringLiteral("几何摘要里没有主屏尺寸：%1").arg(description)));
+    QVERIFY2(description.contains(QLatin1String("aspect=")),
+             qPrintable(QStringLiteral("几何摘要里没有宽高比：%1").arg(description)));
+#endif
+}
+
+void RemoteInputInjectorTest::remembersLastInjectedMoveForDiagnostics() {
+    RemoteInputInjector injector(std::make_unique<RecordingSink>());
+    QVERIFY2(!injector.hasLastMove(), "还没注入过就报告有坐标样本");
+
+    injector.beginSession(QStringLiteral("s1"));
+    Event move;
+    move.type = EventType::MouseMove;
+    move.x = 0.25;
+    move.y = 0.75;
+    QVERIFY(injector.handlePacket(makePacket(QStringLiteral("s1"), 1, {move}),
+                                  Channel::Unreliable, 1000));
+
+    QVERIFY(injector.hasLastMove());
+    QVERIFY(qAbs(injector.lastMoveX() - 0.25) < 1e-9);
+    QVERIFY(qAbs(injector.lastMoveY() - 0.75) < 1e-9);
+}
 
 void RemoteInputInjectorTest::mapsNormalizedCoordinatesOntoVirtualDesktop() {
     // 单屏 1920x1080：主屏即整个虚拟桌面。

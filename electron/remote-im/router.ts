@@ -370,6 +370,40 @@ function buildRemoteImImageTaskText(input: {
   return lines.join('\n')
 }
 
+function buildRemoteImFileTaskText(input: {
+  fromUserId: string
+  localPath: string
+  fileName?: string | null
+  sizeBytes?: number | null
+  mimeType?: string | null
+  caption?: string | null
+}): string {
+  const caption = input.caption?.trim()
+  const lines = ['[文件消息]', `来自: ${input.fromUserId}`]
+  const fileName = input.fileName?.trim()
+  if (fileName) lines.push(`文件名: ${fileName}`)
+  // 类型与大小先给出来：收到一个几十 MB 的二进制时，AICLI 该有机会先判断
+  // 值不值得读，而不是闷头打开。
+  if (input.mimeType?.trim()) lines.push(`类型: ${input.mimeType.trim()}`)
+  if (typeof input.sizeBytes === 'number' && Number.isFinite(input.sizeBytes)) {
+    lines.push(`大小: ${formatRemoteImFileSize(input.sizeBytes)}`)
+  }
+  lines.push(`本地路径: ${input.localPath}`)
+  if (caption) {
+    lines.push(`配文: ${caption}`)
+    lines.push('请结合配文与文件内容继续处理。')
+  } else {
+    lines.push('请根据文件内容和上下文继续处理。')
+  }
+  return lines.join('\n')
+}
+
+function formatRemoteImFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
 export function createRemoteImRouter(deps: RemoteImRouterDeps) {
   async function routeTaskTextToAicli(input: {
     message: RemoteImIncomingTextMessage
@@ -767,8 +801,62 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       return { ok: false, error }
     }
 
-    deps.store.create(createIncomingFileRecord(message, cached.attachment, 'received', null, now))
-    return { ok: true }
+    const attachment = cached.attachment
+    if (!attachment.localPath) {
+      const error = '文件本地路径为空'
+      deps.store.create(createIncomingFileRecord(message, attachment, 'failed', error, now))
+      await sendSystemText(deps, message.projectId, fromUserId, `文件下载失败：${error}`)
+      return { ok: false, error }
+    }
+
+    // 以前到这里就结束了：只入库供界面显示，**从不转给 AICLI**。于是用户发来
+    // 的文件在对话里毫无反应，看起来像没收到。现在与图片走同一条路。
+    const session = deps.resolveSession(message.projectId)
+    const incoming = deps.store.create(
+      createIncomingFileRecord(message, attachment, 'received', null, now)
+    )
+    if (isIncomingAlreadySentToAicli(incoming)) {
+      return {
+        ok: true,
+        ...(incoming.sessionId ? { aicliSessionId: incoming.sessionId } : {})
+      }
+    }
+    if (!session) {
+      deps.store.updateStatus(incoming.id, {
+        status: 'failed',
+        error: 'No running AICLI session'
+      })
+      await sendSystemText(deps, message.projectId, fromUserId, '当前没有运行中的 AICLI。')
+      return { ok: false, error: 'No running AICLI session' }
+    }
+
+    const taskText = buildRemoteImFileTaskText({
+      fromUserId,
+      localPath: attachment.localPath,
+      fileName: attachment.fileName ?? message.fileName ?? null,
+      sizeBytes: attachment.sizeBytes ?? null,
+      mimeType: attachment.mimeType ?? null,
+      caption: message.caption ?? null
+    })
+    const replyId = deps.createReplyId?.() ?? createRemoteImReplyId()
+    const wrapped = buildRemoteImAicliPrompt({ fromUserId, text: taskText, replyId })
+    const displayText = buildRemoteImAicliDisplayText({ fromUserId, text: taskText })
+    const sendResult = await deps.sendUser(session.sessionId, wrapped, { displayText })
+    if (!sendResult.ok) {
+      const error = sendResult.error ?? 'failed to send file message to AICLI'
+      deps.store.updateStatus(incoming.id, { status: 'failed', error })
+      await sendSystemText(deps, message.projectId, fromUserId, `发送给 AICLI 失败：${error}`)
+      return { ok: false, error }
+    }
+
+    deps.store.updateStatus(incoming.id, {
+      sessionId: session.sessionId,
+      status: 'sent-to-aicli',
+      sentToAicliAt: now,
+      error: null
+    })
+    await sendSystemText(deps, message.projectId, fromUserId, '已发送给当前 AICLI，开始处理。')
+    return { ok: true, aicliSessionId: session.sessionId, replyId }
   }
 
   // SDK 漫游补拉（登录后补充离线期间的历史）：只入库展示、绝不路由——漫游是

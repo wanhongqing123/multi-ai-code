@@ -482,6 +482,109 @@ describe('remote IM router', () => {
     })
   })
 
+  it('routes trusted file messages of any type to AICLI with the cached local path', async () => {
+    const store = createMessageStore()
+    const sentToAicli: Array<{ sessionId: string; text: string; displayText: string | undefined }> = []
+    const sentToIm: string[] = []
+    const router = createRemoteImRouter({
+      getConfig: () => config,
+      resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
+      sendUser: async (sessionId, text, options) => {
+        sentToAicli.push({ sessionId, text, displayText: options?.displayText })
+        return { ok: true }
+      },
+      sendImText: async (_projectId, _toUserId, text) => {
+        sentToIm.push(text)
+        return { ok: true }
+      },
+      cacheFile: async () => ({
+        ok: true,
+        attachment: {
+          type: 'file',
+          localPath: '/tmp/remote-im/files/spec.pdf',
+          remoteUrl: 'https://example.test/spec.pdf',
+          sizeBytes: 2_097_152,
+          fileName: 'spec.pdf',
+          mimeType: 'application/pdf',
+          sdkFileId: 'file-1'
+        }
+      }),
+      store
+    })
+
+    const result = await router.handleIncomingFile({
+      projectId: 'project-1',
+      remoteMessageId: 'file-remote-1',
+      fromUserId: 'phone_admin',
+      toUserId: 'desktop_bot',
+      fileUrl: 'https://example.test/spec.pdf',
+      sizeBytes: 2_097_152,
+      fileName: 'spec.pdf',
+      mimeType: 'application/pdf',
+      uuid: 'file-1',
+      caption: '按这个文档改',
+      createdAt: 100
+    })
+
+    // 以前收到文件只入库供界面显示，**从不转给 AICLI**——用户发来的文件在对话里
+    // 毫无反应，看起来像没收到。现在必须与图片走同一条路。
+    expect(result.ok).toBe(true)
+    expect(result.aicliSessionId).toBe('session-main')
+    expect(sentToAicli).toHaveLength(1)
+    expect(sentToAicli[0]?.text).toContain('本地路径: /tmp/remote-im/files/spec.pdf')
+    expect(sentToAicli[0]?.text).toContain('文件名: spec.pdf')
+    expect(sentToAicli[0]?.text).toContain('类型: application/pdf')
+    // 大小要能让 AICLI 先判断值不值得读，而不是闷头打开一个几十 MB 的二进制。
+    expect(sentToAicli[0]?.text).toContain('大小: 2.0 MB')
+    expect(sentToAicli[0]?.text).toContain('配文: 按这个文档改')
+    expect(sentToIm[0]).toContain('已发送给当前 AICLI')
+    expect(store.messages[0]).toMatchObject({
+      kind: 'file',
+      status: 'sent-to-aicli',
+      attachment: { type: 'file', localPath: '/tmp/remote-im/files/spec.pdf' }
+    })
+  })
+
+  it('reports to the sender when a file arrives with no running AICLI', async () => {
+    const store = createMessageStore()
+    const sentToIm: string[] = []
+    const router = createRemoteImRouter({
+      getConfig: () => config,
+      resolveSession: () => null,
+      sendUser: async () => ({ ok: true }),
+      sendImText: async (_projectId, _toUserId, text) => {
+        sentToIm.push(text)
+        return { ok: true }
+      },
+      cacheFile: async () => ({
+        ok: true,
+        attachment: {
+          type: 'file',
+          localPath: '/tmp/remote-im/files/spec.pdf',
+          remoteUrl: 'https://example.test/spec.pdf',
+          sizeBytes: 10,
+          fileName: 'spec.pdf',
+          mimeType: 'application/pdf',
+          sdkFileId: null
+        }
+      }),
+      store
+    })
+
+    const result = await router.handleIncomingFile({
+      projectId: 'project-1',
+      remoteMessageId: 'file-remote-2',
+      fromUserId: 'phone_admin',
+      fileUrl: 'https://example.test/spec.pdf',
+      fileName: 'spec.pdf'
+    })
+
+    // 没有会话时也必须回一句，否则发送方只看到文件发出去了、然后石沉大海。
+    expect(result.ok).toBe(false)
+    expect(sentToIm[0]).toContain('当前没有运行中的 AICLI')
+    expect(store.messages[0]).toMatchObject({ kind: 'file', status: 'failed' })
+  })
+
   it('routes trusted image messages to AICLI with the cached local image path', async () => {
     const store = createMessageStore()
     const sentToAicli: Array<{ sessionId: string; text: string; displayText: string | undefined }> = []

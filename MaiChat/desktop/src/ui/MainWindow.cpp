@@ -998,6 +998,11 @@ MainWindow::MainWindow(RemoteIMApplication& app, QWidget* parent) : QMainWindow(
     // 回填到界面上。
     setupRemoteDesktop();
     refreshRemoteDesktopSettings();
+    connect(qApp, &QGuiApplication::applicationStateChanged, this,
+            [this](Qt::ApplicationState state) {
+                // macOS 从“辅助功能”设置切回来后立即刷新授权状态。
+                if (state == Qt::ApplicationActive) refreshRemoteDesktopSettings();
+            });
     refresh();
 }
 
@@ -3085,12 +3090,15 @@ QWidget* MainWindow::buildRemoteDesktopSettingsPanel(QWidget* parent) {
     remoteDesktopControlValue_ = new QLabel(panel);
     remoteDesktopControlValue_->setObjectName(QStringLiteral("settingsRowValue"));
     remoteDesktopControlValue_->setProperty("settingsRowValue", true);
-    auto* controlRow = createSettingsRow(
-        QStringLiteral("允许远程控制"), remoteDesktopControlValue_,
-        RemoteInput::isInputInjectionSupported()
-            ? QStringLiteral("关闭时对方只能看画面，动不了你的鼠标键盘。开启后无需每次确认——"
-                             "人不在电脑前时弹窗没人应答，等于让无人值守失效。")
-            : QStringLiteral("当前 macOS 版本可观看、共享并控制 Windows，暂不接受远端操作。"));
+    QString remoteControlHelp =
+        QStringLiteral("关闭时对方只能看画面，动不了你的鼠标键盘。开启后无需每次确认——"
+                       "人不在电脑前时弹窗没人应答，等于让无人值守失效。");
+#ifdef Q_OS_MAC
+    remoteControlHelp +=
+        QStringLiteral(" macOS 首次开启还需在“隐私与安全性 > 辅助功能”中允许 MaiChat。");
+#endif
+    auto* controlRow = createSettingsRow(QStringLiteral("允许远程控制"),
+                                         remoteDesktopControlValue_, remoteControlHelp);
     remoteDesktopControlToggle_ = new QCheckBox(QStringLiteral("允许"), controlRow);
     remoteDesktopControlToggle_->setObjectName(QStringLiteral("remoteControlToggle"));
     const bool canInjectInput = RemoteInput::isInputInjectionSupported();
@@ -3104,6 +3112,13 @@ QWidget* MainWindow::buildRemoteDesktopSettingsPanel(QWidget* parent) {
         settings.allowRemoteControl = checked;
         remoteDesktop_->updateSettings(settings);
         remoteDesktopSettingsStore_->save(settings);
+        if (checked && !RemoteInput::hasInputInjectionPermission()) {
+            RemoteInput::requestInputInjectionPermission();
+            AppMessageDialog::show(
+                this, AppMessageDialog::Kind::Info, QStringLiteral("需要辅助功能权限"),
+                QStringLiteral("请在“系统设置 > 隐私与安全性 > 辅助功能”中允许 MaiChat。"
+                               "授权后返回本应用即可接受远程鼠标和键盘操作。"));
+        }
         refreshRemoteDesktopSettings();
     });
     if (auto* rowLayout = qobject_cast<QHBoxLayout*>(controlRow->layout())) {
@@ -3134,11 +3149,16 @@ void MainWindow::refreshRemoteDesktopSettings() {
             RemoteInput::isInputInjectionSupported() && settings.allowRemoteControl);
     }
     if (remoteDesktopControlValue_) {
-        remoteDesktopControlValue_->setText(
-            !RemoteInput::isInputInjectionSupported()
-                ? QStringLiteral("当前平台暂不支持")
-                : settings.allowRemoteControl ? QStringLiteral("已允许")
-                                              : QStringLiteral("仅可观看"));
+        QString status = QStringLiteral("仅可观看");
+        if (!RemoteInput::isInputInjectionSupported()) {
+            status = QStringLiteral("当前平台暂不支持");
+        } else if (settings.allowRemoteControl
+                   && !RemoteInput::hasInputInjectionPermission()) {
+            status = QStringLiteral("等待辅助功能授权");
+        } else if (settings.allowRemoteControl) {
+            status = QStringLiteral("已允许");
+        }
+        remoteDesktopControlValue_->setText(status);
     }
 }
 

@@ -41,7 +41,38 @@ private slots:
     void releasesEverythingWhenDisabledOrFocusLost();
     void recomputesContentRectOnResize();
     void emergencyHotkeyStopsControlAndIsNotForwarded();
+    void sendsCanonicalKeyCodesWhenNativeCodeIsZero();
 };
+
+void RemoteInputCaptureTest::sendsCanonicalKeyCodesWhenNativeCodeIsZero() {
+    RemoteInputSender sender;
+    sender.beginSession(QStringLiteral("s1"));
+    QWidget surface;
+    surface.resize(800, 450);
+
+    RemoteInputCapture capture(sender);
+    capture.attachTo(&surface);
+    capture.setRemoteVideoSize(QSize(1920, 1080));
+    capture.setEnabled(true);
+    drain(sender, 1000);
+
+    // macOS 的 A 键原生 CGKeyCode 就是 0，旧实现会把它误判为“没有键码”。
+    QKeyEvent press(QEvent::KeyPress, Qt::Key_A, Qt::NoModifier, 0, 0, 0,
+                    QStringLiteral("a"));
+    QKeyEvent release(QEvent::KeyRelease, Qt::Key_A, Qt::NoModifier, 0, 0, 0,
+                      QStringLiteral("a"));
+    QCoreApplication::sendEvent(&surface, &press);
+    QCoreApplication::sendEvent(&surface, &release);
+
+    const auto events = allEvents(drain(sender, 1100));
+    int keyEventCount = 0;
+    for (const auto& event : events) {
+        if (event.type != EventType::Key) continue;
+        QCOMPARE(event.keyCode, 0x41u);
+        ++keyEventCount;
+    }
+    QCOMPARE(keyEventCount, 2);
+}
 
 void RemoteInputCaptureTest::emergencyHotkeyStopsControlAndIsNotForwarded() {
     RemoteInputSender sender;
@@ -60,10 +91,14 @@ void RemoteInputCaptureTest::emergencyHotkeyStopsControlAndIsNotForwarded() {
                     Qt::ControlModifier | Qt::AltModifier | Qt::ShiftModifier);
     QCOMPARE(releaseSpy.count(), 1);
 
-    // 急停键必须被本地吞掉：转发过去的话，远端会莫名其妙收到 Ctrl+Alt+Shift+Q，
-    // 而本地这条退路的意义正是"不经过远端"。
+    // Q 必须被本地吞掉；macOS 会先产生修饰键的独立按下事件，所以识别到
+    // 急停后还要补 ReleaseAll，确保远端不会留下按住的 Ctrl/Alt/Shift。
     const auto events = allEvents(drain(sender, 1100));
-    QVERIFY2(!hasType(events, EventType::Key), "急停热键被转发给了远端");
+    for (const auto& event : events) {
+        QVERIFY2(event.type != EventType::Key || event.keyCode != 0x51,
+                 "急停热键 Q 被转发给了远端");
+    }
+    QVERIFY2(hasType(events, EventType::ReleaseAll), "急停后没有释放远端已按下的修饰键");
 }
 
 void RemoteInputCaptureTest::capturesNothingUntilEnabled() {

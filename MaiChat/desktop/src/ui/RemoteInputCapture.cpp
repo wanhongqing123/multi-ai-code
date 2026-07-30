@@ -6,6 +6,8 @@
 #include <QResizeEvent>
 #include <QWheelEvent>
 
+#include "remote/RemoteKeyMapping.h"
+
 namespace {
 
 RemoteInput::MouseButton toRemoteButton(Qt::MouseButton button) {
@@ -135,7 +137,13 @@ bool RemoteInputCapture::eventFilter(QObject* watched, QEvent* event) {
                 && key->modifiers().testFlag(Qt::ControlModifier)
                 && key->modifiers().testFlag(Qt::AltModifier)
                 && key->modifiers().testFlag(Qt::ShiftModifier)) {
-                if (event->type() == QEvent::KeyPress) emit releaseControlRequested();
+                if (event->type() == QEvent::KeyPress) {
+                    // 修饰键的按下事件会先于 Q 到达，可能已经发给远端；急停时
+                    // 主动全部抬起，不能只吞掉 Q 后寄希望于后续 KeyRelease。
+                    pressedButtons_ = Qt::NoButton;
+                    sender_.queueReleaseAll();
+                    emit releaseControlRequested();
+                }
                 return true;
             }
 
@@ -144,13 +152,19 @@ bool RemoteInputCapture::eventFilter(QObject* watched, QEvent* event) {
                 return true;
             }
             const bool pressed = event->type() == QEvent::KeyPress;
-            // nativeVirtualKey 是平台原生键码，正是注入端要的；
-            // 拿 Qt::Key 转换会在符号键与布局差异上出错。
-            const quint32 nativeKey = key->nativeVirtualKey();
-            if (nativeKey != 0) sender_.queueKey(nativeKey, pressed);
+            // 协议统一使用 Windows VK 作为平台无关的物理键标识。macOS 的
+            // nativeVirtualKey 是 CGKeyCode（A 恰好为 0），直接发送会让
+            // Mac→Windows 的字母键和快捷键失效。
+            quint32 canonicalKey = RemoteInput::canonicalKeyCodeFromQt(
+                key->key(), key->modifiers().testFlag(Qt::KeypadModifier));
+#ifdef Q_OS_WIN
+            // Windows 原生值能保留左右修饰键等信息，优先使用；Qt 映射兜底。
+            if (key->nativeVirtualKey() != 0) canonicalKey = key->nativeVirtualKey();
+#endif
+            if (canonicalKey != 0) sender_.queueKey(canonicalKey, pressed);
 
             // 输入法上屏的文本没有对应键码，只能走文本通道。
-            if (pressed && nativeKey == 0 && !key->text().isEmpty()) {
+            if (pressed && canonicalKey == 0 && !key->text().isEmpty()) {
                 sender_.queueText(key->text());
             }
             return true;

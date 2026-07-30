@@ -26,4 +26,7 @@ public:
 
 private:
     bool held_ = false;
+#ifdef Q_OS_MAC
+    quint32 assertionId_ = 0;
+#endif
 };

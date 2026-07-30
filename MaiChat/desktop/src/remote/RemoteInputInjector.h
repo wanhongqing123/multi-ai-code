@@ -11,7 +11,7 @@
 // 被控端输入注入。
 //
 // 分两层：
-//   IRemoteInputSink   —— 真正落到系统的原子操作（Windows 走 SendInput）
+//   IRemoteInputSink   —— 真正落到系统的原子操作（Windows SendInput / macOS CGEvent）
 //   RemoteInputInjector —— 会话绑定、按住键跟踪、丢包兜底、危险组合键拦截
 //
 // 所有判断逻辑都在 Injector 里且不依赖平台 API，可以拿 Fake sink 完整单测；
@@ -95,9 +95,13 @@ void normalizedToVirtualDesktop(double normalizedX, double normalizedY,
                                 const VirtualDesktopRect& capturedScreen,
                                 const VirtualDesktopRect& virtualDesktop, int* outX, int* outY);
 
-// Windows 上返回 SendInput 实现；其它平台返回什么都不做的空实现。
+// Windows 返回 SendInput 实现，macOS 返回 CGEvent 实现。
 std::unique_ptr<IRemoteInputSink> createInputSink();
 // 当前平台是否实现了系统级输入注入。观看端发送输入不受此限制。
 bool isInputInjectionSupported();
+// macOS 注入需要“辅助功能”权限；Windows 始终返回 true。
+bool hasInputInjectionPermission();
+// macOS 弹出系统授权引导；其它平台为空操作。
+void requestInputInjectionPermission();
 
 }  // namespace RemoteInput

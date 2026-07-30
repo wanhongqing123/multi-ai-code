@@ -2,8 +2,12 @@
 
 #include <QtGlobal>
 
+#include "remote/RemoteKeyMapping.h"
+
 #ifdef Q_OS_WIN
 #include <windows.h>
+#elif defined(Q_OS_MAC)
+#include <ApplicationServices/ApplicationServices.h>
 #endif
 
 namespace RemoteInput {
@@ -164,6 +168,160 @@ private:
 
 #endif  // Q_OS_WIN
 
+#ifdef Q_OS_MAC
+
+CGPoint pointOnPrimaryScreen(double x, double y) {
+    const CGRect bounds = CGDisplayBounds(CGMainDisplayID());
+    const double width = qMax<CGFloat>(1.0, CGRectGetWidth(bounds) - 1.0);
+    const double height = qMax<CGFloat>(1.0, CGRectGetHeight(bounds) - 1.0);
+    return CGPointMake(CGRectGetMinX(bounds) + clampNormalized(x) * width,
+                       CGRectGetMinY(bounds) + clampNormalized(y) * height);
+}
+
+CGMouseButton cgMouseButton(MouseButton button) {
+    switch (button) {
+        case MouseButton::Right: return kCGMouseButtonRight;
+        case MouseButton::Middle: return kCGMouseButtonCenter;
+        case MouseButton::Left:
+        default: return kCGMouseButtonLeft;
+    }
+}
+
+CGEventType mouseButtonEventType(MouseButton button, bool pressed) {
+    switch (button) {
+        case MouseButton::Right:
+            return pressed ? kCGEventRightMouseDown : kCGEventRightMouseUp;
+        case MouseButton::Middle:
+            return pressed ? kCGEventOtherMouseDown : kCGEventOtherMouseUp;
+        case MouseButton::Left:
+        default:
+            return pressed ? kCGEventLeftMouseDown : kCGEventLeftMouseUp;
+    }
+}
+
+class MacInputSink final : public IRemoteInputSink {
+public:
+    void moveTo(double x, double y) override {
+        if (!AXIsProcessTrusted()) return;
+
+        CGEventType type = kCGEventMouseMoved;
+        CGMouseButton button = kCGMouseButtonLeft;
+        if (heldButtons_.contains(static_cast<int>(MouseButton::Left))) {
+            type = kCGEventLeftMouseDragged;
+        } else if (heldButtons_.contains(static_cast<int>(MouseButton::Right))) {
+            type = kCGEventRightMouseDragged;
+            button = kCGMouseButtonRight;
+        } else if (heldButtons_.contains(static_cast<int>(MouseButton::Middle))) {
+            type = kCGEventOtherMouseDragged;
+            button = kCGMouseButtonCenter;
+        }
+        postMouseEvent(type, pointOnPrimaryScreen(x, y), button);
+    }
+
+    void mouseButton(MouseButton button, bool pressed, double x, double y) override {
+        // 权限若在会话中途被撤销，抬起事件仍要清掉本地状态；否则重新授权后
+        // 下一次移动会被误判成拖拽。
+        if (!pressed) heldButtons_.remove(static_cast<int>(button));
+        if (!AXIsProcessTrusted()) return;
+
+        const CGPoint point = pointOnPrimaryScreen(x, y);
+        postMouseEvent(mouseButtonEventType(button, pressed), point, cgMouseButton(button));
+        if (pressed) {
+            heldButtons_.insert(static_cast<int>(button));
+        }
+    }
+
+    void wheel(int delta, double x, double y) override {
+        if (!AXIsProcessTrusted() || delta == 0) return;
+
+        int lines = delta / 120;
+        if (lines == 0) lines = delta > 0 ? 1 : -1;
+        CGEventRef event =
+            CGEventCreateScrollWheelEvent(nullptr, kCGScrollEventUnitLine, 1, lines);
+        if (!event) return;
+        CGEventSetLocation(event, pointOnPrimaryScreen(x, y));
+        CGEventPost(kCGHIDEventTap, event);
+        CFRelease(event);
+    }
+
+    void key(quint32 keyCode, bool pressed) override {
+        if (!AXIsProcessTrusted()) {
+            // 同鼠标：权限撤销期间收到抬起，也要清掉先前记录的修饰键状态。
+            if (!pressed) updateModifierFlags(keyCode, false);
+            return;
+        }
+
+        const int nativeKey = macKeyCodeFromCanonical(keyCode);
+        if (nativeKey < 0) return;
+        updateModifierFlags(keyCode, pressed);
+
+        CGEventRef event =
+            CGEventCreateKeyboardEvent(nullptr, static_cast<CGKeyCode>(nativeKey), pressed);
+        if (!event) return;
+        CGEventSetFlags(event, modifierFlags_);
+        CGEventPost(kCGHIDEventTap, event);
+        CFRelease(event);
+    }
+
+    void text(const QString& value) override {
+        if (!AXIsProcessTrusted() || value.isEmpty()) return;
+
+        const auto* units = reinterpret_cast<const UniChar*>(value.utf16());
+        const UniCharCount length = static_cast<UniCharCount>(value.size());
+        CGEventRef down = CGEventCreateKeyboardEvent(nullptr, 0, true);
+        CGEventRef up = CGEventCreateKeyboardEvent(nullptr, 0, false);
+        if (down) {
+            CGEventKeyboardSetUnicodeString(down, length, units);
+            CGEventPost(kCGHIDEventTap, down);
+            CFRelease(down);
+        }
+        if (up) {
+            CGEventKeyboardSetUnicodeString(up, length, units);
+            CGEventPost(kCGHIDEventTap, up);
+            CFRelease(up);
+        }
+    }
+
+private:
+    void postMouseEvent(CGEventType type, CGPoint point, CGMouseButton button) {
+        CGEventRef event = CGEventCreateMouseEvent(nullptr, type, point, button);
+        if (!event) return;
+        CGEventSetFlags(event, modifierFlags_);
+        CGEventPost(kCGHIDEventTap, event);
+        CFRelease(event);
+    }
+
+    void updateModifierFlags(quint32 keyCode, bool pressed) {
+        CGEventFlags flag = 0;
+        switch (keyCode) {
+            case 0x10:
+            case 0xa0:
+            case 0xa1: flag = kCGEventFlagMaskShift; break;
+            case 0x11:
+            case 0xa2:
+            case 0xa3: flag = kCGEventFlagMaskControl; break;
+            case 0x12:
+            case 0xa4:
+            case 0xa5: flag = kCGEventFlagMaskAlternate; break;
+            case 0x5b:
+            case 0x5c: flag = kCGEventFlagMaskCommand; break;
+            case 0x14: flag = kCGEventFlagMaskAlphaShift; break;
+            default: break;
+        }
+        if (flag == 0) return;
+        if (pressed) {
+            modifierFlags_ |= flag;
+        } else {
+            modifierFlags_ &= ~flag;
+        }
+    }
+
+    QSet<int> heldButtons_;
+    CGEventFlags modifierFlags_ = 0;
+};
+
+#endif  // Q_OS_MAC
+
 }  // namespace
 
 void normalizedToVirtualDesktop(double normalizedX, double normalizedY,
@@ -194,16 +352,40 @@ void normalizedToVirtualDesktop(double normalizedX, double normalizedY,
 std::unique_ptr<IRemoteInputSink> createInputSink() {
 #ifdef Q_OS_WIN
     return std::make_unique<WindowsInputSink>();
+#elif defined(Q_OS_MAC)
+    return std::make_unique<MacInputSink>();
 #else
     return std::make_unique<NullInputSink>();
 #endif
 }
 
 bool isInputInjectionSupported() {
-#ifdef Q_OS_WIN
+#if defined(Q_OS_WIN) || defined(Q_OS_MAC)
     return true;
 #else
     return false;
+#endif
+}
+
+bool hasInputInjectionPermission() {
+#ifdef Q_OS_MAC
+    return AXIsProcessTrusted();
+#else
+    return isInputInjectionSupported();
+#endif
+}
+
+void requestInputInjectionPermission() {
+#ifdef Q_OS_MAC
+    const void* keys[] = {kAXTrustedCheckOptionPrompt};
+    const void* values[] = {kCFBooleanTrue};
+    CFDictionaryRef options =
+        CFDictionaryCreate(kCFAllocatorDefault, keys, values, 1, &kCFCopyStringDictionaryKeyCallBacks,
+                           &kCFTypeDictionaryValueCallBacks);
+    if (options) {
+        AXIsProcessTrustedWithOptions(options);
+        CFRelease(options);
+    }
 #endif
 }
 

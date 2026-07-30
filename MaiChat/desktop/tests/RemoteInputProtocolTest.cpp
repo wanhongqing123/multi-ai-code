@@ -1,5 +1,6 @@
 #include <QtTest/QtTest>
 
+#include "remote/RemoteKeyMapping.h"
 #include "remote/RemoteInputProtocol.h"
 
 using namespace RemoteInput;
@@ -16,7 +17,28 @@ private slots:
     void rejectsOutOfRangeKeyCode();
     void reliableAndUnreliableUseDistinctCmdIds();
     void detectsPacketsTooBigForOneSend();
+    void mapsQtKeysToCanonicalCodes();
+    void mapsCanonicalCodesToMacKeys();
 };
+
+void RemoteInputProtocolTest::mapsQtKeysToCanonicalCodes() {
+    QCOMPARE(canonicalKeyCodeFromQt(Qt::Key_A, false), 0x41u);
+    QCOMPARE(canonicalKeyCodeFromQt(Qt::Key_0, false), 0x30u);
+    QCOMPARE(canonicalKeyCodeFromQt(Qt::Key_0, true), 0x60u);
+    QCOMPARE(canonicalKeyCodeFromQt(Qt::Key_Left, false), 0x25u);
+    QCOMPARE(canonicalKeyCodeFromQt(Qt::Key_F12, false), 0x7bu);
+    QCOMPARE(canonicalKeyCodeFromQt(Qt::Key_Question, false), 0xbfu);
+    QCOMPARE(canonicalKeyCodeFromQt(Qt::Key_unknown, false), 0u);
+}
+
+void RemoteInputProtocolTest::mapsCanonicalCodesToMacKeys() {
+    QCOMPARE(macKeyCodeFromCanonical(0x41), 0);    // A
+    QCOMPARE(macKeyCodeFromCanonical(0x5b), 55);   // Command
+    QCOMPARE(macKeyCodeFromCanonical(0x25), 123);  // Left
+    QCOMPARE(macKeyCodeFromCanonical(0x70), 122);  // F1
+    QCOMPARE(macKeyCodeFromCanonical(0x2e), 117);  // Forward Delete
+    QCOMPARE(macKeyCodeFromCanonical(0xffff), -1);
+}
 
 void RemoteInputProtocolTest::roundTripsEveryEventType() {
     Packet packet;

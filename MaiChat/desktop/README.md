@@ -59,11 +59,12 @@ The bundled SDK files come from the domestic Tencent download host `im.sdk.qclou
 ## Remote desktop
 
 Windows and macOS builds link the bundled Tencent TRTC SDK. Both platforms can view and
-share a desktop. A macOS viewer can send mouse and keyboard input to a Windows host;
-injecting remote input into a macOS host is not supported yet.
+share and control a desktop. The same remote-input protocol supports Windows-to-Windows,
+Windows-to-macOS, macOS-to-Windows, and macOS-to-macOS sessions.
 
 The first screen-sharing attempt on macOS triggers the system Screen Recording permission.
-Grant access to MaiChat in System Settings when prompted.
+Accepting remote mouse or keyboard input also requires Accessibility permission. Grant both
+permissions to MaiChat in System Settings when prompted.
 
 ## Windows 免安装绿色包
 

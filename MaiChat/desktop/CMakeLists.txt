@@ -82,6 +82,8 @@ add_library(remote_im_core
   src/remote/RemoteDesktopSignal.cpp
   src/remote/RemoteInputProtocol.h
   src/remote/RemoteInputProtocol.cpp
+  src/remote/RemoteKeyMapping.h
+  src/remote/RemoteKeyMapping.cpp
   src/remote/RemoteInputInjector.h
   src/remote/RemoteInputInjector.cpp
   src/remote/RemoteInputSink.cpp
@@ -104,6 +106,11 @@ add_library(remote_im_core
 )
 target_include_directories(remote_im_core PUBLIC src)
 target_link_libraries(remote_im_core PUBLIC Qt5::Core Qt5::Network Qt5::Sql ZLIB::ZLIB PRIVATE md4c)
+if(APPLE)
+  target_link_libraries(remote_im_core PRIVATE
+    "-framework ApplicationServices"
+    "-framework IOKit")
+endif()
 if(MAICHAT_TRTC_AVAILABLE)
   if(WIN32)
     target_include_directories(remote_im_core PRIVATE

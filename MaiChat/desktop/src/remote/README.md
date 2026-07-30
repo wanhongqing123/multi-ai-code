@@ -41,35 +41,34 @@ controller 不自己决定"要不要放行"，只把状态机的决策翻译成�
 | `RemoteDesktopSettings` | 模式/密码凭据/白名单/失败计数落盘 | Auth, Session |
 | `TrtcEngine` | `ITrtcEngine` 接口 + TRTC 实现 + 空实现 | 无（SDK 在 vendor） |
 | `RemoteDesktopController` | 粘合与副作用执行 | 以上全部 |
+| `RemoteInputProtocol` | 输入事件编解码、可靠/不可靠通道与坐标归一化 | 无 |
+| `RemoteKeyMapping` | Qt 按键 ↔ 协议规范键码 ↔ macOS CGKeyCode | 无 |
+| `RemoteInputSender` | 限流、合包与移动事件降频 | Protocol |
+| `RemoteInputInjector` / `RemoteInputSink` | 会话校验、悬空键兜底与 Win/macOS 系统注入 | Protocol, KeyMapping |
 
-## 二期「远程操控」的扩展点
+## 远程操控
 
-一期只做看屏幕。加鼠标键盘操控时按下面的位置插入，**不需要重构现有分层**：
+Windows 与 macOS 均可作为控制端和被控端，支持四种组合：
 
-1. **信令**：`RemoteDesktopSignal::Type` 增加 `RequestControl` / `GrantControl` /
-   `RevokeControl`。枚举 + 字符串映射两处，协议版本字段已就位。
+| 控制端 | 被控端 | 输入注入 |
+|---|---|---|
+| Windows | Windows | Win32 `SendInput` |
+| Windows | macOS | `CGEventPost` |
+| macOS | Windows | Win32 `SendInput` |
+| macOS | macOS | `CGEventPost` |
 
-2. **权限状态**：操控权是**独立于会话状态的正交维度**，应在
-   `RemoteDesktopSession` 里加 `bool controlGranted`，而不是往 `HostState`
-   里塞 `SharingWithControl` —— 后者会让状态数量翻倍。
+输入协议使用 Windows VK 值作为平台无关的规范物理键码。控制端从 Qt 键值
+转换为规范码，被控端再转换为本机键码，不能直接发送
+`QKeyEvent::nativeVirtualKey()`：macOS 的 A 键原生值就是 0，而且与 Windows VK
+完全不是同一套编号。
 
-3. **输入事件通道**：`ITrtcEngine` 增加
-   `sendCustomMessage(QByteArray)` 与 `customMessageReceived` 回调
-   （底层是 TRTC `sendCustomCmdMsg`。配额 **30 条/秒、16KB/秒，是整个客户端
-   的总量**：源码 `trtc_message_sender.cc` 里 `sendCustomCmdMsg` 与 `sendSEIMsg`
-   走同一个 `CheckIfCanSendMessage`、共用同一个计数器。实际阈值 40，文档写 30，
-   我们按 30 走留安全垫。被拒的消息照样计数，所以发送端用滑动窗口匀速发 +
-   按键优先，永不触发突发惩罚）。
-   接口加方法后，Null 实现和 fake 各补一个空实现即可。
+鼠标移动走 TRTC 不可靠通道，按键、点击、滚轮、文本和 `ReleaseAll` 走可靠
+通道。发送端遵守 `sendCustomCmdMsg` 的频率和带宽限制；接收端按会话 ID、
+序号和静默超时释放悬空按键。
 
-4. **新增两个纯模块**（与现有同级，仍可完整单测）：
-   - `RemoteInputEvent`：鼠标/键盘事件的编解码 + 坐标归一化
-     （远端分辨率 ↔ 本地视图尺寸的换算是纯函数，必须单测）
-   - `InputInjector`：`IInputInjector` 接口 + Win32 `SendInput` 实现 + fake。
-     注入是不可逆副作用，**必须**放在接口后面，否则测试会真的动鼠标。
-
-5. **安全**：操控权需要二次授权（不能因为对方能看就自动能控），
-   走与 invite 同样的"状态机决策 + controller 执行"路径。
+macOS 被控端必须获得系统“辅助功能”权限，屏幕共享还需要“屏幕录制”权限。
+设置页会显示授权状态。共享期间 Windows 和 macOS 都会阻止自动休眠，结束
+会话后恢复系统默认策略。
 
 ## 测试
 

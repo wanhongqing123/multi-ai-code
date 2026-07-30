@@ -158,9 +158,12 @@ private:
         if (!sources) return false;
 
         bool selected = false;
+        int fallbackIndex = -1;
         for (uint32_t i = 0; i < sources->getCount(); ++i) {
             const liteav::TRTCScreenCaptureSourceInfo info = sources->getSourceInfo(i);
             if (info.type != liteav::TRTCScreenCaptureSourceTypeScreen) continue;
+            if (fallbackIndex < 0) fallbackIndex = static_cast<int>(i);
+            if (!info.isMainScreen) continue;
             // 空 RECT = 采集整个源，不做区域裁剪。
             const liteav::RECT captureRect{0, 0, 0, 0};
             liteav::TRTCScreenCaptureProperty property;
@@ -170,6 +173,16 @@ private:
             cloud_->selectScreenCaptureTarget(info, captureRect, property);
             selected = true;
             break;
+        }
+        if (!selected && fallbackIndex >= 0) {
+            const liteav::TRTCScreenCaptureSourceInfo info =
+                sources->getSourceInfo(static_cast<uint32_t>(fallbackIndex));
+            const liteav::RECT captureRect{0, 0, 0, 0};
+            liteav::TRTCScreenCaptureProperty property;
+            property.enableCaptureMouse = true;
+            property.enableHighLight = false;
+            cloud_->selectScreenCaptureTarget(info, captureRect, property);
+            selected = true;
         }
         sources->release();
         return selected;

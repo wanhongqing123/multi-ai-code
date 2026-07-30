@@ -48,7 +48,9 @@ public:
     explicit TrtcEngine(const TrtcNetworkProxyConfig& proxy) {
         initializationError_ = configureNetworkProxy(proxy);
         if (!initializationError_.isEmpty()) {
-            qWarning().noquote() << initializationError_;
+            // 消息体本身是要显示给用户的中文，这里只补一个英文标签，
+            // 便于在日志里定位与检索。
+            qWarning().noquote() << QStringLiteral("[trtc] init failed: ") + initializationError_;
             return;
         }
         cloud_ = getTRTCShareInstance();

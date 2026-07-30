@@ -101,8 +101,11 @@ InputVerdict remoteInputVerdict(HostState currentState, bool allowRemoteControl,
                                 const QString& currentSessionId, const QString& currentPeerUserId,
                                 const QString& packetSessionId, const QString& fromUserId);
 
-// 日志用的短名，不面向用户。
+// 以下三个都是日志用的短名，不面向用户，一律英文——日志文件要能在任何
+// 编码环境下被原样读出来、能直接贴进 issue 搜索。
 const char* inputVerdictName(InputVerdict verdict);
+const char* hostStateName(HostState state);
+const char* viewerStateName(ViewerState state);
 
 bool shouldAcceptRemoteInput(HostState currentState, bool allowRemoteControl,
                              const QString& currentSessionId, const QString& currentPeerUserId,

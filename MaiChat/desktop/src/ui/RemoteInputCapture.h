@@ -4,6 +4,8 @@
 #include <QPointer>
 #include <QWidget>
 
+class QTimer;
+
 #include "remote/RemoteInputSender.h"
 
 // 控制端采集：把画面控件上的鼠标键盘事件翻译成归一化输入，喂给 sender。
@@ -43,6 +45,8 @@ private:
     // MouseMove，悬空移动完全采集不到。退出控制时还原原值。
     void beginMouseTracking();
     void endMouseTracking();
+    // 每秒往应用日志写一条采集汇总。只在控制期间跑。
+    void flushTrace();
 
     RemoteInput::RemoteInputSender& sender_;
     QPointer<QWidget> surface_;
@@ -54,4 +58,13 @@ private:
     // 不会产生按下，也就不该凭空发一个抬起过去。
     // 用集合而不是单个 bool，是为了左键拖拽途中右键点一下也能各自配对。
     Qt::MouseButtons pressedButtons_ = Qt::NoButton;
+
+    // 诊断计数：区分"Qt 没收到事件"与"收到了但没入队"。前者说明事件在到达
+    // Qt 之前就被 SDK 的渲染子窗口截走了，后者说明坐标映射有问题。
+    QTimer* traceTimer_ = nullptr;
+    int traceMoveSeen_ = 0;
+    int traceMoveQueued_ = 0;
+    int traceButtonSeen_ = 0;
+    int traceWheelSeen_ = 0;
+    int traceKeySeen_ = 0;
 };

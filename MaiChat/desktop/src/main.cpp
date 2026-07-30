@@ -10,6 +10,7 @@
 
 #include "app/RemoteIMApplication.h"
 #include "im/RemoteIMCredentialDefaults.h"
+#include "logging/AppLog.h"
 #include "im/TencentUserSigGenerator.h"
 #include "platform/DesktopRemoteIMClientFactory.h"
 #include "storage/LocalMessageDatabase.h"
@@ -45,6 +46,14 @@ int main(int argc, char* argv[]) {
     // 与其它应用的数据树分开。
     QApplication::setApplicationName(QStringLiteral("Desktop IM"));
     QApplication::setOrganizationName(QStringLiteral("MaiChat"));
+#ifdef MAICHAT_VERSION
+    QApplication::setApplicationVersion(QStringLiteral(MAICHAT_VERSION));
+#endif
+
+    // 必须在上面三行之后：日志目录是按组织名/应用名推导的。放在这里也保证了
+    // 后续所有 qInfo/qWarning（含 Qt 自身的）都能落盘——GUI 子系统下 stderr
+    // 没有去处，不接管的话双击启动等于完全没有日志。
+    AppLog::install();
 
     // 接收图片/文件需要走 HTTPS 下载（QNetworkAccessManager），Qt 5.15 依赖 OpenSSL 1.1。
     // 未随包携带 libssl/libcrypto 时 supportsSsl() 为假，图片/文件下载会静默失败——
@@ -54,8 +63,8 @@ int main(int argc, char* argv[]) {
                              .arg(QSslSocket::sslLibraryBuildVersionString());
     if (!QSslSocket::supportsSsl()) {
         qWarning().noquote() << QStringLiteral(
-            "[remote-im] OpenSSL 不可用：接收到的图片/文件将无法下载显示，请随应用携带 "
-            "libssl-1_1-x64.dll 与 libcrypto-1_1-x64.dll。");
+            "[remote-im] OpenSSL unavailable: received images/files cannot be downloaded. "
+            "Ship libssl-1_1-x64.dll and libcrypto-1_1-x64.dll alongside the app.");
     }
 
 #ifdef Q_OS_WIN

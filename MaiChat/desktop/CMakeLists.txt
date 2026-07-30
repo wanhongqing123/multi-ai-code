@@ -78,6 +78,8 @@ add_library(remote_im_core
   src/storage/LocalSettingsStore.cpp
   src/storage/RemoteIMMediaStore.h
   src/storage/RemoteIMMediaStore.cpp
+  src/logging/AppLog.h
+  src/logging/AppLog.cpp
   src/remote/RemoteDesktopSignal.h
   src/remote/RemoteDesktopSignal.cpp
   src/remote/RemoteInputProtocol.h
@@ -89,8 +91,6 @@ add_library(remote_im_core
   src/remote/RemoteInputSink.cpp
   src/remote/RemoteInputSender.h
   src/remote/RemoteInputSender.cpp
-  src/remote/RemoteInputTrace.h
-  src/remote/RemoteInputTrace.cpp
   src/remote/DisplaySleepBlocker.h
   src/remote/DisplaySleepBlocker.cpp
   src/remote/SecureDesktopMonitor.h
@@ -181,6 +181,9 @@ add_executable(maichat
   src/platform/WindowsRemoteIMClient.h
   src/platform/WindowsRemoteIMClient.cpp
 )
+# 版本号带进运行时：日志第一行就得答出"用户跑的到底是哪个包"，
+# 这个问题每次排障都要问一遍。
+target_compile_definitions(maichat PRIVATE MAICHAT_VERSION="${PROJECT_VERSION}")
 if(WIN32)
   # GUI 子系统（/SUBSYSTEM:WINDOWS）：不加时 exe 是控制台程序，双击启动会先弹一个
   # 黑色控制台窗口再出界面。Qt5::Core 会对 WIN32_EXECUTABLE 目标自动链接

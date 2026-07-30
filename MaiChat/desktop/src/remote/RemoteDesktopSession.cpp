@@ -43,6 +43,26 @@ const char* inputVerdictName(InputVerdict verdict) {
     return "unknown";
 }
 
+const char* hostStateName(HostState state) {
+    switch (state) {
+        case HostState::Idle: return "idle";
+        case HostState::AwaitingConsent: return "awaiting-consent";
+        case HostState::Sharing: return "sharing";
+    }
+    return "unknown";
+}
+
+const char* viewerStateName(ViewerState state) {
+    switch (state) {
+        case ViewerState::Idle: return "idle";
+        case ViewerState::Inviting: return "inviting";
+        case ViewerState::Connecting: return "connecting";
+        case ViewerState::Viewing: return "viewing";
+        case ViewerState::Failed: return "failed";
+    }
+    return "unknown";
+}
+
 bool shouldAcceptRemoteInput(HostState currentState, bool allowRemoteControl,
                              const QString& currentSessionId, const QString& currentPeerUserId,
                              const QString& packetSessionId, const QString& fromUserId) {

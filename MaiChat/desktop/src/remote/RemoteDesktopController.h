@@ -127,7 +127,7 @@ private:
     void startHostControlSide();
     void stopHostControlSide();
     // 诊断日志每秒汇总一次输出。移动包一秒二十几个，一包一行会把日志冲垮，
-    // 也看不出趋势。默认不开销：traceEnabled() 为假时这些计数根本不累加。
+    // 也看不出趋势。空闲时不产生任何输出，只有真在会话里才写。
     void flushInputTrace(qint64 nowMs);
 
     Config config_;
@@ -160,7 +160,7 @@ private:
     QTimer* hostWatchdogTimer_ = nullptr;
     DisplaySleepBlocker sleepBlocker_;
 
-    // ---- 诊断计数（仅在 MAICHAT_REMOTE_INPUT_TRACE 打开时累加）----
+    // ---- 诊断计数，每秒汇总一行进应用日志 ----
     qint64 traceWindowStartMs_ = 0;
     // 控制端：发出去多少、被 SDK 拒了多少、因状态没就绪压根没发多少。
     int traceSentOk_ = 0;

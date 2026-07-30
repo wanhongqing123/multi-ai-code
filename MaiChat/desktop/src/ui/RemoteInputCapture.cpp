@@ -1,9 +1,11 @@
 #include "ui/RemoteInputCapture.h"
 
+#include <QDebug>
 #include <QEvent>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QResizeEvent>
+#include <QTimer>
 #include <QWheelEvent>
 
 #include "remote/RemoteKeyMapping.h"
@@ -21,7 +23,16 @@ RemoteInput::MouseButton toRemoteButton(Qt::MouseButton button) {
 }  // namespace
 
 RemoteInputCapture::RemoteInputCapture(RemoteInput::RemoteInputSender& sender, QObject* parent)
-    : QObject(parent), sender_(sender) {}
+    : QObject(parent), sender_(sender) {
+    // 控制期间每秒汇总一次采集情况——这是整条链路上唯一能回答"Qt 到底有没有
+    // 收到鼠标事件"的地方：画面是 SDK 渲染的原生窗口，它若在上面盖了自己的
+    // 子窗口把鼠标吃掉，事件过滤器就一次都不会触发，而下游看起来只是"没有
+    // 输入产生"，两者从发送侧分不出来。
+    // 定时器只在控制期间跑，平时不产生任何日志。
+    traceTimer_ = new QTimer(this);
+    traceTimer_->setInterval(1000);
+    connect(traceTimer_, &QTimer::timeout, this, &RemoteInputCapture::flushTrace);
+}
 
 void RemoteInputCapture::attachTo(QWidget* surface) {
     if (surface_ == surface) return;
@@ -78,6 +89,53 @@ void RemoteInputCapture::setEnabled(bool enabled) {
     } else {
         endMouseTracking();
     }
+
+    if (enabled_) {
+        qInfo().noquote()
+            << QStringLiteral(
+                   "[remote-input] capture: control started (surface=%1, mouseTracking=%2, "
+                   "contentRect=%3)")
+                   .arg(surface_ ? QStringLiteral("bound") : QStringLiteral("none"))
+                   .arg(surface_ && surface_->hasMouseTracking() ? QStringLiteral("on")
+                                                                 : QStringLiteral("off"))
+                   .arg(sender_.contentRect().isEmpty()
+                            ? QStringLiteral("empty (all coordinate mapping will fail)")
+                            : QStringLiteral("ok"));
+        traceTimer_->start();
+    } else {
+        flushTrace();
+        traceTimer_->stop();
+        qInfo().noquote() << QStringLiteral("[remote-input] capture: control stopped");
+    }
+}
+
+void RemoteInputCapture::flushTrace() {
+    const bool sawAnything = traceMoveSeen_ > 0 || traceButtonSeen_ > 0 || traceWheelSeen_ > 0
+                             || traceKeySeen_ > 0;
+    // 一个事件都没收到时也要说话，而且要说得明确——这正是"SDK 把鼠标吃了"的
+    // 特征，日志里空着的话会被当成"用户没动鼠标"。
+    if (!sawAnything) {
+        qInfo().noquote() << QStringLiteral(
+            "[remote-input] capture: no mouse/keyboard event reached Qt in the last 1s "
+            "(if you were moving the mouse over the video area, the SDK render child window "
+            "is swallowing the events before Qt sees them)");
+        return;
+    }
+    qInfo().noquote()
+        << QStringLiteral(
+               "[remote-input] capture: moves seen=%1 queued=%2 dropped-letterbox=%3 | "
+               "buttons=%4 wheel=%5 keys=%6")
+               .arg(traceMoveSeen_)
+               .arg(traceMoveQueued_)
+               .arg(traceMoveSeen_ - traceMoveQueued_)
+               .arg(traceButtonSeen_)
+               .arg(traceWheelSeen_)
+               .arg(traceKeySeen_);
+    traceMoveSeen_ = 0;
+    traceMoveQueued_ = 0;
+    traceButtonSeen_ = 0;
+    traceWheelSeen_ = 0;
+    traceKeySeen_ = 0;
 }
 
 void RemoteInputCapture::refreshContentRect() {
@@ -110,7 +168,11 @@ bool RemoteInputCapture::eventFilter(QObject* watched, QEvent* event) {
             auto* mouse = static_cast<QMouseEvent*>(event);
             double x = 0.0;
             double y = 0.0;
-            if (mapPosition(mouse->localPos(), &x, &y)) sender_.queueMouseMove(x, y);
+            ++traceMoveSeen_;
+            if (mapPosition(mouse->localPos(), &x, &y)) {
+                sender_.queueMouseMove(x, y);
+                ++traceMoveQueued_;
+            }
             return true;
         }
         case QEvent::MouseButtonPress:
@@ -118,6 +180,7 @@ bool RemoteInputCapture::eventFilter(QObject* watched, QEvent* event) {
             auto* mouse = static_cast<QMouseEvent*>(event);
             double x = 0.0;
             double y = 0.0;
+            ++traceButtonSeen_;
             if (!mapPosition(mouse->localPos(), &x, &y)) return true;
             pressedButtons_ |= mouse->button();
             sender_.queueMouseButton(toRemoteButton(mouse->button()), true, x, y);
@@ -148,6 +211,7 @@ bool RemoteInputCapture::eventFilter(QObject* watched, QEvent* event) {
 #else
             const QPointF pos = wheel->posF();
 #endif
+            ++traceWheelSeen_;
             if (!mapPosition(pos, &x, &y)) return true;
             sender_.queueWheel(wheel->angleDelta().y(), x, y);
             return true;
@@ -155,6 +219,7 @@ bool RemoteInputCapture::eventFilter(QObject* watched, QEvent* event) {
         case QEvent::KeyPress:
         case QEvent::KeyRelease: {
             auto* key = static_cast<QKeyEvent*>(event);
+            ++traceKeySeen_;
 
             // 急停热键：本地吞掉，绝不转发给远端。
             // 控制期间鼠标可能被注入的动作带偏（同机自测时尤其明显），

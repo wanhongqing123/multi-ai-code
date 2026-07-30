@@ -106,33 +106,60 @@ void MainWindowLayoutTest::settingsPanelBorderIsNotCoveredByRows() {
     const QImage painted = panel->grab().toImage();
     QVERIFY(!painted.isNull());
 
-    // 面板布局边距为 0，行控件正好铺在那 1px 边框上。行只要有不透明背景，
-    // 就会把左右竖边整段盖掉——只剩标题区一小截还在，看着像"线断了"。
-    // 所以这里断言的是"画出来了什么"：沿高度多点采样，左右边框都得在。
-    const QRgb border = qRgb(0xda, 0xe4, 0xf0);
+    // 子控件不得覆盖面板外框。这里断言的是"画出来了什么"：
+    // 沿高度多点采样，左右边框都得在。
     const auto nearBorder = [](QRgb c) {
         // 抗锯齿会让边框像素略有出入，允许小幅偏差但必须明显不是白色。
         return qAbs(qRed(c) - 0xda) < 24 && qAbs(qGreen(c) - 0xe4) < 24
                && qAbs(qBlue(c) - 0xf0) < 24;
     };
-    Q_UNUSED(border);
 
     int leftHits = 0;
     int rightHits = 0;
     int sampled = 0;
-    for (int y = 8; y < painted.height() - 8; y += 12) {
+    QStringList leftMisses;
+    QStringList rightMisses;
+    const auto describeMiss = [](int y, QRgb first, QRgb second) {
+        return QStringLiteral("y=%1 [%2,%3]")
+            .arg(y)
+            .arg(QString::number(first & 0x00ffffff, 16).rightJustified(6, QLatin1Char('0')))
+            .arg(QString::number(second & 0x00ffffff, 16).rightJustified(6, QLatin1Char('0')));
+    };
+    // 圆角边界会产生平台相关的抗锯齿像素，竖边检查应避开四个圆角。
+    const int cornerGuard = UiZoom::s(12);
+    for (int y = cornerGuard; y < painted.height() - cornerGuard; y += UiZoom::s(12)) {
         ++sampled;
-        if (nearBorder(painted.pixel(0, y)) || nearBorder(painted.pixel(1, y))) ++leftHits;
+        const QRgb leftOuter = painted.pixel(0, y);
+        const QRgb leftInner = painted.pixel(1, y);
+        if (nearBorder(leftOuter) || nearBorder(leftInner)) {
+            ++leftHits;
+        } else {
+            leftMisses.append(describeMiss(y, leftOuter, leftInner));
+        }
         const int w = painted.width();
-        if (nearBorder(painted.pixel(w - 1, y)) || nearBorder(painted.pixel(w - 2, y))) {
+        const QRgb rightOuter = painted.pixel(w - 1, y);
+        const QRgb rightInner = painted.pixel(w - 2, y);
+        if (nearBorder(rightOuter) || nearBorder(rightInner)) {
             ++rightHits;
+        } else {
+            rightMisses.append(describeMiss(y, rightOuter, rightInner));
         }
     }
     QVERIFY(sampled > 5);
     QVERIFY2(leftHits == sampled,
-             qPrintable(QStringLiteral("左边框只在 %1/%2 个采样点上存在").arg(leftHits).arg(sampled)));
+             qPrintable(QStringLiteral("左边框只在 %1/%2 个采样点上存在，面板 %3x%4，缺失：%5")
+                            .arg(leftHits)
+                            .arg(sampled)
+                            .arg(painted.width())
+                            .arg(painted.height())
+                            .arg(leftMisses.join(QStringLiteral("; ")))));
     QVERIFY2(rightHits == sampled,
-             qPrintable(QStringLiteral("右边框只在 %1/%2 个采样点上存在").arg(rightHits).arg(sampled)));
+             qPrintable(QStringLiteral("右边框只在 %1/%2 个采样点上存在，面板 %3x%4，缺失：%5")
+                            .arg(rightHits)
+                            .arg(sampled)
+                            .arg(painted.width())
+                            .arg(painted.height())
+                            .arg(rightMisses.join(QStringLiteral("; ")))));
 }
 
 void MainWindowLayoutTest::exposesDesktopChatLayoutControls() {

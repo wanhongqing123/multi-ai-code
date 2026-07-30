@@ -28,6 +28,19 @@ public:
 
 #ifdef MAICHAT_HAVE_TRTC
 
+// 屏幕采集接口用到的 SIZE / RECT 在两个平台上住在不同命名空间：
+// Windows 版 SDK 直接用 windows.h 的全局 ::SIZE / ::RECT
+//（见 ITRTCCloud.h:999 的 getScreenCaptureSources 签名）；
+// macOS 没有 windows.h，SDK 自己在 liteav 里补了同名类型。
+// 写死任何一边都会让另一边编译不过，所以在这里收敛成一组别名。
+#ifdef Q_OS_WIN
+using TrtcCaptureSize = ::SIZE;
+using TrtcCaptureRect = ::RECT;
+#else
+using TrtcCaptureSize = liteav::SIZE;
+using TrtcCaptureRect = liteav::RECT;
+#endif
+
 class TrtcEngine final : public ITrtcEngine, public liteav::ITRTCCloudCallback {
 public:
     TrtcEngine() : cloud_(getTRTCShareInstance()) {
@@ -154,7 +167,7 @@ private:
     bool selectPrimaryScreen() {
         if (!cloud_) return false;
         liteav::ITRTCScreenCaptureSourceList* sources =
-            cloud_->getScreenCaptureSources(liteav::SIZE{0, 0}, liteav::SIZE{0, 0});
+            cloud_->getScreenCaptureSources(TrtcCaptureSize{0, 0}, TrtcCaptureSize{0, 0});
         if (!sources) return false;
 
         bool selected = false;
@@ -165,7 +178,7 @@ private:
             if (fallbackIndex < 0) fallbackIndex = static_cast<int>(i);
             if (!info.isMainScreen) continue;
             // 空 RECT = 采集整个源，不做区域裁剪。
-            const liteav::RECT captureRect{0, 0, 0, 0};
+            const TrtcCaptureRect captureRect{0, 0, 0, 0};
             liteav::TRTCScreenCaptureProperty property;
             property.enableCaptureMouse = true;
             // 不给被采集的屏幕加高亮描边：整屏共享时那圈边框只会干扰观看。
@@ -177,7 +190,7 @@ private:
         if (!selected && fallbackIndex >= 0) {
             const liteav::TRTCScreenCaptureSourceInfo info =
                 sources->getSourceInfo(static_cast<uint32_t>(fallbackIndex));
-            const liteav::RECT captureRect{0, 0, 0, 0};
+            const TrtcCaptureRect captureRect{0, 0, 0, 0};
             liteav::TRTCScreenCaptureProperty property;
             property.enableCaptureMouse = true;
             property.enableHighLight = false;

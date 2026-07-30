@@ -89,6 +89,8 @@ add_library(remote_im_core
   src/remote/RemoteInputSink.cpp
   src/remote/RemoteInputSender.h
   src/remote/RemoteInputSender.cpp
+  src/remote/RemoteInputTrace.h
+  src/remote/RemoteInputTrace.cpp
   src/remote/DisplaySleepBlocker.h
   src/remote/DisplaySleepBlocker.cpp
   src/remote/SecureDesktopMonitor.h

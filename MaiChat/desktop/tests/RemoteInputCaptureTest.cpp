@@ -42,7 +42,39 @@ private slots:
     void recomputesContentRectOnResize();
     void emergencyHotkeyStopsControlAndIsNotForwarded();
     void sendsCanonicalKeyCodesWhenNativeCodeIsZero();
+    void enablesMouseTrackingWhileControlling();
 };
+
+void RemoteInputCaptureTest::enablesMouseTrackingWhileControlling() {
+    RemoteInputSender sender;
+    sender.beginSession(QStringLiteral("s1"));
+    QWidget first;
+    first.resize(800, 450);
+    QWidget second;
+    second.resize(800, 450);
+
+    RemoteInputCapture capture(sender);
+    capture.attachTo(&first);
+    capture.setRemoteVideoSize(QSize(1920, 1080));
+
+    // 这里只能断言属性，不能断言"悬空移动产生了事件"：mouseTracking 是窗口
+    // 系统投递阶段的开关，而 sendEvent 直接把事件塞进事件过滤器，绕过了这一
+    // 判定——用它造的 MouseMove 开不开 tracking 都会到达，测不出真问题。
+    QVERIFY2(!first.hasMouseTracking(), "没开控制就动了画面控件的 mouseTracking");
+
+    capture.setEnabled(true);
+    QVERIFY2(first.hasMouseTracking(),
+             "控制期间没开 mouseTracking：Qt 只在按住键时才投递 MouseMove，"
+             "悬空移动鼠标一个事件都采集不到，远端光标不会动");
+
+    // 一次只控一台，切目标时旧画面要还原、新画面要接上。
+    capture.attachTo(&second);
+    QVERIFY2(!first.hasMouseTracking(), "换目标后没还原上一块画面的 mouseTracking");
+    QVERIFY2(second.hasMouseTracking(), "换目标后新画面没开 mouseTracking");
+
+    capture.setEnabled(false);
+    QVERIFY2(!second.hasMouseTracking(), "退出控制后没还原 mouseTracking");
+}
 
 void RemoteInputCaptureTest::sendsCanonicalKeyCodesWhenNativeCodeIsZero() {
     RemoteInputSender sender;

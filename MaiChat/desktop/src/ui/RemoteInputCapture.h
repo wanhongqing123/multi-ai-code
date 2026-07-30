@@ -39,11 +39,17 @@ private:
     void refreshContentRect();
     // 返回 false 表示这个位置不该产生输入（落在黑边上且不是拖拽中）。
     bool mapPosition(const QPointF& pos, double* x, double* y) const;
+    // 控制期间必须开画面控件的 mouseTracking，否则 Qt 只在按住键时才投递
+    // MouseMove，悬空移动完全采集不到。退出控制时还原原值。
+    void beginMouseTracking();
+    void endMouseTracking();
 
     RemoteInput::RemoteInputSender& sender_;
     QPointer<QWidget> surface_;
     QSize remoteVideoSize_;
     bool enabled_ = false;
+    bool mouseTrackingApplied_ = false;
+    bool mouseTrackingRestore_ = false;
     // 我们**确实发出过按下**的键。只有它们的抬起才该转发：在黑边上点一下
     // 不会产生按下，也就不该凭空发一个抬起过去。
     // 用集合而不是单个 bool，是为了左键拖拽途中右键点一下也能各自配对。

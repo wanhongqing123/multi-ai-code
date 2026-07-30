@@ -25,12 +25,31 @@ RemoteInputCapture::RemoteInputCapture(RemoteInput::RemoteInputSender& sender, Q
 
 void RemoteInputCapture::attachTo(QWidget* surface) {
     if (surface_ == surface) return;
+    // 换目标前先把上一块画面的鼠标跟踪还原，别把属性留在别人身上。
+    endMouseTracking();
     if (surface_) surface_->removeEventFilter(this);
     surface_ = surface;
     if (surface_) {
         surface_->installEventFilter(this);
+        if (enabled_) beginMouseTracking();
         refreshContentRect();
     }
+}
+
+void RemoteInputCapture::beginMouseTracking() {
+    if (!surface_ || mouseTrackingApplied_) return;
+    // 不开这个，Qt 只在**按住键**时才投递 MouseMove（隐式抓取），悬空移动
+    // 鼠标一个事件都不产生——远端光标纹丝不动，而点击、滚轮、键盘全都正常，
+    // 看起来特别像"链路通了但鼠标没实现"。实测踩过。
+    mouseTrackingRestore_ = surface_->hasMouseTracking();
+    surface_->setMouseTracking(true);
+    mouseTrackingApplied_ = true;
+}
+
+void RemoteInputCapture::endMouseTracking() {
+    if (surface_ && mouseTrackingApplied_) surface_->setMouseTracking(mouseTrackingRestore_);
+    // surface_ 可能已经析构（QPointer 置空），标志位无论如何都要清掉。
+    mouseTrackingApplied_ = false;
 }
 
 void RemoteInputCapture::setRemoteVideoSize(const QSize& size) {
@@ -51,6 +70,13 @@ void RemoteInputCapture::setEnabled(bool enabled) {
         // 控制态下才需要键盘焦点，否则会抢走聊天输入框的按键。
         surface_->setFocusPolicy(enabled_ ? Qt::StrongFocus : Qt::NoFocus);
         if (enabled_) surface_->setFocus(Qt::OtherFocusReason);
+    }
+    // 同理只在控制期间开鼠标跟踪：平时开着会让光标每划过画面一次就走一遍
+    // 事件过滤器，纯属白烧。
+    if (enabled_) {
+        beginMouseTracking();
+    } else {
+        endMouseTracking();
     }
 }
 

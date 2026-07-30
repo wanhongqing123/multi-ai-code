@@ -84,6 +84,26 @@ HostDecision decideOnInvite(const HostInviteInput& input);
 //   2. 设置里开了「允许远程控制」（默认关，独立于观看权限）
 //   3. 会话 ID 对得上（拒收上一场会话的残留包）
 //   4. 发来的人就是当前会话的对端
+//
+// 拒绝原因。四个条件对外表现都是"远端鼠标不动"，排查时必须能区分：
+// 是没在共享、开关没开、还是包对不上号。
+enum class InputVerdict {
+    Accepted,
+    NotSharing,        // 1
+    ControlDisabled,   // 2
+    SessionMismatch,   // 3
+    PeerMismatch       // 4
+};
+
+// 供日志/诊断使用；shouldAcceptRemoteInput 就是它的布尔化包装，
+// 两者不会各判一套。
+InputVerdict remoteInputVerdict(HostState currentState, bool allowRemoteControl,
+                                const QString& currentSessionId, const QString& currentPeerUserId,
+                                const QString& packetSessionId, const QString& fromUserId);
+
+// 日志用的短名，不面向用户。
+const char* inputVerdictName(InputVerdict verdict);
+
 bool shouldAcceptRemoteInput(HostState currentState, bool allowRemoteControl,
                              const QString& currentSessionId, const QString& currentPeerUserId,
                              const QString& packetSessionId, const QString& fromUserId);

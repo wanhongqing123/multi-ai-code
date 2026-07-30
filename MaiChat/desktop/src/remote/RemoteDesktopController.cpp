@@ -7,6 +7,7 @@
 
 #include "remote/RemoteDesktopAuth.h"
 #include "remote/RemoteDesktopSession.h"
+#include "remote/RemoteInputTrace.h"
 
 using namespace RemoteDesktop;
 using RemoteDesktopSignals::Signal;
@@ -115,13 +116,92 @@ void RemoteDesktopController::tickHostWatchdogs(qint64 nowMs) {
 }
 
 void RemoteDesktopController::flushPendingInput(qint64 nowMs) {
-    if (!engine_ || viewerState_ != ViewerState::Viewing) return;
+    if (!engine_ || viewerState_ != ViewerState::Viewing) {
+        // 状态没到 Viewing 时输入是攒着发不出去的。这一条专门为了区分
+        // "对面没收到"和"我根本没发"——首帧没到达导致状态卡在 Connecting
+        // 是踩过的坑，画面正常显示但一个包都发不出去。
+        if (RemoteInput::traceEnabled() && inputSender_.isSessionActive()) {
+            ++traceBlockedNotViewing_;
+        }
+        flushInputTrace(nowMs);
+        return;
+    }
     for (const auto& packet : inputSender_.flush(nowMs)) {
         const bool reliable = packet.channel == RemoteInput::Channel::Reliable;
-        engine_->sendCustomMessage(
+        const bool ok = engine_->sendCustomMessage(
             reliable ? RemoteInput::kCmdIdReliable : RemoteInput::kCmdIdUnreliable,
             packet.payload, reliable, reliable);
+        if (RemoteInput::traceEnabled()) {
+            // SDK 的返回值以前是丢掉的。它为假意味着 TRTC 自己把包拒了
+            // （限频、角色不对、没在房间里），和"发出去但对面没收到"是
+            // 完全不同的两回事，必须分开记。
+            if (ok) {
+                ++traceSentOk_;
+            } else {
+                ++traceSentRejected_;
+            }
+        }
     }
+    flushInputTrace(nowMs);
+}
+
+void RemoteDesktopController::flushInputTrace(qint64 nowMs) {
+    if (!RemoteInput::traceEnabled()) return;
+    if (traceWindowStartMs_ == 0) traceWindowStartMs_ = nowMs;
+    if (nowMs - traceWindowStartMs_ < 1000) return;
+    traceWindowStartMs_ = nowMs;
+
+    const bool viewerBusy = traceSentOk_ > 0 || traceSentRejected_ > 0
+                            || traceBlockedNotViewing_ > 0;
+    const bool hostBusy = traceRecvPackets_ > 0 || traceRecvBadPayload_ > 0
+                          || traceRecvDenied_ > 0;
+
+    if (!viewerBusy && !hostBusy) {
+        // 完全没动静时也得定期报个到，否则"日志里什么都没有"会同时对应
+        // 「没收到包」和「日志压根没开」两种情况，等于白记。
+        // 但也不能每秒一行把有用的信息淹掉，所以降到 5 秒一次。
+        if (++traceQuietWindows_ < 5) return;
+        traceQuietWindows_ = 0;
+        if (hostState_ == RemoteDesktop::HostState::Sharing) {
+            RemoteInput::trace(
+                QStringLiteral("[被控端] 共享中，近 5 秒没有收到任何输入包"
+                               "（允许控制=%1，对端=%2）")
+                    .arg(settings_.allowRemoteControl ? QStringLiteral("是") : QStringLiteral("否"))
+                    .arg(hostPeerId_.isEmpty() ? QStringLiteral("(空)") : hostPeerId_));
+        }
+        if (viewerState_ == ViewerState::Viewing) {
+            RemoteInput::trace(QStringLiteral("[控制端] 画面已连接，近 5 秒没有产生任何输入"));
+        }
+        return;
+    }
+    traceQuietWindows_ = 0;
+
+    if (viewerBusy) {
+        RemoteInput::trace(
+            QStringLiteral("[控制端] 已发=%1 被SDK拒=%2 未就绪未发=%3 viewerState=%4")
+                .arg(traceSentOk_)
+                .arg(traceSentRejected_)
+                .arg(traceBlockedNotViewing_)
+                .arg(static_cast<int>(viewerState_)));
+    }
+    if (hostBusy) {
+        RemoteInput::trace(
+            QStringLiteral("[被控端] 收包=%1 坏包=%2 被门禁拒=%3(%4) 已注入事件=%5 hostState=%6")
+                .arg(traceRecvPackets_)
+                .arg(traceRecvBadPayload_)
+                .arg(traceRecvDenied_)
+                .arg(QLatin1String(RemoteDesktop::inputVerdictName(traceLastVerdict_)))
+                .arg(traceInjectedEvents_)
+                .arg(static_cast<int>(hostState_)));
+    }
+
+    traceSentOk_ = 0;
+    traceSentRejected_ = 0;
+    traceBlockedNotViewing_ = 0;
+    traceRecvPackets_ = 0;
+    traceRecvBadPayload_ = 0;
+    traceRecvDenied_ = 0;
+    traceInjectedEvents_ = 0;
 }
 
 void RemoteDesktopController::handleCustomMessage(const QString& fromUserId, int cmdId,
@@ -129,20 +209,38 @@ void RemoteDesktopController::handleCustomMessage(const QString& fromUserId, int
     if (injector_ == nullptr) return;
     if (cmdId != RemoteInput::kCmdIdReliable && cmdId != RemoteInput::kCmdIdUnreliable) return;
 
+    // 计数放在解包之前：能走到这里就说明 TRTC 的消息确实到岸了，
+    // 这正是"对面到底发没发过来"的分水岭。
+    if (RemoteInput::traceEnabled()) ++traceRecvPackets_;
+
     RemoteInput::Packet packet;
-    if (!RemoteInput::decodePacket(payload, &packet)) return;
+    if (!RemoteInput::decodePacket(payload, &packet)) {
+        if (RemoteInput::traceEnabled()) ++traceRecvBadPayload_;
+        return;
+    }
 
     // 门禁在状态机里，这里只执行结论——"什么情况下别人能操作我的电脑"
     // 必须只有一个地方需要读。
-    if (!RemoteDesktop::shouldAcceptRemoteInput(hostState_, settings_.allowRemoteControl,
-                                                hostSessionId_, hostPeerId_, packet.sessionId,
-                                                fromUserId)) {
+    const auto verdict = RemoteDesktop::remoteInputVerdict(
+        hostState_, settings_.allowRemoteControl, hostSessionId_, hostPeerId_, packet.sessionId,
+        fromUserId);
+    if (verdict != RemoteDesktop::InputVerdict::Accepted) {
+        if (RemoteInput::traceEnabled()) {
+            ++traceRecvDenied_;
+            traceLastVerdict_ = verdict;
+        }
         return;
     }
 
     const auto channel = cmdId == RemoteInput::kCmdIdReliable ? RemoteInput::Channel::Reliable
                                                              : RemoteInput::Channel::Unreliable;
-    injector_->handlePacket(packet, channel, QDateTime::currentMSecsSinceEpoch());
+    const bool applied =
+        injector_->handlePacket(packet, channel, QDateTime::currentMSecsSinceEpoch());
+    if (RemoteInput::traceEnabled()) {
+        traceLastVerdict_ = verdict;
+        // 门禁放行了不等于真注入了：序号乱序/重复的包会在注入器里被丢掉。
+        if (applied) traceInjectedEvents_ += packet.events.size();
+    }
 }
 
 void RemoteDesktopController::setIdGenerator(IdGenerator generator) {

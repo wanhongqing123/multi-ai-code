@@ -95,6 +95,19 @@ mkdir -p "$staging"
 
 ditto "$source_app" "$staged_app"
 
+trtc_root="$project_root/vendor/tencent-trtc/macos/TXLiteAVSDK_TRTC_Mac"
+trtc_slice="macos-arm64_x86_64"
+trtc_target_dir="$staged_app/Contents/Frameworks"
+mkdir -p "$trtc_target_dir"
+for framework in TXLiteAVSDK_TRTC_Mac TXFFmpeg TXSoundTouch; do
+  trtc_source="$trtc_root/$framework.xcframework/$trtc_slice/$framework.framework"
+  if [[ ! -d "$trtc_source" ]]; then
+    echo "Missing native TRTC SDK framework: $trtc_source" >&2
+    exit 1
+  fi
+  ditto "$trtc_source" "$trtc_target_dir/$framework.framework"
+done
+
 "$macdeployqt" "$staged_app" -always-overwrite
 
 sdk_source="$project_root/vendor/tencent-im/macos/ImSDKForMac_Plus.framework"
@@ -116,6 +129,7 @@ MaiChat 桌面客户端（macOS）
 
 - 无需在目标机器安装 Qt，Qt 运行时已随 .app 旁挂。
 - 原生 IM SDK 已随包放在 .app 内部，请不要手动移动 .app 内的 vendor 目录。
+- TRTC 远程桌面组件已内置；首次共享屏幕时请按 macOS 提示授予屏幕录制权限。
 - 首次启动在登录页输入账号 ID 后回车即可登录。
 - 未签名应用首次打开如被 macOS 拦截，可在 Finder 中右键应用并选择“打开”。
 README

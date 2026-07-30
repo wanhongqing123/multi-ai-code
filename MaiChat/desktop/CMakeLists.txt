@@ -8,16 +8,33 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
 option(MAICHAT_USE_FAKE_CLIENT "Use the fake IM client for desktop UI development" OFF)
-# 远程桌面依赖腾讯 TRTC C++ SDK（vendor/tencent-trtc）。仅 Windows 已 vendoring；
-# 其它平台先关掉，编译出的应用不含远程桌面能力但其余功能不受影响。
+# 远程桌面依赖腾讯 TRTC C++ SDK（vendor/tencent-trtc）。
 option(MAICHAT_ENABLE_REMOTE_DESKTOP "Build remote desktop support (requires TRTC SDK)" ON)
 
-set(MAICHAT_TRTC_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/vendor/tencent-trtc/windows")
-if(MAICHAT_ENABLE_REMOTE_DESKTOP AND WIN32 AND EXISTS "${MAICHAT_TRTC_ROOT}/lib/x64/liteav.lib")
-  set(MAICHAT_TRTC_AVAILABLE ON)
-else()
-  set(MAICHAT_TRTC_AVAILABLE OFF)
-  if(MAICHAT_ENABLE_REMOTE_DESKTOP AND WIN32)
+set(MAICHAT_TRTC_AVAILABLE OFF)
+if(MAICHAT_ENABLE_REMOTE_DESKTOP)
+  if(WIN32)
+    set(MAICHAT_TRTC_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/vendor/tencent-trtc/windows")
+    if(EXISTS "${MAICHAT_TRTC_ROOT}/lib/x64/liteav.lib")
+      set(MAICHAT_TRTC_AVAILABLE ON)
+    endif()
+  elseif(APPLE)
+    set(MAICHAT_TRTC_ROOT
+        "${CMAKE_CURRENT_SOURCE_DIR}/vendor/tencent-trtc/macos/TXLiteAVSDK_TRTC_Mac")
+    set(MAICHAT_TRTC_MAC_SLICE "macos-arm64_x86_64")
+    set(MAICHAT_TRTC_MAC_FRAMEWORKS
+        "${MAICHAT_TRTC_ROOT}/TXLiteAVSDK_TRTC_Mac.xcframework/${MAICHAT_TRTC_MAC_SLICE}/TXLiteAVSDK_TRTC_Mac.framework"
+        "${MAICHAT_TRTC_ROOT}/TXFFmpeg.xcframework/${MAICHAT_TRTC_MAC_SLICE}/TXFFmpeg.framework"
+        "${MAICHAT_TRTC_ROOT}/TXSoundTouch.xcframework/${MAICHAT_TRTC_MAC_SLICE}/TXSoundTouch.framework")
+    set(MAICHAT_TRTC_AVAILABLE ON)
+    foreach(framework ${MAICHAT_TRTC_MAC_FRAMEWORKS})
+      if(NOT EXISTS "${framework}")
+        set(MAICHAT_TRTC_AVAILABLE OFF)
+      endif()
+    endforeach()
+  endif()
+
+  if(NOT MAICHAT_TRTC_AVAILABLE AND (WIN32 OR APPLE))
     message(WARNING "TRTC SDK not found under ${MAICHAT_TRTC_ROOT}; remote desktop will be disabled")
   endif()
 endif()
@@ -88,10 +105,19 @@ add_library(remote_im_core
 target_include_directories(remote_im_core PUBLIC src)
 target_link_libraries(remote_im_core PUBLIC Qt5::Core Qt5::Network Qt5::Sql ZLIB::ZLIB PRIVATE md4c)
 if(MAICHAT_TRTC_AVAILABLE)
-  target_include_directories(remote_im_core PRIVATE
-    "${MAICHAT_TRTC_ROOT}/include"
-    "${MAICHAT_TRTC_ROOT}/include/TRTC")
-  target_link_libraries(remote_im_core PRIVATE "${MAICHAT_TRTC_ROOT}/lib/x64/liteav.lib")
+  if(WIN32)
+    target_include_directories(remote_im_core PRIVATE
+      "${MAICHAT_TRTC_ROOT}/include"
+      "${MAICHAT_TRTC_ROOT}/include/TRTC")
+    target_link_libraries(remote_im_core PRIVATE "${MAICHAT_TRTC_ROOT}/lib/x64/liteav.lib")
+  elseif(APPLE)
+    set(MAICHAT_TRTC_MAC_HEADERS
+        "${MAICHAT_TRTC_ROOT}/TXLiteAVSDK_TRTC_Mac.xcframework/${MAICHAT_TRTC_MAC_SLICE}/TXLiteAVSDK_TRTC_Mac.framework/Headers")
+    target_include_directories(remote_im_core PRIVATE
+      "${MAICHAT_TRTC_MAC_HEADERS}"
+      "${MAICHAT_TRTC_MAC_HEADERS}/cpp_interface")
+    target_link_libraries(remote_im_core PRIVATE ${MAICHAT_TRTC_MAC_FRAMEWORKS})
+  endif()
   target_compile_definitions(remote_im_core PRIVATE MAICHAT_HAVE_TRTC=1)
 endif()
 
@@ -165,6 +191,27 @@ if(APPLE)
     MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
     MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
   )
+  if(MAICHAT_TRTC_AVAILABLE)
+    set_target_properties(maichat PROPERTIES
+      BUILD_WITH_INSTALL_RPATH TRUE
+      BUILD_RPATH "@executable_path/../Frameworks"
+      INSTALL_RPATH "@executable_path/../Frameworks"
+    )
+    add_custom_command(TARGET maichat POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E make_directory
+              "$<TARGET_BUNDLE_DIR:maichat>/Contents/Frameworks"
+      COMMAND /usr/bin/ditto
+              "${MAICHAT_TRTC_ROOT}/TXLiteAVSDK_TRTC_Mac.xcframework/${MAICHAT_TRTC_MAC_SLICE}/TXLiteAVSDK_TRTC_Mac.framework"
+              "$<TARGET_BUNDLE_DIR:maichat>/Contents/Frameworks/TXLiteAVSDK_TRTC_Mac.framework"
+      COMMAND /usr/bin/ditto
+              "${MAICHAT_TRTC_ROOT}/TXFFmpeg.xcframework/${MAICHAT_TRTC_MAC_SLICE}/TXFFmpeg.framework"
+              "$<TARGET_BUNDLE_DIR:maichat>/Contents/Frameworks/TXFFmpeg.framework"
+      COMMAND /usr/bin/ditto
+              "${MAICHAT_TRTC_ROOT}/TXSoundTouch.xcframework/${MAICHAT_TRTC_MAC_SLICE}/TXSoundTouch.framework"
+              "$<TARGET_BUNDLE_DIR:maichat>/Contents/Frameworks/TXSoundTouch.framework"
+      COMMENT "Embedding macOS TRTC frameworks into MaiChat.app"
+    )
+  endif()
 endif()
 target_link_libraries(maichat PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets)
 if(MAICHAT_USE_FAKE_CLIENT)
@@ -237,7 +284,7 @@ target_link_libraries(remote_desktop_controller_test PRIVATE remote_im_core Qt5:
 add_executable(trtc_engine_test tests/TrtcEngineTest.cpp)
 target_link_libraries(trtc_engine_test PRIVATE remote_im_core Qt5::Test)
 
-if(MAICHAT_TRTC_AVAILABLE)
+if(MAICHAT_TRTC_AVAILABLE AND WIN32)
   # TRTC 运行时 DLL 必须与 exe 同目录才能加载。构建后自动拷贝，
   # 避免"链接通过但一运行就找不到 SDK"这类只在本地复现的问题。
   file(GLOB MAICHAT_TRTC_RUNTIME_DLLS "${MAICHAT_TRTC_ROOT}/lib/x64/*.dll")

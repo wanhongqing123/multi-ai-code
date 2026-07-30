@@ -61,6 +61,11 @@ RemoteDesktopController::~RemoteDesktopController() {
     // 析构也要走这条：进程退出前把按住的键抬干净，别把被控机留在 Ctrl 按住的
     // 状态上。sleepBlocker_ 的析构会自己恢复休眠策略。
     stopHostControlSide();
+    if (inputSender_.isSessionActive()) {
+        inputSender_.queueReleaseAll();
+        flushPendingInput(QDateTime::currentMSecsSinceEpoch());
+        inputSender_.endSession();
+    }
     if (engine_) engine_->stop();
 }
 
@@ -77,12 +82,14 @@ void RemoteDesktopController::setSecureDesktopProbe(
 
 void RemoteDesktopController::startHostControlSide() {
     if (injector_) injector_->beginSession(hostSessionId_);
+    if (hostWatchdogTimer_) hostWatchdogTimer_->start();
     // 共享期间别让系统自动锁屏：一锁就进安全桌面，远程彻底失联，
     // 而人在外面没法自己解。
     sleepBlocker_.acquire();
 }
 
 void RemoteDesktopController::stopHostControlSide() {
+    if (hostWatchdogTimer_) hostWatchdogTimer_->stop();
     // endSession 内部会把按住的键鼠全部抬起。
     if (injector_) injector_->endSession();
     sleepBlocker_.release();
@@ -204,7 +211,10 @@ bool RemoteDesktopController::handleIncomingText(const QString& fromUserId, cons
             if (transition.nextState == ViewerState::Connecting) {
                 viewerRoomId_ = signal.roomId.isEmpty() ? viewerRoomId_ : signal.roomId;
                 // 观看端的渲染窗口由 UI 层在收到状态变化后提供，这里先进房。
-                engine_->startViewing(roomParams(viewerRoomId_), nullptr);
+                if (!engine_ || !engine_->startViewing(roomParams(viewerRoomId_), nullptr)) {
+                    setViewerState(ViewerState::Failed, QStringLiteral("远程画面启动失败"));
+                    return true;
+                }
             }
             setViewerState(transition.nextState, transition.failureReason);
             return true;
@@ -217,8 +227,8 @@ bool RemoteDesktopController::handleIncomingText(const QString& fromUserId, cons
         }
         case Type::Stop: {
             if (!viewerSessionId_.isEmpty() && signal.sessionId == viewerSessionId_) {
-                engine_->stop();
                 setViewerState(viewerOnSignal(viewerState_, signal).nextState);
+                engine_->stop();
                 viewerSessionId_.clear();
                 viewerRoomId_.clear();
                 viewerPeerId_.clear();
@@ -373,12 +383,12 @@ void RemoteDesktopController::stopSession() {
         applyHostDecision(decideOnPeerGone(hostState_), hostPeerId_);
     }
     if (viewerState_ != ViewerState::Idle) {
-        engine_->stop();
         Signal stop;
         stop.type = Type::Stop;
         stop.sessionId = viewerSessionId_;
-        send(viewerPeerId_, stop);
         setViewerState(viewerOnLocalClose(viewerState_).nextState);
+        engine_->stop();
+        send(viewerPeerId_, stop);
         viewerSessionId_.clear();
         viewerRoomId_.clear();
         viewerPeerId_.clear();
@@ -387,6 +397,11 @@ void RemoteDesktopController::stopSession() {
 
 void RemoteDesktopController::setViewerState(ViewerState state, const QString& failureReason) {
     if (state == viewerState_ && failureReason.isEmpty()) return;
+
+    if (viewerState_ == ViewerState::Viewing && state != ViewerState::Viewing) {
+        inputSender_.queueReleaseAll();
+        flushPendingInput(QDateTime::currentMSecsSinceEpoch());
+    }
     viewerState_ = state;
 
     // 输入会话跟着观看状态走：画面到了才开始收输入，会话一结束立刻清空
@@ -396,6 +411,5 @@ void RemoteDesktopController::setViewerState(ViewerState state, const QString& f
     } else {
         inputSender_.endSession();
     }
-
     emit viewerStateChanged(state, failureReason);
 }

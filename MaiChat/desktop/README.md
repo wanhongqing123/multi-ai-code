@@ -56,6 +56,15 @@ Set `MAICHAT_USE_FAKE_CLIENT=ON` only when developing the UI without a native SD
 
 The bundled SDK files come from the domestic Tencent download host `im.sdk.qcloud.com`; see `vendor/tencent-im/README.md`.
 
+## Remote desktop
+
+Windows and macOS builds link the bundled Tencent TRTC SDK. Both platforms can view and
+share a desktop. A macOS viewer can send mouse and keyboard input to a Windows host;
+injecting remote input into a macOS host is not supported yet.
+
+The first screen-sharing attempt on macOS triggers the system Screen Recording permission.
+Grant access to MaiChat in System Settings when prompted.
+
 ## Windows 免安装绿色包
 
 无需在目标机器安装 Qt 或 VC++ 运行库（要求 Windows 10 及以上 64 位）。先完成 Release 构建，然后：
@@ -99,6 +108,7 @@ MaiChat/desktop/scripts/package-macos.sh
 
 - 使用 `macdeployqt` 旁挂 Qt framework；
 - 把原生 IM SDK framework 放进应用内置 vendor 目录；
+- 把 TRTC、TXFFmpeg、TXSoundTouch framework 放进 `Contents/Frameworks`；
 - 生成标准 Finder 安装窗口，提示把应用拖到 `Applications`；
 - 校验 `CFBundleVersion` 与 `CFBundleShortVersionString`，确保 Launchpad 可索引；
 - 对 `.app` 做 ad-hoc codesign，避免嵌入 framework 因未签名无法加载；

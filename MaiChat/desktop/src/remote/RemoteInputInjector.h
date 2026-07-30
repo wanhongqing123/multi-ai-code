@@ -97,5 +97,7 @@ void normalizedToVirtualDesktop(double normalizedX, double normalizedY,
 
 // Windows 上返回 SendInput 实现；其它平台返回什么都不做的空实现。
 std::unique_ptr<IRemoteInputSink> createInputSink();
+// 当前平台是否实现了系统级输入注入。观看端发送输入不受此限制。
+bool isInputInjectionSupported();
 
 }  // namespace RemoteInput

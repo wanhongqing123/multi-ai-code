@@ -3087,12 +3087,18 @@ QWidget* MainWindow::buildRemoteDesktopSettingsPanel(QWidget* parent) {
     remoteDesktopControlValue_->setProperty("settingsRowValue", true);
     auto* controlRow = createSettingsRow(
         QStringLiteral("允许远程控制"), remoteDesktopControlValue_,
-        QStringLiteral("关闭时对方只能看画面，动不了你的鼠标键盘。开启后无需每次确认——"
-                       "人不在电脑前时弹窗没人应答，等于让无人值守失效。"));
+        RemoteInput::isInputInjectionSupported()
+            ? QStringLiteral("关闭时对方只能看画面，动不了你的鼠标键盘。开启后无需每次确认——"
+                             "人不在电脑前时弹窗没人应答，等于让无人值守失效。")
+            : QStringLiteral("当前 macOS 版本可观看、共享并控制 Windows，暂不接受远端操作。"));
     remoteDesktopControlToggle_ = new QCheckBox(QStringLiteral("允许"), controlRow);
     remoteDesktopControlToggle_->setObjectName(QStringLiteral("remoteControlToggle"));
-    remoteDesktopControlToggle_->setCursor(Qt::PointingHandCursor);
+    const bool canInjectInput = RemoteInput::isInputInjectionSupported();
+    remoteDesktopControlToggle_->setEnabled(canInjectInput);
+    remoteDesktopControlToggle_->setCursor(canInjectInput ? Qt::PointingHandCursor
+                                                          : Qt::ArrowCursor);
     connect(remoteDesktopControlToggle_, &QCheckBox::toggled, this, [this](bool checked) {
+        if (!RemoteInput::isInputInjectionSupported()) return;
         RemoteDesktopSettings settings = remoteDesktop_->settings();
         if (settings.allowRemoteControl == checked) return;
         settings.allowRemoteControl = checked;
@@ -3124,12 +3130,15 @@ void MainWindow::refreshRemoteDesktopSettings() {
     if (remoteDesktopControlToggle_) {
         // 回填时挡掉 toggled：否则会反过来触发一次保存，形成回环。
         QSignalBlocker blocker(remoteDesktopControlToggle_);
-        remoteDesktopControlToggle_->setChecked(settings.allowRemoteControl);
+        remoteDesktopControlToggle_->setChecked(
+            RemoteInput::isInputInjectionSupported() && settings.allowRemoteControl);
     }
     if (remoteDesktopControlValue_) {
-        remoteDesktopControlValue_->setText(settings.allowRemoteControl
-                                                ? QStringLiteral("已允许")
-                                                : QStringLiteral("仅可观看"));
+        remoteDesktopControlValue_->setText(
+            !RemoteInput::isInputInjectionSupported()
+                ? QStringLiteral("当前平台暂不支持")
+                : settings.allowRemoteControl ? QStringLiteral("已允许")
+                                              : QStringLiteral("仅可观看"));
     }
 }
 
@@ -3198,8 +3207,10 @@ void MainWindow::setupRemoteDesktop() {
                                                  RemoteIMCredentialDefaults::secretKey());
     };
 
+    RemoteDesktopSettings remoteSettings = remoteDesktopSettingsStore_->load();
+    if (!RemoteInput::isInputInjectionSupported()) remoteSettings.allowRemoteControl = false;
     remoteDesktop_ = new RemoteDesktopController(
-        config, remoteDesktopSettingsStore_->load(),
+        config, remoteSettings,
         std::unique_ptr<RemoteDesktop::ITrtcEngine>(RemoteDesktop::createTrtcEngine()),
         [this](const QString& peerId, const QString& text) {
             app_.client().sendText(peerId, text, {});

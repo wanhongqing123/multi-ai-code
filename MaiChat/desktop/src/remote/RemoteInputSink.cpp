@@ -199,4 +199,12 @@ std::unique_ptr<IRemoteInputSink> createInputSink() {
 #endif
 }
 
+bool isInputInjectionSupported() {
+#ifdef Q_OS_WIN
+    return true;
+#else
+    return false;
+#endif
+}
+
 }  // namespace RemoteInput

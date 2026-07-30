@@ -6,7 +6,6 @@
 
 #include "ITRTCCloud.h"
 #include "TRTCCloudCallback.h"
-#include "TRTCCloudDef.h"
 #endif
 
 namespace RemoteDesktop {
@@ -66,6 +65,10 @@ public:
         if (!cloud_ || userId.isEmpty()) return;
         const QByteArray id = userId.toUtf8();
         // 被控端推的是辅路（屏幕共享），这里必须订阅同一路，否则拿不到画面。
+        liteav::TRTCRenderParams renderParams;
+        renderParams.fillMode = liteav::TRTCVideoFillMode_Fit;
+        cloud_->setRemoteRenderParams(id.constData(), liteav::TRTCVideoStreamTypeSub,
+                                      renderParams);
         cloud_->startRemoteView(id.constData(), liteav::TRTCVideoStreamTypeSub,
                                 static_cast<liteav::TXView>(renderWindow));
     }
@@ -151,7 +154,7 @@ private:
     bool selectPrimaryScreen() {
         if (!cloud_) return false;
         liteav::ITRTCScreenCaptureSourceList* sources =
-            cloud_->getScreenCaptureSources(SIZE{0, 0}, SIZE{0, 0});
+            cloud_->getScreenCaptureSources(liteav::SIZE{0, 0}, liteav::SIZE{0, 0});
         if (!sources) return false;
 
         bool selected = false;
@@ -159,7 +162,7 @@ private:
             const liteav::TRTCScreenCaptureSourceInfo info = sources->getSourceInfo(i);
             if (info.type != liteav::TRTCScreenCaptureSourceTypeScreen) continue;
             // 空 RECT = 采集整个源，不做区域裁剪。
-            const RECT captureRect{0, 0, 0, 0};
+            const liteav::RECT captureRect{0, 0, 0, 0};
             liteav::TRTCScreenCaptureProperty property;
             property.enableCaptureMouse = true;
             // 不给被采集的屏幕加高亮描边：整屏共享时那圈边框只会干扰观看。

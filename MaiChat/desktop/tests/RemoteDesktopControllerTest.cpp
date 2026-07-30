@@ -58,6 +58,10 @@ public:
     void setCustomMessageCallback(CustomMessageCallback callback) override {
         customMessageCallback = std::move(callback);
     }
+    void setRemoteVideoSizeCallback(RemoteVideoSizeCallback callback) override {
+        remoteVideoSizeCallback = std::move(callback);
+    }
+    RemoteVideoSizeCallback remoteVideoSizeCallback;
     bool sendCustomMessage(int cmdId, const QByteArray& payload, bool reliable,
                            bool ordered) override {
         if (!active) return false;
@@ -228,6 +232,7 @@ private slots:
     void reportsFailureWhenScreenShareCannotStart();
     void doesNotResendInviteWhileOneIsPending();
     void forwardsRemoteVideoHandlerToEngine();
+    void forwardsRemoteVideoSizeToHandler();
 };
 
 namespace {
@@ -610,6 +615,25 @@ void RemoteDesktopControllerTest::forwardsRemoteVideoHandlerToEngine() {
     h.controller->bindRemoteView(kPeerUser, nullptr);
     QCOMPARE(h.engine->bindCalls, 1);
     QCOMPARE(h.engine->lastBoundUserId, kPeerUser);
+}
+
+void RemoteDesktopControllerTest::forwardsRemoteVideoSizeToHandler() {
+    Harness h(HostMode::Attended);
+
+    int seenWidth = 0;
+    int seenHeight = 0;
+    h.controller->setRemoteVideoSizeHandler([&](const QString&, int width, int height) {
+        seenWidth = width;
+        seenHeight = height;
+    });
+    QVERIFY2(h.engine->remoteVideoSizeCallback != nullptr,
+             "控制器没有把尺寸回调注册到引擎上");
+
+    // 被控端是 2560x1600（16:10）这类非 16:9 屏幕时，控制端如果还按写死的
+    // 1920x1080 算黑边，鼠标坐标会整体偏移——能动但点不准。
+    h.engine->remoteVideoSizeCallback(kPeerUser, 2560, 1600);
+    QCOMPARE(seenWidth, 2560);
+    QCOMPARE(seenHeight, 1600);
 }
 
 QTEST_MAIN(RemoteDesktopControllerTest)

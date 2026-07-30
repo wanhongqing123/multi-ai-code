@@ -253,6 +253,21 @@ void RemoteDesktopController::setRemoteVideoHandler(ITrtcEngine::RemoteVideoCall
     remoteVideoHandler_ = std::move(handler);
 }
 
+void RemoteDesktopController::setRemoteVideoSizeHandler(
+    ITrtcEngine::RemoteVideoSizeCallback handler) {
+    if (!engine_) return;
+    engine_->setRemoteVideoSizeCallback(
+        [this, handler = std::move(handler)](const QString& userId, int width, int height) {
+            // 记进日志：坐标偏移这类问题，光看现象分不清是"尺寸拿错了"还是
+            // "映射算错了"，把真实值写下来一眼就能对。
+            qInfo().noquote() << QStringLiteral("[remote-input] remote video size: %1x%2 (user=%3)")
+                                     .arg(width)
+                                     .arg(height)
+                                     .arg(userId.isEmpty() ? QStringLiteral("<empty>") : userId);
+            if (handler) handler(userId, width, height);
+        });
+}
+
 void RemoteDesktopController::setErrorHandler(ITrtcEngine::ErrorCallback handler) {
     if (engine_) engine_->setErrorCallback(std::move(handler));
 }

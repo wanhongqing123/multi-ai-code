@@ -43,7 +43,43 @@ private slots:
     void emergencyHotkeyStopsControlAndIsNotForwarded();
     void sendsCanonicalKeyCodesWhenNativeCodeIsZero();
     void enablesMouseTrackingWhileControlling();
+    void remapsCoordinatesWhenRemoteVideoSizeChanges();
 };
+
+void RemoteInputCaptureTest::remapsCoordinatesWhenRemoteVideoSizeChanges() {
+    RemoteInputSender sender;
+    sender.beginSession(QStringLiteral("s1"));
+    QWidget surface;
+    // 控件 16:9。远端若也是 16:9 则铺满无黑边；换成 16:10 就必须左右留黑边。
+    surface.resize(1600, 900);
+
+    RemoteInputCapture capture(sender);
+    capture.attachTo(&surface);
+    capture.setRemoteVideoSize(QSize(1920, 1080));
+    capture.setEnabled(true);
+
+    // 先按 16:9：内容区铺满整个控件。
+    QCOMPARE(sender.contentRect(), QRectF(0, 0, 1600, 900));
+
+    // 被控端其实是 2560x1600（16:10）。拿到真实尺寸后必须重算，
+    // 否则坐标会一直按错误的宽高比映射——现象是鼠标能动但位置偏。
+    capture.setRemoteVideoSize(QSize(2560, 1600));
+    const QRectF fitted = sender.contentRect();
+    QCOMPARE(fitted.height(), 900.0);
+    QCOMPARE(fitted.width(), 900.0 * 16.0 / 10.0);  // 1440
+    QCOMPARE(fitted.x(), (1600.0 - 1440.0) / 2.0);  // 左右各 80 黑边
+
+    // 关键验证：控件正中必须仍然映射到远端画面正中。用错宽高比的话，
+    // 同一个点会被算到别处去——这正是"偏差"的来源。
+    double x = 0.0;
+    double y = 0.0;
+    QVERIFY(sender.mapToNormalized(QPointF(800, 450), &x, &y));
+    QVERIFY(qAbs(x - 0.5) < 0.001);
+    QVERIFY(qAbs(y - 0.5) < 0.001);
+
+    // 而黑边上的点不该产生输入：它不对应远端屏幕的任何位置。
+    QVERIFY(!sender.mapToNormalized(QPointF(20, 450), &x, &y));
+}
 
 void RemoteInputCaptureTest::enablesMouseTrackingWhileControlling() {
     RemoteInputSender sender;

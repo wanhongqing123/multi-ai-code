@@ -19,6 +19,7 @@ public:
     void setRemoteVideoCallback(RemoteVideoCallback) override {}
     void setErrorCallback(ErrorCallback) override {}
     void setCustomMessageCallback(CustomMessageCallback) override {}
+    void setRemoteVideoSizeCallback(RemoteVideoSizeCallback) override {}
     bool sendCustomMessage(int, const QByteArray&, bool, bool) override { return false; }
     void bindRemoteView(const QString&, void*) override {}
     QString sdkVersion() const override { return QString(); }
@@ -82,6 +83,10 @@ public:
         customMessageCallback_ = std::move(callback);
     }
 
+    void setRemoteVideoSizeCallback(RemoteVideoSizeCallback callback) override {
+        remoteVideoSizeCallback_ = std::move(callback);
+    }
+
     bool sendCustomMessage(int cmdId, const QByteArray& payload, bool reliable,
                            bool ordered) override {
         if (!cloud_ || payload.isEmpty()) return false;
@@ -131,6 +136,20 @@ public:
         postToMainThread([this, id, available] {
             if (remoteVideoCallback_) remoteVideoCallback_(id, available);
         });
+    }
+
+    // 首帧带着真实分辨率，是最早能拿到尺寸的时机——远程控制的坐标映射就等
+    // 这个值，越早给越好，否则开控制的头几秒鼠标是偏的。
+    void onFirstVideoFrame(const char* userId, const liteav::TRTCVideoStreamType streamType,
+                           const int width, const int height) override {
+        reportRemoteVideoSize(userId, streamType, width, height);
+    }
+
+    // 编码参数变化后尺寸会变（比如被控端换了分辨率），必须跟着更新，
+    // 否则映射会一直用旧的宽高比。
+    void onUserVideoSizeChanged(const char* userId, liteav::TRTCVideoStreamType streamType,
+                                int newWidth, int newHeight) override {
+        reportRemoteVideoSize(userId, streamType, newWidth, newHeight);
     }
 
     QString sdkVersion() const override {
@@ -189,6 +208,18 @@ public:
     bool isActive() const override { return active_; }
 
 private:
+    // 只认辅路：被控端推的是屏幕共享（Sub），主路是摄像头，尺寸完全不相干，
+    // 拿它去算黑边会把映射彻底带偏。
+    void reportRemoteVideoSize(const char* userId, liteav::TRTCVideoStreamType streamType,
+                               int width, int height) {
+        if (streamType != liteav::TRTCVideoStreamTypeSub) return;
+        if (width <= 0 || height <= 0) return;
+        const QString id = userId ? QString::fromUtf8(userId) : QString();
+        postToMainThread([this, id, width, height] {
+            if (remoteVideoSizeCallback_) remoteVideoSizeCallback_(id, width, height);
+        });
+    }
+
     static QString configureNetworkProxy(const TrtcNetworkProxyConfig& config) {
         if (!config.enabled) return QString();
 
@@ -336,6 +367,7 @@ private:
     RemoteVideoCallback remoteVideoCallback_;
     ErrorCallback errorCallback_;
     CustomMessageCallback customMessageCallback_;
+    RemoteVideoSizeCallback remoteVideoSizeCallback_;
     QString initializationError_;
 };
 

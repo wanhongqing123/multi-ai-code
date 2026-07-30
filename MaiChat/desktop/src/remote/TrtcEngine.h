@@ -38,12 +38,20 @@ public:
     // 收到对端自定义消息（远程输入）。同样已切回主线程。
     using CustomMessageCallback =
         std::function<void(const QString& userId, int cmdId, const QByteArray& payload)>;
+    // 远端画面的真实像素尺寸。首帧到达时给一次，之后编码参数变化再给。
+    //
+    // 远程控制**必须**拿到这个值：控制端要按它算画面在控件里的黑边位置，
+    // 才能把鼠标坐标映射对。此前是写死 1920x1080 猜的，被控端只要不是 16:9
+    // （实测 2560x1600 的机器就是），黑边算错，光标位置整体偏移。
+    using RemoteVideoSizeCallback =
+        std::function<void(const QString& userId, int width, int height)>;
 
     virtual ~ITrtcEngine() = default;
 
     virtual void setRemoteVideoCallback(RemoteVideoCallback callback) = 0;
     virtual void setErrorCallback(ErrorCallback callback) = 0;
     virtual void setCustomMessageCallback(CustomMessageCallback callback) = 0;
+    virtual void setRemoteVideoSizeCallback(RemoteVideoSizeCallback callback) = 0;
 
     // 发送自定义消息（远程输入）。返回 false 表示 SDK 拒发——多半是撞了
     // 配额，调用方自己已按更严的滑动窗口约束过，正常不该出现。

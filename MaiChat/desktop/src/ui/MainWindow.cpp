@@ -3431,6 +3431,17 @@ void MainWindow::setupRemoteDesktop() {
             }
             remoteDesktopView_->setStreamActive(peerUserId, available);
         });
+    // 远端画面的真实分辨率。此前这里是写死的 1920x1080，被控端只要不是 16:9
+    // （2560x1600 这类很常见），黑边就算错，鼠标位置整体偏移——能动但点不准。
+    remoteDesktop_->setRemoteVideoSizeHandler(
+        [this](const QString&, int width, int height) {
+            const QSize size(width, height);
+            if (!size.isValid() || size.isEmpty() || remoteDesktopRemoteVideoSize_ == size) return;
+            remoteDesktopRemoteVideoSize_ = size;
+            // 控制进行中也要立刻跟上：尺寸是首帧之后才到的，晚一步就意味着
+            // 开控制的头几秒鼠标是偏的。
+            if (remoteInputCapture_) remoteInputCapture_->setRemoteVideoSize(size);
+        });
     // 被控端的状态播报：让用户能区分"对方在等系统授权"和"断网/崩溃"，
     // 而不是对着一块卡住的画面猜。
     connect(remoteDesktop_, &RemoteDesktopController::peerNoticeReceived, this,

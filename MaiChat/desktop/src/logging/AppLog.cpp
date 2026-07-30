@@ -1,11 +1,13 @@
 #include "logging/AppLog.h"
 
 #include <QCoreApplication>
+#include <QDate>
 #include <QDateTime>
 #include <QDebug>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QLockFile>
 #include <QMutex>
 #include <QMutexLocker>
 #include <QStandardPaths>
@@ -15,10 +17,15 @@
 namespace AppLog {
 namespace {
 
-// 5MB × 4 个文件（当前 + 3 个历史）≈ 20MB 上限。日志的价值在于"出问题那几
-// 分钟发生了什么"，留太久没意义，占用用户磁盘反而是负担。
-constexpr qint64 kMaxBytes = 5 * 1024 * 1024;
-constexpr int kHistoryCount = 3;
+// 单个文件 5MB，保留 7 天。日志的价值在于"出问题那天/那几分钟发生了什么"，
+// 再久没有意义，占用用户磁盘反而是负担。
+constexpr qint64 kMaxBytesPerFile = 5 * 1024 * 1024;
+constexpr int kRetentionDays = 7;
+
+constexpr char kFilePrefix[] = "maichat-";
+constexpr char kFileSuffix[] = ".log";
+// maichat-20260731.log / maichat-20260731.1.log / maichat-20260731-p1234.log
+constexpr char kDateFormat[] = "yyyyMMdd";
 
 QMutex& mutex() {
     static QMutex value;
@@ -36,13 +43,37 @@ const QString& directory() {
     return value;
 }
 
-QString historyPath(int index) {
-    return QDir(directory()).filePath(QStringLiteral("maichat.%1.log").arg(index));
+// 同机双开是这个产品的正常用法（--login 就是为远程桌面同机联调加的）。
+// 两个进程往同一个文件里追加，日志会交错，轮转更会互相把对方的文件改名——
+// 排障时看到一份两个账号混在一起的日志，比没有日志更误导人。
+// 所以第一个实例拿到锁用干净的文件名，之后的实例各自带 -p<pid> 后缀。
+const QString& instanceSuffix() {
+    static const QString value = [] {
+        QDir().mkpath(directory());
+        // 静态持有：锁必须活到进程退出，析构时才释放。
+        // 不改 staleLockTime——默认值下 Qt 会检查锁里记的 pid 是否还活着，
+        // 上次崩溃残留的锁能被自动回收；设成 0 反而会让残留锁永远生效，
+        // 之后每次启动都白白带上 pid 后缀。
+        static QLockFile lock(QDir(directory()).filePath(QStringLiteral(".instance.lock")));
+        if (lock.tryLock(0)) return QString();
+        return QStringLiteral("-p%1").arg(QCoreApplication::applicationPid());
+    }();
+    return value;
 }
 
-QString currentPath() {
-    return QDir(directory()).filePath(QStringLiteral("maichat.log"));
+QString fileNameFor(const QDate& date) {
+    return QLatin1String(kFilePrefix) + date.toString(QLatin1String(kDateFormat))
+           + instanceSuffix() + QLatin1String(kFileSuffix);
 }
+
+// 同一天写满 5MB 时，当前文件改名成带序号的，序号按时间递增：
+// .1 是当天最早的一段，不带序号的永远是正在写的那个。
+QString rolledNameFor(const QDate& date, int index) {
+    return QLatin1String(kFilePrefix) + date.toString(QLatin1String(kDateFormat))
+           + instanceSuffix() + QStringLiteral(".%1").arg(index) + QLatin1String(kFileSuffix);
+}
+
+QString pathFor(const QString& fileName) { return QDir(directory()).filePath(fileName); }
 
 QFile& logFile() {
     static QFile value;
@@ -54,27 +85,50 @@ qint64& writtenBytes() {
     return value;
 }
 
-// 以下几个 *Locked 函数都假定调用方已持有 mutex()。
+QDate& openedDate() {
+    static QDate value;
+    return value;
+}
+
+// 以下 *Locked 函数都假定调用方已持有 mutex()。
+
+// 超过保留期的文件直接删掉。只认自己的命名规则，绝不碰目录里的其它文件——
+// 日志目录理论上是我们独占的，但删除是不可逆操作，宁可保守。
+void purgeExpiredLocked() {
+    const QDate oldestKept = QDate::currentDate().addDays(-(kRetentionDays - 1));
+    QDir dir(directory());
+    const auto entries = dir.entryInfoList(
+        {QLatin1String(kFilePrefix) + QStringLiteral("*") + QLatin1String(kFileSuffix)},
+        QDir::Files);
+    for (const QFileInfo& entry : entries) {
+        // 从 maichat-20260731[...] 里取出那 8 位日期。取不出来的说明不是我们
+        // 写的，跳过。
+        const QString stem = entry.fileName().mid(static_cast<int>(qstrlen(kFilePrefix)));
+        const QDate date = QDate::fromString(stem.left(8), QLatin1String(kDateFormat));
+        if (!date.isValid()) continue;
+        if (date < oldestKept) QFile::remove(entry.absoluteFilePath());
+    }
+}
 
 void openLocked() {
     QFile& file = logFile();
     if (file.isOpen()) return;
     QDir().mkpath(directory());
-    file.setFileName(currentPath());
+    openedDate() = QDate::currentDate();
+    file.setFileName(pathFor(fileNameFor(openedDate())));
     if (!file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) return;
     writtenBytes() = file.size();
 }
 
-void rotateLocked() {
+void rollBySizeLocked() {
     QFile& file = logFile();
+    const QDate date = openedDate();
     file.close();
 
-    // 最老的一个直接删掉，其余依次后移。从后往前改名，否则会自己覆盖自己。
-    QFile::remove(historyPath(kHistoryCount));
-    for (int index = kHistoryCount - 1; index >= 1; --index) {
-        QFile::rename(historyPath(index), historyPath(index + 1));
-    }
-    QFile::rename(currentPath(), historyPath(1));
+    // 找当天第一个没被占用的序号。不复用序号，避免把已有的一段覆盖掉。
+    int index = 1;
+    while (QFile::exists(pathFor(rolledNameFor(date, index)))) ++index;
+    QFile::rename(pathFor(fileNameFor(date)), pathFor(rolledNameFor(date, index)));
 
     writtenBytes() = 0;
     openLocked();
@@ -85,11 +139,19 @@ void writeLineLocked(const QString& line) {
     QFile& file = logFile();
     if (!file.isOpen()) return;
 
+    // 跨零点要换文件，否则跑了通宵的进程会把两天的记录混在前一天里。
+    if (openedDate() != QDate::currentDate()) {
+        file.close();
+        openLocked();
+        purgeExpiredLocked();
+        if (!file.isOpen()) return;
+    }
+
     const QByteArray bytes = (line + QLatin1Char('\n')).toUtf8();
     file.write(bytes);
     file.flush();  // 崩溃前那几行才是最有价值的，不能留在缓冲区里
     writtenBytes() += bytes.size();
-    if (writtenBytes() >= kMaxBytes) rotateLocked();
+    if (writtenBytes() >= kMaxBytesPerFile) rollBySizeLocked();
 }
 
 char levelTag(QtMsgType type) {
@@ -136,6 +198,12 @@ void install() {
     if (installed) return;
     installed = true;
 
+    {
+        QMutexLocker locker(&mutex());
+        openLocked();
+        purgeExpiredLocked();
+    }
+
     previousHandler() = qInstallMessageHandler(handler);
 
     // 开头这一段是给"用户把日志发过来"这个场景准备的：版本、系统、
@@ -154,10 +222,15 @@ void install() {
                              .arg(QSysInfo::currentCpuArchitecture());
     qInfo().noquote() << QStringLiteral("executable: %1")
                              .arg(QCoreApplication::applicationFilePath());
-    qInfo().noquote() << QStringLiteral("log file: %1").arg(currentPath());
+    qInfo().noquote() << QStringLiteral("pid: %1").arg(QCoreApplication::applicationPid());
+    qInfo().noquote() << QStringLiteral("log file: %1").arg(filePath());
 }
 
-QString filePath() { return currentPath(); }
+QString filePath() {
+    QMutexLocker locker(&mutex());
+    const QDate date = openedDate().isValid() ? openedDate() : QDate::currentDate();
+    return pathFor(fileNameFor(date));
+}
 
 QString directoryPath() { return directory(); }
 

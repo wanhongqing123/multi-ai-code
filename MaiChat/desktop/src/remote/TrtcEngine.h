@@ -21,6 +21,13 @@ struct TrtcRoomParams {
     QString roomId;   // 字符串房间号，形如 mc-<发起方>-<随机>
 };
 
+struct TrtcNetworkProxyConfig {
+    bool enabled = false;
+    QString host = QStringLiteral("127.0.0.1");
+    quint16 port = 1082;
+    bool supportUdp = false;
+};
+
 class ITrtcEngine {
 public:
     // 远端画面可用性变化。SDK 回调来自其内部线程，实现方负责切回主线程，
@@ -46,12 +53,15 @@ public:
     virtual bool sendCustomMessage(int cmdId, const QByteArray& payload, bool reliable,
                                    bool ordered) = 0;
 
-    // 把远端画面绑定到原生窗口句柄。收到 RemoteVideoCallback(available=true)
-    // 之后调用；渲染窗口可能晚于进房才创建，故与 startViewing 分开。
+    // 把远端画面绑定到原生窗口句柄。已知远端 userId 后即可调用；实现方在
+    // 进房成功后应用订阅。渲染窗口可能晚于进房才创建，故与 startViewing 分开。
     virtual void bindRemoteView(const QString& userId, void* renderWindow) = 0;
 
     // SDK 版本号；取不到返回空串。用于启动自检与问题上报。
     virtual QString sdkVersion() const = 0;
+
+    // SDK 创建前的初始化错误，例如 SOCKS5 参数无效。非空时不会悄悄回退直连。
+    virtual QString initializationError() const { return QString(); }
 
     // 被控端：进房并开始推屏。windowHandle 传 nullptr 表示采集整个主屏。
     virtual bool startScreenShare(const TrtcRoomParams& params) = 0;
@@ -71,6 +81,6 @@ bool isTrtcAvailable();
 
 // 创建引擎实例。SDK 不可用时返回一个所有操作都失败的空实现，
 // 而不是 nullptr——调用方不必到处判空。
-ITrtcEngine* createTrtcEngine();
+ITrtcEngine* createTrtcEngine(const TrtcNetworkProxyConfig& proxy = {});
 
 }  // namespace RemoteDesktop

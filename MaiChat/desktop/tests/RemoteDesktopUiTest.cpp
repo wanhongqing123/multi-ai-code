@@ -1,8 +1,13 @@
 #include <QtTest/QtTest>
 
+#include <QCheckBox>
+#include <QFrame>
+#include <QLineEdit>
 #include <QSignalSpy>
+#include <QSpinBox>
 
 #include "ui/RemoteDesktopConsentDialog.h"
+#include "ui/RemoteDesktopProxyDialog.h"
 #include "ui/RemoteDesktopSessionCard.h"
 #include "ui/RemoteDesktopViewPanel.h"
 #include "ui/SharingIndicatorBar.h"
@@ -15,6 +20,7 @@ private slots:
     void consentDialogDefaultsToReject();
     void consentDialogAutoRejectsWhenCountdownExpires();
     void consentDialogAcceptsOnAllow();
+    void proxyDialogUsesAppChromeAndValidatesAddress();
     void indicatorBarHiddenUntilSharing();
     void indicatorBarNamesPeerAndCountsTime();
     void indicatorBarEmitsStopRequest();
@@ -36,6 +42,46 @@ private slots:
     void escapeGoesToRemoteWhileControlling();
 };
 
+void RemoteDesktopUiTest::proxyDialogUsesAppChromeAndValidatesAddress() {
+    RemoteDesktopProxyDialog::Config config;
+    config.enabled = false;
+    RemoteDesktopProxyDialog dialog(config);
+
+    QVERIFY(dialog.windowFlags().testFlag(Qt::FramelessWindowHint));
+    QVERIFY(dialog.findChild<QFrame*>(QStringLiteral("remoteDesktopProxyPanel")) != nullptr);
+    auto* enabled = dialog.findChild<QCheckBox*>(QStringLiteral("trtcProxyEnabled"));
+    auto* host = dialog.findChild<QLineEdit*>(QStringLiteral("trtcProxyHost"));
+    auto* port = dialog.findChild<QSpinBox*>(QStringLiteral("trtcProxyPort"));
+    auto* udp = dialog.findChild<QCheckBox*>(QStringLiteral("trtcProxyUdp"));
+    auto* save = dialog.findChild<QPushButton*>(QStringLiteral("remoteDesktopProxySave"));
+    QVERIFY(enabled && host && port && udp && save);
+    QVERIFY(!host->isEnabled());
+    QVERIFY(!port->isEnabled());
+    QVERIFY(!udp->isEnabled());
+
+    enabled->click();
+    QVERIFY(host->isEnabled());
+    QVERIFY(port->isEnabled());
+    QVERIFY(udp->isEnabled());
+
+    QSignalSpy acceptedSpy(&dialog, &QDialog::accepted);
+    host->clear();
+    save->click();
+    QCOMPARE(acceptedSpy.count(), 0);
+    auto* error = dialog.findChild<QLabel*>(QStringLiteral("remoteDesktopProxyError"));
+    QVERIFY(error != nullptr);
+    QVERIFY(!error->isHidden());
+
+    host->setText(QStringLiteral("127.0.0.1"));
+    port->setValue(1082);
+    save->click();
+    QCOMPARE(acceptedSpy.count(), 1);
+    const RemoteDesktopProxyDialog::Config saved = dialog.config();
+    QVERIFY(saved.enabled);
+    QCOMPARE(saved.host, QStringLiteral("127.0.0.1"));
+    QCOMPARE(saved.port, static_cast<quint16>(1082));
+}
+
 void RemoteDesktopUiTest::controlButtonRequestsToggleAndReflectsState() {
     RemoteDesktopViewPanel panel;
     panel.beginSession(QStringLiteral("host-a"));
@@ -46,8 +92,15 @@ void RemoteDesktopUiTest::controlButtonRequestsToggleAndReflectsState() {
     QVERIFY(button != nullptr);
     QVERIFY(!card->isControlActive());
 
+    // TRTC 尚未进房/远端画面尚未可用时，不能让用户进入一个无效的控制态。
     // 按钮只发请求，不自己改状态：真正的开关在上层（要先确认对方允许控制）。
     QSignalSpy toggleSpy(&panel, &RemoteDesktopViewPanel::controlToggleRequested);
+    QVERIFY(!button->isEnabled());
+    button->click();
+    QCOMPARE(toggleSpy.count(), 0);
+
+    panel.setStreamActive(QStringLiteral("host-a"), true);
+    QVERIFY(button->isEnabled());
     button->click();
     QCOMPARE(toggleSpy.count(), 1);
     QCOMPARE(toggleSpy.takeFirst().at(0).toString(), QStringLiteral("host-a"));
@@ -60,6 +113,11 @@ void RemoteDesktopUiTest::controlButtonRequestsToggleAndReflectsState() {
 
     panel.setControlActive(QStringLiteral("host-a"), false);
     QVERIFY(!panel.isAnyControlActive());
+
+    panel.setStreamActive(QStringLiteral("host-a"), false);
+    QVERIFY(!button->isEnabled());
+    panel.setControlActive(QStringLiteral("host-a"), true);
+    QVERIFY2(!card->isControlActive(), "无画面时不应允许代码路径强行开启控制");
 }
 
 void RemoteDesktopUiTest::escapeGoesToRemoteWhileControlling() {
@@ -75,6 +133,7 @@ void RemoteDesktopUiTest::escapeGoesToRemoteWhileControlling() {
     QVERIFY(!panel.isFullScreen());
 
     panel.enterFullScreen(QStringLiteral("host-a"));
+    panel.setStreamActive(QStringLiteral("host-a"), true);
     panel.setControlActive(QStringLiteral("host-a"), true);
     // 控制态下 Esc 属于远端——远程那头也要用它。本地不能抢走，
     // 否则按 Esc 永远退的是本地全屏，远端根本收不到。

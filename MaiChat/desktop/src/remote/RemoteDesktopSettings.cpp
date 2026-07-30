@@ -58,6 +58,18 @@ RemoteDesktopSettings RemoteDesktopSettingsStore::load() const {
     // 缺字段一律按 false：老配置文件升级上来时，绝不能因为没写而默认放开控制。
     settings.allowRemoteControl =
         object.value(QStringLiteral("allowRemoteControl")).toBool(false);
+    settings.trtcProxyEnabled =
+        object.value(QStringLiteral("trtcProxyEnabled")).toBool(false);
+    const QString proxyHost =
+        object.value(QStringLiteral("trtcProxyHost")).toString().trimmed();
+    if (!proxyHost.isEmpty()) settings.trtcProxyHost = proxyHost;
+    const int proxyPort =
+        object.value(QStringLiteral("trtcProxyPort")).toInt(settings.trtcProxyPort);
+    if (proxyPort >= 1 && proxyPort <= 65535) {
+        settings.trtcProxyPort = static_cast<quint16>(proxyPort);
+    }
+    settings.trtcProxyUdp =
+        object.value(QStringLiteral("trtcProxyUdp")).toBool(false);
 
     settings.secret.salt =
         QByteArray::fromBase64(object.value(QStringLiteral("salt")).toString().toLatin1());
@@ -79,6 +91,10 @@ bool RemoteDesktopSettingsStore::save(const RemoteDesktopSettings& settings) con
     object.insert(QStringLiteral("mode"), modeToString(settings.mode));
     object.insert(QStringLiteral("consecutiveAuthFailures"), settings.consecutiveAuthFailures);
     object.insert(QStringLiteral("allowRemoteControl"), settings.allowRemoteControl);
+    object.insert(QStringLiteral("trtcProxyEnabled"), settings.trtcProxyEnabled);
+    object.insert(QStringLiteral("trtcProxyHost"), settings.trtcProxyHost.trimmed());
+    object.insert(QStringLiteral("trtcProxyPort"), static_cast<int>(settings.trtcProxyPort));
+    object.insert(QStringLiteral("trtcProxyUdp"), settings.trtcProxyUdp);
     // 只写哈希与 salt；明文密码从不落盘。
     object.insert(QStringLiteral("salt"),
                   QString::fromLatin1(settings.secret.salt.toBase64()));

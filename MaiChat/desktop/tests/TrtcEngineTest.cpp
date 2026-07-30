@@ -11,6 +11,8 @@ class TrtcEngineTest : public QObject {
 
 private slots:
     void reportsSdkVersionWhenAvailable();
+    void rejectsInvalidProxyWithoutFallingBackToDirect();
+    void acceptsValidProxyConfigWhenAvailable();
     void refusesIncompleteRoomParams();
     void stopIsIdempotent();
 };
@@ -45,6 +47,32 @@ void TrtcEngineTest::reportsSdkVersionWhenAvailable() {
     QVERIFY2(!version.isEmpty(), "TRTC SDK 已启用但取不到版本号，检查 liteav.dll 是否可加载");
     QVERIFY(version.contains(QLatin1Char('.')));
     QVERIFY(!engine->isActive());
+}
+
+void TrtcEngineTest::rejectsInvalidProxyWithoutFallingBackToDirect() {
+    if (!isTrtcAvailable()) return;
+
+    TrtcNetworkProxyConfig proxy;
+    proxy.enabled = true;
+    proxy.host.clear();
+    std::unique_ptr<ITrtcEngine> engine(createTrtcEngine(proxy));
+    QVERIFY(engine != nullptr);
+    QVERIFY(!engine->initializationError().isEmpty());
+    QVERIFY(engine->sdkVersion().isEmpty());
+    QVERIFY(!engine->isActive());
+}
+
+void TrtcEngineTest::acceptsValidProxyConfigWhenAvailable() {
+    if (!isTrtcAvailable()) return;
+
+    TrtcNetworkProxyConfig proxy;
+    proxy.enabled = true;
+    proxy.host = QStringLiteral("127.0.0.1");
+    proxy.port = 1082;
+    std::unique_ptr<ITrtcEngine> engine(createTrtcEngine(proxy));
+    QVERIFY2(engine->initializationError().isEmpty(),
+             qPrintable(engine->initializationError()));
+    QVERIFY(!engine->sdkVersion().isEmpty());
 }
 
 void TrtcEngineTest::refusesIncompleteRoomParams() {

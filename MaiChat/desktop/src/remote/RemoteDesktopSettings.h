@@ -24,6 +24,13 @@ struct RemoteDesktopSettings {
     // 这是一次性的事前授权，不是逐次弹窗——人不在电脑旁根本没法应答弹窗。
     bool allowRemoteControl = false;
 
+    // TRTC 不会自动继承系统 HTTP 代理。需要绕过受限网络时，可在创建
+    // TRTCCloud 实例前显式设置 SOCKS5；默认关闭，保持原有直连行为。
+    bool trtcProxyEnabled = false;
+    QString trtcProxyHost = QStringLiteral("127.0.0.1");
+    quint16 trtcProxyPort = 1082;
+    bool trtcProxyUdp = false;
+
     // 是否设了访问密码。密码是可选加固，不是无人值守的前提：
     // 白名单本身即授权，密码只是想再加一道锁的人才设。
     bool hasPassword() const { return secret.isValid(); }

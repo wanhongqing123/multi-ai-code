@@ -2,10 +2,12 @@
 
 #ifdef MAICHAT_HAVE_TRTC
 #include <QCoreApplication>
+#include <QDebug>
 #include <QMetaObject>
 
 #include "ITRTCCloud.h"
 #include "TRTCCloudCallback.h"
+#include "remote/TrtcNetworkProxyApi.h"
 #endif
 
 namespace RemoteDesktop {
@@ -43,15 +45,27 @@ using TrtcCaptureRect = liteav::RECT;
 
 class TrtcEngine final : public ITrtcEngine, public liteav::ITRTCCloudCallback {
 public:
-    TrtcEngine() : cloud_(getTRTCShareInstance()) {
+    explicit TrtcEngine(const TrtcNetworkProxyConfig& proxy) {
+        initializationError_ = configureNetworkProxy(proxy);
+        if (!initializationError_.isEmpty()) {
+            qWarning().noquote() << initializationError_;
+            return;
+        }
+        cloud_ = getTRTCShareInstance();
+        if (!cloud_) {
+            initializationError_ = QStringLiteral("TRTC SDK 初始化失败");
+            return;
+        }
         if (cloud_) cloud_->addCallback(this);
     }
 
     ~TrtcEngine() override {
         stop();
-        if (cloud_) cloud_->removeCallback(this);
-        // 单例由 SDK 管理，必须走 destroy 而不是 delete。
-        destroyTRTCShareInstance();
+        if (cloud_) {
+            cloud_->removeCallback(this);
+            // 单例由 SDK 管理，必须走 destroy 而不是 delete。
+            destroyTRTCShareInstance();
+        }
     }
 
     void setRemoteVideoCallback(RemoteVideoCallback callback) override {
@@ -75,15 +89,10 @@ public:
     }
 
     void bindRemoteView(const QString& userId, void* renderWindow) override {
-        if (!cloud_ || userId.isEmpty()) return;
-        const QByteArray id = userId.toUtf8();
-        // 被控端推的是辅路（屏幕共享），这里必须订阅同一路，否则拿不到画面。
-        liteav::TRTCRenderParams renderParams;
-        renderParams.fillMode = liteav::TRTCVideoFillMode_Fit;
-        cloud_->setRemoteRenderParams(id.constData(), liteav::TRTCVideoStreamTypeSub,
-                                      renderParams);
-        cloud_->startRemoteView(id.constData(), liteav::TRTCVideoStreamTypeSub,
-                                static_cast<liteav::TXView>(renderWindow));
+        if (!cloud_ || userId.isEmpty() || renderWindow == nullptr) return;
+        desiredRemoteUserId_ = userId;
+        desiredRemoteRenderWindow_ = renderWindow;
+        applyRemoteViewBinding();
     }
 
     // ---- ITRTCCloudCallback：回调来自 SDK 线程，一律切回主线程再交给上层 ----
@@ -102,10 +111,14 @@ public:
     void onExitRoom(int) override {}
 
     void onEnterRoom(int result) override {
-        if (result >= 0) return;
-        // 负值是错误码：进房失败要让上层知道，否则界面会一直停在"连接中"。
         postToMainThread([this, result] {
-            if (errorCallback_) errorCallback_(result, QStringLiteral("进入房间失败"));
+            if (result < 0) {
+                // 负值是错误码：进房失败要让上层知道，否则界面会一直停在"连接中"。
+                if (errorCallback_) errorCallback_(result, QStringLiteral("进入房间失败"));
+                return;
+            }
+            enteredRoom_ = true;
+            applyRemoteViewBinding();
         });
     }
 
@@ -123,6 +136,8 @@ public:
         const char* version = cloud_->getSDKVersion();
         return version ? QString::fromUtf8(version) : QString();
     }
+
+    QString initializationError() const override { return initializationError_; }
 
     bool startScreenShare(const TrtcRoomParams& params) override {
         if (!enterRoom(params)) return false;
@@ -146,22 +161,92 @@ public:
 
     bool startViewing(const TrtcRoomParams& params, void* renderWindow) override {
         if (!enterRoom(params)) return false;
-        renderWindow_ = renderWindow;
+        Q_UNUSED(renderWindow);
         active_ = true;
         return true;
     }
 
     void stop() override {
-        if (!cloud_ || !active_) return;
-        cloud_->stopScreenCapture();
-        cloud_->exitRoom();
+        if (!cloud_) return;
+        if (!subscribedRemoteUserId_.isEmpty()) {
+            const QByteArray id = subscribedRemoteUserId_.toUtf8();
+            cloud_->stopRemoteView(id.constData(), liteav::TRTCVideoStreamTypeSub);
+        }
+        if (active_) {
+            cloud_->stopScreenCapture();
+            cloud_->exitRoom();
+        }
         active_ = false;
-        renderWindow_ = nullptr;
+        enteredRoom_ = false;
+        desiredRemoteUserId_.clear();
+        desiredRemoteRenderWindow_ = nullptr;
+        subscribedRemoteUserId_.clear();
+        subscribedRemoteRenderWindow_ = nullptr;
     }
 
     bool isActive() const override { return active_; }
 
 private:
+    static QString configureNetworkProxy(const TrtcNetworkProxyConfig& config) {
+        if (!config.enabled) return QString();
+
+        const QString host = config.host.trimmed();
+        if (host.isEmpty() || config.port == 0) {
+            return QStringLiteral("TRTC SOCKS5 代理地址或端口无效");
+        }
+
+        ITXNetworkProxy* proxy = createTXNetworkProxy();
+        if (!proxy) return QStringLiteral("TRTC SOCKS5 代理接口初始化失败");
+
+        TRTCSocks5ProxyConfig capabilities;
+        capabilities.support_https = true;
+        capabilities.support_tcp = true;
+        capabilities.support_udp = config.supportUdp;
+        const QByteArray hostUtf8 = host.toUtf8();
+        // 无认证代理必须传 nullptr。空字符串仍是非空指针，部分 SDK 版本会据此
+        // 进入用户名/密码认证分支，和只接受 NO AUTH 的本地代理握手失败。
+        const int result = proxy->setSocks5Proxy(hostUtf8.constData(), config.port,
+                                                 nullptr, nullptr, &capabilities);
+        destroyTXNetworkProxy(&proxy);
+        if (result != 0) {
+            return QStringLiteral("TRTC SOCKS5 代理设置失败（%1）").arg(result);
+        }
+        return QString();
+    }
+
+    void applyRemoteViewBinding() {
+        if (!cloud_ || !enteredRoom_ || desiredRemoteUserId_.isEmpty()
+            || desiredRemoteRenderWindow_ == nullptr) {
+            return;
+        }
+
+        const QByteArray id = desiredRemoteUserId_.toUtf8();
+        if (subscribedRemoteUserId_ == desiredRemoteUserId_) {
+            if (subscribedRemoteRenderWindow_ != desiredRemoteRenderWindow_) {
+                cloud_->updateRemoteView(
+                    id.constData(), liteav::TRTCVideoStreamTypeSub,
+                    static_cast<liteav::TXView>(desiredRemoteRenderWindow_));
+                subscribedRemoteRenderWindow_ = desiredRemoteRenderWindow_;
+            }
+            return;
+        }
+
+        if (!subscribedRemoteUserId_.isEmpty()) {
+            const QByteArray previousId = subscribedRemoteUserId_.toUtf8();
+            cloud_->stopRemoteView(previousId.constData(), liteav::TRTCVideoStreamTypeSub);
+        }
+
+        // 被控端推的是辅路（屏幕共享），这里必须订阅同一路，否则拿不到画面。
+        liteav::TRTCRenderParams renderParams;
+        renderParams.fillMode = liteav::TRTCVideoFillMode_Fit;
+        cloud_->setRemoteRenderParams(id.constData(), liteav::TRTCVideoStreamTypeSub,
+                                      renderParams);
+        cloud_->startRemoteView(id.constData(), liteav::TRTCVideoStreamTypeSub,
+                                static_cast<liteav::TXView>(desiredRemoteRenderWindow_));
+        subscribedRemoteUserId_ = desiredRemoteUserId_;
+        subscribedRemoteRenderWindow_ = desiredRemoteRenderWindow_;
+    }
+
     // 选定「整屏」作为共享源。TRTC 要求 startScreenCapture 前先 select 目标，
     // 否则采集器没有源、不产出画面，对端会一直停在"等待画面"。
     bool selectPrimaryScreen() {
@@ -216,6 +301,7 @@ private:
         trtcParams.userSig = userSig.constData();
         trtcParams.strRoomId = roomId.constData();
         // 远程桌面是 1v1 且画面即内容，用视频通话场景（低延迟优先）。
+        enteredRoom_ = false;
         cloud_->enterRoom(trtcParams, liteav::TRTCAppSceneVideoCall);
         return true;
     }
@@ -239,11 +325,16 @@ private:
     }
 
     liteav::ITRTCCloud* cloud_ = nullptr;
-    void* renderWindow_ = nullptr;
     bool active_ = false;
+    bool enteredRoom_ = false;
+    QString desiredRemoteUserId_;
+    void* desiredRemoteRenderWindow_ = nullptr;
+    QString subscribedRemoteUserId_;
+    void* subscribedRemoteRenderWindow_ = nullptr;
     RemoteVideoCallback remoteVideoCallback_;
     ErrorCallback errorCallback_;
     CustomMessageCallback customMessageCallback_;
+    QString initializationError_;
 };
 
 #endif  // MAICHAT_HAVE_TRTC
@@ -258,10 +349,11 @@ bool isTrtcAvailable() {
 #endif
 }
 
-ITrtcEngine* createTrtcEngine() {
+ITrtcEngine* createTrtcEngine(const TrtcNetworkProxyConfig& proxy) {
 #ifdef MAICHAT_HAVE_TRTC
-    return new TrtcEngine();
+    return new TrtcEngine(proxy);
 #else
+    Q_UNUSED(proxy);
     return new NullTrtcEngine();
 #endif
 }

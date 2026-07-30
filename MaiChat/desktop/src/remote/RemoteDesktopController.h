@@ -25,8 +25,12 @@ class RemoteDesktopController : public QObject {
     Q_OBJECT
 
 public:
-    // 发送信令用的回调（实际由 RemoteIMClient::sendText 承接）。
-    using SendSignal = std::function<void(const QString& peerId, const QString& text)>;
+    using SignalSendCompletion = std::function<void()>;
+    // 发送信令用的回调（实际由 RemoteIMClient::sendText 承接）。完成回调用于
+    // 应用退出时等待 stop 已交给 IM SDK，避免进程先结束导致对端收不到。
+    using SendSignal = std::function<void(const QString& peerId,
+                                          const QString& text,
+                                          SignalSendCompletion completion)>;
     // 生成随机 id；测试注入固定值以获得确定性。
     using IdGenerator = std::function<QString()>;
 
@@ -55,8 +59,9 @@ public:
     // 被控端：有人值守弹窗的结果。
     void resolveConsent(bool accepted);
 
-    // 两端通用：主动结束当前会话。
-    void stopSession();
+    // 两端通用：主动结束当前会话。先向对端发送 stop，再清理本地会话；
+    // completion 在所有 stop 发送完成且本地清理完成后调用。
+    void stopSession(SignalSendCompletion completion = {});
 
     // 远端画面可用性 / 引擎错误的转发口。UI 据此绑定渲染窗口与提示。
     void setRemoteVideoHandler(RemoteDesktop::ITrtcEngine::RemoteVideoCallback handler);
@@ -65,6 +70,7 @@ public:
 
     RemoteDesktop::HostState hostState() const;
     RemoteDesktop::ViewerState viewerState() const;
+    QString viewerPeerId() const;
     const RemoteDesktopSettings& settings() const;
     void updateSettings(const RemoteDesktopSettings& settings);
 
@@ -105,12 +111,16 @@ signals:
     void settingsChanged(const RemoteDesktopSettings& settings);
 
 private:
-    void send(const QString& peerId, const RemoteDesktopSignals::Signal& signal);
+    void send(const QString& peerId,
+              const RemoteDesktopSignals::Signal& signal,
+              SignalSendCompletion completion = {});
     void handleInvite(const QString& fromUserId, const RemoteDesktopSignals::Signal& signal);
     // 密码尝试的计数与降级。单独抽出来，避免这段安全语义混在信令分发里。
     void recordAuthAttempt(const RemoteDesktop::HostInviteInput& input,
                            const RemoteDesktop::HostDecision& decision);
-    void applyHostDecision(const RemoteDesktop::HostDecision& decision, const QString& peerId);
+    void applyHostDecision(const RemoteDesktop::HostDecision& decision,
+                           const QString& peerId,
+                           SignalSendCompletion completion = {});
     void setViewerState(RemoteDesktop::ViewerState state, const QString& failureReason = QString());
     RemoteDesktop::TrtcRoomParams roomParams(const QString& roomId) const;
     void handleCustomMessage(const QString& fromUserId, int cmdId, const QByteArray& payload);

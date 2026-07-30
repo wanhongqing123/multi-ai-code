@@ -9,6 +9,7 @@
 #include <QStackedWidget>
 #include <QTextEdit>
 #include <QVBoxLayout>
+#include <functional>
 #include <memory>
 
 #include "app/RemoteIMApplication.h"
@@ -20,6 +21,7 @@ class SharingIndicatorBar;
 class RemoteDesktopViewPanel;
 class QButtonGroup;
 class QCheckBox;
+class QCloseEvent;
 class QResizeEvent;
 class QShowEvent;
 class QLineEdit;
@@ -43,6 +45,7 @@ public:
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
+    void closeEvent(QCloseEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void showEvent(QShowEvent* event) override;
 
@@ -113,6 +116,7 @@ private:
     void handleRemoteDesktopConsent(const QString& fromUserId);
     void openRemoteDesktopViewer(const QString& peerUserId);
     void closeRemoteDesktopViewer();
+    void stopRemoteDesktopForShutdown(std::function<void()> completion = {});
     void applyRemoteDesktopFullScreen(bool fullScreen);
     void toggleRemoteDesktopControl(const QString& peerUserId);
     void promptRemoteDesktopPassword(const QString& peerUserId);
@@ -120,6 +124,7 @@ private:
     void refreshRemoteDesktopSettings();
     void editRemoteDesktopPassword();
     void editRemoteDesktopAllowList();
+    void editRemoteDesktopProxy();
     void showConversationContextMenu(const QPoint& pos);
     void showContactContextMenu(QListWidget* list, const QPoint& pos);
     void deleteContactFromItem(QListWidgetItem* item);
@@ -152,6 +157,8 @@ private:
     QWidget* remotePage_ = nullptr;
     QPushButton* remoteNavButton_ = nullptr;
     RemoteDesktopController* remoteDesktop_ = nullptr;
+    bool remoteDesktopShutdown_ = false;
+    bool remoteDesktopShutdownComplete_ = false;
     std::unique_ptr<RemoteDesktopSettingsStore> remoteDesktopSettingsStore_;
     // 对端设了访问密码时，本次运行内记住，避免每次重试都问。不落盘。
     QHash<QString, QString> remoteDesktopPasswords_;
@@ -160,6 +167,7 @@ private:
     QLabel* remoteDesktopAllowValue_ = nullptr;
     QLabel* remoteDesktopControlValue_ = nullptr;
     QCheckBox* remoteDesktopControlToggle_ = nullptr;
+    QLabel* remoteDesktopProxyValue_ = nullptr;
     QLabel* settingsAccountValue_ = nullptr;
     QLabel* settingsConnectionValue_ = nullptr;
     QLabel* settingsSdkAppIdValue_ = nullptr;

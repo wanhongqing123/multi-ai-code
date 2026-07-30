@@ -105,6 +105,7 @@ add_library(remote_im_core
   src/remote/RemoteDesktopController.cpp
   src/remote/TrtcEngine.h
   src/remote/TrtcEngine.cpp
+  src/remote/TrtcNetworkProxyApi.h
 )
 target_include_directories(remote_im_core PUBLIC src)
 target_link_libraries(remote_im_core PUBLIC Qt5::Core Qt5::Network Qt5::Sql ZLIB::ZLIB PRIVATE md4c)
@@ -153,6 +154,8 @@ add_library(remote_im_desktop_ui
   src/ui/ImagePreviewDialog.cpp
   src/ui/RemoteDesktopConsentDialog.h
   src/ui/RemoteDesktopConsentDialog.cpp
+  src/ui/RemoteDesktopProxyDialog.h
+  src/ui/RemoteDesktopProxyDialog.cpp
   src/ui/SharingIndicatorBar.h
   src/ui/SharingIndicatorBar.cpp
   src/ui/RemoteDesktopViewPanel.h

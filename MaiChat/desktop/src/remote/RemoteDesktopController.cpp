@@ -37,6 +37,12 @@ RemoteDesktopController::RemoteDesktopController(Config config,
             [this](const QString& userId, int cmdId, const QByteArray& payload) {
                 handleCustomMessage(userId, cmdId, payload);
             });
+        // 状态机回调必须跟控制器同生命周期，不能依赖 UI 何时注册观察者。
+        // 否则进房期间先到的画面通知会丢失，状态永远停在 Connecting。
+        engine_->setRemoteVideoCallback([this](const QString& userId, bool available) {
+            if (available) setViewerState(viewerOnFirstFrame(viewerState_).nextState);
+            if (remoteVideoHandler_) remoteVideoHandler_(userId, available);
+        });
     }
     // 被控端默认装上真实的注入器与探针；测试用 setInputSink / setSecureDesktopProbe
     // 换成 Fake，免得跑一遍测试就真去动鼠标。
@@ -249,14 +255,6 @@ void RemoteDesktopController::setIdGenerator(IdGenerator generator) {
 
 void RemoteDesktopController::setRemoteVideoHandler(ITrtcEngine::RemoteVideoCallback handler) {
     remoteVideoHandler_ = std::move(handler);
-    if (!engine_) return;
-    // 不能把 handler 直接塞给引擎：首帧到达是「Connecting → Viewing」的唯一
-    // 触发点，而输入会话正是跟着 Viewing 开的。直接转发的话状态机永远停在
-    // Connecting，画面照常显示、控制却一个包都发不出去（实测踩过）。
-    engine_->setRemoteVideoCallback([this](const QString& userId, bool available) {
-        if (available) setViewerState(viewerOnFirstFrame(viewerState_).nextState);
-        if (remoteVideoHandler_) remoteVideoHandler_(userId, available);
-    });
 }
 
 void RemoteDesktopController::setErrorHandler(ITrtcEngine::ErrorCallback handler) {
@@ -269,16 +267,26 @@ void RemoteDesktopController::bindRemoteView(const QString& userId, void* render
 
 HostState RemoteDesktopController::hostState() const { return hostState_; }
 ViewerState RemoteDesktopController::viewerState() const { return viewerState_; }
+QString RemoteDesktopController::viewerPeerId() const { return viewerPeerId_; }
 const RemoteDesktopSettings& RemoteDesktopController::settings() const { return settings_; }
 
 void RemoteDesktopController::updateSettings(const RemoteDesktopSettings& settings) {
     settings_ = settings;
 }
 
-void RemoteDesktopController::send(const QString& peerId, const Signal& signal) {
-    if (!sendSignal_ || peerId.isEmpty()) return;
+void RemoteDesktopController::send(const QString& peerId,
+                                   const Signal& signal,
+                                   SignalSendCompletion completion) {
+    if (!sendSignal_ || peerId.isEmpty()) {
+        if (completion) completion();
+        return;
+    }
     const QString text = RemoteDesktopSignals::encodeSignal(signal);
-    if (!text.isEmpty()) sendSignal_(peerId, text);
+    if (text.isEmpty()) {
+        if (completion) completion();
+        return;
+    }
+    sendSignal_(peerId, text, std::move(completion));
 }
 
 TrtcRoomParams RemoteDesktopController::roomParams(const QString& roomId) const {
@@ -308,11 +316,14 @@ bool RemoteDesktopController::handleIncomingText(const QString& fromUserId, cons
             const ViewerTransition transition = viewerOnSignal(viewerState_, signal);
             if (transition.nextState == ViewerState::Connecting) {
                 viewerRoomId_ = signal.roomId.isEmpty() ? viewerRoomId_ : signal.roomId;
-                // 观看端的渲染窗口由 UI 层在收到状态变化后提供，这里先进房。
+                // 先通知 UI 创建原生渲染窗口。TRTC 的回调可能在 startViewing
+                // 内同步到达，晚切状态会让首帧落在 Inviting 并被永久忽略。
+                setViewerState(transition.nextState, transition.failureReason);
                 if (!engine_ || !engine_->startViewing(roomParams(viewerRoomId_), nullptr)) {
                     setViewerState(ViewerState::Failed, QStringLiteral("远程画面启动失败"));
                     return true;
                 }
+                return true;
             }
             setViewerState(transition.nextState, transition.failureReason);
             return true;
@@ -381,7 +392,8 @@ void RemoteDesktopController::recordAuthAttempt(const HostInviteInput& input,
 }
 
 void RemoteDesktopController::applyHostDecision(const HostDecision& decision,
-                                                const QString& peerId) {
+                                                const QString& peerId,
+                                                SignalSendCompletion completion) {
     switch (decision.action) {
         case HostAction::ShowConsentDialog:
             hostPeerId_ = peerId;
@@ -430,12 +442,14 @@ void RemoteDesktopController::applyHostDecision(const HostDecision& decision,
             // 先收控制侧再停引擎：注入器要在这里把按住的键全抬了，
             // 否则会话没了而 Ctrl 还按着，人不在电脑旁没法自己解。
             stopHostControlSide();
-            engine_->stop();
-            hostState_ = decision.nextState;
             Signal stop;
             stop.type = Type::Stop;
             stop.sessionId = hostSessionId_;
-            send(peerId.isEmpty() ? hostPeerId_ : peerId, stop);
+            // 先把结束命令交给 IM SDK，再退出 TRTC。应用关闭路径会等待这个
+            // 发送回执，防止 SDK 尚未接收消息时进程就结束。
+            send(peerId.isEmpty() ? hostPeerId_ : peerId, stop, std::move(completion));
+            engine_->stop();
+            hostState_ = decision.nextState;
             hostSessionId_.clear();
             hostRoomId_.clear();
             hostPeerId_.clear();
@@ -476,21 +490,50 @@ void RemoteDesktopController::resolveConsent(bool accepted) {
     applyHostDecision(decision, hostPeerId_);
 }
 
-void RemoteDesktopController::stopSession() {
-    if (hostState_ == HostState::Sharing) {
-        applyHostDecision(decideOnPeerGone(hostState_), hostPeerId_);
+void RemoteDesktopController::stopSession(SignalSendCompletion completion) {
+    const bool stopHost = hostState_ == HostState::Sharing;
+    const bool stopViewer = viewerState_ != ViewerState::Idle;
+    const int sendCount = static_cast<int>(stopHost) + static_cast<int>(stopViewer);
+    if (sendCount == 0) {
+        if (completion) completion();
+        return;
     }
-    if (viewerState_ != ViewerState::Idle) {
+
+    struct StopCompletionState {
+        int pending = 0;
+        bool cleanupDone = false;
+        SignalSendCompletion completion;
+    };
+    auto state = std::make_shared<StopCompletionState>();
+    state->pending = sendCount;
+    state->completion = std::move(completion);
+    const auto finishIfReady = [state] {
+        if (!state->cleanupDone || state->pending != 0 || !state->completion) return;
+        auto done = std::move(state->completion);
+        done();
+    };
+    const auto signalSent = [state, finishIfReady] {
+        --state->pending;
+        finishIfReady();
+    };
+
+    if (stopHost) {
+        applyHostDecision(decideOnPeerGone(hostState_), hostPeerId_, signalSent);
+    }
+    if (stopViewer) {
         Signal stop;
         stop.type = Type::Stop;
         stop.sessionId = viewerSessionId_;
+        // 与被控端使用同一 sessionId，确保它能命中当前会话并停止共享。
+        send(viewerPeerId_, stop, signalSent);
         setViewerState(viewerOnLocalClose(viewerState_).nextState);
         engine_->stop();
-        send(viewerPeerId_, stop);
         viewerSessionId_.clear();
         viewerRoomId_.clear();
         viewerPeerId_.clear();
     }
+    state->cleanupDone = true;
+    finishIfReady();
 }
 
 void RemoteDesktopController::setViewerState(ViewerState state, const QString& failureReason) {

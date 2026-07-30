@@ -25,6 +25,10 @@ void RemoteDesktopSettingsTest::defaultsToAttendedWithoutPassword() {
     QVERIFY(!settings.hasPassword());
     QVERIFY(settings.allowedUserIds.isEmpty());
     QCOMPARE(settings.consecutiveAuthFailures, 0);
+    QVERIFY(!settings.trtcProxyEnabled);
+    QCOMPARE(settings.trtcProxyHost, QStringLiteral("127.0.0.1"));
+    QCOMPARE(settings.trtcProxyPort, static_cast<quint16>(1082));
+    QVERIFY(!settings.trtcProxyUdp);
 }
 
 void RemoteDesktopSettingsTest::roundTripsThroughDisk() {
@@ -38,6 +42,10 @@ void RemoteDesktopSettingsTest::roundTripsThroughDisk() {
     settings.allowedUserIds =
         QStringList{QStringLiteral("whq-iphone"), QStringLiteral("mac-multi-ai-code")};
     settings.consecutiveAuthFailures = 2;
+    settings.trtcProxyEnabled = true;
+    settings.trtcProxyHost = QStringLiteral("proxy.internal");
+    settings.trtcProxyPort = 1088;
+    settings.trtcProxyUdp = false;
     QVERIFY(store.save(settings));
 
     const RemoteDesktopSettings loaded = store.load();
@@ -46,6 +54,10 @@ void RemoteDesktopSettingsTest::roundTripsThroughDisk() {
     QCOMPARE(loaded.secret.hash, settings.secret.hash);
     QCOMPARE(loaded.allowedUserIds, settings.allowedUserIds);
     QCOMPARE(loaded.consecutiveAuthFailures, 2);
+    QVERIFY(loaded.trtcProxyEnabled);
+    QCOMPARE(loaded.trtcProxyHost, QStringLiteral("proxy.internal"));
+    QCOMPARE(loaded.trtcProxyPort, static_cast<quint16>(1088));
+    QVERIFY(!loaded.trtcProxyUdp);
     QVERIFY(loaded.hasPassword());
 }
 

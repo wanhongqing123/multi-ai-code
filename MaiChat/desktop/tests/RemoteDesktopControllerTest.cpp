@@ -83,6 +83,9 @@ public:
         viewCalls += 1;
         lastRoomId = params.roomId;
         active = true;
+        if (emitVideoDuringViewStart && remoteVideoCallback) {
+            remoteVideoCallback(videoUserIdDuringViewStart, true);
+        }
         return true;
     }
 
@@ -99,6 +102,8 @@ public:
     int bindCalls = 0;
     bool active = false;
     bool failNextStart = false;
+    bool emitVideoDuringViewStart = false;
+    QString videoUserIdDuringViewStart = QStringLiteral("remote-host");
     QString lastRoomId;
     QString lastBoundUserId;
     RemoteVideoCallback remoteVideoCallback;
@@ -134,8 +139,16 @@ public:
 
         controller = std::make_unique<RemoteDesktopController>(
             config, settings, std::move(engineOwner),
-            [this](const QString& peerId, const QString& text) {
+            [this](const QString& peerId,
+                   const QString& text,
+                   RemoteDesktopController::SignalSendCompletion completion) {
                 sent.append({peerId, RemoteDesktopSignals::decodeSignal(text)});
+                if (!completion) return;
+                if (autoCompleteSignalSends) {
+                    completion();
+                } else {
+                    pendingSignalCompletions.append(std::move(completion));
+                }
             });
         controller->setIdGenerator([] { return QStringLiteral("fixed-id"); });
 
@@ -183,6 +196,8 @@ public:
     RecordingInputSink* sink = nullptr;
     std::unique_ptr<RemoteDesktopController> controller;
     QVector<SentSignal> sent;
+    bool autoCompleteSignalSends = true;
+    QVector<RemoteDesktopController::SignalSendCompletion> pendingSignalCompletions;
 };
 
 }  // namespace
@@ -192,10 +207,13 @@ class RemoteDesktopControllerTest : public QObject {
 
 private slots:
     void firstFrameEnablesInputSending();
+    void handlesVideoCallbackDuringViewStart();
     void dropsRemoteInputWhenControlSwitchIsOff();
     void injectsRemoteInputOnceControlIsAllowed();
     void dropsRemoteInputFromNonPeerAndStaleSession();
     void releasesHeldKeysWhenSessionStops();
+    void notifiesControlledPeerBeforeViewerShutdownCompletes();
+    void notifiesViewerBeforeHostShutdownCompletes();
     void ignoresPlainChatText();
     void consumesMalformedSignalWithoutActing();
     void attendedModeEmitsConsentAndSharesAfterAccept();
@@ -259,6 +277,24 @@ void RemoteDesktopControllerTest::firstFrameEnablesInputSending() {
     QVERIFY2(!h.engine->sentMessages.isEmpty(), "首帧之后仍然发不出输入包");
 }
 
+void RemoteDesktopControllerTest::handlesVideoCallbackDuringViewStart() {
+    const QString windowsUser = QStringLiteral("company-iphone");
+    Harness h(HostMode::Attended);
+    h.engine->emitVideoDuringViewStart = true;
+    h.engine->videoUserIdDuringViewStart = windowsUser;
+
+    h.controller->requestView(windowsUser);
+    Signal accept;
+    accept.type = Type::Accept;
+    accept.sessionId = h.lastSent().sessionId;
+    accept.roomId = QStringLiteral("room-windows");
+    h.controller->handleIncomingText(windowsUser,
+                                     RemoteDesktopSignals::encodeSignal(accept));
+
+    QCOMPARE(h.controller->viewerPeerId(), windowsUser);
+    QCOMPARE(h.controller->viewerState(), ViewerState::Viewing);
+}
+
 void RemoteDesktopControllerTest::dropsRemoteInputWhenControlSwitchIsOff() {
     Harness h(HostMode::Unattended);
     QVERIFY(!h.controller->isRemoteControlAllowed());  // 默认关
@@ -317,6 +353,59 @@ void RemoteDesktopControllerTest::releasesHeldKeysWhenSessionStops() {
     QVERIFY2(h.sink->calls.contains(QStringLiteral("key 17 up")),
              qPrintable(QStringLiteral("会话结束没抬键，实际调用：%1")
                             .arg(h.sink->calls.join(QStringLiteral(", ")))));
+}
+
+void RemoteDesktopControllerTest::notifiesControlledPeerBeforeViewerShutdownCompletes() {
+    Harness h(HostMode::Attended);
+    h.controller->requestView(kPeerUser);
+    const QString sessionId = h.lastSent().sessionId;
+
+    Signal accept;
+    accept.type = Type::Accept;
+    accept.sessionId = sessionId;
+    accept.roomId = QStringLiteral("room-1");
+    h.controller->handleIncomingText(kPeerUser, RemoteDesktopSignals::encodeSignal(accept));
+
+    h.sent.clear();
+    h.autoCompleteSignalSends = false;
+    int shutdownCompletions = 0;
+    h.controller->stopSession([&shutdownCompletions] { ++shutdownCompletions; });
+
+    QCOMPARE(h.sent.size(), 1);
+    QCOMPARE(h.sent.first().peerId, kPeerUser);
+    QCOMPARE(static_cast<int>(h.sent.first().signal.type), static_cast<int>(Type::Stop));
+    QCOMPARE(h.sent.first().signal.sessionId, sessionId);
+    QCOMPARE(static_cast<int>(h.controller->viewerState()), static_cast<int>(ViewerState::Idle));
+    QCOMPARE(shutdownCompletions, 0);
+    QCOMPARE(h.pendingSignalCompletions.size(), 1);
+
+    auto sendCompleted = std::move(h.pendingSignalCompletions.first());
+    h.pendingSignalCompletions.clear();
+    sendCompleted();
+    QCOMPARE(shutdownCompletions, 1);
+}
+
+void RemoteDesktopControllerTest::notifiesViewerBeforeHostShutdownCompletes() {
+    Harness h(HostMode::Unattended);
+    startSharing(h);
+
+    h.sent.clear();
+    h.autoCompleteSignalSends = false;
+    int shutdownCompletions = 0;
+    h.controller->stopSession([&shutdownCompletions] { ++shutdownCompletions; });
+
+    QCOMPARE(h.sent.size(), 1);
+    QCOMPARE(h.sent.first().peerId, kPeerUser);
+    QCOMPARE(static_cast<int>(h.sent.first().signal.type), static_cast<int>(Type::Stop));
+    QCOMPARE(h.sent.first().signal.sessionId, QStringLiteral("s-1"));
+    QCOMPARE(static_cast<int>(h.controller->hostState()), static_cast<int>(HostState::Idle));
+    QCOMPARE(shutdownCompletions, 0);
+    QCOMPARE(h.pendingSignalCompletions.size(), 1);
+
+    auto sendCompleted = std::move(h.pendingSignalCompletions.first());
+    h.pendingSignalCompletions.clear();
+    sendCompleted();
+    QCOMPARE(shutdownCompletions, 1);
 }
 
 void RemoteDesktopControllerTest::ignoresPlainChatText() {

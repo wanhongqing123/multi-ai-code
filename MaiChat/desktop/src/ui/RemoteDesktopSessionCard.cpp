@@ -89,6 +89,7 @@ void RemoteDesktopSessionCard::buildUi() {
     controlButton_->setCursor(Qt::PointingHandCursor);
     controlButton_->setFocusPolicy(Qt::NoFocus);
     controlButton_->setCheckable(true);
+    controlButton_->setEnabled(false);
     connect(controlButton_, &QPushButton::clicked, this,
             [this] { emit controlToggleRequested(peerUserId_); });
 
@@ -204,6 +205,10 @@ void RemoteDesktopSessionCard::applyStyle() {
             border-color: #b42318;
             color: #ffffff;
         }
+        #remoteCardControl:disabled {
+            border-color: #1e293b;
+            color: #475569;
+        }
         #remoteCardNotice {
             background: #7c2d12;
             color: #fed7aa;
@@ -240,16 +245,20 @@ void RemoteDesktopSessionCard::refreshFullScreenButton() {
 void RemoteDesktopSessionCard::refreshControlButton() {
     controlButton_->setText(controlActive_ ? QStringLiteral("控制中")
                                            : QStringLiteral("控制"));
-    controlButton_->setToolTip(
-        controlActive_
-            ? QStringLiteral("正在操作对方电脑。点此交还控制权（本地退出全屏用 Ctrl+Alt+Shift+Q）")
-            : QStringLiteral("接管对方的鼠标键盘。需要对方在设置里开启「允许远程控制」"));
+    if (!streamActive_) {
+        controlButton_->setToolTip(QStringLiteral("远程画面连接成功后才能控制"));
+    } else {
+        controlButton_->setToolTip(
+            controlActive_
+                ? QStringLiteral("正在操作对方电脑。点此交还控制权（本地退出全屏用 Ctrl+Alt+Shift+Q）")
+                : QStringLiteral("接管对方的鼠标键盘。需要对方在设置里开启「允许远程控制」"));
+    }
     QSignalBlocker blocker(controlButton_);
     controlButton_->setChecked(controlActive_);
 }
 
 void RemoteDesktopSessionCard::setControlActive(bool active) {
-    controlActive_ = active;
+    controlActive_ = active && streamActive_;
     refreshControlButton();
 }
 
@@ -277,6 +286,10 @@ bool RemoteDesktopSessionCard::eventFilter(QObject* watched, QEvent* event) {
 
 void RemoteDesktopSessionCard::setStreamActive(bool active) {
     streamActive_ = active;
+    if (!active) controlActive_ = false;
+    controlButton_->setEnabled(active);
+    controlButton_->setCursor(active ? Qt::PointingHandCursor : Qt::ArrowCursor);
+    refreshControlButton();
     // 画面到达后必须撤下占位文字：它盖在渲染面上会挡住 SDK 画的内容。
     placeholderLabel_->setVisible(!active);
     setStatusText(active ? QStringLiteral("画面已连接") : QStringLiteral("等待画面"));

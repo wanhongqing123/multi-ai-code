@@ -3,6 +3,7 @@
 #include <QCoreApplication>
 #include <QApplication>
 #include <QClipboard>
+#include <QCloseEvent>
 #include <QAction>
 #include <QContextMenuEvent>
 #include <QDateTime>
@@ -75,6 +76,7 @@
 #include "im/TencentUserSigGenerator.h"
 #include "remote/TrtcEngine.h"
 #include "ui/RemoteDesktopConsentDialog.h"
+#include "ui/RemoteDesktopProxyDialog.h"
 #include "ui/RemoteDesktopSessionCard.h"
 #include "ui/RemoteDesktopViewPanel.h"
 #include "ui/SharingIndicatorBar.h"
@@ -91,6 +93,7 @@ constexpr int AvatarUrlRole = Qt::UserRole + 5;
 constexpr int MessageAvatarLogicalSize = 40;
 constexpr int MessageAvatarGap = 10;
 constexpr int MessageMetaBubbleGap = 6;
+constexpr int RemoteDesktopStopSendTimeoutMs = 800;
 
 class MarkdownMessageView final : public QTextBrowser {
 public:
@@ -1003,7 +1006,29 @@ MainWindow::MainWindow(RemoteIMApplication& app, QWidget* parent) : QMainWindow(
                 // macOS 从“辅助功能”设置切回来后立即刷新授权状态。
                 if (state == Qt::ApplicationActive) refreshRemoteDesktopSettings();
             });
+    connect(qApp, &QCoreApplication::aboutToQuit, this,
+            [this] { stopRemoteDesktopForShutdown(); });
     refresh();
+}
+
+void MainWindow::closeEvent(QCloseEvent* event) {
+    if (remoteDesktopShutdownComplete_) {
+        QMainWindow::closeEvent(event);
+        return;
+    }
+
+    // IM 发送是异步的。先拦住本次关闭，等 stop 已交给 SDK（或短超时）
+    // 再真正关闭，否则进程退出会让对端永远停在共享/控制状态。
+    event->ignore();
+    if (remoteDesktopShutdown_) return;
+
+    QPointer<MainWindow> window(this);
+    stopRemoteDesktopForShutdown([window] {
+        if (!window) return;
+        QTimer::singleShot(0, window, [window] {
+            if (window) window->close();
+        });
+    });
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
@@ -3126,6 +3151,21 @@ QWidget* MainWindow::buildRemoteDesktopSettingsPanel(QWidget* parent) {
     }
     layout->addWidget(controlRow);
 
+    remoteDesktopProxyValue_ = new QLabel(panel);
+    remoteDesktopProxyValue_->setObjectName(QStringLiteral("settingsRowValue"));
+    remoteDesktopProxyValue_->setProperty("settingsRowValue", true);
+    auto* proxyRow = createSettingsRow(
+        QStringLiteral("TRTC 网络代理"), remoteDesktopProxyValue_,
+        QStringLiteral("为远程桌面单独设置 SOCKS5，不影响 IM。保存后重启 MaiChat 生效。"));
+    auto* proxyButton = new QPushButton(QStringLiteral("配置"), proxyRow);
+    proxyButton->setObjectName(QStringLiteral("settingsRowButton"));
+    proxyButton->setCursor(Qt::PointingHandCursor);
+    connect(proxyButton, &QPushButton::clicked, this, &MainWindow::editRemoteDesktopProxy);
+    if (auto* rowLayout = qobject_cast<QHBoxLayout*>(proxyRow->layout())) {
+        rowLayout->addWidget(proxyButton);
+    }
+    layout->addWidget(proxyRow);
+
     return panel;
 }
 
@@ -3159,6 +3199,16 @@ void MainWindow::refreshRemoteDesktopSettings() {
             status = QStringLiteral("已允许");
         }
         remoteDesktopControlValue_->setText(status);
+    }
+    if (remoteDesktopProxyValue_) {
+        remoteDesktopProxyValue_->setText(
+            settings.trtcProxyEnabled
+                ? QStringLiteral("%1:%2 · %3")
+                      .arg(settings.trtcProxyHost)
+                      .arg(settings.trtcProxyPort)
+                      .arg(settings.trtcProxyUdp ? QStringLiteral("TCP + UDP")
+                                                 : QStringLiteral("仅 TCP"))
+                : QStringLiteral("直连"));
     }
 }
 
@@ -3210,6 +3260,36 @@ void MainWindow::editRemoteDesktopAllowList() {
     refreshRemoteDesktopSettings();
 }
 
+void MainWindow::editRemoteDesktopProxy() {
+    const RemoteDesktopSettings current = remoteDesktop_->settings();
+    RemoteDesktopProxyDialog::Config dialogConfig;
+    dialogConfig.enabled = current.trtcProxyEnabled;
+    dialogConfig.host = current.trtcProxyHost;
+    dialogConfig.port = current.trtcProxyPort;
+    dialogConfig.supportUdp = current.trtcProxyUdp;
+    RemoteDesktopProxyDialog dialog(dialogConfig, this);
+    if (dialog.exec() != QDialog::Accepted) return;
+    const RemoteDesktopProxyDialog::Config proxy = dialog.config();
+
+    RemoteDesktopSettings settings = current;
+    settings.trtcProxyEnabled = proxy.enabled;
+    settings.trtcProxyHost =
+        proxy.host.isEmpty() ? QStringLiteral("127.0.0.1") : proxy.host;
+    settings.trtcProxyPort = proxy.port;
+    settings.trtcProxyUdp = proxy.supportUdp;
+    if (!remoteDesktopSettingsStore_->save(settings)) {
+        AppMessageDialog::show(this, AppMessageDialog::Kind::Warning,
+                               QStringLiteral("保存失败"),
+                               QStringLiteral("无法保存 TRTC 网络代理设置。"));
+        return;
+    }
+    remoteDesktop_->updateSettings(settings);
+    refreshRemoteDesktopSettings();
+    AppMessageDialog::show(this, AppMessageDialog::Kind::Info,
+                           QStringLiteral("代理设置已保存"),
+                           QStringLiteral("重启 MaiChat 后，TRTC 将使用新的网络代理。"));
+}
+
 void MainWindow::setupRemoteDesktop() {
     // 配置与本地消息库同级：每账号一份。
     QString root = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
@@ -3229,13 +3309,34 @@ void MainWindow::setupRemoteDesktop() {
 
     RemoteDesktopSettings remoteSettings = remoteDesktopSettingsStore_->load();
     if (!RemoteInput::isInputInjectionSupported()) remoteSettings.allowRemoteControl = false;
+    RemoteDesktop::TrtcNetworkProxyConfig proxyConfig;
+    proxyConfig.enabled = remoteSettings.trtcProxyEnabled;
+    proxyConfig.host = remoteSettings.trtcProxyHost;
+    proxyConfig.port = remoteSettings.trtcProxyPort;
+    proxyConfig.supportUdp = remoteSettings.trtcProxyUdp;
+    auto trtcEngine =
+        std::unique_ptr<RemoteDesktop::ITrtcEngine>(RemoteDesktop::createTrtcEngine(proxyConfig));
+    const QString trtcInitializationError = trtcEngine->initializationError();
     remoteDesktop_ = new RemoteDesktopController(
-        config, remoteSettings,
-        std::unique_ptr<RemoteDesktop::ITrtcEngine>(RemoteDesktop::createTrtcEngine()),
-        [this](const QString& peerId, const QString& text) {
-            app_.client().sendText(peerId, text, {});
+        config, remoteSettings, std::move(trtcEngine),
+        [this](const QString& peerId,
+               const QString& text,
+               RemoteDesktopController::SignalSendCompletion completion) {
+            app_.client().sendText(
+                peerId, text,
+                [completion = std::move(completion)](
+                    bool, const QString&, const RemoteIMSendReceipt&) mutable {
+                    if (completion) completion();
+                });
         },
         this);
+    if (!trtcInitializationError.isEmpty()) {
+        QTimer::singleShot(0, this, [this, trtcInitializationError] {
+            AppMessageDialog::show(this, AppMessageDialog::Kind::Warning,
+                                   QStringLiteral("TRTC 初始化失败"),
+                                   trtcInitializationError);
+        });
+    }
 
     connect(&app_, &RemoteIMApplication::remoteDesktopSignalReceived, this,
             [this](const QString& fromUserId, const QString& text) {
@@ -3270,13 +3371,33 @@ void MainWindow::setupRemoteDesktop() {
                 switch (state) {
                     case RemoteDesktop::ViewerState::Connecting:
                         // 对方已同意：先把观看窗开出来，渲染句柄要在窗口显示后才有效。
-                        openRemoteDesktopViewer(app_.chatState().selectedPeerId());
+                        {
+                            const QString peerUserId = remoteDesktop_->viewerPeerId();
+                            openRemoteDesktopViewer(peerUserId);
+                            // 已知对端 userId 时无需等待辅流通知。下一轮事件循环
+                            // 再绑定，确保 startViewing 已发起且 NSView/HWND 已创建。
+                            QTimer::singleShot(0, this, [this, peerUserId] {
+                                if (!remoteDesktop_ || !remoteDesktopView_
+                                    || peerUserId.isEmpty()
+                                    || !remoteDesktopView_->isSessionVisible()) {
+                                    return;
+                                }
+                                const auto state = remoteDesktop_->viewerState();
+                                if (state != RemoteDesktop::ViewerState::Connecting
+                                    && state != RemoteDesktop::ViewerState::Viewing) {
+                                    return;
+                                }
+                                remoteDesktop_->bindRemoteView(
+                                    peerUserId,
+                                    remoteDesktopView_->renderWindowHandle(peerUserId));
+                            });
+                        }
                         break;
                     case RemoteDesktop::ViewerState::Failed:
                         closeRemoteDesktopViewer();
                         if (failureReason == RemoteDesktop::reasonBadPassword()) {
                             // 只有对方额外设了密码才会走到这里：此时才问，问一次记住。
-                            promptRemoteDesktopPassword(app_.chatState().selectedPeerId());
+                            promptRemoteDesktopPassword(remoteDesktop_->viewerPeerId());
                         } else if (!failureReason.isEmpty()) {
                             AppMessageDialog::show(this, AppMessageDialog::Kind::Info, QStringLiteral("远程桌面"), failureReason);
                         }
@@ -3290,15 +3411,25 @@ void MainWindow::setupRemoteDesktop() {
                 }
             });
 
-    // 远端画面到达才绑定渲染窗口：进房时对方可能还没开始推流。
+    // 辅流状态变化时刷新 UI 并重申绑定；首次订阅已在 Connecting 时主动发起，
+    // 不依赖这条可能早于原生窗口创建的单次通知。
     remoteDesktop_->setRemoteVideoHandler(
         [this](const QString& userId, bool available) {
-            if (!remoteDesktopView_ || !remoteDesktopView_->isSessionVisible()) return;
-            remoteDesktopView_->setStreamActive(userId, available);
-            if (available) {
-                remoteDesktop_->bindRemoteView(userId,
-                                               remoteDesktopView_->renderWindowHandle(userId));
+            if (!remoteDesktopView_) return;
+            const QString peerUserId =
+                userId.isEmpty() ? remoteDesktop_->viewerPeerId() : userId;
+            if (available && !remoteDesktopView_->isSessionVisible()) {
+                openRemoteDesktopViewer(remoteDesktop_->viewerPeerId());
             }
+            if (!remoteDesktopView_->isSessionVisible()) return;
+            if (!available && remoteDesktopView_->isControlActive(peerUserId)) {
+                toggleRemoteDesktopControl(peerUserId);
+            }
+            if (available) {
+                remoteDesktop_->bindRemoteView(
+                    peerUserId, remoteDesktopView_->renderWindowHandle(peerUserId));
+            }
+            remoteDesktopView_->setStreamActive(peerUserId, available);
         });
     // 被控端的状态播报：让用户能区分"对方在等系统授权"和"断网/崩溃"，
     // 而不是对着一块卡住的画面猜。
@@ -3318,6 +3449,12 @@ void MainWindow::setupRemoteDesktop() {
 
     remoteDesktop_->setErrorHandler([this](int code, const QString& message) {
         if (remoteDesktopView_) {
+            for (const QString& peerId : remoteDesktopView_->sessionPeerIds()) {
+                if (remoteDesktopView_->isControlActive(peerId)) {
+                    toggleRemoteDesktopControl(peerId);
+                }
+                remoteDesktopView_->setStreamActive(peerId, false);
+            }
             remoteDesktopView_->setStatusText(
                 QStringLiteral("连接异常（%1）：%2").arg(code).arg(message));
         }
@@ -3354,12 +3491,43 @@ void MainWindow::closeRemoteDesktopViewer() {
     remoteDesktopView_->showIdle();
 }
 
+void MainWindow::stopRemoteDesktopForShutdown(std::function<void()> completion) {
+    if (remoteDesktopShutdown_) {
+        if (remoteDesktopShutdownComplete_ && completion) completion();
+        return;
+    }
+    remoteDesktopShutdown_ = true;
+
+    if (remoteInputCapture_) {
+        remoteInputCapture_->setEnabled(false);
+        remoteInputCapture_->attachTo(nullptr);
+    }
+
+    auto completed = std::make_shared<bool>(false);
+    auto completeOnce =
+        [this, completed, completion = std::move(completion)]() mutable {
+            if (*completed) return;
+            *completed = true;
+            remoteDesktopShutdownComplete_ = true;
+            if (completion) completion();
+        };
+
+    // SDK 异常时不能让应用永久关不掉；正常情况下 sendText 的回执会更早到。
+    QTimer::singleShot(RemoteDesktopStopSendTimeoutMs, this, completeOnce);
+    if (remoteDesktop_) {
+        remoteDesktop_->stopSession(completeOnce);
+    } else {
+        completeOnce();
+    }
+}
+
 void MainWindow::toggleRemoteDesktopControl(const QString& peerUserId) {
     if (!remoteDesktop_ || !remoteDesktopView_) return;
     auto* card = remoteDesktopView_->cardFor(peerUserId);
     if (card == nullptr) return;
 
     const bool turningOn = !card->isControlActive();
+    if (turningOn && !card->isStreamActive()) return;
     if (turningOn) {
         if (!remoteInputCapture_) {
             remoteInputCapture_ =

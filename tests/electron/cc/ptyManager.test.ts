@@ -202,7 +202,6 @@ describe('registerPtyIpc prompt injection timing', () => {
       targetRepo,
       planName: '',
       planMode: 'none',
-      allowScheduledTasks: true,
       command,
       args: [],
       mode: 'new',
@@ -331,17 +330,18 @@ describe('registerPtyIpc prompt injection timing', () => {
     }
   })
 
-  it('only exposes task-watch sessions to the scheduled task scheduler', async () => {
+  it('exposes every session to the scheduled task scheduler', async () => {
+    // 定时任务与普通任务并存：会话怎么起的都一样能接定时任务。
+    // 此前会话上带一个 allowScheduledTasks 标记，只有"定时任务模式"下启动的
+    // 会话才会被调度器看见——普通模式下起的会话，定时任务到点也不跑。
     await spawnClaudeSession()
-    const ptyManager = (await import('../../../electron/cc/ptyManager.js')) as typeof import('../../../electron/cc/ptyManager.js') & {
-      getScheduledTaskSessionForProject?: (projectId: string) => {
-        sessionId: string
-        targetRepo: string
-      } | null
-    }
+    const ptyManager = await import('../../../electron/cc/ptyManager.js')
 
-    expect(typeof ptyManager.getScheduledTaskSessionForProject).toBe('function')
-    expect(ptyManager.getScheduledTaskSessionForProject?.('project-1') ?? null).toBeNull()
+    // spawnClaudeSession 起的是一个带方案的普通会话，没有任何"允许定时任务"
+    // 的标记，调度器照样能看到它。
+    expect(ptyManager.getActiveSessionForProject('project-1')).toMatchObject({
+      sessionId: 'session-1'
+    })
 
     const targetRepo = await fs.mkdtemp(join(tmpdir(), 'multi-ai-code-target-watch-'))
     const projectDir = await fs.mkdtemp(join(tmpdir(), 'multi-ai-code-project-watch-'))
@@ -356,14 +356,13 @@ describe('registerPtyIpc prompt injection timing', () => {
       targetRepo,
       planName: '',
       planMode: 'none',
-      allowScheduledTasks: true,
       command: 'claude',
       args: [],
       mode: 'new',
     })
 
     expect(result).toEqual({ ok: true })
-    expect(ptyManager.getScheduledTaskSessionForProject?.('project-watch')).toEqual({
+    expect(ptyManager.getActiveSessionForProject('project-watch')).toEqual({
       sessionId: 'session-watch',
       targetRepo
     })

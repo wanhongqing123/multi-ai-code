@@ -10,7 +10,6 @@ function render(
     <MainBootGate
       phase={{ kind: 'idle' }}
       command="codex"
-      workMode="normal-task"
       onChoose={vi.fn()}
       onDismissFailure={vi.fn()}
       {...overrides}
@@ -31,14 +30,13 @@ describe('MainBootGate', () => {
     expect(html).not.toContain('续聊将由')
   })
 
-  it('idle in scheduled-task mode: shows the mode in the subtitle', () => {
-    const html = render({ workMode: 'scheduled-task' })
-    // 模式只在副标题行体现（无「当前模式/当前 CLI」标签前缀），按钮文案两种模式统一。
+  it('subtitle shows only the CLI, with no work-mode wording', () => {
+    // 普通任务与定时任务并存后，启动闸门不该再声称自己处在某一种模式里。
+    const html = render()
     expect(html).not.toContain('当前模式')
     expect(html).not.toContain('当前 CLI')
-    expect(html).toContain('定时任务')
-    expect(html).toContain('另起炉灶')
-    expect(html).toContain('接着唠')
+    expect(html).not.toContain('定时任务')
+    expect(html).not.toContain('普通任务')
   })
 
   it('spawning-new: marks the new button as in-progress and disables both', () => {

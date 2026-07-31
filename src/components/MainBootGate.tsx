@@ -9,14 +9,10 @@ export type BootGatePhase =
   | { kind: 'spawning'; mode: 'new' | 'resume' }
   | { kind: 'failed'; reason: string; tail?: string }
 
-export type BootGateWorkMode = 'normal-task' | 'scheduled-task'
-
 export interface MainBootGateProps {
   phase: BootGatePhase
   /** Current CLI binary name (claude / codex / other custom). */
   command: string
-  /** User-facing work mode selected for this session start. */
-  workMode: BootGateWorkMode
   /** Whether user can interact (false when no project / no plan). */
   disabled?: boolean
   /** Called when user picks how to start the session. */
@@ -42,7 +38,6 @@ export default function MainBootGate(props: MainBootGateProps): JSX.Element {
   const {
     phase,
     command,
-    workMode,
     disabled = false,
     onChoose,
     onDismissFailure
@@ -51,7 +46,6 @@ export default function MainBootGate(props: MainBootGateProps): JSX.Element {
 
   const spawning = phase.kind === 'spawning'
   const spawningMode = phase.kind === 'spawning' ? phase.mode : null
-  const workModeLabel = workMode === 'scheduled-task' ? '定时任务' : '普通任务'
   const requiresClaudeRiskConfirmation = isClaudeCliCommand(command)
 
   return (
@@ -59,7 +53,7 @@ export default function MainBootGate(props: MainBootGateProps): JSX.Element {
       <div className="main-panel-body boot-gate-body">
         <div className="boot-gate-card">
           <div className="boot-gate-subtitle">
-            <b>{workModeLabel}</b> · <b>{describeCli(command)}</b>
+            <b>{describeCli(command)}</b>
           </div>
 
           {phase.kind === 'failed' && (
@@ -110,7 +104,7 @@ export default function MainBootGate(props: MainBootGateProps): JSX.Element {
                   className="tile-btn boot-gate-btn danger"
                   onClick={() => onChoose('resume')}
                   disabled={disabled || spawning}
-                  title={`即使有风险也要继续使用 Claude，并续聊上次${workModeLabel}会话`}
+                  title="即使有风险也要继续使用 Claude，并续聊上次会话"
                 >
                   {spawningMode === 'resume'
                     ? '正在续聊…'
@@ -138,7 +132,7 @@ export default function MainBootGate(props: MainBootGateProps): JSX.Element {
                 }
                 title={
                   command === 'codex' || command === 'opencode'
-                    ? `继续上次${workModeLabel}会话（由 CLI 自身回放历史）`
+                    ? '继续上次会话（由 CLI 自身回放历史）'
                     : '当前 CLI 不支持续聊'
                 }
               >

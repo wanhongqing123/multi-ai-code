@@ -140,7 +140,6 @@ const DEFAULT_REMOTE_IM_CONFIG: RemoteImConfig = {
   outputMaxChunkChars: 4000
 }
 
-type WorkMode = 'task-watch' | 'plan-design'
 
 function appendBuildLog(current: string, chunk: string): string {
   const next = current + chunk
@@ -255,10 +254,6 @@ function AppShell() {
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null)
   const [showProjectPicker, setShowProjectPicker] = useState(false)
   const [planName, setPlanName] = useState('')
-  const [workMode, setWorkMode] = useState<WorkMode>('plan-design')
-  const isTaskWatchMode = workMode === 'task-watch'
-  const isPlanDesignMode = workMode === 'plan-design'
-  const noPlanMode = isTaskWatchMode
   const [showErrors, setShowErrors] = useState(false)
   const [showAiSettings, setShowAiSettings] = useState(false)
   const [aiSettingsInitialSection, setAiSettingsInitialSection] =
@@ -601,12 +596,8 @@ function AppShell() {
     DEFAULT_RUNTIME_STATE
   )
   const hasProject = currentProject !== null
-  const canStartCurrentMainSession = canStartMainSession(
-    currentProjectId,
-    noPlanMode,
-    planName
-  )
-  const mainSessionPlanLabel = formatMainSessionPlanLabel(noPlanMode, planName)
+  const canStartCurrentMainSession = canStartMainSession(currentProjectId)
+  const mainSessionPlanLabel = formatMainSessionPlanLabel(planName)
   const mainSessionStatusLabel =
     sessionStatus === 'running' ? '运行中' : sessionStatus === 'exited' ? '已退出' : '待启动'
   const runtimeStartBlockedReason = getRuntimeStartBlockedReason(
@@ -840,10 +831,11 @@ function AppShell() {
     setRemoteImSelectedPeerUserId(conversations[0]?.userId ?? null)
   }, [remoteImConfigReady, remoteImConfig, remoteImMessages, remoteImSelectedPeerUserId])
 
+  // 定时任务与普通任务并存，进项目就扫一次，不再取决于处在哪个模式。
   useEffect(() => {
-    if (!isTaskWatchMode || !currentProjectId) return
+    if (!currentProjectId) return
     void window.api.scheduledTasks.scanNow(currentProjectId)
-  }, [isTaskWatchMode, currentProjectId])
+  }, [currentProjectId])
 
   // Wire cc.onExit to flip sessionStatus to 'exited' when the active session exits.
   useEffect(() => {
@@ -903,7 +895,7 @@ function AppShell() {
   )
 
   const handleStart = useCallback(async (mode: 'new' | 'resume' = 'new') => {
-    if (!currentProjectId || !canStartMainSession(currentProjectId, noPlanMode, planName)) return
+    if (!currentProjectId || !canStartMainSession(currentProjectId)) return
     if (!aiSettingsReady) {
       showToast(aiSettingsLoadError ?? '主会话 AI 设置尚未加载完成', { level: 'warn' })
       return
@@ -938,7 +930,6 @@ function AppShell() {
       planMode: 'none',
       planAbsPath: undefined,
       planPending: false,
-      allowScheduledTasks: isTaskWatchMode,
       initialUserMessage: undefined,
       command,
       args,
@@ -956,10 +947,10 @@ function AppShell() {
       return
     }
     setMainPanelMounted(true)
-    if (isTaskWatchMode) {
-      void window.api.scheduledTasks.scanNow(currentProjectId)
-    }
-  }, [currentProjectId, noPlanMode, isTaskWatchMode, planName, projects, aiSettings, aiSettingsReady, aiSettingsLoadError])
+    // 会话一起来就扫一次：定时任务此前只在"定时任务模式"下才会被调度，
+    // 普通模式下到点也不跑。现在任何会话都能接定时任务。
+    void window.api.scheduledTasks.scanNow(currentProjectId)
+  }, [currentProjectId, planName, projects, aiSettings, aiSettingsReady, aiSettingsLoadError])
 
   const handleStop = useCallback(async () => {
     if (!sessionId) return
@@ -1364,27 +1355,6 @@ function AppShell() {
     setGatePhase({ kind: 'idle' })
   }, [sessionId, sessionStatus, mainPanelMounted])
 
-  const onWorkModeSelect = useCallback(
-    (value: WorkMode) => {
-      if (value === workMode) return
-      if (sessionStatus === 'running') {
-        alert('会话正在运行，请先停止（Kill）后再切换模式。')
-        return
-      }
-      setWorkMode(value)
-      setDiffAnnotations([])
-      setDiffGeneralNote('')
-      if (value === 'task-watch') {
-        setPlanReview(null)
-        setDiffReviewOpen(false)
-        setShowNormalTaskDialog(false)
-      } else {
-        setShowScheduledTaskDialog(false)
-      }
-    },
-    [workMode, sessionStatus]
-  )
-
   const runNormalTask = useCallback(
     async (task: NormalTaskEntry): Promise<void> => {
       if (!sessionId || sessionStatus !== 'running') {
@@ -1615,12 +1585,12 @@ function AppShell() {
       showToast('本项目没有 target_repo 路径，无法打开代码审查', { level: 'warn' })
       return
     }
-    if (noPlanMode) {
-      showToast('定时任务下暂不支持代码审查批注，请先切换到普通任务。', { level: 'warn' })
+    if (!planName.trim()) {
+      showToast('代码审查批注需要先选择一个普通任务（方案文件）。', { level: 'warn' })
       return
     }
     setDiffReviewOpen(true)
-  }, [targetRepo, noPlanMode])
+  }, [targetRepo, planName])
 
   const openRepoView = useCallback(async () => {
     if (!currentProjectId || !targetRepo) {
@@ -1691,8 +1661,8 @@ function AppShell() {
         showToast('会话未启动，无法发送批注', { level: 'warn' })
         return
       }
-      if (noPlanMode) {
-        showToast('定时任务下没有方案文件，无法发送代码审查批注。', { level: 'warn' })
+      if (!planName.trim()) {
+        showToast('没有选中普通任务，没有方案文件可写入批注。', { level: 'warn' })
         return
       }
       const planAbsPath = getPlanAbsPath(planName.trim())
@@ -1712,7 +1682,7 @@ function AppShell() {
       setDiffReviewOpen(false)
       showToast(`已发送 ${anns.length} 条批注到会话`, { level: 'info' })
     },
-    [sessionId, sessionStatus, noPlanMode, planName, getPlanAbsPath, currentProjectId, targetRepo]
+    [sessionId, sessionStatus, planName, getPlanAbsPath, currentProjectId, targetRepo]
   )
 
   const judgeExternalReviewItem = useCallback(
@@ -1720,7 +1690,7 @@ function AppShell() {
       if (!sessionId || sessionStatus !== 'running') {
         return { ok: false as const, error: 'session not running' }
       }
-      if (noPlanMode) {
+      if (!planName.trim()) {
         return { ok: false as const, error: 'no plan selected' }
       }
       const planAbsPath = getPlanAbsPath(planName.trim())
@@ -1735,7 +1705,7 @@ function AppShell() {
         }
       })
     },
-    [sessionId, sessionStatus, noPlanMode, getPlanAbsPath, planName]
+    [sessionId, sessionStatus, getPlanAbsPath, planName]
   )
 
   const globalSearchQuickActions = [
@@ -1810,14 +1780,14 @@ function AppShell() {
       label: '📝 审阅当前方案',
       keywords: 'plan review annotate',
       action: () => void openPlanReview(),
-      disabled: !hasProject || noPlanMode || !planName.trim()
+      disabled: !hasProject || !planName.trim()
     },
     {
       id: 'diff-review',
       label: '🔀 代码审查',
       keywords: 'code review diff annotate',
       action: () => void openDiffReview(),
-      disabled: !hasProject || noPlanMode
+      disabled: !hasProject || !planName.trim()
     }
   ]
 
@@ -1937,7 +1907,7 @@ function AppShell() {
               ▶
             </button>
           )}
-          {hasProject && isPlanDesignMode && (
+          {hasProject && (
             <button
               className="topbar-btn topbar-btn-icon"
               data-tone="blue"
@@ -1949,7 +1919,7 @@ function AppShell() {
               📋
             </button>
           )}
-          {hasProject && isTaskWatchMode && (
+          {hasProject && (
             <button
               className="topbar-btn topbar-btn-icon"
               data-tone="amber"
@@ -1961,7 +1931,7 @@ function AppShell() {
               ⏰
             </button>
           )}
-          {hasProject && isPlanDesignMode && planName.trim() && (
+          {hasProject && planName.trim() && (
             <button
               className="topbar-btn topbar-btn-icon"
               data-tone="blue"
@@ -1978,7 +1948,7 @@ function AppShell() {
               className="topbar-btn topbar-btn-icon"
               data-tone="blue"
               onClick={() => void openDiffReview()}
-              disabled={!canStartCurrentMainSession || noPlanMode || sessionStatus !== 'running'}
+              disabled={!canStartCurrentMainSession || !planName.trim() || sessionStatus !== 'running'}
               title="代码审查：打开 diff 并把批注回灌给当前会话"
               aria-label="代码审查"
             >
@@ -2011,22 +1981,6 @@ function AppShell() {
                 {sessionStatus === 'exited' ? '🔄' : '▶'}
               </button>
             ))}
-          <button
-            className="topbar-btn mode-toggle-btn"
-            data-tone="violet"
-            onClick={() => onWorkModeSelect(isTaskWatchMode ? 'plan-design' : 'task-watch')}
-            title={
-              sessionStatus === 'running'
-                ? '运行中无法切换模式，请先停止'
-                : isTaskWatchMode
-                  ? '当前：定时任务，点击切换到普通任务'
-                  : '当前：普通任务，点击切换到定时任务'
-            }
-            aria-label={isTaskWatchMode ? '切换到普通任务' : '切换到定时任务'}
-            aria-pressed={isTaskWatchMode}
-          >
-            🔀
-          </button>
           <button
             className="topbar-btn topbar-btn-icon"
             data-tone="amber"
@@ -2066,7 +2020,6 @@ function AppShell() {
             <MainBootGate
               phase={gatePhase}
               command={aiSettings.command ?? aiSettings.ai_cli ?? DEFAULT_AI_CLI}
-              workMode={isTaskWatchMode ? 'scheduled-task' : 'normal-task'}
               disabled={!canStartCurrentMainSession}
               onChoose={(mode) => void handleStart(mode)}
               onDismissFailure={() => setGatePhase({ kind: 'idle' })}
@@ -2165,7 +2118,7 @@ function AppShell() {
           }}
         />
       )}
-      {showNormalTaskDialog && isPlanDesignMode && currentProjectId && (
+      {showNormalTaskDialog && currentProjectId && (
         <NormalTaskDialog
           tasks={planList}
           selectedName={planName}
@@ -2182,7 +2135,7 @@ function AppShell() {
           onClose={() => setShowNormalTaskDialog(false)}
         />
       )}
-      {showScheduledTaskDialog && isTaskWatchMode && currentProjectId && (
+      {showScheduledTaskDialog && currentProjectId && (
         <ScheduledTaskDialog
           onClose={() => setShowScheduledTaskDialog(false)}
           projectId={currentProjectId}

@@ -236,8 +236,6 @@ export interface SpawnRequest {
   planAbsPath?: string
   /** true when plan file does not yet exist on disk. */
   planPending?: boolean
-  /** True when this session is allowed to receive scheduled task prompts. */
-  allowScheduledTasks?: boolean
   /** First user message to feed after kickoff. */
   initialUserMessage?: string
   /** CLI binary (claude | codex). */

@@ -550,7 +550,6 @@ html, body, #root {
   box-shadow: 0 0 0 3px var(--mac-focus-ring);
 }
 
-.topbar-btn.mode-toggle-btn,
 .topbar-btn.topbar-btn-icon {
   width: 34px;
   min-width: 34px;

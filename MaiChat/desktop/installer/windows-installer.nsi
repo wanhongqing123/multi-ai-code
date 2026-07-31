@@ -77,7 +77,11 @@ FunctionEnd
 
 Section "安装"
   ; 结束运行中的实例，否则覆盖文件会失败（忽略未运行时的报错）。
-  ExecWait 'taskkill /F /IM ${APP_EXE}' $0
+  ; 用 nsExec::Exec 而不是 ExecWait：后者会给 taskkill 开一个真实的控制台窗口，
+  ; 安装过程中黑窗一闪而过，看起来像装了什么可疑东西。nsExec 静默执行，
+  ; 返回码压栈——这里不关心杀没杀到（没运行时本来就该失败），直接丢弃。
+  nsExec::Exec 'taskkill /F /IM ${APP_EXE}'
+  Pop $0
 
   SetOutPath "$INSTDIR"
   File /r "${STAGING_DIR}\*.*"
@@ -102,7 +106,9 @@ Section "安装"
 SectionEnd
 
 Section "Uninstall"
-  ExecWait 'taskkill /F /IM ${APP_EXE}' $0
+  ; 同上：静默结束进程，不弹控制台黑窗。
+  nsExec::Exec 'taskkill /F /IM ${APP_EXE}'
+  Pop $0
 
   Delete "$SMPROGRAMS\${APP_NAME}.lnk"
   Delete "$DESKTOP\${APP_NAME}.lnk"

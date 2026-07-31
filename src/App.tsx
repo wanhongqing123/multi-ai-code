@@ -18,7 +18,7 @@ import {
 } from './utils/mainSessionPlanMode'
 import MainPanel from './components/MainPanel'
 import MainBootGate, { type BootGatePhase } from './components/MainBootGate'
-import ProjectPicker, { type ProjectInfo } from './components/ProjectPicker'
+import type { ProjectInfo } from './types/project'
 import ErrorPanel, { pushLog, useLogs } from './components/ErrorPanel'
 import AiSettingsDialog, {
   DEFAULT_AI_CLI,
@@ -251,7 +251,6 @@ function AccountGate(): JSX.Element {
 function AppShell() {
   const [projects, setProjects] = useState<ProjectInfo[]>([])
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null)
-  const [showProjectPicker, setShowProjectPicker] = useState(false)
   const [planName, setPlanName] = useState('')
   const [showErrors, setShowErrors] = useState(false)
   const [showAiSettings, setShowAiSettings] = useState(false)
@@ -1716,9 +1715,9 @@ function AppShell() {
   const commandPaletteCommands: Command[] = [
     {
       id: 'proj.picker',
-      label: '📁 项目管理（切换 / 新建 / 删除）',
-      keywords: 'project switch new',
-      action: () => setShowProjectPicker(true)
+      label: '📁 打开项目文件夹（切换 / 新建）',
+      keywords: 'project switch new open folder',
+      action: () => void openProjectDirPicker()
     },
     {
       id: 'settings',
@@ -2011,32 +2010,6 @@ function AppShell() {
           )}
         </div>
 
-        {showProjectPicker && (
-          <ProjectPicker
-            currentId={currentProjectId}
-            onClose={() => setShowProjectPicker(false)}
-            onSelect={(p) => {
-              if (p.id === currentProjectId) {
-                setShowProjectPicker(false)
-                return
-              }
-              void window.api.cc.killAll()
-              clearProjectScopedState()
-              setCurrentProjectId(p.id)
-              setShowProjectPicker(false)
-            }}
-            onChanged={async () => {
-              const list = await reloadProjects()
-              // If the currently-open project was deleted, bail out of it cleanly.
-              if (currentProjectId && !list.some((p) => p.id === currentProjectId)) {
-                void window.api.cc.killAll()
-                clearProjectScopedState()
-                setCurrentProjectId(null)
-                showToast('当前项目已被删除，请另选一个或新建', { level: 'warn' })
-              }
-            }}
-          />
-        )}
       </div>
 
       {showGlobalSearch && currentProjectId && (

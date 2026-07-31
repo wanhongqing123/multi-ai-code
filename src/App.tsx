@@ -563,13 +563,13 @@ function AppShell() {
       const list = await reloadProjects()
       const last = localStorage.getItem(LAST_PROJECT_KEY)
       const pick = list.find((p) => p.id === last) ?? list[0]
+      // 没有项目时不自动弹项目管理：顶栏已经写着「未选择项目（请点左上角
+      // 📁 选择项目）」，弹窗只是把同一句话再说一遍，还得先关掉才能动别的。
       if (pick) {
         setCurrentProjectId(pick.id)
         if (last && last !== pick.id) {
           showToast(`上次打开的项目已不存在，已切换到「${pick.name}」`, { level: 'warn' })
         }
-      } else {
-        setShowProjectPicker(true)
       }
     })()
   }, [reloadProjects])

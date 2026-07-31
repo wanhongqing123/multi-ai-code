@@ -1041,15 +1041,6 @@ html, body, #root {
   border-left: 1px solid var(--mac-border-subtle);
 }
 
-.topbar-session-plan {
-  font-size: var(--mac-text-xs);
-  color: var(--mac-fg-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 220px;
-}
-
 .global-search-modal {
   position: fixed;
   top: 12vh;

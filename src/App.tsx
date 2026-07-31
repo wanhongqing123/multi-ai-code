@@ -589,9 +589,6 @@ function AppShell() {
   )
   const hasProject = currentProject !== null
   const canStartCurrentMainSession = canStartMainSession(currentProjectId)
-  // 只有真的选了普通任务才在顶栏写它的名字；没选就只留状态点。占位文案
-  // 「(未选择普通任务)」除了占地方不提供任何信息——普通任务本来就不是必选的。
-  const mainSessionPlanLabel = planName.trim()
   const mainSessionStatusLabel =
     sessionStatus === 'running' ? '运行中' : sessionStatus === 'exited' ? '已退出' : '待启动'
   const runtimeStartBlockedReason = getRuntimeStartBlockedReason(
@@ -1822,6 +1819,8 @@ function AppShell() {
               ›
             </span>
           </button>
+          {/* 顶栏只报会话状态，不写当前选了哪个普通任务——当前任务是内部状态，
+              打开任务弹窗就能看到，常驻在顶栏没有必要。 */}
           {hasProject && (
             <span
               className="topbar-session"
@@ -1831,9 +1830,6 @@ function AppShell() {
                 className={`main-session-dot ${sessionStatus}`}
                 aria-label={mainSessionStatusLabel}
               />
-              {mainSessionPlanLabel && (
-                <span className="topbar-session-plan">{mainSessionPlanLabel}</span>
-              )}
             </span>
           )}
         </div>

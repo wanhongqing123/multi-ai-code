@@ -1790,8 +1790,9 @@ function AppShell() {
               ＋
             </button>
           )}
-          {/* 工作空间选择器：未选时就是行动号召，选后原地变成当前工作空间名。
-              完整路径放 title 里——顶栏宽度有限，长路径会把后面的会话状态挤没。 */}
+          {/* 工作空间选择器：未选时就是行动号召，选后原地变成完整仓库路径。
+              显示全路径而不是目录名——同名目录在不同盘/父目录下很常见，只看
+              末段分不出是哪一个。 */}
           <button
             className="workspace-picker"
             onClick={() => void openProjectDirPicker()}
@@ -1801,7 +1802,7 @@ function AppShell() {
                 : '选择一个代码仓库目录作为工作空间'
             }
             aria-label={
-              hasProject ? `当前工作空间：${projectName}，点击切换` : '选择工作空间'
+              hasProject ? `当前工作空间：${targetRepo}，点击切换` : '选择工作空间'
             }
           >
             <svg
@@ -1816,7 +1817,7 @@ function AppShell() {
               <path d="M1.9 4.4c0-.72.58-1.3 1.3-1.3h2.63c.34 0 .67.14.91.38l.84.84h4.22c.72 0 1.3.58 1.3 1.3v5.98c0 .72-.58 1.3-1.3 1.3H3.2c-.72 0-1.3-.58-1.3-1.3V4.4Z" />
             </svg>
             <span className="workspace-picker-name">
-              {hasProject ? projectName : '选择工作空间'}
+              {hasProject ? targetRepo : '选择工作空间'}
             </span>
             <span className="workspace-picker-chevron" aria-hidden="true">
               ›

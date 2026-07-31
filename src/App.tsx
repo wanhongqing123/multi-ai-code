@@ -59,7 +59,6 @@ import {
   forgetRemoteImOutgoingImageFile,
   registerRemoteImOutgoingImageFile
 } from './remote-im/outgoingImageRegistry'
-import OnboardingWizard from './components/OnboardingWizard'
 import CommandPalette, { type Command } from './components/CommandPalette'
 import ToastHost, { showToast } from './components/Toast'
 import GlobalSearchDialog from './components/GlobalSearchDialog'
@@ -305,7 +304,6 @@ function AppShell() {
   const [showScheduledTaskDialog, setShowScheduledTaskDialog] = useState(false)
   const [showRemoteImDrawer, setShowRemoteImDrawer] = useState(false)
   const [showRemoteImSummary, setShowRemoteImSummary] = useState(false)
-  const [showOnboarding, setShowOnboarding] = useState(false)
   const [showCmdk, setShowCmdk] = useState(false)
   const [showGlobalSearch, setShowGlobalSearch] = useState(false)
   const [showBuildPanel, setShowBuildPanel] = useState(false)
@@ -570,8 +568,6 @@ function AppShell() {
         if (last && last !== pick.id) {
           showToast(`上次打开的项目已不存在，已切换到「${pick.name}」`, { level: 'warn' })
         }
-      } else if (!localStorage.getItem('multi-ai-code.onboarding-done')) {
-        setShowOnboarding(true)
       } else {
         setShowProjectPicker(true)
       }
@@ -1715,12 +1711,6 @@ function AppShell() {
       location: '次级入口',
       onOpen: () => setShowTemplates(true)
     },
-    {
-      title: '新手向导',
-      snippet: '重新打开新手上手向导。',
-      location: '次级入口',
-      onOpen: () => setShowOnboarding(true)
-    }
   ]
 
   const commandPaletteCommands: Command[] = [
@@ -1741,12 +1731,6 @@ function AppShell() {
       label: '📋 Prompt 模板',
       keywords: 'templates prompt snippets',
       action: () => setShowTemplates(true)
-    },
-    {
-      id: 'onboard',
-      label: '❓ 新手向导',
-      keywords: 'help onboarding wizard',
-      action: () => setShowOnboarding(true)
     },
     {
       id: 'search',
@@ -2095,17 +2079,6 @@ function AppShell() {
           selectedFile={diffSelectedFile}
           onSelectedFileChange={setDiffSelectedFile}
           onJudgeExternalReviewItem={judgeExternalReviewItem}
-        />
-      )}
-      {showOnboarding && (
-        <OnboardingWizard
-          onClose={() => setShowOnboarding(false)}
-          onDone={async ({ projectId, planName: pn }) => {
-            setShowOnboarding(false)
-            await reloadProjects()
-            setCurrentProjectId(projectId)
-            setPlanName(pn)
-          }}
         />
       )}
       {showTemplates && (

@@ -12,10 +12,7 @@ import {
   nextRuntimeLogDialogOpenAfterSendResult
 } from './utils/runtimeLogDialogState'
 import { selectVisibleRuntimeState } from './utils/runtimeStateSelection'
-import {
-  canStartMainSession,
-  formatMainSessionPlanLabel
-} from './utils/mainSessionPlanMode'
+import { canStartMainSession } from './utils/mainSessionPlanMode'
 import MainPanel from './components/MainPanel'
 import MainBootGate, { type BootGatePhase } from './components/MainBootGate'
 import type { ProjectInfo } from './types/project'
@@ -592,7 +589,9 @@ function AppShell() {
   )
   const hasProject = currentProject !== null
   const canStartCurrentMainSession = canStartMainSession(currentProjectId)
-  const mainSessionPlanLabel = formatMainSessionPlanLabel(planName)
+  // 只有真的选了普通任务才在顶栏写它的名字；没选就只留状态点。占位文案
+  // 「(未选择普通任务)」除了占地方不提供任何信息——普通任务本来就不是必选的。
+  const mainSessionPlanLabel = planName.trim()
   const mainSessionStatusLabel =
     sessionStatus === 'running' ? '运行中' : sessionStatus === 'exited' ? '已退出' : '待启动'
   const runtimeStartBlockedReason = getRuntimeStartBlockedReason(
@@ -1832,7 +1831,9 @@ function AppShell() {
                 className={`main-session-dot ${sessionStatus}`}
                 aria-label={mainSessionStatusLabel}
               />
-              <span className="topbar-session-plan">{mainSessionPlanLabel}</span>
+              {mainSessionPlanLabel && (
+                <span className="topbar-session-plan">{mainSessionPlanLabel}</span>
+              )}
             </span>
           )}
         </div>

@@ -479,45 +479,57 @@ html, body, #root {
   flex-wrap: wrap;
 }
 
-.topbar .meta {
+/* 工作空间选择器：顶栏里那条占满剩余宽度的浅色胶囊。未选工作空间时显示
+   「选择工作空间」，选定后原地换成工作空间名，形态不变——它始终是同一个
+   可点击的入口，而不是"提示"和"信息"两种东西。 */
+.workspace-picker {
   flex: 1 1 auto;
   min-width: 120px;
-  font-size: var(--mac-text-xs);
-  color: var(--mac-fg-subtle);
   display: inline-flex;
   align-items: center;
   gap: var(--mac-sp-2);
   padding: 6px var(--mac-sp-3);
   background: var(--mac-bg);
+  border: 1px solid transparent;
   border-radius: var(--mac-r-md);
+  color: var(--mac-fg);
+  font-size: var(--mac-text-sm);
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  -webkit-app-region: no-drag;
+}
+
+.workspace-picker:hover {
+  background: var(--mac-bg-subtle);
+}
+
+.workspace-picker:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--mac-focus-ring);
+}
+
+.workspace-picker-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--mac-fg-muted);
+}
+
+/* 工作空间名可能很长，压缩它而不是把后面的箭头挤出去。 */
+.workspace-picker-name {
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.meta code {
-  background: transparent;
+.workspace-picker-chevron {
+  flex-shrink: 0;
   color: var(--mac-fg-subtle);
-  padding: 0;
-  border: none;
-  font-family: var(--mac-font-mono);
-  font-size: var(--mac-text-mono);
-}
-
-.meta strong {
-  color: var(--mac-fg);
-  font-weight: var(--mac-weight-medium);
-  font-size: var(--mac-text-sm);
-}
-
-.meta-warn {
-  color: var(--mac-warning);
-  background: var(--mac-warning-soft);
-  border: 1px solid transparent;
-  padding: 2px var(--mac-sp-2);
-  border-radius: var(--mac-r-sm);
-  font-size: var(--mac-text-xs);
-  font-weight: var(--mac-weight-medium);
+  font-size: var(--mac-text-md);
+  line-height: 1;
 }
 
 .topbar-btn {

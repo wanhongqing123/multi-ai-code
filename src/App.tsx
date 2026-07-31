@@ -562,8 +562,8 @@ function AppShell() {
       const list = await reloadProjects()
       const last = localStorage.getItem(LAST_PROJECT_KEY)
       const pick = list.find((p) => p.id === last) ?? list[0]
-      // 没有项目时不自动弹项目管理：顶栏已经写着「未选择项目（请点左上角
-      // 📁 选择项目）」，弹窗只是把同一句话再说一遍，还得先关掉才能动别的。
+      // 没有项目时不自动弹任何东西：顶栏那条工作空间选择器本身就写着
+      // 「选择工作空间」，再弹一层只是把同一句话重说一遍，还挡着别的操作。
       if (pick) {
         setCurrentProjectId(pick.id)
         if (last && last !== pick.id) {
@@ -1715,8 +1715,8 @@ function AppShell() {
   const commandPaletteCommands: Command[] = [
     {
       id: 'proj.picker',
-      label: '📁 打开项目文件夹（切换 / 新建）',
-      keywords: 'project switch new open folder',
+      label: '📁 选择工作空间（切换 / 新建）',
+      keywords: 'workspace project switch new open folder',
       action: () => void openProjectDirPicker()
     },
     {
@@ -1790,25 +1790,38 @@ function AppShell() {
               ＋
             </button>
           )}
+          {/* 工作空间选择器：未选时就是行动号召，选后原地变成当前工作空间名。
+              完整路径放 title 里——顶栏宽度有限，长路径会把后面的会话状态挤没。 */}
           <button
-            className="topbar-btn topbar-btn-primary topbar-btn-icon"
+            className="workspace-picker"
             onClick={() => void openProjectDirPicker()}
             title={
               hasProject
-                ? `当前项目：${projectName}（点击浏览打开其他项目文件夹）`
-                : '浏览打开项目文件夹'
+                ? `当前工作空间：${targetRepo}（点击切换）`
+                : '选择一个代码仓库目录作为工作空间'
             }
-            aria-label={hasProject ? `当前项目：${projectName}` : '选择项目'}
+            aria-label={
+              hasProject ? `当前工作空间：${projectName}，点击切换` : '选择工作空间'
+            }
           >
-            📁
+            <svg
+              className="workspace-picker-icon"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.3"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M1.9 4.4c0-.72.58-1.3 1.3-1.3h2.63c.34 0 .67.14.91.38l.84.84h4.22c.72 0 1.3.58 1.3 1.3v5.98c0 .72-.58 1.3-1.3 1.3H3.2c-.72 0-1.3-.58-1.3-1.3V4.4Z" />
+            </svg>
+            <span className="workspace-picker-name">
+              {hasProject ? projectName : '选择工作空间'}
+            </span>
+            <span className="workspace-picker-chevron" aria-hidden="true">
+              ›
+            </span>
           </button>
-          <span className="meta">
-            {hasProject ? (
-              <code title={targetRepo}>{targetRepo}</code>
-            ) : (
-              <span className="meta-warn">⚠ 未选择项目（请点左上角「📁 选择项目」）</span>
-            )}
-          </span>
           {hasProject && (
             <span
               className="topbar-session"

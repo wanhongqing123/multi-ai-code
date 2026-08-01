@@ -255,6 +255,9 @@ function AppShell() {
   const [diffMode, setDiffMode] = useState<DiffMode>('working')
   const [diffSelectedCommit, setDiffSelectedCommit] = useState('')
   const [diffSelectedFile, setDiffSelectedFile] = useState('')
+  // 当前工作空间是不是 git 仓库。看 diff 的唯一前提就是这个——与是否选了普通任务、
+  // 会话是否在跑都无关。null = 还没探测出结果（按钮先不禁用，避免闪一下灰）。
+  const [isGitRepo, setIsGitRepo] = useState<boolean | null>(null)
   const [logs] = useLogs()
   const errorCount = logs.filter((l) => l.level === 'error' || l.level === 'warn').length
 
@@ -359,6 +362,23 @@ function AppShell() {
   const targetRepo = currentProject?.target_repo ?? ''
   const projectName = currentProject?.name ?? ''
   const hasProject = currentProject !== null
+
+  // 探测工作空间是否是 git 仓库。复用 git:status——非仓库时它返回 ok:false，
+  // 不需要为此新开一个 IPC。
+  useEffect(() => {
+    if (!targetRepo) {
+      setIsGitRepo(null)
+      return
+    }
+    let cancelled = false
+    setIsGitRepo(null)
+    void window.api.git.status(targetRepo).then((res) => {
+      if (!cancelled) setIsGitRepo(res.ok)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [targetRepo])
   const canStartCurrentMainSession = canStartMainSession(currentProjectId)
   const mainSessionStatusLabel =
     sessionStatus === 'running' ? '运行中' : sessionStatus === 'exited' ? '已退出' : '待启动'
@@ -1172,8 +1192,12 @@ function AppShell() {
       showToast('本项目没有 target_repo 路径，无法打开代码审查', { level: 'warn' })
       return
     }
+    if (isGitRepo === false) {
+      showToast('当前工作空间不是 git 仓库，无法查看 diff', { level: 'warn' })
+      return
+    }
     setDiffReviewOpen(true)
-  }, [targetRepo])
+  }, [targetRepo, isGitRepo])
 
   const openRepoView = useCallback(async () => {
     if (!currentProjectId || !targetRepo) {
@@ -1351,7 +1375,7 @@ function AppShell() {
       label: '🔀 代码审查',
       keywords: 'code review diff annotate',
       action: () => void openDiffReview(),
-      disabled: !hasProject
+      disabled: !hasProject || isGitRepo === false
     }
   ]
 
@@ -1488,16 +1512,20 @@ function AppShell() {
               📄
             </button>
           )}
-          {mainPanelMounted && (
+          {/* 看 diff 的唯一前提是「当前工作空间是 git 仓库」。既不要求选中普通任务，
+              也不要求会话在跑——那两个是**回灌批注**的前提，由 submitDiffAnnotations
+              自己守卫并提示。以前按钮挂在 mainPanelMounted 下，会话没起来时整个不出现。 */}
+          {hasProject && (
             <button
               className="topbar-btn topbar-btn-icon"
               data-tone="blue"
               onClick={() => void openDiffReview()}
-              // 看 diff 只需要一个仓库。以前还要求「选中普通任务 + 会话运行中」，
-              // 那是**回灌批注**的前提，不是看 diff 的前提；顶栏又不再显示当前任务名，
-              // 于是按钮长期灰着且没有任何解释。批注发送处自己有守卫（会提示原因）。
-              disabled={!hasProject}
-              title="代码审查：打开 diff 并把批注回灌给当前会话"
+              disabled={isGitRepo === false}
+              title={
+                isGitRepo === false
+                  ? '当前工作空间不是 git 仓库，无法查看 diff'
+                  : '代码审查：查看 diff（可把批注回灌给运行中的会话）'
+              }
               aria-label="代码审查"
             >
               <FileDiffIcon size={18} verticalAlign="middle" />

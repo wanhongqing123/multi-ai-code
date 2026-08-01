@@ -1,10 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { FileDiffIcon } from '@primer/octicons-react'
 import { getTheme, toggleTheme } from './utils/theme.js'
-import {
-  formatAnnotationsForSession,
-  planNameToFilename
-} from './utils/session-message-format'
+import { formatAnnotationsForSession } from './utils/session-message-format'
 import { buildCliLaunchArgs } from './utils/cliLaunchArgs'
 import { canStartMainSession } from './utils/mainSessionPlanMode'
 import MainPanel from './components/MainPanel'
@@ -18,11 +15,6 @@ import AiSettingsDialog, {
 } from './components/AiSettingsDialog'
 import TemplatesDialog from './components/TemplatesDialog'
 import ScheduledTaskDialog from './scheduled-tasks/ScheduledTaskDialog'
-import NormalTaskDialog, {
-  type NormalTaskEntry,
-  type NormalTaskMetadataDraft
-} from './normal-tasks/NormalTaskDialog'
-import { buildNormalTaskRunPrompt } from './normal-tasks/normalTaskPrompt'
 import RemoteImDrawer from './remote-im/RemoteImDrawer'
 import RemoteImSummaryDialog from './remote-im/RemoteImSummaryDialog'
 import WindowControls from './components/WindowControls'
@@ -47,7 +39,6 @@ import {
 import CommandPalette, { type Command } from './components/CommandPalette'
 import ToastHost, { showToast } from './components/Toast'
 import GlobalSearchDialog from './components/GlobalSearchDialog'
-import PlanReviewDialog, { type Annotation } from './components/PlanReviewDialog'
 import DiffViewerDialog, { type DiffAnnotation } from './components/DiffViewerDialog'
 import type { DiffMode } from './components/diffViewerConfig'
 import type { ExternalReviewSuggestion } from './components/externalAiReview'
@@ -78,19 +69,6 @@ const DEFAULT_REMOTE_IM_CONFIG: RemoteImConfig = {
   outputMaxChunkChars: 4000
 }
 
-
-function verifyNormalTaskMetadataSaved(
-  items: NormalTaskEntry[],
-  name: string,
-  metadata: NormalTaskMetadataDraft
-): boolean {
-  const saved = items.find((item) => item.name === name)
-  if (!saved) return false
-  return (
-    (saved.description ?? '').trim() === metadata.description.trim() &&
-    (saved.details ?? '').trim() === metadata.details.trim()
-  )
-}
 
 export function shouldRenderElectronShell(): boolean {
   return typeof window === 'undefined' || typeof window.api !== 'undefined'
@@ -178,7 +156,6 @@ function AccountGate(): JSX.Element {
 function AppShell() {
   const [projects, setProjects] = useState<ProjectInfo[]>([])
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null)
-  const [planName, setPlanName] = useState('')
   const [showErrors, setShowErrors] = useState(false)
   const [showAiSettings, setShowAiSettings] = useState(false)
   const [aiSettings, setAiSettings] = useState<AiSettings>({ ai_cli: DEFAULT_AI_CLI })
@@ -202,7 +179,6 @@ function AppShell() {
   const [remoteImLoginSaving, setRemoteImLoginSaving] = useState(false)
   const [remoteImLoginError, setRemoteImLoginError] = useState<string | null>(null)
   const [showTemplates, setShowTemplates] = useState(false)
-  const [showNormalTaskDialog, setShowNormalTaskDialog] = useState(false)
   const [showScheduledTaskDialog, setShowScheduledTaskDialog] = useState(false)
   const [showRemoteImDrawer, setShowRemoteImDrawer] = useState(false)
   const [showRemoteImSummary, setShowRemoteImSummary] = useState(false)
@@ -234,15 +210,7 @@ function AppShell() {
   const [stageConfigs, setStageConfigs] = useState<
     Record<string, { command?: string; args?: string[]; env?: Record<string, string>; skip?: boolean }>
   >({})
-  const [planList, setPlanList] = useState<NormalTaskEntry[]>([])
   const [msysEnabled, setMsysEnabled] = useState(false)
-  // Plan-review state. When set, PlanReviewDialog renders the current
-  // in-progress plan md; user annotates and the annotations get sent back to
-  // the session CLI so it can revise the plan.
-  const [planReview, setPlanReview] = useState<{
-    path: string
-    content: string
-  } | null>(null)
   // Diff-review state. When true, DiffViewerDialog is rendered.
   const [diffReviewOpen, setDiffReviewOpen] = useState(false)
   // Lifted from DiffViewerDialog so unsent batches survive a close/reopen
@@ -277,11 +245,9 @@ function AppShell() {
     reloadProjectsRef.current = reloadProjects
   }, [reloadProjects])
 
-  /** Clear UI state tied to a specific project (drawers, dialogs, plan name). */
+  /** Clear UI state tied to a specific project (drawers, dialogs). */
   const clearProjectScopedState = useCallback(() => {
     setShowGlobalSearch(false)
-    setPlanName('')
-    setPlanReview(null)
     setDiffReviewOpen(false)
     setDiffAnnotations([])
     setDiffGeneralNote('')
@@ -382,71 +348,6 @@ function AppShell() {
   const canStartCurrentMainSession = canStartMainSession(currentProjectId)
   const mainSessionStatusLabel =
     sessionStatus === 'running' ? '运行中' : sessionStatus === 'exited' ? '已退出' : '待启动'
-
-  // Track plan names we've ever observed in the list. If `planName` was
-  // in a previous list but is gone from the current one, that's a
-  // deleted/pruned plan and we should clear the selection. A brand-new
-  // name (user typing "+ 新建方案") was never in any previous list and
-  // should NOT be cleared.
-  const knownPlanNamesRef = useRef<Set<string>>(new Set())
-
-  // Refresh plan list when project/projectDir changes. Do NOT depend on
-  // planName — that would re-run on every keystroke of the "new plan"
-  // input. Use functional setState so we can still prune a stale
-  // planName (after switching projects or after the backend auto-prunes
-  // a dead external mapping) without reading planName directly.
-  const applyPlanList = useCallback(
-    (items: NormalTaskEntry[]) => {
-      setPlanList(items)
-      const currentNames = new Set(items.map((p) => p.name))
-      setPlanName((prev) => {
-        if (!prev) return prev
-        if (currentNames.has(prev)) return prev
-        // Not in current list — was it in a previous list?
-        if (knownPlanNamesRef.current.has(prev)) {
-          // Was known, now gone → stale selection, clear it.
-          return ''
-        }
-        return prev
-      })
-      // Update "ever seen" set AFTER the prune check.
-      for (const n of currentNames) knownPlanNamesRef.current.add(n)
-    },
-    []
-  )
-
-  const refreshPlanList = useCallback(async () => {
-    if (!currentProjectId || !projectDir) {
-      setPlanList([])
-      knownPlanNamesRef.current = new Set()
-      return []
-    }
-    const planRes = await window.api.plan.list(projectDir)
-    if (!planRes.ok) {
-      showToast(planRes.error ?? '读取普通任务列表失败', { level: 'error' })
-      return planList
-    }
-    applyPlanList(planRes.items)
-    return planRes.items
-  }, [applyPlanList, currentProjectId, projectDir, planList])
-
-  useEffect(() => {
-    if (!currentProjectId || !projectDir) {
-      setPlanList([])
-      knownPlanNamesRef.current = new Set()
-      return
-    }
-    let cancelled = false
-    void (async () => {
-      const planRes = await window.api.plan.list(projectDir)
-      if (cancelled) return
-      if (!planRes.ok) return
-      applyPlanList(planRes.items)
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [applyPlanList, currentProjectId, projectDir])
 
   useEffect(() => {
     if (!currentProjectId) {
@@ -625,17 +526,6 @@ function AppShell() {
     }
   }, [])
 
-  /** Derive the absolute plan path from planList or construct a default. */
-  const getPlanAbsPath = useCallback(
-    (name: string): string => {
-      const entry = planList.find((p) => p.name === name)
-      if (entry) return entry.abs
-      // Default: internal design path under target_repo
-      return `${targetRepo.replace(/\/$/, '')}/.multi-ai-code/designs/${planNameToFilename(name)}`
-    },
-    [planList, targetRepo]
-  )
-
   const handleStart = useCallback(async (mode: 'new' | 'resume' = 'new') => {
     if (!currentProjectId || !canStartMainSession(currentProjectId)) return
     if (!aiSettingsReady) {
@@ -688,7 +578,7 @@ function AppShell() {
     // 会话一起来就扫一次：定时任务此前只在"定时任务模式"下才会被调度，
     // 普通模式下到点也不跑。现在任何会话都能接定时任务。
     void window.api.scheduledTasks.scanNow(currentProjectId)
-  }, [currentProjectId, planName, projects, aiSettings, aiSettingsReady, aiSettingsLoadError])
+  }, [currentProjectId, projects, aiSettings, aiSettingsReady, aiSettingsLoadError])
 
   const handleStop = useCallback(async () => {
     if (!sessionId) return
@@ -957,230 +847,6 @@ function AppShell() {
     setGatePhase({ kind: 'idle' })
   }, [sessionId, sessionStatus, mainPanelMounted])
 
-  const runNormalTask = useCallback(
-    async (task: NormalTaskEntry): Promise<void> => {
-      if (!sessionId || sessionStatus !== 'running') {
-        showToast('请先启动 AICLI', { level: 'warn' })
-        return
-      }
-      if (!targetRepo) {
-        showToast('当前项目未设置 target_repo', { level: 'warn' })
-        return
-      }
-      if (task.name !== planName) {
-        setDiffAnnotations([])
-        setDiffGeneralNote('')
-        setPlanReview(null)
-        setPlanName(task.name)
-      }
-
-      const prompt = buildNormalTaskRunPrompt(task, targetRepo)
-      const sendResult = await window.api.cc.sendUser(sessionId, prompt)
-      if (!sendResult.ok) {
-        showToast(sendResult.error ?? '发送普通任务失败', { level: 'error' })
-        return
-      }
-
-      showToast(`已发送普通任务「${task.name}」到 AICLI`, { level: 'success' })
-    },
-    [planName, sessionId, sessionStatus, targetRepo]
-  )
-
-  const persistNormalTaskMetadata = useCallback(
-    async (
-      name: string,
-      metadata: NormalTaskMetadataDraft
-    ): Promise<{ ok: true } | { ok: false; error: string }> => {
-      if (!projectDir) return { ok: false, error: '请先打开一个项目' }
-      const request = {
-        projectDir,
-        name,
-        description: metadata.description,
-        details: metadata.details
-      }
-      if (typeof window.api.plan.updateMetadata === 'function') {
-        try {
-          return await window.api.plan.updateMetadata(request)
-        } catch (err: unknown) {
-          const fallback = await window.api.plan.updateDescription(request)
-          if (fallback.ok) return fallback
-          return {
-            ok: false,
-            error: err instanceof Error ? err.message : String(err)
-          }
-        }
-      }
-      return await window.api.plan.updateDescription(request)
-    },
-    [projectDir]
-  )
-
-  const createNormalTask = useCallback(
-    async (name: string, description = '', details = ''): Promise<NormalTaskEntry | null> => {
-      if (!projectDir) {
-        showToast('请先打开一个项目', { level: 'warn' })
-        return null
-      }
-      const result = await window.api.plan.createInternal({ projectDir, name })
-      if (!result.ok) {
-        showToast(result.error, { level: 'error' })
-        return null
-      }
-      const created: NormalTaskEntry = {
-        name: result.name,
-        abs: result.abs,
-        source: 'internal'
-      }
-      const nextDescription = description.trim()
-      const nextDetails = details.trim()
-      if (nextDescription || nextDetails) {
-        const metadataResult = await persistNormalTaskMetadata(result.name, {
-          description: nextDescription,
-          details: nextDetails
-        })
-        if (metadataResult.ok) {
-          if (nextDescription) created.description = nextDescription
-          if (nextDetails) created.details = nextDetails
-        } else {
-          showToast(metadataResult.error, { level: 'error' })
-        }
-      }
-      knownPlanNamesRef.current.add(created.name)
-      setPlanList((current) =>
-        [...current.filter((task) => task.name !== created.name), created].sort((a, b) =>
-          a.name.localeCompare(b.name)
-        )
-      )
-      void refreshPlanList()
-      setPlanName(result.name)
-      setDiffAnnotations([])
-      setDiffGeneralNote('')
-      setPlanReview(null)
-      showToast(`已创建普通任务「${result.name}」`, { level: 'success' })
-      return created
-    },
-    [persistNormalTaskMetadata, projectDir, refreshPlanList]
-  )
-
-  const saveNormalTaskMetadata = useCallback(
-    async (name: string, metadata: NormalTaskMetadataDraft): Promise<boolean> => {
-      if (!projectDir) {
-        showToast('请先打开一个项目', { level: 'warn' })
-        return false
-      }
-      const result = await persistNormalTaskMetadata(name, metadata)
-      if (!result.ok) {
-        showToast(result.error, { level: 'error' })
-        return false
-      }
-      const nextDescription = metadata.description.trim()
-      const nextDetails = metadata.details.trim()
-      const refreshed = await refreshPlanList()
-      if (!verifyNormalTaskMetadataSaved(refreshed, name, metadata)) {
-        showToast('普通任务详情没有写入，请重启应用后重试。', { level: 'error' })
-        return false
-      }
-      setPlanList((current) =>
-        current.map((task) =>
-          task.name === name
-            ? {
-                ...task,
-                description: nextDescription || undefined,
-                details: nextDetails || undefined
-              }
-            : task
-        )
-      )
-      showToast('已保存普通任务信息', { level: 'success' })
-      return true
-    },
-    [persistNormalTaskMetadata, projectDir, refreshPlanList]
-  )
-
-  const autoSaveNormalTaskMetadata = useCallback(
-    async (name: string, metadata: NormalTaskMetadataDraft): Promise<boolean> => {
-      if (!projectDir) return false
-      const result = await persistNormalTaskMetadata(name, metadata)
-      if (!result.ok) return false
-      const nextDescription = metadata.description.trim()
-      const nextDetails = metadata.details.trim()
-      setPlanList((current) =>
-        current.map((task) =>
-          task.name === name
-            ? {
-                ...task,
-                description: nextDescription || undefined,
-                details: nextDetails || undefined
-              }
-            : task
-        )
-      )
-      return true
-    },
-    [persistNormalTaskMetadata, projectDir]
-  )
-
-  /** Load the current plan md and open the review + annotation dialog. */
-  const openPlanReview = useCallback(async (name = planName) => {
-    if (!projectDir) return
-    const currentName = name.trim()
-    if (!currentName) {
-      showToast('请先选择普通任务', { level: 'warn' })
-      return
-    }
-    const res = await window.api.artifact.readCurrent(
-      projectDir,
-      1,
-      currentName
-    )
-    if (!res.ok || res.content === undefined) {
-      // Special case: the current plan is external (registered via import)
-      // but its source file was deleted. Offer to remove the stale mapping
-      // instead of the generic "let AI design" hint.
-      const currentPlan = planList.find((p) => p.name === currentName)
-      const isDeadExternal =
-        currentPlan?.source === 'external' && res.path
-          ? /ENOENT|no such file|不存在|找不到|not.*exist/i.test(
-              res.error ?? ''
-            )
-          : false
-      if (isDeadExternal && currentProjectId && currentName) {
-        showToast(
-          `外部方案文件已丢失（${res.path}）。`,
-          {
-            level: 'warn',
-            duration: 8000,
-            action: {
-              label: '从列表移除',
-              onClick: async () => {
-                if (!projectDir) return
-                const rm = await window.api.plan.removeExternal({
-                  projectDir,
-                  name: currentName
-                })
-                if (!rm.ok) {
-                  showToast(`移除失败：${rm.error}`, { level: 'error' })
-                  return
-                }
-                setPlanName('')
-                setPlanList((prev) => prev.filter((p) => p.name !== currentName))
-                knownPlanNamesRef.current.delete(currentName)
-                showToast('已从普通任务列表移除', { level: 'info' })
-              }
-            }
-          }
-        )
-        return
-      }
-      showToast(
-        `暂无可预览的普通任务文档${res.path ? `（${res.path}）` : ''}。`,
-        { level: 'warn' }
-      )
-      return
-    }
-    setPlanReview({ path: res.path ?? '', content: res.content })
-  }, [projectDir, planName, planList, currentProjectId])
-
   /** Open the git diff viewer. */
   const openDiffReview = useCallback(() => {
     if (!targetRepo) {
@@ -1205,53 +871,6 @@ function AppShell() {
     }
   }, [currentProjectId, targetRepo])
 
-  /** Format annotations as markdown and push them into the running session. */
-  const submitPlanReviewAnnotations = useCallback(
-    async (annotations: Annotation[], generalNote: string) => {
-      if (!sessionId) {
-        showToast('会话的 CLI 未在运行，无法发送标注。请先启动会话。', {
-          level: 'error'
-        })
-        return
-      }
-      const lines: string[] = [
-        '我查看了当前方案，有以下反馈，请据此修改方案文件。',
-        ''
-      ]
-      if (generalNote) {
-        lines.push('## 整体意见', '', generalNote, '')
-      }
-      annotations.forEach((a, i) => {
-        lines.push(
-          `## 批注 ${i + 1}`,
-          '',
-          '原文：',
-          ...a.quote.split('\n').map((ln) => `> ${ln}`),
-          '',
-          '意见：',
-          a.comment,
-          ''
-        )
-      })
-      lines.push(
-        '---',
-        '',
-        '请把以上每条意见落实到方案文件中，修改完成后在终端简述你改了什么。'
-      )
-      const res = await window.api.cc.sendUser(sessionId, lines.join('\n'))
-      if (!res.ok) {
-        showToast(`发送标注失败：${res.error ?? '未知错误'}`, { level: 'error' })
-        return
-      }
-      showToast(
-        `已发送 ${annotations.length} 条批注${generalNote ? ' + 整体意见' : ''}到会话`,
-        { level: 'success' }
-      )
-      setPlanReview(null)
-    },
-    [sessionId]
-  )
-
   /** Format diff annotations and push them into the live session.
    *  Uses cc.sendUser (chunked write + priming) not cc.write (raw): large
    *  annotation batches hitting the PTY as a single chunk get stashed by the
@@ -1263,14 +882,9 @@ function AppShell() {
         showToast('会话未启动，无法发送批注', { level: 'warn' })
         return
       }
-      // 批注针对的是**代码改动**，跟有没有任务在跑无关：普通任务和定时任务只是
-      // 「手动发」和「按点发」的区别，没有「当前选中任务」这种状态。有任务时把
-      // 方案文件一并带上作为上下文，没有就只发批注。
-      const planAbsPath = planName.trim() ? getPlanAbsPath(planName.trim()) : undefined
       const text = formatAnnotationsForSession({
         annotations: anns,
-        generalComment: generalNote,
-        planAbsPath
+        generalComment: generalNote
       })
       const res = await window.api.cc.sendUser(sessionId, text)
       if (!res.ok) {
@@ -1283,7 +897,7 @@ function AppShell() {
       setDiffReviewOpen(false)
       showToast(`已发送 ${anns.length} 条批注到会话`, { level: 'info' })
     },
-    [sessionId, sessionStatus, planName, getPlanAbsPath, currentProjectId, targetRepo]
+    [sessionId, sessionStatus]
   )
 
   const judgeExternalReviewItem = useCallback(
@@ -1291,11 +905,9 @@ function AppShell() {
       if (!sessionId || sessionStatus !== 'running') {
         return { ok: false as const, error: 'session not running' }
       }
-      // 同批注：没有任务在跑也能评审外部 AI 的建议，方案文件只是可选上下文。
-      const planAbsPath = planName.trim() ? getPlanAbsPath(planName.trim()) : ''
       return window.api.cc.judgeExternalReview({
         sessionId,
-        planAbsPath,
+        planAbsPath: '',
         suggestion: {
           rawText: suggestion.rawText,
           pathHint: suggestion.pathHint,
@@ -1304,7 +916,7 @@ function AppShell() {
         }
       })
     },
-    [sessionId, sessionStatus, getPlanAbsPath, planName]
+    [sessionId, sessionStatus]
   )
 
   const globalSearchQuickActions = [
@@ -1354,13 +966,6 @@ function AppShell() {
       label: theme === 'dark' ? '切换到浅色主题' : '切换到暗色主题',
       keywords: 'theme dark light color',
       action: handleToggleTheme
-    },
-    {
-      id: 'plan-review',
-      label: '📝 审阅当前方案',
-      keywords: 'plan review annotate',
-      action: () => void openPlanReview(),
-      disabled: !hasProject || !planName.trim()
     },
     {
       id: 'diff-review',
@@ -1471,18 +1076,6 @@ function AppShell() {
           {hasProject && (
             <button
               className="topbar-btn topbar-btn-icon"
-              data-tone="blue"
-              onClick={() => setShowNormalTaskDialog(true)}
-              disabled={!currentProjectId}
-              title="普通任务：创建、选择和查看"
-              aria-label="普通任务"
-            >
-              📋
-            </button>
-          )}
-          {hasProject && (
-            <button
-              className="topbar-btn topbar-btn-icon"
               data-tone="amber"
               onClick={() => setShowScheduledTaskDialog(true)}
               disabled={!currentProjectId}
@@ -1490,18 +1083,6 @@ function AppShell() {
               aria-label="定时任务"
             >
               ⏰
-            </button>
-          )}
-          {hasProject && planName.trim() && (
-            <button
-              className="topbar-btn topbar-btn-icon"
-              data-tone="blue"
-              onClick={() => void openPlanReview()}
-              disabled={!currentProjectId}
-              title="方案预览：查看 / 标注当前普通任务的方案文档"
-              aria-label="方案预览"
-            >
-              📄
             </button>
           )}
           {/* 看 diff 的唯一前提是「当前工作空间是 git 仓库」。既不要求选中普通任务，
@@ -1601,15 +1182,6 @@ function AppShell() {
           commands={commandPaletteCommands}
         />
       )}
-      {planReview && (
-        <PlanReviewDialog
-          path={planReview.path}
-          content={planReview.content}
-          aiCli={aiSettings.ai_cli}
-          onClose={() => setPlanReview(null)}
-          onSubmit={submitPlanReviewAnnotations}
-        />
-      )}
       {diffReviewOpen && (
         <DiffViewerDialog
           cwd={targetRepo}
@@ -1637,23 +1209,6 @@ function AppShell() {
           onInject={(sid, text) => {
             void window.api.cc.sendUser(sid, text)
           }}
-        />
-      )}
-      {showNormalTaskDialog && currentProjectId && (
-        <NormalTaskDialog
-          tasks={planList}
-          selectedName={planName}
-          sessionRunning={sessionStatus === 'running'}
-          onCreate={createNormalTask}
-          onSelect={setPlanName}
-          onRun={runNormalTask}
-          onPreview={(name) => void openPlanReview(name)}
-          onSaveMetadata={saveNormalTaskMetadata}
-          onAutoSaveMetadata={autoSaveNormalTaskMetadata}
-          onRefresh={async () => {
-            await refreshPlanList()
-          }}
-          onClose={() => setShowNormalTaskDialog(false)}
         />
       )}
       {showScheduledTaskDialog && currentProjectId && (

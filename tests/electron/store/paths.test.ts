@@ -2,17 +2,7 @@ import { describe, it, expect, afterEach, beforeEach } from 'vitest'
 import { promises as fs } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { designArchiveDir, createProjectLayout, ensureRootDir, migrateLegacyStage1Artifacts } from '../../../electron/store/paths.js'
-
-describe('designArchiveDir', () => {
-  it('returns <target_repo>/.multi-ai-code/designs', () => {
-    expect(designArchiveDir('/tmp/my-repo')).toBe('/tmp/my-repo/.multi-ai-code/designs')
-  })
-
-  it('handles trailing slash on target_repo', () => {
-    expect(designArchiveDir('/tmp/my-repo/')).toBe('/tmp/my-repo/.multi-ai-code/designs')
-  })
-})
+import { createProjectLayout, ensureRootDir } from '../../../electron/store/paths.js'
 
 describe('createProjectLayout', () => {
   let root: string
@@ -28,10 +18,10 @@ describe('createProjectLayout', () => {
     await fs.rm(root, { recursive: true, force: true })
   })
 
-  it('creates .multi-ai-code/designs under target_repo', async () => {
+  // 普通任务删除后不该再往用户仓库里预建目录：没建过任务的仓库应当干干净净。
+  it('does not create .multi-ai-code in the target repo', async () => {
     await createProjectLayout('p_test', targetRepo)
-    const stat = await fs.stat(designArchiveDir(targetRepo))
-    expect(stat.isDirectory()).toBe(true)
+    await expect(fs.stat(join(targetRepo, '.multi-ai-code'))).rejects.toThrow()
   })
 })
 
@@ -62,62 +52,6 @@ describe('ensureRootDir', () => {
     } finally {
       delete process.env.MULTI_AI_ROOT
       await fs.rm(projRoot, { recursive: true, force: true })
-    }
-  })
-})
-
-describe('migrateLegacyStage1Artifacts', () => {
-  it('migrateLegacyStage1Artifacts copies stage1 md into .multi-ai-code/designs/', async () => {
-    const root = await fs.mkdtemp(join(tmpdir(), 'mac-migrate-'))
-    process.env.MULTI_AI_ROOT = root
-    try {
-      const pid = 'p_legacy'
-      const pdir = join(root, 'projects', pid)
-      const legacyDir = join(pdir, 'workspaces', 'stage1_design')
-      await fs.mkdir(legacyDir, { recursive: true })
-      await fs.writeFile(join(legacyDir, 'my-plan.md'), '# plan body')
-      const targetRepo = await fs.mkdtemp(join(tmpdir(), 'mac-migrate-repo-'))
-      await fs.writeFile(
-        join(pdir, 'project.json'),
-        JSON.stringify({ id: pid, name: pid, target_repo: targetRepo })
-      )
-      await migrateLegacyStage1Artifacts()
-      const migrated = await fs.readFile(
-        join(targetRepo, '.multi-ai-code', 'designs', 'my-plan.md'),
-        'utf8'
-      )
-      expect(migrated).toBe('# plan body')
-      await fs.rm(targetRepo, { recursive: true, force: true })
-    } finally {
-      delete process.env.MULTI_AI_ROOT
-      await fs.rm(root, { recursive: true, force: true })
-    }
-  })
-
-  it('migrateLegacyStage1Artifacts skips when target already exists (no clobber)', async () => {
-    const root = await fs.mkdtemp(join(tmpdir(), 'mac-migrate-skip-'))
-    process.env.MULTI_AI_ROOT = root
-    try {
-      const pid = 'p_legacy2'
-      const pdir = join(root, 'projects', pid)
-      const legacyDir = join(pdir, 'workspaces', 'stage1_design')
-      await fs.mkdir(legacyDir, { recursive: true })
-      await fs.writeFile(join(legacyDir, 'my-plan.md'), '# OLD legacy content')
-      const targetRepo = await fs.mkdtemp(join(tmpdir(), 'mac-migrate-skip-repo-'))
-      const destDir = join(targetRepo, '.multi-ai-code', 'designs')
-      await fs.mkdir(destDir, { recursive: true })
-      await fs.writeFile(join(destDir, 'my-plan.md'), '# NEW current content')
-      await fs.writeFile(
-        join(pdir, 'project.json'),
-        JSON.stringify({ id: pid, name: pid, target_repo: targetRepo })
-      )
-      await migrateLegacyStage1Artifacts()
-      const content = await fs.readFile(join(destDir, 'my-plan.md'), 'utf8')
-      expect(content).toBe('# NEW current content')
-      await fs.rm(targetRepo, { recursive: true, force: true })
-    } finally {
-      delete process.env.MULTI_AI_ROOT
-      await fs.rm(root, { recursive: true, force: true })
     }
   })
 })

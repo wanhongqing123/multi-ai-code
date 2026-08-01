@@ -8,7 +8,7 @@ const app = readFileSync(fileURLToPath(new URL('../../../src/App.tsx', import.me
  * 「代码审查」入口的开放条件收敛成一句话：当前工作空间是 git 仓库。
  *
  * 它此前被三个无关条件锁着，而且是逐步叠上去的：
- *   - 必须选中普通任务（planName）—— 那是**回灌批注**要写方案文件的前提
+ *   - 必须选中普通任务（planName）—— 该功能后来整体删除，概念已不存在
  *   - 会话必须运行中          —— 同上，发批注才需要
  *   - mainPanelMounted        —— 会话没起来时按钮整个不渲染，连灰的都看不到
  * 顶栏又不再显示当前普通任务名，于是这些条件全部隐形：按钮要么灰着要么消失，
@@ -51,8 +51,8 @@ describe('代码审查入口的开放条件', () => {
 
     expect(submit).toContain('会话未启动，无法发送批注')
     expect(submit).not.toContain('没有选中普通任务')
-    // 有任务就把方案文件当上下文带上，没有就不带——而不是直接拒发。
-    expect(submit).toContain("planName.trim() ? getPlanAbsPath(planName.trim()) : undefined")
+    // 普通任务已整体删除，方案文件这个概念不复存在，批注只带代码改动。
+    expect(submit).not.toContain('planAbsPath')
   })
 
   it('does not block the external-review judge on a selected task either', () => {

@@ -301,10 +301,13 @@ describe('tencent IM client helpers', () => {
           to: 'desktop_bot',
           type: 'TIMFileElem',
           payload: {
-            url: 'https://cos.example.test/report.md',
+            // 腾讯 Web SDK 文件元素的真实形状：fileUrl / fileSize / downloadFlag。
+            // 以前这里写成 url / size，与 SDK 不符，于是测试一直绿、真实链路一直坏。
+            downloadFlag: 2,
+            fileUrl: 'https://cos.example.test/report.md',
             uuid: 'file-uuid-1',
             fileName: 'report.md',
-            size: 4096
+            fileSize: 4096
           },
           time: 1782238800
         },
@@ -355,6 +358,37 @@ describe('tencent IM client helpers', () => {
         createdAt: undefined
       }
     ])
+  })
+
+  // 这条钉死 SDK 的真实字段名。之前解析只认 url，而 SDK 发的是 fileUrl，
+  // 于是收到的每个文件都在渲染层被丢掉：不进主进程、不落库、连失败回执都没有，
+  // 发送方看到「发送成功」，接收方毫无反应。fixture 与 SDK 不一致时测试照样绿，
+  // 所以这里必须用 SDK 真正产出的形状，不能自己编字段名。
+  it('reads the file URL from the SDK fileUrl field, not just url', () => {
+    const messages = extractTencentImFileMessages({
+      data: [
+        {
+          ID: 'file-sdk-shape',
+          from: 'phone_admin',
+          to: 'desktop_bot',
+          type: 'TIMFileElem',
+          // 与 node_modules/@tencentcloud/lite-chat 里 content 的构造完全一致。
+          payload: {
+            downloadFlag: 2,
+            fileUrl: 'https://cos.example.test/202310140450162316.pdf',
+            uuid: 'file-uuid-sdk',
+            fileName: '202310140450162316.pdf',
+            fileSize: 316928
+          },
+          time: 1785601000
+        }
+      ]
+    })
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0].fileUrl).toBe('https://cos.example.test/202310140450162316.pdf')
+    expect(messages[0].fileName).toBe('202310140450162316.pdf')
+    expect(messages[0].sizeBytes).toBe(316928)
   })
 
   it('merges a caption sent together with a file into one delivery', () => {

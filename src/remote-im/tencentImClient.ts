@@ -320,7 +320,18 @@ function getFilePayload(
   const payload = message.payload
   if (!payload || typeof payload !== 'object') return null
   const file = payload as Record<string, unknown>
-  const fileUrl = getStringField(file, ['url', 'URL', 'downloadUrl', 'downloadURL'])
+  // 腾讯 Web SDK 的文件元素把地址放在 **fileUrl**（content = { downloadFlag, fileUrl,
+  // uuid, fileName, fileSize }），不是图片/语音那样的 url。这里以前只找 url，取不到
+  // 就 return null，于是每一条收到的文件都在渲染层被静默丢掉——不进主进程、不落库、
+  // 连一条失败回执都没有，发送方看到的是「发送成功」而接收方毫无反应。
+  const fileUrl = getStringField(file, [
+    'fileUrl',
+    'fileURL',
+    'url',
+    'URL',
+    'downloadUrl',
+    'downloadURL'
+  ])
   if (!fileUrl) return null
   const fileName = getStringField(file, ['fileName', 'filename', 'name'])
   // 不再按 MIME 过滤。以前只放行 md/html，其余类型在这里就被丢掉，用户发来的

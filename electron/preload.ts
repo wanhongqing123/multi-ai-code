@@ -707,42 +707,6 @@ const api = {
         byteLength?: number
         error?: string
       }>,
-    memoryLoad: (root: string) =>
-      ipcRenderer.invoke('repo-view:memory-load', { root }) as Promise<{
-        ok: boolean
-        summary?: string
-        recentTopics?: unknown[]
-        error?: string
-      }>,
-    memoryFileNote: (root: string, path: string) =>
-      ipcRenderer.invoke('repo-view:memory-file-note', { root, path }) as Promise<{
-        ok: boolean
-        fileNote?: string
-        error?: string
-      }>,
-    memoryApply: (root: string, path: string, memoryUpdate: string) =>
-      ipcRenderer.invoke('repo-view:memory-apply', { root, path, memoryUpdate }) as Promise<{
-        ok: boolean
-        summary?: string
-        fileNote?: string
-        recentTopics?: unknown[]
-        error?: string
-      }>,
-    historyLoad: (root: string) =>
-      ipcRenderer.invoke('repo-view:history-load', { root }) as Promise<{
-        ok: boolean
-        messages?: Array<{ id: string; role: 'user' | 'assistant'; text: string }>
-        error?: string
-      }>,
-    historySave: (
-      root: string,
-      messages: Array<{ id: string; role: 'user' | 'assistant'; text: string }>
-    ) =>
-      ipcRenderer.invoke('repo-view:history-save', { root, messages }) as Promise<{
-        ok: boolean
-        messages?: Array<{ id: string; role: 'user' | 'assistant'; text: string }>
-        error?: string
-      }>,
     analysisStart: (req: {
       projectId: string
       targetRepo: string

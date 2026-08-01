@@ -50,13 +50,6 @@ import { snapshotArtifact } from './store/snapshot.js'
 import { resolvePlanArtifactAbs } from './orchestrator/prompts.js'
 import { buildRepoViewSearch } from './repo-view/windowMode.js'
 import { listRepoTree, readRepoTextFile } from './repo-view/filesystem.js'
-import {
-  applyRepoMemoryUpdate,
-  readRepoConversationHistory,
-  readRepoFileNote,
-  readRepoMemory,
-  writeRepoConversationHistory
-} from './repo-view/memory.js'
 import { readProjectMetaFile, writeProjectMetaFile } from './store/projectMeta.js'
 import {
   hasRepoAnalysisSession,
@@ -392,94 +385,6 @@ app.whenReady().then(async () => {
     async (_e, { root, path }: { root: string; path: string }) => {
       try {
         return { ok: true as const, ...(await readRepoTextFile(root, path)) }
-      } catch (err) {
-        return { ok: false as const, error: (err as Error).message }
-      }
-    }
-  )
-
-  ipcMain.handle(
-    'repo-view:memory-load',
-    async (_e, { root }: { root: string }) => {
-      try {
-        return { ok: true as const, ...(await readRepoMemory(root)) }
-      } catch (err) {
-        return { ok: false as const, error: (err as Error).message }
-      }
-    }
-  )
-
-  ipcMain.handle(
-    'repo-view:memory-file-note',
-    async (_e, { root, path }: { root: string; path: string }) => {
-      try {
-        return { ok: true as const, fileNote: await readRepoFileNote(root, path) }
-      } catch (err) {
-        return { ok: false as const, error: (err as Error).message }
-      }
-    }
-  )
-
-  ipcMain.handle(
-    'repo-view:memory-apply',
-    async (
-      _e,
-      {
-        root,
-        path,
-        memoryUpdate
-      }: {
-        root: string
-        path: string
-        memoryUpdate: string
-      }
-    ) => {
-      try {
-        return {
-          ok: true as const,
-          ...(await applyRepoMemoryUpdate({
-            root,
-            filePath: path,
-            memoryUpdate
-          }))
-        }
-      } catch (err) {
-        return { ok: false as const, error: (err as Error).message }
-      }
-    }
-  )
-
-  ipcMain.handle(
-    'repo-view:history-load',
-    async (_e, { root }: { root: string }) => {
-      try {
-        return {
-          ok: true as const,
-          messages: await readRepoConversationHistory(root)
-        }
-      } catch (err) {
-        return { ok: false as const, error: (err as Error).message }
-      }
-    }
-  )
-
-  ipcMain.handle(
-    'repo-view:history-save',
-    async (
-      _e,
-      {
-        root,
-        messages
-      }: {
-        root: string
-        messages: Array<{ id: string; role: 'user' | 'assistant'; text: string }>
-      }
-    ) => {
-      try {
-        return {
-          ok: true as const,
-          messages: await writeRepoConversationHistory(root, messages)
-        }
       } catch (err) {
         return { ok: false as const, error: (err as Error).message }
       }

@@ -3,83 +3,56 @@ import type { ComponentProps } from 'react'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
-import type {
-  ProjectRuntimeConfig,
-  VisualStudioInstallation
-} from '../../../electron/preload'
 import AiSettingsDialog, {
   DEFAULT_AI_CLI,
-  deriveAppSettingsSaveOutcome,
   getProjectSettingsRepairToastMessage,
-  resolveSavedAppSettings,
-  saveProjectScopedSettings,
-  shouldApplyIncomingAppSettings
+  saveProjectScopedSettings
 } from '../../../src/components/AiSettingsDialog.js'
-
-const defaultBuildConfig = {
-  enabled: false,
-  steps: []
-}
-
-const defaultRuntimeConfig: ProjectRuntimeConfig = {
-  enabled: false,
-  cwd: '.',
-  command: '',
-  envType: 'msys',
-  visualStudioInstanceId: '',
-  outputEncoding: 'auto'
-}
-
-const defaultDialogProps = {
-  visualStudioInstallations: [] as VisualStudioInstallation[],
-  visualStudioInstallationsLoading: false,
-  onRefreshVisualStudioInstallations: vi.fn(),
-  initialRuntimeConfig: defaultRuntimeConfig,
-  runtimeConfigReady: true,
-  runtimeConfigDisabled: false,
-  onSavedRuntimeConfig: vi.fn()
-}
 
 function renderDialog(overrides: Partial<ComponentProps<typeof AiSettingsDialog>> = {}) {
   return renderToStaticMarkup(
     <AiSettingsDialog
       projectId="project-1"
       initial={{ ai_cli: 'claude' }}
-      initialRepoView={{ ai_cli: 'codex' }}
-      initialAppSettings={{
-        screenshotShortcutEnabled: true,
-        screenshotShortcut: 'Alt+Shift+S',
-        showDevToolbarButtons: false
-      }}
-      initialBuildConfig={defaultBuildConfig}
-      buildConfigReady={true}
-      {...defaultDialogProps}
       onClose={vi.fn()}
       onSaved={vi.fn()}
-      onSavedRepoView={vi.fn()}
-      onSavedAppSettings={vi.fn()}
-      onSavedBuildConfig={vi.fn()}
       {...overrides}
     />
   )
 }
 
 describe('AiSettingsDialog', () => {
-  it('renders the redesigned settings center shell and screenshot controls', () => {
+  it('renders the settings shell with only the AI CLI section', () => {
     const markup = renderDialog()
 
     expect(markup).toContain('ai-settings-shell')
-    expect(markup).toContain('ai-settings-sidebar')
     expect(markup).toContain('ai-settings-content')
     expect(markup).toContain('ai-settings-footer')
-    expect(markup).toContain('ai-settings-hero-card')
-    expect(markup).toContain('Alt+Shift+S')
+    expect(markup).toContain('id="ai-settings-ai-section"')
+    expect(markup).toContain('ai-settings-ai-card')
+  })
+
+  // 设置界面只保留 AI CLI 一项，全局快捷键 / 工具栏按钮 / 项目构建 / 项目运行
+  // 连同背后的功能一起删除了。这条守住「别又长回来」。
+  it('keeps every removed settings section out of the dialog', () => {
+    const markup = renderDialog()
+
+    expect(markup).not.toContain('ai-settings-sidebar')
+    expect(markup).not.toContain('全局快捷键')
+    expect(markup).not.toContain('工具栏按钮')
+    expect(markup).not.toContain('项目构建')
+    expect(markup).not.toContain('项目运行')
+    expect(markup).not.toContain('ai-settings-hero-card')
+    expect(markup).not.toContain('ai-settings-build-panel')
+    expect(markup).not.toContain('ai-settings-runtime-panel')
+    expect(markup).not.toContain('id="ai-settings-shortcut-section"')
+    expect(markup).not.toContain('id="ai-settings-build-section"')
+    expect(markup).not.toContain('id="ai-settings-runtime-section"')
   })
 
   it('puts Codex first and uses it as the default AI CLI', () => {
     const markup = renderDialog({
-      initial: {} as ComponentProps<typeof AiSettingsDialog>['initial'],
-      initialRepoView: {} as ComponentProps<typeof AiSettingsDialog>['initialRepoView']
+      initial: {} as ComponentProps<typeof AiSettingsDialog>['initial']
     })
     const codexOptionIndex = markup.indexOf('Codex (推荐)')
     const claudeOptionIndex = markup.indexOf('Claude Code (不建议使用)')
@@ -131,19 +104,6 @@ describe('AiSettingsDialog', () => {
     expect(markup).toContain('<input type="password" placeholder="sk-..." value=""/>')
   })
 
-  it('renders sidebar navigation as clickable section buttons', () => {
-    const markup = renderDialog()
-
-    expect(markup).toContain('type="button" class="ai-settings-nav-item active"')
-    expect(markup).toContain('aria-controls="ai-settings-shortcut-section"')
-    expect(markup).toContain('aria-controls="ai-settings-ai-section"')
-    expect(markup).toContain('aria-controls="ai-settings-build-section"')
-    expect(markup).toContain('aria-controls="ai-settings-runtime-section"')
-    expect(markup).not.toContain('aria-controls="ai-settings-remote-im-section"')
-    expect(markup).toContain('id="ai-settings-shortcut-section"')
-    expect(markup).toContain('id="ai-settings-ai-section"')
-  })
-
   it('keeps remote IM configuration out of the settings center', () => {
     const markup = renderDialog()
 
@@ -162,9 +122,23 @@ describe('AiSettingsDialog', () => {
 
     expect(globalModalIndex).toBeGreaterThan(-1)
     expect(settingsModalIndex).toBeGreaterThan(globalModalIndex)
-    expect(settingsModalRule).toContain('width: min(1180px')
+    expect(settingsModalRule).toContain('width: min(820px')
     expect(settingsModalRule).toContain('max-width: calc(100vw - 48px)')
-    expect(settingsModalRule).toContain('height: min(860px')
+    // 只剩一张卡了，固定高度会留一大片空白：按内容长，上限才是视口。
+    expect(settingsModalRule).toContain('height: auto')
+    expect(settingsModalRule).toContain('max-height: calc(100vh - 56px)')
+  })
+
+  // 侧边导航删了，外层网格必须回到单列，否则左边空出 252px 一条白。
+  it('collapses the settings shell to a single column', () => {
+    const css = readFileSync(fileURLToPath(new URL('../../../src/styles.css', import.meta.url)), 'utf8')
+    const shellIndex = css.indexOf('\n.ai-settings-shell {')
+    const shellRule = css.slice(shellIndex, css.indexOf('}', shellIndex))
+
+    expect(shellIndex).toBeGreaterThan(-1)
+    expect(shellRule).toContain('grid-template-columns: minmax(0, 1fr)')
+    // 断言声明本身，不是整个块——块里的注释也会提到 252px。
+    expect(shellRule).not.toContain('grid-template-columns: 252px')
   })
 
   it('uses compact form text inside the larger settings modal', () => {
@@ -176,327 +150,46 @@ describe('AiSettingsDialog', () => {
     expect(inputRule).toContain('font-size: var(--mac-text-xs)')
   })
 
-  it('renders the project runtime settings section', () => {
-    const markup = renderDialog()
-
-    expect(markup).toContain('ai-settings-runtime-panel')
-    expect(markup).toContain('project-runtime-settings-grid')
-  })
-
-  it('renders preset shortcut buttons and hides the custom input until custom mode is needed', () => {
-    const markup = renderDialog({
-      initialAppSettings: {
-        screenshotShortcutEnabled: true,
-        screenshotShortcut: 'CommandOrControl+Shift+S',
-        showDevToolbarButtons: false
-      }
-    })
-
-    expect(markup).toContain('Ctrl/Cmd + Shift + A')
-    expect(markup).toContain('Ctrl/Cmd + Shift + S')
-    expect(markup).toContain('Ctrl/Cmd + Alt + A')
-    expect(markup).toContain('Alt + Shift + A')
-    expect(markup).toContain('ai-settings-shortcut-custom-toggle')
-    expect(markup).not.toContain('placeholder="CommandOrControl+Shift+A"')
-  })
-
-  it('opens the custom editor when the current shortcut is not a preset', async () => {
-    const module = await import('../../../src/components/AiSettingsDialog.js')
-
-    expect(module.isPresetScreenshotShortcut('CommandOrControl+Shift+A')).toBe(true)
-    expect(module.isPresetScreenshotShortcut('Shift+Meta+K')).toBe(false)
-    expect(module.createScreenshotShortcutState('Shift+Meta+K')).toEqual({
-      screenshotShortcut: 'Shift+Meta+K',
-      customExpanded: true
-    })
-  })
-
-  it('keeps preset buttons visible when custom mode is expanded for a non-preset shortcut', () => {
-    const markup = renderDialog({
-      initialAppSettings: {
-        screenshotShortcutEnabled: true,
-        screenshotShortcut: 'Shift+Meta+K',
-        showDevToolbarButtons: false
-      }
-    })
-
-    expect(markup).toContain('Ctrl/Cmd + Shift + A')
-    expect(markup).toContain('ai-settings-shortcut-custom-toggle')
-    expect(markup).toContain('placeholder="CommandOrControl+Shift+A"')
-  })
-
-  it('collapses the custom editor when a preset is chosen or defaults are restored', async () => {
-    const module = await import('../../../src/components/AiSettingsDialog.js')
-
-    expect(module.selectScreenshotShortcutPreset('CommandOrControl+Shift+S')).toEqual({
-      screenshotShortcut: 'CommandOrControl+Shift+S',
-      customExpanded: false
-    })
-    expect(module.restoreDefaultScreenshotShortcut()).toEqual({
-      screenshotShortcut: 'CommandOrControl+Shift+A',
-      customExpanded: false
-    })
-  })
-
   it('renders the no-project AI CLI hint when project is unavailable', () => {
-    const markup = renderDialog({
-      projectId: null,
-      initialAppSettings: {
-        screenshotShortcutEnabled: false,
-        screenshotShortcut: 'CommandOrControl+Shift+A',
-        showDevToolbarButtons: false
-      },
-      buildConfigReady: false
-    })
+    const markup = renderDialog({ projectId: null })
 
     expect(markup).toContain('ai-settings-no-project-card')
-    expect(markup).toContain('ai-settings-build-panel')
   })
 
-  it('prefers authoritative saved app settings returned from the backend', () => {
-    expect(
-      resolveSavedAppSettings(
-        {
-          screenshotShortcutEnabled: true,
-          screenshotShortcut: 'CommandOrControl+Shift+A',
-          showDevToolbarButtons: false
-        },
-        {
-          screenshotShortcutEnabled: false,
-          screenshotShortcut: 'Alt+Shift+S',
-          showDevToolbarButtons: true
-        }
-      )
-    ).toEqual({
-      screenshotShortcutEnabled: false,
-      screenshotShortcut: 'Alt+Shift+S',
-      showDevToolbarButtons: true
-    })
+  it('emits a repair toast when the project settings save repaired metadata', () => {
+    expect(getProjectSettingsRepairToastMessage({ ok: true, repaired: false })).toBeNull()
+    expect(getProjectSettingsRepairToastMessage({ ok: true, repaired: true })).toBe(
+      '项目设置文件已自动修复并保存'
+    )
   })
 
-  it('uses authoritative fallback app settings from a failed save response', () => {
-    expect(
-      deriveAppSettingsSaveOutcome(
-        {
-          screenshotShortcutEnabled: true,
-          screenshotShortcut: 'Attempted+Shortcut',
-          showDevToolbarButtons: false
-        },
-        {
-          ok: false,
-          value: {
-            screenshotShortcutEnabled: false,
-            screenshotShortcut: 'Fallback+Shortcut',
-            showDevToolbarButtons: false
-          },
-          error: 'save failed'
-        }
-      )
-    ).toEqual({
-      appSettings: {
-        screenshotShortcutEnabled: false,
-        screenshotShortcut: 'Fallback+Shortcut',
-        showDevToolbarButtons: false
-      },
-      error: 'save failed'
-    })
-  })
-
-  it('preserves local edits when the incoming app-settings prop has not changed', () => {
-    expect(
-      shouldApplyIncomingAppSettings(
-        {
-          screenshotShortcutEnabled: true,
-          screenshotShortcut: 'CommandOrControl+Shift+A',
-          showDevToolbarButtons: false
-        },
-        {
-          screenshotShortcutEnabled: true,
-          screenshotShortcut: 'CommandOrControl+Shift+A',
-          showDevToolbarButtons: false
-        },
-        false
-      )
-    ).toBe(false)
-  })
-
-  it('applies incoming app settings when the dev-toolbar toggle changes externally', () => {
-    expect(
-      shouldApplyIncomingAppSettings(
-        {
-          screenshotShortcutEnabled: true,
-          screenshotShortcut: 'CommandOrControl+Shift+A',
-          showDevToolbarButtons: false
-        },
-        {
-          screenshotShortcutEnabled: true,
-          screenshotShortcut: 'CommandOrControl+Shift+A',
-          showDevToolbarButtons: true
-        },
-        false
-      )
-    ).toBe(true)
-  })
-
-  it('does not apply incoming app settings during an active save', () => {
-    expect(
-      shouldApplyIncomingAppSettings(
-        {
-          screenshotShortcutEnabled: true,
-          screenshotShortcut: 'CommandOrControl+Shift+A',
-          showDevToolbarButtons: false
-        },
-        {
-          screenshotShortcutEnabled: false,
-          screenshotShortcut: 'Alt+Shift+S',
-          showDevToolbarButtons: false
-        },
-        true
-      )
-    ).toBe(false)
-  })
-
-  it('emits a repair toast when any project settings save repaired metadata', () => {
-    expect(
-      getProjectSettingsRepairToastMessage(
-        { ok: true, repaired: false },
-        { ok: true, repaired: false }
-      )
-    ).toBeNull()
-    expect(
-      getProjectSettingsRepairToastMessage(
-        { ok: true, repaired: false },
-        { ok: true, repaired: false },
-        { ok: true, repaired: true }
-      )
-    ).toBe('项目设置文件已自动修复并保存')
-  })
-
-  it('syncs main and repo AI settings even when build-config save fails', async () => {
+  it('saves the main AI settings and returns the repair toast', async () => {
     const onMainSaved = vi.fn()
-    const onRepoViewSaved = vi.fn()
-    const onBuildConfigSaved = vi.fn()
 
     await expect(
       saveProjectScopedSettings({
         projectId: 'project-1',
         nextMain: { ai_cli: 'claude', command: 'claude' },
-        nextRepoView: { ai_cli: 'codex', command: 'codex' },
-        nextBuildConfig: defaultBuildConfig,
-        setAiSettings: vi.fn().mockResolvedValue({ ok: true }),
-        setRepoViewAiSettings: vi.fn().mockResolvedValue({ ok: true }),
-        setBuildConfig: vi.fn().mockResolvedValue({
-          ok: false,
-          error: 'invalid build config',
-          details: [{ path: 'build_config.steps[0].cwd', message: 'cwd invalid' }]
-        }),
-        onMainSaved,
-        onRepoViewSaved,
-        onBuildConfigSaved
+        setAiSettings: vi.fn().mockResolvedValue({ ok: true, repaired: true }),
+        onMainSaved
       })
-    ).rejects.toThrow('invalid build config')
+    ).resolves.toBe('项目设置文件已自动修复并保存')
 
     expect(onMainSaved).toHaveBeenCalledWith({ ai_cli: 'claude', command: 'claude' })
-    expect(onRepoViewSaved).toHaveBeenCalledWith({ ai_cli: 'codex', command: 'codex' })
-    expect(onBuildConfigSaved).not.toHaveBeenCalled()
   })
 
-  it('returns a repair toast after all project saves succeed', async () => {
+  it('throws without reporting a save when the main settings write fails', async () => {
     const onMainSaved = vi.fn()
-    const onRepoViewSaved = vi.fn()
-    const onBuildConfigSaved = vi.fn()
-
-    const expectedToast = getProjectSettingsRepairToastMessage(
-      { ok: true, repaired: false },
-      { ok: true, repaired: false },
-      { ok: true, repaired: true }
-    )
 
     await expect(
       saveProjectScopedSettings({
         projectId: 'project-1',
         nextMain: { ai_cli: 'claude' },
-        nextRepoView: { ai_cli: 'codex' },
-        nextBuildConfig: defaultBuildConfig,
-        setAiSettings: vi.fn().mockResolvedValue({ ok: true, repaired: false }),
-        setRepoViewAiSettings: vi.fn().mockResolvedValue({ ok: true, repaired: false }),
-        setBuildConfig: vi.fn().mockResolvedValue({ ok: true, repaired: true }),
-        onMainSaved,
-        onRepoViewSaved,
-        onBuildConfigSaved
+        setAiSettings: vi.fn().mockResolvedValue({ ok: false, error: 'disk full' }),
+        onMainSaved
       })
-    ).resolves.toBe(expectedToast)
+    ).rejects.toThrow('disk full')
 
-    expect(onBuildConfigSaved).toHaveBeenCalledWith(defaultBuildConfig)
-  })
-
-  it('saves runtime config after the other project settings succeed', async () => {
-    const onRuntimeConfigSaved = vi.fn()
-    const setRuntimeConfig = vi.fn().mockResolvedValue({ ok: true })
-
-    await expect(
-      saveProjectScopedSettings({
-        projectId: 'project-1',
-        nextMain: { ai_cli: 'claude' },
-        nextRepoView: { ai_cli: 'codex' },
-        nextBuildConfig: defaultBuildConfig,
-        nextRuntimeConfig: defaultRuntimeConfig,
-        setAiSettings: vi.fn().mockResolvedValue({ ok: true, repaired: false }),
-        setRepoViewAiSettings: vi.fn().mockResolvedValue({ ok: true, repaired: false }),
-        setBuildConfig: vi.fn().mockResolvedValue({ ok: true, repaired: false }),
-        setRuntimeConfig,
-        onMainSaved: vi.fn(),
-        onRepoViewSaved: vi.fn(),
-        onBuildConfigSaved: vi.fn(),
-        onRuntimeConfigSaved
-      })
-    ).resolves.toBeNull()
-
-    expect(setRuntimeConfig).toHaveBeenCalledWith('project-1', defaultRuntimeConfig)
-    expect(onRuntimeConfigSaved).toHaveBeenCalledWith(defaultRuntimeConfig)
-  })
-
-  it('reports runtime config validation failures without calling the runtime saved callback', async () => {
-    const onRuntimeConfigSaved = vi.fn()
-
-    await expect(
-      saveProjectScopedSettings({
-        projectId: 'project-1',
-        nextMain: { ai_cli: 'claude' },
-        nextRepoView: { ai_cli: 'codex' },
-        nextRuntimeConfig: { ...defaultRuntimeConfig, enabled: true, command: '' },
-        setAiSettings: vi.fn().mockResolvedValue({ ok: true, repaired: false }),
-        setRepoViewAiSettings: vi.fn().mockResolvedValue({ ok: true, repaired: false }),
-        setRuntimeConfig: vi.fn().mockResolvedValue({
-          ok: false,
-          error: 'invalid runtime config',
-          details: [{ path: 'runtime_config.command', message: 'command must be a non-empty string' }]
-        }),
-        onMainSaved: vi.fn(),
-        onRepoViewSaved: vi.fn(),
-        onRuntimeConfigSaved
-      })
-    ).rejects.toThrow('invalid runtime config')
-
-    expect(onRuntimeConfigSaved).not.toHaveBeenCalled()
-  })
-
-  it('skips build-config persistence when the current project config is still loading', async () => {
-    const setBuildConfig = vi.fn()
-
-    await expect(
-      saveProjectScopedSettings({
-        projectId: 'project-1',
-        nextMain: { ai_cli: 'claude' },
-        nextRepoView: { ai_cli: 'codex' },
-        setAiSettings: vi.fn().mockResolvedValue({ ok: true, repaired: false }),
-        setRepoViewAiSettings: vi.fn().mockResolvedValue({ ok: true, repaired: false }),
-        setBuildConfig,
-        onMainSaved: vi.fn(),
-        onRepoViewSaved: vi.fn()
-      })
-    ).resolves.toBeNull()
-
-    expect(setBuildConfig).not.toHaveBeenCalled()
+    expect(onMainSaved).not.toHaveBeenCalled()
   })
 })

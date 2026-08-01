@@ -33,24 +33,6 @@ import {
   startScheduledTaskScheduler,
   stopScheduledTaskScheduler
 } from './scheduledTasks/scheduler.js'
-import { registerScreenshotIpc } from './screenshot/manager.js'
-import {
-  applyScreenshotHotkeySettings,
-  disposeScreenshotHotkey,
-  initializeScreenshotHotkey
-} from './screenshot/hotkeyService.js'
-import {
-  DEFAULT_SCREENSHOT_HOTKEY_SETTINGS,
-  loadScreenshotHotkeySettings,
-  type ScreenshotHotkeySettings
-} from './screenshot/hotkeySettings.js'
-import {
-  DEFAULT_UI_PREFERENCES,
-  loadUiPreferences,
-  saveUiPreferences,
-  type UiPreferences
-} from './store/uiPreferences.js'
-import type { AppSettings } from './settings/types.js'
 import {
   createInternalPlan,
   listPlans,
@@ -77,26 +59,6 @@ import {
 } from './repo-view/memory.js'
 import { readProjectMetaFile, writeProjectMetaFile } from './store/projectMeta.js'
 import {
-  getProjectBuildConfig,
-  setProjectBuildConfig,
-  type ProjectBuildConfig
-} from './build/config.js'
-import {
-  getProjectRuntimeConfig,
-  setProjectRuntimeConfig,
-  type ProjectRuntimeConfig
-} from './runtime/config.js'
-import { resolveBuildExecutionScope } from './build/executionScope.js'
-import { createBuildRunner } from './build/runner.js'
-import { getFailureAnalysisPrompt as getBuildFailureAnalysisPrompt } from './build/analysisPrompt.js'
-import { createRuntimeRunner } from './runtime/runner.js'
-import { getRuntimeAnalysisPrompt } from './runtime/analysisPrompt.js'
-import {
-  buildRuntimeAnalysisPromptFileMessage,
-  writeRuntimeAnalysisPromptFile
-} from './runtime/analysisPromptFile.js'
-import { listVisualStudioInstallations } from './build/visualStudio.js'
-import {
   hasRepoAnalysisSession,
   resizeRepoAnalysisSession,
   sendRepoAnalysisPrompt,
@@ -118,54 +80,6 @@ app.setPath(
   resolveRemoteImUserDataPath(app.getPath('userData'), remoteImRuntimeProfileId)
 )
 
-
-// AppSettings 由两个独立持久化的部分组合而成：截图快捷键（hotkeySettings）
-// + 通用界面偏好（uiPreferences）。分别缓存，get/set 时组合。
-let effectiveScreenshotSettings: ScreenshotHotkeySettings | null = null
-let effectiveUiPreferences: UiPreferences | null = null
-const buildRunner = createBuildRunner()
-const runtimeRunner = createRuntimeRunner()
-
-function broadcastToAllWindows(channel: string, payload: unknown): void {
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (!win.isDestroyed()) {
-      win.webContents.send(channel, payload)
-    }
-  }
-}
-
-buildRunner.onData((event) => {
-  broadcastToAllWindows('build:data', event)
-})
-
-buildRunner.onStatus((nextState) => {
-  broadcastToAllWindows('build:status', nextState)
-})
-
-runtimeRunner.onData((event) => {
-  broadcastToAllWindows('runtime:data', event)
-})
-
-runtimeRunner.onStatus((nextState) => {
-  broadcastToAllWindows('runtime:status', nextState)
-})
-
-function composeAppSettings(): AppSettings {
-  const screenshot = effectiveScreenshotSettings ?? DEFAULT_SCREENSHOT_HOTKEY_SETTINGS
-  const ui = effectiveUiPreferences ?? DEFAULT_UI_PREFERENCES
-  return {
-    screenshotShortcutEnabled: screenshot.enabled,
-    screenshotShortcut: screenshot.shortcut,
-    showDevToolbarButtons: ui.showDevToolbarButtons
-  }
-}
-
-function fromRendererScreenshot(settings: AppSettings): ScreenshotHotkeySettings {
-  return {
-    enabled: settings.screenshotShortcutEnabled,
-    shortcut: settings.screenshotShortcut
-  }
-}
 
 let mainWindow: BrowserWindow | null = null
 
@@ -348,40 +262,6 @@ app.whenReady().then(async () => {
   if (process.platform === 'darwin') {
     ipcMain.on('app:launch-new-instance', launchMacAppInstance)
   }
-  ipcMain.handle('settings:get-app-settings', async () => {
-    if (!effectiveScreenshotSettings) effectiveScreenshotSettings = await loadScreenshotHotkeySettings()
-    if (!effectiveUiPreferences) effectiveUiPreferences = await loadUiPreferences()
-    return composeAppSettings()
-  })
-  ipcMain.handle(
-    'settings:set-app-settings',
-    async (
-      _e,
-      settings: AppSettings
-    ): Promise<{ ok: boolean; value?: AppSettings; error?: string }> => {
-      // 界面偏好独立持久化（不受截图快捷键校验影响）。
-      effectiveUiPreferences = await saveUiPreferences({
-        showDevToolbarButtons: settings.showDevToolbarButtons
-      })
-      const result = await applyScreenshotHotkeySettings(
-        fromRendererScreenshot(settings),
-        { registrar: globalShortcut }
-      )
-      effectiveScreenshotSettings = result.settings
-      if (!result.ok) {
-        return {
-          ok: false,
-          value: composeAppSettings(),
-          error: result.error
-        }
-      }
-      return {
-        ok: true,
-        value: composeAppSettings()
-      }
-    }
-  )
-
   ipcMain.handle(
     'plan:list',
     async (_e, { projectDir }: { projectDir: string }) => {
@@ -1028,226 +908,6 @@ app.whenReady().then(async () => {
       return { ok: true }
     }
   )
-
-  ipcMain.handle('project:get-build-config', async (_e, { id }: { id: string }) => {
-    const metaPath = join(projectDirFn(id), 'project.json')
-    return await getProjectBuildConfig(metaPath)
-  })
-
-  ipcMain.handle('project:get-runtime-config', async (_e, { id }: { id: string }) => {
-    const metaPath = join(projectDirFn(id), 'project.json')
-    return await getProjectRuntimeConfig(metaPath)
-  })
-
-  ipcMain.handle('project:list-visual-studio-installations', async () => {
-    return await listVisualStudioInstallations()
-  })
-
-  ipcMain.handle(
-    'project:set-build-config',
-    async (
-      _e,
-      { id, config }: { id: string; config: ProjectBuildConfig }
-    ): Promise<{
-      ok: boolean
-      repaired?: boolean
-      error?: string
-      details?: Array<{ path: string; message: string }>
-    }> => {
-      const metaPath = join(projectDirFn(id), 'project.json')
-      return await setProjectBuildConfig(metaPath, config)
-    }
-  )
-
-  ipcMain.handle(
-    'project:set-runtime-config',
-    async (
-      _e,
-      { id, config }: { id: string; config: ProjectRuntimeConfig }
-    ): Promise<{
-      ok: boolean
-      repaired?: boolean
-      error?: string
-      details?: Array<{ path: string; message: string }>
-    }> => {
-      const metaPath = join(projectDirFn(id), 'project.json')
-      return await setProjectRuntimeConfig(metaPath, config)
-    }
-  )
-
-  ipcMain.handle(
-    'build:start',
-    async (
-      _e,
-      {
-        id,
-        scope,
-        stepId
-      }: {
-        id: string
-        scope?: 'all' | 'single-step'
-        stepId?: string | null
-      }
-    ) => {
-      const row = getProject(id)
-      if (!row) {
-        return { ok: false as const, error: 'project not found', state: buildRunner.getState() }
-      }
-
-      const metaPath = join(projectDirFn(id), 'project.json')
-      const metaResult = await readProjectMetaFile(metaPath)
-      if (!metaResult.ok) {
-        return { ok: false as const, error: metaResult.error, state: buildRunner.getState() }
-      }
-
-      const configResult = await getProjectBuildConfig(metaPath)
-      if (!configResult.ok) {
-        return { ok: false as const, error: configResult.error, state: buildRunner.getState() }
-      }
-
-      const metaName =
-        typeof metaResult.meta.name === 'string' && metaResult.meta.name.trim()
-          ? metaResult.meta.name.trim()
-          : row.name
-      const targetRepo =
-        typeof metaResult.meta.target_repo === 'string' && metaResult.meta.target_repo.trim()
-          ? metaResult.meta.target_repo.trim()
-          : row.target_repo
-
-      if (!targetRepo) {
-        return {
-          ok: false as const,
-          error: 'project target_repo is not configured',
-          state: buildRunner.getState()
-        }
-      }
-
-      try {
-        const stat = await fs.stat(targetRepo)
-        if (!stat.isDirectory()) {
-          return {
-            ok: false as const,
-            error: 'project target_repo is not a directory',
-            state: buildRunner.getState()
-          }
-        }
-      } catch (error: unknown) {
-        return {
-          ok: false as const,
-          error: error instanceof Error ? error.message : String(error),
-          state: buildRunner.getState()
-        }
-      }
-
-      const selection = resolveBuildExecutionScope(configResult.value, { scope, stepId })
-      if (!selection.ok) {
-        return { ok: false as const, error: selection.error, state: buildRunner.getState() }
-      }
-
-      return await buildRunner.start({
-        projectId: id,
-        projectName: metaName || id,
-        targetRepo,
-        config: configResult.value,
-        scope: selection.scope,
-        stepId: selection.requestedStepId
-      })
-    }
-  )
-
-  ipcMain.handle('build:stop', () => buildRunner.stop())
-
-  ipcMain.handle('build:get-state', () => buildRunner.getState())
-
-  ipcMain.handle('build:get-failure-analysis-prompt', () => {
-    return getBuildFailureAnalysisPrompt(buildRunner.getState())
-  })
-
-  ipcMain.handle('runtime:start', async (_e, { id }: { id: string }) => {
-    const row = getProject(id)
-    if (!row) {
-      return { ok: false as const, error: 'project not found', state: runtimeRunner.getState() }
-    }
-
-    const metaPath = join(projectDirFn(id), 'project.json')
-    const metaResult = await readProjectMetaFile(metaPath)
-    if (!metaResult.ok) {
-      return { ok: false as const, error: metaResult.error, state: runtimeRunner.getState() }
-    }
-
-    const configResult = await getProjectRuntimeConfig(metaPath)
-    if (!configResult.ok) {
-      return { ok: false as const, error: configResult.error, state: runtimeRunner.getState() }
-    }
-
-    const metaName =
-      typeof metaResult.meta.name === 'string' && metaResult.meta.name.trim()
-        ? metaResult.meta.name.trim()
-        : row.name
-    const targetRepo =
-      typeof metaResult.meta.target_repo === 'string' && metaResult.meta.target_repo.trim()
-        ? metaResult.meta.target_repo.trim()
-        : row.target_repo
-
-    if (!targetRepo) {
-      return {
-        ok: false as const,
-        error: 'project target_repo is not configured',
-        state: runtimeRunner.getState()
-      }
-    }
-
-    try {
-      const stat = await fs.stat(targetRepo)
-      if (!stat.isDirectory()) {
-        return {
-          ok: false as const,
-          error: 'project target_repo is not a directory',
-          state: runtimeRunner.getState()
-        }
-      }
-    } catch (error: unknown) {
-      return {
-        ok: false as const,
-        error: error instanceof Error ? error.message : String(error),
-        state: runtimeRunner.getState()
-      }
-    }
-
-    return await runtimeRunner.start({
-      projectId: id,
-      projectName: metaName || id,
-      targetRepo,
-      config: configResult.value
-    })
-  })
-
-  ipcMain.handle('runtime:stop', () => runtimeRunner.stop())
-
-  ipcMain.handle('runtime:get-state', () => runtimeRunner.getState())
-
-  ipcMain.handle('runtime:get-analysis-prompt', () => {
-    return getRuntimeAnalysisPrompt(runtimeRunner.getState())
-  })
-
-  ipcMain.handle('runtime:get-analysis-prompt-file', async () => {
-    const promptResult = getRuntimeAnalysisPrompt(runtimeRunner.getState())
-    if (!promptResult.ok) return promptResult
-
-    try {
-      const filePath = await writeRuntimeAnalysisPromptFile(promptResult.prompt)
-      return {
-        ok: true as const,
-        filePath,
-        message: buildRuntimeAnalysisPromptFileMessage(filePath)
-      }
-    } catch (error: unknown) {
-      return {
-        ok: false as const,
-        error: error instanceof Error ? error.message : String(error)
-      }
-    }
-  })
 
   interface AiSettings {
     ai_cli: 'claude' | 'codex' | 'opencode'
@@ -1995,7 +1655,6 @@ app.whenReady().then(async () => {
   // 等）在登录页阶段不会被调用。
   registerPtyIpc()
   registerRemoteImIpc({ activateDataLayer: activateAccountDataLayer })
-  registerScreenshotIpc()
 
   createWindow()
 
@@ -2044,12 +1703,6 @@ async function activateAccountDataLayer(
   initDb()
   cleanupLegacyHabitData()
   registerScheduledTaskIpc()
-  const screenshotHotkeyInit = await initializeScreenshotHotkey({ registrar: globalShortcut })
-  effectiveScreenshotSettings = screenshotHotkeyInit.settings
-  effectiveUiPreferences = await loadUiPreferences()
-  if (!screenshotHotkeyInit.ok) {
-    console.warn('[screenshot] failed to initialize hotkey:', screenshotHotkeyInit.error)
-  }
   startScheduledTaskScheduler()
   activateRemoteImDataLayer()
 
@@ -2077,6 +1730,5 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   killAllSessions()
   stopScheduledTaskScheduler()
-  disposeScreenshotHotkey(globalShortcut)
   releaseInstanceLock()
 })

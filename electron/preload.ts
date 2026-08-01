@@ -1,33 +1,6 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent, webUtils } from 'electron'
 
-// 第二批类型去重：Build*/Runtime*/ScheduledTask* 的真源在各自 types.ts（均为纯类型模块）。
-import type {
-  BuildStepEnvType,
-  BuildOutputEncoding,
-  BuildExecutionScope,
-  BuildStepConfig,
-  ProjectBuildConfig,
-  BuildFailureContext,
-  BuildStepRuntime,
-  BuildRuntimeState,
-  BuildDataEvent,
-  BuildStartResult,
-  BuildStopResult,
-  BuildFailureAnalysisPromptResult,
-  VisualStudioInstallation,
-  BuildConfigValidationIssue
-} from './build/types.js'
-import type {
-  RuntimeEnvType,
-  RuntimeOutputEncoding,
-  RuntimeStatus,
-  ProjectRuntimeConfig,
-  RuntimeState,
-  RuntimeDataEvent,
-  RuntimeStartResult,
-  RuntimeStopResult,
-  RuntimeAnalysisPromptResult
-} from './runtime/types.js'
+// 第二批类型去重：ScheduledTask* 的真源在各自 types.ts（均为纯类型模块）。
 import type {
   ScheduledTaskScheduleType,
   ScheduledTaskRunStatus,
@@ -38,29 +11,6 @@ import type {
 } from './scheduledTasks/types.js'
 
 export type {
-  BuildStepEnvType,
-  BuildOutputEncoding,
-  BuildExecutionScope,
-  BuildStepConfig,
-  ProjectBuildConfig,
-  BuildFailureContext,
-  BuildStepRuntime,
-  BuildRuntimeState,
-  BuildDataEvent,
-  BuildStartResult,
-  BuildStopResult,
-  BuildFailureAnalysisPromptResult,
-  VisualStudioInstallation,
-  BuildConfigValidationIssue,
-  RuntimeEnvType,
-  RuntimeOutputEncoding,
-  RuntimeStatus,
-  ProjectRuntimeConfig,
-  RuntimeState,
-  RuntimeDataEvent,
-  RuntimeStartResult,
-  RuntimeStopResult,
-  RuntimeAnalysisPromptResult,
   ScheduledTaskScheduleType,
   ScheduledTaskRunStatus,
   ScheduledTaskRun,
@@ -71,7 +21,7 @@ export type {
 
 // 以下类型的「真源」在各自模块（均为纯类型模块，无运行时/Node 依赖）。这里 import 供
 // preload 自身使用，并统一 re-export——渲染层继续从 preload 引类型即可，无需改动。
-import type { AppSettings, AiSettings } from './settings/types.js'
+import type { AiSettings } from './settings/types.js'
 import type { OpenCodeProviderProfile } from './aicli/opencodeConfig.js'
 import type {
   RemoteImContactRelation,
@@ -97,7 +47,6 @@ import type {
 } from './remote-im/types.js'
 
 export type {
-  AppSettings,
   AiSettings,
   OpenCodeProviderProfile,
   RemoteImContactRelation,
@@ -120,22 +69,6 @@ export type {
   RemoteImIncomingImageMessage,
   RemoteImIncomingFileMessage,
   RemoteImRuntimeLogEntryInput
-}
-
-export interface ScreenshotOverlayPayload {
-  imageDataUrl: string
-  logicalSize: { w: number; h: number }
-  physicalSize: { w: number; h: number }
-}
-
-export interface ScreenshotEditorPayload {
-  imageDataUrl: string
-  size: { w: number; h: number }
-}
-
-export interface ScreenshotDeliverEvent {
-  path: string
-  prompt: string
 }
 
 export interface RemoteImSendPeerImageInput {
@@ -177,31 +110,6 @@ export interface ProjectAiSettingsResponse {
   repaired?: boolean
   error?: string
 }
-
-export type ProjectBuildConfigReadResult =
-  | { ok: true; value: ProjectBuildConfig; repaired?: true }
-  | { ok: false; error: string }
-
-export type ProjectBuildConfigWriteResult =
-  | { ok: true; repaired?: true }
-  | { ok: false; error: string; details?: BuildConfigValidationIssue[] }
-
-export type ProjectRuntimeConfigReadResult =
-  | { ok: true; value: ProjectRuntimeConfig; repaired?: true }
-  | { ok: false; error: string }
-
-export type ProjectRuntimeConfigWriteResult =
-  | { ok: true; repaired?: true }
-  | { ok: false; error: string; details?: BuildConfigValidationIssue[] }
-
-export interface BuildStartOptions {
-  scope?: BuildExecutionScope
-  stepId?: string | null
-}
-
-export type RuntimeAnalysisPromptFileResult =
-  | { ok: true; filePath: string; message: string }
-  | { ok: false; error: string }
 
 export interface ScheduledTaskQueueState {
   running: {
@@ -415,16 +323,6 @@ const api = {
       ipcRenderer.invoke('shell:open-msys-terminal', { cwd }) as Promise<{
         ok: boolean
         variant?: 'msys2' | 'git' | 'path' | null
-        error?: string
-      }>
-  },
-  settings: {
-    getAppSettings: () =>
-      ipcRenderer.invoke('settings:get-app-settings') as Promise<AppSettings>,
-    setAppSettings: (settings: AppSettings) =>
-      ipcRenderer.invoke('settings:set-app-settings', settings) as Promise<{
-        ok: boolean
-        value?: AppSettings
         error?: string
       }>
   },
@@ -722,24 +620,6 @@ const api = {
       >
     ) =>
       ipcRenderer.invoke('project:set-stage-configs', { id, configs }) as Promise<{ ok: boolean }>,
-    getBuildConfig: (id: string) =>
-      ipcRenderer.invoke('project:get-build-config', { id }) as Promise<ProjectBuildConfigReadResult>,
-    getRuntimeConfig: (id: string) =>
-      ipcRenderer.invoke('project:get-runtime-config', { id }) as Promise<ProjectRuntimeConfigReadResult>,
-    listVisualStudioInstallations: () =>
-      ipcRenderer.invoke('project:list-visual-studio-installations') as Promise<
-        { ok: true; value: VisualStudioInstallation[] } | { ok: false; error: string }
-      >,
-    setBuildConfig: (id: string, config: ProjectBuildConfig) =>
-      ipcRenderer.invoke('project:set-build-config', {
-        id,
-        config
-      }) as Promise<ProjectBuildConfigWriteResult>,
-    setRuntimeConfig: (id: string, config: ProjectRuntimeConfig) =>
-      ipcRenderer.invoke('project:set-runtime-config', {
-        id,
-        config
-      }) as Promise<ProjectRuntimeConfigWriteResult>,
     getAiSettings: (id: string) =>
       ipcRenderer.invoke('project:get-ai-settings', { id }) as Promise<ProjectAiSettingsResponse>,
     setAiSettings: (id: string, settings: AiSettings) =>
@@ -769,52 +649,6 @@ const api = {
         name?: string
         error?: string
       }>
-  },
-
-  build: {
-    start: (projectId: string, options?: BuildStartOptions) =>
-      ipcRenderer.invoke('build:start', {
-        id: projectId,
-        scope: options?.scope ?? 'all',
-        stepId: options?.stepId ?? null
-      }) as Promise<BuildStartResult>,
-    stop: () => ipcRenderer.invoke('build:stop') as Promise<BuildStopResult>,
-    getState: () => ipcRenderer.invoke('build:get-state') as Promise<BuildRuntimeState>,
-    getFailureAnalysisPrompt: () =>
-      ipcRenderer.invoke('build:get-failure-analysis-prompt') as Promise<BuildFailureAnalysisPromptResult>,
-    onData: (cb: (evt: BuildDataEvent) => void) => {
-      const handler = (_event: IpcRendererEvent, evt: BuildDataEvent) => cb(evt)
-      ipcRenderer.on('build:data', handler)
-      return () => ipcRenderer.removeListener('build:data', handler)
-    },
-    onStatus: (cb: (state: BuildRuntimeState) => void) => {
-      const handler = (_event: IpcRendererEvent, state: BuildRuntimeState) => cb(state)
-      ipcRenderer.on('build:status', handler)
-      return () => ipcRenderer.removeListener('build:status', handler)
-    }
-  },
-
-  runtime: {
-    start: (projectId: string) =>
-      ipcRenderer.invoke('runtime:start', {
-        id: projectId
-      }) as Promise<RuntimeStartResult>,
-    stop: () => ipcRenderer.invoke('runtime:stop') as Promise<RuntimeStopResult>,
-    getState: () => ipcRenderer.invoke('runtime:get-state') as Promise<RuntimeState>,
-    getAnalysisPrompt: () =>
-      ipcRenderer.invoke('runtime:get-analysis-prompt') as Promise<RuntimeAnalysisPromptResult>,
-    getAnalysisPromptFile: () =>
-      ipcRenderer.invoke('runtime:get-analysis-prompt-file') as Promise<RuntimeAnalysisPromptFileResult>,
-    onData: (cb: (evt: RuntimeDataEvent) => void) => {
-      const handler = (_event: IpcRendererEvent, evt: RuntimeDataEvent) => cb(evt)
-      ipcRenderer.on('runtime:data', handler)
-      return () => ipcRenderer.removeListener('runtime:data', handler)
-    },
-    onStatus: (cb: (state: RuntimeState) => void) => {
-      const handler = (_event: IpcRendererEvent, state: RuntimeState) => cb(state)
-      ipcRenderer.on('runtime:status', handler)
-      return () => ipcRenderer.removeListener('runtime:status', handler)
-    }
   },
 
   scheduledTasks: {
@@ -1188,55 +1022,6 @@ const api = {
       ipcRenderer.invoke('plan:removeExternal', req) as Promise<
         { ok: true } | { ok: false; error: string }
       >
-  },
-  screenshot: {
-    start: () =>
-      ipcRenderer.invoke('screenshot:start') as Promise<{ ok: boolean }>,
-    overlayLoadPayload: (token: string) =>
-      ipcRenderer.invoke('screenshot:overlay-load', token) as Promise<
-        | { ok: true; payload: ScreenshotOverlayPayload }
-        | { ok: false; error: string }
-      >,
-    overlayCommit: (req: {
-      token: string
-      logicalRect: { x: number; y: number; w: number; h: number }
-      logicalSize: { w: number; h: number }
-      physicalSize: { w: number; h: number }
-    }) =>
-      ipcRenderer.invoke('screenshot:overlay-commit', req) as Promise<
-        { ok: true } | { ok: false; error: string }
-      >,
-    overlayCancel: (token: string) =>
-      ipcRenderer.invoke('screenshot:overlay-cancel', token) as Promise<{ ok: boolean }>,
-    editorLoadPayload: (token: string) =>
-      ipcRenderer.invoke('screenshot:editor-load', token) as Promise<
-        | { ok: true; payload: ScreenshotEditorPayload }
-        | { ok: false; error: string }
-      >,
-    editorCancel: (token: string) =>
-      ipcRenderer.invoke('screenshot:editor-cancel', token) as Promise<{ ok: boolean }>,
-    editorSend: (req: {
-      token: string
-      pngBytes?: Uint8Array | null
-      useOriginal?: boolean
-      prompt: string
-    }) =>
-      ipcRenderer.invoke('screenshot:editor-send', req) as Promise<
-        { ok: true; path: string } | { ok: false; error: string }
-      >,
-    onDeliver: (cb: (evt: ScreenshotDeliverEvent) => void): (() => void) => {
-      const handler = (_e: IpcRendererEvent, evt: ScreenshotDeliverEvent) =>
-        cb(evt)
-      ipcRenderer.on('screenshot:deliver', handler)
-      return () => ipcRenderer.removeListener('screenshot:deliver', handler)
-    },
-    onError: (
-      cb: (evt: { message: string }) => void
-    ): (() => void) => {
-      const handler = (_e: IpcRendererEvent, evt: { message: string }) => cb(evt)
-      ipcRenderer.on('screenshot:error', handler)
-      return () => ipcRenderer.removeListener('screenshot:error', handler)
-    }
   }
 }
 

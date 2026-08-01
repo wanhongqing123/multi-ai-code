@@ -1015,7 +1015,6 @@ html, body, #root {
   box-shadow: 0 0 0 3px var(--mac-focus-ring);
 }
 
-
 /* 会话状态圆点：绿色=运行中，灰色=未运行/已退出（悬停 title 提示具体状态）。 */
 .main-session-dot {
   display: inline-block;
@@ -1364,73 +1363,17 @@ html, body, #root {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 252px minmax(0, 1fr);
+  /* 侧边导航随「设置只保留 AICLI」一起删了，这里必须回到单列——留着
+     252px 那一列会在左边空出一整条白，看着像渲染坏了。 */
+  grid-template-columns: minmax(0, 1fr);
   background:
     radial-gradient(circle at 74% 16%, color-mix(in srgb, var(--mac-primary) 8%, transparent), transparent 30%),
     var(--mac-surface);
 }
 
-.ai-settings-sidebar {
-  display: flex;
-  flex-direction: column;
-  gap: var(--mac-sp-5);
-  min-width: 0;
-  padding: var(--mac-sp-6) var(--mac-sp-5);
-  border-right: 1px solid var(--mac-border-subtle);
-  background: linear-gradient(180deg, var(--mac-bg-subtle), color-mix(in srgb, var(--mac-primary) 6%, var(--mac-bg-subtle)));
-}
-
-.ai-settings-sidebar-label {
-  font-size: var(--mac-text-xs);
-  color: var(--mac-fg-muted);
-  font-weight: var(--mac-weight-semibold);
-  letter-spacing: 0.08em;
-}
-
-.ai-settings-nav-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--mac-sp-3);
-}
-
-.ai-settings-nav-item {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: var(--mac-sp-3);
-  width: 100%;
-  min-width: 0;
-  padding: var(--mac-sp-3);
-  border: 1px solid var(--mac-border-subtle);
-  border-radius: 18px;
-  background: var(--mac-surface);
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition:
-    border-color var(--mac-dur-fast) var(--mac-ease),
-    background var(--mac-dur-fast) var(--mac-ease),
-    box-shadow var(--mac-dur-fast) var(--mac-ease),
-    transform var(--mac-dur-fast) var(--mac-ease);
-}
-
 .ai-settings-nav-item.active {
   border-color: color-mix(in srgb, var(--mac-primary) 34%, var(--mac-border));
   background: var(--mac-primary-soft);
-}
-
-.ai-settings-nav-item:hover {
-  border-color: color-mix(in srgb, var(--mac-primary) 26%, var(--mac-border));
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
-  transform: translateY(-1px);
-}
-
-.ai-settings-nav-item:focus-visible {
-  outline: none;
-  border-color: var(--mac-primary);
-  box-shadow: 0 0 0 3px var(--mac-focus-ring);
 }
 
 .ai-settings-nav-item.active::after {
@@ -1443,77 +1386,10 @@ html, body, #root {
   background: var(--mac-primary);
 }
 
-.ai-settings-nav-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  flex: 0 0 32px;
-  border-radius: 12px;
-  background: var(--mac-primary-soft);
-  color: var(--mac-primary);
-  font-size: var(--mac-text-sm);
-  font-weight: var(--mac-weight-semibold);
-}
-
-.ai-settings-nav-item strong,
-.ai-settings-nav-item small {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ai-settings-nav-item strong {
-  color: var(--mac-fg);
-  font-size: var(--mac-text-sm);
-  font-weight: var(--mac-weight-semibold);
-}
-
-.ai-settings-nav-item small {
-  margin-top: 3px;
-  color: var(--mac-fg-muted);
-  font-size: var(--mac-text-xs);
-}
-
-.ai-settings-current-project {
-  margin-top: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: var(--mac-sp-4);
-  border: 1px solid var(--mac-border-subtle);
-  border-radius: 20px;
-  background: var(--mac-surface);
-}
-
-.ai-settings-current-project span {
-  color: var(--mac-fg-muted);
-  font-size: var(--mac-text-xs);
-  font-weight: var(--mac-weight-semibold);
-}
-
-.ai-settings-current-project strong {
-  color: var(--mac-fg);
-  font-size: var(--mac-text-sm);
-}
-
-.ai-settings-current-project small {
-  color: var(--mac-primary);
-  font-size: var(--mac-text-xs);
-}
-
 .ai-settings-content {
   min-width: 0;
   overflow-y: auto;
   padding: var(--mac-sp-6);
-}
-
-.ai-settings-content-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--mac-sp-5);
 }
 
 .ai-settings-section-anchor {
@@ -1632,108 +1508,11 @@ html, body, #root {
   justify-content: space-between;
   gap: var(--mac-sp-3);
 }
-.ai-settings-checkbox {
-  flex-direction: row !important;
-  align-items: center;
-  gap: var(--mac-sp-2) !important;
-}
-.ai-settings-checkbox input[type='checkbox'] {
-  margin: 0;
-}
 .ai-settings-help,
 .ai-settings-note {
   font-size: var(--mac-text-xs);
   color: var(--mac-fg-subtle);
   line-height: var(--mac-line-normal);
-}
-
-.ai-settings-hero-card {
-  position: relative;
-  overflow: hidden;
-  margin-bottom: var(--mac-sp-5);
-  border: none;
-  color: white;
-  background:
-    radial-gradient(circle at 90% 0%, rgba(255, 255, 255, 0.18), transparent 24%),
-    radial-gradient(circle at 76% 100%, rgba(255, 255, 255, 0.12), transparent 28%),
-    linear-gradient(120deg, #2563eb 0%, #4f46e5 54%, #7c3aed 100%);
-  box-shadow: 0 18px 36px rgba(37, 99, 235, 0.2);
-}
-
-.ai-settings-hero-main {
-  display: flex;
-  align-items: center;
-  gap: var(--mac-sp-4);
-}
-
-.ai-settings-hero-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 42px;
-  height: 42px;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.18);
-  color: white;
-  font-size: 28px;
-  line-height: 1;
-}
-
-.ai-settings-hero-title {
-  font-size: 26px;
-  font-weight: var(--mac-weight-semibold);
-  line-height: var(--mac-line-tight);
-}
-
-.ai-settings-hero-copy {
-  margin-top: 5px;
-  color: rgba(255, 255, 255, 0.78);
-  font-size: var(--mac-text-sm);
-}
-
-.ai-settings-hero-status {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--mac-sp-3);
-}
-
-.ai-settings-hero-toggle,
-.ai-settings-shortcut-current,
-.ai-settings-restore-btn {
-  border: 1px solid rgba(255, 255, 255, 0.18) !important;
-  background: rgba(255, 255, 255, 0.18) !important;
-  color: white !important;
-}
-
-.ai-settings-hero-toggle {
-  padding: 7px 14px;
-  border-radius: 999px;
-}
-
-.ai-settings-shortcut-current {
-  display: inline-flex;
-  align-items: center;
-  min-height: 32px;
-  padding: 0 var(--mac-sp-4);
-  border-radius: 999px;
-  font-family: var(--mac-font-mono);
-  font-size: var(--mac-text-xs);
-  font-weight: var(--mac-weight-semibold);
-}
-
-.ai-settings-restore-btn {
-  margin-left: auto;
-}
-
-.ai-settings-shortcut-card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--mac-sp-3);
-  padding: var(--mac-sp-4);
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.12);
 }
 
 .ai-settings-hero-card .ai-settings-title {
@@ -1744,16 +1523,6 @@ html, body, #root {
 .ai-settings-hero-card .ai-settings-card-subtitle,
 .ai-settings-hero-card .ai-settings-help {
   color: rgba(255, 255, 255, 0.72);
-}
-
-.project-build-step-warning {
-  color: var(--mac-danger);
-}
-
-.ai-settings-shortcut-presets {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--mac-sp-2);
 }
 
 .ai-settings-shortcut-presets .drawer-btn {
@@ -1776,29 +1545,8 @@ html, body, #root {
   box-shadow: 0 8px 22px rgba(15, 23, 42, 0.14);
 }
 
-.ai-settings-shortcut-custom {
-  padding: var(--mac-sp-3);
-  border: 1px dashed rgba(255, 255, 255, 0.34);
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.12);
-  color: white !important;
-}
-
-.ai-settings-shortcut-custom input {
-  background: rgba(255, 255, 255, 0.92) !important;
-  color: #0f172a !important;
-}
-
-.ai-settings-panel {
-  min-width: 0;
-}
-
 .ai-settings-panel > .ai-settings-card {
   height: 100%;
-}
-
-.ai-settings-build-panel {
-  margin-top: 0;
 }
 
 .ai-settings-no-project-card {
@@ -1838,58 +1586,6 @@ html, body, #root {
   min-width: 124px;
 }
 
-.project-build-settings-toolbar {
-  display: flex;
-  justify-content: flex-start;
-}
-
-.project-build-settings-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--mac-sp-3);
-}
-
-.project-build-step-card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--mac-sp-3);
-  padding: var(--mac-sp-4);
-  border: 1px solid var(--mac-border);
-  border-radius: var(--mac-r-lg);
-  background: var(--mac-surface);
-}
-
-.project-build-step-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--mac-sp-3);
-}
-
-.project-build-step-title {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.project-build-step-title strong {
-  font-size: var(--mac-text-sm);
-  color: var(--mac-fg);
-}
-
-.project-build-step-title span {
-  font-family: var(--mac-font-mono);
-  font-size: var(--mac-text-xs);
-  color: var(--mac-fg-subtle);
-}
-
-.project-build-step-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: var(--mac-sp-2);
-}
-
 .project-build-step-actions .drawer-btn.danger {
   border-color: color-mix(in srgb, var(--mac-danger) 32%, var(--mac-border));
   color: var(--mac-danger);
@@ -1897,17 +1593,6 @@ html, body, #root {
 
 .project-build-step-actions .drawer-btn.danger:hover:not(:disabled) {
   background: var(--mac-danger-soft);
-}
-
-.project-build-settings-grid,
-.project-runtime-settings-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--mac-sp-3);
-}
-
-.project-build-settings-grid-full {
-  grid-column: 1 / -1;
 }
 
 @media (max-width: 760px) {
@@ -1928,32 +1613,12 @@ html, body, #root {
     grid-template-columns: 1fr;
   }
 
-  .ai-settings-sidebar {
-    padding: var(--mac-sp-4);
-    border-right: none;
-    border-bottom: 1px solid var(--mac-border-subtle);
-  }
-
-  .ai-settings-nav-list {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .ai-settings-current-project {
-    display: none;
-  }
-
   .ai-settings-content {
     padding: var(--mac-sp-4);
   }
 
-  .ai-settings-content-grid,
   .ai-settings-form-grid {
     grid-template-columns: 1fr;
-  }
-
-  .ai-settings-restore-btn {
-    margin-left: 0;
   }
 
   .ai-settings-footer {
@@ -1966,462 +1631,6 @@ html, body, #root {
     width: 100%;
     justify-content: flex-end;
   }
-
-  .project-build-step-head {
-    flex-direction: column;
-  }
-
-  .project-build-step-actions {
-    justify-content: flex-start;
-  }
-
-  .project-build-settings-grid,
-  .project-runtime-settings-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .project-build-settings-grid-full {
-    grid-column: auto;
-  }
-}
-
-.build-panel-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(12, 18, 28, 0.28);
-  backdrop-filter: blur(4px);
-  display: flex;
-  justify-content: flex-end;
-  z-index: 1000;
-}
-
-.build-panel {
-  width: min(520px, 92vw);
-  height: 100%;
-  background: var(--mac-surface);
-  border-left: 1px solid var(--mac-border);
-  box-shadow: var(--mac-elev-3);
-  display: flex;
-  flex-direction: column;
-  color: var(--mac-fg);
-  animation: mac-slide-in var(--mac-dur-normal) var(--mac-ease) both;
-}
-
-.build-panel-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--mac-sp-3);
-  padding: var(--mac-sp-4) var(--mac-sp-5);
-  border-bottom: 1px solid var(--mac-border-subtle);
-}
-
-.build-panel-eyebrow {
-  color: var(--mac-fg-subtle);
-  font-size: var(--mac-text-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.build-panel-title {
-  margin: 4px 0 0;
-  font-size: var(--mac-text-lg);
-}
-
-.build-panel-project {
-  color: var(--mac-fg-subtle);
-  font-weight: var(--mac-weight-regular);
-}
-
-.build-panel-close {
-  background: transparent;
-  border: none;
-  color: var(--mac-fg-subtle);
-  font-size: 22px;
-  cursor: pointer;
-  padding: 2px var(--mac-sp-2);
-  border-radius: var(--mac-r-md);
-}
-
-.build-panel-close:hover {
-  background: var(--mac-bg);
-  color: var(--mac-fg);
-}
-
-.build-panel-status-card,
-.build-panel-section {
-  padding: var(--mac-sp-4) var(--mac-sp-5);
-  border-bottom: 1px solid var(--mac-border-subtle);
-}
-
-.build-panel-status-card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--mac-sp-3);
-}
-
-.build-panel-status-row,
-.build-panel-section-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--mac-sp-3);
-}
-
-.build-panel-label,
-.build-panel-section-head span {
-  color: var(--mac-fg-subtle);
-  font-size: var(--mac-text-xs);
-}
-
-.build-panel-status {
-  display: inline-flex;
-  align-items: center;
-  border-radius: var(--mac-r-pill);
-  padding: 3px var(--mac-sp-3);
-  font-size: var(--mac-text-xs);
-  font-weight: var(--mac-weight-medium);
-  background: var(--mac-bg-subtle);
-  color: var(--mac-fg-subtle);
-}
-
-.build-panel-status-running {
-  background: var(--mac-info-soft);
-  color: var(--mac-info);
-}
-
-.build-panel-status-succeeded {
-  background: var(--mac-success-soft);
-  color: var(--mac-success);
-}
-
-.build-panel-status-failed {
-  background: var(--mac-danger-soft);
-  color: var(--mac-danger);
-}
-
-.build-panel-status-stopped {
-  background: var(--mac-warning-soft);
-  color: var(--mac-warning);
-}
-
-.build-panel-meta-grid {
-  display: grid;
-  gap: var(--mac-sp-2);
-  color: var(--mac-fg-muted);
-  font-size: var(--mac-text-xs);
-}
-
-.build-panel-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--mac-sp-2);
-}
-
-.build-panel-note {
-  margin: 0;
-  color: var(--mac-fg-subtle);
-  font-size: var(--mac-text-xs);
-  line-height: var(--mac-line-normal);
-}
-
-.build-step-list {
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: var(--mac-sp-3);
-  padding: 0;
-  margin: 0;
-}
-
-.build-step-card {
-  border: 1px solid var(--mac-border);
-  border-radius: var(--mac-r-lg);
-  background: var(--mac-bg-subtle);
-  padding: var(--mac-sp-3);
-  display: flex;
-  flex-direction: column;
-  gap: var(--mac-sp-2);
-}
-
-.build-step-head,
-.build-step-meta {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--mac-sp-2);
-  align-items: center;
-}
-
-.build-step-meta {
-  color: var(--mac-fg-subtle);
-  font-size: var(--mac-text-xs);
-  flex-wrap: wrap;
-}
-
-.build-step-status {
-  font-size: var(--mac-text-xs);
-  color: var(--mac-fg-subtle);
-}
-
-.build-step-status-running {
-  color: var(--mac-info);
-}
-
-.build-step-status-succeeded {
-  color: var(--mac-success);
-}
-
-.build-step-status-failed {
-  color: var(--mac-danger);
-}
-
-.build-step-status-skipped {
-  color: var(--mac-warning);
-}
-
-.build-step-status-not-run {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 8px;
-  border-radius: var(--mac-r-pill);
-  background: rgba(148, 163, 184, 0.16);
-  color: #64748b;
-}
-
-.build-step-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--mac-sp-2);
-}
-
-.build-step-command,
-.build-panel-log {
-  margin: 0;
-  font-family: var(--mac-font-mono);
-  font-size: var(--mac-text-mono);
-  color: var(--mac-fg-muted);
-  background: var(--mac-bg);
-  border: 1px solid var(--mac-border);
-  border-radius: var(--mac-r-md);
-  padding: var(--mac-sp-3);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.build-panel-log {
-  max-height: 280px;
-  overflow: auto;
-}
-
-.runtime-log-dialog-layer {
-  position: fixed;
-  inset: 0;
-  z-index: 1040;
-  pointer-events: none;
-}
-
-.runtime-log-dialog {
-  position: fixed;
-  background: var(--mac-surface);
-  border: 1px solid var(--mac-border);
-  border-radius: var(--mac-r-lg);
-  box-shadow: var(--mac-elev-3);
-  color: var(--mac-fg);
-  display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr) auto auto auto;
-  overflow: hidden;
-  pointer-events: auto;
-}
-
-.runtime-log-dialog-head,
-.runtime-log-dialog-status,
-.runtime-log-filter,
-.runtime-log-dialog-comment,
-.runtime-log-dialog-actions {
-  padding: var(--mac-sp-4) var(--mac-sp-5);
-}
-
-.runtime-log-dialog-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--mac-sp-3);
-  border-bottom: 1px solid var(--mac-border-subtle);
-  cursor: move;
-  user-select: none;
-}
-
-.runtime-log-dialog-head .build-panel-close {
-  cursor: pointer;
-}
-
-.runtime-log-dialog-status {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--mac-sp-3);
-  color: var(--mac-fg-subtle);
-  font-size: var(--mac-text-xs);
-  border-bottom: 1px solid var(--mac-border-subtle);
-}
-
-.runtime-log-filter {
-  display: grid;
-  grid-template-columns: auto minmax(160px, 1fr) auto;
-  align-items: center;
-  gap: var(--mac-sp-3);
-  border-bottom: 1px solid var(--mac-border-subtle);
-  color: var(--mac-fg-subtle);
-  font-size: var(--mac-text-xs);
-}
-
-.runtime-log-filter label {
-  color: var(--mac-fg-muted);
-  font-weight: var(--mac-weight-medium);
-}
-
-.runtime-log-filter input {
-  min-width: 0;
-  width: 100%;
-  border: 1px solid var(--mac-border);
-  border-radius: var(--mac-r-md);
-  padding: var(--mac-sp-2) var(--mac-sp-3);
-  background: var(--mac-bg);
-  color: var(--mac-fg);
-  font: inherit;
-}
-
-.runtime-log-filter input:focus {
-  outline: 2px solid var(--mac-primary-soft);
-  border-color: var(--mac-primary);
-}
-
-.runtime-log-dialog-log {
-  margin: 0;
-  padding: var(--mac-sp-4) var(--mac-sp-5);
-  min-height: 0;
-  overflow: auto;
-  font-family: var(--mac-font-mono);
-  font-size: var(--mac-text-mono);
-  line-height: var(--mac-line-normal);
-  color: var(--mac-fg-muted);
-  background: var(--mac-bg);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.runtime-log-dialog-comment {
-  display: grid;
-  gap: var(--mac-sp-2);
-  border-top: 1px solid var(--mac-border-subtle);
-}
-
-.runtime-log-dialog-comment label {
-  color: var(--mac-fg-subtle);
-  font-size: var(--mac-text-xs);
-  font-weight: var(--mac-weight-medium);
-}
-
-.runtime-log-dialog-comment textarea {
-  width: 100%;
-  resize: vertical;
-  min-height: 76px;
-  border: 1px solid var(--mac-border);
-  border-radius: var(--mac-r-md);
-  padding: var(--mac-sp-3);
-  background: var(--mac-bg);
-  color: var(--mac-fg);
-  font: inherit;
-  line-height: var(--mac-line-normal);
-}
-
-.runtime-log-dialog-comment textarea:focus {
-  outline: 2px solid var(--mac-primary-soft);
-  border-color: var(--mac-primary);
-}
-
-.runtime-log-dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--mac-sp-2);
-  border-top: 1px solid var(--mac-border-subtle);
-}
-
-.runtime-log-resize-handle {
-  position: absolute;
-  z-index: 2;
-  pointer-events: auto;
-  touch-action: none;
-}
-
-.runtime-log-resize-handle-n,
-.runtime-log-resize-handle-s {
-  left: 10px;
-  right: 10px;
-  height: 10px;
-  cursor: ns-resize;
-}
-
-.runtime-log-resize-handle-n {
-  top: -5px;
-}
-
-.runtime-log-resize-handle-s {
-  bottom: -5px;
-}
-
-.runtime-log-resize-handle-e,
-.runtime-log-resize-handle-w {
-  top: 10px;
-  bottom: 10px;
-  width: 10px;
-  cursor: ew-resize;
-}
-
-.runtime-log-resize-handle-e {
-  right: -5px;
-}
-
-.runtime-log-resize-handle-w {
-  left: -5px;
-}
-
-.runtime-log-resize-handle-ne,
-.runtime-log-resize-handle-nw,
-.runtime-log-resize-handle-se,
-.runtime-log-resize-handle-sw {
-  width: 16px;
-  height: 16px;
-}
-
-.runtime-log-resize-handle-ne {
-  top: -6px;
-  right: -6px;
-  cursor: nesw-resize;
-}
-
-.runtime-log-resize-handle-nw {
-  top: -6px;
-  left: -6px;
-  cursor: nwse-resize;
-}
-
-.runtime-log-resize-handle-se {
-  right: -6px;
-  bottom: -6px;
-  cursor: nwse-resize;
-}
-
-.runtime-log-resize-handle-sw {
-  left: -6px;
-  bottom: -6px;
-  cursor: nesw-resize;
-}
-
-.build-step-exit,
-.build-panel-empty {
-  color: var(--mac-fg-subtle);
-  font-size: var(--mac-text-xs);
 }
 
 .error-panel {
@@ -3054,10 +2263,12 @@ html, body, #root {
   color: var(--mac-fg);
 }
 
+/* 设置只剩 AI CLI 一张卡后按内容收；再撑到原来的 1180x860 就是一个空了
+   八成的大白框。height:auto + max-height 让它长到内容为止。 */
 .modal.ai-settings-modal {
-  width: min(1180px, calc(100vw - 48px));
+  width: min(820px, calc(100vw - 48px));
   max-width: calc(100vw - 48px);
-  height: min(860px, calc(100vh - 56px));
+  height: auto;
   max-height: calc(100vh - 56px);
   border-radius: 28px;
   background: linear-gradient(135deg, var(--mac-surface), var(--mac-bg-subtle));
@@ -5852,126 +5063,6 @@ html, body, #root {
   display: flex;
   gap: 8px;
 }
-
-/* ===== Screenshot region overlay ===== */
-.screenshot-overlay-loading {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-}
-.screenshot-overlay-root {
-  position: fixed;
-  top: 0;
-  left: 0;
-  cursor: crosshair;
-  user-select: none;
-  overflow: hidden;
-}
-.screenshot-overlay-bg {
-  position: absolute;
-  top: 0;
-  left: 0;
-  pointer-events: none;
-  user-select: none;
-}
-.screenshot-overlay-dim {
-  position: absolute;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.45);
-  pointer-events: none;
-}
-.screenshot-overlay-cutout {
-  position: absolute;
-  background-repeat: no-repeat;
-  pointer-events: none;
-}
-.screenshot-overlay-rect-border {
-  position: absolute;
-  border: 1px solid #38bdf8;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
-  pointer-events: none;
-}
-.screenshot-overlay-size-tag {
-  position: absolute;
-  background: rgba(15, 23, 42, 0.85);
-  color: #fff;
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 12px;
-  font-family: var(--mono-font, monospace);
-  pointer-events: none;
-}
-.screenshot-overlay-hint {
-  position: fixed;
-  bottom: 24px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: rgba(15, 23, 42, 0.78);
-  color: #fff;
-  padding: 8px 16px;
-  border-radius: 6px;
-  font-size: 13px;
-  pointer-events: none;
-}
-
-/* ===== Screenshot annotation editor ===== */
-.screenshot-editor-root {
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-  background: var(--mac-surface, #f5f5f7);
-  color: var(--mac-fg, #111);
-  user-select: none;
-}
-.screenshot-editor-loading,
-.screenshot-editor-error {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100vh;
-  font-size: 14px;
-  color: var(--mac-fg-subtle, #666);
-}
-.screenshot-editor-toolbar {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  flex-wrap: wrap;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--mac-border-subtle, #e0e0e0);
-  background: var(--mac-surface-raised, #fff);
-}
-.screenshot-tool-group,
-.screenshot-color-group,
-.screenshot-action-group {
-  display: flex;
-  gap: 4px;
-  align-items: center;
-}
-.screenshot-tool-btn {
-  appearance: none;
-  -webkit-appearance: none;
-  padding: 4px 10px;
-  border: 1px solid var(--mac-border-subtle, #e0e0e0);
-  background: var(--mac-surface, #fafafa);
-  border-radius: 5px;
-  cursor: pointer;
-  font-size: 13px;
-  color: var(--mac-fg, #111);
-  /* Lock text color so the UA `:active` state can't override it via the
-     system Button color keyword, which produced unreadable text on dark
-     theme. */
-  transition: background var(--mac-dur-fast, 120ms) ease;
-}
-.screenshot-tool-btn:hover:not(:disabled) {
-  background: var(--mac-surface-raised, #f0f0f0);
-}
-.screenshot-tool-btn:active:not(:disabled) {
-  /* Explicit pressed state so we don't fall through to the browser default,
-     which on Chromium pulls in a light system color regardless of theme. */
-  background: var(--mac-bg-subtle, #e8e8eb);
-  color: var(--mac-fg, #111);
-}
 .screenshot-tool-btn.active {
   background: #0a7aff;
   color: #fff;
@@ -5987,42 +5078,9 @@ html, body, #root {
   background: #0867d4;
   color: #fff;
 }
-.screenshot-tool-btn:focus-visible {
-  outline: 2px solid #0a7aff;
-  outline-offset: 1px;
-}
-.screenshot-tool-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-.screenshot-color-swatch {
-  appearance: none;
-  -webkit-appearance: none;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  border: 2px solid #fff;
-  outline: 1px solid var(--mac-border-subtle, #ccc);
-  cursor: pointer;
-  padding: 0;
-}
 .screenshot-color-swatch.active {
   outline: 2px solid #0a7aff;
   transform: scale(1.1);
-}
-.screenshot-color-swatch:focus-visible {
-  outline: 2px solid #0a7aff;
-  outline-offset: 1px;
-}
-.screenshot-canvas-wrap {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 16px;
-  background: repeating-conic-gradient(#e5e7eb 0% 25%, #f3f4f6 0% 50%) 50% / 16px 16px;
 }
 /* Hugs the rendered canvas so absolutely-positioned overlays (e.g. the
    in-flight text input) sit flush with where the user clicked, regardless
@@ -6033,89 +5091,6 @@ html, body, #root {
   max-width: 100%;
   max-height: 100%;
   line-height: 0;
-}
-.screenshot-canvas {
-  display: block;
-  max-width: 100%;
-  max-height: 100%;
-  border: 1px solid var(--mac-border-subtle, #d0d0d5);
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
-  cursor: crosshair;
-}
-.screenshot-text-input {
-  position: absolute;
-  /* The committed text paints with textBaseline=top, so back the input up
-     a couple px to match its visual baseline. */
-  transform: translate(-2px, -2px);
-  background: rgba(255, 255, 255, 0.92);
-  border: 1px dashed #0a7aff;
-  font: bold 18px system-ui, sans-serif;
-  padding: 2px 4px;
-  outline: none;
-  min-width: 120px;
-  z-index: 10;
-}
-.screenshot-editor-footer {
-  display: flex;
-  gap: 12px;
-  align-items: stretch;
-  padding: 10px 14px;
-  border-top: 1px solid var(--mac-border-subtle, #e0e0e0);
-  background: var(--mac-surface-raised, #fff);
-}
-.screenshot-prompt-input {
-  flex: 1;
-  resize: none;
-  padding: 6px 10px;
-  border: 1px solid var(--mac-border-subtle, #d0d0d5);
-  border-radius: 5px;
-  font-size: 13px;
-  font-family: inherit;
-  background: var(--mac-surface, #fafafa);
-  color: var(--mac-fg, #111);
-}
-.screenshot-prompt-input:focus {
-  outline: none;
-  border-color: #0a7aff;
-  background: var(--mac-surface-raised, #fff);
-}
-.screenshot-send-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  align-items: flex-end;
-  justify-content: center;
-}
-.screenshot-send-btn {
-  appearance: none;
-  -webkit-appearance: none;
-  padding: 8px 18px;
-  background: #0a7aff;
-  color: #fff;
-  border: none;
-  border-radius: 5px;
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 600;
-}
-.screenshot-send-btn:hover:not(:disabled) {
-  background: #0867d4;
-}
-.screenshot-send-btn:active:not(:disabled) {
-  background: #0651a8;
-  color: #fff;
-}
-.screenshot-send-btn:focus-visible {
-  outline: 2px solid #0a7aff;
-  outline-offset: 2px;
-}
-.screenshot-send-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.screenshot-send-error {
-  color: #c33;
-  font-size: 12px;
 }
 
 /* ===== Skill bar (top of main session) ===== */

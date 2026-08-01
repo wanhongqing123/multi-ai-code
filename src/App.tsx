@@ -6,12 +6,6 @@ import {
   planNameToFilename
 } from './utils/session-message-format'
 import { buildCliLaunchArgs } from './utils/cliLaunchArgs'
-import { buildRuntimeLogAnalysisMessage } from './utils/runtimeLogAnalysisMessage'
-import {
-  nextRuntimeLogCommentAfterSendResult,
-  nextRuntimeLogDialogOpenAfterSendResult
-} from './utils/runtimeLogDialogState'
-import { selectVisibleRuntimeState } from './utils/runtimeStateSelection'
 import { canStartMainSession } from './utils/mainSessionPlanMode'
 import MainPanel from './components/MainPanel'
 import MainBootGate, { type BootGatePhase } from './components/MainBootGate'
@@ -19,15 +13,8 @@ import type { ProjectInfo } from './types/project'
 import ErrorPanel, { pushLog, useLogs } from './components/ErrorPanel'
 import AiSettingsDialog, {
   DEFAULT_AI_CLI,
-  type AiSettings,
-  type AppSettings,
-  type SettingsSectionKey
+  type AiSettings
 } from './components/AiSettingsDialog'
-import ProjectBuildPanel, {
-  getBuildStartBlockedReason,
-  getRuntimeStartBlockedReason,
-} from './components/ProjectBuildPanel'
-import RuntimeLogDialog from './components/RuntimeLogDialog'
 import TemplatesDialog from './components/TemplatesDialog'
 import ScheduledTaskDialog from './scheduled-tasks/ScheduledTaskDialog'
 import NormalTaskDialog, {
@@ -64,61 +51,15 @@ import DiffViewerDialog, { type DiffAnnotation } from './components/DiffViewerDi
 import type { DiffMode } from './components/diffViewerConfig'
 import type { ExternalReviewSuggestion } from './components/externalAiReview'
 import type {
-  BuildRuntimeState,
-  ProjectBuildConfig,
-  ProjectRuntimeConfig,
-  RuntimeState,
   RemoteImAccountConfig,
   RemoteImConfig,
   RemoteImContactRelation,
   RemoteImLoginState,
   RemoteImMessage,
-  RemoteImStatus,
-  VisualStudioInstallation
+  RemoteImStatus
 } from '../electron/preload'
 
 const LAST_PROJECT_KEY = 'multi-ai-code.lastProjectId'
-const DEFAULT_PROJECT_BUILD_CONFIG: ProjectBuildConfig = { enabled: false, steps: [] }
-const DEFAULT_PROJECT_RUNTIME_CONFIG: ProjectRuntimeConfig = {
-  enabled: false,
-  cwd: '.',
-  command: '',
-  envType: 'msys',
-  visualStudioInstanceId: '',
-  outputEncoding: 'auto'
-}
-const BUILD_LOG_LIMIT = 200_000
-const DEFAULT_BUILD_RUNTIME_STATE: BuildRuntimeState = {
-  status: 'idle',
-  scope: null,
-  requestedStepId: null,
-  projectId: null,
-  projectName: null,
-  targetRepo: null,
-  startedAt: null,
-  finishedAt: null,
-  activeStepId: null,
-  steps: [],
-  log: '',
-  lastFailure: null
-}
-const DEFAULT_RUNTIME_STATE: RuntimeState = {
-  status: 'idle',
-  projectId: null,
-  projectName: null,
-  targetRepo: null,
-  cwd: null,
-  command: null,
-  envType: null,
-  visualStudioInstanceId: null,
-  visualStudioDisplayName: null,
-  outputEncoding: null,
-  startedAt: null,
-  finishedAt: null,
-  exitCode: null,
-  signal: null,
-  log: ''
-}
 const DEFAULT_REMOTE_IM_CONFIG: RemoteImConfig = {
   enabled: true,
   provider: 'tencent-im',
@@ -136,18 +77,6 @@ const DEFAULT_REMOTE_IM_CONFIG: RemoteImConfig = {
   outputMaxChunkChars: 4000
 }
 
-
-function appendBuildLog(current: string, chunk: string): string {
-  const next = current + chunk
-  if (next.length <= BUILD_LOG_LIMIT) return next
-  return `...[build log truncated]...\n${next.slice(-BUILD_LOG_LIMIT)}`
-}
-
-function appendRuntimeLog(current: string, chunk: string): string {
-  const next = current + chunk
-  if (next.length <= BUILD_LOG_LIMIT) return next
-  return `...[runtime log truncated]...\n${next.slice(-BUILD_LOG_LIMIT)}`
-}
 
 function verifyNormalTaskMetadataSaved(
   items: NormalTaskEntry[],
@@ -251,31 +180,12 @@ function AppShell() {
   const [planName, setPlanName] = useState('')
   const [showErrors, setShowErrors] = useState(false)
   const [showAiSettings, setShowAiSettings] = useState(false)
-  const [aiSettingsInitialSection, setAiSettingsInitialSection] =
-    useState<SettingsSectionKey>('shortcut')
   const [aiSettings, setAiSettings] = useState<AiSettings>({ ai_cli: DEFAULT_AI_CLI })
   const [repoViewAiSettings, setRepoViewAiSettings] = useState<AiSettings>({
     ai_cli: DEFAULT_AI_CLI
   })
   const [aiSettingsReady, setAiSettingsReady] = useState(false)
   const [aiSettingsLoadError, setAiSettingsLoadError] = useState<string | null>(null)
-  const [appSettings, setAppSettings] = useState<AppSettings>({
-    screenshotShortcutEnabled: false,
-    screenshotShortcut: 'CommandOrControl+Shift+A',
-    showDevToolbarButtons: false
-  })
-  const [projectBuildConfig, setProjectBuildConfig] = useState<ProjectBuildConfig>(
-    DEFAULT_PROJECT_BUILD_CONFIG
-  )
-  const [projectBuildConfigProjectId, setProjectBuildConfigProjectId] = useState<string | null>(
-    null
-  )
-  const [projectRuntimeConfig, setProjectRuntimeConfig] = useState<ProjectRuntimeConfig>(
-    DEFAULT_PROJECT_RUNTIME_CONFIG
-  )
-  const [projectRuntimeConfigProjectId, setProjectRuntimeConfigProjectId] = useState<
-    string | null
-  >(null)
   const [remoteImConfig, setRemoteImConfig] =
     useState<RemoteImConfig>(DEFAULT_REMOTE_IM_CONFIG)
   const [remoteImConfigProjectId, setRemoteImConfigProjectId] = useState<string | null>(null)
@@ -290,11 +200,6 @@ function AppShell() {
   const [showRemoteImLogin, setShowRemoteImLogin] = useState(false)
   const [remoteImLoginSaving, setRemoteImLoginSaving] = useState(false)
   const [remoteImLoginError, setRemoteImLoginError] = useState<string | null>(null)
-  const [visualStudioInstallations, setVisualStudioInstallations] = useState<
-    VisualStudioInstallation[]
-  >([])
-  const [visualStudioInstallationsLoading, setVisualStudioInstallationsLoading] =
-    useState(false)
   const [showTemplates, setShowTemplates] = useState(false)
   const [showNormalTaskDialog, setShowNormalTaskDialog] = useState(false)
   const [showScheduledTaskDialog, setShowScheduledTaskDialog] = useState(false)
@@ -302,23 +207,8 @@ function AppShell() {
   const [showRemoteImSummary, setShowRemoteImSummary] = useState(false)
   const [showCmdk, setShowCmdk] = useState(false)
   const [showGlobalSearch, setShowGlobalSearch] = useState(false)
-  const [showBuildPanel, setShowBuildPanel] = useState(false)
-  const [showRuntimeLogDialog, setShowRuntimeLogDialog] = useState(false)
-  const [runtimeLogComment, setRuntimeLogComment] = useState('')
   const [theme, setThemeState] = useState<'light' | 'dark'>(() => getTheme())
 
-  const visibleProjectBuildConfig =
-    currentProjectId !== null && projectBuildConfigProjectId === currentProjectId
-      ? projectBuildConfig
-      : DEFAULT_PROJECT_BUILD_CONFIG
-  const projectBuildConfigReady =
-    currentProjectId !== null && projectBuildConfigProjectId === currentProjectId
-  const visibleProjectRuntimeConfig =
-    currentProjectId !== null && projectRuntimeConfigProjectId === currentProjectId
-      ? projectRuntimeConfig
-      : DEFAULT_PROJECT_RUNTIME_CONFIG
-  const projectRuntimeConfigReady =
-    currentProjectId !== null && projectRuntimeConfigProjectId === currentProjectId
   const remoteImConfigReady =
     currentProjectId !== null && remoteImConfigProjectId === currentProjectId
 
@@ -364,34 +254,12 @@ function AppShell() {
   const [diffMode, setDiffMode] = useState<DiffMode>('working')
   const [diffSelectedCommit, setDiffSelectedCommit] = useState('')
   const [diffSelectedFile, setDiffSelectedFile] = useState('')
-  const [buildState, setBuildState] = useState<BuildRuntimeState>(DEFAULT_BUILD_RUNTIME_STATE)
-  const [runtimeState, setRuntimeState] = useState<RuntimeState>(DEFAULT_RUNTIME_STATE)
   const [logs] = useLogs()
   const errorCount = logs.filter((l) => l.level === 'error' || l.level === 'warn').length
-
-  const openAiSettingsSection = useCallback((section: SettingsSectionKey = 'shortcut') => {
-    setAiSettingsInitialSection(section)
-    setShowAiSettings(true)
-  }, [])
 
   const reloadProjectsRef = useRef<() => Promise<ProjectInfo[]>>(
     async () => []
   )
-
-  const refreshVisualStudioInstallations = useCallback(async () => {
-    setVisualStudioInstallationsLoading(true)
-    try {
-      const result = await window.api.project.listVisualStudioInstallations()
-      if (!result.ok) {
-        setVisualStudioInstallations([])
-        showToast(result.error ?? '读取 Visual Studio 实例失败', { level: 'error' })
-        return
-      }
-      setVisualStudioInstallations(result.value ?? [])
-    } finally {
-      setVisualStudioInstallationsLoading(false)
-    }
-  }, [])
 
   const reloadProjects = useCallback(async () => {
     const list = await window.api.project.list()
@@ -405,93 +273,9 @@ function AppShell() {
     reloadProjectsRef.current = reloadProjects
   }, [reloadProjects])
 
-  // Screenshot delivery: when the editor finishes and main saves the image,
-  // it broadcasts {path, prompt} here. Forward to the current main-session
-  // CLI exactly the way TemplatesDialog injects: cc.sendUser with the prompt
-  // text prefixed with an image path the CLI can read.
-  useEffect(() => {
-    const off = window.api.screenshot.onDeliver(({ path, prompt }) => {
-      if (!sessionId || sessionStatus !== 'running') {
-        showToast(
-          `截图已保存到 ${path}，但当前会话未启动，请先启动会话再发送`,
-          { level: 'warn', duration: 4500 }
-        )
-        return
-      }
-      const trimmed = (prompt ?? '').trim()
-      const text = trimmed ? `${trimmed}\n图片: ${path}` : `图片: ${path}`
-      void window.api.cc.sendUser(sessionId, text)
-      showToast('截图已发送到主会话', { level: 'success' })
-    })
-    const offErr = window.api.screenshot.onError(({ message }) => {
-      showToast(message, { level: 'error' })
-    })
-    return () => {
-      off()
-      offErr()
-    }
-  }, [sessionId, sessionStatus])
-
-  useEffect(() => {
-    let cancelled = false
-    void window.api.build.getState().then((state) => {
-      if (cancelled) return
-      setBuildState(state)
-    })
-    const offStatus = window.api.build.onStatus((state) => {
-      if (cancelled) return
-      setBuildState(state)
-    })
-    const offData = window.api.build.onData((event) => {
-      if (cancelled || !event.chunk) return
-      setBuildState((prev) => ({
-        ...prev,
-        projectId: event.projectId ?? prev.projectId,
-        activeStepId: event.stepId ?? prev.activeStepId,
-        log: appendBuildLog(prev.log, event.chunk)
-      }))
-    })
-    return () => {
-      cancelled = true
-      offStatus()
-      offData()
-    }
-  }, [])
-
-  useEffect(() => {
-    let cancelled = false
-    void window.api.runtime.getState().then((state) => {
-      if (cancelled) return
-      setRuntimeState(state)
-    })
-    const offStatus = window.api.runtime.onStatus((state) => {
-      if (cancelled) return
-      setRuntimeState(state)
-    })
-    const offData = window.api.runtime.onData((event) => {
-      if (cancelled || !event.chunk) return
-      setRuntimeState((prev) => ({
-        ...prev,
-        projectId: event.projectId ?? prev.projectId,
-        log: appendRuntimeLog(prev.log, event.chunk)
-      }))
-    })
-    return () => {
-      cancelled = true
-      offStatus()
-      offData()
-    }
-  }, [])
-
-  useEffect(() => {
-    if (!showAiSettings || !currentProjectId) return
-    void refreshVisualStudioInstallations()
-  }, [showAiSettings, currentProjectId, refreshVisualStudioInstallations])
-
   /** Clear UI state tied to a specific project (drawers, dialogs, plan name). */
   const clearProjectScopedState = useCallback(() => {
     setShowGlobalSearch(false)
-    setShowBuildPanel(false)
     setPlanName('')
     setPlanReview(null)
     setDiffReviewOpen(false)
@@ -554,7 +338,6 @@ function AppShell() {
     window.api.version().then((v) => {
       document.title = v ? `Multi-AI Code v${v}` : 'Multi-AI Code'
     })
-    void window.api.settings.getAppSettings().then(setAppSettings)
     void (async () => {
       const list = await reloadProjects()
       const last = localStorage.getItem(LAST_PROJECT_KEY)
@@ -574,31 +357,10 @@ function AppShell() {
   const projectDir = currentProject?.dir ?? ''
   const targetRepo = currentProject?.target_repo ?? ''
   const projectName = currentProject?.name ?? ''
-  const buildStateForCurrentProject =
-    currentProjectId !== null && buildState.projectId === currentProjectId
-      ? buildState
-      : DEFAULT_BUILD_RUNTIME_STATE
-  const runtimeStateForCurrentProject =
-    currentProjectId !== null && runtimeState.projectId === currentProjectId
-      ? runtimeState
-      : DEFAULT_RUNTIME_STATE
-  const visibleRuntimeState = selectVisibleRuntimeState(
-    currentProjectId,
-    runtimeState,
-    DEFAULT_RUNTIME_STATE
-  )
   const hasProject = currentProject !== null
   const canStartCurrentMainSession = canStartMainSession(currentProjectId)
   const mainSessionStatusLabel =
     sessionStatus === 'running' ? '运行中' : sessionStatus === 'exited' ? '已退出' : '待启动'
-  const runtimeStartBlockedReason = getRuntimeStartBlockedReason(
-    currentProjectId,
-    projectRuntimeConfigReady,
-    visibleProjectRuntimeConfig,
-    visibleRuntimeState
-  )
-  const runtimeTopbarRunning = visibleRuntimeState.status === 'running'
-  const runtimeTopbarDisabled = !runtimeTopbarRunning && runtimeStartBlockedReason !== null
 
   // Track plan names we've ever observed in the list. If `planName` was
   // in a previous list but is gone from the current one, that's a
@@ -671,10 +433,6 @@ function AppShell() {
       setMsysEnabled(false)
       setAiSettings({ ai_cli: DEFAULT_AI_CLI })
       setRepoViewAiSettings({ ai_cli: DEFAULT_AI_CLI })
-      setProjectBuildConfig(DEFAULT_PROJECT_BUILD_CONFIG)
-      setProjectBuildConfigProjectId(null)
-      setProjectRuntimeConfig(DEFAULT_PROJECT_RUNTIME_CONFIG)
-      setProjectRuntimeConfigProjectId(null)
       setRemoteImConfig(DEFAULT_REMOTE_IM_CONFIG)
       setRemoteImConfigProjectId(null)
       setRemoteImStatus(null)
@@ -687,10 +445,6 @@ function AppShell() {
     localStorage.setItem(LAST_PROJECT_KEY, currentProjectId)
     void window.api.project.touch(currentProjectId)
     let cancelled = false
-    setProjectBuildConfig(DEFAULT_PROJECT_BUILD_CONFIG)
-    setProjectBuildConfigProjectId(null)
-    setProjectRuntimeConfig(DEFAULT_PROJECT_RUNTIME_CONFIG)
-    setProjectRuntimeConfigProjectId(null)
     setRemoteImConfig(DEFAULT_REMOTE_IM_CONFIG)
     setRemoteImConfigProjectId(null)
     setRemoteImStatus(null)
@@ -707,30 +461,6 @@ function AppShell() {
       setMsysEnabled(enabled)
     })
     void (async () => {
-      const buildResult = await window.api.project.getBuildConfig(currentProjectId)
-      if (cancelled) return
-      if (!buildResult.ok) {
-        setProjectBuildConfig(DEFAULT_PROJECT_BUILD_CONFIG)
-        setProjectBuildConfigProjectId(currentProjectId)
-        showToast(buildResult.error ?? '读取项目构建配置失败', { level: 'error' })
-      } else {
-        setProjectBuildConfig(buildResult.value ?? DEFAULT_PROJECT_BUILD_CONFIG)
-        setProjectBuildConfigProjectId(currentProjectId)
-      }
-      const buildConfigRepaired = buildResult.ok && buildResult.repaired === true
-
-      const runtimeResult = await window.api.project.getRuntimeConfig(currentProjectId)
-      if (cancelled) return
-      if (!runtimeResult.ok) {
-        setProjectRuntimeConfig(DEFAULT_PROJECT_RUNTIME_CONFIG)
-        setProjectRuntimeConfigProjectId(currentProjectId)
-        showToast(runtimeResult.error ?? '读取项目运行配置失败', { level: 'error' })
-      } else {
-        setProjectRuntimeConfig(runtimeResult.value ?? DEFAULT_PROJECT_RUNTIME_CONFIG)
-        setProjectRuntimeConfigProjectId(currentProjectId)
-      }
-      const runtimeConfigRepaired = runtimeResult.ok && runtimeResult.repaired === true
-
       const remoteImResult = await window.api.remoteIm.getConfig(currentProjectId)
       if (cancelled) return
       if (!remoteImResult.ok) {
@@ -766,7 +496,7 @@ function AppShell() {
       }
       setRepoViewAiSettings(repoResult.value ?? { ai_cli: DEFAULT_AI_CLI })
 
-      if (aiResult.repaired || repoResult.repaired || buildConfigRepaired || runtimeConfigRepaired) {
+      if (aiResult.repaired || repoResult.repaired) {
         showToast('项目设置文件已自动修复', { level: 'success' })
       }
     })()
@@ -957,79 +687,6 @@ function AppShell() {
     setSessionStatus('idle')
     setTimeout(() => void handleStart(), 50)
   }, [sessionId, handleStart])
-
-  const handleStartBuild = useCallback(async (
-    scope: 'all' | 'single-step',
-    stepId: string | null = null
-  ) => {
-    if (
-      buildState.projectId !== null &&
-      buildState.projectId !== currentProjectId &&
-      buildState.status === 'running'
-    ) {
-      showToast('另一个项目的构建仍在运行，请先停止后再启动当前项目构建', {
-        level: 'warn'
-      })
-      setShowBuildPanel(true)
-      return
-    }
-    const blockedReason = getBuildStartBlockedReason(
-      currentProjectId,
-      projectBuildConfigReady,
-      visibleProjectBuildConfig,
-      scope,
-      stepId
-    )
-    if (blockedReason) {
-      showToast(blockedReason, { level: 'warn' })
-      setShowBuildPanel(true)
-      return
-    }
-    if (!currentProjectId) return
-
-    const result = await window.api.build.start(currentProjectId, { scope, stepId })
-    setBuildState(result.state)
-    setShowBuildPanel(true)
-    if (!result.ok) {
-      showToast(result.error ?? '启动构建失败', { level: 'error' })
-    }
-  }, [buildState.projectId, buildState.status, currentProjectId, projectBuildConfigReady, visibleProjectBuildConfig])
-
-  const handleStopBuild = useCallback(async () => {
-    const result = await window.api.build.stop()
-    if (!result.ok) {
-      showToast(result.error ?? '停止构建失败', { level: 'error' })
-    }
-  }, [])
-
-  const handleStartRuntime = useCallback(async () => {
-    if (
-      runtimeState.projectId !== null &&
-      runtimeState.projectId !== currentProjectId &&
-      runtimeState.status === 'running'
-    ) {
-      showToast('另一个项目的运行进程仍在运行，请先停止后再启动当前项目运行', {
-        level: 'warn'
-      })
-      setShowRuntimeLogDialog(true)
-      return
-    }
-    if (!currentProjectId) return
-
-    setShowRuntimeLogDialog(true)
-    const result = await window.api.runtime.start(currentProjectId)
-    setRuntimeState(result.state)
-    if (!result.ok) {
-      showToast(result.error ?? '启动运行失败', { level: 'error' })
-    }
-  }, [currentProjectId, runtimeState.projectId, runtimeState.status])
-
-  const handleStopRuntime = useCallback(async () => {
-    const result = await window.api.runtime.stop()
-    if (!result.ok) {
-      showToast(result.error ?? '停止运行失败', { level: 'error' })
-    }
-  }, [])
 
   const handleSendRemoteImLocalMessage = useCallback(async (toUserId?: string | null) => {
     if (!currentProjectId) return
@@ -1259,69 +916,6 @@ function AppShell() {
     },
     [currentProjectId, sessionId, sessionStatus]
   )
-
-  const handleSendRuntimeLog = useCallback(async (comment = '') => {
-    if (!runtimeState.projectId || !runtimeState.log.trim()) {
-      showToast('当前没有可发送的运行日志', { level: 'warn' })
-      return
-    }
-    if (!sessionId || sessionStatus !== 'running') {
-      showToast('主会话未运行，无法发送运行日志，请先启动主会话', { level: 'warn' })
-      return
-    }
-
-    const promptResult = await window.api.runtime.getAnalysisPromptFile()
-    if (!promptResult.ok) {
-      showToast(promptResult.error ?? '获取运行日志分析提示失败', { level: 'error' })
-      return
-    }
-
-    const message = buildRuntimeLogAnalysisMessage(promptResult.message, comment)
-    const sendResult = await window.api.cc.sendUser(sessionId, message)
-    if (!sendResult.ok) {
-      showToast(sendResult.error ?? '发送运行日志失败', { level: 'error' })
-      return
-    }
-
-    setRuntimeLogComment((currentComment) =>
-      nextRuntimeLogCommentAfterSendResult(currentComment, sendResult.ok)
-    )
-    setShowRuntimeLogDialog((currentOpen) =>
-      nextRuntimeLogDialogOpenAfterSendResult(currentOpen, sendResult.ok)
-    )
-    showToast('已将运行日志分析请求发送到主会话', { level: 'success' })
-  }, [runtimeState.log, runtimeState.projectId, sessionId, sessionStatus])
-
-  const handleAnalyzeBuildFailure = useCallback(async () => {
-    if (buildState.status !== 'failed' || !buildState.lastFailure) {
-      showToast('当前没有可分析的构建失败上下文', { level: 'warn' })
-      return
-    }
-    if (!currentProjectId || buildState.projectId !== currentProjectId) {
-      showToast('当前失败上下文不属于所选项目，请切回对应项目后再分析', {
-        level: 'warn'
-      })
-      return
-    }
-    if (!sessionId || sessionStatus !== 'running') {
-      showToast('主会话未运行，无法发送失败分析请求，请先启动主会话', { level: 'warn' })
-      return
-    }
-
-    const promptResult = await window.api.build.getFailureAnalysisPrompt()
-    if (!promptResult.ok) {
-      showToast(promptResult.error ?? '获取失败分析提示失败', { level: 'error' })
-      return
-    }
-
-    const sendResult = await window.api.cc.sendUser(sessionId, promptResult.prompt)
-    if (!sendResult.ok) {
-      showToast(sendResult.error ?? '发送失败分析请求失败', { level: 'error' })
-      return
-    }
-
-    showToast('已将构建失败原因分析请求发送到主会话', { level: 'success' })
-  }, [buildState, currentProjectId, sessionId, sessionStatus])
 
   /**
    * Kill the current main session (if any) and return the UI to the boot
@@ -1719,7 +1313,7 @@ function AppShell() {
       id: 'settings',
       label: '⚙️ 设置',
       keywords: 'settings command ai cli',
-      action: () => openAiSettingsSection()
+      action: () => setShowAiSettings(true)
     },
     {
       id: 'tpl',
@@ -1733,13 +1327,6 @@ function AppShell() {
       hint: 'Ctrl+Shift+F',
       keywords: 'find search',
       action: () => setShowGlobalSearch(true),
-      disabled: !hasProject
-    },
-    {
-      id: 'build-panel',
-      label: '🏗️ 项目构建',
-      keywords: 'build compile msys visual studio',
-      action: () => setShowBuildPanel(true),
       disabled: !hasProject
     },
     {
@@ -1837,7 +1424,7 @@ function AppShell() {
           <button
             className="topbar-btn topbar-btn-icon"
             data-tone="blue"
-            onClick={() => openAiSettingsSection()}
+            onClick={() => setShowAiSettings(true)}
             title="设置：全局截图快捷键、AI CLI 命令 / 参数 / 环境变量"
             aria-label="设置"
           >
@@ -1867,40 +1454,6 @@ function AppShell() {
           >
             🗒
           </button>
-          {hasProject && appSettings.showDevToolbarButtons && (
-            <button
-              className="topbar-btn topbar-btn-icon"
-              data-tone="amber"
-              onClick={() => setShowBuildPanel(true)}
-              disabled={!currentProjectId}
-              title="构建：打开项目构建面板"
-              aria-label="构建"
-            >
-              🔨
-            </button>
-          )}
-          {hasProject && appSettings.showDevToolbarButtons && (
-            <button
-              className={`topbar-btn topbar-btn-icon${runtimeTopbarRunning ? ' is-active' : ''}`}
-              data-tone="success"
-              onClick={() => {
-                if (runtimeTopbarRunning) {
-                  setShowRuntimeLogDialog(true)
-                } else {
-                  void handleStartRuntime()
-                }
-              }}
-              disabled={runtimeTopbarDisabled}
-              title={
-                runtimeTopbarRunning
-                  ? '运行中：打开运行日志'
-                  : runtimeStartBlockedReason ?? '运行：启动项目运行并打开实时日志'
-              }
-              aria-label={runtimeTopbarRunning ? '运行中，打开运行日志' : '运行'}
-            >
-              ▶
-            </button>
-          )}
           {hasProject && (
             <button
               className="topbar-btn topbar-btn-icon"
@@ -1984,16 +1537,6 @@ function AppShell() {
           >
             {theme === 'dark' ? '☀' : '☾'}
           </button>
-          {appSettings.showDevToolbarButtons && (
-            <button
-              className={`topbar-btn ${errorCount > 0 ? 'topbar-btn-danger' : 'topbar-btn-icon'}`}
-              onClick={() => setShowErrors((s) => !s)}
-              title="日志：查看错误与通知"
-              aria-label={errorCount > 0 ? `日志（${errorCount} 条错误/警告）` : '日志'}
-            >
-              {errorCount > 0 ? `⚠ ${errorCount}` : '📣'}
-            </button>
-          )}
         </div>
         <WindowControls />
       </header>
@@ -2105,19 +1648,6 @@ function AppShell() {
         <AiSettingsDialog
           projectId={currentProjectId}
           initial={aiSettings}
-          initialRepoView={repoViewAiSettings}
-          initialAppSettings={appSettings}
-          initialBuildConfig={visibleProjectBuildConfig}
-          buildConfigReady={projectBuildConfigReady}
-          initialRuntimeConfig={visibleProjectRuntimeConfig}
-          runtimeConfigReady={projectRuntimeConfigReady}
-          runtimeConfigDisabled={runtimeStateForCurrentProject.status === 'running'}
-          visualStudioInstallations={visualStudioInstallations}
-          visualStudioInstallationsLoading={visualStudioInstallationsLoading}
-          onRefreshVisualStudioInstallations={() => {
-            void refreshVisualStudioInstallations()
-          }}
-          initialSection={aiSettingsInitialSection}
           onClose={() => setShowAiSettings(false)}
           onSaved={(next) => {
             // If the main-session CLI binary changes while a session is
@@ -2130,16 +1660,6 @@ function AppShell() {
             if (prevCli !== nextCli && mainPanelMounted) {
               void handleResetMainSession()
             }
-          }}
-          onSavedRepoView={(next) => setRepoViewAiSettings(next)}
-          onSavedAppSettings={(next) => setAppSettings(next)}
-          onSavedBuildConfig={(next) => {
-            setProjectBuildConfig(next)
-            setProjectBuildConfigProjectId(currentProjectId)
-          }}
-          onSavedRuntimeConfig={(next) => {
-            setProjectRuntimeConfig(next)
-            setProjectRuntimeConfigProjectId(currentProjectId)
           }}
         />
       )}
@@ -2191,38 +1711,6 @@ function AppShell() {
         onClose={() => setShowRemoteImLogin(false)}
         onSubmit={(input) => void handleSubmitRemoteImLogin(input)}
       />
-      {showBuildPanel && (
-        <ProjectBuildPanel
-          open={showBuildPanel}
-          currentProjectId={currentProjectId}
-          currentProjectName={projectName || null}
-          buildConfig={visibleProjectBuildConfig}
-          buildConfigReady={projectBuildConfigReady}
-          state={buildStateForCurrentProject}
-          sessionId={sessionId}
-          sessionStatus={sessionStatus}
-          onClose={() => setShowBuildPanel(false)}
-          onStartBuild={() => void handleStartBuild('all')}
-          onStartSingleBuild={(stepId) => void handleStartBuild('single-step', stepId)}
-          onStopBuild={() => void handleStopBuild()}
-          onAnalyzeFailure={() => void handleAnalyzeBuildFailure()}
-        />
-      )}
-      {showRuntimeLogDialog && (
-        <RuntimeLogDialog
-          open={showRuntimeLogDialog}
-          currentProjectId={visibleRuntimeState.projectId ?? currentProjectId}
-          currentProjectName={visibleRuntimeState.projectName ?? (projectName || null)}
-          runtimeState={visibleRuntimeState}
-          sessionId={sessionId}
-          sessionStatus={sessionStatus}
-          comment={runtimeLogComment}
-          onCommentChange={setRuntimeLogComment}
-          onClose={() => setShowRuntimeLogDialog(false)}
-          onStopRuntime={() => void handleStopRuntime()}
-          onSendRuntimeLog={(comment) => void handleSendRuntimeLog(comment)}
-        />
-      )}
       {showErrors && <ErrorPanel onClose={() => setShowErrors(false)} />}
 
       <ToastHost />

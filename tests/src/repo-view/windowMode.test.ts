@@ -13,30 +13,16 @@ describe('parseRendererWindowModeSearch', () => {
     })
   })
 
-  it('returns screenshot-overlay mode when token exists', () => {
-    expect(
-      parseRendererWindowModeSearch('?window=screenshot-overlay&token=abc123')
-    ).toEqual({
-      kind: 'screenshot-overlay',
-      sessionToken: 'abc123'
-    })
-  })
-
-  it('returns screenshot-editor mode when token exists', () => {
-    expect(
-      parseRendererWindowModeSearch('?window=screenshot-editor&token=xyz789')
-    ).toEqual({
-      kind: 'screenshot-editor',
-      sessionToken: 'xyz789'
-    })
-  })
-
-  it('falls back to main when screenshot window has no token', () => {
-    expect(parseRendererWindowModeSearch('?window=screenshot-overlay')).toEqual({
+  // 内置截图功能已随「设置界面只保留 AICLI」一并删除，这两个窗口模式不再存在，
+  // 老链接（?window=screenshot-*）必须退回主窗口而不是白屏。
+  it('falls back to main for the removed screenshot window modes', () => {
+    expect(parseRendererWindowModeSearch('?window=screenshot-overlay&token=abc123')).toEqual({
       kind: 'main'
     })
-    expect(parseRendererWindowModeSearch('?window=screenshot-editor')).toEqual({
+    expect(parseRendererWindowModeSearch('?window=screenshot-editor&token=xyz789')).toEqual({
       kind: 'main'
     })
+    expect(parseRendererWindowModeSearch('?window=screenshot-overlay')).toEqual({ kind: 'main' })
+    expect(parseRendererWindowModeSearch('?window=screenshot-editor')).toEqual({ kind: 'main' })
   })
 })

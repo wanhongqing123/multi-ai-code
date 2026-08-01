@@ -1,25 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
-import type {
-  AiSettings,
-  AppSettings,
-  OpenCodeProviderProfile,
-  ProjectBuildConfig,
-  ProjectRuntimeConfig,
-  VisualStudioInstallation
-} from '../../electron/preload'
-// 这三个类型的真源在 electron 侧，这里 re-export 兼容既有从本组件引用它们的地方（App.tsx / RepoViewerWindow）。
-export type { AiSettings, AppSettings, OpenCodeProviderProfile }
-import ProjectBuildSettingsSection, {
-  formatBuildConfigSaveError,
-  normalizeBuildConfigForHost
-} from './ProjectBuildSettingsSection.js'
-import ProjectRuntimeSettingsSection, {
-  formatRuntimeConfigSaveError,
-  normalizeRuntimeConfigForHost
-} from './ProjectRuntimeSettingsSection.js'
+import { useEffect, useState } from 'react'
+import type { AiSettings, OpenCodeProviderProfile } from '../../electron/preload'
+// 类型真源在 electron 侧，这里 re-export 兼容既有从本组件引用它们的地方（App.tsx / RepoViewerWindow）。
+export type { AiSettings, OpenCodeProviderProfile }
 import { showToast } from './Toast.js'
 
-export const DEFAULT_SCREENSHOT_SHORTCUT = 'CommandOrControl+Shift+A'
 export const DEFAULT_AI_CLI = 'codex' as const
 
 const AI_CLI_OPTIONS = [
@@ -39,50 +23,6 @@ const AI_CLI_OPTIONS = [
 
 type AiCliKind = typeof AI_CLI_OPTIONS[number]['value']
 
-export const SCREENSHOT_SHORTCUT_PRESETS = [
-  { value: 'CommandOrControl+Shift+A', label: 'Ctrl/Cmd + Shift + A' },
-  { value: 'CommandOrControl+Shift+S', label: 'Ctrl/Cmd + Shift + S' },
-  { value: 'CommandOrControl+Alt+A', label: 'Ctrl/Cmd + Alt + A' },
-  { value: 'Alt+Shift+A', label: 'Alt + Shift + A' }
-] as const
-
-export interface ScreenshotShortcutState {
-  screenshotShortcut: string
-  customExpanded: boolean
-}
-
-export function isPresetScreenshotShortcut(shortcut: string): boolean {
-  return SCREENSHOT_SHORTCUT_PRESETS.some((preset) => preset.value === shortcut)
-}
-
-export function createScreenshotShortcutState(shortcut: string): ScreenshotShortcutState {
-  return {
-    screenshotShortcut: shortcut,
-    customExpanded: !isPresetScreenshotShortcut(shortcut)
-  }
-}
-
-export function selectScreenshotShortcutPreset(shortcut: string): ScreenshotShortcutState {
-  return {
-    screenshotShortcut: shortcut,
-    customExpanded: false
-  }
-}
-
-export function openCustomScreenshotShortcut(shortcut: string): ScreenshotShortcutState {
-  return {
-    screenshotShortcut: shortcut,
-    customExpanded: true
-  }
-}
-
-export function restoreDefaultScreenshotShortcut(): ScreenshotShortcutState {
-  return {
-    screenshotShortcut: DEFAULT_SCREENSHOT_SHORTCUT,
-    customExpanded: false
-  }
-}
-
 export const DEFAULT_OPENCODE_PROVIDER_PROFILE: OpenCodeProviderProfile = {
   providerId: 'idealab',
   name: 'Alibaba ideaLAB',
@@ -90,120 +30,30 @@ export const DEFAULT_OPENCODE_PROVIDER_PROFILE: OpenCodeProviderProfile = {
   mainModel: 'Qwen3.7-Max-DogFooding'
 }
 
-interface AppSettingsSaveResponse {
-  ok: boolean
-  value?: AppSettings
-  error?: string
-}
-
-export type SettingsSectionKey = 'shortcut' | 'ai' | 'build' | 'runtime'
-
 interface ProjectSettingsSaveResponse {
   ok: boolean
   repaired?: boolean
   error?: string
 }
 
-interface BuildConfigSaveResponse extends ProjectSettingsSaveResponse {
-  details?: Array<{ path: string; message: string }>
-}
-
-interface RuntimeConfigSaveResponse extends ProjectSettingsSaveResponse {
-  details?: Array<{ path: string; message: string }>
-}
-
 export interface AiSettingsDialogProps {
   projectId: string | null
   initial: AiSettings
-  initialRepoView: AiSettings
-  initialAppSettings: AppSettings
-  initialBuildConfig: ProjectBuildConfig
-  buildConfigReady: boolean
-  initialRuntimeConfig: ProjectRuntimeConfig
-  runtimeConfigReady: boolean
-  runtimeConfigDisabled?: boolean
-  visualStudioInstallations: VisualStudioInstallation[]
-  visualStudioInstallationsLoading: boolean
-  onRefreshVisualStudioInstallations: () => void
-  initialSection?: SettingsSectionKey
   onClose: () => void
   onSaved: (next: AiSettings) => void
-  onSavedRepoView: (next: AiSettings) => void
-  onSavedAppSettings: (next: AppSettings) => void
-  onSavedBuildConfig: (next: ProjectBuildConfig) => void
-  onSavedRuntimeConfig: (next: ProjectRuntimeConfig) => void
-}
-
-export function resolveSavedAppSettings(
-  requested: AppSettings,
-  saved: AppSettings | undefined
-): AppSettings {
-  return saved ?? requested
-}
-
-export function deriveAppSettingsSaveOutcome(
-  requested: AppSettings,
-  response: AppSettingsSaveResponse
-): { appSettings: AppSettings; error: string | null } {
-  return {
-    appSettings: resolveSavedAppSettings(requested, response.value),
-    error: response.ok ? null : response.error ?? 'save app settings failed'
-  }
-}
-
-export function shouldApplyIncomingAppSettings(
-  lastSyncedExternal: AppSettings,
-  incoming: AppSettings,
-  saving: boolean
-): boolean {
-  if (saving) return false
-  return (
-    lastSyncedExternal.screenshotShortcutEnabled !== incoming.screenshotShortcutEnabled ||
-    lastSyncedExternal.screenshotShortcut !== incoming.screenshotShortcut ||
-    lastSyncedExternal.showDevToolbarButtons !== incoming.showDevToolbarButtons
-  )
 }
 
 export function getProjectSettingsRepairToastMessage(
-  mainResponse: ProjectSettingsSaveResponse,
-  repoResponse: ProjectSettingsSaveResponse,
-  buildResponse?: ProjectSettingsSaveResponse,
-  runtimeResponse?: ProjectSettingsSaveResponse
+  mainResponse: ProjectSettingsSaveResponse
 ): string | null {
-  return mainResponse.repaired ||
-    repoResponse.repaired ||
-    buildResponse?.repaired ||
-    runtimeResponse?.repaired
-    ? '项目设置文件已自动修复并保存'
-    : null
+  return mainResponse.repaired ? '项目设置文件已自动修复并保存' : null
 }
 
 export interface SaveProjectScopedSettingsParams {
   projectId: string
   nextMain: AiSettings
-  nextRepoView: AiSettings
-  nextBuildConfig?: ProjectBuildConfig
-  nextRuntimeConfig?: ProjectRuntimeConfig
-  setAiSettings: (
-    projectId: string,
-    next: AiSettings
-  ) => Promise<ProjectSettingsSaveResponse>
-  setRepoViewAiSettings: (
-    projectId: string,
-    next: AiSettings
-  ) => Promise<ProjectSettingsSaveResponse>
-  setBuildConfig?: (
-    projectId: string,
-    next: ProjectBuildConfig
-  ) => Promise<BuildConfigSaveResponse>
-  setRuntimeConfig?: (
-    projectId: string,
-    next: ProjectRuntimeConfig
-  ) => Promise<RuntimeConfigSaveResponse>
+  setAiSettings: (projectId: string, next: AiSettings) => Promise<ProjectSettingsSaveResponse>
   onMainSaved: (next: AiSettings) => void
-  onRepoViewSaved: (next: AiSettings) => void
-  onBuildConfigSaved?: (next: ProjectBuildConfig) => void
-  onRuntimeConfigSaved?: (next: ProjectRuntimeConfig) => void
 }
 
 export async function saveProjectScopedSettings(
@@ -212,42 +62,7 @@ export async function saveProjectScopedSettings(
   const mainRes = await params.setAiSettings(params.projectId, params.nextMain)
   if (!mainRes.ok) throw new Error(mainRes.error ?? 'save main settings failed')
   params.onMainSaved(params.nextMain)
-
-  const repoRes = await params.setRepoViewAiSettings(params.projectId, params.nextRepoView)
-  if (!repoRes.ok) throw new Error(repoRes.error ?? 'save repo-view settings failed')
-  params.onRepoViewSaved(params.nextRepoView)
-
-  let buildRes: ProjectSettingsSaveResponse | undefined
-  if (params.nextBuildConfig && params.setBuildConfig && params.onBuildConfigSaved) {
-    const nextBuildRes = await params.setBuildConfig(params.projectId, params.nextBuildConfig)
-    if (!nextBuildRes.ok) {
-      throw new Error(
-        formatBuildConfigSaveError(
-          nextBuildRes.error ?? 'save build config failed',
-          nextBuildRes.details
-        )
-      )
-    }
-    params.onBuildConfigSaved(params.nextBuildConfig)
-    buildRes = nextBuildRes
-  }
-
-  let runtimeRes: ProjectSettingsSaveResponse | undefined
-  if (params.nextRuntimeConfig && params.setRuntimeConfig && params.onRuntimeConfigSaved) {
-    const nextRuntimeRes = await params.setRuntimeConfig(params.projectId, params.nextRuntimeConfig)
-    if (!nextRuntimeRes.ok) {
-      throw new Error(
-        formatRuntimeConfigSaveError(
-          nextRuntimeRes.error ?? 'save runtime config failed',
-          nextRuntimeRes.details
-        )
-      )
-    }
-    params.onRuntimeConfigSaved(params.nextRuntimeConfig)
-    runtimeRes = nextRuntimeRes
-  }
-
-  return getProjectSettingsRepairToastMessage(mainRes, repoRes, buildRes, runtimeRes)
+  return getProjectSettingsRepairToastMessage(mainRes)
 }
 
 function toEnvText(env: Record<string, string> | undefined): string {
@@ -488,96 +303,6 @@ function SettingsSection(props: {
   )
 }
 
-function ScreenshotSettingsSection(props: {
-  enabled: boolean
-  shortcut: string
-  customExpanded: boolean
-  disabled: boolean
-  onEnabledChange: (next: boolean) => void
-  onPresetSelect: (next: string) => void
-  onCustomOpen: () => void
-  onShortcutChange: (next: string) => void
-  onRestoreDefaults: () => void
-}): JSX.Element {
-  const shouldShowCustomInput = props.customExpanded || !isPresetScreenshotShortcut(props.shortcut)
-
-  return (
-    <section className="ai-settings-card ai-settings-hero-card">
-      <div className="ai-settings-hero-main">
-        <span className="ai-settings-hero-icon">＋</span>
-        <div>
-          <div className="ai-settings-hero-title">全局快捷键</div>
-          <div className="ai-settings-hero-copy">截图采样入口，保存后立即生效。</div>
-        </div>
-      </div>
-      <div className="ai-settings-hero-status">
-        <label className="ai-settings-checkbox ai-settings-hero-toggle">
-          <input
-            type="checkbox"
-            checked={props.enabled}
-            onChange={(event) => props.onEnabledChange(event.target.checked)}
-            disabled={props.disabled}
-          />
-          <span>{props.enabled ? '截图已启用' : '截图已关闭'}</span>
-        </label>
-        <span className="ai-settings-shortcut-current">{props.shortcut || DEFAULT_SCREENSHOT_SHORTCUT}</span>
-        <button
-          type="button"
-          className="drawer-btn ai-settings-restore-btn"
-          onClick={props.onRestoreDefaults}
-          disabled={props.disabled}
-        >
-          恢复默认
-        </button>
-      </div>
-      <div className="ai-settings-shortcut-card">
-        <div>
-          <div className="ai-settings-title">快捷键预设</div>
-          <div className="ai-settings-card-subtitle">常用快捷键一键切换，自定义模式单独展开。</div>
-        </div>
-        <div className="ai-settings-shortcut-presets">
-          {SCREENSHOT_SHORTCUT_PRESETS.map((preset) => (
-            <button
-              key={preset.value}
-              type="button"
-              className="drawer-btn ai-settings-shortcut-preset"
-              aria-pressed={props.shortcut === preset.value}
-              onClick={() => props.onPresetSelect(preset.value)}
-              disabled={props.disabled}
-            >
-              {preset.label}
-            </button>
-          ))}
-          <button
-            type="button"
-            className="drawer-btn ai-settings-shortcut-custom-toggle"
-            aria-pressed={shouldShowCustomInput}
-            onClick={props.onCustomOpen}
-            disabled={props.disabled}
-          >
-            自定义
-          </button>
-        </div>
-      </div>
-      {shouldShowCustomInput && (
-        <label className="ai-settings-shortcut-custom">
-          快捷键
-          <input
-            type="text"
-            value={props.shortcut}
-            onChange={(event) => props.onShortcutChange(event.target.value)}
-            placeholder={DEFAULT_SCREENSHOT_SHORTCUT}
-            disabled={props.disabled}
-          />
-        </label>
-      )}
-      <div className="ai-settings-help">
-        默认值：{DEFAULT_SCREENSHOT_SHORTCUT}。示例：Alt+Shift+S、CommandOrControl+Alt+X。
-      </div>
-    </section>
-  )
-}
-
 export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Element {
   const [aiCli, setAiCli] = useState<AiCliKind>(props.initial.ai_cli ?? DEFAULT_AI_CLI)
   const [command, setCommand] = useState<string>(props.initial.command ?? '')
@@ -586,86 +311,8 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
   const [openCodeForm, setOpenCodeForm] = useState<OpenCodeProviderForm>(
     toOpenCodeProviderForm(props.initial.opencode)
   )
-
-  const [repoAiCli, setRepoAiCli] = useState<AiCliKind>(
-    props.initialRepoView.ai_cli ?? DEFAULT_AI_CLI
-  )
-  const [repoCommand, setRepoCommand] = useState<string>(props.initialRepoView.command ?? '')
-  const [repoArgsText, setRepoArgsText] = useState<string>(
-    (props.initialRepoView.args ?? []).join(' ')
-  )
-  const [repoEnvText, setRepoEnvText] = useState<string>(toEnvText(props.initialRepoView.env))
-
-  const [screenshotShortcutEnabled, setScreenshotShortcutEnabled] = useState<boolean>(
-    props.initialAppSettings.screenshotShortcutEnabled
-  )
-  const [screenshotShortcut, setScreenshotShortcut] = useState<string>(
-    props.initialAppSettings.screenshotShortcut
-  )
-  const [screenshotShortcutCustomExpanded, setScreenshotShortcutCustomExpanded] = useState<boolean>(
-    createScreenshotShortcutState(props.initialAppSettings.screenshotShortcut).customExpanded
-  )
-  const [showDevToolbarButtons, setShowDevToolbarButtons] = useState<boolean>(
-    props.initialAppSettings.showDevToolbarButtons
-  )
-  const [buildConfig, setBuildConfig] = useState<ProjectBuildConfig>(props.initialBuildConfig)
-  const [runtimeConfig, setRuntimeConfig] = useState<ProjectRuntimeConfig>(
-    props.initialRuntimeConfig
-  )
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const lastSyncedAppSettingsRef = useRef<AppSettings>(props.initialAppSettings)
-  const [activeSettingsSection, setActiveSettingsSection] = useState<SettingsSectionKey>(
-    props.initialSection ?? 'shortcut'
-  )
-  const shortcutSectionRef = useRef<HTMLDivElement | null>(null)
-  const aiSectionRef = useRef<HTMLDivElement | null>(null)
-  const buildSectionRef = useRef<HTMLDivElement | null>(null)
-  const runtimeSectionRef = useRef<HTMLDivElement | null>(null)
-
-  const scrollToSettingsSection = (section: SettingsSectionKey): void => {
-    setActiveSettingsSection(section)
-    const target = {
-      shortcut: shortcutSectionRef.current,
-      ai: aiSectionRef.current,
-      build: buildSectionRef.current,
-      runtime: runtimeSectionRef.current
-    }[section]
-    target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }
-
-  useEffect(() => {
-    const section = props.initialSection ?? 'shortcut'
-    setActiveSettingsSection(section)
-    window.setTimeout(() => {
-      const target = {
-        shortcut: shortcutSectionRef.current,
-        ai: aiSectionRef.current,
-        build: buildSectionRef.current,
-        runtime: runtimeSectionRef.current
-      }[section]
-      target?.scrollIntoView({ behavior: 'auto', block: 'start' })
-    }, 0)
-  }, [props.initialSection])
-
-  useEffect(() => {
-    if (
-      !shouldApplyIncomingAppSettings(
-        lastSyncedAppSettingsRef.current,
-        props.initialAppSettings,
-        saving
-      )
-    ) {
-      return
-    }
-    setScreenshotShortcutEnabled(props.initialAppSettings.screenshotShortcutEnabled)
-    setScreenshotShortcut(props.initialAppSettings.screenshotShortcut)
-    setScreenshotShortcutCustomExpanded(
-      createScreenshotShortcutState(props.initialAppSettings.screenshotShortcut).customExpanded
-    )
-    setShowDevToolbarButtons(props.initialAppSettings.showDevToolbarButtons)
-    lastSyncedAppSettingsRef.current = props.initialAppSettings
-  }, [props.initialAppSettings, saving])
 
   useEffect(() => {
     if (saving) return
@@ -676,101 +323,19 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
     setOpenCodeForm(toOpenCodeProviderForm(props.initial.opencode))
   }, [props.initial, saving])
 
-  useEffect(() => {
-    if (saving) return
-    setRepoAiCli(props.initialRepoView.ai_cli ?? DEFAULT_AI_CLI)
-    setRepoCommand(props.initialRepoView.command ?? '')
-    setRepoArgsText((props.initialRepoView.args ?? []).join(' '))
-    setRepoEnvText(toEnvText(props.initialRepoView.env))
-  }, [props.initialRepoView, saving])
-
-  useEffect(() => {
-    if (saving) return
-    setBuildConfig(props.initialBuildConfig)
-  }, [props.initialBuildConfig, saving])
-
-  useEffect(() => {
-    if (saving) return
-    setRuntimeConfig(props.initialRuntimeConfig)
-  }, [props.initialRuntimeConfig, saving])
-
-  const handleRestoreDefaultShortcut = (): void => {
-    const next = restoreDefaultScreenshotShortcut()
-    setScreenshotShortcutEnabled(true)
-    setScreenshotShortcut(next.screenshotShortcut)
-    setScreenshotShortcutCustomExpanded(next.customExpanded)
-  }
-
-  const handlePresetSelect = (nextShortcut: string): void => {
-    const next = selectScreenshotShortcutPreset(nextShortcut)
-    setScreenshotShortcut(next.screenshotShortcut)
-    setScreenshotShortcutCustomExpanded(next.customExpanded)
-  }
-
-  const handleCustomOpen = (): void => {
-    const next = openCustomScreenshotShortcut(screenshotShortcut)
-    setScreenshotShortcut(next.screenshotShortcut)
-    setScreenshotShortcutCustomExpanded(next.customExpanded)
-  }
-
   const handleSave = async (): Promise<void> => {
-    const normalizedShortcut = screenshotShortcut.trim()
-    if (screenshotShortcutEnabled && !normalizedShortcut) {
-      setError('启用截图快捷键时，快捷键不能为空')
-      return
-    }
-
     setSaving(true)
     setError(null)
 
-    const requestedAppSettings: AppSettings = {
-      screenshotShortcutEnabled,
-      screenshotShortcut: normalizedShortcut,
-      showDevToolbarButtons
-    }
     const nextMain = fromForm(aiCli, command, argsText, envText, openCodeForm)
-    const nextRepoView = fromForm(repoAiCli, repoCommand, repoArgsText, repoEnvText)
-    const nextBuildConfig = props.buildConfigReady
-      ? normalizeBuildConfigForHost(buildConfig)
-      : undefined
-    const nextRuntimeConfig = props.runtimeConfigReady
-      ? normalizeRuntimeConfigForHost(runtimeConfig)
-      : undefined
 
     try {
-      const appRes = await window.api.settings.setAppSettings(requestedAppSettings)
-      const appOutcome = deriveAppSettingsSaveOutcome(requestedAppSettings, appRes)
-
-      if (appRes.value || appRes.ok) {
-        setScreenshotShortcutEnabled(appOutcome.appSettings.screenshotShortcutEnabled)
-        setScreenshotShortcut(appOutcome.appSettings.screenshotShortcut)
-        setScreenshotShortcutCustomExpanded(
-          createScreenshotShortcutState(appOutcome.appSettings.screenshotShortcut).customExpanded
-        )
-        setShowDevToolbarButtons(appOutcome.appSettings.showDevToolbarButtons)
-        lastSyncedAppSettingsRef.current = appOutcome.appSettings
-        props.onSavedAppSettings(appOutcome.appSettings)
-      }
-
-      if (appOutcome.error) {
-        throw new Error(appOutcome.error)
-      }
-
       if (props.projectId) {
         const repairToast = await saveProjectScopedSettings({
           projectId: props.projectId,
           nextMain,
-          nextRepoView,
-          nextBuildConfig,
-          nextRuntimeConfig,
           setAiSettings: window.api.project.setAiSettings,
-          setRepoViewAiSettings: window.api.project.setRepoViewAiSettings,
-          setBuildConfig: props.buildConfigReady ? window.api.project.setBuildConfig : undefined,
-          setRuntimeConfig: props.runtimeConfigReady ? window.api.project.setRuntimeConfig : undefined,
-          onMainSaved: props.onSaved,
-          onRepoViewSaved: props.onSavedRepoView,
-          onBuildConfigSaved: props.buildConfigReady ? props.onSavedBuildConfig : undefined,
-          onRuntimeConfigSaved: props.runtimeConfigReady ? props.onSavedRuntimeConfig : undefined
+          onMainSaved: props.onSaved
         })
         if (repairToast) {
           showToast(repairToast, { level: 'success' })
@@ -793,7 +358,7 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
             <span className="ai-settings-header-dot" />
             <div>
               <h3>设置中心</h3>
-              <p>快捷键 · AI CLI · 项目构建 · 项目运行</p>
+              <p>AI CLI</p>
             </div>
           </div>
           <div className="ai-settings-header-actions">
@@ -808,196 +373,33 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
         </header>
 
         <div className="ai-settings-shell">
-          <aside className="ai-settings-sidebar" aria-label="设置分组">
-            <div className="ai-settings-sidebar-label">CONFIG</div>
-            <div className="ai-settings-nav-list">
-              <button
-                type="button"
-                className={
-                  activeSettingsSection === 'shortcut'
-                    ? 'ai-settings-nav-item active'
-                    : 'ai-settings-nav-item'
-                }
-                aria-controls="ai-settings-shortcut-section"
-                aria-current={activeSettingsSection === 'shortcut' ? 'true' : undefined}
-                onClick={() => scrollToSettingsSection('shortcut')}
-              >
-                <span className="ai-settings-nav-icon">＋</span>
-                <span>
-                  <strong>全局快捷键</strong>
-                  <small>截图采样入口</small>
-                </span>
-              </button>
-              <button
-                type="button"
-                className={
-                  activeSettingsSection === 'ai'
-                    ? 'ai-settings-nav-item active'
-                    : 'ai-settings-nav-item'
-                }
-                aria-controls="ai-settings-ai-section"
-                aria-current={activeSettingsSection === 'ai' ? 'true' : undefined}
-                onClick={() => scrollToSettingsSection('ai')}
-              >
-                <span className="ai-settings-nav-icon">AI</span>
-                <span>
-                  <strong>主会话 AI</strong>
-                  <small>Codex / Claude</small>
-                </span>
-              </button>
-              <button
-                type="button"
-                className={
-                  activeSettingsSection === 'build'
-                    ? 'ai-settings-nav-item active'
-                    : 'ai-settings-nav-item'
-                }
-                aria-controls="ai-settings-build-section"
-                aria-current={activeSettingsSection === 'build' ? 'true' : undefined}
-                onClick={() => scrollToSettingsSection('build')}
-              >
-                <span className="ai-settings-nav-icon">▤</span>
-                <span>
-                  <strong>项目构建</strong>
-                  <small>步骤 / 环境 / 编码</small>
-                </span>
-              </button>
-              <button
-                type="button"
-                className={
-                  activeSettingsSection === 'runtime'
-                    ? 'ai-settings-nav-item active'
-                    : 'ai-settings-nav-item'
-                }
-                aria-controls="ai-settings-runtime-section"
-                aria-current={activeSettingsSection === 'runtime' ? 'true' : undefined}
-                onClick={() => scrollToSettingsSection('runtime')}
-              >
-                <span className="ai-settings-nav-icon">▶</span>
-                <span>
-                  <strong>项目运行</strong>
-                  <small>启动命令</small>
-                </span>
-              </button>
-            </div>
-            <div className="ai-settings-current-project">
-              <span>当前项目</span>
-              <strong>{props.projectId ?? '未选择项目'}</strong>
-              <small>{props.projectId ? '已选择' : '项目级配置不可编辑'}</small>
-            </div>
-          </aside>
-
           <main className="ai-settings-content">
-            <div
-              id="ai-settings-shortcut-section"
-              ref={shortcutSectionRef}
-              className="ai-settings-section-anchor"
-            >
-              <ScreenshotSettingsSection
-                enabled={screenshotShortcutEnabled}
-                shortcut={screenshotShortcut}
-                customExpanded={screenshotShortcutCustomExpanded}
-                disabled={saving}
-                onEnabledChange={setScreenshotShortcutEnabled}
-                onPresetSelect={handlePresetSelect}
-                onCustomOpen={handleCustomOpen}
-                onShortcutChange={setScreenshotShortcut}
-                onRestoreDefaults={handleRestoreDefaultShortcut}
-              />
-            </div>
-
-            <section className="ai-settings-card">
-              <div className="ai-settings-card-head">
-                <span className="ai-settings-card-icon">🧰</span>
-                <div>
-                  <div className="ai-settings-title">工具栏按钮</div>
-                  <div className="ai-settings-card-subtitle">
-                    顶栏「构建 / 运行 / 日志」三个按钮默认隐藏，需要时在此开启，保存后立即生效。
-                  </div>
-                </div>
-              </div>
-              <label className="ai-settings-checkbox">
-                <input
-                  type="checkbox"
-                  checked={showDevToolbarButtons}
-                  onChange={(event) => setShowDevToolbarButtons(event.target.checked)}
-                  disabled={saving}
+            <div id="ai-settings-ai-section" className="ai-settings-section-anchor">
+              {props.projectId ? (
+                <SettingsSection
+                  title="主会话 AI"
+                  aiCli={aiCli}
+                  command={command}
+                  argsText={argsText}
+                  envText={envText}
+                  openCodeForm={openCodeForm}
+                  onAiCli={setAiCli}
+                  onCommand={setCommand}
+                  onArgs={setArgsText}
+                  onEnv={setEnvText}
+                  onOpenCodeForm={setOpenCodeForm}
                 />
-                <span>
-                  {showDevToolbarButtons
-                    ? '已显示「构建 / 运行 / 日志」按钮'
-                    : '已隐藏「构建 / 运行 / 日志」按钮'}
-                </span>
-              </label>
-            </section>
-
-            <div className="ai-settings-content-grid">
-              <div
-                id="ai-settings-ai-section"
-                ref={aiSectionRef}
-                className="ai-settings-section-anchor"
-              >
-                {props.projectId ? (
-                  <SettingsSection
-                    title="主会话 AI"
-                    aiCli={aiCli}
-                    command={command}
-                    argsText={argsText}
-                    envText={envText}
-                    openCodeForm={openCodeForm}
-                    onAiCli={setAiCli}
-                    onCommand={setCommand}
-                    onArgs={setArgsText}
-                    onEnv={setEnvText}
-                    onOpenCodeForm={setOpenCodeForm}
-                  />
-                ) : (
-                  <section className="ai-settings-card ai-settings-no-project-card">
-                    <div className="ai-settings-card-head">
-                      <span className="ai-settings-card-icon">AI</span>
-                      <div>
-                        <div className="ai-settings-title">AI CLI</div>
-                        <div className="ai-settings-note">选择项目后可编辑 AI CLI 配置</div>
-                      </div>
+              ) : (
+                <section className="ai-settings-card ai-settings-no-project-card">
+                  <div className="ai-settings-card-head">
+                    <span className="ai-settings-card-icon">AI</span>
+                    <div>
+                      <div className="ai-settings-title">AI CLI</div>
+                      <div className="ai-settings-note">选择项目后可编辑 AI CLI 配置</div>
                     </div>
-                  </section>
-                )}
-              </div>
-
-              <div
-                id="ai-settings-runtime-section"
-                ref={runtimeSectionRef}
-                className="ai-settings-panel ai-settings-runtime-panel ai-settings-section-anchor"
-              >
-                <ProjectRuntimeSettingsSection
-                  projectId={props.projectId}
-                  loading={props.projectId !== null && !props.runtimeConfigReady}
-                  value={runtimeConfig}
-                  disabled={saving || props.runtimeConfigDisabled === true}
-                  visualStudioInstallations={props.visualStudioInstallations}
-                  visualStudioInstallationsLoading={props.visualStudioInstallationsLoading}
-                  onRefreshVisualStudioInstallations={props.onRefreshVisualStudioInstallations}
-                  onChange={setRuntimeConfig}
-                />
-              </div>
-
-              <div
-                id="ai-settings-build-section"
-                ref={buildSectionRef}
-                className="ai-settings-panel ai-settings-build-panel ai-settings-grid-full ai-settings-section-anchor"
-              >
-                <ProjectBuildSettingsSection
-                  projectId={props.projectId}
-                  loading={props.projectId !== null && !props.buildConfigReady}
-                  value={buildConfig}
-                  disabled={saving}
-                  visualStudioInstallations={props.visualStudioInstallations}
-                  visualStudioInstallationsLoading={props.visualStudioInstallationsLoading}
-                  onRefreshVisualStudioInstallations={props.onRefreshVisualStudioInstallations}
-                  onChange={setBuildConfig}
-                />
-              </div>
-
+                  </div>
+                </section>
+              )}
             </div>
             {error && <div className="modal-error">⚠ {error}</div>}
           </main>

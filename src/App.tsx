@@ -1172,12 +1172,8 @@ function AppShell() {
       showToast('本项目没有 target_repo 路径，无法打开代码审查', { level: 'warn' })
       return
     }
-    if (!planName.trim()) {
-      showToast('代码审查批注需要先选择一个普通任务（方案文件）。', { level: 'warn' })
-      return
-    }
     setDiffReviewOpen(true)
-  }, [targetRepo, planName])
+  }, [targetRepo])
 
   const openRepoView = useCallback(async () => {
     if (!currentProjectId || !targetRepo) {
@@ -1355,7 +1351,7 @@ function AppShell() {
       label: '🔀 代码审查',
       keywords: 'code review diff annotate',
       action: () => void openDiffReview(),
-      disabled: !hasProject || !planName.trim()
+      disabled: !hasProject
     }
   ]
 
@@ -1497,7 +1493,10 @@ function AppShell() {
               className="topbar-btn topbar-btn-icon"
               data-tone="blue"
               onClick={() => void openDiffReview()}
-              disabled={!canStartCurrentMainSession || !planName.trim() || sessionStatus !== 'running'}
+              // 看 diff 只需要一个仓库。以前还要求「选中普通任务 + 会话运行中」，
+              // 那是**回灌批注**的前提，不是看 diff 的前提；顶栏又不再显示当前任务名，
+              // 于是按钮长期灰着且没有任何解释。批注发送处自己有守卫（会提示原因）。
+              disabled={!hasProject}
               title="代码审查：打开 diff 并把批注回灌给当前会话"
               aria-label="代码审查"
             >

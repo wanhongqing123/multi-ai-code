@@ -414,8 +414,10 @@ html, body, #root {
   justify-content: space-between;
   gap: var(--mac-sp-4);
   /* 无边框窗口：整条 topbar 兼作窗口拖拽区，交互控件单独取消拖拽；
-     窗口按钮是页面内自绘的 WindowControls（右端普通子项），无需给系统浮层留位。 */
-  padding: 10px var(--mac-sp-4) 10px var(--mac-sp-5);
+     窗口按钮是页面内自绘的 WindowControls（右端普通子项），无需给系统浮层留位。
+     纵向 padding 压到 5px：顶栏只是入口条，真正干活的是下面的终端，
+     整条从 ~55px 收到 ~39px。 */
+  padding: 5px var(--mac-sp-4) 5px var(--mac-sp-5);
   background: var(--mac-surface);
   border-bottom: 1px solid var(--mac-border);
   color: var(--mac-fg);
@@ -434,7 +436,8 @@ html, body, #root {
   display: grid;
   place-items: center;
   width: 40px;
-  height: 30px;
+  /* 与顶栏其余控件同高，否则它单独把整条撑高。 */
+  height: 28px;
   border: 0;
   border-radius: 6px;
   background: transparent;
@@ -488,7 +491,8 @@ html, body, #root {
   display: inline-flex;
   align-items: center;
   gap: var(--mac-sp-2);
-  padding: 6px var(--mac-sp-3);
+  min-height: 28px;
+  padding: 3px var(--mac-sp-3);
   background: var(--mac-bg);
   border: 1px solid transparent;
   border-radius: var(--mac-r-md);
@@ -536,7 +540,7 @@ html, body, #root {
   background: var(--mac-surface);
   color: var(--mac-fg-muted);
   border: 1px solid var(--mac-border);
-  padding: 6px var(--mac-sp-3);
+  padding: 4px var(--mac-sp-3);
   border-radius: var(--mac-r-md);
   cursor: pointer;
   font-size: var(--mac-text-xs);
@@ -563,10 +567,16 @@ html, body, #root {
 }
 
 .topbar-btn.topbar-btn-icon {
-  width: 34px;
-  min-width: 34px;
+  /* 28×28：顶栏整体高度由这里决定（见 .topbar 的纵向 padding）。
+     用 inline-flex 居中，SVG 图标（代码审查那颗）才不会被基线顶偏。 */
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding-block: 0;
   padding-inline: 0;
-  text-align: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-size: 15px;
   line-height: 1;
 }

@@ -22,6 +22,7 @@ class RemoteDesktopViewPanel;
 class QButtonGroup;
 class QCheckBox;
 class QCloseEvent;
+class QMimeData;
 class QResizeEvent;
 class QShowEvent;
 class QLineEdit;
@@ -73,7 +74,14 @@ private:
     // 处理消息框里的 Ctrl+V：把剪贴板里的图片/文件作为内联对象插入到输入框中（不立即发送），
     // 返回 true 表示已消费；否则返回 false 交给 QTextEdit 默认粘贴文本。
     bool handleComposerPaste();
+    // 粘贴与拖拽共用的 mime 路由：本地文件 URL → 内联附件，图像数据 → 内联图片。
+    // 返回 true 表示已消费；false 交给 QTextEdit 默认处理（插入文本）。
+    // 拖拽必须走这里：QTextEdit 默认会把 file:/// URL 当成纯文本插进输入框，
+    // 于是「拖一个文件进来」变成发出一行路径字符串，附件根本没产生。
+    bool insertComposerMimeData(const QMimeData* mime);
     void insertComposerImage(const QImage& image);
+    // 本地图片文件：按原文件路径内联，发送时直接发原图，不做 PNG 重编码。
+    void insertComposerImageFile(const QString& localPath);
     void insertComposerFile(const QString& localPath);
     // 输入框里一枚内联附件：isFile 区分文件卡（true）与图片（false），path 为本地原文件路径。
     struct ComposerAttachment {

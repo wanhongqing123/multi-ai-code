@@ -10,14 +10,17 @@
 #include <QStringList>
 #include <QStackedWidget>
 #include <QDir>
+#include <QDropEvent>
 #include <QFile>
 #include <QImage>
 #include <QInputMethodEvent>
+#include <QMimeData>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTextBrowser>
 #include <QTextEdit>
 #include <QTimer>
+#include <QUrl>
 #include <QVBoxLayout>
 #include <QWidget>
 #include <memory>
@@ -93,7 +96,99 @@ private slots:
     void copyAttachmentToPathCopiesOverwritesAndReportsErrors();
     void ctrlShortcutsZoomWholeUi();
     void settingsPanelBorderIsNotCoveredByRows();
+    void droppingFilesIntoComposerAttachesThemInsteadOfPastingPaths();
+    void droppingAnImageFileSendsTheOriginalFileAsAnImage();
 };
+
+// 模拟一次真实拖放：Qt 的 drop 依赖前面的 dragEnter/dragMove 建立内部状态，
+// 只发 QDropEvent 会被直接丢掉。位置取 viewport 中心。
+static void dropOnComposer(QTextEdit* editor, QMimeData* mime) {
+    QWidget* target = editor->viewport();
+    const QPointF pos(target->width() / 2.0, target->height() / 2.0);
+
+    QDragEnterEvent enter(pos.toPoint(), Qt::CopyAction, mime, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(target, &enter);
+    QDragMoveEvent move(pos.toPoint(), Qt::CopyAction, mime, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(target, &move);
+    QDropEvent drop(pos, Qt::CopyAction, mime, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(target, &drop);
+}
+
+// 拖一个文件进输入框，必须变成附件。此前 QTextEdit 默认行为把 file:/// URL 当成
+// 纯文本插进去，用户看到一行路径、发出去的也是一行路径，附件根本没产生。
+void MainWindowLayoutTest::droppingFilesIntoComposerAttachesThemInsteadOfPastingPaths() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString docPath = QDir(dir.path()).filePath(QStringLiteral("report.txt"));
+    QFile doc(docPath);
+    QVERIFY(doc.open(QIODevice::WriteOnly));
+    doc.write("hello");
+    doc.close();
+
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    auto* fakeClient = client.get();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+
+    MainWindow window(app);
+    window.resize(1280, 800);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto* editor = window.findChild<QTextEdit*>(QStringLiteral("messageEditor"));
+    auto* sendButton = window.findChild<QPushButton*>(QStringLiteral("sendButton"));
+    QVERIFY(editor != nullptr);
+    QVERIFY(sendButton != nullptr);
+
+    QMimeData mime;
+    mime.setUrls({QUrl::fromLocalFile(docPath)});
+    dropOnComposer(editor, &mime);
+
+    // 输入框里不能出现路径文本，只能有一枚内联对象（U+FFFC）。
+    QVERIFY(!editor->toPlainText().contains(QStringLiteral("file://")));
+    QVERIFY(!editor->toPlainText().contains(QStringLiteral("report.txt")));
+    QVERIFY(editor->toPlainText().contains(QChar(0xFFFC)));
+    QVERIFY(sendButton->isEnabled());
+
+    sendButton->click();
+    QCOMPARE(fakeClient->lastFilePeerId(), QStringLiteral("phone-user"));
+    QCOMPARE(fakeClient->lastFilePath(), docPath);
+    QCOMPARE(fakeClient->lastFileName(), QStringLiteral("report.txt"));
+}
+
+// 拖进来的图片按图片发，且发的是原文件本身——不重新编码成 PNG，
+// 否则一张 3MB 的 JPG 会被放大成十几 MB。
+void MainWindowLayoutTest::droppingAnImageFileSendsTheOriginalFileAsAnImage() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString imagePath = QDir(dir.path()).filePath(QStringLiteral("photo.png"));
+    QImage image(40, 20, QImage::Format_RGB32);
+    image.fill(Qt::red);
+    QVERIFY(image.save(imagePath, "PNG"));
+
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    auto* fakeClient = client.get();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+
+    MainWindow window(app);
+    window.resize(1280, 800);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto* editor = window.findChild<QTextEdit*>(QStringLiteral("messageEditor"));
+    auto* sendButton = window.findChild<QPushButton*>(QStringLiteral("sendButton"));
+    QVERIFY(editor != nullptr);
+
+    QMimeData mime;
+    mime.setUrls({QUrl::fromLocalFile(imagePath)});
+    dropOnComposer(editor, &mime);
+
+    QVERIFY(editor->toPlainText().contains(QChar(0xFFFC)));
+    sendButton->click();
+
+    QCOMPARE(fakeClient->lastImagePeerId(), QStringLiteral("phone-user"));
+    QCOMPARE(fakeClient->lastImagePath(), imagePath);  // 原文件，不是临时 PNG 副本
+    QCOMPARE(fakeClient->lastFilePath(), QString());   // 没有走文件卡分支
+}
 
 void MainWindowLayoutTest::settingsPanelBorderIsNotCoveredByRows() {
     auto client = std::make_unique<FakeRemoteIMClient>();

@@ -8,7 +8,10 @@
 #include <QContextMenuEvent>
 #include <QDateTime>
 #include <QDir>
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
 #include <QImage>
+#include <QImageReader>
 #include <QMimeData>
 #include <QStandardPaths>
 #include <QUrl>
@@ -565,7 +568,15 @@ private:
 
 class ComposerTextEdit final : public QTextEdit {
 public:
-    explicit ComposerTextEdit(QWidget* parent = nullptr) : QTextEdit(parent) {}
+    explicit ComposerTextEdit(QWidget* parent = nullptr) : QTextEdit(parent) {
+        setAcceptDrops(true);
+    }
+
+    // 把「拖进来/粘进来的东西」交给 MainWindow 决定是否变成内联附件。
+    // 返回 true = 已消费，QTextEdit 不要再按默认方式插入。
+    void setMimeHandler(std::function<bool(const QMimeData*)> handler) {
+        mimeHandler_ = std::move(handler);
+    }
 
     void setCornerAction(QWidget* action) {
         cornerAction_ = action;
@@ -589,8 +600,46 @@ protected:
         positionCornerAction();
     }
 
+    // QTextEdit 的拖放与粘贴最终都汇到这两个钩子。不覆写的话，拖一个文件进来
+    // 只会插入它的 file:/// URL 文本——用户看到的是一行路径，发出去的也是一行路径。
+    bool canInsertFromMimeData(const QMimeData* source) const override {
+        if (hasLocalFile(source)) return true;
+        return QTextEdit::canInsertFromMimeData(source);
+    }
+
+    void insertFromMimeData(const QMimeData* source) override {
+        if (mimeHandler_ && mimeHandler_(source)) return;
+        QTextEdit::insertFromMimeData(source);
+    }
+
+    // 拖到输入框上时给出「可以放」的反馈，否则 Windows 上是禁止光标。
+    void dragEnterEvent(QDragEnterEvent* event) override {
+        if (hasLocalFile(event->mimeData())) {
+            event->acceptProposedAction();
+            return;
+        }
+        QTextEdit::dragEnterEvent(event);
+    }
+
+    void dragMoveEvent(QDragMoveEvent* event) override {
+        if (hasLocalFile(event->mimeData())) {
+            event->acceptProposedAction();
+            return;
+        }
+        QTextEdit::dragMoveEvent(event);
+    }
+
 private:
+    static bool hasLocalFile(const QMimeData* source) {
+        if (!source || !source->hasUrls()) return false;
+        for (const QUrl& url : source->urls()) {
+            if (url.isLocalFile() && QFileInfo(url.toLocalFile()).isFile()) return true;
+        }
+        return false;
+    }
+
     QWidget* cornerAction_ = nullptr;
+    std::function<bool(const QMimeData*)> mimeHandler_;
 };
 
 enum class LineIconKind {
@@ -1293,10 +1342,13 @@ void MainWindow::buildUi() {
 
     messageEditor_ = new ComposerTextEdit(composer);
     messageEditor_->setObjectName(QStringLiteral("messageEditor"));
-    messageEditor_->setPlaceholderText(QStringLiteral("输入消息（可 Ctrl+V 粘贴图片或文件）"));
+    messageEditor_->setPlaceholderText(QStringLiteral("输入消息（可拖入文件，或 Ctrl+V 粘贴图片/文件）"));
     messageEditor_->setAcceptRichText(false);
     messageEditor_->setMinimumHeight(UiZoom::s(64));
     messageEditor_->installEventFilter(this);
+    // 拖进来的文件走和 Ctrl+V 完全相同的路由，不再被当成 file:/// 文本插入。
+    static_cast<ComposerTextEdit*>(messageEditor_)->setMimeHandler(
+        [this](const QMimeData* mime) { return insertComposerMimeData(mime); });
 
     sendButton_ = new QPushButton(messageEditor_);
     sendButton_->setObjectName(QStringLiteral("sendButton"));
@@ -2159,11 +2211,14 @@ void MainWindow::openAddContactDialog() {
 }
 
 bool MainWindow::handleComposerPaste() {
+    return insertComposerMimeData(QApplication::clipboard()->mimeData());
+}
+
+bool MainWindow::insertComposerMimeData(const QMimeData* mime) {
     if (app_.chatState().selectedPeerId().isEmpty()) return false;
-    const QMimeData* mime = QApplication::clipboard()->mimeData();
     if (!mime) return false;
 
-    // 1) 剪贴板里的本地文件（资源管理器复制的文件）：内联插入到输入框。
+    // 1) 本地文件（资源管理器复制或直接拖进来的）：内联插入到输入框。
     if (mime->hasUrls()) {
         QStringList files;
         for (const QUrl& url : mime->urls()) {
@@ -2172,12 +2227,21 @@ bool MainWindow::handleComposerPaste() {
             if (QFileInfo(path).isFile()) files << path;
         }
         if (!files.isEmpty()) {
-            for (const QString& path : files) insertComposerFile(path);
+            for (const QString& path : files) {
+                // 能被 Qt 认出的图片按图片发（对端气泡里直接出图、可预览）；
+                // 其余一律按文件卡发。判断走内容而非扩展名，HEIC 之类 Qt 读不了的
+                // 会自然落到文件卡，不会变成一张打不开的破图。
+                if (!QImageReader::imageFormat(path).isEmpty()) {
+                    insertComposerImageFile(path);
+                } else {
+                    insertComposerFile(path);
+                }
+            }
             return true;
         }
     }
 
-    // 2) 剪贴板里的图像数据（截图工具、复制的图片）：内联插入到输入框。
+    // 2) 图像数据（截图工具、复制的图片，没有对应磁盘文件）：内联插入到输入框。
     if (mime->hasImage()) {
         const QImage image = qvariant_cast<QImage>(mime->imageData());
         if (!image.isNull()) {
@@ -2185,7 +2249,7 @@ bool MainWindow::handleComposerPaste() {
             return true;
         }
     }
-    return false;  // 交给 QTextEdit 默认粘贴（文本）
+    return false;  // 交给 QTextEdit 默认处理（插入文本）
 }
 
 void MainWindow::insertComposerImage(const QImage& image) {
@@ -2202,6 +2266,35 @@ void MainWindow::insertComposerImage(const QImage& image) {
     fmt.setName(path);
     int w = image.width();
     int h = image.height();
+    constexpr int kMaxWidth = 240;
+    if (w > kMaxWidth && w > 0) {
+        h = h * kMaxWidth / w;
+        w = kMaxWidth;
+    }
+    fmt.setWidth(w);
+    fmt.setHeight(h);
+    QTextCursor cursor = messageEditor_->textCursor();
+    cursor.insertImage(fmt);
+    messageEditor_->setTextCursor(cursor);
+    messageEditor_->setFocus();
+    updateComposerState();
+}
+
+void MainWindow::insertComposerImageFile(const QString& localPath) {
+    // 资源名直接用原文件路径：QTextEdit 从磁盘加载渲染，collectComposerAttachments
+    // 也据此判定为图片（没有 pending-file:// 前缀），发送时发的就是这个原文件——
+    // 不像剪贴板图像那样先落一份 PNG，3MB 的 JPG 不会被重编码成十几 MB 的 PNG。
+    QImageReader reader(localPath);
+    const QSize size = reader.size();
+    if (!size.isValid() || size.isEmpty()) {
+        insertComposerFile(localPath);  // 读不出尺寸就别硬塞，退回文件卡
+        return;
+    }
+
+    QTextImageFormat fmt;
+    fmt.setName(localPath);
+    int w = size.width();
+    int h = size.height();
     constexpr int kMaxWidth = 240;
     if (w > kMaxWidth && w > 0) {
         h = h * kMaxWidth / w;

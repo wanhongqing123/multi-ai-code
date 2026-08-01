@@ -13,7 +13,6 @@ import {
   type ExternalReviewDecision,
   type ExternalReviewSuggestion
 } from './structuredReply.js'
-import { planSystemPromptInjection } from './systemPromptInjection.js'
 import { buildResumeArgs, type ResumeCommand } from './resumeArgs.js'
 import { withEmbeddedClaudeSettings } from './claudeLaunchSettings.js'
 import { buildEnvWithPath, resolveCliSpawn } from '../util/cliSpawn.js'
@@ -35,9 +34,6 @@ import {
   type AicliStructuredOutputProvider
 } from '../aicli/structuredOutputBridge.js'
 
-import {
-  buildSystemPrompt
-} from '../orchestrator/prompts.js'
 import { detectMsys } from '../util/msys.js'
 import { rootDir } from '../store/paths.js'
 
@@ -47,12 +43,6 @@ import { rootDir } from '../store/paths.js'
  * <rootDir>/logs/pty-<sessionId>-<ts>.jsonl.
  */
 const PTY_DUMP_ENABLED = process.env.MULTI_AI_CODE_PTY_DUMP === '1'
-
-function systemPromptInjectionCommand(command: string): 'claude' | 'codex' | 'opencode' {
-  if (command === 'codex') return 'codex'
-  if (command === 'opencode') return 'opencode'
-  return 'claude'
-}
 
 function structuredOutputProvider(command: string): AicliStructuredOutputProvider | null {
   if (command === 'codex') return 'codex'
@@ -116,15 +106,6 @@ export interface SpawnRequest {
   projectId: string
   projectDir: string
   targetRepo: string
-  planName?: string
-  /** 'none' starts a raw project CLI session without plan prompt injection. */
-  planMode?: 'plan' | 'none'
-  /** Absolute path resolved via resolvePlanArtifactAbs. */
-  planAbsPath?: string
-  /** true when plan file does not yet exist on disk. */
-  planPending?: boolean
-  /** First user message to feed after kickoff. */
-  initialUserMessage?: string
   /** CLI binary (claude | codex). */
   command: string
   /** CLI args. */
@@ -186,7 +167,6 @@ interface Session {
   /** Absolute path of the target repo used as the process cwd. */
   targetRepo: string
   sessionId: string
-  planName: string
   command: string
   startedAtMs: number
   codexTrustAccepted?: boolean
@@ -681,18 +661,8 @@ export function registerPtyIpc(): void {
 
   ipcMain.handle('cc:spawn', async (_e, req: SpawnRequest) => {
     const launchResolution = resolveLaunchNotice(req.command, req.env)
-    const planMode = req.planMode ?? 'plan'
-    const hasPlan = planMode !== 'none'
-    if (
-      !req.targetRepo ||
-      (hasPlan && (!req.planAbsPath || typeof req.initialUserMessage !== 'string'))
-    ) {
-      return {
-        ok: false,
-        error:
-          'cc:spawn missing required fields (targetRepo, planAbsPath, initialUserMessage). ' +
-          'Task 9 UI rewrite must supply these 鈥?see StagePanel.tsx TODO markers.'
-      }
+    if (!req.targetRepo) {
+      return { ok: false, error: 'cc:spawn missing required field: targetRepo' }
     }
 
     if (sessions.has(req.sessionId)) {
@@ -769,7 +739,6 @@ export function registerPtyIpc(): void {
       projectDir: req.projectDir,
       targetRepo: req.targetRepo,
       sessionId: req.sessionId,
-      planName: req.planName ?? '',
       command: req.command,
       startedAtMs: Date.now(),
       dumpStream,
@@ -864,75 +833,10 @@ export function registerPtyIpc(): void {
     }
     sessions.set(req.sessionId, session)
 
-    // In resume mode, skip the system-prompt + initialUserMessage injection
-    // entirely. The CLI is loading its own saved conversation; injecting a
-    // fresh system prompt would pollute the resumed context.
-    if (isResumeMode) {
-      return spawnOkResponse(launchResolution.notice)
-    }
-
-    if (!hasPlan) {
-      return spawnOkResponse(launchResolution.notice)
-    }
-
-    // Inject system prompt after CC TUI boots.
-    setTimeout(async () => {
-      try {
-        if (req.command === 'codex') {
-          // Startup time varies heavily (trust gate / update banner / MCP boot).
-          // Prefer the source-level control_ready bridge; keep TUI text as a
-          // fallback for older Codex builds.
-          await waitForCodexReady(req.sessionId, 10000)
-        } else if (isOpenCodeCommand(req.command)) {
-          await waitForOpenCodeReady(req.sessionId, 10000)
-        } else if (req.command === 'claude') {
-          // Claude can redraw its TUI after process start. Typing before the
-          // input box is interactive can be lost, leaving the prompt file
-          // written but never read by the session.
-          await waitForClaudeReady(req.sessionId, 15000)
-        }
-        // Pull project metadata for the prompt
-        let projectName: string | undefined
-        try {
-          const meta = JSON.parse(
-            await fs.readFile(join(req.projectDir, 'project.json'), 'utf8')
-          ) as { name?: string }
-          projectName = meta.name
-        } catch {
-          /* ignore */
-        }
-
-        const sysPrompt = await buildSystemPrompt({
-          projectDir: req.projectDir,
-          artifactPath: req.planAbsPath ?? '',
-          projectName,
-          targetRepo: req.targetRepo,
-          stageCwd: finalCwd,
-          planPending: req.planPending ?? false
-        })
-
-        const injection = planSystemPromptInjection({
-          command: systemPromptInjectionCommand(req.command),
-          cwd: finalCwd,
-          systemPrompt: sysPrompt,
-          initialUserMessage: req.initialUserMessage ?? ''
-        })
-        await fs.mkdir(injection.writeDir, { recursive: true })
-        await fs.writeFile(injection.writePath, injection.fileContents, 'utf8')
-        await enqueueSessionInput(req.sessionId, async (current) => {
-          await sendMessage(current.proc, injection.bootstrapMessage, {
-            singleSubmit: isOpenCodeCommand(current.command)
-          })
-        })
-      } catch (err) {
-        broadcast('cc:notice', {
-          sessionId: req.sessionId,
-          level: 'warn',
-          message: `绯荤粺 prompt 娉ㄥ叆澶辫触: ${(err as Error).message}`
-        })
-      }
-    }, req.command === 'codex' ? PRIMING_DELAY_MS_CODEX : PRIMING_DELAY_MS)
-
+    // 非续接模式也不再注入系统提示词：注入链路（planMode/planAbsPath →
+    // buildSystemPrompt → .injections/<cli>-system.md）已经随 planMode 一起下线，
+    // 唯一的调用方 App.tsx 长期传 planMode:'none'，那段代码从来走不到。
+    // 项目级约束现在靠仓库里的约定文件（CLAUDE.md 等）承载。
     return spawnOkResponse(launchResolution.notice)
   })
 

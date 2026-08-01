@@ -5,7 +5,6 @@ import { join } from 'path'
 import {
   planArtifactPath,
   resolvePlanArtifactAbs,
-  renderTemplate,
   mainCliArgs,
   buildCliLaunchArgs,
   MAIN_COMMAND_DEFAULT
@@ -66,40 +65,6 @@ describe('resolvePlanArtifactAbs', () => {
   it('throws when project.json is missing', async () => {
     await fs.rm(join(projectDir, 'project.json'))
     await expect(resolvePlanArtifactAbs(projectDir, 'my-plan')).rejects.toThrow()
-  })
-})
-
-describe('renderTemplate', () => {
-  it('replaces all documented variables', () => {
-    const out = renderTemplate(
-      'P={{PROJECT_NAME}} R={{TARGET_REPO}} C={{STAGE_CWD}} D={{PROJECT_DIR}} A={{ARTIFACT_PATH}}',
-      {
-        projectDir: '/p',
-        projectName: 'demo',
-        targetRepo: '/repo',
-        stageCwd: '/repo',
-        artifactPath: '/repo/.multi-ai-code/designs/x.md'
-      }
-    )
-    expect(out).toBe('P=demo R=/repo C=/repo D=/p A=/repo/.multi-ai-code/designs/x.md')
-  })
-
-  it('uses planPending placeholder when flag is set', () => {
-    const out = renderTemplate('A={{ARTIFACT_PATH}}', {
-      projectDir: '/p',
-      artifactPath: 'ignored',
-      planPending: true,
-      targetRepo: '/repo'
-    })
-    expect(out).toBe('A=/repo/.multi-ai-code/designs/<你稍后将向用户询问得到的方案名称>.md')
-  })
-
-  it('resolves relative artifactPath against projectDir', () => {
-    const out = renderTemplate('A={{ARTIFACT_PATH}}', {
-      projectDir: '/p',
-      artifactPath: 'artifacts/foo.md'
-    })
-    expect(out).toBe('A=/p/artifacts/foo.md')
   })
 })
 

@@ -7,7 +7,6 @@ import { fileURLToPath } from 'url'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const ipcHandlers = vi.hoisted(() => new Map<string, (...args: unknown[]) => unknown>())
-const buildSystemPromptMock = vi.hoisted(() => vi.fn(async () => 'system prompt'))
 const browserWindowSends = vi.hoisted(() => [] as Array<{ channel: string; payload: unknown }>)
 const interactionEvents = vi.hoisted(() => [] as string[])
 const ptyInstances = vi.hoisted(() => [] as Array<{
@@ -44,10 +43,6 @@ vi.mock('electron', () => ({
       }
     ],
   },
-}))
-
-vi.mock('../../../electron/orchestrator/prompts.js', () => ({
-  buildSystemPrompt: buildSystemPromptMock,
 }))
 
 vi.mock('../../../electron/cc/PtyCCProcess.js', () => ({
@@ -166,10 +161,6 @@ describe('registerPtyIpc prompt injection timing', () => {
       projectId: 'project-1',
       projectDir,
       targetRepo,
-      planName: 'demo',
-      planAbsPath: join(targetRepo, '.multi-ai-code', 'designs', 'demo.md'),
-      planPending: true,
-      initialUserMessage: 'start task',
       command: 'claude',
       args: [],
       mode: 'new',
@@ -200,8 +191,6 @@ describe('registerPtyIpc prompt injection timing', () => {
       projectId: 'project-1',
       projectDir,
       targetRepo,
-      planName: '',
-      planMode: 'none',
       command,
       args: [],
       mode: 'new',
@@ -213,33 +202,19 @@ describe('registerPtyIpc prompt injection timing', () => {
     return { proc: ptyInstances[0] }
   }
 
-  it('waits for Claude to become interactive before injecting the bootstrap prompt', async () => {
+  // 系统提示词注入链路已整体下线（planMode / .injections / buildSystemPrompt）。
+  // 起一个新会话不该再往仓库里写 .injections，也不该往 PTY 里灌 bootstrap 文案——
+  // 那两条以前分别由 spawnClaudeSession / spawnNoPlanSession 覆盖，现在合成一条。
+  it('never injects a system prompt or writes .injections on spawn', async () => {
     const { proc, targetRepo } = await spawnClaudeSession()
 
     proc.emitData('Claude Code is starting...')
-    await sleep(3_000)
-
-    expect(proc.writes.join('')).not.toContain('.injections')
-
+    await sleep(1_000)
     proc.emitData('ready\n? for shortcuts')
     await sleep(2_000)
 
-    const written = proc.writes.join('')
-    expect(written).toContain('Please fully read')
-    expect(written.replace(/\\/g, '/')).toContain(`${targetRepo.replace(/\\/g, '/')}/.injections/claude-system.md`)
-  }, 10_000)
-
-  it('allows no-plan sessions without injecting the plan bootstrap prompt', async () => {
-    buildSystemPromptMock.mockClear()
-    const { proc } = await spawnNoPlanSession()
-
-    proc.emitData(
-      'ready\nAdministrator@WIN  C:\\repo  Opus 4.8\n▸ bypass permissions on (shift+tab to cycle) · ← for agents'
-    )
-    await sleep(2_000)
-
     expect(proc.writes.join('')).toBe('')
-    expect(buildSystemPromptMock).not.toHaveBeenCalled()
+    await expect(fs.access(join(targetRepo, '.injections'))).rejects.toThrow()
   }, 10_000)
 
   it('starts embedded Claude sessions with the default TUI renderer', async () => {
@@ -276,8 +251,6 @@ describe('registerPtyIpc prompt injection timing', () => {
       projectId: 'project-1',
       projectDir,
       targetRepo,
-      planName: '',
-      planMode: 'none',
       command: 'opencode',
       args: [],
       opencode: {
@@ -354,8 +327,6 @@ describe('registerPtyIpc prompt injection timing', () => {
       projectId: 'project-watch',
       projectDir,
       targetRepo,
-      planName: '',
-      planMode: 'none',
       command: 'claude',
       args: [],
       mode: 'new',

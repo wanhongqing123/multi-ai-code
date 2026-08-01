@@ -138,15 +138,6 @@ export interface SpawnRequest {
   projectId: string
   projectDir: string
   targetRepo: string
-  planName?: string
-  /** 'none' starts a raw project CLI session without plan prompt injection. */
-  planMode?: 'plan' | 'none'
-  /** Absolute path resolved via resolvePlanArtifactAbs. */
-  planAbsPath?: string
-  /** true when plan file does not yet exist on disk. */
-  planPending?: boolean
-  /** First user message to feed after kickoff. */
-  initialUserMessage?: string
   /** CLI binary (claude | codex). */
   command: string
   /** CLI args. */
@@ -158,10 +149,10 @@ export interface SpawnRequest {
   cols?: number
   rows?: number
   /**
-   * 'new' (default) spawns a fresh CLI session and injects the system prompt.
+   * 'new' (default) spawns a fresh CLI session.
    * 'resume' rewrites args to the CLI's native continue form (claude
-   * --continue / codex resume --last) and skips system-prompt injection so
-   * the CLI's own saved conversation history stays clean.
+   * --continue / codex resume --last) so the CLI's own saved conversation
+   * history is picked up instead of starting over.
    */
   mode?: 'new' | 'resume'
 }

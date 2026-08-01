@@ -1,10 +1,7 @@
 import { promises as fs } from 'fs'
-import { join, dirname, isAbsolute } from 'path'
-import { fileURLToPath } from 'url'
+import { join } from 'path'
 import { joinWithRootStyle } from '../pathStyle.js'
 import { designArchiveDir } from '../store/paths.js'
-
-const __dirname = dirname(fileURLToPath(import.meta.url))
 
 function sanitizeLabel(label: string): string {
   return label
@@ -118,73 +115,4 @@ export function buildCliLaunchArgs(
 
   args.push(...codexDefaultArgs(extraArgs))
   return [...args, ...extraArgs]
-}
-
-function promptsDir(): string {
-  return join(__dirname, '..', '..', 'electron', 'prompts')
-}
-
-function fallbackPromptsDir(): string {
-  return join(__dirname, 'prompts')
-}
-
-export async function loadMainPromptTemplate(): Promise<string> {
-  for (const base of [promptsDir(), fallbackPromptsDir()]) {
-    try {
-      return await fs.readFile(join(base, 'main.md'), 'utf8')
-    } catch {
-      /* try next */
-    }
-  }
-  throw new Error('prompt template not found: main.md')
-}
-
-export interface RenderContext {
-  projectDir: string
-  /** Absolute path to the plan markdown. */
-  artifactPath: string
-  projectName?: string
-  targetRepo?: string
-  stageCwd?: string
-  /** When true, renderTemplate uses a placeholder in ARTIFACT_PATH so the
-   *  CLI can ask the user to pick a plan name at archive time. */
-  planPending?: boolean
-}
-
-export function renderTemplate(tpl: string, ctx: RenderContext): string {
-  let artifactAbs: string
-  if (ctx.planPending) {
-    const root = (ctx.targetRepo ?? ctx.projectDir).replace(/[\/\\]+$/, '')
-    artifactAbs = `${root}/.multi-ai-code/designs/<你稍后将向用户询问得到的方案名称>.md`
-  } else if (isAbsolute(ctx.artifactPath)) {
-    artifactAbs = ctx.artifactPath
-  } else {
-    artifactAbs = `${ctx.projectDir.replace(/\/$/, '')}/${ctx.artifactPath}`
-  }
-  return tpl
-    .replaceAll('{{PROJECT_DIR}}', ctx.projectDir)
-    .replaceAll('{{PROJECT_NAME}}', ctx.projectName ?? '(未设置)')
-    .replaceAll('{{TARGET_REPO}}', ctx.targetRepo ?? '(未设置)')
-    .replaceAll('{{STAGE_CWD}}', ctx.stageCwd ?? ctx.projectDir)
-    .replaceAll('{{ARTIFACT_PATH}}', artifactAbs)
-}
-
-function buildProjectContextBlock(ctx: RenderContext): string {
-  return [
-    '# 项目上下文（平台自动注入）',
-    '',
-    `- **项目名**：${ctx.projectName ?? '(未设置)'}`,
-    `- **代码仓库绝对路径**：${ctx.targetRepo ?? '(未设置)'}`,
-    `- **你的工作目录 (cwd)**：${ctx.stageCwd ?? ctx.projectDir}`,
-    `- **项目根目录**：${ctx.projectDir}`,
-    '',
-    '---',
-    ''
-  ].join('\n')
-}
-
-export async function buildSystemPrompt(ctx: RenderContext): Promise<string> {
-  const tpl = await loadMainPromptTemplate()
-  const body = renderTemplate(tpl, ctx)
-  return buildProjectContextBlock(ctx) + body
 }

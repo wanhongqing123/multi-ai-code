@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
-import type { AiSettings, OpenCodeProviderProfile } from '../../electron/preload'
+import type { AiSettings, AiPermissionMode, OpenCodeProviderProfile } from '../../electron/preload'
 // 类型真源在 electron 侧，这里 re-export 兼容既有从本组件引用它们的地方（App.tsx / RepoViewerWindow）。
-export type { AiSettings, OpenCodeProviderProfile }
+export type { AiSettings, AiPermissionMode, OpenCodeProviderProfile }
+import { DEFAULT_AI_PERMISSION_MODE } from '../utils/cliLaunchArgs.js'
 import { showToast } from './Toast.js'
 
 export const DEFAULT_AI_CLI = 'codex' as const
+export { DEFAULT_AI_PERMISSION_MODE }
 
 const AI_CLI_OPTIONS = [
   {
@@ -20,6 +22,13 @@ const AI_CLI_OPTIONS = [
     label: 'Claude Code (不建议使用)'
   }
 ] as const
+
+// 权限只给两档。背后是哪些 --dangerously-* 参数不暴露给用户，
+// 想自己传参的走「高级参数设置」。
+const PERMISSION_OPTIONS = [
+  { value: 'full-access', label: '完全访问权限' },
+  { value: 'default', label: '默认权限' }
+] as const satisfies readonly { value: AiPermissionMode; label: string }[]
 
 type AiCliKind = typeof AI_CLI_OPTIONS[number]['value']
 
@@ -125,14 +134,14 @@ function fromOpenCodeProviderForm(form: OpenCodeProviderForm): OpenCodeProviderP
 
 function fromForm(
   aiCli: AiCliKind,
-  command: string,
+  permissionMode: AiPermissionMode,
   argsText: string,
   envText: string,
   openCodeForm?: OpenCodeProviderForm
 ): AiSettings {
   return {
     ai_cli: aiCli,
-    command: command.trim() || undefined,
+    permission_mode: permissionMode,
     args: argsText.trim().length ? argsText.trim().split(/\s+/) : undefined,
     env: Object.fromEntries(
       envText
@@ -152,14 +161,15 @@ function fromForm(
 }
 
 function SettingsSection(props: {
-  title: string
   aiCli: AiCliKind
-  command: string
+  permissionMode: AiPermissionMode
+  advancedOpen: boolean
   argsText: string
   envText: string
   openCodeForm: OpenCodeProviderForm
   onAiCli: (next: AiCliKind) => void
-  onCommand: (next: string) => void
+  onPermissionMode: (next: AiPermissionMode) => void
+  onAdvancedOpen: (next: boolean) => void
   onArgs: (next: string) => void
   onEnv: (next: string) => void
   onOpenCodeForm: (next: OpenCodeProviderForm) => void
@@ -170,13 +180,6 @@ function SettingsSection(props: {
 
   return (
     <section className="ai-settings-card ai-settings-ai-card">
-      <div className="ai-settings-card-head">
-        <span className="ai-settings-card-icon">AI</span>
-        <div>
-          <div className="ai-settings-title">{props.title}</div>
-          <div className="ai-settings-card-subtitle">控制主终端实际启动的 AI CLI。</div>
-        </div>
-      </div>
       <div className="ai-settings-form-grid">
         <label>
           AI CLI
@@ -192,31 +195,17 @@ function SettingsSection(props: {
           </select>
         </label>
         <label>
-          Binary override
-          <input
-            type="text"
-            value={props.command}
-            onChange={(event) => props.onCommand(event.target.value)}
-            placeholder={props.aiCli}
-          />
-        </label>
-        <label>
-          附加 args
-          <input
-            type="text"
-            value={props.argsText}
-            onChange={(event) => props.onArgs(event.target.value)}
-            placeholder="--foo --bar"
-          />
-        </label>
-        <label className="ai-settings-grid-full">
-          环境变量
-          <textarea
-            value={props.envText}
-            onChange={(event) => props.onEnv(event.target.value)}
-            rows={4}
-            placeholder="KEY=VALUE"
-          />
+          权限
+          <select
+            value={props.permissionMode}
+            onChange={(event) => props.onPermissionMode(event.target.value as AiPermissionMode)}
+          >
+            {PERMISSION_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
         </label>
         {props.aiCli === 'opencode' ? (
           <div className="ai-settings-grid-full ai-settings-opencode-panel">
@@ -298,6 +287,43 @@ function SettingsSection(props: {
             </div>
           </div>
         ) : null}
+        {/* 启动参数不该是常规操作：默认折叠，需要按特定参数启动的人自己展开。 */}
+        <div className="ai-settings-grid-full ai-settings-advanced">
+          <button
+            type="button"
+            className="ai-settings-advanced-toggle"
+            aria-expanded={props.advancedOpen}
+            aria-controls="ai-settings-advanced-body"
+            onClick={() => props.onAdvancedOpen(!props.advancedOpen)}
+          >
+            <span className="ai-settings-advanced-caret" aria-hidden="true">
+              {props.advancedOpen ? '▾' : '▸'}
+            </span>
+            高级参数设置
+          </button>
+          {props.advancedOpen && (
+            <div id="ai-settings-advanced-body" className="ai-settings-form-grid">
+              <label className="ai-settings-grid-full">
+                附加 args
+                <input
+                  type="text"
+                  value={props.argsText}
+                  onChange={(event) => props.onArgs(event.target.value)}
+                  placeholder="--foo --bar"
+                />
+              </label>
+              <label className="ai-settings-grid-full">
+                环境变量
+                <textarea
+                  value={props.envText}
+                  onChange={(event) => props.onEnv(event.target.value)}
+                  rows={4}
+                  placeholder="KEY=VALUE"
+                />
+              </label>
+            </div>
+          )}
+        </div>
       </div>
     </section>
   )
@@ -305,11 +331,17 @@ function SettingsSection(props: {
 
 export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Element {
   const [aiCli, setAiCli] = useState<AiCliKind>(props.initial.ai_cli ?? DEFAULT_AI_CLI)
-  const [command, setCommand] = useState<string>(props.initial.command ?? '')
+  const [permissionMode, setPermissionMode] = useState<AiPermissionMode>(
+    props.initial.permission_mode ?? DEFAULT_AI_PERMISSION_MODE
+  )
   const [argsText, setArgsText] = useState<string>((props.initial.args ?? []).join(' '))
   const [envText, setEnvText] = useState<string>(toEnvText(props.initial.env))
   const [openCodeForm, setOpenCodeForm] = useState<OpenCodeProviderForm>(
     toOpenCodeProviderForm(props.initial.opencode)
+  )
+  // 已经填过 args/env 的项目，打开设置就该看见它们，否则会以为参数丢了。
+  const [advancedOpen, setAdvancedOpen] = useState<boolean>(
+    (props.initial.args ?? []).length > 0 || Object.keys(props.initial.env ?? {}).length > 0
   )
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -317,7 +349,7 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
   useEffect(() => {
     if (saving) return
     setAiCli(props.initial.ai_cli ?? DEFAULT_AI_CLI)
-    setCommand(props.initial.command ?? '')
+    setPermissionMode(props.initial.permission_mode ?? DEFAULT_AI_PERMISSION_MODE)
     setArgsText((props.initial.args ?? []).join(' '))
     setEnvText(toEnvText(props.initial.env))
     setOpenCodeForm(toOpenCodeProviderForm(props.initial.opencode))
@@ -327,7 +359,7 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
     setSaving(true)
     setError(null)
 
-    const nextMain = fromForm(aiCli, command, argsText, envText, openCodeForm)
+    const nextMain = fromForm(aiCli, permissionMode, argsText, envText, openCodeForm)
 
     try {
       if (props.projectId) {
@@ -355,17 +387,9 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
       <div className="modal ai-settings-modal" onClick={(event) => event.stopPropagation()}>
         <header className="ai-settings-header">
           <div className="ai-settings-header-main">
-            <span className="ai-settings-header-dot" />
-            <div>
-              <h3>设置中心</h3>
-              <p>AI CLI</p>
-            </div>
+            <h3>设置</h3>
           </div>
           <div className="ai-settings-header-actions">
-            <span className="ai-settings-project-badge">
-              <span className="ai-settings-project-badge-dot" />
-              项目级保存
-            </span>
             <button className="modal-close" onClick={props.onClose} aria-label="关闭">
               ×
             </button>
@@ -377,27 +401,22 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
             <div id="ai-settings-ai-section" className="ai-settings-section-anchor">
               {props.projectId ? (
                 <SettingsSection
-                  title="主会话 AI"
                   aiCli={aiCli}
-                  command={command}
+                  permissionMode={permissionMode}
+                  advancedOpen={advancedOpen}
                   argsText={argsText}
                   envText={envText}
                   openCodeForm={openCodeForm}
                   onAiCli={setAiCli}
-                  onCommand={setCommand}
+                  onPermissionMode={setPermissionMode}
+                  onAdvancedOpen={setAdvancedOpen}
                   onArgs={setArgsText}
                   onEnv={setEnvText}
                   onOpenCodeForm={setOpenCodeForm}
                 />
               ) : (
                 <section className="ai-settings-card ai-settings-no-project-card">
-                  <div className="ai-settings-card-head">
-                    <span className="ai-settings-card-icon">AI</span>
-                    <div>
-                      <div className="ai-settings-title">AI CLI</div>
-                      <div className="ai-settings-note">选择项目后可编辑 AI CLI 配置</div>
-                    </div>
-                  </div>
+                  <div className="ai-settings-note">选择工作空间后可编辑 AI CLI 配置</div>
                 </section>
               )}
             </div>
@@ -406,7 +425,6 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
         </div>
 
         <footer className="ai-settings-footer">
-          <span>变更点击“保存设置”后生效。</span>
           <div className="ai-settings-footer-actions">
             <button className="drawer-btn" onClick={props.onClose}>
               取消

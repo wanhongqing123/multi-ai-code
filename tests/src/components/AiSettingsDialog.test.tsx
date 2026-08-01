@@ -32,6 +32,58 @@ describe('AiSettingsDialog', () => {
     expect(markup).toContain('ai-settings-ai-card')
   })
 
+  // 标题副行、「项目级保存」徽章、卡片头、Binary override、页脚那句提示——
+  // 都是没信息量的装饰，删了就别再回来。
+  it('drops the decorative header, badge, card head and binary override', () => {
+    const markup = renderDialog()
+
+    expect(markup).toContain('<h3>设置</h3>')
+    expect(markup).not.toContain('设置中心')
+    expect(markup).not.toContain('ai-settings-header-dot')
+    expect(markup).not.toContain('ai-settings-project-badge')
+    expect(markup).not.toContain('ai-settings-card-head')
+    expect(markup).not.toContain('主会话 AI')
+    expect(markup).not.toContain('Binary override')
+    expect(markup).not.toContain('变更点击')
+  })
+
+  it('offers exactly two permission levels and defaults to full access', () => {
+    const markup = renderDialog()
+
+    expect(markup).toContain('权限')
+    expect(markup).toContain('完全访问权限')
+    expect(markup).toContain('默认权限')
+    // 没有第三档：不暴露 --dangerously-* 之类的东西给用户挑。
+    expect(markup).not.toContain('dangerously')
+    expect(markup).toContain('<option value="full-access" selected="">完全访问权限</option>')
+  })
+
+  it('honours a saved default-permission choice', () => {
+    const markup = renderDialog({ initial: { ai_cli: 'codex', permission_mode: 'default' } })
+
+    expect(markup).toContain('<option value="default" selected="">默认权限</option>')
+  })
+
+  // 启动参数不该是常规操作：默认折叠，别摆在主界面上引导用户去填。
+  it('keeps launch args behind a collapsed advanced toggle', () => {
+    const markup = renderDialog()
+
+    expect(markup).toContain('高级参数设置')
+    expect(markup).toContain('aria-expanded="false"')
+    expect(markup).not.toContain('附加 args')
+    expect(markup).not.toContain('环境变量')
+  })
+
+  // 但已经填过参数的项目不能把它藏起来，否则会以为配置丢了。
+  it('expands the advanced block when the project already has args or env', () => {
+    expect(
+      renderDialog({ initial: { ai_cli: 'codex', args: ['--verbose'] } })
+    ).toContain('附加 args')
+    expect(
+      renderDialog({ initial: { ai_cli: 'codex', env: { FOO: 'bar' } } })
+    ).toContain('环境变量')
+  })
+
   // 设置界面只保留 AI CLI 一项，全局快捷键 / 工具栏按钮 / 项目构建 / 项目运行
   // 连同背后的功能一起删除了。这条守住「别又长回来」。
   it('keeps every removed settings section out of the dialog', () => {
@@ -154,6 +206,7 @@ describe('AiSettingsDialog', () => {
     const markup = renderDialog({ projectId: null })
 
     expect(markup).toContain('ai-settings-no-project-card')
+    expect(markup).toContain('选择工作空间后可编辑 AI CLI 配置')
   })
 
   it('emits a repair toast when the project settings save repaired metadata', () => {

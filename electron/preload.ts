@@ -21,7 +21,7 @@ export type {
 
 // 以下类型的「真源」在各自模块（均为纯类型模块，无运行时/Node 依赖）。这里 import 供
 // preload 自身使用，并统一 re-export——渲染层继续从 preload 引类型即可，无需改动。
-import type { AiSettings } from './settings/types.js'
+import type { AiPermissionMode, AiSettings } from './settings/types.js'
 import type { OpenCodeProviderProfile } from './aicli/opencodeConfig.js'
 import type {
   RemoteImContactRelation,
@@ -47,6 +47,7 @@ import type {
 } from './remote-im/types.js'
 
 export type {
+  AiPermissionMode,
   AiSettings,
   OpenCodeProviderProfile,
   RemoteImContactRelation,

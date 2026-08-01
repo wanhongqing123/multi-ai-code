@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { DEFAULT_AI_CLI, type AiSettings } from '../components/AiSettingsDialog'
+import {
+  DEFAULT_AI_CLI,
+  DEFAULT_AI_PERMISSION_MODE,
+  type AiSettings
+} from '../components/AiSettingsDialog'
 import AnalysisPanel, { type RepoCodeAnnotation } from './AnalysisPanel'
 import CodePane, { type RepoSelection } from './CodePane'
 import FileTree from './FileTree'
@@ -165,7 +169,8 @@ export default function RepoViewerWindow({
     const args = buildCliLaunchArgs(
       repoViewSettings.ai_cli,
       project.target_repo,
-      repoViewSettings.args ?? []
+      repoViewSettings.args ?? [],
+      repoViewSettings.permission_mode ?? DEFAULT_AI_PERMISSION_MODE
     )
     const res = await window.api.repoView.analysisStart({
       projectId,

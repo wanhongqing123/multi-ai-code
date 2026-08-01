@@ -13,6 +13,7 @@ import type { ProjectInfo } from './types/project'
 import ErrorPanel, { pushLog, useLogs } from './components/ErrorPanel'
 import AiSettingsDialog, {
   DEFAULT_AI_CLI,
+  DEFAULT_AI_PERMISSION_MODE,
   type AiSettings
 } from './components/AiSettingsDialog'
 import TemplatesDialog from './components/TemplatesDialog'
@@ -635,7 +636,8 @@ function AppShell() {
     const args = buildCliLaunchArgs(
       aiSettings.ai_cli ?? DEFAULT_AI_CLI,
       proj.target_repo,
-      aiSettings.args ?? []
+      aiSettings.args ?? [],
+      aiSettings.permission_mode ?? DEFAULT_AI_PERMISSION_MODE
     )
     const sid = `sess_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`
     setSessionId(sid)

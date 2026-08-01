@@ -44,7 +44,9 @@ export function buildExternalReviewPrompt({
   return [
     '认真查看下这个由其他外部AI的工具生成的Review建议，详细评价建议的合理性，哪些建议是合理的可以修改的，哪些是不合理的没必要修改的。给出详细的表格和修改方案。',
     '请直接输出 Markdown 结果，不要输出 JSON。',
-    `Plan file: ${planAbsPath}`,
+    // 没有任务在跑时 planAbsPath 为空，这一行整个略掉——否则会发出一句
+    // 「Plan file: 」的空提示，反而误导模型去找一个不存在的文件。
+    ...(planAbsPath.trim() ? [`Plan file: ${planAbsPath}`] : []),
     '',
     'External review content (Markdown):',
     suggestion.rawText,

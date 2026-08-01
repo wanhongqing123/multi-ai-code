@@ -50,17 +50,23 @@ export function formatInitialMessage(p: InitialMessageParams): string {
 export interface AnnotationsForSessionParams {
   readonly annotations: readonly SessionAnnotation[]
   readonly generalComment: string
-  readonly planAbsPath: string
+  /** 当前任务的方案文件。没有任务在跑时留空——批注本身照样成立。 */
+  readonly planAbsPath?: string
 }
 
 export function formatAnnotationsForSession(
   p: AnnotationsForSessionParams
 ): string {
+  const planAbsPath = p.planAbsPath?.trim() ?? ''
   const lines: string[] = []
   lines.push('# 用户批注')
   lines.push('')
+  // 没有方案文件就别提它。以前这里硬拼一个路径，于是「必须先选中一个普通任务」
+  // 成了发批注的前置条件——可批注针对的是代码改动，跟有没有任务无关。
   lines.push(
-    `以下是用户对当前改动的批注，请严格按照批注执行：修改代码、或更新方案文档（\`${p.planAbsPath}\`）。`
+    planAbsPath
+      ? `以下是用户对当前改动的批注，请严格按照批注执行：修改代码、或更新方案文档（\`${planAbsPath}\`）。`
+      : '以下是用户对当前改动的批注，请严格按照批注执行，直接修改代码。'
   )
   lines.push('')
   lines.push('## 逐行批注')
@@ -94,6 +100,10 @@ export function formatAnnotationsForSession(
 
   lines.push('---')
   lines.push('')
-  lines.push('请按照以上批注调整代码 / 方案，完成后在终端里简述改了什么。')
+  lines.push(
+    planAbsPath
+      ? '请按照以上批注调整代码 / 方案，完成后在终端里简述改了什么。'
+      : '请按照以上批注调整代码，完成后在终端里简述改了什么。'
+  )
   return lines.join('\n')
 }

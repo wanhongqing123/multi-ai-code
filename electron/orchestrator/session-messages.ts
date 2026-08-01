@@ -42,18 +42,22 @@ export interface AnnotationsForSessionParams {
   annotations: SessionAnnotation[]
   /** User's optional overall comment on the whole diff. */
   generalComment: string
-  /** Absolute path of the current plan markdown (for "update plan if asked" reference). */
-  planAbsPath: string
+  /** Absolute path of the current plan markdown (for "update plan if asked" reference).
+   *  Optional: 没有任务在跑时留空——批注针对的是代码改动，本身照样成立。 */
+  planAbsPath?: string
 }
 
 export function formatAnnotationsForSession(
   p: AnnotationsForSessionParams
 ): string {
+  const planAbsPath = p.planAbsPath?.trim() ?? ''
   const lines: string[] = []
   lines.push('# 用户批注')
   lines.push('')
   lines.push(
-    `以下是用户对当前改动的批注，请严格按照批注执行：修改代码、或更新方案文档（\`${p.planAbsPath}\`）。`
+    planAbsPath
+      ? `以下是用户对当前改动的批注，请严格按照批注执行：修改代码、或更新方案文档（\`${planAbsPath}\`）。`
+      : '以下是用户对当前改动的批注，请严格按照批注执行，直接修改代码。'
   )
   lines.push('')
   lines.push('## 逐行批注')
@@ -87,6 +91,10 @@ export function formatAnnotationsForSession(
 
   lines.push('---')
   lines.push('')
-  lines.push('请按照以上批注调整代码 / 方案，完成后在终端里简述改了什么。')
+  lines.push(
+    planAbsPath
+      ? '请按照以上批注调整代码 / 方案，完成后在终端里简述改了什么。'
+      : '请按照以上批注调整代码，完成后在终端里简述改了什么。'
+  )
   return lines.join('\n')
 }

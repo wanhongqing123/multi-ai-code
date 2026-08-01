@@ -1268,11 +1268,10 @@ function AppShell() {
         showToast('会话未启动，无法发送批注', { level: 'warn' })
         return
       }
-      if (!planName.trim()) {
-        showToast('没有选中普通任务，没有方案文件可写入批注。', { level: 'warn' })
-        return
-      }
-      const planAbsPath = getPlanAbsPath(planName.trim())
+      // 批注针对的是**代码改动**，跟有没有任务在跑无关：普通任务和定时任务只是
+      // 「手动发」和「按点发」的区别，没有「当前选中任务」这种状态。有任务时把
+      // 方案文件一并带上作为上下文，没有就只发批注。
+      const planAbsPath = planName.trim() ? getPlanAbsPath(planName.trim()) : undefined
       const text = formatAnnotationsForSession({
         annotations: anns,
         generalComment: generalNote,
@@ -1297,10 +1296,8 @@ function AppShell() {
       if (!sessionId || sessionStatus !== 'running') {
         return { ok: false as const, error: 'session not running' }
       }
-      if (!planName.trim()) {
-        return { ok: false as const, error: 'no plan selected' }
-      }
-      const planAbsPath = getPlanAbsPath(planName.trim())
+      // 同批注：没有任务在跑也能评审外部 AI 的建议，方案文件只是可选上下文。
+      const planAbsPath = planName.trim() ? getPlanAbsPath(planName.trim()) : ''
       return window.api.cc.judgeExternalReview({
         sessionId,
         planAbsPath,

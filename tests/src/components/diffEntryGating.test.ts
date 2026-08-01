@@ -41,10 +41,23 @@ describe('代码审查入口的开放条件', () => {
     expect(app).toContain('setIsGitRepo(res.ok)')
   })
 
-  it('keeps the annotation guards where they belong', () => {
-    const submit = app.slice(app.indexOf('const submitDiffAnnotations'))
-    // 发批注仍然要求会话在跑 + 选中普通任务，并且各自给出可读的原因。
+  // 发批注只要求会话在跑（要有人接收），不要求选中任务：普通任务和定时任务
+  // 只是「手动发」和「按点发」的区别，没有「当前选中任务」这种状态。
+  it('only requires a running session to send annotations', () => {
+    const submit = app.slice(
+      app.indexOf('const submitDiffAnnotations'),
+      app.indexOf('const judgeExternalReviewItem')
+    )
+
     expect(submit).toContain('会话未启动，无法发送批注')
-    expect(submit).toContain('没有选中普通任务，没有方案文件可写入批注。')
+    expect(submit).not.toContain('没有选中普通任务')
+    // 有任务就把方案文件当上下文带上，没有就不带——而不是直接拒发。
+    expect(submit).toContain("planName.trim() ? getPlanAbsPath(planName.trim()) : undefined")
+  })
+
+  it('does not block the external-review judge on a selected task either', () => {
+    const judge = app.slice(app.indexOf('const judgeExternalReviewItem'))
+
+    expect(judge).not.toContain("'no plan selected'")
   })
 })

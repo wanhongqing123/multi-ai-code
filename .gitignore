@@ -79,8 +79,11 @@ MaiChat/android/**/local.properties
 # Local git worktrees
 .worktrees/
 
-# Multi-AI Code local design/memory artifacts
+# Multi-AI Code 已不再往目标仓库写任何东西（方案文档 / 仓库记忆 / 分析缓存 /
+# 系统提示词注入，四条链路都已删除）。保留这两条忽略规则只是兜底：万一有人跑
+# 旧版本安装包，生成的残留不会污染 git。
 .multi-ai-code/
+.injections/
 
 # Local Whisper runtime binaries are generated during packaging.
 # The shared Whisper model under resources/asr/models is tracked by Git LFS.
@@ -90,9 +93,6 @@ resources/asr/**/lib/*
 resources/asr/**/licenses/*
 !resources/asr/README.md
 !resources/asr/**/.gitkeep
-
-# Runtime AI CLI system-prompt injection files (never the user's content)
-.injections/
 
 # Playwright MCP 浏览器工具的临时产物（页面快照/控制台日志）
 .playwright-mcp/

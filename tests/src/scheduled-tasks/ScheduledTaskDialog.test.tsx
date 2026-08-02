@@ -48,7 +48,9 @@ describe('ScheduledTaskDialog', () => {
       />
     )
 
-    expect(markup).toContain('\u5b9a\u65f6\u4efb\u52a1\u7ba1\u7406')
+    // \u624b\u52a8\u4efb\u52a1\u4e0e\u5b9a\u65f6\u4efb\u52a1\u7edf\u4e00\u6210\u300c\u4efb\u52a1\u300d\uff0c\u7ba1\u7406\u5668\u4e0d\u518d\u53eb\u300c\u5b9a\u65f6\u4efb\u52a1\u7ba1\u7406\u300d\u3002
+    expect(markup).toContain('\u4efb\u52a1\u7ba1\u7406')
+    expect(markup).not.toContain('\u5b9a\u65f6\u4efb\u52a1\u7ba1\u7406')
     expect(markup).toContain('\u5f53\u524d AICLI\uff1a\u5df2\u542f\u52a8')
     expect(markup).toContain('+ \u65b0\u5efa\u4efb\u52a1')
     expect(markup).toContain('Daily code review')
@@ -73,7 +75,7 @@ describe('ScheduledTaskDialog', () => {
       />
     )
 
-    expect(markup).toContain('\u8fd8\u6ca1\u6709\u5b9a\u65f6\u4efb\u52a1')
+    expect(markup).toContain('\u8fd8\u6ca1\u6709\u4efb\u52a1')
     expect(markup).toContain('+ \u65b0\u5efa\u4efb\u52a1')
     expect(markup).toContain('\u5f53\u524d AICLI\uff1a\u672a\u542f\u52a8')
   })

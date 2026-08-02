@@ -18,6 +18,15 @@ import {
 let tempRoot: string | null = null
 
 describe('computeNextRunAt', () => {
+  // 手动任务不参与调度：listDueScheduledTasks 的 WHERE 里有
+  // `next_run_at IS NOT NULL`，所以 nextRunAt 必须是 null，否则手动任务会被
+  // 当成定时任务到点自动跑掉——那正是「普通任务」不该有的行为。
+  it('gives manual tasks no next run time so the scheduler never picks them up', () => {
+    expect(
+      computeNextRunAt({ scheduleType: 'manual', scheduleTime: '21:30', scheduleDays: [] }, Date.now())
+    ).toBeNull()
+  })
+
   it('returns today when a daily task time is still ahead', () => {
     const now = new Date(2026, 5, 19, 10, 0).getTime()
     const next = computeNextRunAt({ scheduleType: 'daily', scheduleTime: '21:30', scheduleDays: [] }, now)

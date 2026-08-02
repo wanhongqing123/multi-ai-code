@@ -474,7 +474,7 @@ function AppShell() {
     setRemoteImSelectedPeerUserId(conversations[0]?.userId ?? null)
   }, [remoteImConfigReady, remoteImConfig, remoteImMessages, remoteImSelectedPeerUserId])
 
-  // 定时任务与普通任务并存，进项目就扫一次，不再取决于处在哪个模式。
+  // 任务不分模式，进项目就扫一次。
   useEffect(() => {
     if (!currentProjectId) return
     void window.api.scheduledTasks.scanNow(currentProjectId)
@@ -576,7 +576,7 @@ function AppShell() {
     }
     setMainPanelMounted(true)
     // 会话一起来就扫一次：定时任务此前只在"定时任务模式"下才会被调度，
-    // 普通模式下到点也不跑。现在任何会话都能接定时任务。
+    // 普通模式下到点也不跑。现在任何会话都能接任务。
     void window.api.scheduledTasks.scanNow(currentProjectId)
   }, [currentProjectId, projects, aiSettings, aiSettingsReady, aiSettingsLoadError])
 
@@ -1079,8 +1079,8 @@ function AppShell() {
               data-tone="amber"
               onClick={() => setShowScheduledTaskDialog(true)}
               disabled={!currentProjectId}
-              title="定时任务：创建和管理到点后交给当前 AICLI 执行的任务"
-              aria-label="定时任务"
+              title="任务管理：创建手动任务与定时任务，交给当前 AICLI 执行"
+              aria-label="任务管理"
             >
               ⏰
             </button>

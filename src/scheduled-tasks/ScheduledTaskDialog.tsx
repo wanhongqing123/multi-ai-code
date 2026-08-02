@@ -143,7 +143,7 @@ export default function ScheduledTaskDialog(props: Props): JSX.Element {
     if (typeof window === 'undefined' || !window.api?.scheduledTasks) return
     const confirmed =
       typeof window.confirm !== 'function' ||
-      window.confirm(`确认删除定时任务「${task.name}」吗？`)
+      window.confirm(`确认删除任务「${task.name}」吗？`)
     if (!confirmed) return
     await window.api.scheduledTasks.delete(task.id)
     setSelectedId(null)
@@ -153,16 +153,16 @@ export default function ScheduledTaskDialog(props: Props): JSX.Element {
   async function runNow(task: ScheduledTask): Promise<void> {
     if (typeof window === 'undefined' || !window.api?.scheduledTasks) return
     if (!sessionRunning || !sessionId) {
-      showToast('主会话未运行，无法发送定时任务，请先启动 AICLI。', { level: 'warn' })
+      showToast('主会话未运行，无法发送任务，请先启动 AICLI。', { level: 'warn' })
       return
     }
     const result = await window.api.scheduledTasks.runNow({ taskId: task.id, sessionId, targetRepo })
     if (!result.ok) {
-      showToast(result.error ?? '发送定时任务到 AICLI 失败。', { level: 'error' })
+      showToast(result.error ?? '发送任务到 AICLI 失败。', { level: 'error' })
       await refresh()
       return
     }
-    showToast('已发送定时任务到 AICLI。', { level: 'success' })
+    showToast('已发送任务到 AICLI。', { level: 'success' })
     await refresh()
   }
 
@@ -170,7 +170,7 @@ export default function ScheduledTaskDialog(props: Props): JSX.Element {
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal scheduled-task-modal" onClick={(event) => event.stopPropagation()}>
         <div className="modal-head">
-          <h3>⏰ 定时任务管理</h3>
+          <h3>⏰ 任务管理</h3>
           <span className={`scheduled-task-aicli ${aicliState === '已启动' ? 'idle' : ''}`}>
             当前 AICLI：{aicliState}
           </span>
@@ -217,7 +217,7 @@ export default function ScheduledTaskDialog(props: Props): JSX.Element {
               </div>
               {filteredTasks.length === 0 ? (
                 <div className="scheduled-task-empty">
-                  <strong>还没有定时任务</strong>
+                  <strong>还没有任务</strong>
                   <span>点击“+ 新建任务”，告诉 AICLI 到点后要做什么。</span>
                 </div>
               ) : (
@@ -247,8 +247,8 @@ export default function ScheduledTaskDialog(props: Props): JSX.Element {
                           disabled={!sessionRunning || !sessionId}
                           title={
                             sessionRunning && sessionId
-                              ? '发送定时任务到当前 AICLI'
-                              : '主会话未运行，无法发送定时任务'
+                              ? '发送任务到当前 AICLI'
+                              : '主会话未运行，无法发送任务'
                           }
                           onClick={() => {
                             setSelectedId(task.id)
@@ -302,7 +302,7 @@ export default function ScheduledTaskDialog(props: Props): JSX.Element {
                   <ScheduledTaskMarkdown className="scheduled-task-goal" markdown={selectedTask.goal} />
                   <h5>执行计划</h5>
                   <div className="scheduled-task-info-row">
-                    <span>频率：{formatScheduleLabel(selectedTask.scheduleType, selectedTask.scheduleTime, selectedTask.scheduleDays)}</span>
+                    <span>触发：{formatScheduleLabel(selectedTask.scheduleType, selectedTask.scheduleTime, selectedTask.scheduleDays)}</span>
                     <span>超时：{selectedTask.timeoutMinutes} 分钟</span>
                   </div>
                   <h5>AICLI 策略</h5>

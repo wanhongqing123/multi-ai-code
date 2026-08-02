@@ -147,7 +147,7 @@ export default function ScheduledTaskEditorDialog(props: Props): JSX.Element {
     >
       <div className="modal scheduled-task-editor-modal" onClick={(event) => event.stopPropagation()}>
         <div className="modal-head">
-          <h3>{mode === 'create' ? '＋ 新建定时任务' : '编辑定时任务'}</h3>
+          <h3>{mode === 'create' ? '＋ 新建任务' : '编辑任务'}</h3>
           <button className="modal-close" onClick={() => void closeEditor()}>
             ×
           </button>
@@ -282,18 +282,26 @@ export default function ScheduledTaskEditorDialog(props: Props): JSX.Element {
 
             <div className="scheduled-task-form-row">
               <label>
-                <span>频率</span>
+                <span>触发方式</span>
                 <select
                   value={draft.scheduleType}
                   onChange={(event) => setScheduleType(event.target.value as ScheduledTaskScheduleType)}
                 >
+                  <option value="manual">手动执行</option>
                   <option value="once">一次性</option>
                   <option value="daily">每天</option>
                   <option value="weekly">每周</option>
                   <option value="interval">每隔</option>
                 </select>
               </label>
-              {draft.scheduleType === 'interval' ? (
+              {/* 手动任务没有时间可填：它只在用户点「立即执行」时跑。放一个禁用的
+                  时间框比整块消失更稳——行内控件数量不变，布局不会跳。 */}
+              {draft.scheduleType === 'manual' ? (
+                <label className="scheduled-task-manual-hint">
+                  <span>执行时机</span>
+                  <span className="scheduled-task-manual-note">在列表里点「▶ 立即执行」</span>
+                </label>
+              ) : draft.scheduleType === 'interval' ? (
                 <label>
                   <span>间隔分钟</span>
                   <input

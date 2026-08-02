@@ -115,7 +115,7 @@ describe('buildScheduledTaskPrompt', () => {
     })
 
     expect(prompt).toContain('如果你正在处理上一项任务')
-    expect(prompt).toContain('请在上一项任务完成后继续执行下面的定时任务')
+    expect(prompt).toContain('请在上一项任务完成后继续执行下面的任务')
     expect(prompt).not.toContain('Completion marker protocol')
     expect(prompt).not.toContain('MULTI_AI_CODE_SCHEDULED_TASK_DONE:')
   })

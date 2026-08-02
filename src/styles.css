@@ -6020,6 +6020,16 @@ html, body, #root {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
+
+/* 手动任务没有时间可填，这一格放说明文字而不是输入框。行高对齐旁边的
+   input，避免三列里中间那格塌下去。 */
+.scheduled-task-manual-note {
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  color: var(--mac-fg-subtle);
+  font-size: var(--mac-text-xs);
+}
 .scheduled-task-preview pre {
   flex: 1;
   overflow: auto;

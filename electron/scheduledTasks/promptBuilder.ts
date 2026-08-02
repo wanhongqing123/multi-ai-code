@@ -28,8 +28,8 @@ export function buildScheduledTaskPrompt(
   ].filter((line): line is string => Boolean(line))
 
   return [
-    '你现在要执行一个由 Multi-AI Code 触发的定时任务。',
-    '如果你正在处理上一项任务，不要中断当前工作；请在上一项任务完成后继续执行下面的定时任务。如果当前没有正在处理的任务，请立即执行。',
+    '你现在要执行一个由 Multi-AI Code 触发的任务。',
+    '如果你正在处理上一项任务，不要中断当前工作；请在上一项任务完成后继续执行下面的任务。如果当前没有正在处理的任务，请立即执行。',
     '',
     `任务名称：${task.name}`,
     `工作目录：${context.targetRepo}`,

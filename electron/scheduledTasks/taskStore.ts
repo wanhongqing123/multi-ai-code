@@ -148,6 +148,11 @@ function parseIntervalMinutes(scheduleTime: string): number {
 
 export function computeNextRunAt(input: ScheduleInput, now = Date.now()): number | null {
   const current = new Date(now)
+  // 手动任务没有下一次运行时间。listDueScheduledTasks 的 WHERE 里有
+  // `next_run_at IS NOT NULL`，返回 null 就等于永不被调度捞走——它只能由
+  // 用户点「立即执行」触发。
+  if (input.scheduleType === 'manual') return null
+
   if (input.scheduleType === 'once') {
     const onceAt = dateAtLocalTime(current, input.scheduleTime)
     return onceAt.getTime()

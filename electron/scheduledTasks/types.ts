@@ -1,4 +1,14 @@
-export type ScheduledTaskScheduleType = 'once' | 'daily' | 'weekly' | 'interval'
+/**
+ * 任务的触发方式。'manual' 是「手动任务」：不参与调度，只在用户点「立即执行」
+ * 时跑一次——普通任务和定时任务的区别就只在这里，其余字段（目标、指令、超时、
+ * 权限）完全共用。
+ */
+export type ScheduledTaskScheduleType =
+  | 'manual'
+  | 'once'
+  | 'daily'
+  | 'weekly'
+  | 'interval'
 
 export type ScheduledTaskRunStatus =
   | 'pending'

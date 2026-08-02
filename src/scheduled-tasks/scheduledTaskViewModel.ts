@@ -50,9 +50,9 @@ export function buildScheduledTaskPreviewPrompt(
   ].filter((line): line is string => Boolean(line))
 
   return [
-    '你现在要执行一个由 Multi-AI Code 触发的定时任务。',
+    '你现在要执行一个由 Multi-AI Code 触发的任务。',
     '',
-    `任务名称：${draft.name || '未命名定时任务'}`,
+    `任务名称：${draft.name || '未命名任务'}`,
     `工作目录：${targetRepo || '当前项目'}`,
     `任务超时时间：${draft.timeoutMinutes} 分钟`,
     `如果无法在 ${draft.timeoutMinutes} 分钟内完成，请停止继续展开，输出当前进展、阻塞点和建议的下一步。`,
@@ -88,6 +88,7 @@ export function formatScheduleLabel(
   scheduleTime: string,
   scheduleDays: number[]
 ): string {
+  if (scheduleType === 'manual') return '手动执行'
   if (scheduleType === 'once') return `一次性 ${scheduleTime}`
   if (scheduleType === 'daily') return `每天 ${scheduleTime}`
   if (scheduleType === 'interval') return `每隔 ${parseScheduleIntervalMinutes(scheduleTime)} 分钟`

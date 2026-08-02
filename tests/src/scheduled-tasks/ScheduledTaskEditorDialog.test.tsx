@@ -26,7 +26,12 @@ describe('ScheduledTaskEditorDialog', () => {
       />
     )
 
-    expect(markup).toContain('新建定时任务')
+    expect(markup).toContain('新建任务')
+    // 定时/手动统一成「任务」，编辑器不该再自称「定时任务」。
+    expect(markup).not.toContain('新建定时任务')
+    // 触发方式必须能选到手动——这是普通任务的落点。
+    expect(markup).toContain('触发方式')
+    expect(markup).toContain('<option value="manual">手动执行</option>')
     expect(markup).toContain('任务描述')
     expect(markup).toContain('怎么干与限制')
     expect(markup).toContain('默认不允许自动改代码')

@@ -62,8 +62,8 @@ export function artifactsDir(projectId: string): string {
 export async function ensureRootDir(): Promise<void> {
   await fs.mkdir(projectsDir(), { recursive: true })
   // Retire the platform-managed `workspaces/` subdir from every project.
-  // Stage 1 now writes design.md directly to <target_repo>/.multi-ai-code/designs/;
-  // Stages 2-4 no longer exist. Safe to remove on every startup.
+  // 分阶段流程与方案文档都已删除，工作台不再往用户仓库写任何东西；
+  // 这里只负责清掉老版本残留的 workspaces/。每次启动跑一遍是安全的。
   const entries = await fs.readdir(projectsDir())
   for (const id of entries) {
     const ws = join(projectsDir(), id, 'workspaces')

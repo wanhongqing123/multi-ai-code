@@ -1,28 +1,5 @@
 ﻿import { describe, expect, it } from 'vitest'
-import {
-  buildCliInjectionText,
-  encodeAnalysisFileName
-} from '../../../src/repo-view/buildCliInjectionText'
-
-describe('encodeAnalysisFileName', () => {
-  it('replaces path separators with double underscore and appends .md', () => {
-    expect(encodeAnalysisFileName('libobs/obs-audio-controls.c')).toBe(
-      'libobs__obs-audio-controls.c.md'
-    )
-  })
-
-  it('keeps a top-level filename intact', () => {
-    expect(encodeAnalysisFileName('CMakeLists.txt')).toBe('CMakeLists.txt.md')
-  })
-
-  it('truncates very long paths and appends an 8-char hash suffix', () => {
-    const deep = Array.from({ length: 40 }, (_, i) => `seg${i}`).join('/')
-    const out = encodeAnalysisFileName(`${deep}/file.ts`)
-    expect(out.length).toBeLessThanOrEqual(200)
-    expect(out.endsWith('.md')).toBe(true)
-    expect(out).toMatch(/__[0-9a-f]{8}\.md$/)
-  })
-})
+import { buildCliInjectionText } from '../../../src/repo-view/buildCliInjectionText'
 
 describe('buildCliInjectionText', () => {
   const baseInput = {
@@ -97,14 +74,16 @@ describe('buildCliInjectionText', () => {
       ]
     })
 
-    expect(text).toContain('## 记忆约定')
-    expect(text).toContain('.multi-ai-code/repo-view/analyses/__multi-file__.md')
+    // 分析缓存约定已删除：提示词不该再指示 AI 往仓库里写文件，
+    // 否则「我们不建目录」只会变成「AI 自己建」。
+    expect(text).not.toContain('## 记忆约定')
+    expect(text).not.toContain('.multi-ai-code')
   })
 
-  it('keeps the single-file cache path for a single-file request', () => {
+  it('never asks the CLI to write an analysis cache file', () => {
     const text = buildCliInjectionText(baseInput)
-    expect(text).toContain(
-      '.multi-ai-code/repo-view/analyses/libobs__obs-audio-controls.c.md'
-    )
+    expect(text).not.toContain('.multi-ai-code')
+    expect(text).not.toContain('分析缓存')
+    expect(text).not.toContain('append')
   })
 })

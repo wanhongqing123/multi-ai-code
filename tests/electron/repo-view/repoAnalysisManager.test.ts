@@ -120,14 +120,17 @@ describe('shouldAutoRespondToRepoPermissionPrompt', () => {
     ).toEqual({ shouldRespond: true, promptActive: true, lastRespondAt: 4000 })
   })
 
-  it('responds to the repo-view analyses cache prompt', () => {
+  // 分析缓存约定已删除，这类弹窗不会再因为我们而出现。之前那条专门匹配
+  // analyses 路径的分支也一并去掉了——不能放宽成「do you want to proceed +
+  // and always allow」，那会把任意写操作的确认框都自动点掉。
+  it('no longer auto-responds to the removed analyses cache prompt', () => {
     expect(
       shouldAutoRespondToRepoPermissionPrompt(
         { permissionPromptActive: false },
         analysesPrompt,
         1000
       )
-    ).toEqual({ shouldRespond: true, promptActive: true, lastRespondAt: 1000 })
+    ).toEqual({ shouldRespond: false, promptActive: false, lastRespondAt: undefined })
   })
 
   it('does not auto-respond to unrelated persistent per-tool prompts', () => {

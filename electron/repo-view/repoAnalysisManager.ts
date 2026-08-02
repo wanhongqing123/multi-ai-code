@@ -71,13 +71,11 @@ export function shouldAutoRespondToRepoPermissionPrompt(
   lastRespondAt: number | undefined
 } {
   const text = normalizeTerminalText(combined).toLowerCase()
-  const promptVisible =
-    text.includes('allow all edits during this session') ||
-    (text.includes('do you want to proceed') &&
-      text.includes('and always allow') &&
-      (text.includes('ensure analyses cache directory exists') ||
-        text.includes('analyses/ from this project') ||
-        text.includes('.multi-ai-code/repo-view/analyses')))
+  // 只认「本次会话允许全部编辑」这一种弹窗。原本还有一条分支专门匹配写
+  // .multi-ai-code/repo-view/analyses 缓存时弹出的确认框——那套缓存约定已删除，
+  // 那个弹窗不会再出现。不能把该分支放宽成「do you want to proceed + and always
+  // allow」了事：那会把任意写操作的确认框都自动点掉。
+  const promptVisible = text.includes('allow all edits during this session')
   if (!promptVisible) {
     return {
       shouldRespond: false,

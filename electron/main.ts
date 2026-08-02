@@ -50,7 +50,6 @@ import {
   writeRepoAnalysisInput,
   pasteRepoAnalysisInput
 } from './repo-view/repoAnalysisManager.js'
-import { ensureAnalysisCacheDir } from './repo-view/analysisCache.js'
 import { getRemoteImRuntimeProfileId, resolveRemoteImUserDataPath } from './remote-im/profile.js'
 
 const isDev = !app.isPackaged
@@ -329,11 +328,6 @@ app.whenReady().then(async () => {
     async (e, req: { repoRoot: string; text: string }) => {
       const win = BrowserWindow.fromWebContents(e.sender)
       if (!win) return { ok: false as const, error: 'window not found' }
-      try {
-        await ensureAnalysisCacheDir(req.repoRoot)
-      } catch (err) {
-        console.warn('[repo-view] ensureAnalysisCacheDir failed:', err)
-      }
       try {
         await sendRepoAnalysisPrompt({ winId: win.id, text: req.text })
         return { ok: true as const }

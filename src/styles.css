@@ -2207,9 +2207,6 @@ html, body, #root {
      拖拽带从命中区里减掉，否则弹窗顶到该区域的按钮（如 Diff 的 ×）点不到。 */
   -webkit-app-region: no-drag;
 }
-.plan-review-backdrop {
-  z-index: 1300;
-}
 
 :root.theme-dark .modal-backdrop {
   background: rgba(0, 0, 0, 0.6);
@@ -2804,51 +2801,6 @@ html, body, #root {
   color: var(--mac-fg-muted);
 }
 
-/* ---------- PlanReviewDialog ---------- */
-.plan-review-modal {
-  width: 96vw;
-  max-width: 1400px;
-  height: 88vh;
-  max-height: none;
-  display: flex;
-  flex-direction: column;
-  /* Anchor for the composer overlay which uses position:absolute inset:0. */
-  position: relative;
-}
-
-.plan-review-meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--mac-sp-2);
-  padding: var(--mac-sp-3) var(--mac-sp-4);
-  background: var(--mac-surface-raised);
-  border-bottom: 1px solid var(--mac-border-subtle);
-  color: var(--mac-fg-muted);
-  font-size: var(--mac-text-xs);
-}
-
-.plan-review-body {
-  flex: 1 1 auto;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(240px, 320px);
-  min-height: 0;
-  border-bottom: 1px solid var(--mac-border-subtle);
-}
-
-.plan-review-pane {
-  position: relative;
-  overflow: auto;
-  padding: var(--mac-sp-4) var(--mac-sp-5);
-  background: var(--mac-surface);
-  border-right: 1px solid var(--mac-border-subtle);
-}
-
-.plan-review-pane ::selection {
-  background: var(--mac-primary);
-  color: var(--mac-primary-on);
-}
-
 .plan-review-annotate-floater {
   position: absolute;
   padding: 4px var(--mac-sp-2);
@@ -2872,155 +2824,9 @@ html, body, #root {
   box-shadow: 0 0 0 3px var(--mac-focus-ring);
 }
 
-.plan-review-side {
-  background: var(--mac-surface-raised);
-  border-left: 1px solid var(--mac-border-subtle);
-  min-width: 320px;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.plan-review-side-title {
-  padding: var(--mac-sp-3) var(--mac-sp-4);
-  border-bottom: 1px solid var(--mac-border-subtle);
-  font-size: var(--mac-text-md);
-  font-weight: var(--mac-weight-medium);
-  color: var(--mac-fg);
-}
-
-.plan-review-empty {
-  padding: var(--mac-sp-6);
-  text-align: center;
-  color: var(--mac-fg-subtle);
-  font-size: var(--mac-text-sm);
-  line-height: var(--mac-line-normal);
-}
-
-.plan-review-list {
-  flex: 1 1 auto;
-  overflow: auto;
-  list-style: none;
-  margin: 0;
-  padding: var(--mac-sp-3) var(--mac-sp-4);
-}
-
-.plan-review-item {
-  background: var(--mac-surface);
-  border: 1px solid var(--mac-border-subtle);
-  border-radius: var(--mac-r-md);
-  padding: var(--mac-sp-3) var(--mac-sp-4);
-  margin-bottom: var(--mac-sp-3);
-  cursor: pointer;
-}
-
-.plan-review-item:hover {
-  background: var(--mac-bg);
-}
-
-.plan-review-item-head {
-  display: flex;
-  align-items: center;
-  gap: var(--mac-sp-2);
-  font-size: var(--mac-text-sm);
-  color: var(--mac-fg);
-  margin-bottom: var(--mac-sp-2);
-}
-
-.plan-review-item-idx {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: var(--mac-r-pill);
-  background: var(--mac-primary-soft);
-  color: var(--mac-primary);
-  font-size: var(--mac-text-xs);
-  font-weight: var(--mac-weight-bold);
-}
-
-.plan-review-item-actions {
-  margin-left: auto;
-  display: flex;
-  gap: var(--mac-sp-1);
-}
-
-.plan-review-item-btn {
-  background: transparent;
-  border: none;
-  color: var(--mac-fg-subtle);
-  border-radius: var(--mac-r-sm);
-  padding: 4px var(--mac-sp-2);
-  font-size: var(--mac-text-xs);
-  cursor: pointer;
-  transition: background var(--mac-dur-fast) var(--mac-ease), color var(--mac-dur-fast) var(--mac-ease);
-}
-
-.plan-review-item-btn:hover {
-  background: var(--mac-bg);
-  color: var(--mac-fg);
-}
-
 .plan-review-item-btn.danger:hover {
   background: var(--mac-danger-soft);
   color: var(--mac-danger);
-}
-
-.plan-review-item-btn:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 3px var(--mac-focus-ring);
-}
-
-.plan-review-item-quote {
-  font-family: var(--mac-font-mono);
-  font-size: var(--mac-text-mono);
-  color: var(--mac-fg-subtle);
-  background: var(--mac-bg);
-  padding: var(--mac-sp-2);
-  border-radius: var(--mac-r-md);
-  margin: 0 0 var(--mac-sp-2);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.plan-review-item-comment {
-  padding: var(--mac-sp-2) 0;
-  font-size: var(--mac-text-sm);
-  color: var(--mac-fg-muted);
-  white-space: pre-wrap;
-}
-
-.plan-review-general {
-  border-top: 1px solid var(--mac-border-subtle);
-  padding: var(--mac-sp-4);
-}
-
-.plan-review-general-label {
-  display: block;
-  font-size: var(--mac-text-xs);
-  color: var(--mac-fg-subtle);
-  margin-bottom: var(--mac-sp-1);
-}
-
-.plan-review-general-input {
-  width: 100%;
-  background: var(--mac-surface);
-  border: 1px solid var(--mac-border);
-  border-radius: var(--mac-r-md);
-  padding: var(--mac-sp-2);
-  color: var(--mac-fg);
-  font-size: var(--mac-text-sm);
-  font-family: var(--mac-font-mono);
-  min-height: 80px;
-  resize: vertical;
-  box-sizing: border-box;
-}
-
-.plan-review-general-input:focus {
-  outline: none;
-  border-color: var(--mac-primary);
-  box-shadow: 0 0 0 3px var(--mac-focus-ring);
 }
 
 .plan-review-composer-backdrop {

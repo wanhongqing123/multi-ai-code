@@ -21,6 +21,8 @@ final class RemoteIMAppState: ObservableObject {
     @Published var chatState: MasterChatState
     @Published var hasCompletedInitialLogin = false
     @Published var presenceStatusByUserID: [String: RemoteIMPresenceStatus] = [:]
+    @Published private(set) var unreadCountByUserID: [String: Int] = [:]
+    @Published private(set) var userProfileByUserID: [String: RemoteIMUserProfile] = [:]
 
     private let settingsStore: LocalSettingsStore
     private let secretStore: KeychainSecretStore
@@ -28,6 +30,9 @@ final class RemoteIMAppState: ObservableObject {
     private let client: RemoteIMClient
     private let autoConnectOnLaunch: Bool
     private var didHandleLaunchAutoConnect = false
+    private var visibleConversationUserID: String?
+    private var visibleMessageLimitByUserID: [String: Int] = [:]
+    private let messagePageSize = 50
 
     init(
         settingsStore: LocalSettingsStore = LocalSettingsStore(),
@@ -60,6 +65,21 @@ final class RemoteIMAppState: ObservableObject {
             )
         )
         self.chatState = loadedState
+        self.unreadCountByUserID = settings.unreadCountByUserID.filter { userID, count in
+            count > 0 && loadedState.contacts.contains(where: { $0.userID == userID })
+        }
+        self.userProfileByUserID = Dictionary(
+            uniqueKeysWithValues: loadedState.contacts.map { contact in
+                (
+                    contact.userID,
+                    RemoteIMUserProfile(
+                        userID: contact.userID,
+                        displayName: contact.displayName,
+                        avatarURL: contact.avatarURL
+                    )
+                )
+            }
+        )
         self.client.onIncomingText = { [weak self] event in
             Task { @MainActor in
                 self?.receive(event)
@@ -92,6 +112,24 @@ final class RemoteIMAppState: ObservableObject {
         return chatState.contacts.first(where: { $0.userID == selectedPeerID })
     }
 
+    var totalUnreadCount: Int {
+        unreadCountByUserID.values.reduce(0, +)
+    }
+
+    func profile(for userID: String) -> RemoteIMUserProfile {
+        if let profile = userProfileByUserID[userID] {
+            return profile
+        }
+        if let contact = chatState.contacts.first(where: { $0.userID == userID }) {
+            return RemoteIMUserProfile(
+                userID: contact.userID,
+                displayName: contact.displayName,
+                avatarURL: contact.avatarURL
+            )
+        }
+        return RemoteIMUserProfile(userID: userID, displayName: userID, avatarURL: nil)
+    }
+
     var shouldShowInitialLogin: Bool {
         !hasCompletedInitialLogin
     }
@@ -107,6 +145,10 @@ final class RemoteIMAppState: ObservableObject {
     }
 
     var canSendImage: Bool {
+        connectionState == .connected && selectedContact != nil
+    }
+
+    var canSendFile: Bool {
         connectionState == .connected && selectedContact != nil
     }
 
@@ -169,6 +211,7 @@ final class RemoteIMAppState: ObservableObject {
                 userSig: userSig
             )
             connectionState = .connected
+            await refreshProfilesForCurrentUsers()
             await refreshPresenceForCurrentContacts()
             errorMessage = nil
         } catch {
@@ -191,11 +234,13 @@ final class RemoteIMAppState: ObservableObject {
 
     func addContact() {
         do {
+            let addedUserID = newContactUserID.trimmingCharacters(in: .whitespacesAndNewlines)
             try chatState.upsertContact(userID: newContactUserID, relation: newContactRelation)
             newContactUserID = ""
             settingsStore.save(currentStoredSettings())
             errorMessage = nil
             Task {
+                await refreshProfiles(userIDs: [addedUserID])
                 await refreshPresenceForCurrentContacts()
             }
         } catch {
@@ -203,49 +248,119 @@ final class RemoteIMAppState: ObservableObject {
         }
     }
 
-    func deleteContact(_ contact: RemoteIMContact) {
-        deleteContact(userID: contact.userID)
+    func deleteContact(_ contact: RemoteIMContact) async -> Bool {
+        await deleteContact(userID: contact.userID)
     }
 
-    func deleteContact(userID: String) {
+    func deleteContact(userID: String) async -> Bool {
         let cleanUserID = userID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleanUserID.isEmpty else { return }
+        guard !cleanUserID.isEmpty else { return false }
+        do {
+            try await client.deleteContact(userID: cleanUserID)
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
         chatState.removeContactAndMessages(userID: cleanUserID)
         if newContactUserID.trimmingCharacters(in: .whitespacesAndNewlines) == cleanUserID {
             newContactUserID = ""
         }
         persistCurrentHistory()
-        settingsStore.save(currentStoredSettings())
         presenceStatusByUserID = RemoteIMPresenceStatusPolicy.merged(
             current: presenceStatusByUserID,
             updates: [:],
             contactUserIDs: chatState.contacts.map(\.userID)
         )
+        unreadCountByUserID[cleanUserID] = nil
+        visibleMessageLimitByUserID[cleanUserID] = nil
+        if visibleConversationUserID == cleanUserID {
+            visibleConversationUserID = nil
+        }
+        userProfileByUserID[cleanUserID] = nil
+        settingsStore.save(currentStoredSettings())
         Task {
             await refreshPresenceForCurrentContacts()
         }
         errorMessage = nil
+        return true
+    }
+
+    func clearHistory(with userID: String) async -> Bool {
+        let cleanUserID = userID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanUserID.isEmpty else { return false }
+        do {
+            try await client.clearHistory(userID: cleanUserID)
+            chatState.removeMessages(with: cleanUserID)
+            unreadCountByUserID[cleanUserID] = nil
+            visibleMessageLimitByUserID[cleanUserID] = messagePageSize
+            persistCurrentHistory()
+            settingsStore.save(currentStoredSettings())
+            errorMessage = nil
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
     }
 
     func selectContact(_ contact: RemoteIMContact) {
         chatState.selectPeer(userID: contact.userID)
+        unreadCountByUserID[contact.userID] = nil
+        settingsStore.save(currentStoredSettings())
+    }
+
+    func setConversationVisible(userID: String, visible: Bool) {
+        let cleanUserID = userID.trimmingCharacters(in: .whitespacesAndNewlines)
+        if visible {
+            visibleConversationUserID = cleanUserID
+            unreadCountByUserID[cleanUserID] = nil
+        } else if visibleConversationUserID == cleanUserID {
+            visibleConversationUserID = nil
+        }
+        settingsStore.save(currentStoredSettings())
+    }
+
+    func unreadCount(for userID: String) -> Int {
+        unreadCountByUserID[userID] ?? 0
+    }
+
+    func visibleMessages(with userID: String) -> [RemoteIMMessage] {
+        let messages = chatState.messages(with: userID)
+        let limit = visibleMessageLimitByUserID[userID] ?? messagePageSize
+        return Array(messages.suffix(limit))
+    }
+
+    func hasEarlierMessages(with userID: String) -> Bool {
+        visibleMessages(with: userID).count < chatState.messages(with: userID).count
+    }
+
+    func loadEarlierMessages(with userID: String) {
+        let currentLimit = visibleMessageLimitByUserID[userID] ?? messagePageSize
+        visibleMessageLimitByUserID[userID] = currentLimit + messagePageSize
+        objectWillChange.send()
     }
 
     func sendDraft() async {
         guard canSend else { return }
 
+        var queuedMessageID: UUID?
         do {
             let message = try chatState.queueOutgoingText(draftText)
+            queuedMessageID = message.id
             let textToSend = message.text
             draftText = ""
             persistCurrentHistory()
-            try await client.sendText(to: message.toUserID, text: textToSend)
-            try chatState.updateMessageStatus(id: message.id, status: .sent)
+            let receipt = try await client.sendText(to: message.toUserID, text: textToSend)
+            try chatState.updateMessageDelivery(
+                id: message.id,
+                remoteID: receipt.remoteID,
+                createdAt: receipt.createdAt
+            )
             persistCurrentHistory()
             errorMessage = nil
         } catch {
-            if let lastMessage = chatState.messages.last, lastMessage.status == .pending {
-                try? chatState.updateMessageStatus(id: lastMessage.id, status: .failed)
+            if let queuedMessageID {
+                try? chatState.updateMessageStatus(id: queuedMessageID, status: .failed)
                 persistCurrentHistory()
             }
             errorMessage = error.localizedDescription
@@ -255,19 +370,25 @@ final class RemoteIMAppState: ObservableObject {
     func sendVoiceRecording(_ recording: RemoteIMVoiceRecording) async {
         guard canSendVoice else { return }
 
+        var queuedMessageID: UUID?
         do {
             let message = try chatState.queueOutgoingVoice(
                 filePath: recording.fileURL.path,
                 durationSeconds: recording.durationSeconds
             )
+            queuedMessageID = message.id
             persistCurrentHistory()
-            try await client.sendVoice(to: message.toUserID, recording: recording)
-            try chatState.updateMessageStatus(id: message.id, status: .sent)
+            let receipt = try await client.sendVoice(to: message.toUserID, recording: recording)
+            try chatState.updateMessageDelivery(
+                id: message.id,
+                remoteID: receipt.remoteID,
+                createdAt: receipt.createdAt
+            )
             persistCurrentHistory()
             errorMessage = nil
         } catch {
-            if let lastMessage = chatState.messages.last, lastMessage.status == .pending {
-                try? chatState.updateMessageStatus(id: lastMessage.id, status: .failed)
+            if let queuedMessageID {
+                try? chatState.updateMessageStatus(id: queuedMessageID, status: .failed)
                 persistCurrentHistory()
             }
             errorMessage = error.localizedDescription
@@ -277,6 +398,7 @@ final class RemoteIMAppState: ObservableObject {
     func sendImageFile(_ image: RemoteIMImageFile) async {
         guard canSendImage else { return }
 
+        var queuedMessageID: UUID?
         do {
             let message = try chatState.queueOutgoingImage(
                 filePath: image.fileURL.path,
@@ -284,14 +406,49 @@ final class RemoteIMAppState: ObservableObject {
                 height: image.height,
                 sizeBytes: image.sizeBytes
             )
+            queuedMessageID = message.id
             persistCurrentHistory()
-            try await client.sendImage(to: message.toUserID, image: image)
-            try chatState.updateMessageStatus(id: message.id, status: .sent)
+            let receipt = try await client.sendImage(to: message.toUserID, image: image)
+            try chatState.updateMessageDelivery(
+                id: message.id,
+                remoteID: receipt.remoteID,
+                createdAt: receipt.createdAt
+            )
             persistCurrentHistory()
             errorMessage = nil
         } catch {
-            if let lastMessage = chatState.messages.last, lastMessage.status == .pending {
-                try? chatState.updateMessageStatus(id: lastMessage.id, status: .failed)
+            if let queuedMessageID {
+                try? chatState.updateMessageStatus(id: queuedMessageID, status: .failed)
+                persistCurrentHistory()
+            }
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func sendFile(_ file: RemoteIMFile) async {
+        guard canSendFile else { return }
+
+        var queuedMessageID: UUID?
+        do {
+            let message = try chatState.queueOutgoingFile(
+                filePath: file.fileURL.path,
+                fileName: file.fileName,
+                mimeType: file.mimeType,
+                sizeBytes: file.sizeBytes
+            )
+            queuedMessageID = message.id
+            persistCurrentHistory()
+            let receipt = try await client.sendFile(to: message.toUserID, file: file)
+            try chatState.updateMessageDelivery(
+                id: message.id,
+                remoteID: receipt.remoteID,
+                createdAt: receipt.createdAt
+            )
+            persistCurrentHistory()
+            errorMessage = nil
+        } catch {
+            if let queuedMessageID {
+                try? chatState.updateMessageStatus(id: queuedMessageID, status: .failed)
                 persistCurrentHistory()
             }
             errorMessage = error.localizedDescription
@@ -299,16 +456,21 @@ final class RemoteIMAppState: ObservableObject {
     }
 
     private func receive(_ event: IncomingRemoteIMText) {
+        let previousCount = chatState.messages.count
         _ = chatState.receiveText(
             event.text,
             fromUserID: event.fromUserID,
+            remoteID: event.remoteID,
             now: event.createdAt
         )
+        updateUnreadAfterReceiving(from: event.fromUserID, wasInserted: chatState.messages.count > previousCount)
+        refreshProfileIfNeeded(userID: event.fromUserID)
         persistCurrentHistory()
         settingsStore.save(currentStoredSettings())
     }
 
     private func receive(_ event: IncomingRemoteIMVoice) {
+        let previousCount = chatState.messages.count
         _ = chatState.receiveVoice(
             filePath: event.fileURL.path,
             durationSeconds: event.durationSeconds,
@@ -316,11 +478,14 @@ final class RemoteIMAppState: ObservableObject {
             remoteID: event.remoteID,
             now: event.createdAt
         )
+        updateUnreadAfterReceiving(from: event.fromUserID, wasInserted: chatState.messages.count > previousCount)
+        refreshProfileIfNeeded(userID: event.fromUserID)
         persistCurrentHistory()
         settingsStore.save(currentStoredSettings())
     }
 
     private func receive(_ event: IncomingRemoteIMImage) {
+        let previousCount = chatState.messages.count
         _ = chatState.receiveImage(
             filePath: event.fileURL.path,
             fromUserID: event.fromUserID,
@@ -330,11 +495,14 @@ final class RemoteIMAppState: ObservableObject {
             sizeBytes: event.sizeBytes,
             now: event.createdAt
         )
+        updateUnreadAfterReceiving(from: event.fromUserID, wasInserted: chatState.messages.count > previousCount)
+        refreshProfileIfNeeded(userID: event.fromUserID)
         persistCurrentHistory()
         settingsStore.save(currentStoredSettings())
     }
 
     private func receive(_ event: IncomingRemoteIMFile) {
+        let previousCount = chatState.messages.count
         _ = chatState.receiveFile(
             filePath: event.fileURL.path,
             fromUserID: event.fromUserID,
@@ -344,8 +512,19 @@ final class RemoteIMAppState: ObservableObject {
             sizeBytes: event.sizeBytes,
             now: event.createdAt
         )
+        updateUnreadAfterReceiving(from: event.fromUserID, wasInserted: chatState.messages.count > previousCount)
+        refreshProfileIfNeeded(userID: event.fromUserID)
         persistCurrentHistory()
         settingsStore.save(currentStoredSettings())
+    }
+
+    private func updateUnreadAfterReceiving(from userID: String, wasInserted: Bool) {
+        guard wasInserted else { return }
+        if visibleConversationUserID == userID {
+            unreadCountByUserID[userID] = nil
+        } else {
+            unreadCountByUserID[userID, default: 0] += 1
+        }
     }
 
     private func currentStoredSettings() -> StoredRemoteIMSettings {
@@ -354,7 +533,9 @@ final class RemoteIMAppState: ObservableObject {
             masterUserID: masterUserID.trimmingCharacters(in: .whitespacesAndNewlines),
             friendUserIDs: chatState.contacts
                 .map(\.userID),
-            slaveUserIDs: []
+            slaveUserIDs: [],
+            contacts: chatState.contacts,
+            unreadCountByUserID: unreadCountByUserID
         )
     }
 
@@ -421,6 +602,41 @@ final class RemoteIMAppState: ObservableObject {
         }
     }
 
+    private func refreshProfilesForCurrentUsers() async {
+        await refreshProfiles(
+            userIDs: [chatState.ownerUserID] + chatState.contacts.map(\.userID)
+        )
+    }
+
+    private func refreshProfiles(userIDs: [String]) async {
+        guard connectionState == .connected else { return }
+        do {
+            let profiles = try await client.refreshUserProfiles(userIDs: userIDs)
+            for profile in profiles {
+                userProfileByUserID[profile.userID] = profile
+                if let contact = chatState.contacts.first(where: { $0.userID == profile.userID }) {
+                    try chatState.upsertContact(
+                        userID: profile.userID,
+                        relation: contact.relation,
+                        displayName: profile.displayName,
+                        avatarURL: profile.avatarURL
+                    )
+                }
+            }
+            settingsStore.save(currentStoredSettings())
+        } catch {
+            #if DEBUG
+            print("RemoteIM profile refresh failed: \(error.localizedDescription)")
+            #endif
+        }
+    }
+
+    private func refreshProfileIfNeeded(userID: String) {
+        let profile = profile(for: userID)
+        guard profile.displayName == userID && profile.avatarURL == nil else { return }
+        Task { await refreshProfiles(userIDs: [userID]) }
+    }
+
     private func applyPresenceStatusUpdates(_ updates: [String: RemoteIMPresenceStatus]) {
         presenceStatusByUserID = RemoteIMPresenceStatusPolicy.merged(
             current: presenceStatusByUserID,
@@ -434,9 +650,12 @@ final class RemoteIMAppState: ObservableObject {
     }
 
     private static func contacts(from settings: StoredRemoteIMSettings) -> [RemoteIMContact] {
-        (settings.friendUserIDs + settings.slaveUserIDs).map { userID in
-            RemoteIMContact(userID: userID, displayName: userID, relation: .friend)
+        var contacts = settings.contacts
+        for userID in settings.friendUserIDs + settings.slaveUserIDs
+        where !contacts.contains(where: { $0.userID == userID }) {
+            contacts.append(RemoteIMContact(userID: userID, displayName: userID, relation: .friend))
         }
+        return contacts
     }
 
     private func applyFixedCredential() {

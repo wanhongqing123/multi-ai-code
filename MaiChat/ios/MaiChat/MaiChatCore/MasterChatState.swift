@@ -20,7 +20,7 @@ public enum MasterChatStateError: Error, Equatable, LocalizedError {
     }
 }
 
-public enum RemoteIMContactRelation: String, Codable, Equatable, Hashable {
+public enum RemoteIMContactRelation: String, Codable, Equatable, Hashable, Sendable {
     case friend
     case slave
 
@@ -205,20 +205,44 @@ public enum RemoteIMLoginCredentialPolicy {
     }
 }
 
-public struct RemoteIMContact: Identifiable, Codable, Equatable, Hashable {
+public struct RemoteIMContact: Identifiable, Codable, Equatable, Hashable, Sendable {
     public var id: String { userID }
     public let userID: String
     public var displayName: String
+    public var avatarURL: String?
     public var relation: RemoteIMContactRelation
 
     public init(
         userID: String,
         displayName: String,
+        avatarURL: String? = nil,
         relation: RemoteIMContactRelation = .friend
     ) {
         self.userID = userID
         self.displayName = displayName
+        self.avatarURL = avatarURL
         self.relation = .friend
+    }
+}
+
+public enum RemoteIMAvatarMonogramPolicy {
+    public static func text(displayName: String, userID: String) -> String {
+        let cleanUserID = userID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanDisplayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasNickname = !cleanDisplayName.isEmpty && cleanDisplayName != cleanUserID
+        let source = hasNickname ? cleanDisplayName : cleanUserID
+        guard !source.isEmpty else { return "M" }
+        guard hasNickname else { return String(source.prefix(1)).uppercased() }
+
+        let words = source
+            .replacingOccurrences(of: "-", with: " ")
+            .replacingOccurrences(of: "_", with: " ")
+            .split(whereSeparator: { $0.isWhitespace })
+        if words.count >= 2, let first = words.first, let last = words.last {
+            return (String(first.prefix(1)) + String(last.prefix(1))).uppercased()
+        }
+        let containsNonASCII = source.unicodeScalars.contains { !$0.isASCII }
+        return String(containsNonASCII ? source.suffix(2) : source.prefix(2)).uppercased()
     }
 }
 
@@ -297,6 +321,7 @@ public struct RemoteIMFileAttachment: Codable, Equatable {
 
 public struct RemoteIMMessage: Identifiable, Codable, Equatable {
     public let id: UUID
+    public var remoteID: String?
     public let fromUserID: String
     public let toUserID: String
     public let text: String
@@ -305,10 +330,11 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable {
     public let fileAttachment: RemoteIMFileAttachment?
     public let direction: RemoteIMMessageDirection
     public var status: RemoteIMMessageStatus
-    public let createdAt: Date
+    public var createdAt: Date
 
     public init(
         id: UUID = UUID(),
+        remoteID: String? = nil,
         fromUserID: String,
         toUserID: String,
         text: String,
@@ -320,6 +346,7 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable {
         createdAt: Date
     ) {
         self.id = id
+        self.remoteID = remoteID
         self.fromUserID = fromUserID
         self.toUserID = toUserID
         self.text = text
@@ -385,9 +412,11 @@ public struct MasterChatState: Equatable {
             let cleanUserID = contact.userID.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !cleanUserID.isEmpty else { continue }
             let cleanDisplayName = contact.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let cleanAvatarURL = contact.avatarURL?.trimmingCharacters(in: .whitespacesAndNewlines)
             let normalizedContact = RemoteIMContact(
                 userID: cleanUserID,
                 displayName: cleanDisplayName.isEmpty ? cleanUserID : cleanDisplayName,
+                avatarURL: cleanAvatarURL?.isEmpty == false ? cleanAvatarURL : nil,
                 relation: .friend
             )
             if let index = normalizedContacts.firstIndex(where: { $0.userID == cleanUserID }) {
@@ -434,20 +463,35 @@ public struct MasterChatState: Equatable {
     public mutating func upsertContact(
         userID: String,
         relation: RemoteIMContactRelation,
-        displayName: String? = nil
+        displayName: String? = nil,
+        avatarURL: String? = nil
     ) throws {
         let cleanUserID = userID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanUserID.isEmpty else { throw MasterChatStateError.blankUserID }
         let cleanDisplayName = displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let contact = RemoteIMContact(
-            userID: cleanUserID,
-            displayName: cleanDisplayName?.isEmpty == false ? cleanDisplayName! : cleanUserID,
-            relation: relation
-        )
+        let cleanAvatarURL = avatarURL?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let index = contacts.firstIndex(where: { $0.userID == cleanUserID }) {
+            var contact = contacts[index]
+            if let cleanDisplayName,
+               !cleanDisplayName.isEmpty,
+               cleanDisplayName != cleanUserID || contact.displayName.isEmpty || contact.displayName == cleanUserID
+            {
+                contact.displayName = cleanDisplayName
+            }
+            if let cleanAvatarURL, !cleanAvatarURL.isEmpty {
+                contact.avatarURL = cleanAvatarURL
+            }
+            contact.relation = .friend
             contacts[index] = contact
         } else {
-            contacts.append(contact)
+            contacts.append(
+                RemoteIMContact(
+                    userID: cleanUserID,
+                    displayName: cleanDisplayName?.isEmpty == false ? cleanDisplayName! : cleanUserID,
+                    avatarURL: cleanAvatarURL?.isEmpty == false ? cleanAvatarURL : nil,
+                    relation: relation
+                )
+            )
         }
         if selectedPeerID == nil {
             selectedPeerID = cleanUserID
@@ -473,6 +517,14 @@ public struct MasterChatState: Equatable {
             selectedPeerID.map({ selected in !contacts.contains(where: { $0.userID == selected }) }) == true
         {
             selectedPeerID = contacts.first?.userID
+        }
+    }
+
+    public mutating func removeMessages(with userID: String) {
+        let cleanUserID = userID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanUserID.isEmpty else { return }
+        messages.removeAll { message in
+            message.fromUserID == cleanUserID || message.toUserID == cleanUserID
         }
     }
 
@@ -614,13 +666,53 @@ public struct MasterChatState: Equatable {
     }
 
     @discardableResult
+    public mutating func queueOutgoingFile(
+        filePath: String,
+        fileName: String,
+        mimeType: String,
+        sizeBytes: Int? = nil,
+        now: Date = Date()
+    ) throws -> RemoteIMMessage {
+        let cleanFilePath = filePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanFilePath.isEmpty else { throw MasterChatStateError.blankMessage }
+        guard let peerID = selectedPeerID, !peerID.isEmpty else {
+            throw MasterChatStateError.noSelectedPeer
+        }
+        let fileAttachment = RemoteIMFileAttachment(
+            localFilePath: cleanFilePath,
+            fileName: fileName,
+            mimeType: mimeType,
+            sizeBytes: sizeBytes
+        )
+        let message = RemoteIMMessage(
+            fromUserID: ownerUserID,
+            toUserID: peerID,
+            text: Self.fileDisplayText(
+                fileName: fileAttachment.fileName,
+                filePath: cleanFilePath
+            ),
+            fileAttachment: fileAttachment,
+            direction: .outgoing,
+            status: .pending,
+            createdAt: now
+        )
+        messages.append(message)
+        return message
+    }
+
+    @discardableResult
     public mutating func receiveText(
         _ text: String,
         fromUserID: String,
+        remoteID: String? = nil,
         now: Date = Date()
     ) -> RemoteIMMessage {
+        if let existing = existingMessage(remoteID: remoteID) {
+            return existing
+        }
         let cleanFromUserID = fromUserID.trimmingCharacters(in: .whitespacesAndNewlines)
         let message = RemoteIMMessage(
+            remoteID: remoteID,
             fromUserID: cleanFromUserID,
             toUserID: ownerUserID,
             text: Self.incomingDisplayText(text),
@@ -652,6 +744,9 @@ public struct MasterChatState: Equatable {
         remoteID: String? = nil,
         now: Date = Date()
     ) -> RemoteIMMessage {
+        if let existing = existingMessage(remoteID: remoteID) {
+            return existing
+        }
         let cleanFromUserID = fromUserID.trimmingCharacters(in: .whitespacesAndNewlines)
         let voiceAttachment = RemoteIMVoiceAttachment(
             localFilePath: filePath.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -659,6 +754,7 @@ public struct MasterChatState: Equatable {
             remoteID: remoteID
         )
         let message = RemoteIMMessage(
+            remoteID: remoteID,
             fromUserID: cleanFromUserID,
             toUserID: ownerUserID,
             text: Self.voiceDisplayText(durationSeconds: voiceAttachment.durationSeconds),
@@ -693,6 +789,9 @@ public struct MasterChatState: Equatable {
         sizeBytes: Int? = nil,
         now: Date = Date()
     ) -> RemoteIMMessage {
+        if let existing = existingMessage(remoteID: remoteID) {
+            return existing
+        }
         let cleanFromUserID = fromUserID.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanFilePath = filePath.trimmingCharacters(in: .whitespacesAndNewlines)
         let imageAttachment = RemoteIMImageAttachment(
@@ -703,6 +802,7 @@ public struct MasterChatState: Equatable {
             sizeBytes: sizeBytes
         )
         let message = RemoteIMMessage(
+            remoteID: remoteID,
             fromUserID: cleanFromUserID,
             toUserID: ownerUserID,
             text: Self.imageDisplayText(filePath: cleanFilePath),
@@ -737,6 +837,9 @@ public struct MasterChatState: Equatable {
         sizeBytes: Int? = nil,
         now: Date = Date()
     ) -> RemoteIMMessage {
+        if let existing = existingMessage(remoteID: remoteID) {
+            return existing
+        }
         let cleanFromUserID = fromUserID.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanFilePath = filePath.trimmingCharacters(in: .whitespacesAndNewlines)
         let fileAttachment = RemoteIMFileAttachment(
@@ -747,6 +850,7 @@ public struct MasterChatState: Equatable {
             sizeBytes: sizeBytes
         )
         let message = RemoteIMMessage(
+            remoteID: remoteID,
             fromUserID: cleanFromUserID,
             toUserID: ownerUserID,
             text: Self.fileDisplayText(fileName: fileAttachment.fileName, filePath: cleanFilePath),
@@ -779,5 +883,27 @@ public struct MasterChatState: Equatable {
             throw MasterChatStateError.messageNotFound
         }
         messages[index].status = status
+    }
+
+    public mutating func updateMessageDelivery(
+        id: UUID,
+        remoteID: String?,
+        createdAt: Date?
+    ) throws {
+        guard let index = messages.firstIndex(where: { $0.id == id }) else {
+            throw MasterChatStateError.messageNotFound
+        }
+        messages[index].status = .sent
+        if let remoteID, !remoteID.isEmpty {
+            messages[index].remoteID = remoteID
+        }
+        if let createdAt {
+            messages[index].createdAt = createdAt
+        }
+    }
+
+    private func existingMessage(remoteID: String?) -> RemoteIMMessage? {
+        guard let remoteID, !remoteID.isEmpty else { return nil }
+        return messages.first(where: { $0.remoteID == remoteID })
     }
 }

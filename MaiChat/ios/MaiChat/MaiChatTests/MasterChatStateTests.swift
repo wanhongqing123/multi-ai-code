@@ -231,6 +231,78 @@ final class MasterChatStateTests: XCTestCase {
         XCTAssertEqual(state.contacts.map(\.userID), ["mac-quark-pc"])
     }
 
+    func testQueuesOutgoingFileMessageWithLocalAttachment() throws {
+        var state = MasterChatState(ownerUserID: "ios-master")
+        try state.upsertFriend(userID: "mac-quark-pc")
+        state.selectPeer(userID: "mac-quark-pc")
+
+        let message = try state.queueOutgoingFile(
+            filePath: "/tmp/report.pdf",
+            fileName: "report.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 8192,
+            now: Date(timeIntervalSince1970: 164)
+        )
+
+        XCTAssertEqual(message.text, "[文件消息] report.pdf")
+        XCTAssertEqual(message.fileAttachment?.localFilePath, "/tmp/report.pdf")
+        XCTAssertEqual(message.fileAttachment?.fileName, "report.pdf")
+        XCTAssertEqual(message.fileAttachment?.mimeType, "application/pdf")
+        XCTAssertEqual(message.fileAttachment?.sizeBytes, 8192)
+        XCTAssertEqual(message.status, .pending)
+    }
+
+    func testClearsConversationMessagesWithoutRemovingContact() throws {
+        var state = MasterChatState(ownerUserID: "ios-master")
+        try state.upsertFriend(userID: "mac-quark-pc")
+        state.selectPeer(userID: "mac-quark-pc")
+        _ = try state.queueOutgoingText("hello")
+
+        state.removeMessages(with: "mac-quark-pc")
+
+        XCTAssertEqual(state.contacts.map(\.userID), ["mac-quark-pc"])
+        XCTAssertEqual(state.selectedPeerID, "mac-quark-pc")
+        XCTAssertTrue(state.messages.isEmpty)
+    }
+
+    func testDeduplicatesIncomingMessagesByRemoteID() {
+        var state = MasterChatState(ownerUserID: "ios-master")
+
+        let first = state.receiveText(
+            "first",
+            fromUserID: "mac-quark-pc",
+            remoteID: "sdk-message-1",
+            now: Date(timeIntervalSince1970: 165)
+        )
+        let duplicate = state.receiveText(
+            "duplicate callback",
+            fromUserID: "mac-quark-pc",
+            remoteID: "sdk-message-1",
+            now: Date(timeIntervalSince1970: 166)
+        )
+
+        XCTAssertEqual(first, duplicate)
+        XCTAssertEqual(state.messages, [first])
+    }
+
+    func testAdoptsSDKReceiptForOutgoingMessage() throws {
+        var state = MasterChatState(ownerUserID: "ios-master")
+        try state.upsertFriend(userID: "mac-quark-pc")
+        state.selectPeer(userID: "mac-quark-pc")
+        let queued = try state.queueOutgoingText("hello")
+        let serverDate = Date(timeIntervalSince1970: 167)
+
+        try state.updateMessageDelivery(
+            id: queued.id,
+            remoteID: "sdk-message-2",
+            createdAt: serverDate
+        )
+
+        XCTAssertEqual(state.messages.first?.remoteID, "sdk-message-2")
+        XCTAssertEqual(state.messages.first?.createdAt, serverDate)
+        XCTAssertEqual(state.messages.first?.status, .sent)
+    }
+
     func testImagePreviewPolicyCreatesPreviewItemForImageMessage() {
         let messageID = UUID(uuidString: "22222222-2222-2222-2222-222222222222")!
         let message = RemoteIMMessage(
@@ -448,6 +520,63 @@ final class MasterChatStateTests: XCTestCase {
 
         XCTAssertEqual(state.contacts.map(\.userID), ["ios-friend", "mac-quark-pc"])
         XCTAssertEqual(state.contacts.map(\.relation), [.friend, .friend])
+    }
+
+    func testAvatarMonogramPrefersNicknameAndFallsBackToUserID() {
+        XCTAssertEqual(
+            RemoteIMAvatarMonogramPolicy.text(
+                displayName: "iPhone User",
+                userID: "whq-iphone"
+            ),
+            "IU"
+        )
+        XCTAssertEqual(
+            RemoteIMAvatarMonogramPolicy.text(
+                displayName: "钟颖娟",
+                userID: "whq-iphone"
+            ),
+            "颖娟"
+        )
+        XCTAssertEqual(
+            RemoteIMAvatarMonogramPolicy.text(
+                displayName: "whq-iphone",
+                userID: "whq-iphone"
+            ),
+            "W"
+        )
+    }
+
+    func testContactProfileUpdateKeepsUsefulMetadataWhenFallbackIsEmpty() throws {
+        var state = MasterChatState(ownerUserID: "ios-master")
+        try state.upsertContact(
+            userID: "whq-iphone",
+            relation: .friend,
+            displayName: "iPhone User",
+            avatarURL: "https://example.com/avatar.png"
+        )
+
+        try state.upsertContact(
+            userID: "whq-iphone",
+            relation: .friend,
+            displayName: "whq-iphone",
+            avatarURL: ""
+        )
+
+        XCTAssertEqual(state.contacts.first?.displayName, "iPhone User")
+        XCTAssertEqual(state.contacts.first?.avatarURL, "https://example.com/avatar.png")
+    }
+
+    func testContactAvatarURLRoundTripsThroughJSON() throws {
+        let contact = RemoteIMContact(
+            userID: "whq-iphone",
+            displayName: "iPhone User",
+            avatarURL: "https://example.com/avatar.png"
+        )
+
+        let data = try JSONEncoder().encode(contact)
+        let decoded = try JSONDecoder().decode(RemoteIMContact.self, from: data)
+
+        XCTAssertEqual(decoded, contact)
     }
 
     func testDraftSubmitPolicyConsumesTrailingReturn() {

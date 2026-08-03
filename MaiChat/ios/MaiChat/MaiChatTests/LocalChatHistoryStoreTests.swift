@@ -99,6 +99,7 @@ final class LocalChatHistoryStoreTests: XCTestCase {
         let store = LocalChatHistoryStore(baseDirectoryURL: directoryURL)
         let messages = [
             RemoteIMMessage(
+                remoteID: "sdk-file-message-1",
                 fromUserID: "mac-quark-pc",
                 toUserID: "ios-master",
                 text: "[语音]",
@@ -137,6 +138,10 @@ final class LocalChatHistoryStoreTests: XCTestCase {
         XCTAssertEqual(
             store.load(sdkAppID: 1_600_148_979, ownerUserID: "ios-master"),
             messages
+        )
+        XCTAssertEqual(
+            store.load(sdkAppID: 1_600_148_979, ownerUserID: "ios-master").first?.remoteID,
+            "sdk-file-message-1"
         )
     }
 

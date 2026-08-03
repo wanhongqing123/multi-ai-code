@@ -112,9 +112,12 @@ private struct ContactList: View {
                     .listRowBackground(RemoteIMStyle.panelBackground)
                     .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                         Button(role: .destructive) {
-                            appState.deleteContact(contact)
-                            if activeContact?.userID == contact.userID {
-                                activeContact = nil
+                            Task {
+                                if await appState.deleteContact(contact),
+                                   activeContact?.userID == contact.userID
+                                {
+                                    activeContact = nil
+                                }
                             }
                         } label: {
                             Label("删除", systemImage: "trash")
@@ -137,10 +140,10 @@ private struct ContactRow: View {
     var body: some View {
         HStack(spacing: 12) {
             RemoteIMContactAvatar(
+                contact: contact,
                 isSelected: selected,
                 presenceStatus: presenceStatus,
-                size: 30,
-                iconSize: 16
+                size: 30
             )
 
             VStack(alignment: .leading, spacing: 3) {

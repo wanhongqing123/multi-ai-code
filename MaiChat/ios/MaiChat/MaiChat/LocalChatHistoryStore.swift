@@ -111,7 +111,7 @@ final class LocalChatHistoryStore {
             let statement = try prepare(
                 database,
                 sql: """
-                SELECT id, from_user, to_user, text, direction, status, created_at,
+                SELECT id, remote_id, from_user, to_user, text, direction, status, created_at,
                        voice_attachment, image_attachment, file_attachment
                 FROM messages
                 WHERE sdk_app_id = ? AND owner_user_id = ?
@@ -165,10 +165,10 @@ final class LocalChatHistoryStore {
             database,
             sql: """
             INSERT INTO messages(
-                sdk_app_id, owner_user_id, id, from_user, to_user, text,
+                sdk_app_id, owner_user_id, id, remote_id, from_user, to_user, text,
                 direction, status, created_at,
                 voice_attachment, image_attachment, file_attachment
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
         )
         defer { sqlite3_finalize(statement) }
@@ -179,15 +179,16 @@ final class LocalChatHistoryStore {
             try bindText(accountKey(for: sdkAppID), to: statement, at: 1, database: database)
             try bindText(ownerUserID, to: statement, at: 2, database: database)
             try bindText(message.id.uuidString, to: statement, at: 3, database: database)
-            try bindText(message.fromUserID, to: statement, at: 4, database: database)
-            try bindText(message.toUserID, to: statement, at: 5, database: database)
-            try bindText(message.text, to: statement, at: 6, database: database)
-            try bindText(message.direction.rawValue, to: statement, at: 7, database: database)
-            try bindText(message.status.rawValue, to: statement, at: 8, database: database)
-            sqlite3_bind_double(statement, 9, message.createdAt.timeIntervalSince1970)
-            try bindOptionalJSON(message.voiceAttachment, to: statement, at: 10, database: database)
-            try bindOptionalJSON(message.imageAttachment, to: statement, at: 11, database: database)
-            try bindOptionalJSON(message.fileAttachment, to: statement, at: 12, database: database)
+            try bindOptionalText(message.remoteID, to: statement, at: 4, database: database)
+            try bindText(message.fromUserID, to: statement, at: 5, database: database)
+            try bindText(message.toUserID, to: statement, at: 6, database: database)
+            try bindText(message.text, to: statement, at: 7, database: database)
+            try bindText(message.direction.rawValue, to: statement, at: 8, database: database)
+            try bindText(message.status.rawValue, to: statement, at: 9, database: database)
+            sqlite3_bind_double(statement, 10, message.createdAt.timeIntervalSince1970)
+            try bindOptionalJSON(message.voiceAttachment, to: statement, at: 11, database: database)
+            try bindOptionalJSON(message.imageAttachment, to: statement, at: 12, database: database)
+            try bindOptionalJSON(message.fileAttachment, to: statement, at: 13, database: database)
             guard sqlite3_step(statement) == SQLITE_DONE else {
                 throw databaseError(database)
             }
@@ -196,32 +197,33 @@ final class LocalChatHistoryStore {
 
     private func decodeMessage(from statement: OpaquePointer) -> RemoteIMMessage? {
         guard let id = UUID(uuidString: textColumn(statement, at: 0)),
-              let direction = RemoteIMMessageDirection(rawValue: textColumn(statement, at: 4)),
-              let status = RemoteIMMessageStatus(rawValue: textColumn(statement, at: 5))
+              let direction = RemoteIMMessageDirection(rawValue: textColumn(statement, at: 5)),
+              let status = RemoteIMMessageStatus(rawValue: textColumn(statement, at: 6))
         else {
             return nil
         }
 
         return RemoteIMMessage(
             id: id,
-            fromUserID: textColumn(statement, at: 1),
-            toUserID: textColumn(statement, at: 2),
-            text: textColumn(statement, at: 3),
+            remoteID: optionalTextColumn(statement, at: 1),
+            fromUserID: textColumn(statement, at: 2),
+            toUserID: textColumn(statement, at: 3),
+            text: textColumn(statement, at: 4),
             voiceAttachment: decodeOptionalJSON(
                 RemoteIMVoiceAttachment.self,
-                from: optionalTextColumn(statement, at: 7)
+                from: optionalTextColumn(statement, at: 8)
             ),
             imageAttachment: decodeOptionalJSON(
                 RemoteIMImageAttachment.self,
-                from: optionalTextColumn(statement, at: 8)
+                from: optionalTextColumn(statement, at: 9)
             ),
             fileAttachment: decodeOptionalJSON(
                 RemoteIMFileAttachment.self,
-                from: optionalTextColumn(statement, at: 9)
+                from: optionalTextColumn(statement, at: 10)
             ),
             direction: direction,
             status: status,
-            createdAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 6))
+            createdAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 7))
         )
     }
 
@@ -261,6 +263,7 @@ final class LocalChatHistoryStore {
                 sdk_app_id TEXT NOT NULL,
                 owner_user_id TEXT NOT NULL,
                 id TEXT NOT NULL,
+                remote_id TEXT,
                 from_user TEXT NOT NULL,
                 to_user TEXT NOT NULL,
                 text TEXT NOT NULL DEFAULT '',
@@ -274,6 +277,9 @@ final class LocalChatHistoryStore {
             )
             """
         )
+        if try !columnExists("remote_id", in: "messages", database: database) {
+            try execute(database, sql: "ALTER TABLE messages ADD COLUMN remote_id TEXT")
+        }
         try execute(
             database,
             sql: """
@@ -281,7 +287,14 @@ final class LocalChatHistoryStore {
             ON messages(sdk_app_id, owner_user_id, created_at, id)
             """
         )
-        try execute(database, sql: "PRAGMA user_version = 1")
+        try execute(
+            database,
+            sql: """
+            CREATE INDEX IF NOT EXISTS idx_messages_account_remote_id
+            ON messages(sdk_app_id, owner_user_id, remote_id)
+            """
+        )
+        try execute(database, sql: "PRAGMA user_version = 2")
     }
 
     private func execute(_ database: OpaquePointer, sql: String) throws {
@@ -322,6 +335,36 @@ final class LocalChatHistoryStore {
         guard result == SQLITE_OK else {
             throw databaseError(database)
         }
+    }
+
+    private func bindOptionalText(
+        _ value: String?,
+        to statement: OpaquePointer,
+        at index: Int32,
+        database: OpaquePointer
+    ) throws {
+        guard let value, !value.isEmpty else {
+            guard sqlite3_bind_null(statement, index) == SQLITE_OK else {
+                throw databaseError(database)
+            }
+            return
+        }
+        try bindText(value, to: statement, at: index, database: database)
+    }
+
+    private func columnExists(
+        _ columnName: String,
+        in tableName: String,
+        database: OpaquePointer
+    ) throws -> Bool {
+        let statement = try prepare(database, sql: "PRAGMA table_info(\(tableName))")
+        defer { sqlite3_finalize(statement) }
+        while sqlite3_step(statement) == SQLITE_ROW {
+            if textColumn(statement, at: 1) == columnName {
+                return true
+            }
+        }
+        return false
     }
 
     private func bindOptionalJSON<Value: Encodable>(

@@ -1,28 +1,37 @@
 import Foundation
+import MaiChatCore
 
-struct StoredRemoteIMSettings: Codable, Equatable {
+struct StoredRemoteIMSettings: Codable, Equatable, Sendable {
     var sdkAppID: Int?
     var masterUserID: String
     var friendUserIDs: [String]
     var slaveUserIDs: [String]
+    var contacts: [RemoteIMContact]
+    var unreadCountByUserID: [String: Int]
 
     static let empty = StoredRemoteIMSettings(
         sdkAppID: nil,
         masterUserID: "",
         friendUserIDs: [],
-        slaveUserIDs: []
+        slaveUserIDs: [],
+        contacts: [],
+        unreadCountByUserID: [:]
     )
 
     init(
         sdkAppID: Int?,
         masterUserID: String,
         friendUserIDs: [String] = [],
-        slaveUserIDs: [String] = []
+        slaveUserIDs: [String] = [],
+        contacts: [RemoteIMContact] = [],
+        unreadCountByUserID: [String: Int] = [:]
     ) {
         self.sdkAppID = sdkAppID
         self.masterUserID = masterUserID
         self.friendUserIDs = friendUserIDs
         self.slaveUserIDs = slaveUserIDs
+        self.contacts = contacts
+        self.unreadCountByUserID = unreadCountByUserID
     }
 
     init(from decoder: Decoder) throws {
@@ -31,6 +40,11 @@ struct StoredRemoteIMSettings: Codable, Equatable {
         self.masterUserID = try container.decodeIfPresent(String.self, forKey: .masterUserID) ?? ""
         self.friendUserIDs = try container.decodeIfPresent([String].self, forKey: .friendUserIDs) ?? []
         self.slaveUserIDs = try container.decodeIfPresent([String].self, forKey: .slaveUserIDs) ?? []
+        self.contacts = try container.decodeIfPresent([RemoteIMContact].self, forKey: .contacts) ?? []
+        self.unreadCountByUserID = try container.decodeIfPresent(
+            [String: Int].self,
+            forKey: .unreadCountByUserID
+        ) ?? [:]
     }
 }
 

@@ -4,6 +4,7 @@ import MaiChatCore
 struct IncomingRemoteIMText: Equatable {
     let fromUserID: String
     let text: String
+    let remoteID: String?
     let createdAt: Date
 }
 
@@ -47,6 +48,24 @@ struct RemoteIMImageFile: Equatable {
     let sizeBytes: Int?
 }
 
+struct RemoteIMFile: Equatable {
+    let fileURL: URL
+    let fileName: String
+    let mimeType: String
+    let sizeBytes: Int?
+}
+
+struct RemoteIMSendReceipt: Equatable {
+    let remoteID: String?
+    let createdAt: Date?
+}
+
+struct RemoteIMUserProfile: Equatable {
+    let userID: String
+    let displayName: String
+    let avatarURL: String?
+}
+
 enum RemoteIMClientError: Error, LocalizedError {
     case sdkNotIntegrated
     case sdkInitializationFailed
@@ -74,9 +93,13 @@ protocol RemoteIMClient: AnyObject {
 
     func connect(sdkAppID: Int, userID: String, userSig: String) async throws
     func disconnect() async
-    func sendText(to userID: String, text: String) async throws
-    func sendVoice(to userID: String, recording: RemoteIMVoiceRecording) async throws
-    func sendImage(to userID: String, image: RemoteIMImageFile) async throws
+    func sendText(to userID: String, text: String) async throws -> RemoteIMSendReceipt
+    func sendVoice(to userID: String, recording: RemoteIMVoiceRecording) async throws -> RemoteIMSendReceipt
+    func sendImage(to userID: String, image: RemoteIMImageFile) async throws -> RemoteIMSendReceipt
+    func sendFile(to userID: String, file: RemoteIMFile) async throws -> RemoteIMSendReceipt
+    func deleteContact(userID: String) async throws
+    func clearHistory(userID: String) async throws
+    func refreshUserProfiles(userIDs: [String]) async throws -> [RemoteIMUserProfile]
     func refreshPresenceStatuses(userIDs: [String]) async throws -> [String: RemoteIMPresenceStatus]
     func subscribePresenceStatuses(userIDs: [String]) async throws
 }

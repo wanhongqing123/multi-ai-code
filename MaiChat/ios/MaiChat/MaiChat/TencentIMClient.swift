@@ -1,5 +1,6 @@
 import Foundation
 import MaiChatCore
+import UniformTypeIdentifiers
 
 #if canImport(ImSDK_Plus)
 import ImSDK_Plus
@@ -88,6 +89,27 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
         }
     }
 
+    func refreshUserProfiles(userIDs: [String]) async throws -> [RemoteIMUserProfile] {
+        let cleanedUserIDs = Self.cleanUserIDs(userIDs)
+        guard !cleanedUserIDs.isEmpty else { return [] }
+        return try await withCheckedThrowingContinuation { continuation in
+            V2TIMManager.sharedInstance().getUsersInfo(
+                cleanedUserIDs,
+                succ: { infoList in
+                    continuation.resume(returning: (infoList ?? []).compactMap(Self.profile(from:)))
+                },
+                fail: { code, desc in
+                    continuation.resume(
+                        throwing: RemoteIMClientError.operationFailed(
+                            code: code,
+                            description: desc ?? "getUsersInfo failed"
+                        )
+                    )
+                }
+            )
+        }
+    }
+
     func subscribePresenceStatuses(userIDs: [String]) async throws {
         let cleanedUserIDs = Self.cleanUserIDs(userIDs)
         guard !cleanedUserIDs.isEmpty else { return }
@@ -109,48 +131,62 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
         }
     }
 
-    func sendText(to userID: String, text: String) async throws {
-        try await withCheckedThrowingContinuation { continuation in
-            _ = V2TIMManager.sharedInstance().sendC2CTextMessage(
-                text: text,
-                to: userID,
-                succ: {
-                    continuation.resume()
-                },
-                fail: { code, desc in
-                    continuation.resume(
-                        throwing: RemoteIMClientError.operationFailed(
-                            code: code,
-                            description: desc ?? "send failed"
-                        )
-                    )
-                }
-            )
+    func sendText(to userID: String, text: String) async throws -> RemoteIMSendReceipt {
+        guard let message = V2TIMManager.sharedInstance().createTextMessage(text: text) else {
+            throw RemoteIMClientError.operationFailed(code: -1, description: "create text message failed")
         }
+        return try await send(message: message, to: userID, failureDescription: "send text failed")
     }
 
-    func sendVoice(to userID: String, recording: RemoteIMVoiceRecording) async throws {
-        let message = V2TIMManager.sharedInstance().createSoundMessage(
+    func sendVoice(to userID: String, recording: RemoteIMVoiceRecording) async throws -> RemoteIMSendReceipt {
+        guard let message = V2TIMManager.sharedInstance().createSoundMessage(
             audioFilePath: recording.fileURL.path,
             duration: Int32(recording.durationSeconds)
-        )
-        try await withCheckedThrowingContinuation { continuation in
-            V2TIMManager.sharedInstance().sendMessage(
-                message: message,
-                receiver: userID,
-                groupID: nil,
-                priority: V2TIMMessagePriority(rawValue: 0)!,
-                onlineUserOnly: false,
-                offlinePushInfo: nil,
-                progress: nil,
-                succ: {
-                    continuation.resume()
+        ) else {
+            throw RemoteIMClientError.operationFailed(code: -1, description: "create voice message failed")
+        }
+        return try await send(message: message, to: userID, failureDescription: "send voice failed")
+    }
+
+    func sendImage(to userID: String, image: RemoteIMImageFile) async throws -> RemoteIMSendReceipt {
+        guard let message = V2TIMManager.sharedInstance().createImageMessage(imagePath: image.fileURL.path) else {
+            throw RemoteIMClientError.operationFailed(code: -1, description: "create image message failed")
+        }
+        return try await send(message: message, to: userID, failureDescription: "send image failed")
+    }
+
+    func sendFile(to userID: String, file: RemoteIMFile) async throws -> RemoteIMSendReceipt {
+        guard let message = V2TIMManager.sharedInstance().createFileMessage(
+            filePath: file.fileURL.path,
+            fileName: file.fileName
+        ) else {
+            throw RemoteIMClientError.operationFailed(code: -1, description: "create file message failed")
+        }
+        return try await send(message: message, to: userID, failureDescription: "send file failed")
+    }
+
+    func deleteContact(userID: String) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            V2TIMManager.sharedInstance().deleteFromFriendList(
+                userIDList: [userID],
+                deleteType: V2TIMFriendType(rawValue: 2)!,
+                succ: { results in
+                    if let failure = results?.first(where: { $0.resultCode != 0 }) {
+                        continuation.resume(
+                            throwing: RemoteIMClientError.operationFailed(
+                                code: Int32(failure.resultCode),
+                                description: failure.resultInfo ?? "delete friend failed"
+                            )
+                        )
+                    } else {
+                        continuation.resume()
+                    }
                 },
                 fail: { code, desc in
                     continuation.resume(
                         throwing: RemoteIMClientError.operationFailed(
                             code: code,
-                            description: desc ?? "send voice failed"
+                            description: desc ?? "delete friend failed"
                         )
                     )
                 }
@@ -158,8 +194,30 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
         }
     }
 
-    func sendImage(to userID: String, image: RemoteIMImageFile) async throws {
-        let message = V2TIMManager.sharedInstance().createImageMessage(imagePath: image.fileURL.path)
+    func clearHistory(userID: String) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            V2TIMManager.sharedInstance().clearC2CHistoryMessage(
+                userID: userID,
+                succ: {
+                    continuation.resume()
+                },
+                fail: { code, desc in
+                    continuation.resume(
+                        throwing: RemoteIMClientError.operationFailed(
+                            code: code,
+                            description: desc ?? "clear history failed"
+                        )
+                    )
+                }
+            )
+        }
+    }
+
+    private func send(
+        message: V2TIMMessage,
+        to userID: String,
+        failureDescription: String
+    ) async throws -> RemoteIMSendReceipt {
         try await withCheckedThrowingContinuation { continuation in
             V2TIMManager.sharedInstance().sendMessage(
                 message: message,
@@ -170,18 +228,37 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
                 offlinePushInfo: nil,
                 progress: nil,
                 succ: {
-                    continuation.resume()
+                    continuation.resume(returning: Self.receipt(for: message))
                 },
                 fail: { code, desc in
                     continuation.resume(
                         throwing: RemoteIMClientError.operationFailed(
                             code: code,
-                            description: desc ?? "send image failed"
+                            description: desc ?? failureDescription
                         )
                     )
                 }
             )
         }
+    }
+
+    private static func receipt(for message: V2TIMMessage) -> RemoteIMSendReceipt {
+        RemoteIMSendReceipt(remoteID: message.msgID, createdAt: message.timestamp)
+    }
+
+    private static func profile(from info: V2TIMUserFullInfo) -> RemoteIMUserProfile? {
+        guard let userID = info.userID?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !userID.isEmpty
+        else {
+            return nil
+        }
+        let nickname = info.nickName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let avatarURL = info.faceURL?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return RemoteIMUserProfile(
+            userID: userID,
+            displayName: nickname?.isEmpty == false ? nickname! : userID,
+            avatarURL: avatarURL?.isEmpty == false ? avatarURL : nil
+        )
     }
 
     nonisolated func onRecvC2CTextMessage(msgID: String, sender: V2TIMUserInfo, text: String?) {
@@ -194,6 +271,7 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
                 self?.emitIncomingText(
                     fromUserID: userID,
                     text: text,
+                    remoteID: msgID,
                     createdAt: createdAt
                 )
             },
@@ -201,6 +279,7 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
                 self?.emitIncomingText(
                     fromUserID: userID,
                     text: text,
+                    remoteID: msgID,
                     createdAt: fallbackDate
                 )
             }
@@ -262,7 +341,6 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
         fromUserID: String
     ) {
         let fileName = Self.cleanFileName(fileElem.filename)
-        guard Self.isSupportedPreviewFileName(fileName) else { return }
         let createdAt = msg.timestamp ?? Date()
         let remoteID = fileElem.uuid ?? msg.msgID
         let targetURL = Self.fileCacheURL(remoteID: remoteID, messageID: msg.msgID, fileName: fileName)
@@ -326,12 +404,14 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
     private nonisolated func emitIncomingText(
         fromUserID: String,
         text: String,
+        remoteID: String?,
         createdAt: Date
     ) {
-        Task { @MainActor [weak self, fromUserID, text, createdAt] in
+        Task { @MainActor [weak self, fromUserID, text, remoteID, createdAt] in
             let event = IncomingRemoteIMText(
                 fromUserID: fromUserID,
                 text: text,
+                remoteID: remoteID,
                 createdAt: createdAt
             )
             self?.onIncomingText?(event)
@@ -394,7 +474,7 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
         let fileExtension = URL(fileURLWithPath: fileName).pathExtension
         return directory
             .appendingPathComponent(safeName)
-            .appendingPathExtension(fileExtension.isEmpty ? "md" : fileExtension)
+            .appendingPathExtension(fileExtension.isEmpty ? "bin" : fileExtension)
     }
 
     private nonisolated static func cleanFileName(_ value: String?) -> String {
@@ -402,22 +482,9 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
         return cleanValue.isEmpty ? "remote-im-file.md" : cleanValue
     }
 
-    private nonisolated static func isSupportedPreviewFileName(_ fileName: String) -> Bool {
-        switch URL(fileURLWithPath: fileName).pathExtension.lowercased() {
-        case "md", "markdown", "html", "htm":
-            return true
-        default:
-            return false
-        }
-    }
-
     private nonisolated static func mimeType(for fileName: String) -> String {
-        switch URL(fileURLWithPath: fileName).pathExtension.lowercased() {
-        case "html", "htm":
-            return "text/html"
-        default:
-            return "text/markdown"
-        }
+        let fileExtension = URL(fileURLWithPath: fileName).pathExtension
+        return UTType(filenameExtension: fileExtension)?.preferredMIMEType ?? "application/octet-stream"
     }
 
     @objc nonisolated func onUserStatusChanged(userStatusList: [V2TIMUserStatus]!) {
@@ -476,15 +543,31 @@ final class TencentIMClient: RemoteIMClient {
 
     func disconnect() async {}
 
-    func sendText(to userID: String, text: String) async throws {
+    func sendText(to userID: String, text: String) async throws -> RemoteIMSendReceipt {
         throw RemoteIMClientError.sdkNotIntegrated
     }
 
-    func sendVoice(to userID: String, recording: RemoteIMVoiceRecording) async throws {
+    func sendVoice(to userID: String, recording: RemoteIMVoiceRecording) async throws -> RemoteIMSendReceipt {
         throw RemoteIMClientError.sdkNotIntegrated
     }
 
-    func sendImage(to userID: String, image: RemoteIMImageFile) async throws {
+    func sendImage(to userID: String, image: RemoteIMImageFile) async throws -> RemoteIMSendReceipt {
+        throw RemoteIMClientError.sdkNotIntegrated
+    }
+
+    func sendFile(to userID: String, file: RemoteIMFile) async throws -> RemoteIMSendReceipt {
+        throw RemoteIMClientError.sdkNotIntegrated
+    }
+
+    func deleteContact(userID: String) async throws {
+        throw RemoteIMClientError.sdkNotIntegrated
+    }
+
+    func clearHistory(userID: String) async throws {
+        throw RemoteIMClientError.sdkNotIntegrated
+    }
+
+    func refreshUserProfiles(userIDs: [String]) async throws -> [RemoteIMUserProfile] {
         throw RemoteIMClientError.sdkNotIntegrated
     }
 

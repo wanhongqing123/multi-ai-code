@@ -176,13 +176,15 @@ private struct InitialLoginView: View {
 
 private struct CompactTabBar: View {
     @Binding var selectedTab: AppTab
+    @EnvironmentObject private var appState: RemoteIMAppState
 
     var body: some View {
         HStack(spacing: 8) {
             TabButton(
                 title: "消息",
                 systemImage: selectedTab == .messages ? "bubble.left.fill" : "bubble.left",
-                selected: selectedTab == .messages
+                selected: selectedTab == .messages,
+                badgeCount: appState.totalUnreadCount
             ) {
                 selectedTab = .messages
             }
@@ -222,14 +224,20 @@ private struct TabButton: View {
     let title: String
     let systemImage: String
     let selected: Bool
+    var badgeCount = 0
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .font(.system(size: 14, weight: .semibold))
-                .frame(maxWidth: .infinity)
-                .frame(height: 38)
+            HStack(spacing: 6) {
+                Label(title, systemImage: systemImage)
+                if badgeCount > 0 {
+                    RemoteIMUnreadBadge(count: badgeCount)
+                }
+            }
+            .font(.system(size: 14, weight: .semibold))
+            .frame(maxWidth: .infinity)
+            .frame(height: 38)
         }
         .buttonStyle(.plain)
         .foregroundStyle(selected ? Color(red: 0.035, green: 0.376, blue: 0.667) : Color(red: 0.392, green: 0.459, blue: 0.561))

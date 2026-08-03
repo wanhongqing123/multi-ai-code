@@ -2,6 +2,7 @@ import AVFoundation
 import MaiChatCore
 import Photos
 import PhotosUI
+import QuickLook
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
@@ -40,21 +41,38 @@ struct ChatView: View {
 }
 
 struct RemoteIMContactAvatar: View {
+    let contact: RemoteIMContact
     let isSelected: Bool
     let presenceStatus: RemoteIMPresenceStatus
     let size: CGFloat
-    let iconSize: CGFloat
+
+    var body: some View {
+        RemoteIMUserAvatar(
+            profile: RemoteIMUserProfile(
+                userID: contact.userID,
+                displayName: contact.displayName,
+                avatarURL: contact.avatarURL
+            ),
+            outgoing: true,
+            size: size,
+            presenceStatus: presenceStatus,
+            selected: isSelected
+        )
+    }
+}
+
+private struct RemoteIMUserAvatar: View {
+    let profile: RemoteIMUserProfile
+    let outgoing: Bool
+    let size: CGFloat
+    var presenceStatus: RemoteIMPresenceStatus = .unknown
+    var selected = false
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
-            Image(systemName: "desktopcomputer")
-                .font(.system(size: iconSize, weight: .semibold))
-                .foregroundStyle(isSelected ? Color(red: 0.035, green: 0.376, blue: 0.667) : RemoteIMStyle.textSecondary)
+            avatarContent
                 .frame(width: size, height: size)
-                .background(
-                    isSelected ? RemoteIMStyle.blueSoft : Color(red: 0.953, green: 0.961, blue: 0.973),
-                    in: RoundedRectangle(cornerRadius: size >= 40 ? 10 : 8, style: .continuous)
-                )
+                .clipShape(RoundedRectangle(cornerRadius: size >= 40 ? 10 : 8, style: .continuous))
                 .overlay(
                     RoundedRectangle(
                         cornerRadius: size >= 40 ? 10 : 8,
@@ -67,6 +85,10 @@ struct RemoteIMContactAvatar: View {
                         lineWidth: presenceStatus.isOnline ? 2 : 0
                     )
                 )
+                .overlay(
+                    RoundedRectangle(cornerRadius: size >= 40 ? 10 : 8, style: .continuous)
+                        .stroke(selected ? RemoteIMStyle.blue : Color.clear, lineWidth: selected ? 1 : 0)
+                )
 
             if presenceStatus.isOnline {
                 Circle()
@@ -76,6 +98,47 @@ struct RemoteIMContactAvatar: View {
                     .offset(x: 2, y: 2)
             }
         }
+        .accessibilityLabel("\(profile.displayName) 的头像")
+    }
+
+    @ViewBuilder
+    private var avatarContent: some View {
+        if let avatarURL = profile.avatarURL,
+           let url = URL(string: avatarURL),
+           !avatarURL.isEmpty
+        {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case let .success(image):
+                    image
+                        .resizable()
+                        .scaledToFill()
+                default:
+                    monogram
+                }
+            }
+        } else {
+            monogram
+        }
+    }
+
+    private var monogram: some View {
+        Text(RemoteIMAvatarMonogramPolicy.text(
+            displayName: profile.displayName,
+            userID: profile.userID
+        ))
+        .font(.system(size: max(11, size * 0.3), weight: .bold))
+        .foregroundStyle(.white)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(
+            LinearGradient(
+                colors: outgoing
+                    ? [Color(red: 0.357, green: 0.608, blue: 1.0), Color(red: 0.118, green: 0.251, blue: 0.686)]
+                    : [Color(red: 0.176, green: 0.831, blue: 0.749), Color(red: 0.059, green: 0.463, blue: 0.431)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
     }
 }
 
@@ -176,17 +239,19 @@ private struct StatusPill: View {
 private struct ConversationListView: View {
     @EnvironmentObject private var appState: RemoteIMAppState
     @Binding var activeContact: RemoteIMContact?
+    @State private var searchText = ""
+    @State private var pendingAction: PendingConversationAction?
 
     var body: some View {
         List {
-            if appState.chatState.contacts.isEmpty {
+            if filteredContacts.isEmpty {
                 EmptyConversationListView()
                     .padding(.top, 96)
                     .listRowInsets(EdgeInsets())
                     .listRowSeparator(.hidden)
                     .listRowBackground(RemoteIMStyle.panelBackground)
             } else {
-                ForEach(appState.chatState.contacts) { contact in
+                ForEach(filteredContacts) { contact in
                     Button {
                         appState.selectContact(contact)
                         activeContact = contact
@@ -195,22 +260,26 @@ private struct ConversationListView: View {
                             contact: contact,
                             latestMessage: appState.chatState.latestMessage(with: contact.userID),
                             selected: contact.userID == appState.chatState.selectedPeerID,
-                            presenceStatus: appState.presenceStatus(for: contact)
+                            presenceStatus: appState.presenceStatus(for: contact),
+                            unreadCount: appState.unreadCount(for: contact.userID)
                         )
                     }
                     .buttonStyle(.plain)
                     .listRowInsets(EdgeInsets())
                     .listRowSeparator(.hidden)
                     .listRowBackground(RemoteIMStyle.panelBackground)
-                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         Button(role: .destructive) {
-                            appState.deleteContact(contact)
-                            if activeContact?.userID == contact.userID {
-                                activeContact = nil
-                            }
+                            pendingAction = PendingConversationAction(kind: .deleteContact, contact: contact)
                         } label: {
-                            Label("删除", systemImage: "trash")
+                            Label("删除好友", systemImage: "person.crop.circle.badge.minus")
                         }
+                        Button {
+                            pendingAction = PendingConversationAction(kind: .clearHistory, contact: contact)
+                        } label: {
+                            Label("清空消息", systemImage: "eraser")
+                        }
+                        .tint(.orange)
                     }
                 }
             }
@@ -218,6 +287,80 @@ private struct ConversationListView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(RemoteIMStyle.panelBackground)
+        .searchable(text: $searchText, prompt: "搜索联系人或消息")
+        .alert(item: $pendingAction) { action in
+            Alert(
+                title: Text(action.title),
+                message: Text(action.message),
+                primaryButton: .destructive(Text(action.confirmTitle)) {
+                    perform(action)
+                },
+                secondaryButton: .cancel()
+            )
+        }
+    }
+
+    private var filteredContacts: [RemoteIMContact] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return appState.chatState.contacts
+            .filter { contact in
+                guard !query.isEmpty else { return true }
+                let latestText = appState.chatState.latestMessage(with: contact.userID)?.text ?? ""
+                return contact.userID.lowercased().contains(query) ||
+                    contact.displayName.lowercased().contains(query) ||
+                    latestText.lowercased().contains(query)
+            }
+            .sorted { left, right in
+                let leftDate = appState.chatState.latestMessage(with: left.userID)?.createdAt ?? .distantPast
+                let rightDate = appState.chatState.latestMessage(with: right.userID)?.createdAt ?? .distantPast
+                if leftDate == rightDate {
+                    return left.displayName.localizedStandardCompare(right.displayName) == .orderedAscending
+                }
+                return leftDate > rightDate
+            }
+    }
+
+    private func perform(_ action: PendingConversationAction) {
+        Task {
+            switch action.kind {
+            case .clearHistory:
+                _ = await appState.clearHistory(with: action.contact.userID)
+            case .deleteContact:
+                if await appState.deleteContact(action.contact),
+                   activeContact?.userID == action.contact.userID
+                {
+                    activeContact = nil
+                }
+            }
+        }
+    }
+}
+
+private struct PendingConversationAction: Identifiable {
+    enum Kind: String {
+        case clearHistory
+        case deleteContact
+    }
+
+    let kind: Kind
+    let contact: RemoteIMContact
+    var id: String { "\(kind.rawValue)-\(contact.userID)" }
+
+    var title: String {
+        kind == .clearHistory ? "清空聊天记录？" : "删除好友？"
+    }
+
+    var message: String {
+        switch kind {
+        case .clearHistory:
+            return "将清空与 \(contact.displayName) 的消息，但保留该好友。"
+        case .deleteContact:
+            return "将从好友列表删除 \(contact.displayName)，并移除本地聊天记录。"
+        }
+    }
+
+    var confirmTitle: String {
+        kind == .clearHistory ? "清空" : "删除"
     }
 }
 
@@ -226,49 +369,65 @@ private struct ConversationRow: View {
     let latestMessage: RemoteIMMessage?
     let selected: Bool
     let presenceStatus: RemoteIMPresenceStatus
+    let unreadCount: Int
 
     var body: some View {
         HStack(spacing: 12) {
             RemoteIMContactAvatar(
+                contact: contact,
                 isSelected: selected,
                 presenceStatus: presenceStatus,
-                size: 42,
-                iconSize: 18
+                size: 42
             )
 
-            VStack(alignment: .leading, spacing: 5) {
-                Text(contact.displayName)
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(RemoteIMStyle.textPrimary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Text(contact.displayName)
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(RemoteIMStyle.textPrimary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 8)
+                    if let latestMessage {
+                        Text(RemoteIMTimestampTextPolicy.displayText(for: latestMessage.createdAt))
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(RemoteIMStyle.textSecondary)
+                    }
+                }
 
-                if let latestMessage {
-                    Text(latestMessage.text)
+                HStack(spacing: 8) {
+                    Text(latestMessage?.text ?? "暂无消息")
                         .font(.system(size: 13))
                         .foregroundStyle(RemoteIMStyle.textSecondary)
                         .lineLimit(1)
                         .truncationMode(.tail)
+                    Spacer(minLength: 8)
+                    if unreadCount > 0 {
+                        RemoteIMUnreadBadge(count: unreadCount)
+                    }
                 }
-            }
-
-            Spacer(minLength: 8)
-
-            VStack(alignment: .trailing, spacing: 7) {
-                if let latestMessage {
-                    Text(RemoteIMTimestampTextPolicy.displayText(for: latestMessage.createdAt))
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(RemoteIMStyle.textSecondary)
-                }
-                RemoteIMPresenceBadge(status: presenceStatus)
-                RelationBadge(text: contact.relation.displayName)
             }
         }
         .padding(.horizontal, 16)
         .frame(height: 72)
         .contentShape(Rectangle())
     }
+}
 
+struct RemoteIMUnreadBadge: View {
+    let count: Int
+
+    var body: some View {
+        if count > 0 {
+            Text(count > 99 ? "99+" : String(count))
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 5)
+                .frame(minWidth: 18, minHeight: 18)
+                .background(Color(red: 0.961, green: 0.247, blue: 0.247), in: Capsule())
+                .accessibilityLabel("\(count) 条未读消息")
+        }
+    }
 }
 
 private struct EmptyConversationListView: View {
@@ -334,8 +493,12 @@ private struct ChatDetailView: View {
         VStack(spacing: 0) {
             ChatDetailHeader(contact: contact, activeContact: $activeContact)
             MessageListView(
-                messages: appState.chatState.messages(with: contact.userID),
-                peerRelation: contact.relation
+                messages: appState.visibleMessages(with: contact.userID),
+                peerRelation: contact.relation,
+                hasEarlierMessages: appState.hasEarlierMessages(with: contact.userID),
+                loadEarlierMessages: {
+                    appState.loadEarlierMessages(with: contact.userID)
+                }
             )
             ComposerView()
         }
@@ -344,6 +507,10 @@ private struct ChatDetailView: View {
         .simultaneousGesture(edgeSwipeBackGesture)
         .onAppear {
             appState.selectContact(contact)
+            appState.setConversationVisible(userID: contact.userID, visible: true)
+        }
+        .onDisappear {
+            appState.setConversationVisible(userID: contact.userID, visible: false)
         }
     }
 
@@ -424,14 +591,28 @@ struct RelationBadge: View {
 private struct MessageListView: View {
     let messages: [RemoteIMMessage]
     let peerRelation: RemoteIMContactRelation
+    let hasEarlierMessages: Bool
+    let loadEarlierMessages: () -> Void
+    @EnvironmentObject private var appState: RemoteIMAppState
     @StateObject private var voicePlayer = VoiceMessagePlayer()
     @State private var imagePreviewItem: RemoteIMImagePreviewItem?
     @State private var filePreviewItem: RemoteIMFilePreviewItem?
+    @State private var latestMessageID: UUID?
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
+                    if hasEarlierMessages {
+                        Button(action: loadEarlierMessages) {
+                            Label("加载更早的消息", systemImage: "clock.arrow.circlepath")
+                                .font(.system(size: 13, weight: .semibold))
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(RemoteIMStyle.blue)
+                        .padding(.vertical, 4)
+                    }
                     if messages.isEmpty {
                         EmptyMessagesView()
                             .padding(.top, 72)
@@ -439,6 +620,7 @@ private struct MessageListView: View {
                         ForEach(messages) { message in
                             MessageBubbleView(
                                 message: message,
+                                senderProfile: appState.profile(for: message.fromUserID),
                                 incomingRelation: peerRelation,
                                 isVoicePlaying: voicePlayer.playingMessageID == message.id,
                                 playVoice: {
@@ -466,9 +648,13 @@ private struct MessageListView: View {
                 }
             )
             .onAppear {
+                latestMessageID = messages.last?.id
                 scrollToLatestMessage(proxy: proxy)
             }
             .onChange(of: messages.count) { _ in
+                let nextLatestMessageID = messages.last?.id
+                guard nextLatestMessageID != latestMessageID else { return }
+                latestMessageID = nextLatestMessageID
                 scrollToLatestMessage(proxy: proxy)
             }
         }
@@ -523,6 +709,7 @@ private struct EmptyMessagesView: View {
 
 private struct MessageBubbleView: View {
     let message: RemoteIMMessage
+    let senderProfile: RemoteIMUserProfile
     let incomingRelation: RemoteIMContactRelation
     let isVoicePlaying: Bool
     let playVoice: () -> Void
@@ -530,84 +717,95 @@ private struct MessageBubbleView: View {
     let previewFile: () -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 0) {
+        HStack(alignment: .top, spacing: 10) {
             if message.direction == .outgoing {
-                Spacer(minLength: 42)
+                Spacer(minLength: 50)
             }
-
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 8) {
-                    Text(displayUserID)
-                        .font(.system(size: 13, weight: .bold, design: .monospaced))
-                        .foregroundStyle(RemoteIMStyle.textPrimary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    if let relationText {
-                        RelationBadge(text: relationText)
-                    }
-                    Text(RemoteIMTimestampTextPolicy.displayText(for: message.createdAt))
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(RemoteIMStyle.textSecondary)
-                    Spacer(minLength: 0)
-                }
-
-                HStack(alignment: .bottom, spacing: 10) {
-                    if let imageAttachment = message.imageAttachment {
-                        Button(action: previewImage) {
-                            ImageBubbleContent(attachment: imageAttachment)
-                        }
-                        .buttonStyle(.plain)
-                    } else if let fileAttachment = message.fileAttachment {
-                        Button(action: previewFile) {
-                            FileBubbleContent(attachment: fileAttachment)
-                        }
-                        .buttonStyle(.plain)
-                    } else if let voiceAttachment = message.voiceAttachment {
-                        Button(action: playVoice) {
-                            VoiceBubbleContent(
-                                attachment: voiceAttachment,
-                                isPlaying: isVoicePlaying
-                            )
-                        }
-                        .buttonStyle(.plain)
-                    } else {
-                        MarkdownLikeText(message.text)
-                            .font(.system(size: 13, weight: .regular))
-                            .lineSpacing(3)
-                            .foregroundStyle(RemoteIMStyle.textPrimary)
-                            .lineLimit(nil)
-                            .multilineTextAlignment(.leading)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .layoutPriority(1)
-                    }
-
-                    if message.direction == .outgoing {
-                        StatusIcon(status: message.status)
-                    }
-                }
-            }
-            .padding(.horizontal, 13)
-            .padding(.vertical, 11)
-            .frame(maxWidth: 620, alignment: .leading)
-            .background(bubbleBackground, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(bubbleBorder, lineWidth: 1)
-            )
 
             if message.direction == .incoming {
-                Spacer(minLength: 42)
+                RemoteIMUserAvatar(profile: senderProfile, outgoing: false, size: 40)
+            }
+
+            VStack(alignment: message.direction == .outgoing ? .trailing : .leading, spacing: 6) {
+                messageMetadata
+                messageContent
+            }
+            .padding(.top, 4)
+            .layoutPriority(1)
+
+            if message.direction == .outgoing {
+                RemoteIMUserAvatar(profile: senderProfile, outgoing: true, size: 40)
+            }
+
+            if message.direction == .incoming {
+                Spacer(minLength: 50)
             }
         }
         .frame(maxWidth: .infinity, alignment: message.direction == .outgoing ? .trailing : .leading)
     }
 
-    private var displayUserID: String {
-        message.direction == .outgoing ? message.fromUserID : message.fromUserID
+    private var messageMetadata: some View {
+        HStack(spacing: 8) {
+            Text(message.fromUserID)
+                .font(.system(size: 13, weight: .bold, design: .monospaced))
+                .foregroundStyle(RemoteIMStyle.textPrimary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            if let relationText {
+                RelationBadge(text: relationText)
+            }
+            Text(RemoteIMTimestampTextPolicy.displayText(for: message.createdAt))
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(RemoteIMStyle.textSecondary)
+        }
     }
 
     private var relationText: String? {
         message.direction == .outgoing ? nil : incomingRelation.displayName
+    }
+
+    private var messageContent: some View {
+        HStack(alignment: .bottom, spacing: 10) {
+            if let imageAttachment = message.imageAttachment {
+                Button(action: previewImage) {
+                    ImageBubbleContent(attachment: imageAttachment)
+                }
+                .buttonStyle(.plain)
+            } else if let fileAttachment = message.fileAttachment {
+                Button(action: previewFile) {
+                    FileBubbleContent(attachment: fileAttachment)
+                }
+                .buttonStyle(.plain)
+            } else if let voiceAttachment = message.voiceAttachment {
+                Button(action: playVoice) {
+                    VoiceBubbleContent(
+                        attachment: voiceAttachment,
+                        isPlaying: isVoicePlaying
+                    )
+                }
+                .buttonStyle(.plain)
+            } else {
+                MarkdownLikeText(message.text)
+                    .font(.system(size: 13, weight: .regular))
+                    .lineSpacing(3)
+                    .foregroundStyle(RemoteIMStyle.textPrimary)
+                    .lineLimit(nil)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .layoutPriority(1)
+            }
+
+            if message.direction == .outgoing {
+                StatusIcon(status: message.status)
+            }
+        }
+        .padding(.horizontal, 13)
+        .padding(.vertical, 11)
+        .background(bubbleBackground, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(bubbleBorder, lineWidth: 1)
+        )
     }
 
     private var bubbleBackground: Color {
@@ -683,17 +881,62 @@ private struct FullScreenFilePreviewView: View {
             Group {
                 if item.attachment.mimeType == "text/html" {
                     RemoteIMHTMLPreview(filePath: item.attachment.localFilePath)
-                } else {
+                } else if item.attachment.mimeType == "text/markdown" ||
+                            item.attachment.fileName.lowercased().hasSuffix(".md")
+                {
                     RemoteIMMarkdownFilePreview(filePath: item.attachment.localFilePath)
+                } else {
+                    RemoteIMQuickLookPreview(filePath: item.attachment.localFilePath)
                 }
             }
             .navigationTitle(item.attachment.fileName)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    ShareLink(item: URL(fileURLWithPath: item.attachment.localFilePath)) {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                    .accessibilityLabel("分享文件")
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("关闭", action: close)
                 }
             }
+        }
+    }
+}
+
+private struct RemoteIMQuickLookPreview: UIViewControllerRepresentable {
+    let filePath: String
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(filePath: filePath)
+    }
+
+    func makeUIViewController(context: Context) -> QLPreviewController {
+        let controller = QLPreviewController()
+        controller.dataSource = context.coordinator
+        return controller
+    }
+
+    func updateUIViewController(_ controller: QLPreviewController, context: Context) {
+        context.coordinator.filePath = filePath
+        controller.reloadData()
+    }
+
+    final class Coordinator: NSObject, QLPreviewControllerDataSource {
+        var filePath: String
+
+        init(filePath: String) {
+            self.filePath = filePath
+        }
+
+        func numberOfPreviewItems(in _: QLPreviewController) -> Int {
+            1
+        }
+
+        func previewController(_: QLPreviewController, previewItemAt _: Int) -> QLPreviewItem {
+            URL(fileURLWithPath: filePath) as NSURL
         }
     }
 }
@@ -1089,13 +1332,21 @@ private struct MarkdownTableView: View {
             Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
                 GridRow {
                     ForEach(0..<columnCount, id: \.self) { column in
-                        tableCell(table.headers[safe: column] ?? "", isHeader: true)
+                        tableCell(
+                            table.headers[safe: column] ?? "",
+                            isHeader: true,
+                            width: columnWidths[column]
+                        )
                     }
                 }
                 ForEach(Array(table.rows.enumerated()), id: \.offset) { _, row in
                     GridRow {
                         ForEach(0..<columnCount, id: \.self) { column in
-                            tableCell(row[safe: column] ?? "", isHeader: false)
+                            tableCell(
+                                row[safe: column] ?? "",
+                                isHeader: false,
+                                width: columnWidths[column]
+                            )
                         }
                     }
                 }
@@ -1112,14 +1363,27 @@ private struct MarkdownTableView: View {
         max(table.headers.count, table.rows.map(\.count).max() ?? 0)
     }
 
-    private func tableCell(_ text: String, isHeader: Bool) -> some View {
+    private var columnWidths: [CGFloat] {
+        (0..<columnCount).map { column in
+            let values = [table.headers[safe: column] ?? ""] +
+                table.rows.map { $0[safe: column] ?? "" }
+            let longestLineLength = values
+                .flatMap { $0.components(separatedBy: .newlines) }
+                .map(\.count)
+                .max() ?? 0
+            return min(180, max(78, CGFloat(longestLineLength) * 7 + 18))
+        }
+    }
+
+    private func tableCell(_ text: String, isHeader: Bool, width: CGFloat) -> some View {
         MarkdownInlineText(text: text)
             .font(.system(size: 12, weight: isHeader ? .semibold : .regular))
             .foregroundStyle(RemoteIMStyle.textPrimary)
             .lineLimit(nil)
+            .frame(width: max(1, width - 18), alignment: .topLeading)
             .padding(.horizontal, 9)
             .padding(.vertical, 7)
-            .frame(minWidth: 78, maxWidth: 180, alignment: .leading)
+            .frame(width: width, alignment: .topLeading)
             .background(isHeader ? Color(red: 0.93, green: 0.945, blue: 0.965) : Color.white.opacity(0.72))
             .overlay(
                 Rectangle()
@@ -1492,7 +1756,9 @@ private struct ComposerView: View {
     @State private var isVoiceMode = false
     @State private var isPressingVoice = false
     @State private var isCancellingVoice = false
+    @State private var isCameraPresented = false
     @State private var isPhotoPickerPresented = false
+    @State private var isFileImporterPresented = false
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var keyboardVisibleHeight = UIScreen.main.bounds.height
 
@@ -1565,8 +1831,22 @@ private struct ComposerView: View {
                         )
                 }
 
-                Button {
-                    Task { await openPhotoPicker() }
+                Menu {
+                    Button {
+                        Task { await openCamera() }
+                    } label: {
+                        Label("拍照发送", systemImage: "camera")
+                    }
+                    Button {
+                        Task { await openPhotoPicker() }
+                    } label: {
+                        Label("从相册选择", systemImage: "photo")
+                    }
+                    Button {
+                        isFileImporterPresented = true
+                    } label: {
+                        Label("发送文件", systemImage: "doc")
+                    }
                 } label: {
                     Image(systemName: "plus")
                         .font(.system(size: 20, weight: .semibold))
@@ -1577,10 +1857,9 @@ private struct ComposerView: View {
                                 .stroke(RemoteIMStyle.border, lineWidth: 1)
                         )
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(appState.canSendImage ? RemoteIMStyle.textPrimary : RemoteIMStyle.textSecondary)
-                .disabled(!appState.canSendImage)
-                .accessibilityLabel("选择图片")
+                .foregroundStyle(appState.canSendFile ? RemoteIMStyle.textPrimary : RemoteIMStyle.textSecondary)
+                .disabled(!appState.canSendFile)
+                .accessibilityLabel("添加图片或文件")
             }
         }
         .padding(.horizontal, 16)
@@ -1596,6 +1875,25 @@ private struct ComposerView: View {
             matching: .images,
             photoLibrary: .shared()
         )
+        .fullScreenCover(isPresented: $isCameraPresented) {
+            RemoteIMCameraPicker(
+                onCapture: { image in
+                    isCameraPresented = false
+                    Task { await sendCapturedPhoto(image) }
+                },
+                onCancel: {
+                    isCameraPresented = false
+                }
+            )
+            .ignoresSafeArea()
+        }
+        .fileImporter(
+            isPresented: $isFileImporterPresented,
+            allowedContentTypes: [.item],
+            allowsMultipleSelection: false
+        ) { result in
+            Task { await sendSelectedFile(result) }
+        }
         .onChange(of: selectedPhotoItem) { item in
             guard let item else { return }
             Task { await sendSelectedPhoto(item) }
@@ -1621,6 +1919,36 @@ private struct ComposerView: View {
             return
         }
         isPhotoPickerPresented = true
+    }
+
+    private func openCamera() async {
+        guard appState.canSendImage else { return }
+        guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
+            appState.errorMessage = "当前设备不支持拍照"
+            return
+        }
+        guard await requestCameraPermission() else {
+            appState.errorMessage = "没有相机权限，请在系统设置中允许 MaiChat 使用相机"
+            return
+        }
+        isCameraPresented = true
+    }
+
+    private func requestCameraPermission() async -> Bool {
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            return true
+        case .notDetermined:
+            return await withCheckedContinuation { continuation in
+                AVCaptureDevice.requestAccess(for: .video) { granted in
+                    continuation.resume(returning: granted)
+                }
+            }
+        case .denied, .restricted:
+            return false
+        @unknown default:
+            return false
+        }
     }
 
     private func requestPhotoLibraryPermission() async -> Bool {
@@ -1714,6 +2042,57 @@ private struct ComposerView: View {
         }
     }
 
+    private func sendCapturedPhoto(_ image: UIImage) async {
+        do {
+            guard let data = image.jpegData(compressionQuality: 0.9) else {
+                appState.errorMessage = "拍摄的照片处理失败"
+                return
+            }
+            let imageFile = try savePickedImage(data: data, contentTypes: [.jpeg])
+            await appState.sendImageFile(imageFile)
+        } catch {
+            appState.errorMessage = error.localizedDescription
+        }
+    }
+
+    private func sendSelectedFile(_ result: Result<[URL], Error>) async {
+        do {
+            guard let selectedURL = try result.get().first else { return }
+            let file = try copyImportedFileToCache(selectedURL)
+            await appState.sendFile(file)
+        } catch {
+            appState.errorMessage = error.localizedDescription
+        }
+    }
+
+    private func copyImportedFileToCache(_ sourceURL: URL) throws -> RemoteIMFile {
+        let accessedSecurityScopedResource = sourceURL.startAccessingSecurityScopedResource()
+        defer {
+            if accessedSecurityScopedResource {
+                sourceURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        let fileName = sourceURL.lastPathComponent.isEmpty ? "file" : sourceURL.lastPathComponent
+        let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("RemoteIMPickedFile", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let targetURL = directory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension(sourceURL.pathExtension)
+        try FileManager.default.copyItem(at: sourceURL, to: targetURL)
+
+        let resourceValues = try? targetURL.resourceValues(forKeys: [.fileSizeKey])
+        let mimeType = UTType(filenameExtension: sourceURL.pathExtension)?.preferredMIMEType ??
+            "application/octet-stream"
+        return RemoteIMFile(
+            fileURL: targetURL,
+            fileName: fileName,
+            mimeType: mimeType,
+            sizeBytes: resourceValues?.fileSize
+        )
+    }
+
     private func savePickedImage(
         data: Data,
         contentTypes: [UTType]
@@ -1737,6 +2116,51 @@ private struct ComposerView: View {
             height: height,
             sizeBytes: data.count
         )
+    }
+}
+
+private struct RemoteIMCameraPicker: UIViewControllerRepresentable {
+    let onCapture: (UIImage) -> Void
+    let onCancel: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onCapture: onCapture, onCancel: onCancel)
+    }
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let controller = UIImagePickerController()
+        controller.sourceType = .camera
+        controller.cameraCaptureMode = .photo
+        controller.allowsEditing = false
+        controller.delegate = context.coordinator
+        return controller
+    }
+
+    func updateUIViewController(_: UIImagePickerController, context _: Context) {}
+
+    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        private let onCapture: (UIImage) -> Void
+        private let onCancel: () -> Void
+
+        init(onCapture: @escaping (UIImage) -> Void, onCancel: @escaping () -> Void) {
+            self.onCapture = onCapture
+            self.onCancel = onCancel
+        }
+
+        func imagePickerController(
+            _: UIImagePickerController,
+            didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
+        ) {
+            guard let image = info[.originalImage] as? UIImage else {
+                onCancel()
+                return
+            }
+            onCapture(image)
+        }
+
+        func imagePickerControllerDidCancel(_: UIImagePickerController) {
+            onCancel()
+        }
     }
 }
 

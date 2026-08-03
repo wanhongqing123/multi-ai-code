@@ -8,6 +8,7 @@ import { extractRemoteImReplyOutput } from './replyProtocol.js'
 import type { RemoteImConfig } from './types.js'
 
 export const REMOTE_IM_OPERATION_COMPLETE_TEXT = '操作已完成。'
+export const REMOTE_IM_OPERATION_FAILED_PREFIX = 'AICLI 执行失败：'
 // Invisible protocol marker: forwarded AICLI output must still be distinguishable
 // from user input, but the marker should not appear in IM clients.
 export const REMOTE_IM_AICLI_OUTPUT_PREFIX = '\u2063\u200B\u200C\u200D\u2063'
@@ -85,9 +86,15 @@ export function createRemoteImOperationFinishedText(
   return REMOTE_IM_OPERATION_COMPLETE_TEXT
 }
 
+export function createRemoteImOperationFailedText(reason: string): string {
+  const message = reason.trim() || '未知错误'
+  return `${REMOTE_IM_OPERATION_FAILED_PREFIX}${message}`
+}
+
 export function isRemoteImOperationFinishedText(text: string): boolean {
   return (
     text === REMOTE_IM_OPERATION_COMPLETE_TEXT ||
+    text.startsWith(REMOTE_IM_OPERATION_FAILED_PREFIX) ||
     text.startsWith('操作已结束（退出码：') ||
     text.startsWith('操作已结束（信号：')
   )
@@ -187,6 +194,29 @@ export function completeRemoteImOutputSession(
 
   const now = deps.now?.() ?? Date.now()
   const text = createRemoteImOperationFinishedText(info)
+  deps.createMessage(
+    createOutgoingMessage({
+      sessionId,
+      state,
+      content: text,
+      role: 'system',
+      now
+    })
+  )
+  deps.sendText(state.projectId, state.toUserId, text)
+  deps.messagesChanged(state.projectId)
+}
+
+export function failRemoteImOutputSession(
+  sessionId: string,
+  state: RemoteImOutputSessionState,
+  deps: RemoteImOutputForwardingDeps,
+  reason: string
+): void {
+  flushRemoteImOutputSession(sessionId, state, deps)
+
+  const now = deps.now?.() ?? Date.now()
+  const text = createRemoteImOperationFailedText(reason)
   deps.createMessage(
     createOutgoingMessage({
       sessionId,

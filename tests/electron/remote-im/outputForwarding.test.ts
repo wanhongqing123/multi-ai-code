@@ -7,7 +7,9 @@ import type { RemoteImConfig } from '../../../electron/remote-im/types.js'
 import {
   completeRemoteImOutputSession,
   createRemoteImAicliOutputText,
+  createRemoteImOperationFailedText,
   createRemoteImOperationFinishedText,
+  failRemoteImOutputSession,
   flushRemoteImOutputSession,
   parseRemoteImAicliOutputText,
   isRemoteImOperationFinishedText,
@@ -106,7 +108,46 @@ describe('remote IM output forwarding', () => {
     )
     expect(isRemoteImOperationFinishedText('操作已完成。')).toBe(true)
     expect(isRemoteImOperationFinishedText('操作已结束（退出码：1）。')).toBe(true)
+    expect(isRemoteImOperationFinishedText('AICLI 执行失败：network disconnected')).toBe(true)
     expect(isRemoteImOperationFinishedText('检查构建')).toBe(false)
+  })
+
+  it('flushes a completed reply before forwarding a terminal AICLI error', () => {
+    const state = createState(
+      [REMOTE_IM_REPLY_OPEN_TAG, 'partial result', REMOTE_IM_REPLY_CLOSE_TAG].join('\n'),
+      { outputMaxChunkChars: 500 }
+    )
+    const timer = 1 as unknown as RemoteImOutputFlushTimer
+    state.timer = timer
+    const messages: CreateRemoteImMessageInput[] = []
+    const sentTexts: string[] = []
+    const clearedTimers: RemoteImOutputFlushTimer[] = []
+
+    failRemoteImOutputSession(
+      'session-1',
+      state,
+      {
+        now: () => 1234,
+        createMessage: (input) => messages.push(input),
+        sendText: (_projectId, _toUserId, text) => sentTexts.push(text),
+        messagesChanged: () => undefined,
+        clearTimer: (item) => clearedTimers.push(item)
+      },
+      ' stream disconnected '
+    )
+
+    expect(state.buffer).toBe('')
+    expect(state.timer).toBeNull()
+    expect(clearedTimers).toEqual([timer])
+    expect(sentTexts).toEqual([
+      createRemoteImAicliOutputText('partial result'),
+      'AICLI 执行失败：stream disconnected'
+    ])
+    expect(messages.map((message) => message.role)).toEqual(['aicli', 'system'])
+    expect(messages[1]).toMatchObject({
+      content: createRemoteImOperationFailedText('stream disconnected'),
+      sentToImAt: 1234
+    })
   })
 
   it('marks forwarded AICLI output so another desktop does not execute it as a command', () => {

@@ -94,6 +94,48 @@ describe('AICLI structured output bridge', () => {
     expect(events).toEqual([])
   })
 
+  it('forwards and acknowledges terminal turn errors', async () => {
+    const bridge = await createAicliStructuredOutputBridge('session-1', 'codex')
+    const { port, token } = parseTcpEndpoint(bridge.endpoint)
+    const events: AicliStructuredOutputEvent[] = []
+    const removeListener = addAicliStructuredOutputListener((event) => events.push(event))
+    let acked = ''
+    const socket = await new Promise<net.Socket>((resolve, reject) => {
+      const client = net.createConnection({ host: '127.0.0.1', port }, () => resolve(client))
+      client.setEncoding('utf8')
+      client.on('data', (chunk) => {
+        acked += String(chunk)
+      })
+      client.once('error', reject)
+    })
+
+    socket.write(
+      `${JSON.stringify({
+        token,
+        kind: 'turn_error',
+        text: 'stream disconnected before completion',
+        messageId: 'turn-1:error'
+      })}\n`
+    )
+    await new Promise((resolve) => setTimeout(resolve, 30))
+
+    socket.destroy()
+    removeListener()
+    await bridge.close()
+
+    expect(events).toEqual([
+      {
+        sessionId: 'session-1',
+        provider: 'codex',
+        kind: 'turn_error',
+        text: 'stream disconnected before completion',
+        messageId: 'turn-1:error',
+        partId: undefined
+      }
+    ])
+    expect(acked).toContain('"messageId":"turn-1:error"')
+  })
+
   it('switches mode via request/response and reports the AICLI verdict', async () => {
     const bridge = await createAicliStructuredOutputBridge('session-1', 'opencode')
     const { port, token } = parseTcpEndpoint(bridge.endpoint)

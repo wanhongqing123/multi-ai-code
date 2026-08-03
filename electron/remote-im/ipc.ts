@@ -45,6 +45,7 @@ import {
 } from './messageStore.js'
 import {
   completeRemoteImOutputSession,
+  failRemoteImOutputSession,
   flushRemoteImOutputSession,
   type RemoteImOutputCompletionInfo,
   type RemoteImOutputSessionState
@@ -691,6 +692,25 @@ function completeOutputSession(
   outputSessions.delete(sessionId)
 }
 
+function failOutputSession(sessionId: string, reason: string): void {
+  const state = outputSessions.get(sessionId)
+  if (!state) return
+  failRemoteImOutputSession(
+    sessionId,
+    state,
+    {
+      createMessage: (input) => {
+        createRemoteImMessage(input)
+      },
+      sendText: broadcastOutgoingText,
+      messagesChanged: broadcastMessagesChanged,
+      readTranscriptReply: readRemoteImTranscriptReply
+    },
+    reason
+  )
+  outputSessions.delete(sessionId)
+}
+
 function scheduleOutputFlush(sessionId: string): void {
   const state = outputSessions.get(sessionId)
   if (!state || state.timer) return
@@ -710,10 +730,15 @@ function ensureSessionListeners(): void {
     state.buffer += chunk
     scheduleOutputFlush(sessionId)
   })
-  addAicliStructuredOutputListener(({ sessionId, text }) => {
+  addAicliStructuredOutputListener(({ sessionId, kind, text }) => {
     const state = outputSessions.get(sessionId)
     if (!state) return
     if (!state.structuredOutput) return
+    if (kind === 'turn_error') {
+      failOutputSession(sessionId, text)
+      return
+    }
+    if (kind && kind !== 'assistant_text') return
     // 结构化输出的每个 text 是一段完整 assistant 正文，段间必须补换行：
     // marker 提取按行匹配，若旁白与最终答复落在同一个防抖窗口被无分隔拼接，
     // open 标签会失去独立行导致提取为空，且 flush 会把整个 buffer（含回复）清掉。

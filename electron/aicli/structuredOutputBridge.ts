@@ -175,7 +175,8 @@ export async function createAicliStructuredOutputBridge(
 
         // 回执：AICLI 侧靠这条 ack 判定数据连接“还活着”。收不到 ack（半死 socket、
         // write 写进黑洞）时 AICLI 会重连并补发，从根上消除“回传一旦丢就一直丢、
-        // 必须重启 AICLI”的粘滞故障。只有带 messageId 的 assistant_text 需要回执。
+        // 必须重启 AICLI”的粘滞故障。assistant_text / turn_error 等带
+        // messageId 的可靠事件共用这套回执。
         if (messageId && !socket.destroyed) {
           socket.write(`${JSON.stringify({ token, kind: 'ack', messageId })}\n`)
         }

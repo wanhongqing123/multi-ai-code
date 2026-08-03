@@ -1,16 +1,25 @@
 PODS:
   - TXIMSDK_Plus_iOS_XCFramework (9.0.7659)
+  - TXLiteAVSDK_TRTC (13.4.21067):
+    - TXLiteAVSDK_TRTC/TRTC (= 13.4.21067)
+  - TXLiteAVSDK_TRTC/TRTC (13.4.21067)
 
 DEPENDENCIES:
   - TXIMSDK_Plus_iOS_XCFramework
+  - TXLiteAVSDK_TRTC (from `https://liteav.sdk.qcloud.com/pod/liteavsdkspec/TXLiteAVSDK_TRTC.podspec`)
 
 SPEC REPOS:
   trunk:
     - TXIMSDK_Plus_iOS_XCFramework
 
+EXTERNAL SOURCES:
+  TXLiteAVSDK_TRTC:
+    :podspec: https://liteav.sdk.qcloud.com/pod/liteavsdkspec/TXLiteAVSDK_TRTC.podspec
+
 SPEC CHECKSUMS:
   TXIMSDK_Plus_iOS_XCFramework: 650f87c12836d2e29f42faca4a665e92047bdaca
+  TXLiteAVSDK_TRTC: ab7fa7bce8e703cfd894de0effe18fa3321b850d
 
-PODFILE CHECKSUM: 99adeb566aa4486d9147db693cf5296ae0595e95
+PODFILE CHECKSUM: c1863aea45e9217c070efcbad8d53f65599e6ddf
 
 COCOAPODS: 1.16.2

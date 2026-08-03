@@ -5,11 +5,13 @@ import UIKit
 enum AppTab {
     case messages
     case contacts
+    case remote
     case me
 }
 
 struct RootView: View {
     @EnvironmentObject private var appState: RemoteIMAppState
+    @Environment(\.scenePhase) private var scenePhase
     @State private var selectedTab: AppTab = .messages
     @State private var activeChatContact: RemoteIMContact?
 
@@ -25,6 +27,8 @@ struct RootView: View {
                         ChatView(activeContact: $activeChatContact)
                     case .contacts:
                         ContactsView(selectedTab: $selectedTab, activeContact: $activeChatContact)
+                    case .remote:
+                        RemoteDesktopView()
                     case .me:
                         SettingsView()
                     }
@@ -41,6 +45,10 @@ struct RootView: View {
             if !appState.shouldShowInitialLogin {
                 await appState.connectIfRequestedByLaunchEnvironment()
             }
+        }
+        .onChange(of: scenePhase) { phase in
+            guard phase == .background else { return }
+            Task { await appState.stopRemoteDesktopView() }
         }
         .overlay(alignment: .top) {
             if !appState.shouldShowInitialLogin, let errorMessage = appState.errorMessage {
@@ -194,6 +202,13 @@ private struct CompactTabBar: View {
                 selected: selectedTab == .contacts
             ) {
                 selectedTab = .contacts
+            }
+            TabButton(
+                title: "远程",
+                systemImage: selectedTab == .remote ? "display.fill" : "display",
+                selected: selectedTab == .remote
+            ) {
+                selectedTab = .remote
             }
             TabButton(
                 title: "我",

@@ -35,6 +35,7 @@ targets:
     platform: iOS
     sources:
       - path: MaiChatTests
+      - path: MaiChat/LocalChatHistoryStore.swift
     dependencies:
       - target: MaiChatCore
     settings:

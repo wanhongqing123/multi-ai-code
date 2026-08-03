@@ -30,6 +30,10 @@
 		BE66C23BAD55D34765EA6593 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2C61A24E7F2339FBD2E515A /* SettingsView.swift */; };
 		C204F8BE910FD7BF36145756 /* RemoteIMClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CA5659DC276D9184FD98BE7 /* RemoteIMClient.swift */; };
 		CC6FA3A9430628F94F150F71 /* MaiChatCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1B6804F89BDC3CF478FF062D /* MaiChatCore.framework */; };
+		D10000000000000000000001 /* RemoteDesktopSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000001 /* RemoteDesktopSession.swift */; };
+		D10000000000000000000002 /* RemoteDesktopView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000002 /* RemoteDesktopView.swift */; };
+		D10000000000000000000003 /* RemoteDesktopSignal.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000003 /* RemoteDesktopSignal.swift */; };
+		D10000000000000000000004 /* RemoteDesktopSignalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000004 /* RemoteDesktopSignalTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -94,6 +98,10 @@
 		CE473C8D07308E1BC74DD036 /* TencentUserSigGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TencentUserSigGenerator.swift; sourceTree = "<group>"; };
 		CF7E07C37B99162122D43342 /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
 		DDDCE3C682C19DC98F9CCD03 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		D20000000000000000000001 /* RemoteDesktopSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDesktopSession.swift; sourceTree = "<group>"; };
+		D20000000000000000000002 /* RemoteDesktopView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDesktopView.swift; sourceTree = "<group>"; };
+		D20000000000000000000003 /* RemoteDesktopSignal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDesktopSignal.swift; sourceTree = "<group>"; };
+		D20000000000000000000004 /* RemoteDesktopSignalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDesktopSignalTests.swift; sourceTree = "<group>"; };
 		E2C61A24E7F2339FBD2E515A /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		E81FFD8CDF2D9DF951089236 /* MasterChatState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MasterChatState.swift; sourceTree = "<group>"; };
 		EA1537AB16102D8C1671314F /* TencentIMClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TencentIMClient.swift; sourceTree = "<group>"; };
@@ -126,6 +134,7 @@
 			isa = PBXGroup;
 			children = (
 				E81FFD8CDF2D9DF951089236 /* MasterChatState.swift */,
+				D20000000000000000000003 /* RemoteDesktopSignal.swift */,
 				CE473C8D07308E1BC74DD036 /* TencentUserSigGenerator.swift */,
 			);
 			path = MaiChatCore;
@@ -136,6 +145,7 @@
 			children = (
 				8C7B018F54C54F5AB1E12B8D /* LocalChatHistoryStoreTests.swift */,
 				3D0308A44026D2B47490836A /* MasterChatStateTests.swift */,
+				D20000000000000000000004 /* RemoteDesktopSignalTests.swift */,
 				74BEA4EE61CA1B44BF6F8DFB /* UserSigGeneratorTests.swift */,
 			);
 			path = MaiChatTests;
@@ -162,6 +172,8 @@
 				B2E40E1A98DF478A8BA406F7 /* LocalChatHistoryStore.swift */,
 				9BA565F71AA3A5253ED533CD /* LocalSettingsStore.swift */,
 				31103ED5247858C70BCA66A7 /* MaiChatApp.swift */,
+				D20000000000000000000001 /* RemoteDesktopSession.swift */,
+				D20000000000000000000002 /* RemoteDesktopView.swift */,
 				67FB0EED7C034D9E5A43B52C /* RemoteIMAppState.swift */,
 				4CA5659DC276D9184FD98BE7 /* RemoteIMClient.swift */,
 				A57BABC78E13816EA38CDF35 /* RootView.swift */,
@@ -308,13 +320,9 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-MaiChat/Pods-MaiChat-resources-${CONFIGURATION}-input-files.xcfilelist",
 			);
-			inputPaths = (
-			);
 			name = "[CP] Copy Pods Resources";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-MaiChat/Pods-MaiChat-resources-${CONFIGURATION}-output-files.xcfilelist",
-			);
-			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -329,13 +337,9 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-MaiChat/Pods-MaiChat-frameworks-${CONFIGURATION}-input-files.xcfilelist",
 			);
-			inputPaths = (
-			);
 			name = "[CP] Embed Pods Frameworks";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-MaiChat/Pods-MaiChat-frameworks-${CONFIGURATION}-output-files.xcfilelist",
-			);
-			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -372,6 +376,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A0AF7026F5F4B6A41E9011D5 /* MasterChatState.swift in Sources */,
+				D10000000000000000000003 /* RemoteDesktopSignal.swift in Sources */,
 				A4EB9ABC7B8EEC783A597F3F /* TencentUserSigGenerator.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -383,6 +388,7 @@
 				1B6B11173C9F4E5E8F527901 /* LocalChatHistoryStoreTests.swift in Sources */,
 				3BD1F69ADAD14F34BE71B50C /* LocalChatHistoryStore.swift in Sources */,
 				33DF1CF7B27DB82ADDAF60BF /* MasterChatStateTests.swift in Sources */,
+				D10000000000000000000004 /* RemoteDesktopSignalTests.swift in Sources */,
 				3054F8A8B9474264E18F6CA5 /* UserSigGeneratorTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -397,6 +403,8 @@
 				6F8A104C96EA493A9256A839 /* LocalChatHistoryStore.swift in Sources */,
 				3C07CA2D884A70D8C12DADED /* LocalSettingsStore.swift in Sources */,
 				9C44F3384B6455C64BDF6449 /* MaiChatApp.swift in Sources */,
+				D10000000000000000000001 /* RemoteDesktopSession.swift in Sources */,
+				D10000000000000000000002 /* RemoteDesktopView.swift in Sources */,
 				72471911E6CABC0FE2A796B1 /* RemoteIMAppState.swift in Sources */,
 				C204F8BE910FD7BF36145756 /* RemoteIMClient.swift in Sources */,
 				424A1F3534D270220B895970 /* RootView.swift in Sources */,

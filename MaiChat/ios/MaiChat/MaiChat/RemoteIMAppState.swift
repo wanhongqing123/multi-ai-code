@@ -24,6 +24,8 @@ final class RemoteIMAppState: ObservableObject {
     @Published private(set) var unreadCountByUserID: [String: Int] = [:]
     @Published private(set) var userProfileByUserID: [String: RemoteIMUserProfile] = [:]
 
+    let remoteDesktop: RemoteDesktopSession
+
     private let settingsStore: LocalSettingsStore
     private let secretStore: KeychainSecretStore
     private let historyStore: LocalChatHistoryStore
@@ -44,6 +46,7 @@ final class RemoteIMAppState: ObservableObject {
         self.secretStore = secretStore
         self.historyStore = historyStore
         self.client = client
+        self.remoteDesktop = RemoteDesktopSession(client: client)
 
         var settings = settingsStore.load()
         var loadedSecretKey = secretStore.readSecretKey()
@@ -227,6 +230,7 @@ final class RemoteIMAppState: ObservableObject {
     }
 
     func disconnect() async {
+        await remoteDesktop.stop()
         await client.disconnect()
         presenceStatusByUserID = [:]
         connectionState = .disconnected
@@ -455,7 +459,42 @@ final class RemoteIMAppState: ObservableObject {
         }
     }
 
+    func requestRemoteDesktopView(of contact: RemoteIMContact) async {
+        guard connectionState == .connected else {
+            errorMessage = "请先连接 IM"
+            return
+        }
+        guard let sdkAppID = currentSDKAppID(), sdkAppID > 0 else {
+            errorMessage = "IM 应用配置无效"
+            return
+        }
+        let localUserID = masterUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            let userSig = try TencentUserSigGenerator.generate(
+                sdkAppID: sdkAppID,
+                userID: localUserID,
+                secretKey: secretKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+            await remoteDesktop.requestView(
+                peerUserID: contact.userID,
+                sdkAppID: sdkAppID,
+                localUserID: localUserID,
+                userSig: userSig
+            )
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func stopRemoteDesktopView() async {
+        await remoteDesktop.stop()
+    }
+
     private func receive(_ event: IncomingRemoteIMText) {
+        if remoteDesktop.handleIncomingText(from: event.fromUserID, text: event.text) {
+            return
+        }
         let previousCount = chatState.messages.count
         _ = chatState.receiveText(
             event.text,

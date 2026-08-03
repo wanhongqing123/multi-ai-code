@@ -6,4 +6,5 @@ target 'MaiChat' do
   use_frameworks!
 
   pod 'TXIMSDK_Plus_iOS_XCFramework'
+  pod 'TXLiteAVSDK_TRTC', :podspec => 'https://liteav.sdk.qcloud.com/pod/liteavsdkspec/TXLiteAVSDK_TRTC.podspec'
 end

@@ -120,9 +120,9 @@ export interface SpawnRequest {
   cols?: number
   rows?: number
   /**
-   * 'new' (default) spawns a fresh CLI session and injects the system prompt.
-   * 'resume' rewrites args to the CLI's native continue form and skips
-   * system-prompt injection so the CLI's saved conversation stays clean.
+   * 'new' (default) spawns a fresh CLI session.
+   * 'resume' rewrites args to the CLI's native continue form so the CLI picks
+   * up its own saved conversation instead of starting over.
    */
   mode?: 'new' | 'resume'
 }
@@ -833,10 +833,10 @@ export function registerPtyIpc(): void {
     }
     sessions.set(req.sessionId, session)
 
-    // 非续接模式也不再注入系统提示词：注入链路（planMode/planAbsPath →
-    // buildSystemPrompt → .injections/<cli>-system.md）已经随 planMode 一起下线，
-    // 唯一的调用方 App.tsx 长期传 planMode:'none'，那段代码从来走不到。
-    // 项目级约束现在靠仓库里的约定文件（CLAUDE.md 等）承载。
+    // 不注入任何系统提示词。原注入链路（planMode/planAbsPath → buildSystemPrompt
+    // → .injections/<cli>-system.md）已随 planMode 一起下线，其内容也已作废——
+    // 它整篇是围绕「方案文档」写的，而那个功能已删除。CLI 起来就是一个跑在目标
+    // 仓库里的干净会话，项目约定由用户自行决定要不要放约定文件。
     return spawnOkResponse(launchResolution.notice)
   })
 

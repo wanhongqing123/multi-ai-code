@@ -33,7 +33,16 @@ const builtBinary = join(
 requireDir(codexRsRoot, 'Codex submodule')
 requireCommand('cargo')
 
-const cargoArgs = profile === 'dev' ? ['build'] : ['build', '--release']
+// 只编 codex-cli：我们唯一要的产物就是它的 codex.exe。裸 `cargo build` 会编整个
+// workspace，2026-08 rebase 到 openai/codex main 后这会直接构建失败——上游新增的
+// code-mode-runtime 打开了 v8 的 v8_enable_sandbox feature，v8 的 build script 转而
+// 去下 rusty_v8_ptrcomp_sandbox_release_x86_64-pc-windows-msvc.lib.gz，而 rusty_v8
+// v150.4.0 的 release 里根本没发布 Windows 的 ptrcomp_sandbox 变体（只有 plain 和
+// simdutf），404 后 panic。codex-cli 的依赖图里没有 v8（cargo tree -p codex-cli -i v8
+// 无匹配），限定包即可绕开，顺带也省掉一堆用不上的 crate。
+const cargoPackage = ['-p', 'codex-cli']
+const cargoArgs =
+  profile === 'dev' ? ['build', ...cargoPackage] : ['build', '--release', ...cargoPackage]
 run('cargo', cargoArgs, { cwd: codexRsRoot })
 copyExecutable(builtBinary, outputBinary)
 if (profile === 'release' && stripReleaseExecutable(outputBinary)) {

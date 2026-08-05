@@ -94,6 +94,36 @@ describe('AICLI structured output bridge', () => {
     expect(events).toEqual([])
   })
 
+  it('preserves the remote reply id on terminal assistant output', async () => {
+    const bridge = await createAicliStructuredOutputBridge('session-1', 'opencode')
+    const { port, token } = parseTcpEndpoint(bridge.endpoint)
+    const events: AicliStructuredOutputEvent[] = []
+    const removeListener = addAicliStructuredOutputListener((event) => events.push(event))
+
+    await sendLine(port, {
+      token,
+      kind: 'assistant_final',
+      text: 'final answer',
+      replyId: 'rim-current'
+    })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    removeListener()
+    await bridge.close()
+
+    expect(events).toEqual([
+      {
+        sessionId: 'session-1',
+        provider: 'opencode',
+        kind: 'assistant_final',
+        text: 'final answer',
+        messageId: undefined,
+        partId: undefined,
+        replyId: 'rim-current'
+      }
+    ])
+  })
+
   it('forwards and acknowledges terminal turn errors', async () => {
     const bridge = await createAicliStructuredOutputBridge('session-1', 'codex')
     const { port, token } = parseTcpEndpoint(bridge.endpoint)

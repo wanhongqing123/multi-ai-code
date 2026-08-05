@@ -11,6 +11,7 @@ export interface AicliStructuredOutputEvent {
   text: string
   messageId?: string
   partId?: string
+  replyId?: string
 }
 
 export interface AicliStructuredOutputBridge {
@@ -164,13 +165,15 @@ export async function createAicliStructuredOutputBridge(
         if (!parsed.text) continue
 
         const messageId = asOptionalString(parsed.messageId)
+        const replyId = asOptionalString(parsed.replyId)
         emitStructuredOutput({
           sessionId,
           provider,
           text: parsed.text,
           kind: asOptionalString(parsed.kind),
           messageId,
-          partId: asOptionalString(parsed.partId)
+          partId: asOptionalString(parsed.partId),
+          ...(replyId ? { replyId } : {})
         })
 
         // 回执：AICLI 侧靠这条 ack 判定数据连接“还活着”。收不到 ack（半死 socket、

@@ -46,6 +46,7 @@ import {
 import {
   completeRemoteImOutputSession,
   failRemoteImOutputSession,
+  forwardRemoteImStructuredFinalOutput,
   flushRemoteImOutputSession,
   type RemoteImOutputCompletionInfo,
   type RemoteImOutputSessionState
@@ -58,7 +59,7 @@ import {
   resolvePeerUserId
 } from './peerMessage.js'
 import { getRemoteImAccountProfileId, getRemoteImProfileId } from './profile.js'
-import { createRemoteImRouter } from './router.js'
+import { createRemoteImRouter, type RemoteImAicliOutputRoute } from './router.js'
 import { appendRemoteImRuntimeLog } from './runtimeLog.js'
 import { readLatestClaudeRemoteImReply } from './claudeTranscript.js'
 import { startRemoteImCliServer } from './imcliServer.js'
@@ -657,6 +658,22 @@ function startOutputForwarding(
   })
 }
 
+function cancelOutputForwarding(sessionId: string, replyId: string): void {
+  const state = outputSessions.get(sessionId)
+  if (!state || state.replyId !== replyId) return
+  if (state.timer) clearTimeout(state.timer)
+  outputSessions.delete(sessionId)
+}
+
+function createOutputRoutingDeps(config: RemoteImConfig) {
+  return {
+    onAicliOutputStart: ({ sessionId, projectId, toUserId, replyId }: RemoteImAicliOutputRoute) =>
+      startOutputForwarding(sessionId, projectId, toUserId, config, replyId),
+    onAicliOutputCancel: ({ sessionId, replyId }: RemoteImAicliOutputRoute) =>
+      cancelOutputForwarding(sessionId, replyId)
+  }
+}
+
 function flushOutputSession(sessionId: string): void {
   const state = outputSessions.get(sessionId)
   if (!state) return
@@ -730,12 +747,31 @@ function ensureSessionListeners(): void {
     state.buffer += chunk
     scheduleOutputFlush(sessionId)
   })
-  addAicliStructuredOutputListener(({ sessionId, kind, text }) => {
+  addAicliStructuredOutputListener(({ sessionId, kind, text, replyId }) => {
     const state = outputSessions.get(sessionId)
     if (!state) return
     if (!state.structuredOutput) return
     if (kind === 'turn_error') {
+      if (!replyId || replyId !== state.replyId) return
       failOutputSession(sessionId, text)
+      return
+    }
+    if (kind === 'assistant_final') {
+      if (!replyId || replyId !== state.replyId) return
+      forwardRemoteImStructuredFinalOutput(
+        sessionId,
+        state,
+        {
+          createMessage: (input) => {
+            createRemoteImMessage(input)
+          },
+          sendText: broadcastOutgoingText,
+          messagesChanged: broadcastMessagesChanged,
+          readTranscriptReply: readRemoteImTranscriptReply
+        },
+        text
+      )
+      cancelOutputForwarding(sessionId, replyId)
       return
     }
     if (kind && kind !== 'assistant_text') return
@@ -1033,6 +1069,7 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
       const router = createRemoteImRouter({
         getConfig: () => config,
         resolveSession: () => session,
+        ...createOutputRoutingDeps(config),
         sendUser: sendUserMessageToSession,
         sendImText,
         sendImFile: (projectId, toUserId, localPath) =>
@@ -1103,9 +1140,6 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
         }
       })
       const result = await router.handleIncomingText(message)
-      if (result.ok && result.aicliSessionId) {
-        startOutputForwarding(result.aicliSessionId, message.projectId, message.fromUserId, config, result.replyId)
-      }
       broadcastMessagesChanged(message.projectId)
       return result
     }
@@ -1119,6 +1153,7 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
       const router = createRemoteImRouter({
         getConfig: () => config,
         resolveSession: () => session,
+        ...createOutputRoutingDeps(config),
         sendUser: sendUserMessageToSession,
         sendImText,
         transcribeAudio: transcribeRemoteImAudioWithLocalWhisper,
@@ -1135,9 +1170,6 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
         }
       })
       const result = await router.handleIncomingAudio(message)
-      if (result.ok && result.aicliSessionId) {
-        startOutputForwarding(result.aicliSessionId, message.projectId, message.fromUserId, config, result.replyId)
-      }
       broadcastMessagesChanged(message.projectId)
       return result
     }
@@ -1151,6 +1183,7 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
       const router = createRemoteImRouter({
         getConfig: () => config,
         resolveSession: () => session,
+        ...createOutputRoutingDeps(config),
         sendUser: sendUserMessageToSession,
         sendImText,
         transcribeAudio: transcribeRemoteImAudioWithLocalWhisper,
@@ -1194,9 +1227,6 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
         }
       })
       const result = await router.handleIncomingImage(message)
-      if (result.ok && result.aicliSessionId) {
-        startOutputForwarding(result.aicliSessionId, message.projectId, message.fromUserId, config, result.replyId)
-      }
       broadcastMessagesChanged(message.projectId)
       return result
     }
@@ -1210,6 +1240,7 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
       const router = createRemoteImRouter({
         getConfig: () => config,
         resolveSession: () => session,
+        ...createOutputRoutingDeps(config),
         sendUser: sendUserMessageToSession,
         sendImText,
         transcribeAudio: transcribeRemoteImAudioWithLocalWhisper,
@@ -1254,11 +1285,6 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
         }
       })
       const result = await router.handleIncomingFile(message)
-      // 文件现在也会转给 AICLI，所以同样要接上输出转发——否则 AICLI 处理完
-      // 的回复回不到 IM，用户只会看到"已发送给当前 AICLI"然后再无下文。
-      if (result.ok && result.aicliSessionId) {
-        startOutputForwarding(result.aicliSessionId, message.projectId, message.fromUserId, config, result.replyId)
-      }
       broadcastMessagesChanged(message.projectId)
       return result
     }

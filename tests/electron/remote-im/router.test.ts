@@ -139,6 +139,69 @@ describe('remote IM router', () => {
     ])
   })
 
+  it('starts output forwarding before submitting the AICLI prompt', async () => {
+    const store = createMessageStore()
+    const events: string[] = []
+    const router = createRemoteImRouter({
+      getConfig: () => config,
+      resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
+      onAicliOutputStart: ({ sessionId, replyId }) => {
+        events.push(`start:${sessionId}:${replyId}`)
+      },
+      sendUser: async () => {
+        events.push('submit')
+        return { ok: true }
+      },
+      sendImText: async () => {
+        events.push('ack')
+        return { ok: true }
+      },
+      createReplyId: () => 'reply-race',
+      store
+    })
+
+    await router.handleIncomingText({
+      projectId: 'project-1',
+      remoteMessageId: 'remote-race-1',
+      fromUserId: 'phone_admin',
+      toUserId: 'desktop_bot',
+      text: '立即失败也必须能回传',
+      createdAt: 100
+    })
+
+    expect(events).toEqual(['start:session-main:reply-race', 'submit', 'ack'])
+  })
+
+  it('cancels the matching output route when AICLI rejects the prompt', async () => {
+    const store = createMessageStore()
+    const events: string[] = []
+    const router = createRemoteImRouter({
+      getConfig: () => config,
+      resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
+      onAicliOutputStart: ({ replyId }) => events.push(`start:${replyId}`),
+      onAicliOutputCancel: ({ replyId }) => events.push(`cancel:${replyId}`),
+      sendUser: async () => {
+        events.push('submit')
+        return { ok: false, error: 'session not ready' }
+      },
+      sendImText: async () => ({ ok: true }),
+      createReplyId: () => 'reply-rejected',
+      store
+    })
+
+    const result = await router.handleIncomingText({
+      projectId: 'project-1',
+      remoteMessageId: 'remote-rejected-1',
+      fromUserId: 'phone_admin',
+      toUserId: 'desktop_bot',
+      text: '不会留下悬挂监听',
+      createdAt: 100
+    })
+
+    expect(result).toEqual({ ok: false, error: 'session not ready' })
+    expect(events).toEqual(['start:reply-rejected', 'submit', 'cancel:reply-rejected'])
+  })
+
   it('does not route the same remote IM message to AICLI twice', async () => {
     const store = createMessageStore()
     const sentToAicli: string[] = []
@@ -280,6 +343,7 @@ describe('remote IM router', () => {
     const sentToAicli: string[] = []
     const sentToIm: string[] = []
     const handled: Array<{ command: string; args: string; replyId?: string }> = []
+    const events: string[] = []
     const router = createRemoteImRouter({
       getConfig: () => config,
       resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
@@ -292,7 +356,9 @@ describe('remote IM router', () => {
         return { ok: true }
       },
       createReplyId: () => 'reply-btw-fixed',
+      onAicliOutputStart: ({ replyId }) => events.push(`start:${replyId}`),
       handleControlCommand: async ({ command, args, replyId }) => {
+        events.push('submit')
         handled.push({ command, args, replyId })
         return {
           ok: true,
@@ -318,6 +384,7 @@ describe('remote IM router', () => {
     })
     expect(sentToAicli).toEqual([])
     expect(sentToIm).toEqual(['已提交 /btw 子任务，完成后会通过 IM 回传。'])
+    expect(events).toEqual(['start:reply-btw-fixed', 'submit'])
     expect(handled).toEqual([
       {
         command: 'btw',

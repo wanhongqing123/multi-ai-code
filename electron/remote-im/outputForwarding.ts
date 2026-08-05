@@ -184,6 +184,51 @@ export function flushRemoteImOutputSession(
   return chunks.length
 }
 
+/**
+ * Forward a source-confirmed final assistant response. Normal streaming output still
+ * requires reply markers; only this terminal event may fall back to markerless text.
+ */
+export function forwardRemoteImStructuredFinalOutput(
+  sessionId: string,
+  state: RemoteImOutputSessionState,
+  deps: RemoteImOutputForwardingDeps,
+  text: string
+): number {
+  const flushed = flushRemoteImOutputSession(sessionId, state, deps)
+  if (state.replyId && state.forwardedReplyId === state.replyId) return flushed
+
+  const reply = extractRemoteImReplyOutput(text, { replyId: state.replyId })
+  const hasReplyMarker = /<\/?remote-im-reply(?:\s|>)/.test(text)
+  const pendingBody = reply.pending ? reply.nextBuffer.split('\n').slice(1).join('\n') : ''
+  const content = reply.content || pendingBody || (hasReplyMarker ? '' : text)
+  const buffer = sanitizeRemoteImAicliOutput(content, { sourceKind: state.sourceKind })
+  state.buffer = ''
+  if (!buffer.trim()) return flushed
+
+  const chunks = createOutputChunks(buffer, {
+    maxChunkChars: state.config.outputMaxChunkChars
+  })
+  const now = deps.now?.() ?? Date.now()
+  for (const chunk of chunks) {
+    deps.createMessage(
+      createOutgoingMessage({
+        sessionId,
+        state,
+        content: chunk,
+        role: 'aicli',
+        now
+      })
+    )
+    deps.sendText(state.projectId, state.toUserId, createRemoteImAicliOutputText(chunk))
+  }
+
+  if (chunks.length > 0) {
+    deps.messagesChanged(state.projectId)
+    if (state.replyId) state.forwardedReplyId = state.replyId
+  }
+  return flushed + chunks.length
+}
+
 export function completeRemoteImOutputSession(
   sessionId: string,
   state: RemoteImOutputSessionState,

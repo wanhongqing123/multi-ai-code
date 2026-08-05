@@ -40,6 +40,13 @@ export interface RemoteImRouterStore {
   ): RemoteImMessage | null
 }
 
+export interface RemoteImAicliOutputRoute {
+  projectId: string
+  toUserId: string
+  sessionId: string
+  replyId: string
+}
+
 export interface RemoteImRouterDeps {
   getConfig(projectId: string): RemoteImConfig
   resolveSession(projectId: string): RemoteImSessionInfo | null
@@ -75,6 +82,8 @@ export interface RemoteImRouterDeps {
     | { ok: false; error: string; attachment?: RemoteImFileAttachment | null }
   >
   createReplyId?: () => string
+  onAicliOutputStart?: (route: RemoteImAicliOutputRoute) => void
+  onAicliOutputCancel?: (route: RemoteImAicliOutputRoute) => void
   handleControlCommand?: (input: {
     projectId: string
     fromUserId: string
@@ -405,6 +414,22 @@ function formatRemoteImFileSize(bytes: number): string {
 }
 
 export function createRemoteImRouter(deps: RemoteImRouterDeps) {
+  async function sendUserWithOutputRoute(
+    outputRoute: RemoteImAicliOutputRoute,
+    text: string,
+    displayText: string
+  ): Promise<Awaited<ReturnType<RemoteImRouterDeps['sendUser']>>> {
+    deps.onAicliOutputStart?.(outputRoute)
+    try {
+      const result = await deps.sendUser(outputRoute.sessionId, text, { displayText })
+      if (!result.ok) deps.onAicliOutputCancel?.(outputRoute)
+      return result
+    } catch (error) {
+      deps.onAicliOutputCancel?.(outputRoute)
+      throw error
+    }
+  }
+
   async function routeTaskTextToAicli(input: {
     message: RemoteImIncomingTextMessage
     fromUserId: string
@@ -462,7 +487,13 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       fromUserId: input.fromUserId,
       text: input.text
     })
-    const sendResult = await deps.sendUser(session.sessionId, wrapped, { displayText })
+    const outputRoute = {
+      projectId: input.message.projectId,
+      toUserId: input.fromUserId,
+      sessionId: session.sessionId,
+      replyId
+    }
+    const sendResult = await sendUserWithOutputRoute(outputRoute, wrapped, displayText)
     if (!sendResult.ok) {
       const error = sendResult.error ?? 'failed to send message to AICLI'
       deps.store.updateStatus(incoming.id, {
@@ -566,19 +597,36 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
         controlCommand.command === 'btw'
           ? deps.createReplyId?.() ?? createRemoteImReplyId()
           : undefined
-      const result = deps.handleControlCommand
-        ? await deps.handleControlCommand({
-            projectId: message.projectId,
-            fromUserId,
-            command: controlCommand.command,
-            args: controlCommand.args,
-            raw: controlCommand.raw,
-            ...(replyId ? { replyId } : {})
-          })
-        : {
-            ok: false,
-            text: '当前桌面端未接入 IM 控制命令。'
-          }
+      const outputRoute =
+        session && replyId
+          ? {
+              projectId: message.projectId,
+              toUserId: fromUserId,
+              sessionId: session.sessionId,
+              replyId
+            }
+          : undefined
+      if (outputRoute) deps.onAicliOutputStart?.(outputRoute)
+      let result: Awaited<ReturnType<NonNullable<RemoteImRouterDeps['handleControlCommand']>>>
+      try {
+        result = deps.handleControlCommand
+          ? await deps.handleControlCommand({
+              projectId: message.projectId,
+              fromUserId,
+              command: controlCommand.command,
+              args: controlCommand.args,
+              raw: controlCommand.raw,
+              ...(replyId ? { replyId } : {})
+            })
+          : {
+              ok: false,
+              text: '当前桌面端未接入 IM 控制命令。'
+            }
+      } catch (error) {
+        if (outputRoute) deps.onAicliOutputCancel?.(outputRoute)
+        throw error
+      }
+      if (!result.ok && outputRoute) deps.onAicliOutputCancel?.(outputRoute)
       await sendSystemText(deps, message.projectId, fromUserId, result.text)
       if (result.ok && result.attachmentPath) {
         if (!deps.sendImFile) {
@@ -741,7 +789,13 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
     const replyId = deps.createReplyId?.() ?? createRemoteImReplyId()
     const wrapped = buildRemoteImAicliPrompt({ fromUserId, text: taskText, replyId })
     const displayText = buildRemoteImAicliDisplayText({ fromUserId, text: taskText })
-    const sendResult = await deps.sendUser(session.sessionId, wrapped, { displayText })
+    const outputRoute = {
+      projectId: message.projectId,
+      toUserId: fromUserId,
+      sessionId: session.sessionId,
+      replyId
+    }
+    const sendResult = await sendUserWithOutputRoute(outputRoute, wrapped, displayText)
     if (!sendResult.ok) {
       const error = sendResult.error ?? 'failed to send image message to AICLI'
       deps.store.updateStatus(incoming.id, {
@@ -841,7 +895,13 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
     const replyId = deps.createReplyId?.() ?? createRemoteImReplyId()
     const wrapped = buildRemoteImAicliPrompt({ fromUserId, text: taskText, replyId })
     const displayText = buildRemoteImAicliDisplayText({ fromUserId, text: taskText })
-    const sendResult = await deps.sendUser(session.sessionId, wrapped, { displayText })
+    const outputRoute = {
+      projectId: message.projectId,
+      toUserId: fromUserId,
+      sessionId: session.sessionId,
+      replyId
+    }
+    const sendResult = await sendUserWithOutputRoute(outputRoute, wrapped, displayText)
     if (!sendResult.ok) {
       const error = sendResult.error ?? 'failed to send file message to AICLI'
       deps.store.updateStatus(incoming.id, { status: 'failed', error })

@@ -10,6 +10,7 @@ import {
   createRemoteImOperationFailedText,
   createRemoteImOperationFinishedText,
   failRemoteImOutputSession,
+  forwardRemoteImStructuredFinalOutput,
   flushRemoteImOutputSession,
   parseRemoteImAicliOutputText,
   isRemoteImOperationFinishedText,
@@ -449,6 +450,112 @@ describe('remote IM output forwarding', () => {
     expect(chunks).toBe(1)
     expect(messages[0]?.content).toBe('OpenCode reply for IM.')
     expect(sentTexts).toEqual([createRemoteImAicliOutputText('OpenCode reply for IM.')])
+  })
+
+  it('forwards a markerless source-confirmed final reply without intermediate output', () => {
+    const state = createState('intermediate text without markers', { outputMaxChunkChars: 500 })
+    state.replyId = 'rim-current'
+    state.sourceKind = 'opencode'
+    const messages: CreateRemoteImMessageInput[] = []
+    const sentTexts: string[] = []
+    const deps: RemoteImOutputForwardingDeps = {
+      createMessage: (input) => messages.push(input),
+      sendText: (_projectId, _toUserId, text) => sentTexts.push(text),
+      messagesChanged: () => undefined
+    }
+
+    expect(flushRemoteImOutputSession('session-1', state, deps)).toBe(0)
+    expect(
+      forwardRemoteImStructuredFinalOutput(
+        'session-1',
+        state,
+        deps,
+        '最终结论：使用源码终态事件转发。'
+      )
+    ).toBe(1)
+
+    expect(messages.map((message) => message.content)).toEqual([
+      '最终结论：使用源码终态事件转发。'
+    ])
+    expect(sentTexts).toEqual([
+      createRemoteImAicliOutputText('最终结论：使用源码终态事件转发。')
+    ])
+  })
+
+  it('deduplicates a terminal reply already forwarded through markers', () => {
+    const tagged = [
+      '<remote-im-reply id="rim-current">',
+      'marker reply',
+      '</remote-im-reply id="rim-current">'
+    ].join('\n')
+    const state = createState(tagged, { outputMaxChunkChars: 500 })
+    state.replyId = 'rim-current'
+    state.sourceKind = 'codex'
+    const sentTexts: string[] = []
+    const deps: RemoteImOutputForwardingDeps = {
+      createMessage: () => undefined,
+      sendText: (_projectId, _toUserId, text) => sentTexts.push(text),
+      messagesChanged: () => undefined
+    }
+
+    expect(forwardRemoteImStructuredFinalOutput('session-1', state, deps, tagged)).toBe(1)
+    expect(forwardRemoteImStructuredFinalOutput('session-1', state, deps, 'marker reply')).toBe(0)
+    expect(sentTexts).toEqual([createRemoteImAicliOutputText('marker reply')])
+  })
+
+  it('discards a source-confirmed final reply tagged for another request', () => {
+    const state = createState('', { outputMaxChunkChars: 500 })
+    state.replyId = 'rim-current'
+    state.sourceKind = 'opencode'
+    const messages: CreateRemoteImMessageInput[] = []
+    const sentTexts: string[] = []
+    const tagged = [
+      '<remote-im-reply id="rim-other">',
+      'reply for another request',
+      '</remote-im-reply id="rim-other">'
+    ].join('\n')
+
+    expect(
+      forwardRemoteImStructuredFinalOutput(
+        'session-1',
+        state,
+        {
+          createMessage: (input) => messages.push(input),
+          sendText: (_projectId, _toUserId, text) => sentTexts.push(text),
+          messagesChanged: () => undefined
+        },
+        tagged
+      )
+    ).toBe(0)
+
+    expect(messages).toEqual([])
+    expect(sentTexts).toEqual([])
+  })
+
+  it('forwards a completed terminal reply once after an incomplete marker was buffered', () => {
+    const state = createState(
+      ['terminal noise', '<remote-im-reply id="rim-current">', 'partial'].join('\n'),
+      { outputMaxChunkChars: 500 }
+    )
+    state.replyId = 'rim-current'
+    state.sourceKind = 'codex'
+    const messages: CreateRemoteImMessageInput[] = []
+    const sentTexts: string[] = []
+    const deps: RemoteImOutputForwardingDeps = {
+      createMessage: (input) => messages.push(input),
+      sendText: (_projectId, _toUserId, text) => sentTexts.push(text),
+      messagesChanged: () => undefined
+    }
+    const complete = [
+      '<remote-im-reply id="rim-current">',
+      'complete terminal reply',
+      '</remote-im-reply id="rim-current">'
+    ].join('\n')
+
+    expect(forwardRemoteImStructuredFinalOutput('session-1', state, deps, complete)).toBe(1)
+    expect(forwardRemoteImStructuredFinalOutput('session-1', state, deps, complete)).toBe(0)
+    expect(messages.map((message) => message.content)).toEqual(['complete terminal reply'])
+    expect(sentTexts).toEqual([createRemoteImAicliOutputText('complete terminal reply')])
   })
 
   it('prefers raw Claude transcript Markdown over terminal-rendered table fragments', () => {

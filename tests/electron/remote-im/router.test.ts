@@ -654,13 +654,23 @@ describe('remote IM router', () => {
 
   it('routes trusted image messages to AICLI with the cached local image path', async () => {
     const store = createMessageStore()
-    const sentToAicli: Array<{ sessionId: string; text: string; displayText: string | undefined }> = []
+    const sentToAicli: Array<{
+      sessionId: string
+      text: string
+      displayText: string | undefined
+      attachments: unknown
+    }> = []
     const sentToIm: string[] = []
     const router = createRemoteImRouter({
       getConfig: () => config,
       resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
       sendUser: async (sessionId, text, options) => {
-        sentToAicli.push({ sessionId, text, displayText: options?.displayText })
+        sentToAicli.push({
+          sessionId,
+          text,
+          displayText: options?.displayText,
+          attachments: options?.attachments
+        })
         return { ok: true }
       },
       sendImText: async (_projectId, _toUserId, text) => {
@@ -705,6 +715,14 @@ describe('remote IM router', () => {
     expect(sentToAicli).toHaveLength(1)
     expect(sentToAicli[0]?.text).toContain('本地路径: /tmp/remote-im/images/photo.png')
     expect(sentToAicli[0]?.displayText).toContain('本地路径: /tmp/remote-im/images/photo.png')
+    expect(sentToAicli[0]?.attachments).toEqual([
+      {
+        type: 'image',
+        localPath: '/tmp/remote-im/images/photo.png',
+        mimeType: 'image/png',
+        fileName: 'photo.png'
+      }
+    ])
     expect(sentToIm[0]).toContain('已发送给当前 AICLI')
     expect(store.messages[0]).toMatchObject({
       kind: 'image',

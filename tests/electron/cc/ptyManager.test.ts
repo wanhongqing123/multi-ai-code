@@ -429,14 +429,23 @@ describe('registerPtyIpc prompt injection timing', () => {
 
   it('submits OpenCode messages through the source bridge without PTY input or local echo', async () => {
     const { proc } = await spawnNoPlanSession('opencode')
-    const socket = await connectAicliControlBridge(proc)
+    const receivedLines: string[] = []
+    const socket = await connectAicliControlBridge(proc, receivedLines)
 
     const { sendUserMessageToSession } = await import('../../../electron/cc/ptyManager.js')
     const result = await sendUserMessageToSession(
       'session-no-plan',
       'full AICLI protocol prompt',
       {
-        displayText: '[来自远程 IM：mac-apollo-u3player]\n你好'
+        displayText: '[来自远程 IM：mac-apollo-u3player]\n你好',
+        attachments: [
+          {
+            type: 'image',
+            localPath: '/tmp/remote-im/photo.png',
+            mimeType: 'image/png',
+            fileName: 'photo.png'
+          }
+        ]
       }
     )
     socket.destroy()
@@ -446,6 +455,14 @@ describe('registerPtyIpc prompt injection timing', () => {
     expect(written).not.toContain('full AICLI protocol prompt')
     expect(browserWindowSends.filter((send) => send.channel === 'cc:data')).toEqual([])
     expect(written).not.toContain('\r')
+    expect(JSON.parse(receivedLines[0] ?? '{}').attachments).toEqual([
+      {
+        type: 'image',
+        localPath: '/tmp/remote-im/photo.png',
+        mimeType: 'image/png',
+        fileName: 'photo.png'
+      }
+    ])
   })
 
   it('serializes concurrent programmatic messages to the same AICLI session', async () => {

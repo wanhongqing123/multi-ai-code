@@ -442,7 +442,15 @@ describe('AICLI structured output bridge', () => {
       {
         command: 'submit_user_message',
         text: 'wrapped model prompt',
-        displayText: '[来自远程 IM：phone]\n你好'
+        displayText: '[来自远程 IM：phone]\n你好',
+        attachments: [
+          {
+            type: 'image',
+            localPath: '/tmp/remote-im/photo.png',
+            mimeType: 'image/png',
+            fileName: 'photo.png'
+          }
+        ]
       },
       500
     )
@@ -454,6 +462,8 @@ describe('AICLI structured output bridge', () => {
     expect(receivedLines.join('')).toContain('"command":"submit_user_message"')
     expect(receivedLines.join('')).toContain('"text":"wrapped model prompt"')
     expect(receivedLines.join('')).toContain('"displayText":"[来自远程 IM：phone]\\n你好"')
+    expect(receivedLines.join('')).toContain('"localPath":"/tmp/remote-im/photo.png"')
+    expect(receivedLines.join('')).toContain('"mimeType":"image/png"')
   })
 
   it('sends lifecycle control commands without leaking them into normal text input', async () => {

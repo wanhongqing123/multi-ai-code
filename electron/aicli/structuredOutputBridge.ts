@@ -4,6 +4,13 @@ import net from 'node:net'
 export type AicliStructuredOutputProvider = 'codex' | 'opencode'
 export type AicliControlMode = 'plan' | 'build'
 
+export interface AicliUserMessageAttachment {
+  type: 'image'
+  localPath: string
+  mimeType: string
+  fileName?: string
+}
+
 export interface AicliStructuredOutputEvent {
   sessionId: string
   provider: AicliStructuredOutputProvider
@@ -59,7 +66,12 @@ export type AicliRequestControlCommand =
   | { command: 'model'; model?: string; reasoning?: string }
   | { command: 'goal'; goal?: string }
   | { command: 'btw'; task: string; replyId?: string }
-  | { command: 'submit_user_message'; text: string; displayText: string }
+  | {
+      command: 'submit_user_message'
+      text: string
+      displayText: string
+      attachments?: AicliUserMessageAttachment[]
+    }
   | { command: 'interrupt' }
   | { command: 'compact' }
   | { command: 'clear' }
@@ -264,7 +276,11 @@ export async function createAicliStructuredOutputBridge(
             ? { task: input.task, ...(input.replyId ? { replyId: input.replyId } : {}) }
             : {}),
           ...(input.command === 'submit_user_message'
-            ? { text: input.text, displayText: input.displayText }
+            ? {
+                text: input.text,
+                displayText: input.displayText,
+                ...(input.attachments?.length ? { attachments: input.attachments } : {})
+              }
             : {}),
           ...(input.command === 'goal' && input.goal ? { goal: input.goal } : {})
         })

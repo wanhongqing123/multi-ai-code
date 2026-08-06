@@ -32,7 +32,8 @@ import {
   type AicliControlMode,
   type AicliControlCommandResult,
   type AicliStructuredOutputBridge,
-  type AicliStructuredOutputProvider
+  type AicliStructuredOutputProvider,
+  type AicliUserMessageAttachment
 } from '../aicli/structuredOutputBridge.js'
 
 import { detectMsys } from '../util/msys.js'
@@ -301,6 +302,7 @@ function withRemoteImCliEnv(
 
 export interface SendUserMessageOptions {
   displayText?: string
+  attachments?: AicliUserMessageAttachment[]
 }
 
 async function waitForCodexReady(
@@ -505,7 +507,10 @@ export async function sendUserMessageToSession(
           {
             command: 'submit_user_message',
             text,
-            displayText: options.displayText?.trim() || text
+            displayText: options.displayText?.trim() || text,
+            ...(isOpenCodeCommand(current.command) && options.attachments?.length
+              ? { attachments: options.attachments }
+              : {})
           },
           10_000
         )

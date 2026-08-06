@@ -24,6 +24,7 @@ import {
   parseRemoteImControlCommand,
   type RemoteImControlCommandName
 } from './controlCommands.js'
+import type { AicliUserMessageAttachment } from '../aicli/structuredOutputBridge.js'
 
 export interface RemoteImSessionInfo {
   sessionId: string
@@ -53,7 +54,7 @@ export interface RemoteImRouterDeps {
   sendUser(
     sessionId: string,
     text: string,
-    options?: { displayText?: string }
+    options?: { displayText?: string; attachments?: AicliUserMessageAttachment[] }
   ): Promise<{ ok: boolean; error?: string }>
   sendImText(
     projectId: string,
@@ -379,6 +380,15 @@ function buildRemoteImImageTaskText(input: {
   return lines.join('\n')
 }
 
+function inferImageMimeType(localPath: string): string {
+  const lower = localPath.toLowerCase()
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg'
+  if (lower.endsWith('.webp')) return 'image/webp'
+  if (lower.endsWith('.gif')) return 'image/gif'
+  if (lower.endsWith('.heic')) return 'image/heic'
+  return 'image/png'
+}
+
 function buildRemoteImFileTaskText(input: {
   fromUserId: string
   localPath: string
@@ -417,11 +427,15 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
   async function sendUserWithOutputRoute(
     outputRoute: RemoteImAicliOutputRoute,
     text: string,
-    displayText: string
+    displayText: string,
+    attachments?: AicliUserMessageAttachment[]
   ): Promise<Awaited<ReturnType<RemoteImRouterDeps['sendUser']>>> {
     deps.onAicliOutputStart?.(outputRoute)
     try {
-      const result = await deps.sendUser(outputRoute.sessionId, text, { displayText })
+      const result = await deps.sendUser(outputRoute.sessionId, text, {
+        displayText,
+        ...(attachments?.length ? { attachments } : {})
+      })
       if (!result.ok) deps.onAicliOutputCancel?.(outputRoute)
       return result
     } catch (error) {
@@ -795,7 +809,16 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       sessionId: session.sessionId,
       replyId
     }
-    const sendResult = await sendUserWithOutputRoute(outputRoute, wrapped, displayText)
+    const sendResult = await sendUserWithOutputRoute(outputRoute, wrapped, displayText, [
+      {
+        type: 'image',
+        localPath: attachment.localPath,
+        mimeType: attachment.mimeType?.startsWith('image/')
+          ? attachment.mimeType
+          : inferImageMimeType(attachment.localPath),
+        ...(attachment.fileName ? { fileName: attachment.fileName } : {})
+      }
+    ])
     if (!sendResult.ok) {
       const error = sendResult.error ?? 'failed to send image message to AICLI'
       deps.store.updateStatus(incoming.id, {

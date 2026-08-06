@@ -193,7 +193,7 @@ export function buildRemoteImAicliPrompt(input: RemoteImAicliPromptInput): strin
     `[来自远程 IM：${input.fromUserId.trim()}]`,
     input.text,
     '',
-    '如果需要查询或操作 IM，请先运行 imcli help；如需把截图或本地图片发回 IM，可保存为 png/jpg/webp/gif 文件后使用 imcli send-image <user> <imagePath>；如需发送 Markdown/HTML 报告文件，使用 imcli send-file <user> <filePath>；多行文本不要把真实换行直接写进 imcli send 的命令行参数（Windows 下会在第一个换行处被截断），可在单行参数里写字面量 \\n（imcli 会展开为换行），或改用 stdin 管道：imcli send <user> -。',
+    '如果需要查询或操作 IM，请先运行 imcli help；如需把截图或本地图片发回 IM，可保存为 png/jpg/webp/gif 文件后使用 imcli send-image <user> <imagePath>；如需发送 Markdown/HTML 报告文件，使用 imcli send-file <user> <filePath>。正常回复必须使用真实的 Markdown 换行，不要把 Windows 命令行的转义规则用于回复正文。只有手工调用 imcli send 时才按 imcli help 处理多行参数，或改用 stdin 管道：imcli send <user> -。',
     '[IM_REPLY] Put final Markdown for IM between these exact markers, each on its own line in your reply:',
     `Opening marker: ${buildRemoteImReplyOpenTag(replyId)}`,
     `Closing marker: ${buildRemoteImReplyCloseTag(replyId)}`,

@@ -1,13 +1,16 @@
 import { join } from 'path'
 import {
   binaryName,
+  capture,
   copyExecutable,
   gitCommit,
   platformArch,
   repoRoot,
   requireCommand,
   requireDir,
+  resolvePythonCommand,
   run,
+  rustTargetForPlatform,
   stripReleaseExecutable,
   tryVersion,
   writeManifestEntry
@@ -16,7 +19,9 @@ import {
 const codexRoot = join(repoRoot, 'third_party', 'aicli', 'codex')
 const codexRsRoot = join(codexRoot, 'codex-rs')
 const platform = platformArch()
-const outputBinary = join(repoRoot, 'bin', 'aicli', 'codex', platform, binaryName('codex'))
+const outputDir = join(repoRoot, 'bin', 'aicli', 'codex', platform)
+const outputBinary = join(outputDir, binaryName('codex'))
+const outputCodeModeHost = join(outputDir, binaryName('codex-code-mode-host'))
 
 // 默认 release：dev profile 的 codex.exe 带调试信息约 358MB 且未优化，
 // 打进安装包体积和速度都不可接受。日常改代码迭代可用 CODEX_BUILD_PROFILE=dev
@@ -29,24 +34,43 @@ const builtBinary = join(
   profile === 'dev' ? 'debug' : 'release',
   binaryName('codex')
 )
+const builtCodeModeHost = join(
+  codexRsRoot,
+  'target',
+  profile === 'dev' ? 'debug' : 'release',
+  binaryName('codex-code-mode-host')
+)
 
 requireDir(codexRsRoot, 'Codex submodule')
 requireCommand('cargo')
 
-// 只编 codex-cli：我们唯一要的产物就是它的 codex.exe。裸 `cargo build` 会编整个
-// workspace，2026-08 rebase 到 openai/codex main 后这会直接构建失败——上游新增的
-// code-mode-runtime 打开了 v8 的 v8_enable_sandbox feature，v8 的 build script 转而
-// 去下 rusty_v8_ptrcomp_sandbox_release_x86_64-pc-windows-msvc.lib.gz，而 rusty_v8
-// v150.4.0 的 release 里根本没发布 Windows 的 ptrcomp_sandbox 变体（只有 plain 和
-// simdutf），404 后 panic。codex-cli 的依赖图里没有 v8（cargo tree -p codex-cli -i v8
-// 无匹配），限定包即可绕开，顺带也省掉一堆用不上的 crate。
-const cargoPackage = ['-p', 'codex-cli']
+// Code Mode 通过同目录下的独立 host 执行工具。Codex 锁定的 rusty_v8 crate、静态库
+// 和 binding 必须严格匹配；复用上游校验逻辑，从 OpenAI release 自动准备对应产物。
+const python = resolvePythonCommand()
+const v8EnvJson = capture(
+  python.command,
+  [
+    ...python.prefixArgs,
+    join(repoRoot, 'scripts', 'resolve-codex-v8-env.py'),
+    rustTargetForPlatform()
+  ],
+  { cwd: repoRoot }
+)
+const v8Env = JSON.parse(v8EnvJson)
+
+// 只构建安装包实际需要的两个二进制，避免重新构建整个 Codex workspace。
+const cargoBinaries = ['--bin', 'codex', '--bin', 'codex-code-mode-host']
 const cargoArgs =
-  profile === 'dev' ? ['build', ...cargoPackage] : ['build', '--release', ...cargoPackage]
-run('cargo', cargoArgs, { cwd: codexRsRoot })
+  profile === 'dev' ? ['build', ...cargoBinaries] : ['build', '--release', ...cargoBinaries]
+run('cargo', cargoArgs, { cwd: codexRsRoot, env: v8Env })
 copyExecutable(builtBinary, outputBinary)
-if (profile === 'release' && stripReleaseExecutable(outputBinary)) {
-  console.log(`Codex release binary stripped：${outputBinary}`)
+copyExecutable(builtCodeModeHost, outputCodeModeHost)
+if (profile === 'release') {
+  for (const binary of [outputBinary, outputCodeModeHost]) {
+    if (stripReleaseExecutable(binary)) {
+      console.log(`Codex release binary stripped：${binary}`)
+    }
+  }
 }
 
 writeManifestEntry({
@@ -54,7 +78,11 @@ writeManifestEntry({
   platformArch: platform,
   sourceCommit: gitCommit(codexRoot),
   version: tryVersion(outputBinary),
-  binaryPath: outputBinary
+  binaryPath: outputBinary,
+  helperPaths: {
+    codeModeHost: outputCodeModeHost
+  }
 })
 
 console.log(`Codex 已构建：${outputBinary}`)
+console.log(`Codex Code Mode host 已构建：${outputCodeModeHost}`)

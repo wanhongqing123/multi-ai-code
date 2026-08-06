@@ -85,8 +85,51 @@ export function gitCommit(cwd) {
   return capture('git', ['rev-parse', 'HEAD'], { cwd })
 }
 
-export function binaryName(tool) {
-  return process.platform === 'win32' ? `${tool}.exe` : tool
+export function binaryName(tool, platform = process.platform) {
+  return platform === 'win32' ? `${tool}.exe` : tool
+}
+
+export function rustTargetForPlatform(platform = process.platform, arch = process.arch) {
+  const targets = {
+    'darwin-arm64': 'aarch64-apple-darwin',
+    'darwin-x64': 'x86_64-apple-darwin',
+    'linux-arm64': 'aarch64-unknown-linux-gnu',
+    'linux-x64': 'x86_64-unknown-linux-gnu',
+    'win32-arm64': 'aarch64-pc-windows-msvc',
+    'win32-x64': 'x86_64-pc-windows-msvc'
+  }
+  const target = targets[`${platform}-${arch}`]
+  if (!target) {
+    throw new Error(`不支持的 Codex 构建平台：${platform}-${arch}`)
+  }
+  return target
+}
+
+export function resolvePythonCommand({
+  platform = process.platform,
+  spawn = spawnSync
+} = {}) {
+  const candidates =
+    platform === 'win32'
+      ? [
+          { command: 'python', prefixArgs: [] },
+          { command: 'py', prefixArgs: ['-3'] },
+          { command: 'python3', prefixArgs: [] }
+        ]
+      : [
+          { command: 'python3', prefixArgs: [] },
+          { command: 'python', prefixArgs: [] }
+        ]
+
+  for (const candidate of candidates) {
+    const result = spawn(candidate.command, [...candidate.prefixArgs, '--version'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      shell: false
+    })
+    if (!result.error && result.status === 0) return candidate
+  }
+  throw new Error('缺少 Python 3，无法准备 Codex Code Mode 的 V8 构建依赖')
 }
 
 /**
@@ -137,16 +180,29 @@ export function readManifest(manifestPath) {
   return JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw)
 }
 
+export function normalizeManifestEntry(entry, root = repoRoot) {
+  const normalized = {
+    ...entry,
+    binaryPath: relative(root, entry.binaryPath).replaceAll('\\', '/')
+  }
+  if (entry.helperPaths) {
+    normalized.helperPaths = Object.fromEntries(
+      Object.entries(entry.helperPaths).map(([name, path]) => [
+        name,
+        relative(root, path).replaceAll('\\', '/')
+      ])
+    )
+  }
+  return normalized
+}
+
 export function writeManifestEntry(entry) {
   const manifestPath = join(repoRoot, 'bin', 'aicli', 'manifest.json')
   ensureDir(dirname(manifestPath))
   const manifest = readManifest(manifestPath)
   manifest.generatedAt = new Date().toISOString()
   manifest.entries = manifest.entries ?? {}
-  manifest.entries[entry.tool] = {
-    ...entry,
-    binaryPath: relative(repoRoot, entry.binaryPath).replaceAll('\\', '/')
-  }
+  manifest.entries[entry.tool] = normalizeManifestEntry(entry)
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
 }
 

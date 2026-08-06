@@ -21,6 +21,7 @@ import {
   withOpenCodeLspEnv,
   type OpenCodeProviderProfile
 } from '../aicli/opencodeConfig.js'
+import { withOpenCodeManagedRuntimeEnv } from '../aicli/opencodeManagedRuntime.js'
 import {
   codexTerminalColors,
   withCodexTerminalEnv,
@@ -35,7 +36,7 @@ import {
 } from '../aicli/structuredOutputBridge.js'
 
 import { detectMsys } from '../util/msys.js'
-import { rootDir } from '../store/paths.js'
+import { opencodeRuntimeDir, rootDir } from '../store/paths.js'
 
 /**
  * PTY chunk debug dumper. Enable by setting env var MULTI_AI_CODE_PTY_DUMP=1
@@ -712,6 +713,16 @@ export function registerPtyIpc(): void {
       effectiveArgs = [...effectiveArgs, ...structuredOutputBridge.args]
     }
 
+    const configuredOpenCodeEnv = withOpenCodeLspEnv(
+      req.command,
+      req.env,
+      req.opencode,
+      req.terminalTheme
+    )
+    const managedOpenCodeEnv = isOpenCodeCommand(req.command)
+      ? withOpenCodeManagedRuntimeEnv(req.command, configuredOpenCodeEnv, opencodeRuntimeDir())
+      : configuredOpenCodeEnv
+
     const proc = new PtyCCProcess({
       cwd: finalCwd,
       command: req.command,
@@ -719,11 +730,7 @@ export function registerPtyIpc(): void {
       cols: req.cols,
       rows: req.rows,
       env: withRemoteImCliEnv(
-        withCodexTerminalEnv(
-          req.command,
-          withOpenCodeLspEnv(req.command, req.env, req.opencode, req.terminalTheme),
-          req.terminalTheme
-        ),
+        withCodexTerminalEnv(req.command, managedOpenCodeEnv, req.terminalTheme),
         req.projectId
       ),
       enableMsys,

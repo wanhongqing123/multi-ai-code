@@ -59,8 +59,16 @@ export function artifactsDir(projectId: string): string {
   return join(projectDir(projectId), 'artifacts')
 }
 
+/** OpenCode 定制版的全部可变数据。不得回退到宿主机的 XDG 或 ~/.opencode。 */
+export function opencodeRuntimeDir(): string {
+  return join(rootDir(), 'aicli', 'opencode')
+}
+
 export async function ensureRootDir(): Promise<void> {
-  await fs.mkdir(projectsDir(), { recursive: true })
+  await Promise.all([
+    fs.mkdir(projectsDir(), { recursive: true }),
+    fs.mkdir(opencodeRuntimeDir(), { recursive: true })
+  ])
   // Retire the platform-managed `workspaces/` subdir from every project.
   // 分阶段流程与方案文档都已删除，工作台不再往用户仓库写任何东西；
   // 这里只负责清掉老版本残留的 workspaces/。每次启动跑一遍是安全的。

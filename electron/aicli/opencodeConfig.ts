@@ -28,6 +28,14 @@ export interface OpenCodeProviderProfile {
   chunkTimeoutMs?: number
 }
 
+export interface OpenCodeManagedProfile {
+  version: 1
+  defaultModel: string
+  smallModel: string
+  enabledProviders: string[]
+  providers: Record<string, { env: Record<string, string> }>
+}
+
 function basenameLike(command: string): string {
   let normalized = command.trim()
   while (normalized.length >= 2) {
@@ -47,26 +55,6 @@ export function isOpenCodeCommand(command: string): boolean {
   return /^opencode(\.(exe|cmd|bat|ps1))?$/.test(basenameLike(command))
 }
 
-function normalizeProviderProfile(
-  profile: OpenCodeProviderProfile | undefined
-): Required<Pick<OpenCodeProviderProfile, 'providerId' | 'name' | 'baseURL' | 'mainModel'>> &
-  Pick<OpenCodeProviderProfile, 'apiKey' | 'smallModel' | 'timeoutMs' | 'chunkTimeoutMs'> | null {
-  const providerId = profile?.providerId?.trim()
-  const baseURL = profile?.baseURL?.trim()
-  const mainModel = profile?.mainModel?.trim()
-  if (!providerId || !baseURL || !mainModel) return null
-  return {
-    providerId,
-    name: profile?.name?.trim() || providerId,
-    baseURL,
-    mainModel,
-    apiKey: profile?.apiKey?.trim() || undefined,
-    smallModel: profile?.smallModel?.trim() || undefined,
-    timeoutMs: profile?.timeoutMs,
-    chunkTimeoutMs: profile?.chunkTimeoutMs
-  }
-}
-
 function parseOpenCodeConfigContent(content: string): Record<string, unknown> | null {
   let parsed: unknown
   try {
@@ -78,43 +66,13 @@ function parseOpenCodeConfigContent(content: string): Record<string, unknown> | 
   return parsed as Record<string, unknown>
 }
 
-function buildProviderConfig(profile: NonNullable<ReturnType<typeof normalizeProviderProfile>>) {
-  const models: Record<string, { name: string }> = {
-    [profile.mainModel]: { name: profile.mainModel }
-  }
-  const smallModel = profile.smallModel || profile.mainModel
-  models[smallModel] = { name: smallModel }
-
-  const options: Record<string, unknown> = {
-    baseURL: profile.baseURL
-  }
-  if (profile.apiKey) options.apiKey = profile.apiKey
-  if (typeof profile.timeoutMs === 'number' && Number.isFinite(profile.timeoutMs)) {
-    options.timeout = profile.timeoutMs
-  }
-  if (typeof profile.chunkTimeoutMs === 'number' && Number.isFinite(profile.chunkTimeoutMs)) {
-    options.chunkTimeout = profile.chunkTimeoutMs
-  }
-
-  return {
-    npm: '@ai-sdk/openai-compatible',
-    name: profile.name,
-    options,
-    models
-  }
-}
-
-function mergeOpenCodeConfigContent(
-  content: string,
-  profile?: OpenCodeProviderProfile
-): string | null {
+function mergeOpenCodeConfigContent(content: string): string | null {
   const parsed = parseOpenCodeConfigContent(content)
   if (!parsed) return null
 
   const hasLsp = Object.prototype.hasOwnProperty.call(parsed, 'lsp')
   const hasAutoupdate = Object.prototype.hasOwnProperty.call(parsed, 'autoupdate')
-  const normalizedProfile = normalizeProviderProfile(profile)
-  if (!normalizedProfile && hasLsp && hasAutoupdate) return content
+  if (hasLsp && hasAutoupdate) return content
 
   const next: Record<string, unknown> = {
     $schema: 'https://opencode.ai/config.json',
@@ -124,26 +82,39 @@ function mergeOpenCodeConfigContent(
   // 始终默认关闭自动升级（自编译版本 0.0.0 会每次触发升级提示），用户显式配置优先。
   if (!hasAutoupdate) next.autoupdate = false
 
-  if (normalizedProfile) {
-    const provider =
-      parsed.provider && typeof parsed.provider === 'object' && !Array.isArray(parsed.provider)
-        ? { ...(parsed.provider as Record<string, unknown>) }
-        : {}
-    provider[normalizedProfile.providerId] = buildProviderConfig(normalizedProfile)
-    next.provider = provider
-    next.model = `${normalizedProfile.providerId}/${normalizedProfile.mainModel}`
-    next.small_model = `${normalizedProfile.providerId}/${
-      normalizedProfile.smallModel || normalizedProfile.mainModel
-    }`
+  return JSON.stringify(next)
+}
+
+export function withOpenCodeManagedProfileEnv(
+  env: Record<string, string> | undefined,
+  profile: OpenCodeManagedProfile
+): Record<string, string> {
+  const next = { ...(env ?? {}) }
+  for (const provider of Object.values(profile.providers)) {
+    for (const [name, value] of Object.entries(provider.env)) next[name] = value
   }
 
-  return JSON.stringify(next)
+  const parsed = parseOpenCodeConfigContent(next.OPENCODE_CONFIG_CONTENT ?? '') ??
+    parseOpenCodeConfigContent(OPENCODE_LSP_CONFIG_CONTENT)!
+  const config: Record<string, unknown> = {
+    $schema: 'https://opencode.ai/config.json',
+    ...parsed,
+    model: profile.defaultModel,
+    small_model: profile.smallModel,
+    enabled_providers: [...profile.enabledProviders]
+  }
+  // Provider definitions and disabled lists from legacy project settings must
+  // not expand or override the reviewed managed catalog.
+  delete config.provider
+  delete config.disabled_providers
+  next.OPENCODE_CONFIG_CONTENT = JSON.stringify(config)
+  return next
 }
 
 export function withOpenCodeLspEnv(
   command: string,
   env: Record<string, string> | undefined,
-  profile?: OpenCodeProviderProfile,
+  _profile?: OpenCodeProviderProfile,
   theme?: OpenCodeThemeMode
 ): Record<string, string> | undefined {
   if (!isOpenCodeCommand(command)) return env
@@ -157,12 +128,11 @@ export function withOpenCodeLspEnv(
   }
   const existing = next.OPENCODE_CONFIG_CONTENT
   if (!existing) {
-    next.OPENCODE_CONFIG_CONTENT =
-      mergeOpenCodeConfigContent(OPENCODE_LSP_CONFIG_CONTENT, profile) ??
+    next.OPENCODE_CONFIG_CONTENT = mergeOpenCodeConfigContent(OPENCODE_LSP_CONFIG_CONTENT) ??
       OPENCODE_LSP_CONFIG_CONTENT
     return next
   }
-  const merged = mergeOpenCodeConfigContent(existing, profile)
+  const merged = mergeOpenCodeConfigContent(existing)
   if (merged) next.OPENCODE_CONFIG_CONTENT = merged
   return next
 }

@@ -115,7 +115,7 @@ describe('AiSettingsDialog', () => {
     expect(codexOptionIndex).toBeLessThan(claudeOptionIndex)
   })
 
-  it('renders OpenCode provider profile fields when OpenCode is selected', () => {
+  it('does not expose project-level OpenCode provider settings', () => {
     const markup = renderDialog({
       initial: {
         ai_cli: 'opencode',
@@ -130,30 +130,10 @@ describe('AiSettingsDialog', () => {
       }
     })
 
-    expect(markup).toContain('OpenCode 模型服务')
-    expect(markup).toContain('Provider ID')
-    expect(markup).toContain('multi-ai-deepseek-internal')
-    expect(markup).toContain('https://llm.example.test/v1')
-    expect(markup).toContain('API Key')
-    expect(markup).toContain('type="password"')
-    expect(markup).toContain('deepseek-v4-pro')
-    expect(markup).toContain('deepseek-v4-lite')
-    expect(markup).not.toContain('Alibaba ideaLAB')
-  })
-
-  it('prefills Alibaba ideaLAB defaults for new OpenCode settings without an API key', () => {
-    const markup = renderDialog({
-      initial: {
-        ai_cli: 'opencode'
-      }
-    })
-
-    expect(markup).toContain('Alibaba ideaLAB')
-    expect(markup).toContain('idealab')
-    expect(markup).toContain('https://idealab.alibaba-inc.com/api/openai/v1')
-    expect(markup).toContain('Qwen3.7-Max-DogFooding')
-    expect(markup).toContain('https://aistudio.alibaba-inc.com/#/aistudio/manage/accountManage')
-    expect(markup).toContain('<input type="password" placeholder="sk-..." value=""/>')
+    expect(markup).not.toContain('OpenCode 模型服务')
+    expect(markup).not.toContain('Provider ID')
+    expect(markup).not.toContain('multi-ai-deepseek-internal')
+    expect(markup).not.toContain('API Key')
   })
 
   it('keeps remote IM configuration out of the settings center', () => {

@@ -233,7 +233,7 @@ describe('registerPtyIpc prompt injection timing', () => {
     expect(pathValue.split(':').some((item) => item.endsWith('/bin'))).toBe(true)
   })
 
-  it('enables OpenCode LSP for spawned AICLI sessions', async () => {
+  it('starts OpenCode with the managed account runtime and curated providers', async () => {
     const targetRepo = await fs.mkdtemp(join(tmpdir(), 'multi-ai-code-target-opencode-'))
     const projectDir = await fs.mkdtemp(join(tmpdir(), 'multi-ai-code-project-opencode-'))
     await fs.writeFile(join(projectDir, 'project.json'), JSON.stringify({ name: 'demo' }), 'utf8')
@@ -265,18 +265,18 @@ describe('registerPtyIpc prompt injection timing', () => {
 
     expect(result).toMatchObject({ ok: true })
     const env = ptyInstances[0].opts.env as Record<string, string>
-    expect(JSON.parse(env.OPENCODE_CONFIG_CONTENT)).toMatchObject({
+    const config = JSON.parse(env.OPENCODE_CONFIG_CONTENT) as Record<string, unknown>
+    expect(config).toMatchObject({
       lsp: true,
-      model: 'multi-ai-deepseek-internal/deepseek-v4-pro',
-      provider: {
-        'multi-ai-deepseek-internal': {
-          options: {
-            baseURL: 'https://llm.example.test/v1',
-            apiKey: 'test-api-key'
-          }
-        }
-      }
+      model: 'deepseek/deepseek-v4-flash',
+      small_model: 'deepseek/deepseek-v4-flash',
+      enabled_providers: ['deepseek', 'zhipu']
     })
+    expect(config).not.toHaveProperty('provider')
+    expect(env.OPENCODE_RUNTIME_ROOT).toContain('/accounts/test-account/aicli/opencode')
+    expect(env.OPENCODE_MODELS_PATH).toMatch(/managed-models\.json$/)
+    expect(env.OPENCODE_MANAGED_ROUTING_PATH).toMatch(/managed-routing\.json$/)
+    expect(env.MULTI_AI_DEEPSEEK_INTERNAL_API_KEY).toBeUndefined()
   })
 
   it('resolves Codex launch through the bundled policy, never a host/custom path', async () => {

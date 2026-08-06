@@ -32,13 +32,6 @@ const PERMISSION_OPTIONS = [
 
 type AiCliKind = typeof AI_CLI_OPTIONS[number]['value']
 
-export const DEFAULT_OPENCODE_PROVIDER_PROFILE: OpenCodeProviderProfile = {
-  providerId: 'idealab',
-  name: 'Alibaba ideaLAB',
-  baseURL: 'https://idealab.alibaba-inc.com/api/openai/v1',
-  mainModel: 'Qwen3.7-Max-DogFooding'
-}
-
 interface ProjectSettingsSaveResponse {
   ok: boolean
   repaired?: boolean
@@ -80,64 +73,11 @@ function toEnvText(env: Record<string, string> | undefined): string {
     .join('\n')
 }
 
-interface OpenCodeProviderForm {
-  providerId: string
-  name: string
-  baseURL: string
-  apiKey: string
-  mainModel: string
-  smallModel: string
-}
-
-function hasOpenCodeProviderProfile(profile: OpenCodeProviderProfile | undefined): boolean {
-  return Boolean(
-    profile &&
-      [
-        profile.providerId,
-        profile.name,
-        profile.baseURL,
-        profile.apiKey,
-        profile.mainModel,
-        profile.smallModel
-      ].some((value) => value?.trim())
-  )
-}
-
-function toOpenCodeProviderForm(profile: OpenCodeProviderProfile | undefined): OpenCodeProviderForm {
-  const resolvedProfile = hasOpenCodeProviderProfile(profile)
-    ? profile
-    : DEFAULT_OPENCODE_PROVIDER_PROFILE
-  return {
-    providerId: resolvedProfile?.providerId ?? '',
-    name: resolvedProfile?.name ?? '',
-    baseURL: resolvedProfile?.baseURL ?? '',
-    apiKey: resolvedProfile?.apiKey ?? '',
-    mainModel: resolvedProfile?.mainModel ?? '',
-    smallModel: resolvedProfile?.smallModel ?? ''
-  }
-}
-
-function fromOpenCodeProviderForm(form: OpenCodeProviderForm): OpenCodeProviderProfile | undefined {
-  const providerId = form.providerId.trim()
-  const baseURL = form.baseURL.trim()
-  const mainModel = form.mainModel.trim()
-  if (!providerId && !baseURL && !mainModel) return undefined
-  return {
-    providerId: providerId || undefined,
-    name: form.name.trim() || undefined,
-    baseURL: baseURL || undefined,
-    apiKey: form.apiKey.trim() || undefined,
-    mainModel: mainModel || undefined,
-    smallModel: form.smallModel.trim() || undefined
-  }
-}
-
 function fromForm(
   aiCli: AiCliKind,
   permissionMode: AiPermissionMode,
   argsText: string,
-  envText: string,
-  openCodeForm?: OpenCodeProviderForm
+  envText: string
 ): AiSettings {
   return {
     ai_cli: aiCli,
@@ -152,11 +92,7 @@ function fromForm(
           const index = line.indexOf('=')
           return [line.slice(0, index).trim(), line.slice(index + 1).trim()]
         })
-    ),
-    opencode:
-      aiCli === 'opencode' && openCodeForm
-        ? fromOpenCodeProviderForm(openCodeForm)
-        : undefined
+    )
   }
 }
 
@@ -166,18 +102,12 @@ function SettingsSection(props: {
   advancedOpen: boolean
   argsText: string
   envText: string
-  openCodeForm: OpenCodeProviderForm
   onAiCli: (next: AiCliKind) => void
   onPermissionMode: (next: AiPermissionMode) => void
   onAdvancedOpen: (next: boolean) => void
   onArgs: (next: string) => void
   onEnv: (next: string) => void
-  onOpenCodeForm: (next: OpenCodeProviderForm) => void
 }): JSX.Element {
-  const updateOpenCodeForm = (patch: Partial<OpenCodeProviderForm>): void => {
-    props.onOpenCodeForm({ ...props.openCodeForm, ...patch })
-  }
-
   return (
     <section className="ai-settings-card ai-settings-ai-card">
       <div className="ai-settings-form-grid">
@@ -207,86 +137,6 @@ function SettingsSection(props: {
             ))}
           </select>
         </label>
-        {props.aiCli === 'opencode' ? (
-          <div className="ai-settings-grid-full ai-settings-opencode-panel">
-            <div className="ai-settings-title-row">
-              <div>
-                <div className="ai-settings-title">OpenCode 模型服务</div>
-                <div className="ai-settings-card-subtitle">
-                  自定义 OpenAI 兼容服务地址，启动时按当前进程注入。
-                </div>
-              </div>
-            </div>
-            <div className="ai-settings-form-grid">
-              <label>
-                服务名称
-                <input
-                  type="text"
-                  value={props.openCodeForm.name}
-                  onChange={(event) => updateOpenCodeForm({ name: event.target.value })}
-                  placeholder="公司内网 DeepSeek"
-                />
-              </label>
-              <label>
-                Provider ID
-                <input
-                  type="text"
-                  value={props.openCodeForm.providerId}
-                  onChange={(event) => updateOpenCodeForm({ providerId: event.target.value })}
-                  placeholder="multi-ai-deepseek-internal"
-                />
-              </label>
-              <label className="ai-settings-grid-full">
-                Base URL
-                <input
-                  type="text"
-                  value={props.openCodeForm.baseURL}
-                  onChange={(event) => updateOpenCodeForm({ baseURL: event.target.value })}
-                  placeholder="https://your.gateway.example/v1"
-                />
-              </label>
-              <label>
-                API Key
-                <input
-                  type="password"
-                  value={props.openCodeForm.apiKey}
-                  onChange={(event) => updateOpenCodeForm({ apiKey: event.target.value })}
-                  placeholder="sk-..."
-                />
-              </label>
-              <label>
-                主模型
-                <input
-                  type="text"
-                  value={props.openCodeForm.mainModel}
-                  onChange={(event) => updateOpenCodeForm({ mainModel: event.target.value })}
-                  placeholder="deepseek-v4-pro"
-                />
-              </label>
-              <label>
-                小模型
-                <input
-                  type="text"
-                  value={props.openCodeForm.smallModel}
-                  onChange={(event) => updateOpenCodeForm({ smallModel: event.target.value })}
-                  placeholder="默认同主模型"
-                />
-              </label>
-            </div>
-            <div className="ai-settings-help">
-              API Key 会随当前项目配置保存，只用于启动 OpenCode 时注入当前进程。APIKEY
-              的获取请参考：
-              <a
-                href="https://aistudio.alibaba-inc.com/#/aistudio/manage/accountManage"
-                target="_blank"
-                rel="noreferrer"
-              >
-                ideaLAB 账号管理
-              </a>
-              。
-            </div>
-          </div>
-        ) : null}
         {/* 启动参数不该是常规操作：默认折叠，需要按特定参数启动的人自己展开。 */}
         <div className="ai-settings-grid-full ai-settings-advanced">
           <button
@@ -336,9 +186,6 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
   )
   const [argsText, setArgsText] = useState<string>((props.initial.args ?? []).join(' '))
   const [envText, setEnvText] = useState<string>(toEnvText(props.initial.env))
-  const [openCodeForm, setOpenCodeForm] = useState<OpenCodeProviderForm>(
-    toOpenCodeProviderForm(props.initial.opencode)
-  )
   // 已经填过 args/env 的项目，打开设置就该看见它们，否则会以为参数丢了。
   const [advancedOpen, setAdvancedOpen] = useState<boolean>(
     (props.initial.args ?? []).length > 0 || Object.keys(props.initial.env ?? {}).length > 0
@@ -352,14 +199,13 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
     setPermissionMode(props.initial.permission_mode ?? DEFAULT_AI_PERMISSION_MODE)
     setArgsText((props.initial.args ?? []).join(' '))
     setEnvText(toEnvText(props.initial.env))
-    setOpenCodeForm(toOpenCodeProviderForm(props.initial.opencode))
   }, [props.initial, saving])
 
   const handleSave = async (): Promise<void> => {
     setSaving(true)
     setError(null)
 
-    const nextMain = fromForm(aiCli, permissionMode, argsText, envText, openCodeForm)
+    const nextMain = fromForm(aiCli, permissionMode, argsText, envText)
 
     try {
       if (props.projectId) {
@@ -406,13 +252,11 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
                   advancedOpen={advancedOpen}
                   argsText={argsText}
                   envText={envText}
-                  openCodeForm={openCodeForm}
                   onAiCli={setAiCli}
                   onPermissionMode={setPermissionMode}
                   onAdvancedOpen={setAdvancedOpen}
                   onArgs={setArgsText}
                   onEnv={setEnvText}
-                  onOpenCodeForm={setOpenCodeForm}
                 />
               ) : (
                 <section className="ai-settings-card ai-settings-no-project-card">

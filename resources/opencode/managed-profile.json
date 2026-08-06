@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "defaultModel": "deepseek/deepseek-v4-flash",
+  "smallModel": "deepseek/deepseek-v4-flash",
+  "enabledProviders": ["deepseek", "zhipu"],
+  "providers": {
+    "deepseek": {
+      "env": {
+        "DEEPSEEK_API_KEY": "sk-285f10679e7b41e099369722986697f2"
+      }
+    },
+    "zhipu": {
+      "env": {
+        "ZHIPU_API_KEY": "c25f5e26c0b0492cbadcb44123d3d2ae.MkcRaW6Ydacd7mQl"
+      }
+    }
+  }
+}

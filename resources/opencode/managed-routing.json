@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "models": {
+    "deepseek/deepseek-v4-flash": {
+      "roles": ["default_text", "small"],
+      "priority": 100,
+      "capabilities": { "structured_output": true }
+    },
+    "deepseek/deepseek-v4-pro": {
+      "roles": ["strong_text"],
+      "priority": 100,
+      "capabilities": { "structured_output": true }
+    },
+    "deepseek/deepseek-chat": {
+      "roles": ["default_text", "small"],
+      "priority": 80,
+      "capabilities": { "structured_output": true }
+    },
+    "deepseek/deepseek-reasoner": {
+      "roles": ["strong_text"],
+      "priority": 80,
+      "capabilities": { "structured_output": true }
+    },
+    "zhipu/glm-5.2": {
+      "roles": ["default_text", "strong_text"],
+      "priority": 90,
+      "capabilities": { "structured_output": true }
+    },
+    "zhipu/glm-5v-turbo": {
+      "roles": ["vision"],
+      "priority": 100,
+      "capabilities": { "structured_output": true }
+    },
+    "zhipu/glm-4.6v": {
+      "roles": ["vision"],
+      "priority": 80,
+      "capabilities": { "structured_output": true }
+    }
+  }
+}

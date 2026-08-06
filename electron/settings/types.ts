@@ -17,5 +17,6 @@ export interface AiSettings {
   command?: string
   args?: string[]
   env?: Record<string, string>
+  /** @deprecated 仅用于读取旧项目设置；托管 OpenCode 不再使用项目级 Provider。 */
   opencode?: OpenCodeProviderProfile
 }

@@ -1,9 +1,11 @@
-import { existsSync, readFileSync, writeFileSync } from 'fs'
-import { join } from 'path'
+import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'fs'
+import { createHash } from 'crypto'
+import { dirname, join } from 'path'
 import {
   binaryName,
   capture,
   copyExecutable,
+  ensureDir,
   gitCommit,
   platformArch,
   repoRoot,
@@ -82,18 +84,121 @@ const builtBinary = firstExisting([
 ])
 const bun = bunCommand()
 const lockPath = join(opencodeRoot, 'bun.lock')
+const managedModelsPath = join(repoRoot, 'resources', 'opencode', 'managed-models.json')
+const managedRoutingPath = join(repoRoot, 'resources', 'opencode', 'managed-routing.json')
+const managedProfilePath = join(repoRoot, 'resources', 'opencode', 'managed-profile.json')
+
+function readJson(path, label) {
+  if (!existsSync(path)) throw new Error(`${label} 不存在：${path}`)
+  try {
+    return JSON.parse(readFileSync(path, 'utf8'))
+  } catch (error) {
+    throw new Error(`${label} 不是有效 JSON：${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+function validateManagedAssets() {
+  const catalog = readJson(managedModelsPath, 'OpenCode 受控模型目录')
+  const routing = readJson(managedRoutingPath, 'OpenCode 受控路由目录')
+  const profile = readJson(managedProfilePath, 'OpenCode 托管 Profile')
+  if (!catalog || typeof catalog !== 'object' || Array.isArray(catalog)) {
+    throw new Error('OpenCode 受控模型目录根节点必须是 Provider 对象')
+  }
+  if (!routing || routing.version !== 1 || !routing.models || typeof routing.models !== 'object') {
+    throw new Error('OpenCode 受控路由目录必须包含 version=1 和 models')
+  }
+  for (const [providerId, provider] of Object.entries(catalog)) {
+    if (!provider || typeof provider !== 'object' || provider.id !== providerId) {
+      throw new Error(`OpenCode 受控模型目录中的 Provider ID 不一致：${providerId}`)
+    }
+    if (!provider.models || typeof provider.models !== 'object') {
+      throw new Error(`OpenCode Provider 缺少 models：${providerId}`)
+    }
+    for (const [modelId, model] of Object.entries(provider.models)) {
+      if (!model || typeof model !== 'object' || model.id !== modelId) {
+        throw new Error(`OpenCode 模型 ID 不一致：${providerId}/${modelId}`)
+      }
+    }
+  }
+  for (const modelRef of Object.keys(routing.models)) {
+    const slash = modelRef.indexOf('/')
+    const providerId = slash > 0 ? modelRef.slice(0, slash) : ''
+    const modelId = slash > 0 ? modelRef.slice(slash + 1) : ''
+    if (!providerId || !modelId || !catalog[providerId]?.models?.[modelId]) {
+      throw new Error(`OpenCode 路由引用了不存在的模型：${modelRef}`)
+    }
+  }
+  if (!profile || profile.version !== 1 || !profile.providers ||
+      !Array.isArray(profile.enabledProviders) || !profile.enabledProviders.length) {
+    throw new Error('OpenCode 托管 Profile Schema 无效')
+  }
+  for (const modelRef of [profile.defaultModel, profile.smallModel]) {
+    const slash = typeof modelRef === 'string' ? modelRef.indexOf('/') : -1
+    const providerId = slash > 0 ? modelRef.slice(0, slash) : ''
+    const modelId = slash > 0 ? modelRef.slice(slash + 1) : ''
+    if (!providerId || !modelId || !catalog[providerId]?.models?.[modelId]) {
+      throw new Error(`OpenCode 托管 Profile 引用了不存在的模型：${modelRef}`)
+    }
+  }
+  for (const providerId of profile.enabledProviders) {
+    const provider = catalog[providerId]
+    const credentials = profile.providers[providerId]?.env
+    if (!provider || !credentials || typeof credentials !== 'object') {
+      throw new Error(`OpenCode 托管 Profile 缺少 Provider 或凭据：${providerId}`)
+    }
+    const declared = new Set(provider.env ?? [])
+    const entries = Object.entries(credentials)
+    if (!entries.length || entries.some(([name, value]) => !declared.has(name) || typeof value !== 'string' || !value)) {
+      throw new Error(`OpenCode 托管 Profile 的 Provider 凭据无效：${providerId}`)
+    }
+  }
+}
+
+function sha256(path) {
+  return createHash('sha256').update(readFileSync(path)).digest('hex')
+}
+
+function copyManagedAssets() {
+  const outputDir = dirname(outputBinary)
+  ensureDir(outputDir)
+  const modelsOutput = join(outputDir, 'managed-models.json')
+  const routingOutput = join(outputDir, 'managed-routing.json')
+  const profileOutput = join(outputDir, 'managed-profile.json')
+  copyFileSync(managedModelsPath, modelsOutput)
+  copyFileSync(managedRoutingPath, routingOutput)
+  copyFileSync(managedProfilePath, profileOutput)
+  writeFileSync(
+    join(outputDir, 'managed-assets.json'),
+    `${JSON.stringify(
+      {
+        version: 1,
+        files: {
+          'managed-models.json': sha256(modelsOutput),
+          'managed-routing.json': sha256(routingOutput),
+          'managed-profile.json': sha256(profileOutput)
+        }
+      },
+      null,
+      2
+    )}\n`,
+    'utf8'
+  )
+}
 
 requireDir(packageRoot, 'OpenCode submodule')
+validateManagedAssets()
 
 withPreservedFile(lockPath, () => {
   run(bun.command, [...bun.prefixArgs, 'install', '--frozen-lockfile', '--no-save'], {
     cwd: opencodeRoot
   })
   run(bun.command, [...bun.prefixArgs, 'run', '--cwd', 'packages/opencode', 'build', '--single'], {
-    cwd: opencodeRoot
+    cwd: opencodeRoot,
+    env: { MODELS_DEV_API_JSON: managedModelsPath }
   })
 })
 copyExecutable(builtBinary, outputBinary)
+copyManagedAssets()
 
 writeManifestEntry({
   tool: 'opencode',

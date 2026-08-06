@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   isOpenCodeCommand,
   OPENCODE_LSP_CONFIG_CONTENT,
-  type OpenCodeProviderProfile,
+  withOpenCodeManagedProfileEnv,
   withOpenCodeLspEnv
 } from '../../../electron/aicli/opencodeConfig.js'
 
@@ -103,81 +103,39 @@ describe('OpenCode config env', () => {
     expect(env?.OPENCODE_CONFIG_CONTENT).toBe('{bad json')
   })
 
-  it('injects a custom OpenCode provider profile with baseURL and selected models', () => {
-    const profile: OpenCodeProviderProfile = {
-      providerId: 'multi-ai-deepseek-internal',
-      name: '公司内网 DeepSeek',
-      baseURL: 'https://llm.example.test/v1',
-      apiKey: 'test-api-key',
-      mainModel: 'deepseek-v4-pro',
-      smallModel: 'deepseek-v4-lite',
-      timeoutMs: 600000,
-      chunkTimeoutMs: 60000
-    }
-
-    const env = withOpenCodeLspEnv('opencode', { FOO: 'bar' }, profile)
-    const config = JSON.parse(env?.OPENCODE_CONFIG_CONTENT ?? '{}')
-
-    expect(config).toMatchObject({
-      $schema: 'https://opencode.ai/config.json',
-      lsp: true,
-      autoupdate: false,
-      model: 'multi-ai-deepseek-internal/deepseek-v4-pro',
-      small_model: 'multi-ai-deepseek-internal/deepseek-v4-lite',
-      provider: {
-        'multi-ai-deepseek-internal': {
-          npm: '@ai-sdk/openai-compatible',
-          name: '公司内网 DeepSeek',
-          options: {
-            baseURL: 'https://llm.example.test/v1',
-            apiKey: 'test-api-key',
-            timeout: 600000,
-            chunkTimeout: 60000
-          },
-          models: {
-            'deepseek-v4-pro': {
-              name: 'deepseek-v4-pro'
-            },
-            'deepseek-v4-lite': {
-              name: 'deepseek-v4-lite'
-            }
-          }
-        }
-      }
-    })
-  })
-
-  it('merges a custom provider profile into existing inline OpenCode config', () => {
-    const env = withOpenCodeLspEnv(
-      'opencode',
+  it('injects the managed profile and overrides legacy provider selection', () => {
+    const env = withOpenCodeManagedProfileEnv(
       {
         OPENCODE_CONFIG_CONTENT: JSON.stringify({
-          provider: {
-            existing: {
-              models: {
-                old: { name: 'old' }
-              }
-            }
-          },
+          model: 'legacy/old',
+          disabled_providers: ['deepseek'],
+          provider: { legacy: { models: { old: { name: 'old' } } } },
           share: 'disabled'
-        })
+        }),
+        DEEPSEEK_API_KEY: 'legacy-secret'
       },
       {
-        providerId: 'multi-ai-zhipu',
-        name: '智谱 AI',
-        baseURL: 'https://open.bigmodel.cn/api/coding/paas/v4',
-        apiKey: 'zai-api-key',
-        mainModel: 'glm-5.2'
+        version: 1,
+        defaultModel: 'deepseek/deepseek-v4-flash',
+        smallModel: 'deepseek/deepseek-v4-flash',
+        enabledProviders: ['deepseek', 'zhipu'],
+        providers: {
+          deepseek: { env: { DEEPSEEK_API_KEY: 'managed-deepseek' } },
+          zhipu: { env: { ZHIPU_API_KEY: 'managed-zhipu' } }
+        }
       }
     )
-    const config = JSON.parse(env?.OPENCODE_CONFIG_CONTENT ?? '{}')
+    const config = JSON.parse(env.OPENCODE_CONFIG_CONTENT)
 
-    expect(config.provider.existing.models.old.name).toBe('old')
-    expect(config.provider['multi-ai-zhipu'].options.baseURL).toBe(
-      'https://open.bigmodel.cn/api/coding/paas/v4'
-    )
-    expect(config.model).toBe('multi-ai-zhipu/glm-5.2')
-    expect(config.small_model).toBe('multi-ai-zhipu/glm-5.2')
-    expect(config.share).toBe('disabled')
+    expect(env.DEEPSEEK_API_KEY).toBe('managed-deepseek')
+    expect(env.ZHIPU_API_KEY).toBe('managed-zhipu')
+    expect(config).toMatchObject({
+      model: 'deepseek/deepseek-v4-flash',
+      small_model: 'deepseek/deepseek-v4-flash',
+      enabled_providers: ['deepseek', 'zhipu'],
+      share: 'disabled'
+    })
+    expect(config).not.toHaveProperty('provider')
+    expect(config).not.toHaveProperty('disabled_providers')
   })
 })

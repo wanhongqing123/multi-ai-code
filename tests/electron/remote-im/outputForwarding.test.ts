@@ -11,6 +11,7 @@ import {
   createRemoteImOperationFinishedText,
   failRemoteImOutputSession,
   forwardRemoteImStructuredFinalOutput,
+  forwardRemoteImStructuredProgress,
   flushRemoteImOutputSession,
   parseRemoteImAicliOutputText,
   isRemoteImOperationFinishedText,
@@ -18,7 +19,10 @@ import {
   type RemoteImOutputFlushTimer,
   type RemoteImOutputSessionState
 } from '../../../electron/remote-im/outputForwarding.js'
-import { REMOTE_IM_REPLY_CLOSE_TAG, REMOTE_IM_REPLY_OPEN_TAG } from '../../../electron/remote-im/replyProtocol.js'
+import {
+  REMOTE_IM_REPLY_CLOSE_TAG,
+  REMOTE_IM_REPLY_OPEN_TAG
+} from '../../../electron/remote-im/replyProtocol.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -101,9 +105,7 @@ describe('remote IM output forwarding', () => {
   })
 
   it('uses an ended message for abnormal exits', () => {
-    expect(createRemoteImOperationFinishedText({ exitCode: 1 })).toBe(
-      '操作已结束（退出码：1）。'
-    )
+    expect(createRemoteImOperationFinishedText({ exitCode: 1 })).toBe('操作已结束（退出码：1）。')
     expect(createRemoteImOperationFinishedText({ exitCode: null, signal: 'kill' })).toBe(
       '操作已结束（信号：kill）。'
     )
@@ -269,7 +271,10 @@ describe('remote IM output forwarding', () => {
       messagesChanged: () => undefined
     })
 
-    const expected = ['我是 Claude Code，Anthropic 出品的命令行编程助手。', '- 熟悉多语言代码库的查阅、修改与重构'].join('\n')
+    const expected = [
+      '我是 Claude Code，Anthropic 出品的命令行编程助手。',
+      '- 熟悉多语言代码库的查阅、修改与重构'
+    ].join('\n')
     expect(chunks).toBe(1)
     expect(messages[0]?.content).toBe(expected)
     expect(sentTexts).toEqual([createRemoteImAicliOutputText(expected)])
@@ -382,7 +387,8 @@ describe('remote IM output forwarding', () => {
       messagesChanged: () => undefined
     })
 
-    const expected = 'Claude transcript reply with an id-bearing opening marker and a legacy closing marker.'
+    const expected =
+      'Claude transcript reply with an id-bearing opening marker and a legacy closing marker.'
     expect(chunks).toBe(1)
     expect(messages[0]?.content).toBe(expected)
     expect(sentTexts).toEqual([createRemoteImAicliOutputText(expected)])
@@ -453,7 +459,9 @@ describe('remote IM output forwarding', () => {
   })
 
   it('forwards a markerless source-confirmed final reply without intermediate output', () => {
-    const state = createState('intermediate text without markers', { outputMaxChunkChars: 500 })
+    const state = createState('intermediate text without markers', {
+      outputMaxChunkChars: 500
+    })
     state.replyId = 'rim-current'
     state.sourceKind = 'opencode'
     const messages: CreateRemoteImMessageInput[] = []
@@ -474,15 +482,63 @@ describe('remote IM output forwarding', () => {
       )
     ).toBe(1)
 
+    expect(messages.map((message) => message.content)).toEqual(['最终结论：使用源码终态事件转发。'])
+    expect(sentTexts).toEqual([createRemoteImAicliOutputText('最终结论：使用源码终态事件转发。')])
+  })
+
+  it('forwards progress without consuming the final reply id', () => {
+    const state = createState('仍在编译，预计还需要一段时间。', {
+      outputMaxChunkChars: 500
+    })
+    state.replyId = 'rim-current'
+    state.taskId = 'task-current'
+    state.sourceKind = 'codex'
+    const messages: CreateRemoteImMessageInput[] = []
+    const sentTexts: string[] = []
+    const deps: RemoteImOutputForwardingDeps = {
+      createMessage: (input) => messages.push(input),
+      sendText: (_projectId, _toUserId, text) => sentTexts.push(text),
+      messagesChanged: () => undefined
+    }
+
+    expect(forwardRemoteImStructuredProgress('session-1', state, deps)).toBe(1)
+    expect(state.forwardedReplyId).toBeUndefined()
+    expect(
+      forwardRemoteImStructuredFinalOutput('session-1', state, deps, '编译完成并已发布。')
+    ).toBe(1)
+
     expect(messages.map((message) => message.content)).toEqual([
-      '最终结论：使用源码终态事件转发。'
+      '任务仍在处理：\n仍在编译，预计还需要一段时间。',
+      '编译完成并已发布。'
     ])
     expect(sentTexts).toEqual([
-      createRemoteImAicliOutputText('最终结论：使用源码终态事件转发。')
+      createRemoteImAicliOutputText('任务仍在处理：\n仍在编译，预计还需要一段时间。'),
+      createRemoteImAicliOutputText('编译完成并已发布。')
     ])
   })
 
-  it('deduplicates a terminal reply already forwarded through markers', () => {
+  it('discards buffered progress when the final reply arrives first', () => {
+    const state = createState('尚未到五分钟的中间进度', {
+      outputMaxChunkChars: 500
+    })
+    state.replyId = 'rim-current'
+    state.taskId = 'task-current'
+    state.sourceKind = 'opencode'
+    const messages: CreateRemoteImMessageInput[] = []
+    const deps: RemoteImOutputForwardingDeps = {
+      createMessage: (input) => messages.push(input),
+      sendText: () => undefined,
+      messagesChanged: () => undefined
+    }
+
+    expect(forwardRemoteImStructuredFinalOutput('session-1', state, deps, '任务已快速完成。')).toBe(
+      1
+    )
+    expect(state.buffer).toBe('')
+    expect(messages.map((message) => message.content)).toEqual(['任务已快速完成。'])
+  })
+
+  it('deduplicates retransmission of the same structured terminal event', () => {
     const tagged = [
       '<remote-im-reply id="rim-current">',
       'marker reply',
@@ -498,9 +554,54 @@ describe('remote IM output forwarding', () => {
       messagesChanged: () => undefined
     }
 
-    expect(forwardRemoteImStructuredFinalOutput('session-1', state, deps, tagged)).toBe(1)
-    expect(forwardRemoteImStructuredFinalOutput('session-1', state, deps, 'marker reply')).toBe(0)
+    expect(
+      forwardRemoteImStructuredFinalOutput('session-1', state, deps, tagged, 'event-final-1')
+    ).toBe(1)
+    expect(
+      forwardRemoteImStructuredFinalOutput(
+        'session-1',
+        state,
+        deps,
+        'marker reply',
+        'event-final-1'
+      )
+    ).toBe(0)
     expect(sentTexts).toEqual([createRemoteImAicliOutputText('marker reply')])
+  })
+
+  it('does not use reply id as structured terminal event deduplication key', () => {
+    const state = createState('', { outputMaxChunkChars: 500 })
+    state.replyId = 'rim-current'
+    state.sourceKind = 'opencode'
+    const sentTexts: string[] = []
+    const deps: RemoteImOutputForwardingDeps = {
+      createMessage: () => undefined,
+      sendText: (_projectId, _toUserId, text) => sentTexts.push(text),
+      messagesChanged: () => undefined
+    }
+
+    expect(
+      forwardRemoteImStructuredFinalOutput(
+        'session-1',
+        state,
+        deps,
+        'first terminal event',
+        'event-final-1'
+      )
+    ).toBe(1)
+    expect(
+      forwardRemoteImStructuredFinalOutput(
+        'session-1',
+        state,
+        deps,
+        'later terminal event',
+        'event-final-2'
+      )
+    ).toBe(1)
+    expect(sentTexts).toEqual([
+      createRemoteImAicliOutputText('first terminal event'),
+      createRemoteImAicliOutputText('later terminal event')
+    ])
   })
 
   it('discards a source-confirmed final reply tagged for another request', () => {
@@ -552,8 +653,12 @@ describe('remote IM output forwarding', () => {
       '</remote-im-reply id="rim-current">'
     ].join('\n')
 
-    expect(forwardRemoteImStructuredFinalOutput('session-1', state, deps, complete)).toBe(1)
-    expect(forwardRemoteImStructuredFinalOutput('session-1', state, deps, complete)).toBe(0)
+    expect(
+      forwardRemoteImStructuredFinalOutput('session-1', state, deps, complete, 'event-final-1')
+    ).toBe(1)
+    expect(
+      forwardRemoteImStructuredFinalOutput('session-1', state, deps, complete, 'event-final-1')
+    ).toBe(0)
     expect(messages.map((message) => message.content)).toEqual(['complete terminal reply'])
     expect(sentTexts).toEqual([createRemoteImAicliOutputText('complete terminal reply')])
   })
@@ -565,7 +670,9 @@ describe('remote IM output forwarding', () => {
       '目录 │ 作用 │ │ 浏览器主体（UI 标签页、扩展） │ │ content/ `third │ │\r\n',
       `${REMOTE_IM_REPLY_CLOSE_TAG}\r\n`
     ].join('')
-    const state = createState(terminalRenderedTable, { outputMaxChunkChars: 500 })
+    const state = createState(terminalRenderedTable, {
+      outputMaxChunkChars: 500
+    })
     state.transcript = {
       kind: 'claude',
       cwd: '/Users/me/work/repo',

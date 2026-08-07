@@ -9,6 +9,8 @@ import type { RemoteImConfig } from './types.js'
 
 export const REMOTE_IM_OPERATION_COMPLETE_TEXT = '操作已完成。'
 export const REMOTE_IM_OPERATION_FAILED_PREFIX = 'AICLI 执行失败：'
+export const REMOTE_IM_PROGRESS_INTERVAL_MS = 5 * 60 * 1000
+export const REMOTE_IM_PROGRESS_ACTIVE_TEXT = '任务仍在处理，暂无新的可展示进度。'
 // Invisible protocol marker: forwarded AICLI output must still be distinguishable
 // from user input, but the marker should not appear in IM clients.
 export const REMOTE_IM_AICLI_OUTPUT_PREFIX = '\u2063\u200B\u200C\u200D\u2063'
@@ -63,6 +65,11 @@ export interface RemoteImOutputSessionState {
   forwardedTranscriptReply?: string
   forwardedReplyId?: string
   structuredOutput?: boolean
+  taskId?: string
+  sourceStarted?: boolean
+  lastActivityAt?: number
+  lastForwardedProgress?: string
+  forwardedStructuredTerminalMessageIds?: Set<string>
 }
 
 export interface RemoteImOutputForwardingDeps {
@@ -153,7 +160,7 @@ export function flushRemoteImOutputSession(
   const buffer = sanitizeRemoteImAicliOutput(transcriptReply ?? reply?.content ?? '', {
     sourceKind: state.sourceKind
   })
-  state.buffer = transcriptReply === null ? reply?.nextBuffer ?? '' : ''
+  state.buffer = transcriptReply === null ? (reply?.nextBuffer ?? '') : ''
   clearOutputTimer(state, deps)
   if (!buffer.trim()) return 0
   if (transcriptReply !== null) {
@@ -192,18 +199,22 @@ export function forwardRemoteImStructuredFinalOutput(
   sessionId: string,
   state: RemoteImOutputSessionState,
   deps: RemoteImOutputForwardingDeps,
-  text: string
+  text: string,
+  messageId?: string
 ): number {
-  const flushed = flushRemoteImOutputSession(sessionId, state, deps)
-  if (state.replyId && state.forwardedReplyId === state.replyId) return flushed
+  clearOutputTimer(state, deps)
+  state.buffer = ''
+  if (messageId && state.forwardedStructuredTerminalMessageIds?.has(messageId)) return 0
 
   const reply = extractRemoteImReplyOutput(text, { replyId: state.replyId })
   const hasReplyMarker = /<\/?remote-im-reply(?:\s|>)/.test(text)
   const pendingBody = reply.pending ? reply.nextBuffer.split('\n').slice(1).join('\n') : ''
   const content = reply.content || pendingBody || (hasReplyMarker ? '' : text)
-  const buffer = sanitizeRemoteImAicliOutput(content, { sourceKind: state.sourceKind })
+  const buffer = sanitizeRemoteImAicliOutput(content, {
+    sourceKind: state.sourceKind
+  })
   state.buffer = ''
-  if (!buffer.trim()) return flushed
+  if (!buffer.trim()) return 0
 
   const chunks = createOutputChunks(buffer, {
     maxChunkChars: state.config.outputMaxChunkChars
@@ -224,9 +235,67 @@ export function forwardRemoteImStructuredFinalOutput(
 
   if (chunks.length > 0) {
     deps.messagesChanged(state.projectId)
-    if (state.replyId) state.forwardedReplyId = state.replyId
+    if (messageId) {
+      const forwardedIds =
+        state.forwardedStructuredTerminalMessageIds ??
+        (state.forwardedStructuredTerminalMessageIds = new Set())
+      forwardedIds.add(messageId)
+      if (forwardedIds.size > 32) {
+        const oldestId = forwardedIds.values().next().value
+        if (oldestId) forwardedIds.delete(oldestId)
+      }
+    }
   }
-  return flushed + chunks.length
+  return chunks.length
+}
+
+/**
+ * Forward one coalesced progress snapshot. Progress is deliberately not tied to
+ * replyId deduplication, so it can never consume the final response slot.
+ */
+export function forwardRemoteImStructuredProgress(
+  sessionId: string,
+  state: RemoteImOutputSessionState,
+  deps: RemoteImOutputForwardingDeps
+): number {
+  clearOutputTimer(state, deps)
+  const raw = state.buffer
+  state.buffer = ''
+  const reply = extractRemoteImReplyOutput(raw, { replyId: state.replyId })
+  const hasReplyMarker = /<\/?remote-im-reply(?:\s|>)/.test(raw)
+  const pendingBody = reply.pending ? reply.nextBuffer.split('\n').slice(1).join('\n') : ''
+  const candidate = sanitizeRemoteImAicliOutput(
+    reply.content || pendingBody || (hasReplyMarker ? '' : raw),
+    { sourceKind: state.sourceKind }
+  )
+  const freshCandidate =
+    candidate.trim() && candidate !== state.lastForwardedProgress ? candidate : ''
+  const content = freshCandidate
+    ? `任务仍在处理：\n${freshCandidate}`
+    : REMOTE_IM_PROGRESS_ACTIVE_TEXT
+
+  const chunks = createOutputChunks(content, {
+    maxChunkChars: state.config.outputMaxChunkChars
+  })
+  const now = deps.now?.() ?? Date.now()
+  for (const chunk of chunks) {
+    deps.createMessage(
+      createOutgoingMessage({
+        sessionId,
+        state,
+        content: chunk,
+        role: 'aicli',
+        now
+      })
+    )
+    deps.sendText(state.projectId, state.toUserId, createRemoteImAicliOutputText(chunk))
+  }
+
+  if (chunks.length > 0) {
+    if (freshCandidate) state.lastForwardedProgress = freshCandidate
+    deps.messagesChanged(state.projectId)
+  }
+  return chunks.length
 }
 
 export function completeRemoteImOutputSession(

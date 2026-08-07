@@ -19,6 +19,7 @@ export interface AicliStructuredOutputEvent {
   messageId?: string
   partId?: string
   replyId?: string
+  taskId?: string
 }
 
 export interface AicliStructuredOutputBridge {
@@ -57,6 +58,7 @@ interface WireEvent {
   goal?: unknown
   task?: unknown
   replyId?: unknown
+  taskId?: unknown
 }
 
 // 所有控制命令统一走 requestId RPC：switch_mode 也等待 AICLI 回 control_result，
@@ -71,6 +73,8 @@ export type AicliRequestControlCommand =
       text: string
       displayText: string
       attachments?: AicliUserMessageAttachment[]
+      replyId?: string
+      taskId?: string
     }
   | { command: 'interrupt' }
   | { command: 'compact' }
@@ -178,6 +182,7 @@ export async function createAicliStructuredOutputBridge(
 
         const messageId = asOptionalString(parsed.messageId)
         const replyId = asOptionalString(parsed.replyId)
+        const taskId = asOptionalString(parsed.taskId)
         emitStructuredOutput({
           sessionId,
           provider,
@@ -185,7 +190,8 @@ export async function createAicliStructuredOutputBridge(
           kind: asOptionalString(parsed.kind),
           messageId,
           partId: asOptionalString(parsed.partId),
-          ...(replyId ? { replyId } : {})
+          ...(replyId ? { replyId } : {}),
+          ...(taskId ? { taskId } : {})
         })
 
         // 回执：AICLI 侧靠这条 ack 判定数据连接“还活着”。收不到 ack（半死 socket、
@@ -279,7 +285,9 @@ export async function createAicliStructuredOutputBridge(
             ? {
                 text: input.text,
                 displayText: input.displayText,
-                ...(input.attachments?.length ? { attachments: input.attachments } : {})
+                ...(input.attachments?.length ? { attachments: input.attachments } : {}),
+                ...(input.replyId ? { replyId: input.replyId } : {}),
+                ...(input.taskId ? { taskId: input.taskId } : {})
               }
             : {}),
           ...(input.command === 'goal' && input.goal ? { goal: input.goal } : {})

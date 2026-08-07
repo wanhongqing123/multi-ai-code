@@ -303,6 +303,8 @@ function withRemoteImCliEnv(
 export interface SendUserMessageOptions {
   displayText?: string
   attachments?: AicliUserMessageAttachment[]
+  replyId?: string
+  taskId?: string
 }
 
 async function waitForCodexReady(
@@ -508,6 +510,8 @@ export async function sendUserMessageToSession(
             command: 'submit_user_message',
             text,
             displayText: options.displayText?.trim() || text,
+            ...(options.replyId ? { replyId: options.replyId } : {}),
+            ...(options.taskId ? { taskId: options.taskId } : {}),
             ...(isOpenCodeCommand(current.command) && options.attachments?.length
               ? { attachments: options.attachments }
               : {})

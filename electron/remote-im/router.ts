@@ -46,6 +46,7 @@ export interface RemoteImAicliOutputRoute {
   toUserId: string
   sessionId: string
   replyId: string
+  taskId: string
 }
 
 export interface RemoteImRouterDeps {
@@ -54,7 +55,12 @@ export interface RemoteImRouterDeps {
   sendUser(
     sessionId: string,
     text: string,
-    options?: { displayText?: string; attachments?: AicliUserMessageAttachment[] }
+    options?: {
+      displayText?: string
+      attachments?: AicliUserMessageAttachment[]
+      replyId?: string
+      taskId?: string
+    }
   ): Promise<{ ok: boolean; error?: string }>
   sendImText(
     projectId: string,
@@ -83,6 +89,7 @@ export interface RemoteImRouterDeps {
     | { ok: false; error: string; attachment?: RemoteImFileAttachment | null }
   >
   createReplyId?: () => string
+  createTaskId?: (replyId: string) => string
   onAicliOutputStart?: (route: RemoteImAicliOutputRoute) => void
   onAicliOutputCancel?: (route: RemoteImAicliOutputRoute) => void
   handleControlCommand?: (input: {
@@ -434,6 +441,8 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
     try {
       const result = await deps.sendUser(outputRoute.sessionId, text, {
         displayText,
+        replyId: outputRoute.replyId,
+        taskId: outputRoute.taskId,
         ...(attachments?.length ? { attachments } : {})
       })
       if (!result.ok) deps.onAicliOutputCancel?.(outputRoute)
@@ -492,6 +501,7 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
     }
 
     const replyId = deps.createReplyId?.() ?? createRemoteImReplyId()
+    const taskId = deps.createTaskId?.(replyId) ?? `remote-im-task-${replyId}`
     const wrapped = buildRemoteImAicliPrompt({
       fromUserId: input.fromUserId,
       text: input.text,
@@ -505,7 +515,8 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       projectId: input.message.projectId,
       toUserId: input.fromUserId,
       sessionId: session.sessionId,
-      replyId
+      replyId,
+      taskId
     }
     const sendResult = await sendUserWithOutputRoute(outputRoute, wrapped, displayText)
     if (!sendResult.ok) {
@@ -611,13 +622,17 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
         controlCommand.command === 'btw'
           ? deps.createReplyId?.() ?? createRemoteImReplyId()
           : undefined
+      const taskId = replyId
+        ? deps.createTaskId?.(replyId) ?? `remote-im-task-${replyId}`
+        : undefined
       const outputRoute =
-        session && replyId
+        session && replyId && taskId
           ? {
               projectId: message.projectId,
               toUserId: fromUserId,
               sessionId: session.sessionId,
-              replyId
+              replyId,
+              taskId
             }
           : undefined
       if (outputRoute) deps.onAicliOutputStart?.(outputRoute)
@@ -801,13 +816,22 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       caption: message.caption ?? null
     })
     const replyId = deps.createReplyId?.() ?? createRemoteImReplyId()
-    const wrapped = buildRemoteImAicliPrompt({ fromUserId, text: taskText, replyId })
-    const displayText = buildRemoteImAicliDisplayText({ fromUserId, text: taskText })
+    const taskId = deps.createTaskId?.(replyId) ?? `remote-im-task-${replyId}`
+    const wrapped = buildRemoteImAicliPrompt({
+      fromUserId,
+      text: taskText,
+      replyId
+    })
+    const displayText = buildRemoteImAicliDisplayText({
+      fromUserId,
+      text: taskText
+    })
     const outputRoute = {
       projectId: message.projectId,
       toUserId: fromUserId,
       sessionId: session.sessionId,
-      replyId
+      replyId,
+      taskId
     }
     const sendResult = await sendUserWithOutputRoute(outputRoute, wrapped, displayText, [
       {
@@ -916,13 +940,22 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       caption: message.caption ?? null
     })
     const replyId = deps.createReplyId?.() ?? createRemoteImReplyId()
-    const wrapped = buildRemoteImAicliPrompt({ fromUserId, text: taskText, replyId })
-    const displayText = buildRemoteImAicliDisplayText({ fromUserId, text: taskText })
+    const taskId = deps.createTaskId?.(replyId) ?? `remote-im-task-${replyId}`
+    const wrapped = buildRemoteImAicliPrompt({
+      fromUserId,
+      text: taskText,
+      replyId
+    })
+    const displayText = buildRemoteImAicliDisplayText({
+      fromUserId,
+      text: taskText
+    })
     const outputRoute = {
       projectId: message.projectId,
       toUserId: fromUserId,
       sessionId: session.sessionId,
-      replyId
+      replyId,
+      taskId
     }
     const sendResult = await sendUserWithOutputRoute(outputRoute, wrapped, displayText)
     if (!sendResult.ok) {

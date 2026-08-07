@@ -96,13 +96,21 @@ describe('remote IM router', () => {
       sessionId: string
       text: string
       displayText: string | undefined
+      replyId: string | undefined
+      taskId: string | undefined
     }> = []
     const sentToIm: string[] = []
     const router = createRemoteImRouter({
       getConfig: () => config,
       resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
       sendUser: async (sessionId, text, options) => {
-        sentToAicli.push({ sessionId, text, displayText: options?.displayText })
+        sentToAicli.push({
+          sessionId,
+          text,
+          displayText: options?.displayText,
+          replyId: options?.replyId,
+          taskId: options?.taskId
+        })
         return { ok: true }
       },
       sendImText: async (_projectId, _toUserId, text) => {
@@ -132,6 +140,8 @@ describe('remote IM router', () => {
     expect(sentToAicli[0]?.text).toContain('</remote-im-reply id="reply-fixed">')
     expect(sentToAicli[0]?.displayText).toBe('[来自远程 IM：phone_admin]\n检查构建')
     expect(sentToAicli[0]?.displayText).not.toContain('[IM_REPLY]')
+    expect(sentToAicli[0]?.replyId).toBe('reply-fixed')
+    expect(sentToAicli[0]?.taskId).toBe('remote-im-task-reply-fixed')
     expect(sentToIm[0]).toContain('已发送给当前 AICLI')
     expect(store.messages.map((message) => message.status)).toEqual([
       'sent-to-aicli',

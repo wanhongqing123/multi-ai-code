@@ -51,7 +51,9 @@ describe('AICLI structured output bridge', () => {
         kind: 'assistant_text',
         text: '<remote-im-reply id="rim-1">\nhello\n</remote-im-reply id="rim-1">',
         messageId: 'm1',
-        partId: 'p1'
+        partId: 'p1',
+        replyId: 'rim-1',
+        taskId: 'task-1'
       })}\n`
     )
     await new Promise((resolve) => setTimeout(resolve, 30))
@@ -68,7 +70,9 @@ describe('AICLI structured output bridge', () => {
         kind: 'assistant_text',
         text: '<remote-im-reply id="rim-1">\nhello\n</remote-im-reply id="rim-1">',
         messageId: 'm1',
-        partId: 'p1'
+        partId: 'p1',
+        replyId: 'rim-1',
+        taskId: 'task-1'
       }
     ])
     expect(acked).toContain('"kind":"ack"')
@@ -443,6 +447,8 @@ describe('AICLI structured output bridge', () => {
         command: 'submit_user_message',
         text: 'wrapped model prompt',
         displayText: '[来自远程 IM：phone]\n你好',
+        replyId: 'rim-submit',
+        taskId: 'task-submit',
         attachments: [
           {
             type: 'image',
@@ -462,6 +468,8 @@ describe('AICLI structured output bridge', () => {
     expect(receivedLines.join('')).toContain('"command":"submit_user_message"')
     expect(receivedLines.join('')).toContain('"text":"wrapped model prompt"')
     expect(receivedLines.join('')).toContain('"displayText":"[来自远程 IM：phone]\\n你好"')
+    expect(receivedLines.join('')).toContain('"replyId":"rim-submit"')
+    expect(receivedLines.join('')).toContain('"taskId":"task-submit"')
     expect(receivedLines.join('')).toContain('"localPath":"/tmp/remote-im/photo.png"')
     expect(receivedLines.join('')).toContain('"mimeType":"image/png"')
   })

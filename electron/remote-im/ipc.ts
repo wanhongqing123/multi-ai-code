@@ -17,7 +17,11 @@ import {
   switchAicliModeForSession
 } from '../cc/ptyManager.js'
 import { projectDir, rootDir } from '../store/paths.js'
-import { readProjectMetaFile, writeProjectMetaFile, type ProjectMeta } from '../store/projectMeta.js'
+import {
+  readProjectMetaFile,
+  writeProjectMetaFile,
+  type ProjectMeta
+} from '../store/projectMeta.js'
 import {
   DEFAULT_REMOTE_IM_CONFIG,
   normalizeRemoteImConfig,
@@ -47,10 +51,13 @@ import {
   completeRemoteImOutputSession,
   failRemoteImOutputSession,
   forwardRemoteImStructuredFinalOutput,
+  forwardRemoteImStructuredProgress,
   flushRemoteImOutputSession,
+  REMOTE_IM_PROGRESS_INTERVAL_MS,
   type RemoteImOutputCompletionInfo,
   type RemoteImOutputSessionState
 } from './outputForwarding.js'
+import { RemoteImStructuredTaskRegistry } from './structuredTaskRegistry.js'
 import { getRemoteImAicliOutputSourceKind } from './aicliSourceKind.js'
 import {
   createPeerOutgoingFileMessageInput,
@@ -66,16 +73,10 @@ import { startRemoteImCliServer } from './imcliServer.js'
 import { addAicliStructuredOutputListener } from '../aicli/structuredOutputBridge.js'
 import { executeRemoteImControlCommand } from './controlBridge.js'
 import { createGitDiffReport } from './gitDiffReport.js'
-import {
-  createRemoteImAccountChangedStatuses,
-  getRemoteImSendConnectionError
-} from './status.js'
+import { createRemoteImAccountChangedStatuses, getRemoteImSendConnectionError } from './status.js'
 import { transcribeRemoteImAudioWithLocalWhisper } from './localWhisper.js'
 import { cacheRemoteImImage } from './imageCache.js'
-import {
-  loadRemoteImLocalImageForSend,
-  type RemoteImLocalImagePayload
-} from './localImageFile.js'
+import { loadRemoteImLocalImageForSend, type RemoteImLocalImagePayload } from './localImageFile.js'
 import {
   loadRemoteImLocalFileForSend,
   mimeTypeFromRemoteImFilePath,
@@ -108,6 +109,10 @@ const MAX_REMOTE_IM_DOC_PREVIEW_BYTES = 5 * 1024 * 1024
 
 const statuses = new Map<string, RemoteImStatus>()
 const outputSessions = new Map<string, RemoteImOutputSessionState>()
+type RemoteImStructuredTaskState = RemoteImOutputSessionState & {
+  taskId: string
+}
+const structuredOutputTasks = new RemoteImStructuredTaskRegistry<RemoteImStructuredTaskState>()
 let activeRemoteImAccountProfileId: string | null = getRemoteImProfileId()
 
 function broadcast(channel: string, payload: unknown): void {
@@ -137,7 +142,12 @@ function broadcastOutgoingText(
   text: string,
   messageId?: number
 ): void {
-  broadcast('remote-im:outgoing-text', { projectId, toUserId, text, messageId })
+  broadcast('remote-im:outgoing-text', {
+    projectId,
+    toUserId,
+    text,
+    messageId
+  })
 }
 
 function broadcastOutgoingImage(
@@ -146,7 +156,12 @@ function broadcastOutgoingImage(
   fileToken: string,
   messageId?: number
 ): void {
-  broadcast('remote-im:outgoing-image', { projectId, toUserId, fileToken, messageId })
+  broadcast('remote-im:outgoing-image', {
+    projectId,
+    toUserId,
+    fileToken,
+    messageId
+  })
 }
 
 function broadcastOutgoingImagePayload(
@@ -194,7 +209,9 @@ function scheduleOutgoingDeliveryAckTimeout(projectId: string, messageId: number
   }, OUTGOING_DELIVERY_ACK_TIMEOUT_MS)
 }
 
-async function readProjectMeta(projectId: string): Promise<{ meta: ProjectMeta; repaired: boolean }> {
+async function readProjectMeta(
+  projectId: string
+): Promise<{ meta: ProjectMeta; repaired: boolean }> {
   const metaPath = join(projectDir(projectId), 'project.json')
   try {
     const result = await readProjectMetaFile(metaPath)
@@ -271,7 +288,11 @@ async function setRemoteImConfig(
   rawConfig: unknown
 ): Promise<
   | { ok: true; value: RemoteImConfig; repaired?: true }
-  | { ok: false; error: string; details?: Array<{ path: string; message: string }> }
+  | {
+      ok: false
+      error: string
+      details?: Array<{ path: string; message: string }>
+    }
 > {
   const config = toRemoteImProjectConfig(normalizeRemoteImConfig(rawConfig))
   const validation = validateRemoteImConfig(config)
@@ -299,7 +320,11 @@ async function setRemoteImConfig(
     detail: null,
     updatedAt: Date.now()
   })
-  return { ok: true, value: mergedConfig, ...(repaired ? { repaired: true as const } : {}) }
+  return {
+    ok: true,
+    value: mergedConfig,
+    ...(repaired ? { repaired: true as const } : {})
+  }
 }
 
 async function getRemoteImStatus(projectId: string): Promise<RemoteImStatus> {
@@ -364,8 +389,7 @@ async function deleteRemoteImContact(
   projectId: string,
   rawUserId: string
 ): Promise<
-  | { ok: true; value: RemoteImConfig; loginState: RemoteImLoginState }
-  | { ok: false; error: string }
+  { ok: true; value: RemoteImConfig; loginState: RemoteImLoginState } | { ok: false; error: string }
 > {
   const userId = rawUserId.trim()
   if (!userId) return { ok: false, error: '请填写账号 ID' }
@@ -398,8 +422,7 @@ async function syncRemoteImContactsFromSdk(
   projectId: string,
   rawUserIds: string[]
 ): Promise<
-  | { ok: true; value: RemoteImConfig; loginState: RemoteImLoginState }
-  | { ok: false; error: string }
+  { ok: true; value: RemoteImConfig; loginState: RemoteImLoginState } | { ok: false; error: string }
 > {
   const profileId = getCurrentRemoteImAccountProfileId()
   if (!profileId) return { ok: false, error: '远程 IM 账号未登录' }
@@ -523,7 +546,10 @@ async function sendRemoteImPeerLocalImage(
       maxBytes: MAX_REMOTE_IM_IMAGE_BYTES
     })
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err)
+    }
   }
 
   const message = createRemoteImMessage(
@@ -564,7 +590,10 @@ async function sendRemoteImPeerLocalFile(
       maxBytes: MAX_REMOTE_IM_FILE_BYTES
     })
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err)
+    }
   }
 
   const message = createRemoteImMessage(
@@ -598,7 +627,8 @@ async function readRemoteImFilePreview(input: {
   try {
     const stat = await fs.stat(localPath)
     if (!stat.isFile()) return { ok: false, error: 'file path is not a file' }
-    if (stat.size > MAX_REMOTE_IM_DOC_PREVIEW_BYTES) return { ok: false, error: 'file is too large' }
+    if (stat.size > MAX_REMOTE_IM_DOC_PREVIEW_BYTES)
+      return { ok: false, error: 'file is too large' }
     const content = await fs.readFile(localPath, 'utf8')
     return {
       ok: true,
@@ -609,11 +639,16 @@ async function readRemoteImFilePreview(input: {
       }
     }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err)
+    }
   }
 }
 
-function readRemoteImTranscriptReply(source: NonNullable<RemoteImOutputSessionState['transcript']>): string | null {
+function readRemoteImTranscriptReply(
+  source: NonNullable<RemoteImOutputSessionState['transcript']>
+): string | null {
   if (source.kind === 'claude') {
     return readLatestClaudeRemoteImReply({
       cwd: source.cwd,
@@ -629,23 +664,38 @@ function startOutputForwarding(
   projectId: string,
   toUserId: string,
   config: RemoteImConfig,
-  replyId?: string
+  replyId: string,
+  taskId: string
 ): void {
+  const runtime = getSessionRuntimeInfo(sessionId)
+  const sourceKind = runtime ? getRemoteImAicliOutputSourceKind(runtime.command) : 'unknown'
+  if (sourceKind === 'codex' || sourceKind === 'opencode') {
+    structuredOutputTasks.add(sessionId, {
+      projectId,
+      toUserId,
+      config,
+      replyId,
+      taskId,
+      sourceKind,
+      buffer: '',
+      timer: null,
+      structuredOutput: true,
+      sourceStarted: false
+    })
+    return
+  }
+
   const current = outputSessions.get(sessionId)
   if (current?.timer) clearTimeout(current.timer)
-  const runtime = getSessionRuntimeInfo(sessionId)
-  const sourceKind = runtime
-    ? getRemoteImAicliOutputSourceKind(runtime.command)
-    : 'unknown'
   outputSessions.set(sessionId, {
     projectId,
     toUserId,
     config,
     replyId,
     sourceKind,
-    buffer: sourceKind === 'codex' || sourceKind === 'opencode' ? '' : current?.buffer ?? '',
+    buffer: current?.buffer ?? '',
     timer: null,
-    structuredOutput: sourceKind === 'codex' || sourceKind === 'opencode',
+    structuredOutput: false,
     transcript:
       sourceKind === 'claude' && runtime
         ? {
@@ -658,7 +708,17 @@ function startOutputForwarding(
   })
 }
 
-function cancelOutputForwarding(sessionId: string, replyId: string): void {
+function cancelOutputForwarding(sessionId: string, replyId: string, taskId: string): void {
+  const structured = structuredOutputTasks.resolve(
+    sessionId,
+    { taskId, replyId },
+    { allowSoleFallback: false }
+  )
+  if (structured) {
+    if (structured.timer) clearTimeout(structured.timer)
+    structuredOutputTasks.remove(sessionId, structured.taskId)
+    return
+  }
   const state = outputSessions.get(sessionId)
   if (!state || state.replyId !== replyId) return
   if (state.timer) clearTimeout(state.timer)
@@ -667,11 +727,77 @@ function cancelOutputForwarding(sessionId: string, replyId: string): void {
 
 function createOutputRoutingDeps(config: RemoteImConfig) {
   return {
-    onAicliOutputStart: ({ sessionId, projectId, toUserId, replyId }: RemoteImAicliOutputRoute) =>
-      startOutputForwarding(sessionId, projectId, toUserId, config, replyId),
-    onAicliOutputCancel: ({ sessionId, replyId }: RemoteImAicliOutputRoute) =>
-      cancelOutputForwarding(sessionId, replyId)
+    onAicliOutputStart: ({
+      sessionId,
+      projectId,
+      toUserId,
+      replyId,
+      taskId
+    }: RemoteImAicliOutputRoute) =>
+      startOutputForwarding(sessionId, projectId, toUserId, config, replyId, taskId),
+    onAicliOutputCancel: ({ sessionId, replyId, taskId }: RemoteImAicliOutputRoute) =>
+      cancelOutputForwarding(sessionId, replyId, taskId)
   }
+}
+
+function outputForwardingDeps() {
+  return {
+    createMessage: (input: Parameters<typeof createRemoteImMessage>[0]) => {
+      createRemoteImMessage(input)
+    },
+    sendText: broadcastOutgoingText,
+    messagesChanged: broadcastMessagesChanged,
+    readTranscriptReply: readRemoteImTranscriptReply
+  }
+}
+
+function resolveStructuredOutputTask(
+  sessionId: string,
+  identity: { taskId?: string; replyId?: string }
+): RemoteImStructuredTaskState | undefined {
+  const explicit = structuredOutputTasks.resolve(sessionId, identity, {
+    allowSoleFallback: false
+  })
+  if (explicit) return explicit
+  if (identity.taskId || identity.replyId) return undefined
+
+  const tasks = structuredOutputTasks.list(sessionId)
+  const running = tasks.filter((task) => task.sourceStarted)
+  if (running.length === 1) return running[0]
+  if (running.length === 0 && tasks.length === 1) return tasks[0]
+  return undefined
+}
+
+function removeStructuredOutputTask(sessionId: string, state: RemoteImStructuredTaskState): void {
+  if (state.timer) clearTimeout(state.timer)
+  state.timer = null
+  structuredOutputTasks.remove(sessionId, state.taskId)
+}
+
+function scheduleStructuredProgress(sessionId: string, state: RemoteImStructuredTaskState): void {
+  if (state.timer) return
+  state.timer = setTimeout(() => {
+    state.timer = null
+    const current = structuredOutputTasks.resolve(
+      sessionId,
+      { taskId: state.taskId },
+      { allowSoleFallback: false }
+    )
+    if (current !== state || !state.sourceStarted) return
+    forwardRemoteImStructuredProgress(sessionId, state, outputForwardingDeps())
+    scheduleStructuredProgress(sessionId, state)
+  }, REMOTE_IM_PROGRESS_INTERVAL_MS)
+}
+
+function markStructuredTaskActive(
+  sessionId: string,
+  state: RemoteImStructuredTaskState,
+  progressText?: string
+): void {
+  state.sourceStarted = true
+  state.lastActivityAt = Date.now()
+  if (progressText?.trim()) state.buffer = progressText
+  scheduleStructuredProgress(sessionId, state)
 }
 
 function flushOutputSession(sessionId: string): void {
@@ -687,10 +813,7 @@ function flushOutputSession(sessionId: string): void {
   })
 }
 
-function completeOutputSession(
-  sessionId: string,
-  info: RemoteImOutputCompletionInfo = {}
-): void {
+function completeOutputSession(sessionId: string, info: RemoteImOutputCompletionInfo = {}): void {
   const state = outputSessions.get(sessionId)
   if (!state) return
   completeRemoteImOutputSession(
@@ -747,41 +870,46 @@ function ensureSessionListeners(): void {
     state.buffer += chunk
     scheduleOutputFlush(sessionId)
   })
-  addAicliStructuredOutputListener(({ sessionId, kind, text, replyId }) => {
-    const state = outputSessions.get(sessionId)
+  addAicliStructuredOutputListener(({ sessionId, kind, text, messageId, replyId, taskId }) => {
+    const state = resolveStructuredOutputTask(sessionId, { replyId, taskId })
     if (!state) return
-    if (!state.structuredOutput) return
+    if (kind === 'task_started' || kind === 'task_activity') {
+      markStructuredTaskActive(sessionId, state)
+      return
+    }
     if (kind === 'turn_error') {
-      if (!replyId || replyId !== state.replyId) return
-      failOutputSession(sessionId, text)
+      state.buffer = ''
+      failRemoteImOutputSession(sessionId, state, outputForwardingDeps(), text)
+      removeStructuredOutputTask(sessionId, state)
       return
     }
     if (kind === 'assistant_final') {
-      if (!replyId || replyId !== state.replyId) return
       forwardRemoteImStructuredFinalOutput(
         sessionId,
         state,
-        {
-          createMessage: (input) => {
-            createRemoteImMessage(input)
-          },
-          sendText: broadcastOutgoingText,
-          messagesChanged: broadcastMessagesChanged,
-          readTranscriptReply: readRemoteImTranscriptReply
-        },
-        text
+        outputForwardingDeps(),
+        text,
+        messageId
       )
-      cancelOutputForwarding(sessionId, replyId)
+      removeStructuredOutputTask(sessionId, state)
       return
     }
     if (kind && kind !== 'assistant_text') return
-    // 结构化输出的每个 text 是一段完整 assistant 正文，段间必须补换行：
-    // marker 提取按行匹配，若旁白与最终答复落在同一个防抖窗口被无分隔拼接，
-    // open 标签会失去独立行导致提取为空，且 flush 会把整个 buffer（含回复）清掉。
-    state.buffer += (state.buffer !== '' && !state.buffer.endsWith('\n') ? '\n' : '') + text
-    scheduleOutputFlush(sessionId)
+    // Each five-minute window keeps only the latest source-authored progress
+    // snapshot. This avoids replaying every intermediate model/tool event.
+    markStructuredTaskActive(sessionId, state, text)
   })
   addSessionExitListener(({ sessionId, exitCode, signal }) => {
+    const reason = signal
+      ? `AICLI 进程已退出（信号：${signal}）。`
+      : typeof exitCode === 'number'
+        ? `AICLI 进程已退出（退出码：${exitCode}）。`
+        : 'AICLI 进程已退出。'
+    for (const state of structuredOutputTasks.list(sessionId)) {
+      state.buffer = ''
+      failRemoteImOutputSession(sessionId, state, outputForwardingDeps(), reason)
+      removeStructuredOutputTask(sessionId, state)
+    }
     completeOutputSession(sessionId, { exitCode, signal })
   })
 }
@@ -856,14 +984,15 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
 
   ipcMain.handle(
     'remote-im:bind-account',
-    async (
-      _event,
-      { account }: { account: RemoteImAccountConfig }
-    ) => {
+    async (_event, { account }: { account: RemoteImAccountConfig }) => {
       try {
         const normalized = normalizeRemoteImAccountConfig(account)
         const userId = normalized.desktopUserId?.trim()
-        if (!userId) return { ok: false as const, error: '请填写 IM 账号（desktopUserId）' }
+        if (!userId)
+          return {
+            ok: false as const,
+            error: '请填写 IM 账号（desktopUserId）'
+          }
         // 1) 用账号初始化数据层并抢单实例锁
         const activated = options.activateDataLayer
           ? await options.activateDataLayer(userId)
@@ -875,7 +1004,7 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
             error:
               activated.alreadyLocked === true
                 ? '该账号已在另一个 Multi-AI Code 窗口打开'
-                : activated.error ?? '账号数据层初始化失败'
+                : (activated.error ?? '账号数据层初始化失败')
           }
         }
         // 2) 写账号配置（此时 rootDir 已按账号作用域就绪）
@@ -883,7 +1012,10 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
         // 3) 读回登录态供渲染层解锁登录门
         return { ok: true as const, value: await getRemoteImLoginState() }
       } catch (err) {
-        return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+        return {
+          ok: false as const,
+          error: err instanceof Error ? err.message : String(err)
+        }
       }
     }
   )
@@ -892,7 +1024,10 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
     try {
       return { ok: true as const, value: await getRemoteImConfig(projectId) }
     } catch (err) {
-      return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+      return {
+        ok: false as const,
+        error: err instanceof Error ? err.message : String(err)
+      }
     }
   })
 
@@ -900,7 +1035,10 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
     try {
       return { ok: true as const, value: await getRemoteImLoginState() }
     } catch (err) {
-      return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+      return {
+        ok: false as const,
+        error: err instanceof Error ? err.message : String(err)
+      }
     }
   })
 
@@ -908,9 +1046,15 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
     'remote-im:get-account-by-user-id',
     async (_event, { userId }: { userId: string }) => {
       try {
-        return { ok: true as const, value: await getRemoteImAccountByUserId(userId) }
+        return {
+          ok: true as const,
+          value: await getRemoteImAccountByUserId(userId)
+        }
       } catch (err) {
-        return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+        return {
+          ok: false as const,
+          error: err instanceof Error ? err.message : String(err)
+        }
       }
     }
   )
@@ -919,9 +1063,15 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
     'remote-im:set-account',
     async (_event, { account }: { account: RemoteImAccountConfig }) => {
       try {
-        return { ok: true as const, value: await bindRemoteImAccountConfig(account) }
+        return {
+          ok: true as const,
+          value: await bindRemoteImAccountConfig(account)
+        }
       } catch (err) {
-        return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+        return {
+          ok: false as const,
+          error: err instanceof Error ? err.message : String(err)
+        }
       }
     }
   )
@@ -932,7 +1082,10 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
       try {
         return await setRemoteImConfig(projectId, config)
       } catch (err) {
-        return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+        return {
+          ok: false as const,
+          error: err instanceof Error ? err.message : String(err)
+        }
       }
     }
   )
@@ -983,7 +1136,10 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
       try {
         return await deleteRemoteImContact(projectId, userId)
       } catch (err) {
-        return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+        return {
+          ok: false as const,
+          error: err instanceof Error ? err.message : String(err)
+        }
       }
     }
   )
@@ -994,7 +1150,10 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
       try {
         return await syncRemoteImContactsFromSdk(projectId, Array.isArray(userIds) ? userIds : [])
       } catch (err) {
-        return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+        return {
+          ok: false as const,
+          error: err instanceof Error ? err.message : String(err)
+        }
       }
     }
   )
@@ -1020,7 +1179,11 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
         projectId,
         messageId,
         remoteMessageId
-      }: { projectId: string; messageId: number; remoteMessageId?: string | null }
+      }: {
+        projectId: string
+        messageId: number
+        remoteMessageId?: string | null
+      }
     ) => {
       updateRemoteImMessageStatus(messageId, {
         status: 'sent-to-im',
@@ -1056,7 +1219,10 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
         await appendRemoteImRuntimeLog(rootDir(), entry)
         return { ok: true as const }
       } catch (err) {
-        return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+        return {
+          ok: false as const,
+          error: err instanceof Error ? err.message : String(err)
+        }
       }
     }
   )
@@ -1076,9 +1242,7 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
           sendRemoteImPeerLocalFile(projectId, localPath, toUserId),
         handleControlCommand: async ({ command, args, replyId }) => {
           const runtime = session ? getSessionRuntimeInfo(session.sessionId) : null
-          const sourceKind = runtime
-            ? getRemoteImAicliOutputSourceKind(runtime.command)
-            : 'unknown'
+          const sourceKind = runtime ? getRemoteImAicliOutputSourceKind(runtime.command) : 'unknown'
           return executeRemoteImControlCommand({
             command,
             sourceKind,
@@ -1090,9 +1254,16 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
                   startedAtMs: runtime.startedAtMs
                 }
               : null,
-            switchMode: async ({ sessionId, mode }) =>
-              switchAicliModeForSession(sessionId, mode),
-            executeCommand: async ({ sessionId, command, model, reasoning, goal, task, replyId }) => {
+            switchMode: async ({ sessionId, mode }) => switchAicliModeForSession(sessionId, mode),
+            executeCommand: async ({
+              sessionId,
+              command,
+              model,
+              reasoning,
+              goal,
+              task,
+              replyId
+            }) => {
               if (command === 'status') {
                 return requestAicliStatusForSession(sessionId)
               }
@@ -1114,7 +1285,10 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
               if (command === 'clear') {
                 return requestAicliClearForSession(sessionId)
               }
-              return { ok: false as const, error: 'unsupported AICLI control command' }
+              return {
+                ok: false as const,
+                error: 'unsupported AICLI control command'
+              }
             },
             createDiffReport: ({ targetRepo, args: diffArgs }) =>
               createGitDiffReport({
@@ -1325,10 +1499,7 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
     'remote-im:backfill-roamed-text',
     async (
       _event,
-      {
-        projectId,
-        messages
-      }: { projectId: string; messages: RemoteImRoamedTextMessage[] }
+      { projectId, messages }: { projectId: string; messages: RemoteImRoamedTextMessage[] }
     ) => {
       if (!projectId || !Array.isArray(messages) || messages.length === 0) {
         return { ok: true as const, inserted: 0 }
@@ -1338,7 +1509,10 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
         getConfig: () => config,
         resolveSession: () => null,
         sendUser: async () => ({ ok: false, error: 'backfill does not route' }),
-        sendImText: async () => ({ ok: false, error: 'backfill does not send' }),
+        sendImText: async () => ({
+          ok: false,
+          error: 'backfill does not send'
+        }),
         store: {
           create: (input) => createRemoteImMessage(input),
           updateStatus: (id, patch) =>

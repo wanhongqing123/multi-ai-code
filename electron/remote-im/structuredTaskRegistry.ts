@@ -57,6 +57,24 @@ export class RemoteImStructuredTaskRegistry<T extends RemoteImStructuredTaskIden
     return task
   }
 
+  removeAllExcept(
+    sessionId: string,
+    taskId: string,
+    shouldRemove: (task: T) => boolean = () => true
+  ): T[] {
+    const tasks = this.tasksBySession.get(sessionId)
+    if (!tasks) return []
+
+    const removed: T[] = []
+    for (const [candidateTaskId, task] of tasks) {
+      if (candidateTaskId === taskId || !shouldRemove(task)) continue
+      tasks.delete(candidateTaskId)
+      removed.push(task)
+    }
+    if (tasks.size === 0) this.tasksBySession.delete(sessionId)
+    return removed
+  }
+
   list(sessionId: string): T[] {
     return [...(this.tasksBySession.get(sessionId)?.values() ?? [])]
   }

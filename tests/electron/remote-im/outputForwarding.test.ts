@@ -14,6 +14,7 @@ import {
   forwardRemoteImStructuredProgress,
   flushRemoteImOutputSession,
   parseRemoteImAicliOutputText,
+  resolveRemoteImStructuredFinalContent,
   isRemoteImOperationFinishedText,
   type RemoteImOutputForwardingDeps,
   type RemoteImOutputFlushTimer,
@@ -508,13 +509,48 @@ describe('remote IM output forwarding', () => {
     ).toBe(1)
 
     expect(messages.map((message) => message.content)).toEqual([
-      '任务仍在处理：\n仍在编译，预计还需要一段时间。',
+      '**进度更新**\n\n仍在编译，预计还需要一段时间。',
       '编译完成并已发布。'
     ])
     expect(sentTexts).toEqual([
-      createRemoteImAicliOutputText('任务仍在处理：\n仍在编译，预计还需要一段时间。'),
+      createRemoteImAicliOutputText('**进度更新**\n\n仍在编译，预计还需要一段时间。'),
       createRemoteImAicliOutputText('编译完成并已发布。')
     ])
+  })
+
+  it('stays silent when no new progress is available', () => {
+    const state = createState('', { outputMaxChunkChars: 500 })
+    state.replyId = 'rim-current'
+    state.taskId = 'task-current'
+    state.sourceKind = 'opencode'
+    const messages: CreateRemoteImMessageInput[] = []
+
+    expect(
+      forwardRemoteImStructuredProgress('session-1', state, {
+        createMessage: (input) => messages.push(input),
+        sendText: () => undefined,
+        messagesChanged: () => undefined
+      })
+    ).toBe(0)
+    expect(messages).toEqual([])
+  })
+
+  it('stays silent when the sampled progress has already been forwarded', () => {
+    const state = createState('正在上传安装包。', { outputMaxChunkChars: 500 })
+    state.replyId = 'rim-current'
+    state.taskId = 'task-current'
+    state.sourceKind = 'codex'
+    const messages: CreateRemoteImMessageInput[] = []
+    const deps: RemoteImOutputForwardingDeps = {
+      createMessage: (input) => messages.push(input),
+      sendText: () => undefined,
+      messagesChanged: () => undefined
+    }
+
+    expect(forwardRemoteImStructuredProgress('session-1', state, deps)).toBe(1)
+    state.buffer = '正在上传安装包。'
+    expect(forwardRemoteImStructuredProgress('session-1', state, deps)).toBe(0)
+    expect(messages.map((message) => message.content)).toEqual(['**进度更新**\n\n正在上传安装包。'])
   })
 
   it('discards buffered progress when the final reply arrives first', () => {
@@ -604,7 +640,7 @@ describe('remote IM output forwarding', () => {
     ])
   })
 
-  it('discards a source-confirmed final reply tagged for another request', () => {
+  it('forwards a source-confirmed final reply even when its text has a stale reply marker', () => {
     const state = createState('', { outputMaxChunkChars: 500 })
     state.replyId = 'rim-current'
     state.sourceKind = 'opencode'
@@ -627,10 +663,32 @@ describe('remote IM output forwarding', () => {
         },
         tagged
       )
-    ).toBe(0)
+    ).toBe(1)
 
-    expect(messages).toEqual([])
-    expect(sentTexts).toEqual([])
+    expect(messages.map((message) => message.content)).toEqual(['reply for another request'])
+    expect(sentTexts).toEqual([createRemoteImAicliOutputText('reply for another request')])
+    expect(resolveRemoteImStructuredFinalContent(tagged, 'rim-current')).toEqual({
+      content: 'reply for another request',
+      source: 'fallback-marker',
+      markerReplyIdMismatch: true
+    })
+  })
+
+  it('forwards only the latest stale marker body from a structured final event', () => {
+    const tagged = [
+      '<remote-im-reply id="rim-old-1">',
+      'older progress',
+      '</remote-im-reply id="rim-old-1">',
+      '<remote-im-reply id="rim-old-2">',
+      'latest final result',
+      '</remote-im-reply id="rim-old-2">'
+    ].join('\n')
+
+    expect(resolveRemoteImStructuredFinalContent(tagged, 'rim-current')).toEqual({
+      content: 'latest final result',
+      source: 'fallback-marker',
+      markerReplyIdMismatch: true
+    })
   })
 
   it('forwards a completed terminal reply once after an incomplete marker was buffered', () => {

@@ -10,7 +10,6 @@ import type { RemoteImConfig } from './types.js'
 export const REMOTE_IM_OPERATION_COMPLETE_TEXT = '操作已完成。'
 export const REMOTE_IM_OPERATION_FAILED_PREFIX = 'AICLI 执行失败：'
 export const REMOTE_IM_PROGRESS_INTERVAL_MS = 5 * 60 * 1000
-export const REMOTE_IM_PROGRESS_ACTIVE_TEXT = '任务仍在处理，暂无新的可展示进度。'
 // Invisible protocol marker: forwarded AICLI output must still be distinguishable
 // from user input, but the marker should not appear in IM clients.
 export const REMOTE_IM_AICLI_OUTPUT_PREFIX = '\u2063\u200B\u200C\u200D\u2063'
@@ -79,6 +78,15 @@ export interface RemoteImOutputForwardingDeps {
   readTranscriptReply?: (source: RemoteImTranscriptSource) => string | null
   now?: () => number
   clearTimer?: (timer: RemoteImOutputFlushTimer) => void
+}
+
+export type RemoteImStructuredFinalContentSource =
+  'expected-marker' | 'fallback-marker' | 'pending-marker' | 'markerless' | 'empty'
+
+export interface RemoteImStructuredFinalContent {
+  content: string
+  source: RemoteImStructuredFinalContentSource
+  markerReplyIdMismatch: boolean
 }
 
 export function createRemoteImOperationFinishedText(
@@ -192,6 +200,73 @@ export function flushRemoteImOutputSession(
 }
 
 /**
+ * Structured terminal metadata already identifies the owning task. The text marker is
+ * therefore a content envelope, not a second routing authority. This matters when a
+ * second remote message steers the same running turn: the model may still close its
+ * answer with the earlier marker while the terminal event correctly targets the newer
+ * task id.
+ */
+export function resolveRemoteImStructuredFinalContent(
+  text: string,
+  expectedReplyId?: string
+): RemoteImStructuredFinalContent {
+  const expected = extractRemoteImReplyOutput(text, {
+    replyId: expectedReplyId
+  })
+  if (expected.content) {
+    return {
+      content: expected.content,
+      source: 'expected-marker',
+      markerReplyIdMismatch: false
+    }
+  }
+
+  const hasReplyMarker = /<\/?remote-im-reply(?:\s|>)/.test(text)
+  if (hasReplyMarker) {
+    const markerReplyIds = [
+      ...text.matchAll(/<remote-im-reply\s+id="([A-Za-z0-9_-]{1,80})">/g)
+    ].map((match) => match[1])
+    const fallback =
+      markerReplyIds
+        .reverse()
+        .map((replyId) => extractRemoteImReplyOutput(text, { replyId }))
+        .find((candidate) => candidate.content || candidate.pending) ??
+      extractRemoteImReplyOutput(text)
+    if (fallback.content) {
+      return {
+        content: fallback.content,
+        source: 'fallback-marker',
+        markerReplyIdMismatch: Boolean(expectedReplyId)
+      }
+    }
+
+    const pending = expected.pending ? expected : fallback
+    const pendingBody = pending.pending
+      ? pending.nextBuffer.split('\n').slice(1).join('\n').trim()
+      : ''
+    if (pendingBody) {
+      return {
+        content: pendingBody,
+        source: 'pending-marker',
+        markerReplyIdMismatch: false
+      }
+    }
+
+    return {
+      content: '',
+      source: 'empty',
+      markerReplyIdMismatch: false
+    }
+  }
+
+  return {
+    content: text,
+    source: text.trim() ? 'markerless' : 'empty',
+    markerReplyIdMismatch: false
+  }
+}
+
+/**
  * Forward a source-confirmed final assistant response. Normal streaming output still
  * requires reply markers; only this terminal event may fall back to markerless text.
  */
@@ -206,11 +281,8 @@ export function forwardRemoteImStructuredFinalOutput(
   state.buffer = ''
   if (messageId && state.forwardedStructuredTerminalMessageIds?.has(messageId)) return 0
 
-  const reply = extractRemoteImReplyOutput(text, { replyId: state.replyId })
-  const hasReplyMarker = /<\/?remote-im-reply(?:\s|>)/.test(text)
-  const pendingBody = reply.pending ? reply.nextBuffer.split('\n').slice(1).join('\n') : ''
-  const content = reply.content || pendingBody || (hasReplyMarker ? '' : text)
-  const buffer = sanitizeRemoteImAicliOutput(content, {
+  const resolved = resolveRemoteImStructuredFinalContent(text, state.replyId)
+  const buffer = sanitizeRemoteImAicliOutput(resolved.content, {
     sourceKind: state.sourceKind
   })
   state.buffer = ''
@@ -270,9 +342,8 @@ export function forwardRemoteImStructuredProgress(
   )
   const freshCandidate =
     candidate.trim() && candidate !== state.lastForwardedProgress ? candidate : ''
-  const content = freshCandidate
-    ? `任务仍在处理：\n${freshCandidate}`
-    : REMOTE_IM_PROGRESS_ACTIVE_TEXT
+  if (!freshCandidate) return 0
+  const content = `**进度更新**\n\n${freshCandidate}`
 
   const chunks = createOutputChunks(content, {
     maxChunkChars: state.config.outputMaxChunkChars

@@ -54,6 +54,7 @@ import {
   forwardRemoteImStructuredProgress,
   flushRemoteImOutputSession,
   REMOTE_IM_PROGRESS_INTERVAL_MS,
+  resolveRemoteImStructuredFinalContent,
   type RemoteImOutputCompletionInfo,
   type RemoteImOutputSessionState
 } from './outputForwarding.js'
@@ -114,6 +115,40 @@ type RemoteImStructuredTaskState = RemoteImOutputSessionState & {
 }
 const structuredOutputTasks = new RemoteImStructuredTaskRegistry<RemoteImStructuredTaskState>()
 let activeRemoteImAccountProfileId: string | null = getRemoteImProfileId()
+
+function structuredOutputTextPreview(text: string): string {
+  return text.replace(/\s+/g, ' ').trim().slice(0, 180)
+}
+
+function writeStructuredOutputRuntimeLog(
+  event: string,
+  input: {
+    sessionId: string
+    state?: RemoteImStructuredTaskState
+    detail?: Record<string, unknown>
+  }
+): void {
+  const { state } = input
+  void appendRemoteImRuntimeLog(rootDir(), {
+    projectId: state?.projectId ?? null,
+    sdkAppId: state?.config.sdkAppId ?? null,
+    desktopUserId: state?.config.desktopUserId ?? null,
+    peerUserId: state?.toUserId ?? null,
+    event,
+    detail: {
+      sessionId: input.sessionId,
+      taskId: state?.taskId ?? null,
+      replyId: state?.replyId ?? null,
+      sourceKind: state?.sourceKind ?? null,
+      ...input.detail
+    }
+  }).catch((err) => {
+    console.error(
+      '[remote-im] failed to append structured output log:',
+      err instanceof Error ? err.message : String(err)
+    )
+  })
+}
 
 function broadcast(channel: string, payload: unknown): void {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -670,7 +705,7 @@ function startOutputForwarding(
   const runtime = getSessionRuntimeInfo(sessionId)
   const sourceKind = runtime ? getRemoteImAicliOutputSourceKind(runtime.command) : 'unknown'
   if (sourceKind === 'codex' || sourceKind === 'opencode') {
-    structuredOutputTasks.add(sessionId, {
+    const state: RemoteImStructuredTaskState = {
       projectId,
       toUserId,
       config,
@@ -681,6 +716,14 @@ function startOutputForwarding(
       timer: null,
       structuredOutput: true,
       sourceStarted: false
+    }
+    structuredOutputTasks.add(sessionId, state)
+    writeStructuredOutputRuntimeLog('aicli:route-registered', {
+      sessionId,
+      state,
+      detail: {
+        activeRouteCount: structuredOutputTasks.list(sessionId).length
+      }
     })
     return
   }
@@ -717,6 +760,10 @@ function cancelOutputForwarding(sessionId: string, replyId: string, taskId: stri
   if (structured) {
     if (structured.timer) clearTimeout(structured.timer)
     structuredOutputTasks.remove(sessionId, structured.taskId)
+    writeStructuredOutputRuntimeLog('aicli:route-cancelled', {
+      sessionId,
+      state: structured
+    })
     return
   }
   const state = outputSessions.get(sessionId)
@@ -768,10 +815,19 @@ function resolveStructuredOutputTask(
   return undefined
 }
 
-function removeStructuredOutputTask(sessionId: string, state: RemoteImStructuredTaskState): void {
+function removeStructuredOutputTask(
+  sessionId: string,
+  state: RemoteImStructuredTaskState,
+  reason: string
+): void {
   if (state.timer) clearTimeout(state.timer)
   state.timer = null
   structuredOutputTasks.remove(sessionId, state.taskId)
+  writeStructuredOutputRuntimeLog('aicli:route-removed', {
+    sessionId,
+    state,
+    detail: { reason }
+  })
 }
 
 function scheduleStructuredProgress(sessionId: string, state: RemoteImStructuredTaskState): void {
@@ -784,7 +840,22 @@ function scheduleStructuredProgress(sessionId: string, state: RemoteImStructured
       { allowSoleFallback: false }
     )
     if (current !== state || !state.sourceStarted) return
-    forwardRemoteImStructuredProgress(sessionId, state, outputForwardingDeps())
+    const forwardedChunks = forwardRemoteImStructuredProgress(
+      sessionId,
+      state,
+      outputForwardingDeps()
+    )
+    writeStructuredOutputRuntimeLog(
+      forwardedChunks > 0 ? 'aicli:progress-forwarded' : 'aicli:progress-skipped',
+      {
+        sessionId,
+        state,
+        detail: {
+          forwardedChunks,
+          lastActivityAt: state.lastActivityAt ?? null
+        }
+      }
+    )
     scheduleStructuredProgress(sessionId, state)
   }, REMOTE_IM_PROGRESS_INTERVAL_MS)
 }
@@ -872,26 +943,111 @@ function ensureSessionListeners(): void {
   })
   addAicliStructuredOutputListener(({ sessionId, kind, text, messageId, replyId, taskId }) => {
     const state = resolveStructuredOutputTask(sessionId, { replyId, taskId })
-    if (!state) return
-    if (kind === 'task_started' || kind === 'task_activity') {
+    if (!state) {
+      writeStructuredOutputRuntimeLog('aicli:event-unmatched', {
+        sessionId,
+        detail: {
+          kind,
+          messageId: messageId ?? null,
+          replyId: replyId ?? null,
+          taskId: taskId ?? null,
+          textLength: text.length,
+          textPreview: structuredOutputTextPreview(text),
+          candidates: structuredOutputTasks.list(sessionId).map((candidate) => ({
+            taskId: candidate.taskId,
+            replyId: candidate.replyId ?? null,
+            sourceStarted: candidate.sourceStarted ?? false
+          }))
+        }
+      })
+      return
+    }
+    writeStructuredOutputRuntimeLog('aicli:event-received', {
+      sessionId,
+      state,
+      detail: {
+        kind,
+        messageId: messageId ?? null,
+        eventReplyId: replyId ?? null,
+        eventTaskId: taskId ?? null,
+        textLength: text.length,
+        textPreview: structuredOutputTextPreview(text)
+      }
+    })
+    if (kind === 'task_started') {
+      const superseded = structuredOutputTasks.removeAllExcept(
+        sessionId,
+        state.taskId,
+        (candidate) => candidate.sourceStarted === true
+      )
+      for (const previous of superseded) {
+        if (previous.timer) clearTimeout(previous.timer)
+        previous.timer = null
+        writeStructuredOutputRuntimeLog('aicli:route-superseded', {
+          sessionId,
+          state: previous,
+          detail: {
+            replacementTaskId: state.taskId,
+            replacementReplyId: state.replyId ?? null
+          }
+        })
+      }
+      markStructuredTaskActive(sessionId, state)
+      return
+    }
+    if (kind === 'task_activity') {
       markStructuredTaskActive(sessionId, state)
       return
     }
     if (kind === 'turn_error') {
       state.buffer = ''
       failRemoteImOutputSession(sessionId, state, outputForwardingDeps(), text)
-      removeStructuredOutputTask(sessionId, state)
+      writeStructuredOutputRuntimeLog('aicli:error-forwarded', {
+        sessionId,
+        state,
+        detail: {
+          messageId: messageId ?? null,
+          reasonPreview: structuredOutputTextPreview(text)
+        }
+      })
+      removeStructuredOutputTask(sessionId, state, 'turn-error')
       return
     }
     if (kind === 'assistant_final') {
-      forwardRemoteImStructuredFinalOutput(
+      const resolved = resolveRemoteImStructuredFinalContent(text, state.replyId)
+      const forwardedChunks = forwardRemoteImStructuredFinalOutput(
         sessionId,
         state,
         outputForwardingDeps(),
         text,
         messageId
       )
-      removeStructuredOutputTask(sessionId, state)
+      writeStructuredOutputRuntimeLog(
+        forwardedChunks > 0 ? 'aicli:final-forwarded' : 'aicli:final-empty',
+        {
+          sessionId,
+          state,
+          detail: {
+            messageId: messageId ?? null,
+            eventReplyId: replyId ?? null,
+            eventTaskId: taskId ?? null,
+            contentSource: resolved.source,
+            markerReplyIdMismatch: resolved.markerReplyIdMismatch,
+            inputLength: text.length,
+            resolvedLength: resolved.content.length,
+            forwardedChunks
+          }
+        }
+      )
+      if (forwardedChunks === 0) {
+        failRemoteImOutputSession(
+          sessionId,
+          state,
+          outputForwardingDeps(),
+          '任务已经结束，但最终回复为空或无法解析。请查看 remote-im-runtime.log。'
+        )
+      }
+      removeStructuredOutputTask(sessionId, state, 'assistant-final')
       return
     }
     if (kind && kind !== 'assistant_text') return
@@ -908,7 +1064,7 @@ function ensureSessionListeners(): void {
     for (const state of structuredOutputTasks.list(sessionId)) {
       state.buffer = ''
       failRemoteImOutputSession(sessionId, state, outputForwardingDeps(), reason)
-      removeStructuredOutputTask(sessionId, state)
+      removeStructuredOutputTask(sessionId, state, 'session-exit')
     }
     completeOutputSession(sessionId, { exitCode, signal })
   })

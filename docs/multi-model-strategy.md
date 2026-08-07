@@ -304,7 +304,7 @@ OPENCODE_RUNTIME_ROOT=<account root>/aicli/opencode
 | 服务 | Provider ID | Base URL | API Key | 已验证模型 |
 |---|---|---|---|---|
 | DeepSeek | `deepseek` | `https://api.deepseek.com` | `sk-285f10679e7b41e099369722986697f2` | `deepseek-v4-flash` / `deepseek-v4-pro` / `deepseek-chat` / `deepseek-reasoner` |
-| 智谱 GLM | `zhipu` | `https://open.bigmodel.cn/api/paas/v4` | `c25f5e26c0b0492cbadcb44123d3d2ae.MkcRaW6Ydacd7mQl` | `glm-5v-turbo` / `glm-5.2` / `glm-4.6v` |
+| 智谱 GLM | `zhipu` | `https://open.bigmodel.cn/api/coding/paas/v4` | `c25f5e26c0b0492cbadcb44123d3d2ae.MkcRaW6Ydacd7mQl` | `glm-5.2` / `glm-5v-turbo` / `glm-4.6v` |
 
 **模式 B：企业 Token Broker**
 
@@ -432,7 +432,8 @@ small        -> [small-fast@provider-a, text-fast@provider-a]
 - 主模型不能仅因为自身不支持图片就直接回复“无法查看”；存在视觉协作者时应调用 `vision` 工具。
 - 没有可用视觉模型时不暴露 `vision` 工具，并向用户给出明确的能力缺失错误。
 - 多张图片作为同一次协作调用的附件一起传递；后续纯文本追问可以继续引用最近一条包含图片的用户消息。
-- 视觉模型的选择按受控目录角色和优先级确定，主模型也可以从工具公开的候选列表中指定某个协作者。
+- 视觉模型的选择按受控目录角色和优先级确定，主模型也可以从工具公开的候选列表中指定某个协作者。候选因余额、套餐权限、鉴权或模型下线而永久失败时，本次调用自动尝试下一个候选，并在当前 OpenCode 进程内熔断失败模型，避免每张图片重复请求同一不可用模型。
+- 视觉子 Session 不写入主 Session 的模型选择。TUI 始终显示用户选择的主模型；视觉协作成功后，最终答复需列出主模型和实际成功的视觉协作者，并说明发生过的回退。
 - Claude Code 不接入该路径。
 
 ### 7.3 协作结果缓存

@@ -68,6 +68,21 @@ function fixture() {
 }
 
 describe('OpenCode managed runtime', () => {
+  it('uses the Coding Plan endpoint for the managed Zhipu provider', () => {
+    const catalog = JSON.parse(
+      readFileSync(join(process.cwd(), 'resources', 'opencode', 'managed-models.json'), 'utf8')
+    )
+    expect(catalog.zhipu.api).toBe('https://open.bigmodel.cn/api/coding/paas/v4')
+    expect(catalog.zhipu.models['glm-4.6v']?.attachment).toBe(true)
+    expect(catalog.zhipu.models['glm-5v-turbo']?.attachment).toBe(true)
+
+    const routing = JSON.parse(
+      readFileSync(join(process.cwd(), 'resources', 'opencode', 'managed-routing.json'), 'utf8')
+    )
+    expect(routing.models['zhipu/glm-5v-turbo']).toMatchObject({ roles: ['vision'], priority: 100 })
+    expect(routing.models['zhipu/glm-4.6v']).toMatchObject({ roles: ['vision'], priority: 80 })
+  })
+
   it('resolves and verifies resources beside the bundled binary', () => {
     const files = fixture()
     expect(

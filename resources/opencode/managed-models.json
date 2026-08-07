@@ -59,7 +59,7 @@
   "zhipu": {
     "id": "zhipu",
     "name": "Zhipu GLM",
-    "api": "https://open.bigmodel.cn/api/paas/v4",
+    "api": "https://open.bigmodel.cn/api/coding/paas/v4",
     "npm": "@ai-sdk/openai-compatible",
     "env": ["ZHIPU_API_KEY"],
     "models": {

@@ -24,6 +24,7 @@ import {
 export type TerminalStyleCli = 'claude' | 'codex' | 'opencode' | 'unknown'
 import {
   copySelection,
+  interceptTerminalRightMouseDown,
   installCopyBinding,
   installPasteHandler,
   pasteFromClipboard
@@ -188,6 +189,7 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
   const handleContextMenu = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
       e.preventDefault()
+      e.stopPropagation()
       const sel = termRef.current?.getSelection() ?? ''
       setMenu({ x: e.clientX, y: e.clientY, hasSelection: sel.length > 0 })
     },
@@ -240,7 +242,8 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        onContextMenu={handleContextMenu}
+        onMouseDownCapture={interceptTerminalRightMouseDown}
+        onContextMenuCapture={handleContextMenu}
       >
         {dragActive && <div className="drop-hint">松开以粘贴文件路径</div>}
       </div>

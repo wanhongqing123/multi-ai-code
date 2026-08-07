@@ -22,6 +22,23 @@ export function copySelection(term: Terminal): boolean {
   return true
 }
 
+interface TerminalMouseEvent {
+  button: number
+  preventDefault(): void
+  stopPropagation(): void
+}
+
+/** Keep a TUI's mouse-tracking mode from consuming a right click before the
+ *  Electron terminal can open its copy/paste menu. */
+export function interceptTerminalRightMouseDown(
+  event: TerminalMouseEvent
+): boolean {
+  if (event.button !== 2) return false
+  event.preventDefault()
+  event.stopPropagation()
+  return true
+}
+
 /** Install Cmd+C / Ctrl+Shift+C copy on the given xterm instance.
  *  Only consumes the chord when there is a selection — otherwise Ctrl+C
  *  is left alone so it can reach the PTY as SIGINT. */

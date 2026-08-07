@@ -19,6 +19,7 @@ import {
 } from '../components/terminalMarkdown.js'
 import {
   copySelection,
+  interceptTerminalRightMouseDown,
   installCopyBinding,
   installPasteHandler,
   pasteFromClipboard
@@ -170,6 +171,7 @@ export default function RepoTerminalPanel(
   const handleContextMenu = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
       e.preventDefault()
+      e.stopPropagation()
       const sel = termRef.current?.getSelection() ?? ''
       setMenu({ x: e.clientX, y: e.clientY, hasSelection: sel.length > 0 })
     },
@@ -241,7 +243,8 @@ export default function RepoTerminalPanel(
       <div
         className="repo-terminal-body term-host"
         ref={containerRef}
-        onContextMenu={handleContextMenu}
+        onMouseDownCapture={interceptTerminalRightMouseDown}
+        onContextMenuCapture={handleContextMenu}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}

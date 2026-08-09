@@ -19,8 +19,9 @@ import {
 } from '../components/terminalMarkdown.js'
 import {
   copySelection,
-  interceptTerminalRightMouseDown,
+  interceptTerminalRightMouseEvent,
   installCopyBinding,
+  installOsc52SelectionCapture,
   installPasteHandler,
   pasteFromClipboard
 } from '../components/terminalClipboard.js'
@@ -47,8 +48,10 @@ export default function RepoTerminalPanel(
   const fitRef = useRef<FitAddon | null>(null)
   const markdownStateRef = useRef(createTerminalMarkdownState())
   const cliLabelRef = useRef(props.cliLabel)
+  const openCodeSelectionRef = useRef('')
   useEffect(() => {
     cliLabelRef.current = props.cliLabel
+    openCodeSelectionRef.current = ''
     // 终端跨会话复用；切换 CLI 后同步换行语义（opencode 必须关 convertEol）。
     if (termRef.current) {
       termRef.current.options.convertEol = shouldConvertEolForCli(props.cliLabel)
@@ -59,7 +62,7 @@ export default function RepoTerminalPanel(
   const [menu, setMenu] = useState<{
     x: number
     y: number
-    hasSelection: boolean
+    copyText: string
   } | null>(null)
 
   useEffect(() => {
@@ -88,6 +91,13 @@ export default function RepoTerminalPanel(
     })
 
     installCopyBinding(term)
+    const detachOsc52Capture = installOsc52SelectionCapture(term, (text) => {
+      if (cliLabelRef.current.toLowerCase() !== 'opencode') return
+      openCodeSelectionRef.current = text
+      setMenu((current) =>
+        current && !current.copyText ? { ...current, copyText: text } : current
+      )
+    })
     const detachPaste = installPasteHandler(containerRef.current, {
       sessionId: '',
       writeInput: (_sessionId, data) => window.api.repoView.analysisInput(data),
@@ -97,7 +107,7 @@ export default function RepoTerminalPanel(
       },
       saveImage: window.api.clipboard.saveImage
     })
-    unsubRef.current.push(detachPaste)
+    unsubRef.current.push(detachOsc52Capture, detachPaste)
 
     const offData = window.api.repoView.onAnalysisData((evt) => {
       // opencode 的全屏 TUI 依赖精确列宽，Markdown 改写会造成重绘残影，须直通。
@@ -168,23 +178,49 @@ export default function RepoTerminalPanel(
     termRef.current?.focus()
   }, [])
 
+  const openContextMenu = useCallback((x: number, y: number) => {
+    const xtermSelection = termRef.current?.getSelection() ?? ''
+    const openCodeSelection =
+      cliLabelRef.current.toLowerCase() === 'opencode'
+        ? openCodeSelectionRef.current
+        : ''
+    setMenu({ x, y, copyText: xtermSelection || openCodeSelection })
+  }, [])
+
+  const handleTerminalMouseDown = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (e.button === 0 && cliLabelRef.current.toLowerCase() === 'opencode') {
+        openCodeSelectionRef.current = ''
+      }
+      if (!interceptTerminalRightMouseEvent(e)) return
+      openContextMenu(e.clientX, e.clientY)
+    },
+    [openContextMenu]
+  )
+
+  const handleTerminalMouseUp = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      interceptTerminalRightMouseEvent(e)
+    },
+    []
+  )
+
   const handleContextMenu = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
       e.preventDefault()
       e.stopPropagation()
-      const sel = termRef.current?.getSelection() ?? ''
-      setMenu({ x: e.clientX, y: e.clientY, hasSelection: sel.length > 0 })
+      openContextMenu(e.clientX, e.clientY)
     },
-    []
+    [openContextMenu]
   )
 
   const closeMenu = useCallback(() => setMenu(null), [])
 
   const handleMenuCopy = useCallback(() => {
     const term = termRef.current
-    if (term) copySelection(term)
+    if (term) copySelection(term, menu?.copyText)
     closeMenu()
-  }, [closeMenu])
+  }, [menu, closeMenu])
 
   const handleMenuPaste = useCallback(() => {
     void pasteFromClipboard({
@@ -243,7 +279,8 @@ export default function RepoTerminalPanel(
       <div
         className="repo-terminal-body term-host"
         ref={containerRef}
-        onMouseDownCapture={interceptTerminalRightMouseDown}
+        onMouseDownCapture={handleTerminalMouseDown}
+        onMouseUpCapture={handleTerminalMouseUp}
         onContextMenuCapture={handleContextMenu}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -261,8 +298,8 @@ export default function RepoTerminalPanel(
         >
           <li
             role="menuitem"
-            className={`term-ctxmenu-item${menu.hasSelection ? '' : ' is-disabled'}`}
-            onClick={menu.hasSelection ? handleMenuCopy : undefined}
+            className={`term-ctxmenu-item${menu.copyText ? '' : ' is-disabled'}`}
+            onClick={menu.copyText ? handleMenuCopy : undefined}
           >
             复制
           </li>

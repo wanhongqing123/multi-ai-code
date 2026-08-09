@@ -10,9 +10,10 @@ function isMacPlatform(): boolean {
 }
 
 /** Copy the current xterm selection to the system clipboard.
- *  No-op when there is no selection. */
-export function copySelection(term: Terminal): boolean {
-  const selection = term.getSelection()
+ *  OpenCode owns its TUI selection, so callers may provide the text captured
+ *  from its OSC 52 clipboard sequence as a fallback. */
+export function copySelection(term: Terminal, fallbackSelection = ''): boolean {
+  const selection = term.getSelection() || fallbackSelection
   if (!selection) return false
   try {
     void navigator.clipboard.writeText(selection)
@@ -28,15 +29,45 @@ interface TerminalMouseEvent {
   stopPropagation(): void
 }
 
-/** Keep a TUI's mouse-tracking mode from consuming a right click before the
- *  Electron terminal can open its copy/paste menu. */
-export function interceptTerminalRightMouseDown(
+/** Keep a TUI's mouse-tracking mode from consuming either half of a right
+ *  click before the Electron terminal can handle its copy/paste menu. */
+export function interceptTerminalRightMouseEvent(
   event: TerminalMouseEvent
 ): boolean {
   if (event.button !== 2) return false
   event.preventDefault()
   event.stopPropagation()
   return true
+}
+
+/** Decode the payload passed to an xterm OSC 52 handler (`target;base64`). */
+export function decodeOsc52ClipboardText(data: string): string | null {
+  const separator = data.indexOf(';')
+  if (separator < 0) return null
+  const payload = data.slice(separator + 1).trim()
+  if (!payload || payload === '?') return null
+
+  try {
+    const binary = globalThis.atob(payload)
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0))
+    return new TextDecoder().decode(bytes)
+  } catch {
+    return null
+  }
+}
+
+/** Observe OSC 52 clipboard writes without consuming the sequence. OpenCode
+ *  uses this sequence when its own mouse-aware TUI copies a selection. */
+export function installOsc52SelectionCapture(
+  term: Terminal,
+  onSelection: (text: string) => void
+): () => void {
+  const disposable = term.parser.registerOscHandler(52, (data) => {
+    const text = decodeOsc52ClipboardText(data)
+    if (text) onSelection(text)
+    return false
+  })
+  return () => disposable.dispose()
 }
 
 /** Install Cmd+C / Ctrl+Shift+C copy on the given xterm instance.

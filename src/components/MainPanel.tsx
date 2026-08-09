@@ -24,8 +24,9 @@ import {
 export type TerminalStyleCli = 'claude' | 'codex' | 'opencode' | 'unknown'
 import {
   copySelection,
-  interceptTerminalRightMouseDown,
+  interceptTerminalRightMouseEvent,
   installCopyBinding,
+  installOsc52SelectionCapture,
   installPasteHandler,
   pasteFromClipboard
 } from './terminalClipboard.js'
@@ -54,16 +55,18 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
   const searchRef = useRef<SearchAddon | null>(null)
   const markdownStateRef = useRef(createTerminalMarkdownState())
   const aiCliRef = useRef<TerminalStyleCli>(props.aiCli ?? 'unknown')
+  const openCodeSelectionRef = useRef('')
   const unsubRef = useRef<Array<() => void>>([])
   const [dragActive, setDragActive] = useState(false)
   const [menu, setMenu] = useState<{
     x: number
     y: number
-    hasSelection: boolean
+    copyText: string
   } | null>(null)
 
   useEffect(() => {
     aiCliRef.current = props.aiCli ?? 'unknown'
+    openCodeSelectionRef.current = ''
   }, [props.aiCli])
 
   useEffect(() => {
@@ -98,6 +101,13 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
     })
 
     installCopyBinding(term)
+    const detachOsc52Capture = installOsc52SelectionCapture(term, (text) => {
+      if (aiCliRef.current !== 'opencode') return
+      openCodeSelectionRef.current = text
+      setMenu((current) =>
+        current && !current.copyText ? { ...current, copyText: text } : current
+      )
+    })
     const detachPaste = installPasteHandler(containerRef.current, {
       sessionId: props.sessionId,
       writeInput: window.api.cc.write,
@@ -107,7 +117,7 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
       },
       saveImage: window.api.clipboard.saveImage
     })
-    unsubRef.current.push(detachPaste)
+    unsubRef.current.push(detachOsc52Capture, detachPaste)
 
     const offData = window.api.cc.onData((evt) => {
       if (evt.sessionId !== props.sessionId) return
@@ -186,23 +196,47 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
     [props.sessionId]
   )
 
+  const openContextMenu = useCallback((x: number, y: number) => {
+    const xtermSelection = termRef.current?.getSelection() ?? ''
+    const openCodeSelection =
+      aiCliRef.current === 'opencode' ? openCodeSelectionRef.current : ''
+    setMenu({ x, y, copyText: xtermSelection || openCodeSelection })
+  }, [])
+
+  const handleTerminalMouseDown = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (e.button === 0 && aiCliRef.current === 'opencode') {
+        openCodeSelectionRef.current = ''
+      }
+      if (!interceptTerminalRightMouseEvent(e)) return
+      openContextMenu(e.clientX, e.clientY)
+    },
+    [openContextMenu]
+  )
+
+  const handleTerminalMouseUp = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      interceptTerminalRightMouseEvent(e)
+    },
+    []
+  )
+
   const handleContextMenu = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
       e.preventDefault()
       e.stopPropagation()
-      const sel = termRef.current?.getSelection() ?? ''
-      setMenu({ x: e.clientX, y: e.clientY, hasSelection: sel.length > 0 })
+      openContextMenu(e.clientX, e.clientY)
     },
-    []
+    [openContextMenu]
   )
 
   const closeMenu = useCallback(() => setMenu(null), [])
 
   const handleMenuCopy = useCallback(() => {
     const term = termRef.current
-    if (term) copySelection(term)
+    if (term) copySelection(term, menu?.copyText)
     closeMenu()
-  }, [closeMenu])
+  }, [menu, closeMenu])
 
   const handleMenuPaste = useCallback(() => {
     void pasteFromClipboard({
@@ -242,7 +276,8 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        onMouseDownCapture={interceptTerminalRightMouseDown}
+        onMouseDownCapture={handleTerminalMouseDown}
+        onMouseUpCapture={handleTerminalMouseUp}
         onContextMenuCapture={handleContextMenu}
       >
         {dragActive && <div className="drop-hint">松开以粘贴文件路径</div>}
@@ -257,8 +292,8 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
         >
           <li
             role="menuitem"
-            className={`term-ctxmenu-item${menu.hasSelection ? '' : ' is-disabled'}`}
-            onClick={menu.hasSelection ? handleMenuCopy : undefined}
+            className={`term-ctxmenu-item${menu.copyText ? '' : ' is-disabled'}`}
+            onClick={menu.copyText ? handleMenuCopy : undefined}
           >
             复制
           </li>

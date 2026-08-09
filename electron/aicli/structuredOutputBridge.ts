@@ -3,6 +3,7 @@ import net from 'node:net'
 
 export type AicliStructuredOutputProvider = 'codex' | 'opencode'
 export type AicliControlMode = 'plan' | 'build'
+export type AicliUserMessageInputOrigin = 'remote-im' | 'local'
 
 export interface AicliUserMessageAttachment {
   type: 'image'
@@ -73,6 +74,7 @@ export type AicliRequestControlCommand =
       text: string
       displayText: string
       attachments?: AicliUserMessageAttachment[]
+      inputOrigin: AicliUserMessageInputOrigin
       replyId?: string
       taskId?: string
     }
@@ -285,6 +287,7 @@ export async function createAicliStructuredOutputBridge(
             ? {
                 text: input.text,
                 displayText: input.displayText,
+                inputOrigin: input.inputOrigin,
                 ...(input.attachments?.length ? { attachments: input.attachments } : {}),
                 ...(input.replyId ? { replyId: input.replyId } : {}),
                 ...(input.taskId ? { taskId: input.taskId } : {})

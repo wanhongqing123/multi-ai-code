@@ -447,6 +447,7 @@ describe('AICLI structured output bridge', () => {
         command: 'submit_user_message',
         text: 'wrapped model prompt',
         displayText: '[来自远程 IM：phone]\n你好',
+        inputOrigin: 'remote-im',
         replyId: 'rim-submit',
         taskId: 'task-submit',
         attachments: [
@@ -468,6 +469,7 @@ describe('AICLI structured output bridge', () => {
     expect(receivedLines.join('')).toContain('"command":"submit_user_message"')
     expect(receivedLines.join('')).toContain('"text":"wrapped model prompt"')
     expect(receivedLines.join('')).toContain('"displayText":"[来自远程 IM：phone]\\n你好"')
+    expect(receivedLines.join('')).toContain('"inputOrigin":"remote-im"')
     expect(receivedLines.join('')).toContain('"replyId":"rim-submit"')
     expect(receivedLines.join('')).toContain('"taskId":"task-submit"')
     expect(receivedLines.join('')).toContain('"localPath":"/tmp/remote-im/photo.png"')

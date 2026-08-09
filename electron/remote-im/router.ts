@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type {
   RemoteImConfig,
   RemoteImIncomingAudioMessage,
@@ -9,6 +10,7 @@ import type {
   RemoteImMessage,
   RemoteImRoamedTextMessage
 } from './types.js'
+import type { RemoteImAicliOutputSourceKind } from './outputSanitizer.js'
 import {
   isRemoteImOperationFinishedText,
   parseRemoteImAicliOutputText
@@ -29,6 +31,7 @@ import type { AicliUserMessageAttachment } from '../aicli/structuredOutputBridge
 export interface RemoteImSessionInfo {
   sessionId: string
   targetRepo: string
+  sourceKind?: RemoteImAicliOutputSourceKind
 }
 
 export interface RemoteImRouterStore {
@@ -45,7 +48,7 @@ export interface RemoteImAicliOutputRoute {
   projectId: string
   toUserId: string
   sessionId: string
-  replyId: string
+  replyId?: string
   taskId: string
 }
 
@@ -58,6 +61,7 @@ export interface RemoteImRouterDeps {
     options?: {
       displayText?: string
       attachments?: AicliUserMessageAttachment[]
+      inputOrigin?: 'remote-im' | 'local'
       replyId?: string
       taskId?: string
     }
@@ -431,6 +435,33 @@ function formatRemoteImFileSize(bytes: number): string {
 }
 
 export function createRemoteImRouter(deps: RemoteImRouterDeps) {
+  function usesSourceLevelRouting(session: RemoteImSessionInfo): boolean {
+    return session.sourceKind === 'codex' || session.sourceKind === 'opencode'
+  }
+
+  function createOutputRoute(
+    session: RemoteImSessionInfo,
+    projectId: string,
+    toUserId: string
+  ): RemoteImAicliOutputRoute {
+    if (usesSourceLevelRouting(session)) {
+      return {
+        projectId,
+        toUserId,
+        sessionId: session.sessionId,
+        taskId: `remote-im-route-${randomUUID()}`
+      }
+    }
+    const replyId = deps.createReplyId?.() ?? createRemoteImReplyId()
+    return {
+      projectId,
+      toUserId,
+      sessionId: session.sessionId,
+      replyId,
+      taskId: deps.createTaskId?.(replyId) ?? `remote-im-task-${replyId}`
+    }
+  }
+
   async function sendUserWithOutputRoute(
     outputRoute: RemoteImAicliOutputRoute,
     text: string,
@@ -441,8 +472,10 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
     try {
       const result = await deps.sendUser(outputRoute.sessionId, text, {
         displayText,
-        replyId: outputRoute.replyId,
-        taskId: outputRoute.taskId,
+        inputOrigin: 'remote-im',
+        ...(outputRoute.replyId
+          ? { replyId: outputRoute.replyId, taskId: outputRoute.taskId }
+          : {}),
         ...(attachments?.length ? { attachments } : {})
       })
       if (!result.ok) deps.onAicliOutputCancel?.(outputRoute)
@@ -500,24 +533,21 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       return { ok: false, error: 'No running AICLI session' }
     }
 
-    const replyId = deps.createReplyId?.() ?? createRemoteImReplyId()
-    const taskId = deps.createTaskId?.(replyId) ?? `remote-im-task-${replyId}`
+    const outputRoute = createOutputRoute(
+      session,
+      input.message.projectId,
+      input.fromUserId
+    )
+    const replyId = outputRoute.replyId
     const wrapped = buildRemoteImAicliPrompt({
       fromUserId: input.fromUserId,
       text: input.text,
       replyId
-    })
+    }, { includeReplyProtocol: !usesSourceLevelRouting(session) })
     const displayText = buildRemoteImAicliDisplayText({
       fromUserId: input.fromUserId,
       text: input.text
     })
-    const outputRoute = {
-      projectId: input.message.projectId,
-      toUserId: input.fromUserId,
-      sessionId: session.sessionId,
-      replyId,
-      taskId
-    }
     const sendResult = await sendUserWithOutputRoute(outputRoute, wrapped, displayText)
     if (!sendResult.ok) {
       const error = sendResult.error ?? 'failed to send message to AICLI'
@@ -536,7 +566,11 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       error: null
     })
     await sendSystemText(deps, input.message.projectId, input.fromUserId, '已发送给当前 AICLI，开始处理。')
-    return { ok: true, aicliSessionId: session.sessionId, replyId }
+    return {
+      ok: true,
+      aicliSessionId: session.sessionId,
+      ...(replyId ? { replyId } : {})
+    }
   }
 
   async function handleIncomingText(
@@ -815,24 +849,17 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       localPath: attachment.localPath,
       caption: message.caption ?? null
     })
-    const replyId = deps.createReplyId?.() ?? createRemoteImReplyId()
-    const taskId = deps.createTaskId?.(replyId) ?? `remote-im-task-${replyId}`
+    const outputRoute = createOutputRoute(session, message.projectId, fromUserId)
+    const replyId = outputRoute.replyId
     const wrapped = buildRemoteImAicliPrompt({
       fromUserId,
       text: taskText,
       replyId
-    })
+    }, { includeReplyProtocol: !usesSourceLevelRouting(session) })
     const displayText = buildRemoteImAicliDisplayText({
       fromUserId,
       text: taskText
     })
-    const outputRoute = {
-      projectId: message.projectId,
-      toUserId: fromUserId,
-      sessionId: session.sessionId,
-      replyId,
-      taskId
-    }
     const sendResult = await sendUserWithOutputRoute(outputRoute, wrapped, displayText, [
       {
         type: 'image',
@@ -860,7 +887,11 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       error: null
     })
     await sendSystemText(deps, message.projectId, fromUserId, '已发送给当前 AICLI，开始处理。')
-    return { ok: true, aicliSessionId: session.sessionId, replyId }
+    return {
+      ok: true,
+      aicliSessionId: session.sessionId,
+      ...(replyId ? { replyId } : {})
+    }
   }
 
   async function handleIncomingFile(
@@ -939,24 +970,17 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       mimeType: attachment.mimeType ?? null,
       caption: message.caption ?? null
     })
-    const replyId = deps.createReplyId?.() ?? createRemoteImReplyId()
-    const taskId = deps.createTaskId?.(replyId) ?? `remote-im-task-${replyId}`
+    const outputRoute = createOutputRoute(session, message.projectId, fromUserId)
+    const replyId = outputRoute.replyId
     const wrapped = buildRemoteImAicliPrompt({
       fromUserId,
       text: taskText,
       replyId
-    })
+    }, { includeReplyProtocol: !usesSourceLevelRouting(session) })
     const displayText = buildRemoteImAicliDisplayText({
       fromUserId,
       text: taskText
     })
-    const outputRoute = {
-      projectId: message.projectId,
-      toUserId: fromUserId,
-      sessionId: session.sessionId,
-      replyId,
-      taskId
-    }
     const sendResult = await sendUserWithOutputRoute(outputRoute, wrapped, displayText)
     if (!sendResult.ok) {
       const error = sendResult.error ?? 'failed to send file message to AICLI'
@@ -972,7 +996,11 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       error: null
     })
     await sendSystemText(deps, message.projectId, fromUserId, '已发送给当前 AICLI，开始处理。')
-    return { ok: true, aicliSessionId: session.sessionId, replyId }
+    return {
+      ok: true,
+      aicliSessionId: session.sessionId,
+      ...(replyId ? { replyId } : {})
+    }
   }
 
   // SDK 漫游补拉（登录后补充离线期间的历史）：只入库展示、绝不路由——漫游是

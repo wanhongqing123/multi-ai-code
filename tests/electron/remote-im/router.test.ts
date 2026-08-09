@@ -149,6 +149,71 @@ describe('remote IM router', () => {
     ])
   })
 
+  it.each(['codex', 'opencode'] as const)(
+    'uses persistent source routing for %s without reply ids',
+    async (sourceKind) => {
+      const store = createMessageStore()
+      const starts: Array<{ replyId?: string; taskId: string }> = []
+      const submissions: Array<{
+        text: string
+        inputOrigin?: 'remote-im' | 'local'
+        replyId?: string
+        taskId?: string
+      }> = []
+      let replyIdCreated = false
+      const router = createRemoteImRouter({
+        getConfig: () => config,
+        resolveSession: () => ({
+          sessionId: 'session-main',
+          targetRepo: 'repo',
+          sourceKind
+        }),
+        onAicliOutputStart: ({ replyId, taskId }) => starts.push({ replyId, taskId }),
+        sendUser: async (_sessionId, text, options) => {
+          submissions.push({
+            text,
+            inputOrigin: options?.inputOrigin,
+            replyId: options?.replyId,
+            taskId: options?.taskId
+          })
+          return { ok: true }
+        },
+        sendImText: async () => ({ ok: true }),
+        createReplyId: () => {
+          replyIdCreated = true
+          return 'unexpected-reply-id'
+        },
+        store
+      })
+
+      const result = await router.handleIncomingText({
+        projectId: 'project-1',
+        remoteMessageId: `remote-${sourceKind}`,
+        fromUserId: 'phone_admin',
+        toUserId: 'desktop_bot',
+        text: '检查构建',
+        createdAt: 100
+      })
+
+      expect(result).toMatchObject({ ok: true, aicliSessionId: 'session-main' })
+      expect(result.replyId).toBeUndefined()
+      expect(replyIdCreated).toBe(false)
+      expect(starts).toHaveLength(1)
+      expect(starts[0]?.replyId).toBeUndefined()
+      expect(starts[0]?.taskId).toMatch(/^remote-im-route-/)
+      expect(submissions).toEqual([
+        {
+          text: expect.stringContaining('检查构建'),
+          inputOrigin: 'remote-im',
+          replyId: undefined,
+          taskId: undefined
+        }
+      ])
+      expect(submissions[0]?.text).not.toContain('[IM_REPLY]')
+      expect(submissions[0]?.text).not.toContain('<remote-im-reply')
+    }
+  )
+
   it('starts output forwarding before submitting the AICLI prompt', async () => {
     const store = createMessageStore()
     const events: string[] = []

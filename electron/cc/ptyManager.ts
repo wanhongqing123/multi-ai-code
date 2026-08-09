@@ -303,6 +303,7 @@ function withRemoteImCliEnv(
 export interface SendUserMessageOptions {
   displayText?: string
   attachments?: AicliUserMessageAttachment[]
+  inputOrigin?: 'remote-im' | 'local'
   replyId?: string
   taskId?: string
 }
@@ -510,6 +511,7 @@ export async function sendUserMessageToSession(
             command: 'submit_user_message',
             text,
             displayText: options.displayText?.trim() || text,
+            inputOrigin: options.inputOrigin ?? 'local',
             ...(options.replyId ? { replyId: options.replyId } : {}),
             ...(options.taskId ? { taskId: options.taskId } : {}),
             ...(isOpenCodeCommand(current.command) && options.attachments?.length

@@ -9,7 +9,6 @@ import type { RemoteImConfig } from './types.js'
 
 export const REMOTE_IM_OPERATION_COMPLETE_TEXT = '操作已完成。'
 export const REMOTE_IM_OPERATION_FAILED_PREFIX = 'AICLI 执行失败：'
-export const REMOTE_IM_PROGRESS_INTERVAL_MS = 5 * 60 * 1000
 // Invisible protocol marker: forwarded AICLI output must still be distinguishable
 // from user input, but the marker should not appear in IM clients.
 export const REMOTE_IM_AICLI_OUTPUT_PREFIX = '\u2063\u200B\u200C\u200D\u2063'
@@ -67,7 +66,8 @@ export interface RemoteImOutputSessionState {
   taskId?: string
   sourceStarted?: boolean
   lastActivityAt?: number
-  lastForwardedProgress?: string
+  forwardedStructuredAssistantEventIds?: Set<string>
+  forwardedStructuredAssistantTexts?: string[]
   forwardedStructuredTerminalMessageIds?: Set<string>
 }
 
@@ -287,6 +287,15 @@ export function forwardRemoteImStructuredFinalOutput(
   })
   state.buffer = ''
   if (!buffer.trim()) return 0
+  if (wasStructuredAssistantTextForwarded(state, buffer)) {
+    if (messageId) {
+      const forwardedIds =
+        state.forwardedStructuredTerminalMessageIds ??
+        (state.forwardedStructuredTerminalMessageIds = new Set())
+      rememberStructuredEventId(forwardedIds, messageId)
+    }
+    return 0
+  }
 
   const chunks = createOutputChunks(buffer, {
     maxChunkChars: state.config.outputMaxChunkChars
@@ -311,27 +320,28 @@ export function forwardRemoteImStructuredFinalOutput(
       const forwardedIds =
         state.forwardedStructuredTerminalMessageIds ??
         (state.forwardedStructuredTerminalMessageIds = new Set())
-      forwardedIds.add(messageId)
-      if (forwardedIds.size > 32) {
-        const oldestId = forwardedIds.values().next().value
-        if (oldestId) forwardedIds.delete(oldestId)
-      }
+      rememberStructuredEventId(forwardedIds, messageId)
     }
   }
   return chunks.length
 }
 
 /**
- * Forward one coalesced progress snapshot. Progress is deliberately not tied to
- * replyId deduplication, so it can never consume the final response slot.
+ * Forward one source-authored assistant message immediately. Reliable source
+ * retransmissions are deduplicated by their event identity, never by replyId or text.
  */
-export function forwardRemoteImStructuredProgress(
+export function forwardRemoteImStructuredAssistantOutput(
   sessionId: string,
   state: RemoteImOutputSessionState,
-  deps: RemoteImOutputForwardingDeps
+  deps: RemoteImOutputForwardingDeps,
+  text: string,
+  messageId?: string,
+  partId?: string
 ): number {
-  clearOutputTimer(state, deps)
-  const raw = state.buffer
+  const eventId = messageId ? `${messageId}\u0000${partId ?? ''}` : undefined
+  if (eventId && state.forwardedStructuredAssistantEventIds?.has(eventId)) return 0
+
+  const raw = text
   state.buffer = ''
   const reply = extractRemoteImReplyOutput(raw, { replyId: state.replyId })
   const hasReplyMarker = /<\/?remote-im-reply(?:\s|>)/.test(raw)
@@ -340,12 +350,9 @@ export function forwardRemoteImStructuredProgress(
     reply.content || pendingBody || (hasReplyMarker ? '' : raw),
     { sourceKind: state.sourceKind }
   )
-  const freshCandidate =
-    candidate.trim() && candidate !== state.lastForwardedProgress ? candidate : ''
-  if (!freshCandidate) return 0
-  const content = `**进度更新**\n\n${freshCandidate}`
+  if (!candidate.trim()) return 0
 
-  const chunks = createOutputChunks(content, {
+  const chunks = createOutputChunks(candidate, {
     maxChunkChars: state.config.outputMaxChunkChars
   })
   const now = deps.now?.() ?? Date.now()
@@ -363,10 +370,48 @@ export function forwardRemoteImStructuredProgress(
   }
 
   if (chunks.length > 0) {
-    if (freshCandidate) state.lastForwardedProgress = freshCandidate
+    if (eventId) {
+      const forwardedIds =
+        state.forwardedStructuredAssistantEventIds ??
+        (state.forwardedStructuredAssistantEventIds = new Set())
+      rememberStructuredEventId(forwardedIds, eventId)
+    }
+    const forwardedTexts =
+      state.forwardedStructuredAssistantTexts ??
+      (state.forwardedStructuredAssistantTexts = [])
+    forwardedTexts.push(normalizeStructuredAssistantText(candidate))
+    if (forwardedTexts.length > 64) forwardedTexts.splice(0, forwardedTexts.length - 64)
     deps.messagesChanged(state.projectId)
   }
   return chunks.length
+}
+
+function rememberStructuredEventId(ids: Set<string> | undefined, id: string | undefined): void {
+  if (!ids || !id) return
+  ids.add(id)
+  if (ids.size <= 128) return
+  const oldestId = ids.values().next().value
+  if (oldestId) ids.delete(oldestId)
+}
+
+function normalizeStructuredAssistantText(text: string): string {
+  return text.replace(/\r\n?/g, '\n').trim()
+}
+
+function wasStructuredAssistantTextForwarded(
+  state: RemoteImOutputSessionState,
+  finalText: string
+): boolean {
+  let remaining = normalizeStructuredAssistantText(finalText)
+  const forwarded = state.forwardedStructuredAssistantTexts ?? []
+  for (let index = forwarded.length - 1; index >= 0; index -= 1) {
+    const current = normalizeStructuredAssistantText(forwarded[index] ?? '')
+    if (!current) continue
+    if (!remaining.endsWith(current)) return false
+    remaining = remaining.slice(0, -current.length).trim()
+    if (!remaining) return true
+  }
+  return false
 }
 
 export function completeRemoteImOutputSession(

@@ -55,6 +55,23 @@ describe('remote IM reply protocol', () => {
     expect(displayText).not.toContain(REMOTE_IM_REPLY_CLOSE_TAG)
   })
 
+  it('builds a source-routed prompt without reply markers', () => {
+    const prompt = buildRemoteImAicliPrompt(
+      {
+        fromUserId: 'phone_admin',
+        text: 'check build'
+      },
+      { includeReplyProtocol: false }
+    )
+
+    expect(prompt).toContain('[来自远程 IM：phone_admin]')
+    expect(prompt).toContain('check build')
+    expect(prompt).toContain('如果需要查询或操作 IM，请先运行 imcli help')
+    expect(prompt).not.toContain('[IM_REPLY]')
+    expect(prompt).not.toContain('<remote-im-reply')
+    expect(prompt).not.toContain('</remote-im-reply')
+  })
+
   it('extracts only completed tagged reply content', () => {
     const output = [
       'terminal noise',

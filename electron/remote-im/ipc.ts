@@ -50,10 +50,9 @@ import {
 import {
   completeRemoteImOutputSession,
   failRemoteImOutputSession,
+  forwardRemoteImStructuredAssistantOutput,
   forwardRemoteImStructuredFinalOutput,
-  forwardRemoteImStructuredProgress,
   flushRemoteImOutputSession,
-  REMOTE_IM_PROGRESS_INTERVAL_MS,
   resolveRemoteImStructuredFinalContent,
   type RemoteImOutputCompletionInfo,
   type RemoteImOutputSessionState
@@ -67,7 +66,11 @@ import {
   resolvePeerUserId
 } from './peerMessage.js'
 import { getRemoteImAccountProfileId, getRemoteImProfileId } from './profile.js'
-import { createRemoteImRouter, type RemoteImAicliOutputRoute } from './router.js'
+import {
+  createRemoteImRouter,
+  type RemoteImAicliOutputRoute,
+  type RemoteImSessionInfo
+} from './router.js'
 import { appendRemoteImRuntimeLog } from './runtimeLog.js'
 import { readLatestClaudeRemoteImReply } from './claudeTranscript.js'
 import { startRemoteImCliServer } from './imcliServer.js'
@@ -699,17 +702,20 @@ function startOutputForwarding(
   projectId: string,
   toUserId: string,
   config: RemoteImConfig,
-  replyId: string,
+  replyId: string | undefined,
   taskId: string
 ): void {
   const runtime = getSessionRuntimeInfo(sessionId)
   const sourceKind = runtime ? getRemoteImAicliOutputSourceKind(runtime.command) : 'unknown'
   if (sourceKind === 'codex' || sourceKind === 'opencode') {
+    for (const previous of structuredOutputTasks.list(sessionId)) {
+      if (previous.timer) clearTimeout(previous.timer)
+      structuredOutputTasks.remove(sessionId, previous.taskId)
+    }
     const state: RemoteImStructuredTaskState = {
       projectId,
       toUserId,
       config,
-      replyId,
       taskId,
       sourceKind,
       buffer: '',
@@ -727,6 +733,8 @@ function startOutputForwarding(
     })
     return
   }
+
+  if (!replyId) return
 
   const current = outputSessions.get(sessionId)
   if (current?.timer) clearTimeout(current.timer)
@@ -751,7 +759,11 @@ function startOutputForwarding(
   })
 }
 
-function cancelOutputForwarding(sessionId: string, replyId: string, taskId: string): void {
+function cancelOutputForwarding(
+  sessionId: string,
+  replyId: string | undefined,
+  taskId: string
+): void {
   const structured = structuredOutputTasks.resolve(
     sessionId,
     { taskId, replyId },
@@ -802,17 +814,31 @@ function resolveStructuredOutputTask(
   sessionId: string,
   identity: { taskId?: string; replyId?: string }
 ): RemoteImStructuredTaskState | undefined {
+  const tasks = structuredOutputTasks.list(sessionId)
+  const sourceRoutes = tasks.filter(
+    (task) => task.sourceKind === 'codex' || task.sourceKind === 'opencode'
+  )
+  if (sourceRoutes.length === 1) return sourceRoutes[0]
+
   const explicit = structuredOutputTasks.resolve(sessionId, identity, {
     allowSoleFallback: false
   })
   if (explicit) return explicit
   if (identity.taskId || identity.replyId) return undefined
 
-  const tasks = structuredOutputTasks.list(sessionId)
   const running = tasks.filter((task) => task.sourceStarted)
   if (running.length === 1) return running[0]
   if (running.length === 0 && tasks.length === 1) return tasks[0]
   return undefined
+}
+
+function resetStructuredTurnState(state: RemoteImStructuredTaskState): void {
+  if (state.timer) clearTimeout(state.timer)
+  state.timer = null
+  state.buffer = ''
+  state.sourceStarted = false
+  state.lastActivityAt = undefined
+  state.forwardedStructuredAssistantTexts = []
 }
 
 function removeStructuredOutputTask(
@@ -830,45 +856,9 @@ function removeStructuredOutputTask(
   })
 }
 
-function scheduleStructuredProgress(sessionId: string, state: RemoteImStructuredTaskState): void {
-  if (state.timer) return
-  state.timer = setTimeout(() => {
-    state.timer = null
-    const current = structuredOutputTasks.resolve(
-      sessionId,
-      { taskId: state.taskId },
-      { allowSoleFallback: false }
-    )
-    if (current !== state || !state.sourceStarted) return
-    const forwardedChunks = forwardRemoteImStructuredProgress(
-      sessionId,
-      state,
-      outputForwardingDeps()
-    )
-    writeStructuredOutputRuntimeLog(
-      forwardedChunks > 0 ? 'aicli:progress-forwarded' : 'aicli:progress-skipped',
-      {
-        sessionId,
-        state,
-        detail: {
-          forwardedChunks,
-          lastActivityAt: state.lastActivityAt ?? null
-        }
-      }
-    )
-    scheduleStructuredProgress(sessionId, state)
-  }, REMOTE_IM_PROGRESS_INTERVAL_MS)
-}
-
-function markStructuredTaskActive(
-  sessionId: string,
-  state: RemoteImStructuredTaskState,
-  progressText?: string
-): void {
+function markStructuredTaskActive(state: RemoteImStructuredTaskState): void {
   state.sourceStarted = true
   state.lastActivityAt = Date.now()
-  if (progressText?.trim()) state.buffer = progressText
-  scheduleStructuredProgress(sessionId, state)
 }
 
 function flushOutputSession(sessionId: string): void {
@@ -941,7 +931,31 @@ function ensureSessionListeners(): void {
     state.buffer += chunk
     scheduleOutputFlush(sessionId)
   })
-  addAicliStructuredOutputListener(({ sessionId, kind, text, messageId, replyId, taskId }) => {
+  addAicliStructuredOutputListener(({ sessionId, kind, text, messageId, partId, replyId, taskId }) => {
+    if (kind === 'input_origin') {
+      const origin = text.trim()
+      const routes = structuredOutputTasks.list(sessionId)
+      if (origin === 'remote-im') {
+        for (const state of routes) {
+          writeStructuredOutputRuntimeLog('aicli:route-origin', {
+            sessionId,
+            state,
+            detail: { origin }
+          })
+        }
+        return
+      }
+      for (const state of routes) {
+        writeStructuredOutputRuntimeLog('aicli:route-deactivated', {
+          sessionId,
+          state,
+          detail: { origin: origin || 'local' }
+        })
+        removeStructuredOutputTask(sessionId, state, 'local-input')
+      }
+      return
+    }
+
     const state = resolveStructuredOutputTask(sessionId, { replyId, taskId })
     if (!state) {
       writeStructuredOutputRuntimeLog('aicli:event-unmatched', {
@@ -975,28 +989,12 @@ function ensureSessionListeners(): void {
       }
     })
     if (kind === 'task_started') {
-      const superseded = structuredOutputTasks.removeAllExcept(
-        sessionId,
-        state.taskId,
-        (candidate) => candidate.sourceStarted === true
-      )
-      for (const previous of superseded) {
-        if (previous.timer) clearTimeout(previous.timer)
-        previous.timer = null
-        writeStructuredOutputRuntimeLog('aicli:route-superseded', {
-          sessionId,
-          state: previous,
-          detail: {
-            replacementTaskId: state.taskId,
-            replacementReplyId: state.replyId ?? null
-          }
-        })
-      }
-      markStructuredTaskActive(sessionId, state)
+      if (!state.sourceStarted) state.forwardedStructuredAssistantTexts = []
+      markStructuredTaskActive(state)
       return
     }
     if (kind === 'task_activity') {
-      markStructuredTaskActive(sessionId, state)
+      markStructuredTaskActive(state)
       return
     }
     if (kind === 'turn_error') {
@@ -1010,11 +1008,13 @@ function ensureSessionListeners(): void {
           reasonPreview: structuredOutputTextPreview(text)
         }
       })
-      removeStructuredOutputTask(sessionId, state, 'turn-error')
+      resetStructuredTurnState(state)
       return
     }
     if (kind === 'assistant_final') {
       const resolved = resolveRemoteImStructuredFinalContent(text, state.replyId)
+      const hadImmediateAssistantOutput =
+        (state.forwardedStructuredAssistantTexts?.length ?? 0) > 0
       const forwardedChunks = forwardRemoteImStructuredFinalOutput(
         sessionId,
         state,
@@ -1022,8 +1022,14 @@ function ensureSessionListeners(): void {
         text,
         messageId
       )
+      const finalEvent =
+        forwardedChunks > 0
+          ? 'aicli:final-forwarded'
+          : hadImmediateAssistantOutput
+            ? 'aicli:final-already-forwarded'
+            : 'aicli:final-empty'
       writeStructuredOutputRuntimeLog(
-        forwardedChunks > 0 ? 'aicli:final-forwarded' : 'aicli:final-empty',
+        finalEvent,
         {
           sessionId,
           state,
@@ -1039,7 +1045,7 @@ function ensureSessionListeners(): void {
           }
         }
       )
-      if (forwardedChunks === 0) {
+      if (forwardedChunks === 0 && !hadImmediateAssistantOutput) {
         failRemoteImOutputSession(
           sessionId,
           state,
@@ -1047,13 +1053,34 @@ function ensureSessionListeners(): void {
           '任务已经结束，但最终回复为空或无法解析。请查看 remote-im-runtime.log。'
         )
       }
-      removeStructuredOutputTask(sessionId, state, 'assistant-final')
+      resetStructuredTurnState(state)
       return
     }
     if (kind && kind !== 'assistant_text') return
-    // Each five-minute window keeps only the latest source-authored progress
-    // snapshot. This avoids replaying every intermediate model/tool event.
-    markStructuredTaskActive(sessionId, state, text)
+    markStructuredTaskActive(state)
+    const forwardedChunks = forwardRemoteImStructuredAssistantOutput(
+      sessionId,
+      state,
+      outputForwardingDeps(),
+      text,
+      messageId,
+      partId
+    )
+    writeStructuredOutputRuntimeLog(
+      forwardedChunks > 0 ? 'aicli:assistant-forwarded' : 'aicli:assistant-skipped',
+      {
+        sessionId,
+        state,
+        detail: {
+          messageId: messageId ?? null,
+          partId: partId ?? null,
+          eventReplyId: replyId ?? null,
+          eventTaskId: taskId ?? null,
+          inputLength: text.length,
+          forwardedChunks
+        }
+      }
+    )
   })
   addSessionExitListener(({ sessionId, exitCode, signal }) => {
     const reason = signal
@@ -1131,6 +1158,18 @@ async function bindRemoteImAccountConfig(
     resetRemoteImStatusesAfterAccountChange()
   }
   return { profileId, account: value }
+}
+
+function getActiveRemoteImSessionForProject(
+  projectId: string
+): RemoteImSessionInfo | null {
+  const session = getActiveSessionForProject(projectId)
+  if (!session) return null
+  const runtime = getSessionRuntimeInfo(session.sessionId)
+  return {
+    ...session,
+    sourceKind: runtime ? getRemoteImAicliOutputSourceKind(runtime.command) : 'unknown'
+  }
 }
 
 export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): void {
@@ -1387,7 +1426,7 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
     'remote-im:deliver-incoming-text',
     async (_event, message: RemoteImIncomingTextMessage) => {
       const config = await getRemoteImConfig(message.projectId)
-      const session = getActiveSessionForProject(message.projectId)
+      const session = getActiveRemoteImSessionForProject(message.projectId)
       const router = createRemoteImRouter({
         getConfig: () => config,
         resolveSession: () => session,
@@ -1479,7 +1518,7 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
     'remote-im:deliver-incoming-audio',
     async (_event, message: RemoteImIncomingAudioMessage) => {
       const config = await getRemoteImConfig(message.projectId)
-      const session = getActiveSessionForProject(message.projectId)
+      const session = getActiveRemoteImSessionForProject(message.projectId)
       const router = createRemoteImRouter({
         getConfig: () => config,
         resolveSession: () => session,
@@ -1509,7 +1548,7 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
     'remote-im:deliver-incoming-image',
     async (_event, message: RemoteImIncomingImageMessage) => {
       const config = await getRemoteImConfig(message.projectId)
-      const session = getActiveSessionForProject(message.projectId)
+      const session = getActiveRemoteImSessionForProject(message.projectId)
       const router = createRemoteImRouter({
         getConfig: () => config,
         resolveSession: () => session,
@@ -1566,7 +1605,7 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
     'remote-im:deliver-incoming-file',
     async (_event, message: RemoteImIncomingFileMessage) => {
       const config = await getRemoteImConfig(message.projectId)
-      const session = getActiveSessionForProject(message.projectId)
+      const session = getActiveRemoteImSessionForProject(message.projectId)
       const router = createRemoteImRouter({
         getConfig: () => config,
         resolveSession: () => session,

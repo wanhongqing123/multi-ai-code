@@ -10,8 +10,8 @@ import {
   createRemoteImOperationFailedText,
   createRemoteImOperationFinishedText,
   failRemoteImOutputSession,
+  forwardRemoteImStructuredAssistantOutput,
   forwardRemoteImStructuredFinalOutput,
-  forwardRemoteImStructuredProgress,
   flushRemoteImOutputSession,
   parseRemoteImAicliOutputText,
   resolveRemoteImStructuredFinalContent,
@@ -487,10 +487,8 @@ describe('remote IM output forwarding', () => {
     expect(sentTexts).toEqual([createRemoteImAicliOutputText('最终结论：使用源码终态事件转发。')])
   })
 
-  it('forwards progress without consuming the final reply id', () => {
-    const state = createState('仍在编译，预计还需要一段时间。', {
-      outputMaxChunkChars: 500
-    })
+  it('forwards every source-authored assistant message immediately', () => {
+    const state = createState('', { outputMaxChunkChars: 500 })
     state.replyId = 'rim-current'
     state.taskId = 'task-current'
     state.sourceKind = 'codex'
@@ -502,41 +500,50 @@ describe('remote IM output forwarding', () => {
       messagesChanged: () => undefined
     }
 
-    expect(forwardRemoteImStructuredProgress('session-1', state, deps)).toBe(1)
-    expect(state.forwardedReplyId).toBeUndefined()
     expect(
-      forwardRemoteImStructuredFinalOutput('session-1', state, deps, '编译完成并已发布。')
+      forwardRemoteImStructuredAssistantOutput(
+        'session-1',
+        state,
+        deps,
+        '仍在编译，预计还需要一段时间。',
+        'message-1',
+        'part-1'
+      )
+    ).toBe(1)
+    expect(
+      forwardRemoteImStructuredAssistantOutput(
+        'session-1',
+        state,
+        deps,
+        '安装包正在上传。',
+        'message-2',
+        'part-2'
+      )
+    ).toBe(1)
+    expect(
+      forwardRemoteImStructuredFinalOutput(
+        'session-1',
+        state,
+        deps,
+        '编译完成并已发布。',
+        'message-final'
+      )
     ).toBe(1)
 
     expect(messages.map((message) => message.content)).toEqual([
-      '**进度更新**\n\n仍在编译，预计还需要一段时间。',
+      '仍在编译，预计还需要一段时间。',
+      '安装包正在上传。',
       '编译完成并已发布。'
     ])
     expect(sentTexts).toEqual([
-      createRemoteImAicliOutputText('**进度更新**\n\n仍在编译，预计还需要一段时间。'),
+      createRemoteImAicliOutputText('仍在编译，预计还需要一段时间。'),
+      createRemoteImAicliOutputText('安装包正在上传。'),
       createRemoteImAicliOutputText('编译完成并已发布。')
     ])
   })
 
-  it('stays silent when no new progress is available', () => {
+  it('stays silent for empty and noise-only assistant events', () => {
     const state = createState('', { outputMaxChunkChars: 500 })
-    state.replyId = 'rim-current'
-    state.taskId = 'task-current'
-    state.sourceKind = 'opencode'
-    const messages: CreateRemoteImMessageInput[] = []
-
-    expect(
-      forwardRemoteImStructuredProgress('session-1', state, {
-        createMessage: (input) => messages.push(input),
-        sendText: () => undefined,
-        messagesChanged: () => undefined
-      })
-    ).toBe(0)
-    expect(messages).toEqual([])
-  })
-
-  it('stays silent when the sampled progress has already been forwarded', () => {
-    const state = createState('正在上传安装包。', { outputMaxChunkChars: 500 })
     state.replyId = 'rim-current'
     state.taskId = 'task-current'
     state.sourceKind = 'codex'
@@ -547,16 +554,23 @@ describe('remote IM output forwarding', () => {
       messagesChanged: () => undefined
     }
 
-    expect(forwardRemoteImStructuredProgress('session-1', state, deps)).toBe(1)
-    state.buffer = '正在上传安装包。'
-    expect(forwardRemoteImStructuredProgress('session-1', state, deps)).toBe(0)
-    expect(messages.map((message) => message.content)).toEqual(['**进度更新**\n\n正在上传安装包。'])
+    expect(
+      forwardRemoteImStructuredAssistantOutput('session-1', state, deps, '', 'message-empty')
+    ).toBe(0)
+    expect(
+      forwardRemoteImStructuredAssistantOutput(
+        'session-1',
+        state,
+        deps,
+        'Use /skills to list available skills.',
+        'message-noise'
+      )
+    ).toBe(0)
+    expect(messages).toEqual([])
   })
 
-  it('discards buffered progress when the final reply arrives first', () => {
-    const state = createState('尚未到五分钟的中间进度', {
-      outputMaxChunkChars: 500
-    })
+  it('deduplicates reliable retransmission by assistant event identity', () => {
+    const state = createState('', { outputMaxChunkChars: 500 })
     state.replyId = 'rim-current'
     state.taskId = 'task-current'
     state.sourceKind = 'opencode'
@@ -567,11 +581,141 @@ describe('remote IM output forwarding', () => {
       messagesChanged: () => undefined
     }
 
-    expect(forwardRemoteImStructuredFinalOutput('session-1', state, deps, '任务已快速完成。')).toBe(
-      1
-    )
-    expect(state.buffer).toBe('')
-    expect(messages.map((message) => message.content)).toEqual(['任务已快速完成。'])
+    expect(
+      forwardRemoteImStructuredAssistantOutput(
+        'session-1',
+        state,
+        deps,
+        '正在上传安装包。',
+        'message-1',
+        'part-1'
+      )
+    ).toBe(1)
+    expect(
+      forwardRemoteImStructuredAssistantOutput(
+        'session-1',
+        state,
+        deps,
+        '正在上传安装包。',
+        'message-1',
+        'part-1'
+      )
+    ).toBe(0)
+    expect(messages.map((message) => message.content)).toEqual(['正在上传安装包。'])
+  })
+
+  it('allows identical text from distinct assistant events', () => {
+    const state = createState('', { outputMaxChunkChars: 500 })
+    state.replyId = 'rim-current'
+    state.taskId = 'task-current'
+    state.sourceKind = 'opencode'
+    const messages: CreateRemoteImMessageInput[] = []
+    const deps: RemoteImOutputForwardingDeps = {
+      createMessage: (input) => messages.push(input),
+      sendText: () => undefined,
+      messagesChanged: () => undefined
+    }
+
+    expect(
+      forwardRemoteImStructuredAssistantOutput(
+        'session-1',
+        state,
+        deps,
+        '相同但独立的回复。',
+        'message-1',
+        'part-1'
+      )
+    ).toBe(1)
+    expect(
+      forwardRemoteImStructuredAssistantOutput(
+        'session-1',
+        state,
+        deps,
+        '相同但独立的回复。',
+        'message-2',
+        'part-2'
+      )
+    ).toBe(1)
+    expect(messages.map((message) => message.content)).toEqual([
+      '相同但独立的回复。',
+      '相同但独立的回复。'
+    ])
+  })
+
+  it('does not resend an OpenCode final aggregate already emitted as assistant text', () => {
+    const state = createState('', { outputMaxChunkChars: 500 })
+    state.sourceKind = 'opencode'
+    const messages: CreateRemoteImMessageInput[] = []
+    const deps: RemoteImOutputForwardingDeps = {
+      createMessage: (input) => messages.push(input),
+      sendText: () => undefined,
+      messagesChanged: () => undefined
+    }
+
+    expect(
+      forwardRemoteImStructuredAssistantOutput(
+        'session-1',
+        state,
+        deps,
+        '第一段',
+        'message-1:part-1',
+        'part-1'
+      )
+    ).toBe(1)
+    expect(
+      forwardRemoteImStructuredAssistantOutput(
+        'session-1',
+        state,
+        deps,
+        '第二段',
+        'message-1:part-2',
+        'part-2'
+      )
+    ).toBe(1)
+    expect(
+      forwardRemoteImStructuredFinalOutput(
+        'session-1',
+        state,
+        deps,
+        '第一段\n第二段',
+        'message-1:final'
+      )
+    ).toBe(0)
+    expect(messages.map((message) => message.content)).toEqual(['第一段', '第二段'])
+  })
+
+  it('forwards a distinct final after immediate assistant output', () => {
+    const state = createState('', { outputMaxChunkChars: 500 })
+    state.sourceKind = 'codex'
+    const messages: CreateRemoteImMessageInput[] = []
+    const deps: RemoteImOutputForwardingDeps = {
+      createMessage: (input) => messages.push(input),
+      sendText: () => undefined,
+      messagesChanged: () => undefined
+    }
+
+    expect(
+      forwardRemoteImStructuredAssistantOutput(
+        'session-1',
+        state,
+        deps,
+        '我先检查构建日志。',
+        'message-commentary'
+      )
+    ).toBe(1)
+    expect(
+      forwardRemoteImStructuredFinalOutput(
+        'session-1',
+        state,
+        deps,
+        '构建完成，测试通过。',
+        'message-final'
+      )
+    ).toBe(1)
+    expect(messages.map((message) => message.content)).toEqual([
+      '我先检查构建日志。',
+      '构建完成，测试通过。'
+    ])
   })
 
   it('deduplicates retransmission of the same structured terminal event', () => {

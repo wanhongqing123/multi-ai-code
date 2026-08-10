@@ -381,15 +381,33 @@ describe('registerPtyIpc prompt injection timing', () => {
 
   it('accepts Codex messages after the source-level control bridge is ready', async () => {
     const { proc } = await spawnNoPlanSession('codex')
-    const socket = await connectAicliControlBridge(proc)
+    const receivedLines: string[] = []
+    const socket = await connectAicliControlBridge(proc, receivedLines)
 
     const { sendUserMessageToSession } = await import('../../../electron/cc/ptyManager.js')
-    const result = await sendUserMessageToSession('session-no-plan', 'remote im text')
+    const result = await sendUserMessageToSession('session-no-plan', 'remote im text', {
+      attachments: [
+        {
+          type: 'image',
+          localPath: '/tmp/scheduled-task-image.png',
+          mimeType: 'image/png',
+          fileName: 'screen.png'
+        }
+      ]
+    })
 
     socket.destroy()
 
     expect(result).toEqual({ ok: true })
     expect(proc.writes.join('')).not.toContain('remote im text')
+    expect(JSON.parse(receivedLines[0] ?? '{}').attachments).toEqual([
+      {
+        type: 'image',
+        localPath: '/tmp/scheduled-task-image.png',
+        mimeType: 'image/png',
+        fileName: 'screen.png'
+      }
+    ])
   })
 
   it('broadcasts remote IM display text to the local terminal without changing PTY input', async () => {

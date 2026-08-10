@@ -52,6 +52,15 @@ export type SaveScheduledTaskImageResult =
   | { ok: true; attachment: ScheduledTaskImageAttachment }
   | { ok: false; error: string }
 
+export interface ReadScheduledTaskImageInput {
+  projectId: string
+  localPath: string
+}
+
+export type ReadScheduledTaskImageResult =
+  | { ok: true; dataUrl: string }
+  | { ok: false; error: string }
+
 export interface ScheduledTask {
   id: number
   projectId: string

@@ -2,7 +2,9 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import ScheduledTaskDialog from '../../../src/scheduled-tasks/ScheduledTaskDialog'
+import ScheduledTaskDialog, {
+  scheduledTaskMarkdownForDisplay
+} from '../../../src/scheduled-tasks/ScheduledTaskDialog'
 import { formatDateTime } from '../../../src/scheduled-tasks/scheduledTaskViewModel'
 import type { ScheduledTask } from '../../../electron/preload'
 
@@ -201,5 +203,36 @@ describe('ScheduledTaskDialog', () => {
     expect(markup).toContain('<h1>Review plan</h1>')
     expect(markup).toContain('<strong>risk</strong>')
     expect(markup).toContain('<li>dependency updates</li>')
+  })
+
+  it('uses a controlled source for saved task images and does not duplicate attachment chips', () => {
+    const attachment = {
+      id: 'image-1',
+      localPath: '/Users/test/.multi-ai-code/scheduled-task-images/image-1.png',
+      fileName: 'screen.png',
+      mimeType: 'image/png',
+      sizeBytes: 2048
+    }
+    const markdown = `![screen.png](<${attachment.localPath}>)\n\nInspect this image.`
+
+    expect(scheduledTaskMarkdownForDisplay(markdown, [attachment])).toContain(
+      '/__scheduled-task-image__/image-1'
+    )
+
+    const markup = renderToStaticMarkup(
+      <ScheduledTaskDialog
+        projectId="project-1"
+        targetRepo="/Users/test/project-1"
+        sessionId="session-1"
+        sessionRunning={true}
+        initialTasks={[task({ goal: markdown, imageAttachments: [attachment] })]}
+        onClose={() => {}}
+      />
+    )
+
+    expect(markup).toContain('scheduled-task-image-state loading')
+    expect(markup).toContain('正在读取 screen.png')
+    expect(markup).not.toContain(attachment.localPath)
+    expect(markup).not.toContain('scheduled-task-detail-images')
   })
 })

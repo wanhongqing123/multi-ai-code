@@ -5668,6 +5668,24 @@ html, body, #root {
   background: transparent;
   padding: 0;
 }
+.scheduled-task-image-preview {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  max-height: min(480px, 50vh);
+  object-fit: contain;
+  border-radius: 8px;
+}
+.scheduled-task-image-state {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  color: var(--mac-fg-muted, #555);
+  font-size: 12px;
+}
+.scheduled-task-image-state.error {
+  color: var(--mac-danger, #d93025);
+}
 .scheduled-task-info-row {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -5823,30 +5841,6 @@ html, body, #root {
 }
 .scheduled-task-image-input {
   display: none;
-}
-.scheduled-task-detail-images {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.scheduled-task-detail-images > span {
-  display: inline-flex;
-  align-items: center;
-  min-width: 0;
-  max-width: 260px;
-  gap: 7px;
-  border: 1px solid var(--mac-border-subtle, #e0e0e0);
-  border-radius: 8px;
-  background: var(--mac-surface, #fafafa);
-  color: var(--mac-fg-muted, #555);
-  padding: 7px 9px;
-  font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.scheduled-task-detail-images {
-  margin-bottom: 12px;
 }
 .scheduled-task-check-grid {
   display: grid;

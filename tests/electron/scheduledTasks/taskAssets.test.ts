@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { setActiveAccount } from '../../../electron/store/paths.js'
 import {
   MAX_SCHEDULED_TASK_IMAGE_BYTES,
+  readScheduledTaskImage,
   saveScheduledTaskImage
 } from '../../../electron/scheduledTasks/taskAssets.js'
 
@@ -39,6 +40,12 @@ describe('scheduled task image assets', () => {
       join('accounts', 'test-account', 'projects', 'project-1', 'scheduled-task-images')
     )
     expect(await fs.readFile(attachment.localPath)).toEqual(Buffer.from(png))
+    await expect(
+      readScheduledTaskImage({
+        projectId: 'project-1',
+        localPath: attachment.localPath
+      })
+    ).resolves.toBe(`data:image/png;base64,${Buffer.from(png).toString('base64')}`)
   })
 
   it('rejects unsupported data and oversized images', async () => {
@@ -73,5 +80,21 @@ describe('scheduled task image assets', () => {
         data: png
       })
     ).rejects.toThrow('项目 ID 无效')
+  })
+
+  it('does not read images outside the current project asset directory', async () => {
+    if (!tempRoot) throw new Error('temporary root was not created')
+    const outsidePath = join(tempRoot, 'outside.png')
+    await fs.writeFile(
+      outsidePath,
+      Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    )
+
+    await expect(
+      readScheduledTaskImage({
+        projectId: 'project-1',
+        localPath: outsidePath
+      })
+    ).rejects.toThrow('任务图片不属于当前项目')
   })
 })

@@ -6,7 +6,11 @@ import {
   listDueScheduledTasks,
   updateScheduledTaskRun
 } from './taskStore.js'
-import type { ScheduledTask, ScheduledTaskRunStatus } from './types.js'
+import type {
+  ScheduledTask,
+  ScheduledTaskImageAttachment,
+  ScheduledTaskRunStatus
+} from './types.js'
 
 export interface ScheduledTaskSessionInfo {
   sessionId: string
@@ -15,7 +19,11 @@ export interface ScheduledTaskSessionInfo {
 
 export interface ScheduledTaskSendHandler {
   resolveSession(projectId: string): ScheduledTaskSessionInfo | null
-  sendUser(sessionId: string, prompt: string): Promise<{ ok: boolean; error?: string }>
+  sendUser(
+    sessionId: string,
+    prompt: string,
+    imageAttachments: ScheduledTaskImageAttachment[]
+  ): Promise<{ ok: boolean; error?: string }>
 }
 
 export interface ScheduledTaskQueueItem {
@@ -26,6 +34,7 @@ export interface ScheduledTaskQueueItem {
   runId: number
   scheduledAt: number
   prompt: string
+  imageAttachments: ScheduledTaskImageAttachment[]
   timeoutMinutes: number
   preferredSession?: ScheduledTaskSessionInfo
 }
@@ -88,6 +97,7 @@ function enqueueTask(
     runId: run.id,
     scheduledAt,
     prompt,
+    imageAttachments: task.imageAttachments.map((attachment) => ({ ...attachment })),
     timeoutMinutes: task.timeoutMinutes,
     preferredSession
   }
@@ -138,7 +148,11 @@ async function drainQueue(): Promise<void> {
 
       let result: { ok: boolean; error?: string }
       try {
-        result = await sendHandler!.sendUser(session.sessionId, item.prompt)
+        result = await sendHandler!.sendUser(
+          session.sessionId,
+          item.prompt,
+          item.imageAttachments
+        )
       } catch (err) {
         result = {
           ok: false,

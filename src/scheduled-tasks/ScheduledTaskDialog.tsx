@@ -1,10 +1,10 @@
-import { ImageIcon } from '@primer/octicons-react'
 import { useEffect, useMemo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type {
   CreateScheduledTaskInput,
-  ScheduledTask
+  ScheduledTask,
+  ScheduledTaskImageAttachment
 } from '../../electron/preload'
 import ScheduledTaskEditorDialog, { ensureDefaultInstructions } from './ScheduledTaskEditorDialog'
 import {
@@ -28,13 +28,80 @@ type EditorState =
   | { mode: 'create'; draft: CreateScheduledTaskInput; taskId?: undefined }
   | { mode: 'edit'; draft: CreateScheduledTaskInput; taskId: number }
 
-function ScheduledTaskMarkdown(props: { markdown: string; className?: string }): JSX.Element {
-  const content = props.markdown.trim()
+type ScheduledTaskImageSource =
+  | { status: 'loading' }
+  | { status: 'ready'; dataUrl: string }
+  | { status: 'error'; message: string }
+
+const SCHEDULED_TASK_IMAGE_URL_PREFIX = '/__scheduled-task-image__/'
+
+function scheduledTaskImageUrl(id: string): string {
+  return `${SCHEDULED_TASK_IMAGE_URL_PREFIX}${encodeURIComponent(id)}`
+}
+
+function scheduledTaskImageId(src: string | undefined): string | null {
+  if (!src?.startsWith(SCHEDULED_TASK_IMAGE_URL_PREFIX)) return null
+  try {
+    return decodeURIComponent(src.slice(SCHEDULED_TASK_IMAGE_URL_PREFIX.length))
+  } catch {
+    return null
+  }
+}
+
+export function scheduledTaskMarkdownForDisplay(
+  markdown: string,
+  attachments: ScheduledTaskImageAttachment[]
+): string {
+  return attachments.reduce((content, attachment) => {
+    const replacement = `(${scheduledTaskImageUrl(attachment.id)})`
+    return content
+      .split(`(<${attachment.localPath}>)`)
+      .join(replacement)
+      .split(`(${attachment.localPath})`)
+      .join(replacement)
+  }, markdown)
+}
+
+function ScheduledTaskMarkdown(props: {
+  markdown: string
+  attachments?: ScheduledTaskImageAttachment[]
+  imageSources?: Record<string, ScheduledTaskImageSource>
+  className?: string
+}): JSX.Element {
+  const attachments = props.attachments ?? []
+  const content = scheduledTaskMarkdownForDisplay(props.markdown.trim(), attachments)
   const className = ['scheduled-task-markdown', props.className].filter(Boolean).join(' ')
+  const attachmentsById = new Map(attachments.map((attachment) => [attachment.id, attachment]))
 
   return (
     <div className={className}>
-      {content ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown> : null}
+      {content ? (
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          components={{
+            img: ({ src, alt }) => {
+              const imageId = scheduledTaskImageId(src)
+              if (!imageId) return <img src={src} alt={alt ?? ''} />
+
+              const attachment = attachmentsById.get(imageId)
+              const source = props.imageSources?.[imageId]
+              const label = attachment?.fileName ?? alt ?? '任务图片'
+              if (source?.status === 'ready') {
+                return (
+                  <img className="scheduled-task-image-preview" src={source.dataUrl} alt={label} />
+                )
+              }
+              return (
+                <span className={`scheduled-task-image-state ${source?.status ?? 'loading'}`}>
+                  {source?.status === 'error' ? `${label}：${source.message}` : `正在读取 ${label}`}
+                </span>
+              )
+            }
+          }}
+        >
+          {content}
+        </ReactMarkdown>
+      ) : null}
     </div>
   )
 }
@@ -71,6 +138,9 @@ export default function ScheduledTaskDialog(props: Props): JSX.Element {
   const [selectedId, setSelectedId] = useState<number | null>(initialTasks?.[0]?.id ?? null)
   const [query, setQuery] = useState('')
   const [editor, setEditor] = useState<EditorState | null>(null)
+  const [taskImageSources, setTaskImageSources] = useState<
+    Record<string, ScheduledTaskImageSource>
+  >({})
 
   async function refresh(): Promise<void> {
     if (typeof window === 'undefined' || !window.api?.scheduledTasks) return
@@ -103,6 +173,64 @@ export default function ScheduledTaskDialog(props: Props): JSX.Element {
 
   const selectedTask = tasks.find((task) => task.id === selectedId) ?? filteredTasks[0] ?? null
   const aicliState = sessionRunning && sessionId ? '已启动' : '未启动'
+
+  useEffect(() => {
+    const attachments = selectedTask?.imageAttachments ?? []
+    if (attachments.length === 0) {
+      setTaskImageSources({})
+      return
+    }
+
+    let disposed = false
+    const selectedProjectId = selectedTask?.projectId ?? projectId
+    setTaskImageSources(
+      Object.fromEntries(attachments.map((attachment) => [attachment.id, { status: 'loading' }]))
+    )
+    const readImage =
+      typeof window === 'undefined' ? undefined : window.api?.scheduledTasks?.readImage
+    if (!readImage) {
+      setTaskImageSources(
+        Object.fromEntries(
+          attachments.map((attachment) => [
+            attachment.id,
+            { status: 'error', message: '图片读取接口不可用' }
+          ])
+        )
+      )
+      return
+    }
+
+    void Promise.all(
+      attachments.map(async (attachment) => {
+        try {
+          const result = await readImage({
+            projectId: selectedProjectId,
+            localPath: attachment.localPath
+          })
+          return [
+            attachment.id,
+            result.ok
+              ? { status: 'ready', dataUrl: result.dataUrl }
+              : { status: 'error', message: result.error }
+          ] as const
+        } catch (error) {
+          return [
+            attachment.id,
+            {
+              status: 'error',
+              message: error instanceof Error ? error.message : String(error)
+            }
+          ] as const
+        }
+      })
+    ).then((entries) => {
+      if (!disposed) setTaskImageSources(Object.fromEntries(entries))
+    })
+
+    return () => {
+      disposed = true
+    }
+  }, [projectId, selectedTask])
 
   async function autoSaveEditorDraft(draft: CreateScheduledTaskInput): Promise<boolean> {
     if (!editor || editor.mode !== 'edit' || typeof window === 'undefined' || !window.api?.scheduledTasks) {
@@ -310,17 +438,12 @@ export default function ScheduledTaskDialog(props: Props): JSX.Element {
                     </span>
                   </div>
                   <h5>任务内容</h5>
-                  <ScheduledTaskMarkdown className="scheduled-task-goal" markdown={selectedTask.goal} />
-                  {selectedTask.imageAttachments.length > 0 && (
-                    <div className="scheduled-task-detail-images">
-                      {selectedTask.imageAttachments.map((attachment) => (
-                        <span key={attachment.id} title={attachment.localPath}>
-                          <ImageIcon size={15} />
-                          {attachment.fileName}
-                        </span>
-                      ))}
-                    </div>
-                  )}
+                  <ScheduledTaskMarkdown
+                    className="scheduled-task-goal"
+                    markdown={selectedTask.goal}
+                    attachments={selectedTask.imageAttachments}
+                    imageSources={taskImageSources}
+                  />
                   <h5>执行计划</h5>
                   <div className="scheduled-task-info-row">
                     <span>触发：{formatScheduleLabel(selectedTask.scheduleType, selectedTask.scheduleTime, selectedTask.scheduleDays)}</span>

@@ -24,9 +24,10 @@ import {
   setScheduledTaskEnabled,
   updateScheduledTask
 } from './taskStore.js'
-import { saveScheduledTaskImage } from './taskAssets.js'
+import { readScheduledTaskImage, saveScheduledTaskImage } from './taskAssets.js'
 import type {
   CreateScheduledTaskInput,
+  ReadScheduledTaskImageInput,
   SaveScheduledTaskImageInput,
   UpdateScheduledTaskInput
 } from './types.js'
@@ -40,7 +41,16 @@ export function registerScheduledTaskIpc(): void {
 
   setScheduledTaskSendHandler({
     resolveSession: getActiveSessionForProject,
-    sendUser: sendUserMessageToSession
+    sendUser: (sessionId, prompt, imageAttachments) =>
+      sendUserMessageToSession(sessionId, prompt, {
+        inputOrigin: 'local',
+        attachments: imageAttachments.map((attachment) => ({
+          type: 'image',
+          localPath: attachment.localPath,
+          mimeType: attachment.mimeType,
+          fileName: attachment.fileName
+        }))
+      })
   })
 
   if (!removeSessionDataListener) {
@@ -73,6 +83,23 @@ export function registerScheduledTaskIpc(): void {
     async (_event, input: SaveScheduledTaskImageInput) => {
       try {
         return { ok: true as const, attachment: await saveScheduledTaskImage(input) }
+      } catch (error) {
+        return {
+          ok: false as const,
+          error: error instanceof Error ? error.message : String(error)
+        }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'scheduled-tasks:read-image',
+    async (_event, input: ReadScheduledTaskImageInput) => {
+      try {
+        return {
+          ok: true as const,
+          dataUrl: await readScheduledTaskImage(input)
+        }
       } catch (error) {
         return {
           ok: false as const,

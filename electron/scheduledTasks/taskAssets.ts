@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
-import { join } from 'node:path'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { projectDir } from '../store/paths.js'
 import type {
+  ReadScheduledTaskImageInput,
   SaveScheduledTaskImageInput,
   ScheduledTaskImageAttachment
 } from './types.js'
@@ -53,13 +54,28 @@ function displayFileName(fileName: string, fallbackExtension: string): string {
   return name || `task-image.${fallbackExtension}`
 }
 
+function validateProjectId(projectId: string): string {
+  const normalized = projectId.trim()
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(normalized)) {
+    throw new Error('项目 ID 无效')
+  }
+  return normalized
+}
+
+function isPathInside(directory: string, candidate: string): boolean {
+  const pathFromDirectory = relative(directory, candidate)
+  return (
+    pathFromDirectory.length > 0 &&
+    pathFromDirectory !== '..' &&
+    !pathFromDirectory.startsWith(`..${sep}`) &&
+    !isAbsolute(pathFromDirectory)
+  )
+}
+
 export async function saveScheduledTaskImage(
   input: SaveScheduledTaskImageInput
 ): Promise<ScheduledTaskImageAttachment> {
-  const projectId = input.projectId.trim()
-  if (!/^[A-Za-z0-9_-]{1,128}$/.test(projectId)) {
-    throw new Error('项目 ID 无效')
-  }
+  const projectId = validateProjectId(input.projectId)
 
   const bytes = toBuffer(input.data)
   if (bytes.length === 0) throw new Error('图片内容为空')
@@ -84,4 +100,39 @@ export async function saveScheduledTaskImage(
     mimeType: imageInfo.mimeType,
     sizeBytes: bytes.length
   }
+}
+
+export async function readScheduledTaskImage(
+  input: ReadScheduledTaskImageInput
+): Promise<string> {
+  const projectId = validateProjectId(input.projectId)
+  if (!isAbsolute(input.localPath)) {
+    throw new Error('任务图片路径无效')
+  }
+
+  const imageDirectory = resolve(projectDir(projectId), 'scheduled-task-images')
+  const requestedPath = resolve(input.localPath)
+  if (!isPathInside(imageDirectory, requestedPath)) {
+    throw new Error('任务图片不属于当前项目')
+  }
+
+  const [realDirectory, realPath] = await Promise.all([
+    fs.realpath(imageDirectory),
+    fs.realpath(requestedPath)
+  ])
+  if (!isPathInside(realDirectory, realPath)) {
+    throw new Error('任务图片不属于当前项目')
+  }
+
+  const stat = await fs.stat(realPath)
+  if (!stat.isFile()) throw new Error('任务图片不存在')
+  if (stat.size === 0) throw new Error('图片内容为空')
+  if (stat.size > MAX_SCHEDULED_TASK_IMAGE_BYTES) {
+    throw new Error('图片不能超过 20 MB')
+  }
+
+  const bytes = await fs.readFile(realPath)
+  const imageType = detectImageType(bytes)
+  if (!imageType) throw new Error('任务图片格式无效')
+  return `data:${IMAGE_TYPES[imageType].mimeType};base64,${bytes.toString('base64')}`
 }

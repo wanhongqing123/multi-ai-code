@@ -7,6 +7,8 @@ import type {
   ScheduledTaskRun,
   ScheduledTask,
   ScheduledTaskImageAttachment,
+  ReadScheduledTaskImageInput,
+  ReadScheduledTaskImageResult,
   SaveScheduledTaskImageInput,
   SaveScheduledTaskImageResult,
   CreateScheduledTaskInput,
@@ -19,6 +21,8 @@ export type {
   ScheduledTaskRun,
   ScheduledTask,
   ScheduledTaskImageAttachment,
+  ReadScheduledTaskImageInput,
+  ReadScheduledTaskImageResult,
   SaveScheduledTaskImageInput,
   SaveScheduledTaskImageResult,
   CreateScheduledTaskInput,
@@ -661,6 +665,10 @@ const api = {
     saveImage: (input: SaveScheduledTaskImageInput) =>
       ipcRenderer.invoke('scheduled-tasks:save-image', input) as Promise<
         SaveScheduledTaskImageResult
+      >,
+    readImage: (input: ReadScheduledTaskImageInput) =>
+      ipcRenderer.invoke('scheduled-tasks:read-image', input) as Promise<
+        ReadScheduledTaskImageResult
       >,
     update: (id: number, patch: UpdateScheduledTaskInput) =>
       ipcRenderer.invoke('scheduled-tasks:update', { id, patch }) as Promise<

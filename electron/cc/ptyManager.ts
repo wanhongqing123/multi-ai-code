@@ -514,9 +514,7 @@ export async function sendUserMessageToSession(
             inputOrigin: options.inputOrigin ?? 'local',
             ...(options.replyId ? { replyId: options.replyId } : {}),
             ...(options.taskId ? { taskId: options.taskId } : {}),
-            ...(isOpenCodeCommand(current.command) && options.attachments?.length
-              ? { attachments: options.attachments }
-              : {})
+            ...(options.attachments?.length ? { attachments: options.attachments } : {})
           },
           10_000
         )

@@ -261,6 +261,40 @@ describe('scheduled task queue draining', () => {
     expect(mockStore.runs.get(1)?.status).toBe('succeeded')
   })
 
+  it('delivers task images as structured AICLI attachments', async () => {
+    const imageAttachment = {
+      id: 'task-image-1',
+      localPath: '/tmp/scheduled-task-image.png',
+      fileName: 'screen.png',
+      mimeType: 'image/png',
+      sizeBytes: 1024
+    }
+    const sentAttachments: Array<Array<typeof imageAttachment>> = []
+    setScheduledTaskSendHandler({
+      resolveSession: () => null,
+      sendUser: async (_sessionId, _prompt, imageAttachments) => {
+        sentAttachments.push(imageAttachments)
+        return { ok: true }
+      }
+    })
+
+    const result = await enqueueScheduledTaskNow(
+      {
+        ...task(1, 'project-1', 'image task'),
+        imageAttachments: [imageAttachment]
+      },
+      'E:\\OpenSource\\project-1',
+      2,
+      {
+        sessionId: 'manual-session',
+        targetRepo: 'E:\\OpenSource\\project-1'
+      }
+    )
+
+    expect(result.delivery).toBe('sent')
+    expect(sentAttachments).toEqual([[imageAttachment]])
+  })
+
   it('reports manual send failures instead of looking successful', async () => {
     setScheduledTaskSendHandler({
       resolveSession: () => null,

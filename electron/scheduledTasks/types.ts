@@ -33,6 +33,25 @@ export interface ScheduledTaskRun {
   timeoutMinutes: number
 }
 
+export interface ScheduledTaskImageAttachment {
+  id: string
+  localPath: string
+  fileName: string
+  mimeType: string
+  sizeBytes: number
+}
+
+export interface SaveScheduledTaskImageInput {
+  projectId: string
+  fileName: string
+  mimeType: string
+  data: ArrayBuffer | Uint8Array
+}
+
+export type SaveScheduledTaskImageResult =
+  | { ok: true; attachment: ScheduledTaskImageAttachment }
+  | { ok: false; error: string }
+
 export interface ScheduledTask {
   id: number
   projectId: string
@@ -40,6 +59,7 @@ export interface ScheduledTask {
   name: string
   description: string
   goal: string
+  imageAttachments: ScheduledTaskImageAttachment[]
   instructions: string[]
   enabled: boolean
   scheduleType: ScheduledTaskScheduleType
@@ -60,6 +80,7 @@ export interface CreateScheduledTaskInput {
   name: string
   description: string
   goal: string
+  imageAttachments: ScheduledTaskImageAttachment[]
   instructions: string[]
   enabled: boolean
   scheduleType: ScheduledTaskScheduleType

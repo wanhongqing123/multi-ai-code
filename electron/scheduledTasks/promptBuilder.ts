@@ -4,6 +4,24 @@ function buildTimingRequirement(task: ScheduledTask): string {
   return `任务开始执行时先记录当前时间；任务完成时在总结中写明本次任务的执行时间范围和实际执行时长；任务时长上限：${task.timeoutMinutes} 分钟。`
 }
 
+function imageMarkdown(fileName: string, localPath: string): string {
+  const alt = fileName.replace(/\\/g, '\\\\').replace(/\]/g, '\\]')
+  return `![${alt}](<${localPath}>)`
+}
+
+function appendMissingImageMarkdown(task: ScheduledTask, description: string): string {
+  const missing = task.imageAttachments.filter(
+    (attachment) => !description.includes(`(<${attachment.localPath}>)`)
+  )
+  if (missing.length === 0) return description
+  return [
+    description,
+    ...missing.map((attachment) => imageMarkdown(attachment.fileName, attachment.localPath))
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+}
+
 export interface ScheduledTaskPromptContext {
   targetRepo: string
 }
@@ -12,6 +30,10 @@ export function buildScheduledTaskPrompt(
   task: ScheduledTask,
   context: ScheduledTaskPromptContext
 ): string {
+  const baseDescription =
+    task.goal.trim() ||
+    (task.imageAttachments.length > 0 ? '请根据任务图片中的内容执行。' : '请按任务配置执行。')
+  const taskDescription = appendMissingImageMarkdown(task, baseDescription)
   const requirementItems = task.instructions.length
     ? [...task.instructions]
     : ['按任务描述执行，并保持输出清晰。']
@@ -37,7 +59,10 @@ export function buildScheduledTaskPrompt(
     `如果无法在 ${task.timeoutMinutes} 分钟内完成，请停止继续展开，输出当前进展、阻塞点和建议的下一步。`,
     '',
     '\u4efb\u52a1\u63cf\u8ff0\uff1a',
-    task.goal,
+    ...(task.imageAttachments.length > 0
+      ? ['任务描述中的 Markdown 图片指向本地文件，请先读取图片，再结合文字执行。']
+      : []),
+    taskDescription,
     '',
     '执行要求：',
     requirements,

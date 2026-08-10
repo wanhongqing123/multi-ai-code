@@ -3,6 +3,7 @@ import type {
   CreateScheduledTaskInput,
   CreateScheduledTaskRunInput,
   ScheduledTask,
+  ScheduledTaskImageAttachment,
   ScheduledTaskRun,
   ScheduledTaskScheduleType,
   UpdateScheduledTaskInput,
@@ -16,6 +17,7 @@ interface ScheduledTaskRow {
   name: string
   description: string
   goal: string
+  image_attachments: string
   instructions: string
   enabled: number
   schedule_type: ScheduledTaskScheduleType
@@ -97,6 +99,7 @@ function rowToTask(row: ScheduledTaskRow): ScheduledTask {
     name: row.name,
     description: row.description,
     goal: row.goal,
+    imageAttachments: parseImageAttachments(row.image_attachments),
     instructions: parseJsonArray(row.instructions).filter(
       (value): value is string => typeof value === 'string'
     ),
@@ -115,6 +118,31 @@ function rowToTask(row: ScheduledTaskRow): ScheduledTask {
     updatedAt: row.updated_at,
     lastRun: latestRunForTask(row.id)
   }
+}
+
+function parseImageAttachments(value: string): ScheduledTaskImageAttachment[] {
+  return parseJsonArray(value).flatMap((item) => {
+    if (!item || typeof item !== 'object') return []
+    const candidate = item as Record<string, unknown>
+    if (
+      typeof candidate.id !== 'string' ||
+      typeof candidate.localPath !== 'string' ||
+      typeof candidate.fileName !== 'string' ||
+      typeof candidate.mimeType !== 'string' ||
+      typeof candidate.sizeBytes !== 'number'
+    ) {
+      return []
+    }
+    return [
+      {
+        id: candidate.id,
+        localPath: candidate.localPath,
+        fileName: candidate.fileName,
+        mimeType: candidate.mimeType,
+        sizeBytes: candidate.sizeBytes
+      }
+    ]
+  })
 }
 
 function parseScheduleTime(scheduleTime: string): { hour: number; minute: number } {
@@ -234,18 +262,19 @@ export function createScheduledTask(
   const info = getDb()
     .prepare(
       `INSERT INTO scheduled_tasks (
-        project_id, name, description, goal, instructions, enabled,
+        project_id, name, description, goal, image_attachments, instructions, enabled,
         schedule_type, schedule_time, schedule_days, next_run_at,
         timeout_minutes, allow_code_changes, allow_git_commit,
         require_test_confirmation, created_at, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       input.projectId,
       input.name,
       input.description,
       input.goal,
+      JSON.stringify(input.imageAttachments ?? []),
       JSON.stringify(input.instructions),
       input.enabled ? 1 : 0,
       input.scheduleType,
@@ -269,6 +298,7 @@ export function updateScheduledTask(id: number, patch: UpdateScheduledTaskInput)
     name: patch.name ?? current.name,
     description: patch.description ?? current.description,
     goal: patch.goal ?? current.goal,
+    imageAttachments: patch.imageAttachments ?? current.imageAttachments,
     instructions: patch.instructions ?? current.instructions,
     enabled: patch.enabled ?? current.enabled,
     scheduleType: patch.scheduleType ?? current.scheduleType,
@@ -294,7 +324,7 @@ export function updateScheduledTask(id: number, patch: UpdateScheduledTaskInput)
   getDb()
     .prepare(
       `UPDATE scheduled_tasks SET
-        name = ?, description = ?, goal = ?, instructions = ?, enabled = ?,
+        name = ?, description = ?, goal = ?, image_attachments = ?, instructions = ?, enabled = ?,
         schedule_type = ?, schedule_time = ?, schedule_days = ?, next_run_at = ?,
         timeout_minutes = ?, allow_code_changes = ?, allow_git_commit = ?,
         require_test_confirmation = ?, updated_at = ?
@@ -304,6 +334,7 @@ export function updateScheduledTask(id: number, patch: UpdateScheduledTaskInput)
       next.name,
       next.description,
       next.goal,
+      JSON.stringify(next.imageAttachments),
       JSON.stringify(next.instructions),
       next.enabled ? 1 : 0,
       next.scheduleType,

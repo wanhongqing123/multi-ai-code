@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
   name                      TEXT NOT NULL,
   description               TEXT NOT NULL DEFAULT '',
   goal                      TEXT NOT NULL,
+  image_attachments         TEXT NOT NULL DEFAULT '[]',
   instructions              TEXT NOT NULL,
   enabled                   INTEGER NOT NULL DEFAULT 1,
   schedule_type             TEXT NOT NULL,
@@ -141,6 +142,7 @@ export function initDb(): Database.Database {
   db.pragma('journal_mode = WAL')
   db.pragma('foreign_keys = ON')
   db.exec(SCHEMA)
+  ensureColumn(db, 'scheduled_tasks', 'image_attachments', "TEXT NOT NULL DEFAULT '[]'")
   ensureColumn(db, 'remote_im_messages', 'kind', "TEXT NOT NULL DEFAULT 'text'")
   ensureColumn(db, 'remote_im_messages', 'attachment_json', 'TEXT')
   try {

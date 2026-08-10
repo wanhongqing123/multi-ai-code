@@ -53,6 +53,7 @@ function task(id: number, projectId: string, name: string): ScheduledTask {
     name,
     description: '',
     goal: 'execute task',
+    imageAttachments: [],
     instructions: [],
     enabled: true,
     scheduleType: 'once',

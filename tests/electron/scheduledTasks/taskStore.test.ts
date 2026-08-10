@@ -3,6 +3,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { closeDb, createProject, initDb } from '../../../electron/store/db.js'
+import { ensureRootDir, setActiveAccount } from '../../../electron/store/paths.js'
 import {
   computeNextRunAt,
   createScheduledTask,
@@ -93,6 +94,8 @@ describe('scheduled task persistence', () => {
     tempRoot = await fs.mkdtemp(join(tmpdir(), 'scheduled-task-store-'))
     process.env.MULTI_AI_ROOT = tempRoot
     await fs.mkdir(tempRoot, { recursive: true })
+    setActiveAccount('test-account')
+    await ensureRootDir()
     closeDb()
     initDb()
     createProject({
@@ -109,6 +112,7 @@ describe('scheduled task persistence', () => {
 
   afterEach(async () => {
     closeDb()
+    setActiveAccount(null)
     delete process.env.MULTI_AI_ROOT
     if (tempRoot) {
       await fs.rm(tempRoot, { recursive: true, force: true })
@@ -122,6 +126,15 @@ describe('scheduled task persistence', () => {
       name: '每日代码巡检',
       description: '检查项目风险',
       goal: '找出风险',
+      imageAttachments: [
+        {
+          id: 'image-1',
+          localPath: '/tmp/task-image.png',
+          fileName: 'task-image.png',
+          mimeType: 'image/png',
+          sizeBytes: 128
+        }
+      ],
       instructions: ['分析代码风险'],
       enabled: true,
       scheduleType: 'daily',
@@ -147,6 +160,7 @@ describe('scheduled task persistence', () => {
     expect(updated.name).toBe('每日项目巡检')
     expect(updated.enabled).toBe(false)
     expect(updated.instructions).toEqual(['分析代码风险', '给出修改建议'])
+    expect(updated.imageAttachments).toEqual(created.imageAttachments)
 
     deleteScheduledTask(created.id)
     expect(listScheduledTasks('project-1')).toEqual([])
@@ -159,6 +173,7 @@ describe('scheduled task persistence', () => {
       name: '到期任务',
       description: '',
       goal: '执行',
+      imageAttachments: [],
       instructions: [],
       enabled: true,
       scheduleType: 'once',
@@ -175,6 +190,7 @@ describe('scheduled task persistence', () => {
       name: '其他项目任务',
       description: '',
       goal: '执行',
+      imageAttachments: [],
       instructions: [],
       enabled: true,
       scheduleType: 'once',
@@ -196,6 +212,7 @@ describe('scheduled task persistence', () => {
       name: '运行任务',
       description: '',
       goal: '执行',
+      imageAttachments: [],
       instructions: [],
       enabled: true,
       scheduleType: 'daily',

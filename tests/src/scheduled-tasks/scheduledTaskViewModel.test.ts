@@ -15,6 +15,7 @@ describe('scheduled task view model', () => {
     expect(draft.allowCodeChanges).toBe(false)
     expect(draft.allowGitCommit).toBe(false)
     expect(draft.requireTestConfirmation).toBe(false)
+    expect(draft.imageAttachments).toEqual([])
     expect(draft.instructions).toContain('不要直接修改代码')
   })
 

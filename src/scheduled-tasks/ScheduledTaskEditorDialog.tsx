@@ -1,5 +1,10 @@
+import { ImageIcon } from '@primer/octicons-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { CreateScheduledTaskInput, ScheduledTaskScheduleType } from '../../electron/preload'
+import type {
+  CreateScheduledTaskInput,
+  ScheduledTaskImageAttachment,
+  ScheduledTaskScheduleType
+} from '../../electron/preload'
 import {
   DEFAULT_SCHEDULED_TASK_INSTRUCTIONS,
   parseScheduleIntervalMinutes
@@ -16,6 +21,13 @@ interface Props {
 }
 
 const SCHEDULED_TASK_GOAL_AUTOSAVE_DELAY_MS = 700
+const MAX_SCHEDULED_TASK_IMAGES = 8
+
+interface GoalInsertionPoint {
+  goal: string
+  start: number
+  end: number
+}
 
 const COMMON_INSTRUCTIONS = [
   '分析代码风险',
@@ -32,13 +44,82 @@ function normalizeIntervalMinutes(value: string): number {
   return parseScheduleIntervalMinutes(value)
 }
 
+function descriptionFingerprint(draft: CreateScheduledTaskInput): string {
+  return JSON.stringify({
+    goal: draft.goal,
+    imageAttachments: draft.imageAttachments
+  })
+}
+
+function imageMarkdown(attachment: ScheduledTaskImageAttachment): string {
+  const alt = attachment.fileName.replace(/\\/g, '\\\\').replace(/\]/g, '\\]')
+  return `![${alt}](<${attachment.localPath}>)`
+}
+
+function hasImageMarkdown(goal: string, attachment: ScheduledTaskImageAttachment): boolean {
+  return goal.includes(`(<${attachment.localPath}>)`)
+}
+
+export function insertScheduledTaskImageMarkdown(
+  goal: string,
+  attachments: ScheduledTaskImageAttachment[],
+  start = goal.length,
+  end = start
+): string {
+  if (attachments.length === 0) return goal
+  const safeStart = Math.max(0, Math.min(start, goal.length))
+  const safeEnd = Math.max(safeStart, Math.min(end, goal.length))
+  const before = goal.slice(0, safeStart)
+  const after = goal.slice(safeEnd)
+  const markdown = attachments.map(imageMarkdown).join('\n')
+  const prefix = before.length === 0 || before.endsWith('\n\n')
+    ? ''
+    : before.endsWith('\n')
+      ? '\n'
+      : '\n\n'
+  const suffix = after.length === 0 || after.startsWith('\n\n')
+    ? ''
+    : after.startsWith('\n')
+      ? '\n'
+      : '\n\n'
+  return `${before}${prefix}${markdown}${suffix}${after}`
+}
+
+export function appendMissingScheduledTaskImageMarkdown(
+  goal: string,
+  attachments: ScheduledTaskImageAttachment[]
+): string {
+  const missing = attachments.filter((attachment) => !hasImageMarkdown(goal, attachment))
+  return insertScheduledTaskImageMarkdown(goal, missing)
+}
+
+export function referencedScheduledTaskImages(
+  goal: string,
+  attachments: ScheduledTaskImageAttachment[]
+): ScheduledTaskImageAttachment[] {
+  return attachments.filter((attachment) => hasImageMarkdown(goal, attachment))
+}
+
 export default function ScheduledTaskEditorDialog(props: Props): JSX.Element {
   const { draft, mode, onAutoSave, onCancel, onChange, onSave } = props
   const goalTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const imageInputRef = useRef<HTMLInputElement | null>(null)
   const goalAutosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const lastAutosavedGoalRef = useRef(draft.goal)
+  const latestDraftRef = useRef(draft)
+  latestDraftRef.current = draft
+  const editorGoal = appendMissingScheduledTaskImageMarkdown(draft.goal, draft.imageAttachments)
+  const imageInsertionRef = useRef<GoalInsertionPoint>({
+    goal: editorGoal,
+    start: editorGoal.length,
+    end: editorGoal.length
+  })
+  const currentDescriptionFingerprint = descriptionFingerprint(draft)
+  const lastAutosavedDescriptionRef = useRef(currentDescriptionFingerprint)
   const [autosavingGoal, setAutosavingGoal] = useState(false)
   const [goalAutosaveError, setGoalAutosaveError] = useState<string | null>(null)
+  const [imageUploadError, setImageUploadError] = useState<string | null>(null)
+  const [uploadingImages, setUploadingImages] = useState(false)
+  const [draggingImage, setDraggingImage] = useState(false)
 
   const adjustGoalTextareaHeight = useCallback(() => {
     const textarea = goalTextareaRef.current
@@ -49,10 +130,15 @@ export default function ScheduledTaskEditorDialog(props: Props): JSX.Element {
 
   useEffect(() => {
     adjustGoalTextareaHeight()
-  }, [adjustGoalTextareaHeight, draft.goal])
+  }, [adjustGoalTextareaHeight, editorGoal])
+
+  useEffect(() => {
+    if (editorGoal !== draft.goal) onChange({ goal: editorGoal })
+  }, [draft.goal, editorGoal, onChange])
 
   const flushGoalAutosave = useCallback(async (): Promise<boolean> => {
-    if (mode !== 'edit' || !onAutoSave || draft.goal === lastAutosavedGoalRef.current) {
+    const fingerprint = descriptionFingerprint(draft)
+    if (mode !== 'edit' || !onAutoSave || fingerprint === lastAutosavedDescriptionRef.current) {
       return true
     }
     setAutosavingGoal(true)
@@ -60,7 +146,7 @@ export default function ScheduledTaskEditorDialog(props: Props): JSX.Element {
     try {
       const saved = await onAutoSave(draft)
       if (saved) {
-        lastAutosavedGoalRef.current = draft.goal
+        lastAutosavedDescriptionRef.current = fingerprint
         return true
       }
       setGoalAutosaveError('任务描述自动保存失败，请稍后重试。')
@@ -75,7 +161,13 @@ export default function ScheduledTaskEditorDialog(props: Props): JSX.Element {
   }, [draft, mode, onAutoSave])
 
   useEffect(() => {
-    if (mode !== 'edit' || !onAutoSave || draft.goal === lastAutosavedGoalRef.current) return
+    if (
+      mode !== 'edit' ||
+      !onAutoSave ||
+      currentDescriptionFingerprint === lastAutosavedDescriptionRef.current
+    ) {
+      return
+    }
     if (goalAutosaveTimerRef.current) {
       clearTimeout(goalAutosaveTimerRef.current)
     }
@@ -88,7 +180,89 @@ export default function ScheduledTaskEditorDialog(props: Props): JSX.Element {
         goalAutosaveTimerRef.current = null
       }
     }
-  }, [draft.goal, flushGoalAutosave, mode, onAutoSave])
+  }, [currentDescriptionFingerprint, flushGoalAutosave, mode, onAutoSave])
+
+  function rememberGoalSelection(textarea: HTMLTextAreaElement): GoalInsertionPoint {
+    const insertion = {
+      goal: textarea.value,
+      start: textarea.selectionStart,
+      end: textarea.selectionEnd
+    }
+    imageInsertionRef.current = insertion
+    return insertion
+  }
+
+  async function addImageFiles(
+    files: File[],
+    insertion: GoalInsertionPoint = imageInsertionRef.current
+  ): Promise<void> {
+    const imageFiles = files.filter((file) => file.type.startsWith('image/'))
+    if (imageFiles.length === 0) {
+      setImageUploadError('请选择 PNG、JPEG、GIF 或 WebP 图片。')
+      return
+    }
+
+    const remainingSlots = Math.max(0, MAX_SCHEDULED_TASK_IMAGES - draft.imageAttachments.length)
+    if (remainingSlots === 0) {
+      setImageUploadError(`每个任务最多添加 ${MAX_SCHEDULED_TASK_IMAGES} 张图片。`)
+      return
+    }
+
+    const selectedFiles = imageFiles.slice(0, remainingSlots)
+    setUploadingImages(true)
+    setImageUploadError(null)
+    const savedAttachments: ScheduledTaskImageAttachment[] = []
+    const errors: string[] = []
+    try {
+      for (const file of selectedFiles) {
+        const result = await window.api.scheduledTasks.saveImage({
+          projectId: draft.projectId,
+          fileName: file.name,
+          mimeType: file.type,
+          data: await file.arrayBuffer()
+        })
+        if (result.ok) {
+          savedAttachments.push(result.attachment)
+        } else {
+          errors.push(`${file.name}：${result.error}`)
+        }
+      }
+      if (savedAttachments.length > 0) {
+        const currentDraft = latestDraftRef.current
+        const currentGoal = appendMissingScheduledTaskImageMarkdown(
+          currentDraft.goal,
+          currentDraft.imageAttachments
+        )
+        const insertionStillMatches = insertion.goal === currentGoal
+        const start = insertionStillMatches ? insertion.start : currentGoal.length
+        const end = insertionStillMatches ? insertion.end : currentGoal.length
+        const nextGoal = insertScheduledTaskImageMarkdown(
+          currentGoal,
+          savedAttachments,
+          start,
+          end
+        )
+        onChange({
+          goal: nextGoal,
+          imageAttachments: [...currentDraft.imageAttachments, ...savedAttachments]
+        })
+        imageInsertionRef.current = {
+          goal: nextGoal,
+          start: nextGoal.length,
+          end: nextGoal.length
+        }
+      }
+      if (imageFiles.length > remainingSlots) {
+        errors.push(`每个任务最多添加 ${MAX_SCHEDULED_TASK_IMAGES} 张图片。`)
+      }
+      if (errors.length > 0) setImageUploadError(errors.join(' '))
+    } catch (error) {
+      setImageUploadError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setUploadingImages(false)
+      if (imageInputRef.current) imageInputRef.current.value = ''
+    }
+  }
 
   async function closeEditor(): Promise<void> {
     const saved = await flushGoalAutosave()
@@ -181,23 +355,94 @@ export default function ScheduledTaskEditorDialog(props: Props): JSX.Element {
                 placeholder="每日代码巡检"
               />
             </label>
-            <label>
+            <div className="scheduled-task-goal-field">
               <span>任务描述</span>
-              <textarea
-                ref={goalTextareaRef}
-                className="scheduled-task-goal-input"
-                value={draft.goal}
-                onInput={adjustGoalTextareaHeight}
-                onChange={(event) => onChange({ goal: event.target.value })}
-                placeholder="检查当前项目最近的代码变更，找出潜在风险。"
-              />
+              <div
+                className={`scheduled-task-goal-shell ${draggingImage ? 'dragging' : ''}`}
+                onDragOver={(event) => {
+                  event.preventDefault()
+                  setDraggingImage(true)
+                }}
+                onDragLeave={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                    setDraggingImage(false)
+                  }
+                }}
+                onDrop={(event) => {
+                  event.preventDefault()
+                  setDraggingImage(false)
+                  void addImageFiles(Array.from(event.dataTransfer.files), imageInsertionRef.current)
+                }}
+              >
+                <textarea
+                  ref={goalTextareaRef}
+                  className="scheduled-task-goal-input"
+                  value={editorGoal}
+                  onInput={adjustGoalTextareaHeight}
+                  onSelect={(event) => rememberGoalSelection(event.currentTarget)}
+                  onChange={(event) => {
+                    const goal = event.target.value
+                    imageInsertionRef.current = {
+                      goal,
+                      start: event.target.selectionStart,
+                      end: event.target.selectionEnd
+                    }
+                    onChange({
+                      goal,
+                      imageAttachments: referencedScheduledTaskImages(
+                        goal,
+                        draft.imageAttachments
+                      )
+                    })
+                  }}
+                  onPaste={(event) => {
+                    const files = Array.from(event.clipboardData.items)
+                      .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+                      .flatMap((item) => {
+                        const file = item.getAsFile()
+                        return file ? [file] : []
+                      })
+                    if (files.length === 0) return
+                    event.preventDefault()
+                    void addImageFiles(files, rememberGoalSelection(event.currentTarget))
+                  }}
+                  placeholder="检查当前项目最近的代码变更，找出潜在风险。"
+                />
+                <button
+                  type="button"
+                  className="scheduled-task-add-image"
+                  disabled={uploadingImages}
+                  title="添加图片"
+                  aria-label="添加图片"
+                  onMouseDown={() => {
+                    if (goalTextareaRef.current) rememberGoalSelection(goalTextareaRef.current)
+                  }}
+                  onClick={() => imageInputRef.current?.click()}
+                >
+                  <ImageIcon size={18} />
+                </button>
+                <input
+                  ref={imageInputRef}
+                  className="scheduled-task-image-input"
+                  type="file"
+                  accept="image/png,image/jpeg,image/gif,image/webp"
+                  multiple
+                  onChange={(event) => void addImageFiles(Array.from(event.target.files ?? []))}
+                />
+              </div>
+              {uploadingImages && (
+                <small className="scheduled-task-last-run">图片保存中...</small>
+              )}
+              {imageUploadError && (
+                <small className="scheduled-task-last-run">{imageUploadError}</small>
+              )}
               {mode === 'edit' && autosavingGoal && (
-                <small className="scheduled-task-last-run">任务描述自动保存中...</small>
+                <small className="scheduled-task-last-run">任务描述与图片自动保存中...</small>
               )}
               {goalAutosaveError && (
                 <small className="scheduled-task-last-run">{goalAutosaveError}</small>
               )}
-            </label>
+            </div>
 
             <section>
               <span className="scheduled-task-field-title">具体要求</span>
@@ -343,7 +588,11 @@ export default function ScheduledTaskEditorDialog(props: Props): JSX.Element {
           <button
             className="drawer-btn primary"
             onClick={onSave}
-            disabled={!draft.name.trim() || !draft.goal.trim()}
+            disabled={
+              uploadingImages ||
+              !draft.name.trim() ||
+              (!draft.goal.trim() && draft.imageAttachments.length === 0)
+            }
           >
             保存任务
           </button>

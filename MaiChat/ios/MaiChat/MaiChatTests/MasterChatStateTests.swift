@@ -784,4 +784,54 @@ final class MasterChatStateTests: XCTestCase {
     func testMessageListAutoScrollPolicyIgnoresEmptyMessages() {
         XCTAssertNil(MessageListAutoScrollPolicy.latestMessageID(from: []))
     }
+
+    func testMessageCopyPolicyProvidesSelectableTextAndCompleteMetadata() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let message = RemoteIMMessage(
+            fromUserID: "mac-quark-pc",
+            toUserID: "whq-iphone",
+            text: "构建已经完成。",
+            fileAttachment: RemoteIMFileAttachment(
+                localFilePath: "/tmp/report.md",
+                fileName: "report.md",
+                mimeType: "text/markdown",
+                sizeBytes: 2048
+            ),
+            direction: .incoming,
+            status: .received,
+            createdAt: Date(timeIntervalSince1970: 1_750_000_000)
+        )
+
+        XCTAssertEqual(RemoteIMMessageCopyPolicy.selectionText(for: message), "构建已经完成。")
+        let fullText = RemoteIMMessageCopyPolicy.fullText(for: message, calendar: calendar)
+        XCTAssertTrue(fullText.contains("发送人：mac-quark-pc"))
+        XCTAssertTrue(fullText.contains("接收人：whq-iphone"))
+        XCTAssertTrue(fullText.contains("方向：收到"))
+        XCTAssertTrue(fullText.contains("状态：已接收"))
+        XCTAssertTrue(fullText.contains("类型：文件"))
+        XCTAssertTrue(fullText.contains("构建已经完成。"))
+        XCTAssertTrue(fullText.contains("附件：report.md，text/markdown，2048 字节"))
+    }
+
+    func testMessageCopyPolicyDescribesAttachmentOnlyMessages() {
+        let message = RemoteIMMessage(
+            fromUserID: "whq-iphone",
+            toUserID: "mac-quark-pc",
+            text: "",
+            imageAttachment: RemoteIMImageAttachment(
+                localFilePath: "/tmp/screenshot.png",
+                width: 1170,
+                height: 2532
+            ),
+            direction: .outgoing,
+            status: .sent,
+            createdAt: Date(timeIntervalSince1970: 100)
+        )
+
+        XCTAssertEqual(
+            RemoteIMMessageCopyPolicy.selectionText(for: message),
+            "[图片消息] screenshot.png"
+        )
+    }
 }

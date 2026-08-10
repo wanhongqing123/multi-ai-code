@@ -24,7 +24,12 @@ import {
   setScheduledTaskEnabled,
   updateScheduledTask
 } from './taskStore.js'
-import type { CreateScheduledTaskInput, UpdateScheduledTaskInput } from './types.js'
+import { saveScheduledTaskImage } from './taskAssets.js'
+import type {
+  CreateScheduledTaskInput,
+  SaveScheduledTaskImageInput,
+  UpdateScheduledTaskInput
+} from './types.js'
 
 let removeSessionDataListener: (() => void) | null = null
 let removeSessionExitListener: (() => void) | null = null
@@ -60,6 +65,20 @@ export function registerScheduledTaskIpc(): void {
     'scheduled-tasks:create',
     async (_event, input: CreateScheduledTaskInput) => {
       return { ok: true as const, task: createScheduledTask(input) }
+    }
+  )
+
+  ipcMain.handle(
+    'scheduled-tasks:save-image',
+    async (_event, input: SaveScheduledTaskImageInput) => {
+      try {
+        return { ok: true as const, attachment: await saveScheduledTaskImage(input) }
+      } catch (error) {
+        return {
+          ok: false as const,
+          error: error instanceof Error ? error.message : String(error)
+        }
+      }
     }
   )
 

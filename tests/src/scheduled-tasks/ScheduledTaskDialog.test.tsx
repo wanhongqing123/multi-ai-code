@@ -18,6 +18,7 @@ function task(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
     name: 'Daily code review',
     description: 'Check project risks',
     goal: 'Check recent code changes in the current project.',
+    imageAttachments: [],
     instructions: ['Analyze code risk'],
     enabled: true,
     scheduleType: 'daily',

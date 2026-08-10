@@ -10,6 +10,7 @@ function task(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
     name: 'Daily code review',
     description: 'Check project risks',
     goal: 'Check recent code changes in the current project.',
+    imageAttachments: [],
     instructions: ['Analyze code risk', 'Give suggestions', 'Do not modify code'],
     enabled: true,
     scheduleType: 'daily',
@@ -118,5 +119,48 @@ describe('buildScheduledTaskPrompt', () => {
     expect(prompt).toContain('请在上一项任务完成后继续执行下面的任务')
     expect(prompt).not.toContain('Completion marker protocol')
     expect(prompt).not.toContain('MULTI_AI_CODE_SCHEDULED_TASK_DONE:')
+  })
+
+  it('includes persistent task images as part of the task description', () => {
+    const prompt = buildScheduledTaskPrompt(
+      task({
+        imageAttachments: [
+          {
+            id: 'image-1',
+            localPath: '/Users/test/multi-ai-code/accounts/test/projects/project-1/scheduled-task-images/image-1.png',
+            fileName: 'crash-screen.png',
+            mimeType: 'image/png',
+            sizeBytes: 4096
+          }
+        ]
+      }),
+      { targetRepo: '/Users/test/project-1' }
+    )
+
+    expect(prompt).toContain('任务描述中的 Markdown 图片指向本地文件')
+    expect(prompt).toContain('crash-screen.png')
+    expect(prompt).toContain('/scheduled-task-images/image-1.png')
+    expect(prompt.match(/\/scheduled-task-images\/image-1\.png/g)).toHaveLength(1)
+  })
+
+  it('supports an image-only task description', () => {
+    const prompt = buildScheduledTaskPrompt(
+      task({
+        goal: '',
+        imageAttachments: [
+          {
+            id: 'image-1',
+            localPath: '/tmp/image-1.png',
+            fileName: 'image-1.png',
+            mimeType: 'image/png',
+            sizeBytes: 1024
+          }
+        ]
+      }),
+      { targetRepo: '/Users/test/project-1' }
+    )
+
+    expect(prompt).toContain('请根据任务图片中的内容执行。')
+    expect(prompt).toContain('/tmp/image-1.png')
   })
 })

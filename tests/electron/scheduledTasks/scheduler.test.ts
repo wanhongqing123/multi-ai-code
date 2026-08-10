@@ -3,6 +3,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { closeDb, createProject, initDb } from '../../../electron/store/db.js'
+import { ensureRootDir, setActiveAccount } from '../../../electron/store/paths.js'
 import { createScheduledTask, listScheduledTasks } from '../../../electron/scheduledTasks/taskStore.js'
 import {
   getScheduledTaskQueueState,
@@ -17,6 +18,8 @@ beforeEach(async () => {
   tempRoot = await fs.mkdtemp(join(tmpdir(), 'scheduled-task-scheduler-'))
   process.env.MULTI_AI_ROOT = tempRoot
   await fs.mkdir(tempRoot, { recursive: true })
+  setActiveAccount('test-account')
+  await ensureRootDir()
   closeDb()
   initDb()
   createProject({
@@ -35,6 +38,7 @@ beforeEach(async () => {
 afterEach(async () => {
   resetScheduledTaskSchedulerForTests()
   closeDb()
+  setActiveAccount(null)
   delete process.env.MULTI_AI_ROOT
   if (tempRoot) {
     await fs.rm(tempRoot, { recursive: true, force: true })
@@ -49,6 +53,7 @@ function createDueTaskForProject(projectId: string, name: string): number {
       name,
       description: '',
       goal: 'execute task',
+      imageAttachments: [],
       instructions: ['summarize in Chinese'],
       enabled: true,
       scheduleType: 'once',

@@ -715,6 +715,7 @@ private struct MessageBubbleView: View {
     let playVoice: () -> Void
     let previewImage: () -> Void
     let previewFile: () -> Void
+    @State private var selectableCopyItem: SelectableMessageCopyItem?
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -742,6 +743,24 @@ private struct MessageBubbleView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: message.direction == .outgoing ? .trailing : .leading)
+        .contextMenu {
+            Button {
+                selectableCopyItem = SelectableMessageCopyItem(
+                    text: RemoteIMMessageCopyPolicy.selectionText(for: message)
+                )
+            } label: {
+                Label("选择复制", systemImage: "text.cursor")
+            }
+
+            Button {
+                UIPasteboard.general.string = RemoteIMMessageCopyPolicy.fullText(for: message)
+            } label: {
+                Label("复制全部信息", systemImage: "doc.on.doc")
+            }
+        }
+        .sheet(item: $selectableCopyItem) { item in
+            SelectableMessageCopyView(item: item)
+        }
     }
 
     private var messageMetadata: some View {
@@ -814,6 +833,40 @@ private struct MessageBubbleView: View {
 
     private var bubbleBorder: Color {
         message.direction == .outgoing ? Color(red: 0.764, green: 0.873, blue: 0.996) : RemoteIMStyle.yellowBorder
+    }
+}
+
+private struct SelectableMessageCopyItem: Identifiable {
+    let id = UUID()
+    let text: String
+}
+
+private struct SelectableMessageCopyView: View {
+    let item: SelectableMessageCopyItem
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                Text(item.text)
+                    .font(.system(size: 16))
+                    .foregroundStyle(RemoteIMStyle.textPrimary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(20)
+            }
+            .background(RemoteIMStyle.panelBackground)
+            .navigationTitle("选择复制")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
 }
 

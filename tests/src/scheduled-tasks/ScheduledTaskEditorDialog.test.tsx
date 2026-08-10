@@ -2,7 +2,10 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import ScheduledTaskEditorDialog from '../../../src/scheduled-tasks/ScheduledTaskEditorDialog'
+import ScheduledTaskEditorDialog, {
+  appendMissingScheduledTaskImageMarkdown,
+  referencedScheduledTaskImages
+} from '../../../src/scheduled-tasks/ScheduledTaskEditorDialog'
 import { createDefaultScheduledTaskDraft } from '../../../src/scheduled-tasks/scheduledTaskViewModel'
 
 function normalizeNewlines(value: string): string {
@@ -33,6 +36,8 @@ describe('ScheduledTaskEditorDialog', () => {
     expect(markup).toContain('触发方式')
     expect(markup).toContain('<option value="manual">手动执行</option>')
     expect(markup).toContain('任务描述')
+    expect(markup).toContain('aria-label="添加图片"')
+    expect(markup).toContain('accept="image/png,image/jpeg,image/gif,image/webp"')
     expect(markup).toContain('怎么干与限制')
     expect(markup).toContain('默认不允许自动改代码')
     expect(markup).toContain('允许直接修改代码')
@@ -70,7 +75,8 @@ describe('ScheduledTaskEditorDialog', () => {
     expect(markup).toContain('class="scheduled-task-goal-input"')
     expect(styles).toContain('width: min(1380px, calc(100vw - 40px));')
     expect(styles).toContain('height: min(900px, calc(100vh - 32px));')
-    expect(styles).toContain('.scheduled-task-goal-input {\n  min-height: 168px;')
+    expect(styles).toContain('.scheduled-task-goal-input {')
+    expect(styles).toContain('min-height: 168px;')
   })
 
   it('supports interval schedules with a minutes input', () => {
@@ -95,6 +101,53 @@ describe('ScheduledTaskEditorDialog', () => {
     expect(markup).toContain('type="number"')
     expect(markup).toContain('value="15"')
     expect(markup).not.toContain('type="time"')
+  })
+
+  it('allows a task description that contains only an image', () => {
+    const draft = createDefaultScheduledTaskDraft('project-1')
+    draft.name = '检查截图'
+    draft.imageAttachments = [
+      {
+        id: 'image-1',
+        localPath: '/tmp/image-1.png',
+        fileName: 'image-1.png',
+        mimeType: 'image/png',
+        sizeBytes: 1024
+      }
+    ]
+
+    const markup = renderToStaticMarkup(
+      <ScheduledTaskEditorDialog
+        mode="create"
+        draft={draft}
+        targetRepo="E:\\OpenSource\\multi-ai-code"
+        onChange={() => {}}
+        onCancel={() => {}}
+        onSave={() => {}}
+      />
+    )
+
+    expect(markup).toContain('image-1.png')
+    expect(markup).toContain('![image-1.png](&lt;/tmp/image-1.png&gt;)')
+    expect(markup).not.toContain('scheduled-task-image-chip')
+    expect(markup).toContain('>保存任务</button>')
+    expect(markup).not.toContain('disabled="" class="drawer-btn primary"')
+  })
+
+  it('keeps image attachments aligned with Markdown references in the description', () => {
+    const attachment = {
+      id: 'image-1',
+      localPath: '/tmp/image-1.png',
+      fileName: 'screen]shot.png',
+      mimeType: 'image/png',
+      sizeBytes: 1024
+    }
+    const goal = appendMissingScheduledTaskImageMarkdown('检查截图', [attachment])
+
+    expect(goal).toBe('检查截图\n\n![screen\\]shot.png](</tmp/image-1.png>)')
+    expect(referencedScheduledTaskImages(goal, [attachment])).toEqual([attachment])
+    expect(referencedScheduledTaskImages('路径：/tmp/image-1.png', [attachment])).toEqual([])
+    expect(referencedScheduledTaskImages('检查截图', [attachment])).toEqual([])
   })
 
   it('does not render the AICLI prompt preview in the editor', () => {

@@ -244,13 +244,17 @@ private struct TabButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 6) {
-                Label(title, systemImage: systemImage)
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 18, weight: .semibold))
+                    .frame(width: 28, height: 26)
                 if badgeCount > 0 {
-                    RemoteIMUnreadBadge(count: badgeCount)
+                    Circle()
+                        .fill(Color(red: 1.0, green: 0.235, blue: 0.188))
+                        .frame(width: 8, height: 8)
+                        .offset(x: 6, y: -2)
                 }
             }
-            .font(.system(size: 14, weight: .semibold))
             .frame(maxWidth: .infinity)
             .frame(height: 38)
         }
@@ -262,5 +266,13 @@ private struct TabButton: View {
                 : Color.clear,
             in: RoundedRectangle(cornerRadius: 10, style: .continuous)
         )
+        .accessibilityLabel(title)
+        .accessibilityValue(accessibilityValue)
+    }
+
+    private var accessibilityValue: String {
+        [selected ? "已选择" : nil, badgeCount > 0 ? "\(badgeCount) 条未读" : nil]
+            .compactMap { $0 }
+            .joined(separator: "，")
     }
 }

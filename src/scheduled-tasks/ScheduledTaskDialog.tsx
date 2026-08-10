@@ -1,3 +1,4 @@
+import { ImageIcon } from '@primer/octicons-react'
 import { useEffect, useMemo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -44,6 +45,7 @@ function taskToDraft(task: ScheduledTask): CreateScheduledTaskInput {
     name: task.name,
     description: task.description,
     goal: task.goal,
+    imageAttachments: task.imageAttachments,
     instructions: ensureDefaultInstructions(task.instructions),
     enabled: task.enabled,
     scheduleType: task.scheduleType,
@@ -86,7 +88,13 @@ export default function ScheduledTaskDialog(props: Props): JSX.Element {
     const needle = query.trim().toLowerCase()
     if (!needle) return tasks
     return tasks.filter((task) =>
-      [task.name, task.description, task.goal, task.instructions.join(' ')]
+      [
+        task.name,
+        task.description,
+        task.goal,
+        task.instructions.join(' '),
+        task.imageAttachments.map((attachment) => attachment.fileName).join(' ')
+      ]
         .join(' ')
         .toLowerCase()
         .includes(needle)
@@ -100,7 +108,10 @@ export default function ScheduledTaskDialog(props: Props): JSX.Element {
     if (!editor || editor.mode !== 'edit' || typeof window === 'undefined' || !window.api?.scheduledTasks) {
       return false
     }
-    const result = await window.api.scheduledTasks.update(editor.taskId, { goal: draft.goal })
+    const result = await window.api.scheduledTasks.update(editor.taskId, {
+      goal: draft.goal,
+      imageAttachments: draft.imageAttachments
+    })
     if (!result.ok || !result.task) return false
     const updatedTask = result.task
     setTasks((current) =>
@@ -300,6 +311,16 @@ export default function ScheduledTaskDialog(props: Props): JSX.Element {
                   </div>
                   <h5>任务内容</h5>
                   <ScheduledTaskMarkdown className="scheduled-task-goal" markdown={selectedTask.goal} />
+                  {selectedTask.imageAttachments.length > 0 && (
+                    <div className="scheduled-task-detail-images">
+                      {selectedTask.imageAttachments.map((attachment) => (
+                        <span key={attachment.id} title={attachment.localPath}>
+                          <ImageIcon size={15} />
+                          {attachment.fileName}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                   <h5>执行计划</h5>
                   <div className="scheduled-task-info-row">
                     <span>触发：{formatScheduleLabel(selectedTask.scheduleType, selectedTask.scheduleTime, selectedTask.scheduleDays)}</span>

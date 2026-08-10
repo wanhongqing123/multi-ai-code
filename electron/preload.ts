@@ -6,6 +6,9 @@ import type {
   ScheduledTaskRunStatus,
   ScheduledTaskRun,
   ScheduledTask,
+  ScheduledTaskImageAttachment,
+  SaveScheduledTaskImageInput,
+  SaveScheduledTaskImageResult,
   CreateScheduledTaskInput,
   UpdateScheduledTaskInput
 } from './scheduledTasks/types.js'
@@ -15,6 +18,9 @@ export type {
   ScheduledTaskRunStatus,
   ScheduledTaskRun,
   ScheduledTask,
+  ScheduledTaskImageAttachment,
+  SaveScheduledTaskImageInput,
+  SaveScheduledTaskImageResult,
   CreateScheduledTaskInput,
   UpdateScheduledTaskInput
 }
@@ -651,6 +657,10 @@ const api = {
     create: (input: CreateScheduledTaskInput) =>
       ipcRenderer.invoke('scheduled-tasks:create', input) as Promise<
         { ok: true; task: ScheduledTask } | { ok: false; error: string }
+      >,
+    saveImage: (input: SaveScheduledTaskImageInput) =>
+      ipcRenderer.invoke('scheduled-tasks:save-image', input) as Promise<
+        SaveScheduledTaskImageResult
       >,
     update: (id: number, patch: UpdateScheduledTaskInput) =>
       ipcRenderer.invoke('scheduled-tasks:update', { id, patch }) as Promise<

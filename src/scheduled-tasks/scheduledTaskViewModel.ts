@@ -16,6 +16,7 @@ export function createDefaultScheduledTaskDraft(projectId: string): CreateSchedu
     name: '',
     description: '',
     goal: '',
+    imageAttachments: [],
     instructions: [...DEFAULT_SCHEDULED_TASK_INSTRUCTIONS],
     enabled: true,
     scheduleType: 'daily',
@@ -32,6 +33,23 @@ export function buildScheduledTaskPreviewPrompt(
   draft: CreateScheduledTaskInput,
   targetRepo: string
 ): string {
+  const baseDescription =
+    draft.goal.trim() ||
+    (draft.imageAttachments.length > 0
+      ? '请根据任务图片中的内容执行。'
+      : '请按用户配置的任务描述执行。')
+  const missingImages = draft.imageAttachments.filter(
+    (attachment) => !baseDescription.includes(`(<${attachment.localPath}>)`)
+  )
+  const taskDescription = [
+    baseDescription,
+    ...missingImages.map((attachment) => {
+      const alt = attachment.fileName.replace(/\\/g, '\\\\').replace(/\]/g, '\\]')
+      return `![${alt}](<${attachment.localPath}>)`
+    })
+  ]
+    .filter(Boolean)
+    .join('\n\n')
   const requirementItems = draft.instructions.length
     ? [...draft.instructions]
     : ['按任务描述执行，并保持输出清晰。']
@@ -48,7 +66,6 @@ export function buildScheduledTaskPreviewPrompt(
     draft.allowGitCommit ? '允许按任务需要提交 git。' : '不要提交 git。',
     draft.requireTestConfirmation ? '如果需要运行测试，先说明要运行什么命令。' : null
   ].filter((line): line is string => Boolean(line))
-
   return [
     '你现在要执行一个由 Multi-AI Code 触发的任务。',
     '',
@@ -58,7 +75,10 @@ export function buildScheduledTaskPreviewPrompt(
     `如果无法在 ${draft.timeoutMinutes} 分钟内完成，请停止继续展开，输出当前进展、阻塞点和建议的下一步。`,
     '',
     '\u4efb\u52a1\u63cf\u8ff0\uff1a',
-    draft.goal || '请按用户配置的任务描述执行。',
+    ...(draft.imageAttachments.length > 0
+      ? ['任务描述中的 Markdown 图片指向本地文件，请先读取图片，再结合文字执行。']
+      : []),
+    taskDescription,
     '',
     '执行要求：',
     requirements,

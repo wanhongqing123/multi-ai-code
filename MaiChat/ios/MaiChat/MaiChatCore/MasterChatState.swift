@@ -92,6 +92,112 @@ public enum RemoteIMTimestampTextPolicy {
     }
 }
 
+public enum RemoteIMMessageCopyPolicy {
+    public static func selectionText(for message: RemoteIMMessage) -> String {
+        let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !text.isEmpty {
+            return text
+        }
+
+        if let attachment = message.imageAttachment {
+            return "[图片消息] \(fileName(from: attachment.localFilePath, fallback: "图片"))"
+        }
+        if let attachment = message.fileAttachment {
+            return "[文件消息] \(attachment.fileName)"
+        }
+        if let attachment = message.voiceAttachment {
+            return "[语音消息] \(attachment.durationSeconds) 秒"
+        }
+        return "[空消息]"
+    }
+
+    public static func fullText(
+        for message: RemoteIMMessage,
+        calendar: Calendar = .current
+    ) -> String {
+        var lines = [
+            "发送人：\(message.fromUserID)",
+            "接收人：\(message.toUserID)",
+            "时间：\(formattedDate(message.createdAt, calendar: calendar))",
+            "方向：\(directionText(message.direction))",
+            "状态：\(statusText(message.status))",
+            "类型：\(messageTypeText(message))",
+            "内容：",
+            selectionText(for: message)
+        ]
+
+        if let detail = attachmentDetail(message) {
+            lines.append("附件：\(detail)")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private static func formattedDate(_ date: Date, calendar: Calendar) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return formatter.string(from: date)
+    }
+
+    private static func directionText(_ direction: RemoteIMMessageDirection) -> String {
+        direction == .incoming ? "收到" : "发出"
+    }
+
+    private static func statusText(_ status: RemoteIMMessageStatus) -> String {
+        switch status {
+        case .pending:
+            return "发送中"
+        case .sent:
+            return "已发送"
+        case .received:
+            return "已接收"
+        case .failed:
+            return "发送失败"
+        }
+    }
+
+    private static func messageTypeText(_ message: RemoteIMMessage) -> String {
+        if message.imageAttachment != nil { return "图片" }
+        if message.fileAttachment != nil { return "文件" }
+        if message.voiceAttachment != nil { return "语音" }
+        return "文本"
+    }
+
+    private static func attachmentDetail(_ message: RemoteIMMessage) -> String? {
+        if let attachment = message.imageAttachment {
+            var details = [fileName(from: attachment.localFilePath, fallback: "图片")]
+            if let width = attachment.width, let height = attachment.height {
+                details.append("\(width) x \(height)")
+            }
+            if let sizeBytes = attachment.sizeBytes {
+                details.append("\(sizeBytes) 字节")
+            }
+            return details.joined(separator: "，")
+        }
+        if let attachment = message.fileAttachment {
+            var details = [attachment.fileName]
+            if !attachment.mimeType.isEmpty {
+                details.append(attachment.mimeType)
+            }
+            if let sizeBytes = attachment.sizeBytes {
+                details.append("\(sizeBytes) 字节")
+            }
+            return details.joined(separator: "，")
+        }
+        if let attachment = message.voiceAttachment {
+            return "\(attachment.durationSeconds) 秒"
+        }
+        return nil
+    }
+
+    private static func fileName(from path: String, fallback: String) -> String {
+        let fileName = URL(fileURLWithPath: path).lastPathComponent
+        return fileName.isEmpty ? fallback : fileName
+    }
+}
+
 public enum RemoteIMPresenceStatus: String, Codable, Equatable, Hashable, Sendable {
     case unknown
     case online

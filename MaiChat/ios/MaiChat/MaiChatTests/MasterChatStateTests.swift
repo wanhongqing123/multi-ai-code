@@ -407,6 +407,48 @@ final class MasterChatStateTests: XCTestCase {
 
         XCTAssertEqual(state.messages(with: "mac-quark-pc"), [oldest, middle, newest])
         XCTAssertEqual(state.latestMessage(with: "mac-quark-pc"), newest)
+        XCTAssertEqual(state.messageCount(with: "mac-quark-pc"), 3)
+    }
+
+    func testConversationIndexRemainsConsistentAfterDeliveryUpdatesAndRemoval() throws {
+        var state = MasterChatState(ownerUserID: "ios-master")
+        try state.upsertFriend(userID: "mac-quark-pc")
+        try state.upsertFriend(userID: "mac-apollo-u3player")
+
+        state.selectPeer(userID: "mac-quark-pc")
+        let pending = try state.queueOutgoingText(
+            "正在处理",
+            now: Date(timeIntervalSince1970: 300)
+        )
+        let earlier = state.receiveText(
+            "收到",
+            fromUserID: "mac-quark-pc",
+            remoteID: "remote-earlier",
+            now: Date(timeIntervalSince1970: 100)
+        )
+        state.selectPeer(userID: "mac-apollo-u3player")
+        let unrelated = try state.queueOutgoingText(
+            "另一个会话",
+            now: Date(timeIntervalSince1970: 200)
+        )
+
+        try state.updateMessageDelivery(
+            id: pending.id,
+            remoteID: "remote-pending",
+            createdAt: Date(timeIntervalSince1970: 50)
+        )
+
+        XCTAssertEqual(state.messages(with: "mac-quark-pc").map(\.id), [pending.id, earlier.id])
+        XCTAssertEqual(state.latestMessage(with: "mac-quark-pc")?.id, earlier.id)
+        XCTAssertEqual(state.messageCount(with: "mac-quark-pc"), 2)
+        XCTAssertEqual(state.messages(with: "mac-apollo-u3player"), [unrelated])
+
+        state.removeMessages(with: "mac-quark-pc")
+
+        XCTAssertEqual(state.messages(with: "mac-quark-pc"), [])
+        XCTAssertEqual(state.messageCount(with: "mac-quark-pc"), 0)
+        XCTAssertEqual(state.latestMessage(with: "mac-quark-pc"), nil)
+        XCTAssertEqual(state.messages(with: "mac-apollo-u3player"), [unrelated])
     }
 
     func testRemovesContactAndConversationHistory() throws {

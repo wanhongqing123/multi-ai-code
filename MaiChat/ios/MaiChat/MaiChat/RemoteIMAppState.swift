@@ -308,20 +308,26 @@ final class RemoteIMAppState: ObservableObject {
     }
 
     func selectContact(_ contact: RemoteIMContact) {
-        chatState.selectPeer(userID: contact.userID)
-        unreadCountByUserID[contact.userID] = nil
-        settingsStore.save(currentStoredSettings())
+        if chatState.selectedPeerID != contact.userID {
+            chatState.selectPeer(userID: contact.userID)
+        }
+        if unreadCountByUserID.removeValue(forKey: contact.userID) != nil {
+            settingsStore.save(currentStoredSettings())
+        }
     }
 
     func setConversationVisible(userID: String, visible: Bool) {
         let cleanUserID = userID.trimmingCharacters(in: .whitespacesAndNewlines)
+        var shouldPersistSettings = false
         if visible {
             visibleConversationUserID = cleanUserID
-            unreadCountByUserID[cleanUserID] = nil
+            shouldPersistSettings = unreadCountByUserID.removeValue(forKey: cleanUserID) != nil
         } else if visibleConversationUserID == cleanUserID {
             visibleConversationUserID = nil
         }
-        settingsStore.save(currentStoredSettings())
+        if shouldPersistSettings {
+            settingsStore.save(currentStoredSettings())
+        }
     }
 
     func unreadCount(for userID: String) -> Int {
@@ -335,7 +341,8 @@ final class RemoteIMAppState: ObservableObject {
     }
 
     func hasEarlierMessages(with userID: String) -> Bool {
-        visibleMessages(with: userID).count < chatState.messages(with: userID).count
+        let limit = visibleMessageLimitByUserID[userID] ?? messagePageSize
+        return chatState.messageCount(with: userID) > limit
     }
 
     func loadEarlierMessages(with userID: String) {

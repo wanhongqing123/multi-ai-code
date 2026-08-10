@@ -100,8 +100,25 @@ void RemoteIMApplication::clearMessagesWith(const QString& userId) {
 }
 
 void RemoteIMApplication::selectPeer(const QString& userId) {
-    state_.selectPeer(userId);
-    emit stateChanged();
+    const QString peerId = userId.trimmed();
+    if (peerId.isEmpty()) return;
+    const QString previousPeerId = state_.selectedPeerId();
+    const int previousUnreadCount = state_.unreadCount(peerId);
+    bool knownContact = false;
+    for (const RemoteIMContact& contact : state_.contacts()) {
+        if (contact.userId == peerId) {
+            knownContact = true;
+            break;
+        }
+    }
+
+    state_.selectPeer(peerId);
+    if (!knownContact) {
+        // selectPeer 会为未知账号补联系人，此时仍需刷新列表结构。
+        emit stateChanged();
+    } else if (previousPeerId != peerId || previousUnreadCount > 0) {
+        emit selectionChanged(peerId);
+    }
 }
 
 void RemoteIMApplication::sendText(const QString& text) {

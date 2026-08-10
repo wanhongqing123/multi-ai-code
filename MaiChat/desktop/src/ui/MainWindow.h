@@ -55,6 +55,7 @@ private:
     void applyStyle();
     void bindSignals();
     void refresh();
+    void refreshSelectedConversation();
     void refreshContacts();
     void refreshContactDirectory();
     void refreshSettings();

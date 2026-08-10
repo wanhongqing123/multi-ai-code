@@ -22,6 +22,7 @@ private slots:
     void removingContactDropsItsUnread();
     void liveAppendCountsUnreadAndDedupes();
     void removeMessagesWithKeepsContact();
+    void maintainsConversationIndexesAcrossMutations();
 };
 
 void ChatStateTest::queuesOutgoingText() {
@@ -360,6 +361,54 @@ void ChatStateTest::removeMessagesWithKeepsContact() {
     state.receiveText("peer-b", "fresh");
     QCOMPARE(state.messagesWith("peer-b").size(), 1);
     QCOMPARE(state.unreadCount("peer-b"), 1);
+}
+
+void ChatStateTest::maintainsConversationIndexesAcrossMutations() {
+    ChatState state("desktop-user");
+
+    RemoteIMMessage peerAOld;
+    peerAOld.id = QStringLiteral("peer-a-old");
+    peerAOld.fromUserId = QStringLiteral("peer-a");
+    peerAOld.toUserId = QStringLiteral("desktop-user");
+    peerAOld.createdAtMillis = 10;
+    peerAOld.text = QStringLiteral("old");
+
+    RemoteIMMessage peerB = peerAOld;
+    peerB.id = QStringLiteral("peer-b-only");
+    peerB.fromUserId = QStringLiteral("peer-b");
+    peerB.createdAtMillis = 20;
+
+    RemoteIMMessage peerANew = peerAOld;
+    peerANew.id = QStringLiteral("peer-a-new");
+    peerANew.createdAtMillis = 30;
+    peerANew.text = QStringLiteral("new");
+
+    state.appendMessageForRestore(peerAOld);
+    state.appendMessageForRestore(peerB);
+    state.appendMessageForRestore(peerANew);
+
+    QCOMPARE(state.messageCountWith(QStringLiteral("peer-a")), 2);
+    QCOMPARE(state.messageCountWith(QStringLiteral("peer-b")), 1);
+    RemoteIMMessage latest;
+    QVERIFY(state.latestMessageWith(QStringLiteral("peer-a"), &latest));
+    QCOMPARE(latest.id, QStringLiteral("peer-a-new"));
+
+    // 漫游重复项只更新时间；会话索引也必须同步重排。
+    RemoteIMMessage corrected = peerAOld;
+    corrected.createdAtMillis = 40;
+    state.appendMessageForRestore(corrected);
+    QVERIFY(state.latestMessageWith(QStringLiteral("peer-a"), &latest));
+    QCOMPARE(latest.id, QStringLiteral("peer-a-old"));
+
+    QVERIFY(state.adoptMessageId(QStringLiteral("peer-a-old"), QStringLiteral("peer-a-remote")));
+    QVERIFY(state.latestMessageWith(QStringLiteral("peer-a"), &latest));
+    QCOMPARE(latest.id, QStringLiteral("peer-a-remote"));
+
+    state.removeMessagesWith(QStringLiteral("peer-a"));
+    QCOMPARE(state.messageCountWith(QStringLiteral("peer-a")), 0);
+    QVERIFY(!state.latestMessageWith(QStringLiteral("peer-a"), &latest));
+    QCOMPARE(state.messageCountWith(QStringLiteral("peer-b")), 1);
+    QCOMPARE(state.messagesWith(QStringLiteral("peer-b")).first().id, QStringLiteral("peer-b-only"));
 }
 
 QTEST_MAIN(ChatStateTest)

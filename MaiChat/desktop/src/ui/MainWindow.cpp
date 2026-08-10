@@ -48,6 +48,7 @@
 #include <QSet>
 #include <QShortcut>
 #include <QShowEvent>
+#include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QSplitter>
 #include <QStyle>
@@ -957,9 +958,9 @@ QString deliveryStatusIndicator(RemoteIMMessageStatus status) {
     return QString();
 }
 
-QString latestMessageText(const QList<RemoteIMMessage>& messages) {
-    if (messages.isEmpty()) return QStringLiteral("暂无消息");
-    QString text = messages.last().text;
+QString latestMessageText(const RemoteIMMessage* message) {
+    if (!message) return QStringLiteral("暂无消息");
+    QString text = message->text;
     text.replace(QLatin1Char('\n'), QLatin1Char(' '));
     return text;
 }
@@ -987,9 +988,8 @@ QString conversationListTimeText(qint64 createdAtMillis) {
     return messageTime.toString(QStringLiteral("yyyy/M/d"));
 }
 
-QString latestMessageTime(const QList<RemoteIMMessage>& messages) {
-    if (messages.isEmpty()) return QString();
-    return conversationListTimeText(messages.last().createdAtMillis);
+QString latestMessageTime(const RemoteIMMessage* message) {
+    return message ? conversationListTimeText(message->createdAtMillis) : QString();
 }
 
 QString messageTimeText(const RemoteIMMessage& message) {
@@ -1765,6 +1765,9 @@ void MainWindow::bindSignals() {
             this, [this] { resetUiZoom(); });
 
     connect(&app_, &RemoteIMApplication::stateChanged, this, [this] { refresh(); });
+    connect(&app_, &RemoteIMApplication::selectionChanged, this, [this](const QString&) {
+        refreshSelectedConversation();
+    });
     connect(&app_, &RemoteIMApplication::connectionChanged, this, [this](bool connected) {
         statusLabel_->setText(connected ? QStringLiteral("● 已连接") : QStringLiteral("● 未连接"));
         refreshSettings();
@@ -1834,6 +1837,23 @@ void MainWindow::refresh() {
     updateRemoteDesktopButton();
 }
 
+void MainWindow::refreshSelectedConversation() {
+    const QString selectedPeer = app_.chatState().selectedPeerId();
+    {
+        QSignalBlocker blocker(conversationList_);
+        for (int row = 0; row < conversationList_->count(); ++row) {
+            QListWidgetItem* item = conversationList_->item(row);
+            if (item->data(UserIdRole).toString() != selectedPeer) continue;
+            if (conversationList_->currentItem() != item) conversationList_->setCurrentItem(item);
+            if (item->data(UnreadRole).toInt() != 0) item->setData(UnreadRole, 0);
+            break;
+        }
+    }
+    conversationList_->viewport()->update();
+    refreshMessages();
+    updateRemoteDesktopButton();
+}
+
 void MainWindow::refreshContacts() {
     const QString selectedPeer = app_.chatState().selectedPeerId();
     conversationList_->blockSignals(true);
@@ -1844,11 +1864,12 @@ void MainWindow::refreshContacts() {
         const RemoteIMContact& contact = contacts[index];
         auto* item = new QListWidgetItem();
         item->setSizeHint(QSize(0, UiZoom::s(76)));
-        const QList<RemoteIMMessage> messages = app_.chatState().messagesWith(contact.userId);
+        RemoteIMMessage latestMessage;
+        const bool hasLatestMessage = app_.chatState().latestMessageWith(contact.userId, &latestMessage);
         item->setData(UserIdRole, contact.userId);
         item->setData(DisplayNameRole, contact.displayName.isEmpty() ? contact.userId : contact.displayName);
-        item->setData(PreviewRole, latestMessageText(messages));
-        item->setData(TimeRole, latestMessageTime(messages));
+        item->setData(PreviewRole, latestMessageText(hasLatestMessage ? &latestMessage : nullptr));
+        item->setData(TimeRole, latestMessageTime(hasLatestMessage ? &latestMessage : nullptr));
         item->setData(UnreadRole, app_.chatState().unreadCount(contact.userId));
         item->setData(AvatarUrlRole, contact.avatarUrl);
         conversationList_->addItem(item);

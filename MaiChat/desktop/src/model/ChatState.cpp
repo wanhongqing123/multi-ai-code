@@ -45,11 +45,11 @@ void ChatState::removeContactAndMessages(const QString& userId) {
     contacts_.erase(std::remove_if(contacts_.begin(), contacts_.end(), [&cleanUserId](const RemoteIMContact& contact) {
         return contact.userId == cleanUserId;
     }), contacts_.end());
-    messages_.erase(std::remove_if(messages_.begin(), messages_.end(), [this, &cleanUserId](const RemoteIMMessage& message) {
+    messages_.erase(std::remove_if(messages_.begin(), messages_.end(), [&cleanUserId](const RemoteIMMessage& message) {
         const bool removing = message.fromUserId == cleanUserId || message.toUserId == cleanUserId;
-        if (removing) messageIds_.remove(message.id);
         return removing;
     }), messages_.end());
+    rebuildMessageIndexes();
     unreadCounts_.remove(cleanUserId);
     const bool selectedMissing = !selectedPeerId_.isEmpty()
         && std::none_of(contacts_.cbegin(), contacts_.cend(), [this](const RemoteIMContact& contact) {
@@ -65,11 +65,11 @@ void ChatState::removeContactAndMessages(const QString& userId) {
 void ChatState::removeMessagesWith(const QString& peerId) {
     const QString cleanPeerId = clean(peerId);
     if (cleanPeerId.isEmpty()) return;
-    messages_.erase(std::remove_if(messages_.begin(), messages_.end(), [this, &cleanPeerId](const RemoteIMMessage& message) {
+    messages_.erase(std::remove_if(messages_.begin(), messages_.end(), [&cleanPeerId](const RemoteIMMessage& message) {
         const bool removing = message.fromUserId == cleanPeerId || message.toUserId == cleanPeerId;
-        if (removing) messageIds_.remove(message.id);
         return removing;
     }), messages_.end());
+    rebuildMessageIndexes();
     unreadCounts_.remove(cleanPeerId);
 }
 
@@ -231,34 +231,47 @@ RemoteIMMessage ChatState::receiveVoice(const QString& fromUserId, const QString
 QList<RemoteIMMessage> ChatState::messagesWith(const QString& peerId) const {
     QList<RemoteIMMessage> result;
     const QString cleanPeerId = clean(peerId);
-    for (const RemoteIMMessage& message : messages_) {
-        if (message.fromUserId == cleanPeerId || message.toUserId == cleanPeerId) {
-            result.append(message);
-        }
+    const auto conversation = messageIdsByPeer_.constFind(cleanPeerId);
+    if (conversation == messageIdsByPeer_.cend()) return result;
+    result.reserve(conversation->size());
+    for (const QString& messageId : conversation.value()) {
+        const int index = messageIndexById_.value(messageId, -1);
+        if (index >= 0 && index < messages_.size()) result.append(messages_.at(index));
     }
-    std::stable_sort(result.begin(), result.end(), [](const RemoteIMMessage& lhs, const RemoteIMMessage& rhs) {
-        return lhs.createdAtMillis < rhs.createdAtMillis;
-    });
     return result;
 }
 
+int ChatState::messageCountWith(const QString& peerId) const {
+    const auto conversation = messageIdsByPeer_.constFind(clean(peerId));
+    return conversation == messageIdsByPeer_.cend() ? 0 : conversation->size();
+}
+
+bool ChatState::latestMessageWith(const QString& peerId, RemoteIMMessage* message) const {
+    const auto conversation = messageIdsByPeer_.constFind(clean(peerId));
+    if (conversation == messageIdsByPeer_.cend() || conversation->isEmpty()) return false;
+    const int index = messageIndexById_.value(conversation->last(), -1);
+    if (index < 0 || index >= messages_.size()) return false;
+    if (message) *message = messages_.at(index);
+    return true;
+}
+
 bool ChatState::updateMessageStatus(const QString& messageId, RemoteIMMessageStatus status) {
-    for (RemoteIMMessage& message : messages_) {
-        if (message.id == messageId) {
-            message.status = status;
-            return true;
-        }
-    }
-    return false;
+    const int index = messageIndexById_.value(messageId, -1);
+    if (index < 0 || index >= messages_.size()) return false;
+    messages_[index].status = status;
+    return true;
 }
 
 bool ChatState::updateMessageTime(const QString& messageId, qint64 createdAtMillis) {
-    for (RemoteIMMessage& message : messages_) {
-        if (message.id != messageId) continue;
-        if (createdAtMillis > 0) message.createdAtMillis = createdAtMillis;
-        return true;
-    }
-    return false;
+    const int index = messageIndexById_.value(messageId, -1);
+    if (index < 0 || index >= messages_.size()) return false;
+    RemoteIMMessage& message = messages_[index];
+    if (createdAtMillis <= 0 || createdAtMillis == message.createdAtMillis) return true;
+    const QString peerId = peerIdForMessage(message);
+    messageIdsByPeer_[peerId].removeAll(messageId);
+    message.createdAtMillis = createdAtMillis;
+    insertMessageIntoConversation(messageId);
+    return true;
 }
 
 bool ChatState::adoptMessageId(const QString& oldId, const QString& newId) {
@@ -268,18 +281,22 @@ bool ChatState::adoptMessageId(const QString& oldId, const QString& newId) {
         messages_.erase(std::remove_if(messages_.begin(), messages_.end(), [&oldId](const RemoteIMMessage& message) {
             return message.id == oldId;
         }), messages_.end());
-        messageIds_.remove(oldId);
+        rebuildMessageIndexes();
         return false;
     }
-    for (RemoteIMMessage& message : messages_) {
-        if (message.id == oldId) {
-            message.id = newId;
-            messageIds_.remove(oldId);
-            messageIds_.insert(newId);
-            return true;
-        }
-    }
-    return false;
+    const int index = messageIndexById_.value(oldId, -1);
+    if (index < 0 || index >= messages_.size()) return false;
+    RemoteIMMessage& message = messages_[index];
+    const QString peerId = peerIdForMessage(message);
+    message.id = newId;
+    messageIds_.remove(oldId);
+    messageIds_.insert(newId);
+    messageIndexById_.remove(oldId);
+    messageIndexById_.insert(newId, index);
+    QList<QString>& conversation = messageIdsByPeer_[peerId];
+    const int conversationIndex = conversation.indexOf(oldId);
+    if (conversationIndex >= 0) conversation[conversationIndex] = newId;
+    return true;
 }
 
 void ChatState::appendMessageForRestore(const RemoteIMMessage& message) {
@@ -288,11 +305,7 @@ void ChatState::appendMessageForRestore(const RemoteIMMessage& message) {
     if (messageIds_.contains(message.id)) {
         // SDK 漫游命中同一消息时，用规范化时间替换旧版保存的本机毫秒时间，
         // 使同一秒内的消息无需清库也能恢复真实先后顺序。
-        for (RemoteIMMessage& existing : messages_) {
-            if (existing.id != message.id) continue;
-            if (message.createdAtMillis > 0) existing.createdAtMillis = message.createdAtMillis;
-            break;
-        }
+        updateMessageTime(message.id, message.createdAtMillis);
         return;
     }
     RemoteIMMessage restored = message;
@@ -313,8 +326,53 @@ bool ChatState::appendLiveMessage(const RemoteIMMessage& message) {
 }
 
 void ChatState::appendTracked(const RemoteIMMessage& message) {
+    if (messageIds_.contains(message.id)) return;
     messageIds_.insert(message.id);
     messages_.append(message);
+    messageIndexById_.insert(message.id, messages_.size() - 1);
+    insertMessageIntoConversation(message.id);
+}
+
+QString ChatState::peerIdForMessage(const RemoteIMMessage& message) const {
+    if (message.fromUserId == ownerUserId_) return clean(message.toUserId);
+    if (message.toUserId == ownerUserId_) return clean(message.fromUserId);
+    return message.direction == RemoteIMMessageDirection::Outgoing
+        ? clean(message.toUserId)
+        : clean(message.fromUserId);
+}
+
+void ChatState::insertMessageIntoConversation(const QString& messageId) {
+    const int messageIndex = messageIndexById_.value(messageId, -1);
+    if (messageIndex < 0 || messageIndex >= messages_.size()) return;
+    const QString peerId = peerIdForMessage(messages_.at(messageIndex));
+    if (peerId.isEmpty()) return;
+    QList<QString>& conversation = messageIdsByPeer_[peerId];
+    const auto insertionPoint = std::lower_bound(
+        conversation.begin(), conversation.end(), messageIndex,
+        [this](const QString& existingId, int candidateIndex) {
+            const int existingIndex = messageIndexById_.value(existingId, -1);
+            if (existingIndex < 0 || existingIndex >= messages_.size()) return true;
+            const RemoteIMMessage& existing = messages_.at(existingIndex);
+            const RemoteIMMessage& candidate = messages_.at(candidateIndex);
+            if (existing.createdAtMillis != candidate.createdAtMillis) {
+                return existing.createdAtMillis < candidate.createdAtMillis;
+            }
+            // 与原来的 stable_sort 一致：同一毫秒按进入内存的先后顺序展示。
+            return existingIndex < candidateIndex;
+        });
+    conversation.insert(insertionPoint, messageId);
+}
+
+void ChatState::rebuildMessageIndexes() {
+    messageIds_.clear();
+    messageIdsByPeer_.clear();
+    messageIndexById_.clear();
+    for (int index = 0; index < messages_.size(); ++index) {
+        const QString& messageId = messages_.at(index).id;
+        messageIds_.insert(messageId);
+        messageIndexById_.insert(messageId, index);
+        insertMessageIntoConversation(messageId);
+    }
 }
 
 void ChatState::bumpUnreadIfBackground(const QString& peerId) {

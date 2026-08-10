@@ -45,6 +45,8 @@ public:
 
 signals:
     void stateChanged();
+    // 纯会话切换只更新当前会话区域，避免重建通讯录、设置页和整个会话列表。
+    void selectionChanged(const QString& peerId);
     void connectionChanged(bool connected);
     void errorMessage(const QString& message);
     // 远程桌面信令：借道 IM 文本通道，但不入库、不进消息列表、不计未读。

@@ -25,6 +25,7 @@ private slots:
     void loadsRecentPageOnStartAndPagesEarlier();
     void liveChannelCountsUnreadRoamingDoesNot();
     void clearMessagesKeepsContactAndPersists();
+    void selectingKnownPeerUsesLocalRefreshSignal();
 };
 
 void RemoteIMApplicationTest::sendsTextThroughClientAndMarksSent() {
@@ -336,6 +337,20 @@ void RemoteIMApplicationTest::clearMessagesKeepsContactAndPersists() {
     QVERIFY(restarted.chatState().messagesWith(QStringLiteral("phone-user")).isEmpty());
     QCOMPARE(restarted.chatState().contacts().size(), 1);
     QCOMPARE(restarted.chatState().contacts().first().userId, QStringLiteral("phone-user"));
+}
+
+void RemoteIMApplicationTest::selectingKnownPeerUsesLocalRefreshSignal() {
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::make_unique<FakeRemoteIMClient>());
+    app.addContact(QStringLiteral("peer-a"), QStringLiteral("A"));
+    app.addContact(QStringLiteral("peer-b"), QStringLiteral("B"));
+    QSignalSpy stateSpy(&app, &RemoteIMApplication::stateChanged);
+    QSignalSpy selectionSpy(&app, &RemoteIMApplication::selectionChanged);
+
+    app.selectPeer(QStringLiteral("peer-a"));
+
+    QCOMPARE(stateSpy.count(), 0);
+    QCOMPARE(selectionSpy.count(), 1);
+    QCOMPARE(selectionSpy.takeFirst().at(0).toString(), QStringLiteral("peer-a"));
 }
 
 QTEST_MAIN(RemoteIMApplicationTest)

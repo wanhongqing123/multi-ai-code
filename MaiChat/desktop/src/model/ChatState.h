@@ -34,6 +34,8 @@ public:
     RemoteIMMessage receiveVoice(const QString& fromUserId, const QString& localPath, int durationSeconds);
     RemoteIMMessage receiveFile(const QString& fromUserId, const QString& localPath, const QString& fileName, const QString& mimeType, qint64 sizeBytes);
     QList<RemoteIMMessage> messagesWith(const QString& peerId) const;
+    int messageCountWith(const QString& peerId) const;
+    bool latestMessageWith(const QString& peerId, RemoteIMMessage* message) const;
     bool updateMessageStatus(const QString& messageId, RemoteIMMessageStatus status);
     bool updateMessageTime(const QString& messageId, qint64 createdAtMillis);
     // 出站消息发送成功后，把本地临时 UUID 换成 SDK 确认的稳定 id（漫游重投可
@@ -48,6 +50,9 @@ private:
     QString requireSelectedPeer() const;
     // 统一的消息追加入口：登记 id（供恢复/漫游合并去重）后追加。
     void appendTracked(const RemoteIMMessage& message);
+    QString peerIdForMessage(const RemoteIMMessage& message) const;
+    void insertMessageIntoConversation(const QString& messageId);
+    void rebuildMessageIndexes();
     // 实时收到 peer 的消息时计未读：会话未处于选中态才 +1（选中即视为已读）。
     void bumpUnreadIfBackground(const QString& peerId);
     static QString clean(const QString& value);
@@ -59,5 +64,8 @@ private:
     QList<RemoteIMContact> contacts_;
     QList<RemoteIMMessage> messages_;
     QSet<QString> messageIds_;
+    // 全局消息仅保存一份；会话索引保存按时间排好的 id，切换好友时无需扫描、复制并排序全部消息。
+    QHash<QString, QList<QString>> messageIdsByPeer_;
+    QHash<QString, int> messageIndexById_;
     QHash<QString, int> unreadCounts_;
 };

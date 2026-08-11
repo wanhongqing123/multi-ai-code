@@ -34,6 +34,12 @@
 		D10000000000000000000002 /* RemoteDesktopView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000002 /* RemoteDesktopView.swift */; };
 		D10000000000000000000003 /* RemoteDesktopSignal.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000003 /* RemoteDesktopSignal.swift */; };
 		D10000000000000000000004 /* RemoteDesktopSignalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000004 /* RemoteDesktopSignalTests.swift */; };
+		D10000000000000000000005 /* RemoteInputPacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000005 /* RemoteInputPacket.swift */; };
+		D10000000000000000000006 /* RemoteInputPacketTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000006 /* RemoteInputPacketTests.swift */; };
+		D10000000000000000000007 /* DiagnosticLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000007 /* DiagnosticLog.swift */; };
+		D10000000000000000000008 /* AppDiagnosticLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000008 /* AppDiagnosticLog.swift */; };
+		D10000000000000000000009 /* DiagnosticLogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000009 /* DiagnosticLogTests.swift */; };
+		D10000000000000000000010 /* DiagnosticLogFileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000010 /* DiagnosticLogFileStore.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -102,6 +108,12 @@
 		D20000000000000000000002 /* RemoteDesktopView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDesktopView.swift; sourceTree = "<group>"; };
 		D20000000000000000000003 /* RemoteDesktopSignal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDesktopSignal.swift; sourceTree = "<group>"; };
 		D20000000000000000000004 /* RemoteDesktopSignalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDesktopSignalTests.swift; sourceTree = "<group>"; };
+		D20000000000000000000005 /* RemoteInputPacket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteInputPacket.swift; sourceTree = "<group>"; };
+		D20000000000000000000006 /* RemoteInputPacketTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteInputPacketTests.swift; sourceTree = "<group>"; };
+		D20000000000000000000007 /* DiagnosticLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticLog.swift; sourceTree = "<group>"; };
+		D20000000000000000000008 /* AppDiagnosticLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDiagnosticLog.swift; sourceTree = "<group>"; };
+		D20000000000000000000009 /* DiagnosticLogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticLogTests.swift; sourceTree = "<group>"; };
+		D20000000000000000000010 /* DiagnosticLogFileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticLogFileStore.swift; sourceTree = "<group>"; };
 		E2C61A24E7F2339FBD2E515A /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		E81FFD8CDF2D9DF951089236 /* MasterChatState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MasterChatState.swift; sourceTree = "<group>"; };
 		EA1537AB16102D8C1671314F /* TencentIMClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TencentIMClient.swift; sourceTree = "<group>"; };
@@ -133,8 +145,11 @@
 		198AE940DAE956B03430BB91 /* MaiChatCore */ = {
 			isa = PBXGroup;
 			children = (
+				D20000000000000000000007 /* DiagnosticLog.swift */,
+				D20000000000000000000010 /* DiagnosticLogFileStore.swift */,
 				E81FFD8CDF2D9DF951089236 /* MasterChatState.swift */,
 				D20000000000000000000003 /* RemoteDesktopSignal.swift */,
+				D20000000000000000000005 /* RemoteInputPacket.swift */,
 				CE473C8D07308E1BC74DD036 /* TencentUserSigGenerator.swift */,
 			);
 			path = MaiChatCore;
@@ -143,9 +158,11 @@
 		8AE8D818C54FF890A8601D23 /* MaiChatTests */ = {
 			isa = PBXGroup;
 			children = (
+				D20000000000000000000009 /* DiagnosticLogTests.swift */,
 				8C7B018F54C54F5AB1E12B8D /* LocalChatHistoryStoreTests.swift */,
 				3D0308A44026D2B47490836A /* MasterChatStateTests.swift */,
 				D20000000000000000000004 /* RemoteDesktopSignalTests.swift */,
+				D20000000000000000000006 /* RemoteInputPacketTests.swift */,
 				74BEA4EE61CA1B44BF6F8DFB /* UserSigGeneratorTests.swift */,
 			);
 			path = MaiChatTests;
@@ -165,6 +182,7 @@
 			isa = PBXGroup;
 			children = (
 				C9732A2E9202C30B920A151D /* Assets.xcassets */,
+				D20000000000000000000008 /* AppDiagnosticLog.swift */,
 				CF7E07C37B99162122D43342 /* ChatView.swift */,
 				6A21AEEDEF3E938F8C28D791 /* ContactsView.swift */,
 				DDDCE3C682C19DC98F9CCD03 /* Info.plist */,
@@ -375,8 +393,11 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D10000000000000000000007 /* DiagnosticLog.swift in Sources */,
+				D10000000000000000000010 /* DiagnosticLogFileStore.swift in Sources */,
 				A0AF7026F5F4B6A41E9011D5 /* MasterChatState.swift in Sources */,
 				D10000000000000000000003 /* RemoteDesktopSignal.swift in Sources */,
+				D10000000000000000000005 /* RemoteInputPacket.swift in Sources */,
 				A4EB9ABC7B8EEC783A597F3F /* TencentUserSigGenerator.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -385,10 +406,12 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D10000000000000000000009 /* DiagnosticLogTests.swift in Sources */,
 				1B6B11173C9F4E5E8F527901 /* LocalChatHistoryStoreTests.swift in Sources */,
 				3BD1F69ADAD14F34BE71B50C /* LocalChatHistoryStore.swift in Sources */,
 				33DF1CF7B27DB82ADDAF60BF /* MasterChatStateTests.swift in Sources */,
 				D10000000000000000000004 /* RemoteDesktopSignalTests.swift in Sources */,
+				D10000000000000000000006 /* RemoteInputPacketTests.swift in Sources */,
 				3054F8A8B9474264E18F6CA5 /* UserSigGeneratorTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -397,6 +420,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D10000000000000000000008 /* AppDiagnosticLog.swift in Sources */,
 				3F8918522571F81113E7CB66 /* ChatView.swift in Sources */,
 				01D0F56D2570EFCB2F9E1970 /* ContactsView.swift in Sources */,
 				2D096CCEDE5C3A5C2C2345A2 /* KeychainSecretStore.swift in Sources */,

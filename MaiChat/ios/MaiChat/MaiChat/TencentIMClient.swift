@@ -30,7 +30,7 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
         }
         V2TIMManager.sharedInstance().addSimpleMsgListener(listener: self)
         V2TIMManager.sharedInstance().addAdvancedMsgListener(listener: self)
-        try await withCheckedThrowingContinuation { continuation in
+        return try await withCheckedThrowingContinuation { continuation in
             V2TIMManager.sharedInstance().login(
                 userID: userID,
                 userSig: userSig,
@@ -66,6 +66,30 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
                 }
             )
         }
+    }
+
+    @objc nonisolated func onConnecting() {
+        Self.logSDK(level: .info, event: "sdk-connecting")
+    }
+
+    @objc nonisolated func onConnectSuccess() {
+        Self.logSDK(level: .info, event: "sdk-connected")
+    }
+
+    @objc nonisolated func onConnectFailed(_ code: Int32, err: String?) {
+        Self.logSDK(
+            level: .error,
+            event: "sdk-connect-failed",
+            fields: ["code": String(code)]
+        )
+    }
+
+    @objc nonisolated func onKickedOffline() {
+        Self.logSDK(level: .error, event: "sdk-kicked-offline")
+    }
+
+    @objc nonisolated func onUserSigExpired() {
+        Self.logSDK(level: .error, event: "sdk-user-sig-expired")
     }
 
     func refreshPresenceStatuses(userIDs: [String]) async throws -> [String: RemoteIMPresenceStatus] {
@@ -133,9 +157,16 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
 
     func sendText(to userID: String, text: String) async throws -> RemoteIMSendReceipt {
         guard let message = V2TIMManager.sharedInstance().createTextMessage(text: text) else {
+            Self.logMessageCreateFailure(kind: "text", peerUserID: userID)
             throw RemoteIMClientError.operationFailed(code: -1, description: "create text message failed")
         }
-        return try await send(message: message, to: userID, failureDescription: "send text failed")
+        return try await send(
+            message: message,
+            to: userID,
+            kind: "text",
+            metadata: ["content_bytes": String(text.lengthOfBytes(using: .utf8))],
+            failureDescription: "send text failed"
+        )
     }
 
     func sendVoice(to userID: String, recording: RemoteIMVoiceRecording) async throws -> RemoteIMSendReceipt {
@@ -143,16 +174,34 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
             audioFilePath: recording.fileURL.path,
             duration: Int32(recording.durationSeconds)
         ) else {
+            Self.logMessageCreateFailure(kind: "voice", peerUserID: userID)
             throw RemoteIMClientError.operationFailed(code: -1, description: "create voice message failed")
         }
-        return try await send(message: message, to: userID, failureDescription: "send voice failed")
+        return try await send(
+            message: message,
+            to: userID,
+            kind: "voice",
+            metadata: ["duration_seconds": String(recording.durationSeconds)],
+            failureDescription: "send voice failed"
+        )
     }
 
     func sendImage(to userID: String, image: RemoteIMImageFile) async throws -> RemoteIMSendReceipt {
         guard let message = V2TIMManager.sharedInstance().createImageMessage(imagePath: image.fileURL.path) else {
+            Self.logMessageCreateFailure(kind: "image", peerUserID: userID)
             throw RemoteIMClientError.operationFailed(code: -1, description: "create image message failed")
         }
-        return try await send(message: message, to: userID, failureDescription: "send image failed")
+        return try await send(
+            message: message,
+            to: userID,
+            kind: "image",
+            metadata: [
+                "width": image.width.map(String.init) ?? "unknown",
+                "height": image.height.map(String.init) ?? "unknown",
+                "bytes": image.sizeBytes.map(String.init) ?? "unknown",
+            ],
+            failureDescription: "send image failed"
+        )
     }
 
     func sendFile(to userID: String, file: RemoteIMFile) async throws -> RemoteIMSendReceipt {
@@ -160,9 +209,19 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
             filePath: file.fileURL.path,
             fileName: file.fileName
         ) else {
+            Self.logMessageCreateFailure(kind: "file", peerUserID: userID)
             throw RemoteIMClientError.operationFailed(code: -1, description: "create file message failed")
         }
-        return try await send(message: message, to: userID, failureDescription: "send file failed")
+        return try await send(
+            message: message,
+            to: userID,
+            kind: "file",
+            metadata: [
+                "bytes": file.sizeBytes.map(String.init) ?? "unknown",
+                "mime_type": file.mimeType,
+            ],
+            failureDescription: "send file failed"
+        )
     }
 
     func deleteContact(userID: String) async throws {
@@ -216,9 +275,20 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
     private func send(
         message: V2TIMMessage,
         to userID: String,
+        kind: String,
+        metadata: [String: String],
         failureDescription: String
     ) async throws -> RemoteIMSendReceipt {
-        try await withCheckedThrowingContinuation { continuation in
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        var startFields = metadata
+        startFields["operation"] = DiagnosticLogPrivacy.stableTag(
+            UUID().uuidString,
+            prefix: "op"
+        )
+        startFields["kind"] = kind
+        startFields["peer"] = Self.peerTag(userID)
+        Self.logSDK(level: .info, event: "message-send-start", fields: startFields)
+        return try await withCheckedThrowingContinuation { continuation in
             V2TIMManager.sharedInstance().sendMessage(
                 message: message,
                 receiver: userID,
@@ -228,9 +298,20 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
                 offlinePushInfo: nil,
                 progress: nil,
                 succ: {
-                    continuation.resume(returning: Self.receipt(for: message))
+                    let receipt = Self.receipt(for: message)
+                    var fields = startFields
+                    fields["result"] = "ok"
+                    fields["duration_ms"] = Self.elapsedMilliseconds(since: startedAt)
+                    fields["message"] = Self.messageTag(receipt.remoteID)
+                    Self.logSDK(level: .info, event: "message-send-finished", fields: fields)
+                    continuation.resume(returning: receipt)
                 },
                 fail: { code, desc in
+                    var fields = startFields
+                    fields["result"] = "failed"
+                    fields["code"] = String(code)
+                    fields["duration_ms"] = Self.elapsedMilliseconds(since: startedAt)
+                    Self.logSDK(level: .error, event: "message-send-finished", fields: fields)
                     continuation.resume(
                         throwing: RemoteIMClientError.operationFailed(
                             code: code,
@@ -263,6 +344,12 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
 
     nonisolated func onRecvC2CTextMessage(msgID: String, sender: V2TIMUserInfo, text: String?) {
         guard let userID = sender.userID, !userID.isEmpty, let text, !text.isEmpty else { return }
+        Self.logIncomingMessage(
+            kind: "text",
+            peerUserID: userID,
+            messageID: msgID,
+            metadata: ["content_bytes": String(text.lengthOfBytes(using: .utf8))]
+        )
         let fallbackDate = Date()
         V2TIMManager.sharedInstance().findMessages(
             messageIDList: [msgID],
@@ -315,11 +402,24 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
         let durationSeconds = max(1, Int(soundElem.duration))
         let remoteID = soundElem.uuid ?? msg.msgID
         let targetURL = Self.voiceCacheURL(remoteID: remoteID, messageID: msg.msgID)
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        let diagnosticFields = Self.messageDiagnosticFields(
+            kind: "voice",
+            peerUserID: fromUserID,
+            messageID: remoteID,
+            metadata: ["duration_seconds": String(durationSeconds)]
+        )
+        Self.logSDK(level: .info, event: "message-receive-callback", fields: diagnosticFields)
+        Self.logSDK(level: .info, event: "media-download-start", fields: diagnosticFields)
 
         soundElem.downloadSound(
             path: targetURL.path,
             progress: nil,
             succ: {
+                var fields = diagnosticFields
+                fields["result"] = "ok"
+                fields["duration_ms"] = Self.elapsedMilliseconds(since: startedAt)
+                Self.logSDK(level: .info, event: "media-download-finished", fields: fields)
                 Task { @MainActor [weak self, fromUserID, targetURL, durationSeconds, remoteID, createdAt] in
                     let event = IncomingRemoteIMVoice(
                         fromUserID: fromUserID,
@@ -331,7 +431,17 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
                     self?.onIncomingVoice?(event)
                 }
             },
-            fail: { _, _ in }
+            fail: { code, _ in
+                var fields = diagnosticFields
+                fields["result"] = "failed"
+                fields["code"] = String(code)
+                fields["duration_ms"] = Self.elapsedMilliseconds(since: startedAt)
+                Self.logSDK(
+                    level: .warning,
+                    event: "media-download-finished",
+                    fields: fields
+                )
+            }
         )
     }
 
@@ -346,11 +456,27 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
         let targetURL = Self.fileCacheURL(remoteID: remoteID, messageID: msg.msgID, fileName: fileName)
         let mimeType = Self.mimeType(for: fileName)
         let sizeBytes = fileElem.fileSize > 0 ? Int(fileElem.fileSize) : nil
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        let diagnosticFields = Self.messageDiagnosticFields(
+            kind: "file",
+            peerUserID: fromUserID,
+            messageID: remoteID,
+            metadata: [
+                "bytes": sizeBytes.map(String.init) ?? "unknown",
+                "mime_type": mimeType,
+            ]
+        )
+        Self.logSDK(level: .info, event: "message-receive-callback", fields: diagnosticFields)
+        Self.logSDK(level: .info, event: "media-download-start", fields: diagnosticFields)
 
         fileElem.downloadFile(
             path: targetURL.path,
             progress: nil,
             succ: {
+                var fields = diagnosticFields
+                fields["result"] = "ok"
+                fields["duration_ms"] = Self.elapsedMilliseconds(since: startedAt)
+                Self.logSDK(level: .info, event: "media-download-finished", fields: fields)
                 Task { @MainActor [weak self, fromUserID, targetURL, fileName, mimeType, remoteID, sizeBytes, createdAt] in
                     let event = IncomingRemoteIMFile(
                         fromUserID: fromUserID,
@@ -364,7 +490,17 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
                     self?.onIncomingFile?(event)
                 }
             },
-            fail: { _, _ in }
+            fail: { code, _ in
+                var fields = diagnosticFields
+                fields["result"] = "failed"
+                fields["code"] = String(code)
+                fields["duration_ms"] = Self.elapsedMilliseconds(since: startedAt)
+                Self.logSDK(
+                    level: .warning,
+                    event: "media-download-finished",
+                    fields: fields
+                )
+            }
         )
     }
 
@@ -380,10 +516,27 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
         let width = image.width > 0 ? Int(image.width) : nil
         let height = image.height > 0 ? Int(image.height) : nil
         let sizeBytes = image.size > 0 ? Int(image.size) : nil
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        let diagnosticFields = Self.messageDiagnosticFields(
+            kind: "image",
+            peerUserID: fromUserID,
+            messageID: remoteID,
+            metadata: [
+                "width": width.map(String.init) ?? "unknown",
+                "height": height.map(String.init) ?? "unknown",
+                "bytes": sizeBytes.map(String.init) ?? "unknown",
+            ]
+        )
+        Self.logSDK(level: .info, event: "message-receive-callback", fields: diagnosticFields)
+        Self.logSDK(level: .info, event: "media-download-start", fields: diagnosticFields)
         image.downloadImage(
             path: targetURL.path,
             progress: nil,
             succ: {
+                var fields = diagnosticFields
+                fields["result"] = "ok"
+                fields["duration_ms"] = Self.elapsedMilliseconds(since: startedAt)
+                Self.logSDK(level: .info, event: "media-download-finished", fields: fields)
                 Task { @MainActor [weak self, fromUserID, targetURL, remoteID, width, height, sizeBytes, createdAt] in
                     let event = IncomingRemoteIMImage(
                         fromUserID: fromUserID,
@@ -397,7 +550,17 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
                     self?.onIncomingImage?(event)
                 }
             },
-            fail: { _, _ in }
+            fail: { code, _ in
+                var fields = diagnosticFields
+                fields["result"] = "failed"
+                fields["code"] = String(code)
+                fields["duration_ms"] = Self.elapsedMilliseconds(since: startedAt)
+                Self.logSDK(
+                    level: .warning,
+                    event: "media-download-finished",
+                    fields: fields
+                )
+            }
         )
     }
 
@@ -506,6 +669,81 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
             deduped.append(userID)
         }
         return deduped
+    }
+
+    private nonisolated static func logMessageCreateFailure(
+        kind: String,
+        peerUserID: String
+    ) {
+        logSDK(
+            level: .error,
+            event: "message-create-failed",
+            fields: [
+                "kind": kind,
+                "peer": peerTag(peerUserID),
+            ]
+        )
+    }
+
+    private nonisolated static func logIncomingMessage(
+        kind: String,
+        peerUserID: String,
+        messageID: String?,
+        metadata: [String: String] = [:]
+    ) {
+        logSDK(
+            level: .info,
+            event: "message-receive-callback",
+            fields: messageDiagnosticFields(
+                kind: kind,
+                peerUserID: peerUserID,
+                messageID: messageID,
+                metadata: metadata
+            )
+        )
+    }
+
+    private nonisolated static func messageDiagnosticFields(
+        kind: String,
+        peerUserID: String,
+        messageID: String?,
+        metadata: [String: String] = [:]
+    ) -> [String: String] {
+        var fields = metadata
+        fields["kind"] = kind
+        fields["peer"] = peerTag(peerUserID)
+        fields["message"] = messageTag(messageID)
+        return fields
+    }
+
+    private nonisolated static func peerTag(_ userID: String) -> String {
+        guard !userID.isEmpty else { return "none" }
+        return DiagnosticLogPrivacy.stableTag(userID, prefix: "u")
+    }
+
+    private nonisolated static func messageTag(_ messageID: String?) -> String {
+        guard let messageID, !messageID.isEmpty else { return "none" }
+        return DiagnosticLogPrivacy.stableTag(messageID, prefix: "m")
+    }
+
+    private nonisolated static func elapsedMilliseconds(since startedAt: TimeInterval) -> String {
+        let elapsed = max(ProcessInfo.processInfo.systemUptime - startedAt, 0)
+        return String(Int((elapsed * 1_000).rounded()))
+    }
+
+    private nonisolated static func logSDK(
+        level: DiagnosticLogLevel,
+        event: String,
+        fields: [String: String] = [:]
+    ) {
+        Task { @MainActor in
+            AppDiagnosticLog.shared.record(
+                level: level,
+                category: "remote-im",
+                event: event,
+                fields: fields
+            )
+        }
     }
 
     private nonisolated static func statusMap(from userStatusList: [V2TIMUserStatus]) -> [String: RemoteIMPresenceStatus] {

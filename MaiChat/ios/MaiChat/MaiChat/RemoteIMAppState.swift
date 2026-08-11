@@ -8,6 +8,15 @@ final class RemoteIMAppState: ObservableObject {
         case connecting = "连接中"
         case connected = "已连接"
         case failed = "连接失败"
+
+        var diagnosticName: String {
+            switch self {
+            case .disconnected: return "disconnected"
+            case .connecting: return "connecting"
+            case .connected: return "connected"
+            case .failed: return "failed"
+            }
+        }
     }
 
     @Published var sdkAppIDText = ""
@@ -176,6 +185,15 @@ final class RemoteIMAppState: ObservableObject {
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
+            let errorValue = error as NSError
+            logIM(
+                level: .error,
+                event: "settings-save-failed",
+                fields: [
+                    "error_domain": errorValue.domain,
+                    "error_code": String(errorValue.code),
+                ]
+            )
         }
     }
 
@@ -195,14 +213,26 @@ final class RemoteIMAppState: ObservableObject {
         guard let sdkAppID = Int(sdkAppIDText.trimmingCharacters(in: .whitespacesAndNewlines)),
               sdkAppID > 0
         else {
+            logIM(
+                level: .warning,
+                event: "connect-blocked",
+                fields: ["reason": "invalid-sdk-app-id"]
+            )
             errorMessage = "IM 应用配置无效"
             return
         }
         let cleanMasterUserID = masterUserID.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanSecretKey = secretKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let startedAt = ProcessInfo.processInfo.systemUptime
 
         do {
             connectionState = .connecting
+            logIM(
+                level: .info,
+                event: "connect-start",
+                fields: ["sdk_app_id": String(sdkAppID)],
+                userID: cleanMasterUserID
+            )
             let userSig = try TencentUserSigGenerator.generate(
                 sdkAppID: sdkAppID,
                 userID: cleanMasterUserID,
@@ -214,11 +244,32 @@ final class RemoteIMAppState: ObservableObject {
                 userSig: userSig
             )
             connectionState = .connected
+            logIM(
+                level: .info,
+                event: "connect-finished",
+                fields: [
+                    "result": "ok",
+                    "duration_ms": elapsedMilliseconds(since: startedAt),
+                ],
+                userID: cleanMasterUserID
+            )
             await refreshProfilesForCurrentUsers()
             await refreshPresenceForCurrentContacts()
             errorMessage = nil
         } catch {
             connectionState = .failed
+            let errorValue = error as NSError
+            logIM(
+                level: .error,
+                event: "connect-finished",
+                fields: [
+                    "result": "failed",
+                    "error_domain": errorValue.domain,
+                    "error_code": String(errorValue.code),
+                    "duration_ms": elapsedMilliseconds(since: startedAt),
+                ],
+                userID: cleanMasterUserID
+            )
             errorMessage = error.localizedDescription
         }
     }
@@ -230,10 +281,18 @@ final class RemoteIMAppState: ObservableObject {
     }
 
     func disconnect() async {
-        await remoteDesktop.stop()
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        logIM(level: .info, event: "disconnect-start", userID: masterUserID)
+        await remoteDesktop.stop(cause: "im-disconnect")
         await client.disconnect()
         presenceStatusByUserID = [:]
         connectionState = .disconnected
+        logIM(
+            level: .info,
+            event: "disconnect-finished",
+            fields: ["duration_ms": elapsedMilliseconds(since: startedAt)],
+            userID: masterUserID
+        )
     }
 
     func addContact() {
@@ -249,6 +308,15 @@ final class RemoteIMAppState: ObservableObject {
             }
         } catch {
             errorMessage = error.localizedDescription
+            let errorValue = error as NSError
+            logIM(
+                level: .error,
+                event: "contact-add-failed",
+                fields: [
+                    "error_domain": errorValue.domain,
+                    "error_code": String(errorValue.code),
+                ]
+            )
         }
     }
 
@@ -468,10 +536,22 @@ final class RemoteIMAppState: ObservableObject {
 
     func requestRemoteDesktopView(of contact: RemoteIMContact) async {
         guard connectionState == .connected else {
+            logIM(
+                level: .warning,
+                event: "remote-desktop-request-blocked",
+                fields: ["reason": "im-not-connected"],
+                userID: contact.userID
+            )
             errorMessage = "请先连接 IM"
             return
         }
         guard let sdkAppID = currentSDKAppID(), sdkAppID > 0 else {
+            logIM(
+                level: .warning,
+                event: "remote-desktop-request-blocked",
+                fields: ["reason": "invalid-sdk-app-id"],
+                userID: contact.userID
+            )
             errorMessage = "IM 应用配置无效"
             return
         }
@@ -494,8 +574,8 @@ final class RemoteIMAppState: ObservableObject {
         }
     }
 
-    func stopRemoteDesktopView() async {
-        await remoteDesktop.stop()
+    func stopRemoteDesktopView(cause: String = "user") async {
+        await remoteDesktop.stop(cause: cause)
     }
 
     private func receive(_ event: IncomingRemoteIMText) {
@@ -509,7 +589,15 @@ final class RemoteIMAppState: ObservableObject {
             remoteID: event.remoteID,
             now: event.createdAt
         )
-        updateUnreadAfterReceiving(from: event.fromUserID, wasInserted: chatState.messages.count > previousCount)
+        let wasInserted = chatState.messages.count > previousCount
+        logMessageIngested(
+            kind: "text",
+            userID: event.fromUserID,
+            remoteID: event.remoteID,
+            wasInserted: wasInserted,
+            fields: ["content_bytes": String(event.text.lengthOfBytes(using: .utf8))]
+        )
+        updateUnreadAfterReceiving(from: event.fromUserID, wasInserted: wasInserted)
         refreshProfileIfNeeded(userID: event.fromUserID)
         persistCurrentHistory()
         settingsStore.save(currentStoredSettings())
@@ -524,7 +612,15 @@ final class RemoteIMAppState: ObservableObject {
             remoteID: event.remoteID,
             now: event.createdAt
         )
-        updateUnreadAfterReceiving(from: event.fromUserID, wasInserted: chatState.messages.count > previousCount)
+        let wasInserted = chatState.messages.count > previousCount
+        logMessageIngested(
+            kind: "voice",
+            userID: event.fromUserID,
+            remoteID: event.remoteID,
+            wasInserted: wasInserted,
+            fields: ["duration_seconds": String(event.durationSeconds)]
+        )
+        updateUnreadAfterReceiving(from: event.fromUserID, wasInserted: wasInserted)
         refreshProfileIfNeeded(userID: event.fromUserID)
         persistCurrentHistory()
         settingsStore.save(currentStoredSettings())
@@ -541,7 +637,19 @@ final class RemoteIMAppState: ObservableObject {
             sizeBytes: event.sizeBytes,
             now: event.createdAt
         )
-        updateUnreadAfterReceiving(from: event.fromUserID, wasInserted: chatState.messages.count > previousCount)
+        let wasInserted = chatState.messages.count > previousCount
+        logMessageIngested(
+            kind: "image",
+            userID: event.fromUserID,
+            remoteID: event.remoteID,
+            wasInserted: wasInserted,
+            fields: [
+                "width": event.width.map(String.init) ?? "unknown",
+                "height": event.height.map(String.init) ?? "unknown",
+                "bytes": event.sizeBytes.map(String.init) ?? "unknown",
+            ]
+        )
+        updateUnreadAfterReceiving(from: event.fromUserID, wasInserted: wasInserted)
         refreshProfileIfNeeded(userID: event.fromUserID)
         persistCurrentHistory()
         settingsStore.save(currentStoredSettings())
@@ -558,7 +666,18 @@ final class RemoteIMAppState: ObservableObject {
             sizeBytes: event.sizeBytes,
             now: event.createdAt
         )
-        updateUnreadAfterReceiving(from: event.fromUserID, wasInserted: chatState.messages.count > previousCount)
+        let wasInserted = chatState.messages.count > previousCount
+        logMessageIngested(
+            kind: "file",
+            userID: event.fromUserID,
+            remoteID: event.remoteID,
+            wasInserted: wasInserted,
+            fields: [
+                "bytes": event.sizeBytes.map(String.init) ?? "unknown",
+                "mime_type": event.mimeType,
+            ]
+        )
+        updateUnreadAfterReceiving(from: event.fromUserID, wasInserted: wasInserted)
         refreshProfileIfNeeded(userID: event.fromUserID)
         persistCurrentHistory()
         settingsStore.save(currentStoredSettings())
@@ -614,6 +733,16 @@ final class RemoteIMAppState: ObservableObject {
             )
         } catch {
             errorMessage = error.localizedDescription
+            let errorValue = error as NSError
+            logIM(
+                level: .error,
+                event: "history-save-failed",
+                fields: [
+                    "error_domain": errorValue.domain,
+                    "error_code": String(errorValue.code),
+                    "message_count": String(chatState.messages.count),
+                ]
+            )
         }
     }
 
@@ -626,25 +755,60 @@ final class RemoteIMAppState: ObservableObject {
         }
 
         do {
+            let startedAt = ProcessInfo.processInfo.systemUptime
             let updates = try await client.refreshPresenceStatuses(userIDs: contactUserIDs)
             applyPresenceStatusUpdates(updates)
+            logIM(
+                level: .info,
+                event: "presence-refresh",
+                fields: [
+                    "result": "ok",
+                    "requested": String(contactUserIDs.count),
+                    "received": String(updates.count),
+                    "duration_ms": elapsedMilliseconds(since: startedAt),
+                ]
+            )
         } catch {
             presenceStatusByUserID = RemoteIMPresenceStatusPolicy.merged(
                 current: presenceStatusByUserID,
                 updates: [:],
                 contactUserIDs: contactUserIDs
             )
-            #if DEBUG
-            print("RemoteIM presence refresh failed: \(error.localizedDescription)")
-            #endif
+            let errorValue = error as NSError
+            logIM(
+                level: .warning,
+                event: "presence-refresh",
+                fields: [
+                    "result": "failed",
+                    "requested": String(contactUserIDs.count),
+                    "error_domain": errorValue.domain,
+                    "error_code": String(errorValue.code),
+                ]
+            )
         }
 
         do {
             try await client.subscribePresenceStatuses(userIDs: contactUserIDs)
+            logIM(
+                level: .info,
+                event: "presence-subscribe",
+                fields: [
+                    "result": "ok",
+                    "requested": String(contactUserIDs.count),
+                ]
+            )
         } catch {
-            #if DEBUG
-            print("RemoteIM presence subscribe failed: \(error.localizedDescription)")
-            #endif
+            let errorValue = error as NSError
+            logIM(
+                level: .warning,
+                event: "presence-subscribe",
+                fields: [
+                    "result": "failed",
+                    "requested": String(contactUserIDs.count),
+                    "error_domain": errorValue.domain,
+                    "error_code": String(errorValue.code),
+                ]
+            )
         }
     }
 
@@ -656,6 +820,7 @@ final class RemoteIMAppState: ObservableObject {
 
     private func refreshProfiles(userIDs: [String]) async {
         guard connectionState == .connected else { return }
+        let startedAt = ProcessInfo.processInfo.systemUptime
         do {
             let profiles = try await client.refreshUserProfiles(userIDs: userIDs)
             for profile in profiles {
@@ -670,10 +835,29 @@ final class RemoteIMAppState: ObservableObject {
                 }
             }
             settingsStore.save(currentStoredSettings())
+            logIM(
+                level: .info,
+                event: "profile-refresh",
+                fields: [
+                    "result": "ok",
+                    "requested": String(userIDs.count),
+                    "received": String(profiles.count),
+                    "duration_ms": elapsedMilliseconds(since: startedAt),
+                ]
+            )
         } catch {
-            #if DEBUG
-            print("RemoteIM profile refresh failed: \(error.localizedDescription)")
-            #endif
+            let errorValue = error as NSError
+            logIM(
+                level: .warning,
+                event: "profile-refresh",
+                fields: [
+                    "result": "failed",
+                    "requested": String(userIDs.count),
+                    "error_domain": errorValue.domain,
+                    "error_code": String(errorValue.code),
+                    "duration_ms": elapsedMilliseconds(since: startedAt),
+                ]
+            )
         }
     }
 
@@ -689,6 +873,54 @@ final class RemoteIMAppState: ObservableObject {
             updates: updates,
             contactUserIDs: chatState.contacts.map(\.userID)
         )
+    }
+
+    private func logMessageIngested(
+        kind: String,
+        userID: String,
+        remoteID: String?,
+        wasInserted: Bool,
+        fields: [String: String] = [:]
+    ) {
+        var values = fields
+        values["kind"] = kind
+        values["inserted"] = wasInserted ? "true" : "false"
+        if let remoteID, !remoteID.isEmpty {
+            values["message"] = DiagnosticLogPrivacy.stableTag(remoteID, prefix: "m")
+        } else {
+            values["message"] = "none"
+        }
+        logIM(
+            level: .info,
+            event: "message-ingested",
+            fields: values,
+            userID: userID
+        )
+    }
+
+    private func logIM(
+        level: DiagnosticLogLevel,
+        event: String,
+        fields: [String: String] = [:],
+        userID: String? = nil
+    ) {
+        var values = fields
+        values["connection_state"] = connectionState.diagnosticName
+        let resolvedUserID = userID ?? masterUserID
+        if !resolvedUserID.isEmpty {
+            values["user"] = DiagnosticLogPrivacy.stableTag(resolvedUserID, prefix: "u")
+        }
+        AppDiagnosticLog.shared.record(
+            level: level,
+            category: "remote-im",
+            event: event,
+            fields: values
+        )
+    }
+
+    private func elapsedMilliseconds(since startedAt: TimeInterval) -> String {
+        let elapsed = max(ProcessInfo.processInfo.systemUptime - startedAt, 0)
+        return String(Int((elapsed * 1_000).rounded()))
     }
 
     private func currentSDKAppID() -> Int? {

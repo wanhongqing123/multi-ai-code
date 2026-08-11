@@ -14,32 +14,58 @@ struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var selectedTab: AppTab = .messages
     @State private var activeChatContact: RemoteIMContact?
+    @State private var isShowingAddContact = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            if appState.shouldShowInitialLogin {
-                InitialLoginView()
+        ZStack {
+            VStack(spacing: 0) {
+                if appState.shouldShowInitialLogin {
+                    InitialLoginView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    Group {
+                        switch selectedTab {
+                        case .messages:
+                            ChatView(
+                                activeContact: $activeChatContact,
+                                showRemoteDesktop: {
+                                    activeChatContact = nil
+                                    selectedTab = .remote
+                                }
+                            )
+                        case .contacts:
+                            ContactsView(
+                                selectedTab: $selectedTab,
+                                activeContact: $activeChatContact,
+                                showAddContact: {
+                                    appState.newContactUserID = ""
+                                    isShowingAddContact = true
+                                }
+                            )
+                        case .remote:
+                            RemoteDesktopView()
+                        case .me:
+                            SettingsView()
+                        }
+                    }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                Group {
-                    switch selectedTab {
-                    case .messages:
-                        ChatView(activeContact: $activeChatContact)
-                    case .contacts:
-                        ContactsView(selectedTab: $selectedTab, activeContact: $activeChatContact)
-                    case .remote:
-                        RemoteDesktopView()
-                    case .me:
-                        SettingsView()
+
+                    if activeChatContact == nil {
+                        RootTabBar(
+                            selectedTab: $selectedTab,
+                            remoteDesktop: appState.remoteDesktop
+                        )
                     }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
 
-                if activeChatContact == nil {
-                    CompactTabBar(selectedTab: $selectedTab)
-                }
+            if isShowingAddContact, !appState.shouldShowInitialLogin {
+                AddContactDialog(isPresented: $isShowingAddContact)
+                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                    .zIndex(10)
             }
         }
+        .animation(.easeOut(duration: 0.18), value: isShowingAddContact)
         .background(Color(red: 0.966, green: 0.976, blue: 0.988).ignoresSafeArea())
         .task {
             if !appState.shouldShowInitialLogin {
@@ -48,7 +74,10 @@ struct RootView: View {
         }
         .onChange(of: scenePhase) { phase in
             guard phase == .background else { return }
-            Task { await appState.stopRemoteDesktopView() }
+            Task {
+                await appState.stopRemoteDesktopView(cause: "scene-background")
+                await AppDiagnosticLog.shared.flush()
+            }
         }
         .overlay(alignment: .top) {
             if !appState.shouldShowInitialLogin, let errorMessage = appState.errorMessage {
@@ -61,6 +90,17 @@ struct RootView: View {
                     .padding(.top, 8)
                     .padding(.horizontal, 16)
             }
+        }
+    }
+}
+
+private struct RootTabBar: View {
+    @Binding var selectedTab: AppTab
+    @ObservedObject var remoteDesktop: RemoteDesktopSession
+
+    var body: some View {
+        if selectedTab != .remote || !remoteDesktop.state.isActive {
+            CompactTabBar(selectedTab: $selectedTab)
         }
     }
 }
@@ -205,7 +245,9 @@ private struct CompactTabBar: View {
             }
             TabButton(
                 title: "远程",
-                systemImage: selectedTab == .remote ? "display.fill" : "display",
+                // `display.fill` is not available on the iOS 16 deployment target and
+                // renders as an empty image. Selection is already conveyed by tint/background.
+                systemImage: "display",
                 selected: selectedTab == .remote
             ) {
                 selectedTab = .remote

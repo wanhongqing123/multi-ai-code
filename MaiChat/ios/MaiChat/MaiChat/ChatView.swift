@@ -24,11 +24,16 @@ enum RemoteIMStyle {
 
 struct ChatView: View {
     @Binding var activeContact: RemoteIMContact?
+    let showRemoteDesktop: () -> Void
 
     var body: some View {
         Group {
             if let activeContact {
-                ChatDetailView(contact: activeContact, activeContact: $activeContact)
+                ChatDetailView(
+                    contact: activeContact,
+                    activeContact: $activeContact,
+                    showRemoteDesktop: showRemoteDesktop
+                )
             } else {
                 VStack(spacing: 0) {
                     HeaderView()
@@ -172,24 +177,12 @@ private struct HeaderView: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("远程 IM")
-                    .font(.system(size: 21, weight: .bold))
-                    .foregroundStyle(RemoteIMStyle.textPrimary)
-                Text(appState.masterUserID.isEmpty ? "未设置账号" : appState.masterUserID)
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(RemoteIMStyle.textSecondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-
-            Spacer(minLength: 8)
+            Spacer(minLength: 0)
 
             StatusPill(state: appState.connectionState)
         }
         .padding(.horizontal, 16)
-        .padding(.top, 8)
-        .padding(.bottom, 10)
+        .padding(.vertical, 8)
         .background(RemoteIMStyle.panelBackground)
         .overlay(alignment: .bottom) {
             Divider().background(RemoteIMStyle.border)
@@ -205,13 +198,21 @@ private struct StatusPill: View {
             Circle()
                 .fill(dotColor)
                 .frame(width: 8, height: 8)
-            Text(state.rawValue)
-                .font(.system(size: 13, weight: .semibold))
+            if state != .connected {
+                Text(state.rawValue)
+                    .font(.system(size: 13, weight: .semibold))
+            }
         }
         .foregroundStyle(textColor)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
-        .background(backgroundColor, in: Capsule())
+        .padding(.horizontal, state == .connected ? 0 : 12)
+        .padding(.vertical, state == .connected ? 0 : 7)
+        .background(
+            state == .connected ? Color.clear : backgroundColor,
+            in: Capsule()
+        )
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("IM 连接状态")
+        .accessibilityValue(state.rawValue)
     }
 
     private var dotColor: Color {
@@ -240,7 +241,7 @@ private struct ConversationListView: View {
     @EnvironmentObject private var appState: RemoteIMAppState
     @Binding var activeContact: RemoteIMContact?
     @State private var searchText = ""
-    @State private var pendingAction: PendingConversationAction?
+    @State private var pendingClearHistoryContact: RemoteIMContact?
 
     var body: some View {
         List {
@@ -269,13 +270,8 @@ private struct ConversationListView: View {
                     .listRowSeparator(.hidden)
                     .listRowBackground(RemoteIMStyle.panelBackground)
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button(role: .destructive) {
-                            pendingAction = PendingConversationAction(kind: .deleteContact, contact: contact)
-                        } label: {
-                            Label("删除好友", systemImage: "person.crop.circle.badge.minus")
-                        }
                         Button {
-                            pendingAction = PendingConversationAction(kind: .clearHistory, contact: contact)
+                            pendingClearHistoryContact = contact
                         } label: {
                             Label("清空消息", systemImage: "eraser")
                         }
@@ -288,12 +284,14 @@ private struct ConversationListView: View {
         .scrollContentBackground(.hidden)
         .background(RemoteIMStyle.panelBackground)
         .searchable(text: $searchText, prompt: "搜索联系人或消息")
-        .alert(item: $pendingAction) { action in
+        .alert(item: $pendingClearHistoryContact) { contact in
             Alert(
-                title: Text(action.title),
-                message: Text(action.message),
-                primaryButton: .destructive(Text(action.confirmTitle)) {
-                    perform(action)
+                title: Text("清空聊天记录？"),
+                message: Text("将清空与 \(contact.displayName) 的消息，但保留该好友。"),
+                primaryButton: .destructive(Text("清空")) {
+                    Task {
+                        _ = await appState.clearHistory(with: contact.userID)
+                    }
                 },
                 secondaryButton: .cancel()
             )
@@ -320,48 +318,6 @@ private struct ConversationListView: View {
             }
     }
 
-    private func perform(_ action: PendingConversationAction) {
-        Task {
-            switch action.kind {
-            case .clearHistory:
-                _ = await appState.clearHistory(with: action.contact.userID)
-            case .deleteContact:
-                if await appState.deleteContact(action.contact),
-                   activeContact?.userID == action.contact.userID
-                {
-                    activeContact = nil
-                }
-            }
-        }
-    }
-}
-
-private struct PendingConversationAction: Identifiable {
-    enum Kind: String {
-        case clearHistory
-        case deleteContact
-    }
-
-    let kind: Kind
-    let contact: RemoteIMContact
-    var id: String { "\(kind.rawValue)-\(contact.userID)" }
-
-    var title: String {
-        kind == .clearHistory ? "清空聊天记录？" : "删除好友？"
-    }
-
-    var message: String {
-        switch kind {
-        case .clearHistory:
-            return "将清空与 \(contact.displayName) 的消息，但保留该好友。"
-        case .deleteContact:
-            return "将从好友列表删除 \(contact.displayName)，并移除本地聊天记录。"
-        }
-    }
-
-    var confirmTitle: String {
-        kind == .clearHistory ? "清空" : "删除"
-    }
 }
 
 private struct ConversationRow: View {
@@ -487,11 +443,17 @@ private final class VoiceMessagePlayer: NSObject, ObservableObject, AVAudioPlaye
 private struct ChatDetailView: View {
     let contact: RemoteIMContact
     @Binding var activeContact: RemoteIMContact?
+    let showRemoteDesktop: () -> Void
     @EnvironmentObject private var appState: RemoteIMAppState
 
     var body: some View {
         VStack(spacing: 0) {
-            ChatDetailHeader(contact: contact, activeContact: $activeContact)
+            ChatDetailHeader(
+                contact: contact,
+                activeContact: $activeContact,
+                session: appState.remoteDesktop,
+                showRemoteDesktop: showRemoteDesktop
+            )
             MessageListView(
                 messages: appState.visibleMessages(with: contact.userID),
                 peerRelation: contact.relation,
@@ -534,6 +496,8 @@ private struct ChatDetailView: View {
 private struct ChatDetailHeader: View {
     let contact: RemoteIMContact
     @Binding var activeContact: RemoteIMContact?
+    @ObservedObject var session: RemoteDesktopSession
+    let showRemoteDesktop: () -> Void
     @EnvironmentObject private var appState: RemoteIMAppState
 
     var body: some View {
@@ -548,20 +512,43 @@ private struct ChatDetailHeader: View {
             .buttonStyle(.plain)
             .foregroundStyle(RemoteIMStyle.textPrimary)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(contact.displayName)
-                    .font(.system(size: 18, weight: .bold))
-                    .foregroundStyle(RemoteIMStyle.textPrimary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Text(contact.userID)
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundStyle(RemoteIMStyle.textSecondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
+            Text(contact.displayName)
+                .font(.system(size: 18, weight: .bold))
+                .foregroundStyle(RemoteIMStyle.textPrimary)
+                .lineLimit(1)
+                .truncationMode(.middle)
 
             Spacer(minLength: 8)
+
+            Button {
+                if session.state.isActive {
+                    Task { await appState.stopRemoteDesktopView() }
+                } else {
+                    Task {
+                        await appState.requestRemoteDesktopView(of: contact)
+                        if session.state.isActive {
+                            showRemoteDesktop()
+                        }
+                    }
+                }
+            } label: {
+                ZStack {
+                    Image(systemName: "display")
+                        .font(.system(size: 16, weight: .semibold))
+                    if session.state == .inviting || session.state == .connecting {
+                        ProgressView()
+                            .tint(remoteButtonColor)
+                            .scaleEffect(0.65)
+                            .offset(x: 12, y: -11)
+                    }
+                }
+                .frame(width: 36, height: 34)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(remoteButtonColor)
+            .background(remoteButtonBackground, in: RoundedRectangle(cornerRadius: 8))
+            .disabled(!canUseRemoteButton)
+            .accessibilityLabel(remoteButtonAccessibilityLabel)
 
             StatusPill(state: appState.connectionState)
         }
@@ -571,6 +558,44 @@ private struct ChatDetailHeader: View {
         .background(RemoteIMStyle.panelBackground)
         .overlay(alignment: .bottom) {
             Divider().background(RemoteIMStyle.border)
+        }
+    }
+
+    private var canUseRemoteButton: Bool {
+        session.state.isActive ||
+            (appState.connectionState == .connected && session.canStart)
+    }
+
+    private var remoteButtonColor: Color {
+        switch session.state {
+        case .inviting, .connecting:
+            return .orange
+        case .viewing:
+            return .red
+        case .idle, .failed:
+            return canUseRemoteButton ? RemoteIMStyle.blue : RemoteIMStyle.textSecondary
+        }
+    }
+
+    private var remoteButtonBackground: Color {
+        switch session.state {
+        case .inviting, .connecting:
+            return Color.orange.opacity(0.12)
+        case .viewing:
+            return Color.red.opacity(0.1)
+        case .idle, .failed:
+            return Color(.secondarySystemBackground)
+        }
+    }
+
+    private var remoteButtonAccessibilityLabel: String {
+        switch session.state {
+        case .inviting, .connecting:
+            return "取消远程连接"
+        case .viewing:
+            return "断开远程桌面"
+        case .idle, .failed:
+            return "远程控制 \(contact.displayName)"
         }
     }
 }

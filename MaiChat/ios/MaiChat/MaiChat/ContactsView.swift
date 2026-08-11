@@ -2,81 +2,134 @@ import MaiChatCore
 import SwiftUI
 
 struct ContactsView: View {
-    @EnvironmentObject private var appState: RemoteIMAppState
     @Binding var selectedTab: AppTab
     @Binding var activeContact: RemoteIMContact?
+    let showAddContact: () -> Void
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                Header()
-                AddContactBox()
-                ContactList(selectedTab: $selectedTab, activeContact: $activeContact)
-            }
-            .background(RemoteIMStyle.pageBackground.ignoresSafeArea())
-            .toolbar(.hidden, for: .navigationBar)
+            ContactList(selectedTab: $selectedTab, activeContact: $activeContact)
+                .background(RemoteIMStyle.pageBackground.ignoresSafeArea())
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button(action: showAddContact) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 17, weight: .semibold))
+                        }
+                        .accessibilityLabel("添加好友")
+                    }
+                }
+                .toolbarBackground(RemoteIMStyle.panelBackground, for: .navigationBar)
+                .toolbarBackground(.visible, for: .navigationBar)
         }
     }
 }
 
-private struct Header: View {
-    var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("通讯录")
-                    .font(.system(size: 21, weight: .bold))
-                    .foregroundStyle(RemoteIMStyle.textPrimary)
-                Text("可信好友")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(RemoteIMStyle.textSecondary)
-            }
-            Spacer()
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 8)
-        .padding(.bottom, 10)
-        .background(RemoteIMStyle.panelBackground)
-        .overlay(alignment: .bottom) {
-            Divider().background(RemoteIMStyle.border)
-        }
-    }
-}
-
-private struct AddContactBox: View {
+struct AddContactDialog: View {
     @EnvironmentObject private var appState: RemoteIMAppState
+    @Binding var isPresented: Bool
+    @FocusState private var isAccountFocused: Bool
 
     var body: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 8) {
-                TextField("添加好友账号", text: $appState.newContactUserID)
+        ZStack {
+            Color.black.opacity(0.28)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture(perform: cancel)
+
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("添加好友")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(RemoteIMStyle.textPrimary)
+                    Text("请输入要添加的好友账号")
+                        .font(.system(size: 13))
+                        .foregroundStyle(RemoteIMStyle.textSecondary)
+                }
+
+                TextField("好友账号", text: $appState.newContactUserID)
                     .font(.system(size: 15))
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-                    .padding(.horizontal, 12)
-                    .frame(height: 40)
-                    .background(Color.white, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(RemoteIMStyle.border, lineWidth: 1)
+                    .submitLabel(.done)
+                    .focused($isAccountFocused)
+                    .padding(.horizontal, 14)
+                    .frame(height: 44)
+                    .background(
+                        RemoteIMStyle.pageBackground,
+                        in: RoundedRectangle(cornerRadius: 9, style: .continuous)
                     )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .stroke(
+                                isAccountFocused ? RemoteIMStyle.blue : RemoteIMStyle.border,
+                                lineWidth: isAccountFocused ? 1.5 : 1
+                            )
+                    )
+                    .onSubmit(addContact)
 
-                Button {
-                    appState.addContact()
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 18, weight: .bold))
-                        .frame(width: 46, height: 40)
+                HStack(spacing: 10) {
+                    Button("取消", action: cancel)
+                        .buttonStyle(.plain)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(RemoteIMStyle.textPrimary)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 42)
+                        .background(
+                            Color(.secondarySystemBackground),
+                            in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        )
+
+                    Button("添加", action: addContact)
+                        .buttonStyle(.plain)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(canAdd ? Color.white : RemoteIMStyle.textSecondary)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 42)
+                        .background(
+                            canAdd ? RemoteIMStyle.blue : Color(.secondarySystemBackground),
+                            in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        )
+                        .disabled(!canAdd)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.white)
-                .background(RemoteIMStyle.blue, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+            .padding(20)
+            .frame(maxWidth: 340)
+            .background(
+                RemoteIMStyle.panelBackground,
+                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(RemoteIMStyle.border, lineWidth: 1)
+            )
+            .shadow(color: Color.black.opacity(0.16), radius: 24, y: 10)
+            .padding(.horizontal, 24)
+        }
+        .onAppear {
+            DispatchQueue.main.async {
+                isAccountFocused = true
             }
         }
-        .padding(16)
-        .background(RemoteIMStyle.panelBackground)
-        .overlay(alignment: .bottom) {
-            Divider().background(RemoteIMStyle.border)
+    }
+
+    private var canAdd: Bool {
+        !appState.newContactUserID
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .isEmpty
+    }
+
+    private func addContact() {
+        guard canAdd else { return }
+        appState.addContact()
+        if appState.newContactUserID.isEmpty {
+            isPresented = false
         }
+    }
+
+    private func cancel() {
+        appState.newContactUserID = ""
+        isPresented = false
     }
 }
 

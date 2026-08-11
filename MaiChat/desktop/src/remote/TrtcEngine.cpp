@@ -1,8 +1,11 @@
 #include "remote/TrtcEngine.h"
 
+#include <QDebug>
+#include <QJsonDocument>
+#include <QJsonObject>
+
 #ifdef MAICHAT_HAVE_TRTC
 #include <QCoreApplication>
-#include <QDebug>
 #include <QMetaObject>
 
 #include "ITRTCCloud.h"
@@ -11,6 +14,48 @@
 #endif
 
 namespace RemoteDesktop {
+
+namespace TrtcEngineInternal {
+
+const ScreenShareEncodingPolicy& screenShareEncodingPolicy() {
+    static const ScreenShareEncodingPolicy policy;
+    return policy;
+}
+
+QByteArray screenShareEncodingExperimentalRequest() {
+    const ScreenShareEncodingPolicy& policy = screenShareEncodingPolicy();
+    const QJsonObject params{
+        {QStringLiteral("streamType"), policy.streamType},
+        {QStringLiteral("screenEncodingAspectRatio"), policy.screenEncodingAspectRatio},
+    };
+    const QJsonObject request{
+        {QStringLiteral("api"), QStringLiteral("setVideoEncodeParamEx")},
+        {QStringLiteral("params"), params},
+    };
+    return QJsonDocument(request).toJson(QJsonDocument::Compact);
+}
+
+QByteArray applyScreenShareEncodingExperimentalPolicy(const ExperimentalApiInvoker& invoke) {
+    if (!invoke) {
+        qWarning().noquote()
+            << QStringLiteral("[trtc] screen-share aspect policy was not applied: "
+                              "experimental API invoker is missing");
+        return QByteArray();
+    }
+
+    const QByteArray request = screenShareEncodingExperimentalRequest();
+    const QByteArray response = invoke(request);
+    qInfo().noquote()
+        << QStringLiteral("[trtc] screen-share source-aspect policy requested: "
+                          "api=setVideoEncodeParamEx, screenEncodingAspectRatio=0 "
+                          "(follow capture source), stream=Sub, response-bytes=%1; "
+                          "effective size will be verified by receiver frame/geometry logs")
+               .arg(response.size());
+    return response;
+}
+
+}  // namespace TrtcEngineInternal
+
 namespace {
 
 // SDK 不可用时的兜底：所有操作安全失败，调用方无需判空。
@@ -24,6 +69,9 @@ public:
     void bindRemoteView(const QString&, void*) override {}
     QString sdkVersion() const override { return QString(); }
     bool startScreenShare(const TrtcRoomParams&) override { return false; }
+    std::optional<CaptureGeometry> localCaptureGeometry() const override {
+        return std::nullopt;
+    }
     bool startViewing(const TrtcRoomParams&, void*) override { return false; }
     void stop() override {}
     bool isActive() const override { return false; }
@@ -146,8 +194,8 @@ public:
         });
     }
 
-    // 首帧带着真实分辨率，是最早能拿到尺寸的时机——远程控制的坐标映射就等
-    // 这个值，越早给越好，否则开控制的头几秒鼠标是偏的。
+    // 首帧带着接收端实际编码帧尺寸，是最早能拿到这个值的时机。它不等于
+    // 被控屏幕；控制端会再结合 Accept 的 CaptureGeometry 完成两级映射。
     void onFirstVideoFrame(const char* userId, const liteav::TRTCVideoStreamType streamType,
                            const int width, const int height) override {
         reportRemoteVideoSize(userId, streamType, width, height);
@@ -169,15 +217,41 @@ public:
     QString initializationError() const override { return initializationError_; }
 
     bool startScreenShare(const TrtcRoomParams& params) override {
+        localCaptureGeometry_.reset();
         if (!enterRoom(params)) return false;
-        // 屏幕共享编码参数：分辨率跟随桌面，优先保清晰度（文字要能看清），
-        // 帧率压到 10 fps 以省带宽——远程办公看的是静态界面，不是视频。
+        const TrtcEngineInternal::ScreenShareEncodingPolicy& encoding =
+            TrtcEngineInternal::screenShareEncodingPolicy();
+
+        // TRTC 桌面端默认把非 16:9 屏幕塞进固定 1920x1080 画布并补黑边。
+        // 在采集启动前切到“跟随采集源宽高比”：1920x1080 仍是分辨率上限，
+        // 例如 2560x1600 会编码成 1728x1080，而不是带左右黑边的 1920x1080。
+        TrtcEngineInternal::applyScreenShareEncodingExperimentalPolicy(
+            [this](const QByteArray& request) {
+                const char* response = cloud_->callExperimentalAPI(request.constData());
+                return response ? QByteArray(response) : QByteArray();
+            });
+
+        qInfo().noquote()
+            << QStringLiteral("[trtc] screen-share encoder policy: cap=%1x%2, fps=%3, "
+                              "bitrate=%4kbps, enableAdjustRes=%5")
+                   .arg(encoding.maxWidth)
+                   .arg(encoding.maxHeight)
+                   .arg(encoding.frameRate)
+                   .arg(encoding.bitrateKbps)
+                   .arg(encoding.enableAdjustResolution ? QStringLiteral("true")
+                                                        : QStringLiteral("false"));
+
+        // 优先保清晰度（文字要能看清），帧率压到 10 fps 以省带宽——
+        // 远程办公看的是静态界面，不是视频。关闭弱网动态分辨率，避免会话中
+        // 编码几何变化导致控制端短时间使用过期映射。
         liteav::TRTCVideoEncParam encParam;
-        encParam.videoResolution = liteav::TRTCVideoResolution_1920_1080;
-        encParam.resMode = liteav::TRTCVideoResolutionModeLandscape;
-        encParam.videoFps = 10;
-        encParam.videoBitrate = 1600;
-        encParam.enableAdjustRes = true;
+        encParam.videoResolution =
+            static_cast<liteav::TRTCVideoResolution>(encoding.videoResolution);
+        encParam.resMode =
+            static_cast<liteav::TRTCVideoResolutionMode>(encoding.resolutionMode);
+        encParam.videoFps = static_cast<uint32_t>(encoding.frameRate);
+        encParam.videoBitrate = static_cast<uint32_t>(encoding.bitrateKbps);
+        encParam.enableAdjustRes = encoding.enableAdjustResolution;
 
         // 必须先选定采集目标，否则 startScreenCapture 不会产出任何画面
         // （对端会一直停在"等待画面"）。这里选第一个「整屏」类型的源。
@@ -188,6 +262,10 @@ public:
         return true;
     }
 
+    std::optional<CaptureGeometry> localCaptureGeometry() const override {
+        return localCaptureGeometry_;
+    }
+
     bool startViewing(const TrtcRoomParams& params, void* renderWindow) override {
         if (!enterRoom(params)) return false;
         Q_UNUSED(renderWindow);
@@ -196,7 +274,10 @@ public:
     }
 
     void stop() override {
-        if (!cloud_) return;
+        if (!cloud_) {
+            localCaptureGeometry_.reset();
+            return;
+        }
         if (!subscribedRemoteUserId_.isEmpty()) {
             const QByteArray id = subscribedRemoteUserId_.toUtf8();
             cloud_->stopRemoteView(id.constData(), liteav::TRTCVideoStreamTypeSub);
@@ -207,6 +288,7 @@ public:
         }
         active_ = false;
         enteredRoom_ = false;
+        localCaptureGeometry_.reset();
         desiredRemoteUserId_.clear();
         desiredRemoteRenderWindow_ = nullptr;
         subscribedRemoteUserId_.clear();
@@ -327,6 +409,7 @@ private:
             // 不给被采集的屏幕加高亮描边：整屏共享时那圈边框只会干扰观看。
             property.enableHighLight = false;
             cloud_->selectScreenCaptureTarget(info, captureRect, property);
+            rememberCaptureGeometry(info);
             logCaptureSource(info, QStringLiteral("main-screen"));
             selected = true;
             break;
@@ -339,6 +422,7 @@ private:
             property.enableCaptureMouse = true;
             property.enableHighLight = false;
             cloud_->selectScreenCaptureTarget(info, captureRect, property);
+            rememberCaptureGeometry(info);
             // 没找到主屏而退到第一个屏：注入是按主屏坐标算的，这两者不一致
             // 就必然偏，必须在日志里显式点出来。
             logCaptureSource(info, QStringLiteral("FALLBACK-not-main-screen"));
@@ -346,6 +430,19 @@ private:
         }
         sources->release();
         return selected;
+    }
+
+    void rememberCaptureGeometry(const liteav::TRTCScreenCaptureSourceInfo& info) {
+        CaptureGeometry geometry;
+        geometry.sourceSize = QSize(info.width, info.height);
+        geometry.captureRect = QRect(0, 0, info.width, info.height);
+        geometry.contentMode = CaptureContentMode::Fit;
+        ++captureGeometryRevision_;
+        if (captureGeometryRevision_ == 0) ++captureGeometryRevision_;
+        geometry.revision = captureGeometryRevision_;
+        localCaptureGeometry_ = geometry.isValid()
+            ? std::optional<CaptureGeometry>(geometry)
+            : std::nullopt;
     }
 
     bool enterRoom(const TrtcRoomParams& params) {
@@ -389,6 +486,8 @@ private:
     liteav::ITRTCCloud* cloud_ = nullptr;
     bool active_ = false;
     bool enteredRoom_ = false;
+    quint64 captureGeometryRevision_ = 0;
+    std::optional<CaptureGeometry> localCaptureGeometry_;
     QString desiredRemoteUserId_;
     void* desiredRemoteRenderWindow_ = nullptr;
     QString subscribedRemoteUserId_;

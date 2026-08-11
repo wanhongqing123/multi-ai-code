@@ -63,6 +63,7 @@ struct RemotePointerCaptureDiagnostic {
     let location: CGPoint
     let viewportSize: CGSize
     let videoSize: CGSize
+    let activeContentRect: CGRect?
     let normalizedPoint: CGPoint?
     let dropReason: RemotePointerCaptureDropReason?
 }
@@ -73,6 +74,7 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
     @Published private(set) var peerUserID = ""
     @Published private(set) var noticeText: String?
     @Published private(set) var remoteVideoSize: CGSize = .zero
+    @Published private(set) var captureGeometry: CaptureGeometry?
     @Published private(set) var isControlEnabled = false
     @Published private(set) var isLeftButtonHeld = false
 
@@ -210,6 +212,7 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
             localUserID: localUserID,
             userSig: userSig
         )
+        captureGeometry = nil
         requestStartedUptime = ProcessInfo.processInfo.systemUptime
         enterRoomStartedUptime = nil
         self.noticeText = nil
@@ -289,6 +292,7 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
             if !signal.roomID.isEmpty {
                 roomID = signal.roomID
             }
+            applyCaptureGeometry(from: signal)
             transition(to: .connecting, cause: "peer-accepted")
             startViewing()
         case .reject:
@@ -1001,6 +1005,7 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
         credentials = nil
         noticeText = nil
         remoteVideoSize = .zero
+        captureGeometry = nil
         requestStartedUptime = nil
         enterRoomStartedUptime = nil
     }
@@ -1101,6 +1106,36 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
             fields: fields
         )
         state = nextState
+    }
+
+    private func applyCaptureGeometry(from signal: RemoteDesktopSignal) {
+        var fields: [String: String]
+        switch signal.captureGeometryDisposition {
+        case .absent:
+            captureGeometry = nil
+            fields = [
+                "result": "absent",
+                "reason": "missing",
+                "fallback": "encoded-frame",
+            ]
+        case let .accepted(geometry):
+            captureGeometry = geometry
+            fields = captureGeometryDiagnosticFields(geometry)
+            fields["result"] = "accepted"
+            fields["fallback"] = "active-content"
+        case let .ignored(candidate, reason):
+            captureGeometry = nil
+            fields = candidate.map(captureGeometryDiagnosticFields) ?? [:]
+            fields["result"] = "ignored"
+            fields["reason"] = reason
+            fields["fallback"] = "encoded-frame"
+        }
+        log(
+            level: fields["result"] == "ignored" ? .warning : .info,
+            category: "remote-desktop",
+            event: "capture-geometry",
+            fields: fields
+        )
     }
 
     private func logIgnoredSignal(_ signal: RemoteDesktopSignal, from userID: String) {
@@ -1210,6 +1245,25 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
             fields["retry"] = String(snapshot.retries)
             fields["pending_move"] = String(pendingPointerPath.count)
             fields["pending_wheel"] = String(pendingWheelDelta)
+            fields["encoded_frame"] = sizeDiagnosticText(remoteVideoSize)
+            fields["coordinate_space"] = captureGeometry == nil
+                ? "encoded-frame-normalized"
+                : "source-normalized"
+            if let activeContentRect = RemoteDesktopCoordinateMapper.activeContentRect(
+                encodedFrameRect: CGRect(origin: .zero, size: remoteVideoSize),
+                captureGeometry: captureGeometry
+            ) {
+                fields["active_content_rect"] = rectDiagnosticText(activeContentRect)
+            }
+            if let captureGeometry {
+                fields.merge(
+                    captureGeometryDiagnosticFields(captureGeometry),
+                    uniquingKeysWith: { _, new in new }
+                )
+                fields["geometry_fallback"] = "active-content"
+            } else {
+                fields["geometry_fallback"] = "encoded-frame"
+            }
             let capturedPosition = snapshot.capturedMoves
                 + snapshot.capturedClicks
                 + snapshot.capturedWheels
@@ -1237,6 +1291,9 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
                     capture.videoSize.width,
                     capture.videoSize.height
                 )
+                if let activeContentRect = capture.activeContentRect {
+                    fields["capture_active_content_rect"] = rectDiagnosticText(activeContentRect)
+                }
                 if let point = capture.normalizedPoint {
                     fields["capture_normalized"] = String(
                         format: "%.4f,%.4f",
@@ -1316,6 +1373,31 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
 
     private func diagnosticBool(_ value: Bool) -> String {
         value ? "true" : "false"
+    }
+
+    private func captureGeometryDiagnosticFields(
+        _ geometry: CaptureGeometry
+    ) -> [String: String] {
+        [
+            "source_size": "\(geometry.sourceWidth)x\(geometry.sourceHeight)",
+            "capture_rect": "\(geometry.captureX),\(geometry.captureY) \(geometry.captureWidth)x\(geometry.captureHeight)",
+            "content_mode": geometry.contentMode,
+            "geometry_revision": String(geometry.revision),
+        ]
+    }
+
+    private func sizeDiagnosticText(_ size: CGSize) -> String {
+        String(format: "%.0fx%.0f", size.width, size.height)
+    }
+
+    private func rectDiagnosticText(_ rect: CGRect) -> String {
+        String(
+            format: "%.1f,%.1f %.1fx%.1f",
+            rect.origin.x,
+            rect.origin.y,
+            rect.width,
+            rect.height
+        )
     }
 
     private var hasEnteredRoomForDiagnostics: Bool {

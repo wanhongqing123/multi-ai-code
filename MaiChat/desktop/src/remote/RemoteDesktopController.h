@@ -65,7 +65,8 @@ public:
 
     // 远端画面可用性 / 引擎错误的转发口。UI 据此绑定渲染窗口与提示。
     void setRemoteVideoHandler(RemoteDesktop::ITrtcEngine::RemoteVideoCallback handler);
-    // 远端画面真实尺寸。控制端必须据此算黑边，否则鼠标坐标会整体偏移。
+    // 接收端编码帧尺寸。控制端用它算 Qt surface 外层 Fit，再结合 Accept 的
+    // CaptureGeometry 排除帧内补边；它本身不等于被控屏幕分辨率。
     void setRemoteVideoSizeHandler(RemoteDesktop::ITrtcEngine::RemoteVideoSizeCallback handler);
     void setErrorHandler(RemoteDesktop::ITrtcEngine::ErrorCallback handler);
     void bindRemoteView(const QString& userId, void* renderWindow);

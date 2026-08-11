@@ -1,5 +1,7 @@
 #include <QtTest/QtTest>
 
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <memory>
 
 #include "remote/TrtcEngine.h"
@@ -15,6 +17,8 @@ private slots:
     void acceptsValidProxyConfigWhenAvailable();
     void refusesIncompleteRoomParams();
     void stopIsIdempotent();
+    void screenShareEncodingPolicyKeepsStableCapWithoutDynamicResolution();
+    void screenShareEncodingPolicyInvokesExperimentalApiWithSourceAspect();
 };
 
 namespace {
@@ -100,6 +104,50 @@ void TrtcEngineTest::stopIsIdempotent() {
     engine->stop();
     engine->stop();
     QVERIFY(!engine->isActive());
+}
+
+void TrtcEngineTest::screenShareEncodingPolicyKeepsStableCapWithoutDynamicResolution() {
+    const TrtcEngineInternal::ScreenShareEncodingPolicy& policy =
+        TrtcEngineInternal::screenShareEncodingPolicy();
+
+    // 114/0 是 TRTCVideoResolution_1920_1080 + Landscape 的公开稳定枚举值。
+    QCOMPARE(policy.videoResolution, 114);
+    QCOMPARE(policy.resolutionMode, 0);
+    QCOMPARE(policy.maxWidth, 1920);
+    QCOMPARE(policy.maxHeight, 1080);
+    QCOMPARE(policy.frameRate, 10);
+    QCOMPARE(policy.bitrateKbps, 1600);
+    QVERIFY(!policy.enableAdjustResolution);
+}
+
+void TrtcEngineTest::screenShareEncodingPolicyInvokesExperimentalApiWithSourceAspect() {
+    int callCount = 0;
+    QByteArray capturedRequest;
+    const QByteArray expectedResponse("sdk-response");
+
+    const QByteArray response =
+        TrtcEngineInternal::applyScreenShareEncodingExperimentalPolicy(
+            [&](const QByteArray& request) {
+                ++callCount;
+                capturedRequest = request;
+                return expectedResponse;
+            });
+
+    QCOMPARE(callCount, 1);
+    QCOMPARE(response, expectedResponse);
+
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(capturedRequest, &parseError);
+    QCOMPARE(parseError.error, QJsonParseError::NoError);
+    QVERIFY(document.isObject());
+
+    const QJsonObject request = document.object();
+    QCOMPARE(request.value(QStringLiteral("api")).toString(),
+             QStringLiteral("setVideoEncodeParamEx"));
+    const QJsonObject params = request.value(QStringLiteral("params")).toObject();
+    QCOMPARE(params.size(), 2);
+    QCOMPARE(params.value(QStringLiteral("streamType")).toInt(), 2);  // Sub
+    QCOMPARE(params.value(QStringLiteral("screenEncodingAspectRatio")).toInt(), 0);
 }
 
 QTEST_MAIN(TrtcEngineTest)

@@ -3,6 +3,9 @@
 #include <QByteArray>
 #include <QString>
 #include <functional>
+#include <optional>
+
+#include "remote/CaptureGeometry.h"
 
 // TRTC 的薄封装。
 //
@@ -28,6 +31,34 @@ struct TrtcNetworkProxyConfig {
     bool supportUdp = false;
 };
 
+// 屏幕共享编码策略被单独收敛成平台无关数据：生产实现用它填写 TRTC 参数，
+// 单测也能在未 vendoring SDK 的平台验证实验接口调用与关键参数，避免两套常量漂移。
+namespace TrtcEngineInternal {
+
+struct ScreenShareEncodingPolicy {
+    // TRTCVideoResolution_1920_1080 / TRTCVideoResolutionModeLandscape 的稳定枚举值。
+    int videoResolution = 114;
+    int resolutionMode = 0;
+    int maxWidth = 1920;
+    int maxHeight = 1080;
+    int frameRate = 10;
+    int bitrateKbps = 1600;
+    bool enableAdjustResolution = false;
+
+    // TRTCVideoStreamTypeSub，以及 Liteav.Video.screen.encoding.aspect.ratio 的
+    // kScreenAspectRatio。0 会让编码输出跟随采集源宽高比，不再补 16:9 黑边。
+    int streamType = 2;
+    int screenEncodingAspectRatio = 0;
+};
+
+using ExperimentalApiInvoker = std::function<QByteArray(const QByteArray& request)>;
+
+const ScreenShareEncodingPolicy& screenShareEncodingPolicy();
+QByteArray screenShareEncodingExperimentalRequest();
+QByteArray applyScreenShareEncodingExperimentalPolicy(const ExperimentalApiInvoker& invoke);
+
+}  // namespace TrtcEngineInternal
+
 class ITrtcEngine {
 public:
     // 远端画面可用性变化。SDK 回调来自其内部线程，实现方负责切回主线程，
@@ -38,11 +69,10 @@ public:
     // 收到对端自定义消息（远程输入）。同样已切回主线程。
     using CustomMessageCallback =
         std::function<void(const QString& userId, int cmdId, const QByteArray& payload)>;
-    // 远端画面的真实像素尺寸。首帧到达时给一次，之后编码参数变化再给。
+    // 接收端解码到的编码帧像素尺寸。首帧到达时给一次，之后编码参数变化再给。
     //
-    // 远程控制**必须**拿到这个值：控制端要按它算画面在控件里的黑边位置，
-    // 才能把鼠标坐标映射对。此前是写死 1920x1080 猜的，被控端只要不是 16:9
-    // （实测 2560x1600 的机器就是），黑边算错，光标位置整体偏移。
+    // 它只描述编码帧，不等于被控屏幕。控制端先按它算 Qt surface 的外层 Fit，
+    // 再结合 Accept 的 CaptureGeometry 排除编码帧内部补边。
     using RemoteVideoSizeCallback =
         std::function<void(const QString& userId, int width, int height)>;
 
@@ -73,6 +103,10 @@ public:
 
     // 被控端：进房并开始推屏。windowHandle 传 nullptr 表示采集整个主屏。
     virtual bool startScreenShare(const TrtcRoomParams& params) = 0;
+
+    // 最近一次成功选定的本地采集坐标系。只在 startScreenShare 成功后读取；
+    // 拿不到时返回 nullopt，Accept 不带扩展字段，让对端保持旧映射。
+    virtual std::optional<CaptureGeometry> localCaptureGeometry() const = 0;
 
     // 控制端：进房并订阅远端屏幕流，渲染到给定原生窗口句柄。
     virtual bool startViewing(const TrtcRoomParams& params, void* renderWindow) = 0;

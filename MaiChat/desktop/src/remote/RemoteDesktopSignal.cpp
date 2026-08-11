@@ -3,6 +3,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
+#include <cmath>
+
 namespace RemoteDesktopSignals {
 namespace {
 
@@ -30,6 +32,74 @@ Type typeFromString(const QString& value) {
     if (value == QStringLiteral("stop")) return Type::Stop;
     if (value == QStringLiteral("notice")) return Type::Notice;
     return Type::Unknown;
+}
+
+bool exactInteger(const QJsonObject& object, const QString& key, int minimum, int maximum,
+                  int* result) {
+    if (result == nullptr) return false;
+    const QJsonValue value = object.value(key);
+    if (!value.isDouble()) return false;
+    const double number = value.toDouble();
+    if (!std::isfinite(number) || std::floor(number) != number || number < minimum
+        || number > maximum) {
+        return false;
+    }
+    *result = static_cast<int>(number);
+    return true;
+}
+
+QJsonObject encodeCaptureGeometry(const RemoteDesktop::CaptureGeometry& geometry) {
+    QJsonObject object;
+    object.insert(QStringLiteral("sourceWidth"), geometry.sourceSize.width());
+    object.insert(QStringLiteral("sourceHeight"), geometry.sourceSize.height());
+    object.insert(QStringLiteral("captureX"), geometry.captureRect.x());
+    object.insert(QStringLiteral("captureY"), geometry.captureRect.y());
+    object.insert(QStringLiteral("captureWidth"), geometry.captureRect.width());
+    object.insert(QStringLiteral("captureHeight"), geometry.captureRect.height());
+    object.insert(QStringLiteral("contentMode"),
+                  RemoteDesktop::captureContentModeName(geometry.contentMode));
+    object.insert(QStringLiteral("revision"), static_cast<int>(geometry.revision));
+    return object;
+}
+
+std::optional<RemoteDesktop::CaptureGeometry> decodeCaptureGeometry(const QJsonValue& value) {
+    if (!value.isObject()) return std::nullopt;
+    const QJsonObject object = value.toObject();
+
+    int sourceWidth = 0;
+    int sourceHeight = 0;
+    int captureX = 0;
+    int captureY = 0;
+    int captureWidth = 0;
+    int captureHeight = 0;
+    int revision = 0;
+    const int maxDimension = RemoteDesktop::kMaxCaptureGeometryDimension;
+    if (!exactInteger(object, QStringLiteral("sourceWidth"), 1, maxDimension, &sourceWidth)
+        || !exactInteger(object, QStringLiteral("sourceHeight"), 1, maxDimension,
+                         &sourceHeight)
+        || !exactInteger(object, QStringLiteral("captureX"), 0, maxDimension, &captureX)
+        || !exactInteger(object, QStringLiteral("captureY"), 0, maxDimension, &captureY)
+        || !exactInteger(object, QStringLiteral("captureWidth"), 1, maxDimension,
+                         &captureWidth)
+        || !exactInteger(object, QStringLiteral("captureHeight"), 1, maxDimension,
+                         &captureHeight)
+        || !exactInteger(object, QStringLiteral("revision"), 1,
+                         static_cast<int>(RemoteDesktop::kMaxCaptureGeometryRevision),
+                         &revision)) {
+        return std::nullopt;
+    }
+
+    const QString mode = object.value(QStringLiteral("contentMode")).toString();
+    RemoteDesktop::CaptureGeometry geometry;
+    geometry.sourceSize = QSize(sourceWidth, sourceHeight);
+    geometry.captureRect = QRect(captureX, captureY, captureWidth, captureHeight);
+    geometry.contentMode = mode == QStringLiteral("fit")
+        ? RemoteDesktop::CaptureContentMode::Fit
+        : RemoteDesktop::CaptureContentMode::Unknown;
+    geometry.revision = static_cast<quint64>(revision);
+    return geometry.isValid()
+        ? std::optional<RemoteDesktop::CaptureGeometry>(geometry)
+        : std::nullopt;
 }
 
 }  // namespace
@@ -60,6 +130,11 @@ QString encodeSignal(const Signal& signal) {
     if (!signal.reason.isEmpty()) object.insert(QStringLiteral("reason"), signal.reason);
     if (!signal.noticeCode.isEmpty()) {
         object.insert(QStringLiteral("noticeCode"), signal.noticeCode);
+    }
+    if (signal.type == Type::Accept && signal.captureGeometry
+        && signal.captureGeometry->isValid()) {
+        object.insert(QStringLiteral("captureGeometry"),
+                      encodeCaptureGeometry(*signal.captureGeometry));
     }
 
     return signalPrefix()
@@ -94,6 +169,12 @@ Signal decodeSignal(const QString& text) {
     signal.roomId = object.value(QStringLiteral("roomId")).toString();
     signal.authProof = object.value(QStringLiteral("authProof")).toString();
     signal.reason = object.value(QStringLiteral("reason")).toString();
+    // captureGeometry 是 v1 的兼容扩展。坏掉的可选对象只影响坐标增强，不能把
+    // 一条本来合法的 Accept 整体打成 Unknown，否则老/新版本混连会进不了房。
+    if (type == Type::Accept) {
+        signal.captureGeometry =
+            decodeCaptureGeometry(object.value(QStringLiteral("captureGeometry")));
+    }
     return signal;
 }
 

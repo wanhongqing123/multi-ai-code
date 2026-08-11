@@ -18,6 +18,9 @@ private slots:
     void keepsSignalOutOfPlainSight();
     void roundTripsNoticeWithCode();
     void rejectsNoticeWithoutCode();
+    void decodesSharedCaptureGeometryFixture();
+    void ignoresInvalidOptionalGeometryWithoutRejectingAccept();
+    void acceptsLegacyAcceptWithoutGeometry();
 };
 
 void RemoteDesktopSignalTest::roundTripsEverySignalType() {
@@ -167,6 +170,75 @@ void RemoteDesktopSignalTest::rejectsNoticeWithoutCode() {
     stop.type = Type::Stop;
     stop.sessionId = QStringLiteral("sess-1");
     QCOMPARE(decodeSignal(encodeSignal(stop)).type, Type::Stop);
+}
+
+void RemoteDesktopSignalTest::decodesSharedCaptureGeometryFixture() {
+    // 与 Swift 端共用的逐字段 fixture。字段名与层级一旦漂移，这里会直接失败；
+    // v 仍是 1，老客户端只会忽略新增对象。
+    const QString fixture = signalPrefix() + QStringLiteral(
+        R"({"v":1,"type":"accept","sessionId":"session-geometry-1","roomId":"mc-room-1","captureGeometry":{"sourceWidth":2560,"sourceHeight":1600,"captureX":0,"captureY":0,"captureWidth":2560,"captureHeight":1600,"contentMode":"fit","revision":1}})");
+
+    const Signal decoded = decodeSignal(fixture);
+    QCOMPARE(decoded.type, Type::Accept);
+    QCOMPARE(decoded.sessionId, QStringLiteral("session-geometry-1"));
+    QCOMPARE(decoded.roomId, QStringLiteral("mc-room-1"));
+    QVERIFY(decoded.captureGeometry.has_value());
+    const auto& geometry = *decoded.captureGeometry;
+    QCOMPARE(geometry.sourceSize, QSize(2560, 1600));
+    QCOMPARE(geometry.captureRect, QRect(0, 0, 2560, 1600));
+    QCOMPARE(geometry.contentMode, RemoteDesktop::CaptureContentMode::Fit);
+    QCOMPARE(geometry.revision, quint64(1));
+
+    // C++ 发出去后也必须能无损读回同一组值。
+    const Signal roundTripped = decodeSignal(encodeSignal(decoded));
+    QVERIFY(roundTripped.captureGeometry.has_value());
+    QCOMPARE(roundTripped.captureGeometry->sourceSize, geometry.sourceSize);
+    QCOMPARE(roundTripped.captureGeometry->captureRect, geometry.captureRect);
+    QCOMPARE(roundTripped.captureGeometry->revision, geometry.revision);
+
+    Signal maximumRevision = decoded;
+    maximumRevision.captureGeometry->revision =
+        RemoteDesktop::kMaxCaptureGeometryRevision;
+    const Signal maximumRevisionRoundTrip = decodeSignal(encodeSignal(maximumRevision));
+    QVERIFY(maximumRevisionRoundTrip.captureGeometry.has_value());
+    QCOMPARE(maximumRevisionRoundTrip.captureGeometry->revision,
+             RemoteDesktop::kMaxCaptureGeometryRevision);
+}
+
+void RemoteDesktopSignalTest::ignoresInvalidOptionalGeometryWithoutRejectingAccept() {
+    const QString commonPrefix =
+        QStringLiteral(R"({"v":1,"type":"accept","sessionId":"s","roomId":"r","captureGeometry":)");
+    const QString commonSuffix = QStringLiteral("}");
+    const QStringList invalidObjects{
+        QStringLiteral("null"),
+        QStringLiteral(R"("not-an-object")"),
+        // 超大尺寸必须在进入 QRect/浮点计算前拒绝。
+        QStringLiteral(R"({"sourceWidth":999999999,"sourceHeight":1600,"captureX":0,"captureY":0,"captureWidth":2560,"captureHeight":1600,"contentMode":"fit","revision":1})"),
+        // captureX + captureWidth 越过 source 右边界。
+        QStringLiteral(R"({"sourceWidth":2560,"sourceHeight":1600,"captureX":2500,"captureY":0,"captureWidth":100,"captureHeight":1600,"contentMode":"fit","revision":1})"),
+        // 非整数不能被 toInt 静默截断。
+        QStringLiteral(R"({"sourceWidth":2560.5,"sourceHeight":1600,"captureX":0,"captureY":0,"captureWidth":2560,"captureHeight":1600,"contentMode":"fit","revision":1})"),
+        // 未知 mode 只让增强映射失效，不影响 Accept 进房。
+        QStringLiteral(R"({"sourceWidth":2560,"sourceHeight":1600,"captureX":0,"captureY":0,"captureWidth":2560,"captureHeight":1600,"contentMode":"crop","revision":1})"),
+        // 超过跨语言约定的 INT_MAX 会让 int 编码溢出，必须整体忽略该可选对象。
+        QStringLiteral(R"({"sourceWidth":2560,"sourceHeight":1600,"captureX":0,"captureY":0,"captureWidth":2560,"captureHeight":1600,"contentMode":"fit","revision":2147483648})")};
+
+    for (const QString& geometry : invalidObjects) {
+        const Signal decoded =
+            decodeSignal(signalPrefix() + commonPrefix + geometry + commonSuffix);
+        QCOMPARE(decoded.type, Type::Accept);
+        QCOMPARE(decoded.sessionId, QStringLiteral("s"));
+        QVERIFY2(!decoded.captureGeometry.has_value(), qPrintable(geometry));
+    }
+}
+
+void RemoteDesktopSignalTest::acceptsLegacyAcceptWithoutGeometry() {
+    const Signal decoded = decodeSignal(
+        signalPrefix()
+        + QStringLiteral(R"({"v":1,"type":"accept","sessionId":"old-s","roomId":"old-r"})"));
+    QCOMPARE(decoded.type, Type::Accept);
+    QCOMPARE(decoded.sessionId, QStringLiteral("old-s"));
+    QVERIFY(!decoded.captureGeometry.has_value());
 }
 
 QTEST_MAIN(RemoteDesktopSignalTest)

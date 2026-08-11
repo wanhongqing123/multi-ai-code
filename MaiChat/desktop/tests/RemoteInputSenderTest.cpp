@@ -32,6 +32,9 @@ private slots:
     void computesLetterboxRectForBothOrientations();
     void mapsWidgetCoordinatesIgnoringLetterbox();
     void rejectsPointsOnLetterboxButClampsWhenAsked();
+    void composesEncodedAndSurfaceFitThenMapsCaptureIntoSource();
+    void keepsLegacyMappingWhenCaptureGeometryIsUnknown();
+    void mapsSameSourcePointWhetherEncoderFollowsSourceAspect();
     void batchesMovePathIntoOnePacketKeepingEndpoint();
     void respectsByteBudgetNotJustMessageCount();
     void batchesReliableEventsIntoOnePacket();
@@ -106,6 +109,114 @@ void RemoteInputSenderTest::rejectsPointsOnLetterboxButClampsWhenAsked() {
     fresh.beginSession(QStringLiteral("s1"));
     QVERIFY(!fresh.mapToNormalized(QPointF(1, 1), &x, &y));
     QVERIFY(!fresh.mapToNormalizedClamped(QPointF(1, 1), &x, &y));
+}
+
+void RemoteInputSenderTest::composesEncodedAndSurfaceFitThenMapsCaptureIntoSource() {
+    RemoteDesktop::CaptureGeometry geometry;
+    geometry.sourceSize = QSize(3000, 2000);
+    geometry.captureRect = QRect(300, 200, 2400, 1600);  // source 中间的 3:2 区域
+    geometry.contentMode = RemoteDesktop::CaptureContentMode::Fit;
+    geometry.revision = 7;
+    QVERIFY(geometry.isValid());
+
+    // 编码帧 16:9，capture 3:2：第一级在编码帧左右各补 150px。
+    // surface 是正方形：第二级又在 surface 上下补边。
+    const CaptureCoordinateMapping mapping = calculateCaptureCoordinateMapping(
+        QSizeF(1000, 1000), QSizeF(1920, 1080), geometry);
+    QVERIFY(mapping.usesCaptureGeometry);
+    QVERIFY(qAbs(mapping.encodedContentRect.x() - 150.0) < 1e-9);
+    QVERIFY(qAbs(mapping.encodedContentRect.width() - 1620.0) < 1e-9);
+    QVERIFY(qAbs(mapping.surfaceVideoRect.y() - 218.75) < 1e-9);
+    QVERIFY(mapping.surfaceContentRect.x() > mapping.surfaceVideoRect.x());
+    QVERIFY(mapping.surfaceContentRect.width() < mapping.surfaceVideoRect.width());
+
+    RemoteInputSender sender;
+    sender.beginSession(QStringLiteral("s1"));
+    sender.setCaptureGeometry(geometry);
+    sender.setContentRect(mapping.surfaceContentRect);
+    QCOMPARE(sender.normalizedTargetRect(), QRectF(0.1, 0.1, 0.8, 0.8));
+
+    double x = 0.0;
+    double y = 0.0;
+    // capture 左边缘不是 source 左边缘：最终输入必须落在 source 的 10%。
+    QVERIFY(sender.mapToNormalized(
+        QPointF(mapping.surfaceContentRect.left(), mapping.surfaceContentRect.center().y()),
+        &x, &y));
+    QVERIFY(qAbs(x - 0.1) < 1e-9);
+    QVERIFY(qAbs(y - 0.5) < 1e-9);
+
+    // 帧内黑边上的点不产生点击；拖拽出界时则钳到 capture/source 的边界，
+    // 不能误钳到整个 source 的 0。
+    QVERIFY(!sender.mapToNormalized(
+        QPointF(mapping.surfaceVideoRect.left() + 1.0, mapping.surfaceVideoRect.center().y()),
+        &x, &y));
+    QVERIFY(sender.mapToNormalizedClamped(
+        QPointF(mapping.surfaceVideoRect.left() + 1.0, mapping.surfaceVideoRect.center().y()),
+        &x, &y));
+    QVERIFY(qAbs(x - 0.1) < 1e-9);
+}
+
+void RemoteInputSenderTest::keepsLegacyMappingWhenCaptureGeometryIsUnknown() {
+    const CaptureCoordinateMapping mapping = calculateCaptureCoordinateMapping(
+        QSizeF(1000, 1000), QSizeF(1920, 1080), std::nullopt);
+    QVERIFY(!mapping.usesCaptureGeometry);
+    QCOMPARE(mapping.surfaceContentRect, mapping.surfaceVideoRect);
+    QCOMPARE(mapping.encodedContentRect, QRectF(0, 0, 1920, 1080));
+
+    RemoteInputSender sender;
+    sender.setCaptureGeometry(std::nullopt);
+    sender.setContentRect(mapping.surfaceContentRect);
+    double x = 0.0;
+    double y = 0.0;
+    QVERIFY(sender.mapToNormalized(mapping.surfaceContentRect.center(), &x, &y));
+    QCOMPARE(x, 0.5);
+    QCOMPARE(y, 0.5);
+}
+
+void RemoteInputSenderTest::mapsSameSourcePointWhetherEncoderFollowsSourceAspect() {
+    RemoteDesktop::CaptureGeometry geometry;
+    geometry.sourceSize = QSize(2560, 1600);
+    geometry.captureRect = QRect(0, 0, 2560, 1600);
+    geometry.contentMode = RemoteDesktop::CaptureContentMode::Fit;
+    geometry.revision = 1;
+
+    const QSizeF surface(1920, 1080);
+    // 旧 SDK 未采纳 source-aspect：固定 1920x1080 编码帧内部左右各补 96px。
+    const auto fixedCanvas = calculateCaptureCoordinateMapping(
+        surface, QSizeF(1920, 1080), geometry);
+    QVERIFY(qAbs(fixedCanvas.encodedContentRect.x() - 96.0) < 1e-9);
+    QVERIFY(qAbs(fixedCanvas.encodedContentRect.width() - 1728.0) < 1e-9);
+
+    // 新策略生效：实际编码 1728x1080，active rect 是整帧，黑边只在 Qt surface。
+    const auto sourceAspect = calculateCaptureCoordinateMapping(
+        surface, QSizeF(1728, 1080), geometry);
+    QCOMPARE(sourceAspect.encodedContentRect, QRectF(0, 0, 1728, 1080));
+    QVERIFY(qAbs(fixedCanvas.surfaceContentRect.x()
+                 - sourceAspect.surfaceContentRect.x()) < 1e-9);
+    QVERIFY(qAbs(fixedCanvas.surfaceContentRect.width()
+                 - sourceAspect.surfaceContentRect.width()) < 1e-9);
+
+    const QPointF sameVisiblePoint(
+        fixedCanvas.surfaceContentRect.x() + fixedCanvas.surfaceContentRect.width() * 0.25,
+        fixedCanvas.surfaceContentRect.y() + fixedCanvas.surfaceContentRect.height() * 0.75);
+    RemoteInputSender fixedSender;
+    fixedSender.setCaptureGeometry(geometry);
+    fixedSender.setContentRect(fixedCanvas.surfaceContentRect);
+    RemoteInputSender sourceAspectSender;
+    sourceAspectSender.setCaptureGeometry(geometry);
+    sourceAspectSender.setContentRect(sourceAspect.surfaceContentRect);
+
+    double fixedX = 0.0;
+    double fixedY = 0.0;
+    double sourceAspectX = 0.0;
+    double sourceAspectY = 0.0;
+    QVERIFY(fixedSender.mapToNormalized(sameVisiblePoint, &fixedX, &fixedY));
+    QVERIFY(sourceAspectSender.mapToNormalized(
+        sameVisiblePoint, &sourceAspectX, &sourceAspectY));
+    QVERIFY(qAbs(fixedX - 0.25) < 1e-9);
+    QVERIFY(qAbs(fixedY - 0.75) < 1e-9);
+    QVERIFY(qAbs(fixedX - sourceAspectX) < 1e-9);
+    QVERIFY(qAbs(fixedY - sourceAspectY) < 1e-9);
 }
 
 void RemoteInputSenderTest::batchesMovePathIntoOnePacketKeepingEndpoint() {

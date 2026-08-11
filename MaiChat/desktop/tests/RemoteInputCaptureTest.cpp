@@ -44,6 +44,8 @@ private slots:
     void sendsCanonicalKeyCodesWhenNativeCodeIsZero();
     void enablesMouseTrackingWhileControlling();
     void remapsCoordinatesWhenRemoteVideoSizeChanges();
+    void removesEncodedFrameLetterboxUsingCaptureGeometry();
+    void waitsForEncodedFrameSizeBeforeSendingCoordinates();
 };
 
 void RemoteInputCaptureTest::remapsCoordinatesWhenRemoteVideoSizeChanges() {
@@ -61,8 +63,8 @@ void RemoteInputCaptureTest::remapsCoordinatesWhenRemoteVideoSizeChanges() {
     // 先按 16:9：内容区铺满整个控件。
     QCOMPARE(sender.contentRect(), QRectF(0, 0, 1600, 900));
 
-    // 被控端其实是 2560x1600（16:10）。拿到真实尺寸后必须重算，
-    // 否则坐标会一直按错误的宽高比映射——现象是鼠标能动但位置偏。
+    // 接收端编码帧实际变成 2560x1600（16:10）。尺寸回调后必须重算，
+    // 否则 surface 外层 Fit 会一直按错误宽高比映射。
     capture.setRemoteVideoSize(QSize(2560, 1600));
     const QRectF fitted = sender.contentRect();
     QCOMPARE(fitted.height(), 900.0);
@@ -79,6 +81,66 @@ void RemoteInputCaptureTest::remapsCoordinatesWhenRemoteVideoSizeChanges() {
 
     // 而黑边上的点不该产生输入：它不对应远端屏幕的任何位置。
     QVERIFY(!sender.mapToNormalized(QPointF(20, 450), &x, &y));
+}
+
+void RemoteInputCaptureTest::removesEncodedFrameLetterboxUsingCaptureGeometry() {
+    RemoteInputSender sender;
+    sender.beginSession(QStringLiteral("s1"));
+    RemoteDesktop::CaptureGeometry geometry;
+    geometry.sourceSize = QSize(2560, 1600);  // 16:10
+    geometry.captureRect = QRect(0, 0, 2560, 1600);
+    geometry.contentMode = RemoteDesktop::CaptureContentMode::Fit;
+    geometry.revision = 1;
+    sender.setCaptureGeometry(geometry);
+
+    QWidget surface;
+    surface.resize(1920, 1080);
+    RemoteInputCapture capture(sender);
+    capture.attachTo(&surface);
+
+    // 兼容旧 SDK：16:10 采集被 Fit 进固定 16:9 编码帧，左右各 96px 是帧内黑边。
+    capture.setRemoteVideoSize(QSize(1920, 1080));
+    const QRectF fixedCanvasContent = sender.contentRect();
+    QVERIFY(qAbs(fixedCanvasContent.x() - 96.0) < 1e-9);
+    QVERIFY(qAbs(fixedCanvasContent.width() - 1728.0) < 1e-9);
+
+    double x = 0.0;
+    double y = 0.0;
+    QVERIFY(!sender.mapToNormalized(QPointF(20, 540), &x, &y));
+    QVERIFY(sender.mapToNormalized(QPointF(960, 540), &x, &y));
+    QVERIFY(qAbs(x - 0.5) < 1e-9);
+    QVERIFY(qAbs(y - 0.5) < 1e-9);
+
+    // 新策略生效时编码帧直接跟随 16:10（1728x1080），TRTC 在 16:9 surface
+    // 外层留边。两种 SDK 行为组合出的最终 active rect 应完全一致。
+    capture.setRemoteVideoSize(QSize(1728, 1080));
+    const QRectF sourceAspectContent = sender.contentRect();
+    QVERIFY(qAbs(sourceAspectContent.x() - fixedCanvasContent.x()) < 1e-9);
+    QVERIFY(qAbs(sourceAspectContent.y() - fixedCanvasContent.y()) < 1e-9);
+    QVERIFY(qAbs(sourceAspectContent.width() - fixedCanvasContent.width()) < 1e-9);
+    QVERIFY(qAbs(sourceAspectContent.height() - fixedCanvasContent.height()) < 1e-9);
+}
+
+void RemoteInputCaptureTest::waitsForEncodedFrameSizeBeforeSendingCoordinates() {
+    RemoteInputSender sender;
+    sender.beginSession(QStringLiteral("s1"));
+    QWidget surface;
+    surface.resize(800, 450);
+
+    RemoteInputCapture capture(sender);
+    capture.attachTo(&surface);
+    capture.setRemoteVideoSize(QSize());
+    capture.setEnabled(true);
+    QVERIFY(sender.contentRect().isEmpty());
+
+    // 首帧前不能按历史默认 1920x1080 猜；即使用户已经点了控制，也不发坐标。
+    QTest::mouseClick(&surface, Qt::LeftButton, Qt::NoModifier, QPoint(400, 225));
+    QVERIFY(!hasType(allEvents(drain(sender, 1000)), EventType::MouseButton));
+
+    capture.setRemoteVideoSize(QSize(1728, 1080));
+    QVERIFY(!sender.contentRect().isEmpty());
+    QTest::mouseClick(&surface, Qt::LeftButton, Qt::NoModifier, QPoint(400, 225));
+    QVERIFY(hasType(allEvents(drain(sender, 1100)), EventType::MouseButton));
 }
 
 void RemoteInputCaptureTest::enablesMouseTrackingWhileControlling() {

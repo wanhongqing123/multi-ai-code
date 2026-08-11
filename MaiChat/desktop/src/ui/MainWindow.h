@@ -161,8 +161,9 @@ private:
     // 进全屏前窗口是不是最大化的：退出时要还原成原样，不能一律 showNormal。
     bool remoteFullScreenWasMaximized_ = false;
     std::unique_ptr<RemoteInputCapture> remoteInputCapture_;
-    // 远端画面分辨率，用于算黑边。未知时按 16:9 兜底，拿到真实值再覆盖。
-    QSize remoteDesktopRemoteVideoSize_ = QSize(1920, 1080);
+    // TRTC 接收端编码帧尺寸。不能用 1920x1080 猜：source-aspect 策略生效后
+    // 可能是 1728x1080；首帧回调前保持空，坐标采集也保持禁用。
+    QSize remoteDesktopRemoteVideoSize_;
     QWidget* remotePage_ = nullptr;
     QPushButton* remoteNavButton_ = nullptr;
     RemoteDesktopController* remoteDesktop_ = nullptr;

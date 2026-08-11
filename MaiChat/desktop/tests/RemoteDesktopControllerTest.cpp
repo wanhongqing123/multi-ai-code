@@ -83,6 +83,10 @@ public:
         return true;
     }
 
+    std::optional<CaptureGeometry> localCaptureGeometry() const override {
+        return localGeometry;
+    }
+
     bool startViewing(const TrtcRoomParams& params, void*) override {
         viewCalls += 1;
         lastRoomId = params.roomId;
@@ -110,6 +114,7 @@ public:
     QString videoUserIdDuringViewStart = QStringLiteral("remote-host");
     QString lastRoomId;
     QString lastBoundUserId;
+    std::optional<CaptureGeometry> localGeometry;
     RemoteVideoCallback remoteVideoCallback;
     ErrorCallback errorCallback;
 };
@@ -233,6 +238,8 @@ private slots:
     void doesNotResendInviteWhileOneIsPending();
     void forwardsRemoteVideoHandlerToEngine();
     void forwardsRemoteVideoSizeToHandler();
+    void hostAcceptCarriesLocalCaptureGeometry();
+    void viewerAppliesAndClearsCaptureGeometryAcrossLifecycle();
 };
 
 namespace {
@@ -448,6 +455,67 @@ void RemoteDesktopControllerTest::attendedModeEmitsConsentAndSharesAfterAccept()
     QCOMPARE(static_cast<int>(h.lastSent().type), static_cast<int>(Type::Accept));
 }
 
+void RemoteDesktopControllerTest::hostAcceptCarriesLocalCaptureGeometry() {
+    Harness h(HostMode::Attended);
+    CaptureGeometry geometry;
+    geometry.sourceSize = QSize(2560, 1600);
+    geometry.captureRect = QRect(0, 0, 2560, 1600);
+    geometry.contentMode = CaptureContentMode::Fit;
+    geometry.revision = 3;
+    h.engine->localGeometry = geometry;
+
+    h.controller->handleIncomingText(
+        kPeerUser, h.inviteText(QStringLiteral("s-geometry"), QStringLiteral("room-geometry")));
+    h.controller->resolveConsent(true);
+
+    QCOMPARE(h.lastSent().type, Type::Accept);
+    QVERIFY(h.lastSent().captureGeometry.has_value());
+    QCOMPARE(h.lastSent().captureGeometry->sourceSize, QSize(2560, 1600));
+    QCOMPARE(h.lastSent().captureGeometry->captureRect, QRect(0, 0, 2560, 1600));
+    QCOMPARE(h.lastSent().captureGeometry->revision, quint64(3));
+}
+
+void RemoteDesktopControllerTest::viewerAppliesAndClearsCaptureGeometryAcrossLifecycle() {
+    CaptureGeometry geometry;
+    geometry.sourceSize = QSize(2560, 1600);
+    geometry.captureRect = QRect(0, 0, 2560, 1600);
+    geometry.contentMode = CaptureContentMode::Fit;
+    geometry.revision = 1;
+
+    Harness h(HostMode::Attended);
+    // 新邀请发出时必须先清旧机器的坐标系。
+    h.controller->inputSender().setCaptureGeometry(geometry);
+    h.controller->requestView(kPeerUser);
+    QVERIFY(!h.controller->inputSender().captureGeometry().has_value());
+
+    Signal accept;
+    accept.type = Type::Accept;
+    accept.sessionId = h.lastSent().sessionId;
+    accept.roomId = QStringLiteral("room-geometry");
+    accept.captureGeometry = geometry;
+    h.controller->handleIncomingText(kPeerUser, RemoteDesktopSignals::encodeSignal(accept));
+    QVERIFY(h.controller->inputSender().captureGeometry().has_value());
+    QCOMPARE(h.controller->inputSender().captureGeometry()->sourceSize, QSize(2560, 1600));
+
+    Signal stop;
+    stop.type = Type::Stop;
+    stop.sessionId = accept.sessionId;
+    h.controller->handleIncomingText(kPeerUser, RemoteDesktopSignals::encodeSignal(stop));
+    QVERIFY(!h.controller->inputSender().captureGeometry().has_value());
+
+    // Reject 同样不能留下任何增强几何（即便调用前有陈旧值）。
+    Harness rejected(HostMode::Attended);
+    rejected.controller->requestView(kPeerUser);
+    rejected.controller->inputSender().setCaptureGeometry(geometry);
+    Signal reject;
+    reject.type = Type::Reject;
+    reject.sessionId = rejected.lastSent().sessionId;
+    reject.reason = reasonBusy();
+    rejected.controller->handleIncomingText(kPeerUser,
+                                             RemoteDesktopSignals::encodeSignal(reject));
+    QVERIFY(!rejected.controller->inputSender().captureGeometry().has_value());
+}
+
 void RemoteDesktopControllerTest::attendedModeRejectsWhenUserDeclines() {
     Harness h(HostMode::Attended);
     h.controller->handleIncomingText(kPeerUser,
@@ -629,8 +697,8 @@ void RemoteDesktopControllerTest::forwardsRemoteVideoSizeToHandler() {
     QVERIFY2(h.engine->remoteVideoSizeCallback != nullptr,
              "控制器没有把尺寸回调注册到引擎上");
 
-    // 被控端是 2560x1600（16:10）这类非 16:9 屏幕时，控制端如果还按写死的
-    // 1920x1080 算黑边，鼠标坐标会整体偏移——能动但点不准。
+    // 接收端编码帧回调可能是 2560x1600（16:10）；控制器必须原样转给 UI，
+    // 不能继续拿写死的 1920x1080 算 surface 外层黑边。
     h.engine->remoteVideoSizeCallback(kPeerUser, 2560, 1600);
     QCOMPARE(seenWidth, 2560);
     QCOMPARE(seenHeight, 1600);

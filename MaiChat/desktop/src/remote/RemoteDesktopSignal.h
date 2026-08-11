@@ -1,6 +1,9 @@
 #pragma once
 
 #include <QString>
+#include <optional>
+
+#include "remote/CaptureGeometry.h"
 
 // 远程桌面信令：借道现有 IM 文本消息通道传输，不新增 IM 消息类型。
 //
@@ -37,6 +40,9 @@ struct Signal {
     QString reason;
     // 仅 Notice 使用，取 NoticeCodes 里的常量。
     QString noticeCode;
+    // 仅 Accept 使用。v1 的可选扩展：老端会忽略这个 JSON 对象，新端在字段
+    // 缺失或校验失败时也保持旧的“按编码帧直接归一化”行为。
+    std::optional<RemoteDesktop::CaptureGeometry> captureGeometry;
     int protocolVersion = 0;
 };
 

@@ -5,7 +5,9 @@
 #include <QRectF>
 #include <QSizeF>
 #include <QVector>
+#include <optional>
 
+#include "remote/CaptureGeometry.h"
 #include "remote/RemoteInputProtocol.h"
 
 // 控制端输入发送：坐标换算 + 合帧 + 配额调度。
@@ -24,6 +26,20 @@ namespace RemoteInput {
 // 坐标换算必须先减掉黑边，否则整体偏移。
 QRectF fitContentRect(const QSizeF& widgetSize, const QSizeF& videoSize);
 
+// 两层 Fit 的中间结果：TRTC 先可能把采集区域等比放进编码帧，接收端又把
+// 编码帧等比放进 Qt surface。surfaceContentRect 是两层组合后真正对应远端
+// 采集内容的区域；几何未知时它等于旧逻辑的 surfaceVideoRect。
+struct CaptureCoordinateMapping {
+    QRectF encodedContentRect;
+    QRectF surfaceVideoRect;
+    QRectF surfaceContentRect;
+    bool usesCaptureGeometry = false;
+};
+
+CaptureCoordinateMapping calculateCaptureCoordinateMapping(
+    const QSizeF& surfaceSize, const QSizeF& encodedFrameSize,
+    const std::optional<RemoteDesktop::CaptureGeometry>& captureGeometry);
+
 class RemoteInputSender {
 public:
     struct OutgoingPacket {
@@ -38,6 +54,17 @@ public:
     // 画面在控件内的实际矩形，由调用方按 fitContentRect 算好后设进来。
     void setContentRect(const QRectF& contentRect);
     const QRectF& contentRect() const { return contentRect_; }
+
+    // Accept 信令携带的可选采集坐标系。无值或非法值都清回兼容模式：映射结果
+    // 直接是编码帧归一化坐标。设置几何不影响会话/队列生命周期。
+    void setCaptureGeometry(
+        const std::optional<RemoteDesktop::CaptureGeometry>& captureGeometry);
+    const std::optional<RemoteDesktop::CaptureGeometry>& captureGeometry() const {
+        return captureGeometry_;
+    }
+    // 输入包最终使用的 source-normalized 区域。整屏是 [0,0 1x1]；区域采集
+    // 则是 captureRect/sourceSize；兼容模式同样返回 [0,0 1x1]。
+    QRectF normalizedTargetRect() const;
 
     // 控件内坐标 → 归一化 [0,1]。落在黑边上返回 false：那里不对应远端屏幕的
     // 任何位置，硬映射会变成点到屏幕边缘，很意外。
@@ -87,6 +114,7 @@ private:
     bool sessionActive_ = false;
     QString sessionId_;
     QRectF contentRect_;
+    std::optional<RemoteDesktop::CaptureGeometry> captureGeometry_;
     quint32 unreliableSequence_ = 0;
     quint32 reliableSequence_ = 0;
 

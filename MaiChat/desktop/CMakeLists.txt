@@ -80,6 +80,8 @@ add_library(remote_im_core
   src/storage/RemoteIMMediaStore.cpp
   src/logging/AppLog.h
   src/logging/AppLog.cpp
+  src/remote/CaptureGeometry.h
+  src/remote/CaptureGeometry.cpp
   src/remote/RemoteDesktopSignal.h
   src/remote/RemoteDesktopSignal.cpp
   src/remote/RemoteInputProtocol.h

@@ -23,6 +23,40 @@ QRectF fitContentRect(const QSizeF& widgetSize, const QSizeF& videoSize) {
                   width, height);
 }
 
+CaptureCoordinateMapping calculateCaptureCoordinateMapping(
+    const QSizeF& surfaceSize, const QSizeF& encodedFrameSize,
+    const std::optional<RemoteDesktop::CaptureGeometry>& captureGeometry) {
+    CaptureCoordinateMapping mapping;
+    mapping.surfaceVideoRect = fitContentRect(surfaceSize, encodedFrameSize);
+    if (mapping.surfaceVideoRect.isEmpty()) return mapping;
+
+    mapping.encodedContentRect =
+        QRectF(QPointF(0.0, 0.0), encodedFrameSize);
+    mapping.surfaceContentRect = mapping.surfaceVideoRect;
+    if (!captureGeometry || !captureGeometry->isValid()
+        || captureGeometry->contentMode != RemoteDesktop::CaptureContentMode::Fit) {
+        return mapping;
+    }
+
+    // 第一级：采集区域在编码帧内的 active rect。若实验接口成功让编码输出跟随
+    // 采集源比例，这里正好是整帧；旧 SDK 仍输出固定 16:9 时，这里会剥掉帧内黑边。
+    mapping.encodedContentRect = fitContentRect(
+        encodedFrameSize, QSizeF(captureGeometry->captureRect.size()));
+    if (mapping.encodedContentRect.isEmpty()) return mapping;
+
+    // 第二级：TRTC Fit 渲染把整个编码帧放进 Qt surface。按编码帧比例把 active
+    // rect 投影进去，得到真正能接收输入的最终矩形。
+    const double scaleX = mapping.surfaceVideoRect.width() / encodedFrameSize.width();
+    const double scaleY = mapping.surfaceVideoRect.height() / encodedFrameSize.height();
+    mapping.surfaceContentRect = QRectF(
+        mapping.surfaceVideoRect.x() + mapping.encodedContentRect.x() * scaleX,
+        mapping.surfaceVideoRect.y() + mapping.encodedContentRect.y() * scaleY,
+        mapping.encodedContentRect.width() * scaleX,
+        mapping.encodedContentRect.height() * scaleY);
+    mapping.usesCaptureGeometry = true;
+    return mapping;
+}
+
 void RemoteInputSender::beginSession(const QString& sessionId) {
     sessionId_ = sessionId;
     sessionActive_ = true;
@@ -48,13 +82,35 @@ void RemoteInputSender::setContentRect(const QRectF& contentRect) {
     contentRect_ = contentRect;
 }
 
+void RemoteInputSender::setCaptureGeometry(
+    const std::optional<RemoteDesktop::CaptureGeometry>& captureGeometry) {
+    captureGeometry_ = captureGeometry && captureGeometry->isValid()
+        ? captureGeometry
+        : std::nullopt;
+}
+
+QRectF RemoteInputSender::normalizedTargetRect() const {
+    if (!captureGeometry_ || !captureGeometry_->isValid()) return QRectF(0.0, 0.0, 1.0, 1.0);
+    const auto& geometry = *captureGeometry_;
+    return QRectF(
+        static_cast<double>(geometry.captureRect.x()) / geometry.sourceSize.width(),
+        static_cast<double>(geometry.captureRect.y()) / geometry.sourceSize.height(),
+        static_cast<double>(geometry.captureRect.width()) / geometry.sourceSize.width(),
+        static_cast<double>(geometry.captureRect.height()) / geometry.sourceSize.height());
+}
+
 bool RemoteInputSender::mapToNormalized(const QPointF& widgetPos, double* outX,
                                         double* outY) const {
     if (outX == nullptr || outY == nullptr) return false;
     if (contentRect_.width() <= 0.0 || contentRect_.height() <= 0.0) return false;
     if (!contentRect_.contains(widgetPos)) return false;
-    *outX = clampNormalized((widgetPos.x() - contentRect_.x()) / contentRect_.width());
-    *outY = clampNormalized((widgetPos.y() - contentRect_.y()) / contentRect_.height());
+    const double localX =
+        clampNormalized((widgetPos.x() - contentRect_.x()) / contentRect_.width());
+    const double localY =
+        clampNormalized((widgetPos.y() - contentRect_.y()) / contentRect_.height());
+    const QRectF target = normalizedTargetRect();
+    *outX = clampNormalized(target.x() + localX * target.width());
+    *outY = clampNormalized(target.y() + localY * target.height());
     return true;
 }
 
@@ -62,8 +118,13 @@ bool RemoteInputSender::mapToNormalizedClamped(const QPointF& widgetPos, double*
                                                double* outY) const {
     if (outX == nullptr || outY == nullptr) return false;
     if (contentRect_.width() <= 0.0 || contentRect_.height() <= 0.0) return false;
-    *outX = clampNormalized((widgetPos.x() - contentRect_.x()) / contentRect_.width());
-    *outY = clampNormalized((widgetPos.y() - contentRect_.y()) / contentRect_.height());
+    const double localX =
+        clampNormalized((widgetPos.x() - contentRect_.x()) / contentRect_.width());
+    const double localY =
+        clampNormalized((widgetPos.y() - contentRect_.y()) / contentRect_.height());
+    const QRectF target = normalizedTargetRect();
+    *outX = clampNormalized(target.x() + localX * target.width());
+    *outY = clampNormalized(target.y() + localY * target.height());
     return true;
 }
 

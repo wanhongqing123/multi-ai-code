@@ -115,6 +115,7 @@ private struct RemoteDesktopContent: View {
                 RemoteDesktopViewport(
                     traceID: session.diagnosticTraceID,
                     videoSize: session.remoteVideoSize,
+                    captureGeometry: session.captureGeometry,
                     isViewing: session.state == .viewing,
                     isControlEnabled: session.isControlEnabled,
                     resetRequest: zoomResetRequest,
@@ -368,6 +369,7 @@ private struct RemoteControlLabel: View {
 private struct RemoteDesktopViewport: UIViewRepresentable {
     let traceID: String
     let videoSize: CGSize
+    let captureGeometry: CaptureGeometry?
     let isViewing: Bool
     let isControlEnabled: Bool
     let resetRequest: Int
@@ -398,6 +400,7 @@ private struct RemoteDesktopViewport: UIViewRepresentable {
         view.traceID = traceID
         view.update(
             videoSize: videoSize,
+            captureGeometry: captureGeometry,
             isViewing: isViewing,
             isControlEnabled: isControlEnabled,
             resetRequest: resetRequest,
@@ -424,6 +427,7 @@ private final class RemoteDesktopViewportUIView: UIView, UIScrollViewDelegate {
     )
 
     private var videoSize: CGSize = .zero
+    private var captureGeometry: CaptureGeometry?
     private var baseContentSize: CGSize = .zero
     private var lastViewportSize: CGSize = .zero
     private var lastResetRequest = 0
@@ -496,6 +500,7 @@ private final class RemoteDesktopViewportUIView: UIView, UIScrollViewDelegate {
 
     func update(
         videoSize: CGSize,
+        captureGeometry: CaptureGeometry?,
         isViewing: Bool,
         isControlEnabled: Bool,
         resetRequest: Int,
@@ -509,8 +514,14 @@ private final class RemoteDesktopViewportUIView: UIView, UIScrollViewDelegate {
             self.videoSize = videoSize
             setNeedsLayout()
         }
+        if self.captureGeometry != captureGeometry {
+            self.captureGeometry = captureGeometry
+            lastViewportSize = .zero
+            setNeedsLayout()
+        }
 
         pointerView.videoSize = videoSize
+        pointerView.captureGeometry = captureGeometry
         pointerView.onMove = onMove
         pointerView.onClick = onClick
         pointerView.onScroll = onScroll
@@ -790,6 +801,7 @@ private final class RemoteDesktopViewportUIView: UIView, UIScrollViewDelegate {
             "trigger": trigger,
             "viewport": sizeText(bounds.size),
             "video": sizeText(videoSize),
+            "encoded_frame": sizeText(videoSize),
             "base": sizeText(baseContentSize),
             "scale": formatted(scrollView.zoomScale),
             "offset": pointText(scrollView.contentOffset),
@@ -801,6 +813,22 @@ private final class RemoteDesktopViewportUIView: UIView, UIScrollViewDelegate {
                 scrollView.contentInset.right
             ),
         ]
+        let encodedFrameRect = CGRect(origin: .zero, size: baseContentSize)
+        if let activeContentRect = RemoteDesktopCoordinateMapper.activeContentRect(
+            encodedFrameRect: encodedFrameRect,
+            captureGeometry: captureGeometry
+        ) {
+            fields["active_content_rect"] = rectText(activeContentRect)
+        }
+        if let captureGeometry {
+            fields["source_size"] = "\(captureGeometry.sourceWidth)x\(captureGeometry.sourceHeight)"
+            fields["capture_rect"] = "\(captureGeometry.captureX),\(captureGeometry.captureY) \(captureGeometry.captureWidth)x\(captureGeometry.captureHeight)"
+            fields["content_mode"] = captureGeometry.contentMode
+            fields["geometry_revision"] = String(captureGeometry.revision)
+            fields["geometry_fallback"] = "active-content"
+        } else {
+            fields["geometry_fallback"] = "encoded-frame"
+        }
         if let focus {
             fields["focus"] = pointText(focus)
         }
@@ -850,6 +878,16 @@ private final class RemoteDesktopViewportUIView: UIView, UIScrollViewDelegate {
         String(format: "%.3f,%.3f", point.x, point.y)
     }
 
+    private func rectText(_ rect: CGRect) -> String {
+        String(
+            format: "%.1f,%.1f %.1fx%.1f",
+            rect.origin.x,
+            rect.origin.y,
+            rect.width,
+            rect.height
+        )
+    }
+
     private func formatted(_ value: CGFloat) -> String {
         String(format: "%.2f", value)
     }
@@ -861,6 +899,7 @@ private final class RemoteDesktopViewportUIView: UIView, UIScrollViewDelegate {
 
 private final class RemotePointerUIView: UIView, UIGestureRecognizerDelegate {
     var videoSize: CGSize = .zero
+    var captureGeometry: CaptureGeometry?
     var onMove: ((Double, Double) -> Void)?
     var onClick: ((RemoteMouseButton, Double, Double, Int) -> Void)?
     var onScroll: ((Int, Double, Double) -> Void)?
@@ -1002,6 +1041,7 @@ private final class RemotePointerUIView: UIView, UIGestureRecognizerDelegate {
                     location: location,
                     viewportSize: bounds.size,
                     videoSize: videoSize,
+                    activeContentRect: nil,
                     normalizedPoint: nil,
                     dropReason: .invalidGeometry
                 )
@@ -1009,24 +1049,37 @@ private final class RemotePointerUIView: UIView, UIGestureRecognizerDelegate {
             return nil
         }
 
-        let scale = min(bounds.width / videoSize.width, bounds.height / videoSize.height)
-        let contentSize = CGSize(width: videoSize.width * scale, height: videoSize.height * scale)
-        let contentRect = CGRect(
-            x: (bounds.width - contentSize.width) / 2,
-            y: (bounds.height - contentSize.height) / 2,
-            width: contentSize.width,
-            height: contentSize.height
-        )
-        let isInsideContent = location.x >= contentRect.minX
-            && location.x <= contentRect.maxX
-            && location.y >= contentRect.minY
-            && location.y <= contentRect.maxY
-        if !clamped, !isInsideContent {
+        guard let encodedFrameRect = RemoteDesktopCoordinateMapper.aspectFitRect(
+            contentSize: videoSize,
+            in: bounds
+        ), let activeContentRect = RemoteDesktopCoordinateMapper.activeContentRect(
+            encodedFrameRect: encodedFrameRect,
+            captureGeometry: captureGeometry
+        ) else {
             onCapture?(
                 RemotePointerCaptureDiagnostic(
                     location: location,
                     viewportSize: bounds.size,
                     videoSize: videoSize,
+                    activeContentRect: nil,
+                    normalizedPoint: nil,
+                    dropReason: .invalidGeometry
+                )
+            )
+            return nil
+        }
+        guard let point = RemoteDesktopCoordinateMapper.normalizedPoint(
+            at: location,
+            encodedFrameRect: encodedFrameRect,
+            captureGeometry: captureGeometry,
+            clamped: clamped
+        ) else {
+            onCapture?(
+                RemotePointerCaptureDiagnostic(
+                    location: location,
+                    viewportSize: bounds.size,
+                    videoSize: videoSize,
+                    activeContentRect: activeContentRect,
                     normalizedPoint: nil,
                     dropReason: .letterbox
                 )
@@ -1034,15 +1087,12 @@ private final class RemotePointerUIView: UIView, UIGestureRecognizerDelegate {
             return nil
         }
 
-        let point = CGPoint(
-            x: min(max((location.x - contentRect.minX) / contentRect.width, 0), 1),
-            y: min(max((location.y - contentRect.minY) / contentRect.height, 0), 1)
-        )
         onCapture?(
             RemotePointerCaptureDiagnostic(
                 location: location,
                 viewportSize: bounds.size,
                 videoSize: videoSize,
+                activeContentRect: activeContentRect,
                 normalizedPoint: point,
                 dropReason: nil
             )

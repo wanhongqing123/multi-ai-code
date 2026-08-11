@@ -3535,6 +3535,13 @@ void MainWindow::setupRemoteDesktop() {
                         closeRemoteDesktopViewer();
                         break;
                     case RemoteDesktop::ViewerState::Inviting:
+                        // 新会话不能沿用上一场的编码帧尺寸。首帧/尺寸回调前宁可
+                        // 暂停坐标输入，也不能拿固定 1920x1080 短暂映射错。
+                        remoteDesktopRemoteVideoSize_ = QSize();
+                        if (remoteInputCapture_) {
+                            remoteInputCapture_->setRemoteVideoSize(QSize());
+                        }
+                        break;
                     case RemoteDesktop::ViewerState::Viewing:
                         break;
                 }
@@ -3560,8 +3567,8 @@ void MainWindow::setupRemoteDesktop() {
             }
             remoteDesktopView_->setStreamActive(peerUserId, available);
         });
-    // 远端画面的真实分辨率。此前这里是写死的 1920x1080，被控端只要不是 16:9
-    // （2560x1600 这类很常见），黑边就算错，鼠标位置整体偏移——能动但点不准。
+    // TRTC 接收端实际编码帧分辨率，不等于被控屏幕。它与 Accept 里的
+    // CaptureGeometry 一起参与两级换算；此前写死 1920x1080 会在首帧前映射错。
     remoteDesktop_->setRemoteVideoSizeHandler(
         [this](const QString&, int width, int height) {
             const QSize size(width, height);
@@ -3688,8 +3695,7 @@ void MainWindow::toggleRemoteDesktopControl(const QString& peerUserId) {
             if (peerId != peerUserId) remoteDesktopView_->setControlActive(peerId, false);
         }
         remoteInputCapture_->attachTo(card->renderSurface());
-        // 远端画面尺寸暂按被采集屏幕的实际比例给；拿到 onUserVideoSizeChanged
-        // 之后会被更精确的值覆盖。
+        // 首帧/尺寸回调前这里是空尺寸，capture 会保持空映射且不发送坐标。
         remoteInputCapture_->setRemoteVideoSize(remoteDesktopRemoteVideoSize_);
         remoteInputCapture_->setEnabled(true);
     } else if (remoteInputCapture_) {

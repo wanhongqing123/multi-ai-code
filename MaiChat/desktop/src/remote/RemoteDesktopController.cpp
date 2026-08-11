@@ -19,6 +19,20 @@ QString defaultId() {
     return QUuid::createUuid().toString(QUuid::WithoutBraces).left(12);
 }
 
+void logSignalGeometry(const QString& side,
+                       const std::optional<RemoteDesktop::CaptureGeometry>& geometry) {
+    if (geometry && geometry->isValid()) {
+        qInfo().noquote()
+            << QStringLiteral("[remote-input] %1 geometry: %2")
+                   .arg(side, RemoteDesktop::describeCaptureGeometry(*geometry));
+        return;
+    }
+    qInfo().noquote()
+        << QStringLiteral("[remote-input] %1 geometry: unavailable; using legacy "
+                          "encoded-frame mapping")
+               .arg(side);
+}
+
 }  // namespace
 
 RemoteDesktopController::RemoteDesktopController(Config config,
@@ -273,12 +287,12 @@ void RemoteDesktopController::setRemoteVideoSizeHandler(
     if (!engine_) return;
     engine_->setRemoteVideoSizeCallback(
         [this, handler = std::move(handler)](const QString& userId, int width, int height) {
-            // 记进日志：坐标偏移这类问题，光看现象分不清是"尺寸拿错了"还是
-            // "映射算错了"，把真实值写下来一眼就能对。
-            qInfo().noquote() << QStringLiteral("[remote-input] remote video size: %1x%2 (user=%3)")
-                                     .arg(width)
-                                     .arg(height)
-                                     .arg(userId.isEmpty() ? QStringLiteral("<empty>") : userId);
+            // 这是接收端实际解码到的编码帧，不是被控屏幕。日志不带用户/会话
+            // 标识；与 CaptureGeometry、surface 中间量对照即可排查坐标偏移。
+            qInfo().noquote()
+                << QStringLiteral("[remote-input] viewer receiver encoded frame: %1x%2")
+                       .arg(width)
+                       .arg(height);
             if (handler) handler(userId, width, height);
         });
 }
@@ -341,16 +355,20 @@ bool RemoteDesktopController::handleIncomingText(const QString& fromUserId, cons
             if (signal.sessionId != viewerSessionId_) return true;
             const ViewerTransition transition = viewerOnSignal(viewerState_, signal);
             if (transition.nextState == ViewerState::Connecting) {
+                inputSender_.setCaptureGeometry(signal.captureGeometry);
+                logSignalGeometry(QStringLiteral("viewer received"), signal.captureGeometry);
                 viewerRoomId_ = signal.roomId.isEmpty() ? viewerRoomId_ : signal.roomId;
                 // 先通知 UI 创建原生渲染窗口。TRTC 的回调可能在 startViewing
                 // 内同步到达，晚切状态会让首帧落在 Inviting 并被永久忽略。
                 setViewerState(transition.nextState, transition.failureReason);
                 if (!engine_ || !engine_->startViewing(roomParams(viewerRoomId_), nullptr)) {
+                    inputSender_.setCaptureGeometry(std::nullopt);
                     setViewerState(ViewerState::Failed, QStringLiteral("远程画面启动失败"));
                     return true;
                 }
                 return true;
             }
+            inputSender_.setCaptureGeometry(std::nullopt);
             setViewerState(transition.nextState, transition.failureReason);
             return true;
         }
@@ -367,6 +385,7 @@ bool RemoteDesktopController::handleIncomingText(const QString& fromUserId, cons
                 viewerSessionId_.clear();
                 viewerRoomId_.clear();
                 viewerPeerId_.clear();
+                inputSender_.setCaptureGeometry(std::nullopt);
             }
             if (!hostSessionId_.isEmpty() && signal.sessionId == hostSessionId_) {
                 const HostDecision decision = decideOnPeerGone(hostState_);
@@ -444,6 +463,8 @@ void RemoteDesktopController::applyHostDecision(const HostDecision& decision,
             accept.type = Type::Accept;
             accept.sessionId = hostSessionId_;
             accept.roomId = hostRoomId_;
+            accept.captureGeometry = engine_->localCaptureGeometry();
+            logSignalGeometry(QStringLiteral("host Accept"), accept.captureGeometry);
             send(peerId, accept);
             startHostControlSide();
             emit sharingStarted(peerId);
@@ -491,6 +512,8 @@ void RemoteDesktopController::applyHostDecision(const HostDecision& decision,
 void RemoteDesktopController::requestView(const QString& peerId, const QString& password) {
     if (!canStartInvite(viewerState_)) return;
 
+    // 新会话在 Accept 到来前不能沿用上一台机器的采集坐标系。
+    inputSender_.setCaptureGeometry(std::nullopt);
     viewerPeerId_ = peerId;
     viewerSessionId_ = idGenerator_();
     viewerRoomId_ = QStringLiteral("mc-%1-%2").arg(config_.localUserId, idGenerator_());
@@ -557,6 +580,7 @@ void RemoteDesktopController::stopSession(SignalSendCompletion completion) {
         viewerSessionId_.clear();
         viewerRoomId_.clear();
         viewerPeerId_.clear();
+        inputSender_.setCaptureGeometry(std::nullopt);
     }
     state->cleanupDone = true;
     finishIfReady();

@@ -24,7 +24,8 @@ public:
 
     // 绑定画面控件。传 nullptr 解绑。可重复调用。
     void attachTo(QWidget* surface);
-    // 远端画面的原始分辨率，用于算黑边。拿不到时不采集坐标。
+    // TRTC 接收端回调给出的编码帧分辨率，用于算 surface 外层黑边；结合 Accept
+    // 的 CaptureGeometry 后还会继续剥掉编码帧内部黑边。拿不到时不采集坐标。
     void setRemoteVideoSize(const QSize& size);
 
     void setEnabled(bool enabled);
@@ -47,13 +48,14 @@ private:
     void endMouseTracking();
     // 每秒往应用日志写一条采集汇总。只在控制期间跑。
     void flushTrace();
-    // 把控件尺寸、远端画面尺寸、算出来的内容区一起打出来。坐标偏移只可能来自
-    // 这三个数的关系，原样记下就能手算复核，不必再让人重试一轮去猜。
+    // 把 source/capture、接收端编码帧、帧内 active rect、surface 最终内容区
+    // 一起打出来，原样即可手算复核两级映射。
     void logGeometry(const QString& reason) const;
 
     RemoteInput::RemoteInputSender& sender_;
     QPointer<QWidget> surface_;
     QSize remoteVideoSize_;
+    RemoteInput::CaptureCoordinateMapping coordinateMapping_;
     bool enabled_ = false;
     bool mouseTrackingApplied_ = false;
     bool mouseTrackingRestore_ = false;

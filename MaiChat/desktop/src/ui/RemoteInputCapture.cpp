@@ -161,36 +161,74 @@ void RemoteInputCapture::flushTrace() {
 
 void RemoteInputCapture::refreshContentRect() {
     if (!surface_ || !remoteVideoSize_.isValid() || remoteVideoSize_.isEmpty()) {
+        coordinateMapping_ = RemoteInput::CaptureCoordinateMapping{};
         sender_.setContentRect(QRectF());
+        if (surface_) logGeometry(QStringLiteral("waiting-for-encoded-size; mapping disabled"));
         return;
     }
-    sender_.setContentRect(
-        RemoteInput::fitContentRect(QSizeF(surface_->size()), QSizeF(remoteVideoSize_)));
+    coordinateMapping_ = RemoteInput::calculateCaptureCoordinateMapping(
+        QSizeF(surface_->size()), QSizeF(remoteVideoSize_), sender_.captureGeometry());
+    sender_.setContentRect(coordinateMapping_.surfaceContentRect);
     logGeometry(QStringLiteral("content rect"));
 }
 
-// 坐标偏移只可能来自这三个数的关系，把它们原样打出来就能手算复核，
-// 不用再让人重试一轮去猜。
+// 把两级换算的每一个中间量都打出来，既能区分“SDK 输出比例没跟随”与
+// “Qt surface 又补了一层边”，也能直接手算 capture-local → source-normalized。
 void RemoteInputCapture::logGeometry(const QString& reason) const {
     if (!surface_) return;
-    const QRectF rect = sender_.contentRect();
+    const QRectF encodedActive = coordinateMapping_.encodedContentRect;
+    const QRectF surfaceVideo = coordinateMapping_.surfaceVideoRect;
+    const QRectF finalRect = sender_.contentRect();
+    QString source = QStringLiteral("unknown");
+    QString capture = QStringLiteral("unknown");
+    QString mode = QStringLiteral("legacy");
+    QString revision = QStringLiteral("0");
+    const QString receiverEncoded = remoteVideoSize_.isValid() && !remoteVideoSize_.isEmpty()
+        ? QStringLiteral("%1x%2")
+              .arg(remoteVideoSize_.width())
+              .arg(remoteVideoSize_.height())
+        : QStringLiteral("waiting");
+    if (sender_.captureGeometry() && sender_.captureGeometry()->isValid()) {
+        const auto& geometry = *sender_.captureGeometry();
+        source = QStringLiteral("%1x%2")
+                     .arg(geometry.sourceSize.width())
+                     .arg(geometry.sourceSize.height());
+        capture = QStringLiteral("(%1,%2 %3x%4)")
+                      .arg(geometry.captureRect.x())
+                      .arg(geometry.captureRect.y())
+                      .arg(geometry.captureRect.width())
+                      .arg(geometry.captureRect.height());
+        mode = RemoteDesktop::captureContentModeName(geometry.contentMode);
+        revision = QString::number(geometry.revision);
+    }
     qInfo().noquote()
-        << QStringLiteral("[remote-input] capture geometry (%1): widget=%2x%3 video=%4x%5 "
-                          "(aspect %6) contentRect=(%7,%8 %9x%10)")
+        << QStringLiteral(
+               "[remote-input] capture geometry (%1): source=%2 capture=%3 mode=%4 "
+               "revision=%5 receiver-encoded=%6 encoded-active=(%7,%8 %9x%10) "
+               "surface=%11x%12 surface-video=(%13,%14 %15x%16) "
+               "surface-content=(%17,%18 %19x%20) enhanced=%21")
                .arg(reason)
+               .arg(source)
+               .arg(capture)
+               .arg(mode)
+               .arg(revision)
+               .arg(receiverEncoded)
+               .arg(encodedActive.x(), 0, 'f', 1)
+               .arg(encodedActive.y(), 0, 'f', 1)
+               .arg(encodedActive.width(), 0, 'f', 1)
+               .arg(encodedActive.height(), 0, 'f', 1)
                .arg(surface_->width())
                .arg(surface_->height())
-               .arg(remoteVideoSize_.width())
-               .arg(remoteVideoSize_.height())
-               .arg(remoteVideoSize_.height() > 0
-                        ? QString::number(static_cast<double>(remoteVideoSize_.width())
-                                              / remoteVideoSize_.height(),
-                                          'f', 4)
-                        : QStringLiteral("n/a"))
-               .arg(rect.x(), 0, 'f', 1)
-               .arg(rect.y(), 0, 'f', 1)
-               .arg(rect.width(), 0, 'f', 1)
-               .arg(rect.height(), 0, 'f', 1);
+               .arg(surfaceVideo.x(), 0, 'f', 1)
+               .arg(surfaceVideo.y(), 0, 'f', 1)
+               .arg(surfaceVideo.width(), 0, 'f', 1)
+               .arg(surfaceVideo.height(), 0, 'f', 1)
+               .arg(finalRect.x(), 0, 'f', 1)
+               .arg(finalRect.y(), 0, 'f', 1)
+               .arg(finalRect.width(), 0, 'f', 1)
+               .arg(finalRect.height(), 0, 'f', 1)
+               .arg(coordinateMapping_.usesCaptureGeometry ? QStringLiteral("true")
+                                                            : QStringLiteral("false"));
 }
 
 bool RemoteInputCapture::mapPosition(const QPointF& pos, double* x, double* y) const {

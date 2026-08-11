@@ -113,7 +113,7 @@ MaiChat/desktop/scripts/package-macos.sh
 - 生成标准 Finder 安装窗口，提示把应用拖到 `Applications`；
 - 校验 `CFBundleVersion` 与 `CFBundleShortVersionString`，确保 Launchpad 可索引；
 - 对 `.app` 做 ad-hoc codesign，避免嵌入 framework 因未签名无法加载；
-- 生成 `使用说明.txt` 并压缩打包。
+- 压缩生成可分发的 DMG。
 
 产出的 zip 不提交进仓库，通过 GitHub Releases 发布下载：
 

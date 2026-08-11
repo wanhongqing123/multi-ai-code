@@ -120,20 +120,6 @@ sdk_target_dir="$staged_app/Contents/MacOS/vendor/tencent-im/macos"
 mkdir -p "$sdk_target_dir"
 ditto "$sdk_source" "$sdk_target_dir/ImSDKForMac_Plus.framework"
 
-cat > "$staging/使用说明.txt" <<'README'
-MaiChat 桌面客户端（macOS）
-===================================
-
-安装：将 MaiChat.app 拖到右侧 Applications 文件夹。
-运行：复制完成后，从“应用程序”或 Launchpad 打开 MaiChat。
-
-- 无需在目标机器安装 Qt，Qt 运行时已随 .app 旁挂。
-- 原生 IM SDK 已随包放在 .app 内部，请不要手动移动 .app 内的 vendor 目录。
-- TRTC 远程桌面组件已内置；首次共享屏幕时请按 macOS 提示授予屏幕录制权限。
-- 首次启动在登录页输入账号 ID 后回车即可登录。
-- 未签名应用首次打开如被 macOS 拦截，可在 Finder 中右键应用并选择“打开”。
-README
-
 # Standard drag-to-install layout: users can drag the app onto Applications.
 ln -s /Applications "$staging/Applications"
 
@@ -204,7 +190,7 @@ env \
   windowWidth=580 \
   windowHeight=380 \
   backgroundColor="#ffffff" \
-  iconLocations="'MaiChat.app': (150, 165), 'Applications': (430, 165), '使用说明.txt': (290, 315)" \
+  iconLocations="'MaiChat.app': (150, 165), 'Applications': (430, 165)" \
   python3 "$dmgbuild_script"
 
 sync

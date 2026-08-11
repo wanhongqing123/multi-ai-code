@@ -14,7 +14,7 @@ function findMacAppBundle(appOutDir) {
   return appName ? join(appOutDir, appName) : null
 }
 
-function adHocSignMacApp(appOutDir) {
+function adHocSignMacApp(appOutDir, arch) {
   const appBundle = findMacAppBundle(appOutDir)
   if (!appBundle) {
     console.log('[afterPack] macOS app bundle not found, skip ad-hoc codesign')
@@ -25,6 +25,29 @@ function adHocSignMacApp(appOutDir) {
   } catch {
     // xattr is best-effort; codesign below is the important verification step.
   }
+  // Bun emits OpenCode with a linker ad-hoc signature that can become stale after
+  // compilation. `codesign --deep` on the outer app does not repair that nested
+  // executable, so sign and verify it explicitly before sealing the app bundle.
+  const openCodeBinary = join(
+    appBundle,
+    'Contents',
+    'Resources',
+    'app.asar.unpacked',
+    'bin',
+    'aicli',
+    'opencode',
+    `darwin-${arch}`,
+    'opencode'
+  )
+  if (!existsSync(openCodeBinary)) {
+    throw new Error(`[afterPack] OpenCode binary not found: ${openCodeBinary}`)
+  }
+  execFileSync('codesign', ['--force', '--sign', '-', openCodeBinary], {
+    stdio: 'inherit'
+  })
+  execFileSync('codesign', ['--verify', '--strict', '--verbose=2', openCodeBinary], {
+    stdio: 'inherit'
+  })
   execFileSync('codesign', ['--force', '--deep', '--sign', '-', appBundle], {
     stdio: 'inherit'
   })
@@ -53,6 +76,6 @@ module.exports = async function afterPack(context) {
   const codexBinaries = verifyPackagedCodexBinaries(context.appOutDir, { platform, arch })
   console.log(`[afterPack] Codex binaries verified: ${codexBinaries.join(', ')}`)
   if (platform === 'darwin') {
-    adHocSignMacApp(context.appOutDir)
+    adHocSignMacApp(context.appOutDir, arch)
   }
 }

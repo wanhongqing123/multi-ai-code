@@ -621,15 +621,15 @@ final class MasterChatStateTests: XCTestCase {
         XCTAssertEqual(decoded, contact)
     }
 
-    func testDraftSubmitPolicyConsumesTrailingReturn() {
-        XCTAssertNil(RemoteIMDraftSubmitPolicy.textByConsumingTrailingReturn(from: "hello"))
-        XCTAssertEqual(
-            RemoteIMDraftSubmitPolicy.textByConsumingTrailingReturn(from: "hello\n"),
-            "hello"
-        )
-        XCTAssertEqual(
-            RemoteIMDraftSubmitPolicy.textByConsumingTrailingReturn(from: "hello\r\n"),
-            "hello"
+    func testDraftSubmitPolicyOnlySubmitsSingleReturnEvents() {
+        XCTAssertTrue(RemoteIMDraftSubmitPolicy.shouldSubmit(replacementText: "\n"))
+        XCTAssertTrue(RemoteIMDraftSubmitPolicy.shouldSubmit(replacementText: "\r\n"))
+        XCTAssertFalse(RemoteIMDraftSubmitPolicy.shouldSubmit(replacementText: "hello"))
+        XCTAssertFalse(RemoteIMDraftSubmitPolicy.shouldSubmit(replacementText: "\n\n"))
+        XCTAssertFalse(
+            RemoteIMDraftSubmitPolicy.shouldSubmit(
+                replacementText: "## 标题\n\n- 第一项\n- 第二项\n"
+            )
         )
     }
 
@@ -854,6 +854,28 @@ final class MasterChatStateTests: XCTestCase {
         XCTAssertTrue(fullText.contains("类型：文件"))
         XCTAssertTrue(fullText.contains("构建已经完成。"))
         XCTAssertTrue(fullText.contains("附件：report.md，text/markdown，2048 字节"))
+    }
+
+    func testMessageCopyPolicyPreservesMarkdownSource() {
+        let markdown = """
+        ## 标题
+
+        **加粗**、`code` 和 [链接](https://example.com)
+
+        ```swift
+        print("hello")
+        ```
+        """
+        let message = RemoteIMMessage(
+            fromUserID: "mac-quark-pc",
+            toUserID: "whq-iphone",
+            text: markdown,
+            direction: .incoming,
+            status: .received,
+            createdAt: Date(timeIntervalSince1970: 100)
+        )
+
+        XCTAssertEqual(RemoteIMMessageCopyPolicy.selectionText(for: message), markdown)
     }
 
     func testMessageCopyPolicyDescribesAttachmentOnlyMessages() {

@@ -30,6 +30,11 @@ public enum RemoteIMContactRelation: String, Codable, Equatable, Hashable, Senda
 }
 
 public enum RemoteIMDraftSubmitPolicy {
+    public static func shouldSubmit(replacementText: String) -> Bool {
+        replacementText == "\n" || replacementText == "\r\n"
+    }
+
+    @available(*, deprecated, message: "Inspect text input events with shouldSubmit(replacementText:) instead")
     public static func textByConsumingTrailingReturn(from text: String) -> String? {
         let normalizedText = text.replacingOccurrences(of: "\r\n", with: "\n")
         guard normalizedText.hasSuffix("\n") else { return nil }

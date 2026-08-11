@@ -1,5 +1,7 @@
 #include <QAbstractButton>
+#include <QAction>
 #include <QApplication>
+#include <QClipboard>
 #include <QDateTime>
 #include <QLabel>
 #include <QLineEdit>
@@ -74,6 +76,7 @@ private slots:
     void removesRedundantChromeLabels();
     void conversationListsUseDelegateItemsForSmoothScrolling();
     void rendersMarkdownMessageContent();
+    void copiesOriginalMarkdownFromMessageContextMenu();
     void addContactButtonLivesInNavigationRailOnly();
     void navigationTextIsLeftAlignedAndContactsDoNotShowMessagePreview();
     void sectionTitleFollowsSelectedNavigation();
@@ -686,6 +689,33 @@ void MainWindowLayoutTest::rendersMarkdownMessageContent() {
     QVERIFY(!markdownView->toPlainText().contains(QStringLiteral("# Win/Mac")));
     QVERIFY(markdownView->toPlainText().contains(QStringLiteral("重点")));
     QVERIFY(markdownView->toHtml().contains(QStringLiteral("href=\"https://example.com\"")));
+}
+
+void MainWindowLayoutTest::copiesOriginalMarkdownFromMessageContextMenu() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+    const QString markdown = QStringLiteral(
+        "# 原始标题\n\n"
+        "**加粗** 与 `code`\n\n"
+        "- 列表项\n\n"
+        "```cpp\nint answer = 42;\n```\n\n"
+        "[链接](https://example.com?a=1&b=2)");
+    app.chatState().receiveText(QStringLiteral("phone-user"), markdown);
+
+    MainWindow window(app);
+    auto* markdownView = window.findChild<QTextBrowser*>(QStringLiteral("messageMarkdownView"));
+    auto* copyOriginalAction = window.findChild<QAction*>(QStringLiteral("copyOriginalDataAction"));
+    QVERIFY(markdownView != nullptr);
+    QVERIFY(copyOriginalAction != nullptr);
+    QCOMPARE(copyOriginalAction->text(), QStringLiteral("复制原始数据"));
+    QVERIFY(!markdownView->toPlainText().contains(QStringLiteral("# 原始标题")));
+    QVERIFY(!markdownView->toPlainText().contains(QStringLiteral("**加粗**")));
+
+    QApplication::clipboard()->setText(QStringLiteral("旧剪贴板内容"));
+    copyOriginalAction->trigger();
+
+    QCOMPARE(QApplication::clipboard()->text(), markdown);
 }
 
 void MainWindowLayoutTest::addContactButtonLivesInNavigationRailOnly() {

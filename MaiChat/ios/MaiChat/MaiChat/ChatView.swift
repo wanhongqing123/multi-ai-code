@@ -847,26 +847,45 @@ private struct SelectableMessageCopyView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                Text(item.text)
-                    .font(.system(size: 16))
-                    .foregroundStyle(RemoteIMStyle.textPrimary)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(20)
-            }
-            .background(RemoteIMStyle.panelBackground)
-            .navigationTitle("选择复制")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") {
-                        dismiss()
+            SelectableMessageTextView(text: item.text)
+                .background(RemoteIMStyle.panelBackground)
+                .navigationTitle("选择复制")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("完成") {
+                            dismiss()
+                        }
                     }
                 }
-            }
         }
         .presentationDetents([.medium, .large])
+    }
+}
+
+private struct SelectableMessageTextView: UIViewRepresentable {
+    let text: String
+
+    func makeUIView(context _: Context) -> UITextView {
+        let textView = UITextView()
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isScrollEnabled = true
+        textView.alwaysBounceVertical = true
+        textView.backgroundColor = .clear
+        textView.font = .preferredFont(forTextStyle: .body)
+        textView.adjustsFontForContentSizeCategory = true
+        textView.textColor = .label
+        textView.textContainerInset = UIEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
+        textView.textContainer.lineFragmentPadding = 0
+        textView.accessibilityIdentifier = "selectable-message-copy-text"
+        textView.accessibilityLabel = "可选择的消息正文"
+        return textView
+    }
+
+    func updateUIView(_ textView: UITextView, context _: Context) {
+        guard textView.text != text else { return }
+        textView.text = text
     }
 }
 
@@ -1862,26 +1881,28 @@ private struct ComposerView: View {
                         }
                     )
                 } else {
-                    TextField("输入要发送给当前联系人的消息...", text: $appState.draftText, axis: .vertical)
-                        .font(.system(size: 14))
-                        .lineLimit(1...5)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .submitLabel(.send)
-                        .onSubmit {
-                            submitDraft()
-                        }
-                        .onChange(of: appState.draftText) { newValue in
-                            submitWhenDraftEndsWithNewline(newValue)
-                        }
-                        .padding(.horizontal, 13)
-                        .padding(.vertical, 11)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.white, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .stroke(appState.canSend ? RemoteIMStyle.blue : RemoteIMStyle.border, lineWidth: appState.canSend ? 1.5 : 1)
+                    ZStack(alignment: .topLeading) {
+                        ComposerTextView(
+                            text: $appState.draftText,
+                            onSubmit: submitDraft
                         )
+
+                        if appState.draftText.isEmpty {
+                            Text("输入要发送给当前联系人的消息...")
+                                .font(.system(size: 14))
+                                .foregroundStyle(RemoteIMStyle.textSecondary)
+                                .padding(.horizontal, 13)
+                                .padding(.vertical, 13)
+                                .allowsHitTesting(false)
+                                .accessibilityHidden(true)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.white, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(appState.canSend ? RemoteIMStyle.blue : RemoteIMStyle.border, lineWidth: appState.canSend ? 1.5 : 1)
+                    )
                 }
 
                 Menu {
@@ -2027,15 +2048,6 @@ private struct ComposerView: View {
         Task { await appState.sendDraft() }
     }
 
-    private func submitWhenDraftEndsWithNewline(_ draft: String) {
-        guard let draftWithoutReturn = RemoteIMDraftSubmitPolicy
-            .textByConsumingTrailingReturn(from: draft)
-        else { return }
-
-        appState.draftText = draftWithoutReturn
-        submitDraft()
-    }
-
     private func updateKeyboardVisibleHeight(from notification: Notification) {
         guard
             let endFrame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect
@@ -2169,6 +2181,97 @@ private struct ComposerView: View {
             height: height,
             sizeBytes: data.count
         )
+    }
+}
+
+private struct ComposerTextView: UIViewRepresentable {
+    @Binding var text: String
+    let onSubmit: () -> Void
+
+    private let minimumHeight: CGFloat = 44
+    private let maximumLineCount: CGFloat = 5
+    private let verticalInset: CGFloat = 11
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    func makeUIView(context: Context) -> UITextView {
+        let textView = UITextView()
+        textView.delegate = context.coordinator
+        textView.backgroundColor = .clear
+        textView.font = .systemFont(ofSize: 14)
+        textView.textColor = .label
+        textView.tintColor = UIColor(RemoteIMStyle.blue)
+        textView.autocapitalizationType = .none
+        textView.autocorrectionType = .no
+        textView.spellCheckingType = .no
+        textView.returnKeyType = .send
+        textView.enablesReturnKeyAutomatically = true
+        textView.textContainerInset = UIEdgeInsets(
+            top: verticalInset,
+            left: 13,
+            bottom: verticalInset,
+            right: 13
+        )
+        textView.textContainer.lineFragmentPadding = 0
+        textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        textView.accessibilityIdentifier = "message-composer-text-view"
+        textView.accessibilityLabel = "消息输入框"
+        return textView
+    }
+
+    func updateUIView(_ textView: UITextView, context: Context) {
+        context.coordinator.parent = self
+        guard textView.text != text else { return }
+        textView.text = text
+        textView.invalidateIntrinsicContentSize()
+    }
+
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        uiView textView: UITextView,
+        context _: Context
+    ) -> CGSize? {
+        guard let width = proposal.width else { return nil }
+
+        let fittingSize = textView.sizeThatFits(
+            CGSize(width: width, height: .greatestFiniteMagnitude)
+        )
+        let lineHeight = textView.font?.lineHeight ?? 17
+        let maximumHeight = ceil(lineHeight * maximumLineCount + verticalInset * 2)
+        let height = min(max(fittingSize.height, minimumHeight), maximumHeight)
+        textView.isScrollEnabled = fittingSize.height > maximumHeight
+        return CGSize(width: width, height: height)
+    }
+
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var parent: ComposerTextView
+
+        init(parent: ComposerTextView) {
+            self.parent = parent
+        }
+
+        func textViewDidChange(_ textView: UITextView) {
+            parent.text = textView.text
+            textView.invalidateIntrinsicContentSize()
+        }
+
+        func textView(
+            _ textView: UITextView,
+            shouldChangeTextIn _: NSRange,
+            replacementText: String
+        ) -> Bool {
+            guard
+                textView.markedTextRange == nil,
+                RemoteIMDraftSubmitPolicy.shouldSubmit(replacementText: replacementText)
+            else {
+                return true
+            }
+
+            parent.onSubmit()
+            return false
+        }
     }
 }
 

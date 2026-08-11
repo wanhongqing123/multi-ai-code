@@ -127,9 +127,18 @@ public:
                 color: #2563eb;
             }
         )")));
+
+        copyOriginalDataAction_ = new QAction(QStringLiteral("复制原始数据"), this);
+        copyOriginalDataAction_->setObjectName(QStringLiteral("copyOriginalDataAction"));
+        connect(copyOriginalDataAction_, &QAction::triggered, this, [this]() {
+            QApplication::clipboard()->setText(sourceMarkdown_);
+        });
     }
 
     void setMessageMarkdown(const QString& markdown) {
+        // QTextDocument 只保留 Markdown 渲染后的富文本，无法无损还原标题、代码围栏、
+        // 链接目标等源语法；单独保存传入的规范化原文供“复制原始数据”使用。
+        sourceMarkdown_ = markdown;
         // 渲染器输出的 HTML 内嵌固定 px 字号（正文 14px/h1 22px/code 13px…），
         // 会盖过控件字体——整体缩放时须把这些 px 一并按倍率缩放。
         setHtml(UiZoom::scaleQss(MarkdownRenderer::renderToHtml(markdown)));
@@ -158,6 +167,9 @@ protected:
     void contextMenuEvent(QContextMenuEvent* event) override;
 
 private:
+    QString sourceMarkdown_;
+    QAction* copyOriginalDataAction_ = nullptr;
+
     void updateContentHeight() {
         const int width = qMax(120, viewport()->width());
         if (!qFuzzyCompare(document()->textWidth(), static_cast<qreal>(width))) {
@@ -891,14 +903,17 @@ void applyMessageContextMenuStyle(QMenu& menu) {
     )")));
 }
 
-// 文本气泡右键菜单：复制（有选区复制选区，否则复制整条消息）/ 复制链接（点在
-// 链接上时出现）/ 全选。样式与图片/文件气泡的菜单一致。
+// 文本气泡右键菜单：复制（有选区复制选区，否则复制渲染后的整条消息）/
+// 复制原始数据（保留 Markdown 源语法）/ 复制链接（点在链接上时出现）/ 全选。
+// 样式与图片/文件气泡的菜单一致。
 void MarkdownMessageView::contextMenuEvent(QContextMenuEvent* event) {
     QMenu menu(this);
     applyMessageContextMenuStyle(menu);
     const QString anchor = anchorAt(event->pos());
     QAction* copyAction = menu.addAction(makeLineIcon(LineIconKind::Copy, kMenuIconColor),
                                          QStringLiteral("复制"));
+    copyOriginalDataAction_->setIcon(makeLineIcon(LineIconKind::Copy, kMenuIconColor));
+    menu.addAction(copyOriginalDataAction_);
     QAction* copyLinkAction = anchor.isEmpty()
         ? nullptr
         : menu.addAction(makeLineIcon(LineIconKind::Link, kMenuIconColor), QStringLiteral("复制链接"));

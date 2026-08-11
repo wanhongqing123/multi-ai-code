@@ -148,6 +148,9 @@ private slots:
     void deletesFriendAndConversationThroughSdk();
     void fetchesContactsConversationsAndHistoryAfterLogin();
     void emitsIncomingTextAndImageFromSdkMessages();
+    void emitsIncomingGenericFileWithRealMimeType();
+    void mergesCaptionIntoGenericFileMessage();
+    void loadsGenericFileFromHistory();
     void rejectsMissingCredentials();
 };
 
@@ -380,6 +383,126 @@ void TimSdkRemoteIMClientTest::emitsIncomingTextAndImageFromSdkMessages() {
     QCOMPARE(image.createdAtMillis, Q_INT64_C(1700000000) * 1000);
     // 实时推送不得串入漫游通道（否则未读红点永远不累计）。
     QCOMPARE(roamingSpy.count(), 0);
+}
+
+// 普通文件（非 md/html）曾被接收解析层的白名单直接丢弃：消息根本不会生成，
+// 表现为发送端一切正常、接收端毫无反应。这里钉住「任意扩展名都能收下」。
+void TimSdkRemoteIMClientTest::emitsIncomingGenericFileWithRealMimeType() {
+    auto api = std::make_unique<FakeTimSdkApi>();
+    auto* fake = api.get();
+    TimSdkRemoteIMClient client(std::move(api));
+    QSignalSpy messagesSpy(&client, &RemoteIMClient::liveMessagesReceived);
+
+    client.connectToService(123456, QStringLiteral("desktop-user"), QStringLiteral("sig-value"), nullptr);
+    fake->emitMessages(QJsonArray{QJsonObject{
+        {QStringLiteral("message_is_from_self"), false},
+        {QStringLiteral("message_sender"), QStringLiteral("phone-user")},
+        {QStringLiteral("message_msg_id"), QStringLiteral("sdk-file-1")},
+        {QStringLiteral("message_server_time"), 1700000000},
+        {QStringLiteral("message_elem_array"), QJsonArray{
+            QJsonObject{
+                {QStringLiteral("elem_type"), 4},
+                {QStringLiteral("file_elem_file_path"), QStringLiteral("/tmp/maichat-20260811.log")},
+                {QStringLiteral("file_elem_file_name"), QStringLiteral("maichat-20260811.log")},
+                {QStringLiteral("file_elem_file_size"), 88966}
+            }
+        }}
+    }});
+
+    QCOMPARE(messagesSpy.count(), 1);
+    const auto messages = messagesSpy.takeFirst().at(0).value<QList<RemoteIMMessage>>();
+    QCOMPARE(messages.size(), 1);
+    const RemoteIMMessage& file = messages.at(0);
+    QVERIFY(file.hasFile);
+    QCOMPARE(file.id, QStringLiteral("sdk-file-1#0"));
+    QCOMPARE(file.file.localPath, QStringLiteral("/tmp/maichat-20260811.log"));
+    QCOMPARE(file.file.fileName, QStringLiteral("maichat-20260811.log"));
+    QCOMPARE(file.file.sizeBytes, static_cast<qint64>(88966));
+    QCOMPARE(file.text, QStringLiteral("[文件消息] maichat-20260811.log"));
+    // MIME 必须如实：谎报 text/markdown 会让 MainWindow 把它当文档去渲染，而不是走「另存为」。
+    QCOMPARE(file.file.mimeType, QStringLiteral("text/plain"));
+}
+
+// 配文合并此前也挂在同一道白名单上：zip + 配文会退化成「只剩配文的纯文本消息」，附件整条消失。
+void TimSdkRemoteIMClientTest::mergesCaptionIntoGenericFileMessage() {
+    auto api = std::make_unique<FakeTimSdkApi>();
+    auto* fake = api.get();
+    TimSdkRemoteIMClient client(std::move(api));
+    QSignalSpy messagesSpy(&client, &RemoteIMClient::liveMessagesReceived);
+
+    client.connectToService(123456, QStringLiteral("desktop-user"), QStringLiteral("sig-value"), nullptr);
+    fake->emitMessages(QJsonArray{QJsonObject{
+        {QStringLiteral("message_is_from_self"), false},
+        {QStringLiteral("message_sender"), QStringLiteral("phone-user")},
+        {QStringLiteral("message_msg_id"), QStringLiteral("sdk-file-2")},
+        {QStringLiteral("message_server_time"), 1700000000},
+        {QStringLiteral("message_elem_array"), QJsonArray{
+            QJsonObject{
+                {QStringLiteral("elem_type"), 4},
+                {QStringLiteral("file_elem_file_path"), QStringLiteral("/tmp/logs.zip")},
+                {QStringLiteral("file_elem_file_name"), QStringLiteral("logs.zip")},
+                {QStringLiteral("file_elem_file_size"), 2048}
+            },
+            QJsonObject{
+                {QStringLiteral("elem_type"), 0},
+                {QStringLiteral("text_elem_content"), QStringLiteral("看下这个包")}
+            }
+        }}
+    }});
+
+    QCOMPARE(messagesSpy.count(), 1);
+    const auto messages = messagesSpy.takeFirst().at(0).value<QList<RemoteIMMessage>>();
+    // 附件 + 配文合并成一条，配文不再单独成条。
+    QCOMPARE(messages.size(), 1);
+    const RemoteIMMessage& file = messages.at(0);
+    QVERIFY(file.hasFile);
+    QCOMPARE(file.text, QStringLiteral("看下这个包"));
+    QCOMPARE(file.file.fileName, QStringLiteral("logs.zip"));
+    QCOMPARE(file.file.mimeType, QStringLiteral("application/zip"));
+}
+
+// 漫游/历史是与实时并列的第二条接收路径，此前有一模一样的白名单，必须一起放开。
+void TimSdkRemoteIMClientTest::loadsGenericFileFromHistory() {
+    auto api = std::make_unique<FakeTimSdkApi>();
+    auto* fake = api.get();
+    fake->conversationListPayload = QString::fromUtf8(QJsonDocument(QJsonArray{
+        QJsonObject{
+            {QStringLiteral("conv_id"), QStringLiteral("phone-user")},
+            {QStringLiteral("conv_type"), 1}
+        }
+    }).toJson(QJsonDocument::Compact));
+    fake->historyPayload = QString::fromUtf8(QJsonDocument(QJsonArray{
+        QJsonObject{
+            {QStringLiteral("message_is_from_self"), false},
+            {QStringLiteral("message_sender"), QStringLiteral("phone-user")},
+            {QStringLiteral("message_conv_id"), QStringLiteral("phone-user")},
+            {QStringLiteral("message_msg_id"), QStringLiteral("sdk-history-file")},
+            {QStringLiteral("message_server_time"), 1700000000},
+            {QStringLiteral("message_elem_array"), QJsonArray{
+                QJsonObject{
+                    {QStringLiteral("elem_type"), 4},
+                    {QStringLiteral("file_elem_file_path"), QStringLiteral("/tmp/report.pdf")},
+                    {QStringLiteral("file_elem_file_name"), QStringLiteral("report.pdf")},
+                    {QStringLiteral("file_elem_file_size"), 4096}
+                }
+            }}
+        }
+    }).toJson(QJsonDocument::Compact));
+    TimSdkRemoteIMClient client(std::move(api));
+    QSignalSpy messagesSpy(&client, &RemoteIMClient::messagesReceived);
+
+    client.connectToService(123456, QStringLiteral("desktop-user"), QStringLiteral("sig-value"), nullptr);
+
+    QCOMPARE(messagesSpy.count(), 1);
+    const auto messages = messagesSpy.takeFirst().at(0).value<QList<RemoteIMMessage>>();
+    QCOMPARE(messages.size(), 1);
+    const RemoteIMMessage& file = messages.at(0);
+    QVERIFY(file.hasFile);
+    QCOMPARE(file.id, QStringLiteral("sdk-history-file#0"));
+    QCOMPARE(file.file.localPath, QStringLiteral("/tmp/report.pdf"));
+    QCOMPARE(file.file.fileName, QStringLiteral("report.pdf"));
+    QCOMPARE(file.file.mimeType, QStringLiteral("application/pdf"));
+    QCOMPARE(file.text, QStringLiteral("[文件消息] report.pdf"));
 }
 
 void TimSdkRemoteIMClientTest::rejectsMissingCredentials() {

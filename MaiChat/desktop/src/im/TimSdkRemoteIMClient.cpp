@@ -5,6 +5,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -42,22 +43,43 @@ QString cacheFilePathForUrl(const QString& url, const QString& fileName) {
     const QByteArray hash = QCryptographicHash::hash(url.toUtf8(), QCryptographicHash::Sha1).toHex();
     QString suffix = QFileInfo(fileName).suffix();
     if (suffix.isEmpty()) suffix = QFileInfo(QUrl(url).path()).suffix();
-    if (suffix.isEmpty()) suffix = QStringLiteral("md");
+    // 兜底不能用 md：那会把 zip/pdf 存成 .md，另存出去双击打不开。
+    if (suffix.isEmpty()) suffix = QStringLiteral("bin");
     return QDir(appDataDir(QStringLiteral("RemoteIMFiles"))).filePath(QString::fromUtf8(hash) + "." + suffix);
 }
 
+// MIME 必须如实反映扩展名：MainWindow 的 isPreviewableDocument() 同时看 mimeType，
+// 谎报 text/markdown 会让 pdf/zip 被当成文档去渲染。表与 electron/remote-im/localFile.ts 对齐。
 QString mimeTypeForFileName(const QString& fileName) {
-    const QString suffix = QFileInfo(fileName).suffix().toLower();
-    if (suffix == QStringLiteral("html") || suffix == QStringLiteral("htm")) return QStringLiteral("text/html");
-    return QStringLiteral("text/markdown");
+    static const QHash<QString, QString> kMimeBySuffix = {
+        {QStringLiteral("md"), QStringLiteral("text/markdown")},
+        {QStringLiteral("markdown"), QStringLiteral("text/markdown")},
+        {QStringLiteral("html"), QStringLiteral("text/html")},
+        {QStringLiteral("htm"), QStringLiteral("text/html")},
+        {QStringLiteral("7z"), QStringLiteral("application/x-7z-compressed")},
+        {QStringLiteral("csv"), QStringLiteral("text/csv")},
+        {QStringLiteral("gif"), QStringLiteral("image/gif")},
+        {QStringLiteral("gz"), QStringLiteral("application/gzip")},
+        {QStringLiteral("jpeg"), QStringLiteral("image/jpeg")},
+        {QStringLiteral("jpg"), QStringLiteral("image/jpeg")},
+        {QStringLiteral("json"), QStringLiteral("application/json")},
+        {QStringLiteral("log"), QStringLiteral("text/plain")},
+        {QStringLiteral("mp3"), QStringLiteral("audio/mpeg")},
+        {QStringLiteral("mp4"), QStringLiteral("video/mp4")},
+        {QStringLiteral("pdf"), QStringLiteral("application/pdf")},
+        {QStringLiteral("png"), QStringLiteral("image/png")},
+        {QStringLiteral("txt"), QStringLiteral("text/plain")},
+        {QStringLiteral("webp"), QStringLiteral("image/webp")},
+        {QStringLiteral("xml"), QStringLiteral("application/xml")},
+        {QStringLiteral("zip"), QStringLiteral("application/zip")}
+    };
+    return kMimeBySuffix.value(QFileInfo(fileName).suffix().toLower(),
+                               QStringLiteral("application/octet-stream"));
 }
 
-bool isSupportedPreviewFileName(const QString& fileName) {
-    const QString suffix = QFileInfo(fileName).suffix().toLower();
-    return suffix == QStringLiteral("md")
-        || suffix == QStringLiteral("markdown")
-        || suffix == QStringLiteral("html")
-        || suffix == QStringLiteral("htm");
+QString fileDisplayName(const QString& fileName) {
+    const QString name = QFileInfo(fileName).fileName().trimmed();
+    return name.isEmpty() ? QStringLiteral("文件") : name;
 }
 
 QString firstNonEmpty(const QJsonObject& object, std::initializer_list<QString> keys) {
@@ -505,8 +527,7 @@ void TimSdkRemoteIMClient::handleHistoryMessagesPayload(const QString& jsonPaylo
             if (elemType == kElemImage) {
                 if (!elem.value(QStringLiteral("image_elem_orig_path")).toString().trimmed().isEmpty()) hasAttachment = true;
             } else if (elemType == kElemFile) {
-                const QString fn = firstNonEmpty(elem, {QStringLiteral("file_elem_file_name"), QStringLiteral("file_elem_file_path")});
-                if (isSupportedPreviewFileName(fn)) hasAttachment = true;
+                hasAttachment = true;
             } else if (elemType == kElemText && captionElemIndex < 0) {
                 const QString content = elem.value(QStringLiteral("text_elem_content")).toString();
                 if (!content.trimmed().isEmpty()) {
@@ -565,13 +586,13 @@ void TimSdkRemoteIMClient::handleHistoryMessagesPayload(const QString& jsonPaylo
                     QStringLiteral("file_elem_file_name"),
                     QStringLiteral("file_elem_file_path")
                 });
-                if (!isSupportedPreviewFileName(fileName)) continue;
                 const QString localPath = elem.value(QStringLiteral("file_elem_file_path")).toString().trimmed();
                 const qint64 sizeBytes = static_cast<qint64>(elem.value(QStringLiteral("file_elem_file_size")).toDouble(0));
                 const QString url = elem.value(QStringLiteral("file_elem_url")).toString().trimmed();
+                const QString displayName = fileDisplayName(fileName);
                 const QString captionText = (!attachmentCaption.isEmpty() && !captionConsumed)
                                                 ? attachmentCaption
-                                                : QStringLiteral("[文件消息] ") + QFileInfo(fileName).fileName();
+                                                : QStringLiteral("[文件消息] ") + displayName;
                 if (localPath.isEmpty() && !url.isEmpty()) {
                     const QString cachedPath = cacheFilePathForUrl(url, fileName);
                     RemoteIMMessage message = makeBase(elemIndex);
@@ -579,10 +600,10 @@ void TimSdkRemoteIMClient::handleHistoryMessagesPayload(const QString& jsonPaylo
                     message.text = captionText;
                     if (!attachmentCaption.isEmpty() && !captionConsumed) captionConsumed = true;
                     if (QFile::exists(cachedPath)) {
-                        message.file = RemoteIMFileAttachment{cachedPath, QFileInfo(fileName).fileName(), mimeTypeForFileName(fileName), sizeBytes};
+                        message.file = RemoteIMFileAttachment{cachedPath, displayName, mimeTypeForFileName(fileName), sizeBytes};
                         messages.append(message);
                     } else {
-                        message.file = RemoteIMFileAttachment{QString(), QFileInfo(fileName).fileName(), mimeTypeForFileName(fileName), sizeBytes};
+                        message.file = RemoteIMFileAttachment{QString(), displayName, mimeTypeForFileName(fileName), sizeBytes};
                         handleIncomingFileUrl(message, url, /*live=*/false);
                     }
                     continue;
@@ -592,7 +613,7 @@ void TimSdkRemoteIMClient::handleHistoryMessagesPayload(const QString& jsonPaylo
                     message.hasFile = true;
                     message.text = captionText;
                     if (!attachmentCaption.isEmpty() && !captionConsumed) captionConsumed = true;
-                    message.file = RemoteIMFileAttachment{localPath, QFileInfo(fileName).fileName(), mimeTypeForFileName(fileName), sizeBytes};
+                    message.file = RemoteIMFileAttachment{localPath, displayName, mimeTypeForFileName(fileName), sizeBytes};
                     messages.append(message);
                 }
             }
@@ -652,8 +673,7 @@ void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
         if (elemType == kElemImage) {
             hasAttachment = true;
         } else if (elemType == kElemFile) {
-            const QString fn = firstNonEmpty(elem, {QStringLiteral("file_elem_file_name"), QStringLiteral("file_elem_file_path")});
-            if (isSupportedPreviewFileName(fn)) hasAttachment = true;
+            hasAttachment = true;
         } else if (elemType == kElemText && captionElemIndex < 0) {
             const QString content = elem.value(QStringLiteral("text_elem_content")).toString();
             if (!content.trimmed().isEmpty()) {
@@ -710,8 +730,7 @@ void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
                 QStringLiteral("file_elem_file_name"),
                 QStringLiteral("file_elem_file_path")
             });
-            if (!isSupportedPreviewFileName(fileName)) continue;
-            const QString displayName = QFileInfo(fileName).fileName();
+            const QString displayName = fileDisplayName(fileName);
             const QString localPath = elem.value(QStringLiteral("file_elem_file_path")).toString().trimmed();
             const qint64 sizeBytes = static_cast<qint64>(elem.value(QStringLiteral("file_elem_file_size")).toDouble(0));
             RemoteIMMessage fileMessage = baseMessage(elemIndex);

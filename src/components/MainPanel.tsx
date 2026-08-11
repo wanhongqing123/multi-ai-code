@@ -28,7 +28,8 @@ import {
   installCopyBinding,
   installOsc52SelectionCapture,
   installPasteHandler,
-  pasteFromClipboard
+  pasteFromClipboard,
+  tuiOwnsRightClickCopy
 } from './terminalClipboard.js'
 import { buildDroppedFileInput } from './terminalDragDrop.js'
 import { scheduleTerminalMeasurementRecovery } from './terminalLayoutRecovery.js'
@@ -208,7 +209,8 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
       if (e.button === 0 && aiCliRef.current === 'opencode') {
         openCodeSelectionRef.current = ''
       }
-      if (!interceptTerminalRightMouseEvent(e)) return
+      const forward = tuiOwnsRightClickCopy(aiCliRef.current)
+      if (!interceptTerminalRightMouseEvent(e, forward)) return
       openContextMenu(e.clientX, e.clientY)
     },
     [openContextMenu]
@@ -216,7 +218,7 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
 
   const handleTerminalMouseUp = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
-      interceptTerminalRightMouseEvent(e)
+      interceptTerminalRightMouseEvent(e, tuiOwnsRightClickCopy(aiCliRef.current))
     },
     []
   )

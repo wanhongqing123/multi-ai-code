@@ -29,12 +29,27 @@ interface TerminalMouseEvent {
   stopPropagation(): void
 }
 
+/** OpenCode copies its own selection on right mouse down and writes both the
+ *  system clipboard and OSC 52. Swallowing the right button to open our menu
+ *  therefore strands the selection: xterm holds none of its own while mouse
+ *  tracking is on, and the OSC 52 the menu reads is only ever emitted by the
+ *  copy we just prevented. Forward the button and let the TUI do the copy —
+ *  the menu then opens from the `contextmenu` event with that text.
+ *  Safe on platforms where OpenCode copies on select instead: opentui only
+ *  starts/clears selections on the left button, so the cache survives. */
+export function tuiOwnsRightClickCopy(cli: string): boolean {
+  return cli.trim().toLowerCase() === 'opencode'
+}
+
 /** Keep a TUI's mouse-tracking mode from consuming either half of a right
- *  click before the Electron terminal can handle its copy/paste menu. */
+ *  click before the Electron terminal can handle its copy/paste menu.
+ *  Pass `forwardToTui` for TUIs that implement right-click copy themselves. */
 export function interceptTerminalRightMouseEvent(
-  event: TerminalMouseEvent
+  event: TerminalMouseEvent,
+  forwardToTui = false
 ): boolean {
   if (event.button !== 2) return false
+  if (forwardToTui) return false
   event.preventDefault()
   event.stopPropagation()
   return true

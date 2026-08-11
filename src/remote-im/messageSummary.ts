@@ -56,10 +56,50 @@ export function summaryAttachmentParts(message: RemoteImMessage): RemoteImSummar
   return null
 }
 
+/**
+ * Image/file messages persist a generated first line such as
+ * `[图片消息] shot.png`. The attachment card already presents that metadata,
+ * so the summary body should contain only a real caption that followed it.
+ */
+export function summaryMessageContent(message: RemoteImMessage): string {
+  const content = message.content.trim()
+  if (!content || (message.kind !== 'image' && message.kind !== 'file')) return content
+
+  const lines = content.split(/\r?\n/)
+  const placeholder = message.kind === 'image' ? /^\[图片消息\](?:\s.*)?$/ : /^\[文件消息\](?:\s.*)?$/
+  if (!placeholder.test(lines[0]?.trim() ?? '')) return content
+  return lines.slice(1).join('\n').trim()
+}
+
 function attachmentLine(message: RemoteImMessage): string | null {
   const parts = summaryAttachmentParts(message)
   if (!parts) return null
-  return `${parts.icon} ${parts.kindLabel}${parts.fileName ? `：\`${parts.fileName}\`` : ''}`
+  const fileName = parts.fileName
+    ?.replace(/[\r\n\u0000-\u001f]+/g, ' ')
+    .replace(/`/g, "'")
+    .trim()
+  return `${parts.icon} ${parts.kindLabel}${fileName ? `：\`${fileName}\`` : ''}`
+}
+
+function imageMarkdownLine(message: RemoteImMessage): string | null {
+  const attachment = message.attachment?.type === 'image' ? message.attachment : null
+  if (message.kind !== 'image' || !attachment) return null
+  const localPath = attachment.localPath?.trim()
+  const remoteSource = attachment.thumbnailUrl?.trim() || attachment.remoteUrl?.trim()
+  const source =
+    localPath && !/[\r\n]/.test(localPath)
+      ? localPath
+      : remoteSource && /^https?:\/\//i.test(remoteSource) && !/[\r\n]/.test(remoteSource)
+        ? remoteSource
+        : null
+  if (!source) return null
+  const alt = (attachment.fileName ?? '图片消息')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/\\/g, '\\\\')
+    .replace(/\[/g, '\\[')
+    .replace(/\]/g, '\\]')
+  const destination = source.replace(/</g, '%3C').replace(/>/g, '%3E')
+  return `![${alt}](<${destination}>)`
 }
 
 export interface RemoteImSummaryGroup {
@@ -141,7 +181,12 @@ export function buildRemoteImMessageSummaryMarkdown(
         lines.push('')
         lines.push(attachment)
       }
-      const content = message.content.trim()
+      const image = imageMarkdownLine(message)
+      if (image) {
+        lines.push('')
+        lines.push(image)
+      }
+      const content = summaryMessageContent(message)
       if (content) {
         lines.push('')
         lines.push(content)

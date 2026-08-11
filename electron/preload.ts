@@ -48,6 +48,8 @@ import type {
   RemoteImFileAttachment,
   RemoteImMessageAttachment,
   RemoteImMessage,
+  ReadRemoteImImagePreviewInput,
+  ReadRemoteImImagePreviewResult,
   RemoteImIncomingTextMessage,
   RemoteImRoamedTextMessage,
   RemoteImIncomingAudioMessage,
@@ -74,6 +76,8 @@ export type {
   RemoteImFileAttachment,
   RemoteImMessageAttachment,
   RemoteImMessage,
+  ReadRemoteImImagePreviewInput,
+  ReadRemoteImImagePreviewResult,
   RemoteImIncomingTextMessage,
   RemoteImRoamedTextMessage,
   RemoteImIncomingAudioMessage,
@@ -85,7 +89,6 @@ export type {
 export interface RemoteImSendPeerImageInput {
   fileToken: string
   toUserId?: string | null
-  localPath?: string | null
   fileName?: string | null
   mimeType?: string | null
   sizeBytes?: number | null
@@ -368,6 +371,10 @@ const api = {
       ipcRenderer.invoke('remote-im:list-messages-for-summary', { projectId, limit }) as Promise<
         RemoteImMessage[]
       >,
+    readImagePreview: (input: ReadRemoteImImagePreviewInput) =>
+      ipcRenderer.invoke('remote-im:read-image-preview', input) as Promise<
+        ReadRemoteImImagePreviewResult
+      >,
     // 消息汇总落盘为 .md 文件，返回绝对路径（供发送给 AICLI 读取）。
     saveSummaryMarkdown: (projectId: string, markdown: string) =>
       ipcRenderer.invoke('remote-im:save-summary-markdown', { projectId, markdown }) as Promise<
@@ -404,8 +411,12 @@ const api = {
       ipcRenderer.invoke('remote-im:send-peer-message', { projectId, text, toUserId }) as Promise<
         { ok: boolean; error?: string; toUserId?: string }
       >,
-    sendPeerImage: (projectId: string, image: RemoteImSendPeerImageInput) =>
-      ipcRenderer.invoke('remote-im:send-peer-image', { projectId, ...image }) as Promise<
+    sendPeerImage: (projectId: string, file: File, image: RemoteImSendPeerImageInput) =>
+      ipcRenderer.invoke('remote-im:send-peer-image', {
+        projectId,
+        ...image,
+        localPath: webUtils.getPathForFile(file) || null
+      }) as Promise<
         { ok: boolean; error?: string; toUserId?: string }
       >,
     sendPeerFile: (projectId: string, file: RemoteImSendPeerFileInput) =>

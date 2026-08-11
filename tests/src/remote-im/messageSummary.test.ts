@@ -4,7 +4,8 @@ import {
   buildRemoteImMessageSummaryMarkdown,
   formatSummaryClock,
   formatSummaryDay,
-  formatSummaryTime
+  formatSummaryTime,
+  summaryMessageContent
 } from '../../../src/remote-im/messageSummary.js'
 
 let nextId = 1
@@ -151,5 +152,61 @@ describe('buildRemoteImMessageSummaryMarkdown', () => {
     expect(markdown).toContain('⚠️ 发送失败')
     // 出站无 ownerUserId 时退化为「我」。
     expect(markdown).toContain('**我** ·')
+  })
+
+  it('keeps local image references and removes generated image placeholders', () => {
+    const imagePath = '/Users/test/remote-im/images/project-1/shot.png'
+    const message = makeMessage({
+      fromUserId: 'whq-iphone',
+      direction: 'incoming',
+      kind: 'image',
+      content: '[图片消息] shot.png\n请查看这张截图',
+      attachment: {
+        type: 'image',
+        localPath: imagePath,
+        remoteUrl: null,
+        thumbnailUrl: null,
+        width: 1290,
+        height: 2796,
+        sizeBytes: 4096,
+        fileName: 'shot.png',
+        mimeType: 'image/png',
+        sdkImageId: null
+      }
+    })
+
+    const markdown = buildRemoteImMessageSummaryMarkdown([message])
+
+    expect(markdown).toContain(`![shot.png](<${imagePath}>)`)
+    expect(markdown).toContain('请查看这张截图')
+    expect(markdown).not.toContain('[图片消息] shot.png')
+    expect(summaryMessageContent(message)).toBe('请查看这张截图')
+  })
+
+  it('sanitizes image metadata before embedding it in summary Markdown', () => {
+    const message = makeMessage({
+      fromUserId: 'whq-iphone',
+      direction: 'incoming',
+      kind: 'image',
+      content: '[图片消息]',
+      attachment: {
+        type: 'image',
+        localPath: null,
+        remoteUrl: 'javascript:alert(1)',
+        thumbnailUrl: null,
+        width: null,
+        height: null,
+        sizeBytes: null,
+        fileName: 'shot`\n## injected.png',
+        mimeType: 'image/png',
+        sdkImageId: null
+      }
+    })
+
+    const markdown = buildRemoteImMessageSummaryMarkdown([message])
+
+    expect(markdown).toContain("📷 图片：`shot' ## injected.png`")
+    expect(markdown).not.toContain('javascript:')
+    expect(markdown).not.toContain('\n## injected.png')
   })
 })

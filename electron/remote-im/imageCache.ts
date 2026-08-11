@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { promises as fs } from 'fs'
 import { extname, join } from 'path'
 
@@ -27,6 +28,14 @@ export interface CachedRemoteImImage {
   sizeBytes: number
 }
 
+export interface CacheRemoteImImageBytesInput {
+  rootDir: string
+  projectId: string
+  fileName?: string | null
+  mimeType?: string | null
+  bytes: ArrayBuffer | Uint8Array
+}
+
 const MIME_EXTENSIONS: Record<string, string> = {
   'image/jpeg': '.jpg',
   'image/jpg': '.jpg',
@@ -43,6 +52,35 @@ function sanitizePathPart(value: string, fallback: string): string {
     .replace(/_+/g, '_')
     .replace(/^_+|_+$/g, '')
   return sanitized || fallback
+}
+
+export function remoteImImageCacheDirectory(rootDir: string, projectId: string): string {
+  return join(rootDir, 'remote-im', 'images', sanitizePathPart(projectId, 'project'))
+}
+
+export async function cacheRemoteImImageBytes(
+  input: CacheRemoteImImageBytesInput
+): Promise<CachedRemoteImImage> {
+  const bytes =
+    input.bytes instanceof ArrayBuffer
+      ? Buffer.from(input.bytes)
+      : Buffer.from(input.bytes.buffer, input.bytes.byteOffset, input.bytes.byteLength)
+  const extension = normalizeImageExtension({
+    fileName: input.fileName,
+    remoteUrl: '',
+    mimeType: input.mimeType
+  })
+  const storedFileName = `outgoing-${randomUUID()}${extension}`
+  const directory = remoteImImageCacheDirectory(input.rootDir, input.projectId)
+  const localPath = join(directory, storedFileName)
+  await fs.mkdir(directory, { recursive: true })
+  await fs.writeFile(localPath, bytes)
+  return {
+    localPath,
+    fileName: input.fileName?.trim() || storedFileName,
+    mimeType: input.mimeType?.trim() || null,
+    sizeBytes: bytes.byteLength
+  }
 }
 
 function extensionFromUrl(remoteUrl: string): string | null {
@@ -87,12 +125,7 @@ export async function cacheRemoteImImage(input: CacheRemoteImImageInput): Promis
   })
   const baseName = sanitizePathPart(input.remoteMessageId ?? input.fileName ?? 'image', 'image')
   const fileName = `${baseName}${extension}`
-  const directory = join(
-    input.rootDir,
-    'remote-im',
-    'images',
-    sanitizePathPart(input.projectId, 'project')
-  )
+  const directory = remoteImImageCacheDirectory(input.rootDir, input.projectId)
   const localPath = join(directory, fileName)
 
   await fs.mkdir(directory, { recursive: true })

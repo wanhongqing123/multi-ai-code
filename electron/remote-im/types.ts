@@ -108,6 +108,15 @@ export interface RemoteImMessage {
   sentToImAt: number | null
 }
 
+export interface ReadRemoteImImagePreviewInput {
+  projectId: string
+  messageId: number
+}
+
+export type ReadRemoteImImagePreviewResult =
+  | { ok: true; dataUrl: string }
+  | { ok: false; error: string }
+
 // SDK 漫游补拉的文本消息（登录后补充离线期间的历史，只入库展示、不路由 AICLI）。
 export interface RemoteImRoamedTextMessage {
   remoteMessageId: string

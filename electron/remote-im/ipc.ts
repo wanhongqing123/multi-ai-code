@@ -42,6 +42,7 @@ import {
   createRemoteImMessage,
   failRemoteImMessageIfStreaming,
   findRemoteImMessageByRemoteId,
+  listRemoteImMessageById,
   listRemoteImMessages,
   listRemoteImMessagesForSummary,
   listRemoteImPeerMessagesBefore,
@@ -79,8 +80,17 @@ import { executeRemoteImControlCommand } from './controlBridge.js'
 import { createGitDiffReport } from './gitDiffReport.js'
 import { createRemoteImAccountChangedStatuses, getRemoteImSendConnectionError } from './status.js'
 import { transcribeRemoteImAudioWithLocalWhisper } from './localWhisper.js'
-import { cacheRemoteImImage } from './imageCache.js'
-import { loadRemoteImLocalImageForSend, type RemoteImLocalImagePayload } from './localImageFile.js'
+import {
+  cacheRemoteImImage,
+  cacheRemoteImImageBytes,
+  remoteImImageCacheDirectory,
+  type CachedRemoteImImage
+} from './imageCache.js'
+import {
+  loadRemoteImLocalImageForSend,
+  readRemoteImLocalImageDataUrl,
+  type RemoteImLocalImagePayload
+} from './localImageFile.js'
 import {
   loadRemoteImLocalFileForSend,
   mimeTypeFromRemoteImFilePath,
@@ -97,6 +107,7 @@ import type {
   RemoteImFileAttachment,
   RemoteImImageAttachment,
   RemoteImRoamedTextMessage,
+  ReadRemoteImImagePreviewInput,
   RemoteImRuntimeLogEntryInput,
   RemoteImLoginState,
   RemoteImStatus
@@ -534,16 +545,34 @@ async function sendRemoteImPeerImage(input: {
     return { ok: false, error: connectionError }
   }
 
+  const localPath = input.localPath?.trim()
+  if (!localPath) return { ok: false, error: '图片文件已失效，请重新选择' }
+  let payload: RemoteImLocalImagePayload
+  let cached: CachedRemoteImImage
+  try {
+    payload = await loadRemoteImLocalImageForSend(localPath, {
+      maxBytes: MAX_REMOTE_IM_IMAGE_BYTES
+    })
+    cached = await cacheRemoteImImageBytes({
+      rootDir: rootDir(),
+      projectId: input.projectId,
+      fileName: payload.fileName,
+      mimeType: payload.mimeType,
+      bytes: payload.fileBytes
+    })
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
   const attachment: RemoteImImageAttachment = {
     type: 'image',
-    localPath: input.localPath?.trim() || null,
+    localPath: cached.localPath,
     remoteUrl: null,
     thumbnailUrl: null,
     width: null,
     height: null,
-    sizeBytes: input.sizeBytes ?? null,
-    fileName: input.fileName?.trim() || null,
-    mimeType: input.mimeType?.trim() || null,
+    sizeBytes: cached.sizeBytes,
+    fileName: input.fileName?.trim() || cached.fileName,
+    mimeType: payload.mimeType,
     sdkImageId: null
   }
   const message = createRemoteImMessage(
@@ -579,9 +608,17 @@ async function sendRemoteImPeerLocalImage(
   }
 
   let payload: RemoteImLocalImagePayload
+  let cached: CachedRemoteImImage
   try {
     payload = await loadRemoteImLocalImageForSend(cleanPath, {
       maxBytes: MAX_REMOTE_IM_IMAGE_BYTES
+    })
+    cached = await cacheRemoteImImageBytes({
+      rootDir: rootDir(),
+      projectId,
+      fileName: payload.fileName,
+      mimeType: payload.mimeType,
+      bytes: payload.fileBytes
     })
   } catch (err) {
     return {
@@ -595,7 +632,13 @@ async function sendRemoteImPeerLocalImage(
       projectId,
       config,
       toUserId: peerUserId,
-      attachment: payload.attachment,
+      attachment: {
+        ...payload.attachment,
+        localPath: cached.localPath,
+        sizeBytes: cached.sizeBytes,
+        fileName: cached.fileName,
+        mimeType: cached.mimeType
+      },
       now: Date.now()
     })
   )
@@ -1300,6 +1343,45 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
     'remote-im:list-messages-for-summary',
     (_event, { projectId, limit }: { projectId: string; limit?: number }) =>
       listRemoteImMessagesForSummary(projectId, limit ?? 3000)
+  )
+
+  // 图片预览只接受消息 id：实际路径从当前账号数据库中的可信附件记录读取，
+  // 避免渲染层借 IPC 读取任意本地文件。
+  ipcMain.handle(
+    'remote-im:read-image-preview',
+    async (_event, input: ReadRemoteImImagePreviewInput) => {
+      try {
+        const projectId = typeof input?.projectId === 'string' ? input.projectId.trim() : ''
+        const messageId = input?.messageId
+        if (!projectId || !Number.isSafeInteger(messageId) || messageId <= 0) {
+          throw new Error('图片预览参数无效')
+        }
+
+        const message = listRemoteImMessageById(messageId)
+        if (
+          !message ||
+          message.projectId !== projectId ||
+          message.kind !== 'image' ||
+          message.attachment?.type !== 'image' ||
+          !message.attachment.localPath
+        ) {
+          throw new Error('图片消息不存在或不属于当前项目')
+        }
+
+        return {
+          ok: true as const,
+          dataUrl: await readRemoteImLocalImageDataUrl(message.attachment.localPath, {
+            maxBytes: MAX_REMOTE_IM_IMAGE_BYTES,
+            allowedDirectory: remoteImImageCacheDirectory(rootDir(), projectId)
+          })
+        }
+      } catch (error) {
+        return {
+          ok: false as const,
+          error: error instanceof Error ? error.message : String(error)
+        }
+      }
+    }
   )
 
   // 消息汇总落盘为 .md 文件（发送给 AICLI 时把文件路径交给它读取）。

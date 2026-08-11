@@ -1,8 +1,12 @@
 import { mkdtemp, readFile, rm } from 'fs/promises'
-import { join } from 'path'
+import { basename, join } from 'path'
 import { tmpdir } from 'os'
 import { describe, expect, it } from 'vitest'
-import { cacheRemoteImImage } from '../../../electron/remote-im/imageCache.js'
+import {
+  cacheRemoteImImage,
+  cacheRemoteImImageBytes,
+  remoteImImageCacheDirectory
+} from '../../../electron/remote-im/imageCache.js'
 
 describe('remote IM image cache', () => {
   it('downloads a remote image into a safe deterministic cache path', async () => {
@@ -54,6 +58,29 @@ describe('remote IM image cache', () => {
           })
         })
       ).rejects.toThrow('HTTP 404')
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('persists an outgoing image inside the controlled project cache', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'remote-im-image-cache-'))
+    try {
+      const bytes = new Uint8Array([1, 2, 3, 4])
+      const result = await cacheRemoteImImageBytes({
+        rootDir,
+        projectId: 'project:/1',
+        fileName: 'screen.png',
+        mimeType: 'image/png',
+        bytes
+      })
+
+      expect(result.localPath.startsWith(`${remoteImImageCacheDirectory(rootDir, 'project:/1')}/`)).toBe(
+        true
+      )
+      expect(basename(result.localPath)).toMatch(/^outgoing-[0-9a-f-]+\.png$/)
+      expect(result.fileName).toBe('screen.png')
+      await expect(readFile(result.localPath)).resolves.toEqual(Buffer.from(bytes))
     } finally {
       await rm(rootDir, { recursive: true, force: true })
     }

@@ -633,11 +633,9 @@ function AppShell() {
     }
 
     const fileToken = registerRemoteImOutgoingImageFile(file)
-    const localPath = window.api.getPathForFile(file) || null
-    const result = await window.api.remoteIm.sendPeerImage(currentProjectId, {
+    const result = await window.api.remoteIm.sendPeerImage(currentProjectId, file, {
       fileToken,
       toUserId: peerUserId,
-      localPath,
       fileName: file.name || null,
       mimeType: file.type || null,
       sizeBytes: file.size

@@ -6,6 +6,7 @@ const electronMock = vi.hoisted(() => ({
   on: vi.fn(),
   removeListener: vi.fn(),
   send: vi.fn(),
+  getPathForFile: vi.fn(),
   exposeInMainWorld: vi.fn((name: string, api: unknown) => {
     electronMock.exposed[name] = api
   })
@@ -22,7 +23,7 @@ vi.mock('electron', () => ({
     send: electronMock.send
   },
   webUtils: {
-    getPathForFile: vi.fn()
+    getPathForFile: electronMock.getPathForFile
   },
   IpcRendererEvent: class {}
 }))
@@ -41,6 +42,8 @@ beforeEach(() => {
 describe('preload remote IM api', () => {
   it('routes remote IM config and message calls through dedicated IPC channels', async () => {
     const api = await loadApi()
+    const imageFile = { name: 'photo.png' } as File
+    electronMock.getPathForFile.mockReturnValue('/tmp/photo.png')
     const config = {
       enabled: true,
       provider: 'tencent-im',
@@ -68,10 +71,9 @@ describe('preload remote IM api', () => {
     await api.remoteIm.deleteContact('project-1', 'desktop_slave')
     await api.remoteIm.sendLocalMessage('project-1', 'hello')
     await api.remoteIm.sendPeerMessage('project-1', 'hello peer', 'desktop_slave')
-    await api.remoteIm.sendPeerImage('project-1', {
+    await api.remoteIm.sendPeerImage('project-1', imageFile, {
       fileToken: 'file-token-1',
       toUserId: 'desktop_slave',
-      localPath: '/tmp/photo.png',
       fileName: 'photo.png',
       mimeType: 'image/png',
       sizeBytes: 123
@@ -151,6 +153,7 @@ describe('preload remote IM api', () => {
       text: 'hello peer',
       toUserId: 'desktop_slave'
     })
+    expect(electronMock.getPathForFile).toHaveBeenCalledWith(imageFile)
     expect(electronMock.invoke).toHaveBeenNthCalledWith(11, 'remote-im:send-peer-image', {
       projectId: 'project-1',
       fileToken: 'file-token-1',

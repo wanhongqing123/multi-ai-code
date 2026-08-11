@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { RemoteImMessage } from '../../electron/preload.js'
@@ -8,8 +8,139 @@ import {
   formatSummaryTime,
   summarizeRemoteImMessages,
   summaryAttachmentParts,
+  summaryMessageContent,
   summarySenderLabel
 } from './messageSummary.js'
+
+type RemoteImSummaryImageSource =
+  | { status: 'loading' }
+  | { status: 'ready'; url: string }
+  | { status: 'error'; message: string }
+
+function remoteImageFallback(message: RemoteImMessage): string | null {
+  const attachment = message.attachment?.type === 'image' ? message.attachment : null
+  const source = attachment?.thumbnailUrl?.trim() || attachment?.remoteUrl?.trim()
+  return source && /^(https?:|data:image\/)/i.test(source) ? source : null
+}
+
+export function RemoteImSummaryImage(props: {
+  projectId: string
+  message: RemoteImMessage
+}): JSX.Element {
+  const attachment = props.message.attachment?.type === 'image' ? props.message.attachment : null
+  const fallback = remoteImageFallback(props.message)
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const [shouldLoadLocal, setShouldLoadLocal] = useState(false)
+  const [source, setSource] = useState<RemoteImSummaryImageSource>(() =>
+    attachment?.localPath
+      ? { status: 'loading' }
+      : fallback
+        ? { status: 'ready', url: fallback }
+        : { status: 'error', message: '图片暂不可预览' }
+  )
+
+  useEffect(() => {
+    if (!attachment?.localPath) {
+      setShouldLoadLocal(false)
+      return
+    }
+
+    const element = containerRef.current
+    if (typeof window === 'undefined' || !element || typeof IntersectionObserver === 'undefined') {
+      setShouldLoadLocal(true)
+      return
+    }
+
+    setShouldLoadLocal(false)
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return
+        setShouldLoadLocal(true)
+        observer.disconnect()
+      },
+      { rootMargin: '400px 0px' }
+    )
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [attachment?.localPath, props.message.id])
+
+  useEffect(() => {
+    if (!attachment?.localPath) {
+      setSource(
+        fallback
+          ? { status: 'ready', url: fallback }
+          : { status: 'error', message: '图片暂不可预览' }
+      )
+      return
+    }
+    if (!shouldLoadLocal) return
+
+    let cancelled = false
+    setSource({ status: 'loading' })
+    const readImage =
+      typeof window === 'undefined' ? undefined : window.api?.remoteIm?.readImagePreview
+    if (!readImage) {
+      setSource(
+        fallback
+          ? { status: 'ready', url: fallback }
+          : { status: 'error', message: '图片读取接口不可用' }
+      )
+      return
+    }
+
+    void readImage({ projectId: props.projectId, messageId: props.message.id })
+      .then((result) => {
+        if (cancelled) return
+        setSource(
+          result.ok
+            ? { status: 'ready', url: result.dataUrl }
+            : fallback
+              ? { status: 'ready', url: fallback }
+              : { status: 'error', message: result.error }
+        )
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return
+        setSource(
+          fallback
+            ? { status: 'ready', url: fallback }
+            : {
+                status: 'error',
+                message: error instanceof Error ? error.message : '图片读取失败'
+              }
+        )
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [attachment?.localPath, fallback, props.message.id, props.projectId, shouldLoadLocal])
+
+  const label = attachment?.fileName ?? '图片消息'
+  return (
+    <div ref={containerRef} className="remote-im-summary-image">
+      {source.status === 'ready' ? (
+        <img
+          className="remote-im-summary-image-preview"
+          src={source.url}
+          alt={label}
+          loading="lazy"
+          onError={() => {
+            setSource((current) =>
+              fallback && current.status === 'ready' && current.url !== fallback
+                ? { status: 'ready', url: fallback }
+                : { status: 'error', message: '图片暂不可预览' }
+            )
+          }}
+        />
+      ) : (
+        <div className={`remote-im-summary-image-state ${source.status}`}>
+          {source.status === 'loading' ? `正在读取 ${label}` : source.message}
+        </div>
+      )}
+    </div>
+  )
+}
 
 export interface RemoteImSummaryDialogProps {
   open: boolean
@@ -123,7 +254,7 @@ export default function RemoteImSummaryDialog(props: RemoteImSummaryDialogProps)
                       const showDay = day !== lastDay
                       if (showDay) lastDay = day
                       const attachment = summaryAttachmentParts(message)
-                      const content = message.content.trim()
+                      const content = summaryMessageContent(message)
                       return (
                         <Fragment key={message.id}>
                           {showDay ? (
@@ -149,6 +280,12 @@ export default function RemoteImSummaryDialog(props: RemoteImSummaryDialogProps)
                                 <span>{attachment.kindLabel}</span>
                                 {attachment.fileName ? <code>{attachment.fileName}</code> : null}
                               </div>
+                            ) : null}
+                            {message.kind === 'image' ? (
+                              <RemoteImSummaryImage
+                                projectId={props.projectId ?? message.projectId ?? ''}
+                                message={message}
+                              />
                             ) : null}
                             {content ? (
                               <div className="remote-im-summary-content remote-im-markdown">

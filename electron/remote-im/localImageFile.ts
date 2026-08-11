@@ -1,4 +1,5 @@
 import { promises as fs } from 'node:fs'
+import { isAbsolute, relative, resolve, sep } from 'node:path'
 import type { RemoteImImageAttachment } from './types.js'
 
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp'])
@@ -20,6 +21,11 @@ export interface RemoteImLocalImagePayload {
 
 export interface LoadRemoteImLocalImageOptions {
   maxBytes: number
+}
+
+export interface ReadRemoteImLocalImageOptions {
+  maxBytes: number
+  allowedDirectory: string
 }
 
 function toTransferableArrayBuffer(bytes: Uint8Array): ArrayBuffer {
@@ -85,4 +91,52 @@ export async function loadRemoteImLocalImageForSend(
     mimeType,
     fileBytes: toTransferableArrayBuffer(bytes)
   }
+}
+
+/**
+ * Read an image that has already been associated with a persisted IM message.
+ * Callers must resolve the path from the trusted message record instead of
+ * accepting an arbitrary renderer-supplied path.
+ */
+export async function readRemoteImLocalImageDataUrl(
+  localPath: string,
+  options: ReadRemoteImLocalImageOptions
+): Promise<string> {
+  const cleanPath = localPath.trim()
+  if (!cleanPath) throw new Error('图片本地路径为空')
+  if (!isAbsolute(cleanPath)) throw new Error('图片本地路径无效')
+
+  const allowedDirectory = resolve(options.allowedDirectory)
+  const requestedPath = resolve(cleanPath)
+  const isInside = (directory: string, candidate: string): boolean => {
+    const pathFromDirectory = relative(directory, candidate)
+    return (
+      pathFromDirectory.length > 0 &&
+      pathFromDirectory !== '..' &&
+      !pathFromDirectory.startsWith(`..${sep}`) &&
+      !isAbsolute(pathFromDirectory)
+    )
+  }
+  if (!isInside(allowedDirectory, requestedPath)) {
+    throw new Error('图片不属于当前项目缓存')
+  }
+
+  const [realDirectory, realPath] = await Promise.all([
+    fs.realpath(allowedDirectory),
+    fs.realpath(requestedPath)
+  ])
+  if (!isInside(realDirectory, realPath)) {
+    throw new Error('图片不属于当前项目缓存')
+  }
+
+  const mimeType = mimeTypeFromRemoteImImagePath(realPath)
+  if (!mimeType) throw new Error('图片格式不支持')
+
+  const stat = await fs.stat(realPath)
+  if (!stat.isFile()) throw new Error('图片文件不存在')
+  if (stat.size === 0) throw new Error('图片内容为空')
+  if (stat.size > options.maxBytes) throw new Error('图片文件过大')
+
+  const bytes = await fs.readFile(realPath)
+  return `data:${mimeType};base64,${bytes.toString('base64')}`
 }

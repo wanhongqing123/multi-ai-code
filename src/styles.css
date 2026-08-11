@@ -7160,6 +7160,39 @@ html, body, #root {
   font-size: 12px;
 }
 
+.remote-im-summary-image {
+  margin: 2px 0 8px;
+}
+
+.remote-im-summary-image-preview {
+  display: block;
+  max-width: min(100%, 560px);
+  max-height: 520px;
+  border: 1px solid #e3eaf5;
+  border-radius: 10px;
+  background: #f8fafd;
+  object-fit: contain;
+}
+
+.remote-im-summary-image-state {
+  display: flex;
+  min-height: 96px;
+  max-width: 560px;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  border: 1px dashed #d7dfec;
+  border-radius: 10px;
+  background: #f8fafd;
+  color: #76839a;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.remote-im-summary-image-state.error {
+  color: #b45309;
+}
+
 /* 消息正文卡：浅底圆角，内部沿用 .remote-im-markdown 渲染。 */
 .remote-im-summary-content {
   padding: 10px 14px;

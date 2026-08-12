@@ -61,14 +61,8 @@ void FilePreviewDialog::buildUi(const QString& displayName, const QString& html)
     title_->installEventFilter(this);
     headerRow->addWidget(title_, 1);
 
-    auto* closeIcon = new QPushButton(QStringLiteral("✕"), header_);
-    closeIcon->setObjectName(QStringLiteral("filePreviewCloseIcon"));
-    closeIcon->setCursor(Qt::PointingHandCursor);
-    closeIcon->setFixedSize(UiZoom::s(28), UiZoom::s(28));
-    closeIcon->setToolTip(QStringLiteral("关闭"));
-    connect(closeIcon, &QPushButton::clicked, this, &QDialog::accept);
-    headerRow->addWidget(closeIcon, 0, Qt::AlignVCenter);
-
+    // 标题栏不再放 ✕：底部已有「关闭」，两个出口并排反而让人犹豫该点哪个
+    // （远程观看窗那次也是同样的取舍）。关闭入口只留底部按钮 + Esc。
     layout->addWidget(header_);
 
     content_ = new QTextBrowser(panel);
@@ -124,18 +118,6 @@ void FilePreviewDialog::applyStyle() {
             color: #0f172a;
             font-size: 17px;
             font-weight: 800;
-        }
-        #filePreviewCloseIcon {
-            background: transparent;
-            border: 0;
-            border-radius: 8px;
-            color: #64748b;
-            font-size: 15px;
-            font-weight: 700;
-        }
-        #filePreviewCloseIcon:hover {
-            background: #f1f5f9;
-            color: #0f172a;
         }
         /* 不在这里设 font-size：正文字号由 MarkdownRenderer 的 CSS 给出，
            并已被 UiZoom::scaleQss 按缩放倍率换算过，这里再设会把它顶掉。 */

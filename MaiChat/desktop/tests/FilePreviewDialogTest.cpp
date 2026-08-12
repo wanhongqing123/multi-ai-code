@@ -18,6 +18,7 @@ private slots:
     void rendersHtmlContent();
     void longFileNameIsElidedInsteadOfWideningWindow();
     void closeButtonsAccept();
+    void escapeStillCloses();
     void stillResizableWithoutSystemFrame();
     void panelActuallyPaintsItsBackground();
     void contentFontFollowsApplicationFont();
@@ -70,13 +71,25 @@ void FilePreviewDialogTest::closeButtonsAccept() {
     QVERIFY(close != nullptr);
     QCOMPARE(close->text(), QStringLiteral("关闭"));
 
-    // 标题栏右上角那个 ✕ 是去掉系统标题栏后唯一的「角落关闭」入口，不能漏。
-    auto* closeIcon = dialog.findChild<QPushButton*>(QStringLiteral("filePreviewCloseIcon"));
-    QVERIFY(closeIcon != nullptr);
+    // 关闭出口只留底部这一个：标题栏再放一个 ✕ 就是并排的第二个出口，
+    // 反而让人犹豫该点哪个（远程观看窗那次已经做过同样的取舍）。
+    QVERIFY2(dialog.findChild<QPushButton*>(QStringLiteral("filePreviewCloseIcon")) == nullptr,
+             "标题栏又出现了重复的关闭入口");
 
     QSignalSpy acceptedSpy(&dialog, &QDialog::accepted);
-    closeIcon->click();
+    close->click();
     QCOMPARE(acceptedSpy.count(), 1);
+}
+
+void FilePreviewDialogTest::escapeStillCloses() {
+    FilePreviewDialog dialog(QStringLiteral("report.md"), QStringLiteral("<p>hi</p>"));
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+
+    // 去掉标题栏的 ✕ 之后，键盘上只剩 Esc 这一条退路，不能连它也失效。
+    QSignalSpy finishedSpy(&dialog, &QDialog::finished);
+    QTest::keyClick(&dialog, Qt::Key_Escape);
+    QCOMPARE(finishedSpy.count(), 1);
 }
 
 void FilePreviewDialogTest::stillResizableWithoutSystemFrame() {

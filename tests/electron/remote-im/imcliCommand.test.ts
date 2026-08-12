@@ -92,7 +92,11 @@ describe('imcli command', () => {
     expect(stdout).toContain('imcli send-file phone-user ./report.md --project project-1')
   })
 
-  it('prefers the packaged Electron runtime before falling back to host node', async () => {
+  // bin/imcli 是 sh 包装，只在 mac/Linux 上可执行；Windows 上 spawn 它必然 ENOENT。
+  // Windows 的对应覆盖见下面两条（imcli.cmd / imcli.ps1）。
+  it.runIf(process.platform !== 'win32')(
+    'prefers the packaged Electron runtime before falling back to host node',
+    async () => {
     const rootDir = await createTempDir()
     const binDir = join(
       rootDir,
@@ -136,6 +140,83 @@ describe('imcli command', () => {
     expect(stdout).toContain(`script=${join(binDir, 'imcli.mjs')}`)
     expect(stdout).toContain('args=help')
   })
+
+  it('windows wrappers prefer the packaged Electron runtime before host node', async () => {
+    const cmdWrapper = await readFile(join(process.cwd(), 'bin', 'imcli.cmd'), 'utf8')
+    const ps1Wrapper = await readFile(join(process.cwd(), 'bin', 'imcli.ps1'), 'utf8')
+
+    // 安装到没有装 Node 的机器上时，随包 Electron 是唯一的运行时来源。
+    // macOS 的 bin/imcli 早就这么做了，Windows 这两个包装器长期只会调裸 node。
+    for (const [name, wrapper] of [
+      ['imcli.cmd', cmdWrapper],
+      ['imcli.ps1', ps1Wrapper]
+    ] as const) {
+      expect(wrapper, name).toContain('..\\..\\..\\Multi-AI Code.exe')
+      const packagedIndex = wrapper.indexOf('ELECTRON_RUN_AS_NODE')
+      const hostNodeIndex = wrapper.lastIndexOf('node ')
+      expect(packagedIndex, name).toBeGreaterThan(-1)
+      expect(hostNodeIndex, name).toBeGreaterThan(-1)
+      expect(packagedIndex, name).toBeLessThan(hostNodeIndex)
+
+      // cmd.exe 与 PowerShell 5.1 都按系统 ANSI 代码页读取无 BOM 文件：
+      // 中文注释会被错解码，字节落到反引号上还会吞掉后续行（实测踩过）。
+      // eslint-disable-next-line no-control-regex
+      expect(/^[\x00-\x7F]*$/.test(wrapper), `${name} must stay ASCII-only`).toBe(true)
+    }
+
+    // PowerShell 把管道输入绑定到脚本自己的 $input，不会转发给子进程；
+    // 少了这一步，`imcli send <user> -` 的 stdin 模式永远读到空。
+    expect(ps1Wrapper).toContain('$input |')
+    // 随包 Electron 是 GUI 子系统程序，PowerShell 不等它结束：直接调用会出现
+    // 输出捕获为空、$LASTEXITCODE 不可信。接一段管道才能强制同步。
+    expect(ps1Wrapper).toContain('| Write-Output')
+  })
+
+  it.runIf(process.platform === 'win32')(
+    'runs imcli through the packaged runtime and forwards stdin on windows',
+    async () => {
+      const rootDir = await createTempDir()
+      const binDir = join(rootDir, 'resources', 'app.asar.unpacked', 'bin')
+      await mkdir(binDir, { recursive: true })
+      // 用真实的 node.exe 冒充随包 Electron：它同样会执行传入的脚本，
+      // 而脚本回报 process.execPath，能直接证明包装器选的是哪个运行时。
+      await copyFile(process.execPath, join(rootDir, 'Multi-AI Code.exe'))
+      await copyFile(join(process.cwd(), 'bin', 'imcli.cmd'), join(binDir, 'imcli.cmd'))
+      await writeFile(
+        join(binDir, 'imcli.mjs'),
+        [
+          'let body = ""',
+          'process.stdin.on("data", (chunk) => { body += chunk })',
+          'process.stdin.on("end", () => {',
+          '  console.log("RUNTIME=" + process.execPath)',
+          '  console.log("ARGV=" + JSON.stringify(process.argv.slice(2)))',
+          '  console.log("STDIN=" + body.trim())',
+          '})'
+        ].join('\n')
+      )
+
+      const { stdout } = await new Promise<{ stdout: string }>((resolve, reject) => {
+        // Node 在 Windows 上不允许直接 spawn .cmd/.bat（CVE-2024-27980 之后的限制），
+        // 经 cmd.exe /c 调用，同时避开 shell:true 的引号陷阱（路径含空格）。
+        const child = spawn(
+          process.env.ComSpec ?? 'cmd.exe',
+          ['/c', join(binDir, 'imcli.cmd'), 'send', 'agent-b', '-'],
+          { shell: false }
+        )
+        let output = ''
+        child.stdout.on('data', (data) => {
+          output += String(data)
+        })
+        child.on('error', reject)
+        child.on('close', () => resolve({ stdout: output }))
+        child.stdin.end('多行\n正文', 'utf8')
+      })
+
+      expect(stdout).toContain(`RUNTIME=${join(rootDir, 'Multi-AI Code.exe')}`)
+      expect(stdout).toContain('ARGV=["send","agent-b","-"]')
+      expect(stdout).toContain('STDIN=多行\n正文')
+    }
+  )
 
   it('sends a message through the local app bridge using project environment', async () => {
     const rootDir = await createTempDir()

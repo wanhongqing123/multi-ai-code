@@ -1,10 +1,12 @@
 #include <QtTest/QtTest>
 
+#include <QApplication>
 #include <QLabel>
 #include <QPixmap>
 #include <QPushButton>
 #include <QSizeGrip>
 #include <QTextBrowser>
+#include <QTextDocument>
 
 #include "ui/FilePreviewDialog.h"
 
@@ -18,6 +20,7 @@ private slots:
     void closeButtonsAccept();
     void stillResizableWithoutSystemFrame();
     void panelActuallyPaintsItsBackground();
+    void contentFontFollowsApplicationFont();
 };
 
 void FilePreviewDialogTest::dropsNativeTitleBarAndShowsNameOnce() {
@@ -96,6 +99,24 @@ void FilePreviewDialogTest::panelActuallyPaintsItsBackground() {
     const QImage shot = dialog.grab().toImage();
     const QColor center = shot.pixelColor(shot.width() / 2, shot.height() / 2);
     QVERIFY2(center.alpha() > 0, "面板中心是全透明的，说明圆角面板根本没画出来");
+}
+
+void FilePreviewDialogTest::contentFontFollowsApplicationFont() {
+    // MarkdownRenderer 的 CSS 只声明字号、不声明 font-family，正文字体族完全由
+    // 文档默认字体决定。漏了这一步就会落到 Qt 在中文 Windows 上的默认宋体，
+    // 衬线观感与界面其余部分（Segoe UI + 微软雅黑，见 main.cpp）脱节。
+    const QFont previous = QApplication::font();
+    QFont appFont;
+    appFont.setFamilies({QStringLiteral("Segoe UI"), QStringLiteral("Microsoft YaHei")});
+    appFont.setPixelSize(13);
+    QApplication::setFont(appFont);
+
+    FilePreviewDialog dialog(QStringLiteral("report.md"), QStringLiteral("<p>正文</p>"));
+    auto* content = dialog.findChild<QTextBrowser*>(QStringLiteral("filePreviewContent"));
+    QVERIFY(content != nullptr);
+    QCOMPARE(content->document()->defaultFont().families(), appFont.families());
+
+    QApplication::setFont(previous);
 }
 
 QTEST_MAIN(FilePreviewDialogTest)

@@ -1,7 +1,9 @@
 #include "ui/FilePreviewDialog.h"
 
+#include <QApplication>
 #include <QFontMetrics>
 #include <QFrame>
+#include <QTextDocument>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMouseEvent>
@@ -74,6 +76,12 @@ void FilePreviewDialog::buildUi(const QString& displayName, const QString& html)
     content_->setOpenExternalLinks(true);
     content_->setReadOnly(true);
     content_->setFrameShape(QFrame::NoFrame);
+    // 字体必须显式跟随应用全局字体：MarkdownRenderer 的 CSS 只声明字号、不声明
+    // font-family（见 MarkdownRenderer.cpp），字体族完全由文档默认字体决定。
+    // 少了这一步就会落到 Qt 在中文 Windows 上的默认宋体，衬线观感与界面其余部分脱节。
+    // 取 QApplication::font() 而不是写死字体名：Windows 是 Segoe UI + 微软雅黑
+    // （main.cpp 里按平台设的），macOS 用系统默认，且能跟上 MainWindow 的缩放倍率。
+    content_->document()->setDefaultFont(QApplication::font());
     content_->setHtml(html);
     layout->addWidget(content_, 1);
 
@@ -129,12 +137,13 @@ void FilePreviewDialog::applyStyle() {
             background: #f1f5f9;
             color: #0f172a;
         }
+        /* 不在这里设 font-size：正文字号由 MarkdownRenderer 的 CSS 给出，
+           并已被 UiZoom::scaleQss 按缩放倍率换算过，这里再设会把它顶掉。 */
         #filePreviewContent {
             background: #f8fafc;
             border: 1px solid #e6edf5;
             border-radius: 12px;
             color: #172033;
-            font-size: 14px;
             padding: 16px;
         }
         #filePreviewClose {

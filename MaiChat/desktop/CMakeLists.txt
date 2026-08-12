@@ -152,6 +152,8 @@ add_library(remote_im_desktop_ui
   src/ui/LoginDialog.cpp
   src/ui/MainWindow.h
   src/ui/MainWindow.cpp
+  src/ui/FilePreviewDialog.h
+  src/ui/FilePreviewDialog.cpp
   src/ui/ImagePreviewDialog.h
   src/ui/ImagePreviewDialog.cpp
   src/ui/RemoteDesktopConsentDialog.h
@@ -265,6 +267,9 @@ target_link_libraries(app_message_dialog_test PRIVATE remote_im_desktop_ui remot
 add_executable(app_text_input_dialog_test tests/AppTextInputDialogTest.cpp)
 target_link_libraries(app_text_input_dialog_test PRIVATE remote_im_desktop_ui remote_im_core Qt5::Widgets Qt5::Test)
 
+add_executable(file_preview_dialog_test tests/FilePreviewDialogTest.cpp)
+target_link_libraries(file_preview_dialog_test PRIVATE remote_im_desktop_ui remote_im_core Qt5::Widgets Qt5::Test)
+
 add_executable(add_contact_dialog_test tests/AddContactDialogTest.cpp)
 target_link_libraries(add_contact_dialog_test PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets Qt5::Test)
 
@@ -333,6 +338,7 @@ add_test(NAME remote_im_application_test COMMAND remote_im_application_test)
 add_test(NAME login_dialog_test COMMAND login_dialog_test)
 add_test(NAME app_message_dialog_test COMMAND app_message_dialog_test)
 add_test(NAME app_text_input_dialog_test COMMAND app_text_input_dialog_test)
+add_test(NAME file_preview_dialog_test COMMAND file_preview_dialog_test)
 add_test(NAME add_contact_dialog_test COMMAND add_contact_dialog_test)
 add_test(NAME main_window_layout_test COMMAND main_window_layout_test)
 add_test(NAME remote_desktop_signal_test COMMAND remote_desktop_signal_test)

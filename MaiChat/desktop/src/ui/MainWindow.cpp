@@ -70,6 +70,7 @@
 #include "ui/AddContactDialog.h"
 #include "ui/AppMessageDialog.h"
 #include "ui/AppTextInputDialog.h"
+#include "ui/FilePreviewDialog.h"
 #include "ui/ImagePreviewDialog.h"
 #include <QButtonGroup>
 #include <QCheckBox>
@@ -2435,49 +2436,11 @@ void MainWindow::openFilePreview(const RemoteIMFileAttachment& attachment) {
         saveFileAttachmentToLocal(attachment);
         return;
     }
-    QDialog dialog(this);
     const QString displayName = attachment.fileName.isEmpty() ? QFileInfo(attachment.localPath).fileName() : attachment.fileName;
-    dialog.setWindowTitle(displayName.isEmpty() ? QStringLiteral("文件预览") : displayName);
-    dialog.resize(qMax(720, width() / 2), qMax(520, height() / 2));
-
-    auto* layout = new QVBoxLayout(&dialog);
-    layout->setContentsMargins(18, 16, 18, 16);
-    layout->setSpacing(12);
-
-    auto* title = new QLabel(dialog.windowTitle(), &dialog);
-    title->setObjectName(QStringLiteral("filePreviewTitle"));
-    layout->addWidget(title);
-
-    auto* preview = new QTextBrowser(&dialog);
-    preview->setObjectName(QStringLiteral("filePreviewContent"));
-    preview->setOpenExternalLinks(true);
-    preview->setReadOnly(true);
-    if (isHtmlFile(attachment)) {
-        preview->setHtml(readTextFile(attachment.localPath));
-    } else {
-        preview->setHtml(UiZoom::scaleQss(MarkdownRenderer::renderToHtml(readTextFile(attachment.localPath))));
-    }
-    layout->addWidget(preview, 1);
-
-    auto* closeButton = new QPushButton(QStringLiteral("关闭"), &dialog);
-    connect(closeButton, &QPushButton::clicked, &dialog, &QDialog::accept);
-    layout->addWidget(closeButton, 0, Qt::AlignRight);
-
-    dialog.setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
-        QLabel#filePreviewTitle {
-            color: #101828;
-            font-size: 18px;
-            font-weight: 800;
-        }
-        QTextBrowser#filePreviewContent {
-            border: 1px solid #d9e4ef;
-            border-radius: 8px;
-            padding: 12px;
-            background: #ffffff;
-            color: #172033;
-            font-size: 14px;
-        }
-    )")));
+    const QString html = isHtmlFile(attachment)
+        ? readTextFile(attachment.localPath)
+        : UiZoom::scaleQss(MarkdownRenderer::renderToHtml(readTextFile(attachment.localPath)));
+    FilePreviewDialog dialog(displayName, html, this);
     dialog.exec();
 }
 

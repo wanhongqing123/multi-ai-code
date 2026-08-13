@@ -20,24 +20,54 @@
 #    $LASTEXITCODE is unreliable, and text surfaces late under a later command.
 #    Attaching a pipeline forces synchronization (verified: stdin, argv, captured
 #    output and exit code all correct).
+# 4. UTF-8 on both pipes. Windows PowerShell 5.1 defaults $OutputEncoding to
+#    ASCII, so piping text INTO a native command replaces every non-ASCII
+#    character with '?' - silently, and irreversibly (unlike GBK mojibake there
+#    is nothing left to repair). Reading the child's stdout uses
+#    [Console]::OutputEncoding, which is the ANSI codepage by default and would
+#    garble UTF-8 output the same way. Both are restored afterwards because a
+#    bare `imcli` runs inside the caller's own PowerShell session.
 $scriptPath = Join-Path $PSScriptRoot 'imcli.mjs'
 $packagedElectron = Join-Path $PSScriptRoot '..\..\..\Multi-AI Code.exe'
 
-if (Test-Path -LiteralPath $packagedElectron) {
-    $hadRunAsNode = Test-Path Env:\ELECTRON_RUN_AS_NODE
-    $previousRunAsNode = if ($hadRunAsNode) { $env:ELECTRON_RUN_AS_NODE } else { $null }
-    $env:ELECTRON_RUN_AS_NODE = '1'
-    try {
-        $input | & $packagedElectron $scriptPath @args | Write-Output
-    } finally {
-        if ($hadRunAsNode) {
-            $env:ELECTRON_RUN_AS_NODE = $previousRunAsNode
-        } else {
-            Remove-Item Env:\ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+#    NOTE: $OutputEncoding must be assigned at GLOBAL scope. Assigning it inside
+#    a script only creates a script-scoped copy that the native-command pipeline
+#    ignores, so the text still goes out as ASCII (measured: script scope keeps
+#    producing '?', global scope carries the characters through).
+$previousOutputEncoding = $global:OutputEncoding
+$previousConsoleEncoding = $null
+$global:OutputEncoding = New-Object System.Text.UTF8Encoding $false
+try {
+    $previousConsoleEncoding = [Console]::OutputEncoding
+    [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
+} catch {
+    # No console attached (or the host refuses the change): argv/stdin still
+    # carry UTF-8, only the decoding of the child's own output is left as-is.
+    $previousConsoleEncoding = $null
+}
+
+try {
+    if (Test-Path -LiteralPath $packagedElectron) {
+        $hadRunAsNode = Test-Path Env:\ELECTRON_RUN_AS_NODE
+        $previousRunAsNode = if ($hadRunAsNode) { $env:ELECTRON_RUN_AS_NODE } else { $null }
+        $env:ELECTRON_RUN_AS_NODE = '1'
+        try {
+            $input | & $packagedElectron $scriptPath @args | Write-Output
+        } finally {
+            if ($hadRunAsNode) {
+                $env:ELECTRON_RUN_AS_NODE = $previousRunAsNode
+            } else {
+                Remove-Item Env:\ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+            }
         }
+    } else {
+        $input | & node $scriptPath @args | Write-Output
     }
-} else {
-    $input | & node $scriptPath @args | Write-Output
+} finally {
+    $global:OutputEncoding = $previousOutputEncoding
+    if ($null -ne $previousConsoleEncoding) {
+        try { [Console]::OutputEncoding = $previousConsoleEncoding } catch { }
+    }
 }
 
 exit $LASTEXITCODE

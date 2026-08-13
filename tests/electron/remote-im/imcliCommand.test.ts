@@ -170,7 +170,46 @@ describe('imcli command', () => {
     // 随包 Electron 是 GUI 子系统程序，PowerShell 不等它结束：直接调用会出现
     // 输出捕获为空、$LASTEXITCODE 不可信。接一段管道才能强制同步。
     expect(ps1Wrapper).toContain('| Write-Output')
+
+    // Windows PowerShell 5.1 的 $OutputEncoding 默认是 ASCII，往原生命令灌管道时
+    // 每个非 ASCII 字符会被替换成 '?'——静默且不可逆（不像 GBK 乱码还能修回来）。
+    // 必须写全局作用域：脚本作用域的赋值管道根本不认（实测 script 域仍出 '?'）。
+    expect(ps1Wrapper).toContain('$global:OutputEncoding')
+    expect(ps1Wrapper).toContain('UTF8Encoding')
   })
+
+  it.runIf(process.platform === 'win32')(
+    'keeps non-ascii intact through the powershell stdin pipe',
+    async () => {
+      const rootDir = await createTempDir()
+      const binDir = join(rootDir, 'resources', 'app.asar.unpacked', 'bin')
+      await mkdir(binDir, { recursive: true })
+      await copyFile(join(process.cwd(), 'bin', 'imcli.ps1'), join(binDir, 'imcli.ps1'))
+      await writeFile(
+        join(binDir, 'imcli.mjs'),
+        [
+          'let body = ""',
+          'process.stdin.setEncoding("utf8")',
+          'process.stdin.on("data", (chunk) => { body += chunk })',
+          'process.stdin.on("end", () => {',
+          '  const points = Array.from(body.trim()).map((c) => c.codePointAt(0).toString(16))',
+          '  console.log("CP=" + points.join(" "))',
+          '})'
+        ].join('\n')
+      )
+
+      // -NoProfile 让 $OutputEncoding 保持出厂默认（ASCII），正是回归发生的条件。
+      const wrapper = join(binDir, 'imcli.ps1')
+      const { stdout } = await execFileAsync('powershell.exe', [
+        '-NoProfile',
+        '-Command',
+        `& { '中文' | & '${wrapper}' send agent-b - }`
+      ])
+
+      // 中 = U+4E2D, 文 = U+6587。退化成 ASCII 时两者都会变成 3f（'?'）。
+      expect(stdout).toContain('CP=4e2d 6587')
+    }
+  )
 
   it.runIf(process.platform === 'win32')(
     'runs imcli through the packaged runtime and forwards stdin on windows',

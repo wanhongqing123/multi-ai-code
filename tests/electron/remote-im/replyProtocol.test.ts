@@ -36,8 +36,13 @@ describe('remote IM reply protocol', () => {
     expect(prompt).toContain('imcli send-file <user> <filePath>')
     expect(prompt).toContain('正常回复必须使用真实的 Markdown 换行')
     expect(prompt).toContain('不要把 Windows 命令行的转义规则用于回复正文')
-    expect(prompt).toContain('只有手工调用 imcli send 时才按 imcli help 处理多行参数')
-    expect(prompt).not.toContain('字面量 \\n')
+    // 这段提示词是每台机器的 AICLI 每一轮都会读到的唯一指引：它必须指向
+    // 现在唯一安全的通道，指错一次就会让所有项目照着坏路走（问号事故就是这么来的）。
+    expect(prompt).toContain('imcli send <user> --text-b64 <base64>')
+    expect(prompt).not.toContain('stdin 管道：imcli send <user> -')
+    // 只给正确做法，不解释被删通道的历史——那属于 imcli help（按需读一次），
+    // 塞进每轮注入只会白白拉长每个会话的上下文。
+    expect(prompt).not.toContain('已移除')
     expect(prompt).not.toContain('Remote IM reply protocol:')
     expect(prompt).not.toContain(`${REMOTE_IM_REPLY_OPEN_TAG} and ${REMOTE_IM_REPLY_CLOSE_TAG}`)
     expect(prompt.split('\n')).toHaveLength(8)

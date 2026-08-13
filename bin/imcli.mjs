@@ -1,11 +1,7 @@
 #!/usr/bin/env node
 import { readFile } from 'node:fs/promises'
-import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-
-const require = createRequire(import.meta.url)
-const iconv = require('iconv-lite')
 
 const HELP = `imcli help
 
@@ -15,27 +11,25 @@ Usage:
   imcli contacts [--project <projectId>]
   imcli history [--peer <user>] [--limit <n>] [--project <projectId>]
   imcli last [--peer <user>] [--project <projectId>]
-  imcli send <user> <text | -> [--project <projectId>]
+  imcli send <user> --text-b64 <base64> [--project <projectId>]
   imcli send-image <user> <imagePath> [--project <projectId>]
   imcli send-file <user> <filePath> [--project <projectId>]
   imcli forward <user> --message-id <id> [--project <projectId>]
-  imcli broadcast <user1,user2> <text | -> [--project <projectId>]
+  imcli broadcast <user1,user2> --text-b64 <base64> [--project <projectId>]
 
-Multi-line text — READ THIS FIRST (prevents silent truncation):
-  On Windows, imcli runs through a .cmd batch wrapper parsed by cmd.exe, and cmd.exe
-  stops parsing arguments at the first real newline. A multi-line <text> argument is
-  therefore SILENTLY cut down to its first line — the command still prints
-  "sent to <user>" even though the body was lost before imcli ever saw it.
-  Safe patterns for send/broadcast, pick one:
-    1. Write literal \\n inside a single-line argument; imcli expands it to newlines:
-         imcli send phone-user "标题\\n第二行\\n第三行"
-    2. Pass - as <text> and pipe the body via stdin (newlines always survive pipes):
-         type msg.txt | imcli send phone-user -                 (cmd)
-         Get-Content msg.txt -Raw | imcli send phone-user -     (PowerShell)
-         imcli send phone-user - < msg.txt                      (bash)
-    3. Long reports: save as .md/.html and use imcli send-file instead of send.
-  After sending an important multi-line message, run imcli history and confirm the
-  stored content is complete — "sent to <user>" alone does not guarantee integrity.
+Message text is always Base64 — READ THIS FIRST:
+  Encode the UTF-8 message body as standard Base64 and pass it to --text-b64:
+      node -e "process.stdout.write(Buffer.from('标题\\n第二行','utf8').toString('base64'))"
+      imcli send phone-user --text-b64 5qCH6aKYCuesrOS6jOihjA==
+  Base64 is the only channel with no failure mode: it is a single line (nothing can
+  truncate it), pure ASCII (no code page can degrade it), and contains no shell
+  metacharacters (no quoting, %, backtick or backslash surprises). Decoding is exact,
+  so a literal "C:\\new" and a real newline can never be confused.
+  Plain text arguments, stdin pipes and \\n escapes were all removed: each of them
+  silently corrupted messages in practice (cmd.exe truncates at the first newline,
+  PowerShell 5.1 encodes pipes as ASCII and turns non-ASCII into '?', and \\n
+  expansion mangled Windows paths like C:\\new).
+  Attachments do not use this flag — send-image and send-file take a path directly.
 
 Command details:
   imcli whoami
@@ -61,22 +55,14 @@ Command details:
     Use --peer <user> to avoid reading the wrong conversation.
     If no AICLI reply exists, it falls back to the last message in the selected history window.
 
-  imcli send <user> <text | ->
+  imcli send <user> --text-b64 <base64>
     Send a plain text IM message to one user.
-    IMPORTANT: multi-line text passed as a command-line argument is silently cut at the
-    first newline on Windows (the imcli.cmd batch wrapper cannot carry newlines in argv).
-    For multi-line text, write literal \\n inside a single-line argument; imcli expands
-    it to real newlines (only when the argument contains no real newline):
-      imcli send phone-user "标题\\n第二行\\n第三行"
-    If the text must keep a literal \\n (e.g. a Windows path like C:\\new), or is long,
-    pass - as <text> and pipe the body via stdin instead:
-      cmd:        type msg.txt | imcli send phone-user -
-      PowerShell: Get-Content msg.txt -Raw | imcli send phone-user -
-      bash:       imcli send phone-user - < msg.txt
-    Use this for short text answers. For long Markdown/HTML reports, prefer send-file.
-    After sending important multi-line text, verify with imcli history that the stored
-    content is complete ("sent to <user>" only means the command reached the bridge).
-    The command repairs common GBK/UTF-8 mojibake before sending.
+    The body is standard Base64 of the UTF-8 text. Any content is safe this way:
+    multi-line, Chinese, quotes, backslashes, percent signs.
+      imcli send phone-user --text-b64 5qCH6aKYCuesrOS6jOihjA==
+    imcli rejects input that is not valid Base64 instead of sending a damaged
+    message, so a truncated payload fails loudly rather than arriving mangled.
+    Use send-file when the receiver should get an attachment card instead of text.
 
   imcli send-image <user> <imagePath>
     Send a local image file to one user.
@@ -97,9 +83,9 @@ Command details:
     First run imcli history to find the numeric #<id>.
     This is for forwarding text already stored in the local Remote IM history.
 
-  imcli broadcast <user1,user2> <text | ->
+  imcli broadcast <user1,user2> --text-b64 <base64>
     Send the same plain text message to multiple comma-separated users.
-    Pass - as <text> to read a multi-line body from stdin (same rule as imcli send).
+    Body encoding is identical to imcli send: standard Base64 of the UTF-8 text.
     This is text-only. Use send-image or send-file separately for attachments.
     The command prints one sent line per target.
 
@@ -121,11 +107,10 @@ Examples:
   imcli whoami --project project-1
   imcli contacts --project project-1
   imcli history --peer phone-user --limit 20 --project project-1
-  imcli send phone-user "build passed" --project project-1
-  type msg.txt | imcli send phone-user - --project project-1
+  imcli send phone-user --text-b64 YnVpbGQgcGFzc2Vk --project project-1
   imcli send-image phone-user C:\\temp\\screenshot.png --project project-1
   imcli send-file phone-user ./report.md --project project-1
-  imcli broadcast phone-user,desktop-b "ready" --project project-1
+  imcli broadcast phone-user,desktop-b --text-b64 cmVhZHk= --project project-1
 
 Notes:
   imcli talks to the running Multi-AI Code app through a local authenticated bridge.
@@ -164,91 +149,41 @@ function getFlag(args, name) {
   return args[index + 1] ?? null
 }
 
-function withoutProjectArgs(args) {
-  const index = args.indexOf('--project')
+function withoutFlagPair(args, name) {
+  const index = args.indexOf(name)
   if (index < 0) return args
   return args.filter((_item, itemIndex) => itemIndex !== index && itemIndex !== index + 1)
 }
 
-const MOJIBAKE_MARKERS = [
-  '銆',
-  '锛',
-  '鈥',
-  '涓',
-  '鍙',
-  '姣',
-  '鏍',
-  '鍒',
-  '淇',
-  '鏂',
-  '鐗',
-  '绐',
-  '洜',
-  '瑰',
-  '堟',
-  '忓',
-  '楀'
-]
+function withoutProjectArgs(args) {
+  return withoutFlagPair(withoutFlagPair(args, '--project'), '--text-b64')
+}
 
-function countOccurrences(text, needle) {
-  if (!needle) return 0
-  let count = 0
-  let index = text.indexOf(needle)
-  while (index >= 0) {
-    count += 1
-    index = text.indexOf(needle, index + needle.length)
+const TEXT_B64_FLAG = '--text-b64'
+
+// Base64 是 send / broadcast 唯一的正文通道，因为只有它没有失败模式：
+//   单行             —— cmd.exe 逐行解析，无从截断
+//   纯 ASCII         —— 任何代码页都能无损表示，不会退化成 '?'
+//   无 shell 元字符  —— 引号、%、反引号、反斜杠都不会出现
+//   解码精确         —— 不靠任何猜测，"C:\new" 与真实换行天然可分
+// 此前三条路（纯参数 / stdin 管道 / \n 字面量展开）都在靠 shell 行为或猜测还原
+// 原文，且都实测会静默改坏正文：cmd 在换行处截断；PowerShell 5.1 按 ASCII 编码
+// 管道把中文压成 '?'；\n 展开会把 C:\new 拆成换行。全部移除，不留半安全通道。
+function decodeOutgoingText(rawArgs, usage) {
+  const encoded = getFlag(rawArgs, TEXT_B64_FLAG)?.trim()
+  if (!encoded) throw new Error(usage)
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) {
+    throw new Error(`${TEXT_B64_FLAG} must be standard Base64 (A-Z a-z 0-9 + / =)`)
   }
-  return count
-}
-
-function mojibakeScore(text) {
-  let score = 0
-  for (const marker of MOJIBAKE_MARKERS) score += countOccurrences(text, marker)
-  score += countOccurrences(text, '\uFFFD') * 3
-  score += /銆[?�]/.test(text) ? 3 : 0
-  return score
-}
-
-function encodeGb18030(text) {
-  return Buffer.concat([...text].map((char) => iconv.encode(char, 'gb18030')))
-}
-
-function repairLikelyUtf8DecodedAsGbk(text) {
-  const originalScore = mojibakeScore(text)
-  if (originalScore < 4) return text
-
-  const repaired = encodeGb18030(text)
-    .toString('utf8')
-    .replace(/\uFFFD\?/g, '】')
-  return mojibakeScore(repaired) < originalScore ? repaired : text
-}
-
-function normalizeOutgoingText(text) {
-  return repairLikelyUtf8DecodedAsGbk(text.trim())
-}
-
-async function readTextFromStdin() {
-  const chunks = []
-  for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk))
-  return Buffer.concat(chunks).toString('utf8')
-}
-
-// 参数通道的多行兼容：调用方在单行参数里写字面量 \n，imcli 展开成真实换行。
-// 仅当文本不含真实换行时才展开——含真实换行说明通道本身没截断问题，此时文本里的
-// \n 更可能是字面内容（如 Windows 路径 C:\new），保持原样。
-function expandEscapedNewlines(text) {
-  if (text.includes('\n')) return text
-  return text.replace(/\\n/g, '\n')
-}
-
-// `-` 独占文本参数时从 stdin 读取正文。Windows 上 imcli 经 imcli.cmd（批处理）转发，
-// cmd.exe 的命令行解析在第一个真实换行处终止——多行文本作为参数传入会被静默截断成
-// 首行；stdin 管道不经过 cmd 的参数解析，是多行文本最可靠的通道。
-async function resolveOutgoingText(textParts) {
-  if (textParts.length === 1 && textParts[0] === '-') {
-    return normalizeOutgoingText(await readTextFromStdin())
+  const buffer = Buffer.from(encoded, 'base64')
+  // Node 解码 base64 时会跳过非法字符而不报错；往回编一次才能证明拿到的是完整
+  // Base64，而不是被 shell 截断过的半截。
+  if (buffer.toString('base64').replace(/=+$/, '') !== encoded.replace(/=+$/, '')) {
+    throw new Error(`${TEXT_B64_FLAG} is not valid Base64 (payload does not round-trip)`)
   }
-  return expandEscapedNewlines(normalizeOutgoingText(textParts.join(' ')))
+  const text = buffer.toString('utf8').trim()
+  if (!text) throw new Error(`${TEXT_B64_FLAG} decoded to an empty message`)
+  return text
 }
 
 async function requestJson(method, path, body) {
@@ -333,9 +268,10 @@ async function main(argv) {
   }
 
   if (command === 'send') {
-    const [toUserId, ...textParts] = args
-    const text = await resolveOutgoingText(textParts)
-    if (!toUserId || !text) throw new Error('usage: imcli send <user> <text | ->')
+    const [toUserId] = args
+    const usage = `usage: imcli send <user> ${TEXT_B64_FLAG} <base64>`
+    if (!toUserId) throw new Error(usage)
+    const text = decodeOutgoingText(rawArgs, usage)
     const value = await requestJson('POST', '/send', { projectId, toUserId, text })
     console.log(`sent to ${value.toUserId}`)
     return
@@ -360,9 +296,10 @@ async function main(argv) {
   }
 
   if (command === 'broadcast') {
-    const [targets, ...textParts] = args
-    const text = await resolveOutgoingText(textParts)
-    if (!targets || !text) throw new Error('usage: imcli broadcast <user1,user2> <text | ->')
+    const [targets] = args
+    const usage = `usage: imcli broadcast <user1,user2> ${TEXT_B64_FLAG} <base64>`
+    if (!targets) throw new Error(usage)
+    const text = decodeOutgoingText(rawArgs, usage)
     for (const toUserId of targets.split(',').map((item) => item.trim()).filter(Boolean)) {
       const value = await requestJson('POST', '/send', { projectId, toUserId, text })
       console.log(`sent to ${value.toUserId}`)

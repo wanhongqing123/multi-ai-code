@@ -42,26 +42,6 @@ async function createTempDir(): Promise<string> {
   return tempDir
 }
 
-function runImcliWithStdin(
-  args: string[],
-  stdinText: string,
-  env: NodeJS.ProcessEnv
-): Promise<{ stdout: string; code: number | null }> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [imcliPath, ...args], { env })
-    let output = ''
-    child.stdout.on('data', (data) => {
-      output += String(data)
-    })
-    child.stderr.on('data', (data) => {
-      output += String(data)
-    })
-    child.on('error', reject)
-    child.on('close', (code) => resolve({ stdout: output, code }))
-    child.stdin.end(stdinText, 'utf8')
-  })
-}
-
 describe('imcli command', () => {
   afterEach(async () => {
     if (tempDir) await rm(tempDir, { recursive: true, force: true })
@@ -73,7 +53,7 @@ describe('imcli command', () => {
 
     expect(stdout).toContain('imcli help')
     expect(stdout).toContain('Command details:')
-    expect(stdout).toContain('imcli send <user> <text | ->')
+    expect(stdout).toContain('imcli send <user> --text-b64 <base64>')
     expect(stdout).toContain('imcli send-image <user> <imagePath>')
     expect(stdout).toContain('imcli send-file <user> <filePath>')
     expect(stdout).toContain('imcli history')
@@ -257,7 +237,7 @@ describe('imcli command', () => {
     }
   )
 
-  it('sends a message through the local app bridge using project environment', async () => {
+  it('sends a base64 message through the local app bridge using project environment', async () => {
     const rootDir = await createTempDir()
     const sendPeerMessage = vi.fn(async () => ({ ok: true as const, toUserId: 'agent-b' }))
     const bridge = await startRemoteImCliServer({
@@ -269,9 +249,10 @@ describe('imcli command', () => {
     })
 
     try {
+      const text = 'hello from cli'
       const { stdout } = await execFileAsync(
         process.execPath,
-        [imcliPath, 'send', 'agent-b', 'hello from cli'],
+        [imcliPath, 'send', 'agent-b', '--text-b64', Buffer.from(text, 'utf8').toString('base64')],
         {
           env: {
             ...process.env,
@@ -283,29 +264,13 @@ describe('imcli command', () => {
       )
 
       expect(stdout).toContain('sent to agent-b')
-      expect(sendPeerMessage).toHaveBeenCalledWith('project-1', 'hello from cli', 'agent-b')
+      expect(sendPeerMessage).toHaveBeenCalledWith('project-1', text, 'agent-b')
     } finally {
       await bridge.close()
     }
   })
 
-  it('documents the truncation pitfall and safe multi-line patterns in help', async () => {
-    const { stdout } = await execFileAsync(process.execPath, [imcliPath, 'help'])
-
-    expect(stdout).toContain('imcli send <user> <text | ->')
-    expect(stdout).toContain('Multi-line text — READ THIS FIRST (prevents silent truncation):')
-    expect(stdout).toContain('stops parsing arguments at the first real newline')
-    expect(stdout).toContain('SILENTLY cut down to its first line')
-    expect(stdout).toContain('imcli expands it to newlines')
-    expect(stdout).toContain('imcli send phone-user "标题\\n第二行\\n第三行"')
-    expect(stdout).toContain('pipe the body via stdin')
-    expect(stdout).toContain('type msg.txt | imcli send phone-user -')
-    expect(stdout).toContain('Get-Content msg.txt -Raw | imcli send phone-user -')
-    expect(stdout).toContain('use imcli send-file instead of send')
-    expect(stdout).toContain('does not guarantee integrity')
-  })
-
-  it('sends multi-line text read from stdin when the text argument is -', async () => {
+  it('delivers newlines, CJK, quotes and backslash paths byte for byte', async () => {
     const rootDir = await createTempDir()
     const sendPeerMessage = vi.fn(async () => ({ ok: true as const, toUserId: 'agent-b' }))
     const bridge = await startRemoteImCliServer({
@@ -316,41 +281,22 @@ describe('imcli command', () => {
       sendPeerMessage
     })
 
-    // cmd.exe 的批处理包装无法在 argv 里携带换行（多行文本会被截断成首行）；
-    // stdin 管道是多行文本的可靠通道，这里验证 `-` 模式端到端不丢内容。
-    const multiline = '【Code Review 巡查】\n- 第一条结论\n- 第二条结论\n\n结尾行'
+    // 这一条集齐了此前三条通道各自的杀手输入：
+    //   真实换行      —— cmd.exe 会在这里截断参数
+    //   中文          —— PowerShell 5.1 的 ASCII 管道会压成 '?'
+    //   C:\new/\notes —— 旧的 \n 字面量展开会把它们拆成换行
+    //   引号 / % / `  —— shell 元字符
+    const text = [
+      '报告在 C:\\new\\report.md',
+      '第二行：引号 "double" 与 \'single\'',
+      '',
+      '百分号 100% 反引号 `tick` 路径 C:\\temp\\notes.txt'
+    ].join('\n')
+
     try {
-      const { stdout, code } = await runImcliWithStdin(['send', 'agent-b', '-'], multiline, {
-        ...process.env,
-        MULTI_AI_CODE_IMCLI_URL: bridge.url,
-        MULTI_AI_CODE_IMCLI_TOKEN: bridge.token,
-        MULTI_AI_CODE_PROJECT_ID: 'project-1'
-      })
-
-      expect(code).toBe(0)
-      expect(stdout).toContain('sent to agent-b')
-      expect(sendPeerMessage).toHaveBeenCalledWith('project-1', multiline, 'agent-b')
-    } finally {
-      await bridge.close()
-    }
-  })
-
-  it('expands literal \\n escapes in a single-line text argument into newlines', async () => {
-    const rootDir = await createTempDir()
-    const sendPeerMessage = vi.fn(async () => ({ ok: true as const, toUserId: 'agent-b' }))
-    const bridge = await startRemoteImCliServer({
-      rootDir,
-      getConfig: async () => config,
-      getStatus: async () => status,
-      listMessages: () => [],
-      sendPeerMessage
-    })
-
-    // cmd.exe 通道无法在 argv 携带真实换行；调用方以字面量 \n 表达换行，imcli 展开。
-    try {
-      const { stdout } = await execFileAsync(
+      await execFileAsync(
         process.execPath,
-        [imcliPath, 'send', 'agent-b', '【标题】\\n第二行\\n第三行'],
+        [imcliPath, 'send', 'agent-b', '--text-b64', Buffer.from(text, 'utf8').toString('base64')],
         {
           env: {
             ...process.env,
@@ -360,36 +306,6 @@ describe('imcli command', () => {
           }
         }
       )
-
-      expect(stdout).toContain('sent to agent-b')
-      expect(sendPeerMessage).toHaveBeenCalledWith('project-1', '【标题】\n第二行\n第三行', 'agent-b')
-    } finally {
-      await bridge.close()
-    }
-  })
-
-  it('keeps literal \\n untouched when the text already contains real newlines', async () => {
-    const rootDir = await createTempDir()
-    const sendPeerMessage = vi.fn(async () => ({ ok: true as const, toUserId: 'agent-b' }))
-    const bridge = await startRemoteImCliServer({
-      rootDir,
-      getConfig: async () => config,
-      getStatus: async () => status,
-      listMessages: () => [],
-      sendPeerMessage
-    })
-
-    // 真实换行能到达说明通道无截断，此时 \n 视为字面内容（如 Windows 路径 C:\new）。
-    const text = '报告在 C:\\new\\report.md\n第二行'
-    try {
-      await execFileAsync(process.execPath, [imcliPath, 'send', 'agent-b', text], {
-        env: {
-          ...process.env,
-          MULTI_AI_CODE_IMCLI_URL: bridge.url,
-          MULTI_AI_CODE_IMCLI_TOKEN: bridge.token,
-          MULTI_AI_CODE_PROJECT_ID: 'project-1'
-        }
-      })
 
       expect(sendPeerMessage).toHaveBeenCalledWith('project-1', text, 'agent-b')
     } finally {
@@ -397,7 +313,7 @@ describe('imcli command', () => {
     }
   })
 
-  it('repairs text that was decoded as GBK before imcli receives it', async () => {
+  it('fails loudly instead of sending a damaged message when base64 is invalid', async () => {
     const rootDir = await createTempDir()
     const sendPeerMessage = vi.fn(async () => ({ ok: true as const, toUserId: 'agent-b' }))
     const bridge = await startRemoteImCliServer({
@@ -408,29 +324,47 @@ describe('imcli command', () => {
       sendPeerMessage
     })
 
-    try {
-      const garbled =
-        '銆怉pollo win/mac 姣忓懆 Crash 鏍瑰洜鍒嗘瀽 + 淇鏂规銆?鐗堟湰: 6.9.8.899 | 绐楀彛: 07-07~07-15'
-      const expected =
-        '【Apollo win/mac 每周 Crash 根因分析 + 修复方案】版本: 6.9.8.899 | 窗口: 07-07~07-15'
-      const { stdout } = await execFileAsync(
-        process.execPath,
-        [imcliPath, 'send', 'agent-b', garbled],
-        {
-          env: {
-            ...process.env,
-            MULTI_AI_CODE_IMCLI_URL: bridge.url,
-            MULTI_AI_CODE_IMCLI_TOKEN: bridge.token,
-            MULTI_AI_CODE_PROJECT_ID: 'project-1'
-          }
-        }
-      )
+    const env = {
+      ...process.env,
+      MULTI_AI_CODE_IMCLI_URL: bridge.url,
+      MULTI_AI_CODE_IMCLI_TOKEN: bridge.token,
+      MULTI_AI_CODE_PROJECT_ID: 'project-1'
+    }
 
-      expect(stdout).toContain('sent to agent-b')
-      expect(sendPeerMessage).toHaveBeenCalledWith('project-1', expected, 'agent-b')
+    try {
+      // 一个被 shell 截断过的 payload 必须报错，而不是解出半截正文照样发出去——
+      // 静默发出残缺内容正是过去几次事故的共同形态。
+      await expect(
+        execFileAsync(process.execPath, [imcliPath, 'send', 'agent-b', '--text-b64', '不是base64'], {
+          env
+        })
+      ).rejects.toThrow(/standard Base64/)
+
+      // 完全没给正文时也不能当成空消息发出去。
+      await expect(
+        execFileAsync(process.execPath, [imcliPath, 'send', 'agent-b'], { env })
+      ).rejects.toThrow(/--text-b64/)
+
+      expect(sendPeerMessage).not.toHaveBeenCalled()
     } finally {
       await bridge.close()
     }
+  })
+
+  it('documents base64 as the only message channel and why the old ones were removed', async () => {
+    const { stdout } = await execFileAsync(process.execPath, [imcliPath, 'help'])
+    // help 是折行排版的，断言前把连续空白压成单空格，免得调整折行就误伤测试。
+    const flat = stdout.replace(/\s+/g, ' ')
+
+    expect(stdout).toContain('imcli send <user> --text-b64 <base64>')
+    expect(stdout).toContain('imcli broadcast <user1,user2> --text-b64 <base64>')
+    // 三条被删掉的通道各自的失败原因都要留在文档里：不写清楚，下一个人会把它们加回来。
+    expect(flat).toContain('cmd.exe truncates at the first newline')
+    expect(flat).toContain("turns non-ASCII into '?'")
+    expect(flat).toContain('expansion mangled Windows paths')
+    // 旧通道不得再出现在 Usage 里。
+    expect(stdout).not.toContain('imcli send <user> <text | ->')
+    expect(stdout).not.toContain('--file <path>')
   })
 
   it('sends an image path through the local app bridge using project environment', async () => {

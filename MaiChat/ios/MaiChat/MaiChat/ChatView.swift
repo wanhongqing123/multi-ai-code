@@ -464,7 +464,7 @@ private struct ChatDetailView: View {
                     await appState.loadEarlierMessages(with: contact.userID)
                 }
             )
-            ComposerView()
+            ComposerView(draft: appState.draft)
         }
         .background(RemoteIMStyle.pageBackground.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
@@ -1912,6 +1912,7 @@ private struct RemoteIMSlashCommandBar: View {
 
 private struct ComposerView: View {
     @EnvironmentObject private var appState: RemoteIMAppState
+    @ObservedObject var draft: RemoteIMDraftState
     @StateObject private var voiceRecorder = VoiceMessageRecorder()
     @State private var isVoiceMode = false
     @State private var isPressingVoice = false
@@ -1933,7 +1934,7 @@ private struct ComposerView: View {
                     commands: commandSuggestions,
                     visibleHeight: keyboardVisibleHeight
                 ) { command in
-                    appState.draftText = command.command
+                    draft.text = command.command
                 }
             }
 
@@ -1971,11 +1972,11 @@ private struct ComposerView: View {
                 } else {
                     ZStack(alignment: .topLeading) {
                         ComposerTextView(
-                            text: $appState.draftText,
+                            text: $draft.text,
                             onSubmit: submitDraft
                         )
 
-                        if appState.draftText.isEmpty {
+                        if draft.text.isEmpty {
                             Text("输入要发送给当前联系人的消息...")
                                 .font(.system(size: 14))
                                 .foregroundStyle(RemoteIMStyle.textSecondary)
@@ -2069,7 +2070,7 @@ private struct ComposerView: View {
     }
 
     private var commandSuggestions: [RemoteIMSlashCommand] {
-        let query = appState.draftText.trimmingCharacters(in: .whitespaces)
+        let query = draft.text.trimmingCharacters(in: .whitespaces)
         guard query.hasPrefix("/") else { return [] }
         return remoteIMSlashCommands.filter { $0.command.hasPrefix(query) }
     }
@@ -2272,6 +2273,17 @@ private struct ComposerView: View {
     }
 }
 
+private final class GrowingComposerUITextView: UITextView {
+    var onContentHeightChange: (() -> Void)?
+
+    override var contentSize: CGSize {
+        didSet {
+            guard abs(oldValue.height - contentSize.height) > 0.5 else { return }
+            onContentHeightChange?()
+        }
+    }
+}
+
 private struct ComposerTextView: UIViewRepresentable {
     @Binding var text: String
     let onSubmit: () -> Void
@@ -2284,8 +2296,8 @@ private struct ComposerTextView: UIViewRepresentable {
         Coordinator(parent: self)
     }
 
-    func makeUIView(context: Context) -> UITextView {
-        let textView = UITextView()
+    func makeUIView(context: Context) -> GrowingComposerUITextView {
+        let textView = GrowingComposerUITextView()
         textView.delegate = context.coordinator
         textView.backgroundColor = .clear
         textView.font = .systemFont(ofSize: 14)
@@ -2303,46 +2315,102 @@ private struct ComposerTextView: UIViewRepresentable {
             right: 13
         )
         textView.textContainer.lineFragmentPadding = 0
+        textView.textContainer.widthTracksTextView = true
+        textView.textContainer.heightTracksTextView = false
+        // Keep TextKit's document container unbounded. The outer SwiftUI view
+        // caps the visible height at five lines; the text view handles overflow.
+        textView.isScrollEnabled = true
+        textView.bounces = false
+        textView.alwaysBounceVertical = false
+        textView.showsVerticalScrollIndicator = false
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         textView.accessibilityIdentifier = "message-composer-text-view"
         textView.accessibilityLabel = "消息输入框"
+        textView.onContentHeightChange = { [weak coordinator = context.coordinator, weak textView] in
+            guard let coordinator, let textView else { return }
+            coordinator.scheduleContentHeightRefresh(for: textView)
+        }
         return textView
     }
 
-    func updateUIView(_ textView: UITextView, context: Context) {
+    func updateUIView(_ textView: GrowingComposerUITextView, context: Context) {
         context.coordinator.parent = self
         guard textView.text != text else { return }
-        textView.text = text
-        textView.invalidateIntrinsicContentSize()
+        let nextText = text
+        context.coordinator.applyExternalText(nextText, to: textView)
     }
 
     func sizeThatFits(
         _ proposal: ProposedViewSize,
-        uiView textView: UITextView,
-        context _: Context
+        uiView textView: GrowingComposerUITextView,
+        context: Context
     ) -> CGSize? {
-        guard let width = proposal.width else { return nil }
-
-        let fittingSize = textView.sizeThatFits(
-            CGSize(width: width, height: .greatestFiniteMagnitude)
-        )
-        let lineHeight = textView.font?.lineHeight ?? 17
-        let maximumHeight = ceil(lineHeight * maximumLineCount + verticalInset * 2)
-        let height = min(max(fittingSize.height, minimumHeight), maximumHeight)
-        textView.isScrollEnabled = fittingSize.height > maximumHeight
-        return CGSize(width: width, height: height)
+        guard
+            let width = proposal.width,
+            width.isFinite,
+            width > 0
+        else {
+            return nil
+        }
+        return context.coordinator.sizeThatFits(width: width, textView: textView)
     }
 
     final class Coordinator: NSObject, UITextViewDelegate {
         var parent: ComposerTextView
+        private var cachedWidth: CGFloat?
+        private var cachedHeight: CGFloat
+        private var requiresMeasurement = true
+        private var hasScheduledContentHeightRefresh = false
+        private var isApplyingExternalText = false
 
         init(parent: ComposerTextView) {
             self.parent = parent
+            cachedHeight = parent.minimumHeight
+        }
+
+        @discardableResult
+        func requireMeasurement() -> Bool {
+            let wasRequired = requiresMeasurement
+            requiresMeasurement = true
+            return !wasRequired
+        }
+
+        func sizeThatFits(width: CGFloat, textView: UITextView) -> CGSize {
+            let widthChanged = cachedWidth.map { abs($0 - width) >= 0.5 } ?? true
+            if requiresMeasurement || widthChanged {
+                let fittingSize = textView.sizeThatFits(
+                    CGSize(width: width, height: .greatestFiniteMagnitude)
+                )
+                cachedWidth = width
+                requiresMeasurement = false
+                updateCachedHeight(
+                    contentHeight: fittingSize.height,
+                    textView: textView,
+                    invalidatingIntrinsicSize: false
+                )
+            }
+            return CGSize(width: width, height: cachedHeight)
+        }
+
+        func applyExternalText(_ text: String, to textView: UITextView) {
+            isApplyingExternalText = true
+            defer { isApplyingExternalText = false }
+
+            textView.unmarkText()
+            textView.text = text
+            textView.selectedRange = NSRange(
+                location: (text as NSString).length,
+                length: 0
+            )
+            requireMeasurement()
+            textView.invalidateIntrinsicContentSize()
         }
 
         func textViewDidChange(_ textView: UITextView) {
-            parent.text = textView.text
-            textView.invalidateIntrinsicContentSize()
+            if !isApplyingExternalText {
+                parent.text = textView.text
+            }
+            scheduleContentHeightRefresh(for: textView)
         }
 
         func textView(
@@ -2359,6 +2427,56 @@ private struct ComposerTextView: UIViewRepresentable {
 
             parent.onSubmit()
             return false
+        }
+
+        func scheduleContentHeightRefresh(for textView: UITextView) {
+            guard !hasScheduledContentHeightRefresh else { return }
+            hasScheduledContentHeightRefresh = true
+            DispatchQueue.main.async { [weak self, weak textView] in
+                guard let self else { return }
+                self.hasScheduledContentHeightRefresh = false
+                guard let textView else { return }
+                guard
+                    let cachedWidth = self.cachedWidth,
+                    textView.bounds.width.isFinite,
+                    textView.bounds.width > 0,
+                    abs(textView.bounds.width - cachedWidth) < 0.5
+                else {
+                    if self.requireMeasurement() {
+                        textView.invalidateIntrinsicContentSize()
+                    }
+                    return
+                }
+                self.updateCachedHeight(
+                    contentHeight: textView.contentSize.height,
+                    textView: textView,
+                    invalidatingIntrinsicSize: true
+                )
+            }
+        }
+
+        private func updateCachedHeight(
+            contentHeight: CGFloat,
+            textView: UITextView,
+            invalidatingIntrinsicSize: Bool
+        ) {
+            let lineHeight = textView.font?.lineHeight ?? 17
+            let maximumHeight = ceil(
+                lineHeight * parent.maximumLineCount + parent.verticalInset * 2
+            )
+            let nextHeight = min(
+                max(ceil(contentHeight), parent.minimumHeight),
+                maximumHeight
+            )
+
+            if contentHeight <= maximumHeight, textView.contentOffset != .zero {
+                textView.setContentOffset(.zero, animated: false)
+            }
+            guard abs(cachedHeight - nextHeight) > 0.5 else { return }
+            cachedHeight = nextHeight
+            if invalidatingIntrinsicSize {
+                textView.invalidateIntrinsicContentSize()
+            }
         }
     }
 }

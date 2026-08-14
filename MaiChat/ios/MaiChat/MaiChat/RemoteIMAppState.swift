@@ -2,6 +2,11 @@ import Foundation
 import MaiChatCore
 
 @MainActor
+final class RemoteIMDraftState: ObservableObject {
+    @Published var text = ""
+}
+
+@MainActor
 final class RemoteIMAppState: ObservableObject {
     private struct ConversationHistoryState {
         var hasLoadedInitialPage = false
@@ -31,7 +36,6 @@ final class RemoteIMAppState: ObservableObject {
     @Published var secretKey = ""
     @Published var newContactUserID = ""
     @Published var newContactRelation: RemoteIMContactRelation = .friend
-    @Published var draftText = ""
     @Published var errorMessage: String?
     @Published var connectionState: ConnectionState = .disconnected
     @Published var chatState: MasterChatState
@@ -41,6 +45,7 @@ final class RemoteIMAppState: ObservableObject {
     @Published private(set) var userProfileByUserID: [String: RemoteIMUserProfile] = [:]
 
     let remoteDesktop: RemoteDesktopSession
+    let draft = RemoteIMDraftState()
 
     private let settingsStore: LocalSettingsStore
     private let secretStore: KeychainSecretStore
@@ -164,7 +169,7 @@ final class RemoteIMAppState: ObservableObject {
     var canSend: Bool {
         connectionState == .connected &&
         selectedContact != nil &&
-        !draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var canSendVoice: Bool {
@@ -573,10 +578,10 @@ final class RemoteIMAppState: ObservableObject {
 
         var queuedMessageID: UUID?
         do {
-            let message = try chatState.queueOutgoingText(draftText)
+            let message = try chatState.queueOutgoingText(draft.text)
             queuedMessageID = message.id
             let textToSend = message.text
-            draftText = ""
+            draft.text = ""
             enqueueHistoryUpsert(message)
             let receipt = try await client.sendText(to: message.toUserID, text: textToSend)
             try chatState.updateMessageDelivery(

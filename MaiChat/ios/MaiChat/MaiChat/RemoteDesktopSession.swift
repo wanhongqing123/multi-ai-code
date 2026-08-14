@@ -87,9 +87,11 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
     private var invitationTimeoutTask: Task<Void, Never>?
     private var pointerFlushTask: Task<Void, Never>?
     private var wheelFlushTask: Task<Void, Never>?
+    private var textFlushTask: Task<Void, Never>?
     private var pendingPointerPath: [CGPoint] = []
     private var pendingWheelDelta = 0
     private var pendingWheelPoint = CGPoint(x: 0.5, y: 0.5)
+    private var pendingTextInput = ""
     private var lastPointer = CGPoint(x: 0.5, y: 0.5)
     private var lastPointerSentAt: TimeInterval = 0
     private var unreliableInputSequence: UInt32 = 0
@@ -436,6 +438,7 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
         inputDiagnostics.recordClick(x: point.x, y: point.y)
         lastPointer = point
         clearPendingPointer()
+        flushPendingTextInput()
 
         var events: [RemoteInputEvent] = []
         for _ in 0..<min(clickCount, 2) {
@@ -458,6 +461,7 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
         guard held != isLeftButtonHeld else { return }
         inputDiagnostics.recordClick(x: lastPointer.x, y: lastPointer.y)
         clearPendingPointer()
+        flushPendingTextInput()
         let event = RemoteInputEvent.mouseButton(
             button: .left,
             pressed: held,
@@ -495,10 +499,11 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
             characterCount: text.count,
             utf8Bytes: text.lengthOfBytes(using: .utf8)
         )
-        for chunk in Self.textChunks(text, maximumUTF8Bytes: 700) {
-            if !sendTextChunk(chunk) {
-                break
-            }
+        pendingTextInput.append(text)
+        if pendingTextInput.lengthOfBytes(using: .utf8) >= 700 {
+            flushPendingTextInput()
+        } else {
+            scheduleTextFlush()
         }
     }
 
@@ -508,6 +513,7 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
             inputDiagnostics.recordBlockedByState()
             return
         }
+        flushPendingTextInput()
         inputDiagnostics.recordKey()
         _ = sendInputEvents(
             [.key(code: keyCode, pressed: true), .key(code: keyCode, pressed: false)],
@@ -693,6 +699,40 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
         pendingWheelDelta = 0
     }
 
+    private func scheduleTextFlush() {
+        guard textFlushTask == nil, !pendingTextInput.isEmpty else { return }
+        textFlushTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(20))
+            guard !Task.isCancelled, let self else { return }
+            self.textFlushTask = nil
+            self.flushPendingTextInput()
+        }
+    }
+
+    private func flushPendingTextInput() {
+        textFlushTask?.cancel()
+        textFlushTask = nil
+        guard !pendingTextInput.isEmpty else { return }
+        guard isControlEnabled, state == .viewing else {
+            pendingTextInput.removeAll(keepingCapacity: true)
+            return
+        }
+
+        let text = pendingTextInput
+        pendingTextInput.removeAll(keepingCapacity: true)
+        for chunk in Self.textChunks(text, maximumUTF8Bytes: 700) {
+            if !sendTextChunk(chunk) {
+                break
+            }
+        }
+    }
+
+    private func clearPendingTextInput() {
+        textFlushTask?.cancel()
+        textFlushTask = nil
+        pendingTextInput.removeAll(keepingCapacity: true)
+    }
+
     private func sendTextChunk(_ text: String) -> Bool {
         guard !text.isEmpty else { return true }
         let events: [RemoteInputEvent] = [.text(text)]
@@ -796,8 +836,15 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
     private func disableControl(sendRelease: Bool, cause: String) {
         let cancelledPendingMoves = pendingPointerPath.count
         let cancelledPendingWheel = pendingWheelDelta == 0 ? 0 : 1
+        var cancelledPendingTextBytes = 0
         clearPendingPointer()
         clearPendingWheel()
+        if isControlEnabled, state == .viewing {
+            flushPendingTextInput()
+        } else {
+            cancelledPendingTextBytes = pendingTextInput.lengthOfBytes(using: .utf8)
+            clearPendingTextInput()
+        }
         var releaseSent = false
         if sendRelease, isControlEnabled, state == .viewing {
             releaseSent = sendInputEvents([.releaseAll], channel: .reliable)
@@ -818,6 +865,7 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
                     "release_sent": diagnosticBool(releaseSent),
                     "cancelled_pending_move": String(cancelledPendingMoves),
                     "cancelled_pending_wheel": String(cancelledPendingWheel),
+                    "cancelled_pending_text_bytes": String(cancelledPendingTextBytes),
                 ]
             )
         }
@@ -1012,6 +1060,7 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
 
     private func cleanupTRTC() {
         stopViewerHeartbeat()
+        var isTRTCExitOutstanding = false
         let hadActiveResources = isControlEnabled
             || hasEnteredRoomForDiagnostics
             || isEnterRoomInFlightForDiagnostics
@@ -1060,6 +1109,7 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
         } else if !isTRTCExitPending {
             unregisterTRTCDelegateIfNeeded()
         }
+        isTRTCExitOutstanding = shouldExitRoom || isTRTCExitPending
         isRemoteViewStarted = false
         hasEnteredRoom = false
         isEnterRoomInFlight = false
@@ -1079,7 +1129,7 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
             log(
                 level: .info,
                 category: "trtc",
-                event: shouldExitRoom || isTRTCExitPending
+                event: isTRTCExitOutstanding
                     ? "local-cleanup-issued"
                     : "cleanup-finished"
             )

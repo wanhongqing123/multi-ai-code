@@ -23,15 +23,34 @@ private struct RemoteDesktopContent: View {
     @State private var controlGestureHintTask: Task<Void, Never>?
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
+        ZStack {
             if session.state.isActive {
                 activeSession
+                    .ignoresSafeArea(.keyboard, edges: .bottom)
+
+                VStack(spacing: 0) {
+                    header
+                    Spacer(minLength: 0)
+                    if session.state == .viewing {
+                        controlBar
+                    }
+                }
             } else {
-                idleState
+                VStack(spacing: 0) {
+                    header
+                    idleState
+                }
             }
         }
-        .background(RemoteIMStyle.pageBackground.ignoresSafeArea())
+        .ignoresSafeArea(
+            .keyboard,
+            edges: session.state.isActive && !keyboardActive ? .bottom : []
+        )
+        .background(
+            (session.state.isActive ? Color.black : RemoteIMStyle.pageBackground)
+                .ignoresSafeArea()
+        )
+        .preferredColorScheme(session.state.isActive ? .dark : nil)
         .onChange(of: session.isControlEnabled) { enabled in
             controlGestureHintTask?.cancel()
             if !enabled {
@@ -49,6 +68,7 @@ private struct RemoteDesktopContent: View {
         .onChange(of: session.state.isActive) { isActive in
             if !isActive {
                 controlGestureHintTask?.cancel()
+                keyboardActive = false
                 controlGestureHintVisible = false
                 zoomScale = 1
                 zoomResetRequest &+= 1
@@ -60,40 +80,33 @@ private struct RemoteDesktopContent: View {
     }
 
     private var header: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("远程桌面")
-                    .font(.system(size: 21, weight: .bold))
-                    .foregroundStyle(RemoteIMStyle.textPrimary)
-                Text(statusText)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(statusColor)
-                    .lineLimit(1)
-            }
+        HStack(spacing: 0) {
+            Circle()
+                .fill(connectionIndicatorColor)
+                .frame(width: 8, height: 8)
+                .accessibilityLabel(connectionIndicatorLabel)
 
-            Spacer(minLength: 8)
+            Spacer(minLength: 0)
 
             if session.state.isActive {
                 Button {
                     Task { await appState.stopRemoteDesktopView() }
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 15, weight: .bold))
-                        .frame(width: 36, height: 36)
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Color.white)
+                        .frame(width: 28, height: 28)
+                        .background(Color.red, in: Circle())
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(Color.white)
-                .background(Color.red, in: Circle())
                 .accessibilityLabel("停止远程查看")
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 8)
-        .padding(.bottom, 10)
-        .background(RemoteIMStyle.panelBackground)
-        .overlay(alignment: .bottom) {
-            Divider().background(RemoteIMStyle.border)
-        }
+        .padding(.horizontal, 12)
+        .frame(maxWidth: .infinity)
+        .frame(height: 44)
     }
 
     private var idleState: some View {
@@ -109,128 +122,125 @@ private struct RemoteDesktopContent: View {
     }
 
     private var activeSession: some View {
-        VStack(spacing: 0) {
-            ZStack {
-                Color.black
-                RemoteDesktopViewport(
-                    traceID: session.diagnosticTraceID,
-                    videoSize: session.remoteVideoSize,
-                    captureGeometry: session.captureGeometry,
-                    isViewing: session.state == .viewing,
-                    isControlEnabled: session.isControlEnabled,
-                    resetRequest: zoomResetRequest,
-                    bind: { view in
-                        session.bindRenderView(view)
-                    },
-                    onMove: { x, y in
-                        session.movePointer(x: x, y: y)
-                    },
-                    onClick: { button, x, y, clickCount in
-                        session.clickMouse(
-                            button: button,
-                            x: x,
-                            y: y,
-                            clickCount: clickCount
-                        )
-                    },
-                    onScroll: { delta, x, y in
-                        session.scrollPointer(delta: delta, x: x, y: y)
-                    },
-                    onCapture: { diagnostic in
-                        session.recordPointerCapture(diagnostic)
-                    },
-                    onZoomScaleChanged: { newScale in
-                        if abs(zoomScale - newScale) > 0.01 {
-                            zoomScale = newScale
-                        }
+        ZStack {
+            Color.black
+            RemoteDesktopViewport(
+                traceID: session.diagnosticTraceID,
+                videoSize: session.remoteVideoSize,
+                captureGeometry: session.captureGeometry,
+                isViewing: session.state == .viewing,
+                isControlEnabled: session.isControlEnabled,
+                resetRequest: zoomResetRequest,
+                bind: { view in
+                    session.bindRenderView(view)
+                },
+                onMove: { x, y in
+                    session.movePointer(x: x, y: y)
+                },
+                onClick: { button, x, y, clickCount in
+                    session.clickMouse(
+                        button: button,
+                        x: x,
+                        y: y,
+                        clickCount: clickCount
+                    )
+                },
+                onScroll: { delta, x, y in
+                    session.scrollPointer(delta: delta, x: x, y: y)
+                },
+                onCapture: { diagnostic in
+                    session.recordPointerCapture(diagnostic)
+                },
+                onZoomScaleChanged: { newScale in
+                    if abs(zoomScale - newScale) > 0.01 {
+                        zoomScale = newScale
                     }
-                )
+                }
+            )
 
-                if session.state == .viewing, zoomScale > 1.01 {
-                    VStack {
+            if session.state == .viewing, zoomScale > 1.01 {
+                VStack {
+                    Spacer()
+                    HStack {
                         Spacer()
-                        HStack {
-                            Spacer()
-                            Button {
-                                zoomResetRequest &+= 1
-                            } label: {
-                                HStack(spacing: 5) {
-                                    Text(String(format: "%.1f", Double(zoomScale)))
-                                    Text("×")
-                                    Image(systemName: "arrow.counterclockwise")
-                                }
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(Color.white)
-                                .padding(.horizontal, 11)
-                                .frame(minWidth: 44, minHeight: 44)
-                                .background(Color.black.opacity(0.62), in: Capsule())
+                        Button {
+                            zoomResetRequest &+= 1
+                        } label: {
+                            HStack(spacing: 5) {
+                                Text(String(format: "%.1f", Double(zoomScale)))
+                                Text("×")
+                                Image(systemName: "arrow.counterclockwise")
                             }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel(
-                                "缩放 \(Int((zoomScale * 100).rounded()))%，点按还原"
-                            )
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Color.white)
+                            .padding(.horizontal, 11)
+                            .frame(minWidth: 44, minHeight: 44)
+                            .background(Color.black.opacity(0.62), in: Capsule())
                         }
-                        .padding(12)
-                    }
-                }
-
-                if session.state == .viewing, controlGestureHintVisible {
-                    VStack {
-                        Spacer()
-                        Text(
-                            zoomScale > 1.01
-                                ? "画面位置已锁定；关闭控制后可继续缩放"
-                                : "关闭“控制中”后可缩放和移动画面"
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(
+                            "缩放 \(Int((zoomScale * 100).rounded()))%，点按还原"
                         )
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Color.white)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(Color.black.opacity(0.7), in: Capsule())
-                        .padding(.bottom, zoomScale > 1.01 ? 64 : 12)
                     }
-                    .allowsHitTesting(false)
-                    .transition(.opacity)
-                }
-
-                if session.state != .viewing {
-                    VStack(spacing: 14) {
-                        ProgressView()
-                            .tint(.white)
-                            .scaleEffect(1.15)
-                        Text(session.state.statusText)
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(Color.white.opacity(0.82))
-                    }
-                }
-
-                if let noticeText = session.noticeText {
-                    VStack {
-                        Text(noticeText)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 9)
-                            .background(Color.orange.opacity(0.9), in: RoundedRectangle(cornerRadius: 8))
-                            .padding(12)
-                        Spacer()
-                    }
+                    .padding(12)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            if session.state == .viewing {
-                controlBar
+            if session.state == .viewing, controlGestureHintVisible {
+                VStack {
+                    Spacer()
+                    Text(
+                        zoomScale > 1.01
+                            ? "画面位置已锁定；关闭控制后可继续缩放"
+                            : "关闭“控制中”后可缩放和移动画面"
+                    )
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.black.opacity(0.7), in: Capsule())
+                    .padding(.bottom, zoomScale > 1.01 ? 64 : 56)
+                }
+                .allowsHitTesting(false)
+                .transition(.opacity)
+            }
+
+            if session.state != .viewing {
+                VStack(spacing: 14) {
+                    ProgressView()
+                        .tint(.white)
+                        .scaleEffect(1.15)
+                    Text(session.state.statusText)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color.white.opacity(0.82))
+                }
+            }
+
+            if let noticeText = session.noticeText {
+                VStack {
+                    Text(noticeText)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 9)
+                        .background(Color.orange.opacity(0.9), in: RoundedRectangle(cornerRadius: 8))
+                        .padding(12)
+                        .padding(.top, 44)
+                    Spacer()
+                }
+                .allowsHitTesting(false)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.black)
     }
 
     private var controlBar: some View {
         ZStack {
-            HStack(spacing: 10) {
+            HStack(spacing: 4) {
+                Spacer(minLength: 0)
+
                 RemoteControlButton(
-                    title: session.isControlEnabled ? "控制中" : "开始控制",
                     systemImage: "hand.tap",
                     selected: session.isControlEnabled,
                     accessibilityLabel: session.isControlEnabled ? "停止控制" : "开始控制"
@@ -240,7 +250,6 @@ private struct RemoteDesktopContent: View {
 
                 if session.isControlEnabled {
                     RemoteControlButton(
-                        title: keyboardActive ? "收起键盘" : "键盘",
                         systemImage: keyboardActive ? "keyboard.chevron.compact.down" : "keyboard",
                         selected: keyboardActive,
                         accessibilityLabel: keyboardActive ? "收起键盘" : "显示键盘"
@@ -249,26 +258,27 @@ private struct RemoteDesktopContent: View {
                     }
 
                     remoteControlMenu
-
-                    RemoteKeyboardCapture(
-                        traceID: session.diagnosticTraceID,
-                        isActive: keyboardActive,
-                        onText: session.sendTextInput,
-                        onKey: session.sendKeyPress
-                    )
-                    .frame(width: 1, height: 1)
-                    .opacity(0.01)
                 }
 
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 8)
+
+            if session.isControlEnabled {
+                RemoteKeyboardCapture(
+                    traceID: session.diagnosticTraceID,
+                    isActive: keyboardActive,
+                    onText: session.sendTextInput,
+                    onKey: session.sendKeyPress
+                )
+                .frame(width: 1, height: 1)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                .opacity(0.01)
+                .accessibilityHidden(true)
+            }
         }
-        .padding(.vertical, 8)
-        .background(RemoteIMStyle.panelBackground)
-        .overlay(alignment: .top) {
-            Divider().background(RemoteIMStyle.border)
-        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 44)
     }
 
     private var remoteControlMenu: some View {
@@ -303,28 +313,33 @@ private struct RemoteDesktopContent: View {
             }
         } label: {
             RemoteControlLabel(
-                title: "更多",
                 systemImage: "ellipsis",
                 selected: session.isLeftButtonHeld
             )
         }
         .accessibilityLabel("更多远程控制")
+        .accessibilityValue(session.isLeftButtonHeld ? "左键已按住" : "左键未按住")
     }
 
-    private var statusColor: Color {
-        if case .failed = session.state {
+    private var connectionIndicatorColor: Color {
+        switch session.state {
+        case .viewing:
+            return .green
+        case .inviting, .connecting:
+            return .orange
+        case .failed:
             return .red
+        case .idle:
+            return RemoteIMStyle.textSecondary
         }
-        return RemoteIMStyle.textSecondary
     }
 
-    private var statusText: String {
+    private var connectionIndicatorLabel: String {
         session.isControlEnabled ? "远程控制中" : session.state.statusText
     }
 }
 
 private struct RemoteControlButton: View {
-    let title: String
     let systemImage: String
     let selected: Bool
     let accessibilityLabel: String
@@ -333,7 +348,6 @@ private struct RemoteControlButton: View {
     var body: some View {
         Button(action: action) {
             RemoteControlLabel(
-                title: title,
                 systemImage: systemImage,
                 selected: selected
             )
@@ -344,25 +358,20 @@ private struct RemoteControlButton: View {
 }
 
 private struct RemoteControlLabel: View {
-    let title: String
     let systemImage: String
     let selected: Bool
 
     var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: systemImage)
-                .font(.system(size: 16, weight: .semibold))
-            Text(title)
-                .font(.system(size: 13, weight: .semibold))
-        }
-        .padding(.horizontal, 12)
-        .frame(height: 38)
-        .foregroundStyle(selected ? Color.white : RemoteIMStyle.textPrimary)
-        .background(
-            selected ? RemoteIMStyle.blue : Color(.secondarySystemBackground),
-            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-        )
-        .frame(minHeight: 44)
+        Image(systemName: systemImage)
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(Color.white)
+            .frame(width: 32, height: 32)
+            .background(
+                selected ? RemoteIMStyle.blue : Color.white.opacity(0.14),
+                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+            )
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
     }
 }
 

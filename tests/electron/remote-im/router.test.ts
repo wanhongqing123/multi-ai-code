@@ -148,11 +148,8 @@ describe('remote IM router', () => {
     expect(sentToAicli[0]?.displayText).not.toContain('[IM_REPLY]')
     expect(sentToAicli[0]?.replyId).toBe('reply-fixed')
     expect(sentToAicli[0]?.taskId).toBe('remote-im-task-reply-fixed')
-    expect(sentToIm[0]).toContain('已发送给当前 AICLI')
-    expect(store.messages.map((message) => message.status)).toEqual([
-      'sent-to-aicli',
-      'streaming'
-    ])
+    expect(sentToIm).toEqual([])
+    expect(store.messages.map((message) => message.status)).toEqual(['sent-to-aicli'])
   })
 
   it.each(['codex', 'opencode'] as const)(
@@ -308,7 +305,7 @@ describe('remote IM router', () => {
       createdAt: 100
     })
 
-    expect(events).toEqual(['start:session-main:reply-race', 'submit', 'ack'])
+    expect(events).toEqual(['start:session-main:reply-race', 'submit'])
   })
 
   it('cancels the matching output route when AICLI rejects the prompt', async () => {
@@ -375,7 +372,7 @@ describe('remote IM router', () => {
     expect(first.ok).toBe(true)
     expect(second.ok).toBe(true)
     expect(sentToAicli).toHaveLength(1)
-    expect(sentToIm).toEqual(['已发送给当前 AICLI，开始处理。'])
+    expect(sentToIm).toEqual([])
     expect(store.messages.filter((item) => item.direction === 'incoming')).toHaveLength(1)
   })
 
@@ -761,7 +758,7 @@ describe('remote IM router', () => {
     expect(sentToAicli[0]?.displayText).toBe(
       '[来自远程 IM：phone_admin]\n[语音转文字]\n检查一下构建失败原因'
     )
-    expect(sentToIm[0]).toContain('已发送给当前 AICLI')
+    expect(sentToIm).toEqual([])
     expect(store.messages[0]).toMatchObject({
       role: 'remote-user',
       direction: 'incoming',
@@ -867,7 +864,7 @@ describe('remote IM router', () => {
     // 大小要能让 AICLI 先判断值不值得读，而不是闷头打开一个几十 MB 的二进制。
     expect(sentToAicli[0]?.text).toContain('大小: 2.0 MB')
     expect(sentToAicli[0]?.text).toContain('配文: 按这个文档改')
-    expect(sentToIm[0]).toContain('已发送给当前 AICLI')
+    expect(sentToIm).toEqual([])
     expect(store.messages[0]).toMatchObject({
       kind: 'file',
       status: 'sent-to-aicli',
@@ -986,7 +983,7 @@ describe('remote IM router', () => {
         fileName: 'photo.png'
       }
     ])
-    expect(sentToIm[0]).toContain('已发送给当前 AICLI')
+    expect(sentToIm).toEqual([])
     expect(store.messages[0]).toMatchObject({
       kind: 'image',
       status: 'sent-to-aicli',
@@ -1048,8 +1045,8 @@ describe('remote IM router', () => {
     expect(sentToAicli).toHaveLength(1)
     expect(sentToAicli[0]?.text).toContain('本地路径: /tmp/remote-im/images/photo.png')
     expect(sentToAicli[0]?.text).toContain('配文: 帮我看看这张报错截图')
-    // 合并后只回一次系统回执。
-    expect(sentToIm.filter((line) => line.includes('已发送给当前 AICLI'))).toHaveLength(1)
+    // 成功投递保持静默，图片与配文不会产生额外回执。
+    expect(sentToIm).toEqual([])
     expect(store.messages[0]).toMatchObject({
       kind: 'image',
       status: 'sent-to-aicli',
@@ -1177,7 +1174,7 @@ describe('remote IM router', () => {
     expect(result.aicliSessionId).toBe('session-main')
     expect(sentToAicli).toHaveLength(1)
     expect(sentToAicli[0]).toContain('hello from friend')
-    expect(sentToIm[0]).toContain('已发送给当前 AICLI')
+    expect(sentToIm).toEqual([])
     expect(store.messages[0]).toMatchObject({
       role: 'remote-user',
       status: 'sent-to-aicli',
@@ -1218,7 +1215,7 @@ describe('remote IM router', () => {
 
     expect(result.ok).toBe(true)
     expect(sentToAicli).toHaveLength(1)
-    expect(sentToIm[0]).toContain('已发送给当前 AICLI')
+    expect(sentToIm).toEqual([])
     expect(store.messages[0]).toMatchObject({ status: 'sent-to-aicli' })
   })
 
@@ -1255,7 +1252,7 @@ describe('remote IM router', () => {
     expect(result.ok).toBe(true)
     expect(result.aicliSessionId).toBe('session-main')
     expect(sentToAicli).toHaveLength(1)
-    expect(sentToIm[0]).toContain('已发送给当前 AICLI')
+    expect(sentToIm).toEqual([])
     expect(store.messages[0]).toMatchObject({
       status: 'sent-to-aicli',
       error: null
@@ -1336,7 +1333,7 @@ describe('remote IM router', () => {
     expect(result.ok).toBe(true)
     expect(result.aicliSessionId).toBe('session-main')
     expect(sentToAicli).toHaveLength(1)
-    expect(sentToIm[0]).toContain('已发送给当前 AICLI')
+    expect(sentToIm).toEqual([])
     expect(store.messages[0]).toMatchObject({ status: 'sent-to-aicli', error: null })
   })
 

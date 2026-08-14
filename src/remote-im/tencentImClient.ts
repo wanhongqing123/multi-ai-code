@@ -811,7 +811,7 @@ export async function connectTencentImClient(input: {
       const createdAt = typeof message.time === 'number' ? message.time * 1000 : undefined
 
       // 逐条消息按元素拆解：附件（图片/文件/语音）与配文来自「同一条」消息，
-      // 图片 + 配文合并成一次投递（后续只走一次 AICLI、只回一次系统回执）。
+      // 图片 + 配文合并成一次 AICLI 投递。
       const parts = extractTencentImMessageParts(message)
 
       if (parts.image) {
@@ -837,8 +837,8 @@ export async function connectTencentImClient(input: {
 
       if (parts.file) {
         fileCount++
-        // 配文与文件合并成一次投递，与图片一致：拆成两条会让 AICLI 收到一次
-        // 文本、一次文件，还各回一次系统回执，而用户明明只发了一条消息。
+        // 配文与文件合并成一次投递，与图片一致：拆成两条会让 AICLI
+        // 把用户的一条消息当成两个独立任务。
         input.onIncomingFile?.({
           projectId: input.projectId,
           remoteMessageId,

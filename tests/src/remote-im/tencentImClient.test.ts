@@ -406,8 +406,8 @@ describe('tencent IM client helpers', () => {
       ]
     })
 
-    // 配文必须跟文件走同一次投递。以前配文被单独当成一条文本发出去，AICLI 会
-    // 收到一次文本、一次文件，还各回一次系统回执，而用户明明只发了一条消息。
+    // 配文必须跟文件走同一次投递。以前配文被单独当成一条文本发出去，
+    // AICLI 会把用户的一条消息当成两个独立任务。
     expect(parts.file?.fileName).toBe('spec.docx')
     expect(parts.caption).toBe('按这个文档改')
   })

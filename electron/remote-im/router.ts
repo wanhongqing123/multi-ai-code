@@ -581,7 +581,6 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       sentToAicliAt: input.now,
       error: null
     })
-    await sendSystemText(deps, input.message.projectId, input.fromUserId, '已发送给当前 AICLI，开始处理。')
     return {
       ok: true,
       aicliSessionId: session.sessionId,
@@ -950,7 +949,6 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       sentToAicliAt: now,
       error: null
     })
-    await sendSystemText(deps, message.projectId, fromUserId, '已发送给当前 AICLI，开始处理。')
     return {
       ok: true,
       aicliSessionId: session.sessionId,
@@ -1059,7 +1057,6 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       sentToAicliAt: now,
       error: null
     })
-    await sendSystemText(deps, message.projectId, fromUserId, '已发送给当前 AICLI，开始处理。')
     return {
       ok: true,
       aicliSessionId: session.sessionId,

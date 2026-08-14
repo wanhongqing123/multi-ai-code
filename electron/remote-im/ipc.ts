@@ -7,6 +7,7 @@ import {
   getActiveSessionForProject,
   getSessionRuntimeInfo,
   requestAicliBtwForSession,
+  requestAicliApprovalForSession,
   requestAicliClearForSession,
   requestAicliCompactForSession,
   requestAicliGoalForSession,
@@ -16,7 +17,7 @@ import {
   sendUserMessageToSession,
   switchAicliModeForSession
 } from '../cc/ptyManager.js'
-import { projectDir, rootDir } from '../store/paths.js'
+import { getActiveAccount, projectDir, rootDir, sanitizeAccountId } from '../store/paths.js'
 import {
   readProjectMetaFile,
   writeProjectMetaFile,
@@ -34,6 +35,8 @@ import {
   normalizeRemoteImAccountConfig,
   preserveRemoteImAccountContacts,
   readRemoteImAccountConfig,
+  removeRemoteImAccountContact,
+  removedRemoteImAccountContactUserIds,
   syncRemoteImAccountContactsFromSdk,
   writeRemoteImAccountConfig
 } from './account.js'
@@ -50,15 +53,20 @@ import {
 } from './messageStore.js'
 import {
   completeRemoteImOutputSession,
+  createRemoteImAicliOutputText,
   failRemoteImOutputSession,
   forwardRemoteImStructuredAssistantOutput,
   forwardRemoteImStructuredFinalOutput,
   flushRemoteImOutputSession,
+  revokeRemoteImOutputSessions,
   resolveRemoteImStructuredFinalContent,
   type RemoteImOutputCompletionInfo,
   type RemoteImOutputSessionState
 } from './outputForwarding.js'
-import { RemoteImStructuredTaskRegistry } from './structuredTaskRegistry.js'
+import {
+  evaluateRemoteImStructuredTaskAdmission,
+  RemoteImStructuredTaskRegistry
+} from './structuredTaskRegistry.js'
 import { getRemoteImAicliOutputSourceKind } from './aicliSourceKind.js'
 import {
   createPeerOutgoingFileMessageInput,
@@ -77,6 +85,7 @@ import { readLatestClaudeRemoteImReply } from './claudeTranscript.js'
 import { startRemoteImCliServer } from './imcliServer.js'
 import { addAicliStructuredOutputListener } from '../aicli/structuredOutputBridge.js'
 import { executeRemoteImControlCommand } from './controlBridge.js'
+import { RemoteImApprovalCoordinator } from './approvalCoordinator.js'
 import { createGitDiffReport } from './gitDiffReport.js'
 import { createRemoteImAccountChangedStatuses, getRemoteImSendConnectionError } from './status.js'
 import { transcribeRemoteImAudioWithLocalWhisper } from './localWhisper.js'
@@ -107,6 +116,7 @@ import type {
   RemoteImFileAttachment,
   RemoteImImageAttachment,
   RemoteImRoamedTextMessage,
+  RemoteImRuntimeIdentity,
   ReadRemoteImImagePreviewInput,
   RemoteImRuntimeLogEntryInput,
   RemoteImLoginState,
@@ -115,7 +125,11 @@ import type {
 
 const REMOTE_IM_META_KEY = 'remote_im_config'
 const DEFAULT_REMOTE_IM_PROFILE_ID = 'default'
-const OUTGOING_DELIVERY_ACK_TIMEOUT_MS = 17_000
+// Renderer delivery can spend up to 15s waiting for the current Tencent IM
+// runtime and another 15s waiting for the SDK send promise. Keep the main-side
+// acknowledgement window above that combined bound so a valid approval notice
+// is not canceled just before a legitimate send result arrives.
+const OUTGOING_DELIVERY_ACK_TIMEOUT_MS = 35_000
 const MAX_REMOTE_IM_IMAGE_BYTES = 20 * 1024 * 1024
 // send-file 支持任意普通文件，上限对齐腾讯 IM 文件消息的 100MB。
 const MAX_REMOTE_IM_FILE_BYTES = 100 * 1024 * 1024
@@ -128,7 +142,95 @@ type RemoteImStructuredTaskState = RemoteImOutputSessionState & {
   taskId: string
 }
 const structuredOutputTasks = new RemoteImStructuredTaskRegistry<RemoteImStructuredTaskState>()
+const approvalDeliveryWaiters = new Map<
+  number,
+  (result: { ok: boolean; error?: string }) => void
+>()
+let remoteImApprovalCoordinator: RemoteImApprovalCoordinator | null = null
 let activeRemoteImAccountProfileId: string | null = getRemoteImProfileId()
+let remoteImAccountSecurityGeneration = 0
+let remoteImAccountTransitioning = false
+let remoteImApprovalAuthorityMutationCount = 0
+let remoteImAccountBindQueue: Promise<void> = Promise.resolve()
+let remoteImAccountBoundOperationCount = 0
+const remoteImAccountBoundOperationDrainWaiters = new Set<() => void>()
+const remoteImRuntimeIdentities = new Map<
+  string,
+  RemoteImRuntimeIdentity & { securityGeneration: number }
+>()
+
+const REMOTE_IM_ACCOUNT_CHANGING_ERROR = 'Remote IM account is changing'
+
+function isRemoteImAccountSecurityGenerationCurrent(generation: number): boolean {
+  return (
+    !remoteImAccountTransitioning &&
+    remoteImApprovalAuthorityMutationCount === 0 &&
+    generation === remoteImAccountSecurityGeneration
+  )
+}
+
+async function withRemoteImAccountBoundOperation<T>(
+  operation: (securityGeneration: number) => Promise<T>
+): Promise<T | { ok: false; error: string }> {
+  if (remoteImAccountTransitioning || remoteImApprovalAuthorityMutationCount > 0) {
+    return { ok: false, error: REMOTE_IM_ACCOUNT_CHANGING_ERROR }
+  }
+  const securityGeneration = remoteImAccountSecurityGeneration
+  remoteImAccountBoundOperationCount += 1
+  try {
+    // bindRemoteImAccountConfig sets transitioning before it can change the
+    // account-scoped data layer, so this operation either stays wholly on the
+    // old account or is rejected before it starts.
+    if (!isRemoteImAccountSecurityGenerationCurrent(securityGeneration)) {
+      return { ok: false, error: REMOTE_IM_ACCOUNT_CHANGING_ERROR }
+    }
+    return await operation(securityGeneration)
+  } finally {
+    remoteImAccountBoundOperationCount -= 1
+    if (remoteImAccountBoundOperationCount === 0) {
+      for (const resolve of remoteImAccountBoundOperationDrainWaiters) resolve()
+      remoteImAccountBoundOperationDrainWaiters.clear()
+    }
+  }
+}
+
+function waitForRemoteImAccountBoundOperationsToDrain(): Promise<void> {
+  if (remoteImAccountBoundOperationCount === 0) return Promise.resolve()
+  return new Promise((resolve) => {
+    remoteImAccountBoundOperationDrainWaiters.add(resolve)
+  })
+}
+
+function enqueueRemoteImAccountMutation<T>(operation: () => Promise<T>): Promise<T> {
+  const result = remoteImAccountBindQueue.then(operation)
+  remoteImAccountBindQueue = result.then(
+    () => undefined,
+    () => undefined
+  )
+  return result
+}
+
+/**
+ * Contact changes alter who is allowed to steer AICLI and approve dangerous
+ * commands, but they do not require reconnecting the Tencent runtime. Reserve
+ * the account-mutation queue synchronously so no new bound handler can start,
+ * then wait for every handler that already captured the old allow-list before
+ * changing authority. This makes the revoke/write operation linearizable.
+ */
+function enqueueRemoteImApprovalAuthorityMutation<T>(
+  operation: () => Promise<T>
+): Promise<T> {
+  remoteImApprovalAuthorityMutationCount += 1
+
+  return enqueueRemoteImAccountMutation(async () => {
+    try {
+      await waitForRemoteImAccountBoundOperationsToDrain()
+      return await operation()
+    } finally {
+      remoteImApprovalAuthorityMutationCount -= 1
+    }
+  })
+}
 
 function structuredOutputTextPreview(text: string): string {
   return text.replace(/\s+/g, ' ').trim().slice(0, 180)
@@ -179,6 +281,59 @@ function resetRemoteImStatusesAfterAccountChange(): void {
   for (const status of createRemoteImAccountChangedStatuses(statuses.values())) {
     broadcastStatus(status)
   }
+}
+
+async function invalidateRemoteImSecurityStateForAccountChange(): Promise<void> {
+  // Invalidate capabilities before the new credentials/profile become active.
+  // The generation check closes races with an in-flight /approve command, while
+  // local-takeover tombstones prevent another account from steering the same
+  // still-running Codex turn.
+  remoteImAccountSecurityGeneration += 1
+  remoteImRuntimeIdentities.clear()
+  revokeRemoteImOutputSessions(outputSessions)
+  for (const sessionId of structuredOutputTasks.sessionIds()) {
+    structuredOutputTasks.markLocalTakeover(sessionId)
+  }
+  await remoteImApprovalCoordinator?.cancelAll()
+  for (const [messageId, resolve] of approvalDeliveryWaiters) {
+    approvalDeliveryWaiters.delete(messageId)
+    resolve({ ok: false, error: 'Remote IM account changed during approval delivery' })
+  }
+}
+
+function sameRemoteImRuntimeIdentity(
+  expected: RemoteImRuntimeIdentity,
+  actual: RemoteImRuntimeIdentity
+): boolean {
+  return (
+    expected.connectionId === actual.connectionId &&
+    expected.desktopUserId.trim() === actual.desktopUserId.trim() &&
+    expected.sdkAppId === actual.sdkAppId
+  )
+}
+
+function isRegisteredRemoteImRuntime(
+  projectId: string,
+  identity: RemoteImRuntimeIdentity | null | undefined
+): boolean {
+  if (!identity) return false
+  const current = remoteImRuntimeIdentities.get(projectId)
+  return Boolean(
+    current &&
+      current.securityGeneration === remoteImAccountSecurityGeneration &&
+      sameRemoteImRuntimeIdentity(current, identity)
+  )
+}
+
+function isCurrentRemoteImRuntime(
+  projectId: string,
+  identity: RemoteImRuntimeIdentity | null | undefined
+): boolean {
+  return (
+    !remoteImAccountTransitioning &&
+    remoteImApprovalAuthorityMutationCount === 0 &&
+    isRegisteredRemoteImRuntime(projectId, identity)
+  )
 }
 
 function broadcastMessagesChanged(projectId: string | null): void {
@@ -248,14 +403,26 @@ function broadcastOutgoingFilePayload(
 
 function scheduleOutgoingDeliveryAckTimeout(projectId: string, messageId: number): void {
   setTimeout(() => {
+    const error = 'Remote IM sender window did not confirm delivery'
     const updated = failRemoteImMessageIfStreaming(
       messageId,
-      'Remote IM sender window did not confirm delivery'
+      error
     )
     if (updated?.status === 'failed') {
       broadcastMessagesChanged(projectId)
     }
+    settleApprovalDelivery(messageId, { ok: false, error })
   }, OUTGOING_DELIVERY_ACK_TIMEOUT_MS)
+}
+
+function settleApprovalDelivery(
+  messageId: number,
+  result: { ok: boolean; error?: string }
+): void {
+  const resolve = approvalDeliveryWaiters.get(messageId)
+  if (!resolve) return
+  approvalDeliveryWaiters.delete(messageId)
+  resolve(result)
 }
 
 async function readProjectMeta(
@@ -400,6 +567,99 @@ function sendImText(
   return Promise.resolve({ ok: true })
 }
 
+async function sendRemoteImApprovalText(
+  projectId: string,
+  toUserId: string,
+  text: string
+): Promise<{ ok: boolean; error?: string }> {
+  if (remoteImAccountTransitioning || remoteImApprovalAuthorityMutationCount > 0) {
+    return { ok: false, error: 'Remote IM account is changing' }
+  }
+  const securityGeneration = remoteImAccountSecurityGeneration
+  const connectionError = getRemoteImSendConnectionError(await getRemoteImStatus(projectId))
+  if (connectionError) return { ok: false, error: connectionError }
+  if (
+    remoteImAccountTransitioning ||
+    remoteImApprovalAuthorityMutationCount > 0 ||
+    securityGeneration !== remoteImAccountSecurityGeneration
+  ) {
+    return { ok: false, error: 'Remote IM account changed before approval delivery' }
+  }
+
+  const now = Date.now()
+  const message = createRemoteImMessage({
+    projectId,
+    sessionId: null,
+    provider: 'tencent-im',
+    remoteMessageId: null,
+    fromUserId: null,
+    toUserId,
+    role: 'system',
+    direction: 'outgoing',
+    content: text,
+    kind: 'text',
+    attachment: null,
+    status: 'streaming',
+    error: null,
+    createdAt: now,
+    sentToAicliAt: null,
+    sentToImAt: null
+  })
+  const delivery = new Promise<{ ok: boolean; error?: string }>((resolve) => {
+    approvalDeliveryWaiters.set(message.id, resolve)
+  })
+  broadcastOutgoingText(
+    projectId,
+    toUserId,
+    createRemoteImAicliOutputText(text),
+    message.id
+  )
+  scheduleOutgoingDeliveryAckTimeout(projectId, message.id)
+  broadcastMessagesChanged(projectId)
+  // Approval delivery is security-sensitive: do not tell the coordinator that
+  // the capability was sent until the renderer reports the Tencent SDK result.
+  // A failure/timeout makes the coordinator cancel the Codex request.
+  return delivery
+}
+
+async function revokeRemoteImApprovalAuthorityForUsers(
+  rawUserIds: string[]
+): Promise<void> {
+  const userIds = new Set(rawUserIds.map((userId) => userId.trim()).filter(Boolean))
+  if (userIds.size === 0) return
+  revokeRemoteImOutputSessions(outputSessions, userIds)
+  for (const sessionId of structuredOutputTasks.sessionIds()) {
+    const routes = structuredOutputTasks.list(sessionId)
+    if (!routes.some((route) => userIds.has(route.toUserId))) continue
+    for (const state of structuredOutputTasks.markLocalTakeover(sessionId)) {
+      writeStructuredOutputRuntimeLog('aicli:route-authority-revoked', {
+        sessionId,
+        state,
+        detail: { reason: 'contact-removed' }
+      })
+    }
+  }
+  await remoteImApprovalCoordinator?.cancelForRequesters(userIds)
+}
+
+function getRemoteImApprovalCoordinator(): RemoteImApprovalCoordinator {
+  remoteImApprovalCoordinator ??= new RemoteImApprovalCoordinator({
+    sendText: sendRemoteImApprovalText,
+    resolveApproval: ({ sessionId, approvalId, threadId, taskId, turnId, decision }) =>
+      requestAicliApprovalForSession(sessionId, {
+        approvalId,
+        threadId,
+        taskId,
+        turnId,
+        decision
+    }),
+    getSecurityGeneration: () => remoteImAccountSecurityGeneration,
+    isSecurityContextCurrent: () =>
+      !remoteImAccountTransitioning && remoteImApprovalAuthorityMutationCount === 0
+  })
+  return remoteImApprovalCoordinator
+}
+
 function imageAttachmentFromIncoming(
   message: RemoteImIncomingImageMessage,
   patch: Partial<RemoteImImageAttachment> = {}
@@ -418,22 +678,6 @@ function imageAttachmentFromIncoming(
   }
 }
 
-function removeRemoteImAccountContact(
-  account: RemoteImAccountConfig,
-  rawUserId: string
-): RemoteImAccountConfig {
-  const userId = rawUserId.trim()
-  if (!userId) return account
-  const removeUserId = (userIds: string[]) => userIds.filter((item) => item.trim() !== userId)
-  return normalizeRemoteImAccountConfig({
-    ...account,
-    friendUserIds: removeUserId(account.friendUserIds),
-    masterUserIds: removeUserId(account.masterUserIds),
-    slaveUserIds: removeUserId(account.slaveUserIds),
-    allowedUserIds: removeUserId(account.allowedUserIds)
-  })
-}
-
 async function deleteRemoteImContact(
   projectId: string,
   rawUserId: string
@@ -443,11 +687,19 @@ async function deleteRemoteImContact(
   const userId = rawUserId.trim()
   if (!userId) return { ok: false, error: '请填写账号 ID' }
 
+  // The mutation wrapper has already invalidated every outstanding approval.
+  // Tombstone this peer's task before the first filesystem await so no later
+  // event from the same Codex turn can mint a fresh capability.
   const previousProfileId = getCurrentRemoteImAccountProfileId()
   const previousAccount = previousProfileId
     ? await readRemoteImAccountConfig(remoteImAccountDir(previousProfileId))
     : normalizeRemoteImAccountConfig(null)
   const nextAccount = removeRemoteImAccountContact(previousAccount, userId)
+  const removedContactUserIds = removedRemoteImAccountContactUserIds(
+    previousAccount,
+    nextAccount
+  )
+  await revokeRemoteImApprovalAuthorityForUsers(removedContactUserIds)
   const profileId =
     getRemoteImAccountProfileId(nextAccount.desktopUserId) ??
     getRemoteImProfileId() ??
@@ -469,17 +721,28 @@ async function deleteRemoteImContact(
 
 async function syncRemoteImContactsFromSdk(
   projectId: string,
-  rawUserIds: string[]
+  rawUserIds: string[],
+  runtimeIdentity: RemoteImRuntimeIdentity
 ): Promise<
   { ok: true; value: RemoteImConfig; loginState: RemoteImLoginState } | { ok: false; error: string }
 > {
+  // This function runs inside the authority-mutation queue, which deliberately
+  // blocks all ordinary runtime callbacks. Validate against the registered
+  // connection itself rather than asking whether callbacks are globally open.
+  if (!isRegisteredRemoteImRuntime(projectId, runtimeIdentity)) {
+    return { ok: false, error: '远程 IM 连接已失效，忽略旧连接的通讯录更新' }
+  }
   const profileId = getCurrentRemoteImAccountProfileId()
   if (!profileId) return { ok: false, error: '远程 IM 账号未登录' }
   const previousAccount = await readRemoteImAccountConfig(remoteImAccountDir(profileId))
   if (!previousAccount.desktopUserId) return { ok: false, error: '远程 IM 账号未登录' }
+  const nextAccount = syncRemoteImAccountContactsFromSdk(previousAccount, rawUserIds)
+  await revokeRemoteImApprovalAuthorityForUsers(
+    removedRemoteImAccountContactUserIds(previousAccount, nextAccount)
+  )
   const account = await writeRemoteImAccountConfig(
     remoteImAccountDir(profileId),
-    syncRemoteImAccountContactsFromSdk(previousAccount, rawUserIds)
+    nextAccount
   )
   const value = await getRemoteImConfig(projectId)
   return {
@@ -751,14 +1014,11 @@ function startOutputForwarding(
   const runtime = getSessionRuntimeInfo(sessionId)
   const sourceKind = runtime ? getRemoteImAicliOutputSourceKind(runtime.command) : 'unknown'
   if (sourceKind === 'codex' || sourceKind === 'opencode') {
-    for (const previous of structuredOutputTasks.list(sessionId)) {
-      if (previous.timer) clearTimeout(previous.timer)
-      structuredOutputTasks.remove(sessionId, previous.taskId)
-    }
     const state: RemoteImStructuredTaskState = {
       projectId,
       toUserId,
       config,
+      replyId,
       taskId,
       sourceKind,
       buffer: '',
@@ -827,8 +1087,47 @@ function cancelOutputForwarding(
   outputSessions.delete(sessionId)
 }
 
-function createOutputRoutingDeps(config: RemoteImConfig) {
+function createOutputRoutingDeps(
+  config: RemoteImConfig,
+  securityGeneration = remoteImAccountSecurityGeneration
+) {
   return {
+    authorizeAicliOutputStart: (route: RemoteImAicliOutputRoute) => {
+      if (!isRemoteImAccountSecurityGenerationCurrent(securityGeneration)) {
+        return {
+          ok: false as const,
+          error: REMOTE_IM_ACCOUNT_CHANGING_ERROR
+        }
+      }
+      const runtime = getSessionRuntimeInfo(route.sessionId)
+      const sourceKind = runtime
+        ? getRemoteImAicliOutputSourceKind(runtime.command)
+        : 'unknown'
+      if (sourceKind !== 'codex' && sourceKind !== 'opencode') {
+        return { ok: true as const }
+      }
+
+      const admission = evaluateRemoteImStructuredTaskAdmission(
+        structuredOutputTasks.list(route.sessionId),
+        { projectId: route.projectId, toUserId: route.toUserId }
+      )
+      if (admission.ok) return admission
+
+      writeStructuredOutputRuntimeLog('aicli:route-admission-rejected', {
+        sessionId: route.sessionId,
+        detail: {
+          reason: admission.reason,
+          activeRouteCount: structuredOutputTasks.list(route.sessionId).length
+        }
+      })
+      return {
+        ok: false as const,
+        error:
+          admission.reason === 'authority-conflict'
+            ? '当前 AICLI 会话正在处理另一位远程好友或项目的任务，请等待完成后再试。'
+            : '当前 AICLI 会话仍在处理上一条远程任务，请等待完成后再试。'
+      }
+    },
     onAicliOutputStart: ({
       sessionId,
       projectId,
@@ -858,30 +1157,18 @@ function resolveStructuredOutputTask(
   identity: { taskId?: string; replyId?: string }
 ): RemoteImStructuredTaskState | undefined {
   const tasks = structuredOutputTasks.list(sessionId)
-  const sourceRoutes = tasks.filter(
-    (task) => task.sourceKind === 'codex' || task.sourceKind === 'opencode'
-  )
-  if (sourceRoutes.length === 1) return sourceRoutes[0]
-
-  const explicit = structuredOutputTasks.resolve(sessionId, identity, {
-    allowSoleFallback: false
-  })
-  if (explicit) return explicit
-  if (identity.taskId || identity.replyId) return undefined
+  if (identity.taskId || identity.replyId) {
+    // Explicit correlation is authoritative. A stale or forged id must not be
+    // redirected to whichever source route happens to be the only one alive.
+    return structuredOutputTasks.resolve(sessionId, identity, {
+      allowSoleFallback: false
+    })
+  }
 
   const running = tasks.filter((task) => task.sourceStarted)
   if (running.length === 1) return running[0]
   if (running.length === 0 && tasks.length === 1) return tasks[0]
   return undefined
-}
-
-function resetStructuredTurnState(state: RemoteImStructuredTaskState): void {
-  if (state.timer) clearTimeout(state.timer)
-  state.timer = null
-  state.buffer = ''
-  state.sourceStarted = false
-  state.lastActivityAt = undefined
-  state.forwardedStructuredAssistantTexts = []
 }
 
 function removeStructuredOutputTask(
@@ -974,7 +1261,21 @@ function ensureSessionListeners(): void {
     state.buffer += chunk
     scheduleOutputFlush(sessionId)
   })
-  addAicliStructuredOutputListener(({ sessionId, kind, text, messageId, partId, replyId, taskId }) => {
+  addAicliStructuredOutputListener((event) => {
+    const {
+      sessionId,
+      kind,
+      text,
+      messageId,
+      partId,
+      replyId,
+      taskId,
+      approvalId,
+      threadId,
+      turnId,
+      cwd,
+      reason
+    } = event
     if (kind === 'input_origin') {
       const origin = text.trim()
       const routes = structuredOutputTasks.list(sessionId)
@@ -988,14 +1289,159 @@ function ensureSessionListeners(): void {
         }
         return
       }
-      for (const state of routes) {
+      // Local input can steer the still-running Codex turn. Stop forwarding
+      // that turn, but retain every route as an admission tombstone until its
+      // real terminal event. Releasing it here would let a different friend
+      // enter the same turn while Rust still attributes approvals to the old
+      // immutable remote route.
+      const retainedRoutes = structuredOutputTasks.markLocalTakeover(sessionId)
+      void getRemoteImApprovalCoordinator().cancelSession(sessionId)
+      for (const state of retainedRoutes) {
         writeStructuredOutputRuntimeLog('aicli:route-deactivated', {
           sessionId,
           state,
-          detail: { origin: origin || 'local' }
+          detail: {
+            origin: origin || 'local',
+            admissionLockRetained: true
+          }
         })
-        removeStructuredOutputTask(sessionId, state, 'local-input')
       }
+      return
+    }
+
+    if (kind === 'approval_request') {
+      // Approval requests must carry their task identity. No sole-route or
+      // "currently active user" fallback is allowed for a destructive action.
+      const state = taskId && replyId
+        ? structuredOutputTasks.resolve(
+            sessionId,
+            { taskId, replyId },
+            { allowSoleFallback: false }
+          )
+        : undefined
+      const detail = {
+        kind,
+        messageId: messageId ?? null,
+        taskId: taskId ?? null,
+        replyId: replyId ?? null,
+        threadId: threadId ?? null,
+        turnId: turnId ?? null,
+        approvalId: approvalId ?? null,
+        commandLength: text.length
+      }
+      if (
+        !state ||
+        !taskId ||
+        !replyId ||
+        !threadId ||
+        !turnId ||
+        !approvalId ||
+        !cwd ||
+        !text.trim() ||
+        (taskId ? structuredOutputTasks.isLocallyTakenOver(sessionId, taskId) : false)
+      ) {
+        // Privacy: command text may contain paths, arguments or credentials.
+        // Approval logs intentionally record only its length and correlation.
+        writeStructuredOutputRuntimeLog('aicli:approval-unmatched', {
+          sessionId,
+          detail: {
+            ...detail,
+            candidates: structuredOutputTasks.list(sessionId).map((candidate) => ({
+              taskId: candidate.taskId,
+              replyId: candidate.replyId ?? null
+            }))
+          }
+        })
+        // A complete approval identity is sufficient to reject the request
+        // safely even when its remote-IM route is missing or the payload is
+        // malformed. Never leave Codex waiting indefinitely and never guess a
+        // requester from another live route.
+        if (taskId && threadId && turnId && approvalId) {
+          void requestAicliApprovalForSession(sessionId, {
+            taskId,
+            threadId,
+            turnId,
+            approvalId,
+            decision: 'cancel'
+          }).then((result) => {
+            writeStructuredOutputRuntimeLog('aicli:approval-unmatched-cancelled', {
+              sessionId,
+              detail: {
+                taskId,
+                replyId,
+                threadId,
+                turnId,
+                approvalId,
+                ok: result.ok,
+                error: result.ok ? null : result.error
+              }
+            })
+          })
+        }
+        return
+      }
+      writeStructuredOutputRuntimeLog('aicli:approval-received', {
+        sessionId,
+        state,
+        detail
+      })
+      void getRemoteImApprovalCoordinator()
+        .register({
+          projectId: state.projectId,
+          requesterUserId: state.toUserId,
+          sessionId,
+          taskId,
+          replyId,
+          threadId,
+          turnId,
+          approvalId,
+          commandText: text,
+          cwd,
+          ...(reason ? { reason } : {})
+        })
+        .then((result) => {
+          writeStructuredOutputRuntimeLog(
+            result.ok ? 'aicli:approval-forwarded' : 'aicli:approval-forward-failed',
+            {
+              sessionId,
+              state,
+              detail: {
+                taskId,
+                replyId,
+                threadId,
+                turnId,
+                approvalId,
+                commandLength: text.length,
+                ok: result.ok,
+                error: result.error ?? null
+              }
+            }
+          )
+        })
+      return
+    }
+
+    if (kind === 'approval_resolved') {
+      if (taskId && replyId && threadId && turnId && approvalId) {
+        getRemoteImApprovalCoordinator().forgetResolved({
+          sessionId,
+          taskId,
+          replyId,
+          threadId,
+          turnId,
+          approvalId
+        })
+      }
+      writeStructuredOutputRuntimeLog('aicli:approval-resolved', {
+        sessionId,
+        detail: {
+          taskId: taskId ?? null,
+          replyId: replyId ?? null,
+          threadId: threadId ?? null,
+          turnId: turnId ?? null,
+          approvalId: approvalId ?? null
+        }
+      })
       return
     }
 
@@ -1017,6 +1463,22 @@ function ensureSessionListeners(): void {
           }))
         }
       })
+      return
+    }
+    if (structuredOutputTasks.isLocallyTakenOver(sessionId, state.taskId)) {
+      writeStructuredOutputRuntimeLog('aicli:event-ignored-after-local-takeover', {
+        sessionId,
+        state,
+        detail: {
+          kind,
+          messageId: messageId ?? null,
+          eventReplyId: replyId ?? null,
+          eventTaskId: taskId ?? null
+        }
+      })
+      if (kind === 'assistant_final' || kind === 'turn_error') {
+        removeStructuredOutputTask(sessionId, state, `local-takeover-${kind}`)
+      }
       return
     }
     writeStructuredOutputRuntimeLog('aicli:event-received', {
@@ -1051,7 +1513,7 @@ function ensureSessionListeners(): void {
           reasonPreview: structuredOutputTextPreview(text)
         }
       })
-      resetStructuredTurnState(state)
+      removeStructuredOutputTask(sessionId, state, 'turn-error')
       return
     }
     if (kind === 'assistant_final') {
@@ -1096,7 +1558,7 @@ function ensureSessionListeners(): void {
           '任务已经结束，但最终回复为空或无法解析。请查看 remote-im-runtime.log。'
         )
       }
-      resetStructuredTurnState(state)
+      removeStructuredOutputTask(sessionId, state, 'assistant-final')
       return
     }
     if (kind && kind !== 'assistant_text') return
@@ -1126,6 +1588,7 @@ function ensureSessionListeners(): void {
     )
   })
   addSessionExitListener(({ sessionId, exitCode, signal }) => {
+    void getRemoteImApprovalCoordinator().cancelSession(sessionId)
     const reason = signal
       ? `AICLI 进程已退出（信号：${signal}）。`
       : typeof exitCode === 'number'
@@ -1133,7 +1596,9 @@ function ensureSessionListeners(): void {
         : 'AICLI 进程已退出。'
     for (const state of structuredOutputTasks.list(sessionId)) {
       state.buffer = ''
-      failRemoteImOutputSession(sessionId, state, outputForwardingDeps(), reason)
+      if (!structuredOutputTasks.isLocallyTakenOver(sessionId, state.taskId)) {
+        failRemoteImOutputSession(sessionId, state, outputForwardingDeps(), reason)
+      }
       removeStructuredOutputTask(sessionId, state, 'session-exit')
     }
     completeOutputSession(sessionId, { exitCode, signal })
@@ -1182,7 +1647,24 @@ export function activateRemoteImDataLayer(): void {
 async function bindRemoteImAccountConfig(
   account: RemoteImAccountConfig
 ): Promise<{ profileId: string; account: RemoteImAccountConfig }> {
+  return enqueueRemoteImApprovalAuthorityMutation(() =>
+    bindRemoteImAccountConfigOnce(account)
+  )
+}
+
+async function bindRemoteImAccountConfigOnce(
+  account: RemoteImAccountConfig
+): Promise<{ profileId: string; account: RemoteImAccountConfig }> {
+  const hasExplicitBlockedUserIds = Array.isArray(account.blockedUserIds)
   const normalizedAccount = normalizeRemoteImAccountConfig(account)
+  const activeAccountId = getActiveAccount()
+  if (
+    activeAccountId &&
+    normalizedAccount.desktopUserId &&
+    sanitizeAccountId(normalizedAccount.desktopUserId) !== activeAccountId
+  ) {
+    throw new Error('当前窗口已绑定另一个账号；切换账号请重启应用。')
+  }
   const previousProfileId = getCurrentRemoteImAccountProfileId()
   const previousAccount = previousProfileId
     ? await readRemoteImAccountConfig(remoteImAccountDir(previousProfileId))
@@ -1191,16 +1673,41 @@ async function bindRemoteImAccountConfig(
     getRemoteImAccountProfileId(normalizedAccount.desktopUserId) ??
     getRemoteImProfileId() ??
     DEFAULT_REMOTE_IM_PROFILE_ID
-  activeRemoteImAccountProfileId = profileId
   const targetAccount = await readRemoteImAccountConfig(remoteImAccountDir(profileId))
-  const value = await writeRemoteImAccountConfig(
-    remoteImAccountDir(profileId),
-    preserveRemoteImAccountContacts(normalizedAccount, targetAccount)
+  const nextAccount = preserveRemoteImAccountContacts(
+    hasExplicitBlockedUserIds
+      ? normalizedAccount
+      : { ...normalizedAccount, blockedUserIds: undefined },
+    targetAccount
   )
-  if (hasRemoteImAccountConnectionChanged(previousAccount, value)) {
-    resetRemoteImStatusesAfterAccountChange()
+  const removedContactUserIds = removedRemoteImAccountContactUserIds(
+    previousAccount,
+    nextAccount
+  )
+  const connectionChanged =
+    previousProfileId !== profileId ||
+    hasRemoteImAccountConnectionChanged(previousAccount, nextAccount)
+  if (connectionChanged) {
+    remoteImAccountTransitioning = true
+    await invalidateRemoteImSecurityStateForAccountChange()
+    // All incoming handlers use account-scoped message/history/cache stores.
+    // Do not switch those stores underneath a handler that started on the old
+    // account; generation-aware routing makes such handlers fail closed.
+    await waitForRemoteImAccountBoundOperationsToDrain()
+  } else {
+    await revokeRemoteImApprovalAuthorityForUsers(removedContactUserIds)
   }
-  return { profileId, account: value }
+  try {
+    activeRemoteImAccountProfileId = profileId
+    const value = await writeRemoteImAccountConfig(
+      remoteImAccountDir(profileId),
+      nextAccount
+    )
+    if (connectionChanged) resetRemoteImStatusesAfterAccountChange()
+    return { profileId, account: value }
+  } finally {
+    if (connectionChanged) remoteImAccountTransitioning = false
+  }
 }
 
 function getActiveRemoteImSessionForProject(
@@ -1246,7 +1753,7 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
           }
         }
         // 2) 写账号配置（此时 rootDir 已按账号作用域就绪）
-        await bindRemoteImAccountConfig(normalized)
+        await bindRemoteImAccountConfig(account)
         // 3) 读回登录态供渲染层解锁登录门
         return { ok: true as const, value: await getRemoteImLoginState() }
       } catch (err) {
@@ -1411,7 +1918,9 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
     'remote-im:delete-contact',
     async (_event, { projectId, userId }: { projectId: string; userId: string }) => {
       try {
-        return await deleteRemoteImContact(projectId, userId)
+        return await enqueueRemoteImApprovalAuthorityMutation(() =>
+          deleteRemoteImContact(projectId, userId)
+        )
       } catch (err) {
         return {
           ok: false as const,
@@ -1423,9 +1932,26 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
 
   ipcMain.handle(
     'remote-im:sync-contacts',
-    async (_event, { projectId, userIds }: { projectId: string; userIds: string[] }) => {
+    async (
+      _event,
+      {
+        projectId,
+        userIds,
+        runtimeIdentity
+      }: {
+        projectId: string
+        userIds: string[]
+        runtimeIdentity: RemoteImRuntimeIdentity
+      }
+    ) => {
       try {
-        return await syncRemoteImContactsFromSdk(projectId, Array.isArray(userIds) ? userIds : [])
+        return await enqueueRemoteImApprovalAuthorityMutation(() =>
+          syncRemoteImContactsFromSdk(
+            projectId,
+            Array.isArray(userIds) ? userIds : [],
+            runtimeIdentity
+          )
+        )
       } catch (err) {
         return {
           ok: false as const,
@@ -1437,7 +1963,22 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
 
   ipcMain.handle(
     'remote-im:update-sdk-status',
-    (_event, status: Pick<RemoteImStatus, 'projectId' | 'state' | 'detail'>) => {
+    (
+      _event,
+      {
+        status,
+        runtimeIdentity
+      }: {
+        status: Pick<RemoteImStatus, 'projectId' | 'state' | 'detail'>
+        runtimeIdentity?: RemoteImRuntimeIdentity
+      }
+    ) => {
+      if (
+        runtimeIdentity &&
+        (!status.projectId || !isCurrentRemoteImRuntime(status.projectId, runtimeIdentity))
+      ) {
+        return { ok: false as const, error: 'Remote IM runtime is stale' }
+      }
       broadcastStatus({
         projectId: status.projectId,
         state: status.state,
@@ -1455,13 +1996,25 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
       {
         projectId,
         messageId,
-        remoteMessageId
+        remoteMessageId,
+        runtimeIdentity
       }: {
         projectId: string
         messageId: number
         remoteMessageId?: string | null
+        runtimeIdentity: RemoteImRuntimeIdentity
       }
     ) => {
+      const message = listRemoteImMessageById(messageId)
+      if (
+        !isCurrentRemoteImRuntime(projectId, runtimeIdentity) ||
+        !message ||
+        message.projectId !== projectId ||
+        message.direction !== 'outgoing' ||
+        message.status !== 'streaming'
+      ) {
+        return { ok: false as const, error: 'Remote IM delivery acknowledgement is stale' }
+      }
       updateRemoteImMessageStatus(messageId, {
         status: 'sent-to-im',
         error: null,
@@ -1469,6 +2022,7 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
         // SDK 确认的消息 id 回填：漫游重投同一条消息时按 remote_message_id 去重。
         ...(remoteMessageId ? { remoteMessageId } : {})
       })
+      settleApprovalDelivery(messageId, { ok: true })
       broadcastMessagesChanged(projectId)
       return { ok: true as const }
     }
@@ -1478,10 +2032,34 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
     'remote-im:mark-outgoing-message-failed',
     (
       _event,
-      { projectId, messageId, error }: { projectId: string; messageId: number; error: string }
+      {
+        projectId,
+        messageId,
+        error,
+        runtimeIdentity
+      }: {
+        projectId: string
+        messageId: number
+        error: string
+        runtimeIdentity: RemoteImRuntimeIdentity
+      }
     ) => {
+      const message = listRemoteImMessageById(messageId)
+      if (
+        !isCurrentRemoteImRuntime(projectId, runtimeIdentity) ||
+        !message ||
+        message.projectId !== projectId ||
+        message.direction !== 'outgoing' ||
+        message.status !== 'streaming'
+      ) {
+        return { ok: false as const, error: 'Remote IM delivery acknowledgement is stale' }
+      }
       updateRemoteImMessageStatus(messageId, {
         status: 'failed',
+        error: error || 'failed to send IM message'
+      })
+      settleApprovalDelivery(messageId, {
+        ok: false,
         error: error || 'failed to send IM message'
       })
       broadcastMessagesChanged(projectId)
@@ -1505,19 +2083,59 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
   )
 
   ipcMain.handle(
+    'remote-im:register-runtime',
+    async (
+      _event,
+      {
+        projectId,
+        runtimeIdentity
+      }: { projectId: string; runtimeIdentity: RemoteImRuntimeIdentity }
+    ) =>
+      withRemoteImAccountBoundOperation(async (securityGeneration) => {
+        const config = await getRemoteImConfig(projectId)
+        if (
+          !runtimeIdentity.connectionId?.trim() ||
+          runtimeIdentity.desktopUserId.trim() !== config.desktopUserId.trim() ||
+          runtimeIdentity.sdkAppId !== config.sdkAppId
+        ) {
+          return { ok: false as const, error: '远程 IM 连接身份与当前账号不匹配' }
+        }
+        remoteImRuntimeIdentities.set(projectId, {
+          ...runtimeIdentity,
+          connectionId: runtimeIdentity.connectionId.trim(),
+          desktopUserId: runtimeIdentity.desktopUserId.trim(),
+          securityGeneration
+        })
+        return { ok: true as const }
+      })
+  )
+
+  ipcMain.handle(
     'remote-im:deliver-incoming-text',
-    async (_event, message: RemoteImIncomingTextMessage) => {
+    async (
+      _event,
+      {
+        message,
+        runtimeIdentity
+      }: { message: RemoteImIncomingTextMessage; runtimeIdentity: RemoteImRuntimeIdentity }
+    ) =>
+      withRemoteImAccountBoundOperation(async (securityGeneration) => {
+      if (!isCurrentRemoteImRuntime(message.projectId, runtimeIdentity)) {
+        return { ok: false as const, error: 'Remote IM runtime is stale' }
+      }
       const config = await getRemoteImConfig(message.projectId)
       const session = getActiveRemoteImSessionForProject(message.projectId)
       const router = createRemoteImRouter({
         getConfig: () => config,
         resolveSession: () => session,
-        ...createOutputRoutingDeps(config),
+        ...createOutputRoutingDeps(config, securityGeneration),
         sendUser: sendUserMessageToSession,
         sendImText,
         sendImFile: (projectId, toUserId, localPath) =>
           sendRemoteImPeerLocalFile(projectId, localPath, toUserId),
-        handleControlCommand: async ({ command, args, replyId }) => {
+        handleApprovalCommand: (input) =>
+          getRemoteImApprovalCoordinator().handleCommand(input),
+        handleControlCommand: async ({ command, args, replyId, taskId }) => {
           const runtime = session ? getSessionRuntimeInfo(session.sessionId) : null
           const sourceKind = runtime ? getRemoteImAicliOutputSourceKind(runtime.command) : 'unknown'
           return executeRemoteImControlCommand({
@@ -1539,7 +2157,8 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
               reasoning,
               goal,
               task,
-              replyId
+              replyId,
+              taskId
             }) => {
               if (command === 'status') {
                 return requestAicliStatusForSession(sessionId)
@@ -1551,7 +2170,7 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
                 return requestAicliGoalForSession(sessionId, goal)
               }
               if (command === 'btw') {
-                return requestAicliBtwForSession(sessionId, task ?? '', replyId)
+                return requestAicliBtwForSession(sessionId, task ?? '', replyId, taskId)
               }
               if (command === 'interrupt') {
                 return requestAicliInterruptForSession(sessionId)
@@ -1574,7 +2193,8 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
                 outputDir: join(rootDir(), 'remote-im-diff-reports')
               }),
             args,
-            ...(replyId ? { replyId } : {})
+            ...(replyId ? { replyId } : {}),
+            ...(taskId ? { taskId } : {})
           })
         },
         transcribeAudio: transcribeRemoteImAudioWithLocalWhisper,
@@ -1593,18 +2213,28 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
       const result = await router.handleIncomingText(message)
       broadcastMessagesChanged(message.projectId)
       return result
-    }
+      })
   )
 
   ipcMain.handle(
     'remote-im:deliver-incoming-audio',
-    async (_event, message: RemoteImIncomingAudioMessage) => {
+    async (
+      _event,
+      {
+        message,
+        runtimeIdentity
+      }: { message: RemoteImIncomingAudioMessage; runtimeIdentity: RemoteImRuntimeIdentity }
+    ) =>
+      withRemoteImAccountBoundOperation(async (securityGeneration) => {
+      if (!isCurrentRemoteImRuntime(message.projectId, runtimeIdentity)) {
+        return { ok: false as const, error: 'Remote IM runtime is stale' }
+      }
       const config = await getRemoteImConfig(message.projectId)
       const session = getActiveRemoteImSessionForProject(message.projectId)
       const router = createRemoteImRouter({
         getConfig: () => config,
         resolveSession: () => session,
-        ...createOutputRoutingDeps(config),
+        ...createOutputRoutingDeps(config, securityGeneration),
         sendUser: sendUserMessageToSession,
         sendImText,
         transcribeAudio: transcribeRemoteImAudioWithLocalWhisper,
@@ -1623,18 +2253,28 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
       const result = await router.handleIncomingAudio(message)
       broadcastMessagesChanged(message.projectId)
       return result
-    }
+      })
   )
 
   ipcMain.handle(
     'remote-im:deliver-incoming-image',
-    async (_event, message: RemoteImIncomingImageMessage) => {
+    async (
+      _event,
+      {
+        message,
+        runtimeIdentity
+      }: { message: RemoteImIncomingImageMessage; runtimeIdentity: RemoteImRuntimeIdentity }
+    ) =>
+      withRemoteImAccountBoundOperation(async (securityGeneration) => {
+      if (!isCurrentRemoteImRuntime(message.projectId, runtimeIdentity)) {
+        return { ok: false as const, error: 'Remote IM runtime is stale' }
+      }
       const config = await getRemoteImConfig(message.projectId)
       const session = getActiveRemoteImSessionForProject(message.projectId)
       const router = createRemoteImRouter({
         getConfig: () => config,
         resolveSession: () => session,
-        ...createOutputRoutingDeps(config),
+        ...createOutputRoutingDeps(config, securityGeneration),
         sendUser: sendUserMessageToSession,
         sendImText,
         transcribeAudio: transcribeRemoteImAudioWithLocalWhisper,
@@ -1680,18 +2320,28 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
       const result = await router.handleIncomingImage(message)
       broadcastMessagesChanged(message.projectId)
       return result
-    }
+      })
   )
 
   ipcMain.handle(
     'remote-im:deliver-incoming-file',
-    async (_event, message: RemoteImIncomingFileMessage) => {
+    async (
+      _event,
+      {
+        message,
+        runtimeIdentity
+      }: { message: RemoteImIncomingFileMessage; runtimeIdentity: RemoteImRuntimeIdentity }
+    ) =>
+      withRemoteImAccountBoundOperation(async (securityGeneration) => {
+      if (!isCurrentRemoteImRuntime(message.projectId, runtimeIdentity)) {
+        return { ok: false as const, error: 'Remote IM runtime is stale' }
+      }
       const config = await getRemoteImConfig(message.projectId)
       const session = getActiveRemoteImSessionForProject(message.projectId)
       const router = createRemoteImRouter({
         getConfig: () => config,
         resolveSession: () => session,
-        ...createOutputRoutingDeps(config),
+        ...createOutputRoutingDeps(config, securityGeneration),
         sendUser: sendUserMessageToSession,
         sendImText,
         transcribeAudio: transcribeRemoteImAudioWithLocalWhisper,
@@ -1738,7 +2388,7 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
       const result = await router.handleIncomingFile(message)
       broadcastMessagesChanged(message.projectId)
       return result
-    }
+      })
   )
 
   // 按会话向上翻页：取严格早于给定锚点的更早消息（键集分页）。
@@ -1776,8 +2426,19 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
     'remote-im:backfill-roamed-text',
     async (
       _event,
-      { projectId, messages }: { projectId: string; messages: RemoteImRoamedTextMessage[] }
-    ) => {
+      {
+        projectId,
+        messages,
+        runtimeIdentity
+      }: {
+        projectId: string
+        messages: RemoteImRoamedTextMessage[]
+        runtimeIdentity: RemoteImRuntimeIdentity
+      }
+    ) => withRemoteImAccountBoundOperation(async () => {
+      if (!isCurrentRemoteImRuntime(projectId, runtimeIdentity)) {
+        return { ok: false as const, error: 'Remote IM runtime is stale' }
+      }
       if (!projectId || !Array.isArray(messages) || messages.length === 0) {
         return { ok: true as const, inserted: 0 }
       }
@@ -1807,7 +2468,7 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
       const result = await router.backfillRoamedText(projectId, messages)
       if (result.inserted > 0) broadcastMessagesChanged(projectId)
       return result
-    }
+    })
   )
 
   ipcMain.handle(

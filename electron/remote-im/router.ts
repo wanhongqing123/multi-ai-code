@@ -12,6 +12,7 @@ import type {
 } from './types.js'
 import type { RemoteImAicliOutputSourceKind } from './outputSanitizer.js'
 import {
+  createRemoteImAicliOutputText,
   isRemoteImOperationFinishedText,
   parseRemoteImAicliOutputText
 } from './outputForwarding.js'
@@ -94,6 +95,9 @@ export interface RemoteImRouterDeps {
   >
   createReplyId?: () => string
   createTaskId?: (replyId: string) => string
+  authorizeAicliOutputStart?: (
+    route: RemoteImAicliOutputRoute
+  ) => { ok: true } | { ok: false; error: string }
   onAicliOutputStart?: (route: RemoteImAicliOutputRoute) => void
   onAicliOutputCancel?: (route: RemoteImAicliOutputRoute) => void
   handleControlCommand?: (input: {
@@ -103,7 +107,13 @@ export interface RemoteImRouterDeps {
     args: string
     raw: string
     replyId?: string
+    taskId?: string
   }) => Promise<{ ok: boolean; text: string; attachmentPath?: string }>
+  handleApprovalCommand?: (input: {
+    projectId: string
+    fromUserId: string
+    text: string
+  }) => Promise<{ handled: boolean; ok: boolean; text: string }>
   store: RemoteImRouterStore
   now?: () => number
 }
@@ -236,13 +246,17 @@ async function sendSystemText(
   deps: RemoteImRouterDeps,
   projectId: string,
   toUserId: string,
-  text: string
+  text: string,
+  options: { preventAicliRouting?: boolean } = {}
 ): Promise<void> {
   const now = deps.now?.() ?? Date.now()
   const outgoing = deps.store.create(
     createSystemRecord(projectId, toUserId, text, 'streaming', null, now)
   )
-  const result = await deps.sendImText(projectId, toUserId, text, {
+  const wireText = options.preventAicliRouting
+    ? createRemoteImAicliOutputText(text)
+    : text
+  const result = await deps.sendImText(projectId, toUserId, wireText, {
     messageId: outgoing.id
   })
   if (!result.ok) {
@@ -444,15 +458,16 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
     projectId: string,
     toUserId: string
   ): RemoteImAicliOutputRoute {
+    const replyId = deps.createReplyId?.() ?? createRemoteImReplyId()
     if (usesSourceLevelRouting(session)) {
       return {
         projectId,
         toUserId,
         sessionId: session.sessionId,
+        replyId,
         taskId: `remote-im-route-${randomUUID()}`
       }
     }
-    const replyId = deps.createReplyId?.() ?? createRemoteImReplyId()
     return {
       projectId,
       toUserId,
@@ -468,14 +483,15 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
     displayText: string,
     attachments?: AicliUserMessageAttachment[]
   ): Promise<Awaited<ReturnType<RemoteImRouterDeps['sendUser']>>> {
+    const admission = deps.authorizeAicliOutputStart?.(outputRoute)
+    if (admission && !admission.ok) return admission
     deps.onAicliOutputStart?.(outputRoute)
     try {
       const result = await deps.sendUser(outputRoute.sessionId, text, {
         displayText,
         inputOrigin: 'remote-im',
-        ...(outputRoute.replyId
-          ? { replyId: outputRoute.replyId, taskId: outputRoute.taskId }
-          : {}),
+        ...(outputRoute.replyId ? { replyId: outputRoute.replyId } : {}),
+        taskId: outputRoute.taskId,
         ...(attachments?.length ? { attachments } : {})
       })
       if (!result.ok) deps.onAicliOutputCancel?.(outputRoute)
@@ -624,6 +640,33 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       return { ok: true }
     }
 
+    // Approval capabilities are consumed before general slash-command parsing
+    // and before ordinary task routing, so an approval response can never be
+    // forwarded to the model as user input.
+    if (deps.handleApprovalCommand) {
+      const approval = await deps.handleApprovalCommand({
+        projectId: message.projectId,
+        fromUserId,
+        text
+      })
+      if (approval.handled) {
+        deps.store.create(
+          createIncomingRecord(
+            message,
+            approval.ok ? 'received' : 'rejected',
+            approval.ok ? null : 'approval command rejected',
+            now
+          )
+        )
+        await sendSystemText(deps, message.projectId, fromUserId, approval.text, {
+          preventAicliRouting: true
+        })
+        return approval.ok
+          ? { ok: true }
+          : { ok: false, error: 'remote IM approval command rejected' }
+      }
+    }
+
     const controlCommand = parseRemoteImControlCommand(text)
     if (controlCommand.type === 'unknown-command') {
       const routePermission = canRouteRemoteImTaskFrom(config, fromUserId)
@@ -650,7 +693,7 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
         deps.store.create(createIncomingRecord(message, 'rejected', 'sender not allowed', now))
         return { ok: false, error: `sender ${fromUserId} is not allowed` }
       }
-      deps.store.create(createIncomingRecord(message, 'received', null, now))
+      const incoming = deps.store.create(createIncomingRecord(message, 'received', null, now))
       const session = controlCommand.command === 'btw' ? deps.resolveSession(message.projectId) : null
       const replyId =
         controlCommand.command === 'btw'
@@ -669,7 +712,27 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
               taskId
             }
           : undefined
-      if (outputRoute) deps.onAicliOutputStart?.(outputRoute)
+      if (outputRoute) {
+        // Keep `/btw` behind the same conservative admission gate. Until its
+        // side-thread protocol carries the same taskId authority all the way
+        // through, allowing it beside another remote task could misroute an
+        // approval even when the requester happens to be the same person.
+        const admission = deps.authorizeAicliOutputStart?.(outputRoute)
+        if (admission && !admission.ok) {
+          deps.store.updateStatus(incoming.id, {
+            status: 'failed',
+            error: admission.error
+          })
+          await sendSystemText(
+            deps,
+            message.projectId,
+            fromUserId,
+            `发送给 AICLI 失败：${admission.error}`
+          )
+          return { ok: false, error: admission.error }
+        }
+        deps.onAicliOutputStart?.(outputRoute)
+      }
       let result: Awaited<ReturnType<NonNullable<RemoteImRouterDeps['handleControlCommand']>>>
       try {
         result = deps.handleControlCommand
@@ -679,7 +742,8 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
               command: controlCommand.command,
               args: controlCommand.args,
               raw: controlCommand.raw,
-              ...(replyId ? { replyId } : {})
+              ...(replyId ? { replyId } : {}),
+              ...(taskId ? { taskId } : {})
             })
           : {
               ok: false,

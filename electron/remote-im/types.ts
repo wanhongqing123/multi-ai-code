@@ -31,6 +31,8 @@ export interface RemoteImAccountConfig {
   masterUserIds: string[]
   slaveUserIds: string[]
   allowedUserIds: string[]
+  /** Locally revoked SDK friends. Omitted by older account files. */
+  blockedUserIds?: string[]
 }
 
 export interface RemoteImLoginState {
@@ -125,6 +127,13 @@ export interface RemoteImRoamedTextMessage {
   text: string
   createdAt?: number
   flow: 'in' | 'out'
+}
+
+/** Identifies one concrete renderer-side Tencent IM connection lifecycle. */
+export interface RemoteImRuntimeIdentity {
+  connectionId: string
+  desktopUserId: string
+  sdkAppId: number | null
 }
 
 export interface RemoteImIncomingTextMessage {

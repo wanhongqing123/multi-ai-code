@@ -31,6 +31,33 @@ function normalizeCliCommand(cmd: string): string {
   return normalized
 }
 
+function redactStructuredBridgeEndpoint(value: string): string {
+  try {
+    const endpoint = new URL(value)
+    if (endpoint.searchParams.has('token')) {
+      endpoint.searchParams.set('token', '<redacted>')
+    }
+    return endpoint.toString()
+  } catch {
+    // Keep malformed debug values useful while still removing the only
+    // credential carried by the structured bridge endpoint.
+    return value.replace(/([?&]token=)[^&\s]*/giu, '$1<redacted>')
+  }
+}
+
+export function redactPtyDebugSpawnArgs(args: readonly string[]): string[] {
+  return args.map((arg, index) => {
+    if (args[index - 1] === '--multi-ai-code-im-ipc') {
+      return redactStructuredBridgeEndpoint(arg)
+    }
+    const prefix = '--multi-ai-code-im-ipc='
+    if (arg.startsWith(prefix)) {
+      return `${prefix}${redactStructuredBridgeEndpoint(arg.slice(prefix.length))}`
+    }
+    return arg
+  })
+}
+
 function fallbackCliAlias(cmd: string): 'claude' | 'codex' | null {
   const base = basename(cmd).toLowerCase()
   if (/^claude(\.(exe|cmd|bat|ps1))?$/.test(base)) return 'claude'
@@ -362,7 +389,7 @@ export class PtyCCProcess extends EventEmitter {
         }
       }
       summary['__command'] = spawnCommand
-      summary['__args'] = JSON.stringify(spawnArgs)
+      summary['__args'] = JSON.stringify(redactPtyDebugSpawnArgs(spawnArgs))
       summary['__cwd'] = this.opts.cwd
       summary['__pathHead'] = (env[pathKey] ?? '').split(delimiter).slice(0, 6).join(' | ')
       // Full env key list (no values) — used to find vars not covered by the

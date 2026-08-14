@@ -10,6 +10,8 @@ import {
   normalizeRemoteImAccountConfig,
   preserveRemoteImAccountContacts,
   readRemoteImAccountConfig,
+  removeRemoteImAccountContact,
+  removedRemoteImAccountContactUserIds,
   syncRemoteImAccountContactsFromSdk,
   writeRemoteImAccountConfig
 } from '../../../electron/remote-im/account.js'
@@ -49,7 +51,8 @@ describe('remote IM account config', () => {
       friendUserIds: ['friend-a', 'master-a', 'slave-a'],
       masterUserIds: [],
       slaveUserIds: [],
-      allowedUserIds: ['friend-a', 'master-a', 'slave-a']
+      allowedUserIds: ['friend-a', 'master-a', 'slave-a'],
+      blockedUserIds: []
     })
   })
 
@@ -78,14 +81,16 @@ describe('remote IM account config', () => {
       sdkAppId: 1400704311,
       desktopUserId: 'test123',
       userSigMode: 'secret-key',
-      userSigSecretKey: 'secret'
+      userSigSecretKey: 'secret',
+      blockedUserIds: ['revoked-phone']
     })
 
     await expect(readRemoteImAccountConfig(userDataDir)).resolves.toMatchObject({
       sdkAppId: 1400704311,
       desktopUserId: 'test123',
       userSigMode: 'secret-key',
-      userSigSecretKey: 'secret'
+      userSigSecretKey: 'secret',
+      blockedUserIds: ['revoked-phone']
     })
   })
 
@@ -176,7 +181,7 @@ describe('remote IM account config', () => {
     })
   })
 
-  it('keeps existing account contacts when SDK sync returns no usable friends', () => {
+  it('clears existing account contacts when the authoritative SDK snapshot is empty', () => {
     const account = normalizeRemoteImAccountConfig({
       sdkAppId: 1600148979,
       desktopUserId: 'mac-quarkpc',
@@ -186,8 +191,75 @@ describe('remote IM account config', () => {
     })
 
     expect(syncRemoteImAccountContactsFromSdk(account, ['', '   '])).toMatchObject({
-      friendUserIds: ['whq-iphone'],
-      allowedUserIds: ['whq-iphone']
+      friendUserIds: [],
+      allowedUserIds: []
+    })
+  })
+
+  it('keeps locally revoked SDK friends blocked across reconnect snapshots', () => {
+    const account = normalizeRemoteImAccountConfig({
+      sdkAppId: 1600148979,
+      desktopUserId: 'mac-quarkpc',
+      userSigMode: 'secret-key',
+      userSigSecretKey: 'secret',
+      friendUserIds: [],
+      blockedUserIds: ['revoked-phone']
+    })
+
+    expect(
+      syncRemoteImAccountContactsFromSdk(account, ['revoked-phone', 'allowed-phone'])
+    ).toMatchObject({
+      friendUserIds: ['allowed-phone'],
+      allowedUserIds: ['allowed-phone'],
+      blockedUserIds: ['revoked-phone']
+    })
+  })
+
+  it('turns a locally deleted contact into a durable SDK snapshot tombstone', () => {
+    const account = normalizeRemoteImAccountConfig({
+      sdkAppId: 1600148979,
+      desktopUserId: 'mac-quarkpc',
+      friendUserIds: ['revoked-phone', 'allowed-phone']
+    })
+    const deleted = removeRemoteImAccountContact(account, 'revoked-phone')
+
+    expect(deleted).toMatchObject({
+      friendUserIds: ['allowed-phone'],
+      allowedUserIds: ['allowed-phone'],
+      blockedUserIds: ['revoked-phone']
+    })
+    expect(
+      syncRemoteImAccountContactsFromSdk(deleted, ['revoked-phone', 'allowed-phone'])
+    ).toMatchObject({
+      friendUserIds: ['allowed-phone'],
+      allowedUserIds: ['allowed-phone'],
+      blockedUserIds: ['revoked-phone']
+    })
+  })
+
+  it('preserves revoke tombstones on account rebind and allows an explicit unblock', () => {
+    const existing = normalizeRemoteImAccountConfig({
+      sdkAppId: 1600148979,
+      desktopUserId: 'mac-quarkpc',
+      friendUserIds: ['allowed-phone'],
+      blockedUserIds: ['revoked-phone']
+    })
+    const rebindWithoutTombstones = {
+      ...existing,
+      blockedUserIds: undefined
+    }
+
+    expect(
+      preserveRemoteImAccountContacts(rebindWithoutTombstones, existing).blockedUserIds
+    ).toEqual(['revoked-phone'])
+    expect(
+      preserveRemoteImAccountContacts(
+        { ...existing, friendUserIds: ['allowed-phone', 'revoked-phone'], blockedUserIds: [] },
+        existing
+      )
+    ).toMatchObject({
+      friendUserIds: ['allowed-phone', 'revoked-phone'],
+      blockedUserIds: []
     })
   })
 
@@ -218,6 +290,24 @@ describe('remote IM account config', () => {
         userSigSecretKey: 'next-secret'
       })
     ).toBe(true)
+  })
+
+  it('reports every canonical trusted friend removed by a contact update', () => {
+    const previous = normalizeRemoteImAccountConfig({
+      ...DEFAULT_REMOTE_IM_ACCOUNT_CONFIG,
+      friendUserIds: ['phone-a', 'phone-b'],
+      masterUserIds: ['legacy-master']
+    })
+    const next = normalizeRemoteImAccountConfig({
+      ...DEFAULT_REMOTE_IM_ACCOUNT_CONFIG,
+      friendUserIds: ['phone-b']
+    })
+
+    expect(removedRemoteImAccountContactUserIds(previous, next)).toEqual([
+      'phone-a',
+      'legacy-master'
+    ])
+    expect(removedRemoteImAccountContactUserIds(next, previous)).toEqual([])
   })
 
   it('merges user account identity into project-level remote IM behavior config', () => {

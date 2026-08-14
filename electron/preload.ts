@@ -55,6 +55,7 @@ import type {
   RemoteImIncomingAudioMessage,
   RemoteImIncomingImageMessage,
   RemoteImIncomingFileMessage,
+  RemoteImRuntimeIdentity,
   RemoteImRuntimeLogEntryInput
 } from './remote-im/types.js'
 
@@ -83,6 +84,7 @@ export type {
   RemoteImIncomingAudioMessage,
   RemoteImIncomingImageMessage,
   RemoteImIncomingFileMessage,
+  RemoteImRuntimeIdentity,
   RemoteImRuntimeLogEntryInput
 }
 
@@ -398,8 +400,16 @@ const api = {
         | { ok: true; value: RemoteImConfig; loginState: RemoteImLoginState }
         | { ok: false; error: string }
       >,
-    syncContacts: (projectId: string, userIds: string[]) =>
-      ipcRenderer.invoke('remote-im:sync-contacts', { projectId, userIds }) as Promise<
+    syncContacts: (
+      projectId: string,
+      userIds: string[],
+      runtimeIdentity: RemoteImRuntimeIdentity
+    ) =>
+      ipcRenderer.invoke('remote-im:sync-contacts', {
+        projectId,
+        userIds,
+        runtimeIdentity
+      }) as Promise<
         | { ok: true; value: RemoteImConfig; loginState: RemoteImLoginState }
         | { ok: false; error: string }
       >,
@@ -428,29 +438,59 @@ const api = {
         | { ok: true; value: { content: string; mimeType: string; fileName: string } }
         | { ok: false; error: string }
       >,
-    deliverIncomingText: (message: RemoteImIncomingTextMessage) =>
-      ipcRenderer.invoke('remote-im:deliver-incoming-text', message) as Promise<{
+    registerRuntime: (projectId: string, runtimeIdentity: RemoteImRuntimeIdentity) =>
+      ipcRenderer.invoke('remote-im:register-runtime', { projectId, runtimeIdentity }) as Promise<{
         ok: boolean
         error?: string
       }>,
-    deliverIncomingAudio: (message: RemoteImIncomingAudioMessage) =>
-      ipcRenderer.invoke('remote-im:deliver-incoming-audio', message) as Promise<{
+    deliverIncomingText: (
+      message: RemoteImIncomingTextMessage,
+      runtimeIdentity: RemoteImRuntimeIdentity
+    ) =>
+      ipcRenderer.invoke('remote-im:deliver-incoming-text', {
+        message,
+        runtimeIdentity
+      }) as Promise<{
         ok: boolean
         error?: string
       }>,
-    deliverIncomingImage: (message: RemoteImIncomingImageMessage) =>
-      ipcRenderer.invoke('remote-im:deliver-incoming-image', message) as Promise<{
+    deliverIncomingAudio: (
+      message: RemoteImIncomingAudioMessage,
+      runtimeIdentity: RemoteImRuntimeIdentity
+    ) =>
+      ipcRenderer.invoke('remote-im:deliver-incoming-audio', {
+        message,
+        runtimeIdentity
+      }) as Promise<{
         ok: boolean
         error?: string
       }>,
-    deliverIncomingFile: (message: RemoteImIncomingFileMessage) =>
-      ipcRenderer.invoke('remote-im:deliver-incoming-file', message) as Promise<{
+    deliverIncomingImage: (
+      message: RemoteImIncomingImageMessage,
+      runtimeIdentity: RemoteImRuntimeIdentity
+    ) =>
+      ipcRenderer.invoke('remote-im:deliver-incoming-image', {
+        message,
+        runtimeIdentity
+      }) as Promise<{
+        ok: boolean
+        error?: string
+      }>,
+    deliverIncomingFile: (
+      message: RemoteImIncomingFileMessage,
+      runtimeIdentity: RemoteImRuntimeIdentity
+    ) =>
+      ipcRenderer.invoke('remote-im:deliver-incoming-file', {
+        message,
+        runtimeIdentity
+      }) as Promise<{
         ok: boolean
         error?: string
       }>,
     backfillRoamedText: (payload: {
       projectId: string
       messages: RemoteImRoamedTextMessage[]
+      runtimeIdentity: RemoteImRuntimeIdentity
     }) =>
       ipcRenderer.invoke('remote-im:backfill-roamed-text', payload) as Promise<{
         ok: boolean
@@ -458,22 +498,41 @@ const api = {
         error?: string
       }>,
     updateSdkStatus: (status: Pick<RemoteImStatus, 'projectId' | 'state' | 'detail'>) =>
-      ipcRenderer.invoke('remote-im:update-sdk-status', status) as Promise<{ ok: true }>,
+      ipcRenderer.invoke('remote-im:update-sdk-status', { status }) as Promise<{
+        ok: boolean
+        error?: string
+      }>,
+    updateSdkRuntimeStatus: (
+      status: Pick<RemoteImStatus, 'projectId' | 'state' | 'detail'>,
+      runtimeIdentity: RemoteImRuntimeIdentity
+    ) =>
+      ipcRenderer.invoke('remote-im:update-sdk-status', { status, runtimeIdentity }) as Promise<{
+        ok: boolean
+        error?: string
+      }>,
     markOutgoingMessageSent: (
       projectId: string,
       messageId: number,
-      remoteMessageId?: string | null
+      remoteMessageId: string | null | undefined,
+      runtimeIdentity: RemoteImRuntimeIdentity
     ) =>
       ipcRenderer.invoke('remote-im:mark-outgoing-message-sent', {
         projectId,
         messageId,
-        remoteMessageId: remoteMessageId ?? null
+        remoteMessageId: remoteMessageId ?? null,
+        runtimeIdentity
       }) as Promise<{ ok: true }>,
-    markOutgoingMessageFailed: (projectId: string, messageId: number, error: string) =>
+    markOutgoingMessageFailed: (
+      projectId: string,
+      messageId: number,
+      error: string,
+      runtimeIdentity: RemoteImRuntimeIdentity
+    ) =>
       ipcRenderer.invoke('remote-im:mark-outgoing-message-failed', {
         projectId,
         messageId,
-        error
+        error,
+        runtimeIdentity
       }) as Promise<{ ok: true }>,
     writeRuntimeLog: (entry: RemoteImRuntimeLogEntryInput) =>
       ipcRenderer.invoke('remote-im:write-runtime-log', { entry }) as Promise<

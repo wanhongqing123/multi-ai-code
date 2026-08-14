@@ -71,6 +71,31 @@ export interface RemoteImOutputSessionState {
   forwardedStructuredTerminalMessageIds?: Set<string>
 }
 
+/**
+ * Stop buffered/non-structured output without emitting another IM message.
+ * This is used when an account or contact loses authority: any buffered text
+ * must be discarded instead of being flushed to the former recipient later.
+ */
+export function revokeRemoteImOutputSessions(
+  sessions: Map<string, RemoteImOutputSessionState>,
+  rawUserIds?: Iterable<string>,
+  clearTimer: (timer: RemoteImOutputFlushTimer) => void = globalThis.clearTimeout
+): string[] {
+  const userIds = rawUserIds
+    ? new Set([...rawUserIds].map((userId) => userId.trim()).filter(Boolean))
+    : null
+  const revokedSessionIds: string[] = []
+  for (const [sessionId, state] of sessions) {
+    if (userIds && !userIds.has(state.toUserId.trim())) continue
+    if (state.timer) clearTimer(state.timer)
+    state.timer = null
+    state.buffer = ''
+    sessions.delete(sessionId)
+    revokedSessionIds.push(sessionId)
+  }
+  return revokedSessionIds
+}
+
 export interface RemoteImOutputForwardingDeps {
   createMessage(input: CreateRemoteImMessageInput): void
   sendText(projectId: string, toUserId: string, text: string): void

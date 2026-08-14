@@ -23,7 +23,8 @@ import {
   projectDir as projectDirFn,
   artifactsDir,
   rootDir,
-  setActiveAccount
+  setActiveAccount,
+  sanitizeAccountId
 } from './store/paths.js'
 import { acquireInstanceLock, releaseInstanceLock } from './store/instanceLock.js'
 import { registerPtyIpc, killAllSessions } from './cc/ptyManager.js'
@@ -1068,12 +1069,39 @@ function cleanupLegacyHabitData(): void {
  * 账号绑定成功后初始化数据层：解析账号作用域 rootDir、抢每账号单实例锁、开库、起后台
  * 服务。一次性（同一进程只服务一个账号）。返回 alreadyLocked 表示该账号已在别处打开。
  */
-let dataLayerActivated = false
+let dataLayerActivatedAccountId: string | null = null
+let dataLayerActivationPromise: Promise<
+  { ok: true } | { ok: false; alreadyLocked?: boolean; error?: string }
+> | null = null
 async function activateAccountDataLayer(
   userId: string
 ): Promise<{ ok: true } | { ok: false; alreadyLocked?: boolean; error?: string }> {
-  if (dataLayerActivated) return { ok: true }
+  const accountId = sanitizeAccountId(userId)
+  if (dataLayerActivatedAccountId) {
+    return dataLayerActivatedAccountId === accountId
+      ? { ok: true }
+      : { ok: false, error: '当前窗口已绑定另一个账号；切换账号请重启应用。' }
+  }
+  if (dataLayerActivationPromise) {
+    const result = await dataLayerActivationPromise
+    if (!result.ok) return result
+    return dataLayerActivatedAccountId === accountId
+      ? { ok: true }
+      : { ok: false, error: '当前窗口已绑定另一个账号；切换账号请重启应用。' }
+  }
 
+  dataLayerActivationPromise = activateAccountDataLayerOnce(userId, accountId)
+  try {
+    return await dataLayerActivationPromise
+  } finally {
+    dataLayerActivationPromise = null
+  }
+}
+
+async function activateAccountDataLayerOnce(
+  userId: string,
+  accountId: string
+): Promise<{ ok: true } | { ok: false; alreadyLocked?: boolean; error?: string }> {
   setActiveAccount(userId)
   const lock = acquireInstanceLock(rootDir())
   if (!lock.ok) {
@@ -1081,31 +1109,39 @@ async function activateAccountDataLayer(
     return { ok: false, alreadyLocked: lock.alreadyLocked, error: lock.error }
   }
 
-  if (process.env.MULTI_AI_CODE_PTY_DUMP === '1') {
-    console.log(
-      `[pty-dump] enabled. Raw PTY chunks will be written to ${join(rootDir(), 'logs')}\\pty-*.jsonl`
-    )
+  try {
+    if (process.env.MULTI_AI_CODE_PTY_DUMP === '1') {
+      console.log(
+        `[pty-dump] enabled. Raw PTY chunks will be written to ${join(rootDir(), 'logs')}\\pty-*.jsonl`
+      )
+    }
+
+    await ensureRootDir()
+    initDb()
+    cleanupLegacyHabitData()
+    registerScheduledTaskIpc()
+    startScheduledTaskScheduler()
+    activateRemoteImDataLayer()
+
+    // 登录成功：把登录小窗口放大成主界面窗口。
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setResizable(true)
+      mainWindow.setMaximizable(true)
+      mainWindow.setFullScreenable(true)
+      mainWindow.setMinimumSize(1100, 700)
+      mainWindow.setSize(1400, 900)
+      mainWindow.center()
+    }
+
+    dataLayerActivatedAccountId = accountId
+    return { ok: true }
+  } catch (error) {
+    stopScheduledTaskScheduler()
+    closeDb()
+    releaseInstanceLock()
+    setActiveAccount(null)
+    throw error
   }
-
-  await ensureRootDir()
-  initDb()
-  cleanupLegacyHabitData()
-  registerScheduledTaskIpc()
-  startScheduledTaskScheduler()
-  activateRemoteImDataLayer()
-
-  // 登录成功：把登录小窗口放大成主界面窗口。
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.setResizable(true)
-    mainWindow.setMaximizable(true)
-    mainWindow.setFullScreenable(true)
-    mainWindow.setMinimumSize(1100, 700)
-    mainWindow.setSize(1400, 900)
-    mainWindow.center()
-  }
-
-  dataLayerActivated = true
-  return { ok: true }
 }
 
 app.on('window-all-closed', () => {

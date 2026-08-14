@@ -149,15 +149,15 @@ function getStringField(source: Record<string, unknown>, keys: string[]): string
   return null
 }
 
-function getTencentImFriendListPayload(payload: unknown): unknown[] {
+function getTencentImFriendListPayload(payload: unknown): unknown[] | null {
   if (Array.isArray(payload)) return payload
-  if (!payload || typeof payload !== 'object') return []
+  if (!payload || typeof payload !== 'object') return null
   const raw = payload as Record<string, unknown>
   for (const key of ['data', 'friendList', 'friends', 'list', 'items']) {
     const nested = getTencentImFriendListPayload(raw[key])
-    if (nested.length > 0) return nested
+    if (nested !== null) return nested
   }
-  return []
+  return null
 }
 
 function getTencentImFriendUserId(friend: unknown): string | null {
@@ -186,11 +186,23 @@ function getTencentImFriendUserId(friend: unknown): string | null {
 export function extractTencentImFriendUserIds(payload: unknown): string[] {
   return Array.from(
     new Set(
-      getTencentImFriendListPayload(payload)
+      (getTencentImFriendListPayload(payload) ?? [])
         .map((friend) => getTencentImFriendUserId(friend))
         .filter((userId): userId is string => Boolean(userId))
     )
   )
+}
+
+function parseTencentImFriendUserIdsSnapshot(payload: unknown): string[] | null {
+  const friends = getTencentImFriendListPayload(payload)
+  if (friends === null) return null
+  const userIds: string[] = []
+  for (const friend of friends) {
+    const userId = getTencentImFriendUserId(friend)
+    if (!userId) return null
+    userIds.push(userId)
+  }
+  return Array.from(new Set(userIds))
 }
 
 function getNumberField(source: Record<string, unknown>, keys: string[]): number | null {
@@ -914,7 +926,10 @@ export async function connectTencentImClient(input: {
     emitRuntimeLog('friend-list:updated', {
       detail: { count: userIds.length }
     })
-    if (userIds.length > 0) input.onFriendListUpdated?.(userIds)
+    // The event is a refresh signal, not necessarily a complete snapshot.
+    // Notify even when its payload is empty so the host can call
+    // getFriendList() and persist an authoritative empty list.
+    input.onFriendListUpdated?.(userIds)
   }
   chat.on?.(eventName, onMessageReceived)
   chat.on?.(sdkReadyEventName, onSdkReady)
@@ -958,14 +973,20 @@ export async function connectTencentImClient(input: {
       await ensureLoggedIn()
       if (typeof chat.getFriendList !== 'function') {
         emitRuntimeLog('friend-list:unsupported')
-        return []
+        // An unavailable API is not an authoritative empty snapshot. Reject so
+        // the account keeps its last known allow-list instead of revoking every
+        // contact because this SDK build cannot enumerate friends.
+        throw new Error('Tencent IM friend-list API is unavailable')
       }
       emitRuntimeLog('friend-list:start')
       try {
         const result = await chat.getFriendList()
         const failure = getTencentImApiFailure('friend-list', result)
         if (failure) throw new Error(failure)
-        const userIds = extractTencentImFriendUserIds(result)
+        const userIds = parseTencentImFriendUserIdsSnapshot(result)
+        if (userIds === null) {
+          throw new Error('Tencent IM returned a malformed friend-list snapshot')
+        }
         emitRuntimeLog('friend-list:resolved', {
           detail: {
             count: userIds.length

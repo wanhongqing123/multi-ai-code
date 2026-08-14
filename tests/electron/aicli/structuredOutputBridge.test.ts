@@ -128,6 +128,48 @@ describe('AICLI structured output bridge', () => {
     ])
   })
 
+  it('preserves the approval id on structured approval requests', async () => {
+    const bridge = await createAicliStructuredOutputBridge('session-approval', 'codex')
+    const { port, token } = parseTcpEndpoint(bridge.endpoint)
+    const events: AicliStructuredOutputEvent[] = []
+    const removeListener = addAicliStructuredOutputListener((event) => events.push(event))
+
+    await sendLine(port, {
+      token,
+      kind: 'approval_request',
+      text: 'PowerShell wants to run: Remove-Item test -Force',
+      approvalId: 'approval-remove-1',
+      threadId: 'thread-remove-1',
+      turnId: 'turn-remove-1',
+      replyId: 'reply-remove-1',
+      taskId: 'task-remove-1',
+      cwd: 'C:\\repo',
+      reason: '清理构建缓存'
+    })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    removeListener()
+    await bridge.close()
+
+    expect(events).toEqual([
+      {
+        sessionId: 'session-approval',
+        provider: 'codex',
+        kind: 'approval_request',
+        text: 'PowerShell wants to run: Remove-Item test -Force',
+        messageId: undefined,
+        partId: undefined,
+        replyId: 'reply-remove-1',
+        taskId: 'task-remove-1',
+        approvalId: 'approval-remove-1',
+        threadId: 'thread-remove-1',
+        turnId: 'turn-remove-1',
+        cwd: 'C:\\repo',
+        reason: '清理构建缓存'
+      }
+    ])
+  })
+
   it('forwards and acknowledges terminal turn errors', async () => {
     const bridge = await createAicliStructuredOutputBridge('session-1', 'codex')
     const { port, token } = parseTcpEndpoint(bridge.endpoint)
@@ -216,6 +258,59 @@ describe('AICLI structured output bridge', () => {
     expect(receivedLines.join('')).toContain('"requestId"')
   })
 
+  it('uses only the newest control connection and accepts its result on the data connection', async () => {
+    const bridge = await createAicliStructuredOutputBridge('session-control-generation', 'codex')
+    const { port, token } = parseTcpEndpoint(bridge.endpoint)
+
+    const connectControl = () =>
+      new Promise<net.Socket>((resolve, reject) => {
+        const client = net.createConnection({ host: '127.0.0.1', port }, () => {
+          client.write(`${JSON.stringify({ token, kind: 'control_ready' })}\n`)
+          resolve(client)
+        })
+        client.setEncoding('utf8')
+        client.once('error', reject)
+      })
+
+    const oldSocket = await connectControl()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    const currentSocket = await connectControl()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    const dataSocket = await new Promise<net.Socket>((resolve, reject) => {
+      const client = net.createConnection({ host: '127.0.0.1', port }, () => resolve(client))
+      client.setEncoding('utf8')
+      client.once('error', reject)
+    })
+
+    currentSocket.on('data', (chunk) => {
+      const requestId = String(chunk).match(/"requestId":"([^"]+)"/)?.[1]
+      if (!requestId) return
+      dataSocket.write(
+        `${JSON.stringify({ token, kind: 'control_result', requestId, ok: true, text: 'ok' })}\n`
+      )
+    })
+
+    const result = await bridge.requestControlCommand(
+      {
+        command: 'resolve_approval',
+        approvalId: 'approval-1',
+        threadId: 'thread-1',
+        taskId: 'task-1',
+        turnId: 'turn-1',
+        decision: 'accept'
+      },
+      1_000
+    )
+
+    expect(result).toEqual({ ok: true, text: 'ok' })
+    expect(oldSocket.destroyed).toBe(true)
+
+    currentSocket.destroy()
+    dataSocket.destroy()
+    await bridge.close()
+  })
+
   it('reports source-level readiness after the AICLI control bridge connects', async () => {
     const bridge = await createAicliStructuredOutputBridge('session-1', 'codex')
     const { port, token } = parseTcpEndpoint(bridge.endpoint)
@@ -276,6 +371,61 @@ describe('AICLI structured output bridge', () => {
     expect(result).toEqual({ ok: true, text: 'OpenAI Codex\nModel gpt-5.6-sol' })
     expect(receivedLines.join('')).toContain('"kind":"control"')
     expect(receivedLines.join('')).toContain('"command":"status"')
+    expect(receivedLines.join('')).toContain('"requestId"')
+  })
+
+  it('sends an explicit decision for a pending approval request', async () => {
+    const bridge = await createAicliStructuredOutputBridge('session-approval', 'codex')
+    const { port, token } = parseTcpEndpoint(bridge.endpoint)
+    const receivedLines: string[] = []
+
+    const socket = await new Promise<net.Socket>((resolve, reject) => {
+      const client = net.createConnection({ host: '127.0.0.1', port }, () => {
+        client.write(`${JSON.stringify({ token, kind: 'control_ready' })}\n`)
+        resolve(client)
+      })
+      client.setEncoding('utf8')
+      client.on('data', (chunk) => {
+        receivedLines.push(String(chunk))
+        const requestId = String(chunk).match(/"requestId":"([^"]+)"/)?.[1]
+        if (requestId) {
+          client.write(
+            `${JSON.stringify({
+              token,
+              kind: 'control_result',
+              requestId,
+              ok: true,
+              text: '已批准本次命令。'
+            })}\n`
+          )
+        }
+      })
+      client.once('error', reject)
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const result = await bridge.requestControlCommand(
+      {
+        command: 'resolve_approval',
+        approvalId: 'approval-remove-1',
+        threadId: 'thread-remove-1',
+        taskId: 'task-remove-1',
+        turnId: 'turn-remove-1',
+        decision: 'accept'
+      },
+      500
+    )
+
+    socket.destroy()
+    await bridge.close()
+
+    expect(result).toEqual({ ok: true, text: '已批准本次命令。' })
+    expect(receivedLines.join('')).toContain('"command":"resolve_approval"')
+    expect(receivedLines.join('')).toContain('"approvalId":"approval-remove-1"')
+    expect(receivedLines.join('')).toContain('"threadId":"thread-remove-1"')
+    expect(receivedLines.join('')).toContain('"taskId":"task-remove-1"')
+    expect(receivedLines.join('')).toContain('"turnId":"turn-remove-1"')
+    expect(receivedLines.join('')).toContain('"decision":"accept"')
     expect(receivedLines.join('')).toContain('"requestId"')
   })
 
@@ -398,7 +548,12 @@ describe('AICLI structured output bridge', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 20))
     const result = await bridge.requestControlCommand(
-      { command: 'btw', task: '检查构建日志', replyId: 'reply-btw-fixed' },
+      {
+        command: 'btw',
+        task: '检查构建日志',
+        replyId: 'reply-btw-fixed',
+        taskId: 'task-btw-fixed'
+      },
       500
     )
 
@@ -409,6 +564,7 @@ describe('AICLI structured output bridge', () => {
     expect(receivedLines.join('')).toContain('"command":"btw"')
     expect(receivedLines.join('')).toContain('"task":"检查构建日志"')
     expect(receivedLines.join('')).toContain('"replyId":"reply-btw-fixed"')
+    expect(receivedLines.join('')).toContain('"taskId":"task-btw-fixed"')
     expect(receivedLines.join('')).toContain('"requestId"')
   })
 

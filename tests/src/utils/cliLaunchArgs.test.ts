@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  CODEX_APPROVALS_REVIEWER_CONFIG,
   DEFAULT_AI_PERMISSION_MODE,
   buildCliLaunchArgs
 } from '../../../src/utils/cliLaunchArgs.js'
@@ -8,8 +9,13 @@ describe('buildCliLaunchArgs', () => {
   it('adds Codex 1M context window config by default', () => {
     expect(buildCliLaunchArgs('codex', '/repo/demo')).toEqual([
       '--no-alt-screen',
-      '--dangerously-bypass-approvals-and-sandbox',
+      '--ask-for-approval',
+      'on-request',
+      '--sandbox',
+      'danger-full-access',
       '--dangerously-bypass-hook-trust',
+      '-c',
+      CODEX_APPROVALS_REVIEWER_CONFIG,
       '-c',
       'model_context_window=1000000'
     ])
@@ -35,11 +41,29 @@ describe('buildCliLaunchArgs', () => {
       ])
     ).toEqual([
       '--no-alt-screen',
-      '--dangerously-bypass-approvals-and-sandbox',
+      '--ask-for-approval',
+      'on-request',
+      '--sandbox',
+      'danger-full-access',
       '--dangerously-bypass-hook-trust',
+      '-c',
+      CODEX_APPROVALS_REVIEWER_CONFIG,
       '-c',
       'model_context_window=272000'
     ])
+  })
+
+  it.each([
+    ['-c', 'approvals_reviewer="auto_review"'],
+    ['--config', 'approvals_reviewer="auto_review"'],
+    ['-capprovals_reviewer="auto_review"'],
+    ['-c=approvals_reviewer="auto_review"'],
+    ['--config=approvals_reviewer="auto_review"']
+  ])('keeps an explicit Codex approvals reviewer config: %j', (...explicitArgs) => {
+    const args = buildCliLaunchArgs('codex', '/repo/demo', explicitArgs)
+
+    expect(args).not.toContain(CODEX_APPROVALS_REVIEWER_CONFIG)
+    expect(args).toEqual(expect.arrayContaining(explicitArgs))
   })
 
   it('does not duplicate Codex no-alt-screen when user supplies it', () => {
@@ -49,8 +73,13 @@ describe('buildCliLaunchArgs', () => {
         '--verbose'
       ])
     ).toEqual([
-      '--dangerously-bypass-approvals-and-sandbox',
+      '--ask-for-approval',
+      'on-request',
+      '--sandbox',
+      'danger-full-access',
       '--dangerously-bypass-hook-trust',
+      '-c',
+      CODEX_APPROVALS_REVIEWER_CONFIG,
       '-c',
       'model_context_window=1000000',
       '--no-alt-screen',
@@ -66,11 +95,147 @@ describe('buildCliLaunchArgs', () => {
       ])
     ).toEqual([
       '--no-alt-screen',
-      '--dangerously-bypass-approvals-and-sandbox',
+      '--ask-for-approval',
+      'on-request',
+      '--sandbox',
+      'danger-full-access',
+      '-c',
+      CODEX_APPROVALS_REVIEWER_CONFIG,
       '-c',
       'model_context_window=1000000',
       '--dangerously-bypass-hook-trust',
       '--verbose'
+    ])
+  })
+
+  it('honours an explicit legacy bypass without adding conflicting approval flags', () => {
+    expect(
+      buildCliLaunchArgs('codex', '/repo/demo', [
+        '--dangerously-bypass-approvals-and-sandbox'
+      ])
+    ).toEqual([
+      '--no-alt-screen',
+      '--dangerously-bypass-hook-trust',
+      '-c',
+      CODEX_APPROVALS_REVIEWER_CONFIG,
+      '-c',
+      'model_context_window=1000000',
+      '--dangerously-bypass-approvals-and-sandbox'
+    ])
+  })
+
+  it('honours --approve-for-me without adding conflicting approval or sandbox flags', () => {
+    expect(buildCliLaunchArgs('codex', '/repo/demo', ['--approve-for-me'])).toEqual([
+      '--no-alt-screen',
+      '--dangerously-bypass-hook-trust',
+      '-c',
+      'model_context_window=1000000',
+      '--approve-for-me'
+    ])
+  })
+
+  it('only fills the Codex permission dimension not set by advanced args', () => {
+    expect(
+      buildCliLaunchArgs('codex', '/repo/demo', ['--ask-for-approval=never'])
+    ).toEqual([
+      '--no-alt-screen',
+      '--sandbox',
+      'danger-full-access',
+      '--dangerously-bypass-hook-trust',
+      '-c',
+      CODEX_APPROVALS_REVIEWER_CONFIG,
+      '-c',
+      'model_context_window=1000000',
+      '--ask-for-approval=never'
+    ])
+    expect(
+      buildCliLaunchArgs('codex', '/repo/demo', ['--sandbox', 'workspace-write'])
+    ).toEqual([
+      '--no-alt-screen',
+      '--ask-for-approval',
+      'on-request',
+      '--dangerously-bypass-hook-trust',
+      '-c',
+      CODEX_APPROVALS_REVIEWER_CONFIG,
+      '-c',
+      'model_context_window=1000000',
+      '--sandbox',
+      'workspace-write'
+    ])
+  })
+
+  it('honours compact Codex permission flags without adding duplicate long flags', () => {
+    const approvalArgs = buildCliLaunchArgs('codex', '/repo/demo', ['-anever'])
+    expect(approvalArgs).not.toContain('--ask-for-approval')
+    expect(approvalArgs).toEqual(expect.arrayContaining(['-anever']))
+    expect(approvalArgs).toEqual(expect.arrayContaining(['--sandbox', 'danger-full-access']))
+
+    const sandboxArgs = buildCliLaunchArgs('codex', '/repo/demo', ['-sworkspace-write'])
+    expect(sandboxArgs).not.toContain('--sandbox')
+    expect(sandboxArgs).toEqual(expect.arrayContaining(['-sworkspace-write']))
+    expect(sandboxArgs).toEqual(expect.arrayContaining(['--ask-for-approval', 'on-request']))
+  })
+
+  it('does not override permission dimensions configured with -c', () => {
+    const approvalArgs = buildCliLaunchArgs('codex', '/repo/demo', [
+      '-c',
+      'approval_policy="never"'
+    ])
+    expect(approvalArgs).not.toContain('--ask-for-approval')
+    expect(approvalArgs).toEqual(
+      expect.arrayContaining(['-c', 'approval_policy="never"', '--sandbox', 'danger-full-access'])
+    )
+
+    const sandboxArgs = buildCliLaunchArgs('codex', '/repo/demo', [
+      '-c',
+      'sandbox_mode="read-only"'
+    ])
+    expect(sandboxArgs).not.toContain('--sandbox')
+    expect(sandboxArgs).toEqual(
+      expect.arrayContaining(['-c', 'sandbox_mode="read-only"', '--ask-for-approval', 'on-request'])
+    )
+  })
+
+  it('recognizes equals-form Codex config overrides', () => {
+    const args = buildCliLaunchArgs('codex', '/repo/demo', [
+      '-c=approval_policy="never"',
+      '-c=sandbox_mode="read-only"',
+      '-c=model_context_window=272000'
+    ])
+
+    expect(args).not.toContain('--ask-for-approval')
+    expect(args).not.toContain('--sandbox')
+    expect(args).not.toContain('model_context_window=1000000')
+    expect(args).toEqual(
+      expect.arrayContaining([
+        '-c=approval_policy="never"',
+        '-c=sandbox_mode="read-only"',
+        '-c=model_context_window=272000'
+      ])
+    )
+  })
+
+  it('does not treat positional text after -- as advanced Codex flags', () => {
+    expect(
+      buildCliLaunchArgs('codex', '/repo/demo', [
+        '--',
+        '--approve-for-me',
+        '--sandbox=read-only'
+      ])
+    ).toEqual([
+      '--no-alt-screen',
+      '--ask-for-approval',
+      'on-request',
+      '--sandbox',
+      'danger-full-access',
+      '--dangerously-bypass-hook-trust',
+      '-c',
+      CODEX_APPROVALS_REVIEWER_CONFIG,
+      '-c',
+      'model_context_window=1000000',
+      '--',
+      '--approve-for-me',
+      '--sandbox=read-only'
     ])
   })
 
@@ -112,11 +277,16 @@ describe('权限档位', () => {
     expect(buildCliLaunchArgs('opencode', '/repo/demo', ['--yolo'], 'default')).toEqual(['--yolo'])
   })
 
-  it('keeps full access identical to the pre-permission-selector behaviour', () => {
+  it('keeps full access unrestricted while allowing dangerous commands to request approval', () => {
     expect(buildCliLaunchArgs('codex', '/repo/demo', [], 'full-access')).toEqual([
       '--no-alt-screen',
-      '--dangerously-bypass-approvals-and-sandbox',
+      '--ask-for-approval',
+      'on-request',
+      '--sandbox',
+      'danger-full-access',
       '--dangerously-bypass-hook-trust',
+      '-c',
+      CODEX_APPROVALS_REVIEWER_CONFIG,
       '-c',
       'model_context_window=1000000'
     ])

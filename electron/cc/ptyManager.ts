@@ -584,7 +584,8 @@ export function requestAicliGoalForSession(
 export function requestAicliBtwForSession(
   sessionId: string,
   task: string,
-  replyId?: string
+  replyId?: string,
+  taskId?: string
 ): Promise<AicliControlCommandResult> {
   const session = sessions.get(sessionId)
   if (!session) return Promise.resolve({ ok: false, error: 'no session' })
@@ -594,7 +595,8 @@ export function requestAicliBtwForSession(
   return session.structuredOutputBridge.requestControlCommand({
     command: 'btw',
     task,
-    ...(replyId ? { replyId } : {})
+    ...(replyId ? { replyId } : {}),
+    ...(taskId ? { taskId } : {})
   })
 }
 
@@ -629,6 +631,34 @@ export function requestAicliClearForSession(
     return Promise.resolve({ ok: false, error: 'AICLI control bridge is not available' })
   }
   return session.structuredOutputBridge.requestControlCommand({ command: 'clear' })
+}
+
+export function requestAicliApprovalForSession(
+  sessionId: string,
+  input: {
+    approvalId: string
+    threadId: string
+    taskId: string
+    turnId: string
+    decision: 'accept' | 'cancel'
+  }
+): Promise<AicliControlCommandResult> {
+  const session = sessions.get(sessionId)
+  if (!session) return Promise.resolve({ ok: false, error: 'no session' })
+  if (!session.structuredOutputBridge) {
+    return Promise.resolve({ ok: false, error: 'AICLI control bridge is not available' })
+  }
+  // threadId is part of the security binding. The bridge protocol transports
+  // it alongside the approval id so Codex can reject cross-thread replies.
+  const command = {
+    command: 'resolve_approval' as const,
+    approvalId: input.approvalId,
+    threadId: input.threadId,
+    taskId: input.taskId,
+    turnId: input.turnId,
+    decision: input.decision
+  }
+  return session.structuredOutputBridge.requestControlCommand(command)
 }
 
 /** Stream raw input into PTY in small chunks to avoid large-paste truncation. */

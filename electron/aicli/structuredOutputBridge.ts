@@ -4,6 +4,7 @@ import net from 'node:net'
 export type AicliStructuredOutputProvider = 'codex' | 'opencode'
 export type AicliControlMode = 'plan' | 'build'
 export type AicliUserMessageInputOrigin = 'remote-im' | 'local'
+export type AicliApprovalDecision = 'accept' | 'cancel'
 
 export interface AicliUserMessageAttachment {
   type: 'image'
@@ -21,6 +22,11 @@ export interface AicliStructuredOutputEvent {
   partId?: string
   replyId?: string
   taskId?: string
+  approvalId?: string
+  threadId?: string
+  turnId?: string
+  cwd?: string
+  reason?: string
 }
 
 export interface AicliStructuredOutputBridge {
@@ -60,6 +66,11 @@ interface WireEvent {
   task?: unknown
   replyId?: unknown
   taskId?: unknown
+  approvalId?: unknown
+  threadId?: unknown
+  turnId?: unknown
+  cwd?: unknown
+  reason?: unknown
 }
 
 // 所有控制命令统一走 requestId RPC：switch_mode 也等待 AICLI 回 control_result，
@@ -68,7 +79,7 @@ export type AicliRequestControlCommand =
   | { command: 'status' }
   | { command: 'model'; model?: string; reasoning?: string }
   | { command: 'goal'; goal?: string }
-  | { command: 'btw'; task: string; replyId?: string }
+  | { command: 'btw'; task: string; replyId?: string; taskId?: string }
   | {
       command: 'submit_user_message'
       text: string
@@ -81,6 +92,14 @@ export type AicliRequestControlCommand =
   | { command: 'interrupt' }
   | { command: 'compact' }
   | { command: 'clear' }
+  | {
+      command: 'resolve_approval'
+      approvalId: string
+      threadId: string
+      taskId: string
+      turnId: string
+      decision: AicliApprovalDecision
+    }
   | { command: 'switch_mode'; mode: AicliControlMode }
 
 export type AicliControlCommandResult =
@@ -128,12 +147,12 @@ export async function createAicliStructuredOutputBridge(
   const server = net.createServer((socket) => {
     socket.setEncoding('utf8')
     let buffer = ''
-    socket.on('close', () => {
+    const forgetControlSocket = () => {
       controlSockets.delete(socket)
-    })
-    socket.on('error', () => {
-      controlSockets.delete(socket)
-    })
+      if (controlSockets.size === 0) ready = false
+    }
+    socket.on('close', forgetControlSocket)
+    socket.on('error', forgetControlSocket)
 
     socket.on('data', (chunk) => {
       buffer += chunk
@@ -152,6 +171,14 @@ export async function createAicliStructuredOutputBridge(
         }
         if (parsed.token !== token) continue
         if (parsed.kind === 'control_ready') {
+          // The Codex listener reconnects with a fresh control socket. Keep a
+          // single authoritative generation so a late failure from an older
+          // socket cannot win the race against a successful approval response.
+          for (const previous of controlSockets) {
+            if (previous === socket) continue
+            controlSockets.delete(previous)
+            previous.destroy()
+          }
           controlSockets.add(socket)
           ready = true
           for (const resolve of readyWaiters) resolve(true)
@@ -159,6 +186,12 @@ export async function createAicliStructuredOutputBridge(
           continue
         }
         if (parsed.kind === 'control_result') {
+          // Codex intentionally uses independent TCP connections for host -> TUI
+          // control and TUI -> host structured data. A control result therefore
+          // normally arrives on a token-authenticated data socket, not on the
+          // socket that sent `control_ready`. The unguessable requestId below is
+          // the correlation boundary; requiring the control socket here would
+          // discard every real Codex response and turn approvals into timeouts.
           const requestId = asOptionalString(parsed.requestId)
           const pending = requestId ? pendingControlRequests.get(requestId) : undefined
           if (!requestId || !pending) continue
@@ -185,6 +218,11 @@ export async function createAicliStructuredOutputBridge(
         const messageId = asOptionalString(parsed.messageId)
         const replyId = asOptionalString(parsed.replyId)
         const taskId = asOptionalString(parsed.taskId)
+        const approvalId = asOptionalString(parsed.approvalId)
+        const threadId = asOptionalString(parsed.threadId)
+        const turnId = asOptionalString(parsed.turnId)
+        const cwd = asOptionalString(parsed.cwd)
+        const reason = asOptionalString(parsed.reason)
         emitStructuredOutput({
           sessionId,
           provider,
@@ -193,7 +231,12 @@ export async function createAicliStructuredOutputBridge(
           messageId,
           partId: asOptionalString(parsed.partId),
           ...(replyId ? { replyId } : {}),
-          ...(taskId ? { taskId } : {})
+          ...(taskId ? { taskId } : {}),
+          ...(approvalId ? { approvalId } : {}),
+          ...(threadId ? { threadId } : {}),
+          ...(turnId ? { turnId } : {}),
+          ...(cwd ? { cwd } : {}),
+          ...(reason ? { reason } : {})
         })
 
         // 回执：AICLI 侧靠这条 ack 判定数据连接“还活着”。收不到 ack（半死 socket、
@@ -281,7 +324,11 @@ export async function createAicliStructuredOutputBridge(
           ...(input.command === 'model' && input.model ? { model: input.model } : {}),
           ...(input.command === 'model' && input.reasoning ? { reasoning: input.reasoning } : {}),
           ...(input.command === 'btw'
-            ? { task: input.task, ...(input.replyId ? { replyId: input.replyId } : {}) }
+            ? {
+                task: input.task,
+                ...(input.replyId ? { replyId: input.replyId } : {}),
+                ...(input.taskId ? { taskId: input.taskId } : {})
+              }
             : {}),
           ...(input.command === 'submit_user_message'
             ? {
@@ -293,7 +340,16 @@ export async function createAicliStructuredOutputBridge(
                 ...(input.taskId ? { taskId: input.taskId } : {})
               }
             : {}),
-          ...(input.command === 'goal' && input.goal ? { goal: input.goal } : {})
+          ...(input.command === 'goal' && input.goal ? { goal: input.goal } : {}),
+          ...(input.command === 'resolve_approval'
+            ? {
+                approvalId: input.approvalId,
+                threadId: input.threadId,
+                taskId: input.taskId,
+                turnId: input.turnId,
+                decision: input.decision
+              }
+            : {})
         })
         if (sent > 0) return
         clearTimeout(timeout)

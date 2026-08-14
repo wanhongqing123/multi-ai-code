@@ -724,7 +724,12 @@ function AppShell() {
       friendUserIds: nextConfig.friendUserIds,
       masterUserIds: nextConfig.masterUserIds,
       slaveUserIds: nextConfig.slaveUserIds,
-      allowedUserIds: nextConfig.allowedUserIds
+      allowedUserIds: nextConfig.allowedUserIds,
+      // Explicitly adding a contact is the only action that removes its local
+      // revoke tombstone. Other blocked SDK friends remain blocked.
+      blockedUserIds: (remoteImLoginState?.account.blockedUserIds ?? []).filter(
+        (userId) => userId !== cleanUserId
+      )
     }
     const result = await window.api.remoteIm.setAccount(account)
     if (!result.ok) {
@@ -737,7 +742,7 @@ function AppShell() {
       setRemoteImConfigProjectId(currentProjectId)
     }
     setRemoteImSelectedPeerUserId(cleanUserId)
-  }, [currentProjectId, remoteImConfig])
+  }, [currentProjectId, remoteImConfig, remoteImLoginState?.account.blockedUserIds])
 
   const handleDeleteRemoteImContact = useCallback(async (userId: string) => {
     if (!currentProjectId) return

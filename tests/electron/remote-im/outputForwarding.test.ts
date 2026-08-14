@@ -14,6 +14,7 @@ import {
   forwardRemoteImStructuredFinalOutput,
   flushRemoteImOutputSession,
   parseRemoteImAicliOutputText,
+  revokeRemoteImOutputSessions,
   resolveRemoteImStructuredFinalContent,
   isRemoteImOperationFinishedText,
   type RemoteImOutputForwardingDeps,
@@ -62,6 +63,28 @@ function createState(
 }
 
 describe('remote IM output forwarding', () => {
+  it('discards buffered output and timers for contacts whose authority was revoked', () => {
+    const clearTimer = vi.fn()
+    const removed = createState('secret buffered reply')
+    removed.timer = 123 as unknown as RemoteImOutputFlushTimer
+    const retained = {
+      ...createState('safe reply'),
+      toUserId: 'friend-b'
+    }
+    const sessions = new Map([
+      ['session-a', removed],
+      ['session-b', retained]
+    ])
+
+    expect(
+      revokeRemoteImOutputSessions(sessions, ['master_desktop'], clearTimer)
+    ).toEqual(['session-a'])
+    expect(clearTimer).toHaveBeenCalledWith(removed.timer ?? 123)
+    expect(removed.buffer).toBe('')
+    expect(removed.timer).toBeNull()
+    expect(sessions).toEqual(new Map([['session-b', retained]]))
+  })
+
   it('flushes buffered output before notifying the master that work completed', () => {
     const state = createState(
       ['terminal noise', REMOTE_IM_REPLY_OPEN_TAG, 'abcdef', REMOTE_IM_REPLY_CLOSE_TAG].join('\n')

@@ -78,43 +78,60 @@ describe('preload remote IM api', () => {
       mimeType: 'image/png',
       sizeBytes: 123
     })
-    await api.remoteIm.markOutgoingMessageSent('project-1', 42, 'tim-msg-42')
-    await api.remoteIm.markOutgoingMessageFailed('project-1', 43, 'send failed')
+    const runtimeIdentity = {
+      connectionId: 'runtime-1',
+      desktopUserId: 'desktop_bot',
+      sdkAppId: config.sdkAppId
+    }
+    await api.remoteIm.markOutgoingMessageSent(
+      'project-1',
+      42,
+      'tim-msg-42',
+      runtimeIdentity
+    )
+    await api.remoteIm.markOutgoingMessageFailed(
+      'project-1',
+      43,
+      'send failed',
+      runtimeIdentity
+    )
     await api.remoteIm.writeRuntimeLog({
       projectId: 'project-1',
       event: 'send:start',
       desktopUserId: 'desktop_bot'
     })
+    await api.remoteIm.registerRuntime('project-1', runtimeIdentity)
     await api.remoteIm.deliverIncomingText({
       projectId: 'project-1',
       fromUserId: 'phone_admin',
       text: 'hello'
-    })
+    }, runtimeIdentity)
     await api.remoteIm.deliverIncomingAudio({
       projectId: 'project-1',
       fromUserId: 'phone_admin',
       audioUrl: 'https://cos.example.test/voice.amr',
       durationSeconds: 4
-    })
+    }, runtimeIdentity)
     await api.remoteIm.deliverIncomingImage({
       projectId: 'project-1',
       fromUserId: 'phone_admin',
       imageUrl: 'https://cos.example.test/photo.png',
       fileName: 'photo.png'
-    })
+    }, runtimeIdentity)
     await api.remoteIm.updateSdkStatus({
       projectId: 'project-1',
       state: 'connected',
       detail: null
     })
     await api.remoteIm.bindAccount(config)
-    await api.remoteIm.syncContacts('project-1', ['phone_admin'])
+    await api.remoteIm.syncContacts('project-1', ['phone_admin'], runtimeIdentity)
 
     // 顺序无关：登录门用 bind-account 一次完成“绑定账号 + 初始化账号作用域数据层”。
     expect(electronMock.invoke).toHaveBeenCalledWith('remote-im:bind-account', { account: config })
     expect(electronMock.invoke).toHaveBeenCalledWith('remote-im:sync-contacts', {
       projectId: 'project-1',
-      userIds: ['phone_admin']
+      userIds: ['phone_admin'],
+      runtimeIdentity
     })
 
     expect(electronMock.invoke).toHaveBeenNthCalledWith(1, 'remote-im:get-config', {
@@ -166,12 +183,14 @@ describe('preload remote IM api', () => {
     expect(electronMock.invoke).toHaveBeenNthCalledWith(12, 'remote-im:mark-outgoing-message-sent', {
       projectId: 'project-1',
       messageId: 42,
-      remoteMessageId: 'tim-msg-42'
+      remoteMessageId: 'tim-msg-42',
+      runtimeIdentity
     })
     expect(electronMock.invoke).toHaveBeenNthCalledWith(13, 'remote-im:mark-outgoing-message-failed', {
       projectId: 'project-1',
       messageId: 43,
-      error: 'send failed'
+      error: 'send failed',
+      runtimeIdentity
     })
     expect(electronMock.invoke).toHaveBeenNthCalledWith(14, 'remote-im:write-runtime-log', {
       entry: {
@@ -180,27 +199,42 @@ describe('preload remote IM api', () => {
         desktopUserId: 'desktop_bot'
       }
     })
-    expect(electronMock.invoke).toHaveBeenNthCalledWith(15, 'remote-im:deliver-incoming-text', {
+    expect(electronMock.invoke).toHaveBeenNthCalledWith(15, 'remote-im:register-runtime', {
       projectId: 'project-1',
-      fromUserId: 'phone_admin',
-      text: 'hello'
+      runtimeIdentity
     })
-    expect(electronMock.invoke).toHaveBeenNthCalledWith(16, 'remote-im:deliver-incoming-audio', {
-      projectId: 'project-1',
-      fromUserId: 'phone_admin',
-      audioUrl: 'https://cos.example.test/voice.amr',
-      durationSeconds: 4
+    expect(electronMock.invoke).toHaveBeenNthCalledWith(16, 'remote-im:deliver-incoming-text', {
+      message: {
+        projectId: 'project-1',
+        fromUserId: 'phone_admin',
+        text: 'hello'
+      },
+      runtimeIdentity
     })
-    expect(electronMock.invoke).toHaveBeenNthCalledWith(17, 'remote-im:deliver-incoming-image', {
-      projectId: 'project-1',
-      fromUserId: 'phone_admin',
-      imageUrl: 'https://cos.example.test/photo.png',
-      fileName: 'photo.png'
+    expect(electronMock.invoke).toHaveBeenNthCalledWith(17, 'remote-im:deliver-incoming-audio', {
+      message: {
+        projectId: 'project-1',
+        fromUserId: 'phone_admin',
+        audioUrl: 'https://cos.example.test/voice.amr',
+        durationSeconds: 4
+      },
+      runtimeIdentity
     })
-    expect(electronMock.invoke).toHaveBeenNthCalledWith(18, 'remote-im:update-sdk-status', {
-      projectId: 'project-1',
-      state: 'connected',
-      detail: null
+    expect(electronMock.invoke).toHaveBeenNthCalledWith(18, 'remote-im:deliver-incoming-image', {
+      message: {
+        projectId: 'project-1',
+        fromUserId: 'phone_admin',
+        imageUrl: 'https://cos.example.test/photo.png',
+        fileName: 'photo.png'
+      },
+      runtimeIdentity
+    })
+    expect(electronMock.invoke).toHaveBeenNthCalledWith(19, 'remote-im:update-sdk-status', {
+      status: {
+        projectId: 'project-1',
+        state: 'connected',
+        detail: null
+      }
     })
   })
 

@@ -1,5 +1,9 @@
 import { useEffect, useRef } from 'react'
-import type { RemoteImConfig, RemoteImLoginState } from '../../electron/preload.js'
+import type {
+  RemoteImConfig,
+  RemoteImLoginState,
+  RemoteImRuntimeIdentity
+} from '../../electron/preload.js'
 import {
   deliverRemoteImOutgoingFile,
   deliverRemoteImOutgoingImage,
@@ -81,12 +85,52 @@ function normalizeRuntimeFriendUserIds(userIds: string[]): string[] {
   return Array.from(new Set(userIds.map((userId) => userId.trim()).filter(Boolean)))
 }
 
+/**
+ * Coalesce friend-list refresh signals without allowing snapshots to overtake
+ * each other. A signal received while a refresh is in flight marks the result
+ * dirty and forces one more authoritative snapshot after it completes.
+ */
+export function createRemoteImFriendSnapshotSynchronizer(
+  refresh: () => Promise<void>
+): () => Promise<void> {
+  let running: Promise<void> | null = null
+  let refreshAgain = false
+
+  return async () => {
+    if (running) {
+      refreshAgain = true
+      return running
+    }
+
+    const next = (async () => {
+      let lastError: unknown = null
+      do {
+        refreshAgain = false
+        try {
+          await refresh()
+          lastError = null
+        } catch (error) {
+          lastError = error
+        }
+      } while (refreshAgain)
+      if (lastError) throw lastError
+    })()
+    running = next
+    try {
+      await next
+    } finally {
+      if (running === next) running = null
+    }
+  }
+}
+
 export async function syncRemoteImContactUserIds(input: {
   projectId: string
   userIds: string[]
   syncContacts: (
     projectId: string,
-    userIds: string[]
+    userIds: string[],
+    runtimeIdentity: RemoteImRuntimeIdentity
   ) => Promise<
     | { ok: true; value: RemoteImConfig; loginState: RemoteImLoginState }
     | { ok: false; error: string }
@@ -95,10 +139,14 @@ export async function syncRemoteImContactUserIds(input: {
     config: RemoteImConfig
     loginState: RemoteImLoginState
   }) => void
+  runtimeIdentity: RemoteImRuntimeIdentity
 }): Promise<void> {
   const userIds = normalizeRuntimeFriendUserIds(input.userIds)
-  if (userIds.length === 0) return
-  const result = await input.syncContacts(input.projectId, userIds)
+  const result = await input.syncContacts(
+    input.projectId,
+    userIds,
+    input.runtimeIdentity
+  )
   if (!result.ok) return
   input.onContactsSynced?.({
     config: result.value,
@@ -111,7 +159,8 @@ export async function syncRemoteImContactsFromRuntime(input: {
   runtime: Pick<TencentImRuntime, 'listFriendUserIds'>
   syncContacts: (
     projectId: string,
-    userIds: string[]
+    userIds: string[],
+    runtimeIdentity: RemoteImRuntimeIdentity
   ) => Promise<
     | { ok: true; value: RemoteImConfig; loginState: RemoteImLoginState }
     | { ok: false; error: string }
@@ -120,13 +169,18 @@ export async function syncRemoteImContactsFromRuntime(input: {
     config: RemoteImConfig
     loginState: RemoteImLoginState
   }) => void
+  runtimeIdentity: RemoteImRuntimeIdentity
+  isCurrent?: () => boolean
 }): Promise<void> {
   if (!input.runtime.listFriendUserIds) return
+  const userIds = await input.runtime.listFriendUserIds()
+  if (input.isCurrent && !input.isCurrent()) return
   await syncRemoteImContactUserIds({
     projectId: input.projectId,
-    userIds: await input.runtime.listFriendUserIds(),
+    userIds,
     syncContacts: input.syncContacts,
-    onContactsSynced: input.onContactsSynced
+    onContactsSynced: input.onContactsSynced,
+    runtimeIdentity: input.runtimeIdentity
   })
 }
 
@@ -143,6 +197,35 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
   useEffect(() => {
     let cancelled = false
     let ownedRuntime: TencentImRuntime | null = null
+    let runtimeRegistered = false
+    const runtimeIdentity: RemoteImRuntimeIdentity = {
+      connectionId: globalThis.crypto.randomUUID(),
+      desktopUserId: props.config.desktopUserId.trim(),
+      sdkAppId: props.config.sdkAppId
+    }
+    const syncFriendSnapshot = createRemoteImFriendSnapshotSynchronizer(async () => {
+      const projectId = props.projectId
+      const runtime = ownedRuntime
+      if (cancelled || !projectId || !runtime) return
+      await syncRemoteImContactsFromRuntime({
+        projectId,
+        runtime,
+        syncContacts: window.api.remoteIm.syncContacts,
+        onContactsSynced: onContactsSyncedRef.current,
+        runtimeIdentity,
+        isCurrent: () => !cancelled && ownedRuntime === runtime
+      })
+    })
+
+    function reportFriendSyncFailure(projectId: string, error: unknown): void {
+      void window.api.remoteIm.writeRuntimeLog({
+        projectId,
+        sdkAppId: props.config.sdkAppId,
+        desktopUserId: props.config.desktopUserId,
+        event: 'friend-list:sync-failed',
+        detail: { error: error instanceof Error ? error.message : String(error) }
+      })
+    }
 
     async function disconnectCurrent(): Promise<void> {
       await runtimeSlotRef.current.disconnectCurrent().catch(() => undefined)
@@ -169,42 +252,41 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
       }
       if (!projectId) return
 
-      await window.api.remoteIm.updateSdkStatus({
-        projectId,
-        state: 'connecting',
-        detail: null
-      })
-
       try {
+        const registered = await window.api.remoteIm.registerRuntime(projectId, runtimeIdentity)
+        if (!registered.ok) throw new Error(registered.error ?? '远程 IM 连接身份注册失败')
+        runtimeRegistered = true
+        if (cancelled) return
+        await window.api.remoteIm.updateSdkRuntimeStatus({
+          projectId,
+          state: 'connecting',
+          detail: null
+        }, runtimeIdentity)
         const runtime = await connectTencentImClient({
           projectId,
           config: props.config,
           onIncomingText: (message) => {
-            void window.api.remoteIm.deliverIncomingText(message)
+            if (!cancelled) void window.api.remoteIm.deliverIncomingText(message, runtimeIdentity)
           },
           onIncomingAudio: (message) => {
-            void window.api.remoteIm.deliverIncomingAudio(message)
+            if (!cancelled) void window.api.remoteIm.deliverIncomingAudio(message, runtimeIdentity)
           },
           onIncomingImage: (message) => {
-            void window.api.remoteIm.deliverIncomingImage(message)
+            if (!cancelled) void window.api.remoteIm.deliverIncomingImage(message, runtimeIdentity)
           },
           onIncomingFile: (message) => {
-            void window.api.remoteIm.deliverIncomingFile(message)
+            if (!cancelled) void window.api.remoteIm.deliverIncomingFile(message, runtimeIdentity)
           },
-          onFriendListUpdated: (userIds) => {
-            void syncRemoteImContactUserIds({
-              projectId,
-              userIds,
-              syncContacts: window.api.remoteIm.syncContacts,
-              onContactsSynced: onContactsSyncedRef.current
-            }).catch((err) => {
-              void window.api.remoteIm.writeRuntimeLog({
-                projectId,
-                sdkAppId: props.config.sdkAppId,
-                desktopUserId: props.config.desktopUserId,
-                event: 'friend-list:update-sync-failed',
-                detail: { error: err instanceof Error ? err.message : String(err) }
-              })
+          onFriendListUpdated: () => {
+            if (cancelled) return
+            const runtime = ownedRuntime
+            // An update can theoretically arrive while connectTencentImClient
+            // is still returning. The unconditional initial snapshot below
+            // covers that window; every later update refreshes the authoritative
+            // SDK snapshot, including a successful empty friend list.
+            if (!runtime) return
+            void syncFriendSnapshot().catch((error) => {
+              reportFriendSyncFailure(projectId, error)
             })
           },
           onRuntimeLog: (entry) => {
@@ -217,27 +299,20 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
         }
         ownedRuntime = runtime
         runtimeSlotRef.current.setCurrent(runtime)
-        await syncRemoteImContactsFromRuntime({
-          projectId,
-          runtime,
-          syncContacts: window.api.remoteIm.syncContacts,
-          onContactsSynced: onContactsSyncedRef.current
-        }).catch((err) => {
-          void window.api.remoteIm.writeRuntimeLog({
-            projectId,
-            sdkAppId: props.config.sdkAppId,
-            desktopUserId: props.config.desktopUserId,
-            event: 'friend-list:sync-failed',
-            detail: { error: err instanceof Error ? err.message : String(err) }
-          })
+        await syncFriendSnapshot().catch((error) => {
+          reportFriendSyncFailure(projectId, error)
         })
         // 漫游补拉：把离线期间的历史消息补进本地库（按 remoteMessageId 去重，
         // 只入库展示、不路由 AICLI）。后台进行，失败不影响连接可用性。
         void runtime
           .listRoamedTextMessages?.()
           .then((messages) => {
-            if (!messages.length) return
-            return window.api.remoteIm.backfillRoamedText({ projectId, messages })
+            if (cancelled || !messages.length) return
+            return window.api.remoteIm.backfillRoamedText({
+              projectId,
+              messages,
+              runtimeIdentity
+            })
           })
           .catch((err) => {
             void window.api.remoteIm.writeRuntimeLog({
@@ -248,17 +323,23 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
               detail: { error: err instanceof Error ? err.message : String(err) }
             })
           })
-        await window.api.remoteIm.updateSdkStatus({
+        await window.api.remoteIm.updateSdkRuntimeStatus({
           projectId,
           state: 'connected',
           detail: null
-        })
+        }, runtimeIdentity)
       } catch (err) {
-        await window.api.remoteIm.updateSdkStatus({
+        if (cancelled) return
+        const status = {
           projectId,
-          state: 'error',
+          state: 'error' as const,
           detail: err instanceof Error ? err.message : String(err)
-        })
+        }
+        if (runtimeRegistered) {
+          await window.api.remoteIm.updateSdkRuntimeStatus(status, runtimeIdentity)
+        } else {
+          await window.api.remoteIm.updateSdkStatus(status)
+        }
       }
     }
 
@@ -279,7 +360,12 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
           event: 'send:delivery-failed',
           detail: { error }
         })
-        return window.api.remoteIm.markOutgoingMessageFailed(evt.projectId, messageId, error)
+        return window.api.remoteIm.markOutgoingMessageFailed(
+          evt.projectId,
+          messageId,
+          error,
+          runtimeIdentity
+        )
       }
       void (async () => {
         try {
@@ -290,7 +376,12 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
             runtime,
             event: evt,
             markSent: (messageId, remoteMessageId) =>
-              window.api.remoteIm.markOutgoingMessageSent(evt.projectId, messageId, remoteMessageId),
+              window.api.remoteIm.markOutgoingMessageSent(
+                evt.projectId,
+                messageId,
+                remoteMessageId,
+                runtimeIdentity
+              ),
             markFailed
           })
         } catch (err) {
@@ -324,7 +415,12 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
           event: 'send:image:delivery-failed',
           detail: { error }
         })
-        return window.api.remoteIm.markOutgoingMessageFailed(evt.projectId, messageId, error)
+        return window.api.remoteIm.markOutgoingMessageFailed(
+          evt.projectId,
+          messageId,
+          error,
+          runtimeIdentity
+        )
       }
       void (async () => {
         try {
@@ -337,7 +433,12 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
             resolveFile: (event) =>
               event.fileToken ? resolveRemoteImOutgoingImageFile(event.fileToken) : null,
             markSent: (messageId, remoteMessageId) =>
-              window.api.remoteIm.markOutgoingMessageSent(evt.projectId, messageId, remoteMessageId),
+              window.api.remoteIm.markOutgoingMessageSent(
+                evt.projectId,
+                messageId,
+                remoteMessageId,
+                runtimeIdentity
+              ),
             markFailed
           })
         } catch (err) {
@@ -373,7 +474,12 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
           event: 'send:file:delivery-failed',
           detail: { error }
         })
-        return window.api.remoteIm.markOutgoingMessageFailed(evt.projectId, messageId, error)
+        return window.api.remoteIm.markOutgoingMessageFailed(
+          evt.projectId,
+          messageId,
+          error,
+          runtimeIdentity
+        )
       }
       void (async () => {
         try {
@@ -384,7 +490,12 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
             runtime,
             event: evt,
             markSent: (messageId, remoteMessageId) =>
-              window.api.remoteIm.markOutgoingMessageSent(evt.projectId, messageId, remoteMessageId),
+              window.api.remoteIm.markOutgoingMessageSent(
+                evt.projectId,
+                messageId,
+                remoteMessageId,
+                runtimeIdentity
+              ),
             markFailed
           })
         } catch (err) {

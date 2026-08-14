@@ -16,7 +16,8 @@ export const DEFAULT_REMOTE_IM_ACCOUNT_CONFIG: RemoteImAccountConfig = {
   friendUserIds: [],
   masterUserIds: [],
   slaveUserIds: [],
-  allowedUserIds: []
+  allowedUserIds: [],
+  blockedUserIds: []
 }
 
 function normalizeString(value: unknown): string {
@@ -65,12 +66,14 @@ export function normalizeRemoteImAccountConfig(value: unknown): RemoteImAccountC
     raw.userSigMode === 'secret-key' || (!raw.userSigMode && userSigSecretKey && !userSigEndpoint)
       ? 'secret-key'
       : 'endpoint'
+  const blockedUserIds = normalizeUserIds(raw.blockedUserIds)
+  const blockedUserIdSet = new Set(blockedUserIds)
   const friendUserIds = mergeUserIds(
     normalizeUserIds(raw.friendUserIds),
     normalizeUserIds(raw.masterUserIds),
     normalizeUserIds(raw.slaveUserIds),
     normalizeUserIds(raw.allowedUserIds)
-  )
+  ).filter((userId) => !blockedUserIdSet.has(userId))
 
   return {
     provider: 'tencent-im',
@@ -83,7 +86,8 @@ export function normalizeRemoteImAccountConfig(value: unknown): RemoteImAccountC
     friendUserIds,
     masterUserIds: [],
     slaveUserIds: [],
-    allowedUserIds: [...friendUserIds]
+    allowedUserIds: [...friendUserIds],
+    blockedUserIds
   }
 }
 
@@ -94,13 +98,19 @@ export function preserveRemoteImAccountContacts(
   const next = normalizeRemoteImAccountConfig(incoming)
   const previous = normalizeRemoteImAccountConfig(existing)
   if (!next.desktopUserId || next.desktopUserId !== previous.desktopUserId) return next
-  if (hasAccountContacts(next) || !hasAccountContacts(previous)) return next
+  const blockedUserIds = Array.isArray(incoming.blockedUserIds)
+    ? next.blockedUserIds
+    : previous.blockedUserIds
+  if (hasAccountContacts(next) || !hasAccountContacts(previous)) {
+    return normalizeRemoteImAccountConfig({ ...next, blockedUserIds })
+  }
   return normalizeRemoteImAccountConfig({
     ...next,
     friendUserIds: previous.friendUserIds,
     masterUserIds: previous.masterUserIds,
     slaveUserIds: previous.slaveUserIds,
-    allowedUserIds: previous.allowedUserIds
+    allowedUserIds: previous.allowedUserIds,
+    blockedUserIds
   })
 }
 
@@ -108,14 +118,37 @@ export function syncRemoteImAccountContactsFromSdk(
   account: RemoteImAccountConfig,
   sdkFriendUserIds: string[]
 ): RemoteImAccountConfig {
-  const friendUserIds = normalizeUserIds(sdkFriendUserIds)
-  if (friendUserIds.length === 0) return normalizeRemoteImAccountConfig(account)
+  const previous = normalizeRemoteImAccountConfig(account)
+  const blockedUserIds = previous.blockedUserIds ?? []
+  const blockedUserIdSet = new Set(blockedUserIds)
+  const friendUserIds = normalizeUserIds(sdkFriendUserIds).filter(
+    (userId) => !blockedUserIdSet.has(userId)
+  )
   return normalizeRemoteImAccountConfig({
-    ...account,
+    ...previous,
     friendUserIds,
     masterUserIds: [],
     slaveUserIds: [],
-    allowedUserIds: friendUserIds
+    allowedUserIds: friendUserIds,
+    blockedUserIds
+  })
+}
+
+export function removeRemoteImAccountContact(
+  account: RemoteImAccountConfig,
+  rawUserId: string
+): RemoteImAccountConfig {
+  const userId = rawUserId.trim()
+  if (!userId) return normalizeRemoteImAccountConfig(account)
+  const previous = normalizeRemoteImAccountConfig(account)
+  const removeUserId = (userIds: string[]) => userIds.filter((item) => item !== userId)
+  return normalizeRemoteImAccountConfig({
+    ...previous,
+    friendUserIds: removeUserId(previous.friendUserIds),
+    masterUserIds: removeUserId(previous.masterUserIds),
+    slaveUserIds: removeUserId(previous.slaveUserIds),
+    allowedUserIds: removeUserId(previous.allowedUserIds),
+    blockedUserIds: Array.from(new Set([...(previous.blockedUserIds ?? []), userId]))
   })
 }
 
@@ -153,6 +186,21 @@ export function hasRemoteImAccountConnectionChanged(
     previousAccount.userSigEndpoint !== nextAccount.userSigEndpoint ||
     previousAccount.userSigSecretKey !== nextAccount.userSigSecretKey
   )
+}
+
+/**
+ * Return identities that lose trusted-friend authority after an account
+ * contact update. Account normalization folds all legacy role lists into the
+ * canonical friend list, so comparing that list covers every inbound route
+ * permission used by the current product.
+ */
+export function removedRemoteImAccountContactUserIds(
+  previous: RemoteImAccountConfig,
+  next: RemoteImAccountConfig
+): string[] {
+  const previousUserIds = normalizeRemoteImAccountConfig(previous).friendUserIds
+  const nextUserIds = new Set(normalizeRemoteImAccountConfig(next).friendUserIds)
+  return previousUserIds.filter((userId) => !nextUserIds.has(userId))
 }
 
 export async function readRemoteImAccountConfig(

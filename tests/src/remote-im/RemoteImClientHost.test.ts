@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { RemoteImConfig } from '../../../electron/preload.js'
 import {
+  createRemoteImFriendSnapshotSynchronizer,
   createRemoteImLifecycleQueue,
   getRemoteImConnectionKey,
   scheduleRemoteImConnect,
@@ -26,6 +27,30 @@ const config: RemoteImConfig = {
 }
 
 describe('RemoteImClientHost', () => {
+  it('reruns one authoritative friend snapshot after an in-flight refresh becomes dirty', async () => {
+    let finishFirst: (() => void) | undefined
+    let callCount = 0
+    const refresh = vi.fn(async () => {
+      callCount += 1
+      if (callCount === 1) {
+        await new Promise<void>((resolve) => {
+          finishFirst = resolve
+        })
+      }
+    })
+    const sync = createRemoteImFriendSnapshotSynchronizer(refresh)
+
+    const first = sync()
+    await vi.waitFor(() => expect(finishFirst).toBeTypeOf('function'))
+    const second = sync()
+    const third = sync()
+    expect(refresh).toHaveBeenCalledTimes(1)
+    finishFirst?.()
+    await Promise.all([first, second, third])
+
+    expect(refresh).toHaveBeenCalledTimes(2)
+  })
+
   it('does not connect on startup before the user manually logs in', () => {
     expect(
       shouldConnectRemoteImClient({
@@ -211,6 +236,11 @@ describe('RemoteImClientHost', () => {
 
     await syncRemoteImContactsFromRuntime({
       projectId: 'project-1',
+      runtimeIdentity: {
+        connectionId: 'runtime-1',
+        desktopUserId: config.desktopUserId,
+        sdkAppId: config.sdkAppId
+      },
       runtime: {
         listFriendUserIds: async () => [' whq-iphone ', 'whq-iphone']
       },
@@ -218,10 +248,83 @@ describe('RemoteImClientHost', () => {
       onContactsSynced
     })
 
-    expect(syncContacts).toHaveBeenCalledWith('project-1', ['whq-iphone'])
+    expect(syncContacts).toHaveBeenCalledWith('project-1', ['whq-iphone'], {
+      connectionId: 'runtime-1',
+      desktopUserId: config.desktopUserId,
+      sdkAppId: config.sdkAppId
+    })
     expect(onContactsSynced).toHaveBeenCalledWith({
       config: nextConfig,
       loginState: nextLoginState
     })
+  })
+
+  it('forwards a successful empty runtime friend snapshot to clear account authority', async () => {
+    const syncContacts = vi.fn(async () => ({
+      ok: true as const,
+      value: { ...config, friendUserIds: [], allowedUserIds: [] },
+      loginState: {
+        profileId: 'mac-quarkpc',
+        account: {
+          provider: config.provider,
+          sdkAppId: config.sdkAppId,
+          desktopUserId: config.desktopUserId,
+          desktopRole: config.desktopRole,
+          userSigMode: config.userSigMode,
+          userSigEndpoint: config.userSigEndpoint,
+          userSigSecretKey: config.userSigSecretKey,
+          friendUserIds: [],
+          masterUserIds: [],
+          slaveUserIds: [],
+          allowedUserIds: []
+        }
+      }
+    }))
+
+    await syncRemoteImContactsFromRuntime({
+      projectId: 'project-1',
+      runtimeIdentity: {
+        connectionId: 'runtime-empty',
+        desktopUserId: config.desktopUserId,
+        sdkAppId: config.sdkAppId
+      },
+      runtime: { listFriendUserIds: async () => [] },
+      syncContacts
+    })
+
+    expect(syncContacts).toHaveBeenCalledWith('project-1', [], {
+      connectionId: 'runtime-empty',
+      desktopUserId: config.desktopUserId,
+      sdkAppId: config.sdkAppId
+    })
+  })
+
+  it('drops a friend snapshot when its runtime becomes stale while the SDK call is pending', async () => {
+    let finishSnapshot: ((userIds: string[]) => void) | undefined
+    let current = true
+    const syncContacts = vi.fn()
+    const syncing = syncRemoteImContactsFromRuntime({
+      projectId: 'project-1',
+      runtimeIdentity: {
+        connectionId: 'runtime-stale',
+        desktopUserId: config.desktopUserId,
+        sdkAppId: config.sdkAppId
+      },
+      runtime: {
+        listFriendUserIds: () =>
+          new Promise((resolve) => {
+            finishSnapshot = resolve
+          })
+      },
+      syncContacts,
+      isCurrent: () => current
+    })
+
+    await vi.waitFor(() => expect(finishSnapshot).toBeTypeOf('function'))
+    current = false
+    finishSnapshot?.(['old-friend'])
+    await syncing
+
+    expect(syncContacts).not.toHaveBeenCalled()
   })
 })

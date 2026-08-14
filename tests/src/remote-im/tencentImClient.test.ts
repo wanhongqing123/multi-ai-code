@@ -575,7 +575,12 @@ describe('tencent IM client helpers', () => {
 
     expect(runtime.listFriendUserIds).toBeTypeOf('function')
     await expect(runtime.listFriendUserIds!()).resolves.toEqual(['whq-iphone', 'whq-android'])
-    expect(sdkMock.chat.getFriendList).toHaveBeenCalledOnce()
+    sdkMock.chat.getFriendList.mockResolvedValueOnce({ data: { friendList: [] } } as any)
+    await expect(runtime.listFriendUserIds!()).resolves.toEqual([])
+    sdkMock.chat.getFriendList.mockResolvedValueOnce({
+      data: { friendList: [{ displayName: 'missing user id' }] }
+    } as any)
+    await expect(runtime.listFriendUserIds!()).rejects.toThrow('malformed friend-list snapshot')
   })
 
   it('notifies when Tencent IM SDK pushes a friend list update', async () => {
@@ -618,6 +623,9 @@ describe('tencent IM client helpers', () => {
     })
 
     expect(onFriendListUpdated).toHaveBeenCalledWith(['whq-iphone', 'whq-android'])
+
+    sdkMock.handlers.get('friendListUpdated')?.({ data: [] })
+    expect(onFriendListUpdated).toHaveBeenLastCalledWith([])
   })
 
   it('sends image files through Tencent image messages', async () => {

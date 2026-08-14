@@ -410,6 +410,65 @@ final class MasterChatStateTests: XCTestCase {
         XCTAssertEqual(state.messageCount(with: "mac-quark-pc"), 3)
     }
 
+    func testMergesPagedMessagesWithoutDuplicatingConversationSummary() {
+        let summary = RemoteIMMessage(
+            id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,
+            remoteID: "remote-summary",
+            fromUserID: "mac-quark-pc",
+            toUserID: "ios-master",
+            text: "最新消息",
+            direction: .incoming,
+            status: .received,
+            createdAt: Date(timeIntervalSince1970: 300)
+        )
+        let earlier = RemoteIMMessage(
+            id: UUID(uuidString: "22222222-2222-2222-2222-222222222222")!,
+            remoteID: "remote-earlier-page",
+            fromUserID: "ios-master",
+            toUserID: "mac-quark-pc",
+            text: "更早消息",
+            direction: .outgoing,
+            status: .sent,
+            createdAt: Date(timeIntervalSince1970: 100)
+        )
+        var state = MasterChatState(
+            ownerUserID: "ios-master",
+            contacts: [],
+            messages: [summary]
+        )
+
+        state.mergeMessages([earlier, summary])
+
+        XCTAssertEqual(state.messages(with: "mac-quark-pc"), [earlier, summary])
+        XCTAssertEqual(state.messages.count, 2)
+        XCTAssertEqual(state.contacts.map(\.userID), ["mac-quark-pc"])
+    }
+
+    func testHistoryMergeDoesNotRegressNewerInMemoryDeliveryState() throws {
+        let messageID = UUID(uuidString: "33333333-3333-3333-3333-333333333333")!
+        let stalePending = RemoteIMMessage(
+            id: messageID,
+            remoteID: "sdk-message",
+            fromUserID: "ios-master",
+            toUserID: "mac-quark-pc",
+            text: "待发送",
+            direction: .outgoing,
+            status: .pending,
+            createdAt: Date(timeIntervalSince1970: 200)
+        )
+        var currentSent = stalePending
+        currentSent.status = .sent
+        var state = MasterChatState(
+            ownerUserID: "ios-master",
+            contacts: [],
+            messages: [currentSent]
+        )
+
+        state.mergeMessages([stalePending])
+
+        XCTAssertEqual(state.messages(with: "mac-quark-pc"), [currentSent])
+    }
+
     func testConversationIndexRemainsConsistentAfterDeliveryUpdatesAndRemoval() throws {
         var state = MasterChatState(ownerUserID: "ios-master")
         try state.upsertFriend(userID: "mac-quark-pc")

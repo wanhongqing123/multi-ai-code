@@ -3,6 +3,13 @@ import MaiChatCore
 
 @MainActor
 final class RemoteIMAppState: ObservableObject {
+    private struct ConversationHistoryState {
+        var hasLoadedInitialPage = false
+        var isLoading = false
+        var hasEarlierMessages = false
+        var oldestLoadedCursor: LocalChatHistoryCursor?
+    }
+
     enum ConnectionState: String {
         case disconnected = "未连接"
         case connecting = "连接中"
@@ -37,12 +44,19 @@ final class RemoteIMAppState: ObservableObject {
 
     private let settingsStore: LocalSettingsStore
     private let secretStore: KeychainSecretStore
-    private let historyStore: LocalChatHistoryStore
+    private let historyPersistence: LocalChatHistoryPersistence
     private let client: RemoteIMClient
     private let autoConnectOnLaunch: Bool
     private var didHandleLaunchAutoConnect = false
     private var visibleConversationUserID: String?
-    private var visibleMessageLimitByUserID: [String: Int] = [:]
+    private var conversationHistoryStateByUserID: [String: ConversationHistoryState] = [:]
+    private var conversationHistoryLoadGenerationByUserID: [String: UInt64] = [:]
+    private var historyAccountGeneration: UInt64 = 0
+    private var accountRebuildRequestGeneration: UInt64 = 0
+    private var chatHistorySDKAppID: Int?
+    private var pendingHistoryMutations: [LocalChatHistoryMutation] = []
+    private var historySaveTask: Task<Void, Never>?
+    private var pendingIncomingRemoteIDs = Set<String>()
     private let messagePageSize = 50
 
     init(
@@ -53,7 +67,6 @@ final class RemoteIMAppState: ObservableObject {
     ) {
         self.settingsStore = settingsStore
         self.secretStore = secretStore
-        self.historyStore = historyStore
         self.client = client
         self.remoteDesktop = RemoteDesktopSession(client: client)
 
@@ -67,16 +80,15 @@ final class RemoteIMAppState: ObservableObject {
         self.sdkAppIDText = settings.sdkAppID.map(String.init) ?? ""
         self.masterUserID = settings.masterUserID
         self.secretKey = loadedSecretKey
+        self.chatHistorySDKAppID = settings.sdkAppID
 
         let loadedState = MasterChatState(
             ownerUserID: settings.masterUserID,
             contacts: Self.contacts(from: settings),
-            messages: historyStore.load(
-                sdkAppID: settings.sdkAppID,
-                ownerUserID: settings.masterUserID
-            )
+            messages: []
         )
         self.chatState = loadedState
+        self.historyPersistence = historyStore.makePersistence()
         self.unreadCountByUserID = settings.unreadCountByUserID.filter { userID, count in
             count > 0 && loadedState.contacts.contains(where: { $0.userID == userID })
         }
@@ -94,28 +106,31 @@ final class RemoteIMAppState: ObservableObject {
         )
         self.client.onIncomingText = { [weak self] event in
             Task { @MainActor in
-                self?.receive(event)
+                await self?.receive(event)
             }
         }
         self.client.onIncomingVoice = { [weak self] event in
             Task { @MainActor in
-                self?.receive(event)
+                await self?.receive(event)
             }
         }
         self.client.onIncomingImage = { [weak self] event in
             Task { @MainActor in
-                self?.receive(event)
+                await self?.receive(event)
             }
         }
         self.client.onIncomingFile = { [weak self] event in
             Task { @MainActor in
-                self?.receive(event)
+                await self?.receive(event)
             }
         }
         self.client.onPresenceStatusChanged = { [weak self] updates in
             Task { @MainActor in
                 self?.applyPresenceStatusUpdates(updates)
             }
+        }
+        Task { [weak self] in
+            await self?.loadConversationSummariesForCurrentAccount()
         }
     }
 
@@ -176,13 +191,15 @@ final class RemoteIMAppState: ObservableObject {
         RemoteIMLoginCredentialPolicy.isComplete(userID: userID)
     }
 
-    func saveSettings() {
+    @discardableResult
+    func saveSettings() async -> Bool {
         do {
             applyFixedCredential()
             try secretStore.saveSecretKey(secretKey)
+            guard await rebuildChatStateForCurrentAccount() else { return false }
             settingsStore.save(currentStoredSettings())
-            rebuildChatStateForCurrentMaster()
             errorMessage = nil
+            return true
         } catch {
             errorMessage = error.localizedDescription
             let errorValue = error as NSError
@@ -194,6 +211,7 @@ final class RemoteIMAppState: ObservableObject {
                     "error_code": String(errorValue.code),
                 ]
             )
+            return false
         }
     }
 
@@ -209,7 +227,7 @@ final class RemoteIMAppState: ObservableObject {
     }
 
     func connect() async {
-        saveSettings()
+        guard await saveSettings() else { return }
         guard let sdkAppID = Int(sdkAppIDText.trimmingCharacters(in: .whitespacesAndNewlines)),
               sdkAppID > 0
         else {
@@ -334,22 +352,30 @@ final class RemoteIMAppState: ObservableObject {
             return false
         }
         chatState.removeContactAndMessages(userID: cleanUserID)
+        invalidateConversationHistoryLoad(for: cleanUserID)
         if newContactUserID.trimmingCharacters(in: .whitespacesAndNewlines) == cleanUserID {
             newContactUserID = ""
         }
-        persistCurrentHistory()
+        enqueueHistoryMutation(.removeConversation(
+            peerUserID: cleanUserID,
+            sdkAppID: chatHistorySDKAppID,
+            ownerUserID: chatState.ownerUserID
+        ))
         presenceStatusByUserID = RemoteIMPresenceStatusPolicy.merged(
             current: presenceStatusByUserID,
             updates: [:],
             contactUserIDs: chatState.contacts.map(\.userID)
         )
         unreadCountByUserID[cleanUserID] = nil
-        visibleMessageLimitByUserID[cleanUserID] = nil
         if visibleConversationUserID == cleanUserID {
             visibleConversationUserID = nil
         }
         userProfileByUserID[cleanUserID] = nil
         settingsStore.save(currentStoredSettings())
+        guard await flushHistoryPersistence() else {
+            errorMessage = "删除好友记录已生效，但本地消息清理尚未保存，请稍后重试"
+            return false
+        }
         Task {
             await refreshPresenceForCurrentContacts()
         }
@@ -363,10 +389,24 @@ final class RemoteIMAppState: ObservableObject {
         do {
             try await client.clearHistory(userID: cleanUserID)
             chatState.removeMessages(with: cleanUserID)
+            invalidateConversationHistoryLoad(for: cleanUserID)
             unreadCountByUserID[cleanUserID] = nil
-            visibleMessageLimitByUserID[cleanUserID] = messagePageSize
-            persistCurrentHistory()
+            conversationHistoryStateByUserID[cleanUserID] = ConversationHistoryState(
+                hasLoadedInitialPage: true,
+                isLoading: false,
+                hasEarlierMessages: false,
+                oldestLoadedCursor: nil
+            )
+            enqueueHistoryMutation(.removeConversation(
+                peerUserID: cleanUserID,
+                sdkAppID: chatHistorySDKAppID,
+                ownerUserID: chatState.ownerUserID
+            ))
             settingsStore.save(currentStoredSettings())
+            guard await flushHistoryPersistence() else {
+                errorMessage = "聊天记录已清空，但本地清理尚未保存，请稍后重试"
+                return false
+            }
             errorMessage = nil
             return true
         } catch {
@@ -403,20 +443,129 @@ final class RemoteIMAppState: ObservableObject {
     }
 
     func visibleMessages(with userID: String) -> [RemoteIMMessage] {
-        let messages = chatState.messages(with: userID)
-        let limit = visibleMessageLimitByUserID[userID] ?? messagePageSize
-        return Array(messages.suffix(limit))
+        chatState.messages(with: userID)
     }
 
     func hasEarlierMessages(with userID: String) -> Bool {
-        let limit = visibleMessageLimitByUserID[userID] ?? messagePageSize
-        return chatState.messageCount(with: userID) > limit
+        conversationHistoryStateByUserID[userID]?.hasEarlierMessages ?? false
     }
 
-    func loadEarlierMessages(with userID: String) {
-        let currentLimit = visibleMessageLimitByUserID[userID] ?? messagePageSize
-        visibleMessageLimitByUserID[userID] = currentLimit + messagePageSize
+    func loadInitialMessages(with userID: String) async {
+        let cleanUserID = userID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanUserID.isEmpty else { return }
+        let account = LocalChatHistoryAccount(
+            sdkAppID: chatHistorySDKAppID,
+            ownerUserID: chatState.ownerUserID
+        )
+        let accountGeneration = historyAccountGeneration
+        let loadGeneration = conversationHistoryLoadGeneration(for: cleanUserID)
+        guard chatState.contacts.contains(where: { $0.userID == cleanUserID }) else { return }
+        let current = conversationHistoryStateByUserID[cleanUserID] ?? ConversationHistoryState()
+        guard !current.hasLoadedInitialPage, !current.isLoading else { return }
+        conversationHistoryStateByUserID[cleanUserID] = ConversationHistoryState(
+            hasLoadedInitialPage: false,
+            isLoading: true,
+            hasEarlierMessages: current.hasEarlierMessages,
+            oldestLoadedCursor: current.oldestLoadedCursor
+        )
         objectWillChange.send()
+
+        do {
+            let page = try await historyPersistence.loadConversationPage(
+                sdkAppID: account.sdkAppID,
+                ownerUserID: account.ownerUserID,
+                peerUserID: cleanUserID,
+                before: nil,
+                limit: messagePageSize
+            )
+            guard isCurrentHistoryLoad(
+                account: account,
+                accountGeneration: accountGeneration,
+                peerUserID: cleanUserID,
+                loadGeneration: loadGeneration
+            )
+            else { return }
+            chatState.mergeMessages(page.messages)
+            conversationHistoryStateByUserID[cleanUserID] = ConversationHistoryState(
+                hasLoadedInitialPage: true,
+                isLoading: false,
+                hasEarlierMessages: page.hasEarlierMessages,
+                oldestLoadedCursor: page.messages.first.map {
+                    LocalChatHistoryCursor(createdAt: $0.createdAt, messageID: $0.id)
+                }
+            )
+            objectWillChange.send()
+        } catch {
+            guard isCurrentHistoryLoad(
+                account: account,
+                accountGeneration: accountGeneration,
+                peerUserID: cleanUserID,
+                loadGeneration: loadGeneration
+            ) else { return }
+            conversationHistoryStateByUserID[cleanUserID] = current
+            recordHistoryLoadFailure(error, operation: "initial-page")
+        }
+    }
+
+    func loadEarlierMessages(with userID: String) async {
+        let cleanUserID = userID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanUserID.isEmpty else { return }
+        let account = LocalChatHistoryAccount(
+            sdkAppID: chatHistorySDKAppID,
+            ownerUserID: chatState.ownerUserID
+        )
+        let accountGeneration = historyAccountGeneration
+        let loadGeneration = conversationHistoryLoadGeneration(for: cleanUserID)
+        if conversationHistoryStateByUserID[cleanUserID]?.hasLoadedInitialPage != true {
+            await loadInitialMessages(with: cleanUserID)
+            return
+        }
+        guard var state = conversationHistoryStateByUserID[cleanUserID],
+              state.hasEarlierMessages,
+              !state.isLoading,
+              let oldestLoadedCursor = state.oldestLoadedCursor
+        else { return }
+        state.isLoading = true
+        conversationHistoryStateByUserID[cleanUserID] = state
+        objectWillChange.send()
+
+        do {
+            let page = try await historyPersistence.loadConversationPage(
+                sdkAppID: account.sdkAppID,
+                ownerUserID: account.ownerUserID,
+                peerUserID: cleanUserID,
+                before: oldestLoadedCursor,
+                limit: messagePageSize
+            )
+            guard isCurrentHistoryLoad(
+                account: account,
+                accountGeneration: accountGeneration,
+                peerUserID: cleanUserID,
+                loadGeneration: loadGeneration
+            )
+            else { return }
+            chatState.mergeMessages(page.messages)
+            state.isLoading = false
+            state.hasEarlierMessages = page.hasEarlierMessages
+            if let oldestMessage = page.messages.first {
+                state.oldestLoadedCursor = LocalChatHistoryCursor(
+                    createdAt: oldestMessage.createdAt,
+                    messageID: oldestMessage.id
+                )
+            }
+            conversationHistoryStateByUserID[cleanUserID] = state
+            objectWillChange.send()
+        } catch {
+            guard isCurrentHistoryLoad(
+                account: account,
+                accountGeneration: accountGeneration,
+                peerUserID: cleanUserID,
+                loadGeneration: loadGeneration
+            ) else { return }
+            state.isLoading = false
+            conversationHistoryStateByUserID[cleanUserID] = state
+            recordHistoryLoadFailure(error, operation: "earlier-page")
+        }
     }
 
     func sendDraft() async {
@@ -428,19 +577,19 @@ final class RemoteIMAppState: ObservableObject {
             queuedMessageID = message.id
             let textToSend = message.text
             draftText = ""
-            persistCurrentHistory()
+            enqueueHistoryUpsert(message)
             let receipt = try await client.sendText(to: message.toUserID, text: textToSend)
             try chatState.updateMessageDelivery(
                 id: message.id,
                 remoteID: receipt.remoteID,
                 createdAt: receipt.createdAt
             )
-            persistCurrentHistory()
+            enqueueCurrentMessage(id: message.id)
             errorMessage = nil
         } catch {
             if let queuedMessageID {
                 try? chatState.updateMessageStatus(id: queuedMessageID, status: .failed)
-                persistCurrentHistory()
+                enqueueCurrentMessage(id: queuedMessageID)
             }
             errorMessage = error.localizedDescription
         }
@@ -456,19 +605,19 @@ final class RemoteIMAppState: ObservableObject {
                 durationSeconds: recording.durationSeconds
             )
             queuedMessageID = message.id
-            persistCurrentHistory()
+            enqueueHistoryUpsert(message)
             let receipt = try await client.sendVoice(to: message.toUserID, recording: recording)
             try chatState.updateMessageDelivery(
                 id: message.id,
                 remoteID: receipt.remoteID,
                 createdAt: receipt.createdAt
             )
-            persistCurrentHistory()
+            enqueueCurrentMessage(id: message.id)
             errorMessage = nil
         } catch {
             if let queuedMessageID {
                 try? chatState.updateMessageStatus(id: queuedMessageID, status: .failed)
-                persistCurrentHistory()
+                enqueueCurrentMessage(id: queuedMessageID)
             }
             errorMessage = error.localizedDescription
         }
@@ -486,19 +635,19 @@ final class RemoteIMAppState: ObservableObject {
                 sizeBytes: image.sizeBytes
             )
             queuedMessageID = message.id
-            persistCurrentHistory()
+            enqueueHistoryUpsert(message)
             let receipt = try await client.sendImage(to: message.toUserID, image: image)
             try chatState.updateMessageDelivery(
                 id: message.id,
                 remoteID: receipt.remoteID,
                 createdAt: receipt.createdAt
             )
-            persistCurrentHistory()
+            enqueueCurrentMessage(id: message.id)
             errorMessage = nil
         } catch {
             if let queuedMessageID {
                 try? chatState.updateMessageStatus(id: queuedMessageID, status: .failed)
-                persistCurrentHistory()
+                enqueueCurrentMessage(id: queuedMessageID)
             }
             errorMessage = error.localizedDescription
         }
@@ -516,19 +665,19 @@ final class RemoteIMAppState: ObservableObject {
                 sizeBytes: file.sizeBytes
             )
             queuedMessageID = message.id
-            persistCurrentHistory()
+            enqueueHistoryUpsert(message)
             let receipt = try await client.sendFile(to: message.toUserID, file: file)
             try chatState.updateMessageDelivery(
                 id: message.id,
                 remoteID: receipt.remoteID,
                 createdAt: receipt.createdAt
             )
-            persistCurrentHistory()
+            enqueueCurrentMessage(id: message.id)
             errorMessage = nil
         } catch {
             if let queuedMessageID {
                 try? chatState.updateMessageStatus(id: queuedMessageID, status: .failed)
-                persistCurrentHistory()
+                enqueueCurrentMessage(id: queuedMessageID)
             }
             errorMessage = error.localizedDescription
         }
@@ -578,12 +727,13 @@ final class RemoteIMAppState: ObservableObject {
         await remoteDesktop.stop(cause: cause)
     }
 
-    private func receive(_ event: IncomingRemoteIMText) {
+    private func receive(_ event: IncomingRemoteIMText) async {
         if remoteDesktop.handleIncomingText(from: event.fromUserID, text: event.text) {
             return
         }
+        guard await shouldAcceptIncomingMessage(remoteID: event.remoteID) else { return }
         let previousCount = chatState.messages.count
-        _ = chatState.receiveText(
+        let message = chatState.receiveText(
             event.text,
             fromUserID: event.fromUserID,
             remoteID: event.remoteID,
@@ -599,13 +749,16 @@ final class RemoteIMAppState: ObservableObject {
         )
         updateUnreadAfterReceiving(from: event.fromUserID, wasInserted: wasInserted)
         refreshProfileIfNeeded(userID: event.fromUserID)
-        persistCurrentHistory()
-        settingsStore.save(currentStoredSettings())
+        if wasInserted {
+            enqueueHistoryUpsert(message)
+            settingsStore.save(currentStoredSettings())
+        }
     }
 
-    private func receive(_ event: IncomingRemoteIMVoice) {
+    private func receive(_ event: IncomingRemoteIMVoice) async {
+        guard await shouldAcceptIncomingMessage(remoteID: event.remoteID) else { return }
         let previousCount = chatState.messages.count
-        _ = chatState.receiveVoice(
+        let message = chatState.receiveVoice(
             filePath: event.fileURL.path,
             durationSeconds: event.durationSeconds,
             fromUserID: event.fromUserID,
@@ -622,13 +775,16 @@ final class RemoteIMAppState: ObservableObject {
         )
         updateUnreadAfterReceiving(from: event.fromUserID, wasInserted: wasInserted)
         refreshProfileIfNeeded(userID: event.fromUserID)
-        persistCurrentHistory()
-        settingsStore.save(currentStoredSettings())
+        if wasInserted {
+            enqueueHistoryUpsert(message)
+            settingsStore.save(currentStoredSettings())
+        }
     }
 
-    private func receive(_ event: IncomingRemoteIMImage) {
+    private func receive(_ event: IncomingRemoteIMImage) async {
+        guard await shouldAcceptIncomingMessage(remoteID: event.remoteID) else { return }
         let previousCount = chatState.messages.count
-        _ = chatState.receiveImage(
+        let message = chatState.receiveImage(
             filePath: event.fileURL.path,
             fromUserID: event.fromUserID,
             remoteID: event.remoteID,
@@ -651,13 +807,16 @@ final class RemoteIMAppState: ObservableObject {
         )
         updateUnreadAfterReceiving(from: event.fromUserID, wasInserted: wasInserted)
         refreshProfileIfNeeded(userID: event.fromUserID)
-        persistCurrentHistory()
-        settingsStore.save(currentStoredSettings())
+        if wasInserted {
+            enqueueHistoryUpsert(message)
+            settingsStore.save(currentStoredSettings())
+        }
     }
 
-    private func receive(_ event: IncomingRemoteIMFile) {
+    private func receive(_ event: IncomingRemoteIMFile) async {
+        guard await shouldAcceptIncomingMessage(remoteID: event.remoteID) else { return }
         let previousCount = chatState.messages.count
-        _ = chatState.receiveFile(
+        let message = chatState.receiveFile(
             filePath: event.fileURL.path,
             fromUserID: event.fromUserID,
             fileName: event.fileName,
@@ -679,8 +838,10 @@ final class RemoteIMAppState: ObservableObject {
         )
         updateUnreadAfterReceiving(from: event.fromUserID, wasInserted: wasInserted)
         refreshProfileIfNeeded(userID: event.fromUserID)
-        persistCurrentHistory()
-        settingsStore.save(currentStoredSettings())
+        if wasInserted {
+            enqueueHistoryUpsert(message)
+            settingsStore.save(currentStoredSettings())
+        }
     }
 
     private func updateUnreadAfterReceiving(from userID: String, wasInserted: Bool) {
@@ -704,46 +865,278 @@ final class RemoteIMAppState: ObservableObject {
         )
     }
 
-    private func rebuildChatStateForCurrentMaster() {
+    private func rebuildChatStateForCurrentAccount() async -> Bool {
+        accountRebuildRequestGeneration &+= 1
+        let requestGeneration = accountRebuildRequestGeneration
         let cleanMasterUserID = masterUserID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard chatState.ownerUserID != cleanMasterUserID else { return }
-        persistCurrentHistory()
+        let nextSDKAppID = currentSDKAppID()
+        guard chatState.ownerUserID != cleanMasterUserID || chatHistorySDKAppID != nextSDKAppID else {
+            return true
+        }
+        guard await flushHistoryPersistence() else {
+            guard isCurrentAccountRebuildRequest(
+                generation: requestGeneration,
+                sdkAppID: nextSDKAppID,
+                ownerUserID: cleanMasterUserID
+            ) else { return false }
+            errorMessage = "保存当前账号消息失败，请稍后重试"
+            logIM(
+                level: .error,
+                event: "account-switch-blocked",
+                fields: ["reason": "history-flush-failed"]
+            )
+            return false
+        }
+        guard isCurrentAccountRebuildRequest(
+            generation: requestGeneration,
+            sdkAppID: nextSDKAppID,
+            ownerUserID: cleanMasterUserID
+        ) else { return false }
+        let summaries: [RemoteIMMessage]
+        do {
+            summaries = try await historyPersistence.loadConversationSummaries(
+                sdkAppID: nextSDKAppID,
+                ownerUserID: cleanMasterUserID,
+                peerUserIDs: chatState.contacts.map(\.userID)
+            )
+        } catch {
+            guard isCurrentAccountRebuildRequest(
+                generation: requestGeneration,
+                sdkAppID: nextSDKAppID,
+                ownerUserID: cleanMasterUserID
+            ) else { return false }
+            recordHistoryLoadFailure(error, operation: "account-summaries")
+            return false
+        }
+        guard isCurrentAccountRebuildRequest(
+            generation: requestGeneration,
+            sdkAppID: nextSDKAppID,
+            ownerUserID: cleanMasterUserID
+        ) else { return false }
+
+        let currentPeerUserIDs = Set(chatState.contacts.map(\.userID))
+        let currentSummaries = summaries.filter { message in
+            currentPeerUserIDs.contains(
+                historyPeerUserID(for: message, ownerUserID: cleanMasterUserID)
+            )
+        }
         presenceStatusByUserID = [:]
+        historyAccountGeneration &+= 1
+        chatHistorySDKAppID = nextSDKAppID
+        conversationHistoryStateByUserID = [:]
+        conversationHistoryLoadGenerationByUserID = [:]
+        pendingIncomingRemoteIDs = []
         let nextState = MasterChatState(
             ownerUserID: cleanMasterUserID,
             contacts: chatState.contacts,
-            messages: historyStore.load(
-                sdkAppID: currentSDKAppID(),
-                ownerUserID: cleanMasterUserID
-            ),
+            messages: currentSummaries,
             selectedPeerID: chatState.selectedPeerID
         )
         chatState = nextState
         Task {
             await refreshPresenceForCurrentContacts()
         }
+        return true
     }
 
-    private func persistCurrentHistory() {
+    private func isCurrentAccountRebuildRequest(
+        generation: UInt64,
+        sdkAppID: Int?,
+        ownerUserID: String
+    ) -> Bool {
+        accountRebuildRequestGeneration == generation &&
+            currentSDKAppID() == sdkAppID &&
+            masterUserID.trimmingCharacters(in: .whitespacesAndNewlines) == ownerUserID
+    }
+
+    private func loadConversationSummariesForCurrentAccount() async {
+        let account = LocalChatHistoryAccount(
+            sdkAppID: chatHistorySDKAppID,
+            ownerUserID: chatState.ownerUserID
+        )
+        let accountGeneration = historyAccountGeneration
+        let requestedPeerGenerations = Dictionary(uniqueKeysWithValues: chatState.contacts.map {
+            ($0.userID, conversationHistoryLoadGeneration(for: $0.userID))
+        })
+        guard !account.ownerUserID.isEmpty else { return }
         do {
-            try historyStore.save(
-                messages: chatState.messages,
-                sdkAppID: currentSDKAppID(),
-                ownerUserID: chatState.ownerUserID
+            let summaries = try await historyPersistence.loadConversationSummaries(
+                sdkAppID: account.sdkAppID,
+                ownerUserID: account.ownerUserID,
+                peerUserIDs: chatState.contacts.map(\.userID)
             )
+            guard historyAccountGeneration == accountGeneration,
+                  chatHistorySDKAppID == account.sdkAppID,
+                  chatState.ownerUserID == account.ownerUserID
+            else { return }
+            let currentPeerUserIDs = Set(chatState.contacts.map(\.userID))
+            let currentSummaries = summaries.filter { message in
+                let peerUserID = historyPeerUserID(for: message, ownerUserID: account.ownerUserID)
+                return currentPeerUserIDs.contains(peerUserID) &&
+                    requestedPeerGenerations[peerUserID] == conversationHistoryLoadGeneration(for: peerUserID)
+            }
+            chatState.mergeMessages(currentSummaries)
         } catch {
-            errorMessage = error.localizedDescription
-            let errorValue = error as NSError
-            logIM(
-                level: .error,
-                event: "history-save-failed",
-                fields: [
-                    "error_domain": errorValue.domain,
-                    "error_code": String(errorValue.code),
-                    "message_count": String(chatState.messages.count),
-                ]
-            )
+            guard historyAccountGeneration == accountGeneration,
+                  chatHistorySDKAppID == account.sdkAppID,
+                  chatState.ownerUserID == account.ownerUserID
+            else { return }
+            recordHistoryLoadFailure(error, operation: "conversation-summaries")
         }
+    }
+
+    private func enqueueHistoryUpsert(_ message: RemoteIMMessage) {
+        enqueueHistoryMutation(.upsert(
+            [message],
+            sdkAppID: chatHistorySDKAppID,
+            ownerUserID: chatState.ownerUserID
+        ))
+    }
+
+    private func conversationHistoryLoadGeneration(for userID: String) -> UInt64 {
+        conversationHistoryLoadGenerationByUserID[userID] ?? 0
+    }
+
+    private func invalidateConversationHistoryLoad(for userID: String) {
+        conversationHistoryLoadGenerationByUserID[userID] =
+            conversationHistoryLoadGeneration(for: userID) &+ 1
+        conversationHistoryStateByUserID[userID] = nil
+    }
+
+    private func isCurrentHistoryLoad(
+        account: LocalChatHistoryAccount,
+        accountGeneration: UInt64,
+        peerUserID: String,
+        loadGeneration: UInt64
+    ) -> Bool {
+        historyAccountGeneration == accountGeneration &&
+            chatHistorySDKAppID == account.sdkAppID &&
+            chatState.ownerUserID == account.ownerUserID &&
+            conversationHistoryLoadGeneration(for: peerUserID) == loadGeneration &&
+            chatState.contacts.contains(where: { $0.userID == peerUserID })
+    }
+
+    private func historyPeerUserID(
+        for message: RemoteIMMessage,
+        ownerUserID: String
+    ) -> String {
+        message.fromUserID == ownerUserID ? message.toUserID : message.fromUserID
+    }
+
+    private func enqueueCurrentMessage(id: UUID) {
+        guard let message = chatState.message(id: id) else { return }
+        enqueueHistoryUpsert(message)
+    }
+
+    private func enqueueHistoryMutation(_ mutation: LocalChatHistoryMutation) {
+        pendingHistoryMutations.append(mutation)
+        startHistorySaveTaskIfNeeded()
+    }
+
+    private func startHistorySaveTaskIfNeeded() {
+        guard !pendingHistoryMutations.isEmpty else { return }
+        guard historySaveTask == nil else { return }
+        historySaveTask = Task { [weak self] in
+            await self?.drainPendingHistoryMutations()
+        }
+    }
+
+    @discardableResult
+    func flushHistoryPersistence() async -> Bool {
+        startHistorySaveTaskIfNeeded()
+        while let task = historySaveTask {
+            await task.value
+        }
+        return pendingHistoryMutations.isEmpty
+    }
+
+    private func drainPendingHistoryMutations() async {
+        while !pendingHistoryMutations.isEmpty {
+            let mutations = pendingHistoryMutations
+            pendingHistoryMutations.removeAll(keepingCapacity: true)
+            var saveResult: LocalChatHistorySaveResult?
+            var saveError: Error?
+            for attempt in 1 ... 3 {
+                do {
+                    saveResult = try await historyPersistence.persist(mutations: mutations)
+                    saveError = nil
+                    break
+                } catch {
+                    saveError = error
+                    if attempt < 3 {
+                        try? await Task.sleep(for: .milliseconds(50 * attempt))
+                    }
+                }
+            }
+
+            if let result = saveResult {
+                if result.durationMilliseconds >= 50 {
+                    logIM(
+                        level: .warning,
+                        event: "history-save-slow",
+                        fields: [
+                            "duration_ms": String(result.durationMilliseconds),
+                            "mutation_count": String(mutations.count),
+                            "upserted_count": String(result.upsertedCount),
+                            "removed_count": String(result.removedCount),
+                        ]
+                    )
+                }
+            } else if let error = saveError {
+                pendingHistoryMutations.insert(contentsOf: mutations, at: 0)
+                errorMessage = error.localizedDescription
+                let errorValue = error as NSError
+                logIM(
+                    level: .error,
+                    event: "history-save-failed",
+                    fields: [
+                        "error_domain": errorValue.domain,
+                        "error_code": String(errorValue.code),
+                        "mutation_count": String(mutations.count),
+                    ]
+                )
+                break
+            }
+        }
+        historySaveTask = nil
+    }
+
+    private func shouldAcceptIncomingMessage(remoteID: String?) async -> Bool {
+        guard let remoteID, !remoteID.isEmpty else { return true }
+        guard pendingIncomingRemoteIDs.insert(remoteID).inserted else { return false }
+        defer { pendingIncomingRemoteIDs.remove(remoteID) }
+        let account = LocalChatHistoryAccount(
+            sdkAppID: chatHistorySDKAppID,
+            ownerUserID: chatState.ownerUserID
+        )
+        do {
+            let exists = try await historyPersistence.containsMessage(
+                remoteID: remoteID,
+                sdkAppID: account.sdkAppID,
+                ownerUserID: account.ownerUserID
+            )
+            guard chatHistorySDKAppID == account.sdkAppID,
+                  chatState.ownerUserID == account.ownerUserID
+            else { return false }
+            return !exists
+        } catch {
+            recordHistoryLoadFailure(error, operation: "remote-id-lookup")
+            return true
+        }
+    }
+
+    private func recordHistoryLoadFailure(_ error: Error, operation: String) {
+        let errorValue = error as NSError
+        errorMessage = error.localizedDescription
+        logIM(
+            level: .error,
+            event: "history-load-failed",
+            fields: [
+                "operation": operation,
+                "error_domain": errorValue.domain,
+                "error_code": String(errorValue.code),
+            ]
+        )
     }
 
     private func refreshPresenceForCurrentContacts() async {

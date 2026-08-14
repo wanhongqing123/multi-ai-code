@@ -2,6 +2,68 @@ import Foundation
 import MaiChatCore
 import SQLite3
 
+struct LocalChatHistoryAccount: Hashable, Sendable {
+    let sdkAppID: Int?
+    let ownerUserID: String
+}
+
+struct LocalChatHistorySaveResult: Sendable, Equatable {
+    let messageCount: Int
+    let upsertedCount: Int
+    let removedCount: Int
+    let durationMilliseconds: Int
+}
+
+struct LocalChatHistoryCursor: Sendable, Equatable {
+    let createdAt: Date
+    let messageID: UUID
+}
+
+struct LocalChatHistoryPage: Sendable, Equatable {
+    let messages: [RemoteIMMessage]
+    let hasEarlierMessages: Bool
+}
+
+enum LocalChatHistoryMutationOperation: Sendable {
+    case upsert([RemoteIMMessage])
+    case removeConversation(peerUserID: String)
+}
+
+struct LocalChatHistoryMutation: Sendable {
+    let account: LocalChatHistoryAccount
+    let operation: LocalChatHistoryMutationOperation
+
+    static func upsert(
+        _ messages: [RemoteIMMessage],
+        sdkAppID: Int?,
+        ownerUserID: String
+    ) -> Self {
+        Self(
+            account: LocalChatHistoryAccount(
+                sdkAppID: sdkAppID,
+                ownerUserID: ownerUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+            ),
+            operation: .upsert(messages)
+        )
+    }
+
+    static func removeConversation(
+        peerUserID: String,
+        sdkAppID: Int?,
+        ownerUserID: String
+    ) -> Self {
+        Self(
+            account: LocalChatHistoryAccount(
+                sdkAppID: sdkAppID,
+                ownerUserID: ownerUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+            ),
+            operation: .removeConversation(
+                peerUserID: peerUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        )
+    }
+}
+
 final class LocalChatHistoryStore {
     private struct StoredChatHistory: Codable {
         let schemaVersion: Int
@@ -38,76 +100,32 @@ final class LocalChatHistoryStore {
         self.baseDirectoryURL = baseDirectoryURL ?? Self.defaultBaseDirectoryURL(fileManager: fileManager)
     }
 
-    func load(sdkAppID: Int?, ownerUserID: String) -> [RemoteIMMessage] {
-        let cleanOwnerUserID = ownerUserID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleanOwnerUserID.isEmpty else { return [] }
-
-        let databaseMessages = (try? loadFromDatabase(
-            sdkAppID: sdkAppID,
-            ownerUserID: cleanOwnerUserID
-        )) ?? []
-        guard let legacyHistory = loadLegacyHistory(
-            sdkAppID: sdkAppID,
-            ownerUserID: cleanOwnerUserID
-        ) else {
-            return databaseMessages
-        }
-
-        let mergedMessages = Self.mergedMessages(
-            legacyHistory.messages,
-            databaseMessages
-        )
-        do {
-            try save(
-                messages: mergedMessages,
-                sdkAppID: sdkAppID,
-                ownerUserID: cleanOwnerUserID
-            )
-            return mergedMessages
-        } catch {
-            return databaseMessages.isEmpty ? legacyHistory.messages : databaseMessages
-        }
+    func makePersistence() -> LocalChatHistoryPersistence {
+        LocalChatHistoryPersistence(baseDirectoryURL: baseDirectoryURL)
     }
 
-    func save(
-        messages: [RemoteIMMessage],
+    /// Loads one bounded conversation window using a stable cursor.
+    func loadConversationPage(
         sdkAppID: Int?,
-        ownerUserID: String
-    ) throws {
+        ownerUserID: String,
+        peerUserID: String,
+        before cursor: LocalChatHistoryCursor?,
+        limit: Int
+    ) throws -> LocalChatHistoryPage {
         let cleanOwnerUserID = ownerUserID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleanOwnerUserID.isEmpty else { return }
-
-        try withDatabase { database in
-            try execute(database, sql: "BEGIN IMMEDIATE TRANSACTION")
-            do {
-                try deleteMessages(
-                    database,
-                    sdkAppID: sdkAppID,
-                    ownerUserID: cleanOwnerUserID
-                )
-                try insertMessages(
-                    Self.deduplicatedMessages(messages),
-                    into: database,
-                    sdkAppID: sdkAppID,
-                    ownerUserID: cleanOwnerUserID
-                )
-                try execute(database, sql: "COMMIT")
-            } catch {
-                try? execute(database, sql: "ROLLBACK")
-                throw error
-            }
+        let cleanPeerUserID = peerUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanOwnerUserID.isEmpty, !cleanPeerUserID.isEmpty, limit > 0 else {
+            return LocalChatHistoryPage(messages: [], hasEarlierMessages: false)
         }
-
-        try? fileManager.removeItem(
-            at: legacyFileURL(sdkAppID: sdkAppID, ownerUserID: cleanOwnerUserID)
+        try migrateLegacyHistoryIfNeeded(
+            sdkAppID: sdkAppID,
+            ownerUserID: cleanOwnerUserID
         )
-    }
 
-    private func loadFromDatabase(
-        sdkAppID: Int?,
-        ownerUserID: String
-    ) throws -> [RemoteIMMessage] {
-        try withDatabase { database in
+        return try withDatabase { database in
+            let cursorClause = cursor == nil
+                ? ""
+                : "AND (created_at < ? OR (created_at = ? AND id < ?))"
             let statement = try prepare(
                 database,
                 sql: """
@@ -115,60 +133,273 @@ final class LocalChatHistoryStore {
                        voice_attachment, image_attachment, file_attachment
                 FROM messages
                 WHERE sdk_app_id = ? AND owner_user_id = ?
-                ORDER BY created_at, id
+                  AND peer_user_id = ?
+                  \(cursorClause)
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
                 """
             )
             defer { sqlite3_finalize(statement) }
             try bindText(accountKey(for: sdkAppID), to: statement, at: 1, database: database)
-            try bindText(ownerUserID, to: statement, at: 2, database: database)
+            try bindText(cleanOwnerUserID, to: statement, at: 2, database: database)
+            try bindText(cleanPeerUserID, to: statement, at: 3, database: database)
 
-            var messages: [RemoteIMMessage] = []
+            var limitIndex: Int32 = 4
+            if let cursor {
+                sqlite3_bind_double(statement, 4, cursor.createdAt.timeIntervalSince1970)
+                sqlite3_bind_double(statement, 5, cursor.createdAt.timeIntervalSince1970)
+                try bindText(cursor.messageID.uuidString, to: statement, at: 6, database: database)
+                limitIndex = 7
+            }
+            sqlite3_bind_int64(statement, limitIndex, Int64(limit + 1))
+
+            var descendingMessages: [RemoteIMMessage] = []
+            descendingMessages.reserveCapacity(limit + 1)
             while true {
-                let result = sqlite3_step(statement)
-                if result == SQLITE_DONE {
-                    return messages
-                }
-                guard result == SQLITE_ROW else {
+                switch sqlite3_step(statement) {
+                case SQLITE_ROW:
+                    if let message = decodeMessage(from: statement) {
+                        descendingMessages.append(message)
+                    }
+                case SQLITE_DONE:
+                    let hasEarlierMessages = descendingMessages.count > limit
+                    let messages = Array(descendingMessages.prefix(limit).reversed())
+                    return LocalChatHistoryPage(
+                        messages: messages,
+                        hasEarlierMessages: hasEarlierMessages
+                    )
+                default:
                     throw databaseError(database)
-                }
-                if let message = decodeMessage(from: statement) {
-                    messages.append(message)
                 }
             }
         }
     }
 
-    private func deleteMessages(
-        _ database: OpaquePointer,
+    /// Returns at most one newest message per peer for the conversation list.
+    func loadConversationSummaries(
+        sdkAppID: Int?,
+        ownerUserID: String,
+        peerUserIDs: [String]
+    ) throws -> [RemoteIMMessage] {
+        let cleanOwnerUserID = ownerUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanPeerUserIDs = Array(Set(peerUserIDs.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        })).filter { !$0.isEmpty }
+        guard !cleanOwnerUserID.isEmpty else { return [] }
+        try migrateLegacyHistoryIfNeeded(
+            sdkAppID: sdkAppID,
+            ownerUserID: cleanOwnerUserID
+        )
+        guard !cleanPeerUserIDs.isEmpty else { return [] }
+
+        return try withDatabase { database in
+            let statement = try prepare(
+                database,
+                sql: """
+                SELECT id, remote_id, from_user, to_user, text, direction, status, created_at,
+                       voice_attachment, image_attachment, file_attachment
+                FROM messages
+                WHERE sdk_app_id = ? AND owner_user_id = ? AND peer_user_id = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """
+            )
+            defer { sqlite3_finalize(statement) }
+            var messages: [RemoteIMMessage] = []
+            messages.reserveCapacity(cleanPeerUserIDs.count)
+            for peerUserID in cleanPeerUserIDs {
+                sqlite3_reset(statement)
+                sqlite3_clear_bindings(statement)
+                try bindText(accountKey(for: sdkAppID), to: statement, at: 1, database: database)
+                try bindText(cleanOwnerUserID, to: statement, at: 2, database: database)
+                try bindText(peerUserID, to: statement, at: 3, database: database)
+                switch sqlite3_step(statement) {
+                case SQLITE_ROW:
+                    if let message = decodeMessage(from: statement) {
+                        messages.append(message)
+                    }
+                case SQLITE_DONE:
+                    continue
+                default:
+                    throw databaseError(database)
+                }
+            }
+            return messages.sorted {
+                if $0.createdAt != $1.createdAt { return $0.createdAt > $1.createdAt }
+                return $0.id.uuidString > $1.id.uuidString
+            }
+        }
+    }
+
+    func containsMessage(
+        remoteID: String,
         sdkAppID: Int?,
         ownerUserID: String
-    ) throws {
+    ) throws -> Bool {
+        let cleanRemoteID = remoteID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanOwnerUserID = ownerUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanRemoteID.isEmpty, !cleanOwnerUserID.isEmpty else { return false }
+        try migrateLegacyHistoryIfNeeded(
+            sdkAppID: sdkAppID,
+            ownerUserID: cleanOwnerUserID
+        )
+        return try withDatabase { database in
+            let statement = try prepare(
+                database,
+                sql: """
+                SELECT 1 FROM messages
+                WHERE sdk_app_id = ? AND owner_user_id = ? AND remote_id = ?
+                LIMIT 1
+                """
+            )
+            defer { sqlite3_finalize(statement) }
+            try bindText(accountKey(for: sdkAppID), to: statement, at: 1, database: database)
+            try bindText(cleanOwnerUserID, to: statement, at: 2, database: database)
+            try bindText(cleanRemoteID, to: statement, at: 3, database: database)
+            switch sqlite3_step(statement) {
+            case SQLITE_ROW:
+                return true
+            case SQLITE_DONE:
+                return false
+            default:
+                throw databaseError(database)
+            }
+        }
+    }
+
+    func applyMutations(
+        _ mutations: [LocalChatHistoryMutation]
+    ) throws -> LocalChatHistorySaveResult {
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        let validMutations = mutations.filter { !$0.account.ownerUserID.isEmpty }
+        guard !validMutations.isEmpty else {
+            return LocalChatHistorySaveResult(
+                messageCount: 0,
+                upsertedCount: 0,
+                removedCount: 0,
+                durationMilliseconds: 0
+            )
+        }
+
+        var upsertedCount = 0
+        var removedCount = 0
+        let accounts = Set(validMutations.map(\.account))
+        for account in accounts {
+            try migrateLegacyHistoryIfNeeded(
+                sdkAppID: account.sdkAppID,
+                ownerUserID: account.ownerUserID
+            )
+        }
+        try withDatabase { database in
+            try execute(database, sql: "BEGIN IMMEDIATE TRANSACTION")
+            do {
+                for mutation in validMutations {
+                    let ownerUserID = mutation.account.ownerUserID
+                    switch mutation.operation {
+                    case .upsert(let messages):
+                        let validMessages = Self.deduplicatedMessages(messages).filter {
+                            $0.fromUserID == ownerUserID || $0.toUserID == ownerUserID
+                        }
+                        try insertMessages(
+                            validMessages,
+                            into: database,
+                            sdkAppID: mutation.account.sdkAppID,
+                            ownerUserID: ownerUserID
+                        )
+                        upsertedCount += validMessages.count
+                    case .removeConversation(let peerUserID):
+                        removedCount += try removeConversationMessages(
+                            peerUserID: peerUserID,
+                            from: database,
+                            sdkAppID: mutation.account.sdkAppID,
+                            ownerUserID: ownerUserID
+                        )
+                    }
+                }
+                try execute(database, sql: "COMMIT")
+            } catch {
+                try? execute(database, sql: "ROLLBACK")
+                throw error
+            }
+        }
+
+        for account in accounts {
+            try? fileManager.removeItem(
+                at: legacyFileURL(
+                    sdkAppID: account.sdkAppID,
+                    ownerUserID: account.ownerUserID
+                )
+            )
+        }
+        return LocalChatHistorySaveResult(
+            messageCount: upsertedCount,
+            upsertedCount: upsertedCount,
+            removedCount: removedCount,
+            durationMilliseconds: max(
+                0,
+                Int(((ProcessInfo.processInfo.systemUptime - startedAt) * 1_000).rounded())
+            )
+        )
+    }
+
+    private func removeConversationMessages(
+        peerUserID: String,
+        from database: OpaquePointer,
+        sdkAppID: Int?,
+        ownerUserID: String
+    ) throws -> Int {
+        let cleanPeerUserID = peerUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanPeerUserID.isEmpty else { return 0 }
         let statement = try prepare(
             database,
-            sql: "DELETE FROM messages WHERE sdk_app_id = ? AND owner_user_id = ?"
+            sql: """
+            DELETE FROM messages
+            WHERE sdk_app_id = ? AND owner_user_id = ?
+              AND peer_user_id = ?
+            """
         )
         defer { sqlite3_finalize(statement) }
         try bindText(accountKey(for: sdkAppID), to: statement, at: 1, database: database)
         try bindText(ownerUserID, to: statement, at: 2, database: database)
+        try bindText(cleanPeerUserID, to: statement, at: 3, database: database)
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw databaseError(database)
         }
+        return Int(sqlite3_changes(database))
     }
 
     private func insertMessages(
         _ messages: [RemoteIMMessage],
         into database: OpaquePointer,
         sdkAppID: Int?,
-        ownerUserID: String
+        ownerUserID: String,
+        updateExisting: Bool = true
     ) throws {
+        let conflictClause = updateExisting
+            ? """
+              DO UPDATE SET
+                  remote_id = excluded.remote_id,
+                  from_user = excluded.from_user,
+                  to_user = excluded.to_user,
+                  text = excluded.text,
+                  direction = excluded.direction,
+                  status = excluded.status,
+                  created_at = excluded.created_at,
+                  voice_attachment = excluded.voice_attachment,
+                  image_attachment = excluded.image_attachment,
+                  file_attachment = excluded.file_attachment,
+                  peer_user_id = excluded.peer_user_id
+              """
+            : "DO NOTHING"
         let statement = try prepare(
             database,
             sql: """
             INSERT INTO messages(
                 sdk_app_id, owner_user_id, id, remote_id, from_user, to_user, text,
                 direction, status, created_at,
-                voice_attachment, image_attachment, file_attachment
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                voice_attachment, image_attachment, file_attachment, peer_user_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(sdk_app_id, owner_user_id, id) \(conflictClause)
             """
         )
         defer { sqlite3_finalize(statement) }
@@ -189,6 +420,10 @@ final class LocalChatHistoryStore {
             try bindOptionalJSON(message.voiceAttachment, to: statement, at: 11, database: database)
             try bindOptionalJSON(message.imageAttachment, to: statement, at: 12, database: database)
             try bindOptionalJSON(message.fileAttachment, to: statement, at: 13, database: database)
+            let peerUserID = message.fromUserID == ownerUserID
+                ? message.toUserID
+                : message.fromUserID
+            try bindText(peerUserID, to: statement, at: 14, database: database)
             guard sqlite3_step(statement) == SQLITE_DONE else {
                 throw databaseError(database)
             }
@@ -254,6 +489,7 @@ final class LocalChatHistoryStore {
     }
 
     private func migrate(_ database: OpaquePointer) throws {
+        let previousSchemaVersion = try databaseUserVersion(database)
         try execute(database, sql: "PRAGMA journal_mode = WAL")
         try execute(database, sql: "PRAGMA synchronous = NORMAL")
         try execute(
@@ -273,12 +509,29 @@ final class LocalChatHistoryStore {
                 voice_attachment TEXT,
                 image_attachment TEXT,
                 file_attachment TEXT,
+                peer_user_id TEXT,
                 PRIMARY KEY (sdk_app_id, owner_user_id, id)
             )
             """
         )
         if try !columnExists("remote_id", in: "messages", database: database) {
             try execute(database, sql: "ALTER TABLE messages ADD COLUMN remote_id TEXT")
+        }
+        if try !columnExists("peer_user_id", in: "messages", database: database) {
+            try execute(database, sql: "ALTER TABLE messages ADD COLUMN peer_user_id TEXT")
+        }
+        if previousSchemaVersion < 3 {
+            try execute(
+                database,
+                sql: """
+                UPDATE messages
+                SET peer_user_id = CASE
+                    WHEN from_user = owner_user_id THEN to_user
+                    ELSE from_user
+                END
+                WHERE peer_user_id IS NULL OR peer_user_id = ''
+                """
+            )
         }
         try execute(
             database,
@@ -294,7 +547,25 @@ final class LocalChatHistoryStore {
             ON messages(sdk_app_id, owner_user_id, remote_id)
             """
         )
-        try execute(database, sql: "PRAGMA user_version = 2")
+        try execute(
+            database,
+            sql: """
+            CREATE INDEX IF NOT EXISTS idx_messages_account_peer_time
+            ON messages(sdk_app_id, owner_user_id, peer_user_id, created_at DESC, id DESC)
+            """
+        )
+        if previousSchemaVersion < 3 {
+            try execute(database, sql: "PRAGMA user_version = 3")
+        }
+    }
+
+    private func databaseUserVersion(_ database: OpaquePointer) throws -> Int {
+        let statement = try prepare(database, sql: "PRAGMA user_version")
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_step(statement) == SQLITE_ROW else {
+            throw databaseError(database)
+        }
+        return Int(sqlite3_column_int(statement, 0))
     }
 
     private func execute(_ database: OpaquePointer, sql: String) throws {
@@ -428,6 +699,35 @@ final class LocalChatHistoryStore {
         return history
     }
 
+    private func migrateLegacyHistoryIfNeeded(
+        sdkAppID: Int?,
+        ownerUserID: String
+    ) throws {
+        guard let legacyHistory = loadLegacyHistory(
+            sdkAppID: sdkAppID,
+            ownerUserID: ownerUserID
+        ) else { return }
+        try withDatabase { database in
+            try execute(database, sql: "BEGIN IMMEDIATE TRANSACTION")
+            do {
+                try insertMessages(
+                    Self.deduplicatedMessages(legacyHistory.messages),
+                    into: database,
+                    sdkAppID: sdkAppID,
+                    ownerUserID: ownerUserID,
+                    updateExisting: false
+                )
+                try execute(database, sql: "COMMIT")
+            } catch {
+                try? execute(database, sql: "ROLLBACK")
+                throw error
+            }
+        }
+        try fileManager.removeItem(
+            at: legacyFileURL(sdkAppID: sdkAppID, ownerUserID: ownerUserID)
+        )
+    }
+
     private func legacyFileURL(sdkAppID: Int?, ownerUserID: String) -> URL {
         let rawFileName = "\(sdkAppID.map(String.init) ?? "default")__\(ownerUserID)"
         let allowedCharacters = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_."))
@@ -457,13 +757,6 @@ final class LocalChatHistoryStore {
         }
     }
 
-    private static func mergedMessages(
-        _ legacyMessages: [RemoteIMMessage],
-        _ databaseMessages: [RemoteIMMessage]
-    ) -> [RemoteIMMessage] {
-        deduplicatedMessages(legacyMessages + databaseMessages)
-    }
-
     private static func defaultBaseDirectoryURL(fileManager: FileManager) -> URL {
         if let applicationSupportURL = try? fileManager.url(
             for: .applicationSupportDirectory,
@@ -478,5 +771,59 @@ final class LocalChatHistoryStore {
         return fileManager.temporaryDirectory
             .appendingPathComponent("MaiChat", isDirectory: true)
             .appendingPathComponent("ChatHistory", isDirectory: true)
+    }
+}
+
+actor LocalChatHistoryPersistence {
+    private let store: LocalChatHistoryStore
+
+    init(baseDirectoryURL: URL) {
+        self.store = LocalChatHistoryStore(baseDirectoryURL: baseDirectoryURL)
+    }
+
+    func loadConversationPage(
+        sdkAppID: Int?,
+        ownerUserID: String,
+        peerUserID: String,
+        before cursor: LocalChatHistoryCursor?,
+        limit: Int
+    ) throws -> LocalChatHistoryPage {
+        try store.loadConversationPage(
+            sdkAppID: sdkAppID,
+            ownerUserID: ownerUserID,
+            peerUserID: peerUserID,
+            before: cursor,
+            limit: limit
+        )
+    }
+
+    func loadConversationSummaries(
+        sdkAppID: Int?,
+        ownerUserID: String,
+        peerUserIDs: [String]
+    ) throws -> [RemoteIMMessage] {
+        try store.loadConversationSummaries(
+            sdkAppID: sdkAppID,
+            ownerUserID: ownerUserID,
+            peerUserIDs: peerUserIDs
+        )
+    }
+
+    func containsMessage(
+        remoteID: String,
+        sdkAppID: Int?,
+        ownerUserID: String
+    ) throws -> Bool {
+        try store.containsMessage(
+            remoteID: remoteID,
+            sdkAppID: sdkAppID,
+            ownerUserID: ownerUserID
+        )
+    }
+
+    func persist(
+        mutations: [LocalChatHistoryMutation]
+    ) throws -> LocalChatHistorySaveResult {
+        try store.applyMutations(mutations)
     }
 }

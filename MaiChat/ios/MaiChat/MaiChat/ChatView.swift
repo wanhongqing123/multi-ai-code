@@ -283,7 +283,7 @@ private struct ConversationListView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(RemoteIMStyle.panelBackground)
-        .searchable(text: $searchText, prompt: "搜索联系人或消息")
+        .searchable(text: $searchText, prompt: "搜索联系人或最近消息")
         .alert(item: $pendingClearHistoryContact) { contact in
             Alert(
                 title: Text("清空聊天记录？"),
@@ -445,6 +445,7 @@ private struct ChatDetailView: View {
     @Binding var activeContact: RemoteIMContact?
     let showRemoteDesktop: () -> Void
     @EnvironmentObject private var appState: RemoteIMAppState
+    @State private var initialHistoryLoadGeneration = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -458,8 +459,9 @@ private struct ChatDetailView: View {
                 messages: appState.visibleMessages(with: contact.userID),
                 peerRelation: contact.relation,
                 hasEarlierMessages: appState.hasEarlierMessages(with: contact.userID),
+                initialHistoryLoadGeneration: initialHistoryLoadGeneration,
                 loadEarlierMessages: {
-                    appState.loadEarlierMessages(with: contact.userID)
+                    await appState.loadEarlierMessages(with: contact.userID)
                 }
             )
             ComposerView()
@@ -473,6 +475,10 @@ private struct ChatDetailView: View {
         }
         .onDisappear {
             appState.setConversationVisible(userID: contact.userID, visible: false)
+        }
+        .task(id: contact.userID) {
+            await appState.loadInitialMessages(with: contact.userID)
+            initialHistoryLoadGeneration &+= 1
         }
     }
 
@@ -617,27 +623,23 @@ private struct MessageListView: View {
     let messages: [RemoteIMMessage]
     let peerRelation: RemoteIMContactRelation
     let hasEarlierMessages: Bool
-    let loadEarlierMessages: () -> Void
+    let initialHistoryLoadGeneration: Int
+    let loadEarlierMessages: () async -> Void
     @EnvironmentObject private var appState: RemoteIMAppState
     @StateObject private var voicePlayer = VoiceMessagePlayer()
     @State private var imagePreviewItem: RemoteIMImagePreviewItem?
     @State private var filePreviewItem: RemoteIMFilePreviewItem?
     @State private var latestMessageID: UUID?
+    @State private var isLoadingEarlierMessages = false
+    @State private var isNearBottom = true
+    @State private var hasUnseenLatestMessage = false
+
+    private let bottomAnchorID = "message-list-bottom"
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
-                    if hasEarlierMessages {
-                        Button(action: loadEarlierMessages) {
-                            Label("加载更早的消息", systemImage: "clock.arrow.circlepath")
-                                .font(.system(size: 13, weight: .semibold))
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(RemoteIMStyle.blue)
-                        .padding(.vertical, 4)
-                    }
                     if messages.isEmpty {
                         EmptyMessagesView()
                             .padding(.top, 72)
@@ -661,9 +663,22 @@ private struct MessageListView: View {
                                 .id(message.id)
                         }
                     }
+                    Color.clear
+                        .frame(height: 1)
+                        .id(bottomAnchorID)
+                        .onAppear {
+                            isNearBottom = true
+                            hasUnseenLatestMessage = false
+                        }
+                        .onDisappear {
+                            isNearBottom = false
+                        }
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 18)
+            }
+            .refreshable {
+                await loadEarlierMessagesKeepingAnchor(proxy: proxy)
             }
             .scrollDismissesKeyboard(.interactively)
             .background(RemoteIMStyle.panelBackground)
@@ -676,11 +691,38 @@ private struct MessageListView: View {
                 latestMessageID = messages.last?.id
                 scrollToLatestMessage(proxy: proxy)
             }
-            .onChange(of: messages.count) { _ in
+            .onChange(of: messages.last?.id) { _ in
                 let nextLatestMessageID = messages.last?.id
                 guard nextLatestMessageID != latestMessageID else { return }
                 latestMessageID = nextLatestMessageID
+                if isNearBottom || messages.last?.direction == .outgoing {
+                    hasUnseenLatestMessage = false
+                    scrollToLatestMessage(proxy: proxy)
+                } else {
+                    hasUnseenLatestMessage = true
+                }
+            }
+            .onChange(of: initialHistoryLoadGeneration) { _ in
+                latestMessageID = messages.last?.id
+                hasUnseenLatestMessage = false
                 scrollToLatestMessage(proxy: proxy)
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if hasUnseenLatestMessage {
+                    Button {
+                        hasUnseenLatestMessage = false
+                        scrollToLatestMessage(proxy: proxy)
+                    } label: {
+                        Label("新消息", systemImage: "arrow.down")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 12)
+                            .frame(height: 34)
+                            .background(RemoteIMStyle.blue, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(12)
+                }
             }
         }
         .fullScreenCover(item: $imagePreviewItem) { item in
@@ -701,6 +743,27 @@ private struct MessageListView: View {
         }
         DispatchQueue.main.async {
             proxy.scrollTo(latestMessageID, anchor: .bottom)
+        }
+    }
+
+    @MainActor
+    private func loadEarlierMessagesKeepingAnchor(proxy: ScrollViewProxy) async {
+        guard hasEarlierMessages, !isLoadingEarlierMessages else { return }
+        let previousFirstMessageID = messages.first?.id
+        isLoadingEarlierMessages = true
+        defer { isLoadingEarlierMessages = false }
+
+        await loadEarlierMessages()
+        guard let previousFirstMessageID else { return }
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async {
+                var transaction = Transaction(animation: nil)
+                transaction.disablesAnimations = true
+                withTransaction(transaction) {
+                    proxy.scrollTo(previousFirstMessageID, anchor: .top)
+                }
+                continuation.resume()
+            }
         }
     }
 }

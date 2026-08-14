@@ -73,8 +73,22 @@ struct RootView: View {
             }
         }
         .onChange(of: scenePhase) { phase in
-            guard phase == .background else { return }
+            guard phase == .inactive || phase == .background else { return }
             Task {
+                let historyFlushed = await appState.flushHistoryPersistence()
+                if !historyFlushed {
+                    AppDiagnosticLog.shared.record(
+                        level: .error,
+                        category: "remote-im",
+                        event: "history-flush-failed",
+                        fields: [
+                            "cause": phase == .background
+                                ? "scene-background"
+                                : "scene-inactive",
+                        ]
+                    )
+                }
+                guard phase == .background else { return }
                 await appState.stopRemoteDesktopView(cause: "scene-background")
                 await AppDiagnosticLog.shared.flush()
             }

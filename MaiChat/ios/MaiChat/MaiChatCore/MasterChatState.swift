@@ -357,19 +357,19 @@ public enum RemoteIMAvatarMonogramPolicy {
     }
 }
 
-public enum RemoteIMMessageDirection: String, Codable, Equatable {
+public enum RemoteIMMessageDirection: String, Codable, Equatable, Sendable {
     case incoming
     case outgoing
 }
 
-public enum RemoteIMMessageStatus: String, Codable, Equatable {
+public enum RemoteIMMessageStatus: String, Codable, Equatable, Sendable {
     case pending
     case sent
     case received
     case failed
 }
 
-public struct RemoteIMVoiceAttachment: Codable, Equatable {
+public struct RemoteIMVoiceAttachment: Codable, Equatable, Sendable {
     public let localFilePath: String
     public let durationSeconds: Int
     public let remoteID: String?
@@ -385,7 +385,7 @@ public struct RemoteIMVoiceAttachment: Codable, Equatable {
     }
 }
 
-public struct RemoteIMImageAttachment: Codable, Equatable {
+public struct RemoteIMImageAttachment: Codable, Equatable, Sendable {
     public let localFilePath: String
     public let remoteID: String?
     public let width: Int?
@@ -407,7 +407,7 @@ public struct RemoteIMImageAttachment: Codable, Equatable {
     }
 }
 
-public struct RemoteIMFileAttachment: Codable, Equatable {
+public struct RemoteIMFileAttachment: Codable, Equatable, Sendable {
     public let localFilePath: String
     public let fileName: String
     public let mimeType: String
@@ -430,7 +430,7 @@ public struct RemoteIMFileAttachment: Codable, Equatable {
     }
 }
 
-public struct RemoteIMMessage: Identifiable, Codable, Equatable {
+public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
     public let id: UUID
     public var remoteID: String?
     public let fromUserID: String
@@ -678,6 +678,50 @@ public struct MasterChatState: Equatable {
         let cleanPeerID = peerID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanPeerID.isEmpty else { return 0 }
         return conversationMessagesByPeerID[cleanPeerID]?.count ?? 0
+    }
+
+    public func message(id: UUID) -> RemoteIMMessage? {
+        guard let index = messageIndexByID[id] else { return nil }
+        return messages[index]
+    }
+
+    /// Inserts a bounded history page or conversation summary into the in-memory working set.
+    /// Existing messages always win because live delivery updates may be newer than an
+    /// asynchronous SQLite read that started before them.
+    public mutating func mergeMessages(_ incomingMessages: [RemoteIMMessage]) {
+        let normalizedIncoming = Self.normalizedMessages(
+            incomingMessages,
+            ownerUserID: ownerUserID
+        )
+        guard !normalizedIncoming.isEmpty else { return }
+
+        var indexByID: [UUID: Int] = [:]
+        var indexByRemoteID: [String: Int] = [:]
+        for (index, message) in messages.enumerated() {
+            indexByID[message.id] = index
+            if let remoteID = message.remoteID, !remoteID.isEmpty {
+                indexByRemoteID[remoteID] = index
+            }
+        }
+
+        for message in normalizedIncoming {
+            if indexByID[message.id] != nil { continue }
+            if let remoteID = message.remoteID,
+               !remoteID.isEmpty,
+               indexByRemoteID[remoteID] != nil
+            {
+                continue
+            }
+            indexByID[message.id] = messages.count
+            if let remoteID = message.remoteID, !remoteID.isEmpty {
+                indexByRemoteID[remoteID] = messages.count
+            }
+            messages.append(message)
+        }
+
+        messages.sort(by: Self.messageIsEarlier)
+        Self.addMissingContacts(from: messages, ownerUserID: ownerUserID, contacts: &contacts)
+        rebuildMessageIndexes()
     }
 
     private static func voiceDisplayText(durationSeconds: Int) -> String {

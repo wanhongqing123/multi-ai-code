@@ -36,7 +36,8 @@
     "mermaid": "^11.15.0",
     "node-pty": "^1.0.0",
     "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "trtc-electron-sdk": "^13.3.801"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.3",
@@ -76,6 +77,7 @@
       "node_modules/iconv-lite/**",
       "node_modules/node-pty/**",
       "node_modules/safer-buffer/**",
+      "node_modules/trtc-electron-sdk/**",
       "bin/**"
     ],
     "extraResources": [

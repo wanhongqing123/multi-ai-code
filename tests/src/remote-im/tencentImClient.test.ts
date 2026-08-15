@@ -485,7 +485,8 @@ describe('tencent IM client helpers', () => {
         slaveUserIds: [],
         allowedUserIds: ['desktop-b'],
         outputFlushIntervalMs: 1000,
-        outputMaxChunkChars: 1200
+        outputMaxChunkChars: 1200,
+        remoteDesktopMode: 'disabled'
       },
       onIncomingText: vi.fn()
     }).then((runtime) => {
@@ -532,7 +533,8 @@ describe('tencent IM client helpers', () => {
         slaveUserIds: [],
         allowedUserIds: ['desktop-b'],
         outputFlushIntervalMs: 1000,
-        outputMaxChunkChars: 1200
+        outputMaxChunkChars: 1200,
+        remoteDesktopMode: 'disabled'
       },
       onIncomingText: vi.fn()
     })
@@ -582,7 +584,8 @@ describe('tencent IM client helpers', () => {
         slaveUserIds: [],
         allowedUserIds: [],
         outputFlushIntervalMs: 1000,
-        outputMaxChunkChars: 1200
+        outputMaxChunkChars: 1200,
+        remoteDesktopMode: 'disabled'
       },
       onIncomingText: vi.fn()
     })
@@ -627,7 +630,8 @@ describe('tencent IM client helpers', () => {
         slaveUserIds: [],
         allowedUserIds: [],
         outputFlushIntervalMs: 1000,
-        outputMaxChunkChars: 1200
+        outputMaxChunkChars: 1200,
+        remoteDesktopMode: 'disabled'
       },
       onIncomingText: vi.fn(),
       onFriendListUpdated
@@ -672,7 +676,8 @@ describe('tencent IM client helpers', () => {
         slaveUserIds: [],
         allowedUserIds: ['desktop-b'],
         outputFlushIntervalMs: 1000,
-        outputMaxChunkChars: 1200
+        outputMaxChunkChars: 1200,
+        remoteDesktopMode: 'disabled'
       },
       onIncomingText: vi.fn()
     })
@@ -720,7 +725,8 @@ describe('tencent IM client helpers', () => {
         slaveUserIds: [],
         allowedUserIds: ['desktop-b'],
         outputFlushIntervalMs: 1000,
-        outputMaxChunkChars: 1200
+        outputMaxChunkChars: 1200,
+        remoteDesktopMode: 'disabled'
       },
       onIncomingText: vi.fn()
     })
@@ -770,7 +776,8 @@ describe('tencent IM client helpers', () => {
         slaveUserIds: [],
         allowedUserIds: ['desktop-b'],
         outputFlushIntervalMs: 1000,
-        outputMaxChunkChars: 1200
+        outputMaxChunkChars: 1200,
+        remoteDesktopMode: 'disabled'
       },
       onIncomingText: vi.fn()
     })
@@ -812,7 +819,8 @@ describe('tencent IM client helpers', () => {
         slaveUserIds: [],
         allowedUserIds: ['desktop-b'],
         outputFlushIntervalMs: 1000,
-        outputMaxChunkChars: 1200
+        outputMaxChunkChars: 1200,
+        remoteDesktopMode: 'disabled'
       },
       onIncomingText: vi.fn()
     })
@@ -857,7 +865,8 @@ describe('tencent IM client helpers', () => {
           slaveUserIds: [],
           allowedUserIds: ['desktop-b'],
           outputFlushIntervalMs: 1000,
-          outputMaxChunkChars: 1200
+          outputMaxChunkChars: 1200,
+          remoteDesktopMode: 'disabled'
         },
         onIncomingText: vi.fn()
       })
@@ -884,7 +893,8 @@ describe('tencent IM client helpers', () => {
         slaveUserIds: [],
         allowedUserIds: ['desktop-b'],
         outputFlushIntervalMs: 1000,
-        outputMaxChunkChars: 1200
+        outputMaxChunkChars: 1200,
+        remoteDesktopMode: 'disabled'
       },
       onIncomingText: vi.fn()
     })
@@ -921,7 +931,8 @@ describe('tencent IM client helpers', () => {
         slaveUserIds: ['desktop-b'],
         allowedUserIds: ['desktop-b'],
         outputFlushIntervalMs: 1000,
-        outputMaxChunkChars: 1200
+        outputMaxChunkChars: 1200,
+        remoteDesktopMode: 'disabled'
       },
       onIncomingText: vi.fn(),
       onRuntimeLog

@@ -24,7 +24,8 @@ const config: RemoteImConfig = {
   slaveUserIds: ['test321'],
   allowedUserIds: ['test321'],
   outputFlushIntervalMs: 2000,
-  outputMaxChunkChars: 1200
+  outputMaxChunkChars: 1200,
+  remoteDesktopMode: 'disabled'
 }
 
 describe('RemoteImClientHost', () => {
@@ -169,7 +170,8 @@ describe('RemoteImClientHost', () => {
           slaveUserIds: ['slave-a'],
           allowedUserIds: ['friend-a', 'master-a', 'slave-a'],
           outputFlushIntervalMs: 5000,
-          outputMaxChunkChars: 3000
+          outputMaxChunkChars: 3000,
+          remoteDesktopMode: 'disabled'
         },
         loginRequested: true
       })

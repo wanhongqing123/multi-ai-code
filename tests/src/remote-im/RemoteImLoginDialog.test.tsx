@@ -41,7 +41,8 @@ const projectConfig: RemoteImConfig = {
   slaveUserIds: [],
   allowedUserIds: ['test321'],
   outputFlushIntervalMs: 2000,
-  outputMaxChunkChars: 1200
+  outputMaxChunkChars: 1200,
+  remoteDesktopMode: 'disabled'
 }
 
 describe('RemoteImLoginDialog', () => {

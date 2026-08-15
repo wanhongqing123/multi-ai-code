@@ -27,7 +27,8 @@ const config: RemoteImConfig = {
   slaveUserIds: ['slave-a'],
   allowedUserIds: ['friend-a', 'master-a', 'slave-a'],
   outputFlushIntervalMs: 2000,
-  outputMaxChunkChars: 1200
+  outputMaxChunkChars: 1200,
+  remoteDesktopMode: 'disabled'
 }
 
 function message(overrides: Partial<RemoteImMessage>): RemoteImMessage {

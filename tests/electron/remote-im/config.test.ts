@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_REMOTE_IM_CONFIG,
   normalizeRemoteImConfig,
+  toRemoteImProjectConfig,
   validateRemoteImConfig
 } from '../../../electron/remote-im/config.js'
 
@@ -130,5 +131,35 @@ describe('remote IM config', () => {
 
     expect(config.desktopRole).toBe('master')
     expect(validateRemoteImConfig(config).ok).toBe(true)
+  })
+})
+
+describe('remote desktop mode in remote IM config', () => {
+  it('defaults to disabled so a new install is never viewable', () => {
+    // 这台机器上跑着 AICLI 和用户的仓库：屏幕共享必须显式开一次，
+    // 不能因为装了新版本就默认可被查看。
+    expect(DEFAULT_REMOTE_IM_CONFIG.remoteDesktopMode).toBe('disabled')
+    expect(normalizeRemoteImConfig({}).remoteDesktopMode).toBe('disabled')
+  })
+
+  it('falls back to disabled for unknown or corrupted values', () => {
+    // 配置损坏时必须收紧而不是放宽。
+    for (const value of ['viewer', '', null, 42, {}, 'UNATTENDED']) {
+      expect(normalizeRemoteImConfig({ remoteDesktopMode: value }).remoteDesktopMode, String(value)).toBe(
+        'disabled'
+      )
+    }
+  })
+
+  it('keeps the three supported modes', () => {
+    for (const mode of ['disabled', 'attended', 'unattended'] as const) {
+      expect(normalizeRemoteImConfig({ remoteDesktopMode: mode }).remoteDesktopMode).toBe(mode)
+    }
+  })
+
+  it('carries the mode through project config conversion', () => {
+    // toRemoteImProjectConfig 以 DEFAULT 为底，漏传就会在保存时把用户的选择重置。
+    const config = { ...DEFAULT_REMOTE_IM_CONFIG, remoteDesktopMode: 'unattended' as const }
+    expect(toRemoteImProjectConfig(config).remoteDesktopMode).toBe('unattended')
   })
 })

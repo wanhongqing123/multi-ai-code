@@ -7272,3 +7272,51 @@ html, body, #root {
   font-weight: 600;
   line-height: 1.45;
 }
+
+/* 远程桌面共享指示条。
+   固定在顶部、层级高于抽屉：无人值守下这是自动放行之后唯一的可见性保障，
+   被别的面板盖住就等于没有。刻意不提供隐藏入口。 */
+.remote-desktop-sharing-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  background: #b42318;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.25);
+}
+
+.remote-desktop-sharing-bar__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ffffff;
+  flex: 0 0 auto;
+}
+
+.remote-desktop-sharing-bar__text {
+  flex: 1 1 auto;
+}
+
+.remote-desktop-sharing-bar__stop {
+  flex: 0 0 auto;
+  padding: 4px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  border-radius: 6px;
+  background: transparent;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.remote-desktop-sharing-bar__stop:hover {
+  background: rgba(255, 255, 255, 0.15);
+}

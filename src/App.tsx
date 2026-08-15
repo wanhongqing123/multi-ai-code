@@ -20,6 +20,8 @@ import RemoteImSummaryDialog from './remote-im/RemoteImSummaryDialog'
 import WindowControls from './components/WindowControls'
 import { mergeRemoteImMessages } from './remote-im/messageMerge'
 import RemoteImClientHost from './remote-im/RemoteImClientHost'
+import RemoteDesktopSharingBar from './remote-desktop/RemoteDesktopSharingBar'
+import type { RemoteDesktopControllerState } from '../electron/remote-desktop/controller.js'
 import RemoteImLoginDialog, {
   type RemoteImLoginSubmitInput
 } from './remote-im/RemoteImLoginDialog'
@@ -66,7 +68,8 @@ const DEFAULT_REMOTE_IM_CONFIG: RemoteImConfig = {
   slaveUserIds: [],
   allowedUserIds: [],
   outputFlushIntervalMs: 2000,
-  outputMaxChunkChars: 4000
+  outputMaxChunkChars: 4000,
+  remoteDesktopMode: 'disabled'
 }
 
 
@@ -175,6 +178,13 @@ function AppShell() {
   const [remoteImInput, setRemoteImInput] = useState('')
   const [remoteImLoginState, setRemoteImLoginState] = useState<RemoteImLoginState | null>(null)
   const [remoteImLoginRequested, setRemoteImLoginRequested] = useState(false)
+  // 被控端共享状态。RemoteImClientHost 是 headless 的，指示条在这里渲染。
+  const [remoteDesktopState, setRemoteDesktopState] = useState<RemoteDesktopControllerState>({
+    hostState: 'idle',
+    peerUserId: null,
+    sessionId: null
+  })
+  const remoteDesktopStopRef = useRef<(() => Promise<void>) | null>(null)
   const [showRemoteImLogin, setShowRemoteImLogin] = useState(false)
   const [remoteImLoginSaving, setRemoteImLoginSaving] = useState(false)
   const [remoteImLoginError, setRemoteImLoginError] = useState<string | null>(null)
@@ -1247,6 +1257,16 @@ function AppShell() {
         config={remoteImConfig}
         loginRequested={remoteImLoginRequested}
         onContactsSynced={handleRemoteImContactsSynced}
+        onRemoteDesktopStateChanged={setRemoteDesktopState}
+        onRemoteDesktopHostReady={(stop) => {
+          remoteDesktopStopRef.current = stop
+        }}
+      />
+      <RemoteDesktopSharingBar
+        state={remoteDesktopState}
+        onStop={() => {
+          void remoteDesktopStopRef.current?.()
+        }}
       />
       <RemoteImDrawer
         canLoadEarlier={

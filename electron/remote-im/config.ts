@@ -1,4 +1,5 @@
 import type {
+  RemoteDesktopMode,
   RemoteImConfig,
   RemoteImValidationIssue,
   RemoteImValidationResult
@@ -19,10 +20,23 @@ export const DEFAULT_REMOTE_IM_CONFIG: RemoteImConfig = {
   slaveUserIds: [],
   allowedUserIds: [],
   outputFlushIntervalMs: 2000,
-  outputMaxChunkChars: 4000
+  outputMaxChunkChars: 4000,
+  remoteDesktopMode: 'disabled'
 }
 
 const LEGACY_DEFAULT_OUTPUT_MAX_CHUNK_CHARS = 1200
+
+const REMOTE_DESKTOP_MODES: readonly RemoteDesktopMode[] = ['disabled', 'attended', 'unattended']
+
+/**
+ * 无法识别的值一律回落 disabled。配置损坏时必须收紧而不是放宽——
+ * 解析失败绝不能变成"屏幕默认可被查看"。
+ */
+function normalizeRemoteDesktopMode(value: unknown): RemoteDesktopMode {
+  return REMOTE_DESKTOP_MODES.includes(value as RemoteDesktopMode)
+    ? (value as RemoteDesktopMode)
+    : 'disabled'
+}
 
 function normalizeString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
@@ -95,7 +109,8 @@ export function normalizeRemoteImConfig(value: unknown): RemoteImConfig {
     slaveUserIds: [],
     allowedUserIds,
     outputFlushIntervalMs: normalizeNumber(raw.outputFlushIntervalMs, 2000, 1000, 30_000),
-    outputMaxChunkChars: normalizeOutputMaxChunkChars(raw.outputMaxChunkChars)
+    outputMaxChunkChars: normalizeOutputMaxChunkChars(raw.outputMaxChunkChars),
+    remoteDesktopMode: normalizeRemoteDesktopMode(raw.remoteDesktopMode)
   }
 }
 
@@ -110,6 +125,9 @@ export function toRemoteImProjectConfig(config: RemoteImConfig): RemoteImConfig 
     ...DEFAULT_REMOTE_IM_CONFIG,
     enabled: true,
     outputFlushIntervalMs: config.outputFlushIntervalMs,
-    outputMaxChunkChars: config.outputMaxChunkChars
+    outputMaxChunkChars: config.outputMaxChunkChars,
+    // 必须显式透传：这个函数以 DEFAULT 为底，漏掉就会在每次保存时把用户
+    // 开启过的远程桌面悄悄重置回 disabled。
+    remoteDesktopMode: config.remoteDesktopMode
   }
 }

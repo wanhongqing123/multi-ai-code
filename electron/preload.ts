@@ -32,6 +32,12 @@ export type {
 // 以下类型的「真源」在各自模块（均为纯类型模块，无运行时/Node 依赖）。这里 import 供
 // preload 自身使用，并统一 re-export——渲染层继续从 preload 引类型即可，无需改动。
 import type { AiPermissionMode, AiSettings } from './settings/types.js'
+import type {
+  RemoteDesktopCaptureSource,
+  RemoteDesktopEnterRoomParams,
+  RemoteDesktopEngine
+} from './remote-desktop/engine.js'
+import { createTrtcRemoteDesktopEngine } from './remote-desktop/preloadEngine.js'
 import type { OpenCodeProviderProfile } from './aicli/opencodeConfig.js'
 import type {
   RemoteImContactRelation,
@@ -266,6 +272,13 @@ export interface JudgeExternalReviewRequest {
   }
 }
 
+let remoteDesktopEngine: RemoteDesktopEngine | null = null
+
+function getRemoteDesktopEngine(): RemoteDesktopEngine {
+  remoteDesktopEngine ??= createTrtcRemoteDesktopEngine()
+  return remoteDesktopEngine
+}
+
 const api = {
   platform: process.platform,
   /** 无边框窗口的页面内自绘窗口按钮（Windows；macOS 用系统红绿灯）。 */
@@ -338,6 +351,15 @@ const api = {
         variant?: 'msys2' | 'git' | 'path' | null
         error?: string
       }>
+  },
+  // 远程桌面被控端引擎。真实现必须住在 preload：主进程 require 会因模块级
+  // DOM 访问而失败，渲染进程又是 nodeIntegration:false 拿不到 require。
+  // 引擎是惰性创建的，没开启远程桌面的用户不会加载那 29MB 原生二进制。
+  remoteDesktop: {
+    listScreenSources: () => getRemoteDesktopEngine().listScreenSources(),
+    startSharing: (params: RemoteDesktopEnterRoomParams, source: RemoteDesktopCaptureSource) =>
+      getRemoteDesktopEngine().startSharing(params, source),
+    stopSharing: () => getRemoteDesktopEngine().stopSharing()
   },
   remoteIm: {
     getConfig: (projectId: string) =>

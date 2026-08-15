@@ -17,7 +17,15 @@ export interface RemoteImConfig {
   allowedUserIds: string[]
   outputFlushIntervalMs: number
   outputMaxChunkChars: number
+  /**
+   * 被控端远程桌面模式。默认 disabled——这台机器上跑着 AICLI 和你的仓库，
+   * 屏幕共享必须由用户显式开一次，不能因为装了新版本就默认可被查看。
+   * 允许连入的账号复用 allowedUserIds（IM 好友白名单）。
+   */
+  remoteDesktopMode: RemoteDesktopMode
 }
+
+export type RemoteDesktopMode = 'disabled' | 'attended' | 'unattended'
 
 export interface RemoteImAccountConfig {
   provider: RemoteImProvider

@@ -14,7 +14,14 @@ import {
   resolveRemoteImOutgoingImageFile
 } from './outgoingImageRegistry.js'
 import { createRemoteImRuntimeSlot } from './remoteImRuntimeSlot.js'
-import { connectTencentImClient, type TencentImRuntime } from './tencentImClient.js'
+import {
+  connectTencentImClient,
+  generateTencentUserSig,
+  type TencentImRuntime
+} from './tencentImClient.js'
+import { createRemoteDesktopHost, type RemoteDesktopHost } from '../remote-desktop/host.js'
+import { createTrtcRemoteDesktopEngine } from '../remote-desktop/trtcEngine.js'
+import type { RemoteDesktopControllerState } from '../../electron/remote-desktop/controller.js'
 
 export interface RemoteImClientHostProps {
   projectId: string | null
@@ -24,6 +31,13 @@ export interface RemoteImClientHostProps {
     config: RemoteImConfig
     loginState: RemoteImLoginState
   }) => void
+  /**
+   * 被控端共享状态。本组件是 headless 的（返回 null），指示条由父组件渲染——
+   * 共享中必须有常驻可见提示，否则无人值守下你回到电脑前无从知道屏幕被看过。
+   */
+  onRemoteDesktopStateChanged?: (state: RemoteDesktopControllerState) => void
+  /** 交出"本地停止共享"的入口，供指示条上的停止按钮调用。 */
+  onRemoteDesktopHostReady?: (stop: () => Promise<void>) => void
 }
 
 const OUTGOING_RUNTIME_WAIT_TIMEOUT_MS = 15_000
@@ -199,11 +213,17 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
   const runtimeSlotRef = useRef(createRemoteImRuntimeSlot<TencentImRuntime>())
   const lifecycleQueueRef = useRef(createRemoteImLifecycleQueue())
   const onContactsSyncedRef = useRef(props.onContactsSynced)
+  const onRemoteDesktopStateChangedRef = useRef(props.onRemoteDesktopStateChanged)
+  const remoteDesktopHostRef = useRef<RemoteDesktopHost | null>(null)
   const connectionKey = getRemoteImConnectionKey(props)
 
   useEffect(() => {
     onContactsSyncedRef.current = props.onContactsSynced
   }, [props.onContactsSynced])
+
+  useEffect(() => {
+    onRemoteDesktopStateChangedRef.current = props.onRemoteDesktopStateChanged
+  }, [props.onRemoteDesktopStateChanged])
 
   useEffect(() => {
     let cancelled = false
@@ -214,6 +234,49 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
       desktopUserId: props.config.desktopUserId.trim(),
       sdkAppId: props.config.sdkAppId
     }
+    // 远程桌面被控端。整个功能都在渲染进程：IM 消息最先到这里，而 TRTC SDK
+    // 也只能在这里加载，同侧就不需要主进程↔渲染进程的请求/响应桥。
+    // 信令在这里被消费掉、不再往主进程转发，因此不可能被 router 当成普通消息
+    // 路由给 AICLI。
+    const remoteDesktopHost = createRemoteDesktopHost({
+      engine: createTrtcRemoteDesktopEngine(),
+      getSettings: () => ({
+        mode: props.config.remoteDesktopMode,
+        allowedUserIds: props.config.allowedUserIds
+      }),
+      getCredentials: async () => ({
+        sdkAppId: props.config.sdkAppId ?? 0,
+        userId: props.config.desktopUserId.trim(),
+        // 复用 IM 的签名：TRTC 与 IM 同 sdkAppId、同 userId，一个 sig 两边都认。
+        userSig: await generateTencentUserSig({
+          sdkAppId: props.config.sdkAppId ?? 0,
+          userId: props.config.desktopUserId.trim(),
+          secretKey: props.config.userSigSecretKey
+        })
+      }),
+      sendText: async (toUserId, text) => {
+        const runtime = ownedRuntime
+        if (!runtime) throw new Error('IM 连接尚未就绪')
+        await runtime.sendText(toUserId, text)
+      },
+      onStateChanged: (state) => {
+        if (!cancelled) onRemoteDesktopStateChangedRef.current?.(state)
+      },
+      logger: (message, detail) => {
+        const projectId = props.projectId
+        if (!projectId) return
+        void window.api.remoteIm.writeRuntimeLog({
+          projectId,
+          sdkAppId: props.config.sdkAppId,
+          desktopUserId: props.config.desktopUserId,
+          event: message,
+          detail: detail ?? {}
+        })
+      }
+    })
+    remoteDesktopHostRef.current = remoteDesktopHost
+    props.onRemoteDesktopHostReady?.(() => remoteDesktopHost.stopByLocalUser())
+
     const syncFriendSnapshot = createRemoteImFriendSnapshotSynchronizer(async () => {
       const projectId = props.projectId
       const runtime = ownedRuntime
@@ -277,7 +340,11 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
           projectId,
           config: props.config,
           onIncomingText: (message) => {
-            if (!cancelled) void window.api.remoteIm.deliverIncomingText(message, runtimeIdentity)
+            if (cancelled) return
+            // 远程桌面信令在这里消费掉，绝不能继续往主进程转发——否则会被
+            // router 当成普通消息喂给 AICLI。
+            if (remoteDesktopHost.handleIncomingText(message)) return
+            void window.api.remoteIm.deliverIncomingText(message, runtimeIdentity)
           },
           onIncomingAudio: (message) => {
             if (!cancelled) void window.api.remoteIm.deliverIncomingAudio(message, runtimeIdentity)
@@ -546,6 +613,10 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
       offOutgoing()
       offOutgoingImage()
       offOutgoingFile()
+      // IM 断开时必须停掉共享：连接没了就再也发不出 stop 信令，
+      // 留着推流等于在用户不知情的情况下继续共享屏幕。
+      void remoteDesktopHost.stopByLocalUser().catch(() => undefined)
+      remoteDesktopHostRef.current = null
       void enqueueLifecycle(disconnectOwned).catch(() => undefined)
     }
   }, [connectionKey])

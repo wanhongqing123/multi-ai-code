@@ -19,7 +19,8 @@ const config: RemoteImConfig = {
   slaveUserIds: [],
   allowedUserIds: ['agent-b', 'phone-user'],
   outputFlushIntervalMs: 2000,
-  outputMaxChunkChars: 1200
+  outputMaxChunkChars: 1200,
+  remoteDesktopMode: 'disabled'
 }
 
 const status: RemoteImStatus = {

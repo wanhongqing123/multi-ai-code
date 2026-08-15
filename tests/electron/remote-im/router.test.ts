@@ -379,7 +379,8 @@ describe('remote IM router', () => {
     expect(routes[0]).toMatchObject({ autoReplyToIm: false })
     expect(submissions).toHaveLength(1)
     expect(submissions[0]?.inputOrigin).toBe('remote-im')
-    expect(submissions[0]?.text).toContain('本轮 AICLI 的普通输出不会自动发送到 IM')
+    expect(submissions[0]?.text).toContain('继续协作')
+    expect(submissions[0]?.text).not.toContain('本轮 AICLI 的普通输出不会自动发送到 IM')
     expect(store.messages[0]).toMatchObject({ status: 'sent-to-aicli' })
   })
 
@@ -462,7 +463,8 @@ describe('remote IM router', () => {
     expect(result.ok).toBe(true)
     expect(routes[0]).toMatchObject({ autoReplyToIm: false })
     expect(inputs[0]).toMatchObject({ inputOrigin: 'remote-im' })
-    expect(inputs[0]?.text).toContain('如需继续与对方协作，请显式调用 imcli')
+    expect(inputs[0]?.text).toContain('旧版未标记消息')
+    expect(inputs[0]?.text).not.toContain('如需继续与对方协作，请显式调用 imcli')
     expect(store.messages[0]).toMatchObject({ role: 'aicli', status: 'sent-to-aicli' })
   })
 
@@ -780,7 +782,7 @@ describe('remote IM router', () => {
     expect(result.ok).toBe(true)
     expect(receivedAicliInputs).toHaveLength(1)
     expect(receivedAicliInputs[0]).toContain('已拒绝这一次命令执行。')
-    expect(receivedAicliInputs[0]).toContain('如需继续与对方协作，请显式调用 imcli')
+    expect(receivedAicliInputs[0]).not.toContain('如需继续与对方协作，请显式调用 imcli')
     expect(receiverRoutes).toHaveLength(1)
     expect(receiverRoutes[0]).toMatchObject({ autoReplyToIm: false })
     expect(receiverStore.messages[0]).toMatchObject({

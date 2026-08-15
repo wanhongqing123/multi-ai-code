@@ -171,18 +171,6 @@ function normalizeIncomingOrigin(origin: RemoteImMessageOrigin | undefined): Rem
   return origin === 'human' ? 'human' : 'machine'
 }
 
-function appendMachineCollaborationInstruction(
-  prompt: string,
-  origin: RemoteImMessageOrigin
-): string {
-  if (origin !== 'machine') return prompt
-  return [
-    prompt,
-    '',
-    '本轮 AICLI 的普通输出不会自动发送到 IM；如需继续与对方协作，请显式调用 imcli 发送消息。'
-  ].join('\n')
-}
-
 function createIncomingRecord(
   message: RemoteImIncomingTextMessage,
   status: RemoteImMessage['status'],
@@ -612,13 +600,13 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       autoReplyToIm
     )
     const replyId = outputRoute.replyId
-    const wrapped = appendMachineCollaborationInstruction(
-      buildRemoteImAicliPrompt({
+    const wrapped = buildRemoteImAicliPrompt(
+      {
         fromUserId: input.fromUserId,
         text: input.text,
         replyId
-      }, { includeReplyProtocol: !usesSourceLevelRouting(session) }),
-      input.origin
+      },
+      { includeReplyProtocol: !usesSourceLevelRouting(session) }
     )
     const displayText = buildRemoteImAicliDisplayText({
       fromUserId: input.fromUserId,
@@ -1056,13 +1044,13 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
     const autoReplyToIm = origin === 'human'
     const outputRoute = createOutputRoute(session, message.projectId, fromUserId, autoReplyToIm)
     const replyId = outputRoute.replyId
-    const wrapped = appendMachineCollaborationInstruction(
-      buildRemoteImAicliPrompt({
+    const wrapped = buildRemoteImAicliPrompt(
+      {
         fromUserId,
         text: taskText,
         replyId
-      }, { includeReplyProtocol: !usesSourceLevelRouting(session) }),
-      origin
+      },
+      { includeReplyProtocol: !usesSourceLevelRouting(session) }
     )
     const displayText = buildRemoteImAicliDisplayText({
       fromUserId,
@@ -1245,13 +1233,13 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
     const autoReplyToIm = origin === 'human'
     const outputRoute = createOutputRoute(session, message.projectId, fromUserId, autoReplyToIm)
     const replyId = outputRoute.replyId
-    const wrapped = appendMachineCollaborationInstruction(
-      buildRemoteImAicliPrompt({
+    const wrapped = buildRemoteImAicliPrompt(
+      {
         fromUserId,
         text: taskText,
         replyId
-      }, { includeReplyProtocol: !usesSourceLevelRouting(session) }),
-      origin
+      },
+      { includeReplyProtocol: !usesSourceLevelRouting(session) }
     )
     const displayText = buildRemoteImAicliDisplayText({
       fromUserId,

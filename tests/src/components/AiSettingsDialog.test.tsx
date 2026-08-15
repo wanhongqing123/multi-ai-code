@@ -6,8 +6,17 @@ import { describe, expect, it, vi } from 'vitest'
 import AiSettingsDialog, {
   DEFAULT_AI_CLI,
   getProjectSettingsRepairToastMessage,
-  saveProjectScopedSettings
+  saveProjectScopedSettings,
+  saveRemoteDesktopMode
 } from '../../../src/components/AiSettingsDialog.js'
+import type { RemoteImConfig } from '../../../electron/remote-im/types'
+
+const LOADED_IM_CONFIG = {
+  enabled: true,
+  friendUserIds: ['whq-iphone'],
+  allowedUserIds: ['whq-iphone'],
+  remoteDesktopMode: 'disabled'
+} as unknown as RemoteImConfig
 
 function renderDialog(overrides: Partial<ComponentProps<typeof AiSettingsDialog>> = {}) {
   return renderToStaticMarkup(
@@ -224,5 +233,60 @@ describe('AiSettingsDialog', () => {
     ).rejects.toThrow('disk full')
 
     expect(onMainSaved).not.toHaveBeenCalled()
+  })
+
+  it('writes the remote desktop mode back into the untouched IM config', async () => {
+    const setConfig = vi.fn().mockResolvedValue({ ok: true })
+
+    await expect(
+      saveRemoteDesktopMode({
+        projectId: 'project-1',
+        loaded: LOADED_IM_CONFIG,
+        mode: 'unattended',
+        setConfig
+      })
+    ).resolves.toBe(true)
+
+    // 整份配置回写，只改这一个字段——别处（好友列表等）不能被这次保存抹掉。
+    expect(setConfig).toHaveBeenCalledWith('project-1', {
+      ...LOADED_IM_CONFIG,
+      remoteDesktopMode: 'unattended'
+    })
+  })
+
+  it('skips the IM config write when the mode did not change', async () => {
+    const setConfig = vi.fn()
+
+    await expect(
+      saveRemoteDesktopMode({
+        projectId: 'project-1',
+        loaded: LOADED_IM_CONFIG,
+        mode: 'disabled',
+        setConfig
+      })
+    ).resolves.toBe(false)
+
+    expect(setConfig).not.toHaveBeenCalled()
+  })
+
+  it('skips the IM config write when the project has no IM config at all', async () => {
+    const setConfig = vi.fn()
+
+    await expect(
+      saveRemoteDesktopMode({ projectId: 'project-1', loaded: null, mode: 'unattended', setConfig })
+    ).resolves.toBe(false)
+
+    expect(setConfig).not.toHaveBeenCalled()
+  })
+
+  it('surfaces a failed IM config write instead of closing silently', async () => {
+    await expect(
+      saveRemoteDesktopMode({
+        projectId: 'project-1',
+        loaded: LOADED_IM_CONFIG,
+        mode: 'unattended',
+        setConfig: vi.fn().mockResolvedValue({ ok: false, error: 'config locked' })
+      })
+    ).rejects.toThrow('config locked')
   })
 })

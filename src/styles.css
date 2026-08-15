@@ -1489,6 +1489,66 @@ html, body, #root {
   line-height: var(--mac-line-normal);
 }
 
+.ai-settings-card-title {
+  margin: 0;
+  color: var(--mac-fg);
+  font-size: var(--mac-text-sm);
+  font-weight: var(--mac-weight-semibold);
+  line-height: var(--mac-line-tight);
+}
+
+/* 远程桌面模式：三选一。卡片默认把 label 排成竖列（给输入框用的），
+   这里要横排「单选钮 + 名称 + 说明」，所以整条规则重写而不是微调。 */
+.remote-desktop-mode-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mac-sp-2);
+}
+
+.ai-settings-card label.remote-desktop-mode-option {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: baseline;
+  gap: var(--mac-sp-2);
+  margin: 0;
+  padding: 8px var(--mac-sp-3);
+  border: 1px solid var(--mac-border-subtle);
+  border-radius: var(--mac-r-md);
+  background: var(--mac-surface);
+  cursor: pointer;
+  transition: border-color var(--mac-dur-fast) var(--mac-ease),
+              background var(--mac-dur-fast) var(--mac-ease);
+}
+
+.ai-settings-card label.remote-desktop-mode-option:hover {
+  border-color: var(--mac-border-strong);
+}
+
+.ai-settings-card label.remote-desktop-mode-option:has(input:checked) {
+  border-color: var(--mac-primary);
+  background: var(--mac-primary-soft);
+}
+
+.ai-settings-card label.remote-desktop-mode-option > input[type='radio'] {
+  width: auto;
+  margin: 0;
+  align-self: center;
+  accent-color: var(--mac-primary);
+}
+
+.remote-desktop-mode-label {
+  color: var(--mac-fg);
+  font-size: var(--mac-text-xs);
+  font-weight: var(--mac-weight-semibold);
+}
+
+.remote-desktop-mode-hint {
+  color: var(--mac-fg-subtle);
+  font-size: var(--mac-text-xs);
+  font-weight: var(--mac-weight-regular);
+  line-height: var(--mac-line-normal);
+}
+
 /* 高级参数设置：默认折叠的一行文字按钮，不做成卡片，免得看起来像常规步骤。 */
 .ai-settings-advanced {
   display: grid;

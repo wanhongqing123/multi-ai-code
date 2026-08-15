@@ -20,6 +20,7 @@ import {
   type TencentImRuntime
 } from './tencentImClient.js'
 import { createRemoteDesktopHost, type RemoteDesktopHost } from '../remote-desktop/host.js'
+import type { RemoteDesktopSettingsSnapshot } from '../../electron/remote-desktop/controller'
 import { createTrtcRemoteDesktopEngine } from '../remote-desktop/trtcEngine.js'
 import type { RemoteDesktopControllerState } from '../../electron/remote-desktop/controller.js'
 
@@ -215,6 +216,12 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
   const onContactsSyncedRef = useRef(props.onContactsSynced)
   const onRemoteDesktopStateChangedRef = useRef(props.onRemoteDesktopStateChanged)
   const remoteDesktopHostRef = useRef<RemoteDesktopHost | null>(null)
+  // 改远程桌面开关不该重连 IM，所以它不在 connectionKey 里；代价是被控端不能
+  // 闭包捕获建连那一刻的 props，否则在设置里关掉它、连接不变就一直是旧值。
+  const remoteDesktopSettingsRef = useRef<RemoteDesktopSettingsSnapshot>({
+    mode: props.config.remoteDesktopMode,
+    allowedUserIds: props.config.allowedUserIds
+  })
   const connectionKey = getRemoteImConnectionKey(props)
 
   useEffect(() => {
@@ -224,6 +231,13 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
   useEffect(() => {
     onRemoteDesktopStateChangedRef.current = props.onRemoteDesktopStateChanged
   }, [props.onRemoteDesktopStateChanged])
+
+  useEffect(() => {
+    remoteDesktopSettingsRef.current = {
+      mode: props.config.remoteDesktopMode,
+      allowedUserIds: props.config.allowedUserIds
+    }
+  }, [props.config.remoteDesktopMode, props.config.allowedUserIds])
 
   useEffect(() => {
     let cancelled = false
@@ -240,10 +254,7 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
     // 路由给 AICLI。
     const remoteDesktopHost = createRemoteDesktopHost({
       engine: createTrtcRemoteDesktopEngine(),
-      getSettings: () => ({
-        mode: props.config.remoteDesktopMode,
-        allowedUserIds: props.config.allowedUserIds
-      }),
+      getSettings: () => remoteDesktopSettingsRef.current,
       getCredentials: async () => ({
         sdkAppId: props.config.sdkAppId ?? 0,
         userId: props.config.desktopUserId.trim(),

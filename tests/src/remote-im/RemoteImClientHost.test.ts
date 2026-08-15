@@ -178,6 +178,24 @@ describe('RemoteImClientHost', () => {
     ).toBe(key)
   })
 
+  // 开关远程桌面没必要断开重连 IM。代价是被控端必须实时读设置而不是闭包捕获，
+  // 由 host.test.ts「reads settings afresh per invite」那条守住另一半。
+  it('does not reconnect the IM SDK when the remote desktop mode is toggled', () => {
+    const key = getRemoteImConnectionKey({
+      projectId: 'project-1',
+      config,
+      loginRequested: true
+    })
+
+    expect(
+      getRemoteImConnectionKey({
+        projectId: 'project-1',
+        config: { ...config, remoteDesktopMode: 'unattended' },
+        loginRequested: true
+      })
+    ).toBe(key)
+  })
+
   it('changes the SDK connection key when login identity or credentials change', () => {
     const key = getRemoteImConnectionKey({
       projectId: 'project-1',

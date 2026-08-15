@@ -3,6 +3,7 @@ import { createRemoteDesktopHost } from '../../../src/remote-desktop/host.js'
 import type { RemoteDesktopEngine } from '../../../electron/remote-desktop/engine.js'
 import {
   REMOTE_DESKTOP_SIGNAL_PREFIX,
+  decodeRemoteDesktopSignal,
   encodeRemoteDesktopSignal
 } from '../../../electron/remote-desktop/signal.js'
 
@@ -62,6 +63,54 @@ describe('renderer remote desktop host', () => {
     expect(sendText).toHaveBeenCalledTimes(1)
     expect(sendText.mock.calls[0][0]).toBe('whq-iphone')
     expect(host.getState().hostState).toBe('sharing')
+  })
+
+  it('reads settings afresh per invite so switching off mid-session takes effect', async () => {
+    // 改远程桌面开关不会重连 IM（connectionKey 里没有它），所以被控端不能把
+    // 建连那一刻的设置闭包住——否则用户在设置里关掉它，直到重启前都还能被连。
+    const startSharing = vi.fn(async () => {})
+    // 整个换掉而不是改字段：真实的失效是 getSettings 读到过期的 props，
+    // 每次都新建对象返回。改字段的话连"建连时快照一次"的坏实现都能骗过去。
+    let live: { mode: 'unattended' | 'disabled'; allowedUserIds: string[] } = {
+      mode: 'unattended',
+      allowedUserIds: ['whq-iphone']
+    }
+    const sendText = vi.fn(async (_toUserId: string, _text: string) => {})
+    const host = createRemoteDesktopHost({
+      engine: {
+        listScreenSources: async () => [
+          { sourceId: 's0', sourceName: 'Screen1', isMainScreen: true, width: 1920, height: 1080 }
+        ],
+        startSharing,
+        stopSharing: async () => {}
+      },
+      getSettings: () => live,
+      getCredentials: async () => ({ sdkAppId: 1, userId: 'host-pc', userSig: 'sig' }),
+      sendText
+    })
+
+    host.handleIncomingText({
+      projectId: 'p',
+      fromUserId: 'whq-iphone',
+      text: encodeRemoteDesktopSignal({ type: 'invite', sessionId: 's-1', roomId: 'r-1' })
+    })
+    await vi.waitFor(() => expect(startSharing).toHaveBeenCalledTimes(1))
+    await host.stopByLocalUser()
+    // 到这里对端已收到 accept 和 stop 两条。
+    expect(sendText).toHaveBeenCalledTimes(2)
+
+    live = { mode: 'disabled', allowedUserIds: ['whq-iphone'] }
+    host.handleIncomingText({
+      projectId: 'p',
+      fromUserId: 'whq-iphone',
+      text: encodeRemoteDesktopSignal({ type: 'invite', sessionId: 's-2', roomId: 'r-2' })
+    })
+
+    // 等"这条邀请已处理完"的确凿证据——回信。等 hostState 还是 idle 没有意义：
+    // 异步处理开始前它本来就是 idle，断言会立刻通过而什么都没验证。
+    await vi.waitFor(() => expect(sendText).toHaveBeenCalledTimes(3))
+    expect(decodeRemoteDesktopSignal(sendText.mock.calls[2][1])?.type).toBe('reject')
+    expect(startSharing).toHaveBeenCalledTimes(1)
   })
 
   it('never throws into the caller when signal handling fails', async () => {

@@ -43,6 +43,7 @@ import type {
   RemoteImMessageRole,
   RemoteImMessageDirection,
   RemoteImMessageKind,
+  RemoteImMessageOrigin,
   RemoteImMessageStatus,
   RemoteImImageAttachment,
   RemoteImFileAttachment,
@@ -72,6 +73,7 @@ export type {
   RemoteImMessageRole,
   RemoteImMessageDirection,
   RemoteImMessageKind,
+  RemoteImMessageOrigin,
   RemoteImMessageStatus,
   RemoteImImageAttachment,
   RemoteImFileAttachment,
@@ -104,6 +106,8 @@ export interface RemoteImSendPeerFileInput {
 export interface RemoteImOutgoingImageEvent {
   projectId: string
   toUserId: string
+  origin: RemoteImMessageOrigin
+  runtimeIdentity: RemoteImRuntimeIdentity
   fileToken?: string | null
   fileName?: string | null
   mimeType?: string | null
@@ -114,6 +118,8 @@ export interface RemoteImOutgoingImageEvent {
 export interface RemoteImOutgoingFileEvent {
   projectId: string
   toUserId: string
+  origin: RemoteImMessageOrigin
+  runtimeIdentity: RemoteImRuntimeIdentity
   fileName?: string | null
   mimeType?: string | null
   fileBytes?: Uint8Array | ArrayBuffer | number[] | null
@@ -549,11 +555,25 @@ const api = {
       return () => ipcRenderer.removeListener('remote-im:messages-changed', handler)
     },
     onOutgoingText: (
-      cb: (evt: { projectId: string; toUserId: string; text: string; messageId?: number | null }) => void
+      cb: (evt: {
+        projectId: string
+        toUserId: string
+        text: string
+        origin: RemoteImMessageOrigin
+        runtimeIdentity: RemoteImRuntimeIdentity
+        messageId?: number | null
+      }) => void
     ) => {
       const handler = (
         _event: IpcRendererEvent,
-        evt: { projectId: string; toUserId: string; text: string; messageId?: number | null }
+        evt: {
+          projectId: string
+          toUserId: string
+          text: string
+          origin: RemoteImMessageOrigin
+          runtimeIdentity: RemoteImRuntimeIdentity
+          messageId?: number | null
+        }
       ) => cb(evt)
       ipcRenderer.on('remote-im:outgoing-text', handler)
       return () => ipcRenderer.removeListener('remote-im:outgoing-text', handler)

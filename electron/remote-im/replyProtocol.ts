@@ -16,6 +16,12 @@ export interface RemoteImAicliPromptOptions {
 
 export interface RemoteImReplyExtraction {
   content: string
+  /**
+   * The envelope is syntactically closed. Callers that use this as route
+   * authority must additionally establish that the text came from an
+   * assistant-authored source rather than terminal echo.
+   */
+  completed: boolean
   pending: boolean
   nextBuffer: string
 }
@@ -116,20 +122,32 @@ function isPromptMarkerInstructionLine(line: string): boolean {
   return PROMPT_MARKER_INSTRUCTION_LINE_RE.test(markerCandidateText(line))
 }
 
-function stripExpectedOpenMarker(line: string, replyId: string): string | null {
+interface ExpectedMarkerMatch {
+  index: number
+  exact: boolean
+}
+
+interface ExpectedOpenMarkerMatch {
+  remainder: string
+  exact: boolean
+}
+
+function stripExpectedOpenMarker(line: string, replyId: string): ExpectedOpenMarkerMatch | null {
   const text = markerCandidateText(line)
   const exact = buildRemoteImReplyOpenTag(replyId)
-  if (text.startsWith(exact)) return text.slice(exact.length)
+  if (text.startsWith(exact)) {
+    return { remainder: text.slice(exact.length), exact: true }
+  }
 
   const malformedPrefix = `<remote-im-reply id="${replyId}`
   if (!text.startsWith(malformedPrefix)) return null
   let remainder = text.slice(malformedPrefix.length)
   if (remainder.startsWith('"')) remainder = remainder.slice(1)
   if (remainder.startsWith('>')) remainder = remainder.slice(1)
-  return remainder
+  return { remainder, exact: false }
 }
 
-function expectedCloseMarkerIndex(line: string, replyId: string): number {
+function expectedCloseMarkerMatch(line: string, replyId: string): ExpectedMarkerMatch | null {
   const text = markerCandidateText(line)
   const exactIndex = text.indexOf(buildRemoteImReplyCloseTag(replyId))
   const legacyIndex = text.indexOf(REMOTE_IM_REPLY_CLOSE_TAG)
@@ -143,41 +161,52 @@ function expectedCloseMarkerIndex(line: string, replyId: string): number {
     })()
       ? malformedIndex
       : -1
-  const indexes = [exactIndex, legacyIndex, validMalformedIndex].filter((index) => index >= 0)
-  return indexes.length > 0 ? Math.min(...indexes) : -1
+  const matches = [
+    exactIndex >= 0 ? { index: exactIndex, exact: true } : null,
+    legacyIndex >= 0 ? { index: legacyIndex, exact: false } : null,
+    validMalformedIndex >= 0 ? { index: validMalformedIndex, exact: false } : null
+  ].filter((match): match is ExpectedMarkerMatch => match !== null)
+  return matches.sort((a, b) => a.index - b.index)[0] ?? null
 }
 
 function extractExpectedRemoteImReply(clean: string, replyId: string): RemoteImReplyExtraction {
   const replies: string[] = []
   const pendingLines: string[] = []
+  let completed = false
   let pending = false
+  let pendingExactOpen = false
 
   for (const line of clean.split('\n')) {
     if (isPromptMarkerInstructionLine(line)) continue
-    const openingRemainder = stripExpectedOpenMarker(line, replyId)
-    if (openingRemainder !== null) {
+    const opening = stripExpectedOpenMarker(line, replyId)
+    if (opening !== null) {
       pending = true
+      pendingExactOpen = opening.exact
       pendingLines.length = 0
-      const closeIndex = expectedCloseMarkerIndex(openingRemainder, replyId)
-      if (closeIndex >= 0) {
-        if (closeIndex > 0) pendingLines.push(openingRemainder.slice(0, closeIndex))
+      const close = expectedCloseMarkerMatch(opening.remainder, replyId)
+      if (close) {
+        if (close.index > 0) pendingLines.push(opening.remainder.slice(0, close.index))
         const content = trimReplyContent(pendingLines.join('\n'))
         if (content) replies.push(content)
+        if (opening.exact && close.exact) completed = true
         pending = false
-      } else if (openingRemainder) {
-        pendingLines.push(openingRemainder)
+        pendingExactOpen = false
+      } else if (opening.remainder) {
+        pendingLines.push(opening.remainder)
       }
       continue
     }
     if (!pending) continue
 
     const candidate = markerCandidateText(line)
-    const closeIndex = expectedCloseMarkerIndex(line, replyId)
-    if (closeIndex >= 0) {
-      if (closeIndex > 0) pendingLines.push(candidate.slice(0, closeIndex))
+    const close = expectedCloseMarkerMatch(line, replyId)
+    if (close) {
+      if (close.index > 0) pendingLines.push(candidate.slice(0, close.index))
       const content = trimReplyContent(pendingLines.join('\n'))
       if (content) replies.push(content)
+      if (pendingExactOpen && close.exact) completed = true
       pending = false
+      pendingExactOpen = false
       pendingLines.length = 0
       continue
     }
@@ -186,6 +215,7 @@ function extractExpectedRemoteImReply(clean: string, replyId: string): RemoteImR
 
   return {
     content: replies.join('\n\n').trim(),
+    completed,
     pending,
     nextBuffer: pending ? buildPendingReplyBuffer(pendingLines, replyId) : ''
   }
@@ -226,6 +256,7 @@ export function extractRemoteImReplyOutput(
   const expectedReplyId = normalizeReplyId(options.replyId)
   if (expectedReplyId) return extractExpectedRemoteImReply(clean, expectedReplyId)
   let pendingReplyId: string | undefined
+  let completed = false
   let pending = false
 
   for (const line of clean.split('\n')) {
@@ -250,6 +281,7 @@ export function extractRemoteImReplyOutput(
     ) {
       const content = trimReplyContent(pendingLines.join('\n'))
       if (content) replies.push(content)
+      completed = true
       pending = false
       pendingReplyId = undefined
       pendingLines.length = 0
@@ -261,6 +293,7 @@ export function extractRemoteImReplyOutput(
 
   return {
     content: replies.join('\n\n').trim(),
+    completed,
     pending,
     nextBuffer: pending ? buildPendingReplyBuffer(pendingLines, pendingReplyId) : ''
   }

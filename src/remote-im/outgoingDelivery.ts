@@ -1,15 +1,23 @@
+import type {
+  RemoteImMessageOrigin,
+  RemoteImRuntimeIdentity
+} from '../../electron/preload.js'
 import type { TencentImRuntime } from './tencentImClient.js'
 
 export interface RemoteImOutgoingTextEvent {
   projectId: string
   toUserId: string
   text: string
+  origin: RemoteImMessageOrigin
+  runtimeIdentity: RemoteImRuntimeIdentity
   messageId?: number | null
 }
 
 export interface RemoteImOutgoingImageEvent {
   projectId: string
   toUserId: string
+  origin: RemoteImMessageOrigin
+  runtimeIdentity: RemoteImRuntimeIdentity
   fileToken?: string | null
   fileName?: string | null
   mimeType?: string | null
@@ -20,6 +28,8 @@ export interface RemoteImOutgoingImageEvent {
 export interface RemoteImOutgoingFileEvent {
   projectId: string
   toUserId: string
+  origin: RemoteImMessageOrigin
+  runtimeIdentity: RemoteImRuntimeIdentity
   fileName?: string | null
   mimeType?: string | null
   fileBytes?: Uint8Array | ArrayBuffer | number[] | null
@@ -76,7 +86,8 @@ export async function deliverRemoteImOutgoingText(
 ): Promise<void> {
   if (!input.event.messageId) {
     await input.runtime?.sendText(input.event.toUserId, input.event.text, {
-      messageId: input.event.messageId
+      messageId: input.event.messageId,
+      origin: input.event.origin
     })
     return
   }
@@ -89,7 +100,8 @@ export async function deliverRemoteImOutgoingText(
   try {
     const sendResult = await withTimeout(
       input.runtime.sendText(input.event.toUserId, input.event.text, {
-        messageId: input.event.messageId
+        messageId: input.event.messageId,
+        origin: input.event.origin
       }),
       input.sendTimeoutMs ?? DEFAULT_SEND_TIMEOUT_MS
     )
@@ -110,7 +122,8 @@ export async function deliverRemoteImOutgoingImage(
     const file = resolveOutgoingImageFile(input)
     if (file && input.runtime?.sendImage) {
       await input.runtime.sendImage(input.event.toUserId, file, {
-        messageId: input.event.messageId
+        messageId: input.event.messageId,
+        origin: input.event.origin
       })
     }
     return
@@ -130,7 +143,8 @@ export async function deliverRemoteImOutgoingImage(
   try {
     const sendResult = await withTimeout(
       input.runtime.sendImage(input.event.toUserId, file, {
-        messageId: input.event.messageId
+        messageId: input.event.messageId,
+        origin: input.event.origin
       }),
       input.sendTimeoutMs ?? DEFAULT_SEND_TIMEOUT_MS
     )
@@ -151,7 +165,8 @@ export async function deliverRemoteImOutgoingFile(
     const file = resolveOutgoingFile(input.event)
     if (file && input.runtime?.sendFile) {
       await input.runtime.sendFile(input.event.toUserId, file, {
-        messageId: input.event.messageId
+        messageId: input.event.messageId,
+        origin: input.event.origin
       })
     }
     return
@@ -171,7 +186,8 @@ export async function deliverRemoteImOutgoingFile(
   try {
     const sendResult = await withTimeout(
       input.runtime.sendFile(input.event.toUserId, file, {
-        messageId: input.event.messageId
+        messageId: input.event.messageId,
+        origin: input.event.origin
       }),
       input.sendTimeoutMs ?? DEFAULT_SEND_TIMEOUT_MS
     )

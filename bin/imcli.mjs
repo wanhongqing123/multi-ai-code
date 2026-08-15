@@ -188,10 +188,12 @@ function decodeOutgoingText(rawArgs, usage) {
 
 async function requestJson(method, path, body) {
   const bridge = await loadBridge()
+  const sessionId = process.env.MULTI_AI_CODE_SESSION_ID?.trim()
   const response = await fetch(`${bridge.url}${path}`, {
     method,
     headers: {
       authorization: `Bearer ${bridge.token}`,
+      ...(sessionId ? { 'x-multi-ai-code-session-id': sessionId } : {}),
       ...(body ? { 'content-type': 'application/json' } : {})
     },
     body: body ? JSON.stringify(body) : undefined

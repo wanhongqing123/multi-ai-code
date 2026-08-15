@@ -20,7 +20,9 @@ vi.mock('electron', () => ({
     handle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
       ipcHandlers.set(channel, handler)
     }),
-    on: vi.fn(),
+    on: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
+      ipcHandlers.set(channel, handler)
+    }),
   },
   BrowserWindow: {
     getAllWindows: () => [
@@ -229,6 +231,7 @@ describe('registerPtyIpc prompt injection timing', () => {
     const pathValue = env.PATH ?? env.Path ?? ''
 
     expect(env.MULTI_AI_CODE_PROJECT_ID).toBe('project-1')
+    expect(env.MULTI_AI_CODE_SESSION_ID).toBe('session-no-plan')
     expect(env.MULTI_AI_CODE_ROOT_DIR).toBeTruthy()
     expect(pathValue.split(':').some((item) => item.endsWith('/bin'))).toBe(true)
   })
@@ -516,5 +519,33 @@ describe('registerPtyIpc prompt injection timing', () => {
     expect(source).not.toContain("import { scanLocalSkills }")
     expect(source).not.toContain('scanLocalSkills()')
     expect(source).not.toContain('decorateUserMessageWithSkillContext')
+  })
+
+  it('classifies terminal editing, navigation, submission and cancellation distinctly', async () => {
+    const { proc } = await spawnNoPlanSession()
+    const kinds: string[] = []
+    const { addSessionLocalInputListener } = await import(
+      '../../../electron/cc/ptyManager.js'
+    )
+    const unsubscribe = addSessionLocalInputListener(({ kind }) => kinds.push(kind))
+    const inputHandler = ipcHandlers.get('cc:input')
+    if (!inputHandler) throw new Error('cc:input handler was not registered')
+
+    inputHandler({}, { sessionId: 'session-no-plan', data: '中' })
+    inputHandler({}, { sessionId: 'session-no-plan', data: '\x1B[A' })
+    inputHandler({}, { sessionId: 'session-no-plan', data: '\r' })
+    inputHandler({}, { sessionId: 'session-no-plan', data: '\x03' })
+    inputHandler({}, { sessionId: 'session-no-plan', data: '\x15' })
+    await sleep(20)
+    unsubscribe()
+
+    expect(kinds).toEqual([
+      'editing',
+      'navigation',
+      'submit-key',
+      'interrupt',
+      'cancel-editing',
+    ])
+    expect(proc.writes).toEqual(['中', '\x1B[A', '\r', '\x03', '\x15'])
   })
 })

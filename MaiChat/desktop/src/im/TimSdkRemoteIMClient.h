@@ -19,6 +19,7 @@ public:
     void disconnectFromService(RemoteIMCompletion completion) override;
     void deleteContact(const QString& userId, RemoteIMCompletion completion) override;
     void sendText(const QString& peerId, const QString& text, RemoteIMSendCompletion completion) override;
+    void sendMachineText(const QString& peerId, const QString& text, RemoteIMSendCompletion completion) override;
     void sendImage(const QString& peerId, const QString& localPath, RemoteIMSendCompletion completion) override;
     void sendVoice(const QString& peerId, const QString& localPath, int durationSeconds, RemoteIMCompletion completion) override;
     void sendFile(const QString& peerId, const QString& localPath, const QString& fileName, RemoteIMSendCompletion completion) override;
@@ -26,6 +27,10 @@ public:
     void sendFileWithText(const QString& peerId, const QString& localPath, const QString& fileName, const QString& text, RemoteIMSendCompletion completion) override;
 
 private:
+    void sendTextWithOrigin(const QString& peerId,
+                            const QString& text,
+                            RemoteIMMessageOrigin origin,
+                            RemoteIMSendCompletion completion);
     void syncInitialData();
     void fetchFriendList();
     void fetchConversationList();

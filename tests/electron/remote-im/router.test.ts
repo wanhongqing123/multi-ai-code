@@ -5,8 +5,7 @@ import {
   type RemoteImAicliOutputRoute
 } from '../../../electron/remote-im/router.js'
 import {
-  createRemoteImAicliOutputText,
-  parseRemoteImAicliOutputText
+  createRemoteImAicliOutputText
 } from '../../../electron/remote-im/outputForwarding.js'
 import { REMOTE_IM_REPLY_CLOSE_TAG, REMOTE_IM_REPLY_OPEN_TAG } from '../../../electron/remote-im/replyProtocol.js'
 
@@ -62,6 +61,40 @@ function createMessageStore() {
 }
 
 describe('remote IM router', () => {
+  it('consumes remote desktop protocol frames before machine collaboration routing', async () => {
+    const store = createMessageStore()
+    const sentToAicli: string[] = []
+    const sentToIm: string[] = []
+    const router = createRemoteImRouter({
+      getConfig: () => config,
+      resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
+      sendUser: async (_sessionId, text) => {
+        sentToAicli.push(text)
+        return { ok: true }
+      },
+      sendImText: async (_projectId, _toUserId, text) => {
+        sentToIm.push(text)
+        return { ok: true }
+      },
+      store
+    })
+
+    const result = await router.handleIncomingText({
+      projectId: 'project-1',
+      remoteMessageId: 'remote-desktop-signal-1',
+      fromUserId: 'phone_admin',
+      toUserId: 'desktop_bot',
+      text: '\u2063\u200B[remote-desktop]{"v":1,"type":"stop","sessionId":"s1"}',
+      origin: 'machine',
+      createdAt: 100
+    })
+
+    expect(result).toEqual({ ok: true })
+    expect(sentToAicli).toEqual([])
+    expect(sentToIm).toEqual([])
+    expect(store.messages).toEqual([])
+  })
+
   it('rejects non-whitelisted users without sending to AICLI', async () => {
     const store = createMessageStore()
     const sentToAicli: string[] = []
@@ -133,6 +166,7 @@ describe('remote IM router', () => {
       fromUserId: 'phone_admin',
       toUserId: 'desktop_bot',
       text: '检查构建',
+      origin: 'human',
       createdAt: 100
     })
 
@@ -191,6 +225,7 @@ describe('remote IM router', () => {
         fromUserId: 'phone_admin',
         toUserId: 'desktop_bot',
         text: '检查构建',
+        origin: 'human',
         createdAt: 100
       })
 
@@ -252,6 +287,7 @@ describe('remote IM router', () => {
       remoteMessageId: 'remote-a',
       fromUserId: 'phone_admin',
       text: '任务 A',
+      origin: 'human',
       createdAt: 100
     })
     const second = await router.handleIncomingText({
@@ -259,6 +295,7 @@ describe('remote IM router', () => {
       remoteMessageId: 'remote-b',
       fromUserId: 'phone_b',
       text: '任务 B',
+      origin: 'human',
       createdAt: 101
     })
 
@@ -273,6 +310,160 @@ describe('remote IM router', () => {
       { replyId: routes[0]?.replyId, taskId: routes[0]?.taskId }
     ])
     expect(sentToIm.at(-1)).toContain('发送给 AICLI 失败：')
+  })
+
+  it('defers a busy machine input and rechecks admission when the FIFO submits it', async () => {
+    const store = createMessageStore()
+    const routes: RemoteImAicliOutputRoute[] = []
+    const submissions: Array<{
+      inputOrigin?: 'remote-im' | 'local'
+      text: string
+    }> = []
+    let admissionCalls = 0
+    let deferredSubmit: (() => Promise<void>) | null = null
+    const router = createRemoteImRouter({
+      getConfig: () => config,
+      resolveSession: () => ({
+        sessionId: 'session-main',
+        targetRepo: 'repo',
+        sourceKind: 'codex'
+      }),
+      authorizeAicliOutputStart: () => {
+        admissionCalls += 1
+        return { ok: true }
+      },
+      deferAicliInputIfBusy: (_route, submit) => {
+        deferredSubmit = submit
+        return { queued: true }
+      },
+      onAicliOutputStart: (route) => routes.push(route),
+      sendUser: async (_sessionId, text, options) => {
+        submissions.push({ text, inputOrigin: options?.inputOrigin })
+        return { ok: true }
+      },
+      sendImText: async () => ({ ok: true }),
+      createReplyId: () => 'machine-reply',
+      store
+    })
+
+    const result = await router.handleIncomingText({
+      projectId: 'project-1',
+      remoteMessageId: 'machine-queued-1',
+      fromUserId: 'phone_admin',
+      toUserId: 'desktop_bot',
+      text: '继续协作',
+      origin: 'machine',
+      createdAt: 100
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      queued: true,
+      aicliSessionId: 'session-main',
+      replyId: 'machine-reply'
+    })
+    expect(admissionCalls).toBe(0)
+    expect(routes).toEqual([])
+    expect(submissions).toEqual([])
+    expect(store.messages[0]).toMatchObject({
+      role: 'aicli',
+      status: 'received',
+      sessionId: 'session-main'
+    })
+
+    expect(deferredSubmit).not.toBeNull()
+    await deferredSubmit!()
+
+    expect(admissionCalls).toBe(1)
+    expect(routes).toHaveLength(1)
+    expect(routes[0]).toMatchObject({ autoReplyToIm: false })
+    expect(submissions).toHaveLength(1)
+    expect(submissions[0]?.inputOrigin).toBe('remote-im')
+    expect(submissions[0]?.text).toContain('本轮 AICLI 的普通输出不会自动发送到 IM')
+    expect(store.messages[0]).toMatchObject({ status: 'sent-to-aicli' })
+  })
+
+  it('defers a busy human input so it cannot merge into an active local turn', async () => {
+    const store = createMessageStore()
+    const routes: RemoteImAicliOutputRoute[] = []
+    const submissions: string[] = []
+    let deferredSubmit: (() => Promise<void>) | null = null
+    const router = createRemoteImRouter({
+      getConfig: () => config,
+      resolveSession: () => ({
+        sessionId: 'session-main',
+        targetRepo: 'repo',
+        sourceKind: 'claude'
+      }),
+      authorizeAicliOutputStart: () => ({ ok: true }),
+      deferAicliInputIfBusy: (_route, submit) => {
+        deferredSubmit = submit
+        return { queued: true }
+      },
+      onAicliOutputStart: (route) => routes.push(route),
+      sendUser: async (_sessionId, text) => {
+        submissions.push(text)
+        return { ok: true }
+      },
+      sendImText: async () => ({ ok: true }),
+      createReplyId: () => 'human-reply',
+      store
+    })
+
+    const result = await router.handleIncomingText({
+      projectId: 'project-1',
+      remoteMessageId: 'human-queued-1',
+      fromUserId: 'phone_admin',
+      toUserId: 'desktop_bot',
+      text: '人工远程任务',
+      origin: 'human',
+      createdAt: 100
+    })
+
+    expect(result).toMatchObject({ ok: true, queued: true, replyId: 'human-reply' })
+    expect(routes).toEqual([])
+    expect(submissions).toEqual([])
+
+    expect(deferredSubmit).not.toBeNull()
+    await deferredSubmit!()
+
+    expect(routes).toHaveLength(1)
+    expect(routes[0]).toMatchObject({ autoReplyToIm: true })
+    expect(submissions).toHaveLength(1)
+    expect(submissions[0]).not.toContain('本轮 AICLI 的普通输出不会自动发送到 IM')
+    expect(store.messages[0]).toMatchObject({ status: 'sent-to-aicli' })
+  })
+
+  it('defaults missing origin to a silent machine route', async () => {
+    const store = createMessageStore()
+    const routes: RemoteImAicliOutputRoute[] = []
+    const inputs: Array<{ inputOrigin?: 'remote-im' | 'local'; text: string }> = []
+    const router = createRemoteImRouter({
+      getConfig: () => config,
+      resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
+      authorizeAicliOutputStart: () => ({ ok: true }),
+      onAicliOutputStart: (route) => routes.push(route),
+      sendUser: async (_sessionId, text, options) => {
+        inputs.push({ text, inputOrigin: options?.inputOrigin })
+        return { ok: true }
+      },
+      sendImText: async () => ({ ok: true }),
+      store
+    })
+
+    const result = await router.handleIncomingText({
+      projectId: 'project-1',
+      remoteMessageId: 'legacy-without-origin',
+      fromUserId: 'phone_admin',
+      toUserId: 'desktop_bot',
+      text: '旧版未标记消息'
+    })
+
+    expect(result.ok).toBe(true)
+    expect(routes[0]).toMatchObject({ autoReplyToIm: false })
+    expect(inputs[0]).toMatchObject({ inputOrigin: 'remote-im' })
+    expect(inputs[0]?.text).toContain('如需继续与对方协作，请显式调用 imcli')
+    expect(store.messages[0]).toMatchObject({ role: 'aicli', status: 'sent-to-aicli' })
   })
 
   it('starts output forwarding before submitting the AICLI prompt', async () => {
@@ -302,6 +493,7 @@ describe('remote IM router', () => {
       fromUserId: 'phone_admin',
       toUserId: 'desktop_bot',
       text: '立即失败也必须能回传',
+      origin: 'human',
       createdAt: 100
     })
 
@@ -331,6 +523,7 @@ describe('remote IM router', () => {
       fromUserId: 'phone_admin',
       toUserId: 'desktop_bot',
       text: '不会留下悬挂监听',
+      origin: 'human',
       createdAt: 100
     })
 
@@ -376,6 +569,49 @@ describe('remote IM router', () => {
     expect(store.messages.filter((item) => item.direction === 'incoming')).toHaveLength(1)
   })
 
+  it('reserves the incoming row before awaiting sendUser to close the redelivery race', async () => {
+    const store = createMessageStore()
+    let sendCount = 0
+    let releaseSend: (() => void) | null = null
+    const firstSend = new Promise<void>((resolve) => {
+      releaseSend = resolve
+    })
+    const router = createRemoteImRouter({
+      getConfig: () => config,
+      resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
+      sendUser: async () => {
+        sendCount += 1
+        await firstSend
+        return { ok: true }
+      },
+      sendImText: async () => ({ ok: true }),
+      store
+    })
+    const message = {
+      projectId: 'project-1',
+      remoteMessageId: 'remote-in-flight-dup',
+      fromUserId: 'phone_admin',
+      toUserId: 'desktop_bot',
+      text: '只能执行一次',
+      origin: 'human' as const
+    }
+
+    const first = router.handleIncomingText(message)
+    const duplicate = await router.handleIncomingText(message)
+
+    expect(duplicate).toMatchObject({ ok: true, aicliSessionId: 'session-main' })
+    expect(sendCount).toBe(1)
+    expect(store.messages).toHaveLength(1)
+    expect(store.messages[0]).toMatchObject({
+      status: 'received',
+      sessionId: 'session-main'
+    })
+
+    releaseSend!()
+    await expect(first).resolves.toMatchObject({ ok: true })
+    expect(store.messages[0]).toMatchObject({ status: 'sent-to-aicli' })
+  })
+
   it('handles supported slash commands without sending text to AICLI', async () => {
     const store = createMessageStore()
     const sentToAicli: string[] = []
@@ -409,6 +645,7 @@ describe('remote IM router', () => {
       fromUserId: 'phone_admin',
       toUserId: 'desktop_bot',
       text: '/status',
+      origin: 'human',
       createdAt: 100
     })
 
@@ -462,6 +699,7 @@ describe('remote IM router', () => {
       fromUserId: 'phone_admin',
       toUserId: 'desktop_bot',
       text: '/approve approval-public-a',
+      origin: 'human',
       createdAt: 100
     })
 
@@ -475,7 +713,7 @@ describe('remote IM router', () => {
     ])
     expect(sentToAicli).toEqual([])
     expect(sentToIm).toHaveLength(1)
-    expect(parseRemoteImAicliOutputText(sentToIm[0]!)).toBe('已批准这一次命令执行。')
+    expect(sentToIm[0]).toBe('已批准这一次命令执行。')
     expect(store.messages[0]).toMatchObject({ role: 'remote-user', status: 'received' })
     expect(store.messages[1]).toMatchObject({
       role: 'system',
@@ -484,7 +722,7 @@ describe('remote IM router', () => {
     })
   })
 
-  it('shows a transported approval result without routing it into the receiving AICLI', async () => {
+  it('routes a transported approval result into the receiving AICLI without automatic IM output', async () => {
     const senderStore = createMessageStore()
     const wireTexts: string[] = []
     const sender = createRemoteImRouter({
@@ -507,11 +745,13 @@ describe('remote IM router', () => {
       remoteMessageId: 'approval-reply',
       fromUserId: 'phone_admin',
       toUserId: 'desktop_bot',
-      text: '/reject approval-public-a'
+      text: '/reject approval-public-a',
+      origin: 'human'
     })
 
     const receiverStore = createMessageStore()
     const receivedAicliInputs: string[] = []
+    const receiverRoutes: RemoteImAicliOutputRoute[] = []
     const receiver = createRemoteImRouter({
       getConfig: () => ({
         ...config,
@@ -524,6 +764,7 @@ describe('remote IM router', () => {
         receivedAicliInputs.push(text)
         return { ok: true }
       },
+      onAicliOutputStart: (route) => receiverRoutes.push(route),
       sendImText: async () => ({ ok: true }),
       store: receiverStore
     })
@@ -532,14 +773,19 @@ describe('remote IM router', () => {
       remoteMessageId: 'approval-result-wire',
       fromUserId: 'desktop_bot',
       toUserId: 'receiver_bot',
-      text: wireTexts[0]!
+      text: wireTexts[0]!,
+      origin: 'machine'
     })
 
     expect(result.ok).toBe(true)
-    expect(receivedAicliInputs).toEqual([])
+    expect(receivedAicliInputs).toHaveLength(1)
+    expect(receivedAicliInputs[0]).toContain('已拒绝这一次命令执行。')
+    expect(receivedAicliInputs[0]).toContain('如需继续与对方协作，请显式调用 imcli')
+    expect(receiverRoutes).toHaveLength(1)
+    expect(receiverRoutes[0]).toMatchObject({ autoReplyToIm: false })
     expect(receiverStore.messages[0]).toMatchObject({
       role: 'aicli',
-      status: 'received',
+      status: 'sent-to-aicli',
       content: '已拒绝这一次命令执行。'
     })
     expect(senderStore.messages[1]).toMatchObject({
@@ -578,6 +824,7 @@ describe('remote IM router', () => {
       fromUserId: 'phone_admin',
       toUserId: 'desktop_bot',
       text: '/diff',
+      origin: 'human',
       createdAt: 100
     })
 
@@ -633,6 +880,7 @@ describe('remote IM router', () => {
       fromUserId: 'phone_admin',
       toUserId: 'desktop_bot',
       text: '/btw 检查最近一次失败日志',
+      origin: 'human',
       createdAt: 100
     })
 
@@ -678,6 +926,7 @@ describe('remote IM router', () => {
       fromUserId: 'phone_admin',
       toUserId: 'desktop_bot',
       text: '/review',
+      origin: 'human',
       createdAt: 100
     })
 
@@ -747,6 +996,7 @@ describe('remote IM router', () => {
       toUserId: 'desktop_bot',
       audioUrl: 'https://cos.example.test/voice.amr',
       durationSeconds: 4,
+      origin: 'human',
       createdAt: 100
     })
 
@@ -795,6 +1045,7 @@ describe('remote IM router', () => {
       fromUserId: 'phone_admin',
       toUserId: 'desktop_bot',
       audioUrl: 'https://cos.example.test/voice.amr',
+      origin: 'human',
       durationSeconds: 4
     })
 
@@ -902,6 +1153,7 @@ describe('remote IM router', () => {
       projectId: 'project-1',
       remoteMessageId: 'file-remote-2',
       fromUserId: 'phone_admin',
+      origin: 'human',
       fileUrl: 'https://example.test/spec.pdf',
       fileName: 'spec.pdf'
     })
@@ -1081,6 +1333,7 @@ describe('remote IM router', () => {
       remoteMessageId: 'image-remote-1',
       fromUserId: 'phone_admin',
       toUserId: 'desktop_bot',
+      origin: 'human',
       imageUrl: 'https://example.test/missing.png',
       fileName: 'missing.png',
       createdAt: 100
@@ -1167,6 +1420,7 @@ describe('remote IM router', () => {
       fromUserId: 'friend-a',
       toUserId: 'desktop_bot',
       text: 'hello from friend',
+      origin: 'human',
       createdAt: 100
     })
 
@@ -1259,10 +1513,11 @@ describe('remote IM router', () => {
     })
   })
 
-  it('records marked slave AICLI output on the master without executing it as a task', async () => {
+  it('routes legacy marked slave output as a silent machine collaboration input', async () => {
     const store = createMessageStore()
     const sentToAicli: string[] = []
     const sentToIm: string[] = []
+    const routes: RemoteImAicliOutputRoute[] = []
     const router = createRemoteImRouter({
       getConfig: () => ({
         ...config,
@@ -1279,6 +1534,7 @@ describe('remote IM router', () => {
         sentToIm.push(text)
         return { ok: true }
       },
+      onAicliOutputStart: (route) => routes.push(route),
       store
     })
 
@@ -1290,11 +1546,14 @@ describe('remote IM router', () => {
     })
 
     expect(result.ok).toBe(true)
-    expect(sentToAicli).toEqual([])
+    expect(sentToAicli).toHaveLength(1)
+    expect(sentToAicli[0]).toContain('处理完成')
+    expect(sentToAicli[0]).not.toContain(createRemoteImAicliOutputText(''))
     expect(sentToIm).toEqual([])
+    expect(routes[0]).toMatchObject({ autoReplyToIm: false })
     expect(store.messages[0]).toMatchObject({
       role: 'aicli',
-      status: 'received',
+      status: 'sent-to-aicli',
       content: '处理完成'
     })
   })
@@ -1354,6 +1613,7 @@ describe('remote IM router', () => {
     const result = await router.handleIncomingText({
       projectId: 'project-1',
       fromUserId: 'phone_admin',
+      origin: 'human',
       text: '检查构建'
     })
 
@@ -1363,43 +1623,11 @@ describe('remote IM router', () => {
     expect(store.messages[0]).toMatchObject({ status: 'failed' })
   })
 
-  it('records remote IM system replies without sending another reply', async () => {
+  it('routes machine system replies to AICLI through a silent output route', async () => {
     const store = createMessageStore()
     const sentToAicli: string[] = []
     const sentToIm: string[] = []
-    const router = createRemoteImRouter({
-      getConfig: () => config,
-      resolveSession: () => null,
-      sendUser: async (_sessionId, text) => {
-        sentToAicli.push(text)
-        return { ok: true }
-      },
-      sendImText: async (_projectId, _toUserId, text) => {
-        sentToIm.push(text)
-        return { ok: true }
-      },
-      store
-    })
-
-    const result = await router.handleIncomingText({
-      projectId: 'project-1',
-      fromUserId: 'phone_admin',
-      text: '当前没有运行中的 AICLI。'
-    })
-
-    expect(result.ok).toBe(true)
-    expect(sentToAicli).toEqual([])
-    expect(sentToIm).toEqual([])
-    expect(store.messages[0]).toMatchObject({
-      status: 'received',
-      content: '当前没有运行中的 AICLI。'
-    })
-  })
-
-  it('records marked remote AICLI output without sending it to the local AICLI', async () => {
-    const store = createMessageStore()
-    const sentToAicli: string[] = []
-    const sentToIm: string[] = []
+    const routes: RemoteImAicliOutputRoute[] = []
     const router = createRemoteImRouter({
       getConfig: () => config,
       resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
@@ -1411,6 +1639,46 @@ describe('remote IM router', () => {
         sentToIm.push(text)
         return { ok: true }
       },
+      onAicliOutputStart: (route) => routes.push(route),
+      store
+    })
+
+    const result = await router.handleIncomingText({
+      projectId: 'project-1',
+      fromUserId: 'phone_admin',
+      text: '当前没有运行中的 AICLI。',
+      origin: 'machine'
+    })
+
+    expect(result.ok).toBe(true)
+    expect(sentToAicli).toHaveLength(1)
+    expect(sentToAicli[0]).toContain('当前没有运行中的 AICLI。')
+    expect(sentToIm).toEqual([])
+    expect(routes[0]).toMatchObject({ autoReplyToIm: false })
+    expect(store.messages[0]).toMatchObject({
+      role: 'aicli',
+      status: 'sent-to-aicli',
+      content: '当前没有运行中的 AICLI。'
+    })
+  })
+
+  it('routes legacy marked remote output to the local AICLI without automatic IM output', async () => {
+    const store = createMessageStore()
+    const sentToAicli: string[] = []
+    const sentToIm: string[] = []
+    const routes: RemoteImAicliOutputRoute[] = []
+    const router = createRemoteImRouter({
+      getConfig: () => config,
+      resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
+      sendUser: async (_sessionId, text) => {
+        sentToAicli.push(text)
+        return { ok: true }
+      },
+      sendImText: async (_projectId, _toUserId, text) => {
+        sentToIm.push(text)
+        return { ok: true }
+      },
+      onAicliOutputStart: (route) => routes.push(route),
       store
     })
 
@@ -1421,20 +1689,23 @@ describe('remote IM router', () => {
     })
 
     expect(result.ok).toBe(true)
-    expect(sentToAicli).toEqual([])
+    expect(sentToAicli).toHaveLength(1)
+    expect(sentToAicli[0]).toContain('build passed')
     expect(sentToIm).toEqual([])
+    expect(routes[0]).toMatchObject({ autoReplyToIm: false })
     expect(store.messages[0]).toMatchObject({
       role: 'aicli',
       direction: 'incoming',
-      status: 'received',
+      status: 'sent-to-aicli',
       content: 'build passed'
     })
   })
 
-  it('records nested remote IM output without routing it back into AICLI', async () => {
+  it('does not use nested remote text heuristics to block machine AICLI input', async () => {
     const store = createMessageStore()
     const sentToAicli: string[] = []
     const sentToIm: string[] = []
+    const routes: RemoteImAicliOutputRoute[] = []
     const router = createRemoteImRouter({
       getConfig: () => config,
       resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
@@ -1446,6 +1717,7 @@ describe('remote IM router', () => {
         sentToIm.push(text)
         return { ok: true }
       },
+      onAicliOutputStart: (route) => routes.push(route),
       store
     })
 
@@ -1453,24 +1725,28 @@ describe('remote IM router', () => {
     const result = await router.handleIncomingText({
       projectId: 'project-1',
       fromUserId: 'phone_admin',
-      text: nestedOutput
+      text: nestedOutput,
+      origin: 'machine'
     })
 
     expect(result.ok).toBe(true)
-    expect(sentToAicli).toEqual([])
+    expect(sentToAicli).toHaveLength(1)
+    expect(sentToAicli[0]).toContain(nestedOutput)
     expect(sentToIm).toEqual([])
+    expect(routes[0]).toMatchObject({ autoReplyToIm: false })
     expect(store.messages[0]).toMatchObject({
       role: 'aicli',
       direction: 'incoming',
-      status: 'received',
+      status: 'sent-to-aicli',
       content: nestedOutput
     })
   })
 
-  it('records operation completion notifications without forwarding them to AICLI', async () => {
+  it('routes operation completion notifications to AICLI without automatic IM output', async () => {
     const store = createMessageStore()
     const sentToAicli: string[] = []
     const sentToIm: string[] = []
+    const routes: RemoteImAicliOutputRoute[] = []
     const router = createRemoteImRouter({
       getConfig: () => config,
       resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
@@ -1482,20 +1758,25 @@ describe('remote IM router', () => {
         sentToIm.push(text)
         return { ok: true }
       },
+      onAicliOutputStart: (route) => routes.push(route),
       store
     })
 
     const result = await router.handleIncomingText({
       projectId: 'project-1',
       fromUserId: 'phone_admin',
-      text: '操作已完成。'
+      text: '操作已完成。',
+      origin: 'machine'
     })
 
     expect(result.ok).toBe(true)
-    expect(sentToAicli).toEqual([])
+    expect(sentToAicli).toHaveLength(1)
+    expect(sentToAicli[0]).toContain('操作已完成。')
     expect(sentToIm).toEqual([])
+    expect(routes[0]).toMatchObject({ autoReplyToIm: false })
     expect(store.messages[0]).toMatchObject({
-      status: 'received',
+      role: 'aicli',
+      status: 'sent-to-aicli',
       content: '操作已完成。'
     })
   })
@@ -1543,6 +1824,7 @@ describe('remote IM router', () => {
     expect(sentToIm).toEqual([])
     expect(store.messages[0]).toMatchObject({
       remoteMessageId: 'roam-1',
+      role: 'remote-user',
       direction: 'incoming',
       status: 'received',
       content: '离线期间发的任务',
@@ -1550,6 +1832,7 @@ describe('remote IM router', () => {
     })
     expect(store.messages[1]).toMatchObject({
       remoteMessageId: 'roam-2',
+      role: 'remote-user',
       direction: 'outgoing',
       status: 'sent-to-im',
       content: '我发出的历史回复',
@@ -1601,6 +1884,15 @@ describe('remote IM router', () => {
         text: '陌生人的漫游消息',
         createdAt: 60,
         flow: 'in'
+      },
+      {
+        remoteMessageId: 'roam-remote-desktop',
+        fromUserId: 'phone_admin',
+        toUserId: 'desktop_bot',
+        text: '\u2063\u200B[remote-desktop]{"v":1,"type":"invite","sessionId":"s1"}',
+        origin: 'machine',
+        createdAt: 70,
+        flow: 'in'
       }
     ])
 
@@ -1635,5 +1927,53 @@ describe('remote IM router', () => {
       content: 'AICLI 的历史输出',
       status: 'received'
     })
+  })
+
+  it('classifies structured machine roaming messages without a legacy text marker', async () => {
+    const store = createMessageStore()
+    const router = createRemoteImRouter({
+      getConfig: () => config,
+      resolveSession: () => null,
+      sendUser: async () => ({ ok: true }),
+      sendImText: async () => ({ ok: true }),
+      store
+    })
+
+    const result = await router.backfillRoamedText('project-1', [
+      {
+        remoteMessageId: 'roam-machine-in',
+        fromUserId: 'phone_admin',
+        toUserId: 'desktop_bot',
+        text: '协作输入',
+        origin: 'machine',
+        createdAt: 400,
+        flow: 'in'
+      },
+      {
+        remoteMessageId: 'roam-machine-out',
+        fromUserId: 'desktop_bot',
+        toUserId: 'phone_admin',
+        text: '协作输出',
+        origin: 'machine',
+        createdAt: 401,
+        flow: 'out'
+      }
+    ])
+
+    expect(result).toEqual({ ok: true, inserted: 2 })
+    expect(store.messages).toEqual([
+      expect.objectContaining({
+        remoteMessageId: 'roam-machine-in',
+        role: 'aicli',
+        direction: 'incoming',
+        content: '协作输入'
+      }),
+      expect.objectContaining({
+        remoteMessageId: 'roam-machine-out',
+        role: 'aicli',
+        direction: 'outgoing',
+        content: '协作输出'
+      })
+    ])
   })
 })

@@ -59,11 +59,12 @@ describe('Claude transcript remote IM replies', () => {
         projectsRoot: root,
         sinceMs: Date.parse('2026-06-29T00:00:05.000Z')
       })
-    ).toBe(
-      ['## 目录结构', '| 目录 | 作用 |', '|------|------|', '| `chrome/` | 浏览器主体 |', '| `content/` | 渲染引擎 |'].join(
+    ).toEqual({
+      content: ['## 目录结构', '| 目录 | 作用 |', '|------|------|', '| `chrome/` | 浏览器主体 |', '| `content/` | 渲染引擎 |'].join(
         '\n'
-      )
-    )
+      ),
+      completed: true
+    })
   })
 
   it('reads only the transcript reply matching the expected reply id', () => {
@@ -121,7 +122,7 @@ describe('Claude transcript remote IM replies', () => {
         sinceMs: Date.parse('2026-06-29T00:00:05.000Z'),
         replyId: 'reply-current'
       })
-    ).toBe('current transcript reply')
+    ).toEqual({ content: 'current transcript reply', completed: true })
   })
 
   it('reads a matching id reply when Claude emits a legacy close tag', () => {
@@ -160,6 +161,42 @@ describe('Claude transcript remote IM replies', () => {
         sinceMs: Date.parse('2026-06-29T00:00:05.000Z'),
         replyId: 'rim-current'
       })
-    ).toBe('current transcript reply')
+    ).toEqual({ content: 'current transcript reply', completed: false })
+  })
+
+  it('recognizes an empty exact assistant frame as completed', () => {
+    const root = mkdtempSync(join(tmpdir(), 'multi-ai-code-claude-transcript-'))
+    const cwd = '/Users/me/work/repo'
+    const dir = getClaudeProjectTranscriptDir(cwd, root)
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(
+      join(dir, 'session.jsonl'),
+      JSON.stringify({
+        type: 'assistant',
+        timestamp: '2026-06-29T00:00:10.000Z',
+        message: {
+          role: 'assistant',
+          content: [
+            {
+              type: 'text',
+              text: [
+                '<remote-im-reply id="rim-empty">',
+                '</remote-im-reply id="rim-empty">'
+              ].join('\n')
+            }
+          ]
+        }
+      }) + '\n',
+      'utf8'
+    )
+
+    expect(
+      readLatestClaudeRemoteImReply({
+        cwd,
+        projectsRoot: root,
+        sinceMs: Date.parse('2026-06-29T00:00:05.000Z'),
+        replyId: 'rim-empty'
+      })
+    ).toEqual({ content: '', completed: true })
   })
 })

@@ -98,6 +98,7 @@ RemoteIMMessage ChatState::queueOutgoingText(const QString& text) {
     message.text = cleanText;
     message.direction = RemoteIMMessageDirection::Outgoing;
     message.status = RemoteIMMessageStatus::Pending;
+    message.origin = RemoteIMMessageOrigin::Human;
     message.createdAtMillis = (message.createdAtMillis / 1000) * 1000;
     appendTracked(message);
     return message;
@@ -113,6 +114,7 @@ RemoteIMMessage ChatState::queueOutgoingImage(const QString& localPath, int widt
     message.text = clean(text).isEmpty() ? (QStringLiteral("[图片消息] ") + fileName(cleanPath)) : clean(text);
     message.direction = RemoteIMMessageDirection::Outgoing;
     message.status = RemoteIMMessageStatus::Pending;
+    message.origin = RemoteIMMessageOrigin::Human;
     message.hasImage = true;
     message.createdAtMillis = (message.createdAtMillis / 1000) * 1000;
     message.image = RemoteIMImageAttachment{cleanPath, width, height, sizeBytes};
@@ -129,6 +131,7 @@ RemoteIMMessage ChatState::queueOutgoingVoice(const QString& localPath, int dura
     message.text = QString("[语音消息 %1s]").arg(qMax(1, durationSeconds));
     message.direction = RemoteIMMessageDirection::Outgoing;
     message.status = RemoteIMMessageStatus::Pending;
+    message.origin = RemoteIMMessageOrigin::Human;
     message.hasVoice = true;
     message.voice = RemoteIMVoiceAttachment{cleanPath, qMax(1, durationSeconds)};
     appendTracked(message);
@@ -147,6 +150,7 @@ RemoteIMMessage ChatState::queueOutgoingFile(const QString& localPath, const QSt
         : clean(text);
     message.direction = RemoteIMMessageDirection::Outgoing;
     message.status = RemoteIMMessageStatus::Pending;
+    message.origin = RemoteIMMessageOrigin::Human;
     message.hasFile = true;
     message.file = RemoteIMFileAttachment{cleanPath, cleanFileName, clean(mimeType), sizeBytes};
     appendTracked(message);

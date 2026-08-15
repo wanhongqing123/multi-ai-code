@@ -983,7 +983,11 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
             throw RemoteIMClientError.sdkInitializationFailed
         }
         do {
-            _ = try await client.sendText(to: userID, text: signal.encodedText())
+            _ = try await client.sendText(
+                to: userID,
+                text: signal.encodedText(),
+                origin: .machine
+            )
             log(
                 level: .info,
                 category: "remote-desktop",

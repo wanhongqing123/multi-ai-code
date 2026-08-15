@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { extractRemoteImReplyOutput } from './replyProtocol.js'
+import type { RemoteImTranscriptReply } from './outputForwarding.js'
 
 export interface ReadClaudeRemoteImReplyInput {
   cwd: string
@@ -13,6 +14,7 @@ export interface ReadClaudeRemoteImReplyInput {
 
 interface ClaudeTranscriptCandidate {
   content: string
+  completed: boolean
   timestampMs: number
   lineIndex: number
 }
@@ -64,7 +66,7 @@ function getEntryTimestampMs(entry: unknown): number | null {
 
 export function readLatestClaudeRemoteImReply(
   input: ReadClaudeRemoteImReplyInput
-): string | null {
+): RemoteImTranscriptReply | null {
   const dir = getClaudeProjectTranscriptDir(input.cwd, input.projectsRoot)
   if (!existsSync(dir)) return null
 
@@ -96,9 +98,10 @@ export function readLatestClaudeRemoteImReply(
 
       const text = getAssistantText(entry)
       const reply = extractRemoteImReplyOutput(text, { replyId: input.replyId })
-      if (reply.content.trim()) {
+      if (reply.content.trim() || reply.completed) {
         candidates.push({
           content: reply.content,
+          completed: reply.completed,
           timestampMs,
           lineIndex
         })
@@ -107,5 +110,8 @@ export function readLatestClaudeRemoteImReply(
   }
 
   candidates.sort((a, b) => b.timestampMs - a.timestampMs || b.lineIndex - a.lineIndex)
-  return candidates[0]?.content ?? null
+  const latest = candidates[0]
+  return latest
+    ? { content: latest.content, completed: latest.completed }
+    : null
 }

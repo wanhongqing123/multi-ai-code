@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   evaluateRemoteImStructuredTaskAdmission,
+  RemoteImQueuedInputRegistry,
   RemoteImStructuredTaskRegistry
 } from '../../../electron/remote-im/structuredTaskRegistry.js'
 
@@ -180,5 +181,67 @@ describe('evaluateRemoteImStructuredTaskAdmission', () => {
         toUserId: 'phone-a'
       })
     ).toEqual({ ok: false, reason: 'authority-conflict' })
+  })
+})
+
+describe('RemoteImQueuedInputRegistry', () => {
+  it('dequeues machine inputs once in FIFO order and isolates sessions', () => {
+    const queue = new RemoteImQueuedInputRegistry<string>(32, 5 * 60 * 1000)
+    expect(queue.enqueue('session-a', 'first', 100)).toMatchObject({ ok: true })
+    expect(queue.enqueue('session-a', 'second', 101)).toMatchObject({ ok: true })
+    expect(queue.enqueue('session-b', 'other', 102)).toMatchObject({ ok: true })
+
+    expect(queue.take('session-a', 103).entry?.value).toBe('first')
+    expect(queue.take('session-a', 104).entry?.value).toBe('second')
+    expect(queue.take('session-a', 105).entry).toBeUndefined()
+    expect(queue.take('session-b', 106).entry?.value).toBe('other')
+  })
+
+  it('bounds each session independently and admits new work after a terminal dequeue', () => {
+    const queue = new RemoteImQueuedInputRegistry<string>(2, 1000)
+    expect(queue.enqueue('session-a', 'first', 0)).toMatchObject({ ok: true })
+    expect(queue.enqueue('session-a', 'second', 1)).toMatchObject({ ok: true })
+    expect(queue.enqueue('session-a', 'overflow', 2)).toEqual({
+      ok: false,
+      reason: 'capacity',
+      expired: []
+    })
+    expect(queue.enqueue('session-b', 'independent', 2)).toMatchObject({ ok: true })
+
+    expect(queue.take('session-a', 3).entry?.value).toBe('first')
+    expect(queue.enqueue('session-a', 'third', 4)).toMatchObject({ ok: true })
+    expect(queue.take('session-a', 5).entry?.value).toBe('second')
+    expect(queue.take('session-a', 6).entry?.value).toBe('third')
+  })
+
+  it('drops expired closures instead of submitting stale machine input', () => {
+    const queue = new RemoteImQueuedInputRegistry<string>(2, 100)
+    queue.enqueue('session-a', 'expired', 10)
+
+    const result = queue.take('session-a', 110)
+
+    expect(result.entry).toBeUndefined()
+    expect(result.expired).toEqual([{ value: 'expired', queuedAt: 10 }])
+    expect(queue.size('session-a')).toBe(0)
+  })
+
+  it('removes queued inputs by account, contact, or session predicate', () => {
+    type Queued = { sessionId: string; userId: string }
+    const queue = new RemoteImQueuedInputRegistry<Queued>(32, 1000)
+    queue.enqueue('session-a', { sessionId: 'session-a', userId: 'phone-a' }, 1)
+    queue.enqueue('session-a', { sessionId: 'session-a', userId: 'phone-b' }, 2)
+    queue.enqueue('session-b', { sessionId: 'session-b', userId: 'phone-a' }, 3)
+
+    expect(
+      queue.removeWhere((item) => item.userId === 'phone-a').map((entry) => entry.value)
+    ).toEqual([
+      { sessionId: 'session-a', userId: 'phone-a' },
+      { sessionId: 'session-b', userId: 'phone-a' }
+    ])
+    expect(queue.size('session-a')).toBe(1)
+    expect(queue.size('session-b')).toBe(0)
+    expect(
+      queue.removeWhere((item) => item.sessionId === 'session-a').map((entry) => entry.value)
+    ).toEqual([{ sessionId: 'session-a', userId: 'phone-b' }])
   })
 })

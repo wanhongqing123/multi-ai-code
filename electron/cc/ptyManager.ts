@@ -196,6 +196,16 @@ interface PendingExternalReview {
 }
 
 type SessionDataListener = (evt: { sessionId: string; chunk: string }) => void
+type SessionLocalInputListener = (evt: {
+  sessionId: string
+  kind:
+    | 'cancel-editing'
+    | 'editing'
+    | 'interrupt'
+    | 'navigation'
+    | 'submit-key'
+    | 'submit-attempt'
+}) => void
 type SessionExitListener = (evt: {
   sessionId: string
   exitCode: number | null
@@ -205,6 +215,7 @@ type SessionExitListener = (evt: {
 const sessions = new Map<string, Session>()
 const pendingExternalReviews = new Map<string, PendingExternalReview>()
 const sessionDataListeners = new Set<SessionDataListener>()
+const sessionLocalInputListeners = new Set<SessionLocalInputListener>()
 const sessionExitListeners = new Set<SessionExitListener>()
 
 const EXTERNAL_REVIEW_TIMEOUT_MS = 90_000
@@ -223,6 +234,11 @@ export function addSessionDataListener(listener: SessionDataListener): () => voi
   return () => sessionDataListeners.delete(listener)
 }
 
+export function addSessionLocalInputListener(listener: SessionLocalInputListener): () => void {
+  sessionLocalInputListeners.add(listener)
+  return () => sessionLocalInputListeners.delete(listener)
+}
+
 export function addSessionExitListener(listener: SessionExitListener): () => void {
   sessionExitListeners.add(listener)
   return () => sessionExitListeners.delete(listener)
@@ -236,6 +252,40 @@ function emitSessionData(evt: { sessionId: string; chunk: string }): void {
       /* keep PTY data delivery isolated from observers */
     }
   }
+}
+
+function emitSessionLocalInput(
+  sessionId: string,
+  kind:
+    | 'cancel-editing'
+    | 'editing'
+    | 'interrupt'
+    | 'navigation'
+    | 'submit-key'
+    | 'submit-attempt'
+): void {
+  for (const listener of sessionLocalInputListeners) {
+    try {
+      listener({ sessionId, kind })
+    } catch {
+      /* keep PTY input delivery isolated from observers */
+    }
+  }
+}
+
+function classifyTerminalLocalInput(
+  data: string
+): 'cancel-editing' | 'editing' | 'interrupt' | 'navigation' | 'submit-key' {
+  if (data.includes('\x03')) return 'interrupt'
+  if (data.includes('\x15')) return 'cancel-editing'
+  if (data.includes('\r') || data.includes('\n')) return 'submit-key'
+  // Arrow/function-key escape sequences contain printable bytes (for example
+  // "[A") but do not edit the prompt. Strip complete ANSI key sequences
+  // before deciding whether local draft ownership has begun.
+  const plain = data.replace(/\x1B(?:\[[0-?]*[ -/]*[@-~]|O.)/g, '')
+  return [...plain].some((char) => char.codePointAt(0)! >= 0x20)
+    ? 'editing'
+    : 'navigation'
 }
 
 function emitSessionExit(evt: {
@@ -282,11 +332,13 @@ function remoteImCliBinCandidates(): string[] {
 
 function withRemoteImCliEnv(
   env: Record<string, string> | undefined,
-  projectId: string
+  projectId: string,
+  sessionId: string
 ): Record<string, string> {
   const next: Record<string, string> = {
     ...(env ?? {}),
     MULTI_AI_CODE_PROJECT_ID: projectId,
+    MULTI_AI_CODE_SESSION_ID: sessionId,
     MULTI_AI_CODE_ROOT_DIR: rootDir()
   }
   const pathKey = getPathKey(next)
@@ -426,6 +478,7 @@ export function getActiveSessionForProject(projectId: string): {
 }
 
 export function getSessionRuntimeInfo(sessionId: string): {
+  projectId: string
   command: string
   targetRepo: string
   startedAtMs: number
@@ -433,6 +486,7 @@ export function getSessionRuntimeInfo(sessionId: string): {
   const session = sessions.get(sessionId)
   if (!session) return null
   return {
+    projectId: session.projectId,
     command: session.command,
     targetRepo: session.targetRepo,
     startedAtMs: session.startedAtMs
@@ -500,6 +554,9 @@ export async function sendUserMessageToSession(
   try {
     let sourceResult: AicliControlCommandResult | undefined
     await enqueueSessionInput(sessionId, async (current) => {
+      if (options.inputOrigin !== 'remote-im') {
+        emitSessionLocalInput(sessionId, 'submit-attempt')
+      }
       const sourceSubmitted = current.command === 'codex' || isOpenCodeCommand(current.command)
       if (sourceSubmitted) {
         if (!current.structuredOutputBridge) {
@@ -770,7 +827,8 @@ export function registerPtyIpc(): void {
       rows: req.rows,
       env: withRemoteImCliEnv(
         withCodexTerminalEnv(req.command, managedOpenCodeEnv, req.terminalTheme),
-        req.projectId
+        req.projectId,
+        req.sessionId
       ),
       enableMsys,
       msysBashPath,
@@ -887,7 +945,17 @@ export function registerPtyIpc(): void {
   })
 
   ipcMain.on('cc:input', (_e, { sessionId, data }: { sessionId: string; data: string }) => {
-    sessions.get(sessionId)?.proc.write(data)
+    // Raw terminal input and host-injected prompts share one queue. Without
+    // this serialization, a local keystroke can be written between chunks of
+    // a Remote IM prompt and merge two independent turns in the same PTY.
+    void enqueueSessionInput(sessionId, async (current) => {
+      // Publish ownership at the actual serialized PTY boundary. Emitting this
+      // before enqueueing lets a remote submit overtake the local keystroke.
+      emitSessionLocalInput(sessionId, classifyTerminalLocalInput(data))
+      current.proc.write(data)
+    }).catch(() => {
+      /* the renderer will observe the session exit through cc:exit */
+    })
   })
 
   // 宿主切换明暗主题时，把新主题广播给所有运行中的 AICLI 会话，让 TUI 运行时重绘
@@ -903,6 +971,7 @@ export function registerPtyIpc(): void {
       if (!s) return { ok: false as const, error: 'no session' }
       try {
         await enqueueSessionInput(sessionId, async (current) => {
+          emitSessionLocalInput(sessionId, 'editing')
           await streamInput(current.proc, data)
         })
         return { ok: true as const }
@@ -996,6 +1065,7 @@ export function registerPtyIpc(): void {
 
           try {
             await enqueueSessionInput(req.sessionId, async (current) => {
+              emitSessionLocalInput(req.sessionId, 'submit-attempt')
               await sendMessage(
                 current.proc,
                 buildExternalReviewPrompt({

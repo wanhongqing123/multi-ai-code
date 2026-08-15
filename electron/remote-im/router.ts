@@ -7,13 +7,12 @@ import type {
   RemoteImIncomingTextMessage,
   RemoteImFileAttachment,
   RemoteImImageAttachment,
+  RemoteImMessageOrigin,
   RemoteImMessage,
   RemoteImRoamedTextMessage
 } from './types.js'
 import type { RemoteImAicliOutputSourceKind } from './outputSanitizer.js'
 import {
-  createRemoteImAicliOutputText,
-  isRemoteImOperationFinishedText,
   parseRemoteImAicliOutputText
 } from './outputForwarding.js'
 import {
@@ -28,6 +27,16 @@ import {
   type RemoteImControlCommandName
 } from './controlCommands.js'
 import type { AicliUserMessageAttachment } from '../aicli/structuredOutputBridge.js'
+
+// Remote-desktop frames share the Tencent text transport, but they are an
+// application protocol rather than chat/model input. Native MaiChat consumes
+// the same prefix before storing chat history; keep Electron aligned so a
+// program-generated signal can never be interpreted as machine collaboration.
+const REMOTE_DESKTOP_SIGNAL_PREFIX = '\u2063\u200B[remote-desktop]'
+
+function isRemoteDesktopSignalText(text: string): boolean {
+  return text.startsWith(REMOTE_DESKTOP_SIGNAL_PREFIX)
+}
 
 export interface RemoteImSessionInfo {
   sessionId: string
@@ -51,6 +60,7 @@ export interface RemoteImAicliOutputRoute {
   sessionId: string
   replyId?: string
   taskId: string
+  autoReplyToIm: boolean
 }
 
 export interface RemoteImRouterDeps {
@@ -98,7 +108,13 @@ export interface RemoteImRouterDeps {
   authorizeAicliOutputStart?: (
     route: RemoteImAicliOutputRoute
   ) => { ok: true } | { ok: false; error: string }
+  deferAicliInputIfBusy?: (
+    route: RemoteImAicliOutputRoute,
+    submit: () => Promise<void>,
+    cancel: (error: string) => void
+  ) => { queued: true } | { queued: false; error: string } | null
   onAicliOutputStart?: (route: RemoteImAicliOutputRoute) => void
+  onAicliInputAccepted?: (route: RemoteImAicliOutputRoute) => void
   onAicliOutputCancel?: (route: RemoteImAicliOutputRoute) => void
   handleControlCommand?: (input: {
     projectId: string
@@ -115,6 +131,7 @@ export interface RemoteImRouterDeps {
     text: string
   }) => Promise<{ handled: boolean; ok: boolean; text: string }>
   store: RemoteImRouterStore
+  messagesChanged?: (projectId: string) => void
   now?: () => number
 }
 
@@ -123,25 +140,20 @@ export interface RemoteImRouteResult {
   error?: string
   aicliSessionId?: string
   replyId?: string
+  queued?: boolean
 }
 
 function isIncomingAlreadySentToAicli(message: RemoteImMessage): boolean {
   return (
     message.direction === 'incoming' &&
     message.remoteMessageId !== null &&
-    (message.status === 'sent-to-aicli' || message.sentToAicliAt !== null)
+    (message.status === 'sent-to-aicli' ||
+      message.sentToAicliAt !== null ||
+      // A received row with a bound session has already reserved a FIFO slot.
+      // Treat a Tencent retransmission as the same queued input instead of
+      // enqueueing the same machine message twice.
+      (message.status === 'received' && message.sessionId !== null))
   )
-}
-
-const REMOTE_IM_SYSTEM_TEXTS = new Set([
-  '没有远程控制权限。',
-  '消息为空，未发送给 AICLI。',
-  '当前没有运行中的 AICLI。',
-  '已发送给当前 AICLI，开始处理。'
-])
-
-function isLikelyNestedRemoteImOutput(text: string): boolean {
-  return text.includes('[来自远程 IM：') || text.includes('[来自远程IM：')
 }
 
 function formatUnknownControlCommand(commandText: string): string {
@@ -152,12 +164,23 @@ function formatUnknownControlCommand(commandText: string): string {
   ].join('\n')
 }
 
-function isRemoteImSystemText(text: string): boolean {
-  return (
-    REMOTE_IM_SYSTEM_TEXTS.has(text) ||
-    text.startsWith('发送给 AICLI 失败：') ||
-    isRemoteImOperationFinishedText(text)
-  )
+function normalizeIncomingOrigin(origin: RemoteImMessageOrigin | undefined): RemoteImMessageOrigin {
+  // All upgraded first-party senders attach an explicit origin. Unknown or
+  // legacy traffic fails closed: it still reaches AICLI, but can never start an
+  // automatic IM reply chain.
+  return origin === 'human' ? 'human' : 'machine'
+}
+
+function appendMachineCollaborationInstruction(
+  prompt: string,
+  origin: RemoteImMessageOrigin
+): string {
+  if (origin !== 'machine') return prompt
+  return [
+    prompt,
+    '',
+    '本轮 AICLI 的普通输出不会自动发送到 IM；如需继续与对方协作，请显式调用 imcli 发送消息。'
+  ].join('\n')
 }
 
 function createIncomingRecord(
@@ -192,7 +215,8 @@ function createIncomingAudioRecord(
   content: string,
   status: RemoteImMessage['status'],
   error: string | null,
-  now: number
+  now: number,
+  role: RemoteImMessage['role'] = 'remote-user'
 ): Omit<RemoteImMessage, 'id'> {
   return {
     projectId: message.projectId,
@@ -201,7 +225,7 @@ function createIncomingAudioRecord(
     remoteMessageId: message.remoteMessageId ?? null,
     fromUserId: message.fromUserId,
     toUserId: message.toUserId ?? null,
-    role: 'remote-user',
+    role,
     direction: 'incoming',
     content,
     kind: 'text',
@@ -246,17 +270,14 @@ async function sendSystemText(
   deps: RemoteImRouterDeps,
   projectId: string,
   toUserId: string,
-  text: string,
-  options: { preventAicliRouting?: boolean } = {}
+  text: string
 ): Promise<void> {
   const now = deps.now?.() ?? Date.now()
   const outgoing = deps.store.create(
     createSystemRecord(projectId, toUserId, text, 'streaming', null, now)
   )
-  const wireText = options.preventAicliRouting
-    ? createRemoteImAicliOutputText(text)
-    : text
-  const result = await deps.sendImText(projectId, toUserId, wireText, {
+  deps.messagesChanged?.(projectId)
+  const result = await deps.sendImText(projectId, toUserId, text, {
     messageId: outgoing.id
   })
   if (!result.ok) {
@@ -264,7 +285,22 @@ async function sendSystemText(
       status: 'failed',
       error: result.error ?? 'failed to send IM message'
     })
+    deps.messagesChanged?.(projectId)
   }
+}
+
+async function sendIncomingFailureIfHuman(
+  deps: RemoteImRouterDeps,
+  origin: RemoteImMessageOrigin,
+  projectId: string,
+  toUserId: string,
+  text: string
+): Promise<void> {
+  // A machine-originated processing failure must stop locally. Automatically
+  // replying with another machine error lets two unavailable/busy hosts bounce
+  // failure receipts forever without either AICLI participating.
+  if (origin !== 'human') return
+  await sendSystemText(deps, projectId, toUserId, text)
 }
 
 function formatRemoteImAudioPlaceholder(message: RemoteImIncomingAudioMessage): string {
@@ -316,7 +352,8 @@ function createIncomingImageRecord(
   attachment: RemoteImImageAttachment | null,
   status: RemoteImMessage['status'],
   error: string | null,
-  now: number
+  now: number,
+  role: RemoteImMessage['role'] = 'remote-user'
 ): Omit<RemoteImMessage, 'id'> {
   return {
     projectId: message.projectId,
@@ -325,7 +362,7 @@ function createIncomingImageRecord(
     remoteMessageId: message.remoteMessageId ?? null,
     fromUserId: message.fromUserId,
     toUserId: message.toUserId ?? null,
-    role: 'remote-user',
+    role,
     direction: 'incoming',
     content: formatRemoteImImagePlaceholder(message, attachment),
     kind: 'image',
@@ -366,7 +403,8 @@ function createIncomingFileRecord(
   attachment: RemoteImFileAttachment | null,
   status: RemoteImMessage['status'],
   error: string | null,
-  now: number
+  now: number,
+  role: RemoteImMessage['role'] = 'remote-user'
 ): Omit<RemoteImMessage, 'id'> {
   return {
     projectId: message.projectId,
@@ -375,7 +413,7 @@ function createIncomingFileRecord(
     remoteMessageId: message.remoteMessageId ?? null,
     fromUserId: message.fromUserId,
     toUserId: message.toUserId ?? null,
-    role: 'remote-user',
+    role,
     direction: 'incoming',
     content: formatRemoteImFilePlaceholder(message, attachment),
     kind: 'file',
@@ -456,7 +494,8 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
   function createOutputRoute(
     session: RemoteImSessionInfo,
     projectId: string,
-    toUserId: string
+    toUserId: string,
+    autoReplyToIm: boolean
   ): RemoteImAicliOutputRoute {
     const replyId = deps.createReplyId?.() ?? createRemoteImReplyId()
     if (usesSourceLevelRouting(session)) {
@@ -465,7 +504,8 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
         toUserId,
         sessionId: session.sessionId,
         replyId,
-        taskId: `remote-im-route-${randomUUID()}`
+        taskId: `remote-im-route-${randomUUID()}`,
+        autoReplyToIm
       }
     }
     return {
@@ -473,7 +513,8 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       toUserId,
       sessionId: session.sessionId,
       replyId,
-      taskId: deps.createTaskId?.(replyId) ?? `remote-im-task-${replyId}`
+      taskId: deps.createTaskId?.(replyId) ?? `remote-im-task-${replyId}`,
+      autoReplyToIm
     }
   }
 
@@ -483,6 +524,10 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
     displayText: string,
     attachments?: AicliUserMessageAttachment[]
   ): Promise<Awaited<ReturnType<RemoteImRouterDeps['sendUser']>>> {
+    // Machine inputs skip the *busy* rejection by entering the FIFO below, but
+    // they must still pass the current account/contact security gate when they
+    // are actually submitted. In particular, a queued closure must not retain
+    // authority after an account switch or contact revoke.
     const admission = deps.authorizeAicliOutputStart?.(outputRoute)
     if (admission && !admission.ok) return admission
     deps.onAicliOutputStart?.(outputRoute)
@@ -494,7 +539,8 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
         taskId: outputRoute.taskId,
         ...(attachments?.length ? { attachments } : {})
       })
-      if (!result.ok) deps.onAicliOutputCancel?.(outputRoute)
+      if (result.ok) deps.onAicliInputAccepted?.(outputRoute)
+      else deps.onAicliOutputCancel?.(outputRoute)
       return result
     } catch (error) {
       deps.onAicliOutputCancel?.(outputRoute)
@@ -508,6 +554,8 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
     text: string
     recordText: string
     now: number
+    origin: RemoteImMessageOrigin
+    recordRole?: RemoteImMessage['role']
   }): Promise<RemoteImRouteResult> {
     const routePermission = canRouteRemoteImTaskFrom(
       deps.getConfig(input.message.projectId),
@@ -531,7 +579,8 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
         { ...input.message, text: input.recordText },
         'received',
         null,
-        input.now
+        input.now,
+        input.recordRole ?? (input.origin === 'machine' ? 'aicli' : 'remote-user')
       )
     )
     if (isIncomingAlreadySentToAicli(incoming)) {
@@ -545,56 +594,118 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
         status: 'failed',
         error: 'No running AICLI session'
       })
-      await sendSystemText(deps, input.message.projectId, input.fromUserId, '当前没有运行中的 AICLI。')
+      await sendIncomingFailureIfHuman(
+        deps,
+        input.origin,
+        input.message.projectId,
+        input.fromUserId,
+        '当前没有运行中的 AICLI。'
+      )
       return { ok: false, error: 'No running AICLI session' }
     }
 
+    const autoReplyToIm = input.origin === 'human'
     const outputRoute = createOutputRoute(
       session,
       input.message.projectId,
-      input.fromUserId
+      input.fromUserId,
+      autoReplyToIm
     )
     const replyId = outputRoute.replyId
-    const wrapped = buildRemoteImAicliPrompt({
-      fromUserId: input.fromUserId,
-      text: input.text,
-      replyId
-    }, { includeReplyProtocol: !usesSourceLevelRouting(session) })
+    const wrapped = appendMachineCollaborationInstruction(
+      buildRemoteImAicliPrompt({
+        fromUserId: input.fromUserId,
+        text: input.text,
+        replyId
+      }, { includeReplyProtocol: !usesSourceLevelRouting(session) }),
+      input.origin
+    )
     const displayText = buildRemoteImAicliDisplayText({
       fromUserId: input.fromUserId,
       text: input.text
     })
-    const sendResult = await sendUserWithOutputRoute(outputRoute, wrapped, displayText)
-    if (!sendResult.ok) {
-      const error = sendResult.error ?? 'failed to send message to AICLI'
-      deps.store.updateStatus(incoming.id, {
-        status: 'failed',
-        error
-      })
-      await sendSystemText(deps, input.message.projectId, input.fromUserId, `发送给 AICLI 失败：${error}`)
-      return { ok: false, error }
-    }
+    // Reserve the incoming row synchronously before the first sendUser await.
+    // Tencent may redeliver the same remoteMessageId while the provider is
+    // accepting the prompt; the bound session makes that retransmission a
+    // no-op instead of a second model input.
+    deps.store.updateStatus(incoming.id, { sessionId: session.sessionId, error: null })
+    const submit = async (): Promise<RemoteImRouteResult> => {
+      const sendResult = await sendUserWithOutputRoute(outputRoute, wrapped, displayText)
+      if (!sendResult.ok) {
+        const error = sendResult.error ?? 'failed to send message to AICLI'
+        deps.store.updateStatus(incoming.id, {
+          status: 'failed',
+          error
+        })
+        await sendIncomingFailureIfHuman(
+          deps,
+          input.origin,
+          input.message.projectId,
+          input.fromUserId,
+          `发送给 AICLI 失败：${error}`
+        )
+        return { ok: false, error }
+      }
 
-    deps.store.updateStatus(incoming.id, {
-      sessionId: session.sessionId,
-      status: 'sent-to-aicli',
-      sentToAicliAt: input.now,
-      error: null
-    })
-    return {
-      ok: true,
-      aicliSessionId: session.sessionId,
-      ...(replyId ? { replyId } : {})
+      deps.store.updateStatus(incoming.id, {
+        sessionId: session.sessionId,
+        status: 'sent-to-aicli',
+        sentToAicliAt: deps.now?.() ?? Date.now(),
+        error: null
+      })
+      return {
+        ok: true,
+        aicliSessionId: session.sessionId,
+        ...(replyId ? { replyId } : {})
+      }
     }
+    const deferral = deps.deferAicliInputIfBusy?.(
+      outputRoute,
+      async () => {
+        await submit()
+      },
+      (error) => {
+        deps.store.updateStatus(incoming.id, { status: 'failed', error })
+        deps.messagesChanged?.(input.message.projectId)
+        void sendIncomingFailureIfHuman(
+          deps,
+          input.origin,
+          input.message.projectId,
+          input.fromUserId,
+          `发送给 AICLI 失败：${error}`
+        )
+      }
+    )
+    if (deferral?.queued) {
+      return {
+        ok: true,
+        queued: true,
+        aicliSessionId: session.sessionId,
+        ...(replyId ? { replyId } : {})
+      }
+    }
+    if (deferral && !deferral.queued) {
+      return { ok: false, error: deferral.error }
+    }
+    return submit()
   }
 
   async function handleIncomingText(
     message: RemoteImIncomingTextMessage
   ): Promise<RemoteImRouteResult> {
+    if (isRemoteDesktopSignalText(message.text)) {
+      return { ok: true }
+    }
     const config = deps.getConfig(message.projectId)
     const now = deps.now?.() ?? Date.now()
     const fromUserId = message.fromUserId.trim()
-    const text = message.text.trim()
+    const rawText = message.text.trim()
+    const legacyAicliOutput = parseRemoteImAicliOutputText(rawText)
+    const origin = legacyAicliOutput === null
+      ? normalizeIncomingOrigin(message.origin)
+      : 'machine'
+    const text = (legacyAicliOutput ?? rawText).trim()
+    const recordRole: RemoteImMessage['role'] = origin === 'machine' ? 'aicli' : 'remote-user'
 
     const peerRelation = getRemoteImPeerRelation(config, fromUserId)
     if (!peerRelation) {
@@ -612,33 +723,6 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       }
     }
 
-    if (isRemoteImSystemText(text)) {
-      deps.store.create(createIncomingRecord(message, 'received', null, now))
-      return { ok: true }
-    }
-
-    const remoteAicliOutput = parseRemoteImAicliOutputText(text)
-    if (remoteAicliOutput !== null) {
-      deps.store.create(
-        createIncomingRecord(
-          {
-            ...message,
-            text: remoteAicliOutput
-          },
-          'received',
-          null,
-          now,
-          'aicli'
-        )
-      )
-      return { ok: true }
-    }
-
-    if (isLikelyNestedRemoteImOutput(text)) {
-      deps.store.create(createIncomingRecord(message, 'received', null, now, 'aicli'))
-      return { ok: true }
-    }
-
     // Approval capabilities are consumed before general slash-command parsing
     // and before ordinary task routing, so an approval response can never be
     // forwarded to the model as user input.
@@ -651,22 +735,26 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       if (approval.handled) {
         deps.store.create(
           createIncomingRecord(
-            message,
+            { ...message, text },
             approval.ok ? 'received' : 'rejected',
             approval.ok ? null : 'approval command rejected',
-            now
+            now,
+            recordRole
           )
         )
-        await sendSystemText(deps, message.projectId, fromUserId, approval.text, {
-          preventAicliRouting: true
-        })
+        await sendSystemText(deps, message.projectId, fromUserId, approval.text)
         return approval.ok
           ? { ok: true }
           : { ok: false, error: 'remote IM approval command rejected' }
       }
     }
 
-    const controlCommand = parseRemoteImControlCommand(text)
+    // Only a human UI message controls the local host. Machine messages are
+    // collaboration input and must reach AICLI verbatim; approval capabilities
+    // above remain the one intentional exception.
+    const controlCommand = origin === 'human'
+      ? parseRemoteImControlCommand(text)
+      : { type: 'not-command' as const }
     if (controlCommand.type === 'unknown-command') {
       const routePermission = canRouteRemoteImTaskFrom(config, fromUserId)
       if (!routePermission.ok) {
@@ -708,7 +796,8 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
               toUserId: fromUserId,
               sessionId: session.sessionId,
               replyId,
-              taskId
+              taskId,
+              autoReplyToIm: true
             }
           : undefined
       if (outputRoute) {
@@ -780,16 +869,24 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
 
     if (!text) {
       deps.store.create(createIncomingRecord(message, 'rejected', 'empty message', now))
-      await sendSystemText(deps, message.projectId, fromUserId, '消息为空，未发送给 AICLI。')
+      await sendIncomingFailureIfHuman(
+        deps,
+        origin,
+        message.projectId,
+        fromUserId,
+        '消息为空，未发送给 AICLI。'
+      )
       return { ok: false, error: 'empty message' }
     }
 
     return routeTaskTextToAicli({
-      message,
+      message: { ...message, text },
       fromUserId,
       text,
       recordText: text,
-      now
+      now,
+      origin,
+      recordRole
     })
   }
 
@@ -800,27 +897,41 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
     const now = deps.now?.() ?? Date.now()
     const fromUserId = message.fromUserId.trim()
     const placeholder = formatRemoteImAudioPlaceholder(message)
+    const origin = normalizeIncomingOrigin(message.origin)
+    const recordRole: RemoteImMessage['role'] = origin === 'machine' ? 'aicli' : 'remote-user'
 
     const peerRelation = getRemoteImPeerRelation(config, fromUserId)
     if (!peerRelation) {
       deps.store.create(
-        createIncomingAudioRecord(message, placeholder, 'rejected', 'sender not allowed', now)
+        createIncomingAudioRecord(message, placeholder, 'rejected', 'sender not allowed', now, recordRole)
       )
       return { ok: false, error: `sender ${fromUserId} is not allowed` }
     }
 
     if (!deps.transcribeAudio) {
       const error = '本地 Whisper 转写模块未初始化，请重启桌面端或重新构建主进程'
-      deps.store.create(createIncomingAudioRecord(message, placeholder, 'failed', error, now))
-      await sendSystemText(deps, message.projectId, fromUserId, `语音转文字失败：${error}`)
+      deps.store.create(createIncomingAudioRecord(message, placeholder, 'failed', error, now, recordRole))
+      await sendIncomingFailureIfHuman(
+        deps,
+        origin,
+        message.projectId,
+        fromUserId,
+        `语音转文字失败：${error}`
+      )
       return { ok: false, error }
     }
 
     const transcription = await deps.transcribeAudio(message)
     if (!transcription.ok || !transcription.text.trim()) {
       const error = transcription.ok ? '语音转文字结果为空' : transcription.error
-      deps.store.create(createIncomingAudioRecord(message, placeholder, 'failed', error, now))
-      await sendSystemText(deps, message.projectId, fromUserId, `语音转文字失败：${error}`)
+      deps.store.create(createIncomingAudioRecord(message, placeholder, 'failed', error, now, recordRole))
+      await sendIncomingFailureIfHuman(
+        deps,
+        origin,
+        message.projectId,
+        fromUserId,
+        `语音转文字失败：${error}`
+      )
       return { ok: false, error }
     }
 
@@ -832,12 +943,15 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
         fromUserId,
         toUserId: message.toUserId,
         text: transcriptText,
+        origin,
         createdAt: message.createdAt
       },
       fromUserId,
       text: transcriptText,
       recordText: `${placeholder}\n${transcriptText}`,
-      now
+      now,
+      origin,
+      recordRole
     })
   }
 
@@ -849,18 +963,26 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
     const fromUserId = message.fromUserId.trim()
     const peerRelation = getRemoteImPeerRelation(config, fromUserId)
     const fallbackAttachment = createImageAttachmentFromIncoming(message)
+    const origin = normalizeIncomingOrigin(message.origin)
+    const recordRole: RemoteImMessage['role'] = origin === 'machine' ? 'aicli' : 'remote-user'
 
     if (!peerRelation) {
       deps.store.create(
-        createIncomingImageRecord(message, fallbackAttachment, 'rejected', 'sender not allowed', now)
+        createIncomingImageRecord(message, fallbackAttachment, 'rejected', 'sender not allowed', now, recordRole)
       )
       return { ok: false, error: `sender ${fromUserId} is not allowed` }
     }
 
     if (!deps.cacheImage) {
       const error = '图片下载模块未初始化'
-      deps.store.create(createIncomingImageRecord(message, fallbackAttachment, 'failed', error, now))
-      await sendSystemText(deps, message.projectId, fromUserId, `图片下载失败：${error}`)
+      deps.store.create(createIncomingImageRecord(message, fallbackAttachment, 'failed', error, now, recordRole))
+      await sendIncomingFailureIfHuman(
+        deps,
+        origin,
+        message.projectId,
+        fromUserId,
+        `图片下载失败：${error}`
+      )
       return { ok: false, error }
     }
 
@@ -873,24 +995,37 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
           cached.attachment ?? fallbackAttachment,
           'failed',
           error,
-          now
+          now,
+          recordRole
         )
       )
-      await sendSystemText(deps, message.projectId, fromUserId, `图片下载失败：${error}`)
+      await sendIncomingFailureIfHuman(
+        deps,
+        origin,
+        message.projectId,
+        fromUserId,
+        `图片下载失败：${error}`
+      )
       return { ok: false, error }
     }
 
     const attachment = cached.attachment
     if (!attachment.localPath) {
       const error = '图片本地路径为空'
-      deps.store.create(createIncomingImageRecord(message, attachment, 'failed', error, now))
-      await sendSystemText(deps, message.projectId, fromUserId, `图片下载失败：${error}`)
+      deps.store.create(createIncomingImageRecord(message, attachment, 'failed', error, now, recordRole))
+      await sendIncomingFailureIfHuman(
+        deps,
+        origin,
+        message.projectId,
+        fromUserId,
+        `图片下载失败：${error}`
+      )
       return { ok: false, error }
     }
 
     const session = deps.resolveSession(message.projectId)
     const incoming = deps.store.create(
-      createIncomingImageRecord(message, attachment, 'received', null, now)
+      createIncomingImageRecord(message, attachment, 'received', null, now, recordRole)
     )
     if (isIncomingAlreadySentToAicli(incoming)) {
       return {
@@ -903,7 +1038,13 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
         status: 'failed',
         error: 'No running AICLI session'
       })
-      await sendSystemText(deps, message.projectId, fromUserId, '当前没有运行中的 AICLI。')
+      await sendIncomingFailureIfHuman(
+        deps,
+        origin,
+        message.projectId,
+        fromUserId,
+        '当前没有运行中的 AICLI。'
+      )
       return { ok: false, error: 'No running AICLI session' }
     }
 
@@ -912,48 +1053,90 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       localPath: attachment.localPath,
       caption: message.caption ?? null
     })
-    const outputRoute = createOutputRoute(session, message.projectId, fromUserId)
+    const autoReplyToIm = origin === 'human'
+    const outputRoute = createOutputRoute(session, message.projectId, fromUserId, autoReplyToIm)
     const replyId = outputRoute.replyId
-    const wrapped = buildRemoteImAicliPrompt({
-      fromUserId,
-      text: taskText,
-      replyId
-    }, { includeReplyProtocol: !usesSourceLevelRouting(session) })
+    const wrapped = appendMachineCollaborationInstruction(
+      buildRemoteImAicliPrompt({
+        fromUserId,
+        text: taskText,
+        replyId
+      }, { includeReplyProtocol: !usesSourceLevelRouting(session) }),
+      origin
+    )
     const displayText = buildRemoteImAicliDisplayText({
       fromUserId,
       text: taskText
     })
-    const sendResult = await sendUserWithOutputRoute(outputRoute, wrapped, displayText, [
-      {
-        type: 'image',
-        localPath: attachment.localPath,
-        mimeType: attachment.mimeType?.startsWith('image/')
-          ? attachment.mimeType
-          : inferImageMimeType(attachment.localPath),
-        ...(attachment.fileName ? { fileName: attachment.fileName } : {})
+    deps.store.updateStatus(incoming.id, { sessionId: session.sessionId, error: null })
+    const submit = async (): Promise<RemoteImRouteResult> => {
+      const sendResult = await sendUserWithOutputRoute(outputRoute, wrapped, displayText, [
+        {
+          type: 'image',
+          localPath: attachment.localPath!,
+          mimeType: attachment.mimeType?.startsWith('image/')
+            ? attachment.mimeType
+            : inferImageMimeType(attachment.localPath!),
+          ...(attachment.fileName ? { fileName: attachment.fileName } : {})
+        }
+      ])
+      if (!sendResult.ok) {
+        const error = sendResult.error ?? 'failed to send image message to AICLI'
+        deps.store.updateStatus(incoming.id, {
+          status: 'failed',
+          error
+        })
+        await sendIncomingFailureIfHuman(
+          deps,
+          origin,
+          message.projectId,
+          fromUserId,
+          `发送给 AICLI 失败：${error}`
+        )
+        return { ok: false, error }
       }
-    ])
-    if (!sendResult.ok) {
-      const error = sendResult.error ?? 'failed to send image message to AICLI'
-      deps.store.updateStatus(incoming.id, {
-        status: 'failed',
-        error
-      })
-      await sendSystemText(deps, message.projectId, fromUserId, `发送给 AICLI 失败：${error}`)
-      return { ok: false, error }
-    }
 
-    deps.store.updateStatus(incoming.id, {
-      sessionId: session.sessionId,
-      status: 'sent-to-aicli',
-      sentToAicliAt: now,
-      error: null
-    })
-    return {
-      ok: true,
-      aicliSessionId: session.sessionId,
-      ...(replyId ? { replyId } : {})
+      deps.store.updateStatus(incoming.id, {
+        sessionId: session.sessionId,
+        status: 'sent-to-aicli',
+        sentToAicliAt: deps.now?.() ?? Date.now(),
+        error: null
+      })
+      return {
+        ok: true,
+        aicliSessionId: session.sessionId,
+        ...(replyId ? { replyId } : {})
+      }
     }
+    const deferral = deps.deferAicliInputIfBusy?.(
+      outputRoute,
+      async () => {
+        await submit()
+      },
+      (error) => {
+        deps.store.updateStatus(incoming.id, { status: 'failed', error })
+        deps.messagesChanged?.(message.projectId)
+        void sendIncomingFailureIfHuman(
+          deps,
+          origin,
+          message.projectId,
+          fromUserId,
+          `发送给 AICLI 失败：${error}`
+        )
+      }
+    )
+    if (deferral?.queued) {
+      return {
+        ok: true,
+        queued: true,
+        aicliSessionId: session.sessionId,
+        ...(replyId ? { replyId } : {})
+      }
+    }
+    if (deferral && !deferral.queued) {
+      return { ok: false, error: deferral.error }
+    }
+    return submit()
   }
 
   async function handleIncomingFile(
@@ -964,18 +1147,26 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
     const fromUserId = message.fromUserId.trim()
     const peerRelation = getRemoteImPeerRelation(config, fromUserId)
     const fallbackAttachment = createFileAttachmentFromIncoming(message)
+    const origin = normalizeIncomingOrigin(message.origin)
+    const recordRole: RemoteImMessage['role'] = origin === 'machine' ? 'aicli' : 'remote-user'
 
     if (!peerRelation) {
       deps.store.create(
-        createIncomingFileRecord(message, fallbackAttachment, 'rejected', 'sender not allowed', now)
+        createIncomingFileRecord(message, fallbackAttachment, 'rejected', 'sender not allowed', now, recordRole)
       )
       return { ok: false, error: `sender ${fromUserId} is not allowed` }
     }
 
     if (!deps.cacheFile) {
       const error = '文件下载模块未初始化'
-      deps.store.create(createIncomingFileRecord(message, fallbackAttachment, 'failed', error, now))
-      await sendSystemText(deps, message.projectId, fromUserId, `文件下载失败：${error}`)
+      deps.store.create(createIncomingFileRecord(message, fallbackAttachment, 'failed', error, now, recordRole))
+      await sendIncomingFailureIfHuman(
+        deps,
+        origin,
+        message.projectId,
+        fromUserId,
+        `文件下载失败：${error}`
+      )
       return { ok: false, error }
     }
 
@@ -988,18 +1179,31 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
           cached.attachment ?? fallbackAttachment,
           'failed',
           error,
-          now
+          now,
+          recordRole
         )
       )
-      await sendSystemText(deps, message.projectId, fromUserId, `文件下载失败：${error}`)
+      await sendIncomingFailureIfHuman(
+        deps,
+        origin,
+        message.projectId,
+        fromUserId,
+        `文件下载失败：${error}`
+      )
       return { ok: false, error }
     }
 
     const attachment = cached.attachment
     if (!attachment.localPath) {
       const error = '文件本地路径为空'
-      deps.store.create(createIncomingFileRecord(message, attachment, 'failed', error, now))
-      await sendSystemText(deps, message.projectId, fromUserId, `文件下载失败：${error}`)
+      deps.store.create(createIncomingFileRecord(message, attachment, 'failed', error, now, recordRole))
+      await sendIncomingFailureIfHuman(
+        deps,
+        origin,
+        message.projectId,
+        fromUserId,
+        `文件下载失败：${error}`
+      )
       return { ok: false, error }
     }
 
@@ -1007,7 +1211,7 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
     // 的文件在对话里毫无反应，看起来像没收到。现在与图片走同一条路。
     const session = deps.resolveSession(message.projectId)
     const incoming = deps.store.create(
-      createIncomingFileRecord(message, attachment, 'received', null, now)
+      createIncomingFileRecord(message, attachment, 'received', null, now, recordRole)
     )
     if (isIncomingAlreadySentToAicli(incoming)) {
       return {
@@ -1020,7 +1224,13 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
         status: 'failed',
         error: 'No running AICLI session'
       })
-      await sendSystemText(deps, message.projectId, fromUserId, '当前没有运行中的 AICLI。')
+      await sendIncomingFailureIfHuman(
+        deps,
+        origin,
+        message.projectId,
+        fromUserId,
+        '当前没有运行中的 AICLI。'
+      )
       return { ok: false, error: 'No running AICLI session' }
     }
 
@@ -1032,36 +1242,78 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       mimeType: attachment.mimeType ?? null,
       caption: message.caption ?? null
     })
-    const outputRoute = createOutputRoute(session, message.projectId, fromUserId)
+    const autoReplyToIm = origin === 'human'
+    const outputRoute = createOutputRoute(session, message.projectId, fromUserId, autoReplyToIm)
     const replyId = outputRoute.replyId
-    const wrapped = buildRemoteImAicliPrompt({
-      fromUserId,
-      text: taskText,
-      replyId
-    }, { includeReplyProtocol: !usesSourceLevelRouting(session) })
+    const wrapped = appendMachineCollaborationInstruction(
+      buildRemoteImAicliPrompt({
+        fromUserId,
+        text: taskText,
+        replyId
+      }, { includeReplyProtocol: !usesSourceLevelRouting(session) }),
+      origin
+    )
     const displayText = buildRemoteImAicliDisplayText({
       fromUserId,
       text: taskText
     })
-    const sendResult = await sendUserWithOutputRoute(outputRoute, wrapped, displayText)
-    if (!sendResult.ok) {
-      const error = sendResult.error ?? 'failed to send file message to AICLI'
-      deps.store.updateStatus(incoming.id, { status: 'failed', error })
-      await sendSystemText(deps, message.projectId, fromUserId, `发送给 AICLI 失败：${error}`)
-      return { ok: false, error }
-    }
+    deps.store.updateStatus(incoming.id, { sessionId: session.sessionId, error: null })
+    const submit = async (): Promise<RemoteImRouteResult> => {
+      const sendResult = await sendUserWithOutputRoute(outputRoute, wrapped, displayText)
+      if (!sendResult.ok) {
+        const error = sendResult.error ?? 'failed to send file message to AICLI'
+        deps.store.updateStatus(incoming.id, { status: 'failed', error })
+        await sendIncomingFailureIfHuman(
+          deps,
+          origin,
+          message.projectId,
+          fromUserId,
+          `发送给 AICLI 失败：${error}`
+        )
+        return { ok: false, error }
+      }
 
-    deps.store.updateStatus(incoming.id, {
-      sessionId: session.sessionId,
-      status: 'sent-to-aicli',
-      sentToAicliAt: now,
-      error: null
-    })
-    return {
-      ok: true,
-      aicliSessionId: session.sessionId,
-      ...(replyId ? { replyId } : {})
+      deps.store.updateStatus(incoming.id, {
+        sessionId: session.sessionId,
+        status: 'sent-to-aicli',
+        sentToAicliAt: deps.now?.() ?? Date.now(),
+        error: null
+      })
+      return {
+        ok: true,
+        aicliSessionId: session.sessionId,
+        ...(replyId ? { replyId } : {})
+      }
     }
+    const deferral = deps.deferAicliInputIfBusy?.(
+      outputRoute,
+      async () => {
+        await submit()
+      },
+      (error) => {
+        deps.store.updateStatus(incoming.id, { status: 'failed', error })
+        deps.messagesChanged?.(message.projectId)
+        void sendIncomingFailureIfHuman(
+          deps,
+          origin,
+          message.projectId,
+          fromUserId,
+          `发送给 AICLI 失败：${error}`
+        )
+      }
+    )
+    if (deferral?.queued) {
+      return {
+        ok: true,
+        queued: true,
+        aicliSessionId: session.sessionId,
+        ...(replyId ? { replyId } : {})
+      }
+    }
+    if (deferral && !deferral.queued) {
+      return { ok: false, error: deferral.error }
+    }
+    return submit()
   }
 
   // SDK 漫游补拉（登录后补充离线期间的历史）：只入库展示、绝不路由——漫游是
@@ -1078,6 +1330,7 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       const remoteMessageId = roamed.remoteMessageId?.trim()
       const text = roamed.text?.trim()
       if (!remoteMessageId || !text) continue
+      if (isRemoteDesktopSignalText(text)) continue
       if (deps.store.findByRemoteMessageId?.('tencent-im', remoteMessageId)) continue
 
       if (roamed.flow === 'out') {
@@ -1089,7 +1342,7 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
           remoteMessageId,
           fromUserId: roamed.fromUserId,
           toUserId: roamed.toUserId ?? null,
-          role: 'remote-user',
+          role: roamed.origin === 'machine' ? 'aicli' : 'remote-user',
           direction: 'outgoing',
           content: roamed.text,
           kind: 'text',
@@ -1113,16 +1366,21 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
         fromUserId,
         toUserId: roamed.toUserId ?? null,
         text: roamed.text,
+        origin: roamed.origin,
         ...(roamed.createdAt !== undefined ? { createdAt: roamed.createdAt } : {})
       }
       // 与实时链路一致的展示分类（AICLI 输出识别决定气泡角色），但不执行任何路由。
       const aicliOutput = parseRemoteImAicliOutputText(text)
-      if (aicliOutput !== null) {
+      if (aicliOutput !== null || roamed.origin === 'machine') {
         deps.store.create(
-          createIncomingRecord({ ...incoming, text: aicliOutput }, 'received', null, now, 'aicli')
+          createIncomingRecord(
+            { ...incoming, text: aicliOutput ?? text },
+            'received',
+            null,
+            now,
+            'aicli'
+          )
         )
-      } else if (isLikelyNestedRemoteImOutput(text)) {
-        deps.store.create(createIncomingRecord(incoming, 'received', null, now, 'aicli'))
       } else {
         deps.store.create(createIncomingRecord(incoming, 'received', null, now))
       }

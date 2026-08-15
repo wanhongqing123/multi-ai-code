@@ -191,4 +191,109 @@ describe('remote IM CLI bridge server', () => {
       await bridge.close()
     }
   })
+
+  it('binds production bridge requests to the originating AICLI session', async () => {
+    const rootDir = await createTempDir()
+    const authorizeCaller = vi.fn((projectId: string, sessionId: string) =>
+      projectId === 'project-1' && sessionId === 'session-a'
+        ? ({ ok: true } as const)
+        : ({ ok: false, error: 'stale AICLI session' } as const)
+    )
+    const bridge = await startRemoteImCliServer({
+      rootDir,
+      getConfig: async () => config,
+      getStatus: async () => status,
+      listMessages: () => [],
+      sendPeerMessage: async () => ({ ok: true as const, toUserId: 'agent-b' }),
+      authorizeCaller
+    })
+
+    try {
+      const unauthorized = await fetch(`${bridge.url}/whoami?projectId=project-1`, {
+        headers: { authorization: `Bearer ${bridge.token}` }
+      })
+      await expect(unauthorized.json()).resolves.toMatchObject({
+        ok: false,
+        error: 'AICLI session identity is required'
+      })
+
+      const authorized = await fetch(`${bridge.url}/whoami?projectId=project-1`, {
+        headers: {
+          authorization: `Bearer ${bridge.token}`,
+          'x-multi-ai-code-session-id': 'session-a'
+        }
+      })
+      await expect(authorized.json()).resolves.toMatchObject({
+        ok: true,
+        value: { projectId: 'project-1', userId: 'agent-a' }
+      })
+      expect(authorizeCaller).toHaveBeenCalledWith('project-1', 'session-a')
+    } finally {
+      await bridge.close()
+    }
+  })
+
+  it('keeps reads and sends inside the authorized account operation', async () => {
+    const rootDir = await createTempDir()
+    let insideAuthorizedOperation = false
+    let authorizedOperationCount = 0
+    const withAuthorizedCaller = async <T>(
+      projectId: string,
+      sessionId: string,
+      operation: () => Promise<T>
+    ): Promise<T> => {
+      expect(projectId).toBe('project-1')
+      expect(sessionId).toBe('session-a')
+      authorizedOperationCount += 1
+      insideAuthorizedOperation = true
+      try {
+        return await operation()
+      } finally {
+        insideAuthorizedOperation = false
+      }
+    }
+    const getConfig = vi.fn(async () => {
+      expect(insideAuthorizedOperation).toBe(true)
+      return config
+    })
+    const sendPeerMessage = vi.fn(async () => {
+      expect(insideAuthorizedOperation).toBe(true)
+      return { ok: true as const, toUserId: 'agent-b' }
+    })
+    const bridge = await startRemoteImCliServer({
+      rootDir,
+      getConfig,
+      getStatus: async () => status,
+      listMessages: () => [],
+      sendPeerMessage,
+      withAuthorizedCaller
+    })
+    const headers = {
+      authorization: `Bearer ${bridge.token}`,
+      'x-multi-ai-code-session-id': 'session-a'
+    }
+
+    try {
+      const contacts = await fetch(`${bridge.url}/contacts?projectId=project-1`, { headers })
+      await expect(contacts.json()).resolves.toMatchObject({ ok: true })
+
+      const sent = await fetch(`${bridge.url}/send`, {
+        method: 'POST',
+        headers: { ...headers, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'project-1',
+          toUserId: 'agent-b',
+          text: 'delegated work'
+        })
+      })
+      await expect(sent.json()).resolves.toMatchObject({ ok: true })
+      expect(authorizedOperationCount).toBe(2)
+      expect(getConfig).toHaveBeenCalledTimes(1)
+      expect(sendPeerMessage).toHaveBeenCalledTimes(1)
+      expect(insideAuthorizedOperation).toBe(false)
+    } finally {
+      await bridge.close()
+    }
+  })
+
 })

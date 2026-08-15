@@ -18,6 +18,12 @@ enum class RemoteIMMessageStatus {
     Failed
 };
 
+enum class RemoteIMMessageOrigin {
+    Unknown,
+    Human,
+    Machine
+};
+
 struct RemoteIMImageAttachment {
     QString localPath;
     int width = 0;
@@ -44,6 +50,8 @@ struct RemoteIMMessage {
     QString text;
     RemoteIMMessageDirection direction = RemoteIMMessageDirection::Incoming;
     RemoteIMMessageStatus status = RemoteIMMessageStatus::Received;
+    // Versioned Tencent cloud metadata. Unknown means missing/invalid/foreign metadata.
+    RemoteIMMessageOrigin origin = RemoteIMMessageOrigin::Unknown;
     qint64 createdAtMillis = QDateTime::currentMSecsSinceEpoch();
     RemoteIMImageAttachment image;
     RemoteIMVoiceAttachment voice;

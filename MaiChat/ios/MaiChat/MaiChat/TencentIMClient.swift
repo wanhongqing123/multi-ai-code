@@ -155,7 +155,7 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
         }
     }
 
-    func sendText(to userID: String, text: String) async throws -> RemoteIMSendReceipt {
+    func sendText(to userID: String, text: String, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt {
         guard let message = V2TIMManager.sharedInstance().createTextMessage(text: text) else {
             Self.logMessageCreateFailure(kind: "text", peerUserID: userID)
             throw RemoteIMClientError.operationFailed(code: -1, description: "create text message failed")
@@ -164,12 +164,13 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
             message: message,
             to: userID,
             kind: "text",
+            origin: origin,
             metadata: ["content_bytes": String(text.lengthOfBytes(using: .utf8))],
             failureDescription: "send text failed"
         )
     }
 
-    func sendVoice(to userID: String, recording: RemoteIMVoiceRecording) async throws -> RemoteIMSendReceipt {
+    func sendVoice(to userID: String, recording: RemoteIMVoiceRecording, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt {
         guard let message = V2TIMManager.sharedInstance().createSoundMessage(
             audioFilePath: recording.fileURL.path,
             duration: Int32(recording.durationSeconds)
@@ -181,12 +182,13 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
             message: message,
             to: userID,
             kind: "voice",
+            origin: origin,
             metadata: ["duration_seconds": String(recording.durationSeconds)],
             failureDescription: "send voice failed"
         )
     }
 
-    func sendImage(to userID: String, image: RemoteIMImageFile) async throws -> RemoteIMSendReceipt {
+    func sendImage(to userID: String, image: RemoteIMImageFile, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt {
         guard let message = V2TIMManager.sharedInstance().createImageMessage(imagePath: image.fileURL.path) else {
             Self.logMessageCreateFailure(kind: "image", peerUserID: userID)
             throw RemoteIMClientError.operationFailed(code: -1, description: "create image message failed")
@@ -195,6 +197,7 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
             message: message,
             to: userID,
             kind: "image",
+            origin: origin,
             metadata: [
                 "width": image.width.map(String.init) ?? "unknown",
                 "height": image.height.map(String.init) ?? "unknown",
@@ -204,7 +207,7 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
         )
     }
 
-    func sendFile(to userID: String, file: RemoteIMFile) async throws -> RemoteIMSendReceipt {
+    func sendFile(to userID: String, file: RemoteIMFile, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt {
         guard let message = V2TIMManager.sharedInstance().createFileMessage(
             filePath: file.fileURL.path,
             fileName: file.fileName
@@ -216,6 +219,7 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
             message: message,
             to: userID,
             kind: "file",
+            origin: origin,
             metadata: [
                 "bytes": file.sizeBytes.map(String.init) ?? "unknown",
                 "mime_type": file.mimeType,
@@ -276,9 +280,11 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
         message: V2TIMMessage,
         to userID: String,
         kind: String,
+        origin: RemoteIMMessageOrigin,
         metadata: [String: String],
         failureDescription: String
     ) async throws -> RemoteIMSendReceipt {
+        message.cloudCustomData = Self.cloudCustomData(origin: origin)
         let startedAt = ProcessInfo.processInfo.systemUptime
         var startFields = metadata
         startFields["operation"] = DiagnosticLogPrivacy.stableTag(
@@ -327,6 +333,25 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
         RemoteIMSendReceipt(remoteID: message.msgID, createdAt: message.timestamp)
     }
 
+    private nonisolated static func cloudCustomData(origin: RemoteIMMessageOrigin) -> Data {
+        Data(
+            #"{"namespace":"multi-ai-code","version":1,"origin":"\#(origin.rawValue)"}"#.utf8
+        )
+    }
+
+    private nonisolated static func messageOrigin(for message: V2TIMMessage) -> RemoteIMMessageOrigin? {
+        guard let data = message.cloudCustomData,
+              let decoded = try? JSONSerialization.jsonObject(with: data),
+              let object = decoded as? [String: Any],
+              object["namespace"] as? String == "multi-ai-code",
+              object["version"] as? Int == 1,
+              let rawOrigin = object["origin"] as? String
+        else {
+            return nil
+        }
+        return RemoteIMMessageOrigin(rawValue: rawOrigin)
+    }
+
     private static func profile(from info: V2TIMUserFullInfo) -> RemoteIMUserProfile? {
         guard let userID = info.userID?.trimmingCharacters(in: .whitespacesAndNewlines),
               !userID.isEmpty
@@ -354,11 +379,13 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
         V2TIMManager.sharedInstance().findMessages(
             messageIDList: [msgID],
             succ: { [weak self] messages in
-                let createdAt = messages?.first?.timestamp ?? fallbackDate
+                let message = messages?.first
+                let createdAt = message?.timestamp ?? fallbackDate
                 self?.emitIncomingText(
                     fromUserID: userID,
                     text: text,
                     remoteID: msgID,
+                    origin: message.flatMap(Self.messageOrigin(for:)),
                     createdAt: createdAt
                 )
             },
@@ -367,6 +394,7 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
                     fromUserID: userID,
                     text: text,
                     remoteID: msgID,
+                    origin: nil,
                     createdAt: fallbackDate
                 )
             }
@@ -401,6 +429,7 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
         let createdAt = msg.timestamp ?? Date()
         let durationSeconds = max(1, Int(soundElem.duration))
         let remoteID = soundElem.uuid ?? msg.msgID
+        let origin = Self.messageOrigin(for: msg)
         let targetURL = Self.voiceCacheURL(remoteID: remoteID, messageID: msg.msgID)
         let startedAt = ProcessInfo.processInfo.systemUptime
         let diagnosticFields = Self.messageDiagnosticFields(
@@ -420,12 +449,13 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
                 fields["result"] = "ok"
                 fields["duration_ms"] = Self.elapsedMilliseconds(since: startedAt)
                 Self.logSDK(level: .info, event: "media-download-finished", fields: fields)
-                Task { @MainActor [weak self, fromUserID, targetURL, durationSeconds, remoteID, createdAt] in
+                Task { @MainActor [weak self, fromUserID, targetURL, durationSeconds, remoteID, origin, createdAt] in
                     let event = IncomingRemoteIMVoice(
                         fromUserID: fromUserID,
                         fileURL: targetURL,
                         durationSeconds: durationSeconds,
                         remoteID: remoteID,
+                        origin: origin,
                         createdAt: createdAt
                     )
                     self?.onIncomingVoice?(event)
@@ -453,6 +483,7 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
         let fileName = Self.cleanFileName(fileElem.filename)
         let createdAt = msg.timestamp ?? Date()
         let remoteID = fileElem.uuid ?? msg.msgID
+        let origin = Self.messageOrigin(for: msg)
         let targetURL = Self.fileCacheURL(remoteID: remoteID, messageID: msg.msgID, fileName: fileName)
         let mimeType = Self.mimeType(for: fileName)
         let sizeBytes = fileElem.fileSize > 0 ? Int(fileElem.fileSize) : nil
@@ -477,7 +508,7 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
                 fields["result"] = "ok"
                 fields["duration_ms"] = Self.elapsedMilliseconds(since: startedAt)
                 Self.logSDK(level: .info, event: "media-download-finished", fields: fields)
-                Task { @MainActor [weak self, fromUserID, targetURL, fileName, mimeType, remoteID, sizeBytes, createdAt] in
+                Task { @MainActor [weak self, fromUserID, targetURL, fileName, mimeType, remoteID, sizeBytes, origin, createdAt] in
                     let event = IncomingRemoteIMFile(
                         fromUserID: fromUserID,
                         fileURL: targetURL,
@@ -485,6 +516,7 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
                         mimeType: mimeType,
                         remoteID: remoteID,
                         sizeBytes: sizeBytes,
+                        origin: origin,
                         createdAt: createdAt
                     )
                     self?.onIncomingFile?(event)
@@ -512,6 +544,7 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
         guard let image = Self.preferredImage(from: imageElem.imageList) else { return }
         let createdAt = msg.timestamp ?? Date()
         let remoteID = image.uuid ?? msg.msgID
+        let origin = Self.messageOrigin(for: msg)
         let targetURL = Self.imageCacheURL(remoteID: remoteID, messageID: msg.msgID, imageURL: image.url)
         let width = image.width > 0 ? Int(image.width) : nil
         let height = image.height > 0 ? Int(image.height) : nil
@@ -537,7 +570,7 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
                 fields["result"] = "ok"
                 fields["duration_ms"] = Self.elapsedMilliseconds(since: startedAt)
                 Self.logSDK(level: .info, event: "media-download-finished", fields: fields)
-                Task { @MainActor [weak self, fromUserID, targetURL, remoteID, width, height, sizeBytes, createdAt] in
+                Task { @MainActor [weak self, fromUserID, targetURL, remoteID, width, height, sizeBytes, origin, createdAt] in
                     let event = IncomingRemoteIMImage(
                         fromUserID: fromUserID,
                         fileURL: targetURL,
@@ -545,6 +578,7 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
                         width: width,
                         height: height,
                         sizeBytes: sizeBytes,
+                        origin: origin,
                         createdAt: createdAt
                     )
                     self?.onIncomingImage?(event)
@@ -568,13 +602,15 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
         fromUserID: String,
         text: String,
         remoteID: String?,
+        origin: RemoteIMMessageOrigin?,
         createdAt: Date
     ) {
-        Task { @MainActor [weak self, fromUserID, text, remoteID, createdAt] in
+        Task { @MainActor [weak self, fromUserID, text, remoteID, origin, createdAt] in
             let event = IncomingRemoteIMText(
                 fromUserID: fromUserID,
                 text: text,
                 remoteID: remoteID,
+                origin: origin,
                 createdAt: createdAt
             )
             self?.onIncomingText?(event)
@@ -781,19 +817,19 @@ final class TencentIMClient: RemoteIMClient {
 
     func disconnect() async {}
 
-    func sendText(to userID: String, text: String) async throws -> RemoteIMSendReceipt {
+    func sendText(to userID: String, text: String, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt {
         throw RemoteIMClientError.sdkNotIntegrated
     }
 
-    func sendVoice(to userID: String, recording: RemoteIMVoiceRecording) async throws -> RemoteIMSendReceipt {
+    func sendVoice(to userID: String, recording: RemoteIMVoiceRecording, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt {
         throw RemoteIMClientError.sdkNotIntegrated
     }
 
-    func sendImage(to userID: String, image: RemoteIMImageFile) async throws -> RemoteIMSendReceipt {
+    func sendImage(to userID: String, image: RemoteIMImageFile, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt {
         throw RemoteIMClientError.sdkNotIntegrated
     }
 
-    func sendFile(to userID: String, file: RemoteIMFile) async throws -> RemoteIMSendReceipt {
+    func sendFile(to userID: String, file: RemoteIMFile, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt {
         throw RemoteIMClientError.sdkNotIntegrated
     }
 

@@ -3,6 +3,7 @@ import { inflateSync } from 'node:zlib'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   connectTencentImClient,
+  createRemoteImCloudCustomData,
   extractTencentImAudioMessages,
   extractTencentImFileMessages,
   extractTencentImImageMessages,
@@ -11,7 +12,8 @@ import {
   extractUserSig,
   generateTencentUserSig,
   extractTencentImRoamedTextMessages,
-  getSentRemoteMessageId
+  getSentRemoteMessageId,
+  parseRemoteImMessageOrigin
 } from '../../../src/remote-im/tencentImClient.js'
 
 const sdkMock = vi.hoisted(() => {
@@ -95,6 +97,15 @@ describe('tencent IM client helpers', () => {
     expect(() => extractUserSig({ ok: false })).toThrow('凭证接口响应缺少有效凭证')
   })
 
+  it('round-trips versioned Remote IM origin metadata and rejects invalid values', () => {
+    expect(parseRemoteImMessageOrigin(createRemoteImCloudCustomData('human'))).toBe('human')
+    expect(parseRemoteImMessageOrigin(createRemoteImCloudCustomData('machine'))).toBe('machine')
+    expect(parseRemoteImMessageOrigin('{"namespace":"other","version":1,"origin":"human"}')).toBeUndefined()
+    expect(parseRemoteImMessageOrigin('{"namespace":"multi-ai-code","version":1,"origin":"robot"}')).toBeUndefined()
+    expect(parseRemoteImMessageOrigin('not-json')).toBeUndefined()
+    expect(parseRemoteImMessageOrigin(undefined)).toBeUndefined()
+  })
+
   it('extracts C2C text messages from Tencent message events', () => {
     const messages = extractTencentImTextMessages({
       data: [
@@ -104,6 +115,7 @@ describe('tencent IM client helpers', () => {
           to: 'desktop_bot',
           type: 'TIMTextElem',
           payload: { text: 'hello' },
+          cloudCustomData: createRemoteImCloudCustomData('human'),
           time: 1782238800
         },
         {
@@ -122,6 +134,7 @@ describe('tencent IM client helpers', () => {
         fromUserId: 'phone_admin',
         toUserId: 'desktop_bot',
         text: 'hello',
+        origin: 'human',
         createdAt: 1782238800000
       }
     ])
@@ -135,6 +148,7 @@ describe('tencent IM client helpers', () => {
           from: 'phone_admin',
           to: 'desktop_bot',
           type: 'TIMSoundElem',
+          cloudCustomData: createRemoteImCloudCustomData('machine'),
           payload: {
             url: 'https://cos.example.test/voice.amr',
             uuid: 'sound-uuid-1',
@@ -162,6 +176,7 @@ describe('tencent IM client helpers', () => {
         durationSeconds: 4,
         sizeBytes: 2048,
         uuid: 'sound-uuid-1',
+        origin: 'machine',
         createdAt: 1782238800000
       }
     ])
@@ -175,6 +190,7 @@ describe('tencent IM client helpers', () => {
           from: 'phone_admin',
           to: 'desktop_bot',
           type: 'TIMImageElem',
+          cloudCustomData: createRemoteImCloudCustomData('machine'),
           payload: {
             uuid: 'image-uuid-1',
             imageInfoArray: [
@@ -219,6 +235,7 @@ describe('tencent IM client helpers', () => {
         uuid: 'image-uuid-1',
         fileName: null,
         mimeType: null,
+        origin: 'machine',
         createdAt: 1782238800000
       }
     ])
@@ -300,6 +317,7 @@ describe('tencent IM client helpers', () => {
           from: 'phone_admin',
           to: 'desktop_bot',
           type: 'TIMFileElem',
+          cloudCustomData: createRemoteImCloudCustomData('human'),
           payload: {
             // 腾讯 Web SDK 文件元素的真实形状：fileUrl / fileSize / downloadFlag。
             // 以前这里写成 url / size，与 SDK 不符，于是测试一直绿、真实链路一直坏。
@@ -344,6 +362,7 @@ describe('tencent IM client helpers', () => {
         uuid: 'file-uuid-1',
         fileName: 'report.md',
         mimeType: 'text/markdown',
+        origin: 'human',
         createdAt: 1782238800000
       },
       {
@@ -665,12 +684,13 @@ describe('tencent IM client helpers', () => {
     const file = new File([new Uint8Array([1, 2, 3])], 'photo.png', { type: 'image/png' })
 
     expect(runtime.sendImage).toBeTypeOf('function')
-    await runtime.sendImage!('desktop-b', file, { messageId: 77 })
+    await runtime.sendImage!('desktop-b', file, { messageId: 77, origin: 'human' })
 
     expect(sdkMock.chat.createImageMessage).toHaveBeenCalledWith({
       to: 'desktop-b',
       conversationType: 'C2C',
-      payload: { file }
+      payload: { file },
+      cloudCustomData: createRemoteImCloudCustomData('human')
     })
     expect(sdkMock.chat.sendMessage).toHaveBeenCalledTimes(1)
   })
@@ -714,12 +734,13 @@ describe('tencent IM client helpers', () => {
     })
 
     expect(runtime.sendFile).toBeTypeOf('function')
-    await runtime.sendFile!('desktop-b', file, { messageId: 78 })
+    await runtime.sendFile!('desktop-b', file, { messageId: 78, origin: 'machine' })
 
     expect(sdkMock.chat.createFileMessage).toHaveBeenCalledWith({
       to: 'desktop-b',
       conversationType: 'C2C',
-      payload: { file }
+      payload: { file },
+      cloudCustomData: createRemoteImCloudCustomData('machine')
     })
     expect(sdkMock.chat.sendMessage).toHaveBeenCalledTimes(1)
   })
@@ -910,7 +931,23 @@ describe('tencent IM client helpers', () => {
     sdkMock.handlers.get('sdkReady')?.()
     const runtime = await runtimePromise
 
-    await runtime.sendText('desktop-b', 'hello', { messageId: 42 })
+    await runtime.sendText('desktop-b', 'hello', { messageId: 42, origin: 'human' })
+
+    expect(sdkMock.chat.createTextMessage).toHaveBeenCalledWith({
+      to: 'desktop-b',
+      conversationType: 'C2C',
+      payload: { text: 'hello' },
+      cloudCustomData: createRemoteImCloudCustomData('human')
+    })
+
+    sdkMock.chat.createTextMessage.mockClear()
+    await runtime.sendText('desktop-b', 'unclassified programmatic output', { messageId: 43 })
+    expect(sdkMock.chat.createTextMessage).toHaveBeenCalledWith({
+      to: 'desktop-b',
+      conversationType: 'C2C',
+      payload: { text: 'unclassified programmatic output' },
+      cloudCustomData: createRemoteImCloudCustomData('machine')
+    })
 
     expect(onRuntimeLog).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -949,6 +986,7 @@ describe('tencent IM roamed history helpers', () => {
         to: 'desktop_bot',
         time: 1700000000,
         flow: 'in',
+        cloudCustomData: createRemoteImCloudCustomData('machine'),
         payload: { text: '离线消息' }
       },
       {
@@ -971,6 +1009,7 @@ describe('tencent IM roamed history helpers', () => {
         fromUserId: 'phone_admin',
         toUserId: 'desktop_bot',
         text: '离线消息',
+        origin: 'machine',
         createdAt: 1700000000000,
         flow: 'in'
       },

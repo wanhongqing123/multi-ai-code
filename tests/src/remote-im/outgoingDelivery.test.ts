@@ -9,11 +9,19 @@ import {
 } from '../../../src/remote-im/outgoingDelivery.js'
 import type { TencentImRuntime } from '../../../src/remote-im/tencentImClient.js'
 
+const runtimeIdentity = {
+  connectionId: 'runtime-1',
+  desktopUserId: 'desktop-a',
+  sdkAppId: 1400704311
+}
+
 const event: RemoteImOutgoingTextEvent = {
   projectId: 'project-1',
   messageId: 42,
   toUserId: 'desktop-b',
-  text: 'hello'
+  text: 'hello',
+  origin: 'machine',
+  runtimeIdentity
 }
 
 describe('remote IM outgoing delivery', () => {
@@ -31,7 +39,10 @@ describe('remote IM outgoing delivery', () => {
 
     await deliverRemoteImOutgoingText({ runtime, event, markSent, markFailed })
 
-    expect(runtime.sendText).toHaveBeenCalledWith('desktop-b', 'hello', { messageId: 42 })
+    expect(runtime.sendText).toHaveBeenCalledWith('desktop-b', 'hello', {
+      messageId: 42,
+      origin: 'machine'
+    })
     expect(markSent).toHaveBeenCalledWith(42, null)
     expect(markFailed).not.toHaveBeenCalled()
   })
@@ -90,6 +101,8 @@ describe('remote IM outgoing delivery', () => {
       projectId: 'project-1',
       messageId: 88,
       toUserId: 'desktop-b',
+      origin: 'human',
+      runtimeIdentity,
       fileToken: 'token-1'
     }
     const file = new File([new Uint8Array([1])], 'photo.png', { type: 'image/png' })
@@ -110,7 +123,10 @@ describe('remote IM outgoing delivery', () => {
       markFailed
     })
 
-    expect(sendImage).toHaveBeenCalledWith('desktop-b', file, { messageId: 88 })
+    expect(sendImage).toHaveBeenCalledWith('desktop-b', file, {
+      messageId: 88,
+      origin: 'human'
+    })
     expect(markSent).toHaveBeenCalledWith(88, null)
     expect(markFailed).not.toHaveBeenCalled()
   })
@@ -120,6 +136,8 @@ describe('remote IM outgoing delivery', () => {
       projectId: 'project-1',
       messageId: 88,
       toUserId: 'desktop-b',
+      origin: 'human',
+      runtimeIdentity,
       fileName: 'desktop_shot.png',
       mimeType: 'image/png',
       fileBytes: new Uint8Array([1, 2, 3])
@@ -146,7 +164,10 @@ describe('remote IM outgoing delivery', () => {
     expect(sentFile).toBeInstanceOf(File)
     expect(sentFile.name).toBe('desktop_shot.png')
     expect(sentFile.type).toBe('image/png')
-    expect(sendImage).toHaveBeenCalledWith('desktop-b', sentFile, { messageId: 88 })
+    expect(sendImage).toHaveBeenCalledWith('desktop-b', sentFile, {
+      messageId: 88,
+      origin: 'human'
+    })
     expect(markSent).toHaveBeenCalledWith(88, null)
     expect(markFailed).not.toHaveBeenCalled()
   })
@@ -156,6 +177,8 @@ describe('remote IM outgoing delivery', () => {
       projectId: 'project-1',
       messageId: 88,
       toUserId: 'desktop-b',
+      origin: 'human',
+      runtimeIdentity,
       fileToken: 'missing-token'
     }
     const runtime: TencentImRuntime = {
@@ -184,6 +207,8 @@ describe('remote IM outgoing delivery', () => {
       projectId: 'project-1',
       messageId: 88,
       toUserId: 'desktop-b',
+      origin: 'human',
+      runtimeIdentity,
       fileToken: 'token-1'
     }
     const markSent = vi.fn()
@@ -206,6 +231,8 @@ describe('remote IM outgoing delivery', () => {
       projectId: 'project-1',
       messageId: 89,
       toUserId: 'desktop-b',
+      origin: 'human',
+      runtimeIdentity,
       fileName: 'report.md',
       mimeType: 'text/markdown',
       fileBytes: new TextEncoder().encode('# Report')
@@ -231,7 +258,10 @@ describe('remote IM outgoing delivery', () => {
     expect(sentFile).toBeInstanceOf(File)
     expect(sentFile.name).toBe('report.md')
     expect(sentFile.type).toBe('text/markdown')
-    expect(sendFile).toHaveBeenCalledWith('desktop-b', sentFile, { messageId: 89 })
+    expect(sendFile).toHaveBeenCalledWith('desktop-b', sentFile, {
+      messageId: 89,
+      origin: 'human'
+    })
     expect(markSent).toHaveBeenCalledWith(89, null)
     expect(markFailed).not.toHaveBeenCalled()
   })
@@ -241,6 +271,8 @@ describe('remote IM outgoing delivery', () => {
       projectId: 'project-1',
       messageId: 89,
       toUserId: 'desktop-b',
+      origin: 'human',
+      runtimeIdentity,
       fileName: 'report.md',
       mimeType: 'text/markdown',
       fileBytes: new TextEncoder().encode('# Report')
@@ -269,7 +301,14 @@ describe('remote IM outgoing delivery', () => {
 
     await deliverRemoteImOutgoingText({
       runtime,
-      event: { projectId: 'p1', toUserId: 'desktop-b', text: 'hello', messageId: 42 },
+      event: {
+        projectId: 'p1',
+        toUserId: 'desktop-b',
+        text: 'hello',
+        origin: 'machine',
+        runtimeIdentity,
+        messageId: 42
+      },
       markSent,
       markFailed
     })

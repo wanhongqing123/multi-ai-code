@@ -240,6 +240,11 @@ describe('preload remote IM api', () => {
 
   it('exposes status and message subscriptions', async () => {
     const api = await loadApi()
+    const runtimeIdentity = {
+      connectionId: 'runtime-1',
+      desktopUserId: 'desktop-a',
+      sdkAppId: 1400704311
+    }
     const statusCb = vi.fn()
     const messageCb = vi.fn()
 
@@ -271,7 +276,14 @@ describe('preload remote IM api', () => {
     const outgoingHandler = electronMock.on.mock.calls.find(
       (call) => call[0] === 'remote-im:outgoing-text'
     )?.[1]
-    const outgoing = { projectId: 'project-1', toUserId: 'phone_admin', text: 'hello', messageId: 42 }
+    const outgoing = {
+      projectId: 'project-1',
+      toUserId: 'phone_admin',
+      text: 'hello',
+      origin: 'machine',
+      runtimeIdentity,
+      messageId: 42
+    }
     outgoingHandler({}, outgoing)
     expect(outgoingCb).toHaveBeenCalledWith(outgoing)
     offOutgoing()
@@ -288,6 +300,8 @@ describe('preload remote IM api', () => {
     const outgoingImage = {
       projectId: 'project-1',
       toUserId: 'phone_admin',
+      origin: 'human',
+      runtimeIdentity,
       fileToken: 'file-token-1',
       fileName: 'photo.png',
       mimeType: 'image/png',

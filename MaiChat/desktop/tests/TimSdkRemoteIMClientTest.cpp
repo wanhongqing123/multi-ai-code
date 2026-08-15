@@ -137,6 +137,13 @@ QJsonObject firstElement(const QString& jsonMessage) {
     return message.value(QStringLiteral("message_elem_array")).toArray().first().toObject();
 }
 
+QJsonObject messageMetadata(const QString& jsonMessage) {
+    const QJsonObject message = QJsonDocument::fromJson(jsonMessage.toUtf8()).object();
+    const QString metadataText =
+        message.value(QStringLiteral("message_cloud_custom_str")).toString();
+    return QJsonDocument::fromJson(metadataText.toUtf8()).object();
+}
+
 }  // namespace
 
 class TimSdkRemoteIMClientTest : public QObject {
@@ -187,6 +194,16 @@ void TimSdkRemoteIMClientTest::connectsThroughSdkAndSendsTextAndImage() {
     QJsonObject elem = firstElement(fake->lastJsonMessage);
     QCOMPARE(elem.value(QStringLiteral("elem_type")).toInt(), 0);
     QCOMPARE(elem.value(QStringLiteral("text_elem_content")).toString(), QStringLiteral("hello\nworld"));
+    QJsonObject metadata = messageMetadata(fake->lastJsonMessage);
+    QCOMPARE(metadata.value(QStringLiteral("namespace")).toString(), QStringLiteral("multi-ai-code"));
+    QCOMPARE(metadata.value(QStringLiteral("version")).toInt(), 1);
+    QCOMPARE(metadata.value(QStringLiteral("origin")).toString(), QStringLiteral("human"));
+
+    // Remote-desktop/control frames use the same text transport but must not
+    // be mistaken for human chat input by an AICLI receiver.
+    client.sendMachineText(QStringLiteral("phone-user"), QStringLiteral("protocol-frame"), {});
+    metadata = messageMetadata(fake->lastJsonMessage);
+    QCOMPARE(metadata.value(QStringLiteral("origin")).toString(), QStringLiteral("machine"));
 
     bool imageSent = false;
     client.sendImage(QStringLiteral("phone-user"), QStringLiteral("/tmp/outgoing.png"), [&](bool ok, const QString&, const RemoteIMSendReceipt&) {
@@ -198,6 +215,8 @@ void TimSdkRemoteIMClientTest::connectsThroughSdkAndSendsTextAndImage() {
     QCOMPARE(elem.value(QStringLiteral("elem_type")).toInt(), 1);
     QCOMPARE(elem.value(QStringLiteral("image_elem_orig_path")).toString(), QStringLiteral("/tmp/outgoing.png"));
     QCOMPARE(elem.value(QStringLiteral("image_elem_level")).toInt(), 0);
+    metadata = messageMetadata(fake->lastJsonMessage);
+    QCOMPARE(metadata.value(QStringLiteral("origin")).toString(), QStringLiteral("human"));
 }
 
 void TimSdkRemoteIMClientTest::sendsImageWithTextAsSingleMultiElemMessage() {
@@ -348,6 +367,8 @@ void TimSdkRemoteIMClientTest::emitsIncomingTextAndImageFromSdkMessages() {
         {QStringLiteral("message_sender"), QStringLiteral("phone-user")},
         {QStringLiteral("message_msg_id"), QStringLiteral("sdk-msg-1")},
         {QStringLiteral("message_server_time"), 1700000000},
+        {QStringLiteral("message_cloud_custom_str"),
+         QStringLiteral("{\"namespace\":\"multi-ai-code\",\"version\":1,\"origin\":\"human\"}")},
         {QStringLiteral("message_elem_array"), QJsonArray{
             QJsonObject{
                 {QStringLiteral("elem_type"), 0},
@@ -374,6 +395,7 @@ void TimSdkRemoteIMClientTest::emitsIncomingTextAndImageFromSdkMessages() {
     QCOMPARE(image.fromUserId, QStringLiteral("phone-user"));
     QCOMPARE(image.toUserId, QStringLiteral("desktop-user"));
     QCOMPARE(image.direction, RemoteIMMessageDirection::Incoming);
+    QCOMPARE(image.origin, RemoteIMMessageOrigin::Human);
     QCOMPARE(image.text, QStringLiteral("hi"));
     QVERIFY(image.hasImage);
     QCOMPARE(image.image.localPath, QStringLiteral("/tmp/incoming.png"));

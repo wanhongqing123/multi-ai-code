@@ -28,6 +28,15 @@ export interface RemoteImCliServerDeps {
     localPath: string,
     toUserId?: string | null
   ): Promise<RemoteImCliSendResult>
+  authorizeCaller?(
+    projectId: string,
+    sessionId: string
+  ): Promise<{ ok: true } | { ok: false; error: string }> | { ok: true } | { ok: false; error: string }
+  withAuthorizedCaller?<T>(
+    projectId: string,
+    sessionId: string,
+    operation: () => Promise<T>
+  ): Promise<T>
 }
 
 export interface RemoteImCliServerHandle {
@@ -78,6 +87,32 @@ function getProjectId(url: URL, body?: unknown): string {
     if (typeof raw === 'string' && raw.trim()) return raw.trim()
   }
   throw new Error('projectId is required')
+}
+
+async function withAuthorizedCaller<T>(
+  deps: RemoteImCliServerDeps,
+  req: IncomingMessage,
+  projectId: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  const authorizeCaller = deps.authorizeCaller
+  const authorizedOperation = deps.withAuthorizedCaller
+  if (!authorizeCaller && !authorizedOperation) return operation()
+  const sessionId = getCallerSessionId(req)
+  if (authorizedOperation) {
+    return authorizedOperation(projectId, sessionId, operation)
+  }
+  if (!authorizeCaller) throw new Error('AICLI caller authorization is unavailable')
+  const result = await authorizeCaller(projectId, sessionId)
+  if (!result.ok) throw new Error(result.error)
+  return operation()
+}
+
+function getCallerSessionId(req: IncomingMessage): string {
+  const rawSessionId = req.headers['x-multi-ai-code-session-id']
+  const sessionId = (Array.isArray(rawSessionId) ? rawSessionId[0] : rawSessionId)?.trim()
+  if (!sessionId) throw new Error('AICLI session identity is required')
+  return sessionId
 }
 
 function uniqueUserIds(userIds: Array<string | null | undefined>): string[] {
@@ -147,63 +182,71 @@ export async function startRemoteImCliServer(
       const url = new URL(req.url ?? '/', 'http://127.0.0.1')
       if (req.method === 'GET' && url.pathname === '/whoami') {
         const projectId = getProjectId(url)
-        const [config, status] = await Promise.all([
-          deps.getConfig(projectId),
-          deps.getStatus(projectId)
-        ])
-        json(res, 200, {
-          ok: true,
-          value: {
-            projectId,
-            userId: config.desktopUserId,
-            sdkAppId: config.sdkAppId,
-            status: status.state,
-            statusDetail: status.detail
-          }
+        await withAuthorizedCaller(deps, req, projectId, async () => {
+          const [config, status] = await Promise.all([
+            deps.getConfig(projectId),
+            deps.getStatus(projectId)
+          ])
+          json(res, 200, {
+            ok: true,
+            value: {
+              projectId,
+              userId: config.desktopUserId,
+              sdkAppId: config.sdkAppId,
+              status: status.state,
+              statusDetail: status.detail
+            }
+          })
         })
         return
       }
 
       if (req.method === 'GET' && url.pathname === '/contacts') {
         const projectId = getProjectId(url)
-        const config = await deps.getConfig(projectId)
-        json(res, 200, {
-          ok: true,
-          value: {
-            projectId,
-            contacts: contactsFromConfig(config)
-          }
+        await withAuthorizedCaller(deps, req, projectId, async () => {
+          const config = await deps.getConfig(projectId)
+          json(res, 200, {
+            ok: true,
+            value: {
+              projectId,
+              contacts: contactsFromConfig(config)
+            }
+          })
         })
         return
       }
 
       if (req.method === 'GET' && url.pathname === '/history') {
         const projectId = getProjectId(url)
-        const peer = url.searchParams.get('peer')?.trim()
-        const limit = Math.max(1, Math.min(200, Number(url.searchParams.get('limit')) || 20))
-        const config = await deps.getConfig(projectId)
-        const messages = deps
-          .listMessages(projectId, limit)
-          .filter((message) => !peer || messagePeerUserId(message, config.desktopUserId) === peer)
-          .map(formatMessage)
-        json(res, 200, { ok: true, value: { projectId, messages } })
+        await withAuthorizedCaller(deps, req, projectId, async () => {
+          const peer = url.searchParams.get('peer')?.trim()
+          const limit = Math.max(1, Math.min(200, Number(url.searchParams.get('limit')) || 20))
+          const config = await deps.getConfig(projectId)
+          const messages = deps
+            .listMessages(projectId, limit)
+            .filter((message) => !peer || messagePeerUserId(message, config.desktopUserId) === peer)
+            .map(formatMessage)
+          json(res, 200, { ok: true, value: { projectId, messages } })
+        })
         return
       }
 
       if (req.method === 'POST' && url.pathname === '/send') {
         const body = await readBody(req)
         const projectId = getProjectId(url, body)
-        const raw = body && typeof body === 'object' ? (body as Record<string, unknown>) : {}
-        const toUserId = typeof raw.toUserId === 'string' ? raw.toUserId.trim() : ''
-        const text = typeof raw.text === 'string' ? raw.text.trim() : ''
-        if (!toUserId) throw new Error('toUserId is required')
-        if (!text) throw new Error('text is required')
-        const result = await deps.sendPeerMessage(projectId, text, toUserId)
-        json(res, result.ok ? 200 : 400, {
-          ok: result.ok,
-          ...(result.ok
-            ? { value: { toUserId: result.toUserId ?? toUserId } }
-            : { error: result.error ?? 'failed to send IM message' })
+        await withAuthorizedCaller(deps, req, projectId, async () => {
+          const raw = body && typeof body === 'object' ? (body as Record<string, unknown>) : {}
+          const toUserId = typeof raw.toUserId === 'string' ? raw.toUserId.trim() : ''
+          const text = typeof raw.text === 'string' ? raw.text.trim() : ''
+          if (!toUserId) throw new Error('toUserId is required')
+          if (!text) throw new Error('text is required')
+          const result = await deps.sendPeerMessage(projectId, text, toUserId)
+          json(res, result.ok ? 200 : 400, {
+            ok: result.ok,
+            ...(result.ok
+              ? { value: { toUserId: result.toUserId ?? toUserId } }
+              : { error: result.error ?? 'failed to send IM message' })
+          })
         })
         return
       }
@@ -211,18 +254,20 @@ export async function startRemoteImCliServer(
       if (req.method === 'POST' && url.pathname === '/send-image') {
         const body = await readBody(req)
         const projectId = getProjectId(url, body)
-        const raw = body && typeof body === 'object' ? (body as Record<string, unknown>) : {}
-        const toUserId = typeof raw.toUserId === 'string' ? raw.toUserId.trim() : ''
-        const localPath = typeof raw.localPath === 'string' ? raw.localPath.trim() : ''
-        if (!toUserId) throw new Error('toUserId is required')
-        if (!localPath) throw new Error('localPath is required')
-        if (!deps.sendPeerImage) throw new Error('image sending is not available')
-        const result = await deps.sendPeerImage(projectId, localPath, toUserId)
-        json(res, result.ok ? 200 : 400, {
-          ok: result.ok,
-          ...(result.ok
-            ? { value: { toUserId: result.toUserId ?? toUserId } }
-            : { error: result.error ?? 'failed to send IM image' })
+        await withAuthorizedCaller(deps, req, projectId, async () => {
+          const raw = body && typeof body === 'object' ? (body as Record<string, unknown>) : {}
+          const toUserId = typeof raw.toUserId === 'string' ? raw.toUserId.trim() : ''
+          const localPath = typeof raw.localPath === 'string' ? raw.localPath.trim() : ''
+          if (!toUserId) throw new Error('toUserId is required')
+          if (!localPath) throw new Error('localPath is required')
+          if (!deps.sendPeerImage) throw new Error('image sending is not available')
+          const result = await deps.sendPeerImage(projectId, localPath, toUserId)
+          json(res, result.ok ? 200 : 400, {
+            ok: result.ok,
+            ...(result.ok
+              ? { value: { toUserId: result.toUserId ?? toUserId } }
+              : { error: result.error ?? 'failed to send IM image' })
+          })
         })
         return
       }
@@ -230,18 +275,20 @@ export async function startRemoteImCliServer(
       if (req.method === 'POST' && url.pathname === '/send-file') {
         const body = await readBody(req)
         const projectId = getProjectId(url, body)
-        const raw = body && typeof body === 'object' ? (body as Record<string, unknown>) : {}
-        const toUserId = typeof raw.toUserId === 'string' ? raw.toUserId.trim() : ''
-        const localPath = typeof raw.localPath === 'string' ? raw.localPath.trim() : ''
-        if (!toUserId) throw new Error('toUserId is required')
-        if (!localPath) throw new Error('localPath is required')
-        if (!deps.sendPeerFile) throw new Error('file sending is not available')
-        const result = await deps.sendPeerFile(projectId, localPath, toUserId)
-        json(res, result.ok ? 200 : 400, {
-          ok: result.ok,
-          ...(result.ok
-            ? { value: { toUserId: result.toUserId ?? toUserId } }
-            : { error: result.error ?? 'failed to send IM file' })
+        await withAuthorizedCaller(deps, req, projectId, async () => {
+          const raw = body && typeof body === 'object' ? (body as Record<string, unknown>) : {}
+          const toUserId = typeof raw.toUserId === 'string' ? raw.toUserId.trim() : ''
+          const localPath = typeof raw.localPath === 'string' ? raw.localPath.trim() : ''
+          if (!toUserId) throw new Error('toUserId is required')
+          if (!localPath) throw new Error('localPath is required')
+          if (!deps.sendPeerFile) throw new Error('file sending is not available')
+          const result = await deps.sendPeerFile(projectId, localPath, toUserId)
+          json(res, result.ok ? 200 : 400, {
+            ok: result.ok,
+            ...(result.ok
+              ? { value: { toUserId: result.toUserId ?? toUserId } }
+              : { error: result.error ?? 'failed to send IM file' })
+          })
         })
         return
       }

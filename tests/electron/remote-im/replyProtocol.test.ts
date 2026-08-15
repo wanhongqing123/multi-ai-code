@@ -90,6 +90,7 @@ describe('remote IM reply protocol', () => {
 
     expect(extractRemoteImReplyOutput(output)).toEqual({
       content: '## Done\n\n- build passed',
+      completed: true,
       pending: false,
       nextBuffer: ''
     })
@@ -110,6 +111,7 @@ describe('remote IM reply protocol', () => {
 
     expect(extractRemoteImReplyOutput(output, { replyId: 'reply-123' })).toEqual({
       content: 'current result',
+      completed: true,
       pending: false,
       nextBuffer: ''
     })
@@ -119,18 +121,21 @@ describe('remote IM reply protocol', () => {
     {
       name: 'markers and reply body on the same line',
       output:
-        '<remote-im-reply id="rim-0123456789abcdef">你好</remote-im-reply id="rim-0123456789abcdef">'
+        '<remote-im-reply id="rim-0123456789abcdef">你好</remote-im-reply id="rim-0123456789abcdef">',
+      completed: true
     },
     {
       name: 'model omitted marker quote and angle bracket',
       output: [
         '<remote-im-reply id="rim-0123456789abcdef你好',
         '</remote-im-reply id="rim-0123456789abcdef'
-      ].join('\n')
+      ].join('\n'),
+      completed: false
     }
-  ])('extracts Codex reply when $name', ({ output }) => {
+  ])('extracts Codex reply when $name', ({ output, completed }) => {
     expect(extractRemoteImReplyOutput(output, { replyId: 'rim-0123456789abcdef' })).toEqual({
       content: '你好',
+      completed,
       pending: false,
       nextBuffer: ''
     })
@@ -141,7 +146,8 @@ describe('remote IM reply protocol', () => {
       name: 'legacy markers without reply id',
       output: [REMOTE_IM_REPLY_OPEN_TAG, 'legacy reply', REMOTE_IM_REPLY_CLOSE_TAG].join('\n'),
       replyId: undefined,
-      expected: 'legacy reply'
+      expected: 'legacy reply',
+      completed: true
     },
     {
       name: 'matching id markers',
@@ -151,7 +157,8 @@ describe('remote IM reply protocol', () => {
         '</remote-im-reply id="rim-current">'
       ].join('\n'),
       replyId: 'rim-current',
-      expected: 'current id reply'
+      expected: 'current id reply',
+      completed: true
     },
     {
       name: 'matching id open marker with legacy close marker',
@@ -161,11 +168,13 @@ describe('remote IM reply protocol', () => {
         REMOTE_IM_REPLY_CLOSE_TAG
       ].join('\n'),
       replyId: 'rim-current',
-      expected: 'current id reply with legacy close'
+      expected: 'current id reply with legacy close',
+      completed: false
     }
-  ])('extracts reply protocol variant: $name', ({ output, replyId, expected }) => {
+  ])('extracts reply protocol variant: $name', ({ output, replyId, expected, completed }) => {
     expect(extractRemoteImReplyOutput(output, { replyId })).toEqual({
       content: expected,
+      completed,
       pending: false,
       nextBuffer: ''
     })
@@ -181,11 +190,50 @@ describe('remote IM reply protocol', () => {
     const reply = extractRemoteImReplyOutput(output, { replyId: 'rim-current' })
 
     expect(reply.content).toBe('')
+    expect(reply.completed).toBe(false)
     expect(reply.pending).toBe(true)
     expect(reply.nextBuffer).toContain('must not forward yet')
   })
 
-  it('accepts a legacy close tag after a matching reply id open tag', () => {
+  it('distinguishes an empty completed expected reply from absent and wrong-id markers', () => {
+    const empty = extractRemoteImReplyOutput(
+      [
+        '<remote-im-reply id="rim-current">',
+        '</remote-im-reply id="rim-current">'
+      ].join('\n'),
+      { replyId: 'rim-current' }
+    )
+    const absent = extractRemoteImReplyOutput('terminal noise only', {
+      replyId: 'rim-current'
+    })
+    const wrongId = extractRemoteImReplyOutput(
+      [
+        '<remote-im-reply id="rim-other">',
+        'other reply',
+        '</remote-im-reply id="rim-other">'
+      ].join('\n'),
+      { replyId: 'rim-current' }
+    )
+    const generic = extractRemoteImReplyOutput(
+      [REMOTE_IM_REPLY_OPEN_TAG, 'generic reply', REMOTE_IM_REPLY_CLOSE_TAG].join('\n'),
+      { replyId: 'rim-current' }
+    )
+
+    expect(empty).toEqual({
+      content: '',
+      completed: true,
+      pending: false,
+      nextBuffer: ''
+    })
+    expect(absent.completed).toBe(false)
+    expect(absent.pending).toBe(false)
+    expect(wrongId.completed).toBe(false)
+    expect(wrongId.pending).toBe(false)
+    expect(generic.completed).toBe(false)
+    expect(generic.pending).toBe(false)
+  })
+
+  it('extracts a legacy close tag without granting exact route completion', () => {
     const output = [
       '<remote-im-reply id="rim-current">',
       'Claude reply with id open and legacy close',
@@ -194,6 +242,7 @@ describe('remote IM reply protocol', () => {
 
     expect(extractRemoteImReplyOutput(output, { replyId: 'rim-current' })).toEqual({
       content: 'Claude reply with id open and legacy close',
+      completed: false,
       pending: false,
       nextBuffer: ''
     })
@@ -206,6 +255,7 @@ describe('remote IM reply protocol', () => {
       })
     ).toEqual({
       content: 'Claude transcript reply with an id-bearing opening marker and a legacy closing marker.',
+      completed: false,
       pending: false,
       nextBuffer: ''
     })
@@ -225,6 +275,7 @@ describe('remote IM reply protocol', () => {
 
     expect(extractRemoteImReplyOutput(output, { replyId: 'reply-123' })).toEqual({
       content: '',
+      completed: false,
       pending: false,
       nextBuffer: ''
     })
@@ -249,6 +300,7 @@ describe('remote IM reply protocol', () => {
 
     expect(extractRemoteImReplyOutput(output, { replyId: 'rim-incident' })).toEqual({
       content: '真实回复内容',
+      completed: true,
       pending: false,
       nextBuffer: ''
     })
@@ -263,6 +315,7 @@ describe('remote IM reply protocol', () => {
 
     expect(extractRemoteImReplyOutput(output, { replyId: 'rim-incident' })).toEqual({
       content: '',
+      completed: false,
       pending: false,
       nextBuffer: ''
     })
@@ -271,6 +324,7 @@ describe('remote IM reply protocol', () => {
   it('drops untagged output instead of forwarding terminal UI noise', () => {
     expect(extractRemoteImReplyOutput('Assistant text.│AddedCLAUDE_CODE_DISABLE_MOUSE_CLICKS')).toEqual({
       content: '',
+      completed: false,
       pending: false,
       nextBuffer: ''
     })
@@ -279,6 +333,7 @@ describe('remote IM reply protocol', () => {
   it('keeps an incomplete tagged reply buffered until the close tag arrives', () => {
     expect(extractRemoteImReplyOutput(`noise\n${REMOTE_IM_REPLY_OPEN_TAG}\npartial`)).toEqual({
       content: '',
+      completed: false,
       pending: true,
       nextBuffer: `${REMOTE_IM_REPLY_OPEN_TAG}\npartial`
     })
@@ -297,6 +352,7 @@ describe('remote IM reply protocol', () => {
 
     expect(extractRemoteImReplyOutput(fullscreenChunk)).toEqual({
       content: 'debug-ok\nsecond line',
+      completed: true,
       pending: false,
       nextBuffer: ''
     })
@@ -316,6 +372,7 @@ describe('remote IM reply protocol', () => {
 
     expect(extractRemoteImReplyOutput(fullscreenChunk)).toEqual({
       content: '我是 Claude Code，能帮你处理工程任务。',
+      completed: true,
       pending: false,
       nextBuffer: ''
     })
@@ -331,6 +388,7 @@ describe('remote IM reply protocol', () => {
 
     expect(extractRemoteImReplyOutput(fullscreenChunk)).toEqual({
       content: ['我是 Claude Code，Anthropic 出品', 'high · /effort'].join('\n'),
+      completed: true,
       pending: false,
       nextBuffer: ''
     })

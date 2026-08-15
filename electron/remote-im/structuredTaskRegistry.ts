@@ -151,3 +151,104 @@ export class RemoteImStructuredTaskRegistry<T extends RemoteImStructuredTaskIden
     return [...this.tasksBySession.keys()]
   }
 }
+
+export interface RemoteImQueuedInputEntry<T> {
+  value: T
+  queuedAt: number
+}
+
+export type RemoteImQueuedInputEnqueueResult<T> =
+  | { ok: true; expired: RemoteImQueuedInputEntry<T>[] }
+  | { ok: false; reason: 'capacity'; expired: RemoteImQueuedInputEntry<T>[] }
+
+/**
+ * Small bounded FIFO used for machine-to-machine inputs that arrive while the
+ * previous AICLI turn still owns output correlation. Queue policy lives in a
+ * side-effect-free type so ordering, capacity, and expiry remain testable
+ * without importing Electron's main-process IPC module.
+ */
+export class RemoteImQueuedInputRegistry<T> {
+  private readonly entriesBySession = new Map<string, RemoteImQueuedInputEntry<T>[]>()
+
+  constructor(
+    private readonly maxEntriesPerSession: number,
+    private readonly ttlMs: number
+  ) {
+    if (!Number.isInteger(maxEntriesPerSession) || maxEntriesPerSession < 1) {
+      throw new Error('maxEntriesPerSession must be a positive integer')
+    }
+    if (!Number.isFinite(ttlMs) || ttlMs < 1) {
+      throw new Error('ttlMs must be positive')
+    }
+  }
+
+  enqueue(
+    sessionId: string,
+    value: T,
+    now = Date.now()
+  ): RemoteImQueuedInputEnqueueResult<T> {
+    const expired = this.pruneExpired(sessionId, now)
+    const entries = this.entriesBySession.get(sessionId) ?? []
+    if (entries.length >= this.maxEntriesPerSession) {
+      return { ok: false, reason: 'capacity', expired }
+    }
+    entries.push({ value, queuedAt: now })
+    this.entriesBySession.set(sessionId, entries)
+    return { ok: true, expired }
+  }
+
+  take(
+    sessionId: string,
+    now = Date.now()
+  ): {
+    entry?: RemoteImQueuedInputEntry<T>
+    expired: RemoteImQueuedInputEntry<T>[]
+  } {
+    const expired = this.pruneExpired(sessionId, now)
+    const entries = this.entriesBySession.get(sessionId)
+    const entry = entries?.shift()
+    if (!entries?.length) this.entriesBySession.delete(sessionId)
+    return { ...(entry ? { entry } : {}), expired }
+  }
+
+  removeWhere(predicate: (value: T) => boolean): RemoteImQueuedInputEntry<T>[] {
+    const removed: RemoteImQueuedInputEntry<T>[] = []
+    for (const [sessionId, entries] of this.entriesBySession) {
+      const retained: RemoteImQueuedInputEntry<T>[] = []
+      for (const entry of entries) {
+        if (predicate(entry.value)) removed.push(entry)
+        else retained.push(entry)
+      }
+      if (retained.length > 0) this.entriesBySession.set(sessionId, retained)
+      else this.entriesBySession.delete(sessionId)
+    }
+    return removed
+  }
+
+  expire(sessionId: string, now = Date.now()): RemoteImQueuedInputEntry<T>[] {
+    return this.pruneExpired(sessionId, now)
+  }
+
+  nextExpiryAt(sessionId: string): number | undefined {
+    const queuedAt = this.entriesBySession.get(sessionId)?.[0]?.queuedAt
+    return queuedAt === undefined ? undefined : queuedAt + this.ttlMs
+  }
+
+  size(sessionId: string): number {
+    return this.entriesBySession.get(sessionId)?.length ?? 0
+  }
+
+  private pruneExpired(sessionId: string, now: number): RemoteImQueuedInputEntry<T>[] {
+    const entries = this.entriesBySession.get(sessionId)
+    if (!entries?.length) return []
+    const expired: RemoteImQueuedInputEntry<T>[] = []
+    const retained: RemoteImQueuedInputEntry<T>[] = []
+    for (const entry of entries) {
+      if (now - entry.queuedAt >= this.ttlMs) expired.push(entry)
+      else retained.push(entry)
+    }
+    if (retained.length > 0) this.entriesBySession.set(sessionId, retained)
+    else this.entriesBySession.delete(sessionId)
+    return expired
+  }
+}

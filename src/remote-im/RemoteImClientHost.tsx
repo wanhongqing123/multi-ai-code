@@ -61,6 +61,17 @@ export function getRemoteImConnectionKey(props: RemoteImClientHostProps): string
   })
 }
 
+export function isSameRemoteImRuntimeIdentity(
+  expected: RemoteImRuntimeIdentity,
+  actual: RemoteImRuntimeIdentity
+): boolean {
+  return (
+    expected.connectionId === actual.connectionId &&
+    expected.desktopUserId.trim() === actual.desktopUserId.trim() &&
+    expected.sdkAppId === actual.sdkAppId
+  )
+}
+
 export function getRemoteImConnectionBlockReason(config: RemoteImConfig): string | null {
   if (!config.sdkAppId) return '请先选择 IM 应用配置'
   if (!config.desktopUserId.trim()) return '请先填写登录账号'
@@ -350,6 +361,7 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
 
     const offOutgoing = window.api.remoteIm.onOutgoingText((evt) => {
       if (evt.projectId !== props.projectId) return
+      if (!isSameRemoteImRuntimeIdentity(evt.runtimeIdentity, runtimeIdentity)) return
       const markFailed = (messageId: number, error: string) => {
         void window.api.remoteIm.writeRuntimeLog({
           projectId: evt.projectId,
@@ -372,6 +384,9 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
           const runtime = await runtimeSlotRef.current.waitForCurrent(
             OUTGOING_RUNTIME_WAIT_TIMEOUT_MS
           )
+          if (cancelled || ownedRuntime !== runtime) {
+            throw new Error('Remote IM runtime changed before text delivery')
+          }
           await deliverRemoteImOutgoingText({
             runtime,
             event: evt,
@@ -405,6 +420,7 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
 
     const offOutgoingImage = window.api.remoteIm.onOutgoingImage((evt) => {
       if (evt.projectId !== props.projectId) return
+      if (!isSameRemoteImRuntimeIdentity(evt.runtimeIdentity, runtimeIdentity)) return
       const markFailed = (messageId: number, error: string) => {
         void window.api.remoteIm.writeRuntimeLog({
           projectId: evt.projectId,
@@ -427,6 +443,9 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
           const runtime = await runtimeSlotRef.current.waitForCurrent(
             OUTGOING_RUNTIME_WAIT_TIMEOUT_MS
           )
+          if (cancelled || ownedRuntime !== runtime) {
+            throw new Error('Remote IM runtime changed before image delivery')
+          }
           await deliverRemoteImOutgoingImage({
             runtime,
             event: evt,
@@ -464,6 +483,7 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
 
     const offOutgoingFile = window.api.remoteIm.onOutgoingFile((evt) => {
       if (evt.projectId !== props.projectId) return
+      if (!isSameRemoteImRuntimeIdentity(evt.runtimeIdentity, runtimeIdentity)) return
       const markFailed = (messageId: number, error: string) => {
         void window.api.remoteIm.writeRuntimeLog({
           projectId: evt.projectId,
@@ -486,6 +506,9 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
           const runtime = await runtimeSlotRef.current.waitForCurrent(
             OUTGOING_RUNTIME_WAIT_TIMEOUT_MS
           )
+          if (cancelled || ownedRuntime !== runtime) {
+            throw new Error('Remote IM runtime changed before file delivery')
+          }
           await deliverRemoteImOutgoingFile({
             runtime,
             event: evt,

@@ -24,6 +24,43 @@ constexpr int kElemImage = 1;
 constexpr int kElemFile = 4;
 constexpr int kImageLevelOriginal = 0;
 constexpr int kFriendTypeBoth = 1;
+constexpr auto kCloudCustomDataKey = "message_cloud_custom_str";
+constexpr auto kMetadataNamespace = "multi-ai-code";
+constexpr int kMetadataVersion = 1;
+
+QString originName(RemoteIMMessageOrigin origin) {
+    return origin == RemoteIMMessageOrigin::Human
+               ? QStringLiteral("human")
+               : QStringLiteral("machine");
+}
+
+QString cloudCustomData(RemoteIMMessageOrigin origin) {
+    QJsonObject metadata;
+    metadata[QStringLiteral("namespace")] = QString::fromLatin1(kMetadataNamespace);
+    metadata[QStringLiteral("version")] = kMetadataVersion;
+    metadata[QStringLiteral("origin")] = originName(origin);
+    return QString::fromUtf8(QJsonDocument(metadata).toJson(QJsonDocument::Compact));
+}
+
+void setMessageOrigin(QJsonObject& message, RemoteIMMessageOrigin origin) {
+    message[QString::fromLatin1(kCloudCustomDataKey)] = cloudCustomData(origin);
+}
+
+RemoteIMMessageOrigin messageOrigin(const QJsonObject& message) {
+    const QString raw = message.value(QString::fromLatin1(kCloudCustomDataKey)).toString();
+    if (raw.isEmpty()) return RemoteIMMessageOrigin::Unknown;
+    const QJsonDocument document = QJsonDocument::fromJson(raw.toUtf8());
+    if (!document.isObject()) return RemoteIMMessageOrigin::Unknown;
+    const QJsonObject metadata = document.object();
+    if (metadata.value(QStringLiteral("namespace")).toString() != QLatin1String(kMetadataNamespace)
+        || metadata.value(QStringLiteral("version")).toInt(-1) != kMetadataVersion) {
+        return RemoteIMMessageOrigin::Unknown;
+    }
+    const QString origin = metadata.value(QStringLiteral("origin")).toString();
+    if (origin == QStringLiteral("human")) return RemoteIMMessageOrigin::Human;
+    if (origin == QStringLiteral("machine")) return RemoteIMMessageOrigin::Machine;
+    return RemoteIMMessageOrigin::Unknown;
+}
 
 QString appDataDir(const QString& child) {
     QString root = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
@@ -267,6 +304,17 @@ void TimSdkRemoteIMClient::deleteContact(const QString& userId, RemoteIMCompleti
 }
 
 void TimSdkRemoteIMClient::sendText(const QString& peerId, const QString& text, RemoteIMSendCompletion completion) {
+    sendTextWithOrigin(peerId, text, RemoteIMMessageOrigin::Human, std::move(completion));
+}
+
+void TimSdkRemoteIMClient::sendMachineText(const QString& peerId, const QString& text, RemoteIMSendCompletion completion) {
+    sendTextWithOrigin(peerId, text, RemoteIMMessageOrigin::Machine, std::move(completion));
+}
+
+void TimSdkRemoteIMClient::sendTextWithOrigin(const QString& peerId,
+                                              const QString& text,
+                                              RemoteIMMessageOrigin origin,
+                                              RemoteIMSendCompletion completion) {
     const QString cleanPeerId = peerId.trimmed();
     const QString cleanText = text.trimmed();
     if (cleanPeerId.isEmpty() || cleanText.isEmpty()) {
@@ -279,6 +327,7 @@ void TimSdkRemoteIMClient::sendText(const QString& peerId, const QString& text, 
     elem[QStringLiteral("text_elem_content")] = cleanText;
     QJsonObject message;
     message[QStringLiteral("message_elem_array")] = QJsonArray{elem};
+    setMessageOrigin(message, origin);
     api_->sendMessage(cleanPeerId, kConversationTypeC2C, compactJson(message), [completion = std::move(completion)](int code,
                                                                                                                     const QString& description,
                                                                                                                     const QString& jsonPayload) mutable {
@@ -305,6 +354,7 @@ void TimSdkRemoteIMClient::sendImage(const QString& peerId, const QString& local
     elem[QStringLiteral("image_elem_level")] = kImageLevelOriginal;
     QJsonObject message;
     message[QStringLiteral("message_elem_array")] = QJsonArray{elem};
+    setMessageOrigin(message, RemoteIMMessageOrigin::Human);
     api_->sendMessage(cleanPeerId, kConversationTypeC2C, compactJson(message), [completion = std::move(completion)](int code,
                                                                                                                     const QString& description,
                                                                                                                     const QString& jsonPayload) mutable {
@@ -332,6 +382,7 @@ void TimSdkRemoteIMClient::sendFile(const QString& peerId, const QString& localP
     elem[QStringLiteral("file_elem_file_name")] = displayName;
     QJsonObject message;
     message[QStringLiteral("message_elem_array")] = QJsonArray{elem};
+    setMessageOrigin(message, RemoteIMMessageOrigin::Human);
     api_->sendMessage(cleanPeerId, kConversationTypeC2C, compactJson(message), [completion = std::move(completion)](int code,
                                                                                                                     const QString& description,
                                                                                                                     const QString& jsonPayload) mutable {
@@ -368,6 +419,7 @@ void TimSdkRemoteIMClient::sendImageWithText(const QString& peerId, const QStrin
     }
     QJsonObject message;
     message[QStringLiteral("message_elem_array")] = elems;
+    setMessageOrigin(message, RemoteIMMessageOrigin::Human);
     api_->sendMessage(cleanPeerId, kConversationTypeC2C, compactJson(message), [completion = std::move(completion)](int code,
                                                                                                                     const QString& description,
                                                                                                                     const QString& jsonPayload) mutable {
@@ -403,6 +455,7 @@ void TimSdkRemoteIMClient::sendFileWithText(const QString& peerId, const QString
     }
     QJsonObject message;
     message[QStringLiteral("message_elem_array")] = elems;
+    setMessageOrigin(message, RemoteIMMessageOrigin::Human);
     api_->sendMessage(cleanPeerId, kConversationTypeC2C, compactJson(message), [completion = std::move(completion)](int code,
                                                                                                                     const QString& description,
                                                                                                                     const QString& jsonPayload) mutable {
@@ -514,6 +567,7 @@ void TimSdkRemoteIMClient::handleHistoryMessagesPayload(const QString& jsonPaylo
 
         const qint64 sdkTimeMillis = messageTimeMillis(sdkMessage);
         const QString sdkId = sdkMessageId(sdkMessage);
+        const RemoteIMMessageOrigin origin = messageOrigin(sdkMessage);
         const QJsonArray elems = sdkMessage.value(QStringLiteral("message_elem_array")).toArray();
 
         // 与实时接收（handleIncomingMessage）保持一致：图片/文件 + 配文合并成一条，
@@ -546,6 +600,7 @@ void TimSdkRemoteIMClient::handleHistoryMessagesPayload(const QString& jsonPaylo
             message.toUserId = isFromSelf ? peerId : currentUserId_;
             message.direction = isFromSelf ? RemoteIMMessageDirection::Outgoing : RemoteIMMessageDirection::Incoming;
             message.status = isFromSelf ? RemoteIMMessageStatus::Sent : RemoteIMMessageStatus::Received;
+            message.origin = origin;
             message.createdAtMillis = orderedMessageTime(peerId, sdkTimeMillis);
             return message;
         };
@@ -647,7 +702,8 @@ void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
     // 送出，本地库据 id 去重，重登时不会与漫游重复。
     const QString sdkId = sdkMessageId(message);
     const qint64 sdkTimeMillis = messageTimeMillis(message);
-    const auto baseMessage = [this, &fromUserId, &sdkId, sdkTimeMillis](int elemIndex) {
+    const RemoteIMMessageOrigin origin = messageOrigin(message);
+    const auto baseMessage = [this, &fromUserId, &sdkId, sdkTimeMillis, origin](int elemIndex) {
         RemoteIMMessage result;
         const QString stableId = sdkElemMessageId(sdkId, elemIndex);
         if (!stableId.isEmpty()) result.id = stableId;
@@ -655,6 +711,7 @@ void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
         result.toUserId = currentUserId_;
         result.direction = RemoteIMMessageDirection::Incoming;
         result.status = RemoteIMMessageStatus::Received;
+        result.origin = origin;
         result.createdAtMillis = orderedMessageTime(fromUserId, sdkTimeMillis);
         return result;
     };

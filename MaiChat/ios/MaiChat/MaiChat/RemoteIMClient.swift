@@ -1,10 +1,16 @@
 import Foundation
 import MaiChatCore
 
+enum RemoteIMMessageOrigin: String, Equatable, Sendable {
+    case human
+    case machine
+}
+
 struct IncomingRemoteIMText: Equatable {
     let fromUserID: String
     let text: String
     let remoteID: String?
+    let origin: RemoteIMMessageOrigin?
     let createdAt: Date
 }
 
@@ -13,6 +19,7 @@ struct IncomingRemoteIMVoice: Equatable {
     let fileURL: URL
     let durationSeconds: Int
     let remoteID: String?
+    let origin: RemoteIMMessageOrigin?
     let createdAt: Date
 }
 
@@ -23,6 +30,7 @@ struct IncomingRemoteIMImage: Equatable {
     let width: Int?
     let height: Int?
     let sizeBytes: Int?
+    let origin: RemoteIMMessageOrigin?
     let createdAt: Date
 }
 
@@ -33,6 +41,7 @@ struct IncomingRemoteIMFile: Equatable {
     let mimeType: String
     let remoteID: String?
     let sizeBytes: Int?
+    let origin: RemoteIMMessageOrigin?
     let createdAt: Date
 }
 
@@ -93,13 +102,32 @@ protocol RemoteIMClient: AnyObject {
 
     func connect(sdkAppID: Int, userID: String, userSig: String) async throws
     func disconnect() async
-    func sendText(to userID: String, text: String) async throws -> RemoteIMSendReceipt
-    func sendVoice(to userID: String, recording: RemoteIMVoiceRecording) async throws -> RemoteIMSendReceipt
-    func sendImage(to userID: String, image: RemoteIMImageFile) async throws -> RemoteIMSendReceipt
-    func sendFile(to userID: String, file: RemoteIMFile) async throws -> RemoteIMSendReceipt
+    func sendText(to userID: String, text: String, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt
+    func sendVoice(to userID: String, recording: RemoteIMVoiceRecording, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt
+    func sendImage(to userID: String, image: RemoteIMImageFile, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt
+    func sendFile(to userID: String, file: RemoteIMFile, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt
     func deleteContact(userID: String) async throws
     func clearHistory(userID: String) async throws
     func refreshUserProfiles(userIDs: [String]) async throws -> [RemoteIMUserProfile]
     func refreshPresenceStatuses(userIDs: [String]) async throws -> [String: RemoteIMPresenceStatus]
     func subscribePresenceStatuses(userIDs: [String]) async throws
+}
+
+extension RemoteIMClient {
+    // Messages initiated from the MaiChat UI are human-originated by default.
+    func sendText(to userID: String, text: String) async throws -> RemoteIMSendReceipt {
+        try await sendText(to: userID, text: text, origin: .human)
+    }
+
+    func sendVoice(to userID: String, recording: RemoteIMVoiceRecording) async throws -> RemoteIMSendReceipt {
+        try await sendVoice(to: userID, recording: recording, origin: .human)
+    }
+
+    func sendImage(to userID: String, image: RemoteIMImageFile) async throws -> RemoteIMSendReceipt {
+        try await sendImage(to: userID, image: image, origin: .human)
+    }
+
+    func sendFile(to userID: String, file: RemoteIMFile) async throws -> RemoteIMSendReceipt {
+        try await sendFile(to: userID, file: file, origin: .human)
+    }
 }

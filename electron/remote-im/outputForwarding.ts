@@ -9,8 +9,8 @@ import type { RemoteImConfig } from './types.js'
 
 export const REMOTE_IM_OPERATION_COMPLETE_TEXT = '操作已完成。'
 export const REMOTE_IM_OPERATION_FAILED_PREFIX = 'AICLI 执行失败：'
-// Invisible protocol marker: forwarded AICLI output must still be distinguishable
-// from user input, but the marker should not appear in IM clients.
+// Legacy text envelope retained only for reading history/messages produced by
+// older clients. New transports carry the machine origin in cloudCustomData.
 export const REMOTE_IM_AICLI_OUTPUT_PREFIX = '\u2063\u200B\u200C\u200D\u2063'
 const LEGACY_REMOTE_IM_AICLI_OUTPUT_PREFIXES = [
   '【AICLI 输出】\n',
@@ -51,6 +51,12 @@ export interface RemoteImTranscriptSource {
   replyId?: string
 }
 
+export interface RemoteImTranscriptReply {
+  content: string
+  /** True only for an exact expected-id assistant frame in Claude's transcript. */
+  completed: boolean
+}
+
 export interface RemoteImOutputSessionState {
   projectId: string
   toUserId: string
@@ -62,6 +68,11 @@ export interface RemoteImOutputSessionState {
   transcript?: RemoteImTranscriptSource
   forwardedTranscriptReply?: string
   forwardedReplyId?: string
+  /** Exact Claude reply marker consumed for this route, even when its body is empty. */
+  consumedReplyId?: string
+  /** PTY saw a closed frame; poll the trusted assistant transcript before releasing. */
+  awaitingTranscriptCompletion?: boolean
+  transcriptCompletionPolls?: number
   structuredOutput?: boolean
   taskId?: string
   sourceStarted?: boolean
@@ -69,12 +80,15 @@ export interface RemoteImOutputSessionState {
   forwardedStructuredAssistantEventIds?: Set<string>
   forwardedStructuredAssistantTexts?: string[]
   forwardedStructuredTerminalMessageIds?: Set<string>
+  /** False for machine-originated input: consume lifecycle events without IM output. */
+  autoReplyToIm?: boolean
 }
 
 /**
  * Stop buffered/non-structured output without emitting another IM message.
- * This is used when an account or contact loses authority: any buffered text
- * must be discarded instead of being flushed to the former recipient later.
+ * Keep the route as an admission tombstone until its real reply marker or
+ * process exit: deleting it immediately would allow another account/contact to
+ * inject into the still-running Claude turn and inherit mixed output.
  */
 export function revokeRemoteImOutputSessions(
   sessions: Map<string, RemoteImOutputSessionState>,
@@ -90,17 +104,17 @@ export function revokeRemoteImOutputSessions(
     if (state.timer) clearTimer(state.timer)
     state.timer = null
     state.buffer = ''
-    sessions.delete(sessionId)
+    state.autoReplyToIm = false
     revokedSessionIds.push(sessionId)
   }
   return revokedSessionIds
 }
 
 export interface RemoteImOutputForwardingDeps {
-  createMessage(input: CreateRemoteImMessageInput): void
-  sendText(projectId: string, toUserId: string, text: string): void
+  createMessage(input: CreateRemoteImMessageInput): unknown
+  sendText(projectId: string, toUserId: string, text: string, messageId?: number): void
   messagesChanged(projectId: string | null): void
-  readTranscriptReply?: (source: RemoteImTranscriptSource) => string | null
+  readTranscriptReply?: (source: RemoteImTranscriptSource) => RemoteImTranscriptReply | null
   now?: () => number
   clearTimer?: (timer: RemoteImOutputFlushTimer) => void
 }
@@ -149,6 +163,10 @@ function clearOutputTimer(
   state.timer = null
 }
 
+function shouldAutoReplyToIm(state: RemoteImOutputSessionState): boolean {
+  return state.autoReplyToIm !== false
+}
+
 function createOutgoingMessage(input: {
   sessionId: string
   state: RemoteImOutputSessionState
@@ -166,10 +184,15 @@ function createOutgoingMessage(input: {
     role: input.role,
     direction: 'outgoing',
     content: input.content,
-    status: 'sent-to-im',
+    status: 'streaming',
     createdAt: input.now,
-    sentToImAt: input.now
+    sentToImAt: null
   }
+}
+
+function createdMessageId(value: unknown): number | undefined {
+  if (!value || typeof value !== 'object' || !('id' in value)) return undefined
+  return typeof value.id === 'number' ? value.id : undefined
 }
 
 export function flushRemoteImOutputSession(
@@ -181,24 +204,47 @@ export function flushRemoteImOutputSession(
     state.transcript?.kind === 'claude' && deps.readTranscriptReply
       ? deps.readTranscriptReply(state.transcript)
       : null
-  const reply =
-    transcriptReply === null
-      ? extractRemoteImReplyOutput(state.buffer, { replyId: state.replyId })
-      : null
+  const reply = extractRemoteImReplyOutput(state.buffer, { replyId: state.replyId })
+  const completedClaudeReplyId =
+    state.sourceKind === 'claude' && state.replyId && transcriptReply?.completed
+      ? state.replyId
+      : undefined
+  if (completedClaudeReplyId) {
+    state.awaitingTranscriptCompletion = false
+    state.transcriptCompletionPolls = 0
+  } else if (
+    state.sourceKind === 'claude' &&
+    state.replyId &&
+    reply.completed &&
+    state.consumedReplyId !== state.replyId
+  ) {
+    if (!state.awaitingTranscriptCompletion) state.transcriptCompletionPolls = 0
+    state.awaitingTranscriptCompletion = true
+  }
+  if (completedClaudeReplyId && state.consumedReplyId === completedClaudeReplyId) {
+    state.buffer = transcriptReply === null ? (reply?.nextBuffer ?? '') : ''
+    clearOutputTimer(state, deps)
+    return 0
+  }
+  if (completedClaudeReplyId) state.consumedReplyId = completedClaudeReplyId
   if (reply && state.replyId && state.forwardedReplyId === state.replyId) {
     state.buffer = reply.nextBuffer
     clearOutputTimer(state, deps)
     return 0
   }
-  const buffer = sanitizeRemoteImAicliOutput(transcriptReply ?? reply?.content ?? '', {
+  const buffer = sanitizeRemoteImAicliOutput(transcriptReply?.content ?? reply.content, {
     sourceKind: state.sourceKind
   })
   state.buffer = transcriptReply === null ? (reply?.nextBuffer ?? '') : ''
   clearOutputTimer(state, deps)
   if (!buffer.trim()) return 0
   if (transcriptReply !== null) {
-    if (state.forwardedTranscriptReply === transcriptReply) return 0
-    state.forwardedTranscriptReply = transcriptReply
+    if (state.forwardedTranscriptReply === transcriptReply.content) return 0
+    state.forwardedTranscriptReply = transcriptReply.content
+  }
+  if (!shouldAutoReplyToIm(state)) {
+    if (reply && state.replyId) state.forwardedReplyId = state.replyId
+    return 0
   }
 
   const chunks = createOutputChunks(buffer, {
@@ -207,7 +253,7 @@ export function flushRemoteImOutputSession(
   const now = deps.now?.() ?? Date.now()
 
   for (const chunk of chunks) {
-    deps.createMessage(
+    const messageId = createdMessageId(deps.createMessage(
       createOutgoingMessage({
         sessionId,
         state,
@@ -215,8 +261,8 @@ export function flushRemoteImOutputSession(
         role: 'aicli',
         now
       })
-    )
-    deps.sendText(state.projectId, state.toUserId, createRemoteImAicliOutputText(chunk))
+    ))
+    deps.sendText(state.projectId, state.toUserId, chunk, messageId)
   }
 
   if (chunks.length > 0) deps.messagesChanged(state.projectId)
@@ -312,6 +358,15 @@ export function forwardRemoteImStructuredFinalOutput(
   })
   state.buffer = ''
   if (!buffer.trim()) return 0
+  if (!shouldAutoReplyToIm(state)) {
+    if (messageId) {
+      const forwardedIds =
+        state.forwardedStructuredTerminalMessageIds ??
+        (state.forwardedStructuredTerminalMessageIds = new Set())
+      rememberStructuredEventId(forwardedIds, messageId)
+    }
+    return 0
+  }
   if (wasStructuredAssistantTextForwarded(state, buffer)) {
     if (messageId) {
       const forwardedIds =
@@ -327,7 +382,7 @@ export function forwardRemoteImStructuredFinalOutput(
   })
   const now = deps.now?.() ?? Date.now()
   for (const chunk of chunks) {
-    deps.createMessage(
+    const outgoingMessageId = createdMessageId(deps.createMessage(
       createOutgoingMessage({
         sessionId,
         state,
@@ -335,8 +390,8 @@ export function forwardRemoteImStructuredFinalOutput(
         role: 'aicli',
         now
       })
-    )
-    deps.sendText(state.projectId, state.toUserId, createRemoteImAicliOutputText(chunk))
+    ))
+    deps.sendText(state.projectId, state.toUserId, chunk, outgoingMessageId)
   }
 
   if (chunks.length > 0) {
@@ -376,13 +431,22 @@ export function forwardRemoteImStructuredAssistantOutput(
     { sourceKind: state.sourceKind }
   )
   if (!candidate.trim()) return 0
+  if (!shouldAutoReplyToIm(state)) {
+    if (eventId) {
+      const forwardedIds =
+        state.forwardedStructuredAssistantEventIds ??
+        (state.forwardedStructuredAssistantEventIds = new Set())
+      rememberStructuredEventId(forwardedIds, eventId)
+    }
+    return 0
+  }
 
   const chunks = createOutputChunks(candidate, {
     maxChunkChars: state.config.outputMaxChunkChars
   })
   const now = deps.now?.() ?? Date.now()
   for (const chunk of chunks) {
-    deps.createMessage(
+    const outgoingMessageId = createdMessageId(deps.createMessage(
       createOutgoingMessage({
         sessionId,
         state,
@@ -390,8 +454,8 @@ export function forwardRemoteImStructuredAssistantOutput(
         role: 'aicli',
         now
       })
-    )
-    deps.sendText(state.projectId, state.toUserId, createRemoteImAicliOutputText(chunk))
+    ))
+    deps.sendText(state.projectId, state.toUserId, chunk, outgoingMessageId)
   }
 
   if (chunks.length > 0) {
@@ -447,9 +511,14 @@ export function completeRemoteImOutputSession(
 ): void {
   flushRemoteImOutputSession(sessionId, state, deps)
 
+  // Machine-origin collaboration turns own no automatic IM output path at all.
+  // Their model output, success receipt, turn error, signal and non-zero exit
+  // all stay local; only an explicit `imcli` call creates the next IM message.
+  if (!shouldAutoReplyToIm(state)) return
+
   const now = deps.now?.() ?? Date.now()
   const text = createRemoteImOperationFinishedText(info)
-  deps.createMessage(
+  const messageId = createdMessageId(deps.createMessage(
     createOutgoingMessage({
       sessionId,
       state,
@@ -457,8 +526,8 @@ export function completeRemoteImOutputSession(
       role: 'system',
       now
     })
-  )
-  deps.sendText(state.projectId, state.toUserId, text)
+  ))
+  deps.sendText(state.projectId, state.toUserId, text, messageId)
   deps.messagesChanged(state.projectId)
 }
 
@@ -470,9 +539,11 @@ export function failRemoteImOutputSession(
 ): void {
   flushRemoteImOutputSession(sessionId, state, deps)
 
+  if (!shouldAutoReplyToIm(state)) return
+
   const now = deps.now?.() ?? Date.now()
   const text = createRemoteImOperationFailedText(reason)
-  deps.createMessage(
+  const messageId = createdMessageId(deps.createMessage(
     createOutgoingMessage({
       sessionId,
       state,
@@ -480,7 +551,7 @@ export function failRemoteImOutputSession(
       role: 'system',
       now
     })
-  )
-  deps.sendText(state.projectId, state.toUserId, text)
+  ))
+  deps.sendText(state.projectId, state.toUserId, text, messageId)
   deps.messagesChanged(state.projectId)
 }

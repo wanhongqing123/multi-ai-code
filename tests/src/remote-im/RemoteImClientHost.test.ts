@@ -4,6 +4,7 @@ import {
   createRemoteImFriendSnapshotSynchronizer,
   createRemoteImLifecycleQueue,
   getRemoteImConnectionKey,
+  isSameRemoteImRuntimeIdentity,
   scheduleRemoteImConnect,
   shouldConnectRemoteImClient,
   syncRemoteImContactsFromRuntime
@@ -27,6 +28,35 @@ const config: RemoteImConfig = {
 }
 
 describe('RemoteImClientHost', () => {
+  it('accepts outgoing events only for the exact registered runtime identity', () => {
+    const current = {
+      connectionId: 'connection-b',
+      desktopUserId: ' desktop-b ',
+      sdkAppId: 1400704311
+    }
+
+    expect(
+      isSameRemoteImRuntimeIdentity(
+        {
+          connectionId: 'connection-b',
+          desktopUserId: 'desktop-b',
+          sdkAppId: 1400704311
+        },
+        current
+      )
+    ).toBe(true)
+    expect(
+      isSameRemoteImRuntimeIdentity(
+        {
+          connectionId: 'connection-a',
+          desktopUserId: 'desktop-b',
+          sdkAppId: 1400704311
+        },
+        current
+      )
+    ).toBe(false)
+  })
+
   it('reruns one authoritative friend snapshot after an in-flight refresh becomes dirty', async () => {
     let finishFirst: (() => void) | undefined
     let callCount = 0

@@ -4,14 +4,61 @@ import type {
   RemoteImIncomingFileMessage,
   RemoteImIncomingImageMessage,
   RemoteImIncomingTextMessage,
+  RemoteImMessageOrigin,
   RemoteImRuntimeLogEntryInput
 } from '../../electron/preload.js'
+
+export const REMOTE_IM_CLOUD_METADATA_NAMESPACE = 'multi-ai-code'
+export const REMOTE_IM_CLOUD_METADATA_VERSION = 1
+
+interface RemoteImCloudMetadata {
+  namespace: typeof REMOTE_IM_CLOUD_METADATA_NAMESPACE
+  version: typeof REMOTE_IM_CLOUD_METADATA_VERSION
+  origin: RemoteImMessageOrigin
+}
+
+/** Encodes transport metadata shared by Web/Electron and native MaiChat clients. */
+export function createRemoteImCloudCustomData(origin: RemoteImMessageOrigin): string {
+  return JSON.stringify({
+    namespace: REMOTE_IM_CLOUD_METADATA_NAMESPACE,
+    version: REMOTE_IM_CLOUD_METADATA_VERSION,
+    origin
+  } satisfies RemoteImCloudMetadata)
+}
+
+/**
+ * Reads only this application's versioned metadata. Missing, malformed or
+ * foreign custom data deliberately returns undefined so the host can apply its
+ * conservative fallback policy.
+ */
+export function parseRemoteImMessageOrigin(cloudCustomData: unknown): RemoteImMessageOrigin | undefined {
+  if (typeof cloudCustomData !== 'string' || !cloudCustomData.trim()) return undefined
+  try {
+    const value = JSON.parse(cloudCustomData) as Partial<RemoteImCloudMetadata> | null
+    if (
+      !value ||
+      value.namespace !== REMOTE_IM_CLOUD_METADATA_NAMESPACE ||
+      value.version !== REMOTE_IM_CLOUD_METADATA_VERSION ||
+      (value.origin !== 'human' && value.origin !== 'machine')
+    ) {
+      return undefined
+    }
+    return value.origin
+  } catch {
+    return undefined
+  }
+}
+
+function messageOrigin(message: Record<string, unknown>): RemoteImMessageOrigin | undefined {
+  return parseRemoteImMessageOrigin(message.cloudCustomData)
+}
 
 export interface TencentImTextMessage {
   remoteMessageId: string | null
   fromUserId: string
   toUserId: string | null
   text: string
+  origin?: RemoteImMessageOrigin
   createdAt?: number
 }
 
@@ -23,6 +70,7 @@ export interface TencentImAudioMessage {
   durationSeconds: number | null
   sizeBytes: number | null
   uuid: string | null
+  origin?: RemoteImMessageOrigin
   createdAt?: number
 }
 
@@ -38,6 +86,7 @@ export interface TencentImImageMessage {
   uuid: string | null
   fileName: string | null
   mimeType: string | null
+  origin?: RemoteImMessageOrigin
   createdAt?: number
 }
 
@@ -50,6 +99,7 @@ export interface TencentImFileMessage {
   uuid: string | null
   fileName: string | null
   mimeType: string | null
+  origin?: RemoteImMessageOrigin
   createdAt?: number
 }
 
@@ -440,12 +490,14 @@ export function extractTencentImTextMessages(event: unknown): TencentImTextMessa
     if (!text) return []
     const from = typeof message.from === 'string' ? message.from : ''
     if (!from) return []
+    const origin = messageOrigin(message)
     return [
       {
         remoteMessageId: typeof message.ID === 'string' ? message.ID : null,
         fromUserId: from,
         toUserId: typeof message.to === 'string' ? message.to : null,
         text,
+        ...(origin ? { origin } : {}),
         createdAt: typeof message.time === 'number' ? message.time * 1000 : undefined
       }
     ]
@@ -457,6 +509,7 @@ export interface TencentImRoamedTextMessage {
   fromUserId: string
   toUserId: string | null
   text: string
+  origin?: RemoteImMessageOrigin
   createdAt: number | undefined
   flow: 'in' | 'out'
 }
@@ -478,12 +531,14 @@ export function extractTencentImRoamedTextMessages(
     const from = typeof message.from === 'string' ? message.from : ''
     if (!from) return []
     const flow = message.flow === 'out' ? 'out' : 'in'
+    const origin = messageOrigin(message)
     return [
       {
         remoteMessageId,
         fromUserId: from,
         toUserId: typeof message.to === 'string' ? message.to : null,
         text,
+        ...(origin ? { origin } : {}),
         createdAt: typeof message.time === 'number' ? message.time * 1000 : undefined,
         flow
       } as TencentImRoamedTextMessage
@@ -501,12 +556,14 @@ export function extractTencentImImageMessages(event: unknown): TencentImImageMes
     if (!image) return []
     const from = typeof message.from === 'string' ? message.from : ''
     if (!from) return []
+    const origin = messageOrigin(message)
     return [
       {
         remoteMessageId: typeof message.ID === 'string' ? message.ID : null,
         fromUserId: from,
         toUserId: typeof message.to === 'string' ? message.to : null,
         ...image,
+        ...(origin ? { origin } : {}),
         createdAt: typeof message.time === 'number' ? message.time * 1000 : undefined
       }
     ]
@@ -523,12 +580,14 @@ export function extractTencentImFileMessages(event: unknown): TencentImFileMessa
     if (!file) return []
     const from = typeof message.from === 'string' ? message.from : ''
     if (!from) return []
+    const origin = messageOrigin(message)
     return [
       {
         remoteMessageId: typeof message.ID === 'string' ? message.ID : null,
         fromUserId: from,
         toUserId: typeof message.to === 'string' ? message.to : null,
         ...file,
+        ...(origin ? { origin } : {}),
         createdAt: typeof message.time === 'number' ? message.time * 1000 : undefined
       }
     ]
@@ -545,12 +604,14 @@ export function extractTencentImAudioMessages(event: unknown): TencentImAudioMes
     if (!audio) return []
     const from = typeof message.from === 'string' ? message.from : ''
     if (!from) return []
+    const origin = messageOrigin(message)
     return [
       {
         remoteMessageId: typeof message.ID === 'string' ? message.ID : null,
         fromUserId: from,
         toUserId: typeof message.to === 'string' ? message.to : null,
         ...audio,
+        ...(origin ? { origin } : {}),
         createdAt: typeof message.time === 'number' ? message.time * 1000 : undefined
       }
     ]
@@ -713,6 +774,8 @@ async function loginTencentImClient(
 
 export interface TencentImSendTextOptions {
   messageId?: number | null
+  /** Defaults to machine so an unclassified programmatic sender cannot create an auto-reply loop. */
+  origin?: RemoteImMessageOrigin
 }
 
 export type TencentImSendImageOptions = TencentImSendTextOptions
@@ -809,6 +872,7 @@ export async function connectTencentImClient(input: {
       const remoteMessageId = typeof message.ID === 'string' ? message.ID : null
       const toUserId = typeof message.to === 'string' ? message.to : null
       const createdAt = typeof message.time === 'number' ? message.time * 1000 : undefined
+      const origin = messageOrigin(message)
 
       // 逐条消息按元素拆解：附件（图片/文件/语音）与配文来自「同一条」消息，
       // 图片 + 配文合并成一次 AICLI 投递。
@@ -830,6 +894,7 @@ export async function connectTencentImClient(input: {
           fileName: parts.image.fileName,
           mimeType: parts.image.mimeType,
           caption: parts.caption,
+          ...(origin ? { origin } : {}),
           createdAt
         })
         continue
@@ -850,6 +915,7 @@ export async function connectTencentImClient(input: {
           fileName: parts.file.fileName,
           mimeType: parts.file.mimeType,
           caption: parts.caption,
+          ...(origin ? { origin } : {}),
           createdAt
         })
         continue
@@ -866,6 +932,7 @@ export async function connectTencentImClient(input: {
           durationSeconds: parts.audio.durationSeconds,
           sizeBytes: parts.audio.sizeBytes,
           uuid: parts.audio.uuid,
+          ...(origin ? { origin } : {}),
           createdAt
         })
         continue
@@ -879,6 +946,7 @@ export async function connectTencentImClient(input: {
           fromUserId,
           toUserId,
           text: parts.caption,
+          ...(origin ? { origin } : {}),
           createdAt
         })
       }
@@ -1063,7 +1131,8 @@ export async function connectTencentImClient(input: {
       const message = chat.createTextMessage({
         to: toUserId,
         conversationType: TencentCloudChat.TYPES?.CONV_C2C ?? 'C2C',
-        payload: { text }
+        payload: { text },
+        cloudCustomData: createRemoteImCloudCustomData(options.origin ?? 'machine')
       })
       emitRuntimeLog('send:created', {
         peerUserId: toUserId,
@@ -1106,7 +1175,8 @@ export async function connectTencentImClient(input: {
       const message = chat.createImageMessage({
         to: toUserId,
         conversationType: TencentCloudChat.TYPES?.CONV_C2C ?? 'C2C',
-        payload: { file }
+        payload: { file },
+        cloudCustomData: createRemoteImCloudCustomData(options.origin ?? 'machine')
       })
       emitRuntimeLog('send:image:created', {
         peerUserId: toUserId,
@@ -1149,7 +1219,8 @@ export async function connectTencentImClient(input: {
       const message = chat.createFileMessage({
         to: toUserId,
         conversationType: TencentCloudChat.TYPES?.CONV_C2C ?? 'C2C',
-        payload: { file }
+        payload: { file },
+        cloudCustomData: createRemoteImCloudCustomData(options.origin ?? 'machine')
       })
       emitRuntimeLog('send:file:created', {
         peerUserId: toUserId,

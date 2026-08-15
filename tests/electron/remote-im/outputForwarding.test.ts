@@ -63,7 +63,7 @@ function createState(
 }
 
 describe('remote IM output forwarding', () => {
-  it('discards buffered output and timers for contacts whose authority was revoked', () => {
+  it('discards output but retains an admission tombstone after authority is revoked', () => {
     const clearTimer = vi.fn()
     const removed = createState('secret buffered reply')
     removed.timer = 123 as unknown as RemoteImOutputFlushTimer
@@ -82,7 +82,13 @@ describe('remote IM output forwarding', () => {
     expect(clearTimer).toHaveBeenCalledWith(removed.timer ?? 123)
     expect(removed.buffer).toBe('')
     expect(removed.timer).toBeNull()
-    expect(sessions).toEqual(new Map([['session-b', retained]]))
+    expect(removed.autoReplyToIm).toBe(false)
+    expect(sessions).toEqual(
+      new Map([
+        ['session-a', removed],
+        ['session-b', retained]
+      ])
+    )
   })
 
   it('flushes buffered output before notifying the master that work completed', () => {
@@ -108,22 +114,22 @@ describe('remote IM output forwarding', () => {
 
     expect(state.buffer).toBe('')
     expect(sentTexts).toEqual([
-      createRemoteImAicliOutputText('abcd'),
-      createRemoteImAicliOutputText('ef'),
+      'abcd',
+      'ef',
       '操作已完成。'
     ])
     expect(messages.map((message) => message.role)).toEqual(['aicli', 'aicli', 'system'])
     expect(messages.map((message) => message.status)).toEqual([
-      'sent-to-im',
-      'sent-to-im',
-      'sent-to-im'
+      'streaming',
+      'streaming',
+      'streaming'
     ])
     expect(messages[2]).toMatchObject({
       projectId: 'project-1',
       sessionId: 'session-1',
       toUserId: 'master_desktop',
       content: '操作已完成。',
-      sentToImAt: 1234
+      sentToImAt: null
     })
     expect(changedProjects).toEqual(['project-1', 'project-1'])
   })
@@ -167,17 +173,65 @@ describe('remote IM output forwarding', () => {
     expect(state.timer).toBeNull()
     expect(clearedTimers).toEqual([timer])
     expect(sentTexts).toEqual([
-      createRemoteImAicliOutputText('partial result'),
+      'partial result',
       'AICLI 执行失败：stream disconnected'
     ])
     expect(messages.map((message) => message.role)).toEqual(['aicli', 'system'])
     expect(messages[1]).toMatchObject({
       content: createRemoteImOperationFailedText('stream disconnected'),
-      sentToImAt: 1234
+      sentToImAt: null
     })
   })
 
-  it('marks forwarded AICLI output so another desktop does not execute it as a command', () => {
+  it('keeps machine assistant output and turn failures on the local AICLI only', () => {
+    const state = createState(
+      [REMOTE_IM_REPLY_OPEN_TAG, 'machine body', REMOTE_IM_REPLY_CLOSE_TAG].join('\n'),
+      { outputMaxChunkChars: 500 }
+    )
+    state.autoReplyToIm = false
+    const messages: CreateRemoteImMessageInput[] = []
+    const sentTexts: string[] = []
+
+    failRemoteImOutputSession(
+      'session-machine',
+      state,
+      {
+        now: () => 1234,
+        createMessage: (input) => messages.push(input),
+        sendText: (_projectId, _toUserId, text) => sentTexts.push(text),
+        messagesChanged: () => undefined
+      },
+      'worker disconnected'
+    )
+
+    expect(sentTexts).toEqual([])
+    expect(messages).toEqual([])
+  })
+
+  it('suppresses both successful and abnormal machine session receipts', () => {
+    const sentTexts: string[] = []
+    const messages: CreateRemoteImMessageInput[] = []
+    const deps: RemoteImOutputForwardingDeps = {
+      createMessage: (input) => messages.push(input),
+      sendText: (_projectId, _toUserId, text) => sentTexts.push(text),
+      messagesChanged: () => undefined
+    }
+    const successful = createState('')
+    successful.autoReplyToIm = false
+    completeRemoteImOutputSession('session-machine-success', successful, deps, { exitCode: 0 })
+
+    expect(sentTexts).toEqual([])
+    expect(messages).toEqual([])
+
+    const failed = createState('')
+    failed.autoReplyToIm = false
+    completeRemoteImOutputSession('session-machine-failed', failed, deps, { exitCode: 9 })
+
+    expect(sentTexts).toEqual([])
+    expect(messages).toEqual([])
+  })
+
+  it('parses output markers produced by legacy desktop clients', () => {
     const text = createRemoteImAicliOutputText('build passed')
 
     expect(parseRemoteImAicliOutputText(text)).toBe('build passed')
@@ -301,7 +355,7 @@ describe('remote IM output forwarding', () => {
     ].join('\n')
     expect(chunks).toBe(1)
     expect(messages[0]?.content).toBe(expected)
-    expect(sentTexts).toEqual([createRemoteImAicliOutputText(expected)])
+    expect(sentTexts).toEqual([expected])
   })
 
   it('forwards only tagged output for the current reply id', () => {
@@ -335,7 +389,7 @@ describe('remote IM output forwarding', () => {
 
     expect(chunks).toBe(1)
     expect(messages[0]?.content).toBe('current result')
-    expect(sentTexts).toEqual([createRemoteImAicliOutputText('current result')])
+    expect(sentTexts).toEqual(['current result'])
   })
 
   it('forwards a Codex inline reply without leaking malformed markers', () => {
@@ -359,7 +413,7 @@ describe('remote IM output forwarding', () => {
 
     expect(chunks).toBe(1)
     expect(messages[0]?.content).toBe('你好，有什么需要我帮忙的？')
-    expect(sentTexts).toEqual([createRemoteImAicliOutputText('你好，有什么需要我帮忙的？')])
+    expect(sentTexts).toEqual(['你好，有什么需要我帮忙的？'])
   })
 
   it('does not forward the same reply id more than once', () => {
@@ -389,33 +443,91 @@ describe('remote IM output forwarding', () => {
 
     expect(messages).toHaveLength(1)
     expect(messages[0]?.content).toBe('current result')
-    expect(sentTexts).toEqual([createRemoteImAicliOutputText('current result')])
+    expect(sentTexts).toEqual(['current result'])
   })
 
-  it('forwards Claude output when a matching id open tag is closed by a legacy close tag', () => {
+  it('forwards compatible Claude marker content without consuming the route', () => {
     const state = createState(readReplyFixture('claude-id-open-legacy-close.txt'), {
       outputMaxChunkChars: 500
     })
     state.replyId = 'rim-current'
     state.sourceKind = 'claude'
+    state.transcript = {
+      kind: 'claude',
+      cwd: '/repo',
+      sinceMs: 100,
+      replyId: 'rim-current'
+    }
     const messages: CreateRemoteImMessageInput[] = []
     const sentTexts: string[] = []
-
-    const chunks = flushRemoteImOutputSession('session-1', state, {
+    const expected =
+      'Claude transcript reply with an id-bearing opening marker and a legacy closing marker.'
+    let transcriptReply = { content: expected, completed: false }
+    const deps: RemoteImOutputForwardingDeps = {
       createMessage: (input) => {
         messages.push(input)
       },
       sendText: (_projectId, _toUserId, text) => {
         sentTexts.push(text)
       },
-      messagesChanged: () => undefined
-    })
+      messagesChanged: () => undefined,
+      readTranscriptReply: () => transcriptReply
+    }
 
-    const expected =
-      'Claude transcript reply with an id-bearing opening marker and a legacy closing marker.'
+    const chunks = flushRemoteImOutputSession('session-1', state, deps)
+
     expect(chunks).toBe(1)
+    expect(state.consumedReplyId).toBeUndefined()
     expect(messages[0]?.content).toBe(expected)
-    expect(sentTexts).toEqual([createRemoteImAicliOutputText(expected)])
+    expect(sentTexts).toEqual([expected])
+
+    state.buffer = readReplyFixture('claude-id-open-legacy-close.txt')
+    expect(flushRemoteImOutputSession('session-1', state, deps)).toBe(0)
+    expect(messages).toHaveLength(1)
+    expect(sentTexts).toEqual([expected])
+
+    state.buffer = [
+      '<remote-im-reply id="rim-current">',
+      expected,
+      '</remote-im-reply id="rim-current">'
+    ].join('\n')
+    transcriptReply = { content: expected, completed: true }
+    expect(flushRemoteImOutputSession('session-1', state, deps)).toBe(0)
+    expect(state.consumedReplyId).toBe('rim-current')
+    expect(messages).toHaveLength(1)
+    expect(sentTexts).toEqual([expected])
+  })
+
+  it('consumes an exact Claude route once after forwarding its human reply', () => {
+    const taggedReply = [
+      '<remote-im-reply id="rim-current">',
+      'exact Claude reply',
+      '</remote-im-reply id="rim-current">'
+    ].join('\n')
+    const state = createState(taggedReply, { outputMaxChunkChars: 500 })
+    state.replyId = 'rim-current'
+    state.sourceKind = 'claude'
+    state.transcript = {
+      kind: 'claude',
+      cwd: '/repo',
+      sinceMs: 100,
+      replyId: 'rim-current'
+    }
+    const messages: CreateRemoteImMessageInput[] = []
+    const sentTexts: string[] = []
+    const deps: RemoteImOutputForwardingDeps = {
+      createMessage: (input) => messages.push(input),
+      sendText: (_projectId, _toUserId, text) => sentTexts.push(text),
+      messagesChanged: () => undefined,
+      readTranscriptReply: () => ({ content: 'exact Claude reply', completed: true })
+    }
+
+    expect(flushRemoteImOutputSession('session-1', state, deps)).toBe(1)
+    expect(state.consumedReplyId).toBe('rim-current')
+    state.buffer = taggedReply
+    expect(flushRemoteImOutputSession('session-1', state, deps)).toBe(0)
+    expect(messages.map((message) => message.content)).toEqual(['exact Claude reply'])
+    expect(sentTexts).toEqual(['exact Claude reply'])
   })
 
   it('replays a Codex current reply fixture with TUI noise before forwarding', () => {
@@ -440,7 +552,7 @@ describe('remote IM output forwarding', () => {
     const expected = 'Codex reply after terminal UI redraw noise.'
     expect(chunks).toBe(1)
     expect(messages[0]?.content).toBe(expected)
-    expect(sentTexts).toEqual([createRemoteImAicliOutputText(expected)])
+    expect(sentTexts).toEqual([expected])
   })
 
   it('forwards OpenCode tagged replies through the normal terminal buffer path', () => {
@@ -479,7 +591,7 @@ describe('remote IM output forwarding', () => {
 
     expect(chunks).toBe(1)
     expect(messages[0]?.content).toBe('OpenCode reply for IM.')
-    expect(sentTexts).toEqual([createRemoteImAicliOutputText('OpenCode reply for IM.')])
+    expect(sentTexts).toEqual(['OpenCode reply for IM.'])
   })
 
   it('forwards a markerless source-confirmed final reply without intermediate output', () => {
@@ -507,7 +619,155 @@ describe('remote IM output forwarding', () => {
     ).toBe(1)
 
     expect(messages.map((message) => message.content)).toEqual(['最终结论：使用源码终态事件转发。'])
-    expect(sentTexts).toEqual([createRemoteImAicliOutputText('最终结论：使用源码终态事件转发。')])
+    expect(sentTexts).toEqual(['最终结论：使用源码终态事件转发。'])
+  })
+
+  it('consumes structured machine assistant and final events without sending IM text', () => {
+    const state = createState('', { outputMaxChunkChars: 500 })
+    state.replyId = 'rim-machine'
+    state.taskId = 'task-machine'
+    state.sourceKind = 'codex'
+    state.autoReplyToIm = false
+    const messages: CreateRemoteImMessageInput[] = []
+    const sentTexts: string[] = []
+    const changedProjects: Array<string | null> = []
+    const deps: RemoteImOutputForwardingDeps = {
+      createMessage: (input) => messages.push(input),
+      sendText: (_projectId, _toUserId, text) => sentTexts.push(text),
+      messagesChanged: (projectId) => changedProjects.push(projectId)
+    }
+
+    expect(
+      forwardRemoteImStructuredAssistantOutput(
+        'session-machine',
+        state,
+        deps,
+        '正在处理',
+        'assistant-machine-1'
+      )
+    ).toBe(0)
+    expect(
+      forwardRemoteImStructuredFinalOutput(
+        'session-machine',
+        state,
+        deps,
+        '处理完成',
+        'final-machine-1'
+      )
+    ).toBe(0)
+
+    expect(messages).toEqual([])
+    expect(sentTexts).toEqual([])
+    expect(changedProjects).toEqual([])
+    expect(state.forwardedStructuredAssistantEventIds).toContain(
+      'assistant-machine-1\u0000'
+    )
+    expect(state.forwardedStructuredTerminalMessageIds).toContain('final-machine-1')
+  })
+
+  it('uses an exact terminal marker to consume a matching Claude transcript route', () => {
+    const state = createState(
+      [
+        '<remote-im-reply id="rim-machine">',
+        'terminal rendering',
+        '</remote-im-reply id="rim-machine">'
+      ].join('\n')
+    )
+    state.autoReplyToIm = false
+    state.sourceKind = 'claude'
+    state.replyId = 'rim-machine'
+    state.transcript = {
+      kind: 'claude',
+      cwd: '/repo',
+      sinceMs: 100,
+      replyId: 'rim-machine'
+    }
+    const messages: CreateRemoteImMessageInput[] = []
+    const sentTexts: string[] = []
+
+    const deps: RemoteImOutputForwardingDeps = {
+      createMessage: (input) => messages.push(input),
+      sendText: (_projectId, _toUserId, text) => sentTexts.push(text),
+      messagesChanged: () => undefined,
+      readTranscriptReply: () => ({ content: 'Claude machine reply', completed: true })
+    }
+
+    expect(flushRemoteImOutputSession('session-machine', state, deps)).toBe(0)
+    expect(flushRemoteImOutputSession('session-machine', state, deps)).toBe(0)
+
+    expect(state.buffer).toBe('')
+    expect(state.consumedReplyId).toBe('rim-machine')
+    expect(messages).toEqual([])
+    expect(sentTexts).toEqual([])
+  })
+
+  it('consumes an empty completed Claude reply envelope without creating an IM message', () => {
+    const state = createState(
+      [
+        '<remote-im-reply id="rim-empty">',
+        '</remote-im-reply id="rim-empty">'
+      ].join('\n')
+    )
+    state.replyId = 'rim-empty'
+    state.sourceKind = 'claude'
+    state.autoReplyToIm = false
+    state.transcript = {
+      kind: 'claude',
+      cwd: '/repo',
+      sinceMs: 100,
+      replyId: 'rim-empty'
+    }
+    const createMessage = vi.fn()
+    const sendText = vi.fn()
+    const deps: RemoteImOutputForwardingDeps = {
+      createMessage,
+      sendText,
+      messagesChanged: () => undefined,
+      readTranscriptReply: () => ({ content: '', completed: true })
+    }
+
+    expect(flushRemoteImOutputSession('session-machine', state, deps)).toBe(0)
+    state.buffer = [
+      '<remote-im-reply id="rim-empty">',
+      '</remote-im-reply id="rim-empty">'
+    ].join('\n')
+    expect(flushRemoteImOutputSession('session-machine', state, deps)).toBe(0)
+
+    expect(state.buffer).toBe('')
+    expect(state.consumedReplyId).toBe('rim-empty')
+    expect(createMessage).not.toHaveBeenCalled()
+    expect(sendText).not.toHaveBeenCalled()
+  })
+
+  it('does not consume exact marker text that exists only in terminal prompt echo', () => {
+    const state = createState(
+      [
+        '[IM_REPLY] Put final Markdown between these markers:',
+        'Opening marker:',
+        '<remote-im-reply id="rim-echo">',
+        'Closing marker:',
+        '</remote-im-reply id="rim-echo">',
+        'Text outside markers is ignored.'
+      ].join('\n')
+    )
+    state.replyId = 'rim-echo'
+    state.sourceKind = 'claude'
+    state.autoReplyToIm = false
+    state.transcript = {
+      kind: 'claude',
+      cwd: '/repo',
+      sinceMs: 100,
+      replyId: 'rim-echo'
+    }
+
+    flushRemoteImOutputSession('session-machine', state, {
+      createMessage: vi.fn(),
+      sendText: vi.fn(),
+      messagesChanged: () => undefined,
+      readTranscriptReply: () => null
+    })
+
+    expect(state.consumedReplyId).toBeUndefined()
   })
 
   it('forwards every source-authored assistant message immediately', () => {
@@ -559,9 +819,9 @@ describe('remote IM output forwarding', () => {
       '编译完成并已发布。'
     ])
     expect(sentTexts).toEqual([
-      createRemoteImAicliOutputText('仍在编译，预计还需要一段时间。'),
-      createRemoteImAicliOutputText('安装包正在上传。'),
-      createRemoteImAicliOutputText('编译完成并已发布。')
+      '仍在编译，预计还需要一段时间。',
+      '安装包正在上传。',
+      '编译完成并已发布。'
     ])
   })
 
@@ -769,7 +1029,7 @@ describe('remote IM output forwarding', () => {
         'event-final-1'
       )
     ).toBe(0)
-    expect(sentTexts).toEqual([createRemoteImAicliOutputText('marker reply')])
+    expect(sentTexts).toEqual(['marker reply'])
   })
 
   it('does not use reply id as structured terminal event deduplication key', () => {
@@ -802,8 +1062,8 @@ describe('remote IM output forwarding', () => {
       )
     ).toBe(1)
     expect(sentTexts).toEqual([
-      createRemoteImAicliOutputText('first terminal event'),
-      createRemoteImAicliOutputText('later terminal event')
+      'first terminal event',
+      'later terminal event'
     ])
   })
 
@@ -833,7 +1093,7 @@ describe('remote IM output forwarding', () => {
     ).toBe(1)
 
     expect(messages.map((message) => message.content)).toEqual(['reply for another request'])
-    expect(sentTexts).toEqual([createRemoteImAicliOutputText('reply for another request')])
+    expect(sentTexts).toEqual(['reply for another request'])
     expect(resolveRemoteImStructuredFinalContent(tagged, 'rim-current')).toEqual({
       content: 'reply for another request',
       source: 'fallback-marker',
@@ -885,7 +1145,7 @@ describe('remote IM output forwarding', () => {
       forwardRemoteImStructuredFinalOutput('session-1', state, deps, complete, 'event-final-1')
     ).toBe(0)
     expect(messages.map((message) => message.content)).toEqual(['complete terminal reply'])
-    expect(sentTexts).toEqual([createRemoteImAicliOutputText('complete terminal reply')])
+    expect(sentTexts).toEqual(['complete terminal reply'])
   })
 
   it('prefers raw Claude transcript Markdown over terminal-rendered table fragments', () => {
@@ -921,12 +1181,12 @@ describe('remote IM output forwarding', () => {
         sentTexts.push(text)
       },
       messagesChanged: () => undefined,
-      readTranscriptReply: () => transcriptMarkdown
+      readTranscriptReply: () => ({ content: transcriptMarkdown, completed: true })
     })
 
     expect(chunks).toBe(1)
     expect(messages[0]?.content).toBe(transcriptMarkdown)
-    expect(sentTexts).toEqual([createRemoteImAicliOutputText(transcriptMarkdown)])
+    expect(sentTexts).toEqual([transcriptMarkdown])
     expect(state.buffer).toBe('')
   })
 
@@ -959,9 +1219,7 @@ describe('remote IM output forwarding', () => {
 
     expect(chunks).toBe(1)
     expect(sentTexts).toEqual([
-      createRemoteImAicliOutputText(
-        '截图如下：![desktop](/Users/me/MultiAICode/remote-im/images/desktop_shot.png)'
-      )
+      '截图如下：![desktop](/Users/me/MultiAICode/remote-im/images/desktop_shot.png)'
     ])
     expect(messages).toEqual([
       expect.objectContaining({
@@ -969,8 +1227,8 @@ describe('remote IM output forwarding', () => {
         sessionId: 'session-1',
         toUserId: 'master_desktop',
         content: '截图如下：![desktop](/Users/me/MultiAICode/remote-im/images/desktop_shot.png)',
-        status: 'sent-to-im',
-        sentToImAt: 1234
+        status: 'streaming',
+        sentToImAt: null
       })
     ])
     expect(messages[0]).not.toHaveProperty('kind')
@@ -1037,6 +1295,6 @@ describe('remote IM output forwarding', () => {
     expect(secondFlush).toBe(1)
     expect(state.buffer).toBe('')
     expect(messages[0]?.content).toBe('hello')
-    expect(sentTexts).toEqual([createRemoteImAicliOutputText('hello')])
+    expect(sentTexts).toEqual(['hello'])
   })
 })

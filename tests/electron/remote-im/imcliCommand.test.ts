@@ -240,12 +240,14 @@ describe('imcli command', () => {
   it('sends a base64 message through the local app bridge using project environment', async () => {
     const rootDir = await createTempDir()
     const sendPeerMessage = vi.fn(async () => ({ ok: true as const, toUserId: 'agent-b' }))
+    const authorizeCaller = vi.fn(() => ({ ok: true as const }))
     const bridge = await startRemoteImCliServer({
       rootDir,
       getConfig: async () => config,
       getStatus: async () => status,
       listMessages: () => [],
-      sendPeerMessage
+      sendPeerMessage,
+      authorizeCaller
     })
 
     try {
@@ -258,13 +260,15 @@ describe('imcli command', () => {
             ...process.env,
             MULTI_AI_CODE_IMCLI_URL: bridge.url,
             MULTI_AI_CODE_IMCLI_TOKEN: bridge.token,
-            MULTI_AI_CODE_PROJECT_ID: 'project-1'
+            MULTI_AI_CODE_PROJECT_ID: 'project-1',
+            MULTI_AI_CODE_SESSION_ID: 'session-a'
           }
         }
       )
 
       expect(stdout).toContain('sent to agent-b')
       expect(sendPeerMessage).toHaveBeenCalledWith('project-1', text, 'agent-b')
+      expect(authorizeCaller).toHaveBeenCalledWith('project-1', 'session-a')
     } finally {
       await bridge.close()
     }

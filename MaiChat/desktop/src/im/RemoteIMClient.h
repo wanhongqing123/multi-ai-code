@@ -30,6 +30,11 @@ public:
     virtual void disconnectFromService(RemoteIMCompletion completion) = 0;
     virtual void deleteContact(const QString& userId, RemoteIMCompletion completion) = 0;
     virtual void sendText(const QString& peerId, const QString& text, RemoteIMSendCompletion completion) = 0;
+    // Protocol/control frames are machine-originated even when sent through the
+    // same Tencent text API. Regular chat UI continues to call sendText().
+    virtual void sendMachineText(const QString& peerId, const QString& text, RemoteIMSendCompletion completion) {
+        sendText(peerId, text, std::move(completion));
+    }
     virtual void sendImage(const QString& peerId, const QString& localPath, RemoteIMSendCompletion completion) = 0;
     virtual void sendVoice(const QString& peerId, const QString& localPath, int durationSeconds, RemoteIMCompletion completion) = 0;
     // 发送任意文件。默认不支持（Fake/Unsupported 客户端据此优雅降级），仅 TimSdk 真正实现。

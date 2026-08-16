@@ -13,7 +13,7 @@ import {
 const config: RemoteImConfig = {
   enabled: true,
   provider: 'tencent-im',
-  sdkAppId: 1400704311,
+  sdkAppId: 1600148979,
   desktopUserId: 'test123',
   desktopRole: 'master',
   userSigMode: 'secret-key',
@@ -24,7 +24,8 @@ const config: RemoteImConfig = {
   slaveUserIds: ['test321'],
   allowedUserIds: ['test321'],
   outputFlushIntervalMs: 2000,
-  outputMaxChunkChars: 1200,
+  outputMaxChunkChars: 1200
+,
   remoteDesktopMode: 'disabled'
 }
 
@@ -33,7 +34,7 @@ describe('RemoteImClientHost', () => {
     const current = {
       connectionId: 'connection-b',
       desktopUserId: ' desktop-b ',
-      sdkAppId: 1400704311
+      sdkAppId: 1600148979
     }
 
     expect(
@@ -41,7 +42,7 @@ describe('RemoteImClientHost', () => {
         {
           connectionId: 'connection-b',
           desktopUserId: 'desktop-b',
-          sdkAppId: 1400704311
+          sdkAppId: 1600148979
         },
         current
       )
@@ -51,7 +52,7 @@ describe('RemoteImClientHost', () => {
         {
           connectionId: 'connection-a',
           desktopUserId: 'desktop-b',
-          sdkAppId: 1400704311
+          sdkAppId: 1600148979
         },
         current
       )
@@ -170,7 +171,8 @@ describe('RemoteImClientHost', () => {
           slaveUserIds: ['slave-a'],
           allowedUserIds: ['friend-a', 'master-a', 'slave-a'],
           outputFlushIntervalMs: 5000,
-          outputMaxChunkChars: 3000,
+          outputMaxChunkChars: 3000
+,
           remoteDesktopMode: 'disabled'
         },
         loginRequested: true

@@ -12,7 +12,7 @@ import type { TencentImRuntime } from '../../../src/remote-im/tencentImClient.js
 const runtimeIdentity = {
   connectionId: 'runtime-1',
   desktopUserId: 'desktop-a',
-  sdkAppId: 1400704311
+  sdkAppId: 1600148979
 }
 
 const event: RemoteImOutgoingTextEvent = {

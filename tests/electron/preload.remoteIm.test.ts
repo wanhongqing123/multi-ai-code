@@ -243,7 +243,7 @@ describe('preload remote IM api', () => {
     const runtimeIdentity = {
       connectionId: 'runtime-1',
       desktopUserId: 'desktop-a',
-      sdkAppId: 1400704311
+      sdkAppId: 1600148979
     }
     const statusCb = vi.fn()
     const messageCb = vi.fn()

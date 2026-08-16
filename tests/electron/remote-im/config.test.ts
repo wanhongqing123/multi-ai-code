@@ -110,7 +110,7 @@ describe('remote IM config', () => {
     const result = validateRemoteImConfig({
       ...DEFAULT_REMOTE_IM_CONFIG,
       enabled: true,
-      sdkAppId: 1400704311,
+      sdkAppId: 1600148979,
       desktopUserId: 'desktop_bot',
       userSigMode: 'secret-key',
       userSigSecretKey: 'secret-for-local-test'
@@ -122,7 +122,7 @@ describe('remote IM config', () => {
   it('normalizes legacy slave configs as regular desktop accounts', () => {
     const config = normalizeRemoteImConfig({
       enabled: true,
-      sdkAppId: 1400704311,
+      sdkAppId: 1600148979,
       desktopUserId: 'desktop_bot',
       desktopRole: 'slave',
       userSigMode: 'secret-key',

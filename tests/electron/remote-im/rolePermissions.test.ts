@@ -11,7 +11,7 @@ import {
 const masterConfig: RemoteImConfig = {
   enabled: true,
   provider: 'tencent-im',
-  sdkAppId: 1400704311,
+  sdkAppId: 1600148979,
   desktopUserId: 'desktop-a',
   desktopRole: 'master',
   userSigMode: 'secret-key',

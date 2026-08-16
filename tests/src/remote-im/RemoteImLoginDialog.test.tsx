@@ -10,7 +10,7 @@ import RemoteImLoginDialog, { applyLoadedRemoteImLoginAccount } from '../../../s
 
 const account: RemoteImAccountConfig = {
   provider: 'tencent-im',
-  sdkAppId: 1400704311,
+  sdkAppId: 1600148979,
   desktopUserId: 'test123',
   desktopRole: 'master',
   userSigMode: 'secret-key',
@@ -75,7 +75,7 @@ describe('RemoteImLoginDialog', () => {
     expect(html).not.toContain('UserSig 方式')
     expect(html).not.toContain('type="password"')
     expect(html).not.toContain('填入 IM 应用 SecretKey')
-    expect(html).not.toContain('测试凭证 1400704311')
+    expect(html).not.toContain('测试凭证 1600148979')
     expect(html).not.toContain('SDKAppID')
     expect(html).not.toContain('SecretKey')
     expect(html).not.toContain('通信配置已内置')

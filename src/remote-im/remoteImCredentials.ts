@@ -7,18 +7,16 @@ export interface RemoteImCredentialPreset {
   userSigSecretKey: string
 }
 
+// 只保留一套凭证，且必须与 MaiChat 的 RemoteIMCredentialDefaults 完全一致
+// （同 sdkAppId、同 secretKey）。多一套的代价不是"多个选项"而是静默失联：
+// 两端凭证不同就是两个不同的腾讯云应用，IM 和 TRTC 都碰不到一起，
+// 表现为消息发不出去、远程桌面进不了同一个房间，却没有任何报错。
 export const REMOTE_IM_CREDENTIAL_PRESETS: RemoteImCredentialPreset[] = [
   {
     id: 'tencent-im-1600148979',
     label: '测试凭证 1600148979',
     sdkAppId: 1600148979,
     userSigSecretKey: 'aa18d554f5e4a235640745e98145e187977f87770b812b2b4f10ef032bd73861'
-  },
-  {
-    id: 'tencent-im-1400704311',
-    label: '测试凭证 1400704311',
-    sdkAppId: 1400704311,
-    userSigSecretKey: '8b897045d1ee4f067a745b1b6a3fb834d1bd4c5951de43282c21b945f98ec982'
   }
 ]
 

@@ -433,7 +433,7 @@ describe('tencent IM client helpers', () => {
 
   it('generates a Tencent UserSig locally from SDKAppID, UserID, and SecretKey', async () => {
     const userSig = await generateTencentUserSig({
-      sdkAppId: 1400704311,
+      sdkAppId: 1600148979,
       userId: 'desktop-a',
       secretKey: 'local-test-secret',
       nowSeconds: 1782238800
@@ -444,7 +444,7 @@ describe('tencent IM client helpers', () => {
     expect(payload).toMatchObject({
       'TLS.ver': '2.0',
       'TLS.identifier': 'desktop-a',
-      'TLS.sdkappid': 1400704311,
+      'TLS.sdkappid': 1600148979,
       'TLS.expire': 604800,
       'TLS.time': 1782238800
     })
@@ -474,7 +474,7 @@ describe('tencent IM client helpers', () => {
       config: {
         enabled: true,
         provider: 'tencent-im',
-        sdkAppId: 1400704311,
+        sdkAppId: 1600148979,
         desktopUserId: 'desktop-a',
         desktopRole: 'master',
         userSigMode: 'endpoint',
@@ -485,7 +485,8 @@ describe('tencent IM client helpers', () => {
         slaveUserIds: [],
         allowedUserIds: ['desktop-b'],
         outputFlushIntervalMs: 1000,
-        outputMaxChunkChars: 1200,
+        outputMaxChunkChars: 1200
+,
         remoteDesktopMode: 'disabled'
       },
       onIncomingText: vi.fn()
@@ -522,7 +523,7 @@ describe('tencent IM client helpers', () => {
       config: {
         enabled: true,
         provider: 'tencent-im',
-        sdkAppId: 1400704311,
+        sdkAppId: 1600148979,
         desktopUserId: 'desktop-a',
         desktopRole: 'master',
         userSigMode: 'endpoint',
@@ -533,7 +534,8 @@ describe('tencent IM client helpers', () => {
         slaveUserIds: [],
         allowedUserIds: ['desktop-b'],
         outputFlushIntervalMs: 1000,
-        outputMaxChunkChars: 1200,
+        outputMaxChunkChars: 1200
+,
         remoteDesktopMode: 'disabled'
       },
       onIncomingText: vi.fn()
@@ -573,7 +575,7 @@ describe('tencent IM client helpers', () => {
       config: {
         enabled: true,
         provider: 'tencent-im',
-        sdkAppId: 1400704311,
+        sdkAppId: 1600148979,
         desktopUserId: 'desktop-a',
         desktopRole: 'master',
         userSigMode: 'endpoint',
@@ -584,7 +586,8 @@ describe('tencent IM client helpers', () => {
         slaveUserIds: [],
         allowedUserIds: [],
         outputFlushIntervalMs: 1000,
-        outputMaxChunkChars: 1200,
+        outputMaxChunkChars: 1200
+,
         remoteDesktopMode: 'disabled'
       },
       onIncomingText: vi.fn()
@@ -619,7 +622,7 @@ describe('tencent IM client helpers', () => {
       config: {
         enabled: true,
         provider: 'tencent-im',
-        sdkAppId: 1400704311,
+        sdkAppId: 1600148979,
         desktopUserId: 'desktop-a',
         desktopRole: 'master',
         userSigMode: 'endpoint',
@@ -630,7 +633,8 @@ describe('tencent IM client helpers', () => {
         slaveUserIds: [],
         allowedUserIds: [],
         outputFlushIntervalMs: 1000,
-        outputMaxChunkChars: 1200,
+        outputMaxChunkChars: 1200
+,
         remoteDesktopMode: 'disabled'
       },
       onIncomingText: vi.fn(),
@@ -665,7 +669,7 @@ describe('tencent IM client helpers', () => {
       config: {
         enabled: true,
         provider: 'tencent-im',
-        sdkAppId: 1400704311,
+        sdkAppId: 1600148979,
         desktopUserId: 'desktop-a',
         desktopRole: 'master',
         userSigMode: 'endpoint',
@@ -676,7 +680,8 @@ describe('tencent IM client helpers', () => {
         slaveUserIds: [],
         allowedUserIds: ['desktop-b'],
         outputFlushIntervalMs: 1000,
-        outputMaxChunkChars: 1200,
+        outputMaxChunkChars: 1200
+,
         remoteDesktopMode: 'disabled'
       },
       onIncomingText: vi.fn()
@@ -714,7 +719,7 @@ describe('tencent IM client helpers', () => {
       config: {
         enabled: true,
         provider: 'tencent-im',
-        sdkAppId: 1400704311,
+        sdkAppId: 1600148979,
         desktopUserId: 'desktop-a',
         desktopRole: 'master',
         userSigMode: 'endpoint',
@@ -725,7 +730,8 @@ describe('tencent IM client helpers', () => {
         slaveUserIds: [],
         allowedUserIds: ['desktop-b'],
         outputFlushIntervalMs: 1000,
-        outputMaxChunkChars: 1200,
+        outputMaxChunkChars: 1200
+,
         remoteDesktopMode: 'disabled'
       },
       onIncomingText: vi.fn()
@@ -765,7 +771,7 @@ describe('tencent IM client helpers', () => {
       config: {
         enabled: true,
         provider: 'tencent-im',
-        sdkAppId: 1400704311,
+        sdkAppId: 1600148979,
         desktopUserId: 'desktop-a',
         desktopRole: 'master',
         userSigMode: 'endpoint',
@@ -776,7 +782,8 @@ describe('tencent IM client helpers', () => {
         slaveUserIds: [],
         allowedUserIds: ['desktop-b'],
         outputFlushIntervalMs: 1000,
-        outputMaxChunkChars: 1200,
+        outputMaxChunkChars: 1200
+,
         remoteDesktopMode: 'disabled'
       },
       onIncomingText: vi.fn()
@@ -808,7 +815,7 @@ describe('tencent IM client helpers', () => {
       config: {
         enabled: true,
         provider: 'tencent-im',
-        sdkAppId: 1400704311,
+        sdkAppId: 1600148979,
         desktopUserId: 'desktop-a',
         desktopRole: 'master',
         userSigMode: 'endpoint',
@@ -819,7 +826,8 @@ describe('tencent IM client helpers', () => {
         slaveUserIds: [],
         allowedUserIds: ['desktop-b'],
         outputFlushIntervalMs: 1000,
-        outputMaxChunkChars: 1200,
+        outputMaxChunkChars: 1200
+,
         remoteDesktopMode: 'disabled'
       },
       onIncomingText: vi.fn()
@@ -854,7 +862,7 @@ describe('tencent IM client helpers', () => {
         config: {
           enabled: true,
           provider: 'tencent-im',
-          sdkAppId: 1400704311,
+          sdkAppId: 1600148979,
           desktopUserId: 'desktop-a',
           desktopRole: 'master',
           userSigMode: 'endpoint',
@@ -865,7 +873,8 @@ describe('tencent IM client helpers', () => {
           slaveUserIds: [],
           allowedUserIds: ['desktop-b'],
           outputFlushIntervalMs: 1000,
-          outputMaxChunkChars: 1200,
+          outputMaxChunkChars: 1200
+,
           remoteDesktopMode: 'disabled'
         },
         onIncomingText: vi.fn()
@@ -882,7 +891,7 @@ describe('tencent IM client helpers', () => {
       config: {
         enabled: true,
         provider: 'tencent-im',
-        sdkAppId: 1400704311,
+        sdkAppId: 1600148979,
         desktopUserId: 'desktop-a',
         desktopRole: 'master',
         userSigMode: 'secret-key',
@@ -893,7 +902,8 @@ describe('tencent IM client helpers', () => {
         slaveUserIds: [],
         allowedUserIds: ['desktop-b'],
         outputFlushIntervalMs: 1000,
-        outputMaxChunkChars: 1200,
+        outputMaxChunkChars: 1200
+,
         remoteDesktopMode: 'disabled'
       },
       onIncomingText: vi.fn()
@@ -931,7 +941,8 @@ describe('tencent IM client helpers', () => {
         slaveUserIds: ['desktop-b'],
         allowedUserIds: ['desktop-b'],
         outputFlushIntervalMs: 1000,
-        outputMaxChunkChars: 1200,
+        outputMaxChunkChars: 1200
+,
         remoteDesktopMode: 'disabled'
       },
       onIncomingText: vi.fn(),

@@ -78,7 +78,7 @@ describe('remote IM account config', () => {
     const userDataDir = await createTempDir()
     await writeRemoteImAccountConfig(userDataDir, {
       ...DEFAULT_REMOTE_IM_ACCOUNT_CONFIG,
-      sdkAppId: 1400704311,
+      sdkAppId: 1600148979,
       desktopUserId: 'test123',
       userSigMode: 'secret-key',
       userSigSecretKey: 'secret',
@@ -86,7 +86,7 @@ describe('remote IM account config', () => {
     })
 
     await expect(readRemoteImAccountConfig(userDataDir)).resolves.toMatchObject({
-      sdkAppId: 1400704311,
+      sdkAppId: 1600148979,
       desktopUserId: 'test123',
       userSigMode: 'secret-key',
       userSigSecretKey: 'secret',
@@ -275,7 +275,9 @@ describe('remote IM account config', () => {
     expect(
       hasRemoteImAccountConnectionChanged(account, {
         ...account,
-        sdkAppId: 1400704311
+        // 必须与上面的 sdkAppId 不同，这条断言才有意义。用一个明显的任意值，
+        // 而不是另一套真实凭证——预设只该有一套。
+        sdkAppId: 1499999999
       })
     ).toBe(true)
     expect(
@@ -320,7 +322,7 @@ describe('remote IM account config', () => {
       },
       {
         ...DEFAULT_REMOTE_IM_ACCOUNT_CONFIG,
-        sdkAppId: 1400704311,
+        sdkAppId: 1600148979,
         desktopUserId: 'test123',
         desktopRole: 'master',
         userSigMode: 'secret-key',
@@ -332,7 +334,7 @@ describe('remote IM account config', () => {
 
     expect(merged).toMatchObject({
       enabled: true,
-      sdkAppId: 1400704311,
+      sdkAppId: 1600148979,
       desktopUserId: 'test123',
       desktopRole: 'master',
       userSigMode: 'secret-key',

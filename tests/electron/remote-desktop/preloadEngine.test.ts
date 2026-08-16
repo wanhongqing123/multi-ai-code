@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  SCREEN_CAPTURE_SOURCE_TYPE_SCREEN,
   TRTC_VIDEO_STREAM_TYPE_SUB,
   resolveTrtcCloud,
   resolveSdkClass,
@@ -90,6 +91,15 @@ describe('resolveSdkClass', () => {
     for (const bad of [null, undefined, {}, { default: {} }, { Rect: 'nope' }]) {
       expect(() => resolveSdkClass(bad, 'Rect'), String(bad)).toThrow('Rect')
     }
+  })
+})
+
+describe('screen capture source type', () => {
+  it('uses Screen (1), not Window (0)', () => {
+    // TRTCScreenCaptureSourceType: Unknown=-1, Window=0, Screen=1, Custom=2。
+    // 写成 0 时过滤出来的全是窗口，"整屏共享"实际共享的是列表里的第一个窗口，
+    // 对端看到一个应用窗口加一圈黑边——线上就是这么表现的。
+    expect(SCREEN_CAPTURE_SOURCE_TYPE_SCREEN).toBe(1)
   })
 })
 

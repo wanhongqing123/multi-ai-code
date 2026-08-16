@@ -26,8 +26,13 @@ import type {
 export const TRTC_VIDEO_STREAM_TYPE_SUB = 2
 /** TRTCAppScene.VideoCall：不区分角色，sendCustomCmdMsg 天然可用。 */
 const TRTC_APP_SCENE_VIDEO_CALL = 0
-/** TRTCScreenCaptureSourceType.Screen：整屏，不是窗口。 */
-const SCREEN_CAPTURE_SOURCE_TYPE_SCREEN = 0
+/**
+ * TRTCScreenCaptureSourceType.Screen：整屏，不是窗口。
+ *
+ * 是 1 不是 0——0 是 Window。写成 0 时过滤出来的全是窗口，于是"整屏共享"
+ * 实际共享的是列表里的第一个窗口，对端看到一个窗口加一圈黑边。
+ */
+export const SCREEN_CAPTURE_SOURCE_TYPE_SCREEN = 1
 // 编码取值与 MaiChat 的 ScreenShareEncodingPolicy 保持一致，两端表现才一样。
 /** TRTCVideoResolution_1920_1080 的稳定枚举值。 */
 const SCREEN_SHARE_RESOLUTION_1920_1080 = 114
@@ -61,11 +66,14 @@ interface TrtcSdkSource {
   sourceName: string
   type: number
   isMainScreen?: boolean
+  width?: number
+  height?: number
 }
 
 interface TrtcInstance {
   on(event: string, handler: (...args: unknown[]) => void): void
   off?(event: string, handler: (...args: unknown[]) => void): void
+  callExperimentalAPI(jsonStr: string): void
   enterRoom(params: Record<string, unknown>, scene: number): void
   exitRoom(): void
   getScreenCaptureSources(
@@ -220,24 +228,25 @@ export function createTrtcRemoteDesktopEngine(
   return {
     async listScreenSources(): Promise<RemoteDesktopCaptureSource[]> {
       const trtc = await ensureInstance()
-      // 采集源本身不带分辨率；用物理像素兜底。几何要如实回给主控端，
-      // 报错了对方的坐标换算会整体偏移。
-      const width = Math.round(window.screen.width * window.devicePixelRatio)
-      const height = Math.round(window.screen.height * window.devicePixelRatio)
+      // 采集源自带 width/height，优先用它——那是这块屏的真实像素。
+      // 只有 SDK 没给（0 或缺失）时才拿本窗口所在屏兜底：多屏时那个值可能
+      // 根本不是被采集的那块屏，几何报错了主控端的坐标换算会整体偏移。
+      const fallbackWidth = Math.round(window.screen.width * window.devicePixelRatio)
+      const fallbackHeight = Math.round(window.screen.height * window.devicePixelRatio)
       const sources = listRawSources(trtc).map((item) => ({
         sourceId: item.sourceId,
         sourceName: item.sourceName,
         isMainScreen: item.isMainScreen === true,
-        width,
-        height
+        width: item.width && item.width > 0 ? item.width : fallbackWidth,
+        height: item.height && item.height > 0 ? item.height : fallbackHeight
       }))
       // 一个源都没有会一路走到「没有可用的屏幕采集源」，但那时已经进过房了；
       // 在源头记一笔，好区分是采集权限问题还是房间问题。
       log('listed screen sources', {
         count: sources.length,
-        names: sources.map((item) => item.sourceName).slice(0, 4),
-        width,
-        height
+        // 只列整屏源。这里要是出现窗口标题，说明过滤用的枚举值又错了。
+        screens: sources.map((item) => `${item.sourceName} ${item.width}x${item.height}`).slice(0, 4),
+        mainScreens: sources.filter((item) => item.isMainScreen).length
       })
       return sources
     },
@@ -315,17 +324,25 @@ export function createTrtcRemoteDesktopEngine(
 
       // 必须先选目标再开采集：采集器没有源时一帧都不产出，而且不报错，
       // 对端表现为永远黑屏。MaiChat 当初就栽在漏了这一步。
+      // listRawSources 只返回 type=Screen 的整屏源，窗口不在其中。
+      const screens = listRawSources(trtc)
       const target =
-        listRawSources(trtc).find((item) => item.sourceId === source.sourceId) ??
-        listRawSources(trtc)[0]
+        screens.find((item) => item.sourceId === source.sourceId) ??
+        screens.find((item) => item.isMainScreen === true) ??
+        screens[0]
       if (!target) {
         trtc.exitRoom()
         throw new Error('没有可用的屏幕采集源')
       }
+      // 退到非主屏必须显式记下来：主控端的坐标换算是按主屏几何算的，
+      // 两者不一致就必然整体偏移，事后只看画面看不出是这个原因。
       log('selecting capture target', {
         requested: source.sourceId,
         used: target.sourceId,
         name: target.sourceName,
+        isMainScreen: target.isMainScreen === true,
+        size: `${target.width ?? 0}x${target.height ?? 0}`,
+        screenCount: screens.length,
         fellBack: target.sourceId !== source.sourceId
       })
       // captureRect / property 必须是 Rect 和 TRTCScreenCaptureProperty 的实例。
@@ -335,6 +352,21 @@ export function createTrtcRemoteDesktopEngine(
       const captureRect = new sdk!.Rect(0, 0, 0, 0)
       const captureProperty = new sdk!.TRTCScreenCaptureProperty(true, false, false)
       trtc.selectScreenCaptureTarget(target, captureRect, captureProperty)
+
+      // TRTC 默认把非 16:9 的屏塞进固定 1920x1080 画布并补黑边——2560x1600
+      // 的屏会被编码成 16:9 的 1920x1080，左右各一条黑边。必须在采集启动前
+      // 切成"跟随采集源宽高比"：1920x1080 仍是上限，但 2560x1600 会编成
+      // 1728x1080。实测过：不加这句编出来是 1.778，加了才是屏幕真实的 1.600。
+      trtc.callExperimentalAPI(
+        JSON.stringify({
+          api: 'setVideoEncodeParamEx',
+          params: {
+            streamType: TRTC_VIDEO_STREAM_TYPE_SUB,
+            screenEncodingAspectRatio: 0
+          }
+        })
+      )
+      log('applied source-aspect encoding policy')
 
       // 编码参数照抄 MaiChat 的取舍：远程办公看的是静态界面不是视频，
       // 优先保清晰度（文字要能看清），帧率压到 10fps 省带宽；关闭弱网动态

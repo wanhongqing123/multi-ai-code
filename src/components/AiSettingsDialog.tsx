@@ -76,6 +76,7 @@ export interface SaveRemoteDesktopModeParams {
   /** 打开设置时读到的整份配置；为 null 表示该工作空间没接 IM，没什么可存的。 */
   loaded: RemoteImConfig | null
   mode: RemoteDesktopMode
+  control: boolean
   setConfig: (
     projectId: string,
     config: RemoteImConfig
@@ -96,10 +97,16 @@ export async function saveRemoteDesktopMode(
   params: SaveRemoteDesktopModeParams
 ): Promise<RemoteImConfig | null> {
   const loaded = params.loaded
-  if (!loaded || loaded.remoteDesktopMode === params.mode) return null
+  if (
+    !loaded ||
+    (loaded.remoteDesktopMode === params.mode && loaded.remoteDesktopControl === params.control)
+  ) {
+    return null
+  }
   const result = await params.setConfig(params.projectId, {
     ...loaded,
-    remoteDesktopMode: params.mode
+    remoteDesktopMode: params.mode,
+    remoteDesktopControl: params.control
   })
   if (!result.ok) throw new Error(result.error)
   return result.value
@@ -233,6 +240,7 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
   // 远程桌面模式住在 remote-im 配置里（与 AI 设置不同的存储），单独加载与保存。
   const [remoteImConfig, setRemoteImConfig] = useState<RemoteImConfig | null>(null)
   const [remoteDesktopMode, setRemoteDesktopMode] = useState<RemoteDesktopMode>('disabled')
+  const [remoteDesktopControl, setRemoteDesktopControl] = useState(false)
 
   useEffect(() => {
     const projectId = props.projectId
@@ -245,6 +253,7 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
       if (cancelled || !result.ok) return
       setRemoteImConfig(result.value)
       setRemoteDesktopMode(result.value.remoteDesktopMode)
+      setRemoteDesktopControl(result.value.remoteDesktopControl)
     })
     return () => {
       cancelled = true
@@ -280,6 +289,7 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
           projectId: props.projectId,
           loaded: remoteImConfig,
           mode: remoteDesktopMode,
+          control: remoteDesktopControl,
           setConfig: window.api.remoteIm.setConfig
         })
         if (savedRemoteIm) props.onRemoteImConfigSaved?.(savedRemoteIm)
@@ -336,6 +346,8 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
                   mode={remoteDesktopMode}
                   allowedUserIds={remoteImConfig.allowedUserIds}
                   onMode={setRemoteDesktopMode}
+                  control={remoteDesktopControl}
+                  onControl={setRemoteDesktopControl}
                 />
               </div>
             )}

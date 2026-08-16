@@ -26,7 +26,8 @@ const config: RemoteImConfig = {
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 1200
 ,
-  remoteDesktopMode: 'disabled'
+  remoteDesktopMode: 'disabled',
+  remoteDesktopControl: false
 }
 
 describe('RemoteImClientHost', () => {
@@ -173,7 +174,8 @@ describe('RemoteImClientHost', () => {
           outputFlushIntervalMs: 5000,
           outputMaxChunkChars: 3000
 ,
-          remoteDesktopMode: 'disabled'
+          remoteDesktopMode: 'disabled',
+          remoteDesktopControl: false
         },
         loginRequested: true
       })

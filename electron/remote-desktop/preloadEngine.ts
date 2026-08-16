@@ -13,8 +13,16 @@
 import type {
   RemoteDesktopCaptureSource,
   RemoteDesktopEnterRoomParams,
-  RemoteDesktopEngine
+  RemoteDesktopEngine,
+  RemoteDesktopInputGate
 } from './engine.js'
+import { channelForCmdId, decodeRemoteInputPacket } from './inputProtocol.js'
+import {
+  REMOTE_INPUT_SILENCE_TIMEOUT_MS,
+  createRemoteInputInjector,
+  type RemoteInputInjector
+} from './inputInjector.js'
+import { createWindowsInputSink, type WindowsInputSink } from './inputSinkWindows.js'
 
 /**
  * TRTCVideoStreamType.Sub：屏幕共享走辅路。
@@ -69,6 +77,9 @@ interface TrtcSdkSource {
   width?: number
   height?: number
 }
+
+/** 远程输入的 TRTC 自定义消息回调。message 是 Uint8Array 或类数组的字节。 */
+type CustomCmdHandler = (userId: string, cmdId: number, seq: number, message: unknown) => void
 
 interface TrtcInstance {
   on(event: string, handler: (...args: unknown[]) => void): void
@@ -193,6 +204,12 @@ export function createTrtcRemoteDesktopEngine(
     TRTCVideoEncParam: SdkClass
   } | null = null
   let sharing = false
+  // 远程输入：sink 只在真的要注入时才建（koffi 加载失败不该连屏幕共享都用不了）。
+  let inputSink: WindowsInputSink | null = null
+  let injector: RemoteInputInjector | null = null
+  let inputGate: RemoteDesktopInputGate | null = null
+  let watchdogTimer: ReturnType<typeof setInterval> | null = null
+  let customCmdSubscribed = false
   const log = (message: string, detail?: Record<string, unknown>): void => {
     try {
       logger?.(`remote-desktop-engine: ${message}`, detail)
@@ -217,6 +234,83 @@ export function createTrtcRemoteDesktopEngine(
     instance = cloud.getTRTCShareInstance()
     log('sdk ready')
     return instance
+  }
+
+  /** 把 TRTC 给的字节解成 UTF-8 文本。不同版本可能给 Uint8Array、Buffer 或字符串。 */
+  function decodeMessageBytes(message: unknown): string | null {
+    if (typeof message === 'string') return message
+    if (message instanceof Uint8Array) return new TextDecoder().decode(message)
+    if (Array.isArray(message)) return new TextDecoder().decode(Uint8Array.from(message))
+    if (message && typeof message === 'object' && 'buffer' in (message as object)) {
+      try {
+        return new TextDecoder().decode(new Uint8Array((message as { buffer: ArrayBuffer }).buffer))
+      } catch {
+        return null
+      }
+    }
+    return null
+  }
+
+  /**
+   * 惰性创建注入器。koffi 只在这里加载：没开远程控制的用户不该为它付加载
+   * 成本，加载失败也只该让"控制"不可用，不能连屏幕共享一起废掉。
+   */
+  function ensureInjector(): RemoteInputInjector | null {
+    if (injector) return injector
+    if (process.platform !== 'win32') {
+      log('remote input unavailable: platform not supported', { platform: process.platform })
+      return null
+    }
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const koffi = require('koffi')
+      inputSink = createWindowsInputSink(koffi, log)
+      injector = createRemoteInputInjector(inputSink)
+      log('remote input ready')
+      return injector
+    } catch (error) {
+      log('remote input unavailable: sink init failed', {
+        error: error instanceof Error ? error.message : String(error)
+      })
+      return null
+    }
+  }
+
+  function handleCustomCmd(fromUserId: string, cmdId: number, message: unknown): void {
+    const gate = inputGate
+    if (!gate) return
+    // 只认当前会话的对端：房间里若混进第三方，它的输入一律不执行。
+    if (fromUserId !== gate.peerUserId) return
+    const channel = channelForCmdId(cmdId)
+    if (!channel) return
+    const payload = decodeMessageBytes(message)
+    if (!payload) return
+    const packet = decodeRemoteInputPacket(payload)
+    // 坏包整包丢弃，绝不半解析后驱动注入。
+    if (!packet || packet.sessionId !== gate.sessionId) return
+    ensureInjector()?.handlePacket(packet, channel, Date.now())
+  }
+
+  function subscribeCustomCmd(trtc: TrtcInstance): void {
+    if (customCmdSubscribed) return
+    customCmdSubscribed = true
+    const handler: CustomCmdHandler = (userId, cmdId, _seq, message) => {
+      try {
+        handleCustomCmd(String(userId), Number(cmdId), message)
+      } catch (error) {
+        // 一条坏消息不能掀翻整个共享会话。
+        log('remote input: handler threw', {
+          error: error instanceof Error ? error.message : String(error)
+        })
+      }
+    }
+    trtc.on('onRecvCustomCmdMsg', handler as unknown as (...args: unknown[]) => void)
+  }
+
+  function stopWatchdog(): void {
+    if (!watchdogTimer) return
+    clearInterval(watchdogTimer)
+    watchdogTimer = null
   }
 
   function listRawSources(trtc: TrtcInstance): TrtcSdkSource[] {
@@ -382,6 +476,9 @@ export function createTrtcRemoteDesktopEngine(
       // view 传 null：被控端自己不需要预览，省一块渲染开销。
       trtc.startScreenCapture(null, TRTC_VIDEO_STREAM_TYPE_SUB, encParam)
       sharing = true
+      // 输入消息和画面走同一个房间：共享一起来就把通道挂上，
+      // 真正是否注入由 setInputGate 决定，这里只负责收。
+      subscribeCustomCmd(trtc)
       log('screen capture started', {
         streamType: TRTC_VIDEO_STREAM_TYPE_SUB,
         fps: SCREEN_SHARE_FPS,
@@ -389,10 +486,41 @@ export function createTrtcRemoteDesktopEngine(
       })
     },
 
+    setInputGate(gate: RemoteDesktopInputGate | null): void {
+      inputGate = gate
+      if (!gate) {
+        // 切断控制时必须把按住的全抬起：否则关掉开关的那一刻，
+        // 对方最后按住的 Ctrl 会永远卡在那台电脑上。
+        injector?.endSession()
+        stopWatchdog()
+        log('remote input gate cleared')
+        return
+      }
+      const active = ensureInjector()
+      if (!active) return
+      inputSink?.setCaptureScreen(gate.captureScreen)
+      active.beginSession(gate.sessionId)
+      stopWatchdog()
+      // 看门狗独立于输入流：控制端崩了就不会再有包进来，只能靠定时器兜底。
+      watchdogTimer = setInterval(
+        () => active.tickWatchdog(Date.now()),
+        Math.max(1000, Math.floor(REMOTE_INPUT_SILENCE_TIMEOUT_MS / 2))
+      )
+      log('remote input gate set', {
+        sessionId: gate.sessionId,
+        peerUserId: gate.peerUserId,
+        captureScreen: `${gate.captureScreen.width}x${gate.captureScreen.height}`
+      })
+    },
+
     async stopSharing(): Promise<void> {
       // 停止路径会被多个事件触发（对端 stop、本地停止、IM 断开），必须可重复调用。
       if (!instance) return
       log('stopping', { wasSharing: sharing })
+      // 停止共享等于会话结束：按住的键必须全抬起，人不在电脑旁没法自己解。
+      inputGate = null
+      injector?.endSession()
+      stopWatchdog()
       if (sharing) {
         try {
           instance.stopScreenCapture()

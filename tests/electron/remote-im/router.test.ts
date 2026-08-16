@@ -23,8 +23,10 @@ const config: RemoteImConfig = {
   slaveUserIds: [],
   allowedUserIds: ['phone_admin'],
   outputFlushIntervalMs: 2000,
-  outputMaxChunkChars: 1200,
-  remoteDesktopMode: 'disabled'
+  outputMaxChunkChars: 1200
+,
+  remoteDesktopMode: 'disabled',
+  remoteDesktopControl: false
 }
 
 function createMessageStore() {

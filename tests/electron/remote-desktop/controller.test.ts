@@ -24,11 +24,19 @@ function createFakeEngine(overrides: Partial<RemoteDesktopEngine> = {}) {
   const startSharing = vi.fn(async () => {})
   const stopSharing = vi.fn(async () => {})
   const listScreenSources = vi.fn(async () => [mainScreen])
+  const setInputGate = vi.fn()
   return {
-    engine: { listScreenSources, startSharing, stopSharing, ...overrides } as RemoteDesktopEngine,
+    engine: {
+      listScreenSources,
+      startSharing,
+      stopSharing,
+      setInputGate,
+      ...overrides
+    } as RemoteDesktopEngine,
     startSharing,
     stopSharing,
-    listScreenSources
+    listScreenSources,
+    setInputGate
   }
 }
 
@@ -198,5 +206,61 @@ describe('remote desktop controller (host only)', () => {
     expect(stopSharing).not.toHaveBeenCalled()
     expect(controller.getState().hostState).toBe('idle')
     warn.mockRestore()
+  })
+
+  describe('remote control gate', () => {
+    it('keeps input off when the user only allowed viewing', async () => {
+      // 开"看屏幕"不等于把整台电脑交出去：控制是独立的一档授权。
+      const { controller, setInputGate } = setup({ allowRemoteControl: false })
+      await controller.handleSignal('whq-iphone', invite)
+
+      expect(setInputGate).toHaveBeenCalledWith(null)
+    })
+
+    it('opens the gate bound to this session, peer and screen', async () => {
+      const { controller, setInputGate } = setup({ allowRemoteControl: true })
+      await controller.handleSignal('whq-iphone', invite)
+
+      expect(setInputGate).toHaveBeenCalledWith({
+        sessionId: invite.sessionId,
+        peerUserId: 'whq-iphone',
+        // 采集的是整屏，归一化坐标按这块屏换算回像素。
+        captureScreen: { left: 0, top: 0, width: mainScreen.width, height: mainScreen.height }
+      })
+    })
+
+    it('closes the gate when the local user stops sharing', async () => {
+      // 关掉共享的那一刻必须收回控制，否则对方最后按住的键会永远卡在这台电脑上。
+      const { controller, setInputGate } = setup({ allowRemoteControl: true })
+      await controller.handleSignal('whq-iphone', invite)
+      setInputGate.mockClear()
+
+      await controller.stopByLocalUser()
+
+      expect(setInputGate).toHaveBeenCalledWith(null)
+    })
+
+    it('closes the gate when the peer goes away', async () => {
+      const { controller, setInputGate } = setup({ allowRemoteControl: true })
+      await controller.handleSignal('whq-iphone', invite)
+      setInputGate.mockClear()
+
+      await controller.handleSignal('whq-iphone', { type: 'stop', sessionId: invite.sessionId })
+
+      expect(setInputGate).toHaveBeenCalledWith(null)
+    })
+
+    it('closes the gate when entering the room failed', async () => {
+      // 共享没起来却把输入放开，等于对着一台看不见的电脑瞎点。
+      const { controller, setInputGate } = setup({ allowRemoteControl: true }, {
+        startSharing: vi.fn(async () => {
+          throw new Error('boom')
+        })
+      })
+      await controller.handleSignal('whq-iphone', invite)
+
+      expect(setInputGate).toHaveBeenCalledWith(null)
+      expect(setInputGate).not.toHaveBeenCalledWith(expect.objectContaining({ peerUserId: 'whq-iphone' }))
+    })
   })
 })

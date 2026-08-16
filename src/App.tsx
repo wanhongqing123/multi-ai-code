@@ -68,8 +68,10 @@ const DEFAULT_REMOTE_IM_CONFIG: RemoteImConfig = {
   slaveUserIds: [],
   allowedUserIds: [],
   outputFlushIntervalMs: 2000,
-  outputMaxChunkChars: 4000,
-  remoteDesktopMode: 'disabled'
+  outputMaxChunkChars: 4000
+,
+  remoteDesktopMode: 'disabled',
+  remoteDesktopControl: false
 }
 
 

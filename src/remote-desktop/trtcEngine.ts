@@ -23,6 +23,8 @@ export function createTrtcRemoteDesktopEngine(
   return {
     listScreenSources: () => bridge.listScreenSources(),
     startSharing: (params, source) => bridge.startSharing(params, source),
-    stopSharing: () => bridge.stopSharing()
+    stopSharing: () => bridge.stopSharing(),
+    // 门禁状态下推到 preload：输入的热路径全在那侧，渲染层不逐事件参与。
+    setInputGate: (gate) => bridge.setInputGate(gate)
   }
 }

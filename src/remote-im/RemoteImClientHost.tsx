@@ -220,7 +220,8 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
   // 闭包捕获建连那一刻的 props，否则在设置里关掉它、连接不变就一直是旧值。
   const remoteDesktopSettingsRef = useRef<RemoteDesktopSettingsSnapshot>({
     mode: props.config.remoteDesktopMode,
-    allowedUserIds: props.config.allowedUserIds
+    allowedUserIds: props.config.allowedUserIds,
+    allowRemoteControl: props.config.remoteDesktopControl
   })
   const connectionKey = getRemoteImConnectionKey(props)
 
@@ -235,9 +236,10 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
   useEffect(() => {
     remoteDesktopSettingsRef.current = {
       mode: props.config.remoteDesktopMode,
-      allowedUserIds: props.config.allowedUserIds
+      allowedUserIds: props.config.allowedUserIds,
+      allowRemoteControl: props.config.remoteDesktopControl
     }
-  }, [props.config.remoteDesktopMode, props.config.allowedUserIds])
+  }, [props.config.remoteDesktopMode, props.config.allowedUserIds, props.config.remoteDesktopControl])
 
   useEffect(() => {
     let cancelled = false

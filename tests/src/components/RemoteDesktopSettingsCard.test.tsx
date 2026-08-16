@@ -4,12 +4,18 @@ import { describe, expect, it } from 'vitest'
 import RemoteDesktopSettingsCard from '../../../src/components/RemoteDesktopSettingsCard.js'
 import type { RemoteDesktopMode } from '../../../electron/remote-im/types.js'
 
-function markup(mode: RemoteDesktopMode, allowedUserIds: string[] = ['whq-iphone']): string {
+function markup(
+  mode: RemoteDesktopMode,
+  allowedUserIds: string[] = ['whq-iphone'],
+  control = false
+): string {
   return renderToStaticMarkup(
     React.createElement(RemoteDesktopSettingsCard, {
       mode,
       allowedUserIds,
-      onMode: () => {}
+      onMode: () => {},
+      control,
+      onControl: () => {}
     })
   )
 }
@@ -43,6 +49,26 @@ describe('remote desktop settings card', () => {
 
   it('lists the devices that may connect', () => {
     expect(markup('unattended', ['whq-iphone', 'mac-a'])).toContain('whq-iphone、mac-a')
+  })
+
+  it('keeps control behind its own opt-in, off by default', () => {
+    // 开"看屏幕"不等于把整台电脑交出去：控制必须再单独授权一次。
+    // 只盯 checkbox：整段 markup 里被选中的模式单选钮也带 checked。
+    expect(markup('unattended')).toContain('允许对方操作我的键盘和鼠标')
+    expect(markup('unattended')).toContain('<input type="checkbox"/>')
+    expect(markup('unattended', ['whq-iphone'], true)).toContain(
+      '<input type="checkbox" checked=""/>'
+    )
+  })
+
+  it('does not offer control while remote desktop is off', () => {
+    // 整个功能关着的时候摆一个"允许操作"的勾选框只会让人困惑。
+    expect(markup('disabled')).not.toContain('允许对方操作我的键盘和鼠标')
+  })
+
+  it('tells the user Win+L is blocked', () => {
+    // 锁屏是不可逆的：锁上之后只能本人到电脑前解。这条必须写在界面上。
+    expect(markup('unattended')).toContain('Win+L')
   })
 
   it('mentions the indicator bar only when the feature is on', () => {

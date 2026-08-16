@@ -42,7 +42,8 @@ const projectConfig: RemoteImConfig = {
   allowedUserIds: ['test321'],
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 1200,
-  remoteDesktopMode: 'disabled'
+  remoteDesktopMode: 'disabled',
+  remoteDesktopControl: false
 }
 
 describe('RemoteImLoginDialog', () => {

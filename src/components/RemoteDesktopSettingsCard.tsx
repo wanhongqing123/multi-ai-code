@@ -4,6 +4,9 @@ export interface RemoteDesktopSettingsCardProps {
   mode: RemoteDesktopMode
   allowedUserIds: string[]
   onMode: (mode: RemoteDesktopMode) => void
+  /** 是否允许对端操作本机键鼠。与 mode 分开授权。 */
+  control: boolean
+  onControl: (allow: boolean) => void
 }
 
 interface ModeOption {
@@ -74,9 +77,24 @@ export default function RemoteDesktopSettingsCard(
       </div>
 
       {props.mode !== 'disabled' && (
-        <div className="ai-settings-note">
-          共享期间界面顶部会常驻红色提示条，无法隐藏——这样你回到电脑前能一眼看出屏幕是否正被查看。
-        </div>
+        <>
+          {/* 控制是比查看更重的一档授权，所以单独一个开关、默认关闭：
+              开了"看屏幕"不等于把整台电脑交出去。 */}
+          <label className="remote-desktop-control-toggle">
+            <input
+              type="checkbox"
+              checked={props.control}
+              onChange={(event) => props.onControl(event.target.checked)}
+            />
+            <span className="remote-desktop-mode-label">允许对方操作我的键盘和鼠标</span>
+            <span className="remote-desktop-mode-hint">
+              不勾选时对方只能看，不能点击或输入。Win+L 锁屏一律拦截——锁上之后只能你本人到电脑前解锁。
+            </span>
+          </label>
+          <div className="ai-settings-note">
+            共享期间界面顶部会常驻红色提示条，无法隐藏——这样你回到电脑前能一眼看出屏幕是否正被查看。
+          </div>
+        </>
       )}
     </section>
   )

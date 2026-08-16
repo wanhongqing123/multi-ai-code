@@ -21,7 +21,8 @@ const config: RemoteImConfig = {
   allowedUserIds: ['friend-a', 'desktop-b'],
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 1200,
-  remoteDesktopMode: 'disabled'
+  remoteDesktopMode: 'disabled',
+  remoteDesktopControl: false
 }
 
 describe('remote IM peer messages', () => {

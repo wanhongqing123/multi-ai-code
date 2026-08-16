@@ -46,8 +46,10 @@ const config: RemoteImConfig = {
   slaveUserIds: [],
   allowedUserIds: ['master_desktop'],
   outputFlushIntervalMs: 2000,
-  outputMaxChunkChars: 4,
-  remoteDesktopMode: 'disabled'
+  outputMaxChunkChars: 4
+,
+  remoteDesktopMode: 'disabled',
+  remoteDesktopControl: false
 }
 
 function createState(
@@ -449,8 +451,10 @@ describe('remote IM output forwarding', () => {
 
   it('forwards compatible Claude marker content without consuming the route', () => {
     const state = createState(readReplyFixture('claude-id-open-legacy-close.txt'), {
-      outputMaxChunkChars: 500,
-      remoteDesktopMode: 'disabled'
+      outputMaxChunkChars: 500
+,
+      remoteDesktopMode: 'disabled',
+      remoteDesktopControl: false
     })
     state.replyId = 'rim-current'
     state.sourceKind = 'claude'
@@ -534,8 +538,10 @@ describe('remote IM output forwarding', () => {
 
   it('replays a Codex current reply fixture with TUI noise before forwarding', () => {
     const state = createState(readReplyFixture('codex-current-reply-with-tui-noise.txt'), {
-      outputMaxChunkChars: 500,
-      remoteDesktopMode: 'disabled'
+      outputMaxChunkChars: 500
+,
+      remoteDesktopMode: 'disabled',
+      remoteDesktopControl: false
     })
     state.replyId = 'rim-current'
     state.sourceKind = 'codex'
@@ -599,8 +605,10 @@ describe('remote IM output forwarding', () => {
 
   it('forwards a markerless source-confirmed final reply without intermediate output', () => {
     const state = createState('intermediate text without markers', {
-      outputMaxChunkChars: 500,
-      remoteDesktopMode: 'disabled'
+      outputMaxChunkChars: 500
+,
+      remoteDesktopMode: 'disabled',
+      remoteDesktopControl: false
     })
     state.replyId = 'rim-current'
     state.sourceKind = 'opencode'
@@ -1160,8 +1168,10 @@ describe('remote IM output forwarding', () => {
       `${REMOTE_IM_REPLY_CLOSE_TAG}\r\n`
     ].join('')
     const state = createState(terminalRenderedTable, {
-      outputMaxChunkChars: 500,
-      remoteDesktopMode: 'disabled'
+      outputMaxChunkChars: 500
+,
+      remoteDesktopMode: 'disabled',
+      remoteDesktopControl: false
     })
     state.transcript = {
       kind: 'claude',
@@ -1266,8 +1276,10 @@ describe('remote IM output forwarding', () => {
 
   it('keeps an incomplete tagged reply buffered until the close tag arrives', () => {
     const state = createState(`noise\n${REMOTE_IM_REPLY_OPEN_TAG}\nhello`, {
-      outputMaxChunkChars: 100,
-      remoteDesktopMode: 'disabled'
+      outputMaxChunkChars: 100
+,
+      remoteDesktopMode: 'disabled',
+      remoteDesktopControl: false
     })
     const messages: CreateRemoteImMessageInput[] = []
     const sentTexts: string[] = []

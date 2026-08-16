@@ -14,7 +14,8 @@ function setup() {
       { sourceId: 's0', sourceName: 'Screen1', isMainScreen: true, width: 1920, height: 1080 }
     ],
     startSharing,
-    stopSharing: async () => {}
+    stopSharing: async () => {},
+    setInputGate: () => {}
   }
   const sendText = vi.fn(async (_toUserId: string, _text: string) => {})
   const host = createRemoteDesktopHost({
@@ -82,7 +83,8 @@ describe('renderer remote desktop host', () => {
           { sourceId: 's0', sourceName: 'Screen1', isMainScreen: true, width: 1920, height: 1080 }
         ],
         startSharing,
-        stopSharing: async () => {}
+        stopSharing: async () => {},
+        setInputGate: () => {}
       },
       getSettings: () => live,
       getCredentials: async () => ({ sdkAppId: 1, userId: 'host-pc', userSig: 'sig' }),
@@ -120,7 +122,8 @@ describe('renderer remote desktop host', () => {
         throw new Error('boom')
       },
       startSharing: async () => {},
-      stopSharing: async () => {}
+      stopSharing: async () => {},
+      setInputGate: () => {}
     }
     const host = createRemoteDesktopHost({
       engine,

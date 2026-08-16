@@ -24,6 +24,11 @@ import {
 export interface RemoteDesktopSettingsSnapshot {
   mode: RemoteDesktopHostMode
   allowedUserIds: string[]
+  /**
+   * 是否允许对端操作本机键鼠。独立于 mode：无人值守只授权了"看"，
+   * 不该顺带把整台电脑交出去，所以默认关闭、要单独开一次。
+   */
+  allowRemoteControl?: boolean
 }
 
 export interface RemoteDesktopControllerDeps {
@@ -180,6 +185,8 @@ export class RemoteDesktopController {
 
       this.geometryRevision += 1
       this.setState('sharing', fromUserId, signal.sessionId ?? null)
+      // 控制开关是独立授权：没开就连门禁都不下推，引擎那侧收到输入包直接丢。
+      this.applyInputGate(settings, fromUserId, signal.sessionId ?? null, source)
       // 几何必须在 accept 里带上：主控端要靠它把远端坐标换算回真实像素，
       // 缺了它对端只能猜，区域采集或补边时会整体偏移。
       await this.reply(fromUserId, {
@@ -191,6 +198,7 @@ export class RemoteDesktopController {
     } catch (error) {
       // 进房失败必须如实回拒，否则对端会一直卡在"连接中"。
       // 同时落一条日志：对端只看得到一句话，本机要留下能查的现场。
+      this.deps.engine.setInputGate(null)
       this.deps.logger?.('remote-desktop: start sharing failed', {
         fromUserId,
         sessionId: signal.sessionId ?? null,
@@ -207,16 +215,48 @@ export class RemoteDesktopController {
     }
   }
 
+  /**
+   * 共享成功后决定是否放开输入。
+   *
+   * 门禁只在这里下推一次，之后 30Hz 的输入全在引擎那侧处理——逐事件跨进程
+   * 往返的延迟和开销都不可接受。判定仍用 session.ts 那套条件，没有第二份实现。
+   */
+  private applyInputGate(
+    settings: RemoteDesktopSettingsSnapshot,
+    peerUserId: string,
+    sessionId: string | null,
+    source: RemoteDesktopCaptureSource
+  ): void {
+    // 没开控制、或这场会话没有 ID（无从绑定），一律不放行。
+    if (!settings.allowRemoteControl || !sessionId) {
+      this.deps.engine.setInputGate(null)
+      this.deps.logger?.('remote-desktop: remote control disabled', {
+        allowRemoteControl: settings.allowRemoteControl === true,
+        hasSessionId: Boolean(sessionId)
+      })
+      return
+    }
+    this.deps.engine.setInputGate({
+      sessionId,
+      peerUserId,
+      // 采集的是整屏，所以采集区就是这块屏本身。归一化坐标按它换算回像素。
+      captureScreen: { left: 0, top: 0, width: source.width, height: source.height }
+    })
+    this.deps.logger?.('remote-desktop: remote control enabled', { peerUserId, sessionId })
+  }
+
   private async handlePeerGone(fromUserId: string): Promise<void> {
     // 只认当前会话的对端：别人发来的 stop 不能掐掉正在进行的共享。
     if (this.peerUserId && fromUserId.trim() !== this.peerUserId) return
     const decision = decideOnPeerGone(this.hostState)
+    this.deps.engine.setInputGate(null)
     if (decision.action === 'stopSharing') await this.deps.engine.stopSharing()
     this.setState('idle', null, null)
   }
 
   /** 本地主动停止（设置里关掉、或用户点了指示条上的停止）。 */
   async stopByLocalUser(): Promise<void> {
+    this.deps.engine.setInputGate(null)
     if (this.hostState !== 'sharing') {
       this.setState('idle', null, null)
       return

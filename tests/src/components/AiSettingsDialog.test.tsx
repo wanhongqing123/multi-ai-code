@@ -15,7 +15,8 @@ const LOADED_IM_CONFIG = {
   enabled: true,
   friendUserIds: ['whq-iphone'],
   allowedUserIds: ['whq-iphone'],
-  remoteDesktopMode: 'disabled'
+  remoteDesktopMode: 'disabled',
+  remoteDesktopControl: false
 } as unknown as RemoteImConfig
 
 function renderDialog(overrides: Partial<ComponentProps<typeof AiSettingsDialog>> = {}) {
@@ -259,6 +260,7 @@ describe('AiSettingsDialog', () => {
         projectId: 'project-1',
         loaded: LOADED_IM_CONFIG,
         mode: 'unattended',
+        control: false,
         setConfig
       })
     ).resolves.toBe(saved)
@@ -278,6 +280,7 @@ describe('AiSettingsDialog', () => {
         projectId: 'project-1',
         loaded: LOADED_IM_CONFIG,
         mode: 'disabled',
+        control: false,
         setConfig
       })
     ).resolves.toBeNull()
@@ -289,7 +292,13 @@ describe('AiSettingsDialog', () => {
     const setConfig = vi.fn()
 
     await expect(
-      saveRemoteDesktopMode({ projectId: 'project-1', loaded: null, mode: 'unattended', setConfig })
+      saveRemoteDesktopMode({
+        projectId: 'project-1',
+        loaded: null,
+        mode: 'unattended',
+        control: false,
+        setConfig
+      })
     ).resolves.toBeNull()
 
     expect(setConfig).not.toHaveBeenCalled()
@@ -310,6 +319,7 @@ describe('AiSettingsDialog', () => {
         projectId: 'project-1',
         loaded: LOADED_IM_CONFIG,
         mode: 'unattended',
+        control: false,
         setConfig: vi.fn().mockResolvedValue({ ok: true, value: merged })
       })
     ).resolves.toBe(merged)
@@ -321,6 +331,7 @@ describe('AiSettingsDialog', () => {
         projectId: 'project-1',
         loaded: LOADED_IM_CONFIG,
         mode: 'unattended',
+        control: false,
         setConfig: vi.fn().mockResolvedValue({ ok: false, error: 'config locked' })
       })
     ).rejects.toThrow('config locked')

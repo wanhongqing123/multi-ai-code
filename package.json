@@ -33,6 +33,7 @@
     "better-sqlite3": "^11.3.0",
     "diff": "^9.0.0",
     "iconv-lite": "^0.6.3",
+    "koffi": "^3.1.5",
     "mermaid": "^11.15.0",
     "node-pty": "^1.0.0",
     "react-markdown": "^10.1.0",
@@ -75,6 +76,7 @@
     "asarUnpack": [
       "node_modules/better-sqlite3/**",
       "node_modules/iconv-lite/**",
+      "node_modules/koffi/**",
       "node_modules/node-pty/**",
       "node_modules/safer-buffer/**",
       "node_modules/trtc-electron-sdk/**",

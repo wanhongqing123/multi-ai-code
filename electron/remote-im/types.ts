@@ -23,6 +23,11 @@ export interface RemoteImConfig {
    * 允许连入的账号复用 allowedUserIds（IM 好友白名单）。
    */
   remoteDesktopMode: RemoteDesktopMode
+  /**
+   * 是否允许对端操作本机键鼠。独立于 remoteDesktopMode：
+   * 开了"看屏幕"不等于把整台电脑交出去，必须再单独授权一次。
+   */
+  remoteDesktopControl: boolean
 }
 
 export type RemoteDesktopMode = 'disabled' | 'attended' | 'unattended'

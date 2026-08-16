@@ -23,7 +23,8 @@ const masterConfig: RemoteImConfig = {
   slaveUserIds: ['slave-b'],
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 1200,
-  remoteDesktopMode: 'disabled'
+  remoteDesktopMode: 'disabled',
+  remoteDesktopControl: false
 }
 
 const slaveConfig: RemoteImConfig = {

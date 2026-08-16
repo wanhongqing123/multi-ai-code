@@ -35,6 +35,7 @@ import type { AiPermissionMode, AiSettings } from './settings/types.js'
 import type {
   RemoteDesktopCaptureSource,
   RemoteDesktopEnterRoomParams,
+  RemoteDesktopInputGate,
   RemoteDesktopEngine
 } from './remote-desktop/engine.js'
 import { createTrtcRemoteDesktopEngine } from './remote-desktop/preloadEngine.js'
@@ -378,7 +379,10 @@ const api = {
     listScreenSources: () => getRemoteDesktopEngine().listScreenSources(),
     startSharing: (params: RemoteDesktopEnterRoomParams, source: RemoteDesktopCaptureSource) =>
       getRemoteDesktopEngine().startSharing(params, source),
-    stopSharing: () => getRemoteDesktopEngine().stopSharing()
+    stopSharing: () => getRemoteDesktopEngine().stopSharing(),
+    // 远程输入门禁。null = 不接受任何远程输入（未共享 / 用户没开控制开关）。
+    setInputGate: (gate: RemoteDesktopInputGate | null) =>
+      getRemoteDesktopEngine().setInputGate(gate)
   },
   remoteIm: {
     getConfig: (projectId: string) =>

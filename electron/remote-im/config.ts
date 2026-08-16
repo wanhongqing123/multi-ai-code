@@ -20,7 +20,8 @@ export const DEFAULT_REMOTE_IM_CONFIG: RemoteImConfig = {
   allowedUserIds: [],
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 4000,
-  remoteDesktopMode: 'disabled'
+  remoteDesktopMode: 'disabled',
+  remoteDesktopControl: false
 }
 
 const LEGACY_DEFAULT_OUTPUT_MAX_CHUNK_CHARS = 1200
@@ -106,7 +107,9 @@ export function normalizeRemoteImConfig(value: unknown): RemoteImConfig {
     allowedUserIds,
     outputFlushIntervalMs: normalizeNumber(raw.outputFlushIntervalMs, 2000, 1000, 30_000),
     outputMaxChunkChars: normalizeOutputMaxChunkChars(raw.outputMaxChunkChars),
-    remoteDesktopMode: normalizeRemoteDesktopMode(raw.remoteDesktopMode)
+    remoteDesktopMode: normalizeRemoteDesktopMode(raw.remoteDesktopMode),
+    // 只有显式 true 才算开：配置损坏时必须收紧，不能变成"默认可被操作"。
+    remoteDesktopControl: raw.remoteDesktopControl === true
   }
 }
 
@@ -124,6 +127,7 @@ export function toRemoteImProjectConfig(config: RemoteImConfig): RemoteImConfig 
     outputMaxChunkChars: config.outputMaxChunkChars,
     // 必须显式透传：这个函数以 DEFAULT 为底，漏掉就会在每次保存时把用户
     // 开启过的远程桌面悄悄重置回 disabled。
-    remoteDesktopMode: config.remoteDesktopMode
+    remoteDesktopMode: config.remoteDesktopMode,
+    remoteDesktopControl: config.remoteDesktopControl
   }
 }

@@ -252,8 +252,25 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
     // 也只能在这里加载，同侧就不需要主进程↔渲染进程的请求/响应桥。
     // 信令在这里被消费掉、不再往主进程转发，因此不可能被 router 当成普通消息
     // 路由给 AICLI。
+    const writeRemoteDesktopLog = (message: string, detail?: Record<string, unknown>): void => {
+      const projectId = props.projectId
+      if (!projectId) return
+      void window.api.remoteIm.writeRuntimeLog({
+        projectId,
+        sdkAppId: props.config.sdkAppId,
+        desktopUserId: props.config.desktopUserId,
+        event: message,
+        detail: detail ?? {}
+      })
+    }
     const remoteDesktopHost = createRemoteDesktopHost({
-      engine: createTrtcRemoteDesktopEngine(),
+      // 引擎的日志在 preload 里写（SDK 只能活在那儿），这里只把项目身份交过去，
+      // 否则那些日志落不到项目下就查不到。
+      engine: createTrtcRemoteDesktopEngine({
+        projectId: props.projectId,
+        sdkAppId: props.config.sdkAppId,
+        desktopUserId: props.config.desktopUserId
+      }),
       getSettings: () => remoteDesktopSettingsRef.current,
       getCredentials: async () => ({
         sdkAppId: props.config.sdkAppId ?? 0,
@@ -273,17 +290,7 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
       onStateChanged: (state) => {
         if (!cancelled) onRemoteDesktopStateChangedRef.current?.(state)
       },
-      logger: (message, detail) => {
-        const projectId = props.projectId
-        if (!projectId) return
-        void window.api.remoteIm.writeRuntimeLog({
-          projectId,
-          sdkAppId: props.config.sdkAppId,
-          desktopUserId: props.config.desktopUserId,
-          event: message,
-          detail: detail ?? {}
-        })
-      }
+      logger: writeRemoteDesktopLog
     })
     remoteDesktopHostRef.current = remoteDesktopHost
     props.onRemoteDesktopHostReady?.(() => remoteDesktopHost.stopByLocalUser())

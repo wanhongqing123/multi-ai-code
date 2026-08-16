@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resolveTrtcCloud } from '../../../electron/remote-desktop/preloadEngine.js'
+import { resolveTrtcCloud, summarize } from '../../../electron/remote-desktop/preloadEngine.js'
 
 class FakeTrtcCloud {
   static getTRTCShareInstance(): never {
@@ -33,6 +33,31 @@ describe('resolveTrtcCloud', () => {
     // 但能用的是里层那个。挑选必须按「谁有这个方法」，不是按层级先后。
     const outerWithoutStatic = { default: { default: FakeTrtcCloud } }
     expect(resolveTrtcCloud(outerWithoutStatic)).toBe(FakeTrtcCloud)
+  })
+
+  it('summarizes log payloads without leaking credentials', () => {
+    // 排障日志会被贴进聊天窗口发给我看，凭证绝不能跟着出去。
+    const summarized = summarize({
+      userSig: 'eJyrVgrxCdZLrSjILEpVsl',
+      secretKey: 'abc',
+      apiToken: 'xyz',
+      roomId: 'room-42',
+      sdkAppId: 1400000000
+    }) as Record<string, unknown>
+
+    expect(summarized.userSig).toBe('[redacted:22]')
+    expect(summarized.secretKey).toBe('[redacted:3]')
+    expect(summarized.apiToken).toBe('[redacted:3]')
+    // 房间号和 appId 必须留着，双机对不上房间时全靠它们对账。
+    expect(summarized.roomId).toBe('room-42')
+    expect(summarized.sdkAppId).toBe(1400000000)
+  })
+
+  it('keeps log payloads small', () => {
+    // TRTC 事件可能带庞大的原生对象，原样写进日志会把日志冲垮。
+    expect(summarize('x'.repeat(500))).toHaveLength(201)
+    expect(summarize([1, 2, 3])).toBe('[array:3]')
+    expect((summarize({ nested: { deep: 1 } }) as Record<string, unknown>).nested).toBe('[object]')
   })
 
   it('fails loudly instead of returning something unusable', () => {

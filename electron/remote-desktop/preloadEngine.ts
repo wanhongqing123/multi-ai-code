@@ -24,6 +24,25 @@ const TRTC_APP_SCENE_VIDEO_CALL = 0
 const SCREEN_CAPTURE_SOURCE_TYPE_SCREEN = 0
 const ENTER_ROOM_TIMEOUT_MS = 15000
 
+/**
+ * 进房等待期间旁听的 TRTC 事件。
+ *
+ * 只监听 onEnterRoom / onError 的话，两个都不来就只剩一句「进房超时」，
+ * 没有任何线索——第一次线上失败就是这样，只能靠猜。这些事件本身不改变
+ * 判定，纯粹是为了让超时报告能说出「这 15 秒里到底来了什么」。
+ */
+const OBSERVED_ENTER_ROOM_EVENTS = [
+  'onError',
+  'onWarning',
+  'onEnterRoom',
+  'onExitRoom',
+  'onConnectionLost',
+  'onTryToReconnect',
+  'onConnectionRecovery',
+  'onSwitchRole',
+  'onFirstVideoFrame'
+] as const
+
 interface TrtcSdkSource {
   sourceId: string
   sourceName: string
@@ -84,16 +103,55 @@ export function resolveTrtcCloud(mod: unknown): TrtcCloudClass {
   throw new Error('TRTC SDK 加载异常：找不到 getTRTCShareInstance')
 }
 
-export function createTrtcRemoteDesktopEngine(): RemoteDesktopEngine {
+export type RemoteDesktopEngineLogger = (
+  message: string,
+  detail?: Record<string, unknown>
+) => void
+
+/**
+ * TRTC 事件的参数原样塞进日志会有两个问题：可能带凭证，也可能是庞大的
+ * 原生对象。这里只留够定位问题的部分。
+ */
+export function summarize(value: unknown): unknown {
+  if (value === null || value === undefined) return value
+  if (typeof value === 'string') return value.length > 200 ? `${value.slice(0, 200)}…` : value
+  if (typeof value === 'number' || typeof value === 'boolean') return value
+  if (Array.isArray(value)) return `[array:${value.length}]`
+  if (typeof value === 'object') {
+    const out: Record<string, unknown> = {}
+    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+      if (/sig|token|secret|key/i.test(key)) {
+        out[key] = typeof item === 'string' ? `[redacted:${item.length}]` : '[redacted]'
+        continue
+      }
+      out[key] = typeof item === 'object' && item !== null ? '[object]' : item
+    }
+    return out
+  }
+  return String(value)
+}
+
+export function createTrtcRemoteDesktopEngine(
+  logger?: RemoteDesktopEngineLogger
+): RemoteDesktopEngine {
   let instance: TrtcInstance | null = null
   let sharing = false
+  const log = (message: string, detail?: Record<string, unknown>): void => {
+    try {
+      logger?.(`remote-desktop-engine: ${message}`, detail)
+    } catch {
+      // 记日志本身失败绝不能连累共享流程。
+    }
+  }
 
   async function ensureInstance(): Promise<TrtcInstance> {
     if (instance) return instance
     // 动态 import 而不是顶层 import：SDK 带 29MB 原生二进制，没开远程桌面的
     // 用户不该在每次启动时都为它付加载成本。
     const mod: unknown = await import('trtc-electron-sdk')
-    instance = resolveTrtcCloud(mod).getTRTCShareInstance()
+    const cloud = resolveTrtcCloud(mod)
+    instance = cloud.getTRTCShareInstance()
+    log('sdk ready')
     return instance
   }
 
@@ -110,13 +168,22 @@ export function createTrtcRemoteDesktopEngine(): RemoteDesktopEngine {
       // 报错了对方的坐标换算会整体偏移。
       const width = Math.round(window.screen.width * window.devicePixelRatio)
       const height = Math.round(window.screen.height * window.devicePixelRatio)
-      return listRawSources(trtc).map((item) => ({
+      const sources = listRawSources(trtc).map((item) => ({
         sourceId: item.sourceId,
         sourceName: item.sourceName,
         isMainScreen: item.isMainScreen === true,
         width,
         height
       }))
+      // 一个源都没有会一路走到「没有可用的屏幕采集源」，但那时已经进过房了；
+      // 在源头记一笔，好区分是采集权限问题还是房间问题。
+      log('listed screen sources', {
+        count: sources.length,
+        names: sources.map((item) => item.sourceName).slice(0, 4),
+        width,
+        height
+      })
+      return sources
     },
 
     async startSharing(
@@ -126,6 +193,18 @@ export function createTrtcRemoteDesktopEngine(): RemoteDesktopEngine {
       const trtc = await ensureInstance()
 
       await new Promise<void>((resolve, reject) => {
+        // 这 15 秒里 SDK 说过什么，全记下来。超时不带上它就只是一句
+        // 「进房超时」，查不下去。
+        const seen: string[] = []
+        const observers = OBSERVED_ENTER_ROOM_EVENTS.map((event) => {
+          const handler = (...args: unknown[]): void => {
+            seen.push(event)
+            log(`trtc event ${event}`, { args: args.map((a) => summarize(a)) })
+          }
+          trtc.on(event, handler)
+          return { event, handler }
+        })
+
         const onEnter = (result: unknown) => {
           cleanup()
           // 约定：正数是进房耗时（成功），负数是错误码。
@@ -133,6 +212,7 @@ export function createTrtcRemoteDesktopEngine(): RemoteDesktopEngine {
             reject(new Error(`进房失败：${result}`))
             return
           }
+          log('entered room', { elapsedMs: typeof result === 'number' ? result : null })
           resolve()
         }
         const onError = (code: unknown, message: unknown) => {
@@ -141,16 +221,33 @@ export function createTrtcRemoteDesktopEngine(): RemoteDesktopEngine {
         }
         const timer = setTimeout(() => {
           cleanup()
-          reject(new Error('进房超时'))
+          reject(
+            new Error(
+              seen.length
+                ? `进房超时（${ENTER_ROOM_TIMEOUT_MS / 1000}s 内只收到：${[...new Set(seen)].join('、')}）`
+                : `进房超时（${ENTER_ROOM_TIMEOUT_MS / 1000}s 内没有收到任何 TRTC 事件）`
+            )
+          )
         }, ENTER_ROOM_TIMEOUT_MS)
         function cleanup(): void {
           clearTimeout(timer)
           trtc.off?.('onEnterRoom', onEnter)
           trtc.off?.('onError', onError)
+          for (const { event, handler } of observers) trtc.off?.(event, handler)
         }
 
         trtc.on('onEnterRoom', onEnter)
         trtc.on('onError', onError)
+        // userSig 是凭证，只记长度和指纹位；房间号和 userId 必须记全，
+        // 双机对不上房间时就靠这两行对账。
+        log('entering room', {
+          sdkAppId: params.sdkAppId,
+          userId: params.userId,
+          roomId: params.roomId,
+          roomIdField: 'strRoomId',
+          userSigLength: params.userSig?.length ?? 0,
+          scene: TRTC_APP_SCENE_VIDEO_CALL
+        })
         trtc.enterRoom(
           {
             sdkAppId: params.sdkAppId,
@@ -171,6 +268,12 @@ export function createTrtcRemoteDesktopEngine(): RemoteDesktopEngine {
         trtc.exitRoom()
         throw new Error('没有可用的屏幕采集源')
       }
+      log('selecting capture target', {
+        requested: source.sourceId,
+        used: target.sourceId,
+        name: target.sourceName,
+        fellBack: target.sourceId !== source.sourceId
+      })
       trtc.selectScreenCaptureTarget(
         target,
         { left: 0, top: 0, right: 0, bottom: 0 },
@@ -179,11 +282,13 @@ export function createTrtcRemoteDesktopEngine(): RemoteDesktopEngine {
       // view 传 null：被控端自己不需要预览，省一块渲染开销。
       trtc.startScreenCapture(null, TRTC_VIDEO_STREAM_TYPE_SUB, null)
       sharing = true
+      log('screen capture started', { streamType: TRTC_VIDEO_STREAM_TYPE_SUB })
     },
 
     async stopSharing(): Promise<void> {
       // 停止路径会被多个事件触发（对端 stop、本地停止、IM 断开），必须可重复调用。
       if (!instance) return
+      log('stopping', { wasSharing: sharing })
       if (sharing) {
         try {
           instance.stopScreenCapture()

@@ -190,6 +190,14 @@ export class RemoteDesktopController {
       })
     } catch (error) {
       // 进房失败必须如实回拒，否则对端会一直卡在"连接中"。
+      // 同时落一条日志：对端只看得到一句话，本机要留下能查的现场。
+      this.deps.logger?.('remote-desktop: start sharing failed', {
+        fromUserId,
+        sessionId: signal.sessionId ?? null,
+        roomId,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack?.split('\n').slice(0, 4).join('\n') : undefined
+      })
       this.setState('idle', null, null)
       await this.reply(fromUserId, {
         type: 'reject',

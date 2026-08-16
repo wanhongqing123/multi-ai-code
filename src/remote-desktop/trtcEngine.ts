@@ -8,8 +8,18 @@
 
 import type { RemoteDesktopEngine } from '../../electron/remote-desktop/engine.js'
 
-export function createTrtcRemoteDesktopEngine(): RemoteDesktopEngine {
+export interface RemoteDesktopLogContext {
+  projectId?: string | null
+  sdkAppId?: number | null
+  desktopUserId?: string | null
+}
+
+export function createTrtcRemoteDesktopEngine(
+  logContext?: RemoteDesktopLogContext
+): RemoteDesktopEngine {
   const bridge = window.api.remoteDesktop
+  // 引擎的日志在 preload 里写，但项目身份只有这边知道，先交过去。
+  if (logContext) bridge.setLogContext(logContext)
   return {
     listScreenSources: () => bridge.listScreenSources(),
     startSharing: (params, source) => bridge.startSharing(params, source),

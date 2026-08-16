@@ -273,9 +273,20 @@ export interface JudgeExternalReviewRequest {
 }
 
 let remoteDesktopEngine: RemoteDesktopEngine | null = null
+// 引擎住在 preload，但日志要归到具体项目下才查得到，而项目身份只有渲染层
+// 知道。渲染层建 host 时先设一次，之后引擎每条日志都带上它。
+let remoteDesktopLogContext: {
+  projectId?: string | null
+  sdkAppId?: number | null
+  desktopUserId?: string | null
+} = {}
 
 function getRemoteDesktopEngine(): RemoteDesktopEngine {
-  remoteDesktopEngine ??= createTrtcRemoteDesktopEngine()
+  remoteDesktopEngine ??= createTrtcRemoteDesktopEngine((event, detail) => {
+    void ipcRenderer.invoke('remote-im:write-runtime-log', {
+      entry: { ...remoteDesktopLogContext, event, detail: detail ?? {} }
+    })
+  })
   return remoteDesktopEngine
 }
 
@@ -356,6 +367,14 @@ const api = {
   // DOM 访问而失败，渲染进程又是 nodeIntegration:false 拿不到 require。
   // 引擎是惰性创建的，没开启远程桌面的用户不会加载那 29MB 原生二进制。
   remoteDesktop: {
+    /** 让引擎的排障日志能归到项目下；不设也能用，只是日志少了归属。 */
+    setLogContext: (context: {
+      projectId?: string | null
+      sdkAppId?: number | null
+      desktopUserId?: string | null
+    }) => {
+      remoteDesktopLogContext = context
+    },
     listScreenSources: () => getRemoteDesktopEngine().listScreenSources(),
     startSharing: (params: RemoteDesktopEnterRoomParams, source: RemoteDesktopCaptureSource) =>
       getRemoteDesktopEngine().startSharing(params, source),

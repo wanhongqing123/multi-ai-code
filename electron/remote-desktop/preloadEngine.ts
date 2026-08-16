@@ -51,6 +51,39 @@ interface TrtcInstance {
   stopScreenCapture(): void
 }
 
+interface TrtcCloudClass {
+  getTRTCShareInstance(): TrtcInstance
+}
+
+/**
+ * 从动态 import 的结果里挑出 TRTCCloud 类。
+ *
+ * 包是 CJS（`exports.default = TRTCCloud`），而 preload 打出来是 ESM，
+ * 于是 Node 把整个 `module.exports` 塞进 `mod.default`——真正的类落在
+ * `mod.default.default`。直接取 `mod.default` 拿到的是导出对象，调用时报
+ * 「sdk.getTRTCShareInstance is not a function」。
+ *
+ * 三种形状都试，是因为这层 interop 取决于谁来打包：Node 原生 ESM 加载器、
+ * 尊重 __esModule 的打包器、还是直接 require，结果各不相同。与其赌一种，
+ * 不如认「哪个上面有这个方法就用哪个」。
+ */
+export function resolveTrtcCloud(mod: unknown): TrtcCloudClass {
+  const holder = mod as {
+    default?: { default?: unknown } | unknown
+  }
+  const candidates = [
+    (holder as { default?: { default?: unknown } })?.default?.default,
+    holder?.default,
+    mod
+  ]
+  for (const candidate of candidates) {
+    if (typeof (candidate as TrtcCloudClass | undefined)?.getTRTCShareInstance === 'function') {
+      return candidate as TrtcCloudClass
+    }
+  }
+  throw new Error('TRTC SDK 加载异常：找不到 getTRTCShareInstance')
+}
+
 export function createTrtcRemoteDesktopEngine(): RemoteDesktopEngine {
   let instance: TrtcInstance | null = null
   let sharing = false
@@ -60,11 +93,7 @@ export function createTrtcRemoteDesktopEngine(): RemoteDesktopEngine {
     // 动态 import 而不是顶层 import：SDK 带 29MB 原生二进制，没开远程桌面的
     // 用户不该在每次启动时都为它付加载成本。
     const mod: unknown = await import('trtc-electron-sdk')
-    const holder = mod as { default?: { getTRTCShareInstance(): TrtcInstance } } & {
-      getTRTCShareInstance?(): TrtcInstance
-    }
-    const sdk = holder.default ?? (holder as { getTRTCShareInstance(): TrtcInstance })
-    instance = sdk.getTRTCShareInstance()
+    instance = resolveTrtcCloud(mod).getTRTCShareInstance()
     return instance
   }
 

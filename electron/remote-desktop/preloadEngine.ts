@@ -16,12 +16,25 @@ import type {
   RemoteDesktopEngine
 } from './engine.js'
 
-/** TRTCVideoStreamType.Sub：屏幕共享走辅路。 */
-const TRTC_VIDEO_STREAM_TYPE_SUB = 1
+/**
+ * TRTCVideoStreamType.Sub：屏幕共享走辅路。
+ *
+ * 是 2 不是 1——1 是 Small。之前写成 1 能跑纯属侥幸：startScreenCapture 里有
+ * 「非 Sub/Big 一律纠正为 Sub」的兜底，把错值悄悄改对了。但统计和事件回报的
+ * streamType 是真实的 2，拿 1 去比对就永远匹配不上。
+ */
+export const TRTC_VIDEO_STREAM_TYPE_SUB = 2
 /** TRTCAppScene.VideoCall：不区分角色，sendCustomCmdMsg 天然可用。 */
 const TRTC_APP_SCENE_VIDEO_CALL = 0
 /** TRTCScreenCaptureSourceType.Screen：整屏，不是窗口。 */
 const SCREEN_CAPTURE_SOURCE_TYPE_SCREEN = 0
+// 编码取值与 MaiChat 的 ScreenShareEncodingPolicy 保持一致，两端表现才一样。
+/** TRTCVideoResolution_1920_1080 的稳定枚举值。 */
+const SCREEN_SHARE_RESOLUTION_1920_1080 = 114
+/** TRTCVideoResolutionModeLandscape。 */
+const SCREEN_SHARE_RESOLUTION_MODE_LANDSCAPE = 0
+const SCREEN_SHARE_FPS = 10
+const SCREEN_SHARE_BITRATE_KBPS = 1600
 const ENTER_ROOM_TIMEOUT_MS = 15000
 
 /**
@@ -61,11 +74,10 @@ interface TrtcInstance {
     iconWidth: number,
     iconHeight: number
   ): TrtcSdkSource[]
-  selectScreenCaptureTarget(
-    source: TrtcSdkSource,
-    rect: { left: number; top: number; right: number; bottom: number },
-    options: Record<string, unknown>
-  ): void
+  // rect / options 的类型故意写成 object 而不是结构化字面量：SDK 用
+  // instanceof 校验，只有它自己的 Rect / TRTCScreenCaptureProperty 实例
+  // 才作数，写成 { left: number; ... } 会诱导下一个人传对象字面量。
+  selectScreenCaptureTarget(source: TrtcSdkSource, rect: object, options: object): void
   startScreenCapture(view: unknown, streamType: number, params: unknown): void
   stopScreenCapture(): void
 }
@@ -103,35 +115,35 @@ export function resolveTrtcCloud(mod: unknown): TrtcCloudClass {
   throw new Error('TRTC SDK 加载异常：找不到 getTRTCShareInstance')
 }
 
-interface TrtcParamsClass {
-  new (): Record<string, unknown>
+interface SdkClass {
+  new (...args: unknown[]): Record<string, unknown>
 }
 
 /**
- * 从 SDK 模块里取出 TRTCParams 构造函数。
+ * 从 SDK 模块里按名字取出一个构造函数。
  *
- * 为什么非得用它、不能传对象字面量——trtc.js 的 enterRoom 第一行是：
+ * 为什么非得构造真实例、不能传对象字面量——trtc.js 里到处是这种守卫：
  *
  *   if (params instanceof TRTCParams) { this.rtcCloud.enterRoom(...) }
  *   else { this.logger.error('params is not instanceof TRTCParams!') }
  *
- * 传普通对象不会抛错、不会返回失败，只往它自己的 logger 写一行就结束了。
- * 原生调用根本没发生，于是 onEnterRoom / onError 一个都不会来，表现就是
- * 「进房超时」——查了半天以为是凭证、代理、上下文的问题，其实调用压根没出去。
+ * 传普通对象不抛错、不返回失败码，只往 SDK 自己的 logger 写一行就结束，
+ * 原生调用根本没发生。这个故障模式已经咬过三次：
+ *   enterRoom                → 静默不进房，表现为「进房超时」
+ *   selectScreenCaptureTarget → 静默不选源，表现为对端「已连接但黑屏」
+ * 所以凡是 SDK 带 instanceof 守卫的入参，一律走这里构造。
  *
  * 与 resolveTrtcCloud 同理，三种 interop 形状都试。
  */
-export function resolveTrtcParams(mod: unknown): TrtcParamsClass {
-  const holder = mod as { default?: { default?: unknown; TRTCParams?: unknown }; TRTCParams?: unknown }
-  const candidates = [
-    holder?.TRTCParams,
-    holder?.default?.TRTCParams,
-    (holder?.default?.default as { TRTCParams?: unknown } | undefined)?.TRTCParams
-  ]
-  for (const candidate of candidates) {
-    if (typeof candidate === 'function') return candidate as TrtcParamsClass
+export function resolveSdkClass(mod: unknown, name: string): SdkClass {
+  const holder = mod as Record<string, unknown> & {
+    default?: Record<string, unknown> & { default?: Record<string, unknown> }
   }
-  throw new Error('TRTC SDK 加载异常：找不到 TRTCParams')
+  const candidates = [holder?.[name], holder?.default?.[name], holder?.default?.default?.[name]]
+  for (const candidate of candidates) {
+    if (typeof candidate === 'function') return candidate as SdkClass
+  }
+  throw new Error(`TRTC SDK 加载异常：找不到 ${name}`)
 }
 
 export type RemoteDesktopEngineLogger = (
@@ -166,7 +178,12 @@ export function createTrtcRemoteDesktopEngine(
   logger?: RemoteDesktopEngineLogger
 ): RemoteDesktopEngine {
   let instance: TrtcInstance | null = null
-  let trtcParamsClass: TrtcParamsClass | null = null
+  let sdk: {
+    TRTCParams: SdkClass
+    Rect: SdkClass
+    TRTCScreenCaptureProperty: SdkClass
+    TRTCVideoEncParam: SdkClass
+  } | null = null
   let sharing = false
   const log = (message: string, detail?: Record<string, unknown>): void => {
     try {
@@ -182,7 +199,13 @@ export function createTrtcRemoteDesktopEngine(
     // 用户不该在每次启动时都为它付加载成本。
     const mod: unknown = await import('trtc-electron-sdk')
     const cloud = resolveTrtcCloud(mod)
-    trtcParamsClass = resolveTrtcParams(mod)
+    // 一次性全取出来：缺任何一个都该在这里炸，而不是等到调用时被静默丢弃。
+    sdk = {
+      TRTCParams: resolveSdkClass(mod, 'TRTCParams'),
+      Rect: resolveSdkClass(mod, 'Rect'),
+      TRTCScreenCaptureProperty: resolveSdkClass(mod, 'TRTCScreenCaptureProperty'),
+      TRTCVideoEncParam: resolveSdkClass(mod, 'TRTCVideoEncParam')
+    }
     instance = cloud.getTRTCShareInstance()
     log('sdk ready')
     return instance
@@ -281,8 +304,8 @@ export function createTrtcRemoteDesktopEngine(
           userSigLength: params.userSig?.length ?? 0,
           scene: TRTC_APP_SCENE_VIDEO_CALL
         })
-        // 必须是 TRTCParams 实例，不能是对象字面量：见 resolveTrtcParams 的注释。
-        const enterParams = new trtcParamsClass!()
+        // 必须是 TRTCParams 实例，不能是对象字面量：见 resolveSdkClass 的注释。
+        const enterParams = new sdk!.TRTCParams()
         enterParams.sdkAppId = params.sdkAppId
         enterParams.userId = params.userId
         enterParams.userSig = params.userSig
@@ -305,15 +328,33 @@ export function createTrtcRemoteDesktopEngine(
         name: target.sourceName,
         fellBack: target.sourceId !== source.sourceId
       })
-      trtc.selectScreenCaptureTarget(
-        target,
-        { left: 0, top: 0, right: 0, bottom: 0 },
-        { enableCaptureMouse: true, enableHighlightBorder: false }
+      // captureRect / property 必须是 Rect 和 TRTCScreenCaptureProperty 的实例。
+      // 传对象字面量时 trtc.js:3595 的 instanceof 不成立，会落到旧式 6 参数
+      // 重载，参数不足又只写一行日志——采集目标从未被选中，startScreenCapture
+      // 照常运行却一帧不产出，对端表现为「已连接但黑屏」。
+      const captureRect = new sdk!.Rect(0, 0, 0, 0)
+      const captureProperty = new sdk!.TRTCScreenCaptureProperty(true, false, false)
+      trtc.selectScreenCaptureTarget(target, captureRect, captureProperty)
+
+      // 编码参数照抄 MaiChat 的取舍：远程办公看的是静态界面不是视频，
+      // 优先保清晰度（文字要能看清），帧率压到 10fps 省带宽；关闭弱网动态
+      // 分辨率，免得会话中编码几何变化让主控端的坐标映射失准。
+      const encParam = new sdk!.TRTCVideoEncParam(
+        SCREEN_SHARE_RESOLUTION_1920_1080,
+        SCREEN_SHARE_RESOLUTION_MODE_LANDSCAPE,
+        SCREEN_SHARE_FPS,
+        SCREEN_SHARE_BITRATE_KBPS,
+        0,
+        false
       )
       // view 传 null：被控端自己不需要预览，省一块渲染开销。
-      trtc.startScreenCapture(null, TRTC_VIDEO_STREAM_TYPE_SUB, null)
+      trtc.startScreenCapture(null, TRTC_VIDEO_STREAM_TYPE_SUB, encParam)
       sharing = true
-      log('screen capture started', { streamType: TRTC_VIDEO_STREAM_TYPE_SUB })
+      log('screen capture started', {
+        streamType: TRTC_VIDEO_STREAM_TYPE_SUB,
+        fps: SCREEN_SHARE_FPS,
+        bitrateKbps: SCREEN_SHARE_BITRATE_KBPS
+      })
     },
 
     async stopSharing(): Promise<void> {

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  TRTC_VIDEO_STREAM_TYPE_SUB,
   resolveTrtcCloud,
-  resolveTrtcParams,
+  resolveSdkClass,
   summarize
 } from '../../../electron/remote-desktop/preloadEngine.js'
 
@@ -50,26 +51,55 @@ describe('resolveTrtcCloud', () => {
   })
 })
 
-class FakeTRTCParams {}
+class FakeSdkClass {}
 
-describe('resolveTrtcParams', () => {
-  // enterRoom 的第一行是 `if (params instanceof TRTCParams)`，else 分支只写一行
-  // 日志——传对象字面量不会抛错也不会失败，原生调用直接没发生，表现为「进房超时」。
-  // 实测过：换成 TRTCParams 实例后 137ms 进房成功。
-  it('finds TRTCParams across every interop shape', () => {
-    expect(resolveTrtcParams({ TRTCParams: FakeTRTCParams })).toBe(FakeTRTCParams)
-    expect(resolveTrtcParams({ default: { TRTCParams: FakeTRTCParams } })).toBe(FakeTRTCParams)
-    expect(resolveTrtcParams({ default: { default: { TRTCParams: FakeTRTCParams } } })).toBe(
-      FakeTRTCParams
+describe('resolveSdkClass', () => {
+  // SDK 到处用 instanceof 校验入参，传对象字面量既不抛错也不返回失败，
+  // 只往它自己的 logger 写一行——原生调用根本没发生。已经咬过三次：
+  //   enterRoom                 → 静默不进房，表现为「进房超时」
+  //   selectScreenCaptureTarget → 静默不选源，表现为对端「已连接但黑屏」
+  // 实测：换成真实例后 137ms 进房成功。
+  it('finds a class across every interop shape', () => {
+    expect(resolveSdkClass({ Rect: FakeSdkClass }, 'Rect')).toBe(FakeSdkClass)
+    expect(resolveSdkClass({ default: { Rect: FakeSdkClass } }, 'Rect')).toBe(FakeSdkClass)
+    expect(resolveSdkClass({ default: { default: { Rect: FakeSdkClass } } }, 'Rect')).toBe(
+      FakeSdkClass
     )
   })
 
-  it('throws rather than let enterRoom silently do nothing', () => {
-    // 拿不到构造函数时必须当场炸。退回对象字面量的话，enterRoom 会被静默丢弃，
-    // 而这个故障模式极难查——正是这次绕了一大圈的原因。
-    for (const bad of [null, undefined, {}, { default: {} }, { TRTCParams: 'nope' }]) {
-      expect(() => resolveTrtcParams(bad), String(bad)).toThrow('TRTCParams')
+  it('resolves every class the engine constructs', () => {
+    // 少任何一个都会让对应的调用被静默丢弃，所以四个都要能取到。
+    const mod = {
+      default: {
+        default: {
+          TRTCParams: FakeSdkClass,
+          Rect: FakeSdkClass,
+          TRTCScreenCaptureProperty: FakeSdkClass,
+          TRTCVideoEncParam: FakeSdkClass
+        }
+      }
     }
+    for (const name of ['TRTCParams', 'Rect', 'TRTCScreenCaptureProperty', 'TRTCVideoEncParam']) {
+      expect(resolveSdkClass(mod, name), name).toBe(FakeSdkClass)
+    }
+  })
+
+  it('throws rather than let the SDK silently drop the call', () => {
+    // 取不到就当场炸。退回对象字面量的话，调用会被静默丢弃，
+    // 而这个故障模式极难查——正是前面绕了三大圈的原因。
+    for (const bad of [null, undefined, {}, { default: {} }, { Rect: 'nope' }]) {
+      expect(() => resolveSdkClass(bad, 'Rect'), String(bad)).toThrow('Rect')
+    }
+  })
+})
+
+describe('screen share stream type', () => {
+  it('uses Sub (2), not Small (1)', () => {
+    // TRTCVideoStreamType: Big=0, Small=1, Sub=2。曾经写成 1 还能跑纯属侥幸——
+    // startScreenCapture 有「非 Sub/Big 一律纠正为 Sub」的兜底，把错值悄悄改对了。
+    // 但统计和事件回报的 streamType 是真实的 2，拿 1 去比对就永远匹配不上，
+    // 排障时会看到「一帧都没有」的假象。
+    expect(TRTC_VIDEO_STREAM_TYPE_SUB).toBe(2)
   })
 })
 

@@ -773,12 +773,16 @@ async function setRemoteImConfig(
     config,
     await getRemoteImAccountForProject(config)
   )
-  broadcastStatus({
-    projectId,
-    state: 'disconnected',
-    detail: null,
-    updatedAt: Date.now()
-  })
+  // 这里**不能**广播 disconnected。写项目配置改变不了连接：toRemoteImProjectConfig
+  // 会剥掉所有连接相关字段（凭证、账号、provider 都存在账号库里），
+  // config.test.ts 的「strips every connection-relevant field」守着这个前提。
+  // 状态的真源是渲染层的 remote-im:report-status；账号真的变了由
+  // resetRemoteImStatusesAfterAccountChange 单独重置。
+  //
+  // 曾经这里是无条件广播 disconnected 的，因为当时唯一的调用方是登录流程——
+  // 紧接着就重连并上报真实状态，假状态活不过一瞬。等到保存 remoteDesktopMode
+  // 也走这条路，而它又故意不触发重连，假状态就再也没人纠正：连接明明好好的，
+  // 徽标却一直显示未连接。
   return {
     ok: true,
     value: mergedConfig,

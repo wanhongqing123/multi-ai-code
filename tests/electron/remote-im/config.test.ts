@@ -162,4 +162,32 @@ describe('remote desktop mode in remote IM config', () => {
     const config = { ...DEFAULT_REMOTE_IM_CONFIG, remoteDesktopMode: 'unattended' as const }
     expect(toRemoteImProjectConfig(config).remoteDesktopMode).toBe('unattended')
   })
+
+  it('strips every connection-relevant field from the project config', () => {
+    // setRemoteImConfig 据此认定「写项目配置改变不了连接」，所以保存时不再广播
+    // disconnected。要是哪天这里开始保留某个连接字段，那个假设就不成立了：
+    // 保存可能真的需要重连，而状态却没人重置——先在这里炸，比线上徽标说谎好。
+    const connectionFields = [
+      'provider',
+      'sdkAppId',
+      'desktopUserId',
+      'userSigMode',
+      'userSigEndpoint',
+      'userSigSecretKey'
+    ] as const
+
+    const converted = toRemoteImProjectConfig({
+      ...DEFAULT_REMOTE_IM_CONFIG,
+      provider: 'tencent-im',
+      sdkAppId: 1400000000,
+      desktopUserId: 'someone-else',
+      userSigMode: 'secret',
+      userSigEndpoint: 'https://sig.example.test/sign',
+      userSigSecretKey: 'super-secret'
+    } as never)
+
+    for (const field of connectionFields) {
+      expect(converted[field], field).toEqual(DEFAULT_REMOTE_IM_CONFIG[field])
+    }
+  })
 })

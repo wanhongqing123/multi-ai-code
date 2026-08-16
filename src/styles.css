@@ -1360,10 +1360,16 @@ html, body, #root {
   background: var(--mac-primary);
 }
 
+/* 卡片之间要留白：只有一张卡时不需要，加了「远程桌面」后两张直接贴在一起，
+   第二张的标题被挤在交界处。间距比卡内的 sp-4 大一档，卡与卡的分界才比
+   卡内各行的分界更明显。 */
 .ai-settings-content {
   min-width: 0;
   overflow-y: auto;
   padding: var(--mac-sp-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--mac-sp-5);
 }
 
 .ai-settings-section-anchor {

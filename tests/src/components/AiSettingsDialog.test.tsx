@@ -182,6 +182,19 @@ describe('AiSettingsDialog', () => {
     expect(shellRule).not.toContain('grid-template-columns: 252px')
   })
 
+  // 从「远程桌面」开始设置里不止一张卡了，卡与卡之间必须留白，
+  // 否则第二张的标题会被挤在两张卡的交界线上。
+  it('spaces the settings cards apart', () => {
+    const css = readFileSync(fileURLToPath(new URL('../../../src/styles.css', import.meta.url)), 'utf8')
+    const contentIndex = css.indexOf('\n.ai-settings-content {')
+    const contentRule = css.slice(contentIndex, css.indexOf('}', contentIndex))
+
+    expect(contentIndex).toBeGreaterThan(-1)
+    expect(contentRule).toContain('flex-direction: column')
+    // 间距比卡内的 sp-4 大一档，卡的分界才比卡内各行的分界更明显。
+    expect(contentRule).toContain('gap: var(--mac-sp-5)')
+  })
+
   it('uses compact form text inside the larger settings modal', () => {
     const css = readFileSync(fileURLToPath(new URL('../../../src/styles.css', import.meta.url)), 'utf8')
     const inputRuleIndex = css.indexOf(".ai-settings-card label > input:not([type='checkbox'])")

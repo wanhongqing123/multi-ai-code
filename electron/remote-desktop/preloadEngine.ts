@@ -103,6 +103,37 @@ export function resolveTrtcCloud(mod: unknown): TrtcCloudClass {
   throw new Error('TRTC SDK 加载异常：找不到 getTRTCShareInstance')
 }
 
+interface TrtcParamsClass {
+  new (): Record<string, unknown>
+}
+
+/**
+ * 从 SDK 模块里取出 TRTCParams 构造函数。
+ *
+ * 为什么非得用它、不能传对象字面量——trtc.js 的 enterRoom 第一行是：
+ *
+ *   if (params instanceof TRTCParams) { this.rtcCloud.enterRoom(...) }
+ *   else { this.logger.error('params is not instanceof TRTCParams!') }
+ *
+ * 传普通对象不会抛错、不会返回失败，只往它自己的 logger 写一行就结束了。
+ * 原生调用根本没发生，于是 onEnterRoom / onError 一个都不会来，表现就是
+ * 「进房超时」——查了半天以为是凭证、代理、上下文的问题，其实调用压根没出去。
+ *
+ * 与 resolveTrtcCloud 同理，三种 interop 形状都试。
+ */
+export function resolveTrtcParams(mod: unknown): TrtcParamsClass {
+  const holder = mod as { default?: { default?: unknown; TRTCParams?: unknown }; TRTCParams?: unknown }
+  const candidates = [
+    holder?.TRTCParams,
+    holder?.default?.TRTCParams,
+    (holder?.default?.default as { TRTCParams?: unknown } | undefined)?.TRTCParams
+  ]
+  for (const candidate of candidates) {
+    if (typeof candidate === 'function') return candidate as TrtcParamsClass
+  }
+  throw new Error('TRTC SDK 加载异常：找不到 TRTCParams')
+}
+
 export type RemoteDesktopEngineLogger = (
   message: string,
   detail?: Record<string, unknown>
@@ -135,6 +166,7 @@ export function createTrtcRemoteDesktopEngine(
   logger?: RemoteDesktopEngineLogger
 ): RemoteDesktopEngine {
   let instance: TrtcInstance | null = null
+  let trtcParamsClass: TrtcParamsClass | null = null
   let sharing = false
   const log = (message: string, detail?: Record<string, unknown>): void => {
     try {
@@ -150,6 +182,7 @@ export function createTrtcRemoteDesktopEngine(
     // 用户不该在每次启动时都为它付加载成本。
     const mod: unknown = await import('trtc-electron-sdk')
     const cloud = resolveTrtcCloud(mod)
+    trtcParamsClass = resolveTrtcParams(mod)
     instance = cloud.getTRTCShareInstance()
     log('sdk ready')
     return instance
@@ -248,15 +281,13 @@ export function createTrtcRemoteDesktopEngine(
           userSigLength: params.userSig?.length ?? 0,
           scene: TRTC_APP_SCENE_VIDEO_CALL
         })
-        trtc.enterRoom(
-          {
-            sdkAppId: params.sdkAppId,
-            userId: params.userId,
-            userSig: params.userSig,
-            strRoomId: params.roomId
-          },
-          TRTC_APP_SCENE_VIDEO_CALL
-        )
+        // 必须是 TRTCParams 实例，不能是对象字面量：见 resolveTrtcParams 的注释。
+        const enterParams = new trtcParamsClass!()
+        enterParams.sdkAppId = params.sdkAppId
+        enterParams.userId = params.userId
+        enterParams.userSig = params.userSig
+        enterParams.strRoomId = params.roomId
+        trtc.enterRoom(enterParams, TRTC_APP_SCENE_VIDEO_CALL)
       })
 
       // 必须先选目标再开采集：采集器没有源时一帧都不产出，而且不报错，

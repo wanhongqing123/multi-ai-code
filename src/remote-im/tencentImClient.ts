@@ -618,7 +618,14 @@ export function extractTencentImAudioMessages(event: unknown): TencentImAudioMes
   })
 }
 
-async function requestUserSig(config: RemoteImConfig): Promise<string> {
+/**
+ * 按账号配置取 userSig：secret-key 本地算，endpoint 走凭证接口。
+ *
+ * 导出是给远程桌面用的：TRTC 和 IM 同 sdkAppId、同 userId，签名必须
+ * 用同一套规则算出来。远程桌面那边原先无条件本地生成，账号是 endpoint
+ * 模式时 secretKey 为空，直接抛「内置连接凭证无效」。
+ */
+export async function requestUserSig(config: RemoteImConfig): Promise<string> {
   if (config.userSigMode === 'secret-key') {
     return generateTencentUserSig({
       sdkAppId: config.sdkAppId ?? 0,

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { resolveTrtcCloud, summarize } from '../../../electron/remote-desktop/preloadEngine.js'
+import {
+  resolveTrtcCloud,
+  resolveTrtcParams,
+  summarize
+} from '../../../electron/remote-desktop/preloadEngine.js'
 
 class FakeTrtcCloud {
   static getTRTCShareInstance(): never {
@@ -35,6 +39,41 @@ describe('resolveTrtcCloud', () => {
     expect(resolveTrtcCloud(outerWithoutStatic)).toBe(FakeTrtcCloud)
   })
 
+  it('fails loudly instead of returning something unusable', () => {
+    // 静默返回一个没有该方法的对象，错误会推迟到 getTRTCShareInstance() 调用处，
+    // 报出来的信息就跟这次线上一样含糊。
+    for (const bad of [null, undefined, {}, { default: {} }, { default: { default: {} } }, 42]) {
+      expect(() => resolveTrtcCloud(bad), JSON.stringify(bad) ?? String(bad)).toThrow(
+        'getTRTCShareInstance'
+      )
+    }
+  })
+})
+
+class FakeTRTCParams {}
+
+describe('resolveTrtcParams', () => {
+  // enterRoom 的第一行是 `if (params instanceof TRTCParams)`，else 分支只写一行
+  // 日志——传对象字面量不会抛错也不会失败，原生调用直接没发生，表现为「进房超时」。
+  // 实测过：换成 TRTCParams 实例后 137ms 进房成功。
+  it('finds TRTCParams across every interop shape', () => {
+    expect(resolveTrtcParams({ TRTCParams: FakeTRTCParams })).toBe(FakeTRTCParams)
+    expect(resolveTrtcParams({ default: { TRTCParams: FakeTRTCParams } })).toBe(FakeTRTCParams)
+    expect(resolveTrtcParams({ default: { default: { TRTCParams: FakeTRTCParams } } })).toBe(
+      FakeTRTCParams
+    )
+  })
+
+  it('throws rather than let enterRoom silently do nothing', () => {
+    // 拿不到构造函数时必须当场炸。退回对象字面量的话，enterRoom 会被静默丢弃，
+    // 而这个故障模式极难查——正是这次绕了一大圈的原因。
+    for (const bad of [null, undefined, {}, { default: {} }, { TRTCParams: 'nope' }]) {
+      expect(() => resolveTrtcParams(bad), String(bad)).toThrow('TRTCParams')
+    }
+  })
+})
+
+describe('remote desktop log payloads', () => {
   it('summarizes log payloads without leaking credentials', () => {
     // 排障日志会被贴进聊天窗口发给我看，凭证绝不能跟着出去。
     const summarized = summarize({
@@ -60,13 +99,4 @@ describe('resolveTrtcCloud', () => {
     expect((summarize({ nested: { deep: 1 } }) as Record<string, unknown>).nested).toBe('[object]')
   })
 
-  it('fails loudly instead of returning something unusable', () => {
-    // 静默返回一个没有该方法的对象，错误会推迟到 getTRTCShareInstance() 调用处，
-    // 报出来的信息就跟这次线上一样含糊。
-    for (const bad of [null, undefined, {}, { default: {} }, { default: { default: {} } }, 42]) {
-      expect(() => resolveTrtcCloud(bad), JSON.stringify(bad) ?? String(bad)).toThrow(
-        'getTRTCShareInstance'
-      )
-    }
-  })
 })

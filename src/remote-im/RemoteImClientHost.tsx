@@ -16,7 +16,7 @@ import {
 import { createRemoteImRuntimeSlot } from './remoteImRuntimeSlot.js'
 import {
   connectTencentImClient,
-  generateTencentUserSig,
+  requestUserSig,
   type TencentImRuntime
 } from './tencentImClient.js'
 import { createRemoteDesktopHost, type RemoteDesktopHost } from '../remote-desktop/host.js'
@@ -275,12 +275,10 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
       getCredentials: async () => ({
         sdkAppId: props.config.sdkAppId ?? 0,
         userId: props.config.desktopUserId.trim(),
-        // 复用 IM 的签名：TRTC 与 IM 同 sdkAppId、同 userId，一个 sig 两边都认。
-        userSig: await generateTencentUserSig({
-          sdkAppId: props.config.sdkAppId ?? 0,
-          userId: props.config.desktopUserId.trim(),
-          secretKey: props.config.userSigSecretKey
-        })
+        // 与 IM 完全同一条取签名的路径：TRTC 与 IM 同 sdkAppId、同 userId，
+        // 一个 sig 两边都认。原先这里无条件本地生成，账号配成 endpoint 模式时
+        // secretKey 为空，直接抛「内置连接凭证无效」。
+        userSig: await requestUserSig(props.config)
       }),
       sendText: async (toUserId, text) => {
         const runtime = ownedRuntime

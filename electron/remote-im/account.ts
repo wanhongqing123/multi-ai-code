@@ -1,7 +1,6 @@
 import { promises as fs } from 'fs'
 import { join } from 'path'
 import type { RemoteImAccountConfig, RemoteImConfig } from './types.js'
-import { migrateRemoteImCredential } from './credentials.js'
 
 const ACCOUNT_FILE = 'remote-im-account.json'
 
@@ -58,10 +57,7 @@ export function normalizeRemoteImAccountConfig(value: unknown): RemoteImAccountC
   const raw = value as Partial<Record<keyof RemoteImAccountConfig, unknown>>
   const userSigEndpoint = normalizeString(raw.userSigEndpoint)
   const userSigSecretKey = normalizeString(raw.userSigSecretKey)
-  const credential = migrateRemoteImCredential({
-    sdkAppId: normalizeSdkAppId(raw.sdkAppId),
-    userSigSecretKey
-  })
+  const sdkAppId = normalizeSdkAppId(raw.sdkAppId)
   const userSigMode =
     raw.userSigMode === 'secret-key' || (!raw.userSigMode && userSigSecretKey && !userSigEndpoint)
       ? 'secret-key'
@@ -77,12 +73,12 @@ export function normalizeRemoteImAccountConfig(value: unknown): RemoteImAccountC
 
   return {
     provider: 'tencent-im',
-    sdkAppId: credential.sdkAppId,
+    sdkAppId,
     desktopUserId: normalizeString(raw.desktopUserId),
     desktopRole: 'master',
     userSigMode,
     userSigEndpoint,
-    userSigSecretKey: credential.userSigSecretKey,
+    userSigSecretKey,
     friendUserIds,
     masterUserIds: [],
     slaveUserIds: [],

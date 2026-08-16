@@ -4,7 +4,6 @@ import type {
   RemoteImValidationIssue,
   RemoteImValidationResult
 } from './types.js'
-import { migrateRemoteImCredential } from './credentials.js'
 
 export const DEFAULT_REMOTE_IM_CONFIG: RemoteImConfig = {
   enabled: true,
@@ -79,10 +78,7 @@ export function normalizeRemoteImConfig(value: unknown): RemoteImConfig {
   const raw = value as Partial<Record<keyof RemoteImConfig, unknown>>
   const userSigEndpoint = normalizeString(raw.userSigEndpoint)
   const userSigSecretKey = normalizeString(raw.userSigSecretKey)
-  const credential = migrateRemoteImCredential({
-    sdkAppId: normalizeSdkAppId(raw.sdkAppId),
-    userSigSecretKey
-  })
+  const sdkAppId = normalizeSdkAppId(raw.sdkAppId)
   const userSigMode =
     raw.userSigMode === 'secret-key' || (!raw.userSigMode && userSigSecretKey && !userSigEndpoint)
       ? 'secret-key'
@@ -98,12 +94,12 @@ export function normalizeRemoteImConfig(value: unknown): RemoteImConfig {
   return {
     enabled: true,
     provider: 'tencent-im',
-    sdkAppId: credential.sdkAppId,
+    sdkAppId,
     desktopUserId: normalizeString(raw.desktopUserId),
     desktopRole: 'master',
     userSigMode,
     userSigEndpoint,
-    userSigSecretKey: credential.userSigSecretKey,
+    userSigSecretKey,
     friendUserIds,
     masterUserIds: [],
     slaveUserIds: [],

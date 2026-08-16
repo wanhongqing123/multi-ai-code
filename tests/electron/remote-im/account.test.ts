@@ -56,24 +56,6 @@ describe('remote IM account config', () => {
     })
   })
 
-  it('migrates the previous built-in credential to the current credential', () => {
-    const account = normalizeRemoteImAccountConfig({
-      sdkAppId: 1400704311,
-      desktopUserId: 'mac-quark-pc',
-      desktopRole: 'slave',
-      userSigMode: 'secret-key',
-      userSigSecretKey: '8b897045d1ee4f067a745b1b6a3fb834d1bd4c5951de43282c21b945f98ec982'
-    })
-
-    expect(account).toMatchObject({
-      sdkAppId: 1600148979,
-      desktopUserId: 'mac-quark-pc',
-      desktopRole: 'master',
-      userSigMode: 'secret-key',
-      userSigSecretKey: 'aa18d554f5e4a235640745e98145e187977f87770b812b2b4f10ef032bd73861'
-    })
-  })
-
   it('persists the current profile account in the Electron userData directory', async () => {
     const userDataDir = await createTempDir()
     await writeRemoteImAccountConfig(userDataDir, {

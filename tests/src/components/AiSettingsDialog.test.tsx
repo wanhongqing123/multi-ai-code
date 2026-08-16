@@ -236,8 +236,11 @@ describe('AiSettingsDialog', () => {
   })
 
   it('writes the remote desktop mode back into the untouched IM config', async () => {
-    const setConfig = vi.fn().mockResolvedValue({ ok: true })
+    const saved = { ...LOADED_IM_CONFIG, remoteDesktopMode: 'unattended' }
+    const setConfig = vi.fn().mockResolvedValue({ ok: true, value: saved })
 
+    // 必须回吐主进程存下的那份配置：被控端是从 props.config 实时读开关的，
+    // 只写磁盘不回灌，开关要等切项目或重启才生效，界面却显示已保存。
     await expect(
       saveRemoteDesktopMode({
         projectId: 'project-1',
@@ -245,7 +248,7 @@ describe('AiSettingsDialog', () => {
         mode: 'unattended',
         setConfig
       })
-    ).resolves.toBe(true)
+    ).resolves.toBe(saved)
 
     // 整份配置回写，只改这一个字段——别处（好友列表等）不能被这次保存抹掉。
     expect(setConfig).toHaveBeenCalledWith('project-1', {
@@ -264,7 +267,7 @@ describe('AiSettingsDialog', () => {
         mode: 'disabled',
         setConfig
       })
-    ).resolves.toBe(false)
+    ).resolves.toBeNull()
 
     expect(setConfig).not.toHaveBeenCalled()
   })
@@ -274,9 +277,29 @@ describe('AiSettingsDialog', () => {
 
     await expect(
       saveRemoteDesktopMode({ projectId: 'project-1', loaded: null, mode: 'unattended', setConfig })
-    ).resolves.toBe(false)
+    ).resolves.toBeNull()
 
     expect(setConfig).not.toHaveBeenCalled()
+  })
+
+  it('returns the config the main process stored, not the one it sent', async () => {
+    // 主进程会把账号库里的凭证和联系人合并回来，回吐的这份才是完整的。
+    // 直接把发出去的那份灌回状态，会把好友列表抹成空。
+    const merged = {
+      ...LOADED_IM_CONFIG,
+      remoteDesktopMode: 'unattended',
+      desktopUserId: 'house-multi-ai-code',
+      friendUserIds: ['whq-iphone', 'house-iphone']
+    }
+
+    await expect(
+      saveRemoteDesktopMode({
+        projectId: 'project-1',
+        loaded: LOADED_IM_CONFIG,
+        mode: 'unattended',
+        setConfig: vi.fn().mockResolvedValue({ ok: true, value: merged })
+      })
+    ).resolves.toBe(merged)
   })
 
   it('surfaces a failed IM config write instead of closing silently', async () => {

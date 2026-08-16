@@ -45,6 +45,8 @@ export interface AiSettingsDialogProps {
   initial: AiSettings
   onClose: () => void
   onSaved: (next: AiSettings) => void
+  /** 远程桌面开关存在 remote-im 配置里，保存后要回灌应用状态才会立即生效。 */
+  onRemoteImConfigSaved?: (next: RemoteImConfig) => void
 }
 
 export function getProjectSettingsRepairToastMessage(
@@ -77,7 +79,7 @@ export interface SaveRemoteDesktopModeParams {
   setConfig: (
     projectId: string,
     config: RemoteImConfig
-  ) => Promise<{ ok: true } | { ok: false; error: string }>
+  ) => Promise<{ ok: true; value: RemoteImConfig } | { ok: false; error: string }>
 }
 
 /**
@@ -85,16 +87,22 @@ export interface SaveRemoteDesktopModeParams {
  *
  * 它和 AI 设置分属两个存储，所以单独走一趟；没改动就一次都不写，
  * 免得每次点保存都无谓改写整份 IM 配置（里面还有别处在改的字段）。
+ *
+ * 返回主进程回吐的整份配置（没写就是 null）。调用方必须把它交回应用状态：
+ * 被控端是从 props.config 实时读设置的，只写磁盘不回灌，开关要等切项目
+ * 或重启才生效——界面上却显示已经保存了。
  */
-export async function saveRemoteDesktopMode(params: SaveRemoteDesktopModeParams): Promise<boolean> {
+export async function saveRemoteDesktopMode(
+  params: SaveRemoteDesktopModeParams
+): Promise<RemoteImConfig | null> {
   const loaded = params.loaded
-  if (!loaded || loaded.remoteDesktopMode === params.mode) return false
+  if (!loaded || loaded.remoteDesktopMode === params.mode) return null
   const result = await params.setConfig(params.projectId, {
     ...loaded,
     remoteDesktopMode: params.mode
   })
   if (!result.ok) throw new Error(result.error)
-  return true
+  return result.value
 }
 
 function toEnvText(env: Record<string, string> | undefined): string {
@@ -268,12 +276,13 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
         if (repairToast) {
           showToast(repairToast, { level: 'success' })
         }
-        await saveRemoteDesktopMode({
+        const savedRemoteIm = await saveRemoteDesktopMode({
           projectId: props.projectId,
           loaded: remoteImConfig,
           mode: remoteDesktopMode,
           setConfig: window.api.remoteIm.setConfig
         })
+        if (savedRemoteIm) props.onRemoteImConfigSaved?.(savedRemoteIm)
       }
 
       props.onClose()

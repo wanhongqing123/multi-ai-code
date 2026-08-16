@@ -1238,6 +1238,12 @@ function AppShell() {
           projectId={currentProjectId}
           initial={aiSettings}
           onClose={() => setShowAiSettings(false)}
+          // 被控端从 props.config 实时读远程桌面开关，所以保存后必须把新配置
+          // 灌回这里，否则只有磁盘变了，运行时要等切项目或重启才认。
+          onRemoteImConfigSaved={(next) => {
+            setRemoteImConfig(next)
+            if (currentProjectId) setRemoteImConfigProjectId(currentProjectId)
+          }}
           onSaved={(next) => {
             // If the main-session CLI binary changes while a session is
             // mounted, the existing PTY is running the previous CLI — its

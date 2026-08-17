@@ -3,6 +3,7 @@ import { promisify } from 'node:util'
 import { join } from 'node:path'
 import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { RemoteImConfig, RemoteImStatus } from '../../../electron/remote-im/types.js'
 import { startRemoteImCliServer } from '../../../electron/remote-im/imcliServer.js'
@@ -10,6 +11,7 @@ import { startRemoteImCliServer } from '../../../electron/remote-im/imcliServer.
 const execFileAsync = promisify(execFile)
 const imcliWrapperPath = join(process.cwd(), 'bin', 'imcli')
 const imcliPath = join(process.cwd(), 'bin', 'imcli.mjs')
+const { withImcliOriginSuffix } = await import(pathToFileURL(imcliPath).href)
 
 const config: RemoteImConfig = {
   enabled: true,
@@ -270,7 +272,14 @@ describe('imcli command', () => {
       )
 
       expect(stdout).toContain('sent to agent-b')
-      expect(sendPeerMessage).toHaveBeenCalledWith('project-1', text, 'agent-b')
+      // 走 imcli 发出的正文一律带来源标注，所以这里不是原样的 text。
+      expect(sendPeerMessage).toHaveBeenCalledWith(
+        'project-1',
+        `${text}
+
+此消息来自 imcli`,
+        'agent-b'
+      )
       expect(authorizeCaller).toHaveBeenCalledWith('project-1', 'session-a')
     } finally {
       await bridge.close()
@@ -314,7 +323,14 @@ describe('imcli command', () => {
         }
       )
 
-      expect(sendPeerMessage).toHaveBeenCalledWith('project-1', text, 'agent-b')
+      // 正文必须逐字节原样送达；来源标注只追加在末尾，不改动正文本身。
+      // withImcliOriginSuffix(text) 展开就是 text + 分隔空行 + 标注，所以这一条
+      // 同时覆盖了"正文没被改动"和"标注加对了位置"两件事。
+      expect(sendPeerMessage).toHaveBeenCalledWith(
+        'project-1',
+        withImcliOriginSuffix(text),
+        'agent-b'
+      )
     } finally {
       await bridge.close()
     }
@@ -477,5 +493,27 @@ describe('imcli command', () => {
     } finally {
       await bridge.close()
     }
+  })
+})
+
+describe('imcli origin suffix', () => {
+  // 收件人要能一眼看出这条是机器通过 imcli 发的，而不是人在界面上打的。
+  it('appends the origin marker', () => {
+    expect(withImcliOriginSuffix('你好')).toBe('你好\n\n此消息来自 imcli')
+  })
+
+  it('separates the marker with a blank line so it does not glue onto the last sentence', () => {
+    expect(withImcliOriginSuffix('第一行\n第二行')).toBe('第一行\n第二行\n\n此消息来自 imcli')
+  })
+
+  it('does not stack the marker when the text already carries it', () => {
+    // 会撞上的场景：调用方手工加过，或转发自己先前经 imcli 发出的内容。
+    const once = withImcliOriginSuffix('你好')
+    expect(withImcliOriginSuffix(once)).toBe(once)
+  })
+
+  it('normalises trailing whitespace before appending', () => {
+    // 不处理的话正文尾部的换行会和分隔空行叠成好几行空白。
+    expect(withImcliOriginSuffix('你好\n\n  ')).toBe('你好\n\n此消息来自 imcli')
   })
 })

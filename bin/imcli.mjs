@@ -186,6 +186,29 @@ function decodeOutgoingText(rawArgs, usage) {
   return text
 }
 
+/**
+ * 给 imcli 发出的正文加来源标注。
+ *
+ * 加在这里而不是让调用方自己拼：--text-b64 是调用方在执行 imcli 之前就编码
+ * 好的，指望每个调用方都记得加，漏一次就没有。放在 imcli 内部才能保证"凡是
+ * 走 imcli 发出去的就一定带上"。
+ *
+ * 只用于 send / broadcast —— 这两条的正文是调用方当场写的，标注来源不会引起
+ * 误解。forward 复制的是别人（或以前的自己）写的原话，缀上这句会让收件人
+ * 以为它是原文的一部分；send-image / send-file 没有正文。
+ */
+const IMCLI_ORIGIN_SUFFIX = '此消息来自 imcli'
+
+export function withImcliOriginSuffix(text) {
+  const body = String(text ?? '').trimEnd()
+  // 已经带了就不再叠加：转发自己发过的内容、或调用方手工加过时都会撞上。
+  if (body.endsWith(IMCLI_ORIGIN_SUFFIX)) return body
+  // 空行隔开，避免和正文最后一句粘成一行。
+  return `${body}
+
+${IMCLI_ORIGIN_SUFFIX}`
+}
+
 async function requestJson(method, path, body) {
   const bridge = await loadBridge()
   const sessionId = process.env.MULTI_AI_CODE_SESSION_ID?.trim()
@@ -273,7 +296,7 @@ async function main(argv) {
     const [toUserId] = args
     const usage = `usage: imcli send <user> ${TEXT_B64_FLAG} <base64>`
     if (!toUserId) throw new Error(usage)
-    const text = decodeOutgoingText(rawArgs, usage)
+    const text = withImcliOriginSuffix(decodeOutgoingText(rawArgs, usage))
     const value = await requestJson('POST', '/send', { projectId, toUserId, text })
     console.log(`sent to ${value.toUserId}`)
     return
@@ -301,7 +324,7 @@ async function main(argv) {
     const [targets] = args
     const usage = `usage: imcli broadcast <user1,user2> ${TEXT_B64_FLAG} <base64>`
     if (!targets) throw new Error(usage)
-    const text = decodeOutgoingText(rawArgs, usage)
+    const text = withImcliOriginSuffix(decodeOutgoingText(rawArgs, usage))
     for (const toUserId of targets.split(',').map((item) => item.trim()).filter(Boolean)) {
       const value = await requestJson('POST', '/send', { projectId, toUserId, text })
       console.log(`sent to ${value.toUserId}`)

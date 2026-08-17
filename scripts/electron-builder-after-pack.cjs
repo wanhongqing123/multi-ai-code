@@ -87,4 +87,17 @@ module.exports = async function afterPack(context) {
       `[afterPack] Electron ABI ${nativeSummary.abi}; better-sqlite3 ${nativeSummary.sqliteVersion}; node-pty loaded`
     )
   }
+  if (platform === 'win32') {
+    // Windows 比 macOS 多两个原生模块：koffi（远程控制注入）和 TRTC SDK
+    // （远程桌面）。koffi 的二进制还在平台专属的 @koromix/koffi-win32-x64
+    // 里，不在 koffi 包内——只靠人工记得去验不可靠，必须进自动关卡。
+    const { verifyPackagedWindowsNativeModules } = await import(
+      './verify-packaged-native-modules.mjs'
+    )
+    const nativeSummary = verifyPackagedWindowsNativeModules(context.appOutDir)
+    const extras = Object.entries(nativeSummary.loaded ?? {})
+      .map(([name, detail]) => `${name} ${detail}`)
+      .join('; ')
+    console.log(`[afterPack] Electron ABI ${nativeSummary.abi}; ${extras}`)
+  }
 }

@@ -488,12 +488,13 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
         scheduleWheelFlush()
     }
 
-    func sendTextInput(_ text: String) {
-        guard !text.isEmpty else { return }
-        guard isControlEnabled else { return }
+    @discardableResult
+    func sendTextInput(_ text: String) -> Bool {
+        guard !text.isEmpty else { return false }
+        guard isControlEnabled else { return false }
         guard state == .viewing else {
             inputDiagnostics.recordBlockedByState()
-            return
+            return false
         }
         inputDiagnostics.recordText(
             characterCount: text.count,
@@ -505,6 +506,7 @@ final class RemoteDesktopSession: NSObject, ObservableObject {
         } else {
             scheduleTextFlush()
         }
+        return true
     }
 
     func sendKeyPress(_ keyCode: UInt32) {

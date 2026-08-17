@@ -17,6 +17,9 @@ private struct RemoteDesktopContent: View {
     @ObservedObject var session: RemoteDesktopSession
     let appState: RemoteIMAppState
     @State private var keyboardActive = false
+    @State private var keyboardDraft = ""
+    @State private var keyboardDraftFocused = true
+    @State private var keyboardSubmitRequest = 0
     @State private var zoomScale: CGFloat = 1
     @State private var zoomResetRequest = 0
     @State private var controlGestureHintVisible = false
@@ -26,7 +29,6 @@ private struct RemoteDesktopContent: View {
         ZStack {
             if session.state.isActive {
                 activeSession
-                    .ignoresSafeArea(.keyboard, edges: .bottom)
 
                 VStack(spacing: 0) {
                     header
@@ -55,6 +57,8 @@ private struct RemoteDesktopContent: View {
             controlGestureHintTask?.cancel()
             if !enabled {
                 keyboardActive = false
+                keyboardDraftFocused = true
+                keyboardDraft = ""
                 controlGestureHintVisible = false
             } else {
                 controlGestureHintVisible = true
@@ -69,6 +73,8 @@ private struct RemoteDesktopContent: View {
             if !isActive {
                 controlGestureHintTask?.cancel()
                 keyboardActive = false
+                keyboardDraftFocused = true
+                keyboardDraft = ""
                 controlGestureHintVisible = false
                 zoomScale = 1
                 zoomResetRequest &+= 1
@@ -149,6 +155,9 @@ private struct RemoteDesktopContent: View {
                     session.scrollPointer(delta: delta, x: x, y: y)
                 },
                 onCapture: { diagnostic in
+                    if keyboardActive {
+                        keyboardDraftFocused = false
+                    }
                     session.recordPointerCapture(diagnostic)
                 },
                 onZoomScaleChanged: { newScale in
@@ -236,7 +245,11 @@ private struct RemoteDesktopContent: View {
     }
 
     private var controlBar: some View {
-        ZStack {
+        VStack(spacing: 0) {
+            if session.isControlEnabled, keyboardActive {
+                remoteTextComposer
+            }
+
             HStack(spacing: 4) {
                 Spacer(minLength: 0)
 
@@ -254,7 +267,12 @@ private struct RemoteDesktopContent: View {
                         selected: keyboardActive,
                         accessibilityLabel: keyboardActive ? "收起键盘" : "显示键盘"
                     ) {
-                        keyboardActive.toggle()
+                        if keyboardActive {
+                            keyboardActive = false
+                        } else {
+                            keyboardDraftFocused = true
+                            keyboardActive = true
+                        }
                     }
 
                     remoteControlMenu
@@ -263,22 +281,112 @@ private struct RemoteDesktopContent: View {
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 8)
-
-            if session.isControlEnabled {
-                RemoteKeyboardCapture(
-                    traceID: session.diagnosticTraceID,
-                    isActive: keyboardActive,
-                    onText: session.sendTextInput,
-                    onKey: session.sendKeyPress
-                )
-                .frame(width: 1, height: 1)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-                .opacity(0.01)
-                .accessibilityHidden(true)
-            }
+            .frame(height: 44)
         }
         .frame(maxWidth: .infinity)
-        .frame(height: 44)
+    }
+
+    private var remoteTextComposer: some View {
+        HStack(spacing: 8) {
+            ZStack(alignment: .leading) {
+                RemoteKeyboardCapture(
+                    traceID: session.diagnosticTraceID,
+                    text: $keyboardDraft,
+                    isActive: keyboardActive,
+                    isDraftFocused: keyboardDraftFocused,
+                    submitRequest: keyboardSubmitRequest,
+                    onSubmit: sendKeyboardDraft,
+                    onDirectText: { value in
+                        _ = session.sendTextInput(value)
+                    },
+                    onDirectKey: session.sendKeyPress,
+                    onDismiss: {
+                        keyboardActive = false
+                        keyboardDraftFocused = true
+                    }
+                )
+
+                if keyboardDraftFocused, keyboardDraft.isEmpty {
+                    Text("输入远程文字")
+                        .font(.system(size: 15))
+                        .foregroundStyle(Color.white.opacity(0.46))
+                        .padding(.leading, 12)
+                        .allowsHitTesting(false)
+                }
+
+                if !keyboardDraftFocused {
+                    Button {
+                        keyboardDraftFocused = true
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "keyboard")
+                                .font(.system(size: 14, weight: .semibold))
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("键盘直接控制中")
+                                    .font(.system(size: 13, weight: .semibold))
+
+                                Text(
+                                    keyboardDraft.isEmpty
+                                        ? "点此编辑文字草稿"
+                                        : "草稿已保留，点此继续编辑"
+                                )
+                                .font(.system(size: 11))
+                                .foregroundStyle(Color.white.opacity(0.62))
+                            }
+
+                            Spacer(minLength: 0)
+                        }
+                        .foregroundStyle(Color.white)
+                        .padding(.horizontal, 12)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("返回远程文字草稿编辑")
+                }
+            }
+            .frame(height: 68)
+            .background(
+                keyboardDraftFocused
+                    ? Color.white.opacity(0.12)
+                    : Color.orange.opacity(0.2),
+                in: RoundedRectangle(cornerRadius: 12)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.white.opacity(0.14), lineWidth: 1)
+            }
+
+            Button {
+                keyboardDraftFocused = true
+                keyboardSubmitRequest &+= 1
+            } label: {
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(Color.white)
+                    .frame(width: 36, height: 36)
+                    .background(
+                        keyboardDraft.isEmpty
+                            ? Color.white.opacity(0.16)
+                            : Color.blue,
+                        in: Circle()
+                    )
+            }
+            .buttonStyle(.plain)
+            .disabled(keyboardDraft.isEmpty)
+            .accessibilityLabel("发送文字到远端")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Color.black.opacity(0.82))
+    }
+
+    private func sendKeyboardDraft(_ draft: String) {
+        guard !draft.isEmpty else { return }
+        if session.sendTextInput(draft) {
+            keyboardDraft = ""
+        }
     }
 
     private var remoteControlMenu: some View {
@@ -1112,19 +1220,26 @@ private final class RemotePointerUIView: UIView, UIGestureRecognizerDelegate {
 
 private struct RemoteKeyboardCapture: UIViewRepresentable {
     let traceID: String
+    @Binding var text: String
     let isActive: Bool
-    let onText: (String) -> Void
-    let onKey: (UInt32) -> Void
+    let isDraftFocused: Bool
+    let submitRequest: Int
+    let onSubmit: (String) -> Void
+    let onDirectText: (String) -> Void
+    let onDirectKey: (UInt32) -> Void
+    let onDismiss: () -> Void
 
     func makeUIView(context: Context) -> RemoteKeyboardInputTextView {
         let view = RemoteKeyboardInputTextView()
         update(view)
+        view.lastSubmitRequest = submitRequest
         return view
     }
 
     func updateUIView(_ uiView: RemoteKeyboardInputTextView, context: Context) {
         update(uiView)
         uiView.wantsKeyboard = isActive
+        uiView.submitIfRequested(submitRequest)
     }
 
     static func dismantleUIView(_ uiView: RemoteKeyboardInputTextView, coordinator: Void) {
@@ -1133,15 +1248,28 @@ private struct RemoteKeyboardCapture: UIViewRepresentable {
 
     private func update(_ view: RemoteKeyboardInputTextView) {
         view.traceID = traceID
-        view.onText = onText
-        view.onKey = onKey
+        view.onTextChange = { value in
+            text = value
+        }
+        view.onSubmit = onSubmit
+        view.onDirectText = onDirectText
+        view.onDirectKey = onDirectKey
+        view.onDismiss = onDismiss
+        view.updateDraftMode(isDraftFocused, draftText: text)
+        view.accessibilityLabel = isDraftFocused
+            ? "远程文字草稿"
+            : "远程键盘直接控制"
     }
 }
 
 private final class RemoteKeyboardInputTextView: UITextView, UITextViewDelegate {
     var traceID = "none"
-    var onText: ((String) -> Void)?
-    var onKey: ((UInt32) -> Void)?
+    var onTextChange: ((String) -> Void)?
+    var onSubmit: ((String) -> Void)?
+    var onDirectText: ((String) -> Void)?
+    var onDirectKey: ((UInt32) -> Void)?
+    var onDismiss: (() -> Void)?
+    var lastSubmitRequest = 0
     var wantsKeyboard = false {
         didSet {
             guard wantsKeyboard != oldValue else { return }
@@ -1155,13 +1283,20 @@ private final class RemoteKeyboardInputTextView: UITextView, UITextViewDelegate 
     }
 
     private var focusRequestID = 0
+    private var isDraftMode = true
+    private var pendingDraftMode: Bool?
+    private var modeTransitionID = 0
 
     override init(frame: CGRect, textContainer: NSTextContainer?) {
         super.init(frame: frame, textContainer: textContainer)
         delegate = self
         backgroundColor = .clear
-        textColor = .clear
-        tintColor = .clear
+        textColor = .white
+        tintColor = .systemBlue
+        font = .preferredFont(forTextStyle: .body)
+        adjustsFontForContentSizeCategory = true
+        textContainerInset = UIEdgeInsets(top: 8, left: 7, bottom: 8, right: 7)
+        self.textContainer.lineFragmentPadding = 0
         autocorrectionType = .no
         autocapitalizationType = .none
         spellCheckingType = .no
@@ -1194,15 +1329,19 @@ private final class RemoteKeyboardInputTextView: UITextView, UITextViewDelegate 
     }
 
     override func deleteBackward() {
-        if text.isEmpty, markedTextRange == nil {
-            onKey?(0x08)
+        if !isDraftMode, text.isEmpty, markedTextRange == nil {
+            onDirectKey?(0x08)
             return
         }
         super.deleteBackward()
     }
 
     func textViewDidChange(_ textView: UITextView) {
-        flushCommittedText()
+        if isDraftMode {
+            onTextChange?(textView.text ?? "")
+        } else {
+            flushDirectText()
+        }
     }
 
     func textViewDidEndEditing(_ textView: UITextView) {
@@ -1212,7 +1351,12 @@ private final class RemoteKeyboardInputTextView: UITextView, UITextViewDelegate 
             fields: ["still_requested": wantsKeyboard ? "true" : "false"]
         )
         if wantsKeyboard {
-            requestKeyboardFocus()
+            // The system keyboard can be dismissed without tapping our toolbar
+            // button. Treat that as the source of truth instead of immediately
+            // becoming first responder again, otherwise SwiftUI keeps the old
+            // keyboard inset and exposes a large blank area below the desktop.
+            wantsKeyboard = false
+            onDismiss?()
         }
     }
 
@@ -1222,66 +1366,161 @@ private final class RemoteKeyboardInputTextView: UITextView, UITextViewDelegate 
         replacementText replacement: String
     ) -> Bool {
         guard textView.markedTextRange == nil else { return true }
+        if !isDraftMode {
+            if replacement == "\n" || replacement == "\r\n" {
+                flushDirectText()
+                onDirectKey?(0x0D)
+                return false
+            }
+            if replacement == "\t" {
+                flushDirectText()
+                onDirectKey?(0x09)
+                return false
+            }
+            return true
+        }
         if replacement == "\n" || replacement == "\r\n" {
-            flushCommittedText()
-            onKey?(0x0D)
+            // Drafts are sent only through the explicit button. Remote Return
+            // remains a separate command in the control menu, so typing cannot
+            // accidentally execute a command on the controlled computer.
             return false
         }
         if replacement == "\t" {
-            flushCommittedText()
-            onKey?(0x09)
+            return false
+        }
+        let sanitized = replacement
+            .replacingOccurrences(of: "\r\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\t", with: " ")
+        if sanitized != replacement,
+           let start = textView.position(
+               from: textView.beginningOfDocument,
+               offset: range.location
+           ),
+           let end = textView.position(from: start, offset: range.length),
+           let textRange = textView.textRange(from: start, to: end) {
+            textView.replace(textRange, withText: sanitized)
+            onTextChange?(textView.text ?? "")
             return false
         }
         return true
     }
 
-    private func flushCommittedText() {
-        guard markedTextRange == nil, !text.isEmpty else { return }
-        let committedText = text ?? ""
+    func updateDraftMode(_ draftMode: Bool, draftText: String) {
+        if isDraftMode == draftMode {
+            if pendingDraftMode != nil {
+                modeTransitionID &+= 1
+            }
+            pendingDraftMode = nil
+            if draftMode, markedTextRange == nil, text != draftText {
+                text = draftText
+                selectedRange = NSRange(
+                    location: (draftText as NSString).length,
+                    length: 0
+                )
+            }
+            return
+        }
+        guard pendingDraftMode != draftMode else { return }
+        pendingDraftMode = draftMode
+        modeTransitionID &+= 1
+        let transitionID = modeTransitionID
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  self.modeTransitionID == transitionID,
+                  self.pendingDraftMode == draftMode,
+                  self.wantsKeyboard
+            else {
+                return
+            }
+            self.pendingDraftMode = nil
+            if self.markedTextRange != nil {
+                self.unmarkText()
+            }
+            if draftMode {
+                self.flushDirectText()
+                self.isDraftMode = true
+                self.text = draftText
+                self.selectedRange = NSRange(
+                    location: (draftText as NSString).length,
+                    length: 0
+                )
+            } else {
+                self.isDraftMode = false
+                self.text = ""
+            }
+        }
+    }
+
+    func submitIfRequested(_ request: Int) {
+        guard request != lastSubmitRequest else { return }
+        lastSubmitRequest = request
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  self.lastSubmitRequest == request,
+                  self.wantsKeyboard,
+                  self.window != nil,
+                  self.isDraftMode
+            else {
+                return
+            }
+            self.submitDraft()
+        }
+    }
+
+    private func submitDraft() {
+        if markedTextRange != nil {
+            unmarkText()
+        }
+        let value = text ?? ""
+        onTextChange?(value)
+        onSubmit?(value)
+    }
+
+    private func flushDirectText() {
+        guard !isDraftMode, markedTextRange == nil, !text.isEmpty else { return }
+        let value = (text ?? "")
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
         text = ""
-        forwardCommittedText(committedText)
+        var buffered = ""
+
+        func flushBufferedText() {
+            guard !buffered.isEmpty else { return }
+            onDirectText?(buffered)
+            buffered = ""
+        }
+
+        for character in value {
+            switch character {
+            case "\n":
+                flushBufferedText()
+                onDirectKey?(0x0D)
+            case "\t":
+                flushBufferedText()
+                onDirectKey?(0x09)
+            default:
+                buffered.append(character)
+            }
+        }
+        flushBufferedText()
     }
 
     private func updateKeyboardFocus() {
         guard wantsKeyboard else {
             focusRequestID &+= 1
+            modeTransitionID &+= 1
+            pendingDraftMode = nil
             if markedTextRange != nil {
                 unmarkText()
             }
-            flushCommittedText()
             if isFirstResponder {
                 resignFirstResponder()
             }
             return
         }
         requestKeyboardFocus()
-    }
-
-    private func forwardCommittedText(_ value: String) {
-        let normalized = value
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\r", with: "\n")
-        var bufferedText = ""
-
-        func flushText() {
-            guard !bufferedText.isEmpty else { return }
-            onText?(bufferedText)
-            bufferedText = ""
-        }
-
-        for character in normalized {
-            switch character {
-            case "\n":
-                flushText()
-                onKey?(0x0D)
-            case "\t":
-                flushText()
-                onKey?(0x09)
-            default:
-                bufferedText.append(character)
-            }
-        }
-        flushText()
     }
 
     @objc private func applicationDidBecomeActive() {

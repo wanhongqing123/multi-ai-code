@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 
-export type RemoteImApprovalDecision = 'accept' | 'cancel'
+export type RemoteImApprovalDecision = 'accept' | 'accept-persistent' | 'cancel'
 
 export interface RemoteImApprovalRequest {
   projectId: string
@@ -14,6 +14,7 @@ export interface RemoteImApprovalRequest {
   commandText: string
   cwd: string
   reason?: string
+  persistentApprovalCommand?: string
 }
 
 export interface RemoteImApprovalResolution extends RemoteImApprovalRequest {
@@ -86,8 +87,14 @@ function approvalIdentity(input: Pick<RemoteImApprovalRequest, 'sessionId' | 'ta
   ])
 }
 
-function commandHash(commandText: string, cwd: string): string {
-  return createHash('sha256').update(JSON.stringify([commandText, cwd])).digest('hex')
+function commandHash(
+  commandText: string,
+  cwd: string,
+  persistentApprovalCommand?: string
+): string {
+  return createHash('sha256')
+    .update(JSON.stringify([commandText, cwd, persistentApprovalCommand ?? null]))
+    .digest('hex')
 }
 
 function escapeApprovalDisplayControls(commandText: string): string {
@@ -123,22 +130,44 @@ function formatApprovalRequest(item: PendingRemoteImApproval): string {
   }
   lines.push(
     '',
-    `请在 ${minutes} 分钟内由本消息对应的请求人确认：`,
-    `/approve ${item.token}`,
-    `/reject ${item.token}`,
+    `请在 ${minutes} 分钟内由本消息对应的请求人确认。`,
+    '请选择一项，并且每次只发送下面的一条命令；可直接在 IM 中发送，也可由 AICLI 通过 imcli 原样发送：',
     '',
-    '审批仅对上面这一条待执行命令生效。'
+    '1. 仅批准这一次',
+    '',
+    `    /approve ${item.token}`
   )
+  if (item.persistentApprovalCommand) {
+    lines.push(
+      '',
+      '2. 批准并记住以下命令前缀，后续匹配的命令不再询问',
+      '',
+      formatCommandBlock(item.persistentApprovalCommand),
+      '',
+      `    /approve-prefix ${item.token}`,
+      '',
+      '3. 拒绝这一次'
+    )
+  } else {
+    lines.push('', '2. 拒绝这一次')
+  }
+  lines.push('', `    /reject ${item.token}`)
+  if (!item.persistentApprovalCommand) {
+    lines.push('', '本次请求没有提供“记住命令前缀”的安全规则，因此只有批准或拒绝两项。')
+  }
   return lines.join('\n')
 }
 
 export function parseRemoteImApprovalCommand(
   text: string
-): { action: 'approve' | 'reject'; token: string } | { action: 'invalid'; token: string } | null {
+):
+  | { action: 'approve' | 'approve-prefix' | 'reject'; token: string }
+  | { action: 'invalid'; token: string }
+  | null {
   const trimmed = text.trim()
-  const match = /^\/(approve|reject)(?:\s+(\S+))?\s*$/i.exec(trimmed)
+  const match = /^\/(approve-prefix|approve|reject)(?:\s+(\S+))?\s*$/i.exec(trimmed)
   if (!match) return null
-  const action = match[1]?.toLowerCase() as 'approve' | 'reject'
+  const action = match[1]?.toLowerCase() as 'approve' | 'approve-prefix' | 'reject'
   const token = match[2]?.trim() ?? ''
   return token ? { action, token } : { action: 'invalid', token: '' }
 }
@@ -183,6 +212,10 @@ export class RemoteImApprovalCoordinator {
       cwd: input.cwd,
       ...(input.reason !== undefined && input.reason.trim()
         ? { reason: input.reason }
+        : {}),
+      ...(input.persistentApprovalCommand !== undefined &&
+        input.persistentApprovalCommand.trim()
+        ? { persistentApprovalCommand: input.persistentApprovalCommand }
         : {})
     }
     if (
@@ -214,7 +247,12 @@ export class RemoteImApprovalCoordinator {
         if (
           previous.projectId === request.projectId &&
           previous.requesterUserId === request.requesterUserId &&
-          previous.commandHash === commandHash(request.commandText, request.cwd)
+          previous.commandHash ===
+            commandHash(
+              request.commandText,
+              request.cwd,
+              request.persistentApprovalCommand
+            )
         ) {
           return previous.state === 'pending' || previous.state === 'resolving'
             ? { ok: true, token: previous.token }
@@ -246,7 +284,11 @@ export class RemoteImApprovalCoordinator {
     const item: PendingRemoteImApproval = {
       ...request,
       token,
-      commandHash: commandHash(request.commandText, request.cwd),
+      commandHash: commandHash(
+        request.commandText,
+        request.cwd,
+        request.persistentApprovalCommand
+      ),
       createdAt,
       expiresAt: createdAt + this.timeoutMs,
       state: 'pending',
@@ -299,7 +341,8 @@ export class RemoteImApprovalCoordinator {
       return {
         handled: true,
         ok: false,
-        text: '审批指令格式：/approve <审批码> 或 /reject <审批码>。'
+        text:
+          '审批指令格式：/approve <审批码>、/approve-prefix <审批码>（仅通知中提供时）或 /reject <审批码>。每次只发送一条命令。'
       }
     }
     const item = this.byToken.get(parsed.token)
@@ -317,6 +360,9 @@ export class RemoteImApprovalCoordinator {
     ) {
       return { handled: true, ok: false, text: INVALID_APPROVAL_TEXT }
     }
+    if (parsed.action === 'approve-prefix' && !item.persistentApprovalCommand) {
+      return { handled: true, ok: false, text: INVALID_APPROVAL_TEXT }
+    }
     if (this.now() >= item.expiresAt) {
       await this.expire(item)
       return { handled: true, ok: false, text: INVALID_APPROVAL_TEXT }
@@ -324,7 +370,12 @@ export class RemoteImApprovalCoordinator {
 
     item.state = 'resolving'
     this.clearItemTimer(item)
-    const decision: RemoteImApprovalDecision = parsed.action === 'approve' ? 'accept' : 'cancel'
+    const decision: RemoteImApprovalDecision =
+      parsed.action === 'approve'
+        ? 'accept'
+        : parsed.action === 'approve-prefix'
+          ? 'accept-persistent'
+          : 'cancel'
     let resolved: { ok: boolean; error?: string; text?: string }
     try {
       resolved = await this.deps.resolveApproval({ ...this.requestFrom(item), decision })
@@ -352,7 +403,7 @@ export class RemoteImApprovalCoordinator {
     }
     if (!resolved.ok) {
       this.consume(item, 'failed')
-      if (decision === 'accept') await this.cancelFailClosed(item)
+      if (decision !== 'cancel') await this.cancelFailClosed(item)
       return {
         handled: true,
         ok: false,
@@ -360,11 +411,16 @@ export class RemoteImApprovalCoordinator {
       }
     }
 
-    this.consume(item, decision === 'accept' ? 'approved' : 'rejected')
+    this.consume(item, decision === 'cancel' ? 'rejected' : 'approved')
     return {
       handled: true,
       ok: true,
-      text: decision === 'accept' ? '已批准这一次命令执行。' : '已拒绝这一次命令执行。'
+      text:
+        decision === 'accept'
+          ? '已批准这一次命令执行。'
+          : decision === 'accept-persistent'
+            ? '已批准命令执行，并应用了 Codex 提供的命令前缀规则。'
+            : '已拒绝这一次命令执行。'
     }
   }
 
@@ -438,7 +494,10 @@ export class RemoteImApprovalCoordinator {
       approvalId: item.approvalId,
       commandText: item.commandText,
       cwd: item.cwd,
-      ...(item.reason ? { reason: item.reason } : {})
+      ...(item.reason ? { reason: item.reason } : {}),
+      ...(item.persistentApprovalCommand
+        ? { persistentApprovalCommand: item.persistentApprovalCommand }
+        : {})
     }
   }
 

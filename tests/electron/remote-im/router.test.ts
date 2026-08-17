@@ -773,6 +773,47 @@ describe('remote IM router', () => {
     })
   })
 
+  it('consumes an approval command sent by another AICLI through imcli', async () => {
+    const store = createMessageStore()
+    const sentToAicli: string[] = []
+    const approvalInputs: Array<{ projectId: string; fromUserId: string; text: string }> = []
+    const router = createRemoteImRouter({
+      getConfig: () => config,
+      resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
+      sendUser: async (_sessionId, text) => {
+        sentToAicli.push(text)
+        return { ok: true }
+      },
+      sendImText: async () => ({ ok: true }),
+      handleApprovalCommand: async (input) => {
+        approvalInputs.push(input)
+        return { handled: true, ok: true, text: '已批准这一次命令执行。' }
+      },
+      store
+    })
+
+    const result = await router.handleIncomingText({
+      projectId: 'project-1',
+      remoteMessageId: 'remote-machine-approval-1',
+      fromUserId: 'phone_admin',
+      toUserId: 'desktop_bot',
+      text: '/approve approval-public-a',
+      origin: 'machine',
+      createdAt: 100
+    })
+
+    expect(result.ok).toBe(true)
+    expect(approvalInputs).toEqual([
+      {
+        projectId: 'project-1',
+        fromUserId: 'phone_admin',
+        text: '/approve approval-public-a'
+      }
+    ])
+    expect(sentToAicli).toEqual([])
+    expect(store.messages[0]).toMatchObject({ role: 'aicli', status: 'received' })
+  })
+
   it('routes a transported approval result into the receiving AICLI without automatic IM output', async () => {
     const senderStore = createMessageStore()
     const wireTexts: string[] = []

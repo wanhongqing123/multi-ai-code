@@ -144,7 +144,8 @@ describe('AICLI structured output bridge', () => {
       replyId: 'reply-remove-1',
       taskId: 'task-remove-1',
       cwd: 'C:\\repo',
-      reason: '清理构建缓存'
+      reason: '清理构建缓存',
+      persistentApprovalCommand: 'Remove-Item test -Force'
     })
     await new Promise((resolve) => setTimeout(resolve, 20))
 
@@ -165,7 +166,8 @@ describe('AICLI structured output bridge', () => {
         threadId: 'thread-remove-1',
         turnId: 'turn-remove-1',
         cwd: 'C:\\repo',
-        reason: '清理构建缓存'
+        reason: '清理构建缓存',
+        persistentApprovalCommand: 'Remove-Item test -Force'
       }
     ])
   })
@@ -298,7 +300,7 @@ describe('AICLI structured output bridge', () => {
         threadId: 'thread-1',
         taskId: 'task-1',
         turnId: 'turn-1',
-        decision: 'accept'
+        decision: 'accept-persistent'
       },
       1_000
     )
@@ -411,7 +413,7 @@ describe('AICLI structured output bridge', () => {
         threadId: 'thread-remove-1',
         taskId: 'task-remove-1',
         turnId: 'turn-remove-1',
-        decision: 'accept'
+        decision: 'accept-persistent'
       },
       500
     )
@@ -425,7 +427,7 @@ describe('AICLI structured output bridge', () => {
     expect(receivedLines.join('')).toContain('"threadId":"thread-remove-1"')
     expect(receivedLines.join('')).toContain('"taskId":"task-remove-1"')
     expect(receivedLines.join('')).toContain('"turnId":"turn-remove-1"')
-    expect(receivedLines.join('')).toContain('"decision":"accept"')
+    expect(receivedLines.join('')).toContain('"decision":"accept-persistent"')
     expect(receivedLines.join('')).toContain('"requestId"')
   })
 

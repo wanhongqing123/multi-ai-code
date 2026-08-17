@@ -22,7 +22,7 @@ const request: RemoteImApprovalRequest = {
 }
 
 describe('RemoteImApprovalCoordinator', () => {
-  it('parses only explicit approve and reject commands', () => {
+  it('parses only one explicit approval command at a time', () => {
     expect(parseRemoteImApprovalCommand('/approve token-1')).toEqual({
       action: 'approve',
       token: 'token-1'
@@ -31,8 +31,74 @@ describe('RemoteImApprovalCoordinator', () => {
       action: 'reject',
       token: 'token-2'
     })
+    expect(parseRemoteImApprovalCommand('/approve-prefix token-3')).toEqual({
+      action: 'approve-prefix',
+      token: 'token-3'
+    })
     expect(parseRemoteImApprovalCommand('/approve')).toEqual({ action: 'invalid', token: '' })
     expect(parseRemoteImApprovalCommand('请 /approve token-1')).toBeNull()
+    expect(parseRemoteImApprovalCommand('/approve token-1 /reject token-1')).toBeNull()
+  })
+
+  it('renders separate IM or imcli choices and resolves the persistent prefix decision', async () => {
+    const sent: string[] = []
+    const resolutions: RemoteImApprovalResolution[] = []
+    const persistentRequest: RemoteImApprovalRequest = {
+      ...request,
+      persistentApprovalCommand: 'Remove-Item -LiteralPath C:\\repo\\tmp -Recurse -Force'
+    }
+    const coordinator = new RemoteImApprovalCoordinator({
+      createToken: () => 'approval-public-prefix',
+      sendText: async (_projectId, _toUserId, text) => {
+        sent.push(text)
+        return { ok: true }
+      },
+      resolveApproval: async (input) => {
+        resolutions.push(input)
+        return { ok: true }
+      }
+    })
+
+    await coordinator.register(persistentRequest)
+
+    expect(sent[0]).toContain('可直接在 IM 中发送，也可由 AICLI 通过 imcli 原样发送')
+    expect(sent[0]).toContain('1. 仅批准这一次\n\n    /approve approval-public-prefix')
+    expect(sent[0]).toContain(
+      '2. 批准并记住以下命令前缀，后续匹配的命令不再询问'
+    )
+    expect(sent[0]).toContain('\n\n    /approve-prefix approval-public-prefix')
+    expect(sent[0]).toContain('3. 拒绝这一次\n\n    /reject approval-public-prefix')
+
+    await expect(
+      coordinator.handleCommand({
+        projectId: 'project-a',
+        fromUserId: 'phone-a',
+        text: '/approve-prefix approval-public-prefix'
+      })
+    ).resolves.toMatchObject({ handled: true, ok: true })
+    expect(resolutions).toEqual([{ ...persistentRequest, decision: 'accept-persistent' }])
+  })
+
+  it('rejects a persistent approval command when Codex did not offer that choice', async () => {
+    const resolutions: RemoteImApprovalResolution[] = []
+    const coordinator = new RemoteImApprovalCoordinator({
+      createToken: () => 'approval-public-no-prefix',
+      sendText: async () => ({ ok: true }),
+      resolveApproval: async (input) => {
+        resolutions.push(input)
+        return { ok: true }
+      }
+    })
+    await coordinator.register(request)
+
+    await expect(
+      coordinator.handleCommand({
+        projectId: 'project-a',
+        fromUserId: 'phone-a',
+        text: '/approve-prefix approval-public-no-prefix'
+      })
+    ).resolves.toMatchObject({ handled: true, ok: false })
+    expect(resolutions).toEqual([])
   })
 
   it('binds a one-time approval to project, requester, session, task and thread', async () => {

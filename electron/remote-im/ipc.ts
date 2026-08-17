@@ -1921,7 +1921,8 @@ function ensureSessionListeners(): void {
       threadId,
       turnId,
       cwd,
-      reason
+      reason,
+      persistentApprovalCommand
     } = event
     if (kind === 'input_origin') {
       const origin = text.trim()
@@ -2044,7 +2045,8 @@ function ensureSessionListeners(): void {
           approvalId,
           commandText: text,
           cwd,
-          ...(reason ? { reason } : {})
+          ...(reason ? { reason } : {}),
+          ...(persistentApprovalCommand ? { persistentApprovalCommand } : {})
         })
         .then((result) => {
           writeStructuredOutputRuntimeLog(

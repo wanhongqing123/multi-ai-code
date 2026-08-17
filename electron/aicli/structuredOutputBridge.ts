@@ -4,7 +4,7 @@ import net from 'node:net'
 export type AicliStructuredOutputProvider = 'codex' | 'opencode'
 export type AicliControlMode = 'plan' | 'build'
 export type AicliUserMessageInputOrigin = 'remote-im' | 'remote-im-machine' | 'local'
-export type AicliApprovalDecision = 'accept' | 'cancel'
+export type AicliApprovalDecision = 'accept' | 'accept-persistent' | 'cancel'
 
 export interface AicliUserMessageAttachment {
   type: 'image'
@@ -27,6 +27,7 @@ export interface AicliStructuredOutputEvent {
   turnId?: string
   cwd?: string
   reason?: string
+  persistentApprovalCommand?: string
 }
 
 export interface AicliStructuredOutputBridge {
@@ -71,6 +72,7 @@ interface WireEvent {
   turnId?: unknown
   cwd?: unknown
   reason?: unknown
+  persistentApprovalCommand?: unknown
 }
 
 // 所有控制命令统一走 requestId RPC：switch_mode 也等待 AICLI 回 control_result，
@@ -223,6 +225,7 @@ export async function createAicliStructuredOutputBridge(
         const turnId = asOptionalString(parsed.turnId)
         const cwd = asOptionalString(parsed.cwd)
         const reason = asOptionalString(parsed.reason)
+        const persistentApprovalCommand = asOptionalString(parsed.persistentApprovalCommand)
         emitStructuredOutput({
           sessionId,
           provider,
@@ -236,7 +239,8 @@ export async function createAicliStructuredOutputBridge(
           ...(threadId ? { threadId } : {}),
           ...(turnId ? { turnId } : {}),
           ...(cwd ? { cwd } : {}),
-          ...(reason ? { reason } : {})
+          ...(reason ? { reason } : {}),
+          ...(persistentApprovalCommand ? { persistentApprovalCommand } : {})
         })
 
         // 回执：AICLI 侧靠这条 ack 判定数据连接“还活着”。收不到 ack（半死 socket、

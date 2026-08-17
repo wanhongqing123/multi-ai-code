@@ -697,7 +697,7 @@ export function requestAicliApprovalForSession(
     threadId: string
     taskId: string
     turnId: string
-    decision: 'accept' | 'cancel'
+    decision: 'accept' | 'accept-persistent' | 'cancel'
   }
 ): Promise<AicliControlCommandResult> {
   const session = sessions.get(sessionId)

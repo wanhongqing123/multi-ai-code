@@ -297,4 +297,39 @@ describe('权限档位', () => {
       '--dangerously-skip-permissions'
     ])
   })
+
+  it('uses the explicit all-command bypass only in dangerous mode', () => {
+    expect(buildCliLaunchArgs('codex', '/repo/demo', [], 'dangerous')).toEqual([
+      '--no-alt-screen',
+      '--dangerously-bypass-approvals-and-sandbox',
+      '--dangerously-bypass-hook-trust',
+      '-c',
+      'model_context_window=1000000'
+    ])
+    expect(buildCliLaunchArgs('claude', '/repo/demo', [], 'dangerous')).toEqual([
+      '--dangerously-skip-permissions'
+    ])
+    expect(buildCliLaunchArgs('opencode', '/repo/demo', [], 'dangerous')).toEqual([
+      '--dangerously-skip-permissions'
+    ])
+  })
+
+  it('keeps explicit advanced permission flags ahead of dangerous mode defaults', () => {
+    const args = buildCliLaunchArgs(
+      'codex',
+      '/repo/demo',
+      ['--ask-for-approval', 'on-request', '--sandbox', 'workspace-write'],
+      'dangerous'
+    )
+
+    expect(args).not.toContain('--dangerously-bypass-approvals-and-sandbox')
+    expect(args).toEqual(
+      expect.arrayContaining([
+        '--ask-for-approval',
+        'on-request',
+        '--sandbox',
+        'workspace-write'
+      ])
+    )
+  })
 })

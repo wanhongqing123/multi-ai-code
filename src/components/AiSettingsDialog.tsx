@@ -25,10 +25,9 @@ const AI_CLI_OPTIONS = [
   }
 ] as const
 
-// 权限只给两档。背后是哪些 --dangerously-* 参数不暴露给用户，
-// 想自己传参的走「高级参数设置」。
 const PERMISSION_OPTIONS = [
   { value: 'full-access', label: '完全访问权限' },
+  { value: 'dangerous', label: '危险模式' },
   { value: 'default', label: '默认权限' }
 ] as const satisfies readonly { value: AiPermissionMode; label: string }[]
 
@@ -182,6 +181,11 @@ function SettingsSection(props: {
             ))}
           </select>
         </label>
+        {props.permissionMode === 'dangerous' && (
+          <div className="ai-settings-grid-full ai-settings-danger-warning" role="alert">
+            危险模式下 Codex 可直接执行任意本地命令：无沙箱、无审批，递归强制删除也会立即执行。
+          </div>
+        )}
         {/* 启动参数不该是常规操作：默认折叠，需要按特定参数启动的人自己展开。 */}
         <div className="ai-settings-grid-full ai-settings-advanced">
           <button

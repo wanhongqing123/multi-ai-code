@@ -1482,6 +1482,16 @@ html, body, #root {
   grid-column: 1 / -1;
 }
 
+.ai-settings-danger-warning {
+  border: 1px solid color-mix(in srgb, var(--mac-danger) 45%, var(--mac-border));
+  border-radius: var(--mac-r-md);
+  padding: 9px var(--mac-sp-3);
+  color: var(--mac-danger);
+  background: color-mix(in srgb, var(--mac-danger) 9%, var(--mac-surface));
+  font-size: var(--mac-text-xs);
+  line-height: var(--mac-line-normal);
+}
+
 .ai-settings-title-row {
   display: flex;
   align-items: center;

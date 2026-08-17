@@ -711,7 +711,7 @@ app.whenReady().then(async () => {
 
   interface AiSettings {
     ai_cli: 'claude' | 'codex' | 'opencode'
-    permission_mode?: 'default' | 'full-access'
+    permission_mode?: 'default' | 'full-access' | 'dangerous'
     command?: string
     args?: string[]
     env?: Record<string, string>

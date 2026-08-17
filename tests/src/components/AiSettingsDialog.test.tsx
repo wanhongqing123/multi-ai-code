@@ -57,15 +57,26 @@ describe('AiSettingsDialog', () => {
     expect(markup).not.toContain('变更点击')
   })
 
-  it('offers exactly two permission levels and defaults to full access', () => {
+  it('offers three permission levels and defaults to full access', () => {
     const markup = renderDialog()
 
     expect(markup).toContain('权限')
     expect(markup).toContain('完全访问权限')
+    expect(markup).toContain('危险模式')
     expect(markup).toContain('默认权限')
-    // 没有第三档：不暴露 --dangerously-* 之类的东西给用户挑。
     expect(markup).not.toContain('dangerously')
     expect(markup).toContain('<option value="full-access" selected="">完全访问权限</option>')
+  })
+
+  it('shows an explicit destructive-command warning for dangerous mode', () => {
+    const markup = renderDialog({
+      initial: { ai_cli: 'codex', permission_mode: 'dangerous' }
+    })
+
+    expect(markup).toContain('<option value="dangerous" selected="">危险模式</option>')
+    expect(markup).toContain('无沙箱、无审批')
+    expect(markup).toContain('递归强制删除也会立即执行')
+    expect(markup).toContain('role="alert"')
   })
 
   it('honours a saved default-permission choice', () => {

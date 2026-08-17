@@ -6,8 +6,9 @@ import type { OpenCodeProviderProfile } from '../aicli/opencodeConfig.js'
  *                   该问就问、该沙箱就沙箱
  * - 'full-access' ：文件系统不设沙箱；普通命令直接运行，Codex 上游标记的高风险
  *                   命令仍需用户审批（远程任务可通过 IM 完成审批）
+ * - 'dangerous'   ：无沙箱、无审批，并显式绕过 Codex 命令安全策略
  */
-export type AiPermissionMode = 'default' | 'full-access'
+export type AiPermissionMode = 'default' | 'full-access' | 'dangerous'
 
 // 单个 AI CLI 的配置（主会话 / repo 视图共用）。
 export interface AiSettings {

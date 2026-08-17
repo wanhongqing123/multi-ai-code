@@ -88,9 +88,23 @@ function codexDefaultArgs(
   if (!hasAnyArg(explicitArgs, [CODEX_NO_ALT_SCREEN_ARG])) {
     args.push(CODEX_NO_ALT_SCREEN_ARG)
   }
+  if (permissionMode === 'dangerous') {
+    const hasExplicitPermissions =
+      hasAnyFlag(explicitArgs, CODEX_EXPLICIT_APPROVAL_FLAGS) ||
+      hasAnyFlag(explicitArgs, CODEX_EXPLICIT_SANDBOX_FLAGS) ||
+      hasCodexConfigKey(explicitArgs, 'approval_policy') ||
+      hasCodexConfigKey(explicitArgs, 'sandbox_mode')
+    if (!hasExplicitPermissions) {
+      args.push('--dangerously-bypass-approvals-and-sandbox')
+    }
+    if (!hasAnyArg(explicitArgs, [CODEX_BYPASS_HOOK_TRUST_ARG])) {
+      args.push(CODEX_BYPASS_HOOK_TRUST_ARG)
+    }
+  }
   // 「完全访问权限」下，普通命令仍可在无沙箱环境中直接执行；但删除等被
-  // Codex 标记为危险的命令要保留审批机会。`--dangerously-bypass-approvals-and-sandbox`
-  // 会把 approval policy 设成 never，反而会让这些命令在 exec policy 层直接 Forbidden。
+  // Codex 标记为危险的命令要保留审批机会。单独配置 approval=never 时，这些
+  // 命令仍会在 exec policy 层直接 Forbidden；只有上面的显式「危险模式」标志
+  // 才会启用定制版 Codex 的全命令放行。
   //
   // 高级参数里手工写的权限 flag 始终优先：只补齐用户没有指定的那一维，
   // 避免与 --approve-for-me / --yolo 之类的显式选择产生 clap 冲突。
@@ -130,7 +144,7 @@ function opencodeDefaultArgs(
   extraArgs: readonly string[],
   permissionMode: AiPermissionMode
 ): string[] {
-  if (permissionMode !== 'full-access') return []
+  if (permissionMode === 'default') return []
   if (hasAnyArg(extraArgs, ['--dangerously-skip-permissions', '--yolo', '--auto'])) {
     return []
   }
@@ -146,7 +160,7 @@ export function buildCliLaunchArgs(
   const args: string[] = []
   if (binary === 'claude') {
     if (
-      permissionMode === 'full-access' &&
+      permissionMode !== 'default' &&
       !hasAnyArg(extraArgs, ['--dangerously-skip-permissions'])
     ) {
       args.push('--dangerously-skip-permissions')

@@ -8,6 +8,15 @@ import type {
 export interface RemoteImContact {
   userId: string
   relation: RemoteImContactRelation
+  /**
+   * 是否真的在联系人配置里。
+   *
+   * 单靠 relation 判断不出来：它是持久化类型（friend/master/slave），没有
+   * "不是联系人"这一档，查不到时只能兜个默认值——以前兜的是 'friend'，
+   * 于是任何给你发过消息的陌生账号都被显示成好友，而它的消息同时标着
+   * 「已拒绝」。授权判定读的是配置，界面读的是兜底值，两边说的不是一回事。
+   */
+  isContact: boolean
 }
 
 export interface RemoteImConversation extends RemoteImContact {
@@ -19,6 +28,7 @@ export interface RemoteImConversation extends RemoteImContact {
 export interface RemoteImMessageDisplayMeta {
   userId: string
   relation: RemoteImContactRelation
+  isContact: boolean
 }
 
 const HIDDEN_REMOTE_IM_MESSAGE_CONTENTS = new Set([
@@ -123,7 +133,8 @@ function addContactRows(
   for (const userId of uniqueUserIds(userIds)) {
     if (seen.has(userId)) continue
     seen.add(userId)
-    contacts.push({ userId, relation })
+    // 这个函数只从配置里取人，所以一律是真联系人。
+    contacts.push({ userId, relation, isContact: true })
   }
 }
 
@@ -143,6 +154,13 @@ function getRemoteImContactRelation(
 ): RemoteImContactRelation {
   if (userId === config.desktopUserId) return 'friend'
   return getRemoteImContacts(config).find((contact) => contact.userId === userId)?.relation ?? 'friend'
+}
+
+/** 是不是真在联系人配置里。自己永远算"是"。 */
+export function isRemoteImContact(config: RemoteImConfig, userId: string): boolean {
+  if (!userId) return false
+  if (userId === config.desktopUserId) return true
+  return getRemoteImContacts(config).some((contact) => contact.userId === userId)
 }
 
 export function getRemoteImMessagePeerUserId(
@@ -173,7 +191,8 @@ export function getRemoteImMessageDisplayMeta(
 
   return {
     userId: userId ?? '',
-    relation: userId ? getRemoteImContactRelation(config, userId) : config.desktopRole
+    relation: userId ? getRemoteImContactRelation(config, userId) : config.desktopRole,
+    isContact: userId ? isRemoteImContact(config, userId) : true
   }
 }
 
@@ -212,9 +231,12 @@ export function getRemoteImConversations(
 
     const current =
       conversations.get(peerUserId) ??
+      // 只在消息里出现过、配置里没有的人：显示成陌生人。
+      // 以前这里兜底成 'friend'，未授权账号会混进「好友」页。
       ({
         userId: peerUserId,
         relation: 'friend',
+        isContact: false,
         lastMessagePreview: null,
         lastMessageAt: null,
         unreadCount: 0

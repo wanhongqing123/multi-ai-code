@@ -86,9 +86,14 @@ const RELATION_FILTERS: Array<{ value: ConversationFilter; label: string }> = [
   { value: 'friend', label: '好友' }
 ]
 
-function getRelationLabel(relation: RemoteImContactRelation): string {
-  void relation
-  return '好友'
+/**
+ * 会话行上的关系标签。
+ *
+ * 以前无条件返回「好友」，参数直接丢弃——任何给你发过消息的陌生账号
+ * 都被标成好友，而同一行的消息标着「已拒绝」，两个信息互相打架。
+ */
+function getRelationLabel(isContact: boolean): string {
+  return isContact ? '好友' : '陌生人'
 }
 
 function RemoteImMarkdown(props: { content: string }): JSX.Element {
@@ -234,7 +239,9 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
   const filteredConversations =
     conversationFilter === 'recent'
       ? conversations
-      : conversations.filter((conversation) => conversation.relation === conversationFilter)
+      // 「好友」页只列真正在联系人配置里的人。陌生人只在「最近」里出现——
+      // 它们的消息本来就会被授权判定拒掉，混进好友页会让人以为已授权。
+      : conversations.filter((conversation) => conversation.isContact)
   const selectedPeerUserId =
     props.selectedPeerUserId ?? filteredConversations[0]?.userId ?? conversations[0]?.userId ?? null
   const selectedMessages = selectedPeerUserId
@@ -515,7 +522,7 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
                         <strong>{conversation.userId}</strong>
                         <span>{conversation.lastMessagePreview || '暂无消息'}</span>
                       </div>
-                      <em>{getRelationLabel(conversation.relation)}</em>
+                      <em>{getRelationLabel(conversation.isContact)}</em>
                     </button>
                     <button
                       type="button"
@@ -551,7 +558,7 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
                   {selectedPeerUserId || '未选择联系人'}
                 </strong>
               </div>
-              {selectedConversation ? <em>{getRelationLabel(selectedConversation.relation)}</em> : null}
+              {selectedConversation ? <em>{getRelationLabel(selectedConversation.isContact)}</em> : null}
             </div>
 
             <div ref={messagesRef} className="remote-im-messages">
@@ -589,7 +596,7 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
                         <div className="remote-im-message-meta">
                           <strong>{displayMeta.userId}</strong>
                           <em data-message-relation={displayMeta.relation}>
-                            {getRelationLabel(displayMeta.relation)}
+                            {getRelationLabel(displayMeta.isContact)}
                           </em>
                           <span>{formatRemoteImTime(message.createdAt)}</span>
                         </div>

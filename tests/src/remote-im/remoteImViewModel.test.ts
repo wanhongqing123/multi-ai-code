@@ -9,6 +9,7 @@ import {
   getRemoteImMessageAvatar,
   getRemoteImMessageStatusLabel,
   getRemoteImStatusLabel,
+  isRemoteImContact,
   isRemoteImSendDisabled,
   removeRemoteImContact
 } from '../../../src/remote-im/remoteImViewModel.js'
@@ -120,9 +121,9 @@ describe('remote IM view model', () => {
 
   it('derives trusted friend contacts from friend and legacy role UserID lists', () => {
     expect(getRemoteImContacts(config)).toEqual([
-      { userId: 'friend-a', relation: 'friend' },
-      { userId: 'master-a', relation: 'friend' },
-      { userId: 'slave-a', relation: 'friend' }
+      { userId: 'friend-a', relation: 'friend', isContact: true },
+      { userId: 'master-a', relation: 'friend', isContact: true },
+      { userId: 'slave-a', relation: 'friend', isContact: true }
     ])
   })
 
@@ -187,7 +188,7 @@ describe('remote IM view model', () => {
         config,
         message({ id: 1, fromUserId: 'master-a', toUserId: 'local-user' })
       )
-    ).toEqual({ userId: 'master-a', relation: 'friend' })
+    ).toEqual({ userId: 'master-a', relation: 'friend', isContact: true })
     expect(
       getRemoteImMessageDisplayMeta(
         config,
@@ -199,7 +200,7 @@ describe('remote IM view model', () => {
           toUserId: 'slave-a'
         })
       )
-    ).toEqual({ userId: 'local-user', relation: 'friend' })
+    ).toEqual({ userId: 'local-user', relation: 'friend', isContact: true })
     expect(
       getRemoteImMessageDisplayMeta(
         config,
@@ -209,7 +210,7 @@ describe('remote IM view model', () => {
           toUserId: 'local-user'
         })
       )
-    ).toEqual({ userId: 'slave-a', relation: 'friend' })
+    ).toEqual({ userId: 'slave-a', relation: 'friend', isContact: true })
   })
 
   it('adds trusted friends while keeping allowed users in sync and removing legacy duplicates', () => {
@@ -229,5 +230,39 @@ describe('remote IM view model', () => {
     expect(next.masterUserIds).toEqual([])
     expect(next.slaveUserIds).toEqual(['slave-a'])
     expect(next.allowedUserIds).toEqual(['friend-a', 'slave-a'])
+  })
+})
+
+describe('contact vs stranger', () => {
+  // 授权判定读的是联系人配置。界面必须说同一套话，否则会出现
+  // 「好友」标签和「已拒绝」状态并排显示、互相打架的情况。
+  const base = { ...config, friendUserIds: ['whq-iphone'], allowedUserIds: ['whq-iphone'] }
+
+  it('marks a peer that is only in the message history as a stranger', () => {
+    const conversations = getRemoteImConversations(base, [
+      message({
+        direction: 'incoming',
+        fromUserId: 'mac-multi-ai-code',
+        toUserId: base.desktopUserId
+      })
+    ])
+    const stranger = conversations.find((c) => c.userId === 'mac-multi-ai-code')
+
+    expect(stranger).toBeDefined()
+    // 出现在会话列表里可以，但不能冒充联系人。
+    expect(stranger?.isContact).toBe(false)
+  })
+
+  it('marks a peer from the contact config as a contact', () => {
+    const conversations = getRemoteImConversations(base, [])
+    expect(conversations.find((c) => c.userId === 'whq-iphone')?.isContact).toBe(true)
+  })
+
+  it('reports isContact straight from the config', () => {
+    expect(isRemoteImContact(base, 'whq-iphone')).toBe(true)
+    expect(isRemoteImContact(base, 'mac-multi-ai-code')).toBe(false)
+    expect(isRemoteImContact(base, '')).toBe(false)
+    // 自己永远算联系人，否则自己发的消息会被标成陌生人。
+    expect(isRemoteImContact(base, base.desktopUserId)).toBe(true)
   })
 })

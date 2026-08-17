@@ -2,7 +2,11 @@ import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import type { RemoteImConfig, RemoteImMessage, RemoteImStatus } from '../../../electron/preload.js'
-import RemoteImDrawer, { type RemoteImDrawerProps } from '../../../src/remote-im/RemoteImDrawer.js'
+import RemoteImDrawer, {
+  scrollRemoteImMessagesToLatest,
+  shouldScrollRemoteImConversationToLatest,
+  type RemoteImDrawerProps
+} from '../../../src/remote-im/RemoteImDrawer.js'
 
 const status: RemoteImStatus = {
   projectId: 'project-1',
@@ -115,6 +119,20 @@ function renderDrawer(overrides: Partial<RemoteImDrawerProps> = {}): string {
 }
 
 describe('RemoteImDrawer', () => {
+  it('moves a selected conversation scroll container to its latest message', () => {
+    const container = { scrollHeight: 2048, scrollTop: 120 }
+
+    scrollRemoteImMessagesToLatest(container)
+
+    expect(container.scrollTop).toBe(2048)
+  })
+
+  it('keeps the latest-scroll request pending until async messages arrive', () => {
+    expect(shouldScrollRemoteImConversationToLatest('peer-a', 'peer-a', 0)).toBe(false)
+    expect(shouldScrollRemoteImConversationToLatest('peer-a', 'peer-a', 1)).toBe(true)
+    expect(shouldScrollRemoteImConversationToLatest('peer-a', 'peer-b', 2)).toBe(false)
+  })
+
   it('renders a two-column UserID chat surface', () => {
     const html = renderDrawer()
 

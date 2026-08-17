@@ -189,6 +189,24 @@ function getRemoteImPanelFrame(panel: HTMLElement): RemoteImPanelFrame {
   }
 }
 
+export function scrollRemoteImMessagesToLatest(
+  container: Pick<HTMLDivElement, 'scrollHeight' | 'scrollTop'>
+): void {
+  container.scrollTop = container.scrollHeight
+}
+
+export function shouldScrollRemoteImConversationToLatest(
+  pendingPeerUserId: string | null,
+  selectedPeerUserId: string | null,
+  messageCount: number
+): boolean {
+  return Boolean(
+    selectedPeerUserId &&
+      pendingPeerUserId === selectedPeerUserId &&
+      messageCount > 0
+  )
+}
+
 function isInteractiveDragTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && Boolean(target.closest('button, input, select, textarea, a'))
 }
@@ -198,6 +216,9 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
   const [newContactUserId, setNewContactUserId] = useState('')
   const [loadingEarlier, setLoadingEarlier] = useState(false)
   const panelRef = useRef<HTMLDivElement | null>(null)
+  const messagesRef = useRef<HTMLDivElement | null>(null)
+  const previousMessageSelectionRef = useRef<string | null>(null)
+  const pendingLatestScrollPeerRef = useRef<string | null>(null)
   const imageInputRef = useRef<HTMLInputElement | null>(null)
   const [panelPosition, setPanelPosition] = useState<RemoteImPanelPosition | null>(null)
   const [dragState, setDragState] = useState<{
@@ -222,6 +243,7 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
   const selectedConversation = selectedPeerUserId
     ? conversations.find((conversation) => conversation.userId === selectedPeerUserId)
     : null
+  const selectedLatestMessageId = selectedMessages.at(-1)?.id ?? null
   const inputDisabled =
     !selectedPeerUserId || !props.projectId || props.status?.state !== 'connected'
   const sendDisabled =
@@ -263,6 +285,30 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
   }, [props.open, panelPosition])
+
+  useEffect(() => {
+    const selection = props.open ? selectedPeerUserId : null
+    if (selection !== previousMessageSelectionRef.current) {
+      previousMessageSelectionRef.current = selection
+      pendingLatestScrollPeerRef.current = selection
+    }
+    if (!shouldScrollRemoteImConversationToLatest(
+      pendingLatestScrollPeerRef.current,
+      selection,
+      selectedMessages.length
+    )) {
+      return
+    }
+
+    const frame = requestAnimationFrame(() => {
+      if (pendingLatestScrollPeerRef.current !== selection) return
+      const container = messagesRef.current
+      if (!container) return
+      scrollRemoteImMessagesToLatest(container)
+      pendingLatestScrollPeerRef.current = null
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [props.open, selectedPeerUserId, selectedMessages.length, selectedLatestMessageId])
 
   useEffect(() => {
     if (!dragState) return
@@ -337,6 +383,23 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
   function handleChooseImage(): void {
     if (imageSendDisabled) return
     imageInputRef.current?.click()
+  }
+
+  function handleSelectConversation(userId: string): void {
+    pendingLatestScrollPeerRef.current = userId
+    props.onSelectPeer(userId)
+    if (!shouldScrollRemoteImConversationToLatest(
+      pendingLatestScrollPeerRef.current,
+      selectedPeerUserId,
+      selectedMessages.length
+    )) return
+    requestAnimationFrame(() => {
+      if (pendingLatestScrollPeerRef.current !== userId) return
+      const container = messagesRef.current
+      if (!container) return
+      scrollRemoteImMessagesToLatest(container)
+      pendingLatestScrollPeerRef.current = null
+    })
   }
 
   function handleImageInputChange(event: ChangeEvent<HTMLInputElement>): void {
@@ -446,7 +509,7 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
                     <button
                       type="button"
                       className="remote-im-conversation"
-                      onClick={() => props.onSelectPeer(conversation.userId)}
+                      onClick={() => handleSelectConversation(conversation.userId)}
                     >
                       <div>
                         <strong>{conversation.userId}</strong>
@@ -491,7 +554,7 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
               {selectedConversation ? <em>{getRelationLabel(selectedConversation.relation)}</em> : null}
             </div>
 
-            <div className="remote-im-messages">
+            <div ref={messagesRef} className="remote-im-messages">
               {selectedPeerUserId && selectedMessages.length > 0 && props.canLoadEarlier ? (
                 <div className="remote-im-load-earlier-row">
                   <button

@@ -49,12 +49,19 @@ export interface RemoteImTranscriptSource {
   cwd: string
   sinceMs: number
   replyId?: string
+  pendingReplyIds?: string[]
 }
 
 export interface RemoteImTranscriptReply {
   content: string
   /** True only for an exact expected-id assistant frame in Claude's transcript. */
   completed: boolean
+  /** The exact marker carried by this assistant frame, when known. */
+  replyId?: string
+  /** Pending prompts materialized as user turns before this exact assistant frame. */
+  completedReplyIds?: string[]
+  /** Stable assistant transcript identity used instead of reply-id-wide deduplication. */
+  frameId?: string
 }
 
 export interface RemoteImOutputSessionState {
@@ -68,8 +75,12 @@ export interface RemoteImOutputSessionState {
   transcript?: RemoteImTranscriptSource
   forwardedTranscriptReply?: string
   forwardedReplyId?: string
+  forwardedReplyIds?: Set<string>
+  forwardedTranscriptFrameIds?: Set<string>
   /** Exact Claude reply marker consumed for this route, even when its body is empty. */
   consumedReplyId?: string
+  /** Fresh human submission ids still awaiting a causal assistant frame. */
+  pendingReplyIds?: string[]
   /** PTY saw a closed frame; poll the trusted assistant transcript before releasing. */
   awaitingTranscriptCompletion?: boolean
   transcriptCompletionPolls?: number
@@ -80,8 +91,10 @@ export interface RemoteImOutputSessionState {
   forwardedStructuredAssistantEventIds?: Set<string>
   forwardedStructuredAssistantTexts?: string[]
   forwardedStructuredTerminalMessageIds?: Set<string>
-  /** False for machine-originated input: consume lifecycle events without IM output. */
+  /** False after local takeover or authority revocation: consume lifecycle without IM output. */
   autoReplyToIm?: boolean
+  /** Security revocation is terminal for authority and must never be reclaimed by a later steer. */
+  authorityRevoked?: boolean
 }
 
 /**
@@ -105,6 +118,7 @@ export function revokeRemoteImOutputSessions(
     state.timer = null
     state.buffer = ''
     state.autoReplyToIm = false
+    state.authorityRevoked = true
     revokedSessionIds.push(sessionId)
   }
   return revokedSessionIds
@@ -195,6 +209,75 @@ function createdMessageId(value: unknown): number | undefined {
   return typeof value.id === 'number' ? value.id : undefined
 }
 
+function rememberBoundedId(ids: Set<string>, id: string, limit = 128): void {
+  ids.add(id)
+  if (ids.size <= limit) return
+  const oldest = ids.values().next().value
+  if (oldest) ids.delete(oldest)
+}
+
+function claudePendingReplyIds(state: RemoteImOutputSessionState): string[] {
+  if (state.pendingReplyIds !== undefined) {
+    return [...new Set(state.pendingReplyIds.filter(Boolean))]
+  }
+  return state.replyId ? [state.replyId] : []
+}
+
+function extractBufferedRemoteImReply(
+  state: RemoteImOutputSessionState
+): { replyId?: string; extraction: ReturnType<typeof extractRemoteImReplyOutput> } {
+  const replyIds = state.sourceKind === 'claude'
+    ? claudePendingReplyIds(state)
+    : state.replyId
+      ? [state.replyId]
+      : []
+  if (replyIds.length === 0) {
+    return { extraction: extractRemoteImReplyOutput(state.buffer) }
+  }
+  const candidates = replyIds.map((replyId) => ({
+    replyId,
+    extraction: extractRemoteImReplyOutput(state.buffer, { replyId })
+  }))
+  return (
+    [...candidates]
+      .reverse()
+      .find(({ extraction }) => extraction.completed || extraction.content || extraction.pending) ??
+    candidates[0]!
+  )
+}
+
+export function isRemoteImClaudeRouteConsumed(state: RemoteImOutputSessionState): boolean {
+  if (state.sourceKind !== 'claude') return false
+  if (state.pendingReplyIds) return state.pendingReplyIds.length === 0
+  return Boolean(state.replyId && state.consumedReplyId === state.replyId)
+}
+
+export function reserveRemoteImClaudeReplyId(
+  state: RemoteImOutputSessionState,
+  rawReplyId: string | undefined
+): boolean {
+  const replyId = rawReplyId?.trim()
+  if (state.sourceKind !== 'claude' || !replyId) return false
+  const pending = state.pendingReplyIds ?? (state.pendingReplyIds = [])
+  if (pending.includes(replyId)) return false
+  pending.push(replyId)
+  if (state.transcript) state.transcript.pendingReplyIds = [...pending]
+  return true
+}
+
+export function rollbackRemoteImClaudeReplyId(
+  state: RemoteImOutputSessionState,
+  rawReplyId: string | undefined
+): boolean {
+  const replyId = rawReplyId?.trim()
+  if (state.sourceKind !== 'claude' || !replyId || !state.pendingReplyIds?.includes(replyId)) {
+    return false
+  }
+  state.pendingReplyIds = state.pendingReplyIds.filter((pendingId) => pendingId !== replyId)
+  if (state.transcript) state.transcript.pendingReplyIds = [...state.pendingReplyIds]
+  return true
+}
+
 export function flushRemoteImOutputSession(
   sessionId: string,
   state: RemoteImOutputSessionState,
@@ -204,46 +287,67 @@ export function flushRemoteImOutputSession(
     state.transcript?.kind === 'claude' && deps.readTranscriptReply
       ? deps.readTranscriptReply(state.transcript)
       : null
-  const reply = extractRemoteImReplyOutput(state.buffer, { replyId: state.replyId })
-  const completedClaudeReplyId =
-    state.sourceKind === 'claude' && state.replyId && transcriptReply?.completed
-      ? state.replyId
-      : undefined
-  if (completedClaudeReplyId) {
-    state.awaitingTranscriptCompletion = false
+  const buffered = extractBufferedRemoteImReply(state)
+  const reply = buffered.extraction
+  const pendingReplyIds = claudePendingReplyIds(state)
+  const completedClaudeReplyIds =
+    state.sourceKind === 'claude' && transcriptReply?.completed
+      ? (transcriptReply.completedReplyIds !== undefined
+          ? transcriptReply.completedReplyIds
+          : [transcriptReply.replyId ?? state.replyId].filter(
+              (replyId): replyId is string => Boolean(replyId)
+            )
+        ).filter((replyId) => pendingReplyIds.includes(replyId))
+      : []
+  if (completedClaudeReplyIds.length > 0) {
+    const completed = new Set(completedClaudeReplyIds)
+    state.pendingReplyIds = pendingReplyIds.filter((replyId) => !completed.has(replyId))
+    if (state.transcript) state.transcript.pendingReplyIds = [...state.pendingReplyIds]
+    state.consumedReplyId = transcriptReply?.replyId ?? completedClaudeReplyIds.at(-1)
+    state.awaitingTranscriptCompletion = state.pendingReplyIds.length > 0
     state.transcriptCompletionPolls = 0
   } else if (
     state.sourceKind === 'claude' &&
-    state.replyId &&
+    buffered.replyId &&
     reply.completed &&
-    state.consumedReplyId !== state.replyId
+    !state.forwardedReplyIds?.has(buffered.replyId)
   ) {
     if (!state.awaitingTranscriptCompletion) state.transcriptCompletionPolls = 0
     state.awaitingTranscriptCompletion = true
   }
-  if (completedClaudeReplyId && state.consumedReplyId === completedClaudeReplyId) {
-    state.buffer = transcriptReply === null ? (reply?.nextBuffer ?? '') : ''
-    clearOutputTimer(state, deps)
-    return 0
-  }
-  if (completedClaudeReplyId) state.consumedReplyId = completedClaudeReplyId
-  if (reply && state.replyId && state.forwardedReplyId === state.replyId) {
-    state.buffer = reply.nextBuffer
-    clearOutputTimer(state, deps)
-    return 0
-  }
+  const outputReplyId = transcriptReply?.replyId ?? buffered.replyId
+  const transcriptFrameAlreadyForwarded = Boolean(
+    transcriptReply?.frameId &&
+      state.forwardedTranscriptFrameIds?.has(transcriptReply.frameId)
+  )
+  const replyAlreadyForwarded = Boolean(
+    outputReplyId &&
+      (state.forwardedReplyIds?.has(outputReplyId) ||
+        (state.sourceKind !== 'claude' && state.forwardedReplyId === outputReplyId))
+  )
   const buffer = sanitizeRemoteImAicliOutput(transcriptReply?.content ?? reply.content, {
     sourceKind: state.sourceKind
   })
   state.buffer = transcriptReply === null ? (reply?.nextBuffer ?? '') : ''
   clearOutputTimer(state, deps)
+  if (transcriptReply?.frameId) {
+    const ids =
+      state.forwardedTranscriptFrameIds ??
+      (state.forwardedTranscriptFrameIds = new Set())
+    rememberBoundedId(ids, transcriptReply.frameId)
+  }
+  if (transcriptFrameAlreadyForwarded || replyAlreadyForwarded) return 0
   if (!buffer.trim()) return 0
-  if (transcriptReply !== null) {
+  if (transcriptReply !== null && !transcriptReply.frameId) {
     if (state.forwardedTranscriptReply === transcriptReply.content) return 0
     state.forwardedTranscriptReply = transcriptReply.content
   }
   if (!shouldAutoReplyToIm(state)) {
-    if (reply && state.replyId) state.forwardedReplyId = state.replyId
+    if (outputReplyId) {
+      const ids = state.forwardedReplyIds ?? (state.forwardedReplyIds = new Set())
+      rememberBoundedId(ids, outputReplyId)
+      if (state.sourceKind !== 'claude') state.forwardedReplyId = outputReplyId
+    }
     return 0
   }
 
@@ -266,7 +370,11 @@ export function flushRemoteImOutputSession(
   }
 
   if (chunks.length > 0) deps.messagesChanged(state.projectId)
-  if (chunks.length > 0 && reply && state.replyId) state.forwardedReplyId = state.replyId
+  if (chunks.length > 0 && outputReplyId) {
+    const ids = state.forwardedReplyIds ?? (state.forwardedReplyIds = new Set())
+    rememberBoundedId(ids, outputReplyId)
+    if (state.sourceKind !== 'claude') state.forwardedReplyId = outputReplyId
+  }
   return chunks.length
 }
 

@@ -355,7 +355,7 @@ function withRemoteImCliEnv(
 export interface SendUserMessageOptions {
   displayText?: string
   attachments?: AicliUserMessageAttachment[]
-  inputOrigin?: 'remote-im' | 'local'
+  inputOrigin?: 'remote-im' | 'remote-im-machine' | 'local'
   replyId?: string
   taskId?: string
 }
@@ -554,7 +554,7 @@ export async function sendUserMessageToSession(
   try {
     let sourceResult: AicliControlCommandResult | undefined
     await enqueueSessionInput(sessionId, async (current) => {
-      if (options.inputOrigin !== 'remote-im') {
+      if (!options.inputOrigin || options.inputOrigin === 'local') {
         emitSessionLocalInput(sessionId, 'submit-attempt')
       }
       const sourceSubmitted = current.command === 'codex' || isOpenCodeCommand(current.command)

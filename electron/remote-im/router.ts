@@ -61,6 +61,7 @@ export interface RemoteImAicliOutputRoute {
   replyId?: string
   taskId: string
   autoReplyToIm: boolean
+  continuation?: boolean
 }
 
 export interface RemoteImRouterDeps {
@@ -72,7 +73,7 @@ export interface RemoteImRouterDeps {
     options?: {
       displayText?: string
       attachments?: AicliUserMessageAttachment[]
-      inputOrigin?: 'remote-im' | 'local'
+      inputOrigin?: 'remote-im' | 'remote-im-machine' | 'local'
       replyId?: string
       taskId?: string
     }
@@ -108,13 +109,10 @@ export interface RemoteImRouterDeps {
   authorizeAicliOutputStart?: (
     route: RemoteImAicliOutputRoute
   ) => { ok: true } | { ok: false; error: string }
-  deferAicliInputIfBusy?: (
-    route: RemoteImAicliOutputRoute,
-    submit: () => Promise<void>,
-    cancel: (error: string) => void
-  ) => { queued: true } | { queued: false; error: string } | null
   onAicliOutputStart?: (route: RemoteImAicliOutputRoute) => void
   onAicliInputAccepted?: (route: RemoteImAicliOutputRoute) => void
+  onAicliInputRejected?: (route: RemoteImAicliOutputRoute) => void
+  onAicliMachineInputAccepted?: (sessionId: string) => void
   onAicliOutputCancel?: (route: RemoteImAicliOutputRoute) => void
   handleControlCommand?: (input: {
     projectId: string
@@ -140,7 +138,6 @@ export interface RemoteImRouteResult {
   error?: string
   aicliSessionId?: string
   replyId?: string
-  queued?: boolean
 }
 
 function isIncomingAlreadySentToAicli(message: RemoteImMessage): boolean {
@@ -508,32 +505,50 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
 
   async function sendUserWithOutputRoute(
     outputRoute: RemoteImAicliOutputRoute,
-    text: string,
+    text: string | (() => string),
     displayText: string,
     attachments?: AicliUserMessageAttachment[]
   ): Promise<Awaited<ReturnType<RemoteImRouterDeps['sendUser']>>> {
-    // Machine inputs skip the *busy* rejection by entering the FIFO below, but
-    // they must still pass the current account/contact security gate when they
-    // are actually submitted. In particular, a queued closure must not retain
-    // authority after an account switch or contact revoke.
     const admission = deps.authorizeAicliOutputStart?.(outputRoute)
     if (admission && !admission.ok) return admission
+    const resolvedText = typeof text === 'function' ? text() : text
     deps.onAicliOutputStart?.(outputRoute)
     try {
-      const result = await deps.sendUser(outputRoute.sessionId, text, {
+      const result = await deps.sendUser(outputRoute.sessionId, resolvedText, {
         displayText,
         inputOrigin: 'remote-im',
         ...(outputRoute.replyId ? { replyId: outputRoute.replyId } : {}),
         taskId: outputRoute.taskId,
         ...(attachments?.length ? { attachments } : {})
       })
-      if (result.ok) deps.onAicliInputAccepted?.(outputRoute)
-      else deps.onAicliOutputCancel?.(outputRoute)
+      if (result.ok) {
+        deps.onAicliInputAccepted?.(outputRoute)
+      } else if (outputRoute.continuation) {
+        deps.onAicliInputRejected?.(outputRoute)
+      } else {
+        deps.onAicliOutputCancel?.(outputRoute)
+      }
       return result
     } catch (error) {
-      deps.onAicliOutputCancel?.(outputRoute)
+      if (outputRoute.continuation) deps.onAicliInputRejected?.(outputRoute)
+      else deps.onAicliOutputCancel?.(outputRoute)
       throw error
     }
+  }
+
+  async function sendMachineInput(
+    sessionId: string,
+    text: string,
+    displayText: string,
+    attachments?: AicliUserMessageAttachment[]
+  ): Promise<Awaited<ReturnType<RemoteImRouterDeps['sendUser']>>> {
+    const result = await deps.sendUser(sessionId, text, {
+      displayText,
+      inputOrigin: 'remote-im-machine',
+      ...(attachments?.length ? { attachments } : {})
+    })
+    if (result.ok) deps.onAicliMachineInputAccepted?.(sessionId)
+    return result
   }
 
   async function routeTaskTextToAicli(input: {
@@ -592,22 +607,22 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       return { ok: false, error: 'No running AICLI session' }
     }
 
-    const autoReplyToIm = input.origin === 'human'
-    const outputRoute = createOutputRoute(
-      session,
-      input.message.projectId,
-      input.fromUserId,
-      autoReplyToIm
-    )
-    const replyId = outputRoute.replyId
-    const wrapped = buildRemoteImAicliPrompt(
-      {
-        fromUserId: input.fromUserId,
-        text: input.text,
-        replyId
-      },
-      { includeReplyProtocol: !usesSourceLevelRouting(session) }
-    )
+    const outputRoute =
+      input.origin === 'human'
+        ? createOutputRoute(session, input.message.projectId, input.fromUserId, true)
+        : null
+    const buildPrompt = () =>
+      buildRemoteImAicliPrompt(
+        {
+          fromUserId: input.fromUserId,
+          text: input.text,
+          replyId: outputRoute?.replyId
+        },
+        {
+          includeReplyProtocol:
+            input.origin === 'human' && !usesSourceLevelRouting(session)
+        }
+      )
     const displayText = buildRemoteImAicliDisplayText({
       fromUserId: input.fromUserId,
       text: input.text
@@ -617,65 +632,33 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
     // accepting the prompt; the bound session makes that retransmission a
     // no-op instead of a second model input.
     deps.store.updateStatus(incoming.id, { sessionId: session.sessionId, error: null })
-    const submit = async (): Promise<RemoteImRouteResult> => {
-      const sendResult = await sendUserWithOutputRoute(outputRoute, wrapped, displayText)
-      if (!sendResult.ok) {
-        const error = sendResult.error ?? 'failed to send message to AICLI'
-        deps.store.updateStatus(incoming.id, {
-          status: 'failed',
-          error
-        })
-        await sendIncomingFailureIfHuman(
-          deps,
-          input.origin,
-          input.message.projectId,
-          input.fromUserId,
-          `发送给 AICLI 失败：${error}`
-        )
-        return { ok: false, error }
-      }
+    const sendResult = outputRoute
+      ? await sendUserWithOutputRoute(outputRoute, buildPrompt, displayText)
+      : await sendMachineInput(session.sessionId, buildPrompt(), displayText)
+    if (!sendResult.ok) {
+      const error = sendResult.error ?? 'failed to send message to AICLI'
+      deps.store.updateStatus(incoming.id, { status: 'failed', error })
+      await sendIncomingFailureIfHuman(
+        deps,
+        input.origin,
+        input.message.projectId,
+        input.fromUserId,
+        `发送给 AICLI 失败：${error}`
+      )
+      return { ok: false, error }
+    }
 
-      deps.store.updateStatus(incoming.id, {
-        sessionId: session.sessionId,
-        status: 'sent-to-aicli',
-        sentToAicliAt: deps.now?.() ?? Date.now(),
-        error: null
-      })
-      return {
-        ok: true,
-        aicliSessionId: session.sessionId,
-        ...(replyId ? { replyId } : {})
-      }
+    deps.store.updateStatus(incoming.id, {
+      sessionId: session.sessionId,
+      status: 'sent-to-aicli',
+      sentToAicliAt: deps.now?.() ?? Date.now(),
+      error: null
+    })
+    return {
+      ok: true,
+      aicliSessionId: session.sessionId,
+      ...(outputRoute?.replyId ? { replyId: outputRoute.replyId } : {})
     }
-    const deferral = deps.deferAicliInputIfBusy?.(
-      outputRoute,
-      async () => {
-        await submit()
-      },
-      (error) => {
-        deps.store.updateStatus(incoming.id, { status: 'failed', error })
-        deps.messagesChanged?.(input.message.projectId)
-        void sendIncomingFailureIfHuman(
-          deps,
-          input.origin,
-          input.message.projectId,
-          input.fromUserId,
-          `发送给 AICLI 失败：${error}`
-        )
-      }
-    )
-    if (deferral?.queued) {
-      return {
-        ok: true,
-        queued: true,
-        aicliSessionId: session.sessionId,
-        ...(replyId ? { replyId } : {})
-      }
-    }
-    if (deferral && !deferral.queued) {
-      return { ok: false, error: deferral.error }
-    }
-    return submit()
   }
 
   async function handleIncomingText(
@@ -1041,90 +1024,54 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       localPath: attachment.localPath,
       caption: message.caption ?? null
     })
-    const autoReplyToIm = origin === 'human'
-    const outputRoute = createOutputRoute(session, message.projectId, fromUserId, autoReplyToIm)
-    const replyId = outputRoute.replyId
-    const wrapped = buildRemoteImAicliPrompt(
-      {
-        fromUserId,
-        text: taskText,
-        replyId
-      },
-      { includeReplyProtocol: !usesSourceLevelRouting(session) }
-    )
+    const outputRoute =
+      origin === 'human' ? createOutputRoute(session, message.projectId, fromUserId, true) : null
+    const buildPrompt = () =>
+      buildRemoteImAicliPrompt(
+        { fromUserId, text: taskText, replyId: outputRoute?.replyId },
+        { includeReplyProtocol: origin === 'human' && !usesSourceLevelRouting(session) }
+      )
     const displayText = buildRemoteImAicliDisplayText({
       fromUserId,
       text: taskText
     })
     deps.store.updateStatus(incoming.id, { sessionId: session.sessionId, error: null })
-    const submit = async (): Promise<RemoteImRouteResult> => {
-      const sendResult = await sendUserWithOutputRoute(outputRoute, wrapped, displayText, [
-        {
-          type: 'image',
-          localPath: attachment.localPath!,
-          mimeType: attachment.mimeType?.startsWith('image/')
-            ? attachment.mimeType
-            : inferImageMimeType(attachment.localPath!),
-          ...(attachment.fileName ? { fileName: attachment.fileName } : {})
-        }
-      ])
-      if (!sendResult.ok) {
-        const error = sendResult.error ?? 'failed to send image message to AICLI'
-        deps.store.updateStatus(incoming.id, {
-          status: 'failed',
-          error
-        })
-        await sendIncomingFailureIfHuman(
-          deps,
-          origin,
-          message.projectId,
-          fromUserId,
-          `发送给 AICLI 失败：${error}`
-        )
-        return { ok: false, error }
+    const attachments: AicliUserMessageAttachment[] = [
+      {
+        type: 'image',
+        localPath: attachment.localPath!,
+        mimeType: attachment.mimeType?.startsWith('image/')
+          ? attachment.mimeType
+          : inferImageMimeType(attachment.localPath!),
+        ...(attachment.fileName ? { fileName: attachment.fileName } : {})
       }
-
-      deps.store.updateStatus(incoming.id, {
-        sessionId: session.sessionId,
-        status: 'sent-to-aicli',
-        sentToAicliAt: deps.now?.() ?? Date.now(),
-        error: null
-      })
-      return {
-        ok: true,
-        aicliSessionId: session.sessionId,
-        ...(replyId ? { replyId } : {})
-      }
+    ]
+    const sendResult = outputRoute
+      ? await sendUserWithOutputRoute(outputRoute, buildPrompt, displayText, attachments)
+      : await sendMachineInput(session.sessionId, buildPrompt(), displayText, attachments)
+    if (!sendResult.ok) {
+      const error = sendResult.error ?? 'failed to send image message to AICLI'
+      deps.store.updateStatus(incoming.id, { status: 'failed', error })
+      await sendIncomingFailureIfHuman(
+        deps,
+        origin,
+        message.projectId,
+        fromUserId,
+        `发送给 AICLI 失败：${error}`
+      )
+      return { ok: false, error }
     }
-    const deferral = deps.deferAicliInputIfBusy?.(
-      outputRoute,
-      async () => {
-        await submit()
-      },
-      (error) => {
-        deps.store.updateStatus(incoming.id, { status: 'failed', error })
-        deps.messagesChanged?.(message.projectId)
-        void sendIncomingFailureIfHuman(
-          deps,
-          origin,
-          message.projectId,
-          fromUserId,
-          `发送给 AICLI 失败：${error}`
-        )
-      }
-    )
-    if (deferral?.queued) {
-      return {
-        ok: true,
-        queued: true,
-        aicliSessionId: session.sessionId,
-        ...(replyId ? { replyId } : {})
-      }
+    deps.store.updateStatus(incoming.id, {
+      sessionId: session.sessionId,
+      status: 'sent-to-aicli',
+      sentToAicliAt: deps.now?.() ?? Date.now(),
+      error: null
+    })
+    return {
+      ok: true,
+      aicliSessionId: session.sessionId,
+      ...(outputRoute?.replyId ? { replyId: outputRoute.replyId } : {})
     }
-    if (deferral && !deferral.queued) {
-      return { ok: false, error: deferral.error }
-    }
-    return submit()
   }
 
   async function handleIncomingFile(
@@ -1230,78 +1177,44 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       mimeType: attachment.mimeType ?? null,
       caption: message.caption ?? null
     })
-    const autoReplyToIm = origin === 'human'
-    const outputRoute = createOutputRoute(session, message.projectId, fromUserId, autoReplyToIm)
-    const replyId = outputRoute.replyId
-    const wrapped = buildRemoteImAicliPrompt(
-      {
-        fromUserId,
-        text: taskText,
-        replyId
-      },
-      { includeReplyProtocol: !usesSourceLevelRouting(session) }
-    )
+    const outputRoute =
+      origin === 'human' ? createOutputRoute(session, message.projectId, fromUserId, true) : null
+    const buildPrompt = () =>
+      buildRemoteImAicliPrompt(
+        { fromUserId, text: taskText, replyId: outputRoute?.replyId },
+        { includeReplyProtocol: origin === 'human' && !usesSourceLevelRouting(session) }
+      )
     const displayText = buildRemoteImAicliDisplayText({
       fromUserId,
       text: taskText
     })
     deps.store.updateStatus(incoming.id, { sessionId: session.sessionId, error: null })
-    const submit = async (): Promise<RemoteImRouteResult> => {
-      const sendResult = await sendUserWithOutputRoute(outputRoute, wrapped, displayText)
-      if (!sendResult.ok) {
-        const error = sendResult.error ?? 'failed to send file message to AICLI'
-        deps.store.updateStatus(incoming.id, { status: 'failed', error })
-        await sendIncomingFailureIfHuman(
-          deps,
-          origin,
-          message.projectId,
-          fromUserId,
-          `发送给 AICLI 失败：${error}`
-        )
-        return { ok: false, error }
-      }
-
-      deps.store.updateStatus(incoming.id, {
-        sessionId: session.sessionId,
-        status: 'sent-to-aicli',
-        sentToAicliAt: deps.now?.() ?? Date.now(),
-        error: null
-      })
-      return {
-        ok: true,
-        aicliSessionId: session.sessionId,
-        ...(replyId ? { replyId } : {})
-      }
+    const sendResult = outputRoute
+      ? await sendUserWithOutputRoute(outputRoute, buildPrompt, displayText)
+      : await sendMachineInput(session.sessionId, buildPrompt(), displayText)
+    if (!sendResult.ok) {
+      const error = sendResult.error ?? 'failed to send file message to AICLI'
+      deps.store.updateStatus(incoming.id, { status: 'failed', error })
+      await sendIncomingFailureIfHuman(
+        deps,
+        origin,
+        message.projectId,
+        fromUserId,
+        `发送给 AICLI 失败：${error}`
+      )
+      return { ok: false, error }
     }
-    const deferral = deps.deferAicliInputIfBusy?.(
-      outputRoute,
-      async () => {
-        await submit()
-      },
-      (error) => {
-        deps.store.updateStatus(incoming.id, { status: 'failed', error })
-        deps.messagesChanged?.(message.projectId)
-        void sendIncomingFailureIfHuman(
-          deps,
-          origin,
-          message.projectId,
-          fromUserId,
-          `发送给 AICLI 失败：${error}`
-        )
-      }
-    )
-    if (deferral?.queued) {
-      return {
-        ok: true,
-        queued: true,
-        aicliSessionId: session.sessionId,
-        ...(replyId ? { replyId } : {})
-      }
+    deps.store.updateStatus(incoming.id, {
+      sessionId: session.sessionId,
+      status: 'sent-to-aicli',
+      sentToAicliAt: deps.now?.() ?? Date.now(),
+      error: null
+    })
+    return {
+      ok: true,
+      aicliSessionId: session.sessionId,
+      ...(outputRoute?.replyId ? { replyId: outputRoute.replyId } : {})
     }
-    if (deferral && !deferral.queued) {
-      return { ok: false, error: deferral.error }
-    }
-    return submit()
   }
 
   // SDK 漫游补拉（登录后补充离线期间的历史）：只入库展示、绝不路由——漫游是

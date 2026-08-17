@@ -13,8 +13,11 @@ import {
   forwardRemoteImStructuredAssistantOutput,
   forwardRemoteImStructuredFinalOutput,
   flushRemoteImOutputSession,
+  isRemoteImClaudeRouteConsumed,
   parseRemoteImAicliOutputText,
+  reserveRemoteImClaudeReplyId,
   revokeRemoteImOutputSessions,
+  rollbackRemoteImClaudeReplyId,
   resolveRemoteImStructuredFinalContent,
   isRemoteImOperationFinishedText,
   type RemoteImOutputForwardingDeps,
@@ -86,6 +89,7 @@ describe('remote IM output forwarding', () => {
     expect(removed.buffer).toBe('')
     expect(removed.timer).toBeNull()
     expect(removed.autoReplyToIm).toBe(false)
+    expect(removed.authorityRevoked).toBe(true)
     expect(sessions).toEqual(
       new Map([
         ['session-a', removed],
@@ -534,6 +538,87 @@ describe('remote IM output forwarding', () => {
     expect(flushRemoteImOutputSession('session-1', state, deps)).toBe(0)
     expect(messages.map((message) => message.content)).toEqual(['exact Claude reply'])
     expect(sentTexts).toEqual(['exact Claude reply'])
+  })
+
+  it('keeps a queued Claude continuation alive and forwards its distinct frame', () => {
+    const state = createState('', { outputMaxChunkChars: 500 })
+    state.replyId = 'rim-first'
+    state.pendingReplyIds = ['rim-first']
+    state.sourceKind = 'claude'
+    state.transcript = {
+      kind: 'claude',
+      cwd: '/repo',
+      sinceMs: 100,
+      replyId: 'rim-first',
+      pendingReplyIds: ['rim-first']
+    }
+    expect(reserveRemoteImClaudeReplyId(state, 'rim-second')).toBe(true)
+    expect(reserveRemoteImClaudeReplyId(state, 'rim-second')).toBe(false)
+    const messages: CreateRemoteImMessageInput[] = []
+    const sentTexts: string[] = []
+    const transcriptReplies = [
+      {
+        content: 'first answer',
+        completed: true,
+        replyId: 'rim-first',
+        completedReplyIds: ['rim-first'],
+        frameId: 'assistant-first'
+      },
+      {
+        content: 'second answer',
+        completed: true,
+        replyId: 'rim-second',
+        completedReplyIds: ['rim-second'],
+        frameId: 'assistant-second'
+      }
+    ]
+    let transcriptIndex = 0
+    const deps: RemoteImOutputForwardingDeps = {
+      createMessage: (input) => messages.push(input),
+      sendText: (_projectId, _toUserId, text) => sentTexts.push(text),
+      messagesChanged: () => undefined,
+      readTranscriptReply: () => transcriptReplies[transcriptIndex] ?? null
+    }
+
+    expect(flushRemoteImOutputSession('session-1', state, deps)).toBe(1)
+    expect(state.pendingReplyIds).toEqual(['rim-second'])
+    expect(state.transcript.pendingReplyIds).toEqual(['rim-second'])
+    expect(state.awaitingTranscriptCompletion).toBe(true)
+    expect(isRemoteImClaudeRouteConsumed(state)).toBe(false)
+
+    transcriptIndex = 1
+    expect(flushRemoteImOutputSession('session-1', state, deps)).toBe(1)
+    expect(state.pendingReplyIds).toEqual([])
+    expect(state.awaitingTranscriptCompletion).toBe(false)
+    expect(isRemoteImClaudeRouteConsumed(state)).toBe(true)
+
+    expect(flushRemoteImOutputSession('session-1', state, deps)).toBe(0)
+    expect(messages.map((message) => message.content)).toEqual([
+      'first answer',
+      'second answer'
+    ])
+    expect(sentTexts).toEqual(['first answer', 'second answer'])
+  })
+
+  it('rolls back a rejected Claude continuation without removing its owner prompt', () => {
+    const state = createState('')
+    state.replyId = 'rim-first'
+    state.pendingReplyIds = ['rim-first']
+    state.sourceKind = 'claude'
+    state.transcript = {
+      kind: 'claude',
+      cwd: '/repo',
+      sinceMs: 100,
+      replyId: 'rim-first',
+      pendingReplyIds: ['rim-first']
+    }
+
+    expect(reserveRemoteImClaudeReplyId(state, 'rim-rejected')).toBe(true)
+    expect(rollbackRemoteImClaudeReplyId(state, 'rim-rejected')).toBe(true)
+    expect(rollbackRemoteImClaudeReplyId(state, 'rim-rejected')).toBe(false)
+    expect(state.pendingReplyIds).toEqual(['rim-first'])
+    expect(state.transcript.pendingReplyIds).toEqual(['rim-first'])
+    expect(isRemoteImClaudeRouteConsumed(state)).toBe(false)
   })
 
   it('replays a Codex current reply fixture with TUI noise before forwarding', () => {

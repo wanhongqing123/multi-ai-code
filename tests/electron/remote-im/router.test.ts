@@ -196,7 +196,7 @@ describe('remote IM router', () => {
       const starts: Array<{ replyId?: string; taskId: string }> = []
       const submissions: Array<{
         text: string
-        inputOrigin?: 'remote-im' | 'local'
+        inputOrigin?: 'remote-im' | 'remote-im-machine' | 'local'
         replyId?: string
         taskId?: string
       }> = []
@@ -315,15 +315,14 @@ describe('remote IM router', () => {
     expect(sentToIm.at(-1)).toContain('发送给 AICLI 失败：')
   })
 
-  it('defers a busy machine input and rechecks admission when the FIFO submits it', async () => {
+  it('submits a machine input immediately without creating an output route', async () => {
     const store = createMessageStore()
     const routes: RemoteImAicliOutputRoute[] = []
     const submissions: Array<{
-      inputOrigin?: 'remote-im' | 'local'
+      inputOrigin?: 'remote-im' | 'remote-im-machine' | 'local'
       text: string
     }> = []
     let admissionCalls = 0
-    let deferredSubmit: (() => Promise<void>) | null = null
     const router = createRemoteImRouter({
       getConfig: () => config,
       resolveSession: () => ({
@@ -335,17 +334,12 @@ describe('remote IM router', () => {
         admissionCalls += 1
         return { ok: true }
       },
-      deferAicliInputIfBusy: (_route, submit) => {
-        deferredSubmit = submit
-        return { queued: true }
-      },
       onAicliOutputStart: (route) => routes.push(route),
       sendUser: async (_sessionId, text, options) => {
         submissions.push({ text, inputOrigin: options?.inputOrigin })
         return { ok: true }
       },
       sendImText: async () => ({ ok: true }),
-      createReplyId: () => 'machine-reply',
       store
     })
 
@@ -359,39 +353,25 @@ describe('remote IM router', () => {
       createdAt: 100
     })
 
-    expect(result).toMatchObject({
-      ok: true,
-      queued: true,
-      aicliSessionId: 'session-main',
-      replyId: 'machine-reply'
-    })
+    expect(result).toMatchObject({ ok: true, aicliSessionId: 'session-main' })
+    expect(result).not.toHaveProperty('queued')
+    expect(result).not.toHaveProperty('replyId')
     expect(admissionCalls).toBe(0)
     expect(routes).toEqual([])
-    expect(submissions).toEqual([])
+    expect(submissions).toHaveLength(1)
+    expect(submissions[0]?.inputOrigin).toBe('remote-im-machine')
+    expect(submissions[0]?.text).toContain('继续协作')
     expect(store.messages[0]).toMatchObject({
       role: 'aicli',
-      status: 'received',
+      status: 'sent-to-aicli',
       sessionId: 'session-main'
     })
-
-    expect(deferredSubmit).not.toBeNull()
-    await deferredSubmit!()
-
-    expect(admissionCalls).toBe(1)
-    expect(routes).toHaveLength(1)
-    expect(routes[0]).toMatchObject({ autoReplyToIm: false })
-    expect(submissions).toHaveLength(1)
-    expect(submissions[0]?.inputOrigin).toBe('remote-im')
-    expect(submissions[0]?.text).toContain('继续协作')
-    expect(submissions[0]?.text).not.toContain('本轮 AICLI 的普通输出不会自动发送到 IM')
-    expect(store.messages[0]).toMatchObject({ status: 'sent-to-aicli' })
   })
 
-  it('defers a busy human input so it cannot merge into an active local turn', async () => {
+  it('submits a human input immediately with an automatic output route', async () => {
     const store = createMessageStore()
     const routes: RemoteImAicliOutputRoute[] = []
     const submissions: string[] = []
-    let deferredSubmit: (() => Promise<void>) | null = null
     const router = createRemoteImRouter({
       getConfig: () => config,
       resolveSession: () => ({
@@ -400,10 +380,6 @@ describe('remote IM router', () => {
         sourceKind: 'claude'
       }),
       authorizeAicliOutputStart: () => ({ ok: true }),
-      deferAicliInputIfBusy: (_route, submit) => {
-        deferredSubmit = submit
-        return { queued: true }
-      },
       onAicliOutputStart: (route) => routes.push(route),
       sendUser: async (_sessionId, text) => {
         submissions.push(text)
@@ -424,13 +400,8 @@ describe('remote IM router', () => {
       createdAt: 100
     })
 
-    expect(result).toMatchObject({ ok: true, queued: true, replyId: 'human-reply' })
-    expect(routes).toEqual([])
-    expect(submissions).toEqual([])
-
-    expect(deferredSubmit).not.toBeNull()
-    await deferredSubmit!()
-
+    expect(result).toMatchObject({ ok: true, replyId: 'human-reply' })
+    expect(result).not.toHaveProperty('queued')
     expect(routes).toHaveLength(1)
     expect(routes[0]).toMatchObject({ autoReplyToIm: true })
     expect(submissions).toHaveLength(1)
@@ -438,10 +409,85 @@ describe('remote IM router', () => {
     expect(store.messages[0]).toMatchObject({ status: 'sent-to-aicli' })
   })
 
+  it('keeps a fresh reply identity for each human continuation', async () => {
+    const store = createMessageStore()
+    const submitted: Array<{ text: string; replyId?: string; taskId?: string }> = []
+    const router = createRemoteImRouter({
+      getConfig: () => config,
+      resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo', sourceKind: 'claude' }),
+      authorizeAicliOutputStart: (route) => {
+        route.taskId = 'active-task'
+        route.continuation = true
+        return { ok: true }
+      },
+      sendUser: async (_sessionId, text, options) => {
+        submitted.push({ text, replyId: options?.replyId, taskId: options?.taskId })
+        return { ok: true }
+      },
+      sendImText: async () => ({ ok: true }),
+      createReplyId: () => 'fresh-continuation-reply',
+      store
+    })
+
+    const result = await router.handleIncomingText({
+      projectId: 'project-1',
+      remoteMessageId: 'human-steer-identity',
+      fromUserId: 'phone_admin',
+      text: '中途补充',
+      origin: 'human'
+    })
+
+    expect(result).toMatchObject({ ok: true, replyId: 'fresh-continuation-reply' })
+    expect(submitted[0]).toMatchObject({
+      replyId: 'fresh-continuation-reply',
+      taskId: 'active-task'
+    })
+    expect(submitted[0]?.text).toContain(
+      '<remote-im-reply id="fresh-continuation-reply">'
+    )
+  })
+
+  it('rolls back only the rejected continuation reservation without cancelling its owner', async () => {
+    const store = createMessageStore()
+    const cancelled: RemoteImAicliOutputRoute[] = []
+    const rejected: RemoteImAicliOutputRoute[] = []
+    const router = createRemoteImRouter({
+      getConfig: () => config,
+      resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo', sourceKind: 'codex' }),
+      authorizeAicliOutputStart: (route) => {
+        route.replyId = 'active-reply'
+        route.taskId = 'active-task'
+        route.continuation = true
+        return { ok: true }
+      },
+      sendUser: async () => ({ ok: false, error: 'steer rejected' }),
+      onAicliOutputCancel: (route) => cancelled.push(route),
+      onAicliInputRejected: (route) => rejected.push(route),
+      sendImText: async () => ({ ok: true }),
+      store
+    })
+
+    const result = await router.handleIncomingText({
+      projectId: 'project-1',
+      remoteMessageId: 'human-steer-rejected',
+      fromUserId: 'phone_admin',
+      text: '中途补充',
+      origin: 'human'
+    })
+
+    expect(result).toEqual({ ok: false, error: 'steer rejected' })
+    expect(cancelled).toEqual([])
+    expect(rejected).toHaveLength(1)
+    expect(rejected[0]).toMatchObject({ continuation: true })
+  })
+
   it('defaults missing origin to a silent machine route', async () => {
     const store = createMessageStore()
     const routes: RemoteImAicliOutputRoute[] = []
-    const inputs: Array<{ inputOrigin?: 'remote-im' | 'local'; text: string }> = []
+    const inputs: Array<{
+      inputOrigin?: 'remote-im' | 'remote-im-machine' | 'local'
+      text: string
+    }> = []
     const router = createRemoteImRouter({
       getConfig: () => config,
       resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
@@ -464,8 +510,8 @@ describe('remote IM router', () => {
     })
 
     expect(result.ok).toBe(true)
-    expect(routes[0]).toMatchObject({ autoReplyToIm: false })
-    expect(inputs[0]).toMatchObject({ inputOrigin: 'remote-im' })
+    expect(routes).toEqual([])
+    expect(inputs[0]).toMatchObject({ inputOrigin: 'remote-im-machine' })
     expect(inputs[0]?.text).toContain('旧版未标记消息')
     expect(inputs[0]?.text).not.toContain('如需继续与对方协作，请显式调用 imcli')
     expect(store.messages[0]).toMatchObject({ role: 'aicli', status: 'sent-to-aicli' })
@@ -786,8 +832,7 @@ describe('remote IM router', () => {
     expect(receivedAicliInputs).toHaveLength(1)
     expect(receivedAicliInputs[0]).toContain('已拒绝这一次命令执行。')
     expect(receivedAicliInputs[0]).not.toContain('如需继续与对方协作，请显式调用 imcli')
-    expect(receiverRoutes).toHaveLength(1)
-    expect(receiverRoutes[0]).toMatchObject({ autoReplyToIm: false })
+    expect(receiverRoutes).toEqual([])
     expect(receiverStore.messages[0]).toMatchObject({
       role: 'aicli',
       status: 'sent-to-aicli',
@@ -1067,13 +1112,23 @@ describe('remote IM router', () => {
 
   it('routes trusted file messages of any type to AICLI with the cached local path', async () => {
     const store = createMessageStore()
-    const sentToAicli: Array<{ sessionId: string; text: string; displayText: string | undefined }> = []
+    const sentToAicli: Array<{
+      sessionId: string
+      text: string
+      displayText: string | undefined
+      inputOrigin: string | undefined
+    }> = []
     const sentToIm: string[] = []
     const router = createRemoteImRouter({
       getConfig: () => config,
       resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
       sendUser: async (sessionId, text, options) => {
-        sentToAicli.push({ sessionId, text, displayText: options?.displayText })
+        sentToAicli.push({
+          sessionId,
+          text,
+          displayText: options?.displayText,
+          inputOrigin: options?.inputOrigin
+        })
         return { ok: true }
       },
       sendImText: async (_projectId, _toUserId, text) => {
@@ -1120,6 +1175,7 @@ describe('remote IM router', () => {
     // 大小要能让 AICLI 先判断值不值得读，而不是闷头打开一个几十 MB 的二进制。
     expect(sentToAicli[0]?.text).toContain('大小: 2.0 MB')
     expect(sentToAicli[0]?.text).toContain('配文: 按这个文档改')
+    expect(sentToAicli[0]?.inputOrigin).toBe('remote-im-machine')
     expect(sentToIm).toEqual([])
     expect(store.messages[0]).toMatchObject({
       kind: 'file',
@@ -1176,6 +1232,7 @@ describe('remote IM router', () => {
       text: string
       displayText: string | undefined
       attachments: unknown
+      inputOrigin: string | undefined
     }> = []
     const sentToIm: string[] = []
     const router = createRemoteImRouter({
@@ -1186,7 +1243,8 @@ describe('remote IM router', () => {
           sessionId,
           text,
           displayText: options?.displayText,
-          attachments: options?.attachments
+          attachments: options?.attachments,
+          inputOrigin: options?.inputOrigin
         })
         return { ok: true }
       },
@@ -1232,6 +1290,7 @@ describe('remote IM router', () => {
     expect(sentToAicli).toHaveLength(1)
     expect(sentToAicli[0]?.text).toContain('本地路径: /tmp/remote-im/images/photo.png')
     expect(sentToAicli[0]?.displayText).toContain('本地路径: /tmp/remote-im/images/photo.png')
+    expect(sentToAicli[0]?.inputOrigin).toBe('remote-im-machine')
     expect(sentToAicli[0]?.attachments).toEqual([
       {
         type: 'image',
@@ -1555,7 +1614,7 @@ describe('remote IM router', () => {
     expect(sentToAicli[0]).toContain('处理完成')
     expect(sentToAicli[0]).not.toContain(createRemoteImAicliOutputText(''))
     expect(sentToIm).toEqual([])
-    expect(routes[0]).toMatchObject({ autoReplyToIm: false })
+    expect(routes).toEqual([])
     expect(store.messages[0]).toMatchObject({
       role: 'aicli',
       status: 'sent-to-aicli',
@@ -1628,7 +1687,7 @@ describe('remote IM router', () => {
     expect(store.messages[0]).toMatchObject({ status: 'failed' })
   })
 
-  it('routes machine system replies to AICLI through a silent output route', async () => {
+  it('routes machine system replies to AICLI without an output route', async () => {
     const store = createMessageStore()
     const sentToAicli: string[] = []
     const sentToIm: string[] = []
@@ -1659,7 +1718,7 @@ describe('remote IM router', () => {
     expect(sentToAicli).toHaveLength(1)
     expect(sentToAicli[0]).toContain('当前没有运行中的 AICLI。')
     expect(sentToIm).toEqual([])
-    expect(routes[0]).toMatchObject({ autoReplyToIm: false })
+    expect(routes).toEqual([])
     expect(store.messages[0]).toMatchObject({
       role: 'aicli',
       status: 'sent-to-aicli',
@@ -1697,7 +1756,7 @@ describe('remote IM router', () => {
     expect(sentToAicli).toHaveLength(1)
     expect(sentToAicli[0]).toContain('build passed')
     expect(sentToIm).toEqual([])
-    expect(routes[0]).toMatchObject({ autoReplyToIm: false })
+    expect(routes).toEqual([])
     expect(store.messages[0]).toMatchObject({
       role: 'aicli',
       direction: 'incoming',
@@ -1738,7 +1797,7 @@ describe('remote IM router', () => {
     expect(sentToAicli).toHaveLength(1)
     expect(sentToAicli[0]).toContain(nestedOutput)
     expect(sentToIm).toEqual([])
-    expect(routes[0]).toMatchObject({ autoReplyToIm: false })
+    expect(routes).toEqual([])
     expect(store.messages[0]).toMatchObject({
       role: 'aicli',
       direction: 'incoming',
@@ -1778,7 +1837,7 @@ describe('remote IM router', () => {
     expect(sentToAicli).toHaveLength(1)
     expect(sentToAicli[0]).toContain('操作已完成。')
     expect(sentToIm).toEqual([])
-    expect(routes[0]).toMatchObject({ autoReplyToIm: false })
+    expect(routes).toEqual([])
     expect(store.messages[0]).toMatchObject({
       role: 'aicli',
       status: 'sent-to-aicli',

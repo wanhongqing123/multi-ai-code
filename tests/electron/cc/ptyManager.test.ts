@@ -413,6 +413,30 @@ describe('registerPtyIpc prompt injection timing', () => {
     ])
   })
 
+  it('submits machine IM input without reporting a local takeover', async () => {
+    const { proc } = await spawnNoPlanSession('codex')
+    const receivedLines: string[] = []
+    const socket = await connectAicliControlBridge(proc, receivedLines)
+    const localKinds: string[] = []
+    const { addSessionLocalInputListener, sendUserMessageToSession } = await import(
+      '../../../electron/cc/ptyManager.js'
+    )
+    const unsubscribe = addSessionLocalInputListener(({ kind }) => localKinds.push(kind))
+
+    const result = await sendUserMessageToSession('session-no-plan', 'machine steer', {
+      inputOrigin: 'remote-im-machine'
+    })
+
+    unsubscribe()
+    socket.destroy()
+    expect(result).toEqual({ ok: true })
+    expect(localKinds).toEqual([])
+    expect(JSON.parse(receivedLines[0] ?? '{}')).toMatchObject({
+      command: 'submit_user_message',
+      inputOrigin: 'remote-im-machine'
+    })
+  })
+
   it('broadcasts remote IM display text to the local terminal without changing PTY input', async () => {
     const { proc } = await spawnNoPlanSession()
     proc.emitData(

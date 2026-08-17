@@ -3,7 +3,7 @@ import net from 'node:net'
 
 export type AicliStructuredOutputProvider = 'codex' | 'opencode'
 export type AicliControlMode = 'plan' | 'build'
-export type AicliUserMessageInputOrigin = 'remote-im' | 'local'
+export type AicliUserMessageInputOrigin = 'remote-im' | 'remote-im-machine' | 'local'
 export type AicliApprovalDecision = 'accept' | 'cancel'
 
 export interface AicliUserMessageAttachment {

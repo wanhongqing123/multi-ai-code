@@ -58,14 +58,15 @@ import {
   forwardRemoteImStructuredAssistantOutput,
   forwardRemoteImStructuredFinalOutput,
   flushRemoteImOutputSession,
+  isRemoteImClaudeRouteConsumed,
+  reserveRemoteImClaudeReplyId,
+  rollbackRemoteImClaudeReplyId,
   revokeRemoteImOutputSessions,
   resolveRemoteImStructuredFinalContent,
   type RemoteImOutputCompletionInfo,
   type RemoteImOutputSessionState
 } from './outputForwarding.js'
 import {
-  evaluateRemoteImStructuredTaskAdmission,
-  RemoteImQueuedInputRegistry,
   RemoteImStructuredTaskRegistry
 } from './structuredTaskRegistry.js'
 import { getRemoteImAicliOutputSourceKind } from './aicliSourceKind.js'
@@ -137,8 +138,6 @@ const MAX_REMOTE_IM_IMAGE_BYTES = 20 * 1024 * 1024
 const MAX_REMOTE_IM_FILE_BYTES = 100 * 1024 * 1024
 // md/html 预览要把全文读进内存渲染，保持独立的小上限。
 const MAX_REMOTE_IM_DOC_PREVIEW_BYTES = 5 * 1024 * 1024
-const MAX_QUEUED_REMOTE_IM_AICLI_INPUTS_PER_SESSION = 32
-const QUEUED_REMOTE_IM_AICLI_INPUT_TTL_MS = 5 * 60 * 1000
 const CLAUDE_TRANSCRIPT_COMPLETION_POLL_MS = 250
 const MAX_CLAUDE_TRANSCRIPT_COMPLETION_POLLS = 6
 
@@ -151,24 +150,6 @@ type RemoteImStructuredTaskState = RemoteImAccountBoundOutputSessionState & {
   taskId: string
 }
 const structuredOutputTasks = new RemoteImStructuredTaskRegistry<RemoteImStructuredTaskState>()
-interface RemoteImQueuedAicliInput {
-  route: RemoteImAicliOutputRoute
-  submit: () => Promise<void>
-  cancel: (error: string) => void
-}
-const queuedAicliInputs = new RemoteImQueuedInputRegistry<RemoteImQueuedAicliInput>(
-  MAX_QUEUED_REMOTE_IM_AICLI_INPUTS_PER_SESSION,
-  QUEUED_REMOTE_IM_AICLI_INPUT_TTL_MS
-)
-const queuedAicliInputExpiryTimers = new Map<string, ReturnType<typeof setTimeout>>()
-const dispatchingQueuedAicliInputSessions = new Set<string>()
-const pendingQueuedAicliInputDrainSessions = new Set<string>()
-// Claude has no structured source bridge. While the operator is editing a
-// local prompt, keep Remote IM input out of that draft. Submission and raw PTY
-// writes share the same queue, so clearing this claim at the serialized write
-// boundary preserves local-before-remote ordering without pretending a
-// blockable Claude hook is an authoritative turn terminal.
-const claudeLocalEditingSessions = new Set<string>()
 const approvalDeliveryWaiters = new Map<
   number,
   (result: { ok: boolean; error?: string }) => void
@@ -315,9 +296,6 @@ function enqueueRemoteImApprovalAuthorityMutation<T>(
       return await operation()
     } finally {
       remoteImApprovalAuthorityMutationCount -= 1
-      if (remoteImApprovalAuthorityMutationCount === 0) {
-        drainPendingQueuedRemoteImAicliInputs()
-      }
     }
   })
 }
@@ -398,9 +376,7 @@ function revokeRemoteImOutputRoutes(
     )
     if (
       outputSessions.get(sessionId) === state &&
-      state.sourceKind === 'claude' &&
-      state.replyId &&
-      state.consumedReplyId === state.replyId
+      isRemoteImClaudeRouteConsumed(state)
     ) {
       outputSessions.delete(sessionId)
       writeStructuredOutputRuntimeLog('aicli:claude-reply-frame-consumed', {
@@ -413,7 +389,6 @@ function revokeRemoteImOutputRoutes(
           reason: 'authority-revoked'
         }
       })
-      drainQueuedRemoteImAicliInput(sessionId)
     }
   }
 
@@ -437,9 +412,10 @@ async function invalidateRemoteImSecurityStateForAccountChange(): Promise<void> 
   remoteImAccountSecurityGeneration += 1
   remoteImRuntimeIdentities.clear()
   revokeRemoteImOutputRoutes()
-  cancelQueuedRemoteImAicliInputs('Remote IM account changed before queued input was submitted')
-  pendingQueuedAicliInputDrainSessions.clear()
   for (const sessionId of structuredOutputTasks.sessionIds()) {
+    for (const state of structuredOutputTasks.list(sessionId)) {
+      state.authorityRevoked = true
+    }
     structuredOutputTasks.markLocalTakeover(sessionId)
   }
   await remoteImApprovalCoordinator?.cancelAll()
@@ -884,10 +860,6 @@ async function revokeRemoteImApprovalAuthorityForUsers(
   const userIds = new Set(rawUserIds.map((userId) => userId.trim()).filter(Boolean))
   if (userIds.size === 0) return
   const revokedOutputSessionIds = revokeRemoteImOutputRoutes(userIds)
-  cancelQueuedRemoteImAicliInputs(
-    'Remote IM contact was removed before queued input was submitted',
-    (item) => userIds.has(item.route.toUserId)
-  )
   for (const sessionId of revokedOutputSessionIds) {
     revokedRemoteImCliSessions.add(sessionId)
     const state = outputSessions.get(sessionId)
@@ -906,6 +878,7 @@ async function revokeRemoteImApprovalAuthorityForUsers(
     if (!routes.some((route) => userIds.has(route.toUserId))) continue
     revokedRemoteImCliSessions.add(sessionId)
     for (const state of structuredOutputTasks.markLocalTakeover(sessionId)) {
+      state.authorityRevoked = true
       writeStructuredOutputRuntimeLog('aicli:route-authority-revoked', {
         sessionId,
         state,
@@ -1321,179 +1294,11 @@ function readRemoteImTranscriptReply(
     return readLatestClaudeRemoteImReply({
       cwd: source.cwd,
       sinceMs: source.sinceMs,
-      replyId: source.replyId
+      replyId: source.replyId,
+      pendingReplyIds: source.pendingReplyIds
     })
   }
   return null
-}
-
-function hasActiveRemoteImAicliRoute(sessionId: string): boolean {
-  return (
-    dispatchingQueuedAicliInputSessions.has(sessionId) ||
-    claudeLocalEditingSessions.has(sessionId) ||
-    structuredOutputTasks.list(sessionId).length > 0 ||
-    outputSessions.has(sessionId)
-  )
-}
-
-function deferRemoteImAicliInputIfBusy(
-  route: RemoteImAicliOutputRoute,
-  submit: () => Promise<void>,
-  cancel: (error: string) => void
-): { queued: true } | { queued: false; error: string } | null {
-  if (!hasActiveRemoteImAicliRoute(route.sessionId)) return null
-  const now = Date.now()
-  const result = queuedAicliInputs.enqueue(
-    route.sessionId,
-    { route, submit, cancel },
-    now
-  )
-  cancelExpiredQueuedRemoteImAicliInputs(route.sessionId, result.expired, now)
-  if (!result.ok) {
-    const error = `AICLI 会话的远程消息队列已满（最多 ${MAX_QUEUED_REMOTE_IM_AICLI_INPUTS_PER_SESSION} 条）`
-    cancel(error)
-    writeStructuredOutputRuntimeLog('aicli:input-queue-rejected', {
-      sessionId: route.sessionId,
-      detail: {
-        taskId: route.taskId,
-        replyId: route.replyId ?? null,
-        toUserId: route.toUserId,
-        queueLength: queuedAicliInputs.size(route.sessionId),
-        reason: 'capacity'
-      }
-    })
-    return { queued: false, error }
-  }
-  writeStructuredOutputRuntimeLog('aicli:input-queued', {
-    sessionId: route.sessionId,
-    detail: {
-      taskId: route.taskId,
-      replyId: route.replyId ?? null,
-      toUserId: route.toUserId,
-      queueLength: queuedAicliInputs.size(route.sessionId)
-    }
-  })
-  scheduleQueuedRemoteImAicliInputExpiry(route.sessionId)
-  return { queued: true }
-}
-
-function cancelExpiredQueuedRemoteImAicliInputs(
-  sessionId: string,
-  expired: Array<{ value: RemoteImQueuedAicliInput; queuedAt: number }>,
-  now: number
-): void {
-  for (const { value: item, queuedAt } of expired) {
-    const error = '等待 AICLI 上一轮任务超时，远程消息未提交'
-    item.cancel(error)
-    writeStructuredOutputRuntimeLog('aicli:queued-input-expired', {
-      sessionId,
-      detail: {
-        taskId: item.route.taskId,
-        replyId: item.route.replyId ?? null,
-        toUserId: item.route.toUserId,
-        queuedForMs: now - queuedAt
-      }
-    })
-  }
-}
-
-function scheduleQueuedRemoteImAicliInputExpiry(sessionId: string): void {
-  const current = queuedAicliInputExpiryTimers.get(sessionId)
-  if (current) clearTimeout(current)
-  queuedAicliInputExpiryTimers.delete(sessionId)
-  const expiresAt = queuedAicliInputs.nextExpiryAt(sessionId)
-  if (expiresAt === undefined) return
-  const timer = setTimeout(() => {
-    queuedAicliInputExpiryTimers.delete(sessionId)
-    const now = Date.now()
-    cancelExpiredQueuedRemoteImAicliInputs(
-      sessionId,
-      queuedAicliInputs.expire(sessionId, now),
-      now
-    )
-    scheduleQueuedRemoteImAicliInputExpiry(sessionId)
-  }, Math.max(0, expiresAt - Date.now()))
-  timer.unref?.()
-  queuedAicliInputExpiryTimers.set(sessionId, timer)
-}
-
-function drainQueuedRemoteImAicliInput(sessionId: string): void {
-  if (remoteImAccountTransitioning || remoteImApprovalAuthorityMutationCount > 0) {
-    pendingQueuedAicliInputDrainSessions.add(sessionId)
-    return
-  }
-  if (hasActiveRemoteImAicliRoute(sessionId)) return
-  const now = Date.now()
-  const { entry, expired } = queuedAicliInputs.take(sessionId, now)
-  cancelExpiredQueuedRemoteImAicliInputs(sessionId, expired, now)
-  scheduleQueuedRemoteImAicliInputExpiry(sessionId)
-  const next = entry?.value
-  if (!next) {
-    return
-  }
-  dispatchingQueuedAicliInputSessions.add(sessionId)
-  writeStructuredOutputRuntimeLog('aicli:input-dequeued', {
-    sessionId,
-    detail: {
-      taskId: next.route.taskId,
-      replyId: next.route.replyId ?? null,
-      toUserId: next.route.toUserId,
-      remainingQueueLength: queuedAicliInputs.size(sessionId)
-    }
-  })
-  void withRemoteImAccountBoundOperation(async () => {
-    await next.submit()
-    return { ok: true as const }
-  })
-    .then((result) => {
-      if (result.ok) return
-      next.cancel(result.error)
-      writeStructuredOutputRuntimeLog('aicli:queued-input-failed', {
-        sessionId,
-        detail: {
-          taskId: next.route.taskId,
-          replyId: next.route.replyId ?? null,
-          error: result.error
-        }
-      })
-    })
-    .catch((error) => {
-      const message = error instanceof Error ? error.message : String(error)
-      next.cancel(message)
-      writeStructuredOutputRuntimeLog('aicli:queued-input-failed', {
-        sessionId,
-        detail: {
-          taskId: next.route.taskId,
-          replyId: next.route.replyId ?? null,
-          error: message
-        }
-      })
-    })
-    .finally(() => {
-      dispatchingQueuedAicliInputSessions.delete(sessionId)
-      drainQueuedRemoteImAicliInput(sessionId)
-    })
-}
-
-function drainPendingQueuedRemoteImAicliInputs(): void {
-  if (remoteImAccountTransitioning || remoteImApprovalAuthorityMutationCount > 0) return
-  const sessionIds = [...pendingQueuedAicliInputDrainSessions]
-  pendingQueuedAicliInputDrainSessions.clear()
-  for (const sessionId of sessionIds) drainQueuedRemoteImAicliInput(sessionId)
-}
-
-function cancelQueuedRemoteImAicliInputs(
-  error: string,
-  predicate: (item: RemoteImQueuedAicliInput) => boolean = () => true
-): void {
-  const affectedSessionIds = new Set<string>()
-  for (const { value: item } of queuedAicliInputs.removeWhere(predicate)) {
-    affectedSessionIds.add(item.route.sessionId)
-    item.cancel(error)
-  }
-  for (const sessionId of affectedSessionIds) {
-    scheduleQueuedRemoteImAicliInputExpiry(sessionId)
-  }
 }
 
 function startOutputForwarding(
@@ -1508,6 +1313,19 @@ function startOutputForwarding(
   const runtime = getSessionRuntimeInfo(sessionId)
   const sourceKind = runtime ? getRemoteImAicliOutputSourceKind(runtime.command) : 'unknown'
   if (sourceKind === 'codex' || sourceKind === 'opencode') {
+    const existing = structuredOutputTasks.resolve(
+      sessionId,
+      { taskId, replyId },
+      { allowSoleFallback: false }
+    )
+    if (existing) {
+      writeStructuredOutputRuntimeLog('aicli:route-steered', {
+        sessionId,
+        state: existing,
+        detail: { inputUserId: toUserId, ownerUserId: existing.toUserId }
+      })
+      return
+    }
     const state: RemoteImStructuredTaskState = {
       projectId,
       toUserId,
@@ -1536,15 +1354,24 @@ function startOutputForwarding(
   if (!replyId) return
 
   const current = outputSessions.get(sessionId)
-  if (current?.timer) clearTimeout(current.timer)
+  if (current) {
+    reserveRemoteImClaudeReplyId(current, replyId)
+    writeStructuredOutputRuntimeLog('aicli:route-steered', {
+      sessionId,
+      state: current,
+      detail: { inputUserId: toUserId, ownerUserId: current.toUserId }
+    })
+    return
+  }
   outputSessions.set(sessionId, {
     projectId,
     toUserId,
     config,
     replyId,
+    taskId,
     sourceKind,
     securityGeneration: remoteImAccountSecurityGeneration,
-    buffer: current?.buffer ?? '',
+    buffer: '',
     timer: null,
     structuredOutput: false,
     autoReplyToIm,
@@ -1554,10 +1381,38 @@ function startOutputForwarding(
             kind: sourceKind,
             cwd: runtime.targetRepo,
             sinceMs: Date.now(),
-            replyId
+            replyId,
+            pendingReplyIds: [replyId]
           }
-        : undefined
+        : undefined,
+    ...(sourceKind === 'claude' ? { pendingReplyIds: [replyId] } : {})
   })
+}
+
+function rollbackClaudeOutputReservation(
+  sessionId: string,
+  replyId: string | undefined,
+  taskId: string
+): void {
+  if (!replyId) return
+  const state = outputSessions.get(sessionId)
+  if (
+    !state ||
+    state.sourceKind !== 'claude' ||
+    state.taskId !== taskId ||
+    !state.pendingReplyIds?.includes(replyId)
+  ) {
+    return
+  }
+  rollbackRemoteImClaudeReplyId(state, replyId)
+  writeStructuredOutputRuntimeLog('aicli:claude-input-reservation-rolled-back', {
+    sessionId,
+    state,
+    detail: { rejectedReplyId: replyId, pendingReplyIds: state.pendingReplyIds }
+  })
+  if (state.pendingReplyIds.length > 0) return
+  if (state.timer) clearTimeout(state.timer)
+  if (outputSessions.get(sessionId) === state) outputSessions.delete(sessionId)
 }
 
 function bindRemoteImCliSessionToSecurityGeneration(
@@ -1642,14 +1497,24 @@ function cancelOutputForwarding(
       sessionId,
       state: structured
     })
-    drainQueuedRemoteImAicliInput(sessionId)
     return
   }
   const state = outputSessions.get(sessionId)
+  if (
+    state?.sourceKind === 'claude' &&
+    state.taskId === taskId &&
+    replyId &&
+    state.pendingReplyIds?.includes(replyId)
+  ) {
+    // The initial submission can fail while a concurrently accepted
+    // continuation already owns another pending id. Roll back only the failed
+    // reservation; deleting the stable owner would orphan that continuation.
+    rollbackClaudeOutputReservation(sessionId, replyId, taskId)
+    return
+  }
   if (!state || state.replyId !== replyId) return
   if (state.timer) clearTimeout(state.timer)
   outputSessions.delete(sessionId)
-  drainQueuedRemoteImAicliInput(sessionId)
 }
 
 function createOutputRoutingDeps(
@@ -1668,41 +1533,48 @@ function createOutputRoutingDeps(
       const sourceKind = runtime
         ? getRemoteImAicliOutputSourceKind(runtime.command)
         : 'unknown'
-      const nonStructuredRoute = outputSessions.get(route.sessionId)
-      if (nonStructuredRoute) {
-        return {
-          ok: false as const,
-          error:
-            nonStructuredRoute.projectId !== route.projectId ||
-            nonStructuredRoute.toUserId !== route.toUserId
-              ? '当前 AICLI 会话正在处理另一位远程好友或项目的任务，请等待完成后再试。'
-              : '当前 AICLI 会话仍在处理上一条远程任务，请等待完成后再试。'
-        }
-      }
       if (sourceKind !== 'codex' && sourceKind !== 'opencode') {
+        const current = outputSessions.get(route.sessionId)
+        if (!current) return { ok: true as const }
+        if (
+          current.authorityRevoked ||
+          current.securityGeneration !== remoteImAccountSecurityGeneration
+        ) {
+          return {
+            ok: false as const,
+            error: '上一条远程任务的权限已经失效，请重启 AICLI 会话后重试。'
+          }
+        }
+        // Each Claude submission keeps its fresh reply id. The stable owner
+        // state tracks all pending ids and the transcript decides whether a
+        // continuation steered the current turn or became a queued next turn.
+        route.taskId = current.taskId ?? route.taskId
+        route.continuation = true
         return { ok: true as const }
       }
 
-      const admission = evaluateRemoteImStructuredTaskAdmission(
-        structuredOutputTasks.list(route.sessionId),
-        { projectId: route.projectId, toUserId: route.toUserId }
-      )
-      if (admission.ok) return admission
-
-      writeStructuredOutputRuntimeLog('aicli:route-admission-rejected', {
-        sessionId: route.sessionId,
-        detail: {
-          reason: admission.reason,
-          activeRouteCount: structuredOutputTasks.list(route.sessionId).length
+      const existingRoutes = structuredOutputTasks.list(route.sessionId)
+      if (existingRoutes.length === 0) return { ok: true as const }
+      const active = resolveStructuredOutputTask(route.sessionId, {})
+      if (!active) {
+        return {
+          ok: false as const,
+          error: '当前 AICLI 会话存在多个无法区分的活动任务，请先结束或重启会话。'
         }
-      })
-      return {
-        ok: false as const,
-        error:
-          admission.reason === 'authority-conflict'
-            ? '当前 AICLI 会话正在处理另一位远程好友或项目的任务，请等待完成后再试。'
-            : '当前 AICLI 会话仍在处理上一条远程任务，请等待完成后再试。'
       }
+      if (
+        active.authorityRevoked ||
+        active.securityGeneration !== remoteImAccountSecurityGeneration
+      ) {
+        return {
+          ok: false as const,
+          error: '上一条远程任务的权限已经失效，请重启 AICLI 会话后重试。'
+        }
+      }
+      route.replyId = active.replyId
+      route.taskId = active.taskId
+      route.continuation = true
+      return { ok: true as const }
     },
     onAicliOutputStart: ({
       sessionId,
@@ -1721,11 +1593,34 @@ function createOutputRoutingDeps(
         taskId,
         autoReplyToIm
       ),
-    onAicliInputAccepted: ({ sessionId }: RemoteImAicliOutputRoute) =>
+    onAicliInputAccepted: (route: RemoteImAicliOutputRoute) => {
+      bindRemoteImCliSessionToSecurityGeneration(route.sessionId)
+      const runtime = getSessionRuntimeInfo(route.sessionId)
+      const sourceKind = runtime
+        ? getRemoteImAicliOutputSourceKind(runtime.command)
+        : 'unknown'
+      if (
+        route.continuation &&
+        (sourceKind === 'codex' || sourceKind === 'opencode')
+      ) {
+        structuredOutputTasks.clearLocalTakeover(route.sessionId, route.taskId)
+        startOutputForwarding(
+          route.sessionId,
+          route.projectId,
+          route.toUserId,
+          config,
+          route.replyId,
+          route.taskId,
+          route.autoReplyToIm
+        )
+      }
+    },
+    onAicliInputRejected: ({ sessionId, replyId, taskId }: RemoteImAicliOutputRoute) =>
+      rollbackClaudeOutputReservation(sessionId, replyId, taskId),
+    onAicliMachineInputAccepted: (sessionId: string) =>
       bindRemoteImCliSessionToSecurityGeneration(sessionId),
     onAicliOutputCancel: ({ sessionId, replyId, taskId }: RemoteImAicliOutputRoute) =>
       cancelOutputForwarding(sessionId, replyId, taskId),
-    deferAicliInputIfBusy: deferRemoteImAicliInputIfBusy,
     messagesChanged: broadcastMessagesChanged
   }
 }
@@ -1871,7 +1766,6 @@ function removeStructuredOutputTask(
     state,
     detail: { reason }
   })
-  drainQueuedRemoteImAicliInput(sessionId)
 }
 
 function markStructuredTaskActive(state: RemoteImStructuredTaskState): void {
@@ -1925,9 +1819,7 @@ function flushOutputSession(sessionId: string): void {
   )
   if (
     outputSessions.get(sessionId) === state &&
-    state.sourceKind === 'claude' &&
-    state.replyId &&
-    state.consumedReplyId === state.replyId
+    isRemoteImClaudeRouteConsumed(state)
   ) {
     outputSessions.delete(sessionId)
     writeStructuredOutputRuntimeLog('aicli:claude-reply-frame-consumed', {
@@ -1939,7 +1831,6 @@ function flushOutputSession(sessionId: string): void {
         autoReplyToIm: state.autoReplyToIm !== false
       }
     })
-    drainQueuedRemoteImAicliInput(sessionId)
     return
   }
   if (
@@ -1961,7 +1852,6 @@ function completeOutputSession(sessionId: string, info: RemoteImOutputCompletion
     info
   )
   outputSessions.delete(sessionId)
-  drainQueuedRemoteImAicliInput(sessionId)
 }
 
 function failOutputSession(sessionId: string, reason: string): void {
@@ -1974,15 +1864,6 @@ function failOutputSession(sessionId: string, reason: string): void {
     reason
   )
   outputSessions.delete(sessionId)
-  drainQueuedRemoteImAicliInput(sessionId)
-}
-
-function claimClaudeLocalEditing(sessionId: string): void {
-  claudeLocalEditingSessions.add(sessionId)
-}
-
-function clearClaudeLocalSessionOwnership(sessionId: string): void {
-  claudeLocalEditingSessions.delete(sessionId)
 }
 
 function scheduleOutputFlush(sessionId: string): void {
@@ -2008,27 +1889,7 @@ function ensureSessionListeners(): void {
     scheduleOutputFlush(sessionId)
   })
   addSessionLocalInputListener(({ sessionId, kind }) => {
-    // Capture the route before changing ownership. A local write and a queued
-    // Remote IM prompt use the same PTY queue, so draining below cannot overtake
-    // the local keystroke/submission that emitted this event.
     const state = outputSessions.get(sessionId)
-    const runtime = getSessionRuntimeInfo(sessionId)
-    let shouldDrainClaudeQueue = false
-    const isClaude =
-      runtime && getRemoteImAicliOutputSourceKind(runtime.command) === 'claude'
-    if (isClaude) {
-      if (kind === 'editing') {
-        claimClaudeLocalEditing(sessionId)
-      } else if (
-        kind === 'cancel-editing' ||
-        kind === 'interrupt' ||
-        kind === 'submit-key' ||
-        kind === 'submit-attempt'
-      ) {
-        claudeLocalEditingSessions.delete(sessionId)
-        shouldDrainClaudeQueue = true
-      }
-    }
     if (state && kind !== 'navigation') {
       if (state.timer) clearTimeout(state.timer)
       state.timer = null
@@ -2045,9 +1906,7 @@ function ensureSessionListeners(): void {
           sourceKind: state.sourceKind ?? 'unknown'
         }
       })
-      shouldDrainClaudeQueue = true
     }
-    if (shouldDrainClaudeQueue) drainQueuedRemoteImAicliInput(sessionId)
   })
   addAicliStructuredOutputListener((event) => {
     const {
@@ -2387,13 +2246,8 @@ function ensureSessionListeners(): void {
     )
   })
   addSessionExitListener(({ sessionId, exitCode, signal }) => {
-    clearClaudeLocalSessionOwnership(sessionId)
     remoteImCliSessionSecurityGenerations.delete(sessionId)
     revokedRemoteImCliSessions.delete(sessionId)
-    cancelQueuedRemoteImAicliInputs(
-      'AICLI session exited before queued input was submitted',
-      (item) => item.route.sessionId === sessionId
-    )
     void getRemoteImApprovalCoordinator().cancelSession(sessionId)
     const reason = signal
       ? `AICLI 进程已退出（信号：${signal}）。`
@@ -2523,7 +2377,6 @@ async function bindRemoteImAccountConfigOnce(
   } finally {
     if (connectionChanged) {
       remoteImAccountTransitioning = false
-      drainPendingQueuedRemoteImAicliInputs()
     }
   }
 }

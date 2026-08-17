@@ -516,6 +516,39 @@ describe('RemoteImApprovalCoordinator', () => {
     expect(decisions).toEqual(['accept', 'cancel'])
   })
 
+  it('reports success when approval_resolved arrives before the matching control result', async () => {
+    let finishAccept: ((result: { ok: boolean }) => void) | undefined
+    const decisions: RemoteImApprovalDecision[] = []
+    const coordinator = new RemoteImApprovalCoordinator({
+      createToken: () => 'approval-public-resolved-before-control-result',
+      sendText: async () => ({ ok: true }),
+      resolveApproval: (input) => {
+        decisions.push(input.decision)
+        return new Promise((resolve) => {
+          finishAccept = resolve
+        })
+      }
+    })
+    await coordinator.register(request)
+
+    const approving = coordinator.handleCommand({
+      projectId: 'project-a',
+      fromUserId: 'phone-a',
+      text: '/approve approval-public-resolved-before-control-result'
+    })
+    await vi.waitFor(() => expect(finishAccept).toBeTypeOf('function'))
+
+    coordinator.forgetResolved(request)
+    finishAccept?.({ ok: true })
+
+    await expect(approving).resolves.toEqual({
+      handled: true,
+      ok: true,
+      text: '已批准这一次命令执行。'
+    })
+    expect(decisions).toEqual(['accept'])
+  })
+
   it('cancels an in-flight approval when authority changes before the RPC returns', async () => {
     let authorityCurrent = true
     let finishAccept: ((result: { ok: boolean }) => void) | undefined

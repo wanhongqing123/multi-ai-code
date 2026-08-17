@@ -56,6 +56,7 @@ type RemoteImApprovalState =
   | 'expired'
   | 'session-cancelled'
   | 'failed'
+  | 'resolved-awaiting-control-result'
   | 'resolved'
 
 interface PendingRemoteImApproval extends RemoteImApprovalRequest {
@@ -382,7 +383,10 @@ export class RemoteImApprovalCoordinator {
     } catch (error) {
       resolved = { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
-    if (this.byToken.get(item.token) !== item || item.state !== 'resolving') {
+    if (
+      this.byToken.get(item.token) !== item ||
+      (item.state !== 'resolving' && item.state !== 'resolved-awaiting-control-result')
+    ) {
       return {
         handled: true,
         ok: false,
@@ -471,7 +475,17 @@ export class RemoteImApprovalCoordinator {
   forgetResolved(input: Pick<RemoteImApprovalRequest, 'sessionId' | 'taskId' | 'replyId' | 'threadId' | 'turnId' | 'approvalId'>): void {
     const token = this.tokenByIdentity.get(approvalIdentity(input))
     const item = token ? this.byToken.get(token) : undefined
-    if (item) this.consume(item, 'resolved')
+    if (!item) return
+    if (item.state === 'resolving') {
+      // A remote approval is resolved inside Codex before its control_result is
+      // sent back to the host. The independent approval_resolved event can win
+      // that transport race. Keep the capability correlated until the matching
+      // RPC result arrives; only that result proves which decision was applied.
+      this.clearItemTimer(item)
+      item.state = 'resolved-awaiting-control-result'
+      return
+    }
+    this.consume(item, 'resolved')
   }
 
   private createUniqueToken(): string | null {
@@ -514,7 +528,12 @@ export class RemoteImApprovalCoordinator {
 
   private pruneTerminalEntries(): void {
     const terminal = [...this.byToken.values()]
-      .filter((candidate) => candidate.state !== 'pending' && candidate.state !== 'resolving')
+      .filter(
+        (candidate) =>
+          candidate.state !== 'pending' &&
+          candidate.state !== 'resolving' &&
+          candidate.state !== 'resolved-awaiting-control-result'
+      )
       .sort((left, right) => left.createdAt - right.createdAt)
     const excess = terminal.length - MAX_TERMINAL_APPROVAL_ENTRIES
     if (excess <= 0) return

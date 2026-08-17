@@ -51,7 +51,11 @@ if [[ "$skip_aicli" -eq 0 ]]; then
 fi
 
 if [[ "$skip_build" -eq 0 ]]; then
+  electron_abi="$(ELECTRON_RUN_AS_NODE=1 ./node_modules/.bin/electron -p 'process.versions.modules')"
   npm run dist:mac
+  MULTI_AI_CODE_EXPECTED_ELECTRON_ABI="$electron_abi" \
+    node scripts/verify-packaged-native-modules.mjs \
+    "release/mac-arm64/Multi-AI Code.app"
 fi
 
 artifacts_file="$(mktemp)"

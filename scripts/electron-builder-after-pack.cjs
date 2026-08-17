@@ -18,7 +18,7 @@ function adHocSignMacApp(appOutDir, arch) {
   const appBundle = findMacAppBundle(appOutDir)
   if (!appBundle) {
     console.log('[afterPack] macOS app bundle not found, skip ad-hoc codesign')
-    return
+    return null
   }
   try {
     execFileSync('xattr', ['-cr', appBundle], { stdio: 'inherit' })
@@ -55,6 +55,7 @@ function adHocSignMacApp(appOutDir, arch) {
     stdio: 'inherit'
   })
   console.log(`[afterPack] macOS app ad-hoc signed: ${appBundle}`)
+  return appBundle
 }
 
 module.exports = async function afterPack(context) {
@@ -76,6 +77,14 @@ module.exports = async function afterPack(context) {
   const codexBinaries = verifyPackagedCodexBinaries(context.appOutDir, { platform, arch })
   console.log(`[afterPack] Codex binaries verified: ${codexBinaries.join(', ')}`)
   if (platform === 'darwin') {
-    adHocSignMacApp(context.appOutDir, arch)
+    const appBundle = adHocSignMacApp(context.appOutDir, arch)
+    if (!appBundle) throw new Error('[afterPack] macOS app bundle is required')
+    const { verifyPackagedMacNativeModules } = await import(
+      './verify-packaged-native-modules.mjs'
+    )
+    const nativeSummary = verifyPackagedMacNativeModules(appBundle)
+    console.log(
+      `[afterPack] Electron ABI ${nativeSummary.abi}; better-sqlite3 ${nativeSummary.sqliteVersion}; node-pty loaded`
+    )
   }
 }

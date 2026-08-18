@@ -107,6 +107,42 @@ public class ChatStateTest {
     }
 
     @Test
+    public void deduplicatesIncomingMessagesByRemoteId() {
+        ChatState state = new ChatState("android-user");
+
+        RemoteIMMessage first = state.receiveText(
+            "完成",
+            "mac-office",
+            "remote-1",
+            100L,
+            RemoteIMOrigin.MACHINE
+        );
+        RemoteIMMessage duplicate = state.receiveText(
+            "重复",
+            "mac-office",
+            "remote-1",
+            200L,
+            RemoteIMOrigin.MACHINE
+        );
+
+        assertEquals(first, duplicate);
+        assertEquals(1, state.messagesWith("mac-office").size());
+        assertEquals(RemoteIMOrigin.MACHINE, first.origin());
+    }
+
+    @Test
+    public void deletingAContactAlsoRemovesOnlyThatConversation() {
+        ChatState state = new ChatState("android-user");
+        state.receiveText("A", "mac-office");
+        state.receiveText("B", "house-office");
+
+        assertTrue(state.removeContact("mac-office"));
+
+        assertTrue(state.messagesWith("mac-office").isEmpty());
+        assertEquals(1, state.messagesWith("house-office").size());
+    }
+
+    @Test
     public void returnsPeerMessagesChronologically() {
         ChatState state = new ChatState("android-user");
         RemoteIMMessage newest = new RemoteIMMessage(

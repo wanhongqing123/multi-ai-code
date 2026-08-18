@@ -45,6 +45,23 @@ public final class ChatState {
         contacts.add(contact);
     }
 
+    public boolean removeContact(String userId) {
+        String cleanUserId = clean(userId);
+        boolean removed = contacts.removeIf(contact -> contact.userId().equals(cleanUserId));
+        removeMessagesWith(cleanUserId);
+        if (cleanUserId.equals(selectedPeerId)) {
+            selectedPeerId = contacts.isEmpty() ? null : contacts.get(0).userId();
+        }
+        return removed;
+    }
+
+    public void removeMessagesWith(String peerId) {
+        String cleanPeerId = clean(peerId);
+        messages.removeIf(message ->
+            message.fromUserId().equals(cleanPeerId) || message.toUserId().equals(cleanPeerId)
+        );
+    }
+
     public void selectPeer(String userId) {
         String cleanUserId = clean(userId);
         if (cleanUserId.isEmpty()) {
@@ -149,17 +166,33 @@ public final class ChatState {
     }
 
     public RemoteIMMessage receiveText(String text, String fromUserId) {
+        return receiveText(text, fromUserId, null, System.currentTimeMillis(), RemoteIMOrigin.MACHINE);
+    }
+
+    public RemoteIMMessage receiveText(
+        String text,
+        String fromUserId,
+        String remoteId,
+        long createdAtMillis,
+        RemoteIMOrigin origin
+    ) {
+        RemoteIMMessage existing = messageWithRemoteId(remoteId);
+        if (existing != null) return existing;
         String peerId = clean(fromUserId);
         upsertContact(new RemoteIMContact(peerId, peerId));
         RemoteIMMessage message = new RemoteIMMessage(
+            null,
+            remoteId,
             peerId,
             ownerUserId,
             incomingDisplayText(text),
             RemoteIMMessage.Direction.INCOMING,
             RemoteIMMessage.Status.RECEIVED,
-            System.currentTimeMillis(),
+            createdAtMillis,
             null,
-            null
+            null,
+            null,
+            origin
         );
         messages.add(message);
         return message;
@@ -172,6 +205,30 @@ public final class ChatState {
         int height,
         long sizeBytes
     ) {
+        return receiveImage(
+            localPath,
+            fromUserId,
+            width,
+            height,
+            sizeBytes,
+            null,
+            System.currentTimeMillis(),
+            RemoteIMOrigin.MACHINE
+        );
+    }
+
+    public RemoteIMMessage receiveImage(
+        String localPath,
+        String fromUserId,
+        int width,
+        int height,
+        long sizeBytes,
+        String remoteId,
+        long createdAtMillis,
+        RemoteIMOrigin origin
+    ) {
+        RemoteIMMessage existing = messageWithRemoteId(remoteId);
+        if (existing != null) return existing;
         String peerId = clean(fromUserId);
         String cleanPath = clean(localPath);
         upsertContact(new RemoteIMContact(peerId, peerId));
@@ -182,32 +239,60 @@ public final class ChatState {
             sizeBytes
         );
         RemoteIMMessage message = new RemoteIMMessage(
+            null,
+            remoteId,
             peerId,
             ownerUserId,
             "[图片消息] " + fileName(cleanPath),
             RemoteIMMessage.Direction.INCOMING,
             RemoteIMMessage.Status.RECEIVED,
-            System.currentTimeMillis(),
+            createdAtMillis,
             attachment,
-            null
+            null,
+            null,
+            origin
         );
         messages.add(message);
         return message;
     }
 
     public RemoteIMMessage receiveVoice(String localPath, int durationSeconds, String fromUserId) {
+        return receiveVoice(
+            localPath,
+            durationSeconds,
+            fromUserId,
+            null,
+            System.currentTimeMillis(),
+            RemoteIMOrigin.MACHINE
+        );
+    }
+
+    public RemoteIMMessage receiveVoice(
+        String localPath,
+        int durationSeconds,
+        String fromUserId,
+        String remoteId,
+        long createdAtMillis,
+        RemoteIMOrigin origin
+    ) {
+        RemoteIMMessage existing = messageWithRemoteId(remoteId);
+        if (existing != null) return existing;
         String peerId = clean(fromUserId);
         upsertContact(new RemoteIMContact(peerId, peerId));
         RemoteIMVoiceAttachment attachment = new RemoteIMVoiceAttachment(localPath, durationSeconds);
         RemoteIMMessage message = new RemoteIMMessage(
+            null,
+            remoteId,
             peerId,
             ownerUserId,
             "[语音消息 " + attachment.durationSeconds() + "s]",
             RemoteIMMessage.Direction.INCOMING,
             RemoteIMMessage.Status.RECEIVED,
-            System.currentTimeMillis(),
+            createdAtMillis,
             null,
-            attachment
+            attachment,
+            null,
+            origin
         );
         messages.add(message);
         return message;
@@ -220,6 +305,30 @@ public final class ChatState {
         String mimeType,
         long sizeBytes
     ) {
+        return receiveFile(
+            localPath,
+            fromUserId,
+            fileName,
+            mimeType,
+            sizeBytes,
+            null,
+            System.currentTimeMillis(),
+            RemoteIMOrigin.MACHINE
+        );
+    }
+
+    public RemoteIMMessage receiveFile(
+        String localPath,
+        String fromUserId,
+        String fileName,
+        String mimeType,
+        long sizeBytes,
+        String remoteId,
+        long createdAtMillis,
+        RemoteIMOrigin origin
+    ) {
+        RemoteIMMessage existing = messageWithRemoteId(remoteId);
+        if (existing != null) return existing;
         String peerId = clean(fromUserId);
         upsertContact(new RemoteIMContact(peerId, peerId));
         RemoteIMFileAttachment attachment = new RemoteIMFileAttachment(
@@ -229,15 +338,18 @@ public final class ChatState {
             sizeBytes
         );
         RemoteIMMessage message = new RemoteIMMessage(
+            null,
+            remoteId,
             peerId,
             ownerUserId,
             fileDisplayText(attachment.fileName(), attachment.localPath()),
             RemoteIMMessage.Direction.INCOMING,
             RemoteIMMessage.Status.RECEIVED,
-            System.currentTimeMillis(),
+            createdAtMillis,
             null,
             null,
-            attachment
+            attachment,
+            origin
         );
         messages.add(message);
         return message;
@@ -255,6 +367,13 @@ public final class ChatState {
         return Collections.unmodifiableList(result);
     }
 
+    public List<RemoteIMMessage> recentMessagesWith(String peerId, int limit) {
+        List<RemoteIMMessage> all = messagesWith(peerId);
+        int safeLimit = Math.max(1, limit);
+        int start = Math.max(0, all.size() - safeLimit);
+        return Collections.unmodifiableList(new ArrayList<>(all.subList(start, all.size())));
+    }
+
     public boolean updateMessageStatus(String messageId, RemoteIMMessage.Status status) {
         for (RemoteIMMessage message : messages) {
             if (message.id().equals(messageId)) {
@@ -265,8 +384,38 @@ public final class ChatState {
         return false;
     }
 
+    public boolean updateMessageDelivery(String messageId, String remoteId) {
+        for (RemoteIMMessage message : messages) {
+            if (message.id().equals(messageId)) {
+                message.setStatus(RemoteIMMessage.Status.SENT);
+                message.setRemoteId(remoteId);
+                return true;
+            }
+        }
+        return false;
+    }
+
     void addRestoredMessage(RemoteIMMessage message) {
+        if (message == null || messageWithRemoteId(message.remoteId()) != null) return;
+        for (RemoteIMMessage existing : messages) {
+            if (existing.id().equals(message.id())) return;
+        }
         messages.add(message);
+    }
+
+    public void mergeMessages(List<RemoteIMMessage> incoming) {
+        if (incoming == null) return;
+        for (RemoteIMMessage message : incoming) addRestoredMessage(message);
+        messages.sort(Comparator.comparingLong(RemoteIMMessage::createdAtMillis));
+    }
+
+    public RemoteIMMessage messageWithRemoteId(String remoteId) {
+        String cleanRemoteId = clean(remoteId);
+        if (cleanRemoteId.isEmpty()) return null;
+        for (RemoteIMMessage message : messages) {
+            if (message.remoteId().equals(cleanRemoteId)) return message;
+        }
+        return null;
     }
 
     private String requireSelectedPeer() {

@@ -1,5 +1,6 @@
 package com.kongshang.maichat;
 
+import android.annotation.SuppressLint;
 import android.Manifest;
 
 public final class RemoteIMPermissionPolicy {
@@ -7,6 +8,7 @@ public final class RemoteIMPermissionPolicy {
 
     private RemoteIMPermissionPolicy() {}
 
+    @SuppressLint("InlinedApi")
     public static String imageReadPermission(int sdkInt) {
         return sdkInt >= ANDROID_13_API_LEVEL
             ? Manifest.permission.READ_MEDIA_IMAGES

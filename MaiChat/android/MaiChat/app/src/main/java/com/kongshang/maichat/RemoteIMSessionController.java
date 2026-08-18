@@ -40,6 +40,7 @@ public final class RemoteIMSessionController {
     private TencentIMClient.ConnectionState connectionState = TencentIMClient.ConnectionState.DISCONNECTED;
     private String connectionDetail = "未连接";
     private String visibleConversationUserId = "";
+    private Runnable pendingStateNotification;
 
     public RemoteIMSessionController(
         LocalSettingsStore settingsStore,
@@ -160,7 +161,7 @@ public final class RemoteIMSessionController {
         chatState.selectPeer(cleanUserId);
         if (productionMode) {
             historyStore.upsertContact(chatState.ownerUserId(), contact);
-            refreshContactMetadata();
+            refreshContactMetadata(Collections.singletonList(cleanUserId));
         } else {
             try {
                 saveChatState();
@@ -382,7 +383,6 @@ public final class RemoteIMSessionController {
         );
         chatState.mergeMessages(page.messages());
         hasEarlierByUserId.put(peerId, page.hasEarlier());
-        notifyStateChanged();
     }
 
     public boolean loadEarlierMessages(String userId) {
@@ -409,6 +409,10 @@ public final class RemoteIMSessionController {
 
     public void destroy() {
         if (!productionMode) return;
+        if (pendingStateNotification != null) {
+            mainHandler.removeCallbacks(pendingStateNotification);
+            pendingStateNotification = null;
+        }
         if (remoteDesktop != null) remoteDesktop.destroy();
         client.destroy();
         historyStore.close();
@@ -417,7 +421,6 @@ public final class RemoteIMSessionController {
     private void connect() {
         try {
             client.connect(SDK_APP_ID, settings.loginUserId(), currentUserSig());
-            refreshContactMetadata();
         } catch (RuntimeException error) {
             connectionState = TencentIMClient.ConnectionState.FAILED;
             connectionDetail = error.getMessage() == null ? "登录失败" : error.getMessage();
@@ -429,6 +432,11 @@ public final class RemoteIMSessionController {
         if (!productionMode || chatState.contacts().isEmpty()) return;
         List<String> userIds = new ArrayList<>();
         for (RemoteIMContact contact : chatState.contacts()) userIds.add(contact.userId());
+        refreshContactMetadata(userIds);
+    }
+
+    private void refreshContactMetadata(List<String> userIds) {
+        if (!productionMode || userIds == null || userIds.isEmpty()) return;
         client.refreshProfiles(userIds);
         client.refreshAndSubscribePresence(userIds);
     }
@@ -470,6 +478,7 @@ public final class RemoteIMSessionController {
             return;
         }
         if (historyStore.containsRemoteId(chatState.ownerUserId(), incoming.remoteId())) return;
+        boolean knownContact = contactExists(incoming.fromUserId());
 
         RemoteIMMessage message;
         if (incoming.imageAttachment() != null) {
@@ -524,8 +533,17 @@ public final class RemoteIMSessionController {
                 unreadByUserId.getOrDefault(incoming.fromUserId(), 0) + 1
             );
         }
-        refreshContactMetadata();
+        if (!knownContact) {
+            refreshContactMetadata(Collections.singletonList(incoming.fromUserId()));
+        }
         notifyStateChanged();
+    }
+
+    private boolean contactExists(String userId) {
+        for (RemoteIMContact contact : chatState.contacts()) {
+            if (contact.userId().equals(userId)) return true;
+        }
+        return false;
     }
 
     private RemoteIMContact findContact(String userId) {
@@ -585,7 +603,22 @@ public final class RemoteIMSessionController {
 
     private void notifyStateChanged() {
         if (listener == null) return;
-        runOnMain(listener::onStateChanged);
+        if (mainHandler == null) {
+            listener.onStateChanged();
+            return;
+        }
+        Runnable schedule = () -> {
+            if (pendingStateNotification != null) {
+                mainHandler.removeCallbacks(pendingStateNotification);
+            }
+            pendingStateNotification = () -> {
+                pendingStateNotification = null;
+                listener.onStateChanged();
+            };
+            mainHandler.postDelayed(pendingStateNotification, 100);
+        };
+        if (Looper.myLooper() == Looper.getMainLooper()) schedule.run();
+        else mainHandler.post(schedule);
     }
 
     private void reportError(String message) {

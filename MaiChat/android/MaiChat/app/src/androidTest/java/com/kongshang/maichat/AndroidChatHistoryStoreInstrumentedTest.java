@@ -16,11 +16,13 @@ import java.util.List;
 
 @RunWith(AndroidJUnit4.class)
 public class AndroidChatHistoryStoreInstrumentedTest {
+    private static final String TEST_DATABASE_NAME = "maichat-history-instrumented-test.db";
+
     @Test
     public void testIncrementalUpsertSummaryPaginationAndConversationDelete() {
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
-        context.deleteDatabase("maichat-history.db");
-        AndroidChatHistoryStore store = new AndroidChatHistoryStore(context);
+        context.deleteDatabase(TEST_DATABASE_NAME);
+        AndroidChatHistoryStore store = new AndroidChatHistoryStore(context, TEST_DATABASE_NAME);
         String owner = "android-test-owner";
         String peer = "mac-test-peer";
         store.upsertContact(owner, new RemoteIMContact(peer, "Mac Test"));
@@ -77,5 +79,6 @@ public class AndroidChatHistoryStoreInstrumentedTest {
         assertTrue(store.loadConversationPage(owner, peer, null, null, 50).messages().isEmpty());
         assertEquals(1, store.loadContacts(owner).size());
         store.close();
+        context.deleteDatabase(TEST_DATABASE_NAME);
     }
 }

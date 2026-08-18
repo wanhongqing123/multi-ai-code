@@ -14,7 +14,11 @@ public final class MaiChatSymbolView extends View {
         MESSAGE,
         CONTACTS,
         REMOTE,
-        USER
+        USER,
+        SPEAKER,
+        KEYBOARD,
+        CHEVRON_LEFT,
+        PLUS
     }
 
     private final Symbol symbol;
@@ -24,7 +28,7 @@ public final class MaiChatSymbolView extends View {
         super(context);
         this.symbol = symbol;
         paint.setStyle(Paint.Style.STROKE);
-        paint.setStrokeWidth(MaiChatTheme.dp(context, 2));
+        paint.setStrokeWidth(MaiChatTheme.dp(context, 1.6f));
         paint.setStrokeCap(Paint.Cap.ROUND);
         paint.setStrokeJoin(Paint.Join.ROUND);
     }
@@ -55,6 +59,18 @@ public final class MaiChatSymbolView extends View {
                 break;
             case USER:
                 drawUser(canvas, bounds);
+                break;
+            case SPEAKER:
+                drawSpeaker(canvas, bounds);
+                break;
+            case KEYBOARD:
+                drawKeyboard(canvas, bounds);
+                break;
+            case CHEVRON_LEFT:
+                drawChevronLeft(canvas, bounds);
+                break;
+            case PLUS:
+                drawPlus(canvas, bounds);
                 break;
         }
     }
@@ -113,5 +129,79 @@ public final class MaiChatSymbolView extends View {
             false,
             paint
         );
+    }
+
+    private void drawSpeaker(Canvas canvas, RectF bounds) {
+        Path speaker = new Path();
+        speaker.moveTo(bounds.left, bounds.centerY() - bounds.height() * 0.14f);
+        speaker.lineTo(bounds.left + bounds.width() * 0.24f, bounds.centerY() - bounds.height() * 0.14f);
+        speaker.lineTo(bounds.left + bounds.width() * 0.48f, bounds.top + bounds.height() * 0.18f);
+        speaker.lineTo(bounds.left + bounds.width() * 0.48f, bounds.bottom - bounds.height() * 0.18f);
+        speaker.lineTo(bounds.left + bounds.width() * 0.24f, bounds.centerY() + bounds.height() * 0.14f);
+        speaker.lineTo(bounds.left, bounds.centerY() + bounds.height() * 0.14f);
+        speaker.close();
+        canvas.drawPath(speaker, paint);
+        canvas.drawArc(
+            new RectF(
+                bounds.left + bounds.width() * 0.38f,
+                bounds.top + bounds.height() * 0.24f,
+                bounds.left + bounds.width() * 0.76f,
+                bounds.bottom - bounds.height() * 0.24f
+            ),
+            -58,
+            116,
+            false,
+            paint
+        );
+        canvas.drawArc(
+            new RectF(
+                bounds.left + bounds.width() * 0.30f,
+                bounds.top + bounds.height() * 0.06f,
+                bounds.right,
+                bounds.bottom - bounds.height() * 0.06f
+            ),
+            -52,
+            104,
+            false,
+            paint
+        );
+    }
+
+    private void drawKeyboard(Canvas canvas, RectF bounds) {
+        canvas.drawRoundRect(
+            bounds,
+            bounds.width() * 0.10f,
+            bounds.width() * 0.10f,
+            paint
+        );
+        float top = bounds.top + bounds.height() * 0.30f;
+        float rowSpacing = bounds.height() * 0.22f;
+        for (int row = 0; row < 2; row += 1) {
+            float y = top + row * rowSpacing;
+            for (int column = 0; column < 4; column += 1) {
+                float x = bounds.left + bounds.width() * (0.18f + column * 0.21f);
+                canvas.drawPoint(x, y, paint);
+            }
+        }
+        canvas.drawLine(
+            bounds.left + bounds.width() * 0.24f,
+            bounds.bottom - bounds.height() * 0.18f,
+            bounds.right - bounds.width() * 0.24f,
+            bounds.bottom - bounds.height() * 0.18f,
+            paint
+        );
+    }
+
+    private void drawChevronLeft(Canvas canvas, RectF bounds) {
+        Path path = new Path();
+        path.moveTo(bounds.right - bounds.width() * 0.28f, bounds.top + bounds.height() * 0.12f);
+        path.lineTo(bounds.left + bounds.width() * 0.30f, bounds.centerY());
+        path.lineTo(bounds.right - bounds.width() * 0.28f, bounds.bottom - bounds.height() * 0.12f);
+        canvas.drawPath(path, paint);
+    }
+
+    private void drawPlus(Canvas canvas, RectF bounds) {
+        canvas.drawLine(bounds.centerX(), bounds.top, bounds.centerX(), bounds.bottom, paint);
+        canvas.drawLine(bounds.left, bounds.centerY(), bounds.right, bounds.centerY(), paint);
     }
 }

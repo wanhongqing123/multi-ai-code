@@ -33,7 +33,11 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
     }
 
     public AndroidChatHistoryStore(Context context) {
-        super(context.getApplicationContext(), DATABASE_NAME, null, DATABASE_VERSION);
+        this(context, DATABASE_NAME);
+    }
+
+    AndroidChatHistoryStore(Context context, String databaseName) {
+        super(context.getApplicationContext(), databaseName, null, DATABASE_VERSION);
     }
 
     @Override

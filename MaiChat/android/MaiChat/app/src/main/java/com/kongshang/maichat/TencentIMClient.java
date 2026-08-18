@@ -103,6 +103,9 @@ public final class TencentIMClient {
 
     private Integer initializedSdkAppId;
     private String currentUserId = "";
+    private String profileRequestKey = "";
+    private String presenceRequestKey = "";
+    private boolean presenceUnsupported;
 
     public TencentIMClient(Context context, Listener listener) {
         this.context = context.getApplicationContext();
@@ -239,11 +242,19 @@ public final class TencentIMClient {
         List<String> cleaned = cleanUserIds(userIds);
         if (cleaned.isEmpty()) return;
         String accountAtRequest = currentUserId;
+        String requestKey = accountAtRequest + "\n" + String.join("\n", cleaned);
+        synchronized (this) {
+            if (requestKey.equals(profileRequestKey)) return;
+            profileRequestKey = requestKey;
+        }
         V2TIMManager.getInstance().getUsersInfo(
             cleaned,
             new V2TIMValueCallback<List<V2TIMUserFullInfo>>() {
                 @Override
                 public void onSuccess(List<V2TIMUserFullInfo> users) {
+                    synchronized (TencentIMClient.this) {
+                        if (requestKey.equals(profileRequestKey)) profileRequestKey = "";
+                    }
                     if (!accountAtRequest.equals(currentUserId)) return;
                     List<RemoteIMContact> contacts = new ArrayList<>();
                     if (users != null) {
@@ -263,6 +274,9 @@ public final class TencentIMClient {
 
                 @Override
                 public void onError(int code, String description) {
+                    synchronized (TencentIMClient.this) {
+                        if (requestKey.equals(profileRequestKey)) profileRequestKey = "";
+                    }
                     // Profile refresh is best effort and must not interrupt messaging.
                 }
             }
@@ -271,20 +285,31 @@ public final class TencentIMClient {
 
     public void refreshAndSubscribePresence(List<String> userIds) {
         List<String> cleaned = cleanUserIds(userIds);
-        if (cleaned.isEmpty()) return;
+        if (cleaned.isEmpty() || presenceUnsupported) return;
         String accountAtRequest = currentUserId;
+        String requestKey = accountAtRequest + "\n" + String.join("\n", cleaned);
+        synchronized (this) {
+            if (requestKey.equals(presenceRequestKey) || presenceUnsupported) return;
+            presenceRequestKey = requestKey;
+        }
         V2TIMManager.getInstance().getUserStatus(
             cleaned,
             new V2TIMValueCallback<List<V2TIMUserStatus>>() {
                 @Override
                 public void onSuccess(List<V2TIMUserStatus> statuses) {
+                    synchronized (TencentIMClient.this) {
+                        if (requestKey.equals(presenceRequestKey)) presenceRequestKey = "";
+                    }
                     if (!accountAtRequest.equals(currentUserId)) return;
                     listener.onPresenceUpdated(statusMap(statuses));
                 }
 
                 @Override
                 public void onError(int code, String description) {
-                    // Presence is optional.
+                    synchronized (TencentIMClient.this) {
+                        if (isPresenceUnsupported(description)) presenceUnsupported = true;
+                        if (requestKey.equals(presenceRequestKey)) presenceRequestKey = "";
+                    }
                 }
             }
         );
@@ -295,6 +320,10 @@ public final class TencentIMClient {
 
             @Override
             public void onError(int code, String description) {
+                synchronized (TencentIMClient.this) {
+                    if (isPresenceUnsupported(description)) presenceUnsupported = true;
+                    if (requestKey.equals(presenceRequestKey)) presenceRequestKey = "";
+                }
             }
         });
     }
@@ -609,6 +638,14 @@ public final class TencentIMClient {
     private static String safeError(String value, String fallback) {
         String cleanValue = clean(value);
         return cleanValue.isEmpty() ? fallback : cleanValue;
+    }
+
+    private static boolean isPresenceUnsupported(String description) {
+        String value = clean(description).toLowerCase(Locale.ROOT);
+        return value.contains("premium")
+            || value.contains("upgrade")
+            || value.contains("旗舰")
+            || value.contains("套餐");
     }
 
     private static String clean(String value) {

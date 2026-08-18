@@ -21,9 +21,8 @@ public final class GrowingMessageEditText extends android.widget.EditText {
         setMinLines(1);
         setMaxLines(5);
         setGravity(android.view.Gravity.TOP | android.view.Gravity.START);
-        setInputType(
+        setRawInputType(
             InputType.TYPE_CLASS_TEXT
-                | InputType.TYPE_TEXT_FLAG_MULTI_LINE
                 | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
         );
         setImeOptions(EditorInfo.IME_ACTION_SEND | EditorInfo.IME_FLAG_NO_EXTRACT_UI);

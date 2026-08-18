@@ -36,6 +36,17 @@ export interface RemoteImOutgoingFileEvent {
   messageId?: number | null
 }
 
+export interface RemoteImOutgoingVideoEvent {
+  projectId: string
+  toUserId: string
+  origin: RemoteImMessageOrigin
+  runtimeIdentity: RemoteImRuntimeIdentity
+  fileName?: string | null
+  mimeType?: string | null
+  fileBytes?: Uint8Array | ArrayBuffer | number[] | null
+  messageId?: number | null
+}
+
 export interface DeliverRemoteImOutgoingTextInput {
   runtime: TencentImRuntime | null
   event: RemoteImOutgoingTextEvent
@@ -61,7 +72,18 @@ export interface DeliverRemoteImOutgoingFileInput {
   sendTimeoutMs?: number
 }
 
+export interface DeliverRemoteImOutgoingVideoInput {
+  runtime: TencentImRuntime | null
+  event: RemoteImOutgoingVideoEvent
+  markSent(messageId: number, remoteMessageId?: string | null): Promise<unknown> | unknown
+  markFailed(messageId: number, error: string): Promise<unknown> | unknown
+  sendTimeoutMs?: number
+}
+
 const DEFAULT_SEND_TIMEOUT_MS = 15_000
+// 视频要先整包上传到 COS，服务端再生成封面，比图片/文件慢得多。
+// 沿用 15s 会把一段正常的手机录屏判成超时，这里单独放宽。
+const DEFAULT_VIDEO_SEND_TIMEOUT_MS = 120_000
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -225,4 +247,55 @@ function resolveOutgoingFile(event: RemoteImOutgoingFileEvent): File | null {
   const fileName = event.fileName?.trim() || 'remote-im-file.md'
   const mimeType = event.mimeType?.trim() || 'application/octet-stream'
   return new File([toFileArrayBuffer(bytes)], fileName, { type: mimeType })
+}
+
+function resolveOutgoingVideo(event: RemoteImOutgoingVideoEvent): File | null {
+  const bytes = event.fileBytes
+  if (!bytes) return null
+  const fileName = event.fileName?.trim() || 'remote-im-video.mp4'
+  const mimeType = event.mimeType?.trim() || 'video/mp4'
+  return new File([toFileArrayBuffer(bytes)], fileName, { type: mimeType })
+}
+
+export async function deliverRemoteImOutgoingVideo(
+  input: DeliverRemoteImOutgoingVideoInput
+): Promise<void> {
+  if (!input.event.messageId) {
+    const file = resolveOutgoingVideo(input.event)
+    if (file && input.runtime?.sendVideo) {
+      await input.runtime.sendVideo(input.event.toUserId, file, {
+        messageId: input.event.messageId,
+        origin: input.event.origin
+      })
+    }
+    return
+  }
+
+  if (!input.runtime?.sendVideo) {
+    await input.markFailed(input.event.messageId, 'IM 运行时未连接')
+    return
+  }
+
+  const file = resolveOutgoingVideo(input.event)
+  if (!file) {
+    await input.markFailed(input.event.messageId, '视频已失效，请重新选择')
+    return
+  }
+
+  try {
+    const sendResult = await withTimeout(
+      input.runtime.sendVideo(input.event.toUserId, file, {
+        messageId: input.event.messageId,
+        origin: input.event.origin
+      }),
+      input.sendTimeoutMs ?? DEFAULT_VIDEO_SEND_TIMEOUT_MS
+    )
+    // SDK 确认的消息 ID 回填出站记录：漫游重投同一条消息时按 remote_message_id 去重。
+    await input.markSent(input.event.messageId, sendResult?.remoteMessageId ?? null)
+  } catch (err) {
+    await input.markFailed(
+      input.event.messageId,
+      err instanceof Error ? err.message : String(err)
+    )
+  }
 }

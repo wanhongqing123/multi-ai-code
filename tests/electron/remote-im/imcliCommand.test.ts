@@ -61,13 +61,14 @@ describe('imcli command', () => {
     expect(stdout).toContain('imcli send <user> --text-b64 <base64>')
     expect(stdout).toContain('imcli send-image <user> <imagePath>')
     expect(stdout).toContain('imcli send-file <user> <filePath>')
+    expect(stdout).toContain('imcli send-video <user> <videoPath>')
     expect(stdout).toContain('imcli history')
     expect(stdout).toContain('Output format: #<id> <role>/<direction> <from> -> <to>: <content>')
     expect(stdout).toContain('Use one of these user IDs as the <user> argument')
-    expect(stdout).toContain('Send a local file of any type to one user (up to 100MB).')
+    expect(stdout).toContain('Send a local file of any type to one user (up to 20GB).')
     expect(stdout).toContain('in iOS, Android, or Desktop IM to preview it.')
     expect(stdout).toContain('the receiver taps to save locally')
-    expect(stdout).toContain('This is text-only. Use send-image or send-file separately for attachments.')
+    expect(stdout).toContain('This is text-only. Use send-image, send-file or send-video separately for attachments.')
     expect(stdout).toContain('Requirements:')
     expect(stdout).toContain('MULTI_AI_CODE_PROJECT_ID')
     expect(stdout).toContain('Markdown and HTML files')
@@ -75,6 +76,10 @@ describe('imcli command', () => {
     expect(stdout).toContain('Examples:')
     expect(stdout).toContain('imcli send-image phone-user C:\\temp\\screenshot.png --project project-1')
     expect(stdout).toContain('imcli send-file phone-user ./report.md --project project-1')
+    expect(stdout).toContain('Supported extensions: mp4, mov.')
+    expect(stdout).toContain(
+      'imcli send-video phone-user C:\\temp\\screen-record.mp4 --project project-1'
+    )
   })
 
   // bin/imcli 是 sh 包装，只在 mac/Linux 上可执行；Windows 上 spawn 它必然 ENOENT。

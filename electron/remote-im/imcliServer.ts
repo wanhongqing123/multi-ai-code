@@ -28,6 +28,11 @@ export interface RemoteImCliServerDeps {
     localPath: string,
     toUserId?: string | null
   ): Promise<RemoteImCliSendResult>
+  sendPeerVideo?(
+    projectId: string,
+    localPath: string,
+    toUserId?: string | null
+  ): Promise<RemoteImCliSendResult>
   authorizeCaller?(
     projectId: string,
     sessionId: string
@@ -288,6 +293,27 @@ export async function startRemoteImCliServer(
             ...(result.ok
               ? { value: { toUserId: result.toUserId ?? toUserId } }
               : { error: result.error ?? 'failed to send IM file' })
+          })
+        })
+        return
+      }
+
+      if (req.method === 'POST' && url.pathname === '/send-video') {
+        const body = await readBody(req)
+        const projectId = getProjectId(url, body)
+        await withAuthorizedCaller(deps, req, projectId, async () => {
+          const raw = body && typeof body === 'object' ? (body as Record<string, unknown>) : {}
+          const toUserId = typeof raw.toUserId === 'string' ? raw.toUserId.trim() : ''
+          const localPath = typeof raw.localPath === 'string' ? raw.localPath.trim() : ''
+          if (!toUserId) throw new Error('toUserId is required')
+          if (!localPath) throw new Error('localPath is required')
+          if (!deps.sendPeerVideo) throw new Error('video sending is not available')
+          const result = await deps.sendPeerVideo(projectId, localPath, toUserId)
+          json(res, result.ok ? 200 : 400, {
+            ok: result.ok,
+            ...(result.ok
+              ? { value: { toUserId: result.toUserId ?? toUserId } }
+              : { error: result.error ?? 'failed to send IM video' })
           })
         })
         return

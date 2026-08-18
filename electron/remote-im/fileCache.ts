@@ -91,7 +91,7 @@ export async function cacheRemoteImFile(input: CacheRemoteImFileInput): Promise<
   const fetchImpl = input.fetchImpl ?? (globalThis.fetch as unknown as RemoteImFileFetch)
   if (!fetchImpl) throw new Error('当前运行环境不支持下载文件')
 
-  // 不再按 MIME 拒收。接收任意普通文件与发送侧（send-file，100MB 上限）对齐；
+  // 不再按 MIME 拒收。接收任意普通文件与发送侧（send-file）对齐；
   // 真正的护栏是体积上限，而不是类型白名单。
   const declaredMimeType = input.mimeType?.split(';')[0]?.trim() || null
 

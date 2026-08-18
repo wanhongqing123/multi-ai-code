@@ -150,8 +150,20 @@ function RemoteImFileMessage(props: {
     attachment?.mimeType === 'text/markdown' ||
     lowerName.endsWith('.md') ||
     lowerName.endsWith('.markdown')
+  // 收到的视频按文件投递（下载到缓存后把本地路径交给 AICLI），所以到这里是 file 类型。
+  // 但卡片上得写「视频」——一段 mp4 标成「文件」会让人以为发错了。
+  const isVideo =
+    attachment?.mimeType?.toLowerCase().startsWith('video/') ||
+    lowerName.endsWith('.mp4') ||
+    lowerName.endsWith('.mov')
   const canPreview = Boolean(attachment?.localPath && (isHtml || isMarkdown))
-  const typeLabel = isHtml ? 'HTML 文件' : isMarkdown ? 'Markdown 文件' : '文件'
+  const typeLabel = isHtml
+    ? 'HTML 文件'
+    : isMarkdown
+      ? 'Markdown 文件'
+      : isVideo
+        ? '视频'
+        : '文件'
 
   return (
     <button
@@ -161,12 +173,55 @@ function RemoteImFileMessage(props: {
       onClick={() => props.onPreview(props.message)}
       title={canPreview ? '点击预览文件' : '文件暂不可预览'}
     >
-      <span className="remote-im-file-icon">文</span>
+      <span className="remote-im-file-icon">{isVideo ? '视' : '文'}</span>
       <span className="remote-im-file-info">
         <strong>{fileName || '文件消息'}</strong>
         <em>{typeLabel}</em>
       </span>
     </button>
+  )
+}
+
+export function formatRemoteImVideoDuration(seconds: number | null | undefined): string | null {
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) return null
+  const total = Math.round(seconds)
+  const minutes = Math.floor(total / 60)
+  const rest = total % 60
+  return `${minutes}:${String(rest).padStart(2, '0')}`
+}
+
+export function formatRemoteImVideoSize(sizeBytes: number | null | undefined): string | null {
+  if (typeof sizeBytes !== 'number' || !Number.isFinite(sizeBytes) || sizeBytes <= 0) return null
+  const mb = sizeBytes / (1024 * 1024)
+  if (mb >= 1) return `${mb.toFixed(1)} MB`
+  return `${Math.max(1, Math.round(sizeBytes / 1024))} KB`
+}
+
+function RemoteImVideoMessage(props: { message: RemoteImMessage }): JSX.Element {
+  const attachment = props.message.attachment?.type === 'video' ? props.message.attachment : null
+  const fileName = attachment?.fileName ?? props.message.content.replace(/^\[视频消息\]\s*/, '')
+  // 封面由 IM 服务端在上传后生成，出站时本端拿不到，所以这里只在对端消息上才有图。
+  const posterSource = getRemoteImImageSource(attachment?.thumbnailUrl)
+  const meta = [
+    formatRemoteImVideoDuration(attachment?.durationSeconds),
+    formatRemoteImVideoSize(attachment?.sizeBytes)
+  ].filter((part): part is string => Boolean(part))
+
+  return (
+    <div className="remote-im-video-message">
+      <div className="remote-im-video-poster">
+        {posterSource ? (
+          <img src={posterSource} alt={fileName || '视频消息'} loading="lazy" />
+        ) : null}
+        <span className="remote-im-video-play" aria-hidden="true">
+          ▶
+        </span>
+      </div>
+      <div className="remote-im-video-info">
+        <strong>{fileName || '视频消息'}</strong>
+        <em>{meta.length > 0 ? `视频 · ${meta.join(' · ')}` : '视频'}</em>
+      </div>
+    </div>
   )
 }
 
@@ -605,6 +660,8 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
                             <RemoteImImageMessage message={message} />
                           ) : message.kind === 'file' ? (
                             <RemoteImFileMessage message={message} onPreview={handlePreviewFile} />
+                          ) : message.kind === 'video' ? (
+                            <RemoteImVideoMessage message={message} />
                           ) : (
                             <RemoteImMarkdown content={message.content} />
                           )}

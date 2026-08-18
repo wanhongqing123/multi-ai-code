@@ -69,7 +69,7 @@ export interface RemoteImStatus {
 
 export type RemoteImMessageRole = 'remote-user' | 'system' | 'aicli'
 export type RemoteImMessageDirection = 'incoming' | 'outgoing' | 'internal'
-export type RemoteImMessageKind = 'text' | 'image' | 'file'
+export type RemoteImMessageKind = 'text' | 'image' | 'file' | 'video'
 /**
  * Who caused a Remote IM message to be sent.
  *
@@ -109,7 +109,28 @@ export interface RemoteImFileAttachment {
   sdkFileId: string | null
 }
 
-export type RemoteImMessageAttachment = RemoteImImageAttachment | RemoteImFileAttachment
+/**
+ * 视频消息附件。封面(thumbnail)由 IM 服务端在上传后生成，本端发送时拿不到，
+ * 所以 thumbnailUrl/width/height 出站阶段一律为 null，等回执或对端消息才有值。
+ */
+export interface RemoteImVideoAttachment {
+  type: 'video'
+  localPath: string | null
+  remoteUrl: string | null
+  thumbnailUrl: string | null
+  width: number | null
+  height: number | null
+  durationSeconds: number | null
+  sizeBytes: number | null
+  fileName: string | null
+  mimeType: string | null
+  sdkVideoId: string | null
+}
+
+export type RemoteImMessageAttachment =
+  | RemoteImImageAttachment
+  | RemoteImFileAttachment
+  | RemoteImVideoAttachment
 
 export interface RemoteImMessage {
   id: number

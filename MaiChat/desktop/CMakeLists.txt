@@ -57,6 +57,7 @@ target_include_directories(md4c PUBLIC third_party/md4c)
 add_library(remote_im_core
   src/model/RemoteIMContact.h
   src/model/RemoteIMMessage.h
+  src/model/RemoteIMVideoPayload.h
   src/model/ChatState.h
   src/model/ChatState.cpp
   src/markdown/MarkdownRenderer.h
@@ -70,6 +71,8 @@ add_library(remote_im_core
   src/im/DynamicTimSdkApi.cpp
   src/im/TimSdkRemoteIMClient.h
   src/im/TimSdkRemoteIMClient.cpp
+  src/im/VideoFileMetadata.h
+  src/im/VideoFileMetadata.cpp
   src/im/FakeRemoteIMClient.h
   src/im/FakeRemoteIMClient.cpp
   src/storage/LocalMessageDatabase.h
@@ -136,9 +139,17 @@ endif()
 add_library(remote_im_desktop_app
   src/app/RemoteIMApplication.h
   src/app/RemoteIMApplication.cpp
+  src/app/VideoCoverImage.h
+  src/app/VideoCoverImage.cpp
 )
 target_include_directories(remote_im_desktop_app PUBLIC src)
-target_link_libraries(remote_im_desktop_app PUBLIC remote_im_core)
+# Qt5::Gui：视频封面要用 QImage/QPainter 画（并在 Windows 上把系统缩略图的 HBITMAP
+# 转成 QImage）。remote_im_core 保持无 GUI 依赖，封面这层留在应用层。
+target_link_libraries(remote_im_desktop_app PUBLIC remote_im_core Qt5::Gui)
+if(WIN32)
+  # IShellItemImageFactory（资源管理器的缩略图提供程序）取视频首帧。
+  target_link_libraries(remote_im_desktop_app PRIVATE shell32 ole32)
+endif()
 
 add_library(remote_im_desktop_ui
   resources/resources.qrc
@@ -306,6 +317,12 @@ target_link_libraries(remote_desktop_controller_test PRIVATE remote_im_core Qt5:
 add_executable(trtc_engine_test tests/TrtcEngineTest.cpp)
 target_link_libraries(trtc_engine_test PRIVATE remote_im_core Qt5::Test)
 
+add_executable(video_file_metadata_test tests/VideoFileMetadataTest.cpp)
+target_link_libraries(video_file_metadata_test PRIVATE remote_im_core Qt5::Test)
+
+add_executable(video_cover_image_test tests/VideoCoverImageTest.cpp)
+target_link_libraries(video_cover_image_test PRIVATE remote_im_desktop_app remote_im_core Qt5::Gui Qt5::Test)
+
 if(MAICHAT_TRTC_AVAILABLE AND WIN32)
   # TRTC 运行时 DLL 必须与 exe 同目录才能加载。构建后自动拷贝，
   # 避免"链接通过但一运行就找不到 SDK"这类只在本地复现的问题。
@@ -351,6 +368,8 @@ add_test(NAME remote_desktop_session_test COMMAND remote_desktop_session_test)
 add_test(NAME remote_desktop_settings_test COMMAND remote_desktop_settings_test)
 add_test(NAME remote_desktop_controller_test COMMAND remote_desktop_controller_test)
 add_test(NAME trtc_engine_test COMMAND trtc_engine_test)
+add_test(NAME video_file_metadata_test COMMAND video_file_metadata_test)
+add_test(NAME video_cover_image_test COMMAND video_cover_image_test)
 add_test(NAME remote_input_capture_test COMMAND remote_input_capture_test)
 add_test(NAME remote_desktop_ui_test COMMAND remote_desktop_ui_test)
 add_test(NAME ui_zoom_test COMMAND ui_zoom_test)

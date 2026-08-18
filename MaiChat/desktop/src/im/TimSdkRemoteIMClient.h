@@ -25,6 +25,8 @@ public:
     void sendFile(const QString& peerId, const QString& localPath, const QString& fileName, RemoteIMSendCompletion completion) override;
     void sendImageWithText(const QString& peerId, const QString& imagePath, const QString& text, RemoteIMSendCompletion completion) override;
     void sendFileWithText(const QString& peerId, const QString& localPath, const QString& fileName, const QString& text, RemoteIMSendCompletion completion) override;
+    void sendVideo(const QString& peerId, const RemoteIMVideoPayload& video, RemoteIMSendCompletion completion) override;
+    void sendVideoWithText(const QString& peerId, const RemoteIMVideoPayload& video, const QString& text, RemoteIMSendCompletion completion) override;
 
 private:
     void sendTextWithOrigin(const QString& peerId,

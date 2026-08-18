@@ -7,6 +7,7 @@
 
 #include "model/RemoteIMContact.h"
 #include "model/RemoteIMMessage.h"
+#include "model/RemoteIMVideoPayload.h"
 
 using RemoteIMCompletion = std::function<void(bool ok, const QString& error)>;
 struct RemoteIMSendReceipt {
@@ -54,6 +55,18 @@ public:
     virtual void sendFileWithText(const QString& peerId, const QString& localPath, const QString& fileName, const QString& text, RemoteIMSendCompletion completion) {
         if (text.trimmed().isEmpty()) { sendFile(peerId, localPath, fileName, std::move(completion)); return; }
         sendFile(peerId, localPath, fileName, {});
+        sendText(peerId, text, std::move(completion));
+    }
+    // 发送视频。payload 里的时长/尺寸/封面必须由应用层备齐（见 RemoteIMVideoPayload），
+    // 与 sendFile 一样默认不支持，只有 TimSdk 客户端真正实现。
+    virtual void sendVideo(const QString& peerId, const RemoteIMVideoPayload& video, RemoteIMSendCompletion completion) {
+        Q_UNUSED(peerId);
+        Q_UNUSED(video);
+        if (completion) completion(false, QStringLiteral("当前 IM 客户端不支持发送视频"), {});
+    }
+    virtual void sendVideoWithText(const QString& peerId, const RemoteIMVideoPayload& video, const QString& text, RemoteIMSendCompletion completion) {
+        if (text.trimmed().isEmpty()) { sendVideo(peerId, video, std::move(completion)); return; }
+        sendVideo(peerId, video, {});
         sendText(peerId, text, std::move(completion));
     }
 

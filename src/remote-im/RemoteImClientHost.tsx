@@ -7,7 +7,8 @@ import type {
 import {
   deliverRemoteImOutgoingFile,
   deliverRemoteImOutgoingImage,
-  deliverRemoteImOutgoingText
+  deliverRemoteImOutgoingText,
+  deliverRemoteImOutgoingVideo
 } from './outgoingDelivery.js'
 import {
   forgetRemoteImOutgoingImageFile,
@@ -625,12 +626,72 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
       })()
     })
 
+    const offOutgoingVideo = window.api.remoteIm.onOutgoingVideo((evt) => {
+      if (evt.projectId !== props.projectId) return
+      if (!isSameRemoteImRuntimeIdentity(evt.runtimeIdentity, runtimeIdentity)) return
+      const markFailed = (messageId: number, error: string) => {
+        void window.api.remoteIm.writeRuntimeLog({
+          projectId: evt.projectId,
+          sdkAppId: props.config.sdkAppId,
+          desktopUserId: props.config.desktopUserId,
+          peerUserId: evt.toUserId,
+          messageId,
+          event: 'send:video:delivery-failed',
+          detail: { error }
+        })
+        return window.api.remoteIm.markOutgoingMessageFailed(
+          evt.projectId,
+          messageId,
+          error,
+          runtimeIdentity
+        )
+      }
+      void (async () => {
+        try {
+          const runtime = await runtimeSlotRef.current.waitForCurrent(
+            OUTGOING_RUNTIME_WAIT_TIMEOUT_MS
+          )
+          if (cancelled || ownedRuntime !== runtime) {
+            throw new Error('Remote IM runtime changed before video delivery')
+          }
+          await deliverRemoteImOutgoingVideo({
+            runtime,
+            event: evt,
+            markSent: (messageId, remoteMessageId) =>
+              window.api.remoteIm.markOutgoingMessageSent(
+                evt.projectId,
+                messageId,
+                remoteMessageId,
+                runtimeIdentity
+              ),
+            markFailed
+          })
+        } catch (err) {
+          if (!evt.messageId) return
+          await markFailed(
+            evt.messageId,
+            err instanceof Error ? err.message : String(err)
+          )
+          void window.api.remoteIm.writeRuntimeLog({
+            projectId: evt.projectId,
+            sdkAppId: props.config.sdkAppId,
+            desktopUserId: props.config.desktopUserId,
+            peerUserId: evt.toUserId,
+            messageId: evt.messageId,
+            event: 'send:video:runtime-wait-failed',
+            detail: { error: err instanceof Error ? err.message : String(err) }
+          })
+        }
+      })()
+    })
+
     return () => {
       cancelled = true
       cancelScheduledConnect()
       offOutgoing()
       offOutgoingImage()
       offOutgoingFile()
+      offOutgoingVideo()
       // IM 断开时必须停掉共享：连接没了就再也发不出 stop 信令，
       // 留着推流等于在用户不知情的情况下继续共享屏幕。
       void remoteDesktopHost.stopByLocalUser().catch(() => undefined)

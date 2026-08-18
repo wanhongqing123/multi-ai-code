@@ -22,6 +22,9 @@ constexpr int kConversationTypeC2C = 1;
 constexpr int kElemText = 0;
 constexpr int kElemImage = 1;
 constexpr int kElemFile = 4;
+// TIMElemType 里 Video 排在 Text/Image/Sound/Custom/File/GroupTips/Face/Location/GroupReport
+// 之后，值为 9（见 vendor/tencent-im/.../TIMMessageManager.h 的 enum TIMElemType）。
+constexpr int kElemVideo = 9;
 constexpr int kImageLevelOriginal = 0;
 constexpr int kFriendTypeBoth = 1;
 constexpr auto kCloudCustomDataKey = "message_cloud_custom_str";
@@ -447,6 +450,65 @@ void TimSdkRemoteIMClient::sendFileWithText(const QString& peerId, const QString
         fileElem[QStringLiteral("file_elem_file_name")] = displayName;
         elems.append(fileElem);
     }
+    if (!cleanText.isEmpty()) {
+        QJsonObject textElem;
+        textElem[QStringLiteral("elem_type")] = kElemText;
+        textElem[QStringLiteral("text_elem_content")] = cleanText;
+        elems.append(textElem);
+    }
+    QJsonObject message;
+    message[QStringLiteral("message_elem_array")] = elems;
+    setMessageOrigin(message, RemoteIMMessageOrigin::Human);
+    api_->sendMessage(cleanPeerId, kConversationTypeC2C, compactJson(message), [completion = std::move(completion)](int code,
+                                                                                                                    const QString& description,
+                                                                                                                    const QString& jsonPayload) mutable {
+        if (!completion) return;
+        const bool ok = code == 0;
+        RemoteIMSendReceipt receipt = ok ? sentMessageReceipt(jsonPayload) : RemoteIMSendReceipt{};
+        completion(ok, ok ? QString() : (description.isEmpty() ? QStringLiteral("IM SDK 操作失败：%1").arg(code) : description), receipt);
+    });
+}
+
+namespace {
+
+// VideoElem 的九个「必填」字段一个都不能少：少一个 SDK 不会报错，只会发出一条
+// 对端解析不出来的空视频消息——这是这套 C 接口最典型的静默失败方式。
+QJsonObject videoElemJson(const RemoteIMVideoPayload& video) {
+    QJsonObject elem;
+    elem[QStringLiteral("elem_type")] = kElemVideo;
+    elem[QStringLiteral("video_elem_video_path")] = video.videoPath;
+    elem[QStringLiteral("video_elem_video_type")] = video.videoType;
+    // QJsonValue 在 Qt5 里没有 qint64 重载，只有 int / double；用 double 序列化出来
+    // 可能带小数点，jsoncpp 的 asUInt() 读到就废了。视频上限远小于 2GB，收敛成 int。
+    elem[QStringLiteral("video_elem_video_size")] = static_cast<int>(video.videoSizeBytes);
+    elem[QStringLiteral("video_elem_video_duration")] = video.durationSeconds;
+    elem[QStringLiteral("video_elem_image_path")] = video.coverPath;
+    elem[QStringLiteral("video_elem_image_type")] = video.coverType;
+    elem[QStringLiteral("video_elem_image_size")] = static_cast<int>(video.coverSizeBytes);
+    elem[QStringLiteral("video_elem_image_width")] = video.coverWidth;
+    elem[QStringLiteral("video_elem_image_height")] = video.coverHeight;
+    return elem;
+}
+
+}  // namespace
+
+void TimSdkRemoteIMClient::sendVideo(const QString& peerId, const RemoteIMVideoPayload& video, RemoteIMSendCompletion completion) {
+    sendVideoWithText(peerId, video, QString(), std::move(completion));
+}
+
+void TimSdkRemoteIMClient::sendVideoWithText(const QString& peerId, const RemoteIMVideoPayload& video, const QString& text, RemoteIMSendCompletion completion) {
+    const QString cleanPeerId = peerId.trimmed();
+    const QString cleanText = text.trimmed();
+    if (cleanPeerId.isEmpty()) {
+        if (completion) completion(false, QStringLiteral("视频消息缺少接收人"), {});
+        return;
+    }
+    if (!video.isValid()) {
+        if (completion) completion(false, QStringLiteral("视频消息缺少时长、尺寸或封面"), {});
+        return;
+    }
+
+    QJsonArray elems{videoElemJson(video)};
     if (!cleanText.isEmpty()) {
         QJsonObject textElem;
         textElem[QStringLiteral("elem_type")] = kElemText;

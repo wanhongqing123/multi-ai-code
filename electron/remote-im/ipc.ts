@@ -74,6 +74,7 @@ import {
   createPeerOutgoingFileMessageInput,
   createPeerOutgoingImageMessageInput,
   createPeerOutgoingMessageInput,
+  createPeerOutgoingVideoMessageInput,
   resolvePeerUserId
 } from './peerMessage.js'
 import { getRemoteImAccountProfileId, getRemoteImProfileId } from './profile.js'
@@ -107,6 +108,10 @@ import {
   mimeTypeFromRemoteImFilePath,
   type RemoteImLocalFilePayload
 } from './localFile.js'
+import {
+  loadRemoteImLocalVideoForSend,
+  type RemoteImLocalVideoPayload
+} from './localVideoFile.js'
 import { cacheRemoteImFile, fileAttachmentFromIncoming } from './fileCache.js'
 import type {
   RemoteImAccountConfig,
@@ -133,9 +138,26 @@ const DEFAULT_REMOTE_IM_PROFILE_ID = 'default'
 // acknowledgement window above that combined bound so a valid approval notice
 // is not canceled just before a legitimate send result arrives.
 const OUTGOING_DELIVERY_ACK_TIMEOUT_MS = 35_000
+// 视频要整包上传到 COS 再由服务端生成封面，渲染层给它的发送窗口是 120s
+// （deliverRemoteImOutgoingVideo）。这里必须盖过「15s 等运行时 + 120s 发送」，
+// 否则一段大录屏会在还在上传时就被判成「发送方窗口未确认」。
+const OUTGOING_VIDEO_DELIVERY_ACK_TIMEOUT_MS = 150_000
 const MAX_REMOTE_IM_IMAGE_BYTES = 20 * 1024 * 1024
-// send-file 支持任意普通文件，上限对齐腾讯 IM 文件消息的 100MB。
-const MAX_REMOTE_IM_FILE_BYTES = 100 * 1024 * 1024
+// 附件（文件/视频）体积上限，收发共用。
+//
+// 这不是腾讯的产品上限：IM 的真实上限由该 SDKAppID 的云控配置
+// (upload_size_limit.f / .v) 决定，Web SDK 只在云控缺省时兜底 100MB；
+// 云控若比这里低，SDK 会在上传前以 2351/2352 打回，失败是响的，不会静默。
+//
+// 20GB 基本等于「不设限」，是产品上的明确决定。
+// 运行时那一层过得去：Electron 33 内置 Node 20.18.3，实测
+// buffer.constants.MAX_LENGTH = 34359738367（32GB），20GB 不会撞 Buffer 上限。
+// 真正的约束是内存——当前实现把整个附件 readFile 进内存、再结构化克隆过 IPC
+// 交给渲染进程，所以实际能走通的体积取决于机器可用内存，远小于这个数。
+// 这条链路后续会改成流式，届时这个常量才名副其实。
+const MAX_REMOTE_IM_ATTACHMENT_BYTES = 20 * 1024 * 1024 * 1024
+const MAX_REMOTE_IM_FILE_BYTES = MAX_REMOTE_IM_ATTACHMENT_BYTES
+const MAX_REMOTE_IM_VIDEO_BYTES = MAX_REMOTE_IM_ATTACHMENT_BYTES
 // md/html 预览要把全文读进内存渲染，保持独立的小上限。
 const MAX_REMOTE_IM_DOC_PREVIEW_BYTES = 5 * 1024 * 1024
 const CLAUDE_TRANSCRIPT_COMPLETION_POLL_MS = 250
@@ -568,7 +590,33 @@ function broadcastOutgoingFilePayload(
   return true
 }
 
-function scheduleOutgoingDeliveryAckTimeout(projectId: string, messageId: number): void {
+function broadcastOutgoingVideoPayload(
+  projectId: string,
+  toUserId: string,
+  video: RemoteImLocalVideoPayload,
+  messageId?: number,
+  origin: RemoteImMessageOrigin = 'machine'
+): boolean {
+  const runtimeIdentity = getRegisteredRemoteImRuntimeIdentity(projectId)
+  if (!runtimeIdentity) return false
+  broadcast('remote-im:outgoing-video', {
+    projectId,
+    toUserId,
+    origin,
+    runtimeIdentity,
+    messageId,
+    fileName: video.fileName,
+    mimeType: video.mimeType,
+    fileBytes: video.fileBytes
+  })
+  return true
+}
+
+function scheduleOutgoingDeliveryAckTimeout(
+  projectId: string,
+  messageId: number,
+  timeoutMs: number = OUTGOING_DELIVERY_ACK_TIMEOUT_MS
+): void {
   const runtimeIdentity = getRegisteredRemoteImRuntimeIdentity(projectId)
   if (!runtimeIdentity) return
   const existing = outgoingDeliveryAckTimers.get(messageId)
@@ -589,7 +637,7 @@ function scheduleOutgoingDeliveryAckTimeout(projectId: string, messageId: number
         broadcastMessagesChanged(projectId)
       }
       settleApprovalDelivery(messageId, { ok: false, error })
-    }, OUTGOING_DELIVERY_ACK_TIMEOUT_MS)
+    }, timeoutMs)
   }
   entry.timer.unref?.()
   outgoingDeliveryAckTimers.set(messageId, entry)
@@ -1248,6 +1296,65 @@ async function sendRemoteImPeerLocalFile(
     return { ok: false, error: REMOTE_IM_ACCOUNT_CHANGING_ERROR }
   }
   scheduleOutgoingDeliveryAckTimeout(projectId, message.id)
+  broadcastMessagesChanged(projectId)
+  return { ok: true, toUserId: peerUserId }
+}
+
+async function sendRemoteImPeerLocalVideo(
+  projectId: string,
+  localPath: string,
+  toUserId?: string | null,
+  origin: RemoteImMessageOrigin = 'machine'
+): Promise<{ ok: boolean; error?: string; toUserId?: string }> {
+  const config = await getRemoteImConfig(projectId)
+  const cleanPath = localPath.trim()
+  if (!cleanPath) return { ok: false, error: 'video path is required' }
+  const peerUserId = resolvePeerUserId(config, toUserId)
+  if (!peerUserId) {
+    return { ok: false, error: '未配置远程 IM 联系人账号' }
+  }
+  const connectionError = getRemoteImSendConnectionError(await getRemoteImStatus(projectId))
+  if (connectionError) {
+    return { ok: false, error: connectionError }
+  }
+  if (!getRegisteredRemoteImRuntimeIdentity(projectId)) {
+    return { ok: false, error: 'Remote IM runtime is not connected' }
+  }
+
+  let payload: RemoteImLocalVideoPayload
+  try {
+    payload = await loadRemoteImLocalVideoForSend(cleanPath, {
+      maxBytes: MAX_REMOTE_IM_VIDEO_BYTES
+    })
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err)
+    }
+  }
+
+  const message = createRemoteImMessage(
+    createPeerOutgoingVideoMessageInput({
+      projectId,
+      config,
+      toUserId: peerUserId,
+      attachment: payload.attachment,
+      now: Date.now()
+    })
+  )
+  if (!broadcastOutgoingVideoPayload(projectId, peerUserId, payload, message.id, origin)) {
+    updateRemoteImMessageStatus(message.id, {
+      status: 'failed',
+      error: REMOTE_IM_ACCOUNT_CHANGING_ERROR
+    })
+    broadcastMessagesChanged(projectId)
+    return { ok: false, error: REMOTE_IM_ACCOUNT_CHANGING_ERROR }
+  }
+  scheduleOutgoingDeliveryAckTimeout(
+    projectId,
+    message.id,
+    OUTGOING_VIDEO_DELIVERY_ACK_TIMEOUT_MS
+  )
   broadcastMessagesChanged(projectId)
   return { ok: true, toUserId: peerUserId }
 }
@@ -2286,7 +2393,9 @@ function ensureRemoteImCliServer(): void {
     sendPeerImage: (projectId, localPath, toUserId) =>
       sendRemoteImPeerLocalImage(projectId, localPath, toUserId, 'machine'),
     sendPeerFile: (projectId, localPath, toUserId) =>
-      sendRemoteImPeerLocalFile(projectId, localPath, toUserId, 'machine')
+      sendRemoteImPeerLocalFile(projectId, localPath, toUserId, 'machine'),
+    sendPeerVideo: (projectId, localPath, toUserId) =>
+      sendRemoteImPeerLocalVideo(projectId, localPath, toUserId, 'machine')
   }).catch((err) => {
     remoteImCliServerStarted = false
     console.error(

@@ -12,7 +12,7 @@ interface FakeRow {
   role: 'remote-user' | 'system' | 'aicli'
   direction: 'incoming' | 'outgoing' | 'internal'
   content: string
-  kind?: 'text' | 'image' | 'file'
+  kind?: 'text' | 'image' | 'file' | 'video'
   attachment_json?: string | null
   status: 'received' | 'rejected' | 'sent-to-aicli' | 'streaming' | 'sent-to-im' | 'failed'
   error: string | null
@@ -257,6 +257,39 @@ describe('remote IM message store', () => {
 
     expect(store.listById(message.id)).toMatchObject({
       kind: 'file',
+      attachment
+    })
+  })
+
+  it('persists video message attachments through a store round trip', () => {
+    const store = createRemoteImMessageStore(createFakeDatabase())
+    const attachment = {
+      type: 'video',
+      localPath: 'E:/tmp/screen-record.mp4',
+      remoteUrl: 'https://example.com/screen-record.mp4',
+      thumbnailUrl: 'https://example.com/screen-record.jpg',
+      width: 1920,
+      height: 1080,
+      durationSeconds: 42,
+      sizeBytes: 8 * 1024 * 1024,
+      fileName: 'screen-record.mp4',
+      mimeType: 'video/mp4',
+      sdkVideoId: 'video-sdk-id'
+    }
+    const message = store.create({
+      projectId: 'project-1',
+      provider: 'tencent-im',
+      role: 'remote-user',
+      direction: 'outgoing',
+      content: '[视频消息] screen-record.mp4',
+      status: 'streaming',
+      createdAt: 100,
+      kind: 'video',
+      attachment
+    } as any)
+
+    expect(store.listById(message.id)).toMatchObject({
+      kind: 'video',
       attachment
     })
   })

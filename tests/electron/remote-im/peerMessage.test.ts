@@ -3,6 +3,7 @@ import type { RemoteImConfig } from '../../../electron/remote-im/types.js'
 import {
   createPeerOutgoingImageMessageInput,
   createPeerOutgoingMessageInput,
+  createPeerOutgoingVideoMessageInput,
   resolvePeerUserId
 } from '../../../electron/remote-im/peerMessage.js'
 
@@ -86,6 +87,42 @@ describe('remote IM peer messages', () => {
       attachment: {
         type: 'image',
         localPath: '/tmp/photo.png'
+      },
+      status: 'streaming'
+    })
+  })
+
+  it('creates an outgoing video message record for a peer IM send', () => {
+    expect(
+      createPeerOutgoingVideoMessageInput({
+        projectId: 'project-1',
+        config,
+        toUserId: 'desktop-b',
+        now: 1234,
+        attachment: {
+          type: 'video',
+          localPath: '/tmp/screen-record.mp4',
+          remoteUrl: null,
+          thumbnailUrl: null,
+          width: null,
+          height: null,
+          durationSeconds: null,
+          sizeBytes: 4096,
+          fileName: 'screen-record.mp4',
+          mimeType: 'video/mp4',
+          sdkVideoId: null
+        }
+      })
+    ).toMatchObject({
+      projectId: 'project-1',
+      fromUserId: 'desktop-a',
+      toUserId: 'desktop-b',
+      direction: 'outgoing',
+      content: '[视频消息] screen-record.mp4',
+      kind: 'video',
+      attachment: {
+        type: 'video',
+        localPath: '/tmp/screen-record.mp4'
       },
       status: 'streaming'
     })

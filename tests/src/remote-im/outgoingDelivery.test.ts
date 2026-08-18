@@ -3,9 +3,11 @@ import {
   deliverRemoteImOutgoingImage,
   deliverRemoteImOutgoingFile,
   deliverRemoteImOutgoingText,
+  deliverRemoteImOutgoingVideo,
   type RemoteImOutgoingFileEvent,
   type RemoteImOutgoingImageEvent,
-  type RemoteImOutgoingTextEvent
+  type RemoteImOutgoingTextEvent,
+  type RemoteImOutgoingVideoEvent
 } from '../../../src/remote-im/outgoingDelivery.js'
 import type { TencentImRuntime } from '../../../src/remote-im/tencentImClient.js'
 
@@ -289,6 +291,113 @@ describe('remote IM outgoing delivery', () => {
 
     expect(markSent).not.toHaveBeenCalled()
     expect(markFailed).toHaveBeenCalledWith(89, 'IM 运行时未连接')
+  })
+
+  it('delivers an outgoing video from an inline IPC file payload', async () => {
+    const videoEvent: RemoteImOutgoingVideoEvent = {
+      projectId: 'project-1',
+      messageId: 91,
+      toUserId: 'desktop-b',
+      origin: 'machine',
+      runtimeIdentity,
+      fileName: 'screen-record.mp4',
+      mimeType: 'video/mp4',
+      fileBytes: new Uint8Array([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70])
+    }
+    const sendVideo = vi.fn<NonNullable<TencentImRuntime['sendVideo']>>(async () => ({
+      remoteMessageId: 'tim-video-7'
+    }))
+    const runtime: TencentImRuntime = {
+      disconnect: vi.fn(),
+      sendText: vi.fn(async () => undefined),
+      sendVideo
+    }
+    const markSent = vi.fn()
+    const markFailed = vi.fn()
+
+    await deliverRemoteImOutgoingVideo({
+      runtime,
+      event: videoEvent,
+      markSent,
+      markFailed
+    })
+
+    expect(sendVideo).toHaveBeenCalledTimes(1)
+    const sentFile = sendVideo.mock.calls[0]![1]
+    expect(sentFile).toBeInstanceOf(File)
+    expect(sentFile.name).toBe('screen-record.mp4')
+    expect(sentFile.type).toBe('video/mp4')
+    expect(sentFile.size).toBe(8)
+    expect(markSent).toHaveBeenCalledWith(91, 'tim-video-7')
+    expect(markFailed).not.toHaveBeenCalled()
+  })
+
+  it('marks an outgoing video as failed when the runtime cannot send video', async () => {
+    const videoEvent: RemoteImOutgoingVideoEvent = {
+      projectId: 'project-1',
+      messageId: 92,
+      toUserId: 'desktop-b',
+      origin: 'machine',
+      runtimeIdentity,
+      fileName: 'screen-record.mp4',
+      mimeType: 'video/mp4',
+      fileBytes: new Uint8Array([1, 2, 3, 4])
+    }
+    const markSent = vi.fn()
+    const markFailed = vi.fn()
+
+    // 旧版本的 runtime 没有 sendVideo：必须落成失败，而不是静默丢掉这条消息。
+    await deliverRemoteImOutgoingVideo({
+      runtime: { disconnect: vi.fn(), sendText: vi.fn(async () => undefined) },
+      event: videoEvent,
+      markSent,
+      markFailed
+    })
+
+    expect(markSent).not.toHaveBeenCalled()
+    expect(markFailed).toHaveBeenCalledWith(92, 'IM 运行时未连接')
+  })
+
+  it('gives video a longer send window than text so a large upload is not judged as a timeout', async () => {
+    vi.useFakeTimers()
+    const videoEvent: RemoteImOutgoingVideoEvent = {
+      projectId: 'project-1',
+      messageId: 93,
+      toUserId: 'desktop-b',
+      origin: 'machine',
+      runtimeIdentity,
+      fileName: 'screen-record.mp4',
+      mimeType: 'video/mp4',
+      fileBytes: new Uint8Array([1, 2, 3, 4])
+    }
+    // 初值给个空函数而不是 null：TS 的控制流分析看不见回调里的赋值，
+    // 用 null 起头会把后面的调用点收窄成 never。
+    let resolveSend: () => void = () => undefined
+    const sendVideo = vi.fn<NonNullable<TencentImRuntime['sendVideo']>>(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSend = () => resolve()
+        })
+    )
+    const markSent = vi.fn()
+    const markFailed = vi.fn()
+
+    const delivery = deliverRemoteImOutgoingVideo({
+      runtime: { disconnect: vi.fn(), sendText: vi.fn(async () => undefined), sendVideo },
+      event: videoEvent,
+      markSent,
+      markFailed
+    })
+
+    // 文本/图片的 15s 窗口早已过去，视频这条还必须在飞。
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(markFailed).not.toHaveBeenCalled()
+
+    resolveSend()
+    await delivery
+
+    expect(markSent).toHaveBeenCalledWith(93, null)
+    expect(markFailed).not.toHaveBeenCalled()
   })
 
   it('passes the SDK-confirmed remote message id to markSent for dedup backfill', async () => {

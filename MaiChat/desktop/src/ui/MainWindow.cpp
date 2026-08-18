@@ -66,6 +66,7 @@
 #include <utility>
 
 #include "im/RemoteIMCredentialDefaults.h"
+#include "im/VideoFileMetadata.h"
 #include "markdown/MarkdownRenderer.h"
 #include "ui/AddContactDialog.h"
 #include "ui/AppMessageDialog.h"
@@ -1012,6 +1013,11 @@ QString messageTimeText(const RemoteIMMessage& message) {
     return relativeMessageTimeText(message.createdAtMillis);
 }
 
+// 输入框里内联附件的资源名前缀：QTextEdit 只认得住一个「资源名」，把类型编码进去
+// 是这里区分图片 / 文件 / 视频的唯一手段（图片没有前缀，资源名就是原路径）。
+const QString kComposerFilePrefix = QStringLiteral("pending-file://");
+const QString kComposerVideoPrefix = QStringLiteral("pending-video://");
+
 bool isHtmlFile(const RemoteIMFileAttachment& attachment) {
     const QString mimeType = attachment.mimeType.toLower();
     const QString fileName = attachment.fileName.toLower();
@@ -1026,6 +1032,16 @@ bool isMarkdownFile(const RemoteIMFileAttachment& attachment) {
     return mimeType.contains(QStringLiteral("markdown"))
         || fileName.endsWith(QStringLiteral(".md"))
         || fileName.endsWith(QStringLiteral(".markdown"));
+}
+
+// 视频走 IM 的视频消息发出去，但本地回显仍存成文件附件（本地库还没有视频列）。
+// 气泡靠 MIME/扩展名认出来，显示成视频卡片而不是一张「文档」卡。
+bool isVideoFile(const RemoteIMFileAttachment& attachment) {
+    const QString mimeType = attachment.mimeType.toLower();
+    const QString fileName = attachment.fileName.toLower();
+    return mimeType.startsWith(QStringLiteral("video/"))
+        || fileName.endsWith(QStringLiteral(".mp4"))
+        || fileName.endsWith(QStringLiteral(".mov"));
 }
 
 // 仅 md/html 文档支持内嵌预览；其余是普通文件，点击/菜单走「另存为」。
@@ -2265,10 +2281,12 @@ bool MainWindow::insertComposerMimeData(const QMimeData* mime) {
         }
         if (!files.isEmpty()) {
             for (const QString& path : files) {
-                // 能被 Qt 认出的图片按图片发（对端气泡里直接出图、可预览）；
-                // 其余一律按文件卡发。判断走内容而非扩展名，HEIC 之类 Qt 读不了的
-                // 会自然落到文件卡，不会变成一张打不开的破图。
-                if (!QImageReader::imageFormat(path).isEmpty()) {
+                // mp4/mov 走 IM 的视频消息（对端能直接播）；能被 Qt 认出的图片按图片发
+                // （对端气泡里直接出图、可预览）；其余一律按文件卡发。图片判断走内容而非
+                // 扩展名，HEIC 之类 Qt 读不了的会自然落到文件卡，不会变成一张打不开的破图。
+                if (isSupportedVideoFile(path)) {
+                    insertComposerVideo(path);
+                } else if (!QImageReader::imageFormat(path).isEmpty()) {
                     insertComposerImageFile(path);
                 } else {
                     insertComposerFile(path);
@@ -2349,9 +2367,18 @@ void MainWindow::insertComposerImageFile(const QString& localPath) {
 void MainWindow::insertComposerFile(const QString& localPath) {
     // 文件在输入框里用一枚「文件卡」缩略图表示（📄 文件名），资源名带 pending-file:// 前缀，
     // 发送时据此识别为文件（区别于图片路径）。
+    insertComposerChip(localPath, QStringLiteral("📄"), kComposerFilePrefix);
+}
+
+void MainWindow::insertComposerVideo(const QString& localPath) {
+    // 视频同理，只是前缀换成 pending-video://，发送时走 IM 的视频消息而不是文件消息。
+    insertComposerChip(localPath, QStringLiteral("🎬"), kComposerVideoPrefix);
+}
+
+void MainWindow::insertComposerChip(const QString& localPath, const QString& icon, const QString& resourcePrefix) {
     QString shown = QFileInfo(localPath).fileName();
     if (shown.size() > 22) shown = shown.left(19) + QStringLiteral("…");
-    const QString label = QStringLiteral("📄 ") + shown;
+    const QString label = icon + QStringLiteral(" ") + shown;
 
     const QFontMetrics fm(messageEditor_->font());
     const int chipW = fm.horizontalAdvance(label) + 22;
@@ -2368,7 +2395,7 @@ void MainWindow::insertComposerFile(const QString& localPath) {
         p.drawText(QRectF(11, 0, chipW - 14.0, chipH), Qt::AlignVCenter | Qt::AlignLeft, label);
     }
 
-    const QString resourceName = QStringLiteral("pending-file://") + localPath;
+    const QString resourceName = resourcePrefix + localPath;
     messageEditor_->document()->addResource(QTextDocument::ImageResource, QUrl(resourceName), chip);
     QTextImageFormat fmt;
     fmt.setName(resourceName);
@@ -2389,7 +2416,6 @@ bool MainWindow::composerHasAttachments() const {
 QList<MainWindow::ComposerAttachment> MainWindow::collectComposerAttachments() const {
     QList<ComposerAttachment> attachments;
     if (!messageEditor_) return attachments;
-    const QString filePrefix = QStringLiteral("pending-file://");
     const QTextDocument* doc = messageEditor_->document();
     // 按文档顺序取出所有内联对象（图片/文件）。
     for (QTextBlock block = doc->begin(); block.isValid(); block = block.next()) {
@@ -2397,10 +2423,14 @@ QList<MainWindow::ComposerAttachment> MainWindow::collectComposerAttachments() c
             const QTextFragment frag = it.fragment();
             if (!frag.isValid() || !frag.charFormat().isImageFormat()) continue;
             const QString name = frag.charFormat().toImageFormat().name();
-            if (name.startsWith(filePrefix)) {
-                attachments.append(ComposerAttachment{true, name.mid(filePrefix.size())});
+            if (name.startsWith(kComposerFilePrefix)) {
+                attachments.append(ComposerAttachment{ComposerAttachment::Kind::File,
+                                                      name.mid(kComposerFilePrefix.size())});
+            } else if (name.startsWith(kComposerVideoPrefix)) {
+                attachments.append(ComposerAttachment{ComposerAttachment::Kind::Video,
+                                                      name.mid(kComposerVideoPrefix.size())});
             } else {
-                attachments.append(ComposerAttachment{false, name});
+                attachments.append(ComposerAttachment{ComposerAttachment::Kind::Image, name});
             }
         }
     }
@@ -2608,17 +2638,24 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
             ? QFileInfo(message.file.localPath).fileName()
             : message.file.fileName;
         QString subtitle;
+        QString icon = QStringLiteral("📄");
         if (isHtmlFile(message.file)) {
             subtitle = QStringLiteral("HTML 文件，点击预览");
         } else if (isMarkdownFile(message.file)) {
             subtitle = QStringLiteral("Markdown 文件，点击预览");
+        } else if (isVideoFile(message.file)) {
+            icon = QStringLiteral("🎬");
+            const QString size = fileSizeText(message.file.sizeBytes);
+            subtitle = size.isEmpty() ? QStringLiteral("视频，点击另存为")
+                                      : QStringLiteral("视频 · %1，点击另存为").arg(size);
         } else {
             // 普通文件：无内嵌预览，点击直接另存为；有大小时一并展示。
             const QString size = fileSizeText(message.file.sizeBytes);
             subtitle = size.isEmpty() ? QStringLiteral("文件，点击另存为")
                                       : QStringLiteral("文件 · %1，点击另存为").arg(size);
         }
-        fileButton->setText(QStringLiteral("📄 %1\n%2")
+        fileButton->setText(QStringLiteral("%1 %2\n%3")
+            .arg(icon)
             .arg(displayName.isEmpty() ? QStringLiteral("file") : displayName)
             .arg(subtitle));
         fileButton->setMinimumWidth(UiZoom::s(220));
@@ -2860,10 +2897,16 @@ void MainWindow::sendCurrentText() {
         // 文字并入「第一个」附件，合并成一条消息发送（气泡内图上文下）；其余附件各自单独发。
         for (int i = 0; i < attachments.size(); ++i) {
             const QString caption = (i == 0) ? text : QString();
-            if (attachments.at(i).isFile) {
+            switch (attachments.at(i).kind) {
+            case ComposerAttachment::Kind::File:
                 app_.sendFile(attachments.at(i).path, caption);
-            } else {
+                break;
+            case ComposerAttachment::Kind::Video:
+                app_.sendVideo(attachments.at(i).path, caption);
+                break;
+            case ComposerAttachment::Kind::Image:
                 app_.sendImage(attachments.at(i).path, caption);
+                break;
             }
         }
     }

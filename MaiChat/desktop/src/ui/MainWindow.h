@@ -84,9 +84,14 @@ private:
     // 本地图片文件：按原文件路径内联，发送时直接发原图，不做 PNG 重编码。
     void insertComposerImageFile(const QString& localPath);
     void insertComposerFile(const QString& localPath);
-    // 输入框里一枚内联附件：isFile 区分文件卡（true）与图片（false），path 为本地原文件路径。
+    void insertComposerVideo(const QString& localPath);
+    // 文件/视频在输入框里都用一枚「卡片」缩略图表示。两者只差图标和资源名前缀，
+    // 画法共用这一处。
+    void insertComposerChip(const QString& localPath, const QString& icon, const QString& resourcePrefix);
+    // 输入框里一枚内联附件：kind 决定发送时走哪条 IM 通道，path 为本地原文件路径。
     struct ComposerAttachment {
-        bool isFile;
+        enum class Kind { Image, File, Video };
+        Kind kind;
         QString path;
     };
     // 按文档顺序取出输入框里内联的图片/文件附件（发送时用于与配文合并）。

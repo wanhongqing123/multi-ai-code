@@ -8,7 +8,8 @@ import type {
   RemoteImMessageKind,
   RemoteImMessageRole,
   RemoteImMessageStatus,
-  RemoteImProvider
+  RemoteImProvider,
+  RemoteImVideoAttachment
 } from './types.js'
 
 interface PreparedStatement {
@@ -72,7 +73,7 @@ export interface UpdateRemoteImMessageStatusInput {
 }
 
 function normalizeMessageKind(value: unknown): RemoteImMessageKind {
-  return value === 'image' || value === 'file' ? value : 'text'
+  return value === 'image' || value === 'file' || value === 'video' ? value : 'text'
 }
 
 function nullableString(value: unknown): string | null {
@@ -110,6 +111,22 @@ function parseFileAttachment(value: Record<string, unknown>): RemoteImFileAttach
   }
 }
 
+function parseVideoAttachment(value: Record<string, unknown>): RemoteImVideoAttachment {
+  return {
+    type: 'video',
+    localPath: nullableString(value.localPath),
+    remoteUrl: nullableString(value.remoteUrl),
+    thumbnailUrl: nullableString(value.thumbnailUrl),
+    width: nullableNumber(value.width),
+    height: nullableNumber(value.height),
+    durationSeconds: nullableNumber(value.durationSeconds),
+    sizeBytes: nullableNumber(value.sizeBytes),
+    fileName: nullableString(value.fileName),
+    mimeType: nullableString(value.mimeType),
+    sdkVideoId: nullableString(value.sdkVideoId)
+  }
+}
+
 function parseAttachmentJson(
   kind: RemoteImMessageKind,
   value: string | null | undefined
@@ -120,6 +137,7 @@ function parseAttachmentJson(
     if (!parsed || typeof parsed !== 'object') return null
     if (kind === 'image') return parseImageAttachment(parsed as Record<string, unknown>)
     if (kind === 'file') return parseFileAttachment(parsed as Record<string, unknown>)
+    if (kind === 'video') return parseVideoAttachment(parsed as Record<string, unknown>)
     return null
   } catch {
     return null

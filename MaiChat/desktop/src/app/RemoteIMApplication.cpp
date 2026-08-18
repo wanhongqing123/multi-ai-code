@@ -1,10 +1,14 @@
 #include "app/RemoteIMApplication.h"
 
+#include <QDir>
 #include <QFileInfo>
 #include <QMimeDatabase>
+#include <QStandardPaths>
 #include <stdexcept>
 #include <utility>
 
+#include "app/VideoCoverImage.h"
+#include "im/VideoFileMetadata.h"
 #include "remote/RemoteDesktopSignal.h"
 
 namespace {
@@ -198,6 +202,72 @@ void RemoteIMApplication::sendFile(const QString& localPath, const QString& text
         client_->sendFile(message.toUserId, cleanPath, fileName, std::move(onDone));
     } else {
         client_->sendFileWithText(message.toUserId, cleanPath, fileName, caption, std::move(onDone));
+    }
+}
+
+void RemoteIMApplication::sendVideo(const QString& localPath, const QString& text) {
+    const QString cleanPath = localPath.trimmed();
+    if (cleanPath.isEmpty() || state_.selectedPeerId().isEmpty()) return;
+
+    const QFileInfo info(cleanPath);
+    if (!info.exists() || !info.isFile()) {
+        emit errorMessage(QStringLiteral("视频不存在或不可读：%1").arg(cleanPath));
+        return;
+    }
+    if (!isSupportedVideoFile(cleanPath)) {
+        emit errorMessage(QStringLiteral("只支持发送 mp4 / mov 视频"));
+        return;
+    }
+
+    VideoFileMetadata metadata = readVideoFileMetadata(cleanPath);
+    // 时长是 SDK 的必填项，而加密/畸形容器可能解不出来。给 1 秒兜底也比让整条
+    // 消息发不出去强——对端最多是进度条显示得不准。
+    if (metadata.durationSeconds <= 0) metadata.durationSeconds = 1;
+
+    const QString coverDirectory =
+        QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
+            .filePath(QStringLiteral("maichat-video-cover"));
+    const VideoCoverImage cover = createVideoCoverImage(cleanPath, metadata, coverDirectory);
+    if (!cover.valid) {
+        emit errorMessage(QStringLiteral("视频封面生成失败，无法发送视频"));
+        return;
+    }
+
+    RemoteIMVideoPayload payload;
+    payload.videoPath = cleanPath;
+    payload.videoType = metadata.containerType;
+    payload.videoSizeBytes = info.size();
+    payload.durationSeconds = metadata.durationSeconds;
+    payload.coverPath = cover.path;
+    payload.coverType = cover.type;
+    payload.coverSizeBytes = cover.sizeBytes;
+    payload.coverWidth = cover.width;
+    payload.coverHeight = cover.height;
+
+    const QString fileName = info.fileName();
+    const QString mimeType = QMimeDatabase().mimeTypeForFile(info).name();
+    const QString caption = text.trimmed();
+    // 本地回显仍走文件附件：本地库的 messages 表还没有视频列，而发出去的是货真价实的
+    // 视频元素。气泡靠 mimeType 认出这是视频并显示成视频卡片。
+    RemoteIMMessage message =
+        state_.queueOutgoingFile(cleanPath, fileName, mimeType, info.size(), caption);
+    persistMessage(message);
+    emit stateChanged();
+
+    RemoteIMSendCompletion onDone =
+        [this, messageId = message.id](bool ok, const QString& error, const RemoteIMSendReceipt& receipt) {
+        const QString effectiveId = adoptRemoteMessageId(messageId, ok ? receipt.remoteMessageId : QString());
+        if (ok) {
+            state_.updateMessageTime(effectiveId, receipt.createdAtMillis);
+            if (database_) database_->updateMessageTime(effectiveId, receipt.createdAtMillis);
+        }
+        markMessage(effectiveId, ok ? RemoteIMMessageStatus::Sent : RemoteIMMessageStatus::Failed);
+        if (!ok) emit errorMessage(error.isEmpty() ? QStringLiteral("视频消息发送失败") : error);
+    };
+    if (caption.isEmpty()) {
+        client_->sendVideo(message.toUserId, payload, std::move(onDone));
+    } else {
+        client_->sendVideoWithText(message.toUserId, payload, caption, std::move(onDone));
     }
 }
 

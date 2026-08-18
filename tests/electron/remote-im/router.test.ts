@@ -1225,6 +1225,57 @@ describe('remote IM router', () => {
     })
   })
 
+  it('tells AICLI a video is a video, not a file to be read as text', async () => {
+    const store = createMessageStore()
+    const sentToAicli: string[] = []
+    const router = createRemoteImRouter({
+      getConfig: () => config,
+      resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
+      sendUser: async (_sessionId, text) => {
+        sentToAicli.push(text)
+        return { ok: true }
+      },
+      sendImText: async () => ({ ok: true }),
+      cacheFile: async () => ({
+        ok: true,
+        attachment: {
+          type: 'file',
+          localPath: '/tmp/remote-im/files/clip.mp4',
+          remoteUrl: 'https://example.test/clip.mp4',
+          sizeBytes: 8_388_608,
+          fileName: 'clip.mp4',
+          mimeType: 'video/mp4',
+          sdkFileId: 'video-1'
+        }
+      }),
+      store
+    })
+
+    const result = await router.handleIncomingFile({
+      projectId: 'project-1',
+      remoteMessageId: 'video-remote-1',
+      fromUserId: 'phone_admin',
+      toUserId: 'desktop_bot',
+      fileUrl: 'https://example.test/clip.mp4',
+      sizeBytes: 8_388_608,
+      fileName: 'clip.mp4',
+      mimeType: 'video/mp4',
+      uuid: 'video-1',
+      caption: '看下这段录屏',
+      createdAt: 100
+    })
+
+    expect(result.ok).toBe(true)
+    expect(sentToAicli).toHaveLength(1)
+    // 抬头写「文件消息」的话，AICLI 很可能直接去读这个 8MB 的二进制当文本。
+    expect(sentToAicli[0]).toContain('[视频消息]')
+    expect(sentToAicli[0]).not.toContain('[文件消息]')
+    expect(sentToAicli[0]).toContain('本地路径: /tmp/remote-im/files/clip.mp4')
+    expect(sentToAicli[0]).toContain('类型: video/mp4')
+    expect(sentToAicli[0]).toContain('配文: 看下这段录屏')
+    expect(sentToAicli[0]).toContain('请结合配文与这段视频继续处理。')
+  })
+
   it('reports to the sender when a file arrives with no running AICLI', async () => {
     const store = createMessageStore()
     const sentToIm: string[] = []

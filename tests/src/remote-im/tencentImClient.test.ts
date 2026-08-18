@@ -43,6 +43,7 @@ const sdkMock = vi.hoisted(() => {
     })),
     createFileMessage: vi.fn((message: unknown) => message),
     createImageMessage: vi.fn((message: unknown) => message),
+    createVideoMessage: vi.fn((message: unknown) => message),
     createTextMessage: vi.fn((message: unknown) => message),
     sendMessage: vi.fn(async () => ({ code: 0, message: 'OK' }))
   }
@@ -71,6 +72,28 @@ const sdkMock = vi.hoisted(() => {
 vi.mock('@tencentcloud/lite-chat', () => ({
   default: sdkMock.sdk
 }))
+
+// 连接用的最小可用配置。仓库里既有用例是整段内联的，新增用例复用这个工厂即可。
+function baseConfig() {
+  return {
+    enabled: true,
+    provider: 'tencent-im' as const,
+    sdkAppId: 1600148979,
+    desktopUserId: 'desktop-a',
+    desktopRole: 'master' as const,
+    userSigMode: 'endpoint' as const,
+    userSigEndpoint: 'https://example.test/sig',
+    userSigSecretKey: '',
+    friendUserIds: ['phone-user'],
+    masterUserIds: ['phone-user'],
+    slaveUserIds: [],
+    allowedUserIds: ['phone-user'],
+    outputFlushIntervalMs: 1000,
+    outputMaxChunkChars: 1200,
+    remoteDesktopMode: 'disabled' as const,
+    remoteDesktopControl: false
+  }
+}
 
 describe('tencent IM client helpers', () => {
   afterEach(() => {
@@ -755,6 +778,172 @@ describe('tencent IM client helpers', () => {
     await runtime.sendFile!('desktop-b', file, { messageId: 78, origin: 'machine' })
 
     expect(sdkMock.chat.createFileMessage).toHaveBeenCalledWith({
+      to: 'desktop-b',
+      conversationType: 'C2C',
+      payload: { file },
+      cloudCustomData: createRemoteImCloudCustomData('machine')
+    })
+    expect(sdkMock.chat.sendMessage).toHaveBeenCalledTimes(1)
+  })
+
+  it('delivers an incoming video down the file path so AICLI gets a local file', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, json: async () => ({ userSig: 'sig-1' }) }))
+    )
+    const onIncomingFile = vi.fn()
+    const runtimePromise = connectTencentImClient({
+      projectId: 'project-1',
+      config: baseConfig(),
+      onIncomingText: vi.fn(),
+      onIncomingFile
+    })
+    await vi.waitFor(() => expect(sdkMock.chat.login).toHaveBeenCalled())
+    sdkMock.chat.isReady.mockReturnValue(true)
+    sdkMock.handlers.get('sdkReady')?.()
+    await runtimePromise
+
+    sdkMock.handlers.get('messageReceived')?.({
+      data: [
+        {
+          ID: 'msg-video-1',
+          from: 'phone-user',
+          to: 'desktop-a',
+          time: 1700000000,
+          type: 'TIMVideoFileElem',
+          _elements: [
+            {
+              type: 'TIMVideoFileElem',
+              content: {
+                remoteVideoUrl: 'https://example.com/clip.mp4',
+                videoUrl: 'https://example.com/clip.mp4',
+                videoUUID: 'video-uuid-1',
+                videoFormat: 'mp4',
+                videoSecond: 12,
+                videoSize: 8388608,
+                thumbUrl: 'https://example.com/clip.jpg'
+              }
+            }
+          ]
+        }
+      ]
+    })
+
+    expect(onIncomingFile).toHaveBeenCalledTimes(1)
+    expect(onIncomingFile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 'project-1',
+        fromUserId: 'phone-user',
+        remoteMessageId: 'msg-video-1',
+        fileUrl: 'https://example.com/clip.mp4',
+        sizeBytes: 8388608,
+        uuid: 'video-uuid-1',
+        fileName: 'video-uuid-1.mp4',
+        mimeType: 'video/mp4'
+      })
+    )
+  })
+
+  it('keeps the caption together with the video instead of delivering text alone', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, json: async () => ({ userSig: 'sig-1' }) }))
+    )
+    const onIncomingText = vi.fn()
+    const onIncomingFile = vi.fn()
+    const runtimePromise = connectTencentImClient({
+      projectId: 'project-1',
+      config: baseConfig(),
+      onIncomingText,
+      onIncomingFile
+    })
+    await vi.waitFor(() => expect(sdkMock.chat.login).toHaveBeenCalled())
+    sdkMock.chat.isReady.mockReturnValue(true)
+    sdkMock.handlers.get('sdkReady')?.()
+    await runtimePromise
+
+    sdkMock.handlers.get('messageReceived')?.({
+      data: [
+        {
+          ID: 'msg-video-2',
+          from: 'phone-user',
+          to: 'desktop-a',
+          time: 1700000000,
+          type: 'TIMVideoFileElem',
+          _elements: [
+            {
+              type: 'TIMVideoFileElem',
+              content: {
+                remoteVideoUrl: 'https://example.com/clip.mov',
+                videoUUID: 'video-uuid-2',
+                videoFormat: 'mov',
+                videoSize: 1024
+              }
+            },
+            { type: 'TIMTextElem', content: { text: '看下这段录屏' } }
+          ]
+        }
+      ]
+    })
+
+    // 回归：以前视频匹配不上任何附件分支，只有配文走 onIncomingText 进了 AICLI，
+    // 视频凭空消失——用户看到 AICLI 回应了他的话，以为视频收到了。
+    expect(onIncomingText).not.toHaveBeenCalled()
+    expect(onIncomingFile).toHaveBeenCalledTimes(1)
+    expect(onIncomingFile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fileUrl: 'https://example.com/clip.mov',
+        mimeType: 'video/quicktime',
+        fileName: 'video-uuid-2.mov',
+        caption: '看下这段录屏'
+      })
+    )
+  })
+
+  it('sends mp4 videos through Tencent video messages', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ userSig: 'sig-1' })
+      }))
+    )
+
+    const runtimePromise = connectTencentImClient({
+      projectId: 'project-1',
+      config: {
+        enabled: true,
+        provider: 'tencent-im',
+        sdkAppId: 1600148979,
+        desktopUserId: 'desktop-a',
+        desktopRole: 'master',
+        userSigMode: 'endpoint',
+        userSigEndpoint: 'https://example.test/sig',
+        userSigSecretKey: '',
+        friendUserIds: [],
+        masterUserIds: ['desktop-b'],
+        slaveUserIds: [],
+        allowedUserIds: ['desktop-b'],
+        outputFlushIntervalMs: 1000,
+        outputMaxChunkChars: 1200,
+        remoteDesktopMode: 'disabled',
+        remoteDesktopControl: false
+      },
+      onIncomingText: vi.fn()
+    })
+
+    await vi.waitFor(() => expect(sdkMock.chat.login).toHaveBeenCalled())
+    sdkMock.chat.isReady.mockReturnValue(true)
+    sdkMock.handlers.get('sdkReady')?.()
+    const runtime = await runtimePromise
+    const file = new File([new Uint8Array([0, 0, 0, 24])], 'screen-record.mp4', {
+      type: 'video/mp4'
+    })
+
+    expect(runtime.sendVideo).toBeTypeOf('function')
+    await runtime.sendVideo!('desktop-b', file, { messageId: 79, origin: 'machine' })
+
+    expect(sdkMock.chat.createVideoMessage).toHaveBeenCalledWith({
       to: 'desktop-b',
       conversationType: 'C2C',
       payload: { file },

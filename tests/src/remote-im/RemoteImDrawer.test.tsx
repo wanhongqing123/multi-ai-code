@@ -213,6 +213,98 @@ describe('RemoteImDrawer', () => {
     expect(html).toContain('photo.png')
   })
 
+  it('renders video messages as a video card with duration and size', () => {
+    const html = renderDrawer({
+      messages: [
+        {
+          ...messages[1],
+          id: 21,
+          content: '[视频消息] screen-record.mp4',
+          kind: 'video',
+          attachment: {
+            type: 'video',
+            localPath: 'E:/tmp/screen-record.mp4',
+            remoteUrl: null,
+            thumbnailUrl: null,
+            width: null,
+            height: null,
+            durationSeconds: 92,
+            sizeBytes: 3 * 1024 * 1024,
+            fileName: 'screen-record.mp4',
+            mimeType: 'video/mp4',
+            sdkVideoId: null
+          }
+        }
+      ]
+    })
+
+    expect(html).toContain('class="remote-im-video-message"')
+    expect(html).toContain('screen-record.mp4')
+    expect(html).toContain('视频 · 1:32 · 3.0 MB')
+    // 出站消息没有封面：只应出现播放角标，不该出现 <img>。
+    expect(html).toContain('class="remote-im-video-play"')
+    expect(html).not.toContain('<img')
+  })
+
+  it('labels a received video as a video even though it arrives as a file attachment', () => {
+    const html = renderDrawer({
+      selectedPeerUserId: 'friend_a',
+      messages: [
+        {
+          ...messages[2],
+          id: 23,
+          content: '[文件消息] clip.mp4',
+          kind: 'file',
+          attachment: {
+            type: 'file',
+            localPath: 'E:/cache/clip.mp4',
+            remoteUrl: 'https://example.com/clip.mp4',
+            sizeBytes: 8 * 1024 * 1024,
+            fileName: 'clip.mp4',
+            mimeType: 'video/mp4',
+            sdkFileId: 'video-1'
+          }
+        }
+      ]
+    })
+
+    // 收到的视频走文件链路落库，卡片上却不能写「文件」——用户会以为发错了。
+    expect(html).toContain('clip.mp4')
+    expect(html).toContain('>视频</em>')
+    expect(html).not.toContain('>文件</em>')
+  })
+
+  it('renders the server generated cover once an incoming video carries one', () => {
+    const html = renderDrawer({
+      selectedPeerUserId: 'friend_a',
+      messages: [
+        {
+          ...messages[2],
+          id: 22,
+          content: '[视频消息] clip.mp4',
+          kind: 'video',
+          attachment: {
+            type: 'video',
+            localPath: null,
+            remoteUrl: 'https://example.com/clip.mp4',
+            thumbnailUrl: 'https://example.com/clip.jpg',
+            width: 1920,
+            height: 1080,
+            durationSeconds: null,
+            sizeBytes: null,
+            fileName: 'clip.mp4',
+            mimeType: 'video/mp4',
+            sdkVideoId: null
+          }
+        }
+      ]
+    })
+
+    expect(html).toContain('src="https://example.com/clip.jpg"')
+    // 时长和大小都缺失时只写「视频」，不该出现空的分隔符。
+    expect(html).toContain('>视频</em>')
+  })
+
   it('shows sent message status as a compact check mark', () => {
     const html = renderDrawer()
 

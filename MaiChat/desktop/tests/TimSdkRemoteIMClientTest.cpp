@@ -152,6 +152,9 @@ class TimSdkRemoteIMClientTest : public QObject {
 private slots:
     void connectsThroughSdkAndSendsTextAndImage();
     void sendsImageWithTextAsSingleMultiElemMessage();
+    void sendsVideoWithEverySdkRequiredField();
+    void sendsVideoWithTextAsSingleMultiElemMessage();
+    void refusesVideoWithoutDurationOrCover();
     void deletesFriendAndConversationThroughSdk();
     void fetchesContactsConversationsAndHistoryAfterLogin();
     void emitsIncomingTextAndImageFromSdkMessages();
@@ -244,6 +247,102 @@ void TimSdkRemoteIMClientTest::sendsImageWithTextAsSingleMultiElemMessage() {
     const QJsonObject textElem = elems.at(1).toObject();
     QCOMPARE(textElem.value(QStringLiteral("elem_type")).toInt(), 0);
     QCOMPARE(textElem.value(QStringLiteral("text_elem_content")).toString(), QStringLiteral("看这张图"));
+}
+
+namespace {
+
+RemoteIMVideoPayload samplePayload() {
+    RemoteIMVideoPayload video;
+    video.videoPath = QStringLiteral("/tmp/screen-record.mp4");
+    video.videoType = QStringLiteral("mp4");
+    video.videoSizeBytes = 8 * 1024 * 1024;
+    video.durationSeconds = 42;
+    video.coverPath = QStringLiteral("/tmp/cover-1.jpg");
+    video.coverType = QStringLiteral("jpg");
+    video.coverSizeBytes = 51200;
+    video.coverWidth = 1920;
+    video.coverHeight = 1080;
+    return video;
+}
+
+}  // namespace
+
+void TimSdkRemoteIMClientTest::sendsVideoWithEverySdkRequiredField() {
+    auto api = std::make_unique<FakeTimSdkApi>();
+    auto* fake = api.get();
+    TimSdkRemoteIMClient client(std::move(api));
+    client.connectToService(123456, QStringLiteral("desktop-user"), QStringLiteral("sig-value"), nullptr);
+
+    bool sent = false;
+    client.sendVideo(QStringLiteral("phone-user"), samplePayload(),
+                     [&](bool ok, const QString&, const RemoteIMSendReceipt&) { sent = ok; });
+
+    QVERIFY(sent);
+    QCOMPARE(fake->lastConversationId, QStringLiteral("phone-user"));
+    QCOMPARE(fake->lastConversationType, 1);
+    const QJsonObject elem = firstElement(fake->lastJsonMessage);
+    // TIMElemType::kTIMElem_Video == 9。发错枚举 SDK 不会报错，只会发出一条对端解不出的消息。
+    QCOMPARE(elem.value(QStringLiteral("elem_type")).toInt(), 9);
+    QCOMPARE(elem.value(QStringLiteral("video_elem_video_path")).toString(),
+             QStringLiteral("/tmp/screen-record.mp4"));
+    QCOMPARE(elem.value(QStringLiteral("video_elem_video_type")).toString(), QStringLiteral("mp4"));
+    QCOMPARE(elem.value(QStringLiteral("video_elem_video_size")).toInt(), 8 * 1024 * 1024);
+    QCOMPARE(elem.value(QStringLiteral("video_elem_video_duration")).toInt(), 42);
+    QCOMPARE(elem.value(QStringLiteral("video_elem_image_path")).toString(),
+             QStringLiteral("/tmp/cover-1.jpg"));
+    QCOMPARE(elem.value(QStringLiteral("video_elem_image_type")).toString(), QStringLiteral("jpg"));
+    QCOMPARE(elem.value(QStringLiteral("video_elem_image_size")).toInt(), 51200);
+    QCOMPARE(elem.value(QStringLiteral("video_elem_image_width")).toInt(), 1920);
+    QCOMPARE(elem.value(QStringLiteral("video_elem_image_height")).toInt(), 1080);
+    // 尺寸字段必须是整数字面量：SDK 那边用 jsoncpp 的 asUInt() 读，
+    // 序列化成 8388608.0 这种带小数点的形式会读废。
+    QVERIFY(fake->lastJsonMessage.contains(QStringLiteral("\"video_elem_video_size\":8388608")));
+    const QJsonObject metadata = messageMetadata(fake->lastJsonMessage);
+    QCOMPARE(metadata.value(QStringLiteral("origin")).toString(), QStringLiteral("human"));
+}
+
+void TimSdkRemoteIMClientTest::sendsVideoWithTextAsSingleMultiElemMessage() {
+    auto api = std::make_unique<FakeTimSdkApi>();
+    auto* fake = api.get();
+    TimSdkRemoteIMClient client(std::move(api));
+    client.connectToService(123456, QStringLiteral("desktop-user"), QStringLiteral("sig-value"), nullptr);
+
+    bool sent = false;
+    client.sendVideoWithText(QStringLiteral("phone-user"), samplePayload(), QStringLiteral("录屏在这"),
+                             [&](bool ok, const QString&, const RemoteIMSendReceipt&) { sent = ok; });
+
+    QVERIFY(sent);
+    const QJsonObject message = QJsonDocument::fromJson(fake->lastJsonMessage.toUtf8()).object();
+    const QJsonArray elems = message.value(QStringLiteral("message_elem_array")).toArray();
+    QCOMPARE(elems.size(), 2);
+    QCOMPARE(elems.at(0).toObject().value(QStringLiteral("elem_type")).toInt(), 9);
+    QCOMPARE(elems.at(1).toObject().value(QStringLiteral("elem_type")).toInt(), 0);
+    QCOMPARE(elems.at(1).toObject().value(QStringLiteral("text_elem_content")).toString(),
+             QStringLiteral("录屏在这"));
+}
+
+void TimSdkRemoteIMClientTest::refusesVideoWithoutDurationOrCover() {
+    auto api = std::make_unique<FakeTimSdkApi>();
+    auto* fake = api.get();
+    TimSdkRemoteIMClient client(std::move(api));
+    client.connectToService(123456, QStringLiteral("desktop-user"), QStringLiteral("sig-value"), nullptr);
+    fake->lastJsonMessage.clear();
+
+    // 封面字段缺失时必须当场失败并说明原因。放行的话 SDK 照发不误，
+    // 对端收到的是一条打不开的空视频——这类静默失败最难查。
+    RemoteIMVideoPayload broken = samplePayload();
+    broken.coverPath.clear();
+    bool ok = true;
+    QString error;
+    client.sendVideo(QStringLiteral("phone-user"), broken,
+                     [&](bool sent, const QString& message, const RemoteIMSendReceipt&) {
+                         ok = sent;
+                         error = message;
+                     });
+
+    QVERIFY(!ok);
+    QVERIFY(!error.isEmpty());
+    QVERIFY(fake->lastJsonMessage.isEmpty());
 }
 
 void TimSdkRemoteIMClientTest::deletesFriendAndConversationThroughSdk() {

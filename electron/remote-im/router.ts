@@ -446,7 +446,10 @@ function buildRemoteImFileTaskText(input: {
   caption?: string | null
 }): string {
   const caption = input.caption?.trim()
-  const lines = ['[文件消息]', `来自: ${input.fromUserId}`]
+  // 视频与文件走同一条投递链路，但抬头要说实话：AICLI 读到的第一行就是它对
+  // 「收到了什么」的判断依据，一段录屏被写成「文件消息」会让它当文本去读。
+  const isVideo = input.mimeType?.trim().toLowerCase().startsWith('video/') ?? false
+  const lines = [isVideo ? '[视频消息]' : '[文件消息]', `来自: ${input.fromUserId}`]
   const fileName = input.fileName?.trim()
   if (fileName) lines.push(`文件名: ${fileName}`)
   // 类型与大小先给出来：收到一个几十 MB 的二进制时，AICLI 该有机会先判断
@@ -458,9 +461,9 @@ function buildRemoteImFileTaskText(input: {
   lines.push(`本地路径: ${input.localPath}`)
   if (caption) {
     lines.push(`配文: ${caption}`)
-    lines.push('请结合配文与文件内容继续处理。')
+    lines.push(isVideo ? '请结合配文与这段视频继续处理。' : '请结合配文与文件内容继续处理。')
   } else {
-    lines.push('请根据文件内容和上下文继续处理。')
+    lines.push(isVideo ? '请根据这段视频和上下文继续处理。' : '请根据文件内容和上下文继续处理。')
   }
   return lines.join('\n')
 }

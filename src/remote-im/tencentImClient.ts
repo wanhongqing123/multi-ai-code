@@ -282,6 +282,13 @@ function isTencentFileMessage(message: Record<string, unknown>): boolean {
   return type === 'TIMFileElem' || type === 'MSG_FILE'
 }
 
+function isTencentVideoMessage(message: Record<string, unknown>): boolean {
+  const type = typeof message.type === 'string' ? message.type : ''
+  // Web SDK 的常量是 TIMVideoFileElem（不是移动端/C SDK 那套 TIMVideoElem）。
+  // 三个都认，免得换个发送端就收不到。
+  return type === 'TIMVideoFileElem' || type === 'TIMVideoElem' || type === 'MSG_VIDEO'
+}
+
 function mimeTypeFromFileName(fileName: string | null): string | null {
   const ext = fileName?.split('.').pop()?.trim().toLowerCase()
   switch (ext) {
@@ -442,13 +449,57 @@ export interface TencentImMessageParts {
   image: Omit<TencentImImageMessage, 'remoteMessageId' | 'fromUserId' | 'toUserId' | 'createdAt'> | null
   file: Omit<TencentImFileMessage, 'remoteMessageId' | 'fromUserId' | 'toUserId' | 'createdAt'> | null
   audio: Omit<TencentImAudioMessage, 'remoteMessageId' | 'fromUserId' | 'toUserId' | 'createdAt'> | null
+  /**
+   * 视频按「文件」投递：下载到缓存后把本地路径交给 AICLI，与收文件完全同一条链路。
+   * 单独留一个字段而不是直接塞进 file，只是为了运行日志能把两者分开——
+   * 排障时「收到 3 个文件」和「收到 1 个视频 2 个文件」是两回事。
+   */
+  video: Omit<TencentImFileMessage, 'remoteMessageId' | 'fromUserId' | 'toUserId' | 'createdAt'> | null
   caption: string | null
+}
+
+const VIDEO_MIME_BY_FORMAT: Record<string, string> = {
+  mov: 'video/quicktime',
+  mp4: 'video/mp4',
+  quicktime: 'video/quicktime'
+}
+
+/**
+ * 把收到的视频元素映射成文件形态。视频元素不带文件名，扩展名只能从 videoFormat 推；
+ * 一个都推不出来时按 mp4 兜底——SDK 本来就只收 mp4/mov，落成 .bin 反而让接收方
+ * 拿到一个双击打不开的文件。
+ */
+function getVideoAsFilePayload(
+  message: Record<string, unknown>
+): Omit<TencentImFileMessage, 'remoteMessageId' | 'fromUserId' | 'toUserId' | 'createdAt'> | null {
+  if (!isTencentVideoMessage(message)) return null
+  const payload = message.payload
+  if (!payload || typeof payload !== 'object') return null
+  const video = payload as Record<string, unknown>
+  const fileUrl = getStringField(video, ['remoteVideoUrl', 'videoUrl', 'url', 'URL'])
+  if (!fileUrl) return null
+  const uuid = getStringField(video, ['videoUUID', 'videoUuid', 'uuid', 'UUID'])
+  const format = (getStringField(video, ['videoFormat', 'format']) ?? 'mp4').toLowerCase()
+  const extension = /^[a-z0-9]{1,8}$/.test(format) ? format : 'mp4'
+  return {
+    fileUrl,
+    sizeBytes: getNumberField(video, ['videoSize', 'size', 'fileSize']),
+    uuid,
+    fileName: `${uuid || 'remote-im-video'}.${extension}`,
+    mimeType: VIDEO_MIME_BY_FORMAT[format] ?? `video/${extension}`
+  }
 }
 
 // 把一条（可能多元素的）消息拆成：首个图片/文件/语音附件 + 首条非空文本（作为附件配文）。
 // 复用既有的单元素 payload 解析器：为每个元素构造 { type, payload } 伪消息喂进去。
 export function extractTencentImMessageParts(message: Record<string, unknown>): TencentImMessageParts {
-  const parts: TencentImMessageParts = { image: null, file: null, audio: null, caption: null }
+  const parts: TencentImMessageParts = {
+    image: null,
+    file: null,
+    audio: null,
+    video: null,
+    caption: null
+  }
   for (const element of getTencentImMessageElements(message)) {
     const pseudo = { ...message, type: element.type, payload: element.content }
     if (!parts.image) {
@@ -469,6 +520,13 @@ export function extractTencentImMessageParts(message: Record<string, unknown>): 
       const audio = getAudioPayload(pseudo)
       if (audio) {
         parts.audio = audio
+        continue
+      }
+    }
+    if (!parts.video) {
+      const video = getVideoAsFilePayload(pseudo)
+      if (video) {
+        parts.video = video
         continue
       }
     }
@@ -787,6 +845,7 @@ export interface TencentImSendTextOptions {
 
 export type TencentImSendImageOptions = TencentImSendTextOptions
 export type TencentImSendFileOptions = TencentImSendTextOptions
+export type TencentImSendVideoOptions = TencentImSendTextOptions
 
 export interface TencentImSendResult {
   remoteMessageId: string | null
@@ -815,6 +874,62 @@ export interface TencentImRuntime {
     file: File,
     options?: TencentImSendFileOptions
   ): Promise<TencentImSendResult | void>
+  sendVideo?(
+    toUserId: string,
+    file: File,
+    options?: TencentImSendVideoOptions
+  ): Promise<TencentImSendResult | void>
+}
+
+/** 视频时长探测的硬超时。探不出来不该拖住整条发送链路。 */
+const VIDEO_DURATION_PROBE_TIMEOUT_MS = 3_000
+
+/**
+ * 用 <video> 读一次 metadata 拿时长（秒）。腾讯 IM Web SDK 直接从 File 上读
+ * `duration` 字段，而浏览器的 File 根本没有这个字段——不补的话对端气泡永远显示 0 秒。
+ * 任何一步失败都返回 0：时长只是展示信息，不值得让发送失败。
+ */
+export async function probeVideoDurationSeconds(file: File): Promise<number> {
+  try {
+    if (typeof document === 'undefined') return 0
+    if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') return 0
+    const objectUrl = URL.createObjectURL(file)
+    return await new Promise<number>((resolve) => {
+      let settled = false
+      const element = document.createElement('video')
+      const finish = (seconds: number) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        element.removeAttribute('src')
+        URL.revokeObjectURL(objectUrl)
+        resolve(Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds) : 0)
+      }
+      const timer = setTimeout(() => finish(0), VIDEO_DURATION_PROBE_TIMEOUT_MS)
+      element.preload = 'metadata'
+      element.onloadedmetadata = () => finish(element.duration)
+      element.onerror = () => finish(0)
+      element.src = objectUrl
+    })
+  } catch {
+    return 0
+  }
+}
+
+/** 把探到的时长挂到 File 上供 SDK 读取；挂不上就原样返回（SDK 落到 0 秒）。 */
+export function withProbedVideoDuration(file: File, durationSeconds: number): File {
+  if (!(durationSeconds > 0)) return file
+  try {
+    Object.defineProperty(file, 'duration', {
+      value: durationSeconds,
+      configurable: true,
+      enumerable: false,
+      writable: true
+    })
+  } catch {
+    // 只读/密封的 File 实现：交给 SDK 的 0 秒兜底。
+  }
+  return file
 }
 
 // sendMessage resolve 结果里带服务端确认的消息（含 ID）。取出来回填到本地
@@ -870,6 +985,7 @@ export async function connectTencentImClient(input: {
     let audioCount = 0
     let imageCount = 0
     let fileCount = 0
+    let videoCount = 0
 
     for (const item of data) {
       if (!item || typeof item !== 'object') continue
@@ -907,8 +1023,14 @@ export async function connectTencentImClient(input: {
         continue
       }
 
-      if (parts.file) {
-        fileCount++
+      // 视频与文件走同一条投递链路：下载到缓存 → 把本地路径交给 AICLI。
+      // 以前视频在这里既不匹配 image 也不匹配 file，四个回调一个都不触发，
+      // 整条消息静默消失；带配文时更糟——只有文字进了 AICLI，视频没了，
+      // 用户看到 AICLI 回应了他的话，以为视频收到了。
+      const fileLike = parts.file ?? parts.video
+      if (fileLike) {
+        if (parts.file) fileCount++
+        else videoCount++
         // 配文与文件合并成一次投递，与图片一致：拆成两条会让 AICLI
         // 把用户的一条消息当成两个独立任务。
         input.onIncomingFile?.({
@@ -916,11 +1038,11 @@ export async function connectTencentImClient(input: {
           remoteMessageId,
           fromUserId,
           toUserId,
-          fileUrl: parts.file.fileUrl,
-          sizeBytes: parts.file.sizeBytes,
-          uuid: parts.file.uuid,
-          fileName: parts.file.fileName,
-          mimeType: parts.file.mimeType,
+          fileUrl: fileLike.fileUrl,
+          sizeBytes: fileLike.sizeBytes,
+          uuid: fileLike.uuid,
+          fileName: fileLike.fileName,
+          mimeType: fileLike.mimeType,
           caption: parts.caption,
           ...(origin ? { origin } : {}),
           createdAt
@@ -964,7 +1086,8 @@ export async function connectTencentImClient(input: {
         count: textCount,
         audioCount,
         imageCount,
-        fileCount
+        fileCount,
+        videoCount
       }
     })
   }
@@ -1246,6 +1369,53 @@ export async function connectTencentImClient(input: {
         return { remoteMessageId: getSentRemoteMessageId(result) }
       } catch (err) {
         emitRuntimeLog('send:file:rejected', {
+          peerUserId: toUserId,
+          messageId: options.messageId,
+          detail: { error: err instanceof Error ? err.message : String(err) }
+        })
+        throw err
+      }
+    },
+    async sendVideo(toUserId: string, file: File, options: TencentImSendVideoOptions = {}) {
+      // 时长只影响对端气泡上显示的秒数；探测失败就交给 SDK 落到 0，别因此拦下发送。
+      const durationSeconds = await probeVideoDurationSeconds(file)
+      emitRuntimeLog('send:video:start', {
+        peerUserId: toUserId,
+        messageId: options.messageId,
+        detail: {
+          sdkReady,
+          loginUser: getTencentImLoginUser(chat),
+          isReady: typeof chat.isReady === 'function' ? Boolean(chat.isReady()) : null,
+          fileName: file.name,
+          fileSize: file.size,
+          fileType: file.type,
+          durationSeconds
+        }
+      })
+      await ensureLoggedIn()
+      const message = chat.createVideoMessage({
+        to: toUserId,
+        conversationType: TencentCloudChat.TYPES?.CONV_C2C ?? 'C2C',
+        payload: { file: withProbedVideoDuration(file, durationSeconds) },
+        cloudCustomData: createRemoteImCloudCustomData(options.origin ?? 'machine')
+      })
+      emitRuntimeLog('send:video:created', {
+        peerUserId: toUserId,
+        messageId: options.messageId,
+        detail: summarizeTencentImMessage(message)
+      })
+      try {
+        const result = await chat.sendMessage(message)
+        emitRuntimeLog('send:video:resolved', {
+          peerUserId: toUserId,
+          messageId: options.messageId,
+          detail: summarizeTencentImApiResult(result)
+        })
+        const failure = getTencentImApiFailure('send', result)
+        if (failure) throw new Error(failure)
+        return { remoteMessageId: getSentRemoteMessageId(result) }
+      } catch (err) {
+        emitRuntimeLog('send:video:rejected', {
           peerUserId: toUserId,
           messageId: options.messageId,
           detail: { error: err instanceof Error ? err.message : String(err) }

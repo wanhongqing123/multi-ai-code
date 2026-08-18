@@ -195,6 +195,77 @@ describe('remote IM CLI bridge server', () => {
     }
   })
 
+  it('sends peer videos through the app runtime', async () => {
+    const rootDir = await createTempDir()
+    const sendPeerVideo = vi.fn(async () => ({ ok: true as const, toUserId: 'agent-b' }))
+    const bridge = await startRemoteImCliServer({
+      rootDir,
+      getConfig: async () => config,
+      getStatus: async () => status,
+      listMessages: () => [],
+      sendPeerMessage: async () => ({ ok: true as const, toUserId: 'agent-b' }),
+      sendPeerVideo
+    })
+
+    try {
+      const response = await fetch(`${bridge.url}/send-video`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${bridge.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          projectId: 'project-1',
+          toUserId: 'agent-b',
+          localPath: '/tmp/screen-record.mp4'
+        })
+      })
+
+      await expect(response.json()).resolves.toMatchObject({
+        ok: true,
+        value: { toUserId: 'agent-b' }
+      })
+      expect(sendPeerVideo).toHaveBeenCalledWith('project-1', '/tmp/screen-record.mp4', 'agent-b')
+    } finally {
+      await bridge.close()
+    }
+  })
+
+  it('reports a clear error when the running app build cannot send video', async () => {
+    const rootDir = await createTempDir()
+    // 旧版本主进程没接 sendPeerVideo：必须 400 说明白，不能装作发出去了。
+    const bridge = await startRemoteImCliServer({
+      rootDir,
+      getConfig: async () => config,
+      getStatus: async () => status,
+      listMessages: () => [],
+      sendPeerMessage: async () => ({ ok: true as const, toUserId: 'agent-b' })
+    })
+
+    try {
+      const response = await fetch(`${bridge.url}/send-video`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${bridge.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          projectId: 'project-1',
+          toUserId: 'agent-b',
+          localPath: '/tmp/screen-record.mp4'
+        })
+      })
+
+      expect(response.status).toBe(400)
+      await expect(response.json()).resolves.toMatchObject({
+        ok: false,
+        error: 'video sending is not available'
+      })
+    } finally {
+      await bridge.close()
+    }
+  })
+
   it('binds production bridge requests to the originating AICLI session', async () => {
     const rootDir = await createTempDir()
     const authorizeCaller = vi.fn((projectId: string, sessionId: string) =>

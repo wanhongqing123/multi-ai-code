@@ -15,6 +15,8 @@ class RemoteIMApplicationTest : public QObject {
 private slots:
     void sendsTextThroughClientAndMarksSent();
     void sendsFileThroughClientAndMarksSent();
+    void sendsVideoWithParsedMetadataAndGeneratedCover();
+    void refusesUnsupportedVideoContainers();
     void receivesIncomingTextIntoSelectedConversation();
     void deletesContactThroughClientAfterRemoteSuccess();
     void keepsContactWhenRemoteDeletionFails();
@@ -71,6 +73,133 @@ void RemoteIMApplicationTest::sendsFileThroughClientAndMarksSent() {
     QVERIFY(messages.first().hasFile);
     QCOMPARE(messages.first().file.fileName, QStringLiteral("report.md"));
     QCOMPARE(messages.first().status, RemoteIMMessageStatus::Sent);
+}
+
+namespace {
+
+void appendU32(QByteArray& out, quint32 value) {
+    out.append(static_cast<char>((value >> 24) & 0xFF));
+    out.append(static_cast<char>((value >> 16) & 0xFF));
+    out.append(static_cast<char>((value >> 8) & 0xFF));
+    out.append(static_cast<char>(value & 0xFF));
+}
+
+QByteArray box(const char* type, const QByteArray& content) {
+    QByteArray out;
+    appendU32(out, static_cast<quint32>(8 + content.size()));
+    out.append(type, 4);
+    out.append(content);
+    return out;
+}
+
+// 一个最小但结构正确的 mp4：只有 moov/mvhd + moov/trak/tkhd，够解出时长和尺寸。
+QByteArray minimalMp4(quint32 timescale, quint32 duration, quint32 width, quint32 height) {
+    QByteArray mvhd;
+    appendU32(mvhd, 0);
+    appendU32(mvhd, 0);
+    appendU32(mvhd, 0);
+    appendU32(mvhd, timescale);
+    appendU32(mvhd, duration);
+    appendU32(mvhd, 0x00010000);
+
+    QByteArray tkhd;
+    appendU32(tkhd, 0);
+    for (int i = 0; i < 5; ++i) appendU32(tkhd, 0);
+    for (int i = 0; i < 2; ++i) appendU32(tkhd, 0);
+    appendU32(tkhd, 0);
+    appendU32(tkhd, 0);
+    appendU32(tkhd, 0x00010000);
+    appendU32(tkhd, 0);
+    appendU32(tkhd, 0);
+    appendU32(tkhd, 0);
+    appendU32(tkhd, 0x00010000);
+    appendU32(tkhd, 0);
+    appendU32(tkhd, 0);
+    appendU32(tkhd, 0);
+    appendU32(tkhd, 0x40000000);
+    appendU32(tkhd, width << 16);
+    appendU32(tkhd, height << 16);
+
+    QByteArray ftypContent;
+    ftypContent.append("isom", 4);
+    appendU32(ftypContent, 512);
+    ftypContent.append("isomiso2avc1mp41", 16);
+
+    return box("ftyp", ftypContent) + box("moov", box("mvhd", mvhd) + box("trak", box("tkhd", tkhd)));
+}
+
+QString writeVideo(const QString& path, const QByteArray& bytes) {
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly)) return QString();
+    file.write(bytes);
+    file.close();
+    return path;
+}
+
+}  // namespace
+
+void RemoteIMApplicationTest::sendsVideoWithParsedMetadataAndGeneratedCover() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    auto* fakeClient = client.get();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+    app.selectPeer(QStringLiteral("phone-user"));
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    // 用 960x540（小于封面 1080 的最长边上限），封面尺寸才应当与画面尺寸一一对应。
+    const QByteArray bytes = minimalMp4(600, 600 * 9, 960, 540);
+    const QString videoPath =
+        writeVideo(dir.filePath(QStringLiteral("screen-record.mp4")), bytes);
+    QVERIFY(!videoPath.isEmpty());
+
+    app.sendVideo(videoPath, QStringLiteral("录屏在这"));
+
+    QCOMPARE(fakeClient->lastVideoPeerId(), QStringLiteral("phone-user"));
+    const RemoteIMVideoPayload sent = fakeClient->lastVideo();
+    // SDK 的九个必填字段必须全部备齐，否则对端收到的是一条打不开的空视频。
+    QVERIFY(sent.isValid());
+    QCOMPARE(sent.videoPath, videoPath);
+    QCOMPARE(sent.videoType, QStringLiteral("mp4"));
+    QCOMPARE(sent.videoSizeBytes, qint64(bytes.size()));
+    QCOMPARE(sent.durationSeconds, 9);
+    QVERIFY(QFileInfo::exists(sent.coverPath));
+    QVERIFY(sent.coverSizeBytes > 0);
+    QCOMPARE(sent.coverWidth, 960);
+    QCOMPARE(sent.coverHeight, 540);
+
+    // 本地回显：库里还没有视频列，先按文件附件存，气泡靠 video/ MIME 显示成视频卡。
+    const QList<RemoteIMMessage> messages = app.chatState().messagesWith(QStringLiteral("phone-user"));
+    QCOMPARE(messages.size(), 1);
+    QVERIFY(messages.first().hasFile);
+    QCOMPARE(messages.first().file.fileName, QStringLiteral("screen-record.mp4"));
+    QVERIFY(messages.first().file.mimeType.startsWith(QStringLiteral("video/")));
+    QCOMPARE(messages.first().text, QStringLiteral("录屏在这"));
+    QCOMPARE(messages.first().status, RemoteIMMessageStatus::Sent);
+}
+
+void RemoteIMApplicationTest::refusesUnsupportedVideoContainers() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    auto* fakeClient = client.get();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    QSignalSpy errorSpy(&app, &RemoteIMApplication::errorMessage);
+
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+    app.selectPeer(QStringLiteral("phone-user"));
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    // mkv 之类 IM 各端播不了的容器要在本端就拦下，别等传完 100MB 再被服务端打回。
+    const QString videoPath = writeVideo(dir.filePath(QStringLiteral("clip.mkv")),
+                                         minimalMp4(600, 600, 640, 360));
+    QVERIFY(!videoPath.isEmpty());
+
+    app.sendVideo(videoPath);
+
+    QCOMPARE(errorSpy.count(), 1);
+    QVERIFY(fakeClient->lastVideoPeerId().isEmpty());
+    QVERIFY(app.chatState().messagesWith(QStringLiteral("phone-user")).isEmpty());
 }
 
 void RemoteIMApplicationTest::receivesIncomingTextIntoSelectedConversation() {

@@ -40,6 +40,12 @@ void FakeRemoteIMClient::sendFile(const QString& peerId, const QString& localPat
     completeSend(std::move(completion));
 }
 
+void FakeRemoteIMClient::sendVideo(const QString& peerId, const RemoteIMVideoPayload& video, RemoteIMSendCompletion completion) {
+    lastVideoPeerId_ = peerId.trimmed();
+    lastVideo_ = video;
+    completeSend(std::move(completion));
+}
+
 QString FakeRemoteIMClient::connectedUserId() const { return connectedUserId_; }
 QString FakeRemoteIMClient::lastDeletedContactId() const { return lastDeletedContactId_; }
 QString FakeRemoteIMClient::lastTextPeerId() const { return lastTextPeerId_; }
@@ -49,6 +55,8 @@ QString FakeRemoteIMClient::lastImagePath() const { return lastImagePath_; }
 QString FakeRemoteIMClient::lastFilePeerId() const { return lastFilePeerId_; }
 QString FakeRemoteIMClient::lastFilePath() const { return lastFilePath_; }
 QString FakeRemoteIMClient::lastFileName() const { return lastFileName_; }
+QString FakeRemoteIMClient::lastVideoPeerId() const { return lastVideoPeerId_; }
+RemoteIMVideoPayload FakeRemoteIMClient::lastVideo() const { return lastVideo_; }
 
 void FakeRemoteIMClient::failNext(const QString& error) {
     nextError_ = error;

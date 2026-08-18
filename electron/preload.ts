@@ -54,6 +54,7 @@ import type {
   RemoteImMessageStatus,
   RemoteImImageAttachment,
   RemoteImFileAttachment,
+  RemoteImVideoAttachment,
   RemoteImMessageAttachment,
   RemoteImMessage,
   ReadRemoteImImagePreviewInput,
@@ -84,6 +85,7 @@ export type {
   RemoteImMessageStatus,
   RemoteImImageAttachment,
   RemoteImFileAttachment,
+  RemoteImVideoAttachment,
   RemoteImMessageAttachment,
   RemoteImMessage,
   ReadRemoteImImagePreviewInput,
@@ -123,6 +125,17 @@ export interface RemoteImOutgoingImageEvent {
 }
 
 export interface RemoteImOutgoingFileEvent {
+  projectId: string
+  toUserId: string
+  origin: RemoteImMessageOrigin
+  runtimeIdentity: RemoteImRuntimeIdentity
+  fileName?: string | null
+  mimeType?: string | null
+  fileBytes?: Uint8Array | ArrayBuffer | number[] | null
+  messageId?: number | null
+}
+
+export interface RemoteImOutgoingVideoEvent {
   projectId: string
   toUserId: string
   origin: RemoteImMessageOrigin
@@ -642,6 +655,16 @@ const api = {
       ) => cb(evt)
       ipcRenderer.on('remote-im:outgoing-file', handler)
       return () => ipcRenderer.removeListener('remote-im:outgoing-file', handler)
+    },
+    onOutgoingVideo: (
+      cb: (evt: RemoteImOutgoingVideoEvent) => void
+    ) => {
+      const handler = (
+        _event: IpcRendererEvent,
+        evt: RemoteImOutgoingVideoEvent
+      ) => cb(evt)
+      ipcRenderer.on('remote-im:outgoing-video', handler)
+      return () => ipcRenderer.removeListener('remote-im:outgoing-video', handler)
     }
   },
   git: {

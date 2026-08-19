@@ -575,13 +575,20 @@ final class RemoteIMAppState: ObservableObject {
 
     func sendDraft() async {
         guard canSend else { return }
+        let text = draft.text
+        draft.text = ""
+        await sendText(text)
+    }
 
+    /// 直接发一段文本（语音识别结果走这里）。与 sendDraft 共用同一套排队/落库/回执逻辑，
+    /// 避免语音输入这条路径漏掉其中任何一步。
+    func sendText(_ text: String) async {
+        guard canSendVoice else { return }   // 连接 + 已选联系人；正文非空由调用方保证
         var queuedMessageID: UUID?
         do {
-            let message = try chatState.queueOutgoingText(draft.text)
+            let message = try chatState.queueOutgoingText(text)
             queuedMessageID = message.id
             let textToSend = message.text
-            draft.text = ""
             enqueueHistoryUpsert(message)
             let receipt = try await client.sendText(to: message.toUserID, text: textToSend)
             try chatState.updateMessageDelivery(

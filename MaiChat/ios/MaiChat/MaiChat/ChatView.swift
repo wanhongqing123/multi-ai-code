@@ -1914,6 +1914,12 @@ private struct ComposerView: View {
     @EnvironmentObject private var appState: RemoteIMAppState
     @ObservedObject var draft: RemoteIMDraftState
     @StateObject private var voiceRecorder = VoiceMessageRecorder()
+    // 凭证留空时 isAvailable 为 false，录音照旧作为语音消息发出，不受影响。
+    private let speechRecognizer: SpeechRecognizing = TencentSpeechRecognizer(
+        appId: TencentASRCredentials.appId,
+        secretId: TencentASRCredentials.secretId,
+        secretKey: TencentASRCredentials.secretKey
+    )
     @State private var isVoiceMode = false
     @State private var isPressingVoice = false
     @State private var isCancellingVoice = false
@@ -2169,7 +2175,31 @@ private struct ComposerView: View {
         }
 
         guard let recording = voiceRecorder.stop() else { return }
-        await appState.sendVoiceRecording(recording)
+        await transcribeThenSend(recording)
+    }
+
+    /// 录完先转文字发文字；识别不可用或失败时回退成发语音消息——用户说过的话不能因为
+    /// 识别这一环出问题就凭空消失。
+    private func transcribeThenSend(_ recording: RemoteIMVoiceRecording) async {
+        guard speechRecognizer.isAvailable else {
+            await appState.sendVoiceRecording(recording)
+            return
+        }
+        do {
+            let text = try await speechRecognizer.transcribe(
+                fileURL: recording.fileURL,
+                format: "m4a"
+            )
+            guard !text.isEmpty else {
+                await appState.sendVoiceRecording(recording)
+                return
+            }
+            await appState.sendText(text)
+            try? FileManager.default.removeItem(at: recording.fileURL)
+        } catch {
+            appState.errorMessage = error.localizedDescription
+            await appState.sendVoiceRecording(recording)
+        }
     }
 
     private func startVoiceRecording() async {

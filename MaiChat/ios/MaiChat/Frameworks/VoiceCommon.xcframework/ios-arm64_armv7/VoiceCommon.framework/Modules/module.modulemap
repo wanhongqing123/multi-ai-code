@@ -1,0 +1,13 @@
+//
+//  CloudServerTimeGlobleTool.h
+//  voice_common_ios
+//
+//  Created by sunnydu on 2025/07/17.
+//
+
+framework module VoiceCommon {
+    umbrella header "VoiceCommon.h"
+
+    export *
+    module * { export * }
+}

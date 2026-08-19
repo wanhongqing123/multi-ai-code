@@ -1125,7 +1125,7 @@ describe('remote IM router', () => {
       },
       transcribeAudio: async () => ({
         ok: false,
-        error: '本地 Whisper 未配置'
+        error: '语音转写未配置'
       }),
       store
     })
@@ -1141,12 +1141,12 @@ describe('remote IM router', () => {
     })
 
     expect(result.ok).toBe(false)
-    expect(result.error).toContain('本地 Whisper 未配置')
+    expect(result.error).toContain('语音转写未配置')
     expect(sentToAicli).toEqual([])
     expect(sentToIm[0]).toContain('语音转文字失败')
     expect(store.messages[0]).toMatchObject({
       status: 'failed',
-      error: '本地 Whisper 未配置',
+      error: '语音转写未配置',
       content: '[语音消息 4s]'
     })
   })

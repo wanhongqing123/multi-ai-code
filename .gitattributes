@@ -1,1 +1,5 @@
-resources/asr/models/*.bin filter=lfs diff=lfs merge=lfs -text
+# imcliCommand.test.ts 会动态 import bin/imcli.mjs。该文件在 CRLF 行尾下会让
+# vitest 的模块管线报 SyntaxError（原生 node 与 esbuild 都能正常解析，只有
+# vitest 挂），整个测试文件收集失败、16 条测试静默不跑。Windows 上
+# core.autocrlf=true 会把它检出成 CRLF，所以必须在这里钉死 LF。
+bin/imcli.mjs text eol=lf

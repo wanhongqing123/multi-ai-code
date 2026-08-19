@@ -883,7 +883,7 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
     }
 
     if (!deps.transcribeAudio) {
-      const error = '本地 Whisper 转写模块未初始化，请重启桌面端或重新构建主进程'
+      const error = '桌面端已不再内置语音转文字，请改用文字，或在手机上用语音输入后发送'
       deps.store.create(createIncomingAudioRecord(message, placeholder, 'failed', error, now, recordRole))
       await sendIncomingFailureIfHuman(
         deps,

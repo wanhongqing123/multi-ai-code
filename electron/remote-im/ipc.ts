@@ -91,7 +91,6 @@ import { executeRemoteImControlCommand } from './controlBridge.js'
 import { RemoteImApprovalCoordinator } from './approvalCoordinator.js'
 import { createGitDiffReport } from './gitDiffReport.js'
 import { createRemoteImAccountChangedStatuses, getRemoteImSendConnectionError } from './status.js'
-import { transcribeRemoteImAudioWithLocalWhisper } from './localWhisper.js'
 import {
   cacheRemoteImImage,
   cacheRemoteImImageBytes,
@@ -2981,7 +2980,6 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
             ...(taskId ? { taskId } : {})
           })
         },
-        transcribeAudio: transcribeRemoteImAudioWithLocalWhisper,
         store: {
           create: (input) => createRemoteImMessage(input),
           updateStatus: (id, patch) =>
@@ -3021,7 +3019,6 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
         ...createOutputRoutingDeps(config, securityGeneration),
         sendUser: sendUserMessageToSession,
         sendImText,
-        transcribeAudio: transcribeRemoteImAudioWithLocalWhisper,
         store: {
           create: (input) => createRemoteImMessage(input),
           updateStatus: (id, patch) =>
@@ -3061,7 +3058,6 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
         ...createOutputRoutingDeps(config, securityGeneration),
         sendUser: sendUserMessageToSession,
         sendImText,
-        transcribeAudio: transcribeRemoteImAudioWithLocalWhisper,
         cacheImage: async (incoming) => {
           try {
             const cached = await cacheRemoteImImage({
@@ -3128,7 +3124,6 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
         ...createOutputRoutingDeps(config, securityGeneration),
         sendUser: sendUserMessageToSession,
         sendImText,
-        transcribeAudio: transcribeRemoteImAudioWithLocalWhisper,
         cacheFile: async (incoming) => {
           const fallbackAttachment = fileAttachmentFromIncoming(incoming)
           try {

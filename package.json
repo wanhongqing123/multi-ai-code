@@ -10,11 +10,10 @@
     "build:aicli": "node scripts/build-aicli.mjs",
     "start": "electron-vite preview",
     "icons": "node scripts/build-icons.mjs",
-    "prepare-asr": "node scripts/prepare-asr-assets.mjs",
-    "dist": "npm run icons && npm run prepare-asr && electron-vite build && electron-builder",
-    "dist:mac": "npm run icons && node scripts/prepare-asr-assets.mjs --target darwin-arm64 && electron-vite build && electron-builder --mac",
-    "dist:win": "npm run icons && node scripts/prepare-asr-assets.mjs --target win32-x64 && electron-vite build && electron-builder --win",
-    "dist:all": "npm run icons && npm run prepare-asr && electron-vite build && electron-builder --mac --win",
+    "dist": "npm run icons && electron-vite build && electron-builder",
+    "dist:mac": "npm run icons && electron-vite build && electron-builder --mac",
+    "dist:win": "npm run icons && electron-vite build && electron-builder --win",
+    "dist:all": "npm run icons && electron-vite build && electron-builder --mac --win",
     "package:mac:electron": "scripts/package-macos-electron.sh",
     "package:mac:qt-im": "MaiChat/desktop/scripts/package-macos.sh",
     "release:mac": "scripts/upload-macos-releases.sh",
@@ -81,12 +80,6 @@
       "node_modules/safer-buffer/**",
       "node_modules/trtc-electron-sdk/**",
       "bin/**"
-    ],
-    "extraResources": [
-      {
-        "from": "resources/asr",
-        "to": "asr"
-      }
     ],
     "beforePack": "scripts/electron-builder-before-pack.cjs",
     "afterPack": "scripts/electron-builder-after-pack.cjs",

@@ -43,6 +43,17 @@ struct RemoteIMFileAttachment {
     qint64 sizeBytes = 0;
 };
 
+// 视频消息附件。coverPath 是封面在本地的路径：发送侧是我们自己生成的那张，
+// 接收侧是从 video_elem_image_url 下载缓存下来的。durationSeconds 用于气泡上
+// 显示时长，解不出来时为 0（不影响播放）。
+struct RemoteIMVideoAttachment {
+    QString localPath;
+    QString fileName;
+    QString coverPath;
+    int durationSeconds = 0;
+    qint64 sizeBytes = 0;
+};
+
 struct RemoteIMMessage {
     QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     QString fromUserId;
@@ -56,9 +67,11 @@ struct RemoteIMMessage {
     RemoteIMImageAttachment image;
     RemoteIMVoiceAttachment voice;
     RemoteIMFileAttachment file;
+    RemoteIMVideoAttachment video;
     bool hasImage = false;
     bool hasVoice = false;
     bool hasFile = false;
+    bool hasVideo = false;
 };
 
 Q_DECLARE_METATYPE(RemoteIMMessage)

@@ -2,6 +2,8 @@
 
 #include <QDir>
 #include <QFileInfo>
+#include <QPair>
+#include <QSet>
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QUuid>
@@ -38,6 +40,14 @@ RemoteIMMessage messageFromQuery(const QSqlQuery& query) {
         query.value(QStringLiteral("file_name")).toString(),
         query.value(QStringLiteral("file_mime")).toString(),
         query.value(QStringLiteral("file_bytes")).toLongLong()
+    };
+    message.hasVideo = query.value(QStringLiteral("has_video")).toInt() != 0;
+    message.video = RemoteIMVideoAttachment{
+        query.value(QStringLiteral("video_path")).toString(),
+        query.value(QStringLiteral("video_name")).toString(),
+        query.value(QStringLiteral("video_cover")).toString(),
+        query.value(QStringLiteral("video_seconds")).toInt(),
+        query.value(QStringLiteral("video_bytes")).toLongLong()
     };
     return message;
 }
@@ -97,8 +107,30 @@ void LocalMessageDatabase::migrate() {
         "  has_voice     INTEGER NOT NULL DEFAULT 0,"
         "  voice_path    TEXT, voice_seconds INTEGER,"
         "  has_file      INTEGER NOT NULL DEFAULT 0,"
-        "  file_path     TEXT, file_name TEXT, file_mime TEXT, file_bytes INTEGER"
+        "  file_path     TEXT, file_name TEXT, file_mime TEXT, file_bytes INTEGER,"
+        "  has_video     INTEGER NOT NULL DEFAULT 0,"
+        "  video_path    TEXT, video_name TEXT, video_cover TEXT,"
+        "  video_seconds INTEGER, video_bytes INTEGER"
         ")"));
+    // 老库（建于视频功能之前）没有这几列，CREATE TABLE IF NOT EXISTS 不会补。
+    // 与 contacts.avatar_url 一样按 PRAGMA 判存在再 ALTER，重复启动无副作用。
+    QSet<QString> messageColumns;
+    query.exec(QStringLiteral("PRAGMA table_info(messages)"));
+    while (query.next()) messageColumns.insert(query.value(1).toString());
+    const QList<QPair<QString, QString>> videoColumns{
+        {QStringLiteral("has_video"), QStringLiteral("INTEGER NOT NULL DEFAULT 0")},
+        {QStringLiteral("video_path"), QStringLiteral("TEXT")},
+        {QStringLiteral("video_name"), QStringLiteral("TEXT")},
+        {QStringLiteral("video_cover"), QStringLiteral("TEXT")},
+        {QStringLiteral("video_seconds"), QStringLiteral("INTEGER")},
+        {QStringLiteral("video_bytes"), QStringLiteral("INTEGER")}
+    };
+    for (const auto& column : videoColumns) {
+        if (messageColumns.contains(column.first)) continue;
+        query.exec(QStringLiteral("ALTER TABLE messages ADD COLUMN %1 %2")
+                       .arg(column.first, column.second));
+    }
+
     query.exec(QStringLiteral(
         "CREATE INDEX IF NOT EXISTS idx_messages_peer_time ON messages(peer, created_at)"));
 }
@@ -228,8 +260,9 @@ bool LocalMessageDatabase::insertMessageIfAbsent(const RemoteIMMessage& message,
         "  id, from_user, to_user, peer, direction, status, text, created_at,"
         "  has_image, image_path, image_w, image_h, image_bytes,"
         "  has_voice, voice_path, voice_seconds,"
-        "  has_file, file_path, file_name, file_mime, file_bytes"
-        ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"));
+        "  has_file, file_path, file_name, file_mime, file_bytes,"
+        "  has_video, video_path, video_name, video_cover, video_seconds, video_bytes"
+        ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"));
     query.addBindValue(message.id);
     query.addBindValue(message.fromUserId);
     query.addBindValue(message.toUserId);
@@ -251,6 +284,12 @@ bool LocalMessageDatabase::insertMessageIfAbsent(const RemoteIMMessage& message,
     query.addBindValue(message.file.fileName);
     query.addBindValue(message.file.mimeType);
     query.addBindValue(message.file.sizeBytes);
+    query.addBindValue(message.hasVideo ? 1 : 0);
+    query.addBindValue(message.video.localPath);
+    query.addBindValue(message.video.fileName);
+    query.addBindValue(message.video.coverPath);
+    query.addBindValue(message.video.durationSeconds);
+    query.addBindValue(message.video.sizeBytes);
     if (!query.exec()) return false;
     const bool inserted = query.numRowsAffected() > 0;
     if (!inserted && message.createdAtMillis > 0) {

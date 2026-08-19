@@ -1,3 +1,6 @@
+#include <QSet>
+#include <QSqlDatabase>
+#include <QSqlQuery>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -35,6 +38,8 @@ private slots:
     void cascadesContactDeletion();
     void adoptsMessageIdAndResolvesConflict();
     void loadsRecentPagePerPeerAndPagesBackward();
+    void roundTripsVideoAttachment();
+    void upgradesPreVideoDatabaseWithoutLosingOldMessages();
 };
 
 void LocalMessageDatabaseTest::insertsAndDeduplicatesById() {
@@ -214,6 +219,141 @@ void LocalMessageDatabaseTest::loadsRecentPagePerPeerAndPagesBackward() {
 
     // 已到最早：不再返回。
     QCOMPARE(db.loadMessagesBefore("peer-a", 100, "a1", 3).size(), 0);
+}
+
+void LocalMessageDatabaseTest::roundTripsVideoAttachment() {
+    QTemporaryDir dir;
+    LocalMessageDatabase db(dir.filePath("messages.db"));
+    QVERIFY(db.isOpen());
+
+    RemoteIMMessage message;
+    message.id = QStringLiteral("video-1");
+    message.fromUserId = QStringLiteral("me");
+    message.toUserId = QStringLiteral("peer");
+    message.direction = RemoteIMMessageDirection::Outgoing;
+    message.status = RemoteIMMessageStatus::Sent;
+    message.text = QStringLiteral("看下这段录屏");
+    message.createdAtMillis = 1700000000000LL;
+    message.hasVideo = true;
+    message.video = RemoteIMVideoAttachment{
+        QStringLiteral("E:/clips/screen-record.mp4"),
+        QStringLiteral("screen-record.mp4"),
+        QStringLiteral("E:/covers/cover-1.jpg"),
+        42,
+        8388608LL
+    };
+    QVERIFY(db.insertMessageIfAbsent(message, QStringLiteral("peer")));
+
+    ChatState restored(QStringLiteral("me"));
+    db.loadInto(restored);
+    const QList<RemoteIMMessage> messages = restored.messagesWith(QStringLiteral("peer"));
+    QCOMPARE(messages.size(), 1);
+    const RemoteIMMessage& loaded = messages.first();
+    // 插入是位置绑定（27 个 ?），列名单/占位符/绑定顺序错位不会报错，只会把值写进
+    // 相邻的列。逐字段比对是唯一能发现错位的手段。
+    QVERIFY(loaded.hasVideo);
+    QVERIFY(!loaded.hasFile);
+    QVERIFY(!loaded.hasImage);
+    QCOMPARE(loaded.video.localPath, QStringLiteral("E:/clips/screen-record.mp4"));
+    QCOMPARE(loaded.video.fileName, QStringLiteral("screen-record.mp4"));
+    QCOMPARE(loaded.video.coverPath, QStringLiteral("E:/covers/cover-1.jpg"));
+    QCOMPARE(loaded.video.durationSeconds, 42);
+    QCOMPARE(loaded.video.sizeBytes, 8388608LL);
+    QCOMPARE(loaded.text, QStringLiteral("看下这段录屏"));
+}
+
+void LocalMessageDatabaseTest::upgradesPreVideoDatabaseWithoutLosingOldMessages() {
+    QTemporaryDir dir;
+    const QString path = dir.filePath("messages.db");
+
+    // 1) 先造一个「视频功能之前」的库：手工建不含 video_* 列的表并塞一条文件消息。
+    {
+        QSqlDatabase legacy = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"),
+                                                        QStringLiteral("legacy_pre_video"));
+        legacy.setDatabaseName(path);
+        QVERIFY(legacy.open());
+        QSqlQuery q(legacy);
+        QVERIFY(q.exec(QStringLiteral(
+            "CREATE TABLE messages ("
+            "  id TEXT PRIMARY KEY, from_user TEXT NOT NULL, to_user TEXT NOT NULL,"
+            "  peer TEXT NOT NULL, direction INTEGER NOT NULL, status INTEGER NOT NULL,"
+            "  text TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL,"
+            "  has_image INTEGER NOT NULL DEFAULT 0,"
+            "  image_path TEXT, image_w INTEGER, image_h INTEGER, image_bytes INTEGER,"
+            "  has_voice INTEGER NOT NULL DEFAULT 0, voice_path TEXT, voice_seconds INTEGER,"
+            "  has_file INTEGER NOT NULL DEFAULT 0,"
+            "  file_path TEXT, file_name TEXT, file_mime TEXT, file_bytes INTEGER)")));
+        QVERIFY(q.exec(QStringLiteral(
+            "INSERT INTO messages(id, from_user, to_user, peer, direction, status, text,"
+            " created_at, has_file, file_path, file_name, file_mime, file_bytes)"
+            " VALUES('old-1','peer','me','peer',0,2,'旧的文件消息',1600000000000,1,"
+            "'E:/old/report.md','report.md','text/markdown',2048)")));
+        legacy.close();
+    }
+    QSqlDatabase::removeDatabase(QStringLiteral("legacy_pre_video"));
+
+    // 2) 用新版打开：迁移必须补列，且旧消息一条不丢。
+    {
+        LocalMessageDatabase db(path);
+        QVERIFY(db.isOpen());
+        ChatState restored(QStringLiteral("me"));
+        db.loadInto(restored);
+        const QList<RemoteIMMessage> messages = restored.messagesWith(QStringLiteral("peer"));
+        QCOMPARE(messages.size(), 1);
+        QVERIFY(messages.first().hasFile);
+        QCOMPARE(messages.first().file.fileName, QStringLiteral("report.md"));
+        QVERIFY(!messages.first().hasVideo);
+
+        // 读取按列名取值，列不存在只会得到无效 QVariant（=0/空），所以上面那条
+        // hasVideo==false 两种情况都成立、证明不了迁移跑了。直接问 schema。
+        QSet<QString> columns;
+        {
+            // QSqlQuery 必须先出作用域，否则 removeDatabase 会警告「连接仍在使用」。
+            QSqlDatabase probe = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"),
+                                                           QStringLiteral("probe_schema"));
+            probe.setDatabaseName(path);
+            QVERIFY(probe.open());
+            QSqlQuery probeQuery(probe);
+            QVERIFY(probeQuery.exec(QStringLiteral("PRAGMA table_info(messages)")));
+            while (probeQuery.next()) columns.insert(probeQuery.value(1).toString());
+        }
+        QSqlDatabase::removeDatabase(QStringLiteral("probe_schema"));
+        for (const QString& expected : {QStringLiteral("has_video"), QStringLiteral("video_path"),
+                                        QStringLiteral("video_name"), QStringLiteral("video_cover"),
+                                        QStringLiteral("video_seconds"), QStringLiteral("video_bytes")}) {
+            QVERIFY2(columns.contains(expected), qPrintable(QStringLiteral("缺列 %1").arg(expected)));
+        }
+
+        RemoteIMMessage video;
+        video.id = QStringLiteral("video-new");
+        video.fromUserId = QStringLiteral("me");
+        video.toUserId = QStringLiteral("peer");
+        video.direction = RemoteIMMessageDirection::Outgoing;
+        video.status = RemoteIMMessageStatus::Sent;
+        video.createdAtMillis = 1700000000000LL;
+        // text 必须显式给：默认构造的 QString 是 null，会绑成 SQL NULL 撞上
+        // text NOT NULL，而 INSERT OR IGNORE 会把约束冲突静默吞掉。
+        video.text = QStringLiteral("[视频消息] a.mp4");
+        video.hasVideo = true;
+        video.video = RemoteIMVideoAttachment{QStringLiteral("E:/clips/a.mp4"),
+                                              QStringLiteral("a.mp4"),
+                                              QStringLiteral("E:/covers/a.jpg"), 7, 1024LL};
+        QVERIFY(db.insertMessageIfAbsent(video, QStringLiteral("peer")));
+    }
+
+    // 3) 再开一次：迁移必须幂等（重复 ALTER 会报 duplicate column），两条都在。
+    {
+        LocalMessageDatabase db(path);
+        QVERIFY(db.isOpen());
+        ChatState restored(QStringLiteral("me"));
+        db.loadInto(restored);
+        const QList<RemoteIMMessage> messages = restored.messagesWith(QStringLiteral("peer"));
+        QCOMPARE(messages.size(), 2);
+        const RemoteIMMessage& video = messages.last();
+        QVERIFY(video.hasVideo);
+        QCOMPARE(video.video.coverPath, QStringLiteral("E:/covers/a.jpg"));
+        QCOMPARE(video.video.durationSeconds, 7);
+    }
 }
 
 QTEST_MAIN(LocalMessageDatabaseTest)

@@ -157,6 +157,27 @@ RemoteIMMessage ChatState::queueOutgoingFile(const QString& localPath, const QSt
     return message;
 }
 
+RemoteIMMessage ChatState::queueOutgoingVideo(const QString& localPath, const QString& fileName, const QString& coverPath, int durationSeconds, qint64 sizeBytes, const QString& text) {
+    const QString cleanPath = clean(localPath);
+    if (cleanPath.isEmpty()) throw std::invalid_argument("localPath is required");
+    const QString cleanFileName = clean(fileName).isEmpty() ? ChatState::fileName(cleanPath) : clean(fileName);
+    RemoteIMMessage message;
+    message.fromUserId = ownerUserId_;
+    message.toUserId = requireSelectedPeer();
+    // 与图片/文件一致：有配文存配文（气泡里图下显示、会话列表也预览配文），无配文回退占位摘要。
+    message.text = clean(text).isEmpty()
+        ? QStringLiteral("[视频消息] %1").arg(cleanFileName.isEmpty() ? QStringLiteral("video") : cleanFileName)
+        : clean(text);
+    message.direction = RemoteIMMessageDirection::Outgoing;
+    message.status = RemoteIMMessageStatus::Pending;
+    message.origin = RemoteIMMessageOrigin::Human;
+    message.hasVideo = true;
+    message.video = RemoteIMVideoAttachment{cleanPath, cleanFileName, clean(coverPath),
+                                            durationSeconds > 0 ? durationSeconds : 0, sizeBytes};
+    appendTracked(message);
+    return message;
+}
+
 RemoteIMMessage ChatState::receiveText(const QString& fromUserId, const QString& text) {
     const QString peerId = clean(fromUserId);
     if (peerId.isEmpty()) throw std::invalid_argument("fromUserId is required");

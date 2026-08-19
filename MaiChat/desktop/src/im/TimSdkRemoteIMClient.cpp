@@ -79,6 +79,31 @@ QString cacheImagePathForUrl(const QString& url) {
     return QDir(appDataDir(QStringLiteral("RemoteIMImages"))).filePath(QString::fromUtf8(hash) + "." + suffix);
 }
 
+// 视频元素不带文件名，只能从本地路径或下载 URL 里抠；都抠不出来就用默认名——
+// 气泡上总得有个能显示的标题。
+QString videoDisplayName(const QJsonObject& elem) {
+    const QString localPath = elem.value(QStringLiteral("video_elem_video_path")).toString().trimmed();
+    if (!localPath.isEmpty()) {
+        const QString name = QFileInfo(localPath).fileName();
+        if (!name.isEmpty()) return name;
+    }
+    const QString url = elem.value(QStringLiteral("video_elem_video_url")).toString().trimmed();
+    if (!url.isEmpty()) {
+        const QString name = QFileInfo(QUrl(url).path()).fileName();
+        if (!name.isEmpty()) return name;
+    }
+    return QStringLiteral("video.mp4");
+}
+
+QString cacheVideoPathForUrl(const QString& url, const QString& suffix) {
+    const QString hash = QString::fromLatin1(
+        QCryptographicHash::hash(url.toUtf8(), QCryptographicHash::Sha1).toHex());
+    const QString dir = QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation))
+                            .filePath(QStringLiteral("remote-im-videos"));
+    QDir().mkpath(dir);
+    return QDir(dir).filePath(hash + suffix);
+}
+
 QString cacheFilePathForUrl(const QString& url, const QString& fileName) {
     const QByteArray hash = QCryptographicHash::hash(url.toUtf8(), QCryptographicHash::Sha1).toHex();
     QString suffix = QFileInfo(fileName).suffix();
@@ -642,7 +667,7 @@ void TimSdkRemoteIMClient::handleHistoryMessagesPayload(const QString& jsonPaylo
             const int elemType = elem.value(QStringLiteral("elem_type")).toInt(-1);
             if (elemType == kElemImage) {
                 if (!elem.value(QStringLiteral("image_elem_orig_path")).toString().trimmed().isEmpty()) hasAttachment = true;
-            } else if (elemType == kElemFile) {
+            } else if (elemType == kElemFile || elemType == kElemVideo) {
                 hasAttachment = true;
             } else if (elemType == kElemText && captionElemIndex < 0) {
                 const QString content = elem.value(QStringLiteral("text_elem_content")).toString();
@@ -696,6 +721,27 @@ void TimSdkRemoteIMClient::handleHistoryMessagesPayload(const QString& jsonPaylo
                     message.text = QStringLiteral("[图片消息] ") + QFileInfo(localPath).fileName();
                 }
                 messages.append(message);
+                continue;
+            }
+            if (elemType == kElemVideo) {
+                const QString videoUrl = elem.value(QStringLiteral("video_elem_video_url")).toString().trimmed();
+                const QString coverUrl = elem.value(QStringLiteral("video_elem_image_url")).toString().trimmed();
+                const QString localPath = elem.value(QStringLiteral("video_elem_video_path")).toString().trimmed();
+                const int duration = elem.value(QStringLiteral("video_elem_video_duration")).toInt(0);
+                const qint64 sizeBytes = static_cast<qint64>(elem.value(QStringLiteral("video_elem_video_size")).toDouble(0));
+                const QString displayName = videoDisplayName(elem);
+                RemoteIMMessage message = makeBase(elemIndex);
+                message.hasVideo = true;
+                message.text = (!attachmentCaption.isEmpty() && !captionConsumed)
+                                   ? attachmentCaption
+                                   : QStringLiteral("[视频消息] ") + displayName;
+                if (!attachmentCaption.isEmpty() && !captionConsumed) captionConsumed = true;
+                message.video = RemoteIMVideoAttachment{localPath, displayName, QString(), duration, sizeBytes};
+                if (!localPath.isEmpty()) {
+                    messages.append(message);
+                } else if (!videoUrl.isEmpty()) {
+                    handleIncomingVideoUrls(message, videoUrl, coverUrl, /*live=*/false);
+                }
                 continue;
             }
             if (elemType == kElemFile) {
@@ -791,7 +837,7 @@ void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
         const int elemType = elem.value(QStringLiteral("elem_type")).toInt(-1);
         if (elemType == kElemImage) {
             hasAttachment = true;
-        } else if (elemType == kElemFile) {
+        } else if (elemType == kElemFile || elemType == kElemVideo) {
             hasAttachment = true;
         } else if (elemType == kElemText && captionElemIndex < 0) {
             const QString content = elem.value(QStringLiteral("text_elem_content")).toString();
@@ -842,6 +888,29 @@ void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
                 QStringLiteral("image_elem_thumb_url")
             });
             if (!url.isEmpty()) handleIncomingImageUrl(imageMessage, url, /*live=*/true);
+            continue;
+        }
+        if (elemType == kElemVideo) {
+            const QString videoUrl = elem.value(QStringLiteral("video_elem_video_url")).toString().trimmed();
+            const QString coverUrl = elem.value(QStringLiteral("video_elem_image_url")).toString().trimmed();
+            const QString localPath = elem.value(QStringLiteral("video_elem_video_path")).toString().trimmed();
+            const int duration = elem.value(QStringLiteral("video_elem_video_duration")).toInt(0);
+            const qint64 sizeBytes = static_cast<qint64>(elem.value(QStringLiteral("video_elem_video_size")).toDouble(0));
+            const QString displayName = videoDisplayName(elem);
+            RemoteIMMessage videoMessage = baseMessage(elemIndex);
+            videoMessage.hasVideo = true;
+            if (!attachmentCaption.isEmpty() && !captionConsumed) {
+                videoMessage.text = attachmentCaption;
+                captionConsumed = true;
+            } else {
+                videoMessage.text = QStringLiteral("[视频消息] ") + displayName;
+            }
+            videoMessage.video = RemoteIMVideoAttachment{localPath, displayName, QString(), duration, sizeBytes};
+            if (!localPath.isEmpty()) {
+                received.append(videoMessage);
+            } else if (!videoUrl.isEmpty()) {
+                handleIncomingVideoUrls(videoMessage, videoUrl, coverUrl, /*live=*/true);
+            }
             continue;
         }
         if (elemType == kElemFile) {
@@ -925,6 +994,64 @@ void TimSdkRemoteIMClient::handleIncomingFileUrl(RemoteIMMessage message, const 
         file.write(data);
         file.close();
         emitReceivedMessages({message}, live);
+    });
+}
+
+void TimSdkRemoteIMClient::handleIncomingVideoUrls(RemoteIMMessage message,
+                                                   const QString& videoUrl,
+                                                   const QString& coverUrl,
+                                                   bool live) {
+    const QString videoPath = cacheVideoPathForUrl(videoUrl, QStringLiteral(".mp4"));
+    message.video.localPath = videoPath;
+
+    // 先把封面拿下来（小、快），再下视频本体。封面失败只是没有缩略图，
+    // 不能因此把整条视频消息拦住——气泡会退化成深色底 + 播放角标，仍可播放。
+    // message 必须按参数传进来：如果在这里按值捕获，封面回调里补上的 coverPath
+    // 改的是外层那一份，拷贝进 lambda 的那份永远是空的，封面白下了。
+    const auto fetchVideo = [this, videoUrl, videoPath, live](RemoteIMMessage message) {
+        if (QFile::exists(videoPath)) {
+            emitReceivedMessages({message}, live);
+            return;
+        }
+        QNetworkReply* reply = network_.get(QNetworkRequest(QUrl(videoUrl)));
+        connect(reply, &QNetworkReply::finished, this, [this, reply, message, live] {
+            const QByteArray data = reply->readAll();
+            const bool ok = reply->error() == QNetworkReply::NoError && !data.isEmpty();
+            reply->deleteLater();
+            if (!ok) return;
+            QFile file(message.video.localPath);
+            if (!file.open(QIODevice::WriteOnly)) return;
+            file.write(data);
+            file.close();
+            emitReceivedMessages({message}, live);
+        });
+    };
+
+    if (coverUrl.trimmed().isEmpty()) {
+        fetchVideo(message);
+        return;
+    }
+    const QString coverPath = cacheVideoPathForUrl(coverUrl, QStringLiteral(".jpg"));
+    if (QFile::exists(coverPath)) {
+        message.video.coverPath = coverPath;
+        fetchVideo(message);
+        return;
+    }
+    QNetworkReply* coverReply = network_.get(QNetworkRequest(QUrl(coverUrl)));
+    connect(coverReply, &QNetworkReply::finished, this,
+            [coverReply, coverPath, message, fetchVideo]() mutable {
+        const QByteArray data = coverReply->readAll();
+        const bool ok = coverReply->error() == QNetworkReply::NoError && !data.isEmpty();
+        coverReply->deleteLater();
+        if (ok) {
+            QFile file(coverPath);
+            if (file.open(QIODevice::WriteOnly)) {
+                file.write(data);
+                file.close();
+                message.video.coverPath = coverPath;
+            }
+        }
+        fetchVideo(message);
     });
 }
 

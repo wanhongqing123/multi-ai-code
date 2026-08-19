@@ -161,6 +161,8 @@ private slots:
     void emitsIncomingGenericFileWithRealMimeType();
     void mergesCaptionIntoGenericFileMessage();
     void loadsGenericFileFromHistory();
+    void emitsIncomingVideoWithLocalPath();
+    void mergesCaptionIntoIncomingVideoMessage();
     void rejectsMissingCredentials();
 };
 
@@ -624,6 +626,82 @@ void TimSdkRemoteIMClientTest::loadsGenericFileFromHistory() {
     QCOMPARE(file.file.fileName, QStringLiteral("report.pdf"));
     QCOMPARE(file.file.mimeType, QStringLiteral("application/pdf"));
     QCOMPARE(file.text, QStringLiteral("[文件消息] report.pdf"));
+}
+
+// 视频入站此前完全没有分支：elem_type 9 一个 if 都匹配不上，整条消息静默消失，
+// 界面上什么都不出现。这条守住「收得到」。
+void TimSdkRemoteIMClientTest::emitsIncomingVideoWithLocalPath() {
+    auto api = std::make_unique<FakeTimSdkApi>();
+    auto* fake = api.get();
+    TimSdkRemoteIMClient client(std::move(api));
+    QSignalSpy messagesSpy(&client, &RemoteIMClient::liveMessagesReceived);
+
+    client.connectToService(123456, QStringLiteral("desktop-user"), QStringLiteral("sig-value"), nullptr);
+    fake->emitMessages(QJsonArray{QJsonObject{
+        {QStringLiteral("message_is_from_self"), false},
+        {QStringLiteral("message_sender"), QStringLiteral("phone-user")},
+        {QStringLiteral("message_msg_id"), QStringLiteral("sdk-video-1")},
+        {QStringLiteral("message_server_time"), 1700000000},
+        {QStringLiteral("message_elem_array"), QJsonArray{
+            QJsonObject{
+                {QStringLiteral("elem_type"), 9},
+                {QStringLiteral("video_elem_video_path"), QStringLiteral("/tmp/screen-record.mp4")},
+                {QStringLiteral("video_elem_video_duration"), 42},
+                {QStringLiteral("video_elem_video_size"), 8388608}
+            }
+        }}
+    }});
+
+    QCOMPARE(messagesSpy.count(), 1);
+    const auto messages = messagesSpy.takeFirst().at(0).value<QList<RemoteIMMessage>>();
+    QCOMPARE(messages.size(), 1);
+    const RemoteIMMessage& video = messages.at(0);
+    QVERIFY(video.hasVideo);
+    QVERIFY(!video.hasFile);
+    QCOMPARE(video.id, QStringLiteral("sdk-video-1#0"));
+    QCOMPARE(video.video.localPath, QStringLiteral("/tmp/screen-record.mp4"));
+    QCOMPARE(video.video.durationSeconds, 42);
+    QCOMPARE(video.video.sizeBytes, static_cast<qint64>(8388608));
+    // 视频元素不带文件名，得从路径抠出来，否则气泡上没有标题。
+    QCOMPARE(video.video.fileName, QStringLiteral("screen-record.mp4"));
+    QCOMPARE(video.text, QStringLiteral("[视频消息] screen-record.mp4"));
+}
+
+// 与图片/文件同样的坑：视频 + 配文若不合并，会退化成「只剩配文的纯文本消息」，
+// 视频整条消失，而用户以为发到了。
+void TimSdkRemoteIMClientTest::mergesCaptionIntoIncomingVideoMessage() {
+    auto api = std::make_unique<FakeTimSdkApi>();
+    auto* fake = api.get();
+    TimSdkRemoteIMClient client(std::move(api));
+    QSignalSpy messagesSpy(&client, &RemoteIMClient::liveMessagesReceived);
+
+    client.connectToService(123456, QStringLiteral("desktop-user"), QStringLiteral("sig-value"), nullptr);
+    fake->emitMessages(QJsonArray{QJsonObject{
+        {QStringLiteral("message_is_from_self"), false},
+        {QStringLiteral("message_sender"), QStringLiteral("phone-user")},
+        {QStringLiteral("message_msg_id"), QStringLiteral("sdk-video-2")},
+        {QStringLiteral("message_server_time"), 1700000000},
+        {QStringLiteral("message_elem_array"), QJsonArray{
+            QJsonObject{
+                {QStringLiteral("elem_type"), 9},
+                {QStringLiteral("video_elem_video_path"), QStringLiteral("/tmp/clip.mp4")},
+                {QStringLiteral("video_elem_video_duration"), 7},
+                {QStringLiteral("video_elem_video_size"), 1024}
+            },
+            QJsonObject{
+                {QStringLiteral("elem_type"), 0},
+                {QStringLiteral("text_elem_content"), QStringLiteral("看下这段录屏")}
+            }
+        }}
+    }});
+
+    QCOMPARE(messagesSpy.count(), 1);
+    const auto messages = messagesSpy.takeFirst().at(0).value<QList<RemoteIMMessage>>();
+    // 只应产生一条：视频带配文，而不是拆成「视频」+「文本」两条。
+    QCOMPARE(messages.size(), 1);
+    QVERIFY(messages.at(0).hasVideo);
+    QCOMPARE(messages.at(0).text, QStringLiteral("看下这段录屏"));
+    QCOMPARE(messages.at(0).video.durationSeconds, 7);
 }
 
 void TimSdkRemoteIMClientTest::rejectsMissingCredentials() {

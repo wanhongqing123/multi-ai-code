@@ -50,6 +50,10 @@ private:
     // false 表示漫游/历史解析，送 messagesReceived。下载助手被两条链路共用，须透传。
     void handleIncomingImageUrl(RemoteIMMessage message, const QString& url, bool live);
     void handleIncomingFileUrl(RemoteIMMessage message, const QString& url, bool live);
+    // 视频要下两个文件（视频本体 + 封面）。封面失败不阻塞：气泡会退化成深色底 +
+    // 播放角标，仍然能点开播放。
+    void handleIncomingVideoUrls(RemoteIMMessage message, const QString& videoUrl,
+                                 const QString& coverUrl, bool live);
     void emitReceivedMessages(const QList<RemoteIMMessage>& messages, bool live);
     static void complete(RemoteIMCompletion completion, int code, const QString& description);
     static QString compactJson(const QJsonObject& object);

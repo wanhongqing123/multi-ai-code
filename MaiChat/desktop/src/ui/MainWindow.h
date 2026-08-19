@@ -100,6 +100,7 @@ private:
     bool composerHasAttachments() const;
     void openImagePreview(const QString& imagePath);
     void openFilePreview(const RemoteIMFileAttachment& attachment);
+    void openVideoPreview(const RemoteIMVideoAttachment& attachment);
     // 右键菜单入口：弹「另存为」对话框（默认下载目录 + 原文件名），把附件保存到用户选的位置。
     void saveFileAttachmentToLocal(const RemoteIMFileAttachment& attachment);
     QWidget* createMessageBubble(const RemoteIMMessage& message);

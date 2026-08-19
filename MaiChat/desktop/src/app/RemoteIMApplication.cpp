@@ -245,12 +245,11 @@ void RemoteIMApplication::sendVideo(const QString& localPath, const QString& tex
     payload.coverHeight = cover.height;
 
     const QString fileName = info.fileName();
-    const QString mimeType = QMimeDatabase().mimeTypeForFile(info).name();
     const QString caption = text.trimmed();
-    // 本地回显仍走文件附件：本地库的 messages 表还没有视频列，而发出去的是货真价实的
-    // 视频元素。气泡靠 mimeType 认出这是视频并显示成视频卡片。
-    RemoteIMMessage message =
-        state_.queueOutgoingFile(cleanPath, fileName, mimeType, info.size(), caption);
+    // 本地回显用真正的视频附件（messages 表已有视频列）：气泡直接显示封面 + 时长，
+    // 点击可播放，不再借道文件卡。
+    RemoteIMMessage message = state_.queueOutgoingVideo(
+        cleanPath, fileName, cover.path, metadata.durationSeconds, info.size(), caption);
     persistMessage(message);
     emit stateChanged();
 

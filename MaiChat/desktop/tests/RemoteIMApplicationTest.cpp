@@ -169,14 +169,21 @@ void RemoteIMApplicationTest::sendsVideoWithParsedMetadataAndGeneratedCover() {
     QCOMPARE(sent.coverWidth, 960);
     QCOMPARE(sent.coverHeight, 540);
 
-    // 本地回显：库里还没有视频列，先按文件附件存，气泡靠 video/ MIME 显示成视频卡。
+    // 本地回显是真正的视频附件：气泡据此显示封面 + 时长并支持点击播放。
     const QList<RemoteIMMessage> messages = app.chatState().messagesWith(QStringLiteral("phone-user"));
     QCOMPARE(messages.size(), 1);
-    QVERIFY(messages.first().hasFile);
-    QCOMPARE(messages.first().file.fileName, QStringLiteral("screen-record.mp4"));
-    QVERIFY(messages.first().file.mimeType.startsWith(QStringLiteral("video/")));
-    QCOMPARE(messages.first().text, QStringLiteral("录屏在这"));
-    QCOMPARE(messages.first().status, RemoteIMMessageStatus::Sent);
+    const RemoteIMMessage& echoed = messages.first();
+    QVERIFY(echoed.hasVideo);
+    QVERIFY(!echoed.hasFile);
+    QCOMPARE(echoed.video.localPath, videoPath);
+    QCOMPARE(echoed.video.fileName, QStringLiteral("screen-record.mp4"));
+    QCOMPARE(echoed.video.durationSeconds, 9);
+    QCOMPARE(echoed.video.sizeBytes, qint64(bytes.size()));
+    // 封面路径必须落到回显里，否则气泡只能画一块黑底。
+    QCOMPARE(echoed.video.coverPath, sent.coverPath);
+    QVERIFY(QFileInfo::exists(echoed.video.coverPath));
+    QCOMPARE(echoed.text, QStringLiteral("录屏在这"));
+    QCOMPARE(echoed.status, RemoteIMMessageStatus::Sent);
 }
 
 void RemoteIMApplicationTest::refusesUnsupportedVideoContainers() {

@@ -73,6 +73,7 @@
 #include "ui/AppTextInputDialog.h"
 #include "ui/FilePreviewDialog.h"
 #include "ui/ImagePreviewDialog.h"
+#include "ui/VideoPreviewDialog.h"
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QRadioButton>
@@ -2437,6 +2438,22 @@ QList<MainWindow::ComposerAttachment> MainWindow::collectComposerAttachments() c
     return attachments;
 }
 
+void MainWindow::openVideoPreview(const RemoteIMVideoAttachment& attachment) {
+    const QString path = attachment.localPath.trimmed();
+    if (path.isEmpty() || !QFile::exists(path)) {
+        AppMessageDialog::show(this, AppMessageDialog::Kind::Warning,
+                               QStringLiteral("无法播放"),
+                               QStringLiteral("视频尚未下载完成或本地缓存已被清理。"));
+        return;
+    }
+    const QString title = attachment.fileName.trimmed().isEmpty()
+        ? QFileInfo(path).fileName()
+        : attachment.fileName.trimmed();
+    auto* dialog = new VideoPreviewDialog(path, title, this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->show();
+}
+
 void MainWindow::openImagePreview(const QString& imagePath) {
     if (imagePreviewDialog_) {
         imagePreviewDialog_->raise();
@@ -2537,7 +2554,7 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
 
     auto* bubble = new QWidget(row);
     bubble->setObjectName(outgoing ? QStringLiteral("messageBubbleOutgoing") : QStringLiteral("messageBubbleIncoming"));
-    const bool expandedTextBubble = !message.hasImage && !message.hasFile && (message.text.size() >= 50 || message.text.contains(QLatin1Char('\n')));
+    const bool expandedTextBubble = !message.hasImage && !message.hasFile && !message.hasVideo && (message.text.size() >= 50 || message.text.contains(QLatin1Char('\n')));
     bubble->setProperty("expandedTextBubble", expandedTextBubble);
     applyMessageBubbleWidth(bubble, expandedTextBubble);
     bubble->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
@@ -2629,6 +2646,72 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
             auto* missingLabel = new QLabel(QStringLiteral("图片无法加载"), bubble);
             missingLabel->setWordWrap(true);
             contentRow->addWidget(missingLabel);
+        }
+    } else if (message.hasVideo) {
+        // 视频气泡：封面 + 中心播放角标，点击开播。封面拿不到（老消息、或生成失败）
+        // 时退化成深色底 + 角标，仍然可点——不能因为没有封面就让视频打不开。
+        auto* videoButton = new QPushButton(bubble);
+        videoButton->setObjectName(QStringLiteral("messageVideoButton"));
+        videoButton->setCursor(Qt::PointingHandCursor);
+        videoButton->setFlat(true);
+
+        constexpr int kCoverMaxWidth = 240;
+        QPixmap cover(message.video.coverPath);
+        int coverWidth = kCoverMaxWidth;
+        int coverHeight = UiZoom::s(135);
+        if (!cover.isNull()) {
+            cover = cover.scaledToWidth(UiZoom::s(kCoverMaxWidth), Qt::SmoothTransformation);
+            coverWidth = cover.width();
+            coverHeight = cover.height();
+        } else {
+            coverWidth = UiZoom::s(kCoverMaxWidth);
+            cover = QPixmap(coverWidth, coverHeight);
+            cover.fill(QColor(0x11, 0x18, 0x27));
+        }
+        // 播放角标画进封面本身：QPushButton 的 icon 只有一层，叠控件在这里
+        // 会被气泡的布局挤走。
+        {
+            QPainter painter(&cover);
+            painter.setRenderHint(QPainter::Antialiasing, true);
+            const QPointF center(coverWidth / 2.0, coverHeight / 2.0);
+            const double radius = qMin(coverWidth, coverHeight) * 0.16;
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(QColor(0, 0, 0, 110));
+            painter.drawEllipse(center, radius, radius);
+            QPainterPath triangle;
+            const double half = radius * 0.62;
+            const double shift = half * 0.18;
+            triangle.moveTo(center.x() - half * 0.55 + shift, center.y() - half);
+            triangle.lineTo(center.x() - half * 0.55 + shift, center.y() + half);
+            triangle.lineTo(center.x() + half * 0.85 + shift, center.y());
+            triangle.closeSubpath();
+            painter.setBrush(QColor(255, 255, 255, 230));
+            painter.drawPath(triangle);
+        }
+        videoButton->setIcon(QIcon(cover));
+        videoButton->setIconSize(QSize(coverWidth, coverHeight));
+        videoButton->setFixedSize(coverWidth, coverHeight);
+        videoButton->setStyleSheet(QStringLiteral(
+            "QPushButton#messageVideoButton { border: none; padding: 0; background: transparent; }"));
+        const QString durationText = message.video.durationSeconds > 0
+            ? QStringLiteral("%1:%2")
+                  .arg(message.video.durationSeconds / 60, 2, 10, QLatin1Char('0'))
+                  .arg(message.video.durationSeconds % 60, 2, 10, QLatin1Char('0'))
+            : QString();
+        const QString sizeText = fileSizeText(message.video.sizeBytes);
+        QStringList parts;
+        if (!durationText.isEmpty()) parts << durationText;
+        if (!sizeText.isEmpty()) parts << sizeText;
+        videoButton->setToolTip(parts.isEmpty()
+            ? QStringLiteral("点击播放")
+            : QStringLiteral("点击播放 · %1").arg(parts.join(QStringLiteral(" · "))));
+        connect(videoButton, &QPushButton::clicked, this,
+                [this, attachment = message.video]() { openVideoPreview(attachment); });
+        contentRow->addWidget(videoButton);
+        if (!parts.isEmpty()) {
+            auto* metaLabel = new QLabel(parts.join(QStringLiteral(" · ")), bubble);
+            metaLabel->setStyleSheet(QStringLiteral("color: #6b7a8c; font-size: 12px;"));
+            contentRow->addWidget(metaLabel);
         }
     } else if (message.hasFile) {
         auto* fileButton = new QPushButton(bubble);

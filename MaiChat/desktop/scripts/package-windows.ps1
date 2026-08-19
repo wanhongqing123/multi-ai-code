@@ -50,6 +50,17 @@ Copy-Item $exePath (Join-Path $staging 'maichat.exe')
     --dir $staging (Join-Path $staging 'maichat.exe')
 if ($LASTEXITCODE -ne 0) { throw "windeployqt 失败，退出码 $LASTEXITCODE" }
 
+# 视频播放的解码后端是插件，不是 Qt5Multimedia.dll 本身。缺了它 QMediaPlayer
+# 不报错也不崩，只是永远停在 StoppedState、画面全黑——和当年缺 OpenSSL 导致
+# 「文字能收、图片收不到」是同一类静默故障。windeployqt 目前会自动带上，
+# 但这里显式校验，将来谁改坏了要立刻炸而不是发一个播不了视频的包。
+$mediaserviceDir = Join-Path $staging 'mediaservice'
+$mediaBackends = @(Get-ChildItem (Join-Path $mediaserviceDir '*engine.dll') -ErrorAction SilentlyContinue)
+if ($mediaBackends.Count -eq 0) {
+    throw "staging 里没有 mediaservice 解码插件（wmfengine/dsengine），视频消息将无法播放"
+}
+Write-Host "多媒体解码插件已部署：$($mediaBackends.Name -join ', ')"
+
 # 显式旁挂 VC++ 运行库（app-local 部署）：exe 与 Qt5*.dll 都依赖
 # MSVCP140/VCRUNTIME140 系列，未装 VC Redist 的机器上缺它们会直接 0xc0000135。
 # 从本机 VS 的 Redist 目录取最新版本的 x64 CRT 全套。

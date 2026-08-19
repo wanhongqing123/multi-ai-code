@@ -92,6 +92,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private boolean hasUnseenLatestMessage;
     private boolean voiceMode;
     private MediaRecorder recorder;
+    private SpeechRecognizer speechRecognizer;
     private File recordingFile;
     private long recordingStartedAtMillis;
     private boolean cancelRecording;
@@ -111,6 +112,12 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         getWindow().setNavigationBarColor(Color.WHITE);
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
         mediaStore = new RemoteIMMediaStore(getCacheDir());
+        // 凭证由 Gradle 从 local.properties 注入；没配时 isAvailable() 为 false，
+        // 录音会照旧当语音消息发出去，不会因此报错。
+        speechRecognizer = new TencentSpeechRecognizer(
+                BuildConfig.TENCENT_ASR_APP_ID,
+                BuildConfig.TENCENT_ASR_SECRET_ID,
+                BuildConfig.TENCENT_ASR_SECRET_KEY);
         session = new RemoteIMSessionController(this, this);
         showInitialLogin = session.requiresLogin();
         render();
@@ -1525,20 +1532,74 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
 
     private void finishVoiceRecording() {
         if (recorder == null) return;
+        java.io.File finishedFile = null;
+        int duration = 1;
         try {
             recorder.stop();
-            int duration = Math.max(1, (int) ((System.currentTimeMillis() - recordingStartedAtMillis) / 1000));
-            session.sendVoiceMessage(recordingFile.getAbsolutePath(), duration);
-            stickToLatestMessage = true;
-        } catch (RuntimeException | IOException error) {
+            duration = Math.max(1, (int) ((System.currentTimeMillis() - recordingStartedAtMillis) / 1000));
+            finishedFile = recordingFile;
+        } catch (RuntimeException error) {
             if (recordingFile != null) recordingFile.delete();
-            toast("语音消息发送失败");
+            toast("录音结束失败");
         } finally {
             recorder.release();
             recorder = null;
             recordingFile = null;
-            render();
         }
+        if (finishedFile == null) {
+            render();
+            return;
+        }
+        transcribeThenSend(finishedFile, duration);
+    }
+
+    /**
+     * 录完先转文字发文字；识别不可用或失败时回退成发语音消息——用户说过的话不能因为
+     * 识别这一环出问题就凭空消失。
+     */
+    private void transcribeThenSend(java.io.File audioFile, int duration) {
+        if (speechRecognizer == null || !speechRecognizer.isAvailable()) {
+            sendVoiceFallback(audioFile, duration);
+            return;
+        }
+        toast("正在识别…");
+        speechRecognizer.transcribe(audioFile, "m4a", new SpeechRecognizer.Callback() {
+            @Override
+            public void onText(String text) {
+                if (text == null || text.trim().isEmpty()) {
+                    toast("没听清，已按语音发送");
+                    sendVoiceFallback(audioFile, duration);
+                    return;
+                }
+                try {
+                    session.sendTextMessage(text.trim());
+                } catch (RuntimeException | IOException error) {
+                    toast("识别成功但发送失败，已按语音发送");
+                    sendVoiceFallback(audioFile, duration);
+                    return;
+                }
+                audioFile.delete();
+                stickToLatestMessage = true;
+                render();
+            }
+
+            @Override
+            public void onError(String message) {
+                toast(message == null || message.isEmpty() ? "语音识别失败，已按语音发送" : message);
+                sendVoiceFallback(audioFile, duration);
+            }
+        });
+    }
+
+    private void sendVoiceFallback(java.io.File audioFile, int duration) {
+        try {
+            session.sendVoiceMessage(audioFile.getAbsolutePath(), duration);
+            stickToLatestMessage = true;
+        } catch (RuntimeException | IOException error) {
+            audioFile.delete();
+            toast("语音消息发送失败");
+        }
+        render();
     }
 
     private void cancelVoiceRecording() {

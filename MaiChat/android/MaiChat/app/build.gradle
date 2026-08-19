@@ -2,6 +2,16 @@ plugins {
     id "com.android.application"
 }
 
+// 腾讯云 ASR 凭证从 local.properties 读，绝不进源码。local.properties 已被
+// 两层 .gitignore 忽略，所以提交出去的代码里不含任何密钥；没配时三项为空字符串，
+// 语音识别自动降级为「照旧发语音消息」，构建不会失败。
+def asrProps = new Properties()
+def asrPropsFile = rootProject.file("local.properties")
+if (asrPropsFile.exists()) {
+    asrPropsFile.withInputStream { asrProps.load(it) }
+}
+def asrValue = { String key -> (asrProps.getProperty(key) ?: "").trim() }
+
 android {
     namespace "com.kongshang.maichat"
     compileSdk 34
@@ -14,6 +24,10 @@ android {
         versionName "0.1.51"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        buildConfigField "String", "TENCENT_ASR_APP_ID", "\"${asrValue('tencent.asr.appId')}\""
+        buildConfigField "String", "TENCENT_ASR_SECRET_ID", "\"${asrValue('tencent.asr.secretId')}\""
+        buildConfigField "String", "TENCENT_ASR_SECRET_KEY", "\"${asrValue('tencent.asr.secretKey')}\""
 
         ndk {
             abiFilters "armeabi-v7a", "arm64-v8a"
@@ -35,6 +49,10 @@ android {
 
 dependencies {
     implementation "androidx.core:core:1.10.1"
+    // 腾讯云一句话识别。settings.gradle 是 FAIL_ON_PROJECT_REPOS，模块里不能加
+    // flatDir 仓库，所以用 files() 直接引 vendored 的 aar。
+    implementation files("libs/asr-one-sentence-release.aar")
+    implementation "com.google.code.gson:gson:2.8.5"
     implementation "com.tencent.imsdk:imsdk-plus:9.0.7665"
     implementation "com.tencent.liteav:LiteAVSDK_TRTC:13.4.0.20477"
 

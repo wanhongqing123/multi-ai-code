@@ -15,7 +15,7 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "7FC7FD6A429324B348E303F6"
+               BlueprintIdentifier = "AB419E14F801B114793FBE7B"
                BuildableName = "MaiChatCore.framework"
                BlueprintName = "MaiChatCore"
                ReferencedContainer = "container:MaiChat.xcodeproj">
@@ -29,7 +29,7 @@
             buildForAnalyzing = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "C5B6F2E337567903DC127260"
+               BlueprintIdentifier = "93B5D72D6A27417C033FC716"
                BuildableName = "MaiChatTests.xctest"
                BlueprintName = "MaiChatTests"
                ReferencedContainer = "container:MaiChat.xcodeproj">
@@ -46,7 +46,7 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "7FC7FD6A429324B348E303F6"
+            BlueprintIdentifier = "AB419E14F801B114793FBE7B"
             BuildableName = "MaiChatCore.framework"
             BlueprintName = "MaiChatCore"
             ReferencedContainer = "container:MaiChat.xcodeproj">
@@ -58,7 +58,7 @@
             parallelizable = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "C5B6F2E337567903DC127260"
+               BlueprintIdentifier = "93B5D72D6A27417C033FC716"
                BuildableName = "MaiChatTests.xctest"
                BlueprintName = "MaiChatTests"
                ReferencedContainer = "container:MaiChat.xcodeproj">
@@ -81,7 +81,7 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "7FC7FD6A429324B348E303F6"
+            BlueprintIdentifier = "AB419E14F801B114793FBE7B"
             BuildableName = "MaiChatCore.framework"
             BlueprintName = "MaiChatCore"
             ReferencedContainer = "container:MaiChat.xcodeproj">
@@ -97,7 +97,7 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "7FC7FD6A429324B348E303F6"
+            BlueprintIdentifier = "AB419E14F801B114793FBE7B"
             BuildableName = "MaiChatCore.framework"
             BlueprintName = "MaiChatCore"
             ReferencedContainer = "container:MaiChat.xcodeproj">

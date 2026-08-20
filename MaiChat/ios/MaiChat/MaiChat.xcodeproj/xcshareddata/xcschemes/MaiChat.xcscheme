@@ -15,7 +15,7 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "7FDFC48FC4EC8124BDAE9AD7"
+               BlueprintIdentifier = "EF22154244DAC9372E230EE5"
                BuildableName = "MaiChat.app"
                BlueprintName = "MaiChat"
                ReferencedContainer = "container:MaiChat.xcodeproj">
@@ -29,7 +29,7 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "7FC7FD6A429324B348E303F6"
+               BlueprintIdentifier = "AB419E14F801B114793FBE7B"
                BuildableName = "MaiChatCore.framework"
                BlueprintName = "MaiChatCore"
                ReferencedContainer = "container:MaiChat.xcodeproj">
@@ -46,7 +46,7 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "7FDFC48FC4EC8124BDAE9AD7"
+            BlueprintIdentifier = "EF22154244DAC9372E230EE5"
             BuildableName = "MaiChat.app"
             BlueprintName = "MaiChat"
             ReferencedContainer = "container:MaiChat.xcodeproj">
@@ -69,7 +69,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "7FDFC48FC4EC8124BDAE9AD7"
+            BlueprintIdentifier = "EF22154244DAC9372E230EE5"
             BuildableName = "MaiChat.app"
             BlueprintName = "MaiChat"
             ReferencedContainer = "container:MaiChat.xcodeproj">
@@ -88,7 +88,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "7FDFC48FC4EC8124BDAE9AD7"
+            BlueprintIdentifier = "EF22154244DAC9372E230EE5"
             BuildableName = "MaiChat.app"
             BlueprintName = "MaiChat"
             ReferencedContainer = "container:MaiChat.xcodeproj">

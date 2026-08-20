@@ -79,7 +79,7 @@ private final class SentenceRecognitionSession: NSObject, QCloudSentenceRecogniz
             self.selfReference = self
             lock.unlock()
             let accepted = recognizer.recoginize(
-                withData: audioData,
+                with: audioData,
                 voiceFormat: voiceFormat,
                 engSerViceType: engineType
             )

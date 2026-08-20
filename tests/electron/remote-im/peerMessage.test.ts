@@ -8,7 +8,6 @@ import {
 } from '../../../electron/remote-im/peerMessage.js'
 
 const config: RemoteImConfig = {
-  enabled: true,
   provider: 'tencent-im',
   sdkAppId: 1600148979,
   desktopUserId: 'desktop-a',

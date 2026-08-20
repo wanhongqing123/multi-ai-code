@@ -76,7 +76,6 @@ vi.mock('@tencentcloud/lite-chat', () => ({
 // 连接用的最小可用配置。仓库里既有用例是整段内联的，新增用例复用这个工厂即可。
 function baseConfig() {
   return {
-    enabled: true,
     provider: 'tencent-im' as const,
     sdkAppId: 1600148979,
     desktopUserId: 'desktop-a',
@@ -495,7 +494,6 @@ describe('tencent IM client helpers', () => {
     const runtimePromise = connectTencentImClient({
       projectId: 'project-1',
       config: {
-        enabled: true,
         provider: 'tencent-im',
         sdkAppId: 1600148979,
         desktopUserId: 'desktop-a',
@@ -545,7 +543,6 @@ describe('tencent IM client helpers', () => {
     const runtimePromise = connectTencentImClient({
       projectId: 'project-1',
       config: {
-        enabled: true,
         provider: 'tencent-im',
         sdkAppId: 1600148979,
         desktopUserId: 'desktop-a',
@@ -598,7 +595,6 @@ describe('tencent IM client helpers', () => {
     const runtimePromise = connectTencentImClient({
       projectId: 'project-1',
       config: {
-        enabled: true,
         provider: 'tencent-im',
         sdkAppId: 1600148979,
         desktopUserId: 'desktop-a',
@@ -646,7 +642,6 @@ describe('tencent IM client helpers', () => {
     const runtimePromise = connectTencentImClient({
       projectId: 'project-1',
       config: {
-        enabled: true,
         provider: 'tencent-im',
         sdkAppId: 1600148979,
         desktopUserId: 'desktop-a',
@@ -694,7 +689,6 @@ describe('tencent IM client helpers', () => {
     const runtimePromise = connectTencentImClient({
       projectId: 'project-1',
       config: {
-        enabled: true,
         provider: 'tencent-im',
         sdkAppId: 1600148979,
         desktopUserId: 'desktop-a',
@@ -745,7 +739,6 @@ describe('tencent IM client helpers', () => {
     const runtimePromise = connectTencentImClient({
       projectId: 'project-1',
       config: {
-        enabled: true,
         provider: 'tencent-im',
         sdkAppId: 1600148979,
         desktopUserId: 'desktop-a',
@@ -912,7 +905,6 @@ describe('tencent IM client helpers', () => {
     const runtimePromise = connectTencentImClient({
       projectId: 'project-1',
       config: {
-        enabled: true,
         provider: 'tencent-im',
         sdkAppId: 1600148979,
         desktopUserId: 'desktop-a',
@@ -964,7 +956,6 @@ describe('tencent IM client helpers', () => {
     const runtimePromise = connectTencentImClient({
       projectId: 'project-1',
       config: {
-        enabled: true,
         provider: 'tencent-im',
         sdkAppId: 1600148979,
         desktopUserId: 'desktop-a',
@@ -1009,7 +1000,6 @@ describe('tencent IM client helpers', () => {
     const runtimePromise = connectTencentImClient({
       projectId: 'project-1',
       config: {
-        enabled: true,
         provider: 'tencent-im',
         sdkAppId: 1600148979,
         desktopUserId: 'desktop-a',
@@ -1057,7 +1047,6 @@ describe('tencent IM client helpers', () => {
       connectTencentImClient({
         projectId: 'project-1',
         config: {
-          enabled: true,
           provider: 'tencent-im',
           sdkAppId: 1600148979,
           desktopUserId: 'desktop-a',
@@ -1087,7 +1076,6 @@ describe('tencent IM client helpers', () => {
     const runtimePromise = connectTencentImClient({
       projectId: 'project-1',
       config: {
-        enabled: true,
         provider: 'tencent-im',
         sdkAppId: 1600148979,
         desktopUserId: 'desktop-a',
@@ -1127,7 +1115,6 @@ describe('tencent IM client helpers', () => {
     const runtimePromise = connectTencentImClient({
       projectId: 'project-1',
       config: {
-        enabled: true,
         provider: 'tencent-im',
         sdkAppId: 1600148979,
         desktopUserId: 'desktop-a',

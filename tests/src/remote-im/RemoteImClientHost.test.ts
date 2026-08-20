@@ -11,7 +11,6 @@ import {
 } from '../../../src/remote-im/RemoteImClientHost.js'
 
 const config: RemoteImConfig = {
-  enabled: true,
   provider: 'tencent-im',
   sdkAppId: 1600148979,
   desktopUserId: 'test123',
@@ -109,13 +108,6 @@ describe('RemoteImClientHost', () => {
         loginRequested: true
       })
     ).toBe(false)
-    expect(
-      shouldConnectRemoteImClient({
-        projectId: 'project-1',
-        config: { ...config, enabled: false },
-        loginRequested: true
-      })
-    ).toBe(true)
   })
 
   it('does not connect with incomplete account credentials', () => {

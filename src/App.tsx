@@ -55,7 +55,6 @@ import type {
 
 const LAST_PROJECT_KEY = 'multi-ai-code.lastProjectId'
 const DEFAULT_REMOTE_IM_CONFIG: RemoteImConfig = {
-  enabled: true,
   provider: 'tencent-im',
   sdkAppId: null,
   desktopUserId: '',
@@ -686,10 +685,7 @@ function AppShell() {
 
       if (currentProjectId) {
         const configResult = input.projectConfig
-          ? await window.api.remoteIm.setConfig(currentProjectId, {
-              ...input.projectConfig,
-              enabled: true
-            })
+          ? await window.api.remoteIm.setConfig(currentProjectId, input.projectConfig)
           : await window.api.remoteIm.getConfig(currentProjectId)
         if (configResult.ok) {
           setRemoteImConfig(configResult.value)

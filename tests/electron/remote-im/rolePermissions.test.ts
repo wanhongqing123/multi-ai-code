@@ -9,7 +9,6 @@ import {
 } from '../../../electron/remote-im/rolePermissions.js'
 
 const masterConfig: RemoteImConfig = {
-  enabled: true,
   provider: 'tencent-im',
   sdkAppId: 1600148979,
   desktopUserId: 'desktop-a',

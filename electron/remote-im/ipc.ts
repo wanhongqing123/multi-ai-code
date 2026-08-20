@@ -28,6 +28,7 @@ import {
   DEFAULT_REMOTE_IM_CONFIG,
   normalizeRemoteImConfig,
   toRemoteImProjectConfig,
+  toRemoteImProjectMetaConfig,
   validateRemoteImConfig
 } from './config.js'
 import {
@@ -801,7 +802,14 @@ async function setRemoteImConfig(
   }
 
   const { meta, repaired } = await readProjectMeta(projectId)
-  meta[REMOTE_IM_META_KEY] = config
+  // 只写项目级真正拥有的字段。其余（凭证、账号、好友名单）读取时一律被
+  // mergeRemoteImAccountIntoConfig 用账号库的值覆盖，写进来只是一堆永远为空、
+  // 且容易让人误以为「这里能改」的空壳。
+  meta[REMOTE_IM_META_KEY] = toRemoteImProjectMetaConfig(config)
+  // 设置界面只剩 AI CLI 之后（0b35e1b）这两块功能被整体删除，代码里已无任何
+  // 读写方，只有老项目文件里还留着数据。保存时顺手清掉。
+  delete meta.build_config
+  delete meta.runtime_config
   await writeProjectMeta(projectId, meta)
   const mergedConfig = mergeRemoteImAccountIntoConfig(
     config,

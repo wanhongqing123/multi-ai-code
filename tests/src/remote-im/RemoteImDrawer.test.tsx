@@ -16,7 +16,6 @@ const status: RemoteImStatus = {
 }
 
 const config: RemoteImConfig = {
-  enabled: true,
   provider: 'tencent-im',
   sdkAppId: 1400000000,
   desktopUserId: 'desktop_bot',

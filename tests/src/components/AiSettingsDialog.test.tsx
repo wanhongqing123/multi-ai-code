@@ -12,7 +12,6 @@ import AiSettingsDialog, {
 import type { RemoteImConfig } from '../../../electron/remote-im/types'
 
 const LOADED_IM_CONFIG = {
-  enabled: true,
   friendUserIds: ['whq-iphone'],
   allowedUserIds: ['whq-iphone'],
   remoteDesktopMode: 'disabled',

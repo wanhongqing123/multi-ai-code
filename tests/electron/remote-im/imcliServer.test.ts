@@ -6,7 +6,6 @@ import type { RemoteImConfig, RemoteImMessage, RemoteImStatus } from '../../../e
 import { startRemoteImCliServer } from '../../../electron/remote-im/imcliServer.js'
 
 const config: RemoteImConfig = {
-  enabled: true,
   provider: 'tencent-im',
   sdkAppId: 1600148979,
   desktopUserId: 'agent-a',

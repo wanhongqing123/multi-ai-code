@@ -340,7 +340,6 @@ describe('remote IM account config', () => {
     const merged = mergeRemoteImAccountIntoConfig(
       {
         ...DEFAULT_REMOTE_IM_CONFIG,
-        enabled: true,
         outputFlushIntervalMs: 5000,
         outputMaxChunkChars: 900
       },
@@ -357,7 +356,6 @@ describe('remote IM account config', () => {
     )
 
     expect(merged).toMatchObject({
-      enabled: true,
       sdkAppId: 1600148979,
       desktopUserId: 'test123',
       desktopRole: 'master',

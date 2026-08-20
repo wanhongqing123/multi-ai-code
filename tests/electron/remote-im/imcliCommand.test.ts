@@ -14,7 +14,6 @@ const imcliPath = join(process.cwd(), 'bin', 'imcli.mjs')
 const { withImcliOriginSuffix } = await import(pathToFileURL(imcliPath).href)
 
 const config: RemoteImConfig = {
-  enabled: true,
   provider: 'tencent-im',
   sdkAppId: 1600148979,
   desktopUserId: 'agent-a',

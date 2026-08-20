@@ -45,7 +45,6 @@ describe('preload remote IM api', () => {
     const imageFile = { name: 'photo.png' } as File
     electronMock.getPathForFile.mockReturnValue('/tmp/photo.png')
     const config = {
-      enabled: true,
       provider: 'tencent-im',
       sdkAppId: 1400000000,
       desktopUserId: 'desktop_bot',

@@ -15,7 +15,6 @@ import {
 } from '../../../src/remote-im/remoteImViewModel.js'
 
 const config: RemoteImConfig = {
-  enabled: true,
   provider: 'tencent-im',
   sdkAppId: 1400000000,
   desktopUserId: 'local-user',

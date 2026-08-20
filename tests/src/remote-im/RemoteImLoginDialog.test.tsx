@@ -28,7 +28,6 @@ const loginState: RemoteImLoginState = {
 }
 
 const projectConfig: RemoteImConfig = {
-  enabled: true,
   provider: 'tencent-im',
   sdkAppId: 1600148979,
   desktopUserId: 'test123',

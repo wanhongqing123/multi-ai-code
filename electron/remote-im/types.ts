@@ -3,7 +3,6 @@ export type RemoteImDesktopRole = 'master' | 'slave'
 export type RemoteImContactRelation = 'friend' | 'master' | 'slave'
 
 export interface RemoteImConfig {
-  enabled: boolean
   provider: RemoteImProvider
   sdkAppId: number | null
   desktopUserId: string

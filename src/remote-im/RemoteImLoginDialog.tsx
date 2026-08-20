@@ -126,7 +126,7 @@ export default function RemoteImLoginDialog(props: RemoteImLoginDialogProps): JS
         ...draft,
         desktopUserId: userId
       }),
-      projectConfig: projectDraft ? { ...projectDraft, enabled: true } : undefined
+      projectConfig: projectDraft ?? undefined
     })
   }
 

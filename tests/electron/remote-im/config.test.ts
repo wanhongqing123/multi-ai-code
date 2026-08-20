@@ -3,6 +3,7 @@ import {
   DEFAULT_REMOTE_IM_CONFIG,
   normalizeRemoteImConfig,
   toRemoteImProjectConfig,
+  toRemoteImProjectMetaConfig,
   validateRemoteImConfig
 } from '../../../electron/remote-im/config.js'
 
@@ -27,7 +28,6 @@ describe('remote IM config', () => {
   it('trims user ids, removes empty whitelist entries, and ignores legacy enabled=false', () => {
     expect(
       normalizeRemoteImConfig({
-        enabled: false,
         provider: 'tencent-im',
         sdkAppId: '1400000000',
         desktopUserId: ' desktop_bot ',
@@ -39,7 +39,6 @@ describe('remote IM config', () => {
         outputMaxChunkChars: 10
       })
     ).toMatchObject({
-      enabled: true,
       provider: 'tencent-im',
       sdkAppId: 1400000000,
       desktopUserId: 'desktop_bot',
@@ -83,19 +82,15 @@ describe('remote IM config', () => {
     })
   })
 
-  it('allows enabled project configs without account fields because login is user-level', () => {
-    const result = validateRemoteImConfig({
-      ...DEFAULT_REMOTE_IM_CONFIG,
-      enabled: true
-    })
+  it('allows project configs without account fields because login is user-level', () => {
+    const result = validateRemoteImConfig({ ...DEFAULT_REMOTE_IM_CONFIG })
 
     expect(result.ok).toBe(true)
   })
 
-  it('allows enabled test configs without contacts so contacts can be added from the IM panel', () => {
+  it('allows test configs without contacts so contacts can be added from the IM panel', () => {
     const result = validateRemoteImConfig({
       ...DEFAULT_REMOTE_IM_CONFIG,
-      enabled: true,
       sdkAppId: 1600148979,
       desktopUserId: 'desktop_bot',
       userSigMode: 'secret-key',
@@ -107,7 +102,6 @@ describe('remote IM config', () => {
 
   it('normalizes legacy slave configs as regular desktop accounts', () => {
     const config = normalizeRemoteImConfig({
-      enabled: true,
       sdkAppId: 1600148979,
       desktopUserId: 'desktop_bot',
       desktopRole: 'slave',
@@ -147,6 +141,40 @@ describe('remote desktop mode in remote IM config', () => {
     // toRemoteImProjectConfig 以 DEFAULT 为底，漏传就会在保存时把用户的选择重置。
     const config = { ...DEFAULT_REMOTE_IM_CONFIG, remoteDesktopMode: 'unattended' as const }
     expect(toRemoteImProjectConfig(config).remoteDesktopMode).toBe('unattended')
+  })
+
+  it('persists only the four project-owned fields into project.json', () => {
+    // 以前整份 RemoteImConfig 都写进 project.json，于是每个项目里都躺着一份
+    // sdkAppId/desktopUserId/friendUserIds 的空壳——读取时全被账号库覆盖，
+    // 纯冗余，还让人误以为这些能按项目改。
+    const meta = toRemoteImProjectMetaConfig({
+      ...DEFAULT_REMOTE_IM_CONFIG,
+      sdkAppId: 1400000000,
+      desktopUserId: 'someone-else',
+      userSigSecretKey: 'super-secret',
+      friendUserIds: ['phone-user'],
+      allowedUserIds: ['phone-user'],
+      outputFlushIntervalMs: 3000,
+      outputMaxChunkChars: 1200,
+      remoteDesktopMode: 'attended',
+      remoteDesktopControl: true
+    } as never)
+
+    expect(Object.keys(meta).sort()).toEqual([
+      'outputFlushIntervalMs',
+      'outputMaxChunkChars',
+      'remoteDesktopControl',
+      'remoteDesktopMode'
+    ])
+    expect(meta).toEqual({
+      outputFlushIntervalMs: 3000,
+      outputMaxChunkChars: 1200,
+      remoteDesktopMode: 'attended',
+      remoteDesktopControl: true
+    })
+    // 凭证绝不能进项目文件：项目目录可能被同步/分享，账号库才是它们的家。
+    expect(JSON.stringify(meta)).not.toContain('super-secret')
+    expect(JSON.stringify(meta)).not.toContain('someone-else')
   })
 
   it('strips every connection-relevant field from the project config', () => {

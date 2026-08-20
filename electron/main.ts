@@ -14,7 +14,6 @@ import {
   deleteProject as dbDeleteProject,
   updateProjectName,
   touchProject,
-  recordEvent
 } from './store/db.js'
 import {
   ensureRootDir,

@@ -13,28 +13,6 @@ CREATE TABLE IF NOT EXISTS projects (
   updated_at   TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS stages (
-  project_id   TEXT NOT NULL,
-  stage_id     INTEGER NOT NULL,
-  status       TEXT NOT NULL DEFAULT 'idle',
-  artifact     TEXT,
-  verdict      TEXT,
-  updated_at   TEXT NOT NULL,
-  PRIMARY KEY (project_id, stage_id),
-  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS events (
-  id           INTEGER PRIMARY KEY AUTOINCREMENT,
-  project_id   TEXT NOT NULL,
-  from_stage   INTEGER,
-  to_stage     INTEGER,
-  kind         TEXT NOT NULL,
-  payload      TEXT,
-  created_at   TEXT NOT NULL,
-  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
-);
-
 
 CREATE TABLE IF NOT EXISTS scheduled_tasks (
   id                        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -101,7 +79,6 @@ CREATE TABLE IF NOT EXISTS remote_im_messages (
 `
 
 const INDEXES = `
-CREATE INDEX IF NOT EXISTS idx_events_project ON events(project_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_project ON scheduled_tasks(project_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_due ON scheduled_tasks(project_id, enabled, next_run_at);
 CREATE INDEX IF NOT EXISTS idx_scheduled_task_runs_task ON scheduled_task_runs(task_id, scheduled_at DESC);
@@ -149,23 +126,20 @@ export function initDb(): Database.Database {
     db.prepare('DROP TABLE IF EXISTS habit_flows').run()
     db.prepare('DROP TABLE IF EXISTS skill_candidates').run()
     db.prepare('DROP TABLE IF EXISTS skills').run()
+    // 多阶段架构退休：stages / events 已无任何读写方（updateStageStatus 零调用，
+    // recordEvent 只被 import 从未调用）。CREATE TABLE IF NOT EXISTS 只管新库，
+    // 老库里这两张表还在，显式 DROP 才能真正清掉。
+    db.prepare('DROP INDEX IF EXISTS idx_events_project').run()
+    db.prepare('DROP TABLE IF EXISTS stages').run()
+    db.prepare('DROP TABLE IF EXISTS events').run()
+    // artifacts 的代码已在上一轮清理中移除，但老库里表还在。
+    db.prepare('DROP INDEX IF EXISTS idx_artifacts_project').run()
+    db.prepare('DROP TABLE IF EXISTS artifacts').run()
   } catch {
     /* best-effort cleanup for retired feature storage */
   }
   db.exec(INDEXES)
 
-  // One-shot migration: single-stage architecture retires stages 2/3/4.
-  // Drop any orphaned rows so UI filters and aggregates stay clean.
-  try {
-    db.prepare('DELETE FROM stages WHERE stage_id > 1').run()
-  } catch (err) {
-    // Table may not exist on fresh installs or under a different name.
-  }
-  try {
-    db.prepare('DELETE FROM events WHERE from_stage > 1 OR to_stage > 1').run()
-  } catch (err) {
-    // Table may not exist on fresh installs or under a different name.
-  }
 
   return db
 }
@@ -210,12 +184,6 @@ export function createProject(p: {
     )
     .run(p.id, p.name, p.target_repo, now, now)
 
-  const insertStage = getDb().prepare(
-    `INSERT INTO stages (project_id, stage_id, status, updated_at) VALUES (?, ?, 'idle', ?)`
-  )
-  for (const stageId of [1, 2, 3, 4, 5, 6]) {
-    insertStage.run(p.id, stageId, now)
-  }
   return getProject(p.id)!
 }
 
@@ -247,40 +215,3 @@ export function listProjects(): ProjectRow[] {
     .all() as ProjectRow[]
 }
 
-export function updateStageStatus(
-  projectId: string,
-  stageId: number,
-  status: string,
-  extras: { artifact?: string; verdict?: string } = {}
-): void {
-  const now = new Date().toISOString()
-  getDb()
-    .prepare(
-      `UPDATE stages SET status = ?, artifact = COALESCE(?, artifact),
-         verdict = COALESCE(?, verdict), updated_at = ?
-       WHERE project_id = ? AND stage_id = ?`
-    )
-    .run(status, extras.artifact ?? null, extras.verdict ?? null, now, projectId, stageId)
-}
-
-export function recordEvent(e: {
-  project_id: string
-  from_stage?: number
-  to_stage?: number
-  kind: string
-  payload?: unknown
-}): void {
-  getDb()
-    .prepare(
-      `INSERT INTO events (project_id, from_stage, to_stage, kind, payload, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`
-    )
-    .run(
-      e.project_id,
-      e.from_stage ?? null,
-      e.to_stage ?? null,
-      e.kind,
-      e.payload ? JSON.stringify(e.payload) : null,
-      new Date().toISOString()
-    )
-}

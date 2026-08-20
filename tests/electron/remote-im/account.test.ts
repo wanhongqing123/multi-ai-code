@@ -93,7 +93,11 @@ describe('remote IM account config', () => {
       hasRemoteImAccountConnectionChanged(account, {
         ...account,
         friendUserIds: ['mac-apollo-u3player', 'friend-a', 'whq-iphone', 'slave-a'],
-        allowedUserIds: ['friend-a', 'mac-apollo-u3player', 'whq-iphone', 'slave-a']
+        allowedUserIds: ['friend-a', 'mac-apollo-u3player', 'whq-iphone', 'slave-a'],
+        outputFlushIntervalMs: 2000,
+        outputMaxChunkChars: 4000,
+        remoteDesktopMode: 'disabled' as const,
+        remoteDesktopControl: false
       })
     ).toBe(false)
   })
@@ -105,7 +109,11 @@ describe('remote IM account config', () => {
       userSigMode: 'secret-key',
       userSigSecretKey: 'secret',
       friendUserIds: ['whq-iphone'],
-      allowedUserIds: ['whq-iphone']
+      allowedUserIds: ['whq-iphone'],
+      outputFlushIntervalMs: 2000,
+      outputMaxChunkChars: 4000,
+      remoteDesktopMode: 'disabled' as const,
+      remoteDesktopControl: false
     })
 
     const incoming = normalizeRemoteImAccountConfig({
@@ -118,7 +126,11 @@ describe('remote IM account config', () => {
     expect(preserveRemoteImAccountContacts(incoming, existing)).toMatchObject({
       desktopUserId: 'mac-quarkpc',
       friendUserIds: ['whq-iphone'],
-      allowedUserIds: ['whq-iphone']
+      allowedUserIds: ['whq-iphone'],
+      outputFlushIntervalMs: 2000,
+      outputMaxChunkChars: 4000,
+      remoteDesktopMode: 'disabled' as const,
+      remoteDesktopControl: false
     })
   })
 
@@ -160,7 +172,11 @@ describe('remote IM account config', () => {
       friendUserIds: ['whq-iphone', 'whq-android'],
       masterUserIds: [],
       slaveUserIds: [],
-      allowedUserIds: ['whq-iphone', 'whq-android']
+      allowedUserIds: ['whq-iphone', 'whq-android'],
+      outputFlushIntervalMs: 2000,
+      outputMaxChunkChars: 4000,
+      remoteDesktopMode: 'disabled' as const,
+      remoteDesktopControl: false
     })
   })
 
@@ -175,7 +191,11 @@ describe('remote IM account config', () => {
 
     expect(syncRemoteImAccountContactsFromSdk(account, ['', '   '])).toMatchObject({
       friendUserIds: [],
-      allowedUserIds: []
+      allowedUserIds: [],
+      outputFlushIntervalMs: 2000,
+      outputMaxChunkChars: 4000,
+      remoteDesktopMode: 'disabled' as const,
+      remoteDesktopControl: false
     })
   })
 
@@ -220,6 +240,48 @@ describe('remote IM account config', () => {
     })
   })
 
+  it('keeps output throttling and remote desktop settings on the account', () => {
+    // 这四项以前存在每个项目的 project.json 里。它们描述的是「这台机器上的这个
+    // 账号」怎么工作，与仓库无关——分项目存会让同一台机器出现互相矛盾的设置，
+    // 比如 A 项目开着无人值守远程桌面而 B 项目关着，可屏幕只有一块。
+    const account = normalizeRemoteImAccountConfig({
+      sdkAppId: 1600148979,
+      desktopUserId: 'mac-quarkpc',
+      outputFlushIntervalMs: 3000,
+      outputMaxChunkChars: 1200,
+      remoteDesktopMode: 'attended',
+      remoteDesktopControl: true
+    })
+
+    expect(account).toMatchObject({
+      outputFlushIntervalMs: 3000,
+      outputMaxChunkChars: 1200,
+      remoteDesktopMode: 'attended',
+      remoteDesktopControl: true
+    })
+    // 合并进项目配置时必须带上，否则界面读到的永远是默认值。
+    expect(mergeRemoteImAccountIntoConfig(DEFAULT_REMOTE_IM_CONFIG, account)).toMatchObject({
+      outputFlushIntervalMs: 3000,
+      remoteDesktopMode: 'attended',
+      remoteDesktopControl: true
+    })
+  })
+
+  it('falls back to safe defaults for missing or corrupt runtime settings', () => {
+    const account = normalizeRemoteImAccountConfig({
+      sdkAppId: 1600148979,
+      desktopUserId: 'mac-quarkpc',
+      remoteDesktopMode: 'bogus',
+      remoteDesktopControl: 'yes'
+    })
+
+    // 远程桌面必须收紧：配置损坏时绝不能变成「默认可被看屏幕/被操作」。
+    expect(account.remoteDesktopMode).toBe('disabled')
+    expect(account.remoteDesktopControl).toBe(false)
+    expect(account.outputFlushIntervalMs).toBe(2000)
+    expect(account.outputMaxChunkChars).toBe(4000)
+  })
+
   it('adds a contact to the friend and allow lists', () => {
     const account = normalizeRemoteImAccountConfig({
       sdkAppId: 1600148979,
@@ -229,7 +291,11 @@ describe('remote IM account config', () => {
 
     expect(addRemoteImAccountContact(account, ' new-phone ')).toMatchObject({
       friendUserIds: ['existing-phone', 'new-phone'],
-      allowedUserIds: ['existing-phone', 'new-phone']
+      allowedUserIds: ['existing-phone', 'new-phone'],
+      outputFlushIntervalMs: 2000,
+      outputMaxChunkChars: 4000,
+      remoteDesktopMode: 'disabled' as const,
+      remoteDesktopControl: false
     })
     // 重复添加不应产生重复项。
     const twice = addRemoteImAccountContact(
@@ -336,7 +402,9 @@ describe('remote IM account config', () => {
     expect(removedRemoteImAccountContactUserIds(next, previous)).toEqual([])
   })
 
-  it('merges user account identity into project-level remote IM behavior config', () => {
+  it('merges the account config into the shape the UI reads', () => {
+    // 输出节流与远程桌面授权现在也归账号：合并结果必须以账号为准，
+    // 传进来的项目侧值（历史残留）不能反过来盖掉它。
     const merged = mergeRemoteImAccountIntoConfig(
       {
         ...DEFAULT_REMOTE_IM_CONFIG,
@@ -351,7 +419,9 @@ describe('remote IM account config', () => {
         userSigMode: 'secret-key',
         userSigSecretKey: 'secret',
         friendUserIds: ['test321'],
-        allowedUserIds: ['test321']
+        allowedUserIds: ['test321'],
+        outputFlushIntervalMs: 3000,
+        outputMaxChunkChars: 1200
       }
     )
 
@@ -365,8 +435,8 @@ describe('remote IM account config', () => {
       masterUserIds: [],
       slaveUserIds: [],
       allowedUserIds: ['test321'],
-      outputFlushIntervalMs: 5000,
-      outputMaxChunkChars: 900
+      outputFlushIntervalMs: 3000,
+      outputMaxChunkChars: 1200
     })
   })
 })

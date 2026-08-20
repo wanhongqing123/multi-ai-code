@@ -19,7 +19,11 @@ const account: RemoteImAccountConfig = {
   friendUserIds: [],
   masterUserIds: [],
   slaveUserIds: [],
-  allowedUserIds: []
+  allowedUserIds: [],
+  outputFlushIntervalMs: 2000,
+  outputMaxChunkChars: 4000,
+  remoteDesktopMode: 'disabled' as const,
+  remoteDesktopControl: false
 }
 
 describe('remote IM credentials', () => {

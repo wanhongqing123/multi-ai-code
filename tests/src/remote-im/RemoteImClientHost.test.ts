@@ -25,7 +25,7 @@ const config: RemoteImConfig = {
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 1200
 ,
-  remoteDesktopMode: 'disabled',
+  remoteDesktopMode: 'disabled' as const,
   remoteDesktopControl: false
 }
 
@@ -166,7 +166,7 @@ describe('RemoteImClientHost', () => {
           outputFlushIntervalMs: 5000,
           outputMaxChunkChars: 3000
 ,
-          remoteDesktopMode: 'disabled',
+          remoteDesktopMode: 'disabled' as const,
           remoteDesktopControl: false
         },
         loginRequested: true
@@ -255,7 +255,11 @@ describe('RemoteImClientHost', () => {
     const nextConfig = {
       ...config,
       friendUserIds: ['whq-iphone'],
-      allowedUserIds: ['whq-iphone']
+      allowedUserIds: ['whq-iphone'],
+      outputFlushIntervalMs: 2000,
+      outputMaxChunkChars: 4000,
+      remoteDesktopMode: 'disabled' as const,
+      remoteDesktopControl: false
     }
     const nextLoginState = {
       profileId: 'mac-quarkpc',
@@ -270,7 +274,11 @@ describe('RemoteImClientHost', () => {
         friendUserIds: nextConfig.friendUserIds,
         masterUserIds: nextConfig.masterUserIds,
         slaveUserIds: nextConfig.slaveUserIds,
-        allowedUserIds: nextConfig.allowedUserIds
+        allowedUserIds: nextConfig.allowedUserIds,
+        outputFlushIntervalMs: nextConfig.outputFlushIntervalMs,
+        outputMaxChunkChars: nextConfig.outputMaxChunkChars,
+        remoteDesktopMode: nextConfig.remoteDesktopMode,
+        remoteDesktopControl: nextConfig.remoteDesktopControl
       }
     }
     const syncContacts = vi.fn(async () => ({
@@ -322,7 +330,11 @@ describe('RemoteImClientHost', () => {
           friendUserIds: [],
           masterUserIds: [],
           slaveUserIds: [],
-          allowedUserIds: []
+          allowedUserIds: [],
+          outputFlushIntervalMs: 2000,
+          outputMaxChunkChars: 4000,
+          remoteDesktopMode: 'disabled' as const,
+          remoteDesktopControl: false
         }
       }
     }))

@@ -748,7 +748,12 @@ function AppShell() {
       // revoke tombstone. Other blocked SDK friends remain blocked.
       blockedUserIds: (remoteImLoginState?.account.blockedUserIds ?? []).filter(
         (userId) => userId !== cleanUserId
-      )
+      ),
+      // 输出节流与远程桌面授权也归账号：这里不带上就会在加好友时被重置成默认值。
+      outputFlushIntervalMs: nextConfig.outputFlushIntervalMs,
+      outputMaxChunkChars: nextConfig.outputMaxChunkChars,
+      remoteDesktopMode: nextConfig.remoteDesktopMode,
+      remoteDesktopControl: nextConfig.remoteDesktopControl
     }
     const result = await window.api.remoteIm.setAccount(account)
     if (!result.ok) {

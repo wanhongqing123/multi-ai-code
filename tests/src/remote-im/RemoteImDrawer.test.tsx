@@ -30,7 +30,7 @@ const config: RemoteImConfig = {
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 1200
 ,
-  remoteDesktopMode: 'disabled',
+  remoteDesktopMode: 'disabled' as const,
   remoteDesktopControl: false
 }
 
@@ -436,7 +436,11 @@ describe('RemoteImDrawer', () => {
         friendUserIds: [],
         masterUserIds: [],
         slaveUserIds: [],
-        allowedUserIds: []
+        allowedUserIds: [],
+        outputFlushIntervalMs: 2000,
+        outputMaxChunkChars: 4000,
+        remoteDesktopMode: 'disabled' as const,
+        remoteDesktopControl: false
       },
       messages: [],
       input: 'hello'

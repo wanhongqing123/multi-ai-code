@@ -24,7 +24,7 @@ const config: RemoteImConfig = {
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 1200
 ,
-  remoteDesktopMode: 'disabled',
+  remoteDesktopMode: 'disabled' as const,
   remoteDesktopControl: false
 }
 
@@ -258,7 +258,11 @@ describe('remote IM router', () => {
     const multiUserConfig: RemoteImConfig = {
       ...config,
       friendUserIds: ['phone_b'],
-      allowedUserIds: ['phone_admin', 'phone_b']
+      allowedUserIds: ['phone_admin', 'phone_b'],
+      outputFlushIntervalMs: 2000,
+      outputMaxChunkChars: 4000,
+      remoteDesktopMode: 'disabled' as const,
+      remoteDesktopControl: false
     }
     const router = createRemoteImRouter({
       getConfig: () => multiUserConfig,
@@ -848,7 +852,11 @@ describe('remote IM router', () => {
         ...config,
         desktopUserId: 'receiver_bot',
         masterUserIds: ['desktop_bot'],
-        allowedUserIds: ['desktop_bot']
+        allowedUserIds: ['desktop_bot'],
+        outputFlushIntervalMs: 2000,
+        outputMaxChunkChars: 4000,
+        remoteDesktopMode: 'disabled' as const,
+        remoteDesktopControl: false
       }),
       resolveSession: () => ({ sessionId: 'session-receiver', targetRepo: 'repo' }),
       sendUser: async (_sessionId, text) => {
@@ -1555,7 +1563,11 @@ describe('remote IM router', () => {
         friendUserIds: ['friend-a'],
         masterUserIds: [],
         slaveUserIds: [],
-        allowedUserIds: ['friend-a']
+        allowedUserIds: ['friend-a'],
+        outputFlushIntervalMs: 2000,
+        outputMaxChunkChars: 4000,
+        remoteDesktopMode: 'disabled' as const,
+        remoteDesktopControl: false
       }),
       resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
       sendUser: async (_sessionId, text) => {
@@ -1601,7 +1613,11 @@ describe('remote IM router', () => {
         desktopRole: 'slave',
         masterUserIds: ['master-a'],
         slaveUserIds: ['slave-c'],
-        allowedUserIds: ['master-a', 'slave-c']
+        allowedUserIds: ['master-a', 'slave-c'],
+        outputFlushIntervalMs: 2000,
+        outputMaxChunkChars: 4000,
+        remoteDesktopMode: 'disabled' as const,
+        remoteDesktopControl: false
       }),
       resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
       sendUser: async (_sessionId, text) => {
@@ -1637,7 +1653,11 @@ describe('remote IM router', () => {
         ...config,
         masterUserIds: ['master-a'],
         slaveUserIds: ['slave-b'],
-        allowedUserIds: ['master-a', 'slave-b']
+        allowedUserIds: ['master-a', 'slave-b'],
+        outputFlushIntervalMs: 2000,
+        outputMaxChunkChars: 4000,
+        remoteDesktopMode: 'disabled' as const,
+        remoteDesktopControl: false
       }),
       resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
       sendUser: async (_sessionId, text) => {
@@ -1678,7 +1698,11 @@ describe('remote IM router', () => {
         ...config,
         masterUserIds: ['master-a'],
         slaveUserIds: ['slave-b'],
-        allowedUserIds: ['master-a', 'slave-b']
+        allowedUserIds: ['master-a', 'slave-b'],
+        outputFlushIntervalMs: 2000,
+        outputMaxChunkChars: 4000,
+        remoteDesktopMode: 'disabled' as const,
+        remoteDesktopControl: false
       }),
       resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
       sendUser: async (_sessionId, text) => {
@@ -1723,7 +1747,11 @@ describe('remote IM router', () => {
         desktopRole: 'slave',
         masterUserIds: ['master-a'],
         slaveUserIds: ['slave-c'],
-        allowedUserIds: ['master-a', 'slave-c']
+        allowedUserIds: ['master-a', 'slave-c'],
+        outputFlushIntervalMs: 2000,
+        outputMaxChunkChars: 4000,
+        remoteDesktopMode: 'disabled' as const,
+        remoteDesktopControl: false
       }),
       resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
       sendUser: async (_sessionId, text) => {

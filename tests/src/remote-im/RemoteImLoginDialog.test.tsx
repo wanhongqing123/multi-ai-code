@@ -19,7 +19,11 @@ const account: RemoteImAccountConfig = {
   friendUserIds: [],
   masterUserIds: [],
   slaveUserIds: ['test321'],
-  allowedUserIds: ['test321']
+  allowedUserIds: ['test321'],
+  outputFlushIntervalMs: 2000,
+  outputMaxChunkChars: 4000,
+  remoteDesktopMode: 'disabled' as const,
+  remoteDesktopControl: false
 }
 
 const loginState: RemoteImLoginState = {
@@ -41,7 +45,7 @@ const projectConfig: RemoteImConfig = {
   allowedUserIds: ['test321'],
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 1200,
-  remoteDesktopMode: 'disabled',
+  remoteDesktopMode: 'disabled' as const,
   remoteDesktopControl: false
 }
 
@@ -128,7 +132,11 @@ describe('RemoteImLoginDialog', () => {
       desktopRole: 'master',
       masterUserIds: [],
       slaveUserIds: [],
-      allowedUserIds: []
+      allowedUserIds: [],
+      outputFlushIntervalMs: 2000,
+      outputMaxChunkChars: 4000,
+      remoteDesktopMode: 'disabled' as const,
+      remoteDesktopControl: false
     } satisfies RemoteImAccountConfig
     const saved = {
       ...account,
@@ -136,7 +144,11 @@ describe('RemoteImLoginDialog', () => {
       desktopRole: 'slave',
       masterUserIds: ['test1234'],
       slaveUserIds: [],
-      allowedUserIds: ['test1234']
+      allowedUserIds: ['test1234'],
+      outputFlushIntervalMs: 2000,
+      outputMaxChunkChars: 4000,
+      remoteDesktopMode: 'disabled' as const,
+      remoteDesktopControl: false
     } satisfies RemoteImAccountConfig
 
     expect(applyLoadedRemoteImLoginAccount(draft, saved)).toMatchObject({
@@ -145,7 +157,11 @@ describe('RemoteImLoginDialog', () => {
       sdkAppId: 1600148979,
       userSigMode: 'secret-key',
       masterUserIds: ['test1234'],
-      allowedUserIds: ['test1234']
+      allowedUserIds: ['test1234'],
+      outputFlushIntervalMs: 2000,
+      outputMaxChunkChars: 4000,
+      remoteDesktopMode: 'disabled' as const,
+      remoteDesktopControl: false
     })
     expect(applyLoadedRemoteImLoginAccount(draft, { ...saved, desktopUserId: 'other' })).toBe(draft)
   })

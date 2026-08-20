@@ -117,32 +117,6 @@ export function validateRemoteImConfig(config: RemoteImConfig): RemoteImValidati
   return issues.length === 0 ? { ok: true, issues: [] } : { ok: false, issues }
 }
 
-/** 项目 meta 里真正属于项目级的那几个键（其余读取时由账号库覆盖）。 */
-export interface RemoteImProjectMetaConfig {
-  outputFlushIntervalMs: number
-  outputMaxChunkChars: number
-  remoteDesktopMode: RemoteDesktopMode
-  remoteDesktopControl: boolean
-}
-
-/**
- * 落盘用的最小项目配置。
- *
- * 以前是把整个 RemoteImConfig 写进 project.json，于是每个项目里都躺着一份
- * sdkAppId/desktopUserId/friendUserIds 的空壳——读取时全被账号库覆盖，纯冗余，
- * 还容易让人误以为「这些能按项目改」。
- */
-export function toRemoteImProjectMetaConfig(
-  config: RemoteImConfig
-): RemoteImProjectMetaConfig {
-  return {
-    outputFlushIntervalMs: config.outputFlushIntervalMs,
-    outputMaxChunkChars: config.outputMaxChunkChars,
-    remoteDesktopMode: config.remoteDesktopMode,
-    remoteDesktopControl: config.remoteDesktopControl
-  }
-}
-
 export function toRemoteImProjectConfig(config: RemoteImConfig): RemoteImConfig {
   return {
     ...DEFAULT_REMOTE_IM_CONFIG,

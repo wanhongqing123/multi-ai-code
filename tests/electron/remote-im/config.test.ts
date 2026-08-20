@@ -3,7 +3,6 @@ import {
   DEFAULT_REMOTE_IM_CONFIG,
   normalizeRemoteImConfig,
   toRemoteImProjectConfig,
-  toRemoteImProjectMetaConfig,
   validateRemoteImConfig
 } from '../../../electron/remote-im/config.js'
 
@@ -54,14 +53,22 @@ describe('remote IM config', () => {
   it('migrates legacy allowed users to trusted friends when role lists are missing', () => {
     expect(
       normalizeRemoteImConfig({
-        allowedUserIds: [' master-a ', '', 'master-a']
+        allowedUserIds: [' master-a ', '', 'master-a'],
+        outputFlushIntervalMs: 2000,
+        outputMaxChunkChars: 4000,
+        remoteDesktopMode: 'disabled' as const,
+        remoteDesktopControl: false
       })
     ).toMatchObject({
       desktopRole: 'master',
       friendUserIds: ['master-a'],
       masterUserIds: [],
       slaveUserIds: [],
-      allowedUserIds: ['master-a']
+      allowedUserIds: ['master-a'],
+      outputFlushIntervalMs: 2000,
+      outputMaxChunkChars: 4000,
+      remoteDesktopMode: 'disabled' as const,
+      remoteDesktopControl: false
     })
   })
 
@@ -78,7 +85,11 @@ describe('remote IM config', () => {
       friendUserIds: ['friend-a', 'master-a', 'slave-b'],
       masterUserIds: [],
       slaveUserIds: [],
-      allowedUserIds: ['friend-a', 'master-a', 'slave-b']
+      allowedUserIds: ['friend-a', 'master-a', 'slave-b'],
+      outputFlushIntervalMs: 2000,
+      outputMaxChunkChars: 4000,
+      remoteDesktopMode: 'disabled' as const,
+      remoteDesktopControl: false
     })
   })
 
@@ -141,40 +152,6 @@ describe('remote desktop mode in remote IM config', () => {
     // toRemoteImProjectConfig 以 DEFAULT 为底，漏传就会在保存时把用户的选择重置。
     const config = { ...DEFAULT_REMOTE_IM_CONFIG, remoteDesktopMode: 'unattended' as const }
     expect(toRemoteImProjectConfig(config).remoteDesktopMode).toBe('unattended')
-  })
-
-  it('persists only the four project-owned fields into project.json', () => {
-    // 以前整份 RemoteImConfig 都写进 project.json，于是每个项目里都躺着一份
-    // sdkAppId/desktopUserId/friendUserIds 的空壳——读取时全被账号库覆盖，
-    // 纯冗余，还让人误以为这些能按项目改。
-    const meta = toRemoteImProjectMetaConfig({
-      ...DEFAULT_REMOTE_IM_CONFIG,
-      sdkAppId: 1400000000,
-      desktopUserId: 'someone-else',
-      userSigSecretKey: 'super-secret',
-      friendUserIds: ['phone-user'],
-      allowedUserIds: ['phone-user'],
-      outputFlushIntervalMs: 3000,
-      outputMaxChunkChars: 1200,
-      remoteDesktopMode: 'attended',
-      remoteDesktopControl: true
-    } as never)
-
-    expect(Object.keys(meta).sort()).toEqual([
-      'outputFlushIntervalMs',
-      'outputMaxChunkChars',
-      'remoteDesktopControl',
-      'remoteDesktopMode'
-    ])
-    expect(meta).toEqual({
-      outputFlushIntervalMs: 3000,
-      outputMaxChunkChars: 1200,
-      remoteDesktopMode: 'attended',
-      remoteDesktopControl: true
-    })
-    // 凭证绝不能进项目文件：项目目录可能被同步/分享，账号库才是它们的家。
-    expect(JSON.stringify(meta)).not.toContain('super-secret')
-    expect(JSON.stringify(meta)).not.toContain('someone-else')
   })
 
   it('strips every connection-relevant field from the project config', () => {

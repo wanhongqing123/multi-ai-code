@@ -28,7 +28,7 @@ const config: RemoteImConfig = {
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 1200
 ,
-  remoteDesktopMode: 'disabled',
+  remoteDesktopMode: 'disabled' as const,
   remoteDesktopControl: false
 }
 

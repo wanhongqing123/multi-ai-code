@@ -28,7 +28,7 @@ const config: RemoteImConfig = {
   allowedUserIds: ['friend-a', 'master-a', 'slave-a'],
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 1200,
-  remoteDesktopMode: 'disabled',
+  remoteDesktopMode: 'disabled' as const,
   remoteDesktopControl: false
 }
 

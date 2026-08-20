@@ -508,7 +508,7 @@ describe('tencent IM client helpers', () => {
         outputFlushIntervalMs: 1000,
         outputMaxChunkChars: 1200
 ,
-        remoteDesktopMode: 'disabled',
+        remoteDesktopMode: 'disabled' as const,
         remoteDesktopControl: false
       },
       onIncomingText: vi.fn()
@@ -557,7 +557,7 @@ describe('tencent IM client helpers', () => {
         outputFlushIntervalMs: 1000,
         outputMaxChunkChars: 1200
 ,
-        remoteDesktopMode: 'disabled',
+        remoteDesktopMode: 'disabled' as const,
         remoteDesktopControl: false
       },
       onIncomingText: vi.fn()
@@ -609,7 +609,7 @@ describe('tencent IM client helpers', () => {
         outputFlushIntervalMs: 1000,
         outputMaxChunkChars: 1200
 ,
-        remoteDesktopMode: 'disabled',
+        remoteDesktopMode: 'disabled' as const,
         remoteDesktopControl: false
       },
       onIncomingText: vi.fn()
@@ -656,7 +656,7 @@ describe('tencent IM client helpers', () => {
         outputFlushIntervalMs: 1000,
         outputMaxChunkChars: 1200
 ,
-        remoteDesktopMode: 'disabled',
+        remoteDesktopMode: 'disabled' as const,
         remoteDesktopControl: false
       },
       onIncomingText: vi.fn(),
@@ -703,7 +703,7 @@ describe('tencent IM client helpers', () => {
         outputFlushIntervalMs: 1000,
         outputMaxChunkChars: 1200
 ,
-        remoteDesktopMode: 'disabled',
+        remoteDesktopMode: 'disabled' as const,
         remoteDesktopControl: false
       },
       onIncomingText: vi.fn()
@@ -753,7 +753,7 @@ describe('tencent IM client helpers', () => {
         outputFlushIntervalMs: 1000,
         outputMaxChunkChars: 1200
 ,
-        remoteDesktopMode: 'disabled',
+        remoteDesktopMode: 'disabled' as const,
         remoteDesktopControl: false
       },
       onIncomingText: vi.fn()
@@ -918,7 +918,7 @@ describe('tencent IM client helpers', () => {
         allowedUserIds: ['desktop-b'],
         outputFlushIntervalMs: 1000,
         outputMaxChunkChars: 1200,
-        remoteDesktopMode: 'disabled',
+        remoteDesktopMode: 'disabled' as const,
         remoteDesktopControl: false
       },
       onIncomingText: vi.fn()
@@ -970,7 +970,7 @@ describe('tencent IM client helpers', () => {
         outputFlushIntervalMs: 1000,
         outputMaxChunkChars: 1200
 ,
-        remoteDesktopMode: 'disabled',
+        remoteDesktopMode: 'disabled' as const,
         remoteDesktopControl: false
       },
       onIncomingText: vi.fn()
@@ -1014,7 +1014,7 @@ describe('tencent IM client helpers', () => {
         outputFlushIntervalMs: 1000,
         outputMaxChunkChars: 1200
 ,
-        remoteDesktopMode: 'disabled',
+        remoteDesktopMode: 'disabled' as const,
         remoteDesktopControl: false
       },
       onIncomingText: vi.fn()
@@ -1061,7 +1061,7 @@ describe('tencent IM client helpers', () => {
           outputFlushIntervalMs: 1000,
           outputMaxChunkChars: 1200
 ,
-          remoteDesktopMode: 'disabled',
+          remoteDesktopMode: 'disabled' as const,
           remoteDesktopControl: false
         },
         onIncomingText: vi.fn()
@@ -1090,7 +1090,7 @@ describe('tencent IM client helpers', () => {
         outputFlushIntervalMs: 1000,
         outputMaxChunkChars: 1200
 ,
-        remoteDesktopMode: 'disabled',
+        remoteDesktopMode: 'disabled' as const,
         remoteDesktopControl: false
       },
       onIncomingText: vi.fn()
@@ -1129,7 +1129,7 @@ describe('tencent IM client helpers', () => {
         outputFlushIntervalMs: 1000,
         outputMaxChunkChars: 1200
 ,
-        remoteDesktopMode: 'disabled',
+        remoteDesktopMode: 'disabled' as const,
         remoteDesktopControl: false
       },
       onIncomingText: vi.fn(),

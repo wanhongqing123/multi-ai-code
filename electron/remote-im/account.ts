@@ -1,6 +1,6 @@
 import { promises as fs } from 'fs'
 import { join } from 'path'
-import type { RemoteImAccountConfig, RemoteImConfig } from './types.js'
+import type { RemoteDesktopMode, RemoteImAccountConfig, RemoteImConfig } from './types.js'
 
 const ACCOUNT_FILE = 'remote-im-account.json'
 
@@ -16,7 +16,29 @@ export const DEFAULT_REMOTE_IM_ACCOUNT_CONFIG: RemoteImAccountConfig = {
   masterUserIds: [],
   slaveUserIds: [],
   allowedUserIds: [],
-  blockedUserIds: []
+  blockedUserIds: [],
+  outputFlushIntervalMs: 2000,
+  outputMaxChunkChars: 4000,
+  remoteDesktopMode: 'disabled',
+  remoteDesktopControl: false
+}
+
+function normalizeNumberInRange(value: unknown, fallback: number, min: number, max: number): number {
+  const parsed = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(parsed)) return fallback
+  return Math.min(max, Math.max(min, Math.round(parsed)))
+}
+
+function normalizeIntervalMs(value: unknown): number {
+  return normalizeNumberInRange(value, 2000, 1000, 30_000)
+}
+
+function normalizeMaxChunkChars(value: unknown): number {
+  return normalizeNumberInRange(value, 4000, 200, 20_000)
+}
+
+function normalizeDesktopMode(value: unknown): RemoteDesktopMode {
+  return value === 'attended' || value === 'unattended' ? value : 'disabled'
 }
 
 function normalizeString(value: unknown): string {
@@ -83,7 +105,12 @@ export function normalizeRemoteImAccountConfig(value: unknown): RemoteImAccountC
     masterUserIds: [],
     slaveUserIds: [],
     allowedUserIds: [...friendUserIds],
-    blockedUserIds
+    blockedUserIds,
+    outputFlushIntervalMs: normalizeIntervalMs(raw.outputFlushIntervalMs),
+    outputMaxChunkChars: normalizeMaxChunkChars(raw.outputMaxChunkChars),
+    remoteDesktopMode: normalizeDesktopMode(raw.remoteDesktopMode),
+    // 只有显式 true 才算开：配置损坏时必须收紧，不能变成「默认可被操作」。
+    remoteDesktopControl: raw.remoteDesktopControl === true
   }
 }
 
@@ -186,7 +213,11 @@ export function mergeRemoteImAccountIntoConfig(
     friendUserIds: account.friendUserIds,
     masterUserIds: account.masterUserIds,
     slaveUserIds: account.slaveUserIds,
-    allowedUserIds: account.allowedUserIds
+    allowedUserIds: account.allowedUserIds,
+    outputFlushIntervalMs: account.outputFlushIntervalMs,
+    outputMaxChunkChars: account.outputMaxChunkChars,
+    remoteDesktopMode: account.remoteDesktopMode,
+    remoteDesktopControl: account.remoteDesktopControl
   }
 }
 

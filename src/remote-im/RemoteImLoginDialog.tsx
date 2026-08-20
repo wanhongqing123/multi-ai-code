@@ -43,7 +43,11 @@ const EMPTY_ACCOUNT: RemoteImAccountConfig = {
   friendUserIds: [],
   masterUserIds: [],
   slaveUserIds: [],
-  allowedUserIds: []
+  allowedUserIds: [],
+  outputFlushIntervalMs: 2000,
+  outputMaxChunkChars: 4000,
+  remoteDesktopMode: 'disabled',
+  remoteDesktopControl: false
 }
 
 function toFixedCredentialAccount(account: RemoteImAccountConfig): RemoteImAccountConfig {

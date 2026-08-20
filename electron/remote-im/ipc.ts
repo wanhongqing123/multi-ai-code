@@ -28,7 +28,6 @@ import {
   DEFAULT_REMOTE_IM_CONFIG,
   normalizeRemoteImConfig,
   toRemoteImProjectConfig,
-  toRemoteImProjectMetaConfig,
   validateRemoteImConfig
 } from './config.js'
 import {
@@ -723,10 +722,11 @@ async function writeProjectMeta(projectId: string, meta: ProjectMeta): Promise<v
 }
 
 async function getRemoteImConfig(projectId: string): Promise<RemoteImConfig> {
-  const { meta } = await readProjectMeta(projectId)
-  const projectConfig = normalizeRemoteImConfig(meta[REMOTE_IM_META_KEY])
-  const account = await getRemoteImAccountForProject(projectConfig)
-  return mergeRemoteImAccountIntoConfig(projectConfig, account)
+  // IM 配置整体归账号，project.json 不再参与。projectId 仍保留在签名里：
+  // 调用方遍布各处，且账号 profile 的解析将来可能与项目相关。
+  void projectId
+  const account = await getRemoteImAccountForProject()
+  return mergeRemoteImAccountIntoConfig(normalizeRemoteImConfig(null), account)
 }
 
 async function getRemoteImAccountForProject(
@@ -801,20 +801,35 @@ async function setRemoteImConfig(
     }
   }
 
+  // IM 配置整体归账号：输出节流和远程桌面授权描述的是「这台机器上的这个账号」
+  // 怎么工作，与具体仓库无关。分项目存只会让同一台机器出现互相矛盾的设置——
+  // 比如 A 项目开着无人值守远程桌面、B 项目关着，而屏幕只有一块。
+  const previousProfileId = getCurrentRemoteImAccountProfileId()
+  const previousAccount = previousProfileId
+    ? await readRemoteImAccountConfig(remoteImAccountDir(previousProfileId))
+    : normalizeRemoteImAccountConfig(null)
+  const nextAccount = normalizeRemoteImAccountConfig({
+    ...previousAccount,
+    outputFlushIntervalMs: config.outputFlushIntervalMs,
+    outputMaxChunkChars: config.outputMaxChunkChars,
+    remoteDesktopMode: config.remoteDesktopMode,
+    remoteDesktopControl: config.remoteDesktopControl
+  })
+  const profileId =
+    getRemoteImAccountProfileId(nextAccount.desktopUserId) ??
+    getRemoteImProfileId() ??
+    DEFAULT_REMOTE_IM_PROFILE_ID
+  activeRemoteImAccountProfileId = profileId
+  await writeRemoteImAccountConfig(remoteImAccountDir(profileId), nextAccount)
+
+  // project.json 里不再保留 remote_im_config；老文件里的残留（含已删功能的
+  // build_config / runtime_config）保存时一并清掉。
   const { meta, repaired } = await readProjectMeta(projectId)
-  // 只写项目级真正拥有的字段。其余（凭证、账号、好友名单）读取时一律被
-  // mergeRemoteImAccountIntoConfig 用账号库的值覆盖，写进来只是一堆永远为空、
-  // 且容易让人误以为「这里能改」的空壳。
-  meta[REMOTE_IM_META_KEY] = toRemoteImProjectMetaConfig(config)
-  // 设置界面只剩 AI CLI 之后（0b35e1b）这两块功能被整体删除，代码里已无任何
-  // 读写方，只有老项目文件里还留着数据。保存时顺手清掉。
+  delete meta[REMOTE_IM_META_KEY]
   delete meta.build_config
   delete meta.runtime_config
   await writeProjectMeta(projectId, meta)
-  const mergedConfig = mergeRemoteImAccountIntoConfig(
-    config,
-    await getRemoteImAccountForProject(config)
-  )
+  const mergedConfig = mergeRemoteImAccountIntoConfig(config, nextAccount)
   // 这里**不能**广播 disconnected。写项目配置改变不了连接：toRemoteImProjectConfig
   // 会剥掉所有连接相关字段（凭证、账号、provider 都存在账号库里），
   // config.test.ts 的「strips every connection-relevant field」守着这个前提。

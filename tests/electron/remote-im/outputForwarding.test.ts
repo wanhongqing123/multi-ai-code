@@ -50,7 +50,7 @@ const config: RemoteImConfig = {
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 4
 ,
-  remoteDesktopMode: 'disabled',
+  remoteDesktopMode: 'disabled' as const,
   remoteDesktopControl: false
 }
 
@@ -456,7 +456,7 @@ describe('remote IM output forwarding', () => {
     const state = createState(readReplyFixture('claude-id-open-legacy-close.txt'), {
       outputMaxChunkChars: 500
 ,
-      remoteDesktopMode: 'disabled',
+      remoteDesktopMode: 'disabled' as const,
       remoteDesktopControl: false
     })
     state.replyId = 'rim-current'
@@ -624,7 +624,7 @@ describe('remote IM output forwarding', () => {
     const state = createState(readReplyFixture('codex-current-reply-with-tui-noise.txt'), {
       outputMaxChunkChars: 500
 ,
-      remoteDesktopMode: 'disabled',
+      remoteDesktopMode: 'disabled' as const,
       remoteDesktopControl: false
     })
     state.replyId = 'rim-current'
@@ -691,7 +691,7 @@ describe('remote IM output forwarding', () => {
     const state = createState('intermediate text without markers', {
       outputMaxChunkChars: 500
 ,
-      remoteDesktopMode: 'disabled',
+      remoteDesktopMode: 'disabled' as const,
       remoteDesktopControl: false
     })
     state.replyId = 'rim-current'
@@ -1254,7 +1254,7 @@ describe('remote IM output forwarding', () => {
     const state = createState(terminalRenderedTable, {
       outputMaxChunkChars: 500
 ,
-      remoteDesktopMode: 'disabled',
+      remoteDesktopMode: 'disabled' as const,
       remoteDesktopControl: false
     })
     state.transcript = {
@@ -1362,7 +1362,7 @@ describe('remote IM output forwarding', () => {
     const state = createState(`noise\n${REMOTE_IM_REPLY_OPEN_TAG}\nhello`, {
       outputMaxChunkChars: 100
 ,
-      remoteDesktopMode: 'disabled',
+      remoteDesktopMode: 'disabled' as const,
       remoteDesktopControl: false
     })
     const messages: CreateRemoteImMessageInput[] = []

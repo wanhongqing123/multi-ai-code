@@ -6,6 +6,7 @@ import { DEFAULT_REMOTE_IM_CONFIG } from '../../../electron/remote-im/config.js'
 import {
   DEFAULT_REMOTE_IM_ACCOUNT_CONFIG,
   hasRemoteImAccountConnectionChanged,
+  addRemoteImAccountContact,
   mergeRemoteImAccountIntoConfig,
   normalizeRemoteImAccountConfig,
   preserveRemoteImAccountContacts,
@@ -217,6 +218,47 @@ describe('remote IM account config', () => {
       allowedUserIds: ['allowed-phone'],
       blockedUserIds: ['revoked-phone']
     })
+  })
+
+  it('adds a contact to the friend and allow lists', () => {
+    const account = normalizeRemoteImAccountConfig({
+      sdkAppId: 1600148979,
+      desktopUserId: 'mac-quarkpc',
+      friendUserIds: ['existing-phone']
+    })
+
+    expect(addRemoteImAccountContact(account, ' new-phone ')).toMatchObject({
+      friendUserIds: ['existing-phone', 'new-phone'],
+      allowedUserIds: ['existing-phone', 'new-phone']
+    })
+    // 重复添加不应产生重复项。
+    const twice = addRemoteImAccountContact(
+      addRemoteImAccountContact(account, 'new-phone'),
+      'new-phone'
+    )
+    expect(twice.friendUserIds.filter((id) => id === 'new-phone')).toHaveLength(1)
+    // 空输入原样返回，不该凭空造出一个空 ID 的联系人。
+    expect(addRemoteImAccountContact(account, '   ').friendUserIds).toEqual(['existing-phone'])
+  })
+
+  it('clears the revoke tombstone so a deleted contact can be added back', () => {
+    const account = normalizeRemoteImAccountConfig({
+      sdkAppId: 1600148979,
+      desktopUserId: 'mac-quarkpc',
+      friendUserIds: ['revoked-phone']
+    })
+    const deleted = removeRemoteImAccountContact(account, 'revoked-phone')
+    expect(deleted.blockedUserIds).toEqual(['revoked-phone'])
+
+    const readded = addRemoteImAccountContact(deleted, 'revoked-phone')
+
+    // 墓碑不清掉的话，SDK 下次同步会把这个人重新过滤掉——
+    // 表现为「加了但过一会儿又没了」。
+    expect(readded.blockedUserIds ?? []).not.toContain('revoked-phone')
+    expect(readded.friendUserIds).toContain('revoked-phone')
+    expect(
+      syncRemoteImAccountContactsFromSdk(readded, ['revoked-phone'])
+    ).toMatchObject({ friendUserIds: ['revoked-phone'] })
   })
 
   it('preserves revoke tombstones on account rebind and allows an explicit unblock', () => {

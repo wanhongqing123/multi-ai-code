@@ -33,6 +33,10 @@ export interface RemoteImCliServerDeps {
     localPath: string,
     toUserId?: string | null
   ): Promise<RemoteImCliSendResult>
+  addContact?(
+    projectId: string,
+    userId: string
+  ): Promise<{ ok: boolean; error?: string; userId?: string }>
   authorizeCaller?(
     projectId: string,
     sessionId: string
@@ -293,6 +297,25 @@ export async function startRemoteImCliServer(
             ...(result.ok
               ? { value: { toUserId: result.toUserId ?? toUserId } }
               : { error: result.error ?? 'failed to send IM file' })
+          })
+        })
+        return
+      }
+
+      if (req.method === 'POST' && url.pathname === '/add-contact') {
+        const body = await readBody(req)
+        const projectId = getProjectId(url, body)
+        await withAuthorizedCaller(deps, req, projectId, async () => {
+          const raw = body && typeof body === 'object' ? (body as Record<string, unknown>) : {}
+          const userId = typeof raw.userId === 'string' ? raw.userId.trim() : ''
+          if (!userId) throw new Error('userId is required')
+          if (!deps.addContact) throw new Error('adding contacts is not available')
+          const result = await deps.addContact(projectId, userId)
+          json(res, result.ok ? 200 : 400, {
+            ok: result.ok,
+            ...(result.ok
+              ? { value: { userId: result.userId ?? userId } }
+              : { error: result.error ?? 'failed to add IM contact' })
           })
         })
         return

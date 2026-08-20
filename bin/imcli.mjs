@@ -9,6 +9,7 @@ Usage:
   imcli help
   imcli whoami [--project <projectId>]
   imcli contacts [--project <projectId>]
+  imcli add-contact <user> [--project <projectId>]
   imcli history [--peer <user>] [--limit <n>] [--project <projectId>]
   imcli last [--peer <user>] [--project <projectId>]
   imcli send <user> --text-b64 <base64> [--project <projectId>]
@@ -42,7 +43,7 @@ Command details:
     List configured peer user IDs that the current desktop account can message.
     The output is one user ID per line so AICLI can parse it safely.
     Use one of these user IDs as the <user> argument for send, send-image, send-file,
-    send-video, or forward.
+    send-video, or forward. Use add-contact to add an account that is not listed.
 
   imcli history
     Print recent IM messages. Use --peer <user> to narrow to one conversation.
@@ -56,6 +57,14 @@ Command details:
     This is useful when a task wants to inspect the previous IM answer.
     Use --peer <user> to avoid reading the wrong conversation.
     If no AICLI reply exists, it falls back to the last message in the selected history window.
+
+  imcli add-contact <user>
+    Add an IM account to the contact list so you can message it.
+    Sending to an account that is not a contact is rejected, so run this first
+    when imcli send reports that the peer is not allowed.
+    This changes the desktop account's contact list, so it applies to every
+    project, not just the current one. Adding an existing contact is a no-op.
+    Re-adding someone you deleted locally also clears that deletion.
 
   imcli send <user> --text-b64 <base64>
     Send a plain text IM message to one user.
@@ -119,6 +128,7 @@ File notes:
 Examples:
   imcli whoami --project project-1
   imcli contacts --project project-1
+  imcli add-contact phone-user --project project-1
   imcli history --peer phone-user --limit 20 --project project-1
   imcli send phone-user --text-b64 YnVpbGQgcGFzc2Vk --project project-1
   imcli send-image phone-user C:\\temp\\screenshot.png --project project-1
@@ -303,6 +313,14 @@ async function main(argv) {
       return
     }
     console.log(last.content)
+    return
+  }
+
+  if (command === 'add-contact') {
+    const [userId] = args
+    if (!userId) throw new Error('usage: imcli add-contact <user>')
+    const value = await requestJson('POST', '/add-contact', { projectId, userId })
+    console.log(`added contact ${value.userId}`)
     return
   }
 

@@ -266,6 +266,69 @@ describe('remote IM CLI bridge server', () => {
     }
   })
 
+  it('adds a contact through the app runtime', async () => {
+    const rootDir = await createTempDir()
+    const addContact = vi.fn(async () => ({ ok: true as const, userId: 'agent-c' }))
+    const bridge = await startRemoteImCliServer({
+      rootDir,
+      getConfig: async () => config,
+      getStatus: async () => status,
+      listMessages: () => [],
+      sendPeerMessage: async () => ({ ok: true as const, toUserId: 'agent-b' }),
+      addContact
+    })
+
+    try {
+      const response = await fetch(`${bridge.url}/add-contact`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${bridge.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ projectId: 'project-1', userId: 'agent-c' })
+      })
+
+      await expect(response.json()).resolves.toMatchObject({
+        ok: true,
+        value: { userId: 'agent-c' }
+      })
+      // projectId 必须透传下去：账号配置的落盘 profile 是按它挑的。
+      expect(addContact).toHaveBeenCalledWith('project-1', 'agent-c')
+    } finally {
+      await bridge.close()
+    }
+  })
+
+  it('rejects an add-contact request without a user id', async () => {
+    const rootDir = await createTempDir()
+    const addContact = vi.fn(async () => ({ ok: true as const, userId: '' }))
+    const bridge = await startRemoteImCliServer({
+      rootDir,
+      getConfig: async () => config,
+      getStatus: async () => status,
+      listMessages: () => [],
+      sendPeerMessage: async () => ({ ok: true as const, toUserId: 'agent-b' }),
+      addContact
+    })
+
+    try {
+      const response = await fetch(`${bridge.url}/add-contact`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${bridge.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ projectId: 'project-1', userId: '   ' })
+      })
+
+      expect(response.status).toBe(400)
+      // 空 ID 必须在到达主进程之前就被挡掉，别把空联系人写进账号配置。
+      expect(addContact).not.toHaveBeenCalled()
+    } finally {
+      await bridge.close()
+    }
+  })
+
   it('binds production bridge requests to the originating AICLI session', async () => {
     const rootDir = await createTempDir()
     const authorizeCaller = vi.fn((projectId: string, sessionId: string) =>

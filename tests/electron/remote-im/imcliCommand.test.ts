@@ -62,6 +62,8 @@ describe('imcli command', () => {
     expect(stdout).toContain('imcli send-image <user> <imagePath>')
     expect(stdout).toContain('imcli send-file <user> <filePath>')
     expect(stdout).toContain('imcli send-video <user> <videoPath>')
+    expect(stdout).toContain('imcli add-contact <user>')
+    expect(stdout).toContain('Add an IM account to the contact list')
     expect(stdout).toContain('imcli history')
     expect(stdout).toContain('Output format: #<id> <role>/<direction> <from> -> <to>: <content>')
     expect(stdout).toContain('Use one of these user IDs as the <user> argument')

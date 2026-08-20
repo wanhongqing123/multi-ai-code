@@ -148,6 +148,28 @@ export function removeRemoteImAccountContact(
   })
 }
 
+/**
+ * 把一个账号加进好友名单。
+ *
+ * 必须同时把它从 blockedUserIds 里摘掉：那是「本地已删好友」的墓碑，留着的话
+ * SDK 下次同步会重新把这个人过滤掉——表现为「加了但过一会儿又没了」。
+ * 与 removeRemoteImAccountContact 互为逆操作。
+ */
+export function addRemoteImAccountContact(
+  account: RemoteImAccountConfig,
+  rawUserId: string
+): RemoteImAccountConfig {
+  const userId = rawUserId.trim()
+  if (!userId) return normalizeRemoteImAccountConfig(account)
+  const previous = normalizeRemoteImAccountConfig(account)
+  return normalizeRemoteImAccountConfig({
+    ...previous,
+    friendUserIds: Array.from(new Set([...previous.friendUserIds, userId])),
+    allowedUserIds: Array.from(new Set([...previous.allowedUserIds, userId])),
+    blockedUserIds: (previous.blockedUserIds ?? []).filter((item) => item !== userId)
+  })
+}
+
 export function mergeRemoteImAccountIntoConfig(
   projectConfig: RemoteImConfig,
   account: RemoteImAccountConfig

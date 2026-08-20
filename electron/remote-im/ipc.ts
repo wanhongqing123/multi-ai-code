@@ -31,6 +31,7 @@ import {
   validateRemoteImConfig
 } from './config.js'
 import {
+  addRemoteImAccountContact,
   hasRemoteImAccountConnectionChanged,
   mergeRemoteImAccountIntoConfig,
   normalizeRemoteImAccountConfig,
@@ -970,6 +971,40 @@ function imageAttachmentFromIncoming(
     mimeType: patch.mimeType ?? message.mimeType?.trim() ?? null,
     sdkImageId: patch.sdkImageId ?? message.uuid?.trim() ?? null
   }
+}
+
+/**
+ * 把一个账号加进好友名单（账号级配置，跨项目生效）。
+ *
+ * 与界面上「添加联系人」走同一份存储：读账号配置 -> 加名单 -> 落盘 -> 刷新项目配置。
+ * 加回一个之前删过的人时，addRemoteImAccountContact 会把 blockedUserIds 里的
+ * 墓碑一并清掉，否则 SDK 下次同步又会把他过滤掉。
+ */
+async function addRemoteImContact(
+  projectId: string,
+  rawUserId: string
+): Promise<{ ok: true; userId: string } | { ok: false; error: string }> {
+  const userId = rawUserId.trim()
+  if (!userId) return { ok: false, error: '请填写账号 ID' }
+
+  const config = await getRemoteImConfig(projectId)
+  if (userId === config.desktopUserId.trim()) {
+    return { ok: false, error: '不能把自己加为联系人' }
+  }
+
+  const previousProfileId = getCurrentRemoteImAccountProfileId()
+  const previousAccount = previousProfileId
+    ? await readRemoteImAccountConfig(remoteImAccountDir(previousProfileId))
+    : normalizeRemoteImAccountConfig(null)
+  const nextAccount = addRemoteImAccountContact(previousAccount, userId)
+  const profileId =
+    getRemoteImAccountProfileId(nextAccount.desktopUserId) ??
+    getRemoteImProfileId() ??
+    DEFAULT_REMOTE_IM_PROFILE_ID
+  activeRemoteImAccountProfileId = profileId
+  await writeRemoteImAccountConfig(remoteImAccountDir(profileId), nextAccount)
+  broadcastMessagesChanged(projectId)
+  return { ok: true, userId }
 }
 
 async function deleteRemoteImContact(
@@ -2394,7 +2429,8 @@ function ensureRemoteImCliServer(): void {
     sendPeerFile: (projectId, localPath, toUserId) =>
       sendRemoteImPeerLocalFile(projectId, localPath, toUserId, 'machine'),
     sendPeerVideo: (projectId, localPath, toUserId) =>
-      sendRemoteImPeerLocalVideo(projectId, localPath, toUserId, 'machine')
+      sendRemoteImPeerLocalVideo(projectId, localPath, toUserId, 'machine'),
+    addContact: (projectId, userId) => addRemoteImContact(projectId, userId)
   }).catch((err) => {
     remoteImCliServerStarted = false
     console.error(

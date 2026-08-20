@@ -35,15 +35,6 @@ CREATE TABLE IF NOT EXISTS events (
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS artifacts (
-  id           INTEGER PRIMARY KEY AUTOINCREMENT,
-  project_id   TEXT NOT NULL,
-  stage_id     INTEGER NOT NULL,
-  path         TEXT NOT NULL,
-  kind         TEXT NOT NULL,
-  created_at   TEXT NOT NULL,
-  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
-);
 
 CREATE TABLE IF NOT EXISTS scheduled_tasks (
   id                        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -105,7 +96,6 @@ CREATE TABLE IF NOT EXISTS remote_im_messages (
 
 const INDEXES = `
 CREATE INDEX IF NOT EXISTS idx_events_project ON events(project_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_artifacts_project ON artifacts(project_id, stage_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_project ON scheduled_tasks(project_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_due ON scheduled_tasks(project_id, enabled, next_run_at);
 CREATE INDEX IF NOT EXISTS idx_scheduled_task_runs_task ON scheduled_task_runs(task_id, scheduled_at DESC);
@@ -265,67 +255,6 @@ export function updateStageStatus(
        WHERE project_id = ? AND stage_id = ?`
     )
     .run(status, extras.artifact ?? null, extras.verdict ?? null, now, projectId, stageId)
-}
-
-export interface ArtifactRow {
-  id: number
-  project_id: string
-  stage_id: number
-  path: string
-  kind: string
-  created_at: string
-}
-
-export function recordArtifact(a: {
-  project_id: string
-  stage_id: number
-  path: string
-  kind: string
-}): ArtifactRow {
-  const now = new Date().toISOString()
-  const info = getDb()
-    .prepare(
-      `INSERT INTO artifacts (project_id, stage_id, path, kind, created_at)
-       VALUES (?, ?, ?, ?, ?)`
-    )
-    .run(a.project_id, a.stage_id, a.path, a.kind, now)
-  return getDb()
-    .prepare(`SELECT * FROM artifacts WHERE id = ?`)
-    .get(info.lastInsertRowid) as ArtifactRow
-}
-
-/**
- * Upsert-style record: if a row with the same (project_id, stage_id, path)
- * already exists, bump its created_at + kind instead of inserting a new row.
- * Used by Stage 1 where the plan file is appended across iterations.
- */
-export function recordOrTouchArtifact(a: {
-  project_id: string
-  stage_id: number
-  path: string
-  kind: string
-}): ArtifactRow {
-  const existing = getDb()
-    .prepare(
-      `SELECT * FROM artifacts WHERE project_id = ? AND stage_id = ? AND path = ?`
-    )
-    .get(a.project_id, a.stage_id, a.path) as ArtifactRow | undefined
-  const now = new Date().toISOString()
-  if (existing) {
-    getDb()
-      .prepare(`UPDATE artifacts SET created_at = ?, kind = ? WHERE id = ?`)
-      .run(now, a.kind, existing.id)
-    return { ...existing, created_at: now, kind: a.kind }
-  }
-  return recordArtifact(a)
-}
-
-export function listArtifacts(projectId: string, stageId?: number): ArtifactRow[] {
-  const sql = stageId
-    ? `SELECT * FROM artifacts WHERE project_id = ? AND stage_id = ? ORDER BY created_at DESC`
-    : `SELECT * FROM artifacts WHERE project_id = ? ORDER BY stage_id ASC, created_at DESC`
-  const args = stageId ? [projectId, stageId] : [projectId]
-  return getDb().prepare(sql).all(...args) as ArtifactRow[]
 }
 
 export function recordEvent(e: {

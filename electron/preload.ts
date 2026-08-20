@@ -234,27 +234,6 @@ export interface ExitEvent {
   signal?: number
 }
 
-export interface StageDoneEvent {
-  sessionId: string
-  projectId: string
-  stageId: number
-  raw: string
-  params: Record<string, string>
-  artifactPath: string | null
-  artifactContent: string | null
-  /** Path of the snapshot saved to artifacts/history/ (project-dir-relative). */
-  snapshotPath?: string | null
-}
-
-export interface ArtifactRecord {
-  id: number
-  project_id: string
-  stage_id: number
-  path: string
-  kind: string
-  created_at: string
-}
-
 export interface ExternalReviewDecision {
   decision: 'accepted' | 'rejected' | 'needs-human'
   reason: string
@@ -344,13 +323,6 @@ const api = {
       canceled?: boolean
       path?: string
     }>,
-  search: {
-    artifacts: (projectId: string, query: string) =>
-      ipcRenderer.invoke('search:artifacts', { projectId, query }) as Promise<{
-        ok: boolean
-        results: { path: string; stageId: number; line: number; snippet: string }[]
-      }>
-  },
   dialog: {
     /** Open file picker + read content in ONE round-trip. Does not materialize. */
     pickTextFile: (opts: { title?: string } = {}) =>

@@ -55,11 +55,6 @@ export function projectDir(projectId: string): string {
   return join(projectsDir(), projectId)
 }
 
-export function artifactsDir(projectId: string): string {
-  return join(projectDir(projectId), 'artifacts')
-}
-
-/** OpenCode 定制版的全部可变数据。不得回退到宿主机的 XDG 或 ~/.opencode。 */
 export function opencodeRuntimeDir(): string {
   return join(rootDir(), 'aicli', 'opencode')
 }
@@ -85,21 +80,15 @@ export async function ensureRootDir(): Promise<void> {
 
 /**
  * Creates the full directory layout for a new project.
- * Single-stage architecture: creates artifacts dir, design archive dir, and project metadata.
  */
 export async function createProjectLayout(
   projectId: string,
   targetRepoPath: string
 ): Promise<void> {
   const pdir = projectDir(projectId)
-  await fs.mkdir(join(pdir, 'artifacts'), { recursive: true })
-
-  const historyPath = join(pdir, 'artifacts', 'history.jsonl')
-  try {
-    await fs.access(historyPath)
-  } catch {
-    await fs.writeFile(historyPath, '')
-  }
+  // 项目目录本身以前是被 mkdir(artifacts) 顺带建出来的（recursive）。artifacts 撤掉后
+  // 必须显式建，否则下面写 project.json 会因为目录不存在直接失败。
+  await fs.mkdir(pdir, { recursive: true })
 
   const metaPath = join(pdir, 'project.json')
   try {

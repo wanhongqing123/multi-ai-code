@@ -1100,7 +1100,6 @@ html, body, #root {
   border-radius: var(--mac-r-sm);
   flex-shrink: 0;
 }
-.gs-tag-artifact { background: var(--mac-success-soft); color: var(--mac-success); }
 .gs-tag-action { background: var(--mac-warning-soft); color: var(--mac-warning); }
 .gs-tag-template { background: var(--mac-info-soft); color: var(--mac-info); }
 .gs-hit-title {
@@ -2012,19 +2011,6 @@ html, body, #root {
   gap: var(--mac-sp-3);
 }
 
-.drawer-artifact {
-  margin: 0;
-  font-family: var(--mac-font-mono);
-  font-size: var(--mac-text-mono);
-  white-space: pre-wrap;
-  word-break: break-word;
-  color: var(--mac-fg-muted);
-  background: var(--mac-bg);
-  padding: var(--mac-sp-3);
-  border-radius: var(--mac-r-md);
-  border: 1px solid var(--mac-border);
-}
-
 .drawer-empty {
   font-size: var(--mac-text-xs);
   color: var(--mac-fg-subtle);
@@ -2572,12 +2558,7 @@ html, body, #root {
   background: var(--mac-surface);
 }
 
-.history-preview .drawer-artifact {
-  flex: 1;
-  overflow: auto;
-}
-
-/* ---------- StageSettings · project-wide MSYS card ---------- */
+.history-preview /* ---------- StageSettings · project-wide MSYS card ---------- */
 .project-wide-card {
   border: 1px solid var(--mac-info);
   background: var(--mac-info-soft);

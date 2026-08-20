@@ -13,7 +13,7 @@ export interface GlobalSearchDialogProps {
 }
 
 interface Hit {
-  source: 'artifact' | 'template' | 'action'
+  source: 'template' | 'action'
   title: string
   snippet: string
   location: string
@@ -75,18 +75,6 @@ export default function GlobalSearchDialog({
           })
         }
       }
-      // Artifacts
-      const res = await window.api.search.artifacts(projectId, q)
-      if (res.ok) {
-        for (const r of res.results) {
-          hits.push({
-            source: 'artifact',
-            title: r.path,
-            snippet: r.snippet,
-            location: `Stage ${r.stageId} · 行 ${r.line}`
-          })
-        }
-      }
       // Templates (localStorage)
       try {
         const raw = localStorage.getItem('multi-ai-code.templates')
@@ -145,11 +133,7 @@ export default function GlobalSearchDialog({
               >
                 <div className="gs-hit-head">
                   <span className={`gs-hit-tag gs-tag-${h.source}`}>
-                    {h.source === 'artifact'
-                      ? '📦 产物'
-                      : h.source === 'action'
-                        ? '⚡ 操作'
-                        : '📋 模板'}
+                    {h.source === 'action' ? '⚡ 操作' : '📋 模板'}
                   </span>
                   <span className="gs-hit-title" title={h.title}>
                     {highlight(h.title, q)}

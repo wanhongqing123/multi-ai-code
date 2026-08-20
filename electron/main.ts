@@ -14,14 +14,12 @@ import {
   deleteProject as dbDeleteProject,
   updateProjectName,
   touchProject,
-  listArtifacts,
   recordEvent
 } from './store/db.js'
 import {
   ensureRootDir,
   createProjectLayout,
   projectDir as projectDirFn,
-  artifactsDir,
   rootDir,
   opencodeRuntimeDir,
   setActiveAccount,
@@ -457,7 +455,6 @@ app.whenReady().then(async () => {
       try {
         await createProjectLayout(id, target_repo)
         createProject({ id, name: name.trim() || id, target_repo })
-        await fs.mkdir(artifactsDir(id), { recursive: true })
         const metaPath = join(projectDirFn(id), 'project.json')
         let meta: Record<string, unknown> = {}
         try {
@@ -590,6 +587,22 @@ app.whenReady().then(async () => {
   ipcMain.handle('env:detect-msys', async () => detectMsys())
 
   // ---------- Git IPC: log + diff for Stage 3 Diff Review ----------
+
+  async function runGit(cwd: string, args: string[]): Promise<{ ok: true; stdout: string } | { ok: false; error: string }> {
+    try {
+      const { stdout } = await execFileAsync('git', args, {
+        cwd,
+        maxBuffer: 16 * 1024 * 1024,
+        timeout: 30000
+      })
+      return { ok: true, stdout }
+    } catch (err: any) {
+      const msg = err.killed
+        ? `git ${args[0] ?? ''} 执行超过 30s 未完成`
+        : (err.stderr || err.message || String(err)).toString().trim()
+      return { ok: false, error: msg }
+    }
+  }
 
   ipcMain.handle(
     'git:log',
@@ -941,89 +954,6 @@ app.whenReady().then(async () => {
     }
   })
 
-  // ---------- Global search ----------
-  ipcMain.handle(
-    'search:artifacts',
-    async (_e, { projectId, query }: { projectId: string; query: string }) => {
-      if (!query.trim()) return { ok: true, results: [] }
-      const q = query.toLowerCase()
-      const pdir = projectDirFn(projectId)
-      const historyRoot = join(pdir, 'artifacts', 'history')
-      const results: {
-        path: string
-        stageId: number
-        line: number
-        snippet: string
-      }[] = []
-      const MAX_DEPTH = 8
-      const MAX_RESULTS = 200
-      const DEADLINE_MS = 5000
-      const deadline = Date.now() + DEADLINE_MS
-      const { relative } = await import('path')
-      let truncated: 'limit' | 'deadline' | null = null
-      async function walk(dir: string, depth: number): Promise<void> {
-        if (depth > MAX_DEPTH) return
-        if (results.length >= MAX_RESULTS) { truncated = 'limit'; return }
-        if (Date.now() > deadline) { truncated = 'deadline'; return }
-        let entries: import('fs').Dirent[]
-        try {
-          entries = await fs.readdir(dir, { withFileTypes: true })
-        } catch {
-          return
-        }
-        for (const ent of entries) {
-          if (results.length >= MAX_RESULTS) { truncated = 'limit'; return }
-          if (Date.now() > deadline) { truncated = 'deadline'; return }
-          // Skip symlinks to avoid loops
-          if (ent.isSymbolicLink()) continue
-          const p = join(dir, ent.name)
-          if (ent.isDirectory()) {
-            await walk(p, depth + 1)
-          } else if (ent.isFile() && ent.name.endsWith('.md')) {
-            try {
-              const content = await fs.readFile(p, 'utf8')
-              const lines = content.split(/\r?\n/)
-              const stageMatch = p.match(/stage(\d+)/)
-              const stageId = stageMatch ? Number(stageMatch[1]) : 0
-              for (let i = 0; i < lines.length; i++) {
-                if (lines[i].toLowerCase().includes(q)) {
-                  results.push({
-                    path: relative(pdir, p),
-                    stageId,
-                    line: i + 1,
-                    snippet: lines[i].trim().slice(0, 200)
-                  })
-                  if (results.length >= MAX_RESULTS) { truncated = 'limit'; return }
-                }
-              }
-            } catch {
-              /* skip */
-            }
-          }
-        }
-      }
-      await walk(historyRoot, 0)
-      return { ok: true, results, truncated }
-    }
-  )
-
-  // ---------- Git integration ----------
-  async function runGit(cwd: string, args: string[]): Promise<{ ok: true; stdout: string } | { ok: false; error: string }> {
-    try {
-      const { stdout } = await execFileAsync('git', args, {
-        cwd,
-        maxBuffer: 16 * 1024 * 1024,
-        timeout: 30000
-      })
-      return { ok: true, stdout }
-    } catch (err: any) {
-      const msg = err.killed
-        ? `git ${args[0] ?? ''} 执行超过 30s 未完成`
-        : (err.stderr || err.message || String(err)).toString().trim()
-      return { ok: false, error: msg }
-    }
-  }
-
   ipcMain.handle('git:status', async (_e, { cwd }: { cwd: string }) => {
     const res = await runGit(cwd, ['status', '--porcelain=v1', '-b'])
     if (!res.ok) return res
@@ -1066,7 +996,7 @@ app.whenReady().then(async () => {
     }
   )
 
-  // 纯注册（不碰 DB/rootDir）可在登录前完成；handler 体内触库的那些（project/artifact
+  // 纯注册（不碰 DB/rootDir）可在登录前完成；handler 体内触库的那些（project
   // 等）在登录页阶段不会被调用。
   registerPtyIpc()
   registerRemoteImIpc({ activateDataLayer: activateAccountDataLayer })

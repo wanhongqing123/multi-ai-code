@@ -271,6 +271,23 @@ describe('preload remote IM api', () => {
       messageHandler
     )
 
+    // 联系人名单变化必须有独立通道：只广播 messages-changed 的话，「好友」页
+    // （读的是 config 而非消息列表）加了好友要重启才看得见。
+    const configCb = vi.fn()
+    const offConfig = api.remoteIm.onConfigChanged(configCb)
+    const configHandler = electronMock.on.mock.calls.find(
+      (call) => call[0] === 'remote-im:config-changed'
+    )?.[1]
+    expect(configHandler).toBeTypeOf('function')
+    const configEvent = { projectId: 'project-1' }
+    configHandler({}, configEvent)
+    expect(configCb).toHaveBeenCalledWith(configEvent)
+    offConfig()
+    expect(electronMock.removeListener).toHaveBeenCalledWith(
+      'remote-im:config-changed',
+      configHandler
+    )
+
     const outgoingCb = vi.fn()
     const offOutgoing = api.remoteIm.onOutgoingText(outgoingCb)
     const outgoingHandler = electronMock.on.mock.calls.find(

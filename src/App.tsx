@@ -468,9 +468,20 @@ function AppShell() {
         .listMessages(currentProjectId, 500)
         .then((messages) => setRemoteImMessages(messages))
     })
+    // 联系人名单变了（例如 imcli add-contact）要重拉 config：「好友」页读的是
+    // config 而不是消息列表，只广播 messages-changed 的话加了好友要重启才看得见。
+    const offConfig = window.api.remoteIm.onConfigChanged((evt) => {
+      if (!currentProjectId || evt.projectId !== currentProjectId) return
+      void window.api.remoteIm.getConfig(currentProjectId).then((result) => {
+        if (!result.ok || !result.value) return
+        setRemoteImConfig(result.value)
+        setRemoteImConfigProjectId(currentProjectId)
+      })
+    })
     return () => {
       offStatus()
       offMessages()
+      offConfig()
     }
   }, [currentProjectId])
 

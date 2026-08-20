@@ -612,6 +612,16 @@ function broadcastOutgoingVideoPayload(
   return true
 }
 
+/**
+ * 通知渲染层重新拉取项目配置。
+ *
+ * messages-changed 只会让界面重拉消息列表，config 一动不动——而「好友」页读的
+ * 正是 config。imcli 加了好友却要重启才看得见，就是缺这一条。
+ */
+function broadcastConfigChanged(projectId: string): void {
+  broadcast('remote-im:config-changed', { projectId })
+}
+
 function scheduleOutgoingDeliveryAckTimeout(
   projectId: string,
   messageId: number,
@@ -1003,6 +1013,7 @@ async function addRemoteImContact(
     DEFAULT_REMOTE_IM_PROFILE_ID
   activeRemoteImAccountProfileId = profileId
   await writeRemoteImAccountConfig(remoteImAccountDir(profileId), nextAccount)
+  broadcastConfigChanged(projectId)
   broadcastMessagesChanged(projectId)
   return { ok: true, userId }
 }

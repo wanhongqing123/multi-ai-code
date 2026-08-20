@@ -666,6 +666,11 @@ const api = {
       ipcRenderer.on('remote-im:outgoing-file', handler)
       return () => ipcRenderer.removeListener('remote-im:outgoing-file', handler)
     },
+    onConfigChanged: (cb: (evt: { projectId: string }) => void) => {
+      const handler = (_event: IpcRendererEvent, evt: { projectId: string }) => cb(evt)
+      ipcRenderer.on('remote-im:config-changed', handler)
+      return () => ipcRenderer.removeListener('remote-im:config-changed', handler)
+    },
     onOutgoingVideo: (
       cb: (evt: RemoteImOutgoingVideoEvent) => void
     ) => {

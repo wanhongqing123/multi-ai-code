@@ -1,18 +1,14 @@
 export type RemoteImProvider = 'tencent-im'
-export type RemoteImDesktopRole = 'master' | 'slave'
 export type RemoteImContactRelation = 'friend' | 'master' | 'slave'
 
 export interface RemoteImConfig {
   provider: RemoteImProvider
   sdkAppId: number | null
   desktopUserId: string
-  desktopRole: RemoteImDesktopRole
   userSigMode: 'endpoint' | 'secret-key'
   userSigEndpoint: string
   userSigSecretKey: string
   friendUserIds: string[]
-  masterUserIds: string[]
-  slaveUserIds: string[]
   allowedUserIds: string[]
   outputFlushIntervalMs: number
   outputMaxChunkChars: number
@@ -35,13 +31,10 @@ export interface RemoteImAccountConfig {
   provider: RemoteImProvider
   sdkAppId: number | null
   desktopUserId: string
-  desktopRole: RemoteImDesktopRole
   userSigMode: 'endpoint' | 'secret-key'
   userSigEndpoint: string
   userSigSecretKey: string
   friendUserIds: string[]
-  masterUserIds: string[]
-  slaveUserIds: string[]
   allowedUserIds: string[]
   /** Locally revoked SDK friends. Omitted by older account files. */
   blockedUserIds?: string[]

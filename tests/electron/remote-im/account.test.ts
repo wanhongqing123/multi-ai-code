@@ -30,29 +30,23 @@ describe('remote IM account config', () => {
     tempDir = null
   })
 
-  it('normalizes account identity, credentials, and legacy contacts as trusted friends', () => {
+  it('normalizes account identity, credentials, and the trusted friend list', () => {
     const account = normalizeRemoteImAccountConfig({
       sdkAppId: '1600148979',
       desktopUserId: ' test123 ',
-      desktopRole: 'slave',
       userSigMode: 'secret-key',
       userSigSecretKey: ' secret ',
       friendUserIds: ['friend-a', 'friend-a', ''],
-      masterUserIds: ['master-a'],
-      slaveUserIds: ['slave-a']
     })
 
     expect(account).toEqual({
       ...DEFAULT_REMOTE_IM_ACCOUNT_CONFIG,
       sdkAppId: 1600148979,
       desktopUserId: 'test123',
-      desktopRole: 'master',
       userSigMode: 'secret-key',
       userSigSecretKey: 'secret',
-      friendUserIds: ['friend-a', 'master-a', 'slave-a'],
-      masterUserIds: [],
-      slaveUserIds: [],
-      allowedUserIds: ['friend-a', 'master-a', 'slave-a'],
+      friendUserIds: ['friend-a'],
+      allowedUserIds: ['friend-a'],
       blockedUserIds: []
     })
   })
@@ -82,7 +76,6 @@ describe('remote IM account config', () => {
       ...DEFAULT_REMOTE_IM_ACCOUNT_CONFIG,
       sdkAppId: 1600148979,
       desktopUserId: 'mac-quark-pc',
-      desktopRole: 'master' as const,
       userSigMode: 'secret-key' as const,
       userSigSecretKey: 'secret',
       friendUserIds: ['mac-apollo-u3player'],
@@ -170,8 +163,6 @@ describe('remote IM account config', () => {
     ).toMatchObject({
       desktopUserId: 'mac-quarkpc',
       friendUserIds: ['whq-iphone', 'whq-android'],
-      masterUserIds: [],
-      slaveUserIds: [],
       allowedUserIds: ['whq-iphone', 'whq-android'],
       outputFlushIntervalMs: 2000,
       outputMaxChunkChars: 4000,
@@ -388,17 +379,13 @@ describe('remote IM account config', () => {
     const previous = normalizeRemoteImAccountConfig({
       ...DEFAULT_REMOTE_IM_ACCOUNT_CONFIG,
       friendUserIds: ['phone-a', 'phone-b'],
-      masterUserIds: ['legacy-master']
     })
     const next = normalizeRemoteImAccountConfig({
       ...DEFAULT_REMOTE_IM_ACCOUNT_CONFIG,
       friendUserIds: ['phone-b']
     })
 
-    expect(removedRemoteImAccountContactUserIds(previous, next)).toEqual([
-      'phone-a',
-      'legacy-master'
-    ])
+    expect(removedRemoteImAccountContactUserIds(previous, next)).toEqual(['phone-a'])
     expect(removedRemoteImAccountContactUserIds(next, previous)).toEqual([])
   })
 
@@ -415,7 +402,6 @@ describe('remote IM account config', () => {
         ...DEFAULT_REMOTE_IM_ACCOUNT_CONFIG,
         sdkAppId: 1600148979,
         desktopUserId: 'test123',
-        desktopRole: 'master',
         userSigMode: 'secret-key',
         userSigSecretKey: 'secret',
         friendUserIds: ['test321'],
@@ -428,12 +414,9 @@ describe('remote IM account config', () => {
     expect(merged).toMatchObject({
       sdkAppId: 1600148979,
       desktopUserId: 'test123',
-      desktopRole: 'master',
       userSigMode: 'secret-key',
       userSigSecretKey: 'secret',
       friendUserIds: ['test321'],
-      masterUserIds: [],
-      slaveUserIds: [],
       allowedUserIds: ['test321'],
       outputFlushIntervalMs: 3000,
       outputMaxChunkChars: 1200

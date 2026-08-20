@@ -142,8 +142,6 @@ export function getRemoteImContacts(config: RemoteImConfig): RemoteImContact[] {
   const contacts: RemoteImContact[] = []
   const seen = new Set<string>()
   addContactRows(contacts, seen, config.friendUserIds, 'friend')
-  addContactRows(contacts, seen, config.masterUserIds, 'friend')
-  addContactRows(contacts, seen, config.slaveUserIds, 'friend')
   addContactRows(contacts, seen, config.allowedUserIds, 'friend')
   return contacts
 }
@@ -191,7 +189,7 @@ export function getRemoteImMessageDisplayMeta(
 
   return {
     userId: userId ?? '',
-    relation: userId ? getRemoteImContactRelation(config, userId) : config.desktopRole,
+    relation: userId ? getRemoteImContactRelation(config, userId) : 'friend',
     isContact: userId ? isRemoteImContact(config, userId) : true
   }
 }
@@ -268,22 +266,14 @@ export function addRemoteImContact(
   if (!userId) return config
 
   const nextFriendUserIds = uniqueUserIds(config.friendUserIds).filter((item) => item !== userId)
-  const nextMasterUserIds = uniqueUserIds(config.masterUserIds).filter((item) => item !== userId)
-  const nextSlaveUserIds = uniqueUserIds(config.slaveUserIds).filter((item) => item !== userId)
   void relation
   nextFriendUserIds.push(userId)
 
-  const nextAllowedUserIds = uniqueUserIds([
-    ...nextFriendUserIds,
-    ...nextMasterUserIds,
-    ...nextSlaveUserIds
-  ])
+  const nextAllowedUserIds = uniqueUserIds([...nextFriendUserIds])
 
   return {
     ...config,
     friendUserIds: nextFriendUserIds,
-    masterUserIds: nextMasterUserIds,
-    slaveUserIds: nextSlaveUserIds,
     allowedUserIds: nextAllowedUserIds
   }
 }
@@ -296,19 +286,11 @@ export function removeRemoteImContact(
   if (!userId) return config
 
   const nextFriendUserIds = uniqueUserIds(config.friendUserIds).filter((item) => item !== userId)
-  const nextMasterUserIds = uniqueUserIds(config.masterUserIds).filter((item) => item !== userId)
-  const nextSlaveUserIds = uniqueUserIds(config.slaveUserIds).filter((item) => item !== userId)
-  const nextAllowedUserIds = uniqueUserIds([
-    ...nextFriendUserIds,
-    ...nextMasterUserIds,
-    ...nextSlaveUserIds
-  ])
+  const nextAllowedUserIds = uniqueUserIds([...nextFriendUserIds])
 
   return {
     ...config,
     friendUserIds: nextFriendUserIds,
-    masterUserIds: nextMasterUserIds,
-    slaveUserIds: nextSlaveUserIds,
     allowedUserIds: nextAllowedUserIds
   }
 }
@@ -326,9 +308,7 @@ export function isRemoteImSendDisabled(input: {
   sessionRunning: boolean
   text: string
   status: RemoteImStatus | null
-  desktopRole?: 'master' | 'slave'
 }): boolean {
-  void input.desktopRole
   return (
     !input.projectId ||
     input.status?.state !== 'connected' ||

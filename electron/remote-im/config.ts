@@ -9,13 +9,10 @@ export const DEFAULT_REMOTE_IM_CONFIG: RemoteImConfig = {
   provider: 'tencent-im',
   sdkAppId: null,
   desktopUserId: '',
-  desktopRole: 'master',
   userSigMode: 'endpoint',
   userSigEndpoint: '',
   userSigSecretKey: '',
   friendUserIds: [],
-  masterUserIds: [],
-  slaveUserIds: [],
   allowedUserIds: [],
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 4000,
@@ -86,8 +83,6 @@ export function normalizeRemoteImConfig(value: unknown): RemoteImConfig {
   const legacyAllowedUserIds = normalizeAllowedUserIds(raw.allowedUserIds)
   const friendUserIds = mergeUserIds(
     normalizeAllowedUserIds(raw.friendUserIds),
-    normalizeAllowedUserIds(raw.masterUserIds),
-    normalizeAllowedUserIds(raw.slaveUserIds),
     legacyAllowedUserIds
   )
   const allowedUserIds = [...friendUserIds]
@@ -95,13 +90,10 @@ export function normalizeRemoteImConfig(value: unknown): RemoteImConfig {
     provider: 'tencent-im',
     sdkAppId,
     desktopUserId: normalizeString(raw.desktopUserId),
-    desktopRole: 'master',
     userSigMode,
     userSigEndpoint,
     userSigSecretKey,
     friendUserIds,
-    masterUserIds: [],
-    slaveUserIds: [],
     allowedUserIds,
     outputFlushIntervalMs: normalizeNumber(raw.outputFlushIntervalMs, 2000, 1000, 30_000),
     outputMaxChunkChars: normalizeOutputMaxChunkChars(raw.outputMaxChunkChars),

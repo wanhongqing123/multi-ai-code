@@ -9,13 +9,10 @@ const config: RemoteImConfig = {
   provider: 'tencent-im',
   sdkAppId: 1600148979,
   desktopUserId: 'agent-a',
-  desktopRole: 'master',
   userSigMode: 'secret-key',
   userSigEndpoint: '',
   userSigSecretKey: 'secret',
   friendUserIds: ['agent-b', 'phone-user'],
-  masterUserIds: [],
-  slaveUserIds: [],
   allowedUserIds: ['agent-b', 'phone-user'],
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 1200

@@ -60,10 +60,7 @@ describe('remote IM config', () => {
         remoteDesktopControl: false
       })
     ).toMatchObject({
-      desktopRole: 'master',
       friendUserIds: ['master-a'],
-      masterUserIds: [],
-      slaveUserIds: [],
       allowedUserIds: ['master-a'],
       outputFlushIntervalMs: 2000,
       outputMaxChunkChars: 4000,
@@ -72,20 +69,16 @@ describe('remote IM config', () => {
     })
   })
 
-  it('normalizes explicit legacy role contact lists into trusted friends', () => {
+  it('trims and de-duplicates the trusted friend list', () => {
     expect(
       normalizeRemoteImConfig({
-        desktopRole: 'slave',
-        friendUserIds: [' friend-a ', '', 'friend-a'],
-        masterUserIds: [' master-a ', 'master-a'],
-        slaveUserIds: [' slave-b ', '']
+        friendUserIds: [' friend-a ', '', 'friend-a', 'friend-b']
       })
     ).toMatchObject({
-      desktopRole: 'master',
-      friendUserIds: ['friend-a', 'master-a', 'slave-b'],
-      masterUserIds: [],
-      slaveUserIds: [],
-      allowedUserIds: ['friend-a', 'master-a', 'slave-b'],
+      // friendUserIds 与 allowedUserIds 必须保持一致：前者决定界面显示，
+      // 后者决定收发权限，分叉会让「看得到但发不出」。
+      friendUserIds: ['friend-a', 'friend-b'],
+      allowedUserIds: ['friend-a', 'friend-b'],
       outputFlushIntervalMs: 2000,
       outputMaxChunkChars: 4000,
       remoteDesktopMode: 'disabled' as const,
@@ -115,12 +108,10 @@ describe('remote IM config', () => {
     const config = normalizeRemoteImConfig({
       sdkAppId: 1600148979,
       desktopUserId: 'desktop_bot',
-      desktopRole: 'slave',
       userSigMode: 'secret-key',
       userSigSecretKey: 'secret-for-local-test'
     })
 
-    expect(config.desktopRole).toBe('master')
     expect(validateRemoteImConfig(config).ok).toBe(true)
   })
 })

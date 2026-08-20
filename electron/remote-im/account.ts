@@ -8,13 +8,10 @@ export const DEFAULT_REMOTE_IM_ACCOUNT_CONFIG: RemoteImAccountConfig = {
   provider: 'tencent-im',
   sdkAppId: null,
   desktopUserId: '',
-  desktopRole: 'master',
   userSigMode: 'endpoint',
   userSigEndpoint: '',
   userSigSecretKey: '',
   friendUserIds: [],
-  masterUserIds: [],
-  slaveUserIds: [],
   allowedUserIds: [],
   blockedUserIds: [],
   outputFlushIntervalMs: 2000,
@@ -68,8 +65,6 @@ function mergeUserIds(...lists: string[][]): string[] {
 function hasAccountContacts(account: RemoteImAccountConfig): boolean {
   return (
     account.friendUserIds.length > 0 ||
-    account.masterUserIds.length > 0 ||
-    account.slaveUserIds.length > 0 ||
     account.allowedUserIds.length > 0
   )
 }
@@ -88,8 +83,6 @@ export function normalizeRemoteImAccountConfig(value: unknown): RemoteImAccountC
   const blockedUserIdSet = new Set(blockedUserIds)
   const friendUserIds = mergeUserIds(
     normalizeUserIds(raw.friendUserIds),
-    normalizeUserIds(raw.masterUserIds),
-    normalizeUserIds(raw.slaveUserIds),
     normalizeUserIds(raw.allowedUserIds)
   ).filter((userId) => !blockedUserIdSet.has(userId))
 
@@ -97,13 +90,10 @@ export function normalizeRemoteImAccountConfig(value: unknown): RemoteImAccountC
     provider: 'tencent-im',
     sdkAppId,
     desktopUserId: normalizeString(raw.desktopUserId),
-    desktopRole: 'master',
     userSigMode,
     userSigEndpoint,
     userSigSecretKey,
     friendUserIds,
-    masterUserIds: [],
-    slaveUserIds: [],
     allowedUserIds: [...friendUserIds],
     blockedUserIds,
     outputFlushIntervalMs: normalizeIntervalMs(raw.outputFlushIntervalMs),
@@ -130,8 +120,6 @@ export function preserveRemoteImAccountContacts(
   return normalizeRemoteImAccountConfig({
     ...next,
     friendUserIds: previous.friendUserIds,
-    masterUserIds: previous.masterUserIds,
-    slaveUserIds: previous.slaveUserIds,
     allowedUserIds: previous.allowedUserIds,
     blockedUserIds
   })
@@ -150,8 +138,6 @@ export function syncRemoteImAccountContactsFromSdk(
   return normalizeRemoteImAccountConfig({
     ...previous,
     friendUserIds,
-    masterUserIds: [],
-    slaveUserIds: [],
     allowedUserIds: friendUserIds,
     blockedUserIds
   })
@@ -168,8 +154,6 @@ export function removeRemoteImAccountContact(
   return normalizeRemoteImAccountConfig({
     ...previous,
     friendUserIds: removeUserId(previous.friendUserIds),
-    masterUserIds: removeUserId(previous.masterUserIds),
-    slaveUserIds: removeUserId(previous.slaveUserIds),
     allowedUserIds: removeUserId(previous.allowedUserIds),
     blockedUserIds: Array.from(new Set([...(previous.blockedUserIds ?? []), userId]))
   })
@@ -206,13 +190,10 @@ export function mergeRemoteImAccountIntoConfig(
     provider: account.provider,
     sdkAppId: account.sdkAppId,
     desktopUserId: account.desktopUserId,
-    desktopRole: account.desktopRole,
     userSigMode: account.userSigMode,
     userSigEndpoint: account.userSigEndpoint,
     userSigSecretKey: account.userSigSecretKey,
     friendUserIds: account.friendUserIds,
-    masterUserIds: account.masterUserIds,
-    slaveUserIds: account.slaveUserIds,
     allowedUserIds: account.allowedUserIds,
     outputFlushIntervalMs: account.outputFlushIntervalMs,
     outputMaxChunkChars: account.outputMaxChunkChars,

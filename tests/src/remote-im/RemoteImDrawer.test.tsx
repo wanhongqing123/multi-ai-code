@@ -19,13 +19,10 @@ const config: RemoteImConfig = {
   provider: 'tencent-im',
   sdkAppId: 1400000000,
   desktopUserId: 'desktop_bot',
-  desktopRole: 'master',
   userSigMode: 'endpoint',
   userSigEndpoint: 'https://example.test/sig',
   userSigSecretKey: '',
   friendUserIds: ['friend_a'],
-  masterUserIds: ['phone_admin'],
-  slaveUserIds: ['desktop_slave'],
   allowedUserIds: ['friend_a', 'phone_admin', 'desktop_slave'],
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 1200
@@ -434,8 +431,6 @@ describe('RemoteImDrawer', () => {
       config: {
         ...config,
         friendUserIds: [],
-        masterUserIds: [],
-        slaveUserIds: [],
         allowedUserIds: [],
         outputFlushIntervalMs: 2000,
         outputMaxChunkChars: 4000,
@@ -461,7 +456,7 @@ describe('RemoteImDrawer', () => {
 
   it('keeps manual sending available for legacy slave accounts', () => {
     const html = renderDrawer({
-      config: { ...config, desktopRole: 'slave' },
+      config: { ...config },
       input: 'hello'
     })
 

@@ -1,6 +1,7 @@
-import type { RemoteImConfig, RemoteImContactRelation, RemoteImDesktopRole } from './types.js'
+import type { RemoteImConfig, RemoteImContactRelation } from './types.js'
 
-export type RemoteImPeerRole = RemoteImDesktopRole
+// 主从角色早已不再区分，这里保留类型名只为不惊动调用方；取值恒为 'master'。
+export type RemoteImPeerRole = 'master'
 export type RemoteImPeerRelation = RemoteImContactRelation
 
 export type RemoteImInboundTaskDeniedReason = 'sender-not-allowed'
@@ -10,14 +11,6 @@ export type RemoteImPermissionResult<TReason extends string> =
   | { ok: true; peerRole: RemoteImPeerRole }
   | { ok: false; reason: TReason; peerRole: RemoteImPeerRole | null }
 
-function masterUserIds(config: RemoteImConfig): string[] {
-  return Array.isArray(config.masterUserIds) ? config.masterUserIds : config.allowedUserIds ?? []
-}
-
-function slaveUserIds(config: RemoteImConfig): string[] {
-  return Array.isArray(config.slaveUserIds) ? config.slaveUserIds : []
-}
-
 function friendUserIds(config: RemoteImConfig): string[] {
   return Array.isArray(config.friendUserIds) ? config.friendUserIds : []
 }
@@ -26,8 +19,6 @@ function trustedFriendUserIds(config: RemoteImConfig): string[] {
   return Array.from(
     new Set([
       ...friendUserIds(config),
-      ...masterUserIds(config),
-      ...slaveUserIds(config),
       ...(Array.isArray(config.allowedUserIds) ? config.allowedUserIds : [])
     ])
   )
@@ -74,5 +65,9 @@ export function canManuallySendToRemoteImPeer(
 }
 
 export function resolveDefaultRemoteImPeerUserId(config: RemoteImConfig): string | null {
-  return friendUserIds(config)[0] ?? masterUserIds(config)[0] ?? slaveUserIds(config)[0] ?? null
+  return (
+    friendUserIds(config)[0] ??
+    (Array.isArray(config.allowedUserIds) ? config.allowedUserIds[0] : undefined) ??
+    null
+  )
 }

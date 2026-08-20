@@ -48,13 +48,10 @@ describe('preload remote IM api', () => {
       provider: 'tencent-im',
       sdkAppId: 1400000000,
       desktopUserId: 'desktop_bot',
-      desktopRole: 'master',
       userSigMode: 'endpoint',
       userSigEndpoint: 'https://example.test/sig',
       userSigSecretKey: '',
       friendUserIds: [],
-      masterUserIds: ['phone_admin'],
-      slaveUserIds: [],
       allowedUserIds: ['phone_admin'],
       outputFlushIntervalMs: 2000,
       outputMaxChunkChars: 1200

@@ -131,8 +131,6 @@ function uniqueUserIds(userIds: Array<string | null | undefined>): string[] {
 function contactsFromConfig(config: RemoteImConfig): Array<{ userId: string }> {
   return uniqueUserIds([
     ...config.friendUserIds,
-    ...config.masterUserIds,
-    ...config.slaveUserIds,
     ...config.allowedUserIds
   ])
     .filter((userId) => userId !== config.desktopUserId)

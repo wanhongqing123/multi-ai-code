@@ -12,14 +12,11 @@ const masterConfig: RemoteImConfig = {
   provider: 'tencent-im',
   sdkAppId: 1600148979,
   desktopUserId: 'desktop-a',
-  desktopRole: 'master',
   userSigMode: 'secret-key',
   userSigEndpoint: '',
   userSigSecretKey: 'local-secret',
   friendUserIds: ['friend-b'],
   allowedUserIds: ['friend-b', 'master-b', 'slave-b'],
-  masterUserIds: ['master-b'],
-  slaveUserIds: ['slave-b'],
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 1200,
   remoteDesktopMode: 'disabled' as const,
@@ -29,11 +26,8 @@ const masterConfig: RemoteImConfig = {
 const slaveConfig: RemoteImConfig = {
   ...masterConfig,
   desktopUserId: 'desktop-b',
-  desktopRole: 'slave',
   friendUserIds: ['friend-c'],
   allowedUserIds: ['friend-c', 'master-a', 'slave-c'],
-  masterUserIds: ['master-a'],
-  slaveUserIds: ['slave-c']
 }
 
 describe('remote IM trusted-contact permissions', () => {
@@ -82,14 +76,14 @@ describe('remote IM trusted-contact permissions', () => {
     })
   })
 
-  it('chooses configured trusted friends before legacy role entries for default manual sends', () => {
+  it('picks the first trusted friend as the default manual send peer', () => {
     expect(resolveDefaultRemoteImPeerUserId(masterConfig)).toBe('friend-b')
-    expect(resolveDefaultRemoteImPeerUserId({ ...masterConfig, friendUserIds: [] })).toBe('master-b')
-    expect(resolveDefaultRemoteImPeerUserId({
-      ...masterConfig,
-      friendUserIds: [],
-      masterUserIds: []
-    })).toBe('slave-b')
     expect(resolveDefaultRemoteImPeerUserId(slaveConfig)).toBe('friend-c')
+    // friendUserIds 为空时回退到 allowedUserIds——两者正常情况下同步，
+    // 但配置损坏时不该直接变成「没有默认对端」。
+    expect(resolveDefaultRemoteImPeerUserId({ ...masterConfig, friendUserIds: [] })).toBe('friend-b')
+    expect(
+      resolveDefaultRemoteImPeerUserId({ ...masterConfig, friendUserIds: [], allowedUserIds: [] })
+    ).toBeNull()
   })
 })

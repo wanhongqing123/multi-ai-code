@@ -58,13 +58,10 @@ const DEFAULT_REMOTE_IM_CONFIG: RemoteImConfig = {
   provider: 'tencent-im',
   sdkAppId: null,
   desktopUserId: '',
-  desktopRole: 'master',
   userSigMode: 'endpoint',
   userSigEndpoint: '',
   userSigSecretKey: '',
   friendUserIds: [],
-  masterUserIds: [],
-  slaveUserIds: [],
   allowedUserIds: [],
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 4000
@@ -736,13 +733,10 @@ function AppShell() {
       provider: nextConfig.provider,
       sdkAppId: nextConfig.sdkAppId,
       desktopUserId: nextConfig.desktopUserId,
-      desktopRole: nextConfig.desktopRole,
       userSigMode: nextConfig.userSigMode,
       userSigEndpoint: nextConfig.userSigEndpoint,
       userSigSecretKey: nextConfig.userSigSecretKey,
       friendUserIds: nextConfig.friendUserIds,
-      masterUserIds: nextConfig.masterUserIds,
-      slaveUserIds: nextConfig.slaveUserIds,
       allowedUserIds: nextConfig.allowedUserIds,
       // Explicitly adding a contact is the only action that removes its local
       // revoke tombstone. Other blocked SDK friends remain blocked.

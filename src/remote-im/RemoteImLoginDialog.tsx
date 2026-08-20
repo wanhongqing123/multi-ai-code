@@ -36,13 +36,10 @@ const EMPTY_ACCOUNT: RemoteImAccountConfig = {
   provider: 'tencent-im',
   sdkAppId: DEFAULT_REMOTE_IM_CREDENTIAL_PRESET.sdkAppId,
   desktopUserId: '',
-  desktopRole: 'master',
   userSigMode: 'secret-key',
   userSigEndpoint: '',
   userSigSecretKey: DEFAULT_REMOTE_IM_CREDENTIAL_PRESET.userSigSecretKey,
   friendUserIds: [],
-  masterUserIds: [],
-  slaveUserIds: [],
   allowedUserIds: [],
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 4000,
@@ -51,10 +48,7 @@ const EMPTY_ACCOUNT: RemoteImAccountConfig = {
 }
 
 function toFixedCredentialAccount(account: RemoteImAccountConfig): RemoteImAccountConfig {
-  return {
-    ...applyDefaultRemoteImCredential(account),
-    desktopRole: 'master'
-  }
+  return applyDefaultRemoteImCredential(account)
 }
 
 function readNumberInput(value: string, fallback: number): number {

@@ -313,8 +313,7 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
       projectId: props.projectId,
       sessionRunning: props.sessionRunning,
       text: props.input,
-      status: props.status,
-      desktopRole: props.config.desktopRole
+      status: props.status
     }) || !selectedPeerUserId
   const imageSendDisabled =
     !selectedPeerUserId || !props.projectId || props.status?.state !== 'connected'

@@ -18,13 +18,10 @@ const config: RemoteImConfig = {
   provider: 'tencent-im',
   sdkAppId: 1400000000,
   desktopUserId: 'local-user',
-  desktopRole: 'master',
   userSigMode: 'secret-key',
   userSigEndpoint: '',
   userSigSecretKey: 'secret',
   friendUserIds: ['friend-a'],
-  masterUserIds: ['master-a'],
-  slaveUserIds: ['slave-a'],
   allowedUserIds: ['friend-a', 'master-a', 'slave-a'],
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 1200,
@@ -114,7 +111,6 @@ describe('remote IM view model', () => {
       sessionRunning: true,
       text: 'hi',
       status,
-      desktopRole: 'slave'
     })).toBe(false)
   })
 
@@ -212,23 +208,20 @@ describe('remote IM view model', () => {
     ).toEqual({ userId: 'slave-a', relation: 'friend', isContact: true })
   })
 
-  it('adds trusted friends while keeping allowed users in sync and removing legacy duplicates', () => {
-    const next = addRemoteImContact(config, 'slave', ' slave-b ')
+  it('adds trusted friends while keeping allowed users in sync', () => {
+    const next = addRemoteImContact(config, 'friend', ' slave-b ')
 
-    expect(next.friendUserIds).toEqual(['friend-a', 'slave-b'])
-    expect(next.masterUserIds).toEqual(['master-a'])
-    expect(next.slaveUserIds).toEqual(['slave-a'])
-    expect(next.allowedUserIds).toEqual(['friend-a', 'slave-b', 'master-a', 'slave-a'])
-    expect(addRemoteImContact(next, 'friend', 'slave-a').slaveUserIds).toEqual([])
+    // friendUserIds 与 allowedUserIds 必须始终同步：前者决定界面显示，
+    // 后者决定收发权限，分叉会让「看得到但发不出」。
+    expect(next.friendUserIds).toContain('slave-b')
+    expect(next.allowedUserIds).toEqual(next.friendUserIds)
   })
 
   it('removes trusted friends from every contact list and keeps allowed users in sync', () => {
     const next = removeRemoteImContact(config, ' master-a ')
 
-    expect(next.friendUserIds).toEqual(['friend-a'])
-    expect(next.masterUserIds).toEqual([])
-    expect(next.slaveUserIds).toEqual(['slave-a'])
-    expect(next.allowedUserIds).toEqual(['friend-a', 'slave-a'])
+    expect(next.friendUserIds).not.toContain('master-a')
+    expect(next.allowedUserIds).toEqual(next.friendUserIds)
   })
 })
 

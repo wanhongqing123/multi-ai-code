@@ -13,13 +13,10 @@ const config: RemoteImConfig = {
   provider: 'tencent-im',
   sdkAppId: 1400000000,
   desktopUserId: 'desktop_bot',
-  desktopRole: 'master',
   userSigMode: 'endpoint',
   userSigEndpoint: 'https://example.test/sig',
   userSigSecretKey: '',
   friendUserIds: [],
-  masterUserIds: ['phone_admin'],
-  slaveUserIds: [],
   allowedUserIds: ['phone_admin'],
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 1200
@@ -851,7 +848,6 @@ describe('remote IM router', () => {
       getConfig: () => ({
         ...config,
         desktopUserId: 'receiver_bot',
-        masterUserIds: ['desktop_bot'],
         allowedUserIds: ['desktop_bot'],
         outputFlushIntervalMs: 2000,
         outputMaxChunkChars: 4000,
@@ -1561,8 +1557,6 @@ describe('remote IM router', () => {
       getConfig: () => ({
         ...config,
         friendUserIds: ['friend-a'],
-        masterUserIds: [],
-        slaveUserIds: [],
         allowedUserIds: ['friend-a'],
         outputFlushIntervalMs: 2000,
         outputMaxChunkChars: 4000,
@@ -1610,9 +1604,6 @@ describe('remote IM router', () => {
     const router = createRemoteImRouter({
       getConfig: () => ({
         ...config,
-        desktopRole: 'slave',
-        masterUserIds: ['master-a'],
-        slaveUserIds: ['slave-c'],
         allowedUserIds: ['master-a', 'slave-c'],
         outputFlushIntervalMs: 2000,
         outputMaxChunkChars: 4000,
@@ -1651,8 +1642,6 @@ describe('remote IM router', () => {
     const router = createRemoteImRouter({
       getConfig: () => ({
         ...config,
-        masterUserIds: ['master-a'],
-        slaveUserIds: ['slave-b'],
         allowedUserIds: ['master-a', 'slave-b'],
         outputFlushIntervalMs: 2000,
         outputMaxChunkChars: 4000,
@@ -1696,8 +1685,6 @@ describe('remote IM router', () => {
     const router = createRemoteImRouter({
       getConfig: () => ({
         ...config,
-        masterUserIds: ['master-a'],
-        slaveUserIds: ['slave-b'],
         allowedUserIds: ['master-a', 'slave-b'],
         outputFlushIntervalMs: 2000,
         outputMaxChunkChars: 4000,
@@ -1744,9 +1731,6 @@ describe('remote IM router', () => {
     const router = createRemoteImRouter({
       getConfig: () => ({
         ...config,
-        desktopRole: 'slave',
-        masterUserIds: ['master-a'],
-        slaveUserIds: ['slave-c'],
         allowedUserIds: ['master-a', 'slave-c'],
         outputFlushIntervalMs: 2000,
         outputMaxChunkChars: 4000,

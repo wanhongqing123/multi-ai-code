@@ -11,13 +11,10 @@ const config: RemoteImConfig = {
   provider: 'tencent-im',
   sdkAppId: 1600148979,
   desktopUserId: 'desktop-a',
-  desktopRole: 'master',
   userSigMode: 'secret-key',
   userSigEndpoint: '',
   userSigSecretKey: 'local-secret',
   friendUserIds: ['friend-a'],
-  masterUserIds: ['desktop-b'],
-  slaveUserIds: [],
   allowedUserIds: ['friend-a', 'desktop-b'],
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 1200,
@@ -29,8 +26,7 @@ describe('remote IM peer messages', () => {
   it('uses the first trusted friend UserID as the default peer', () => {
     expect(resolvePeerUserId(config)).toBe('friend-a')
     expect(resolvePeerUserId(config, 'friend-a')).toBe('friend-a')
-    expect(resolvePeerUserId({ ...config, friendUserIds: [], masterUserIds: [], slaveUserIds: [], allowedUserIds: [] })).toBeNull()
-    expect(resolvePeerUserId({ ...config, desktopRole: 'slave' })).toBe('friend-a')
+    expect(resolvePeerUserId({ ...config, friendUserIds: [], allowedUserIds: [] })).toBeNull()
   })
 
   it('creates an outgoing message record for a peer IM send', () => {

@@ -1,61 +1,4 @@
 {
-  "deepseek": {
-    "id": "deepseek",
-    "name": "DeepSeek",
-    "api": "https://api.deepseek.com",
-    "npm": "@ai-sdk/openai-compatible",
-    "env": ["DEEPSEEK_API_KEY"],
-    "models": {
-      "deepseek-v4-flash": {
-        "id": "deepseek-v4-flash",
-        "name": "DeepSeek V4 Flash",
-        "family": "deepseek",
-        "release_date": "2026-01-01",
-        "attachment": false,
-        "reasoning": true,
-        "temperature": true,
-        "tool_call": true,
-        "modalities": { "input": ["text"], "output": ["text"] },
-        "limit": { "context": 131072, "output": 32768 }
-      },
-      "deepseek-v4-pro": {
-        "id": "deepseek-v4-pro",
-        "name": "DeepSeek V4 Pro",
-        "family": "deepseek",
-        "release_date": "2026-01-01",
-        "attachment": false,
-        "reasoning": true,
-        "temperature": true,
-        "tool_call": true,
-        "modalities": { "input": ["text"], "output": ["text"] },
-        "limit": { "context": 131072, "output": 32768 }
-      },
-      "deepseek-chat": {
-        "id": "deepseek-chat",
-        "name": "DeepSeek Chat",
-        "family": "deepseek",
-        "release_date": "2025-01-01",
-        "attachment": false,
-        "reasoning": false,
-        "temperature": true,
-        "tool_call": true,
-        "modalities": { "input": ["text"], "output": ["text"] },
-        "limit": { "context": 131072, "output": 8192 }
-      },
-      "deepseek-reasoner": {
-        "id": "deepseek-reasoner",
-        "name": "DeepSeek Reasoner",
-        "family": "deepseek",
-        "release_date": "2025-01-01",
-        "attachment": false,
-        "reasoning": true,
-        "temperature": false,
-        "tool_call": true,
-        "modalities": { "input": ["text"], "output": ["text"] },
-        "limit": { "context": 131072, "output": 32768 }
-      }
-    }
-  },
   "zhipu": {
     "id": "zhipu",
     "name": "Zhipu GLM",
@@ -63,6 +6,20 @@
     "npm": "@ai-sdk/openai-compatible",
     "env": ["ZHIPU_API_KEY"],
     "models": {
+      "glm-5.3": {
+        "id": "glm-5.3",
+        "name": "GLM 5.3",
+        "release_date": "2026-08-13",
+        "attachment": false,
+        "reasoning": true,
+        "reasoning_options": [
+          { "type": "effort", "values": ["low", "high", "max"] }
+        ],
+        "temperature": true,
+        "tool_call": true,
+        "modalities": { "input": ["text"], "output": ["text"] },
+        "limit": { "context": 1000000, "output": 131072 }
+      },
       "glm-5.2": {
         "id": "glm-5.2",
         "name": "GLM 5.2",

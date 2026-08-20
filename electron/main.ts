@@ -23,6 +23,7 @@ import {
   projectDir as projectDirFn,
   artifactsDir,
   rootDir,
+  opencodeRuntimeDir,
   setActiveAccount,
   sanitizeAccountId
 } from './store/paths.js'
@@ -52,6 +53,7 @@ import {
   pasteRepoAnalysisInput
 } from './repo-view/repoAnalysisManager.js'
 import { getRemoteImRuntimeProfileId, resolveRemoteImUserDataPath } from './remote-im/profile.js'
+import { readOpenCodeApiKey, writeOpenCodeApiKey } from './aicli/opencodeCredentials.js'
 
 const isDev = !app.isPackaged
 const repoViewWindows = new Map<string, BrowserWindow>()
@@ -228,6 +230,30 @@ app.whenReady().then(async () => {
   // 初始化在账号绑定成功后由 activateAccountDataLayer() 触发。
   ipcMain.handle('app:ping', () => 'pong')
   ipcMain.handle('app:version', () => app.getVersion())
+  ipcMain.handle('opencode:get-api-key', async () => {
+    try {
+      return { ok: true as const, value: readOpenCodeApiKey(opencodeRuntimeDir()) }
+    } catch (error) {
+      return {
+        ok: false as const,
+        error: error instanceof Error ? error.message : String(error)
+      }
+    }
+  })
+  ipcMain.handle('opencode:set-api-key', async (_event, input: { apiKey?: unknown }) => {
+    try {
+      if (typeof input?.apiKey !== 'string') {
+        return { ok: false as const, error: '智谱 API Key 格式无效' }
+      }
+      writeOpenCodeApiKey(opencodeRuntimeDir(), input.apiKey)
+      return { ok: true as const }
+    } catch (error) {
+      return {
+        ok: false as const,
+        error: error instanceof Error ? error.message : String(error)
+      }
+    }
+  })
 
   // 无边框窗口的页面内自绘按钮（最小化/最大化/关闭）——作用于发起请求的窗口。
   ipcMain.on('window-controls:minimize', (event) => {

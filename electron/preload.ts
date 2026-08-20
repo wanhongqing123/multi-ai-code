@@ -312,6 +312,16 @@ const api = {
     toggleMaximize: () => ipcRenderer.send('window-controls:toggle-maximize'),
     close: () => ipcRenderer.send('window-controls:close')
   },
+  opencode: {
+    getApiKey: () =>
+      ipcRenderer.invoke('opencode:get-api-key') as Promise<
+        { ok: true; value: string } | { ok: false; error: string }
+      >,
+    setApiKey: (apiKey: string) =>
+      ipcRenderer.invoke('opencode:set-api-key', { apiKey }) as Promise<
+        { ok: true } | { ok: false; error: string }
+      >
+  },
   /** Resolve a DataTransfer File to its absolute filesystem path (Electron 32+). */
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
   clipboard: {

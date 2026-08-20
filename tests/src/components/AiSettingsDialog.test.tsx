@@ -136,25 +136,28 @@ describe('AiSettingsDialog', () => {
     expect(codexOptionIndex).toBeLessThan(claudeOptionIndex)
   })
 
-  it('does not expose project-level OpenCode provider settings', () => {
+  it('shows only the local Zhipu API Key setting for OpenCode', () => {
     const markup = renderDialog({
       initial: {
         ai_cli: 'opencode',
         opencode: {
-          providerId: 'multi-ai-deepseek-internal',
-          name: '公司内网 DeepSeek',
+          providerId: 'legacy-custom-provider',
+          name: '旧的项目级模型服务',
           baseURL: 'https://llm.example.test/v1',
           apiKey: 'test-api-key',
-          mainModel: 'deepseek-v4-pro',
-          smallModel: 'deepseek-v4-lite'
+          mainModel: 'legacy-model',
+          smallModel: 'legacy-small-model'
         }
       }
     })
 
     expect(markup).not.toContain('OpenCode 模型服务')
     expect(markup).not.toContain('Provider ID')
-    expect(markup).not.toContain('multi-ai-deepseek-internal')
-    expect(markup).not.toContain('API Key')
+    expect(markup).not.toContain('legacy-custom-provider')
+    expect(markup).toContain('智谱 API Key')
+    expect(markup).toContain('type="password"')
+    expect(markup).toContain('不会写入项目仓库或安装包')
+    expect(markup).not.toContain('test-api-key')
   })
 
   it('keeps remote IM configuration out of the settings center', () => {

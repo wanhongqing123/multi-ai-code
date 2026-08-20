@@ -33,7 +33,6 @@ export interface OpenCodeManagedProfile {
   defaultModel: string
   smallModel: string
   enabledProviders: string[]
-  providers: Record<string, { env: Record<string, string> }>
 }
 
 function basenameLike(command: string): string {
@@ -87,12 +86,10 @@ function mergeOpenCodeConfigContent(content: string): string | null {
 
 export function withOpenCodeManagedProfileEnv(
   env: Record<string, string> | undefined,
-  profile: OpenCodeManagedProfile
+  profile: OpenCodeManagedProfile,
+  credentialEnv: Record<string, string>
 ): Record<string, string> {
-  const next = { ...(env ?? {}) }
-  for (const provider of Object.values(profile.providers)) {
-    for (const [name, value] of Object.entries(provider.env)) next[name] = value
-  }
+  const next = { ...(env ?? {}), ...credentialEnv }
 
   const parsed = parseOpenCodeConfigContent(next.OPENCODE_CONFIG_CONTENT ?? '') ??
     parseOpenCodeConfigContent(OPENCODE_LSP_CONFIG_CONTENT)!

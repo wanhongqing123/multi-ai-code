@@ -79,6 +79,10 @@ vi.mock('../../../electron/cc/PtyCCProcess.js', () => ({
   },
 }))
 
+vi.mock('../../../electron/aicli/opencodeCredentials.js', () => ({
+  readOpenCodeCredentialEnv: () => ({ ZHIPU_API_KEY: 'test-zhipu-key' })
+}))
+
 describe('registerPtyIpc prompt injection timing', () => {
   beforeEach(() => {
     vi.resetModules()
@@ -257,11 +261,11 @@ describe('registerPtyIpc prompt injection timing', () => {
       command: 'opencode',
       args: [],
       opencode: {
-        providerId: 'multi-ai-deepseek-internal',
-        name: '公司内网 DeepSeek',
+        providerId: 'legacy-custom-provider',
+        name: '旧的项目级模型服务',
         baseURL: 'https://llm.example.test/v1',
         apiKey: 'test-api-key',
-        mainModel: 'deepseek-v4-pro'
+        mainModel: 'legacy-model'
       },
       mode: 'new',
     })
@@ -271,15 +275,16 @@ describe('registerPtyIpc prompt injection timing', () => {
     const config = JSON.parse(env.OPENCODE_CONFIG_CONTENT) as Record<string, unknown>
     expect(config).toMatchObject({
       lsp: true,
-      model: 'deepseek/deepseek-v4-flash',
-      small_model: 'deepseek/deepseek-v4-flash',
-      enabled_providers: ['deepseek', 'zhipu']
+      model: 'zhipu/glm-5.3',
+      small_model: 'zhipu/glm-5.3',
+      enabled_providers: ['zhipu']
     })
     expect(config).not.toHaveProperty('provider')
     expect(env.OPENCODE_RUNTIME_ROOT).toContain('/accounts/test-account/aicli/opencode')
     expect(env.OPENCODE_MODELS_PATH).toMatch(/managed-models\.json$/)
     expect(env.OPENCODE_MANAGED_ROUTING_PATH).toMatch(/managed-routing\.json$/)
-    expect(env.MULTI_AI_DEEPSEEK_INTERNAL_API_KEY).toBeUndefined()
+    expect(env.ZHIPU_API_KEY).toBe('test-zhipu-key')
+    expect(env.LEGACY_CUSTOM_PROVIDER_API_KEY).toBeUndefined()
   })
 
   it('resolves Codex launch through the bundled policy, never a host/custom path', async () => {

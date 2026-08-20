@@ -128,7 +128,7 @@ function validateManagedAssets() {
       throw new Error(`OpenCode 路由引用了不存在的模型：${modelRef}`)
     }
   }
-  if (!profile || profile.version !== 1 || !profile.providers ||
+  if (!profile || profile.version !== 1 ||
       !Array.isArray(profile.enabledProviders) || !profile.enabledProviders.length) {
     throw new Error('OpenCode 托管 Profile Schema 无效')
   }
@@ -142,14 +142,11 @@ function validateManagedAssets() {
   }
   for (const providerId of profile.enabledProviders) {
     const provider = catalog[providerId]
-    const credentials = profile.providers[providerId]?.env
-    if (!provider || !credentials || typeof credentials !== 'object') {
-      throw new Error(`OpenCode 托管 Profile 缺少 Provider 或凭据：${providerId}`)
+    if (!provider) {
+      throw new Error(`OpenCode 托管 Profile 缺少 Provider：${providerId}`)
     }
-    const declared = new Set(provider.env ?? [])
-    const entries = Object.entries(credentials)
-    if (!entries.length || entries.some(([name, value]) => !declared.has(name) || typeof value !== 'string' || !value)) {
-      throw new Error(`OpenCode 托管 Profile 的 Provider 凭据无效：${providerId}`)
+    if (!Array.isArray(provider.env) || !provider.env.length) {
+      throw new Error(`OpenCode 托管 Provider 未声明 API Key 环境变量：${providerId}`)
     }
   }
 }

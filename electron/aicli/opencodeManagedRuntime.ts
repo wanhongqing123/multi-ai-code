@@ -10,6 +10,7 @@ import {
   withOpenCodeManagedProfileEnv,
   type OpenCodeManagedProfile
 } from './opencodeConfig.js'
+import { readOpenCodeCredentialEnv } from './opencodeCredentials.js'
 
 export const OPENCODE_RUNTIME_ROOT_ENV = 'OPENCODE_RUNTIME_ROOT'
 export const OPENCODE_MODELS_PATH_ENV = 'OPENCODE_MODELS_PATH'
@@ -82,9 +83,7 @@ function validateManagedProfile(
   const enabledProviders = Array.isArray(value.enabledProviders)
     ? value.enabledProviders.filter((item): item is string => typeof item === 'string' && item.length > 0)
     : []
-  const providers = value.providers
-  if (!defaultModel || !smallModel || !enabledProviders.length || !providers ||
-      typeof providers !== 'object' || Array.isArray(providers)) {
+  if (!defaultModel || !smallModel || !enabledProviders.length) {
     throw new Error('OpenCode 安装资源损坏：managed-profile.json Schema 无效')
   }
 
@@ -103,44 +102,39 @@ function validateManagedProfile(
   requireModel(defaultModel)
   requireModel(smallModel)
 
-  const normalizedProviders: OpenCodeManagedProfile['providers'] = {}
   for (const providerId of enabledProviders) {
     const catalogProvider = catalog[providerId]
-    const profileProvider = (providers as Record<string, unknown>)[providerId]
-    if (!catalogProvider || typeof catalogProvider !== 'object' || Array.isArray(catalogProvider) ||
-        !profileProvider || typeof profileProvider !== 'object' || Array.isArray(profileProvider)) {
+    if (!catalogProvider || typeof catalogProvider !== 'object' || Array.isArray(catalogProvider)) {
       throw new Error(`OpenCode 安装资源损坏：托管 Provider 不存在 ${providerId}`)
     }
-    const declaredEnv = new Set(
-      Array.isArray((catalogProvider as Record<string, unknown>).env)
-        ? ((catalogProvider as Record<string, unknown>).env as unknown[]).filter(
-            (item): item is string => typeof item === 'string'
-          )
-        : []
-    )
-    const env = (profileProvider as Record<string, unknown>).env
-    if (!env || typeof env !== 'object' || Array.isArray(env)) {
-      throw new Error(`OpenCode 安装资源损坏：托管 Provider 缺少凭据 ${providerId}`)
-    }
-    const normalizedEnv: Record<string, string> = {}
-    for (const [name, secret] of Object.entries(env)) {
-      if (!declaredEnv.has(name) || typeof secret !== 'string' || !secret) {
-        throw new Error(`OpenCode 安装资源损坏：托管 Provider 凭据无效 ${providerId}/${name}`)
-      }
-      normalizedEnv[name] = secret
-    }
-    if (!Object.keys(normalizedEnv).length) {
-      throw new Error(`OpenCode 安装资源损坏：托管 Provider 没有可用凭据 ${providerId}`)
-    }
-    normalizedProviders[providerId] = { env: normalizedEnv }
   }
   return {
     version: 1,
     defaultModel,
     smallModel,
-    enabledProviders,
-    providers: normalizedProviders
+    enabledProviders
   }
+}
+
+function validateCredentialEnv(
+  profile: OpenCodeManagedProfile,
+  catalog: Record<string, unknown>,
+  credentialEnv: Record<string, string>
+): Record<string, string> {
+  const requiredNames = profile.enabledProviders.flatMap((providerId) => {
+    const provider = catalog[providerId] as Record<string, unknown>
+    return Array.isArray(provider.env)
+      ? provider.env.filter((item): item is string => typeof item === 'string' && item.length > 0)
+      : []
+  })
+  if (!requiredNames.length) {
+    throw new Error('OpenCode 安装资源损坏：托管 Provider 未声明 API Key 环境变量')
+  }
+  const missing = requiredNames.filter((name) => !credentialEnv[name]?.trim())
+  if (missing.length) {
+    throw new Error('尚未配置智谱 API Key，请先在设置中填写后再启动 OpenCode')
+  }
+  return Object.fromEntries(requiredNames.map((name) => [name, credentialEnv[name].trim()]))
 }
 
 export function resolveOpenCodeManagedAssets(
@@ -212,10 +206,16 @@ export function withOpenCodeManagedRuntimeEnv(
     validateJson(assets.profilePath, 'managed-profile.json'),
     validateJson(assets.modelsPath, 'managed-models.json')
   )
+  const catalog = validateJson(assets.modelsPath, 'managed-models.json')
+  const credentialEnv = validateCredentialEnv(
+    profile,
+    catalog,
+    readOpenCodeCredentialEnv(runtimeRoot)
+  )
   return withOpenCodeManagedProfileEnv({
     ...(env ?? {}),
     [OPENCODE_RUNTIME_ROOT_ENV]: runtimeRoot,
     [OPENCODE_MODELS_PATH_ENV]: assets.modelsPath,
     [OPENCODE_MANAGED_ROUTING_PATH_ENV]: assets.routingPath
-  }, profile)
+  }, profile, credentialEnv)
 }

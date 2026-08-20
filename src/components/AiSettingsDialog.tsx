@@ -143,11 +143,14 @@ function fromForm(
 function SettingsSection(props: {
   aiCli: AiCliKind
   permissionMode: AiPermissionMode
+  zhipuApiKey: string
+  apiKeyLoading: boolean
   advancedOpen: boolean
   argsText: string
   envText: string
   onAiCli: (next: AiCliKind) => void
   onPermissionMode: (next: AiPermissionMode) => void
+  onZhipuApiKey: (next: string) => void
   onAdvancedOpen: (next: boolean) => void
   onArgs: (next: string) => void
   onEnv: (next: string) => void
@@ -185,6 +188,23 @@ function SettingsSection(props: {
           <div className="ai-settings-grid-full ai-settings-danger-warning" role="alert">
             危险模式下 Codex 可直接执行任意本地命令：无沙箱、无审批，递归强制删除也会立即执行。
           </div>
+        )}
+        {props.aiCli === 'opencode' && (
+          <label className="ai-settings-grid-full">
+            智谱 API Key
+            <input
+              type="password"
+              value={props.zhipuApiKey}
+              disabled={props.apiKeyLoading}
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(event) => props.onZhipuApiKey(event.target.value)}
+              placeholder={props.apiKeyLoading ? '正在读取…' : '请输入智谱 Coding Plan API Key'}
+            />
+            <span className="ai-settings-help">
+              仅保存在当前桌面账号的本地数据目录，不会写入项目仓库或安装包。
+            </span>
+          </label>
         )}
         {/* 启动参数不该是常规操作：默认折叠，需要按特定参数启动的人自己展开。 */}
         <div className="ai-settings-grid-full ai-settings-advanced">
@@ -235,6 +255,8 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
   )
   const [argsText, setArgsText] = useState<string>((props.initial.args ?? []).join(' '))
   const [envText, setEnvText] = useState<string>(toEnvText(props.initial.env))
+  const [zhipuApiKey, setZhipuApiKey] = useState('')
+  const [apiKeyLoading, setApiKeyLoading] = useState(true)
   // 已经填过 args/env 的项目，打开设置就该看见它们，否则会以为参数丢了。
   const [advancedOpen, setAdvancedOpen] = useState<boolean>(
     (props.initial.args ?? []).length > 0 || Object.keys(props.initial.env ?? {}).length > 0
@@ -245,6 +267,23 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
   const [remoteImConfig, setRemoteImConfig] = useState<RemoteImConfig | null>(null)
   const [remoteDesktopMode, setRemoteDesktopMode] = useState<RemoteDesktopMode>('disabled')
   const [remoteDesktopControl, setRemoteDesktopControl] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    setApiKeyLoading(true)
+    void window.api.opencode.getApiKey().then((result) => {
+      if (cancelled) return
+      setApiKeyLoading(false)
+      if (!result.ok) {
+        setError(result.error)
+        return
+      }
+      setZhipuApiKey(result.value)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     const projectId = props.projectId
@@ -273,12 +312,19 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
   }, [props.initial, saving])
 
   const handleSave = async (): Promise<void> => {
+    if (apiKeyLoading) return
+    if (aiCli === 'opencode' && !zhipuApiKey.trim()) {
+      setError('请输入智谱 API Key 后再保存 OpenCode 设置')
+      return
+    }
     setSaving(true)
     setError(null)
 
     const nextMain = fromForm(aiCli, permissionMode, argsText, envText)
 
     try {
+      const credentialResult = await window.api.opencode.setApiKey(zhipuApiKey)
+      if (!credentialResult.ok) throw new Error(credentialResult.error)
       if (props.projectId) {
         const repairToast = await saveProjectScopedSettings({
           projectId: props.projectId,
@@ -328,11 +374,14 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
                 <SettingsSection
                   aiCli={aiCli}
                   permissionMode={permissionMode}
+                  zhipuApiKey={zhipuApiKey}
+                  apiKeyLoading={apiKeyLoading}
                   advancedOpen={advancedOpen}
                   argsText={argsText}
                   envText={envText}
                   onAiCli={setAiCli}
                   onPermissionMode={setPermissionMode}
+                  onZhipuApiKey={setZhipuApiKey}
                   onAdvancedOpen={setAdvancedOpen}
                   onArgs={setArgsText}
                   onEnv={setEnvText}
@@ -364,7 +413,11 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
             <button className="drawer-btn" onClick={props.onClose}>
               取消
             </button>
-            <button className="drawer-btn primary" onClick={handleSave} disabled={saving}>
+            <button
+              className="drawer-btn primary"
+              onClick={handleSave}
+              disabled={saving || apiKeyLoading}
+            >
               {saving ? '保存中…' : '保存设置'}
             </button>
           </div>

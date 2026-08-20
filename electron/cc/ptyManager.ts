@@ -801,6 +801,24 @@ export function registerPtyIpc(): void {
       ? buildResumeArgs(req.command as ResumeCommand, req.args)
       : req.args
     effectiveArgs = withEmbeddedClaudeSettings(req.command, effectiveArgs)
+    const configuredOpenCodeEnv = withOpenCodeLspEnv(
+      req.command,
+      req.env,
+      req.opencode,
+      req.terminalTheme
+    )
+    let managedOpenCodeEnv: Record<string, string> | undefined
+    try {
+      managedOpenCodeEnv = isOpenCodeCommand(req.command)
+        ? withOpenCodeManagedRuntimeEnv(req.command, configuredOpenCodeEnv, opencodeRuntimeDir())
+        : configuredOpenCodeEnv
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error)
+      }
+    }
+
     const structuredProvider = structuredOutputProvider(req.command)
     const structuredOutputBridge = structuredProvider
       ? await createAicliStructuredOutputBridge(req.sessionId, structuredProvider)
@@ -808,16 +826,6 @@ export function registerPtyIpc(): void {
     if (structuredOutputBridge) {
       effectiveArgs = [...effectiveArgs, ...structuredOutputBridge.args]
     }
-
-    const configuredOpenCodeEnv = withOpenCodeLspEnv(
-      req.command,
-      req.env,
-      req.opencode,
-      req.terminalTheme
-    )
-    const managedOpenCodeEnv = isOpenCodeCommand(req.command)
-      ? withOpenCodeManagedRuntimeEnv(req.command, configuredOpenCodeEnv, opencodeRuntimeDir())
-      : configuredOpenCodeEnv
 
     const proc = new PtyCCProcess({
       cwd: finalCwd,

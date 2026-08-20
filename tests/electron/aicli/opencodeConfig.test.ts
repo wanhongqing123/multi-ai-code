@@ -108,31 +108,26 @@ describe('OpenCode config env', () => {
       {
         OPENCODE_CONFIG_CONTENT: JSON.stringify({
           model: 'legacy/old',
-          disabled_providers: ['deepseek'],
+          disabled_providers: ['zhipu'],
           provider: { legacy: { models: { old: { name: 'old' } } } },
           share: 'disabled'
-        }),
-        DEEPSEEK_API_KEY: 'legacy-secret'
+        })
       },
       {
         version: 1,
-        defaultModel: 'deepseek/deepseek-v4-flash',
-        smallModel: 'deepseek/deepseek-v4-flash',
-        enabledProviders: ['deepseek', 'zhipu'],
-        providers: {
-          deepseek: { env: { DEEPSEEK_API_KEY: 'managed-deepseek' } },
-          zhipu: { env: { ZHIPU_API_KEY: 'managed-zhipu' } }
-        }
-      }
+        defaultModel: 'zhipu/glm-5.3',
+        smallModel: 'zhipu/glm-5.3',
+        enabledProviders: ['zhipu']
+      },
+      { ZHIPU_API_KEY: 'managed-zhipu' }
     )
     const config = JSON.parse(env.OPENCODE_CONFIG_CONTENT)
 
-    expect(env.DEEPSEEK_API_KEY).toBe('managed-deepseek')
     expect(env.ZHIPU_API_KEY).toBe('managed-zhipu')
     expect(config).toMatchObject({
-      model: 'deepseek/deepseek-v4-flash',
-      small_model: 'deepseek/deepseek-v4-flash',
-      enabled_providers: ['deepseek', 'zhipu'],
+      model: 'zhipu/glm-5.3',
+      small_model: 'zhipu/glm-5.3',
+      enabled_providers: ['zhipu'],
       share: 'disabled'
     })
     expect(config).not.toHaveProperty('provider')

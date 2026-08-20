@@ -7,6 +7,7 @@ import {
   resolveOpenCodeManagedAssets,
   withOpenCodeManagedRuntimeEnv
 } from '../../../electron/aicli/opencodeManagedRuntime.js'
+import { writeOpenCodeApiKey } from '../../../electron/aicli/opencodeCredentials.js'
 
 const roots: string[] = []
 
@@ -28,29 +29,29 @@ function fixture() {
   const routingPath = join(directory, 'managed-routing.json')
   const profilePath = join(directory, 'managed-profile.json')
   const manifestPath = join(directory, 'managed-assets.json')
+  const runtimeRoot = join(root, 'runtime')
   writeFileSync(binaryPath, '')
   writeFileSync(
     modelsPath,
     JSON.stringify({
-      provider: {
-        id: 'provider',
-        env: ['PROVIDER_API_KEY'],
-        models: { model: { id: 'model' } }
+      zhipu: {
+        id: 'zhipu',
+        env: ['ZHIPU_API_KEY'],
+        models: { glm: { id: 'glm' } }
       }
     })
   )
   writeFileSync(
     routingPath,
-    JSON.stringify({ version: 1, models: { 'provider/model': { roles: ['default_text'] } } })
+    JSON.stringify({ version: 1, models: { 'zhipu/glm': { roles: ['default_text'] } } })
   )
   writeFileSync(
     profilePath,
     JSON.stringify({
       version: 1,
-      defaultModel: 'provider/model',
-      smallModel: 'provider/model',
-      enabledProviders: ['provider'],
-      providers: { provider: { env: { PROVIDER_API_KEY: 'managed-secret' } } }
+      defaultModel: 'zhipu/glm',
+      smallModel: 'zhipu/glm',
+      enabledProviders: ['zhipu']
     })
   )
   writeFileSync(
@@ -64,21 +65,53 @@ function fixture() {
       }
     })
   )
-  return { root, binaryPath, modelsPath, routingPath, profilePath, manifestPath }
+  return { root, runtimeRoot, binaryPath, modelsPath, routingPath, profilePath, manifestPath }
 }
 
 describe('OpenCode managed runtime', () => {
-  it('uses the Coding Plan endpoint for the managed Zhipu provider', () => {
+  it('exposes only managed GLM models through the Coding Plan endpoint', () => {
     const catalog = JSON.parse(
       readFileSync(join(process.cwd(), 'resources', 'opencode', 'managed-models.json'), 'utf8')
     )
+    expect(Object.keys(catalog)).toEqual(['zhipu'])
     expect(catalog.zhipu.api).toBe('https://open.bigmodel.cn/api/coding/paas/v4')
+    expect(Object.keys(catalog.zhipu.models)).toEqual([
+      'glm-5.3',
+      'glm-5.2',
+      'glm-5v-turbo',
+      'glm-4.6v'
+    ])
+    expect(catalog.zhipu.models['glm-5.3']).toMatchObject({
+      attachment: false,
+      reasoning: true,
+      reasoning_options: [{ type: 'effort', values: ['low', 'high', 'max'] }],
+      limit: { context: 1000000, output: 131072 }
+    })
     expect(catalog.zhipu.models['glm-4.6v']?.attachment).toBe(true)
     expect(catalog.zhipu.models['glm-5v-turbo']?.attachment).toBe(true)
+
+    const profile = JSON.parse(
+      readFileSync(join(process.cwd(), 'resources', 'opencode', 'managed-profile.json'), 'utf8')
+    )
+    expect(profile).toMatchObject({
+      defaultModel: 'zhipu/glm-5.3',
+      smallModel: 'zhipu/glm-5.3',
+      enabledProviders: ['zhipu']
+    })
+    expect(profile).not.toHaveProperty('providers')
 
     const routing = JSON.parse(
       readFileSync(join(process.cwd(), 'resources', 'opencode', 'managed-routing.json'), 'utf8')
     )
+    expect(Object.keys(routing.models).every((modelRef) => modelRef.startsWith('zhipu/glm-'))).toBe(true)
+    expect(routing.models['zhipu/glm-5.3']).toMatchObject({
+      roles: ['default_text', 'strong_text', 'small'],
+      priority: 110
+    })
+    expect(routing.models['zhipu/glm-5.2']).toMatchObject({
+      roles: ['default_text', 'strong_text', 'small'],
+      priority: 100
+    })
     expect(routing.models['zhipu/glm-5v-turbo']).toMatchObject({ roles: ['vision'], priority: 100 })
     expect(routing.models['zhipu/glm-4.6v']).toMatchObject({ roles: ['vision'], priority: 80 })
   })
@@ -100,25 +133,37 @@ describe('OpenCode managed runtime', () => {
     })
   })
 
-  it('injects account runtime and managed resource paths without user setup', () => {
+  it('injects the account-local API Key with managed runtime paths', () => {
     const files = fixture()
-    const env = withOpenCodeManagedRuntimeEnv('opencode', { FOO: 'bar' }, '/accounts/alice/aicli/opencode', {
+    writeOpenCodeApiKey(files.runtimeRoot, 'managed-secret')
+    const env = withOpenCodeManagedRuntimeEnv('opencode', { FOO: 'bar' }, files.runtimeRoot, {
       platform: 'darwin',
       arch: 'arm64',
       roots: [files.root]
     })
     expect(env).toMatchObject({
       FOO: 'bar',
-      OPENCODE_RUNTIME_ROOT: '/accounts/alice/aicli/opencode',
+      OPENCODE_RUNTIME_ROOT: files.runtimeRoot,
       OPENCODE_MODELS_PATH: files.modelsPath,
       OPENCODE_MANAGED_ROUTING_PATH: files.routingPath,
-      PROVIDER_API_KEY: 'managed-secret'
+      ZHIPU_API_KEY: 'managed-secret'
     })
     expect(JSON.parse(env?.OPENCODE_CONFIG_CONTENT ?? '{}')).toMatchObject({
-      model: 'provider/model',
-      small_model: 'provider/model',
-      enabled_providers: ['provider']
+      model: 'zhipu/glm',
+      small_model: 'zhipu/glm',
+      enabled_providers: ['zhipu']
     })
+  })
+
+  it('requires the account-local API Key before starting OpenCode', () => {
+    const files = fixture()
+    expect(() =>
+      withOpenCodeManagedRuntimeEnv('opencode', {}, files.runtimeRoot, {
+        platform: 'darwin',
+        arch: 'arm64',
+        roots: [files.root]
+      })
+    ).toThrow('请先在设置中填写')
   })
 
   it('rejects a modified catalog instead of falling back to host caches', () => {

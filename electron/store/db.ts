@@ -72,6 +72,12 @@ CREATE TABLE IF NOT EXISTS scheduled_task_runs (
   FOREIGN KEY (task_id) REFERENCES scheduled_tasks(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS remote_im_contacts (
+  user_id    TEXT PRIMARY KEY,
+  blocked    INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS remote_im_messages (
   id                INTEGER PRIMARY KEY AUTOINCREMENT,
   project_id        TEXT,

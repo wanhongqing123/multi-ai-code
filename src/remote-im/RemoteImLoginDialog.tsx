@@ -39,8 +39,6 @@ const EMPTY_ACCOUNT: RemoteImAccountConfig = {
   userSigMode: 'secret-key',
   userSigEndpoint: '',
   userSigSecretKey: DEFAULT_REMOTE_IM_CREDENTIAL_PRESET.userSigSecretKey,
-  friendUserIds: [],
-  allowedUserIds: [],
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 4000,
   remoteDesktopMode: 'disabled',

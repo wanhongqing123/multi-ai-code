@@ -34,10 +34,6 @@ export interface RemoteImAccountConfig {
   userSigMode: 'endpoint' | 'secret-key'
   userSigEndpoint: string
   userSigSecretKey: string
-  friendUserIds: string[]
-  allowedUserIds: string[]
-  /** Locally revoked SDK friends. Omitted by older account files. */
-  blockedUserIds?: string[]
   // 以下四项以前存在每个项目的 project.json 里，但它们描述的是「这台机器上的这个
   // 账号」怎么工作，与具体仓库无关，分项目存只会让同一台机器上出现互相矛盾的设置。
   outputFlushIntervalMs: number

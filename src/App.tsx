@@ -727,40 +727,17 @@ function AppShell() {
     userId: string
   ) => {
     const cleanUserId = userId.trim()
-    if (!cleanUserId) return
-    const nextConfig = addRemoteImContact(remoteImConfig, relation, cleanUserId)
-    const account: RemoteImAccountConfig = {
-      provider: nextConfig.provider,
-      sdkAppId: nextConfig.sdkAppId,
-      desktopUserId: nextConfig.desktopUserId,
-      userSigMode: nextConfig.userSigMode,
-      userSigEndpoint: nextConfig.userSigEndpoint,
-      userSigSecretKey: nextConfig.userSigSecretKey,
-      friendUserIds: nextConfig.friendUserIds,
-      allowedUserIds: nextConfig.allowedUserIds,
-      // Explicitly adding a contact is the only action that removes its local
-      // revoke tombstone. Other blocked SDK friends remain blocked.
-      blockedUserIds: (remoteImLoginState?.account.blockedUserIds ?? []).filter(
-        (userId) => userId !== cleanUserId
-      ),
-      // 输出节流与远程桌面授权也归账号：这里不带上就会在加好友时被重置成默认值。
-      outputFlushIntervalMs: nextConfig.outputFlushIntervalMs,
-      outputMaxChunkChars: nextConfig.outputMaxChunkChars,
-      remoteDesktopMode: nextConfig.remoteDesktopMode,
-      remoteDesktopControl: nextConfig.remoteDesktopControl
-    }
-    const result = await window.api.remoteIm.setAccount(account)
+    if (!cleanUserId || !currentProjectId) return
+    void relation
+    // 与 imcli add-contact 走同一条 IPC：好友存在 DB 里，只有主进程一处写入。
+    const result = await window.api.remoteIm.addContact(currentProjectId, cleanUserId)
     if (!result.ok) {
       showToast(result.error ?? '保存远程 IM 联系人失败', { level: 'error' })
       return
     }
-    setRemoteImLoginState(result.value)
-    setRemoteImConfig(nextConfig)
-    if (currentProjectId) {
-      setRemoteImConfigProjectId(currentProjectId)
-    }
+    // 主进程写完会广播 config-changed，界面据此重拉；这里只负责选中新联系人。
     setRemoteImSelectedPeerUserId(cleanUserId)
-  }, [currentProjectId, remoteImConfig, remoteImLoginState?.account.blockedUserIds])
+  }, [currentProjectId])
 
   const handleDeleteRemoteImContact = useCallback(async (userId: string) => {
     if (!currentProjectId) return

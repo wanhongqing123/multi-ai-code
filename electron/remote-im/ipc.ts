@@ -31,15 +31,10 @@ import {
   validateRemoteImConfig
 } from './config.js'
 import {
-  addRemoteImAccountContact,
   hasRemoteImAccountConnectionChanged,
   mergeRemoteImAccountIntoConfig,
   normalizeRemoteImAccountConfig,
-  preserveRemoteImAccountContacts,
   readRemoteImAccountConfig,
-  removeRemoteImAccountContact,
-  removedRemoteImAccountContactUserIds,
-  syncRemoteImAccountContactsFromSdk,
   writeRemoteImAccountConfig
 } from './account.js'
 import {
@@ -112,6 +107,9 @@ import {
   loadRemoteImLocalVideoForSend,
   type RemoteImLocalVideoPayload
 } from './localVideoFile.js'
+import { getDb } from '../store/db.js'
+import type { RemoteImDatabase } from './messageStore.js'
+import { createRemoteImContactStore } from './contactStore.js'
 import { cacheRemoteImFile, fileAttachmentFromIncoming } from './fileCache.js'
 import type {
   RemoteImAccountConfig,
@@ -721,12 +719,23 @@ async function writeProjectMeta(projectId: string, meta: ProjectMeta): Promise<v
   await writeProjectMetaFile(join(dir, 'project.json'), meta)
 }
 
+/**
+ * 好友名单存 DB（remote_im_contacts），凭证仍在账号 JSON 里。
+ * 前者是会增删的数据，后者是启动读一次的配置。
+ */
+function contactStore(): ReturnType<typeof createRemoteImContactStore> {
+  return createRemoteImContactStore(getDb() as unknown as RemoteImDatabase)
+}
+
 async function getRemoteImConfig(projectId: string): Promise<RemoteImConfig> {
   // IM 配置整体归账号，project.json 不再参与。projectId 仍保留在签名里：
   // 调用方遍布各处，且账号 profile 的解析将来可能与项目相关。
   void projectId
   const account = await getRemoteImAccountForProject()
-  return mergeRemoteImAccountIntoConfig(normalizeRemoteImConfig(null), account)
+  const merged = mergeRemoteImAccountIntoConfig(normalizeRemoteImConfig(null), account)
+  // 好友以 DB 为准：JSON 里那两个数组已不再维护。
+  const friendUserIds = contactStore().list()
+  return { ...merged, friendUserIds, allowedUserIds: [...friendUserIds] }
 }
 
 async function getRemoteImAccountForProject(
@@ -1010,8 +1019,7 @@ function imageAttachmentFromIncoming(
  * 把一个账号加进好友名单（账号级配置，跨项目生效）。
  *
  * 与界面上「添加联系人」走同一份存储：读账号配置 -> 加名单 -> 落盘 -> 刷新项目配置。
- * 加回一个之前删过的人时，addRemoteImAccountContact 会把 blockedUserIds 里的
- * 墓碑一并清掉，否则 SDK 下次同步又会把他过滤掉。
+ * 加回一个之前删过的人时会一并清掉墓碑，否则 SDK 下次同步又会把他过滤掉。
  */
 async function addRemoteImContact(
   projectId: string,
@@ -1025,17 +1033,8 @@ async function addRemoteImContact(
     return { ok: false, error: '不能把自己加为联系人' }
   }
 
-  const previousProfileId = getCurrentRemoteImAccountProfileId()
-  const previousAccount = previousProfileId
-    ? await readRemoteImAccountConfig(remoteImAccountDir(previousProfileId))
-    : normalizeRemoteImAccountConfig(null)
-  const nextAccount = addRemoteImAccountContact(previousAccount, userId)
-  const profileId =
-    getRemoteImAccountProfileId(nextAccount.desktopUserId) ??
-    getRemoteImProfileId() ??
-    DEFAULT_REMOTE_IM_PROFILE_ID
-  activeRemoteImAccountProfileId = profileId
-  await writeRemoteImAccountConfig(remoteImAccountDir(profileId), nextAccount)
+  // add 同时会清掉墓碑：加回一个删过的人，不清的话 SDK 下次同步又会把他过滤掉。
+  contactStore().add(userId)
   broadcastConfigChanged(projectId)
   broadcastMessagesChanged(projectId)
   return { ok: true, userId }
@@ -1053,22 +1052,14 @@ async function deleteRemoteImContact(
   // The mutation wrapper has already invalidated every outstanding approval.
   // Tombstone this peer's task before the first filesystem await so no later
   // event from the same Codex turn can mint a fresh capability.
-  const previousProfileId = getCurrentRemoteImAccountProfileId()
-  const previousAccount = previousProfileId
-    ? await readRemoteImAccountConfig(remoteImAccountDir(previousProfileId))
-    : normalizeRemoteImAccountConfig(null)
-  const nextAccount = removeRemoteImAccountContact(previousAccount, userId)
-  const removedContactUserIds = removedRemoteImAccountContactUserIds(
-    previousAccount,
-    nextAccount
-  )
-  await revokeRemoteImApprovalAuthorityForUsers(removedContactUserIds)
+  // 撤销授权必须在删除之前完成：这个人一旦不再是联系人，他手上任何未决的审批
+  // 授权都要立刻作废，不能留到下一个事件循环。
+  await revokeRemoteImApprovalAuthorityForUsers([userId])
+  // block 而不是 DELETE：删行的话 SDK 下次同步会把这个人重新加回来。
+  contactStore().block(userId)
   const profileId =
-    getRemoteImAccountProfileId(nextAccount.desktopUserId) ??
-    getRemoteImProfileId() ??
-    DEFAULT_REMOTE_IM_PROFILE_ID
-  activeRemoteImAccountProfileId = profileId
-  const account = await writeRemoteImAccountConfig(remoteImAccountDir(profileId), nextAccount)
+    getCurrentRemoteImAccountProfileId() ?? getRemoteImProfileId() ?? DEFAULT_REMOTE_IM_PROFILE_ID
+  const account = await getRemoteImAccountForProject()
   clearRemoteImPeerMessages(projectId, userId)
   const value = await getRemoteImConfig(projectId)
   broadcastMessagesChanged(projectId)
@@ -1097,16 +1088,26 @@ async function syncRemoteImContactsFromSdk(
   }
   const profileId = getCurrentRemoteImAccountProfileId()
   if (!profileId) return { ok: false, error: '远程 IM 账号未登录' }
-  const previousAccount = await readRemoteImAccountConfig(remoteImAccountDir(profileId))
-  if (!previousAccount.desktopUserId) return { ok: false, error: '远程 IM 账号未登录' }
-  const nextAccount = syncRemoteImAccountContactsFromSdk(previousAccount, rawUserIds)
-  await revokeRemoteImApprovalAuthorityForUsers(
-    removedRemoteImAccountContactUserIds(previousAccount, nextAccount)
-  )
-  const account = await writeRemoteImAccountConfig(
-    remoteImAccountDir(profileId),
-    nextAccount
-  )
+  const account = await readRemoteImAccountConfig(remoteImAccountDir(profileId))
+  if (!account.desktopUserId) return { ok: false, error: '远程 IM 账号未登录' }
+
+  const store = contactStore()
+  // 本地删过的人不能被 SDK 同步加回来——这正是 blocked 墓碑存在的理由。
+  const blocked = new Set(store.listBlocked())
+  const incoming = rawUserIds
+    .map((item) => item.trim())
+    .filter((item) => item && item !== account.desktopUserId && !blocked.has(item))
+  const before = new Set(store.list())
+  for (const userId of incoming) {
+    if (!before.has(userId)) store.add(userId)
+  }
+  // SDK 说不再是好友的人：立墓碑并撤销其审批授权。
+  const incomingSet = new Set(incoming)
+  const removed = [...before].filter((userId) => !incomingSet.has(userId))
+  if (removed.length > 0) {
+    await revokeRemoteImApprovalAuthorityForUsers(removed)
+    for (const userId of removed) store.block(userId)
+  }
   const value = await getRemoteImConfig(projectId)
   return {
     ok: true,
@@ -2504,7 +2505,6 @@ async function bindRemoteImAccountConfig(
 async function bindRemoteImAccountConfigOnce(
   account: RemoteImAccountConfig
 ): Promise<{ profileId: string; account: RemoteImAccountConfig }> {
-  const hasExplicitBlockedUserIds = Array.isArray(account.blockedUserIds)
   const normalizedAccount = normalizeRemoteImAccountConfig(account)
   const activeAccountId = getActiveAccount()
   if (
@@ -2522,17 +2522,8 @@ async function bindRemoteImAccountConfigOnce(
     getRemoteImAccountProfileId(normalizedAccount.desktopUserId) ??
     getRemoteImProfileId() ??
     DEFAULT_REMOTE_IM_PROFILE_ID
-  const targetAccount = await readRemoteImAccountConfig(remoteImAccountDir(profileId))
-  const nextAccount = preserveRemoteImAccountContacts(
-    hasExplicitBlockedUserIds
-      ? normalizedAccount
-      : { ...normalizedAccount, blockedUserIds: undefined },
-    targetAccount
-  )
-  const removedContactUserIds = removedRemoteImAccountContactUserIds(
-    previousAccount,
-    nextAccount
-  )
+  // 联系人已经不在账号文件里（存 remote_im_contacts 表），绑定账号只关心凭证。
+  const nextAccount = normalizedAccount
   const connectionChanged =
     previousProfileId !== profileId ||
     hasRemoteImAccountConnectionChanged(previousAccount, nextAccount)
@@ -2543,8 +2534,6 @@ async function bindRemoteImAccountConfigOnce(
     // Do not switch those stores underneath a handler that started on the old
     // account; generation-aware routing makes such handlers fail closed.
     await waitForRemoteImAccountBoundOperationsToDrain()
-  } else {
-    await revokeRemoteImApprovalAuthorityForUsers(removedContactUserIds)
   }
   try {
     activeRemoteImAccountProfileId = profileId
@@ -2761,6 +2750,18 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
           ok: false as const,
           error: cause instanceof Error ? cause.message : '保存消息汇总文件失败'
         }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'remote-im:add-contact',
+    async (_event, { projectId, userId }: { projectId: string; userId: string }) => {
+      try {
+        // 与 imcli add-contact 走同一个函数：好友只有一处写入，界面和 CLI 不会分叉。
+        return await addRemoteImContact(projectId, userId)
+      } catch (err) {
+        return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
       }
     }
   )

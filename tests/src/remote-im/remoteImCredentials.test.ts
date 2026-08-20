@@ -15,8 +15,6 @@ const account: RemoteImAccountConfig = {
   userSigMode: 'endpoint',
   userSigEndpoint: '',
   userSigSecretKey: '',
-  friendUserIds: [],
-  allowedUserIds: [],
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 4000,
   remoteDesktopMode: 'disabled' as const,

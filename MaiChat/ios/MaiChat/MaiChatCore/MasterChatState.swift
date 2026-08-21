@@ -104,6 +104,9 @@ public enum RemoteIMMessageCopyPolicy {
             return text
         }
 
+        if let attachment = message.videoAttachment {
+            return "[视频消息] \(attachment.durationSeconds) 秒"
+        }
         if let attachment = message.imageAttachment {
             return "[图片消息] \(fileName(from: attachment.localFilePath, fallback: "图片"))"
         }
@@ -164,6 +167,7 @@ public enum RemoteIMMessageCopyPolicy {
     }
 
     private static func messageTypeText(_ message: RemoteIMMessage) -> String {
+        if message.videoAttachment != nil { return "视频" }
         if message.imageAttachment != nil { return "图片" }
         if message.fileAttachment != nil { return "文件" }
         if message.voiceAttachment != nil { return "语音" }
@@ -171,6 +175,16 @@ public enum RemoteIMMessageCopyPolicy {
     }
 
     private static func attachmentDetail(_ message: RemoteIMMessage) -> String? {
+        if let attachment = message.videoAttachment {
+            var details = ["\(attachment.durationSeconds) 秒"]
+            if attachment.width > 0, attachment.height > 0 {
+                details.append("\(attachment.width) x \(attachment.height)")
+            }
+            if attachment.sizeBytes > 0 {
+                details.append("\(attachment.sizeBytes) 字节")
+            }
+            return details.joined(separator: "，")
+        }
         if let attachment = message.imageAttachment {
             var details = [fileName(from: attachment.localFilePath, fallback: "图片")]
             if let width = attachment.width, let height = attachment.height {
@@ -258,6 +272,28 @@ public enum RemoteIMImagePreviewPolicy {
             return nil
         }
         return RemoteIMImagePreviewItem(id: message.id, localFilePath: attachment.localFilePath)
+    }
+}
+
+public struct RemoteIMVideoPreviewItem: Identifiable, Equatable {
+    public let id: UUID
+    public let localFilePath: String
+
+    public init(id: UUID, localFilePath: String) {
+        self.id = id
+        self.localFilePath = localFilePath
+    }
+}
+
+public enum RemoteIMVideoPreviewPolicy {
+    public static func previewItem(for message: RemoteIMMessage) -> RemoteIMVideoPreviewItem? {
+        guard let attachment = message.videoAttachment,
+              !attachment.localPath.isEmpty,
+              FileManager.default.fileExists(atPath: attachment.localPath)
+        else {
+            return nil
+        }
+        return RemoteIMVideoPreviewItem(id: message.id, localFilePath: attachment.localPath)
     }
 }
 
@@ -407,6 +443,32 @@ public struct RemoteIMImageAttachment: Codable, Equatable, Sendable {
     }
 }
 
+public struct RemoteIMVideoAttachment: Codable, Equatable, Sendable {
+    public let localPath: String
+    public let coverPath: String?
+    public let durationSeconds: Int
+    public let width: Int
+    public let height: Int
+    public let sizeBytes: Int64
+
+    public init(
+        localPath: String,
+        coverPath: String? = nil,
+        durationSeconds: Int,
+        width: Int,
+        height: Int,
+        sizeBytes: Int64
+    ) {
+        self.localPath = localPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanCoverPath = coverPath?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.coverPath = cleanCoverPath?.isEmpty == false ? cleanCoverPath : nil
+        self.durationSeconds = max(0, durationSeconds)
+        self.width = max(0, width)
+        self.height = max(0, height)
+        self.sizeBytes = max(0, sizeBytes)
+    }
+}
+
 public struct RemoteIMFileAttachment: Codable, Equatable, Sendable {
     public let localFilePath: String
     public let fileName: String
@@ -439,6 +501,7 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
     public let voiceAttachment: RemoteIMVoiceAttachment?
     public let imageAttachment: RemoteIMImageAttachment?
     public let fileAttachment: RemoteIMFileAttachment?
+    public var videoAttachment: RemoteIMVideoAttachment?
     public let direction: RemoteIMMessageDirection
     public var status: RemoteIMMessageStatus
     public var createdAt: Date
@@ -452,6 +515,7 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
         voiceAttachment: RemoteIMVoiceAttachment? = nil,
         imageAttachment: RemoteIMImageAttachment? = nil,
         fileAttachment: RemoteIMFileAttachment? = nil,
+        videoAttachment: RemoteIMVideoAttachment? = nil,
         direction: RemoteIMMessageDirection,
         status: RemoteIMMessageStatus,
         createdAt: Date
@@ -464,6 +528,7 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
         self.voiceAttachment = voiceAttachment
         self.imageAttachment = imageAttachment
         self.fileAttachment = fileAttachment
+        self.videoAttachment = videoAttachment
         self.direction = direction
         self.status = status
         self.createdAt = createdAt
@@ -479,6 +544,10 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
 
     public var isFileMessage: Bool {
         fileAttachment != nil
+    }
+
+    public var isVideoMessage: Bool {
+        videoAttachment != nil
     }
 }
 
@@ -685,6 +754,10 @@ public struct MasterChatState: Equatable {
         return messages[index]
     }
 
+    public func message(remoteID: String?) -> RemoteIMMessage? {
+        existingMessage(remoteID: remoteID)
+    }
+
     /// Inserts a bounded history page or conversation summary into the in-memory working set.
     /// Existing messages always win because live delivery updates may be newer than an
     /// asynchronous SQLite read that started before them.
@@ -731,6 +804,10 @@ public struct MasterChatState: Equatable {
     private static func imageDisplayText(filePath: String) -> String {
         let fileName = URL(fileURLWithPath: filePath).lastPathComponent
         return fileName.isEmpty ? "[图片消息]" : "[图片消息] \(fileName)"
+    }
+
+    private static func videoDisplayText(durationSeconds: Int) -> String {
+        "[视频消息 \(max(0, durationSeconds))s]"
     }
 
     private static func fileDisplayText(fileName: String, filePath: String) -> String {
@@ -980,6 +1057,79 @@ public struct MasterChatState: Equatable {
             toUserID: ownerUserID,
             text: Self.imageDisplayText(filePath: cleanFilePath),
             imageAttachment: imageAttachment,
+            direction: .incoming,
+            status: .received,
+            createdAt: now
+        )
+        if !cleanFromUserID.isEmpty && !contacts.contains(where: { $0.userID == cleanFromUserID }) {
+            contacts.append(
+                RemoteIMContact(
+                    userID: cleanFromUserID,
+                    displayName: cleanFromUserID,
+                    relation: .friend
+                )
+            )
+        }
+        if selectedPeerID == nil && !cleanFromUserID.isEmpty {
+            selectedPeerID = cleanFromUserID
+        }
+        appendMessage(message)
+        return message
+    }
+
+    @discardableResult
+    public mutating func receiveVideo(
+        filePath: String,
+        coverFilePath: String?,
+        durationSeconds: Int,
+        width: Int,
+        height: Int,
+        sizeBytes: Int64,
+        fromUserID: String,
+        remoteID: String? = nil,
+        now: Date = Date()
+    ) -> RemoteIMMessage {
+        let cleanFilePath = filePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanCoverPath = coverFilePath?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let attachment = RemoteIMVideoAttachment(
+            localPath: cleanFilePath,
+            coverPath: cleanCoverPath,
+            durationSeconds: durationSeconds,
+            width: width,
+            height: height,
+            sizeBytes: sizeBytes
+        )
+
+        if let existing = existingMessage(remoteID: remoteID),
+           let index = messageIndexByID[existing.id]
+        {
+            let previousMessage = messages[index]
+            let previousAttachment = previousMessage.videoAttachment
+            messages[index].videoAttachment = RemoteIMVideoAttachment(
+                localPath: cleanFilePath.isEmpty
+                    ? previousAttachment?.localPath ?? ""
+                    : cleanFilePath,
+                coverPath: cleanCoverPath?.isEmpty == false
+                    ? cleanCoverPath
+                    : previousAttachment?.coverPath,
+                durationSeconds: durationSeconds > 0
+                    ? durationSeconds
+                    : previousAttachment?.durationSeconds ?? 0,
+                width: width > 0 ? width : previousAttachment?.width ?? 0,
+                height: height > 0 ? height : previousAttachment?.height ?? 0,
+                sizeBytes: sizeBytes > 0 ? sizeBytes : previousAttachment?.sizeBytes ?? 0
+            )
+            replaceCachedMessage(previous: previousMessage, updated: messages[index])
+            return messages[index]
+        }
+
+        let cleanFromUserID = fromUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let message = RemoteIMMessage(
+            remoteID: remoteID,
+            fromUserID: cleanFromUserID,
+            toUserID: ownerUserID,
+            text: Self.videoDisplayText(durationSeconds: attachment.durationSeconds),
+            videoAttachment: attachment,
             direction: .incoming,
             status: .received,
             createdAt: now

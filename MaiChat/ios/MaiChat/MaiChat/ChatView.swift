@@ -1,4 +1,5 @@
 import AVFoundation
+import AVKit
 import MaiChatCore
 import Photos
 import PhotosUI
@@ -821,6 +822,7 @@ private struct MessageListView: View {
     @EnvironmentObject private var appState: RemoteIMAppState
     @StateObject private var voicePlayer = VoiceMessagePlayer()
     @State private var imagePreviewItem: RemoteIMImagePreviewItem?
+    @State private var videoPreviewItem: RemoteIMVideoPreviewItem?
     @State private var filePreviewItem: RemoteIMFilePreviewItem?
     @State private var latestMessageID: UUID?
     @State private var isLoadingEarlierMessages = false
@@ -848,6 +850,9 @@ private struct MessageListView: View {
                                 },
                                 previewImage: {
                                     imagePreviewItem = RemoteIMImagePreviewPolicy.previewItem(for: message)
+                                },
+                                previewVideo: {
+                                    videoPreviewItem = RemoteIMVideoPreviewPolicy.previewItem(for: message)
                                 },
                                 previewFile: {
                                     filePreviewItem = RemoteIMFilePreviewItem(message: message)
@@ -923,6 +928,11 @@ private struct MessageListView: View {
                 imagePreviewItem = nil
             }
         }
+        .fullScreenCover(item: $videoPreviewItem) { item in
+            FullScreenVideoPreviewView(item: item) {
+                videoPreviewItem = nil
+            }
+        }
         .fullScreenCover(item: $filePreviewItem) { item in
             FullScreenFilePreviewView(item: item) {
                 filePreviewItem = nil
@@ -995,6 +1005,7 @@ private struct MessageBubbleView: View {
     let isVoicePlaying: Bool
     let playVoice: () -> Void
     let previewImage: () -> Void
+    let previewVideo: () -> Void
     let previewFile: () -> Void
     @State private var selectableCopyItem: SelectableMessageCopyItem?
 
@@ -1066,7 +1077,13 @@ private struct MessageBubbleView: View {
 
     private var messageContent: some View {
         HStack(alignment: .bottom, spacing: 10) {
-            if let imageAttachment = message.imageAttachment {
+            if let videoAttachment = message.videoAttachment {
+                Button(action: previewVideo) {
+                    VideoBubbleContent(attachment: videoAttachment)
+                }
+                .buttonStyle(.plain)
+                .disabled(!VideoBubbleContent.isPlayable(videoAttachment))
+            } else if let imageAttachment = message.imageAttachment {
                 Button(action: previewImage) {
                     ImageBubbleContent(attachment: imageAttachment)
                 }
@@ -1211,6 +1228,58 @@ private struct FullScreenImagePreviewView: View {
             .accessibilityLabel("关闭图片预览")
         }
         .statusBarHidden(true)
+    }
+}
+
+private struct FullScreenVideoPreviewView: View {
+    let item: RemoteIMVideoPreviewItem
+    let close: () -> Void
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Color.black.ignoresSafeArea()
+            LocalVideoPlayer(url: URL(fileURLWithPath: item.localFilePath))
+                .ignoresSafeArea()
+
+            Button(action: close) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+                    .background(.black.opacity(0.52), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 18)
+            .padding(.trailing, 18)
+            .accessibilityLabel("关闭视频预览")
+        }
+        .statusBarHidden(true)
+    }
+}
+
+private struct LocalVideoPlayer: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeUIViewController(context _: Context) -> AVPlayerViewController {
+        let controller = AVPlayerViewController()
+        controller.player = AVPlayer(url: url)
+        controller.showsPlaybackControls = true
+        controller.videoGravity = .resizeAspect
+        controller.player?.play()
+        return controller
+    }
+
+    func updateUIViewController(_ controller: AVPlayerViewController, context _: Context) {
+        guard let currentAsset = controller.player?.currentItem?.asset as? AVURLAsset,
+              currentAsset.url != url
+        else { return }
+        controller.player?.replaceCurrentItem(with: AVPlayerItem(url: url))
+        controller.player?.play()
+    }
+
+    static func dismantleUIViewController(_ controller: AVPlayerViewController, coordinator _: Void) {
+        controller.player?.pause()
+        controller.player = nil
     }
 }
 
@@ -1403,6 +1472,96 @@ private struct ZoomableImagePreview: UIViewRepresentable {
             )
             scrollView.zoom(to: zoomRect, animated: true)
         }
+    }
+}
+
+private struct VideoBubbleContent: View {
+    let attachment: RemoteIMVideoAttachment
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            ZStack {
+                if let coverImage {
+                    Image(uiImage: coverImage)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 220, height: previewHeight)
+                        .clipped()
+                } else {
+                    LinearGradient(
+                        colors: [Color(red: 0.10, green: 0.17, blue: 0.27), Color(red: 0.18, green: 0.32, blue: 0.47)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                    .frame(width: 220, height: previewHeight)
+                    Image(systemName: "video.fill")
+                        .font(.system(size: 30, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.72))
+                }
+
+                if Self.isPlayable(attachment) {
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 52, height: 52)
+                        .background(.black.opacity(0.5), in: Circle())
+                        .overlay(Circle().stroke(.white.opacity(0.85), lineWidth: 1.5))
+                } else {
+                    VStack(spacing: 8) {
+                        ProgressView()
+                            .tint(.white)
+                        Text("视频下载中")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.white)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(.black.opacity(0.5), in: Capsule())
+                }
+
+                Text(durationText)
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 7)
+                    .frame(height: 22)
+                    .background(.black.opacity(0.56), in: Capsule())
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                    .padding(8)
+            }
+            .frame(width: 220, height: previewHeight)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .background(Color(red: 0.945, green: 0.957, blue: 0.973), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+            Text(Self.isPlayable(attachment) ? "点击播放" : "封面可先显示，视频正在后台下载")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(RemoteIMStyle.textSecondary)
+        }
+        .contentShape(Rectangle())
+    }
+
+    static func isPlayable(_ attachment: RemoteIMVideoAttachment) -> Bool {
+        guard !attachment.localPath.isEmpty else { return false }
+        guard let values = try? URL(fileURLWithPath: attachment.localPath)
+            .resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+        else { return false }
+        return values.isRegularFile == true && (values.fileSize ?? 0) > 0
+    }
+
+    private var coverImage: UIImage? {
+        guard let coverPath = attachment.coverPath else { return nil }
+        return UIImage(contentsOfFile: coverPath)
+    }
+
+    private var previewHeight: CGFloat {
+        guard attachment.width > 0, attachment.height > 0 else { return 142 }
+        let ratio = CGFloat(attachment.width) / CGFloat(attachment.height)
+        return min(180, max(118, 220 / max(0.35, ratio)))
+    }
+
+    private var durationText: String {
+        let minutes = attachment.durationSeconds / 60
+        let seconds = attachment.durationSeconds % 60
+        return String(format: "%d:%02d", minutes, seconds)
     }
 }
 

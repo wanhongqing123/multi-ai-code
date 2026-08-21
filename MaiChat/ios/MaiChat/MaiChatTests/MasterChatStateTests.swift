@@ -205,6 +205,72 @@ final class MasterChatStateTests: XCTestCase {
         XCTAssertEqual(state.contacts.map(\.userID), ["mac-quark-pc"])
     }
 
+    func testReceivesVideoProgressivelyWithoutDuplicatingMessage() throws {
+        var state = MasterChatState(ownerUserID: "ios-master")
+
+        let metadataMessage = state.receiveVideo(
+            filePath: "/tmp/video-1.mp4",
+            coverFilePath: nil,
+            durationSeconds: 12,
+            width: 1280,
+            height: 720,
+            sizeBytes: 4_096,
+            fromUserID: "mac-quark-pc",
+            remoteID: "video-uuid",
+            now: Date(timeIntervalSince1970: 161)
+        )
+        let coverMessage = state.receiveVideo(
+            filePath: "/tmp/video-1.mp4",
+            coverFilePath: "/tmp/video-1.jpg",
+            durationSeconds: 12,
+            width: 1280,
+            height: 720,
+            sizeBytes: 4_096,
+            fromUserID: "mac-quark-pc",
+            remoteID: "video-uuid",
+            now: Date(timeIntervalSince1970: 161)
+        )
+
+        XCTAssertEqual(state.messages.count, 1)
+        XCTAssertEqual(metadataMessage.id, coverMessage.id)
+        XCTAssertEqual(coverMessage.text, "[视频消息 12s]")
+        XCTAssertEqual(coverMessage.videoAttachment?.localPath, "/tmp/video-1.mp4")
+        XCTAssertEqual(coverMessage.videoAttachment?.coverPath, "/tmp/video-1.jpg")
+        XCTAssertEqual(coverMessage.videoAttachment?.durationSeconds, 12)
+        XCTAssertEqual(coverMessage.videoAttachment?.width, 1280)
+        XCTAssertEqual(coverMessage.videoAttachment?.height, 720)
+        XCTAssertEqual(coverMessage.videoAttachment?.sizeBytes, 4_096)
+        XCTAssertEqual(state.message(remoteID: "video-uuid"), coverMessage)
+    }
+
+    func testVideoPreviewRequiresDownloadedLocalFile() throws {
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("maichat-video-\(UUID().uuidString).mp4")
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        let message = RemoteIMMessage(
+            fromUserID: "mac-quark-pc",
+            toUserID: "ios-master",
+            text: "",
+            videoAttachment: RemoteIMVideoAttachment(
+                localPath: fileURL.path,
+                durationSeconds: 5,
+                width: 640,
+                height: 360,
+                sizeBytes: 3
+            ),
+            direction: .incoming,
+            status: .received,
+            createdAt: Date(timeIntervalSince1970: 162)
+        )
+
+        XCTAssertNil(RemoteIMVideoPreviewPolicy.previewItem(for: message))
+        try Data([0, 1, 2]).write(to: fileURL)
+        XCTAssertEqual(
+            RemoteIMVideoPreviewPolicy.previewItem(for: message)?.localFilePath,
+            fileURL.path
+        )
+    }
+
     func testReceivesMarkdownFileMessageWithLocalAttachment() throws {
         var state = MasterChatState(ownerUserID: "ios-master")
 

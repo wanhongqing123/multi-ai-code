@@ -353,6 +353,35 @@ final class LocalChatHistoryStoreTests: XCTestCase {
 
         XCTAssertEqual(page.messages.map(\.text), ["incoming", "outgoing"])
         XCTAssertFalse(page.hasEarlierMessages)
+
+        XCTAssertEqual(sqlite3_open(databaseURL.path, &database), SQLITE_OK)
+        let migratedDatabase = try XCTUnwrap(database)
+        defer { sqlite3_close(migratedDatabase) }
+        var versionStatement: OpaquePointer?
+        XCTAssertEqual(
+            sqlite3_prepare_v2(migratedDatabase, "PRAGMA user_version", -1, &versionStatement, nil),
+            SQLITE_OK
+        )
+        let openedVersionStatement = try XCTUnwrap(versionStatement)
+        defer { sqlite3_finalize(openedVersionStatement) }
+        XCTAssertEqual(sqlite3_step(openedVersionStatement), SQLITE_ROW)
+        XCTAssertEqual(sqlite3_column_int(openedVersionStatement, 0), 4)
+
+        var columnStatement: OpaquePointer?
+        XCTAssertEqual(
+            sqlite3_prepare_v2(
+                migratedDatabase,
+                "SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'video_attachment'",
+                -1,
+                &columnStatement,
+                nil
+            ),
+            SQLITE_OK
+        )
+        let openedColumnStatement = try XCTUnwrap(columnStatement)
+        defer { sqlite3_finalize(openedColumnStatement) }
+        XCTAssertEqual(sqlite3_step(openedColumnStatement), SQLITE_ROW)
+        XCTAssertEqual(sqlite3_column_int(openedColumnStatement, 0), 1)
     }
 
     func testConversationPageQueryUsesPeerTimeIndex() throws {
@@ -435,6 +464,23 @@ final class LocalChatHistoryStoreTests: XCTestCase {
                 direction: .incoming,
                 status: .received,
                 createdAt: Date(timeIntervalSince1970: 501)
+            ),
+            RemoteIMMessage(
+                remoteID: "sdk-video-message-1",
+                fromUserID: "mac-quark-pc",
+                toUserID: "ios-master",
+                text: "[视频消息 18s]",
+                videoAttachment: RemoteIMVideoAttachment(
+                    localPath: "/tmp/video.mp4",
+                    coverPath: "/tmp/video.jpg",
+                    durationSeconds: 18,
+                    width: 1920,
+                    height: 1080,
+                    sizeBytes: 8_192
+                ),
+                direction: .incoming,
+                status: .received,
+                createdAt: Date(timeIntervalSince1970: 502)
             )
         ]
 

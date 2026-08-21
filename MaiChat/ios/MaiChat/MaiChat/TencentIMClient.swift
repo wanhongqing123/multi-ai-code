@@ -10,6 +10,7 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
     var onIncomingVoice: ((IncomingRemoteIMVoice) -> Void)?
     var onIncomingImage: ((IncomingRemoteIMImage) -> Void)?
     var onIncomingFile: ((IncomingRemoteIMFile) -> Void)?
+    var onIncomingVideo: ((IncomingRemoteIMVideo) -> Void)?
     var onPresenceStatusChanged: (([String: RemoteIMPresenceStatus]) -> Void)?
     private var initializedSDKAppID: Int?
     private var hasRegisteredIMSDKListener = false
@@ -443,6 +444,13 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
             return
         }
 
+        // Text messages are delivered through V2TIMSimpleMsgListener and already ingested by
+        // onRecvC2CTextMessage. The advanced listener receives them as well; do not classify
+        // that normal duplicate callback as an unhandled message.
+        if msg.textElem != nil {
+            return
+        }
+
         if let soundElem = msg.soundElem {
             handleIncomingSound(msg: msg, soundElem: soundElem, fromUserID: fromUserID)
             return
@@ -450,6 +458,11 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
 
         if let imageElem = msg.imageElem {
             handleIncomingImage(msg: msg, imageElem: imageElem, fromUserID: fromUserID)
+            return
+        }
+
+        if let videoElem = msg.videoElem {
+            handleIncomingVideo(msg: msg, videoElem: videoElem, fromUserID: fromUserID)
             return
         }
 
@@ -651,6 +664,212 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
         )
     }
 
+    private nonisolated func handleIncomingVideo(
+        msg: V2TIMMessage,
+        videoElem: V2TIMVideoElem,
+        fromUserID: String
+    ) {
+        let createdAt = msg.timestamp ?? Date()
+        let remoteID = Self.nonEmpty(videoElem.videoUUID) ?? Self.nonEmpty(msg.msgID) ?? UUID().uuidString
+        let origin = Self.messageOrigin(for: msg)
+        let durationSeconds = max(0, Int(videoElem.duration))
+        let width = max(0, Int(videoElem.snapshotWidth))
+        let height = max(0, Int(videoElem.snapshotHeight))
+        let sizeBytes = max(0, Int64(videoElem.videoSize))
+        let videoURL = Self.videoCacheURL(
+            remoteID: remoteID,
+            videoType: videoElem.videoType
+        )
+        let hasSnapshot = Self.nonEmpty(videoElem.snapshotUUID) != nil ||
+            videoElem.snapshotSize > 0 || width > 0 || height > 0
+        let coverURL = hasSnapshot
+            ? Self.videoCoverCacheURL(remoteID: remoteID)
+            : nil
+        let diagnosticFields = Self.messageDiagnosticFields(
+            kind: "video",
+            peerUserID: fromUserID,
+            messageID: remoteID,
+            metadata: [
+                "duration_seconds": String(durationSeconds),
+                "width": String(width),
+                "height": String(height),
+                "bytes": String(sizeBytes),
+            ]
+        )
+        Self.logSDK(level: .info, event: "message-receive-callback", fields: diagnosticFields)
+
+        emitIncomingVideo(
+            fromUserID: fromUserID,
+            videoFileURL: videoURL,
+            coverFileURL: coverURL,
+            durationSeconds: durationSeconds,
+            width: width,
+            height: height,
+            sizeBytes: sizeBytes,
+            remoteID: remoteID,
+            origin: origin,
+            createdAt: createdAt,
+            stage: .metadata
+        )
+
+        if let coverURL {
+            if Self.isUsableCachedFile(coverURL) {
+                emitIncomingVideo(
+                    fromUserID: fromUserID,
+                    videoFileURL: videoURL,
+                    coverFileURL: coverURL,
+                    durationSeconds: durationSeconds,
+                    width: width,
+                    height: height,
+                    sizeBytes: sizeBytes,
+                    remoteID: remoteID,
+                    origin: origin,
+                    createdAt: createdAt,
+                    stage: .coverReady
+                )
+            } else {
+                let coverPartURL = Self.partialDownloadURL(for: coverURL)
+                try? FileManager.default.removeItem(at: coverPartURL)
+                var coverFields = diagnosticFields
+                coverFields["asset"] = "cover"
+                let coverStartedAt = ProcessInfo.processInfo.systemUptime
+                Self.logSDK(level: .info, event: "media-download-start", fields: coverFields)
+                videoElem.downloadSnapshot(
+                    path: coverPartURL.path,
+                    progress: nil,
+                    succ: { [weak self] in
+                        var fields = coverFields
+                        guard Self.promoteDownloadedFile(from: coverPartURL, to: coverURL) else {
+                            fields["result"] = "failed"
+                            fields["reason"] = "file-promote-failed"
+                            fields["duration_ms"] = Self.elapsedMilliseconds(since: coverStartedAt)
+                            Self.logSDK(level: .warning, event: "media-download-finished", fields: fields)
+                            return
+                        }
+                        fields["result"] = "ok"
+                        fields["duration_ms"] = Self.elapsedMilliseconds(since: coverStartedAt)
+                        Self.logSDK(level: .info, event: "media-download-finished", fields: fields)
+                        self?.emitIncomingVideo(
+                            fromUserID: fromUserID,
+                            videoFileURL: videoURL,
+                            coverFileURL: coverURL,
+                            durationSeconds: durationSeconds,
+                            width: width,
+                            height: height,
+                            sizeBytes: sizeBytes,
+                            remoteID: remoteID,
+                            origin: origin,
+                            createdAt: createdAt,
+                            stage: .coverReady
+                        )
+                    },
+                    fail: { code, _ in
+                        try? FileManager.default.removeItem(at: coverPartURL)
+                        var fields = coverFields
+                        fields["result"] = "failed"
+                        fields["code"] = String(code)
+                        fields["duration_ms"] = Self.elapsedMilliseconds(since: coverStartedAt)
+                        Self.logSDK(level: .warning, event: "media-download-finished", fields: fields)
+                    }
+                )
+            }
+        }
+
+        if Self.isUsableCachedFile(videoURL) {
+            emitIncomingVideo(
+                fromUserID: fromUserID,
+                videoFileURL: videoURL,
+                coverFileURL: coverURL,
+                durationSeconds: durationSeconds,
+                width: width,
+                height: height,
+                sizeBytes: sizeBytes,
+                remoteID: remoteID,
+                origin: origin,
+                createdAt: createdAt,
+                stage: .videoReady
+            )
+            return
+        }
+
+        var videoFields = diagnosticFields
+        videoFields["asset"] = "video"
+        let videoStartedAt = ProcessInfo.processInfo.systemUptime
+        let videoPartURL = Self.partialDownloadURL(for: videoURL)
+        try? FileManager.default.removeItem(at: videoPartURL)
+        Self.logSDK(level: .info, event: "media-download-start", fields: videoFields)
+        videoElem.downloadVideo(
+            path: videoPartURL.path,
+            progress: nil,
+            succ: { [weak self] in
+                var fields = videoFields
+                guard Self.promoteDownloadedFile(from: videoPartURL, to: videoURL) else {
+                    fields["result"] = "failed"
+                    fields["reason"] = "file-promote-failed"
+                    fields["duration_ms"] = Self.elapsedMilliseconds(since: videoStartedAt)
+                    Self.logSDK(level: .warning, event: "media-download-finished", fields: fields)
+                    return
+                }
+                fields["result"] = "ok"
+                fields["duration_ms"] = Self.elapsedMilliseconds(since: videoStartedAt)
+                Self.logSDK(level: .info, event: "media-download-finished", fields: fields)
+                self?.emitIncomingVideo(
+                    fromUserID: fromUserID,
+                    videoFileURL: videoURL,
+                    coverFileURL: coverURL,
+                    durationSeconds: durationSeconds,
+                    width: width,
+                    height: height,
+                    sizeBytes: sizeBytes,
+                    remoteID: remoteID,
+                    origin: origin,
+                    createdAt: createdAt,
+                    stage: .videoReady
+                )
+            },
+            fail: { code, _ in
+                try? FileManager.default.removeItem(at: videoPartURL)
+                var fields = videoFields
+                fields["result"] = "failed"
+                fields["code"] = String(code)
+                fields["duration_ms"] = Self.elapsedMilliseconds(since: videoStartedAt)
+                Self.logSDK(level: .warning, event: "media-download-finished", fields: fields)
+            }
+        )
+    }
+
+    private nonisolated func emitIncomingVideo(
+        fromUserID: String,
+        videoFileURL: URL,
+        coverFileURL: URL?,
+        durationSeconds: Int,
+        width: Int,
+        height: Int,
+        sizeBytes: Int64,
+        remoteID: String?,
+        origin: RemoteIMMessageOrigin?,
+        createdAt: Date,
+        stage: IncomingRemoteIMVideoStage
+    ) {
+        Task { @MainActor [weak self] in
+            self?.onIncomingVideo?(
+                IncomingRemoteIMVideo(
+                    fromUserID: fromUserID,
+                    videoFileURL: videoFileURL,
+                    coverFileURL: coverFileURL,
+                    durationSeconds: durationSeconds,
+                    width: width,
+                    height: height,
+                    sizeBytes: sizeBytes,
+                    remoteID: remoteID,
+                    origin: origin,
+                    createdAt: createdAt,
+                    stage: stage
+                )
+            )
+        }
+    }
+
     private nonisolated func emitIncomingText(
         fromUserID: String,
         text: String,
@@ -679,6 +898,69 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
             .appendingPathComponent("RemoteIMVoice", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory.appendingPathComponent(safeName).appendingPathExtension("m4a")
+    }
+
+    private nonisolated static func videoCacheURL(
+        remoteID: String,
+        videoType: String?
+    ) -> URL {
+        let safeName = remoteID
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: ":", with: "_")
+        let rawExtension = videoType?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+            .lowercased() ?? ""
+        let fileExtension = !rawExtension.isEmpty && rawExtension.allSatisfy({ $0.isLetter || $0.isNumber })
+            ? rawExtension
+            : "mp4"
+        let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("RemoteIMVideo", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory.appendingPathComponent(safeName).appendingPathExtension(fileExtension)
+    }
+
+    private nonisolated static func videoCoverCacheURL(remoteID: String) -> URL {
+        let safeName = remoteID
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: ":", with: "_")
+        let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("RemoteIMVideoCover", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory.appendingPathComponent(safeName).appendingPathExtension("jpg")
+    }
+
+    private nonisolated static func isUsableCachedFile(_ url: URL) -> Bool {
+        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]) else {
+            return false
+        }
+        return values.isRegularFile == true && (values.fileSize ?? 0) > 0
+    }
+
+    private nonisolated static func partialDownloadURL(for finalURL: URL) -> URL {
+        finalURL.appendingPathExtension("part")
+    }
+
+    private nonisolated static func promoteDownloadedFile(from partialURL: URL, to finalURL: URL) -> Bool {
+        guard isUsableCachedFile(partialURL) else {
+            try? FileManager.default.removeItem(at: partialURL)
+            return false
+        }
+        do {
+            if FileManager.default.fileExists(atPath: finalURL.path) {
+                try FileManager.default.removeItem(at: finalURL)
+            }
+            try FileManager.default.moveItem(at: partialURL, to: finalURL)
+            return isUsableCachedFile(finalURL)
+        } catch {
+            try? FileManager.default.removeItem(at: partialURL)
+            return false
+        }
+    }
+
+    private nonisolated static func nonEmpty(_ value: String?) -> String? {
+        let cleanValue = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return cleanValue.isEmpty ? nil : cleanValue
     }
 
     private nonisolated static func preferredImage(from imageList: [V2TIMImage]) -> V2TIMImage? {
@@ -862,6 +1144,7 @@ final class TencentIMClient: RemoteIMClient {
     var onIncomingVoice: ((IncomingRemoteIMVoice) -> Void)?
     var onIncomingImage: ((IncomingRemoteIMImage) -> Void)?
     var onIncomingFile: ((IncomingRemoteIMFile) -> Void)?
+    var onIncomingVideo: ((IncomingRemoteIMVideo) -> Void)?
     var onPresenceStatusChanged: (([String: RemoteIMPresenceStatus]) -> Void)?
 
     func connect(sdkAppID: Int, userID: String, userSig: String) async throws {

@@ -129,6 +129,11 @@ final class RemoteIMAppState: ObservableObject {
                 await self?.receive(event)
             }
         }
+        self.client.onIncomingVideo = { [weak self] event in
+            Task { @MainActor in
+                await self?.receive(event)
+            }
+        }
         self.client.onPresenceStatusChanged = { [weak self] updates in
             Task { @MainActor in
                 self?.applyPresenceStatusUpdates(updates)
@@ -854,6 +859,52 @@ final class RemoteIMAppState: ObservableObject {
             enqueueHistoryUpsert(message)
             settingsStore.save(currentStoredSettings())
         }
+    }
+
+    private func receive(_ event: IncomingRemoteIMVideo) async {
+        let existingMessage = chatState.message(remoteID: event.remoteID)
+        if existingMessage == nil {
+            guard await shouldAcceptIncomingMessage(remoteID: event.remoteID) else { return }
+        }
+
+        let previousCount = chatState.messages.count
+        let previousAttachment = existingMessage?.videoAttachment
+        let message = chatState.receiveVideo(
+            filePath: event.videoFileURL.path,
+            coverFilePath: event.coverFileURL?.path,
+            durationSeconds: event.durationSeconds,
+            width: event.width,
+            height: event.height,
+            sizeBytes: event.sizeBytes,
+            fromUserID: event.fromUserID,
+            remoteID: event.remoteID,
+            now: event.createdAt
+        )
+        let wasInserted = chatState.messages.count > previousCount
+        let wasUpdated = !wasInserted && previousAttachment != message.videoAttachment
+        logMessageIngested(
+            kind: "video",
+            userID: event.fromUserID,
+            remoteID: event.remoteID,
+            wasInserted: wasInserted,
+            fields: [
+                "stage": event.stage.rawValue,
+                "updated": wasUpdated ? "1" : "0",
+                "duration_seconds": String(event.durationSeconds),
+                "width": String(event.width),
+                "height": String(event.height),
+                "bytes": String(event.sizeBytes),
+            ]
+        )
+        updateUnreadAfterReceiving(from: event.fromUserID, wasInserted: wasInserted)
+        refreshProfileIfNeeded(userID: event.fromUserID)
+        enqueueHistoryUpsert(message)
+        if wasInserted {
+            settingsStore.save(currentStoredSettings())
+        }
+        // The attachment paths are stable from the metadata stage onward. A later download
+        // makes the file appear at the same path, so explicitly refresh the bubble/player.
+        objectWillChange.send()
     }
 
     private func updateUnreadAfterReceiving(from userID: String, wasInserted: Bool) {

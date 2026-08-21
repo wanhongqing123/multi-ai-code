@@ -161,6 +161,7 @@ private slots:
     void emitsIncomingGenericFileWithRealMimeType();
     void mergesCaptionIntoGenericFileMessage();
     void loadsGenericFileFromHistory();
+    void emitsIncomingVoiceWithLocalPath();
     void emitsIncomingVideoWithLocalPath();
     void mergesCaptionIntoIncomingVideoMessage();
     void rejectsMissingCredentials();
@@ -626,6 +627,42 @@ void TimSdkRemoteIMClientTest::loadsGenericFileFromHistory() {
     QCOMPARE(file.file.fileName, QStringLiteral("report.pdf"));
     QCOMPARE(file.file.mimeType, QStringLiteral("application/pdf"));
     QCOMPARE(file.text, QStringLiteral("[文件消息] report.pdf"));
+}
+
+// 语音入站此前完全没有分支：elem_type 2 一个 if 都匹配不上，整条消息静默消失，
+// 界面上什么都不出现——而 incomingVoice 信号、ChatState::receiveVoice、本地库的
+// voice_* 列全都早就备好了，只差这一环。
+void TimSdkRemoteIMClientTest::emitsIncomingVoiceWithLocalPath() {
+    auto api = std::make_unique<FakeTimSdkApi>();
+    auto* fake = api.get();
+    TimSdkRemoteIMClient client(std::move(api));
+    QSignalSpy messagesSpy(&client, &RemoteIMClient::liveMessagesReceived);
+
+    client.connectToService(123456, QStringLiteral("desktop-user"), QStringLiteral("sig-value"), nullptr);
+    fake->emitMessages(QJsonArray{QJsonObject{
+        {QStringLiteral("message_is_from_self"), false},
+        {QStringLiteral("message_sender"), QStringLiteral("phone-user")},
+        {QStringLiteral("message_msg_id"), QStringLiteral("sdk-voice-1")},
+        {QStringLiteral("message_server_time"), 1700000000},
+        {QStringLiteral("message_elem_array"), QJsonArray{
+            QJsonObject{
+                {QStringLiteral("elem_type"), 2},
+                {QStringLiteral("sound_elem_file_path"), QStringLiteral("/tmp/voice-1.amr")},
+                {QStringLiteral("sound_elem_file_time"), 7}
+            }
+        }}
+    }});
+
+    QCOMPARE(messagesSpy.count(), 1);
+    const auto messages = messagesSpy.takeFirst().at(0).value<QList<RemoteIMMessage>>();
+    QCOMPARE(messages.size(), 1);
+    const RemoteIMMessage& voice = messages.at(0);
+    QVERIFY(voice.hasVoice);
+    QVERIFY(!voice.hasFile);
+    QCOMPARE(voice.id, QStringLiteral("sdk-voice-1#0"));
+    QCOMPARE(voice.voice.localPath, QStringLiteral("/tmp/voice-1.amr"));
+    QCOMPARE(voice.voice.durationSeconds, 7);
+    QCOMPARE(voice.text, QStringLiteral("[语音消息]"));
 }
 
 // 视频入站此前完全没有分支：elem_type 9 一个 if 都匹配不上，整条消息静默消失，

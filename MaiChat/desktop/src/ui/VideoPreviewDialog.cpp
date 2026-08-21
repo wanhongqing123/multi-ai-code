@@ -108,9 +108,14 @@ void VideoPreviewDialog::togglePlayback() {
 void VideoPreviewDialog::showError(const QString& message) {
     if (!errorLabel_) return;
     const QString detail = message.trimmed().isEmpty() ? QStringLiteral("未知错误") : message.trimmed();
+    // 不要笼统地说「缺插件」：实测插件齐全时也会失败——Qt 挑中了 DirectShow 后端，
+    // 而它解不了 H.264（0x80040266 VFW_E_UNSUPPORTED_STREAM）。把当前首选后端一并
+    // 显示出来，才能一眼分清是「没插件」还是「挑错了后端」。
+    const QString backend = qEnvironmentVariable("QT_MULTIMEDIA_PREFERRED_PLUGINS",
+                                                 QStringLiteral("(系统默认)"));
     errorLabel_->setText(
-        QStringLiteral("无法播放：%1\n若为全新安装的版本，通常是缺少 Qt 多媒体解码插件（mediaservice）。")
-            .arg(detail));
+        QStringLiteral("无法播放：%1\n首选解码后端：%2")
+            .arg(detail, backend));
     errorLabel_->show();
 }
 

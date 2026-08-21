@@ -21,6 +21,7 @@ namespace {
 constexpr int kConversationTypeC2C = 1;
 constexpr int kElemText = 0;
 constexpr int kElemImage = 1;
+constexpr int kElemSound = 2;
 constexpr int kElemFile = 4;
 // TIMElemType 里 Video 排在 Text/Image/Sound/Custom/File/GroupTips/Face/Location/GroupReport
 // 之后，值为 9（见 vendor/tencent-im/.../TIMMessageManager.h 的 enum TIMElemType）。
@@ -93,6 +94,17 @@ QString videoDisplayName(const QJsonObject& elem) {
         if (!name.isEmpty()) return name;
     }
     return QStringLiteral("video.mp4");
+}
+
+QString cacheVoicePathForUrl(const QString& url) {
+    const QString hash = QString::fromLatin1(
+        QCryptographicHash::hash(url.toUtf8(), QCryptographicHash::Sha1).toHex());
+    const QString dir = QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation))
+                            .filePath(QStringLiteral("remote-im-voice"));
+    QDir().mkpath(dir);
+    // 腾讯 IM 的语音是 AMR/SILK 之类，扩展名统一给 .amr——播放侧按内容解码，
+    // 这里只需要一个稳定且唯一的落盘名。
+    return QDir(dir).filePath(hash + QStringLiteral(".amr"));
 }
 
 QString cacheVideoPathForUrl(const QString& url, const QString& suffix) {
@@ -667,7 +679,7 @@ void TimSdkRemoteIMClient::handleHistoryMessagesPayload(const QString& jsonPaylo
             const int elemType = elem.value(QStringLiteral("elem_type")).toInt(-1);
             if (elemType == kElemImage) {
                 if (!elem.value(QStringLiteral("image_elem_orig_path")).toString().trimmed().isEmpty()) hasAttachment = true;
-            } else if (elemType == kElemFile || elemType == kElemVideo) {
+            } else if (elemType == kElemFile || elemType == kElemVideo || elemType == kElemSound) {
                 hasAttachment = true;
             } else if (elemType == kElemText && captionElemIndex < 0) {
                 const QString content = elem.value(QStringLiteral("text_elem_content")).toString();
@@ -721,6 +733,24 @@ void TimSdkRemoteIMClient::handleHistoryMessagesPayload(const QString& jsonPaylo
                     message.text = QStringLiteral("[图片消息] ") + QFileInfo(localPath).fileName();
                 }
                 messages.append(message);
+                continue;
+            }
+            if (elemType == kElemSound) {
+                const QString localPath = elem.value(QStringLiteral("sound_elem_file_path")).toString().trimmed();
+                const QString url = elem.value(QStringLiteral("sound_elem_url")).toString().trimmed();
+                const int duration = elem.value(QStringLiteral("sound_elem_file_time")).toInt(0);
+                RemoteIMMessage message = makeBase(elemIndex);
+                message.hasVoice = true;
+                message.text = (!attachmentCaption.isEmpty() && !captionConsumed)
+                                   ? attachmentCaption
+                                   : QStringLiteral("[语音消息]");
+                if (!attachmentCaption.isEmpty() && !captionConsumed) captionConsumed = true;
+                message.voice = RemoteIMVoiceAttachment{localPath, duration > 0 ? duration : 1};
+                if (!localPath.isEmpty()) {
+                    messages.append(message);
+                } else if (!url.isEmpty()) {
+                    handleIncomingVoiceUrl(message, url, /*live=*/false);
+                }
                 continue;
             }
             if (elemType == kElemVideo) {
@@ -837,7 +867,7 @@ void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
         const int elemType = elem.value(QStringLiteral("elem_type")).toInt(-1);
         if (elemType == kElemImage) {
             hasAttachment = true;
-        } else if (elemType == kElemFile || elemType == kElemVideo) {
+        } else if (elemType == kElemFile || elemType == kElemVideo || elemType == kElemSound) {
             hasAttachment = true;
         } else if (elemType == kElemText && captionElemIndex < 0) {
             const QString content = elem.value(QStringLiteral("text_elem_content")).toString();
@@ -888,6 +918,26 @@ void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
                 QStringLiteral("image_elem_thumb_url")
             });
             if (!url.isEmpty()) handleIncomingImageUrl(imageMessage, url, /*live=*/true);
+            continue;
+        }
+        if (elemType == kElemSound) {
+            const QString localPath = elem.value(QStringLiteral("sound_elem_file_path")).toString().trimmed();
+            const QString url = elem.value(QStringLiteral("sound_elem_url")).toString().trimmed();
+            const int duration = elem.value(QStringLiteral("sound_elem_file_time")).toInt(0);
+            RemoteIMMessage voiceMessage = baseMessage(elemIndex);
+            voiceMessage.hasVoice = true;
+            if (!attachmentCaption.isEmpty() && !captionConsumed) {
+                voiceMessage.text = attachmentCaption;
+                captionConsumed = true;
+            } else {
+                voiceMessage.text = QStringLiteral("[语音消息]");
+            }
+            voiceMessage.voice = RemoteIMVoiceAttachment{localPath, duration > 0 ? duration : 1};
+            if (!localPath.isEmpty()) {
+                received.append(voiceMessage);
+            } else if (!url.isEmpty()) {
+                handleIncomingVoiceUrl(voiceMessage, url, /*live=*/true);
+            }
             continue;
         }
         if (elemType == kElemVideo) {
@@ -1052,6 +1102,28 @@ void TimSdkRemoteIMClient::handleIncomingVideoUrls(RemoteIMMessage message,
             }
         }
         fetchVideo(message);
+    });
+}
+
+void TimSdkRemoteIMClient::handleIncomingVoiceUrl(RemoteIMMessage message, const QString& url, bool live) {
+    const QString targetPath = cacheVoicePathForUrl(url);
+    message.voice.localPath = targetPath;
+    if (QFile::exists(targetPath)) {
+        emitReceivedMessages({message}, live);
+        return;
+    }
+
+    QNetworkReply* reply = network_.get(QNetworkRequest(QUrl(url)));
+    connect(reply, &QNetworkReply::finished, this, [this, reply, message, live] {
+        const QByteArray data = reply->readAll();
+        const bool ok = reply->error() == QNetworkReply::NoError && !data.isEmpty();
+        reply->deleteLater();
+        if (!ok) return;
+        QFile file(message.voice.localPath);
+        if (!file.open(QIODevice::WriteOnly)) return;
+        file.write(data);
+        file.close();
+        emitReceivedMessages({message}, live);
     });
 }
 

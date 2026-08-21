@@ -52,6 +52,8 @@ private:
     void handleIncomingFileUrl(RemoteIMMessage message, const QString& url, bool live);
     // 视频要下两个文件（视频本体 + 封面）。封面失败不阻塞：气泡会退化成深色底 +
     // 播放角标，仍然能点开播放。
+    // 语音：SDK 给的是 HTTPS URL，本端下载后才有本地文件可播。
+    void handleIncomingVoiceUrl(RemoteIMMessage message, const QString& url, bool live);
     void handleIncomingVideoUrls(RemoteIMMessage message, const QString& videoUrl,
                                  const QString& coverUrl, bool live);
     void emitReceivedMessages(const QList<RemoteIMMessage>& messages, bool live);

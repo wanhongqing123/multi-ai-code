@@ -20,6 +20,7 @@
 #include <QTextBlock>
 #include <QTextFormat>
 #include <QTextFragment>
+#include <QDesktopServices>
 #include <QDialog>
 #include <QEvent>
 #include <QFile>
@@ -2554,7 +2555,7 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
 
     auto* bubble = new QWidget(row);
     bubble->setObjectName(outgoing ? QStringLiteral("messageBubbleOutgoing") : QStringLiteral("messageBubbleIncoming"));
-    const bool expandedTextBubble = !message.hasImage && !message.hasFile && !message.hasVideo && (message.text.size() >= 50 || message.text.contains(QLatin1Char('\n')));
+    const bool expandedTextBubble = !message.hasImage && !message.hasFile && !message.hasVideo && !message.hasVoice && (message.text.size() >= 50 || message.text.contains(QLatin1Char('\n')));
     bubble->setProperty("expandedTextBubble", expandedTextBubble);
     applyMessageBubbleWidth(bubble, expandedTextBubble);
     bubble->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
@@ -2647,6 +2648,41 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
             missingLabel->setWordWrap(true);
             contentRow->addWidget(missingLabel);
         }
+    } else if (message.hasVoice) {
+        // 语音气泡：时长 + 点击用系统播放器打开。腾讯 IM 的语音多是 AMR/SILK，
+        // Qt Multimedia 在 Windows 上不一定解得了，交给系统关联程序更可靠。
+        auto* voiceButton = new QPushButton(bubble);
+        voiceButton->setObjectName(QStringLiteral("messageVoiceButton"));
+        voiceButton->setCursor(Qt::PointingHandCursor);
+        const int seconds = qMax(1, message.voice.durationSeconds);
+        voiceButton->setText(QStringLiteral("🔊 语音 %1\"").arg(seconds));
+        voiceButton->setMinimumWidth(UiZoom::s(120 + qMin(seconds, 30) * 4));
+        voiceButton->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+        voiceButton->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
+            QPushButton#messageVoiceButton {
+                background: #f8fafc;
+                border: 1px solid #d9e4ef;
+                border-radius: 8px;
+                color: #172033;
+                font-size: 13px;
+                padding: 10px 14px;
+                text-align: left;
+            }
+            QPushButton#messageVoiceButton:hover {
+                border-color: #1aa7ec;
+                background: #edf8ff;
+            }
+        )")));
+        connect(voiceButton, &QPushButton::clicked, this, [this, path = message.voice.localPath]() {
+            if (path.trimmed().isEmpty() || !QFile::exists(path)) {
+                AppMessageDialog::show(this, AppMessageDialog::Kind::Warning,
+                                       QStringLiteral("无法播放"),
+                                       QStringLiteral("语音尚未下载完成或本地缓存已被清理。"));
+                return;
+            }
+            QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+        });
+        contentRow->addWidget(voiceButton);
     } else if (message.hasVideo) {
         // 视频气泡：封面 + 中心播放角标，点击开播。封面拿不到（老消息、或生成失败）
         // 时退化成深色底 + 角标，仍然可点——不能因为没有封面就让视频打不开。

@@ -41,6 +41,19 @@ int main(int argc, char* argv[]) {
     QApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
 #endif
 
+#ifdef Q_OS_WIN
+    // 强制 QMediaPlayer 走 Windows Media Foundation。
+    //
+    // Qt5 在 Windows 上同时带 dsengine（DirectShow）和 wmfengine（WMF）两个后端，
+    // 默认可能挑中 DirectShow——而 DirectShow 没有内置 H.264/AAC 解码器，播放
+    // 手机录的 mp4 会失败：日志里是 DirectShowPlayerService::doRender 报
+    // 0x80040266（VFW_E_UNSUPPORTED_STREAM），界面上只有一块黑屏。
+    // 必须在构造 QApplication 之前设置，插件选择发生在那之前。
+    if (qEnvironmentVariableIsEmpty("QT_MULTIMEDIA_PREFERRED_PLUGINS")) {
+        qputenv("QT_MULTIMEDIA_PREFERRED_PLUGINS", "windowsmediafoundation");
+    }
+#endif
+
     QApplication app(argc, argv);
     // 独立应用身份：数据落 %APPDATA%\MaiChat\Desktop IM（macOS 同理在 Application Support 下），
     // 与其它应用的数据树分开。

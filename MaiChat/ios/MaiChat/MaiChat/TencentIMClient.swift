@@ -21,7 +21,10 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
                 Int32(sdkAppID),
                 config: config
             )
-            guard initialized else { throw RemoteIMClientError.sdkInitializationFailed }
+            guard initialized else {
+                Self.logSDK(level: .error, event: "sdk-init-failed")
+                throw RemoteIMClientError.sdkInitializationFailed
+            }
             initializedSDKAppID = sdkAppID
         }
         if !hasRegisteredIMSDKListener {
@@ -30,14 +33,29 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
         }
         V2TIMManager.sharedInstance().addSimpleMsgListener(listener: self)
         V2TIMManager.sharedInstance().addAdvancedMsgListener(listener: self)
+        Self.logSDK(level: .info, event: "login-start", fields: ["peer": Self.peerTag(userID)])
         return try await withCheckedThrowingContinuation { continuation in
             V2TIMManager.sharedInstance().login(
                 userID: userID,
                 userSig: userSig,
                 succ: {
+                    Self.logSDK(
+                        level: .info,
+                        event: "login-finished",
+                        fields: ["result": "ok", "peer": Self.peerTag(userID)]
+                    )
                     continuation.resume()
                 },
                 fail: { code, desc in
+                    Self.logSDK(
+                        level: .error,
+                        event: "login-finished",
+                        fields: [
+                            "result": "failed",
+                            "code": String(code),
+                            "peer": Self.peerTag(userID)
+                        ]
+                    )
                     continuation.resume(
                         throwing: RemoteIMClientError.operationFailed(
                             code: code,
@@ -368,7 +386,19 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
     }
 
     nonisolated func onRecvC2CTextMessage(msgID: String, sender: V2TIMUserInfo, text: String?) {
-        guard let userID = sender.userID, !userID.isEmpty, let text, !text.isEmpty else { return }
+        guard let userID = sender.userID, !userID.isEmpty, let text, !text.isEmpty else {
+            let hasSender = !(sender.userID ?? "").isEmpty
+            Self.logSDK(
+                level: .warning,
+                event: "message-dropped",
+                fields: [
+                    "kind": "text",
+                    "reason": hasSender ? "empty-text" : "no-sender",
+                    "message": Self.messageTag(msgID)
+                ]
+            )
+            return
+        }
         Self.logIncomingMessage(
             kind: "text",
             peerUserID: userID,
@@ -404,7 +434,14 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
     nonisolated func onRecvNewMessage(msg: V2TIMMessage) {
         guard !msg.isSelf else { return }
         let fromUserID = msg.sender ?? msg.userID ?? ""
-        guard !fromUserID.isEmpty else { return }
+        guard !fromUserID.isEmpty else {
+            Self.logSDK(
+                level: .warning,
+                event: "message-dropped",
+                fields: ["reason": "no-sender", "message": Self.messageTag(msg.msgID)]
+            )
+            return
+        }
 
         if let soundElem = msg.soundElem {
             handleIncomingSound(msg: msg, soundElem: soundElem, fromUserID: fromUserID)
@@ -418,7 +455,23 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
 
         if let fileElem = msg.fileElem {
             handleIncomingFile(msg: msg, fileElem: fileElem, fromUserID: fromUserID)
+            return
         }
+
+        // 一个分支都没命中就说明这类消息本端不认，而且原来是悄悄丢掉的——桌面端那次
+        // 语音消息丢失就是死在同样的静默里。elem_type 是这条日志的关键：光知道
+        // "有消息没人处理"还得再猜一轮，有了类型号才能直接对上缺哪个分支
+        // （例如视频是 5，本端目前没有对应实现）。
+        Self.logSDK(
+            level: .warning,
+            event: "message-unhandled",
+            fields: [
+                "reason": "no-branch-matched",
+                "peer": Self.peerTag(fromUserID),
+                "message": Self.messageTag(msg.msgID),
+                "elem_type": String(msg.elemType.rawValue)
+            ]
+        )
     }
 
     private nonisolated func handleIncomingSound(

@@ -503,6 +503,20 @@ public final class RemoteIMSessionController {
                 incoming.createdAtMillis(),
                 incoming.origin()
             );
+        } else if (incoming.videoAttachment() != null) {
+            RemoteIMVideoAttachment video = incoming.videoAttachment();
+            message = chatState.receiveVideo(
+                video.localPath(),
+                video.coverPath(),
+                video.durationSeconds(),
+                video.width(),
+                video.height(),
+                video.sizeBytes(),
+                incoming.fromUserId(),
+                incoming.remoteId(),
+                incoming.createdAtMillis(),
+                incoming.origin()
+            );
         } else if (incoming.fileAttachment() != null) {
             RemoteIMFileAttachment file = incoming.fileAttachment();
             message = chatState.receiveFile(

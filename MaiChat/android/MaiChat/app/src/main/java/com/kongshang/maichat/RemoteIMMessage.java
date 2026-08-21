@@ -27,6 +27,7 @@ public final class RemoteIMMessage {
     private final RemoteIMImageAttachment imageAttachment;
     private final RemoteIMVoiceAttachment voiceAttachment;
     private final RemoteIMFileAttachment fileAttachment;
+    private final RemoteIMVideoAttachment videoAttachment;
     private final RemoteIMOrigin origin;
 
     public RemoteIMMessage(
@@ -51,6 +52,7 @@ public final class RemoteIMMessage {
             imageAttachment,
             voiceAttachment,
             null,
+            null,
             RemoteIMOrigin.HUMAN
         );
     }
@@ -78,6 +80,7 @@ public final class RemoteIMMessage {
             imageAttachment,
             voiceAttachment,
             fileAttachment,
+            null,
             RemoteIMOrigin.HUMAN
         );
     }
@@ -104,6 +107,7 @@ public final class RemoteIMMessage {
             createdAtMillis,
             imageAttachment,
             voiceAttachment,
+            null,
             null,
             RemoteIMOrigin.HUMAN
         );
@@ -133,6 +137,37 @@ public final class RemoteIMMessage {
             imageAttachment,
             voiceAttachment,
             fileAttachment,
+            null,
+            RemoteIMOrigin.HUMAN
+        );
+    }
+
+    RemoteIMMessage(
+        String id,
+        String fromUserId,
+        String toUserId,
+        String text,
+        Direction direction,
+        Status status,
+        long createdAtMillis,
+        RemoteIMImageAttachment imageAttachment,
+        RemoteIMVoiceAttachment voiceAttachment,
+        RemoteIMFileAttachment fileAttachment,
+        RemoteIMVideoAttachment videoAttachment
+    ) {
+        this(
+            id,
+            null,
+            fromUserId,
+            toUserId,
+            text,
+            direction,
+            status,
+            createdAtMillis,
+            imageAttachment,
+            voiceAttachment,
+            fileAttachment,
+            videoAttachment,
             RemoteIMOrigin.HUMAN
         );
     }
@@ -149,6 +184,7 @@ public final class RemoteIMMessage {
         RemoteIMImageAttachment imageAttachment,
         RemoteIMVoiceAttachment voiceAttachment,
         RemoteIMFileAttachment fileAttachment,
+        RemoteIMVideoAttachment videoAttachment,
         RemoteIMOrigin origin
     ) {
         this.id = clean(id).isEmpty() ? UUID.randomUUID().toString() : clean(id);
@@ -162,6 +198,7 @@ public final class RemoteIMMessage {
         this.imageAttachment = imageAttachment;
         this.voiceAttachment = voiceAttachment;
         this.fileAttachment = fileAttachment;
+        this.videoAttachment = videoAttachment;
         this.origin = origin == null ? RemoteIMOrigin.MACHINE : origin;
     }
 
@@ -213,6 +250,10 @@ public final class RemoteIMMessage {
         return voiceAttachment;
     }
 
+    public RemoteIMVideoAttachment videoAttachment() {
+        return videoAttachment;
+    }
+
     public RemoteIMFileAttachment fileAttachment() {
         return fileAttachment;
     }
@@ -241,6 +282,7 @@ public final class RemoteIMMessage {
             && Objects.equals(imageAttachment, that.imageAttachment)
             && Objects.equals(voiceAttachment, that.voiceAttachment)
             && Objects.equals(fileAttachment, that.fileAttachment)
+            && Objects.equals(videoAttachment, that.videoAttachment)
             && origin == that.origin;
     }
 
@@ -258,6 +300,7 @@ public final class RemoteIMMessage {
             imageAttachment,
             voiceAttachment,
             fileAttachment,
+            videoAttachment,
             origin
         );
     }

@@ -66,6 +66,7 @@ public final class LocalChatHistoryStore {
         RemoteIMImageAttachment image = message.imageAttachment();
         RemoteIMVoiceAttachment voice = message.voiceAttachment();
         RemoteIMFileAttachment file = message.fileAttachment();
+        RemoteIMVideoAttachment video = message.videoAttachment();
         writer.write("MESSAGE");
         writer.write('\t');
         writer.write(encode(message.id()));
@@ -101,6 +102,18 @@ public final class LocalChatHistoryStore {
         writer.write(encode(file == null ? "" : file.mimeType()));
         writer.write('\t');
         writer.write(Long.toString(file == null ? 0 : file.sizeBytes()));
+        writer.write('	');
+        writer.write(encode(video == null ? "" : video.localPath()));
+        writer.write('	');
+        writer.write(encode(video == null ? "" : video.coverPath()));
+        writer.write('	');
+        writer.write(Integer.toString(video == null ? 0 : video.durationSeconds()));
+        writer.write('	');
+        writer.write(Integer.toString(video == null ? 0 : video.width()));
+        writer.write('	');
+        writer.write(Integer.toString(video == null ? 0 : video.height()));
+        writer.write('	');
+        writer.write(Long.toString(video == null ? 0 : video.sizeBytes()));
         writer.newLine();
     }
 
@@ -135,6 +148,21 @@ public final class LocalChatHistoryStore {
             }
         }
 
+        RemoteIMVideoAttachment video = null;
+        if (parts.length >= 24) {
+            String videoPath = decode(parts[18]);
+            if (!videoPath.isEmpty()) {
+                video = new RemoteIMVideoAttachment(
+                    videoPath,
+                    decode(parts[19]),
+                    parseInt(parts[20]),
+                    parseInt(parts[21]),
+                    parseInt(parts[22]),
+                    parseLong(parts[23])
+                );
+            }
+        }
+
         return new RemoteIMMessage(
             decode(parts[1]),
             decode(parts[2]),
@@ -145,7 +173,8 @@ public final class LocalChatHistoryStore {
             parseLong(parts[7]),
             image,
             voice,
-            file
+            file,
+            video
         );
     }
 

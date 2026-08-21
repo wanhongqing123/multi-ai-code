@@ -20,6 +20,7 @@ import com.tencent.imsdk.v2.V2TIMSoundElem;
 import com.tencent.imsdk.v2.V2TIMUserFullInfo;
 import com.tencent.imsdk.v2.V2TIMUserStatus;
 import com.tencent.imsdk.v2.V2TIMValueCallback;
+import com.tencent.imsdk.v2.V2TIMVideoElem;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -27,6 +28,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.Map;
 import java.util.UUID;
 
@@ -418,6 +420,7 @@ public final class TencentIMClient {
                 null,
                 null,
                 null,
+                null,
                 origin
             ));
             return;
@@ -428,6 +431,10 @@ public final class TencentIMClient {
         }
         if (sdkMessage.getSoundElem() != null) {
             downloadVoice(sdkMessage, fromUserId, recipientUserId, createdAt, origin);
+            return;
+        }
+        if (sdkMessage.getVideoElem() != null) {
+            downloadVideo(sdkMessage, fromUserId, recipientUserId, createdAt, origin);
             return;
         }
         if (sdkMessage.getFileElem() != null) {
@@ -491,6 +498,7 @@ public final class TencentIMClient {
                     attachment,
                     null,
                     null,
+                    null,
                     origin
                 ));
             }
@@ -535,6 +543,7 @@ public final class TencentIMClient {
                     null,
                     new RemoteIMVoiceAttachment(target.getAbsolutePath(), duration),
                     null,
+                    null,
                     origin
                 ));
             }
@@ -545,6 +554,130 @@ public final class TencentIMClient {
                     + " target=" + target.getAbsolutePath());
             }
         });
+    }
+
+    private void downloadVideo(
+        V2TIMMessage message,
+        String fromUserId,
+        String recipientUserId,
+        long createdAt,
+        RemoteIMOrigin origin
+    ) {
+        V2TIMVideoElem elem = message.getVideoElem();
+        String remoteId = clean(elem.getVideoUUID());
+        if (remoteId.isEmpty()) remoteId = clean(message.getMsgID());
+        final String finalRemoteId = remoteId;
+
+        final File videoTarget = mediaFile("video", remoteId, extension(elem.getVideoPath(), "mp4"));
+        // 先下到 .part 再改名：这样"目标文件存在"就等价于"已经下完"，界面只需判存在性，
+        // 不会拿到一个下了一半的文件去播放。
+        final File videoPart = new File(videoTarget.getAbsolutePath() + ".part");
+        final File coverTarget = mediaFile("video-cover", remoteId + "-cover", "jpg");
+
+        final int duration = Math.max(0, (int) elem.getDuration());
+        final int width = Math.max(0, elem.getSnapshotWidth());
+        final int height = Math.max(0, elem.getSnapshotHeight());
+        final long sizeBytes = Math.max(0L, elem.getVideoSize());
+
+        // 视频体积大、下得慢，等它下完再出气泡会让聊天界面长时间什么都不显示。
+        // 封面一到就先把消息投出去；视频路径指向最终目标，下完即可播放。
+        // 封面失败时退回等视频下完再投，保证消息不会因为没有封面而丢失。
+        final AtomicBoolean delivered = new AtomicBoolean(false);
+
+        elem.downloadSnapshot(coverTarget.getAbsolutePath(), new V2TIMDownloadCallback() {
+            @Override
+            public void onProgress(V2TIMElem.V2ProgressInfo progressInfo) {
+            }
+
+            @Override
+            public void onSuccess() {
+                if (delivered.compareAndSet(false, true)) {
+                    emitVideoMessage(
+                        finalRemoteId, fromUserId, recipientUserId, createdAt, origin,
+                        videoTarget.getAbsolutePath(), coverTarget.getAbsolutePath(),
+                        duration, width, height, sizeBytes
+                    );
+                }
+            }
+
+            @Override
+            public void onError(int code, String description) {
+                Log.w(TAG, "download video cover failed: code=" + code + " " + description
+                    + " target=" + coverTarget.getAbsolutePath());
+            }
+        });
+
+        elem.downloadVideo(videoPart.getAbsolutePath(), new V2TIMDownloadCallback() {
+            @Override
+            public void onProgress(V2TIMElem.V2ProgressInfo progressInfo) {
+            }
+
+            @Override
+            public void onSuccess() {
+                if (videoTarget.exists() && !videoTarget.delete()) {
+                    Log.w(TAG, "recv video: cannot replace existing file "
+                        + videoTarget.getAbsolutePath());
+                }
+                if (!videoPart.renameTo(videoTarget)) {
+                    Log.w(TAG, "recv video: rename failed, "
+                        + videoPart.getAbsolutePath() + " -> " + videoTarget.getAbsolutePath());
+                    return;
+                }
+                // 封面失败或还没回来时，这里兜底把消息投出去。
+                if (delivered.compareAndSet(false, true)) {
+                    emitVideoMessage(
+                        finalRemoteId, fromUserId, recipientUserId, createdAt, origin,
+                        videoTarget.getAbsolutePath(),
+                        coverTarget.exists() ? coverTarget.getAbsolutePath() : "",
+                        duration, width, height, sizeBytes
+                    );
+                }
+            }
+
+            @Override
+            public void onError(int code, String description) {
+                Log.w(TAG, "download video failed: code=" + code + " " + description
+                    + " target=" + videoTarget.getAbsolutePath());
+                if (!videoPart.exists()) return;
+                if (!videoPart.delete()) {
+                    Log.w(TAG, "recv video: cannot delete partial file "
+                        + videoPart.getAbsolutePath());
+                }
+            }
+        });
+    }
+
+    private void emitVideoMessage(
+        String remoteId,
+        String fromUserId,
+        String recipientUserId,
+        long createdAt,
+        RemoteIMOrigin origin,
+        String videoPath,
+        String coverPath,
+        int duration,
+        int width,
+        int height,
+        long sizeBytes
+    ) {
+        RemoteIMVideoAttachment attachment = new RemoteIMVideoAttachment(
+            videoPath, coverPath, duration, width, height, sizeBytes
+        );
+        listener.onIncomingMessage(new RemoteIMMessage(
+            null,
+            remoteId,
+            fromUserId,
+            recipientUserId,
+            "[视频消息 " + duration + "s]",
+            RemoteIMMessage.Direction.INCOMING,
+            RemoteIMMessage.Status.RECEIVED,
+            createdAt,
+            null,
+            null,
+            null,
+            attachment,
+            origin
+        ));
     }
 
     private void downloadFile(
@@ -585,6 +718,7 @@ public final class TencentIMClient {
                     null,
                     null,
                     attachment,
+                    null,
                     origin
                 ));
             }

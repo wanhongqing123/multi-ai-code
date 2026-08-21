@@ -184,4 +184,46 @@ public class ChatStateTest {
 
         assertEquals(List.of(oldest, middle, newest), state.messagesWith("mac-office"));
     }
+
+    @Test
+    public void receivesVideoAndDedupesByRemoteId() {
+        ChatState state = new ChatState("android-user");
+        state.upsertContact(new RemoteIMContact("mac-office", "Mac Office"));
+
+        RemoteIMMessage message = state.receiveVideo(
+            "/tmp/clip.mp4",
+            "/tmp/clip-cover.jpg",
+            12,
+            1080,
+            1920,
+            4_194_304L,
+            "mac-office",
+            "sdk-video-1",
+            1_700_000_000_000L,
+            RemoteIMOrigin.HUMAN
+        );
+
+        assertEquals("[视频消息 12s]", message.text());
+        assertEquals(RemoteIMMessage.Direction.INCOMING, message.direction());
+        assertNotNull(message.videoAttachment());
+        assertEquals("/tmp/clip-cover.jpg", message.videoAttachment().coverPath());
+
+        // 同一条 remoteId 再来一次不能变成两条：封面与视频是两次下载，
+        // 上层对同一条消息可能不止投递一次。
+        RemoteIMMessage again = state.receiveVideo(
+            "/tmp/clip.mp4",
+            "/tmp/clip-cover.jpg",
+            12,
+            1080,
+            1920,
+            4_194_304L,
+            "mac-office",
+            "sdk-video-1",
+            1_700_000_000_000L,
+            RemoteIMOrigin.HUMAN
+        );
+
+        assertEquals(message.id(), again.id());
+        assertEquals(1, state.messagesWith("mac-office").size());
+    }
 }

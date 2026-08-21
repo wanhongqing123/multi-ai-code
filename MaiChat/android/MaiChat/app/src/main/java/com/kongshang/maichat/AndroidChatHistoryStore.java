@@ -12,7 +12,7 @@ import java.util.List;
 
 public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
     private static final String DATABASE_NAME = "maichat-history.db";
-    private static final int DATABASE_VERSION = 1;
+    private static final int DATABASE_VERSION = 2;
 
     public static final class Page {
         private final List<RemoteIMMessage> messages;
@@ -73,6 +73,12 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
                 + "file_mime TEXT NOT NULL DEFAULT '',"
                 + "file_size INTEGER NOT NULL DEFAULT 0,"
                 + "origin TEXT NOT NULL DEFAULT 'human',"
+                + "video_path TEXT NOT NULL DEFAULT '',"
+                + "video_cover_path TEXT NOT NULL DEFAULT '',"
+                + "video_duration INTEGER NOT NULL DEFAULT 0,"
+                + "video_width INTEGER NOT NULL DEFAULT 0,"
+                + "video_height INTEGER NOT NULL DEFAULT 0,"
+                + "video_size INTEGER NOT NULL DEFAULT 0,"
                 + "PRIMARY KEY(owner_id, id))"
         );
         database.execSQL(
@@ -87,9 +93,29 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
     @Override
     public void onUpgrade(SQLiteDatabase database, int oldVersion, int newVersion) {
         if (oldVersion == newVersion) return;
-        database.execSQL("DROP TABLE IF EXISTS messages");
-        database.execSQL("DROP TABLE IF EXISTS contacts");
-        onCreate(database);
+        int version = oldVersion;
+        if (version < 2) {
+            addVideoColumns(database);
+            version = 2;
+        }
+        if (version != newVersion) {
+            // 只有在没有可用迁移路径时才重建。重建会清空用户本地聊天记录，
+            // 为了加几列而删历史，这个代价不该由用户承担，所以放在最后一步。
+            database.execSQL("DROP TABLE IF EXISTS messages");
+            database.execSQL("DROP TABLE IF EXISTS contacts");
+            onCreate(database);
+        }
+    }
+
+    private static void addVideoColumns(SQLiteDatabase database) {
+        database.execSQL("ALTER TABLE messages ADD COLUMN video_path TEXT NOT NULL DEFAULT ''");
+        database.execSQL(
+            "ALTER TABLE messages ADD COLUMN video_cover_path TEXT NOT NULL DEFAULT ''"
+        );
+        database.execSQL("ALTER TABLE messages ADD COLUMN video_duration INTEGER NOT NULL DEFAULT 0");
+        database.execSQL("ALTER TABLE messages ADD COLUMN video_width INTEGER NOT NULL DEFAULT 0");
+        database.execSQL("ALTER TABLE messages ADD COLUMN video_height INTEGER NOT NULL DEFAULT 0");
+        database.execSQL("ALTER TABLE messages ADD COLUMN video_size INTEGER NOT NULL DEFAULT 0");
     }
 
     public List<RemoteIMContact> loadContacts(String ownerId) {
@@ -240,6 +266,13 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
         values.put("file_name", file == null ? "" : file.fileName());
         values.put("file_mime", file == null ? "" : file.mimeType());
         values.put("file_size", file == null ? 0 : file.sizeBytes());
+        RemoteIMVideoAttachment video = message.videoAttachment();
+        values.put("video_path", video == null ? "" : video.localPath());
+        values.put("video_cover_path", video == null ? "" : video.coverPath());
+        values.put("video_duration", video == null ? 0 : video.durationSeconds());
+        values.put("video_width", video == null ? 0 : video.width());
+        values.put("video_height", video == null ? 0 : video.height());
+        values.put("video_size", video == null ? 0 : video.sizeBytes());
         values.put("origin", message.origin().wireValue());
         getWritableDatabase().insertWithOnConflict(
             "messages",
@@ -262,7 +295,9 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
             "id", "remote_id", "from_id", "to_id", "body", "direction", "status",
             "created_at", "image_path", "image_width", "image_height", "image_size",
             "voice_path", "voice_duration", "file_path", "file_name", "file_mime",
-            "file_size", "origin"
+            "file_size", "origin",
+            "video_path", "video_cover_path", "video_duration", "video_width",
+            "video_height", "video_size"
         };
     }
 
@@ -302,6 +337,18 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
                 cursor.getLong(17)
             );
         }
+        RemoteIMVideoAttachment video = null;
+        String videoPath = cursor.getString(19);
+        if (!videoPath.isEmpty()) {
+            video = new RemoteIMVideoAttachment(
+                videoPath,
+                cursor.getString(20),
+                cursor.getInt(21),
+                cursor.getInt(22),
+                cursor.getInt(23),
+                cursor.getLong(24)
+            );
+        }
         return new RemoteIMMessage(
             cursor.getString(0),
             cursor.getString(1),
@@ -314,6 +361,7 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
             image,
             voice,
             file,
+            video,
             RemoteIMOrigin.fromWireValue(cursor.getString(18))
         );
     }

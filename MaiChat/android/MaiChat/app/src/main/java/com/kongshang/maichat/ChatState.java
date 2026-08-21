@@ -192,6 +192,7 @@ public final class ChatState {
             null,
             null,
             null,
+            null,
             origin
         );
         messages.add(message);
@@ -250,6 +251,7 @@ public final class ChatState {
             attachment,
             null,
             null,
+            null,
             origin
         );
         messages.add(message);
@@ -292,6 +294,45 @@ public final class ChatState {
             null,
             attachment,
             null,
+            null,
+            origin
+        );
+        messages.add(message);
+        return message;
+    }
+
+    public RemoteIMMessage receiveVideo(
+        String localPath,
+        String coverPath,
+        int durationSeconds,
+        int width,
+        int height,
+        long sizeBytes,
+        String fromUserId,
+        String remoteId,
+        long createdAtMillis,
+        RemoteIMOrigin origin
+    ) {
+        RemoteIMMessage existing = messageWithRemoteId(remoteId);
+        if (existing != null) return existing;
+        String peerId = clean(fromUserId);
+        upsertContact(new RemoteIMContact(peerId, peerId));
+        RemoteIMVideoAttachment attachment = new RemoteIMVideoAttachment(
+            localPath, coverPath, durationSeconds, width, height, sizeBytes
+        );
+        RemoteIMMessage message = new RemoteIMMessage(
+            null,
+            remoteId,
+            peerId,
+            ownerUserId,
+            "[视频消息 " + attachment.durationSeconds() + "s]",
+            RemoteIMMessage.Direction.INCOMING,
+            RemoteIMMessage.Status.RECEIVED,
+            createdAtMillis,
+            null,
+            null,
+            null,
+            attachment,
             origin
         );
         messages.add(message);
@@ -349,6 +390,7 @@ public final class ChatState {
             null,
             null,
             attachment,
+            null,
             origin
         );
         messages.add(message);

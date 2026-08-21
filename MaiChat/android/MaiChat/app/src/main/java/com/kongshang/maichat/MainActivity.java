@@ -43,7 +43,9 @@ import android.widget.LinearLayout;
 import android.widget.PopupWindow;
 import android.widget.ScrollView;
 import android.widget.Space;
+import android.widget.MediaController;
 import android.widget.TextView;
+import android.widget.VideoView;
 import android.widget.Toast;
 
 import androidx.core.content.FileProvider;
@@ -798,6 +800,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             voice.setPadding(0, dp(8), dp(18), dp(4));
             voice.setOnClickListener(view -> toggleVoicePlayback(message));
             bubble.addView(voice, matchWrap());
+        } else if (message.videoAttachment() != null) {
+            bubble.addView(videoMessageContent(message.videoAttachment()), matchWrap());
         } else if (message.fileAttachment() != null) {
             bubble.addView(fileMessageContent(message.fileAttachment()), matchWrap());
         } else {
@@ -1762,6 +1766,102 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         return box;
     }
 
+    private View videoMessageContent(RemoteIMVideoAttachment attachment) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+
+        Bitmap cover = attachment.hasCover()
+            ? BitmapFactory.decodeFile(attachment.coverPath())
+            : null;
+
+        FrameLayout stage = new FrameLayout(this);
+        stage.setBackgroundColor(MaiChatTheme.PAGE);
+        if (cover != null) {
+            ImageView image = new ImageView(this);
+            image.setImageBitmap(cover);
+            image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            stage.addView(image, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            ));
+        }
+
+        // 播放角标压在封面上；没有封面时它就是整个气泡的主体，仍然可点。
+        TextView badge = iconButton("▶", 22, Color.WHITE);
+        badge.setBackground(MaiChatTheme.rounded(Color.argb(150, 0, 0, 0), 22, this));
+        stage.addView(badge, new FrameLayout.LayoutParams(dp(44), dp(44), Gravity.CENTER));
+
+        LinearLayout.LayoutParams stageParams = match(dp(190));
+        stageParams.setMargins(0, dp(7), 0, dp(4));
+        box.addView(stage, stageParams);
+
+        box.addView(
+            MaiChatTheme.text(this, videoSubtitle(attachment), 12, MaiChatTheme.SECONDARY),
+            match(dp(22))
+        );
+        box.setOnClickListener(view -> showVideoPlayer(attachment));
+        return box;
+    }
+
+    private String videoSubtitle(RemoteIMVideoAttachment attachment) {
+        StringBuilder result = new StringBuilder();
+        if (attachment.durationSeconds() > 0) {
+            result.append(attachment.durationSeconds()).append(" 秒");
+        }
+        if (attachment.width() > 0 && attachment.height() > 0) {
+            if (result.length() > 0) result.append("  ");
+            result.append(attachment.width()).append('x').append(attachment.height());
+        }
+        if (!new File(attachment.localPath()).exists()) {
+            // 封面先到、视频后到是常态，这里必须说清楚，否则用户点了没反应会以为坏了。
+            if (result.length() > 0) result.append("  ");
+            result.append("下载中…");
+        }
+        return result.length() == 0 ? "视频" : result.toString();
+    }
+
+    private void showVideoPlayer(RemoteIMVideoAttachment attachment) {
+        File source = new File(attachment.localPath());
+        if (!source.exists()) {
+            toast("视频还在下载中，稍后再试");
+            return;
+        }
+        Dialog dialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
+        FrameLayout frame = new FrameLayout(this);
+        frame.setBackgroundColor(Color.BLACK);
+
+        VideoView video = new VideoView(this);
+        video.setVideoPath(source.getAbsolutePath());
+        MediaController controller = new MediaController(this);
+        controller.setAnchorView(video);
+        video.setMediaController(controller);
+        video.setOnPreparedListener(player -> video.start());
+        video.setOnErrorListener((player, what, extra) -> {
+            toast("无法播放该视频（" + what + "/" + extra + "）");
+            dialog.dismiss();
+            return true;
+        });
+        FrameLayout.LayoutParams videoParams = new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            Gravity.CENTER
+        );
+        frame.addView(video, videoParams);
+
+        TextView close = iconButton("×", 26, Color.WHITE);
+        close.setBackground(MaiChatTheme.rounded(Color.argb(160, 0, 0, 0), 20, this));
+        close.setOnClickListener(view -> dialog.dismiss());
+        FrameLayout.LayoutParams closeParams =
+            new FrameLayout.LayoutParams(dp(44), dp(44), Gravity.TOP | Gravity.END);
+        closeParams.setMargins(0, dp(14), dp(14), 0);
+        frame.addView(close, closeParams);
+
+        // 不停就关的话解码器可能还占着文件句柄。
+        dialog.setOnDismissListener(d -> video.stopPlayback());
+        dialog.setContentView(frame);
+        dialog.show();
+    }
+
     private View fileMessageContent(RemoteIMFileAttachment attachment) {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
@@ -2230,7 +2330,9 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             ? "图片"
             : message.voiceAttachment() != null
                 ? "语音"
-                : message.fileAttachment() != null ? "文件" : "文本";
+                : message.videoAttachment() != null
+                    ? "视频"
+                    : message.fileAttachment() != null ? "文件" : "文本";
         return "发送人：" + message.fromUserId() + "\n"
             + "接收人：" + message.toUserId() + "\n"
             + "时间：" + new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.CHINA)

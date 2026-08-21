@@ -2,6 +2,7 @@
 
 #include <QCryptographicHash>
 #include <QDateTime>
+#include <QDebug>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -278,8 +279,11 @@ void TimSdkRemoteIMClient::connectToService(int sdkAppId, const QString& userId,
     }
     currentUserId_ = userId.trimmed();
 
+    qInfo().noquote()
+        << QStringLiteral("[im] connect: sdkAppId=%1 user=%2").arg(sdkAppId).arg(currentUserId_);
     const int initResult = api_->init(static_cast<quint64>(sdkAppId), sdkConfigJson());
     if (initResult != 0) {
+        qWarning().noquote() << QStringLiteral("[im] SDK init failed: %1").arg(initResult);
         if (completion) completion(false, QStringLiteral("IM SDK 初始化失败：%1").arg(initResult));
         return;
     }
@@ -291,6 +295,12 @@ void TimSdkRemoteIMClient::connectToService(int sdkAppId, const QString& userId,
                                                                                                 const QString& description,
                                                                                                 const QString&) mutable {
         connected_ = code == 0;
+        if (connected_) {
+            qInfo().noquote() << QStringLiteral("[im] login ok: %1").arg(currentUserId_);
+        } else {
+            qWarning().noquote()
+                << QStringLiteral("[im] login failed: code=%1 %2").arg(code).arg(description);
+        }
         if (!connected_) api_->removeReceiveMessageCallback();
         if (connected_) syncInitialData();
         complete(std::move(completion), code, description);
@@ -373,6 +383,10 @@ void TimSdkRemoteIMClient::sendTextWithOrigin(const QString& peerId,
                                                                                                                     const QString& jsonPayload) mutable {
         if (!completion) return;
         const bool ok = code == 0;
+        if (!ok) {
+            qWarning().noquote()
+                << QStringLiteral("[im] send failed: code=%1 %2").arg(code).arg(description);
+        }
         RemoteIMSendReceipt receipt = ok ? sentMessageReceipt(jsonPayload) : RemoteIMSendReceipt{};
         completion(ok,
                    ok ? QString() : (description.isEmpty() ? QStringLiteral("IM SDK 操作失败：%1").arg(code) : description),
@@ -400,6 +414,10 @@ void TimSdkRemoteIMClient::sendImage(const QString& peerId, const QString& local
                                                                                                                     const QString& jsonPayload) mutable {
         if (!completion) return;
         const bool ok = code == 0;
+        if (!ok) {
+            qWarning().noquote()
+                << QStringLiteral("[im] send failed: code=%1 %2").arg(code).arg(description);
+        }
         RemoteIMSendReceipt receipt = ok ? sentMessageReceipt(jsonPayload) : RemoteIMSendReceipt{};
         completion(ok,
                    ok ? QString() : (description.isEmpty() ? QStringLiteral("IM SDK 操作失败：%1").arg(code) : description),
@@ -428,6 +446,10 @@ void TimSdkRemoteIMClient::sendFile(const QString& peerId, const QString& localP
                                                                                                                     const QString& jsonPayload) mutable {
         if (!completion) return;
         const bool ok = code == 0;
+        if (!ok) {
+            qWarning().noquote()
+                << QStringLiteral("[im] send failed: code=%1 %2").arg(code).arg(description);
+        }
         RemoteIMSendReceipt receipt = ok ? sentMessageReceipt(jsonPayload) : RemoteIMSendReceipt{};
         completion(ok,
                    ok ? QString() : (description.isEmpty() ? QStringLiteral("IM SDK 操作失败：%1").arg(code) : description),
@@ -465,6 +487,10 @@ void TimSdkRemoteIMClient::sendImageWithText(const QString& peerId, const QStrin
                                                                                                                     const QString& jsonPayload) mutable {
         if (!completion) return;
         const bool ok = code == 0;
+        if (!ok) {
+            qWarning().noquote()
+                << QStringLiteral("[im] send failed: code=%1 %2").arg(code).arg(description);
+        }
         RemoteIMSendReceipt receipt = ok ? sentMessageReceipt(jsonPayload) : RemoteIMSendReceipt{};
         completion(ok, ok ? QString() : (description.isEmpty() ? QStringLiteral("IM SDK 操作失败：%1").arg(code) : description), receipt);
     });
@@ -501,6 +527,10 @@ void TimSdkRemoteIMClient::sendFileWithText(const QString& peerId, const QString
                                                                                                                     const QString& jsonPayload) mutable {
         if (!completion) return;
         const bool ok = code == 0;
+        if (!ok) {
+            qWarning().noquote()
+                << QStringLiteral("[im] send failed: code=%1 %2").arg(code).arg(description);
+        }
         RemoteIMSendReceipt receipt = ok ? sentMessageReceipt(jsonPayload) : RemoteIMSendReceipt{};
         completion(ok, ok ? QString() : (description.isEmpty() ? QStringLiteral("IM SDK 操作失败：%1").arg(code) : description), receipt);
     });
@@ -560,6 +590,10 @@ void TimSdkRemoteIMClient::sendVideoWithText(const QString& peerId, const Remote
                                                                                                                     const QString& jsonPayload) mutable {
         if (!completion) return;
         const bool ok = code == 0;
+        if (!ok) {
+            qWarning().noquote()
+                << QStringLiteral("[im] send failed: code=%1 %2").arg(code).arg(description);
+        }
         RemoteIMSendReceipt receipt = ok ? sentMessageReceipt(jsonPayload) : RemoteIMSendReceipt{};
         completion(ok, ok ? QString() : (description.isEmpty() ? QStringLiteral("IM SDK 操作失败：%1").arg(code) : description), receipt);
     });
@@ -575,15 +609,31 @@ void TimSdkRemoteIMClient::syncInitialData() {
 }
 
 void TimSdkRemoteIMClient::fetchFriendList() {
-    api_->getFriendList([this](int code, const QString&, const QString& jsonPayload) {
-        if (code != 0 || jsonPayload.trimmed().isEmpty()) return;
+    api_->getFriendList([this](int code, const QString& description, const QString& jsonPayload) {
+        if (code != 0) {
+            qWarning().noquote()
+                << QStringLiteral("[im] fetch friend list failed: code=%1 %2").arg(code).arg(description);
+            return;
+        }
+        if (jsonPayload.trimmed().isEmpty()) {
+            qInfo().noquote() << QStringLiteral("[im] friend list: empty payload");
+            return;
+        }
         handleFriendListPayload(jsonPayload);
     });
 }
 
 void TimSdkRemoteIMClient::fetchConversationList() {
-    api_->getConversationList([this](int code, const QString&, const QString& jsonPayload) {
-        if (code != 0 || jsonPayload.trimmed().isEmpty()) return;
+    api_->getConversationList([this](int code, const QString& description, const QString& jsonPayload) {
+        if (code != 0) {
+            qWarning().noquote()
+                << QStringLiteral("[im] fetch conversation list failed: code=%1 %2").arg(code).arg(description);
+            return;
+        }
+        if (jsonPayload.trimmed().isEmpty()) {
+            qInfo().noquote() << QStringLiteral("[im] conversation list: empty payload");
+            return;
+        }
         handleConversationListPayload(jsonPayload);
     });
 }
@@ -594,10 +644,16 @@ void TimSdkRemoteIMClient::fetchRecentMessages(const QString& conversationId, in
     request[QStringLiteral("msg_getmsglist_param_count")] = 20;
     request[QStringLiteral("msg_getmsglist_param_is_ramble")] = true;
     request[QStringLiteral("msg_getmsglist_param_is_forward")] = false;
-    api_->getMessageList(conversationId, conversationType, compactJson(request), [this](int code,
-                                                                                       const QString&,
+    api_->getMessageList(conversationId, conversationType, compactJson(request), [this, conversationId](int code,
+                                                                                       const QString& description,
                                                                                        const QString& jsonPayload) {
-        if (code != 0 || jsonPayload.trimmed().isEmpty()) return;
+        if (code != 0) {
+            qWarning().noquote()
+                << QStringLiteral("[im] fetch history failed: conv=%1 code=%2 %3")
+                       .arg(conversationId).arg(code).arg(description);
+            return;
+        }
+        if (jsonPayload.trimmed().isEmpty()) return;
         handleHistoryMessagesPayload(jsonPayload);
     });
 }
@@ -619,6 +675,9 @@ void TimSdkRemoteIMClient::handleFriendListPayload(const QString& jsonPayload) {
         });
         contacts.append(RemoteIMContact{userId, displayName.isEmpty() ? userId : displayName, avatarUrl});
     }
+    qInfo().noquote()
+        << QStringLiteral("[im] friend list: %1 raw -> %2 contacts")
+               .arg(friends.size()).arg(contacts.size());
     if (!contacts.isEmpty()) emit contactsReceived(contacts);
 }
 
@@ -648,6 +707,9 @@ void TimSdkRemoteIMClient::handleConversationListPayload(const QString& jsonPayl
             fetchRecentMessages(conversationId, conversationType);
         }
     }
+    qInfo().noquote()
+        << QStringLiteral("[im] conversation list: %1 raw -> %2 c2c")
+               .arg(conversations.size()).arg(contacts.size());
     if (!contacts.isEmpty()) emit contactsReceived(contacts);
 }
 
@@ -812,6 +874,14 @@ void TimSdkRemoteIMClient::handleHistoryMessagesPayload(const QString& jsonPaylo
             }
         }
     }
+    qInfo().noquote()
+        << QStringLiteral("[im] recv history: %1 raw -> %2 messages%3")
+               .arg(sdkMessages.size())
+               .arg(messages.size())
+               .arg(messages.isEmpty() && !sdkMessages.isEmpty()
+                        ? QStringLiteral("  <- raw messages produced nothing; "
+                                         "an elem_type branch may be missing")
+                        : QString());
     emitReceivedMessages(messages, /*live=*/false);
 }
 
@@ -824,16 +894,25 @@ QString TimSdkRemoteIMClient::sdkConfigJson() const {
 
 void TimSdkRemoteIMClient::handleIncomingMessages(const QString& jsonMessages) {
     const QJsonDocument doc = QJsonDocument::fromJson(jsonMessages.toUtf8());
+    if (doc.isNull()) {
+        qWarning().noquote() << "[im] recv: callback JSON is not parseable; whole batch dropped";
+        return;
+    }
     const QJsonArray messages = doc.isArray() ? doc.array() : QJsonArray{doc.object()};
+    qInfo().noquote() << QStringLiteral("[im] recv: %1 pushed by SDK").arg(messages.size());
     for (const QJsonValue& value : messages) {
         handleIncomingMessage(value.toObject());
     }
 }
 
 void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
+    // 这两个 return 以前是完全静默的：消息在这里消失，日志里一个字都没有。
     if (message.value(QStringLiteral("message_is_from_self")).toBool(false)) return;
     const QString fromUserId = firstNonEmpty(message, {QStringLiteral("message_sender"), QStringLiteral("message_conv_id")});
-    if (fromUserId.isEmpty()) return;
+    if (fromUserId.isEmpty()) {
+        qWarning().noquote() << "[im] recv: message has no sender id; dropped";
+        return;
+    }
 
     // 实时消息与漫游是同一条消息的两次投递：构造与漫游路径完全一致的
     // RemoteIMMessage（含稳定 SDK id 与服务器时间），经 messagesReceived 通道
@@ -991,6 +1070,20 @@ void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
             }
         }
     }
+    // 把「收到哪些元素类型」与「产出几条消息」一起记下来：某个 elem_type 没有
+    // 对应分支时，这两个数字会对不上——语音收不到那次，正是缺这条日志才只能读代码。
+    QStringList elemTypes;
+    for (const QJsonValue& value : elems) {
+        elemTypes << QString::number(value.toObject().value(QStringLiteral("elem_type")).toInt(-1));
+    }
+    qInfo().noquote()
+        << QStringLiteral("[im] recv live: from=%1 id=%2 elems=[%3] -> %4 messages%5")
+               .arg(fromUserId, sdkId, elemTypes.join(QLatin1Char(',')))
+               .arg(received.size())
+               .arg(received.isEmpty() && !elems.isEmpty()
+                        ? QStringLiteral("  <- elems produced no message; "
+                                         "an elem_type branch may be missing")
+                        : QString());
     emitReceivedMessages(received, /*live=*/true);
 }
 
@@ -1014,7 +1107,7 @@ void TimSdkRemoteIMClient::handleIncomingImageUrl(RemoteIMMessage message, const
         if (!ok) {
             // 常见原因：未携带 OpenSSL 1.1 导致 HTTPS 请求失败（supportsSsl()==false）。
             qWarning().noquote()
-                << QStringLiteral("[remote-im] image download failed: %1 - %2").arg(err, url);
+                << QStringLiteral("[im] image download failed: %1 - %2").arg(err, url);
             return;
         }
         QFile file(message.image.localPath);
@@ -1037,8 +1130,15 @@ void TimSdkRemoteIMClient::handleIncomingFileUrl(RemoteIMMessage message, const 
     connect(reply, &QNetworkReply::finished, this, [this, reply, message, live] {
         const QByteArray data = reply->readAll();
         const bool ok = reply->error() == QNetworkReply::NoError && !data.isEmpty();
+        const QString replyError = reply->errorString();
         reply->deleteLater();
-        if (!ok) return;
+        if (!ok) {
+            // 以前这里是静默 return：附件下载失败时界面上什么都不出现，日志里也没有痕迹。
+            qWarning().noquote()
+                << QStringLiteral("[im] attachment download failed: %1 (%2 bytes)")
+                       .arg(replyError).arg(data.size());
+            return;
+        }
         QFile file(message.file.localPath);
         if (!file.open(QIODevice::WriteOnly)) return;
         file.write(data);
@@ -1067,10 +1167,20 @@ void TimSdkRemoteIMClient::handleIncomingVideoUrls(RemoteIMMessage message,
         connect(reply, &QNetworkReply::finished, this, [this, reply, message, live] {
             const QByteArray data = reply->readAll();
             const bool ok = reply->error() == QNetworkReply::NoError && !data.isEmpty();
+            const QString replyError = reply->errorString();
             reply->deleteLater();
-            if (!ok) return;
+            if (!ok) {
+                qWarning().noquote()
+                    << QStringLiteral("[im] video download failed: %1 (%2 bytes)")
+                           .arg(replyError).arg(data.size());
+                return;
+            }
             QFile file(message.video.localPath);
-            if (!file.open(QIODevice::WriteOnly)) return;
+            if (!file.open(QIODevice::WriteOnly)) {
+                qWarning().noquote()
+                    << QStringLiteral("[im] video write failed: %1").arg(message.video.localPath);
+                return;
+            }
             file.write(data);
             file.close();
             emitReceivedMessages({message}, live);
@@ -1117,8 +1227,15 @@ void TimSdkRemoteIMClient::handleIncomingVoiceUrl(RemoteIMMessage message, const
     connect(reply, &QNetworkReply::finished, this, [this, reply, message, live] {
         const QByteArray data = reply->readAll();
         const bool ok = reply->error() == QNetworkReply::NoError && !data.isEmpty();
+        const QString replyError = reply->errorString();
         reply->deleteLater();
-        if (!ok) return;
+        if (!ok) {
+            // 以前这里是静默 return：附件下载失败时界面上什么都不出现，日志里也没有痕迹。
+            qWarning().noquote()
+                << QStringLiteral("[im] attachment download failed: %1 (%2 bytes)")
+                       .arg(replyError).arg(data.size());
+            return;
+        }
         QFile file(message.voice.localPath);
         if (!file.open(QIODevice::WriteOnly)) return;
         file.write(data);

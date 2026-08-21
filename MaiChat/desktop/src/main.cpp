@@ -71,12 +71,12 @@ int main(int argc, char* argv[]) {
     // 接收图片/文件需要走 HTTPS 下载（QNetworkAccessManager），Qt 5.15 依赖 OpenSSL 1.1。
     // 未随包携带 libssl/libcrypto 时 supportsSsl() 为假，图片/文件下载会静默失败——
     // 表现为“文字能收、图片收不到”。此处给出明确告警便于定位。
-    qInfo().noquote() << QStringLiteral("[remote-im] OpenSSL supportsSsl=%1 build=%2")
+    qInfo().noquote() << QStringLiteral("[im] OpenSSL supportsSsl=%1 build=%2")
                              .arg(QSslSocket::supportsSsl() ? QStringLiteral("true") : QStringLiteral("false"))
                              .arg(QSslSocket::sslLibraryBuildVersionString());
     if (!QSslSocket::supportsSsl()) {
         qWarning().noquote() << QStringLiteral(
-            "[remote-im] OpenSSL unavailable: received images/files cannot be downloaded. "
+            "[im] OpenSSL unavailable: received images/files cannot be downloaded. "
             "Ship libssl-1_1-x64.dll and libcrypto-1_1-x64.dll alongside the app.");
     }
 

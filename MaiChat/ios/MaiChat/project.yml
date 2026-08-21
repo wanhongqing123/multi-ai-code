@@ -16,14 +16,6 @@ targets:
       - path: MaiChat
     dependencies:
       - target: MaiChatCore
-      # 腾讯云一句话识别（手动下载的 xcframework，没有 pod）。两个都要：
-      # QCloudOneSentence 依赖 VoiceCommon。带 modulemap，Swift 可直接 import。
-      - framework: Frameworks/QCloudOneSentence.xcframework
-        embed: true
-        codeSign: true
-      - framework: Frameworks/VoiceCommon.xcframework
-        embed: true
-        codeSign: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.kongshang.maichat

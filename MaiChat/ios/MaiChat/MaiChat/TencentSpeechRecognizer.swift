@@ -1,124 +1,215 @@
+import AVFoundation
+import Combine
 import Foundation
-import QCloudOneSentence
+@preconcurrency import QCloudRealTime
 
-/// 腾讯云「一句话识别」实现。
+/// 腾讯云实时语音识别。
 ///
-/// 选一句话识别而不是实时/录音文件识别，是因为 MaiChat 的用法就是「按住说一段、松手出结果」，
-/// 正好落在它的适用范围（≤60 秒、≤3MB）。超出的走不了这个接口，这里当场拒绝并让调用方
-/// 回退成发语音消息，而不是把一个必然失败的请求发出去。
-final class TencentSpeechRecognizer: SpeechRecognizing {
+/// 长按期间持续发布非稳态识别文本，松手后等待服务端的最终文本；SDK 使用内置录音器，
+/// 与「直接发送语音」所用的 AVAudioRecorder 相互独立。
+@MainActor
+final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
+    QCloudRealTimeRecognizerDelegate {
 
-    /// 一句话识别的硬上限：超过必然被服务端拒绝，本地先挡掉。
-    private static let maxAudioBytes = 3 * 1024 * 1024
-    /// 中文通用引擎。电话音质场景是 8k_zh；本端录音是 16kHz 单声道，走 16k_zh。
-    private static let engineType = "16k_zh"
+    @Published private(set) var liveText = ""
+    @Published private(set) var meterLevel: CGFloat = 0
+    @Published private(set) var isRecognizing = false
 
     private let appId: String
     private let secretId: String
     private let secretKey: String
+    private var recognizer: QCloudRealTimeRecognizer?
+    private var stopContinuation: CheckedContinuation<String, Error>?
+    private var stopTimeoutTask: Task<Void, Never>?
 
     init(appId: String, secretId: String, secretKey: String) {
         self.appId = appId.trimmingCharacters(in: .whitespacesAndNewlines)
         self.secretId = secretId.trimmingCharacters(in: .whitespacesAndNewlines)
         self.secretKey = secretKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        super.init()
     }
 
     var isAvailable: Bool {
         !appId.isEmpty && !secretId.isEmpty && !secretKey.isEmpty
     }
 
-    func transcribe(fileURL: URL, format: String) async throws -> String {
+    func start() async throws {
         guard isAvailable else { throw SpeechRecognitionError.unavailable }
-
-        let audioData: Data
-        do {
-            audioData = try Data(contentsOf: fileURL)
-        } catch {
-            throw SpeechRecognitionError.unreadableAudio
+        guard await requestRecordPermission() else {
+            throw SpeechRecognitionError.service("没有麦克风权限")
         }
-        guard !audioData.isEmpty else { throw SpeechRecognitionError.emptyAudio }
-        guard audioData.count <= Self.maxAudioBytes else { throw SpeechRecognitionError.audioTooLarge }
+        try Task.checkCancellation()
 
-        let session = SentenceRecognitionSession(
+        cancelCurrentSession()
+        let audioSession = AVAudioSession.sharedInstance()
+        try audioSession.setCategory(.record, mode: .measurement)
+        try audioSession.setActive(true)
+
+        let config = QCloudConfig(
             appId: appId,
             secretId: secretId,
-            secretKey: secretKey
+            secretKey: secretKey,
+            projectId: 0
         )
-        return try await session.recognize(
-            audioData: audioData,
-            voiceFormat: format,
-            engineType: Self.engineType
-        )
-    }
-}
+        config.engineType = "16k_zh"
+        config.enableDetectVolume = true
+        config.endRecognizeWhenDetectSilence = false
+        config.endRecognizeWhenDetectSilenceAutoStop = false
+        config.needvad = 1
+        config.filterPunc = 0
+        config.convertNumMode = 1
+        config.requestTimeout = 20
 
-/// 一次识别请求的生命周期。
-///
-/// SDK 的 delegate 是 weak，而回调要等网络往返才来——不自己持有的话这个对象在
-/// 请求还在飞的时候就被释放，回调永远不触发，表现为「按了没反应」。所以这里在
-/// 发起请求时把自己钉住，回调后再放开。
-private final class SentenceRecognitionSession: NSObject, QCloudSentenceRecognizerDelegate {
-
-    private let recognizer: QCloudSentenceRecognizer
-    // SDK 的回调线程不确定，而 continuation 重复 resume 在 Swift 并发里是直接崩溃
-    // （不是抛错），所以这两个字段的读写必须串行化。
-    private let lock = NSLock()
-    private var continuation: CheckedContinuation<String, Error>?
-    private var selfReference: SentenceRecognitionSession?
-
-    init(appId: String, secretId: String, secretKey: String) {
-        recognizer = QCloudSentenceRecognizer(appId: appId, secretId: secretId, secretKey: secretKey)
-        super.init()
-        recognizer.delegate = self
+        let nextRecognizer = QCloudRealTimeRecognizer(config: config)
+        nextRecognizer.delegate = self
+        recognizer = nextRecognizer
+        liveText = ""
+        meterLevel = 0
+        isRecognizing = true
+        nextRecognizer.start()
     }
 
-    func recognize(audioData: Data, voiceFormat: String, engineType: String) async throws -> String {
-        try await withCheckedThrowingContinuation { continuation in
-            lock.lock()
-            self.continuation = continuation
-            self.selfReference = self
-            lock.unlock()
-            let accepted = recognizer.recoginize(
-                with: audioData,
-                voiceFormat: voiceFormat,
-                engSerViceType: engineType
-            )
-            // 返回 NO 表示本地参数校验就没过，此时不会有任何回调，必须在这里结束等待，
-            // 否则 await 会永远挂住。
-            if !accepted {
-                finish(.failure(SpeechRecognitionError.service("语音识别参数校验失败")))
+    func stop() async throws -> String {
+        guard let recognizer, isRecognizing else {
+            throw SpeechRecognitionError.service("实时语音识别尚未启动")
+        }
+        return try await withCheckedThrowingContinuation { continuation in
+            stopContinuation = continuation
+            recognizer.stop()
+            stopTimeoutTask?.cancel()
+            stopTimeoutTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled, let self else { return }
+                // 个别 SDK/网络状态下 stop 后不会回调 DidFinish。屏幕上的实时文本已经
+                // 是服务端返回的识别结果，用它兜底，避免界面无限停在“正在完成识别”。
+                self.recognizer?.delegate = nil
+                self.recognizer?.cancel()
+                self.finish(.success(self.liveText))
             }
         }
     }
 
-    func oneSentenceRecognizerDidRecognize(
-        _ recognizer: QCloudSentenceRecognizer,
-        text: String?,
-        error: Error?,
-        resultData: [AnyHashable: Any]?
-    ) {
-        if let error {
-            finish(.failure(SpeechRecognitionError.service(error.localizedDescription)))
-            return
-        }
-        finish(.success(text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""))
+    func cancel() {
+        cancelCurrentSession()
+        liveText = ""
+        meterLevel = 0
     }
 
-    /// 回调可能来自任意线程，且理论上可能重入，这里保证 continuation 只被 resume 一次——
-    /// 重复 resume 在 Swift 并发里是直接崩溃，不是报错。
-    private func finish(_ result: Result<String, Error>) {
-        lock.lock()
-        guard let pending = continuation else {
-            lock.unlock()
-            return
+    nonisolated func realTimeRecognizer(
+        onSliceRecognize recognizer: QCloudRealTimeRecognizer,
+        result: QCloudRealTimeResult
+    ) {
+        publish(resultText(from: result))
+    }
+
+    nonisolated func realTimeRecognizer(
+        onSegmentSuccessRecognize recognizer: QCloudRealTimeRecognizer,
+        result: QCloudRealTimeResult
+    ) {
+        publish(resultText(from: result))
+    }
+
+    nonisolated func realTimeRecognizerDidFinish(
+        _ recognizer: QCloudRealTimeRecognizer,
+        result: String
+    ) {
+        let finalText = result.trimmingCharacters(in: .whitespacesAndNewlines)
+        Task { @MainActor [weak self] in
+            self?.finish(.success(finalText))
         }
-        continuation = nil
-        selfReference = nil
-        lock.unlock()
+    }
+
+    nonisolated func realTimeRecognizerDidError(
+        _ recognizer: QCloudRealTimeRecognizer,
+        result: QCloudRealTimeResult
+    ) {
+        let message = [result.clientErrMessage, result.message]
+            .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            ?? "实时语音识别失败"
+        Task { @MainActor [weak self] in
+            self?.finish(.failure(SpeechRecognitionError.service(message)))
+        }
+    }
+
+    nonisolated func realTimeRecognizerDidUpdateVolumeDB(
+        _ recognizer: QCloudRealTimeRecognizer,
+        volume: Float
+    ) {
+        let level: CGFloat
+        if volume <= 0 {
+            level = max(0, min(1, (CGFloat(volume) + 45) / 45))
+        } else {
+            level = max(0, min(1, CGFloat(volume) / 60))
+        }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.meterLevel = self.meterLevel * 0.45 + level * 0.55
+        }
+    }
+
+    nonisolated func realTimeRecognizerDidStartRecord(
+        _ recognizer: QCloudRealTimeRecognizer,
+        error: Error?
+    ) {
+        guard let error else { return }
+        Task { @MainActor [weak self] in
+            self?.finish(.failure(SpeechRecognitionError.service(error.localizedDescription)))
+        }
+    }
+
+    private nonisolated func resultText(from result: QCloudRealTimeResult) -> String {
+        let recognized = result.recognizedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !recognized.isEmpty { return recognized }
+        return result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private nonisolated func publish(_ text: String) {
+        guard !text.isEmpty else { return }
+        Task { @MainActor [weak self] in
+            self?.liveText = text
+        }
+    }
+
+    private func finish(_ result: Result<String, Error>) {
+        let continuation = stopContinuation
+        stopContinuation = nil
+        stopTimeoutTask?.cancel()
+        stopTimeoutTask = nil
+        recognizer?.delegate = nil
+        recognizer = nil
+        isRecognizing = false
+        meterLevel = 0
 
         switch result {
-        case .success(let text): pending.resume(returning: text)
-        case .failure(let error): pending.resume(throwing: error)
+        case .success(let text):
+            if !text.isEmpty {
+                liveText = text
+            }
+            continuation?.resume(returning: text)
+        case .failure(let error):
+            continuation?.resume(throwing: error)
+        }
+    }
+
+    private func cancelCurrentSession() {
+        recognizer?.delegate = nil
+        recognizer?.cancel()
+        recognizer = nil
+        isRecognizing = false
+        meterLevel = 0
+        stopTimeoutTask?.cancel()
+        stopTimeoutTask = nil
+        if let continuation = stopContinuation {
+            stopContinuation = nil
+            continuation.resume(throwing: CancellationError())
+        }
+    }
+
+    private func requestRecordPermission() async -> Bool {
+        await withCheckedContinuation { continuation in
+            AVAudioSession.sharedInstance().requestRecordPermission { granted in
+                continuation.resume(returning: granted)
+            }
         }
     }
 }

@@ -446,27 +446,49 @@ private struct ChatDetailView: View {
     let showRemoteDesktop: () -> Void
     @EnvironmentObject private var appState: RemoteIMAppState
     @State private var initialHistoryLoadGeneration = 0
+    @State private var transcriptionTarget: VoiceTranscriptionTarget?
+    @State private var transcriptionLiveText = ""
+    @State private var transcriptionAudioLevel: CGFloat = 0
 
     var body: some View {
-        VStack(spacing: 0) {
-            ChatDetailHeader(
-                contact: contact,
-                activeContact: $activeContact,
-                session: appState.remoteDesktop,
-                showRemoteDesktop: showRemoteDesktop
-            )
-            MessageListView(
-                messages: appState.visibleMessages(with: contact.userID),
-                peerRelation: contact.relation,
-                hasEarlierMessages: appState.hasEarlierMessages(with: contact.userID),
-                initialHistoryLoadGeneration: initialHistoryLoadGeneration,
-                loadEarlierMessages: {
-                    await appState.loadEarlierMessages(with: contact.userID)
-                }
-            )
-            ComposerView(draft: appState.draft)
+        ZStack {
+            VStack(spacing: 0) {
+                ChatDetailHeader(
+                    contact: contact,
+                    activeContact: $activeContact,
+                    session: appState.remoteDesktop,
+                    showRemoteDesktop: showRemoteDesktop
+                )
+                MessageListView(
+                    messages: appState.visibleMessages(with: contact.userID),
+                    peerRelation: contact.relation,
+                    hasEarlierMessages: appState.hasEarlierMessages(with: contact.userID),
+                    initialHistoryLoadGeneration: initialHistoryLoadGeneration,
+                    loadEarlierMessages: {
+                        await appState.loadEarlierMessages(with: contact.userID)
+                    }
+                )
+                ComposerView(
+                    draft: appState.draft,
+                    transcriptionTarget: $transcriptionTarget,
+                    transcriptionLiveText: $transcriptionLiveText,
+                    transcriptionAudioLevel: $transcriptionAudioLevel
+                )
+            }
+
+            if let transcriptionTarget {
+                VoiceTranscriptionHighlight(
+                    target: transcriptionTarget,
+                    transcript: transcriptionLiveText,
+                    audioLevel: transcriptionAudioLevel
+                )
+                .transition(.opacity)
+                .zIndex(10)
+                .allowsHitTesting(false)
+            }
         }
         .background(RemoteIMStyle.pageBackground.ignoresSafeArea())
+        .animation(.easeOut(duration: 0.14), value: transcriptionTarget)
         .toolbar(.hidden, for: .navigationBar)
         .simultaneousGesture(edgeSwipeBackGesture)
         .onAppear {
@@ -496,6 +518,177 @@ private struct ChatDetailView: View {
                     activeContact = nil
                 }
             }
+    }
+}
+
+private enum VoiceTranscriptionTarget: Equatable {
+    case send
+    case cancel
+    case edit
+    case finishingSend
+    case finishingEdit
+}
+
+private struct VoiceTranscriptionHighlight: View {
+    let target: VoiceTranscriptionTarget
+    let transcript: String
+    let audioLevel: CGFloat
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.68)
+                .ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                Spacer(minLength: 120)
+
+                if transcript.isEmpty {
+                    listeningIndicator(size: 104)
+                } else {
+                    Text(transcript)
+                        .font(.system(size: 24, weight: .medium))
+                        .foregroundStyle(.white)
+                        .multilineTextAlignment(.leading)
+                        .lineLimit(8)
+                        .minimumScaleFactor(0.78)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 22)
+                        .background(
+                            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                                .fill(RemoteIMStyle.blue.opacity(0.94))
+                                .shadow(color: RemoteIMStyle.blue.opacity(0.45), radius: 20)
+                        )
+                        .padding(.horizontal, 30)
+                        .transition(.scale(scale: 0.92).combined(with: .opacity))
+
+                    listeningIndicator(size: 58)
+                        .padding(.top, 18)
+                }
+
+                Text(statusText)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.top, 16)
+
+                Spacer()
+
+                HStack(spacing: 72) {
+                    targetBadge(
+                        title: "取消",
+                        systemImage: "xmark",
+                        selected: target == .cancel,
+                        selectedColor: .red
+                    )
+                    targetBadge(
+                        title: "编辑",
+                        systemImage: "pencil",
+                        selected: target == .edit || target == .finishingEdit,
+                        selectedColor: RemoteIMStyle.blue
+                    )
+                }
+                .padding(.bottom, 76)
+            }
+        }
+        .animation(.easeOut(duration: 0.16), value: transcript)
+        .animation(.easeOut(duration: 0.12), value: target)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(statusText)
+    }
+
+    private func listeningIndicator(size: CGFloat) -> some View {
+        ZStack {
+            Circle()
+                .fill(indicatorColor.opacity(0.25))
+                .frame(width: size * 1.34, height: size * 1.34)
+                .blur(radius: size * 0.1)
+            Circle()
+                .fill(indicatorColor)
+                .frame(width: size, height: size)
+                .shadow(color: indicatorColor.opacity(0.9), radius: size * 0.2)
+            if target == .cancel {
+                Image(systemName: "xmark")
+                    .font(.system(size: size * 0.3, weight: .bold))
+                    .foregroundStyle(.white)
+            } else if target == .edit || target == .finishingEdit {
+                Image(systemName: "pencil")
+                    .font(.system(size: size * 0.28, weight: .bold))
+                    .foregroundStyle(.white)
+            } else {
+                VoiceLevelBars(level: audioLevel, height: size * 0.46)
+            }
+        }
+    }
+
+    private func targetBadge(
+        title: String,
+        systemImage: String,
+        selected: Bool,
+        selectedColor: Color
+    ) -> some View {
+        VStack(spacing: 8) {
+            Image(systemName: systemImage)
+                .font(.system(size: 22, weight: .semibold))
+                .frame(width: 64, height: 64)
+                .background(
+                    Circle().fill(selected ? selectedColor : Color.white.opacity(0.14))
+                )
+                .overlay(
+                    Circle().stroke(Color.white.opacity(selected ? 0.9 : 0.3), lineWidth: 1.5)
+                )
+            Text(title)
+                .font(.system(size: 15, weight: .semibold))
+        }
+        .foregroundStyle(.white)
+        .scaleEffect(selected ? 1.12 : 1)
+    }
+
+    private var statusText: String {
+        switch target {
+        case .send:
+            return transcript.isEmpty ? "正在听，松手发送" : "松手发送"
+        case .cancel:
+            return "松手取消"
+        case .edit:
+            return "松手编辑"
+        case .finishingSend:
+            return "正在完成识别…"
+        case .finishingEdit:
+            return "正在准备编辑…"
+        }
+    }
+
+    private var indicatorColor: Color {
+        switch target {
+        case .cancel:
+            return .red
+        default:
+            return RemoteIMStyle.blue
+        }
+    }
+}
+
+private struct VoiceLevelBars: View {
+    let level: CGFloat
+    var height: CGFloat = 44
+
+    private let weights: [CGFloat] = [0.52, 0.78, 1.0, 0.72, 0.48]
+
+    var body: some View {
+        HStack(alignment: .center, spacing: max(3, height * 0.11)) {
+            ForEach(Array(weights.enumerated()), id: \.offset) { _, weight in
+                Capsule()
+                    .fill(.white)
+                    .frame(width: max(3, height * 0.11), height: barHeight(weight: weight))
+            }
+        }
+        .frame(height: height)
+        .animation(.easeOut(duration: 0.09), value: level)
+        .accessibilityHidden(true)
+    }
+
+    private func barHeight(weight: CGFloat) -> CGFloat {
+        height * (0.2 + max(0.08, min(level, 1)) * 0.76 * weight)
     }
 }
 
@@ -1754,8 +1947,10 @@ private extension Array {
 @MainActor
 private final class VoiceMessageRecorder: NSObject, ObservableObject {
     @Published var isRecording = false
+    @Published private(set) var meterLevel: CGFloat = 0
 
     private var recorder: AVAudioRecorder?
+    private var meterTask: Task<Void, Never>?
     private var startedAt: Date?
     private var recordingURL: URL?
 
@@ -1780,6 +1975,7 @@ private final class VoiceMessageRecorder: NSObject, ObservableObject {
             AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue
         ]
         let nextRecorder = try AVAudioRecorder(url: url, settings: settings)
+        nextRecorder.isMeteringEnabled = true
         nextRecorder.prepareToRecord()
         guard nextRecorder.record() else {
             throw VoiceRecorderError.startFailed
@@ -1789,10 +1985,20 @@ private final class VoiceMessageRecorder: NSObject, ObservableObject {
         recordingURL = url
         startedAt = Date()
         isRecording = true
+        meterLevel = 0
+        meterTask?.cancel()
+        meterTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(80))
+                guard !Task.isCancelled, let self else { return }
+                self.updateMeter()
+            }
+        }
     }
 
     func stop() -> RemoteIMVoiceRecording? {
         guard isRecording, let recorder, let recordingURL else { return nil }
+        stopMetering()
         recorder.stop()
         self.recorder = nil
         self.recordingURL = nil
@@ -1804,6 +2010,7 @@ private final class VoiceMessageRecorder: NSObject, ObservableObject {
 
     func cancel() {
         let url = recordingURL
+        stopMetering()
         recorder?.stop()
         recorder = nil
         recordingURL = nil
@@ -1812,6 +2019,23 @@ private final class VoiceMessageRecorder: NSObject, ObservableObject {
         if let url {
             try? FileManager.default.removeItem(at: url)
         }
+    }
+
+    private func updateMeter() {
+        guard let recorder, isRecording else {
+            stopMetering()
+            return
+        }
+        recorder.updateMeters()
+        let power = recorder.averagePower(forChannel: 0)
+        let normalized = max(0, min(1, (CGFloat(power) + 45) / 45))
+        meterLevel = meterLevel * 0.5 + normalized * 0.5
+    }
+
+    private func stopMetering() {
+        meterTask?.cancel()
+        meterTask = nil
+        meterLevel = 0
     }
 
     private func requestRecordPermission() async -> Bool {
@@ -1913,9 +2137,11 @@ private struct RemoteIMSlashCommandBar: View {
 private struct ComposerView: View {
     @EnvironmentObject private var appState: RemoteIMAppState
     @ObservedObject var draft: RemoteIMDraftState
+    @Binding var transcriptionTarget: VoiceTranscriptionTarget?
+    @Binding var transcriptionLiveText: String
+    @Binding var transcriptionAudioLevel: CGFloat
     @StateObject private var voiceRecorder = VoiceMessageRecorder()
-    // 凭证留空时 isAvailable 为 false，录音照旧作为语音消息发出，不受影响。
-    private let speechRecognizer: SpeechRecognizing = TencentSpeechRecognizer(
+    @StateObject private var realtimeSpeechRecognizer = TencentRealtimeSpeechRecognizer(
         appId: TencentASRCredentials.appId,
         secretId: TencentASRCredentials.secretId,
         secretKey: TencentASRCredentials.secretKey
@@ -1923,6 +2149,8 @@ private struct ComposerView: View {
     @State private var isVoiceMode = false
     @State private var isPressingVoice = false
     @State private var isCancellingVoice = false
+    @State private var realtimeStartTask: Task<Bool, Never>?
+    @State private var composerFocusRequestGeneration = 0
     @State private var isCameraPresented = false
     @State private var isPhotoPickerPresented = false
     @State private var isFileImporterPresented = false
@@ -1931,10 +2159,6 @@ private struct ComposerView: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            if voiceRecorder.isRecording {
-                VoiceRecordingHint(isCancelling: isCancellingVoice)
-            }
-
             if !isVoiceMode && !commandSuggestions.isEmpty {
                 RemoteIMSlashCommandBar(
                     commands: commandSuggestions,
@@ -1946,6 +2170,11 @@ private struct ComposerView: View {
 
             HStack(alignment: .bottom, spacing: 8) {
                 Button {
+                    transcriptionTarget = nil
+                    transcriptionLiveText = ""
+                    realtimeStartTask?.cancel()
+                    realtimeStartTask = nil
+                    realtimeSpeechRecognizer.cancel()
                     isVoiceMode.toggle()
                     if !isVoiceMode {
                         voiceRecorder.cancel()
@@ -1954,9 +2183,9 @@ private struct ComposerView: View {
                     Image(systemName: isVoiceMode ? "keyboard" : "speaker.wave.2.fill")
                         .font(.system(size: 18, weight: .bold))
                         .frame(width: 44, height: 44)
-                        .background(RemoteIMStyle.blueSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .background(RemoteIMStyle.blueSoft, in: Circle())
                         .overlay(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            Circle()
                                 .stroke(RemoteIMStyle.border, lineWidth: 1)
                         )
                 }
@@ -1968,24 +2197,50 @@ private struct ComposerView: View {
                         isPressing: isPressingVoice,
                         isCancelling: isCancellingVoice,
                         isEnabled: appState.canSendVoice,
+                        idleTitle: "按住 发语音",
                         onChanged: { translation in
-                            handleVoicePressChanged(translation: translation)
+                            handleVoicePressChanged(
+                                translation: translation,
+                                showsTranscriptionHighlight: false
+                            )
                         },
                         onEnded: { translation in
-                            Task { await handleVoicePressEnded(translation: translation) }
+                            Task {
+                                await handleVoicePressEnded(
+                                    translation: translation,
+                                    sendsVoiceDirectly: true
+                                )
+                            }
                         }
                     )
                 } else {
                     ZStack(alignment: .topLeading) {
                         ComposerTextView(
                             text: $draft.text,
-                            onSubmit: submitDraft
+                            onSubmit: submitDraft,
+                            focusRequestGeneration: composerFocusRequestGeneration,
+                            voiceTranscriptionEnabled: appState.canSendVoice && draft.text.isEmpty,
+                            onVoiceLongPressChanged: { translation in
+                                handleVoicePressChanged(
+                                    translation: translation,
+                                    showsTranscriptionHighlight: true
+                                )
+                            },
+                            onVoiceLongPressEnded: { translation in
+                                Task {
+                                    await handleVoicePressEnded(
+                                        translation: translation,
+                                        sendsVoiceDirectly: false
+                                    )
+                                }
+                            },
+                            onVoiceLongPressCancelled: cancelVoiceLongPress
                         )
 
                         if draft.text.isEmpty {
-                            Text("输入要发送给当前联系人的消息...")
-                                .font(.system(size: 14))
-                                .foregroundStyle(RemoteIMStyle.textSecondary)
+                            Text(textComposerPrompt)
+                                .font(.system(size: 14, weight: isPressingVoice ? .semibold : .regular))
+                                .foregroundStyle(textComposerPromptColor)
                                 .padding(.horizontal, 13)
                                 .padding(.vertical, 13)
                                 .allowsHitTesting(false)
@@ -1996,7 +2251,10 @@ private struct ComposerView: View {
                     .background(Color.white, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(appState.canSend ? RemoteIMStyle.blue : RemoteIMStyle.border, lineWidth: appState.canSend ? 1.5 : 1)
+                            .stroke(
+                                appState.canSend ? RemoteIMStyle.blue : RemoteIMStyle.border,
+                                lineWidth: appState.canSend ? 1.5 : 1
+                            )
                     )
                 }
 
@@ -2020,9 +2278,9 @@ private struct ComposerView: View {
                     Image(systemName: "plus")
                         .font(.system(size: 20, weight: .semibold))
                         .frame(width: 44, height: 44)
-                        .background(Color.white, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .background(Color.white, in: Circle())
                         .overlay(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            Circle()
                                 .stroke(RemoteIMStyle.border, lineWidth: 1)
                         )
                 }
@@ -2073,12 +2331,39 @@ private struct ComposerView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
             keyboardVisibleHeight = UIScreen.main.bounds.height
         }
+        .onReceive(voiceRecorder.$meterLevel) { level in
+            if isVoiceMode {
+                transcriptionAudioLevel = level
+            }
+        }
+        .onReceive(realtimeSpeechRecognizer.$meterLevel) { level in
+            if !isVoiceMode {
+                transcriptionAudioLevel = level
+            }
+        }
+        .onReceive(realtimeSpeechRecognizer.$liveText) { text in
+            if transcriptionTarget != nil {
+                transcriptionLiveText = text
+            }
+        }
     }
 
     private var commandSuggestions: [RemoteIMSlashCommand] {
         let query = draft.text.trimmingCharacters(in: .whitespaces)
         guard query.hasPrefix("/") else { return [] }
         return remoteIMSlashCommands.filter { $0.command.hasPrefix(query) }
+    }
+
+    private var textComposerPrompt: String {
+        if isCancellingVoice { return "松开取消" }
+        if transcriptionTarget == .edit { return "松开编辑" }
+        if isPressingVoice { return "松手发送" }
+        return "可按住 转文字"
+    }
+
+    private var textComposerPromptColor: Color {
+        if isCancellingVoice { return .red }
+        return isPressingVoice ? RemoteIMStyle.blue : RemoteIMStyle.textSecondary
     }
 
     private func openPhotoPicker() async {
@@ -2155,50 +2440,141 @@ private struct ComposerView: View {
         keyboardVisibleHeight = max(0, min(screenHeight, endFrame.minY))
     }
 
-    private func handleVoicePressChanged(translation: CGSize) {
+    private func handleVoicePressChanged(
+        translation: CGSize,
+        showsTranscriptionHighlight: Bool
+    ) {
         guard appState.canSendVoice else { return }
         if !isPressingVoice {
             isPressingVoice = true
-            Task { await startVoiceRecording() }
+            if showsTranscriptionHighlight {
+                transcriptionLiveText = ""
+                transcriptionAudioLevel = 0
+                transcriptionTarget = .send
+                realtimeStartTask = Task { await startRealtimeTranscription() }
+            } else {
+                Task { await startVoiceRecording() }
+            }
         }
-        isCancellingVoice = translation.height < -70
+        if showsTranscriptionHighlight {
+            let target = transcriptionTarget(for: translation)
+            isCancellingVoice = target == .cancel
+            transcriptionTarget = target
+        } else {
+            isCancellingVoice = translation.height < -70
+            transcriptionTarget = nil
+        }
     }
 
-    private func handleVoicePressEnded(translation: CGSize) async {
+    private func handleVoicePressEnded(
+        translation: CGSize,
+        sendsVoiceDirectly: Bool
+    ) async {
         guard isPressingVoice else { return }
-        let shouldCancel = translation.height < -70
         isPressingVoice = false
-        isCancellingVoice = false
-        if shouldCancel {
-            voiceRecorder.cancel()
+
+        if sendsVoiceDirectly {
+            transcriptionTarget = nil
+            let shouldCancel = translation.height < -70
+            isCancellingVoice = false
+            if shouldCancel {
+                voiceRecorder.cancel()
+                return
+            }
+            guard let recording = voiceRecorder.stop() else { return }
+            await appState.sendVoiceRecording(recording)
             return
         }
 
-        guard let recording = voiceRecorder.stop() else { return }
-        await transcribeThenSend(recording)
-    }
+        let releaseTarget = transcriptionTarget(for: translation)
+        isCancellingVoice = false
+        if releaseTarget == .cancel {
+            realtimeStartTask?.cancel()
+            realtimeStartTask = nil
+            realtimeSpeechRecognizer.cancel()
+            transcriptionTarget = nil
+            transcriptionLiveText = ""
+            return
+        }
 
-    /// 录完先转文字发文字；识别不可用或失败时回退成发语音消息——用户说过的话不能因为
-    /// 识别这一环出问题就凭空消失。
-    private func transcribeThenSend(_ recording: RemoteIMVoiceRecording) async {
-        guard speechRecognizer.isAvailable else {
-            await appState.sendVoiceRecording(recording)
+        let shouldEdit = releaseTarget == .edit
+        transcriptionTarget = shouldEdit ? .finishingEdit : .finishingSend
+        let didStart = await realtimeStartTask?.value ?? realtimeSpeechRecognizer.isRecognizing
+        realtimeStartTask = nil
+        guard didStart, realtimeSpeechRecognizer.isRecognizing else {
+            transcriptionTarget = nil
+            transcriptionLiveText = ""
             return
         }
         do {
-            let text = try await speechRecognizer.transcribe(
-                fileURL: recording.fileURL,
-                format: "m4a"
-            )
+            let text = try await realtimeSpeechRecognizer.stop()
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            transcriptionTarget = nil
+            transcriptionLiveText = ""
             guard !text.isEmpty else {
-                await appState.sendVoiceRecording(recording)
+                appState.errorMessage = "没有识别到文字，未发送"
                 return
             }
-            await appState.sendText(text)
-            try? FileManager.default.removeItem(at: recording.fileURL)
+            if shouldEdit {
+                draft.text = text
+                composerFocusRequestGeneration &+= 1
+            } else {
+                await appState.sendText(text)
+            }
+        } catch is CancellationError {
+            transcriptionTarget = nil
+            transcriptionLiveText = ""
         } catch {
+            transcriptionTarget = nil
+            transcriptionLiveText = ""
+            appState.errorMessage = "语音转文字失败，未发送：\(error.localizedDescription)"
+        }
+    }
+
+    private func cancelVoiceLongPress() {
+        transcriptionTarget = nil
+        transcriptionLiveText = ""
+        isPressingVoice = false
+        isCancellingVoice = false
+        realtimeStartTask?.cancel()
+        realtimeStartTask = nil
+        realtimeSpeechRecognizer.cancel()
+    }
+
+    private func transcriptionTarget(for translation: CGSize) -> VoiceTranscriptionTarget {
+        if translation.width < -70 {
+            return .cancel
+        }
+        if translation.width > 70, translation.height < -35 {
+            return .edit
+        }
+        return .send
+    }
+
+    private func startRealtimeTranscription() async -> Bool {
+        guard realtimeSpeechRecognizer.isAvailable else {
+            transcriptionTarget = nil
+            isPressingVoice = false
+            appState.errorMessage = "语音转文字凭证未配置"
+            return false
+        }
+        do {
+            try await realtimeSpeechRecognizer.start()
+            guard !Task.isCancelled else {
+                realtimeSpeechRecognizer.cancel()
+                return false
+            }
+            return true
+        } catch is CancellationError {
+            realtimeSpeechRecognizer.cancel()
+            return false
+        } catch {
+            transcriptionTarget = nil
+            transcriptionLiveText = ""
+            isPressingVoice = false
+            isCancellingVoice = false
             appState.errorMessage = error.localizedDescription
-            await appState.sendVoiceRecording(recording)
+            return false
         }
     }
 
@@ -2206,6 +2582,7 @@ private struct ComposerView: View {
         do {
             try await voiceRecorder.start()
         } catch {
+            transcriptionTarget = nil
             isPressingVoice = false
             isCancellingVoice = false
             appState.errorMessage = error.localizedDescription
@@ -2317,6 +2694,11 @@ private final class GrowingComposerUITextView: UITextView {
 private struct ComposerTextView: UIViewRepresentable {
     @Binding var text: String
     let onSubmit: () -> Void
+    let focusRequestGeneration: Int
+    let voiceTranscriptionEnabled: Bool
+    let onVoiceLongPressChanged: (CGSize) -> Void
+    let onVoiceLongPressEnded: (CGSize) -> Void
+    let onVoiceLongPressCancelled: () -> Void
 
     private let minimumHeight: CGFloat = 44
     private let maximumLineCount: CGFloat = 5
@@ -2355,7 +2737,16 @@ private struct ComposerTextView: UIViewRepresentable {
         textView.showsVerticalScrollIndicator = false
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         textView.accessibilityIdentifier = "message-composer-text-view"
-        textView.accessibilityLabel = "消息输入框"
+        textView.accessibilityLabel = "消息输入框，长按语音转文字"
+        let voiceLongPress = UILongPressGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleVoiceLongPress(_:))
+        )
+        voiceLongPress.minimumPressDuration = 0.35
+        voiceLongPress.allowableMovement = 400
+        voiceLongPress.cancelsTouchesInView = true
+        voiceLongPress.delegate = context.coordinator
+        textView.addGestureRecognizer(voiceLongPress)
         textView.onContentHeightChange = { [weak coordinator = context.coordinator, weak textView] in
             guard let coordinator, let textView else { return }
             coordinator.scheduleContentHeightRefresh(for: textView)
@@ -2365,9 +2756,16 @@ private struct ComposerTextView: UIViewRepresentable {
 
     func updateUIView(_ textView: GrowingComposerUITextView, context: Context) {
         context.coordinator.parent = self
-        guard textView.text != text else { return }
-        let nextText = text
-        context.coordinator.applyExternalText(nextText, to: textView)
+        if textView.text != text {
+            let nextText = text
+            context.coordinator.applyExternalText(nextText, to: textView)
+        }
+        if context.coordinator.lastFocusRequestGeneration != focusRequestGeneration {
+            context.coordinator.lastFocusRequestGeneration = focusRequestGeneration
+            DispatchQueue.main.async { [weak textView] in
+                textView?.becomeFirstResponder()
+            }
+        }
     }
 
     func sizeThatFits(
@@ -2385,17 +2783,20 @@ private struct ComposerTextView: UIViewRepresentable {
         return context.coordinator.sizeThatFits(width: width, textView: textView)
     }
 
-    final class Coordinator: NSObject, UITextViewDelegate {
+    final class Coordinator: NSObject, UITextViewDelegate, UIGestureRecognizerDelegate {
         var parent: ComposerTextView
         private var cachedWidth: CGFloat?
         private var cachedHeight: CGFloat
         private var requiresMeasurement = true
         private var hasScheduledContentHeightRefresh = false
         private var isApplyingExternalText = false
+        private var voiceLongPressOrigin: CGPoint?
+        var lastFocusRequestGeneration: Int
 
         init(parent: ComposerTextView) {
             self.parent = parent
             cachedHeight = parent.minimumHeight
+            lastFocusRequestGeneration = parent.focusRequestGeneration
         }
 
         @discardableResult
@@ -2457,6 +2858,41 @@ private struct ComposerTextView: UIViewRepresentable {
 
             parent.onSubmit()
             return false
+        }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard gestureRecognizer is UILongPressGestureRecognizer else { return true }
+            return parent.voiceTranscriptionEnabled
+        }
+
+        @objc func handleVoiceLongPress(_ gesture: UILongPressGestureRecognizer) {
+            let location = gesture.location(in: gesture.view)
+            switch gesture.state {
+            case .began:
+                guard parent.voiceTranscriptionEnabled else { return }
+                voiceLongPressOrigin = location
+                gesture.view?.resignFirstResponder()
+                parent.onVoiceLongPressChanged(.zero)
+            case .changed:
+                guard let origin = voiceLongPressOrigin else { return }
+                parent.onVoiceLongPressChanged(
+                    CGSize(width: location.x - origin.x, height: location.y - origin.y)
+                )
+            case .ended:
+                guard let origin = voiceLongPressOrigin else { return }
+                voiceLongPressOrigin = nil
+                parent.onVoiceLongPressEnded(
+                    CGSize(width: location.x - origin.x, height: location.y - origin.y)
+                )
+            case .cancelled, .failed:
+                voiceLongPressOrigin = nil
+                parent.onVoiceLongPressCancelled()
+            case .possible:
+                break
+            @unknown default:
+                voiceLongPressOrigin = nil
+                parent.onVoiceLongPressCancelled()
+            }
         }
 
         func scheduleContentHeightRefresh(for textView: UITextView) {
@@ -2556,27 +2992,11 @@ private struct RemoteIMCameraPicker: UIViewControllerRepresentable {
     }
 }
 
-private struct VoiceRecordingHint: View {
-    let isCancelling: Bool
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: isCancelling ? "xmark.circle.fill" : "mic.fill")
-            Text(isCancelling ? "松开取消" : "松开发送，上滑取消")
-                .font(.system(size: 13, weight: .semibold))
-        }
-        .foregroundStyle(isCancelling ? .red : RemoteIMStyle.textPrimary)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 9)
-        .background(Color.white, in: Capsule())
-        .overlay(Capsule().stroke(isCancelling ? Color.red.opacity(0.45) : RemoteIMStyle.border, lineWidth: 1))
-    }
-}
-
 private struct PressToTalkButton: View {
     let isPressing: Bool
     let isCancelling: Bool
     let isEnabled: Bool
+    let idleTitle: String
     let onChanged: (CGSize) -> Void
     let onEnded: (CGSize) -> Void
 
@@ -2606,7 +3026,7 @@ private struct PressToTalkButton: View {
     private var title: String {
         if !isEnabled { return "选择联系人后可发送语音" }
         if isCancelling { return "松开取消" }
-        return isPressing ? "松开发送" : "按住 说话"
+        return isPressing ? "松开发送" : idleTitle
     }
 
     private var backgroundColor: Color {

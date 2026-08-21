@@ -10,10 +10,8 @@
 		1003B14C78530C6912622414 /* TencentIMClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F7C7C15F662BDB6F5A720CE /* TencentIMClient.swift */; };
 		1A64DAEB06DA808D3F82C0D4 /* MaiChatCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 771AB137E6961E2B9187CFEB /* MaiChatCore.framework */; };
 		1D22F82E6F163B0AB9E8F98D /* RemoteDesktopSignal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1ECE96EA18C906CBFAAABCB2 /* RemoteDesktopSignal.swift */; };
-		231E833D62DF92BCC575A1BA /* VoiceCommon.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 016118209A5FEA8E00B65AF0 /* VoiceCommon.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		2377E8DF39D78C16B0643C59 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14B73FB9EA5595A63DC567FC /* SettingsView.swift */; };
 		26B1704C44A6CCBD623B955E /* DiagnosticLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9FAB0891F5BEFFA9558439E /* DiagnosticLog.swift */; };
-		3A0398BB99E627B6E61D546E /* QCloudOneSentence.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5306C300A0BFFCA9A4638AEC /* QCloudOneSentence.xcframework */; };
 		3C6DF0BD9610ACAE564EF27D /* MaiChatCore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 771AB137E6961E2B9187CFEB /* MaiChatCore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		4213D8C4C34EA1026840453D /* ContactsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 982ED942EFC3EBB4726E7D3D /* ContactsView.swift */; };
 		50286CB0E1E8F7296338FFF6 /* RemoteIMClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F0A72E18F2D49F6FB7391C2 /* RemoteIMClient.swift */; };
@@ -30,7 +28,6 @@
 		84C6E03F0FB9AD9E1A903D91 /* RemoteInputPacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4AFF1CD5EF80428DA47C1703 /* RemoteInputPacket.swift */; };
 		8C34368F48B3F479062382AD /* RemoteDesktopSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1779831AA39C911B9DDCF3C6 /* RemoteDesktopSession.swift */; };
 		9647FC458C5CF43214B64E71 /* LocalChatHistoryStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59C1F4DABEBD721F3CB32385 /* LocalChatHistoryStoreTests.swift */; };
-		A5C7B9CC2262C341C8BADE49 /* VoiceCommon.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 016118209A5FEA8E00B65AF0 /* VoiceCommon.xcframework */; };
 		B026FD4170222BE676887F35 /* TencentSpeechRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB8F65F82E7D766F7DE33E1E /* TencentSpeechRecognizer.swift */; };
 		B0AD7763503D992983F88DAE /* LocalChatHistoryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CB6E7BFFB4AF8BFC203BBFB /* LocalChatHistoryStore.swift */; };
 		B1A21D8A0C00E9FA9C4D0159 /* KeychainSecretStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77098CB4FAD4DDF16F02FA58 /* KeychainSecretStore.swift */; };
@@ -39,7 +36,6 @@
 		C6A8FEC8A0213ED962099B8A /* RemoteDesktopView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62EB5A3A0F34A11982B0419E /* RemoteDesktopView.swift */; };
 		C996E00852A7E3E1174A15C8 /* DiagnosticLogFileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 770FE6D4DCC9CA17734123DF /* DiagnosticLogFileStore.swift */; };
 		D8890915CD794198A0332BB2 /* MaiChatCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 771AB137E6961E2B9187CFEB /* MaiChatCore.framework */; };
-		DA0401D526B95DC5160009B1 /* QCloudOneSentence.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 5306C300A0BFFCA9A4638AEC /* QCloudOneSentence.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		DEBCE768E14C523F47FC7CC5 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A6457534DA0479F3AD712C60 /* Assets.xcassets */; };
 		E08F17391BEC855D4D18BDF3 /* MasterChatState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DEB1B23B3415DFB7943237F /* MasterChatState.swift */; };
 		E5BF3394A45A4DA77030A3E9 /* RemoteDesktopSignalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF3AA66C952DF0D15005D6BE /* RemoteDesktopSignalTests.swift */; };
@@ -84,8 +80,6 @@
 			dstSubfolderSpec = 10;
 			files = (
 				3C6DF0BD9610ACAE564EF27D /* MaiChatCore.framework in Embed Frameworks */,
-				DA0401D526B95DC5160009B1 /* QCloudOneSentence.xcframework in Embed Frameworks */,
-				231E833D62DF92BCC575A1BA /* VoiceCommon.xcframework in Embed Frameworks */,
 			);
 			name = "Embed Frameworks";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -93,7 +87,6 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		016118209A5FEA8E00B65AF0 /* VoiceCommon.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = VoiceCommon.xcframework; path = Frameworks/VoiceCommon.xcframework; sourceTree = "<group>"; };
 		14B73FB9EA5595A63DC567FC /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		1779831AA39C911B9DDCF3C6 /* RemoteDesktopSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDesktopSession.swift; sourceTree = "<group>"; };
 		197E4AB75717086188244F1A /* MaiChatApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MaiChatApp.swift; sourceTree = "<group>"; };
@@ -107,7 +100,6 @@
 		4DF2A8369BE5503C5666FE18 /* AppDiagnosticLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDiagnosticLog.swift; sourceTree = "<group>"; };
 		4F0A72E18F2D49F6FB7391C2 /* RemoteIMClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteIMClient.swift; sourceTree = "<group>"; };
 		525AF6C102D32018100882EA /* Pods-MaiChat.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-MaiChat.debug.xcconfig"; path = "Target Support Files/Pods-MaiChat/Pods-MaiChat.debug.xcconfig"; sourceTree = "<group>"; };
-		5306C300A0BFFCA9A4638AEC /* QCloudOneSentence.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = QCloudOneSentence.xcframework; path = Frameworks/QCloudOneSentence.xcframework; sourceTree = "<group>"; };
 		59C1F4DABEBD721F3CB32385 /* LocalChatHistoryStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalChatHistoryStoreTests.swift; sourceTree = "<group>"; };
 		5DEB1B23B3415DFB7943237F /* MasterChatState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MasterChatState.swift; sourceTree = "<group>"; };
 		62EB5A3A0F34A11982B0419E /* RemoteDesktopView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDesktopView.swift; sourceTree = "<group>"; };
@@ -139,8 +131,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				D8890915CD794198A0332BB2 /* MaiChatCore.framework in Frameworks */,
-				3A0398BB99E627B6E61D546E /* QCloudOneSentence.xcframework in Frameworks */,
-				A5C7B9CC2262C341C8BADE49 /* VoiceCommon.xcframework in Frameworks */,
 				7C8DA494F14DCC0C17F2C5DA /* Pods_MaiChat.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -184,8 +174,6 @@
 		4DD5E25E190E35D4136B3F80 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
-				5306C300A0BFFCA9A4638AEC /* QCloudOneSentence.xcframework */,
-				016118209A5FEA8E00B65AF0 /* VoiceCommon.xcframework */,
 				23DC1B212E8DB764615836A8 /* Pods_MaiChat.framework */,
 			);
 			name = Frameworks;

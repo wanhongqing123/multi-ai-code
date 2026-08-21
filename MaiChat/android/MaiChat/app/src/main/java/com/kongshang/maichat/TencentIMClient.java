@@ -1,6 +1,7 @@
 package com.kongshang.maichat;
 
 import android.content.Context;
+import android.util.Log;
 
 import com.tencent.imsdk.v2.V2TIMAdvancedMsgListener;
 import com.tencent.imsdk.v2.V2TIMCallback;
@@ -60,6 +61,10 @@ public final class TencentIMClient {
         void onError(int code, String message);
     }
 
+    // 日志一律英文：logcat 在不同机器上的编码不一致，中文容易变成乱码，
+    // 也不便直接贴进 issue 检索。桌面端 AppLog 用的是同一条约定。
+    private static final String TAG = "MaiChat.im";
+
     private final Context context;
     private final File mediaDirectory;
     private final Listener listener;
@@ -82,16 +87,19 @@ public final class TencentIMClient {
 
         @Override
         public void onConnectFailed(int code, String error) {
+            Log.w(TAG, "connect failed: code=" + code + " " + error);
             listener.onConnectionStateChanged(ConnectionState.FAILED, safeError(error, "连接失败"));
         }
 
         @Override
         public void onKickedOffline() {
+            Log.w(TAG, "kicked offline: signed in on another device");
             listener.onConnectionStateChanged(ConnectionState.FAILED, "账号已在其他设备登录");
         }
 
         @Override
         public void onUserSigExpired() {
+            Log.w(TAG, "userSig expired");
             listener.onConnectionStateChanged(ConnectionState.FAILED, "登录凭证已过期，请重新登录");
         }
 
@@ -129,6 +137,7 @@ public final class TencentIMClient {
                 new V2TIMSDKConfig()
             );
             if (!initialized) {
+                Log.e(TAG, "SDK init failed: sdkAppId=" + sdkAppId);
                 listener.onConnectionStateChanged(ConnectionState.FAILED, "IM SDK 初始化失败");
                 return;
             }
@@ -137,14 +146,17 @@ public final class TencentIMClient {
             V2TIMManager.getMessageManager().addAdvancedMsgListener(messageListener);
         }
         currentUserId = cleanUserId;
+        Log.i(TAG, "connect: sdkAppId=" + sdkAppId + " user=" + cleanUserId);
         V2TIMManager.getInstance().login(cleanUserId, userSig, new V2TIMCallback() {
             @Override
             public void onSuccess() {
+                Log.i(TAG, "login ok: " + cleanUserId);
                 listener.onConnectionStateChanged(ConnectionState.CONNECTED, "已连接");
             }
 
             @Override
             public void onError(int code, String description) {
+                Log.w(TAG, "login failed: code=" + code + " " + description);
                 listener.onConnectionStateChanged(
                     ConnectionState.FAILED,
                     safeError(description, "登录失败（" + code + "）")
@@ -335,6 +347,7 @@ public final class TencentIMClient {
         SendCompletion completion
     ) {
         if (message == null) {
+            Log.w(TAG, "send aborted: SDK returned a null message");
             completion.onError(-1, "消息创建失败");
             return;
         }
@@ -364,6 +377,8 @@ public final class TencentIMClient {
 
                 @Override
                 public void onError(int code, String description) {
+                    Log.w(TAG, "send failed: peer=" + clean(peerId)
+                        + " code=" + code + " " + description);
                     completion.onError(code, safeError(description, "发送失败"));
                 }
             }
@@ -371,10 +386,18 @@ public final class TencentIMClient {
     }
 
     private void handleIncomingMessage(V2TIMMessage sdkMessage) {
-        if (sdkMessage == null || sdkMessage.isSelf()) return;
+        if (sdkMessage == null) {
+            Log.w(TAG, "recv: null message from SDK; dropped");
+            return;
+        }
+        if (sdkMessage.isSelf()) return;
         String fromUserId = clean(sdkMessage.getSender());
         if (fromUserId.isEmpty()) fromUserId = clean(sdkMessage.getUserID());
-        if (fromUserId.isEmpty()) return;
+        if (fromUserId.isEmpty()) {
+            Log.w(TAG, "recv: message has no sender id; dropped id="
+                + clean(sdkMessage.getMsgID()));
+            return;
+        }
         long createdAt = sdkMessage.getTimestamp() > 0
             ? sdkMessage.getTimestamp() * 1000L
             : System.currentTimeMillis();
@@ -409,7 +432,16 @@ public final class TencentIMClient {
         }
         if (sdkMessage.getFileElem() != null) {
             downloadFile(sdkMessage, fromUserId, recipientUserId, createdAt, origin);
+            return;
         }
+        // 一个分支都没命中就说明这类消息 Android 端根本不认，而且原来是悄悄丢掉的。
+        // elemType 打出来才能一眼看出缺哪类；例如视频（V2TIM_ELEM_TYPE_VIDEO）目前
+        // 就没有对应分支。
+        Log.w(TAG, "recv: unhandled message, dropped."
+            + " from=" + fromUserId
+            + " id=" + messageId
+            + " elemType=" + sdkMessage.getElemType()
+            + " <- no branch matched; this message type is not implemented");
     }
 
     private void downloadImage(
@@ -424,7 +456,11 @@ public final class TencentIMClient {
         for (V2TIMImageElem.V2TIMImage image : elem.getImageList()) {
             if (selected == null || imageScore(image) > imageScore(selected)) selected = image;
         }
-        if (selected == null) return;
+        if (selected == null) {
+            Log.w(TAG, "recv image: elem carries no image entry; dropped id="
+                + clean(message.getMsgID()));
+            return;
+        }
         String remoteId = clean(selected.getUUID());
         if (remoteId.isEmpty()) remoteId = clean(message.getMsgID());
         File target = mediaFile("image", remoteId, extension(selected.getUrl(), "jpg"));
@@ -461,6 +497,8 @@ public final class TencentIMClient {
 
             @Override
             public void onError(int code, String description) {
+                Log.w(TAG, "download image failed: code=" + code + " " + description
+                    + " target=" + target.getAbsolutePath());
             }
         });
     }
@@ -503,6 +541,8 @@ public final class TencentIMClient {
 
             @Override
             public void onError(int code, String description) {
+                Log.w(TAG, "download voice failed: code=" + code + " " + description
+                    + " target=" + target.getAbsolutePath());
             }
         });
     }
@@ -551,6 +591,8 @@ public final class TencentIMClient {
 
             @Override
             public void onError(int code, String description) {
+                Log.w(TAG, "download file failed: code=" + code + " " + description
+                    + " target=" + target.getAbsolutePath());
             }
         });
     }

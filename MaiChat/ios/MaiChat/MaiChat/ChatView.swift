@@ -2313,7 +2313,7 @@ private struct ComposerView: View {
     @State private var isCameraPresented = false
     @State private var isPhotoPickerPresented = false
     @State private var isFileImporterPresented = false
-    @State private var selectedPhotoItem: PhotosPickerItem?
+    @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var keyboardVisibleHeight = UIScreen.main.bounds.height
 
     var body: some View {
@@ -2457,7 +2457,9 @@ private struct ComposerView: View {
         }
         .photosPicker(
             isPresented: $isPhotoPickerPresented,
-            selection: $selectedPhotoItem,
+            selection: $selectedPhotoItems,
+            maxSelectionCount: 20,
+            selectionBehavior: .ordered,
             matching: .images,
             photoLibrary: .shared()
         )
@@ -2480,9 +2482,9 @@ private struct ComposerView: View {
         ) { result in
             Task { await sendSelectedFile(result) }
         }
-        .onChange(of: selectedPhotoItem) { item in
-            guard let item else { return }
-            Task { await sendSelectedPhoto(item) }
+        .onChange(of: selectedPhotoItems) { items in
+            guard !items.isEmpty else { return }
+            Task { await sendSelectedPhotos(items) }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
             updateKeyboardVisibleHeight(from: notification)
@@ -2748,17 +2750,32 @@ private struct ComposerView: View {
         }
     }
 
-    private func sendSelectedPhoto(_ item: PhotosPickerItem) async {
-        defer { selectedPhotoItem = nil }
-        do {
-            guard let data = try await item.loadTransferable(type: Data.self) else {
-                appState.errorMessage = "图片读取失败"
-                return
+    private func sendSelectedPhotos(_ items: [PhotosPickerItem]) async {
+        defer { selectedPhotoItems = [] }
+        var sentCount = 0
+        var failedReadCount = 0
+
+        for item in items {
+            do {
+                guard let data = try await item.loadTransferable(type: Data.self) else {
+                    failedReadCount += 1
+                    continue
+                }
+                let imageFile = try savePickedImage(
+                    data: data,
+                    contentTypes: item.supportedContentTypes
+                )
+                await appState.sendImageFile(imageFile)
+                sentCount += 1
+            } catch {
+                failedReadCount += 1
             }
-            let imageFile = try savePickedImage(data: data, contentTypes: item.supportedContentTypes)
-            await appState.sendImageFile(imageFile)
-        } catch {
-            appState.errorMessage = error.localizedDescription
+        }
+
+        if failedReadCount > 0 {
+            appState.errorMessage = sentCount > 0
+                ? "已发送 \(sentCount) 张图片，另有 \(failedReadCount) 张读取失败"
+                : "所选图片读取失败"
         }
     }
 

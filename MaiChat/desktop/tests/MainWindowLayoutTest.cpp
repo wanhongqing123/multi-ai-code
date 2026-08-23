@@ -451,8 +451,7 @@ void MainWindowLayoutTest::rendersSentMessageFromTopWithMetadata() {
     QVERIFY(loadEarlierButton->isHidden());
     QVERIFY(messageLayout->itemAt(1)->widget() != nullptr);
     QCOMPARE(messageLayout->itemAt(1)->widget()->objectName(), QStringLiteral("messageRowOutgoing"));
-    auto* outgoingBubble = window.findChild<QWidget*>(QStringLiteral("messageBubbleOutgoing"));
-    QVERIFY(outgoingBubble != nullptr);
+    QVERIFY(window.findChild<QWidget*>(QStringLiteral("messageBubbleOutgoing")) != nullptr);
 
     auto* authorLabel = window.findChild<QLabel*>(QStringLiteral("messageAuthorLabel"));
     auto* timeLabel = window.findChild<QLabel*>(QStringLiteral("messageTimeLabel"));
@@ -474,8 +473,19 @@ void MainWindowLayoutTest::rendersSentMessageFromTopWithMetadata() {
     QCOMPARE(statusLabel->minimumHeight(), 16);
     QVERIFY(statusLabel->styleSheet().contains(QStringLiteral("border: 1px solid #12a150")));
     QVERIFY(statusLabel->styleSheet().contains(QStringLiteral("background: transparent")));
-    QVERIFY(!outgoingBubble->isAncestorOf(statusLabel));
-    QCOMPARE(statusLabel->parentWidget(), messageLayout->itemAt(1)->widget());
+    // 状态图标要和气泡平级挂在消息行上，不能落进气泡内部。
+    // 必须从 statusLabel 反查所在行，不能用 window.findChild 直接找气泡：pending→sent
+    // 是「建新行 + 旧行 deleteLater + 插入新行」，旧 pending 行在事件循环真正销毁前仍留在
+    // 对象树里，findChild 可能拿到那条旧气泡。而 Pending 态不生成状态图标，statusLabel
+    // 只可能来自新行——拿旧气泡和新行的图标比祖先关系恒为假，断言会假通过，退回旧实现照样绿。
+    QWidget* statusRow = statusLabel->parentWidget();
+    QVERIFY(statusRow != nullptr);
+    QCOMPARE(statusRow->objectName(), QStringLiteral("messageRowOutgoing"));
+    QCOMPARE(statusRow, messageLayout->itemAt(1)->widget());
+    // 气泡应当是同一行里的兄弟节点。父子关系已被上面的 parentWidget 断言锁死，
+    // 再补一条 isAncestorOf 是恒真的废断言，故不写。
+    QVERIFY(statusRow->findChild<QWidget*>(QStringLiteral("messageBubbleOutgoing"),
+                                           Qt::FindDirectChildrenOnly) != nullptr);
 }
 
 void MainWindowLayoutTest::rendersRelativeMessageDates() {

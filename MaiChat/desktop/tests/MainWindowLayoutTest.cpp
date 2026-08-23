@@ -451,7 +451,8 @@ void MainWindowLayoutTest::rendersSentMessageFromTopWithMetadata() {
     QVERIFY(loadEarlierButton->isHidden());
     QVERIFY(messageLayout->itemAt(1)->widget() != nullptr);
     QCOMPARE(messageLayout->itemAt(1)->widget()->objectName(), QStringLiteral("messageRowOutgoing"));
-    QVERIFY(window.findChild<QWidget*>(QStringLiteral("messageBubbleOutgoing")) != nullptr);
+    auto* outgoingBubble = window.findChild<QWidget*>(QStringLiteral("messageBubbleOutgoing"));
+    QVERIFY(outgoingBubble != nullptr);
 
     auto* authorLabel = window.findChild<QLabel*>(QStringLiteral("messageAuthorLabel"));
     auto* timeLabel = window.findChild<QLabel*>(QStringLiteral("messageTimeLabel"));
@@ -473,6 +474,8 @@ void MainWindowLayoutTest::rendersSentMessageFromTopWithMetadata() {
     QCOMPARE(statusLabel->minimumHeight(), 16);
     QVERIFY(statusLabel->styleSheet().contains(QStringLiteral("border: 1px solid #12a150")));
     QVERIFY(statusLabel->styleSheet().contains(QStringLiteral("background: transparent")));
+    QVERIFY(!outgoingBubble->isAncestorOf(statusLabel));
+    QCOMPARE(statusLabel->parentWidget(), messageLayout->itemAt(1)->widget());
 }
 
 void MainWindowLayoutTest::rendersRelativeMessageDates() {

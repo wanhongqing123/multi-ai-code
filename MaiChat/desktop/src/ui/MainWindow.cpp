@@ -2590,6 +2590,7 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
     auto* contentRow = new QHBoxLayout();
     contentRow->setContentsMargins(0, 0, 0, 0);
     contentRow->setSpacing(10);
+    QLabel* deliveryStatusLabel = nullptr;
 
     if (message.hasImage) {
         QPixmap pixmap(message.image.localPath);
@@ -2844,11 +2845,11 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
 
     const QString status = outgoing ? deliveryStatusIndicator(message.status) : QString();
     if (!status.isEmpty()) {
-        auto* statusLabel = new QLabel(status, bubble);
-        statusLabel->setObjectName(QStringLiteral("messageStatusLabel"));
-        statusLabel->setAlignment(Qt::AlignCenter);
-        statusLabel->setFixedSize(UiZoom::s(16), UiZoom::s(16));
-        statusLabel->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
+        deliveryStatusLabel = new QLabel(status, row);
+        deliveryStatusLabel->setObjectName(QStringLiteral("messageStatusLabel"));
+        deliveryStatusLabel->setAlignment(Qt::AlignCenter);
+        deliveryStatusLabel->setFixedSize(UiZoom::s(16), UiZoom::s(16));
+        deliveryStatusLabel->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
             QLabel#messageStatusLabel {
                 border: 1px solid #12a150;
                 border-radius: 8px;
@@ -2859,7 +2860,6 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
                 padding: 0;
             }
         )")));
-        contentRow->addWidget(statusLabel, 0, Qt::AlignVCenter);
     }
     bubbleLayout->addLayout(contentRow);
 
@@ -2913,7 +2913,15 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
     column->setContentsMargins(0, columnTopInset, 0, 0);
     column->setSpacing(metaBubbleGap);
     column->addLayout(metaRow);
-    column->addWidget(bubble, 0, outgoing ? Qt::AlignRight : Qt::AlignLeft);
+    auto* bubbleRow = new QHBoxLayout();
+    bubbleRow->setContentsMargins(0, 0, 0, 0);
+    bubbleRow->setSpacing(UiZoom::s(8));
+    bubbleRow->setAlignment(outgoing ? Qt::AlignRight : Qt::AlignLeft);
+    bubbleRow->addWidget(bubble);
+    if (deliveryStatusLabel) {
+        bubbleRow->addWidget(deliveryStatusLabel, 0, Qt::AlignVCenter);
+    }
+    column->addLayout(bubbleRow);
 
     const QString avatarUserId = message.fromUserId.trimmed();
     const QString avatarDisplayName = contactName(avatarUserId);

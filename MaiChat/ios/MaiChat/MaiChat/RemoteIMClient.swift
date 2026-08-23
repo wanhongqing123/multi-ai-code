@@ -84,6 +84,16 @@ struct RemoteIMFile: Equatable {
     let sizeBytes: Int?
 }
 
+struct RemoteIMVideoFile: Equatable {
+    let fileURL: URL
+    let coverFileURL: URL
+    let fileType: String
+    let durationSeconds: Int
+    let width: Int
+    let height: Int
+    let sizeBytes: Int64
+}
+
 struct RemoteIMSendReceipt: Equatable {
     let remoteID: String?
     let createdAt: Date?
@@ -126,6 +136,7 @@ protocol RemoteIMClient: AnyObject {
     func sendText(to userID: String, text: String, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt
     func sendVoice(to userID: String, recording: RemoteIMVoiceRecording, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt
     func sendImage(to userID: String, image: RemoteIMImageFile, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt
+    func sendVideo(to userID: String, video: RemoteIMVideoFile, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt
     func sendFile(to userID: String, file: RemoteIMFile, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt
     func deleteContact(userID: String) async throws
     func clearHistory(userID: String) async throws
@@ -146,6 +157,10 @@ extension RemoteIMClient {
 
     func sendImage(to userID: String, image: RemoteIMImageFile) async throws -> RemoteIMSendReceipt {
         try await sendImage(to: userID, image: image, origin: .human)
+    }
+
+    func sendVideo(to userID: String, video: RemoteIMVideoFile) async throws -> RemoteIMSendReceipt {
+        try await sendVideo(to: userID, video: video, origin: .human)
     }
 
     func sendFile(to userID: String, file: RemoteIMFile) async throws -> RemoteIMSendReceipt {

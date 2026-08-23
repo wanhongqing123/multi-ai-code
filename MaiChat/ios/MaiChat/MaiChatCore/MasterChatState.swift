@@ -916,6 +916,42 @@ public struct MasterChatState: Equatable {
     }
 
     @discardableResult
+    public mutating func queueOutgoingVideo(
+        filePath: String,
+        coverPath: String?,
+        durationSeconds: Int,
+        width: Int,
+        height: Int,
+        sizeBytes: Int64,
+        now: Date = Date()
+    ) throws -> RemoteIMMessage {
+        let cleanFilePath = filePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanFilePath.isEmpty else { throw MasterChatStateError.blankMessage }
+        guard let peerID = selectedPeerID, !peerID.isEmpty else {
+            throw MasterChatStateError.noSelectedPeer
+        }
+        let videoAttachment = RemoteIMVideoAttachment(
+            localPath: cleanFilePath,
+            coverPath: coverPath,
+            durationSeconds: durationSeconds,
+            width: width,
+            height: height,
+            sizeBytes: sizeBytes
+        )
+        let message = RemoteIMMessage(
+            fromUserID: ownerUserID,
+            toUserID: peerID,
+            text: Self.videoDisplayText(durationSeconds: videoAttachment.durationSeconds),
+            videoAttachment: videoAttachment,
+            direction: .outgoing,
+            status: .pending,
+            createdAt: now
+        )
+        appendMessage(message)
+        return message
+    }
+
+    @discardableResult
     public mutating func queueOutgoingFile(
         filePath: String,
         fileName: String,

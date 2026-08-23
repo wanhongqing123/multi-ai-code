@@ -185,6 +185,10 @@ final class RemoteIMAppState: ObservableObject {
         connectionState == .connected && selectedContact != nil
     }
 
+    var canSendVideo: Bool {
+        connectionState == .connected && selectedContact != nil
+    }
+
     var canSendFile: Bool {
         connectionState == .connected && selectedContact != nil
     }
@@ -654,6 +658,38 @@ final class RemoteIMAppState: ObservableObject {
             queuedMessageID = message.id
             enqueueHistoryUpsert(message)
             let receipt = try await client.sendImage(to: message.toUserID, image: image)
+            try chatState.updateMessageDelivery(
+                id: message.id,
+                remoteID: receipt.remoteID,
+                createdAt: receipt.createdAt
+            )
+            enqueueCurrentMessage(id: message.id)
+            errorMessage = nil
+        } catch {
+            if let queuedMessageID {
+                try? chatState.updateMessageStatus(id: queuedMessageID, status: .failed)
+                enqueueCurrentMessage(id: queuedMessageID)
+            }
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func sendVideoFile(_ video: RemoteIMVideoFile) async {
+        guard canSendVideo else { return }
+
+        var queuedMessageID: UUID?
+        do {
+            let message = try chatState.queueOutgoingVideo(
+                filePath: video.fileURL.path,
+                coverPath: video.coverFileURL.path,
+                durationSeconds: video.durationSeconds,
+                width: video.width,
+                height: video.height,
+                sizeBytes: video.sizeBytes
+            )
+            queuedMessageID = message.id
+            enqueueHistoryUpsert(message)
+            let receipt = try await client.sendVideo(to: message.toUserID, video: video)
             try chatState.updateMessageDelivery(
                 id: message.id,
                 remoteID: receipt.remoteID,

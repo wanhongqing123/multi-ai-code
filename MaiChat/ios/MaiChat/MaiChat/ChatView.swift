@@ -1,5 +1,6 @@
 import AVFoundation
 import AVKit
+import CoreTransferable
 import MaiChatCore
 import Photos
 import PhotosUI
@@ -1077,52 +1078,55 @@ private struct MessageBubbleView: View {
 
     private var messageContent: some View {
         HStack(alignment: .bottom, spacing: 10) {
-            if let videoAttachment = message.videoAttachment {
-                Button(action: previewVideo) {
-                    VideoBubbleContent(attachment: videoAttachment)
+            Group {
+                if let videoAttachment = message.videoAttachment {
+                    Button(action: previewVideo) {
+                        VideoBubbleContent(attachment: videoAttachment)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!VideoBubbleContent.isPlayable(videoAttachment))
+                } else if let imageAttachment = message.imageAttachment {
+                    Button(action: previewImage) {
+                        ImageBubbleContent(attachment: imageAttachment)
+                    }
+                    .buttonStyle(.plain)
+                } else if let fileAttachment = message.fileAttachment {
+                    Button(action: previewFile) {
+                        FileBubbleContent(attachment: fileAttachment)
+                    }
+                    .buttonStyle(.plain)
+                } else if let voiceAttachment = message.voiceAttachment {
+                    Button(action: playVoice) {
+                        VoiceBubbleContent(
+                            attachment: voiceAttachment,
+                            isPlaying: isVoicePlaying
+                        )
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    MarkdownLikeText(message.text)
+                        .font(.system(size: 13, weight: .regular))
+                        .lineSpacing(3)
+                        .foregroundStyle(RemoteIMStyle.textPrimary)
+                        .lineLimit(nil)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .layoutPriority(1)
                 }
-                .buttonStyle(.plain)
-                .disabled(!VideoBubbleContent.isPlayable(videoAttachment))
-            } else if let imageAttachment = message.imageAttachment {
-                Button(action: previewImage) {
-                    ImageBubbleContent(attachment: imageAttachment)
-                }
-                .buttonStyle(.plain)
-            } else if let fileAttachment = message.fileAttachment {
-                Button(action: previewFile) {
-                    FileBubbleContent(attachment: fileAttachment)
-                }
-                .buttonStyle(.plain)
-            } else if let voiceAttachment = message.voiceAttachment {
-                Button(action: playVoice) {
-                    VoiceBubbleContent(
-                        attachment: voiceAttachment,
-                        isPlaying: isVoicePlaying
-                    )
-                }
-                .buttonStyle(.plain)
-            } else {
-                MarkdownLikeText(message.text)
-                    .font(.system(size: 13, weight: .regular))
-                    .lineSpacing(3)
-                    .foregroundStyle(RemoteIMStyle.textPrimary)
-                    .lineLimit(nil)
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .layoutPriority(1)
             }
+            .padding(.horizontal, 13)
+            .padding(.vertical, 11)
+            .background(bubbleBackground, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(bubbleBorder, lineWidth: 1)
+            )
 
             if message.direction == .outgoing {
                 StatusIcon(status: message.status)
+                    .padding(.bottom, 4)
             }
         }
-        .padding(.horizontal, 13)
-        .padding(.vertical, 11)
-        .background(bubbleBackground, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(bubbleBorder, lineWidth: 1)
-        )
     }
 
     private var bubbleBackground: Color {
@@ -2293,6 +2297,44 @@ private struct RemoteIMSlashCommandBar: View {
     }
 }
 
+private enum RemoteIMPickedMediaError: LocalizedError {
+    case videoReadFailed
+    case videoTrackMissing
+    case coverGenerationFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .videoReadFailed:
+            return "视频读取失败"
+        case .videoTrackMissing:
+            return "所选文件没有可用的视频轨道"
+        case .coverGenerationFailed:
+            return "视频封面生成失败"
+        }
+    }
+}
+
+private struct RemoteIMPickedVideoTransfer: Transferable, Sendable {
+    let fileURL: URL
+
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(contentType: .movie) { video in
+            SentTransferredFile(video.fileURL)
+        } importing: { received in
+            let sourceURL = received.file
+            let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("RemoteIMOutgoingVideo", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let sourceExtension = sourceURL.pathExtension.trimmingCharacters(in: .whitespacesAndNewlines)
+            let targetURL = directory
+                .appendingPathComponent("remote-im-video-\(UUID().uuidString)")
+                .appendingPathExtension(sourceExtension.isEmpty ? "mov" : sourceExtension)
+            try FileManager.default.copyItem(at: sourceURL, to: targetURL)
+            return RemoteIMPickedVideoTransfer(fileURL: targetURL)
+        }
+    }
+}
+
 private struct ComposerView: View {
     @EnvironmentObject private var appState: RemoteIMAppState
     @ObservedObject var draft: RemoteIMDraftState
@@ -2313,7 +2355,7 @@ private struct ComposerView: View {
     @State private var isCameraPresented = false
     @State private var isPhotoPickerPresented = false
     @State private var isFileImporterPresented = false
-    @State private var selectedPhotoItems: [PhotosPickerItem] = []
+    @State private var selectedMediaItems: [PhotosPickerItem] = []
     @State private var keyboardVisibleHeight = UIScreen.main.bounds.height
 
     var body: some View {
@@ -2419,6 +2461,11 @@ private struct ComposerView: View {
 
                 Menu {
                     Button {
+                        isFileImporterPresented = true
+                    } label: {
+                        Label("发送文件", systemImage: "doc")
+                    }
+                    Button {
                         Task { await openCamera() }
                     } label: {
                         Label("拍照发送", systemImage: "camera")
@@ -2426,12 +2473,7 @@ private struct ComposerView: View {
                     Button {
                         Task { await openPhotoPicker() }
                     } label: {
-                        Label("从相册选择", systemImage: "photo")
-                    }
-                    Button {
-                        isFileImporterPresented = true
-                    } label: {
-                        Label("发送文件", systemImage: "doc")
+                        Label("发送图片或视频", systemImage: "photo")
                     }
                 } label: {
                     Image(systemName: "plus")
@@ -2457,10 +2499,10 @@ private struct ComposerView: View {
         }
         .photosPicker(
             isPresented: $isPhotoPickerPresented,
-            selection: $selectedPhotoItems,
+            selection: $selectedMediaItems,
             maxSelectionCount: 20,
             selectionBehavior: .ordered,
-            matching: .images,
+            matching: .any(of: [.images, .videos]),
             photoLibrary: .shared()
         )
         .fullScreenCover(isPresented: $isCameraPresented) {
@@ -2482,9 +2524,9 @@ private struct ComposerView: View {
         ) { result in
             Task { await sendSelectedFile(result) }
         }
-        .onChange(of: selectedPhotoItems) { items in
+        .onChange(of: selectedMediaItems) { items in
             guard !items.isEmpty else { return }
-            Task { await sendSelectedPhotos(items) }
+            Task { await sendSelectedMedia(items) }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
             updateKeyboardVisibleHeight(from: notification)
@@ -2528,7 +2570,7 @@ private struct ComposerView: View {
     }
 
     private func openPhotoPicker() async {
-        guard appState.canSendImage else { return }
+        guard appState.canSendImage || appState.canSendVideo else { return }
         guard await requestPhotoLibraryPermission() else {
             appState.errorMessage = "没有相册权限，请在系统设置中允许访问照片"
             return
@@ -2750,22 +2792,27 @@ private struct ComposerView: View {
         }
     }
 
-    private func sendSelectedPhotos(_ items: [PhotosPickerItem]) async {
-        defer { selectedPhotoItems = [] }
+    private func sendSelectedMedia(_ items: [PhotosPickerItem]) async {
+        defer { selectedMediaItems = [] }
         var sentCount = 0
         var failedReadCount = 0
 
         for item in items {
             do {
-                guard let data = try await item.loadTransferable(type: Data.self) else {
-                    failedReadCount += 1
-                    continue
+                if item.supportedContentTypes.contains(where: { $0.conforms(to: .movie) }) {
+                    let video = try await preparePickedVideo(item)
+                    await appState.sendVideoFile(video)
+                } else {
+                    guard let data = try await item.loadTransferable(type: Data.self) else {
+                        failedReadCount += 1
+                        continue
+                    }
+                    let imageFile = try savePickedImage(
+                        data: data,
+                        contentTypes: item.supportedContentTypes
+                    )
+                    await appState.sendImageFile(imageFile)
                 }
-                let imageFile = try savePickedImage(
-                    data: data,
-                    contentTypes: item.supportedContentTypes
-                )
-                await appState.sendImageFile(imageFile)
                 sentCount += 1
             } catch {
                 failedReadCount += 1
@@ -2774,9 +2821,60 @@ private struct ComposerView: View {
 
         if failedReadCount > 0 {
             appState.errorMessage = sentCount > 0
-                ? "已发送 \(sentCount) 张图片，另有 \(failedReadCount) 张读取失败"
-                : "所选图片读取失败"
+                ? "已发送 \(sentCount) 项，另有 \(failedReadCount) 项读取失败"
+                : "所选照片或视频读取失败"
         }
+    }
+
+    private func preparePickedVideo(_ item: PhotosPickerItem) async throws -> RemoteIMVideoFile {
+        guard let pickedVideo = try await item.loadTransferable(type: RemoteIMPickedVideoTransfer.self) else {
+            throw RemoteIMPickedMediaError.videoReadFailed
+        }
+        let fileURL = pickedVideo.fileURL
+        let asset = AVURLAsset(url: fileURL)
+        let duration = try await asset.load(.duration)
+        let durationValue = CMTimeGetSeconds(duration)
+        let durationSeconds = durationValue.isFinite
+            ? max(1, Int(ceil(durationValue)))
+            : 1
+
+        let videoTracks = try await asset.loadTracks(withMediaType: .video)
+        guard let videoTrack = videoTracks.first else {
+            throw RemoteIMPickedMediaError.videoTrackMissing
+        }
+        let naturalSize = try await videoTrack.load(.naturalSize)
+        let preferredTransform = try await videoTrack.load(.preferredTransform)
+        let transformedRect = CGRect(origin: .zero, size: naturalSize).applying(preferredTransform)
+        let width = max(0, Int(abs(transformedRect.width).rounded()))
+        let height = max(0, Int(abs(transformedRect.height).rounded()))
+
+        let imageGenerator = AVAssetImageGenerator(asset: asset)
+        imageGenerator.appliesPreferredTrackTransform = true
+        imageGenerator.maximumSize = CGSize(width: 1_280, height: 1_280)
+        let coverTime = CMTime(
+            seconds: durationValue.isFinite && durationValue > 0.2 ? 0.1 : 0,
+            preferredTimescale: 600
+        )
+        let generatedCover = try await imageGenerator.image(at: coverTime)
+        guard let coverData = UIImage(cgImage: generatedCover.image).jpegData(compressionQuality: 0.86) else {
+            throw RemoteIMPickedMediaError.coverGenerationFailed
+        }
+        let coverFileURL = fileURL
+            .deletingPathExtension()
+            .appendingPathExtension("jpg")
+        try coverData.write(to: coverFileURL, options: .atomic)
+
+        let resourceValues = try fileURL.resourceValues(forKeys: [.fileSizeKey])
+        let fileType = fileURL.pathExtension.trimmingCharacters(in: .whitespacesAndNewlines)
+        return RemoteIMVideoFile(
+            fileURL: fileURL,
+            coverFileURL: coverFileURL,
+            fileType: fileType.isEmpty ? "mp4" : fileType.lowercased(),
+            durationSeconds: durationSeconds,
+            width: width,
+            height: height,
+            sizeBytes: Int64(max(0, resourceValues.fileSize ?? 0))
+        )
     }
 
     private func sendCapturedPhoto(_ image: UIImage) async {

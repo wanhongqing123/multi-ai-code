@@ -243,6 +243,33 @@ final class MasterChatStateTests: XCTestCase {
         XCTAssertEqual(state.message(remoteID: "video-uuid"), coverMessage)
     }
 
+    func testQueuesOutgoingVideoWithCoverAndMetadata() throws {
+        var state = MasterChatState(ownerUserID: "ios-master")
+        try state.upsertFriend(userID: "mac-quark-pc")
+        state.selectPeer(userID: "mac-quark-pc")
+
+        let message = try state.queueOutgoingVideo(
+            filePath: "/tmp/outgoing-video.mp4",
+            coverPath: "/tmp/outgoing-video.jpg",
+            durationSeconds: 9,
+            width: 1920,
+            height: 1080,
+            sizeBytes: 12_345,
+            now: Date(timeIntervalSince1970: 161.5)
+        )
+
+        XCTAssertEqual(message.text, "[视频消息 9s]")
+        XCTAssertEqual(message.videoAttachment?.localPath, "/tmp/outgoing-video.mp4")
+        XCTAssertEqual(message.videoAttachment?.coverPath, "/tmp/outgoing-video.jpg")
+        XCTAssertEqual(message.videoAttachment?.durationSeconds, 9)
+        XCTAssertEqual(message.videoAttachment?.width, 1920)
+        XCTAssertEqual(message.videoAttachment?.height, 1080)
+        XCTAssertEqual(message.videoAttachment?.sizeBytes, 12_345)
+        XCTAssertEqual(message.direction, .outgoing)
+        XCTAssertEqual(message.status, .pending)
+        XCTAssertEqual(state.messages, [message])
+    }
+
     func testVideoPreviewRequiresDownloadedLocalFile() throws {
         let fileURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("maichat-video-\(UUID().uuidString).mp4")

@@ -62,7 +62,6 @@ const DEFAULT_REMOTE_IM_CONFIG: RemoteImConfig = {
   userSigEndpoint: '',
   userSigSecretKey: '',
   friendUserIds: [],
-  allowedUserIds: [],
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 4000
 ,

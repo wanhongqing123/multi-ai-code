@@ -20,7 +20,11 @@ function setup() {
   const sendText = vi.fn(async (_toUserId: string, _text: string) => {})
   const host = createRemoteDesktopHost({
     engine,
-    getSettings: () => ({ mode: 'unattended', allowedUserIds: ['whq-iphone'] }),
+    getSettings: () => ({ mode: 'unattended' }),
+    resolveAccess: async (fromUserId) => ({
+      mode: 'unattended',
+      allowed: fromUserId === 'whq-iphone'
+    }),
     getCredentials: async () => ({ sdkAppId: 1, userId: 'host-pc', userSig: 'sig' }),
     sendText
   })
@@ -72,9 +76,8 @@ describe('renderer remote desktop host', () => {
     const startSharing = vi.fn(async () => {})
     // 整个换掉而不是改字段：真实的失效是 getSettings 读到过期的 props，
     // 每次都新建对象返回。改字段的话连"建连时快照一次"的坏实现都能骗过去。
-    let live: { mode: 'unattended' | 'disabled'; allowedUserIds: string[] } = {
-      mode: 'unattended',
-      allowedUserIds: ['whq-iphone']
+    let live: { mode: 'unattended' | 'disabled' } = {
+      mode: 'unattended'
     }
     const sendText = vi.fn(async (_toUserId: string, _text: string) => {})
     const host = createRemoteDesktopHost({
@@ -87,6 +90,12 @@ describe('renderer remote desktop host', () => {
         setInputGate: () => {}
       },
       getSettings: () => live,
+      // 准入走的是 resolveAccess，所以这里也得读 live——
+      // 否则「设置里关掉后立刻生效」这条根本没被验到。
+      resolveAccess: async (fromUserId) => ({
+        mode: live.mode,
+        allowed: fromUserId === 'whq-iphone'
+      }),
       getCredentials: async () => ({ sdkAppId: 1, userId: 'host-pc', userSig: 'sig' }),
       sendText
     })
@@ -101,7 +110,7 @@ describe('renderer remote desktop host', () => {
     // 到这里对端已收到 accept 和 stop 两条。
     expect(sendText).toHaveBeenCalledTimes(2)
 
-    live = { mode: 'disabled', allowedUserIds: ['whq-iphone'] }
+    live = { mode: 'disabled' }
     host.handleIncomingText({
       projectId: 'p',
       fromUserId: 'whq-iphone',
@@ -127,7 +136,11 @@ describe('renderer remote desktop host', () => {
     }
     const host = createRemoteDesktopHost({
       engine,
-      getSettings: () => ({ mode: 'unattended', allowedUserIds: ['whq-iphone'] }),
+      getSettings: () => ({ mode: 'unattended' }),
+      resolveAccess: async (fromUserId) => ({
+        mode: 'unattended',
+        allowed: fromUserId === 'whq-iphone'
+      }),
       getCredentials: async () => ({ sdkAppId: 1, userId: 'host-pc', userSig: 'sig' }),
       // 回信也失败：构造最坏情况，确认异常不会冒泡到 IM 消息投递路径。
       sendText: async () => {

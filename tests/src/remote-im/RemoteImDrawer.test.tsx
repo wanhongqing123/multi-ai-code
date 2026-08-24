@@ -22,8 +22,7 @@ const config: RemoteImConfig = {
   userSigMode: 'endpoint',
   userSigEndpoint: 'https://example.test/sig',
   userSigSecretKey: '',
-  friendUserIds: ['friend_a'],
-  allowedUserIds: ['friend_a', 'phone_admin', 'desktop_slave'],
+  friendUserIds: ['friend_a', 'phone_admin', 'desktop_slave'],
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 1200
 ,
@@ -431,7 +430,6 @@ describe('RemoteImDrawer', () => {
       config: {
         ...config,
         friendUserIds: [],
-        allowedUserIds: [],
         outputFlushIntervalMs: 2000,
         outputMaxChunkChars: 4000,
         remoteDesktopMode: 'disabled' as const,

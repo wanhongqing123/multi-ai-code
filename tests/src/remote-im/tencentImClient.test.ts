@@ -83,7 +83,6 @@ function baseConfig() {
     userSigEndpoint: 'https://example.test/sig',
     userSigSecretKey: '',
     friendUserIds: ['phone-user'],
-    allowedUserIds: ['phone-user'],
     outputFlushIntervalMs: 1000,
     outputMaxChunkChars: 1200,
     remoteDesktopMode: 'disabled' as const,
@@ -497,8 +496,7 @@ describe('tencent IM client helpers', () => {
         userSigMode: 'endpoint',
         userSigEndpoint: 'https://example.test/sig',
         userSigSecretKey: '',
-        friendUserIds: [],
-        allowedUserIds: ['desktop-b'],
+        friendUserIds: ['desktop-b'],
         outputFlushIntervalMs: 1000,
         outputMaxChunkChars: 1200
 ,
@@ -543,8 +541,7 @@ describe('tencent IM client helpers', () => {
         userSigMode: 'endpoint',
         userSigEndpoint: 'https://example.test/sig',
         userSigSecretKey: '',
-        friendUserIds: [],
-        allowedUserIds: ['desktop-b'],
+        friendUserIds: ['desktop-b'],
         outputFlushIntervalMs: 1000,
         outputMaxChunkChars: 1200
 ,
@@ -593,7 +590,6 @@ describe('tencent IM client helpers', () => {
         userSigEndpoint: 'https://example.test/sig',
         userSigSecretKey: '',
         friendUserIds: [],
-        allowedUserIds: [],
         outputFlushIntervalMs: 1000,
         outputMaxChunkChars: 1200
 ,
@@ -637,7 +633,6 @@ describe('tencent IM client helpers', () => {
         userSigEndpoint: 'https://example.test/sig',
         userSigSecretKey: '',
         friendUserIds: [],
-        allowedUserIds: [],
         outputFlushIntervalMs: 1000,
         outputMaxChunkChars: 1200
 ,
@@ -680,8 +675,7 @@ describe('tencent IM client helpers', () => {
         userSigMode: 'endpoint',
         userSigEndpoint: 'https://example.test/sig',
         userSigSecretKey: '',
-        friendUserIds: [],
-        allowedUserIds: ['desktop-b'],
+        friendUserIds: ['desktop-b'],
         outputFlushIntervalMs: 1000,
         outputMaxChunkChars: 1200
 ,
@@ -727,8 +721,7 @@ describe('tencent IM client helpers', () => {
         userSigMode: 'endpoint',
         userSigEndpoint: 'https://example.test/sig',
         userSigSecretKey: '',
-        friendUserIds: [],
-        allowedUserIds: ['desktop-b'],
+        friendUserIds: ['desktop-b'],
         outputFlushIntervalMs: 1000,
         outputMaxChunkChars: 1200
 ,
@@ -890,8 +883,7 @@ describe('tencent IM client helpers', () => {
         userSigMode: 'endpoint',
         userSigEndpoint: 'https://example.test/sig',
         userSigSecretKey: '',
-        friendUserIds: [],
-        allowedUserIds: ['desktop-b'],
+        friendUserIds: ['desktop-b'],
         outputFlushIntervalMs: 1000,
         outputMaxChunkChars: 1200,
         remoteDesktopMode: 'disabled' as const,
@@ -938,8 +930,7 @@ describe('tencent IM client helpers', () => {
         userSigMode: 'endpoint',
         userSigEndpoint: 'https://example.test/sig',
         userSigSecretKey: '',
-        friendUserIds: [],
-        allowedUserIds: ['desktop-b'],
+        friendUserIds: ['desktop-b'],
         outputFlushIntervalMs: 1000,
         outputMaxChunkChars: 1200
 ,
@@ -979,8 +970,7 @@ describe('tencent IM client helpers', () => {
         userSigMode: 'endpoint',
         userSigEndpoint: 'https://example.test/sig',
         userSigSecretKey: '',
-        friendUserIds: [],
-        allowedUserIds: ['desktop-b'],
+        friendUserIds: ['desktop-b'],
         outputFlushIntervalMs: 1000,
         outputMaxChunkChars: 1200
 ,
@@ -1023,8 +1013,7 @@ describe('tencent IM client helpers', () => {
           userSigMode: 'endpoint',
           userSigEndpoint: 'https://example.test/sig',
           userSigSecretKey: '',
-          friendUserIds: [],
-          allowedUserIds: ['desktop-b'],
+          friendUserIds: ['desktop-b'],
           outputFlushIntervalMs: 1000,
           outputMaxChunkChars: 1200
 ,
@@ -1049,8 +1038,7 @@ describe('tencent IM client helpers', () => {
         userSigMode: 'secret-key',
         userSigEndpoint: '',
         userSigSecretKey: 'local-test-secret',
-        friendUserIds: [],
-        allowedUserIds: ['desktop-b'],
+        friendUserIds: ['desktop-b'],
         outputFlushIntervalMs: 1000,
         outputMaxChunkChars: 1200
 ,
@@ -1085,8 +1073,7 @@ describe('tencent IM client helpers', () => {
         userSigMode: 'secret-key',
         userSigEndpoint: '',
         userSigSecretKey: 'local-test-secret',
-        friendUserIds: [],
-        allowedUserIds: ['desktop-b'],
+        friendUserIds: ['desktop-b'],
         outputFlushIntervalMs: 1000,
         outputMaxChunkChars: 1200
 ,

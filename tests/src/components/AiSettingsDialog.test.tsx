@@ -13,7 +13,6 @@ import type { RemoteImConfig } from '../../../electron/remote-im/types'
 
 const LOADED_IM_CONFIG = {
   friendUserIds: ['whq-iphone'],
-  allowedUserIds: ['whq-iphone'],
   remoteDesktopMode: 'disabled' as const,
   remoteDesktopControl: false
 } as unknown as RemoteImConfig

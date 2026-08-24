@@ -15,8 +15,7 @@ const masterConfig: RemoteImConfig = {
   userSigMode: 'secret-key',
   userSigEndpoint: '',
   userSigSecretKey: 'local-secret',
-  friendUserIds: ['friend-b'],
-  allowedUserIds: ['friend-b', 'master-b', 'slave-b'],
+  friendUserIds: ['friend-b', 'master-b', 'slave-b'],
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 1200,
   remoteDesktopMode: 'disabled' as const,
@@ -26,8 +25,7 @@ const masterConfig: RemoteImConfig = {
 const slaveConfig: RemoteImConfig = {
   ...masterConfig,
   desktopUserId: 'desktop-b',
-  friendUserIds: ['friend-c'],
-  allowedUserIds: ['friend-c', 'master-a', 'slave-c'],
+  friendUserIds: ['friend-c', 'master-a', 'slave-c'],
 }
 
 describe('remote IM trusted-contact permissions', () => {
@@ -79,11 +77,7 @@ describe('remote IM trusted-contact permissions', () => {
   it('picks the first trusted friend as the default manual send peer', () => {
     expect(resolveDefaultRemoteImPeerUserId(masterConfig)).toBe('friend-b')
     expect(resolveDefaultRemoteImPeerUserId(slaveConfig)).toBe('friend-c')
-    // friendUserIds 为空时回退到 allowedUserIds——两者正常情况下同步，
-    // 但配置损坏时不该直接变成「没有默认对端」。
-    expect(resolveDefaultRemoteImPeerUserId({ ...masterConfig, friendUserIds: [] })).toBe('friend-b')
-    expect(
-      resolveDefaultRemoteImPeerUserId({ ...masterConfig, friendUserIds: [], allowedUserIds: [] })
-    ).toBeNull()
+    // 现在只有好友名单这一份，没有第二份名单可回退：好友为空就是没有默认对端。
+    expect(resolveDefaultRemoteImPeerUserId({ ...masterConfig, friendUserIds: [] })).toBeNull()
   })
 })

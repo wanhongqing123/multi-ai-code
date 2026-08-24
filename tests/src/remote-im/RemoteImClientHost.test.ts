@@ -17,8 +17,7 @@ const config: RemoteImConfig = {
   userSigMode: 'secret-key',
   userSigEndpoint: '',
   userSigSecretKey: 'secret',
-  friendUserIds: [],
-  allowedUserIds: ['test321'],
+  friendUserIds: ['test321'],
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 1200
 ,
@@ -155,8 +154,7 @@ describe('RemoteImClientHost', () => {
         projectId: 'project-1',
         config: {
           ...config,
-          friendUserIds: ['friend-a'],
-          allowedUserIds: ['friend-a', 'master-a', 'slave-a'],
+          friendUserIds: ['friend-a', 'master-a', 'slave-a'],
           outputFlushIntervalMs: 5000,
           outputMaxChunkChars: 3000
 ,
@@ -249,7 +247,6 @@ describe('RemoteImClientHost', () => {
     const nextConfig = {
       ...config,
       friendUserIds: ['whq-iphone'],
-      allowedUserIds: ['whq-iphone'],
       outputFlushIntervalMs: 2000,
       outputMaxChunkChars: 4000,
       remoteDesktopMode: 'disabled' as const,
@@ -265,7 +262,6 @@ describe('RemoteImClientHost', () => {
         userSigEndpoint: nextConfig.userSigEndpoint,
         userSigSecretKey: nextConfig.userSigSecretKey,
         friendUserIds: nextConfig.friendUserIds,
-        allowedUserIds: nextConfig.allowedUserIds,
         outputFlushIntervalMs: nextConfig.outputFlushIntervalMs,
         outputMaxChunkChars: nextConfig.outputMaxChunkChars,
         remoteDesktopMode: nextConfig.remoteDesktopMode,
@@ -307,7 +303,7 @@ describe('RemoteImClientHost', () => {
   it('forwards a successful empty runtime friend snapshot to clear account authority', async () => {
     const syncContacts = vi.fn(async () => ({
       ok: true as const,
-      value: { ...config, friendUserIds: [], allowedUserIds: [] },
+      value: { ...config, friendUserIds: [] },
       loginState: {
         profileId: 'mac-quarkpc',
         account: {
@@ -318,7 +314,6 @@ describe('RemoteImClientHost', () => {
           userSigEndpoint: config.userSigEndpoint,
           userSigSecretKey: config.userSigSecretKey,
           friendUserIds: [],
-          allowedUserIds: [],
           outputFlushIntervalMs: 2000,
           outputMaxChunkChars: 4000,
           remoteDesktopMode: 'disabled' as const,

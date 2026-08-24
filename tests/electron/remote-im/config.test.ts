@@ -33,7 +33,7 @@ describe('remote IM config', () => {
         userSigMode: 'secret-key',
         userSigEndpoint: ' https://example.test/sig ',
         userSigSecretKey: ' test_secret ',
-        allowedUserIds: [' phone_admin ', '', 'phone_admin'],
+        friendUserIds: [' phone_admin ', '', 'phone_admin'],
         outputFlushIntervalMs: 500,
         outputMaxChunkChars: 10
       })
@@ -44,7 +44,7 @@ describe('remote IM config', () => {
       userSigMode: 'secret-key',
       userSigEndpoint: 'https://example.test/sig',
       userSigSecretKey: 'test_secret',
-      allowedUserIds: ['phone_admin'],
+      friendUserIds: ['phone_admin'],
       outputFlushIntervalMs: 1000,
       outputMaxChunkChars: 200
     })
@@ -53,7 +53,7 @@ describe('remote IM config', () => {
   it('migrates legacy allowed users to trusted friends when role lists are missing', () => {
     expect(
       normalizeRemoteImConfig({
-        allowedUserIds: [' master-a ', '', 'master-a'],
+        friendUserIds: [' master-a ', '', 'master-a'],
         outputFlushIntervalMs: 2000,
         outputMaxChunkChars: 4000,
         remoteDesktopMode: 'disabled' as const,
@@ -61,7 +61,6 @@ describe('remote IM config', () => {
       })
     ).toMatchObject({
       friendUserIds: ['master-a'],
-      allowedUserIds: ['master-a'],
       outputFlushIntervalMs: 2000,
       outputMaxChunkChars: 4000,
       remoteDesktopMode: 'disabled' as const,
@@ -75,10 +74,9 @@ describe('remote IM config', () => {
         friendUserIds: [' friend-a ', '', 'friend-a', 'friend-b']
       })
     ).toMatchObject({
-      // friendUserIds 与 allowedUserIds 必须保持一致：前者决定界面显示，
+      // 只有 friendUserIds 一份名单：
       // 后者决定收发权限，分叉会让「看得到但发不出」。
       friendUserIds: ['friend-a', 'friend-b'],
-      allowedUserIds: ['friend-a', 'friend-b'],
       outputFlushIntervalMs: 2000,
       outputMaxChunkChars: 4000,
       remoteDesktopMode: 'disabled' as const,

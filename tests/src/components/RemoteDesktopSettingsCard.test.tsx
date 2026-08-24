@@ -6,13 +6,13 @@ import type { RemoteDesktopMode } from '../../../electron/remote-im/types.js'
 
 function markup(
   mode: RemoteDesktopMode,
-  allowedUserIds: string[] = ['whq-iphone'],
+  friendUserIds: string[] = ['whq-iphone'],
   control = false
 ): string {
   return renderToStaticMarkup(
     React.createElement(RemoteDesktopSettingsCard, {
       mode,
-      allowedUserIds,
+      friendUserIds,
       onMode: () => {},
       control,
       onControl: () => {}

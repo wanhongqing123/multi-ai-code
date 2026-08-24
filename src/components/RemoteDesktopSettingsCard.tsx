@@ -2,7 +2,8 @@ import type { RemoteDesktopMode } from '../../electron/remote-im/types.js'
 
 export interface RemoteDesktopSettingsCardProps {
   mode: RemoteDesktopMode
-  allowedUserIds: string[]
+  /** 谁能连入就看这一份：IM 好友。没有第二份「允许名单」。 */
+  friendUserIds: string[]
   onMode: (mode: RemoteDesktopMode) => void
   /** 是否允许对端操作本机键鼠。与 mode 分开授权。 */
   control: boolean
@@ -43,7 +44,7 @@ const MODE_OPTIONS: ModeOption[] = [
 export default function RemoteDesktopSettingsCard(
   props: RemoteDesktopSettingsCardProps
 ): JSX.Element {
-  const allowed = props.allowedUserIds.filter((userId) => userId.trim())
+  const allowed = props.friendUserIds.filter((userId) => userId.trim())
 
   return (
     <section className="ai-settings-card">

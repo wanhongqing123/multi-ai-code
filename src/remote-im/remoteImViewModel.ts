@@ -142,7 +142,6 @@ export function getRemoteImContacts(config: RemoteImConfig): RemoteImContact[] {
   const contacts: RemoteImContact[] = []
   const seen = new Set<string>()
   addContactRows(contacts, seen, config.friendUserIds, 'friend')
-  addContactRows(contacts, seen, config.allowedUserIds, 'friend')
   return contacts
 }
 
@@ -269,12 +268,9 @@ export function addRemoteImContact(
   void relation
   nextFriendUserIds.push(userId)
 
-  const nextAllowedUserIds = uniqueUserIds([...nextFriendUserIds])
-
   return {
     ...config,
-    friendUserIds: nextFriendUserIds,
-    allowedUserIds: nextAllowedUserIds
+    friendUserIds: nextFriendUserIds
   }
 }
 
@@ -286,12 +282,9 @@ export function removeRemoteImContact(
   if (!userId) return config
 
   const nextFriendUserIds = uniqueUserIds(config.friendUserIds).filter((item) => item !== userId)
-  const nextAllowedUserIds = uniqueUserIds([...nextFriendUserIds])
-
   return {
     ...config,
-    friendUserIds: nextFriendUserIds,
-    allowedUserIds: nextAllowedUserIds
+    friendUserIds: nextFriendUserIds
   }
 }
 

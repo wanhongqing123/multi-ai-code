@@ -21,8 +21,7 @@ const config: RemoteImConfig = {
   userSigMode: 'secret-key',
   userSigEndpoint: '',
   userSigSecretKey: 'secret',
-  friendUserIds: ['friend-a'],
-  allowedUserIds: ['friend-a', 'master-a', 'slave-a'],
+  friendUserIds: ['friend-a', 'master-a', 'slave-a'],
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 1200,
   remoteDesktopMode: 'disabled' as const,
@@ -211,24 +210,21 @@ describe('remote IM view model', () => {
   it('adds trusted friends while keeping allowed users in sync', () => {
     const next = addRemoteImContact(config, 'friend', ' slave-b ')
 
-    // friendUserIds 与 allowedUserIds 必须始终同步：前者决定界面显示，
-    // 后者决定收发权限，分叉会让「看得到但发不出」。
+    // 只有好友名单这一份：加进来的人既在界面显示，也就是被允许的人。
     expect(next.friendUserIds).toContain('slave-b')
-    expect(next.allowedUserIds).toEqual(next.friendUserIds)
   })
 
   it('removes trusted friends from every contact list and keeps allowed users in sync', () => {
     const next = removeRemoteImContact(config, ' master-a ')
 
     expect(next.friendUserIds).not.toContain('master-a')
-    expect(next.allowedUserIds).toEqual(next.friendUserIds)
   })
 })
 
 describe('contact vs stranger', () => {
   // 授权判定读的是联系人配置。界面必须说同一套话，否则会出现
   // 「好友」标签和「已拒绝」状态并排显示、互相打架的情况。
-  const base = { ...config, friendUserIds: ['whq-iphone'], allowedUserIds: ['whq-iphone'] }
+  const base = { ...config, friendUserIds: ['whq-iphone'] }
 
   it('marks a peer that is only in the message history as a stranger', () => {
     const conversations = getRemoteImConversations(base, [

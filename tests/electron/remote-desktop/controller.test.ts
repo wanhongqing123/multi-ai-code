@@ -40,12 +40,23 @@ function createFakeEngine(overrides: Partial<RemoteDesktopEngine> = {}) {
   }
 }
 
-function setup(settings: Partial<RemoteDesktopSettingsSnapshot> = {}, engineOverrides = {}) {
+function setup(
+  settings: Partial<RemoteDesktopSettingsSnapshot> = {},
+  engineOverrides = {},
+  allowedPeers: string[] = ['whq-iphone']
+) {
   const fake = createFakeEngine(engineOverrides)
   const sent: { toUserId: string; signal: RemoteDesktopSignal | null }[] = []
+  // 准入现在只认库：测试里由 resolveAccess 扮演那次查询，不再有本地名单。
+  const effective = { mode: 'unattended' as const, ...settings }
   const controller = new RemoteDesktopController({
     engine: fake.engine,
-    getSettings: () => ({ mode: 'unattended', allowedUserIds: ['whq-iphone'], ...settings }),
+    getSettings: () => effective,
+    resolveAccess: async (fromUserId) => ({
+      mode: effective.mode,
+      allowRemoteControl: effective.allowRemoteControl,
+      allowed: allowedPeers.includes(fromUserId)
+    }),
     getCredentials: async () => ({ sdkAppId: 1600148979, userId: 'host-pc', userSig: 'sig' }),
     sendSignal: async (toUserId, text) => {
       sent.push({ toUserId, signal: decodeRemoteDesktopSignal(text) })
@@ -68,14 +79,14 @@ describe('remote desktop controller (host only)', () => {
 
   // 真实事故：好友加回来了，但渲染进程手里的白名单还是清空那一刻的旧值，
   // 邀请被判 allowed=false，只能重启才恢复。准入必须直接问库，不看缓存名单。
-  it('asks the database per invite, so a stale cached list cannot lock a friend out', async () => {
+  it('asks the database per invite instead of trusting any local list', async () => {
     const fake = createFakeEngine()
     const sent: { toUserId: string; signal: RemoteDesktopSignal | null }[] = []
     let refreshCalls = 0
     const controller = new RemoteDesktopController({
       engine: fake.engine,
       // 缓存是空的——升级清空联系人后没刷新到的那种状态
-      getSettings: () => ({ mode: 'unattended', allowedUserIds: [] }),
+      getSettings: () => ({ mode: 'unattended' }),
       resolveAccess: async (fromUserId) => {
         refreshCalls += 1
         // 库里说：这个人是好友、没被禁掉。
@@ -94,14 +105,13 @@ describe('remote desktop controller (host only)', () => {
     expect(sent[0]?.signal?.type).toBe('accept')
   })
 
-  // 反向也要成立：库里说不允许（比如刚被删除、留了墓碑），
-  // 即便渲染进程缓存名单里还留着这个人，也必须拒绝——否则「删好友」形同虚设。
-  it('rejects when the database says no, even if the cached list still contains the peer', async () => {
+  // 库里说不允许（比如刚被删除、留了墓碑）就必须拒绝，否则「删好友」形同虚设。
+  it('rejects when the database says the peer is not a friend', async () => {
     const fake = createFakeEngine()
     const sent: { toUserId: string; signal: RemoteDesktopSignal | null }[] = []
     const controller = new RemoteDesktopController({
       engine: fake.engine,
-      getSettings: () => ({ mode: 'unattended', allowedUserIds: ['whq-iphone'] }),
+      getSettings: () => ({ mode: 'unattended' }),
       resolveAccess: async () => ({ mode: 'unattended', allowed: false }),
       getCredentials: async () => ({ sdkAppId: 1, userId: 'host-pc', userSig: 'sig' }),
       sendSignal: async (toUserId, text) => {
@@ -115,13 +125,14 @@ describe('remote desktop controller (host only)', () => {
     expect(sent[0]?.signal?.type).toBe('reject')
   })
 
-  // 查库失败不能把准入卡死：退回缓存名单继续判断。
-  it('falls back to the cached allow list when the database lookup throws', async () => {
+  // 查库失败时必须拒绝，而不是放行：不确定的情况下把屏幕交出去，
+  // 比连不上严重得多。对端拿到明确答复，不会卡在「连接中」。
+  it('rejects when the database lookup fails, instead of guessing', async () => {
     const fake = createFakeEngine()
     const sent: { toUserId: string; signal: RemoteDesktopSignal | null }[] = []
     const controller = new RemoteDesktopController({
       engine: fake.engine,
-      getSettings: () => ({ mode: 'unattended', allowedUserIds: ['whq-iphone'] }),
+      getSettings: () => ({ mode: 'unattended' }),
       resolveAccess: async () => {
         throw new Error('main process unreachable')
       },
@@ -133,8 +144,8 @@ describe('remote desktop controller (host only)', () => {
 
     await controller.handleSignal('whq-iphone', invite)
 
-    expect(fake.startSharing).toHaveBeenCalledTimes(1)
-    expect(sent[0]?.signal?.type).toBe('accept')
+    expect(fake.startSharing).not.toHaveBeenCalled()
+    expect(sent[0]?.signal?.type).toBe('reject')
   })
 
   it('accepts an invite from an allowed peer and starts sharing', async () => {

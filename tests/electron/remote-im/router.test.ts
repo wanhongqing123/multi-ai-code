@@ -16,8 +16,7 @@ const config: RemoteImConfig = {
   userSigMode: 'endpoint',
   userSigEndpoint: 'https://example.test/sig',
   userSigSecretKey: '',
-  friendUserIds: [],
-  allowedUserIds: ['phone_admin'],
+  friendUserIds: ['phone_admin'],
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 1200
 ,
@@ -254,8 +253,7 @@ describe('remote IM router', () => {
     let replySequence = 0
     const multiUserConfig: RemoteImConfig = {
       ...config,
-      friendUserIds: ['phone_b'],
-      allowedUserIds: ['phone_admin', 'phone_b'],
+      friendUserIds: ['phone_admin', 'phone_b'],
       outputFlushIntervalMs: 2000,
       outputMaxChunkChars: 4000,
       remoteDesktopMode: 'disabled' as const,
@@ -848,7 +846,7 @@ describe('remote IM router', () => {
       getConfig: () => ({
         ...config,
         desktopUserId: 'receiver_bot',
-        allowedUserIds: ['desktop_bot'],
+        friendUserIds: ['desktop_bot'],
         outputFlushIntervalMs: 2000,
         outputMaxChunkChars: 4000,
         remoteDesktopMode: 'disabled' as const,
@@ -1557,7 +1555,6 @@ describe('remote IM router', () => {
       getConfig: () => ({
         ...config,
         friendUserIds: ['friend-a'],
-        allowedUserIds: ['friend-a'],
         outputFlushIntervalMs: 2000,
         outputMaxChunkChars: 4000,
         remoteDesktopMode: 'disabled' as const,
@@ -1604,7 +1601,7 @@ describe('remote IM router', () => {
     const router = createRemoteImRouter({
       getConfig: () => ({
         ...config,
-        allowedUserIds: ['master-a', 'slave-c'],
+        friendUserIds: ['master-a', 'slave-c'],
         outputFlushIntervalMs: 2000,
         outputMaxChunkChars: 4000,
         remoteDesktopMode: 'disabled' as const,
@@ -1642,7 +1639,7 @@ describe('remote IM router', () => {
     const router = createRemoteImRouter({
       getConfig: () => ({
         ...config,
-        allowedUserIds: ['master-a', 'slave-b'],
+        friendUserIds: ['master-a', 'slave-b'],
         outputFlushIntervalMs: 2000,
         outputMaxChunkChars: 4000,
         remoteDesktopMode: 'disabled' as const,
@@ -1685,7 +1682,7 @@ describe('remote IM router', () => {
     const router = createRemoteImRouter({
       getConfig: () => ({
         ...config,
-        allowedUserIds: ['master-a', 'slave-b'],
+        friendUserIds: ['master-a', 'slave-b'],
         outputFlushIntervalMs: 2000,
         outputMaxChunkChars: 4000,
         remoteDesktopMode: 'disabled' as const,
@@ -1731,7 +1728,7 @@ describe('remote IM router', () => {
     const router = createRemoteImRouter({
       getConfig: () => ({
         ...config,
-        allowedUserIds: ['master-a', 'slave-c'],
+        friendUserIds: ['master-a', 'slave-c'],
         outputFlushIntervalMs: 2000,
         outputMaxChunkChars: 4000,
         remoteDesktopMode: 'disabled' as const,

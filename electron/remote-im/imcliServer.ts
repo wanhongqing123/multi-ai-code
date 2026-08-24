@@ -129,10 +129,7 @@ function uniqueUserIds(userIds: Array<string | null | undefined>): string[] {
 }
 
 function contactsFromConfig(config: RemoteImConfig): Array<{ userId: string }> {
-  return uniqueUserIds([
-    ...config.friendUserIds,
-    ...config.allowedUserIds
-  ])
+  return uniqueUserIds([...config.friendUserIds])
     .filter((userId) => userId !== config.desktopUserId)
     .map((userId) => ({ userId }))
 }

@@ -397,7 +397,7 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
               <div id="ai-settings-remote-desktop-section" className="ai-settings-section-anchor">
                 <RemoteDesktopSettingsCard
                   mode={remoteDesktopMode}
-                  allowedUserIds={remoteImConfig.allowedUserIds}
+                  friendUserIds={remoteImConfig.friendUserIds}
                   onMode={setRemoteDesktopMode}
                   control={remoteDesktopControl}
                   onControl={setRemoteDesktopControl}

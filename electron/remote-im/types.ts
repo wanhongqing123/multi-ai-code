@@ -9,13 +9,13 @@ export interface RemoteImConfig {
   userSigEndpoint: string
   userSigSecretKey: string
   friendUserIds: string[]
-  allowedUserIds: string[]
   outputFlushIntervalMs: number
   outputMaxChunkChars: number
   /**
    * 被控端远程桌面模式。默认 disabled——这台机器上跑着 AICLI 和你的仓库，
    * 屏幕共享必须由用户显式开一次，不能因为装了新版本就默认可被查看。
-   * 允许连入的账号复用 allowedUserIds（IM 好友白名单）。
+   * 谁能连入只看一份名单：IM 好友（friendUserIds）。本地删掉的好友在库里留墓碑，
+   * 查不出来即等于禁止，不需要另一份「允许名单」。
    */
   remoteDesktopMode: RemoteDesktopMode
   /**

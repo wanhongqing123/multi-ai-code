@@ -14,8 +14,7 @@ const config: RemoteImConfig = {
   userSigMode: 'secret-key',
   userSigEndpoint: '',
   userSigSecretKey: 'local-secret',
-  friendUserIds: ['friend-a'],
-  allowedUserIds: ['friend-a', 'desktop-b'],
+  friendUserIds: ['friend-a', 'desktop-b'],
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 1200,
   remoteDesktopMode: 'disabled' as const,
@@ -26,7 +25,7 @@ describe('remote IM peer messages', () => {
   it('uses the first trusted friend UserID as the default peer', () => {
     expect(resolvePeerUserId(config)).toBe('friend-a')
     expect(resolvePeerUserId(config, 'friend-a')).toBe('friend-a')
-    expect(resolvePeerUserId({ ...config, friendUserIds: [], allowedUserIds: [] })).toBeNull()
+    expect(resolvePeerUserId({ ...config, friendUserIds: [] })).toBeNull()
   })
 
   it('creates an outgoing message record for a peer IM send', () => {

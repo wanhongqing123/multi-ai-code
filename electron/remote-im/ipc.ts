@@ -733,9 +733,10 @@ async function getRemoteImConfig(projectId: string): Promise<RemoteImConfig> {
   void projectId
   const account = await getRemoteImAccountForProject()
   const merged = mergeRemoteImAccountIntoConfig(normalizeRemoteImConfig(null), account)
-  // 好友以 DB 为准：JSON 里那两个数组已不再维护。
+  // 好友以 DB 为准：JSON 里那个数组已不再维护。
+  // 只有这一份名单——谁是好友谁就能被允许，不再另存一份「允许名单」。
   const friendUserIds = contactStore().list()
-  return { ...merged, friendUserIds, allowedUserIds: [...friendUserIds] }
+  return { ...merged, friendUserIds }
 }
 
 async function getRemoteImAccountForProject(

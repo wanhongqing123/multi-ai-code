@@ -51,8 +51,7 @@ describe('preload remote IM api', () => {
       userSigMode: 'endpoint',
       userSigEndpoint: 'https://example.test/sig',
       userSigSecretKey: '',
-      friendUserIds: [],
-      allowedUserIds: ['phone_admin'],
+      friendUserIds: ['phone_admin'],
       outputFlushIntervalMs: 2000,
       outputMaxChunkChars: 1200
     }

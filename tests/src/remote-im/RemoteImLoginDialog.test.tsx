@@ -31,7 +31,6 @@ const projectConfig: RemoteImConfig = {
   sdkAppId: 1600148979,
   desktopUserId: 'test123',
   friendUserIds: [],
-  allowedUserIds: [],
   userSigMode: 'secret-key',
   userSigEndpoint: '',
   userSigSecretKey: 'secret',

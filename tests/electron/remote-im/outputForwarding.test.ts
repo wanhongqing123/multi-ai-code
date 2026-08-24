@@ -42,8 +42,7 @@ const config: RemoteImConfig = {
   userSigMode: 'endpoint',
   userSigEndpoint: 'https://example.test/sig',
   userSigSecretKey: '',
-  friendUserIds: [],
-  allowedUserIds: ['master_desktop'],
+  friendUserIds: ['master_desktop'],
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 4
 ,

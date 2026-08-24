@@ -13,7 +13,6 @@ export const DEFAULT_REMOTE_IM_CONFIG: RemoteImConfig = {
   userSigEndpoint: '',
   userSigSecretKey: '',
   friendUserIds: [],
-  allowedUserIds: [],
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 4000,
   remoteDesktopMode: 'disabled',
@@ -80,12 +79,14 @@ export function normalizeRemoteImConfig(value: unknown): RemoteImConfig {
     raw.userSigMode === 'secret-key' || (!raw.userSigMode && userSigSecretKey && !userSigEndpoint)
       ? 'secret-key'
       : 'endpoint'
-  const legacyAllowedUserIds = normalizeAllowedUserIds(raw.allowedUserIds)
+  // 老配置文件里的 allowedUserIds 只在读取时并进好友名单，不再作为独立字段留下来。
+  const legacyAllowedUserIds = normalizeAllowedUserIds(
+    (raw as Record<string, unknown>).allowedUserIds
+  )
   const friendUserIds = mergeUserIds(
     normalizeAllowedUserIds(raw.friendUserIds),
     legacyAllowedUserIds
   )
-  const allowedUserIds = [...friendUserIds]
   return {
     provider: 'tencent-im',
     sdkAppId,
@@ -94,7 +95,6 @@ export function normalizeRemoteImConfig(value: unknown): RemoteImConfig {
     userSigEndpoint,
     userSigSecretKey,
     friendUserIds,
-    allowedUserIds,
     outputFlushIntervalMs: normalizeNumber(raw.outputFlushIntervalMs, 2000, 1000, 30_000),
     outputMaxChunkChars: normalizeOutputMaxChunkChars(raw.outputMaxChunkChars),
     remoteDesktopMode: normalizeRemoteDesktopMode(raw.remoteDesktopMode),

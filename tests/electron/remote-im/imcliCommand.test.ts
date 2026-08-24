@@ -21,7 +21,6 @@ const config: RemoteImConfig = {
   userSigEndpoint: '',
   userSigSecretKey: 'secret',
   friendUserIds: ['agent-b'],
-  allowedUserIds: ['agent-b'],
   outputFlushIntervalMs: 2000,
   outputMaxChunkChars: 1200
 ,

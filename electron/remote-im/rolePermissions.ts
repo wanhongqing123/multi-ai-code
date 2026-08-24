@@ -16,12 +16,7 @@ function friendUserIds(config: RemoteImConfig): string[] {
 }
 
 function trustedFriendUserIds(config: RemoteImConfig): string[] {
-  return Array.from(
-    new Set([
-      ...friendUserIds(config),
-      ...(Array.isArray(config.allowedUserIds) ? config.allowedUserIds : [])
-    ])
-  )
+  return Array.from(new Set(friendUserIds(config)))
 }
 
 export function getRemoteImPeerRelation(
@@ -65,9 +60,5 @@ export function canManuallySendToRemoteImPeer(
 }
 
 export function resolveDefaultRemoteImPeerUserId(config: RemoteImConfig): string | null {
-  return (
-    friendUserIds(config)[0] ??
-    (Array.isArray(config.allowedUserIds) ? config.allowedUserIds[0] : undefined) ??
-    null
-  )
+  return friendUserIds(config)[0] ?? null
 }

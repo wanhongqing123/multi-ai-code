@@ -23,7 +23,6 @@ import {
 
 export interface RemoteDesktopSettingsSnapshot {
   mode: RemoteDesktopHostMode
-  allowedUserIds: string[]
   /**
    * 是否允许对端操作本机键鼠。独立于 mode：无人值守只授权了"看"，
    * 不该顺带把整台电脑交出去，所以默认关闭、要单独开一次。
@@ -154,12 +153,12 @@ export class RemoteDesktopController {
 
   private async handleInvite(fromUserId: string, signal: RemoteDesktopSignal): Promise<void> {
     // 每次都问一次库：这个人现在是不是好友、有没有被禁掉。
+    // 问不到就拒绝，而不是拿别处的旧数据顶上——准入判断宁可答「不行」，
+    // 也不能在不确定的情况下把屏幕交出去。对端拿到明确答复，不会卡在连接中。
     const access = await this.resolvedAccess(fromUserId)
     const settings = this.deps.getSettings()
     const mode = access?.mode ?? settings.mode
-    const allowed = access
-      ? access.allowed
-      : normalizeList(settings.allowedUserIds).includes(fromUserId.trim())
+    const allowed = access?.allowed === true
     const decision = decideOnInvite({
       mode,
       currentState: this.hostState,
@@ -178,7 +177,9 @@ export class RemoteDesktopController {
       // 记下判断依据的来源：db 表示问过库，cache 表示退回了本地缓存名单。
       // 只记 allowed=false 的话，排查时分不清「库里确实没有这个人」和
       // 「查询没走通、用的是过期缓存」——上一次就为此多绕了一轮。
-      source: access ? 'db' : 'cache'
+      // 记下这次判断有没有真的问到库：allowed=false 时要能分清
+      // 「库里确实没有这个人」和「根本没问到库」。
+      source: access ? 'db' : 'unavailable'
     })
 
     if (decision.action === 'rejectInvite') {

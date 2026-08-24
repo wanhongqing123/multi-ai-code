@@ -1,4 +1,5 @@
 #include "ui/MainWindow.h"
+#include "model/MessageSearch.h"
 
 #include <QCoreApplication>
 #include <QApplication>
@@ -33,6 +34,7 @@
 #include <QInputMethodEvent>
 #include <QKeyEvent>
 #include <QLineEdit>
+#include <QShortcut>
 #include <QMenu>
 #include <QPixmap>
 #include <QMouseEvent>
@@ -846,8 +848,13 @@ QIcon makeLineIcon(LineIconKind kind, const QColor& color) {
 }
 
 QPushButton* makeNavButton(const QString& title, const QString& objectName, QWidget* parent) {
-    auto* button = new QPushButton(title, parent);
+    // 只留图标，不显示文字。文字改挂 tooltip 与 accessibleName：纯图标对
+    // 「远程」「设置」这类不常点的入口本来就不好认，去掉文字后必须留个说明，
+    // accessibleName 同时让读屏软件和测试仍能按名字找到它。
+    auto* button = new QPushButton(parent);
     button->setObjectName(objectName);
+    button->setToolTip(title);
+    button->setAccessibleName(title);
     button->setCursor(Qt::PointingHandCursor);
     return button;
 }
@@ -1322,7 +1329,11 @@ void MainWindow::buildUi() {
     statusLabel_ = new QLabel(QStringLiteral("未连接"), header);
     statusLabel_->setObjectName(QStringLiteral("statusBadge"));
     headerLayout->addWidget(titleLabel_, 1);
-    headerLayout->addWidget(makeHeaderIconButton(LineIconKind::Search, QStringLiteral("搜索"), header));
+    headerSearchButton_ =
+        makeHeaderIconButton(LineIconKind::Search, QStringLiteral("搜索消息 (Ctrl+F)"), header);
+    headerSearchButton_->setObjectName(QStringLiteral("headerSearchButton"));
+    connect(headerSearchButton_, &QPushButton::clicked, this, &MainWindow::toggleMessageSearch);
+    headerLayout->addWidget(headerSearchButton_);
     // 远程桌面入口：跟着当前会话走——正在跟谁聊天就远程谁，无需另选设备。
     remoteDesktopButton_ =
         makeHeaderIconButton(LineIconKind::Screen, QStringLiteral("远程桌面"), header);
@@ -1409,7 +1420,57 @@ void MainWindow::buildUi() {
         if (slashCommandBar_ && slashCommandBar_->isVisible()) positionSlashCommandBar();
     });
 
+    // 会话内搜索条：默认收起，点头部放大镜或按 Ctrl+F 展开。
+    messageSearchBar_ = new QWidget(chatContentPane);
+    messageSearchBar_->setObjectName(QStringLiteral("messageSearchBar"));
+    messageSearchBar_->setVisible(false);
+    auto* searchLayout = new QHBoxLayout(messageSearchBar_);
+    searchLayout->setContentsMargins(28, 8, 28, 8);
+    searchLayout->setSpacing(8);
+    messageSearchInput_ = new QLineEdit(messageSearchBar_);
+    messageSearchInput_->setObjectName(QStringLiteral("messageSearchInput"));
+    messageSearchInput_->setPlaceholderText(QStringLiteral("在本会话中搜索"));
+    messageSearchInput_->setClearButtonEnabled(true);
+    messageSearchCountLabel_ = new QLabel(messageSearchBar_);
+    messageSearchCountLabel_->setObjectName(QStringLiteral("messageSearchCount"));
+    messageSearchPrevButton_ = new QPushButton(QStringLiteral("↑"), messageSearchBar_);
+    messageSearchPrevButton_->setObjectName(QStringLiteral("messageSearchPrev"));
+    messageSearchPrevButton_->setToolTip(QStringLiteral("上一条 (Shift+Enter)"));
+    messageSearchPrevButton_->setCursor(Qt::PointingHandCursor);
+    messageSearchNextButton_ = new QPushButton(QStringLiteral("↓"), messageSearchBar_);
+    messageSearchNextButton_->setObjectName(QStringLiteral("messageSearchNext"));
+    messageSearchNextButton_->setToolTip(QStringLiteral("下一条 (Enter)"));
+    messageSearchNextButton_->setCursor(Qt::PointingHandCursor);
+    auto* searchCloseButton = new QPushButton(QStringLiteral("×"), messageSearchBar_);
+    searchCloseButton->setObjectName(QStringLiteral("messageSearchClose"));
+    searchCloseButton->setToolTip(QStringLiteral("关闭 (Esc)"));
+    searchCloseButton->setCursor(Qt::PointingHandCursor);
+    searchLayout->addWidget(messageSearchInput_, 1);
+    searchLayout->addWidget(messageSearchCountLabel_);
+    searchLayout->addWidget(messageSearchPrevButton_);
+    searchLayout->addWidget(messageSearchNextButton_);
+    searchLayout->addWidget(searchCloseButton);
+    connect(messageSearchInput_, &QLineEdit::textChanged, this,
+            [this] { refreshMessageSearchHits(); });
+    // 回车向后、Shift+回车向前，与编辑器里的查找一致。
+    connect(messageSearchInput_, &QLineEdit::returnPressed, this, [this] {
+        const bool backward =
+            QApplication::keyboardModifiers().testFlag(Qt::ShiftModifier);
+        stepMessageSearch(!backward);
+    });
+    connect(messageSearchPrevButton_, &QPushButton::clicked, this,
+            [this] { stepMessageSearch(false); });
+    connect(messageSearchNextButton_, &QPushButton::clicked, this,
+            [this] { stepMessageSearch(true); });
+    connect(searchCloseButton, &QPushButton::clicked, this, &MainWindow::closeMessageSearch);
+    auto* searchShortcut = new QShortcut(QKeySequence::Find, this);
+    connect(searchShortcut, &QShortcut::activated, this, &MainWindow::toggleMessageSearch);
+    auto* searchCloseShortcut = new QShortcut(QKeySequence(Qt::Key_Escape), messageSearchBar_);
+    searchCloseShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(searchCloseShortcut, &QShortcut::activated, this, &MainWindow::closeMessageSearch);
+
     chatLayout->addWidget(header);
+    chatLayout->addWidget(messageSearchBar_);
     chatLayout->addWidget(messageComposerSplitter, 1);
 
     contentSplitter->addWidget(conversationPane);
@@ -1576,6 +1637,40 @@ void MainWindow::applyStyle() {
         }
         #navSearchBox:focus {
             border-color: #8ed0ff;
+        }
+        #messageSearchBar {
+            background: #f7fafd;
+            border-bottom: 1px solid #dae4f0;
+        }
+        #messageSearchInput {
+            min-height: 30px;
+            border: 1px solid #dbe4ef;
+            border-radius: 8px;
+            padding: 0 10px;
+            background: #ffffff;
+            font-size: 13px;
+        }
+        #messageSearchInput:focus {
+            border-color: #8ed0ff;
+        }
+        #messageSearchCount {
+            color: #62728a;
+            font-size: 12px;
+        }
+        #messageSearchPrev, #messageSearchNext, #messageSearchClose {
+            min-width: 28px;
+            min-height: 28px;
+            border: 0;
+            border-radius: 6px;
+            background: transparent;
+            color: #4c5866;
+            font-size: 14px;
+        }
+        #messageSearchPrev:hover, #messageSearchNext:hover, #messageSearchClose:hover {
+            background: #e6eef8;
+        }
+        #messageSearchPrev:disabled, #messageSearchNext:disabled {
+            color: #b6c0cd;
         }
         #messagesNavButton, #contactsNavButton, #remoteNavButton, #settingsNavButton {
             min-height: 40px;
@@ -1928,6 +2023,99 @@ void MainWindow::applyConversationFilter() {
     }
 }
 
+void MainWindow::toggleMessageSearch() {
+    if (!messageSearchBar_ || !messageSearchInput_) return;
+    // 用 isHidden 而不是 isVisible：isVisible 还取决于祖先是否已显示，
+    // 窗口尚未 show 时它恒为 false，切换会一直往「展开」跑。
+    if (!messageSearchBar_->isHidden()) {
+        closeMessageSearch();
+        return;
+    }
+    messageSearchBar_->setVisible(true);
+    messageSearchInput_->setFocus();
+    messageSearchInput_->selectAll();
+    refreshMessageSearchHits();
+}
+
+void MainWindow::closeMessageSearch() {
+    if (!messageSearchBar_) return;
+    clearMessageSearchHighlight();
+    messageSearchHits_.clear();
+    messageSearchCursor_ = -1;
+    if (messageSearchInput_) messageSearchInput_->clear();
+    if (messageSearchCountLabel_) messageSearchCountLabel_->clear();
+    messageSearchBar_->setVisible(false);
+    if (messageEditor_) messageEditor_->setFocus();
+}
+
+void MainWindow::refreshMessageSearchHits() {
+    if (!messageSearchBar_ || !messageSearchInput_) return;
+    const QString needle = messageSearchInput_->text();
+    const QList<RemoteIMMessage> messages =
+        app_.chatState().messagesWith(app_.chatState().selectedPeerId());
+    messageSearchHits_ = MessageSearch::matchIndexes(messages, needle);
+    clearMessageSearchHighlight();
+    messageSearchCursor_ = -1;
+
+    const bool hasHits = !messageSearchHits_.isEmpty();
+    if (messageSearchPrevButton_) messageSearchPrevButton_->setEnabled(hasHits);
+    if (messageSearchNextButton_) messageSearchNextButton_->setEnabled(hasHits);
+    if (!hasHits) {
+        if (messageSearchCountLabel_) {
+            // 只在真的没搜到时才提「已加载」这个边界：这正是用户需要分辨
+            // 「确实没有」还是「还没翻上去加载」的时刻。
+            messageSearchCountLabel_->setText(
+                needle.trimmed().isEmpty()
+                    ? QString()
+                    : QStringLiteral("无结果（仅搜索已加载的消息）"));
+        }
+        return;
+    }
+    // 默认落在最新的一条命中：要找的通常是最近说过的话。
+    focusMessageSearchHit(messageSearchHits_.last());
+}
+
+void MainWindow::stepMessageSearch(bool forward) {
+    if (messageSearchHits_.isEmpty()) return;
+    const int target = forward
+        ? MessageSearch::nextHit(messageSearchHits_, messageSearchCursor_)
+        : MessageSearch::previousHit(messageSearchHits_, messageSearchCursor_);
+    if (target < 0) return;
+    focusMessageSearchHit(target);
+}
+
+void MainWindow::focusMessageSearchHit(int messageIndex) {
+    const QList<RemoteIMMessage> messages =
+        app_.chatState().messagesWith(app_.chatState().selectedPeerId());
+    if (messageIndex < 0 || messageIndex >= messages.size()) return;
+    messageSearchCursor_ = messageIndex;
+    const int position = messageSearchHits_.indexOf(messageIndex);
+    if (messageSearchCountLabel_ && position >= 0) {
+        messageSearchCountLabel_->setText(
+            QStringLiteral("%1/%2").arg(position + 1).arg(messageSearchHits_.size()));
+    }
+
+    clearMessageSearchHighlight();
+    const QString messageId = messages.at(messageIndex).id;
+    QWidget* row = messageRowById_.value(messageId);
+    if (!row) return;
+    messageSearchHighlightedId_ = messageId;
+    row->setProperty("searchHit", true);
+    row->style()->unpolish(row);
+    row->style()->polish(row);
+    if (messageScroll_) messageScroll_->ensureWidgetVisible(row, 0, UiZoom::s(60));
+}
+
+void MainWindow::clearMessageSearchHighlight() {
+    if (messageSearchHighlightedId_.isEmpty()) return;
+    if (QWidget* row = messageRowById_.value(messageSearchHighlightedId_)) {
+        row->setProperty("searchHit", false);
+        row->style()->unpolish(row);
+        row->style()->polish(row);
+    }
+    messageSearchHighlightedId_.clear();
+}
+
 void MainWindow::refreshContactDirectory() {
     contactsList_->blockSignals(true);
     contactsList_->clear();
@@ -2009,6 +2197,10 @@ void MainWindow::refreshMessages() {
     updateComposerState();
 
     const QList<RemoteIMMessage> messages = app_.chatState().messagesWith(selectedPeer);
+    if (selectedPeer != renderedPeerId_ && messageSearchBar_ && !messageSearchBar_->isHidden()) {
+        // 命中下标是针对当前会话那份消息列表的，换了会话就全部失效，直接收起。
+        closeMessageSearch();
+    }
     bool needFullRebuild = selectedPeer != renderedPeerId_
         || renderedEmptyView_ != messages.isEmpty()
         || messageLayout_->count() == 0;
@@ -2897,6 +3089,12 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
             padding: 2px 8px;
             font-size: 11px;
             font-weight: 800;
+        }
+        /* 搜索命中高亮：用动态属性切换，不去改写 row 的 styleSheet——
+           这份样式表还带着上面几条 meta 规则，整体替换会把它们一起抹掉。 */
+        #messageRowOutgoing[searchHit="true"], #messageRowIncoming[searchHit="true"] {
+            background: #fff4c2;
+            border-radius: 10px;
         }
     )")));
 

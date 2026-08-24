@@ -65,6 +65,13 @@ private:
     void updateLoadEarlierVisibility();
     void scrollMessagesToBottom();
     void applyConversationFilter();
+    // 会话内消息搜索：头部放大镜或 Ctrl+F 唤出，Esc 收起。
+    void toggleMessageSearch();
+    void closeMessageSearch();
+    void refreshMessageSearchHits();
+    void stepMessageSearch(bool forward);
+    void focusMessageSearchHit(int messageIndex);
+    void clearMessageSearchHighlight();
     void showMessagesPage();
     void showContactsPage();
     void showSettingsPage();
@@ -201,6 +208,17 @@ private:
     QHash<QString, QWidget*> messageRowById_;
     QHash<QString, RemoteIMMessageStatus> renderedStatusById_;
     QPushButton* loadEarlierButton_ = nullptr;
+    // 会话内搜索。搜索范围是「当前会话已加载的消息」——没点过「加载更早」的
+    // 历史不在 ChatState 里，也就搜不到，界面上要如实说清楚。
+    QPushButton* headerSearchButton_ = nullptr;
+    QWidget* messageSearchBar_ = nullptr;
+    QLineEdit* messageSearchInput_ = nullptr;
+    QLabel* messageSearchCountLabel_ = nullptr;
+    QPushButton* messageSearchPrevButton_ = nullptr;
+    QPushButton* messageSearchNextButton_ = nullptr;
+    QList<int> messageSearchHits_;
+    int messageSearchCursor_ = -1;
+    QString messageSearchHighlightedId_;
     bool renderedEmptyView_ = false;
     QPushButton* addContactButton_ = nullptr;
     QPushButton* sendButton_ = nullptr;

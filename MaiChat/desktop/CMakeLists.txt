@@ -63,6 +63,8 @@ add_library(remote_im_core
   src/model/RemoteIMVideoPayload.h
   src/model/ChatState.h
   src/model/ChatState.cpp
+  src/model/MessageSearch.h
+  src/model/MessageSearch.cpp
   src/markdown/MarkdownRenderer.h
   src/markdown/MarkdownRenderer.cpp
   src/im/RemoteIMClient.h
@@ -346,6 +348,9 @@ target_link_libraries(remote_input_capture_test PRIVATE remote_im_desktop_ui rem
 add_executable(remote_desktop_ui_test tests/RemoteDesktopUiTest.cpp)
 target_link_libraries(remote_desktop_ui_test PRIVATE remote_im_desktop_ui remote_im_core Qt5::Widgets Qt5::Test)
 
+add_executable(message_search_test tests/MessageSearchTest.cpp)
+target_link_libraries(message_search_test PRIVATE remote_im_core Qt5::Widgets Qt5::Test)
+
 add_executable(ui_zoom_test tests/UiZoomTest.cpp)
 target_link_libraries(ui_zoom_test PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets Qt5::Test)
 
@@ -377,4 +382,5 @@ add_test(NAME video_file_metadata_test COMMAND video_file_metadata_test)
 add_test(NAME video_cover_image_test COMMAND video_cover_image_test)
 add_test(NAME remote_input_capture_test COMMAND remote_input_capture_test)
 add_test(NAME remote_desktop_ui_test COMMAND remote_desktop_ui_test)
+add_test(NAME message_search_test COMMAND message_search_test)
 add_test(NAME ui_zoom_test COMMAND ui_zoom_test)

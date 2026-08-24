@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  聊天媒体不进云备份：自动备份有 25MB 配额，视频很容易把它撑爆，
+  一旦超额整个应用的备份都会被放弃，反而把设置这类真正该备份的数据一起丢掉。
+  （API 30 及以下走这份规则。）
+-->
+<full-backup-content>
+    <exclude domain="file" path="RemoteIMMedia" />
+</full-backup-content>

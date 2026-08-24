@@ -23,6 +23,7 @@ import com.tencent.imsdk.v2.V2TIMValueCallback;
 import com.tencent.imsdk.v2.V2TIMVideoElem;
 
 import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -68,7 +69,7 @@ public final class TencentIMClient {
     private static final String TAG = "MaiChat.im";
 
     private final Context context;
-    private final File mediaDirectory;
+    private final RemoteIMMediaPaths mediaPaths;
     private final Listener listener;
     private final V2TIMAdvancedMsgListener messageListener = new V2TIMAdvancedMsgListener() {
         @Override
@@ -120,8 +121,9 @@ public final class TencentIMClient {
     public TencentIMClient(Context context, Listener listener) {
         this.context = context.getApplicationContext();
         this.listener = listener;
-        this.mediaDirectory = new File(context.getCacheDir(), "remote-im-media");
-        if (!mediaDirectory.exists()) mediaDirectory.mkdirs();
+        // 收到的媒体必须落在持久目录：放缓存目录的话，系统清缓存或用户手动清除之后，
+        // 聊天记录里的图片视频就永远打不开了。
+        this.mediaPaths = RemoteIMMediaPaths.forApp(context);
     }
 
     public void connect(int sdkAppId, String userId, String userSig) {
@@ -470,7 +472,7 @@ public final class TencentIMClient {
         }
         String remoteId = clean(selected.getUUID());
         if (remoteId.isEmpty()) remoteId = clean(message.getMsgID());
-        File target = mediaFile("image", remoteId, extension(selected.getUrl(), "jpg"));
+        File target = mediaFile(RemoteIMMediaPaths.IMAGES, remoteId, extension(selected.getUrl(), "jpg"));
         V2TIMImageElem.V2TIMImage image = selected;
         String finalRemoteId = remoteId;
         selected.downloadImage(target.getAbsolutePath(), new V2TIMDownloadCallback() {
@@ -521,7 +523,7 @@ public final class TencentIMClient {
         V2TIMSoundElem elem = message.getSoundElem();
         String remoteId = clean(elem.getUUID());
         if (remoteId.isEmpty()) remoteId = clean(message.getMsgID());
-        File target = mediaFile("voice", remoteId, "m4a");
+        File target = mediaFile(RemoteIMMediaPaths.VOICES, remoteId, "m4a");
         int duration = Math.max(1, elem.getDuration());
         String finalRemoteId = remoteId;
         elem.downloadSound(target.getAbsolutePath(), new V2TIMDownloadCallback() {
@@ -568,11 +570,11 @@ public final class TencentIMClient {
         if (remoteId.isEmpty()) remoteId = clean(message.getMsgID());
         final String finalRemoteId = remoteId;
 
-        final File videoTarget = mediaFile("video", remoteId, extension(elem.getVideoPath(), "mp4"));
+        final File videoTarget = mediaFile(RemoteIMMediaPaths.VIDEOS, remoteId, extension(elem.getVideoPath(), "mp4"));
         // 先下到 .part 再改名：这样"目标文件存在"就等价于"已经下完"，界面只需判存在性，
         // 不会拿到一个下了一半的文件去播放。
         final File videoPart = new File(videoTarget.getAbsolutePath() + ".part");
-        final File coverTarget = mediaFile("video-cover", remoteId + "-cover", "jpg");
+        final File coverTarget = mediaFile(RemoteIMMediaPaths.VIDEO_COVERS, remoteId + "-cover", "jpg");
 
         final int duration = Math.max(0, (int) elem.getDuration());
         final int width = Math.max(0, elem.getSnapshotWidth());
@@ -691,7 +693,7 @@ public final class TencentIMClient {
         String remoteId = clean(elem.getUUID());
         if (remoteId.isEmpty()) remoteId = clean(message.getMsgID());
         String fileName = safeFileName(elem.getFileName(), "remote-im-file.bin");
-        File target = mediaFile("file", remoteId, extension(fileName, "bin"));
+        File target = mediaFile(RemoteIMMediaPaths.FILES, remoteId, extension(fileName, "bin"));
         String finalRemoteId = remoteId;
         elem.downloadFile(target.getAbsolutePath(), new V2TIMDownloadCallback() {
             @Override
@@ -732,9 +734,18 @@ public final class TencentIMClient {
     }
 
     private File mediaFile(String kind, String remoteId, String extension) {
-        File directory = new File(mediaDirectory, kind);
-        if (!directory.exists()) directory.mkdirs();
         String name = safeFileName(remoteId, UUID.randomUUID().toString());
+        File directory;
+        try {
+            directory = mediaPaths.directory(RemoteIMMediaPaths.INCOMING, kind);
+        } catch (IOException error) {
+            // 目录建不出来时仍返回目标路径：写入随后会失败并由下载回调统一报错，
+            // 比静默改写到别处更容易定位。
+            Log.w(TAG, "media: create directory failed."
+                + " kind=" + kind
+                + " <- attachment save will fail", error);
+            directory = new File(new File(mediaPaths.root(), RemoteIMMediaPaths.INCOMING), kind);
+        }
         return new File(directory, name + "." + extension);
     }
 

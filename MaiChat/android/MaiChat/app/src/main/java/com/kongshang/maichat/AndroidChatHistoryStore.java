@@ -14,6 +14,8 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
     private static final String DATABASE_NAME = "maichat-history.db";
     private static final int DATABASE_VERSION = 2;
 
+    private final RemoteIMMediaPaths mediaPaths;
+
     public static final class Page {
         private final List<RemoteIMMessage> messages;
         private final boolean hasEarlier;
@@ -38,6 +40,8 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
 
     AndroidChatHistoryStore(Context context, String databaseName) {
         super(context.getApplicationContext(), databaseName, null, DATABASE_VERSION);
+        // 媒体路径入库存相对形式，读出来再按当前根还原：数据目录换根时历史不会整片失效。
+        this.mediaPaths = RemoteIMMediaPaths.forApp(context);
     }
 
     @Override
@@ -254,21 +258,21 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
         values.put("status", message.status().name());
         values.put("created_at", message.createdAtMillis());
         RemoteIMImageAttachment image = message.imageAttachment();
-        values.put("image_path", image == null ? "" : image.localPath());
+        values.put("image_path", image == null ? "" : mediaPaths.toStoredPath(image.localPath()));
         values.put("image_width", image == null ? 0 : image.width());
         values.put("image_height", image == null ? 0 : image.height());
         values.put("image_size", image == null ? 0 : image.sizeBytes());
         RemoteIMVoiceAttachment voice = message.voiceAttachment();
-        values.put("voice_path", voice == null ? "" : voice.localPath());
+        values.put("voice_path", voice == null ? "" : mediaPaths.toStoredPath(voice.localPath()));
         values.put("voice_duration", voice == null ? 0 : voice.durationSeconds());
         RemoteIMFileAttachment file = message.fileAttachment();
-        values.put("file_path", file == null ? "" : file.localPath());
+        values.put("file_path", file == null ? "" : mediaPaths.toStoredPath(file.localPath()));
         values.put("file_name", file == null ? "" : file.fileName());
         values.put("file_mime", file == null ? "" : file.mimeType());
         values.put("file_size", file == null ? 0 : file.sizeBytes());
         RemoteIMVideoAttachment video = message.videoAttachment();
-        values.put("video_path", video == null ? "" : video.localPath());
-        values.put("video_cover_path", video == null ? "" : video.coverPath());
+        values.put("video_path", video == null ? "" : mediaPaths.toStoredPath(video.localPath()));
+        values.put("video_cover_path", video == null ? "" : mediaPaths.toStoredPath(video.coverPath()));
         values.put("video_duration", video == null ? 0 : video.durationSeconds());
         values.put("video_width", video == null ? 0 : video.width());
         values.put("video_height", video == null ? 0 : video.height());
@@ -311,9 +315,9 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
         return result.toString();
     }
 
-    private static RemoteIMMessage readMessage(Cursor cursor) {
+    private RemoteIMMessage readMessage(Cursor cursor) {
         RemoteIMImageAttachment image = null;
-        String imagePath = cursor.getString(8);
+        String imagePath = mediaPaths.toAbsolutePath(cursor.getString(8));
         if (!imagePath.isEmpty()) {
             image = new RemoteIMImageAttachment(
                 imagePath,
@@ -323,12 +327,12 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
             );
         }
         RemoteIMVoiceAttachment voice = null;
-        String voicePath = cursor.getString(12);
+        String voicePath = mediaPaths.toAbsolutePath(cursor.getString(12));
         if (!voicePath.isEmpty()) {
             voice = new RemoteIMVoiceAttachment(voicePath, cursor.getInt(13));
         }
         RemoteIMFileAttachment file = null;
-        String filePath = cursor.getString(14);
+        String filePath = mediaPaths.toAbsolutePath(cursor.getString(14));
         if (!filePath.isEmpty()) {
             file = new RemoteIMFileAttachment(
                 filePath,
@@ -338,11 +342,11 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
             );
         }
         RemoteIMVideoAttachment video = null;
-        String videoPath = cursor.getString(19);
+        String videoPath = mediaPaths.toAbsolutePath(cursor.getString(19));
         if (!videoPath.isEmpty()) {
             video = new RemoteIMVideoAttachment(
                 videoPath,
-                cursor.getString(20),
+                mediaPaths.toAbsolutePath(cursor.getString(20)),
                 cursor.getInt(21),
                 cursor.getInt(22),
                 cursor.getInt(23),

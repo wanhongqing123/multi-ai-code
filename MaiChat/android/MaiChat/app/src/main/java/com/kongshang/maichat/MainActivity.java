@@ -113,7 +113,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         getWindow().setStatusBarColor(Color.WHITE);
         getWindow().setNavigationBarColor(Color.WHITE);
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
-        mediaStore = new RemoteIMMediaStore(getCacheDir());
+        // 发出的媒体同样落持久目录，不放缓存：路径会进聊天记录并被长期引用。
+        mediaStore = new RemoteIMMediaStore(RemoteIMMediaPaths.forApp(this));
         // 凭证由 Gradle 从 local.properties 注入；没配时 isAvailable() 为 false，
         // 录音会照旧当语音消息发出去，不会因此报错。
         speechRecognizer = new TencentSpeechRecognizer(
@@ -1674,9 +1675,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
 
     private void openCamera() {
         try {
-            File directory = new File(getCacheDir(), "remote-im-camera");
-            if (!directory.exists() && !directory.mkdirs()) throw new IOException("create camera directory failed");
-            pendingCameraFile = new File(directory, "camera-" + System.currentTimeMillis() + ".jpg");
+            pendingCameraFile = mediaStore.createCameraPhotoFile();
             Uri output = FileProvider.getUriForFile(this, getPackageName() + ".files", pendingCameraFile);
             Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
             intent.putExtra(MediaStore.EXTRA_OUTPUT, output);
@@ -1719,10 +1718,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         String mimeType = getContentResolver().getType(uri);
         if (mimeType == null || mimeType.trim().isEmpty()) mimeType = "application/octet-stream";
         try (InputStream input = getContentResolver().openInputStream(uri)) {
-            File directory = new File(getCacheDir(), "remote-im-file");
-            if (!directory.exists() && !directory.mkdirs()) throw new IOException("create file directory failed");
-            String suffix = fileName.contains(".") ? fileName.substring(fileName.lastIndexOf('.')) : ".bin";
-            File target = new File(directory, "file-" + System.currentTimeMillis() + suffix);
+            File target = mediaStore.createOutgoingFile(fileName);
             copy(input, target);
             session.sendFileMessage(target.getAbsolutePath(), fileName, mimeType, target.length());
             stickToLatestMessage = true;

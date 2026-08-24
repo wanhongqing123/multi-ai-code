@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  API 31 及以上走这份规则。
+  云备份排除媒体，理由同 backup_rules.xml：25MB 配额撑爆会导致整体备份失败。
+  换机直传（device-transfer）不设限制，所以不排除——那条路没有配额，
+  把图片视频一起带到新设备对用户只有好处。
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="RemoteIMMedia" />
+    </cloud-backup>
+</data-extraction-rules>

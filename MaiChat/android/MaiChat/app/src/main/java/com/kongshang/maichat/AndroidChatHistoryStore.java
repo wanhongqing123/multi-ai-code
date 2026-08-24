@@ -5,6 +5,7 @@ import android.content.Context;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
+import android.util.Log;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -13,6 +14,7 @@ import java.util.List;
 public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
     private static final String DATABASE_NAME = "maichat-history.db";
     private static final int DATABASE_VERSION = 2;
+    private static final String TAG = "MaiChat.im";
 
     private final RemoteIMMediaPaths mediaPaths;
 
@@ -258,21 +260,21 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
         values.put("status", message.status().name());
         values.put("created_at", message.createdAtMillis());
         RemoteIMImageAttachment image = message.imageAttachment();
-        values.put("image_path", image == null ? "" : mediaPaths.toStoredPath(image.localPath()));
+        values.put("image_path", image == null ? "" : storedMediaPath(image.localPath()));
         values.put("image_width", image == null ? 0 : image.width());
         values.put("image_height", image == null ? 0 : image.height());
         values.put("image_size", image == null ? 0 : image.sizeBytes());
         RemoteIMVoiceAttachment voice = message.voiceAttachment();
-        values.put("voice_path", voice == null ? "" : mediaPaths.toStoredPath(voice.localPath()));
+        values.put("voice_path", voice == null ? "" : storedMediaPath(voice.localPath()));
         values.put("voice_duration", voice == null ? 0 : voice.durationSeconds());
         RemoteIMFileAttachment file = message.fileAttachment();
-        values.put("file_path", file == null ? "" : mediaPaths.toStoredPath(file.localPath()));
+        values.put("file_path", file == null ? "" : storedMediaPath(file.localPath()));
         values.put("file_name", file == null ? "" : file.fileName());
         values.put("file_mime", file == null ? "" : file.mimeType());
         values.put("file_size", file == null ? 0 : file.sizeBytes());
         RemoteIMVideoAttachment video = message.videoAttachment();
-        values.put("video_path", video == null ? "" : mediaPaths.toStoredPath(video.localPath()));
-        values.put("video_cover_path", video == null ? "" : mediaPaths.toStoredPath(video.coverPath()));
+        values.put("video_path", video == null ? "" : storedMediaPath(video.localPath()));
+        values.put("video_cover_path", video == null ? "" : storedMediaPath(video.coverPath()));
         values.put("video_duration", video == null ? 0 : video.durationSeconds());
         values.put("video_width", video == null ? 0 : video.width());
         values.put("video_height", video == null ? 0 : video.height());
@@ -313,6 +315,20 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
             result.append(prefix).append(column);
         }
         return result.toString();
+    }
+
+    /**
+     * 媒体路径入库前压成相对形式。落在媒体根之外的不入库——但静默丢附件极难排查，
+     * 所以留一行日志。正常收发的媒体都由 RemoteIMMediaPaths 分配位置，不会走到这里。
+     */
+    private String storedMediaPath(String runtimePath) {
+        String stored = mediaPaths.toStoredPath(runtimePath);
+        if (stored.isEmpty() && runtimePath != null && !runtimePath.trim().isEmpty()) {
+            Log.w(TAG, "history: media path outside the media root was dropped."
+                + " path=" + runtimePath
+                + " <- attachment will not be persisted");
+        }
+        return stored;
     }
 
     private RemoteIMMessage readMessage(Cursor cursor) {

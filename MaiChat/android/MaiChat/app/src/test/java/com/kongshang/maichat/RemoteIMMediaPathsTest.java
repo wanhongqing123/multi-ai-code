@@ -23,15 +23,16 @@ public class RemoteIMMediaPathsTest {
         assertEquals("Incoming/Images/photo.jpg", paths.toStoredPath(target.getAbsolutePath()));
     }
 
+    /** 库里只承认本 app 管理的媒体：根外的文件不受我们控制，存进去只是又一条悬空引用。 */
     @Test
-    public void leavesPathOutsideRootUnchanged() throws Exception {
+    public void dropsPathOutsideRootInsteadOfStoringIt() throws Exception {
         Path root = Files.createTempDirectory("maichat-media-root-foreign");
         Path elsewhere = Files.createTempDirectory("maichat-media-elsewhere");
         RemoteIMMediaPaths paths = new RemoteIMMediaPaths(root.toFile());
 
-        String legacy = new File(elsewhere.toFile(), "cached.jpg").getAbsolutePath();
+        String outsideRoot = new File(elsewhere.toFile(), "cached.jpg").getAbsolutePath();
 
-        assertEquals(legacy, paths.toStoredPath(legacy));
+        assertEquals("", paths.toStoredPath(outsideRoot));
     }
 
     @Test
@@ -48,15 +49,19 @@ public class RemoteIMMediaPathsTest {
         );
     }
 
+    /**
+     * 旧版本写下的绝对路径一律不读：按用户要求不做任何旧版本兼容，既不搬运文件也不
+     * 沿用旧路径。这类记录当作没有附件，由正文里的「[图片消息] …」占位文字体现。
+     */
     @Test
-    public void returnsLegacyAbsolutePathUnchanged() throws Exception {
+    public void refusesToReadLegacyAbsolutePath() throws Exception {
         Path root = Files.createTempDirectory("maichat-media-legacy");
         Path cache = Files.createTempDirectory("maichat-media-legacy-cache");
         RemoteIMMediaPaths paths = new RemoteIMMediaPaths(root.toFile());
 
         String legacy = new File(cache.toFile(), "remote-im-media/image/old.jpg").getAbsolutePath();
 
-        assertEquals(legacy, paths.toAbsolutePath(legacy));
+        assertEquals("", paths.toAbsolutePath(legacy));
     }
 
     /**
@@ -98,6 +103,18 @@ public class RemoteIMMediaPathsTest {
         assertEquals("Incoming", incomingCovers.getParentFile().getName());
         assertEquals("Files", outgoingFiles.getName());
         assertEquals("Outgoing", outgoingFiles.getParentFile().getName());
+    }
+
+    /** 带 .. 的相对路径拼出来能逃出媒体根，还原时必须挡住。 */
+    @Test
+    public void refusesRelativePathEscapingTheRoot() throws Exception {
+        Path root = Files.createTempDirectory("maichat-media-escape");
+        RemoteIMMediaPaths paths = new RemoteIMMediaPaths(root.toFile());
+
+        assertEquals("", paths.toAbsolutePath("../outside.jpg"));
+        assertEquals("", paths.toAbsolutePath("Incoming/../../outside.jpg"));
+        assertTrue(paths.toAbsolutePath("Incoming/Images/ok.jpg")
+            .startsWith(root.toFile().getAbsolutePath()));
     }
 
     @Test

@@ -168,6 +168,8 @@ add_library(remote_im_desktop_ui
   src/ui/LoginDialog.cpp
   src/ui/MainWindow.h
   src/ui/MainWindow.cpp
+  src/ui/MessageImageLoader.h
+  src/ui/MessageImageLoader.cpp
   src/ui/FilePreviewDialog.h
   src/ui/FilePreviewDialog.cpp
   src/ui/ImagePreviewDialog.h
@@ -348,6 +350,9 @@ target_link_libraries(remote_input_capture_test PRIVATE remote_im_desktop_ui rem
 add_executable(remote_desktop_ui_test tests/RemoteDesktopUiTest.cpp)
 target_link_libraries(remote_desktop_ui_test PRIVATE remote_im_desktop_ui remote_im_core Qt5::Widgets Qt5::Test)
 
+add_executable(message_image_loader_test tests/MessageImageLoaderTest.cpp)
+target_link_libraries(message_image_loader_test PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets Qt5::Test)
+
 add_executable(message_search_test tests/MessageSearchTest.cpp)
 target_link_libraries(message_search_test PRIVATE remote_im_core Qt5::Widgets Qt5::Test)
 
@@ -382,5 +387,6 @@ add_test(NAME video_file_metadata_test COMMAND video_file_metadata_test)
 add_test(NAME video_cover_image_test COMMAND video_cover_image_test)
 add_test(NAME remote_input_capture_test COMMAND remote_input_capture_test)
 add_test(NAME remote_desktop_ui_test COMMAND remote_desktop_ui_test)
+add_test(NAME message_image_loader_test COMMAND message_image_loader_test)
 add_test(NAME message_search_test COMMAND message_search_test)
 add_test(NAME ui_zoom_test COMMAND ui_zoom_test)

@@ -1,5 +1,6 @@
 #include "ui/MainWindow.h"
 #include "model/MessageSearch.h"
+#include "ui/MessageImageLoader.h"
 
 #include <QCoreApplication>
 #include <QApplication>
@@ -2830,22 +2831,26 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
     QLabel* deliveryStatusLabel = nullptr;
 
     if (message.hasImage) {
-        QPixmap pixmap(message.image.localPath);
-        if (!pixmap.isNull()) {
+        {
             auto* imageLabel = new ClickableImageLabel(message.image.localPath, [this](const QString& path) {
                 openImagePreview(path);
             }, bubble);
             imageLabel->setObjectName(QStringLiteral("messageImageLabel"));
-            // 高分屏（DPR>1）按物理分辨率缩放并声明 DPR，否则缩略图被绘制层二次放大而发虚；
+            // 高分屏（DPR>1）按物理分辨率解码并声明 DPR，否则缩略图被绘制层二次放大而发虚；
             // 控件尺寸用逻辑值（物理尺寸 / DPR）。
             const qreal thumbDpr = imageLabel->devicePixelRatioF();
-            QPixmap thumbnail = pixmap.scaled(
-                (QSizeF(UiZoom::s(280), UiZoom::s(200)) * thumbDpr).toSize(),
-                Qt::KeepAspectRatio, Qt::SmoothTransformation);
-            thumbnail.setDevicePixelRatio(thumbDpr);
-            imageLabel->setPixmap(thumbnail);
+            const QSize targetPixels = (QSizeF(UiZoom::s(280), UiZoom::s(200)) * thumbDpr).toSize();
             imageLabel->setAlignment(Qt::AlignCenter);
-            imageLabel->setMinimumSize((QSizeF(thumbnail.size()) / thumbDpr).toSize());
+            // 先按目标尺寸占位，避免解码回来时气泡高度突变把列表顶得乱跳。
+            imageLabel->setMinimumSize((QSizeF(targetPixels) / thumbDpr).toSize());
+            // 解码放后台、按目标尺寸降采样、结果进缓存。原先这里是 QPixmap(path)
+            // 解全尺寸原图再缩，实测 12MP 照片 46.8ms/张，且每次重建都重解。
+            MessageImageLoader::instance().loadInto(
+                message.image.localPath, targetPixels, imageLabel, [imageLabel, thumbDpr] {
+                    imageLabel->setText(QStringLiteral("图片暂不可预览"));
+                    imageLabel->setMinimumSize(QSize());
+                    Q_UNUSED(thumbDpr);
+                });
             // 右键菜单（飞书式）：复制图片 / 预览 / 保存到本地。
             imageLabel->setContextMenuPolicy(Qt::CustomContextMenu);
             connect(imageLabel, &QLabel::customContextMenuRequested, this,
@@ -2881,10 +2886,6 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
                 }
             });
             contentRow->addWidget(imageLabel);
-        } else {
-            auto* missingLabel = new QLabel(QStringLiteral("图片无法加载"), bubble);
-            missingLabel->setWordWrap(true);
-            contentRow->addWidget(missingLabel);
         }
     } else if (message.hasVoice) {
         // 语音气泡：时长 + 点击用系统播放器打开。腾讯 IM 的语音多是 AMR/SILK，
@@ -2930,25 +2931,19 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
         videoButton->setFlat(true);
 
         constexpr int kCoverMaxWidth = 240;
-        QPixmap cover(message.video.coverPath);
-        int coverWidth = kCoverMaxWidth;
-        int coverHeight = UiZoom::s(135);
-        if (!cover.isNull()) {
-            cover = cover.scaledToWidth(UiZoom::s(kCoverMaxWidth), Qt::SmoothTransformation);
-            coverWidth = cover.width();
-            coverHeight = cover.height();
-        } else {
-            coverWidth = UiZoom::s(kCoverMaxWidth);
-            cover = QPixmap(coverWidth, coverHeight);
-            cover.fill(QColor(0x11, 0x18, 0x27));
-        }
+        // 封面同样不在这里同步解码：先摆一张纯色占位，解码回来再把带角标的封面换上。
+        const int coverWidth = UiZoom::s(kCoverMaxWidth);
+        const int coverHeight = UiZoom::s(135);
+        QPixmap cover(coverWidth, coverHeight);
+        cover.fill(QColor(0x11, 0x18, 0x27));
         // 播放角标画进封面本身：QPushButton 的 icon 只有一层，叠控件在这里
         // 会被气泡的布局挤走。
-        {
-            QPainter painter(&cover);
+        // 抽成 lambda：占位封面和随后解码回来的真封面都要画同一个角标。
+        auto paintPlayBadge = [](QPixmap& target) {
+            QPainter painter(&target);
             painter.setRenderHint(QPainter::Antialiasing, true);
-            const QPointF center(coverWidth / 2.0, coverHeight / 2.0);
-            const double radius = qMin(coverWidth, coverHeight) * 0.16;
+            const QPointF center(target.width() / 2.0, target.height() / 2.0);
+            const double radius = qMin(target.width(), target.height()) * 0.16;
             painter.setPen(Qt::NoPen);
             painter.setBrush(QColor(0, 0, 0, 110));
             painter.drawEllipse(center, radius, radius);
@@ -2961,9 +2956,25 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
             triangle.closeSubpath();
             painter.setBrush(QColor(255, 255, 255, 230));
             painter.drawPath(triangle);
-        }
+        };
+        paintPlayBadge(cover);
         videoButton->setIcon(QIcon(cover));
         videoButton->setIconSize(QSize(coverWidth, coverHeight));
+        // 真封面后台解码，回来再换上；解不出来就一直是占位图，不影响播放。
+        if (!message.video.coverPath.trimmed().isEmpty()) {
+            const qreal coverDpr = videoButton->devicePixelRatioF();
+            MessageImageLoader::instance().load(
+                message.video.coverPath,
+                (QSizeF(coverWidth, coverHeight) * coverDpr).toSize(),
+                videoButton,
+                [videoButton, coverWidth, coverHeight, paintPlayBadge](const QPixmap& loaded) {
+                    QPixmap composed = loaded.scaled(QSize(coverWidth, coverHeight),
+                                                     Qt::KeepAspectRatioByExpanding,
+                                                     Qt::SmoothTransformation);
+                    paintPlayBadge(composed);
+                    videoButton->setIcon(QIcon(composed));
+                });
+        }
         videoButton->setFixedSize(coverWidth, coverHeight);
         videoButton->setStyleSheet(QStringLiteral(
             "QPushButton#messageVideoButton { border: none; padding: 0; background: transparent; }"));

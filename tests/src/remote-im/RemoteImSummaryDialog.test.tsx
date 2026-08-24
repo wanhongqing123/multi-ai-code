@@ -2,7 +2,10 @@ import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { RemoteImMessage } from '../../../electron/preload.js'
-import { RemoteImSummaryImage } from '../../../src/remote-im/RemoteImSummaryDialog.js'
+import {
+  RemoteImSummaryImage,
+  isScrolledToBottom
+} from '../../../src/remote-im/RemoteImSummaryDialog.js'
 
 function imageMessage(overrides: Partial<RemoteImMessage> = {}): RemoteImMessage {
   return {
@@ -66,5 +69,25 @@ describe('RemoteImSummaryImage', () => {
     expect(markup).toContain('class="remote-im-summary-image-preview"')
     expect(markup).toContain('src="https://example.test/shot-thumb.png"')
     expect(markup).toContain('alt="shot.png"')
+  })
+})
+
+// 时光胶囊打开时要停在最后一条。持续贴底的开关就靠这个判断：判反了要么自动定位
+// 失效，要么用户往回翻会被一直拽回底部——两种都不会报错，只能靠断言守住。
+describe('isScrolledToBottom', () => {
+  it('恰好在底部时算贴底', () => {
+    expect(isScrolledToBottom({ scrollTop: 900, scrollHeight: 1400, clientHeight: 500 })).toBe(true)
+  })
+
+  it('差几像素仍算贴底，避免图片加载的抖动误判为用户滚动', () => {
+    expect(isScrolledToBottom({ scrollTop: 897, scrollHeight: 1400, clientHeight: 500 })).toBe(true)
+  })
+
+  it('用户往回翻之后不再算贴底', () => {
+    expect(isScrolledToBottom({ scrollTop: 200, scrollHeight: 1400, clientHeight: 500 })).toBe(false)
+  })
+
+  it('内容不足一屏时算贴底，此时没有可滚动空间', () => {
+    expect(isScrolledToBottom({ scrollTop: 0, scrollHeight: 300, clientHeight: 500 })).toBe(true)
   })
 })

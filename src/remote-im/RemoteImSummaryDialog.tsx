@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { RemoteImMessage } from '../../electron/preload.js'
@@ -152,6 +152,21 @@ export interface RemoteImSummaryDialogProps {
   onClose: () => void
 }
 
+/** 距底部多少像素以内仍算「贴着底」。图片加载会带来 1px 级的抖动，留一点余量。 */
+const BOTTOM_TOLERANCE_PX = 4
+
+/**
+ * 是否仍停在底部。抽成纯函数是为了能测：这里判错方向的话，要么永远不贴底
+ * （自动定位失效），要么一直贴底（用户往回翻会被拽回来），两种都很难靠肉眼发现。
+ */
+export function isScrolledToBottom(metrics: {
+  scrollTop: number
+  scrollHeight: number
+  clientHeight: number
+}): boolean {
+  return metrics.scrollHeight - metrics.scrollTop - metrics.clientHeight <= BOTTOM_TOLERANCE_PX
+}
+
 // 消息记录汇总弹窗：结构化文档视图（统计徽章、会话卡片、日期分隔、方向着色的
 // 发送者胶囊），消息正文仍用 Markdown 渲染（AICLI 输出的标题/列表/代码块不丢）。
 // 「发送给 AICLI」用共享生成器落成完整 .md 文件后把路径交给主会话。
@@ -180,6 +195,41 @@ export default function RemoteImSummaryDialog(props: RemoteImSummaryDialogProps)
   }, [props.open, props.projectId])
 
   const summary = useMemo(() => (messages ? summarizeRemoteImMessages(messages) : null), [messages])
+
+  const bodyRef = useRef<HTMLDivElement | null>(null)
+  // 打开就停在最后一条：这个弹窗是用来回看「最近发生了什么」的，
+  // 从两千条之前的开头开始滚没有意义。用 layout effect 是为了在绘制前就定好位，
+  // 否则会先闪一下顶部再跳。
+  useLayoutEffect(() => {
+    const element = bodyRef.current
+    if (!props.open || !summary || !element) return
+
+    let pinned = true
+    const scrollToBottom = (): void => {
+      if (!pinned) return
+      element.scrollTop = element.scrollHeight
+    }
+    scrollToBottom()
+
+    // 图片是懒加载的，加载完会把内容撑高、把「底部」顶走，所以在用户第一次主动
+    // 往回滚之前持续贴底；用户一滚就交还控制权，不再跟他抢滚动条。
+    const handleScroll = (): void => {
+      if (!isScrolledToBottom(element)) pinned = false
+    }
+    element.addEventListener('scroll', handleScroll, { passive: true })
+
+    const content = element.firstElementChild
+    const observer =
+      typeof ResizeObserver === 'undefined' || !content
+        ? null
+        : new ResizeObserver(scrollToBottom)
+    if (observer && content) observer.observe(content)
+
+    return () => {
+      element.removeEventListener('scroll', handleScroll)
+      observer?.disconnect()
+    }
+  }, [props.open, summary])
   const markdown = useMemo(
     () =>
       messages
@@ -218,7 +268,7 @@ export default function RemoteImSummaryDialog(props: RemoteImSummaryDialogProps)
             </button>
           </div>
         </header>
-        <div className="remote-im-summary-body">
+        <div className="remote-im-summary-body" ref={bodyRef}>
           {error ? (
             <div className="remote-im-summary-error">{error}</div>
           ) : messages === null ? (

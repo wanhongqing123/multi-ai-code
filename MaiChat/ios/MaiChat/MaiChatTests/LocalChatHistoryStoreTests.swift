@@ -496,6 +496,84 @@ final class LocalChatHistoryStoreTests: XCTestCase {
         )
     }
 
+    func testPersistsNewApplicationSupportImageAsRelativeReference() throws {
+        let directoryURL = makeTemporaryDirectoryURL()
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+
+        let fileName = "persistent-image-\(UUID().uuidString).png"
+        let persistentURL = RemoteIMMediaStorage.fileURL(category: .outgoingImages, fileName: fileName)
+        let bytes = Data([0x89, 0x50, 0x4E, 0x47])
+        try bytes.write(to: persistentURL)
+        defer { try? FileManager.default.removeItem(at: persistentURL) }
+
+        let message = RemoteIMMessage(
+            remoteID: "legacy-cache-image",
+            fromUserID: "ios-master",
+            toUserID: "peer-a",
+            text: "[图片消息] \(fileName)",
+            imageAttachment: RemoteIMImageAttachment(
+                localFilePath: persistentURL.path,
+                width: 1,
+                height: 1,
+                sizeBytes: bytes.count
+            ),
+            direction: .outgoing,
+            status: .sent,
+            createdAt: Date(timeIntervalSince1970: 550)
+        )
+
+        let store = LocalChatHistoryStore(baseDirectoryURL: directoryURL)
+        try persist([message], in: store)
+        let loaded = try XCTUnwrap(
+            conversationMessages(in: store, peerUserID: "peer-a").first
+        )
+
+        XCTAssertEqual(loaded.imageAttachment?.localFilePath, persistentURL.path)
+        XCTAssertEqual(try Data(contentsOf: persistentURL), bytes)
+
+        let databaseURL = directoryURL.appendingPathComponent("messages.sqlite3")
+        var database: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(databaseURL.path, &database), SQLITE_OK)
+        let openedDatabase = try XCTUnwrap(database)
+        defer { sqlite3_close(openedDatabase) }
+        var statement: OpaquePointer?
+        XCTAssertEqual(
+            sqlite3_prepare_v2(openedDatabase, "SELECT image_attachment FROM messages LIMIT 1", -1, &statement, nil),
+            SQLITE_OK
+        )
+        let openedStatement = try XCTUnwrap(statement)
+        defer { sqlite3_finalize(openedStatement) }
+        XCTAssertEqual(sqlite3_step(openedStatement), SQLITE_ROW)
+        let storedJSON = sqlite3_column_text(openedStatement, 0).map { String(cString: $0) } ?? ""
+        let storedAttachment = try JSONDecoder().decode(
+            RemoteIMImageAttachment.self,
+            from: try XCTUnwrap(storedJSON.data(using: .utf8))
+        )
+        XCTAssertEqual(storedAttachment.localFilePath, "Outgoing/Images/\(fileName)")
+        XCTAssertFalse(storedJSON.contains("/Library/Caches/"))
+    }
+
+    func testKeepsLegacyAbsoluteMediaPathWithoutMigration() throws {
+        let fileName = "legacy-image-\(UUID().uuidString).png"
+        let legacyDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("RemoteIMPickedImage", isDirectory: true)
+        try FileManager.default.createDirectory(at: legacyDirectory, withIntermediateDirectories: true)
+        let legacyURL = legacyDirectory.appendingPathComponent(fileName)
+        let bytes = Data([1, 1, 1])
+        try bytes.write(to: legacyURL)
+        defer { try? FileManager.default.removeItem(at: legacyURL) }
+
+        XCTAssertEqual(
+            RemoteIMMediaStorage.persistentReference(for: legacyURL.path, category: .outgoingImages),
+            legacyURL.path
+        )
+        XCTAssertEqual(
+            RemoteIMMediaStorage.resolvedPath(from: legacyURL.path, category: .outgoingImages),
+            legacyURL.path
+        )
+        XCTAssertEqual(try Data(contentsOf: legacyURL), bytes)
+    }
+
     func testMigratesLegacyJSONHistoryIntoSQLite() throws {
         let directoryURL = makeTemporaryDirectoryURL()
         defer { try? FileManager.default.removeItem(at: directoryURL) }

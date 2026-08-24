@@ -916,22 +916,13 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
 
     private nonisolated static func voiceCacheURL(remoteID: String?, messageID: String?) -> URL {
         let rawName = remoteID ?? messageID ?? UUID().uuidString
-        let safeName = rawName
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: ":", with: "_")
-        let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("RemoteIMVoice", isDirectory: true)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        return directory.appendingPathComponent(safeName).appendingPathExtension("m4a")
+        return RemoteIMMediaStorage.fileURL(category: .incomingVoices, stem: rawName, pathExtension: "m4a")
     }
 
     private nonisolated static func videoCacheURL(
         remoteID: String,
         videoType: String?
     ) -> URL {
-        let safeName = remoteID
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: ":", with: "_")
         let rawExtension = videoType?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .trimmingCharacters(in: CharacterSet(charactersIn: "."))
@@ -939,20 +930,15 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
         let fileExtension = !rawExtension.isEmpty && rawExtension.allSatisfy({ $0.isLetter || $0.isNumber })
             ? rawExtension
             : "mp4"
-        let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("RemoteIMVideo", isDirectory: true)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        return directory.appendingPathComponent(safeName).appendingPathExtension(fileExtension)
+        return RemoteIMMediaStorage.fileURL(
+            category: .incomingVideos,
+            stem: remoteID,
+            pathExtension: fileExtension
+        )
     }
 
     private nonisolated static func videoCoverCacheURL(remoteID: String) -> URL {
-        let safeName = remoteID
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: ":", with: "_")
-        let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("RemoteIMVideoCover", isDirectory: true)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        return directory.appendingPathComponent(safeName).appendingPathExtension("jpg")
+        RemoteIMMediaStorage.fileURL(category: .incomingVideoCovers, stem: remoteID, pathExtension: "jpg")
     }
 
     private nonisolated static func isUsableCachedFile(_ url: URL) -> Bool {
@@ -963,7 +949,7 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
     }
 
     private nonisolated static func partialDownloadURL(for finalURL: URL) -> URL {
-        finalURL.appendingPathExtension("part")
+        RemoteIMMediaStorage.partialDownloadURL(for: finalURL)
     }
 
     private nonisolated static func promoteDownloadedFile(from partialURL: URL, to finalURL: URL) -> Bool {
@@ -1006,16 +992,12 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
         imageURL: String?
     ) -> URL {
         let rawName = remoteID ?? messageID ?? UUID().uuidString
-        let safeName = rawName
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: ":", with: "_")
-        let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("RemoteIMImage", isDirectory: true)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let pathExtension = URL(string: imageURL ?? "")?.pathExtension
-        return directory
-            .appendingPathComponent(safeName)
-            .appendingPathExtension(pathExtension?.isEmpty == false ? pathExtension! : "jpg")
+        return RemoteIMMediaStorage.fileURL(
+            category: .incomingImages,
+            stem: rawName,
+            pathExtension: pathExtension?.isEmpty == false ? pathExtension! : "jpg"
+        )
     }
 
     private nonisolated static func fileCacheURL(
@@ -1024,16 +1006,12 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
         fileName: String
     ) -> URL {
         let rawName = remoteID ?? messageID ?? UUID().uuidString
-        let safeName = rawName
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: ":", with: "_")
-        let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("RemoteIMFile", isDirectory: true)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let fileExtension = URL(fileURLWithPath: fileName).pathExtension
-        return directory
-            .appendingPathComponent(safeName)
-            .appendingPathExtension(fileExtension.isEmpty ? "bin" : fileExtension)
+        return RemoteIMMediaStorage.fileURL(
+            category: .incomingFiles,
+            stem: rawName,
+            pathExtension: fileExtension.isEmpty ? "bin" : fileExtension
+        )
     }
 
     private nonisolated static func cleanFileName(_ value: String?) -> String {

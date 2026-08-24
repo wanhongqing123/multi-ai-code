@@ -1081,7 +1081,10 @@ private struct MessageBubbleView: View {
             Group {
                 if let videoAttachment = message.videoAttachment {
                     Button(action: previewVideo) {
-                        VideoBubbleContent(attachment: videoAttachment)
+                        VideoBubbleContent(
+                            attachment: videoAttachment,
+                            isIncoming: message.direction == .incoming
+                        )
                     }
                     .buttonStyle(.plain)
                     .disabled(!VideoBubbleContent.isPlayable(videoAttachment))
@@ -1207,7 +1210,7 @@ private struct FullScreenImagePreviewView: View {
                 VStack(spacing: 12) {
                     Image(systemName: "photo")
                         .font(.system(size: 34, weight: .semibold))
-                    Text("图片暂不可预览")
+                    Text("图片文件已丢失，无法预览")
                         .font(.system(size: 15, weight: .semibold))
                     Text(URL(fileURLWithPath: item.localFilePath).lastPathComponent)
                         .font(.system(size: 12, weight: .medium))
@@ -1481,6 +1484,7 @@ private struct ZoomableImagePreview: UIViewRepresentable {
 
 private struct VideoBubbleContent: View {
     let attachment: RemoteIMVideoAttachment
+    let isIncoming: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -1510,7 +1514,7 @@ private struct VideoBubbleContent: View {
                         .frame(width: 52, height: 52)
                         .background(.black.opacity(0.5), in: Circle())
                         .overlay(Circle().stroke(.white.opacity(0.85), lineWidth: 1.5))
-                } else {
+                } else if isDownloading {
                     VStack(spacing: 8) {
                         ProgressView()
                             .tint(.white)
@@ -1521,6 +1525,17 @@ private struct VideoBubbleContent: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
                     .background(.black.opacity(0.5), in: Capsule())
+                } else {
+                    VStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 20, weight: .bold))
+                        Text(isIncoming ? "视频文件已丢失" : "本地视频已丢失")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(.black.opacity(0.56), in: Capsule())
                 }
 
                 Text(durationText)
@@ -1536,7 +1551,7 @@ private struct VideoBubbleContent: View {
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .background(Color(red: 0.945, green: 0.957, blue: 0.973), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 
-            Text(Self.isPlayable(attachment) ? "点击播放" : "封面可先显示，视频正在后台下载")
+            Text(videoStatusText)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(RemoteIMStyle.textSecondary)
         }
@@ -1554,6 +1569,20 @@ private struct VideoBubbleContent: View {
     private var coverImage: UIImage? {
         guard let coverPath = attachment.coverPath else { return nil }
         return UIImage(contentsOfFile: coverPath)
+    }
+
+    private var isDownloading: Bool {
+        guard !attachment.localPath.isEmpty else { return false }
+        let partialURL = RemoteIMMediaStorage.partialDownloadURL(
+            for: URL(fileURLWithPath: attachment.localPath)
+        )
+        return FileManager.default.fileExists(atPath: partialURL.path)
+    }
+
+    private var videoStatusText: String {
+        if Self.isPlayable(attachment) { return "点击播放" }
+        if isDownloading { return "封面可先显示，视频正在后台下载" }
+        return isIncoming ? "视频文件已丢失，暂时无法播放" : "本地视频文件已丢失"
     }
 
     private var previewHeight: CGFloat {
@@ -1584,7 +1613,7 @@ private struct ImageBubbleContent: View {
             } else {
                 HStack(spacing: 8) {
                     Image(systemName: "photo")
-                    Text("图片暂不可预览")
+                    Text("图片文件已丢失，无法预览")
                         .font(.system(size: 13, weight: .semibold))
                 }
                 .foregroundStyle(RemoteIMStyle.textSecondary)
@@ -2128,9 +2157,11 @@ private final class VoiceMessageRecorder: NSObject, ObservableObject {
         try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker])
         try session.setActive(true)
 
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("remote-im-voice-\(UUID().uuidString)")
-            .appendingPathExtension("m4a")
+        let url = RemoteIMMediaStorage.fileURL(
+            category: .outgoingVoices,
+            stem: "remote-im-voice-\(UUID().uuidString)",
+            pathExtension: "m4a"
+        )
         let settings: [String: Any] = [
             AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
             AVSampleRateKey: 16_000,
@@ -2322,13 +2353,12 @@ private struct RemoteIMPickedVideoTransfer: Transferable, Sendable {
             SentTransferredFile(video.fileURL)
         } importing: { received in
             let sourceURL = received.file
-            let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("RemoteIMOutgoingVideo", isDirectory: true)
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let sourceExtension = sourceURL.pathExtension.trimmingCharacters(in: .whitespacesAndNewlines)
-            let targetURL = directory
-                .appendingPathComponent("remote-im-video-\(UUID().uuidString)")
-                .appendingPathExtension(sourceExtension.isEmpty ? "mov" : sourceExtension)
+            let targetURL = RemoteIMMediaStorage.fileURL(
+                category: .outgoingVideos,
+                stem: "remote-im-video-\(UUID().uuidString)",
+                pathExtension: sourceExtension.isEmpty ? "mov" : sourceExtension
+            )
             try FileManager.default.copyItem(at: sourceURL, to: targetURL)
             return RemoteIMPickedVideoTransfer(fileURL: targetURL)
         }
@@ -2859,9 +2889,11 @@ private struct ComposerView: View {
         guard let coverData = UIImage(cgImage: generatedCover.image).jpegData(compressionQuality: 0.86) else {
             throw RemoteIMPickedMediaError.coverGenerationFailed
         }
-        let coverFileURL = fileURL
-            .deletingPathExtension()
-            .appendingPathExtension("jpg")
+        let coverFileURL = RemoteIMMediaStorage.fileURL(
+            category: .outgoingVideoCovers,
+            stem: fileURL.deletingPathExtension().lastPathComponent,
+            pathExtension: "jpg"
+        )
         try coverData.write(to: coverFileURL, options: .atomic)
 
         let resourceValues = try fileURL.resourceValues(forKeys: [.fileSizeKey])
@@ -2909,12 +2941,11 @@ private struct ComposerView: View {
         }
 
         let fileName = sourceURL.lastPathComponent.isEmpty ? "file" : sourceURL.lastPathComponent
-        let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("RemoteIMPickedFile", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let targetURL = directory
-            .appendingPathComponent(UUID().uuidString)
-            .appendingPathExtension(sourceURL.pathExtension)
+        let targetURL = RemoteIMMediaStorage.fileURL(
+            category: .outgoingFiles,
+            stem: UUID().uuidString,
+            pathExtension: sourceURL.pathExtension
+        )
         try FileManager.default.copyItem(at: sourceURL, to: targetURL)
 
         let resourceValues = try? targetURL.resourceValues(forKeys: [.fileSizeKey])
@@ -2934,12 +2965,11 @@ private struct ComposerView: View {
     ) throws -> RemoteIMImageFile {
         let contentType = contentTypes.first(where: { $0.conforms(to: .image) })
         let fileExtension = contentType?.preferredFilenameExtension ?? "jpg"
-        let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("RemoteIMPickedImage", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let fileURL = directory
-            .appendingPathComponent("remote-im-image-\(UUID().uuidString)")
-            .appendingPathExtension(fileExtension)
+        let fileURL = RemoteIMMediaStorage.fileURL(
+            category: .outgoingImages,
+            stem: "remote-im-image-\(UUID().uuidString)",
+            pathExtension: fileExtension
+        )
         try data.write(to: fileURL, options: .atomic)
 
         let image = UIImage(data: data)

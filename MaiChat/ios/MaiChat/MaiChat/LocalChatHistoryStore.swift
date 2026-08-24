@@ -2,6 +2,114 @@ import Foundation
 import MaiChatCore
 import SQLite3
 
+enum RemoteIMMediaStorage {
+    enum Category: String {
+        case incomingImages = "Incoming/Images"
+        case outgoingImages = "Outgoing/Images"
+        case incomingVideos = "Incoming/Videos"
+        case outgoingVideos = "Outgoing/Videos"
+        case incomingVideoCovers = "Incoming/VideoCovers"
+        case outgoingVideoCovers = "Outgoing/VideoCovers"
+        case incomingVoices = "Incoming/Voices"
+        case outgoingVoices = "Outgoing/Voices"
+        case incomingFiles = "Incoming/Files"
+        case outgoingFiles = "Outgoing/Files"
+    }
+
+    private static let mediaMarker = "/Library/Application Support/MaiChat/RemoteIMMedia/"
+
+    static func fileURL(
+        category: Category,
+        stem: String,
+        pathExtension: String
+    ) -> URL {
+        let cleanStem = sanitizedFileName(stem).trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        let cleanExtension = pathExtension
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        let fileName = cleanExtension.isEmpty
+            ? (cleanStem.isEmpty ? UUID().uuidString : cleanStem)
+            : "\(cleanStem.isEmpty ? UUID().uuidString : cleanStem).\(cleanExtension)"
+        return fileURL(category: category, fileName: fileName)
+    }
+
+    static func fileURL(category: Category, fileName: String) -> URL {
+        let directory = directoryURL(category: category)
+        return directory.appendingPathComponent(sanitizedFileName(fileName))
+    }
+
+    static func persistentReference(for runtimePath: String, category: Category) -> String {
+        let cleanPath = runtimePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanPath.isEmpty else { return "" }
+
+        if let markerRange = cleanPath.range(of: mediaMarker) {
+            let relative = String(cleanPath[markerRange.upperBound...])
+            return relative.isEmpty ? "\(category.rawValue)/\(URL(fileURLWithPath: cleanPath).lastPathComponent)" : relative
+        }
+
+        let sourceURL = URL(fileURLWithPath: cleanPath)
+        let mediaRootPath = mediaRootURL().standardizedFileURL.path
+        let standardizedPath = sourceURL.standardizedFileURL.path
+        if standardizedPath.hasPrefix(mediaRootPath + "/") {
+            return String(standardizedPath.dropFirst(mediaRootPath.count + 1))
+        }
+        // Unit tests and explicitly imported external paths remain absolute. Production media
+        // enters through fileURL(category:...), so every new on-device record is relative.
+        return cleanPath
+    }
+
+    static func resolvedPath(from storedPath: String, category: Category) -> String {
+        let cleanPath = storedPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanPath.isEmpty else { return "" }
+
+        if !cleanPath.hasPrefix("/") {
+            let relativePath = cleanPath.contains("/")
+                ? cleanPath
+                : "\(category.rawValue)/\(cleanPath)"
+            return mediaRootURL().appendingPathComponent(relativePath).standardizedFileURL.path
+        }
+
+        // Legacy absolute paths are intentionally not migrated during the test phase. Keep
+        // them verbatim: existing files remain readable; missing files degrade in the UI.
+        return cleanPath
+    }
+
+    static func partialDownloadURL(for finalURL: URL) -> URL {
+        finalURL.appendingPathExtension("part")
+    }
+
+    private static func mediaRootURL() -> URL {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let root = appSupport
+            .appendingPathComponent("MaiChat", isDirectory: true)
+            .appendingPathComponent("RemoteIMMedia", isDirectory: true)
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        var excludedRoot = root
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? excludedRoot.setResourceValues(values)
+        return root
+    }
+
+    private static func directoryURL(category: Category) -> URL {
+        let directory = category.rawValue
+            .split(separator: "/")
+            .reduce(mediaRootURL()) { partialURL, component in
+                partialURL.appendingPathComponent(String(component), isDirectory: true)
+            }
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+
+    private static func sanitizedFileName(_ value: String) -> String {
+        let clean = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallback = clean.isEmpty ? UUID().uuidString : clean
+        return fallback
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: ":", with: "_")
+    }
+}
+
 struct LocalChatHistoryAccount: Hashable, Sendable {
     let sdkAppID: Int?
     let ownerUserID: String
@@ -408,6 +516,61 @@ final class LocalChatHistoryStore {
         for message in messages {
             sqlite3_reset(statement)
             sqlite3_clear_bindings(statement)
+            let incoming = message.direction == .incoming
+            let voiceCategory: RemoteIMMediaStorage.Category = incoming ? .incomingVoices : .outgoingVoices
+            let imageCategory: RemoteIMMediaStorage.Category = incoming ? .incomingImages : .outgoingImages
+            let fileCategory: RemoteIMMediaStorage.Category = incoming ? .incomingFiles : .outgoingFiles
+            let videoCategory: RemoteIMMediaStorage.Category = incoming ? .incomingVideos : .outgoingVideos
+            let coverCategory: RemoteIMMediaStorage.Category = incoming ? .incomingVideoCovers : .outgoingVideoCovers
+            let persistedVoiceAttachment = message.voiceAttachment.map {
+                RemoteIMVoiceAttachment(
+                    localFilePath: RemoteIMMediaStorage.persistentReference(
+                        for: $0.localFilePath,
+                        category: voiceCategory
+                    ),
+                    durationSeconds: $0.durationSeconds,
+                    remoteID: $0.remoteID
+                )
+            }
+            let persistedImageAttachment = message.imageAttachment.map {
+                RemoteIMImageAttachment(
+                    localFilePath: RemoteIMMediaStorage.persistentReference(
+                        for: $0.localFilePath,
+                        category: imageCategory
+                    ),
+                    remoteID: $0.remoteID,
+                    width: $0.width,
+                    height: $0.height,
+                    sizeBytes: $0.sizeBytes
+                )
+            }
+            let persistedFileAttachment = message.fileAttachment.map {
+                RemoteIMFileAttachment(
+                    localFilePath: RemoteIMMediaStorage.persistentReference(
+                        for: $0.localFilePath,
+                        category: fileCategory
+                    ),
+                    fileName: $0.fileName,
+                    mimeType: $0.mimeType,
+                    remoteID: $0.remoteID,
+                    sizeBytes: $0.sizeBytes
+                )
+            }
+            let persistedVideoAttachment = message.videoAttachment.map {
+                RemoteIMVideoAttachment(
+                    localPath: RemoteIMMediaStorage.persistentReference(
+                        for: $0.localPath,
+                        category: videoCategory
+                    ),
+                    coverPath: $0.coverPath.map {
+                        RemoteIMMediaStorage.persistentReference(for: $0, category: coverCategory)
+                    },
+                    durationSeconds: $0.durationSeconds,
+                    width: $0.width,
+                    height: $0.height,
+                    sizeBytes: $0.sizeBytes
+                )
+            }
             try bindText(accountKey(for: sdkAppID), to: statement, at: 1, database: database)
             try bindText(ownerUserID, to: statement, at: 2, database: database)
             try bindText(message.id.uuidString, to: statement, at: 3, database: database)
@@ -418,10 +581,10 @@ final class LocalChatHistoryStore {
             try bindText(message.direction.rawValue, to: statement, at: 8, database: database)
             try bindText(message.status.rawValue, to: statement, at: 9, database: database)
             sqlite3_bind_double(statement, 10, message.createdAt.timeIntervalSince1970)
-            try bindOptionalJSON(message.voiceAttachment, to: statement, at: 11, database: database)
-            try bindOptionalJSON(message.imageAttachment, to: statement, at: 12, database: database)
-            try bindOptionalJSON(message.fileAttachment, to: statement, at: 13, database: database)
-            try bindOptionalJSON(message.videoAttachment, to: statement, at: 14, database: database)
+            try bindOptionalJSON(persistedVoiceAttachment, to: statement, at: 11, database: database)
+            try bindOptionalJSON(persistedImageAttachment, to: statement, at: 12, database: database)
+            try bindOptionalJSON(persistedFileAttachment, to: statement, at: 13, database: database)
+            try bindOptionalJSON(persistedVideoAttachment, to: statement, at: 14, database: database)
             let peerUserID = message.fromUserID == ownerUserID
                 ? message.toUserID
                 : message.fromUserID
@@ -440,28 +603,82 @@ final class LocalChatHistoryStore {
             return nil
         }
 
+        let incoming = direction == .incoming
+        let voiceCategory: RemoteIMMediaStorage.Category = incoming ? .incomingVoices : .outgoingVoices
+        let imageCategory: RemoteIMMediaStorage.Category = incoming ? .incomingImages : .outgoingImages
+        let fileCategory: RemoteIMMediaStorage.Category = incoming ? .incomingFiles : .outgoingFiles
+        let videoCategory: RemoteIMMediaStorage.Category = incoming ? .incomingVideos : .outgoingVideos
+        let coverCategory: RemoteIMMediaStorage.Category = incoming ? .incomingVideoCovers : .outgoingVideoCovers
+
+        let voiceAttachment = decodeOptionalJSON(
+            RemoteIMVoiceAttachment.self,
+            from: optionalTextColumn(statement, at: 8)
+        ).map {
+            RemoteIMVoiceAttachment(
+                localFilePath: RemoteIMMediaStorage.resolvedPath(
+                    from: $0.localFilePath,
+                    category: voiceCategory
+                ),
+                durationSeconds: $0.durationSeconds,
+                remoteID: $0.remoteID
+            )
+        }
+        let imageAttachment = decodeOptionalJSON(
+            RemoteIMImageAttachment.self,
+            from: optionalTextColumn(statement, at: 9)
+        ).map {
+            RemoteIMImageAttachment(
+                localFilePath: RemoteIMMediaStorage.resolvedPath(
+                    from: $0.localFilePath,
+                    category: imageCategory
+                ),
+                remoteID: $0.remoteID,
+                width: $0.width,
+                height: $0.height,
+                sizeBytes: $0.sizeBytes
+            )
+        }
+        let fileAttachment = decodeOptionalJSON(
+            RemoteIMFileAttachment.self,
+            from: optionalTextColumn(statement, at: 10)
+        ).map {
+            RemoteIMFileAttachment(
+                localFilePath: RemoteIMMediaStorage.resolvedPath(
+                    from: $0.localFilePath,
+                    category: fileCategory
+                ),
+                fileName: $0.fileName,
+                mimeType: $0.mimeType,
+                remoteID: $0.remoteID,
+                sizeBytes: $0.sizeBytes
+            )
+        }
+        let videoAttachment = decodeOptionalJSON(
+            RemoteIMVideoAttachment.self,
+            from: optionalTextColumn(statement, at: 11)
+        ).map {
+            RemoteIMVideoAttachment(
+                localPath: RemoteIMMediaStorage.resolvedPath(from: $0.localPath, category: videoCategory),
+                coverPath: $0.coverPath.map {
+                    RemoteIMMediaStorage.resolvedPath(from: $0, category: coverCategory)
+                },
+                durationSeconds: $0.durationSeconds,
+                width: $0.width,
+                height: $0.height,
+                sizeBytes: $0.sizeBytes
+            )
+        }
+
         return RemoteIMMessage(
             id: id,
             remoteID: optionalTextColumn(statement, at: 1),
             fromUserID: textColumn(statement, at: 2),
             toUserID: textColumn(statement, at: 3),
             text: textColumn(statement, at: 4),
-            voiceAttachment: decodeOptionalJSON(
-                RemoteIMVoiceAttachment.self,
-                from: optionalTextColumn(statement, at: 8)
-            ),
-            imageAttachment: decodeOptionalJSON(
-                RemoteIMImageAttachment.self,
-                from: optionalTextColumn(statement, at: 9)
-            ),
-            fileAttachment: decodeOptionalJSON(
-                RemoteIMFileAttachment.self,
-                from: optionalTextColumn(statement, at: 10)
-            ),
-            videoAttachment: decodeOptionalJSON(
-                RemoteIMVideoAttachment.self,
-                from: optionalTextColumn(statement, at: 11)
-            ),
+            voiceAttachment: voiceAttachment,
+            imageAttachment: imageAttachment,
+            fileAttachment: fileAttachment,
+            videoAttachment: videoAttachment,
             direction: direction,
             status: status,
             createdAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 7))

@@ -16,8 +16,6 @@ enum RemoteIMMediaStorage {
         case outgoingFiles = "Outgoing/Files"
     }
 
-    private static let mediaMarker = "/Library/Application Support/MaiChat/RemoteIMMedia/"
-
     static func fileURL(
         category: Category,
         stem: String,
@@ -42,36 +40,26 @@ enum RemoteIMMediaStorage {
         let cleanPath = runtimePath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanPath.isEmpty else { return "" }
 
-        if let markerRange = cleanPath.range(of: mediaMarker) {
-            let relative = String(cleanPath[markerRange.upperBound...])
-            return relative.isEmpty ? "\(category.rawValue)/\(URL(fileURLWithPath: cleanPath).lastPathComponent)" : relative
-        }
-
         let sourceURL = URL(fileURLWithPath: cleanPath)
         let mediaRootPath = mediaRootURL().standardizedFileURL.path
         let standardizedPath = sourceURL.standardizedFileURL.path
         if standardizedPath.hasPrefix(mediaRootPath + "/") {
-            return String(standardizedPath.dropFirst(mediaRootPath.count + 1))
+            let relativePath = String(standardizedPath.dropFirst(mediaRootPath.count + 1))
+            return relativePath.hasPrefix(category.rawValue + "/") ? relativePath : ""
         }
-        // Unit tests and explicitly imported external paths remain absolute. Production media
-        // enters through fileURL(category:...), so every new on-device record is relative.
-        return cleanPath
+        return ""
     }
 
     static func resolvedPath(from storedPath: String, category: Category) -> String {
         let cleanPath = storedPath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanPath.isEmpty else { return "" }
-
-        if !cleanPath.hasPrefix("/") {
-            let relativePath = cleanPath.contains("/")
-                ? cleanPath
-                : "\(category.rawValue)/\(cleanPath)"
-            return mediaRootURL().appendingPathComponent(relativePath).standardizedFileURL.path
+        guard !cleanPath.hasPrefix("/"), cleanPath.hasPrefix(category.rawValue + "/") else {
+            return ""
         }
-
-        // Legacy absolute paths are intentionally not migrated during the test phase. Keep
-        // them verbatim: existing files remain readable; missing files degrade in the UI.
-        return cleanPath
+        let resolvedURL = mediaRootURL().appendingPathComponent(cleanPath).standardizedFileURL
+        let categoryRoot = directoryURL(category: category).standardizedFileURL.path
+        guard resolvedURL.path.hasPrefix(categoryRoot + "/") else { return "" }
+        return resolvedURL.path
     }
 
     static func partialDownloadURL(for finalURL: URL) -> URL {

@@ -433,6 +433,22 @@ final class LocalChatHistoryStoreTests: XCTestCase {
     func testPersistsMessageAttachments() throws {
         let directoryURL = makeTemporaryDirectoryURL()
         defer { try? FileManager.default.removeItem(at: directoryURL) }
+        let voiceURL = RemoteIMMediaStorage.fileURL(
+            category: .incomingVoices,
+            fileName: "voice-\(UUID().uuidString).m4a"
+        )
+        let fileURL = RemoteIMMediaStorage.fileURL(
+            category: .incomingFiles,
+            fileName: "report-\(UUID().uuidString).md"
+        )
+        let videoURL = RemoteIMMediaStorage.fileURL(
+            category: .incomingVideos,
+            fileName: "video-\(UUID().uuidString).mp4"
+        )
+        let coverURL = RemoteIMMediaStorage.fileURL(
+            category: .incomingVideoCovers,
+            fileName: "video-\(UUID().uuidString).jpg"
+        )
 
         let store = LocalChatHistoryStore(baseDirectoryURL: directoryURL)
         let messages = [
@@ -442,7 +458,7 @@ final class LocalChatHistoryStoreTests: XCTestCase {
                 toUserID: "ios-master",
                 text: "[语音]",
                 voiceAttachment: RemoteIMVoiceAttachment(
-                    localFilePath: "/tmp/voice.m4a",
+                    localFilePath: voiceURL.path,
                     durationSeconds: 3,
                     remoteID: "voice-1"
                 ),
@@ -455,7 +471,7 @@ final class LocalChatHistoryStoreTests: XCTestCase {
                 toUserID: "ios-master",
                 text: "report.md",
                 fileAttachment: RemoteIMFileAttachment(
-                    localFilePath: "/tmp/report.md",
+                    localFilePath: fileURL.path,
                     fileName: "report.md",
                     mimeType: "text/markdown",
                     remoteID: "file-1",
@@ -471,8 +487,8 @@ final class LocalChatHistoryStoreTests: XCTestCase {
                 toUserID: "ios-master",
                 text: "[视频消息 18s]",
                 videoAttachment: RemoteIMVideoAttachment(
-                    localPath: "/tmp/video.mp4",
-                    coverPath: "/tmp/video.jpg",
+                    localPath: videoURL.path,
+                    coverPath: coverURL.path,
                     durationSeconds: 18,
                     width: 1920,
                     height: 1080,
@@ -553,7 +569,7 @@ final class LocalChatHistoryStoreTests: XCTestCase {
         XCTAssertFalse(storedJSON.contains("/Library/Caches/"))
     }
 
-    func testKeepsLegacyAbsoluteMediaPathWithoutMigration() throws {
+    func testRejectsLegacyAbsoluteMediaPathWithoutMigration() throws {
         let fileName = "legacy-image-\(UUID().uuidString).png"
         let legacyDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("RemoteIMPickedImage", isDirectory: true)
@@ -565,11 +581,11 @@ final class LocalChatHistoryStoreTests: XCTestCase {
 
         XCTAssertEqual(
             RemoteIMMediaStorage.persistentReference(for: legacyURL.path, category: .outgoingImages),
-            legacyURL.path
+            ""
         )
         XCTAssertEqual(
             RemoteIMMediaStorage.resolvedPath(from: legacyURL.path, category: .outgoingImages),
-            legacyURL.path
+            ""
         )
         XCTAssertEqual(try Data(contentsOf: legacyURL), bytes)
     }

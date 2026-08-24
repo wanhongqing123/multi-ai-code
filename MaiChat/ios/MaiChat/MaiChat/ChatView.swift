@@ -470,6 +470,7 @@ private struct ChatDetailView: View {
                         await appState.loadEarlierMessages(with: contact.userID)
                     }
                 )
+                .id(contact.userID)
                 ComposerView(
                     draft: appState.draft,
                     transcriptionTarget: $transcriptionTarget,
@@ -496,13 +497,35 @@ private struct ChatDetailView: View {
         .onAppear {
             appState.selectContact(contact)
             appState.setConversationVisible(userID: contact.userID, visible: true)
+            AppDiagnosticLog.shared.record(
+                level: .info,
+                category: "remote-im-ui",
+                event: "conversation-opened",
+                fields: [
+                    "peer": DiagnosticLogPrivacy.stableTag(contact.userID, prefix: "u"),
+                    "cached_messages": String(appState.visibleMessages(with: contact.userID).count),
+                ]
+            )
         }
         .onDisappear {
             appState.setConversationVisible(userID: contact.userID, visible: false)
         }
         .task(id: contact.userID) {
+            let startedAt = ProcessInfo.processInfo.systemUptime
             await appState.loadInitialMessages(with: contact.userID)
             initialHistoryLoadGeneration &+= 1
+            let elapsed = max(ProcessInfo.processInfo.systemUptime - startedAt, 0)
+            AppDiagnosticLog.shared.record(
+                level: .info,
+                category: "remote-im-ui",
+                event: "conversation-history-ready",
+                fields: [
+                    "peer": DiagnosticLogPrivacy.stableTag(contact.userID, prefix: "u"),
+                    "messages": String(appState.visibleMessages(with: contact.userID).count),
+                    "has_earlier": appState.hasEarlierMessages(with: contact.userID) ? "true" : "false",
+                    "duration_ms": String(Int((elapsed * 1_000).rounded())),
+                ]
+            )
         }
     }
 
@@ -835,7 +858,10 @@ private struct MessageListView: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 14) {
+                // The initial page is intentionally rendered eagerly. LazyVStack estimates the
+                // height of off-screen Markdown bubbles; scrollTo can then overshoot the real
+                // content and leave an entirely blank viewport until the user drags it.
+                VStack(alignment: .leading, spacing: 14) {
                     if messages.isEmpty {
                         EmptyMessagesView()
                             .padding(.top, 72)
@@ -942,11 +968,24 @@ private struct MessageListView: View {
     }
 
     private func scrollToLatestMessage(proxy: ScrollViewProxy) {
-        guard let latestMessageID = MessageListAutoScrollPolicy.latestMessageID(from: messages) else {
+        guard MessageListAutoScrollPolicy.latestMessageID(from: messages) != nil else {
             return
         }
         DispatchQueue.main.async {
-            proxy.scrollTo(latestMessageID, anchor: .bottom)
+            scrollToBottom(proxy: proxy)
+            // The first pass establishes the content layout. Repeating on the next main-loop
+            // turn accounts for multiline Markdown text whose final height is resolved then.
+            DispatchQueue.main.async {
+                scrollToBottom(proxy: proxy)
+            }
+        }
+    }
+
+    private func scrollToBottom(proxy: ScrollViewProxy) {
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            proxy.scrollTo(bottomAnchorID, anchor: .bottom)
         }
     }
 

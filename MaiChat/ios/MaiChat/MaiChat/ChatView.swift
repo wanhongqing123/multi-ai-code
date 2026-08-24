@@ -448,9 +448,7 @@ private struct ChatDetailView: View {
     let showRemoteDesktop: () -> Void
     @EnvironmentObject private var appState: RemoteIMAppState
     @State private var initialHistoryLoadGeneration = 0
-    @State private var transcriptionTarget: VoiceTranscriptionTarget?
-    @State private var transcriptionLiveText = ""
-    @State private var transcriptionAudioLevel: CGFloat = 0
+    @State private var transcriptionPresentation = VoiceTranscriptionPresentation()
 
     var body: some View {
         ZStack {
@@ -473,25 +471,15 @@ private struct ChatDetailView: View {
                 .id(contact.userID)
                 ComposerView(
                     draft: appState.draft,
-                    transcriptionTarget: $transcriptionTarget,
-                    transcriptionLiveText: $transcriptionLiveText,
-                    transcriptionAudioLevel: $transcriptionAudioLevel
+                    transcriptionPresentation: transcriptionPresentation
                 )
             }
 
-            if let transcriptionTarget {
-                VoiceTranscriptionHighlight(
-                    target: transcriptionTarget,
-                    transcript: transcriptionLiveText,
-                    audioLevel: transcriptionAudioLevel
-                )
-                .transition(.opacity)
+            VoiceTranscriptionHighlightHost(presentation: transcriptionPresentation)
                 .zIndex(10)
                 .allowsHitTesting(false)
-            }
         }
         .background(RemoteIMStyle.pageBackground.ignoresSafeArea())
-        .animation(.easeOut(duration: 0.14), value: transcriptionTarget)
         .toolbar(.hidden, for: .navigationBar)
         .simultaneousGesture(edgeSwipeBackGesture)
         .onAppear {
@@ -554,10 +542,61 @@ private enum VoiceTranscriptionTarget: Equatable {
     case finishingEdit
 }
 
+@MainActor
+private final class VoiceTranscriptionPresentation: ObservableObject {
+    @Published var target: VoiceTranscriptionTarget?
+    @Published var liveText = ""
+    private var firstLoggedSessionID: UInt64?
+
+    func prepareForNewSession() {
+        liveText = ""
+        firstLoggedSessionID = nil
+    }
+
+    func updateLiveText(_ text: String, sessionID: UInt64) {
+        guard liveText != text else { return }
+        if !text.isEmpty, firstLoggedSessionID != sessionID {
+            firstLoggedSessionID = sessionID
+            AppDiagnosticLog.shared.record(
+                level: .info,
+                category: "asr",
+                event: "ui-first-text-updated",
+                fields: [
+                    "session": String(sessionID),
+                    "characters": String(text.count),
+                ]
+            )
+        }
+        liveText = text
+    }
+
+    func reset() {
+        target = nil
+        liveText = ""
+        firstLoggedSessionID = nil
+    }
+}
+
+private struct VoiceTranscriptionHighlightHost: View {
+    @ObservedObject var presentation: VoiceTranscriptionPresentation
+
+    var body: some View {
+        Group {
+            if let target = presentation.target {
+                VoiceTranscriptionHighlight(
+                    target: target,
+                    transcript: presentation.liveText
+                )
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.14), value: presentation.target)
+    }
+}
+
 private struct VoiceTranscriptionHighlight: View {
     let target: VoiceTranscriptionTarget
     let transcript: String
-    let audioLevel: CGFloat
 
     var body: some View {
         ZStack {
@@ -615,7 +654,6 @@ private struct VoiceTranscriptionHighlight: View {
                 .padding(.bottom, 76)
             }
         }
-        .animation(.easeOut(duration: 0.16), value: transcript)
         .animation(.easeOut(duration: 0.12), value: target)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(statusText)
@@ -639,8 +677,6 @@ private struct VoiceTranscriptionHighlight: View {
                 Image(systemName: "pencil")
                     .font(.system(size: size * 0.28, weight: .bold))
                     .foregroundStyle(.white)
-            } else {
-                VoiceLevelBars(level: audioLevel, height: size * 0.46)
             }
         }
     }
@@ -690,30 +726,6 @@ private struct VoiceTranscriptionHighlight: View {
         default:
             return RemoteIMStyle.blue
         }
-    }
-}
-
-private struct VoiceLevelBars: View {
-    let level: CGFloat
-    var height: CGFloat = 44
-
-    private let weights: [CGFloat] = [0.52, 0.78, 1.0, 0.72, 0.48]
-
-    var body: some View {
-        HStack(alignment: .center, spacing: max(3, height * 0.11)) {
-            ForEach(Array(weights.enumerated()), id: \.offset) { _, weight in
-                Capsule()
-                    .fill(.white)
-                    .frame(width: max(3, height * 0.11), height: barHeight(weight: weight))
-            }
-        }
-        .frame(height: height)
-        .animation(.easeOut(duration: 0.09), value: level)
-        .accessibilityHidden(true)
-    }
-
-    private func barHeight(weight: CGFloat) -> CGFloat {
-        height * (0.2 + max(0.08, min(level, 1)) * 0.76 * weight)
     }
 }
 
@@ -858,9 +870,10 @@ private struct MessageListView: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                // The initial page is intentionally rendered eagerly. LazyVStack estimates the
-                // height of off-screen Markdown bubbles; scrollTo can then overshoot the real
-                // content and leave an entirely blank viewport until the user drags it.
+                // Keep the initial page eagerly laid out so the dedicated bottom anchor has its
+                // final position before the first scroll. LazyVStack recreates the historical
+                // "first open is blank until the user drags" failure with variable-height Markdown
+                // bubbles, even when the anchor scroll is repeated on the next main-loop turn.
                 VStack(alignment: .leading, spacing: 14) {
                     if messages.isEmpty {
                         EmptyMessagesView()
@@ -1766,11 +1779,69 @@ private struct StatusIcon: View {
     }
 }
 
+private final class MarkdownBlocksBox {
+    let value: [MarkdownBlock]
+
+    init(_ value: [MarkdownBlock]) {
+        self.value = value
+    }
+}
+
+private final class MarkdownAttributedTextBox {
+    let value: AttributedString?
+
+    init(_ value: AttributedString?) {
+        self.value = value
+    }
+}
+
+private final class MarkdownRenderCache: @unchecked Sendable {
+    static let shared = MarkdownRenderCache()
+
+    private let blocks = NSCache<NSString, MarkdownBlocksBox>()
+    private let attributedTexts = NSCache<NSString, MarkdownAttributedTextBox>()
+
+    private init() {
+        blocks.countLimit = 256
+        blocks.totalCostLimit = 2 * 1_024 * 1_024
+        attributedTexts.countLimit = 512
+        attributedTexts.totalCostLimit = 2 * 1_024 * 1_024
+    }
+
+    func blocks(for text: String) -> [MarkdownBlock] {
+        let key = text as NSString
+        if let cached = blocks.object(forKey: key) {
+            return cached.value
+        }
+        let parsed = parseMarkdownBlocks(text)
+        blocks.setObject(
+            MarkdownBlocksBox(parsed),
+            forKey: key,
+            cost: text.lengthOfBytes(using: .utf8)
+        )
+        return parsed
+    }
+
+    func attributedText(for text: String) -> AttributedString? {
+        let key = text as NSString
+        if let cached = attributedTexts.object(forKey: key) {
+            return cached.value
+        }
+        let parsed = try? AttributedString(markdown: text)
+        attributedTexts.setObject(
+            MarkdownAttributedTextBox(parsed),
+            forKey: key,
+            cost: text.lengthOfBytes(using: .utf8)
+        )
+        return parsed
+    }
+}
+
 private struct MarkdownLikeText: View {
     private let blocks: [MarkdownBlock]
 
     init(_ text: String) {
-        self.blocks = parseMarkdownBlocks(text)
+        self.blocks = MarkdownRenderCache.shared.blocks(for: text)
     }
 
     var body: some View {
@@ -1827,11 +1898,17 @@ private struct MarkdownTable {
 
 private struct MarkdownInlineText: View {
     let text: String
+    private let attributedText: AttributedString?
+
+    init(text: String) {
+        self.text = text
+        self.attributedText = MarkdownRenderCache.shared.attributedText(for: text)
+    }
 
     var body: some View {
         Group {
-            if let attributed = try? AttributedString(markdown: text) {
-                Text(attributed)
+            if let attributedText {
+                Text(attributedText)
             } else {
                 Text(text)
             }
@@ -2178,10 +2255,8 @@ private extension Array {
 @MainActor
 private final class VoiceMessageRecorder: NSObject, ObservableObject {
     @Published var isRecording = false
-    @Published private(set) var meterLevel: CGFloat = 0
 
     private var recorder: AVAudioRecorder?
-    private var meterTask: Task<Void, Never>?
     private var startedAt: Date?
     private var recordingURL: URL?
 
@@ -2208,7 +2283,6 @@ private final class VoiceMessageRecorder: NSObject, ObservableObject {
             AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue
         ]
         let nextRecorder = try AVAudioRecorder(url: url, settings: settings)
-        nextRecorder.isMeteringEnabled = true
         nextRecorder.prepareToRecord()
         guard nextRecorder.record() else {
             throw VoiceRecorderError.startFailed
@@ -2218,20 +2292,10 @@ private final class VoiceMessageRecorder: NSObject, ObservableObject {
         recordingURL = url
         startedAt = Date()
         isRecording = true
-        meterLevel = 0
-        meterTask?.cancel()
-        meterTask = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(80))
-                guard !Task.isCancelled, let self else { return }
-                self.updateMeter()
-            }
-        }
     }
 
     func stop() -> RemoteIMVoiceRecording? {
         guard isRecording, let recorder, let recordingURL else { return nil }
-        stopMetering()
         recorder.stop()
         self.recorder = nil
         self.recordingURL = nil
@@ -2243,7 +2307,6 @@ private final class VoiceMessageRecorder: NSObject, ObservableObject {
 
     func cancel() {
         let url = recordingURL
-        stopMetering()
         recorder?.stop()
         recorder = nil
         recordingURL = nil
@@ -2252,23 +2315,6 @@ private final class VoiceMessageRecorder: NSObject, ObservableObject {
         if let url {
             try? FileManager.default.removeItem(at: url)
         }
-    }
-
-    private func updateMeter() {
-        guard let recorder, isRecording else {
-            stopMetering()
-            return
-        }
-        recorder.updateMeters()
-        let power = recorder.averagePower(forChannel: 0)
-        let normalized = max(0, min(1, (CGFloat(power) + 45) / 45))
-        meterLevel = meterLevel * 0.5 + normalized * 0.5
-    }
-
-    private func stopMetering() {
-        meterTask?.cancel()
-        meterTask = nil
-        meterLevel = 0
     }
 
     private func requestRecordPermission() async -> Bool {
@@ -2407,9 +2453,7 @@ private struct RemoteIMPickedVideoTransfer: Transferable, Sendable {
 private struct ComposerView: View {
     @EnvironmentObject private var appState: RemoteIMAppState
     @ObservedObject var draft: RemoteIMDraftState
-    @Binding var transcriptionTarget: VoiceTranscriptionTarget?
-    @Binding var transcriptionLiveText: String
-    @Binding var transcriptionAudioLevel: CGFloat
+    let transcriptionPresentation: VoiceTranscriptionPresentation
     @StateObject private var voiceRecorder = VoiceMessageRecorder()
     @StateObject private var realtimeSpeechRecognizer = TencentRealtimeSpeechRecognizer(
         appId: TencentASRCredentials.appId,
@@ -2440,8 +2484,7 @@ private struct ComposerView: View {
 
             HStack(alignment: .bottom, spacing: 8) {
                 Button {
-                    transcriptionTarget = nil
-                    transcriptionLiveText = ""
+                    transcriptionPresentation.reset()
                     realtimeStartTask?.cancel()
                     realtimeStartTask = nil
                     realtimeSpeechRecognizer.cancel()
@@ -2603,20 +2646,20 @@ private struct ComposerView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
             keyboardVisibleHeight = UIScreen.main.bounds.height
         }
-        .onReceive(voiceRecorder.$meterLevel) { level in
-            if isVoiceMode {
-                transcriptionAudioLevel = level
+        .onAppear {
+            realtimeSpeechRecognizer.onLiveTextUpdate = {
+                [weak transcriptionPresentation] text, sessionID in
+                guard transcriptionPresentation?.target != nil else { return }
+                transcriptionPresentation?.updateLiveText(text, sessionID: sessionID)
             }
         }
-        .onReceive(realtimeSpeechRecognizer.$meterLevel) { level in
-            if !isVoiceMode {
-                transcriptionAudioLevel = level
-            }
-        }
-        .onReceive(realtimeSpeechRecognizer.$liveText) { text in
-            if transcriptionTarget != nil {
-                transcriptionLiveText = text
-            }
+        .onDisappear {
+            realtimeSpeechRecognizer.onLiveTextUpdate = nil
+            realtimeStartTask?.cancel()
+            realtimeStartTask = nil
+            realtimeSpeechRecognizer.cancel()
+            voiceRecorder.cancel()
+            transcriptionPresentation.reset()
         }
     }
 
@@ -2628,7 +2671,7 @@ private struct ComposerView: View {
 
     private var textComposerPrompt: String {
         if isCancellingVoice { return "松开取消" }
-        if transcriptionTarget == .edit { return "松开编辑" }
+        if transcriptionPresentation.target == .edit { return "松开编辑" }
         if isPressingVoice { return "松手发送" }
         return "可按住 转文字"
     }
@@ -2720,9 +2763,14 @@ private struct ComposerView: View {
         if !isPressingVoice {
             isPressingVoice = true
             if showsTranscriptionHighlight {
-                transcriptionLiveText = ""
-                transcriptionAudioLevel = 0
-                transcriptionTarget = .send
+                transcriptionPresentation.prepareForNewSession()
+                transcriptionPresentation.target = .send
+                AppDiagnosticLog.shared.record(
+                    level: .info,
+                    category: "asr",
+                    event: "gesture-started",
+                    fields: ["mode": "transcription"]
+                )
                 realtimeStartTask = Task { await startRealtimeTranscription() }
             } else {
                 Task { await startVoiceRecording() }
@@ -2731,10 +2779,10 @@ private struct ComposerView: View {
         if showsTranscriptionHighlight {
             let target = transcriptionTarget(for: translation)
             isCancellingVoice = target == .cancel
-            transcriptionTarget = target
+            transcriptionPresentation.target = target
         } else {
             isCancellingVoice = translation.height < -70
-            transcriptionTarget = nil
+            transcriptionPresentation.target = nil
         }
     }
 
@@ -2746,7 +2794,7 @@ private struct ComposerView: View {
         isPressingVoice = false
 
         if sendsVoiceDirectly {
-            transcriptionTarget = nil
+            transcriptionPresentation.target = nil
             let shouldCancel = translation.height < -70
             isCancellingVoice = false
             if shouldCancel {
@@ -2761,28 +2809,37 @@ private struct ComposerView: View {
         let releaseTarget = transcriptionTarget(for: translation)
         isCancellingVoice = false
         if releaseTarget == .cancel {
+            AppDiagnosticLog.shared.record(
+                level: .info,
+                category: "asr",
+                event: "gesture-ended",
+                fields: ["action": "cancel"]
+            )
             realtimeStartTask?.cancel()
             realtimeStartTask = nil
             realtimeSpeechRecognizer.cancel()
-            transcriptionTarget = nil
-            transcriptionLiveText = ""
+            transcriptionPresentation.reset()
             return
         }
 
         let shouldEdit = releaseTarget == .edit
-        transcriptionTarget = shouldEdit ? .finishingEdit : .finishingSend
+        AppDiagnosticLog.shared.record(
+            level: .info,
+            category: "asr",
+            event: "gesture-ended",
+            fields: ["action": shouldEdit ? "edit" : "send"]
+        )
+        transcriptionPresentation.target = shouldEdit ? .finishingEdit : .finishingSend
         let didStart = await realtimeStartTask?.value ?? realtimeSpeechRecognizer.isRecognizing
         realtimeStartTask = nil
         guard didStart, realtimeSpeechRecognizer.isRecognizing else {
-            transcriptionTarget = nil
-            transcriptionLiveText = ""
+            transcriptionPresentation.reset()
             return
         }
         do {
             let text = try await realtimeSpeechRecognizer.stop()
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            transcriptionTarget = nil
-            transcriptionLiveText = ""
+            transcriptionPresentation.reset()
             guard !text.isEmpty else {
                 appState.errorMessage = "没有识别到文字，未发送"
                 return
@@ -2793,19 +2850,25 @@ private struct ComposerView: View {
             } else {
                 await appState.sendText(text)
             }
+            AppDiagnosticLog.shared.record(
+                level: .info,
+                category: "asr",
+                event: "transcription-applied",
+                fields: [
+                    "action": shouldEdit ? "edit" : "send",
+                    "characters": String(text.count),
+                ]
+            )
         } catch is CancellationError {
-            transcriptionTarget = nil
-            transcriptionLiveText = ""
+            transcriptionPresentation.reset()
         } catch {
-            transcriptionTarget = nil
-            transcriptionLiveText = ""
+            transcriptionPresentation.reset()
             appState.errorMessage = "语音转文字失败，未发送：\(error.localizedDescription)"
         }
     }
 
     private func cancelVoiceLongPress() {
-        transcriptionTarget = nil
-        transcriptionLiveText = ""
+        transcriptionPresentation.reset()
         isPressingVoice = false
         isCancellingVoice = false
         realtimeStartTask?.cancel()
@@ -2825,7 +2888,7 @@ private struct ComposerView: View {
 
     private func startRealtimeTranscription() async -> Bool {
         guard realtimeSpeechRecognizer.isAvailable else {
-            transcriptionTarget = nil
+            transcriptionPresentation.target = nil
             isPressingVoice = false
             appState.errorMessage = "语音转文字凭证未配置"
             return false
@@ -2841,11 +2904,19 @@ private struct ComposerView: View {
             realtimeSpeechRecognizer.cancel()
             return false
         } catch {
-            transcriptionTarget = nil
-            transcriptionLiveText = ""
+            transcriptionPresentation.reset()
             isPressingVoice = false
             isCancellingVoice = false
             appState.errorMessage = error.localizedDescription
+            AppDiagnosticLog.shared.record(
+                level: .warning,
+                category: "asr",
+                event: "session-start-failed",
+                fields: [
+                    "error_domain": (error as NSError).domain,
+                    "error_code": String((error as NSError).code),
+                ]
+            )
             return false
         }
     }
@@ -2854,7 +2925,7 @@ private struct ComposerView: View {
         do {
             try await voiceRecorder.start()
         } catch {
-            transcriptionTarget = nil
+            transcriptionPresentation.target = nil
             isPressingVoice = false
             isCancellingVoice = false
             appState.errorMessage = error.localizedDescription

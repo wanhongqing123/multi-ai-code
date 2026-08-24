@@ -82,29 +82,27 @@ public enum RemoteIMTimestampTextPolicy {
         calendar: Calendar = .current
     ) -> String {
         if calendar.isDate(date, inSameDayAs: now) {
-            return formatted(date, dateFormat: "HH:mm", calendar: calendar)
+            return timeText(for: date, calendar: calendar)
         }
 
         if let yesterday = calendar.date(byAdding: .day, value: -1, to: now),
            calendar.isDate(date, inSameDayAs: yesterday)
         {
-            return "昨天 " + formatted(date, dateFormat: "HH:mm", calendar: calendar)
+            return "昨天 " + timeText(for: date, calendar: calendar)
         }
 
-        return formatted(date, dateFormat: "M 月 d 日 HH:mm", calendar: calendar)
+        let components = calendar.dateComponents([.month, .day], from: date)
+        return "\(components.month ?? 0) 月 \(components.day ?? 0) 日 " +
+            timeText(for: date, calendar: calendar)
     }
 
-    private static func formatted(
-        _ date: Date,
-        dateFormat: String,
-        calendar: Calendar
-    ) -> String {
-        let formatter = DateFormatter()
-        formatter.calendar = calendar
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.timeZone = calendar.timeZone
-        formatter.dateFormat = dateFormat
-        return formatter.string(from: date)
+    private static func timeText(for date: Date, calendar: Calendar) -> String {
+        let components = calendar.dateComponents([.hour, .minute], from: date)
+        return String(
+            format: "%02d:%02d",
+            components.hour ?? 0,
+            components.minute ?? 0
+        )
     }
 }
 
@@ -152,12 +150,19 @@ public enum RemoteIMMessageCopyPolicy {
     }
 
     private static func formattedDate(_ date: Date, calendar: Calendar) -> String {
-        let formatter = DateFormatter()
-        formatter.calendar = calendar
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.timeZone = calendar.timeZone
-        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        return formatter.string(from: date)
+        let components = calendar.dateComponents(
+            [.year, .month, .day, .hour, .minute, .second],
+            from: date
+        )
+        return String(
+            format: "%04d-%02d-%02d %02d:%02d:%02d",
+            components.year ?? 0,
+            components.month ?? 0,
+            components.day ?? 0,
+            components.hour ?? 0,
+            components.minute ?? 0,
+            components.second ?? 0
+        )
     }
 
     private static func directionText(_ direction: RemoteIMMessageDirection) -> String {

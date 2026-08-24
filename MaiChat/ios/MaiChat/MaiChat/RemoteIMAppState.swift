@@ -62,6 +62,7 @@ final class RemoteIMAppState: ObservableObject {
     private var pendingHistoryMutations: [LocalChatHistoryMutation] = []
     private var historySaveTask: Task<Void, Never>?
     private var pendingIncomingRemoteIDs = Set<String>()
+    private var profileRefreshUserIDsInFlight = Set<String>()
     private let messagePageSize = 50
 
     init(
@@ -1337,13 +1338,24 @@ final class RemoteIMAppState: ObservableObject {
 
     private func refreshProfiles(userIDs: [String]) async {
         guard connectionState == .connected else { return }
+        let requestedUserIDs = Set(userIDs.lazy.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }.filter { !$0.isEmpty })
+        let pendingUserIDs = requestedUserIDs.subtracting(profileRefreshUserIDsInFlight)
+        guard !pendingUserIDs.isEmpty else { return }
+        profileRefreshUserIDsInFlight.formUnion(pendingUserIDs)
+        defer { profileRefreshUserIDsInFlight.subtract(pendingUserIDs) }
+
+        let pendingUserIDList = pendingUserIDs.sorted()
         let startedAt = ProcessInfo.processInfo.systemUptime
         do {
-            let profiles = try await client.refreshUserProfiles(userIDs: userIDs)
+            let profiles = try await client.refreshUserProfiles(userIDs: pendingUserIDList)
+            var nextProfiles = userProfileByUserID
+            var nextChatState = chatState
             for profile in profiles {
-                userProfileByUserID[profile.userID] = profile
-                if let contact = chatState.contacts.first(where: { $0.userID == profile.userID }) {
-                    try chatState.upsertContact(
+                nextProfiles[profile.userID] = profile
+                if let contact = nextChatState.contacts.first(where: { $0.userID == profile.userID }) {
+                    try nextChatState.upsertContact(
                         userID: profile.userID,
                         relation: contact.relation,
                         displayName: profile.displayName,
@@ -1351,13 +1363,19 @@ final class RemoteIMAppState: ObservableObject {
                     )
                 }
             }
+            if nextProfiles != userProfileByUserID {
+                userProfileByUserID = nextProfiles
+            }
+            if nextChatState != chatState {
+                chatState = nextChatState
+            }
             settingsStore.save(currentStoredSettings())
             logIM(
                 level: .info,
                 event: "profile-refresh",
                 fields: [
                     "result": "ok",
-                    "requested": String(userIDs.count),
+                    "requested": String(pendingUserIDList.count),
                     "received": String(profiles.count),
                     "duration_ms": elapsedMilliseconds(since: startedAt),
                 ]
@@ -1369,7 +1387,7 @@ final class RemoteIMAppState: ObservableObject {
                 event: "profile-refresh",
                 fields: [
                     "result": "failed",
-                    "requested": String(userIDs.count),
+                    "requested": String(pendingUserIDList.count),
                     "error_domain": errorValue.domain,
                     "error_code": String(errorValue.code),
                     "duration_ms": elapsedMilliseconds(since: startedAt),

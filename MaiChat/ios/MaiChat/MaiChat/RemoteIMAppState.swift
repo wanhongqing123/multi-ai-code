@@ -87,9 +87,14 @@ final class RemoteIMAppState: ObservableObject {
         self.secretKey = loadedSecretKey
         self.chatHistorySDKAppID = settings.sdkAppID
 
+        let storedContacts = Self.contacts(from: settings)
+        let cleanOwnerUserID = settings.masterUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hadInvalidSelfContact = storedContacts.contains { contact in
+            !cleanOwnerUserID.isEmpty && contact.userID == cleanOwnerUserID
+        }
         let loadedState = MasterChatState(
             ownerUserID: settings.masterUserID,
-            contacts: Self.contacts(from: settings),
+            contacts: storedContacts,
             messages: []
         )
         self.chatState = loadedState
@@ -138,6 +143,22 @@ final class RemoteIMAppState: ObservableObject {
             Task { @MainActor in
                 self?.applyPresenceStatusUpdates(updates)
             }
+        }
+        if hadInvalidSelfContact {
+            self.settingsStore.save(currentStoredSettings())
+        }
+        if !cleanOwnerUserID.isEmpty {
+            enqueueHistoryMutation(.removeConversation(
+                peerUserID: cleanOwnerUserID,
+                sdkAppID: chatHistorySDKAppID,
+                ownerUserID: cleanOwnerUserID
+            ))
+            logIM(
+                level: .warning,
+                event: "self-conversation-cleanup",
+                fields: ["result": "scheduled"],
+                userID: cleanOwnerUserID
+            )
         }
         Task { [weak self] in
             await self?.loadConversationSummariesForCurrentAccount()
@@ -781,6 +802,7 @@ final class RemoteIMAppState: ObservableObject {
     }
 
     private func receive(_ event: IncomingRemoteIMText) async {
+        guard shouldAcceptIncomingSender(event.fromUserID, kind: "text") else { return }
         if remoteDesktop.handleIncomingText(from: event.fromUserID, text: event.text) {
             return
         }
@@ -809,6 +831,7 @@ final class RemoteIMAppState: ObservableObject {
     }
 
     private func receive(_ event: IncomingRemoteIMVoice) async {
+        guard shouldAcceptIncomingSender(event.fromUserID, kind: "voice") else { return }
         guard await shouldAcceptIncomingMessage(remoteID: event.remoteID) else { return }
         let previousCount = chatState.messages.count
         let message = chatState.receiveVoice(
@@ -835,6 +858,7 @@ final class RemoteIMAppState: ObservableObject {
     }
 
     private func receive(_ event: IncomingRemoteIMImage) async {
+        guard shouldAcceptIncomingSender(event.fromUserID, kind: "image") else { return }
         guard await shouldAcceptIncomingMessage(remoteID: event.remoteID) else { return }
         let previousCount = chatState.messages.count
         let message = chatState.receiveImage(
@@ -867,6 +891,7 @@ final class RemoteIMAppState: ObservableObject {
     }
 
     private func receive(_ event: IncomingRemoteIMFile) async {
+        guard shouldAcceptIncomingSender(event.fromUserID, kind: "file") else { return }
         guard await shouldAcceptIncomingMessage(remoteID: event.remoteID) else { return }
         let previousCount = chatState.messages.count
         let message = chatState.receiveFile(
@@ -898,6 +923,7 @@ final class RemoteIMAppState: ObservableObject {
     }
 
     private func receive(_ event: IncomingRemoteIMVideo) async {
+        guard shouldAcceptIncomingSender(event.fromUserID, kind: "video") else { return }
         let existingMessage = chatState.message(remoteID: event.remoteID)
         if existingMessage == nil {
             guard await shouldAcceptIncomingMessage(remoteID: event.remoteID) else { return }
@@ -941,6 +967,26 @@ final class RemoteIMAppState: ObservableObject {
         // The attachment paths are stable from the metadata stage onward. A later download
         // makes the file appear at the same path, so explicitly refresh the bubble/player.
         objectWillChange.send()
+    }
+
+    private func shouldAcceptIncomingSender(_ userID: String, kind: String) -> Bool {
+        let cleanUserID = userID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard RemoteIMPeerPolicy.isValidPeer(
+            userID: cleanUserID,
+            ownerUserID: chatState.ownerUserID
+        ) else {
+            logIM(
+                level: .warning,
+                event: "message-dropped",
+                fields: [
+                    "kind": kind,
+                    "reason": cleanUserID.isEmpty ? "empty-sender" : "sender-is-current-user",
+                ],
+                userID: cleanUserID
+            )
+            return false
+        }
+        return true
     }
 
     private func updateUnreadAfterReceiving(from userID: String, wasInserted: Bool) {

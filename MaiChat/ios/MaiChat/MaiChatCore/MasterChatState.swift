@@ -2,6 +2,7 @@ import Foundation
 
 public enum MasterChatStateError: Error, Equatable, LocalizedError {
     case blankUserID
+    case selfContactNotAllowed
     case blankMessage
     case noSelectedPeer
     case messageNotFound
@@ -10,6 +11,8 @@ public enum MasterChatStateError: Error, Equatable, LocalizedError {
         switch self {
         case .blankUserID:
             return "请填写账号 ID"
+        case .selfContactNotAllowed:
+            return "不能添加当前登录账号为好友"
         case .blankMessage:
             return "请输入消息内容"
         case .noSelectedPeer:
@@ -17,6 +20,14 @@ public enum MasterChatStateError: Error, Equatable, LocalizedError {
         case .messageNotFound:
             return "消息不存在"
         }
+    }
+}
+
+public enum RemoteIMPeerPolicy {
+    public static func isValidPeer(userID: String, ownerUserID: String) -> Bool {
+        let cleanUserID = userID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanOwnerUserID = ownerUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !cleanUserID.isEmpty && (cleanOwnerUserID.isEmpty || cleanUserID != cleanOwnerUserID)
     }
 }
 
@@ -584,7 +595,7 @@ public struct MasterChatState: Equatable {
         selectedPeerID: String? = nil
     ) {
         self.ownerUserID = ownerUserID.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.contacts = Self.normalizedContacts(contacts)
+        self.contacts = Self.normalizedContacts(contacts, ownerUserID: self.ownerUserID)
         self.messages = Self.normalizedMessages(messages, ownerUserID: self.ownerUserID)
         self.conversationMessagesByPeerID = [:]
         self.messageIndexByID = [:]
@@ -603,11 +614,17 @@ public struct MasterChatState: Equatable {
         rebuildMessageIndexes()
     }
 
-    private static func normalizedContacts(_ contacts: [RemoteIMContact]) -> [RemoteIMContact] {
+    private static func normalizedContacts(
+        _ contacts: [RemoteIMContact],
+        ownerUserID: String
+    ) -> [RemoteIMContact] {
         var normalizedContacts: [RemoteIMContact] = []
         for contact in contacts {
             let cleanUserID = contact.userID.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !cleanUserID.isEmpty else { continue }
+            guard RemoteIMPeerPolicy.isValidPeer(
+                userID: cleanUserID,
+                ownerUserID: ownerUserID
+            ) else { continue }
             let cleanDisplayName = contact.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
             let cleanAvatarURL = contact.avatarURL?.trimmingCharacters(in: .whitespacesAndNewlines)
             let normalizedContact = RemoteIMContact(
@@ -631,7 +648,18 @@ public struct MasterChatState: Equatable {
     ) -> [RemoteIMMessage] {
         guard !ownerUserID.isEmpty else { return messages }
         return messages
-            .filter { $0.fromUserID == ownerUserID || $0.toUserID == ownerUserID }
+            .filter { message in
+                guard message.fromUserID == ownerUserID || message.toUserID == ownerUserID else {
+                    return false
+                }
+                let peerUserID = message.fromUserID == ownerUserID
+                    ? message.toUserID
+                    : message.fromUserID
+                return RemoteIMPeerPolicy.isValidPeer(
+                    userID: peerUserID,
+                    ownerUserID: ownerUserID
+                )
+            }
             .sorted { $0.createdAt < $1.createdAt }
     }
 
@@ -644,7 +672,10 @@ public struct MasterChatState: Equatable {
         for message in messages {
             let peerID = message.fromUserID == ownerUserID ? message.toUserID : message.fromUserID
             let cleanPeerID = peerID.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !cleanPeerID.isEmpty else { continue }
+            guard RemoteIMPeerPolicy.isValidPeer(
+                userID: cleanPeerID,
+                ownerUserID: ownerUserID
+            ) else { continue }
             if !contacts.contains(where: { $0.userID == cleanPeerID }) {
                 contacts.append(
                     RemoteIMContact(
@@ -665,6 +696,9 @@ public struct MasterChatState: Equatable {
     ) throws {
         let cleanUserID = userID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanUserID.isEmpty else { throw MasterChatStateError.blankUserID }
+        guard cleanUserID != ownerUserID else {
+            throw MasterChatStateError.selfContactNotAllowed
+        }
         let cleanDisplayName = displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanAvatarURL = avatarURL?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let index = contacts.firstIndex(where: { $0.userID == cleanUserID }) {
@@ -728,7 +762,12 @@ public struct MasterChatState: Equatable {
     }
 
     public mutating func selectPeer(userID: String) {
-        selectedPeerID = userID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanUserID = userID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard RemoteIMPeerPolicy.isValidPeer(
+            userID: cleanUserID,
+            ownerUserID: ownerUserID
+        ), contacts.contains(where: { $0.userID == cleanUserID }) else { return }
+        selectedPeerID = cleanUserID
     }
 
     public func messages(with peerID: String) -> [RemoteIMMessage] {
@@ -1006,18 +1045,7 @@ public struct MasterChatState: Equatable {
             status: .received,
             createdAt: now
         )
-        if !cleanFromUserID.isEmpty && !contacts.contains(where: { $0.userID == cleanFromUserID }) {
-            contacts.append(
-                RemoteIMContact(
-                    userID: cleanFromUserID,
-                    displayName: cleanFromUserID,
-                    relation: .friend
-                )
-            )
-        }
-        if selectedPeerID == nil && !cleanFromUserID.isEmpty {
-            selectedPeerID = cleanFromUserID
-        }
+        registerIncomingPeer(cleanFromUserID)
         appendMessage(message)
         return message
     }
@@ -1049,18 +1077,7 @@ public struct MasterChatState: Equatable {
             status: .received,
             createdAt: now
         )
-        if !cleanFromUserID.isEmpty && !contacts.contains(where: { $0.userID == cleanFromUserID }) {
-            contacts.append(
-                RemoteIMContact(
-                    userID: cleanFromUserID,
-                    displayName: cleanFromUserID,
-                    relation: .friend
-                )
-            )
-        }
-        if selectedPeerID == nil && !cleanFromUserID.isEmpty {
-            selectedPeerID = cleanFromUserID
-        }
+        registerIncomingPeer(cleanFromUserID)
         appendMessage(message)
         return message
     }
@@ -1097,18 +1114,7 @@ public struct MasterChatState: Equatable {
             status: .received,
             createdAt: now
         )
-        if !cleanFromUserID.isEmpty && !contacts.contains(where: { $0.userID == cleanFromUserID }) {
-            contacts.append(
-                RemoteIMContact(
-                    userID: cleanFromUserID,
-                    displayName: cleanFromUserID,
-                    relation: .friend
-                )
-            )
-        }
-        if selectedPeerID == nil && !cleanFromUserID.isEmpty {
-            selectedPeerID = cleanFromUserID
-        }
+        registerIncomingPeer(cleanFromUserID)
         appendMessage(message)
         return message
     }
@@ -1170,18 +1176,7 @@ public struct MasterChatState: Equatable {
             status: .received,
             createdAt: now
         )
-        if !cleanFromUserID.isEmpty && !contacts.contains(where: { $0.userID == cleanFromUserID }) {
-            contacts.append(
-                RemoteIMContact(
-                    userID: cleanFromUserID,
-                    displayName: cleanFromUserID,
-                    relation: .friend
-                )
-            )
-        }
-        if selectedPeerID == nil && !cleanFromUserID.isEmpty {
-            selectedPeerID = cleanFromUserID
-        }
+        registerIncomingPeer(cleanFromUserID)
         appendMessage(message)
         return message
     }
@@ -1218,18 +1213,7 @@ public struct MasterChatState: Equatable {
             status: .received,
             createdAt: now
         )
-        if !cleanFromUserID.isEmpty && !contacts.contains(where: { $0.userID == cleanFromUserID }) {
-            contacts.append(
-                RemoteIMContact(
-                    userID: cleanFromUserID,
-                    displayName: cleanFromUserID,
-                    relation: .friend
-                )
-            )
-        }
-        if selectedPeerID == nil && !cleanFromUserID.isEmpty {
-            selectedPeerID = cleanFromUserID
-        }
+        registerIncomingPeer(cleanFromUserID)
         appendMessage(message)
         return message
     }
@@ -1298,6 +1282,7 @@ public struct MasterChatState: Equatable {
     }
 
     private mutating func appendMessage(_ message: RemoteIMMessage) {
+        guard let peerID = conversationPeerID(for: message) else { return }
         messageIndexByID[message.id] = messages.count
         messages.append(message)
         if let remoteID = message.remoteID, !remoteID.isEmpty,
@@ -1305,8 +1290,26 @@ public struct MasterChatState: Equatable {
         {
             messageIDByRemoteID[remoteID] = message.id
         }
-        guard let peerID = conversationPeerID(for: message) else { return }
         insertMessageInConversation(message, peerID: peerID)
+    }
+
+    private mutating func registerIncomingPeer(_ userID: String) {
+        guard RemoteIMPeerPolicy.isValidPeer(
+            userID: userID,
+            ownerUserID: ownerUserID
+        ) else { return }
+        if !contacts.contains(where: { $0.userID == userID }) {
+            contacts.append(
+                RemoteIMContact(
+                    userID: userID,
+                    displayName: userID,
+                    relation: .friend
+                )
+            )
+        }
+        if selectedPeerID == nil {
+            selectedPeerID = userID
+        }
     }
 
     private mutating func replaceCachedMessage(
@@ -1368,13 +1371,19 @@ public struct MasterChatState: Equatable {
     }
 
     private func conversationPeerID(for message: RemoteIMMessage) -> String? {
+        let peerUserID: String
         if message.fromUserID == ownerUserID {
-            return message.toUserID
+            peerUserID = message.toUserID
+        } else if message.toUserID == ownerUserID {
+            peerUserID = message.fromUserID
+        } else {
+            return nil
         }
-        if message.toUserID == ownerUserID {
-            return message.fromUserID
-        }
-        return nil
+        guard RemoteIMPeerPolicy.isValidPeer(
+            userID: peerUserID,
+            ownerUserID: ownerUserID
+        ) else { return nil }
+        return peerUserID
     }
 
     private static func messageIsEarlier(

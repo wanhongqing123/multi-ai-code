@@ -425,6 +425,22 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
             )
             return
         }
+        let loginUserID = V2TIMManager.sharedInstance().getLoginUser() ?? ""
+        guard RemoteIMPeerPolicy.isValidPeer(
+            userID: userID,
+            ownerUserID: loginUserID
+        ) else {
+            Self.logSDK(
+                level: .debug,
+                event: "message-dropped",
+                fields: [
+                    "kind": "text",
+                    "reason": "sender-is-current-user",
+                    "message": Self.messageTag(msgID),
+                ]
+            )
+            return
+        }
         Self.logIncomingMessage(
             kind: "text",
             peerUserID: userID,
@@ -436,6 +452,18 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
             messageIDList: [msgID],
             succ: { [weak self] messages in
                 let message = messages?.first
+                guard message?.isSelf != true else {
+                    Self.logSDK(
+                        level: .debug,
+                        event: "message-dropped",
+                        fields: [
+                            "kind": "text",
+                            "reason": "sdk-self-message",
+                            "message": Self.messageTag(msgID),
+                        ]
+                    )
+                    return
+                }
                 let createdAt = message?.timestamp ?? fallbackDate
                 self?.emitIncomingText(
                     fromUserID: userID,

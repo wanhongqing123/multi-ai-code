@@ -2,6 +2,89 @@ import XCTest
 @testable import MaiChatCore
 
 final class MasterChatStateTests: XCTestCase {
+    func testPeerPolicyRejectsBlankAndCurrentLoginAccount() {
+        XCTAssertFalse(RemoteIMPeerPolicy.isValidPeer(userID: "", ownerUserID: "whq-iphone"))
+        XCTAssertFalse(
+            RemoteIMPeerPolicy.isValidPeer(
+                userID: " whq-iphone ",
+                ownerUserID: "whq-iphone"
+            )
+        )
+        XCTAssertTrue(
+            RemoteIMPeerPolicy.isValidPeer(
+                userID: "mac-multi-ai-code",
+                ownerUserID: "whq-iphone"
+            )
+        )
+    }
+
+    func testInitializationDropsCurrentAccountContactAndSelfConversation() {
+        let selfMessage = RemoteIMMessage(
+            remoteID: "self-sync-message",
+            fromUserID: "whq-iphone",
+            toUserID: "whq-iphone",
+            text: "这条是同账号多端同步，不是收到的消息",
+            direction: .incoming,
+            status: .received,
+            createdAt: Date(timeIntervalSince1970: 100)
+        )
+        let peerMessage = RemoteIMMessage(
+            remoteID: "peer-message",
+            fromUserID: "mac-multi-ai-code",
+            toUserID: "whq-iphone",
+            text: "正常好友消息",
+            direction: .incoming,
+            status: .received,
+            createdAt: Date(timeIntervalSince1970: 110)
+        )
+
+        let state = MasterChatState(
+            ownerUserID: "whq-iphone",
+            contacts: [
+                RemoteIMContact(
+                    userID: "whq-iphone",
+                    displayName: "whq-iphone",
+                    relation: .friend
+                ),
+                RemoteIMContact(
+                    userID: "mac-multi-ai-code",
+                    displayName: "mac-multi-ai-code",
+                    relation: .friend
+                ),
+            ],
+            messages: [selfMessage, peerMessage],
+            selectedPeerID: "whq-iphone"
+        )
+
+        XCTAssertEqual(state.contacts.map(\.userID), ["mac-multi-ai-code"])
+        XCTAssertEqual(state.messages, [peerMessage])
+        XCTAssertEqual(state.selectedPeerID, "mac-multi-ai-code")
+        XCTAssertTrue(state.messages(with: "whq-iphone").isEmpty)
+    }
+
+    func testCannotAddCurrentLoginAccountAsContact() {
+        var state = MasterChatState(ownerUserID: "whq-iphone")
+
+        XCTAssertThrowsError(try state.upsertFriend(userID: " whq-iphone ")) { error in
+            XCTAssertEqual(error as? MasterChatStateError, .selfContactNotAllowed)
+        }
+        XCTAssertTrue(state.contacts.isEmpty)
+    }
+
+    func testSelfSyncedIncomingTextDoesNotCreateConversation() {
+        var state = MasterChatState(ownerUserID: "whq-iphone")
+
+        state.receiveText(
+            "从另一台同账号设备同步过来的已发送消息",
+            fromUserID: "whq-iphone",
+            remoteID: "self-sync-message"
+        )
+
+        XCTAssertTrue(state.contacts.isEmpty)
+        XCTAssertTrue(state.messages.isEmpty)
+        XCTAssertNil(state.selectedPeerID)
+    }
+
     func testAddsTrustedFriendAndQueuesOutgoingMessage() throws {
         var state = MasterChatState(ownerUserID: "ios-master")
 

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <functional>
+
 #include <QHash>
 #include <QList>
 #include <QSet>
@@ -35,6 +37,10 @@ public:
     RemoteIMMessage receiveVoice(const QString& fromUserId, const QString& localPath, int durationSeconds);
     RemoteIMMessage receiveFile(const QString& fromUserId, const QString& localPath, const QString& fileName, const QString& mimeType, qint64 sizeBytes);
     QList<RemoteIMMessage> messagesWith(const QString& peerId) const;
+    // 按会话顺序逐条访问，不复制。messagesWith 会把整个会话深拷贝一份，
+    // 放在每次按键上跑（搜索）就是可感知的卡顿。
+    void forEachMessageWith(const QString& peerId,
+                            const std::function<void(const RemoteIMMessage&)>& visit) const;
     int messageCountWith(const QString& peerId) const;
     bool latestMessageWith(const QString& peerId, RemoteIMMessage* message) const;
     bool updateMessageStatus(const QString& messageId, RemoteIMMessageStatus status);

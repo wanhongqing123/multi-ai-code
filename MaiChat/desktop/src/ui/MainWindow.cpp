@@ -1869,11 +1869,26 @@ void MainWindow::bindSignals() {
         AppMessageDialog::show(this, AppMessageDialog::Kind::Warning, QStringLiteral("IM"), message);
     });
     connect(addContactButton_, &QPushButton::clicked, this, [this] { openAddContactDialog(); });
-    connect(navSearchInput_, &QLineEdit::textChanged, this, [this] {
-        // 左边的会话列表跟着收窄，右边浮出命中的消息：一次输入同时回答
-        // 「哪个会话」和「哪条消息」。
-        applyConversationFilter();
+    // 搜索一次要扫所有会话的消息，绝不能挂在每次按键上跑：会话上千条时输入会发涩。
+    // 与命令提示条同一套做法——停顿 150ms 才真正执行，输入法组词期间一律不跑。
+    globalSearchUpdateTimer_ = new QTimer(this);
+    globalSearchUpdateTimer_->setSingleShot(true);
+    globalSearchUpdateTimer_->setInterval(150);
+    connect(globalSearchUpdateTimer_, &QTimer::timeout, this, [this] {
+        // 必须先搜索再过滤：过滤要用搜索算出的 peersWithSearchHits_，
+        // 反过来的话会话列表用的是上一次的结果，看着像「少了一个会话」。
         refreshGlobalSearchResults();
+        applyConversationFilter();
+    });
+    connect(navSearchInput_, &QLineEdit::textChanged, this, [this] {
+        // 清空是个例外：立刻收起结果、恢复会话列表，不该让人等 150ms。
+        if (navSearchInput_->text().trimmed().isEmpty()) {
+            globalSearchUpdateTimer_->stop();
+            refreshGlobalSearchResults();
+            applyConversationFilter();
+            return;
+        }
+        globalSearchUpdateTimer_->start();
     });
     connect(globalSearchResults_, &QListWidget::itemClicked, this,
             &MainWindow::openGlobalSearchResult);
@@ -1996,18 +2011,18 @@ void MainWindow::refreshContacts() {
 void MainWindow::applyConversationFilter() {
     if (!navSearchInput_) return;
     const QString needle = navSearchInput_->text().trimmed();
-    const ChatState& state = app_.chatState();
     for (int row = 0; row < conversationList_->count(); ++row) {
         QListWidgetItem* item = conversationList_->item(row);
         const QString name = item->data(DisplayNameRole).toString();
         const QString preview = item->data(PreviewRole).toString();
         // 会话里有命中的消息也要留下。否则搜一个只出现在聊天记录深处的词，
         // 左边整列会空掉——而右边的结果面板明明列着这些会话，自相矛盾。
+        // 「会话里有没有命中」由上一趟搜索算好放在 peersWithSearchHits_ 里，
+        // 这里直接查，不再把所有会话重新扫一遍——否则一次输入要扫两遍。
         const bool matched = needle.isEmpty()
             || name.contains(needle, Qt::CaseInsensitive)
             || preview.contains(needle, Qt::CaseInsensitive)
-            || !MessageSearch::matchIndexes(
-                    state.messagesWith(item->data(UserIdRole).toString()), needle).isEmpty();
+            || peersWithSearchHits_.contains(item->data(UserIdRole).toString());
         item->setHidden(!matched);
     }
 }
@@ -2038,46 +2053,70 @@ void MainWindow::refreshGlobalSearchResults() {
     if (!navSearchInput_ || !globalSearchResults_) return;
     const QString needle = navSearchInput_->text().trimmed();
     globalSearchResults_->clear();
+    peersWithSearchHits_.clear();
     if (needle.isEmpty()) {
         closeGlobalSearchResults();
         return;
     }
 
+    struct Hit {
+        QString peerId;
+        QString peerName;
+        QString messageId;
+        QString preview;
+        qint64 createdAt = 0;
+        int score = 0;
+    };
+
     const ChatState& state = app_.chatState();
-    int total = 0;
-    bool truncated = false;
+    QVector<Hit> hits;
     for (const RemoteIMContact& contact : state.contacts()) {
-        const QList<RemoteIMMessage> messages = state.messagesWith(contact.userId);
-        const QList<int> hits = MessageSearch::matchIndexes(messages, needle);
         const QString peerName = contact.displayName.isEmpty() ? contact.userId : contact.displayName;
-        // 每个会话内按时间倒序：先给最近说过的。
-        for (int i = hits.size() - 1; i >= 0; --i) {
-            if (total >= MaxGlobalSearchResults) { truncated = true; break; }
-            const RemoteIMMessage& message = messages.at(hits.at(i));
-            auto* item = new QListWidgetItem(QStringLiteral("%1 · %2\n%3")
-                .arg(peerName,
-                     QDateTime::fromMSecsSinceEpoch(message.createdAtMillis)
-                         .toString(QStringLiteral("MM-dd HH:mm")),
-                     message.text.simplified()));
-            item->setData(SearchPeerRole, contact.userId);
-            item->setData(SearchMessageRole, message.id);
-            item->setSizeHint(QSize(0, UiZoom::s(52)));
-            globalSearchResults_->addItem(item);
-            ++total;
-        }
-        if (truncated) break;
+        // 逐条流式判断，不调 messagesWith——那会把整个会话深拷贝一份出来，
+        // 放在搜索里等于每次输入都复制上千条消息。
+        state.forEachMessageWith(contact.userId, [&](const RemoteIMMessage& message) {
+            const int score = MessageSearch::score(message.text, needle);
+            if (score == MessageSearch::NoMatch) return;
+            // 同一趟顺便记下「这个会话有命中」，会话列表过滤直接复用，不再扫第二遍。
+            peersWithSearchHits_.insert(contact.userId);
+            hits.append({contact.userId, peerName, message.id, message.text.simplified(),
+                         message.createdAtMillis, score});
+        });
     }
 
-    if (total == 0) {
+    // 先按贴切度，再按时间新→旧。模糊命中排在原样命中后面，
+    // 这样「记岔一点也能搜到」不会把真正想找的那条挤下去。
+    std::sort(hits.begin(), hits.end(), [](const Hit& a, const Hit& b) {
+        if (a.score != b.score) return a.score > b.score;
+        return a.createdAt > b.createdAt;
+    });
+
+    const bool truncated = hits.size() > MaxGlobalSearchResults;
+    const int shown = truncated ? MaxGlobalSearchResults : hits.size();
+    for (int i = 0; i < shown; ++i) {
+        const Hit& hit = hits.at(i);
+        auto* item = new QListWidgetItem(
+            QStringLiteral("%1 · %2\n%3")
+                .arg(hit.peerName,
+                     QDateTime::fromMSecsSinceEpoch(hit.createdAt)
+                         .toString(QStringLiteral("MM-dd HH:mm")),
+                     hit.preview));
+        item->setData(SearchPeerRole, hit.peerId);
+        item->setData(SearchMessageRole, hit.messageId);
+        item->setSizeHint(QSize(0, UiZoom::s(52)));
+        globalSearchResults_->addItem(item);
+    }
+
+    if (hits.isEmpty()) {
         // 说清范围：没点过「加载更早」的历史不在内存里，也就搜不到。
-        // 只说「无结果」会让人以为这句话从来没说过。
         auto* empty = new QListWidgetItem(QStringLiteral("无结果\n只搜索各会话中已加载的消息"));
         empty->setFlags(Qt::NoItemFlags);
         empty->setSizeHint(QSize(0, UiZoom::s(52)));
         globalSearchResults_->addItem(empty);
     } else if (truncated) {
         auto* more = new QListWidgetItem(
-            QStringLiteral("结果过多，仅显示前 %1 条\n再输入几个字缩小范围").arg(MaxGlobalSearchResults));
+            QStringLiteral("结果过多，仅显示最贴切的 %1 条\n再输入几个字缩小范围")
+                .arg(MaxGlobalSearchResults));
         more->setFlags(Qt::NoItemFlags);
         more->setSizeHint(QSize(0, UiZoom::s(52)));
         globalSearchResults_->addItem(more);

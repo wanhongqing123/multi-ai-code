@@ -1547,9 +1547,11 @@ void MainWindowLayoutTest::globalSearchFindsMatchesAcrossConversationsAndJumps()
     QVERIFY(results != nullptr);
     QVERIFY(results->isHidden());
 
+    // 搜索是防抖的：输入后要等停顿才真正执行，所以这里必须等，不能同步断言。
+    // 防抖本身是为了不让每次按键都去扫所有会话，卡顿就是那样来的。
     search->setText(QStringLiteral("cmake"));
-    QVERIFY(!results->isHidden());
-    QCOMPARE(results->count(), 2);
+    QTRY_VERIFY(!results->isHidden());
+    QTRY_COMPARE(results->count(), 2);
 
     // 左边的会话列表不能被清空：这两个会话都含命中，虽然它们的名字和
     // 最后一条预览都不含关键词。否则右边列着结果、左边一片空白，自相矛盾。
@@ -1604,14 +1606,14 @@ void MainWindowLayoutTest::globalSearchReportsNoResultWithLoadedScopeHint() {
     QVERIFY(results != nullptr);
 
     search->setText(QStringLiteral("不存在的关键词"));
-    QCOMPARE(results->count(), 1);
+    QTRY_COMPARE(results->count(), 1);
     const QString hint = results->item(0)->text();
     QVERIFY(hint.contains(QStringLiteral("无结果")));
     QVERIFY(hint.contains(QStringLiteral("已加载")));
     // 提示项不能被点开——它不对应任何消息。
     QVERIFY(!results->item(0)->flags().testFlag(Qt::ItemIsSelectable));
 
-    // 清空输入应当收起面板，而不是继续显示「无结果」：那是还没开始搜。
+    // 清空输入立即收起面板，不走防抖——没人愿意清空后还要等 150ms 才恢复。
     search->clear();
     QVERIFY(results->isHidden());
 }

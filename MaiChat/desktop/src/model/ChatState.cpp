@@ -253,6 +253,17 @@ RemoteIMMessage ChatState::receiveVoice(const QString& fromUserId, const QString
     return message;
 }
 
+void ChatState::forEachMessageWith(
+    const QString& peerId, const std::function<void(const RemoteIMMessage&)>& visit) const {
+    const QString cleanPeerId = clean(peerId);
+    const auto conversation = messageIdsByPeer_.constFind(cleanPeerId);
+    if (conversation == messageIdsByPeer_.cend()) return;
+    for (const QString& messageId : conversation.value()) {
+        const int index = messageIndexById_.value(messageId, -1);
+        if (index >= 0 && index < messages_.size()) visit(messages_.at(index));
+    }
+}
+
 QList<RemoteIMMessage> ChatState::messagesWith(const QString& peerId) const {
     QList<RemoteIMMessage> result;
     const QString cleanPeerId = clean(peerId);

@@ -35,6 +35,10 @@ private slots:
     void previousWrapsAroundToLast();
     void navigationOnEmptyHitsReturnsInvalid();
     void navigationFromUnknownPositionPicksNearestEnd();
+    void scoresExactMatchesAboveFuzzyOnes();
+    void matchesWhenWordsAreRememberedOutOfOrder();
+    void matchesWhenAFewCharactersAreMisremembered();
+    void singleCharacterQueryDoesNotMatchEverything();
 };
 
 void MessageSearchTest::findsMatchesInTimeOrder() {
@@ -88,6 +92,42 @@ void MessageSearchTest::navigationFromUnknownPositionPicksNearestEnd() {
     const QList<int> hits{2, 5, 9};
     QCOMPARE(MessageSearch::nextHit(hits, -1), 2);
     QCOMPARE(MessageSearch::previousHit(hits, 100), 9);
+}
+
+
+// 分级的意义：原样命中要排在模糊命中前面，否则「记岔一点也能搜到」会把
+// 真正想找的那条挤下去。
+void MessageSearchTest::scoresExactMatchesAboveFuzzyOnes() {
+    const int prefix = MessageSearch::score(QStringLiteral("cmake 失败了"), QStringLiteral("cmake"));
+    const int middle = MessageSearch::score(QStringLiteral("构建时 cmake 失败"), QStringLiteral("cmake"));
+    const int fuzzy = MessageSearch::score(QStringLiteral("c 开头 m 中间 ake 结尾"), QStringLiteral("cmake"));
+    QCOMPARE(prefix, static_cast<int>(MessageSearch::Prefix));
+    QCOMPARE(middle, static_cast<int>(MessageSearch::Substring));
+    QCOMPARE(fuzzy, static_cast<int>(MessageSearch::Subsequence));
+    QVERIFY(prefix > middle);
+    QVERIFY(middle > fuzzy);
+}
+
+// 词序记反也要能搜到：严格子串在这里会一无所获。
+void MessageSearchTest::matchesWhenWordsAreRememberedOutOfOrder() {
+    const QString text = QStringLiteral("cmake 那一步失败了");
+    QCOMPARE(MessageSearch::score(text, QStringLiteral("失败 cmake")),
+             static_cast<int>(MessageSearch::AllTokens));
+    QVERIFY(MessageSearch::matches(text, QStringLiteral("失败 cmake")));
+}
+
+// 中间漏字也要能搜到：「构建失败」找得到「构建那一步失败了」。
+void MessageSearchTest::matchesWhenAFewCharactersAreMisremembered() {
+    QVERIFY(MessageSearch::matches(QStringLiteral("构建那一步失败了"), QStringLiteral("构建失败")));
+    QVERIFY(!MessageSearch::matches(QStringLiteral("构建那一步失败了"), QStringLiteral("失败构建")));
+}
+
+// 但模糊不能糊到没用：单字查询若走子序列，几乎所有消息都会命中。
+void MessageSearchTest::singleCharacterQueryDoesNotMatchEverything() {
+    QCOMPARE(MessageSearch::score(QStringLiteral("今天的构建通过了"), QStringLiteral("天")),
+             static_cast<int>(MessageSearch::Substring));
+    QCOMPARE(MessageSearch::score(QStringLiteral("今日构建通过"), QStringLiteral("天")),
+             static_cast<int>(MessageSearch::NoMatch));
 }
 
 QTEST_MAIN(MessageSearchTest)

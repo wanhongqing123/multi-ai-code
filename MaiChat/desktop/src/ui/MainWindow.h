@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QHash>
+#include <QSet>
 #include <QLabel>
 #include <QListWidget>
 #include <QMainWindow>
@@ -215,6 +216,10 @@ private:
     QPushButton* headerSearchButton_ = nullptr;
     QWidget* appTopBar_ = nullptr;
     QListWidget* globalSearchResults_ = nullptr;
+    // 搜索要扫所有会话，不能挂在每次按键上跑：停顿后才执行，组词期间不跑。
+    QTimer* globalSearchUpdateTimer_ = nullptr;
+    // 上一趟搜索里「有命中」的会话。会话列表过滤直接复用，避免同一次输入扫两遍。
+    QSet<QString> peersWithSearchHits_;
     QString messageSearchHighlightedId_;
     bool renderedEmptyView_ = false;
     QPushButton* addContactButton_ = nullptr;

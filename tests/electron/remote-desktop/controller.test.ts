@@ -66,6 +66,55 @@ describe('remote desktop controller (host only)', () => {
     warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
   })
 
+  // 真实事故：好友加回来了，但渲染进程手里的白名单还是清空那一刻的旧值，
+  // 邀请被判 allowed=false，只能重启才恢复。准入前必须重新取一次权威数据。
+  it('refreshes the allow list before deciding, so a stale cache cannot lock a friend out', async () => {
+    const fake = createFakeEngine()
+    const sent: { toUserId: string; signal: RemoteDesktopSignal | null }[] = []
+    let refreshCalls = 0
+    const controller = new RemoteDesktopController({
+      engine: fake.engine,
+      // 缓存是空的——升级清空联系人后没刷新到的那种状态
+      getSettings: () => ({ mode: 'unattended', allowedUserIds: [] }),
+      refreshSettings: async () => {
+        refreshCalls += 1
+        return { mode: 'unattended', allowedUserIds: ['whq-iphone'] }
+      },
+      getCredentials: async () => ({ sdkAppId: 1, userId: 'host-pc', userSig: 'sig' }),
+      sendSignal: async (toUserId, text) => {
+        sent.push({ toUserId, signal: decodeRemoteDesktopSignal(text) })
+      }
+    })
+
+    await controller.handleSignal('whq-iphone', invite)
+
+    expect(refreshCalls).toBe(1)
+    expect(fake.startSharing).toHaveBeenCalledTimes(1)
+    expect(sent[0]?.signal?.type).toBe('accept')
+  })
+
+  // 刷新失败不能把准入卡死：退回缓存继续判断。
+  it('falls back to the cached settings when the refresh throws', async () => {
+    const fake = createFakeEngine()
+    const sent: { toUserId: string; signal: RemoteDesktopSignal | null }[] = []
+    const controller = new RemoteDesktopController({
+      engine: fake.engine,
+      getSettings: () => ({ mode: 'unattended', allowedUserIds: ['whq-iphone'] }),
+      refreshSettings: async () => {
+        throw new Error('main process unreachable')
+      },
+      getCredentials: async () => ({ sdkAppId: 1, userId: 'host-pc', userSig: 'sig' }),
+      sendSignal: async (toUserId, text) => {
+        sent.push({ toUserId, signal: decodeRemoteDesktopSignal(text) })
+      }
+    })
+
+    await controller.handleSignal('whq-iphone', invite)
+
+    expect(fake.startSharing).toHaveBeenCalledTimes(1)
+    expect(sent[0]?.signal?.type).toBe('accept')
+  })
+
   it('accepts an invite from an allowed peer and starts sharing', async () => {
     const { controller, sent, startSharing } = setup()
 

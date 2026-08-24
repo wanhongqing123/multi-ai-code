@@ -27,6 +27,8 @@ export interface RemoteDesktopHostIncomingText {
 export interface RemoteDesktopHostDeps {
   engine: RemoteDesktopEngine
   getSettings(): RemoteDesktopSettingsSnapshot
+  /** 准入判断前重新取一次权威设置，避免缓存过期把好友挡在门外。 */
+  refreshSettings?(): Promise<RemoteDesktopSettingsSnapshot | null>
   getCredentials(): Promise<{ sdkAppId: number; userId: string; userSig: string }>
   sendText(toUserId: string, text: string): Promise<void>
   onStateChanged?(state: RemoteDesktopControllerState): void
@@ -47,6 +49,7 @@ export function createRemoteDesktopHost(deps: RemoteDesktopHostDeps): RemoteDesk
   const controller = new RemoteDesktopController({
     engine: deps.engine,
     getSettings: deps.getSettings,
+    refreshSettings: deps.refreshSettings,
     getCredentials: deps.getCredentials,
     sendSignal: deps.sendText,
     onStateChanged: deps.onStateChanged,

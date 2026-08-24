@@ -34,6 +34,14 @@ export interface RemoteDesktopSettingsSnapshot {
 export interface RemoteDesktopControllerDeps {
   engine: RemoteDesktopEngine
   getSettings(): RemoteDesktopSettingsSnapshot
+  /**
+   * 在真正做准入判断前重新取一次设置。白名单来自 IM 好友名单，而好友随时会变
+   * （imcli add-contact、界面添加都会改）；渲染进程手里的那份是缓存，一旦某次
+   * 刷新没送到，就会拿着过期名单把人挡在门外，且只能靠重启恢复。
+   * 准入是安全判断，宁可多一次往返也要用当下的权威数据。
+   * 未提供时退回 getSettings()，老调用方不受影响。
+   */
+  refreshSettings?(): Promise<RemoteDesktopSettingsSnapshot | null>
   /** 拿本机 TRTC 凭证。复用 IM 的 sdkAppId / userId / secretKey，无需二次签名。 */
   getCredentials(): Promise<{ sdkAppId: number; userId: string; userSig: string }>
   /** 把信令文本经 IM 发回给对端。 */
@@ -120,9 +128,25 @@ export class RemoteDesktopController {
     }
   }
 
+  /** 取最新设置；拿不到（未提供或出错）时返回 null，由调用方退回缓存。 */
+  private async refreshedSettings(): Promise<RemoteDesktopSettingsSnapshot | null> {
+    if (!this.deps.refreshSettings) return null
+    try {
+      return await this.deps.refreshSettings()
+    } catch (error) {
+      // 刷新失败不能让准入直接挂掉：退回缓存继续判断，但要留痕。
+      this.deps.logger?.('remote-desktop: settings refresh failed', {
+        error: error instanceof Error ? error.message : String(error)
+      })
+      return null
+    }
+  }
+
   private async handleInvite(fromUserId: string, signal: RemoteDesktopSignal): Promise<void> {
-    const settings = this.deps.getSettings()
-    const allowed = normalizeList(settings.allowedUserIds).includes(fromUserId.trim())
+    // 先刷新再判断：缓存的白名单过期时，表现是「明明是好友却连不上，重启才好」。
+    const settings = (await this.refreshedSettings()) ?? this.deps.getSettings()
+    const allowedUserIds = normalizeList(settings.allowedUserIds)
+    const allowed = allowedUserIds.includes(fromUserId.trim())
     const decision = decideOnInvite({
       mode: settings.mode,
       currentState: this.hostState,
@@ -137,7 +161,10 @@ export class RemoteDesktopController {
       fromUserId,
       action: decision.action,
       mode: settings.mode,
-      allowed
+      allowed,
+      // 把判断依据也记下来：只记 allowed=false 的话，排查时分不清是
+      // 「名单里确实没有这个人」还是「名单本身是空的/过期的」。
+      allowedUserIds
     })
 
     if (decision.action === 'rejectInvite') {

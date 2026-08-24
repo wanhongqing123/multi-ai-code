@@ -45,12 +45,6 @@ struct IncomingRemoteIMFile: Equatable {
     let createdAt: Date
 }
 
-enum IncomingRemoteIMVideoStage: String, Equatable {
-    case metadata
-    case coverReady
-    case videoReady
-}
-
 struct IncomingRemoteIMVideo: Equatable {
     let fromUserID: String
     let videoFileURL: URL
@@ -62,7 +56,7 @@ struct IncomingRemoteIMVideo: Equatable {
     let remoteID: String?
     let origin: RemoteIMMessageOrigin?
     let createdAt: Date
-    let stage: IncomingRemoteIMVideoStage
+    let stage: RemoteIMVideoDownloadStage
 }
 
 struct RemoteIMVoiceRecording: Equatable {

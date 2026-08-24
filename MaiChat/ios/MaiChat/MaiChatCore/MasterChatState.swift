@@ -485,6 +485,37 @@ public struct RemoteIMVideoAttachment: Codable, Equatable, Sendable {
     }
 }
 
+public enum RemoteIMVideoDownloadStage: String, Equatable, Sendable {
+    case metadata
+    case coverReady
+    case videoReady
+    case videoFailed
+}
+
+public enum RemoteIMVideoDownloadTrackingPolicy {
+    public static func updatedKeys(
+        current: Set<String>,
+        key: String,
+        stage: RemoteIMVideoDownloadStage,
+        fileIsUsable: Bool
+    ) -> Set<String> {
+        var result = current
+        switch stage {
+        case .metadata:
+            if fileIsUsable {
+                result.remove(key)
+            } else {
+                result.insert(key)
+            }
+        case .coverReady:
+            break
+        case .videoReady, .videoFailed:
+            result.remove(key)
+        }
+        return result
+    }
+}
+
 public struct RemoteIMFileAttachment: Codable, Equatable, Sendable {
     public let localFilePath: String
     public let fileName: String

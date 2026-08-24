@@ -1130,6 +1130,10 @@ private struct MessageListView: View {
                                 message: message,
                                 senderProfile: appState.profile(for: message.fromUserID),
                                 incomingRelation: peerRelation,
+                                isVideoDownloading: appState.isVideoDownloading(
+                                    remoteID: message.remoteID,
+                                    localPath: message.videoAttachment?.localPath ?? ""
+                                ),
                                 isVoicePlaying: voicePlayer.playingMessageID == message.id,
                                 playVoice: {
                                     voicePlayer.toggle(message: message)
@@ -1301,6 +1305,7 @@ private struct MessageBubbleView: View {
     let message: RemoteIMMessage
     let senderProfile: RemoteIMUserProfile
     let incomingRelation: RemoteIMContactRelation
+    let isVideoDownloading: Bool
     let isVoicePlaying: Bool
     let playVoice: () -> Void
     let previewImage: () -> Void
@@ -1378,7 +1383,10 @@ private struct MessageBubbleView: View {
         HStack(alignment: .bottom, spacing: 10) {
             Group {
                 if let videoAttachment = message.videoAttachment {
-                    let fileState = RemoteIMVideoFileState(attachment: videoAttachment)
+                    let fileState = RemoteIMVideoFileState(
+                        attachment: videoAttachment,
+                        isDownloadingHint: isVideoDownloading
+                    )
                     Button(action: previewVideo) {
                         VideoBubbleContent(
                             attachment: videoAttachment,
@@ -1388,6 +1396,7 @@ private struct MessageBubbleView: View {
                     }
                     .buttonStyle(.plain)
                     .disabled(!fileState.isPlayable)
+                    .accessibilityIdentifier("remote-im-video-bubble")
                 } else if let imageAttachment = message.imageAttachment {
                     Button(action: previewImage) {
                         ImageBubbleContent(attachment: imageAttachment)
@@ -1559,6 +1568,7 @@ private struct FullScreenVideoPreviewView: View {
             Color.black.ignoresSafeArea()
             LocalVideoPlayer(url: URL(fileURLWithPath: item.localFilePath))
                 .ignoresSafeArea()
+                .accessibilityIdentifier("remote-im-video-preview")
 
             Button(action: close) {
                 Image(systemName: "xmark")
@@ -1798,7 +1808,7 @@ private struct RemoteIMVideoFileState: Equatable {
     let isPlayable: Bool
     let isDownloading: Bool
 
-    init(attachment: RemoteIMVideoAttachment) {
+    init(attachment: RemoteIMVideoAttachment, isDownloadingHint: Bool) {
         guard !attachment.localPath.isEmpty else {
             self.isPlayable = false
             self.isDownloading = false
@@ -1809,8 +1819,10 @@ private struct RemoteIMVideoFileState: Equatable {
         let values = try? localURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
         let isPlayable = values?.isRegularFile == true && (values?.fileSize ?? 0) > 0
         self.isPlayable = isPlayable
-        self.isDownloading = !isPlayable && FileManager.default.fileExists(
-            atPath: RemoteIMMediaStorage.partialDownloadURL(for: localURL).path
+        self.isDownloading = !isPlayable && (
+            isDownloadingHint || FileManager.default.fileExists(
+                atPath: RemoteIMMediaStorage.partialDownloadURL(for: localURL).path
+            )
         )
     }
 }
@@ -1895,6 +1907,7 @@ private struct VideoBubbleContent: View {
             Text(videoStatusText)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(RemoteIMStyle.textSecondary)
+                .accessibilityIdentifier("remote-im-video-status")
         }
         .contentShape(Rectangle())
     }

@@ -43,6 +43,7 @@ final class RemoteIMAppState: ObservableObject {
     @Published var presenceStatusByUserID: [String: RemoteIMPresenceStatus] = [:]
     @Published private(set) var unreadCountByUserID: [String: Int] = [:]
     @Published private(set) var userProfileByUserID: [String: RemoteIMUserProfile] = [:]
+    @Published private(set) var downloadingVideoKeys = Set<String>()
 
     let remoteDesktop: RemoteDesktopSession
     let draft = RemoteIMDraftState()
@@ -319,6 +320,7 @@ final class RemoteIMAppState: ObservableObject {
         await remoteDesktop.stop(cause: "im-disconnect")
         await client.disconnect()
         presenceStatusByUserID = [:]
+        downloadingVideoKeys = []
         connectionState = .disconnected
         logIM(
             level: .info,
@@ -455,6 +457,12 @@ final class RemoteIMAppState: ObservableObject {
 
     func unreadCount(for userID: String) -> Int {
         unreadCountByUserID[userID] ?? 0
+    }
+
+    func isVideoDownloading(remoteID: String?, localPath: String) -> Bool {
+        downloadingVideoKeys.contains(
+            Self.videoDownloadKey(remoteID: remoteID, localPath: localPath)
+        )
     }
 
     func visibleMessages(with userID: String) -> [RemoteIMMessage] {
@@ -924,6 +932,7 @@ final class RemoteIMAppState: ObservableObject {
         )
         let wasInserted = chatState.messages.count > previousCount
         let wasUpdated = !wasInserted && previousAttachment != message.videoAttachment
+        updateVideoDownloadState(for: event)
         logMessageIngested(
             kind: "video",
             userID: event.fromUserID,
@@ -931,6 +940,10 @@ final class RemoteIMAppState: ObservableObject {
             wasInserted: wasInserted,
             fields: [
                 "stage": event.stage.rawValue,
+                "downloading": isVideoDownloading(
+                    remoteID: event.remoteID,
+                    localPath: event.videoFileURL.path
+                ) ? "1" : "0",
                 "updated": wasUpdated ? "1" : "0",
                 "duration_seconds": String(event.durationSeconds),
                 "width": String(event.width),
@@ -947,6 +960,36 @@ final class RemoteIMAppState: ObservableObject {
         // The attachment paths are stable from the metadata stage onward. A later download
         // makes the file appear at the same path, so explicitly refresh the bubble/player.
         objectWillChange.send()
+    }
+
+    private func updateVideoDownloadState(for event: IncomingRemoteIMVideo) {
+        let key = Self.videoDownloadKey(
+            remoteID: event.remoteID,
+            localPath: event.videoFileURL.path
+        )
+        let nextKeys = RemoteIMVideoDownloadTrackingPolicy.updatedKeys(
+            current: downloadingVideoKeys,
+            key: key,
+            stage: event.stage,
+            fileIsUsable: Self.isUsableLocalFile(event.videoFileURL)
+        )
+        if nextKeys != downloadingVideoKeys {
+            downloadingVideoKeys = nextKeys
+        }
+    }
+
+    private static func videoDownloadKey(remoteID: String?, localPath: String) -> String {
+        let cleanRemoteID = remoteID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return cleanRemoteID.isEmpty
+            ? URL(fileURLWithPath: localPath).standardizedFileURL.path
+            : cleanRemoteID
+    }
+
+    private static func isUsableLocalFile(_ url: URL) -> Bool {
+        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]) else {
+            return false
+        }
+        return values.isRegularFile == true && (values.fileSize ?? 0) > 0
     }
 
     private func shouldAcceptIncomingSender(_ userID: String, kind: String) -> Bool {
@@ -1046,6 +1089,7 @@ final class RemoteIMAppState: ObservableObject {
             )
         }
         presenceStatusByUserID = [:]
+        downloadingVideoKeys = []
         historyAccountGeneration &+= 1
         chatHistorySDKAppID = nextSDKAppID
         conversationHistoryStateByUserID = [:]

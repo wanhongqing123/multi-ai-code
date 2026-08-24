@@ -861,6 +861,19 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
                     fields["reason"] = "file-promote-failed"
                     fields["duration_ms"] = Self.elapsedMilliseconds(since: videoStartedAt)
                     Self.logSDK(level: .warning, event: "media-download-finished", fields: fields)
+                    self?.emitIncomingVideo(
+                        fromUserID: fromUserID,
+                        videoFileURL: videoURL,
+                        coverFileURL: coverURL,
+                        durationSeconds: durationSeconds,
+                        width: width,
+                        height: height,
+                        sizeBytes: sizeBytes,
+                        remoteID: remoteID,
+                        origin: origin,
+                        createdAt: createdAt,
+                        stage: .videoFailed
+                    )
                     return
                 }
                 fields["result"] = "ok"
@@ -880,13 +893,26 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
                     stage: .videoReady
                 )
             },
-            fail: { code, _ in
+            fail: { [weak self] code, _ in
                 try? FileManager.default.removeItem(at: videoPartURL)
                 var fields = videoFields
                 fields["result"] = "failed"
                 fields["code"] = String(code)
                 fields["duration_ms"] = Self.elapsedMilliseconds(since: videoStartedAt)
                 Self.logSDK(level: .warning, event: "media-download-finished", fields: fields)
+                self?.emitIncomingVideo(
+                    fromUserID: fromUserID,
+                    videoFileURL: videoURL,
+                    coverFileURL: coverURL,
+                    durationSeconds: durationSeconds,
+                    width: width,
+                    height: height,
+                    sizeBytes: sizeBytes,
+                    remoteID: remoteID,
+                    origin: origin,
+                    createdAt: createdAt,
+                    stage: .videoFailed
+                )
             }
         )
     }
@@ -902,7 +928,7 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
         remoteID: String?,
         origin: RemoteIMMessageOrigin?,
         createdAt: Date,
-        stage: IncomingRemoteIMVideoStage
+        stage: RemoteIMVideoDownloadStage
     ) {
         Task { @MainActor [weak self] in
             self?.onIncomingVideo?(

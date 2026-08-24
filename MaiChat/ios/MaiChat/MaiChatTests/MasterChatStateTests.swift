@@ -1062,6 +1062,53 @@ final class MasterChatStateTests: XCTestCase {
         XCTAssertNil(MessageListAutoScrollPolicy.latestMessageID(from: []))
     }
 
+    func testVideoDownloadTrackingFollowsMetadataReadyAndFailureStages() {
+        let key = "video-1"
+        let downloading = RemoteIMVideoDownloadTrackingPolicy.updatedKeys(
+            current: [],
+            key: key,
+            stage: .metadata,
+            fileIsUsable: false
+        )
+        XCTAssertEqual(downloading, [key])
+        XCTAssertEqual(
+            RemoteIMVideoDownloadTrackingPolicy.updatedKeys(
+                current: downloading,
+                key: key,
+                stage: .coverReady,
+                fileIsUsable: false
+            ),
+            downloading
+        )
+        XCTAssertEqual(
+            RemoteIMVideoDownloadTrackingPolicy.updatedKeys(
+                current: downloading,
+                key: key,
+                stage: .videoReady,
+                fileIsUsable: true
+            ),
+            []
+        )
+        XCTAssertEqual(
+            RemoteIMVideoDownloadTrackingPolicy.updatedKeys(
+                current: downloading,
+                key: key,
+                stage: .videoFailed,
+                fileIsUsable: false
+            ),
+            []
+        )
+        XCTAssertEqual(
+            RemoteIMVideoDownloadTrackingPolicy.updatedKeys(
+                current: [],
+                key: key,
+                stage: .metadata,
+                fileIsUsable: true
+            ),
+            []
+        )
+    }
+
     func testMessageCopyPolicyProvidesSelectableTextAndCompleteMetadata() {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!

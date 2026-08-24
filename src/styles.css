@@ -1564,6 +1564,29 @@ html, body, #root {
   line-height: var(--mac-line-normal);
 }
 
+/* 控制开关不是模式列表的第四项，所以不做成同款选项卡片；但复选框得和上面三个单选钮
+   一样跟文字同排。卡片默认的 label 是竖排（那是给「标题在上、输入框在下」用的），
+   继承下来会把复选框甩到单独一行，并被 flex 拉伸成整行宽——勾选标记落在行正中，
+   看着就像没对齐。说明文字进第二列，跟标题左边缘对齐。 */
+.ai-settings-card label.remote-desktop-control-toggle {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  column-gap: var(--mac-sp-2);
+  row-gap: 4px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.ai-settings-card label.remote-desktop-control-toggle > input[type='checkbox'] {
+  margin: 0;
+  accent-color: var(--mac-primary);
+}
+
+.ai-settings-card label.remote-desktop-control-toggle > .remote-desktop-mode-hint {
+  grid-column: 2;
+}
+
 /* 高级参数设置：默认折叠的一行文字按钮，不做成卡片，免得看起来像常规步骤。 */
 .ai-settings-advanced {
   display: grid;

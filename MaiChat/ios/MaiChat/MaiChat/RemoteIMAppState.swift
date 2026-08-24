@@ -87,14 +87,9 @@ final class RemoteIMAppState: ObservableObject {
         self.secretKey = loadedSecretKey
         self.chatHistorySDKAppID = settings.sdkAppID
 
-        let storedContacts = Self.contacts(from: settings)
-        let cleanOwnerUserID = settings.masterUserID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let hadInvalidSelfContact = storedContacts.contains { contact in
-            !cleanOwnerUserID.isEmpty && contact.userID == cleanOwnerUserID
-        }
         let loadedState = MasterChatState(
             ownerUserID: settings.masterUserID,
-            contacts: storedContacts,
+            contacts: Self.contacts(from: settings),
             messages: []
         )
         self.chatState = loadedState
@@ -143,22 +138,6 @@ final class RemoteIMAppState: ObservableObject {
             Task { @MainActor in
                 self?.applyPresenceStatusUpdates(updates)
             }
-        }
-        if hadInvalidSelfContact {
-            self.settingsStore.save(currentStoredSettings())
-        }
-        if !cleanOwnerUserID.isEmpty {
-            enqueueHistoryMutation(.removeConversation(
-                peerUserID: cleanOwnerUserID,
-                sdkAppID: chatHistorySDKAppID,
-                ownerUserID: cleanOwnerUserID
-            ))
-            logIM(
-                level: .warning,
-                event: "self-conversation-cleanup",
-                fields: ["result": "scheduled"],
-                userID: cleanOwnerUserID
-            )
         }
         Task { [weak self] in
             await self?.loadConversationSummariesForCurrentAccount()

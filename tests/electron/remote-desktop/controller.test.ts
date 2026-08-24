@@ -67,8 +67,8 @@ describe('remote desktop controller (host only)', () => {
   })
 
   // 真实事故：好友加回来了，但渲染进程手里的白名单还是清空那一刻的旧值，
-  // 邀请被判 allowed=false，只能重启才恢复。准入前必须重新取一次权威数据。
-  it('refreshes the allow list before deciding, so a stale cache cannot lock a friend out', async () => {
+  // 邀请被判 allowed=false，只能重启才恢复。准入必须直接问库，不看缓存名单。
+  it('asks the database per invite, so a stale cached list cannot lock a friend out', async () => {
     const fake = createFakeEngine()
     const sent: { toUserId: string; signal: RemoteDesktopSignal | null }[] = []
     let refreshCalls = 0
@@ -76,9 +76,10 @@ describe('remote desktop controller (host only)', () => {
       engine: fake.engine,
       // 缓存是空的——升级清空联系人后没刷新到的那种状态
       getSettings: () => ({ mode: 'unattended', allowedUserIds: [] }),
-      refreshSettings: async () => {
+      resolveAccess: async (fromUserId) => {
         refreshCalls += 1
-        return { mode: 'unattended', allowedUserIds: ['whq-iphone'] }
+        // 库里说：这个人是好友、没被禁掉。
+        return { mode: 'unattended', allowed: fromUserId === 'whq-iphone' }
       },
       getCredentials: async () => ({ sdkAppId: 1, userId: 'host-pc', userSig: 'sig' }),
       sendSignal: async (toUserId, text) => {
@@ -93,14 +94,35 @@ describe('remote desktop controller (host only)', () => {
     expect(sent[0]?.signal?.type).toBe('accept')
   })
 
-  // 刷新失败不能把准入卡死：退回缓存继续判断。
-  it('falls back to the cached settings when the refresh throws', async () => {
+  // 反向也要成立：库里说不允许（比如刚被删除、留了墓碑），
+  // 即便渲染进程缓存名单里还留着这个人，也必须拒绝——否则「删好友」形同虚设。
+  it('rejects when the database says no, even if the cached list still contains the peer', async () => {
     const fake = createFakeEngine()
     const sent: { toUserId: string; signal: RemoteDesktopSignal | null }[] = []
     const controller = new RemoteDesktopController({
       engine: fake.engine,
       getSettings: () => ({ mode: 'unattended', allowedUserIds: ['whq-iphone'] }),
-      refreshSettings: async () => {
+      resolveAccess: async () => ({ mode: 'unattended', allowed: false }),
+      getCredentials: async () => ({ sdkAppId: 1, userId: 'host-pc', userSig: 'sig' }),
+      sendSignal: async (toUserId, text) => {
+        sent.push({ toUserId, signal: decodeRemoteDesktopSignal(text) })
+      }
+    })
+
+    await controller.handleSignal('whq-iphone', invite)
+
+    expect(fake.startSharing).not.toHaveBeenCalled()
+    expect(sent[0]?.signal?.type).toBe('reject')
+  })
+
+  // 查库失败不能把准入卡死：退回缓存名单继续判断。
+  it('falls back to the cached allow list when the database lookup throws', async () => {
+    const fake = createFakeEngine()
+    const sent: { toUserId: string; signal: RemoteDesktopSignal | null }[] = []
+    const controller = new RemoteDesktopController({
+      engine: fake.engine,
+      getSettings: () => ({ mode: 'unattended', allowedUserIds: ['whq-iphone'] }),
+      resolveAccess: async () => {
         throw new Error('main process unreachable')
       },
       getCredentials: async () => ({ sdkAppId: 1, userId: 'host-pc', userSig: 'sig' }),

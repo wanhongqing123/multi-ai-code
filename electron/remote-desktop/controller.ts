@@ -31,17 +31,27 @@ export interface RemoteDesktopSettingsSnapshot {
   allowRemoteControl?: boolean
 }
 
+/** 一次准入判断需要的全部输入，由权威数据源一次性给出。 */
+export interface RemoteDesktopAccess {
+  mode: RemoteDesktopHostMode
+  allowRemoteControl?: boolean
+  /** 该账号当前是否允许远程（是好友且未被删除）。 */
+  allowed: boolean
+}
+
 export interface RemoteDesktopControllerDeps {
   engine: RemoteDesktopEngine
   getSettings(): RemoteDesktopSettingsSnapshot
   /**
-   * 在真正做准入判断前重新取一次设置。白名单来自 IM 好友名单，而好友随时会变
-   * （imcli add-contact、界面添加都会改）；渲染进程手里的那份是缓存，一旦某次
-   * 刷新没送到，就会拿着过期名单把人挡在门外，且只能靠重启恢复。
-   * 准入是安全判断，宁可多一次往返也要用当下的权威数据。
-   * 未提供时退回 getSettings()，老调用方不受影响。
+   * 直接问权威数据源「这个人现在能不能远程」。
+   *
+   * 不再把一份名单拷贝发到这里比对：所谓「允许远程的名单」本来就等于好友名单，
+   * 多存一份只是多一处会过期的地方——之前那次「加回好友却连不上、重启才好」
+   * 就是这份拷贝过期了。本地删掉的好友在库里是墓碑，查出来就是不允许，
+   * 「禁掉某人的远程」这层语义已经在库里，不需要另一份名单。
+   * 未提供时退回 getSettings() 里的名单，老调用方不受影响。
    */
-  refreshSettings?(): Promise<RemoteDesktopSettingsSnapshot | null>
+  resolveAccess?(fromUserId: string): Promise<RemoteDesktopAccess | null>
   /** 拿本机 TRTC 凭证。复用 IM 的 sdkAppId / userId / secretKey，无需二次签名。 */
   getCredentials(): Promise<{ sdkAppId: number; userId: string; userSig: string }>
   /** 把信令文本经 IM 发回给对端。 */
@@ -128,14 +138,14 @@ export class RemoteDesktopController {
     }
   }
 
-  /** 取最新设置；拿不到（未提供或出错）时返回 null，由调用方退回缓存。 */
-  private async refreshedSettings(): Promise<RemoteDesktopSettingsSnapshot | null> {
-    if (!this.deps.refreshSettings) return null
+  /** 问权威数据源；拿不到（未提供或出错）时返回 null，由调用方退回缓存名单。 */
+  private async resolvedAccess(fromUserId: string): Promise<RemoteDesktopAccess | null> {
+    if (!this.deps.resolveAccess) return null
     try {
-      return await this.deps.refreshSettings()
+      return await this.deps.resolveAccess(fromUserId)
     } catch (error) {
-      // 刷新失败不能让准入直接挂掉：退回缓存继续判断，但要留痕。
-      this.deps.logger?.('remote-desktop: settings refresh failed', {
+      // 查询失败不能让准入直接挂掉：退回缓存继续判断，但要留痕。
+      this.deps.logger?.('remote-desktop: access lookup failed', {
         error: error instanceof Error ? error.message : String(error)
       })
       return null
@@ -143,12 +153,15 @@ export class RemoteDesktopController {
   }
 
   private async handleInvite(fromUserId: string, signal: RemoteDesktopSignal): Promise<void> {
-    // 先刷新再判断：缓存的白名单过期时，表现是「明明是好友却连不上，重启才好」。
-    const settings = (await this.refreshedSettings()) ?? this.deps.getSettings()
-    const allowedUserIds = normalizeList(settings.allowedUserIds)
-    const allowed = allowedUserIds.includes(fromUserId.trim())
+    // 每次都问一次库：这个人现在是不是好友、有没有被禁掉。
+    const access = await this.resolvedAccess(fromUserId)
+    const settings = this.deps.getSettings()
+    const mode = access?.mode ?? settings.mode
+    const allowed = access
+      ? access.allowed
+      : normalizeList(settings.allowedUserIds).includes(fromUserId.trim())
     const decision = decideOnInvite({
-      mode: settings.mode,
+      mode,
       currentState: this.hostState,
       senderAllowed: allowed,
       // 本轮不做访问密码：白名单即授权，与 MaiChat 无人值守未设密码时行为一致。
@@ -160,11 +173,12 @@ export class RemoteDesktopController {
     this.deps.logger?.('remote-desktop: invite decision', {
       fromUserId,
       action: decision.action,
-      mode: settings.mode,
+      mode,
       allowed,
-      // 把判断依据也记下来：只记 allowed=false 的话，排查时分不清是
-      // 「名单里确实没有这个人」还是「名单本身是空的/过期的」。
-      allowedUserIds
+      // 记下判断依据的来源：db 表示问过库，cache 表示退回了本地缓存名单。
+      // 只记 allowed=false 的话，排查时分不清「库里确实没有这个人」和
+      // 「查询没走通、用的是过期缓存」——上一次就为此多绕了一轮。
+      source: access ? 'db' : 'cache'
     })
 
     if (decision.action === 'rejectInvite') {

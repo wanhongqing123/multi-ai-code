@@ -9,6 +9,7 @@
 
 import {
   RemoteDesktopController,
+  type RemoteDesktopAccess,
   type RemoteDesktopSettingsSnapshot
 } from '../../electron/remote-desktop/controller.js'
 import type { RemoteDesktopEngine } from '../../electron/remote-desktop/engine.js'
@@ -27,8 +28,8 @@ export interface RemoteDesktopHostIncomingText {
 export interface RemoteDesktopHostDeps {
   engine: RemoteDesktopEngine
   getSettings(): RemoteDesktopSettingsSnapshot
-  /** 准入判断前重新取一次权威设置，避免缓存过期把好友挡在门外。 */
-  refreshSettings?(): Promise<RemoteDesktopSettingsSnapshot | null>
+  /** 直接问主进程「这个人现在能不能远程」，避免渲染进程持有会过期的名单副本。 */
+  resolveAccess?(fromUserId: string): Promise<RemoteDesktopAccess | null>
   getCredentials(): Promise<{ sdkAppId: number; userId: string; userSig: string }>
   sendText(toUserId: string, text: string): Promise<void>
   onStateChanged?(state: RemoteDesktopControllerState): void
@@ -49,7 +50,7 @@ export function createRemoteDesktopHost(deps: RemoteDesktopHostDeps): RemoteDesk
   const controller = new RemoteDesktopController({
     engine: deps.engine,
     getSettings: deps.getSettings,
-    refreshSettings: deps.refreshSettings,
+    resolveAccess: deps.resolveAccess,
     getCredentials: deps.getCredentials,
     sendSignal: deps.sendText,
     onStateChanged: deps.onStateChanged,

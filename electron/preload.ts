@@ -384,6 +384,15 @@ const api = {
       ipcRenderer.invoke('remote-im:get-config', { projectId }) as Promise<
         { ok: true; value: RemoteImConfig } | { ok: false; error: string }
       >,
+    /** 远程桌面准入：直接问主进程「这个人现在能不能远程」，不再传整份名单过来。 */
+    remoteDesktopAccess: (projectId: string, userId: string) =>
+      ipcRenderer.invoke('remote-im:remote-desktop-access', { projectId, userId }) as Promise<
+        | {
+            ok: true
+            value: { mode: RemoteImConfig['remoteDesktopMode']; allowRemoteControl: boolean; allowed: boolean }
+          }
+        | { ok: false; error: string }
+      >,
     getLoginState: () =>
       ipcRenderer.invoke('remote-im:get-login-state') as Promise<
         { ok: true; value: RemoteImLoginState } | { ok: false; error: string }

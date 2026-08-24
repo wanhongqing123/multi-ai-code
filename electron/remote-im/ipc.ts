@@ -2616,6 +2616,36 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
     }
   })
 
+  /**
+   * 远程桌面准入：直接问库「这个人现在能不能远程」，不再把整份名单发给渲染进程比对。
+   *
+   * 「允许远程的名单」本来就等于好友名单，多存一份拷贝只会多一处过期的机会——
+   * 之前那次「加回好友却连不上、重启才好」就是拷贝过期。本地删掉的好友在
+   * remote_im_contacts 里是墓碑，list() 不会返回，等同于「禁掉远程」。
+   */
+  ipcMain.handle(
+    'remote-im:remote-desktop-access',
+    async (_event, { projectId, userId }: { projectId: string; userId: string }) => {
+      try {
+        const config = await getRemoteImConfig(projectId)
+        const cleanUserId = typeof userId === 'string' ? userId.trim() : ''
+        return {
+          ok: true as const,
+          value: {
+            mode: config.remoteDesktopMode,
+            allowRemoteControl: config.remoteDesktopControl,
+            allowed: cleanUserId.length > 0 && config.friendUserIds.includes(cleanUserId)
+          }
+        }
+      } catch (err) {
+        return {
+          ok: false as const,
+          error: err instanceof Error ? err.message : String(err)
+        }
+      }
+    }
+  )
+
   ipcMain.handle('remote-im:get-login-state', async () => {
     try {
       return { ok: true as const, value: await getRemoteImLoginState() }

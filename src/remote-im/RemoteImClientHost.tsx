@@ -275,21 +275,18 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
         desktopUserId: props.config.desktopUserId
       }),
       getSettings: () => remoteDesktopSettingsRef.current,
-      // 准入判断前重新取一次：好友名单随时会变（imcli add-contact、界面添加），
-      // 这里这份是缓存，某次刷新没送到就会拿过期名单把人挡在门外、且只能重启恢复。
-      refreshSettings: async () => {
+      // 准入判断直接问主进程：好友名单在库里，渲染进程不再持有会过期的副本。
+      // 之前那次「加回好友却连不上、重启才好」，坏的就是这份副本。
+      resolveAccess: async (fromUserId) => {
         const projectId = props.projectId
         if (!projectId) return null
-        const result = await window.api.remoteIm.getConfig(projectId)
+        const result = await window.api.remoteIm.remoteDesktopAccess(projectId, fromUserId)
         if (!result.ok || !result.value) return null
-        const snapshot: RemoteDesktopSettingsSnapshot = {
-          mode: result.value.remoteDesktopMode,
-          allowedUserIds: result.value.allowedUserIds,
-          allowRemoteControl: result.value.remoteDesktopControl
+        return {
+          mode: result.value.mode,
+          allowRemoteControl: result.value.allowRemoteControl,
+          allowed: result.value.allowed
         }
-        // 顺手把缓存也刷新，后续的同步读不再落后。
-        remoteDesktopSettingsRef.current = snapshot
-        return snapshot
       },
       getCredentials: async () => ({
         sdkAppId: props.config.sdkAppId ?? 0,

@@ -32,7 +32,20 @@ public final class MessageImageDecodePolicy {
      * 共用一个键会让先到的那个把另一个尺寸顶掉，表现为「预览很糊」或「气泡很占内存」。
      */
     public static String cacheKey(String path, int targetWidth, int targetHeight) {
+        return cacheKey(path, targetWidth, targetHeight, 0L, 0L);
+    }
+
+    /**
+     * 带文件指纹的缓存键。同一路径的内容可能变（下载完成后覆盖、重新接收同一条消息），
+     * 只按路径缓存会让旧图一直留在内存里、界面上永远是过期的那张。
+     * 加上大小与修改时间，内容一变键就变，不需要额外的失效逻辑。
+     */
+    public static String cacheKey(String path, int targetWidth, int targetHeight,
+                                  long sizeBytes, long modifiedAtMillis) {
         String cleanPath = path == null ? "" : path.trim();
-        return cleanPath + "|" + Math.max(0, targetWidth) + "x" + Math.max(0, targetHeight);
+        return cleanPath
+            + "|" + Math.max(0, targetWidth) + "x" + Math.max(0, targetHeight)
+            + "|" + Math.max(0L, sizeBytes)
+            + "@" + Math.max(0L, modifiedAtMillis);
     }
 }

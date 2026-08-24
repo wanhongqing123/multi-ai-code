@@ -45,6 +45,16 @@ public class MessageImageDecodePolicyTest {
         assertEquals(bubble, MessageImageDecodePolicy.cacheKey("  /data/a.jpg  ", 260, 190));
     }
 
+    // 同一路径的内容可能变（下载完成后覆盖、同一条消息重新接收）。只按路径缓存的话，
+    // 界面上会一直贴着那张旧图，而且没有任何东西会去清它。指纹进键就不用额外失效逻辑。
+    @Test
+    public void cacheKeySeparatesDifferentContentAtTheSamePath() {
+        String before = MessageImageDecodePolicy.cacheKey("/data/a.jpg", 260, 190, 1024L, 100L);
+        String afterRewrite = MessageImageDecodePolicy.cacheKey("/data/a.jpg", 260, 190, 4096L, 200L);
+        assertNotEquals(before, afterRewrite);
+        assertEquals(before, MessageImageDecodePolicy.cacheKey("/data/a.jpg", 260, 190, 1024L, 100L));
+    }
+
     @Test
     public void cacheKeySeparatesDifferentFiles() {
         assertNotEquals(

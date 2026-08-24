@@ -47,7 +47,9 @@ public final class MessageImageLoader {
 
     /** 已缓存则同步返回，否则 null——调用方据此决定先摆占位还是直接贴图。 */
     public static Bitmap cached(String path, int targetWidth, int targetHeight) {
-        final String key = MessageImageDecodePolicy.cacheKey(path, targetWidth, targetHeight);
+        final File file = new File(path == null ? "" : path.trim());
+        final String key = MessageImageDecodePolicy.cacheKey(
+            path, targetWidth, targetHeight, file.length(), file.lastModified());
         synchronized (CACHE) {
             return CACHE.get(key);
         }
@@ -56,11 +58,15 @@ public final class MessageImageLoader {
     public static void load(String path, int targetWidth, int targetHeight, ImageView target,
                             MissingHandler onMissing) {
         final String cleanPath = path == null ? "" : path.trim();
-        if (cleanPath.isEmpty() || !new File(cleanPath).isFile()) {
+        final File file = new File(cleanPath);
+        if (cleanPath.isEmpty() || !file.isFile()) {
             if (onMissing != null) onMissing.onMissing();
             return;
         }
-        final String key = MessageImageDecodePolicy.cacheKey(cleanPath, targetWidth, targetHeight);
+        // 指纹进键：文件内容变了（下载完成覆盖、同一条消息重新接收）键就变，
+        // 不会一直贴着旧图，也就不需要另写失效逻辑。
+        final String key = MessageImageDecodePolicy.cacheKey(
+            cleanPath, targetWidth, targetHeight, file.length(), file.lastModified());
         Bitmap hit;
         synchronized (CACHE) {
             hit = CACHE.get(key);

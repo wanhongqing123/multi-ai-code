@@ -65,12 +65,14 @@ private:
     void updateLoadEarlierVisibility();
     void scrollMessagesToBottom();
     void applyConversationFilter();
-    // 会话内消息搜索：头部放大镜或 Ctrl+F 唤出，Esc 收起。
-    void toggleMessageSearch();
-    void closeMessageSearch();
-    void refreshMessageSearchHits();
-    void stepMessageSearch(bool forward);
-    void focusMessageSearchHit(int messageIndex);
+    // 顶栏全局搜索：横贯窗口顶部，Ctrl+F 聚焦，Esc 收起结果面板。
+    // 搜的是所有会话里已加载的消息，点结果直接跳到那条。
+    void focusGlobalSearch();
+    void refreshGlobalSearchResults();
+    void openGlobalSearchResult(QListWidgetItem* item);
+    void closeGlobalSearchResults();
+    void layoutGlobalSearchResults();
+    void highlightMessage(const QString& messageId);
     void clearMessageSearchHighlight();
     void showMessagesPage();
     void showContactsPage();
@@ -208,16 +210,11 @@ private:
     QHash<QString, QWidget*> messageRowById_;
     QHash<QString, RemoteIMMessageStatus> renderedStatusById_;
     QPushButton* loadEarlierButton_ = nullptr;
-    // 会话内搜索。搜索范围是「当前会话已加载的消息」——没点过「加载更早」的
-    // 历史不在 ChatState 里，也就搜不到，界面上要如实说清楚。
+    // 顶栏搜索。范围是所有会话里「已加载」的消息——没点过「加载更早」的历史
+    // 不在 ChatState 里，也就搜不到，结果面板上要如实说清楚。
     QPushButton* headerSearchButton_ = nullptr;
-    QWidget* messageSearchBar_ = nullptr;
-    QLineEdit* messageSearchInput_ = nullptr;
-    QLabel* messageSearchCountLabel_ = nullptr;
-    QPushButton* messageSearchPrevButton_ = nullptr;
-    QPushButton* messageSearchNextButton_ = nullptr;
-    QList<int> messageSearchHits_;
-    int messageSearchCursor_ = -1;
+    QWidget* appTopBar_ = nullptr;
+    QListWidget* globalSearchResults_ = nullptr;
     QString messageSearchHighlightedId_;
     bool renderedEmptyView_ = false;
     QPushButton* addContactButton_ = nullptr;

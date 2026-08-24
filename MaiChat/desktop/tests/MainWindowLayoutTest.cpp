@@ -74,8 +74,8 @@ private slots:
     void settingsNavigationShowsAccountAndSdkDefaults();
     void leftNavigationRailIsResizableAndWider();
     void removesRedundantChromeLabels();
-    void messageSearchFindsHighlightsAndCloses();
-    void messageSearchReportsNoResultWithLoadedScopeHint();
+    void globalSearchFindsMatchesAcrossConversationsAndJumps();
+    void globalSearchReportsNoResultWithLoadedScopeHint();
     void conversationListsUseDelegateItemsForSmoothScrolling();
     void rendersMarkdownMessageContent();
     void copiesOriginalMarkdownFromMessageContextMenu();
@@ -121,6 +121,18 @@ static void dropOnComposer(QTextEdit* editor, QMimeData* mime) {
 
 // 拖一个文件进输入框，必须变成附件。此前 QTextEdit 默认行为把 file:/// URL 当成
 // 纯文本插进去，用户看到一行路径、发出去的也是一行路径，附件根本没产生。
+namespace {
+
+int highlightedRowCount(const QWidget& window) {
+    int highlighted = 0;
+    for (QWidget* row : window.findChildren<QWidget*>()) {
+        if (row->property("searchHit").toBool()) ++highlighted;
+    }
+    return highlighted;
+}
+
+}  // namespace
+
 void MainWindowLayoutTest::droppingFilesIntoComposerAttachesThemInsteadOfPastingPaths() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -1506,81 +1518,74 @@ void MainWindowLayoutTest::ctrlShortcutsZoomWholeUi() {
 }
 
 
-// 头部放大镜此前只是个装饰按钮：建出来就没接过任何逻辑，按下去什么都不发生。
-// 这条把「点开 → 输入 → 命中计数 → 高亮 → 跳转 → 关闭」整条链路钉住。
-void MainWindowLayoutTest::messageSearchFindsHighlightsAndCloses() {
+// 搜索入口在顶栏，搜的是所有会话——所以这条必须跨两个会话验，
+// 只在当前会话里能搜到的话，把它放在顶栏就是误导。
+void MainWindowLayoutTest::globalSearchFindsMatchesAcrossConversationsAndJumps() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
-    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+    app.addContact(QStringLiteral("peer-a"), QStringLiteral("Alice"));
+    app.addContact(QStringLiteral("peer-b"), QStringLiteral("Bob"));
 
     MainWindow window(app);
     auto* editor = window.findChild<QTextEdit*>(QStringLiteral("messageEditor"));
     auto* sendButton = window.findChild<QPushButton*>(QStringLiteral("sendButton"));
-    auto* searchButton = window.findChild<QPushButton*>(QStringLiteral("headerSearchButton"));
-    auto* searchBar = window.findChild<QWidget*>(QStringLiteral("messageSearchBar"));
     QVERIFY(editor != nullptr);
     QVERIFY(sendButton != nullptr);
-    QVERIFY(searchButton != nullptr);
-    QVERIFY(searchBar != nullptr);
 
-    const QStringList outgoing{
-        QStringLiteral("构建失败了"),
-        QStringLiteral("再看看 CMake 配置"),
-        QStringLiteral("cmake 已经修好")
-    };
-    for (const QString& text : outgoing) {
-        editor->setPlainText(text);
-        sendButton->click();
+    app.selectPeer(QStringLiteral("peer-a"));
+    editor->setPlainText(QStringLiteral("构建失败了，看下 CMake"));
+    sendButton->click();
+    app.selectPeer(QStringLiteral("peer-b"));
+    editor->setPlainText(QStringLiteral("cmake 已经修好"));
+    sendButton->click();
+    editor->setPlainText(QStringLiteral("与关键词无关的一条"));
+    sendButton->click();
+
+    auto* search = window.findChild<QLineEdit*>(QStringLiteral("globalSearchBox"));
+    auto* results = window.findChild<QListWidget*>(QStringLiteral("globalSearchResults"));
+    QVERIFY(search != nullptr);
+    QVERIFY(results != nullptr);
+    QVERIFY(results->isHidden());
+
+    search->setText(QStringLiteral("cmake"));
+    QVERIFY(!results->isHidden());
+    QCOMPARE(results->count(), 2);
+
+    // 左边的会话列表不能被清空：这两个会话都含命中，虽然它们的名字和
+    // 最后一条预览都不含关键词。否则右边列着结果、左边一片空白，自相矛盾。
+    auto* conversationList = window.findChild<QListWidget*>(QStringLiteral("conversationList"));
+    QVERIFY(conversationList != nullptr);
+    int visibleConversations = 0;
+    for (int i = 0; i < conversationList->count(); ++i) {
+        if (!conversationList->item(i)->isHidden()) ++visibleConversations;
     }
-    auto* messageLayout = window.findChild<QVBoxLayout*>(QStringLiteral("messageLayout"));
-    QVERIFY(messageLayout != nullptr);
-    QTRY_COMPARE(messageLayout->count(), outgoing.size() + 2);  // [0] 加载更早 + 末尾 stretch
+    QCOMPARE(visibleConversations, 2);
 
-    QVERIFY(searchBar->isHidden());
-    searchButton->click();
-    QVERIFY(!searchBar->isHidden());
+    // 结果里要能看出各自属于哪个会话，否则跨会话的结果混在一起没法用。
+    QStringList shown;
+    for (int i = 0; i < results->count(); ++i) shown << results->item(i)->text();
+    QVERIFY(shown.filter(QStringLiteral("Alice")).size() == 1);
+    QVERIFY(shown.filter(QStringLiteral("Bob")).size() == 1);
 
-    auto* input = window.findChild<QLineEdit*>(QStringLiteral("messageSearchInput"));
-    auto* count = window.findChild<QLabel*>(QStringLiteral("messageSearchCount"));
-    QVERIFY(input != nullptr);
-    QVERIFY(count != nullptr);
-
-    // 两条含 cmake（大小写不同），默认停在最新的一条命中。
-    input->setText(QStringLiteral("cmake"));
-    QCOMPARE(count->text(), QStringLiteral("2/2"));
-
-    int highlighted = 0;
-    QString highlightedRowName;
-    for (QWidget* row : window.findChildren<QWidget*>()) {
-        if (!row->property("searchHit").toBool()) continue;
-        ++highlighted;
-        highlightedRowName = row->objectName();
+    // 点 Alice 那条：应当切回 peer-a 并高亮那一行。当前选中的是 peer-b，
+    // 所以这条同时验证了「跨会话跳转」。
+    QCOMPARE(app.chatState().selectedPeerId(), QStringLiteral("peer-b"));
+    QListWidgetItem* target = nullptr;
+    for (int i = 0; i < results->count(); ++i) {
+        if (results->item(i)->text().contains(QStringLiteral("Alice"))) target = results->item(i);
     }
-    QCOMPARE(highlighted, 1);
-    QCOMPARE(highlightedRowName, QStringLiteral("messageRowOutgoing"));
+    QVERIFY(target != nullptr);
+    emit results->itemClicked(target);
 
-    // 往下一条会回绕到第一条命中，计数跟着变。
-    auto* nextButton = window.findChild<QPushButton*>(QStringLiteral("messageSearchNext"));
-    QVERIFY(nextButton != nullptr);
-    nextButton->click();
-    QCOMPARE(count->text(), QStringLiteral("1/2"));
-
-    // 关闭要收起搜索条、清空输入并撤掉高亮，不能留一行黄底在那儿。
-    auto* closeButton = window.findChild<QPushButton*>(QStringLiteral("messageSearchClose"));
-    QVERIFY(closeButton != nullptr);
-    closeButton->click();
-    QVERIFY(searchBar->isHidden());
-    QVERIFY(input->text().isEmpty());
-    int stillHighlighted = 0;
-    for (QWidget* row : window.findChildren<QWidget*>()) {
-        if (row->property("searchHit").toBool()) ++stillHighlighted;
-    }
-    QCOMPARE(stillHighlighted, 0);
+    QCOMPARE(app.chatState().selectedPeerId(), QStringLiteral("peer-a"));
+    QVERIFY(results->isHidden());
+    // 跳转要等下一轮事件循环（切会话会整屏重建气泡），所以这里用 QTRY。
+    QTRY_COMPARE(highlightedRowCount(window), 1);
 }
 
-// 搜不到时必须说清搜索范围：没点过「加载更早」的历史不在内存里，也就搜不到。
+// 搜不到时必须说清范围：没点过「加载更早」的历史不在内存里，也就搜不到。
 // 只显示「无结果」会让人以为这句话从没说过。
-void MainWindowLayoutTest::messageSearchReportsNoResultWithLoadedScopeHint() {
+void MainWindowLayoutTest::globalSearchReportsNoResultWithLoadedScopeHint() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
     app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
@@ -1588,26 +1593,27 @@ void MainWindowLayoutTest::messageSearchReportsNoResultWithLoadedScopeHint() {
     MainWindow window(app);
     auto* editor = window.findChild<QTextEdit*>(QStringLiteral("messageEditor"));
     auto* sendButton = window.findChild<QPushButton*>(QStringLiteral("sendButton"));
-    auto* searchButton = window.findChild<QPushButton*>(QStringLiteral("headerSearchButton"));
     QVERIFY(editor != nullptr);
     QVERIFY(sendButton != nullptr);
-    QVERIFY(searchButton != nullptr);
     editor->setPlainText(QStringLiteral("只有这一条"));
     sendButton->click();
 
-    searchButton->click();
-    auto* input = window.findChild<QLineEdit*>(QStringLiteral("messageSearchInput"));
-    auto* count = window.findChild<QLabel*>(QStringLiteral("messageSearchCount"));
-    QVERIFY(input != nullptr);
-    QVERIFY(count != nullptr);
+    auto* search = window.findChild<QLineEdit*>(QStringLiteral("globalSearchBox"));
+    auto* results = window.findChild<QListWidget*>(QStringLiteral("globalSearchResults"));
+    QVERIFY(search != nullptr);
+    QVERIFY(results != nullptr);
 
-    input->setText(QStringLiteral("不存在的关键词"));
-    QVERIFY(count->text().contains(QStringLiteral("无结果")));
-    QVERIFY(count->text().contains(QStringLiteral("已加载")));
+    search->setText(QStringLiteral("不存在的关键词"));
+    QCOMPARE(results->count(), 1);
+    const QString hint = results->item(0)->text();
+    QVERIFY(hint.contains(QStringLiteral("无结果")));
+    QVERIFY(hint.contains(QStringLiteral("已加载")));
+    // 提示项不能被点开——它不对应任何消息。
+    QVERIFY(!results->item(0)->flags().testFlag(Qt::ItemIsSelectable));
 
-    // 清空输入不该继续显示「无结果」——那是还没开始搜，不是搜不到。
-    input->clear();
-    QVERIFY(count->text().isEmpty());
+    // 清空输入应当收起面板，而不是继续显示「无结果」：那是还没开始搜。
+    search->clear();
+    QVERIFY(results->isHidden());
 }
 
 QTEST_MAIN(MainWindowLayoutTest)

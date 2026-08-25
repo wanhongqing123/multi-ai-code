@@ -106,6 +106,8 @@ constexpr int SearchPeerRole = Qt::UserRole + 6;
 constexpr int SearchMessageRole = Qt::UserRole + 7;
 // 结果太多时列表本身就没用了，截断并提示收窄关键词。
 constexpr int MaxGlobalSearchResults = 60;
+// 导航栏与会话栏头部的图标统一用这个尺寸：混用会让一列图标看起来大小不一。
+constexpr int kNavIconPixels = 20;
 constexpr int MessageAvatarLogicalSize = 40;
 constexpr int MessageAvatarGap = 10;
 constexpr int MessageMetaBubbleGap = 6;
@@ -1208,25 +1210,6 @@ void MainWindow::buildUi() {
     sharingIndicator_ = new SharingIndicatorBar(root);
     rootColumn->addWidget(sharingIndicator_);
 
-    // 顶栏：横贯整个窗口的搜索入口。放在这里而不是塞进某个面板，是因为它搜的是
-    // 所有会话，属于全局功能；挂在会话头部会让人以为只搜当前这一个会话。
-    appTopBar_ = new QWidget(root);
-    appTopBar_->setObjectName(QStringLiteral("appTopBar"));
-    auto* topBarLayout = new QHBoxLayout(appTopBar_);
-    topBarLayout->setContentsMargins(16, 8, 16, 8);
-    topBarLayout->setSpacing(8);
-    navSearchInput_ = new QLineEdit(appTopBar_);
-    navSearchInput_->setObjectName(QStringLiteral("globalSearchBox"));
-    navSearchInput_->setPlaceholderText(QStringLiteral("搜索消息 (Ctrl+F)"));
-    navSearchInput_->setClearButtonEnabled(true);
-    navSearchInput_->setMaximumWidth(UiZoom::s(560));
-    navSearchInput_->addAction(makeLineIcon(LineIconKind::Search, QColor(QStringLiteral("#98a2b3"))),
-                               QLineEdit::LeadingPosition);
-    topBarLayout->addStretch(1);
-    topBarLayout->addWidget(navSearchInput_, 2);
-    topBarLayout->addStretch(1);
-    rootColumn->addWidget(appTopBar_);
-
     // 结果面板浮在窗口上，不进布局：它要盖住下方内容，进布局会把主体挤下去。
     globalSearchResults_ = new QListWidget(root);
     globalSearchResults_->setObjectName(QStringLiteral("globalSearchResults"));
@@ -1263,11 +1246,11 @@ void MainWindow::buildUi() {
 
     navRail_ = new QWidget(rootNavigationSplitter);
     navRail_->setObjectName(QStringLiteral("navRail"));
-    navRail_->setMinimumWidth(UiZoom::s(160));
-    navRail_->setMaximumWidth(UiZoom::s(260));
+    // 纯图标之后不需要那么宽：按「图标 + 两侧留白」定宽，不再让它可拉伸。
+    navRail_->setFixedWidth(UiZoom::s(64));
     auto* navLayout = new QVBoxLayout(navRail_);
-    navLayout->setContentsMargins(16, 18, 16, 14);
-    navLayout->setSpacing(12);
+    navLayout->setContentsMargins(8, 14, 8, 12);
+    navLayout->setSpacing(8);
 
     auto* logo = new QLabel(navRail_);
     logo->setObjectName(QStringLiteral("navLogo"));
@@ -1275,20 +1258,9 @@ void MainWindow::buildUi() {
     logo->setPixmap(monogramAvatarPixmap(QStringLiteral("M"), UiZoom::s(34), UiZoom::s(17),
                                          kBrandGradientFrom, kBrandGradientTo,
                                          UiZoom::s(15), logo->devicePixelRatioF()));
-    addContactButton_ = new QPushButton(navRail_);
-    addContactButton_->setObjectName(QStringLiteral("addConversationButton"));
-    addContactButton_->setIcon(makeLineIcon(LineIconKind::Add, QColor(QStringLiteral("#4c5866"))));
-    addContactButton_->setIconSize(QSize(18, 18));
-    addContactButton_->setToolTip(QStringLiteral("添加联系人"));
-    addContactButton_->setCursor(Qt::PointingHandCursor);
-
-    auto* navTopRow = new QHBoxLayout();
-    navTopRow->setContentsMargins(0, 0, 0, 0);
-    navTopRow->setSpacing(12);
-    navTopRow->addWidget(logo, 0, Qt::AlignLeft);
-    navTopRow->addStretch(1);
-    navTopRow->addWidget(addContactButton_, 0, Qt::AlignRight);
-    navLayout->addLayout(navTopRow);
+    // 头像独占一行居中；「添加联系人」已移到会话栏的搜索框旁边（微信式）。
+    navLayout->addWidget(logo, 0, Qt::AlignHCenter);
+    navLayout->addSpacing(UiZoom::s(6));
 
     messageNavButton_ = makeNavButton(QStringLiteral("消息"), QStringLiteral("messagesNavButton"), navRail_);
     contactsNavButton_ = makeNavButton(QStringLiteral("通讯录"), QStringLiteral("contactsNavButton"), navRail_);
@@ -1302,7 +1274,7 @@ void MainWindow::buildUi() {
     messageNavButton_->setProperty("selected", true);
     for (QPushButton* navButton :
          {messageNavButton_, contactsNavButton_, remoteNavButton_, settingsNavButton_}) {
-        navButton->setIconSize(QSize(18, 18));
+        navButton->setIconSize(QSize(kNavIconPixels, kNavIconPixels));
     }
     applyNavButtonIcon(messageNavButton_, true);
     applyNavButtonIcon(contactsNavButton_, false);
@@ -1321,11 +1293,26 @@ void MainWindow::buildUi() {
     conversationLayout->setContentsMargins(20, 18, 16, 16);
     conversationLayout->setSpacing(14);
 
+    // 会话栏头部：搜索框 + 添加联系人，与微信同一形态。
+    // 搜索原先横贯窗口顶部，但它搜的结果最终都落在这一列里，放在这列的头部
+    // 更符合「在哪找、结果在哪」的直觉，也省掉一整条顶栏的高度。
     auto* conversationHeader = new QHBoxLayout();
-    auto* messagesTitle = new QLabel(QStringLiteral("消息"), conversationPane);
-    messagesTitle->setObjectName(QStringLiteral("messagesSectionTitle"));
-    conversationHeader->addWidget(messagesTitle);
-    conversationHeader->addStretch();
+    conversationHeader->setContentsMargins(0, 0, 0, 0);
+    conversationHeader->setSpacing(8);
+    navSearchInput_ = new QLineEdit(conversationPane);
+    navSearchInput_->setObjectName(QStringLiteral("globalSearchBox"));
+    navSearchInput_->setPlaceholderText(QStringLiteral("搜索消息 (Ctrl+F)"));
+    navSearchInput_->setClearButtonEnabled(true);
+    navSearchInput_->addAction(makeLineIcon(LineIconKind::Search, QColor(QStringLiteral("#98a2b3"))),
+                               QLineEdit::LeadingPosition);
+    addContactButton_ = new QPushButton(conversationPane);
+    addContactButton_->setObjectName(QStringLiteral("addConversationButton"));
+    addContactButton_->setIcon(makeLineIcon(LineIconKind::Add, QColor(QStringLiteral("#4c5866"))));
+    addContactButton_->setIconSize(QSize(kNavIconPixels, kNavIconPixels));
+    addContactButton_->setToolTip(QStringLiteral("添加联系人"));
+    addContactButton_->setCursor(Qt::PointingHandCursor);
+    conversationHeader->addWidget(navSearchInput_, 1);
+    conversationHeader->addWidget(addContactButton_, 0);
 
     conversationList_ = new QListWidget(conversationPane);
     conversationList_->setObjectName(QStringLiteral("conversationList"));
@@ -1355,13 +1342,6 @@ void MainWindow::buildUi() {
     statusLabel_ = new QLabel(QStringLiteral("未连接"), header);
     statusLabel_->setObjectName(QStringLiteral("statusBadge"));
     headerLayout->addWidget(titleLabel_, 1);
-    headerSearchButton_ =
-        makeHeaderIconButton(LineIconKind::Search, QStringLiteral("搜索消息 (Ctrl+F)"), header);
-    headerSearchButton_->setObjectName(QStringLiteral("headerSearchButton"));
-    // 搜索入口只有一个——顶栏那个。这里点一下就是把光标送过去，
-    // 不再单独开一条会话内搜索条，免得同一个功能出现两个入口。
-    connect(headerSearchButton_, &QPushButton::clicked, this, &MainWindow::focusGlobalSearch);
-    headerLayout->addWidget(headerSearchButton_);
     // 远程桌面入口：跟着当前会话走——正在跟谁聊天就远程谁，无需另选设备。
     remoteDesktopButton_ =
         makeHeaderIconButton(LineIconKind::Screen, QStringLiteral("远程桌面"), header);
@@ -1604,6 +1584,19 @@ void MainWindow::applyStyle() {
             max-height: 34px;
             background: transparent;
         }
+        #addConversationButton {
+            min-width: 30px;
+            max-width: 30px;
+            min-height: 30px;
+            border: 1px solid #dbe4ef;
+            border-radius: 8px;
+            background: #ffffff;
+            padding: 0;
+        }
+        #addConversationButton:hover {
+            border-color: #8ed0ff;
+            background: #f2f9ff;
+        }
         #globalSearchBox {
             min-height: 34px;
             border: 1px solid #dbe6f3;
@@ -1615,10 +1608,6 @@ void MainWindow::applyStyle() {
         }
         #globalSearchBox:focus {
             border-color: #8ed0ff;
-        }
-        #appTopBar {
-            background: #eef4fb;
-            border-bottom: 1px solid #dae4f0;
         }
         #globalSearchResults {
             background: #ffffff;
@@ -1636,17 +1625,17 @@ void MainWindow::applyStyle() {
             background: #e6eef8;
             color: #0b67b7;
         }
+        /* 纯图标：不再留文字的左内边距，图标居中，宽高一致，
+           否则一列图标会因为各自的留白不同而看起来大小不一。 */
         #messagesNavButton, #contactsNavButton, #remoteNavButton, #settingsNavButton {
+            min-width: 40px;
+            max-width: 40px;
             min-height: 40px;
+            max-height: 40px;
             border: 0;
-            border-radius: 8px;
+            border-radius: 10px;
             background: transparent;
-            color: #62728a;
-            font-size: 14px;
-            font-weight: 500;
-            text-align: left;
-            padding-left: 12px;
-            padding-right: 12px;
+            padding: 0;
         }
         #messagesNavButton[selected="true"], #contactsNavButton[selected="true"], #remoteNavButton[selected="true"], #settingsNavButton[selected="true"] {
             background: #dff1ff;

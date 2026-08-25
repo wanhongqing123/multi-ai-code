@@ -79,7 +79,7 @@ private slots:
     void conversationListsUseDelegateItemsForSmoothScrolling();
     void rendersMarkdownMessageContent();
     void copiesOriginalMarkdownFromMessageContextMenu();
-    void addContactButtonLivesInNavigationRailOnly();
+    void addContactButtonSitsBesideTheSearchBox();
     void navigationTextIsLeftAlignedAndContactsDoNotShowMessagePreview();
     void sectionTitleFollowsSelectedNavigation();
     void visibleContactsNavigationSwitchesMiddlePane();
@@ -648,9 +648,23 @@ void MainWindowLayoutTest::leftNavigationRailIsResizableAndWider() {
     QVERIFY(contactsNavButton->text().isEmpty());
     QCOMPARE(contactsNavButton->accessibleName(), QStringLiteral("通讯录"));
     QVERIFY(!contactsNavButton->icon().isNull());
-    QVERIFY(navRail->minimumWidth() >= 148);
-    QVERIFY(navRail->maximumWidth() > navRail->minimumWidth());
+    // 纯图标之后导航栏按需求收窄，并且不再可拉伸：min==max 才能保证它不会被
+    // splitter 拖回原来那么宽。
+    QVERIFY2(navRail->maximumWidth() <= 96, "导航栏应当是窄条，不该再占一整列");
+    QCOMPARE(navRail->minimumWidth(), navRail->maximumWidth());
     QVERIFY(rootNavigationSplitter->handleWidth() >= 6);
+
+    // 一列图标的尺寸必须一致：混用尺寸时肉眼看到的就是「有的大有的小」，
+    // 而每个按钮单独看都正常，所以要横向比。
+    const QList<QPushButton*> navButtons{
+        window.findChild<QPushButton*>(QStringLiteral("messagesNavButton")),
+        contactsNavButton,
+        window.findChild<QPushButton*>(QStringLiteral("remoteNavButton")),
+        window.findChild<QPushButton*>(QStringLiteral("settingsNavButton"))};
+    for (QPushButton* button : navButtons) {
+        QVERIFY(button != nullptr);
+        QCOMPARE(button->iconSize(), navButtons.first()->iconSize());
+    }
 }
 
 void MainWindowLayoutTest::removesRedundantChromeLabels() {
@@ -749,7 +763,7 @@ void MainWindowLayoutTest::copiesOriginalMarkdownFromMessageContextMenu() {
     QCOMPARE(QApplication::clipboard()->text(), markdown);
 }
 
-void MainWindowLayoutTest::addContactButtonLivesInNavigationRailOnly() {
+void MainWindowLayoutTest::addContactButtonSitsBesideTheSearchBox() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
     app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
@@ -759,8 +773,16 @@ void MainWindowLayoutTest::addContactButtonLivesInNavigationRailOnly() {
     const QList<QPushButton*> addButtons = window.findChildren<QPushButton*>(QStringLiteral("addConversationButton"));
 
     QVERIFY(navRail != nullptr);
+    // 全窗口只能有一个「添加联系人」：之前它在导航栏，现在移到搜索框旁边，
+    // 两处都留着就会出现两个入口。
     QCOMPARE(addButtons.size(), 1);
-    QCOMPARE(addButtons.first()->parentWidget(), navRail);
+    QVERIFY2(addButtons.first()->parentWidget() != navRail,
+             "加号已从导航栏移出，不该还挂在导航栏上");
+
+    // 和搜索框同一个父级、同一行：这是「放到搜索旁边」的可验证含义。
+    auto* search = window.findChild<QLineEdit*>(QStringLiteral("globalSearchBox"));
+    QVERIFY(search != nullptr);
+    QCOMPARE(addButtons.first()->parentWidget(), search->parentWidget());
 }
 
 void MainWindowLayoutTest::navigationTextIsLeftAlignedAndContactsDoNotShowMessagePreview() {
@@ -770,7 +792,11 @@ void MainWindowLayoutTest::navigationTextIsLeftAlignedAndContactsDoNotShowMessag
     app.chatState().receiveText(QStringLiteral("phone-user"), QStringLiteral("这条消息不应该显示在通讯录"));
 
     MainWindow window(app);
-    QVERIFY(window.styleSheet().contains(QStringLiteral("text-align: left")));
+    // 原来这里断言样式表含 text-align:left——那是导航按钮还有文字时的要求。
+    // 现在是纯图标，改为直接钉住「没有文字」这个事实。
+    auto* messagesNavButton = window.findChild<QPushButton*>(QStringLiteral("messagesNavButton"));
+    QVERIFY(messagesNavButton != nullptr);
+    QVERIFY(messagesNavButton->text().isEmpty());
 
     auto* contactsNavButton = window.findChild<QPushButton*>(QStringLiteral("contactsNavButton"));
     QVERIFY(contactsNavButton != nullptr);
@@ -805,9 +831,13 @@ void MainWindowLayoutTest::sectionTitleFollowsSelectedNavigation() {
     auto* conversationList = window.findChild<QListWidget*>(QStringLiteral("conversationList"));
     auto* contactsList = window.findChild<QListWidget*>(QStringLiteral("contactsList"));
 
-    QVERIFY(messagesTitle != nullptr);
+    // 消息页的「消息」标题已被搜索框取代（那一行现在是 搜索 + 添加联系人），
+    // 所以这里不再要求它存在；通讯录页仍有自己的标题。
+    QVERIFY2(messagesTitle == nullptr, "消息页的标题应当已被搜索行取代");
+    auto* search = window.findChild<QLineEdit*>(QStringLiteral("globalSearchBox"));
+    QVERIFY2(search != nullptr && search->parentWidget() == conversationList->parentWidget(),
+             "搜索框应当就在会话列表这一列的头部");
     QVERIFY(contactsTitle != nullptr);
-    QCOMPARE(messagesTitle->text(), QStringLiteral("消息"));
     QCOMPARE(contactsTitle->text(), QStringLiteral("通讯录"));
     QVERIFY(contactsNavButton != nullptr);
     QVERIFY(contentStack != nullptr);

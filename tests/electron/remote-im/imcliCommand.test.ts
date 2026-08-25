@@ -5,13 +5,19 @@ import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:f
 import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { RemoteImConfig, RemoteImStatus } from '../../../electron/remote-im/types.js'
+import type {
+  RemoteImConfig,
+  RemoteImMessage,
+  RemoteImStatus
+} from '../../../electron/remote-im/types.js'
 import { startRemoteImCliServer } from '../../../electron/remote-im/imcliServer.js'
 
 const execFileAsync = promisify(execFile)
 const imcliWrapperPath = join(process.cwd(), 'bin', 'imcli')
 const imcliPath = join(process.cwd(), 'bin', 'imcli.mjs')
-const { withImcliOriginSuffix } = await import(pathToFileURL(imcliPath).href)
+const { suspiciousOutgoingTextReason, withImcliOriginSuffix } = await import(
+  pathToFileURL(imcliPath).href
+)
 
 const config: RemoteImConfig = {
   provider: 'tencent-im',
@@ -42,6 +48,29 @@ async function createTempDir(): Promise<string> {
   return tempDir
 }
 
+function storedMessage(overrides: Partial<RemoteImMessage>): RemoteImMessage {
+  return {
+    id: 1,
+    projectId: 'project-1',
+    sessionId: null,
+    provider: 'tencent-im',
+    remoteMessageId: null,
+    fromUserId: 'phone-user',
+    toUserId: 'agent-a',
+    role: 'remote-user',
+    direction: 'incoming',
+    kind: 'text',
+    attachment: null,
+    content: 'hello',
+    status: 'received',
+    error: null,
+    createdAt: 100,
+    sentToAicliAt: null,
+    sentToImAt: null,
+    ...overrides
+  }
+}
+
 describe('imcli command', () => {
   afterEach(async () => {
     if (tempDir) await rm(tempDir, { recursive: true, force: true })
@@ -54,6 +83,8 @@ describe('imcli command', () => {
     expect(stdout).toContain('imcli help')
     expect(stdout).toContain('Command details:')
     expect(stdout).toContain('imcli send <user> --text-b64 <base64>')
+    expect(stdout).toContain('--allow-suspicious-text')
+    expect(stdout).toContain('lines dominated by repeated')
     expect(stdout).toContain('imcli send-image <user> <imagePath>')
     expect(stdout).toContain('imcli send-file <user> <filePath>')
     expect(stdout).toContain('imcli send-video <user> <videoPath>')
@@ -370,7 +401,121 @@ describe('imcli command', () => {
         execFileAsync(process.execPath, [imcliPath, 'send', 'agent-b'], { env })
       ).rejects.toThrow(/--text-b64/)
 
+      // 合法 Base64 也可能包着非法 UTF-8；Buffer.toString 会静默替换成 U+FFFD，
+      // 所以必须用 fatal decoder 在发送前拒绝。
+      await expect(
+        execFileAsync(
+          process.execPath,
+          [imcliPath, 'send', 'agent-b', '--text-b64', Buffer.from([0xc3, 0x28]).toString('base64')],
+          { env }
+        )
+      ).rejects.toThrow(/not valid UTF-8/)
+
       expect(sendPeerMessage).not.toHaveBeenCalled()
+    } finally {
+      await bridge.close()
+    }
+  })
+
+  it('rejects question-mark mojibake before the bridge and allows an explicit override', async () => {
+    const rootDir = await createTempDir()
+    const sendPeerMessage = vi.fn(async () => ({ ok: true as const, toUserId: 'agent-b' }))
+    const bridge = await startRemoteImCliServer({
+      rootDir,
+      getConfig: async () => config,
+      getStatus: async () => status,
+      listMessages: () => [],
+      sendPeerMessage
+    })
+    const env = {
+      ...process.env,
+      MULTI_AI_CODE_IMCLI_URL: bridge.url,
+      MULTI_AI_CODE_IMCLI_TOKEN: bridge.token,
+      MULTI_AI_CODE_PROJECT_ID: 'project-1'
+    }
+    const corrupted = '?????? ?? 9/9??? 1/1\n{"uid":"uid"}'
+    const payload = Buffer.from(corrupted, 'utf8').toString('base64')
+
+    try {
+      await expect(
+        execFileAsync(process.execPath, [imcliPath, 'send', 'agent-b', '--text-b64', payload], {
+          env
+        })
+      ).rejects.toThrow(/refusing to send suspicious text/)
+      await expect(
+        execFileAsync(
+          process.execPath,
+          [imcliPath, 'broadcast', 'agent-b', '--text-b64', payload],
+          { env }
+        )
+      ).rejects.toThrow(/refusing to send suspicious text/)
+      expect(sendPeerMessage).not.toHaveBeenCalled()
+
+      const { stdout } = await execFileAsync(
+        process.execPath,
+        [
+          imcliPath,
+          'send',
+          'agent-b',
+          '--text-b64',
+          payload,
+          '--allow-suspicious-text'
+        ],
+        { env }
+      )
+      expect(stdout).toContain('sent to agent-b')
+      expect(sendPeerMessage).toHaveBeenCalledWith(
+        'project-1',
+        withImcliOriginSuffix(corrupted),
+        'agent-b'
+      )
+    } finally {
+      await bridge.close()
+    }
+  })
+
+  it('refuses to forward an already-corrupted history message', async () => {
+    const rootDir = await createTempDir()
+    const corrupted = '?????? ?? 9/9??? 1/1'
+    const sendPeerMessage = vi.fn(async () => ({ ok: true as const, toUserId: 'agent-b' }))
+    const bridge = await startRemoteImCliServer({
+      rootDir,
+      getConfig: async () => config,
+      getStatus: async () => status,
+      listMessages: () => [storedMessage({ id: 196, content: corrupted })],
+      sendPeerMessage
+    })
+    const env = {
+      ...process.env,
+      MULTI_AI_CODE_IMCLI_URL: bridge.url,
+      MULTI_AI_CODE_IMCLI_TOKEN: bridge.token,
+      MULTI_AI_CODE_PROJECT_ID: 'project-1'
+    }
+
+    try {
+      await expect(
+        execFileAsync(
+          process.execPath,
+          [imcliPath, 'forward', 'agent-b', '--message-id', '196'],
+          { env }
+        )
+      ).rejects.toThrow(/refusing to send suspicious text/)
+      expect(sendPeerMessage).not.toHaveBeenCalled()
+
+      const { stdout } = await execFileAsync(
+        process.execPath,
+        [
+          imcliPath,
+          'forward',
+          'agent-b',
+          '--message-id',
+          '196',
+          '--allow-suspicious-text'
+        ],
+        { env }
+      )
+      expect(stdout).toContain('forwarded #196 to agent-b')
+      expect(sendPeerMessage).toHaveBeenCalledWith('project-1', corrupted, 'agent-b')
     } finally {
       await bridge.close()
     }
@@ -517,5 +662,22 @@ describe('imcli origin suffix', () => {
   it('normalises trailing whitespace before appending', () => {
     // 不处理的话正文尾部的换行会和分隔空行叠成好几行空白。
     expect(withImcliOriginSuffix('你好\n\n  ')).toBe('你好\n\n此消息来自 imcli')
+  })
+})
+
+describe('imcli suspicious text guard', () => {
+  it('recognises the PowerShell question-mark degradation signature', () => {
+    expect(suspiciousOutgoingTextReason('?????? ?? 9/9??? 1/1')).toMatch(/line 1/)
+  })
+
+  it('allows ordinary questions and source-code punctuation', () => {
+    expect(suspiciousOutgoingTextReason('这个结果正确吗？需要重试吗？')).toBeNull()
+    expect(suspiciousOutgoingTextReason('const value = ready ? first : second')).toBeNull()
+    expect(suspiciousOutgoingTextReason('真的吗???')).toBeNull()
+  })
+
+  it('rejects replacement and control characters', () => {
+    expect(suspiciousOutgoingTextReason('损坏\uFFFD正文')).toMatch(/replacement character/)
+    expect(suspiciousOutgoingTextReason('hello\u0000world')).toMatch(/control character/)
   })
 })

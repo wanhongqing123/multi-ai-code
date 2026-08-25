@@ -2,6 +2,7 @@
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { TextDecoder } from 'node:util'
 
 const HELP = `imcli help
 
@@ -12,18 +13,18 @@ Usage:
   imcli add-contact <user> [--project <projectId>]
   imcli history [--peer <user>] [--limit <n>] [--project <projectId>]
   imcli last [--peer <user>] [--project <projectId>]
-  imcli send <user> --text-b64 <base64> [--project <projectId>]
+  imcli send <user> --text-b64 <base64> [--allow-suspicious-text] [--project <projectId>]
   imcli send-image <user> <imagePath> [--project <projectId>]
   imcli send-file <user> <filePath> [--project <projectId>]
   imcli send-video <user> <videoPath> [--project <projectId>]
-  imcli forward <user> --message-id <id> [--project <projectId>]
-  imcli broadcast <user1,user2> --text-b64 <base64> [--project <projectId>]
+  imcli forward <user> --message-id <id> [--allow-suspicious-text] [--project <projectId>]
+  imcli broadcast <user1,user2> --text-b64 <base64> [--allow-suspicious-text] [--project <projectId>]
 
 Message text is always Base64 — READ THIS FIRST:
   Encode the UTF-8 message body as standard Base64 and pass it to --text-b64:
       node -e "process.stdout.write(Buffer.from('标题\\n第二行','utf8').toString('base64'))"
       imcli send phone-user --text-b64 5qCH6aKYCuesrOS6jOihjA==
-  Base64 is the only channel with no failure mode: it is a single line (nothing can
+  Base64 is the only robust transport channel: it is a single line (nothing can
   truncate it), pure ASCII (no code page can degrade it), and contains no shell
   metacharacters (no quoting, %, backtick or backslash surprises). Decoding is exact,
   so a literal "C:\\new" and a real newline can never be confused.
@@ -31,6 +32,8 @@ Message text is always Base64 — READ THIS FIRST:
   silently corrupted messages in practice (cmd.exe truncates at the first newline,
   PowerShell 5.1 encodes pipes as ASCII and turns non-ASCII into '?', and \\n
   expansion mangled Windows paths like C:\\new).
+  Base64 cannot repair text that was already corrupted before encoding, so imcli
+  performs a final suspicious-text check before it contacts the app bridge.
   Attachments do not use this flag — send-image, send-file and send-video take a path directly.
 
 Command details:
@@ -72,7 +75,11 @@ Command details:
     multi-line, Chinese, quotes, backslashes, percent signs.
       imcli send phone-user --text-b64 5qCH6aKYCuesrOS6jOihjA==
     imcli rejects input that is not valid Base64 instead of sending a damaged
-    message, so a truncated payload fails loudly rather than arriving mangled.
+    message. It also rejects invalid UTF-8, replacement characters, control
+    characters, and lines dominated by repeated '?' (the signature of text that
+    was degraded before Base64 encoding). The command exits non-zero so AICLI can
+    repair its source and retry instead of silently sending mojibake.
+    Use --allow-suspicious-text only when those characters are intentional.
     Use send-file when the receiver should get an attachment card instead of text.
 
   imcli send-image <user> <imagePath>
@@ -179,13 +186,64 @@ function withoutFlagPair(args, name) {
   return args.filter((_item, itemIndex) => itemIndex !== index && itemIndex !== index + 1)
 }
 
+function withoutFlag(args, name) {
+  return args.filter((item) => item !== name)
+}
+
 function withoutProjectArgs(args) {
-  return withoutFlagPair(withoutFlagPair(args, '--project'), '--text-b64')
+  return withoutFlag(
+    withoutFlagPair(withoutFlagPair(args, '--project'), '--text-b64'),
+    '--allow-suspicious-text'
+  )
 }
 
 const TEXT_B64_FLAG = '--text-b64'
+const ALLOW_SUSPICIOUS_TEXT_FLAG = '--allow-suspicious-text'
+const UTF8_DECODER = new TextDecoder('utf-8', { fatal: true })
 
-// Base64 是 send / broadcast 唯一的正文通道，因为只有它没有失败模式：
+export function suspiciousOutgoingTextReason(value) {
+  const text = String(value ?? '')
+  if (text.includes('\uFFFD')) {
+    return 'contains the Unicode replacement character U+FFFD'
+  }
+
+  for (const character of text) {
+    const codePoint = character.codePointAt(0)
+    if ((codePoint < 0x20 && character !== '\n' && character !== '\r' && character !== '\t') ||
+        codePoint === 0x7f) {
+      return `contains control character U+${codePoint.toString(16).toUpperCase().padStart(4, '0')}`
+    }
+  }
+
+  const lines = text.split(/\r?\n/)
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]
+    const compactLength = line.replace(/\s/g, '').length
+    const questionCount = (line.match(/\?/g) ?? []).length
+    const longestRun = Math.max(0, ...(line.match(/\?+/g) ?? []).map((run) => run.length))
+    const density = compactLength > 0 ? questionCount / compactLength : 0
+    // PowerShell/ANSI 降级的典型形态是整段中文逐字变成 '?'，数字和 ASCII 标点
+    // 留在原位。要求数量、连续长度/密度同时命中，避免误伤普通问句和三元表达式。
+    if (questionCount >= 6 && (longestRun >= 4 || density >= 0.4)) {
+      return `line ${index + 1} contains ${questionCount} '?' characters ` +
+        `(longest run ${longestRun}, density ${Math.round(density * 100)}%)`
+    }
+  }
+  return null
+}
+
+function assertOutgoingTextSafe(text, rawArgs) {
+  if (rawArgs.includes(ALLOW_SUSPICIOUS_TEXT_FLAG)) return
+  const reason = suspiciousOutgoingTextReason(text)
+  if (!reason) return
+  throw new Error(
+    `refusing to send suspicious text: ${reason}. ` +
+    `The message may have been corrupted before Base64 encoding. ` +
+    `Recreate the source as UTF-8 and retry; pass ${ALLOW_SUSPICIOUS_TEXT_FLAG} only if intentional.`
+  )
+}
+
+// Base64 是 send / broadcast 唯一的正文通道，因为它能避开已知的 shell 传输故障：
 //   单行             —— cmd.exe 逐行解析，无从截断
 //   纯 ASCII         —— 任何代码页都能无损表示，不会退化成 '?'
 //   无 shell 元字符  —— 引号、%、反引号、反斜杠都不会出现
@@ -205,8 +263,14 @@ function decodeOutgoingText(rawArgs, usage) {
   if (buffer.toString('base64').replace(/=+$/, '') !== encoded.replace(/=+$/, '')) {
     throw new Error(`${TEXT_B64_FLAG} is not valid Base64 (payload does not round-trip)`)
   }
-  const text = buffer.toString('utf8').trim()
+  let text
+  try {
+    text = UTF8_DECODER.decode(buffer).trim()
+  } catch {
+    throw new Error(`${TEXT_B64_FLAG} decoded bytes are not valid UTF-8`)
+  }
   if (!text) throw new Error(`${TEXT_B64_FLAG} decoded to an empty message`)
+  assertOutgoingTextSafe(text, rawArgs)
   return text
 }
 
@@ -382,10 +446,12 @@ async function main(argv) {
     const value = await requestJson('GET', `/history?${new URLSearchParams({ projectId, limit: '200' }).toString()}`)
     const message = value.messages.find((item) => Number(item.id) === messageId)
     if (!message) throw new Error(`message not found: ${messageId}`)
+    const forwardedText = String(message.content || '')
+    assertOutgoingTextSafe(forwardedText, rawArgs)
     const sent = await requestJson('POST', '/send', {
       projectId,
       toUserId,
-      text: String(message.content || '')
+      text: forwardedText
     })
     console.log(`forwarded #${messageId} to ${sent.toUserId}`)
     return

@@ -4,13 +4,20 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import sys
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CODEX_SCRIPTS = REPO_ROOT / "third_party" / "aicli" / "codex" / "scripts"
+CODEX_ROOT = REPO_ROOT / "third_party" / "aicli" / "codex"
+CODEX_SCRIPTS = CODEX_ROOT / "scripts"
 sys.path.insert(0, str(CODEX_SCRIPTS))
+
+# 上游（2026-08 起）要求 codex_package.targets 在导入时就能读到 CODEX_REPO_ROOT，
+# 否则直接 raise。上游自己是靠 `just assemble-codex-package` 设的，我们不走那条路，
+# 所以在这里显式指向子模块根目录。
+os.environ.setdefault("CODEX_REPO_ROOT", str(CODEX_ROOT))
 
 from codex_package.targets import TARGET_SPECS  # noqa: E402
 from codex_package.v8 import resolve_codex_v8_cargo_env  # noqa: E402

@@ -6,6 +6,7 @@ import {
   binaryName,
   copyExecutable,
   normalizeManifestEntry,
+  requireVersion,
   resolveBunExecutable,
   resolvePythonCommand,
   rustTargetForPlatform,
@@ -130,5 +131,19 @@ describe('AICLI build utilities', () => {
     expect(stripReleaseExecutable('/tmp/codex.exe', { platform: 'win32', runCommand: () => {} })).toBe(
       false
     )
+  })
+
+  it('requires a runnable build artifact before writing its version to the manifest', () => {
+    expect(
+      requireVersion('/tmp/codex', {
+        spawn: () => ({ status: 0, stdout: 'codex-cli 1.2.3\n', stderr: '' })
+      })
+    ).toBe('codex-cli 1.2.3')
+
+    expect(() =>
+      requireVersion('/tmp/broken', {
+        spawn: () => ({ status: 137, stdout: '', stderr: '' })
+      })
+    ).toThrow(/无法执行 --version/)
   })
 })

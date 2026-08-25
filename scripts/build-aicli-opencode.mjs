@@ -12,7 +12,7 @@ import {
   requireDir,
   resolveBunExecutable,
   run,
-  tryVersion,
+  requireVersion,
   writeManifestEntry
 } from './aicli-build-utils.mjs'
 
@@ -194,6 +194,9 @@ withPreservedFile(lockPath, () => {
     env: { MODELS_DEV_API_JSON: managedModelsPath }
   })
 })
+// 构建原件已经是用户最终会运行的同一份字节；复制前先要求它能启动并记录版本，
+// 避免复制路径上的安全扫描令 manifest 静默退化为 version: null。
+const builtVersion = requireVersion(builtBinary)
 copyExecutable(builtBinary, outputBinary)
 copyManagedAssets()
 
@@ -201,7 +204,7 @@ writeManifestEntry({
   tool: 'opencode',
   platformArch: platform,
   sourceCommit: gitCommit(opencodeRoot),
-  version: tryVersion(outputBinary),
+  version: builtVersion,
   binaryPath: outputBinary
 })
 

@@ -12,7 +12,7 @@ import {
   run,
   rustTargetForPlatform,
   stripReleaseExecutable,
-  tryVersion,
+  requireVersion,
   writeManifestEntry
 } from './aicli-build-utils.mjs'
 
@@ -63,6 +63,9 @@ const cargoBinaries = ['--bin', 'codex', '--bin', 'codex-code-mode-host']
 const cargoArgs =
   profile === 'dev' ? ['build', ...cargoBinaries] : ['build', '--release', ...cargoBinaries]
 run('cargo', cargoArgs, { cwd: codexRsRoot, env: v8Env })
+// 先在构建目录验证原始产物并读取版本，再复制/strip。企业终端安全软件可能对
+// 新复制的可执行文件做延迟扫描，不能让这种本机策略把 manifest 静默写成 null。
+const builtVersion = requireVersion(builtBinary)
 copyExecutable(builtBinary, outputBinary)
 copyExecutable(builtCodeModeHost, outputCodeModeHost)
 if (profile === 'release') {
@@ -77,7 +80,7 @@ writeManifestEntry({
   tool: 'codex',
   platformArch: platform,
   sourceCommit: gitCommit(codexRoot),
-  version: tryVersion(outputBinary),
+  version: builtVersion,
   binaryPath: outputBinary,
   helperPaths: {
     codeModeHost: outputCodeModeHost

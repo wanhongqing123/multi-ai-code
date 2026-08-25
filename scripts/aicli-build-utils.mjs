@@ -206,12 +206,20 @@ export function writeManifestEntry(entry) {
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
 }
 
-export function tryVersion(binaryPath) {
-  const result = spawnSync(binaryPath, ['--version'], {
+export function tryVersion(binaryPath, { spawn = spawnSync } = {}) {
+  const result = spawn(binaryPath, ['--version'], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     shell: false
   })
   if (result.error || result.status !== 0) return null
   return `${result.stdout ?? ''}${result.stderr ?? ''}`.trim().split(/\r?\n/)[0] || null
+}
+
+export function requireVersion(binaryPath, options = {}) {
+  const version = tryVersion(binaryPath, options)
+  if (!version) {
+    throw new Error(`AICLI 构建产物无法执行 --version：${binaryPath}`)
+  }
+  return version
 }

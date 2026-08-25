@@ -17,6 +17,7 @@ private slots:
     void differentTargetSizesDoNotShareOneCacheEntry();
     void reportsMissingFileInsteadOfHangingOnThePlaceholder();
     void cacheKeyChangesWhenTheFileContentChanges();
+    void cachedReplacementRejectsOlderAsyncResult();
 
 private:
     QTemporaryDir dir_;
@@ -102,6 +103,25 @@ void MessageImageLoaderTest::cacheKeyChangesWhenTheFileContentChanges() {
     const QString after = MessageImageLoader::cacheKey(path, QSize(50, 50));
 
     QVERIFY2(before != after, "同一路径换了内容之后，缓存键必须跟着变");
+}
+
+// 先发一个大图异步请求，随即用已经缓存的小图替换同一个控件。缓存命中也必须更新
+// pendingImageKey，否则大图稍后回来会把已经贴好的新图覆盖掉。
+void MessageImageLoaderTest::cachedReplacementRejectsOlderAsyncResult() {
+    const QSize replacementSize(91, 67);
+    QLabel warmUp;
+    MessageImageLoader::instance().loadInto(largePath_, replacementSize, &warmUp);
+    QTRY_VERIFY(warmUp.pixmap() != nullptr && !warmUp.pixmap()->isNull());
+
+    QLabel target;
+    MessageImageLoader::instance().loadInto(largePath_, QSize(777, 583), &target);
+    MessageImageLoader::instance().loadInto(largePath_, replacementSize, &target);
+    QVERIFY(target.pixmap() != nullptr && !target.pixmap()->isNull());
+    QVERIFY(target.pixmap()->width() <= replacementSize.width());
+
+    QTest::qWait(500);
+    QVERIFY2(target.pixmap() != nullptr && target.pixmap()->width() <= replacementSize.width(),
+             "较早的异步结果不能覆盖后来同步命中的缓存图");
 }
 
 QTEST_MAIN(MessageImageLoaderTest)

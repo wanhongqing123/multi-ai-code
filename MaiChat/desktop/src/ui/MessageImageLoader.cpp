@@ -88,22 +88,21 @@ void MessageImageLoader::load(const QString& path, const QSize& targetPixels, QW
                               const std::function<void(const QPixmap&)>& onReady,
                               const std::function<void()>& onMissing) {
     if (!owner) return;
+    const QString key = cacheKey(path, targetPixels);
+    // 每次请求都先更新身份，包括缓存命中和文件缺失。否则旧的后台任务仍会认为
+    // 控件在等旧 key，并在稍后把新缓存图或缺失占位覆盖掉。
+    owner->setProperty("pendingImageKey", key);
     const QFileInfo info(path);
     if (path.trimmed().isEmpty() || !info.isFile()) {
         if (onMissing) onMissing();
         return;
     }
 
-    const QString key = cacheKey(path, targetPixels);
     QPixmap cached;
     if (QPixmapCache::find(key, &cached) && !cached.isNull()) {
         if (onReady) onReady(cached);
         return;
     }
-
-    // 记住这个控件当前等的是哪个键：增量渲染会替换气泡，
-    // 迟到的解码结果不能贴到已经换成别条消息的控件上。
-    owner->setProperty("pendingImageKey", key);
 
     auto& queue = waiting_[key];
     queue.append(Pending{QPointer<QWidget>(owner), onReady, onMissing});
@@ -119,7 +118,9 @@ void MessageImageLoader::deliver(const QString& key, const QImage& image, qint64
             << QStringLiteral("[ui] image decode failed: key=%1 <- file unreadable or unsupported")
                    .arg(key);
         for (const Pending& pending : targets) {
-            if (pending.owner && pending.onMissing) pending.onMissing();
+            QWidget* owner = pending.owner.data();
+            if (!owner || owner->property("pendingImageKey").toString() != key) continue;
+            if (pending.onMissing) pending.onMissing();
         }
         return;
     }

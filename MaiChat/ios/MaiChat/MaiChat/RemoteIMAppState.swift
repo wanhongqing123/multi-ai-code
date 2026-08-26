@@ -616,7 +616,11 @@ final class RemoteIMAppState: ObservableObject {
             errorMessage = "该审批请求不允许此操作"
             return false
         }
-        return await sendQueuedText(action.decisionDisplayText) { [client] userID, _ in
+        let decision = RemoteIMApprovalDecision(token: request.token, action: action)
+        return await sendQueuedText(
+            action.decisionDisplayText,
+            approvalDecision: decision
+        ) { [client] userID, _ in
             try await client.sendApprovalDecision(
                 to: userID,
                 token: request.token,
@@ -627,12 +631,20 @@ final class RemoteIMAppState: ObservableObject {
 
     private func sendQueuedText(
         _ text: String,
+        approvalDecision: RemoteIMApprovalDecision? = nil,
         deliver: (String, String) async throws -> RemoteIMSendReceipt
     ) async -> Bool {
         guard canSendVoice else { return false }   // 连接 + 已选联系人；正文非空由调用方保证
         var queuedMessageID: UUID?
         do {
-            let message = try chatState.queueOutgoingText(text)
+            let message = if let approvalDecision {
+                try chatState.queueOutgoingApprovalDecision(
+                    token: approvalDecision.token,
+                    action: approvalDecision.action
+                )
+            } else {
+                try chatState.queueOutgoingText(text)
+            }
             queuedMessageID = message.id
             enqueueHistoryUpsert(message)
             let receipt = try await deliver(message.toUserID, message.text)

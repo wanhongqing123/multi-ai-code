@@ -28,6 +28,8 @@ public:
     void removeMessagesWith(const QString& peerId);
     void selectPeer(const QString& userId);
     RemoteIMMessage queueOutgoingText(const QString& text);
+    RemoteIMMessage queueOutgoingApprovalDecision(const QString& token,
+                                                   RemoteIMApprovalAction action);
     RemoteIMMessage queueOutgoingImage(const QString& localPath, int width, int height, qint64 sizeBytes, const QString& text = QString());
     RemoteIMMessage queueOutgoingVoice(const QString& localPath, int durationSeconds);
     RemoteIMMessage queueOutgoingFile(const QString& localPath, const QString& fileName, const QString& mimeType, qint64 sizeBytes, const QString& text = QString());

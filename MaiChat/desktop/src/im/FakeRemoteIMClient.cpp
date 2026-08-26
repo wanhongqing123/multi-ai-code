@@ -75,6 +75,15 @@ void FakeRemoteIMClient::failNext(const QString& error) {
     nextError_ = error;
 }
 
+void FakeRemoteIMClient::deferNextSend() {
+    deferNextSend_ = true;
+}
+
+void FakeRemoteIMClient::finishDeferredSend() {
+    if (!deferredSendCompletion_) return;
+    completeSend(std::move(deferredSendCompletion_));
+}
+
 void FakeRemoteIMClient::emitIncomingText(const QString& fromUserId, const QString& text) {
     emit incomingText(fromUserId.trimmed(), text.trimmed());
 }
@@ -96,6 +105,11 @@ void FakeRemoteIMClient::complete(RemoteIMCompletion completion) {
 
 void FakeRemoteIMClient::completeSend(RemoteIMSendCompletion completion) {
     if (!completion) return;
+    if (deferNextSend_) {
+        deferNextSend_ = false;
+        deferredSendCompletion_ = std::move(completion);
+        return;
+    }
     if (nextError_.isEmpty()) {
         // 模拟 SDK 回执的稳定消息 id（与真实实现的 <msg_id>#<elem> 结构对齐）。
         const qint64 sequence = ++sentSequence_;

@@ -36,7 +36,9 @@ constexpr int kMetadataVersion = 2;
 struct ParsedCloudMetadata {
     RemoteIMMessageOrigin origin = RemoteIMMessageOrigin::Unknown;
     RemoteIMApprovalRequest approvalRequest;
+    RemoteIMApprovalDecision approvalDecision;
     bool hasApprovalRequest = false;
+    bool hasApprovalDecision = false;
 };
 
 QString originName(RemoteIMMessageOrigin origin) {
@@ -114,6 +116,8 @@ ParsedCloudMetadata messageMetadata(const QJsonObject& message) {
         RemoteIMApprovalAction action;
         if (remoteIMApprovalActionFromWireName(
                 interaction.value(QStringLiteral("action")).toString(), &action)) {
+            parsed.approvalDecision = RemoteIMApprovalDecision{token, action};
+            parsed.hasApprovalDecision = true;
             return parsed;
         }
     }
@@ -854,6 +858,10 @@ void TimSdkRemoteIMClient::handleHistoryMessagesPayload(const QString& jsonPaylo
                     message.approvalRequest = metadata.approvalRequest;
                     message.hasApprovalRequest = true;
                 }
+                if (metadata.hasApprovalDecision) {
+                    message.approvalDecision = metadata.approvalDecision;
+                    message.hasApprovalDecision = true;
+                }
                 if (!message.text.trimmed().isEmpty()) messages.append(message);
                 continue;
             }
@@ -1054,6 +1062,10 @@ void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
             if (metadata.hasApprovalRequest) {
                 textMessage.approvalRequest = metadata.approvalRequest;
                 textMessage.hasApprovalRequest = true;
+            }
+            if (metadata.hasApprovalDecision) {
+                textMessage.approvalDecision = metadata.approvalDecision;
+                textMessage.hasApprovalDecision = true;
             }
             received.append(textMessage);
             continue;

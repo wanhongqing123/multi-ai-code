@@ -290,6 +290,33 @@ void LocalMessageDatabaseTest::roundTripsApprovalRequest() {
     QVERIFY(loaded.hasApprovalRequest);
     QCOMPARE(loaded.approvalRequest.token, QStringLiteral("approval-desktop-persisted"));
     QVERIFY(loaded.approvalRequest.actions == message.approvalRequest.actions);
+
+    RemoteIMMessage decision = makeTextMessage(
+        QStringLiteral("approval-decision-1"),
+        QStringLiteral("me"),
+        QStringLiteral("multi-ai-code"),
+        RemoteIMMessageDirection::Outgoing,
+        1700000000200LL,
+        QStringLiteral("审批操作：同意并记住"));
+    decision.status = RemoteIMMessageStatus::Sent;
+    decision.hasApprovalDecision = true;
+    decision.approvalDecision = RemoteIMApprovalDecision{
+        QStringLiteral("approval-desktop-persisted"),
+        RemoteIMApprovalAction::ApprovePrefix
+    };
+    QVERIFY(db.insertMessageIfAbsent(decision, QStringLiteral("multi-ai-code")));
+
+    ChatState restarted(QStringLiteral("me"));
+    db.loadInto(restarted);
+    const QList<RemoteIMMessage> restartedMessages =
+        restarted.messagesWith(QStringLiteral("multi-ai-code"));
+    QCOMPARE(restartedMessages.size(), 2);
+    const RemoteIMMessage& loadedDecision = restartedMessages.last();
+    QVERIFY(loadedDecision.hasApprovalDecision);
+    QCOMPARE(loadedDecision.approvalDecision.token,
+             QStringLiteral("approval-desktop-persisted"));
+    QCOMPARE(loadedDecision.approvalDecision.action,
+             RemoteIMApprovalAction::ApprovePrefix);
 }
 
 void LocalMessageDatabaseTest::upgradesPreVideoDatabaseWithoutLosingOldMessages() {

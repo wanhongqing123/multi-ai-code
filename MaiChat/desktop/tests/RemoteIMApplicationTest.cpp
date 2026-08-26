@@ -65,6 +65,9 @@ void RemoteIMApplicationTest::sendsStructuredApprovalDecisionAndMarksSent() {
     QCOMPARE(messages.size(), 1);
     QCOMPARE(messages.first().text, QStringLiteral("审批操作：同意并记住"));
     QCOMPARE(messages.first().status, RemoteIMMessageStatus::Sent);
+    QVERIFY(messages.first().hasApprovalDecision);
+    QCOMPARE(messages.first().approvalDecision.token, QStringLiteral("approval-desktop-1"));
+    QCOMPARE(messages.first().approvalDecision.action, RemoteIMApprovalAction::ApprovePrefix);
 }
 
 void RemoteIMApplicationTest::sendsFileThroughClientAndMarksSent() {

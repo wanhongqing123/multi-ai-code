@@ -1113,7 +1113,21 @@ private struct MessageListView: View {
 
     private let bottomAnchorID = "message-list-bottom"
 
+    private var approvalDecisionStates: [String: ApprovalDecisionDisplayState] {
+        var states: [String: ApprovalDecisionDisplayState] = [:]
+        for message in messages {
+            guard let token = message.approvalDecision?.token else { continue }
+            if message.status == .sent {
+                states[token] = .sent
+            } else if message.status == .pending, states[token] != .sent {
+                states[token] = .sending
+            }
+        }
+        return states
+    }
+
     var body: some View {
+        let decisionStates = approvalDecisionStates
         ScrollViewReader { proxy in
             ScrollView {
                 // Keep the initial page eagerly laid out so the dedicated bottom anchor has its
@@ -1128,6 +1142,9 @@ private struct MessageListView: View {
                         ForEach(messages) { message in
                             MessageBubbleView(
                                 message: message,
+                                approvalDecisionState: message.approvalRequest.map {
+                                    decisionStates[$0.token] ?? .available
+                                } ?? .available,
                                 senderProfile: appState.profile(for: message.fromUserID),
                                 incomingRelation: peerRelation,
                                 isVideoDownloading: appState.isVideoDownloading(
@@ -1303,6 +1320,7 @@ private struct EmptyMessagesView: View {
 
 private struct MessageBubbleView: View {
     let message: RemoteIMMessage
+    let approvalDecisionState: ApprovalDecisionDisplayState
     let senderProfile: RemoteIMUserProfile
     let incomingRelation: RemoteIMContactRelation
     let isVideoDownloading: Bool
@@ -1430,7 +1448,8 @@ private struct MessageBubbleView: View {
 
                         RemoteIMApprovalActionsView(
                             request: approvalRequest,
-                            messageID: message.id
+                            messageID: message.id,
+                            decisionState: approvalDecisionState
                         )
                     }
                 } else {
@@ -1468,20 +1487,32 @@ private struct MessageBubbleView: View {
     }
 }
 
+private enum ApprovalDecisionDisplayState {
+    case available
+    case sending
+    case sent
+}
+
 private struct RemoteIMApprovalActionsView: View {
     let request: RemoteIMApprovalRequest
     let messageID: UUID
+    let decisionState: ApprovalDecisionDisplayState
     @EnvironmentObject private var appState: RemoteIMAppState
     @State private var submittingAction: RemoteIMApprovalAction?
     @State private var submittedAction: RemoteIMApprovalAction?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
-            if submittedAction != nil {
+            if decisionState == .sent || submittedAction != nil {
                 Label("审批选择已发送", systemImage: "checkmark.circle.fill")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(RemoteIMStyle.green)
                     .accessibilityIdentifier("remote-im-approval-sent")
+            } else if decisionState == .sending || submittingAction != nil {
+                Label("审批选择正在发送…", systemImage: "clock.arrow.circlepath")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(RemoteIMStyle.blue)
+                    .accessibilityIdentifier("remote-im-approval-sending")
             } else {
                 ForEach(request.actions, id: \.self) { action in
                     Button {
@@ -1526,7 +1557,10 @@ private struct RemoteIMApprovalActionsView: View {
     }
 
     private func submit(_ action: RemoteIMApprovalAction) {
-        guard submittingAction == nil, submittedAction == nil else { return }
+        guard decisionState == .available,
+              submittingAction == nil,
+              submittedAction == nil
+        else { return }
         submittingAction = action
         AppDiagnosticLog.shared.record(
             level: .info,

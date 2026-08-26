@@ -41,6 +41,28 @@ final class MasterChatStateTests: XCTestCase {
         XCTAssertEqual(state.messages.first?.approvalRequest, request)
     }
 
+    func testOutgoingApprovalDecisionIsStoredOnTheMessage() throws {
+        var state = MasterChatState(ownerUserID: "whq-iphone")
+        try state.upsertContact(
+            userID: "mac-multi-ai-code",
+            relation: .friend,
+            displayName: "Mac"
+        )
+        state.selectPeer(userID: "mac-multi-ai-code")
+
+        let message = try state.queueOutgoingApprovalDecision(
+            token: "approval-token-1",
+            action: .approvePrefix,
+            now: Date(timeIntervalSince1970: 92)
+        )
+
+        XCTAssertEqual(
+            message.approvalDecision,
+            RemoteIMApprovalDecision(token: "approval-token-1", action: .approvePrefix)
+        )
+        XCTAssertEqual(state.messages.first?.approvalDecision, message.approvalDecision)
+    }
+
     func testApprovalCloudMetadataV2RoundTripsRequestsAndDecisions() {
         let request = RemoteIMApprovalRequest(
             token: "approval-wire-1",

@@ -104,6 +104,27 @@ RemoteIMMessage ChatState::queueOutgoingText(const QString& text) {
     return message;
 }
 
+RemoteIMMessage ChatState::queueOutgoingApprovalDecision(
+    const QString& token,
+    RemoteIMApprovalAction action) {
+    const QString cleanToken = clean(token);
+    if (!isValidRemoteIMApprovalToken(cleanToken)) {
+        throw std::invalid_argument("approval token is required");
+    }
+    RemoteIMMessage message;
+    message.fromUserId = ownerUserId_;
+    message.toUserId = requireSelectedPeer();
+    message.text = QStringLiteral("审批操作：%1").arg(remoteIMApprovalActionTitle(action));
+    message.direction = RemoteIMMessageDirection::Outgoing;
+    message.status = RemoteIMMessageStatus::Pending;
+    message.origin = RemoteIMMessageOrigin::Human;
+    message.hasApprovalDecision = true;
+    message.approvalDecision = RemoteIMApprovalDecision{cleanToken, action};
+    message.createdAtMillis = (message.createdAtMillis / 1000) * 1000;
+    appendTracked(message);
+    return message;
+}
+
 RemoteIMMessage ChatState::queueOutgoingImage(const QString& localPath, int width, int height, qint64 sizeBytes, const QString& text) {
     const QString cleanPath = clean(localPath);
     if (cleanPath.isEmpty()) throw std::invalid_argument("localPath is required");

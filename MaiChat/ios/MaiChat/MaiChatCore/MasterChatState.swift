@@ -124,6 +124,17 @@ public struct RemoteIMApprovalRequest: Codable, Equatable, Sendable {
     }
 }
 
+public struct RemoteIMApprovalDecision: Codable, Equatable, Sendable {
+    public let token: String
+    public let action: RemoteIMApprovalAction
+
+    public init?(token: String, action: RemoteIMApprovalAction) {
+        guard RemoteIMApprovalRequest.isValidToken(token) else { return nil }
+        self.token = token
+        self.action = action
+    }
+}
+
 public enum RemoteIMMessageOrigin: String, Codable, Equatable, Sendable {
     case human
     case machine
@@ -713,6 +724,7 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
     public let fileAttachment: RemoteIMFileAttachment?
     public var videoAttachment: RemoteIMVideoAttachment?
     public let approvalRequest: RemoteIMApprovalRequest?
+    public let approvalDecision: RemoteIMApprovalDecision?
     public let direction: RemoteIMMessageDirection
     public var status: RemoteIMMessageStatus
     public var createdAt: Date
@@ -728,6 +740,7 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
         fileAttachment: RemoteIMFileAttachment? = nil,
         videoAttachment: RemoteIMVideoAttachment? = nil,
         approvalRequest: RemoteIMApprovalRequest? = nil,
+        approvalDecision: RemoteIMApprovalDecision? = nil,
         direction: RemoteIMMessageDirection,
         status: RemoteIMMessageStatus,
         createdAt: Date
@@ -742,6 +755,7 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
         self.fileAttachment = fileAttachment
         self.videoAttachment = videoAttachment
         self.approvalRequest = approvalRequest
+        self.approvalDecision = approvalDecision
         self.direction = direction
         self.status = status
         self.createdAt = createdAt
@@ -1088,6 +1102,31 @@ public struct MasterChatState: Equatable {
             fromUserID: ownerUserID,
             toUserID: peerID,
             text: cleanText,
+            direction: .outgoing,
+            status: .pending,
+            createdAt: now
+        )
+        appendMessage(message)
+        return message
+    }
+
+    @discardableResult
+    public mutating func queueOutgoingApprovalDecision(
+        token: String,
+        action: RemoteIMApprovalAction,
+        now: Date = Date()
+    ) throws -> RemoteIMMessage {
+        guard let decision = RemoteIMApprovalDecision(token: token, action: action) else {
+            throw MasterChatStateError.blankMessage
+        }
+        guard let peerID = selectedPeerID, !peerID.isEmpty else {
+            throw MasterChatStateError.noSelectedPeer
+        }
+        let message = RemoteIMMessage(
+            fromUserID: ownerUserID,
+            toUserID: peerID,
+            text: action.decisionDisplayText,
+            approvalDecision: decision,
             direction: .outgoing,
             status: .pending,
             createdAt: now

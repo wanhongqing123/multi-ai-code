@@ -68,11 +68,18 @@ RemoteIMMessage messageFromQuery(const QSqlQuery& query) {
         query.value(QStringLiteral("video_seconds")).toInt(),
         query.value(QStringLiteral("video_bytes")).toLongLong()
     };
-    message.approvalRequest = RemoteIMApprovalRequest{
-        query.value(QStringLiteral("approval_token")).toString(),
-        approvalActionsFromText(query.value(QStringLiteral("approval_actions")).toString())
-    };
+    const QString approvalToken = query.value(QStringLiteral("approval_token")).toString();
+    const QList<RemoteIMApprovalAction> approvalActions =
+        approvalActionsFromText(query.value(QStringLiteral("approval_actions")).toString());
+    message.approvalRequest = RemoteIMApprovalRequest{approvalToken, approvalActions};
     message.hasApprovalRequest = message.approvalRequest.isValid();
+    if (!message.hasApprovalRequest && approvalActions.size() == 1) {
+        message.approvalDecision = RemoteIMApprovalDecision{
+            approvalToken,
+            approvalActions.first()
+        };
+        message.hasApprovalDecision = message.approvalDecision.isValid();
+    }
     return message;
 }
 
@@ -318,9 +325,16 @@ bool LocalMessageDatabase::insertMessageIfAbsent(const RemoteIMMessage& message,
     query.addBindValue(message.video.coverPath);
     query.addBindValue(message.video.durationSeconds);
     query.addBindValue(message.video.sizeBytes);
-    query.addBindValue(message.hasApprovalRequest ? message.approvalRequest.token : QString());
-    query.addBindValue(
-        message.hasApprovalRequest ? approvalActionsText(message.approvalRequest.actions) : QString());
+    const QString approvalToken = message.hasApprovalRequest
+        ? message.approvalRequest.token
+        : message.hasApprovalDecision ? message.approvalDecision.token : QString();
+    const QList<RemoteIMApprovalAction> approvalActions = message.hasApprovalRequest
+        ? message.approvalRequest.actions
+        : message.hasApprovalDecision
+            ? QList<RemoteIMApprovalAction>{message.approvalDecision.action}
+            : QList<RemoteIMApprovalAction>{};
+    query.addBindValue(approvalToken);
+    query.addBindValue(approvalActionsText(approvalActions));
     if (!query.exec()) return false;
     const bool inserted = query.numRowsAffected() > 0;
     if (!inserted && message.createdAtMillis > 0) {

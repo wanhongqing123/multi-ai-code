@@ -2286,6 +2286,15 @@ void MainWindow::refreshMessages() {
     updateComposerState();
 
     const QList<RemoteIMMessage> messages = app_.chatState().messagesWith(selectedPeer);
+    sentApprovalTokens_.clear();
+    for (const RemoteIMMessage& message : messages) {
+        if (message.direction == RemoteIMMessageDirection::Outgoing
+                && message.status == RemoteIMMessageStatus::Sent
+                && message.hasApprovalDecision
+                && message.approvalDecision.isValid()) {
+            sentApprovalTokens_.insert(message.approvalDecision.token);
+        }
+    }
     bool needFullRebuild = selectedPeer != renderedPeerId_
         || renderedEmptyView_ != messages.isEmpty()
         || messageLayout_->count() == 0;
@@ -2342,6 +2351,7 @@ void MainWindow::rebuildMessageList(const QString& peerId, const QList<RemoteIMM
     renderedMessageIds_.clear();
     messageRowById_.clear();
     renderedStatusById_.clear();
+    renderedApprovalStateById_.clear();
     loadEarlierButton_ = nullptr;
     renderedEmptyView_ = messages.isEmpty();
 
@@ -2422,6 +2432,12 @@ void MainWindow::rebuildMessageList(const QString& peerId, const QList<RemoteIMM
         renderedMessageIds_.append(message.id);
         messageRowById_.insert(message.id, row);
         renderedStatusById_.insert(message.id, message.status);
+        const int approvalState = message.hasApprovalRequest
+            ? sentApprovalTokens_.contains(message.approvalRequest.token)
+                ? 2
+                : submittingApprovalTokens_.contains(message.approvalRequest.token) ? 1 : 0
+            : 0;
+        renderedApprovalStateById_.insert(message.id, approvalState);
     }
     messageLayout_->addStretch(1);
     updateLoadEarlierVisibility();
@@ -2445,6 +2461,7 @@ void MainWindow::applyIncrementalMessageUpdate(const QList<RemoteIMMessage>& mes
             row->deleteLater();
         }
         renderedStatusById_.remove(id);
+        renderedApprovalStateById_.remove(id);
     }
 
     // 首个仍在的旧消息在新列表中的位置：其前方的新增视为「向上翻页」，
@@ -2471,7 +2488,13 @@ void MainWindow::applyIncrementalMessageUpdate(const QList<RemoteIMMessage>& mes
         const RemoteIMMessage& message = messages.at(i);
         resultIds.append(message.id);
         if (QWidget* existing = messageRowById_.value(message.id)) {
-            if (renderedStatusById_.value(message.id) != message.status) {
+            const int approvalState = message.hasApprovalRequest
+                ? sentApprovalTokens_.contains(message.approvalRequest.token)
+                    ? 2
+                    : submittingApprovalTokens_.contains(message.approvalRequest.token) ? 1 : 0
+                : 0;
+            if (renderedStatusById_.value(message.id) != message.status
+                    || renderedApprovalStateById_.value(message.id) != approvalState) {
                 // 状态徽标在气泡内部：原位替换单个气泡，代价 O(1)。
                 const int layoutIndex = messageLayout_->indexOf(existing);
                 QWidget* fresh = createMessageBubble(message);
@@ -2480,6 +2503,7 @@ void MainWindow::applyIncrementalMessageUpdate(const QList<RemoteIMMessage>& mes
                 messageLayout_->insertWidget(layoutIndex, fresh);
                 messageRowById_.insert(message.id, fresh);
                 renderedStatusById_.insert(message.id, message.status);
+                renderedApprovalStateById_.insert(message.id, approvalState);
             }
             continue;
         }
@@ -2487,6 +2511,12 @@ void MainWindow::applyIncrementalMessageUpdate(const QList<RemoteIMMessage>& mes
         messageLayout_->insertWidget(kLayoutBase + i, row);
         messageRowById_.insert(message.id, row);
         renderedStatusById_.insert(message.id, message.status);
+        const int approvalState = message.hasApprovalRequest
+            ? sentApprovalTokens_.contains(message.approvalRequest.token)
+                ? 2
+                : submittingApprovalTokens_.contains(message.approvalRequest.token) ? 1 : 0
+            : 0;
+        renderedApprovalStateById_.insert(message.id, approvalState);
         if (i < firstKeptIndex) prepended = true;
         else appended = true;
     }
@@ -3154,8 +3184,11 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
 
     if (!outgoing && message.hasApprovalRequest && message.approvalRequest.isValid()) {
         const QString token = message.approvalRequest.token;
-        if (submittedApprovalTokens_.contains(token)) {
-            auto* sentLabel = new QLabel(QStringLiteral("✓ 审批选择已发送"), bubble);
+        if (sentApprovalTokens_.contains(token) || submittingApprovalTokens_.contains(token)) {
+            const bool sent = sentApprovalTokens_.contains(token);
+            auto* sentLabel = new QLabel(
+                sent ? QStringLiteral("✓ 审批选择已发送") : QStringLiteral("审批选择正在发送…"),
+                bubble);
             sentLabel->setObjectName(QStringLiteral("approvalSentLabel"));
             sentLabel->setStyleSheet(UiZoom::scaleQss(QStringLiteral(
                 "QLabel#approvalSentLabel{color:#059669;font-size:13px;font-weight:700;"
@@ -3194,38 +3227,18 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
                           .arg(persistent ? QStringLiteral("#059669") : QStringLiteral("#0f8dde"),
                                persistent ? QStringLiteral("#047857") : QStringLiteral("#087abe"))));
                 connect(button, &QPushButton::clicked, this,
-                        [this, token, action, bubble, bubbleLayout] {
-                    if (submittedApprovalTokens_.contains(token)) return;
-                    submittedApprovalTokens_.insert(token);
-                    for (QPushButton* approvalButton : bubble->findChildren<QPushButton*>()) {
-                        if (approvalButton->objectName().startsWith(QStringLiteral("approval"))) {
-                            approvalButton->hide();
-                        }
-                    }
-                    auto* sentLabel = new QLabel(QStringLiteral("✓ 审批选择已发送"), bubble);
-                    sentLabel->setObjectName(QStringLiteral("approvalSentLabel"));
-                    sentLabel->setStyleSheet(UiZoom::scaleQss(QStringLiteral(
-                        "QLabel#approvalSentLabel{color:#059669;font-size:13px;font-weight:700;"
-                        "padding:7px 2px;background:transparent;}")));
-                    bubbleLayout->addWidget(sentLabel);
-                    const QPointer<QWidget> bubbleGuard(bubble);
-                    const QPointer<QLabel> sentLabelGuard(sentLabel);
+                        [this, token, action] {
+                    if (submittingApprovalTokens_.contains(token)
+                            || sentApprovalTokens_.contains(token)) return;
+                    submittingApprovalTokens_.insert(token);
                     app_.sendApprovalDecision(
                         token,
                         action,
-                        [this, token, bubbleGuard, sentLabelGuard](bool ok) {
-                            if (ok) return;
-                            submittedApprovalTokens_.remove(token);
-                            if (bubbleGuard) {
-                                for (QPushButton* approvalButton
-                                     : bubbleGuard->findChildren<QPushButton*>()) {
-                                    if (approvalButton->objectName().startsWith(
-                                            QStringLiteral("approval"))) {
-                                        approvalButton->show();
-                                    }
-                                }
-                            }
-                            if (sentLabelGuard) sentLabelGuard->deleteLater();
+                        [this, token](bool) {
+                            submittingApprovalTokens_.remove(token);
+                            // 不能只改点击时的旧控件：网络回调前切换会话/重建列表后，
+                            // 旧控件已销毁。按消息模型重新计算，失败恢复按钮，成功显示已发送。
+                            refreshMessages();
                         });
                 });
                 actions->addWidget(button);

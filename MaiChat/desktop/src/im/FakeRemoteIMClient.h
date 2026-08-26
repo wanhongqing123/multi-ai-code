@@ -35,6 +35,8 @@ public:
     QString lastVideoPeerId() const;
     RemoteIMVideoPayload lastVideo() const;
     void failNext(const QString& error);
+    void deferNextSend();
+    void finishDeferredSend();
     void emitIncomingText(const QString& fromUserId, const QString& text);
     void emitIncomingImage(const QString& fromUserId, const QString& localPath, int width, int height, qint64 sizeBytes);
 
@@ -56,5 +58,7 @@ private:
     QString lastVideoPeerId_;
     RemoteIMVideoPayload lastVideo_;
     QString nextError_;
+    bool deferNextSend_ = false;
+    RemoteIMSendCompletion deferredSendCompletion_;
     int sentSequence_ = 0;
 };

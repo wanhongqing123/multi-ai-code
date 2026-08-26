@@ -213,9 +213,11 @@ private:
     QStringList renderedMessageIds_;
     QHash<QString, QWidget*> messageRowById_;
     QHash<QString, RemoteIMMessageStatus> renderedStatusById_;
-    // 本轮会话中已经点过的审批码。刷新气泡后继续显示「已发送」，避免重复点击；
-    // 桌面端仍会对重放做最终拒绝，这里只是 UI 去重。
-    QSet<QString> submittedApprovalTokens_;
+    // 0=可操作、1=正在发送、2=已发送。与消息状态一并决定是否原位重建审批气泡。
+    QHash<QString, int> renderedApprovalStateById_;
+    // 只保存一次网络请求的瞬时状态；成功状态由已落库的出站审批决定恢复。
+    QSet<QString> submittingApprovalTokens_;
+    QSet<QString> sentApprovalTokens_;
     QPushButton* loadEarlierButton_ = nullptr;
     // 顶栏搜索。范围是所有会话里「已加载」的消息——没点过「加载更早」的历史
     // 不在 ChatState 里，也就搜不到，结果面板上要如实说清楚。

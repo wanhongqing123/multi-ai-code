@@ -772,20 +772,47 @@ void MainWindowLayoutTest::rendersApprovalButtonsAndSendsStructuredDecision() {
     QVERIFY(window.findChild<QPushButton*>(QStringLiteral("approvalRejectButton")) != nullptr);
 
     fakeClient->failNext(QStringLiteral("network unavailable"));
-    confirmNextContactDeletion();  // 关闭发送失败提示的模态框，继续检查按钮是否恢复。
+    fakeClient->deferNextSend();
     QTest::mouseClick(prefixButton, Qt::LeftButton);
+    QCoreApplication::processEvents();
+
+    auto* sendingLabel = window.findChild<QLabel*>(QStringLiteral("approvalSentLabel"));
+    QVERIFY(sendingLabel != nullptr);
+    QVERIFY(sendingLabel->text().contains(QStringLiteral("正在发送")));
+
+    // 网络回调到达前切走再切回，会销毁点击时的气泡。失败处理必须依据消息模型
+    // 重建当前气泡，不能只操作已经失效的旧控件指针。
+    app.addContact(QStringLiteral("other-peer"), QStringLiteral("Other"));
+    app.selectPeer(QStringLiteral("multi-ai-code"));
+    QCoreApplication::processEvents();
+    confirmNextContactDeletion();  // 关闭发送失败提示的模态框，继续检查按钮是否恢复。
+    fakeClient->finishDeferredSend();
     QCoreApplication::processEvents();
     QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
 
+    prefixButton = window.findChild<QPushButton*>(QStringLiteral("approvalApprovePrefixButton"));
+    QVERIFY(prefixButton != nullptr);
     QVERIFY(prefixButton->isVisible());
     QVERIFY(window.findChild<QLabel*>(QStringLiteral("approvalSentLabel")) == nullptr);
 
     QTest::mouseClick(prefixButton, Qt::LeftButton);
     QCoreApplication::processEvents();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
 
     QCOMPARE(fakeClient->lastTextPeerId(), QStringLiteral("multi-ai-code"));
     QCOMPARE(fakeClient->lastApprovalToken(), QStringLiteral("approval-ui-1"));
     QCOMPARE(fakeClient->lastApprovalAction(), RemoteIMApprovalAction::ApprovePrefix);
+    auto* sentLabel = window.findChild<QLabel*>(QStringLiteral("approvalSentLabel"));
+    QVERIFY(sentLabel != nullptr);
+    QVERIFY(sentLabel->text().contains(QStringLiteral("已发送")));
+
+    // 再切走/切回强制重建：已发送状态来自出站决定消息，而不是旧气泡控件。
+    app.selectPeer(QStringLiteral("other-peer"));
+    app.selectPeer(QStringLiteral("multi-ai-code"));
+    QCoreApplication::processEvents();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QVERIFY(window.findChild<QPushButton*>(
+                QStringLiteral("approvalApproveOnceButton")) == nullptr);
     QVERIFY(window.findChild<QLabel*>(QStringLiteral("approvalSentLabel")) != nullptr);
 }
 

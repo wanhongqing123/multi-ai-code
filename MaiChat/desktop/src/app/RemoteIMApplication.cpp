@@ -153,8 +153,7 @@ void RemoteIMApplication::sendApprovalDecision(const QString& token,
         if (completion) completion(false);
         return;
     }
-    RemoteIMMessage message = state_.queueOutgoingText(
-        QStringLiteral("审批操作：%1").arg(remoteIMApprovalActionTitle(action)));
+    RemoteIMMessage message = state_.queueOutgoingApprovalDecision(cleanToken, action);
     persistMessage(message);
     emit stateChanged();
 

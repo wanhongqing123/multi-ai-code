@@ -103,6 +103,13 @@ struct RemoteIMApprovalRequest {
     bool allows(RemoteIMApprovalAction action) const { return actions.contains(action); }
 };
 
+struct RemoteIMApprovalDecision {
+    QString token;
+    RemoteIMApprovalAction action = RemoteIMApprovalAction::Reject;
+
+    bool isValid() const { return isValidRemoteIMApprovalToken(token); }
+};
+
 struct RemoteIMImageAttachment {
     QString localPath;
     int width = 0;
@@ -143,6 +150,7 @@ struct RemoteIMMessage {
     // Versioned Tencent cloud metadata. Unknown means missing/invalid/foreign metadata.
     RemoteIMMessageOrigin origin = RemoteIMMessageOrigin::Unknown;
     RemoteIMApprovalRequest approvalRequest;
+    RemoteIMApprovalDecision approvalDecision;
     qint64 createdAtMillis = QDateTime::currentMSecsSinceEpoch();
     RemoteIMImageAttachment image;
     RemoteIMVoiceAttachment voice;
@@ -153,6 +161,7 @@ struct RemoteIMMessage {
     bool hasFile = false;
     bool hasVideo = false;
     bool hasApprovalRequest = false;
+    bool hasApprovalDecision = false;
 };
 
 Q_DECLARE_METATYPE(RemoteIMMessage)

@@ -79,6 +79,27 @@ final class LocalChatHistoryStoreTests: XCTestCase {
             try conversationMessages(in: store, peerUserID: "mac-quark-pc").first?.approvalRequest,
             request
         )
+
+        let decision = RemoteIMApprovalDecision(
+            token: request.token,
+            action: .approvePrefix
+        )!
+        let decisionMessage = RemoteIMMessage(
+            fromUserID: "ios-master",
+            toUserID: "mac-quark-pc",
+            text: decision.action.decisionDisplayText,
+            approvalDecision: decision,
+            direction: .outgoing,
+            status: .sent,
+            createdAt: Date(timeIntervalSince1970: 302)
+        )
+        try persist([decisionMessage], in: store)
+        let restored = try conversationMessages(
+            in: store,
+            peerUserID: "mac-quark-pc"
+        )
+        XCTAssertEqual(restored.count, 2)
+        XCTAssertEqual(restored.last?.approvalDecision, decision)
     }
 
     func testUpsertDeduplicatesMessagesByIDAndConversationDeleteIsExplicit() throws {
@@ -391,13 +412,14 @@ final class LocalChatHistoryStoreTests: XCTestCase {
         let openedVersionStatement = try XCTUnwrap(versionStatement)
         defer { sqlite3_finalize(openedVersionStatement) }
         XCTAssertEqual(sqlite3_step(openedVersionStatement), SQLITE_ROW)
-        XCTAssertEqual(sqlite3_column_int(openedVersionStatement, 0), 5)
+        XCTAssertEqual(sqlite3_column_int(openedVersionStatement, 0), 6)
 
         var columnStatement: OpaquePointer?
         XCTAssertEqual(
             sqlite3_prepare_v2(
                 migratedDatabase,
-                "SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'video_attachment'",
+                "SELECT COUNT(*) FROM pragma_table_info('messages') " +
+                    "WHERE name IN ('video_attachment', 'approval_decision')",
                 -1,
                 &columnStatement,
                 nil
@@ -407,7 +429,7 @@ final class LocalChatHistoryStoreTests: XCTestCase {
         let openedColumnStatement = try XCTUnwrap(columnStatement)
         defer { sqlite3_finalize(openedColumnStatement) }
         XCTAssertEqual(sqlite3_step(openedColumnStatement), SQLITE_ROW)
-        XCTAssertEqual(sqlite3_column_int(openedColumnStatement, 0), 1)
+        XCTAssertEqual(sqlite3_column_int(openedColumnStatement, 0), 2)
 
         var approvalColumnStatement: OpaquePointer?
         XCTAssertEqual(

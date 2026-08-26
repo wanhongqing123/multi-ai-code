@@ -108,6 +108,9 @@ constexpr int SearchMessageRole = Qt::UserRole + 7;
 constexpr int MaxGlobalSearchResults = 60;
 // 导航栏与会话栏头部的图标统一用这个尺寸：混用会让一列图标看起来大小不一。
 constexpr int kNavIconPixels = 20;
+// 导航栏图标比会话栏那个「+」大一档：它是四个入口里唯一的辨识依据（没有文字），
+// 太小就只能靠位置记。图标源是 48px 渲染的，26 仍是缩小、不会糊。
+constexpr int kNavRailIconPixels = 26;
 constexpr int MessageAvatarLogicalSize = 40;
 constexpr int MessageAvatarGap = 10;
 constexpr int MessageMetaBubbleGap = 6;
@@ -1274,7 +1277,7 @@ void MainWindow::buildUi() {
     messageNavButton_->setProperty("selected", true);
     for (QPushButton* navButton :
          {messageNavButton_, contactsNavButton_, remoteNavButton_, settingsNavButton_}) {
-        navButton->setIconSize(QSize(kNavIconPixels, kNavIconPixels));
+        navButton->setIconSize(QSize(kNavRailIconPixels, kNavRailIconPixels));
     }
     applyNavButtonIcon(messageNavButton_, true);
     applyNavButtonIcon(contactsNavButton_, false);
@@ -1639,10 +1642,10 @@ void MainWindow::applyStyle() {
         /* 纯图标：不再留文字的左内边距，图标居中，宽高一致，
            否则一列图标会因为各自的留白不同而看起来大小不一。 */
         #messagesNavButton, #contactsNavButton, #remoteNavButton, #settingsNavButton {
-            min-width: 40px;
-            max-width: 40px;
-            min-height: 40px;
-            max-height: 40px;
+            min-width: 44px;
+            max-width: 44px;
+            min-height: 44px;
+            max-height: 44px;
             border: 0;
             border-radius: 10px;
             background: transparent;

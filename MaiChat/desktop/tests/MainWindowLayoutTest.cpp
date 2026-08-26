@@ -668,6 +668,18 @@ void MainWindowLayoutTest::leftNavigationRailIsResizableAndWider() {
         QVERIFY(button != nullptr);
         QCOMPARE(button->iconSize(), navButtons.first()->iconSize());
     }
+
+    // 纯图标导航栏里，图标是四个入口唯一的辨识依据，太小就只能靠位置记。
+    // 但放大图标最容易越过的界线是「图标撑出按钮被裁掉」，所以两条一起钉：
+    // 够大，且仍装得进按钮。
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    for (QPushButton* button : navButtons) {
+        QVERIFY2(button->iconSize().width() >= 24, "导航栏图标应当比会话栏的「+」大一档");
+        QVERIFY2(button->iconSize().width() + 8 <= button->width(),
+                 "图标放大后必须仍装得进按钮，否则会被裁掉");
+        QVERIFY2(button->width() <= navRail->width(), "按钮不能宽过导航栏本身");
+    }
 }
 
 void MainWindowLayoutTest::removesRedundantChromeLabels() {

@@ -22,25 +22,39 @@ const codexRsRoot = join(codexRoot, 'codex-rs')
 const platform = platformArch()
 const outputDir = join(repoRoot, 'bin', 'aicli', 'codex', platform)
 
-// 打包所需的全部 Codex 二进制。以前这里是手写的两个名字，结果漏掉了 Windows 沙箱的
-// 两个 helper：codex 运行时到 codex.exe 旁边找它们（helper_materialization.rs 的
-// bundled_executable_path_for_exe），找不到就起不了沙箱，本该在沙箱里跑的只读命令
-// 只能退回提权/审批那条路——症状不是报错，而是「每条命令都要提权」，看着像设计如此。
+// Codex 二进制登记表：**全集**在这里列全，再用 bundled 决定这次打不打包。
 //
-// 更要命的是这个坑踩过两次：d31546e「FIX: 打包 Codex Code Mode host」修的就是同一类
-// 问题，但只补了当时发现的那一个，没有回头把 [[bin]] 目标数一遍。所以现在改成显式登记
-// 全集 + 构建后校验缺失即失败，让下一次遗漏在构建时炸掉，而不是几个月后由用户在使用中发现。
+// 以前这里是手写的两个名字，漏掉的东西无从发现——d31546e「FIX: 打包 Codex Code Mode host」
+// 修的就是同一类问题（一个 helper 没被打包），但只补了当时注意到的那一个，没有回头把
+// [[bin]] 目标数一遍，于是一个月后又暴露出别的遗漏。
+//
+// 所以现在是：登记全集 + 显式标注打不打包 + 构建后按表核对输出目录（缺失或零字节即失败）。
+// 「不打包」是一个写下来的决定并附理由，而不是一个没人注意到的空缺。
 const CODEX_BINARIES = [
-  { name: 'codex', platforms: null },
-  { name: 'codex-code-mode-host', platforms: null },
-  // Windows 沙箱专有：非 Windows 目标上这两个 crate 的 build.rs 直接 early return，
-  // setup_main 在非 Windows 甚至是 panic! 桩，所以只在 win32 上要求它们。
-  { name: 'codex-windows-sandbox-setup', platforms: ['win32'] },
-  { name: 'codex-command-runner', platforms: ['win32'] }
+  { name: 'codex', platforms: null, bundled: true },
+  { name: 'codex-code-mode-host', platforms: null, bundled: true },
+  // 以下两个只在 Windows 沙箱的 elevated 级别用得上，**当前不打包**（合计约 23.7MB）。
+  //
+  // 三个级别里只有 elevated 会碰它们：
+  //   disabled    不隔离
+  //   unelevated  以当前用户身份跑、受限令牌 —— 直接拉起子进程，不经过 command-runner
+  //   elevated    以一个专门创建的 Windows 用户跑 —— setup 负责建这个用户，
+  //               command-runner 以该用户身份接 IPC 并拉起子进程
+  //
+  // 而 elevated 只能靠 config.toml 里显式写 `[windows] sandbox = "elevated"` 选中：
+  // 走 feature 那条路的 Feature::WindowsSandboxElevated 是
+  // `stage: Removed, default_enabled: false`（features/src/lib.rs），已经不是活开关。
+  //
+  // 所以默认配置下它们一次都不会被调用，纯占体积。要开 elevated 时把 bundled 改成 true
+  // 重建即可——留在表里而不是删掉，是为了保住上面这段结论，省得下次有人重新查一遍，
+  // 或者反过来又漏掉它们（这个坑已经踩过两次）。
+  { name: 'codex-windows-sandbox-setup', platforms: ['win32'], bundled: false },
+  { name: 'codex-command-runner', platforms: ['win32'], bundled: false }
 ]
 
 const requiredBinaries = CODEX_BINARIES.filter(
-  (entry) => entry.platforms === null || entry.platforms.includes(process.platform)
+  (entry) =>
+    entry.bundled && (entry.platforms === null || entry.platforms.includes(process.platform))
 ).map((entry) => ({
   name: entry.name,
   fileName: binaryName(entry.name),
@@ -105,9 +119,10 @@ if (profile === 'release') {
   }
 }
 
-// 产物齐全性校验。copyExecutable 缺源文件时会抛，但这里再按「登记的全集」核一遍输出目录：
-// 真正要防的是「登记表加了一项、却没有任何一步真的把它放进去」这类改动，
-// 那种情况下每一步都不报错，只有最终目录是缺的。
+// 产物齐全性校验。copyExecutable 在源文件缺失时就会抛，所以这一步不是为了兜住"没复制"，
+// 而是兜住"复制完之后又没了"——本文件上面那条注释已经写明这台机器上会发生什么：
+// 企业终端安全软件对新复制的可执行文件做延迟扫描，可能把它隔离/删掉。
+// 那种情况下每一步都返回成功，只有最终目录是缺的或零字节，而这正是会被打进安装包的东西。
 const missing = requiredBinaries.filter(
   (entry) => !existsSync(entry.outputPath) || statSync(entry.outputPath).size === 0
 )

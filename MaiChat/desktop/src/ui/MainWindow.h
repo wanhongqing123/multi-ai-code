@@ -66,8 +66,10 @@ private:
     void updateLoadEarlierVisibility();
     void scrollMessagesToBottom();
     void applyConversationFilter();
-    // 顶栏全局搜索：横贯窗口顶部，Ctrl+F 聚焦，Esc 收起结果面板。
-    // 搜的是所有会话里已加载的消息，点结果直接跳到那条。
+    void applyContactFilter();
+    // 搜索按页分工：消息页搜消息（顺带把有命中的会话留在左列），
+    // 通讯录页搜联系人。Ctrl+F 聚焦当前页的那个框，Esc 清空/收起结果面板。
+    void focusPageSearch();
     void focusGlobalSearch();
     void refreshGlobalSearchResults();
     void openGlobalSearchResult(QListWidgetItem* item);
@@ -160,6 +162,7 @@ private:
     RemoteIMApplication& app_;
     QWidget* navRail_ = nullptr;
     QLineEdit* navSearchInput_ = nullptr;
+    QLineEdit* contactsSearchInput_ = nullptr;
     QPushButton* messageNavButton_ = nullptr;
     QPushButton* contactsNavButton_ = nullptr;
     QPushButton* settingsNavButton_ = nullptr;

@@ -1452,11 +1452,20 @@ void MainWindow::buildUi() {
     contactsDirectoryLayout->setContentsMargins(24, 24, 20, 18);
     contactsDirectoryLayout->setSpacing(16);
 
+    // 通讯录栏头部：和会话栏一样是一个搜索框，只是搜的对象不同。
+    // 搜索框跟着页面走而不是共用一个：点通讯录就搜联系人、点消息就搜消息，
+    // 一个框只做一件事，不必再在框里塞「现在搜的是什么」的模式开关。
     auto* contactsHeader = new QHBoxLayout();
-    auto* contactsTitle = new QLabel(QStringLiteral("通讯录"), contactsDirectoryPane);
-    contactsTitle->setObjectName(QStringLiteral("contactsSectionTitle"));
-    contactsHeader->addWidget(contactsTitle);
-    contactsHeader->addStretch(1);
+    contactsHeader->setContentsMargins(0, 0, 0, 0);
+    contactsHeader->setSpacing(8);
+    contactsSearchInput_ = new QLineEdit(contactsDirectoryPane);
+    contactsSearchInput_->setObjectName(QStringLiteral("contactsSearchBox"));
+    contactsSearchInput_->setPlaceholderText(QStringLiteral("搜索联系人 (Ctrl+F)"));
+    contactsSearchInput_->setClearButtonEnabled(true);
+    contactsSearchInput_->addAction(
+        makeLineIcon(LineIconKind::Search, QColor(QStringLiteral("#98a2b3"))),
+        QLineEdit::LeadingPosition);
+    contactsHeader->addWidget(contactsSearchInput_, 1);
 
     contactsList_ = new QListWidget(contactsDirectoryPane);
     contactsList_->setObjectName(QStringLiteral("contactsList"));
@@ -1563,7 +1572,9 @@ void MainWindow::buildUi() {
     rootNavigationSplitter->addWidget(contentStack_);
     rootNavigationSplitter->setStretchFactor(0, 0);
     rootNavigationSplitter->setStretchFactor(1, 1);
-    rootNavigationSplitter->setSizes(QList<int>() << 180 << 1100);
+    // 第一格给导航栏的实际定宽。原先写死 180，是导航栏还带文字时的宽度：
+    // 收窄成纯图标条之后，多出来的那截就成了导航栏和内容之间一条空白列。
+    rootNavigationSplitter->setSizes(QList<int>() << UiZoom::s(64) << 1100);
     rootLayout->addWidget(rootNavigationSplitter, 1);
 }
 
@@ -1597,7 +1608,7 @@ void MainWindow::applyStyle() {
             border-color: #8ed0ff;
             background: #f2f9ff;
         }
-        #globalSearchBox {
+        #globalSearchBox, #contactsSearchBox {
             min-height: 34px;
             border: 1px solid #dbe6f3;
             border-radius: 9px;
@@ -1606,7 +1617,7 @@ void MainWindow::applyStyle() {
             padding: 0 8px;
             font-size: 13px;
         }
-        #globalSearchBox:focus {
+        #globalSearchBox:focus, #contactsSearchBox:focus {
             border-color: #8ed0ff;
         }
         #globalSearchResults {
@@ -1645,7 +1656,7 @@ void MainWindow::applyStyle() {
             background: #ffffff;
             border-right: 1px solid #dae4f0;
         }
-        #messagesSectionTitle, #contactsSectionTitle, #pageTitle {
+        #pageTitle {
             color: #101828;
             font-size: 16px;
             font-weight: 600;
@@ -1891,11 +1902,19 @@ void MainWindow::bindSignals() {
         if (!first) first = globalSearchResults_->item(0);
         openGlobalSearchResult(first);
     });
+    // 联系人搜索不用防抖：它只扫好友表（几十条量级）并且是纯字符串比对，
+    // 不像消息搜索那样要扫遍每个会话的全部消息，挂在按键上也不会发涩。
+    connect(contactsSearchInput_, &QLineEdit::textChanged, this,
+            [this] { applyContactFilter(); });
     auto* globalSearchShortcut = new QShortcut(QKeySequence::Find, this);
-    connect(globalSearchShortcut, &QShortcut::activated, this, &MainWindow::focusGlobalSearch);
+    connect(globalSearchShortcut, &QShortcut::activated, this, &MainWindow::focusPageSearch);
     auto* globalSearchEscape = new QShortcut(QKeySequence(Qt::Key_Escape), navSearchInput_);
     globalSearchEscape->setContext(Qt::WidgetWithChildrenShortcut);
     connect(globalSearchEscape, &QShortcut::activated, this, &MainWindow::closeGlobalSearchResults);
+    auto* contactsSearchEscape = new QShortcut(QKeySequence(Qt::Key_Escape), contactsSearchInput_);
+    contactsSearchEscape->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(contactsSearchEscape, &QShortcut::activated, this,
+            [this] { contactsSearchInput_->clear(); });
     connect(messageNavButton_, &QPushButton::clicked, this, [this] { showMessagesPage(); });
     connect(contactsNavButton_, &QPushButton::clicked, this, [this] { showContactsPage(); });
     connect(remoteNavButton_, &QPushButton::clicked, this, [this] { showRemotePage(); });
@@ -2009,12 +2028,40 @@ void MainWindow::applyConversationFilter() {
         // 左边整列会空掉——而右边的结果面板明明列着这些会话，自相矛盾。
         // 「会话里有没有命中」由上一趟搜索算好放在 peersWithSearchHits_ 里，
         // 这里直接查，不再把所有会话重新扫一遍——否则一次输入要扫两遍。
+        // 名字和摘要与消息正文走同一套模糊规则。原先是严格 contains：
+        // 备注名记岔一个字就整列空掉，而右边结果面板还列着这个会话，自相矛盾。
         const bool matched = needle.isEmpty()
-            || name.contains(needle, Qt::CaseInsensitive)
-            || preview.contains(needle, Qt::CaseInsensitive)
+            || MessageSearch::matches(name, needle)
+            || MessageSearch::matches(preview, needle)
             || peersWithSearchHits_.contains(item->data(UserIdRole).toString());
         item->setHidden(!matched);
     }
+}
+
+void MainWindow::applyContactFilter() {
+    if (!contactsSearchInput_ || !contactsList_) return;
+    const QString needle = contactsSearchInput_->text().trimmed();
+    for (int row = 0; row < contactsList_->count(); ++row) {
+        QListWidgetItem* item = contactsList_->item(row);
+        // 备注名和 userId 都参与匹配，且和消息搜索共用一套模糊规则：
+        // 名字记岔一个字、只记得 ID 中间一段，都还能搜出来。
+        const bool matched = needle.isEmpty()
+            || MessageSearch::matches(item->data(DisplayNameRole).toString(), needle)
+            || MessageSearch::matches(item->data(UserIdRole).toString(), needle);
+        item->setHidden(!matched);
+    }
+}
+
+// Ctrl+F 聚焦「当前这一页的」搜索框。两个框各搜各的，按页分流之后
+// 就不存在「按了 Ctrl+F 却聚焦到看不见的那个框」这种情况。
+void MainWindow::focusPageSearch() {
+    if (contentStack_ && contentStack_->currentWidget() == contactsPage_) {
+        if (!contactsSearchInput_) return;
+        contactsSearchInput_->setFocus();
+        contactsSearchInput_->selectAll();
+        return;
+    }
+    focusGlobalSearch();
 }
 
 void MainWindow::focusGlobalSearch() {
@@ -2168,6 +2215,9 @@ void MainWindow::refreshContactDirectory() {
         contactsList_->addItem(item);
     }
     contactsList_->blockSignals(false);
+    // 列表被重建过，隐藏状态跟着没了；搜索词还在框里，这里补回过滤，
+    // 否则来一条消息触发刷新，搜索结果就会突然变回全部联系人。
+    applyContactFilter();
 }
 
 void MainWindow::refreshSettings() {
@@ -3411,10 +3461,9 @@ void MainWindow::applyUiZoom(bool showToastPopup) {
 
 void MainWindow::applyScaledFixedGeometry() {
     setMinimumSize(UiZoom::s(980), UiZoom::s(640));
-    if (navRail_) {
-        navRail_->setMinimumWidth(UiZoom::s(160));
-        navRail_->setMaximumWidth(UiZoom::s(260));
-    }
+    // 必须和构造时一致地定宽。这里原先放的是 160~260（同样是带文字时代的遗留），
+    // 会把构造时的 setFixedWidth(64) 顶掉——缩放一次导航栏就胖回去。
+    if (navRail_) navRail_->setFixedWidth(UiZoom::s(64));
     // navLogo 是生成位图（QPainterPath 灰度抗锯齿），倍率变化时按新尺寸重生成。
     if (auto* logo = findChild<QLabel*>(QStringLiteral("navLogo"))) {
         logo->setPixmap(monogramAvatarPixmap(QStringLiteral("M"), UiZoom::s(34), UiZoom::s(17),

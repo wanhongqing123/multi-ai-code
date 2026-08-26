@@ -82,6 +82,7 @@ private slots:
     void addContactButtonSitsBesideTheSearchBox();
     void navigationTextIsLeftAlignedAndContactsDoNotShowMessagePreview();
     void sectionTitleFollowsSelectedNavigation();
+    void contactSearchFiltersDirectoryFuzzily();
     void visibleContactsNavigationSwitchesMiddlePane();
     void navigationSelectionFollowsContentStackCurrentPage();
     void contactsDirectoryUsesSingleLineRows();
@@ -831,14 +832,19 @@ void MainWindowLayoutTest::sectionTitleFollowsSelectedNavigation() {
     auto* conversationList = window.findChild<QListWidget*>(QStringLiteral("conversationList"));
     auto* contactsList = window.findChild<QListWidget*>(QStringLiteral("contactsList"));
 
-    // 消息页的「消息」标题已被搜索框取代（那一行现在是 搜索 + 添加联系人），
-    // 所以这里不再要求它存在；通讯录页仍有自己的标题。
+    // 两页的标题文字都已被各自的搜索框取代，所以这里要求它们不存在。
     QVERIFY2(messagesTitle == nullptr, "消息页的标题应当已被搜索行取代");
+    QVERIFY2(contactsTitle == nullptr, "通讯录页的标题应当已被搜索框取代");
+    for (QLabel* label : labels) {
+        QVERIFY2(label->text() != QStringLiteral("通讯录"), "不该再有「通讯录」这行标题文字");
+    }
     auto* search = window.findChild<QLineEdit*>(QStringLiteral("globalSearchBox"));
     QVERIFY2(search != nullptr && search->parentWidget() == conversationList->parentWidget(),
              "搜索框应当就在会话列表这一列的头部");
-    QVERIFY(contactsTitle != nullptr);
-    QCOMPARE(contactsTitle->text(), QStringLiteral("通讯录"));
+    auto* contactsSearch = window.findChild<QLineEdit*>(QStringLiteral("contactsSearchBox"));
+    QVERIFY2(contactsSearch != nullptr
+                 && contactsSearch->parentWidget() == contactsList->parentWidget(),
+             "通讯录搜索框应当就在联系人列表这一列的头部");
     QVERIFY(contactsNavButton != nullptr);
     QVERIFY(contentStack != nullptr);
     QVERIFY(contactsPage != nullptr);
@@ -851,6 +857,65 @@ void MainWindowLayoutTest::sectionTitleFollowsSelectedNavigation() {
     QVERIFY(contactsList->item(0)->data(Qt::UserRole + 2).toString().isEmpty());
     QVERIFY(contactsList->item(0)->data(Qt::UserRole + 3).toString().isEmpty());
     QVERIFY(conversationList->item(0)->data(Qt::UserRole + 2).toString().contains(QStringLiteral("通讯录里不应该显示")));
+}
+
+// 通讯录页的搜索框必须搜联系人（而不是搜消息），且要和消息搜索一样容错：
+// 严格 contains 的话，备注名记岔一个字就什么都搜不出来。
+void MainWindowLayoutTest::contactSearchFiltersDirectoryFuzzily() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone 手机"));
+    app.addContact(QStringLiteral("mac-agent"), QStringLiteral("Mac 构建机"));
+    app.addContact(QStringLiteral("desk-01"), QStringLiteral("台式机"));
+
+    MainWindow window(app);
+    auto* contactsSearch = window.findChild<QLineEdit*>(QStringLiteral("contactsSearchBox"));
+    auto* contactsList = window.findChild<QListWidget*>(QStringLiteral("contactsList"));
+    QVERIFY(contactsSearch != nullptr);
+    QVERIFY(contactsList != nullptr);
+    QCOMPARE(contactsList->count(), 3);
+
+    auto visibleNames = [contactsList] {
+        QStringList names;
+        for (int row = 0; row < contactsList->count(); ++row) {
+            if (contactsList->item(row)->isHidden()) continue;
+            names << contactsList->item(row)->data(Qt::UserRole + 1).toString();
+        }
+        names.sort();
+        return names;
+    };
+
+    QCOMPARE(visibleNames().size(), 3);
+
+    // 原样子串。
+    contactsSearch->setText(QStringLiteral("Mac"));
+    QCOMPARE(visibleNames(), QStringList{QStringLiteral("Mac 构建机")});
+
+    // 子序列：「构机」在「Mac 构建机」里按顺序出现但中间隔了字。
+    // 这一条正是严格匹配会漏掉的，也是这个测试真正要守住的行为。
+    contactsSearch->setText(QStringLiteral("构机"));
+    QCOMPARE(visibleNames(), QStringList{QStringLiteral("Mac 构建机")});
+
+    // 备注名里没有「desk」，只有 userId 有——ID 也要能搜。
+    contactsSearch->setText(QStringLiteral("desk"));
+    QCOMPARE(visibleNames(), QStringList{QStringLiteral("台式机")});
+
+    // 谁都不像的词应当一条都不剩，而不是「搜不到就全给你」。
+    contactsSearch->setText(QStringLiteral("zzzz"));
+    QVERIFY(visibleNames().isEmpty());
+
+    // 清空恢复全部。
+    contactsSearch->clear();
+    QCOMPARE(visibleNames().size(), 3);
+
+    // 通讯录页按 Ctrl+F 应当聚焦到这个框，而不是消息页那个看不见的框。
+    auto* contactsNavButton = window.findChild<QPushButton*>(QStringLiteral("contactsNavButton"));
+    QVERIFY(contactsNavButton != nullptr);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    contactsNavButton->click();
+    QTest::keyClick(&window, Qt::Key_F, Qt::ControlModifier);
+    QTRY_VERIFY(contactsSearch->hasFocus());
 }
 
 void MainWindowLayoutTest::visibleContactsNavigationSwitchesMiddlePane() {
@@ -1533,6 +1598,12 @@ void MainWindowLayoutTest::ctrlShortcutsZoomWholeUi() {
     auto* chatContentPane = window.findChild<QWidget*>(QStringLiteral("chatContentPane"));
     QVERIFY(chatContentPane != nullptr);
     QCOMPARE(chatContentPane->minimumWidth(), 572);
+    // 导航栏缩放后仍须是定宽窄条。这里重放的曾经是「带文字时代」的 160~260，
+    // 会把构造时的定宽顶掉——缩放一次导航栏就胖回去，还在旁边留出一条空白列。
+    auto* navRail = window.findChild<QWidget*>(QStringLiteral("navRail"));
+    QVERIFY(navRail != nullptr);
+    QCOMPARE(navRail->minimumWidth(), navRail->maximumWidth());
+    QCOMPARE(navRail->maximumWidth(), 70);  // 64 × 1.1
 
     // Ctrl+- 缩回，Ctrl+0 复位；最小宽高须一并还原，否则布局缩不回去。
     QTest::keyClick(&window, Qt::Key_Minus, Qt::ControlModifier);

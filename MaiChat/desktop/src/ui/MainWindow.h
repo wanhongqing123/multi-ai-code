@@ -116,6 +116,8 @@ private:
     // 右键菜单入口：弹「另存为」对话框（默认下载目录 + 原文件名），把附件保存到用户选的位置。
     void saveFileAttachmentToLocal(const RemoteIMFileAttachment& attachment);
     QWidget* createMessageBubble(const RemoteIMMessage& message);
+    enum class ApprovalDisplayState { Available, Sending, Sent };
+    ApprovalDisplayState approvalDisplayState(const RemoteIMMessage& message) const;
     int messageBubbleMaximumWidth() const;
     void applyMessageBubbleWidth(QWidget* bubble, bool expanded) const;
     void updateMessageBubbleWidths();
@@ -213,8 +215,8 @@ private:
     QStringList renderedMessageIds_;
     QHash<QString, QWidget*> messageRowById_;
     QHash<QString, RemoteIMMessageStatus> renderedStatusById_;
-    // 0=可操作、1=正在发送、2=已发送。与消息状态一并决定是否原位重建审批气泡。
-    QHash<QString, int> renderedApprovalStateById_;
+    // 与消息状态一并决定是否原位重建审批气泡。
+    QHash<QString, ApprovalDisplayState> renderedApprovalStateById_;
     // 只保存一次网络请求的瞬时状态；成功状态由已落库的出站审批决定恢复。
     QSet<QString> submittingApprovalTokens_;
     QSet<QString> sentApprovalTokens_;

@@ -2342,6 +2342,17 @@ void MainWindow::refreshMessages() {
     applyIncrementalMessageUpdate(messages);
 }
 
+MainWindow::ApprovalDisplayState MainWindow::approvalDisplayState(
+    const RemoteIMMessage& message) const {
+    if (!message.hasApprovalRequest || !message.approvalRequest.isValid()) {
+        return ApprovalDisplayState::Available;
+    }
+    const QString& token = message.approvalRequest.token;
+    if (sentApprovalTokens_.contains(token)) return ApprovalDisplayState::Sent;
+    if (submittingApprovalTokens_.contains(token)) return ApprovalDisplayState::Sending;
+    return ApprovalDisplayState::Available;
+}
+
 void MainWindow::rebuildMessageList(const QString& peerId, const QList<RemoteIMMessage>& messages) {
     while (QLayoutItem* item = messageLayout_->takeAt(0)) {
         if (QWidget* widget = item->widget()) delete widget;
@@ -2432,12 +2443,7 @@ void MainWindow::rebuildMessageList(const QString& peerId, const QList<RemoteIMM
         renderedMessageIds_.append(message.id);
         messageRowById_.insert(message.id, row);
         renderedStatusById_.insert(message.id, message.status);
-        const int approvalState = message.hasApprovalRequest
-            ? sentApprovalTokens_.contains(message.approvalRequest.token)
-                ? 2
-                : submittingApprovalTokens_.contains(message.approvalRequest.token) ? 1 : 0
-            : 0;
-        renderedApprovalStateById_.insert(message.id, approvalState);
+        renderedApprovalStateById_.insert(message.id, approvalDisplayState(message));
     }
     messageLayout_->addStretch(1);
     updateLoadEarlierVisibility();
@@ -2488,11 +2494,7 @@ void MainWindow::applyIncrementalMessageUpdate(const QList<RemoteIMMessage>& mes
         const RemoteIMMessage& message = messages.at(i);
         resultIds.append(message.id);
         if (QWidget* existing = messageRowById_.value(message.id)) {
-            const int approvalState = message.hasApprovalRequest
-                ? sentApprovalTokens_.contains(message.approvalRequest.token)
-                    ? 2
-                    : submittingApprovalTokens_.contains(message.approvalRequest.token) ? 1 : 0
-                : 0;
+            const ApprovalDisplayState approvalState = approvalDisplayState(message);
             if (renderedStatusById_.value(message.id) != message.status
                     || renderedApprovalStateById_.value(message.id) != approvalState) {
                 // 状态徽标在气泡内部：原位替换单个气泡，代价 O(1)。
@@ -2511,12 +2513,7 @@ void MainWindow::applyIncrementalMessageUpdate(const QList<RemoteIMMessage>& mes
         messageLayout_->insertWidget(kLayoutBase + i, row);
         messageRowById_.insert(message.id, row);
         renderedStatusById_.insert(message.id, message.status);
-        const int approvalState = message.hasApprovalRequest
-            ? sentApprovalTokens_.contains(message.approvalRequest.token)
-                ? 2
-                : submittingApprovalTokens_.contains(message.approvalRequest.token) ? 1 : 0
-            : 0;
-        renderedApprovalStateById_.insert(message.id, approvalState);
+        renderedApprovalStateById_.insert(message.id, approvalDisplayState(message));
         if (i < firstKeptIndex) prepended = true;
         else appended = true;
     }

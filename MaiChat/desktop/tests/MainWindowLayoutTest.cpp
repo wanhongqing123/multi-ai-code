@@ -79,6 +79,7 @@ private slots:
     void conversationListsUseDelegateItemsForSmoothScrolling();
     void rendersMarkdownMessageContent();
     void rendersApprovalButtonsAndSendsStructuredDecision();
+    void restoresSubmittedApprovalStateFromDatabase();
     void copiesOriginalMarkdownFromMessageContextMenu();
     void addContactButtonSitsBesideTheSearchBox();
     void navigationTextIsLeftAlignedAndContactsDoNotShowMessagePreview();
@@ -814,6 +815,71 @@ void MainWindowLayoutTest::rendersApprovalButtonsAndSendsStructuredDecision() {
     QVERIFY(window.findChild<QPushButton*>(
                 QStringLiteral("approvalApproveOnceButton")) == nullptr);
     QVERIFY(window.findChild<QLabel*>(QStringLiteral("approvalSentLabel")) != nullptr);
+}
+
+void MainWindowLayoutTest::restoresSubmittedApprovalStateFromDatabase() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString databasePath = dir.filePath(QStringLiteral("messages.db"));
+    {
+        LocalMessageDatabase database(databasePath);
+        QVERIFY(database.isOpen());
+        database.upsertContact(RemoteIMContact{
+            QStringLiteral("multi-ai-code"),
+            QStringLiteral("Multi-AI Code")
+        });
+
+        RemoteIMMessage request;
+        request.id = QStringLiteral("approval-restart-request");
+        request.fromUserId = QStringLiteral("multi-ai-code");
+        request.toUserId = QStringLiteral("desktop-user");
+        request.text = QStringLiteral("Codex 请求执行一条高风险命令");
+        request.direction = RemoteIMMessageDirection::Incoming;
+        request.status = RemoteIMMessageStatus::Received;
+        request.origin = RemoteIMMessageOrigin::Machine;
+        request.createdAtMillis = 1700000000100LL;
+        request.hasApprovalRequest = true;
+        request.approvalRequest = RemoteIMApprovalRequest{
+            QStringLiteral("approval-restart-1"),
+            {RemoteIMApprovalAction::ApproveOnce, RemoteIMApprovalAction::Reject}
+        };
+        QVERIFY(database.insertMessageIfAbsent(request, QStringLiteral("multi-ai-code")));
+
+        RemoteIMMessage decision;
+        decision.id = QStringLiteral("approval-restart-decision");
+        decision.fromUserId = QStringLiteral("desktop-user");
+        decision.toUserId = QStringLiteral("multi-ai-code");
+        decision.text = QStringLiteral("审批操作：同意本次");
+        decision.direction = RemoteIMMessageDirection::Outgoing;
+        decision.status = RemoteIMMessageStatus::Sent;
+        decision.origin = RemoteIMMessageOrigin::Human;
+        decision.createdAtMillis = 1700000000200LL;
+        decision.hasApprovalDecision = true;
+        decision.approvalDecision = RemoteIMApprovalDecision{
+            QStringLiteral("approval-restart-1"),
+            RemoteIMApprovalAction::ApproveOnce
+        };
+        QVERIFY(database.insertMessageIfAbsent(decision, QStringLiteral("multi-ai-code")));
+    }
+
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    auto database = std::make_unique<LocalMessageDatabase>(databasePath);
+    QVERIFY(database->isOpen());
+    RemoteIMApplication app(
+        QStringLiteral("desktop-user"),
+        std::move(client),
+        std::move(database));
+    app.selectPeer(QStringLiteral("multi-ai-code"));
+
+    MainWindow window(app);
+    window.show();
+    QCoreApplication::processEvents();
+
+    QVERIFY(window.findChild<QPushButton*>(
+                QStringLiteral("approvalApproveOnceButton")) == nullptr);
+    auto* sentLabel = window.findChild<QLabel*>(QStringLiteral("approvalSentLabel"));
+    QVERIFY(sentLabel != nullptr);
+    QVERIFY(sentLabel->text().contains(QStringLiteral("已发送")));
 }
 
 void MainWindowLayoutTest::copiesOriginalMarkdownFromMessageContextMenu() {

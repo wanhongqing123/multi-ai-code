@@ -13,7 +13,7 @@ import java.util.List;
 
 public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
     private static final String DATABASE_NAME = "maichat-history.db";
-    private static final int DATABASE_VERSION = 2;
+    private static final int DATABASE_VERSION = 3;
     private static final String TAG = "MaiChat.im";
 
     private final RemoteIMMediaPaths mediaPaths;
@@ -85,6 +85,10 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
                 + "video_width INTEGER NOT NULL DEFAULT 0,"
                 + "video_height INTEGER NOT NULL DEFAULT 0,"
                 + "video_size INTEGER NOT NULL DEFAULT 0,"
+                + "approval_request_token TEXT NOT NULL DEFAULT '',"
+                + "approval_request_actions TEXT NOT NULL DEFAULT '',"
+                + "approval_decision_token TEXT NOT NULL DEFAULT '',"
+                + "approval_decision_action TEXT NOT NULL DEFAULT '',"
                 + "PRIMARY KEY(owner_id, id))"
         );
         database.execSQL(
@@ -104,6 +108,10 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
             addVideoColumns(database);
             version = 2;
         }
+        if (version < 3) {
+            addApprovalColumns(database);
+            version = 3;
+        }
         if (version != newVersion) {
             // 只有在没有可用迁移路径时才重建。重建会清空用户本地聊天记录，
             // 为了加几列而删历史，这个代价不该由用户承担，所以放在最后一步。
@@ -122,6 +130,21 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
         database.execSQL("ALTER TABLE messages ADD COLUMN video_width INTEGER NOT NULL DEFAULT 0");
         database.execSQL("ALTER TABLE messages ADD COLUMN video_height INTEGER NOT NULL DEFAULT 0");
         database.execSQL("ALTER TABLE messages ADD COLUMN video_size INTEGER NOT NULL DEFAULT 0");
+    }
+
+    private static void addApprovalColumns(SQLiteDatabase database) {
+        database.execSQL(
+            "ALTER TABLE messages ADD COLUMN approval_request_token TEXT NOT NULL DEFAULT ''"
+        );
+        database.execSQL(
+            "ALTER TABLE messages ADD COLUMN approval_request_actions TEXT NOT NULL DEFAULT ''"
+        );
+        database.execSQL(
+            "ALTER TABLE messages ADD COLUMN approval_decision_token TEXT NOT NULL DEFAULT ''"
+        );
+        database.execSQL(
+            "ALTER TABLE messages ADD COLUMN approval_decision_action TEXT NOT NULL DEFAULT ''"
+        );
     }
 
     public List<RemoteIMContact> loadContacts(String ownerId) {
@@ -279,6 +302,24 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
         values.put("video_width", video == null ? 0 : video.width());
         values.put("video_height", video == null ? 0 : video.height());
         values.put("video_size", video == null ? 0 : video.sizeBytes());
+        RemoteIMApprovalRequest approvalRequest = message.approvalRequest();
+        values.put(
+            "approval_request_token",
+            approvalRequest == null ? "" : approvalRequest.token()
+        );
+        values.put(
+            "approval_request_actions",
+            approvalRequest == null ? "" : approvalActions(approvalRequest.actions())
+        );
+        RemoteIMApprovalDecision approvalDecision = message.approvalDecision();
+        values.put(
+            "approval_decision_token",
+            approvalDecision == null ? "" : approvalDecision.token()
+        );
+        values.put(
+            "approval_decision_action",
+            approvalDecision == null ? "" : approvalDecision.action().wireValue()
+        );
         values.put("origin", message.origin().wireValue());
         getWritableDatabase().insertWithOnConflict(
             "messages",
@@ -303,7 +344,9 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
             "voice_path", "voice_duration", "file_path", "file_name", "file_mime",
             "file_size", "origin",
             "video_path", "video_cover_path", "video_duration", "video_width",
-            "video_height", "video_size"
+            "video_height", "video_size", "approval_request_token",
+            "approval_request_actions", "approval_decision_token",
+            "approval_decision_action"
         };
     }
 
@@ -369,6 +412,14 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
                 cursor.getLong(24)
             );
         }
+        RemoteIMApprovalRequest approvalRequest = readApprovalRequest(
+            cursor.getString(25),
+            cursor.getString(26)
+        );
+        RemoteIMApprovalDecision approvalDecision = readApprovalDecision(
+            cursor.getString(27),
+            cursor.getString(28)
+        );
         return new RemoteIMMessage(
             cursor.getString(0),
             cursor.getString(1),
@@ -382,8 +433,47 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
             voice,
             file,
             video,
-            RemoteIMOrigin.fromWireValue(cursor.getString(18))
+            RemoteIMOrigin.fromWireValue(cursor.getString(18)),
+            approvalRequest,
+            approvalDecision
         );
+    }
+
+    private static String approvalActions(List<RemoteIMApprovalAction> actions) {
+        StringBuilder value = new StringBuilder();
+        for (RemoteIMApprovalAction action : actions) {
+            if (value.length() > 0) value.append(',');
+            value.append(action.wireValue());
+        }
+        return value.toString();
+    }
+
+    private static RemoteIMApprovalRequest readApprovalRequest(String token, String rawActions) {
+        String cleanToken = clean(token);
+        String cleanActions = clean(rawActions);
+        if (cleanToken.isEmpty() || cleanActions.isEmpty()) return null;
+        List<RemoteIMApprovalAction> actions = new ArrayList<>();
+        for (String rawAction : cleanActions.split(",", -1)) {
+            RemoteIMApprovalAction action = RemoteIMApprovalAction.fromWireValue(rawAction);
+            if (action == null) return null;
+            actions.add(action);
+        }
+        try {
+            return new RemoteIMApprovalRequest(cleanToken, actions);
+        } catch (IllegalArgumentException error) {
+            return null;
+        }
+    }
+
+    private static RemoteIMApprovalDecision readApprovalDecision(String token, String rawAction) {
+        String cleanToken = clean(token);
+        RemoteIMApprovalAction action = RemoteIMApprovalAction.fromWireValue(rawAction);
+        if (cleanToken.isEmpty() || action == null) return null;
+        try {
+            return new RemoteIMApprovalDecision(cleanToken, action);
+        } catch (IllegalArgumentException error) {
+            return null;
+        }
     }
 
     private static String clean(String value) {

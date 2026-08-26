@@ -15,6 +15,7 @@ import androidx.test.platform.app.InstrumentationRegistry;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import java.io.File;
 import java.util.List;
 
 @RunWith(AndroidJUnit4.class)
@@ -87,7 +88,7 @@ public class AndroidChatHistoryStoreInstrumentedTest {
     }
 
     @Test
-    public void keepsExistingHistoryWhenVideoColumnsAreAdded() {
+    public void keepsExistingHistoryWhenVideoColumnsAreAdded() throws Exception {
         // 迁移前的 onUpgrade 是 DROP TABLE 再重建，升个版本就把用户聊天记录清空了。
         // 这条用例锁住"加列不能丢历史"。
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
@@ -101,6 +102,7 @@ public class AndroidChatHistoryStoreInstrumentedTest {
                 + "owner_id TEXT NOT NULL,"
                 + "user_id TEXT NOT NULL,"
                 + "display_name TEXT NOT NULL,"
+                + "avatar_url TEXT NOT NULL DEFAULT '',"
                 + "PRIMARY KEY(owner_id, user_id))"
         );
         legacy.execSQL(
@@ -149,6 +151,15 @@ public class AndroidChatHistoryStoreInstrumentedTest {
         assertEquals(1, store.loadContacts("owner-1").size());
 
         // 新表结构可用：写一条带视频的消息并读回。
+        RemoteIMMediaPaths mediaPaths = RemoteIMMediaPaths.forApp(context);
+        File videoFile = new File(
+            mediaPaths.directory(RemoteIMMediaPaths.INCOMING, RemoteIMMediaPaths.VIDEOS),
+            "clip.mp4"
+        );
+        File coverFile = new File(
+            mediaPaths.directory(RemoteIMMediaPaths.INCOMING, RemoteIMMediaPaths.VIDEO_COVERS),
+            "cover.jpg"
+        );
         store.upsertMessage("owner-1", new RemoteIMMessage(
             "m-2",
             "remote-2",
@@ -161,7 +172,14 @@ public class AndroidChatHistoryStoreInstrumentedTest {
             null,
             null,
             null,
-            new RemoteIMVideoAttachment("/tmp/clip.mp4", "/tmp/cover.jpg", 12, 1080, 1920, 4194304L),
+            new RemoteIMVideoAttachment(
+                videoFile.getAbsolutePath(),
+                coverFile.getAbsolutePath(),
+                12,
+                1080,
+                1920,
+                4194304L
+            ),
             RemoteIMOrigin.HUMAN
         ));
 
@@ -170,11 +188,61 @@ public class AndroidChatHistoryStoreInstrumentedTest {
         RemoteIMVideoAttachment video =
             afterInsert.get(afterInsert.size() - 1).videoAttachment();
         assertNotNull(video);
-        assertEquals("/tmp/clip.mp4", video.localPath());
-        assertEquals("/tmp/cover.jpg", video.coverPath());
+        assertEquals(videoFile.getAbsolutePath(), video.localPath());
+        assertEquals(coverFile.getAbsolutePath(), video.coverPath());
         assertEquals(12, video.durationSeconds());
         assertEquals(1080, video.width());
         assertEquals(1920, video.height());
         assertEquals(4194304L, video.sizeBytes());
+
+        RemoteIMApprovalRequest request = new RemoteIMApprovalRequest(
+            "approval-database-1",
+            List.of(RemoteIMApprovalAction.APPROVE_ONCE, RemoteIMApprovalAction.REJECT)
+        );
+        store.upsertMessage("owner-1", new RemoteIMMessage(
+            "m-3",
+            "remote-3",
+            "peer-1",
+            "owner-1",
+            "需要审批",
+            RemoteIMMessage.Direction.INCOMING,
+            RemoteIMMessage.Status.RECEIVED,
+            1700000002000L,
+            null,
+            null,
+            null,
+            null,
+            RemoteIMOrigin.MACHINE,
+            request,
+            null
+        ));
+        store.upsertMessage("owner-1", new RemoteIMMessage(
+            "m-4",
+            "remote-4",
+            "owner-1",
+            "peer-1",
+            RemoteIMApprovalAction.APPROVE_ONCE.decisionDisplayText(),
+            RemoteIMMessage.Direction.OUTGOING,
+            RemoteIMMessage.Status.SENT,
+            1700000003000L,
+            null,
+            null,
+            null,
+            null,
+            RemoteIMOrigin.HUMAN,
+            null,
+            new RemoteIMApprovalDecision(
+                request.token(),
+                RemoteIMApprovalAction.APPROVE_ONCE
+            )
+        ));
+
+        List<RemoteIMMessage> withApproval =
+            store.loadConversationPage("owner-1", "peer-1", null, null, 20).messages();
+        assertEquals(request, withApproval.get(withApproval.size() - 2).approvalRequest());
+        assertEquals(
+            request.token(),
+            withApproval.get(withApproval.size() - 1).approvalDecision().token()
+        );
     }
 }

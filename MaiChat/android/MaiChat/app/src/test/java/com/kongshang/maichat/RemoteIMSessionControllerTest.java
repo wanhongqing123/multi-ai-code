@@ -8,6 +8,7 @@ import org.junit.Test;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 public class RemoteIMSessionControllerTest {
     @Test
@@ -82,6 +83,40 @@ public class RemoteIMSessionControllerTest {
         assertEquals("[图片消息] photo.png", image.text());
         assertEquals(RemoteIMMessage.Status.SENT, voice.status());
         assertEquals("[语音消息 5s]", voice.text());
+    }
+
+    @Test
+    public void sendApprovalDecisionMarksItSentAndPersistsCorrelation() throws Exception {
+        Path root = Files.createTempDirectory("maichat-android-session-approval");
+        RemoteIMSessionController session = newSession(root);
+        session.login("android-user");
+        RemoteIMApprovalRequest request = new RemoteIMApprovalRequest(
+            "approval-session-1",
+            List.of(RemoteIMApprovalAction.APPROVE_ONCE, RemoteIMApprovalAction.REJECT)
+        );
+
+        RemoteIMMessage message = session.sendApprovalDecision(
+            "mac-office",
+            request,
+            RemoteIMApprovalAction.APPROVE_ONCE
+        );
+
+        assertEquals(RemoteIMMessage.Status.SENT, message.status());
+        assertEquals("审批操作：同意本次", message.text());
+        assertEquals(
+            new RemoteIMApprovalDecision(
+                request.token(),
+                RemoteIMApprovalAction.APPROVE_ONCE
+            ),
+            message.approvalDecision()
+        );
+
+        RemoteIMSessionController restored = newSession(root);
+        RemoteIMMessage restoredDecision = restored.chatState()
+            .messagesWith("mac-office")
+            .get(0);
+        assertEquals(message.approvalDecision(), restoredDecision.approvalDecision());
+        assertEquals(RemoteIMMessage.Status.SENT, restoredDecision.status());
     }
 
     private RemoteIMSessionController newSession() throws Exception {

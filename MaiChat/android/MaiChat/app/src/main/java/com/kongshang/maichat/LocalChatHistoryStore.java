@@ -7,7 +7,9 @@ import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.List;
 
 public final class LocalChatHistoryStore {
     private final File baseDirectory;
@@ -114,6 +116,20 @@ public final class LocalChatHistoryStore {
         writer.write(Integer.toString(video == null ? 0 : video.height()));
         writer.write('	');
         writer.write(Long.toString(video == null ? 0 : video.sizeBytes()));
+        writer.write('\t');
+        writer.write(message.origin().wireValue());
+        writer.write('\t');
+        writer.write(encode(message.approvalRequest() == null ? "" : message.approvalRequest().token()));
+        writer.write('\t');
+        writer.write(encode(message.approvalRequest() == null
+            ? ""
+            : approvalActions(message.approvalRequest().actions())));
+        writer.write('\t');
+        writer.write(encode(message.approvalDecision() == null ? "" : message.approvalDecision().token()));
+        writer.write('\t');
+        writer.write(message.approvalDecision() == null
+            ? ""
+            : message.approvalDecision().action().wireValue());
         writer.newLine();
     }
 
@@ -163,8 +179,19 @@ public final class LocalChatHistoryStore {
             }
         }
 
+        RemoteIMOrigin origin = parts.length >= 25
+            ? RemoteIMOrigin.fromWireValue(parts[24])
+            : RemoteIMOrigin.HUMAN;
+        RemoteIMApprovalRequest approvalRequest = parts.length >= 27
+            ? approvalRequest(decode(parts[25]), decode(parts[26]))
+            : null;
+        RemoteIMApprovalDecision approvalDecision = parts.length >= 29
+            ? approvalDecision(decode(parts[27]), parts[28])
+            : null;
+
         return new RemoteIMMessage(
             decode(parts[1]),
+            null,
             decode(parts[2]),
             decode(parts[3]),
             decode(parts[4]),
@@ -174,8 +201,45 @@ public final class LocalChatHistoryStore {
             image,
             voice,
             file,
-            video
+            video,
+            origin,
+            approvalRequest,
+            approvalDecision
         );
+    }
+
+    private static String approvalActions(List<RemoteIMApprovalAction> actions) {
+        StringBuilder value = new StringBuilder();
+        for (RemoteIMApprovalAction action : actions) {
+            if (value.length() > 0) value.append(',');
+            value.append(action.wireValue());
+        }
+        return value.toString();
+    }
+
+    private static RemoteIMApprovalRequest approvalRequest(String token, String rawActions) {
+        if (token.isEmpty() || rawActions.isEmpty()) return null;
+        List<RemoteIMApprovalAction> actions = new ArrayList<>();
+        for (String rawAction : rawActions.split(",", -1)) {
+            RemoteIMApprovalAction action = RemoteIMApprovalAction.fromWireValue(rawAction);
+            if (action == null) return null;
+            actions.add(action);
+        }
+        try {
+            return new RemoteIMApprovalRequest(token, actions);
+        } catch (IllegalArgumentException error) {
+            return null;
+        }
+    }
+
+    private static RemoteIMApprovalDecision approvalDecision(String token, String rawAction) {
+        RemoteIMApprovalAction action = RemoteIMApprovalAction.fromWireValue(rawAction);
+        if (token.isEmpty() || action == null) return null;
+        try {
+            return new RemoteIMApprovalDecision(token, action);
+        } catch (IllegalArgumentException error) {
+            return null;
+        }
     }
 
     private static String encode(String value) {

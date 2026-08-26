@@ -92,6 +92,53 @@ public class LocalChatHistoryStoreTest {
         assertNull(messages.get(0).videoAttachment());
     }
 
+    @Test
+    public void approvalRequestAndDecisionSurviveRestart() throws Exception {
+        Path root = Files.createTempDirectory("maichat-android-history-approval");
+        LocalChatHistoryStore store = new LocalChatHistoryStore(root.toFile());
+        ChatState state = new ChatState("android-user");
+        state.upsertContact(new RemoteIMContact("desktop-bot", "Desktop Bot"));
+        RemoteIMApprovalRequest request = new RemoteIMApprovalRequest(
+            "approval-history-1",
+            List.of(RemoteIMApprovalAction.APPROVE_ONCE, RemoteIMApprovalAction.REJECT)
+        );
+        state.receiveText(
+            "需要审批",
+            "desktop-bot",
+            "remote-approval-1",
+            1_700_000_000_000L,
+            RemoteIMOrigin.MACHINE,
+            request
+        );
+        RemoteIMMessage decision = state.queueOutgoingApprovalDecision(
+            "desktop-bot",
+            request.token(),
+            RemoteIMApprovalAction.APPROVE_ONCE
+        );
+        state.updateMessageStatus(decision.id(), RemoteIMMessage.Status.SENT);
+        store.save(state);
+
+        ChatState restored = store.load("android-user");
+        List<RemoteIMMessage> messages = restored.messagesWith("desktop-bot");
+
+        assertEquals(2, messages.size());
+        assertEquals(request, messages.get(0).approvalRequest());
+        assertEquals(
+            new RemoteIMApprovalDecision(
+                request.token(),
+                RemoteIMApprovalAction.APPROVE_ONCE
+            ),
+            messages.get(1).approvalDecision()
+        );
+        assertEquals(
+            RemoteIMApprovalDisplayPolicy.State.SENT,
+            RemoteIMApprovalDisplayPolicy.stateFor(
+                request,
+                RemoteIMApprovalDisplayPolicy.statesFor(messages)
+            )
+        );
+    }
+
     private static String encode(String value) {
         return Base64.getUrlEncoder().encodeToString(value.getBytes(StandardCharsets.UTF_8));
     }

@@ -91,6 +91,37 @@ public final class ChatState {
         return message;
     }
 
+    public RemoteIMMessage queueOutgoingApprovalDecision(
+        String peerId,
+        String token,
+        RemoteIMApprovalAction action
+    ) {
+        String cleanPeerId = clean(peerId);
+        if (cleanPeerId.isEmpty()) {
+            throw new IllegalArgumentException("peerId is required");
+        }
+        RemoteIMApprovalDecision decision = new RemoteIMApprovalDecision(token, action);
+        RemoteIMMessage message = new RemoteIMMessage(
+            null,
+            null,
+            ownerUserId,
+            cleanPeerId,
+            action.decisionDisplayText(),
+            RemoteIMMessage.Direction.OUTGOING,
+            RemoteIMMessage.Status.PENDING,
+            System.currentTimeMillis(),
+            null,
+            null,
+            null,
+            null,
+            RemoteIMOrigin.HUMAN,
+            null,
+            decision
+        );
+        messages.add(message);
+        return message;
+    }
+
     public RemoteIMMessage queueOutgoingImage(String localPath, int width, int height, long sizeBytes) {
         String cleanPath = clean(localPath);
         if (cleanPath.isEmpty()) {
@@ -176,6 +207,17 @@ public final class ChatState {
         long createdAtMillis,
         RemoteIMOrigin origin
     ) {
+        return receiveText(text, fromUserId, remoteId, createdAtMillis, origin, null);
+    }
+
+    public RemoteIMMessage receiveText(
+        String text,
+        String fromUserId,
+        String remoteId,
+        long createdAtMillis,
+        RemoteIMOrigin origin,
+        RemoteIMApprovalRequest approvalRequest
+    ) {
         RemoteIMMessage existing = messageWithRemoteId(remoteId);
         if (existing != null) return existing;
         String peerId = clean(fromUserId);
@@ -193,7 +235,9 @@ public final class ChatState {
             null,
             null,
             null,
-            origin
+            origin,
+            approvalRequest,
+            null
         );
         messages.add(message);
         return message;

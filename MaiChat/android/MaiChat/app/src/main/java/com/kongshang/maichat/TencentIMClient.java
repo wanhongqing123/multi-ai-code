@@ -189,6 +189,43 @@ public final class TencentIMClient {
         send(message, peerId, origin, completion);
     }
 
+    public void sendApprovalDecision(
+        String peerId,
+        RemoteIMApprovalDecision decision,
+        SendCompletion completion
+    ) {
+        if (decision == null) {
+            completion.onError(-1, "审批操作无效");
+            return;
+        }
+        V2TIMMessage message = V2TIMManager.getMessageManager().createTextMessage(
+            decision.action().decisionDisplayText()
+        );
+        Log.i(TAG, "approval: decision send start. peer=" + clean(peerId)
+            + " action=" + decision.action().wireValue());
+        send(
+            message,
+            peerId,
+            RemoteIMProtocolMetadata.encodeApprovalDecision(decision),
+            new SendCompletion() {
+                @Override
+                public void onSuccess(String remoteId, long createdAtMillis) {
+                    Log.i(TAG, "approval: decision send resolved. peer=" + clean(peerId)
+                        + " action=" + decision.action().wireValue());
+                    completion.onSuccess(remoteId, createdAtMillis);
+                }
+
+                @Override
+                public void onError(int code, String description) {
+                    Log.w(TAG, "approval: decision send failed. peer=" + clean(peerId)
+                        + " action=" + decision.action().wireValue()
+                        + " code=" + code);
+                    completion.onError(code, description);
+                }
+            }
+        );
+    }
+
     public void sendImage(
         String peerId,
         String path,
@@ -350,12 +387,21 @@ public final class TencentIMClient {
         RemoteIMOrigin origin,
         SendCompletion completion
     ) {
+        send(message, peerId, RemoteIMProtocolMetadata.encode(origin), completion);
+    }
+
+    private void send(
+        V2TIMMessage message,
+        String peerId,
+        String cloudCustomData,
+        SendCompletion completion
+    ) {
         if (message == null) {
             Log.w(TAG, "send aborted: SDK returned a null message");
             completion.onError(-1, "消息创建失败");
             return;
         }
-        message.setCloudCustomData(RemoteIMProtocolMetadata.encode(origin));
+        message.setCloudCustomData(cloudCustomData);
         V2TIMManager.getMessageManager().sendMessage(
             message,
             clean(peerId),
@@ -407,9 +453,16 @@ public final class TencentIMClient {
             : System.currentTimeMillis();
         String recipientUserId = currentUserId;
         String messageId = clean(sdkMessage.getMsgID());
-        RemoteIMOrigin origin = RemoteIMProtocolMetadata.decode(sdkMessage.getCloudCustomData());
+        RemoteIMProtocolMetadata.Metadata metadata =
+            RemoteIMProtocolMetadata.decodeMetadata(sdkMessage.getCloudCustomData());
+        RemoteIMOrigin origin = metadata.origin();
 
         if (sdkMessage.getTextElem() != null) {
+            if (metadata.approvalRequest() != null) {
+                Log.i(TAG, "approval: request received. from=" + fromUserId
+                    + " id=" + messageId
+                    + " actions=" + metadata.approvalRequest().actions().size());
+            }
             listener.onIncomingMessage(new RemoteIMMessage(
                 null,
                 messageId,
@@ -423,7 +476,9 @@ public final class TencentIMClient {
                 null,
                 null,
                 null,
-                origin
+                origin,
+                metadata.approvalRequest(),
+                null
             ));
             return;
         }

@@ -620,6 +620,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         currentMessageScroll = messageScroll;
         currentMessageContainer = messages;
         List<RemoteIMMessage> values = session.chatState().messagesWith(userId);
+        Map<String, RemoteIMApprovalDisplayPolicy.State> approvalStates =
+            RemoteIMApprovalDisplayPolicy.statesFor(values);
         RemoteIMMessage latestMessage = values.isEmpty() ? null : values.get(values.size() - 1);
         String nextLatestMessageId = latestMessage == null ? null : latestMessage.id();
         if (lastRenderedLatestMessageId != null
@@ -638,7 +640,14 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             messages.addView(emptyState("◇", "暂无消息", "发送一条消息开始对话。"), match(dp(260)));
         } else {
             for (RemoteIMMessage message : values) {
-                View bubble = messageBubble(message, contact);
+                View bubble = messageBubble(
+                    message,
+                    contact,
+                    RemoteIMApprovalDisplayPolicy.stateFor(
+                        message.approvalRequest(),
+                        approvalStates
+                    )
+                );
                 bubble.setTag(message.id());
                 messages.addView(bubble, matchWrap());
             }
@@ -755,7 +764,11 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         return header;
     }
 
-    private View messageBubble(RemoteIMMessage message, RemoteIMContact peer) {
+    private View messageBubble(
+        RemoteIMMessage message,
+        RemoteIMContact peer,
+        RemoteIMApprovalDisplayPolicy.State approvalState
+    ) {
         boolean outgoing = message.direction() == RemoteIMMessage.Direction.OUTGOING;
         LinearLayout outer = new LinearLayout(this);
         outer.setOrientation(LinearLayout.HORIZONTAL);
@@ -814,6 +827,13 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             bubble.addView(body, matchWrap());
         }
 
+        if (message.approvalRequest() != null) {
+            bubble.addView(
+                approvalActions(message, peer, approvalState),
+                matchWrap()
+            );
+        }
+
         if (outgoing) {
             TextView status = MaiChatTheme.text(this, statusText(message.status()), 11, statusColor(message.status()));
             status.setGravity(Gravity.END);
@@ -836,6 +856,102 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             outer.addView(bubble, bubbleParams);
         }
         return outer;
+    }
+
+    private View approvalActions(
+        RemoteIMMessage message,
+        RemoteIMContact peer,
+        RemoteIMApprovalDisplayPolicy.State state
+    ) {
+        LinearLayout wrapper = new LinearLayout(this);
+        wrapper.setOrientation(LinearLayout.VERTICAL);
+
+        View divider = new View(this);
+        divider.setBackgroundColor(MaiChatTheme.BORDER);
+        LinearLayout.LayoutParams dividerParams = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            dp(1)
+        );
+        dividerParams.setMargins(0, dp(8), 0, dp(9));
+        wrapper.addView(divider, dividerParams);
+
+        if (state == RemoteIMApprovalDisplayPolicy.State.SENT) {
+            TextView sent = MaiChatTheme.label(this, "✓  审批选择已发送", 13, MaiChatTheme.GREEN);
+            sent.setContentDescription("审批选择已发送");
+            wrapper.addView(sent, match(dp(34)));
+            return wrapper;
+        }
+        if (state == RemoteIMApprovalDisplayPolicy.State.SENDING) {
+            TextView sending = MaiChatTheme.label(this, "◷  审批选择正在发送…", 13, MaiChatTheme.BLUE_DARK);
+            sending.setContentDescription("审批选择正在发送");
+            wrapper.addView(sending, match(dp(34)));
+            return wrapper;
+        }
+
+        RemoteIMApprovalRequest request = message.approvalRequest();
+        for (RemoteIMApprovalAction action : request.actions()) {
+            TextView button = MaiChatTheme.label(
+                this,
+                action.title(),
+                14,
+                action == RemoteIMApprovalAction.REJECT ? MaiChatTheme.RED : Color.WHITE
+            );
+            button.setGravity(Gravity.CENTER_VERTICAL);
+            button.setPadding(dp(12), 0, dp(12), 0);
+            button.setContentDescription("审批操作：" + action.title());
+            int background = action == RemoteIMApprovalAction.APPROVE_PREFIX
+                ? MaiChatTheme.GREEN
+                : action == RemoteIMApprovalAction.REJECT
+                    ? Color.TRANSPARENT
+                    : MaiChatTheme.BLUE;
+            int border = action == RemoteIMApprovalAction.REJECT
+                ? MaiChatTheme.RED
+                : background;
+            button.setBackground(MaiChatTheme.bordered(background, border, 9, this));
+            button.setOnClickListener(view -> sendApprovalDecision(
+                wrapper,
+                peer.userId(),
+                request,
+                action
+            ));
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(40)
+            );
+            params.setMargins(0, 0, 0, dp(8));
+            wrapper.addView(button, params);
+        }
+        return wrapper;
+    }
+
+    private void sendApprovalDecision(
+        LinearLayout actionsView,
+        String peerId,
+        RemoteIMApprovalRequest request,
+        RemoteIMApprovalAction action
+    ) {
+        // Give immediate feedback without calling render(): Android's current render() rebuilds
+        // the whole activity tree. The controller's debounced state notification will perform the
+        // one authoritative rebuild after PENDING/SENT/FAILED is persisted.
+        actionsView.removeAllViews();
+        TextView sending = MaiChatTheme.label(
+            this,
+            "◷  审批选择正在发送…",
+            13,
+            MaiChatTheme.BLUE_DARK
+        );
+        sending.setContentDescription("审批选择正在发送");
+        actionsView.addView(sending, match(dp(34)));
+        try {
+            session.sendApprovalDecision(peerId, request, action);
+        } catch (IOException | RuntimeException error) {
+            Toast.makeText(
+                this,
+                error.getMessage() == null ? "审批发送失败" : error.getMessage(),
+                Toast.LENGTH_LONG
+            ).show();
+            render();
+        }
     }
 
     @SuppressLint("ClickableViewAccessibility")

@@ -259,6 +259,40 @@ public final class RemoteIMSessionController {
         return message;
     }
 
+    public RemoteIMMessage sendApprovalDecision(
+        String peerId,
+        RemoteIMApprovalRequest request,
+        RemoteIMApprovalAction action
+    ) throws IOException {
+        if (request == null || !request.allows(action)) {
+            throw new IllegalArgumentException("该审批请求不允许此操作");
+        }
+        RemoteIMMessage message = chatState.queueOutgoingApprovalDecision(
+            peerId,
+            request.token(),
+            action
+        );
+        if (!productionMode) {
+            markMessageSentAndSave(message);
+            return message;
+        }
+        persistMessage(message);
+        notifyStateChanged();
+        try {
+            client.sendApprovalDecision(
+                peerId,
+                message.approvalDecision(),
+                sendCompletion(message)
+            );
+        } catch (RuntimeException error) {
+            chatState.updateMessageStatus(message.id(), RemoteIMMessage.Status.FAILED);
+            persistMessage(message);
+            notifyStateChanged();
+            throw error;
+        }
+        return message;
+    }
+
     public void sendMachineText(String userId, String text) {
         if (!productionMode) return;
         client.sendText(userId, text, RemoteIMOrigin.MACHINE, new TencentIMClient.SendCompletion() {
@@ -535,7 +569,8 @@ public final class RemoteIMSessionController {
                 incoming.fromUserId(),
                 incoming.remoteId(),
                 incoming.createdAtMillis(),
-                incoming.origin()
+                incoming.origin(),
+                incoming.approvalRequest()
             );
         }
         RemoteIMContact contact = findContact(incoming.fromUserId());

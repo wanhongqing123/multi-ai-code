@@ -29,6 +29,8 @@ public final class RemoteIMMessage {
     private final RemoteIMFileAttachment fileAttachment;
     private final RemoteIMVideoAttachment videoAttachment;
     private final RemoteIMOrigin origin;
+    private final RemoteIMApprovalRequest approvalRequest;
+    private final RemoteIMApprovalDecision approvalDecision;
 
     public RemoteIMMessage(
         String fromUserId,
@@ -187,6 +189,42 @@ public final class RemoteIMMessage {
         RemoteIMVideoAttachment videoAttachment,
         RemoteIMOrigin origin
     ) {
+        this(
+            id,
+            remoteId,
+            fromUserId,
+            toUserId,
+            text,
+            direction,
+            status,
+            createdAtMillis,
+            imageAttachment,
+            voiceAttachment,
+            fileAttachment,
+            videoAttachment,
+            origin,
+            null,
+            null
+        );
+    }
+
+    RemoteIMMessage(
+        String id,
+        String remoteId,
+        String fromUserId,
+        String toUserId,
+        String text,
+        Direction direction,
+        Status status,
+        long createdAtMillis,
+        RemoteIMImageAttachment imageAttachment,
+        RemoteIMVoiceAttachment voiceAttachment,
+        RemoteIMFileAttachment fileAttachment,
+        RemoteIMVideoAttachment videoAttachment,
+        RemoteIMOrigin origin,
+        RemoteIMApprovalRequest approvalRequest,
+        RemoteIMApprovalDecision approvalDecision
+    ) {
         this.id = clean(id).isEmpty() ? UUID.randomUUID().toString() : clean(id);
         this.remoteId = clean(remoteId);
         this.fromUserId = clean(fromUserId);
@@ -200,6 +238,8 @@ public final class RemoteIMMessage {
         this.fileAttachment = fileAttachment;
         this.videoAttachment = videoAttachment;
         this.origin = origin == null ? RemoteIMOrigin.MACHINE : origin;
+        this.approvalRequest = approvalRequest;
+        this.approvalDecision = approvalDecision;
     }
 
     public String id() {
@@ -262,6 +302,14 @@ public final class RemoteIMMessage {
         return origin;
     }
 
+    public RemoteIMApprovalRequest approvalRequest() {
+        return approvalRequest;
+    }
+
+    public RemoteIMApprovalDecision approvalDecision() {
+        return approvalDecision;
+    }
+
     private static String clean(String value) {
         return value == null ? "" : value.trim();
     }
@@ -283,7 +331,9 @@ public final class RemoteIMMessage {
             && Objects.equals(voiceAttachment, that.voiceAttachment)
             && Objects.equals(fileAttachment, that.fileAttachment)
             && Objects.equals(videoAttachment, that.videoAttachment)
-            && origin == that.origin;
+            && origin == that.origin
+            && Objects.equals(approvalRequest, that.approvalRequest)
+            && Objects.equals(approvalDecision, that.approvalDecision);
     }
 
     @Override
@@ -301,7 +351,9 @@ public final class RemoteIMMessage {
             voiceAttachment,
             fileAttachment,
             videoAttachment,
-            origin
+            origin,
+            approvalRequest,
+            approvalDecision
         );
     }
 }

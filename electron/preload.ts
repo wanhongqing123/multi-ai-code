@@ -51,6 +51,10 @@ import type {
   RemoteImMessageDirection,
   RemoteImMessageKind,
   RemoteImMessageOrigin,
+  RemoteImApprovalAction,
+  RemoteImApprovalRequestInteraction,
+  RemoteImApprovalDecisionInteraction,
+  RemoteImTextInteraction,
   RemoteImMessageStatus,
   RemoteImImageAttachment,
   RemoteImFileAttachment,
@@ -82,6 +86,10 @@ export type {
   RemoteImMessageDirection,
   RemoteImMessageKind,
   RemoteImMessageOrigin,
+  RemoteImApprovalAction,
+  RemoteImApprovalRequestInteraction,
+  RemoteImApprovalDecisionInteraction,
+  RemoteImTextInteraction,
   RemoteImMessageStatus,
   RemoteImImageAttachment,
   RemoteImFileAttachment,
@@ -613,6 +621,7 @@ const api = {
         toUserId: string
         text: string
         origin: RemoteImMessageOrigin
+        interaction?: RemoteImTextInteraction
         runtimeIdentity: RemoteImRuntimeIdentity
         messageId?: number | null
       }) => void
@@ -624,6 +633,7 @@ const api = {
           toUserId: string
           text: string
           origin: RemoteImMessageOrigin
+          interaction?: RemoteImTextInteraction
           runtimeIdentity: RemoteImRuntimeIdentity
           messageId?: number | null
         }

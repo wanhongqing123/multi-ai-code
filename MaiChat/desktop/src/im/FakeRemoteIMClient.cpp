@@ -23,6 +23,17 @@ void FakeRemoteIMClient::sendText(const QString& peerId, const QString& text, Re
     completeSend(std::move(completion));
 }
 
+void FakeRemoteIMClient::sendApprovalDecision(const QString& peerId,
+                                              const QString& token,
+                                              RemoteIMApprovalAction action,
+                                              RemoteIMSendCompletion completion) {
+    lastTextPeerId_ = peerId.trimmed();
+    lastApprovalToken_ = token.trimmed();
+    lastApprovalAction_ = action;
+    lastText_ = QStringLiteral("审批操作：%1").arg(remoteIMApprovalActionTitle(action));
+    completeSend(std::move(completion));
+}
+
 void FakeRemoteIMClient::sendImage(const QString& peerId, const QString& localPath, RemoteIMSendCompletion completion) {
     lastImagePeerId_ = peerId.trimmed();
     lastImagePath_ = localPath.trimmed();
@@ -50,6 +61,8 @@ QString FakeRemoteIMClient::connectedUserId() const { return connectedUserId_; }
 QString FakeRemoteIMClient::lastDeletedContactId() const { return lastDeletedContactId_; }
 QString FakeRemoteIMClient::lastTextPeerId() const { return lastTextPeerId_; }
 QString FakeRemoteIMClient::lastText() const { return lastText_; }
+QString FakeRemoteIMClient::lastApprovalToken() const { return lastApprovalToken_; }
+RemoteIMApprovalAction FakeRemoteIMClient::lastApprovalAction() const { return lastApprovalAction_; }
 QString FakeRemoteIMClient::lastImagePeerId() const { return lastImagePeerId_; }
 QString FakeRemoteIMClient::lastImagePath() const { return lastImagePath_; }
 QString FakeRemoteIMClient::lastFilePeerId() const { return lastFilePeerId_; }

@@ -2832,7 +2832,9 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
 
     auto* bubble = new QWidget(row);
     bubble->setObjectName(outgoing ? QStringLiteral("messageBubbleOutgoing") : QStringLiteral("messageBubbleIncoming"));
-    const bool expandedTextBubble = !message.hasImage && !message.hasFile && !message.hasVideo && !message.hasVoice && (message.text.size() >= 50 || message.text.contains(QLatin1Char('\n')));
+    const bool expandedTextBubble = message.hasApprovalRequest
+        || (!message.hasImage && !message.hasFile && !message.hasVideo && !message.hasVoice
+            && (message.text.size() >= 50 || message.text.contains(QLatin1Char('\n'))));
     bubble->setProperty("expandedTextBubble", expandedTextBubble);
     applyMessageBubbleWidth(bubble, expandedTextBubble);
     bubble->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
@@ -3149,6 +3151,88 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
         )")));
     }
     bubbleLayout->addLayout(contentRow);
+
+    if (!outgoing && message.hasApprovalRequest && message.approvalRequest.isValid()) {
+        const QString token = message.approvalRequest.token;
+        if (submittedApprovalTokens_.contains(token)) {
+            auto* sentLabel = new QLabel(QStringLiteral("✓ 审批选择已发送"), bubble);
+            sentLabel->setObjectName(QStringLiteral("approvalSentLabel"));
+            sentLabel->setStyleSheet(UiZoom::scaleQss(QStringLiteral(
+                "QLabel#approvalSentLabel{color:#059669;font-size:13px;font-weight:700;"
+                "padding:7px 2px;background:transparent;}")));
+            bubbleLayout->addWidget(sentLabel);
+        } else {
+            auto* divider = new QFrame(bubble);
+            divider->setFrameShape(QFrame::HLine);
+            divider->setStyleSheet(QStringLiteral("color:#ead99d;background:#ead99d;max-height:1px;"));
+            bubbleLayout->addWidget(divider);
+
+            auto* actions = new QHBoxLayout();
+            actions->setContentsMargins(0, 0, 0, 0);
+            actions->setSpacing(UiZoom::s(8));
+            for (RemoteIMApprovalAction action : message.approvalRequest.actions) {
+                auto* button = new QPushButton(remoteIMApprovalActionTitle(action), bubble);
+                const bool reject = action == RemoteIMApprovalAction::Reject;
+                const bool persistent = action == RemoteIMApprovalAction::ApprovePrefix;
+                button->setObjectName(
+                    action == RemoteIMApprovalAction::ApproveOnce
+                        ? QStringLiteral("approvalApproveOnceButton")
+                        : persistent ? QStringLiteral("approvalApprovePrefixButton")
+                                     : QStringLiteral("approvalRejectButton"));
+                button->setCursor(Qt::PointingHandCursor);
+                button->setMinimumHeight(UiZoom::s(38));
+                button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+                button->setStyleSheet(UiZoom::scaleQss(reject
+                    ? QStringLiteral(
+                        "QPushButton{background:transparent;border:1px solid #ef4444;"
+                        "border-radius:9px;color:#dc2626;font-size:13px;font-weight:700;padding:7px 10px;}"
+                        "QPushButton:hover{background:#fff1f2;}")
+                    : QStringLiteral(
+                        "QPushButton{background:%1;border:1px solid %1;border-radius:9px;"
+                        "color:white;font-size:13px;font-weight:700;padding:7px 10px;}"
+                        "QPushButton:hover{background:%2;border-color:%2;}")
+                          .arg(persistent ? QStringLiteral("#059669") : QStringLiteral("#0f8dde"),
+                               persistent ? QStringLiteral("#047857") : QStringLiteral("#087abe"))));
+                connect(button, &QPushButton::clicked, this,
+                        [this, token, action, bubble, bubbleLayout] {
+                    if (submittedApprovalTokens_.contains(token)) return;
+                    submittedApprovalTokens_.insert(token);
+                    for (QPushButton* approvalButton : bubble->findChildren<QPushButton*>()) {
+                        if (approvalButton->objectName().startsWith(QStringLiteral("approval"))) {
+                            approvalButton->hide();
+                        }
+                    }
+                    auto* sentLabel = new QLabel(QStringLiteral("✓ 审批选择已发送"), bubble);
+                    sentLabel->setObjectName(QStringLiteral("approvalSentLabel"));
+                    sentLabel->setStyleSheet(UiZoom::scaleQss(QStringLiteral(
+                        "QLabel#approvalSentLabel{color:#059669;font-size:13px;font-weight:700;"
+                        "padding:7px 2px;background:transparent;}")));
+                    bubbleLayout->addWidget(sentLabel);
+                    const QPointer<QWidget> bubbleGuard(bubble);
+                    const QPointer<QLabel> sentLabelGuard(sentLabel);
+                    app_.sendApprovalDecision(
+                        token,
+                        action,
+                        [this, token, bubbleGuard, sentLabelGuard](bool ok) {
+                            if (ok) return;
+                            submittedApprovalTokens_.remove(token);
+                            if (bubbleGuard) {
+                                for (QPushButton* approvalButton
+                                     : bubbleGuard->findChildren<QPushButton*>()) {
+                                    if (approvalButton->objectName().startsWith(
+                                            QStringLiteral("approval"))) {
+                                        approvalButton->show();
+                                    }
+                                }
+                            }
+                            if (sentLabelGuard) sentLabelGuard->deleteLater();
+                        });
+                });
+                actions->addWidget(button);
+            }
+            bubbleLayout->addLayout(actions);
+        }
+    }
 
     // 图片/文件带配文时：配文渲染在附件下方，与附件同属一条气泡（微信式图上文下）。
     // 占位文字（[图片消息]/[文件消息] …）不是真正配文，不再重复展示。

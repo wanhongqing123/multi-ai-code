@@ -1,4 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto'
+import type {
+  RemoteImApprovalAction,
+  RemoteImApprovalRequestInteraction
+} from './types.js'
 
 export type RemoteImApprovalDecision = 'accept' | 'accept-persistent' | 'cancel'
 
@@ -21,20 +25,26 @@ export interface RemoteImApprovalResolution extends RemoteImApprovalRequest {
   decision: RemoteImApprovalDecision
 }
 
-export interface RemoteImApprovalCommandInput {
+export interface RemoteImApprovalDecisionInput {
   projectId: string
   fromUserId: string
-  text: string
+  token: string
+  action: RemoteImApprovalAction
 }
 
-export interface RemoteImApprovalCommandResult {
+export interface RemoteImApprovalDecisionResult {
   handled: boolean
   ok: boolean
   text: string
 }
 
 export interface RemoteImApprovalCoordinatorDeps {
-  sendText(projectId: string, toUserId: string, text: string): Promise<{ ok: boolean; error?: string }>
+  sendText(
+    projectId: string,
+    toUserId: string,
+    text: string,
+    interaction?: RemoteImApprovalRequestInteraction
+  ): Promise<{ ok: boolean; error?: string }>
   resolveApproval(
     input: RemoteImApprovalResolution
   ): Promise<{ ok: boolean; error?: string; text?: string }>
@@ -132,45 +142,17 @@ function formatApprovalRequest(item: PendingRemoteImApproval): string {
   lines.push(
     '',
     `请在 ${minutes} 分钟内由本消息对应的请求人确认。`,
-    '请选择一项，并且每次只发送下面的一条命令；可直接在 IM 中发送，也可由 AICLI 通过 imcli 原样发送：',
-    '',
-    '1. 仅批准这一次',
-    '',
-    `    /approve ${item.token}`
+    '请使用 MaiChat 消息卡片下方的按钮选择本次审批结果。'
   )
   if (item.persistentApprovalCommand) {
     lines.push(
       '',
-      '2. 批准并记住以下命令前缀，后续匹配的命令不再询问',
+      '“同意并记住”将记住以下命令前缀，后续匹配的命令不再询问：',
       '',
-      formatCommandBlock(item.persistentApprovalCommand),
-      '',
-      `    /approve-prefix ${item.token}`,
-      '',
-      '3. 拒绝这一次'
+      formatCommandBlock(item.persistentApprovalCommand)
     )
-  } else {
-    lines.push('', '2. 拒绝这一次')
-  }
-  lines.push('', `    /reject ${item.token}`)
-  if (!item.persistentApprovalCommand) {
-    lines.push('', '本次请求没有提供“记住命令前缀”的安全规则，因此只有批准或拒绝两项。')
   }
   return lines.join('\n')
-}
-
-export function parseRemoteImApprovalCommand(
-  text: string
-):
-  | { action: 'approve' | 'approve-prefix' | 'reject'; token: string }
-  | { action: 'invalid'; token: string }
-  | null {
-  const trimmed = text.trim()
-  const match = /^\/(approve-prefix|approve|reject)(?:\s+(\S+))?\s*$/i.exec(trimmed)
-  if (!match) return null
-  const action = match[1]?.toLowerCase() as 'approve' | 'approve-prefix' | 'reject'
-  const token = match[2]?.trim() ?? ''
-  return token ? { action, token } : { action: 'invalid', token: '' }
 }
 
 export class RemoteImApprovalCoordinator {
@@ -307,7 +289,16 @@ export class RemoteImApprovalCoordinator {
       sent = await this.deps.sendText(
         item.projectId,
         item.requesterUserId,
-        formatApprovalRequest(item)
+        formatApprovalRequest(item),
+        {
+          kind: 'approval-request',
+          token: item.token,
+          actions: [
+            'approve-once',
+            ...(item.persistentApprovalCommand ? ['approve-prefix' as const] : []),
+            'reject'
+          ]
+        }
       )
     } catch (error) {
       sent = { ok: false, error: error instanceof Error ? error.message : String(error) }
@@ -335,18 +326,10 @@ export class RemoteImApprovalCoordinator {
     return { ok: true, token }
   }
 
-  async handleCommand(input: RemoteImApprovalCommandInput): Promise<RemoteImApprovalCommandResult> {
-    const parsed = parseRemoteImApprovalCommand(input.text)
-    if (!parsed) return { handled: false, ok: false, text: '' }
-    if (parsed.action === 'invalid') {
-      return {
-        handled: true,
-        ok: false,
-        text:
-          '审批指令格式：/approve <审批码>、/approve-prefix <审批码>（仅通知中提供时）或 /reject <审批码>。每次只发送一条命令。'
-      }
-    }
-    const item = this.byToken.get(parsed.token)
+  async handleDecision(
+    input: RemoteImApprovalDecisionInput
+  ): Promise<RemoteImApprovalDecisionResult> {
+    const item = this.byToken.get(input.token.trim())
     const projectId = cleanRequired(input.projectId)
     const fromUserId = cleanRequired(input.fromUserId)
     // The same generic response is used for wrong users, wrong projects,
@@ -361,7 +344,7 @@ export class RemoteImApprovalCoordinator {
     ) {
       return { handled: true, ok: false, text: INVALID_APPROVAL_TEXT }
     }
-    if (parsed.action === 'approve-prefix' && !item.persistentApprovalCommand) {
+    if (input.action === 'approve-prefix' && !item.persistentApprovalCommand) {
       return { handled: true, ok: false, text: INVALID_APPROVAL_TEXT }
     }
     if (this.now() >= item.expiresAt) {
@@ -372,9 +355,9 @@ export class RemoteImApprovalCoordinator {
     item.state = 'resolving'
     this.clearItemTimer(item)
     const decision: RemoteImApprovalDecision =
-      parsed.action === 'approve'
+      input.action === 'approve-once'
         ? 'accept'
-        : parsed.action === 'approve-prefix'
+        : input.action === 'approve-prefix'
           ? 'accept-persistent'
           : 'cancel'
     let resolved: { ok: boolean; error?: string; text?: string }

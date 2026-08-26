@@ -5,6 +5,7 @@ import type {
   RemoteImIncomingFileMessage,
   RemoteImIncomingImageMessage,
   RemoteImIncomingTextMessage,
+  RemoteImApprovalAction,
   RemoteImFileAttachment,
   RemoteImImageAttachment,
   RemoteImMessageOrigin,
@@ -123,10 +124,11 @@ export interface RemoteImRouterDeps {
     replyId?: string
     taskId?: string
   }) => Promise<{ ok: boolean; text: string; attachmentPath?: string }>
-  handleApprovalCommand?: (input: {
+  handleApprovalDecision?: (input: {
     projectId: string
     fromUserId: string
-    text: string
+    token: string
+    action: RemoteImApprovalAction
   }) => Promise<{ handled: boolean; ok: boolean; text: string }>
   store: RemoteImRouterStore
   messagesChanged?: (projectId: string) => void
@@ -697,30 +699,44 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       }
     }
 
-    // Approval capabilities are consumed before general slash-command parsing
-    // and before ordinary task routing, so an approval response can never be
-    // forwarded to the model as user input.
-    if (deps.handleApprovalCommand) {
-      const approval = await deps.handleApprovalCommand({
+    // Versioned approval interactions are consumed before ordinary task routing,
+    // so a button decision can never be forwarded to the model as user input.
+    if (
+      message.interaction?.kind === 'approval-decision' &&
+      origin === 'human' &&
+      deps.handleApprovalDecision
+    ) {
+      const approval = await deps.handleApprovalDecision({
         projectId: message.projectId,
         fromUserId,
-        text
+        token: message.interaction.token,
+        action: message.interaction.action
       })
-      if (approval.handled) {
-        deps.store.create(
-          createIncomingRecord(
-            { ...message, text },
-            approval.ok ? 'received' : 'rejected',
-            approval.ok ? null : 'approval command rejected',
-            now,
-            recordRole
-          )
+      deps.store.create(
+        createIncomingRecord(
+          { ...message, text },
+          approval.ok ? 'received' : 'rejected',
+          approval.ok ? null : 'approval decision rejected',
+          now,
+          recordRole
         )
-        await sendSystemText(deps, message.projectId, fromUserId, approval.text)
-        return approval.ok
-          ? { ok: true }
-          : { ok: false, error: 'remote IM approval command rejected' }
-      }
+      )
+      await sendSystemText(deps, message.projectId, fromUserId, approval.text)
+      return approval.ok
+        ? { ok: true }
+        : { ok: false, error: 'remote IM approval decision rejected' }
+    }
+    if (message.interaction) {
+      deps.store.create(
+        createIncomingRecord(
+          message,
+          'rejected',
+          'unsupported interaction direction',
+          now,
+          recordRole
+        )
+      )
+      return { ok: false, error: 'unsupported remote IM interaction direction' }
     }
 
     // Only a human UI message controls the local host. Machine messages are

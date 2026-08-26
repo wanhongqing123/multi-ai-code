@@ -55,6 +55,32 @@ final class LocalChatHistoryStoreTests: XCTestCase {
         )
     }
 
+    func testPersistsStructuredApprovalRequestWithoutParsingMessageText() throws {
+        let directoryURL = makeTemporaryDirectoryURL()
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+        let store = LocalChatHistoryStore(baseDirectoryURL: directoryURL)
+        let request = RemoteIMApprovalRequest(
+            token: "approval-persisted-1",
+            actions: [.approveOnce, .approvePrefix, .reject]
+        )!
+        let message = RemoteIMMessage(
+            fromUserID: "mac-quark-pc",
+            toUserID: "ios-master",
+            text: "审批正文不包含任何斜杠命令",
+            approvalRequest: request,
+            direction: .incoming,
+            status: .received,
+            createdAt: Date(timeIntervalSince1970: 301)
+        )
+
+        try persist([message], in: store)
+
+        XCTAssertEqual(
+            try conversationMessages(in: store, peerUserID: "mac-quark-pc").first?.approvalRequest,
+            request
+        )
+    }
+
     func testUpsertDeduplicatesMessagesByIDAndConversationDeleteIsExplicit() throws {
         let directoryURL = makeTemporaryDirectoryURL()
         defer { try? FileManager.default.removeItem(at: directoryURL) }
@@ -365,7 +391,7 @@ final class LocalChatHistoryStoreTests: XCTestCase {
         let openedVersionStatement = try XCTUnwrap(versionStatement)
         defer { sqlite3_finalize(openedVersionStatement) }
         XCTAssertEqual(sqlite3_step(openedVersionStatement), SQLITE_ROW)
-        XCTAssertEqual(sqlite3_column_int(openedVersionStatement, 0), 4)
+        XCTAssertEqual(sqlite3_column_int(openedVersionStatement, 0), 5)
 
         var columnStatement: OpaquePointer?
         XCTAssertEqual(
@@ -382,6 +408,22 @@ final class LocalChatHistoryStoreTests: XCTestCase {
         defer { sqlite3_finalize(openedColumnStatement) }
         XCTAssertEqual(sqlite3_step(openedColumnStatement), SQLITE_ROW)
         XCTAssertEqual(sqlite3_column_int(openedColumnStatement, 0), 1)
+
+        var approvalColumnStatement: OpaquePointer?
+        XCTAssertEqual(
+            sqlite3_prepare_v2(
+                migratedDatabase,
+                "SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'approval_request'",
+                -1,
+                &approvalColumnStatement,
+                nil
+            ),
+            SQLITE_OK
+        )
+        let openedApprovalColumnStatement = try XCTUnwrap(approvalColumnStatement)
+        defer { sqlite3_finalize(openedApprovalColumnStatement) }
+        XCTAssertEqual(sqlite3_step(openedApprovalColumnStatement), SQLITE_ROW)
+        XCTAssertEqual(sqlite3_column_int(openedApprovalColumnStatement, 0), 1)
     }
 
     func testConversationPageQueryUsesPeerTimeIndex() throws {

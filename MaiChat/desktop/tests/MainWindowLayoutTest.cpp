@@ -78,6 +78,7 @@ private slots:
     void globalSearchReportsNoResultWithLoadedScopeHint();
     void conversationListsUseDelegateItemsForSmoothScrolling();
     void rendersMarkdownMessageContent();
+    void rendersApprovalButtonsAndSendsStructuredDecision();
     void copiesOriginalMarkdownFromMessageContextMenu();
     void addContactButtonSitsBesideTheSearchBox();
     void navigationTextIsLeftAlignedAndContactsDoNotShowMessagePreview();
@@ -735,6 +736,57 @@ void MainWindowLayoutTest::rendersMarkdownMessageContent() {
     QVERIFY(!markdownView->toPlainText().contains(QStringLiteral("# Win/Mac")));
     QVERIFY(markdownView->toPlainText().contains(QStringLiteral("重点")));
     QVERIFY(markdownView->toHtml().contains(QStringLiteral("href=\"https://example.com\"")));
+}
+
+void MainWindowLayoutTest::rendersApprovalButtonsAndSendsStructuredDecision() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    auto* fakeClient = client.get();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("multi-ai-code"), QStringLiteral("Multi-AI Code"));
+
+    RemoteIMMessage request;
+    request.id = QStringLiteral("approval-message-1");
+    request.fromUserId = QStringLiteral("multi-ai-code");
+    request.toUserId = QStringLiteral("desktop-user");
+    request.text = QStringLiteral("Codex 请求执行一条高风险命令");
+    request.direction = RemoteIMMessageDirection::Incoming;
+    request.status = RemoteIMMessageStatus::Received;
+    request.origin = RemoteIMMessageOrigin::Machine;
+    request.hasApprovalRequest = true;
+    request.approvalRequest = RemoteIMApprovalRequest{
+        QStringLiteral("approval-ui-1"),
+        {RemoteIMApprovalAction::ApproveOnce,
+         RemoteIMApprovalAction::ApprovePrefix,
+         RemoteIMApprovalAction::Reject}
+    };
+    app.chatState().appendMessageForRestore(request);
+
+    MainWindow window(app);
+    window.show();
+    QCoreApplication::processEvents();
+
+    QVERIFY(window.findChild<QPushButton*>(QStringLiteral("approvalApproveOnceButton")) != nullptr);
+    auto* prefixButton =
+        window.findChild<QPushButton*>(QStringLiteral("approvalApprovePrefixButton"));
+    QVERIFY(prefixButton != nullptr);
+    QVERIFY(window.findChild<QPushButton*>(QStringLiteral("approvalRejectButton")) != nullptr);
+
+    fakeClient->failNext(QStringLiteral("network unavailable"));
+    confirmNextContactDeletion();  // 关闭发送失败提示的模态框，继续检查按钮是否恢复。
+    QTest::mouseClick(prefixButton, Qt::LeftButton);
+    QCoreApplication::processEvents();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+
+    QVERIFY(prefixButton->isVisible());
+    QVERIFY(window.findChild<QLabel*>(QStringLiteral("approvalSentLabel")) == nullptr);
+
+    QTest::mouseClick(prefixButton, Qt::LeftButton);
+    QCoreApplication::processEvents();
+
+    QCOMPARE(fakeClient->lastTextPeerId(), QStringLiteral("multi-ai-code"));
+    QCOMPARE(fakeClient->lastApprovalToken(), QStringLiteral("approval-ui-1"));
+    QCOMPARE(fakeClient->lastApprovalAction(), RemoteIMApprovalAction::ApprovePrefix);
+    QVERIFY(window.findChild<QLabel*>(QStringLiteral("approvalSentLabel")) != nullptr);
 }
 
 void MainWindowLayoutTest::copiesOriginalMarkdownFromMessageContextMenu() {

@@ -12,6 +12,10 @@ public:
     void disconnectFromService(RemoteIMCompletion completion) override;
     void deleteContact(const QString& userId, RemoteIMCompletion completion) override;
     void sendText(const QString& peerId, const QString& text, RemoteIMSendCompletion completion) override;
+    void sendApprovalDecision(const QString& peerId,
+                              const QString& token,
+                              RemoteIMApprovalAction action,
+                              RemoteIMSendCompletion completion) override;
     void sendImage(const QString& peerId, const QString& localPath, RemoteIMSendCompletion completion) override;
     void sendVoice(const QString& peerId, const QString& localPath, int durationSeconds, RemoteIMCompletion completion) override;
     void sendFile(const QString& peerId, const QString& localPath, const QString& fileName, RemoteIMSendCompletion completion) override;
@@ -21,6 +25,8 @@ public:
     QString lastDeletedContactId() const;
     QString lastTextPeerId() const;
     QString lastText() const;
+    QString lastApprovalToken() const;
+    RemoteIMApprovalAction lastApprovalAction() const;
     QString lastImagePeerId() const;
     QString lastImagePath() const;
     QString lastFilePeerId() const;
@@ -40,6 +46,8 @@ private:
     QString lastDeletedContactId_;
     QString lastTextPeerId_;
     QString lastText_;
+    QString lastApprovalToken_;
+    RemoteIMApprovalAction lastApprovalAction_ = RemoteIMApprovalAction::Reject;
     QString lastImagePeerId_;
     QString lastImagePath_;
     QString lastFilePeerId_;

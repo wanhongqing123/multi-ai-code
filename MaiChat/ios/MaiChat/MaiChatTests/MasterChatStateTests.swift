@@ -2,6 +2,93 @@ import XCTest
 @testable import MaiChatCore
 
 final class MasterChatStateTests: XCTestCase {
+    func testApprovalRequestUsesVersionedActionsInsteadOfParsingMessageText() {
+        let request = RemoteIMApprovalRequest(
+            token: "approval-token-1",
+            actions: [.approveOnce, .approvePrefix, .reject]
+        )
+
+        XCTAssertEqual(request?.actions.map(\.title), ["同意本次", "同意并记住", "拒绝"])
+        XCTAssertEqual(RemoteIMApprovalAction.approveOnce.decisionDisplayText, "审批操作：同意本次")
+        XCTAssertTrue(request?.allows(.approvePrefix) == true)
+    }
+
+    func testApprovalRequestRejectsInvalidTokensAndActionSets() {
+        XCTAssertNil(RemoteIMApprovalRequest(token: "token-1", actions: [.approveOnce, .reject]))
+        XCTAssertNil(RemoteIMApprovalRequest(token: "approval-", actions: [.approveOnce, .reject]))
+        XCTAssertNil(RemoteIMApprovalRequest(token: "approval-good", actions: [.approveOnce]))
+        XCTAssertNil(RemoteIMApprovalRequest(
+            token: "approval-good",
+            actions: [.approveOnce, .approveOnce, .reject]
+        ))
+    }
+
+    func testIncomingApprovalRequestIsStoredOnTheMessage() {
+        var state = MasterChatState(ownerUserID: "whq-iphone")
+        let request = RemoteIMApprovalRequest(
+            token: "approval-token-1",
+            actions: [.approveOnce, .reject]
+        )!
+        let message = state.receiveText(
+            "Codex 请求执行一条高风险命令",
+            fromUserID: "mac-multi-ai-code",
+            remoteID: "approval-message",
+            approvalRequest: request,
+            now: Date(timeIntervalSince1970: 91)
+        )
+
+        XCTAssertEqual(message.approvalRequest, request)
+        XCTAssertEqual(state.messages.first?.approvalRequest, request)
+    }
+
+    func testApprovalCloudMetadataV2RoundTripsRequestsAndDecisions() {
+        let request = RemoteIMApprovalRequest(
+            token: "approval-wire-1",
+            actions: [.approveOnce, .approvePrefix, .reject]
+        )!
+        let requestMetadata = RemoteIMCloudMetadata(
+            origin: .machine,
+            interaction: .approvalRequest(request)
+        )
+        let decisionMetadata = RemoteIMCloudMetadata(
+            origin: .human,
+            interaction: .approvalDecision(token: request.token, action: .approveOnce)
+        )
+
+        XCTAssertEqual(
+            RemoteIMCloudMetadataCodec.decode(RemoteIMCloudMetadataCodec.encode(requestMetadata)),
+            requestMetadata
+        )
+        XCTAssertEqual(
+            RemoteIMCloudMetadataCodec.decode(RemoteIMCloudMetadataCodec.encode(decisionMetadata)),
+            decisionMetadata
+        )
+        XCTAssertEqual(
+            RemoteIMCloudMetadataCodec.decode(Data(
+                #"{"namespace":"multi-ai-code","version":2,"origin":"machine","interaction":{"kind":"approval-request","token":"approval-wire-1","actions":["approve-once","approve-prefix","reject"]}}"#.utf8
+            )),
+            requestMetadata
+        )
+        XCTAssertEqual(
+            RemoteIMCloudMetadataCodec.decode(Data(
+                #"{"namespace":"multi-ai-code","version":2,"origin":"human","interaction":{"kind":"approval-decision","token":"approval-wire-1","action":"approve-once"}}"#.utf8
+            )),
+            decisionMetadata
+        )
+    }
+
+    func testApprovalCloudMetadataRejectsOldOrWrongDirectionProtocols() {
+        XCTAssertNil(RemoteIMCloudMetadataCodec.decode(Data(
+            #"{"namespace":"multi-ai-code","version":1,"origin":"machine"}"#.utf8
+        )))
+        XCTAssertNil(RemoteIMCloudMetadataCodec.decode(Data(
+            #"{"namespace":"multi-ai-code","version":2,"origin":"human","interaction":{"kind":"approval-request","token":"approval-wire-1","actions":["approve-once","reject"]}}"#.utf8
+        )))
+        XCTAssertNil(RemoteIMCloudMetadataCodec.decode(Data(
+            #"{"namespace":"multi-ai-code","version":2,"origin":"machine","interaction":{"kind":"approval-decision","token":"approval-wire-1","action":"approve-once"}}"#.utf8
+        )))
+    }
+
     func testPeerPolicyRejectsBlankAndCurrentLoginAccount() {
         XCTAssertFalse(RemoteIMPeerPolicy.isValidPeer(userID: "", ownerUserID: "whq-iphone"))
         XCTAssertFalse(

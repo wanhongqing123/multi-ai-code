@@ -49,6 +49,32 @@ describe('remote IM outgoing delivery', () => {
     expect(markFailed).not.toHaveBeenCalled()
   })
 
+  it('forwards structured approval metadata to the Tencent runtime', async () => {
+    const sendText = vi.fn(async () => undefined)
+    const runtime: TencentImRuntime = { disconnect: vi.fn(), sendText }
+    const approvalEvent: RemoteImOutgoingTextEvent = {
+      ...event,
+      interaction: {
+        kind: 'approval-request',
+        token: 'approval-wire-1',
+        actions: ['approve-once', 'reject']
+      }
+    }
+
+    await deliverRemoteImOutgoingText({
+      runtime,
+      event: approvalEvent,
+      markSent: vi.fn(),
+      markFailed: vi.fn()
+    })
+
+    expect(sendText).toHaveBeenCalledWith('desktop-b', 'hello', {
+      messageId: 42,
+      origin: 'machine',
+      interaction: approvalEvent.interaction
+    })
+  })
+
   it('marks an outgoing IM message as failed when Tencent SDK delivery fails', async () => {
     const runtime: TencentImRuntime = {
       disconnect: vi.fn(),

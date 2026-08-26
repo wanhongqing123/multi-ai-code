@@ -31,7 +31,13 @@ constexpr int kImageLevelOriginal = 0;
 constexpr int kFriendTypeBoth = 1;
 constexpr auto kCloudCustomDataKey = "message_cloud_custom_str";
 constexpr auto kMetadataNamespace = "multi-ai-code";
-constexpr int kMetadataVersion = 1;
+constexpr int kMetadataVersion = 2;
+
+struct ParsedCloudMetadata {
+    RemoteIMMessageOrigin origin = RemoteIMMessageOrigin::Unknown;
+    RemoteIMApprovalRequest approvalRequest;
+    bool hasApprovalRequest = false;
+};
 
 QString originName(RemoteIMMessageOrigin origin) {
     return origin == RemoteIMMessageOrigin::Human
@@ -39,32 +45,79 @@ QString originName(RemoteIMMessageOrigin origin) {
                : QStringLiteral("machine");
 }
 
-QString cloudCustomData(RemoteIMMessageOrigin origin) {
+QString cloudCustomData(RemoteIMMessageOrigin origin,
+                        const QJsonObject& interaction = QJsonObject()) {
     QJsonObject metadata;
     metadata[QStringLiteral("namespace")] = QString::fromLatin1(kMetadataNamespace);
     metadata[QStringLiteral("version")] = kMetadataVersion;
     metadata[QStringLiteral("origin")] = originName(origin);
+    if (!interaction.isEmpty()) metadata[QStringLiteral("interaction")] = interaction;
     return QString::fromUtf8(QJsonDocument(metadata).toJson(QJsonDocument::Compact));
 }
 
-void setMessageOrigin(QJsonObject& message, RemoteIMMessageOrigin origin) {
-    message[QString::fromLatin1(kCloudCustomDataKey)] = cloudCustomData(origin);
+void setMessageMetadata(QJsonObject& message,
+                        RemoteIMMessageOrigin origin,
+                        const QJsonObject& interaction = QJsonObject()) {
+    message[QString::fromLatin1(kCloudCustomDataKey)] = cloudCustomData(origin, interaction);
 }
 
-RemoteIMMessageOrigin messageOrigin(const QJsonObject& message) {
+void setMessageOrigin(QJsonObject& message, RemoteIMMessageOrigin origin) {
+    setMessageMetadata(message, origin);
+}
+
+ParsedCloudMetadata messageMetadata(const QJsonObject& message) {
+    ParsedCloudMetadata parsed;
     const QString raw = message.value(QString::fromLatin1(kCloudCustomDataKey)).toString();
-    if (raw.isEmpty()) return RemoteIMMessageOrigin::Unknown;
+    if (raw.isEmpty()) return parsed;
     const QJsonDocument document = QJsonDocument::fromJson(raw.toUtf8());
-    if (!document.isObject()) return RemoteIMMessageOrigin::Unknown;
+    if (!document.isObject()) return parsed;
     const QJsonObject metadata = document.object();
     if (metadata.value(QStringLiteral("namespace")).toString() != QLatin1String(kMetadataNamespace)
         || metadata.value(QStringLiteral("version")).toInt(-1) != kMetadataVersion) {
-        return RemoteIMMessageOrigin::Unknown;
+        return parsed;
     }
     const QString origin = metadata.value(QStringLiteral("origin")).toString();
-    if (origin == QStringLiteral("human")) return RemoteIMMessageOrigin::Human;
-    if (origin == QStringLiteral("machine")) return RemoteIMMessageOrigin::Machine;
-    return RemoteIMMessageOrigin::Unknown;
+    if (origin == QStringLiteral("human")) {
+        parsed.origin = RemoteIMMessageOrigin::Human;
+    } else if (origin == QStringLiteral("machine")) {
+        parsed.origin = RemoteIMMessageOrigin::Machine;
+    } else {
+        return ParsedCloudMetadata{};
+    }
+
+    if (!metadata.contains(QStringLiteral("interaction"))) return parsed;
+    const QJsonObject interaction = metadata.value(QStringLiteral("interaction")).toObject();
+    const QString kind = interaction.value(QStringLiteral("kind")).toString();
+    const QString token = interaction.value(QStringLiteral("token")).toString();
+    if (kind == QStringLiteral("approval-request")
+        && parsed.origin == RemoteIMMessageOrigin::Machine
+        && !interaction.contains(QStringLiteral("action"))) {
+        RemoteIMApprovalRequest request;
+        request.token = token;
+        const QJsonArray actions = interaction.value(QStringLiteral("actions")).toArray();
+        for (const QJsonValue& value : actions) {
+            RemoteIMApprovalAction action;
+            if (!remoteIMApprovalActionFromWireName(value.toString(), &action)) {
+                return ParsedCloudMetadata{};
+            }
+            request.actions.append(action);
+        }
+        if (!request.isValid()) return ParsedCloudMetadata{};
+        parsed.approvalRequest = request;
+        parsed.hasApprovalRequest = true;
+        return parsed;
+    }
+    if (kind == QStringLiteral("approval-decision")
+        && parsed.origin == RemoteIMMessageOrigin::Human
+        && !interaction.contains(QStringLiteral("actions"))
+        && isValidRemoteIMApprovalToken(token)) {
+        RemoteIMApprovalAction action;
+        if (remoteIMApprovalActionFromWireName(
+                interaction.value(QStringLiteral("action")).toString(), &action)) {
+            return parsed;
+        }
+    }
+    return ParsedCloudMetadata{};
 }
 
 QString appDataDir(const QString& child) {
@@ -361,10 +414,32 @@ void TimSdkRemoteIMClient::sendMachineText(const QString& peerId, const QString&
     sendTextWithOrigin(peerId, text, RemoteIMMessageOrigin::Machine, std::move(completion));
 }
 
+void TimSdkRemoteIMClient::sendApprovalDecision(const QString& peerId,
+                                                const QString& token,
+                                                RemoteIMApprovalAction action,
+                                                RemoteIMSendCompletion completion) {
+    const QString cleanToken = token.trimmed();
+    if (!isValidRemoteIMApprovalToken(cleanToken)) {
+        if (completion) completion(false, QStringLiteral("审批请求已失效"), {});
+        return;
+    }
+    QJsonObject interaction;
+    interaction[QStringLiteral("kind")] = QStringLiteral("approval-decision");
+    interaction[QStringLiteral("token")] = cleanToken;
+    interaction[QStringLiteral("action")] = remoteIMApprovalActionWireName(action);
+    sendTextWithOrigin(
+        peerId,
+        QStringLiteral("审批操作：%1").arg(remoteIMApprovalActionTitle(action)),
+        RemoteIMMessageOrigin::Human,
+        std::move(completion),
+        interaction);
+}
+
 void TimSdkRemoteIMClient::sendTextWithOrigin(const QString& peerId,
                                               const QString& text,
                                               RemoteIMMessageOrigin origin,
-                                              RemoteIMSendCompletion completion) {
+                                              RemoteIMSendCompletion completion,
+                                              const QJsonObject& interaction) {
     const QString cleanPeerId = peerId.trimmed();
     const QString cleanText = text.trimmed();
     if (cleanPeerId.isEmpty() || cleanText.isEmpty()) {
@@ -377,7 +452,7 @@ void TimSdkRemoteIMClient::sendTextWithOrigin(const QString& peerId,
     elem[QStringLiteral("text_elem_content")] = cleanText;
     QJsonObject message;
     message[QStringLiteral("message_elem_array")] = QJsonArray{elem};
-    setMessageOrigin(message, origin);
+    setMessageMetadata(message, origin, interaction);
     api_->sendMessage(cleanPeerId, kConversationTypeC2C, compactJson(message), [completion = std::move(completion)](int code,
                                                                                                                     const QString& description,
                                                                                                                     const QString& jsonPayload) mutable {
@@ -728,7 +803,8 @@ void TimSdkRemoteIMClient::handleHistoryMessagesPayload(const QString& jsonPaylo
 
         const qint64 sdkTimeMillis = messageTimeMillis(sdkMessage);
         const QString sdkId = sdkMessageId(sdkMessage);
-        const RemoteIMMessageOrigin origin = messageOrigin(sdkMessage);
+        const ParsedCloudMetadata metadata = messageMetadata(sdkMessage);
+        const RemoteIMMessageOrigin origin = metadata.origin;
         const QJsonArray elems = sdkMessage.value(QStringLiteral("message_elem_array")).toArray();
 
         // 与实时接收（handleIncomingMessage）保持一致：图片/文件 + 配文合并成一条，
@@ -774,6 +850,10 @@ void TimSdkRemoteIMClient::handleHistoryMessagesPayload(const QString& jsonPaylo
                 if (hasAttachment && elemIndex == captionElemIndex) continue;
                 RemoteIMMessage message = makeBase(elemIndex);
                 message.text = elem.value(QStringLiteral("text_elem_content")).toString();
+                if (!isFromSelf && metadata.hasApprovalRequest) {
+                    message.approvalRequest = metadata.approvalRequest;
+                    message.hasApprovalRequest = true;
+                }
                 if (!message.text.trimmed().isEmpty()) messages.append(message);
                 continue;
             }
@@ -919,7 +999,8 @@ void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
     // 送出，本地库据 id 去重，重登时不会与漫游重复。
     const QString sdkId = sdkMessageId(message);
     const qint64 sdkTimeMillis = messageTimeMillis(message);
-    const RemoteIMMessageOrigin origin = messageOrigin(message);
+    const ParsedCloudMetadata metadata = messageMetadata(message);
+    const RemoteIMMessageOrigin origin = metadata.origin;
     const auto baseMessage = [this, &fromUserId, &sdkId, sdkTimeMillis, origin](int elemIndex) {
         RemoteIMMessage result;
         const QString stableId = sdkElemMessageId(sdkId, elemIndex);
@@ -970,6 +1051,10 @@ void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
             if (text.trimmed().isEmpty()) continue;
             RemoteIMMessage textMessage = baseMessage(elemIndex);
             textMessage.text = text;
+            if (metadata.hasApprovalRequest) {
+                textMessage.approvalRequest = metadata.approvalRequest;
+                textMessage.hasApprovalRequest = true;
+            }
             received.append(textMessage);
             continue;
         }

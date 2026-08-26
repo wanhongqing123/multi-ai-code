@@ -1,5 +1,6 @@
 import type {
   RemoteImMessageOrigin,
+  RemoteImTextInteraction,
   RemoteImRuntimeIdentity
 } from '../../electron/preload.js'
 import type { TencentImRuntime } from './tencentImClient.js'
@@ -9,6 +10,7 @@ export interface RemoteImOutgoingTextEvent {
   toUserId: string
   text: string
   origin: RemoteImMessageOrigin
+  interaction?: RemoteImTextInteraction
   runtimeIdentity: RemoteImRuntimeIdentity
   messageId?: number | null
 }
@@ -109,7 +111,8 @@ export async function deliverRemoteImOutgoingText(
   if (!input.event.messageId) {
     await input.runtime?.sendText(input.event.toUserId, input.event.text, {
       messageId: input.event.messageId,
-      origin: input.event.origin
+      origin: input.event.origin,
+      ...(input.event.interaction ? { interaction: input.event.interaction } : {})
     })
     return
   }
@@ -123,7 +126,8 @@ export async function deliverRemoteImOutgoingText(
     const sendResult = await withTimeout(
       input.runtime.sendText(input.event.toUserId, input.event.text, {
         messageId: input.event.messageId,
-        origin: input.event.origin
+        origin: input.event.origin,
+        ...(input.event.interaction ? { interaction: input.event.interaction } : {})
       }),
       input.sendTimeoutMs ?? DEFAULT_SEND_TIMEOUT_MS
     )

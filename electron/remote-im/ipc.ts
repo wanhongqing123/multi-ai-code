@@ -121,6 +121,8 @@ import type {
   RemoteImFileAttachment,
   RemoteImImageAttachment,
   RemoteImMessageOrigin,
+  RemoteImApprovalRequestInteraction,
+  RemoteImTextInteraction,
   RemoteImRoamedTextMessage,
   RemoteImRuntimeIdentity,
   ReadRemoteImImagePreviewInput,
@@ -424,7 +426,7 @@ function revokeRemoteImOutputRoutes(
 
 async function invalidateRemoteImSecurityStateForAccountChange(): Promise<void> {
   // Invalidate capabilities before the new credentials/profile become active.
-  // The generation check closes races with an in-flight /approve command, while
+  // The generation check closes races with an in-flight structured approval decision, while
   // local-takeover tombstones prevent another account from steering the same
   // still-running Codex turn.
   cancelOutgoingDeliveryAckTimeoutsForAccountChange()
@@ -508,7 +510,8 @@ function broadcastOutgoingText(
   toUserId: string,
   text: string,
   messageId?: number,
-  origin: RemoteImMessageOrigin = 'machine'
+  origin: RemoteImMessageOrigin = 'machine',
+  interaction?: RemoteImTextInteraction
 ): boolean {
   const runtimeIdentity = getRegisteredRemoteImRuntimeIdentity(projectId)
   if (!runtimeIdentity) return false
@@ -517,6 +520,7 @@ function broadcastOutgoingText(
     toUserId,
     text,
     origin,
+    ...(interaction ? { interaction } : {}),
     runtimeIdentity,
     messageId
   })
@@ -885,7 +889,8 @@ function sendImText(
 async function sendRemoteImApprovalText(
   projectId: string,
   toUserId: string,
-  text: string
+  text: string,
+  interaction?: RemoteImApprovalRequestInteraction
 ): Promise<{ ok: boolean; error?: string }> {
   if (remoteImAccountTransitioning || remoteImApprovalAuthorityMutationCount > 0) {
     return { ok: false, error: 'Remote IM account is changing' }
@@ -930,7 +935,9 @@ async function sendRemoteImApprovalText(
     projectId,
     toUserId,
     text,
-    message.id
+    message.id,
+    'machine',
+    interaction
   )
   if (!broadcasted) {
     approvalDeliveryWaiters.delete(message.id)
@@ -3018,8 +3025,8 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
         sendImText,
         sendImFile: (projectId, toUserId, localPath) =>
           sendRemoteImPeerLocalFile(projectId, localPath, toUserId, 'machine'),
-        handleApprovalCommand: (input) =>
-          getRemoteImApprovalCoordinator().handleCommand(input),
+        handleApprovalDecision: (input) =>
+          getRemoteImApprovalCoordinator().handleDecision(input),
         handleControlCommand: async ({ command, args, replyId, taskId }) => {
           const runtime = session ? getSessionRuntimeInfo(session.sessionId) : null
           const sourceKind = runtime ? getRemoteImAicliOutputSourceKind(runtime.command) : 'unknown'

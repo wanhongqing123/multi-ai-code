@@ -72,6 +72,24 @@ export type RemoteImMessageKind = 'text' | 'image' | 'file' | 'video'
  * turn's output back to IM.
  */
 export type RemoteImMessageOrigin = 'human' | 'machine'
+
+export type RemoteImApprovalAction = 'approve-once' | 'approve-prefix' | 'reject'
+
+export interface RemoteImApprovalRequestInteraction {
+  kind: 'approval-request'
+  token: string
+  actions: RemoteImApprovalAction[]
+}
+
+export interface RemoteImApprovalDecisionInteraction {
+  kind: 'approval-decision'
+  token: string
+  action: RemoteImApprovalAction
+}
+
+export type RemoteImTextInteraction =
+  | RemoteImApprovalRequestInteraction
+  | RemoteImApprovalDecisionInteraction
 export type RemoteImMessageStatus =
   | 'received'
   | 'rejected'
@@ -181,6 +199,8 @@ export interface RemoteImIncomingTextMessage {
   text: string
   /** Missing/invalid wire metadata is intentionally left undefined for the host policy. */
   origin?: RemoteImMessageOrigin
+  /** Versioned first-party interaction. Invalid or foreign wire data is discarded. */
+  interaction?: RemoteImTextInteraction
   createdAt?: number
 }
 

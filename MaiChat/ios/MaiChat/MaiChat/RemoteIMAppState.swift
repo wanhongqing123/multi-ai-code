@@ -600,15 +600,42 @@ final class RemoteIMAppState: ObservableObject {
 
     /// 直接发一段文本（语音识别结果走这里）。与 sendDraft 共用同一套排队/落库/回执逻辑，
     /// 避免语音输入这条路径漏掉其中任何一步。
-    func sendText(_ text: String) async {
-        guard canSendVoice else { return }   // 连接 + 已选联系人；正文非空由调用方保证
+    @discardableResult
+    func sendText(_ text: String) async -> Bool {
+        await sendQueuedText(text) { [client] userID, queuedText in
+            try await client.sendText(to: userID, text: queuedText)
+        }
+    }
+
+    @discardableResult
+    func sendApprovalDecision(
+        _ action: RemoteIMApprovalAction,
+        for request: RemoteIMApprovalRequest
+    ) async -> Bool {
+        guard request.allows(action) else {
+            errorMessage = "该审批请求不允许此操作"
+            return false
+        }
+        return await sendQueuedText(action.decisionDisplayText) { [client] userID, _ in
+            try await client.sendApprovalDecision(
+                to: userID,
+                token: request.token,
+                action: action
+            )
+        }
+    }
+
+    private func sendQueuedText(
+        _ text: String,
+        deliver: (String, String) async throws -> RemoteIMSendReceipt
+    ) async -> Bool {
+        guard canSendVoice else { return false }   // 连接 + 已选联系人；正文非空由调用方保证
         var queuedMessageID: UUID?
         do {
             let message = try chatState.queueOutgoingText(text)
             queuedMessageID = message.id
-            let textToSend = message.text
             enqueueHistoryUpsert(message)
-            let receipt = try await client.sendText(to: message.toUserID, text: textToSend)
+            let receipt = try await deliver(message.toUserID, message.text)
             try chatState.updateMessageDelivery(
                 id: message.id,
                 remoteID: receipt.remoteID,
@@ -616,12 +643,14 @@ final class RemoteIMAppState: ObservableObject {
             )
             enqueueCurrentMessage(id: message.id)
             errorMessage = nil
+            return true
         } catch {
             if let queuedMessageID {
                 try? chatState.updateMessageStatus(id: queuedMessageID, status: .failed)
                 enqueueCurrentMessage(id: queuedMessageID)
             }
             errorMessage = error.localizedDescription
+            return false
         }
     }
 
@@ -800,6 +829,7 @@ final class RemoteIMAppState: ObservableObject {
             event.text,
             fromUserID: event.fromUserID,
             remoteID: event.remoteID,
+            approvalRequest: event.approvalRequest,
             now: event.createdAt
         )
         let wasInserted = chatState.messages.count > previousCount

@@ -31,6 +31,15 @@ public:
     virtual void disconnectFromService(RemoteIMCompletion completion) = 0;
     virtual void deleteContact(const QString& userId, RemoteIMCompletion completion) = 0;
     virtual void sendText(const QString& peerId, const QString& text, RemoteIMSendCompletion completion) = 0;
+    virtual void sendApprovalDecision(const QString& peerId,
+                                      const QString& token,
+                                      RemoteIMApprovalAction action,
+                                      RemoteIMSendCompletion completion) {
+        Q_UNUSED(peerId);
+        Q_UNUSED(token);
+        Q_UNUSED(action);
+        if (completion) completion(false, QStringLiteral("当前 IM 客户端不支持审批按钮"), {});
+    }
     // Protocol/control frames are machine-originated even when sent through the
     // same Tencent text API. Regular chat UI continues to call sendText().
     virtual void sendMachineText(const QString& peerId, const QString& text, RemoteIMSendCompletion completion) {

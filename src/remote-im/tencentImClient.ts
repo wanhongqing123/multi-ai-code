@@ -4,26 +4,104 @@ import type {
   RemoteImIncomingFileMessage,
   RemoteImIncomingImageMessage,
   RemoteImIncomingTextMessage,
+  RemoteImApprovalAction,
   RemoteImMessageOrigin,
+  RemoteImTextInteraction,
   RemoteImRuntimeLogEntryInput
 } from '../../electron/preload.js'
 
 export const REMOTE_IM_CLOUD_METADATA_NAMESPACE = 'multi-ai-code'
-export const REMOTE_IM_CLOUD_METADATA_VERSION = 1
+export const REMOTE_IM_CLOUD_METADATA_VERSION = 2
 
 interface RemoteImCloudMetadata {
   namespace: typeof REMOTE_IM_CLOUD_METADATA_NAMESPACE
   version: typeof REMOTE_IM_CLOUD_METADATA_VERSION
   origin: RemoteImMessageOrigin
+  interaction?: RemoteImTextInteraction
 }
 
 /** Encodes transport metadata shared by Web/Electron and native MaiChat clients. */
-export function createRemoteImCloudCustomData(origin: RemoteImMessageOrigin): string {
+export function createRemoteImCloudCustomData(
+  origin: RemoteImMessageOrigin,
+  interaction?: RemoteImTextInteraction
+): string {
   return JSON.stringify({
     namespace: REMOTE_IM_CLOUD_METADATA_NAMESPACE,
     version: REMOTE_IM_CLOUD_METADATA_VERSION,
-    origin
+    origin,
+    ...(interaction ? { interaction } : {})
   } satisfies RemoteImCloudMetadata)
+}
+
+const APPROVAL_TOKEN_PATTERN = /^approval-[A-Za-z0-9_-]{1,191}$/
+const APPROVAL_ACTIONS = new Set<RemoteImApprovalAction>([
+  'approve-once',
+  'approve-prefix',
+  'reject'
+])
+
+function parseApprovalAction(value: unknown): RemoteImApprovalAction | undefined {
+  return typeof value === 'string' && APPROVAL_ACTIONS.has(value as RemoteImApprovalAction)
+    ? (value as RemoteImApprovalAction)
+    : undefined
+}
+
+function parseRemoteImTextInteraction(
+  value: unknown,
+  origin: RemoteImMessageOrigin
+): RemoteImTextInteraction | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const raw = value as Record<string, unknown>
+  const token = typeof raw.token === 'string' ? raw.token : ''
+  if (!APPROVAL_TOKEN_PATTERN.test(token)) return undefined
+
+  if (raw.kind === 'approval-request' && origin === 'machine') {
+    if (!Array.isArray(raw.actions)) return undefined
+    const actions = raw.actions.map(parseApprovalAction)
+    if (actions.some((action) => !action)) return undefined
+    const normalized = actions as RemoteImApprovalAction[]
+    if (
+      normalized.length < 2 ||
+      normalized.length > 3 ||
+      new Set(normalized).size !== normalized.length ||
+      !normalized.includes('approve-once') ||
+      !normalized.includes('reject')
+    ) {
+      return undefined
+    }
+    return { kind: 'approval-request', token, actions: normalized }
+  }
+
+  if (raw.kind === 'approval-decision' && origin === 'human') {
+    const action = parseApprovalAction(raw.action)
+    return action ? { kind: 'approval-decision', token, action } : undefined
+  }
+  return undefined
+}
+
+export function parseRemoteImCloudMetadata(value: unknown): RemoteImCloudMetadata | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined
+  try {
+    const raw = JSON.parse(value) as Record<string, unknown> | null
+    if (
+      !raw ||
+      raw.namespace !== REMOTE_IM_CLOUD_METADATA_NAMESPACE ||
+      raw.version !== REMOTE_IM_CLOUD_METADATA_VERSION ||
+      (raw.origin !== 'human' && raw.origin !== 'machine')
+    ) {
+      return undefined
+    }
+    const origin = raw.origin
+    if (raw.interaction === undefined) {
+      return { namespace: REMOTE_IM_CLOUD_METADATA_NAMESPACE, version: 2, origin }
+    }
+    const interaction = parseRemoteImTextInteraction(raw.interaction, origin)
+    return interaction
+      ? { namespace: REMOTE_IM_CLOUD_METADATA_NAMESPACE, version: 2, origin, interaction }
+      : undefined
+  } catch {
+    return undefined
+  }
 }
 
 /**
@@ -32,25 +110,11 @@ export function createRemoteImCloudCustomData(origin: RemoteImMessageOrigin): st
  * conservative fallback policy.
  */
 export function parseRemoteImMessageOrigin(cloudCustomData: unknown): RemoteImMessageOrigin | undefined {
-  if (typeof cloudCustomData !== 'string' || !cloudCustomData.trim()) return undefined
-  try {
-    const value = JSON.parse(cloudCustomData) as Partial<RemoteImCloudMetadata> | null
-    if (
-      !value ||
-      value.namespace !== REMOTE_IM_CLOUD_METADATA_NAMESPACE ||
-      value.version !== REMOTE_IM_CLOUD_METADATA_VERSION ||
-      (value.origin !== 'human' && value.origin !== 'machine')
-    ) {
-      return undefined
-    }
-    return value.origin
-  } catch {
-    return undefined
-  }
+  return parseRemoteImCloudMetadata(cloudCustomData)?.origin
 }
 
-function messageOrigin(message: Record<string, unknown>): RemoteImMessageOrigin | undefined {
-  return parseRemoteImMessageOrigin(message.cloudCustomData)
+function messageMetadata(message: Record<string, unknown>): RemoteImCloudMetadata | undefined {
+  return parseRemoteImCloudMetadata(message.cloudCustomData)
 }
 
 export interface TencentImTextMessage {
@@ -59,6 +123,7 @@ export interface TencentImTextMessage {
   toUserId: string | null
   text: string
   origin?: RemoteImMessageOrigin
+  interaction?: RemoteImTextInteraction
   createdAt?: number
 }
 
@@ -548,14 +613,15 @@ export function extractTencentImTextMessages(event: unknown): TencentImTextMessa
     if (!text) return []
     const from = typeof message.from === 'string' ? message.from : ''
     if (!from) return []
-    const origin = messageOrigin(message)
+    const metadata = messageMetadata(message)
     return [
       {
         remoteMessageId: typeof message.ID === 'string' ? message.ID : null,
         fromUserId: from,
         toUserId: typeof message.to === 'string' ? message.to : null,
         text,
-        ...(origin ? { origin } : {}),
+        ...(metadata?.origin ? { origin: metadata.origin } : {}),
+        ...(metadata?.interaction ? { interaction: metadata.interaction } : {}),
         createdAt: typeof message.time === 'number' ? message.time * 1000 : undefined
       }
     ]
@@ -589,7 +655,7 @@ export function extractTencentImRoamedTextMessages(
     const from = typeof message.from === 'string' ? message.from : ''
     if (!from) return []
     const flow = message.flow === 'out' ? 'out' : 'in'
-    const origin = messageOrigin(message)
+    const origin = messageMetadata(message)?.origin
     return [
       {
         remoteMessageId,
@@ -614,7 +680,7 @@ export function extractTencentImImageMessages(event: unknown): TencentImImageMes
     if (!image) return []
     const from = typeof message.from === 'string' ? message.from : ''
     if (!from) return []
-    const origin = messageOrigin(message)
+    const origin = messageMetadata(message)?.origin
     return [
       {
         remoteMessageId: typeof message.ID === 'string' ? message.ID : null,
@@ -638,7 +704,7 @@ export function extractTencentImFileMessages(event: unknown): TencentImFileMessa
     if (!file) return []
     const from = typeof message.from === 'string' ? message.from : ''
     if (!from) return []
-    const origin = messageOrigin(message)
+    const origin = messageMetadata(message)?.origin
     return [
       {
         remoteMessageId: typeof message.ID === 'string' ? message.ID : null,
@@ -662,7 +728,7 @@ export function extractTencentImAudioMessages(event: unknown): TencentImAudioMes
     if (!audio) return []
     const from = typeof message.from === 'string' ? message.from : ''
     if (!from) return []
-    const origin = messageOrigin(message)
+    const origin = messageMetadata(message)?.origin
     return [
       {
         remoteMessageId: typeof message.ID === 'string' ? message.ID : null,
@@ -841,6 +907,7 @@ export interface TencentImSendTextOptions {
   messageId?: number | null
   /** Defaults to machine so an unclassified programmatic sender cannot create an auto-reply loop. */
   origin?: RemoteImMessageOrigin
+  interaction?: RemoteImTextInteraction
 }
 
 export type TencentImSendImageOptions = TencentImSendTextOptions
@@ -995,7 +1062,8 @@ export async function connectTencentImClient(input: {
       const remoteMessageId = typeof message.ID === 'string' ? message.ID : null
       const toUserId = typeof message.to === 'string' ? message.to : null
       const createdAt = typeof message.time === 'number' ? message.time * 1000 : undefined
-      const origin = messageOrigin(message)
+      const metadata = messageMetadata(message)
+      const origin = metadata?.origin
 
       // 逐条消息按元素拆解：附件（图片/文件/语音）与配文来自「同一条」消息，
       // 图片 + 配文合并成一次 AICLI 投递。
@@ -1076,6 +1144,7 @@ export async function connectTencentImClient(input: {
           toUserId,
           text: parts.caption,
           ...(origin ? { origin } : {}),
+          ...(metadata?.interaction ? { interaction: metadata.interaction } : {}),
           createdAt
         })
       }
@@ -1262,7 +1331,10 @@ export async function connectTencentImClient(input: {
         to: toUserId,
         conversationType: TencentCloudChat.TYPES?.CONV_C2C ?? 'C2C',
         payload: { text },
-        cloudCustomData: createRemoteImCloudCustomData(options.origin ?? 'machine')
+        cloudCustomData: createRemoteImCloudCustomData(
+          options.origin ?? 'machine',
+          options.interaction
+        )
       })
       emitRuntimeLog('send:created', {
         peerUserId: toUserId,

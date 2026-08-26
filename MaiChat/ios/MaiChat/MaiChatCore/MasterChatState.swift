@@ -75,6 +75,169 @@ public enum MessageListAutoScrollPolicy {
     }
 }
 
+public enum RemoteIMApprovalAction: String, Codable, CaseIterable, Equatable, Hashable, Sendable {
+    case approveOnce = "approve-once"
+    case approvePrefix = "approve-prefix"
+    case reject
+
+    public var title: String {
+        switch self {
+        case .approveOnce: return "同意本次"
+        case .approvePrefix: return "同意并记住"
+        case .reject: return "拒绝"
+        }
+    }
+
+    public var decisionDisplayText: String {
+        "审批操作：\(title)"
+    }
+}
+
+public struct RemoteIMApprovalRequest: Codable, Equatable, Sendable {
+    public let token: String
+    public let actions: [RemoteIMApprovalAction]
+
+    public init?(token: String, actions: [RemoteIMApprovalAction]) {
+        guard Self.isValidToken(token),
+              actions.count >= 2,
+              actions.count <= 3,
+              Set(actions).count == actions.count,
+              actions.contains(.approveOnce),
+              actions.contains(.reject)
+        else { return nil }
+        self.token = token
+        self.actions = actions
+    }
+
+    public func allows(_ action: RemoteIMApprovalAction) -> Bool {
+        actions.contains(action)
+    }
+
+    public static func isValidToken(_ token: String) -> Bool {
+        token.hasPrefix("approval-") &&
+            token.count > "approval-".count &&
+            token.count <= 200 &&
+            token.dropFirst("approval-".count).allSatisfy { character in
+                character.isASCII &&
+                    (character.isLetter || character.isNumber || character == "-" || character == "_")
+            }
+    }
+}
+
+public enum RemoteIMMessageOrigin: String, Codable, Equatable, Sendable {
+    case human
+    case machine
+}
+
+public enum RemoteIMTextInteraction: Equatable, Sendable {
+    case approvalRequest(RemoteIMApprovalRequest)
+    case approvalDecision(token: String, action: RemoteIMApprovalAction)
+}
+
+public struct RemoteIMCloudMetadata: Equatable, Sendable {
+    public let origin: RemoteIMMessageOrigin
+    public let interaction: RemoteIMTextInteraction?
+
+    public init(origin: RemoteIMMessageOrigin, interaction: RemoteIMTextInteraction? = nil) {
+        self.origin = origin
+        self.interaction = interaction
+    }
+
+    public var approvalRequest: RemoteIMApprovalRequest? {
+        guard case let .approvalRequest(request) = interaction else { return nil }
+        return request
+    }
+}
+
+public enum RemoteIMCloudMetadataCodec {
+    public static let namespace = "multi-ai-code"
+    public static let version = 2
+
+    private struct WireInteraction: Codable {
+        let kind: String
+        let token: String
+        let actions: [String]?
+        let action: String?
+    }
+
+    private struct WireMetadata: Codable {
+        let namespace: String
+        let version: Int
+        let origin: String
+        let interaction: WireInteraction?
+    }
+
+    public static func encode(_ metadata: RemoteIMCloudMetadata) -> Data {
+        let wireInteraction: WireInteraction?
+        switch metadata.interaction {
+        case let .approvalRequest(request):
+            wireInteraction = WireInteraction(
+                kind: "approval-request",
+                token: request.token,
+                actions: request.actions.map(\.rawValue),
+                action: nil
+            )
+        case let .approvalDecision(token, action):
+            wireInteraction = WireInteraction(
+                kind: "approval-decision",
+                token: token,
+                actions: nil,
+                action: action.rawValue
+            )
+        case nil:
+            wireInteraction = nil
+        }
+        return try! JSONEncoder().encode(WireMetadata(
+            namespace: namespace,
+            version: version,
+            origin: metadata.origin.rawValue,
+            interaction: wireInteraction
+        ))
+    }
+
+    public static func decode(_ data: Data?) -> RemoteIMCloudMetadata? {
+        guard let data,
+              let wire = try? JSONDecoder().decode(WireMetadata.self, from: data),
+              wire.namespace == namespace,
+              wire.version == version,
+              let origin = RemoteIMMessageOrigin(rawValue: wire.origin)
+        else { return nil }
+        guard let interaction = wire.interaction else {
+            return RemoteIMCloudMetadata(origin: origin)
+        }
+
+        if interaction.kind == "approval-request",
+           origin == .machine,
+           interaction.action == nil,
+           let rawActions = interaction.actions,
+           rawActions.count == Set(rawActions).count
+        {
+            let actions = rawActions.compactMap(RemoteIMApprovalAction.init(rawValue:))
+            guard actions.count == rawActions.count,
+                  let request = RemoteIMApprovalRequest(token: interaction.token, actions: actions)
+            else { return nil }
+            return RemoteIMCloudMetadata(
+                origin: origin,
+                interaction: .approvalRequest(request)
+            )
+        }
+
+        if interaction.kind == "approval-decision",
+           origin == .human,
+           interaction.actions == nil,
+           RemoteIMApprovalRequest.isValidToken(interaction.token),
+           let rawAction = interaction.action,
+           let action = RemoteIMApprovalAction(rawValue: rawAction)
+        {
+            return RemoteIMCloudMetadata(
+                origin: origin,
+                interaction: .approvalDecision(token: interaction.token, action: action)
+            )
+        }
+        return nil
+    }
+}
+
 public enum RemoteIMTimestampTextPolicy {
     public static func displayText(
         for date: Date,
@@ -549,6 +712,7 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
     public let imageAttachment: RemoteIMImageAttachment?
     public let fileAttachment: RemoteIMFileAttachment?
     public var videoAttachment: RemoteIMVideoAttachment?
+    public let approvalRequest: RemoteIMApprovalRequest?
     public let direction: RemoteIMMessageDirection
     public var status: RemoteIMMessageStatus
     public var createdAt: Date
@@ -563,6 +727,7 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
         imageAttachment: RemoteIMImageAttachment? = nil,
         fileAttachment: RemoteIMFileAttachment? = nil,
         videoAttachment: RemoteIMVideoAttachment? = nil,
+        approvalRequest: RemoteIMApprovalRequest? = nil,
         direction: RemoteIMMessageDirection,
         status: RemoteIMMessageStatus,
         createdAt: Date
@@ -576,6 +741,7 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
         self.imageAttachment = imageAttachment
         self.fileAttachment = fileAttachment
         self.videoAttachment = videoAttachment
+        self.approvalRequest = approvalRequest
         self.direction = direction
         self.status = status
         self.createdAt = createdAt
@@ -1066,6 +1232,7 @@ public struct MasterChatState: Equatable {
         _ text: String,
         fromUserID: String,
         remoteID: String? = nil,
+        approvalRequest: RemoteIMApprovalRequest? = nil,
         now: Date = Date()
     ) -> RemoteIMMessage {
         if let existing = existingMessage(remoteID: remoteID) {
@@ -1077,6 +1244,7 @@ public struct MasterChatState: Equatable {
             fromUserID: cleanFromUserID,
             toUserID: ownerUserID,
             text: Self.incomingDisplayText(text),
+            approvalRequest: approvalRequest,
             direction: .incoming,
             status: .received,
             createdAt: now

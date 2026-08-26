@@ -145,6 +145,42 @@ void RemoteIMApplication::sendText(const QString& text) {
     });
 }
 
+void RemoteIMApplication::sendApprovalDecision(const QString& token,
+                                               RemoteIMApprovalAction action,
+                                               std::function<void(bool)> completion) {
+    const QString cleanToken = token.trimmed();
+    if (!isValidRemoteIMApprovalToken(cleanToken) || state_.selectedPeerId().isEmpty()) {
+        if (completion) completion(false);
+        return;
+    }
+    RemoteIMMessage message = state_.queueOutgoingText(
+        QStringLiteral("审批操作：%1").arg(remoteIMApprovalActionTitle(action)));
+    persistMessage(message);
+    emit stateChanged();
+
+    client_->sendApprovalDecision(
+        message.toUserId,
+        cleanToken,
+        action,
+        [this, messageId = message.id, completion = std::move(completion)](
+            bool ok, const QString& error, const RemoteIMSendReceipt& receipt) {
+            const QString effectiveId = adoptRemoteMessageId(
+                messageId, ok ? receipt.remoteMessageId : QString());
+            if (ok) {
+                state_.updateMessageTime(effectiveId, receipt.createdAtMillis);
+                if (database_) database_->updateMessageTime(effectiveId, receipt.createdAtMillis);
+            }
+            markMessage(
+                effectiveId,
+                ok ? RemoteIMMessageStatus::Sent : RemoteIMMessageStatus::Failed);
+            if (!ok) {
+                emit errorMessage(
+                    error.isEmpty() ? QStringLiteral("审批决定发送失败") : error);
+            }
+            if (completion) completion(ok);
+        });
+}
+
 void RemoteIMApplication::sendImage(const QString& localPath, const QString& text) {
     const QString cleanPath = localPath.trimmed();
     if (cleanPath.isEmpty() || state_.selectedPeerId().isEmpty()) return;

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { inflateSync } from 'node:zlib'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { RemoteImApprovalRequestInteraction } from '../../../electron/remote-im/types.js'
 import {
   connectTencentImClient,
   createRemoteImCloudCustomData,
@@ -13,6 +14,7 @@ import {
   generateTencentUserSig,
   extractTencentImRoamedTextMessages,
   getSentRemoteMessageId,
+  parseRemoteImCloudMetadata,
   parseRemoteImMessageOrigin
 } from '../../../src/remote-im/tencentImClient.js'
 
@@ -124,6 +126,41 @@ describe('tencent IM client helpers', () => {
     expect(parseRemoteImMessageOrigin(undefined)).toBeUndefined()
   })
 
+  it('round-trips v2 approval interactions and rejects old or wrong-direction metadata', () => {
+    const request: RemoteImApprovalRequestInteraction = {
+      kind: 'approval-request',
+      token: 'approval-wire-1',
+      actions: ['approve-once', 'approve-prefix', 'reject']
+    }
+    const decision = {
+      kind: 'approval-decision' as const,
+      token: 'approval-wire-1',
+      action: 'approve-once' as const
+    }
+
+    expect(parseRemoteImCloudMetadata(createRemoteImCloudCustomData('machine', request))).toEqual({
+      namespace: 'multi-ai-code',
+      version: 2,
+      origin: 'machine',
+      interaction: request
+    })
+    expect(parseRemoteImCloudMetadata(createRemoteImCloudCustomData('human', decision))).toEqual({
+      namespace: 'multi-ai-code',
+      version: 2,
+      origin: 'human',
+      interaction: decision
+    })
+    expect(
+      parseRemoteImCloudMetadata(createRemoteImCloudCustomData('human', request))
+    ).toBeUndefined()
+    expect(
+      parseRemoteImCloudMetadata(createRemoteImCloudCustomData('machine', decision))
+    ).toBeUndefined()
+    expect(
+      parseRemoteImCloudMetadata('{"namespace":"multi-ai-code","version":1,"origin":"human"}')
+    ).toBeUndefined()
+  })
+
   it('extracts C2C text messages from Tencent message events', () => {
     const messages = extractTencentImTextMessages({
       data: [
@@ -156,6 +193,27 @@ describe('tencent IM client helpers', () => {
         createdAt: 1782238800000
       }
     ])
+  })
+
+  it('extracts a validated approval request from text message cloud metadata', () => {
+    const interaction: RemoteImApprovalRequestInteraction = {
+      kind: 'approval-request',
+      token: 'approval-wire-2',
+      actions: ['approve-once', 'reject']
+    }
+    expect(
+      extractTencentImTextMessages({
+        data: [
+          {
+            ID: 'approval-message-1',
+            from: 'desktop_bot',
+            to: 'phone_admin',
+            payload: { text: 'Codex 请求执行一条高风险命令' },
+            cloudCustomData: createRemoteImCloudCustomData('machine', interaction)
+          }
+        ]
+      })[0]
+    ).toMatchObject({ origin: 'machine', interaction })
   })
 
   it('extracts C2C audio messages from Tencent message events', () => {
@@ -1104,6 +1162,24 @@ describe('tencent IM client helpers', () => {
       conversationType: 'C2C',
       payload: { text: 'unclassified programmatic output' },
       cloudCustomData: createRemoteImCloudCustomData('machine')
+    })
+
+    sdkMock.chat.createTextMessage.mockClear()
+    const approvalRequest: RemoteImApprovalRequestInteraction = {
+      kind: 'approval-request',
+      token: 'approval-runtime-1',
+      actions: ['approve-once', 'reject']
+    }
+    await runtime.sendText('desktop-b', 'approval', {
+      messageId: 44,
+      origin: 'machine',
+      interaction: approvalRequest
+    })
+    expect(sdkMock.chat.createTextMessage).toHaveBeenCalledWith({
+      to: 'desktop-b',
+      conversationType: 'C2C',
+      payload: { text: 'approval' },
+      cloudCustomData: createRemoteImCloudCustomData('machine', approvalRequest)
     })
 
     expect(onRuntimeLog).toHaveBeenCalledWith(

@@ -4,12 +4,31 @@
 #include <QFileInfo>
 #include <QPair>
 #include <QSet>
+#include <QStringList>
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QUuid>
 #include <QVariant>
 
 namespace {
+
+QString approvalActionsText(const QList<RemoteIMApprovalAction>& actions) {
+    QStringList values;
+    for (RemoteIMApprovalAction action : actions) {
+        values.append(remoteIMApprovalActionWireName(action));
+    }
+    return values.join(QLatin1Char(','));
+}
+
+QList<RemoteIMApprovalAction> approvalActionsFromText(const QString& text) {
+    QList<RemoteIMApprovalAction> actions;
+    for (const QString& value : text.split(QLatin1Char(','), Qt::SkipEmptyParts)) {
+        RemoteIMApprovalAction action;
+        if (!remoteIMApprovalActionFromWireName(value, &action)) return {};
+        actions.append(action);
+    }
+    return actions;
+}
 
 RemoteIMMessage messageFromQuery(const QSqlQuery& query) {
     RemoteIMMessage message;
@@ -49,6 +68,11 @@ RemoteIMMessage messageFromQuery(const QSqlQuery& query) {
         query.value(QStringLiteral("video_seconds")).toInt(),
         query.value(QStringLiteral("video_bytes")).toLongLong()
     };
+    message.approvalRequest = RemoteIMApprovalRequest{
+        query.value(QStringLiteral("approval_token")).toString(),
+        approvalActionsFromText(query.value(QStringLiteral("approval_actions")).toString())
+    };
+    message.hasApprovalRequest = message.approvalRequest.isValid();
     return message;
 }
 
@@ -110,22 +134,25 @@ void LocalMessageDatabase::migrate() {
         "  file_path     TEXT, file_name TEXT, file_mime TEXT, file_bytes INTEGER,"
         "  has_video     INTEGER NOT NULL DEFAULT 0,"
         "  video_path    TEXT, video_name TEXT, video_cover TEXT,"
-        "  video_seconds INTEGER, video_bytes INTEGER"
+        "  video_seconds INTEGER, video_bytes INTEGER,"
+        "  approval_token TEXT, approval_actions TEXT"
         ")"));
     // 老库（建于视频功能之前）没有这几列，CREATE TABLE IF NOT EXISTS 不会补。
     // 与 contacts.avatar_url 一样按 PRAGMA 判存在再 ALTER，重复启动无副作用。
     QSet<QString> messageColumns;
     query.exec(QStringLiteral("PRAGMA table_info(messages)"));
     while (query.next()) messageColumns.insert(query.value(1).toString());
-    const QList<QPair<QString, QString>> videoColumns{
+    const QList<QPair<QString, QString>> optionalColumns{
         {QStringLiteral("has_video"), QStringLiteral("INTEGER NOT NULL DEFAULT 0")},
         {QStringLiteral("video_path"), QStringLiteral("TEXT")},
         {QStringLiteral("video_name"), QStringLiteral("TEXT")},
         {QStringLiteral("video_cover"), QStringLiteral("TEXT")},
         {QStringLiteral("video_seconds"), QStringLiteral("INTEGER")},
-        {QStringLiteral("video_bytes"), QStringLiteral("INTEGER")}
+        {QStringLiteral("video_bytes"), QStringLiteral("INTEGER")},
+        {QStringLiteral("approval_token"), QStringLiteral("TEXT")},
+        {QStringLiteral("approval_actions"), QStringLiteral("TEXT")}
     };
-    for (const auto& column : videoColumns) {
+    for (const auto& column : optionalColumns) {
         if (messageColumns.contains(column.first)) continue;
         query.exec(QStringLiteral("ALTER TABLE messages ADD COLUMN %1 %2")
                        .arg(column.first, column.second));
@@ -261,8 +288,9 @@ bool LocalMessageDatabase::insertMessageIfAbsent(const RemoteIMMessage& message,
         "  has_image, image_path, image_w, image_h, image_bytes,"
         "  has_voice, voice_path, voice_seconds,"
         "  has_file, file_path, file_name, file_mime, file_bytes,"
-        "  has_video, video_path, video_name, video_cover, video_seconds, video_bytes"
-        ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"));
+        "  has_video, video_path, video_name, video_cover, video_seconds, video_bytes,"
+        "  approval_token, approval_actions"
+        ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"));
     query.addBindValue(message.id);
     query.addBindValue(message.fromUserId);
     query.addBindValue(message.toUserId);
@@ -290,6 +318,9 @@ bool LocalMessageDatabase::insertMessageIfAbsent(const RemoteIMMessage& message,
     query.addBindValue(message.video.coverPath);
     query.addBindValue(message.video.durationSeconds);
     query.addBindValue(message.video.sizeBytes);
+    query.addBindValue(message.hasApprovalRequest ? message.approvalRequest.token : QString());
+    query.addBindValue(
+        message.hasApprovalRequest ? approvalActionsText(message.approvalRequest.actions) : QString());
     if (!query.exec()) return false;
     const bool inserted = query.numRowsAffected() > 0;
     if (!inserted && message.createdAtMillis > 0) {

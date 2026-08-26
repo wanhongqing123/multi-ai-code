@@ -226,7 +226,8 @@ final class LocalChatHistoryStore {
                 database,
                 sql: """
                 SELECT id, remote_id, from_user, to_user, text, direction, status, created_at,
-                       voice_attachment, image_attachment, file_attachment, video_attachment
+                       voice_attachment, image_attachment, file_attachment, video_attachment,
+                       approval_request
                 FROM messages
                 WHERE sdk_app_id = ? AND owner_user_id = ?
                   AND peer_user_id = ?
@@ -293,7 +294,8 @@ final class LocalChatHistoryStore {
                 database,
                 sql: """
                 SELECT id, remote_id, from_user, to_user, text, direction, status, created_at,
-                       voice_attachment, image_attachment, file_attachment, video_attachment
+                       voice_attachment, image_attachment, file_attachment, video_attachment,
+                       approval_request
                 FROM messages
                 WHERE sdk_app_id = ? AND owner_user_id = ? AND peer_user_id = ?
                 ORDER BY created_at DESC, id DESC
@@ -485,6 +487,7 @@ final class LocalChatHistoryStore {
                   image_attachment = excluded.image_attachment,
                   file_attachment = excluded.file_attachment,
                   video_attachment = excluded.video_attachment,
+                  approval_request = excluded.approval_request,
                   peer_user_id = excluded.peer_user_id
               """
             : "DO NOTHING"
@@ -494,8 +497,9 @@ final class LocalChatHistoryStore {
             INSERT INTO messages(
                 sdk_app_id, owner_user_id, id, remote_id, from_user, to_user, text,
                 direction, status, created_at,
-                voice_attachment, image_attachment, file_attachment, video_attachment, peer_user_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                voice_attachment, image_attachment, file_attachment, video_attachment,
+                approval_request, peer_user_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(sdk_app_id, owner_user_id, id) \(conflictClause)
             """
         )
@@ -573,10 +577,11 @@ final class LocalChatHistoryStore {
             try bindOptionalJSON(persistedImageAttachment, to: statement, at: 12, database: database)
             try bindOptionalJSON(persistedFileAttachment, to: statement, at: 13, database: database)
             try bindOptionalJSON(persistedVideoAttachment, to: statement, at: 14, database: database)
+            try bindOptionalJSON(message.approvalRequest, to: statement, at: 15, database: database)
             let peerUserID = message.fromUserID == ownerUserID
                 ? message.toUserID
                 : message.fromUserID
-            try bindText(peerUserID, to: statement, at: 15, database: database)
+            try bindText(peerUserID, to: statement, at: 16, database: database)
             guard sqlite3_step(statement) == SQLITE_DONE else {
                 throw databaseError(database)
             }
@@ -656,6 +661,10 @@ final class LocalChatHistoryStore {
                 sizeBytes: $0.sizeBytes
             )
         }
+        let approvalRequest = decodeOptionalJSON(
+            RemoteIMApprovalRequest.self,
+            from: optionalTextColumn(statement, at: 12)
+        )
 
         return RemoteIMMessage(
             id: id,
@@ -667,6 +676,7 @@ final class LocalChatHistoryStore {
             imageAttachment: imageAttachment,
             fileAttachment: fileAttachment,
             videoAttachment: videoAttachment,
+            approvalRequest: approvalRequest,
             direction: direction,
             status: status,
             createdAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 7))
@@ -721,6 +731,7 @@ final class LocalChatHistoryStore {
                 image_attachment TEXT,
                 file_attachment TEXT,
                 video_attachment TEXT,
+                approval_request TEXT,
                 peer_user_id TEXT,
                 PRIMARY KEY (sdk_app_id, owner_user_id, id)
             )
@@ -734,6 +745,9 @@ final class LocalChatHistoryStore {
         }
         if try !columnExists("video_attachment", in: "messages", database: database) {
             try execute(database, sql: "ALTER TABLE messages ADD COLUMN video_attachment TEXT")
+        }
+        if try !columnExists("approval_request", in: "messages", database: database) {
+            try execute(database, sql: "ALTER TABLE messages ADD COLUMN approval_request TEXT")
         }
         if previousSchemaVersion < 3 {
             try execute(
@@ -769,8 +783,8 @@ final class LocalChatHistoryStore {
             ON messages(sdk_app_id, owner_user_id, peer_user_id, created_at DESC, id DESC)
             """
         )
-        if previousSchemaVersion < 4 {
-            try execute(database, sql: "PRAGMA user_version = 4")
+        if previousSchemaVersion < 5 {
+            try execute(database, sql: "PRAGMA user_version = 5")
         }
     }
 

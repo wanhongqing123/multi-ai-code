@@ -14,6 +14,7 @@ class RemoteIMApplicationTest : public QObject {
 
 private slots:
     void sendsTextThroughClientAndMarksSent();
+    void sendsStructuredApprovalDecisionAndMarksSent();
     void sendsFileThroughClientAndMarksSent();
     void sendsVideoWithParsedMetadataAndGeneratedCover();
     void refusesUnsupportedVideoContainers();
@@ -45,6 +46,25 @@ void RemoteIMApplicationTest::sendsTextThroughClientAndMarksSent() {
     QCOMPARE(messages.size(), 1);
     QCOMPARE(messages.first().status, RemoteIMMessageStatus::Sent);
     QVERIFY(stateSpy.count() >= 2);
+}
+
+void RemoteIMApplicationTest::sendsStructuredApprovalDecisionAndMarksSent() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    auto* fakeClient = client.get();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+    app.sendApprovalDecision(
+        QStringLiteral("approval-desktop-1"),
+        RemoteIMApprovalAction::ApprovePrefix);
+
+    QCOMPARE(fakeClient->lastTextPeerId(), QStringLiteral("phone-user"));
+    QCOMPARE(fakeClient->lastApprovalToken(), QStringLiteral("approval-desktop-1"));
+    QCOMPARE(fakeClient->lastApprovalAction(), RemoteIMApprovalAction::ApprovePrefix);
+    const QList<RemoteIMMessage> messages = app.chatState().messagesWith(QStringLiteral("phone-user"));
+    QCOMPARE(messages.size(), 1);
+    QCOMPARE(messages.first().text, QStringLiteral("审批操作：同意并记住"));
+    QCOMPARE(messages.first().status, RemoteIMMessageStatus::Sent);
 }
 
 void RemoteIMApplicationTest::sendsFileThroughClientAndMarksSent() {

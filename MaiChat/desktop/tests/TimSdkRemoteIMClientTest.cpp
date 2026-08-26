@@ -151,6 +151,7 @@ class TimSdkRemoteIMClientTest : public QObject {
 
 private slots:
     void connectsThroughSdkAndSendsTextAndImage();
+    void sendsApprovalDecisionAsV2CloudInteraction();
     void sendsImageWithTextAsSingleMultiElemMessage();
     void sendsVideoWithEverySdkRequiredField();
     void sendsVideoWithTextAsSingleMultiElemMessage();
@@ -158,6 +159,7 @@ private slots:
     void deletesFriendAndConversationThroughSdk();
     void fetchesContactsConversationsAndHistoryAfterLogin();
     void emitsIncomingTextAndImageFromSdkMessages();
+    void emitsIncomingApprovalRequestFromV2CloudMetadata();
     void emitsIncomingGenericFileWithRealMimeType();
     void mergesCaptionIntoGenericFileMessage();
     void loadsGenericFileFromHistory();
@@ -202,7 +204,7 @@ void TimSdkRemoteIMClientTest::connectsThroughSdkAndSendsTextAndImage() {
     QCOMPARE(elem.value(QStringLiteral("text_elem_content")).toString(), QStringLiteral("hello\nworld"));
     QJsonObject metadata = messageMetadata(fake->lastJsonMessage);
     QCOMPARE(metadata.value(QStringLiteral("namespace")).toString(), QStringLiteral("multi-ai-code"));
-    QCOMPARE(metadata.value(QStringLiteral("version")).toInt(), 1);
+    QCOMPARE(metadata.value(QStringLiteral("version")).toInt(), 2);
     QCOMPARE(metadata.value(QStringLiteral("origin")).toString(), QStringLiteral("human"));
 
     // Remote-desktop/control frames use the same text transport but must not
@@ -223,6 +225,34 @@ void TimSdkRemoteIMClientTest::connectsThroughSdkAndSendsTextAndImage() {
     QCOMPARE(elem.value(QStringLiteral("image_elem_level")).toInt(), 0);
     metadata = messageMetadata(fake->lastJsonMessage);
     QCOMPARE(metadata.value(QStringLiteral("origin")).toString(), QStringLiteral("human"));
+}
+
+void TimSdkRemoteIMClientTest::sendsApprovalDecisionAsV2CloudInteraction() {
+    auto api = std::make_unique<FakeTimSdkApi>();
+    auto* fake = api.get();
+    TimSdkRemoteIMClient client(std::move(api));
+
+    bool sent = false;
+    client.sendApprovalDecision(
+        QStringLiteral("phone-user"),
+        QStringLiteral("approval-desktop-1"),
+        RemoteIMApprovalAction::ApproveOnce,
+        [&](bool ok, const QString&, const RemoteIMSendReceipt&) { sent = ok; });
+
+    QVERIFY(sent);
+    QCOMPARE(
+        firstElement(fake->lastJsonMessage).value(QStringLiteral("text_elem_content")).toString(),
+        QStringLiteral("审批操作：同意本次"));
+    const QJsonObject metadata = messageMetadata(fake->lastJsonMessage);
+    QCOMPARE(metadata.value(QStringLiteral("version")).toInt(), 2);
+    QCOMPARE(metadata.value(QStringLiteral("origin")).toString(), QStringLiteral("human"));
+    const QJsonObject interaction = metadata.value(QStringLiteral("interaction")).toObject();
+    QCOMPARE(interaction.value(QStringLiteral("kind")).toString(),
+             QStringLiteral("approval-decision"));
+    QCOMPARE(interaction.value(QStringLiteral("token")).toString(),
+             QStringLiteral("approval-desktop-1"));
+    QCOMPARE(interaction.value(QStringLiteral("action")).toString(),
+             QStringLiteral("approve-once"));
 }
 
 void TimSdkRemoteIMClientTest::sendsImageWithTextAsSingleMultiElemMessage() {
@@ -470,7 +500,7 @@ void TimSdkRemoteIMClientTest::emitsIncomingTextAndImageFromSdkMessages() {
         {QStringLiteral("message_msg_id"), QStringLiteral("sdk-msg-1")},
         {QStringLiteral("message_server_time"), 1700000000},
         {QStringLiteral("message_cloud_custom_str"),
-         QStringLiteral("{\"namespace\":\"multi-ai-code\",\"version\":1,\"origin\":\"human\"}")},
+         QStringLiteral("{\"namespace\":\"multi-ai-code\",\"version\":2,\"origin\":\"human\"}")},
         {QStringLiteral("message_elem_array"), QJsonArray{
             QJsonObject{
                 {QStringLiteral("elem_type"), 0},
@@ -507,6 +537,58 @@ void TimSdkRemoteIMClientTest::emitsIncomingTextAndImageFromSdkMessages() {
     QCOMPARE(image.createdAtMillis, Q_INT64_C(1700000000) * 1000);
     // 实时推送不得串入漫游通道（否则未读红点永远不累计）。
     QCOMPARE(roamingSpy.count(), 0);
+}
+
+void TimSdkRemoteIMClientTest::emitsIncomingApprovalRequestFromV2CloudMetadata() {
+    auto api = std::make_unique<FakeTimSdkApi>();
+    auto* fake = api.get();
+    TimSdkRemoteIMClient client(std::move(api));
+    QSignalSpy messagesSpy(&client, &RemoteIMClient::liveMessagesReceived);
+
+    client.connectToService(123456, QStringLiteral("desktop-user"), QStringLiteral("sig-value"), nullptr);
+    fake->emitMessages(QJsonArray{QJsonObject{
+        {QStringLiteral("message_is_from_self"), false},
+        {QStringLiteral("message_sender"), QStringLiteral("multi-ai-code")},
+        {QStringLiteral("message_msg_id"), QStringLiteral("approval-request-1")},
+        {QStringLiteral("message_cloud_custom_str"), QStringLiteral(
+            "{\"namespace\":\"multi-ai-code\",\"version\":2,\"origin\":\"machine\","
+            "\"interaction\":{\"kind\":\"approval-request\",\"token\":\"approval-desktop-2\","
+            "\"actions\":[\"approve-once\",\"approve-prefix\",\"reject\"]}}")},
+        {QStringLiteral("message_elem_array"), QJsonArray{QJsonObject{
+            {QStringLiteral("elem_type"), 0},
+            {QStringLiteral("text_elem_content"), QStringLiteral("Codex 请求执行一条高风险命令")}
+        }}}
+    }});
+
+    QCOMPARE(messagesSpy.count(), 1);
+    const auto messages = messagesSpy.takeFirst().at(0).value<QList<RemoteIMMessage>>();
+    QCOMPARE(messages.size(), 1);
+    QVERIFY(messages.first().hasApprovalRequest);
+    QCOMPARE(messages.first().approvalRequest.token, QStringLiteral("approval-desktop-2"));
+    QVERIFY(messages.first().approvalRequest.actions
+            == QList<RemoteIMApprovalAction>({RemoteIMApprovalAction::ApproveOnce,
+                                              RemoteIMApprovalAction::ApprovePrefix,
+                                              RemoteIMApprovalAction::Reject}));
+
+    // 用户明确不兼容旧协议：v1 即使伪装成相同正文，也只能作为普通未知来源文本。
+    fake->emitMessages(QJsonArray{QJsonObject{
+        {QStringLiteral("message_is_from_self"), false},
+        {QStringLiteral("message_sender"), QStringLiteral("multi-ai-code")},
+        {QStringLiteral("message_msg_id"), QStringLiteral("approval-request-v1")},
+        {QStringLiteral("message_cloud_custom_str"), QStringLiteral(
+            "{\"namespace\":\"multi-ai-code\",\"version\":1,\"origin\":\"machine\","
+            "\"interaction\":{\"kind\":\"approval-request\",\"token\":\"approval-old\","
+            "\"actions\":[\"approve-once\",\"reject\"]}}")},
+        {QStringLiteral("message_elem_array"), QJsonArray{QJsonObject{
+            {QStringLiteral("elem_type"), 0},
+            {QStringLiteral("text_elem_content"), QStringLiteral("旧审批协议")}
+        }}}
+    }});
+    QCOMPARE(messagesSpy.count(), 1);
+    const auto oldMessages = messagesSpy.takeFirst().at(0).value<QList<RemoteIMMessage>>();
+    QCOMPARE(oldMessages.size(), 1);
+    QVERIFY(!oldMessages.first().hasApprovalRequest);
+    QCOMPARE(oldMessages.first().origin, RemoteIMMessageOrigin::Unknown);
 }
 
 // 普通文件（非 md/html）曾被接收解析层的白名单直接丢弃：消息根本不会生成，

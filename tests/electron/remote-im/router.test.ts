@@ -716,10 +716,15 @@ describe('remote IM router', () => {
     })
   })
 
-  it('consumes approval commands before slash parsing or AICLI task routing', async () => {
+  it('consumes structured approval decisions before AICLI task routing', async () => {
     const store = createMessageStore()
     const sentToAicli: string[] = []
-    const approvalInputs: Array<{ projectId: string; fromUserId: string; text: string }> = []
+    const approvalInputs: Array<{
+      projectId: string
+      fromUserId: string
+      token: string
+      action: 'approve-once' | 'approve-prefix' | 'reject'
+    }> = []
     const sentToIm: string[] = []
     const router = createRemoteImRouter({
       getConfig: () => config,
@@ -732,7 +737,7 @@ describe('remote IM router', () => {
         sentToIm.push(text)
         return { ok: true }
       },
-      handleApprovalCommand: async (input) => {
+      handleApprovalDecision: async (input) => {
         approvalInputs.push(input)
         return { handled: true, ok: true, text: '已批准这一次命令执行。' }
       },
@@ -747,8 +752,13 @@ describe('remote IM router', () => {
       remoteMessageId: 'remote-approval-1',
       fromUserId: 'phone_admin',
       toUserId: 'desktop_bot',
-      text: '/approve approval-public-a',
+      text: '审批操作：同意本次',
       origin: 'human',
+      interaction: {
+        kind: 'approval-decision',
+        token: 'approval-public-a',
+        action: 'approve-once'
+      },
       createdAt: 100
     })
 
@@ -757,7 +767,8 @@ describe('remote IM router', () => {
       {
         projectId: 'project-1',
         fromUserId: 'phone_admin',
-        text: '/approve approval-public-a'
+        token: 'approval-public-a',
+        action: 'approve-once'
       }
     ])
     expect(sentToAicli).toEqual([])
@@ -771,10 +782,10 @@ describe('remote IM router', () => {
     })
   })
 
-  it('consumes an approval command sent by another AICLI through imcli', async () => {
+  it('rejects approval decisions carrying a machine origin', async () => {
     const store = createMessageStore()
     const sentToAicli: string[] = []
-    const approvalInputs: Array<{ projectId: string; fromUserId: string; text: string }> = []
+    const approvalInputs: unknown[] = []
     const router = createRemoteImRouter({
       getConfig: () => config,
       resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo' }),
@@ -783,7 +794,7 @@ describe('remote IM router', () => {
         return { ok: true }
       },
       sendImText: async () => ({ ok: true }),
-      handleApprovalCommand: async (input) => {
+      handleApprovalDecision: async (input) => {
         approvalInputs.push(input)
         return { handled: true, ok: true, text: '已批准这一次命令执行。' }
       },
@@ -795,21 +806,20 @@ describe('remote IM router', () => {
       remoteMessageId: 'remote-machine-approval-1',
       fromUserId: 'phone_admin',
       toUserId: 'desktop_bot',
-      text: '/approve approval-public-a',
+      text: '审批操作：同意本次',
       origin: 'machine',
+      interaction: {
+        kind: 'approval-decision',
+        token: 'approval-public-a',
+        action: 'approve-once'
+      },
       createdAt: 100
     })
 
-    expect(result.ok).toBe(true)
-    expect(approvalInputs).toEqual([
-      {
-        projectId: 'project-1',
-        fromUserId: 'phone_admin',
-        text: '/approve approval-public-a'
-      }
-    ])
+    expect(result.ok).toBe(false)
+    expect(approvalInputs).toEqual([])
     expect(sentToAicli).toEqual([])
-    expect(store.messages[0]).toMatchObject({ role: 'aicli', status: 'received' })
+    expect(store.messages[0]).toMatchObject({ role: 'aicli', status: 'rejected' })
   })
 
   it('routes a transported approval result into the receiving AICLI without automatic IM output', async () => {
@@ -823,7 +833,7 @@ describe('remote IM router', () => {
         wireTexts.push(text)
         return { ok: true }
       },
-      handleApprovalCommand: async () => ({
+      handleApprovalDecision: async () => ({
         handled: true,
         ok: true,
         text: '已拒绝这一次命令执行。'
@@ -835,8 +845,13 @@ describe('remote IM router', () => {
       remoteMessageId: 'approval-reply',
       fromUserId: 'phone_admin',
       toUserId: 'desktop_bot',
-      text: '/reject approval-public-a',
-      origin: 'human'
+      text: '审批操作：拒绝',
+      origin: 'human',
+      interaction: {
+        kind: 'approval-decision',
+        token: 'approval-public-a',
+        action: 'reject'
+      }
     })
 
     const receiverStore = createMessageStore()

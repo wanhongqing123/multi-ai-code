@@ -39,6 +39,7 @@ private slots:
     void adoptsMessageIdAndResolvesConflict();
     void loadsRecentPagePerPeerAndPagesBackward();
     void roundTripsVideoAttachment();
+    void roundTripsApprovalRequest();
     void upgradesPreVideoDatabaseWithoutLosingOldMessages();
 };
 
@@ -249,7 +250,7 @@ void LocalMessageDatabaseTest::roundTripsVideoAttachment() {
     const QList<RemoteIMMessage> messages = restored.messagesWith(QStringLiteral("peer"));
     QCOMPARE(messages.size(), 1);
     const RemoteIMMessage& loaded = messages.first();
-    // 插入是位置绑定（27 个 ?），列名单/占位符/绑定顺序错位不会报错，只会把值写进
+    // 插入是位置绑定（29 个 ?），列名单/占位符/绑定顺序错位不会报错，只会把值写进
     // 相邻的列。逐字段比对是唯一能发现错位的手段。
     QVERIFY(loaded.hasVideo);
     QVERIFY(!loaded.hasFile);
@@ -260,6 +261,35 @@ void LocalMessageDatabaseTest::roundTripsVideoAttachment() {
     QCOMPARE(loaded.video.durationSeconds, 42);
     QCOMPARE(loaded.video.sizeBytes, 8388608LL);
     QCOMPARE(loaded.text, QStringLiteral("看下这段录屏"));
+}
+
+void LocalMessageDatabaseTest::roundTripsApprovalRequest() {
+    QTemporaryDir dir;
+    LocalMessageDatabase db(dir.filePath("messages.db"));
+    QVERIFY(db.isOpen());
+
+    RemoteIMMessage message = makeTextMessage(
+        QStringLiteral("approval-1"),
+        QStringLiteral("multi-ai-code"),
+        QStringLiteral("me"),
+        RemoteIMMessageDirection::Incoming,
+        1700000000100LL,
+        QStringLiteral("Codex 请求执行一条高风险命令"));
+    message.hasApprovalRequest = true;
+    message.approvalRequest = RemoteIMApprovalRequest{
+        QStringLiteral("approval-desktop-persisted"),
+        {RemoteIMApprovalAction::ApproveOnce,
+         RemoteIMApprovalAction::ApprovePrefix,
+         RemoteIMApprovalAction::Reject}
+    };
+    QVERIFY(db.insertMessageIfAbsent(message, QStringLiteral("multi-ai-code")));
+
+    ChatState restored(QStringLiteral("me"));
+    db.loadInto(restored);
+    const RemoteIMMessage loaded = restored.messagesWith(QStringLiteral("multi-ai-code")).first();
+    QVERIFY(loaded.hasApprovalRequest);
+    QCOMPARE(loaded.approvalRequest.token, QStringLiteral("approval-desktop-persisted"));
+    QVERIFY(loaded.approvalRequest.actions == message.approvalRequest.actions);
 }
 
 void LocalMessageDatabaseTest::upgradesPreVideoDatabaseWithoutLosingOldMessages() {
@@ -320,7 +350,8 @@ void LocalMessageDatabaseTest::upgradesPreVideoDatabaseWithoutLosingOldMessages(
         QSqlDatabase::removeDatabase(QStringLiteral("probe_schema"));
         for (const QString& expected : {QStringLiteral("has_video"), QStringLiteral("video_path"),
                                         QStringLiteral("video_name"), QStringLiteral("video_cover"),
-                                        QStringLiteral("video_seconds"), QStringLiteral("video_bytes")}) {
+                                        QStringLiteral("video_seconds"), QStringLiteral("video_bytes"),
+                                        QStringLiteral("approval_token"), QStringLiteral("approval_actions")}) {
             QVERIFY2(columns.contains(expected), qPrintable(QStringLiteral("缺列 %1").arg(expected)));
         }
 

@@ -1415,6 +1415,24 @@ private struct MessageBubbleView: View {
                         )
                     }
                     .buttonStyle(.plain)
+                } else if let approvalRequest = message.approvalRequest {
+                    VStack(alignment: .leading, spacing: 12) {
+                        MarkdownLikeText(message.text)
+                            .font(.system(size: 13, weight: .regular))
+                            .lineSpacing(3)
+                            .foregroundStyle(RemoteIMStyle.textPrimary)
+                            .lineLimit(nil)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .layoutPriority(1)
+
+                        Divider()
+
+                        RemoteIMApprovalActionsView(
+                            request: approvalRequest,
+                            messageID: message.id
+                        )
+                    }
                 } else {
                     MarkdownLikeText(message.text)
                         .font(.system(size: 13, weight: .regular))
@@ -1447,6 +1465,94 @@ private struct MessageBubbleView: View {
 
     private var bubbleBorder: Color {
         message.direction == .outgoing ? Color(red: 0.764, green: 0.873, blue: 0.996) : RemoteIMStyle.yellowBorder
+    }
+}
+
+private struct RemoteIMApprovalActionsView: View {
+    let request: RemoteIMApprovalRequest
+    let messageID: UUID
+    @EnvironmentObject private var appState: RemoteIMAppState
+    @State private var submittingAction: RemoteIMApprovalAction?
+    @State private var submittedAction: RemoteIMApprovalAction?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            if submittedAction != nil {
+                Label("审批选择已发送", systemImage: "checkmark.circle.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(RemoteIMStyle.green)
+                    .accessibilityIdentifier("remote-im-approval-sent")
+            } else {
+                ForEach(request.actions, id: \.self) { action in
+                    Button {
+                        submit(action)
+                    } label: {
+                        HStack(spacing: 8) {
+                            if submittingAction == action {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .tint(action == .reject ? .red : .white)
+                            }
+                            Text(action.title)
+                                .font(.system(size: 14, weight: .semibold))
+                            Spacer(minLength: 0)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal, 12)
+                        .frame(height: 40)
+                        .foregroundStyle(action == .reject ? Color.red : Color.white)
+                        .background(
+                            action == .reject ? Color.clear : approvalButtonColor(action),
+                            in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                .stroke(
+                                    action == .reject ? Color.red.opacity(0.72) : Color.clear,
+                                    lineWidth: 1
+                                )
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(submittingAction != nil)
+                    .accessibilityIdentifier("remote-im-approval-\(action.rawValue)")
+                }
+            }
+        }
+    }
+
+    private func approvalButtonColor(_ action: RemoteIMApprovalAction) -> Color {
+        action == .approvePrefix ? RemoteIMStyle.green : RemoteIMStyle.blue
+    }
+
+    private func submit(_ action: RemoteIMApprovalAction) {
+        guard submittingAction == nil, submittedAction == nil else { return }
+        submittingAction = action
+        AppDiagnosticLog.shared.record(
+            level: .info,
+            category: "approval",
+            event: "button-tapped",
+            fields: [
+                "action": action.rawValue,
+                "message_id": messageID.uuidString,
+            ]
+        )
+        Task {
+            let sent = await appState.sendApprovalDecision(action, for: request)
+            if sent {
+                submittedAction = action
+            }
+            submittingAction = nil
+            AppDiagnosticLog.shared.record(
+                level: sent ? .info : .error,
+                category: "approval",
+                event: sent ? "button-sent" : "button-send-failed",
+                fields: [
+                    "action": action.rawValue,
+                    "message_id": messageID.uuidString,
+                ]
+            )
+        }
     }
 }
 

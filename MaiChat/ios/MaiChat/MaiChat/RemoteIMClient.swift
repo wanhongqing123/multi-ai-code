@@ -1,16 +1,12 @@
 import Foundation
 import MaiChatCore
 
-enum RemoteIMMessageOrigin: String, Equatable, Sendable {
-    case human
-    case machine
-}
-
 struct IncomingRemoteIMText: Equatable {
     let fromUserID: String
     let text: String
     let remoteID: String?
     let origin: RemoteIMMessageOrigin?
+    let approvalRequest: RemoteIMApprovalRequest?
     let createdAt: Date
 }
 
@@ -128,6 +124,11 @@ protocol RemoteIMClient: AnyObject {
     func connect(sdkAppID: Int, userID: String, userSig: String) async throws
     func disconnect() async
     func sendText(to userID: String, text: String, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt
+    func sendApprovalDecision(
+        to userID: String,
+        token: String,
+        action: RemoteIMApprovalAction
+    ) async throws -> RemoteIMSendReceipt
     func sendVoice(to userID: String, recording: RemoteIMVoiceRecording, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt
     func sendImage(to userID: String, image: RemoteIMImageFile, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt
     func sendVideo(to userID: String, video: RemoteIMVideoFile, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt

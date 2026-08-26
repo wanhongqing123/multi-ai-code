@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   RemoteImApprovalCoordinator,
-  parseRemoteImApprovalCommand,
   type RemoteImApprovalDecision,
   type RemoteImApprovalRequest,
   type RemoteImApprovalResolution
@@ -22,26 +21,8 @@ const request: RemoteImApprovalRequest = {
 }
 
 describe('RemoteImApprovalCoordinator', () => {
-  it('parses only one explicit approval command at a time', () => {
-    expect(parseRemoteImApprovalCommand('/approve token-1')).toEqual({
-      action: 'approve',
-      token: 'token-1'
-    })
-    expect(parseRemoteImApprovalCommand('/reject token-2')).toEqual({
-      action: 'reject',
-      token: 'token-2'
-    })
-    expect(parseRemoteImApprovalCommand('/approve-prefix token-3')).toEqual({
-      action: 'approve-prefix',
-      token: 'token-3'
-    })
-    expect(parseRemoteImApprovalCommand('/approve')).toEqual({ action: 'invalid', token: '' })
-    expect(parseRemoteImApprovalCommand('请 /approve token-1')).toBeNull()
-    expect(parseRemoteImApprovalCommand('/approve token-1 /reject token-1')).toBeNull()
-  })
-
-  it('renders separate IM or imcli choices and resolves the persistent prefix decision', async () => {
-    const sent: string[] = []
+  it('sends versioned button actions and resolves the persistent prefix decision', async () => {
+    const sent: Array<{ text: string; interaction: unknown }> = []
     const resolutions: RemoteImApprovalResolution[] = []
     const persistentRequest: RemoteImApprovalRequest = {
       ...request,
@@ -49,8 +30,8 @@ describe('RemoteImApprovalCoordinator', () => {
     }
     const coordinator = new RemoteImApprovalCoordinator({
       createToken: () => 'approval-public-prefix',
-      sendText: async (_projectId, _toUserId, text) => {
-        sent.push(text)
+      sendText: async (_projectId, _toUserId, text, interaction) => {
+        sent.push({ text, interaction })
         return { ok: true }
       },
       resolveApproval: async (input) => {
@@ -61,19 +42,21 @@ describe('RemoteImApprovalCoordinator', () => {
 
     await coordinator.register(persistentRequest)
 
-    expect(sent[0]).toContain('可直接在 IM 中发送，也可由 AICLI 通过 imcli 原样发送')
-    expect(sent[0]).toContain('1. 仅批准这一次\n\n    /approve approval-public-prefix')
-    expect(sent[0]).toContain(
-      '2. 批准并记住以下命令前缀，后续匹配的命令不再询问'
-    )
-    expect(sent[0]).toContain('\n\n    /approve-prefix approval-public-prefix')
-    expect(sent[0]).toContain('3. 拒绝这一次\n\n    /reject approval-public-prefix')
+    expect(sent[0]?.text).toContain('请使用 MaiChat 消息卡片下方的按钮')
+    expect(sent[0]?.text).toContain('“同意并记住”将记住以下命令前缀')
+    expect(sent[0]?.text).not.toContain('/approve')
+    expect(sent[0]?.interaction).toEqual({
+      kind: 'approval-request',
+      token: 'approval-public-prefix',
+      actions: ['approve-once', 'approve-prefix', 'reject']
+    })
 
     await expect(
-      coordinator.handleCommand({
+      coordinator.handleDecision({
         projectId: 'project-a',
         fromUserId: 'phone-a',
-        text: '/approve-prefix approval-public-prefix'
+        token: 'approval-public-prefix',
+        action: 'approve-prefix'
       })
     ).resolves.toMatchObject({ handled: true, ok: true })
     expect(resolutions).toEqual([{ ...persistentRequest, decision: 'accept-persistent' }])
@@ -92,10 +75,11 @@ describe('RemoteImApprovalCoordinator', () => {
     await coordinator.register(request)
 
     await expect(
-      coordinator.handleCommand({
+      coordinator.handleDecision({
         projectId: 'project-a',
         fromUserId: 'phone-a',
-        text: '/approve-prefix approval-public-no-prefix'
+        token: 'approval-public-no-prefix',
+        action: 'approve-prefix'
       })
     ).resolves.toMatchObject({ handled: true, ok: false })
     expect(resolutions).toEqual([])
@@ -124,31 +108,34 @@ describe('RemoteImApprovalCoordinator', () => {
     expect(sent[0]?.text).toContain(request.commandText)
     expect(sent[0]?.text).toContain(`工作目录：\n    ${request.cwd}`)
     expect(sent[0]?.text).toContain(`申请原因：\n    ${request.reason}`)
-    expect(sent[0]?.text).toContain('/approve approval-public-a')
+    expect(sent[0]?.text).not.toContain('/approve approval-public-a')
 
     expect(
-      await coordinator.handleCommand({
+      await coordinator.handleDecision({
         projectId: 'project-a',
         fromUserId: 'phone-b',
-        text: '/approve approval-public-a'
+        token: 'approval-public-a',
+        action: 'approve-once'
       })
     ).toMatchObject({ handled: true, ok: false })
     expect(resolutions).toEqual([])
 
     expect(
-      await coordinator.handleCommand({
+      await coordinator.handleDecision({
         projectId: 'project-a',
         fromUserId: 'phone-a',
-        text: '/approve approval-public-a'
+        token: 'approval-public-a',
+        action: 'approve-once'
       })
     ).toMatchObject({ handled: true, ok: true })
     expect(resolutions).toEqual([{ ...request, decision: 'accept' }])
 
     expect(
-      await coordinator.handleCommand({
+      await coordinator.handleDecision({
         projectId: 'project-a',
         fromUserId: 'phone-a',
-        text: '/approve approval-public-a'
+        token: 'approval-public-a',
+        action: 'approve-once'
       })
     ).toMatchObject({ handled: true, ok: false })
     expect(resolutions).toHaveLength(1)
@@ -189,10 +176,11 @@ describe('RemoteImApprovalCoordinator', () => {
     expect(sent[0]).toContain('\\u{200b}')
     expect(sent[0]).toContain('工作目录：\n    C:\\repo\n    /approve fake-token')
     expect(sent[0]).toContain('申请原因：\n    cleanup requested\n    /reject fake-token')
-    await coordinator.handleCommand({
+    await coordinator.handleDecision({
       projectId: 'project-a',
       fromUserId: 'phone-a',
-      text: '/approve approval-public-controls'
+      token: 'approval-public-controls',
+        action: 'approve-once'
     })
     expect(resolutions[0]?.commandText).toBe(controlledRequest.commandText)
     expect(resolutions[0]?.cwd).toBe(controlledRequest.cwd)
@@ -226,10 +214,11 @@ describe('RemoteImApprovalCoordinator', () => {
     expect(sent[0]).toContain('工作目录：\n      C:\\repo with spaces  ')
     expect(sent[0]).toContain('申请原因：\n      exact reason  ')
     expect(sent[0]).not.toContain('...')
-    await coordinator.handleCommand({
+    await coordinator.handleDecision({
       projectId: 'project-a',
       fromUserId: 'phone-a',
-      text: '/reject approval-public-exact'
+      token: 'approval-public-exact',
+        action: 'reject'
     })
     expect(resolutions[0]).toMatchObject({
       cwd: '  C:\\repo with spaces  ',
@@ -315,10 +304,11 @@ describe('RemoteImApprovalCoordinator', () => {
 
     authorityCurrent = true
     await expect(
-      coordinator.handleCommand({
+      coordinator.handleDecision({
         projectId: 'project-a',
         fromUserId: 'phone-a',
-        text: '/approve approval-delivery-authority-race'
+        token: 'approval-delivery-authority-race',
+        action: 'approve-once'
       })
     ).resolves.toMatchObject({ handled: true, ok: false })
   })
@@ -349,10 +339,11 @@ describe('RemoteImApprovalCoordinator', () => {
       expect(resolutions).toEqual([{ ...request, decision: 'cancel' }])
       expect(notices.at(-1)).toContain('自动拒绝')
       await expect(
-        coordinator.handleCommand({
+        coordinator.handleDecision({
           projectId: 'project-a',
           fromUserId: 'phone-a',
-          text: '/approve approval-public-timeout'
+          token: 'approval-public-timeout',
+        action: 'approve-once'
         })
       ).resolves.toMatchObject({ handled: true, ok: false })
       expect(resolutions).toHaveLength(1)
@@ -408,10 +399,11 @@ describe('RemoteImApprovalCoordinator', () => {
 
     securityGeneration += 1
     await expect(
-      coordinator.handleCommand({
+      coordinator.handleDecision({
         projectId: 'project-a',
         fromUserId: 'phone-a',
-        text: '/approve approval-public-old-account'
+        token: 'approval-public-old-account',
+        action: 'approve-once'
       })
     ).resolves.toMatchObject({ handled: true, ok: false })
     expect(resolutions).toEqual([])
@@ -443,17 +435,19 @@ describe('RemoteImApprovalCoordinator', () => {
 
     await coordinator.cancelForRequesters(['phone-a'])
     await expect(
-      coordinator.handleCommand({
+      coordinator.handleDecision({
         projectId: 'project-a',
         fromUserId: 'phone-a',
-        text: '/approve approval-contact-1'
+        token: 'approval-contact-1',
+        action: 'approve-once'
       })
     ).resolves.toMatchObject({ handled: true, ok: false })
     await expect(
-      coordinator.handleCommand({
+      coordinator.handleDecision({
         projectId: 'project-a',
         fromUserId: 'phone-b',
-        text: '/approve approval-contact-2'
+        token: 'approval-contact-2',
+        action: 'approve-once'
       })
     ).resolves.toMatchObject({ handled: true, ok: true })
     expect(resolutions.map((item) => [item.requesterUserId, item.decision])).toEqual([
@@ -478,10 +472,11 @@ describe('RemoteImApprovalCoordinator', () => {
     authorityCurrent = false
 
     await expect(
-      coordinator.handleCommand({
+      coordinator.handleDecision({
         projectId: 'project-a',
         fromUserId: 'phone-a',
-        text: '/approve approval-authority-changing'
+        token: 'approval-authority-changing',
+        action: 'approve-once'
       })
     ).resolves.toMatchObject({ handled: true, ok: false })
     expect(resolutions).toEqual([])
@@ -503,10 +498,11 @@ describe('RemoteImApprovalCoordinator', () => {
     })
     await coordinator.register(request)
 
-    const approving = coordinator.handleCommand({
+    const approving = coordinator.handleDecision({
       projectId: 'project-a',
       fromUserId: 'phone-a',
-      text: '/approve approval-public-in-flight'
+      token: 'approval-public-in-flight',
+        action: 'approve-once'
     })
     await vi.waitFor(() => expect(finishAccept).toBeTypeOf('function'))
     await coordinator.cancelAll()
@@ -531,10 +527,11 @@ describe('RemoteImApprovalCoordinator', () => {
     })
     await coordinator.register(request)
 
-    const approving = coordinator.handleCommand({
+    const approving = coordinator.handleDecision({
       projectId: 'project-a',
       fromUserId: 'phone-a',
-      text: '/approve approval-public-resolved-before-control-result'
+      token: 'approval-public-resolved-before-control-result',
+        action: 'approve-once'
     })
     await vi.waitFor(() => expect(finishAccept).toBeTypeOf('function'))
 
@@ -567,10 +564,11 @@ describe('RemoteImApprovalCoordinator', () => {
     })
     await coordinator.register(request)
 
-    const approving = coordinator.handleCommand({
+    const approving = coordinator.handleDecision({
       projectId: 'project-a',
       fromUserId: 'phone-a',
-      text: '/approve approval-authority-race'
+      token: 'approval-authority-race',
+        action: 'approve-once'
     })
     await vi.waitFor(() => expect(finishAccept).toBeTypeOf('function'))
     authorityCurrent = false
@@ -592,18 +590,20 @@ describe('RemoteImApprovalCoordinator', () => {
     })
     await coordinator.register(request)
 
-    const first = await coordinator.handleCommand({
+    const first = await coordinator.handleDecision({
       projectId: 'project-a',
       fromUserId: 'phone-a',
-      text: '/approve approval-public-failed'
+      token: 'approval-public-failed',
+        action: 'approve-once'
     })
     expect(first).toMatchObject({ handled: true, ok: false })
     expect(decisions).toEqual(['accept', 'cancel'])
 
-    const replay = await coordinator.handleCommand({
+    const replay = await coordinator.handleDecision({
       projectId: 'project-a',
       fromUserId: 'phone-a',
-      text: '/approve approval-public-failed'
+      token: 'approval-public-failed',
+        action: 'approve-once'
     })
     expect(replay).toMatchObject({ handled: true, ok: false })
     expect(decisions).toHaveLength(2)
@@ -619,10 +619,11 @@ describe('RemoteImApprovalCoordinator', () => {
     coordinator.forgetResolved(request)
 
     await expect(
-      coordinator.handleCommand({
+      coordinator.handleDecision({
         projectId: 'project-a',
         fromUserId: 'phone-a',
-        text: '/approve approval-public-local-overlay'
+        token: 'approval-public-local-overlay',
+        action: 'approve-once'
       })
     ).resolves.toMatchObject({ handled: true, ok: false })
   })
@@ -645,10 +646,11 @@ describe('RemoteImApprovalCoordinator', () => {
     coordinator.forgetResolved(request)
 
     await expect(
-      coordinator.handleCommand({
+      coordinator.handleDecision({
         projectId: 'project-a',
         fromUserId: 'phone-a',
-        text: '/approve approval-public-next-2'
+        token: 'approval-public-next-2',
+        action: 'approve-once'
       })
     ).resolves.toMatchObject({ handled: true, ok: true })
   })

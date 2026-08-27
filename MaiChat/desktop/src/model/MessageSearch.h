@@ -25,6 +25,16 @@ enum MatchScore {
     Prefix = 130
 };
 
+// 拼音首字母命中单独一档，且排在所有字面档之下。
+//
+// 理由是它信息量最低：两万多个汉字压成 26 个字母，重复度极高。
+// 只有在字面匹配全部落空时才尝试，这样搜英文词永远走字面，拼音不会来抢。
+constexpr int PinyinInitial = 20;
+
+// 首字母查询的最短长度。实测（7340 条真实消息）：4 字母查询命中 0.2~0.7%，
+// 3 字母 0.9~1.7%，而 2 字母的「fb」命中 11.2%——太糙，没有意义。
+constexpr int kMinPinyinQueryLength = 3;
+
 // 0 表示不匹配；分数越高越贴切。大小写不敏感。
 int score(const QString& text, const QString& needle);
 

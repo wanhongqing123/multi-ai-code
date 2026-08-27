@@ -2,6 +2,8 @@
 
 #include <QStringList>
 
+#include "model/PinyinInitials.h"
+
 namespace MessageSearch {
 namespace {
 
@@ -54,6 +56,42 @@ bool isSubsequenceWithinSpan(const QString& text, const QString& needle) {
     return false;
 }
 
+// 查询是否可以按拼音首字母解释：纯 a–z、且够长。
+// 大小写在调用前已折叠。含数字、空格、标点或中文的查询一律不进拼音这条路——
+// 那些形态本来就该走字面匹配。
+bool looksLikePinyinQuery(const QString& needle) {
+    if (needle.size() < MessageSearch::kMinPinyinQueryLength) return false;
+    for (const QChar ch : needle) {
+        if (ch < QLatin1Char('a') || ch > QLatin1Char('z')) return false;
+    }
+    return true;
+}
+
+// 首字母必须**连续**：查询的每个字母依次对应正文里相邻的汉字。
+//
+// 不做子序列，是因为实测子序列式即使加上跨度限制，仍会命中 7340 条真实消息里的
+// 16~29%——首字母把两万多个汉字压成 26 个字母，散着匹配几乎命中一切。
+// 要求连续之后，4 字母查询降到 0.2~0.7%，才是可用的。
+//
+// 非收录汉字（标点、英文、数字、扩展区汉字）的掩码是 0，天然会让窗口失配，
+// 因此不需要另外维护「连续段」的边界。
+bool matchesPinyinInitials(const QString& text, const QString& needle) {
+    const int textSize = text.size();
+    const int needleSize = needle.size();
+    for (int start = 0; start + needleSize <= textSize; ++start) {
+        bool all = true;
+        for (int offset = 0; offset < needleSize; ++offset) {
+            const quint32 mask = PinyinInitials::maskFor(text.at(start + offset));
+            if (!PinyinInitials::maskHasLetter(mask, needle.at(offset))) {
+                all = false;
+                break;
+            }
+        }
+        if (all) return true;
+    }
+    return false;
+}
+
 }  // namespace
 
 int score(const QString& text, const QString& needle) {
@@ -75,6 +113,10 @@ int score(const QString& text, const QString& needle) {
 
     // 单字查询不做子序列：一个「的」能命中几乎所有消息，那样的结果没有意义。
     if (cleanNeedle.size() >= 2 && isSubsequenceWithinSpan(text, cleanNeedle)) return Subsequence;
+
+    // 字面全部落空之后才试拼音首字母，所以搜英文词不会被拼音干扰。
+    const QString folded = cleanNeedle.toCaseFolded();
+    if (looksLikePinyinQuery(folded) && matchesPinyinInitials(text, folded)) return PinyinInitial;
     return NoMatch;
 }
 

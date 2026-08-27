@@ -65,6 +65,7 @@ add_library(remote_im_core
   src/model/ChatState.cpp
   src/model/MessageSearch.h
   src/model/MessageSearch.cpp
+  src/model/PinyinInitials.cpp
   src/markdown/MarkdownRenderer.h
   src/markdown/MarkdownRenderer.cpp
   src/im/RemoteIMClient.h

@@ -41,6 +41,11 @@ private slots:
     void singleCharacterQueryDoesNotMatchEverything();
     void subsequenceRejectsMatchesScatteredAcrossLongText();
     void subsequenceStillMatchesWhenTheTightHitComesAfterAScatteredOne();
+    void pinyinInitialsMatchConsecutiveCharacters();
+    void pinyinInitialsRejectNonAdjacentCharacters();
+    void pinyinInitialsIgnoreTooShortQueries();
+    void pinyinInitialsAcceptAnyReadingOfAPolyphonicCharacter();
+    void literalMatchesOutrankPinyinInitials();
 };
 
 void MessageSearchTest::findsMatchesInTimeOrder() {
@@ -164,6 +169,57 @@ void MessageSearchTest::subsequenceStillMatchesWhenTheTightHitComesAfterAScatter
     text += QStringLiteral("构建那一步失败了");
     QCOMPARE(MessageSearch::score(text, QStringLiteral("构建失败")),
              static_cast<int>(MessageSearch::Subsequence));
+}
+
+// 首字母连续匹配：「昨天失败」的首字母是 z-t-s-b。
+void MessageSearchTest::pinyinInitialsMatchConsecutiveCharacters() {
+    QCOMPARE(MessageSearch::score(QStringLiteral("昨天失败了，日志在下面"), QStringLiteral("ztsb")),
+             static_cast<int>(MessageSearch::PinyinInitial));
+    // 大小写不敏感。
+    QCOMPARE(MessageSearch::score(QStringLiteral("昨天失败了"), QStringLiteral("ZTSB")),
+             static_cast<int>(MessageSearch::PinyinInitial));
+    // 出现在正文中间同样算。
+    QCOMPARE(MessageSearch::score(QStringLiteral("我记得昨天失败过一次"), QStringLiteral("ztsb")),
+             static_cast<int>(MessageSearch::PinyinInitial));
+}
+
+// 必须相邻。中间隔了字就不算——这是首字母能用的前提：
+// 实测散着匹配会命中 7340 条真实消息里的 16~29%，等于没有筛选。
+void MessageSearchTest::pinyinInitialsRejectNonAdjacentCharacters() {
+    // 「昨天那一步失败」= z-t-n-y-b-s-b，ztsb 在其中不连续。
+    QCOMPARE(MessageSearch::score(QStringLiteral("昨天那一步失败"), QStringLiteral("ztsb")),
+             static_cast<int>(MessageSearch::NoMatch));
+    // 中间夹标点也切断（标点的掩码为 0）。
+    QCOMPARE(MessageSearch::score(QStringLiteral("昨天，失败"), QStringLiteral("ztsb")),
+             static_cast<int>(MessageSearch::NoMatch));
+}
+
+// 两个字母的查询不启用拼音。实测「fb」在连续匹配下仍命中 11.2%，太糙。
+void MessageSearchTest::pinyinInitialsIgnoreTooShortQueries() {
+    QCOMPARE(MessageSearch::score(QStringLiteral("发版了"), QStringLiteral("fb")),
+             static_cast<int>(MessageSearch::NoMatch));
+    // 三个字母是启用门槛。
+    QCOMPARE(MessageSearch::score(QStringLiteral("发版了"), QStringLiteral("fbl")),
+             static_cast<int>(MessageSearch::PinyinInitial));
+}
+
+// 多音字任一读音的首字母都算命中。「长」有 cháng / zhǎng，「行」有 háng / xíng。
+void MessageSearchTest::pinyinInitialsAcceptAnyReadingOfAPolyphonicCharacter() {
+    QCOMPARE(MessageSearch::score(QStringLiteral("长行了"), QStringLiteral("chl")),
+             static_cast<int>(MessageSearch::PinyinInitial));
+    QCOMPARE(MessageSearch::score(QStringLiteral("长行了"), QStringLiteral("zxl")),
+             static_cast<int>(MessageSearch::PinyinInitial));
+}
+
+// 字面命中必须排在拼音之上，否则搜英文词会被拼音抢走。
+void MessageSearchTest::literalMatchesOutrankPinyinInitials() {
+    // 正文里同时存在字面串 "ztsb" 和「昨天失败」，字面优先。
+    const QString text = QStringLiteral("ztsb 这个缩写代表昨天失败");
+    QCOMPARE(MessageSearch::score(text, QStringLiteral("ztsb")),
+             static_cast<int>(MessageSearch::Prefix));
+    // 纯英文查询在没有字面命中时也不会误落到拼音档（英文字母掩码为 0）。
+    QCOMPARE(MessageSearch::score(QStringLiteral("hello world"), QStringLiteral("abc")),
+             static_cast<int>(MessageSearch::NoMatch));
 }
 
 QTEST_MAIN(MessageSearchTest)

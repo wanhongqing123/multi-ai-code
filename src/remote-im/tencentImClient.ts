@@ -76,6 +76,17 @@ function parseRemoteImTextInteraction(
     const action = parseApprovalAction(raw.action)
     return action ? { kind: 'approval-decision', token, action } : undefined
   }
+  if (raw.kind === 'approval-resolved' && origin === 'machine') {
+    const outcome = raw.outcome
+    if (
+      outcome === 'approved' ||
+      outcome === 'rejected' ||
+      outcome === 'auto-declined' ||
+      outcome === 'resolved'
+    ) {
+      return { kind: 'approval-resolved', token, outcome }
+    }
+  }
   return undefined
 }
 

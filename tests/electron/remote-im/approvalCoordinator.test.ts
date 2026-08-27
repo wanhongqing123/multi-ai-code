@@ -85,6 +85,54 @@ describe('RemoteImApprovalCoordinator', () => {
     expect(resolutions).toEqual([])
   })
 
+  it('does not report a late approval click as applied when another CAS source won', async () => {
+    const resolutions: RemoteImApprovalResolution[] = []
+    const interactions: unknown[] = []
+    const coordinator = new RemoteImApprovalCoordinator({
+      createToken: () => 'approval-public-late-click',
+      sendText: async (_projectId, _toUserId, _text, interaction) => {
+        interactions.push(interaction)
+        return { ok: true }
+      },
+      resolveApproval: async (input) => {
+        resolutions.push(input)
+        return {
+          ok: true,
+          approvalResolution: {
+            applied: false,
+            winnerDecision: 'decline',
+            winnerSource: 'remote-im-input'
+          }
+        }
+      }
+    })
+    await coordinator.register(request)
+
+    await expect(
+      coordinator.handleDecision({
+        projectId: 'project-a',
+        fromUserId: 'phone-a',
+        token: 'approval-public-late-click',
+        action: 'approve-once'
+      })
+    ).resolves.toEqual({
+      handled: true,
+      ok: false,
+      text: [
+        '该审批已由另一条操作先处理，本次点击未生效。',
+        '最终决定：decline',
+        '解决来源：remote-im-input'
+      ].join('\n')
+    })
+    expect(resolutions).toEqual([{ ...request, decision: 'accept' }])
+    await vi.waitFor(() => expect(interactions).toHaveLength(2))
+    expect(interactions[1]).toEqual({
+      kind: 'approval-resolved',
+      token: 'approval-public-late-click',
+      outcome: 'auto-declined'
+    })
+  })
+
   it('binds a one-time approval to project, requester, session, task and thread', async () => {
     const sent: Array<{ projectId: string; toUserId: string; text: string }> = []
     const resolutions: RemoteImApprovalResolution[] = []
@@ -245,25 +293,62 @@ describe('RemoteImApprovalCoordinator', () => {
     expect(sendText).toHaveBeenCalledTimes(1)
 
     coordinator.forgetResolved(request)
+    await vi.waitFor(() => expect(sendText).toHaveBeenCalledTimes(2))
     await expect(coordinator.register({ ...request })).resolves.toMatchObject({
       ok: false,
       error: 'approval was already resolved'
     })
-    expect(sendText).toHaveBeenCalledTimes(1)
+    expect(sendText).toHaveBeenCalledTimes(2)
 
     await expect(
       coordinator.register({ ...request, commandText: 'Remove-Item C:\\other -Force' })
     ).resolves.toMatchObject({ ok: false, error: 'approval identity collision' })
   })
 
+  it('sends one authoritative resolution interaction for client card state', async () => {
+    const sent: Array<{ text: string; interaction: unknown }> = []
+    const coordinator = new RemoteImApprovalCoordinator({
+      createToken: () => 'approval-public-auto-declined',
+      sendText: async (_projectId, _toUserId, text, interaction) => {
+        sent.push({ text, interaction })
+        return { ok: true }
+      },
+      resolveApproval: async () => ({ ok: true })
+    })
+    await coordinator.register(request)
+
+    coordinator.forgetResolved(request, {
+      source: 'remote-im-input',
+      decision: 'decline'
+    })
+    coordinator.forgetResolved(request, {
+      source: 'remote-im-input',
+      decision: 'decline'
+    })
+    await vi.waitFor(() => expect(sent).toHaveLength(2))
+
+    expect(sent[1]).toEqual({
+      text: '该审批收到新的 IM 消息后已自动拒绝：approval-public-auto-declined',
+      interaction: {
+        kind: 'approval-resolved',
+        token: 'approval-public-auto-declined',
+        outcome: 'auto-declined'
+      }
+    })
+  })
+
   it('does not report a capability as forwarded when it resolves during delivery', async () => {
     let finishDelivery: ((result: { ok: boolean }) => void) | undefined
+    let sendCount = 0
     const coordinator = new RemoteImApprovalCoordinator({
       createToken: () => 'approval-public-delivery-race',
-      sendText: () =>
-        new Promise((resolve) => {
+      sendText: () => {
+        sendCount += 1
+        if (sendCount > 1) return Promise.resolve({ ok: true })
+        return new Promise((resolve) => {
           finishDelivery = resolve
-        }),
+        })
+      },
       resolveApproval: async () => ({ ok: true })
     })
 
@@ -347,6 +432,42 @@ describe('RemoteImApprovalCoordinator', () => {
         })
       ).resolves.toMatchObject({ handled: true, ok: false })
       expect(resolutions).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not claim timeout rejection when another approval resolver wins', async () => {
+    vi.useFakeTimers()
+    try {
+      let finishTimeoutCancel: ((result: { ok: boolean }) => void) | undefined
+      const notices: string[] = []
+      const coordinator = new RemoteImApprovalCoordinator({
+        timeoutMs: 1_000,
+        createToken: () => 'approval-timeout-loses-race',
+        sendText: async (_projectId, _toUserId, text) => {
+          notices.push(text)
+          return { ok: true }
+        },
+        resolveApproval: (input) => {
+          if (input.decision !== 'cancel') return Promise.resolve({ ok: true })
+          return new Promise((resolve) => {
+            finishTimeoutCancel = resolve
+          })
+        }
+      })
+      await coordinator.register(request)
+
+      const timeout = vi.advanceTimersByTimeAsync(1_000)
+      await vi.waitFor(() => expect(finishTimeoutCancel).toBeTypeOf('function'))
+      coordinator.forgetResolved(request)
+      finishTimeoutCancel?.({ ok: true })
+      await timeout
+
+      expect(notices).toHaveLength(2)
+      expect(notices[0]).toContain('Codex 请求执行一条高风险命令')
+      expect(notices[1]).toContain('该审批已处理')
+      expect(notices.some((notice) => notice.includes('审批已超时'))).toBe(false)
     } finally {
       vi.useRealTimers()
     }

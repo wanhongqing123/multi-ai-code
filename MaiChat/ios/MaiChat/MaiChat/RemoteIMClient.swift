@@ -7,6 +7,7 @@ struct IncomingRemoteIMText: Equatable {
     let remoteID: String?
     let origin: RemoteIMMessageOrigin?
     let approvalRequest: RemoteIMApprovalRequest?
+    let approvalDecision: RemoteIMApprovalDecision?
     let createdAt: Date
 }
 

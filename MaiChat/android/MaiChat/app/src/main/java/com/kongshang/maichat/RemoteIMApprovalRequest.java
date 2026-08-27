@@ -24,6 +24,8 @@ public final class RemoteIMApprovalRequest {
             || cleanActions.size() < 2
             || cleanActions.size() > 3
             || cleanActions.contains(null)
+            || cleanActions.contains(RemoteIMApprovalAction.RESOLVED)
+            || cleanActions.contains(RemoteIMApprovalAction.AUTO_DECLINED)
             || new HashSet<>(cleanActions).size() != cleanActions.size()
             || !cleanActions.contains(RemoteIMApprovalAction.APPROVE_ONCE)
             || !cleanActions.contains(RemoteIMApprovalAction.REJECT)) {

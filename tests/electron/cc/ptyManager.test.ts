@@ -96,7 +96,8 @@ describe('registerPtyIpc prompt injection timing', () => {
 
   async function connectAicliControlBridge(
     proc: (typeof ptyInstances)[number],
-    receivedLines: string[] = []
+    receivedLines: string[] = [],
+    controlResultExtra: Record<string, unknown> = {}
   ): Promise<net.Socket> {
     const args = proc.opts.args as string[]
     const endpoint = args[args.indexOf('--multi-ai-code-im-ipc') + 1]
@@ -135,7 +136,8 @@ describe('registerPtyIpc prompt injection timing', () => {
               kind: 'control_result',
               requestId: payload.requestId,
               ok: true,
-              text: 'queued'
+              text: 'queued',
+              ...controlResultExtra
             })}\n`
           )
         }
@@ -416,6 +418,29 @@ describe('registerPtyIpc prompt injection timing', () => {
         fileName: 'screen.png'
       }
     ])
+  })
+
+  it('returns structured approval auto-decline metadata from Codex', async () => {
+    const { proc } = await spawnNoPlanSession('codex')
+    const socket = await connectAicliControlBridge(proc, [], {
+      autoDeclinedApprovals: [
+        { approvalId: 'approval-remove-1', commandSummary: 'Remove-Item …' }
+      ]
+    })
+
+    const { sendUserMessageToSession } = await import('../../../electron/cc/ptyManager.js')
+    const result = await sendUserMessageToSession('session-no-plan', 'new remote IM', {
+      inputOrigin: 'remote-im'
+    })
+
+    socket.destroy()
+    expect(result).toEqual({
+      ok: true,
+      detail: 'queued',
+      autoDeclinedApprovals: [
+        { approvalId: 'approval-remove-1', commandSummary: 'Remove-Item …' }
+      ]
+    })
   })
 
   it('submits machine IM input without reporting a local takeover', async () => {

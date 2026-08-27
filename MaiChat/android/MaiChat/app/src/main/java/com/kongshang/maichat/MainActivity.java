@@ -881,6 +881,18 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             wrapper.addView(sent, match(dp(34)));
             return wrapper;
         }
+        if (state == RemoteIMApprovalDisplayPolicy.State.AUTO_DECLINED) {
+            TextView resolved = MaiChatTheme.label(this, "✕  审批已因新消息自动拒绝", 13, Color.rgb(217, 119, 6));
+            resolved.setContentDescription("审批已因新消息自动拒绝");
+            wrapper.addView(resolved, match(dp(34)));
+            return wrapper;
+        }
+        if (state == RemoteIMApprovalDisplayPolicy.State.RESOLVED) {
+            TextView resolved = MaiChatTheme.label(this, "✓  审批已处理", 13, MaiChatTheme.SECONDARY);
+            resolved.setContentDescription("审批已处理");
+            wrapper.addView(resolved, match(dp(34)));
+            return wrapper;
+        }
         if (state == RemoteIMApprovalDisplayPolicy.State.SENDING) {
             TextView sending = MaiChatTheme.label(this, "◷  审批选择正在发送…", 13, MaiChatTheme.BLUE_DARK);
             sending.setContentDescription("审批选择正在发送");

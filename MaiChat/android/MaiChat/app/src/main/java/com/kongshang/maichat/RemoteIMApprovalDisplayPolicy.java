@@ -8,7 +8,9 @@ public final class RemoteIMApprovalDisplayPolicy {
     public enum State {
         AVAILABLE,
         SENDING,
-        SENT
+        SENT,
+        RESOLVED,
+        AUTO_DECLINED
     }
 
     private RemoteIMApprovalDisplayPolicy() {
@@ -18,15 +20,24 @@ public final class RemoteIMApprovalDisplayPolicy {
         Map<String, State> states = new HashMap<>();
         if (messages == null) return states;
         for (RemoteIMMessage message : messages) {
-            if (message == null
-                || message.direction() != RemoteIMMessage.Direction.OUTGOING
-                || message.approvalDecision() == null) {
+            if (message == null || message.approvalDecision() == null) {
                 continue;
             }
-            String token = message.approvalDecision().token();
-            if (message.status() == RemoteIMMessage.Status.SENT) {
+            RemoteIMApprovalDecision decision = message.approvalDecision();
+            String token = decision.token();
+            if (decision.action() == RemoteIMApprovalAction.AUTO_DECLINED) {
+                states.put(token, State.AUTO_DECLINED);
+            } else if (decision.action() == RemoteIMApprovalAction.RESOLVED
+                && states.get(token) != State.AUTO_DECLINED) {
+                states.put(token, State.RESOLVED);
+            } else if (states.get(token) == State.RESOLVED
+                || states.get(token) == State.AUTO_DECLINED) {
+                continue;
+            } else if (message.direction() == RemoteIMMessage.Direction.OUTGOING
+                && message.status() == RemoteIMMessage.Status.SENT) {
                 states.put(token, State.SENT);
-            } else if (message.status() == RemoteIMMessage.Status.PENDING
+            } else if (message.direction() == RemoteIMMessage.Direction.OUTGOING
+                && message.status() == RemoteIMMessage.Status.PENDING
                 && states.get(token) != State.SENT) {
                 states.put(token, State.SENDING);
             }

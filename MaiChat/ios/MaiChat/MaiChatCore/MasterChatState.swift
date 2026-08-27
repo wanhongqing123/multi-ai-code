@@ -79,12 +79,16 @@ public enum RemoteIMApprovalAction: String, Codable, CaseIterable, Equatable, Ha
     case approveOnce = "approve-once"
     case approvePrefix = "approve-prefix"
     case reject
+    case resolved
+    case autoDeclined = "auto-declined"
 
     public var title: String {
         switch self {
         case .approveOnce: return "同意本次"
         case .approvePrefix: return "同意并记住"
         case .reject: return "拒绝"
+        case .resolved: return "审批已处理"
+        case .autoDeclined: return "审批已自动拒绝"
         }
     }
 
@@ -101,6 +105,9 @@ public struct RemoteIMApprovalRequest: Codable, Equatable, Sendable {
         guard Self.isValidToken(token),
               actions.count >= 2,
               actions.count <= 3,
+              actions.allSatisfy({
+                  $0 == .approveOnce || $0 == .approvePrefix || $0 == .reject
+              }),
               Set(actions).count == actions.count,
               actions.contains(.approveOnce),
               actions.contains(.reject)
@@ -158,6 +165,11 @@ public struct RemoteIMCloudMetadata: Equatable, Sendable {
         guard case let .approvalRequest(request) = interaction else { return nil }
         return request
     }
+
+    public var approvalDecision: RemoteIMApprovalDecision? {
+        guard case let .approvalDecision(token, action) = interaction else { return nil }
+        return RemoteIMApprovalDecision(token: token, action: action)
+    }
 }
 
 public enum RemoteIMCloudMetadataCodec {
@@ -169,6 +181,7 @@ public enum RemoteIMCloudMetadataCodec {
         let token: String
         let actions: [String]?
         let action: String?
+        let outcome: String?
     }
 
     private struct WireMetadata: Codable {
@@ -186,14 +199,16 @@ public enum RemoteIMCloudMetadataCodec {
                 kind: "approval-request",
                 token: request.token,
                 actions: request.actions.map(\.rawValue),
-                action: nil
+                action: nil,
+                outcome: nil
             )
         case let .approvalDecision(token, action):
             wireInteraction = WireInteraction(
                 kind: "approval-decision",
                 token: token,
                 actions: nil,
-                action: action.rawValue
+                action: action.rawValue,
+                outcome: nil
             )
         case nil:
             wireInteraction = nil
@@ -238,8 +253,23 @@ public enum RemoteIMCloudMetadataCodec {
            interaction.actions == nil,
            RemoteIMApprovalRequest.isValidToken(interaction.token),
            let rawAction = interaction.action,
-           let action = RemoteIMApprovalAction(rawValue: rawAction)
+           let action = RemoteIMApprovalAction(rawValue: rawAction),
+           action == .approveOnce || action == .approvePrefix || action == .reject
         {
+            return RemoteIMCloudMetadata(
+                origin: origin,
+                interaction: .approvalDecision(token: interaction.token, action: action)
+            )
+        }
+        if interaction.kind == "approval-resolved",
+           origin == .machine,
+           interaction.actions == nil,
+           interaction.action == nil,
+           RemoteIMApprovalRequest.isValidToken(interaction.token),
+           let outcome = interaction.outcome,
+           ["approved", "rejected", "resolved", "auto-declined"].contains(outcome)
+        {
+            let action: RemoteIMApprovalAction = outcome == "auto-declined" ? .autoDeclined : .resolved
             return RemoteIMCloudMetadata(
                 origin: origin,
                 interaction: .approvalDecision(token: interaction.token, action: action)
@@ -1116,6 +1146,9 @@ public struct MasterChatState: Equatable {
         action: RemoteIMApprovalAction,
         now: Date = Date()
     ) throws -> RemoteIMMessage {
+        guard action == .approveOnce || action == .approvePrefix || action == .reject else {
+            throw MasterChatStateError.blankMessage
+        }
         guard let decision = RemoteIMApprovalDecision(token: token, action: action) else {
             throw MasterChatStateError.blankMessage
         }
@@ -1272,6 +1305,7 @@ public struct MasterChatState: Equatable {
         fromUserID: String,
         remoteID: String? = nil,
         approvalRequest: RemoteIMApprovalRequest? = nil,
+        approvalDecision: RemoteIMApprovalDecision? = nil,
         now: Date = Date()
     ) -> RemoteIMMessage {
         if let existing = existingMessage(remoteID: remoteID) {
@@ -1284,6 +1318,7 @@ public struct MasterChatState: Equatable {
             toUserID: ownerUserID,
             text: Self.incomingDisplayText(text),
             approvalRequest: approvalRequest,
+            approvalDecision: approvalDecision,
             direction: .incoming,
             status: .received,
             createdAt: now

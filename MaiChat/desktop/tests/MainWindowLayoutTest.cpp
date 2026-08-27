@@ -80,6 +80,7 @@ private slots:
     void rendersMarkdownMessageContent();
     void rendersApprovalButtonsAndSendsStructuredDecision();
     void restoresSubmittedApprovalStateFromDatabase();
+    void authoritativeApprovalResolutionOverridesLateSentDecision();
     void copiesOriginalMarkdownFromMessageContextMenu();
     void addContactButtonSitsBesideTheSearchBox();
     void navigationTextIsLeftAlignedAndContactsDoNotShowMessagePreview();
@@ -892,6 +893,67 @@ void MainWindowLayoutTest::restoresSubmittedApprovalStateFromDatabase() {
     auto* sentLabel = window.findChild<QLabel*>(QStringLiteral("approvalSentLabel"));
     QVERIFY(sentLabel != nullptr);
     QVERIFY(sentLabel->text().contains(QStringLiteral("已发送")));
+}
+
+void MainWindowLayoutTest::authoritativeApprovalResolutionOverridesLateSentDecision() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("multi-ai-code"), QStringLiteral("Multi-AI Code"));
+
+    RemoteIMMessage request;
+    request.id = QStringLiteral("approval-authoritative-request");
+    request.fromUserId = QStringLiteral("multi-ai-code");
+    request.toUserId = QStringLiteral("desktop-user");
+    request.text = QStringLiteral("需要审批");
+    request.direction = RemoteIMMessageDirection::Incoming;
+    request.status = RemoteIMMessageStatus::Received;
+    request.origin = RemoteIMMessageOrigin::Machine;
+    request.hasApprovalRequest = true;
+    request.approvalRequest = RemoteIMApprovalRequest{
+        QStringLiteral("approval-authoritative-1"),
+        {RemoteIMApprovalAction::ApproveOnce, RemoteIMApprovalAction::Reject}
+    };
+    app.chatState().appendMessageForRestore(request);
+
+    RemoteIMMessage resolution;
+    resolution.id = QStringLiteral("approval-authoritative-resolution");
+    resolution.fromUserId = QStringLiteral("multi-ai-code");
+    resolution.toUserId = QStringLiteral("desktop-user");
+    resolution.text = QStringLiteral("该审批收到新的 IM 消息后已自动拒绝");
+    resolution.direction = RemoteIMMessageDirection::Incoming;
+    resolution.status = RemoteIMMessageStatus::Received;
+    resolution.origin = RemoteIMMessageOrigin::Machine;
+    resolution.hasApprovalDecision = true;
+    resolution.approvalDecision = RemoteIMApprovalDecision{
+        QStringLiteral("approval-authoritative-1"),
+        RemoteIMApprovalAction::AutoDeclined
+    };
+    app.chatState().appendMessageForRestore(resolution);
+
+    RemoteIMMessage lateDecision;
+    lateDecision.id = QStringLiteral("approval-authoritative-late-decision");
+    lateDecision.fromUserId = QStringLiteral("desktop-user");
+    lateDecision.toUserId = QStringLiteral("multi-ai-code");
+    lateDecision.text = QStringLiteral("审批操作：同意本次");
+    lateDecision.direction = RemoteIMMessageDirection::Outgoing;
+    lateDecision.status = RemoteIMMessageStatus::Sent;
+    lateDecision.origin = RemoteIMMessageOrigin::Human;
+    lateDecision.hasApprovalDecision = true;
+    lateDecision.approvalDecision = RemoteIMApprovalDecision{
+        QStringLiteral("approval-authoritative-1"),
+        RemoteIMApprovalAction::ApproveOnce
+    };
+    app.chatState().appendMessageForRestore(lateDecision);
+
+    MainWindow window(app);
+    window.show();
+    QCoreApplication::processEvents();
+
+    QVERIFY(window.findChild<QPushButton*>(
+                QStringLiteral("approvalApproveOnceButton")) == nullptr);
+    auto* resolvedLabel = window.findChild<QLabel*>(QStringLiteral("approvalSentLabel"));
+    QVERIFY(resolvedLabel != nullptr);
+    QVERIFY(resolvedLabel->text().contains(QStringLiteral("自动拒绝")));
 }
 
 void MainWindowLayoutTest::copiesOriginalMarkdownFromMessageContextMenu() {

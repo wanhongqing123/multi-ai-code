@@ -73,6 +73,12 @@ struct RootView: View {
             }
         }
         .onChange(of: scenePhase) { phase in
+            AppDiagnosticLog.shared.record(
+                level: .info,
+                category: "app",
+                event: "scene-phase-changed",
+                fields: ["phase": phase.diagnosticName]
+            )
             guard phase == .inactive || phase == .background else { return }
             Task {
                 let historyFlushed = await appState.flushHistoryPersistence()
@@ -104,6 +110,17 @@ struct RootView: View {
                     .padding(.top, 8)
                     .padding(.horizontal, 16)
             }
+        }
+    }
+}
+
+private extension ScenePhase {
+    var diagnosticName: String {
+        switch self {
+        case .active: return "active"
+        case .inactive: return "inactive"
+        case .background: return "background"
+        @unknown default: return "unknown"
         }
     }
 }

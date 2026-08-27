@@ -184,6 +184,51 @@ describe('remote IM router', () => {
     expect(store.messages.map((message) => message.status)).toEqual(['sent-to-aicli'])
   })
 
+  it('reports structured auto-decline audit data when accepting the next message', async () => {
+    const store = createMessageStore()
+    const acceptedDeliveries: unknown[] = []
+    const router = createRemoteImRouter({
+      getConfig: () => config,
+      resolveSession: () => ({
+        sessionId: 'session-main',
+        targetRepo: 'repo',
+        sourceKind: 'codex'
+      }),
+      sendUser: async () => ({
+        ok: true,
+        detail: 'queued',
+        autoDeclinedApprovals: [
+          { approvalId: 'approval-remove-1', commandSummary: 'Remove-Item …' }
+        ]
+      }),
+      sendImText: async () => ({ ok: true }),
+      onAicliInputAccepted: (_route, delivery) => acceptedDeliveries.push(delivery),
+      createReplyId: () => 'reply-auto-decline',
+      store
+    })
+
+    const result = await router.handleIncomingText({
+      projectId: 'project-1',
+      remoteMessageId: 'remote-auto-decline',
+      fromUserId: 'phone_admin',
+      toUserId: 'desktop_bot',
+      text: '进度怎么样了',
+      origin: 'human',
+      createdAt: 100
+    })
+
+    expect(result.ok).toBe(true)
+    expect(acceptedDeliveries).toEqual([
+      {
+        ok: true,
+        detail: 'queued',
+        autoDeclinedApprovals: [
+          { approvalId: 'approval-remove-1', commandSummary: 'Remove-Item …' }
+        ]
+      }
+    ])
+  })
+
   it.each(['codex', 'opencode'] as const)(
     'uses explicit task correlation for %s without adding reply markers to the prompt',
     async (sourceKind) => {

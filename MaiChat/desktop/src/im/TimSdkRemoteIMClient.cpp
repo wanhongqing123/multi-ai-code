@@ -115,7 +115,32 @@ ParsedCloudMetadata messageMetadata(const QJsonObject& message) {
         && isValidRemoteIMApprovalToken(token)) {
         RemoteIMApprovalAction action;
         if (remoteIMApprovalActionFromWireName(
-                interaction.value(QStringLiteral("action")).toString(), &action)) {
+                interaction.value(QStringLiteral("action")).toString(), &action)
+            && (action == RemoteIMApprovalAction::ApproveOnce
+                || action == RemoteIMApprovalAction::ApprovePrefix
+                || action == RemoteIMApprovalAction::Reject)) {
+            parsed.approvalDecision = RemoteIMApprovalDecision{token, action};
+            parsed.hasApprovalDecision = true;
+            return parsed;
+        }
+    }
+    if (kind == QStringLiteral("approval-resolved")
+        && parsed.origin == RemoteIMMessageOrigin::Machine
+        && !interaction.contains(QStringLiteral("actions"))
+        && !interaction.contains(QStringLiteral("action"))
+        && isValidRemoteIMApprovalToken(token)) {
+        const QString outcome = interaction.value(QStringLiteral("outcome")).toString();
+        const RemoteIMApprovalAction action = outcome == QStringLiteral("auto-declined")
+            ? RemoteIMApprovalAction::AutoDeclined
+            : (outcome == QStringLiteral("approved")
+               || outcome == QStringLiteral("rejected")
+               || outcome == QStringLiteral("resolved"))
+                ? RemoteIMApprovalAction::Resolved
+                : RemoteIMApprovalAction::Reject;
+        if (outcome == QStringLiteral("auto-declined")
+            || outcome == QStringLiteral("approved")
+            || outcome == QStringLiteral("rejected")
+            || outcome == QStringLiteral("resolved")) {
             parsed.approvalDecision = RemoteIMApprovalDecision{token, action};
             parsed.hasApprovalDecision = true;
             return parsed;
@@ -425,6 +450,12 @@ void TimSdkRemoteIMClient::sendApprovalDecision(const QString& peerId,
     const QString cleanToken = token.trimmed();
     if (!isValidRemoteIMApprovalToken(cleanToken)) {
         if (completion) completion(false, QStringLiteral("审批请求已失效"), {});
+        return;
+    }
+    if (action != RemoteIMApprovalAction::ApproveOnce
+        && action != RemoteIMApprovalAction::ApprovePrefix
+        && action != RemoteIMApprovalAction::Reject) {
+        if (completion) completion(false, QStringLiteral("审批状态不能作为用户决定发送"), {});
         return;
     }
     QJsonObject interaction;

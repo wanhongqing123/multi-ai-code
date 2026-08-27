@@ -93,13 +93,27 @@ final class LocalChatHistoryStoreTests: XCTestCase {
             status: .sent,
             createdAt: Date(timeIntervalSince1970: 302)
         )
-        try persist([decisionMessage], in: store)
+        let resolution = RemoteIMApprovalDecision(
+            token: request.token,
+            action: .autoDeclined
+        )!
+        let resolutionMessage = RemoteIMMessage(
+            fromUserID: "mac-quark-pc",
+            toUserID: "ios-master",
+            text: "该审批已自动拒绝",
+            approvalDecision: resolution,
+            direction: .incoming,
+            status: .received,
+            createdAt: Date(timeIntervalSince1970: 303)
+        )
+        try persist([decisionMessage, resolutionMessage], in: store)
         let restored = try conversationMessages(
             in: store,
             peerUserID: "mac-quark-pc"
         )
-        XCTAssertEqual(restored.count, 2)
-        XCTAssertEqual(restored.last?.approvalDecision, decision)
+        XCTAssertEqual(restored.count, 3)
+        XCTAssertEqual(restored[1].approvalDecision, decision)
+        XCTAssertEqual(restored.last?.approvalDecision, resolution)
     }
 
     func testUpsertDeduplicatesMessagesByIDAndConversationDeleteIsExplicit() throws {

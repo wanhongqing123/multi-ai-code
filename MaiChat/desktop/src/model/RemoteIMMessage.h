@@ -27,7 +27,9 @@ enum class RemoteIMMessageOrigin {
 enum class RemoteIMApprovalAction {
     ApproveOnce,
     ApprovePrefix,
-    Reject
+    Reject,
+    Resolved,
+    AutoDeclined
 };
 
 inline QString remoteIMApprovalActionWireName(RemoteIMApprovalAction action) {
@@ -35,6 +37,8 @@ inline QString remoteIMApprovalActionWireName(RemoteIMApprovalAction action) {
         case RemoteIMApprovalAction::ApproveOnce: return QStringLiteral("approve-once");
         case RemoteIMApprovalAction::ApprovePrefix: return QStringLiteral("approve-prefix");
         case RemoteIMApprovalAction::Reject: return QStringLiteral("reject");
+        case RemoteIMApprovalAction::Resolved: return QStringLiteral("resolved");
+        case RemoteIMApprovalAction::AutoDeclined: return QStringLiteral("auto-declined");
     }
     return QString();
 }
@@ -44,6 +48,8 @@ inline QString remoteIMApprovalActionTitle(RemoteIMApprovalAction action) {
         case RemoteIMApprovalAction::ApproveOnce: return QStringLiteral("同意本次");
         case RemoteIMApprovalAction::ApprovePrefix: return QStringLiteral("同意并记住");
         case RemoteIMApprovalAction::Reject: return QStringLiteral("拒绝");
+        case RemoteIMApprovalAction::Resolved: return QStringLiteral("审批已处理");
+        case RemoteIMApprovalAction::AutoDeclined: return QStringLiteral("审批已自动拒绝");
     }
     return QString();
 }
@@ -60,6 +66,14 @@ inline bool remoteIMApprovalActionFromWireName(const QString& value,
     }
     if (value == QStringLiteral("reject")) {
         if (action) *action = RemoteIMApprovalAction::Reject;
+        return true;
+    }
+    if (value == QStringLiteral("resolved")) {
+        if (action) *action = RemoteIMApprovalAction::Resolved;
+        return true;
+    }
+    if (value == QStringLiteral("auto-declined")) {
+        if (action) *action = RemoteIMApprovalAction::AutoDeclined;
         return true;
     }
     return false;
@@ -91,9 +105,14 @@ struct RemoteIMApprovalRequest {
         bool hasApprovePrefix = false;
         bool hasReject = false;
         for (RemoteIMApprovalAction action : actions) {
-            bool* seen = action == RemoteIMApprovalAction::ApproveOnce
-                ? &hasApproveOnce
-                : action == RemoteIMApprovalAction::ApprovePrefix ? &hasApprovePrefix : &hasReject;
+            bool* seen = nullptr;
+            switch (action) {
+                case RemoteIMApprovalAction::ApproveOnce: seen = &hasApproveOnce; break;
+                case RemoteIMApprovalAction::ApprovePrefix: seen = &hasApprovePrefix; break;
+                case RemoteIMApprovalAction::Reject: seen = &hasReject; break;
+                case RemoteIMApprovalAction::Resolved:
+                case RemoteIMApprovalAction::AutoDeclined: return false;
+            }
             if (*seen) return false;
             *seen = true;
         }

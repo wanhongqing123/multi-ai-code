@@ -842,6 +842,7 @@ final class RemoteIMAppState: ObservableObject {
             fromUserID: event.fromUserID,
             remoteID: event.remoteID,
             approvalRequest: event.approvalRequest,
+            approvalDecision: event.approvalDecision,
             now: event.createdAt
         )
         let wasInserted = chatState.messages.count > previousCount
@@ -850,7 +851,12 @@ final class RemoteIMAppState: ObservableObject {
             userID: event.fromUserID,
             remoteID: event.remoteID,
             wasInserted: wasInserted,
-            fields: ["content_bytes": String(event.text.lengthOfBytes(using: .utf8))]
+            fields: [
+                "content_bytes": String(event.text.lengthOfBytes(using: .utf8)),
+                "interaction": event.approvalRequest != nil
+                    ? "approval-request"
+                    : event.approvalDecision != nil ? "approval-resolved" : "none",
+            ]
         )
         updateUnreadAfterReceiving(from: event.fromUserID, wasInserted: wasInserted)
         refreshProfileIfNeeded(userID: event.fromUserID)

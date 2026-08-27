@@ -21,6 +21,10 @@ final class MasterChatStateTests: XCTestCase {
             token: "approval-good",
             actions: [.approveOnce, .approveOnce, .reject]
         ))
+        XCTAssertNil(RemoteIMApprovalRequest(
+            token: "approval-good",
+            actions: [.approveOnce, .reject, .autoDeclined]
+        ))
     }
 
     func testIncomingApprovalRequestIsStoredOnTheMessage() {
@@ -108,6 +112,19 @@ final class MasterChatStateTests: XCTestCase {
         )))
         XCTAssertNil(RemoteIMCloudMetadataCodec.decode(Data(
             #"{"namespace":"multi-ai-code","version":2,"origin":"machine","interaction":{"kind":"approval-decision","token":"approval-wire-1","action":"approve-once"}}"#.utf8
+        )))
+    }
+
+    func testApprovalResolvedMetadataBecomesAnAuthoritativeIncomingDecision() {
+        let autoDeclined = RemoteIMCloudMetadataCodec.decode(Data(
+            #"{"namespace":"multi-ai-code","version":2,"origin":"machine","interaction":{"kind":"approval-resolved","token":"approval-wire-1","outcome":"auto-declined"}}"#.utf8
+        ))
+        XCTAssertEqual(
+            autoDeclined?.approvalDecision,
+            RemoteIMApprovalDecision(token: "approval-wire-1", action: .autoDeclined)
+        )
+        XCTAssertNil(RemoteIMCloudMetadataCodec.decode(Data(
+            #"{"namespace":"multi-ai-code","version":2,"origin":"human","interaction":{"kind":"approval-resolved","token":"approval-wire-1","outcome":"auto-declined"}}"#.utf8
         )))
     }
 

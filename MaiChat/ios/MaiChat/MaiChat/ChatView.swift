@@ -1116,8 +1116,15 @@ private struct MessageListView: View {
     private var approvalDecisionStates: [String: ApprovalDecisionDisplayState] {
         var states: [String: ApprovalDecisionDisplayState] = [:]
         for message in messages {
-            guard let token = message.approvalDecision?.token else { continue }
-            if message.status == .sent {
+            guard let decision = message.approvalDecision else { continue }
+            let token = decision.token
+            if decision.action == .autoDeclined {
+                states[token] = .autoDeclined
+            } else if decision.action == .resolved, states[token] != .autoDeclined {
+                states[token] = .resolved
+            } else if states[token] == .resolved || states[token] == .autoDeclined {
+                continue
+            } else if message.status == .sent {
                 states[token] = .sent
             } else if message.status == .pending, states[token] != .sent {
                 states[token] = .sending
@@ -1200,7 +1207,24 @@ private struct MessageListView: View {
                 let nextLatestMessageID = messages.last?.id
                 guard nextLatestMessageID != latestMessageID else { return }
                 latestMessageID = nextLatestMessageID
-                if isNearBottom || messages.last?.direction == .outgoing {
+                let latestMessage = messages.last
+                let shouldScroll = isNearBottom || latestMessage?.direction == .outgoing
+                if let latestMessage, latestMessage.approvalRequest != nil {
+                    AppDiagnosticLog.shared.record(
+                        level: .info,
+                        category: "approval",
+                        event: "list-update",
+                        fields: [
+                            "message": DiagnosticLogPrivacy.stableTag(
+                                latestMessage.remoteID ?? latestMessage.id.uuidString,
+                                prefix: "m"
+                            ),
+                            "near_bottom": isNearBottom ? "true" : "false",
+                            "scroll_action": shouldScroll ? "scroll-to-bottom" : "show-new-message-indicator",
+                        ]
+                    )
+                }
+                if shouldScroll {
                     hasUnseenLatestMessage = false
                     scrollToLatestMessage(proxy: proxy)
                 } else {
@@ -1491,6 +1515,8 @@ private enum ApprovalDecisionDisplayState {
     case available
     case sending
     case sent
+    case resolved
+    case autoDeclined
 }
 
 private struct RemoteIMApprovalActionsView: View {
@@ -1500,15 +1526,28 @@ private struct RemoteIMApprovalActionsView: View {
     @EnvironmentObject private var appState: RemoteIMAppState
     @State private var submittingAction: RemoteIMApprovalAction?
     @State private var submittedAction: RemoteIMApprovalAction?
+    @State private var didLogRendered = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
-            if decisionState == .sent || submittedAction != nil {
+            if decisionState == .autoDeclined {
+                Label("审批已因新消息自动拒绝", systemImage: "xmark.circle.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.orange)
+                    .accessibilityIdentifier("remote-im-approval-auto-declined")
+            } else if decisionState == .resolved {
+                Label("审批已处理", systemImage: "checkmark.circle.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(RemoteIMStyle.textSecondary)
+                    .accessibilityIdentifier("remote-im-approval-resolved")
+            } else if decisionState == .sent ||
+                        (decisionState == .available && submittedAction != nil) {
                 Label("审批选择已发送", systemImage: "checkmark.circle.fill")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(RemoteIMStyle.green)
                     .accessibilityIdentifier("remote-im-approval-sent")
-            } else if decisionState == .sending || submittingAction != nil {
+            } else if decisionState == .sending ||
+                        (decisionState == .available && submittingAction != nil) {
                 Label("审批选择正在发送…", systemImage: "clock.arrow.circlepath")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(RemoteIMStyle.blue)
@@ -1550,6 +1589,20 @@ private struct RemoteIMApprovalActionsView: View {
                 }
             }
         }
+        .onAppear {
+            guard !didLogRendered else { return }
+            didLogRendered = true
+            AppDiagnosticLog.shared.record(
+                level: .info,
+                category: "approval",
+                event: "card-rendered",
+                fields: [
+                    "message": DiagnosticLogPrivacy.stableTag(messageID.uuidString, prefix: "m"),
+                    "action_count": String(request.actions.count),
+                    "state": decisionState.diagnosticName,
+                ]
+            )
+        }
     }
 
     private func approvalButtonColor(_ action: RemoteIMApprovalAction) -> Color {
@@ -1586,6 +1639,18 @@ private struct RemoteIMApprovalActionsView: View {
                     "message_id": messageID.uuidString,
                 ]
             )
+        }
+    }
+}
+
+private extension ApprovalDecisionDisplayState {
+    var diagnosticName: String {
+        switch self {
+        case .available: return "available"
+        case .sending: return "sending"
+        case .sent: return "sent"
+        case .resolved: return "resolved"
+        case .autoDeclined: return "auto-declined"
         }
     }
 }

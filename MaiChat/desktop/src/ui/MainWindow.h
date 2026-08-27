@@ -116,7 +116,7 @@ private:
     // 右键菜单入口：弹「另存为」对话框（默认下载目录 + 原文件名），把附件保存到用户选的位置。
     void saveFileAttachmentToLocal(const RemoteIMFileAttachment& attachment);
     QWidget* createMessageBubble(const RemoteIMMessage& message);
-    enum class ApprovalDisplayState { Available, Sending, Sent };
+    enum class ApprovalDisplayState { Available, Sending, Sent, Resolved, AutoDeclined };
     ApprovalDisplayState approvalDisplayState(const RemoteIMMessage& message) const;
     int messageBubbleMaximumWidth() const;
     void applyMessageBubbleWidth(QWidget* bubble, bool expanded) const;
@@ -220,6 +220,8 @@ private:
     // 只保存一次网络请求的瞬时状态；成功状态由已落库的出站审批决定恢复。
     QSet<QString> submittingApprovalTokens_;
     QSet<QString> sentApprovalTokens_;
+    QSet<QString> resolvedApprovalTokens_;
+    QSet<QString> autoDeclinedApprovalTokens_;
     QPushButton* loadEarlierButton_ = nullptr;
     // 顶栏搜索。范围是所有会话里「已加载」的消息——没点过「加载更早」的历史
     // 不在 ChatState 里，也就搜不到，结果面板上要如实说清楚。

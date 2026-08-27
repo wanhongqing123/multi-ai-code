@@ -137,6 +137,11 @@ describe('tencent IM client helpers', () => {
       token: 'approval-wire-1',
       action: 'approve-once' as const
     }
+    const resolution = {
+      kind: 'approval-resolved' as const,
+      token: 'approval-wire-1',
+      outcome: 'auto-declined' as const
+    }
 
     expect(parseRemoteImCloudMetadata(createRemoteImCloudCustomData('machine', request))).toEqual({
       namespace: 'multi-ai-code',
@@ -150,11 +155,20 @@ describe('tencent IM client helpers', () => {
       origin: 'human',
       interaction: decision
     })
+    expect(parseRemoteImCloudMetadata(createRemoteImCloudCustomData('machine', resolution))).toEqual({
+      namespace: 'multi-ai-code',
+      version: 2,
+      origin: 'machine',
+      interaction: resolution
+    })
     expect(
       parseRemoteImCloudMetadata(createRemoteImCloudCustomData('human', request))
     ).toBeUndefined()
     expect(
       parseRemoteImCloudMetadata(createRemoteImCloudCustomData('machine', decision))
+    ).toBeUndefined()
+    expect(
+      parseRemoteImCloudMetadata(createRemoteImCloudCustomData('human', resolution))
     ).toBeUndefined()
     expect(
       parseRemoteImCloudMetadata('{"namespace":"multi-ai-code","version":1,"origin":"human"}')

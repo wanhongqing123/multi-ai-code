@@ -160,6 +160,7 @@ private slots:
     void fetchesContactsConversationsAndHistoryAfterLogin();
     void emitsIncomingTextAndImageFromSdkMessages();
     void emitsIncomingApprovalRequestFromV2CloudMetadata();
+    void emitsIncomingApprovalResolutionFromV2CloudMetadata();
     void emitsIncomingGenericFileWithRealMimeType();
     void mergesCaptionIntoGenericFileMessage();
     void loadsGenericFileFromHistory();
@@ -589,6 +590,37 @@ void TimSdkRemoteIMClientTest::emitsIncomingApprovalRequestFromV2CloudMetadata()
     QCOMPARE(oldMessages.size(), 1);
     QVERIFY(!oldMessages.first().hasApprovalRequest);
     QCOMPARE(oldMessages.first().origin, RemoteIMMessageOrigin::Unknown);
+}
+
+void TimSdkRemoteIMClientTest::emitsIncomingApprovalResolutionFromV2CloudMetadata() {
+    auto api = std::make_unique<FakeTimSdkApi>();
+    auto* fake = api.get();
+    TimSdkRemoteIMClient client(std::move(api));
+    QSignalSpy messagesSpy(&client, &RemoteIMClient::liveMessagesReceived);
+
+    client.connectToService(123456, QStringLiteral("desktop-user"), QStringLiteral("sig-value"), nullptr);
+    fake->emitMessages(QJsonArray{QJsonObject{
+        {QStringLiteral("message_is_from_self"), false},
+        {QStringLiteral("message_sender"), QStringLiteral("multi-ai-code")},
+        {QStringLiteral("message_msg_id"), QStringLiteral("approval-resolution-1")},
+        {QStringLiteral("message_cloud_custom_str"), QStringLiteral(
+            "{\"namespace\":\"multi-ai-code\",\"version\":2,\"origin\":\"machine\","
+            "\"interaction\":{\"kind\":\"approval-resolved\","
+            "\"token\":\"approval-desktop-resolved\",\"outcome\":\"auto-declined\"}}")},
+        {QStringLiteral("message_elem_array"), QJsonArray{QJsonObject{
+            {QStringLiteral("elem_type"), 0},
+            {QStringLiteral("text_elem_content"), QStringLiteral("该审批已自动拒绝")}
+        }}}
+    }});
+
+    QCOMPARE(messagesSpy.count(), 1);
+    const auto messages = messagesSpy.takeFirst().at(0).value<QList<RemoteIMMessage>>();
+    QCOMPARE(messages.size(), 1);
+    QVERIFY(messages.first().hasApprovalDecision);
+    QCOMPARE(messages.first().approvalDecision.token,
+             QStringLiteral("approval-desktop-resolved"));
+    QCOMPARE(messages.first().approvalDecision.action,
+             RemoteIMApprovalAction::AutoDeclined);
 }
 
 // 普通文件（非 md/html）曾被接收解析层的白名单直接丢弃：消息根本不会生成，

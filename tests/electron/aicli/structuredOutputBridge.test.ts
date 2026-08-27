@@ -172,6 +172,47 @@ describe('AICLI structured output bridge', () => {
     ])
   })
 
+  it('preserves the winning approval decision and source on resolution events', async () => {
+    const bridge = await createAicliStructuredOutputBridge('session-resolution', 'codex')
+    const { port, token } = parseTcpEndpoint(bridge.endpoint)
+    const events: AicliStructuredOutputEvent[] = []
+    const removeListener = addAicliStructuredOutputListener((event) => events.push(event))
+
+    await sendLine(port, {
+      token,
+      kind: 'approval_resolved',
+      text: 'resolved',
+      approvalId: 'approval-internal-1',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      replyId: 'reply-1',
+      taskId: 'task-1',
+      approvalDecision: 'decline',
+      resolutionSource: 'remote-im-input'
+    })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    removeListener()
+    await bridge.close()
+    expect(events).toEqual([
+      {
+        sessionId: 'session-resolution',
+        provider: 'codex',
+        kind: 'approval_resolved',
+        text: 'resolved',
+        messageId: undefined,
+        partId: undefined,
+        replyId: 'reply-1',
+        taskId: 'task-1',
+        approvalId: 'approval-internal-1',
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        approvalDecision: 'decline',
+        resolutionSource: 'remote-im-input'
+      }
+    ])
+  })
+
   it('forwards and acknowledges terminal turn errors', async () => {
     const bridge = await createAicliStructuredOutputBridge('session-1', 'codex')
     const { port, token } = parseTcpEndpoint(bridge.endpoint)
@@ -374,6 +415,67 @@ describe('AICLI structured output bridge', () => {
     expect(receivedLines.join('')).toContain('"kind":"control"')
     expect(receivedLines.join('')).toContain('"command":"status"')
     expect(receivedLines.join('')).toContain('"requestId"')
+  })
+
+  it('preserves structured approval auto-decline audit metadata', async () => {
+    const bridge = await createAicliStructuredOutputBridge('session-auto-decline', 'codex')
+    const { port, token } = parseTcpEndpoint(bridge.endpoint)
+    const socket = await new Promise<net.Socket>((resolve, reject) => {
+      const client = net.createConnection({ host: '127.0.0.1', port }, () => {
+        client.write(`${JSON.stringify({ token, kind: 'control_ready' })}\n`)
+        resolve(client)
+      })
+      client.setEncoding('utf8')
+      client.on('data', (chunk) => {
+        const requestId = String(chunk).match(/"requestId":"([^"]+)"/)?.[1]
+        if (!requestId) return
+        client.write(
+          `${JSON.stringify({
+            token,
+            kind: 'control_result',
+            requestId,
+            ok: true,
+            text: 'queued',
+            autoDeclinedApprovals: [
+              { approvalId: 'approval-1', commandSummary: 'Remove-Item …' },
+              { approvalId: '', commandSummary: 'ignored' }
+            ],
+            approvalResolution: {
+              applied: false,
+              winnerDecision: 'decline',
+              winnerSource: 'remote-im-input'
+            }
+          })}\n`
+        )
+      })
+      client.once('error', reject)
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const result = await bridge.requestControlCommand(
+      {
+        command: 'submit_user_message',
+        text: 'new message',
+        displayText: 'new message',
+        inputOrigin: 'remote-im'
+      },
+      500
+    )
+
+    socket.destroy()
+    await bridge.close()
+    expect(result).toEqual({
+      ok: true,
+      text: 'queued',
+      autoDeclinedApprovals: [
+        { approvalId: 'approval-1', commandSummary: 'Remove-Item …' }
+      ],
+      approvalResolution: {
+        applied: false,
+        winnerDecision: 'decline',
+        winnerSource: 'remote-im-input'
+      }
+    })
   })
 
   it('sends an explicit decision for a pending approval request', async () => {

@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type {
   RemoteImApprovalAction,
-  RemoteImApprovalRequestInteraction
+  RemoteImTextInteraction,
+  RemoteImApprovalResolutionOutcome
 } from './types.js'
 
 export type RemoteImApprovalDecision = 'accept' | 'accept-persistent' | 'cancel'
@@ -43,11 +44,20 @@ export interface RemoteImApprovalCoordinatorDeps {
     projectId: string,
     toUserId: string,
     text: string,
-    interaction?: RemoteImApprovalRequestInteraction
+    interaction?: RemoteImTextInteraction
   ): Promise<{ ok: boolean; error?: string }>
   resolveApproval(
     input: RemoteImApprovalResolution
-  ): Promise<{ ok: boolean; error?: string; text?: string }>
+  ): Promise<{
+    ok: boolean
+    error?: string
+    text?: string
+    approvalResolution?: {
+      applied: boolean
+      winnerDecision: string
+      winnerSource: string
+    }
+  }>
   now?: () => number
   createToken?: () => string
   setTimer?: (callback: () => void, timeoutMs: number) => ReturnType<typeof setTimeout>
@@ -77,6 +87,7 @@ interface PendingRemoteImApproval extends RemoteImApprovalRequest {
   state: RemoteImApprovalState
   timer: ReturnType<typeof setTimeout> | null
   securityGeneration: number
+  resolutionNoticeSent: boolean
 }
 
 const DEFAULT_APPROVAL_TIMEOUT_MS = 10 * 60 * 1000
@@ -276,7 +287,8 @@ export class RemoteImApprovalCoordinator {
       expiresAt: createdAt + this.timeoutMs,
       state: 'pending',
       timer: null,
-      securityGeneration: this.getSecurityGeneration()
+      securityGeneration: this.getSecurityGeneration(),
+      resolutionNoticeSent: false
     }
     item.timer = this.setTimer(() => {
       void this.expire(item)
@@ -360,7 +372,7 @@ export class RemoteImApprovalCoordinator {
         : input.action === 'approve-prefix'
           ? 'accept-persistent'
           : 'cancel'
-    let resolved: { ok: boolean; error?: string; text?: string }
+    let resolved: Awaited<ReturnType<RemoteImApprovalCoordinatorDeps['resolveApproval']>>
     try {
       resolved = await this.deps.resolveApproval({ ...this.requestFrom(item), decision })
     } catch (error) {
@@ -395,6 +407,26 @@ export class RemoteImApprovalCoordinator {
         handled: true,
         ok: false,
         text: `审批结果未确认，已尝试取消；请核查 Codex 与目标状态：${resolved.error ?? 'unknown error'}`
+      }
+    }
+
+    if (resolved.approvalResolution?.applied === false) {
+      this.sendResolutionNotice(
+        item,
+        resolutionOutcome({
+          source: resolved.approvalResolution.winnerSource,
+          decision: resolved.approvalResolution.winnerDecision
+        })
+      )
+      this.consume(item, 'resolved')
+      return {
+        handled: true,
+        ok: false,
+        text: [
+          '该审批已由另一条操作先处理，本次点击未生效。',
+          `最终决定：${resolved.approvalResolution.winnerDecision}`,
+          `解决来源：${resolved.approvalResolution.winnerSource}`
+        ].join('\n')
       }
     }
 
@@ -455,10 +487,17 @@ export class RemoteImApprovalCoordinator {
     }
   }
 
-  forgetResolved(input: Pick<RemoteImApprovalRequest, 'sessionId' | 'taskId' | 'replyId' | 'threadId' | 'turnId' | 'approvalId'>): void {
+  forgetResolved(
+    input: Pick<
+      RemoteImApprovalRequest,
+      'sessionId' | 'taskId' | 'replyId' | 'threadId' | 'turnId' | 'approvalId'
+    >,
+    resolution?: { source?: string; decision?: string }
+  ): void {
     const token = this.tokenByIdentity.get(approvalIdentity(input))
     const item = token ? this.byToken.get(token) : undefined
     if (!item) return
+    this.sendResolutionNotice(item, resolutionOutcome(resolution))
     if (item.state === 'resolving') {
       // A remote approval is resolved inside Codex before its control_result is
       // sent back to the host. The independent approval_resolved event can win
@@ -469,6 +508,32 @@ export class RemoteImApprovalCoordinator {
       return
     }
     this.consume(item, 'resolved')
+  }
+
+  private sendResolutionNotice(
+    item: PendingRemoteImApproval,
+    outcome: RemoteImApprovalResolutionOutcome
+  ): void {
+    if (item.resolutionNoticeSent) return
+    item.resolutionNoticeSent = true
+    const outcomeText =
+      outcome === 'auto-declined'
+        ? '收到新的 IM 消息后已自动拒绝'
+        : outcome === 'approved'
+          ? '已批准'
+          : outcome === 'rejected'
+            ? '已拒绝'
+            : '已处理'
+    void this.deps
+      .sendText(
+        item.projectId,
+        item.requesterUserId,
+        `该审批${outcomeText}：${item.token}`,
+        { kind: 'approval-resolved', token: item.token, outcome }
+      )
+      .catch(() => {
+        // The approval itself is already resolved; this is a best-effort client-state update.
+      })
   }
 
   private createUniqueToken(): string | null {
@@ -533,6 +598,11 @@ export class RemoteImApprovalCoordinator {
     if (item.state !== 'pending') return
     this.consume(item, 'expired')
     const cancelled = await this.cancelFailClosed(item)
+    // A local TUI decision or a new-IM auto-decline can win Codex's approval CAS while this
+    // independent Electron timer is awaiting its cancel RPC. `approval_resolved` then changes
+    // the item away from expired. Do not send a contradictory "timeout rejected" notice for a
+    // timeout decision that lost that race.
+    if ((item as PendingRemoteImApproval).state !== 'expired') return
     try {
       await this.deps.sendText(
         item.projectId,
@@ -556,10 +626,20 @@ export class RemoteImApprovalCoordinator {
         ...item,
         decision: 'cancel'
       })
-      return result.ok
+      return result.ok && result.approvalResolution?.applied !== false
     } catch {
       // The session may already be gone. The local capability remains consumed.
       return false
     }
   }
+}
+
+function resolutionOutcome(input?: {
+  source?: string
+  decision?: string
+}): RemoteImApprovalResolutionOutcome {
+  if (input?.source === 'remote-im-input') return 'auto-declined'
+  if (input?.decision?.startsWith('accept')) return 'approved'
+  if (input?.decision === 'decline' || input?.decision === 'cancel') return 'rejected'
+  return 'resolved'
 }

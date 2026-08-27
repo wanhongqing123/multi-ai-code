@@ -50,6 +50,7 @@ public final class RemoteIMProtocolMetadata {
         String token;
         List<String> actions;
         String action;
+        String outcome;
     }
 
     private RemoteIMProtocolMetadata() {
@@ -66,6 +67,11 @@ public final class RemoteIMProtocolMetadata {
 
     public static String encodeApprovalDecision(RemoteIMApprovalDecision decision) {
         if (decision == null) throw new IllegalArgumentException("approval decision is required");
+        if (decision.action() != RemoteIMApprovalAction.APPROVE_ONCE
+            && decision.action() != RemoteIMApprovalAction.APPROVE_PREFIX
+            && decision.action() != RemoteIMApprovalAction.REJECT) {
+            throw new IllegalArgumentException("approval resolution cannot be sent as a user decision");
+        }
         return encode(RemoteIMOrigin.HUMAN, null, decision);
     }
 
@@ -118,6 +124,30 @@ public final class RemoteIMProtocolMetadata {
             && origin == RemoteIMOrigin.HUMAN
             && interaction.actions == null) {
             RemoteIMApprovalAction action = RemoteIMApprovalAction.fromWireValue(interaction.action);
+            if (action != RemoteIMApprovalAction.APPROVE_ONCE
+                && action != RemoteIMApprovalAction.APPROVE_PREFIX
+                && action != RemoteIMApprovalAction.REJECT) return machineMetadata();
+            try {
+                return new Metadata(
+                    origin,
+                    null,
+                    new RemoteIMApprovalDecision(interaction.token, action)
+                );
+            } catch (IllegalArgumentException error) {
+                return machineMetadata();
+            }
+        }
+        if ("approval-resolved".equals(interaction.kind)
+            && origin == RemoteIMOrigin.MACHINE
+            && interaction.actions == null
+            && interaction.action == null) {
+            RemoteIMApprovalAction action = "auto-declined".equals(interaction.outcome)
+                ? RemoteIMApprovalAction.AUTO_DECLINED
+                : ("approved".equals(interaction.outcome)
+                    || "rejected".equals(interaction.outcome)
+                    || "resolved".equals(interaction.outcome))
+                        ? RemoteIMApprovalAction.RESOLVED
+                        : null;
             if (action == null) return machineMetadata();
             try {
                 return new Metadata(

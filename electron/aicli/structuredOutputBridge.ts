@@ -13,6 +13,17 @@ export interface AicliUserMessageAttachment {
   fileName?: string
 }
 
+export interface AicliAutoDeclinedApproval {
+  approvalId: string
+  commandSummary: string
+}
+
+export interface AicliApprovalResolutionResult {
+  applied: boolean
+  winnerDecision: string
+  winnerSource: string
+}
+
 export interface AicliStructuredOutputEvent {
   sessionId: string
   provider: AicliStructuredOutputProvider
@@ -28,6 +39,8 @@ export interface AicliStructuredOutputEvent {
   cwd?: string
   reason?: string
   persistentApprovalCommand?: string
+  resolutionSource?: string
+  approvalDecision?: string
 }
 
 export interface AicliStructuredOutputBridge {
@@ -73,6 +86,10 @@ interface WireEvent {
   cwd?: unknown
   reason?: unknown
   persistentApprovalCommand?: unknown
+  resolutionSource?: unknown
+  approvalDecision?: unknown
+  autoDeclinedApprovals?: unknown
+  approvalResolution?: unknown
 }
 
 // 所有控制命令统一走 requestId RPC：switch_mode 也等待 AICLI 回 control_result，
@@ -105,7 +122,12 @@ export type AicliRequestControlCommand =
   | { command: 'switch_mode'; mode: AicliControlMode }
 
 export type AicliControlCommandResult =
-  | { ok: true; text: string }
+  | {
+      ok: true
+      text: string
+      autoDeclinedApprovals?: AicliAutoDeclinedApproval[]
+      approvalResolution?: AicliApprovalResolutionResult
+    }
   | { ok: false; error: string; text?: string }
 
 const listeners = new Set<AicliStructuredOutputListener>()
@@ -129,6 +151,28 @@ function emitStructuredOutput(event: AicliStructuredOutputEvent): void {
 
 function asOptionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value : undefined
+}
+
+function asAutoDeclinedApprovals(value: unknown): AicliAutoDeclinedApproval[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .flatMap((item) => {
+      if (!item || typeof item !== 'object') return []
+      const record = item as Record<string, unknown>
+      const approvalId = asOptionalString(record.approvalId)
+      const commandSummary = asOptionalString(record.commandSummary)
+      return approvalId && commandSummary ? [{ approvalId, commandSummary }] : []
+    })
+    .slice(0, 32)
+}
+
+function asApprovalResolution(value: unknown): AicliApprovalResolutionResult | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const record = value as Record<string, unknown>
+  const winnerDecision = asOptionalString(record.winnerDecision)
+  const winnerSource = asOptionalString(record.winnerSource)
+  if (typeof record.applied !== 'boolean' || !winnerDecision || !winnerSource) return undefined
+  return { applied: record.applied, winnerDecision, winnerSource }
 }
 
 export async function createAicliStructuredOutputBridge(
@@ -201,7 +245,14 @@ export async function createAicliStructuredOutputBridge(
           clearTimeout(pending.timeout)
           const text = typeof parsed.text === 'string' ? parsed.text : ''
           if (parsed.ok === true) {
-            pending.resolve({ ok: true, text })
+            const autoDeclinedApprovals = asAutoDeclinedApprovals(parsed.autoDeclinedApprovals)
+            const approvalResolution = asApprovalResolution(parsed.approvalResolution)
+            pending.resolve({
+              ok: true,
+              text,
+              ...(autoDeclinedApprovals.length ? { autoDeclinedApprovals } : {}),
+              ...(approvalResolution ? { approvalResolution } : {})
+            })
           } else {
             pending.resolve({
               ok: false,
@@ -226,6 +277,8 @@ export async function createAicliStructuredOutputBridge(
         const cwd = asOptionalString(parsed.cwd)
         const reason = asOptionalString(parsed.reason)
         const persistentApprovalCommand = asOptionalString(parsed.persistentApprovalCommand)
+        const resolutionSource = asOptionalString(parsed.resolutionSource)
+        const approvalDecision = asOptionalString(parsed.approvalDecision)
         emitStructuredOutput({
           sessionId,
           provider,
@@ -240,7 +293,9 @@ export async function createAicliStructuredOutputBridge(
           ...(turnId ? { turnId } : {}),
           ...(cwd ? { cwd } : {}),
           ...(reason ? { reason } : {}),
-          ...(persistentApprovalCommand ? { persistentApprovalCommand } : {})
+          ...(persistentApprovalCommand ? { persistentApprovalCommand } : {}),
+          ...(resolutionSource ? { resolutionSource } : {}),
+          ...(approvalDecision ? { approvalDecision } : {})
         })
 
         // 回执：AICLI 侧靠这条 ack 判定数据连接“还活着”。收不到 ack（半死 socket、

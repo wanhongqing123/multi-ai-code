@@ -111,6 +111,11 @@ RemoteIMMessage ChatState::queueOutgoingApprovalDecision(
     if (!isValidRemoteIMApprovalToken(cleanToken)) {
         throw std::invalid_argument("approval token is required");
     }
+    if (action != RemoteIMApprovalAction::ApproveOnce
+        && action != RemoteIMApprovalAction::ApprovePrefix
+        && action != RemoteIMApprovalAction::Reject) {
+        throw std::invalid_argument("approval resolution is not a user decision");
+    }
     RemoteIMMessage message;
     message.fromUserId = ownerUserId_;
     message.toUserId = requireSelectedPeer();

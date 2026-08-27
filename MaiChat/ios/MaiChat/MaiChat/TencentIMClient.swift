@@ -484,22 +484,60 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
                 }
                 let createdAt = message?.timestamp ?? fallbackDate
                 let metadata = message.flatMap(Self.messageMetadata(for:))
+                if metadata?.approvalRequest != nil {
+                    Self.logSDK(
+                        level: .info,
+                        event: "approval-metadata-resolved",
+                        fields: [
+                            "kind": "text",
+                            "peer": Self.peerTag(userID),
+                            "message": Self.messageTag(msgID),
+                            "result": "ok",
+                            "interaction": "approval-request",
+                        ]
+                    )
+                }
+                if metadata?.approvalDecision != nil {
+                    Self.logSDK(
+                        level: .info,
+                        event: "approval-metadata-resolved",
+                        fields: [
+                            "kind": "text",
+                            "peer": Self.peerTag(userID),
+                            "message": Self.messageTag(msgID),
+                            "result": "ok",
+                            "interaction": "approval-resolved",
+                        ]
+                    )
+                }
                 self?.emitIncomingText(
                     fromUserID: userID,
                     text: text,
                     remoteID: msgID,
                     origin: metadata?.origin,
                     approvalRequest: metadata?.approvalRequest,
+                    approvalDecision: metadata?.approvalDecision,
                     createdAt: createdAt
                 )
             },
-            fail: { [weak self] _, _ in
+            fail: { [weak self] code, _ in
+                Self.logSDK(
+                    level: .warning,
+                    event: "text-metadata-resolve-failed",
+                    fields: [
+                        "kind": "text",
+                        "peer": Self.peerTag(userID),
+                        "message": Self.messageTag(msgID),
+                        "code": String(code),
+                    ]
+                )
                 self?.emitIncomingText(
                     fromUserID: userID,
                     text: text,
                     remoteID: msgID,
                     origin: nil,
                     approvalRequest: nil,
+                    approvalDecision: nil,
                     createdAt: fallbackDate
                 )
             }
@@ -976,15 +1014,17 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
         remoteID: String?,
         origin: RemoteIMMessageOrigin?,
         approvalRequest: RemoteIMApprovalRequest?,
+        approvalDecision: RemoteIMApprovalDecision?,
         createdAt: Date
     ) {
-        Task { @MainActor [weak self, fromUserID, text, remoteID, origin, approvalRequest, createdAt] in
+        Task { @MainActor [weak self, fromUserID, text, remoteID, origin, approvalRequest, approvalDecision, createdAt] in
             let event = IncomingRemoteIMText(
                 fromUserID: fromUserID,
                 text: text,
                 remoteID: remoteID,
                 origin: origin,
                 approvalRequest: approvalRequest,
+                approvalDecision: approvalDecision,
                 createdAt: createdAt
             )
             self?.onIncomingText?(event)

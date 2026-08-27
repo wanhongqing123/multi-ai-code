@@ -570,7 +570,8 @@ public final class RemoteIMSessionController {
                 incoming.remoteId(),
                 incoming.createdAtMillis(),
                 incoming.origin(),
-                incoming.approvalRequest()
+                incoming.approvalRequest(),
+                incoming.approvalDecision()
             );
         }
         RemoteIMContact contact = findContact(incoming.fromUserId());

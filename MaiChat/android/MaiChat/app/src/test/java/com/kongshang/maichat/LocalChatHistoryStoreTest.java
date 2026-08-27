@@ -116,12 +116,24 @@ public class LocalChatHistoryStoreTest {
             RemoteIMApprovalAction.APPROVE_ONCE
         );
         state.updateMessageStatus(decision.id(), RemoteIMMessage.Status.SENT);
+        state.receiveText(
+            "该审批已自动拒绝",
+            "desktop-bot",
+            "remote-resolution-1",
+            decision.createdAtMillis() + 1_000L,
+            RemoteIMOrigin.MACHINE,
+            null,
+            new RemoteIMApprovalDecision(
+                request.token(),
+                RemoteIMApprovalAction.AUTO_DECLINED
+            )
+        );
         store.save(state);
 
         ChatState restored = store.load("android-user");
         List<RemoteIMMessage> messages = restored.messagesWith("desktop-bot");
 
-        assertEquals(2, messages.size());
+        assertEquals(3, messages.size());
         assertEquals(request, messages.get(0).approvalRequest());
         assertEquals(
             new RemoteIMApprovalDecision(
@@ -131,7 +143,14 @@ public class LocalChatHistoryStoreTest {
             messages.get(1).approvalDecision()
         );
         assertEquals(
-            RemoteIMApprovalDisplayPolicy.State.SENT,
+            new RemoteIMApprovalDecision(
+                request.token(),
+                RemoteIMApprovalAction.AUTO_DECLINED
+            ),
+            messages.get(2).approvalDecision()
+        );
+        assertEquals(
+            RemoteIMApprovalDisplayPolicy.State.AUTO_DECLINED,
             RemoteIMApprovalDisplayPolicy.stateFor(
                 request,
                 RemoteIMApprovalDisplayPolicy.statesFor(messages)

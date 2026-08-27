@@ -121,7 +121,6 @@ import type {
   RemoteImFileAttachment,
   RemoteImImageAttachment,
   RemoteImMessageOrigin,
-  RemoteImApprovalRequestInteraction,
   RemoteImTextInteraction,
   RemoteImRoamedTextMessage,
   RemoteImRuntimeIdentity,
@@ -890,7 +889,7 @@ async function sendRemoteImApprovalText(
   projectId: string,
   toUserId: string,
   text: string,
-  interaction?: RemoteImApprovalRequestInteraction
+  interaction?: RemoteImTextInteraction
 ): Promise<{ ok: boolean; error?: string }> {
   if (remoteImAccountTransitioning || remoteImApprovalAuthorityMutationCount > 0) {
     return { ok: false, error: 'Remote IM account is changing' }
@@ -1708,6 +1707,15 @@ function createOutputRoutingDeps(
   return {
     authorizeAicliOutputStart: (route: RemoteImAicliOutputRoute) => {
       if (!isRemoteImAccountSecurityGenerationCurrent(securityGeneration)) {
+        writeStructuredOutputRuntimeLog('aicli:route-admission-rejected', {
+          sessionId: route.sessionId,
+          detail: {
+            reason: 'security-generation-changed',
+            inputUserId: route.toUserId,
+            taskId: route.taskId,
+            replyId: route.replyId ?? null
+          }
+        })
         return {
           ok: false as const,
           error: REMOTE_IM_ACCOUNT_CHANGING_ERROR
@@ -1738,9 +1746,32 @@ function createOutputRoutingDeps(
       }
 
       const existingRoutes = structuredOutputTasks.list(route.sessionId)
-      if (existingRoutes.length === 0) return { ok: true as const }
+      if (existingRoutes.length === 0) {
+        writeStructuredOutputRuntimeLog('aicli:route-admission-fresh', {
+          sessionId: route.sessionId,
+          detail: {
+            inputUserId: route.toUserId,
+            taskId: route.taskId,
+            replyId: route.replyId ?? null
+          }
+        })
+        return { ok: true as const }
+      }
       const active = resolveStructuredOutputTask(route.sessionId, {})
       if (!active) {
+        writeStructuredOutputRuntimeLog('aicli:route-admission-rejected', {
+          sessionId: route.sessionId,
+          detail: {
+            reason: 'ambiguous-active-routes',
+            inputUserId: route.toUserId,
+            activeRouteCount: existingRoutes.length,
+            candidates: existingRoutes.map((candidate) => ({
+              taskId: candidate.taskId,
+              replyId: candidate.replyId ?? null,
+              ownerUserId: candidate.toUserId
+            }))
+          }
+        })
         return {
           ok: false as const,
           error: '当前 AICLI 会话存在多个无法区分的活动任务，请先结束或重启会话。'
@@ -1750,11 +1781,31 @@ function createOutputRoutingDeps(
         active.authorityRevoked ||
         active.securityGeneration !== remoteImAccountSecurityGeneration
       ) {
+        writeStructuredOutputRuntimeLog('aicli:route-admission-rejected', {
+          sessionId: route.sessionId,
+          state: active,
+          detail: {
+            reason: 'route-authority-revoked',
+            inputUserId: route.toUserId,
+            ownerUserId: active.toUserId
+          }
+        })
         return {
           ok: false as const,
           error: '上一条远程任务的权限已经失效，请重启 AICLI 会话后重试。'
         }
       }
+      writeStructuredOutputRuntimeLog('aicli:route-admission-continuation', {
+        sessionId: route.sessionId,
+        state: active,
+        detail: {
+          inputUserId: route.toUserId,
+          ownerUserId: active.toUserId,
+          ownerMatches: active.toUserId === route.toUserId,
+          inputTaskId: route.taskId,
+          inputReplyId: route.replyId ?? null
+        }
+      })
       route.replyId = active.replyId
       route.taskId = active.taskId
       route.continuation = true
@@ -1777,7 +1828,37 @@ function createOutputRoutingDeps(
         taskId,
         autoReplyToIm
       ),
-    onAicliInputAccepted: (route: RemoteImAicliOutputRoute) => {
+    onAicliInputAccepted: (
+      route: RemoteImAicliOutputRoute,
+      delivery: {
+        detail?: string
+        autoDeclinedApprovals?: Array<{ approvalId: string; commandSummary: string }>
+      }
+    ) => {
+      const boundState = structuredOutputTasks.resolve(
+        route.sessionId,
+        { taskId: route.taskId, replyId: route.replyId },
+        { allowSoleFallback: false }
+      )
+      const autoDeclinedApprovals = delivery.autoDeclinedApprovals ?? []
+      writeStructuredOutputRuntimeLog(
+        autoDeclinedApprovals.length > 0
+          ? 'aicli:input-accepted-after-approval-decline'
+          : 'aicli:input-accepted',
+        {
+        sessionId: route.sessionId,
+        ...(boundState ? { state: boundState } : {}),
+        detail: {
+          inputUserId: route.toUserId,
+          continuation: route.continuation === true,
+          taskId: route.taskId,
+          replyId: route.replyId ?? null,
+          boundOwnerUserId: boundState?.toUserId ?? null,
+          ownerMatches: boundState ? boundState.toUserId === route.toUserId : null,
+          deliveryDetail: delivery.detail ?? null,
+          autoDeclinedApprovals
+        }
+      })
       bindRemoteImCliSessionToSecurityGeneration(route.sessionId)
       const runtime = getSessionRuntimeInfo(route.sessionId)
       const sourceKind = runtime
@@ -2106,7 +2187,9 @@ function ensureSessionListeners(): void {
       turnId,
       cwd,
       reason,
-      persistentApprovalCommand
+      persistentApprovalCommand,
+      resolutionSource,
+      approvalDecision
     } = event
     if (kind === 'input_origin') {
       const origin = text.trim()
@@ -2205,7 +2288,7 @@ function ensureSessionListeners(): void {
                 turnId,
                 approvalId,
                 ok: result.ok,
-                error: result.ok ? null : result.error
+                error: result.ok ? null : result.text
               }
             })
           })
@@ -2256,14 +2339,17 @@ function ensureSessionListeners(): void {
 
     if (kind === 'approval_resolved') {
       if (taskId && replyId && threadId && turnId && approvalId) {
-        getRemoteImApprovalCoordinator().forgetResolved({
-          sessionId,
-          taskId,
-          replyId,
-          threadId,
-          turnId,
-          approvalId
-        })
+        getRemoteImApprovalCoordinator().forgetResolved(
+          {
+            sessionId,
+            taskId,
+            replyId,
+            threadId,
+            turnId,
+            approvalId
+          },
+          { source: resolutionSource, decision: approvalDecision }
+        )
       }
       writeStructuredOutputRuntimeLog('aicli:approval-resolved', {
         sessionId,
@@ -2272,7 +2358,9 @@ function ensureSessionListeners(): void {
           replyId: replyId ?? null,
           threadId: threadId ?? null,
           turnId: turnId ?? null,
-          approvalId: approvalId ?? null
+          approvalId: approvalId ?? null,
+          resolutionSource: resolutionSource ?? null,
+          approvalDecision: approvalDecision ?? null
         }
       })
       return
@@ -2336,6 +2424,17 @@ function ensureSessionListeners(): void {
       return
     }
     if (kind === 'turn_error') {
+      writeStructuredOutputRuntimeLog('aicli:turn-terminal', {
+        sessionId,
+        state,
+        detail: {
+          terminalKind: kind,
+          reasonPreview: structuredOutputTextPreview(text),
+          eventReplyId: replyId ?? null,
+          eventTaskId: taskId ?? null,
+          activeRouteCountBeforeRemoval: structuredOutputTasks.list(sessionId).length
+        }
+      })
       state.buffer = ''
       failRemoteImOutputSession(
         sessionId,
@@ -3030,7 +3129,18 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
         handleControlCommand: async ({ command, args, replyId, taskId }) => {
           const runtime = session ? getSessionRuntimeInfo(session.sessionId) : null
           const sourceKind = runtime ? getRemoteImAicliOutputSourceKind(runtime.command) : 'unknown'
-          return executeRemoteImControlCommand({
+          if (session) {
+            writeStructuredOutputRuntimeLog('aicli:control-requested', {
+              sessionId: session.sessionId,
+              detail: {
+                command,
+                sourceKind,
+                taskId: taskId ?? null,
+                replyId: replyId ?? null
+              }
+            })
+          }
+          const result = await executeRemoteImControlCommand({
             command,
             sourceKind,
             session: runtime
@@ -3088,6 +3198,20 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
             ...(replyId ? { replyId } : {}),
             ...(taskId ? { taskId } : {})
           })
+          if (session) {
+            writeStructuredOutputRuntimeLog('aicli:control-finished', {
+              sessionId: session.sessionId,
+              detail: {
+                command,
+                sourceKind,
+                taskId: taskId ?? null,
+                replyId: replyId ?? null,
+                ok: result.ok,
+                error: result.ok ? null : result.text
+              }
+            })
+          }
+          return result
         },
         store: {
           create: (input) => createRemoteImMessage(input),

@@ -2290,12 +2290,19 @@ void MainWindow::refreshMessages() {
 
     const QList<RemoteIMMessage> messages = app_.chatState().messagesWith(selectedPeer);
     sentApprovalTokens_.clear();
+    resolvedApprovalTokens_.clear();
+    autoDeclinedApprovalTokens_.clear();
     for (const RemoteIMMessage& message : messages) {
-        if (message.direction == RemoteIMMessageDirection::Outgoing
-                && message.status == RemoteIMMessageStatus::Sent
-                && message.hasApprovalDecision
-                && message.approvalDecision.isValid()) {
-            sentApprovalTokens_.insert(message.approvalDecision.token);
+        if (!message.hasApprovalDecision || !message.approvalDecision.isValid()) continue;
+        const QString& token = message.approvalDecision.token;
+        if (message.approvalDecision.action == RemoteIMApprovalAction::AutoDeclined) {
+            autoDeclinedApprovalTokens_.insert(token);
+        } else if (message.approvalDecision.action == RemoteIMApprovalAction::Resolved) {
+            resolvedApprovalTokens_.insert(token);
+        } else if (message.direction == RemoteIMMessageDirection::Outgoing
+                && message.status == RemoteIMMessageStatus::Sent)
+        {
+            sentApprovalTokens_.insert(token);
         }
     }
     bool needFullRebuild = selectedPeer != renderedPeerId_
@@ -2351,6 +2358,8 @@ MainWindow::ApprovalDisplayState MainWindow::approvalDisplayState(
         return ApprovalDisplayState::Available;
     }
     const QString& token = message.approvalRequest.token;
+    if (autoDeclinedApprovalTokens_.contains(token)) return ApprovalDisplayState::AutoDeclined;
+    if (resolvedApprovalTokens_.contains(token)) return ApprovalDisplayState::Resolved;
     if (sentApprovalTokens_.contains(token)) return ApprovalDisplayState::Sent;
     if (submittingApprovalTokens_.contains(token)) return ApprovalDisplayState::Sending;
     return ApprovalDisplayState::Available;
@@ -2440,6 +2449,7 @@ void MainWindow::rebuildMessageList(const QString& peerId, const QList<RemoteIMM
     buttonRowLayout->addStretch(1);
     messageLayout_->addWidget(buttonRow);
 
+    QStringList renderedApprovalIds;
     for (const RemoteIMMessage& message : messages) {
         QWidget* row = createMessageBubble(message);
         messageLayout_->addWidget(row);
@@ -2447,13 +2457,32 @@ void MainWindow::rebuildMessageList(const QString& peerId, const QList<RemoteIMM
         messageRowById_.insert(message.id, row);
         renderedStatusById_.insert(message.id, message.status);
         renderedApprovalStateById_.insert(message.id, approvalDisplayState(message));
+        if (message.hasApprovalRequest && message.approvalRequest.isValid()) {
+            renderedApprovalIds.append(message.id);
+        }
     }
     messageLayout_->addStretch(1);
     updateLoadEarlierVisibility();
 
-    QTimer::singleShot(0, this, [this] {
+    QTimer::singleShot(0, this, [this, peerId, renderedApprovalIds] {
         updateMessageBubbleWidths();
         scrollMessagesToBottom();
+        QTimer::singleShot(0, this, [this, peerId, renderedApprovalIds] {
+            QWidget* viewport = messageScroll_ ? messageScroll_->viewport() : nullptr;
+            for (const QString& messageId : renderedApprovalIds) {
+                QWidget* row = messageRowById_.value(messageId);
+                if (!row || !viewport) continue;
+                const QRect rowRect(row->mapTo(viewport, QPoint(0, 0)), row->size());
+                const bool intersectsViewport = viewport->rect().intersects(rowRect);
+                qInfo().noquote()
+                    << QStringLiteral(
+                           "[approval-ui] card-rendered id=%1 peer=%2 path=full-rebuild visible=%3 scroll=%4/%5")
+                           .arg(messageId, peerId,
+                                intersectsViewport ? QStringLiteral("true") : QStringLiteral("false"))
+                           .arg(messageScroll_->verticalScrollBar()->value())
+                           .arg(messageScroll_->verticalScrollBar()->maximum());
+            }
+        });
     });
 }
 
@@ -2490,6 +2519,7 @@ void MainWindow::applyIncrementalMessageUpdate(const QList<RemoteIMMessage>& mes
 
     bool prepended = false;
     bool appended = false;
+    QStringList appendedApprovalIds;
     constexpr int kLayoutBase = 1;  // [0] 是加载更早按钮行
     QStringList resultIds;
     resultIds.reserve(messages.size());
@@ -2517,13 +2547,24 @@ void MainWindow::applyIncrementalMessageUpdate(const QList<RemoteIMMessage>& mes
         messageRowById_.insert(message.id, row);
         renderedStatusById_.insert(message.id, message.status);
         renderedApprovalStateById_.insert(message.id, approvalDisplayState(message));
+        if (message.hasApprovalRequest && message.approvalRequest.isValid()) {
+            appendedApprovalIds.append(message.id);
+            qInfo().noquote()
+                << QStringLiteral(
+                       "[approval-ui] card-inserted id=%1 peer=%2 path=incremental near_bottom=%3 scroll=%4/%5")
+                       .arg(message.id, app_.chatState().selectedPeerId(),
+                            wasNearBottom ? QStringLiteral("true") : QStringLiteral("false"))
+                       .arg(oldValue)
+                       .arg(oldMax);
+        }
         if (i < firstKeptIndex) prepended = true;
         else appended = true;
     }
     renderedMessageIds_ = resultIds;
     updateLoadEarlierVisibility();
 
-    QTimer::singleShot(0, this, [this, prepended, appended, wasNearBottom, oldMax, oldValue] {
+    QTimer::singleShot(0, this, [this, prepended, appended, wasNearBottom, oldMax, oldValue,
+                                      appendedApprovalIds] {
         updateMessageBubbleWidths();
         QScrollBar* bar = messageScroll_->verticalScrollBar();
         QObject::disconnect(messageScrollToBottomConn_);
@@ -2541,6 +2582,22 @@ void MainWindow::applyIncrementalMessageUpdate(const QList<RemoteIMMessage>& mes
         if (appended && wasNearBottom) {
             scrollMessagesToBottom();
         }
+        QTimer::singleShot(0, this, [this, appendedApprovalIds] {
+            QWidget* viewport = messageScroll_ ? messageScroll_->viewport() : nullptr;
+            for (const QString& messageId : appendedApprovalIds) {
+                QWidget* row = messageRowById_.value(messageId);
+                if (!row || !viewport) continue;
+                const QRect rowRect(row->mapTo(viewport, QPoint(0, 0)), row->size());
+                const bool intersectsViewport = viewport->rect().intersects(rowRect);
+                qInfo().noquote()
+                    << QStringLiteral(
+                           "[approval-ui] card-visibility id=%1 peer=%2 visible=%3 scroll=%4/%5")
+                           .arg(messageId, app_.chatState().selectedPeerId(),
+                                intersectsViewport ? QStringLiteral("true") : QStringLiteral("false"))
+                           .arg(messageScroll_->verticalScrollBar()->value())
+                           .arg(messageScroll_->verticalScrollBar()->maximum());
+            }
+        });
     });
 }
 
@@ -3184,15 +3241,25 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
 
     if (!outgoing && message.hasApprovalRequest && message.approvalRequest.isValid()) {
         const QString token = message.approvalRequest.token;
-        if (sentApprovalTokens_.contains(token) || submittingApprovalTokens_.contains(token)) {
-            const bool sent = sentApprovalTokens_.contains(token);
+        const ApprovalDisplayState approvalState = approvalDisplayState(message);
+        if (approvalState != ApprovalDisplayState::Available) {
+            const bool sent = approvalState == ApprovalDisplayState::Sent;
+            const bool autoDeclined = approvalState == ApprovalDisplayState::AutoDeclined;
+            const bool resolved = approvalState == ApprovalDisplayState::Resolved;
             auto* sentLabel = new QLabel(
-                sent ? QStringLiteral("✓ 审批选择已发送") : QStringLiteral("审批选择正在发送…"),
+                autoDeclined
+                    ? QStringLiteral("✕ 审批已因新消息自动拒绝")
+                    : resolved ? QStringLiteral("✓ 审批已处理")
+                               : sent ? QStringLiteral("✓ 审批选择已发送")
+                                      : QStringLiteral("审批选择正在发送…"),
                 bubble);
             sentLabel->setObjectName(QStringLiteral("approvalSentLabel"));
             sentLabel->setStyleSheet(UiZoom::scaleQss(QStringLiteral(
-                "QLabel#approvalSentLabel{color:#059669;font-size:13px;font-weight:700;"
-                "padding:7px 2px;background:transparent;}")));
+                "QLabel#approvalSentLabel{color:%1;font-size:13px;font-weight:700;"
+                "padding:7px 2px;background:transparent;}")
+                .arg(autoDeclined ? QStringLiteral("#d97706")
+                                  : resolved ? QStringLiteral("#64748b")
+                                             : QStringLiteral("#059669"))));
             bubbleLayout->addWidget(sentLabel);
         } else {
             auto* divider = new QFrame(bubble);
@@ -3227,14 +3294,26 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
                           .arg(persistent ? QStringLiteral("#059669") : QStringLiteral("#0f8dde"),
                                persistent ? QStringLiteral("#047857") : QStringLiteral("#087abe"))));
                 connect(button, &QPushButton::clicked, this,
-                        [this, token, action] {
+                        [this, token, action, messageId = message.id] {
                     if (submittingApprovalTokens_.contains(token)
-                            || sentApprovalTokens_.contains(token)) return;
+                            || sentApprovalTokens_.contains(token)
+                            || resolvedApprovalTokens_.contains(token)
+                            || autoDeclinedApprovalTokens_.contains(token)) return;
+                    qInfo().noquote()
+                        << QStringLiteral("[approval-ui] button-clicked id=%1 peer=%2 action=%3")
+                               .arg(messageId, app_.chatState().selectedPeerId(),
+                                    remoteIMApprovalActionWireName(action));
                     submittingApprovalTokens_.insert(token);
                     app_.sendApprovalDecision(
                         token,
                         action,
-                        [this, token](bool) {
+                        [this, token, messageId, action](bool ok) {
+                            qInfo().noquote()
+                                << QStringLiteral(
+                                       "[approval-ui] decision-finished id=%1 peer=%2 action=%3 ok=%4")
+                                       .arg(messageId, app_.chatState().selectedPeerId(),
+                                            remoteIMApprovalActionWireName(action),
+                                            ok ? QStringLiteral("true") : QStringLiteral("false"));
                             submittingApprovalTokens_.remove(token);
                             // 不能只改点击时的旧控件：网络回调前切换会话/重建列表后，
                             // 旧控件已销毁。按消息模型重新计算，失败恢复按钮，成功显示已发送。

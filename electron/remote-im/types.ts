@@ -87,9 +87,22 @@ export interface RemoteImApprovalDecisionInteraction {
   action: RemoteImApprovalAction
 }
 
+export type RemoteImApprovalResolutionOutcome =
+  | 'approved'
+  | 'rejected'
+  | 'auto-declined'
+  | 'resolved'
+
+export interface RemoteImApprovalResolvedInteraction {
+  kind: 'approval-resolved'
+  token: string
+  outcome: RemoteImApprovalResolutionOutcome
+}
+
 export type RemoteImTextInteraction =
   | RemoteImApprovalRequestInteraction
   | RemoteImApprovalDecisionInteraction
+  | RemoteImApprovalResolvedInteraction
 export type RemoteImMessageStatus =
   | 'received'
   | 'rejected'

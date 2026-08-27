@@ -27,7 +27,10 @@ import {
   parseRemoteImControlCommand,
   type RemoteImControlCommandName
 } from './controlCommands.js'
-import type { AicliUserMessageAttachment } from '../aicli/structuredOutputBridge.js'
+import type {
+  AicliAutoDeclinedApproval,
+  AicliUserMessageAttachment
+} from '../aicli/structuredOutputBridge.js'
 
 // Remote-desktop frames share the Tencent text transport, but they are an
 // application protocol rather than chat/model input. Native MaiChat consumes
@@ -78,7 +81,12 @@ export interface RemoteImRouterDeps {
       replyId?: string
       taskId?: string
     }
-  ): Promise<{ ok: boolean; error?: string }>
+  ): Promise<{
+    ok: boolean
+    error?: string
+    detail?: string
+    autoDeclinedApprovals?: AicliAutoDeclinedApproval[]
+  }>
   sendImText(
     projectId: string,
     toUserId: string,
@@ -111,7 +119,13 @@ export interface RemoteImRouterDeps {
     route: RemoteImAicliOutputRoute
   ) => { ok: true } | { ok: false; error: string }
   onAicliOutputStart?: (route: RemoteImAicliOutputRoute) => void
-  onAicliInputAccepted?: (route: RemoteImAicliOutputRoute) => void
+  onAicliInputAccepted?: (
+    route: RemoteImAicliOutputRoute,
+    delivery: {
+      detail?: string
+      autoDeclinedApprovals?: AicliAutoDeclinedApproval[]
+    }
+  ) => void
   onAicliInputRejected?: (route: RemoteImAicliOutputRoute) => void
   onAicliMachineInputAccepted?: (sessionId: string) => void
   onAicliOutputCancel?: (route: RemoteImAicliOutputRoute) => void
@@ -527,7 +541,7 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
         ...(attachments?.length ? { attachments } : {})
       })
       if (result.ok) {
-        deps.onAicliInputAccepted?.(outputRoute)
+        deps.onAicliInputAccepted?.(outputRoute, result)
       } else if (outputRoute.continuation) {
         deps.onAicliInputRejected?.(outputRoute)
       } else {

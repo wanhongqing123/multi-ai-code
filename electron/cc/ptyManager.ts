@@ -31,6 +31,7 @@ import {
   createAicliStructuredOutputBridge,
   type AicliControlMode,
   type AicliControlCommandResult,
+  type AicliAutoDeclinedApproval,
   type AicliStructuredOutputBridge,
   type AicliStructuredOutputProvider,
   type AicliUserMessageAttachment
@@ -537,7 +538,12 @@ export async function sendUserMessageToSession(
   sessionId: string,
   text: string,
   options: SendUserMessageOptions = {}
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{
+  ok: boolean
+  error?: string
+  detail?: string
+  autoDeclinedApprovals?: AicliAutoDeclinedApproval[]
+}> {
   let session = sessions.get(sessionId)
   if (!session) return { ok: false, error: 'no session' }
   const ready =
@@ -581,7 +587,21 @@ export async function sendUserMessageToSession(
       await sendMessage(current.proc, text)
       displayLocalTerminalText(sessionId, options.displayText)
     })
-    if (sourceResult && !sourceResult.ok) return sourceResult
+    if (sourceResult && !sourceResult.ok) {
+      return {
+        ok: false,
+        error: sourceResult.error,
+        ...(sourceResult.text ? { detail: sourceResult.text } : {})
+      }
+    }
+    if (sourceResult) {
+      if (!sourceResult.autoDeclinedApprovals?.length) return { ok: true }
+      return {
+        ok: true,
+        ...(sourceResult.text ? { detail: sourceResult.text } : {}),
+        autoDeclinedApprovals: sourceResult.autoDeclinedApprovals
+      }
+    }
     return { ok: true }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) }

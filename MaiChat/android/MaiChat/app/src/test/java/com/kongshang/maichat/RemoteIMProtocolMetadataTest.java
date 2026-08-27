@@ -73,6 +73,24 @@ public class RemoteIMProtocolMetadataTest {
     }
 
     @Test
+    public void decodesMachineApprovalResolutionAsAuthoritativeDecisionState() {
+        RemoteIMProtocolMetadata.Metadata metadata = RemoteIMProtocolMetadata.decodeMetadata(
+            "{\"namespace\":\"multi-ai-code\",\"version\":2,\"origin\":\"machine\","
+                + "\"interaction\":{\"kind\":\"approval-resolved\","
+                + "\"token\":\"approval-wire-android-3\",\"outcome\":\"auto-declined\"}}"
+        );
+        assertEquals(RemoteIMOrigin.MACHINE, metadata.origin());
+        assertNull(metadata.approvalRequest());
+        assertEquals(
+            new RemoteIMApprovalDecision(
+                "approval-wire-android-3",
+                RemoteIMApprovalAction.AUTO_DECLINED
+            ),
+            metadata.approvalDecision()
+        );
+    }
+
+    @Test
     public void versionOneAndMalformedMetadataFailClosedWithoutInteraction() {
         for (String value : new String[]{
             null,

@@ -478,7 +478,7 @@ public final class TencentIMClient {
                 null,
                 origin,
                 metadata.approvalRequest(),
-                null
+                metadata.approvalDecision()
             ));
             return;
         }

@@ -207,7 +207,7 @@ public final class ChatState {
         long createdAtMillis,
         RemoteIMOrigin origin
     ) {
-        return receiveText(text, fromUserId, remoteId, createdAtMillis, origin, null);
+        return receiveText(text, fromUserId, remoteId, createdAtMillis, origin, null, null);
     }
 
     public RemoteIMMessage receiveText(
@@ -217,6 +217,26 @@ public final class ChatState {
         long createdAtMillis,
         RemoteIMOrigin origin,
         RemoteIMApprovalRequest approvalRequest
+    ) {
+        return receiveText(
+            text,
+            fromUserId,
+            remoteId,
+            createdAtMillis,
+            origin,
+            approvalRequest,
+            null
+        );
+    }
+
+    public RemoteIMMessage receiveText(
+        String text,
+        String fromUserId,
+        String remoteId,
+        long createdAtMillis,
+        RemoteIMOrigin origin,
+        RemoteIMApprovalRequest approvalRequest,
+        RemoteIMApprovalDecision approvalDecision
     ) {
         RemoteIMMessage existing = messageWithRemoteId(remoteId);
         if (existing != null) return existing;
@@ -237,7 +257,7 @@ public final class ChatState {
             null,
             origin,
             approvalRequest,
-            null
+            approvalDecision
         );
         messages.add(message);
         return message;

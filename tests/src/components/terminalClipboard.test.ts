@@ -2,9 +2,65 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   decodeOsc52ClipboardText,
   interceptTerminalRightMouseEvent,
+  installCopyBinding,
   installOsc52SelectionCapture,
   tuiOwnsRightClickCopy
 } from '../../../src/components/terminalClipboard.js'
+
+describe('installCopyBinding', () => {
+  function install(selection: string, ctrlCAsCopyOnWindows: boolean) {
+    let handler: ((event: KeyboardEvent) => boolean) | undefined
+    const term = {
+      getSelection: () => selection,
+      attachCustomKeyEventHandler: vi.fn((callback: (event: KeyboardEvent) => boolean) => {
+        handler = callback
+      })
+    }
+    installCopyBinding(term as never, {
+      platform: 'Win32',
+      ctrlCAsCopyOnWindows
+    })
+    if (!handler) throw new Error('copy key handler was not installed')
+    return handler
+  }
+
+  function keyEvent(input: Partial<KeyboardEvent> = {}): KeyboardEvent {
+    return {
+      type: 'keydown',
+      code: 'KeyC',
+      ctrlKey: true,
+      shiftKey: false,
+      altKey: false,
+      metaKey: false,
+      preventDefault: vi.fn(),
+      ...input
+    } as unknown as KeyboardEvent
+  }
+
+  it('consumes Windows main-TUI Ctrl+C even when there is no selection', () => {
+    const handler = install('', true)
+    const event = keyEvent()
+
+    expect(handler(event)).toBe(false)
+    expect(event.preventDefault).toHaveBeenCalledOnce()
+  })
+
+  it('leaves Windows Ctrl+C available to repository shell terminals', () => {
+    const handler = install('', false)
+    const event = keyEvent()
+
+    expect(handler(event)).toBe(true)
+    expect(event.preventDefault).not.toHaveBeenCalled()
+  })
+
+  it('keeps Ctrl+Shift+C copy for Windows terminals', () => {
+    const handler = install('selected text', false)
+    const event = keyEvent({ shiftKey: true })
+
+    expect(handler(event)).toBe(false)
+    expect(event.preventDefault).toHaveBeenCalledOnce()
+  })
+})
 
 describe('interceptTerminalRightMouseEvent', () => {
   it('blocks right mouse events before a TUI mouse tracker can consume them', () => {

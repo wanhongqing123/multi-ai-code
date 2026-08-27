@@ -593,13 +593,25 @@ describe('registerPtyIpc prompt injection timing', () => {
     await sleep(20)
     unsubscribe()
 
-    expect(kinds).toEqual([
-      'editing',
-      'navigation',
-      'submit-key',
-      'interrupt',
-      'cancel-editing',
-    ])
-    expect(proc.writes).toEqual(['中', '\x1B[A', '\r', '\x03', '\x15'])
+    expect(kinds).toEqual(
+      process.platform === 'win32'
+        ? ['editing', 'navigation', 'submit-key', 'cancel-editing']
+        : ['editing', 'navigation', 'submit-key', 'interrupt', 'cancel-editing']
+    )
+    expect(proc.writes).toEqual(
+      process.platform === 'win32'
+        ? ['中', '\x1B[A', '\r', '\x15']
+        : ['中', '\x1B[A', '\r', '\x03', '\x15']
+    )
+  })
+
+  it('suppresses only a bare Windows Ctrl+C terminal signal', async () => {
+    const { shouldSuppressWindowsTerminalCtrlC } = await import(
+      '../../../electron/cc/ptyManager.js'
+    )
+
+    expect(shouldSuppressWindowsTerminalCtrlC('\x03', 'win32')).toBe(true)
+    expect(shouldSuppressWindowsTerminalCtrlC('\x03', 'darwin')).toBe(false)
+    expect(shouldSuppressWindowsTerminalCtrlC('text\x03', 'win32')).toBe(false)
   })
 })

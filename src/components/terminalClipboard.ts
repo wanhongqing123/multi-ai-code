@@ -3,10 +3,21 @@ import type { Terminal } from '@xterm/xterm'
 const IMAGE_EXT_FALLBACK = 'png'
 const MAX_IMAGE_SIZE = 15 * 1024 * 1024 // 15 MB guard
 
-function isMacPlatform(): boolean {
-  const plat =
-    typeof navigator !== 'undefined' ? navigator.platform.toLowerCase() : ''
+function normalizedPlatform(platform?: string): string {
+  return (
+    platform ??
+    (typeof navigator !== 'undefined' ? navigator.platform : '')
+  ).toLowerCase()
+}
+
+function isMacPlatform(platform?: string): boolean {
+  const plat = normalizedPlatform(platform)
   return plat.includes('mac')
+}
+
+function isWindowsPlatform(platform?: string): boolean {
+  const plat = normalizedPlatform(platform)
+  return plat.includes('win')
 }
 
 /** Copy the current xterm selection to the system clipboard.
@@ -85,18 +96,41 @@ export function installOsc52SelectionCapture(
   return () => disposable.dispose()
 }
 
-/** Install Cmd+C / Ctrl+Shift+C copy on the given xterm instance.
- *  Only consumes the chord when there is a selection — otherwise Ctrl+C
- *  is left alone so it can reach the PTY as SIGINT. */
-export function installCopyBinding(term: Terminal): void {
-  const mac = isMacPlatform()
+export interface CopyBindingOptions {
+  /**
+   * The main Windows TUI uses Ctrl+C as copy. Consume it even without a
+   * selection so xterm never turns the copy attempt into ETX/SIGINT.
+   * Repository shell terminals leave this false and retain Ctrl+C interrupt.
+   */
+  ctrlCAsCopyOnWindows?: boolean
+  /** Deterministic platform override for tests. */
+  platform?: string
+}
+
+/** Install platform copy shortcuts on the given xterm instance. */
+export function installCopyBinding(
+  term: Terminal,
+  options: CopyBindingOptions = {}
+): void {
+  const mac = isMacPlatform(options.platform)
+  const windowsMainTuiCopy =
+    options.ctrlCAsCopyOnWindows === true && isWindowsPlatform(options.platform)
   term.attachCustomKeyEventHandler((e) => {
     if (e.type !== 'keydown') return true
-    const copyChord = mac
-      ? e.metaKey && !e.ctrlKey && !e.altKey && e.code === 'KeyC'
-      : e.ctrlKey && e.shiftKey && !e.altKey && e.code === 'KeyC'
+    const mainTuiCtrlC =
+      windowsMainTuiCopy &&
+      e.ctrlKey &&
+      !e.metaKey &&
+      !e.altKey &&
+      e.code === 'KeyC'
+    const copyChord =
+      mainTuiCtrlC ||
+      (mac
+        ? e.metaKey && !e.ctrlKey && !e.altKey && e.code === 'KeyC'
+        : e.ctrlKey && e.shiftKey && !e.altKey && e.code === 'KeyC')
     if (!copyChord) return true
-    if (!copySelection(term)) return true // nothing to copy — don't swallow Ctrl+C
+    const copied = copySelection(term)
+    if (!copied && !mainTuiCtrlC) return true
     e.preventDefault()
     return false
   })

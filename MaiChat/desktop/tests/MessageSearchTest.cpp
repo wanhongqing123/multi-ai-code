@@ -39,6 +39,8 @@ private slots:
     void matchesWhenWordsAreRememberedOutOfOrder();
     void matchesWhenAFewCharactersAreMisremembered();
     void singleCharacterQueryDoesNotMatchEverything();
+    void subsequenceRejectsMatchesScatteredAcrossLongText();
+    void subsequenceStillMatchesWhenTheTightHitComesAfterAScatteredOne();
 };
 
 void MessageSearchTest::findsMatchesInTimeOrder() {
@@ -128,6 +130,40 @@ void MessageSearchTest::singleCharacterQueryDoesNotMatchEverything() {
              static_cast<int>(MessageSearch::Substring));
     QCOMPARE(MessageSearch::score(QStringLiteral("今日构建通过"), QStringLiteral("天")),
              static_cast<int>(MessageSearch::NoMatch));
+}
+
+void MessageSearchTest::subsequenceRejectsMatchesScatteredAcrossLongText() {
+    // 真实记录里最极端的那种：一千多字的文档，四个字按顺序散落在首尾。
+    // 这类命中没有意义，而结果面板只有 60 个位置，它会把贴切的挤出去。
+    QString scattered = QStringLiteral("构");
+    scattered += QString(400, QLatin1Char('x'));
+    scattered += QStringLiteral("建");
+    scattered += QString(400, QLatin1Char('y'));
+    scattered += QStringLiteral("失");
+    scattered += QString(400, QLatin1Char('z'));
+    scattered += QStringLiteral("败");
+    QCOMPARE(MessageSearch::score(scattered, QStringLiteral("构建失败")),
+             static_cast<int>(MessageSearch::NoMatch));
+
+    // 紧凑的那种必须继续命中：4 个字的查询，窗口上限 16。
+    QCOMPARE(MessageSearch::score(QStringLiteral("构建那一步失败了"), QStringLiteral("构建失败")),
+             static_cast<int>(MessageSearch::Subsequence));
+}
+
+void MessageSearchTest::subsequenceStillMatchesWhenTheTightHitComesAfterAScatteredOne() {
+    // 这条专门守住「换起点重试」这一步，而不是「反向收紧起点」那一步——两者容易混。
+    //
+    // 构造：开头就有一处完整但过散的匹配（构、建 挨着，失、败 在 50 个字之后），
+    // 它的最小窗口仍然超限；真正紧凑的那处在正文后半段。
+    // 前向贪心第一次落到的就是开头那处，反向收紧也救不回来（起点就是 0），
+    // 必须从收紧后的起点之后重新找，才能发现后面那处。
+    QString text = QStringLiteral("构建");
+    text += QString(50, QLatin1Char('x'));
+    text += QStringLiteral("失败");
+    text += QString(200, QLatin1Char('v'));
+    text += QStringLiteral("构建那一步失败了");
+    QCOMPARE(MessageSearch::score(text, QStringLiteral("构建失败")),
+             static_cast<int>(MessageSearch::Subsequence));
 }
 
 QTEST_MAIN(MessageSearchTest)

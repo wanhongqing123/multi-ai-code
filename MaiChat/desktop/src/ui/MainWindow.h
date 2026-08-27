@@ -75,6 +75,9 @@ private:
     void openGlobalSearchResult(QListWidgetItem* item);
     void closeGlobalSearchResults();
     void layoutGlobalSearchResults();
+    // 搜索状态下点左列会话时，落到该会话里最贴切的那条命中。
+    // 排序规则与结果面板一致（先分数、后时间），否则同一次搜索里两个入口会跳到不同消息。
+    QString bestSearchHitId(const QString& peerId, const QString& needle) const;
     void highlightMessage(const QString& messageId);
     void clearMessageSearchHighlight();
     void showMessagesPage();

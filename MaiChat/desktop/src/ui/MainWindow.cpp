@@ -1952,10 +1952,19 @@ void MainWindow::bindSignals() {
     connect(conversationList_, &QListWidget::currentItemChanged, this, [this](QListWidgetItem* current) {
         if (!current) return;
         const QString userId = current->data(Qt::UserRole).toString();
-        if (!userId.isEmpty() && userId != app_.chatState().selectedPeerId()) {
+        if (userId.isEmpty()) return;
+        if (userId != app_.chatState().selectedPeerId()) {
             if (composerHasAttachments()) messageEditor_->clear();  // 丢弃属上一个会话的内联附件草稿
             app_.selectPeer(userId);
         }
+        // 搜索状态下，左列被过滤成「有命中的会话」。点进去只打开会话而不定位，
+        // 等于筛出来了还得自己找——和右侧结果面板点进去的行为也不一致。
+        const QString needle = navSearchInput_ ? navSearchInput_->text().trimmed() : QString();
+        if (needle.isEmpty()) return;
+        const QString hitId = bestSearchHitId(userId, needle);
+        if (hitId.isEmpty()) return;
+        // 切会话会整屏重建气泡，高度要等一次布局才定下来；和结果面板走同一套延后定位。
+        QTimer::singleShot(0, this, [this, hitId] { highlightMessage(hitId); });
     });
     auto openContactConversation = [this](QListWidgetItem* item) {
         if (!item) return;
@@ -2182,6 +2191,24 @@ void MainWindow::openGlobalSearchResult(QListWidgetItem* item) {
     // 切会话会整屏重建气泡，气泡高度还要等一次布局才定下来，
     // 所以定位放到事件循环下一轮，否则滚到的位置是旧布局算出来的。
     QTimer::singleShot(0, this, [this, messageId] { highlightMessage(messageId); });
+}
+
+QString MainWindow::bestSearchHitId(const QString& peerId, const QString& needle) const {
+    QString bestId;
+    int bestScore = MessageSearch::NoMatch;
+    qint64 bestAt = 0;
+    // 逐条流式判断，不调 messagesWith——那会把整个会话深拷贝一份，
+    // 而这个函数挂在「点会话」这个交互上，长会话会卡一下。
+    app_.chatState().forEachMessageWith(peerId, [&](const RemoteIMMessage& message) {
+        const int s = MessageSearch::score(message.text, needle);
+        if (s == MessageSearch::NoMatch) return;
+        if (s > bestScore || (s == bestScore && message.createdAtMillis > bestAt)) {
+            bestScore = s;
+            bestAt = message.createdAtMillis;
+            bestId = message.id;
+        }
+    });
+    return bestId;
 }
 
 void MainWindow::highlightMessage(const QString& messageId) {

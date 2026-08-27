@@ -75,6 +75,7 @@ private slots:
     void leftNavigationRailIsResizableAndWider();
     void removesRedundantChromeLabels();
     void globalSearchFindsMatchesAcrossConversationsAndJumps();
+    void clickingFilteredConversationJumpsToItsSearchHit();
     void globalSearchReportsNoResultWithLoadedScopeHint();
     void conversationListsUseDelegateItemsForSmoothScrolling();
     void rendersMarkdownMessageContent();
@@ -1907,6 +1908,47 @@ void MainWindowLayoutTest::globalSearchFindsMatchesAcrossConversationsAndJumps()
 
 // 搜不到时必须说清范围：没点过「加载更早」的历史不在内存里，也就搜不到。
 // 只显示「无结果」会让人以为这句话从没说过。
+// 搜索把左列过滤成「有命中的会话」之后，点其中一个必须直接落到命中那条消息。
+// 此前只有右侧结果面板会跳，左列点进去只是打开会话——筛出来了还得自己找。
+void MainWindowLayoutTest::clickingFilteredConversationJumpsToItsSearchHit() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("peer-a"), QStringLiteral("Peer A"));
+    app.addContact(QStringLiteral("peer-b"), QStringLiteral("Peer B"));
+    // peer-b 里夹一条不相关的，确保跳的是命中那条而不是最后一条。
+    app.chatState().receiveText(QStringLiteral("peer-b"), QStringLiteral("水管漏了要修"));
+    app.chatState().receiveText(QStringLiteral("peer-b"), QStringLiteral("构建失败在链接那步"));
+    app.chatState().receiveText(QStringLiteral("peer-b"), QStringLiteral("今天天气不错"));
+    app.selectPeer(QStringLiteral("peer-a"));
+
+    MainWindow window(app);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    auto* search = window.findChild<QLineEdit*>(QStringLiteral("globalSearchBox"));
+    auto* conversationList = window.findChild<QListWidget*>(QStringLiteral("conversationList"));
+    QVERIFY(search != nullptr);
+    QVERIFY(conversationList != nullptr);
+    QCOMPARE(highlightedRowCount(window), 0);
+
+    search->setText(QStringLiteral("构建失败"));
+    // 搜索有 150ms 防抖，过滤要等它跑完。
+    QTRY_VERIFY(conversationList->count() > 0);
+
+    int targetRow = -1;
+    for (int row = 0; row < conversationList->count(); ++row) {
+        QListWidgetItem* item = conversationList->item(row);
+        if (item->isHidden()) continue;
+        if (item->data(Qt::UserRole).toString() == QStringLiteral("peer-b")) targetRow = row;
+    }
+    QVERIFY2(targetRow >= 0, "有命中的会话必须留在过滤后的左列里");
+
+    conversationList->setCurrentRow(targetRow);
+    QCOMPARE(app.chatState().selectedPeerId(), QStringLiteral("peer-b"));
+    // 定位延后到事件循环下一轮，所以用 QTRY。
+    QTRY_COMPARE(highlightedRowCount(window), 1);
+}
+
 void MainWindowLayoutTest::globalSearchReportsNoResultWithLoadedScopeHint() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));

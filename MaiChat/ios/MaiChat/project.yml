@@ -6,8 +6,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MARKETING_VERSION: "0.1.55"
-    CURRENT_PROJECT_VERSION: "55"
+    MARKETING_VERSION: "0.1.57"
+    CURRENT_PROJECT_VERSION: "57"
 targets:
   MaiChat:
     type: application

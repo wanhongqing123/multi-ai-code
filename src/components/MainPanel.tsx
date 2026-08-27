@@ -101,7 +101,7 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
       window.api.cc.write(props.sessionId, data)
     })
 
-    installCopyBinding(term, { ctrlCAsCopyOnWindows: true })
+    installCopyBinding(term, { ctrlCAsCopyInMainTui: true })
     const detachOsc52Capture = installOsc52SelectionCapture(term, (text) => {
       if (aiCliRef.current !== 'opencode') return
       openCodeSelectionRef.current = text

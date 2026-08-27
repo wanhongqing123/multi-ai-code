@@ -8,7 +8,11 @@ import {
 } from '../../../src/components/terminalClipboard.js'
 
 describe('installCopyBinding', () => {
-  function install(selection: string, ctrlCAsCopyOnWindows: boolean) {
+  function install(
+    selection: string,
+    ctrlCAsCopyInMainTui: boolean,
+    platform = 'Win32'
+  ) {
     let handler: ((event: KeyboardEvent) => boolean) | undefined
     const term = {
       getSelection: () => selection,
@@ -17,8 +21,8 @@ describe('installCopyBinding', () => {
       })
     }
     installCopyBinding(term as never, {
-      platform: 'Win32',
-      ctrlCAsCopyOnWindows
+      platform,
+      ctrlCAsCopyInMainTui
     })
     if (!handler) throw new Error('copy key handler was not installed')
     return handler
@@ -51,6 +55,22 @@ describe('installCopyBinding', () => {
 
     expect(handler(event)).toBe(true)
     expect(event.preventDefault).not.toHaveBeenCalled()
+  })
+
+  it('consumes macOS main-TUI Ctrl+C even when there is no selection', () => {
+    const handler = install('', true, 'MacIntel')
+    const event = keyEvent()
+
+    expect(handler(event)).toBe(false)
+    expect(event.preventDefault).toHaveBeenCalledOnce()
+  })
+
+  it('keeps macOS Cmd+C copy available alongside protected Ctrl+C', () => {
+    const handler = install('selected text', true, 'MacIntel')
+    const event = keyEvent({ ctrlKey: false, metaKey: true })
+
+    expect(handler(event)).toBe(false)
+    expect(event.preventDefault).toHaveBeenCalledOnce()
   })
 
   it('keeps Ctrl+Shift+C copy for Windows terminals', () => {

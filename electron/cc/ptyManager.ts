@@ -290,15 +290,16 @@ function classifyTerminalLocalInput(
 }
 
 /**
- * Windows reserves Ctrl+C for copy in the main AICLI TUI. Its keyboard event
- * normally gets consumed in the renderer; this boundary guard ensures a raw
- * ETX can never regress into a PTY interrupt if that renderer hook changes.
+ * Windows and macOS reserve Ctrl+C for copy in the main AICLI TUI. Its
+ * keyboard event normally gets consumed in the renderer; this boundary guard
+ * prevents a standalone raw ETX from regressing into a PTY interrupt if that
+ * renderer hook changes.
  */
-export function shouldSuppressWindowsTerminalCtrlC(
+export function shouldSuppressMainTuiCtrlC(
   data: string,
   platform: NodeJS.Platform = process.platform
 ): boolean {
-  return platform === 'win32' && data === '\x03'
+  return (platform === 'win32' || platform === 'darwin') && data === '\x03'
 }
 
 function emitSessionExit(evt: {
@@ -985,7 +986,7 @@ export function registerPtyIpc(): void {
   })
 
   ipcMain.on('cc:input', (_e, { sessionId, data }: { sessionId: string; data: string }) => {
-    if (shouldSuppressWindowsTerminalCtrlC(data)) return
+    if (shouldSuppressMainTuiCtrlC(data)) return
     // Raw terminal input and host-injected prompts share one queue. Without
     // this serialization, a local keystroke can be written between chunks of
     // a Remote IM prompt and merge two independent turns in the same PTY.

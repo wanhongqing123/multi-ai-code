@@ -593,25 +593,28 @@ describe('registerPtyIpc prompt injection timing', () => {
     await sleep(20)
     unsubscribe()
 
+    const suppressesMainTuiCtrlC =
+      process.platform === 'win32' || process.platform === 'darwin'
     expect(kinds).toEqual(
-      process.platform === 'win32'
+      suppressesMainTuiCtrlC
         ? ['editing', 'navigation', 'submit-key', 'cancel-editing']
         : ['editing', 'navigation', 'submit-key', 'interrupt', 'cancel-editing']
     )
     expect(proc.writes).toEqual(
-      process.platform === 'win32'
+      suppressesMainTuiCtrlC
         ? ['中', '\x1B[A', '\r', '\x15']
         : ['中', '\x1B[A', '\r', '\x03', '\x15']
     )
   })
 
-  it('suppresses only a bare Windows Ctrl+C terminal signal', async () => {
-    const { shouldSuppressWindowsTerminalCtrlC } = await import(
+  it('suppresses only a bare main-TUI Ctrl+C signal on Windows and macOS', async () => {
+    const { shouldSuppressMainTuiCtrlC } = await import(
       '../../../electron/cc/ptyManager.js'
     )
 
-    expect(shouldSuppressWindowsTerminalCtrlC('\x03', 'win32')).toBe(true)
-    expect(shouldSuppressWindowsTerminalCtrlC('\x03', 'darwin')).toBe(false)
-    expect(shouldSuppressWindowsTerminalCtrlC('text\x03', 'win32')).toBe(false)
+    expect(shouldSuppressMainTuiCtrlC('\x03', 'win32')).toBe(true)
+    expect(shouldSuppressMainTuiCtrlC('\x03', 'darwin')).toBe(true)
+    expect(shouldSuppressMainTuiCtrlC('\x03', 'linux')).toBe(false)
+    expect(shouldSuppressMainTuiCtrlC('text\x03', 'win32')).toBe(false)
   })
 })

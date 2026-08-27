@@ -20,6 +20,10 @@ function isWindowsPlatform(platform?: string): boolean {
   return plat.includes('win')
 }
 
+function isProtectedMainTuiPlatform(platform?: string): boolean {
+  return isMacPlatform(platform) || isWindowsPlatform(platform)
+}
+
 /** Copy the current xterm selection to the system clipboard.
  *  OpenCode owns its TUI selection, so callers may provide the text captured
  *  from its OSC 52 clipboard sequence as a fallback. */
@@ -98,11 +102,11 @@ export function installOsc52SelectionCapture(
 
 export interface CopyBindingOptions {
   /**
-   * The main Windows TUI uses Ctrl+C as copy. Consume it even without a
+   * The main Windows/macOS TUI uses Ctrl+C as copy. Consume it even without a
    * selection so xterm never turns the copy attempt into ETX/SIGINT.
    * Repository shell terminals leave this false and retain Ctrl+C interrupt.
    */
-  ctrlCAsCopyOnWindows?: boolean
+  ctrlCAsCopyInMainTui?: boolean
   /** Deterministic platform override for tests. */
   platform?: string
 }
@@ -113,12 +117,12 @@ export function installCopyBinding(
   options: CopyBindingOptions = {}
 ): void {
   const mac = isMacPlatform(options.platform)
-  const windowsMainTuiCopy =
-    options.ctrlCAsCopyOnWindows === true && isWindowsPlatform(options.platform)
+  const protectMainTuiCtrlC =
+    options.ctrlCAsCopyInMainTui === true && isProtectedMainTuiPlatform(options.platform)
   term.attachCustomKeyEventHandler((e) => {
     if (e.type !== 'keydown') return true
     const mainTuiCtrlC =
-      windowsMainTuiCopy &&
+      protectMainTuiCtrlC &&
       e.ctrlKey &&
       !e.metaKey &&
       !e.altKey &&

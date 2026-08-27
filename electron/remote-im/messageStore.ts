@@ -240,7 +240,16 @@ export function createRemoteImMessageStore(database: RemoteImDatabase) {
     return listById(Number(result.lastInsertRowid))!
   }
 
-  function list(projectId: string, limit = 100): RemoteImMessage[] {
+  // 会话视图按**账号**取，不按项目过滤。
+  //
+  // 数据库本身就是每个账号一个（accounts/<userId>/multi-ai-code.db），而 project_id
+  // 只是记录「这条消息当时被哪个项目的会话处理了」——它来自消息到达那一刻窗口里恰好
+  // 打开的项目，不是消息自身的属性。按它过滤，会把同一段 IM 对话按「当时开着哪个仓库」
+  // 任意切碎：用户换个仓库就看不到自己刚发过的消息。
+  //
+  // projectId 参数保留：调用方仍然按项目组织，且它是发送路径的必需信息，
+  // 这里只是不再拿它做过滤条件。
+  function list(_projectId: string, limit = 100): RemoteImMessage[] {
     const rows = database
       .prepare(
         `
@@ -248,20 +257,19 @@ export function createRemoteImMessageStore(database: RemoteImDatabase) {
         FROM (
           SELECT *
           FROM remote_im_messages
-          WHERE project_id = ?
           ORDER BY created_at DESC, id DESC
           LIMIT ?
         )
         ORDER BY created_at ASC, id ASC
         `
       )
-      .all(projectId, Math.max(1, Math.min(500, Math.round(limit)))) as RemoteImMessageRow[]
+      .all(Math.max(1, Math.min(500, Math.round(limit)))) as RemoteImMessageRow[]
     return rows.map(mapRow)
   }
 
   // 汇总视图用：一次取回项目最近的消息全集（升序）。上限独立于 list() 的 500，
   // 但仍设 5000 硬顶避免超大历史一次性拖爆 IPC。
-  function listRecent(projectId: string, limit = 3000): RemoteImMessage[] {
+  function listRecent(_projectId: string, limit = 3000): RemoteImMessage[] {
     const rows = database
       .prepare(
         `
@@ -269,14 +277,13 @@ export function createRemoteImMessageStore(database: RemoteImDatabase) {
         FROM (
           SELECT *
           FROM remote_im_messages
-          WHERE project_id = ?
           ORDER BY created_at DESC, id DESC
           LIMIT ?
         )
         ORDER BY created_at ASC, id ASC
         `
       )
-      .all(projectId, Math.max(1, Math.min(5000, Math.round(limit)))) as RemoteImMessageRow[]
+      .all(Math.max(1, Math.min(5000, Math.round(limit)))) as RemoteImMessageRow[]
     return rows.map(mapRow)
   }
 
@@ -317,7 +324,7 @@ export function createRemoteImMessageStore(database: RemoteImDatabase) {
   // 键集分页取某会话更早的消息：严格早于 (beforeCreatedAt, beforeId)，
   // 升序返回，最多 limit 条。大历史下配合前端「加载更早」按需翻页。
   function listPeerBefore(
-    projectId: string,
+    _projectId: string,
     rawPeerUserId: string,
     beforeCreatedAt: number,
     beforeId: number,
@@ -330,15 +337,13 @@ export function createRemoteImMessageStore(database: RemoteImDatabase) {
         `
         SELECT *
         FROM remote_im_messages
-        WHERE project_id = ?
-          AND (from_user_id = ? OR to_user_id = ?)
+        WHERE (from_user_id = ? OR to_user_id = ?)
           AND (created_at < ? OR (created_at = ? AND id < ?))
         ORDER BY created_at DESC, id DESC
         LIMIT ?
         `
       )
       .all(
-        projectId,
         peerUserId,
         peerUserId,
         beforeCreatedAt,
@@ -368,18 +373,19 @@ export function createRemoteImMessageStore(database: RemoteImDatabase) {
     })
   }
 
-  function clearPeer(projectId: string, rawPeerUserId: string): void {
+  // 清除范围必须与查看范围一致：会话视图已经是账号级，如果这里还按项目删，
+  // 用户点完「清除」仍会看到别的项目留下的同一段对话——界面在骗人。
+  function clearPeer(_projectId: string, rawPeerUserId: string): void {
     const peerUserId = rawPeerUserId.trim()
     if (!peerUserId) return
     database
       .prepare(
         `
         DELETE FROM remote_im_messages
-        WHERE project_id = ?
-          AND (from_user_id = ? OR to_user_id = ?)
+        WHERE (from_user_id = ? OR to_user_id = ?)
         `
       )
-      .run(projectId, peerUserId, peerUserId)
+      .run(peerUserId, peerUserId)
   }
 
   return {

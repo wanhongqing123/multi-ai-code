@@ -67,15 +67,14 @@ function createFakeDatabase(seedRows: FakeRow[] = []): RemoteImDatabase {
           run: () => ({}),
           get: () => undefined,
           all: (...args: unknown[]) => {
-            const projectId = args[0] as string
-            const peer = args[1] as string
-            const beforeCreatedAt = args[3] as number
-            const beforeId = args[5] as number
-            const limit = args[6] as number
+            // 不再按 project_id 过滤，参数整体前移一位。
+            const peer = args[0] as string
+            const beforeCreatedAt = args[2] as number
+            const beforeId = args[4] as number
+            const limit = args[5] as number
             return rows
               .filter(
                 (row) =>
-                  row.project_id === projectId &&
                   (row.from_user_id === peer || row.to_user_id === peer) &&
                   (row.created_at < beforeCreatedAt ||
                     (row.created_at === beforeCreatedAt && row.id < beforeId))
@@ -105,11 +104,12 @@ function createFakeDatabase(seedRows: FakeRow[] = []): RemoteImDatabase {
       }
       if (sql.includes('DELETE FROM remote_im_messages') && sql.includes('from_user_id')) {
         return {
-          run: (projectId: unknown, fromUserId: unknown, toUserId: unknown) => {
+          run: (fromUserId: unknown, toUserId: unknown) => {
+            // 清除已改为账号级，SQL 里不再有 project_id 条件。
             for (let index = rows.length - 1; index >= 0; index -= 1) {
               if (
-                rows[index].project_id === projectId &&
-                (rows[index].from_user_id === fromUserId || rows[index].to_user_id === toUserId)
+                rows[index].from_user_id === fromUserId ||
+                rows[index].to_user_id === toUserId
               ) {
                 rows.splice(index, 1)
               }
@@ -142,13 +142,13 @@ function createFakeDatabase(seedRows: FakeRow[] = []): RemoteImDatabase {
           all: () => []
         }
       }
-      if (sql.includes('WHERE project_id = ?')) {
+      // 会话视图查询：账号级，SQL 里已经没有 project_id 条件。
+      if (sql.includes('FROM remote_im_messages') && sql.includes('ORDER BY created_at ASC')) {
         return {
           run: () => ({}),
           get: () => undefined,
-          all: (projectId: unknown, limit: unknown) =>
+          all: (limit: unknown) =>
             rows
-              .filter((row) => row.project_id === projectId)
               .sort((left, right) => right.created_at - left.created_at || right.id - left.id)
               .slice(0, Number(limit))
               .sort((left, right) => left.created_at - right.created_at || left.id - right.id)
@@ -325,7 +325,9 @@ describe('remote IM message store', () => {
     })
   })
 
-  it('creates and lists messages for one project newest last', () => {
+  // 曾经这条断言「只返回当前项目的消息」。现在会话是账号级的，
+  // 别的项目处理过的那条也必须出现——它同样是这个账号收到的消息。
+  it('creates and lists the account history newest last across projects', () => {
     const store = createRemoteImMessageStore(createFakeDatabase())
     store.create({
       projectId: 'project-2',
@@ -369,9 +371,11 @@ describe('remote IM message store', () => {
     })
 
     expect(first.id).toBeGreaterThan(0)
-    expect(store.list('project-1', 20).map((message) => message.id)).toEqual([
-      first.id,
-      second.id
+    // 第一条是 project-2 处理的（id 比 first 小），也要在列表里。
+    expect(store.list('project-1', 20).map((message) => message.content)).toEqual([
+      'other project',
+      'hello',
+      'sent'
     ])
   })
 
@@ -442,7 +446,11 @@ describe('remote IM message store', () => {
 
   })
 
-  it('clears only the selected peer conversation history in one project', () => {
+  // 清除范围必须跟查看范围一致。会话既然是账号级的，
+  // 清 friend-a 就得把它在所有项目下留下的记录一起清掉——否则点完「清除」，
+  // 别的项目处理过的同一段对话还会显示出来，界面在骗人。
+  // 别的对端（friend-b）不受影响。
+  it('clears the whole peer conversation across projects and leaves other peers alone', () => {
     const store = createRemoteImMessageStore(createFakeDatabase())
     const deletedIncoming = store.create({
       projectId: 'project-1',
@@ -494,7 +502,10 @@ describe('remote IM message store', () => {
     expect(store.list('project-1', 20).map((message) => message.id)).toEqual([kept.id])
     expect(store.listById(deletedIncoming.id)).toBeNull()
     expect(store.listById(deletedOutgoing.id)).toBeNull()
-    expect(store.listById(keptOtherProject.id)).toMatchObject({ id: keptOtherProject.id })
+    // 同一个对端在别的项目下的记录也必须清掉。
+    expect(store.listById(keptOtherProject.id)).toBeNull()
+    // 另一个对端不受影响。
+    expect(store.listById(kept.id)).toMatchObject({ id: kept.id })
   })
 
   it('fails an outgoing message only while it is still streaming', () => {
@@ -613,5 +624,66 @@ describe('remote IM message store', () => {
     expect(store.listPeerBefore('project-1', 'phone_admin', 100, 1, 2)).toEqual([])
     // 其他会话不可见。
     expect(store.listPeerBefore('project-1', 'someone_else', 400, 4, 2)).toEqual([])
+  })
+
+  // 消息记录跟账号走，不跟项目走。
+  //
+  // project_id 只是「这条消息当时被哪个项目的会话处理了」——它取自消息到达那一刻窗口里
+  // 恰好打开的项目，不是消息自身的属性。数据库本来就是每账号一个，按 project_id 过滤会
+  // 把同一段 IM 对话按「当时开着哪个仓库」任意切碎，用户换个仓库就看不到自己刚发的消息。
+  //
+  // 这三条断言全部用一个**与任何已存消息都不匹配**的 projectId 去查，
+  // 旧行为下三条都会返回空。
+  it('returns the account history regardless of which project is open', () => {
+    const store = createRemoteImMessageStore(
+      createFakeDatabase([
+        {
+          id: 1,
+          project_id: 'project-one',
+          session_id: null,
+          provider: 'tencent-im',
+          remote_message_id: null,
+          from_user_id: 'phone',
+          to_user_id: 'desktop',
+          role: 'remote-user',
+          direction: 'incoming',
+          content: 'in project one',
+          status: 'received',
+          error: null,
+          created_at: 100,
+          sent_to_aicli_at: null,
+          sent_to_im_at: null
+        },
+        {
+          id: 2,
+          project_id: 'project-two',
+          session_id: null,
+          provider: 'tencent-im',
+          remote_message_id: null,
+          from_user_id: 'phone',
+          to_user_id: 'desktop',
+          role: 'remote-user',
+          direction: 'incoming',
+          content: 'in project two',
+          status: 'received',
+          error: null,
+          created_at: 200,
+          sent_to_aicli_at: null,
+          sent_to_im_at: null
+        }
+      ])
+    )
+
+    expect(store.list('project-never-used', 100).map((m) => m.content)).toEqual([
+      'in project one',
+      'in project two'
+    ])
+    expect(store.listRecent('project-never-used', 3000).map((m) => m.content)).toEqual([
+      'in project one',
+      'in project two'
+    ])
+    expect(
+      store.listPeerBefore('project-never-used', 'phone', 999, 999, 10).map((m) => m.content)
+    ).toEqual(['in project one', 'in project two'])
   })
 })

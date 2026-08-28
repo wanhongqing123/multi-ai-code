@@ -1536,7 +1536,8 @@ void MainWindow::buildUi() {
     // 通讯录栏头部：和会话栏一样是一个搜索框，只是搜的对象不同。
     // 搜索框跟着页面走而不是共用一个：点通讯录就搜联系人、点消息就搜消息，
     // 一个框只做一件事，不必再在框里塞「现在搜的是什么」的模式开关。
-    auto* contactsHeader = new QHBoxLayout();
+    // 搜索框一行、按钮一行：挤在同一行时搜索框被压窄，而搜索是这一页更常用的动作。
+    auto* contactsHeader = new QVBoxLayout();
     contactsHeader->setContentsMargins(0, 0, 0, 0);
     contactsHeader->setSpacing(8);
     contactsSearchInput_ = new QLineEdit(contactsDirectoryPane);
@@ -1546,14 +1547,14 @@ void MainWindow::buildUi() {
     contactsSearchInput_->addAction(
         makeLineIcon(LineIconKind::Search, QColor(QStringLiteral("#98a2b3"))),
         QLineEdit::LeadingPosition);
-    contactsHeader->addWidget(contactsSearchInput_, 1);
+    contactsHeader->addWidget(contactsSearchInput_);
     // 建分组的主入口。右键菜单里也有，但那要求用户先想到去右键；
-    // 一个摆在搜索框旁边的按钮才是"这里可以建分组"的可见提示。
+    // 一个摆在搜索框下面的按钮才是"这里可以建分组"的可见提示。
     newContactGroupButton_ = new QPushButton(QStringLiteral("新建分组"), contactsDirectoryPane);
     newContactGroupButton_->setObjectName(QStringLiteral("newContactGroupButton"));
     newContactGroupButton_->setCursor(Qt::PointingHandCursor);
     connect(newContactGroupButton_, &QPushButton::clicked, this, [this] { createContactGroup(); });
-    contactsHeader->addWidget(newContactGroupButton_, 0);
+    contactsHeader->addWidget(newContactGroupButton_);
 
     contactsList_ = new QListWidget(contactsDirectoryPane);
     contactsList_->setObjectName(QStringLiteral("contactsList"));

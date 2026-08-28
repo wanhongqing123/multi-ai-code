@@ -60,6 +60,7 @@ final class MasterChatStateTests: XCTestCase {
         ]
         let contacts = [
             RemoteIMContact(userID: "alice", displayName: "Alice", groupName: "同事"),
+            RemoteIMContact(userID: "amy", displayName: "Amy", groupName: "同事"),
             RemoteIMContact(userID: "bob", displayName: "Bob"),
         ]
 
@@ -71,9 +72,9 @@ final class MasterChatStateTests: XCTestCase {
                 query: ""
             ),
             [
-                .group(name: "同事", memberCount: 1),
+                .group(name: "同事", memberCount: 2),
                 .group(name: "空组", memberCount: 0),
-                .contact(contacts[1], indented: false),
+                .contact(contacts[2], indented: false),
             ]
         )
         XCTAssertEqual(
@@ -84,7 +85,7 @@ final class MasterChatStateTests: XCTestCase {
                 query: "ali"
             ),
             [
-                .group(name: "同事", memberCount: 1),
+                .group(name: "同事", memberCount: 2),
                 .contact(contacts[0], indented: true),
             ]
         )

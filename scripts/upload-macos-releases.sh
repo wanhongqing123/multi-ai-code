@@ -70,7 +70,7 @@ latest_file() {
 
 electron_dmg="$(latest_file './release/MultiAICode-*-arm64.dmg')"
 electron_blockmap="$(latest_file './release/MultiAICode-*-arm64.dmg.blockmap')"
-qt_im_dmg="$(latest_file "./MaiChat/desktop/dist/MaiChat-macos-arm64-$release_date-*.dmg")"
+qt_im_dmg="$(latest_file "./MaiChat/desktop/dist/MaiChat-macos-arm64-v*-$release_date-*.dmg")"
 
 if [[ -z "$electron_dmg" || -z "$electron_blockmap" ]]; then
   echo "Missing Electron macOS artifacts under release/." >&2

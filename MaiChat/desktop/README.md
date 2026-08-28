@@ -104,7 +104,7 @@ MaiChat/desktop/scripts/package-macos.sh
 ```
 
 产出 `dist/MaiChat-macos-arm64/` 和
-`dist/MaiChat-macos-arm64-<日期>-<git短哈希>.dmg`。DMG 内包含应用和
+`dist/MaiChat-macos-arm64-v<版本>-<日期>-<git短哈希>.dmg`。DMG 内包含应用和
 `Applications` 快捷入口，脚本会：
 
 - 使用 `macdeployqt` 旁挂 Qt framework；

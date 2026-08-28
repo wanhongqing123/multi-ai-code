@@ -13,7 +13,7 @@ The script expects a built macOS bundle:
 
 Outputs:
   <out-dir>/MaiChat-macos-arm64/
-  <out-dir>/MaiChat-macos-arm64-<date>-<git-short-hash>.dmg
+  <out-dir>/MaiChat-macos-arm64-v<version>-<date>-<git-short-hash>.dmg
 USAGE
 }
 
@@ -141,7 +141,7 @@ if [[ -z "$git_hash" ]]; then
   git_hash="unknown"
 fi
 
-dmg_name="MaiChat-macos-arm64-$(date +%Y%m%d)-$git_hash.dmg"
+dmg_name="MaiChat-macos-arm64-v${short_version}-$(date +%Y%m%d)-$git_hash.dmg"
 dmg_path="$dist_root/$dmg_name"
 rw_dmg="$dist_root/.${dmg_name%.dmg}-rw.dmg"
 mount_dir=""

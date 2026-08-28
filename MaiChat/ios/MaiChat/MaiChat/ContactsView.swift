@@ -376,14 +376,13 @@ private struct BroadcastComposeView: View {
                     .textFieldStyle(.roundedBorder)
 
                 List {
-                    ForEach(visibleGroups) { group in
-                        groupSelectionRow(group)
-                        ForEach(visibleMembers(in: group.name)) { contact in
-                            recipientRow(contact, indented: true)
+                    ForEach(recipientListItems) { item in
+                        switch item {
+                        case let .group(name, memberCount):
+                            groupSelectionRow(name: name, memberCount: memberCount)
+                        case let .contact(contact, indented):
+                            recipientRow(contact, indented: indented)
                         }
-                    }
-                    ForEach(visibleUngroupedContacts) { contact in
-                        recipientRow(contact, indented: false)
                     }
                 }
                 .listStyle(.plain)
@@ -454,10 +453,6 @@ private struct BroadcastComposeView: View {
         }
     }
 
-    private var cleanFilter: String {
-        filterText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    }
-
     private var canSend: Bool {
         !isSending && appState.connectionState == .connected && !selectedUserIDs.isEmpty
             && !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -469,45 +464,25 @@ private struct BroadcastComposeView: View {
 
     private var selectedNames: [String] { selectedContacts.map(\.displayName) }
 
-    private var visibleGroups: [RemoteIMContactGroup] {
-        appState.chatState.contactGroups.filter { group in
-            cleanFilter.isEmpty
-                || group.name.lowercased().contains(cleanFilter)
-                || !visibleMembers(in: group.name).isEmpty
-        }
+    private var recipientListItems: [RemoteIMBroadcastRecipientListItem] {
+        RemoteIMBroadcastRecipientDisplayPolicy.items(
+            groups: appState.chatState.contactGroups,
+            contacts: appState.chatState.contacts,
+            query: filterText
+        )
     }
 
-    private var visibleUngroupedContacts: [RemoteIMContact] {
-        appState.chatState.contacts.filter {
-            $0.groupName.isEmpty && matchesFilter($0)
-        }
-    }
-
-    private func visibleMembers(in groupName: String) -> [RemoteIMContact] {
-        let groupMatches = groupName.lowercased().contains(cleanFilter)
-        return appState.chatState.contacts.filter {
-            $0.groupName == groupName && (cleanFilter.isEmpty || groupMatches || matchesFilter($0))
-        }
-    }
-
-    private func matchesFilter(_ contact: RemoteIMContact) -> Bool {
-        cleanFilter.isEmpty
-            || contact.displayName.lowercased().contains(cleanFilter)
-            || contact.userID.lowercased().contains(cleanFilter)
-    }
-
-    private func groupSelectionRow(_ group: RemoteIMContactGroup) -> some View {
+    private func groupSelectionRow(name: String, memberCount: Int) -> some View {
         let state = RemoteIMBroadcastSelectionPolicy.groupState(
-            groupName: group.name,
+            groupName: name,
             contacts: appState.chatState.contacts,
             selectedUserIDs: selectedUserIDs
         )
         let symbol = state == .all ? "checkmark.square.fill"
             : state == .partial ? "minus.square.fill" : "square"
-        let memberCount = appState.chatState.contacts.filter { $0.groupName == group.name }.count
         return Button {
             selectedUserIDs = RemoteIMBroadcastSelectionPolicy.settingGroup(
-                groupName: group.name,
+                groupName: name,
                 contacts: appState.chatState.contacts,
                 selectedUserIDs: selectedUserIDs,
                 selected: state != .all
@@ -516,7 +491,7 @@ private struct BroadcastComposeView: View {
             HStack {
                 Image(systemName: symbol)
                     .foregroundStyle(RemoteIMStyle.blue)
-                Text(group.name).font(.system(size: 14, weight: .semibold))
+                Text(name).font(.system(size: 14, weight: .semibold))
                 Spacer()
                 Text("\(memberCount)").foregroundStyle(RemoteIMStyle.textSecondary)
             }

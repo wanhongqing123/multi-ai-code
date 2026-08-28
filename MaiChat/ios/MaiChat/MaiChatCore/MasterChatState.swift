@@ -724,6 +724,48 @@ public struct RemoteIMBroadcastDeliveryTracker: Equatable, Sendable {
     }
 }
 
+public enum RemoteIMBroadcastRecipientListItem: Equatable, Sendable, Identifiable {
+    case group(name: String, memberCount: Int)
+    case contact(RemoteIMContact, indented: Bool)
+
+    public var id: String {
+        switch self {
+        case let .group(name, _): return "broadcast-group:\(name)"
+        case let .contact(contact, _): return "broadcast-contact:\(contact.userID)"
+        }
+    }
+}
+
+public enum RemoteIMBroadcastRecipientDisplayPolicy {
+    public static func items(
+        groups: [RemoteIMContactGroup],
+        contacts: [RemoteIMContact],
+        query: String
+    ) -> [RemoteIMBroadcastRecipientListItem] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        var result: [RemoteIMBroadcastRecipientListItem] = []
+        for group in groups {
+            let allMembers = contacts.filter { $0.groupName == group.name }
+            let groupMatches = group.name.lowercased().contains(needle)
+            let visibleMembers = allMembers.filter {
+                needle.isEmpty || groupMatches || matches($0, needle: needle)
+            }
+            if !needle.isEmpty && !groupMatches && visibleMembers.isEmpty { continue }
+            result.append(.group(name: group.name, memberCount: allMembers.count))
+            result.append(contentsOf: visibleMembers.map { .contact($0, indented: true) })
+        }
+        result.append(contentsOf: contacts
+            .filter { $0.groupName.isEmpty && (needle.isEmpty || matches($0, needle: needle)) }
+            .map { .contact($0, indented: false) })
+        return result
+    }
+
+    private static func matches(_ contact: RemoteIMContact, needle: String) -> Bool {
+        contact.displayName.lowercased().contains(needle)
+            || contact.userID.lowercased().contains(needle)
+    }
+}
+
 public enum RemoteIMAvatarMonogramPolicy {
     public static func text(displayName: String, userID: String) -> String {
         let cleanUserID = userID.trimmingCharacters(in: .whitespacesAndNewlines)

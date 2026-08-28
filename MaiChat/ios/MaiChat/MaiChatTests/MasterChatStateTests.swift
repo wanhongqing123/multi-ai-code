@@ -59,6 +59,27 @@ final class MasterChatStateTests: XCTestCase {
         XCTAssertEqual(tracker.failedUserIDs, ["alice", "carol"])
     }
 
+    func testBroadcastRecipientFilterDoesNotMutateSelectionAndKeepsGroupTotal() {
+        let contacts = [
+            RemoteIMContact(userID: "alice", displayName: "Alice", groupName: "同事"),
+            RemoteIMContact(userID: "amy", displayName: "Amy", groupName: "同事"),
+            RemoteIMContact(userID: "bob", displayName: "Bob"),
+        ]
+        let selected: Set<String> = ["alice", "amy"]
+
+        let items = RemoteIMBroadcastRecipientDisplayPolicy.items(
+            groups: [RemoteIMContactGroup(name: "同事", sortOrder: 0)],
+            contacts: contacts,
+            query: "ali"
+        )
+
+        XCTAssertEqual(selected, ["alice", "amy"])
+        XCTAssertEqual(items, [
+            .group(name: "同事", memberCount: 2),
+            .contact(contacts[0], indented: true),
+        ])
+    }
+
     func testContactGroupsRenameDeleteAndPreserveProfileAssignments() throws {
         var state = MasterChatState(ownerUserID: "ios-master")
         XCTAssertTrue(state.createContactGroup(name: " 同事 "))

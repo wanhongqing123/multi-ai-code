@@ -1340,52 +1340,33 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         Runnable updateSendState
     ) {
         rows.removeAllViews();
-        String query = queryValue == null ? "" : queryValue.trim().toLowerCase(Locale.ROOT);
-        for (String group : groups) {
-            List<RemoteIMContact> members = new ArrayList<>();
-            for (RemoteIMContact contact : contacts) {
-                if (group.equals(contact.groupName())) members.add(contact);
+        for (BroadcastRecipientDisplayPolicy.Row row : BroadcastRecipientDisplayPolicy.rows(
+            groups, contacts, queryValue
+        )) {
+            if (row.kind() == BroadcastRecipientDisplayPolicy.Kind.CONTACT) {
+                rows.addView(broadcastContactRow(
+                    row.contact(), row.isIndented(), selected, refresh, updateSendState
+                ), match(dp(38)));
+                continue;
             }
-            List<RemoteIMContact> visibleMembers = new ArrayList<>();
-            for (RemoteIMContact contact : members) {
-                if (query.isEmpty()
-                    || contact.displayName().toLowerCase(Locale.ROOT).contains(query)
-                    || contact.userId().toLowerCase(Locale.ROOT).contains(query)) {
-                    visibleMembers.add(contact);
-                }
-            }
-            if (!query.isEmpty() && visibleMembers.isEmpty()
-                && !group.toLowerCase(Locale.ROOT).contains(query)) continue;
+            String group = row.groupName();
             BroadcastSelectionPolicy.GroupState state =
                 BroadcastSelectionPolicy.groupState(group, contacts, selected);
             String marker = state == BroadcastSelectionPolicy.GroupState.ALL ? "☑ "
                 : state == BroadcastSelectionPolicy.GroupState.PARTIAL ? "◩ " : "☐ ";
             TextView header = MaiChatTheme.label(
-                this, marker + group + "（" + members.size() + "）", 14, MaiChatTheme.TEXT
+                this, marker + group + "（" + row.memberCount() + "）", 14, MaiChatTheme.TEXT
             );
             header.setGravity(Gravity.CENTER_VERTICAL);
             header.setPadding(dp(4), 0, dp(4), 0);
             header.setOnClickListener(view -> {
                 BroadcastSelectionPolicy.setGroupSelected(
-                    group,
-                    contacts,
-                    selected,
-                    state != BroadcastSelectionPolicy.GroupState.ALL
+                    group, contacts, selected, state != BroadcastSelectionPolicy.GroupState.ALL
                 );
                 refresh.run();
                 updateSendState.run();
             });
             rows.addView(header, match(dp(38)));
-            for (RemoteIMContact contact : visibleMembers) {
-                rows.addView(broadcastContactRow(contact, true, selected, refresh, updateSendState), match(dp(38)));
-            }
-        }
-        for (RemoteIMContact contact : contacts) {
-            if (!contact.groupName().isEmpty()) continue;
-            if (!query.isEmpty()
-                && !contact.displayName().toLowerCase(Locale.ROOT).contains(query)
-                && !contact.userId().toLowerCase(Locale.ROOT).contains(query)) continue;
-            rows.addView(broadcastContactRow(contact, false, selected, refresh, updateSendState), match(dp(38)));
         }
     }
 

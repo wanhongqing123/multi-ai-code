@@ -572,23 +572,98 @@ public enum RemoteIMLoginCredentialPolicy {
     }
 }
 
+public struct RemoteIMContactGroup: Codable, Equatable, Hashable, Sendable, Identifiable {
+    public var id: String { name }
+    public let name: String
+    public let sortOrder: Int
+
+    public init(name: String, sortOrder: Int) {
+        self.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.sortOrder = sortOrder
+    }
+}
+
 public struct RemoteIMContact: Identifiable, Codable, Equatable, Hashable, Sendable {
     public var id: String { userID }
     public let userID: String
     public var displayName: String
     public var avatarURL: String?
     public var relation: RemoteIMContactRelation
+    public var groupName: String
 
     public init(
         userID: String,
         displayName: String,
         avatarURL: String? = nil,
-        relation: RemoteIMContactRelation = .friend
+        relation: RemoteIMContactRelation = .friend,
+        groupName: String = ""
     ) {
         self.userID = userID
         self.displayName = displayName
         self.avatarURL = avatarURL
         self.relation = .friend
+        self.groupName = groupName.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case userID, displayName, avatarURL, relation, groupName
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        userID = try container.decode(String.self, forKey: .userID)
+        displayName = try container.decode(String.self, forKey: .displayName)
+        avatarURL = try container.decodeIfPresent(String.self, forKey: .avatarURL)
+        relation = try container.decodeIfPresent(
+            RemoteIMContactRelation.self,
+            forKey: .relation
+        ) ?? .friend
+        groupName = try container.decodeIfPresent(String.self, forKey: .groupName)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+}
+
+public enum RemoteIMContactListItem: Equatable, Sendable, Identifiable {
+    case group(name: String, memberCount: Int)
+    case contact(RemoteIMContact, indented: Bool)
+
+    public var id: String {
+        switch self {
+        case let .group(name, _): return "group:\(name)"
+        case let .contact(contact, _): return "contact:\(contact.userID)"
+        }
+    }
+}
+
+public enum RemoteIMContactGroupDisplayPolicy {
+    public static func items(
+        groups: [RemoteIMContactGroup],
+        contacts: [RemoteIMContact],
+        collapsedGroupNames: Set<String>,
+        query: String
+    ) -> [RemoteIMContactListItem] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let searching = !needle.isEmpty
+        var result: [RemoteIMContactListItem] = []
+        for group in groups {
+            let allMembers = contacts.filter { $0.groupName == group.name }
+            let matchedMembers = allMembers.filter { matches($0, needle: needle) }
+            if searching && matchedMembers.isEmpty { continue }
+            result.append(.group(name: group.name, memberCount: allMembers.count))
+            if searching || !collapsedGroupNames.contains(group.name) {
+                result.append(contentsOf: matchedMembers.map { .contact($0, indented: true) })
+            }
+        }
+        result.append(contentsOf: contacts
+            .filter { $0.groupName.isEmpty && matches($0, needle: needle) }
+            .map { .contact($0, indented: false) })
+        return result
+    }
+
+    private static func matches(_ contact: RemoteIMContact, needle: String) -> Bool {
+        needle.isEmpty
+            || contact.displayName.lowercased().contains(needle)
+            || contact.userID.lowercased().contains(needle)
     }
 }
 
@@ -811,6 +886,7 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
 public struct MasterChatState: Equatable {
     public let ownerUserID: String
     public private(set) var contacts: [RemoteIMContact]
+    public private(set) var contactGroups: [RemoteIMContactGroup]
     public private(set) var messages: [RemoteIMMessage]
     public private(set) var selectedPeerID: String?
     private var conversationMessagesByPeerID: [String: [RemoteIMMessage]]
@@ -820,6 +896,7 @@ public struct MasterChatState: Equatable {
     public static func == (left: MasterChatState, right: MasterChatState) -> Bool {
         left.ownerUserID == right.ownerUserID &&
             left.contacts == right.contacts &&
+            left.contactGroups == right.contactGroups &&
             left.messages == right.messages &&
             left.selectedPeerID == right.selectedPeerID
     }
@@ -827,6 +904,7 @@ public struct MasterChatState: Equatable {
     public init(ownerUserID: String) {
         self.ownerUserID = ownerUserID.trimmingCharacters(in: .whitespacesAndNewlines)
         self.contacts = []
+        self.contactGroups = []
         self.messages = []
         self.selectedPeerID = nil
         self.conversationMessagesByPeerID = [:]
@@ -837,11 +915,17 @@ public struct MasterChatState: Equatable {
     public init(
         ownerUserID: String,
         contacts: [RemoteIMContact],
+        contactGroups: [RemoteIMContactGroup] = [],
         messages: [RemoteIMMessage],
         selectedPeerID: String? = nil
     ) {
         self.ownerUserID = ownerUserID.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.contacts = Self.normalizedContacts(contacts, ownerUserID: self.ownerUserID)
+        self.contactGroups = Self.normalizedContactGroups(contactGroups)
+        self.contacts = Self.normalizedContacts(
+            contacts,
+            ownerUserID: self.ownerUserID,
+            groupNames: Set(self.contactGroups.map(\.name))
+        )
         self.messages = Self.normalizedMessages(messages, ownerUserID: self.ownerUserID)
         self.conversationMessagesByPeerID = [:]
         self.messageIndexByID = [:]
@@ -862,7 +946,8 @@ public struct MasterChatState: Equatable {
 
     private static func normalizedContacts(
         _ contacts: [RemoteIMContact],
-        ownerUserID: String
+        ownerUserID: String,
+        groupNames: Set<String>
     ) -> [RemoteIMContact] {
         var normalizedContacts: [RemoteIMContact] = []
         for contact in contacts {
@@ -877,7 +962,8 @@ public struct MasterChatState: Equatable {
                 userID: cleanUserID,
                 displayName: cleanDisplayName.isEmpty ? cleanUserID : cleanDisplayName,
                 avatarURL: cleanAvatarURL?.isEmpty == false ? cleanAvatarURL : nil,
-                relation: .friend
+                relation: .friend,
+                groupName: groupNames.contains(contact.groupName) ? contact.groupName : ""
             )
             if let index = normalizedContacts.firstIndex(where: { $0.userID == cleanUserID }) {
                 normalizedContacts[index] = normalizedContact
@@ -886,6 +972,20 @@ public struct MasterChatState: Equatable {
             }
         }
         return normalizedContacts
+    }
+
+    private static func normalizedContactGroups(
+        _ groups: [RemoteIMContactGroup]
+    ) -> [RemoteIMContactGroup] {
+        var names = Set<String>()
+        return groups
+            .map { RemoteIMContactGroup(name: $0.name, sortOrder: $0.sortOrder) }
+            .filter { !$0.name.isEmpty && names.insert($0.name).inserted }
+            .sorted {
+                $0.sortOrder == $1.sortOrder
+                    ? $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+                    : $0.sortOrder < $1.sortOrder
+            }
     }
 
     private static func normalizedMessages(
@@ -959,6 +1059,7 @@ public struct MasterChatState: Equatable {
                 contact.avatarURL = cleanAvatarURL
             }
             contact.relation = .friend
+            // profile refresh 不带本地 groupName，保留现值。
             contacts[index] = contact
         } else {
             contacts.append(
@@ -973,6 +1074,60 @@ public struct MasterChatState: Equatable {
         if selectedPeerID == nil {
             selectedPeerID = cleanUserID
         }
+    }
+
+    @discardableResult
+    public mutating func createContactGroup(name: String) -> Bool {
+        let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanName.isEmpty,
+              !contactGroups.contains(where: { $0.name == cleanName }) else { return false }
+        let nextOrder = (contactGroups.map(\.sortOrder).max() ?? -1) + 1
+        contactGroups.append(RemoteIMContactGroup(name: cleanName, sortOrder: nextOrder))
+        return true
+    }
+
+    @discardableResult
+    public mutating func renameContactGroup(from: String, to: String) -> Bool {
+        let oldName = from.trimmingCharacters(in: .whitespacesAndNewlines)
+        let newName = to.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !newName.isEmpty,
+              let index = contactGroups.firstIndex(where: { $0.name == oldName }) else { return false }
+        if oldName == newName { return true }
+        guard !contactGroups.contains(where: { $0.name == newName }) else { return false }
+        contactGroups[index] = RemoteIMContactGroup(
+            name: newName,
+            sortOrder: contactGroups[index].sortOrder
+        )
+        for contactIndex in contacts.indices where contacts[contactIndex].groupName == oldName {
+            contacts[contactIndex].groupName = newName
+        }
+        return true
+    }
+
+    @discardableResult
+    public mutating func deleteContactGroup(name: String) -> Bool {
+        let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let index = contactGroups.firstIndex(where: { $0.name == cleanName }) else {
+            return false
+        }
+        contactGroups.remove(at: index)
+        for contactIndex in contacts.indices where contacts[contactIndex].groupName == cleanName {
+            contacts[contactIndex].groupName = ""
+        }
+        return true
+    }
+
+    @discardableResult
+    public mutating func setContactGroup(userID: String, groupName: String) -> Bool {
+        let cleanUserID = userID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanGroupName = groupName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let index = contacts.firstIndex(where: { $0.userID == cleanUserID }) else {
+            return false
+        }
+        contacts[index].groupName = contactGroups.contains(where: { $0.name == cleanGroupName })
+            ? cleanGroupName
+            : ""
+        return true
     }
 
     public mutating func upsertFriend(userID: String, displayName: String? = nil) throws {

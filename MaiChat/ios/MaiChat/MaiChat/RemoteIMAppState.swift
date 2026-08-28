@@ -92,6 +92,7 @@ final class RemoteIMAppState: ObservableObject {
         let loadedState = MasterChatState(
             ownerUserID: settings.masterUserID,
             contacts: Self.contacts(from: settings),
+            contactGroups: settings.contactGroups,
             messages: []
         )
         self.chatState = loadedState
@@ -353,6 +354,34 @@ final class RemoteIMAppState: ObservableObject {
                 ]
             )
         }
+    }
+
+    @discardableResult
+    func createContactGroup(name: String) -> Bool {
+        guard chatState.createContactGroup(name: name) else { return false }
+        settingsStore.save(currentStoredSettings())
+        return true
+    }
+
+    @discardableResult
+    func renameContactGroup(from: String, to: String) -> Bool {
+        guard chatState.renameContactGroup(from: from, to: to) else { return false }
+        settingsStore.save(currentStoredSettings())
+        return true
+    }
+
+    @discardableResult
+    func deleteContactGroup(name: String) -> Bool {
+        guard chatState.deleteContactGroup(name: name) else { return false }
+        settingsStore.save(currentStoredSettings())
+        return true
+    }
+
+    @discardableResult
+    func setContactGroup(userID: String, groupName: String) -> Bool {
+        guard chatState.setContactGroup(userID: userID, groupName: groupName) else { return false }
+        settingsStore.save(currentStoredSettings())
+        return true
     }
 
     func deleteContact(_ contact: RemoteIMContact) async -> Bool {
@@ -1077,6 +1106,7 @@ final class RemoteIMAppState: ObservableObject {
                 .map(\.userID),
             slaveUserIDs: [],
             contacts: chatState.contacts,
+            contactGroups: chatState.contactGroups,
             unreadCountByUserID: unreadCountByUserID
         )
     }
@@ -1146,6 +1176,7 @@ final class RemoteIMAppState: ObservableObject {
         let nextState = MasterChatState(
             ownerUserID: cleanMasterUserID,
             contacts: chatState.contacts,
+            contactGroups: chatState.contactGroups,
             messages: currentSummaries,
             selectedPeerID: chatState.selectedPeerID
         )

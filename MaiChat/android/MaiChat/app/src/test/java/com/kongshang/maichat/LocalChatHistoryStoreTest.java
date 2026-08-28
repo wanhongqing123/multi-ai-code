@@ -14,6 +14,23 @@ import java.util.List;
 
 public class LocalChatHistoryStoreTest {
     @Test
+    public void contactGroupsAndAssignmentsSurviveRestart() throws Exception {
+        Path root = Files.createTempDirectory("maichat-android-groups");
+        LocalChatHistoryStore store = new LocalChatHistoryStore(root.toFile());
+        ChatState state = new ChatState("android-user");
+        state.addContactGroup("同事");
+        state.addContactGroup("未分组");
+        state.upsertContact(new RemoteIMContact("mac-office", "Mac"));
+        state.setContactGroup("mac-office", "同事");
+
+        store.save(state);
+        ChatState restored = store.load("android-user");
+
+        assertEquals(List.of("同事", "未分组"), restored.contactGroups());
+        assertEquals("同事", restored.contacts().get(0).groupName());
+    }
+
+    @Test
     public void savesAndRestoresContactsAndMessages() throws Exception {
         Path root = Files.createTempDirectory("maichat-android-history");
         LocalChatHistoryStore store = new LocalChatHistoryStore(root.toFile());

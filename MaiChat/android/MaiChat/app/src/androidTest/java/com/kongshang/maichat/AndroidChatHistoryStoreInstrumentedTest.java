@@ -20,6 +20,37 @@ import java.util.List;
 
 @RunWith(AndroidJUnit4.class)
 public class AndroidChatHistoryStoreInstrumentedTest {
+    @Test
+    public void contactGroupsAreAccountScopedTransactionalAndProfileSafe() {
+        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        String databaseName = "maichat-contact-groups-test.db";
+        context.deleteDatabase(databaseName);
+        AndroidChatHistoryStore store = new AndroidChatHistoryStore(context, databaseName);
+
+        assertTrue(store.createContactGroup("owner-1", "同事"));
+        assertTrue(store.createContactGroup("owner-1", "未分组"));
+        assertTrue(store.createContactGroup("owner-2", "同事"));
+        assertFalse(store.createContactGroup("owner-1", " 同事 "));
+        store.upsertContact("owner-1", new RemoteIMContact("peer-1", "Peer"));
+        store.setContactGroup("owner-1", "peer-1", "同事");
+        store.upsertContact("owner-1", new RemoteIMContact("peer-1", "新资料", "avatar"));
+
+        assertEquals("同事", store.loadContacts("owner-1").get(0).groupName());
+        assertEquals("新资料", store.loadContacts("owner-1").get(0).displayName());
+        assertEquals(List.of("同事", "未分组"), store.loadContactGroups("owner-1"));
+        assertEquals(List.of("同事"), store.loadContactGroups("owner-2"));
+
+        assertFalse(store.renameContactGroup("owner-1", "同事", "未分组"));
+        assertTrue(store.renameContactGroup("owner-1", "同事", "工作"));
+        assertEquals("工作", store.loadContacts("owner-1").get(0).groupName());
+        assertTrue(store.deleteContactGroup("owner-1", "工作"));
+        assertEquals("", store.loadContacts("owner-1").get(0).groupName());
+        assertEquals(1, store.loadContacts("owner-1").size());
+
+        store.close();
+        context.deleteDatabase(databaseName);
+    }
+
     private static final String TEST_DATABASE_NAME = "maichat-history-instrumented-test.db";
 
     @Test
@@ -149,6 +180,10 @@ public class AndroidChatHistoryStoreInstrumentedTest {
         assertEquals("旧消息", messages.get(0).text());
         assertNull(messages.get(0).videoAttachment());
         assertEquals(1, store.loadContacts("owner-1").size());
+        assertEquals("", store.loadContacts("owner-1").get(0).groupName());
+        assertTrue(store.createContactGroup("owner-1", "同事"));
+        assertTrue(store.setContactGroup("owner-1", "peer-1", "同事"));
+        assertEquals("同事", store.loadContacts("owner-1").get(0).groupName());
 
         // 新表结构可用：写一条带视频的消息并读回。
         RemoteIMMediaPaths mediaPaths = RemoteIMMediaPaths.forApp(context);

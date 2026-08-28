@@ -207,6 +207,66 @@ public final class RemoteIMSessionController {
         });
     }
 
+    public boolean createContactGroup(String name) {
+        String cleanName = ContactGroups.normalize(name);
+        if (!ContactGroups.isAcceptableName(cleanName) || requiresLogin()) return false;
+        boolean stored = productionMode
+            ? historyStore.createContactGroup(chatState.ownerUserId(), cleanName)
+            : chatState.addContactGroup(cleanName);
+        if (!stored) return false;
+        if (productionMode) chatState.addContactGroup(cleanName);
+        persistLegacyAndNotify();
+        return true;
+    }
+
+    public boolean renameContactGroup(String from, String to) {
+        String oldName = ContactGroups.normalize(from);
+        String newName = ContactGroups.normalize(to);
+        if (!ContactGroups.isAcceptableName(newName) || requiresLogin()) return false;
+        boolean stored = productionMode
+            ? historyStore.renameContactGroup(chatState.ownerUserId(), oldName, newName)
+            : chatState.renameContactGroup(oldName, newName);
+        if (!stored) return false;
+        if (productionMode) chatState.renameContactGroup(oldName, newName);
+        persistLegacyAndNotify();
+        return true;
+    }
+
+    public boolean deleteContactGroup(String name) {
+        String cleanName = ContactGroups.normalize(name);
+        if (cleanName.isEmpty() || requiresLogin()) return false;
+        boolean stored = productionMode
+            ? historyStore.deleteContactGroup(chatState.ownerUserId(), cleanName)
+            : chatState.removeContactGroup(cleanName);
+        if (!stored) return false;
+        if (productionMode) chatState.removeContactGroup(cleanName);
+        persistLegacyAndNotify();
+        return true;
+    }
+
+    public boolean setContactGroup(String userId, String groupName) {
+        String cleanUserId = clean(userId);
+        if (cleanUserId.isEmpty() || requiresLogin()) return false;
+        if (productionMode) {
+            if (!historyStore.setContactGroup(
+                chatState.ownerUserId(), cleanUserId, ContactGroups.normalize(groupName)
+            )) return false;
+        }
+        if (!chatState.setContactGroup(cleanUserId, groupName)) return false;
+        persistLegacyAndNotify();
+        return true;
+    }
+
+    private void persistLegacyAndNotify() {
+        if (!productionMode) {
+            try {
+                saveChatState();
+            } catch (IOException ignored) {
+            }
+        }
+        notifyStateChanged();
+    }
+
     public void clearHistory(String userId) {
         String cleanUserId = clean(userId);
         if (!productionMode) {
@@ -633,6 +693,7 @@ public final class RemoteIMSessionController {
         String ownerUserId = requiresLogin() ? FALLBACK_OWNER_USER_ID : settings.loginUserId();
         if (requiresLogin()) return new ChatState(ownerUserId);
         ChatState state = new ChatState(ownerUserId);
+        state.setContactGroups(historyStore.loadContactGroups(ownerUserId));
         for (RemoteIMContact contact : historyStore.loadContacts(ownerUserId)) {
             state.upsertContact(contact);
         }

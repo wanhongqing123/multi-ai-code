@@ -24,12 +24,20 @@ public final class LocalChatHistoryStore {
         }
 
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(historyFile(state.ownerUserId())))) {
+            for (String group : state.contactGroups()) {
+                writer.write("GROUP");
+                writer.write('\t');
+                writer.write(encode(group));
+                writer.newLine();
+            }
             for (RemoteIMContact contact : state.contacts()) {
                 writer.write("CONTACT");
                 writer.write('\t');
                 writer.write(encode(contact.userId()));
                 writer.write('\t');
                 writer.write(encode(contact.displayName()));
+                writer.write('\t');
+                writer.write(encode(contact.groupName()));
                 writer.newLine();
             }
 
@@ -44,18 +52,30 @@ public final class LocalChatHistoryStore {
         File file = historyFile(ownerUserId);
         if (!file.exists()) return state;
 
+        List<String> groups = new ArrayList<>();
+        List<RemoteIMContact> contacts = new ArrayList<>();
         try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
             String line;
             while ((line = reader.readLine()) != null) {
                 String[] parts = line.split("\t", -1);
                 if (parts.length == 0) continue;
-                if ("CONTACT".equals(parts[0]) && parts.length >= 3) {
-                    state.upsertContact(new RemoteIMContact(decode(parts[1]), decode(parts[2])));
+                if ("GROUP".equals(parts[0]) && parts.length >= 2) {
+                    groups.add(decode(parts[1]));
+                } else if ("CONTACT".equals(parts[0]) && parts.length >= 3) {
+                    contacts.add(new RemoteIMContact(
+                        decode(parts[1]),
+                        decode(parts[2]),
+                        "",
+                        parts.length >= 4 ? decode(parts[3]) : ""
+                    ));
                 } else if ("MESSAGE".equals(parts[0]) && parts.length >= 14) {
                     state.addRestoredMessage(readMessage(parts));
                 }
             }
         }
+
+        state.setContactGroups(groups);
+        for (RemoteIMContact contact : contacts) state.upsertContact(contact);
 
         return state;
     }

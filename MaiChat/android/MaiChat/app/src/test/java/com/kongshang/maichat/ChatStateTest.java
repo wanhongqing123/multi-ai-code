@@ -11,6 +11,41 @@ import java.util.List;
 
 public class ChatStateTest {
     @Test
+    public void contactGroupsRenameDeleteAndPreserveProfileAssignments() {
+        ChatState state = new ChatState("android-user");
+        assertTrue(state.addContactGroup(" 同事 "));
+        assertTrue(state.addContactGroup("未分组"));
+        assertFalse(state.addContactGroup("同事"));
+        assertFalse(state.addContactGroup("  "));
+
+        state.upsertContact(new RemoteIMContact("mac-office", "Mac Office"));
+        assertTrue(state.setContactGroup("mac-office", "同事"));
+        state.upsertContact(new RemoteIMContact(
+            "mac-office", "办公室电脑", "https://example.com/avatar.png"
+        ));
+        assertEquals("同事", state.contacts().get(0).groupName());
+        assertEquals("办公室电脑", state.contacts().get(0).displayName());
+
+        assertTrue(state.renameContactGroup("同事", "工作"));
+        assertEquals("工作", state.contacts().get(0).groupName());
+        assertFalse(state.renameContactGroup("工作", "未分组"));
+        assertTrue(state.removeContactGroup("工作"));
+        assertEquals("", state.contacts().get(0).groupName());
+        assertEquals(List.of("未分组"), state.contactGroups());
+    }
+
+    @Test
+    public void unknownContactGroupSelfHealsToUngrouped() {
+        ChatState state = new ChatState("android-user");
+        state.setContactGroups(List.of("同事"));
+        state.upsertContact(new RemoteIMContact("mac-office", "Mac", "", "幽灵组"));
+
+        assertEquals("", state.contacts().get(0).groupName());
+        assertTrue(state.setContactGroup("mac-office", "幽灵组"));
+        assertEquals("", state.contacts().get(0).groupName());
+    }
+
+    @Test
     public void upsertsContactAndQueuesOutgoingText() {
         ChatState state = new ChatState("android-user");
 

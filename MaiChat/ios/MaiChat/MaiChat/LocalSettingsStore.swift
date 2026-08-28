@@ -7,6 +7,7 @@ struct StoredRemoteIMSettings: Codable, Equatable, Sendable {
     var friendUserIDs: [String]
     var slaveUserIDs: [String]
     var contacts: [RemoteIMContact]
+    var contactGroups: [RemoteIMContactGroup]
     var unreadCountByUserID: [String: Int]
 
     static let empty = StoredRemoteIMSettings(
@@ -15,6 +16,7 @@ struct StoredRemoteIMSettings: Codable, Equatable, Sendable {
         friendUserIDs: [],
         slaveUserIDs: [],
         contacts: [],
+        contactGroups: [],
         unreadCountByUserID: [:]
     )
 
@@ -24,6 +26,7 @@ struct StoredRemoteIMSettings: Codable, Equatable, Sendable {
         friendUserIDs: [String] = [],
         slaveUserIDs: [String] = [],
         contacts: [RemoteIMContact] = [],
+        contactGroups: [RemoteIMContactGroup] = [],
         unreadCountByUserID: [String: Int] = [:]
     ) {
         self.sdkAppID = sdkAppID
@@ -31,6 +34,7 @@ struct StoredRemoteIMSettings: Codable, Equatable, Sendable {
         self.friendUserIDs = friendUserIDs
         self.slaveUserIDs = slaveUserIDs
         self.contacts = contacts
+        self.contactGroups = contactGroups
         self.unreadCountByUserID = unreadCountByUserID
     }
 
@@ -41,6 +45,10 @@ struct StoredRemoteIMSettings: Codable, Equatable, Sendable {
         self.friendUserIDs = try container.decodeIfPresent([String].self, forKey: .friendUserIDs) ?? []
         self.slaveUserIDs = try container.decodeIfPresent([String].self, forKey: .slaveUserIDs) ?? []
         self.contacts = try container.decodeIfPresent([RemoteIMContact].self, forKey: .contacts) ?? []
+        self.contactGroups = try container.decodeIfPresent(
+            [RemoteIMContactGroup].self,
+            forKey: .contactGroups
+        ) ?? []
         self.unreadCountByUserID = try container.decodeIfPresent(
             [String: Int].self,
             forKey: .unreadCountByUserID

@@ -9,6 +9,7 @@ import java.util.List;
 public final class ChatState {
     private final String ownerUserId;
     private final List<RemoteIMContact> contacts = new ArrayList<>();
+    private final List<String> contactGroups = new ArrayList<>();
     private final List<RemoteIMMessage> messages = new ArrayList<>();
     private String selectedPeerId;
 
@@ -35,14 +36,91 @@ public final class ChatState {
         return Collections.unmodifiableList(new ArrayList<>(messages));
     }
 
+    public List<String> contactGroups() {
+        return Collections.unmodifiableList(new ArrayList<>(contactGroups));
+    }
+
+    public void setContactGroups(List<String> groups) {
+        contactGroups.clear();
+        if (groups != null) {
+            for (String value : groups) {
+                String cleanName = ContactGroups.normalize(value);
+                if (ContactGroups.isAcceptableName(cleanName) && !contactGroups.contains(cleanName)) {
+                    contactGroups.add(cleanName);
+                }
+            }
+        }
+        for (int index = 0; index < contacts.size(); index += 1) {
+            RemoteIMContact contact = contacts.get(index);
+            if (!contact.groupName().isEmpty() && !contactGroups.contains(contact.groupName())) {
+                contacts.set(index, contact.withGroupName(""));
+            }
+        }
+    }
+
     public void upsertContact(RemoteIMContact contact) {
         for (int index = 0; index < contacts.size(); index += 1) {
             if (contacts.get(index).userId().equals(contact.userId())) {
-                contacts.set(index, contact);
+                // SDK 资料刷新不携带本地分组，更新资料时必须保住已有 groupName。
+                contacts.set(index, contacts.get(index).withProfile(
+                    contact.displayName(),
+                    contact.avatarUrl()
+                ));
                 return;
             }
         }
-        contacts.add(contact);
+        String groupName = contactGroups.contains(contact.groupName()) ? contact.groupName() : "";
+        contacts.add(contact.withGroupName(groupName));
+    }
+
+    public boolean addContactGroup(String name) {
+        String cleanName = ContactGroups.normalize(name);
+        if (!ContactGroups.isAcceptableName(cleanName) || contactGroups.contains(cleanName)) return false;
+        contactGroups.add(cleanName);
+        return true;
+    }
+
+    public boolean renameContactGroup(String from, String to) {
+        String oldName = ContactGroups.normalize(from);
+        String newName = ContactGroups.normalize(to);
+        int index = contactGroups.indexOf(oldName);
+        if (index < 0 || !ContactGroups.isAcceptableName(newName)) return false;
+        if (oldName.equals(newName)) return true;
+        if (contactGroups.contains(newName)) return false;
+        contactGroups.set(index, newName);
+        for (int contactIndex = 0; contactIndex < contacts.size(); contactIndex += 1) {
+            RemoteIMContact contact = contacts.get(contactIndex);
+            if (oldName.equals(contact.groupName())) {
+                contacts.set(contactIndex, contact.withGroupName(newName));
+            }
+        }
+        return true;
+    }
+
+    public boolean removeContactGroup(String name) {
+        String cleanName = ContactGroups.normalize(name);
+        if (cleanName.isEmpty() || !contactGroups.remove(cleanName)) return false;
+        for (int index = 0; index < contacts.size(); index += 1) {
+            RemoteIMContact contact = contacts.get(index);
+            if (cleanName.equals(contact.groupName())) {
+                contacts.set(index, contact.withGroupName(""));
+            }
+        }
+        return true;
+    }
+
+    public boolean setContactGroup(String userId, String groupName) {
+        String cleanUserId = clean(userId);
+        String cleanGroupName = ContactGroups.normalize(groupName);
+        String target = contactGroups.contains(cleanGroupName) ? cleanGroupName : "";
+        for (int index = 0; index < contacts.size(); index += 1) {
+            RemoteIMContact contact = contacts.get(index);
+            if (contact.userId().equals(cleanUserId)) {
+                contacts.set(index, contact.withGroupName(target));
+                return true;
+            }
+        }
+        return false;
     }
 
     public boolean removeContact(String userId) {

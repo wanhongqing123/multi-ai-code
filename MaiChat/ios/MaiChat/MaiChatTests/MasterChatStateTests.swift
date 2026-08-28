@@ -2,6 +2,94 @@ import XCTest
 @testable import MaiChatCore
 
 final class MasterChatStateTests: XCTestCase {
+    func testContactGroupsRenameDeleteAndPreserveProfileAssignments() throws {
+        var state = MasterChatState(ownerUserID: "ios-master")
+        XCTAssertTrue(state.createContactGroup(name: " 同事 "))
+        XCTAssertTrue(state.createContactGroup(name: "未分组"))
+        XCTAssertFalse(state.createContactGroup(name: "同事"))
+        XCTAssertFalse(state.createContactGroup(name: "  "))
+        try state.upsertContact(userID: "mac-office", relation: .friend, displayName: "Mac")
+        XCTAssertTrue(state.setContactGroup(userID: "mac-office", groupName: "同事"))
+
+        try state.upsertContact(
+            userID: "mac-office",
+            relation: .friend,
+            displayName: "办公室电脑",
+            avatarURL: "https://example.com/avatar.png"
+        )
+        XCTAssertEqual(state.contacts.first?.groupName, "同事")
+        XCTAssertTrue(state.renameContactGroup(from: "同事", to: "工作"))
+        XCTAssertEqual(state.contacts.first?.groupName, "工作")
+        XCTAssertFalse(state.renameContactGroup(from: "工作", to: "未分组"))
+        XCTAssertTrue(state.deleteContactGroup(name: "工作"))
+        XCTAssertEqual(state.contacts.first?.groupName, "")
+        XCTAssertEqual(state.contactGroups.map(\.name), ["未分组"])
+    }
+
+    func testContactGroupInitializationSelfHealsDanglingAssignmentsAndSortsStably() {
+        let state = MasterChatState(
+            ownerUserID: "ios-master",
+            contacts: [
+                RemoteIMContact(userID: "a", displayName: "A", groupName: "幽灵组"),
+                RemoteIMContact(userID: "b", displayName: "B", groupName: "同事"),
+            ],
+            contactGroups: [
+                RemoteIMContactGroup(name: "家人", sortOrder: 2),
+                RemoteIMContactGroup(name: "同事", sortOrder: 1),
+            ],
+            messages: []
+        )
+
+        XCTAssertEqual(state.contactGroups.map(\.name), ["同事", "家人"])
+        XCTAssertEqual(state.contacts.first(where: { $0.userID == "a" })?.groupName, "")
+        XCTAssertEqual(state.contacts.first(where: { $0.userID == "b" })?.groupName, "同事")
+    }
+
+    func testLegacyContactJSONDefaultsToUngrouped() throws {
+        let data = Data(
+            #"{"userID":"mac-office","displayName":"Mac","relation":"friend"}"#.utf8
+        )
+        let contact = try JSONDecoder().decode(RemoteIMContact.self, from: data)
+        XCTAssertEqual(contact.groupName, "")
+    }
+
+    func testContactGroupDisplayKeepsEmptyGroupsAndSearchPiercesCollapse() {
+        let groups = [
+            RemoteIMContactGroup(name: "同事", sortOrder: 0),
+            RemoteIMContactGroup(name: "空组", sortOrder: 1),
+        ]
+        let contacts = [
+            RemoteIMContact(userID: "alice", displayName: "Alice", groupName: "同事"),
+            RemoteIMContact(userID: "bob", displayName: "Bob"),
+        ]
+
+        XCTAssertEqual(
+            RemoteIMContactGroupDisplayPolicy.items(
+                groups: groups,
+                contacts: contacts,
+                collapsedGroupNames: ["同事"],
+                query: ""
+            ),
+            [
+                .group(name: "同事", memberCount: 1),
+                .group(name: "空组", memberCount: 0),
+                .contact(contacts[1], indented: false),
+            ]
+        )
+        XCTAssertEqual(
+            RemoteIMContactGroupDisplayPolicy.items(
+                groups: groups,
+                contacts: contacts,
+                collapsedGroupNames: ["同事"],
+                query: "ali"
+            ),
+            [
+                .group(name: "同事", memberCount: 1),
+                .contact(contacts[0], indented: true),
+            ]
+        )
+    }
+
     func testApprovalRequestUsesVersionedActionsInsteadOfParsingMessageText() {
         let request = RemoteIMApprovalRequest(
             token: "approval-token-1",

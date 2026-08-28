@@ -3,6 +3,7 @@ package com.kongshang.maichat;
 import android.annotation.SuppressLint;
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.app.Dialog;
 import android.content.ClipData;
 import android.content.ClipboardManager;
@@ -65,9 +66,11 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 public final class MainActivity extends Activity implements RemoteIMSessionController.Listener {
     private static final int REQUEST_PICK_IMAGE = 1001;
@@ -106,6 +109,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private boolean loginSubmitting;
     private String loginError = "";
     private String loginUserDraft = "";
+    private String contactSearchQuery = "";
+    private final Set<String> collapsedContactGroups = new HashSet<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -1084,11 +1089,11 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     }
 
     private void renderContacts() {
-        content.addView(toolbarWithAdd(), match(dp(48)));
-        ScrollView scroll = new ScrollView(this);
         LinearLayout rows = new LinearLayout(this);
         rows.setOrientation(LinearLayout.VERTICAL);
         rows.setPadding(dp(16), dp(8), dp(16), dp(16));
+        content.addView(contactToolbar(rows), match(dp(52)));
+        ScrollView scroll = new ScrollView(this);
         scroll.addView(rows, matchWrap());
         content.addView(scroll, new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
@@ -1096,12 +1101,38 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             1
         ));
 
-        if (session.chatState().contacts().isEmpty()) {
+        renderContactRows(rows, contactSearchQuery);
+    }
+
+    private void renderContactRows(LinearLayout rows, String queryValue) {
+        rows.removeAllViews();
+        List<RemoteIMContact> contacts = session.chatState().contacts();
+        List<String> groups = session.chatState().contactGroups();
+        if (contacts.isEmpty() && groups.isEmpty()) {
             rows.addView(emptyState("◎", "暂无联系人", "添加好友账号后即可开始聊天。"), match(dp(280)));
             return;
         }
-        for (RemoteIMContact contact : session.chatState().contacts()) {
-            View card = contactRow(contact);
+
+        boolean searching = queryValue != null && !queryValue.trim().isEmpty();
+        for (ContactGroupDisplayPolicy.Row row : ContactGroupDisplayPolicy.rows(
+            groups, contacts, collapsedContactGroups, queryValue
+        )) {
+            if (row.kind() == ContactGroupDisplayPolicy.Kind.GROUP_HEADER) {
+                rows.addView(contactGroupHeader(
+                    rows, row.groupName(), row.memberCount(), searching
+                ), match(dp(42)));
+            } else {
+                addContactRow(rows, row.contact(), row.isIndented());
+            }
+        }
+    }
+
+    private void addContactRow(LinearLayout rows, RemoteIMContact contact, boolean grouped) {
+        View card = contactRow(contact);
+        card.setOnLongClickListener(view -> {
+            showContactGroupPicker(contact);
+            return true;
+        });
             SwipeActionRow row = new SwipeActionRow(
                 this,
                 card,
@@ -1115,21 +1146,142 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
                 )
             );
             LinearLayout.LayoutParams params = match(dp(76));
-            params.setMargins(0, 0, 0, dp(8));
+            params.setMargins(grouped ? dp(14) : 0, 0, 0, dp(8));
             rows.addView(row, params);
-        }
     }
 
-    private View toolbarWithAdd() {
+    private View contactToolbar(LinearLayout rows) {
         LinearLayout toolbar = new LinearLayout(this);
         toolbar.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
         toolbar.setPadding(dp(12), dp(3), dp(12), dp(3));
         toolbar.setBackgroundColor(Color.WHITE);
+        EditText search = new EditText(this);
+        search.setSingleLine(true);
+        search.setHint("搜索联系人");
+        search.setText(contactSearchQuery);
+        search.setSelection(search.length());
+        search.setTextSize(14);
+        search.setPadding(dp(12), 0, dp(12), 0);
+        search.setBackground(MaiChatTheme.bordered(MaiChatTheme.PAGE, MaiChatTheme.BORDER, 9, this));
+        toolbar.addView(search, new LinearLayout.LayoutParams(0, dp(42), 1));
+        search.addTextChangedListener(new SimpleTextWatcher() {
+            @Override
+            public void afterTextChanged(Editable editable) {
+                contactSearchQuery = editable.toString();
+                renderContactRows(rows, contactSearchQuery);
+            }
+        });
+        TextView group = iconButton("分组＋", 14, MaiChatTheme.BLUE_DARK);
+        group.setContentDescription("新建分组");
+        group.setOnClickListener(view -> showContactGroupNameDialog("新建分组", "", null));
+        LinearLayout.LayoutParams groupParams = new LinearLayout.LayoutParams(dp(64), dp(44));
+        groupParams.setMargins(dp(6), 0, 0, 0);
+        toolbar.addView(group, groupParams);
         TextView plus = iconButton("＋", 24, MaiChatTheme.BLUE_DARK);
         plus.setContentDescription("添加好友");
         plus.setOnClickListener(view -> showAddContactDialog());
         toolbar.addView(plus, new LinearLayout.LayoutParams(dp(44), dp(44)));
         return toolbar;
+    }
+
+    private View contactGroupHeader(LinearLayout rows, String group, int count, boolean searching) {
+        TextView header = MaiChatTheme.label(
+            this,
+            ((searching || !collapsedContactGroups.contains(group)) ? "⌄ " : "› ")
+                + group + "  " + count,
+            14,
+            MaiChatTheme.TEXT
+        );
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setPadding(dp(4), 0, dp(8), 0);
+        header.setOnClickListener(view -> {
+            if (collapsedContactGroups.contains(group)) collapsedContactGroups.remove(group);
+            else collapsedContactGroups.add(group);
+            renderContactRows(rows, contactSearchQuery);
+        });
+        header.setOnLongClickListener(view -> {
+            showContactGroupActions(group);
+            return true;
+        });
+        return header;
+    }
+
+    private void showContactGroupPicker(RemoteIMContact contact) {
+        List<String> groups = session.chatState().contactGroups();
+        List<String> labels = new ArrayList<>(groups);
+        if (!contact.groupName().isEmpty()) labels.add("移出分组");
+        labels.add("新建分组并移入…");
+        new AlertDialog.Builder(this)
+            .setTitle("移动到分组")
+            .setItems(labels.toArray(new String[0]), (dialog, index) -> {
+                if (index < groups.size()) {
+                    session.setContactGroup(contact.userId(), groups.get(index));
+                } else if (!contact.groupName().isEmpty() && index == groups.size()) {
+                    session.setContactGroup(contact.userId(), "");
+                } else {
+                    showContactGroupNameDialog("新建分组", "", contact.userId());
+                }
+            })
+            .show();
+    }
+
+    private void showContactGroupActions(String group) {
+        new AlertDialog.Builder(this)
+            .setTitle(group)
+            .setItems(new String[]{"重命名分组", "删除分组"}, (dialog, index) -> {
+                if (index == 0) {
+                    showContactGroupNameDialog("重命名分组", group, null);
+                    return;
+                }
+                int members = 0;
+                for (RemoteIMContact contact : session.chatState().contacts()) {
+                    if (group.equals(contact.groupName())) members += 1;
+                }
+                String detail = members == 0
+                    ? "这个分组是空的，删除后不影响任何联系人。"
+                    : "组里的 " + members + " 位联系人会直接列在通讯录里，好友本身不会被删除。";
+                confirm("删除分组？", detail, "删除分组", () -> session.deleteContactGroup(group));
+            })
+            .show();
+    }
+
+    private void showContactGroupNameDialog(String title, String originalName, String moveUserId) {
+        EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setText(originalName);
+        input.setSelection(input.length());
+        input.setHint("分组名");
+        int horizontalPadding = dp(20);
+        FrameLayout wrapper = new FrameLayout(this);
+        wrapper.setPadding(horizontalPadding, dp(8), horizontalPadding, 0);
+        wrapper.addView(input, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            dp(48)
+        ));
+        AlertDialog dialog = new AlertDialog.Builder(this)
+            .setTitle(title)
+            .setView(wrapper)
+            .setNegativeButton("取消", null)
+            .setPositiveButton("确定", null)
+            .create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            .setOnClickListener(view -> {
+                String name = ContactGroups.normalize(input.getText().toString());
+                if (!ContactGroups.isAcceptableName(name)) {
+                    input.setError("分组名不能为空");
+                    return;
+                }
+                boolean changed = originalName.isEmpty()
+                    ? session.createContactGroup(name)
+                    : session.renameContactGroup(originalName, name);
+                if (!changed) {
+                    input.setError("已经有同名分组");
+                    return;
+                }
+                if (moveUserId != null) session.setContactGroup(moveUserId, name);
+                dialog.dismiss();
+            }));
+        dialog.show();
     }
 
     private View contactRow(RemoteIMContact contact) {

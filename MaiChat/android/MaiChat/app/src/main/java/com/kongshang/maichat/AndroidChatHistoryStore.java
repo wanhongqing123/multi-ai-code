@@ -13,7 +13,7 @@ import java.util.List;
 
 public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
     private static final String DATABASE_NAME = "maichat-history.db";
-    private static final int DATABASE_VERSION = 3;
+    private static final int DATABASE_VERSION = 4;
     private static final String TAG = "MaiChat.im";
 
     private final RemoteIMMediaPaths mediaPaths;
@@ -54,8 +54,10 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
                 + "user_id TEXT NOT NULL,"
                 + "display_name TEXT NOT NULL,"
                 + "avatar_url TEXT NOT NULL DEFAULT '',"
+                + "group_name TEXT NOT NULL DEFAULT '',"
                 + "PRIMARY KEY(owner_id, user_id))"
         );
+        createContactGroupsTable(database);
         database.execSQL(
             "CREATE TABLE messages ("
                 + "owner_id TEXT NOT NULL,"
@@ -112,6 +114,11 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
             addApprovalColumns(database);
             version = 3;
         }
+        if (version < 4) {
+            database.execSQL("ALTER TABLE contacts ADD COLUMN group_name TEXT NOT NULL DEFAULT ''");
+            createContactGroupsTable(database);
+            version = 4;
+        }
         if (version != newVersion) {
             // 只有在没有可用迁移路径时才重建。重建会清空用户本地聊天记录，
             // 为了加几列而删历史，这个代价不该由用户承担，所以放在最后一步。
@@ -147,22 +154,46 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
         );
     }
 
-    public List<RemoteIMContact> loadContacts(String ownerId) {
-        List<RemoteIMContact> contacts = new ArrayList<>();
+    private static void createContactGroupsTable(SQLiteDatabase database) {
+        database.execSQL(
+            "CREATE TABLE IF NOT EXISTS contact_groups ("
+                + "owner_id TEXT NOT NULL,"
+                + "name TEXT NOT NULL,"
+                + "sort_order INTEGER NOT NULL,"
+                + "PRIMARY KEY(owner_id, name))"
+        );
+    }
+
+    public List<String> loadContactGroups(String ownerId) {
+        List<String> groups = new ArrayList<>();
         try (Cursor cursor = getReadableDatabase().query(
-            "contacts",
-            new String[]{"user_id", "display_name", "avatar_url"},
+            "contact_groups",
+            new String[]{"name"},
             "owner_id = ?",
             new String[]{clean(ownerId)},
             null,
             null,
-            "display_name COLLATE NOCASE ASC, user_id ASC"
+            "sort_order ASC, name COLLATE NOCASE ASC"
         )) {
+            while (cursor.moveToNext()) groups.add(cursor.getString(0));
+        }
+        return groups;
+    }
+
+    public List<RemoteIMContact> loadContacts(String ownerId) {
+        List<RemoteIMContact> contacts = new ArrayList<>();
+        String sql = "SELECT c.user_id,c.display_name,c.avatar_url,"
+            + "CASE WHEN g.name IS NULL THEN '' ELSE c.group_name END "
+            + "FROM contacts c LEFT JOIN contact_groups g "
+            + "ON g.owner_id=c.owner_id AND g.name=c.group_name "
+            + "WHERE c.owner_id=? ORDER BY c.display_name COLLATE NOCASE,c.user_id";
+        try (Cursor cursor = getReadableDatabase().rawQuery(sql, new String[]{clean(ownerId)})) {
             while (cursor.moveToNext()) {
                 contacts.add(new RemoteIMContact(
                     cursor.getString(0),
                     cursor.getString(1),
-                    cursor.getString(2)
+                    cursor.getString(2),
+                    cursor.getString(3)
                 ));
             }
         }
@@ -170,17 +201,135 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
     }
 
     public void upsertContact(String ownerId, RemoteIMContact contact) {
+        String cleanOwnerId = clean(ownerId);
         ContentValues values = new ContentValues();
-        values.put("owner_id", clean(ownerId));
-        values.put("user_id", contact.userId());
         values.put("display_name", contact.displayName());
         values.put("avatar_url", contact.avatarUrl());
-        getWritableDatabase().insertWithOnConflict(
+        SQLiteDatabase database = getWritableDatabase();
+        int updated = database.update(
             "contacts",
-            null,
             values,
-            SQLiteDatabase.CONFLICT_REPLACE
+            "owner_id = ? AND user_id = ?",
+            new String[]{cleanOwnerId, contact.userId()}
         );
+        // 资料刷新只更新显示名和头像，不能用 REPLACE：REPLACE 会把本地 group_name
+        // 一起重置。只有新联系人插入时才采纳其分组，且未知分组降级为空串。
+        if (updated > 0) return;
+        values.put("owner_id", cleanOwnerId);
+        values.put("user_id", contact.userId());
+        values.put("group_name", existingGroupName(database, cleanOwnerId, contact.groupName()));
+        database.insertWithOnConflict("contacts", null, values, SQLiteDatabase.CONFLICT_IGNORE);
+    }
+
+    public boolean createContactGroup(String ownerId, String name) {
+        String cleanOwnerId = clean(ownerId);
+        String cleanName = ContactGroups.normalize(name);
+        if (cleanOwnerId.isEmpty() || !ContactGroups.isAcceptableName(cleanName)) return false;
+        SQLiteDatabase database = getWritableDatabase();
+        long nextOrder = 0;
+        try (Cursor cursor = database.rawQuery(
+            "SELECT COALESCE(MAX(sort_order),-1)+1 FROM contact_groups WHERE owner_id=?",
+            new String[]{cleanOwnerId}
+        )) {
+            if (cursor.moveToFirst()) nextOrder = cursor.getLong(0);
+        }
+        ContentValues values = new ContentValues();
+        values.put("owner_id", cleanOwnerId);
+        values.put("name", cleanName);
+        values.put("sort_order", nextOrder);
+        return database.insertWithOnConflict(
+            "contact_groups", null, values, SQLiteDatabase.CONFLICT_IGNORE
+        ) != -1;
+    }
+
+    public boolean renameContactGroup(String ownerId, String from, String to) {
+        String cleanOwnerId = clean(ownerId);
+        String oldName = ContactGroups.normalize(from);
+        String newName = ContactGroups.normalize(to);
+        if (cleanOwnerId.isEmpty() || !ContactGroups.isAcceptableName(newName)) return false;
+        if (oldName.equals(newName)) return true;
+        SQLiteDatabase database = getWritableDatabase();
+        database.beginTransaction();
+        try {
+            ContentValues groupValues = new ContentValues();
+            groupValues.put("name", newName);
+            int changed = database.update(
+                "contact_groups",
+                groupValues,
+                "owner_id = ? AND name = ?",
+                new String[]{cleanOwnerId, oldName}
+            );
+            if (changed <= 0) return false;
+            ContentValues contactValues = new ContentValues();
+            contactValues.put("group_name", newName);
+            database.update(
+                "contacts",
+                contactValues,
+                "owner_id = ? AND group_name = ?",
+                new String[]{cleanOwnerId, oldName}
+            );
+            database.setTransactionSuccessful();
+            return true;
+        } catch (RuntimeException error) {
+            return false;
+        } finally {
+            database.endTransaction();
+        }
+    }
+
+    public boolean deleteContactGroup(String ownerId, String name) {
+        String cleanOwnerId = clean(ownerId);
+        String cleanName = ContactGroups.normalize(name);
+        if (cleanOwnerId.isEmpty() || cleanName.isEmpty()) return false;
+        SQLiteDatabase database = getWritableDatabase();
+        database.beginTransaction();
+        try {
+            ContentValues values = new ContentValues();
+            values.put("group_name", "");
+            database.update(
+                "contacts", values, "owner_id = ? AND group_name = ?",
+                new String[]{cleanOwnerId, cleanName}
+            );
+            int removed = database.delete(
+                "contact_groups", "owner_id = ? AND name = ?",
+                new String[]{cleanOwnerId, cleanName}
+            );
+            if (removed <= 0) return false;
+            database.setTransactionSuccessful();
+            return true;
+        } finally {
+            database.endTransaction();
+        }
+    }
+
+    public boolean setContactGroup(String ownerId, String userId, String groupName) {
+        String cleanOwnerId = clean(ownerId);
+        String cleanUserId = clean(userId);
+        if (cleanOwnerId.isEmpty() || cleanUserId.isEmpty()) return false;
+        SQLiteDatabase database = getWritableDatabase();
+        ContentValues values = new ContentValues();
+        values.put("group_name", existingGroupName(
+            database, cleanOwnerId, ContactGroups.normalize(groupName)
+        ));
+        return database.update(
+            "contacts", values, "owner_id = ? AND user_id = ?",
+            new String[]{cleanOwnerId, cleanUserId}
+        ) > 0;
+    }
+
+    private static String existingGroupName(
+        SQLiteDatabase database,
+        String ownerId,
+        String groupName
+    ) {
+        if (groupName.isEmpty()) return "";
+        try (Cursor cursor = database.query(
+            "contact_groups", new String[]{"name"},
+            "owner_id = ? AND name = ?", new String[]{ownerId, groupName},
+            null, null, null, "1"
+        )) {
+            return cursor.moveToFirst() ? groupName : "";
+        }
     }
 
     public void deleteContact(String ownerId, String userId) {

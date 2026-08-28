@@ -35,8 +35,38 @@ RemoteIMApplication::RemoteIMApplication(QString ownerUserId,
     // 登录前先把本地库的全部历史恢复进内存：消息列表不再依赖 SDK 漫游
     //（只有几条），漫游随后按 id 去重合并进来。
     if (database_ && database_->isOpen()) {
+        // 分组要在联系人之前恢复：联系人带着分组名进来，分组列表先就位，
+        // 内存里才不会出现「指向还不存在的分组」这种中间态。
+        state_.setContactGroups(database_->contactGroups());
         hasEarlierMessages_ = database_->loadRecentInto(state_, kMessagesPageSize);
     }
+}
+
+bool RemoteIMApplication::createContactGroup(const QString& name) {
+    // 先落库再改内存：库里主键冲突（重名）是权威判据，内存不必自己再查一遍。
+    if (database_ && !database_->createContactGroup(name)) return false;
+    if (!state_.addContactGroup(name)) return false;
+    emit stateChanged();
+    return true;
+}
+
+bool RemoteIMApplication::renameContactGroup(const QString& from, const QString& to) {
+    if (database_ && !database_->renameContactGroup(from, to)) return false;
+    if (!state_.renameContactGroup(from, to)) return false;
+    emit stateChanged();
+    return true;
+}
+
+void RemoteIMApplication::deleteContactGroup(const QString& name) {
+    if (database_) database_->deleteContactGroup(name);
+    state_.removeContactGroup(name);
+    emit stateChanged();
+}
+
+void RemoteIMApplication::setContactGroup(const QString& userId, const QString& groupName) {
+    if (database_) database_->setContactGroup(userId, groupName);
+    state_.setContactGroup(userId, groupName);
+    emit stateChanged();
 }
 
 const ChatState& RemoteIMApplication::chatState() const { return state_; }

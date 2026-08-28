@@ -6,6 +6,7 @@
 #include <QList>
 #include <QSet>
 #include <QString>
+#include <QStringList>
 
 #include "model/RemoteIMContact.h"
 #include "model/RemoteIMMessage.h"
@@ -23,6 +24,18 @@ public:
     int unreadCount(const QString& peerId) const;
 
     void upsertContact(const RemoteIMContact& contact);
+
+    // ---- 联系人分组（本地概念，不跨端同步）----
+    // 「未分组」不在列表里：它是「没有分组」的显示名，不是一个真的分组。
+    QStringList contactGroups() const;
+    void setContactGroups(const QStringList& groups);
+    // 空名、保留名「未分组」、重名一律返回 false。
+    bool addContactGroup(const QString& name);
+    bool renameContactGroup(const QString& from, const QString& to);
+    // 成员回到未分组；联系人本身绝不删除。
+    void removeContactGroup(const QString& name);
+    // groupName 为空或指向不存在的分组，都落到未分组。
+    void setContactGroup(const QString& userId, const QString& groupName);
     void removeContactAndMessages(const QString& userId);
     // 仅清空与该 peer 的聊天记录（好友保留、选中态不变），未读红点一并清零。
     void removeMessagesWith(const QString& peerId);
@@ -71,6 +84,7 @@ private:
     QString ownerUserId_;
     QString selectedPeerId_;
     QList<RemoteIMContact> contacts_;
+    QStringList contactGroups_;
     QList<RemoteIMMessage> messages_;
     QSet<QString> messageIds_;
     // 全局消息仅保存一份；会话索引保存按时间排好的 id，切换好友时无需扫描、复制并排序全部消息。

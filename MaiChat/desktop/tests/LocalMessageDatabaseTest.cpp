@@ -41,6 +41,13 @@ private slots:
     void roundTripsVideoAttachment();
     void roundTripsApprovalRequest();
     void upgradesPreVideoDatabaseWithoutLosingOldMessages();
+    void createsGroupsAndRejectsBadNames();
+    void movesContactBetweenGroupsAndPersists();
+    void deletingGroupKeepsContactsAndUngroupsThem();
+    void renamingGroupCarriesItsMembers();
+    void contactProfileRefreshKeepsLocalGroup();
+    void healsContactPointingAtMissingGroup();
+    void upgradesPreGroupDatabaseWithoutLosingContacts();
 };
 
 void LocalMessageDatabaseTest::insertsAndDeduplicatesById() {
@@ -431,6 +438,183 @@ void LocalMessageDatabaseTest::upgradesPreVideoDatabaseWithoutLosingOldMessages(
         QCOMPARE(video.video.coverPath, QStringLiteral("E:/covers/a.jpg"));
         QCOMPARE(video.video.durationSeconds, 7);
     }
+}
+
+namespace {
+
+// 找出某个联系人当前落在哪个分组（空串 = 未分组）。
+QString groupOf(const LocalMessageDatabase& db, const QString& userId) {
+    ChatState state("me");
+    db.loadInto(state);
+    for (const RemoteIMContact& contact : state.contacts()) {
+        if (contact.userId == userId) return contact.groupName;
+    }
+    return QStringLiteral("<absent>");
+}
+
+}  // namespace
+
+void LocalMessageDatabaseTest::createsGroupsAndRejectsBadNames() {
+    QTemporaryDir dir;
+    LocalMessageDatabase db(dir.filePath("messages.db"));
+
+    QVERIFY(db.createContactGroup("同事"));
+    QVERIFY(db.createContactGroup("家人"));
+    // 重名：分组名是主键，第二次必须失败而不是悄悄建出两个同名组。
+    QVERIFY(!db.createContactGroup("同事"));
+    // 首尾空白归一化之后同样算重名。
+    QVERIFY(!db.createContactGroup("  同事  "));
+    QVERIFY(!db.createContactGroup(""));
+    QVERIFY(!db.createContactGroup("   "));
+    // 界面上没有「未分组」这一节，所以它也不是保留名——建一个叫这名字的组
+    // 只是个普通分组，没有任何东西会跟它撞。
+    QVERIFY(db.createContactGroup("未分组"));
+
+    // 创建顺序即显示顺序。
+    QCOMPARE(db.contactGroups(), QStringList({"同事", "家人", "未分组"}));
+}
+
+void LocalMessageDatabaseTest::movesContactBetweenGroupsAndPersists() {
+    QTemporaryDir dir;
+    const QString path = dir.filePath("messages.db");
+    {
+        LocalMessageDatabase db(path);
+        db.upsertContact(RemoteIMContact{"alice", "Alice", ""});
+        QVERIFY(db.createContactGroup("同事"));
+        db.setContactGroup("alice", "同事");
+        QCOMPARE(groupOf(db, "alice"), QStringLiteral("同事"));
+
+        // 不存在的分组不会被凭空造出来，联系人落回未分组。
+        db.setContactGroup("alice", "查无此组");
+        QCOMPARE(groupOf(db, "alice"), QString());
+        QCOMPARE(db.contactGroups(), QStringList({"同事"}));
+
+        db.setContactGroup("alice", "同事");
+        // 空串就是「移出到未分组」。
+        db.setContactGroup("alice", "");
+        QCOMPARE(groupOf(db, "alice"), QString());
+
+        db.setContactGroup("alice", "同事");
+    }
+    // 重开库仍在原分组：分组是落库的，不是只活在内存里。
+    LocalMessageDatabase reopened(path);
+    QCOMPARE(reopened.contactGroups(), QStringList({"同事"}));
+    QCOMPARE(groupOf(reopened, "alice"), QStringLiteral("同事"));
+}
+
+void LocalMessageDatabaseTest::deletingGroupKeepsContactsAndUngroupsThem() {
+    QTemporaryDir dir;
+    LocalMessageDatabase db(dir.filePath("messages.db"));
+    db.upsertContact(RemoteIMContact{"alice", "Alice", ""});
+    db.upsertContact(RemoteIMContact{"bob", "Bob", ""});
+    QVERIFY(db.createContactGroup("同事"));
+    db.setContactGroup("alice", "同事");
+    db.setContactGroup("bob", "同事");
+
+    db.deleteContactGroup("同事");
+
+    // 删组绝不删人——这是那种一旦发生就无法挽回的事。
+    ChatState state("me");
+    db.loadInto(state);
+    QCOMPARE(state.contacts().size(), 2);
+    QCOMPARE(groupOf(db, "alice"), QString());
+    QCOMPARE(groupOf(db, "bob"), QString());
+    QVERIFY(db.contactGroups().isEmpty());
+}
+
+void LocalMessageDatabaseTest::renamingGroupCarriesItsMembers() {
+    QTemporaryDir dir;
+    LocalMessageDatabase db(dir.filePath("messages.db"));
+    db.upsertContact(RemoteIMContact{"alice", "Alice", ""});
+    QVERIFY(db.createContactGroup("同时"));
+    QVERIFY(db.createContactGroup("家人"));
+    db.setContactGroup("alice", "同时");
+
+    QVERIFY(db.renameContactGroup("同时", "同事"));
+    QCOMPARE(db.contactGroups(), QStringList({"同事", "家人"}));
+    // 成员跟着改名走，不会被落在一个已经不存在的组里。
+    QCOMPARE(groupOf(db, "alice"), QStringLiteral("同事"));
+
+    // 改成一个已存在的名字必须整笔失败，不能把两个组悄悄合并。
+    QVERIFY(!db.renameContactGroup("同事", "家人"));
+    QCOMPARE(db.contactGroups(), QStringList({"同事", "家人"}));
+    QCOMPARE(groupOf(db, "alice"), QStringLiteral("同事"));
+
+    QVERIFY(!db.renameContactGroup("同事", "   "));
+    QVERIFY(!db.renameContactGroup("查无此组", "新名"));
+}
+
+void LocalMessageDatabaseTest::contactProfileRefreshKeepsLocalGroup() {
+    QTemporaryDir dir;
+    LocalMessageDatabase db(dir.filePath("messages.db"));
+    db.upsertContact(RemoteIMContact{"alice", "Alice", ""});
+    QVERIFY(db.createContactGroup("同事"));
+    db.setContactGroup("alice", "同事");
+
+    // SDK 拉到的资料对象里从来没有分组信息。若 upsert 跟着覆盖，
+    // 用户分好的组会在下一次资料刷新时被静默清空。
+    db.upsertContact(RemoteIMContact{"alice", "Alice Chen", "https://cdn/a.png"});
+
+    ChatState state("me");
+    db.loadInto(state);
+    QCOMPARE(state.contacts().size(), 1);
+    QCOMPARE(state.contacts().first().displayName, QStringLiteral("Alice Chen"));
+    QCOMPARE(state.contacts().first().avatarUrl, QStringLiteral("https://cdn/a.png"));
+    QCOMPARE(state.contacts().first().groupName, QStringLiteral("同事"));
+}
+
+void LocalMessageDatabaseTest::healsContactPointingAtMissingGroup() {
+    QTemporaryDir dir;
+    const QString path = dir.filePath("messages.db");
+    {
+        LocalMessageDatabase db(path);
+        db.upsertContact(RemoteIMContact{"alice", "Alice", ""});
+        QVERIFY(db.createContactGroup("同事"));
+        db.setContactGroup("alice", "同事");
+    }
+    // 绕过接口直接把分组删掉，模拟历史数据或半途失败留下的悬空引用。
+    {
+        QSqlDatabase raw = QSqlDatabase::addDatabase("QSQLITE", "heal-check");
+        raw.setDatabaseName(path);
+        QVERIFY(raw.open());
+        QSqlQuery(raw).exec("DELETE FROM contact_groups WHERE name = '同事'");
+        raw.close();
+    }
+    QSqlDatabase::removeDatabase("heal-check");
+
+    // 读取时自愈成未分组：界面上不会冒出一个点不开、删不掉的幽灵分组。
+    LocalMessageDatabase db(path);
+    QCOMPARE(groupOf(db, "alice"), QString());
+}
+
+void LocalMessageDatabaseTest::upgradesPreGroupDatabaseWithoutLosingContacts() {
+    QTemporaryDir dir;
+    const QString path = dir.filePath("messages.db");
+    // 手工造一个分组功能之前的库：contacts 只有三列，没有 contact_groups 表。
+    {
+        QSqlDatabase legacy = QSqlDatabase::addDatabase("QSQLITE", "pre-group");
+        legacy.setDatabaseName(path);
+        QVERIFY(legacy.open());
+        QSqlQuery query(legacy);
+        QVERIFY(query.exec("CREATE TABLE contacts (user_id TEXT PRIMARY KEY,"
+                           " display_name TEXT NOT NULL, avatar_url TEXT NOT NULL DEFAULT '')"));
+        QVERIFY(query.exec("INSERT INTO contacts VALUES ('alice', 'Alice', '')"));
+        legacy.close();
+    }
+    QSqlDatabase::removeDatabase("pre-group");
+
+    // 升级靠 ALTER 加列，不重建表——重建会把已有联系人一起丢掉。
+    LocalMessageDatabase db(path);
+    QVERIFY(db.isOpen());
+    ChatState state("me");
+    db.loadInto(state);
+    QCOMPARE(state.contacts().size(), 1);
+    QCOMPARE(state.contacts().first().displayName, QStringLiteral("Alice"));
+    QCOMPARE(state.contacts().first().groupName, QString());
+    // 新表也补上了，可以正常建组。
+    QVERIFY(db.createContactGroup("同事"));
+    db.setContactGroup("alice", "同事");
+    QCOMPARE(groupOf(db, "alice"), QStringLiteral("同事"));
 }
 
 QTEST_MAIN(LocalMessageDatabaseTest)

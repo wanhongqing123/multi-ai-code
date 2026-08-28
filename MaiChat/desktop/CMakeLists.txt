@@ -63,6 +63,8 @@ add_library(remote_im_core
   src/model/RemoteIMVideoPayload.h
   src/model/ChatState.h
   src/model/ChatState.cpp
+  src/model/ContactGroups.h
+  src/model/ContactGroups.cpp
   src/model/MessageSearch.h
   src/model/MessageSearch.cpp
   src/model/PinyinInitials.cpp

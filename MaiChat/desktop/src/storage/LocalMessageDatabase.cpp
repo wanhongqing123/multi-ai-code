@@ -1,5 +1,7 @@
 #include "storage/LocalMessageDatabase.h"
 
+#include "model/ContactGroups.h"
+
 #include <QDir>
 #include <QFileInfo>
 #include <QPair>
@@ -11,6 +13,14 @@
 #include <QVariant>
 
 namespace {
+
+// 联系人读取统一走这一句：LEFT JOIN 让「指向已不存在的分组」在读取时自动降级成
+// 未分组，不必写库修数据，也不会因为一次删组失败就让联系人挂在幽灵分组上。
+const auto kSelectContactsSql = QStringLiteral(
+    "SELECT c.user_id, c.display_name, c.avatar_url,"
+    "       CASE WHEN g.name IS NULL THEN '' ELSE c.group_name END "
+    "FROM contacts c LEFT JOIN contact_groups g ON g.name = c.group_name "
+    "ORDER BY c.user_id");
 
 QString approvalActionsText(const QList<RemoteIMApprovalAction>& actions) {
     QStringList values;
@@ -123,6 +133,26 @@ void LocalMessageDatabase::migrate() {
         query.exec(QStringLiteral(
             "ALTER TABLE contacts ADD COLUMN avatar_url TEXT NOT NULL DEFAULT ''"));
     }
+    // 分组同样按「PRAGMA 判存在再 ALTER」加列，不重建表——重建会丢已有联系人。
+    bool hasGroupName = false;
+    query.exec(QStringLiteral("PRAGMA table_info(contacts)"));
+    while (query.next()) {
+        if (query.value(1).toString() == QStringLiteral("group_name")) {
+            hasGroupName = true;
+            break;
+        }
+    }
+    if (!hasGroupName) {
+        query.exec(QStringLiteral(
+            "ALTER TABLE contacts ADD COLUMN group_name TEXT NOT NULL DEFAULT ''"));
+    }
+    // 分组单独建表而不是从 contacts.group_name 里隐式推导：推导表示不出「空分组」，
+    // 而用户新建一个分组、还没往里放人时，它必须看得见，否则「新建分组」看起来什么都没发生。
+    query.exec(QStringLiteral(
+        "CREATE TABLE IF NOT EXISTS contact_groups ("
+        "  name       TEXT PRIMARY KEY,"
+        "  sort_order INTEGER NOT NULL DEFAULT 0"
+        ")"));
     query.exec(QStringLiteral(
         "CREATE TABLE IF NOT EXISTS messages ("
         "  id            TEXT PRIMARY KEY,"
@@ -173,12 +203,13 @@ void LocalMessageDatabase::loadInto(ChatState& state) const {
     if (!db_.isOpen()) return;
 
     QSqlQuery contactQuery(db_);
-    contactQuery.exec(QStringLiteral("SELECT user_id, display_name, avatar_url FROM contacts ORDER BY user_id"));
+    contactQuery.exec(kSelectContactsSql);
     while (contactQuery.next()) {
         state.upsertContact(RemoteIMContact{
             contactQuery.value(0).toString(),
             contactQuery.value(1).toString(),
-            contactQuery.value(2).toString()
+            contactQuery.value(2).toString(),
+            contactQuery.value(3).toString()
         });
     }
 
@@ -194,12 +225,13 @@ QHash<QString, bool> LocalMessageDatabase::loadRecentInto(ChatState& state, int 
     if (!db_.isOpen() || perPeerLimit <= 0) return hasEarlier;
 
     QSqlQuery contactQuery(db_);
-    contactQuery.exec(QStringLiteral("SELECT user_id, display_name, avatar_url FROM contacts ORDER BY user_id"));
+    contactQuery.exec(kSelectContactsSql);
     while (contactQuery.next()) {
         state.upsertContact(RemoteIMContact{
             contactQuery.value(0).toString(),
             contactQuery.value(1).toString(),
-            contactQuery.value(2).toString()
+            contactQuery.value(2).toString(),
+            contactQuery.value(3).toString()
         });
     }
 
@@ -271,6 +303,107 @@ void LocalMessageDatabase::removeMessagesForPeer(const QString& userId) {
     deleteMessages.prepare(QStringLiteral("DELETE FROM messages WHERE peer = ?"));
     deleteMessages.addBindValue(userId);
     deleteMessages.exec();
+}
+
+QStringList LocalMessageDatabase::contactGroups() const {
+    QStringList groups;
+    if (!db_.isOpen()) return groups;
+    QSqlQuery query(db_);
+    // 二级按 name 排序：sort_order 撞车或断档时顺序也是稳定的，不会每次启动跳来跳去。
+    query.exec(QStringLiteral("SELECT name FROM contact_groups ORDER BY sort_order, name"));
+    while (query.next()) groups.append(query.value(0).toString());
+    return groups;
+}
+
+bool LocalMessageDatabase::createContactGroup(const QString& name) {
+    if (!db_.isOpen()) return false;
+    const QString clean = ContactGroups::normalize(name);
+    if (!ContactGroups::isAcceptableName(clean)) return false;
+    QSqlQuery query(db_);
+    // 新组排在末尾：创建顺序就是用户给出的顺序，无需再让他手工排一遍。
+    query.prepare(QStringLiteral(
+        "INSERT INTO contact_groups(name, sort_order) "
+        "VALUES(?, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM contact_groups))"));
+    query.addBindValue(clean);
+    // 主键冲突即重名，exec 返回 false——不必先查一次。
+    return query.exec();
+}
+
+bool LocalMessageDatabase::renameContactGroup(const QString& from, const QString& to) {
+    if (!db_.isOpen()) return false;
+    const QString oldName = ContactGroups::normalize(from);
+    const QString newName = ContactGroups::normalize(to);
+    if (!ContactGroups::isAcceptableName(newName)) return false;
+    if (oldName == newName) return true;
+
+    db_.transaction();
+    QSqlQuery rename(db_);
+    rename.prepare(QStringLiteral("UPDATE contact_groups SET name = ? WHERE name = ?"));
+    rename.addBindValue(newName);
+    rename.addBindValue(oldName);
+    // 目标名已存在会撞主键；此时整笔回滚，绝不把两个组悄悄合并成一个。
+    if (!rename.exec() || rename.numRowsAffected() <= 0) {
+        db_.rollback();
+        return false;
+    }
+    QSqlQuery move(db_);
+    move.prepare(QStringLiteral("UPDATE contacts SET group_name = ? WHERE group_name = ?"));
+    move.addBindValue(newName);
+    move.addBindValue(oldName);
+    if (!move.exec()) {
+        db_.rollback();
+        return false;
+    }
+    db_.commit();
+    return true;
+}
+
+void LocalMessageDatabase::deleteContactGroup(const QString& name) {
+    if (!db_.isOpen()) return;
+    const QString clean = ContactGroups::normalize(name);
+    if (clean.isEmpty()) return;
+
+    // 先清成员再删组，且放在同一个事务里。顺序反过来的话，中途失败会留下一批
+    // 指向已删分组的联系人；而删组顺手删人是那种一旦发生就无法挽回的事，
+    // 所以这里只动 group_name，永远不碰 contacts 的行本身。
+    db_.transaction();
+    QSqlQuery clear(db_);
+    clear.prepare(QStringLiteral("UPDATE contacts SET group_name = '' WHERE group_name = ?"));
+    clear.addBindValue(clean);
+    if (!clear.exec()) {
+        db_.rollback();
+        return;
+    }
+    QSqlQuery drop(db_);
+    drop.prepare(QStringLiteral("DELETE FROM contact_groups WHERE name = ?"));
+    drop.addBindValue(clean);
+    if (!drop.exec()) {
+        db_.rollback();
+        return;
+    }
+    db_.commit();
+}
+
+void LocalMessageDatabase::setContactGroup(const QString& userId, const QString& groupName) {
+    if (!db_.isOpen() || userId.trimmed().isEmpty()) return;
+    const QString clean = ContactGroups::normalize(groupName);
+    // 必须是「空但非 null」的 QString：默认构造的 QString 是 null，绑定进去写的是
+    // SQL NULL，而 group_name 是 NOT NULL 列，整条 UPDATE 会被约束静默拒绝——
+    // 表现就是「移出分组」点了没反应。upsertContact 里的 avatar_url 同理。
+    QString target = QStringLiteral("");
+    if (!clean.isEmpty()) {
+        // 只认已存在的分组。写入一个不存在的组名等于凭空造组，
+        // 而分组的存在与否只由 contact_groups 说了算。
+        QSqlQuery exists(db_);
+        exists.prepare(QStringLiteral("SELECT 1 FROM contact_groups WHERE name = ?"));
+        exists.addBindValue(clean);
+        if (exists.exec() && exists.next()) target = clean;
+    }
+    QSqlQuery query(db_);
+    query.prepare(QStringLiteral("UPDATE contacts SET group_name = ? WHERE user_id = ?"));
+    query.addBindValue(target);
+    query.addBindValue(userId);
+    query.exec();
 }
 
 void LocalMessageDatabase::removeContactCascade(const QString& userId) {

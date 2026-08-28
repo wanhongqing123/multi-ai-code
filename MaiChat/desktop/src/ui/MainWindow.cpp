@@ -1,4 +1,5 @@
 #include "ui/MainWindow.h"
+#include "model/ContactGroups.h"
 #include "model/MessageSearch.h"
 #include "ui/MessageImageLoader.h"
 
@@ -104,6 +105,13 @@ constexpr int AvatarUrlRole = Qt::UserRole + 5;
 // 顶栏搜索结果项：记住它属于哪个会话、哪条消息，点开才能跳过去。
 constexpr int SearchPeerRole = Qt::UserRole + 6;
 constexpr int SearchMessageRole = Qt::UserRole + 7;
+// 通讯录分组：分组表头和联系人共用一个 QListWidget（而不是换成 QTreeWidget），
+// 表头就是一种特殊行。这样既不用重写已有的联系人绘制，也不必再套一层缩进。
+constexpr int IsGroupHeaderRole = Qt::UserRole + 8;
+constexpr int GroupNameRole = Qt::UserRole + 9;
+constexpr int GroupCollapsedRole = Qt::UserRole + 10;
+constexpr int GroupCountRole = Qt::UserRole + 11;
+// 未分组表头在列表里的 GroupNameRole 用空串——和联系人的 groupName 表示法一致。
 // 结果太多时列表本身就没用了，截断并提示收窄关键词。
 constexpr int MaxGlobalSearchResults = 60;
 // 导航栏与会话栏头部的图标统一用这个尺寸：混用会让一列图标看起来大小不一。
@@ -525,15 +533,26 @@ public:
     }
 };
 
+// 通讯录分组表头的行高。比联系人行矮一截：它是分隔物，不是内容，
+// 做成同高会让一列看起来全是等价的条目，反而看不出层次。
+constexpr int kContactGroupHeaderHeight = 30;
+
 class ContactListDelegate final : public QStyledItemDelegate {
 public:
     explicit ContactListDelegate(QObject* parent = nullptr) : QStyledItemDelegate(parent) {}
 
-    QSize sizeHint(const QStyleOptionViewItem&, const QModelIndex&) const override {
+    QSize sizeHint(const QStyleOptionViewItem&, const QModelIndex& index) const override {
+        if (index.data(IsGroupHeaderRole).toBool()) {
+            return QSize(0, UiZoom::s(kContactGroupHeaderHeight));
+        }
         return QSize(0, UiZoom::s(54));
     }
 
     void paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override {
+        if (index.data(IsGroupHeaderRole).toBool()) {
+            paintGroupHeader(painter, option, index);
+            return;
+        }
         painter->save();
         painter->setRenderHint(QPainter::Antialiasing, true);
 
@@ -547,7 +566,11 @@ public:
         const QString userId = index.data(UserIdRole).toString();
         const QString name = index.data(DisplayNameRole).toString();
         const QString avatarUrl = index.data(AvatarUrlRole).toString();
-        const QRect avatarRect(rowRect.left() + UiZoom::s(12), rowRect.top() + UiZoom::s(7),
+        // 属于某个分组的人往里缩一格；没有分组的人留在分组标题那一层。
+        // 不这么做的话，排在最后一个分组后面的散人看起来就像那个分组的成员——
+        // 唯一能纠正这个误会的只有标题右边那个人数，代价太大了。
+        const int indent = index.data(GroupNameRole).toString().isEmpty() ? 0 : UiZoom::s(14);
+        const QRect avatarRect(rowRect.left() + UiZoom::s(12) + indent, rowRect.top() + UiZoom::s(7),
                                UiZoom::s(36), UiZoom::s(36));
         if (!drawRemoteAvatar(painter, avatarRect, avatarUrl, UiZoom::s(8),
                               const_cast<QWidget*>(option.widget))) {
@@ -569,6 +592,61 @@ public:
         painter->setPen(QColor(QStringLiteral("#1f2329")));
         painter->drawText(nameRect, Qt::AlignLeft | Qt::AlignVCenter,
                           QFontMetrics(nameFont).elidedText(name, Qt::ElideRight, nameRect.width()));
+
+        painter->restore();
+    }
+
+private:
+    void paintGroupHeader(QPainter* painter, const QStyleOptionViewItem& option,
+                          const QModelIndex& index) const {
+        painter->save();
+        painter->setRenderHint(QPainter::Antialiasing, true);
+
+        const QRect rowRect = option.rect.adjusted(0, 0, -6, 0);
+        // 表头不画选中底色：它不是可选中的行，画了会让人以为自己"选中"了一个分组。
+        if (option.state & QStyle::State_MouseOver) {
+            painter->setPen(Qt::NoPen);
+            painter->setBrush(QColor(QStringLiteral("#f2f4f7")));
+            painter->drawRoundedRect(rowRect, UiZoom::s(4), UiZoom::s(4));
+        }
+
+        const bool collapsed = index.data(GroupCollapsedRole).toBool();
+        // 三角形箭头：展开朝下、折叠朝右，和绝大多数树形控件的习惯一致。
+        const int arrowSize = UiZoom::s(8);
+        const QPointF center(rowRect.left() + UiZoom::s(14), rowRect.center().y() + 0.5);
+        QPolygonF arrow;
+        if (collapsed) {
+            arrow << QPointF(center.x() - arrowSize / 3.0, center.y() - arrowSize / 2.0)
+                  << QPointF(center.x() - arrowSize / 3.0, center.y() + arrowSize / 2.0)
+                  << QPointF(center.x() + arrowSize * 2 / 3.0, center.y());
+        } else {
+            arrow << QPointF(center.x() - arrowSize / 2.0, center.y() - arrowSize / 3.0)
+                  << QPointF(center.x() + arrowSize / 2.0, center.y() - arrowSize / 3.0)
+                  << QPointF(center.x(), center.y() + arrowSize * 2 / 3.0);
+        }
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(QColor(QStringLiteral("#98a2b3")));
+        painter->drawPolygon(arrow);
+
+        QFont titleFont = option.font;
+        titleFont.setPixelSize(UiZoom::s(12));
+        titleFont.setWeight(QFont::Medium);
+        painter->setFont(titleFont);
+        painter->setPen(QColor(QStringLiteral("#667085")));
+
+        const QString title = index.data(DisplayNameRole).toString();
+        const QString count = QString::number(index.data(GroupCountRole).toInt());
+        const QFontMetrics metrics(titleFont);
+        const int countWidth = metrics.horizontalAdvance(count);
+        const int textLeft = rowRect.left() + UiZoom::s(26);
+        const int textRight = rowRect.right() - UiZoom::s(12) - countWidth - UiZoom::s(8);
+        const QRect titleRect(textLeft, rowRect.top(), qMax(0, textRight - textLeft), rowRect.height());
+        painter->drawText(titleRect, Qt::AlignLeft | Qt::AlignVCenter,
+                          metrics.elidedText(title, Qt::ElideRight, titleRect.width()));
+        // 人数右对齐。折叠之后这是唯一还能看出组里有没有人的线索。
+        const QRect countRect(textRight, rowRect.top(), countWidth + UiZoom::s(8), rowRect.height());
+        painter->setPen(QColor(QStringLiteral("#98a2b3")));
+        painter->drawText(countRect, Qt::AlignRight | Qt::AlignVCenter, count);
 
         painter->restore();
     }
@@ -1469,13 +1547,22 @@ void MainWindow::buildUi() {
         makeLineIcon(LineIconKind::Search, QColor(QStringLiteral("#98a2b3"))),
         QLineEdit::LeadingPosition);
     contactsHeader->addWidget(contactsSearchInput_, 1);
+    // 建分组的主入口。右键菜单里也有，但那要求用户先想到去右键；
+    // 一个摆在搜索框旁边的按钮才是"这里可以建分组"的可见提示。
+    newContactGroupButton_ = new QPushButton(QStringLiteral("新建分组"), contactsDirectoryPane);
+    newContactGroupButton_->setObjectName(QStringLiteral("newContactGroupButton"));
+    newContactGroupButton_->setCursor(Qt::PointingHandCursor);
+    connect(newContactGroupButton_, &QPushButton::clicked, this, [this] { createContactGroup(); });
+    contactsHeader->addWidget(newContactGroupButton_, 0);
 
     contactsList_ = new QListWidget(contactsDirectoryPane);
     contactsList_->setObjectName(QStringLiteral("contactsList"));
     contactsList_->setFrameShape(QFrame::NoFrame);
     contactsList_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     contactsList_->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
-    contactsList_->setUniformItemSizes(true);
+    // 分组表头比联系人行矮，行高不再统一——开着这个优化会让所有行都按第一行的
+    // 高度画，表头和联系人会叠在一起。
+    contactsList_->setUniformItemSizes(false);
     contactsList_->setItemDelegate(new ContactListDelegate(contactsList_));
     contactsDirectoryLayout->addLayout(contactsHeader);
     contactsDirectoryLayout->addWidget(contactsList_, 1);
@@ -1608,6 +1695,18 @@ void MainWindow::applyStyle() {
             padding: 0;
         }
         #addConversationButton:hover {
+            border-color: #8ed0ff;
+            background: #f2f9ff;
+        }
+        #newContactGroupButton {
+            min-height: 34px;
+            border: 1px solid #dbe4ef;
+            border-radius: 8px;
+            background: #ffffff;
+            color: #4c5866;
+            padding: 0 12px;
+        }
+        #newContactGroupButton:hover {
             border-color: #8ed0ff;
             background: #f2f9ff;
         }
@@ -1968,6 +2067,11 @@ void MainWindow::bindSignals() {
     });
     auto openContactConversation = [this](QListWidgetItem* item) {
         if (!item) return;
+        if (item->data(IsGroupHeaderRole).toBool()) {
+            // 点表头就是折叠/展开。整行都可点，不必去瞄那个小三角。
+            toggleContactGroupCollapsed(item->data(GroupNameRole).toString());
+            return;
+        }
         const QString userId = item->data(Qt::UserRole).toString();
         if (userId.isEmpty()) return;
         if (userId != app_.chatState().selectedPeerId() && composerHasAttachments()) messageEditor_->clear();
@@ -2053,15 +2157,47 @@ void MainWindow::applyConversationFilter() {
 void MainWindow::applyContactFilter() {
     if (!contactsSearchInput_ || !contactsList_) return;
     const QString needle = contactsSearchInput_->text().trimmed();
+    const bool searching = !needle.isEmpty();
+
+    // 表头是在联系人之前出现的，可见人数要等这一节走完才知道。
+    // 因此先记住表头位置，最后回填。
+    int pendingHeaderRow = -1;
+    int visibleInSection = 0;
+
+    auto closePendingSection = [&] {
+        if (pendingHeaderRow < 0) return;
+        // 搜索时把整节都没命中的分组表头一并藏掉，否则结果里全是空标题。
+        // 不搜索时表头一律显示——空分组必须看得见。
+        contactsList_->item(pendingHeaderRow)->setHidden(searching && visibleInSection == 0);
+        pendingHeaderRow = -1;
+        visibleInSection = 0;
+    };
+
     for (int row = 0; row < contactsList_->count(); ++row) {
         QListWidgetItem* item = contactsList_->item(row);
+        if (item->data(IsGroupHeaderRole).toBool()) {
+            closePendingSection();
+            pendingHeaderRow = row;
+            visibleInSection = 0;
+            continue;
+        }
+
+        const QString group = item->data(GroupNameRole).toString();
+        // 没有分组的联系人不属于任何一节，它们的命中不能算到上一个分组的表头上——
+        // 否则一个自己没有命中的分组，会因为后面跟着的散人而留在结果里。
+        if (group.isEmpty()) closePendingSection();
+
         // 备注名和 userId 都参与匹配，且和消息搜索共用一套模糊规则：
         // 名字记岔一个字、只记得 ID 中间一段，都还能搜出来。
-        const bool matched = needle.isEmpty()
+        const bool matched = !searching
             || MessageSearch::matches(item->data(DisplayNameRole).toString(), needle)
             || MessageSearch::matches(item->data(UserIdRole).toString(), needle);
-        item->setHidden(!matched);
+        // 搜索时无视折叠状态：命中的人藏在收起的分组里不显示，看上去就是"搜不到"。
+        const bool collapsed = !searching && collapsedContactGroups_.contains(group);
+        item->setHidden(!matched || collapsed);
+        if (matched) ++visibleInSection;
     }
+    closePendingSection();
 }
 
 // Ctrl+F 聚焦「当前这一页的」搜索框。两个框各搜各的，按页分流之后
@@ -2236,18 +2372,70 @@ void MainWindow::refreshContactDirectory() {
     contactsList_->blockSignals(true);
     contactsList_->clear();
     const QList<RemoteIMContact> contacts = app_.chatState().contacts();
+    const QStringList groups = app_.chatState().contactGroups();
+
+    // 先按分组归拢。联系人本身已按 userId 排好，桶内顺序自然继承。
+    QHash<QString, QList<RemoteIMContact>> byGroup;
     for (const RemoteIMContact& contact : contacts) {
-        auto* item = new QListWidgetItem();
-        item->setSizeHint(QSize(0, UiZoom::s(54)));
-        item->setData(UserIdRole, contact.userId);
-        item->setData(DisplayNameRole, contact.displayName.isEmpty() ? contact.userId : contact.displayName);
-        item->setData(AvatarUrlRole, contact.avatarUrl);
-        contactsList_->addItem(item);
+        byGroup[contact.groupName].append(contact);
     }
+    for (const QString& group : groups) {
+        appendContactGroupSection(group, byGroup.value(group));
+    }
+    // 没有分组的联系人不套标题，直接列在分组的同一层、排在分组之后。
+    // 给它们加一个「未分组」标题只是在给"没有分组"这件事起名字，界面上凭空多一层，
+    // 而那一层不对应任何用户能操作的东西。
+    //
+    // 一个分组都没建过时，上面的循环什么都不产生，这里就退化成原来的平铺列表——
+    // 不需要为"没有分组"单独写一条分支。
+    for (const RemoteIMContact& contact : byGroup.value(QString())) {
+        contactsList_->addItem(makeContactItem(contact));
+    }
+
     contactsList_->blockSignals(false);
     // 列表被重建过，隐藏状态跟着没了；搜索词还在框里，这里补回过滤，
     // 否则来一条消息触发刷新，搜索结果就会突然变回全部联系人。
     applyContactFilter();
+}
+
+QListWidgetItem* MainWindow::makeContactItem(const RemoteIMContact& contact) {
+    auto* item = new QListWidgetItem();
+    item->setSizeHint(QSize(0, UiZoom::s(54)));
+    item->setData(UserIdRole, contact.userId);
+    item->setData(DisplayNameRole, contact.displayName.isEmpty() ? contact.userId : contact.displayName);
+    item->setData(AvatarUrlRole, contact.avatarUrl);
+    item->setData(GroupNameRole, contact.groupName);
+    item->setData(IsGroupHeaderRole, false);
+    return item;
+}
+
+void MainWindow::appendContactGroupSection(const QString& groupName,
+                                           const QList<RemoteIMContact>& members) {
+    const bool collapsed = collapsedContactGroups_.contains(groupName);
+    auto* header = new QListWidgetItem();
+    header->setSizeHint(QSize(0, UiZoom::s(kContactGroupHeaderHeight)));
+    header->setData(IsGroupHeaderRole, true);
+    header->setData(GroupNameRole, groupName);
+    header->setData(DisplayNameRole, groupName);
+    header->setData(GroupCollapsedRole, collapsed);
+    header->setData(GroupCountRole, members.size());
+    // 表头不可选中：选中态在这个列表里代表「当前联系人」，让表头也能被选中
+    // 会把方向键操作变成在人和标题之间跳。
+    header->setFlags(Qt::ItemIsEnabled);
+    contactsList_->addItem(header);
+
+    for (const RemoteIMContact& contact : members) {
+        contactsList_->addItem(makeContactItem(contact));
+    }
+}
+
+void MainWindow::toggleContactGroupCollapsed(const QString& groupName) {
+    if (collapsedContactGroups_.contains(groupName)) {
+        collapsedContactGroups_.remove(groupName);
+    } else {
+        collapsedContactGroups_.insert(groupName);
+    }
+    refreshContactDirectory();
 }
 
 void MainWindow::refreshSettings() {
@@ -4397,17 +4585,166 @@ void MainWindow::showConversationContextMenu(const QPoint& pos) {
 void MainWindow::showContactContextMenu(QListWidget* list, const QPoint& pos) {
     if (!list) return;
     QListWidgetItem* item = list->itemAt(pos);
-    if (!item) return;
+    // 空白处右键也给「新建分组」：这是除按钮之外的第二个入口，
+    // 通讯录空着的时候尤其用得上。
+    if (!item) {
+        if (list != contactsList_) return;
+        QMenu menu(this);
+        applyMessageContextMenuStyle(menu);
+        QAction* createAction = menu.addAction(makeLineIcon(LineIconKind::Add, kMenuIconColor),
+                                               QStringLiteral("新建分组"));
+        if (menu.exec(list->viewport()->mapToGlobal(pos)) == createAction) createContactGroup();
+        return;
+    }
+
+    if (item->data(IsGroupHeaderRole).toBool()) {
+        showContactGroupContextMenu(list, item, pos);
+        return;
+    }
     list->setCurrentItem(item);
 
     QMenu menu(this);
     applyMessageContextMenuStyle(menu);
+    // 「移动到分组」只在通讯录页出现：会话列表里的行是会话，不是联系人。
+    if (list == contactsList_) {
+        appendMoveToGroupMenu(menu, item->data(UserIdRole).toString(),
+                              item->data(GroupNameRole).toString());
+        menu.addSeparator();
+    }
     QAction* deleteAction = menu.addAction(makeLineIcon(LineIconKind::Trash, kMenuIconColor),
                                            QStringLiteral("删除好友"));
     QAction* selectedAction = menu.exec(list->viewport()->mapToGlobal(pos));
     if (selectedAction == deleteAction) {
         deleteContactFromItem(item);
     }
+}
+
+void MainWindow::appendMoveToGroupMenu(QMenu& menu, const QString& userId,
+                                       const QString& currentGroup) {
+    if (userId.isEmpty()) return;
+    QMenu* submenu = menu.addMenu(QStringLiteral("移动到分组"));
+    applyMessageContextMenuStyle(*submenu);
+
+    const QStringList groups = app_.chatState().contactGroups();
+    for (const QString& group : groups) {
+        QAction* action = submenu->addAction(group);
+        action->setCheckable(true);
+        action->setChecked(group == currentGroup);
+        // 当前分组仍然列出并打勾，只是点不动：只列出别的分组的话，
+        // 用户就无从知道这个人现在究竟在哪一组。
+        action->setEnabled(group != currentGroup);
+        connect(action, &QAction::triggered, this,
+                [this, userId, group] { app_.setContactGroup(userId, group); });
+    }
+    // 「移出分组」是个动作，不是一个叫「未分组」的去处——界面上没有那一节。
+    if (!currentGroup.isEmpty()) {
+        QAction* ungroup = submenu->addAction(QStringLiteral("移出分组"));
+        connect(ungroup, &QAction::triggered, this,
+                [this, userId] { app_.setContactGroup(userId, QString()); });
+    }
+
+    submenu->addSeparator();
+    // 一步到位：不必先关掉菜单去建组、再右键一次把人移进去。
+    QAction* createAndMove = submenu->addAction(makeLineIcon(LineIconKind::Add, kMenuIconColor),
+                                                QStringLiteral("新建分组并移入…"));
+    connect(createAndMove, &QAction::triggered, this, [this, userId] {
+        const QString created = createContactGroup();
+        if (!created.isEmpty()) app_.setContactGroup(userId, created);
+    });
+}
+
+void MainWindow::showContactGroupContextMenu(QListWidget* list, QListWidgetItem* item,
+                                             const QPoint& pos) {
+    const QString groupName = item->data(GroupNameRole).toString();
+    QMenu menu(this);
+    applyMessageContextMenuStyle(menu);
+    QAction* createAction = menu.addAction(makeLineIcon(LineIconKind::Add, kMenuIconColor),
+                                           QStringLiteral("新建分组"));
+    QAction* renameAction = nullptr;
+    QAction* deleteAction = nullptr;
+    // 「未分组」不是真的分组，改不了名也删不掉；菜单里干脆不给这两项，
+    // 好过给了再弹一句不能这么做。
+    if (!groupName.isEmpty()) {
+        menu.addSeparator();
+        renameAction = menu.addAction(QStringLiteral("重命名分组"));
+        deleteAction = menu.addAction(makeLineIcon(LineIconKind::Trash, kMenuIconColor),
+                                      QStringLiteral("删除分组"));
+    }
+
+    QAction* selected = menu.exec(list->viewport()->mapToGlobal(pos));
+    if (!selected) return;
+    if (selected == createAction) {
+        createContactGroup();
+    } else if (selected == renameAction) {
+        renameContactGroup(groupName);
+    } else if (selected == deleteAction) {
+        deleteContactGroup(groupName);
+    }
+}
+
+// 返回真正建出来的分组名；用户取消或名字不合法时返回空串。
+QString MainWindow::createContactGroup() {
+    bool accepted = false;
+    AppTextInputDialog::Options options;
+    options.title = QStringLiteral("新建分组");
+    options.description = QStringLiteral("给这一组联系人起个名字，之后可以把好友移进来。");
+    options.placeholder = QStringLiteral("例如：同事");
+    const QString name = AppTextInputDialog::getText(this, options, &accepted);
+    if (!accepted) return QString();
+
+    const QString clean = ContactGroups::normalize(name);
+    if (!ContactGroups::isAcceptableName(clean)) {
+        AppMessageDialog::show(this, AppMessageDialog::Kind::Warning, QStringLiteral("分组名不可用"),
+                               QStringLiteral("分组名不能为空。"));
+        return QString();
+    }
+    if (!app_.createContactGroup(clean)) {
+        AppMessageDialog::show(this, AppMessageDialog::Kind::Warning, QStringLiteral("分组已存在"),
+                               QStringLiteral("已经有一个叫「%1」的分组了。").arg(clean));
+        return QString();
+    }
+    return clean;
+}
+
+void MainWindow::renameContactGroup(const QString& groupName) {
+    if (groupName.isEmpty()) return;
+    bool accepted = false;
+    AppTextInputDialog::Options options;
+    options.title = QStringLiteral("重命名分组");
+    options.initialText = groupName;
+    options.placeholder = QStringLiteral("分组名");
+    const QString name = AppTextInputDialog::getText(this, options, &accepted);
+    if (!accepted) return;
+
+    const QString clean = ContactGroups::normalize(name);
+    if (clean == groupName) return;
+    if (!ContactGroups::isAcceptableName(clean)) {
+        AppMessageDialog::show(this, AppMessageDialog::Kind::Warning, QStringLiteral("分组名不可用"),
+                               QStringLiteral("分组名不能为空。"));
+        return;
+    }
+    if (!app_.renameContactGroup(groupName, clean)) {
+        AppMessageDialog::show(this, AppMessageDialog::Kind::Warning, QStringLiteral("改名失败"),
+                               QStringLiteral("已经有一个叫「%1」的分组了。两个分组不会被合并。").arg(clean));
+    }
+}
+
+void MainWindow::deleteContactGroup(const QString& groupName) {
+    if (groupName.isEmpty()) return;
+    int memberCount = 0;
+    for (const RemoteIMContact& contact : app_.chatState().contacts()) {
+        if (contact.groupName == groupName) ++memberCount;
+    }
+    // 说清楚人不会丢。不说的话，删一个装着十几个好友的分组是很吓人的操作。
+    const QString body = memberCount == 0
+        ? QStringLiteral("分组「%1」是空的，删除后不影响任何联系人。").arg(groupName)
+        : QStringLiteral("删除分组「%1」后，组里的 %2 位联系人会直接列在通讯录里，好友本身不会被删除。")
+              .arg(groupName).arg(memberCount);
+    if (!AppMessageDialog::confirm(this, QStringLiteral("删除分组"), body,
+                                   QStringLiteral("删除分组"), true)) {
+        return;
+    }
+    app_.deleteContactGroup(groupName);
 }
 
 void MainWindow::clearMessagesFromItem(QListWidgetItem* item) {

@@ -34,6 +34,14 @@ public:
     void connectToService(int sdkAppId, const QString& userSig);
     void addContact(const QString& userId, const QString& displayName);
     void deleteContact(const QString& userId);
+
+    // ---- 联系人分组 ----
+    // 库与内存一起改，成功后发 stateChanged()。名字不合法或重名返回 false。
+    bool createContactGroup(const QString& name);
+    bool renameContactGroup(const QString& from, const QString& to);
+    // 成员回到未分组，联系人本身保留。
+    void deleteContactGroup(const QString& name);
+    void setContactGroup(const QString& userId, const QString& groupName);
     // 清空与该 peer 的聊天记录（内存 + 本地库），好友保留。纯本地操作，不走远端。
     void clearMessagesWith(const QString& userId);
     void selectPeer(const QString& userId);

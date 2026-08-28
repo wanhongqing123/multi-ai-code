@@ -78,6 +78,11 @@ private slots:
     void clickingFilteredConversationJumpsToItsSearchHit();
     void globalSearchReportsNoResultWithLoadedScopeHint();
     void conversationListsUseDelegateItemsForSmoothScrolling();
+    void contactDirectoryStaysFlatUntilAGroupExists();
+    void contactDirectoryShowsGroupsWithUngroupedLast();
+    void clickingGroupHeaderCollapsesItsMembers();
+    void contactSearchLooksInsideCollapsedGroups();
+    void contactSearchHidesGroupsWithoutAnyHit();
     void rendersMarkdownMessageContent();
     void rendersApprovalButtonsAndSendsStructuredDecision();
     void restoresSubmittedApprovalStateFromDatabase();
@@ -723,7 +728,9 @@ void MainWindowLayoutTest::conversationListsUseDelegateItemsForSmoothScrolling()
     contactsNavButton->click();
     auto* contactsList = window.findChild<QListWidget*>(QStringLiteral("contactsList"));
     QVERIFY(contactsList != nullptr);
-    QVERIFY(contactsList->uniformItemSizes());
+    // 通讯录有意不等高：分组表头比联系人行矮。开着 uniformItemSizes 会让所有行
+    // 都按第一行的高度画，表头和联系人叠在一起。会话列表仍然是等高的。
+    QVERIFY(!contactsList->uniformItemSizes());
     QCOMPARE(contactsList->item(0)->data(Qt::UserRole + 5).toString(),
              QStringLiteral("https://example.com/iphone.png"));
     for (int index = 0; index < contactsList->count(); ++index) {
@@ -1978,6 +1985,180 @@ void MainWindowLayoutTest::globalSearchReportsNoResultWithLoadedScopeHint() {
     // 清空输入立即收起面板，不走防抖——没人愿意清空后还要等 150ms 才恢复。
     search->clear();
     QVERIFY(results->isHidden());
+}
+
+namespace {
+
+// 通讯录列表的一行：要么是分组表头，要么是联系人。
+struct DirectoryRow {
+    bool isHeader = false;
+    QString text;    // 表头是分组名，联系人是显示名
+    QString group;   // 所属/所指分组，空串 = 未分组
+    int count = 0;   // 仅表头有意义
+    bool hidden = false;
+};
+
+QList<DirectoryRow> readDirectory(QListWidget* list) {
+    QList<DirectoryRow> rows;
+    for (int index = 0; index < list->count(); ++index) {
+        QListWidgetItem* item = list->item(index);
+        DirectoryRow row;
+        row.isHeader = item->data(Qt::UserRole + 8).toBool();
+        row.text = item->data(Qt::UserRole + 1).toString();
+        row.group = item->data(Qt::UserRole + 9).toString();
+        row.count = item->data(Qt::UserRole + 11).toInt();
+        row.hidden = item->isHidden();
+        rows.append(row);
+    }
+    return rows;
+}
+
+// 只保留没被过滤掉的行，写断言时不必跟着隐藏行数数。
+QStringList visibleLabels(QListWidget* list) {
+    QStringList labels;
+    for (const DirectoryRow& row : readDirectory(list)) {
+        if (row.hidden) continue;
+        labels.append(row.isHeader ? QStringLiteral("[%1 %2]").arg(row.text).arg(row.count) : row.text);
+    }
+    return labels;
+}
+
+QListWidget* openContactsPage(MainWindow& window) {
+    auto* navButton = window.findChild<QPushButton*>(QStringLiteral("contactsNavButton"));
+    if (navButton) navButton->click();
+    return window.findChild<QListWidget*>(QStringLiteral("contactsList"));
+}
+
+// 找到某个分组表头当前所在的行。列表每次刷新都会重建，不能缓存这个下标。
+int headerRowOf(QListWidget* list, const QString& groupName) {
+    for (int index = 0; index < list->count(); ++index) {
+        QListWidgetItem* item = list->item(index);
+        if (item->data(Qt::UserRole + 8).toBool()
+            && item->data(Qt::UserRole + 9).toString() == groupName) {
+            return index;
+        }
+    }
+    return -1;
+}
+
+}  // namespace
+
+void MainWindowLayoutTest::contactDirectoryStaysFlatUntilAGroupExists() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("alice"), QStringLiteral("Alice"));
+    app.addContact(QStringLiteral("bob"), QStringLiteral("Bob"));
+
+    MainWindow window(app);
+    QListWidget* list = openContactsPage(window);
+    QVERIFY(list != nullptr);
+
+    // 一个分组都没建过的人不该被迫看见分组结构：连「未分组」表头也不该出现。
+    QCOMPARE(visibleLabels(list), QStringList({"Alice", "Bob"}));
+    for (const DirectoryRow& row : readDirectory(list)) {
+        QVERIFY(!row.isHeader);
+    }
+}
+
+void MainWindowLayoutTest::contactDirectoryShowsGroupsWithUngroupedLast() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("alice"), QStringLiteral("Alice"));
+    app.addContact(QStringLiteral("bob"), QStringLiteral("Bob"));
+    QVERIFY(app.createContactGroup(QStringLiteral("同事")));
+    QVERIFY(app.createContactGroup(QStringLiteral("家人")));
+    app.setContactGroup(QStringLiteral("alice"), QStringLiteral("同事"));
+
+    MainWindow window(app);
+    QListWidget* list = openContactsPage(window);
+    QVERIFY(list != nullptr);
+
+    // 分组按创建顺序；「家人」还没人也要显示，否则新建分组看起来什么都没发生。
+    // 没有分组的 Bob 不套任何标题，直接跟在分组后面、和分组同一层。
+    QCOMPARE(visibleLabels(list),
+             QStringList({"[同事 1]", "Alice", "[家人 0]", "Bob"}));
+
+    // 移动之后 Bob 落到「家人」下面，没有分组的人一个不剩，列表里也不该
+    // 冒出一个空的「未分组」标题。
+    app.setContactGroup(QStringLiteral("bob"), QStringLiteral("家人"));
+    QCOMPARE(visibleLabels(list),
+             QStringList({"[同事 1]", "Alice", "[家人 1]", "Bob"}));
+}
+
+void MainWindowLayoutTest::clickingGroupHeaderCollapsesItsMembers() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("alice"), QStringLiteral("Alice"));
+    app.addContact(QStringLiteral("bob"), QStringLiteral("Bob"));
+    QVERIFY(app.createContactGroup(QStringLiteral("同事")));
+    app.setContactGroup(QStringLiteral("alice"), QStringLiteral("同事"));
+
+    MainWindow window(app);
+    QListWidget* list = openContactsPage(window);
+    QVERIFY(list != nullptr);
+
+    const int headerRow = headerRowOf(list, QStringLiteral("同事"));
+    QVERIFY(headerRow >= 0);
+    emit list->itemClicked(list->item(headerRow));
+
+    // 收起后成员不见了，但表头和人数还在——那是唯一还能看出组里有人的线索。
+    // 没有分组的 Bob 不属于任何一节，折叠影响不到他。
+    QCOMPARE(visibleLabels(list), QStringList({"[同事 1]", "Bob"}));
+
+    emit list->itemClicked(list->item(headerRowOf(list, QStringLiteral("同事"))));
+    QCOMPARE(visibleLabels(list), QStringList({"[同事 1]", "Alice", "Bob"}));
+}
+
+void MainWindowLayoutTest::contactSearchLooksInsideCollapsedGroups() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("alice"), QStringLiteral("Alice"));
+    app.addContact(QStringLiteral("bob"), QStringLiteral("Bob"));
+    QVERIFY(app.createContactGroup(QStringLiteral("同事")));
+    app.setContactGroup(QStringLiteral("alice"), QStringLiteral("同事"));
+
+    MainWindow window(app);
+    QListWidget* list = openContactsPage(window);
+    QVERIFY(list != nullptr);
+    emit list->itemClicked(list->item(headerRowOf(list, QStringLiteral("同事"))));
+    QCOMPARE(visibleLabels(list), QStringList({"[同事 1]", "Bob"}));
+
+    auto* search = window.findChild<QLineEdit*>(QStringLiteral("contactsSearchBox"));
+    QVERIFY(search != nullptr);
+    search->setText(QStringLiteral("Alice"));
+
+    // 命中的人藏在收起的分组里不显示，看上去就是「搜不到」。搜索必须无视折叠。
+    QCOMPARE(visibleLabels(list), QStringList({"[同事 1]", "Alice"}));
+
+    // 清空搜索后回到收起状态，折叠不会因为搜过一次就丢了。
+    search->clear();
+    QCOMPARE(visibleLabels(list), QStringList({"[同事 1]", "Bob"}));
+}
+
+void MainWindowLayoutTest::contactSearchHidesGroupsWithoutAnyHit() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("alice"), QStringLiteral("Alice"));
+    app.addContact(QStringLiteral("bob"), QStringLiteral("Bob"));
+    QVERIFY(app.createContactGroup(QStringLiteral("同事")));
+    QVERIFY(app.createContactGroup(QStringLiteral("家人")));
+    app.setContactGroup(QStringLiteral("alice"), QStringLiteral("同事"));
+
+    MainWindow window(app);
+    QListWidget* list = openContactsPage(window);
+    QVERIFY(list != nullptr);
+
+    auto* search = window.findChild<QLineEdit*>(QStringLiteral("contactsSearchBox"));
+    QVERIFY(search != nullptr);
+    search->setText(QStringLiteral("Alice"));
+
+    // 一个命中都没有的分组，表头也要藏掉，否则结果里全是空标题。
+    QCOMPARE(visibleLabels(list), QStringList({"[同事 1]", "Alice"}));
+
+    // Bob 没有分组：搜到他时，两个分组的表头都该消失，
+    // 不能因为他排在分组后面就把上一个分组的标题留下来。
+    search->setText(QStringLiteral("Bob"));
+    QCOMPARE(visibleLabels(list), QStringList({"Bob"}));
 }
 
 QTEST_MAIN(MainWindowLayoutTest)

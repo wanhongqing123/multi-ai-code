@@ -1,5 +1,7 @@
 #include "model/ChatState.h"
 
+#include "model/ContactGroups.h"
+
 #include <QFileInfo>
 #include <QStringList>
 #include <QtGlobal>
@@ -33,10 +35,64 @@ void ChatState::upsertContact(const RemoteIMContact& contact) {
                 existing.displayName = displayName;
             }
             if (!avatarUrl.isEmpty()) existing.avatarUrl = avatarUrl;
+            // groupName 有意不在这里更新。这个入口也被 SDK 资料刷新走，
+            // 而资料对象里从来没有分组信息——跟着覆盖就会让用户分好的组
+            // 在下一次刷新时被静默清空。分组只能由分组相关的接口改。
             return;
         }
     }
-    contacts_.append(RemoteIMContact{userId, displayName, avatarUrl});
+    contacts_.append(RemoteIMContact{userId, displayName, avatarUrl,
+                                     ContactGroups::normalize(contact.groupName)});
+}
+
+QStringList ChatState::contactGroups() const { return contactGroups_; }
+
+void ChatState::setContactGroups(const QStringList& groups) { contactGroups_ = groups; }
+
+bool ChatState::addContactGroup(const QString& name) {
+    const QString clean = ContactGroups::normalize(name);
+    if (!ContactGroups::isAcceptableName(clean)) return false;
+    if (contactGroups_.contains(clean)) return false;
+    contactGroups_.append(clean);
+    return true;
+}
+
+bool ChatState::renameContactGroup(const QString& from, const QString& to) {
+    const QString oldName = ContactGroups::normalize(from);
+    const QString newName = ContactGroups::normalize(to);
+    if (!ContactGroups::isAcceptableName(newName)) return false;
+    const int index = contactGroups_.indexOf(oldName);
+    if (index < 0) return false;
+    if (oldName == newName) return true;
+    if (contactGroups_.contains(newName)) return false;
+    contactGroups_[index] = newName;
+    for (RemoteIMContact& contact : contacts_) {
+        if (contact.groupName == oldName) contact.groupName = newName;
+    }
+    return true;
+}
+
+void ChatState::removeContactGroup(const QString& name) {
+    const QString clean = ContactGroups::normalize(name);
+    if (clean.isEmpty()) return;
+    contactGroups_.removeAll(clean);
+    // 成员回到未分组——删组不删人。
+    for (RemoteIMContact& contact : contacts_) {
+        if (contact.groupName == clean) contact.groupName.clear();
+    }
+}
+
+void ChatState::setContactGroup(const QString& userId, const QString& groupName) {
+    const QString id = clean(userId);
+    const QString group = ContactGroups::normalize(groupName);
+    // 未知分组一律落到未分组：内存里也不该出现指向不存在分组的联系人。
+    const QString target = contactGroups_.contains(group) ? group : QString();
+    for (RemoteIMContact& contact : contacts_) {
+        if (contact.userId == id) {
+            contact.groupName = target;
+            return;
+        }
+    }
 }
 
 void ChatState::removeContactAndMessages(const QString& userId) {

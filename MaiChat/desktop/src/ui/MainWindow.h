@@ -59,6 +59,17 @@ private:
     void refreshSelectedConversation();
     void refreshContacts();
     void refreshContactDirectory();
+    // 通讯录分组：表头和联系人共用 contactsList_，表头是一种特殊行。
+    QListWidgetItem* makeContactItem(const RemoteIMContact& contact);
+    void appendContactGroupSection(const QString& groupName,
+                                   const QList<RemoteIMContact>& members);
+    void toggleContactGroupCollapsed(const QString& groupName);
+    // 返回真正建出来的分组名；用户取消或名字不合法时返回空串。
+    QString createContactGroup();
+    void renameContactGroup(const QString& groupName);
+    void deleteContactGroup(const QString& groupName);
+    void appendMoveToGroupMenu(QMenu& menu, const QString& userId, const QString& currentGroup);
+    void showContactGroupContextMenu(QListWidget* list, QListWidgetItem* item, const QPoint& pos);
     void refreshSettings();
     void refreshMessages();
     void rebuildMessageList(const QString& peerId, const QList<RemoteIMMessage>& messages);
@@ -168,6 +179,10 @@ private:
     QWidget* navRail_ = nullptr;
     QLineEdit* navSearchInput_ = nullptr;
     QLineEdit* contactsSearchInput_ = nullptr;
+    QPushButton* newContactGroupButton_ = nullptr;
+    // 折叠状态只活在内存里：重启后一律展开。持久化它的收益很小，
+    // 而"上次收起来的组这次还是收着的"反而容易让人以为联系人少了。
+    QSet<QString> collapsedContactGroups_;
     QPushButton* messageNavButton_ = nullptr;
     QPushButton* contactsNavButton_ = nullptr;
     QPushButton* settingsNavButton_ = nullptr;

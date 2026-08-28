@@ -66,6 +66,9 @@ private:
     void toggleContactGroupCollapsed(const QString& groupName);
     // 返回真正建出来的分组名；用户取消或名字不合法时返回空串。
     QString createContactGroup();
+    // preselectedGroup 非空时，打开对话框就预先勾中该分组（分组表头右键进来的情况）。
+    void openBroadcastDialog(const QString& preselectedGroup = QString());
+    void reportBroadcastResult(int total, const QStringList& failedPeerIds);
     void renameContactGroup(const QString& groupName);
     void deleteContactGroup(const QString& groupName);
     void appendMoveToGroupMenu(QMenu& menu, const QString& userId, const QString& currentGroup);
@@ -180,6 +183,7 @@ private:
     QLineEdit* navSearchInput_ = nullptr;
     QLineEdit* contactsSearchInput_ = nullptr;
     QPushButton* newContactGroupButton_ = nullptr;
+    QPushButton* broadcastButton_ = nullptr;
     // 折叠状态只活在内存里：重启后一律展开。持久化它的收益很小，
     // 而"上次收起来的组这次还是收着的"反而容易让人以为联系人少了。
     QSet<QString> collapsedContactGroups_;

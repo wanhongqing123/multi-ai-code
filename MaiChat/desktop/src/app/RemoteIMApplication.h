@@ -46,6 +46,10 @@ public:
     void clearMessagesWith(const QString& userId);
     void selectPeer(const QString& userId);
     void sendText(const QString& text);
+    // 群发：给每个收件人各发一条独立消息，进各自的会话——不是一条"群消息"。
+    // 这样每个人的聊天记录都是完整的，收件人那边看到的也和平时的私聊消息毫无区别。
+    // 返回实际发出的人数（去重、去空之后）。
+    int broadcastText(const QStringList& peerIds, const QString& text);
     void sendApprovalDecision(const QString& token,
                               RemoteIMApprovalAction action,
                               std::function<void(bool)> completion = {});
@@ -59,6 +63,9 @@ public:
 
 signals:
     void stateChanged();
+    // 群发全部回执到齐后发出一次。failedPeerIds 为发送失败的人，
+    // 部分失败必须让用户看见是"谁"没收到——只报一句"部分失败"没法补救。
+    void broadcastFinished(int total, const QStringList& failedPeerIds);
     // 纯会话切换只更新当前会话区域，避免重建通讯录、设置页和整个会话列表。
     void selectionChanged(const QString& peerId);
     void connectionChanged(bool connected);

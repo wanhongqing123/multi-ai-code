@@ -146,11 +146,17 @@ void ChatState::selectPeer(const QString& userId) {
 }
 
 RemoteIMMessage ChatState::queueOutgoingText(const QString& text) {
+    return queueOutgoingTextTo(requireSelectedPeer(), text);
+}
+
+RemoteIMMessage ChatState::queueOutgoingTextTo(const QString& peerId, const QString& text) {
     const QString cleanText = clean(text);
     if (cleanText.isEmpty()) throw std::invalid_argument("text is required");
+    const QString peer = clean(peerId);
+    if (peer.isEmpty()) throw std::invalid_argument("peerId is required");
     RemoteIMMessage message;
     message.fromUserId = ownerUserId_;
-    message.toUserId = requireSelectedPeer();
+    message.toUserId = peer;
     message.text = cleanText;
     message.direction = RemoteIMMessageDirection::Outgoing;
     message.status = RemoteIMMessageStatus::Pending;

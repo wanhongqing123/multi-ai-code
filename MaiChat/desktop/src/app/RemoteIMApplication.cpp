@@ -1,5 +1,8 @@
 #include "app/RemoteIMApplication.h"
 
+#include <QSet>
+#include <memory>
+
 #include <QDir>
 #include <QFileInfo>
 #include <QMimeDatabase>
@@ -173,6 +176,59 @@ void RemoteIMApplication::sendText(const QString& text) {
         markMessage(effectiveId, ok ? RemoteIMMessageStatus::Sent : RemoteIMMessageStatus::Failed);
         if (!ok) emit errorMessage(error.isEmpty() ? QStringLiteral("文本消息发送失败") : error);
     });
+}
+
+int RemoteIMApplication::broadcastText(const QStringList& peerIds, const QString& text) {
+    if (text.trimmed().isEmpty()) return 0;
+
+    // 去重 + 去空。同一个人在"选中的联系人"和"选中的分组"里各出现一次是很常见的，
+    // 不去重他就会收到两条一模一样的消息。
+    QStringList recipients;
+    QSet<QString> seen;
+    for (const QString& peerId : peerIds) {
+        const QString clean = peerId.trimmed();
+        if (clean.isEmpty() || seen.contains(clean)) continue;
+        seen.insert(clean);
+        recipients.append(clean);
+    }
+    if (recipients.isEmpty()) return 0;
+
+    // 先把所有消息一次性入库入内存再发，中途不刷界面：
+    // 边发边刷会让会话列表在群发过程中不停跳动。
+    QList<RemoteIMMessage> queued;
+    for (const QString& peerId : recipients) {
+        RemoteIMMessage message = state_.queueOutgoingTextTo(peerId, text);
+        persistMessage(message);
+        queued.append(message);
+    }
+    emit stateChanged();
+
+    // 回执是逐条异步回来的，用共享计数器等齐再报结果。
+    auto remaining = std::make_shared<int>(queued.size());
+    auto failed = std::make_shared<QStringList>();
+    const int total = queued.size();
+
+    for (const RemoteIMMessage& message : queued) {
+        client_->sendText(message.toUserId, message.text,
+                          [this, messageId = message.id, peerId = message.toUserId, remaining, failed, total]
+                          (bool ok, const QString& error, const RemoteIMSendReceipt& receipt) {
+            Q_UNUSED(error);
+            const QString effectiveId =
+                adoptRemoteMessageId(messageId, ok ? receipt.remoteMessageId : QString());
+            if (ok) {
+                state_.updateMessageTime(effectiveId, receipt.createdAtMillis);
+                if (database_) database_->updateMessageTime(effectiveId, receipt.createdAtMillis);
+            } else {
+                failed->append(peerId);
+            }
+            markMessage(effectiveId, ok ? RemoteIMMessageStatus::Sent : RemoteIMMessageStatus::Failed);
+
+            // 群发失败不逐条弹 errorMessage：发给 20 个人失败 5 个就是 5 个弹窗。
+            // 统一在最后报一次，把失败的人列全。
+            if (--(*remaining) == 0) emit broadcastFinished(total, *failed);
+        });
+    }
+    return total;
 }
 
 void RemoteIMApplication::sendApprovalDecision(const QString& token,

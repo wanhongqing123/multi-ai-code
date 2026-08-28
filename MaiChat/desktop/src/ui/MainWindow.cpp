@@ -75,6 +75,7 @@
 #include "markdown/MarkdownRenderer.h"
 #include "ui/AddContactDialog.h"
 #include "ui/AppMessageDialog.h"
+#include "ui/BroadcastDialog.h"
 #include "ui/AppTextInputDialog.h"
 #include "ui/FilePreviewDialog.h"
 #include "ui/ImagePreviewDialog.h"
@@ -1556,6 +1557,12 @@ void MainWindow::buildUi() {
     connect(newContactGroupButton_, &QPushButton::clicked, this, [this] { createContactGroup(); });
     contactsHeader->addWidget(newContactGroupButton_);
 
+    broadcastButton_ = new QPushButton(QStringLiteral("群发消息"), contactsDirectoryPane);
+    broadcastButton_->setObjectName(QStringLiteral("broadcastButton"));
+    broadcastButton_->setCursor(Qt::PointingHandCursor);
+    connect(broadcastButton_, &QPushButton::clicked, this, [this] { openBroadcastDialog(); });
+    contactsHeader->addWidget(broadcastButton_);
+
     contactsList_ = new QListWidget(contactsDirectoryPane);
     contactsList_->setObjectName(QStringLiteral("contactsList"));
     contactsList_->setFrameShape(QFrame::NoFrame);
@@ -1707,9 +1714,17 @@ void MainWindow::applyStyle() {
             color: #4c5866;
             padding: 0 12px;
         }
-        #newContactGroupButton:hover {
+        #newContactGroupButton:hover, #broadcastButton:hover {
             border-color: #8ed0ff;
             background: #f2f9ff;
+        }
+        #broadcastButton {
+            min-height: 34px;
+            border: 1px solid #dbe4ef;
+            border-radius: 8px;
+            background: #ffffff;
+            color: #4c5866;
+            padding: 0 12px;
         }
         #globalSearchBox, #contactsSearchBox {
             min-height: 34px;
@@ -2079,6 +2094,8 @@ void MainWindow::bindSignals() {
         app_.selectPeer(userId);
         showMessagesPage();
     };
+    connect(&app_, &RemoteIMApplication::broadcastFinished, this,
+            [this](int total, const QStringList& failed) { reportBroadcastResult(total, failed); });
     connect(contactsList_, &QListWidget::itemClicked, this, openContactConversation);
     connect(contactsList_, &QListWidget::itemActivated, this, openContactConversation);
 }
@@ -4661,8 +4678,13 @@ void MainWindow::showContactGroupContextMenu(QListWidget* list, QListWidgetItem*
     applyMessageContextMenuStyle(menu);
     QAction* createAction = menu.addAction(makeLineIcon(LineIconKind::Add, kMenuIconColor),
                                            QStringLiteral("新建分组"));
+    QAction* broadcastAction = nullptr;
     QAction* renameAction = nullptr;
     QAction* deleteAction = nullptr;
+    if (!groupName.isEmpty()) {
+        broadcastAction = menu.addAction(makeLineIcon(LineIconKind::Send, kMenuIconColor),
+                                         QStringLiteral("群发给这个分组"));
+    }
     // 「未分组」不是真的分组，改不了名也删不掉；菜单里干脆不给这两项，
     // 好过给了再弹一句不能这么做。
     if (!groupName.isEmpty()) {
@@ -4676,6 +4698,8 @@ void MainWindow::showContactGroupContextMenu(QListWidget* list, QListWidgetItem*
     if (!selected) return;
     if (selected == createAction) {
         createContactGroup();
+    } else if (selected == broadcastAction) {
+        openBroadcastDialog(groupName);
     } else if (selected == renameAction) {
         renameContactGroup(groupName);
     } else if (selected == deleteAction) {
@@ -4705,6 +4729,51 @@ QString MainWindow::createContactGroup() {
         return QString();
     }
     return clean;
+}
+
+void MainWindow::openBroadcastDialog(const QString& preselectedGroup) {
+    const QList<RemoteIMContact> contacts = app_.chatState().contacts();
+    if (contacts.isEmpty()) {
+        AppMessageDialog::show(this, AppMessageDialog::Kind::Info, QStringLiteral("还没有联系人"),
+                               QStringLiteral("通讯录是空的，先加几个好友再群发。"));
+        return;
+    }
+
+    BroadcastDialog dialog(contacts, app_.chatState().contactGroups(), preselectedGroup, this);
+    if (dialog.exec() != QDialog::Accepted) return;
+
+    const QStringList peerIds = dialog.selectedPeerIds();
+    const QString text = dialog.messageText().trimmed();
+    if (peerIds.isEmpty() || text.isEmpty()) return;
+
+    // 发送前把收件人一个不落地列出来。分组里到底有几个人，用户往往记不准
+    // ——以为「同事」是 3 个，实际是 8 个。这一步是发出去之前唯一的刹车。
+    QStringList names;
+    for (const QString& peerId : peerIds) names.append(contactName(peerId));
+    const QString body = QStringLiteral("这 %1 个人会各收到一条相同的消息：\n\n%2")
+                             .arg(peerIds.size())
+                             .arg(names.join(QStringLiteral("、")));
+    if (!AppMessageDialog::confirm(this, QStringLiteral("确认群发"), body,
+                                   QStringLiteral("发送给 %1 人").arg(peerIds.size()), false)) {
+        return;
+    }
+
+    app_.broadcastText(peerIds, text);
+}
+
+void MainWindow::reportBroadcastResult(int total, const QStringList& failedPeerIds) {
+    if (failedPeerIds.isEmpty()) {
+        AppMessageDialog::show(this, AppMessageDialog::Kind::Info, QStringLiteral("群发完成"),
+                               QStringLiteral("%1 个人都收到了。").arg(total));
+        return;
+    }
+    // 只说「部分失败」用户没法补救，必须说出是谁——他才知道该单独补发给谁。
+    QStringList names;
+    for (const QString& peerId : failedPeerIds) names.append(contactName(peerId));
+    AppMessageDialog::show(
+        this, AppMessageDialog::Kind::Warning, QStringLiteral("部分没有发出去"),
+        QStringLiteral("%1 个人里有 %2 个没发出去：\n\n%3\n\n这几条留在各自的会话里并标成发送失败，可以单独重发。")
+            .arg(total).arg(failedPeerIds.size()).arg(names.join(QStringLiteral("、"))));
 }
 
 void MainWindow::renameContactGroup(const QString& groupName) {

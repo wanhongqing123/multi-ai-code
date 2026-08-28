@@ -29,6 +29,9 @@ private slots:
     void liveChannelCountsUnreadRoamingDoesNot();
     void clearMessagesKeepsContactAndPersists();
     void selectingKnownPeerUsesLocalRefreshSignal();
+    void broadcastDeliversOneMessagePerRecipientAndSkipsDuplicates();
+    void broadcastNamesTheRecipientsThatFailed();
+    void broadcastDoesNotDependOnTheSelectedConversation();
 };
 
 void RemoteIMApplicationTest::sendsTextThroughClientAndMarksSent() {
@@ -510,6 +513,74 @@ void RemoteIMApplicationTest::selectingKnownPeerUsesLocalRefreshSignal() {
     QCOMPARE(stateSpy.count(), 0);
     QCOMPARE(selectionSpy.count(), 1);
     QCOMPARE(selectionSpy.takeFirst().at(0).toString(), QStringLiteral("peer-a"));
+}
+
+void RemoteIMApplicationTest::broadcastDeliversOneMessagePerRecipientAndSkipsDuplicates() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("alice"), QStringLiteral("Alice"));
+    app.addContact(QStringLiteral("bob"), QStringLiteral("Bob"));
+    app.addContact(QStringLiteral("carol"), QStringLiteral("Carol"));
+
+    // 同一个人在「选中的联系人」和「选中的分组」里各出现一次是很常见的；
+    // 不去重他就会收到两条一模一样的消息。空串同样要被丢掉。
+    const int sent = app.broadcastText(
+        {QStringLiteral("alice"), QStringLiteral("bob"), QStringLiteral("alice"),
+         QString(), QStringLiteral("  "), QStringLiteral("carol")},
+        QStringLiteral("周会推迟到明天"));
+    QCOMPARE(sent, 3);
+
+    // 群发不是一条「群消息」：每个人的会话里各有一条独立消息，
+    // 收件人看到的和平时的私聊消息毫无区别。
+    for (const QString& peer : {QStringLiteral("alice"), QStringLiteral("bob"), QStringLiteral("carol")}) {
+        const QList<RemoteIMMessage> messages = app.chatState().messagesWith(peer);
+        QCOMPARE(messages.size(), 1);
+        QCOMPARE(messages.first().text, QStringLiteral("周会推迟到明天"));
+        QCOMPARE(messages.first().toUserId, peer);
+        QCOMPARE(messages.first().status, RemoteIMMessageStatus::Sent);
+    }
+}
+
+void RemoteIMApplicationTest::broadcastNamesTheRecipientsThatFailed() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    auto* fakeClient = client.get();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("alice"), QStringLiteral("Alice"));
+    app.addContact(QStringLiteral("bob"), QStringLiteral("Bob"));
+    QSignalSpy finishedSpy(&app, &RemoteIMApplication::broadcastFinished);
+
+    fakeClient->failNext(QStringLiteral("network down"));
+    const int sent = app.broadcastText(
+        {QStringLiteral("alice"), QStringLiteral("bob")}, QStringLiteral("发版了"));
+    QCOMPARE(sent, 2);
+
+    // 部分失败只说一句「部分失败」是没法补救的——必须说出是谁没收到，
+    // 用户才知道该单独补发给谁。
+    QCOMPARE(finishedSpy.count(), 1);
+    QCOMPARE(finishedSpy.first().at(0).toInt(), 2);
+    QCOMPARE(finishedSpy.first().at(1).toStringList(), QStringList({QStringLiteral("alice")}));
+
+    // 失败的那条留在会话里并标成失败，不会凭空消失。
+    QCOMPARE(app.chatState().messagesWith(QStringLiteral("alice")).first().status,
+             RemoteIMMessageStatus::Failed);
+    QCOMPARE(app.chatState().messagesWith(QStringLiteral("bob")).first().status,
+             RemoteIMMessageStatus::Sent);
+}
+
+void RemoteIMApplicationTest::broadcastDoesNotDependOnTheSelectedConversation() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("alice"), QStringLiteral("Alice"));
+    app.addContact(QStringLiteral("bob"), QStringLiteral("Bob"));
+    // 当前打开的是 alice 的会话，但群发的对象里没有她。
+    app.selectPeer(QStringLiteral("alice"));
+
+    QCOMPARE(app.broadcastText({QStringLiteral("bob")}, QStringLiteral("只发给 bob")), 1);
+
+    // 普通发送走「发给当前选中的人」，群发不能沿用这条隐含约定：
+    // 沿用的话消息会发错人，而且是发给一个用户没勾选的人。
+    QCOMPARE(app.chatState().messagesWith(QStringLiteral("bob")).size(), 1);
+    QVERIFY(app.chatState().messagesWith(QStringLiteral("alice")).isEmpty());
 }
 
 QTEST_MAIN(RemoteIMApplicationTest)

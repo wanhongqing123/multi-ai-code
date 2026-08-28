@@ -41,6 +41,9 @@ public:
     void removeMessagesWith(const QString& peerId);
     void selectPeer(const QString& userId);
     RemoteIMMessage queueOutgoingText(const QString& text);
+    // 群发用：显式指定收件人。群发时当前选中的会话可能是别人，甚至没有选中，
+    // 不能沿用 queueOutgoingText 那条"发给当前选中的人"的隐含约定。
+    RemoteIMMessage queueOutgoingTextTo(const QString& peerId, const QString& text);
     RemoteIMMessage queueOutgoingApprovalDecision(const QString& token,
                                                    RemoteIMApprovalAction action);
     RemoteIMMessage queueOutgoingImage(const QString& localPath, int width, int height, qint64 sizeBytes, const QString& text = QString());

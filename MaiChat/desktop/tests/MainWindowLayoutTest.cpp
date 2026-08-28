@@ -83,6 +83,7 @@ private slots:
     void clickingGroupHeaderCollapsesItsMembers();
     void contactSearchLooksInsideCollapsedGroups();
     void contactSearchHidesGroupsWithoutAnyHit();
+    void groupHeaderCountStaysTheGroupSizeWhileSearching();
     void rendersMarkdownMessageContent();
     void rendersApprovalButtonsAndSendsStructuredDecision();
     void restoresSubmittedApprovalStateFromDatabase();
@@ -2159,6 +2160,31 @@ void MainWindowLayoutTest::contactSearchHidesGroupsWithoutAnyHit() {
     // 不能因为他排在分组后面就把上一个分组的标题留下来。
     search->setText(QStringLiteral("Bob"));
     QCOMPARE(visibleLabels(list), QStringList({"Bob"}));
+}
+
+void MainWindowLayoutTest::groupHeaderCountStaysTheGroupSizeWhileSearching() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("alice"), QStringLiteral("Alice"));
+    app.addContact(QStringLiteral("amy"), QStringLiteral("Amy"));
+    app.addContact(QStringLiteral("bob"), QStringLiteral("Bob"));
+    QVERIFY(app.createContactGroup(QStringLiteral("同事")));
+    app.setContactGroup(QStringLiteral("alice"), QStringLiteral("同事"));
+    app.setContactGroup(QStringLiteral("amy"), QStringLiteral("同事"));
+
+    MainWindow window(app);
+    QListWidget* list = openContactsPage(window);
+    QVERIFY(list != nullptr);
+    QCOMPARE(visibleLabels(list), QStringList({"[同事 2]", "Alice", "Amy", "Bob"}));
+
+    auto* search = window.findChild<QLineEdit*>(QStringLiteral("contactsSearchBox"));
+    QVERIFY(search != nullptr);
+    search->setText(QStringLiteral("Alice"));
+
+    // 只有 Alice 命中，但标题上的数字仍然是 2。
+    // 那个数字说的是「这个分组有几个人」，不是「搜到了几个」——
+    // 跟着搜索变的话，一边搜一边看，分组的人数就成了会跳的数字。
+    QCOMPARE(visibleLabels(list), QStringList({"[同事 2]", "Alice"}));
 }
 
 QTEST_MAIN(MainWindowLayoutTest)

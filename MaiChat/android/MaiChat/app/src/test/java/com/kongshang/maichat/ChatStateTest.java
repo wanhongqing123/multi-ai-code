@@ -11,6 +11,20 @@ import java.util.List;
 
 public class ChatStateTest {
     @Test
+    public void explicitRecipientSendDoesNotUseSelectedConversation() {
+        ChatState state = new ChatState("android-user");
+        state.upsertContact(new RemoteIMContact("alice", "Alice"));
+        state.upsertContact(new RemoteIMContact("bob", "Bob"));
+        state.selectPeer("alice");
+
+        state.queueOutgoingTextTo("bob", "只发给 Bob");
+
+        assertTrue(state.messagesWith("alice").isEmpty());
+        assertEquals(1, state.messagesWith("bob").size());
+        assertEquals("bob", state.messagesWith("bob").get(0).toUserId());
+    }
+
+    @Test
     public void contactGroupsRenameDeleteAndPreserveProfileAssignments() {
         ChatState state = new ChatState("android-user");
         assertTrue(state.addContactGroup(" 同事 "));

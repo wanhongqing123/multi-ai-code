@@ -667,6 +667,63 @@ public enum RemoteIMContactGroupDisplayPolicy {
     }
 }
 
+public enum RemoteIMBroadcastGroupSelectionState: Equatable, Sendable {
+    case none
+    case partial
+    case all
+}
+
+public enum RemoteIMBroadcastSelectionPolicy {
+    public static func uniqueRecipientIDs(_ rawIDs: [String]) -> [String] {
+        var seen = Set<String>()
+        return rawIDs.compactMap { raw in
+            let clean = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !clean.isEmpty, seen.insert(clean).inserted else { return nil }
+            return clean
+        }
+    }
+
+    public static func groupState(
+        groupName: String,
+        contacts: [RemoteIMContact],
+        selectedUserIDs: Set<String>
+    ) -> RemoteIMBroadcastGroupSelectionState {
+        let members = contacts.filter { $0.groupName == groupName }
+        let selectedCount = members.filter { selectedUserIDs.contains($0.userID) }.count
+        if members.isEmpty || selectedCount == 0 { return .none }
+        return selectedCount == members.count ? .all : .partial
+    }
+
+    public static func settingGroup(
+        groupName: String,
+        contacts: [RemoteIMContact],
+        selectedUserIDs: Set<String>,
+        selected: Bool
+    ) -> Set<String> {
+        var result = selectedUserIDs
+        for contact in contacts where contact.groupName == groupName {
+            if selected { result.insert(contact.userID) }
+            else { result.remove(contact.userID) }
+        }
+        return result
+    }
+}
+
+public struct RemoteIMBroadcastDeliveryTracker: Equatable, Sendable {
+    public let total: Int
+    public private(set) var failedUserIDs: [String] = []
+
+    public init(total: Int) {
+        self.total = max(0, total)
+    }
+
+    public mutating func record(userID: String, succeeded: Bool) {
+        guard !succeeded else { return }
+        let cleanUserID = userID.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !cleanUserID.isEmpty { failedUserIDs.append(cleanUserID) }
+    }
+}
+
 public enum RemoteIMAvatarMonogramPolicy {
     public static func text(displayName: String, userID: String) -> String {
         let cleanUserID = userID.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1278,14 +1335,25 @@ public struct MasterChatState: Equatable {
         _ text: String,
         now: Date = Date()
     ) throws -> RemoteIMMessage {
-        let cleanText = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleanText.isEmpty else { throw MasterChatStateError.blankMessage }
         guard let peerID = selectedPeerID, !peerID.isEmpty else {
             throw MasterChatStateError.noSelectedPeer
         }
+        return try queueOutgoingText(to: peerID, text: text, now: now)
+    }
+
+    @discardableResult
+    public mutating func queueOutgoingText(
+        to peerID: String,
+        text: String,
+        now: Date = Date()
+    ) throws -> RemoteIMMessage {
+        let cleanText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanText.isEmpty else { throw MasterChatStateError.blankMessage }
+        let cleanPeerID = peerID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanPeerID.isEmpty else { throw MasterChatStateError.noSelectedPeer }
         let message = RemoteIMMessage(
             fromUserID: ownerUserID,
-            toUserID: peerID,
+            toUserID: cleanPeerID,
             text: cleanText,
             direction: .outgoing,
             status: .pending,

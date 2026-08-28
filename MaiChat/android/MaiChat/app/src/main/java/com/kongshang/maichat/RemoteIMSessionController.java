@@ -23,6 +23,10 @@ public final class RemoteIMSessionController {
         void onError(String message);
     }
 
+    public interface BroadcastCompletion {
+        void onFinished(int total, List<String> failedUserIds);
+    }
+
     private final LocalSettingsStore settingsStore;
     private final LocalChatHistoryStore legacyHistoryStore;
     private final AndroidChatHistoryStore historyStore;
@@ -317,6 +321,74 @@ public final class RemoteIMSessionController {
             sendCompletion(message)
         );
         return message;
+    }
+
+    public int broadcastText(
+        List<String> rawUserIds,
+        String text,
+        BroadcastCompletion completion
+    ) throws IOException {
+        List<String> recipients = BroadcastSelectionPolicy.uniqueRecipientIds(rawUserIds);
+        String cleanText = clean(text);
+        if (recipients.isEmpty() || cleanText.isEmpty() || requiresLogin()) return 0;
+
+        List<RemoteIMMessage> queued = new ArrayList<>();
+        for (String userId : recipients) {
+            RemoteIMMessage message = chatState.queueOutgoingTextTo(userId, cleanText);
+            queued.add(message);
+            if (productionMode) persistMessage(message);
+        }
+        notifyStateChanged();
+
+        if (!productionMode) {
+            for (RemoteIMMessage message : queued) {
+                chatState.updateMessageStatus(message.id(), RemoteIMMessage.Status.SENT);
+            }
+            saveChatState();
+            notifyStateChanged();
+            if (completion != null) completion.onFinished(queued.size(), Collections.emptyList());
+            return queued.size();
+        }
+
+        String ownerUserId = chatState.ownerUserId();
+        BroadcastDeliveryTracker tracker = new BroadcastDeliveryTracker(
+            queued.size(),
+            (total, failed) -> {
+                if (completion != null) completion.onFinished(total, failed);
+            }
+        );
+        for (RemoteIMMessage message : queued) {
+            client.sendText(
+                message.toUserId(),
+                message.text(),
+                RemoteIMOrigin.HUMAN,
+                new TencentIMClient.SendCompletion() {
+                    @Override
+                    public void onSuccess(String remoteId, long createdAtMillis) {
+                        runOnMain(() -> {
+                            if (!ownerUserId.equals(chatState.ownerUserId())) return;
+                            chatState.updateMessageDelivery(message.id(), remoteId);
+                            persistMessage(message);
+                            notifyStateChanged();
+                            tracker.record(message.toUserId(), true);
+                        });
+                    }
+
+                    @Override
+                    public void onError(int code, String description) {
+                        runOnMain(() -> {
+                            if (!ownerUserId.equals(chatState.ownerUserId())) return;
+                            chatState.updateMessageStatus(message.id(), RemoteIMMessage.Status.FAILED);
+                            persistMessage(message);
+                            notifyStateChanged();
+                            // 不逐条 reportError；等全部回执到齐后一次列出失败的人。
+                            tracker.record(message.toUserId(), false);
+                        });
+                    }
+                }
+            );
+        }
+        return queued.size();
     }
 
     public RemoteIMMessage sendApprovalDecision(

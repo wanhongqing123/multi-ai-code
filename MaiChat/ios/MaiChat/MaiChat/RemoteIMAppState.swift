@@ -6,6 +6,11 @@ final class RemoteIMDraftState: ObservableObject {
     @Published var text = ""
 }
 
+struct RemoteIMBroadcastResult: Equatable {
+    let total: Int
+    let failedUserIDs: [String]
+}
+
 @MainActor
 final class RemoteIMAppState: ObservableObject {
     private struct ConversationHistoryState {
@@ -634,6 +639,46 @@ final class RemoteIMAppState: ObservableObject {
         await sendQueuedText(text) { [client] userID, queuedText in
             try await client.sendText(to: userID, text: queuedText)
         }
+    }
+
+    func broadcastText(to rawUserIDs: [String], text: String) async -> RemoteIMBroadcastResult {
+        let recipients = RemoteIMBroadcastSelectionPolicy.uniqueRecipientIDs(rawUserIDs)
+        let cleanText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !recipients.isEmpty, !cleanText.isEmpty, connectionState == .connected else {
+            return RemoteIMBroadcastResult(total: 0, failedUserIDs: recipients)
+        }
+
+        // 先把每一条独立私聊消息全部写进模型和持久化队列；当前打开的会话不参与寻址。
+        var queued: [(userID: String, messageID: UUID)] = []
+        do {
+            for userID in recipients {
+                let message = try chatState.queueOutgoingText(to: userID, text: cleanText)
+                enqueueHistoryUpsert(message)
+                queued.append((userID, message.id))
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+            return RemoteIMBroadcastResult(total: 0, failedUserIDs: recipients)
+        }
+
+        var delivery = RemoteIMBroadcastDeliveryTracker(total: queued.count)
+        for item in queued {
+            do {
+                let receipt = try await client.sendText(to: item.userID, text: cleanText)
+                try chatState.updateMessageDelivery(
+                    id: item.messageID,
+                    remoteID: receipt.remoteID,
+                    createdAt: receipt.createdAt
+                )
+            } catch {
+                try? chatState.updateMessageStatus(id: item.messageID, status: .failed)
+                delivery.record(userID: item.userID, succeeded: false)
+            }
+            enqueueCurrentMessage(id: item.messageID)
+        }
+        // 群发失败统一由调用方最后报一次，不逐条覆盖全局 error toast。
+        errorMessage = nil
+        return RemoteIMBroadcastResult(total: delivery.total, failedUserIDs: delivery.failedUserIDs)
     }
 
     @discardableResult

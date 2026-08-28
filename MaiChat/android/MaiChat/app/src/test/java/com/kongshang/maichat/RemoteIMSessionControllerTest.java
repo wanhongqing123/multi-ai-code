@@ -12,6 +12,27 @@ import java.util.List;
 
 public class RemoteIMSessionControllerTest {
     @Test
+    public void broadcastQueuesSeparatePrivateMessagesAndDeduplicatesRecipients() throws Exception {
+        Path root = Files.createTempDirectory("maichat-android-session-broadcast");
+        RemoteIMSessionController session = newSession(root);
+        session.login("android-user");
+        session.addContact("alice");
+        session.addContact("bob");
+        session.chatState().selectPeer("mac-office");
+
+        int count = session.broadcastText(
+            List.of("alice", " bob ", "alice", ""),
+            "群发正文",
+            null
+        );
+
+        assertEquals(2, count);
+        assertEquals(1, session.chatState().messagesWith("alice").size());
+        assertEquals(1, session.chatState().messagesWith("bob").size());
+        assertTrue(session.chatState().messagesWith("mac-office").isEmpty());
+    }
+
+    @Test
     public void startsLoggedOutWhenSettingsAreEmpty() throws Exception {
         RemoteIMSessionController session = newSession();
 

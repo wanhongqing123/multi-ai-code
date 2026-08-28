@@ -2,6 +2,63 @@ import XCTest
 @testable import MaiChatCore
 
 final class MasterChatStateTests: XCTestCase {
+    func testExplicitRecipientSendDoesNotUseSelectedConversation() throws {
+        var state = MasterChatState(ownerUserID: "ios-master")
+        try state.upsertContact(userID: "alice", relation: .friend)
+        try state.upsertContact(userID: "bob", relation: .friend)
+        state.selectPeer(userID: "alice")
+
+        try state.queueOutgoingText(to: "bob", text: "只发给 Bob")
+
+        XCTAssertTrue(state.messages(with: "alice").isEmpty)
+        XCTAssertEqual(state.messages(with: "bob").count, 1)
+        XCTAssertEqual(state.messages(with: "bob").first?.toUserID, "bob")
+    }
+
+    func testBroadcastSelectionDeduplicatesAndTracksGroupTriState() {
+        let contacts = [
+            RemoteIMContact(userID: "alice", displayName: "Alice", groupName: "同事"),
+            RemoteIMContact(userID: "amy", displayName: "Amy", groupName: "同事"),
+            RemoteIMContact(userID: "bob", displayName: "Bob"),
+        ]
+        XCTAssertEqual(
+            RemoteIMBroadcastSelectionPolicy.uniqueRecipientIDs(
+                [" alice ", "", "bob", "alice", "  "]
+            ),
+            ["alice", "bob"]
+        )
+        var selected: Set<String> = ["alice", "bob"]
+        XCTAssertEqual(
+            RemoteIMBroadcastSelectionPolicy.groupState(
+                groupName: "同事", contacts: contacts, selectedUserIDs: selected
+            ),
+            .partial
+        )
+        selected = RemoteIMBroadcastSelectionPolicy.settingGroup(
+            groupName: "同事",
+            contacts: contacts,
+            selectedUserIDs: selected,
+            selected: true
+        )
+        XCTAssertEqual(selected, ["alice", "amy", "bob"])
+        XCTAssertEqual(
+            RemoteIMBroadcastSelectionPolicy.groupState(
+                groupName: "同事", contacts: contacts, selectedUserIDs: selected
+            ),
+            .all
+        )
+    }
+
+    func testBroadcastDeliveryTrackerNamesEveryFailureWithoutSuccessNoise() {
+        var tracker = RemoteIMBroadcastDeliveryTracker(total: 3)
+        tracker.record(userID: "alice", succeeded: false)
+        tracker.record(userID: "bob", succeeded: true)
+        tracker.record(userID: " carol ", succeeded: false)
+
+        XCTAssertEqual(tracker.total, 3)
+        XCTAssertEqual(tracker.failedUserIDs, ["alice", "carol"])
+    }
+
     func testContactGroupsRenameDeleteAndPreserveProfileAssignments() throws {
         var state = MasterChatState(ownerUserID: "ios-master")
         XCTAssertTrue(state.createContactGroup(name: " 同事 "))

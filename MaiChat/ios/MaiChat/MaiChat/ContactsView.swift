@@ -8,22 +8,21 @@ struct ContactsView: View {
     let showAddContact: () -> Void
     @State private var isCreatingGroup = false
     @State private var groupNameDraft = ""
+    @State private var isBroadcasting = false
 
     var body: some View {
         NavigationStack {
-            ContactList(selectedTab: $selectedTab, activeContact: $activeContact)
+            ContactList(
+                selectedTab: $selectedTab,
+                activeContact: $activeContact,
+                showCreateGroup: {
+                    groupNameDraft = ""
+                    isCreatingGroup = true
+                },
+                showBroadcast: { isBroadcasting = true }
+            )
                 .background(RemoteIMStyle.pageBackground.ignoresSafeArea())
                 .toolbar {
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        Button {
-                            groupNameDraft = ""
-                            isCreatingGroup = true
-                        } label: {
-                            Image(systemName: "folder.badge.plus")
-                                .font(.system(size: 17, weight: .semibold))
-                        }
-                        .accessibilityLabel("新建分组")
-                    }
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button(action: showAddContact) {
                             Image(systemName: "plus")
@@ -44,6 +43,9 @@ struct ContactsView: View {
                     }
                 } message: {
                     Text("新分组会按创建顺序显示，空分组也会保留。")
+                }
+                .sheet(isPresented: $isBroadcasting) {
+                    BroadcastComposeView()
                 }
         }
     }
@@ -161,6 +163,8 @@ private struct ContactList: View {
     @EnvironmentObject private var appState: RemoteIMAppState
     @Binding var selectedTab: AppTab
     @Binding var activeContact: RemoteIMContact?
+    let showCreateGroup: () -> Void
+    let showBroadcast: () -> Void
     @State private var searchText = ""
     @State private var collapsedGroups = Set<String>()
     @State private var renamingGroup: String?
@@ -169,6 +173,22 @@ private struct ContactList: View {
 
     var body: some View {
         List {
+            HStack(spacing: 10) {
+                Button(action: showCreateGroup) {
+                    Label("新建分组", systemImage: "folder.badge.plus")
+                        .frame(maxWidth: .infinity)
+                }
+                Button(action: showBroadcast) {
+                    Label("群发消息", systemImage: "paperplane")
+                        .frame(maxWidth: .infinity)
+                }
+                .disabled(appState.chatState.contacts.isEmpty)
+            }
+            .buttonStyle(.bordered)
+            .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 8, trailing: 16))
+            .listRowSeparator(.hidden)
+            .listRowBackground(RemoteIMStyle.panelBackground)
+
             if appState.chatState.contacts.isEmpty && appState.chatState.contactGroups.isEmpty {
                 EmptyContacts()
                     .padding(.top, 76)
@@ -331,6 +351,225 @@ private struct ContactList: View {
         return count == 0
             ? "这个分组是空的，删除后不影响任何联系人。"
             : "组里的 \(count) 位联系人会直接列在通讯录里，好友本身不会被删除。"
+    }
+}
+
+private struct BroadcastComposeView: View {
+    @EnvironmentObject private var appState: RemoteIMAppState
+    @Environment(\.dismiss) private var dismiss
+    @State private var filterText = ""
+    @State private var messageText = ""
+    @State private var selectedUserIDs = Set<String>()
+    @State private var isConfirming = false
+    @State private var isSending = false
+    @State private var resultMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 12) {
+                Text("勾选的每个人都会单独收到一条私聊消息。")
+                    .font(.system(size: 13))
+                    .foregroundStyle(RemoteIMStyle.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                TextField("筛选联系人", text: $filterText)
+                    .textFieldStyle(.roundedBorder)
+
+                List {
+                    ForEach(visibleGroups) { group in
+                        groupSelectionRow(group)
+                        ForEach(visibleMembers(in: group.name)) { contact in
+                            recipientRow(contact, indented: true)
+                        }
+                    }
+                    ForEach(visibleUngroupedContacts) { contact in
+                        recipientRow(contact, indented: false)
+                    }
+                }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .background(RemoteIMStyle.pageBackground)
+
+                TextEditor(text: $messageText)
+                    .frame(minHeight: 88, maxHeight: 120)
+                    .padding(8)
+                    .background(
+                        RemoteIMStyle.pageBackground,
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(RemoteIMStyle.border, lineWidth: 1)
+                    )
+
+                Button {
+                    isConfirming = true
+                } label: {
+                    HStack {
+                        if isSending { ProgressView().tint(.white) }
+                        Text(selectedUserIDs.isEmpty
+                            ? "发送"
+                            : "发送给 \(selectedUserIDs.count) 人")
+                    }
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 44)
+                    .background(
+                        canSend ? RemoteIMStyle.blue : Color.gray.opacity(0.4),
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(!canSend)
+            }
+            .padding(16)
+            .background(RemoteIMStyle.panelBackground.ignoresSafeArea())
+            .navigationTitle("群发消息")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                        .disabled(isSending)
+                }
+            }
+            .alert("确认群发", isPresented: $isConfirming) {
+                Button("取消", role: .cancel) {}
+                Button("发送给 \(selectedUserIDs.count) 人") { sendBroadcast() }
+            } message: {
+                Text("以下每个人会各收到一条相同的私聊消息：\n\n\(selectedNames.joined(separator: "、"))")
+            }
+            .alert("群发结果", isPresented: Binding(
+                get: { resultMessage != nil },
+                set: { if !$0 { resultMessage = nil } }
+            )) {
+                Button("知道了") {
+                    let succeeded = resultMessage?.contains("都收到了") == true
+                    resultMessage = nil
+                    if succeeded { dismiss() }
+                }
+            } message: {
+                Text(resultMessage ?? "")
+            }
+        }
+    }
+
+    private var cleanFilter: String {
+        filterText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private var canSend: Bool {
+        !isSending && appState.connectionState == .connected && !selectedUserIDs.isEmpty
+            && !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var selectedContacts: [RemoteIMContact] {
+        appState.chatState.contacts.filter { selectedUserIDs.contains($0.userID) }
+    }
+
+    private var selectedNames: [String] { selectedContacts.map(\.displayName) }
+
+    private var visibleGroups: [RemoteIMContactGroup] {
+        appState.chatState.contactGroups.filter { group in
+            cleanFilter.isEmpty
+                || group.name.lowercased().contains(cleanFilter)
+                || !visibleMembers(in: group.name).isEmpty
+        }
+    }
+
+    private var visibleUngroupedContacts: [RemoteIMContact] {
+        appState.chatState.contacts.filter {
+            $0.groupName.isEmpty && matchesFilter($0)
+        }
+    }
+
+    private func visibleMembers(in groupName: String) -> [RemoteIMContact] {
+        let groupMatches = groupName.lowercased().contains(cleanFilter)
+        return appState.chatState.contacts.filter {
+            $0.groupName == groupName && (cleanFilter.isEmpty || groupMatches || matchesFilter($0))
+        }
+    }
+
+    private func matchesFilter(_ contact: RemoteIMContact) -> Bool {
+        cleanFilter.isEmpty
+            || contact.displayName.lowercased().contains(cleanFilter)
+            || contact.userID.lowercased().contains(cleanFilter)
+    }
+
+    private func groupSelectionRow(_ group: RemoteIMContactGroup) -> some View {
+        let state = RemoteIMBroadcastSelectionPolicy.groupState(
+            groupName: group.name,
+            contacts: appState.chatState.contacts,
+            selectedUserIDs: selectedUserIDs
+        )
+        let symbol = state == .all ? "checkmark.square.fill"
+            : state == .partial ? "minus.square.fill" : "square"
+        let memberCount = appState.chatState.contacts.filter { $0.groupName == group.name }.count
+        return Button {
+            selectedUserIDs = RemoteIMBroadcastSelectionPolicy.settingGroup(
+                groupName: group.name,
+                contacts: appState.chatState.contacts,
+                selectedUserIDs: selectedUserIDs,
+                selected: state != .all
+            )
+        } label: {
+            HStack {
+                Image(systemName: symbol)
+                    .foregroundStyle(RemoteIMStyle.blue)
+                Text(group.name).font(.system(size: 14, weight: .semibold))
+                Spacer()
+                Text("\(memberCount)").foregroundStyle(RemoteIMStyle.textSecondary)
+            }
+        }
+        .buttonStyle(.plain)
+        .listRowSeparator(.hidden)
+    }
+
+    private func recipientRow(_ contact: RemoteIMContact, indented: Bool) -> some View {
+        Button {
+            if !selectedUserIDs.insert(contact.userID).inserted {
+                selectedUserIDs.remove(contact.userID)
+            }
+        } label: {
+            HStack {
+                Image(systemName: selectedUserIDs.contains(contact.userID)
+                    ? "checkmark.square.fill" : "square")
+                    .foregroundStyle(RemoteIMStyle.blue)
+                Text(contact.displayName)
+                Spacer()
+                Text(contact.userID)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(RemoteIMStyle.textSecondary)
+            }
+        }
+        .buttonStyle(.plain)
+        .listRowInsets(EdgeInsets(
+            top: 7,
+            leading: indented ? 30 : 16,
+            bottom: 7,
+            trailing: 16
+        ))
+        .listRowSeparator(.hidden)
+    }
+
+    private func sendBroadcast() {
+        let recipients = selectedContacts.map(\.userID)
+        let text = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
+        isSending = true
+        Task {
+            let result = await appState.broadcastText(to: recipients, text: text)
+            isSending = false
+            if result.failedUserIDs.isEmpty {
+                resultMessage = "\(result.total) 个人都收到了。"
+                return
+            }
+            let failedNames = appState.chatState.contacts
+                .filter { result.failedUserIDs.contains($0.userID) }
+                .map(\.displayName)
+            resultMessage = "\(result.total) 个人里有 \(failedNames.count) 个没发出去：\n\n"
+                + failedNames.joined(separator: "、")
+                + "\n\n失败消息保留在各自会话里，可以单独重发。"
+        }
     }
 }
 

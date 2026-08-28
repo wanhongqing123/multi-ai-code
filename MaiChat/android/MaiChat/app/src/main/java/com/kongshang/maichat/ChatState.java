@@ -150,11 +150,16 @@ public final class ChatState {
     }
 
     public RemoteIMMessage queueOutgoingText(String text) {
+        return queueOutgoingTextTo(requireSelectedPeer(), text);
+    }
+
+    public RemoteIMMessage queueOutgoingTextTo(String peerIdValue, String text) {
         String cleanText = clean(text);
         if (cleanText.isEmpty()) {
             throw new IllegalArgumentException("text is required");
         }
-        String peerId = requireSelectedPeer();
+        String peerId = clean(peerIdValue);
+        if (peerId.isEmpty()) throw new IllegalArgumentException("peerId is required");
         RemoteIMMessage message = new RemoteIMMessage(
             ownerUserId,
             peerId,

@@ -1092,7 +1092,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         LinearLayout rows = new LinearLayout(this);
         rows.setOrientation(LinearLayout.VERTICAL);
         rows.setPadding(dp(16), dp(8), dp(16), dp(16));
-        content.addView(contactToolbar(rows), match(dp(52)));
+        content.addView(contactToolbar(rows), match(dp(96)));
         ScrollView scroll = new ScrollView(this);
         scroll.addView(rows, matchWrap());
         content.addView(scroll, new LinearLayout.LayoutParams(
@@ -1152,8 +1152,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
 
     private View contactToolbar(LinearLayout rows) {
         LinearLayout toolbar = new LinearLayout(this);
-        toolbar.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
-        toolbar.setPadding(dp(12), dp(3), dp(12), dp(3));
+        toolbar.setOrientation(LinearLayout.VERTICAL);
+        toolbar.setPadding(dp(12), dp(4), dp(12), dp(4));
         toolbar.setBackgroundColor(Color.WHITE);
         EditText search = new EditText(this);
         search.setSingleLine(true);
@@ -1163,7 +1163,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         search.setTextSize(14);
         search.setPadding(dp(12), 0, dp(12), 0);
         search.setBackground(MaiChatTheme.bordered(MaiChatTheme.PAGE, MaiChatTheme.BORDER, 9, this));
-        toolbar.addView(search, new LinearLayout.LayoutParams(0, dp(42), 1));
+        toolbar.addView(search, match(dp(42)));
         search.addTextChangedListener(new SimpleTextWatcher() {
             @Override
             public void afterTextChanged(Editable editable) {
@@ -1171,17 +1171,262 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
                 renderContactRows(rows, contactSearchQuery);
             }
         });
-        TextView group = iconButton("分组＋", 14, MaiChatTheme.BLUE_DARK);
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(Gravity.CENTER_VERTICAL);
+        TextView group = iconButton("新建分组", 14, MaiChatTheme.BLUE_DARK);
         group.setContentDescription("新建分组");
         group.setOnClickListener(view -> showContactGroupNameDialog("新建分组", "", null));
-        LinearLayout.LayoutParams groupParams = new LinearLayout.LayoutParams(dp(64), dp(44));
-        groupParams.setMargins(dp(6), 0, 0, 0);
-        toolbar.addView(group, groupParams);
+        actions.addView(group, new LinearLayout.LayoutParams(0, dp(42), 1));
+        TextView broadcast = iconButton("群发消息", 14, MaiChatTheme.BLUE_DARK);
+        broadcast.setContentDescription("群发消息");
+        broadcast.setOnClickListener(view -> showBroadcastDialog());
+        actions.addView(broadcast, new LinearLayout.LayoutParams(0, dp(42), 1));
         TextView plus = iconButton("＋", 24, MaiChatTheme.BLUE_DARK);
         plus.setContentDescription("添加好友");
         plus.setOnClickListener(view -> showAddContactDialog());
-        toolbar.addView(plus, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        actions.addView(plus, new LinearLayout.LayoutParams(dp(44), dp(42)));
+        toolbar.addView(actions, match(dp(42)));
         return toolbar;
+    }
+
+    private void showBroadcastDialog() {
+        List<RemoteIMContact> contacts = session.chatState().contacts();
+        if (contacts.isEmpty()) {
+            new AlertDialog.Builder(this)
+                .setTitle("还没有联系人")
+                .setMessage("通讯录是空的，先加几个好友再群发。")
+                .setPositiveButton("知道了", null)
+                .show();
+            return;
+        }
+
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(18), dp(18), dp(18), dp(16));
+        card.setBackground(MaiChatTheme.rounded(Color.WHITE, 16, this));
+        card.addView(MaiChatTheme.label(this, "群发消息", 20, MaiChatTheme.TEXT), match(dp(30)));
+        TextView detail = MaiChatTheme.text(
+            this,
+            "勾选的每个人都会单独收到一条私聊消息。",
+            13,
+            MaiChatTheme.SECONDARY
+        );
+        card.addView(detail, match(dp(28)));
+
+        EditText filter = new EditText(this);
+        filter.setSingleLine(true);
+        filter.setHint("筛选联系人");
+        filter.setPadding(dp(12), 0, dp(12), 0);
+        filter.setBackground(MaiChatTheme.bordered(MaiChatTheme.PAGE, MaiChatTheme.BORDER, 9, this));
+        card.addView(filter, match(dp(42)));
+
+        ScrollView recipientScroll = new ScrollView(this);
+        LinearLayout recipientRows = new LinearLayout(this);
+        recipientRows.setOrientation(LinearLayout.VERTICAL);
+        recipientScroll.addView(recipientRows, matchWrap());
+        LinearLayout.LayoutParams listParams = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            0,
+            1
+        );
+        listParams.setMargins(0, dp(8), 0, dp(8));
+        card.addView(recipientScroll, listParams);
+
+        EditText message = new EditText(this);
+        message.setHint("要发送的文本内容");
+        message.setGravity(Gravity.TOP | Gravity.START);
+        message.setMinLines(3);
+        message.setMaxLines(5);
+        message.setPadding(dp(12), dp(10), dp(12), dp(10));
+        message.setBackground(MaiChatTheme.bordered(MaiChatTheme.PAGE, MaiChatTheme.BORDER, 9, this));
+        card.addView(message, match(dp(92)));
+
+        TextView summary = MaiChatTheme.text(this, "还没有选人", 13, MaiChatTheme.SECONDARY);
+        Button send = primaryButton("发送");
+        send.setEnabled(false);
+        LinearLayout footer = new LinearLayout(this);
+        footer.setGravity(Gravity.CENTER_VERTICAL);
+        footer.addView(summary, new LinearLayout.LayoutParams(0, dp(44), 1));
+        Button cancel = secondaryButton("取消");
+        footer.addView(cancel, new LinearLayout.LayoutParams(dp(72), dp(42)));
+        LinearLayout.LayoutParams sendParams = new LinearLayout.LayoutParams(dp(112), dp(42));
+        sendParams.setMargins(dp(8), 0, 0, 0);
+        footer.addView(send, sendParams);
+        LinearLayout.LayoutParams footerParams = match(dp(48));
+        footerParams.setMargins(0, dp(8), 0, 0);
+        card.addView(footer, footerParams);
+
+        Set<String> selected = new HashSet<>();
+        Runnable updateSendState = () -> {
+            int count = selected.size();
+            summary.setText(count == 0 ? "还没有选人" : "已选 " + count + " 人");
+            send.setText(count == 0 ? "发送" : "发送给 " + count + " 人");
+            send.setEnabled(count > 0 && !message.getText().toString().trim().isEmpty());
+        };
+        Runnable[] refresh = new Runnable[1];
+        refresh[0] = () -> renderBroadcastRecipientRows(
+            recipientRows,
+            contacts,
+            session.chatState().contactGroups(),
+            selected,
+            filter.getText().toString(),
+            refresh[0],
+            updateSendState
+        );
+        filter.addTextChangedListener(new SimpleTextWatcher() {
+            @Override
+            public void afterTextChanged(Editable editable) { refresh[0].run(); }
+        });
+        message.addTextChangedListener(new SimpleTextWatcher() {
+            @Override
+            public void afterTextChanged(Editable editable) { updateSendState.run(); }
+        });
+        refresh[0].run();
+
+        cancel.setOnClickListener(view -> dialog.dismiss());
+        send.setOnClickListener(view -> {
+            List<String> recipients = new ArrayList<>();
+            List<String> names = new ArrayList<>();
+            for (RemoteIMContact contact : contacts) {
+                if (!selected.contains(contact.userId())) continue;
+                recipients.add(contact.userId());
+                names.add(contact.displayName());
+            }
+            String cleanText = message.getText().toString().trim();
+            if (recipients.isEmpty() || cleanText.isEmpty()) return;
+            new AlertDialog.Builder(this)
+                .setTitle("确认群发")
+                .setMessage("以下每个人会各收到一条相同的私聊消息：\n\n"
+                    + String.join("、", names))
+                .setNegativeButton("取消", null)
+                .setPositiveButton("发送给 " + recipients.size() + " 人", (confirmDialog, which) -> {
+                    dialog.dismiss();
+                    try {
+                        session.broadcastText(recipients, cleanText, this::showBroadcastResult);
+                    } catch (IOException error) {
+                        new AlertDialog.Builder(this)
+                            .setTitle("群发失败")
+                            .setMessage(error.getMessage())
+                            .setPositiveButton("知道了", null)
+                            .show();
+                    }
+                })
+                .show();
+        });
+
+        dialog.setContentView(card);
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.setDimAmount(0.28f);
+            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            window.setLayout(
+                (int) (getResources().getDisplayMetrics().widthPixels * 0.94f),
+                (int) (getResources().getDisplayMetrics().heightPixels * 0.84f)
+            );
+        }
+    }
+
+    private void renderBroadcastRecipientRows(
+        LinearLayout rows,
+        List<RemoteIMContact> contacts,
+        List<String> groups,
+        Set<String> selected,
+        String queryValue,
+        Runnable refresh,
+        Runnable updateSendState
+    ) {
+        rows.removeAllViews();
+        String query = queryValue == null ? "" : queryValue.trim().toLowerCase(Locale.ROOT);
+        for (String group : groups) {
+            List<RemoteIMContact> members = new ArrayList<>();
+            for (RemoteIMContact contact : contacts) {
+                if (group.equals(contact.groupName())) members.add(contact);
+            }
+            List<RemoteIMContact> visibleMembers = new ArrayList<>();
+            for (RemoteIMContact contact : members) {
+                if (query.isEmpty()
+                    || contact.displayName().toLowerCase(Locale.ROOT).contains(query)
+                    || contact.userId().toLowerCase(Locale.ROOT).contains(query)) {
+                    visibleMembers.add(contact);
+                }
+            }
+            if (!query.isEmpty() && visibleMembers.isEmpty()
+                && !group.toLowerCase(Locale.ROOT).contains(query)) continue;
+            BroadcastSelectionPolicy.GroupState state =
+                BroadcastSelectionPolicy.groupState(group, contacts, selected);
+            String marker = state == BroadcastSelectionPolicy.GroupState.ALL ? "☑ "
+                : state == BroadcastSelectionPolicy.GroupState.PARTIAL ? "◩ " : "☐ ";
+            TextView header = MaiChatTheme.label(
+                this, marker + group + "（" + members.size() + "）", 14, MaiChatTheme.TEXT
+            );
+            header.setGravity(Gravity.CENTER_VERTICAL);
+            header.setPadding(dp(4), 0, dp(4), 0);
+            header.setOnClickListener(view -> {
+                BroadcastSelectionPolicy.setGroupSelected(
+                    group,
+                    contacts,
+                    selected,
+                    state != BroadcastSelectionPolicy.GroupState.ALL
+                );
+                refresh.run();
+                updateSendState.run();
+            });
+            rows.addView(header, match(dp(38)));
+            for (RemoteIMContact contact : visibleMembers) {
+                rows.addView(broadcastContactRow(contact, true, selected, refresh, updateSendState), match(dp(38)));
+            }
+        }
+        for (RemoteIMContact contact : contacts) {
+            if (!contact.groupName().isEmpty()) continue;
+            if (!query.isEmpty()
+                && !contact.displayName().toLowerCase(Locale.ROOT).contains(query)
+                && !contact.userId().toLowerCase(Locale.ROOT).contains(query)) continue;
+            rows.addView(broadcastContactRow(contact, false, selected, refresh, updateSendState), match(dp(38)));
+        }
+    }
+
+    private View broadcastContactRow(
+        RemoteIMContact contact,
+        boolean indented,
+        Set<String> selected,
+        Runnable refresh,
+        Runnable updateSendState
+    ) {
+        TextView row = MaiChatTheme.label(
+            this,
+            (selected.contains(contact.userId()) ? "☑ " : "☐ ") + contact.displayName(),
+            14,
+            MaiChatTheme.TEXT
+        );
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(indented ? dp(18) : dp(4), 0, dp(4), 0);
+        row.setOnClickListener(view -> {
+            if (!selected.add(contact.userId())) selected.remove(contact.userId());
+            refresh.run();
+            updateSendState.run();
+        });
+        return row;
+    }
+
+    private void showBroadcastResult(int total, List<String> failedUserIds) {
+        List<String> failedNames = new ArrayList<>();
+        for (String userId : failedUserIds) {
+            RemoteIMContact contact = contact(userId);
+            failedNames.add(contact == null ? userId : contact.displayName());
+        }
+        new AlertDialog.Builder(this)
+            .setTitle(failedNames.isEmpty() ? "群发完成" : "部分没有发出去")
+            .setMessage(failedNames.isEmpty()
+                ? total + " 个人都收到了。"
+                : total + " 个人里有 " + failedNames.size() + " 个没发出去：\n\n"
+                    + String.join("、", failedNames)
+                    + "\n\n失败消息保留在各自会话里，可以单独重发。")
+            .setPositiveButton("知道了", null)
+            .show();
     }
 
     private View contactGroupHeader(LinearLayout rows, String group, int count, boolean searching) {

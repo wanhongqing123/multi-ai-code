@@ -357,9 +357,8 @@ private struct ContactList: View {
 private struct BroadcastComposeView: View {
     @EnvironmentObject private var appState: RemoteIMAppState
     @Environment(\.dismiss) private var dismiss
-    @State private var filterText = ""
     @State private var messageText = ""
-    @State private var selectedUserIDs = Set<String>()
+    @State private var pickerState = RemoteIMBroadcastRecipientPickerState()
     @State private var isConfirming = false
     @State private var isSending = false
     @State private var resultMessage: String?
@@ -372,7 +371,10 @@ private struct BroadcastComposeView: View {
                     .foregroundStyle(RemoteIMStyle.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                TextField("筛选联系人", text: $filterText)
+                TextField("筛选联系人", text: Binding(
+                    get: { pickerState.filterText },
+                    set: { pickerState.setFilterText($0) }
+                ))
                     .textFieldStyle(.roundedBorder)
 
                 List {
@@ -406,9 +408,9 @@ private struct BroadcastComposeView: View {
                 } label: {
                     HStack {
                         if isSending { ProgressView().tint(.white) }
-                        Text(selectedUserIDs.isEmpty
+                        Text(pickerState.selectedUserIDs.isEmpty
                             ? "发送"
-                            : "发送给 \(selectedUserIDs.count) 人")
+                            : "发送给 \(pickerState.selectedUserIDs.count) 人")
                     }
                     .font(.system(size: 15, weight: .bold))
                     .foregroundStyle(.white)
@@ -434,7 +436,7 @@ private struct BroadcastComposeView: View {
             }
             .alert("确认群发", isPresented: $isConfirming) {
                 Button("取消", role: .cancel) {}
-                Button("发送给 \(selectedUserIDs.count) 人") { sendBroadcast() }
+                Button("发送给 \(pickerState.selectedUserIDs.count) 人") { sendBroadcast() }
             } message: {
                 Text("以下每个人会各收到一条相同的私聊消息：\n\n\(selectedNames.joined(separator: "、"))")
             }
@@ -454,38 +456,35 @@ private struct BroadcastComposeView: View {
     }
 
     private var canSend: Bool {
-        !isSending && appState.connectionState == .connected && !selectedUserIDs.isEmpty
+        !isSending && appState.connectionState == .connected
+            && !pickerState.selectedUserIDs.isEmpty
             && !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var selectedContacts: [RemoteIMContact] {
-        appState.chatState.contacts.filter { selectedUserIDs.contains($0.userID) }
+        appState.chatState.contacts.filter { pickerState.selectedUserIDs.contains($0.userID) }
     }
 
     private var selectedNames: [String] { selectedContacts.map(\.displayName) }
 
     private var recipientListItems: [RemoteIMBroadcastRecipientListItem] {
-        RemoteIMBroadcastRecipientDisplayPolicy.items(
+        pickerState.visibleItems(
             groups: appState.chatState.contactGroups,
-            contacts: appState.chatState.contacts,
-            query: filterText
+            contacts: appState.chatState.contacts
         )
     }
 
     private func groupSelectionRow(name: String, memberCount: Int) -> some View {
-        let state = RemoteIMBroadcastSelectionPolicy.groupState(
+        let state = pickerState.groupState(
             groupName: name,
-            contacts: appState.chatState.contacts,
-            selectedUserIDs: selectedUserIDs
+            contacts: appState.chatState.contacts
         )
         let symbol = state == .all ? "checkmark.square.fill"
             : state == .partial ? "minus.square.fill" : "square"
         return Button {
-            selectedUserIDs = RemoteIMBroadcastSelectionPolicy.settingGroup(
+            pickerState.toggleGroup(
                 groupName: name,
-                contacts: appState.chatState.contacts,
-                selectedUserIDs: selectedUserIDs,
-                selected: state != .all
+                contacts: appState.chatState.contacts
             )
         } label: {
             HStack {
@@ -502,12 +501,10 @@ private struct BroadcastComposeView: View {
 
     private func recipientRow(_ contact: RemoteIMContact, indented: Bool) -> some View {
         Button {
-            if !selectedUserIDs.insert(contact.userID).inserted {
-                selectedUserIDs.remove(contact.userID)
-            }
+            pickerState.toggleContact(userID: contact.userID)
         } label: {
             HStack {
-                Image(systemName: selectedUserIDs.contains(contact.userID)
+                Image(systemName: pickerState.selectedUserIDs.contains(contact.userID)
                     ? "checkmark.square.fill" : "square")
                     .foregroundStyle(RemoteIMStyle.blue)
                 Text(contact.displayName)

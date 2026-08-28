@@ -766,6 +766,54 @@ public enum RemoteIMBroadcastRecipientDisplayPolicy {
     }
 }
 
+public struct RemoteIMBroadcastRecipientPickerState: Equatable, Sendable {
+    public private(set) var filterText = ""
+    public private(set) var selectedUserIDs = Set<String>()
+
+    public init() {}
+
+    public mutating func setFilterText(_ value: String) {
+        // 筛选只改可见行；选择集合的生命周期与搜索框完全独立。
+        filterText = value
+    }
+
+    public mutating func toggleContact(userID: String) {
+        if !selectedUserIDs.insert(userID).inserted { selectedUserIDs.remove(userID) }
+    }
+
+    public func groupState(
+        groupName: String,
+        contacts: [RemoteIMContact]
+    ) -> RemoteIMBroadcastGroupSelectionState {
+        RemoteIMBroadcastSelectionPolicy.groupState(
+            groupName: groupName,
+            contacts: contacts,
+            selectedUserIDs: selectedUserIDs
+        )
+    }
+
+    public mutating func toggleGroup(groupName: String, contacts: [RemoteIMContact]) {
+        let shouldSelect = groupState(groupName: groupName, contacts: contacts) != .all
+        selectedUserIDs = RemoteIMBroadcastSelectionPolicy.settingGroup(
+            groupName: groupName,
+            contacts: contacts,
+            selectedUserIDs: selectedUserIDs,
+            selected: shouldSelect
+        )
+    }
+
+    public func visibleItems(
+        groups: [RemoteIMContactGroup],
+        contacts: [RemoteIMContact]
+    ) -> [RemoteIMBroadcastRecipientListItem] {
+        RemoteIMBroadcastRecipientDisplayPolicy.items(
+            groups: groups,
+            contacts: contacts,
+            query: filterText
+        )
+    }
+}
+
 public enum RemoteIMAvatarMonogramPolicy {
     public static func text(displayName: String, userID: String) -> String {
         let cleanUserID = userID.trimmingCharacters(in: .whitespacesAndNewlines)

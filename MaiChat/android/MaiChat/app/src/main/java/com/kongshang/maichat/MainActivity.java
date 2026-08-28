@@ -1258,9 +1258,9 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         footerParams.setMargins(0, dp(8), 0, 0);
         card.addView(footer, footerParams);
 
-        Set<String> selected = new HashSet<>();
+        BroadcastRecipientPickerState pickerState = new BroadcastRecipientPickerState();
         Runnable updateSendState = () -> {
-            int count = selected.size();
+            int count = pickerState.selectedUserIds().size();
             summary.setText(count == 0 ? "还没有选人" : "已选 " + count + " 人");
             send.setText(count == 0 ? "发送" : "发送给 " + count + " 人");
             send.setEnabled(count > 0 && !message.getText().toString().trim().isEmpty());
@@ -1270,14 +1270,16 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             recipientRows,
             contacts,
             session.chatState().contactGroups(),
-            selected,
-            filter.getText().toString(),
+            pickerState,
             refresh[0],
             updateSendState
         );
         filter.addTextChangedListener(new SimpleTextWatcher() {
             @Override
-            public void afterTextChanged(Editable editable) { refresh[0].run(); }
+            public void afterTextChanged(Editable editable) {
+                pickerState.setFilterText(editable.toString());
+                refresh[0].run();
+            }
         });
         message.addTextChangedListener(new SimpleTextWatcher() {
             @Override
@@ -1290,7 +1292,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             List<String> recipients = new ArrayList<>();
             List<String> names = new ArrayList<>();
             for (RemoteIMContact contact : contacts) {
-                if (!selected.contains(contact.userId())) continue;
+                if (!pickerState.isSelected(contact.userId())) continue;
                 recipients.add(contact.userId());
                 names.add(contact.displayName());
             }
@@ -1334,24 +1336,21 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         LinearLayout rows,
         List<RemoteIMContact> contacts,
         List<String> groups,
-        Set<String> selected,
-        String queryValue,
+        BroadcastRecipientPickerState pickerState,
         Runnable refresh,
         Runnable updateSendState
     ) {
         rows.removeAllViews();
-        for (BroadcastRecipientDisplayPolicy.Row row : BroadcastRecipientDisplayPolicy.rows(
-            groups, contacts, queryValue
-        )) {
+        for (BroadcastRecipientDisplayPolicy.Row row : pickerState.visibleRows(groups, contacts)) {
             if (row.kind() == BroadcastRecipientDisplayPolicy.Kind.CONTACT) {
                 rows.addView(broadcastContactRow(
-                    row.contact(), row.isIndented(), selected, refresh, updateSendState
+                    row.contact(), row.isIndented(), pickerState, refresh, updateSendState
                 ), match(dp(38)));
                 continue;
             }
             String group = row.groupName();
             BroadcastSelectionPolicy.GroupState state =
-                BroadcastSelectionPolicy.groupState(group, contacts, selected);
+                pickerState.groupState(group, contacts);
             String marker = state == BroadcastSelectionPolicy.GroupState.ALL ? "☑ "
                 : state == BroadcastSelectionPolicy.GroupState.PARTIAL ? "◩ " : "☐ ";
             TextView header = MaiChatTheme.label(
@@ -1360,9 +1359,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             header.setGravity(Gravity.CENTER_VERTICAL);
             header.setPadding(dp(4), 0, dp(4), 0);
             header.setOnClickListener(view -> {
-                BroadcastSelectionPolicy.setGroupSelected(
-                    group, contacts, selected, state != BroadcastSelectionPolicy.GroupState.ALL
-                );
+                pickerState.toggleGroup(group, contacts);
                 refresh.run();
                 updateSendState.run();
             });
@@ -1373,20 +1370,20 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private View broadcastContactRow(
         RemoteIMContact contact,
         boolean indented,
-        Set<String> selected,
+        BroadcastRecipientPickerState pickerState,
         Runnable refresh,
         Runnable updateSendState
     ) {
         TextView row = MaiChatTheme.label(
             this,
-            (selected.contains(contact.userId()) ? "☑ " : "☐ ") + contact.displayName(),
+            (pickerState.isSelected(contact.userId()) ? "☑ " : "☐ ") + contact.displayName(),
             14,
             MaiChatTheme.TEXT
         );
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(indented ? dp(18) : dp(4), 0, dp(4), 0);
         row.setOnClickListener(view -> {
-            if (!selected.add(contact.userId())) selected.remove(contact.userId());
+            pickerState.toggleContact(contact.userId());
             refresh.run();
             updateSendState.run();
         });

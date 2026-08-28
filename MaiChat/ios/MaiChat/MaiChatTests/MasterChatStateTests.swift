@@ -63,21 +63,28 @@ final class MasterChatStateTests: XCTestCase {
         let contacts = [
             RemoteIMContact(userID: "alice", displayName: "Alice", groupName: "同事"),
             RemoteIMContact(userID: "amy", displayName: "Amy", groupName: "同事"),
+            RemoteIMContact(userID: "carol", displayName: "Carol", groupName: "家人"),
             RemoteIMContact(userID: "bob", displayName: "Bob"),
         ]
-        let selected: Set<String> = ["alice", "amy"]
+        var pickerState = RemoteIMBroadcastRecipientPickerState()
+        pickerState.toggleGroup(groupName: "同事", contacts: contacts)
+        pickerState.setFilterText("ali")
 
-        let items = RemoteIMBroadcastRecipientDisplayPolicy.items(
-            groups: [RemoteIMContactGroup(name: "同事", sortOrder: 0)],
-            contacts: contacts,
-            query: "ali"
+        let items = pickerState.visibleItems(
+            groups: [
+                RemoteIMContactGroup(name: "同事", sortOrder: 0),
+                RemoteIMContactGroup(name: "家人", sortOrder: 1),
+            ],
+            contacts: contacts
         )
 
-        XCTAssertEqual(selected, ["alice", "amy"])
+        XCTAssertEqual(pickerState.selectedUserIDs, ["alice", "amy"])
         XCTAssertEqual(items, [
             .group(name: "同事", memberCount: 2),
             .contact(contacts[0], indented: true),
         ])
+        pickerState.setFilterText("")
+        XCTAssertEqual(pickerState.selectedUserIDs, ["alice", "amy"])
     }
 
     func testContactGroupsRenameDeleteAndPreserveProfileAssignments() throws {

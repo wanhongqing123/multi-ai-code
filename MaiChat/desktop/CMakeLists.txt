@@ -289,6 +289,9 @@ target_link_libraries(login_dialog_test PRIVATE remote_im_desktop_ui remote_im_d
 add_executable(app_message_dialog_test tests/AppMessageDialogTest.cpp)
 target_link_libraries(app_message_dialog_test PRIVATE remote_im_desktop_ui remote_im_core Qt5::Widgets Qt5::Test)
 
+add_executable(broadcast_dialog_test tests/BroadcastDialogTest.cpp)
+target_link_libraries(broadcast_dialog_test PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets Qt5::Test)
+
 add_executable(app_text_input_dialog_test tests/AppTextInputDialogTest.cpp)
 target_link_libraries(app_text_input_dialog_test PRIVATE remote_im_desktop_ui remote_im_core Qt5::Widgets Qt5::Test)
 
@@ -365,6 +368,7 @@ add_executable(ui_zoom_test tests/UiZoomTest.cpp)
 target_link_libraries(ui_zoom_test PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets Qt5::Test)
 
 enable_testing()
+add_test(NAME broadcast_dialog_test COMMAND broadcast_dialog_test)
 add_test(NAME chat_state_test COMMAND chat_state_test)
 add_test(NAME fake_remote_im_client_test COMMAND fake_remote_im_client_test)
 add_test(NAME tencent_user_sig_generator_test COMMAND tencent_user_sig_generator_test)

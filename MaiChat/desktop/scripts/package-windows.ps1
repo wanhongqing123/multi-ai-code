@@ -7,7 +7,7 @@
 #
 # 产出：
 #   <OutDir>\MaiChat-win64\            解压即用目录
-#   <OutDir>\MaiChat-win64-<日期>-<git短哈希>.zip
+#   <OutDir>\MaiChat-win64-v<版本>-<日期>-<git短哈希>.zip
 
 param(
     [string]$BuildDir = 'build-msvc2019_64',
@@ -145,7 +145,14 @@ if ($SkipZip) {
 # 压缩，文件名带日期与 git 短哈希便于追溯
 $gitHash = (& git -C $projectRoot rev-parse --short HEAD 2>$null)
 if (-not $gitHash) { $gitHash = 'unknown' }
-$zipName = "MaiChat-win64-$(Get-Date -Format yyyyMMdd)-$gitHash.zip"
+# 版本号取仓库根 package.json，和 make-installer-windows.ps1 同一个来源。
+# 名字里带上版本，是因为 Release 页面上光看 zip 名认不出它属于哪一版
+# ——安装包和 macOS 的 dmg 都带，唯独 zip 不带的话，三个产物摆在一起会以为漏了。
+$repoRoot = Split-Path -Parent (Split-Path -Parent $projectRoot)
+$pkgJson = Join-Path $repoRoot 'package.json'
+$appSemver = (Get-Content $pkgJson -Raw -Encoding UTF8 | ConvertFrom-Json).version
+if (-not $appSemver) { throw "无法从 $pkgJson 读取 version" }
+$zipName = "MaiChat-win64-v$appSemver-$(Get-Date -Format yyyyMMdd)-$gitHash.zip"
 $zipPath = Join-Path $distRoot $zipName
 if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
 Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $zipPath

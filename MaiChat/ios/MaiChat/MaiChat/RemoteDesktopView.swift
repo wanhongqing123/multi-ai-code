@@ -1530,18 +1530,27 @@ private final class RemoteKeyboardInputTextView: UITextView, UITextViewDelegate 
     /// posts this notification on the main thread, but treating that as a guarantee caused a
     /// physical-device crash when focus restoration arrived on a cooperative Task executor.
     @objc nonisolated private func applicationDidBecomeActive() {
-        let arrivedOnMainThread = Thread.isMainThread
-        Task { @MainActor [weak self] in
-            guard let self, self.wantsKeyboard else { return }
-            if !arrivedOnMainThread {
-                self.logKeyboard(
-                    level: .warning,
-                    event: "activation-focus-rerouted-to-main",
-                    fields: ["source_thread": "background"]
-                )
+        if Thread.isMainThread {
+            MainActor.assumeIsolated {
+                handleApplicationDidBecomeActive(wasRerouted: false)
             }
-            self.requestKeyboardFocus()
+            return
         }
+        Task { @MainActor [weak self] in
+            self?.handleApplicationDidBecomeActive(wasRerouted: true)
+        }
+    }
+
+    private func handleApplicationDidBecomeActive(wasRerouted: Bool) {
+        guard wantsKeyboard else { return }
+        if wasRerouted {
+            logKeyboard(
+                level: .warning,
+                event: "activation-focus-rerouted-to-main",
+                fields: ["source_thread": "background"]
+            )
+        }
+        requestKeyboardFocus()
     }
 
     func prepareForDismantle() {

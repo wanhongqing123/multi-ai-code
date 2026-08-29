@@ -1,3 +1,4 @@
+import MaiChatCore
 import SwiftUI
 import UserNotifications
 import UIKit
@@ -92,7 +93,9 @@ final class RemoteIMSystemNotificationCenter: NSObject, UNUserNotificationCenter
         content.title = title
         content.body = body
         content.sound = .default
-        content.badge = NSNumber(value: min(99, max(0, badgeCount)))
+        content.badge = NSNumber(value: RemoteIMNewMessageNotificationPolicy.systemBadgeCount(
+            totalUnreadCount: badgeCount
+        ))
         content.threadIdentifier = "remote-im-\(peerUserID)"
         content.userInfo = ["peerUserID": peerUserID]
         do {
@@ -112,13 +115,17 @@ final class RemoteIMSystemNotificationCenter: NSObject, UNUserNotificationCenter
         center.removePendingNotificationRequests(withIdentifiers: [identifier])
         center.removeDeliveredNotifications(withIdentifiers: [identifier])
         if #available(iOS 16.0, *) {
-            center.setBadgeCount(min(99, max(0, badgeCount)))
+            center.setBadgeCount(RemoteIMNewMessageNotificationPolicy.systemBadgeCount(
+                totalUnreadCount: badgeCount
+            ))
         }
     }
 
     func updateBadgeCount(_ badgeCount: Int) {
         if #available(iOS 16.0, *) {
-            center.setBadgeCount(min(99, max(0, badgeCount)))
+            center.setBadgeCount(RemoteIMNewMessageNotificationPolicy.systemBadgeCount(
+                totalUnreadCount: badgeCount
+            ))
         }
     }
 

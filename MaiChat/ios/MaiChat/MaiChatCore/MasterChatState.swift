@@ -1106,6 +1106,8 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
 }
 
 public enum RemoteIMNewMessageNotificationPolicy {
+    /// Keeps the app icon readable when persisted unread history is large. This is a MaiChat
+    /// product choice, not an iOS system limit.
     public static func systemBadgeCount(totalUnreadCount: Int) -> Int {
         min(99, max(0, totalUnreadCount))
     }

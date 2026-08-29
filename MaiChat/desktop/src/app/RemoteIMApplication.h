@@ -67,6 +67,11 @@ signals:
     // 群发全部回执到齐后发出一次。failedPeerIds 为发送失败的人，
     // 部分失败必须让用户看见是"谁"没收到——只报一句"部分失败"没法补救。
     void broadcastFinished(int total, const QStringList& failedPeerIds);
+    // 实时收到的、之前没入过库的入站消息。UI 据此弹系统通知。
+    //
+    // 应用层只判断「这是不是一条值得通知的新消息」，不判断「现在该不该打扰用户」——
+    // 后者取决于窗口是否激活、当前开着谁的会话，那是 UI 才知道的事。
+    void incomingMessageArrived(const QString& peerId, const RemoteIMMessage& message);
     // 纯会话切换只更新当前会话区域，避免重建通讯录、设置页和整个会话列表。
     void selectionChanged(const QString& peerId);
     void connectionChanged(bool connected);

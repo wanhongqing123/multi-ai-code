@@ -440,30 +440,38 @@ void RemoteIMApplication::bindClientSignals() {
             emit remoteDesktopSignalReceived(fromUserId, text);
             return;
         }
-        persistMessage(state_.receiveText(fromUserId, text));
+        const RemoteIMMessage received = state_.receiveText(fromUserId, text);
+        persistMessage(received);
         emit stateChanged();
+        emit incomingMessageArrived(fromUserId.trimmed(), received);
     });
     connect(client_.get(), &RemoteIMClient::incomingImage, this, [this](const QString& fromUserId,
                                                                         const QString& localPath,
                                                                         int width,
                                                                         int height,
                                                                         qint64 sizeBytes) {
-        persistMessage(state_.receiveImage(fromUserId, localPath, width, height, sizeBytes));
+        const RemoteIMMessage received = state_.receiveImage(fromUserId, localPath, width, height, sizeBytes);
+        persistMessage(received);
         emit stateChanged();
+        emit incomingMessageArrived(fromUserId.trimmed(), received);
     });
     connect(client_.get(), &RemoteIMClient::incomingVoice, this, [this](const QString& fromUserId,
                                                                         const QString& localPath,
                                                                         int durationSeconds) {
-        persistMessage(state_.receiveVoice(fromUserId, localPath, durationSeconds));
+        const RemoteIMMessage received = state_.receiveVoice(fromUserId, localPath, durationSeconds);
+        persistMessage(received);
         emit stateChanged();
+        emit incomingMessageArrived(fromUserId.trimmed(), received);
     });
     connect(client_.get(), &RemoteIMClient::incomingFile, this, [this](const QString& fromUserId,
                                                                        const QString& localPath,
                                                                        const QString& fileName,
                                                                        const QString& mimeType,
                                                                        qint64 sizeBytes) {
-        persistMessage(state_.receiveFile(fromUserId, localPath, fileName, mimeType, sizeBytes));
+        const RemoteIMMessage received = state_.receiveFile(fromUserId, localPath, fileName, mimeType, sizeBytes);
+        persistMessage(received);
         emit stateChanged();
+        emit incomingMessageArrived(fromUserId.trimmed(), received);
     });
     connect(client_.get(), &RemoteIMClient::disconnected, this, [this] {
         connected_ = false;
@@ -485,12 +493,19 @@ void RemoteIMApplication::ingestMessages(const QList<RemoteIMMessage>& messages,
         if (peerId.isEmpty()) continue;
         if (firstPeerId.isEmpty()) firstPeerId = peerId;
         state_.upsertContact(RemoteIMContact{peerId, peerId});
+        // 首次入库才算「新消息」。漫游和实时两条路会投递同一条消息，
+        // 没有库时退化成「实时的都算新」——那种模式下本来也没有历史可重复。
+        bool firstTimeSeen = true;
         if (database_) {
             database_->upsertContact(RemoteIMContact{peerId, peerId});
-            database_->insertMessageIfAbsent(message, peerId);
+            firstTimeSeen = database_->insertMessageIfAbsent(message, peerId);
         }
         if (live) {
             state_.appendLiveMessage(message);
+            // 自己发出去的消息不通知；漫游/历史恢复也不通知（live=false 走不到这里）。
+            if (firstTimeSeen && message.direction == RemoteIMMessageDirection::Incoming) {
+                emit incomingMessageArrived(peerId, message);
+            }
         } else {
             state_.appendMessageForRestore(message);
         }

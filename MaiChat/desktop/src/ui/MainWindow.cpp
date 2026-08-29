@@ -1,4 +1,5 @@
 #include "ui/MainWindow.h"
+#include "model/MessageNotification.h"
 #include "model/ContactGroups.h"
 #include "model/MessageSearch.h"
 #include "ui/MessageImageLoader.h"
@@ -75,6 +76,8 @@
 #include "markdown/MarkdownRenderer.h"
 #include "ui/AddContactDialog.h"
 #include "ui/AppMessageDialog.h"
+#include <QSystemTrayIcon>
+#include <QLoggingCategory>
 #include "ui/BroadcastDialog.h"
 #include "ui/AppTextInputDialog.h"
 #include "ui/FilePreviewDialog.h"
@@ -1188,6 +1191,9 @@ MainWindow::MainWindow(RemoteIMApplication& app, QWidget* parent) : QMainWindow(
             });
     connect(qApp, &QCoreApplication::aboutToQuit, this,
             [this] { stopRemoteDesktopForShutdown(); });
+    // 放在 refresh 之前：refresh 会重建列表但不产生入站消息，先后顺序无所谓，
+    // 重要的是通知在第一条实时消息到达之前就已经接好线。
+    setUpMessageNotifications();
     refresh();
 }
 
@@ -2474,7 +2480,84 @@ void MainWindow::refreshSettings() {
     settingsSdkAppIdValue_->setText(QString::number(RemoteIMCredentialDefaults::sdkAppId));
 }
 
+void MainWindow::setUpMessageNotifications() {
+    // 系统托盘不可用时（某些精简桌面环境）直接不做通知，而不是崩掉或静默假装成功。
+    if (!QSystemTrayIcon::isSystemTrayAvailable()) {
+        qInfo("[notify] system tray unavailable; message notifications disabled");
+        return;
+    }
+    // 必须给一个真图标：QSystemTrayIcon 拿到空图标时不会真正显示出来，
+    // 而 showMessage 对一个没显示的托盘图标是静默失效的——代码照跑、日志照打，
+    // 屏幕上什么都不出现。这个坑我踩过一次，是靠真机截图才发现的。
+    QIcon trayImage = windowIcon();
+    if (trayImage.isNull()) trayImage = QIcon(QStringLiteral(":/maichat/app-icon.png"));
+    // 图标仍然为空就别装通知能用了——托盘不显示时 showMessage 是静默失效的。
+    if (trayImage.isNull()) {
+        qWarning("[notify] app icon missing; message notifications disabled");
+        return;
+    }
+    trayIcon_ = new QSystemTrayIcon(trayImage, this);
+    trayIcon_->setToolTip(QStringLiteral("MaiChat"));
+    trayIcon_->show();
+
+    connect(trayIcon_, &QSystemTrayIcon::messageClicked, this,
+            [this] { openConversationFromNotification(); });
+    connect(&app_, &RemoteIMApplication::incomingMessageArrived, this,
+            [this](const QString& peerId, const RemoteIMMessage& message) {
+                handleIncomingMessageForNotification(peerId, message);
+            });
+}
+
+bool MainWindow::conversationIsVisibleTo(const QString& peerId) const {
+    // 三个条件都满足才算「用户正看着这个人的消息」：窗口是激活的、
+    // 当前在消息页、且选中的就是这个人。少一个都该通知——
+    // 窗口在后台却不弹，用户就永远不知道有人找他。
+    if (!isActiveWindow() || isMinimized()) return false;
+    if (!contentStack_ || contentStack_->currentWidget() != messagesPage_) return false;
+    return app_.chatState().selectedPeerId() == peerId;
+}
+
+void MainWindow::handleIncomingMessageForNotification(const QString& peerId,
+                                                      const RemoteIMMessage& message) {
+    if (!trayIcon_ || peerId.isEmpty()) return;
+
+    if (conversationIsVisibleTo(peerId)) {
+        // 正开着这个人的会话，消息已经在眼前了，再弹一次是纯打扰。
+        qInfo("[notify] suppressed peer=%s reason=conversation-visible",
+              qUtf8Printable(peerId));
+        pendingNotificationCounts_.remove(peerId);
+        return;
+    }
+
+    const int pending = pendingNotificationCounts_.value(peerId, 0) + 1;
+    pendingNotificationCounts_[peerId] = pending;
+    lastNotifiedPeerId_ = peerId;
+
+    const QString title = MessageNotification::title(contactName(peerId), peerId);
+    const QString body = MessageNotification::aggregatedPreview(message, pending);
+    // 正文不入日志：通知内容会进系统通知中心已经够了，日志里再存一份没有必要。
+    qInfo("[notify] requested peer=%s pending=%d", qUtf8Printable(peerId), pending);
+    trayIcon_->showMessage(title, body, QSystemTrayIcon::Information, 5000);
+}
+
+void MainWindow::openConversationFromNotification() {
+    if (lastNotifiedPeerId_.isEmpty()) return;
+    const QString peerId = lastNotifiedPeerId_;
+    qInfo("[notify] clicked peer=%s", qUtf8Printable(peerId));
+
+    // 窗口可能被最小化或压在别的程序后面，先弄回前台再切会话。
+    showNormal();
+    raise();
+    activateWindow();
+    app_.selectPeer(peerId);
+    showMessagesPage();
+    pendingNotificationCounts_.remove(peerId);
+}
+
 void MainWindow::showMessagesPage() {
+    // 用户看到消息了，堆积计数归零；不清的话下一条通知会显示成「第 5 条」，
+    // 而他其实前 4 条都读过了。
+    pendingNotificationCounts_.remove(app_.chatState().selectedPeerId());
     contentStack_->setCurrentWidget(messagesPage_);
     syncNavigationSelection();
     messageEditor_->setFocus();

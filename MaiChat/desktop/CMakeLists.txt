@@ -65,6 +65,8 @@ add_library(remote_im_core
   src/model/ChatState.cpp
   src/model/ContactGroups.h
   src/model/ContactGroups.cpp
+  src/model/MessageNotification.h
+  src/model/MessageNotification.cpp
   src/model/MessageSearch.h
   src/model/MessageSearch.cpp
   src/model/PinyinInitials.cpp
@@ -289,6 +291,9 @@ target_link_libraries(login_dialog_test PRIVATE remote_im_desktop_ui remote_im_d
 add_executable(app_message_dialog_test tests/AppMessageDialogTest.cpp)
 target_link_libraries(app_message_dialog_test PRIVATE remote_im_desktop_ui remote_im_core Qt5::Widgets Qt5::Test)
 
+add_executable(message_notification_test tests/MessageNotificationTest.cpp)
+target_link_libraries(message_notification_test PRIVATE remote_im_core Qt5::Test)
+
 add_executable(broadcast_dialog_test tests/BroadcastDialogTest.cpp)
 target_link_libraries(broadcast_dialog_test PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets Qt5::Test)
 
@@ -373,6 +378,7 @@ add_executable(ui_zoom_test tests/UiZoomTest.cpp)
 target_link_libraries(ui_zoom_test PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets Qt5::Test)
 
 enable_testing()
+add_test(NAME message_notification_test COMMAND message_notification_test)
 add_test(NAME broadcast_dialog_test COMMAND broadcast_dialog_test)
 add_test(NAME chat_state_test COMMAND chat_state_test)
 add_test(NAME fake_remote_im_client_test COMMAND fake_remote_im_client_test)

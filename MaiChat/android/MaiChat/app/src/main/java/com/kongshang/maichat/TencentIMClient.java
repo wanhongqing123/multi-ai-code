@@ -436,7 +436,7 @@ public final class TencentIMClient {
         );
     }
 
-    private void handleIncomingMessage(V2TIMMessage sdkMessage) {
+    void handleIncomingMessage(V2TIMMessage sdkMessage) {
         if (sdkMessage == null) {
             Log.w(TAG, "recv: null message from SDK; dropped");
             return;

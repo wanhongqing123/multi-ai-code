@@ -806,6 +806,13 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         );
         bubble.addView(meta, match(dp(20)));
 
+        String attachmentCaption = RemoteIMAttachmentCaptionPolicy.caption(message);
+        RemoteIMAttachmentCaptionPolicy.Placement captionPlacement =
+            RemoteIMAttachmentCaptionPolicy.placement(message);
+        if (captionPlacement == RemoteIMAttachmentCaptionPolicy.Placement.ABOVE) {
+            bubble.addView(attachmentCaptionView(attachmentCaption), matchWrap());
+        }
+
         if (message.imageAttachment() != null) {
             bubble.addView(imageMessageContent(message.imageAttachment()), matchWrap());
         } else if (message.voiceAttachment() != null) {
@@ -830,6 +837,10 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             body.setLineSpacing(0, 1.15f);
             body.setPadding(0, dp(5), 0, dp(2));
             bubble.addView(body, matchWrap());
+        }
+
+        if (captionPlacement == RemoteIMAttachmentCaptionPolicy.Placement.BELOW) {
+            bubble.addView(attachmentCaptionView(attachmentCaption), matchWrap());
         }
 
         if (message.approvalRequest() != null) {
@@ -861,6 +872,15 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             outer.addView(bubble, bubbleParams);
         }
         return outer;
+    }
+
+    private TextView attachmentCaptionView(String caption) {
+        TextView body = MaiChatTheme.text(this, "", 15, MaiChatTheme.TEXT);
+        body.setText(MarkdownRenderer.render(caption));
+        body.setTextIsSelectable(true);
+        body.setLineSpacing(0, 1.15f);
+        body.setPadding(0, dp(5), 0, dp(5));
+        return body;
     }
 
     private View approvalActions(

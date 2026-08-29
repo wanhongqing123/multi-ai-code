@@ -13,7 +13,7 @@ import java.util.List;
 
 public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
     private static final String DATABASE_NAME = "maichat-history.db";
-    private static final int DATABASE_VERSION = 4;
+    private static final int DATABASE_VERSION = 5;
     private static final String TAG = "MaiChat.im";
 
     private final RemoteIMMediaPaths mediaPaths;
@@ -91,6 +91,7 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
                 + "approval_request_actions TEXT NOT NULL DEFAULT '',"
                 + "approval_decision_token TEXT NOT NULL DEFAULT '',"
                 + "approval_decision_action TEXT NOT NULL DEFAULT '',"
+                + "caption_above INTEGER NOT NULL DEFAULT 0,"
                 + "PRIMARY KEY(owner_id, id))"
         );
         database.execSQL(
@@ -118,6 +119,12 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
             database.execSQL("ALTER TABLE contacts ADD COLUMN group_name TEXT NOT NULL DEFAULT ''");
             createContactGroupsTable(database);
             version = 4;
+        }
+        if (version < 5) {
+            database.execSQL(
+                "ALTER TABLE messages ADD COLUMN caption_above INTEGER NOT NULL DEFAULT 0"
+            );
+            version = 5;
         }
         if (version != newVersion) {
             // 只有在没有可用迁移路径时才重建。重建会清空用户本地聊天记录，
@@ -469,6 +476,7 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
             "approval_decision_action",
             approvalDecision == null ? "" : approvalDecision.action().wireValue()
         );
+        values.put("caption_above", message.captionAbove() ? 1 : 0);
         values.put("origin", message.origin().wireValue());
         getWritableDatabase().insertWithOnConflict(
             "messages",
@@ -495,7 +503,7 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
             "video_path", "video_cover_path", "video_duration", "video_width",
             "video_height", "video_size", "approval_request_token",
             "approval_request_actions", "approval_decision_token",
-            "approval_decision_action"
+            "approval_decision_action", "caption_above"
         };
     }
 
@@ -569,7 +577,7 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
             cursor.getString(27),
             cursor.getString(28)
         );
-        return new RemoteIMMessage(
+        RemoteIMMessage message = new RemoteIMMessage(
             cursor.getString(0),
             cursor.getString(1),
             cursor.getString(2),
@@ -586,6 +594,8 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
             approvalRequest,
             approvalDecision
         );
+        message.setCaptionAbove(cursor.getInt(29) != 0);
+        return message;
     }
 
     private static String approvalActions(List<RemoteIMApprovalAction> actions) {

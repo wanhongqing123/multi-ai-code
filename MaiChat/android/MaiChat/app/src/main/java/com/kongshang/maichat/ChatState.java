@@ -375,6 +375,24 @@ public final class ChatState {
         long createdAtMillis,
         RemoteIMOrigin origin
     ) {
+        return receiveImage(
+            localPath, fromUserId, width, height, sizeBytes, remoteId,
+            createdAtMillis, origin, null, false
+        );
+    }
+
+    public RemoteIMMessage receiveImage(
+        String localPath,
+        String fromUserId,
+        int width,
+        int height,
+        long sizeBytes,
+        String remoteId,
+        long createdAtMillis,
+        RemoteIMOrigin origin,
+        String caption,
+        boolean captionAbove
+    ) {
         RemoteIMMessage existing = messageWithRemoteId(remoteId);
         if (existing != null) return existing;
         String peerId = clean(fromUserId);
@@ -391,7 +409,7 @@ public final class ChatState {
             remoteId,
             peerId,
             ownerUserId,
-            "[图片消息] " + fileName(cleanPath),
+            clean(caption).isEmpty() ? "[图片消息] " + fileName(cleanPath) : clean(caption),
             RemoteIMMessage.Direction.INCOMING,
             RemoteIMMessage.Status.RECEIVED,
             createdAtMillis,
@@ -401,6 +419,7 @@ public final class ChatState {
             null,
             origin
         );
+        message.setCaptionAbove(!clean(caption).isEmpty() && captionAbove);
         messages.add(message);
         return message;
     }
@@ -460,6 +479,26 @@ public final class ChatState {
         long createdAtMillis,
         RemoteIMOrigin origin
     ) {
+        return receiveVideo(
+            localPath, coverPath, durationSeconds, width, height, sizeBytes,
+            fromUserId, remoteId, createdAtMillis, origin, null, false
+        );
+    }
+
+    public RemoteIMMessage receiveVideo(
+        String localPath,
+        String coverPath,
+        int durationSeconds,
+        int width,
+        int height,
+        long sizeBytes,
+        String fromUserId,
+        String remoteId,
+        long createdAtMillis,
+        RemoteIMOrigin origin,
+        String caption,
+        boolean captionAbove
+    ) {
         RemoteIMMessage existing = messageWithRemoteId(remoteId);
         if (existing != null) return existing;
         String peerId = clean(fromUserId);
@@ -472,7 +511,9 @@ public final class ChatState {
             remoteId,
             peerId,
             ownerUserId,
-            "[视频消息 " + attachment.durationSeconds() + "s]",
+            clean(caption).isEmpty()
+                ? "[视频消息 " + attachment.durationSeconds() + "s]"
+                : clean(caption),
             RemoteIMMessage.Direction.INCOMING,
             RemoteIMMessage.Status.RECEIVED,
             createdAtMillis,
@@ -482,6 +523,7 @@ public final class ChatState {
             attachment,
             origin
         );
+        message.setCaptionAbove(!clean(caption).isEmpty() && captionAbove);
         messages.add(message);
         return message;
     }
@@ -515,6 +557,24 @@ public final class ChatState {
         long createdAtMillis,
         RemoteIMOrigin origin
     ) {
+        return receiveFile(
+            localPath, fromUserId, fileName, mimeType, sizeBytes, remoteId,
+            createdAtMillis, origin, null, false
+        );
+    }
+
+    public RemoteIMMessage receiveFile(
+        String localPath,
+        String fromUserId,
+        String fileName,
+        String mimeType,
+        long sizeBytes,
+        String remoteId,
+        long createdAtMillis,
+        RemoteIMOrigin origin,
+        String caption,
+        boolean captionAbove
+    ) {
         RemoteIMMessage existing = messageWithRemoteId(remoteId);
         if (existing != null) return existing;
         String peerId = clean(fromUserId);
@@ -530,7 +590,9 @@ public final class ChatState {
             remoteId,
             peerId,
             ownerUserId,
-            fileDisplayText(attachment.fileName(), attachment.localPath()),
+            clean(caption).isEmpty()
+                ? fileDisplayText(attachment.fileName(), attachment.localPath())
+                : clean(caption),
             RemoteIMMessage.Direction.INCOMING,
             RemoteIMMessage.Status.RECEIVED,
             createdAtMillis,
@@ -540,6 +602,7 @@ public final class ChatState {
             null,
             origin
         );
+        message.setCaptionAbove(!clean(caption).isEmpty() && captionAbove);
         messages.add(message);
         return message;
     }

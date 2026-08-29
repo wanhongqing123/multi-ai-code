@@ -1,7 +1,9 @@
 package com.kongshang.maichat;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
 
@@ -21,6 +23,28 @@ public class RemoteIMProtocolMetadataTest {
         assertEquals(RemoteIMOrigin.HUMAN, metadata.origin());
         assertNull(metadata.approvalRequest());
         assertNull(metadata.approvalDecision());
+        assertFalse(metadata.captionAbove());
+    }
+
+    @Test
+    public void captionPlacementIsAnOptionalAdditiveVersionTwoKey() {
+        RemoteIMProtocolMetadata.Metadata above = RemoteIMProtocolMetadata.decodeMetadata(
+            "{\"namespace\":\"multi-ai-code\",\"version\":2,\"origin\":\"human\","
+                + "\"captionAbove\":true}"
+        );
+        RemoteIMProtocolMetadata.Metadata missing = RemoteIMProtocolMetadata.decodeMetadata(
+            "{\"namespace\":\"multi-ai-code\",\"version\":2,\"origin\":\"human\"}"
+        );
+        RemoteIMProtocolMetadata.Metadata wrongType = RemoteIMProtocolMetadata.decodeMetadata(
+            "{\"namespace\":\"multi-ai-code\",\"version\":2,\"origin\":\"human\","
+                + "\"captionAbove\":\"true\"}"
+        );
+
+        assertTrue(above.captionAbove());
+        assertFalse(missing.captionAbove());
+        assertFalse(wrongType.captionAbove());
+        assertEquals(2, RemoteIMProtocolMetadata.VERSION);
+        assertFalse(RemoteIMProtocolMetadata.encode(RemoteIMOrigin.HUMAN).contains("captionAbove"));
     }
 
     @Test

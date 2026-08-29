@@ -112,6 +112,11 @@ function getRemoteImImageSource(value: string | null | undefined): string | null
   return source
 }
 
+function RemoteImAttachmentCaption(props: { message: RemoteImMessage }): JSX.Element | null {
+  const caption = props.message.caption?.trim()
+  return caption ? <RemoteImMarkdown content={caption} /> : null
+}
+
 function RemoteImImageMessage(props: { message: RemoteImMessage }): JSX.Element {
   const attachment = props.message.attachment?.type === 'image' ? props.message.attachment : null
   const imageSource = getRemoteImImageSource(
@@ -121,6 +126,7 @@ function RemoteImImageMessage(props: { message: RemoteImMessage }): JSX.Element 
 
   return (
     <div className="remote-im-image-message">
+      {props.message.captionAbove === true ? <RemoteImAttachmentCaption message={props.message} /> : null}
       {imageSource ? (
         <img
           className="remote-im-image-preview"
@@ -132,6 +138,7 @@ function RemoteImImageMessage(props: { message: RemoteImMessage }): JSX.Element 
         <div className="remote-im-image-placeholder">图片暂不可预览</div>
       )}
       <div className="remote-im-image-caption">{fileName || props.message.content}</div>
+      {props.message.captionAbove !== true ? <RemoteImAttachmentCaption message={props.message} /> : null}
     </div>
   )
 }
@@ -165,20 +172,19 @@ function RemoteImFileMessage(props: {
         ? '视频'
         : '文件'
 
-  return (
-    <button
-      type="button"
-      className="remote-im-file-message"
-      disabled={!canPreview}
-      onClick={() => props.onPreview(props.message)}
-      title={canPreview ? '点击预览文件' : '文件暂不可预览'}
-    >
+  const card = (
+    <button type="button" className="remote-im-file-message" disabled={!canPreview}
+      onClick={() => props.onPreview(props.message)} title={canPreview ? '点击预览文件' : '文件暂不可预览'}>
       <span className="remote-im-file-icon">{isVideo ? '视' : '文'}</span>
-      <span className="remote-im-file-info">
-        <strong>{fileName || '文件消息'}</strong>
-        <em>{typeLabel}</em>
-      </span>
+      <span className="remote-im-file-info"><strong>{fileName || '文件消息'}</strong><em>{typeLabel}</em></span>
     </button>
+  )
+  return (
+    <div className="remote-im-attachment-message">
+      {props.message.captionAbove === true ? <RemoteImAttachmentCaption message={props.message} /> : null}
+      {card}
+      {props.message.captionAbove !== true ? <RemoteImAttachmentCaption message={props.message} /> : null}
+    </div>
   )
 }
 
@@ -209,6 +215,7 @@ function RemoteImVideoMessage(props: { message: RemoteImMessage }): JSX.Element 
 
   return (
     <div className="remote-im-video-message">
+      {props.message.captionAbove === true ? <RemoteImAttachmentCaption message={props.message} /> : null}
       <div className="remote-im-video-poster">
         {posterSource ? (
           <img src={posterSource} alt={fileName || '视频消息'} loading="lazy" />
@@ -221,6 +228,7 @@ function RemoteImVideoMessage(props: { message: RemoteImMessage }): JSX.Element 
         <strong>{fileName || '视频消息'}</strong>
         <em>{meta.length > 0 ? `视频 · ${meta.join(' · ')}` : '视频'}</em>
       </div>
+      {props.message.captionAbove !== true ? <RemoteImAttachmentCaption message={props.message} /> : null}
     </div>
   )
 }

@@ -227,7 +227,7 @@ final class LocalChatHistoryStore {
                 sql: """
                 SELECT id, remote_id, from_user, to_user, text, direction, status, created_at,
                        voice_attachment, image_attachment, file_attachment, video_attachment,
-                       approval_request, approval_decision
+                       approval_request, approval_decision, caption_above
                 FROM messages
                 WHERE sdk_app_id = ? AND owner_user_id = ?
                   AND peer_user_id = ?
@@ -295,7 +295,7 @@ final class LocalChatHistoryStore {
                 sql: """
                 SELECT id, remote_id, from_user, to_user, text, direction, status, created_at,
                        voice_attachment, image_attachment, file_attachment, video_attachment,
-                       approval_request, approval_decision
+                       approval_request, approval_decision, caption_above
                 FROM messages
                 WHERE sdk_app_id = ? AND owner_user_id = ? AND peer_user_id = ?
                 ORDER BY created_at DESC, id DESC
@@ -489,6 +489,7 @@ final class LocalChatHistoryStore {
                   video_attachment = excluded.video_attachment,
                   approval_request = excluded.approval_request,
                   approval_decision = excluded.approval_decision,
+                  caption_above = excluded.caption_above,
                   peer_user_id = excluded.peer_user_id
               """
             : "DO NOTHING"
@@ -499,8 +500,8 @@ final class LocalChatHistoryStore {
                 sdk_app_id, owner_user_id, id, remote_id, from_user, to_user, text,
                 direction, status, created_at,
                 voice_attachment, image_attachment, file_attachment, video_attachment,
-                approval_request, approval_decision, peer_user_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                approval_request, approval_decision, caption_above, peer_user_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(sdk_app_id, owner_user_id, id) \(conflictClause)
             """
         )
@@ -580,10 +581,11 @@ final class LocalChatHistoryStore {
             try bindOptionalJSON(persistedVideoAttachment, to: statement, at: 14, database: database)
             try bindOptionalJSON(message.approvalRequest, to: statement, at: 15, database: database)
             try bindOptionalJSON(message.approvalDecision, to: statement, at: 16, database: database)
+            sqlite3_bind_int(statement, 17, message.captionAbove ? 1 : 0)
             let peerUserID = message.fromUserID == ownerUserID
                 ? message.toUserID
                 : message.fromUserID
-            try bindText(peerUserID, to: statement, at: 17, database: database)
+            try bindText(peerUserID, to: statement, at: 18, database: database)
             guard sqlite3_step(statement) == SQLITE_DONE else {
                 throw databaseError(database)
             }
@@ -678,6 +680,7 @@ final class LocalChatHistoryStore {
             fromUserID: textColumn(statement, at: 2),
             toUserID: textColumn(statement, at: 3),
             text: textColumn(statement, at: 4),
+            captionAbove: sqlite3_column_int(statement, 14) != 0,
             voiceAttachment: voiceAttachment,
             imageAttachment: imageAttachment,
             fileAttachment: fileAttachment,
@@ -740,6 +743,7 @@ final class LocalChatHistoryStore {
                 video_attachment TEXT,
                 approval_request TEXT,
                 approval_decision TEXT,
+                caption_above INTEGER NOT NULL DEFAULT 0,
                 peer_user_id TEXT,
                 PRIMARY KEY (sdk_app_id, owner_user_id, id)
             )
@@ -759,6 +763,12 @@ final class LocalChatHistoryStore {
         }
         if try !columnExists("approval_decision", in: "messages", database: database) {
             try execute(database, sql: "ALTER TABLE messages ADD COLUMN approval_decision TEXT")
+        }
+        if try !columnExists("caption_above", in: "messages", database: database) {
+            try execute(
+                database,
+                sql: "ALTER TABLE messages ADD COLUMN caption_above INTEGER NOT NULL DEFAULT 0"
+            )
         }
         if previousSchemaVersion < 3 {
             try execute(
@@ -794,8 +804,8 @@ final class LocalChatHistoryStore {
             ON messages(sdk_app_id, owner_user_id, peer_user_id, created_at DESC, id DESC)
             """
         )
-        if previousSchemaVersion < 6 {
-            try execute(database, sql: "PRAGMA user_version = 6")
+        if previousSchemaVersion < 7 {
+            try execute(database, sql: "PRAGMA user_version = 7")
         }
     }
 

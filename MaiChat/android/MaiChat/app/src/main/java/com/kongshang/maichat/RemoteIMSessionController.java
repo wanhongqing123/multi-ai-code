@@ -657,7 +657,9 @@ public final class RemoteIMSessionController {
                 image.sizeBytes(),
                 incoming.remoteId(),
                 incoming.createdAtMillis(),
-                incoming.origin()
+                incoming.origin(),
+                incoming.text(),
+                incoming.captionAbove()
             );
         } else if (incoming.voiceAttachment() != null) {
             RemoteIMVoiceAttachment voice = incoming.voiceAttachment();
@@ -681,7 +683,9 @@ public final class RemoteIMSessionController {
                 incoming.fromUserId(),
                 incoming.remoteId(),
                 incoming.createdAtMillis(),
-                incoming.origin()
+                incoming.origin(),
+                incoming.text(),
+                incoming.captionAbove()
             );
         } else if (incoming.fileAttachment() != null) {
             RemoteIMFileAttachment file = incoming.fileAttachment();
@@ -693,7 +697,9 @@ public final class RemoteIMSessionController {
                 file.sizeBytes(),
                 incoming.remoteId(),
                 incoming.createdAtMillis(),
-                incoming.origin()
+                incoming.origin(),
+                incoming.text(),
+                incoming.captionAbove()
             );
         } else {
             message = chatState.receiveText(

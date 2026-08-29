@@ -170,6 +170,9 @@ export interface RemoteImMessage {
   content: string
   kind: RemoteImMessageKind
   attachment: RemoteImMessageAttachment | null
+  caption?: string | null
+  /** Missing/false = attachment first; true = caption first. Caption presence is `caption`. */
+  captionAbove?: boolean
   status: RemoteImMessageStatus
   error: string | null
   createdAt: number
@@ -246,6 +249,7 @@ export interface RemoteImIncomingImageMessage {
   mimeType?: string | null
   // 同一条多元素消息里随图片一起发来的配文。图片下载后与配文合并成「一次」AICLI 输入。
   caption?: string | null
+  captionAbove?: boolean
   /** Missing/invalid wire metadata is intentionally left undefined for the host policy. */
   origin?: RemoteImMessageOrigin
   createdAt?: number
@@ -263,6 +267,7 @@ export interface RemoteImIncomingFileMessage {
   mimeType?: string | null
   // 同一条多元素消息里随文件一起发来的配文，与图片同样合并成「一次」AICLI 输入。
   caption?: string | null
+  captionAbove?: boolean
   /** Missing/invalid wire metadata is intentionally left undefined for the host policy. */
   origin?: RemoteImMessageOrigin
   createdAt?: number

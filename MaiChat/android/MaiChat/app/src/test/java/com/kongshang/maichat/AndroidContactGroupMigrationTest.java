@@ -42,6 +42,29 @@ public class AndroidContactGroupMigrationTest {
             "INSERT INTO contacts(owner_id,user_id,display_name) "
                 + "VALUES('owner-1','peer-1','旧联系人')"
         );
+        // v3 的真实库一定已有 messages；把前四版的列完整列出，才能同时验证
+        // v3→v4 联系人分组与 v4→v5 caption_above 两段迁移都不重建历史。
+        legacy.execSQL(
+            "CREATE TABLE messages ("
+                + "owner_id TEXT NOT NULL,id TEXT NOT NULL,remote_id TEXT NOT NULL DEFAULT '',"
+                + "peer_id TEXT NOT NULL,from_id TEXT NOT NULL,to_id TEXT NOT NULL,"
+                + "body TEXT NOT NULL,direction TEXT NOT NULL,status TEXT NOT NULL,created_at INTEGER NOT NULL,"
+                + "image_path TEXT NOT NULL DEFAULT '',image_width INTEGER NOT NULL DEFAULT 0,"
+                + "image_height INTEGER NOT NULL DEFAULT 0,image_size INTEGER NOT NULL DEFAULT 0,"
+                + "voice_path TEXT NOT NULL DEFAULT '',voice_duration INTEGER NOT NULL DEFAULT 0,"
+                + "file_path TEXT NOT NULL DEFAULT '',file_name TEXT NOT NULL DEFAULT '',"
+                + "file_mime TEXT NOT NULL DEFAULT '',file_size INTEGER NOT NULL DEFAULT 0,"
+                + "origin TEXT NOT NULL DEFAULT 'human',video_path TEXT NOT NULL DEFAULT '',"
+                + "video_cover_path TEXT NOT NULL DEFAULT '',video_duration INTEGER NOT NULL DEFAULT 0,"
+                + "video_width INTEGER NOT NULL DEFAULT 0,video_height INTEGER NOT NULL DEFAULT 0,"
+                + "video_size INTEGER NOT NULL DEFAULT 0,approval_request_token TEXT NOT NULL DEFAULT '',"
+                + "approval_request_actions TEXT NOT NULL DEFAULT '',approval_decision_token TEXT NOT NULL DEFAULT '',"
+                + "approval_decision_action TEXT NOT NULL DEFAULT '',PRIMARY KEY(owner_id,id))"
+        );
+        legacy.execSQL(
+            "INSERT INTO messages(owner_id,id,peer_id,from_id,to_id,body,direction,status,created_at) "
+                + "VALUES('owner-1','legacy-1','peer-1','peer-1','owner-1','旧消息','INCOMING','RECEIVED',100)"
+        );
         legacy.setVersion(3);
         legacy.close();
 
@@ -50,6 +73,22 @@ public class AndroidContactGroupMigrationTest {
         assertEquals(1, migrated.size());
         assertEquals("旧联系人", migrated.get(0).displayName());
         assertEquals("", migrated.get(0).groupName());
+        List<RemoteIMMessage> legacyMessages =
+            store.loadConversationPage("owner-1", "peer-1", null, null, 20).messages();
+        assertEquals(1, legacyMessages.size());
+        assertFalse(legacyMessages.get(0).captionAbove());
+
+        RemoteIMMessage captioned = new RemoteIMMessage(
+            "caption-1", "remote-caption-1", "peer-1", "owner-1", "说明在上面",
+            RemoteIMMessage.Direction.INCOMING, RemoteIMMessage.Status.RECEIVED, 200L,
+            null, null, null, null, RemoteIMOrigin.HUMAN
+        );
+        captioned.setCaptionAbove(true);
+        store.upsertMessage("owner-1", captioned);
+        assertTrue(
+            store.loadConversationPage("owner-1", "peer-1", null, null, 20)
+                .messages().get(1).captionAbove()
+        );
 
         assertTrue(store.createContactGroup("owner-1", "同事"));
         assertTrue(store.createContactGroup("owner-1", "未分组"));
@@ -78,7 +117,7 @@ public class AndroidContactGroupMigrationTest {
         assertEquals("", store.loadContacts("owner-1").get(0).groupName());
         store.close();
 
-        // 重新打开后仍是 v4 数据，证明迁移与后续写入都已真正落库。
+        // 重新打开后仍是 v5 数据，证明迁移与后续写入都已真正落库。
         AndroidChatHistoryStore reopened = new AndroidChatHistoryStore(context, databaseName);
         assertEquals(List.of("未分组"), reopened.loadContactGroups("owner-1"));
         assertEquals(1, reopened.loadContacts("owner-1").size());

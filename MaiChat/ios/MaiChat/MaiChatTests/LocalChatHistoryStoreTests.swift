@@ -55,6 +55,33 @@ final class LocalChatHistoryStoreTests: XCTestCase {
         )
     }
 
+    func testPersistsAttachmentCaptionPlacementAndDefaultsLegacyRowsBelow() throws {
+        let directoryURL = makeTemporaryDirectoryURL()
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+        let store = LocalChatHistoryStore(baseDirectoryURL: directoryURL)
+        let captioned = RemoteIMMessage(
+            fromUserID: "mac-quark-pc",
+            toUserID: "ios-master",
+            text: "文字在上面",
+            captionAbove: true,
+            imageAttachment: RemoteIMImageAttachment(
+                localFilePath: "/tmp/captioned.png",
+                remoteID: "captioned-1"
+            ),
+            direction: .incoming,
+            status: .received,
+            createdAt: Date(timeIntervalSince1970: 300.5)
+        )
+
+        try persist([captioned], in: store)
+        let restored = try XCTUnwrap(
+            conversationMessages(in: store, peerUserID: "mac-quark-pc").first
+        )
+        XCTAssertEqual(restored.text, "文字在上面")
+        XCTAssertTrue(restored.captionAbove)
+        XCTAssertNotNil(restored.imageAttachment)
+    }
+
     func testPersistsStructuredApprovalRequestWithoutParsingMessageText() throws {
         let directoryURL = makeTemporaryDirectoryURL()
         defer { try? FileManager.default.removeItem(at: directoryURL) }
@@ -426,14 +453,14 @@ final class LocalChatHistoryStoreTests: XCTestCase {
         let openedVersionStatement = try XCTUnwrap(versionStatement)
         defer { sqlite3_finalize(openedVersionStatement) }
         XCTAssertEqual(sqlite3_step(openedVersionStatement), SQLITE_ROW)
-        XCTAssertEqual(sqlite3_column_int(openedVersionStatement, 0), 6)
+        XCTAssertEqual(sqlite3_column_int(openedVersionStatement, 0), 7)
 
         var columnStatement: OpaquePointer?
         XCTAssertEqual(
             sqlite3_prepare_v2(
                 migratedDatabase,
                 "SELECT COUNT(*) FROM pragma_table_info('messages') " +
-                    "WHERE name IN ('video_attachment', 'approval_decision')",
+                    "WHERE name IN ('video_attachment', 'approval_decision', 'caption_above')",
                 -1,
                 &columnStatement,
                 nil
@@ -443,7 +470,7 @@ final class LocalChatHistoryStoreTests: XCTestCase {
         let openedColumnStatement = try XCTUnwrap(columnStatement)
         defer { sqlite3_finalize(openedColumnStatement) }
         XCTAssertEqual(sqlite3_step(openedColumnStatement), SQLITE_ROW)
-        XCTAssertEqual(sqlite3_column_int(openedColumnStatement, 0), 2)
+        XCTAssertEqual(sqlite3_column_int(openedColumnStatement, 0), 3)
 
         var approvalColumnStatement: OpaquePointer?
         XCTAssertEqual(

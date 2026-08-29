@@ -27,6 +27,8 @@ struct IncomingRemoteIMImage: Equatable {
     let width: Int?
     let height: Int?
     let sizeBytes: Int?
+    let caption: String?
+    let captionAbove: Bool
     let origin: RemoteIMMessageOrigin?
     let createdAt: Date
 }
@@ -38,6 +40,8 @@ struct IncomingRemoteIMFile: Equatable {
     let mimeType: String
     let remoteID: String?
     let sizeBytes: Int?
+    let caption: String?
+    let captionAbove: Bool
     let origin: RemoteIMMessageOrigin?
     let createdAt: Date
 }
@@ -50,6 +54,8 @@ struct IncomingRemoteIMVideo: Equatable {
     let width: Int
     let height: Int
     let sizeBytes: Int64
+    let caption: String?
+    let captionAbove: Bool
     let remoteID: String?
     let origin: RemoteIMMessageOrigin?
     let createdAt: Date

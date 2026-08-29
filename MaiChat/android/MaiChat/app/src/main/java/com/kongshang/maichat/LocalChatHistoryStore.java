@@ -150,6 +150,8 @@ public final class LocalChatHistoryStore {
         writer.write(message.approvalDecision() == null
             ? ""
             : message.approvalDecision().action().wireValue());
+        writer.write('\t');
+        writer.write(message.captionAbove() ? "1" : "0");
         writer.newLine();
     }
 
@@ -209,7 +211,7 @@ public final class LocalChatHistoryStore {
             ? approvalDecision(decode(parts[27]), parts[28])
             : null;
 
-        return new RemoteIMMessage(
+        RemoteIMMessage message = new RemoteIMMessage(
             decode(parts[1]),
             null,
             decode(parts[2]),
@@ -226,6 +228,8 @@ public final class LocalChatHistoryStore {
             approvalRequest,
             approvalDecision
         );
+        message.setCaptionAbove(parts.length >= 30 && "1".equals(parts[29]));
+        return message;
     }
 
     private static String approvalActions(List<RemoteIMApprovalAction> actions) {

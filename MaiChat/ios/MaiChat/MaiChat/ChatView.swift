@@ -1421,42 +1421,80 @@ private struct MessageBubbleView: View {
         message.direction == .outgoing ? nil : incomingRelation.displayName
     }
 
+    private var attachmentCaption: String? {
+        guard message.imageAttachment != nil || message.fileAttachment != nil
+            || message.videoAttachment != nil || message.voiceAttachment != nil else { return nil }
+        let clean = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty,
+              !clean.hasPrefix("[图片消息]"),
+              !clean.hasPrefix("[文件消息]"),
+              !clean.hasPrefix("[视频消息"),
+              !clean.hasPrefix("[语音消息") else { return nil }
+        return clean
+    }
+
+    @ViewBuilder private var attachmentCaptionView: some View {
+        if let attachmentCaption {
+            MarkdownLikeText(attachmentCaption)
+                .font(.system(size: 13, weight: .regular))
+                .lineSpacing(3)
+                .foregroundStyle(RemoteIMStyle.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     private var messageContent: some View {
         HStack(alignment: .bottom, spacing: 10) {
             Group {
                 if let videoAttachment = message.videoAttachment {
-                    let fileState = RemoteIMVideoFileState(
-                        attachment: videoAttachment,
-                        isDownloadingHint: isVideoDownloading
-                    )
-                    Button(action: previewVideo) {
-                        VideoBubbleContent(
+                    VStack(alignment: .leading, spacing: 8) {
+                        if message.captionAbove { attachmentCaptionView }
+                        let fileState = RemoteIMVideoFileState(
                             attachment: videoAttachment,
-                            isIncoming: message.direction == .incoming,
-                            fileState: fileState
+                            isDownloadingHint: isVideoDownloading
                         )
+                        Button(action: previewVideo) {
+                            VideoBubbleContent(
+                                attachment: videoAttachment,
+                                isIncoming: message.direction == .incoming,
+                                fileState: fileState
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!fileState.isPlayable)
+                        .accessibilityIdentifier("remote-im-video-bubble")
+                        if !message.captionAbove { attachmentCaptionView }
                     }
-                    .buttonStyle(.plain)
-                    .disabled(!fileState.isPlayable)
-                    .accessibilityIdentifier("remote-im-video-bubble")
                 } else if let imageAttachment = message.imageAttachment {
-                    Button(action: previewImage) {
-                        ImageBubbleContent(attachment: imageAttachment)
+                    VStack(alignment: .leading, spacing: 8) {
+                        if message.captionAbove { attachmentCaptionView }
+                        Button(action: previewImage) {
+                            ImageBubbleContent(attachment: imageAttachment)
+                        }
+                        .buttonStyle(.plain)
+                        if !message.captionAbove { attachmentCaptionView }
                     }
-                    .buttonStyle(.plain)
                 } else if let fileAttachment = message.fileAttachment {
-                    Button(action: previewFile) {
-                        FileBubbleContent(attachment: fileAttachment)
+                    VStack(alignment: .leading, spacing: 8) {
+                        if message.captionAbove { attachmentCaptionView }
+                        Button(action: previewFile) {
+                            FileBubbleContent(attachment: fileAttachment)
+                        }
+                        .buttonStyle(.plain)
+                        if !message.captionAbove { attachmentCaptionView }
                     }
-                    .buttonStyle(.plain)
                 } else if let voiceAttachment = message.voiceAttachment {
-                    Button(action: playVoice) {
-                        VoiceBubbleContent(
-                            attachment: voiceAttachment,
-                            isPlaying: isVoicePlaying
-                        )
+                    VStack(alignment: .leading, spacing: 8) {
+                        if message.captionAbove { attachmentCaptionView }
+                        Button(action: playVoice) {
+                            VoiceBubbleContent(
+                                attachment: voiceAttachment,
+                                isPlaying: isVoicePlaying
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        if !message.captionAbove { attachmentCaptionView }
                     }
-                    .buttonStyle(.plain)
                 } else if let approvalRequest = message.approvalRequest {
                     VStack(alignment: .leading, spacing: 12) {
                         MarkdownLikeText(message.text)

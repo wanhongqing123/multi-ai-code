@@ -179,6 +179,7 @@ public class AndroidChatHistoryStoreInstrumentedTest {
         assertEquals(1, messages.size());
         assertEquals("旧消息", messages.get(0).text());
         assertNull(messages.get(0).videoAttachment());
+        assertFalse(messages.get(0).captionAbove());
         assertEquals(1, store.loadContacts("owner-1").size());
         assertEquals("", store.loadContacts("owner-1").get(0).groupName());
         assertTrue(store.createContactGroup("owner-1", "同事"));

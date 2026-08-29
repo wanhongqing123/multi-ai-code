@@ -69,6 +69,8 @@ CREATE TABLE IF NOT EXISTS remote_im_messages (
   content           TEXT NOT NULL,
   kind              TEXT NOT NULL DEFAULT 'text',
   attachment_json   TEXT,
+  caption           TEXT,
+  caption_above     INTEGER NOT NULL DEFAULT 0,
   status            TEXT NOT NULL,
   error             TEXT,
   created_at        INTEGER NOT NULL,
@@ -118,6 +120,8 @@ export function initDb(): Database.Database {
   ensureColumn(db, 'scheduled_tasks', 'image_attachments', "TEXT NOT NULL DEFAULT '[]'")
   ensureColumn(db, 'remote_im_messages', 'kind', "TEXT NOT NULL DEFAULT 'text'")
   ensureColumn(db, 'remote_im_messages', 'attachment_json', 'TEXT')
+  ensureColumn(db, 'remote_im_messages', 'caption', 'TEXT')
+  ensureColumn(db, 'remote_im_messages', 'caption_above', 'INTEGER NOT NULL DEFAULT 0')
   try {
     db.prepare('DROP INDEX IF EXISTS idx_managed_chrome_sessions_running').run()
     db.prepare('DROP TABLE IF EXISTS managed_chrome_sessions').run()
@@ -214,4 +218,3 @@ export function listProjects(): ProjectRow[] {
     .prepare(`SELECT * FROM projects ORDER BY updated_at DESC`)
     .all() as ProjectRow[]
 }
-

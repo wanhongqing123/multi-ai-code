@@ -14,15 +14,18 @@ public final class RemoteIMProtocolMetadata {
         private final RemoteIMOrigin origin;
         private final RemoteIMApprovalRequest approvalRequest;
         private final RemoteIMApprovalDecision approvalDecision;
+        private final boolean captionAbove;
 
         Metadata(
             RemoteIMOrigin origin,
             RemoteIMApprovalRequest approvalRequest,
-            RemoteIMApprovalDecision approvalDecision
+            RemoteIMApprovalDecision approvalDecision,
+            boolean captionAbove
         ) {
             this.origin = origin == null ? RemoteIMOrigin.MACHINE : origin;
             this.approvalRequest = approvalRequest;
             this.approvalDecision = approvalDecision;
+            this.captionAbove = captionAbove;
         }
 
         public RemoteIMOrigin origin() {
@@ -36,6 +39,10 @@ public final class RemoteIMProtocolMetadata {
         public RemoteIMApprovalDecision approvalDecision() {
             return approvalDecision;
         }
+
+        public boolean captionAbove() {
+            return captionAbove;
+        }
     }
 
     private static final class WireMetadata {
@@ -43,6 +50,7 @@ public final class RemoteIMProtocolMetadata {
         int version;
         String origin;
         WireInteraction interaction;
+        Object captionAbove;
     }
 
     private static final class WireInteraction {
@@ -96,7 +104,8 @@ public final class RemoteIMProtocolMetadata {
             return machineMetadata();
         }
         RemoteIMOrigin origin = RemoteIMOrigin.fromWireValue(wire.origin);
-        if (wire.interaction == null) return new Metadata(origin, null, null);
+        boolean captionAbove = Boolean.TRUE.equals(wire.captionAbove);
+        if (wire.interaction == null) return new Metadata(origin, null, null, captionAbove);
 
         WireInteraction interaction = wire.interaction;
         if ("approval-request".equals(interaction.kind)
@@ -113,7 +122,8 @@ public final class RemoteIMProtocolMetadata {
                 return new Metadata(
                     origin,
                     new RemoteIMApprovalRequest(interaction.token, actions),
-                    null
+                    null,
+                    captionAbove
                 );
             } catch (IllegalArgumentException error) {
                 return machineMetadata();
@@ -131,7 +141,8 @@ public final class RemoteIMProtocolMetadata {
                 return new Metadata(
                     origin,
                     null,
-                    new RemoteIMApprovalDecision(interaction.token, action)
+                    new RemoteIMApprovalDecision(interaction.token, action),
+                    captionAbove
                 );
             } catch (IllegalArgumentException error) {
                 return machineMetadata();
@@ -153,7 +164,8 @@ public final class RemoteIMProtocolMetadata {
                 return new Metadata(
                     origin,
                     null,
-                    new RemoteIMApprovalDecision(interaction.token, action)
+                    new RemoteIMApprovalDecision(interaction.token, action),
+                    captionAbove
                 );
             } catch (IllegalArgumentException error) {
                 return machineMetadata();
@@ -191,6 +203,6 @@ public final class RemoteIMProtocolMetadata {
     }
 
     private static Metadata machineMetadata() {
-        return new Metadata(RemoteIMOrigin.MACHINE, null, null);
+        return new Metadata(RemoteIMOrigin.MACHINE, null, null, false);
     }
 }

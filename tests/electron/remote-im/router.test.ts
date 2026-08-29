@@ -1506,6 +1506,7 @@ describe('remote IM router', () => {
       fileName: 'photo.png',
       mimeType: 'image/png',
       caption: '帮我看看这张报错截图',
+      captionAbove: true,
       createdAt: 100
     })
 
@@ -1519,7 +1520,9 @@ describe('remote IM router', () => {
     expect(store.messages[0]).toMatchObject({
       kind: 'image',
       status: 'sent-to-aicli',
-      content: '[图片消息] photo.png\n帮我看看这张报错截图'
+      content: '[图片消息] photo.png\n帮我看看这张报错截图',
+      caption: '帮我看看这张报错截图',
+      captionAbove: true
     })
   })
 

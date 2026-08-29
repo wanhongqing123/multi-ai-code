@@ -3,6 +3,7 @@ package com.kongshang.maichat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
 
@@ -79,6 +80,24 @@ public class LocalChatHistoryStoreTest {
     }
 
     @Test
+    public void attachmentCaptionPlacementSurvivesRestart() throws Exception {
+        Path root = Files.createTempDirectory("maichat-android-caption-history");
+        LocalChatHistoryStore store = new LocalChatHistoryStore(root.toFile());
+        ChatState state = new ChatState("android-user");
+        RemoteIMMessage message = state.receiveImage(
+            "/tmp/photo.png", "mac-office", 640, 480, 4096,
+            "caption-remote-1", 200L, RemoteIMOrigin.HUMAN,
+            "先看说明", true
+        );
+
+        store.save(state);
+        RemoteIMMessage restored = store.load("android-user").messagesWith("mac-office").get(0);
+        assertEquals(message.text(), restored.text());
+        assertTrue(restored.captionAbove());
+        assertNotNull(restored.imageAttachment());
+    }
+
+    @Test
     public void readsHistoryWrittenBeforeVideoColumnsExisted() throws Exception {
         // 老版本写下的行没有视频那几列。加列不能让用户已有的历史读不出来，
         // 所以这里直接喂一条老格式的行（18 列），断言仍能正常还原。
@@ -107,6 +126,7 @@ public class LocalChatHistoryStoreTest {
         assertEquals(1, messages.size());
         assertEquals("旧消息", messages.get(0).text());
         assertNull(messages.get(0).videoAttachment());
+        assertEquals(false, messages.get(0).captionAbove());
     }
 
     @Test

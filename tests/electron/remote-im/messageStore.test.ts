@@ -14,6 +14,8 @@ interface FakeRow {
   content: string
   kind?: 'text' | 'image' | 'file' | 'video'
   attachment_json?: string | null
+  caption?: string | null
+  caption_above?: number | null
   status: 'received' | 'rejected' | 'sent-to-aicli' | 'streaming' | 'sent-to-im' | 'failed'
   error: string | null
   created_at: number
@@ -30,6 +32,7 @@ function createFakeDatabase(seedRows: FakeRow[] = []): RemoteImDatabase {
         return {
           run: (...args: unknown[]) => {
             const hasAttachmentColumns = args.length >= 16
+            const hasCaptionColumns = args.length >= 18
             rows.push({
               id: nextId,
               project_id: args[0] as string | null,
@@ -43,11 +46,13 @@ function createFakeDatabase(seedRows: FakeRow[] = []): RemoteImDatabase {
               content: args[8] as string,
               kind: hasAttachmentColumns ? (args[9] as FakeRow['kind']) : 'text',
               attachment_json: hasAttachmentColumns ? (args[10] as string | null) : null,
-              status: (hasAttachmentColumns ? args[11] : args[9]) as FakeRow['status'],
-              error: (hasAttachmentColumns ? args[12] : args[10]) as string | null,
-              created_at: (hasAttachmentColumns ? args[13] : args[11]) as number,
-              sent_to_aicli_at: (hasAttachmentColumns ? args[14] : args[12]) as number | null,
-              sent_to_im_at: (hasAttachmentColumns ? args[15] : args[13]) as number | null
+              caption: hasCaptionColumns ? (args[11] as string | null) : null,
+              caption_above: hasCaptionColumns ? (args[12] as number | null) : null,
+              status: (hasCaptionColumns ? args[13] : hasAttachmentColumns ? args[11] : args[9]) as FakeRow['status'],
+              error: (hasCaptionColumns ? args[14] : hasAttachmentColumns ? args[12] : args[10]) as string | null,
+              created_at: (hasCaptionColumns ? args[15] : hasAttachmentColumns ? args[13] : args[11]) as number,
+              sent_to_aicli_at: (hasCaptionColumns ? args[16] : hasAttachmentColumns ? args[14] : args[12]) as number | null,
+              sent_to_im_at: (hasCaptionColumns ? args[17] : hasAttachmentColumns ? args[15] : args[13]) as number | null
             })
             return { lastInsertRowid: nextId++ }
           },
@@ -175,7 +180,9 @@ describe('remote IM message store', () => {
     expect(message).toMatchObject({
       content: 'hello',
       kind: 'text',
-      attachment: null
+      attachment: null,
+      caption: null,
+      captionAbove: false
     })
   })
 
@@ -223,12 +230,16 @@ describe('remote IM message store', () => {
       status: 'received',
       createdAt: 100,
       kind: 'image',
-      attachment
+      attachment,
+      caption: '先看这句说明',
+      captionAbove: true
     } as any)
 
     expect(store.listById(message.id)).toMatchObject({
       kind: 'image',
-      attachment
+      attachment,
+      caption: '先看这句说明',
+      captionAbove: true
     })
   })
 
@@ -310,6 +321,8 @@ describe('remote IM message store', () => {
           content: '[图片消息]',
           kind: 'image',
           attachment_json: '{bad-json',
+          caption: null,
+          caption_above: null,
           status: 'received',
           error: null,
           created_at: 100,
@@ -321,7 +334,9 @@ describe('remote IM message store', () => {
 
     expect(store.listById(1)).toMatchObject({
       kind: 'image',
-      attachment: null
+      attachment: null,
+      caption: null,
+      captionAbove: false
     })
   })
 

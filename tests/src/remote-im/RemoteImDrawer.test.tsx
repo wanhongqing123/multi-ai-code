@@ -208,6 +208,45 @@ describe('RemoteImDrawer', () => {
     expect(html).toContain('photo.png')
   })
 
+  it('renders real attachment captions on the metadata-selected side of the image', () => {
+    const makeHtml = (captionAbove?: boolean) =>
+      renderDrawer({
+        messages: [
+          {
+            ...messages[1],
+            id: captionAbove ? 24 : 25,
+            content: '[图片消息] photo.png',
+            kind: 'image',
+            caption: '这才是真正的图片配文',
+            ...(captionAbove === undefined ? {} : { captionAbove }),
+            attachment: {
+              type: 'image',
+              localPath: '/tmp/photo.png',
+              remoteUrl: null,
+              thumbnailUrl: null,
+              width: 640,
+              height: 480,
+              sizeBytes: 4096,
+              fileName: 'photo.png',
+              mimeType: 'image/png',
+              sdkImageId: null
+            }
+          }
+        ]
+      })
+
+    const above = makeHtml(true)
+    // Wire metadata missing means the default placement below, not a third state.
+    const below = makeHtml()
+    expect(above).toContain('这才是真正的图片配文')
+    expect(above.indexOf('这才是真正的图片配文')).toBeLessThan(
+      above.indexOf('class="remote-im-image-preview"')
+    )
+    expect(below.indexOf('这才是真正的图片配文')).toBeGreaterThan(
+      below.indexOf('class="remote-im-image-preview"')
+    )
+  })
+
   it('renders video messages as a video card with duration and size', () => {
     const html = renderDrawer({
       messages: [

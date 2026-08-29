@@ -277,6 +277,43 @@ final class MasterChatStateTests: XCTestCase {
         )
     }
 
+    func testCaptionPlacementMetadataIsOptionalAndDoesNotBumpProtocolVersion() throws {
+        let above = RemoteIMCloudMetadata(origin: .human, captionAbove: true)
+        let aboveData = RemoteIMCloudMetadataCodec.encode(above)
+        let aboveObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: aboveData) as? [String: Any]
+        )
+        XCTAssertEqual(aboveObject["version"] as? Int, 2)
+        XCTAssertEqual(aboveObject["captionAbove"] as? Bool, true)
+        XCTAssertEqual(RemoteIMCloudMetadataCodec.decode(aboveData), above)
+
+        let defaultMetadata = RemoteIMCloudMetadata(origin: .human)
+        let defaultData = RemoteIMCloudMetadataCodec.encode(defaultMetadata)
+        let defaultObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: defaultData) as? [String: Any]
+        )
+        XCTAssertNil(defaultObject["captionAbove"])
+        XCTAssertEqual(RemoteIMCloudMetadataCodec.decode(defaultData)?.captionAbove, false)
+        XCTAssertEqual(
+            RemoteIMCloudMetadataCodec.decode(Data(
+                #"{"namespace":"multi-ai-code","version":2,"origin":"human"}"#.utf8
+            ))?.captionAbove,
+            false
+        )
+    }
+
+    func testRemoteMessageDecodesLegacyHistoryWithoutCaptionPlacement() throws {
+        let legacyJSON = #"{"id":"44444444-4444-4444-4444-444444444444","fromUserID":"mac","toUserID":"ios","text":"[图片消息] photo.png","direction":"incoming","status":"received","createdAt":0}"#
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        let message = try decoder.decode(RemoteIMMessage.self, from: Data(legacyJSON.utf8))
+
+        XCTAssertFalse(message.captionAbove)
+        let encoded = try JSONEncoder().encode(message)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        XCTAssertNil(object["captionAbove"])
+    }
+
     func testApprovalCloudMetadataRejectsOldOrWrongDirectionProtocols() {
         XCTAssertNil(RemoteIMCloudMetadataCodec.decode(Data(
             #"{"namespace":"multi-ai-code","version":1,"origin":"machine"}"#.utf8
@@ -586,6 +623,23 @@ final class MasterChatStateTests: XCTestCase {
         XCTAssertEqual(message.status, .received)
         XCTAssertEqual(message.createdAt, Date(timeIntervalSince1970: 160))
         XCTAssertEqual(state.contacts.map(\.userID), ["mac-quark-pc"])
+    }
+
+    func testReceivesImageCaptionAndPreservesMetadataPlacement() throws {
+        var state = MasterChatState(ownerUserID: "ios-master")
+
+        let message = state.receiveImage(
+            filePath: "/tmp/incoming-photo.png",
+            fromUserID: "mac-quark-pc",
+            remoteID: "image-caption-uuid",
+            caption: "文字应该在图片上面",
+            captionAbove: true,
+            now: Date(timeIntervalSince1970: 161)
+        )
+
+        XCTAssertEqual(message.text, "文字应该在图片上面")
+        XCTAssertTrue(message.captionAbove)
+        XCTAssertNotNil(message.imageAttachment)
     }
 
     func testReceivesVideoProgressivelyWithoutDuplicatingMessage() throws {

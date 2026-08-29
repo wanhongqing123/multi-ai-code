@@ -104,6 +104,27 @@ public class ChatStateTest {
     }
 
     @Test
+    public void receivesImageCaptionWithMetadataPlacement() {
+        ChatState state = new ChatState("android-user");
+        RemoteIMMessage message = state.receiveImage(
+            "/tmp/photo.png",
+            "mac-office",
+            640,
+            480,
+            4096,
+            "remote-caption-1",
+            101L,
+            RemoteIMOrigin.HUMAN,
+            "文字应该在图片上面",
+            true
+        );
+
+        assertEquals("文字应该在图片上面", message.text());
+        assertTrue(message.captionAbove());
+        assertNotNull(message.imageAttachment());
+    }
+
+    @Test
     public void queuesAndReceivesVoiceMessages() {
         ChatState state = new ChatState("android-user");
         state.upsertContact(new RemoteIMContact("mac-office", "Mac Office"));

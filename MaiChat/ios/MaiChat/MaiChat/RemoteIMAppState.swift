@@ -978,6 +978,8 @@ final class RemoteIMAppState: ObservableObject {
             width: event.width,
             height: event.height,
             sizeBytes: event.sizeBytes,
+            caption: event.caption,
+            captionAbove: event.captionAbove,
             now: event.createdAt
         )
         let wasInserted = chatState.messages.count > previousCount
@@ -1011,6 +1013,8 @@ final class RemoteIMAppState: ObservableObject {
             mimeType: event.mimeType,
             remoteID: event.remoteID,
             sizeBytes: event.sizeBytes,
+            caption: event.caption,
+            captionAbove: event.captionAbove,
             now: event.createdAt
         )
         let wasInserted = chatState.messages.count > previousCount
@@ -1050,6 +1054,8 @@ final class RemoteIMAppState: ObservableObject {
             sizeBytes: event.sizeBytes,
             fromUserID: event.fromUserID,
             remoteID: event.remoteID,
+            caption: event.caption,
+            captionAbove: event.captionAbove,
             now: event.createdAt
         )
         let wasInserted = chatState.messages.count > previousCount

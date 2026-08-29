@@ -544,6 +544,51 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
         )
     }
 
+    private struct IncomingElementParts {
+        var caption: String?
+        var image: V2TIMImageElem?
+        var sound: V2TIMSoundElem?
+        var video: V2TIMVideoElem?
+        var file: V2TIMFileElem?
+    }
+
+    private nonisolated static func firstElement(in message: V2TIMMessage) -> V2TIMElem? {
+        switch message.elemType.rawValue {
+        case 1: return message.textElem
+        case 3: return message.imageElem
+        case 4: return message.soundElem
+        case 5: return message.videoElem
+        case 6: return message.fileElem
+        default: return nil
+        }
+    }
+
+    private nonisolated static func incomingElementParts(
+        from message: V2TIMMessage
+    ) -> IncomingElementParts {
+        var parts = IncomingElementParts()
+        var element = firstElement(in: message)
+        while let current = element {
+            if let text = current as? V2TIMTextElem,
+               parts.caption == nil,
+               let clean = text.text?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !clean.isEmpty
+            {
+                parts.caption = clean
+            } else if let image = current as? V2TIMImageElem, parts.image == nil {
+                parts.image = image
+            } else if let sound = current as? V2TIMSoundElem, parts.sound == nil {
+                parts.sound = sound
+            } else if let video = current as? V2TIMVideoElem, parts.video == nil {
+                parts.video = video
+            } else if let file = current as? V2TIMFileElem, parts.file == nil {
+                parts.file = file
+            }
+            element = current.next()
+        }
+        return parts
+    }
+
     nonisolated func onRecvNewMessage(msg: V2TIMMessage) {
         guard !msg.isSelf else { return }
         let fromUserID = msg.sender ?? msg.userID ?? ""
@@ -556,32 +601,52 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
             return
         }
 
-        // Text messages are delivered through V2TIMSimpleMsgListener and already ingested by
-        // onRecvC2CTextMessage. The advanced listener receives them as well; do not classify
-        // that normal duplicate callback as an unhandled message.
-        if msg.textElem != nil {
-            return
-        }
+        let parts = Self.incomingElementParts(from: msg)
+        let metadata = Self.messageMetadata(for: msg)
+        let captionAbove = metadata?.captionAbove == true
 
-        if let soundElem = msg.soundElem {
+        // 多元素消息必须先找附件，不能因为存在 textElem 就提前 return；否则
+        // [文本, 图片] 会只收到文字、整张图静默消失。
+        if let soundElem = parts.sound {
             handleIncomingSound(msg: msg, soundElem: soundElem, fromUserID: fromUserID)
             return
         }
 
-        if let imageElem = msg.imageElem {
-            handleIncomingImage(msg: msg, imageElem: imageElem, fromUserID: fromUserID)
+        if let imageElem = parts.image {
+            handleIncomingImage(
+                msg: msg,
+                imageElem: imageElem,
+                fromUserID: fromUserID,
+                caption: parts.caption,
+                captionAbove: captionAbove
+            )
             return
         }
 
-        if let videoElem = msg.videoElem {
-            handleIncomingVideo(msg: msg, videoElem: videoElem, fromUserID: fromUserID)
+        if let videoElem = parts.video {
+            handleIncomingVideo(
+                msg: msg,
+                videoElem: videoElem,
+                fromUserID: fromUserID,
+                caption: parts.caption,
+                captionAbove: captionAbove
+            )
             return
         }
 
-        if let fileElem = msg.fileElem {
-            handleIncomingFile(msg: msg, fileElem: fileElem, fromUserID: fromUserID)
+        if let fileElem = parts.file {
+            handleIncomingFile(
+                msg: msg,
+                fileElem: fileElem,
+                fromUserID: fromUserID,
+                caption: parts.caption,
+                captionAbove: captionAbove
+            )
             return
         }
+
+        // 纯文本消息仍由 SimpleMsgListener 入库，避免高级回调重复投递。
+        if parts.caption != nil { return }
 
         // 一个分支都没命中就说明这类消息本端不认，而且原来是悄悄丢掉的——桌面端那次
         // 语音消息丢失就是死在同样的静默里。elem_type 是这条日志的关键：光知道
@@ -656,7 +721,9 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
     private nonisolated func handleIncomingFile(
         msg: V2TIMMessage,
         fileElem: V2TIMFileElem,
-        fromUserID: String
+        fromUserID: String,
+        caption: String?,
+        captionAbove: Bool
     ) {
         let fileName = Self.cleanFileName(fileElem.filename)
         let createdAt = msg.timestamp ?? Date()
@@ -686,7 +753,7 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
                 fields["result"] = "ok"
                 fields["duration_ms"] = Self.elapsedMilliseconds(since: startedAt)
                 Self.logSDK(level: .info, event: "media-download-finished", fields: fields)
-                Task { @MainActor [weak self, fromUserID, targetURL, fileName, mimeType, remoteID, sizeBytes, origin, createdAt] in
+                Task { @MainActor [weak self, fromUserID, targetURL, fileName, mimeType, remoteID, sizeBytes, origin, createdAt, caption, captionAbove] in
                     let event = IncomingRemoteIMFile(
                         fromUserID: fromUserID,
                         fileURL: targetURL,
@@ -694,6 +761,8 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
                         mimeType: mimeType,
                         remoteID: remoteID,
                         sizeBytes: sizeBytes,
+                        caption: caption,
+                        captionAbove: captionAbove,
                         origin: origin,
                         createdAt: createdAt
                     )
@@ -717,7 +786,9 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
     private nonisolated func handleIncomingImage(
         msg: V2TIMMessage,
         imageElem: V2TIMImageElem,
-        fromUserID: String
+        fromUserID: String,
+        caption: String?,
+        captionAbove: Bool
     ) {
         guard let image = Self.preferredImage(from: imageElem.imageList) else { return }
         let createdAt = msg.timestamp ?? Date()
@@ -748,7 +819,7 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
                 fields["result"] = "ok"
                 fields["duration_ms"] = Self.elapsedMilliseconds(since: startedAt)
                 Self.logSDK(level: .info, event: "media-download-finished", fields: fields)
-                Task { @MainActor [weak self, fromUserID, targetURL, remoteID, width, height, sizeBytes, origin, createdAt] in
+                Task { @MainActor [weak self, fromUserID, targetURL, remoteID, width, height, sizeBytes, origin, createdAt, caption, captionAbove] in
                     let event = IncomingRemoteIMImage(
                         fromUserID: fromUserID,
                         fileURL: targetURL,
@@ -756,6 +827,8 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
                         width: width,
                         height: height,
                         sizeBytes: sizeBytes,
+                        caption: caption,
+                        captionAbove: captionAbove,
                         origin: origin,
                         createdAt: createdAt
                     )
@@ -779,7 +852,9 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
     private nonisolated func handleIncomingVideo(
         msg: V2TIMMessage,
         videoElem: V2TIMVideoElem,
-        fromUserID: String
+        fromUserID: String,
+        caption: String?,
+        captionAbove: Bool
     ) {
         let createdAt = msg.timestamp ?? Date()
         let remoteID = Self.nonEmpty(videoElem.videoUUID) ?? Self.nonEmpty(msg.msgID) ?? UUID().uuidString
@@ -819,6 +894,8 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
             height: height,
             sizeBytes: sizeBytes,
             remoteID: remoteID,
+            caption: caption,
+            captionAbove: captionAbove,
             origin: origin,
             createdAt: createdAt,
             stage: .metadata
@@ -835,6 +912,8 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
                     height: height,
                     sizeBytes: sizeBytes,
                     remoteID: remoteID,
+                    caption: caption,
+                    captionAbove: captionAbove,
                     origin: origin,
                     createdAt: createdAt,
                     stage: .coverReady
@@ -870,6 +949,8 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
                             height: height,
                             sizeBytes: sizeBytes,
                             remoteID: remoteID,
+                            caption: caption,
+                            captionAbove: captionAbove,
                             origin: origin,
                             createdAt: createdAt,
                             stage: .coverReady
@@ -897,6 +978,8 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
                 height: height,
                 sizeBytes: sizeBytes,
                 remoteID: remoteID,
+                caption: caption,
+                captionAbove: captionAbove,
                 origin: origin,
                 createdAt: createdAt,
                 stage: .videoReady
@@ -929,6 +1012,8 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
                         height: height,
                         sizeBytes: sizeBytes,
                         remoteID: remoteID,
+                        caption: caption,
+                        captionAbove: captionAbove,
                         origin: origin,
                         createdAt: createdAt,
                         stage: .videoFailed
@@ -947,6 +1032,8 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
                     height: height,
                     sizeBytes: sizeBytes,
                     remoteID: remoteID,
+                    caption: caption,
+                    captionAbove: captionAbove,
                     origin: origin,
                     createdAt: createdAt,
                     stage: .videoReady
@@ -968,6 +1055,8 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
                     height: height,
                     sizeBytes: sizeBytes,
                     remoteID: remoteID,
+                    caption: caption,
+                    captionAbove: captionAbove,
                     origin: origin,
                     createdAt: createdAt,
                     stage: .videoFailed
@@ -985,6 +1074,8 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
         height: Int,
         sizeBytes: Int64,
         remoteID: String?,
+        caption: String?,
+        captionAbove: Bool,
         origin: RemoteIMMessageOrigin?,
         createdAt: Date,
         stage: RemoteIMVideoDownloadStage
@@ -999,6 +1090,8 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
                     width: width,
                     height: height,
                     sizeBytes: sizeBytes,
+                    caption: caption,
+                    captionAbove: captionAbove,
                     remoteID: remoteID,
                     origin: origin,
                     createdAt: createdAt,

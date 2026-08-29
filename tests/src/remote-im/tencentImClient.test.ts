@@ -175,6 +175,35 @@ describe('tencent IM client helpers', () => {
     ).toBeUndefined()
   })
 
+  it('reads caption placement as an additive optional v2 metadata key', () => {
+    expect(
+      parseRemoteImCloudMetadata(
+        JSON.stringify({
+          namespace: 'multi-ai-code',
+          version: 2,
+          origin: 'human',
+          captionAbove: true
+        })
+      )
+    ).toEqual({
+      namespace: 'multi-ai-code',
+      version: 2,
+      origin: 'human',
+      captionAbove: true
+    })
+    expect(parseRemoteImCloudMetadata(createRemoteImCloudCustomData('human'))).toEqual({
+      namespace: 'multi-ai-code',
+      version: 2,
+      origin: 'human'
+    })
+    // 只有严格的 true 才启用；false/其它类型都等同于键缺失。
+    expect(
+      parseRemoteImCloudMetadata(
+        '{"namespace":"multi-ai-code","version":2,"origin":"human","captionAbove":false}'
+      )
+    ).toEqual({ namespace: 'multi-ai-code', version: 2, origin: 'human' })
+  })
+
   it('extracts C2C text messages from Tencent message events', () => {
     const messages = extractTencentImTextMessages({
       data: [
@@ -355,6 +384,7 @@ describe('tencent IM client helpers', () => {
 
     expect(parts.image?.imageUrl).toBe('https://cos.example.test/original.png')
     expect(parts.caption).toBe('看这张图')
+    expect(parts.captionAbove).toBe(false)
     expect(parts.file).toBeNull()
     expect(parts.audio).toBeNull()
   })
@@ -372,11 +402,19 @@ describe('tencent IM client helpers', () => {
       from: 'phone_admin',
       type: 'TIMTextElem',
       payload: textElement.content,
-      _elements: [textElement, imageElement]
+      _elements: [textElement, imageElement],
+      cloudCustomData: JSON.stringify({
+        namespace: 'multi-ai-code',
+        version: 2,
+        origin: 'human',
+        captionAbove: true
+      })
     })
 
     expect(parts.image?.imageUrl).toBe('https://cos.example.test/pic.png')
     expect(parts.caption).toBe('先文字后图片')
+    // 排版只看 metadata，元素顺序只负责保证附件不丢。
+    expect(parts.captionAbove).toBe(true)
   })
 
   it('falls back to the single public element when _elements is absent', () => {

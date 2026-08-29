@@ -35,6 +35,8 @@ interface RemoteImMessageRow {
   content: string
   kind?: RemoteImMessageKind | string | null
   attachment_json?: string | null
+  caption?: string | null
+  caption_above?: number | null
   status: RemoteImMessageStatus
   error: string | null
   created_at: number
@@ -54,6 +56,8 @@ export interface CreateRemoteImMessageInput {
   content: string
   kind?: RemoteImMessageKind
   attachment?: RemoteImMessageAttachment | null
+  caption?: string | null
+  captionAbove?: boolean
   status: RemoteImMessageStatus
   error?: string | null
   createdAt?: number
@@ -163,6 +167,8 @@ function mapRow(row: RemoteImMessageRow): RemoteImMessage {
     content: row.content,
     kind,
     attachment: parseAttachmentJson(kind, row.attachment_json),
+    caption: nullableString(row.caption),
+    captionAbove: row.caption_above === 1,
     status: row.status,
     error: row.error,
     createdAt: row.created_at,
@@ -210,13 +216,15 @@ export function createRemoteImMessageStore(database: RemoteImDatabase) {
           content,
           kind,
           attachment_json,
+          caption,
+          caption_above,
           status,
           error,
           created_at,
           sent_to_aicli_at,
           sent_to_im_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `
       )
       .run(
@@ -231,6 +239,8 @@ export function createRemoteImMessageStore(database: RemoteImDatabase) {
         input.content,
         input.kind ?? 'text',
         serializeAttachmentJson(input.attachment),
+        nullableString(input.caption),
+        input.captionAbove === true ? 1 : 0,
         input.status,
         input.error ?? null,
         createdAt,

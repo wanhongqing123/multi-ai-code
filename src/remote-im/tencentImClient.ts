@@ -18,6 +18,7 @@ interface RemoteImCloudMetadata {
   version: typeof REMOTE_IM_CLOUD_METADATA_VERSION
   origin: RemoteImMessageOrigin
   interaction?: RemoteImTextInteraction
+  captionAbove?: true
 }
 
 /** Encodes transport metadata shared by Web/Electron and native MaiChat clients. */
@@ -103,12 +104,19 @@ export function parseRemoteImCloudMetadata(value: unknown): RemoteImCloudMetadat
       return undefined
     }
     const origin = raw.origin
+    const captionAbove = raw.captionAbove === true ? true : undefined
+    const base = {
+      namespace: REMOTE_IM_CLOUD_METADATA_NAMESPACE,
+      version: REMOTE_IM_CLOUD_METADATA_VERSION,
+      origin,
+      ...(captionAbove ? { captionAbove } : {})
+    } satisfies RemoteImCloudMetadata
     if (raw.interaction === undefined) {
-      return { namespace: REMOTE_IM_CLOUD_METADATA_NAMESPACE, version: 2, origin }
+      return base
     }
     const interaction = parseRemoteImTextInteraction(raw.interaction, origin)
     return interaction
-      ? { namespace: REMOTE_IM_CLOUD_METADATA_NAMESPACE, version: 2, origin, interaction }
+      ? { ...base, interaction }
       : undefined
   } catch {
     return undefined
@@ -532,6 +540,8 @@ export interface TencentImMessageParts {
    */
   video: Omit<TencentImFileMessage, 'remoteMessageId' | 'fromUserId' | 'toUserId' | 'createdAt'> | null
   caption: string | null
+  /** false = attachment then caption; true = caption then attachment. Caption presence is `caption`. */
+  captionAbove: boolean
 }
 
 const VIDEO_MIME_BY_FORMAT: Record<string, string> = {
@@ -574,9 +584,12 @@ export function extractTencentImMessageParts(message: Record<string, unknown>): 
     file: null,
     audio: null,
     video: null,
-    caption: null
+    caption: null,
+    captionAbove: false
   }
-  for (const element of getTencentImMessageElements(message)) {
+  const elements = getTencentImMessageElements(message)
+  for (let index = 0; index < elements.length; index += 1) {
+    const element = elements[index]
     const pseudo = { ...message, type: element.type, payload: element.content }
     if (!parts.image) {
       const image = getImagePayload(pseudo)
@@ -608,9 +621,12 @@ export function extractTencentImMessageParts(message: Record<string, unknown>): 
     }
     if (parts.caption === null) {
       const text = getTextPayload(pseudo)
-      if (text) parts.caption = text
+      if (text) {
+        parts.caption = text
+      }
     }
   }
+  parts.captionAbove = parts.caption !== null && messageMetadata(message)?.captionAbove === true
   return parts
 }
 
@@ -1096,6 +1112,7 @@ export async function connectTencentImClient(input: {
           fileName: parts.image.fileName,
           mimeType: parts.image.mimeType,
           caption: parts.caption,
+          captionAbove: parts.captionAbove,
           ...(origin ? { origin } : {}),
           createdAt
         })
@@ -1123,6 +1140,7 @@ export async function connectTencentImClient(input: {
           fileName: fileLike.fileName,
           mimeType: fileLike.mimeType,
           caption: parts.caption,
+          captionAbove: parts.captionAbove,
           ...(origin ? { origin } : {}),
           createdAt
         })

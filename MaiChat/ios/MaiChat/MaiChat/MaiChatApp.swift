@@ -92,7 +92,7 @@ final class RemoteIMSystemNotificationCenter: NSObject, UNUserNotificationCenter
         content.title = title
         content.body = body
         content.sound = .default
-        content.badge = NSNumber(value: max(0, badgeCount))
+        content.badge = NSNumber(value: min(99, max(0, badgeCount)))
         content.threadIdentifier = "remote-im-\(peerUserID)"
         content.userInfo = ["peerUserID": peerUserID]
         do {
@@ -112,7 +112,13 @@ final class RemoteIMSystemNotificationCenter: NSObject, UNUserNotificationCenter
         center.removePendingNotificationRequests(withIdentifiers: [identifier])
         center.removeDeliveredNotifications(withIdentifiers: [identifier])
         if #available(iOS 16.0, *) {
-            center.setBadgeCount(max(0, badgeCount))
+            center.setBadgeCount(min(99, max(0, badgeCount)))
+        }
+    }
+
+    func updateBadgeCount(_ badgeCount: Int) {
+        if #available(iOS 16.0, *) {
+            center.setBadgeCount(min(99, max(0, badgeCount)))
         }
     }
 

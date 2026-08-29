@@ -1106,6 +1106,10 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
 }
 
 public enum RemoteIMNewMessageNotificationPolicy {
+    public static func systemBadgeCount(totalUnreadCount: Int) -> Int {
+        min(99, max(0, totalUnreadCount))
+    }
+
     public static func shouldNotify(
         wasInserted: Bool,
         isApplicationActive: Bool,

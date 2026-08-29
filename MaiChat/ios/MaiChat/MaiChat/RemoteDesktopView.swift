@@ -96,7 +96,9 @@ private struct RemoteDesktopContent: View {
 
             if session.state.isActive {
                 Button {
-                    Task { await appState.stopRemoteDesktopView() }
+                    Task { @MainActor in
+                        await appState.stopRemoteDesktopView()
+                    }
                 } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 12, weight: .bold))
@@ -1243,7 +1245,7 @@ private struct RemoteKeyboardCapture: UIViewRepresentable {
     }
 
     static func dismantleUIView(_ uiView: RemoteKeyboardInputTextView, coordinator: Void) {
-        uiView.wantsKeyboard = false
+        uiView.prepareForDismantle()
     }
 
     private func update(_ view: RemoteKeyboardInputTextView) {
@@ -1262,6 +1264,7 @@ private struct RemoteKeyboardCapture: UIViewRepresentable {
     }
 }
 
+@MainActor
 private final class RemoteKeyboardInputTextView: UITextView, UITextViewDelegate {
     var traceID = "none"
     var onTextChange: ((String) -> Void)?
@@ -1523,10 +1526,36 @@ private final class RemoteKeyboardInputTextView: UITextView, UITextViewDelegate 
         requestKeyboardFocus()
     }
 
-    @objc private func applicationDidBecomeActive() {
-        if wantsKeyboard {
-            requestKeyboardFocus()
+    /// Objective-C notification selectors do not preserve Swift actor isolation. UIKit normally
+    /// posts this notification on the main thread, but treating that as a guarantee caused a
+    /// physical-device crash when focus restoration arrived on a cooperative Task executor.
+    @objc nonisolated private func applicationDidBecomeActive() {
+        let arrivedOnMainThread = Thread.isMainThread
+        Task { @MainActor [weak self] in
+            guard let self, self.wantsKeyboard else { return }
+            if !arrivedOnMainThread {
+                self.logKeyboard(
+                    level: .warning,
+                    event: "activation-focus-rerouted-to-main",
+                    fields: ["source_thread": "background"]
+                )
+            }
+            self.requestKeyboardFocus()
         }
+    }
+
+    func prepareForDismantle() {
+        NotificationCenter.default.removeObserver(self)
+        focusRequestID &+= 1
+        modeTransitionID &+= 1
+        pendingDraftMode = nil
+        wantsKeyboard = false
+        delegate = nil
+        onTextChange = nil
+        onSubmit = nil
+        onDirectText = nil
+        onDirectKey = nil
+        onDismiss = nil
     }
 
     private func requestKeyboardFocus() {

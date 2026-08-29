@@ -480,7 +480,17 @@ final class RemoteIMAppState: ObservableObject {
     func clearSystemNotification(for userID: String) {
         RemoteIMSystemNotificationCenter.shared.clear(
             peerUserID: userID,
-            badgeCount: totalUnreadCount
+            badgeCount: RemoteIMNewMessageNotificationPolicy.systemBadgeCount(
+                totalUnreadCount: totalUnreadCount
+            )
+        )
+    }
+
+    func synchronizeSystemNotificationBadge() {
+        RemoteIMSystemNotificationCenter.shared.updateBadgeCount(
+            RemoteIMNewMessageNotificationPolicy.systemBadgeCount(
+                totalUnreadCount: totalUnreadCount
+            )
         )
     }
 
@@ -1216,7 +1226,9 @@ final class RemoteIMAppState: ObservableObject {
                 for: message,
                 pendingCount: unreadCountByUserID[userID] ?? 1
             ),
-            badgeCount: totalUnreadCount
+            badgeCount: RemoteIMNewMessageNotificationPolicy.systemBadgeCount(
+                totalUnreadCount: totalUnreadCount
+            )
         )
         logIM(
             level: posted ? .info : .warning,

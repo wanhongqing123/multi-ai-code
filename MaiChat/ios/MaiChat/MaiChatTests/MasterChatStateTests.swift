@@ -3,6 +3,10 @@ import XCTest
 
 final class MasterChatStateTests: XCTestCase {
     func testNewMessageNotificationPolicyOnlySuppressesDuplicateOrVisibleForegroundConversation() {
+        XCTAssertEqual(RemoteIMNewMessageNotificationPolicy.systemBadgeCount(totalUnreadCount: -1), 0)
+        XCTAssertEqual(RemoteIMNewMessageNotificationPolicy.systemBadgeCount(totalUnreadCount: 0), 0)
+        XCTAssertEqual(RemoteIMNewMessageNotificationPolicy.systemBadgeCount(totalUnreadCount: 58), 58)
+        XCTAssertEqual(RemoteIMNewMessageNotificationPolicy.systemBadgeCount(totalUnreadCount: 1_608), 99)
         XCTAssertFalse(RemoteIMNewMessageNotificationPolicy.shouldNotify(
             wasInserted: false,
             isApplicationActive: false,

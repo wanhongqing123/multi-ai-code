@@ -72,6 +72,7 @@ struct RootView: View {
                 await RemoteIMSystemNotificationCenter.shared.requestAuthorizationIfNeeded()
                 await appState.connectIfRequestedByLaunchEnvironment()
             }
+            appState.synchronizeSystemNotificationBadge()
             if let peerUserID = RemoteIMSystemNotificationCenter.shared.consumePendingPeerUserID() {
                 openNotificationConversation(peerUserID)
             }
@@ -97,13 +98,14 @@ struct RootView: View {
             )
             if phase == .active {
                 IOSBackgroundActivityKeeper.shared.end(cause: "scene-active")
+                appState.synchronizeSystemNotificationBadge()
                 return
             }
             guard phase == .inactive || phase == .background else { return }
             if phase == .background {
                 IOSBackgroundActivityKeeper.shared.beginIfNeeded()
             }
-            Task {
+            Task { @MainActor in
                 let historyFlushed = await appState.flushHistoryPersistence()
                 if !historyFlushed {
                     AppDiagnosticLog.shared.record(

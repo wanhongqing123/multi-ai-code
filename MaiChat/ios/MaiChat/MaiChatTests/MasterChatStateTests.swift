@@ -50,6 +50,19 @@ final class MasterChatStateTests: XCTestCase {
             status: .received,
             createdAt: Date(timeIntervalSince1970: 2)
         )
+        let sensitiveFile = RemoteIMMessage(
+            fromUserID: "peer-a",
+            toUserID: "ios-user",
+            text: "[文件消息] 2026年薪资表.xlsx",
+            fileAttachment: RemoteIMFileAttachment(
+                localFilePath: "/private/hr/2026年薪资表.xlsx",
+                fileName: "2026年薪资表.xlsx",
+                mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+            direction: .incoming,
+            status: .received,
+            createdAt: Date(timeIntervalSince1970: 3)
+        )
 
         XCTAssertEqual(RemoteIMNewMessageNotificationPolicy.preview(for: image), "图片消息")
         XCTAssertFalse(RemoteIMNewMessageNotificationPolicy.preview(for: image).contains("/private"))
@@ -57,6 +70,8 @@ final class MasterChatStateTests: XCTestCase {
             RemoteIMNewMessageNotificationPolicy.preview(for: captioned),
             "请看这张图 然后回复"
         )
+        XCTAssertEqual(RemoteIMNewMessageNotificationPolicy.preview(for: sensitiveFile), "文件消息")
+        XCTAssertFalse(RemoteIMNewMessageNotificationPolicy.preview(for: sensitiveFile).contains("薪资"))
         XCTAssertEqual(
             RemoteIMNewMessageNotificationPolicy.aggregatedPreview(
                 for: captioned,
@@ -64,6 +79,18 @@ final class MasterChatStateTests: XCTestCase {
             ),
             "3 条新消息：请看这张图 然后回复"
         )
+
+        let longText = RemoteIMMessage(
+            fromUserID: "peer-a",
+            toUserID: "ios-user",
+            text: String(repeating: "x", count: 200),
+            direction: .incoming,
+            status: .received,
+            createdAt: Date(timeIntervalSince1970: 4)
+        )
+        let longPreview = RemoteIMNewMessageNotificationPolicy.preview(for: longText)
+        XCTAssertEqual(longPreview.count, 81)
+        XCTAssertTrue(longPreview.hasSuffix("…"))
     }
     func testExplicitRecipientSendDoesNotUseSelectedConversation() throws {
         var state = MasterChatState(ownerUserID: "ios-master")

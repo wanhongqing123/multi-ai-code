@@ -29,7 +29,7 @@ public final class RemoteIMNewMessageNotificationPolicy {
             value = text.isEmpty() || text.startsWith("[图片消息]") ? "图片消息" : text;
         } else if (message.fileAttachment() != null) {
             value = text.isEmpty() || text.startsWith("[文件消息]")
-                ? "文件：" + message.fileAttachment().fileName()
+                ? "文件消息"
                 : text;
         } else if (message.videoAttachment() != null) {
             value = text.isEmpty() || text.startsWith("[视频消息") ? "视频消息" : text;

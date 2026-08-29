@@ -1126,9 +1126,9 @@ public enum RemoteIMNewMessageNotificationPolicy {
             fallback = isPlaceholder(cleanText, prefixes: ["[图片消息]"])
                 ? "图片消息"
                 : cleanText
-        } else if let file = message.fileAttachment {
+        } else if message.fileAttachment != nil {
             fallback = isPlaceholder(cleanText, prefixes: ["[文件消息]"])
-                ? "文件：\(file.fileName)"
+                ? "文件消息"
                 : cleanText
         } else if message.videoAttachment != nil {
             fallback = isPlaceholder(cleanText, prefixes: ["[视频消息"])

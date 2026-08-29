@@ -68,12 +68,18 @@ struct RootView: View {
         .animation(.easeOut(duration: 0.18), value: isShowingAddContact)
         .background(Color(red: 0.966, green: 0.976, blue: 0.988).ignoresSafeArea())
         .task {
-            await RemoteIMSystemNotificationCenter.shared.requestAuthorizationIfNeeded()
             if !appState.shouldShowInitialLogin {
+                await RemoteIMSystemNotificationCenter.shared.requestAuthorizationIfNeeded()
                 await appState.connectIfRequestedByLaunchEnvironment()
             }
             if let peerUserID = RemoteIMSystemNotificationCenter.shared.consumePendingPeerUserID() {
                 openNotificationConversation(peerUserID)
+            }
+        }
+        .onChange(of: appState.shouldShowInitialLogin) { needsLogin in
+            guard !needsLogin else { return }
+            Task {
+                await RemoteIMSystemNotificationCenter.shared.requestAuthorizationIfNeeded()
             }
         }
         .onReceive(

@@ -1122,20 +1122,18 @@ public enum RemoteIMNewMessageNotificationPolicy {
     public static func preview(for message: RemoteIMMessage, limit: Int = 80) -> String {
         let cleanText = compact(message.text)
         let fallback: String
-        if let image = message.imageAttachment {
+        if message.imageAttachment != nil {
             fallback = isPlaceholder(cleanText, prefixes: ["[图片消息]"])
                 ? "图片消息"
                 : cleanText
-            _ = image
         } else if let file = message.fileAttachment {
             fallback = isPlaceholder(cleanText, prefixes: ["[文件消息]"])
                 ? "文件：\(file.fileName)"
                 : cleanText
-        } else if let video = message.videoAttachment {
+        } else if message.videoAttachment != nil {
             fallback = isPlaceholder(cleanText, prefixes: ["[视频消息"])
                 ? "视频消息"
                 : cleanText
-            _ = video
         } else if let voice = message.voiceAttachment {
             fallback = "语音消息（\(voice.durationSeconds) 秒）"
         } else {

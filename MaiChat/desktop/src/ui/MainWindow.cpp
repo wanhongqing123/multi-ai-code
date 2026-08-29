@@ -1549,19 +1549,32 @@ void MainWindow::buildUi() {
         makeLineIcon(LineIconKind::Search, QColor(QStringLiteral("#98a2b3"))),
         QLineEdit::LeadingPosition);
     contactsHeader->addWidget(contactsSearchInput_);
+
+    // 两个动作并排一行，不再各占一行。竖着堆三个等宽白框时，搜索框（输入）和
+    // 这两个（动作）长得一模一样，看不出哪个能点、哪个能打字，而且白占一屏高度。
+    auto* contactsActions = new QHBoxLayout();
+    contactsActions->setContentsMargins(0, 0, 0, 0);
+    contactsActions->setSpacing(8);
+
     // 建分组的主入口。右键菜单里也有，但那要求用户先想到去右键；
     // 一个摆在搜索框下面的按钮才是"这里可以建分组"的可见提示。
     newContactGroupButton_ = new QPushButton(QStringLiteral("新建分组"), contactsDirectoryPane);
     newContactGroupButton_->setObjectName(QStringLiteral("newContactGroupButton"));
     newContactGroupButton_->setCursor(Qt::PointingHandCursor);
+    newContactGroupButton_->setIcon(makeLineIcon(LineIconKind::Add, QColor(QStringLiteral("#64748b"))));
+    newContactGroupButton_->setIconSize(QSize(UiZoom::s(15), UiZoom::s(15)));
     connect(newContactGroupButton_, &QPushButton::clicked, this, [this] { createContactGroup(); });
-    contactsHeader->addWidget(newContactGroupButton_);
+    contactsActions->addWidget(newContactGroupButton_, 1);
 
     broadcastButton_ = new QPushButton(QStringLiteral("群发消息"), contactsDirectoryPane);
     broadcastButton_->setObjectName(QStringLiteral("broadcastButton"));
     broadcastButton_->setCursor(Qt::PointingHandCursor);
+    broadcastButton_->setIcon(makeLineIcon(LineIconKind::Send, QColor(QStringLiteral("#64748b"))));
+    broadcastButton_->setIconSize(QSize(UiZoom::s(15), UiZoom::s(15)));
     connect(broadcastButton_, &QPushButton::clicked, this, [this] { openBroadcastDialog(); });
-    contactsHeader->addWidget(broadcastButton_);
+    contactsActions->addWidget(broadcastButton_, 1);
+
+    contactsHeader->addLayout(contactsActions);
 
     contactsList_ = new QListWidget(contactsDirectoryPane);
     contactsList_->setObjectName(QStringLiteral("contactsList"));
@@ -1706,25 +1719,24 @@ void MainWindow::applyStyle() {
             border-color: #8ed0ff;
             background: #f2f9ff;
         }
-        #newContactGroupButton {
-            min-height: 34px;
-            border: 1px solid #dbe4ef;
+        /* 动作按钮：浅底、无边框。白底加边框是输入框的样式，
+           两者用同一种外观时，用户看不出哪个能点、哪个能打字。 */
+        #newContactGroupButton, #broadcastButton {
+            min-height: 32px;
+            border: 0;
             border-radius: 8px;
-            background: #ffffff;
-            color: #4c5866;
-            padding: 0 12px;
+            background: #eef2f7;
+            color: #475569;
+            font-size: 13px;
+            font-weight: 600;
+            padding: 0 10px;
         }
         #newContactGroupButton:hover, #broadcastButton:hover {
-            border-color: #8ed0ff;
-            background: #f2f9ff;
+            background: #e2e8f0;
+            color: #1e293b;
         }
-        #broadcastButton {
-            min-height: 34px;
-            border: 1px solid #dbe4ef;
-            border-radius: 8px;
-            background: #ffffff;
-            color: #4c5866;
-            padding: 0 12px;
+        #newContactGroupButton:pressed, #broadcastButton:pressed {
+            background: #d7dee8;
         }
         #globalSearchBox, #contactsSearchBox {
             min-height: 34px;

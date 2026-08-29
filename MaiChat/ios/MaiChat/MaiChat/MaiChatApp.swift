@@ -1,5 +1,60 @@
 import SwiftUI
 import UserNotifications
+import UIKit
+
+@MainActor
+final class IOSBackgroundActivityKeeper {
+    static let shared = IOSBackgroundActivityKeeper()
+
+    private var taskIdentifier: UIBackgroundTaskIdentifier = .invalid
+
+    private init() {
+    }
+
+    /// Requests the finite background execution window that iOS grants regular apps.
+    /// This deliberately does not play silent audio or claim location/VoIP modes: those are
+    /// not legitimate generic IM keep-alive mechanisms and would still be terminated by iOS.
+    func beginIfNeeded() {
+        guard taskIdentifier == .invalid else { return }
+        taskIdentifier = UIApplication.shared.beginBackgroundTask(
+            withName: "MaiChat.IMBackgroundKeepAlive"
+        ) { [weak self] in
+            Task { @MainActor in
+                self?.end(cause: "system-expired")
+            }
+        }
+        let started = taskIdentifier != .invalid
+        AppDiagnosticLog.shared.record(
+            level: started ? .info : .warning,
+            category: "app",
+            event: started ? "background-keepalive-started" : "background-keepalive-unavailable",
+            fields: [
+                "remaining_seconds": remainingSecondsText(),
+            ]
+        )
+    }
+
+    func end(cause: String) {
+        guard taskIdentifier != .invalid else { return }
+        let identifier = taskIdentifier
+        taskIdentifier = .invalid
+        UIApplication.shared.endBackgroundTask(identifier)
+        AppDiagnosticLog.shared.record(
+            level: .info,
+            category: "app",
+            event: "background-keepalive-ended",
+            fields: ["cause": cause]
+        )
+    }
+
+    private func remainingSecondsText() -> String {
+        let remaining = UIApplication.shared.backgroundTimeRemaining
+        guard remaining.isFinite, remaining >= 0, remaining <= Double(Int.max) else {
+            return "unknown"
+        }
+        return String(Int(remaining.rounded(.down)))
+    }
+}
 
 extension Notification.Name {
     static let remoteIMNotificationConversationSelected = Notification.Name(

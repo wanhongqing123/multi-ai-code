@@ -95,7 +95,14 @@ struct RootView: View {
                 event: "scene-phase-changed",
                 fields: ["phase": phase.diagnosticName]
             )
+            if phase == .active {
+                IOSBackgroundActivityKeeper.shared.end(cause: "scene-active")
+                return
+            }
             guard phase == .inactive || phase == .background else { return }
+            if phase == .background {
+                IOSBackgroundActivityKeeper.shared.beginIfNeeded()
+            }
             Task {
                 let historyFlushed = await appState.flushHistoryPersistence()
                 if !historyFlushed {

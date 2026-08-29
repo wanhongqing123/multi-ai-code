@@ -1,4 +1,4 @@
-; MaiChat Windows 安装程序（NSIS）。
+﻿; MaiChat Windows 安装程序（NSIS）。
 ; 由 scripts\make-installer-windows.ps1 调用，需要以下命令行定义：
 ;   /DSTAGING_DIR=<staging 目录>   打包好的应用文件（package-windows.ps1 产出）
 ;   /DOUT_FILE=<输出 exe 路径>
@@ -40,6 +40,9 @@ ManifestDPIAware true
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\MaiChat"
 
 Name "${APP_NAME}"
+; 与 src/main.cpp 里 SetCurrentProcessExplicitAppUserModelID 的值必须一致。
+!define APP_AUMID "com.kongshang.maichat"
+
 OutFile "${OUT_FILE}"
 ; 装进 Program Files 属于机器范围写入，必须提权，否则 File 会全部失败。
 RequestExecutionLevel admin
@@ -154,6 +157,11 @@ Section "安装"
 
   CreateShortcut "$SMPROGRAMS\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}"
   CreateShortcut "$DESKTOP\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}"
+  ; 快捷方式上写入与进程一致的 AppUserModelID（见 src/main.cpp）。
+  ; 两边必须完全相同：Windows 靠这个 id 把系统通知归属到某个"应用"，
+  ; 对不上时通知会被静默丢弃——程序照跑、日志照打，屏幕上什么都不出现。
+  WinShell::SetLnkAUMI "$SMPROGRAMS\${APP_NAME}.lnk" "${APP_AUMID}"
+  WinShell::SetLnkAUMI "$DESKTOP\${APP_NAME}.lnk" "${APP_AUMID}"
 SectionEnd
 
 Section "Uninstall"

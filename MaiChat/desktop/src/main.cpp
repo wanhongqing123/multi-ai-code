@@ -14,6 +14,10 @@
 #include "im/TencentUserSigGenerator.h"
 #include "platform/DesktopRemoteIMClientFactory.h"
 #include "storage/LocalMessageDatabase.h"
+
+#ifdef Q_OS_WIN
+#include <shobjidl.h>
+#endif
 #include "ui/LoginDialog.h"
 #include "ui/MainWindow.h"
 
@@ -52,6 +56,15 @@ int main(int argc, char* argv[]) {
     if (qEnvironmentVariableIsEmpty("QT_MULTIMEDIA_PREFERRED_PLUGINS")) {
         qputenv("QT_MULTIMEDIA_PREFERRED_PLUGINS", "windowsmediafoundation");
     }
+#endif
+
+#ifdef Q_OS_WIN
+    // 必须在 QApplication 之前：Windows 只在进程还没创建过窗口时接受这个设置。
+    //
+    // 没有它，系统托盘的通知在 Windows 10/11 上会被静默丢弃——代码照跑、日志照打、
+    // 屏幕上什么都不出现。Windows 需要靠这个 id 把通知归属到某个"应用"，
+    // 而这个 id 必须和开始菜单快捷方式上写的那一个完全一致（见 windows-installer.nsi）。
+    SetCurrentProcessExplicitAppUserModelID(L"com.kongshang.maichat");
 #endif
 
     QApplication app(argc, argv);

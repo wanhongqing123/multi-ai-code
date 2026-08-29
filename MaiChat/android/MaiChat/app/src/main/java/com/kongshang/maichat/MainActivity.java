@@ -5,6 +5,9 @@ import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.Dialog;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
@@ -19,10 +22,12 @@ import android.media.MediaPlayer;
 import android.media.MediaRecorder;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Build;
 import android.provider.MediaStore;
 import android.text.Editable;
 import android.text.TextUtils;
 import android.text.TextWatcher;
+import android.util.Log;
 import android.view.GestureDetector;
 import android.view.Gravity;
 import android.view.KeyEvent;
@@ -50,6 +55,8 @@ import android.widget.VideoView;
 import android.widget.Toast;
 
 import androidx.core.content.FileProvider;
+import androidx.core.app.NotificationCompat;
+import androidx.core.app.NotificationManagerCompat;
 
 import com.tencent.rtmp.ui.TXCloudVideoView;
 
@@ -78,6 +85,11 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private static final int REQUEST_CAMERA_PERMISSION = 1003;
     private static final int REQUEST_TAKE_PHOTO = 1004;
     private static final int REQUEST_PICK_FILE = 1005;
+    private static final int REQUEST_POST_NOTIFICATIONS = 1006;
+    private static final String TAG = "MaiChat.notify";
+    private static final String MESSAGE_CHANNEL_ID = "maichat-new-messages";
+    private static final String MESSAGE_GROUP_KEY = "maichat-private-messages";
+    private static final String EXTRA_NOTIFICATION_PEER = "notification-peer-user-id";
 
     private RemoteIMSessionController session;
     private RemoteIMMediaStore mediaStore;
@@ -110,6 +122,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private String loginError = "";
     private String loginUserDraft = "";
     private String contactSearchQuery = "";
+    private String pendingNotificationPeerUserId = "";
+    private boolean activityInForeground;
     private final Set<String> collapsedContactGroups = new HashSet<>();
 
     @Override
@@ -127,8 +141,30 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
                 BuildConfig.TENCENT_ASR_SECRET_ID,
                 BuildConfig.TENCENT_ASR_SECRET_KEY);
         session = new RemoteIMSessionController(this, this);
+        createMessageNotificationChannel();
         showInitialLogin = session.requiresLogin();
         render();
+        handleNotificationIntent(getIntent());
+        if (!session.requiresLogin()) requestNotificationPermissionIfNeeded();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        activityInForeground = true;
+    }
+
+    @Override
+    protected void onPause() {
+        activityInForeground = false;
+        super.onPause();
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleNotificationIntent(intent);
     }
 
     @Override
@@ -171,6 +207,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
                     loginSubmitting = false;
                     showInitialLogin = false;
                     loginError = "";
+                    requestNotificationPermissionIfNeeded();
+                    openPendingNotificationConversationIfPossible();
                 } else if (session.connectionState() == TencentIMClient.ConnectionState.FAILED) {
                     loginSubmitting = false;
                     showInitialLogin = true;
@@ -189,6 +227,15 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             message == null || message.trim().isEmpty() ? "操作失败" : message,
             Toast.LENGTH_LONG
         ).show());
+    }
+
+    @Override
+    public void onNewIncomingMessage(
+        RemoteIMMessage message,
+        boolean conversationVisible
+    ) {
+        if (destroyed || message == null) return;
+        runOnUiThread(() -> showNewMessageNotification(message, conversationVisible));
     }
 
     @Override
@@ -219,7 +266,107 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         } else if (requestCode == REQUEST_CAMERA_PERMISSION) {
             if (granted) openCamera();
             else toast("没有相机权限，无法拍照");
+        } else if (requestCode == REQUEST_POST_NOTIFICATIONS && !granted) {
+            Log.i(TAG, "notification-suppressed reason=permission-denied");
         }
+    }
+
+    private void createMessageNotificationChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
+        NotificationChannel channel = new NotificationChannel(
+            MESSAGE_CHANNEL_ID,
+            "新消息通知",
+            NotificationManager.IMPORTANCE_HIGH
+        );
+        channel.setDescription("收到新的 MaiChat 私聊消息时提醒");
+        channel.enableVibration(true);
+        getSystemService(NotificationManager.class).createNotificationChannel(channel);
+    }
+
+    private void requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return;
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+            == PackageManager.PERMISSION_GRANTED) return;
+        requestPermissions(
+            new String[]{Manifest.permission.POST_NOTIFICATIONS},
+            REQUEST_POST_NOTIFICATIONS
+        );
+    }
+
+    private void showNewMessageNotification(
+        RemoteIMMessage message,
+        boolean conversationVisible
+    ) {
+        if (!RemoteIMNewMessageNotificationPolicy.shouldNotify(
+            true,
+            activityInForeground,
+            conversationVisible
+        )) {
+            Log.d(TAG, "notification-suppressed reason=visible-foreground-conversation"
+                + " peer=" + message.fromUserId());
+            return;
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+            && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) {
+            Log.i(TAG, "notification-suppressed reason=permission-denied"
+                + " peer=" + message.fromUserId());
+            return;
+        }
+
+        String peerUserId = message.fromUserId();
+        RemoteIMContact sender = contact(peerUserId);
+        String title = sender == null ? peerUserId : sender.displayName();
+        Intent openIntent = new Intent(this, MainActivity.class)
+            .putExtra(EXTRA_NOTIFICATION_PEER, peerUserId)
+            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        PendingIntent pendingIntent = PendingIntent.getActivity(
+            this,
+            notificationId(peerUserId),
+            openIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
+        int unreadCount = Math.max(1, session.unreadCount(peerUserId));
+        String preview = RemoteIMNewMessageNotificationPolicy.aggregatedPreview(
+            message,
+            unreadCount
+        );
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, MESSAGE_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(title)
+            .setContentText(preview)
+            .setStyle(new NotificationCompat.BigTextStyle().bigText(preview))
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setGroup(MESSAGE_GROUP_KEY)
+            .setNumber(unreadCount);
+        NotificationManagerCompat.from(this).notify(notificationId(peerUserId), builder.build());
+        Log.i(TAG, "notification-requested peer=" + peerUserId
+            + " unread=" + session.unreadCount(peerUserId));
+    }
+
+    private void handleNotificationIntent(Intent intent) {
+        if (intent == null) return;
+        String peerUserId = intent.getStringExtra(EXTRA_NOTIFICATION_PEER);
+        intent.removeExtra(EXTRA_NOTIFICATION_PEER);
+        if (peerUserId == null || peerUserId.trim().isEmpty()) return;
+        pendingNotificationPeerUserId = peerUserId.trim();
+        openPendingNotificationConversationIfPossible();
+    }
+
+    private void openPendingNotificationConversationIfPossible() {
+        if (pendingNotificationPeerUserId.isEmpty() || session == null || session.requiresLogin()) return;
+        String peerUserId = pendingNotificationPeerUserId;
+        pendingNotificationPeerUserId = "";
+        openChat(peerUserId);
+        NotificationManagerCompat.from(this).cancel(notificationId(peerUserId));
+        Log.i(TAG, "notification-clicked peer=" + peerUserId);
+    }
+
+    private static int notificationId(String peerUserId) {
+        return 0x4d430000 ^ (peerUserId == null ? 0 : peerUserId.hashCode());
     }
 
     private void renderPreservingInput() {

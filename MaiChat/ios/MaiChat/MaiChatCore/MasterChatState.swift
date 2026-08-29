@@ -1105,6 +1105,69 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
     }
 }
 
+public enum RemoteIMNewMessageNotificationPolicy {
+    public static func shouldNotify(
+        wasInserted: Bool,
+        isApplicationActive: Bool,
+        visibleConversationUserID: String?,
+        incomingUserID: String
+    ) -> Bool {
+        guard wasInserted else { return false }
+        let incoming = incomingUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !incoming.isEmpty else { return false }
+        let visible = visibleConversationUserID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !(isApplicationActive && visible == incoming)
+    }
+
+    public static func preview(for message: RemoteIMMessage, limit: Int = 80) -> String {
+        let cleanText = compact(message.text)
+        let fallback: String
+        if let image = message.imageAttachment {
+            fallback = isPlaceholder(cleanText, prefixes: ["[图片消息]"])
+                ? "图片消息"
+                : cleanText
+            _ = image
+        } else if let file = message.fileAttachment {
+            fallback = isPlaceholder(cleanText, prefixes: ["[文件消息]"])
+                ? "文件：\(file.fileName)"
+                : cleanText
+        } else if let video = message.videoAttachment {
+            fallback = isPlaceholder(cleanText, prefixes: ["[视频消息"])
+                ? "视频消息"
+                : cleanText
+            _ = video
+        } else if let voice = message.voiceAttachment {
+            fallback = "语音消息（\(voice.durationSeconds) 秒）"
+        } else {
+            fallback = cleanText.isEmpty ? "新消息" : cleanText
+        }
+        return truncated(fallback, limit: limit)
+    }
+
+    public static func aggregatedPreview(
+        for message: RemoteIMMessage,
+        pendingCount: Int,
+        limit: Int = 80
+    ) -> String {
+        let latest = preview(for: message, limit: limit)
+        return pendingCount <= 1 ? latest : "\(pendingCount) 条新消息：\(latest)"
+    }
+
+    private static func compact(_ value: String) -> String {
+        value.split(whereSeparator: \Character.isWhitespace).joined(separator: " ")
+    }
+
+    private static func isPlaceholder(_ value: String, prefixes: [String]) -> Bool {
+        value.isEmpty || prefixes.contains(where: value.hasPrefix)
+    }
+
+    private static func truncated(_ value: String, limit: Int) -> String {
+        let safeLimit = max(1, limit)
+        guard value.count > safeLimit else { return value }
+        return String(value.prefix(safeLimit)) + "…"
+    }
+}
+
 public struct MasterChatState: Equatable {
     public let ownerUserID: String
     public private(set) var contacts: [RemoteIMContact]

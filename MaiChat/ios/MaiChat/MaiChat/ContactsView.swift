@@ -11,16 +11,17 @@ struct ContactsView: View {
     @State private var isBroadcasting = false
 
     var body: some View {
-        NavigationStack {
-            ContactList(
-                selectedTab: $selectedTab,
-                activeContact: $activeContact,
-                showCreateGroup: {
-                    groupNameDraft = ""
-                    isCreatingGroup = true
-                },
-                showBroadcast: { isBroadcasting = true }
-            )
+        ZStack {
+            NavigationStack {
+                ContactList(
+                    selectedTab: $selectedTab,
+                    activeContact: $activeContact,
+                    showCreateGroup: {
+                        groupNameDraft = ""
+                        isCreatingGroup = true
+                    },
+                    showBroadcast: { isBroadcasting = true }
+                )
                 .background(RemoteIMStyle.pageBackground.ignoresSafeArea())
                 .toolbar {
                     ToolbarItem(placement: .navigationBarTrailing) {
@@ -33,21 +34,127 @@ struct ContactsView: View {
                 }
                 .toolbarBackground(RemoteIMStyle.panelBackground, for: .navigationBar)
                 .toolbarBackground(.visible, for: .navigationBar)
-                .alert("新建分组", isPresented: $isCreatingGroup) {
-                    TextField("分组名", text: $groupNameDraft)
-                    Button("取消", role: .cancel) {}
-                    Button("新建") {
-                        if !appState.createContactGroup(name: groupNameDraft) {
-                            appState.errorMessage = "分组名不能为空，且不能与已有分组重名"
-                        }
-                    }
-                } message: {
-                    Text("新分组会按创建顺序显示，空分组也会保留。")
-                }
                 .sheet(isPresented: $isBroadcasting) {
                     BroadcastComposeView()
                 }
+            }
+
+            if isCreatingGroup {
+                CreateContactGroupDialog(
+                    isPresented: $isCreatingGroup,
+                    groupName: $groupNameDraft
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                .zIndex(10)
+            }
         }
+        .animation(.easeOut(duration: 0.18), value: isCreatingGroup)
+    }
+}
+
+private struct CreateContactGroupDialog: View {
+    @EnvironmentObject private var appState: RemoteIMAppState
+    @Binding var isPresented: Bool
+    @Binding var groupName: String
+    @FocusState private var isNameFocused: Bool
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.28)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture(perform: cancel)
+
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("新建分组")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(RemoteIMStyle.textPrimary)
+                    Text("新分组会按创建顺序显示，空分组也会保留。")
+                        .font(.system(size: 13))
+                        .foregroundStyle(RemoteIMStyle.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                TextField("分组名", text: $groupName)
+                    .font(.system(size: 15))
+                    .submitLabel(.done)
+                    .focused($isNameFocused)
+                    .padding(.horizontal, 14)
+                    .frame(height: 44)
+                    .background(
+                        RemoteIMStyle.pageBackground,
+                        in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .stroke(
+                                isNameFocused ? RemoteIMStyle.blue : RemoteIMStyle.border,
+                                lineWidth: isNameFocused ? 1.5 : 1
+                            )
+                    )
+                    .onSubmit(createGroup)
+
+                HStack(spacing: 10) {
+                    Button("取消", action: cancel)
+                        .buttonStyle(.plain)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(RemoteIMStyle.textPrimary)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 42)
+                        .background(
+                            Color(.secondarySystemBackground),
+                            in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        )
+
+                    Button("新建", action: createGroup)
+                        .buttonStyle(.plain)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(canCreate ? Color.white : RemoteIMStyle.textSecondary)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 42)
+                        .background(
+                            canCreate ? RemoteIMStyle.blue : Color(.secondarySystemBackground),
+                            in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        )
+                        .disabled(!canCreate)
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: 340)
+            .background(
+                RemoteIMStyle.panelBackground,
+                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(RemoteIMStyle.border, lineWidth: 1)
+            )
+            .shadow(color: Color.black.opacity(0.16), radius: 24, y: 10)
+            .padding(.horizontal, 24)
+        }
+        .onAppear {
+            DispatchQueue.main.async { isNameFocused = true }
+        }
+    }
+
+    private var canCreate: Bool {
+        !groupName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func createGroup() {
+        guard canCreate else { return }
+        if appState.createContactGroup(name: groupName) {
+            isPresented = false
+            groupName = ""
+        } else {
+            appState.errorMessage = "分组名不能为空，且不能与已有分组重名"
+        }
+    }
+
+    private func cancel() {
+        groupName = ""
+        isPresented = false
     }
 }
 

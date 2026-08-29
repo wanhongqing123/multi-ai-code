@@ -2,6 +2,69 @@ import XCTest
 @testable import MaiChatCore
 
 final class MasterChatStateTests: XCTestCase {
+    func testNewMessageNotificationPolicyOnlySuppressesDuplicateOrVisibleForegroundConversation() {
+        XCTAssertFalse(RemoteIMNewMessageNotificationPolicy.shouldNotify(
+            wasInserted: false,
+            isApplicationActive: false,
+            visibleConversationUserID: nil,
+            incomingUserID: "peer-a"
+        ))
+        XCTAssertFalse(RemoteIMNewMessageNotificationPolicy.shouldNotify(
+            wasInserted: true,
+            isApplicationActive: true,
+            visibleConversationUserID: "peer-a",
+            incomingUserID: "peer-a"
+        ))
+        XCTAssertTrue(RemoteIMNewMessageNotificationPolicy.shouldNotify(
+            wasInserted: true,
+            isApplicationActive: true,
+            visibleConversationUserID: "peer-b",
+            incomingUserID: "peer-a"
+        ))
+        XCTAssertTrue(RemoteIMNewMessageNotificationPolicy.shouldNotify(
+            wasInserted: true,
+            isApplicationActive: false,
+            visibleConversationUserID: "peer-a",
+            incomingUserID: "peer-a"
+        ))
+    }
+
+    func testNewMessageNotificationPreviewDoesNotExposeAttachmentPath() {
+        let image = RemoteIMMessage(
+            fromUserID: "peer-a",
+            toUserID: "ios-user",
+            text: "[图片消息] private-photo.png",
+            imageAttachment: RemoteIMImageAttachment(
+                localFilePath: "/private/account/token/private-photo.png"
+            ),
+            direction: .incoming,
+            status: .received,
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+        let captioned = RemoteIMMessage(
+            fromUserID: "peer-a",
+            toUserID: "ios-user",
+            text: "  请看这张图\n然后回复  ",
+            imageAttachment: RemoteIMImageAttachment(localFilePath: "/tmp/photo.png"),
+            direction: .incoming,
+            status: .received,
+            createdAt: Date(timeIntervalSince1970: 2)
+        )
+
+        XCTAssertEqual(RemoteIMNewMessageNotificationPolicy.preview(for: image), "图片消息")
+        XCTAssertFalse(RemoteIMNewMessageNotificationPolicy.preview(for: image).contains("/private"))
+        XCTAssertEqual(
+            RemoteIMNewMessageNotificationPolicy.preview(for: captioned),
+            "请看这张图 然后回复"
+        )
+        XCTAssertEqual(
+            RemoteIMNewMessageNotificationPolicy.aggregatedPreview(
+                for: captioned,
+                pendingCount: 3
+            ),
+            "3 条新消息：请看这张图 然后回复"
+        )
+    }
     func testExplicitRecipientSendDoesNotUseSelectedConversation() throws {
         var state = MasterChatState(ownerUserID: "ios-master")
         try state.upsertContact(userID: "alice", relation: .friend)

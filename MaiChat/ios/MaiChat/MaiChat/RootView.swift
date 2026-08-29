@@ -68,9 +68,19 @@ struct RootView: View {
         .animation(.easeOut(duration: 0.18), value: isShowingAddContact)
         .background(Color(red: 0.966, green: 0.976, blue: 0.988).ignoresSafeArea())
         .task {
+            await RemoteIMSystemNotificationCenter.shared.requestAuthorizationIfNeeded()
             if !appState.shouldShowInitialLogin {
                 await appState.connectIfRequestedByLaunchEnvironment()
             }
+            if let peerUserID = RemoteIMSystemNotificationCenter.shared.consumePendingPeerUserID() {
+                openNotificationConversation(peerUserID)
+            }
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(for: .remoteIMNotificationConversationSelected)
+        ) { notification in
+            guard let peerUserID = notification.object as? String else { return }
+            openNotificationConversation(peerUserID)
         }
         .onChange(of: scenePhase) { phase in
             AppDiagnosticLog.shared.record(
@@ -111,6 +121,20 @@ struct RootView: View {
                     .padding(.horizontal, 16)
             }
         }
+    }
+
+    private func openNotificationConversation(_ peerUserID: String) {
+        guard let contact = appState.chatState.contacts.first(where: { $0.userID == peerUserID })
+        else { return }
+        appState.selectContact(contact)
+        selectedTab = .messages
+        activeChatContact = contact
+        AppDiagnosticLog.shared.record(
+            level: .info,
+            category: "remote-im",
+            event: "notification-clicked",
+            fields: ["peer": DiagnosticLogPrivacy.stableTag(peerUserID, prefix: "u")]
+        )
     }
 }
 

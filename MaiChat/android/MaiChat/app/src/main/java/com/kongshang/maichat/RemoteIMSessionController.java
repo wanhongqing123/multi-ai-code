@@ -21,6 +21,12 @@ public final class RemoteIMSessionController {
     public interface Listener {
         void onStateChanged();
         void onError(String message);
+
+        default void onNewIncomingMessage(
+            RemoteIMMessage message,
+            boolean conversationVisible
+        ) {
+        }
     }
 
     public interface BroadcastCompletion {
@@ -645,6 +651,7 @@ public final class RemoteIMSessionController {
         }
         if (historyStore.containsRemoteId(chatState.ownerUserId(), incoming.remoteId())) return;
         boolean knownContact = contactExists(incoming.fromUserId());
+        int previousMessageCount = chatState.messages().size();
 
         RemoteIMMessage message;
         if (incoming.imageAttachment() != null) {
@@ -712,6 +719,7 @@ public final class RemoteIMSessionController {
                 incoming.approvalDecision()
             );
         }
+        boolean wasInserted = chatState.messages().size() > previousMessageCount;
         RemoteIMContact contact = findContact(incoming.fromUserId());
         historyStore.upsertContact(chatState.ownerUserId(), contact);
         persistMessage(message);
@@ -723,6 +731,12 @@ public final class RemoteIMSessionController {
         }
         if (!knownContact) {
             refreshContactMetadata(Collections.singletonList(incoming.fromUserId()));
+        }
+        if (wasInserted) {
+            listener.onNewIncomingMessage(
+                message,
+                visibleConversationUserId.equals(incoming.fromUserId())
+            );
         }
         notifyStateChanged();
     }

@@ -1,5 +1,6 @@
 import Foundation
 import MaiChatCore
+import UIKit
 
 @MainActor
 final class RemoteIMDraftState: ObservableObject {
@@ -473,6 +474,14 @@ final class RemoteIMAppState: ObservableObject {
         if unreadCountByUserID.removeValue(forKey: contact.userID) != nil {
             settingsStore.save(currentStoredSettings())
         }
+        clearSystemNotification(for: contact.userID)
+    }
+
+    func clearSystemNotification(for userID: String) {
+        RemoteIMSystemNotificationCenter.shared.clear(
+            peerUserID: userID,
+            badgeCount: totalUnreadCount
+        )
     }
 
     func setConversationVisible(userID: String, visible: Bool) {
@@ -933,6 +942,11 @@ final class RemoteIMAppState: ObservableObject {
             ]
         )
         updateUnreadAfterReceiving(from: event.fromUserID, wasInserted: wasInserted)
+        await postSystemNotificationIfNeeded(
+            message: message,
+            from: event.fromUserID,
+            wasInserted: wasInserted
+        )
         refreshProfileIfNeeded(userID: event.fromUserID)
         if wasInserted {
             enqueueHistoryUpsert(message)
@@ -960,6 +974,11 @@ final class RemoteIMAppState: ObservableObject {
             fields: ["duration_seconds": String(event.durationSeconds)]
         )
         updateUnreadAfterReceiving(from: event.fromUserID, wasInserted: wasInserted)
+        await postSystemNotificationIfNeeded(
+            message: message,
+            from: event.fromUserID,
+            wasInserted: wasInserted
+        )
         refreshProfileIfNeeded(userID: event.fromUserID)
         if wasInserted {
             enqueueHistoryUpsert(message)
@@ -995,6 +1014,11 @@ final class RemoteIMAppState: ObservableObject {
             ]
         )
         updateUnreadAfterReceiving(from: event.fromUserID, wasInserted: wasInserted)
+        await postSystemNotificationIfNeeded(
+            message: message,
+            from: event.fromUserID,
+            wasInserted: wasInserted
+        )
         refreshProfileIfNeeded(userID: event.fromUserID)
         if wasInserted {
             enqueueHistoryUpsert(message)
@@ -1029,6 +1053,11 @@ final class RemoteIMAppState: ObservableObject {
             ]
         )
         updateUnreadAfterReceiving(from: event.fromUserID, wasInserted: wasInserted)
+        await postSystemNotificationIfNeeded(
+            message: message,
+            from: event.fromUserID,
+            wasInserted: wasInserted
+        )
         refreshProfileIfNeeded(userID: event.fromUserID)
         if wasInserted {
             enqueueHistoryUpsert(message)
@@ -1080,6 +1109,11 @@ final class RemoteIMAppState: ObservableObject {
             ]
         )
         updateUnreadAfterReceiving(from: event.fromUserID, wasInserted: wasInserted)
+        await postSystemNotificationIfNeeded(
+            message: message,
+            from: event.fromUserID,
+            wasInserted: wasInserted
+        )
         refreshProfileIfNeeded(userID: event.fromUserID)
         enqueueHistoryUpsert(message)
         if wasInserted {
@@ -1147,6 +1181,49 @@ final class RemoteIMAppState: ObservableObject {
         } else {
             unreadCountByUserID[userID, default: 0] += 1
         }
+    }
+
+    private func postSystemNotificationIfNeeded(
+        message: RemoteIMMessage,
+        from userID: String,
+        wasInserted: Bool
+    ) async {
+        let isApplicationActive = UIApplication.shared.applicationState == .active
+        guard RemoteIMNewMessageNotificationPolicy.shouldNotify(
+            wasInserted: wasInserted,
+            isApplicationActive: isApplicationActive,
+            visibleConversationUserID: visibleConversationUserID,
+            incomingUserID: userID
+        ) else {
+            logIM(
+                level: .debug,
+                event: "notification-suppressed",
+                fields: [
+                    "reason": wasInserted
+                        ? "visible-foreground-conversation"
+                        : "duplicate-or-history",
+                ],
+                userID: userID
+            )
+            return
+        }
+
+        let profile = profile(for: userID)
+        let posted = await RemoteIMSystemNotificationCenter.shared.post(
+            peerUserID: userID,
+            title: profile.displayName,
+            body: RemoteIMNewMessageNotificationPolicy.aggregatedPreview(
+                for: message,
+                pendingCount: unreadCountByUserID[userID] ?? 1
+            ),
+            badgeCount: totalUnreadCount
+        )
+        logIM(
+            level: posted ? .info : .warning,
+            event: posted ? "notification-requested" : "notification-failed",
+            fields: ["badge_count": String(totalUnreadCount)],
+            userID: userID
+        )
     }
 
     private func currentStoredSettings() -> StoredRemoteIMSettings {

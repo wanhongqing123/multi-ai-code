@@ -283,22 +283,41 @@ void TimSdkRemoteIMClientTest::sendsImageWithTextAsSingleMultiElemMessage() {
     QCOMPARE(textElem.value(QStringLiteral("elem_type")).toInt(), 0);
     QCOMPARE(textElem.value(QStringLiteral("text_elem_content")).toString(), QStringLiteral("看这张图"));
 
-    // 用户在输入框里把文字打在图片上面时，文本元素必须排在图片元素前面。
-    // 元素顺序就是收发两端看到的排版顺序，没有别的字段描述它——
-    // 顺序反了，对方看到的就和发送方当时打的不一样。
+    // 配文在上时，元素顺序**不能**跟着变：把文本元素放到附件前面，已经装出去的
+    // 旧客户端（判到第一个元素是文本就 return）会把附件整条丢掉，而它们不会因为
+    // 我们改了源码就自动变好。排版改由 cloudCustomData 的可选键承载，
+    // 老客户端不认识就忽略，一张图都不会丢。
     sent = false;
     client.sendImageWithText(QStringLiteral("phone-user"), QStringLiteral("/tmp/outgoing.png"),
                              QStringLiteral("看这张图"), true,
                              [&](bool ok, const QString&, const RemoteIMSendReceipt&) { sent = ok; });
     QVERIFY(sent);
+    const QJsonObject aboveMessage =
+        QJsonDocument::fromJson(fake->lastJsonMessage.toUtf8()).object();
     const QJsonArray aboveElems =
-        QJsonDocument::fromJson(fake->lastJsonMessage.toUtf8()).object()
-            .value(QStringLiteral("message_elem_array")).toArray();
+        aboveMessage.value(QStringLiteral("message_elem_array")).toArray();
     QCOMPARE(aboveElems.size(), 2);
-    QCOMPARE(aboveElems.at(0).toObject().value(QStringLiteral("elem_type")).toInt(), 0);
-    QCOMPARE(aboveElems.at(0).toObject().value(QStringLiteral("text_elem_content")).toString(),
-             QStringLiteral("看这张图"));
-    QCOMPARE(aboveElems.at(1).toObject().value(QStringLiteral("elem_type")).toInt(), 1);
+    QCOMPARE(aboveElems.at(0).toObject().value(QStringLiteral("elem_type")).toInt(), 1);
+    QCOMPARE(aboveElems.at(1).toObject().value(QStringLiteral("elem_type")).toInt(), 0);
+
+    const QJsonObject aboveMeta =
+        QJsonDocument::fromJson(
+            aboveMessage.value(QStringLiteral("message_cloud_custom_str")).toString().toUtf8())
+            .object();
+    QCOMPARE(aboveMeta.value(QStringLiteral("captionAbove")).toBool(), true);
+
+    // 配文在下是默认，元数据里干脆不写这个键——老客户端连见都见不到。
+    sent = false;
+    client.sendImageWithText(QStringLiteral("phone-user"), QStringLiteral("/tmp/outgoing.png"),
+                             QStringLiteral("看这张图"), false,
+                             [&](bool ok, const QString&, const RemoteIMSendReceipt&) { sent = ok; });
+    QVERIFY(sent);
+    const QJsonObject belowMeta =
+        QJsonDocument::fromJson(
+            QJsonDocument::fromJson(fake->lastJsonMessage.toUtf8()).object()
+                .value(QStringLiteral("message_cloud_custom_str")).toString().toUtf8())
+            .object();
+    QVERIFY(!belowMeta.contains(QStringLiteral("captionAbove")));
 }
 
 namespace {

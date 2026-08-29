@@ -35,6 +35,7 @@ constexpr int kMetadataVersion = 2;
 
 struct ParsedCloudMetadata {
     RemoteIMMessageOrigin origin = RemoteIMMessageOrigin::Unknown;
+    bool captionAbove = false;
     RemoteIMApprovalRequest approvalRequest;
     RemoteIMApprovalDecision approvalDecision;
     bool hasApprovalRequest = false;
@@ -48,23 +49,37 @@ QString originName(RemoteIMMessageOrigin origin) {
 }
 
 QString cloudCustomData(RemoteIMMessageOrigin origin,
-                        const QJsonObject& interaction = QJsonObject()) {
+                        const QJsonObject& interaction = QJsonObject(),
+                        bool captionAbove = false) {
     QJsonObject metadata;
     metadata[QStringLiteral("namespace")] = QString::fromLatin1(kMetadataNamespace);
     metadata[QStringLiteral("version")] = kMetadataVersion;
     metadata[QStringLiteral("origin")] = originName(origin);
     if (!interaction.isEmpty()) metadata[QStringLiteral("interaction")] = interaction;
+    // 配文排在附件上方。走元数据而不是靠元素顺序：元素顺序是破坏性变更——
+    // 把文本元素放到附件前面，已经装出去的旧客户端（判到文本元素就 return）
+    // 会把附件整条丢掉，而它们不会因为我们改了源码就自动变好。
+    // 元数据是加性的，不认识这个键的客户端直接忽略。
+    if (captionAbove) metadata[QStringLiteral("captionAbove")] = true;
     return QString::fromUtf8(QJsonDocument(metadata).toJson(QJsonDocument::Compact));
 }
 
 void setMessageMetadata(QJsonObject& message,
                         RemoteIMMessageOrigin origin,
-                        const QJsonObject& interaction = QJsonObject()) {
-    message[QString::fromLatin1(kCloudCustomDataKey)] = cloudCustomData(origin, interaction);
+                        const QJsonObject& interaction = QJsonObject(),
+                        bool captionAbove = false) {
+    message[QString::fromLatin1(kCloudCustomDataKey)] =
+        cloudCustomData(origin, interaction, captionAbove);
 }
 
 void setMessageOrigin(QJsonObject& message, RemoteIMMessageOrigin origin) {
     setMessageMetadata(message, origin);
+}
+
+void setMessageOriginWithCaptionOrder(QJsonObject& message,
+                                      RemoteIMMessageOrigin origin,
+                                      bool captionAbove) {
+    setMessageMetadata(message, origin, QJsonObject(), captionAbove);
 }
 
 ParsedCloudMetadata messageMetadata(const QJsonObject& message) {
@@ -78,6 +93,7 @@ ParsedCloudMetadata messageMetadata(const QJsonObject& message) {
         || metadata.value(QStringLiteral("version")).toInt(-1) != kMetadataVersion) {
         return parsed;
     }
+    parsed.captionAbove = metadata.value(QStringLiteral("captionAbove")).toBool(false);
     const QString origin = metadata.value(QStringLiteral("origin")).toString();
     if (origin == QStringLiteral("human")) {
         parsed.origin = RemoteIMMessageOrigin::Human;
@@ -585,7 +601,6 @@ void TimSdkRemoteIMClient::sendImageWithText(const QString& peerId, const QStrin
     };
     // 配文在上就先放文本元素。元素数组的顺序就是收发两端看到的排版顺序，
     // 不需要额外的协议字段来描述它。
-    if (captionAbove) appendCaption();
     {
         QJsonObject imageElem;
         imageElem[QStringLiteral("elem_type")] = kElemImage;
@@ -593,10 +608,10 @@ void TimSdkRemoteIMClient::sendImageWithText(const QString& peerId, const QStrin
         imageElem[QStringLiteral("image_elem_level")] = kImageLevelOriginal;
         elems.append(imageElem);
     }
-    if (!captionAbove) appendCaption();
+    appendCaption();
     QJsonObject message;
     message[QStringLiteral("message_elem_array")] = elems;
-    setMessageOrigin(message, RemoteIMMessageOrigin::Human);
+    setMessageOriginWithCaptionOrder(message, RemoteIMMessageOrigin::Human, captionAbove);
     api_->sendMessage(cleanPeerId, kConversationTypeC2C, compactJson(message), [completion = std::move(completion)](int code,
                                                                                                                     const QString& description,
                                                                                                                     const QString& jsonPayload) mutable {
@@ -628,7 +643,6 @@ void TimSdkRemoteIMClient::sendFileWithText(const QString& peerId, const QString
         textElem[QStringLiteral("text_elem_content")] = cleanText;
         elems.append(textElem);
     };
-    if (captionAbove) appendCaption();
     {
         QJsonObject fileElem;
         fileElem[QStringLiteral("elem_type")] = kElemFile;
@@ -636,10 +650,10 @@ void TimSdkRemoteIMClient::sendFileWithText(const QString& peerId, const QString
         fileElem[QStringLiteral("file_elem_file_name")] = displayName;
         elems.append(fileElem);
     }
-    if (!captionAbove) appendCaption();
+    appendCaption();
     QJsonObject message;
     message[QStringLiteral("message_elem_array")] = elems;
-    setMessageOrigin(message, RemoteIMMessageOrigin::Human);
+    setMessageOriginWithCaptionOrder(message, RemoteIMMessageOrigin::Human, captionAbove);
     api_->sendMessage(cleanPeerId, kConversationTypeC2C, compactJson(message), [completion = std::move(completion)](int code,
                                                                                                                     const QString& description,
                                                                                                                     const QString& jsonPayload) mutable {
@@ -701,12 +715,11 @@ void TimSdkRemoteIMClient::sendVideoWithText(const QString& peerId, const Remote
         textElem[QStringLiteral("text_elem_content")] = cleanText;
         elems.append(textElem);
     };
-    if (captionAbove) appendCaption();
     elems.append(videoElemJson(video));
-    if (!captionAbove) appendCaption();
+    appendCaption();
     QJsonObject message;
     message[QStringLiteral("message_elem_array")] = elems;
-    setMessageOrigin(message, RemoteIMMessageOrigin::Human);
+    setMessageOriginWithCaptionOrder(message, RemoteIMMessageOrigin::Human, captionAbove);
     api_->sendMessage(cleanPeerId, kConversationTypeC2C, compactJson(message), [completion = std::move(completion)](int code,
                                                                                                                     const QString& description,
                                                                                                                     const QString& jsonPayload) mutable {
@@ -880,11 +893,8 @@ void TimSdkRemoteIMClient::handleHistoryMessagesPayload(const QString& jsonPaylo
             }
         }
         const QString attachmentCaption = hasAttachment ? caption : QString();
-        // 配文元素排在附件元素之前，就说明发送方当时是「文字在上、附件在下」。
-        // 元素顺序是发送方排版的唯一记录，这里不做别的猜测。
-        const bool attachmentCaptionAbove =
-            hasAttachment && captionElemIndex >= 0 && firstAttachmentIndex >= 0
-            && captionElemIndex < firstAttachmentIndex;
+        // 排版来自元数据，理由同实时路径。
+        const bool attachmentCaptionAbove = hasAttachment && metadata.captionAbove;
 
         const auto makeBase = [&](int elemIndex) {
             RemoteIMMessage message;
@@ -1103,11 +1113,9 @@ void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
         }
     }
     const QString attachmentCaption = hasAttachment ? caption : QString();
-    // 配文元素排在附件元素之前，就说明发送方当时是「文字在上、附件在下」。
-    // 元素顺序是发送方排版的唯一记录，这里不做别的猜测。
-    const bool attachmentCaptionAbove =
-        hasAttachment && captionElemIndex >= 0 && firstAttachmentIndex >= 0
-        && captionElemIndex < firstAttachmentIndex;
+    // 排版来自元数据，不从元素顺序推：元素顺序永远是「附件在前」，
+    // 那是为了不让旧客户端丢附件。
+    const bool attachmentCaptionAbove = hasAttachment && metadata.captionAbove;
 
     QList<RemoteIMMessage> received;
     bool captionConsumed = false;

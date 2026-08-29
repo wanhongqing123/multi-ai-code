@@ -122,9 +122,15 @@ private:
         enum class Kind { Image, File, Video };
         Kind kind;
         QString path;
+        // 附件在输入框文档里的位置。发送时要靠它判断配文排在附件上面还是下面
+        // ——用户在输入框里怎么排的，发出去就该是什么样。
+        int position = 0;
     };
     // 按文档顺序取出输入框里内联的图片/文件附件（发送时用于与配文合并）。
     QList<ComposerAttachment> collectComposerAttachments() const;
+    // 第一个附件之前是否已经有非空白文字。空白不算——只敲了个回车再插图，
+    // 用户的意思仍然是「图在上面」。
+    bool composerTextPrecedesFirstAttachment(int firstAttachmentPosition) const;
     // 输入框里是否有内联的图片/文件附件。
     bool composerHasAttachments() const;
     void openImagePreview(const QString& imagePath);

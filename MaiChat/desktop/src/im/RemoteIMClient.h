@@ -56,13 +56,26 @@ public:
     }
     // 图片/文件 + 配文合并成「一条」多元素消息发送。默认降级为分两条发（图片/文件 + 文本），
     // 仅 TimSdk 真正合并成一条。
-    virtual void sendImageWithText(const QString& peerId, const QString& imagePath, const QString& text, RemoteIMSendCompletion completion) {
+    // captionAbove 决定配文元素排在附件元素之前还是之后。消息本身就是一个元素数组，
+    // 顺序天然就是排版信息，不需要额外的协议字段。
+    virtual void sendImageWithText(const QString& peerId, const QString& imagePath, const QString& text, bool captionAbove, RemoteIMSendCompletion completion) {
         if (text.trimmed().isEmpty()) { sendImage(peerId, imagePath, std::move(completion)); return; }
+        // 降级路径发的是两条消息，先后顺序就是它们在对方会话里的先后顺序。
+        if (captionAbove) {
+            sendText(peerId, text, {});
+            sendImage(peerId, imagePath, std::move(completion));
+            return;
+        }
         sendImage(peerId, imagePath, {});
         sendText(peerId, text, std::move(completion));
     }
-    virtual void sendFileWithText(const QString& peerId, const QString& localPath, const QString& fileName, const QString& text, RemoteIMSendCompletion completion) {
+    virtual void sendFileWithText(const QString& peerId, const QString& localPath, const QString& fileName, const QString& text, bool captionAbove, RemoteIMSendCompletion completion) {
         if (text.trimmed().isEmpty()) { sendFile(peerId, localPath, fileName, std::move(completion)); return; }
+        if (captionAbove) {
+            sendText(peerId, text, {});
+            sendFile(peerId, localPath, fileName, std::move(completion));
+            return;
+        }
         sendFile(peerId, localPath, fileName, {});
         sendText(peerId, text, std::move(completion));
     }
@@ -73,8 +86,13 @@ public:
         Q_UNUSED(video);
         if (completion) completion(false, QStringLiteral("当前 IM 客户端不支持发送视频"), {});
     }
-    virtual void sendVideoWithText(const QString& peerId, const RemoteIMVideoPayload& video, const QString& text, RemoteIMSendCompletion completion) {
+    virtual void sendVideoWithText(const QString& peerId, const RemoteIMVideoPayload& video, const QString& text, bool captionAbove, RemoteIMSendCompletion completion) {
         if (text.trimmed().isEmpty()) { sendVideo(peerId, video, std::move(completion)); return; }
+        if (captionAbove) {
+            sendText(peerId, text, {});
+            sendVideo(peerId, video, std::move(completion));
+            return;
+        }
         sendVideo(peerId, video, {});
         sendText(peerId, text, std::move(completion));
     }

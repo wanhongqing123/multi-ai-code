@@ -3022,18 +3022,27 @@ QList<MainWindow::ComposerAttachment> MainWindow::collectComposerAttachments() c
             const QTextFragment frag = it.fragment();
             if (!frag.isValid() || !frag.charFormat().isImageFormat()) continue;
             const QString name = frag.charFormat().toImageFormat().name();
+            const int position = frag.position();
             if (name.startsWith(kComposerFilePrefix)) {
                 attachments.append(ComposerAttachment{ComposerAttachment::Kind::File,
-                                                      name.mid(kComposerFilePrefix.size())});
+                                                      name.mid(kComposerFilePrefix.size()), position});
             } else if (name.startsWith(kComposerVideoPrefix)) {
                 attachments.append(ComposerAttachment{ComposerAttachment::Kind::Video,
-                                                      name.mid(kComposerVideoPrefix.size())});
+                                                      name.mid(kComposerVideoPrefix.size()), position});
             } else {
-                attachments.append(ComposerAttachment{ComposerAttachment::Kind::Image, name});
+                attachments.append(ComposerAttachment{ComposerAttachment::Kind::Image, name, position});
             }
         }
     }
     return attachments;
+}
+
+bool MainWindow::composerTextPrecedesFirstAttachment(int firstAttachmentPosition) const {
+    if (!messageEditor_ || firstAttachmentPosition <= 0) return false;
+    QString before = messageEditor_->document()->toPlainText().left(firstAttachmentPosition);
+    // 内联附件本身在纯文本里是一个对象替换符，不能算作「文字」。
+    before.remove(QChar(0xFFFC));
+    return !before.trimmed().isEmpty();
 }
 
 void MainWindow::openVideoPreview(const RemoteIMVideoAttachment& attachment) {
@@ -3559,7 +3568,7 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
         }
     }
 
-    // 图片/文件带配文时：配文渲染在附件下方，与附件同属一条气泡（微信式图上文下）。
+    // 图片/文件带配文时：配文与附件同属一条气泡，上下位置按发送时的排版走。
     // 占位文字（[图片消息]/[文件消息] …）不是真正配文，不再重复展示。
     if ((message.hasImage || message.hasFile)
             && !message.text.trimmed().isEmpty()
@@ -3567,7 +3576,12 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
             && !message.text.startsWith(QStringLiteral("[文件消息] "))) {
         auto* captionView = new MarkdownMessageView(bubble);
         captionView->setMessageMarkdown(message.text);
-        bubbleLayout->addWidget(captionView);
+        if (message.captionAbove) {
+            // 附件是这条气泡里先加进来的部件，插到 0 就排到它上面。
+            bubbleLayout->insertWidget(0, captionView);
+        } else {
+            bubbleLayout->addWidget(captionView);
+        }
     }
     // meta 行对齐 Electron 端 .remote-im-message-meta：作者 #334155/700、
     // 时间 #94a3b8、好友徽章 #ecfdf5 底 #047857 字 11px 胶囊。
@@ -3723,18 +3737,23 @@ void MainWindow::sendCurrentText() {
     if (attachments.isEmpty()) {
         app_.sendText(text);
     } else {
-        // 文字并入「第一个」附件，合并成一条消息发送（气泡内图上文下）；其余附件各自单独发。
+        // 文字并入「第一个」附件，合并成一条消息发送；其余附件各自单独发。
+        //
+        // 配文排在附件上面还是下面，取决于用户在输入框里怎么排的：第一个附件之前
+        // 只要有非空白文字，就是「文字在上」。以前这里写死成图上文下，
+        // 用户明明是文字在上打的字，发出去却被翻过来。
+        const bool captionAbove = composerTextPrecedesFirstAttachment(attachments.first().position);
         for (int i = 0; i < attachments.size(); ++i) {
             const QString caption = (i == 0) ? text : QString();
             switch (attachments.at(i).kind) {
             case ComposerAttachment::Kind::File:
-                app_.sendFile(attachments.at(i).path, caption);
+                app_.sendFile(attachments.at(i).path, caption, captionAbove);
                 break;
             case ComposerAttachment::Kind::Video:
-                app_.sendVideo(attachments.at(i).path, caption);
+                app_.sendVideo(attachments.at(i).path, caption, captionAbove);
                 break;
             case ComposerAttachment::Kind::Image:
-                app_.sendImage(attachments.at(i).path, caption);
+                app_.sendImage(attachments.at(i).path, caption, captionAbove);
                 break;
             }
         }

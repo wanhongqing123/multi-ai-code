@@ -192,7 +192,7 @@ RemoteIMMessage ChatState::queueOutgoingApprovalDecision(
     return message;
 }
 
-RemoteIMMessage ChatState::queueOutgoingImage(const QString& localPath, int width, int height, qint64 sizeBytes, const QString& text) {
+RemoteIMMessage ChatState::queueOutgoingImage(const QString& localPath, int width, int height, qint64 sizeBytes, const QString& text, bool captionAbove) {
     const QString cleanPath = clean(localPath);
     if (cleanPath.isEmpty()) throw std::invalid_argument("localPath is required");
     RemoteIMMessage message;
@@ -204,6 +204,7 @@ RemoteIMMessage ChatState::queueOutgoingImage(const QString& localPath, int widt
     message.status = RemoteIMMessageStatus::Pending;
     message.origin = RemoteIMMessageOrigin::Human;
     message.hasImage = true;
+    message.captionAbove = captionAbove;
     message.createdAtMillis = (message.createdAtMillis / 1000) * 1000;
     message.image = RemoteIMImageAttachment{cleanPath, width, height, sizeBytes};
     appendTracked(message);
@@ -226,7 +227,7 @@ RemoteIMMessage ChatState::queueOutgoingVoice(const QString& localPath, int dura
     return message;
 }
 
-RemoteIMMessage ChatState::queueOutgoingFile(const QString& localPath, const QString& fileName, const QString& mimeType, qint64 sizeBytes, const QString& text) {
+RemoteIMMessage ChatState::queueOutgoingFile(const QString& localPath, const QString& fileName, const QString& mimeType, qint64 sizeBytes, const QString& text, bool captionAbove) {
     const QString cleanPath = clean(localPath);
     if (cleanPath.isEmpty()) throw std::invalid_argument("localPath is required");
     const QString cleanFileName = clean(fileName).isEmpty() ? ChatState::fileName(cleanPath) : clean(fileName);
@@ -240,12 +241,13 @@ RemoteIMMessage ChatState::queueOutgoingFile(const QString& localPath, const QSt
     message.status = RemoteIMMessageStatus::Pending;
     message.origin = RemoteIMMessageOrigin::Human;
     message.hasFile = true;
+    message.captionAbove = captionAbove;
     message.file = RemoteIMFileAttachment{cleanPath, cleanFileName, clean(mimeType), sizeBytes};
     appendTracked(message);
     return message;
 }
 
-RemoteIMMessage ChatState::queueOutgoingVideo(const QString& localPath, const QString& fileName, const QString& coverPath, int durationSeconds, qint64 sizeBytes, const QString& text) {
+RemoteIMMessage ChatState::queueOutgoingVideo(const QString& localPath, const QString& fileName, const QString& coverPath, int durationSeconds, qint64 sizeBytes, const QString& text, bool captionAbove) {
     const QString cleanPath = clean(localPath);
     if (cleanPath.isEmpty()) throw std::invalid_argument("localPath is required");
     const QString cleanFileName = clean(fileName).isEmpty() ? ChatState::fileName(cleanPath) : clean(fileName);
@@ -260,6 +262,7 @@ RemoteIMMessage ChatState::queueOutgoingVideo(const QString& localPath, const QS
     message.status = RemoteIMMessageStatus::Pending;
     message.origin = RemoteIMMessageOrigin::Human;
     message.hasVideo = true;
+    message.captionAbove = captionAbove;
     message.video = RemoteIMVideoAttachment{cleanPath, cleanFileName, clean(coverPath),
                                             durationSeconds > 0 ? durationSeconds : 0, sizeBytes};
     appendTracked(message);

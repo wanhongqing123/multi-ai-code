@@ -54,11 +54,12 @@ public:
                               RemoteIMApprovalAction action,
                               std::function<void(bool)> completion = {});
     // text 非空时，图片/文件与配文合并成「一条」消息发送（气泡内图上文下）。
-    void sendImage(const QString& localPath, const QString& text = QString());
-    void sendFile(const QString& localPath, const QString& text = QString());
+    // captionAbove：配文在附件上方（用户在输入框里就是这么排的）还是下方。
+    void sendImage(const QString& localPath, const QString& text = QString(), bool captionAbove = false);
+    void sendFile(const QString& localPath, const QString& text = QString(), bool captionAbove = false);
     // 发送视频（mp4/mov）。时长/尺寸从容器里解，封面在这里生成——IM SDK 两样都要，
     // 且都不会自己算。
-    void sendVideo(const QString& localPath, const QString& text = QString());
+    void sendVideo(const QString& localPath, const QString& text = QString(), bool captionAbove = false);
     void sendVoicePlaceholder();
 
 signals:

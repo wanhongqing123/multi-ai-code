@@ -265,6 +265,7 @@ void TimSdkRemoteIMClientTest::sendsImageWithTextAsSingleMultiElemMessage() {
 
     bool sent = false;
     client.sendImageWithText(QStringLiteral("phone-user"), QStringLiteral("/tmp/outgoing.png"), QStringLiteral("看这张图"),
+                             false,
                              [&](bool ok, const QString&, const RemoteIMSendReceipt&) { sent = ok; });
     QVERIFY(sent);
     QCOMPARE(fake->lastConversationId, QStringLiteral("phone-user"));
@@ -281,6 +282,23 @@ void TimSdkRemoteIMClientTest::sendsImageWithTextAsSingleMultiElemMessage() {
     const QJsonObject textElem = elems.at(1).toObject();
     QCOMPARE(textElem.value(QStringLiteral("elem_type")).toInt(), 0);
     QCOMPARE(textElem.value(QStringLiteral("text_elem_content")).toString(), QStringLiteral("看这张图"));
+
+    // 用户在输入框里把文字打在图片上面时，文本元素必须排在图片元素前面。
+    // 元素顺序就是收发两端看到的排版顺序，没有别的字段描述它——
+    // 顺序反了，对方看到的就和发送方当时打的不一样。
+    sent = false;
+    client.sendImageWithText(QStringLiteral("phone-user"), QStringLiteral("/tmp/outgoing.png"),
+                             QStringLiteral("看这张图"), true,
+                             [&](bool ok, const QString&, const RemoteIMSendReceipt&) { sent = ok; });
+    QVERIFY(sent);
+    const QJsonArray aboveElems =
+        QJsonDocument::fromJson(fake->lastJsonMessage.toUtf8()).object()
+            .value(QStringLiteral("message_elem_array")).toArray();
+    QCOMPARE(aboveElems.size(), 2);
+    QCOMPARE(aboveElems.at(0).toObject().value(QStringLiteral("elem_type")).toInt(), 0);
+    QCOMPARE(aboveElems.at(0).toObject().value(QStringLiteral("text_elem_content")).toString(),
+             QStringLiteral("看这张图"));
+    QCOMPARE(aboveElems.at(1).toObject().value(QStringLiteral("elem_type")).toInt(), 1);
 }
 
 namespace {
@@ -342,7 +360,7 @@ void TimSdkRemoteIMClientTest::sendsVideoWithTextAsSingleMultiElemMessage() {
     client.connectToService(123456, QStringLiteral("desktop-user"), QStringLiteral("sig-value"), nullptr);
 
     bool sent = false;
-    client.sendVideoWithText(QStringLiteral("phone-user"), samplePayload(), QStringLiteral("录屏在这"),
+    client.sendVideoWithText(QStringLiteral("phone-user"), samplePayload(), QStringLiteral("录屏在这"), false,
                              [&](bool ok, const QString&, const RemoteIMSendReceipt&) { sent = ok; });
 
     QVERIFY(sent);

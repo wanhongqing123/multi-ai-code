@@ -176,6 +176,9 @@ struct RemoteIMMessage {
     RemoteIMFileAttachment file;
     RemoteIMVideoAttachment video;
     bool hasImage = false;
+    // 配文排在附件上方还是下方。默认 false（图上文下）——历史消息和别的客户端
+    // 发来的消息如果看不出顺序，就沿用原来的样子，不去猜。
+    bool captionAbove = false;
     bool hasVoice = false;
     bool hasFile = false;
     bool hasVideo = false;

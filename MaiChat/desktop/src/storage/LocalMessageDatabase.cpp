@@ -52,6 +52,7 @@ RemoteIMMessage messageFromQuery(const QSqlQuery& query) {
     message.text = query.value(QStringLiteral("text")).toString();
     message.createdAtMillis = query.value(QStringLiteral("created_at")).toLongLong();
     message.hasImage = query.value(QStringLiteral("has_image")).toInt() != 0;
+    message.captionAbove = query.value(QStringLiteral("caption_above")).toInt() != 0;
     message.image = RemoteIMImageAttachment{
         query.value(QStringLiteral("image_path")).toString(),
         query.value(QStringLiteral("image_w")).toInt(),
@@ -172,7 +173,8 @@ void LocalMessageDatabase::migrate() {
         "  has_video     INTEGER NOT NULL DEFAULT 0,"
         "  video_path    TEXT, video_name TEXT, video_cover TEXT,"
         "  video_seconds INTEGER, video_bytes INTEGER,"
-        "  approval_token TEXT, approval_actions TEXT"
+        "  approval_token TEXT, approval_actions TEXT,"
+        "  caption_above INTEGER NOT NULL DEFAULT 0"
         ")"));
     // 老库（建于视频功能之前）没有这几列，CREATE TABLE IF NOT EXISTS 不会补。
     // 与 contacts.avatar_url 一样按 PRAGMA 判存在再 ALTER，重复启动无副作用。
@@ -186,6 +188,7 @@ void LocalMessageDatabase::migrate() {
         {QStringLiteral("video_cover"), QStringLiteral("TEXT")},
         {QStringLiteral("video_seconds"), QStringLiteral("INTEGER")},
         {QStringLiteral("video_bytes"), QStringLiteral("INTEGER")},
+        {QStringLiteral("caption_above"), QStringLiteral("INTEGER NOT NULL DEFAULT 0")},
         {QStringLiteral("approval_token"), QStringLiteral("TEXT")},
         {QStringLiteral("approval_actions"), QStringLiteral("TEXT")}
     };
@@ -429,8 +432,8 @@ bool LocalMessageDatabase::insertMessageIfAbsent(const RemoteIMMessage& message,
         "  has_voice, voice_path, voice_seconds,"
         "  has_file, file_path, file_name, file_mime, file_bytes,"
         "  has_video, video_path, video_name, video_cover, video_seconds, video_bytes,"
-        "  approval_token, approval_actions"
-        ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"));
+        "  approval_token, approval_actions, caption_above"
+        ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"));
     query.addBindValue(message.id);
     query.addBindValue(message.fromUserId);
     query.addBindValue(message.toUserId);
@@ -468,6 +471,7 @@ bool LocalMessageDatabase::insertMessageIfAbsent(const RemoteIMMessage& message,
             : QList<RemoteIMApprovalAction>{};
     query.addBindValue(approvalToken);
     query.addBindValue(approvalActionsText(approvalActions));
+    query.addBindValue(message.captionAbove ? 1 : 0);
     if (!query.exec()) return false;
     const bool inserted = query.numRowsAffected() > 0;
     if (!inserted && message.createdAtMillis > 0) {

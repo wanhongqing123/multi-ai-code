@@ -266,13 +266,13 @@ void RemoteIMApplication::sendApprovalDecision(const QString& token,
         });
 }
 
-void RemoteIMApplication::sendImage(const QString& localPath, const QString& text) {
+void RemoteIMApplication::sendImage(const QString& localPath, const QString& text, bool captionAbove) {
     const QString cleanPath = localPath.trimmed();
     if (cleanPath.isEmpty() || state_.selectedPeerId().isEmpty()) return;
 
     QFileInfo info(cleanPath);
     const QString caption = text.trimmed();
-    RemoteIMMessage message = state_.queueOutgoingImage(cleanPath, 0, 0, info.size(), caption);
+    RemoteIMMessage message = state_.queueOutgoingImage(cleanPath, 0, 0, info.size(), caption, captionAbove);
     persistMessage(message);
     emit stateChanged();
 
@@ -289,11 +289,11 @@ void RemoteIMApplication::sendImage(const QString& localPath, const QString& tex
     if (caption.isEmpty()) {
         client_->sendImage(message.toUserId, cleanPath, std::move(onDone));
     } else {
-        client_->sendImageWithText(message.toUserId, cleanPath, caption, std::move(onDone));
+        client_->sendImageWithText(message.toUserId, cleanPath, caption, captionAbove, std::move(onDone));
     }
 }
 
-void RemoteIMApplication::sendFile(const QString& localPath, const QString& text) {
+void RemoteIMApplication::sendFile(const QString& localPath, const QString& text, bool captionAbove) {
     const QString cleanPath = localPath.trimmed();
     if (cleanPath.isEmpty() || state_.selectedPeerId().isEmpty()) return;
 
@@ -305,7 +305,7 @@ void RemoteIMApplication::sendFile(const QString& localPath, const QString& text
     const QString fileName = info.fileName();
     const QString mimeType = QMimeDatabase().mimeTypeForFile(info).name();
     const QString caption = text.trimmed();
-    RemoteIMMessage message = state_.queueOutgoingFile(cleanPath, fileName, mimeType, info.size(), caption);
+    RemoteIMMessage message = state_.queueOutgoingFile(cleanPath, fileName, mimeType, info.size(), caption, captionAbove);
     persistMessage(message);
     emit stateChanged();
 
@@ -322,11 +322,11 @@ void RemoteIMApplication::sendFile(const QString& localPath, const QString& text
     if (caption.isEmpty()) {
         client_->sendFile(message.toUserId, cleanPath, fileName, std::move(onDone));
     } else {
-        client_->sendFileWithText(message.toUserId, cleanPath, fileName, caption, std::move(onDone));
+        client_->sendFileWithText(message.toUserId, cleanPath, fileName, caption, captionAbove, std::move(onDone));
     }
 }
 
-void RemoteIMApplication::sendVideo(const QString& localPath, const QString& text) {
+void RemoteIMApplication::sendVideo(const QString& localPath, const QString& text, bool captionAbove) {
     const QString cleanPath = localPath.trimmed();
     if (cleanPath.isEmpty() || state_.selectedPeerId().isEmpty()) return;
 
@@ -370,7 +370,7 @@ void RemoteIMApplication::sendVideo(const QString& localPath, const QString& tex
     // 本地回显用真正的视频附件（messages 表已有视频列）：气泡直接显示封面 + 时长，
     // 点击可播放，不再借道文件卡。
     RemoteIMMessage message = state_.queueOutgoingVideo(
-        cleanPath, fileName, cover.path, metadata.durationSeconds, info.size(), caption);
+        cleanPath, fileName, cover.path, metadata.durationSeconds, info.size(), caption, captionAbove);
     persistMessage(message);
     emit stateChanged();
 
@@ -387,7 +387,7 @@ void RemoteIMApplication::sendVideo(const QString& localPath, const QString& tex
     if (caption.isEmpty()) {
         client_->sendVideo(message.toUserId, payload, std::move(onDone));
     } else {
-        client_->sendVideoWithText(message.toUserId, payload, caption, std::move(onDone));
+        client_->sendVideoWithText(message.toUserId, payload, caption, captionAbove, std::move(onDone));
     }
 }
 

@@ -567,7 +567,7 @@ void TimSdkRemoteIMClient::sendFile(const QString& peerId, const QString& localP
     });
 }
 
-void TimSdkRemoteIMClient::sendImageWithText(const QString& peerId, const QString& imagePath, const QString& text, RemoteIMSendCompletion completion) {
+void TimSdkRemoteIMClient::sendImageWithText(const QString& peerId, const QString& imagePath, const QString& text, bool captionAbove, RemoteIMSendCompletion completion) {
     const QString cleanPeerId = peerId.trimmed();
     const QString cleanPath = imagePath.trimmed();
     const QString cleanText = text.trimmed();
@@ -576,6 +576,16 @@ void TimSdkRemoteIMClient::sendImageWithText(const QString& peerId, const QStrin
         return;
     }
     QJsonArray elems;
+    auto appendCaption = [&elems, &cleanText]() {
+        if (cleanText.isEmpty()) return;
+        QJsonObject textElem;
+        textElem[QStringLiteral("elem_type")] = kElemText;
+        textElem[QStringLiteral("text_elem_content")] = cleanText;
+        elems.append(textElem);
+    };
+    // 配文在上就先放文本元素。元素数组的顺序就是收发两端看到的排版顺序，
+    // 不需要额外的协议字段来描述它。
+    if (captionAbove) appendCaption();
     {
         QJsonObject imageElem;
         imageElem[QStringLiteral("elem_type")] = kElemImage;
@@ -583,12 +593,7 @@ void TimSdkRemoteIMClient::sendImageWithText(const QString& peerId, const QStrin
         imageElem[QStringLiteral("image_elem_level")] = kImageLevelOriginal;
         elems.append(imageElem);
     }
-    if (!cleanText.isEmpty()) {
-        QJsonObject textElem;
-        textElem[QStringLiteral("elem_type")] = kElemText;
-        textElem[QStringLiteral("text_elem_content")] = cleanText;
-        elems.append(textElem);
-    }
+    if (!captionAbove) appendCaption();
     QJsonObject message;
     message[QStringLiteral("message_elem_array")] = elems;
     setMessageOrigin(message, RemoteIMMessageOrigin::Human);
@@ -606,7 +611,7 @@ void TimSdkRemoteIMClient::sendImageWithText(const QString& peerId, const QStrin
     });
 }
 
-void TimSdkRemoteIMClient::sendFileWithText(const QString& peerId, const QString& localPath, const QString& fileName, const QString& text, RemoteIMSendCompletion completion) {
+void TimSdkRemoteIMClient::sendFileWithText(const QString& peerId, const QString& localPath, const QString& fileName, const QString& text, bool captionAbove, RemoteIMSendCompletion completion) {
     const QString cleanPeerId = peerId.trimmed();
     const QString cleanPath = localPath.trimmed();
     const QString cleanText = text.trimmed();
@@ -616,6 +621,14 @@ void TimSdkRemoteIMClient::sendFileWithText(const QString& peerId, const QString
     }
     const QString displayName = fileName.trimmed().isEmpty() ? QFileInfo(cleanPath).fileName() : fileName.trimmed();
     QJsonArray elems;
+    auto appendCaption = [&elems, &cleanText]() {
+        if (cleanText.isEmpty()) return;
+        QJsonObject textElem;
+        textElem[QStringLiteral("elem_type")] = kElemText;
+        textElem[QStringLiteral("text_elem_content")] = cleanText;
+        elems.append(textElem);
+    };
+    if (captionAbove) appendCaption();
     {
         QJsonObject fileElem;
         fileElem[QStringLiteral("elem_type")] = kElemFile;
@@ -623,12 +636,7 @@ void TimSdkRemoteIMClient::sendFileWithText(const QString& peerId, const QString
         fileElem[QStringLiteral("file_elem_file_name")] = displayName;
         elems.append(fileElem);
     }
-    if (!cleanText.isEmpty()) {
-        QJsonObject textElem;
-        textElem[QStringLiteral("elem_type")] = kElemText;
-        textElem[QStringLiteral("text_elem_content")] = cleanText;
-        elems.append(textElem);
-    }
+    if (!captionAbove) appendCaption();
     QJsonObject message;
     message[QStringLiteral("message_elem_array")] = elems;
     setMessageOrigin(message, RemoteIMMessageOrigin::Human);
@@ -670,10 +678,10 @@ QJsonObject videoElemJson(const RemoteIMVideoPayload& video) {
 }  // namespace
 
 void TimSdkRemoteIMClient::sendVideo(const QString& peerId, const RemoteIMVideoPayload& video, RemoteIMSendCompletion completion) {
-    sendVideoWithText(peerId, video, QString(), std::move(completion));
+    sendVideoWithText(peerId, video, QString(), false, std::move(completion));
 }
 
-void TimSdkRemoteIMClient::sendVideoWithText(const QString& peerId, const RemoteIMVideoPayload& video, const QString& text, RemoteIMSendCompletion completion) {
+void TimSdkRemoteIMClient::sendVideoWithText(const QString& peerId, const RemoteIMVideoPayload& video, const QString& text, bool captionAbove, RemoteIMSendCompletion completion) {
     const QString cleanPeerId = peerId.trimmed();
     const QString cleanText = text.trimmed();
     if (cleanPeerId.isEmpty()) {
@@ -685,13 +693,17 @@ void TimSdkRemoteIMClient::sendVideoWithText(const QString& peerId, const Remote
         return;
     }
 
-    QJsonArray elems{videoElemJson(video)};
-    if (!cleanText.isEmpty()) {
+    QJsonArray elems;
+    auto appendCaption = [&elems, &cleanText]() {
+        if (cleanText.isEmpty()) return;
         QJsonObject textElem;
         textElem[QStringLiteral("elem_type")] = kElemText;
         textElem[QStringLiteral("text_elem_content")] = cleanText;
         elems.append(textElem);
-    }
+    };
+    if (captionAbove) appendCaption();
+    elems.append(videoElemJson(video));
+    if (!captionAbove) appendCaption();
     QJsonObject message;
     message[QStringLiteral("message_elem_array")] = elems;
     setMessageOrigin(message, RemoteIMMessageOrigin::Human);
@@ -845,15 +857,20 @@ void TimSdkRemoteIMClient::handleHistoryMessagesPayload(const QString& jsonPaylo
         // 与实时接收（handleIncomingMessage）保持一致：图片/文件 + 配文合并成一条，
         // 稳定 id 锚定在附件元素上，重登漫游拉取回来的 id 与实时投递一致，本地库去重不产生重复配文行。
         int captionElemIndex = -1;
+        int firstAttachmentIndex = -1;
         QString caption;
         bool hasAttachment = false;
         for (int i = 0; i < elems.size(); ++i) {
             const QJsonObject elem = elems.at(i).toObject();
             const int elemType = elem.value(QStringLiteral("elem_type")).toInt(-1);
             if (elemType == kElemImage) {
-                if (!elem.value(QStringLiteral("image_elem_orig_path")).toString().trimmed().isEmpty()) hasAttachment = true;
+                if (!elem.value(QStringLiteral("image_elem_orig_path")).toString().trimmed().isEmpty()) {
+                    hasAttachment = true;
+                    if (firstAttachmentIndex < 0) firstAttachmentIndex = i;
+                }
             } else if (elemType == kElemFile || elemType == kElemVideo || elemType == kElemSound) {
                 hasAttachment = true;
+                if (firstAttachmentIndex < 0) firstAttachmentIndex = i;
             } else if (elemType == kElemText && captionElemIndex < 0) {
                 const QString content = elem.value(QStringLiteral("text_elem_content")).toString();
                 if (!content.trimmed().isEmpty()) {
@@ -863,6 +880,11 @@ void TimSdkRemoteIMClient::handleHistoryMessagesPayload(const QString& jsonPaylo
             }
         }
         const QString attachmentCaption = hasAttachment ? caption : QString();
+        // 配文元素排在附件元素之前，就说明发送方当时是「文字在上、附件在下」。
+        // 元素顺序是发送方排版的唯一记录，这里不做别的猜测。
+        const bool attachmentCaptionAbove =
+            hasAttachment && captionElemIndex >= 0 && firstAttachmentIndex >= 0
+            && captionElemIndex < firstAttachmentIndex;
 
         const auto makeBase = [&](int elemIndex) {
             RemoteIMMessage message;
@@ -909,6 +931,7 @@ void TimSdkRemoteIMClient::handleHistoryMessagesPayload(const QString& jsonPaylo
                 };
                 if (!attachmentCaption.isEmpty() && !captionConsumed) {
                     message.text = attachmentCaption;
+                message.captionAbove = attachmentCaptionAbove;
                     captionConsumed = true;
                 } else {
                     message.text = QStringLiteral("[图片消息] ") + QFileInfo(localPath).fileName();
@@ -1059,6 +1082,7 @@ void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
     // 附件与配文共用同一条 RemoteIMMessage（稳定 id 锚定在附件元素上），
     // 使实时与漫游两路投递出的 id 一致，本地库不会把配文当成独立文本重复入库。
     int captionElemIndex = -1;
+    int firstAttachmentIndex = -1;
     QString caption;
     bool hasAttachment = false;
     for (int i = 0; i < elems.size(); ++i) {
@@ -1066,8 +1090,10 @@ void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
         const int elemType = elem.value(QStringLiteral("elem_type")).toInt(-1);
         if (elemType == kElemImage) {
             hasAttachment = true;
+            if (firstAttachmentIndex < 0) firstAttachmentIndex = i;
         } else if (elemType == kElemFile || elemType == kElemVideo || elemType == kElemSound) {
             hasAttachment = true;
+            if (firstAttachmentIndex < 0) firstAttachmentIndex = i;
         } else if (elemType == kElemText && captionElemIndex < 0) {
             const QString content = elem.value(QStringLiteral("text_elem_content")).toString();
             if (!content.trimmed().isEmpty()) {
@@ -1077,6 +1103,11 @@ void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
         }
     }
     const QString attachmentCaption = hasAttachment ? caption : QString();
+    // 配文元素排在附件元素之前，就说明发送方当时是「文字在上、附件在下」。
+    // 元素顺序是发送方排版的唯一记录，这里不做别的猜测。
+    const bool attachmentCaptionAbove =
+        hasAttachment && captionElemIndex >= 0 && firstAttachmentIndex >= 0
+        && captionElemIndex < firstAttachmentIndex;
 
     QList<RemoteIMMessage> received;
     bool captionConsumed = false;
@@ -1111,6 +1142,7 @@ void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
             imageMessage.image = RemoteIMImageAttachment{localPath, width, height, sizeBytes};
             if (!attachmentCaption.isEmpty() && !captionConsumed) {
                 imageMessage.text = attachmentCaption;
+                imageMessage.captionAbove = attachmentCaptionAbove;
                 captionConsumed = true;
             }
             if (!localPath.isEmpty()) {
@@ -1135,6 +1167,7 @@ void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
             voiceMessage.hasVoice = true;
             if (!attachmentCaption.isEmpty() && !captionConsumed) {
                 voiceMessage.text = attachmentCaption;
+                voiceMessage.captionAbove = attachmentCaptionAbove;
                 captionConsumed = true;
             } else {
                 voiceMessage.text = QStringLiteral("[语音消息]");
@@ -1158,6 +1191,7 @@ void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
             videoMessage.hasVideo = true;
             if (!attachmentCaption.isEmpty() && !captionConsumed) {
                 videoMessage.text = attachmentCaption;
+                videoMessage.captionAbove = attachmentCaptionAbove;
                 captionConsumed = true;
             } else {
                 videoMessage.text = QStringLiteral("[视频消息] ") + displayName;
@@ -1182,6 +1216,7 @@ void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
             fileMessage.hasFile = true;
             if (!attachmentCaption.isEmpty() && !captionConsumed) {
                 fileMessage.text = attachmentCaption;
+                fileMessage.captionAbove = attachmentCaptionAbove;
                 captionConsumed = true;
             } else {
                 fileMessage.text = QStringLiteral("[文件消息] ") + displayName;

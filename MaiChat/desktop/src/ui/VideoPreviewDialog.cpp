@@ -1,6 +1,8 @@
 #include "ui/VideoPreviewDialog.h"
 
 #include <QFileInfo>
+#include <QCloseEvent>
+#include <QDebug>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
@@ -62,7 +64,7 @@ VideoPreviewDialog::VideoPreviewDialog(const QString& videoPath, const QString& 
     connect(positionSlider_, &QSlider::sliderPressed, this, [this]() { sliderPressed_ = true; });
     connect(positionSlider_, &QSlider::sliderReleased, this, [this]() {
         sliderPressed_ = false;
-        player_->setPosition(positionSlider_->value());
+        if (player_) player_->setPosition(positionSlider_->value());
     });
 
     connect(player_, &QMediaPlayer::durationChanged, this, [this](qint64 duration) {
@@ -92,8 +94,39 @@ VideoPreviewDialog::VideoPreviewDialog(const QString& videoPath, const QString& 
 }
 
 VideoPreviewDialog::~VideoPreviewDialog() {
-    // 不停就析构的话，后端可能还持着文件句柄，Windows 上表现为文件删不掉。
-    if (player_) player_->stop();
+    // 正常关闭会在 closeEvent（原生窗口/CALayer 仍有效）里完成播放器销毁。
+    // 父窗口直接析构等少数路径没有 closeEvent，此处只做无 stop 的兜底释放：
+    // macOS AVFoundation 后端在原生视图已关闭后调用 stop() 会访问悬空 CALayer。
+    shutdownPlayer(false, "destructor-fallback");
+}
+
+void VideoPreviewDialog::closeEvent(QCloseEvent* event) {
+    // WA_DeleteOnClose 会先关闭原生窗口，再投递 DeferredDelete。原实现把 stop()
+    // 放在析构函数里，执行时 NSView/CALayer 已失效，libqavfmediaplayer 会在
+    // objc_msgSend 处 EXC_BAD_ACCESS。必须在交给 QDialog 关闭窗口之前拆播放器。
+    shutdownPlayer(true, "close-event");
+    QDialog::closeEvent(event);
+}
+
+void VideoPreviewDialog::shutdownPlayer(bool stopPlayback, const char* reason) {
+    if (!player_) return;
+    QMediaPlayer* player = player_;
+    player_ = nullptr;
+    const QMediaPlayer::State state = player->state();
+    qInfo().noquote()
+        << QStringLiteral("[video-preview] teardown begin reason=%1 state=%2 file=%3")
+               .arg(QString::fromLatin1(reason))
+               .arg(static_cast<int>(state))
+               .arg(QFileInfo(videoPath_).fileName());
+
+    // 防止 stop/detach 期间的同步状态信号回调已经在关闭中的控件。
+    disconnect(player, nullptr, this, nullptr);
+    if (stopPlayback && state != QMediaPlayer::StoppedState) player->stop();
+    player->setVideoOutput(static_cast<QVideoWidget*>(nullptr));
+    delete player;
+    qInfo().noquote()
+        << QStringLiteral("[video-preview] teardown complete reason=%1")
+               .arg(QString::fromLatin1(reason));
 }
 
 void VideoPreviewDialog::togglePlayback() {

@@ -4,6 +4,7 @@
 #include <QString>
 
 class QLabel;
+class QCloseEvent;
 class QMediaPlayer;
 class QPushButton;
 class QSlider;
@@ -23,10 +24,12 @@ public:
     ~VideoPreviewDialog() override;
 
 protected:
+    void closeEvent(QCloseEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
 
 private:
     void togglePlayback();
+    void shutdownPlayer(bool stopPlayback, const char* reason);
     void showError(const QString& message);
     static QString formatDuration(qint64 milliseconds);
 

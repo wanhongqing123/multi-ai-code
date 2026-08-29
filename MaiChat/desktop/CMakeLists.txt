@@ -298,6 +298,11 @@ target_link_libraries(app_text_input_dialog_test PRIVATE remote_im_desktop_ui re
 add_executable(file_preview_dialog_test tests/FilePreviewDialogTest.cpp)
 target_link_libraries(file_preview_dialog_test PRIVATE remote_im_desktop_ui remote_im_core Qt5::Widgets Qt5::Test)
 
+add_executable(video_preview_dialog_test tests/VideoPreviewDialogTest.cpp)
+target_link_libraries(video_preview_dialog_test PRIVATE remote_im_desktop_ui remote_im_core Qt5::Widgets Qt5::Multimedia Qt5::Test)
+target_compile_definitions(video_preview_dialog_test PRIVATE
+  MAICHAT_TEST_VIDEO_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/aicli/opencode/packages/app/src/assets/help/introducing-tabs.mp4")
+
 add_executable(add_contact_dialog_test tests/AddContactDialogTest.cpp)
 target_link_libraries(add_contact_dialog_test PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets Qt5::Test)
 
@@ -380,6 +385,7 @@ add_test(NAME login_dialog_test COMMAND login_dialog_test)
 add_test(NAME app_message_dialog_test COMMAND app_message_dialog_test)
 add_test(NAME app_text_input_dialog_test COMMAND app_text_input_dialog_test)
 add_test(NAME file_preview_dialog_test COMMAND file_preview_dialog_test)
+add_test(NAME video_preview_dialog_test COMMAND video_preview_dialog_test)
 add_test(NAME add_contact_dialog_test COMMAND add_contact_dialog_test)
 add_test(NAME main_window_layout_test COMMAND main_window_layout_test)
 add_test(NAME remote_desktop_signal_test COMMAND remote_desktop_signal_test)

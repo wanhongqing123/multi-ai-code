@@ -59,6 +59,27 @@ if (-not $MakeNsis -or -not (Test-Path $MakeNsis)) {
 }
 Write-Host "makensis: $MakeNsis"
 
+# 4) 定位 NSIS 插件目录。
+#
+# 快捷方式上的 AppUserModelID 要靠 WinShell 插件写（见 windows-installer.nsi），
+# 而 electron-builder 把 makensis 和插件放在两个不同的缓存包里
+# （nsis-3.x 与 nsis-resources-3.x），makensis 默认找不到隔壁包里的插件。
+# 不显式指定的话报的是 "Plugin not found, cannot call WinShell::SetLnkAUMI"。
+$pluginDir = ''
+$winShell = Get-ChildItem "$env:LOCALAPPDATA\electron-builder\Cache\nsis" -Recurse -Filter WinShell.dll -ErrorAction SilentlyContinue |
+    Where-Object { $_.DirectoryName -match 'x86-unicode$' } |
+    Select-Object -First 1
+if ($winShell) { $pluginDir = $winShell.DirectoryName }
+if (-not $pluginDir) {
+    # 系统安装的 NSIS 自带插件目录。
+    $local = Join-Path (Split-Path (Split-Path $MakeNsis -Parent) -Parent) 'Plugins\x86-unicode'
+    if (Test-Path (Join-Path $local 'WinShell.dll')) { $pluginDir = $local }
+}
+if (-not $pluginDir) {
+    throw '未找到 NSIS 的 WinShell 插件：快捷方式无法写入 AppUserModelID，系统通知会被静默丢弃。请先运行一次 npm run dist:win 让 electron-builder 缓存 nsis-resources。'
+}
+Write-Host "nsis plugins: $pluginDir"
+
 # 4) 编译安装程序
 # 版本号取仓库根 package.json 的 version——Electron 与 qt-im 共用同一版本源，
 # 每次发布前通过 `npm version patch` 递增，两端安装包版本一致。
@@ -78,6 +99,7 @@ $iconFile = Join-Path $projectRoot 'resources\windows\AppIcon.ico'
 
 # /INPUTCHARSET UTF8：.nsi 为无 BOM UTF-8，含中文文案，不指定会按系统码页误读。
 & $MakeNsis /INPUTCHARSET UTF8 `
+    "/X!addplugindir /x86-unicode `"$pluginDir`"" `
     "/DSTAGING_DIR=$staging" `
     "/DOUT_FILE=$outFile" `
     "/DAPP_VERSION=$appVersion" `

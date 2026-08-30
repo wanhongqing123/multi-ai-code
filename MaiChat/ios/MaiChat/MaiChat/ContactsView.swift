@@ -277,6 +277,7 @@ private struct ContactList: View {
     @State private var renamingGroup: String?
     @State private var renameDraft = ""
     @State private var deletingGroup: String?
+    @State private var movingContact: RemoteIMContact?
 
     var body: some View {
         List {
@@ -351,6 +352,15 @@ private struct ContactList: View {
         } message: {
             Text(deleteGroupMessage)
         }
+        .overlay {
+            if let movingContact {
+                MoveContactGroupDialog(contact: movingContact) {
+                    self.movingContact = nil
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.96)))
+            }
+        }
+        .animation(.easeOut(duration: 0.18), value: movingContact?.userID)
     }
 
     private var normalizedSearch: String {
@@ -421,21 +431,8 @@ private struct ContactList: View {
         ))
         .listRowSeparator(.hidden)
         .listRowBackground(RemoteIMStyle.panelBackground)
-        .contextMenu {
-            Menu("移动到分组") {
-                ForEach(appState.chatState.contactGroups) { group in
-                    Button(group.name) {
-                        _ = appState.setContactGroup(userID: contact.userID, groupName: group.name)
-                    }
-                    .disabled(contact.groupName == group.name)
-                }
-                if !contact.groupName.isEmpty {
-                    Divider()
-                    Button("移出分组") {
-                        _ = appState.setContactGroup(userID: contact.userID, groupName: "")
-                    }
-                }
-            }
+        .onLongPressGesture(minimumDuration: 0.42) {
+            movingContact = contact
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button(role: .destructive) {
@@ -458,6 +455,124 @@ private struct ContactList: View {
         return count == 0
             ? "这个分组是空的，删除后不影响任何联系人。"
             : "组里的 \(count) 位联系人会直接列在通讯录里，好友本身不会被删除。"
+    }
+}
+
+private struct MoveContactGroupDialog: View {
+    @EnvironmentObject private var appState: RemoteIMAppState
+    let contact: RemoteIMContact
+    let dismiss: () -> Void
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.28)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture(perform: dismiss)
+
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("移动到分组")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(RemoteIMStyle.textPrimary)
+                    Text("为 \(contact.displayName) 选择一个分组")
+                        .font(.system(size: 13))
+                        .foregroundStyle(RemoteIMStyle.textSecondary)
+                        .lineLimit(2)
+                }
+
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        groupOption(
+                            name: "",
+                            title: contact.groupName.isEmpty ? "不在分组中" : "移出当前分组",
+                            systemImage: "person"
+                        )
+                        ForEach(appState.chatState.contactGroups) { group in
+                            groupOption(
+                                name: group.name,
+                                title: group.name,
+                                systemImage: "folder"
+                            )
+                        }
+                    }
+                }
+                .frame(height: optionListHeight)
+
+                Button("取消", action: dismiss)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(RemoteIMStyle.textPrimary)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 42)
+                    .background(
+                        Color(.secondarySystemBackground),
+                        in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    )
+            }
+            .padding(20)
+            .frame(maxWidth: 360)
+            .background(
+                RemoteIMStyle.panelBackground,
+                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(RemoteIMStyle.border, lineWidth: 1)
+            )
+            .shadow(color: Color.black.opacity(0.16), radius: 24, y: 10)
+            .padding(.horizontal, 24)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("移动 \(contact.displayName) 到分组")
+    }
+
+    private var optionListHeight: CGFloat {
+        min(CGFloat(appState.chatState.contactGroups.count + 1) * 54, 320)
+    }
+
+    private func groupOption(
+        name: String,
+        title: String,
+        systemImage: String
+    ) -> some View {
+        let isCurrent = contact.groupName == name
+        return Button {
+            if isCurrent || appState.setContactGroup(userID: contact.userID, groupName: name) {
+                dismiss()
+            }
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(isCurrent ? RemoteIMStyle.blue : RemoteIMStyle.textSecondary)
+                    .frame(width: 24)
+                Text(title)
+                    .font(.system(size: 15, weight: isCurrent ? .semibold : .regular))
+                    .foregroundStyle(RemoteIMStyle.textPrimary)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                if isCurrent {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 18))
+                        .foregroundStyle(RemoteIMStyle.blue)
+                }
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 46)
+            .background(
+                isCurrent ? RemoteIMStyle.blueSoft : RemoteIMStyle.pageBackground,
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(
+                        isCurrent ? RemoteIMStyle.blue.opacity(0.45) : RemoteIMStyle.border,
+                        lineWidth: 1
+                    )
+            )
+        }
+        .buttonStyle(.plain)
     }
 }
 

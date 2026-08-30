@@ -67,6 +67,7 @@ final class RemoteIMAppState: ObservableObject {
     private let historyPersistence: LocalChatHistoryPersistence
     private let client: RemoteIMClient
     private let shouldConnectOnLaunch: Bool
+    private var reconnectOnLaunch: Bool
     private var didHandleLaunchAutoConnect = false
     private var visibleConversationUserID: String?
     private var conversationHistoryStateByUserID: [String: ConversationHistoryState] = [:]
@@ -101,7 +102,12 @@ final class RemoteIMAppState: ObservableObject {
         let hasRestorableAccount = RemoteIMLoginCredentialPolicy.shouldRestoreSavedSession(
             userID: settings.masterUserID
         )
-        self.shouldConnectOnLaunch = debugRequestedAutoConnect || hasRestorableAccount
+        self.shouldConnectOnLaunch = debugRequestedAutoConnect ||
+            RemoteIMLoginCredentialPolicy.shouldAutoConnectSavedSession(
+                userID: settings.masterUserID,
+                reconnectOnLaunch: settings.reconnectOnLaunch
+            )
+        self.reconnectOnLaunch = settings.reconnectOnLaunch
         self.hasCompletedInitialLogin = hasRestorableAccount
         self.sdkAppIDText = settings.sdkAppID.map(String.init) ?? ""
         self.masterUserID = settings.masterUserID
@@ -303,6 +309,8 @@ final class RemoteIMAppState: ObservableObject {
                 userSig: userSig
             )
             connectionState = .connected
+            reconnectOnLaunch = true
+            settingsStore.save(currentStoredSettings())
             logIM(
                 level: .info,
                 event: "connect-finished",
@@ -341,6 +349,10 @@ final class RemoteIMAppState: ObservableObject {
 
     func disconnect() async {
         let startedAt = ProcessInfo.processInfo.systemUptime
+        // Persist the user's intent before any asynchronous shutdown work. If iOS terminates the
+        // process in this window, the next launch must stay disconnected instead of undoing the tap.
+        reconnectOnLaunch = false
+        settingsStore.save(currentStoredSettings())
         logIM(level: .info, event: "disconnect-start", userID: masterUserID)
         await remoteDesktop.stop(cause: "im-disconnect")
         await client.disconnect()
@@ -1322,7 +1334,8 @@ final class RemoteIMAppState: ObservableObject {
             slaveUserIDs: [],
             contacts: chatState.contacts,
             contactGroups: chatState.contactGroups,
-            unreadCountByUserID: unreadCountByUserID
+            unreadCountByUserID: unreadCountByUserID,
+            reconnectOnLaunch: reconnectOnLaunch
         )
     }
 

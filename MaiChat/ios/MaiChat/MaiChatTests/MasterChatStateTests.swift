@@ -1507,6 +1507,30 @@ final class MasterChatStateTests: XCTestCase {
         XCTAssertFalse(
             RemoteIMLoginCredentialPolicy.shouldRestoreSavedSession(userID: "   ")
         )
+        XCTAssertTrue(
+            RemoteIMLoginCredentialPolicy.migratedReconnectOnLaunch(
+                storedValue: nil,
+                userID: "legacy-owner"
+            )
+        )
+        XCTAssertFalse(
+            RemoteIMLoginCredentialPolicy.shouldAutoConnectSavedSession(
+                userID: "ios-owner",
+                reconnectOnLaunch: false
+            )
+        )
+        XCTAssertTrue(
+            RemoteIMLoginCredentialPolicy.shouldAutoConnectSavedSession(
+                userID: "ios-owner",
+                reconnectOnLaunch: true
+            )
+        )
+        XCTAssertFalse(
+            RemoteIMLoginCredentialPolicy.shouldAutoConnectSavedSession(
+                userID: "   ",
+                reconnectOnLaunch: true
+            )
+        )
     }
 
     func testMessageListAutoScrollPolicyTargetsLatestMessageID() {

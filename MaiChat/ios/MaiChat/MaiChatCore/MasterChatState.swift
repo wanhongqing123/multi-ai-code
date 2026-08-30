@@ -588,6 +588,22 @@ public enum RemoteIMLoginCredentialPolicy {
     public static func shouldRestoreSavedSession(userID: String) -> Bool {
         isComplete(userID: userID)
     }
+
+    /// Old settings did not persist connection intent. Preserve their historical always-connected
+    /// behavior once during migration; newly persisted `false` must remain authoritative.
+    public static func migratedReconnectOnLaunch(
+        storedValue: Bool?,
+        userID: String
+    ) -> Bool {
+        storedValue ?? shouldRestoreSavedSession(userID: userID)
+    }
+
+    public static func shouldAutoConnectSavedSession(
+        userID: String,
+        reconnectOnLaunch: Bool
+    ) -> Bool {
+        shouldRestoreSavedSession(userID: userID) && reconnectOnLaunch
+    }
 }
 
 public struct RemoteIMContactGroup: Codable, Equatable, Hashable, Sendable, Identifiable {

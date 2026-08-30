@@ -9,6 +9,7 @@ struct StoredRemoteIMSettings: Codable, Equatable, Sendable {
     var contacts: [RemoteIMContact]
     var contactGroups: [RemoteIMContactGroup]
     var unreadCountByUserID: [String: Int]
+    var reconnectOnLaunch: Bool
 
     static let empty = StoredRemoteIMSettings(
         sdkAppID: nil,
@@ -17,7 +18,8 @@ struct StoredRemoteIMSettings: Codable, Equatable, Sendable {
         slaveUserIDs: [],
         contacts: [],
         contactGroups: [],
-        unreadCountByUserID: [:]
+        unreadCountByUserID: [:],
+        reconnectOnLaunch: false
     )
 
     init(
@@ -27,7 +29,8 @@ struct StoredRemoteIMSettings: Codable, Equatable, Sendable {
         slaveUserIDs: [String] = [],
         contacts: [RemoteIMContact] = [],
         contactGroups: [RemoteIMContactGroup] = [],
-        unreadCountByUserID: [String: Int] = [:]
+        unreadCountByUserID: [String: Int] = [:],
+        reconnectOnLaunch: Bool = false
     ) {
         self.sdkAppID = sdkAppID
         self.masterUserID = masterUserID
@@ -36,6 +39,7 @@ struct StoredRemoteIMSettings: Codable, Equatable, Sendable {
         self.contacts = contacts
         self.contactGroups = contactGroups
         self.unreadCountByUserID = unreadCountByUserID
+        self.reconnectOnLaunch = reconnectOnLaunch
     }
 
     init(from decoder: Decoder) throws {
@@ -53,6 +57,10 @@ struct StoredRemoteIMSettings: Codable, Equatable, Sendable {
             [String: Int].self,
             forKey: .unreadCountByUserID
         ) ?? [:]
+        self.reconnectOnLaunch = RemoteIMLoginCredentialPolicy.migratedReconnectOnLaunch(
+            storedValue: try container.decodeIfPresent(Bool.self, forKey: .reconnectOnLaunch),
+            userID: masterUserID
+        )
     }
 }
 

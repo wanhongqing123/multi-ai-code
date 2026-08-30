@@ -267,10 +267,21 @@ final class RemoteIMAppState: ObservableObject {
             errorMessage = validationError
             return
         }
-        await connect()
+        await requestConnection()
         if connectionState == .connected {
             hasCompletedInitialLogin = true
         }
+    }
+
+    /// Records the user's connection intent before the network attempt starts. A failed first
+    /// login must remain retryable after a process restart instead of becoming a saved-but-offline
+    /// account with neither a login screen nor an automatic retry.
+    func requestConnection() async {
+        guard connectionState != .connecting else { return }
+        persistReconnectOnLaunchIntent(
+            RemoteIMConnectionIntentPolicy.afterUserRequestedConnection()
+        )
+        await connect()
     }
 
     func connect() async {
@@ -309,8 +320,9 @@ final class RemoteIMAppState: ObservableObject {
                 userSig: userSig
             )
             connectionState = .connected
-            reconnectOnLaunch = true
-            settingsStore.save(currentStoredSettings())
+            persistReconnectOnLaunchIntent(
+                RemoteIMConnectionIntentPolicy.afterUserRequestedConnection()
+            )
             logIM(
                 level: .info,
                 event: "connect-finished",
@@ -351,8 +363,9 @@ final class RemoteIMAppState: ObservableObject {
         let startedAt = ProcessInfo.processInfo.systemUptime
         // Persist the user's intent before any asynchronous shutdown work. If iOS terminates the
         // process in this window, the next launch must stay disconnected instead of undoing the tap.
-        reconnectOnLaunch = false
-        settingsStore.save(currentStoredSettings())
+        persistReconnectOnLaunchIntent(
+            RemoteIMConnectionIntentPolicy.afterUserDisconnected()
+        )
         logIM(level: .info, event: "disconnect-start", userID: masterUserID)
         await remoteDesktop.stop(cause: "im-disconnect")
         await client.disconnect()
@@ -1337,6 +1350,18 @@ final class RemoteIMAppState: ObservableObject {
             unreadCountByUserID: unreadCountByUserID,
             reconnectOnLaunch: reconnectOnLaunch
         )
+    }
+
+    private func persistReconnectOnLaunchIntent(_ value: Bool) {
+        reconnectOnLaunch = value
+        // Only update the intent and account identity here. `connect()` performs the full account
+        // rebuild before its normal settings save, so an early intent write cannot accidentally
+        // copy the previous account's contacts under a newly typed user ID.
+        var settings = settingsStore.load()
+        settings.sdkAppID = currentSDKAppID()
+        settings.masterUserID = masterUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        settings.reconnectOnLaunch = value
+        settingsStore.save(settings)
     }
 
     private func rebuildChatStateForCurrentAccount() async -> Bool {

@@ -606,6 +606,12 @@ public enum RemoteIMLoginCredentialPolicy {
     }
 }
 
+public enum RemoteIMConnectionIntentPolicy {
+    public static func afterUserRequestedConnection() -> Bool { true }
+
+    public static func afterUserDisconnected() -> Bool { false }
+}
+
 public struct RemoteIMContactGroup: Codable, Equatable, Hashable, Sendable, Identifiable {
     public var id: String { name }
     public let name: String

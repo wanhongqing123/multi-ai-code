@@ -1531,6 +1531,17 @@ final class MasterChatStateTests: XCTestCase {
                 reconnectOnLaunch: true
             )
         )
+
+        // A first login can fail after the account has already been persisted. The user's tap,
+        // not the network result, must keep the next cold launch retryable.
+        let intentAfterFailedLogin = RemoteIMConnectionIntentPolicy.afterUserRequestedConnection()
+        XCTAssertTrue(
+            RemoteIMLoginCredentialPolicy.shouldAutoConnectSavedSession(
+                userID: "new-owner",
+                reconnectOnLaunch: intentAfterFailedLogin
+            )
+        )
+        XCTAssertFalse(RemoteIMConnectionIntentPolicy.afterUserDisconnected())
     }
 
     func testMessageListAutoScrollPolicyTargetsLatestMessageID() {

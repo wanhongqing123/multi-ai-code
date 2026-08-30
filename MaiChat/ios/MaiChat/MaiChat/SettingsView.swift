@@ -34,7 +34,21 @@ struct SettingsView: View {
                     Text(appState.connectionState.rawValue)
                         .foregroundStyle(statusColor)
                 }
-                Text("登录后会自动连接 IM；需要切换账号时重新进入登录页。")
+                if appState.connectionState != .connected {
+                    Button {
+                        Task { await appState.requestConnection() }
+                    } label: {
+                        Label(
+                            appState.connectionState == .failed ? "重新连接" : "连接 IM",
+                            systemImage: "arrow.clockwise"
+                        )
+                    }
+                    .disabled(
+                        appState.connectionState == .connecting ||
+                            appState.masterUserID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    )
+                }
+                Text("登录后会自动连接 IM；连接失败时可在这里重新连接。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }

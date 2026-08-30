@@ -30,7 +30,7 @@ struct StoredRemoteIMSettings: Codable, Equatable, Sendable {
         contacts: [RemoteIMContact] = [],
         contactGroups: [RemoteIMContactGroup] = [],
         unreadCountByUserID: [String: Int] = [:],
-        reconnectOnLaunch: Bool = false
+        reconnectOnLaunch: Bool
     ) {
         self.sdkAppID = sdkAppID
         self.masterUserID = masterUserID

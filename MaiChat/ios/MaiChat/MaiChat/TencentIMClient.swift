@@ -112,7 +112,6 @@ final class TencentIMClient:
     }
 
     func disconnect() async {
-        V2TIMManager.sharedInstance().setAPNSListener(apnsListener: nil)
         if hasRegisteredIMSDKListener {
             V2TIMManager.sharedInstance().removeIMSDKListener(listener: self)
             hasRegisteredIMSDKListener = false
@@ -1471,6 +1470,9 @@ final class TencentIMClient: RemoteIMClient {
 
     func subscribePresenceStatuses(userIDs: [String]) async throws {
         throw RemoteIMClientError.sdkNotIntegrated
+    }
+
+    func updateApplicationBadgeCount(_ count: Int) {
     }
 
 }

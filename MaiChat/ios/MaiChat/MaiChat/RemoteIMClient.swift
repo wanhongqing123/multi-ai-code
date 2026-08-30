@@ -149,9 +149,6 @@ protocol RemoteIMClient: AnyObject {
 }
 
 extension RemoteIMClient {
-    func updateApplicationBadgeCount(_ count: Int) {
-    }
-
     // Messages initiated from the MaiChat UI are human-originated by default.
     func sendText(to userID: String, text: String) async throws -> RemoteIMSendReceipt {
         try await sendText(to: userID, text: text, origin: .human)

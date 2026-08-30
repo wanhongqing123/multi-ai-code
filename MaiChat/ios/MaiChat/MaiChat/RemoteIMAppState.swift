@@ -279,6 +279,10 @@ final class RemoteIMAppState: ObservableObject {
     /// account with neither a login screen nor an automatic retry.
     func requestConnection() async {
         guard connectionState != .connecting else { return }
+        if let validationError = RemoteIMLoginCredentialPolicy.validationError(userID: masterUserID) {
+            errorMessage = validationError
+            return
+        }
         persistReconnectOnLaunchIntent(
             RemoteIMConnectionIntentPolicy.afterUserRequestedConnection()
         )
@@ -1364,9 +1368,17 @@ final class RemoteIMAppState: ObservableObject {
     }
 
     private func persistReconnectOnLaunchIntent(_ value: Bool) {
+        let cleanMasterUserID = masterUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanMasterUserID.isEmpty else {
+            logIM(
+                level: .warning,
+                event: "connection-intent-not-persisted",
+                fields: ["reason": "empty-user-id"]
+            )
+            return
+        }
         reconnectOnLaunch = value
         var settings = settingsStore.load()
-        let cleanMasterUserID = masterUserID.trimmingCharacters(in: .whitespacesAndNewlines)
         // Account switching is not exposed by the current UI, but keep this partial write safe for
         // a future switch: a process kill between this write and the full account rebuild must not
         // leave account B paired with account A's contacts and unread counters.

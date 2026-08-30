@@ -5,6 +5,7 @@ struct ContactsView: View {
     @EnvironmentObject private var appState: RemoteIMAppState
     @Binding var selectedTab: AppTab
     @Binding var activeContact: RemoteIMContact?
+    @Binding var movingContact: RemoteIMContact?
     let showAddContact: () -> Void
     @State private var isCreatingGroup = false
     @State private var groupNameDraft = ""
@@ -16,6 +17,7 @@ struct ContactsView: View {
                 ContactList(
                     selectedTab: $selectedTab,
                     activeContact: $activeContact,
+                    movingContact: $movingContact,
                     showCreateGroup: {
                         groupNameDraft = ""
                         isCreatingGroup = true
@@ -270,6 +272,7 @@ private struct ContactList: View {
     @EnvironmentObject private var appState: RemoteIMAppState
     @Binding var selectedTab: AppTab
     @Binding var activeContact: RemoteIMContact?
+    @Binding var movingContact: RemoteIMContact?
     let showCreateGroup: () -> Void
     let showBroadcast: () -> Void
     @State private var searchText = ""
@@ -277,7 +280,6 @@ private struct ContactList: View {
     @State private var renamingGroup: String?
     @State private var renameDraft = ""
     @State private var deletingGroup: String?
-    @State private var movingContact: RemoteIMContact?
 
     var body: some View {
         List {
@@ -352,15 +354,6 @@ private struct ContactList: View {
         } message: {
             Text(deleteGroupMessage)
         }
-        .overlay {
-            if let movingContact {
-                MoveContactGroupDialog(contact: movingContact) {
-                    self.movingContact = nil
-                }
-                .transition(.opacity.combined(with: .scale(scale: 0.96)))
-            }
-        }
-        .animation(.easeOut(duration: 0.18), value: movingContact?.userID)
     }
 
     private var normalizedSearch: String {
@@ -434,6 +427,9 @@ private struct ContactList: View {
         .onLongPressGesture(minimumDuration: 0.42) {
             movingContact = contact
         }
+        .accessibilityAction(named: "移动到分组") {
+            movingContact = contact
+        }
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button(role: .destructive) {
                 Task {
@@ -458,7 +454,7 @@ private struct ContactList: View {
     }
 }
 
-private struct MoveContactGroupDialog: View {
+struct MoveContactGroupDialog: View {
     @EnvironmentObject private var appState: RemoteIMAppState
     let contact: RemoteIMContact
     let dismiss: () -> Void
@@ -528,7 +524,9 @@ private struct MoveContactGroupDialog: View {
     }
 
     private var optionListHeight: CGFloat {
-        min(CGFloat(appState.chatState.contactGroups.count + 1) * 54, 320)
+        let count = appState.chatState.contactGroups.count + 1
+        let contentHeight = count * 46 + max(count - 1, 0) * 8
+        return min(CGFloat(contentHeight), 320)
     }
 
     private func groupOption(
@@ -538,7 +536,14 @@ private struct MoveContactGroupDialog: View {
     ) -> some View {
         let isCurrent = contact.groupName == name
         return Button {
-            if isCurrent || appState.setContactGroup(userID: contact.userID, groupName: name) {
+            if isCurrent {
+                dismiss()
+                return
+            }
+            if appState.setContactGroup(userID: contact.userID, groupName: name) {
+                dismiss()
+            } else {
+                appState.errorMessage = "联系人已不存在，无法移动到分组"
                 dismiss()
             }
         } label: {

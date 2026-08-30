@@ -15,6 +15,7 @@ struct RootView: View {
     @State private var selectedTab: AppTab = .messages
     @State private var activeChatContact: RemoteIMContact?
     @State private var isShowingAddContact = false
+    @State private var movingContact: RemoteIMContact?
 
     var body: some View {
         ZStack {
@@ -37,6 +38,7 @@ struct RootView: View {
                             ContactsView(
                                 selectedTab: $selectedTab,
                                 activeContact: $activeChatContact,
+                                movingContact: $movingContact,
                                 showAddContact: {
                                     appState.newContactUserID = ""
                                     isShowingAddContact = true
@@ -64,8 +66,17 @@ struct RootView: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.96)))
                     .zIndex(10)
             }
+
+            if let movingContact, !appState.shouldShowInitialLogin {
+                MoveContactGroupDialog(contact: movingContact) {
+                    self.movingContact = nil
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                .zIndex(20)
+            }
         }
         .animation(.easeOut(duration: 0.18), value: isShowingAddContact)
+        .animation(.easeOut(duration: 0.18), value: movingContact?.userID)
         .background(Color(red: 0.966, green: 0.976, blue: 0.988).ignoresSafeArea())
         .task {
             if !appState.shouldShowInitialLogin {

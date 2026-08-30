@@ -171,6 +171,9 @@ describe('Git Diff report', () => {
     const report = await fs.readFile(result.attachmentPath, 'utf8')
     expect(report).toContain('class="split"')
     expect(report).toContain('class="unified"')
+    const split = report.split('<!-- MAICHAT_SPLIT_START -->')[1]?.split('<!-- MAICHAT_SPLIT_END -->')[0]
+    expect(split).toContain('<table class="split-table"')
+    expect(split).not.toContain('<pre>')
     expect(report).toContain('&quot;&lt;two&gt;&quot;')
     expect(report).not.toContain('working tree must not leak')
     expect(result.artifact.sha256).toBe(

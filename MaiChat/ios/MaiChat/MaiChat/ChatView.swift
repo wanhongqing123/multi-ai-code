@@ -3331,15 +3331,7 @@ private struct ComposerView: View {
 
                 HStack(alignment: .bottom, spacing: 8) {
                     Button {
-                        isAttachmentPanelPresented = false
-                        transcriptionPresentation.reset()
-                        realtimeStartTask?.cancel()
-                        realtimeStartTask = nil
-                        realtimeSpeechRecognizer.cancel()
-                        isVoiceMode.toggle()
-                        if !isVoiceMode {
-                            voiceRecorder.cancel()
-                        }
+                        setVoiceMode(!isVoiceMode)
                     } label: {
                         Image(systemName: isVoiceMode ? "keyboard" : "speaker.wave.2.fill")
                             .font(.system(size: 18, weight: .bold))
@@ -3471,11 +3463,7 @@ private struct ComposerView: View {
                         isFileImporterPresented = true
                     },
                     openVoiceInput: {
-                        isAttachmentPanelPresented = false
-                        if !isVoiceMode {
-                            transcriptionPresentation.reset()
-                            isVoiceMode = true
-                        }
+                        setVoiceMode(true)
                     }
                 )
                 .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -3545,6 +3533,16 @@ private struct ComposerView: View {
         let query = draft.text.trimmingCharacters(in: .whitespaces)
         guard query.hasPrefix("/") else { return [] }
         return remoteIMSlashCommands.filter { $0.command.hasPrefix(query) }
+    }
+
+    private func setVoiceMode(_ enabled: Bool) {
+        isAttachmentPanelPresented = false
+        transcriptionPresentation.reset()
+        realtimeStartTask?.cancel()
+        realtimeStartTask = nil
+        realtimeSpeechRecognizer.cancel()
+        voiceRecorder.cancel()
+        isVoiceMode = enabled
     }
 
     private var textComposerPrompt: String {

@@ -581,6 +581,13 @@ public enum RemoteIMLoginCredentialPolicy {
     ) -> Bool {
         validationError(userID: userID) == nil
     }
+
+    /// A saved account means the user already passed the initial-login gate. If iOS terminates
+    /// the process while it is in the background, the next launch should restore the main UI and
+    /// reconnect instead of presenting the login form again.
+    public static func shouldRestoreSavedSession(userID: String) -> Bool {
+        isComplete(userID: userID)
+    }
 }
 
 public struct RemoteIMContactGroup: Codable, Equatable, Hashable, Sendable, Identifiable {

@@ -66,7 +66,7 @@ final class RemoteIMAppState: ObservableObject {
     private let secretStore: KeychainSecretStore
     private let historyPersistence: LocalChatHistoryPersistence
     private let client: RemoteIMClient
-    private let autoConnectOnLaunch: Bool
+    private let shouldConnectOnLaunch: Bool
     private var didHandleLaunchAutoConnect = false
     private var visibleConversationUserID: String?
     private var conversationHistoryStateByUserID: [String: ConversationHistoryState] = [:]
@@ -94,10 +94,15 @@ final class RemoteIMAppState: ObservableObject {
         var settings = settingsStore.load()
         var loadedSecretKey = secretStore.readSecretKey()
         Self.applyCredentialDefaults(settings: &settings, secretKey: &loadedSecretKey)
-        self.autoConnectOnLaunch = Self.applyDebugLaunchOverrides(
+        let debugRequestedAutoConnect = Self.applyDebugLaunchOverrides(
             settings: &settings,
             secretKey: &loadedSecretKey
         )
+        let hasRestorableAccount = RemoteIMLoginCredentialPolicy.shouldRestoreSavedSession(
+            userID: settings.masterUserID
+        )
+        self.shouldConnectOnLaunch = debugRequestedAutoConnect || hasRestorableAccount
+        self.hasCompletedInitialLogin = hasRestorableAccount
         self.sdkAppIDText = settings.sdkAppID.map(String.init) ?? ""
         self.masterUserID = settings.masterUserID
         self.secretKey = loadedSecretKey
@@ -328,8 +333,8 @@ final class RemoteIMAppState: ObservableObject {
         }
     }
 
-    func connectIfRequestedByLaunchEnvironment() async {
-        guard autoConnectOnLaunch, !didHandleLaunchAutoConnect else { return }
+    func connectOnLaunchIfNeeded() async {
+        guard shouldConnectOnLaunch, !didHandleLaunchAutoConnect else { return }
         didHandleLaunchAutoConnect = true
         await connect()
     }
@@ -533,6 +538,59 @@ final class RemoteIMAppState: ObservableObject {
 
     func visibleMessages(with userID: String) -> [RemoteIMMessage] {
         chatState.messages(with: userID)
+    }
+
+    func searchMessages(_ query: String, limit: Int = 100) async -> [LocalChatHistorySearchHit] {
+        let cleanQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let account = LocalChatHistoryAccount(
+            sdkAppID: chatHistorySDKAppID,
+            ownerUserID: chatState.ownerUserID
+        )
+        let accountGeneration = historyAccountGeneration
+        guard !cleanQuery.isEmpty, !account.ownerUserID.isEmpty else { return [] }
+
+        // Search must include messages accepted moments ago but not yet drained to SQLite.
+        _ = await flushHistoryPersistence()
+        guard historyAccountGeneration == accountGeneration,
+              chatState.ownerUserID == account.ownerUserID,
+              chatHistorySDKAppID == account.sdkAppID
+        else { return [] }
+
+        do {
+            let hits = try await historyPersistence.searchMessages(
+                sdkAppID: account.sdkAppID,
+                ownerUserID: account.ownerUserID,
+                query: cleanQuery,
+                limit: limit
+            )
+            guard historyAccountGeneration == accountGeneration,
+                  chatState.ownerUserID == account.ownerUserID,
+                  chatHistorySDKAppID == account.sdkAppID
+            else { return [] }
+            logIM(
+                level: .info,
+                event: "message-search-finished",
+                fields: [
+                    "query_characters": String(cleanQuery.count),
+                    "results": String(hits.count),
+                ]
+            )
+            return hits
+        } catch {
+            recordHistoryLoadFailure(error, operation: "message-search")
+            return []
+        }
+    }
+
+    @discardableResult
+    func openMessageSearchHit(_ hit: LocalChatHistorySearchHit) -> RemoteIMContact? {
+        guard let contact = chatState.contacts.first(where: { $0.userID == hit.peerUserID })
+        else { return nil }
+        // Search covers the full database, so an old hit may not be in the current 50-message
+        // window. Merge the authoritative stored row before opening, making the scroll target real.
+        chatState.mergeMessages([hit.message])
+        selectContact(contact)
+        return contact
     }
 
     func hasEarlierMessages(with userID: String) -> Bool {

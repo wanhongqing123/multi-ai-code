@@ -70,7 +70,7 @@ struct RootView: View {
         .task {
             if !appState.shouldShowInitialLogin {
                 await RemoteIMSystemNotificationCenter.shared.requestAuthorizationIfNeeded()
-                await appState.connectIfRequestedByLaunchEnvironment()
+                await appState.connectOnLaunchIfNeeded()
             }
             appState.synchronizeSystemNotificationBadge()
             if let peerUserID = RemoteIMSystemNotificationCenter.shared.consumePendingPeerUserID() {

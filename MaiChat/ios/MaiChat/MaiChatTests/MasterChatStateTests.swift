@@ -1497,6 +1497,18 @@ final class MasterChatStateTests: XCTestCase {
         )
     }
 
+    func testSavedAccountRestoresMainInterfaceAfterProcessRelaunch() {
+        XCTAssertTrue(
+            RemoteIMLoginCredentialPolicy.shouldRestoreSavedSession(userID: "ios-owner")
+        )
+        XCTAssertTrue(
+            RemoteIMLoginCredentialPolicy.shouldRestoreSavedSession(userID: "  ios-owner  ")
+        )
+        XCTAssertFalse(
+            RemoteIMLoginCredentialPolicy.shouldRestoreSavedSession(userID: "   ")
+        )
+    }
+
     func testMessageListAutoScrollPolicyTargetsLatestMessageID() {
         let firstID = UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")!
         let latestID = UUID(uuidString: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")!

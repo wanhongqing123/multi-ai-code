@@ -274,6 +274,7 @@ private struct RemoteIMAsyncImage<Content: View, Placeholder: View>: View {
 struct ChatView: View {
     @Binding var activeContact: RemoteIMContact?
     let showRemoteDesktop: () -> Void
+    @State private var searchTargetMessageID: UUID?
 
     var body: some View {
         Group {
@@ -281,12 +282,16 @@ struct ChatView: View {
                 ChatDetailView(
                     contact: activeContact,
                     activeContact: $activeContact,
+                    searchTargetMessageID: searchTargetMessageID,
                     showRemoteDesktop: showRemoteDesktop
                 )
             } else {
                 VStack(spacing: 0) {
                     HeaderView()
-                    ConversationListView(activeContact: $activeContact)
+                    ConversationListView(
+                        activeContact: $activeContact,
+                        searchTargetMessageID: $searchTargetMessageID
+                    )
                 }
             }
         }
@@ -489,50 +494,93 @@ private struct StatusPill: View {
 private struct ConversationListView: View {
     @EnvironmentObject private var appState: RemoteIMAppState
     @Binding var activeContact: RemoteIMContact?
+    @Binding var searchTargetMessageID: UUID?
     @State private var searchText = ""
     @State private var pendingClearHistoryContact: RemoteIMContact?
+    @State private var messageSearchHits: [LocalChatHistorySearchHit] = []
+    @State private var isSearchingMessages = false
 
     var body: some View {
         List {
-            if filteredContacts.isEmpty {
-                EmptyConversationListView()
-                    .padding(.top, 96)
-                    .listRowInsets(EdgeInsets())
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(RemoteIMStyle.panelBackground)
+            if normalizedSearch.isEmpty {
+                if filteredContacts.isEmpty {
+                    EmptyConversationListView()
+                        .padding(.top, 96)
+                        .listRowInsets(EdgeInsets())
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(RemoteIMStyle.panelBackground)
+                } else {
+                    ForEach(filteredContacts) { contact in
+                        conversationButton(contact)
+                    }
+                }
             } else {
-                ForEach(filteredContacts) { contact in
-                    Button {
-                        appState.selectContact(contact)
-                        activeContact = contact
-                    } label: {
-                        ConversationRow(
-                            contact: contact,
-                            latestMessage: appState.chatState.latestMessage(with: contact.userID),
-                            selected: contact.userID == appState.chatState.selectedPeerID,
-                            presenceStatus: appState.presenceStatus(for: contact),
-                            unreadCount: appState.unreadCount(for: contact.userID)
-                        )
+                if !filteredContacts.isEmpty {
+                    Section("联系人") {
+                        ForEach(filteredContacts) { contact in
+                            conversationButton(contact)
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .listRowInsets(EdgeInsets())
+                }
+
+                if isSearchingMessages {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                        Text("正在搜索全部消息…")
+                            .foregroundStyle(RemoteIMStyle.textSecondary)
+                    }
                     .listRowSeparator(.hidden)
                     .listRowBackground(RemoteIMStyle.panelBackground)
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button {
-                            pendingClearHistoryContact = contact
-                        } label: {
-                            Label("清空消息", systemImage: "eraser")
+                } else if !visibleMessageSearchHits.isEmpty {
+                    Section("消息") {
+                        ForEach(visibleMessageSearchHits) { hit in
+                            if let contact = contact(for: hit.peerUserID) {
+                                Button {
+                                    guard let openedContact = appState.openMessageSearchHit(hit)
+                                    else { return }
+                                    searchTargetMessageID = hit.message.id
+                                    activeContact = openedContact
+                                } label: {
+                                    MessageSearchResultRow(contact: contact, hit: hit)
+                                }
+                                .buttonStyle(.plain)
+                                .listRowInsets(EdgeInsets())
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(RemoteIMStyle.panelBackground)
+                            }
                         }
-                        .tint(.orange)
                     }
+                } else if filteredContacts.isEmpty {
+                    EmptyMessageSearchView(query: searchText)
+                        .padding(.top, 72)
+                        .listRowInsets(EdgeInsets())
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(RemoteIMStyle.panelBackground)
                 }
             }
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(RemoteIMStyle.panelBackground)
-        .searchable(text: $searchText, prompt: "搜索联系人或最近消息")
+        .searchable(text: $searchText, prompt: "搜索联系人或全部消息")
+        .task(id: normalizedSearch) {
+            let query = normalizedSearch
+            guard !query.isEmpty else {
+                messageSearchHits = []
+                isSearchingMessages = false
+                return
+            }
+            isSearchingMessages = true
+            do {
+                try await Task.sleep(nanoseconds: 250_000_000)
+            } catch {
+                return
+            }
+            let hits = await appState.searchMessages(query)
+            guard !Task.isCancelled, normalizedSearch == query else { return }
+            messageSearchHits = hits
+            isSearchingMessages = false
+        }
         .alert(item: $pendingClearHistoryContact) { contact in
             Alert(
                 title: Text("清空聊天记录？"),
@@ -547,8 +595,49 @@ private struct ConversationListView: View {
         }
     }
 
+    @ViewBuilder
+    private func conversationButton(_ contact: RemoteIMContact) -> some View {
+        Button {
+            searchTargetMessageID = nil
+            appState.selectContact(contact)
+            activeContact = contact
+        } label: {
+            ConversationRow(
+                contact: contact,
+                latestMessage: appState.chatState.latestMessage(with: contact.userID),
+                selected: contact.userID == appState.chatState.selectedPeerID,
+                presenceStatus: appState.presenceStatus(for: contact),
+                unreadCount: appState.unreadCount(for: contact.userID)
+            )
+        }
+        .buttonStyle(.plain)
+        .listRowInsets(EdgeInsets())
+        .listRowSeparator(.hidden)
+        .listRowBackground(RemoteIMStyle.panelBackground)
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button {
+                pendingClearHistoryContact = contact
+            } label: {
+                Label("清空消息", systemImage: "eraser")
+            }
+            .tint(.orange)
+        }
+    }
+
+    private var normalizedSearch: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private var visibleMessageSearchHits: [LocalChatHistorySearchHit] {
+        messageSearchHits.filter { contact(for: $0.peerUserID) != nil }
+    }
+
+    private func contact(for userID: String) -> RemoteIMContact? {
+        appState.chatState.contacts.first(where: { $0.userID == userID })
+    }
+
     private var filteredContacts: [RemoteIMContact] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let query = normalizedSearch
         return appState.chatState.contacts
             .filter { contact in
                 guard !query.isEmpty else { return true }
@@ -567,6 +656,70 @@ private struct ConversationListView: View {
             }
     }
 
+}
+
+private struct MessageSearchResultRow: View {
+    let contact: RemoteIMContact
+    let hit: LocalChatHistorySearchHit
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            RemoteIMContactAvatar(
+                contact: contact,
+                isSelected: false,
+                presenceStatus: .unknown,
+                size: 38
+            )
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 8) {
+                    Text(contact.displayName)
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(RemoteIMStyle.textPrimary)
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    Text(RemoteIMTimestampTextPolicy.displayText(for: hit.message.createdAt))
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(RemoteIMStyle.textSecondary)
+                }
+                Text(previewText)
+                    .font(.system(size: 13))
+                    .foregroundStyle(RemoteIMStyle.textSecondary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 11)
+        .contentShape(Rectangle())
+    }
+
+    private var previewText: String {
+        let compact = hit.message.text
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return hit.message.direction == .outgoing ? "我：\(compact)" : compact
+    }
+}
+
+private struct EmptyMessageSearchView: View {
+    let query: String
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 28))
+                .foregroundStyle(Color(red: 0.56, green: 0.59, blue: 0.64))
+            Text("没有找到相关消息")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(RemoteIMStyle.textPrimary)
+            Text("没有包含“\(query.trimmingCharacters(in: .whitespacesAndNewlines))”的联系人或消息。")
+                .font(.system(size: 13))
+                .foregroundStyle(RemoteIMStyle.textSecondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 24)
+    }
 }
 
 private struct ConversationRow: View {
@@ -692,6 +845,7 @@ private final class VoiceMessagePlayer: NSObject, ObservableObject, AVAudioPlaye
 private struct ChatDetailView: View {
     let contact: RemoteIMContact
     @Binding var activeContact: RemoteIMContact?
+    let searchTargetMessageID: UUID?
     let showRemoteDesktop: () -> Void
     @EnvironmentObject private var appState: RemoteIMAppState
     @State private var initialHistoryLoadGeneration = 0
@@ -709,6 +863,7 @@ private struct ChatDetailView: View {
                 MessageListView(
                     messages: appState.visibleMessages(with: contact.userID),
                     peerRelation: contact.relation,
+                    searchTargetMessageID: searchTargetMessageID,
                     hasEarlierMessages: appState.hasEarlierMessages(with: contact.userID),
                     initialHistoryLoadGeneration: initialHistoryLoadGeneration,
                     loadEarlierMessages: {
@@ -1099,6 +1254,7 @@ struct RelationBadge: View {
 private struct MessageListView: View {
     let messages: [RemoteIMMessage]
     let peerRelation: RemoteIMContactRelation
+    let searchTargetMessageID: UUID?
     let hasEarlierMessages: Bool
     let initialHistoryLoadGeneration: Int
     let loadEarlierMessages: () async -> Void
@@ -1173,6 +1329,16 @@ private struct MessageListView: View {
                                     filePreviewItem = RemoteIMFilePreviewItem(message: message)
                                 }
                             )
+                                .padding(searchTargetMessageID == message.id ? 4 : 0)
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                        .stroke(
+                                            searchTargetMessageID == message.id
+                                                ? Color.orange
+                                                : Color.clear,
+                                            lineWidth: 2
+                                        )
+                                }
                                 .id(message.id)
                         }
                     }
@@ -1202,14 +1368,20 @@ private struct MessageListView: View {
             )
             .onAppear {
                 latestMessageID = messages.last?.id
-                scrollToLatestMessage(proxy: proxy)
+                if !scrollToSearchTarget(proxy: proxy) {
+                    scrollToLatestMessage(proxy: proxy)
+                }
+            }
+            .onChange(of: searchTargetMessageID) { _ in
+                _ = scrollToSearchTarget(proxy: proxy)
             }
             .onChange(of: messages.last?.id) { _ in
                 let nextLatestMessageID = messages.last?.id
                 guard nextLatestMessageID != latestMessageID else { return }
                 latestMessageID = nextLatestMessageID
                 let latestMessage = messages.last
-                let shouldScroll = isNearBottom || latestMessage?.direction == .outgoing
+                let shouldScroll = searchTargetMessageID == nil &&
+                    (isNearBottom || latestMessage?.direction == .outgoing)
                 if let latestMessage, latestMessage.approvalRequest != nil {
                     AppDiagnosticLog.shared.record(
                         level: .info,
@@ -1235,7 +1407,9 @@ private struct MessageListView: View {
             .onChange(of: initialHistoryLoadGeneration) { _ in
                 latestMessageID = messages.last?.id
                 hasUnseenLatestMessage = false
-                scrollToLatestMessage(proxy: proxy)
+                if !scrollToSearchTarget(proxy: proxy) {
+                    scrollToLatestMessage(proxy: proxy)
+                }
             }
             .overlay(alignment: .bottomTrailing) {
                 if hasUnseenLatestMessage {
@@ -1270,6 +1444,19 @@ private struct MessageListView: View {
                 filePreviewItem = nil
             }
         }
+    }
+
+    @discardableResult
+    private func scrollToSearchTarget(proxy: ScrollViewProxy) -> Bool {
+        guard let targetID = searchTargetMessageID,
+              messages.contains(where: { $0.id == targetID })
+        else { return false }
+        DispatchQueue.main.async {
+            withAnimation(.easeOut(duration: 0.2)) {
+                proxy.scrollTo(targetID, anchor: .center)
+            }
+        }
+        return true
     }
 
     private func scrollToLatestMessage(proxy: ScrollViewProxy) {

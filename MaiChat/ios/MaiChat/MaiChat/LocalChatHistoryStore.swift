@@ -120,6 +120,12 @@ struct LocalChatHistoryPage: Sendable, Equatable {
     let hasEarlierMessages: Bool
 }
 
+struct LocalChatHistorySearchHit: Identifiable, Sendable, Equatable {
+    var id: UUID { message.id }
+    let peerUserID: String
+    let message: RemoteIMMessage
+}
+
 enum LocalChatHistoryMutationOperation: Sendable {
     case upsert([RemoteIMMessage])
     case removeConversation(peerUserID: String)
@@ -325,6 +331,72 @@ final class LocalChatHistoryStore {
             return messages.sorted {
                 if $0.createdAt != $1.createdAt { return $0.createdAt > $1.createdAt }
                 return $0.id.uuidString > $1.id.uuidString
+            }
+        }
+    }
+
+    /// Searches the complete persisted history for this account, not only the bounded pages
+    /// currently loaded into memory. `instr` treats `%` and `_` as literal user text, avoiding
+    /// the wildcard surprises of LIKE while still supporting ASCII case-insensitive matching.
+    func searchMessages(
+        sdkAppID: Int?,
+        ownerUserID: String,
+        query: String,
+        limit: Int
+    ) throws -> [LocalChatHistorySearchHit] {
+        let cleanOwnerUserID = ownerUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let safeLimit = min(max(limit, 1), 200)
+        guard !cleanOwnerUserID.isEmpty, !cleanQuery.isEmpty else { return [] }
+        try migrateLegacyHistoryIfNeeded(
+            sdkAppID: sdkAppID,
+            ownerUserID: cleanOwnerUserID
+        )
+
+        return try withDatabase { database in
+            let statement = try prepare(
+                database,
+                sql: """
+                SELECT id, remote_id, from_user, to_user, text, direction, status, created_at,
+                       voice_attachment, image_attachment, file_attachment, video_attachment,
+                       approval_request, approval_decision, caption_above,
+                       CASE
+                           WHEN peer_user_id IS NULL OR peer_user_id = '' THEN
+                               CASE WHEN from_user = owner_user_id THEN to_user ELSE from_user END
+                           ELSE peer_user_id
+                       END
+                FROM messages
+                WHERE sdk_app_id = ? AND owner_user_id = ?
+                  AND text <> ''
+                  AND instr(lower(text), lower(?)) > 0
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """
+            )
+            defer { sqlite3_finalize(statement) }
+            try bindText(accountKey(for: sdkAppID), to: statement, at: 1, database: database)
+            try bindText(cleanOwnerUserID, to: statement, at: 2, database: database)
+            try bindText(cleanQuery, to: statement, at: 3, database: database)
+            sqlite3_bind_int64(statement, 4, Int64(safeLimit))
+
+            var hits: [LocalChatHistorySearchHit] = []
+            hits.reserveCapacity(safeLimit)
+            while true {
+                switch sqlite3_step(statement) {
+                case SQLITE_ROW:
+                    let peerUserID = textColumn(statement, at: 15)
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !peerUserID.isEmpty, let message = decodeMessage(from: statement) {
+                        hits.append(LocalChatHistorySearchHit(
+                            peerUserID: peerUserID,
+                            message: message
+                        ))
+                    }
+                case SQLITE_DONE:
+                    return hits
+                default:
+                    throw databaseError(database)
+                }
             }
         }
     }
@@ -1056,6 +1128,20 @@ actor LocalChatHistoryPersistence {
             sdkAppID: sdkAppID,
             ownerUserID: ownerUserID,
             peerUserIDs: peerUserIDs
+        )
+    }
+
+    func searchMessages(
+        sdkAppID: Int?,
+        ownerUserID: String,
+        query: String,
+        limit: Int
+    ) throws -> [LocalChatHistorySearchHit] {
+        try store.searchMessages(
+            sdkAppID: sdkAppID,
+            ownerUserID: ownerUserID,
+            query: query,
+            limit: limit
         )
     }
 

@@ -386,6 +386,80 @@ final class LocalChatHistoryStoreTests: XCTestCase {
         )
     }
 
+    func testSearchesCompletePersistedHistoryAcrossConversations() async throws {
+        let directoryURL = makeTemporaryDirectoryURL()
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+        let store = LocalChatHistoryStore(baseDirectoryURL: directoryURL)
+        let olderMatch = RemoteIMMessage(
+            id: UUID(uuidString: "20000000-0000-0000-0000-000000000001")!,
+            fromUserID: "peer-a",
+            toUserID: "ios-master",
+            text: "Build FAILED at 100%_safe",
+            direction: .incoming,
+            status: .received,
+            createdAt: Date(timeIntervalSince1970: 10)
+        )
+        let unrelated = RemoteIMMessage(
+            id: UUID(uuidString: "20000000-0000-0000-0000-000000000002")!,
+            fromUserID: "peer-a",
+            toUserID: "ios-master",
+            text: "ordinary status",
+            direction: .incoming,
+            status: .received,
+            createdAt: Date(timeIntervalSince1970: 20)
+        )
+        let newerMatch = RemoteIMMessage(
+            id: UUID(uuidString: "20000000-0000-0000-0000-000000000003")!,
+            fromUserID: "ios-master",
+            toUserID: "peer-b",
+            text: "please inspect build failed logs",
+            direction: .outgoing,
+            status: .sent,
+            createdAt: Date(timeIntervalSince1970: 30)
+        )
+        try persist([olderMatch, unrelated, newerMatch], in: store)
+        try persist(
+            [
+                RemoteIMMessage(
+                    fromUserID: "peer-c",
+                    toUserID: "another-owner",
+                    text: "build failed must stay isolated",
+                    direction: .incoming,
+                    status: .received,
+                    createdAt: Date(timeIntervalSince1970: 40)
+                ),
+            ],
+            in: store,
+            ownerUserID: "another-owner"
+        )
+
+        let persistence = store.makePersistence()
+        let hits = try await persistence.searchMessages(
+            sdkAppID: 1_600_148_979,
+            ownerUserID: "ios-master",
+            query: "BUILD failed",
+            limit: 50
+        )
+        XCTAssertEqual(hits.map(\.peerUserID), ["peer-b", "peer-a"])
+        XCTAssertEqual(hits.map(\.message.id), [newerMatch.id, olderMatch.id])
+
+        // `%` and `_` are literal message characters, not LIKE wildcards.
+        let literalHit = try await persistence.searchMessages(
+            sdkAppID: 1_600_148_979,
+            ownerUserID: "ios-master",
+            query: "100%_safe",
+            limit: 1
+        )
+        XCTAssertEqual(literalHit.map(\.message.id), [olderMatch.id])
+        let blankHits = try await persistence.searchMessages(
+            sdkAppID: 1_600_148_979,
+            ownerUserID: "ios-master",
+            query: "   ",
+            limit: 50
+        )
+        XCTAssertTrue(blankHits.isEmpty)
+    }
+
     func testMigratesV2RowsToPeerCursorSchemaWithoutLosingMessages() async throws {
         let directoryURL = makeTemporaryDirectoryURL()
         defer { try? FileManager.default.removeItem(at: directoryURL) }

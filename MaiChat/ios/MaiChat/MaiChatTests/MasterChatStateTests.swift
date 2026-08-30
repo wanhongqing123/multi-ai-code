@@ -1556,7 +1556,7 @@ final class MasterChatStateTests: XCTestCase {
         XCTAssertTrue(gate.begin(), "前一次连接结束后应允许用户重试")
     }
 
-    func testRepeatedVoiceModeSelectionDoesNotCancelInFlightTranscription() {
+    func testVoiceModeTransitionPolicyRequiresCleanupOnlyOnChange() {
         XCTAssertFalse(
             RemoteIMVoiceModeTransitionPolicy.requiresCleanup(current: true, target: true)
         )

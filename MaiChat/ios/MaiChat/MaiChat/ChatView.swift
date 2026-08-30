@@ -3431,11 +3431,11 @@ private struct ComposerView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(
-                    appState.canSendFile
+                    canOpenAttachmentPanel
                         ? RemoteIMStyle.textPrimary
                         : RemoteIMStyle.textSecondary
                 )
-                .disabled(!appState.canSendFile)
+                .disabled(!canOpenAttachmentPanel)
                 .accessibilityLabel(isAttachmentPanelPresented ? "收起更多功能" : "展开更多功能")
                 }
             }
@@ -3533,6 +3533,10 @@ private struct ComposerView: View {
         let query = draft.text.trimmingCharacters(in: .whitespaces)
         guard query.hasPrefix("/") else { return [] }
         return remoteIMSlashCommands.filter { $0.command.hasPrefix(query) }
+    }
+
+    private var canOpenAttachmentPanel: Bool {
+        appState.canSendImage || appState.canSendVideo || appState.canSendFile || appState.canSendVoice
     }
 
     private func setVoiceMode(_ enabled: Bool) {

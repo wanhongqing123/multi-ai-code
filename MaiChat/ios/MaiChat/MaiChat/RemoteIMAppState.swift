@@ -68,6 +68,7 @@ final class RemoteIMAppState: ObservableObject {
     private let client: RemoteIMClient
     private let shouldConnectOnLaunch: Bool
     private var reconnectOnLaunch: Bool
+    private var connectionAttemptGate = RemoteIMConnectionAttemptGate()
     private var didHandleLaunchAutoConnect = false
     private var visibleConversationUserID: String?
     private var conversationHistoryStateByUserID: [String: ConversationHistoryState] = [:]
@@ -285,7 +286,17 @@ final class RemoteIMAppState: ObservableObject {
     }
 
     func connect() async {
-        guard await saveSettings() else { return }
+        guard connectionAttemptGate.begin() else {
+            logIM(level: .info, event: "connect-blocked", fields: ["reason": "attempt-in-flight"])
+            return
+        }
+        connectionState = .connecting
+        defer { connectionAttemptGate.end() }
+
+        guard await saveSettings() else {
+            connectionState = .failed
+            return
+        }
         guard let sdkAppID = Int(sdkAppIDText.trimmingCharacters(in: .whitespacesAndNewlines)),
               sdkAppID > 0
         else {
@@ -295,6 +306,7 @@ final class RemoteIMAppState: ObservableObject {
                 fields: ["reason": "invalid-sdk-app-id"]
             )
             errorMessage = "IM 应用配置无效"
+            connectionState = .failed
             return
         }
         let cleanMasterUserID = masterUserID.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -302,7 +314,6 @@ final class RemoteIMAppState: ObservableObject {
         let startedAt = ProcessInfo.processInfo.systemUptime
 
         do {
-            connectionState = .connecting
             logIM(
                 level: .info,
                 event: "connect-start",
@@ -1354,12 +1365,20 @@ final class RemoteIMAppState: ObservableObject {
 
     private func persistReconnectOnLaunchIntent(_ value: Bool) {
         reconnectOnLaunch = value
-        // Only update the intent and account identity here. `connect()` performs the full account
-        // rebuild before its normal settings save, so an early intent write cannot accidentally
-        // copy the previous account's contacts under a newly typed user ID.
         var settings = settingsStore.load()
+        let cleanMasterUserID = masterUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Account switching is not exposed by the current UI, but keep this partial write safe for
+        // a future switch: a process kill between this write and the full account rebuild must not
+        // leave account B paired with account A's contacts and unread counters.
+        if settings.masterUserID.trimmingCharacters(in: .whitespacesAndNewlines) != cleanMasterUserID {
+            settings.friendUserIDs = []
+            settings.slaveUserIDs = []
+            settings.contacts = []
+            settings.contactGroups = []
+            settings.unreadCountByUserID = [:]
+        }
         settings.sdkAppID = currentSDKAppID()
-        settings.masterUserID = masterUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        settings.masterUserID = cleanMasterUserID
         settings.reconnectOnLaunch = value
         settingsStore.save(settings)
     }

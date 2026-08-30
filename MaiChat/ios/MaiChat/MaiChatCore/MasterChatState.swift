@@ -612,6 +612,22 @@ public enum RemoteIMConnectionIntentPolicy {
     public static func afterUserDisconnected() -> Bool { false }
 }
 
+public struct RemoteIMConnectionAttemptGate: Sendable {
+    public private(set) var isInFlight = false
+
+    public init() {}
+
+    public mutating func begin() -> Bool {
+        guard !isInFlight else { return false }
+        isInFlight = true
+        return true
+    }
+
+    public mutating func end() {
+        isInFlight = false
+    }
+}
+
 public struct RemoteIMContactGroup: Codable, Equatable, Hashable, Sendable, Identifiable {
     public var id: String { name }
     public let name: String

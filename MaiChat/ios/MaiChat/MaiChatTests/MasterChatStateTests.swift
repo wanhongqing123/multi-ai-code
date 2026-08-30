@@ -1544,6 +1544,18 @@ final class MasterChatStateTests: XCTestCase {
         XCTAssertFalse(RemoteIMConnectionIntentPolicy.afterUserDisconnected())
     }
 
+    func testAutomaticAndManualConnectionAttemptsShareOneGate() {
+        var gate = RemoteIMConnectionAttemptGate()
+
+        XCTAssertTrue(gate.begin())
+        XCTAssertTrue(gate.isInFlight)
+        XCTAssertFalse(gate.begin(), "手动入口不应穿过正在等待设置保存的自动连接")
+
+        gate.end()
+        XCTAssertFalse(gate.isInFlight)
+        XCTAssertTrue(gate.begin(), "前一次连接结束后应允许用户重试")
+    }
+
     func testMessageListAutoScrollPolicyTargetsLatestMessageID() {
         let firstID = UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")!
         let latestID = UUID(uuidString: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")!

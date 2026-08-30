@@ -3216,12 +3216,7 @@ void MainWindow::openFilePreview(const RemoteIMFileAttachment& attachment) {
         ? readTextFile(attachment.localPath)
         : UiZoom::scaleQss(MarkdownRenderer::renderToHtml(readTextFile(attachment.localPath)));
     if (isGitDiffFile(attachment)) {
-        // QTextDocument 不执行媒体查询，会把桌面 split 与手机 unified 两份都画出来。
-        // HTML 中的显式边界只用于选择表现形式，不执行脚本；Qt 固定保留左右对比。
-        const QRegularExpression unifiedBlock(
-            QStringLiteral("<!-- MAICHAT_UNIFIED_START -->.*<!-- MAICHAT_UNIFIED_END -->"),
-            QRegularExpression::DotMatchesEverythingOption);
-        html.remove(unifiedBlock);
+        html = FilePreviewDialog::normalizeGitDiffHtmlForQt(html);
     }
     FilePreviewDialog dialog(displayName, html, this);
     dialog.exec();

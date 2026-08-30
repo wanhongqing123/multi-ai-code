@@ -4,6 +4,7 @@
 #include <QLabel>
 #include <QPixmap>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QSizeGrip>
 #include <QTextBrowser>
 #include <QTextDocument>
@@ -18,6 +19,7 @@ private slots:
     void dropsNativeTitleBarAndShowsNameOnce();
     void rendersHtmlContent();
     void rendersSideBySideDiffTable();
+    void normalizesGitDiffHtmlForQt();
     void longFileNameIsElidedInsteadOfWideningWindow();
     void closeButtonsAccept();
     void escapeStillCloses();
@@ -65,6 +67,40 @@ void FilePreviewDialogTest::rendersSideBySideDiffTable() {
     QVERIFY2(before.currentTable() != nullptr, "删除侧没有落在表格中，无法左右对比");
     QCOMPARE(before.currentTable(), after.currentTable());
     QCOMPARE(before.currentTable()->columns(), 4);
+}
+
+void FilePreviewDialogTest::normalizesGitDiffHtmlForQt() {
+    const QString source = QStringLiteral(
+        "<style>body{background:var(--bg);color:var(--text)}"
+        ".pill{border:1px solid var(--border);color:var(--muted)}"
+        ".qt-separator{display:none}.add{background:var(--add)}"
+        ".palette{background:var(--panel);border-color:var(--del);color:var(--hunk);"
+        "outline-color:var(--add-strong);text-decoration-color:var(--del-strong)}</style>"
+        "<div class='title'><span class='pill'>提交 abc</span>"
+        "<span class='qt-separator'> · </span><span class='pill'>1 files</span>"
+        "<span class='qt-separator'> · </span><span class='pill'>+3 / -1</span></div>"
+        "<!-- MAICHAT_SPLIT_START --><div>split-only</div><!-- MAICHAT_SPLIT_END -->"
+        "<!-- MAICHAT_UNIFIED_START --><div>mobile-only</div><!-- MAICHAT_UNIFIED_END -->");
+
+    const QString normalized = FilePreviewDialog::normalizeGitDiffHtmlForQt(source);
+    QVERIFY(normalized.contains(QStringLiteral("split-only")));
+    QVERIFY(!normalized.contains(QStringLiteral("mobile-only")));
+    QVERIFY(!normalized.contains(QStringLiteral("MAICHAT_UNIFIED_START")));
+    QVERIFY2(!normalized.contains(QStringLiteral("var(--")),
+             "Qt 不支持的 CSS 自定义属性仍残留在预览 HTML 中");
+    QVERIFY(normalized.contains(QStringLiteral("#d0d7de")));
+    QVERIFY(normalized.contains(QStringLiteral("#656d76")));
+    QVERIFY(normalized.contains(QStringLiteral("#dafbe1")));
+    QVERIFY2(!normalized.contains(QStringLiteral(".qt-separator{display:none}")),
+             "Qt 真实文本分隔符仍被隐藏");
+
+    FilePreviewDialog dialog(QStringLiteral("remote-im-diff-repo.html"), normalized);
+    auto* content = dialog.findChild<QTextBrowser*>(QStringLiteral("filePreviewContent"));
+    QVERIFY(content != nullptr);
+    QString rendered = content->toPlainText();
+    rendered.replace(QRegularExpression(QStringLiteral("\\s+")), QStringLiteral(" "));
+    QVERIFY2(rendered.contains(QStringLiteral("提交 abc · 1 files · +3 / -1")),
+             qPrintable(QStringLiteral("Qt 中的 Diff 摘要仍粘连：%1").arg(rendered)));
 }
 
 void FilePreviewDialogTest::longFileNameIsElidedInsteadOfWideningWindow() {

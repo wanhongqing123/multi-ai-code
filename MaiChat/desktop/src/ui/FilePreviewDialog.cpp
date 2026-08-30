@@ -3,16 +3,52 @@
 #include <QApplication>
 #include <QFontMetrics>
 #include <QFrame>
+#include <QList>
+#include <QPair>
 #include <QTextDocument>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QSizeGrip>
 #include <QTextBrowser>
 #include <QVBoxLayout>
 
 #include "ui/UiZoom.h"
+
+QString FilePreviewDialog::normalizeGitDiffHtmlForQt(QString html) {
+    // QTextDocument 不执行媒体查询，会把桌面 split 与手机 unified 两份都画出来。
+    // HTML 中的显式边界只用于选择表现形式，不执行脚本；Qt 固定保留左右对比。
+    const QRegularExpression unifiedBlock(
+        QStringLiteral("<!-- MAICHAT_UNIFIED_START -->.*<!-- MAICHAT_UNIFIED_END -->"),
+        QRegularExpression::DotMatchesEverythingOption);
+    html.remove(unifiedBlock);
+
+    // 浏览器用 CSS gap 分隔 pill；Qt 的富文本引擎会把 gap、圆角和背景静默丢掉。
+    // 生成器放入了真实文本分隔符，浏览器隐藏、Qt 则在这里解除隐藏。
+    html.replace(QStringLiteral(".qt-separator{display:none}"),
+                 QStringLiteral(".qt-separator{}"));
+
+    // QTextDocument 不支持 CSS 自定义属性。统一展开成浅色字面值，确保边框、次要文字
+    // 和增删背景不会静默退回平台默认色；预览面板本身也是浅色主题。
+    const QList<QPair<QString, QString>> colors = {
+        {QStringLiteral("var(--bg)"), QStringLiteral("#f6f8fa")},
+        {QStringLiteral("var(--panel)"), QStringLiteral("#ffffff")},
+        {QStringLiteral("var(--border)"), QStringLiteral("#d0d7de")},
+        {QStringLiteral("var(--text)"), QStringLiteral("#1f2328")},
+        {QStringLiteral("var(--muted)"), QStringLiteral("#656d76")},
+        {QStringLiteral("var(--add)"), QStringLiteral("#dafbe1")},
+        {QStringLiteral("var(--del)"), QStringLiteral("#ffebe9")},
+        {QStringLiteral("var(--hunk)"), QStringLiteral("#ddf4ff")},
+        {QStringLiteral("var(--add-strong)"), QStringLiteral("#aceebb")},
+        {QStringLiteral("var(--del-strong)"), QStringLiteral("#ffcecb")},
+    };
+    for (const auto& color : colors) {
+        html.replace(color.first, color.second);
+    }
+    return html;
+}
 
 FilePreviewDialog::FilePreviewDialog(const QString& displayName, const QString& html, QWidget* parent)
     : QDialog(parent) {

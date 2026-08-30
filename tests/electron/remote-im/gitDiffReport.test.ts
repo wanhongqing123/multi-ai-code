@@ -174,6 +174,8 @@ describe('Git Diff report', () => {
     const split = report.split('<!-- MAICHAT_SPLIT_START -->')[1]?.split('<!-- MAICHAT_SPLIT_END -->')[0]
     expect(split).toContain('<table class="split-table"')
     expect(split).not.toContain('<pre>')
+    expect(report.match(/class="qt-separator"/g)).toHaveLength(2)
+    expect(report.match(/> · <\/span>/g)).toHaveLength(2)
     expect(report).toContain('&quot;&lt;two&gt;&quot;')
     expect(report).not.toContain('working tree must not leak')
     expect(result.artifact.sha256).toBe(

@@ -628,6 +628,12 @@ public struct RemoteIMConnectionAttemptGate: Sendable {
     }
 }
 
+public enum RemoteIMVoiceModeTransitionPolicy {
+    public static func requiresCleanup(current: Bool, target: Bool) -> Bool {
+        current != target
+    }
+}
+
 public struct RemoteIMContactGroup: Codable, Equatable, Hashable, Sendable, Identifiable {
     public var id: String { name }
     public let name: String

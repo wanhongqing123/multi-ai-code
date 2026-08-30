@@ -1556,6 +1556,21 @@ final class MasterChatStateTests: XCTestCase {
         XCTAssertTrue(gate.begin(), "前一次连接结束后应允许用户重试")
     }
 
+    func testRepeatedVoiceModeSelectionDoesNotCancelInFlightTranscription() {
+        XCTAssertFalse(
+            RemoteIMVoiceModeTransitionPolicy.requiresCleanup(current: true, target: true)
+        )
+        XCTAssertFalse(
+            RemoteIMVoiceModeTransitionPolicy.requiresCleanup(current: false, target: false)
+        )
+        XCTAssertTrue(
+            RemoteIMVoiceModeTransitionPolicy.requiresCleanup(current: false, target: true)
+        )
+        XCTAssertTrue(
+            RemoteIMVoiceModeTransitionPolicy.requiresCleanup(current: true, target: false)
+        )
+    }
+
     func testMessageListAutoScrollPolicyTargetsLatestMessageID() {
         let firstID = UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")!
         let latestID = UUID(uuidString: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")!

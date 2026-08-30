@@ -3411,32 +3411,32 @@ private struct ComposerView: View {
                     )
                 }
 
-                    Button {
-                        if isAttachmentPanelPresented {
-                            isAttachmentPanelPresented = false
-                        } else {
-                            dismissKeyboard()
-                            isAttachmentPanelPresented = true
-                        }
-                    } label: {
-                        Image(systemName: "plus")
-                            .font(.system(size: 20, weight: .semibold))
-                            .rotationEffect(.degrees(isAttachmentPanelPresented ? 45 : 0))
-                            .frame(width: 44, height: 44)
-                            .background(Color.white, in: Circle())
-                            .overlay(
-                                Circle()
-                                    .stroke(RemoteIMStyle.border, lineWidth: 1)
-                            )
+                Button {
+                    if isAttachmentPanelPresented {
+                        isAttachmentPanelPresented = false
+                    } else {
+                        dismissKeyboard()
+                        isAttachmentPanelPresented = true
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(
-                        appState.canSendFile
-                            ? RemoteIMStyle.textPrimary
-                            : RemoteIMStyle.textSecondary
-                    )
-                    .disabled(!appState.canSendFile)
-                    .accessibilityLabel(isAttachmentPanelPresented ? "收起更多功能" : "展开更多功能")
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 20, weight: .semibold))
+                        .rotationEffect(.degrees(isAttachmentPanelPresented ? 45 : 0))
+                        .frame(width: 44, height: 44)
+                        .background(Color.white, in: Circle())
+                        .overlay(
+                            Circle()
+                                .stroke(RemoteIMStyle.border, lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(
+                    appState.canSendFile
+                        ? RemoteIMStyle.textPrimary
+                        : RemoteIMStyle.textSecondary
+                )
+                .disabled(!appState.canSendFile)
+                .accessibilityLabel(isAttachmentPanelPresented ? "收起更多功能" : "展开更多功能")
                 }
             }
             .padding(.horizontal, 16)
@@ -3537,6 +3537,10 @@ private struct ComposerView: View {
 
     private func setVoiceMode(_ enabled: Bool) {
         isAttachmentPanelPresented = false
+        guard RemoteIMVoiceModeTransitionPolicy.requiresCleanup(
+            current: isVoiceMode,
+            target: enabled
+        ) else { return }
         transcriptionPresentation.reset()
         realtimeStartTask?.cancel()
         realtimeStartTask = nil

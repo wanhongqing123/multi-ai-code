@@ -564,6 +564,7 @@ private struct ConversationListView: View {
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
+            .scrollDismissesKeyboard(.immediately)
             .background(RemoteIMStyle.panelBackground)
         }
         .background(RemoteIMStyle.panelBackground)
@@ -575,6 +576,12 @@ private struct ConversationListView: View {
                 return
             }
             isSearchingMessages = true
+            defer {
+                // A cancelled task must not clear the spinner owned by the replacement query.
+                if normalizedSearch == query {
+                    isSearchingMessages = false
+                }
+            }
             do {
                 try await Task.sleep(nanoseconds: 250_000_000)
             } catch {
@@ -583,7 +590,6 @@ private struct ConversationListView: View {
             let hits = await appState.searchMessages(query)
             guard !Task.isCancelled, normalizedSearch == query else { return }
             messageSearchHits = hits
-            isSearchingMessages = false
         }
         .alert(item: $pendingClearHistoryContact) { contact in
             Alert(
@@ -677,6 +683,7 @@ private struct ConversationSearchField: View {
                 .autocorrectionDisabled()
                 .focused($isFocused)
                 .submitLabel(.search)
+                .onSubmit { isFocused = false }
                 .accessibilityIdentifier("remote-im-message-search-field")
             if !text.isEmpty {
                 Button {

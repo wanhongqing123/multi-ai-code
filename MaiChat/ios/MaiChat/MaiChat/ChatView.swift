@@ -3209,6 +3209,92 @@ private struct RemoteIMPickedVideoTransfer: Transferable, Sendable {
     }
 }
 
+private struct ComposerAttachmentPanel: View {
+    let canSendImage: Bool
+    let canSendVideo: Bool
+    let canSendFile: Bool
+    let canSendVoice: Bool
+    let openLibrary: () -> Void
+    let openCamera: () -> Void
+    let openFile: () -> Void
+    let openVoiceInput: () -> Void
+
+    private let columns = Array(
+        repeating: GridItem(.flexible(), spacing: 12, alignment: .top),
+        count: 4
+    )
+
+    var body: some View {
+        LazyVGrid(columns: columns, alignment: .center, spacing: 14) {
+            actionButton(
+                title: "相册",
+                systemImage: "photo",
+                enabled: canSendImage || canSendVideo,
+                action: openLibrary
+            )
+            actionButton(
+                title: "拍摄",
+                systemImage: "camera.fill",
+                enabled: canSendImage,
+                action: openCamera
+            )
+            actionButton(
+                title: "文件",
+                systemImage: "doc.fill",
+                enabled: canSendFile,
+                action: openFile
+            )
+            actionButton(
+                title: "语音输入",
+                systemImage: "mic.fill",
+                enabled: canSendVoice,
+                action: openVoiceInput
+            )
+        }
+        .padding(.horizontal, 18)
+        .padding(.top, 18)
+        .padding(.bottom, 20)
+        .background(RemoteIMStyle.pageBackground)
+    }
+
+    private func actionButton(
+        title: String,
+        systemImage: String,
+        enabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            VStack(spacing: 8) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 25, weight: .medium))
+                    .foregroundStyle(
+                        enabled ? RemoteIMStyle.textPrimary : RemoteIMStyle.textSecondary.opacity(0.5)
+                    )
+                    .frame(maxWidth: .infinity)
+                    .aspectRatio(1, contentMode: .fit)
+                    .background(
+                        RemoteIMStyle.panelBackground,
+                        in: RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 13, style: .continuous)
+                            .stroke(RemoteIMStyle.border, lineWidth: 1)
+                    )
+                Text(title)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(
+                        enabled ? RemoteIMStyle.textSecondary : RemoteIMStyle.textSecondary.opacity(0.5)
+                    )
+                    .lineLimit(1)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .accessibilityLabel(title)
+    }
+}
+
 private struct ComposerView: View {
     @EnvironmentObject private var appState: RemoteIMAppState
     @ObservedObject var draft: RemoteIMDraftState
@@ -3227,42 +3313,45 @@ private struct ComposerView: View {
     @State private var isCameraPresented = false
     @State private var isPhotoPickerPresented = false
     @State private var isFileImporterPresented = false
+    @State private var isAttachmentPanelPresented = false
     @State private var selectedMediaItems: [PhotosPickerItem] = []
     @State private var keyboardVisibleHeight = UIScreen.main.bounds.height
 
     var body: some View {
-        VStack(spacing: 8) {
-            if !isVoiceMode && !commandSuggestions.isEmpty {
-                RemoteIMSlashCommandBar(
-                    commands: commandSuggestions,
-                    visibleHeight: keyboardVisibleHeight
-                ) { command in
-                    draft.text = command.command
-                }
-            }
-
-            HStack(alignment: .bottom, spacing: 8) {
-                Button {
-                    transcriptionPresentation.reset()
-                    realtimeStartTask?.cancel()
-                    realtimeStartTask = nil
-                    realtimeSpeechRecognizer.cancel()
-                    isVoiceMode.toggle()
-                    if !isVoiceMode {
-                        voiceRecorder.cancel()
+        VStack(spacing: 0) {
+            VStack(spacing: 8) {
+                if !isVoiceMode && !commandSuggestions.isEmpty {
+                    RemoteIMSlashCommandBar(
+                        commands: commandSuggestions,
+                        visibleHeight: keyboardVisibleHeight
+                    ) { command in
+                        draft.text = command.command
                     }
-                } label: {
-                    Image(systemName: isVoiceMode ? "keyboard" : "speaker.wave.2.fill")
-                        .font(.system(size: 18, weight: .bold))
-                        .frame(width: 44, height: 44)
-                        .background(RemoteIMStyle.blueSoft, in: Circle())
-                        .overlay(
-                            Circle()
-                                .stroke(RemoteIMStyle.border, lineWidth: 1)
-                        )
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(RemoteIMStyle.blue)
+
+                HStack(alignment: .bottom, spacing: 8) {
+                    Button {
+                        isAttachmentPanelPresented = false
+                        transcriptionPresentation.reset()
+                        realtimeStartTask?.cancel()
+                        realtimeStartTask = nil
+                        realtimeSpeechRecognizer.cancel()
+                        isVoiceMode.toggle()
+                        if !isVoiceMode {
+                            voiceRecorder.cancel()
+                        }
+                    } label: {
+                        Image(systemName: isVoiceMode ? "keyboard" : "speaker.wave.2.fill")
+                            .font(.system(size: 18, weight: .bold))
+                            .frame(width: 44, height: 44)
+                            .background(RemoteIMStyle.blueSoft, in: Circle())
+                            .overlay(
+                                Circle()
+                                    .stroke(RemoteIMStyle.border, lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(RemoteIMStyle.blue)
 
                 if isVoiceMode {
                     PressToTalkButton(
@@ -3330,40 +3419,69 @@ private struct ComposerView: View {
                     )
                 }
 
-                Menu {
                     Button {
-                        isFileImporterPresented = true
+                        if isAttachmentPanelPresented {
+                            isAttachmentPanelPresented = false
+                        } else {
+                            dismissKeyboard()
+                            isAttachmentPanelPresented = true
+                        }
                     } label: {
-                        Label("发送文件", systemImage: "doc")
+                        Image(systemName: "plus")
+                            .font(.system(size: 20, weight: .semibold))
+                            .rotationEffect(.degrees(isAttachmentPanelPresented ? 45 : 0))
+                            .frame(width: 44, height: 44)
+                            .background(Color.white, in: Circle())
+                            .overlay(
+                                Circle()
+                                    .stroke(RemoteIMStyle.border, lineWidth: 1)
+                            )
                     }
-                    Button {
-                        Task { await openCamera() }
-                    } label: {
-                        Label("拍照发送", systemImage: "camera")
-                    }
-                    Button {
-                        Task { await openPhotoPicker() }
-                    } label: {
-                        Label("发送图片或视频", systemImage: "photo")
-                    }
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 20, weight: .semibold))
-                        .frame(width: 44, height: 44)
-                        .background(Color.white, in: Circle())
-                        .overlay(
-                            Circle()
-                                .stroke(RemoteIMStyle.border, lineWidth: 1)
-                        )
+                    .buttonStyle(.plain)
+                    .foregroundStyle(
+                        appState.canSendFile
+                            ? RemoteIMStyle.textPrimary
+                            : RemoteIMStyle.textSecondary
+                    )
+                    .disabled(!appState.canSendFile)
+                    .accessibilityLabel(isAttachmentPanelPresented ? "收起更多功能" : "展开更多功能")
                 }
-                .foregroundStyle(appState.canSendFile ? RemoteIMStyle.textPrimary : RemoteIMStyle.textSecondary)
-                .disabled(!appState.canSendFile)
-                .accessibilityLabel("添加图片或文件")
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 10)
+
+            if isAttachmentPanelPresented {
+                Divider().background(RemoteIMStyle.border)
+                ComposerAttachmentPanel(
+                    canSendImage: appState.canSendImage,
+                    canSendVideo: appState.canSendVideo,
+                    canSendFile: appState.canSendFile,
+                    canSendVoice: appState.canSendVoice,
+                    openLibrary: {
+                        isAttachmentPanelPresented = false
+                        Task { await openPhotoPicker() }
+                    },
+                    openCamera: {
+                        isAttachmentPanelPresented = false
+                        Task { await openCamera() }
+                    },
+                    openFile: {
+                        isAttachmentPanelPresented = false
+                        isFileImporterPresented = true
+                    },
+                    openVoiceInput: {
+                        isAttachmentPanelPresented = false
+                        if !isVoiceMode {
+                            transcriptionPresentation.reset()
+                            isVoiceMode = true
+                        }
+                    }
+                )
+                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 12)
-        .padding(.bottom, 10)
+        .animation(.easeOut(duration: 0.18), value: isAttachmentPanelPresented)
         .background(RemoteIMStyle.panelBackground)
         .overlay(alignment: .top) {
             Divider().background(RemoteIMStyle.border)
@@ -3419,6 +3537,7 @@ private struct ComposerView: View {
             realtimeSpeechRecognizer.cancel()
             voiceRecorder.cancel()
             transcriptionPresentation.reset()
+            isAttachmentPanelPresented = false
         }
     }
 
@@ -3512,6 +3631,9 @@ private struct ComposerView: View {
 
         let screenHeight = UIScreen.main.bounds.height
         keyboardVisibleHeight = max(0, min(screenHeight, endFrame.minY))
+        if endFrame.minY < screenHeight - 1 {
+            isAttachmentPanelPresented = false
+        }
     }
 
     private func handleVoicePressChanged(

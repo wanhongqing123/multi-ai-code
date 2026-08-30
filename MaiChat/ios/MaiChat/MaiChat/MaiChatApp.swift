@@ -57,17 +57,12 @@ final class IOSBackgroundActivityKeeper {
     }
 }
 
-extension Notification.Name {
-    static let remoteIMNotificationConversationSelected = Notification.Name(
-        "MaiChat.remoteIMNotificationConversationSelected"
-    )
-}
-
 @MainActor
-final class RemoteIMSystemNotificationCenter: NSObject, UNUserNotificationCenterDelegate {
+final class RemoteIMSystemNotificationCenter: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
     static let shared = RemoteIMSystemNotificationCenter()
 
     private let center = UNUserNotificationCenter.current()
+    @Published private(set) var pendingRouteRevision: UInt64 = 0
     private(set) var pendingPeerUserID: String?
 
     func install() {
@@ -143,17 +138,40 @@ final class RemoteIMSystemNotificationCenter: NSObject, UNUserNotificationCenter
 
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
-        didReceive response: UNNotificationResponse
-    ) async {
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
         guard let peerUserID = response.notification.request.content.userInfo["peerUserID"] as? String,
-              !peerUserID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        await MainActor.run {
-            pendingPeerUserID = peerUserID
-            NotificationCenter.default.post(
-                name: .remoteIMNotificationConversationSelected,
-                object: peerUserID
-            )
+              !peerUserID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            completionHandler()
+            return
         }
+        completionHandler()
+        // The async UNUserNotificationCenterDelegate witness is executed on a cooperative queue
+        // on physical devices. Calling UIKit from its generated async thunk caused the crash before
+        // our MainActor method even began. Use the completion-handler witness and an explicit GCD
+        // main-queue hop, then assert the actor only after the real thread boundary is crossed.
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated {
+                self?.queueNotificationConversation(peerUserID)
+            }
+        }
+    }
+
+    private func queueNotificationConversation(_ peerUserID: String) {
+        pendingPeerUserID = peerUserID
+        pendingRouteRevision &+= 1
+        AppDiagnosticLog.shared.record(
+            level: .info,
+            category: "remote-im",
+            event: "notification-route-queued",
+            fields: [
+                "peer": DiagnosticLogPrivacy.stableTag(peerUserID, prefix: "u"),
+                "main_thread": Thread.isMainThread ? "true" : "false",
+                "revision": String(pendingRouteRevision),
+            ]
+        )
     }
 
     private func notificationIdentifier(_ peerUserID: String) -> String {

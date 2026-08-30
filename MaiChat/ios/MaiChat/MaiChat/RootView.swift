@@ -12,6 +12,7 @@ enum AppTab {
 struct RootView: View {
     @EnvironmentObject private var appState: RemoteIMAppState
     @Environment(\.scenePhase) private var scenePhase
+    @ObservedObject private var systemNotificationCenter = RemoteIMSystemNotificationCenter.shared
     @State private var selectedTab: AppTab = .messages
     @State private var activeChatContact: RemoteIMContact?
     @State private var isShowingAddContact = false
@@ -80,25 +81,20 @@ struct RootView: View {
         .background(Color(red: 0.966, green: 0.976, blue: 0.988).ignoresSafeArea())
         .task {
             if !appState.shouldShowInitialLogin {
-                await RemoteIMSystemNotificationCenter.shared.requestAuthorizationIfNeeded()
+                await systemNotificationCenter.requestAuthorizationIfNeeded()
                 await appState.connectOnLaunchIfNeeded()
             }
             appState.synchronizeSystemNotificationBadge()
-            if let peerUserID = RemoteIMSystemNotificationCenter.shared.consumePendingPeerUserID() {
-                openNotificationConversation(peerUserID)
-            }
+            schedulePendingNotificationRoute(sceneIsActive: scenePhase == .active)
         }
         .onChange(of: appState.shouldShowInitialLogin) { needsLogin in
             guard !needsLogin else { return }
             Task {
-                await RemoteIMSystemNotificationCenter.shared.requestAuthorizationIfNeeded()
+                await systemNotificationCenter.requestAuthorizationIfNeeded()
             }
         }
-        .onReceive(
-            NotificationCenter.default.publisher(for: .remoteIMNotificationConversationSelected)
-        ) { notification in
-            guard let peerUserID = notification.object as? String else { return }
-            openNotificationConversation(peerUserID)
+        .onChange(of: systemNotificationCenter.pendingRouteRevision) { _ in
+            schedulePendingNotificationRoute(sceneIsActive: scenePhase == .active)
         }
         .onChange(of: scenePhase) { phase in
             AppDiagnosticLog.shared.record(
@@ -110,6 +106,7 @@ struct RootView: View {
             if phase == .active {
                 IOSBackgroundActivityKeeper.shared.end(cause: "scene-active")
                 appState.synchronizeSystemNotificationBadge()
+                schedulePendingNotificationRoute(sceneIsActive: true)
                 return
             }
             guard phase == .inactive || phase == .background else { return }
@@ -149,6 +146,19 @@ struct RootView: View {
         }
     }
 
+    private func schedulePendingNotificationRoute(sceneIsActive: Bool) {
+        guard sceneIsActive else { return }
+        // Notification taps arrive while the scene is commonly still inactive. Dispatching to the
+        // next real main-queue turn avoids routing during UIKit's state-restoration transaction.
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                guard let peerUserID = systemNotificationCenter.consumePendingPeerUserID()
+                else { return }
+                openNotificationConversation(peerUserID)
+            }
+        }
+    }
+
     private func openNotificationConversation(_ peerUserID: String) {
         guard let contact = appState.chatState.contacts.first(where: { $0.userID == peerUserID })
         else { return }
@@ -159,7 +169,10 @@ struct RootView: View {
             level: .info,
             category: "remote-im",
             event: "notification-clicked",
-            fields: ["peer": DiagnosticLogPrivacy.stableTag(peerUserID, prefix: "u")]
+            fields: [
+                "peer": DiagnosticLogPrivacy.stableTag(peerUserID, prefix: "u"),
+                "main_thread": Thread.isMainThread ? "true" : "false",
+            ]
         )
     }
 }

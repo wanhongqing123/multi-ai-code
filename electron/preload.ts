@@ -51,6 +51,7 @@ import type {
   RemoteImMessageDirection,
   RemoteImMessageKind,
   RemoteImMessageOrigin,
+  RemoteImGitDiffArtifact,
   RemoteImApprovalAction,
   RemoteImApprovalRequestInteraction,
   RemoteImApprovalDecisionInteraction,
@@ -86,6 +87,7 @@ export type {
   RemoteImMessageDirection,
   RemoteImMessageKind,
   RemoteImMessageOrigin,
+  RemoteImGitDiffArtifact,
   RemoteImApprovalAction,
   RemoteImApprovalRequestInteraction,
   RemoteImApprovalDecisionInteraction,
@@ -136,6 +138,7 @@ export interface RemoteImOutgoingFileEvent {
   projectId: string
   toUserId: string
   origin: RemoteImMessageOrigin
+  artifact?: RemoteImGitDiffArtifact
   runtimeIdentity: RemoteImRuntimeIdentity
   fileName?: string | null
   mimeType?: string | null

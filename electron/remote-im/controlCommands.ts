@@ -71,8 +71,8 @@ export const REMOTE_IM_CONTROL_COMMANDS: RemoteImControlCommandDefinition[] = [
   },
   {
     name: 'diff',
-    usage: '/diff [--stat] [文件或目录]',
-    description: '查看当前仓库未提交改动并发送 Diff'
+    usage: '/diff [--stat] [--working | --commit <ref> | --range <base>..<head>] [文件或目录]',
+    description: '查看当前仓库工作区、提交或范围 Diff，并发送响应式 HTML 预览'
   },
   {
     name: 'interrupt',

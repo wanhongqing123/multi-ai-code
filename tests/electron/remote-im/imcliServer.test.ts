@@ -190,6 +190,51 @@ describe('remote IM CLI bridge server', () => {
     }
   })
 
+  it('sends a structured Diff request bound to the authorized AICLI session', async () => {
+    const rootDir = await createTempDir()
+    const sendPeerDiff = vi.fn(async () => ({ ok: true as const, toUserId: 'agent-b' }))
+    const authorizeCaller = vi.fn(() => ({ ok: true as const }))
+    const bridge = await startRemoteImCliServer({
+      rootDir,
+      getConfig: async () => config,
+      getStatus: async () => status,
+      listMessages: () => [],
+      sendPeerMessage: async () => ({ ok: true as const, toUserId: 'agent-b' }),
+      sendPeerDiff,
+      authorizeCaller
+    })
+
+    try {
+      const response = await fetch(`${bridge.url}/send-diff`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${bridge.token}`,
+          'content-type': 'application/json',
+          'x-multi-ai-code-session-id': 'session-diff'
+        },
+        body: JSON.stringify({
+          projectId: 'project-1',
+          toUserId: 'agent-b',
+          args: '--commit HEAD src'
+        })
+      })
+
+      await expect(response.json()).resolves.toMatchObject({
+        ok: true,
+        value: { toUserId: 'agent-b' }
+      })
+      expect(authorizeCaller).toHaveBeenCalledWith('project-1', 'session-diff')
+      expect(sendPeerDiff).toHaveBeenCalledWith(
+        'project-1',
+        '--commit HEAD src',
+        'agent-b',
+        'session-diff'
+      )
+    } finally {
+      await bridge.close()
+    }
+  })
+
   it('sends peer videos through the app runtime', async () => {
     const rootDir = await createTempDir()
     const sendPeerVideo = vi.fn(async () => ({ ok: true as const, toUserId: 'agent-b' }))

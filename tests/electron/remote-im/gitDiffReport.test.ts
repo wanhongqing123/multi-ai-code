@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -140,5 +141,69 @@ describe('Git Diff report', () => {
     expect(report).toContain('Submodule: deps/child')
     expect(report).toContain('after')
     expect(report).toContain('new child file')
+  })
+
+  it('renders a resolved commit as responsive split and unified HTML', async () => {
+    const { repo, reports } = await createWorkspace()
+    await fs.writeFile(join(repo, 'app.ts'), 'export const value = 1\n')
+    await commitAll(repo)
+    const base = await git(repo, ['rev-parse', 'HEAD'])
+    await fs.writeFile(join(repo, 'app.ts'), 'export const value = "<two>"\n')
+    await commitAll(repo, 'feature')
+    const head = await git(repo, ['rev-parse', 'HEAD'])
+    await fs.writeFile(join(repo, 'app.ts'), 'working tree must not leak\n')
+
+    const result = await createGitDiffReport({
+      targetRepo: repo,
+      args: `--commit ${head}`,
+      outputDir: reports
+    })
+
+    expect(result.ok, JSON.stringify(result)).toBe(true)
+    if (!result.ok || !result.attachmentPath || !result.artifact) return
+    expect(result.attachmentPath).toMatch(/\.html$/)
+    expect(result.artifact.source).toMatchObject({
+      kind: 'commit',
+      requestedRef: head,
+      baseOid: base,
+      headOid: head
+    })
+    const report = await fs.readFile(result.attachmentPath, 'utf8')
+    expect(report).toContain('class="split"')
+    expect(report).toContain('class="unified"')
+    expect(report).toContain('&quot;&lt;two&gt;&quot;')
+    expect(report).not.toContain('working tree must not leak')
+    expect(result.artifact.sha256).toBe(
+      createHash('sha256').update(report, 'utf8').digest('hex')
+    )
+    expect(result.attachmentPath).toContain(result.artifact.sha256)
+    expect(result.artifact.sizeBytes).toBe(Buffer.byteLength(report, 'utf8'))
+  })
+
+  it('resolves an explicit commit range and rejects option-shaped refs', async () => {
+    const { repo, reports } = await createWorkspace()
+    await fs.writeFile(join(repo, 'range.txt'), 'before\n')
+    await commitAll(repo)
+    const base = await git(repo, ['rev-parse', 'HEAD'])
+    await fs.writeFile(join(repo, 'range.txt'), 'after\n')
+    await commitAll(repo, 'after')
+    const head = await git(repo, ['rev-parse', 'HEAD'])
+
+    const result = await createGitDiffReport({
+      targetRepo: repo,
+      args: `--range ${base}..${head}`,
+      outputDir: reports
+    })
+    expect(result.ok, JSON.stringify(result)).toBe(true)
+    if (!result.ok || !result.artifact) return
+    expect(result.artifact.source).toMatchObject({ kind: 'range', baseOid: base, headOid: head })
+
+    const invalid = await createGitDiffReport({
+      targetRepo: repo,
+      args: '--commit --help',
+      outputDir: reports
+    })
+    expect(invalid.ok).toBe(false)
+    expect(invalid.text).toContain('不能以 - 开头')
   })
 })

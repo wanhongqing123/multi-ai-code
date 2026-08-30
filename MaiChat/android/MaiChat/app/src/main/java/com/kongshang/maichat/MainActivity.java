@@ -2532,7 +2532,12 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(0, dp(7), 0, dp(3));
-        TextView title = MaiChatTheme.label(this, "□  " + attachment.fileName(), 15, MaiChatTheme.BLUE_DARK);
+        TextView title = MaiChatTheme.label(
+            this,
+            (RemoteIMGitDiffDisplayPolicy.isGitDiff(attachment) ? "Δ  " : "□  ") + attachment.fileName(),
+            15,
+            MaiChatTheme.BLUE_DARK
+        );
         title.setSingleLine(true);
         title.setEllipsize(TextUtils.TruncateAt.MIDDLE);
         box.addView(title, match(dp(26)));
@@ -2574,10 +2579,17 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     }
 
     private void showFilePreview(RemoteIMFileAttachment attachment) {
+        if (RemoteIMGitDiffDisplayPolicy.isGitDiff(attachment)
+            && !RemoteIMGitDiffDisplayPolicy.hasValidIntegrity(attachment)) {
+            Toast.makeText(this, "Diff 文件 SHA256 校验失败，已停止渲染", Toast.LENGTH_LONG).show();
+            return;
+        }
         String mime = attachment.mimeType().toLowerCase(Locale.ROOT);
         String name = attachment.fileName().toLowerCase(Locale.ROOT);
         if (mime.contains("html") || name.endsWith(".html") || name.endsWith(".htm")) {
-            Dialog dialog = previewDialog(attachment.fileName());
+            Dialog dialog = previewDialog(
+                RemoteIMGitDiffDisplayPolicy.isGitDiff(attachment) ? "代码 Diff" : attachment.fileName()
+            );
             WebView web = new WebView(this);
             web.getSettings().setJavaScriptEnabled(false);
             web.loadDataWithBaseURL(
@@ -2989,6 +3001,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     }
 
     private String fileSubtitle(RemoteIMFileAttachment attachment) {
+        if (RemoteIMGitDiffDisplayPolicy.isGitDiff(attachment)) return "代码 Diff · 点击查看";
         if (attachment.mimeType().contains("html")) return "HTML 文件，点击预览";
         if (attachment.mimeType().contains("markdown") || attachment.fileName().endsWith(".md")) {
             return "Markdown 文件，点击预览";

@@ -1,7 +1,10 @@
 import { readFileSync } from 'node:fs'
 import { inflateSync } from 'node:zlib'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { RemoteImApprovalRequestInteraction } from '../../../electron/remote-im/types.js'
+import type {
+  RemoteImApprovalRequestInteraction,
+  RemoteImGitDiffArtifact
+} from '../../../electron/remote-im/types.js'
 import {
   connectTencentImClient,
   createRemoteImCloudCustomData,
@@ -202,6 +205,48 @@ describe('tencent IM client helpers', () => {
         '{"namespace":"multi-ai-code","version":2,"origin":"human","captionAbove":false}'
       )
     ).toEqual({ namespace: 'multi-ai-code', version: 2, origin: 'human' })
+  })
+
+  it('round-trips a validated git-diff artifact and rejects corrupted integrity metadata', () => {
+    const artifact: RemoteImGitDiffArtifact = {
+      schema: 'git-diff/v1',
+      id: 'diff-artifact-1234',
+      repositoryName: 'multi-ai-code',
+      source: {
+        kind: 'commit',
+        label: '提交 HEAD',
+        requestedRef: 'HEAD',
+        baseOid: '1'.repeat(40),
+        headOid: '2'.repeat(40)
+      },
+      files: 2,
+      additions: 12,
+      deletions: 3,
+      sha256: 'a'.repeat(64),
+      sizeBytes: 4096,
+      complete: true
+    }
+
+    expect(
+      parseRemoteImCloudMetadata(
+        createRemoteImCloudCustomData('machine', undefined, artifact)
+      )
+    ).toEqual({
+      namespace: 'multi-ai-code',
+      version: 2,
+      origin: 'machine',
+      artifact
+    })
+    expect(
+      parseRemoteImCloudMetadata(
+        JSON.stringify({
+          namespace: 'multi-ai-code',
+          version: 2,
+          origin: 'machine',
+          artifact: { ...artifact, sha256: 'not-a-digest' }
+        })
+      )
+    ).toBeUndefined()
   })
 
   it('extracts C2C text messages from Tencent message events', () => {
@@ -848,15 +893,31 @@ describe('tencent IM client helpers', () => {
     const file = new File([new TextEncoder().encode('# Report')], 'report.md', {
       type: 'text/markdown'
     })
+    const artifact: RemoteImGitDiffArtifact = {
+      schema: 'git-diff/v1',
+      id: 'diff-send-1234',
+      repositoryName: 'repo',
+      source: { kind: 'working', label: '当前未提交改动', headOid: '1'.repeat(40) },
+      files: 1,
+      additions: 1,
+      deletions: 0,
+      sha256: 'b'.repeat(64),
+      sizeBytes: file.size,
+      complete: true
+    }
 
     expect(runtime.sendFile).toBeTypeOf('function')
-    await runtime.sendFile!('desktop-b', file, { messageId: 78, origin: 'machine' })
+    await runtime.sendFile!('desktop-b', file, {
+      messageId: 78,
+      origin: 'machine',
+      artifact
+    })
 
     expect(sdkMock.chat.createFileMessage).toHaveBeenCalledWith({
       to: 'desktop-b',
       conversationType: 'C2C',
       payload: { file },
-      cloudCustomData: createRemoteImCloudCustomData('machine')
+      cloudCustomData: createRemoteImCloudCustomData('machine', undefined, artifact)
     })
     expect(sdkMock.chat.sendMessage).toHaveBeenCalledTimes(1)
   })

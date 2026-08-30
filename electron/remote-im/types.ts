@@ -73,6 +73,29 @@ export type RemoteImMessageKind = 'text' | 'image' | 'file' | 'video'
  */
 export type RemoteImMessageOrigin = 'human' | 'machine'
 
+export interface RemoteImGitDiffArtifactSource {
+  kind: 'working' | 'commit' | 'range'
+  label: string
+  requestedRef?: string
+  requestedBase?: string
+  requestedHead?: string
+  baseOid?: string
+  headOid: string
+}
+
+export interface RemoteImGitDiffArtifact {
+  schema: 'git-diff/v1'
+  id: string
+  repositoryName: string
+  source: RemoteImGitDiffArtifactSource
+  files: number
+  additions: number
+  deletions: number
+  sha256: string
+  sizeBytes: number
+  complete: boolean
+}
+
 export type RemoteImApprovalAction = 'approve-once' | 'approve-prefix' | 'reject'
 
 export interface RemoteImApprovalRequestInteraction {
@@ -270,6 +293,7 @@ export interface RemoteImIncomingFileMessage {
   captionAbove?: boolean
   /** Missing/invalid wire metadata is intentionally left undefined for the host policy. */
   origin?: RemoteImMessageOrigin
+  artifact?: RemoteImGitDiffArtifact
   createdAt?: number
 }
 

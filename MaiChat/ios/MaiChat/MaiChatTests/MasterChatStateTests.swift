@@ -2,6 +2,25 @@ import XCTest
 @testable import MaiChatCore
 
 final class MasterChatStateTests: XCTestCase {
+    func testGitDiffDisplayPolicyOnlyRecognizesGeneratedHtmlArtifacts() {
+        let diff = RemoteIMFileAttachment(
+            localFilePath: "/tmp/repo.diff.html",
+            fileName: "remote-im-diff-repo-\(String(repeating: "a", count: 64)).html",
+            mimeType: "text/html"
+        )
+        let ordinary = RemoteIMFileAttachment(
+            localFilePath: "/tmp/report.html",
+            fileName: "report.html",
+            mimeType: "text/html"
+        )
+        XCTAssertTrue(RemoteIMGitDiffDisplayPolicy.isGitDiff(diff))
+        XCTAssertEqual(
+            RemoteIMGitDiffDisplayPolicy.expectedSHA256(fileName: diff.fileName),
+            String(repeating: "a", count: 64)
+        )
+        XCTAssertFalse(RemoteIMGitDiffDisplayPolicy.isGitDiff(ordinary))
+    }
+
     func testNewMessageNotificationPolicyOnlySuppressesDuplicateOrVisibleForegroundConversation() {
         XCTAssertEqual(RemoteIMNewMessageNotificationPolicy.systemBadgeCount(totalUnreadCount: -1), 0)
         XCTAssertEqual(RemoteIMNewMessageNotificationPolicy.systemBadgeCount(totalUnreadCount: 0), 0)

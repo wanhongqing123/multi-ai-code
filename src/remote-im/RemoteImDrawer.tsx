@@ -153,6 +153,7 @@ function RemoteImFileMessage(props: {
   // 仅 md/html 支持内嵌预览；普通文件显示为文件卡片。老消息可能没有 MIME，按扩展名兜底。
   const isHtml =
     attachment?.mimeType === 'text/html' || lowerName.endsWith('.html') || lowerName.endsWith('.htm')
+  const isGitDiff = isHtml && lowerName.startsWith('remote-im-diff-')
   const isMarkdown =
     attachment?.mimeType === 'text/markdown' ||
     lowerName.endsWith('.md') ||
@@ -164,8 +165,10 @@ function RemoteImFileMessage(props: {
     lowerName.endsWith('.mp4') ||
     lowerName.endsWith('.mov')
   const canPreview = Boolean(attachment?.localPath && (isHtml || isMarkdown))
-  const typeLabel = isHtml
-    ? 'HTML 文件'
+  const typeLabel = isGitDiff
+    ? '代码 Diff · 点击查看'
+    : isHtml
+      ? 'HTML 文件'
     : isMarkdown
       ? 'Markdown 文件'
       : isVideo
@@ -175,7 +178,7 @@ function RemoteImFileMessage(props: {
   const card = (
     <button type="button" className="remote-im-file-message" disabled={!canPreview}
       onClick={() => props.onPreview(props.message)} title={canPreview ? '点击预览文件' : '文件暂不可预览'}>
-      <span className="remote-im-file-icon">{isVideo ? '视' : '文'}</span>
+      <span className="remote-im-file-icon">{isGitDiff ? 'Δ' : isVideo ? '视' : '文'}</span>
       <span className="remote-im-file-info"><strong>{fileName || '文件消息'}</strong><em>{typeLabel}</em></span>
     </button>
   )

@@ -1,6 +1,7 @@
 import AVFoundation
 import AVKit
 import CoreTransferable
+import CryptoKit
 import ImageIO
 import MaiChatCore
 import Photos
@@ -1873,7 +1874,19 @@ private struct FullScreenFilePreviewView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if item.attachment.mimeType == "text/html" {
+                if let integrityError {
+                    VStack(spacing: 12) {
+                        Image(systemName: "exclamationmark.shield")
+                            .font(.system(size: 34, weight: .semibold))
+                            .foregroundStyle(.red)
+                        Text("Diff 校验失败")
+                            .font(.headline)
+                        Text(integrityError)
+                            .font(.footnote)
+                            .foregroundStyle(RemoteIMStyle.textSecondary)
+                    }
+                    .padding(24)
+                } else if item.attachment.mimeType == "text/html" {
                     RemoteIMHTMLPreview(filePath: item.attachment.localFilePath)
                 } else if item.attachment.mimeType == "text/markdown" ||
                             item.attachment.fileName.lowercased().hasSuffix(".md")
@@ -1883,7 +1896,7 @@ private struct FullScreenFilePreviewView: View {
                     RemoteIMQuickLookPreview(filePath: item.attachment.localFilePath)
                 }
             }
-            .navigationTitle(item.attachment.fileName)
+            .navigationTitle(isGitDiff ? "代码 Diff" : item.attachment.fileName)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -1897,6 +1910,22 @@ private struct FullScreenFilePreviewView: View {
                 }
             }
         }
+    }
+
+    private var isGitDiff: Bool {
+        RemoteIMGitDiffDisplayPolicy.isGitDiff(item.attachment)
+    }
+
+    private var integrityError: String? {
+        guard isGitDiff,
+              let expected = RemoteIMGitDiffDisplayPolicy.expectedSHA256(
+                  fileName: item.attachment.fileName
+              )
+        else { return nil }
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: item.attachment.localFilePath))
+        else { return "无法读取 Diff 文件。" }
+        let actual = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        return actual == expected ? nil : "文件内容与发送方提供的 SHA256 不一致，已停止渲染。"
     }
 }
 
@@ -2221,7 +2250,7 @@ private struct FileBubbleContent: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: attachment.mimeType == "text/html" ? "safari" : "doc.text")
+            Image(systemName: isGitDiff ? "arrow.left.arrow.right.square" : attachment.mimeType == "text/html" ? "safari" : "doc.text")
                 .font(.system(size: 20, weight: .semibold))
                 .foregroundStyle(RemoteIMStyle.blue)
                 .frame(width: 38, height: 38)
@@ -2233,13 +2262,21 @@ private struct FileBubbleContent: View {
                     .foregroundStyle(RemoteIMStyle.textPrimary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Text(attachment.mimeType == "text/html" ? "HTML 文件" : "Markdown 文件")
+                Text(
+                    isGitDiff
+                        ? "代码 Diff · 点击查看"
+                        : attachment.mimeType == "text/html" ? "HTML 文件" : "Markdown 文件"
+                )
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(RemoteIMStyle.textSecondary)
             }
         }
         .frame(minWidth: 190, alignment: .leading)
         .contentShape(Rectangle())
+    }
+
+    private var isGitDiff: Bool {
+        RemoteIMGitDiffDisplayPolicy.isGitDiff(attachment)
     }
 }
 

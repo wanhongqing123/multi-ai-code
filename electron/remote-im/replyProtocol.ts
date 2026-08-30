@@ -229,7 +229,7 @@ export function buildRemoteImAicliPrompt(
     `[来自远程 IM：${input.fromUserId.trim()}]`,
     input.text,
     '',
-    '如果需要查询或操作 IM，请先运行 imcli help；如需把截图或本地图片发回 IM，可保存为 png/jpg/webp/gif 文件后使用 imcli send-image <user> <imagePath>；如需发送 Markdown/HTML 报告文件，使用 imcli send-file <user> <filePath>。正常回复必须使用真实的 Markdown 换行，不要把 Windows 命令行的转义规则用于回复正文。手工调用 imcli send 发送文本时，正文一律传 UTF-8 文本的标准 Base64：imcli send <user> --text-b64 <base64>。'
+    '如果需要查询或操作 IM，请先运行 imcli help；如需把截图或本地图片发回 IM，可保存为 png/jpg/webp/gif 文件后使用 imcli send-image <user> <imagePath>；如需发送 Markdown/HTML 报告文件，使用 imcli send-file <user> <filePath>；如需发送当前仓库的代码 Diff，使用 imcli send-diff <user> [--working | --commit <ref> | --range <base>..<head>]。正常回复必须使用真实的 Markdown 换行，不要把 Windows 命令行的转义规则用于回复正文。手工调用 imcli send 发送文本时，正文一律传 UTF-8 文本的标准 Base64：imcli send <user> --text-b64 <base64>。'
   ]
   if (options.includeReplyProtocol === false) return lines.join('\n')
   const replyId = normalizeReplyId(input.replyId)

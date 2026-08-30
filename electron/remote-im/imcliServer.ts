@@ -28,6 +28,12 @@ export interface RemoteImCliServerDeps {
     localPath: string,
     toUserId?: string | null
   ): Promise<RemoteImCliSendResult>
+  sendPeerDiff?(
+    projectId: string,
+    args: string | undefined,
+    toUserId: string,
+    sessionId: string
+  ): Promise<RemoteImCliSendResult>
   sendPeerVideo?(
     projectId: string,
     localPath: string,
@@ -292,6 +298,32 @@ export async function startRemoteImCliServer(
             ...(result.ok
               ? { value: { toUserId: result.toUserId ?? toUserId } }
               : { error: result.error ?? 'failed to send IM file' })
+          })
+        })
+        return
+      }
+
+      if (req.method === 'POST' && url.pathname === '/send-diff') {
+        const body = await readBody(req)
+        const projectId = getProjectId(url, body)
+        const sessionId = getCallerSessionId(req)
+        await withAuthorizedCaller(deps, req, projectId, async () => {
+          const raw = body && typeof body === 'object' ? (body as Record<string, unknown>) : {}
+          const toUserId = typeof raw.toUserId === 'string' ? raw.toUserId.trim() : ''
+          const args = typeof raw.args === 'string' ? raw.args.trim() : ''
+          if (!toUserId) throw new Error('toUserId is required')
+          if (!deps.sendPeerDiff) throw new Error('Diff sending is not available')
+          const result = await deps.sendPeerDiff(
+            projectId,
+            args || undefined,
+            toUserId,
+            sessionId
+          )
+          json(res, result.ok ? 200 : 400, {
+            ok: result.ok,
+            ...(result.ok
+              ? { value: { toUserId: result.toUserId ?? toUserId } }
+              : { error: result.error ?? 'failed to send Diff' })
           })
         })
         return

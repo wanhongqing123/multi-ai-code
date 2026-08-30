@@ -87,6 +87,7 @@ describe('imcli command', () => {
     expect(stdout).toContain('lines dominated by repeated')
     expect(stdout).toContain('imcli send-image <user> <imagePath>')
     expect(stdout).toContain('imcli send-file <user> <filePath>')
+    expect(stdout).toContain('imcli send-diff <user>')
     expect(stdout).toContain('imcli send-video <user> <videoPath>')
     expect(stdout).toContain('imcli add-contact <user>')
     expect(stdout).toContain('Add an IM account to the contact list')
@@ -637,6 +638,47 @@ describe('imcli command', () => {
 
       expect(stdout).toContain('sent file to agent-b')
       expect(sendPeerFile).toHaveBeenCalledWith('project-1', filePath, 'agent-b')
+    } finally {
+      await bridge.close()
+    }
+  })
+
+  it('sends a commit Diff through the session-bound local app bridge', async () => {
+    const rootDir = await createTempDir()
+    const sendPeerDiff = vi.fn(async () => ({ ok: true as const, toUserId: 'agent-b' }))
+    const authorizeCaller = vi.fn(() => ({ ok: true as const }))
+    const bridge = await startRemoteImCliServer({
+      rootDir,
+      getConfig: async () => config,
+      getStatus: async () => status,
+      listMessages: () => [],
+      sendPeerMessage: async () => ({ ok: true as const, toUserId: 'agent-b' }),
+      sendPeerDiff,
+      authorizeCaller
+    })
+
+    try {
+      const { stdout } = await execFileAsync(
+        process.execPath,
+        [imcliPath, 'send-diff', 'agent-b', '--commit', 'HEAD', 'src'],
+        {
+          env: {
+            ...process.env,
+            MULTI_AI_CODE_IMCLI_URL: bridge.url,
+            MULTI_AI_CODE_IMCLI_TOKEN: bridge.token,
+            MULTI_AI_CODE_PROJECT_ID: 'project-1',
+            MULTI_AI_CODE_SESSION_ID: 'session-diff'
+          }
+        }
+      )
+
+      expect(stdout).toContain('sent diff to agent-b')
+      expect(sendPeerDiff).toHaveBeenCalledWith(
+        'project-1',
+        '--commit HEAD src',
+        'agent-b',
+        'session-diff'
+      )
     } finally {
       await bridge.close()
     }

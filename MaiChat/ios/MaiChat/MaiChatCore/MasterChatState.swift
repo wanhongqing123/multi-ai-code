@@ -976,6 +976,24 @@ public struct RemoteIMFileAttachment: Codable, Equatable, Sendable {
     }
 }
 
+public enum RemoteIMGitDiffDisplayPolicy {
+    public static func isGitDiff(_ attachment: RemoteIMFileAttachment) -> Bool {
+        attachment.mimeType.lowercased().contains("html") &&
+            expectedSHA256(fileName: attachment.fileName) != nil
+    }
+
+    public static func expectedSHA256(fileName: String) -> String? {
+        let lower = fileName.lowercased()
+        guard lower.hasPrefix("remote-im-diff-"), lower.hasSuffix(".html") else { return nil }
+        let stem = String(lower.dropLast(".html".count))
+        guard let candidate = stem.split(separator: "-").last,
+              candidate.count == 64,
+              candidate.allSatisfy({ $0.isHexDigit })
+        else { return nil }
+        return String(candidate)
+    }
+}
+
 public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
     public let id: UUID
     public var remoteID: String?

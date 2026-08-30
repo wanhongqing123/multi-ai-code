@@ -5,6 +5,7 @@ import type {
   RemoteImIncomingImageMessage,
   RemoteImIncomingTextMessage,
   RemoteImApprovalAction,
+  RemoteImGitDiffArtifact,
   RemoteImMessageOrigin,
   RemoteImTextInteraction,
   RemoteImRuntimeLogEntryInput
@@ -19,18 +20,21 @@ interface RemoteImCloudMetadata {
   origin: RemoteImMessageOrigin
   interaction?: RemoteImTextInteraction
   captionAbove?: true
+  artifact?: RemoteImGitDiffArtifact
 }
 
 /** Encodes transport metadata shared by Web/Electron and native MaiChat clients. */
 export function createRemoteImCloudCustomData(
   origin: RemoteImMessageOrigin,
-  interaction?: RemoteImTextInteraction
+  interaction?: RemoteImTextInteraction,
+  artifact?: RemoteImGitDiffArtifact
 ): string {
   return JSON.stringify({
     namespace: REMOTE_IM_CLOUD_METADATA_NAMESPACE,
     version: REMOTE_IM_CLOUD_METADATA_VERSION,
     origin,
-    ...(interaction ? { interaction } : {})
+    ...(interaction ? { interaction } : {}),
+    ...(artifact ? { artifact } : {})
   } satisfies RemoteImCloudMetadata)
 }
 
@@ -91,6 +95,79 @@ function parseRemoteImTextInteraction(
   return undefined
 }
 
+function parseGitDiffArtifact(value: unknown): RemoteImGitDiffArtifact | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const raw = value as Record<string, unknown>
+  if (
+    raw.schema !== 'git-diff/v1' ||
+    typeof raw.id !== 'string' ||
+    !/^[A-Za-z0-9_-]{8,128}$/.test(raw.id) ||
+    typeof raw.repositoryName !== 'string' ||
+    !raw.repositoryName.trim() ||
+    raw.repositoryName.length > 255 ||
+    typeof raw.sha256 !== 'string' ||
+    !/^[0-9a-f]{64}$/i.test(raw.sha256) ||
+    typeof raw.complete !== 'boolean'
+  ) {
+    return undefined
+  }
+  const source = raw.source
+  if (!source || typeof source !== 'object') return undefined
+  const sourceRaw = source as Record<string, unknown>
+  if (
+    (sourceRaw.kind !== 'working' && sourceRaw.kind !== 'commit' && sourceRaw.kind !== 'range') ||
+    typeof sourceRaw.label !== 'string' ||
+    !sourceRaw.label ||
+    typeof sourceRaw.headOid !== 'string' ||
+    !(/^[0-9a-f]{40,64}$/i.test(sourceRaw.headOid) ||
+      (sourceRaw.kind === 'working' && sourceRaw.headOid === 'unborn'))
+  ) {
+    return undefined
+  }
+  const optionalString = (key: string): string | undefined => {
+    const item = sourceRaw[key]
+    return typeof item === 'string' && item.length <= 255 ? item : undefined
+  }
+  const nonNegativeInteger = (key: string): number | undefined => {
+    const item = raw[key]
+    return typeof item === 'number' && Number.isSafeInteger(item) && item >= 0
+      ? item
+      : undefined
+  }
+  const files = nonNegativeInteger('files')
+  const additions = nonNegativeInteger('additions')
+  const deletions = nonNegativeInteger('deletions')
+  const sizeBytes = nonNegativeInteger('sizeBytes')
+  if (files === undefined || additions === undefined || deletions === undefined || !sizeBytes) {
+    return undefined
+  }
+  const requestedRef = optionalString('requestedRef')
+  const requestedBase = optionalString('requestedBase')
+  const requestedHead = optionalString('requestedHead')
+  const baseOid = optionalString('baseOid')
+  if (baseOid && !/^[0-9a-f]{40,64}$/i.test(baseOid)) return undefined
+  return {
+    schema: 'git-diff/v1',
+    id: raw.id,
+    repositoryName: raw.repositoryName,
+    source: {
+      kind: sourceRaw.kind,
+      label: sourceRaw.label,
+      ...(requestedRef ? { requestedRef } : {}),
+      ...(requestedBase ? { requestedBase } : {}),
+      ...(requestedHead ? { requestedHead } : {}),
+      ...(baseOid ? { baseOid } : {}),
+      headOid: sourceRaw.headOid
+    },
+    files,
+    additions,
+    deletions,
+    sha256: raw.sha256.toLowerCase(),
+    sizeBytes,
+    complete: raw.complete
+  }
+}
+
 export function parseRemoteImCloudMetadata(value: unknown): RemoteImCloudMetadata | undefined {
   if (typeof value !== 'string' || !value.trim()) return undefined
   try {
@@ -105,11 +182,14 @@ export function parseRemoteImCloudMetadata(value: unknown): RemoteImCloudMetadat
     }
     const origin = raw.origin
     const captionAbove = raw.captionAbove === true ? true : undefined
+    const artifact = raw.artifact === undefined ? undefined : parseGitDiffArtifact(raw.artifact)
+    if (raw.artifact !== undefined && !artifact) return undefined
     const base = {
       namespace: REMOTE_IM_CLOUD_METADATA_NAMESPACE,
       version: REMOTE_IM_CLOUD_METADATA_VERSION,
       origin,
-      ...(captionAbove ? { captionAbove } : {})
+      ...(captionAbove ? { captionAbove } : {}),
+      ...(artifact ? { artifact } : {})
     } satisfies RemoteImCloudMetadata
     if (raw.interaction === undefined) {
       return base
@@ -184,6 +264,7 @@ export interface TencentImFileMessage {
   fileName: string | null
   mimeType: string | null
   origin?: RemoteImMessageOrigin
+  artifact?: RemoteImGitDiffArtifact
   createdAt?: number
 }
 
@@ -682,7 +763,8 @@ export function extractTencentImRoamedTextMessages(
     const from = typeof message.from === 'string' ? message.from : ''
     if (!from) return []
     const flow = message.flow === 'out' ? 'out' : 'in'
-    const origin = messageMetadata(message)?.origin
+    const metadata = messageMetadata(message)
+    const origin = metadata?.origin
     return [
       {
         remoteMessageId,
@@ -707,7 +789,8 @@ export function extractTencentImImageMessages(event: unknown): TencentImImageMes
     if (!image) return []
     const from = typeof message.from === 'string' ? message.from : ''
     if (!from) return []
-    const origin = messageMetadata(message)?.origin
+    const metadata = messageMetadata(message)
+    const origin = metadata?.origin
     return [
       {
         remoteMessageId: typeof message.ID === 'string' ? message.ID : null,
@@ -731,7 +814,8 @@ export function extractTencentImFileMessages(event: unknown): TencentImFileMessa
     if (!file) return []
     const from = typeof message.from === 'string' ? message.from : ''
     if (!from) return []
-    const origin = messageMetadata(message)?.origin
+    const metadata = messageMetadata(message)
+    const origin = metadata?.origin
     return [
       {
         remoteMessageId: typeof message.ID === 'string' ? message.ID : null,
@@ -739,6 +823,7 @@ export function extractTencentImFileMessages(event: unknown): TencentImFileMessa
         toUserId: typeof message.to === 'string' ? message.to : null,
         ...file,
         ...(origin ? { origin } : {}),
+        ...(metadata?.artifact ? { artifact: metadata.artifact } : {}),
         createdAt: typeof message.time === 'number' ? message.time * 1000 : undefined
       }
     ]
@@ -938,7 +1023,9 @@ export interface TencentImSendTextOptions {
 }
 
 export type TencentImSendImageOptions = TencentImSendTextOptions
-export type TencentImSendFileOptions = TencentImSendTextOptions
+export interface TencentImSendFileOptions extends TencentImSendTextOptions {
+  artifact?: RemoteImGitDiffArtifact
+}
 export type TencentImSendVideoOptions = TencentImSendTextOptions
 
 export interface TencentImSendResult {
@@ -1142,6 +1229,7 @@ export async function connectTencentImClient(input: {
           caption: parts.caption,
           captionAbove: parts.captionAbove,
           ...(origin ? { origin } : {}),
+          ...(metadata?.artifact ? { artifact: metadata.artifact } : {}),
           createdAt
         })
         continue
@@ -1451,7 +1539,11 @@ export async function connectTencentImClient(input: {
         to: toUserId,
         conversationType: TencentCloudChat.TYPES?.CONV_C2C ?? 'C2C',
         payload: { file },
-        cloudCustomData: createRemoteImCloudCustomData(options.origin ?? 'machine')
+        cloudCustomData: createRemoteImCloudCustomData(
+          options.origin ?? 'machine',
+          undefined,
+          options.artifact
+        )
       })
       emitRuntimeLog('send:file:created', {
         peerUserId: toUserId,

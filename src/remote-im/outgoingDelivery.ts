@@ -1,4 +1,5 @@
 import type {
+  RemoteImGitDiffArtifact,
   RemoteImMessageOrigin,
   RemoteImTextInteraction,
   RemoteImRuntimeIdentity
@@ -31,6 +32,7 @@ export interface RemoteImOutgoingFileEvent {
   projectId: string
   toUserId: string
   origin: RemoteImMessageOrigin
+  artifact?: RemoteImGitDiffArtifact
   runtimeIdentity: RemoteImRuntimeIdentity
   fileName?: string | null
   mimeType?: string | null
@@ -192,7 +194,8 @@ export async function deliverRemoteImOutgoingFile(
     if (file && input.runtime?.sendFile) {
       await input.runtime.sendFile(input.event.toUserId, file, {
         messageId: input.event.messageId,
-        origin: input.event.origin
+        origin: input.event.origin,
+        ...(input.event.artifact ? { artifact: input.event.artifact } : {})
       })
     }
     return
@@ -213,7 +216,8 @@ export async function deliverRemoteImOutgoingFile(
     const sendResult = await withTimeout(
       input.runtime.sendFile(input.event.toUserId, file, {
         messageId: input.event.messageId,
-        origin: input.event.origin
+        origin: input.event.origin,
+        ...(input.event.artifact ? { artifact: input.event.artifact } : {})
       }),
       input.sendTimeoutMs ?? DEFAULT_SEND_TIMEOUT_MS
     )

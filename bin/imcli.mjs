@@ -16,6 +16,7 @@ Usage:
   imcli send <user> --text-b64 <base64> [--allow-suspicious-text] [--project <projectId>]
   imcli send-image <user> <imagePath> [--project <projectId>]
   imcli send-file <user> <filePath> [--project <projectId>]
+  imcli send-diff <user> [--working | --commit <ref> | --range <base>..<head>] [path] [--project <projectId>]
   imcli send-video <user> <videoPath> [--project <projectId>]
   imcli forward <user> --message-id <id> [--allow-suspicious-text] [--project <projectId>]
   imcli broadcast <user1,user2> --text-b64 <base64> [--allow-suspicious-text] [--project <projectId>]
@@ -95,6 +96,14 @@ Command details:
     Any other file type (zip, pdf, txt, logs, binaries, ...) shows a file card that
     the receiver taps to save locally.
 
+  imcli send-diff <user> [--working | --commit <ref> | --range <base>..<head>] [path]
+    Generate a Diff from the current AICLI session repository and send a responsive
+    HTML review. Desktop/landscape uses side-by-side columns; phone portrait uses a
+    unified layout. Refs are resolved by the host to immutable commit IDs.
+      imcli send-diff phone-user --commit HEAD
+      imcli send-diff phone-user --range main..feature src
+    The command cannot select an arbitrary repository path and never auto-applies code.
+
   imcli send-video <user> <videoPath>
     Send a local video file to one user (up to 20GB) as a playable video message.
     Supported extensions: mp4, mov. Other containers are rejected before upload
@@ -140,6 +149,7 @@ Examples:
   imcli send phone-user --text-b64 YnVpbGQgcGFzc2Vk --project project-1
   imcli send-image phone-user C:\\temp\\screenshot.png --project project-1
   imcli send-file phone-user ./report.md --project project-1
+  imcli send-diff phone-user --commit HEAD --project project-1
   imcli send-video phone-user C:\\temp\\screen-record.mp4 --project project-1
   imcli broadcast phone-user,desktop-b --text-b64 cmVhZHk= --project project-1
 
@@ -413,6 +423,23 @@ async function main(argv) {
     if (!toUserId || !localPath) throw new Error('usage: imcli send-file <user> <filePath>')
     const value = await requestJson('POST', '/send-file', { projectId, toUserId, localPath })
     console.log(`sent file to ${value.toUserId}`)
+    return
+  }
+
+  if (command === 'send-diff') {
+    const [toUserId, ...diffParts] = args
+    if (!toUserId) {
+      throw new Error(
+        'usage: imcli send-diff <user> [--working | --commit <ref> | --range <base>..<head>] [path]'
+      )
+    }
+    const diffArgs = diffParts.join(' ').trim()
+    const value = await requestJson('POST', '/send-diff', {
+      projectId,
+      toUserId,
+      ...(diffArgs ? { args: diffArgs } : {})
+    })
+    console.log(`sent diff to ${value.toUserId}`)
     return
   }
 

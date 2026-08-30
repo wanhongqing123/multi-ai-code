@@ -34,6 +34,7 @@ describe('remote IM reply protocol', () => {
     expect(prompt).toContain('如需把截图或本地图片发回 IM')
     expect(prompt).toContain('imcli send-image <user> <imagePath>')
     expect(prompt).toContain('imcli send-file <user> <filePath>')
+    expect(prompt).toContain('imcli send-diff <user>')
     expect(prompt).toContain('正常回复必须使用真实的 Markdown 换行')
     expect(prompt).toContain('不要把 Windows 命令行的转义规则用于回复正文')
     // 这段提示词是每台机器的 AICLI 每一轮都会读到的唯一指引：它必须指向

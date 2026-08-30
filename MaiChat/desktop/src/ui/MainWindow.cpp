@@ -1128,6 +1128,24 @@ bool isHtmlFile(const RemoteIMFileAttachment& attachment) {
         || fileName.endsWith(QStringLiteral(".htm"));
 }
 
+bool isGitDiffFile(const RemoteIMFileAttachment& attachment) {
+    const QString fileName = attachment.fileName.toLower();
+    const QRegularExpression pattern(QStringLiteral("-([0-9a-f]{64})\\.html$"));
+    return isHtmlFile(attachment)
+        && fileName.startsWith(QStringLiteral("remote-im-diff-"))
+        && pattern.match(fileName).hasMatch();
+}
+
+bool hasValidGitDiffIntegrity(const RemoteIMFileAttachment& attachment) {
+    const QRegularExpression pattern(QStringLiteral("-([0-9a-f]{64})\\.html$"));
+    const QRegularExpressionMatch match = pattern.match(attachment.fileName.toLower());
+    if (!match.hasMatch()) return false;
+    QFile file(attachment.localPath);
+    if (!file.open(QIODevice::ReadOnly)) return false;
+    const QByteArray actual = QCryptographicHash::hash(file.readAll(), QCryptographicHash::Sha256).toHex();
+    return actual == match.captured(1).toLatin1();
+}
+
 bool isMarkdownFile(const RemoteIMFileAttachment& attachment) {
     const QString mimeType = attachment.mimeType.toLower();
     const QString fileName = attachment.fileName.toLower();
@@ -3185,10 +3203,26 @@ void MainWindow::openFilePreview(const RemoteIMFileAttachment& attachment) {
         saveFileAttachmentToLocal(attachment);
         return;
     }
+    if (isGitDiffFile(attachment) && !hasValidGitDiffIntegrity(attachment)) {
+        AppMessageDialog::show(
+            this,
+            AppMessageDialog::Kind::Warning,
+            QStringLiteral("Diff 校验失败"),
+            QStringLiteral("文件内容与发送方提供的 SHA256 不一致，已停止渲染。"));
+        return;
+    }
     const QString displayName = attachment.fileName.isEmpty() ? QFileInfo(attachment.localPath).fileName() : attachment.fileName;
-    const QString html = isHtmlFile(attachment)
+    QString html = isHtmlFile(attachment)
         ? readTextFile(attachment.localPath)
         : UiZoom::scaleQss(MarkdownRenderer::renderToHtml(readTextFile(attachment.localPath)));
+    if (isGitDiffFile(attachment)) {
+        // QTextDocument 不执行媒体查询，会把桌面 split 与手机 unified 两份都画出来。
+        // HTML 中的显式边界只用于选择表现形式，不执行脚本；Qt 固定保留左右对比。
+        const QRegularExpression unifiedBlock(
+            QStringLiteral("<!-- MAICHAT_UNIFIED_START -->.*<!-- MAICHAT_UNIFIED_END -->"),
+            QRegularExpression::DotMatchesEverythingOption);
+        html.remove(unifiedBlock);
+    }
     FilePreviewDialog dialog(displayName, html, this);
     dialog.exec();
 }
@@ -3472,7 +3506,10 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
             : message.file.fileName;
         QString subtitle;
         QString icon = QStringLiteral("📄");
-        if (isHtmlFile(message.file)) {
+        if (isGitDiffFile(message.file)) {
+            icon = QStringLiteral("Δ");
+            subtitle = QStringLiteral("代码 Diff · 点击查看");
+        } else if (isHtmlFile(message.file)) {
             subtitle = QStringLiteral("HTML 文件，点击预览");
         } else if (isMarkdownFile(message.file)) {
             subtitle = QStringLiteral("Markdown 文件，点击预览");

@@ -1,4 +1,5 @@
 import { BrowserWindow, ipcMain } from 'electron'
+import { createHash } from 'crypto'
 import { promises as fs } from 'fs'
 import { basename, join } from 'path'
 import {
@@ -120,6 +121,7 @@ import type {
   RemoteImIncomingTextMessage,
   RemoteImFileAttachment,
   RemoteImImageAttachment,
+  RemoteImGitDiffArtifact,
   RemoteImMessageOrigin,
   RemoteImTextInteraction,
   RemoteImRoamedTextMessage,
@@ -574,7 +576,8 @@ function broadcastOutgoingFilePayload(
   toUserId: string,
   file: RemoteImLocalFilePayload,
   messageId?: number,
-  origin: RemoteImMessageOrigin = 'machine'
+  origin: RemoteImMessageOrigin = 'machine',
+  artifact?: RemoteImGitDiffArtifact
 ): boolean {
   const runtimeIdentity = getRegisteredRemoteImRuntimeIdentity(projectId)
   if (!runtimeIdentity) return false
@@ -582,6 +585,7 @@ function broadcastOutgoingFilePayload(
     projectId,
     toUserId,
     origin,
+    ...(artifact ? { artifact } : {}),
     runtimeIdentity,
     messageId,
     fileName: file.fileName,
@@ -1325,7 +1329,8 @@ async function sendRemoteImPeerLocalFile(
   projectId: string,
   localPath: string,
   toUserId?: string | null,
-  origin: RemoteImMessageOrigin = 'machine'
+  origin: RemoteImMessageOrigin = 'machine',
+  artifact?: RemoteImGitDiffArtifact
 ): Promise<{ ok: boolean; error?: string; toUserId?: string }> {
   const config = await getRemoteImConfig(projectId)
   const cleanPath = localPath.trim()
@@ -1363,7 +1368,14 @@ async function sendRemoteImPeerLocalFile(
       now: Date.now()
     })
   )
-  if (!broadcastOutgoingFilePayload(projectId, peerUserId, payload, message.id, origin)) {
+  if (!broadcastOutgoingFilePayload(
+    projectId,
+    peerUserId,
+    payload,
+    message.id,
+    origin,
+    artifact
+  )) {
     updateRemoteImMessageStatus(message.id, {
       status: 'failed',
       error: REMOTE_IM_ACCOUNT_CHANGING_ERROR
@@ -1453,13 +1465,22 @@ async function readRemoteImFilePreview(input: {
     if (!stat.isFile()) return { ok: false, error: 'file path is not a file' }
     if (stat.size > MAX_REMOTE_IM_DOC_PREVIEW_BYTES)
       return { ok: false, error: 'file is too large' }
-    const content = await fs.readFile(localPath, 'utf8')
+    const bytes = await fs.readFile(localPath)
+    const fileName = basename(localPath)
+    const diffDigest = /^remote-im-diff-.*-([0-9a-f]{64})\.html$/i.exec(fileName)?.[1]
+    if (
+      diffDigest &&
+      createHash('sha256').update(bytes).digest('hex') !== diffDigest.toLowerCase()
+    ) {
+      return { ok: false, error: 'Diff 文件 SHA256 校验失败，已停止渲染' }
+    }
+    const content = bytes.toString('utf8')
     return {
       ok: true,
       value: {
         content,
         mimeType,
-        fileName: basename(localPath)
+        fileName
       }
     }
   } catch (err) {
@@ -2570,6 +2591,32 @@ function ensureRemoteImCliServer(): void {
       sendRemoteImPeerLocalImage(projectId, localPath, toUserId, 'machine'),
     sendPeerFile: (projectId, localPath, toUserId) =>
       sendRemoteImPeerLocalFile(projectId, localPath, toUserId, 'machine'),
+    sendPeerDiff: async (projectId, diffArgs, toUserId, sessionId) => {
+      const runtime = getSessionRuntimeInfo(sessionId)
+      if (!runtime?.targetRepo) {
+        return { ok: false, error: '当前 AICLI 会话没有绑定代码仓库。' }
+      }
+      const report = await createGitDiffReport({
+        targetRepo: runtime.targetRepo,
+        ...(diffArgs ? { args: diffArgs } : {}),
+        outputDir: join(rootDir(), 'remote-im-diff-reports')
+      })
+      if (!report.ok) return { ok: false, error: report.text }
+      const summaryResult = await sendRemoteImPeerMessage(
+        projectId,
+        report.text,
+        toUserId,
+        'machine'
+      )
+      if (!summaryResult.ok || !report.attachmentPath) return summaryResult
+      return sendRemoteImPeerLocalFile(
+        projectId,
+        report.attachmentPath,
+        toUserId,
+        'machine',
+        report.artifact
+      )
+    },
     sendPeerVideo: (projectId, localPath, toUserId) =>
       sendRemoteImPeerLocalVideo(projectId, localPath, toUserId, 'machine'),
     addContact: (projectId, userId) => addRemoteImContact(projectId, userId)

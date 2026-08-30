@@ -7,6 +7,7 @@
 #include <QSizeGrip>
 #include <QTextBrowser>
 #include <QTextDocument>
+#include <QTextTable>
 
 #include "ui/FilePreviewDialog.h"
 
@@ -16,6 +17,7 @@ class FilePreviewDialogTest : public QObject {
 private slots:
     void dropsNativeTitleBarAndShowsNameOnce();
     void rendersHtmlContent();
+    void rendersSideBySideDiffTable();
     void longFileNameIsElidedInsteadOfWideningWindow();
     void closeButtonsAccept();
     void escapeStillCloses();
@@ -45,6 +47,24 @@ void FilePreviewDialogTest::rendersHtmlContent() {
     QVERIFY(content != nullptr);
     QVERIFY(content->isReadOnly());
     QVERIFY(content->toPlainText().contains(QStringLiteral("正文内容")));
+}
+
+void FilePreviewDialogTest::rendersSideBySideDiffTable() {
+    const QString html = QStringLiteral(
+        "<section><div>src/app.cpp</div><table><tr>"
+        "<td>10</td><td><pre>before</pre></td>"
+        "<td>10</td><td><pre>after</pre></td>"
+        "</tr></table></section>");
+    FilePreviewDialog dialog(QStringLiteral("remote-im-diff-repo.html"), html);
+
+    auto* content = dialog.findChild<QTextBrowser*>(QStringLiteral("filePreviewContent"));
+    QVERIFY(content != nullptr);
+    const QTextCursor before = content->document()->find(QStringLiteral("before"));
+    const QTextCursor after = content->document()->find(QStringLiteral("after"));
+    QVERIFY2(!before.isNull() && !after.isNull(), "Diff 两侧代码没有进入 Qt 文档");
+    QVERIFY2(before.currentTable() != nullptr, "删除侧没有落在表格中，无法左右对比");
+    QCOMPARE(before.currentTable(), after.currentTable());
+    QCOMPARE(before.currentTable()->columns(), 4);
 }
 
 void FilePreviewDialogTest::longFileNameIsElidedInsteadOfWideningWindow() {

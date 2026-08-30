@@ -501,68 +501,72 @@ private struct ConversationListView: View {
     @State private var isSearchingMessages = false
 
     var body: some View {
-        List {
-            if normalizedSearch.isEmpty {
-                if filteredContacts.isEmpty {
-                    EmptyConversationListView()
-                        .padding(.top, 96)
-                        .listRowInsets(EdgeInsets())
-                        .listRowSeparator(.hidden)
-                        .listRowBackground(RemoteIMStyle.panelBackground)
-                } else {
-                    ForEach(filteredContacts) { contact in
-                        conversationButton(contact)
-                    }
-                }
-            } else {
-                if !filteredContacts.isEmpty {
-                    Section("联系人") {
+        VStack(spacing: 0) {
+            ConversationSearchField(text: $searchText)
+
+            List {
+                if normalizedSearch.isEmpty {
+                    if filteredContacts.isEmpty {
+                        EmptyConversationListView()
+                            .padding(.top, 96)
+                            .listRowInsets(EdgeInsets())
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(RemoteIMStyle.panelBackground)
+                    } else {
                         ForEach(filteredContacts) { contact in
                             conversationButton(contact)
                         }
                     }
-                }
-
-                if isSearchingMessages {
-                    HStack(spacing: 10) {
-                        ProgressView()
-                        Text("正在搜索全部消息…")
-                            .foregroundStyle(RemoteIMStyle.textSecondary)
-                    }
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(RemoteIMStyle.panelBackground)
-                } else if !visibleMessageSearchHits.isEmpty {
-                    Section("消息") {
-                        ForEach(visibleMessageSearchHits) { hit in
-                            if let contact = contact(for: hit.peerUserID) {
-                                Button {
-                                    guard let openedContact = appState.openMessageSearchHit(hit)
-                                    else { return }
-                                    searchTargetMessageID = hit.message.id
-                                    activeContact = openedContact
-                                } label: {
-                                    MessageSearchResultRow(contact: contact, hit: hit)
-                                }
-                                .buttonStyle(.plain)
-                                .listRowInsets(EdgeInsets())
-                                .listRowSeparator(.hidden)
-                                .listRowBackground(RemoteIMStyle.panelBackground)
+                } else {
+                    if !filteredContacts.isEmpty {
+                        Section("联系人") {
+                            ForEach(filteredContacts) { contact in
+                                conversationButton(contact)
                             }
                         }
                     }
-                } else if filteredContacts.isEmpty {
-                    EmptyMessageSearchView(query: searchText)
-                        .padding(.top, 72)
-                        .listRowInsets(EdgeInsets())
+
+                    if isSearchingMessages {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                            Text("正在搜索全部消息…")
+                                .foregroundStyle(RemoteIMStyle.textSecondary)
+                        }
                         .listRowSeparator(.hidden)
                         .listRowBackground(RemoteIMStyle.panelBackground)
+                    } else if !visibleMessageSearchHits.isEmpty {
+                        Section("消息") {
+                            ForEach(visibleMessageSearchHits) { hit in
+                                if let contact = contact(for: hit.peerUserID) {
+                                    Button {
+                                        guard let openedContact = appState.openMessageSearchHit(hit)
+                                        else { return }
+                                        searchTargetMessageID = hit.message.id
+                                        activeContact = openedContact
+                                    } label: {
+                                        MessageSearchResultRow(contact: contact, hit: hit)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .listRowInsets(EdgeInsets())
+                                    .listRowSeparator(.hidden)
+                                    .listRowBackground(RemoteIMStyle.panelBackground)
+                                }
+                            }
+                        }
+                    } else if filteredContacts.isEmpty {
+                        EmptyMessageSearchView(query: searchText)
+                            .padding(.top, 72)
+                            .listRowInsets(EdgeInsets())
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(RemoteIMStyle.panelBackground)
+                    }
                 }
             }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(RemoteIMStyle.panelBackground)
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
         .background(RemoteIMStyle.panelBackground)
-        .searchable(text: $searchText, prompt: "搜索联系人或全部消息")
         .task(id: normalizedSearch) {
             let query = normalizedSearch
             guard !query.isEmpty else {
@@ -656,6 +660,51 @@ private struct ConversationListView: View {
             }
     }
 
+}
+
+private struct ConversationSearchField: View {
+    @Binding var text: String
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(isFocused ? RemoteIMStyle.blue : RemoteIMStyle.textSecondary)
+            TextField("搜索联系人或全部消息", text: $text)
+                .font(.system(size: 15))
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .focused($isFocused)
+                .submitLabel(.search)
+                .accessibilityIdentifier("remote-im-message-search-field")
+            if !text.isEmpty {
+                Button {
+                    text = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(RemoteIMStyle.textSecondary.opacity(0.7))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("清空搜索")
+            }
+        }
+        .padding(.horizontal, 13)
+        .frame(height: 44)
+        .background(
+            RemoteIMStyle.pageBackground,
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(isFocused ? RemoteIMStyle.blue : RemoteIMStyle.border, lineWidth: isFocused ? 1.5 : 1)
+        )
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(RemoteIMStyle.panelBackground)
+        .accessibilityElement(children: .contain)
+    }
 }
 
 private struct MessageSearchResultRow: View {

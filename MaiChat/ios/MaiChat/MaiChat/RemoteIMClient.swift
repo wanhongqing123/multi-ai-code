@@ -145,9 +145,13 @@ protocol RemoteIMClient: AnyObject {
     func refreshUserProfiles(userIDs: [String]) async throws -> [RemoteIMUserProfile]
     func refreshPresenceStatuses(userIDs: [String]) async throws -> [String: RemoteIMPresenceStatus]
     func subscribePresenceStatuses(userIDs: [String]) async throws
+    func updateApplicationBadgeCount(_ count: Int)
 }
 
 extension RemoteIMClient {
+    func updateApplicationBadgeCount(_ count: Int) {
+    }
+
     // Messages initiated from the MaiChat UI are human-originated by default.
     func sendText(to userID: String, text: String) async throws -> RemoteIMSendReceipt {
         try await sendText(to: userID, text: text, origin: .human)

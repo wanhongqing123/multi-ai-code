@@ -5,7 +5,32 @@ import UniformTypeIdentifiers
 #if canImport(ImSDK_Plus)
 import ImSDK_Plus
 
-final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V2TIMAdvancedMsgListener, V2TIMSDKListener {
+private final class ApplicationBadgeSnapshot: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: UInt32 = 0
+
+    func store(_ nextValue: UInt32) {
+        lock.lock()
+        value = nextValue
+        lock.unlock()
+    }
+
+    func load() -> UInt32 {
+        lock.lock()
+        let currentValue = value
+        lock.unlock()
+        return currentValue
+    }
+}
+
+final class TencentIMClient:
+    NSObject,
+    RemoteIMClient,
+    V2TIMSimpleMsgListener,
+    V2TIMAdvancedMsgListener,
+    V2TIMSDKListener,
+    V2TIMAPNSListener
+{
     var onIncomingText: ((IncomingRemoteIMText) -> Void)?
     var onIncomingVoice: ((IncomingRemoteIMVoice) -> Void)?
     var onIncomingImage: ((IncomingRemoteIMImage) -> Void)?
@@ -14,6 +39,7 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
     var onPresenceStatusChanged: (([String: RemoteIMPresenceStatus]) -> Void)?
     private var initializedSDKAppID: Int?
     private var hasRegisteredIMSDKListener = false
+    private nonisolated let applicationBadgeSnapshot = ApplicationBadgeSnapshot()
 
     func connect(sdkAppID: Int, userID: String, userSig: String) async throws {
         if initializedSDKAppID != sdkAppID {
@@ -32,6 +58,7 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
             V2TIMManager.sharedInstance().addIMSDKListener(listener: self)
             hasRegisteredIMSDKListener = true
         }
+        V2TIMManager.sharedInstance().setAPNSListener(apnsListener: self)
         V2TIMManager.sharedInstance().addSimpleMsgListener(listener: self)
         V2TIMManager.sharedInstance().addAdvancedMsgListener(listener: self)
         Self.logSDK(level: .info, event: "login-start", fields: ["peer": Self.peerTag(userID)])
@@ -44,6 +71,22 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
                         level: .info,
                         event: "login-finished",
                         fields: ["result": "ok", "peer": Self.peerTag(userID)]
+                    )
+                    V2TIMManager.sharedInstance().getTotalUnreadMessageCount(
+                        succ: { count in
+                            Self.logSDK(
+                                level: .info,
+                                event: "sdk-unread-count-read",
+                                fields: ["unread_count": String(count)]
+                            )
+                        },
+                        fail: { code, _ in
+                            Self.logSDK(
+                                level: .warning,
+                                event: "sdk-unread-count-read-failed",
+                                fields: ["code": String(code)]
+                            )
+                        }
                     )
                     continuation.resume()
                 },
@@ -69,6 +112,7 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
     }
 
     func disconnect() async {
+        V2TIMManager.sharedInstance().setAPNSListener(apnsListener: nil)
         if hasRegisteredIMSDKListener {
             V2TIMManager.sharedInstance().removeIMSDKListener(listener: self)
             hasRegisteredIMSDKListener = false
@@ -85,6 +129,21 @@ final class TencentIMClient: NSObject, RemoteIMClient, V2TIMSimpleMsgListener, V
                 }
             )
         }
+    }
+
+    func updateApplicationBadgeCount(_ count: Int) {
+        let safeCount = UInt32(clamping: max(0, count))
+        applicationBadgeSnapshot.store(safeCount)
+    }
+
+    @objc nonisolated func onSetAPPUnreadCount() -> UInt32 {
+        let count = applicationBadgeSnapshot.load()
+        Self.logSDK(
+            level: .info,
+            event: "sdk-app-badge-overridden",
+            fields: ["badge_count": String(count)]
+        )
+        return count
     }
 
     @objc nonisolated func onConnecting() {

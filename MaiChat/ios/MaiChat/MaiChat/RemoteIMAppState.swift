@@ -47,7 +47,15 @@ final class RemoteIMAppState: ObservableObject {
     @Published var chatState: MasterChatState
     @Published var hasCompletedInitialLogin = false
     @Published var presenceStatusByUserID: [String: RemoteIMPresenceStatus] = [:]
-    @Published private(set) var unreadCountByUserID: [String: Int] = [:]
+    @Published private(set) var unreadCountByUserID: [String: Int] = [:] {
+        didSet {
+            client.updateApplicationBadgeCount(
+                RemoteIMNewMessageNotificationPolicy.systemBadgeCount(
+                    totalUnreadCount: totalUnreadCount
+                )
+            )
+        }
+    }
     @Published private(set) var userProfileByUserID: [String: RemoteIMUserProfile] = [:]
     @Published private(set) var downloadingVideoKeys = Set<String>()
 
@@ -117,6 +125,11 @@ final class RemoteIMAppState: ObservableObject {
                     )
                 )
             }
+        )
+        self.client.updateApplicationBadgeCount(
+            RemoteIMNewMessageNotificationPolicy.systemBadgeCount(
+                totalUnreadCount: self.totalUnreadCount
+            )
         )
         self.client.onIncomingText = { [weak self] event in
             Task { @MainActor in
@@ -487,11 +500,11 @@ final class RemoteIMAppState: ObservableObject {
     }
 
     func synchronizeSystemNotificationBadge() {
-        RemoteIMSystemNotificationCenter.shared.updateBadgeCount(
-            RemoteIMNewMessageNotificationPolicy.systemBadgeCount(
-                totalUnreadCount: totalUnreadCount
-            )
+        let badgeCount = RemoteIMNewMessageNotificationPolicy.systemBadgeCount(
+            totalUnreadCount: totalUnreadCount
         )
+        client.updateApplicationBadgeCount(badgeCount)
+        RemoteIMSystemNotificationCenter.shared.updateBadgeCount(badgeCount)
     }
 
     func setConversationVisible(userID: String, visible: Bool) {
@@ -1219,6 +1232,9 @@ final class RemoteIMAppState: ObservableObject {
         }
 
         let profile = profile(for: userID)
+        let badgeCount = RemoteIMNewMessageNotificationPolicy.systemBadgeCount(
+            totalUnreadCount: totalUnreadCount
+        )
         let posted = await RemoteIMSystemNotificationCenter.shared.post(
             peerUserID: userID,
             title: profile.displayName,
@@ -1226,14 +1242,15 @@ final class RemoteIMAppState: ObservableObject {
                 for: message,
                 pendingCount: unreadCountByUserID[userID] ?? 1
             ),
-            badgeCount: RemoteIMNewMessageNotificationPolicy.systemBadgeCount(
-                totalUnreadCount: totalUnreadCount
-            )
+            badgeCount: badgeCount
         )
         logIM(
             level: posted ? .info : .warning,
             event: posted ? "notification-requested" : "notification-failed",
-            fields: ["badge_count": String(totalUnreadCount)],
+            fields: [
+                "badge_count": String(badgeCount),
+                "unread_count": String(totalUnreadCount),
+            ],
             userID: userID
         )
     }

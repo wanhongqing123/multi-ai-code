@@ -5,10 +5,13 @@
 #include <QPixmap>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QScreen>
+#include <QScrollBar>
 #include <QSizeGrip>
 #include <QTextBrowser>
 #include <QTextDocument>
 #include <QTextTable>
+#include <QtMath>
 
 #include "ui/FilePreviewDialog.h"
 
@@ -21,6 +24,7 @@ private slots:
     void rendersSideBySideDiffTable();
     void normalizesGitDiffHtmlForQt();
     void longFileNameIsElidedInsteadOfWideningWindow();
+    void initialSizeTracksContentAndKeepsDiffReadable();
     void closeButtonsAccept();
     void escapeStillCloses();
     void stillResizableWithoutSystemFrame();
@@ -120,6 +124,56 @@ void FilePreviewDialogTest::longFileNameIsElidedInsteadOfWideningWindow() {
     QVERIFY2(title->text().endsWith(QStringLiteral(".md")), "省略方式吃掉了扩展名");
 }
 
+void FilePreviewDialogTest::initialSizeTracksContentAndKeepsDiffReadable() {
+    QWidget parent;
+    parent.resize(1200, 820);
+
+    FilePreviewDialog shortDocument(
+        QStringLiteral("short.md"),
+        QStringLiteral("<h2>简短说明</h2><p>只有一行正文。</p>"),
+        &parent);
+
+    QString longHtml = QStringLiteral("<h2>长文档</h2>");
+    for (int i = 0; i < 120; ++i) {
+        longHtml += QStringLiteral("<p>第 %1 行：用于验证长内容会扩展到屏幕安全高度并滚动。</p>")
+                        .arg(i + 1);
+    }
+    FilePreviewDialog longDocument(QStringLiteral("long.md"), longHtml, &parent);
+
+    const QString diffHtml = QStringLiteral(
+        "<table><tr><td>1</td><td>before</td><td>1</td><td>after</td></tr></table>");
+    FilePreviewDialog diffDocument(
+        QStringLiteral("remote-im-diff-repo.html"), diffHtml, &parent);
+
+    QVERIFY2(shortDocument.height() < longDocument.height(),
+             "短文档与长文档仍使用同一个固定初始高度");
+    QVERIFY2(diffDocument.width() > shortDocument.width(),
+             "Diff 没有获得左右对比所需的可读初始宽度");
+
+    longDocument.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&longDocument));
+    auto* longContent = longDocument.findChild<QTextBrowser*>(
+        QStringLiteral("filePreviewContent"));
+    QVERIFY(longContent != nullptr);
+    QVERIFY2(longContent->verticalScrollBar()->maximum() > 0,
+             "长文档达到屏幕安全高度后没有提供垂直滚动");
+
+    const QSize manualSize = shortDocument.size() + QSize(40, 30);
+    shortDocument.resize(manualSize);
+    QCoreApplication::processEvents();
+    QCOMPARE(shortDocument.size(), manualSize);
+
+    QScreen* screen = QApplication::screenAt(
+        parent.mapToGlobal(parent.rect().center()));
+    if (!screen) screen = QApplication::primaryScreen();
+    QVERIFY(screen != nullptr);
+    const QSize available = screen->availableGeometry().size();
+    QVERIFY2(longDocument.width() <= qMax(1, qFloor(available.width() * 0.90)) + 1,
+             "预览窗口初始宽度越过屏幕安全范围");
+    QVERIFY2(longDocument.height() <= qMax(1, qFloor(available.height() * 0.90)) + 1,
+             "预览窗口初始高度越过屏幕安全范围");
+}
+
 void FilePreviewDialogTest::closeButtonsAccept() {
     FilePreviewDialog dialog(QStringLiteral("report.md"), QStringLiteral("<p>hi</p>"));
 
@@ -153,8 +207,11 @@ void FilePreviewDialogTest::stillResizableWithoutSystemFrame() {
 
     // 无边框窗口没有系统缩放边框；少了 grip，长文档就只能在固定大小里滚，
     // 比原来的原生窗口更难用。
-    QVERIFY2(dialog.findChild<QSizeGrip*>(QStringLiteral("filePreviewGrip")) != nullptr,
+    auto* grip = dialog.findChild<QSizeGrip*>(QStringLiteral("filePreviewGrip"));
+    QVERIFY2(grip != nullptr,
              "无边框预览窗没有缩放入口");
+    QCOMPARE(grip->cursor().shape(), Qt::SizeFDiagCursor);
+    QVERIFY2(!grip->toolTip().isEmpty(), "缩放入口没有向用户说明可以拖动调整大小");
 }
 
 void FilePreviewDialogTest::panelActuallyPaintsItsBackground() {

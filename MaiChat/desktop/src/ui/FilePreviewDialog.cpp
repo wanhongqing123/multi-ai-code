@@ -1,6 +1,7 @@
 #include "ui/FilePreviewDialog.h"
 
 #include <QApplication>
+#include <QAbstractTextDocumentLayout>
 #include <QFontMetrics>
 #include <QFrame>
 #include <QList>
@@ -11,9 +12,11 @@
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QScreen>
 #include <QSizeGrip>
 #include <QTextBrowser>
 #include <QVBoxLayout>
+#include <QtMath>
 
 #include "ui/UiZoom.h"
 
@@ -54,6 +57,7 @@ FilePreviewDialog::FilePreviewDialog(const QString& displayName, const QString& 
     : QDialog(parent) {
     buildUi(displayName, html);
     applyStyle();
+    resize(contentAwareInitialSize());
 }
 
 void FilePreviewDialog::buildUi(const QString& displayName, const QString& html) {
@@ -130,17 +134,14 @@ void FilePreviewDialog::buildUi(const QString& displayName, const QString& html)
     // 无边框窗口没有系统缩放边框，靠右下角的 grip 补回来。
     auto* grip = new QSizeGrip(panel);
     grip->setObjectName(QStringLiteral("filePreviewGrip"));
-    grip->setFixedSize(UiZoom::s(16), UiZoom::s(16));
+    grip->setFixedSize(UiZoom::s(22), UiZoom::s(22));
+    grip->setCursor(Qt::SizeFDiagCursor);
+    grip->setToolTip(QStringLiteral("拖动调整窗口大小"));
+    grip->setAccessibleName(QStringLiteral("调整预览窗口大小"));
     footerRow->addWidget(grip, 0, Qt::AlignBottom);
 
     layout->addLayout(footerRow);
 
-    QSize target(UiZoom::s(900), UiZoom::s(660));
-    if (parentWidget()) {
-        target = QSize(qMax(UiZoom::s(720), parentWidget()->width() * 2 / 3),
-                       qMax(UiZoom::s(520), parentWidget()->height() * 3 / 4));
-    }
-    resize(target);
     setMinimumSize(UiZoom::s(480), UiZoom::s(360));
 }
 
@@ -178,6 +179,66 @@ void FilePreviewDialog::applyStyle() {
             background: #1e40af;
         }
     )")));
+}
+
+QSize FilePreviewDialog::contentAwareInitialSize() {
+    // 初始尺寸由内容与当前屏幕共同决定：短文档不应占满父窗口，长 Diff 则要保留
+    // 足够的左右对比宽度，但无论内容多大都不能越过工作区，超出的部分交给滚动条。
+    ensurePolished();
+    if (layout()) layout()->activate();
+
+    QScreen* screen = QApplication::primaryScreen();
+    if (parentWidget()) {
+        const QPoint parentCenter = parentWidget()->mapToGlobal(parentWidget()->rect().center());
+        if (QScreen* parentScreen = QApplication::screenAt(parentCenter)) screen = parentScreen;
+    }
+    const QSize available = screen ? screen->availableGeometry().size() : QSize(1440, 900);
+    const int maximumWidth = qMax(
+        1,
+        qMin(UiZoom::s(1280), qFloor(available.width() * 0.90)));
+    const int maximumHeight = qMax(1, qFloor(available.height() * 0.90));
+    const int minimumWidth = qMin(UiZoom::s(480), maximumWidth);
+    const int minimumHeight = qMin(UiZoom::s(360), maximumHeight);
+    setMinimumSize(minimumWidth, minimumHeight);
+
+    const bool isGitDiff = fullTitle_.startsWith(QStringLiteral("remote-im-diff-"),
+                                                  Qt::CaseInsensitive)
+        && fullTitle_.endsWith(QStringLiteral(".html"), Qt::CaseInsensitive);
+    int preferredWidth = UiZoom::s(620);
+    if (isGitDiff) {
+        const int parentBasedWidth = parentWidget()
+            ? parentWidget()->width() * 2 / 3
+            : UiZoom::s(1000);
+        const int readableDiffWidth = qMin(UiZoom::s(900), maximumWidth);
+        preferredWidth = qBound(readableDiffWidth, parentBasedWidth, maximumWidth);
+    } else {
+        const QFontMetrics metrics(content_->document()->defaultFont());
+        int longestLineWidth = 0;
+        const QStringList lines = content_->toPlainText().split(QLatin1Char('\n'));
+        for (const QString& line : lines) {
+            longestLineWidth = qMax(longestLineWidth, metrics.horizontalAdvance(line));
+        }
+        const int naturalWidth = longestLineWidth + UiZoom::s(150);
+        const int parentCeiling = parentWidget()
+            ? qMax(minimumWidth, parentWidget()->width() * 2 / 3)
+            : UiZoom::s(900);
+        preferredWidth = qMin(naturalWidth, parentCeiling);
+    }
+    const int targetWidth = qBound(minimumWidth, preferredWidth, maximumWidth);
+
+    // 用已经 polish 的真实控件测 chrome，而不是把标题、按钮、QSS padding 写死。
+    // probe 文档避免为了量高度去改变屏幕上 QTextBrowser 的真实 page size。
+    const int chromeWidth = qMax(UiZoom::s(96), width() - content_->viewport()->width());
+    const int chromeHeight = qMax(UiZoom::s(150), height() - content_->viewport()->height());
+    const int documentWidth = qMax(1, targetWidth - chromeWidth);
+    QTextDocument probe;
+    probe.setDefaultFont(content_->document()->defaultFont());
+    probe.setHtml(content_->toHtml());
+    probe.setTextWidth(documentWidth);
+    const int documentHeight = qCeil(probe.documentLayout()->documentSize().height());
+    const int preferredHeight = documentHeight + chromeHeight;
+    const int targetHeight = qBound(minimumHeight, preferredHeight, maximumHeight);
+    return QSize(targetWidth, targetHeight);
 }
 
 void FilePreviewDialog::updateElidedTitle() {

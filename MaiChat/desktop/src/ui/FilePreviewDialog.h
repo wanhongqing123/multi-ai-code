@@ -2,6 +2,7 @@
 
 #include <QDialog>
 #include <QPoint>
+#include <QSize>
 #include <QString>
 
 class QLabel;
@@ -36,6 +37,7 @@ private:
     void buildUi(const QString& displayName, const QString& html);
     void applyStyle();
     void updateElidedTitle();
+    QSize contentAwareInitialSize();
 
     QWidget* header_ = nullptr;
     QLabel* title_ = nullptr;

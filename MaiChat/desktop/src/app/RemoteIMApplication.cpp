@@ -158,13 +158,15 @@ void RemoteIMApplication::selectPeer(const QString& userId) {
     }
 }
 
-void RemoteIMApplication::sendText(const QString& text) {
+void RemoteIMApplication::sendText(const QString& text,
+                                   const RemoteIMQuote& quote,
+                                   bool hasQuote) {
     if (text.trimmed().isEmpty() || state_.selectedPeerId().isEmpty()) return;
-    RemoteIMMessage message = state_.queueOutgoingText(text);
+    RemoteIMMessage message = state_.queueOutgoingText(text, quote, hasQuote);
     persistMessage(message);
     emit stateChanged();
 
-    client_->sendText(message.toUserId, message.text,
+    client_->sendTextWithQuote(message.toUserId, message.text, message.quote, message.hasQuote,
                       [this, messageId = message.id](bool ok, const QString& error, const RemoteIMSendReceipt& receipt) {
         // 发送成功且 SDK 给了稳定 id：内存与库同步换 id，漫游重投同一条消息
         // 时按主键去重（否则临时 UUID 与漫游 id 对不上，重启后会重复显示）。

@@ -159,6 +159,21 @@ struct RemoteIMVideoAttachment {
     qint64 sizeBytes = 0;
 };
 
+// 引用回复里被引用的那条消息。
+//
+// digest 是**发送时的快照**，不是运行时去本地查出来的：被引用的消息可能根本不在
+// 本地——对端设备发的、本地已清理、或者正好落在还没加载的分页里。只存 ID 的话
+// 引用块会渲染成空白，而空白引用块在聊天里非常显眼。
+//
+// msgId 允许为空：本地消息在发出去之前没有服务端 ID。此时引用块照常显示，
+// 只是不提供「跳到原文」。绝不拿本地 UUID 冒充跨端可解析的 ID。
+struct RemoteIMQuote {
+    QString msgId;      // 原消息服务端 ID，可为空
+    QString senderId;   // 原发送者 userID
+    QString digest;     // 原文摘要快照（已折叠空白并截断）
+    QString kind;       // text / image / file / video / voice
+};
+
 struct RemoteIMMessage {
     QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     QString fromUserId;
@@ -182,6 +197,8 @@ struct RemoteIMMessage {
     bool hasVoice = false;
     bool hasFile = false;
     bool hasVideo = false;
+    RemoteIMQuote quote;
+    bool hasQuote = false;
     bool hasApprovalRequest = false;
     bool hasApprovalDecision = false;
 };

@@ -39,6 +39,9 @@ class MainWindow final : public QMainWindow {
 public:
     explicit MainWindow(RemoteIMApplication& app, QWidget* parent = nullptr);
 
+    // 开始回复某条消息：右键菜单调它，测试也直接调它。
+    void beginReplyTo(const RemoteIMMessage& message);
+
     // 把 IM 收/发的文件附件从本地缓存拷贝到 targetPath（存在则覆盖）。
     // 纯文件操作、不弹 UI，供右键「保存到本地」与单测复用；失败时经
     // errorMessage 返回原因。
@@ -140,12 +143,25 @@ private:
     bool composerTextPrecedesFirstAttachment(int firstAttachmentPosition) const;
     // 输入框里是否有内联的图片/文件附件。
     bool composerHasAttachments() const;
+    RemoteIMQuote pendingQuote_;
+    bool hasPendingQuote_ = false;
+    QWidget* pendingReplyBar_ = nullptr;
+    QLabel* pendingReplyLabel_ = nullptr;
     void openImagePreview(const QString& imagePath);
     void openFilePreview(const RemoteIMFileAttachment& attachment);
     void openVideoPreview(const RemoteIMVideoAttachment& attachment);
     // 右键菜单入口：弹「另存为」对话框（默认下载目录 + 原文件名），把附件保存到用户选的位置。
     void saveFileAttachmentToLocal(const RemoteIMFileAttachment& attachment);
     QWidget* createMessageBubble(const RemoteIMMessage& message);
+    // 气泡顶部的引用块。返回 nullptr 表示这条消息没有引用。
+    QWidget* createQuoteBlock(const RemoteIMMessage& message, QWidget* parent);
+    // 右键「回复」：把目标消息压成快照存进 pendingQuote_，并在输入框上方显示提示条。
+
+    void cancelPendingReply();
+    void refreshPendingReplyBar();
+    // 点引用块跳到原文。跨端只承诺定位到同一条逻辑 SDK 消息：
+    // desktop 把一条 SDK 消息按 elem 拆成多行，命中多行时锚定下标最小的那条。
+    void jumpToQuotedMessage(const QString& sdkMsgId);
     enum class ApprovalDisplayState { Available, Sending, Sent, Resolved, AutoDeclined };
     ApprovalDisplayState approvalDisplayState(const RemoteIMMessage& message) const;
     int messageBubbleMaximumWidth() const;

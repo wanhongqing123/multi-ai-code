@@ -32,10 +32,16 @@ constexpr int kFriendTypeBoth = 1;
 constexpr auto kCloudCustomDataKey = "message_cloud_custom_str";
 constexpr auto kMetadataNamespace = "multi-ai-code";
 constexpr int kMetadataVersion = 2;
+// 引用块字段的长度上限。对端可以往 metadata 里塞任意长的串，
+// 不设上限等于让别人决定我们的内存占用和渲染耗时。
+constexpr int kQuoteFieldLimit = 256;
+constexpr int kQuoteDigestLimit = 200;
 
 struct ParsedCloudMetadata {
     RemoteIMMessageOrigin origin = RemoteIMMessageOrigin::Unknown;
     bool captionAbove = false;
+    RemoteIMQuote quote;
+    bool hasQuote = false;
     RemoteIMApprovalRequest approvalRequest;
     RemoteIMApprovalDecision approvalDecision;
     bool hasApprovalRequest = false;
@@ -48,9 +54,21 @@ QString originName(RemoteIMMessageOrigin origin) {
                : QStringLiteral("machine");
 }
 
+// 引用块编码。msgId 为空时**整个键都不写**，而不是写一个空串：
+// 空串会让对端以为「有 ID 但解析不出来」，而事实是这条消息压根没有跨端可解析的 ID。
+QJsonObject quoteObject(const RemoteIMQuote& quote) {
+    QJsonObject object;
+    if (!quote.msgId.isEmpty()) object[QStringLiteral("msgId")] = quote.msgId;
+    object[QStringLiteral("sender")] = quote.senderId;
+    object[QStringLiteral("digest")] = quote.digest;
+    object[QStringLiteral("kind")] = quote.kind;
+    return object;
+}
+
 QString cloudCustomData(RemoteIMMessageOrigin origin,
                         const QJsonObject& interaction = QJsonObject(),
-                        bool captionAbove = false) {
+                        bool captionAbove = false,
+                        const QJsonObject& quote = QJsonObject()) {
     QJsonObject metadata;
     metadata[QStringLiteral("namespace")] = QString::fromLatin1(kMetadataNamespace);
     metadata[QStringLiteral("version")] = kMetadataVersion;
@@ -61,15 +79,24 @@ QString cloudCustomData(RemoteIMMessageOrigin origin,
     // 会把附件整条丢掉，而它们不会因为我们改了源码就自动变好。
     // 元数据是加性的，不认识这个键的客户端直接忽略。
     if (captionAbove) metadata[QStringLiteral("captionAbove")] = true;
+    // 引用同样走可选键：不认识它的客户端忽略，照常显示回复正文，不会出错。
+    if (!quote.isEmpty()) metadata[QStringLiteral("quote")] = quote;
     return QString::fromUtf8(QJsonDocument(metadata).toJson(QJsonDocument::Compact));
 }
 
 void setMessageMetadata(QJsonObject& message,
                         RemoteIMMessageOrigin origin,
                         const QJsonObject& interaction = QJsonObject(),
-                        bool captionAbove = false) {
+                        bool captionAbove = false,
+                        const QJsonObject& quote = QJsonObject()) {
     message[QString::fromLatin1(kCloudCustomDataKey)] =
-        cloudCustomData(origin, interaction, captionAbove);
+        cloudCustomData(origin, interaction, captionAbove, quote);
+}
+
+void setMessageOriginWithQuote(QJsonObject& message,
+                               RemoteIMMessageOrigin origin,
+                               const RemoteIMQuote& quote) {
+    setMessageMetadata(message, origin, QJsonObject(), false, quoteObject(quote));
 }
 
 void setMessageOrigin(QJsonObject& message, RemoteIMMessageOrigin origin) {
@@ -112,6 +139,25 @@ ParsedCloudMetadata messageMetadata(const QJsonObject& message) {
         parsed.origin = RemoteIMMessageOrigin::Machine;
     } else {
         return ParsedCloudMetadata{};
+    }
+
+    // 引用块。解析失败只丢 quote，不能连带丢 origin / captionAbove / interaction——
+    // origin 是自动回环阻断的依据，为了一个装饰性的引用块把它丢掉是不划算的。
+    // metadata 来自对端，一律当不可信输入：字段缺失、类型不对、超长都只是「没有引用」。
+    if (metadata.contains(QStringLiteral("quote"))) {
+        const QJsonObject quote = metadata.value(QStringLiteral("quote")).toObject();
+        RemoteIMQuote parsedQuote;
+        parsedQuote.msgId = quote.value(QStringLiteral("msgId")).toString().left(kQuoteFieldLimit);
+        parsedQuote.senderId =
+            quote.value(QStringLiteral("sender")).toString().left(kQuoteFieldLimit);
+        parsedQuote.digest =
+            quote.value(QStringLiteral("digest")).toString().left(kQuoteDigestLimit);
+        parsedQuote.kind = quote.value(QStringLiteral("kind")).toString().left(kQuoteFieldLimit);
+        // 没有摘要的引用块会渲染成空白，那比没有引用更难看。
+        if (!parsedQuote.digest.isEmpty()) {
+            parsed.quote = parsedQuote;
+            parsed.hasQuote = true;
+        }
     }
 
     if (!metadata.contains(QStringLiteral("interaction"))) return parsed;
@@ -466,6 +512,13 @@ void TimSdkRemoteIMClient::sendText(const QString& peerId, const QString& text, 
     sendTextWithOrigin(peerId, text, RemoteIMMessageOrigin::Human, std::move(completion));
 }
 
+void TimSdkRemoteIMClient::sendTextWithQuote(const QString& peerId, const QString& text,
+                                             const RemoteIMQuote& quote, bool hasQuote,
+                                             RemoteIMSendCompletion completion) {
+    sendTextWithOrigin(peerId, text, RemoteIMMessageOrigin::Human, std::move(completion),
+                       QJsonObject(), quote, hasQuote);
+}
+
 void TimSdkRemoteIMClient::sendMachineText(const QString& peerId, const QString& text, RemoteIMSendCompletion completion) {
     sendTextWithOrigin(peerId, text, RemoteIMMessageOrigin::Machine, std::move(completion));
 }
@@ -501,7 +554,9 @@ void TimSdkRemoteIMClient::sendTextWithOrigin(const QString& peerId,
                                               const QString& text,
                                               RemoteIMMessageOrigin origin,
                                               RemoteIMSendCompletion completion,
-                                              const QJsonObject& interaction) {
+                                              const QJsonObject& interaction,
+                                              const RemoteIMQuote& quote,
+                                              bool hasQuote) {
     const QString cleanPeerId = peerId.trimmed();
     const QString cleanText = text.trimmed();
     if (cleanPeerId.isEmpty() || cleanText.isEmpty()) {
@@ -514,7 +569,10 @@ void TimSdkRemoteIMClient::sendTextWithOrigin(const QString& peerId,
     elem[QStringLiteral("text_elem_content")] = cleanText;
     QJsonObject message;
     message[QStringLiteral("message_elem_array")] = QJsonArray{elem};
-    setMessageMetadata(message, origin, interaction);
+    // 引用只在确实有摘要时才写。没有摘要的引用块在对端会渲染成空白，
+    // 那比不带引用更糟。
+    setMessageMetadata(message, origin, interaction, false,
+                       (hasQuote && !quote.digest.isEmpty()) ? quoteObject(quote) : QJsonObject());
     api_->sendMessage(cleanPeerId, kConversationTypeC2C, compactJson(message), [completion = std::move(completion)](int code,
                                                                                                                     const QString& description,
                                                                                                                     const QString& jsonPayload) mutable {

@@ -639,7 +639,8 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
         {
           fromUserId: input.fromUserId,
           text: input.text,
-          replyId: outputRoute?.replyId
+          replyId: outputRoute?.replyId,
+          quote: input.quote
         },
         {
           includeReplyProtocol:
@@ -648,7 +649,8 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       )
     const displayText = buildRemoteImAicliDisplayText({
       fromUserId: input.fromUserId,
-      text: input.text
+      text: input.text,
+      quote: input.quote
     })
     // Reserve the incoming row synchronously before the first sendUser await.
     // Tencent may redeliver the same remoteMessageId while the provider is

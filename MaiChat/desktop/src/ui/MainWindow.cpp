@@ -1,5 +1,6 @@
 #include "ui/MainWindow.h"
 #include "model/MessageNotification.h"
+#include "model/MessageQuote.h"
 #include "model/ContactGroups.h"
 #include "model/MessageSearch.h"
 #include "ui/MessageImageLoader.h"
@@ -38,7 +39,9 @@
 #include <QKeyEvent>
 #include <QLineEdit>
 #include <QShortcut>
+#include <QHash>
 #include <QMenu>
+#include <limits>
 #include <QPixmap>
 #include <QMouseEvent>
 #include <QLinearGradient>
@@ -195,9 +198,15 @@ protected:
     // 换成与图片/文件气泡一致的飞书式中文菜单。定义在辅助函数之后（见文件下方）。
     void contextMenuEvent(QContextMenuEvent* event) override;
 
+public:
+    // 「回复」由 MainWindow 注入：这个视图本身不知道自己渲染的是哪条消息，
+    // 把消息塞进来会让它依赖整个消息模型，不如只收一个回调。
+    void setReplyHandler(std::function<void()> handler) { replyHandler_ = std::move(handler); }
+
 private:
     QString sourceMarkdown_;
     QAction* copyOriginalDataAction_ = nullptr;
+    std::function<void()> replyHandler_;
 
     void updateContentHeight() {
         const int width = qMax(120, viewport()->width());
@@ -1014,6 +1023,8 @@ void MarkdownMessageView::contextMenuEvent(QContextMenuEvent* event) {
     QMenu menu(this);
     applyMessageContextMenuStyle(menu);
     const QString anchor = anchorAt(event->pos());
+    QAction* replyAction = replyHandler_ ? menu.addAction(QStringLiteral("回复")) : nullptr;
+    if (replyAction != nullptr) menu.addSeparator();
     QAction* copyAction = menu.addAction(makeLineIcon(LineIconKind::Copy, kMenuIconColor),
                                          QStringLiteral("复制"));
     copyOriginalDataAction_->setIcon(makeLineIcon(LineIconKind::Copy, kMenuIconColor));
@@ -1025,7 +1036,9 @@ void MarkdownMessageView::contextMenuEvent(QContextMenuEvent* event) {
     QAction* selectAllAction = menu.addAction(makeLineIcon(LineIconKind::SelectAll, kMenuIconColor),
                                               QStringLiteral("全选"));
     QAction* chosen = menu.exec(event->globalPos());
-    if (chosen == copyAction) {
+    if (replyAction != nullptr && chosen == replyAction) {
+        replyHandler_();
+    } else if (chosen == copyAction) {
         if (textCursor().hasSelection()) {
             copy();
         } else {
@@ -1527,6 +1540,51 @@ void MainWindow::buildUi() {
     sendButton_->setAccessibleName(QStringLiteral("发送消息"));
     sendButton_->setCursor(Qt::PointingHandCursor);
     static_cast<ComposerTextEdit*>(messageEditor_)->setCornerAction(sendButton_);
+
+    // 待回复提示条：显示「正在回复谁的哪句话」，右侧 ✕ 取消。
+    // 放在输入框**上方**而不是下方——用户视线从提示条落到输入框，顺序才对。
+    pendingReplyBar_ = new QWidget(composer);
+    pendingReplyBar_->setObjectName(QStringLiteral("pendingReplyBar"));
+    auto* replyBarLayout = new QHBoxLayout(pendingReplyBar_);
+    replyBarLayout->setContentsMargins(UiZoom::s(10), UiZoom::s(6), UiZoom::s(6), UiZoom::s(6));
+    replyBarLayout->setSpacing(UiZoom::s(8));
+    pendingReplyLabel_ = new QLabel(pendingReplyBar_);
+    pendingReplyLabel_->setObjectName(QStringLiteral("pendingReplyLabel"));
+    pendingReplyLabel_->setWordWrap(false);
+    pendingReplyLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    auto* cancelReplyButton = new QPushButton(QStringLiteral("×"), pendingReplyBar_);
+    cancelReplyButton->setObjectName(QStringLiteral("cancelReplyButton"));
+    cancelReplyButton->setCursor(Qt::PointingHandCursor);
+    cancelReplyButton->setFixedSize(UiZoom::s(22), UiZoom::s(22));
+    cancelReplyButton->setToolTip(QStringLiteral("取消回复"));
+    cancelReplyButton->setAccessibleName(QStringLiteral("取消回复"));
+    connect(cancelReplyButton, &QPushButton::clicked, this, &MainWindow::cancelPendingReply);
+    replyBarLayout->addWidget(pendingReplyLabel_, 1);
+    replyBarLayout->addWidget(cancelReplyButton);
+    pendingReplyBar_->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
+        #pendingReplyBar {
+            background: #f1f5f9;
+            border: 1px solid #e2e8f0;
+            border-radius: 10px;
+        }
+        #pendingReplyLabel {
+            color: #475569;
+            font-size: 12px;
+            background: transparent;
+        }
+        QPushButton#cancelReplyButton {
+            background: transparent;
+            border: none;
+            color: #64748b;
+            font-size: 15px;
+        }
+        QPushButton#cancelReplyButton:hover {
+            background: #e2e8f0;
+            border-radius: 11px;
+        }
+    )")));
+    pendingReplyBar_->hide();
+    composerLayout->addWidget(pendingReplyBar_);
 
     composerLayout->addWidget(messageEditor_, 1);
 
@@ -3305,6 +3363,158 @@ void MainWindow::saveFileAttachmentToLocal(const RemoteIMFileAttachment& attachm
                            QStringLiteral("已保存到：\n%1").arg(QDir::toNativeSeparators(targetPath)));
 }
 
+// 气泡顶部的引用块：一条竖线 + 「发送者：摘要」。
+//
+// 内容来自**发送时的快照**，不去本地查原消息——被引用的消息可能根本不在本地
+// （对端设备发的、本地已清理、或落在还没加载的分页里）。查不到就渲染成空白，
+// 而空白引用块比没有引用更难看。
+void MainWindow::beginReplyTo(const RemoteIMMessage& message) {
+    pendingQuote_ = MessageQuote::quoteFor(message);
+    // 摘要为空说明这条消息压不出可展示的内容，引用它只会得到一个空白块。
+    hasPendingQuote_ = !pendingQuote_.digest.isEmpty();
+    refreshPendingReplyBar();
+    if (hasPendingQuote_ && messageEditor_) messageEditor_->setFocus();
+}
+
+void MainWindow::cancelPendingReply() {
+    hasPendingQuote_ = false;
+    pendingQuote_ = RemoteIMQuote{};
+    refreshPendingReplyBar();
+}
+
+void MainWindow::refreshPendingReplyBar() {
+    if (!pendingReplyBar_ || !pendingReplyLabel_) return;
+    if (!hasPendingQuote_) {
+        pendingReplyBar_->hide();
+        return;
+    }
+    const QString sender = pendingQuote_.senderId.trimmed();
+    pendingReplyLabel_->setText(
+        sender.isEmpty()
+            ? QStringLiteral("回复：") + pendingQuote_.digest
+            : QStringLiteral("回复 ") + sender + QStringLiteral("：") + pendingQuote_.digest);
+    pendingReplyBar_->show();
+}
+
+// 跨端只承诺定位到同一条**逻辑 SDK 消息**。desktop 把一条 SDK 消息按 elem 拆成多行，
+// 所以命中可能不止一条：锚定下标最小的那条，不承诺定位到 desktop 私有拆分后的某个 elem。
+void MainWindow::jumpToQuotedMessage(const QString& sdkMsgId) {
+    if (sdkMsgId.isEmpty()) return;
+    const QString prefix = sdkMsgId + QLatin1Char('#');
+    QString best;
+    int bestIndex = std::numeric_limits<int>::max();
+    for (auto it = messageRowById_.constBegin(); it != messageRowById_.constEnd(); ++it) {
+        const QString& id = it.key();
+        if (id == sdkMsgId) {
+            best = id;
+            bestIndex = -1;
+            break;
+        }
+        if (!id.startsWith(prefix)) continue;
+        bool ok = false;
+        const int index = QStringView(id).mid(prefix.size()).toInt(&ok);
+        if (ok && index < bestIndex) {
+            bestIndex = index;
+            best = id;
+        }
+    }
+    // 找不到是正常情况：原消息可能还没加载进来，或者根本不在本地。
+    // 此时什么都不做——引用块的快照已经把内容显示出来了。
+    if (best.isEmpty()) return;
+    highlightMessage(best);
+}
+
+namespace {
+
+// 会随宽度变化重新计算省略号的单行标签。
+//
+// QLabel 不会自动省略：setWordWrap(false) 只是把超出的部分**硬裁掉**，
+// 裁在半个字上，看起来像渲染坏了。摘要虽然已经限到 120 字，
+// 但气泡宽度装不下 120 个汉字，所以一定会触发。
+class ElidedLabel : public QLabel {
+public:
+    using QLabel::QLabel;
+
+    void setFullText(const QString& text) {
+        fullText_ = text;
+        applyElide();
+    }
+
+    QSize minimumSizeHint() const override {
+        // 不让完整文本决定最小宽度，否则气泡会被一条长引用撑爆。
+        return QSize(0, QLabel::minimumSizeHint().height());
+    }
+
+protected:
+    void resizeEvent(QResizeEvent* event) override {
+        QLabel::resizeEvent(event);
+        applyElide();
+    }
+
+private:
+    QString fullText_;
+
+    void applyElide() {
+        if (fullText_.isEmpty()) return;
+        const int available = qMax(0, width());
+        QLabel::setText(available <= 0
+                            ? fullText_
+                            : fontMetrics().elidedText(fullText_, Qt::ElideRight, available));
+    }
+};
+
+}  // namespace
+
+QWidget* MainWindow::createQuoteBlock(const RemoteIMMessage& message, QWidget* parent) {
+    if (!message.hasQuote || message.quote.digest.isEmpty()) return nullptr;
+
+    auto* block = new QWidget(parent);
+    block->setObjectName(QStringLiteral("messageQuoteBlock"));
+    auto* layout = new QHBoxLayout(block);
+    layout->setContentsMargins(UiZoom::s(9), UiZoom::s(6), UiZoom::s(9), UiZoom::s(6));
+    layout->setSpacing(UiZoom::s(8));
+
+    auto* bar = new QLabel(block);
+    bar->setObjectName(QStringLiteral("messageQuoteBar"));
+    bar->setFixedWidth(UiZoom::s(3));
+    layout->addWidget(bar);
+
+    const QString sender = message.quote.senderId.trimmed();
+    auto* text = new ElidedLabel(block);
+    text->setObjectName(QStringLiteral("messageQuoteText"));
+    text->setFullText(sender.isEmpty() ? message.quote.digest
+                                       : sender + QStringLiteral("：") + message.quote.digest);
+    // 引用块是单行摘要，超出用省略号，绝不让它把气泡撑高。
+    text->setWordWrap(false);
+    text->setTextInteractionFlags(Qt::NoTextInteraction);
+    text->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    layout->addWidget(text, 1);
+
+    // 只有拿得到原始 SDK 消息 ID 时才可点。没有 ID 的引用块照常显示，
+    // 但不做成可点——点了没反应比不可点更让人困惑。
+    if (!message.quote.msgId.isEmpty()) {
+        block->setCursor(Qt::PointingHandCursor);
+        block->setProperty("quoteMsgId", message.quote.msgId);
+    }
+
+    block->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
+        #messageQuoteBlock {
+            background: rgba(15, 23, 42, 0.04);
+            border-radius: 8px;
+        }
+        #messageQuoteBar {
+            background: #94a3b8;
+            border-radius: 2px;
+        }
+        #messageQuoteText {
+            color: #475569;
+            font-size: 12px;
+            background: transparent;
+        }
+    )")));
+    return block;
+}
+
 QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
     const bool outgoing = message.direction == RemoteIMMessageDirection::Outgoing;
     auto* row = new QWidget(messageContainer_);
@@ -3331,6 +3541,11 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
     auto* bubbleLayout = new QVBoxLayout(bubble);
     bubbleLayout->setContentsMargins(14, 11, 14, 12);
     bubbleLayout->setSpacing(7);
+
+    // 引用块在正文之上，和聊天软件的惯例一致：先看到「在回复什么」，再看到回复内容。
+    if (QWidget* quoteBlock = createQuoteBlock(message, bubble)) {
+        bubbleLayout->addWidget(quoteBlock);
+    }
 
     // meta 行（作者/好友徽章/时间）放在气泡外部上方（飞书式），不与正文混在同一气泡里。
     auto* metaRow = new QHBoxLayout();
@@ -3379,9 +3594,11 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
             // 右键菜单（飞书式）：复制图片 / 预览 / 保存到本地。
             imageLabel->setContextMenuPolicy(Qt::CustomContextMenu);
             connect(imageLabel, &QLabel::customContextMenuRequested, this,
-                    [this, imageLabel, image = message.image](const QPoint& pos) {
+                    [this, imageLabel, image = message.image, quoted = message](const QPoint& pos) {
                 QMenu menu(imageLabel);
                 applyMessageContextMenuStyle(menu);
+                QAction* replyAction = menu.addAction(QStringLiteral("回复"));
+                menu.addSeparator();
                 QAction* copyAction = menu.addAction(makeLineIcon(LineIconKind::Copy, kMenuIconColor),
                                                      QStringLiteral("复制"));
                 QAction* previewAction = menu.addAction(makeLineIcon(LineIconKind::Preview, kMenuIconColor),
@@ -3390,7 +3607,9 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
                 QAction* saveAction = menu.addAction(makeLineIcon(LineIconKind::Download, kMenuIconColor),
                                                      QStringLiteral("保存到本地…"));
                 QAction* chosen = menu.exec(imageLabel->mapToGlobal(pos));
-                if (chosen == copyAction) {
+                if (chosen == replyAction) {
+                    beginReplyTo(quoted);
+                } else if (chosen == copyAction) {
                     // 位图 + 文件 URL 一起放剪贴板：贴到聊天/文档得到图片，贴到资源管理器得到文件。
                     const QImage imageData(image.localPath);
                     if (imageData.isNull()) {
@@ -3615,6 +3834,7 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
         contentRow->addWidget(fileButton);
     } else {
         auto* markdownView = new MarkdownMessageView(bubble);
+        markdownView->setReplyHandler([this, quoted = message] { beginReplyTo(quoted); });
         markdownView->setMessageMarkdown(message.text);
         contentRow->addWidget(markdownView, 1);
     }
@@ -3733,6 +3953,7 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
             && !message.text.startsWith(QStringLiteral("[图片消息] "))
             && !message.text.startsWith(QStringLiteral("[文件消息] "))) {
         auto* captionView = new MarkdownMessageView(bubble);
+        captionView->setReplyHandler([this, quoted = message] { beginReplyTo(quoted); });
         captionView->setMessageMarkdown(message.text);
         if (message.captionAbove) {
             // 附件是这条气泡里先加进来的部件，插到 0 就排到它上面。
@@ -3893,7 +4114,10 @@ void MainWindow::sendCurrentText() {
     if (text.isEmpty() && attachments.isEmpty()) return;
 
     if (attachments.isEmpty()) {
-        app_.sendText(text);
+        app_.sendText(text, pendingQuote_, hasPendingQuote_);
+        // 发出去就清掉：引用是「这一条回复」的属性，不是会话的持续状态。
+        // 不清的话下一条普通消息会莫名其妙也带上引用。
+        cancelPendingReply();
     } else {
         // 文字并入「第一个」附件，合并成一条消息发送；其余附件各自单独发。
         //

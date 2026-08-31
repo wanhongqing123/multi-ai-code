@@ -17,6 +17,47 @@ function readReplyFixture(name: string): string {
 }
 
 describe('remote IM reply protocol', () => {
+  it('carries the quoted message into the prompt as a blockquote', () => {
+    const prompt = buildRemoteImAicliPrompt({
+      fromUserId: 'phone_admin',
+      text: '这条重做',
+      replyId: 'reply-1',
+      quote: { sender: 'multi-ai-code', digest: '第二步已经跑完了', kind: 'text' }
+    })
+    // 引用必须出现在正文之前：模型先看到「在回复什么」，再看到回复内容。
+    const quoteLine = prompt.indexOf('> multi-ai-code：第二步已经跑完了')
+    const bodyLine = prompt.indexOf('这条重做')
+    expect(quoteLine).toBeGreaterThanOrEqual(0)
+    expect(bodyLine).toBeGreaterThan(quoteLine)
+  })
+
+  it('omits the blockquote entirely when there is no quote', () => {
+    const prompt = buildRemoteImAicliPrompt({ fromUserId: 'phone_admin', text: 'plain' })
+    const quoteLines = prompt.split('\n').filter((line) => line.startsWith('> '))
+    expect(quoteLines).toEqual([])
+  })
+
+  it('flattens a multi-line digest so it cannot escape the blockquote', () => {
+    // 多行摘要如果原样带进去，第二行就跑到引用块外面，
+    // 读起来像是人类自己写的一句话。
+    const prompt = buildRemoteImAicliPrompt({
+      fromUserId: 'phone_admin',
+      text: 'ok',
+      quote: { sender: 'bot', digest: '第一行\n第二行' }
+    })
+    expect(prompt).toContain('> bot：第一行 第二行')
+    expect(prompt).not.toContain('\n第二行')
+  })
+
+  it('includes the quote in the display text too', () => {
+    const shown = buildRemoteImAicliDisplayText({
+      fromUserId: 'phone_admin',
+      text: '收到',
+      quote: { sender: 'bot', digest: '原文' }
+    })
+    expect(shown).toContain('> bot：原文')
+  })
+
   it('builds a compact AICLI prompt that avoids visible protocol echo fragments', () => {
     const prompt = buildRemoteImAicliPrompt({
       fromUserId: 'phone_admin',

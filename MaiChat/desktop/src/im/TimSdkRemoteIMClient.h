@@ -20,6 +20,9 @@ public:
     void disconnectFromService(RemoteIMCompletion completion) override;
     void deleteContact(const QString& userId, RemoteIMCompletion completion) override;
     void sendText(const QString& peerId, const QString& text, RemoteIMSendCompletion completion) override;
+    void sendTextWithQuote(const QString& peerId, const QString& text,
+                           const RemoteIMQuote& quote, bool hasQuote,
+                           RemoteIMSendCompletion completion) override;
     void sendApprovalDecision(const QString& peerId,
                               const QString& token,
                               RemoteIMApprovalAction action,
@@ -38,7 +41,9 @@ private:
                             const QString& text,
                             RemoteIMMessageOrigin origin,
                             RemoteIMSendCompletion completion,
-                            const QJsonObject& interaction = QJsonObject());
+                            const QJsonObject& interaction = QJsonObject(),
+                            const RemoteIMQuote& quote = RemoteIMQuote(),
+                            bool hasQuote = false);
     void syncInitialData();
     void fetchFriendList();
     void fetchConversationList();

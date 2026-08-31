@@ -230,6 +230,24 @@ export interface RemoteImRuntimeIdentity {
   sdkAppId: number | null
 }
 
+/**
+ * A quoted message carried in the wire metadata of a reply.
+ *
+ * `digest` is a snapshot taken when the reply was sent, not a lookup: the quoted
+ * message may not exist on this side at all (sent from another device, pruned
+ * locally, or sitting in a page that was never loaded). Resolving by id alone
+ * would render an empty quote, which is worse than showing nothing.
+ *
+ * `msgId` is the raw SDK message id with no platform-private suffix, and may be
+ * absent — a locally queued message has no server id yet. Never fabricate one.
+ */
+export interface RemoteImMessageQuote {
+  msgId?: string | null
+  sender?: string | null
+  digest: string
+  kind?: string | null
+}
+
 export interface RemoteImIncomingTextMessage {
   projectId: string
   remoteMessageId?: string | null
@@ -240,6 +258,8 @@ export interface RemoteImIncomingTextMessage {
   origin?: RemoteImMessageOrigin
   /** Versioned first-party interaction. Invalid or foreign wire data is discarded. */
   interaction?: RemoteImTextInteraction
+  /** Set when this message is a reply quoting an earlier one. */
+  quote?: RemoteImMessageQuote
   createdAt?: number
 }
 

@@ -145,8 +145,26 @@ void ChatState::selectPeer(const QString& userId) {
     unreadCounts_.remove(peerId);
 }
 
-RemoteIMMessage ChatState::queueOutgoingText(const QString& text) {
-    return queueOutgoingTextTo(requireSelectedPeer(), text);
+RemoteIMMessage ChatState::queueOutgoingText(const QString& text,
+                                             const RemoteIMQuote& quote,
+                                             bool hasQuote) {
+    RemoteIMMessage message = queueOutgoingTextTo(requireSelectedPeer(), text);
+    if (!hasQuote || quote.digest.isEmpty()) return message;
+    // 引用信息补在入队之后：queueOutgoingTextTo 已经把消息放进了列表，
+    // 这里改的是列表里那一条，不是副本，否则界面上看不到引用块。
+    message.quote = quote;
+    message.hasQuote = true;
+    updateMessageQuote(message.id, quote);
+    return message;
+}
+
+void ChatState::updateMessageQuote(const QString& messageId, const RemoteIMQuote& quote) {
+    for (RemoteIMMessage& message : messages_) {
+        if (message.id != messageId) continue;
+        message.quote = quote;
+        message.hasQuote = !quote.digest.isEmpty();
+        return;
+    }
 }
 
 RemoteIMMessage ChatState::queueOutgoingTextTo(const QString& peerId, const QString& text) {

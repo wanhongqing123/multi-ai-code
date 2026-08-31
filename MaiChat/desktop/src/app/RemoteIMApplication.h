@@ -45,7 +45,10 @@ public:
     // 清空与该 peer 的聊天记录（内存 + 本地库），好友保留。纯本地操作，不走远端。
     void clearMessagesWith(const QString& userId);
     void selectPeer(const QString& userId);
-    void sendText(const QString& text);
+    // quote 为可选引用：hasQuote 为假时与原来完全一致。
+    void sendText(const QString& text,
+                  const RemoteIMQuote& quote = RemoteIMQuote(),
+                  bool hasQuote = false);
     // 群发：给每个收件人各发一条独立消息，进各自的会话——不是一条"群消息"。
     // 这样每个人的聊天记录都是完整的，收件人那边看到的也和平时的私聊消息毫无区别。
     // 返回实际发出的人数（去重、去空之后）。

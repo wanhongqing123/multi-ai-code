@@ -31,6 +31,17 @@ public:
     virtual void disconnectFromService(RemoteIMCompletion completion) = 0;
     virtual void deleteContact(const QString& userId, RemoteIMCompletion completion) = 0;
     virtual void sendText(const QString& peerId, const QString& text, RemoteIMSendCompletion completion) = 0;
+
+    // 带引用的文本发送。默认实现退化成普通发送并丢掉引用——这样实现方
+    // （测试用的 Fake、将来可能新增的后端）不必被迫实现它，而真正支持引用的
+    // TimSdkRemoteIMClient 覆写它。改动是加性的，不碰已有的 8 处 sendText 调用。
+    virtual void sendTextWithQuote(const QString& peerId, const QString& text,
+                                   const RemoteIMQuote& quote, bool hasQuote,
+                                   RemoteIMSendCompletion completion) {
+        Q_UNUSED(quote);
+        Q_UNUSED(hasQuote);
+        sendText(peerId, text, std::move(completion));
+    }
     virtual void sendApprovalDecision(const QString& peerId,
                                       const QString& token,
                                       RemoteIMApprovalAction action,

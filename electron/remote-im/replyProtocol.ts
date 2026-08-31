@@ -1,3 +1,4 @@
+import type { RemoteImMessageQuote } from './types'
 import { randomUUID } from 'node:crypto'
 
 export const REMOTE_IM_REPLY_OPEN_TAG = '<remote-im-reply>'
@@ -8,6 +9,8 @@ export interface RemoteImAicliPromptInput {
   fromUserId: string
   text: string
   replyId?: string
+  /** Set when the human replied to a specific earlier message. */
+  quote?: RemoteImMessageQuote
 }
 
 export interface RemoteImAicliPromptOptions {
@@ -221,12 +224,33 @@ function extractExpectedRemoteImReply(clean: string, replyId: string): RemoteImR
   }
 }
 
+/**
+ * Renders the quoted message as a Markdown blockquote ahead of the reply body.
+ *
+ * Without this the model receives a bare reply and cannot tell which of its own
+ * messages is being answered - and the failure is silent: the human sees the
+ * quote in their client and assumes the model saw it too.
+ *
+ * Markdown blockquote is used rather than a bespoke tag because every model
+ * already reads it as quoted context; no protocol needs to be taught.
+ */
+function formatQuoteLines(quote: RemoteImMessageQuote | undefined): string[] {
+  const digest = quote?.digest?.trim()
+  if (!digest) return []
+  const sender = quote?.sender?.trim()
+  const head = sender ? sender + '\uff1a' + digest : digest
+  // Collapse whitespace: a multi-line digest would break out of the blockquote
+  // and read as if the human had written those lines.
+  return ['> ' + head.replace(/\s+/g, ' '), '']
+}
+
 export function buildRemoteImAicliPrompt(
   input: RemoteImAicliPromptInput,
   options: RemoteImAicliPromptOptions = {}
 ): string {
   const lines = [
     `[来自远程 IM：${input.fromUserId.trim()}]`,
+    ...formatQuoteLines(input.quote),
     input.text,
     '',
     '如果需要查询或操作 IM，请先运行 imcli help；如需把截图或本地图片发回 IM，可保存为 png/jpg/webp/gif 文件后使用 imcli send-image <user> <imagePath>；如需发送 Markdown/HTML 报告文件，使用 imcli send-file <user> <filePath>；如需发送当前仓库的代码 Diff，使用 imcli send-diff <user> [--working | --commit <ref> | --range <base>..<head>]。正常回复必须使用真实的 Markdown 换行，不要把 Windows 命令行的转义规则用于回复正文。手工调用 imcli send 发送文本时，正文一律传 UTF-8 文本的标准 Base64：imcli send <user> --text-b64 <base64>。'
@@ -243,7 +267,13 @@ export function buildRemoteImAicliPrompt(
 }
 
 export function buildRemoteImAicliDisplayText(input: RemoteImAicliPromptInput): string {
-  return [`[来自远程 IM：${input.fromUserId.trim()}]`, input.text].join('\n').trim()
+  return [
+    `[来自远程 IM：${input.fromUserId.trim()}]`,
+    ...formatQuoteLines(input.quote),
+    input.text
+  ]
+    .join('\n')
+    .trim()
 }
 
 export function extractRemoteImReplyOutput(

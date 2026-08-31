@@ -67,6 +67,8 @@ add_library(remote_im_core
   src/model/ContactGroups.cpp
   src/model/MessageNotification.h
   src/model/MessageNotification.cpp
+  src/model/MessageQuote.h
+  src/model/MessageQuote.cpp
   src/model/MessageSearch.h
   src/model/MessageSearch.cpp
   src/model/PinyinInitials.cpp
@@ -298,6 +300,13 @@ target_link_libraries(app_message_dialog_test PRIVATE remote_im_desktop_ui remot
 add_executable(message_notification_test tests/MessageNotificationTest.cpp)
 target_link_libraries(message_notification_test PRIVATE remote_im_core Qt5::Test)
 
+# 视觉自检程序：手工跑起来截图用，不进 ctest。
+add_executable(quote_visual_probe tests/QuoteVisualProbe.cpp)
+target_link_libraries(quote_visual_probe PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets)
+
+add_executable(message_quote_test tests/MessageQuoteTest.cpp)
+target_link_libraries(message_quote_test PRIVATE remote_im_core Qt5::Test)
+
 add_executable(broadcast_dialog_test tests/BroadcastDialogTest.cpp)
 target_link_libraries(broadcast_dialog_test PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets Qt5::Test)
 
@@ -383,6 +392,7 @@ target_link_libraries(ui_zoom_test PRIVATE remote_im_desktop_ui remote_im_deskto
 
 enable_testing()
 add_test(NAME message_notification_test COMMAND message_notification_test)
+add_test(NAME message_quote_test COMMAND message_quote_test)
 add_test(NAME broadcast_dialog_test COMMAND broadcast_dialog_test)
 add_test(NAME chat_state_test COMMAND chat_state_test)
 add_test(NAME fake_remote_im_client_test COMMAND fake_remote_im_client_test)

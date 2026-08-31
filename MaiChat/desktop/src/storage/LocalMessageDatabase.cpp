@@ -53,6 +53,13 @@ RemoteIMMessage messageFromQuery(const QSqlQuery& query) {
     message.createdAtMillis = query.value(QStringLiteral("created_at")).toLongLong();
     message.hasImage = query.value(QStringLiteral("has_image")).toInt() != 0;
     message.captionAbove = query.value(QStringLiteral("caption_above")).toInt() != 0;
+    // 引用块。digest 是判据而不是 msgId：msgId 允许缺失（本地消息没有服务端 ID），
+    // 但没有摘要的引用块会渲染成空白，那比没有引用更难看，所以按摘要判定「有没有引用」。
+    message.quote.msgId = query.value(QStringLiteral("quote_msg_id")).toString();
+    message.quote.senderId = query.value(QStringLiteral("quote_sender")).toString();
+    message.quote.digest = query.value(QStringLiteral("quote_digest")).toString();
+    message.quote.kind = query.value(QStringLiteral("quote_kind")).toString();
+    message.hasQuote = !message.quote.digest.isEmpty();
     message.image = RemoteIMImageAttachment{
         query.value(QStringLiteral("image_path")).toString(),
         query.value(QStringLiteral("image_w")).toInt(),
@@ -174,7 +181,8 @@ void LocalMessageDatabase::migrate() {
         "  video_path    TEXT, video_name TEXT, video_cover TEXT,"
         "  video_seconds INTEGER, video_bytes INTEGER,"
         "  approval_token TEXT, approval_actions TEXT,"
-        "  caption_above INTEGER NOT NULL DEFAULT 0"
+        "  caption_above INTEGER NOT NULL DEFAULT 0,"
+        "  quote_msg_id TEXT, quote_sender TEXT, quote_digest TEXT, quote_kind TEXT"
         ")"));
     // 老库（建于视频功能之前）没有这几列，CREATE TABLE IF NOT EXISTS 不会补。
     // 与 contacts.avatar_url 一样按 PRAGMA 判存在再 ALTER，重复启动无副作用。
@@ -190,7 +198,11 @@ void LocalMessageDatabase::migrate() {
         {QStringLiteral("video_bytes"), QStringLiteral("INTEGER")},
         {QStringLiteral("caption_above"), QStringLiteral("INTEGER NOT NULL DEFAULT 0")},
         {QStringLiteral("approval_token"), QStringLiteral("TEXT")},
-        {QStringLiteral("approval_actions"), QStringLiteral("TEXT")}
+        {QStringLiteral("approval_actions"), QStringLiteral("TEXT")},
+        {QStringLiteral("quote_msg_id"), QStringLiteral("TEXT")},
+        {QStringLiteral("quote_sender"), QStringLiteral("TEXT")},
+        {QStringLiteral("quote_digest"), QStringLiteral("TEXT")},
+        {QStringLiteral("quote_kind"), QStringLiteral("TEXT")}
     };
     for (const auto& column : optionalColumns) {
         if (messageColumns.contains(column.first)) continue;
@@ -432,8 +444,9 @@ bool LocalMessageDatabase::insertMessageIfAbsent(const RemoteIMMessage& message,
         "  has_voice, voice_path, voice_seconds,"
         "  has_file, file_path, file_name, file_mime, file_bytes,"
         "  has_video, video_path, video_name, video_cover, video_seconds, video_bytes,"
-        "  approval_token, approval_actions, caption_above"
-        ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"));
+        "  approval_token, approval_actions, caption_above,"
+        "  quote_msg_id, quote_sender, quote_digest, quote_kind"
+        ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"));
     query.addBindValue(message.id);
     query.addBindValue(message.fromUserId);
     query.addBindValue(message.toUserId);
@@ -472,6 +485,12 @@ bool LocalMessageDatabase::insertMessageIfAbsent(const RemoteIMMessage& message,
     query.addBindValue(approvalToken);
     query.addBindValue(approvalActionsText(approvalActions));
     query.addBindValue(message.captionAbove ? 1 : 0);
+    // 没有引用时写空串而不是默认构造的 QString：后者是 null，绑进去成 SQL NULL。
+    // 这几列虽然可空，但读取侧统一按空串判定，混进 NULL 会让判据出现两种形状。
+    query.addBindValue(message.hasQuote ? message.quote.msgId : QStringLiteral(""));
+    query.addBindValue(message.hasQuote ? message.quote.senderId : QStringLiteral(""));
+    query.addBindValue(message.hasQuote ? message.quote.digest : QStringLiteral(""));
+    query.addBindValue(message.hasQuote ? message.quote.kind : QStringLiteral(""));
     if (!query.exec()) return false;
     const bool inserted = query.numRowsAffected() > 0;
     if (!inserted && message.createdAtMillis > 0) {

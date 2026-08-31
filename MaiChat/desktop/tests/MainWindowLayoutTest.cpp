@@ -4,6 +4,8 @@
 #include <QClipboard>
 #include <QDateTime>
 #include <QLabel>
+#include <QListWidget>
+#include <QLayout>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
@@ -114,6 +116,8 @@ private slots:
     void ctrlShortcutsZoomWholeUi();
     void settingsPanelBorderIsNotCoveredByRows();
     void droppingFilesIntoComposerAttachesThemInsteadOfPastingPaths();
+    void quotedReplyRendersQuoteBlockAboveBody();
+    void replyBarShowsTargetAndClearsAfterSending();
     void droppingAnImageFileSendsTheOriginalFileAsAnImage();
 };
 
@@ -144,6 +148,108 @@ int highlightedRowCount(const QWidget& window) {
 }
 
 }  // namespace
+
+// 引用回复必须在气泡里真的画出来。
+//
+// 这条测的是**渲染路径**，不是摘要那几个纯函数——纯函数全绿也可能一个像素都没画上去：
+// 之前我改过两处只落地了一处，编译通过、单测通过，是靠把界面跑起来才发现的。
+// 「回复」的交互状态：提示条要显示回复对象，发出去之后必须自动清掉。
+//
+// 不清掉的后果很隐蔽：用户回复完一条，接着发一句无关的话，那句话会莫名其妙
+// 也带着上一条的引用——而且发送方自己的界面上看着是对的，只有对端能看出不对。
+void MainWindowLayoutTest::replyBarShowsTargetAndClearsAfterSending() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+
+    MainWindow window(app);
+    window.resize(1280, 800);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    app.selectPeer(QStringLiteral("phone-user"));
+
+    app.sendText(QStringLiteral("原始消息内容"));
+    QCoreApplication::processEvents();
+
+    auto* replyBar = window.findChild<QWidget*>(QStringLiteral("pendingReplyBar"));
+    auto* replyLabel = window.findChild<QLabel*>(QStringLiteral("pendingReplyLabel"));
+    auto* editor = window.findChild<QTextEdit*>(QStringLiteral("messageEditor"));
+    QVERIFY(replyBar != nullptr);
+    QVERIFY(replyLabel != nullptr);
+    QVERIFY(editor != nullptr);
+    // 还没点「回复」时提示条不该出现。
+    QVERIFY(replyBar->isHidden());
+
+    // 直接调菜单动作背后的入口，而不是模拟右键弹窗：QMenu::exec 会阻塞事件循环，
+    // 在测试里点它需要额外的定时器配合，测的还是 Qt 自己的菜单而不是我们的逻辑。
+    window.beginReplyTo(app.chatState().messages().last());
+    QCoreApplication::processEvents();
+    QVERIFY2(!replyBar->isHidden(), "点了回复之后提示条必须出现");
+    QVERIFY2(replyLabel->text().contains(QStringLiteral("原始消息内容")),
+             qPrintable(QStringLiteral("提示条没显示回复对象：") + replyLabel->text()));
+
+    editor->setPlainText(QStringLiteral("这是回复内容"));
+    // 点真实的发送按钮，走用户实际走的那条路。
+    auto* sendButton = window.findChild<QPushButton*>(QStringLiteral("sendButton"));
+    QVERIFY(sendButton != nullptr);
+    QTest::mouseClick(sendButton, Qt::LeftButton);
+    QCoreApplication::processEvents();
+
+    QVERIFY2(replyBar->isHidden(), "发送后提示条必须收起，否则下一条会带上旧引用");
+    const RemoteIMMessage sent = app.chatState().messages().last();
+    QCOMPARE(sent.text, QStringLiteral("这是回复内容"));
+    QVERIFY2(sent.hasQuote, "回复必须带上引用");
+    QVERIFY(sent.quote.digest.contains(QStringLiteral("原始消息内容")));
+
+    // 再发一条普通消息，绝不能继续带引用。
+    editor->setPlainText(QStringLiteral("一句无关的话"));
+    QTest::mouseClick(sendButton, Qt::LeftButton);
+    QCoreApplication::processEvents();
+    const RemoteIMMessage plain = app.chatState().messages().last();
+    QCOMPARE(plain.text, QStringLiteral("一句无关的话"));
+    QVERIFY2(!plain.hasQuote, "引用是单条回复的属性，不能粘在后续消息上");
+}
+
+void MainWindowLayoutTest::quotedReplyRendersQuoteBlockAboveBody() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+
+    MainWindow window(app);
+    window.resize(1280, 800);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    app.selectPeer(QStringLiteral("phone-user"));
+
+    app.sendText(QStringLiteral("这是被引用的原始消息"));
+    QCoreApplication::processEvents();
+    // 没有引用时不该凭空冒出引用块。
+    QVERIFY(window.findChild<QWidget*>(QStringLiteral("messageQuoteBlock")) == nullptr);
+
+    RemoteIMQuote quote;
+    quote.senderId = QStringLiteral("phone-user");
+    quote.digest = QStringLiteral("这是被引用的原始消息");
+    quote.kind = QStringLiteral("text");
+    app.sendText(QStringLiteral("这是回复"), quote, true);
+    QCoreApplication::processEvents();
+
+    QWidget* block = window.findChild<QWidget*>(QStringLiteral("messageQuoteBlock"));
+    QVERIFY2(block != nullptr, "带引用的消息必须渲染出引用块");
+    // findChild 找得到 ≠ 真的画出来了：部件只要 parent 还在就找得到，
+    // 哪怕它压根没被加进布局（deleteLater 也不会立刻销毁它）。
+    // 所以断言必须落在「进了父气泡的布局」上，否则这条测试是恒真的。
+    QWidget* bubble = block->parentWidget();
+    QVERIFY(bubble != nullptr);
+    QVERIFY(bubble->layout() != nullptr);
+    QVERIFY2(bubble->layout()->indexOf(block) >= 0, "引用块必须被加入气泡布局");
+    // 并且排在正文之上。
+    QCOMPARE(bubble->layout()->indexOf(block), 0);
+    auto* text = block->findChild<QLabel*>(QStringLiteral("messageQuoteText"));
+    QVERIFY(text != nullptr);
+    QVERIFY2(text->text().contains(QStringLiteral("这是被引用的原始消息")),
+             qPrintable(QStringLiteral("引用块内容不对：") + text->text()));
+    QVERIFY(text->text().contains(QStringLiteral("phone-user")));
+}
 
 void MainWindowLayoutTest::droppingFilesIntoComposerAttachesThemInsteadOfPastingPaths() {
     QTemporaryDir dir;

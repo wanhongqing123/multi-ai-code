@@ -1358,14 +1358,26 @@ void MainWindow::buildUi() {
     navLayout->setContentsMargins(8, 14, 8, 12);
     navLayout->setSpacing(8);
 
-    auto* logo = new QLabel(navRail_);
+    auto* logoContainer = new QWidget(navRail_);
+    logoContainer->setObjectName(QStringLiteral("navLogoContainer"));
+    logoContainer->setFixedSize(UiZoom::s(44), UiZoom::s(44));
+
+    auto* logo = new QLabel(logoContainer);
     logo->setObjectName(QStringLiteral("navLogo"));
     logo->setAlignment(Qt::AlignCenter);
+    logo->setFixedSize(UiZoom::s(34), UiZoom::s(34));
+    logo->move(UiZoom::s(5), UiZoom::s(5));
     logo->setPixmap(monogramAvatarPixmap(QStringLiteral("M"), UiZoom::s(34), UiZoom::s(17),
                                          kBrandGradientFrom, kBrandGradientTo,
                                          UiZoom::s(15), logo->devicePixelRatioF()));
+
+    statusLabel_ = new QLabel(logoContainer);
+    statusLabel_->setObjectName(QStringLiteral("connectionStatusDot"));
+    statusLabel_->setFixedSize(UiZoom::s(12), UiZoom::s(12));
+    statusLabel_->move(UiZoom::s(29), UiZoom::s(1));
+    statusLabel_->setAccessibleName(QStringLiteral("IM 连接状态"));
     // 头像独占一行居中；「添加联系人」已移到会话栏的搜索框旁边（微信式）。
-    navLayout->addWidget(logo, 0, Qt::AlignHCenter);
+    navLayout->addWidget(logoContainer, 0, Qt::AlignHCenter);
     navLayout->addSpacing(UiZoom::s(6));
 
     messageNavButton_ = makeNavButton(QStringLiteral("消息"), QStringLiteral("messagesNavButton"), navRail_);
@@ -1445,8 +1457,6 @@ void MainWindow::buildUi() {
     headerLayout->setSpacing(12);
     titleLabel_ = new QLabel(header);
     titleLabel_->setObjectName(QStringLiteral("chatTitle"));
-    statusLabel_ = new QLabel(QStringLiteral("未连接"), header);
-    statusLabel_->setObjectName(QStringLiteral("statusBadge"));
     headerLayout->addWidget(titleLabel_, 1);
     // 远程桌面入口：跟着当前会话走——正在跟谁聊天就远程谁，无需另选设备。
     remoteDesktopButton_ =
@@ -1456,7 +1466,6 @@ void MainWindow::buildUi() {
             &MainWindow::requestRemoteDesktop);
     headerLayout->addWidget(remoteDesktopButton_);
     headerLayout->addWidget(makeHeaderIconButton(LineIconKind::More, QStringLiteral("更多"), header));
-    headerLayout->addWidget(statusLabel_);
 
     messageScroll_ = new QScrollArea(chatContentPane);
     messageScroll_->setObjectName(QStringLiteral("messageScroll"));
@@ -1723,12 +1732,27 @@ void MainWindow::applyStyle() {
         #navRail {
             background: #ecf3ff;
         }
+        #navLogoContainer {
+            background: transparent;
+        }
         #navLogo {
             min-width: 34px;
             max-width: 34px;
             min-height: 34px;
             max-height: 34px;
             background: transparent;
+        }
+        #connectionStatusDot {
+            min-width: 12px;
+            max-width: 12px;
+            min-height: 12px;
+            max-height: 12px;
+            border: 2px solid #ecf3ff;
+            border-radius: 6px;
+            background: #98a2b3;
+        }
+        #connectionStatusDot[connected="true"] {
+            background: #12b76a;
         }
         #addConversationButton {
             min-width: 30px;
@@ -1944,14 +1968,6 @@ void MainWindow::applyStyle() {
             font-size: 16px;
             font-weight: 600;
         }
-        #statusBadge {
-            background: #e7f8ee;
-            color: #087443;
-            border-radius: 8px;
-            padding: 4px 10px;
-            font-size: 12px;
-            font-weight: 500;
-        }
         #messageScroll, #messageContainer {
             background: #ffffff;
         }
@@ -2016,7 +2032,8 @@ void MainWindow::bindSignals() {
         refreshSelectedConversation();
     });
     connect(&app_, &RemoteIMApplication::connectionChanged, this, [this](bool connected) {
-        statusLabel_->setText(connected ? QStringLiteral("● 已连接") : QStringLiteral("● 未连接"));
+        Q_UNUSED(connected);
+        updateConnectionIndicator();
         refreshSettings();
     });
     connect(&app_, &RemoteIMApplication::errorMessage, this, [this](const QString& message) {
@@ -2628,10 +2645,24 @@ void MainWindow::updateNavigationSelection(QPushButton* selectedButton) {
     }
 }
 
+void MainWindow::updateConnectionIndicator() {
+    if (!statusLabel_) return;
+    const bool connected = app_.isConnected();
+    statusLabel_->setText(QString());
+    statusLabel_->setProperty("connected", connected);
+    statusLabel_->setToolTip(connected ? QStringLiteral("IM 已连接")
+                                       : QStringLiteral("IM 未连接"));
+    statusLabel_->setAccessibleDescription(
+        connected ? QStringLiteral("已连接") : QStringLiteral("未连接"));
+    statusLabel_->style()->unpolish(statusLabel_);
+    statusLabel_->style()->polish(statusLabel_);
+    statusLabel_->update();
+}
+
 void MainWindow::refreshMessages() {
     const QString selectedPeer = app_.chatState().selectedPeerId();
     titleLabel_->setText(selectedPeer.isEmpty() ? QStringLiteral("请选择会话") : contactName(selectedPeer));
-    statusLabel_->setText(app_.isConnected() ? QStringLiteral("● 已连接") : QStringLiteral("● 未连接"));
+    updateConnectionIndicator();
     updateComposerState();
 
     const QList<RemoteIMMessage> messages = app_.chatState().messagesWith(selectedPeer);
@@ -4020,10 +4051,19 @@ void MainWindow::applyScaledFixedGeometry() {
     // 会把构造时的 setFixedWidth(64) 顶掉——缩放一次导航栏就胖回去。
     if (navRail_) navRail_->setFixedWidth(UiZoom::s(64));
     // navLogo 是生成位图（QPainterPath 灰度抗锯齿），倍率变化时按新尺寸重生成。
+    if (auto* container = findChild<QWidget*>(QStringLiteral("navLogoContainer"))) {
+        container->setFixedSize(UiZoom::s(44), UiZoom::s(44));
+    }
     if (auto* logo = findChild<QLabel*>(QStringLiteral("navLogo"))) {
+        logo->setFixedSize(UiZoom::s(34), UiZoom::s(34));
+        logo->move(UiZoom::s(5), UiZoom::s(5));
         logo->setPixmap(monogramAvatarPixmap(QStringLiteral("M"), UiZoom::s(34), UiZoom::s(17),
                                              kBrandGradientFrom, kBrandGradientTo,
                                              UiZoom::s(15), logo->devicePixelRatioF()));
+    }
+    if (statusLabel_) {
+        statusLabel_->setFixedSize(UiZoom::s(12), UiZoom::s(12));
+        statusLabel_->move(UiZoom::s(29), UiZoom::s(1));
     }
     if (auto* pane = findChild<QWidget*>(QStringLiteral("conversationPane"))) {
         pane->setMinimumWidth(UiZoom::s(220));

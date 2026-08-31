@@ -66,17 +66,19 @@ void AppTextInputDialog::buildUi(const Options& options) {
     layout->addSpacing(UiZoom::s(4));
 
     auto* buttonRow = new QHBoxLayout();
-    buttonRow->setContentsMargins(0, 0, 0, 0);
-    buttonRow->setSpacing(UiZoom::s(10));
+    buttonRow->setContentsMargins(0, UiZoom::s(8), 0, 0);
+    buttonRow->setSpacing(UiZoom::s(16));
     buttonRow->addStretch(1);
 
     auto* cancel = new QPushButton(options.cancelText, panel);
     cancel->setObjectName(QStringLiteral("appTextInputCancel"));
+    cancel->setMinimumSize(UiZoom::s(104), UiZoom::s(40));
     cancel->setCursor(Qt::PointingHandCursor);
     connect(cancel, &QPushButton::clicked, this, &QDialog::reject);
 
     auto* confirm = new QPushButton(options.confirmText, panel);
     confirm->setObjectName(QStringLiteral("appTextInputConfirm"));
+    confirm->setMinimumSize(UiZoom::s(104), UiZoom::s(40));
     confirm->setCursor(Qt::PointingHandCursor);
     // 输入框里按回车等同于点确定，省一次鼠标往返。
     confirm->setDefault(true);

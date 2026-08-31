@@ -106,6 +106,7 @@ private slots:
     void conversationListShowsUnreadBadgeAndClearsOnOpen();
     void everyNavButtonIsStyledConsistently();
     void navLogoUsesAppIconBrandGradient();
+    void connectionStatusLivesOnNavAvatarWithoutText();
     void fileBubbleOffersContextMenu();
     void imageBubbleOffersContextMenu();
     void maximizedImageBubbleOpensOnlyOnePreview();
@@ -1682,6 +1683,37 @@ void MainWindowLayoutTest::navLogoUsesAppIconBrandGradient() {
     const QColor center = img.pixelColor(img.width() / 2, img.height() / 8);
     QVERIFY(center.alpha() > 200);
     QVERIFY(center.blue() > center.red());
+}
+
+void MainWindowLayoutTest::connectionStatusLivesOnNavAvatarWithoutText() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    MainWindow window(app);
+    window.resize(1280, 820);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    auto* statusDot = window.findChild<QLabel*>(QStringLiteral("connectionStatusDot"));
+    auto* logoContainer = window.findChild<QWidget*>(QStringLiteral("navLogoContainer"));
+    auto* chatHeader = window.findChild<QWidget*>(QStringLiteral("chatHeader"));
+    QVERIFY(statusDot != nullptr);
+    QVERIFY(logoContainer != nullptr);
+    QVERIFY(chatHeader != nullptr);
+    QCOMPARE(statusDot->parentWidget(), logoContainer);
+    QVERIFY2(!chatHeader->isAncestorOf(statusDot), "连接状态仍然占在聊天页右上角");
+    auto* logo = logoContainer->findChild<QLabel*>(QStringLiteral("navLogo"));
+    QVERIFY(logo != nullptr);
+    QVERIFY2(statusDot->x() > logo->x() + logo->width() / 2,
+             "连接状态点没有落在头像右侧");
+    QVERIFY2(statusDot->y() < logo->y() + logo->height() / 2,
+             "连接状态点没有落在头像上方");
+    QCOMPARE(statusDot->text(), QString());
+    QCOMPARE(statusDot->property("connected").toBool(), false);
+
+    app.connectToService(1, QStringLiteral("test-user-sig"));
+    QCOMPARE(statusDot->property("connected").toBool(), true);
+    QCOMPARE(statusDot->text(), QString());
+    QVERIFY(statusDot->toolTip().contains(QStringLiteral("已连接")));
 }
 
 void MainWindowLayoutTest::fileBubbleOffersContextMenu() {

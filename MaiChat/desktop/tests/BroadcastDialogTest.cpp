@@ -33,6 +33,7 @@ private slots:
     void partiallySelectedGroupShowsAsPartiallyChecked();
     void filteringHidesRowsButKeepsWhatIsAlreadySelected();
     void sendStaysDisabledUntilThereAreRecipientsAndText();
+    void actionButtonsHaveBreathingRoom();
 };
 
 void BroadcastDialogTest::checkingAGroupHeaderSelectsEveryMember() {
@@ -129,6 +130,23 @@ void BroadcastDialogTest::sendStaysDisabledUntilThereAreRecipientsAndText() {
     // 只剩空白的正文等于没有正文，不能让它发出去。
     message->setPlainText(QStringLiteral("   "));
     QVERIFY(!send->isEnabled());
+}
+
+void BroadcastDialogTest::actionButtonsHaveBreathingRoom() {
+    const QList<RemoteIMContact> contacts{
+        makeContact(QStringLiteral("alice"), QStringLiteral("Alice"), QString())};
+    BroadcastDialog dialog(contacts, {}, QString());
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+
+    auto* cancel = dialog.findChild<QPushButton*>(QStringLiteral("broadcastCancel"));
+    auto* send = dialog.findChild<QPushButton*>(QStringLiteral("broadcastSend"));
+    QVERIFY(cancel != nullptr && send != nullptr);
+    const int gap = send->mapTo(&dialog, QPoint(0, 0)).x()
+        - cancel->mapTo(&dialog, QPoint(cancel->width(), 0)).x();
+    QVERIFY2(gap >= 16, "群发窗口的取消与发送按钮仍然挤在一起");
+    QVERIFY(cancel->width() >= 104);
+    QVERIFY(send->width() >= 116);
 }
 
 QTEST_MAIN(BroadcastDialogTest)

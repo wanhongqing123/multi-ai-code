@@ -190,6 +190,7 @@ private:
     void clearMessagesFromItem(QListWidgetItem* item);
     void deleteSelectedContactFromList(QListWidget* list);
     QString contactName(const QString& userId) const;
+    void updateConnectionIndicator();
 
     RemoteIMApplication& app_;
     QWidget* navRail_ = nullptr;

@@ -130,8 +130,8 @@ void BroadcastDialog::buildUi(const QList<RemoteIMContact>& contacts,
     layout->addWidget(messageInput_);
 
     auto* buttonRow = new QHBoxLayout();
-    buttonRow->setContentsMargins(0, 0, 0, 0);
-    buttonRow->setSpacing(UiZoom::s(10));
+    buttonRow->setContentsMargins(0, UiZoom::s(8), 0, 0);
+    buttonRow->setSpacing(UiZoom::s(16));
 
     summaryLabel_ = new QLabel(panel);
     summaryLabel_->setObjectName(QStringLiteral("broadcastSummary"));
@@ -140,11 +140,13 @@ void BroadcastDialog::buildUi(const QList<RemoteIMContact>& contacts,
 
     auto* cancel = new QPushButton(QStringLiteral("取消"), panel);
     cancel->setObjectName(QStringLiteral("broadcastCancel"));
+    cancel->setMinimumSize(UiZoom::s(104), UiZoom::s(40));
     cancel->setCursor(Qt::PointingHandCursor);
     connect(cancel, &QPushButton::clicked, this, &QDialog::reject);
 
     sendButton_ = new QPushButton(panel);
     sendButton_->setObjectName(QStringLiteral("broadcastSend"));
+    sendButton_->setMinimumSize(UiZoom::s(116), UiZoom::s(40));
     sendButton_->setCursor(Qt::PointingHandCursor);
     sendButton_->setDefault(true);
     connect(sendButton_, &QPushButton::clicked, this, &QDialog::accept);

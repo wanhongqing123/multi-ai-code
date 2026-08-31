@@ -13,6 +13,7 @@ private slots:
     void masksPasswordInput();
     void confirmReturnsTextAndCancelDiscardsIt();
     void returnKeyConfirms();
+    void actionButtonsHaveBreathingRoom();
 };
 
 void AppTextInputDialogTest::showsTitleAndDescriptionInsideThePanel() {
@@ -89,6 +90,23 @@ void AppTextInputDialogTest::returnKeyConfirms() {
     // 输入完直接回车是最自然的动作，不该逼用户去点按钮。
     QTest::keyClick(input, Qt::Key_Return);
     QCOMPARE(acceptedSpy.count(), 1);
+}
+
+void AppTextInputDialogTest::actionButtonsHaveBreathingRoom() {
+    AppTextInputDialog::Options options;
+    options.title = QStringLiteral("新建分组");
+    AppTextInputDialog dialog(options);
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+
+    auto* cancel = dialog.findChild<QPushButton*>(QStringLiteral("appTextInputCancel"));
+    auto* confirm = dialog.findChild<QPushButton*>(QStringLiteral("appTextInputConfirm"));
+    QVERIFY(cancel != nullptr && confirm != nullptr);
+    const int gap = confirm->mapTo(&dialog, QPoint(0, 0)).x()
+        - cancel->mapTo(&dialog, QPoint(cancel->width(), 0)).x();
+    QVERIFY2(gap >= 16, "取消与确定仍然挤在一起");
+    QVERIFY(cancel->width() >= 104);
+    QVERIFY(confirm->width() >= 104);
 }
 
 QTEST_MAIN(AppTextInputDialogTest)

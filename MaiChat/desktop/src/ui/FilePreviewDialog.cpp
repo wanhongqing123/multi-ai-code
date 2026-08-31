@@ -23,8 +23,13 @@
 QString FilePreviewDialog::normalizeGitDiffHtmlForQt(QString html) {
     // QTextDocument 不执行媒体查询，会把桌面 split 与手机 unified 两份都画出来。
     // HTML 中的显式边界只用于选择表现形式，不执行脚本；Qt 固定保留左右对比。
+    //
+    // 必须是**非贪婪**（.*?）：多文件 Diff 每个文件各有一对 START/END 标记，
+    // 贪婪的 .* 会从第一个 START 一路吃到最后一个 END，把中间所有文件的 split
+    // 表格连同它们的锚点一起删掉——21 个文件的报告实测被吞掉 97.2% 的内容，
+    // 桌面端只剩第一个文件可看，且不报错、不空白，看起来就像「这次只改了一个文件」。
     const QRegularExpression unifiedBlock(
-        QStringLiteral("<!-- MAICHAT_UNIFIED_START -->.*<!-- MAICHAT_UNIFIED_END -->"),
+        QStringLiteral("<!-- MAICHAT_UNIFIED_START -->.*?<!-- MAICHAT_UNIFIED_END -->"),
         QRegularExpression::DotMatchesEverythingOption);
     html.remove(unifiedBlock);
 

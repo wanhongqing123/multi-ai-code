@@ -861,7 +861,8 @@ function renderSplitSide(line: HtmlDiffLine | undefined, side: 'left' | 'right')
   return `<td class="ln ${kind}" width="54" align="right" bgcolor="${background}" style="padding:3px 8px;border-right:1px solid #d0d7de;color:#656d76">${htmlLineNumber(lineNumber)}</td><td class="code ${kind}" bgcolor="${background}" style="padding:3px 8px"><span class="code-text">${line ? escapeHtml(line.text) : ''}</span></td>`
 }
 
-function renderHtmlDiffFile(file: HtmlDiffFile, label: string, sectionLabel?: string): string {
+function renderHtmlDiffFile(file: HtmlDiffFile, label: string, sectionLabel?: string,
+  anchorId: string): string {
   const pairedRows = pairHtmlDiffLines(file.lines)
   const splitRows = pairedRows
     .map((row) =>
@@ -878,7 +879,7 @@ function renderHtmlDiffFile(file: HtmlDiffFile, label: string, sectionLabel?: st
     })
     .join('')
   const header = file.header.map(escapeHtml).join('<br>')
-  return `<div class="file"><div class="file-title"><span>${sectionLabel ? `<small>${escapeHtml(sectionLabel)}</small>` : ''}${escapeHtml(label)}</span></div><div class="meta"><code>${header}</code></div><!-- MAICHAT_SPLIT_START --><div class="split"><table class="split-table" width="100%" border="0" cellpadding="0" cellspacing="0"><tbody>${splitRows}</tbody></table></div><!-- MAICHAT_SPLIT_END --><!-- MAICHAT_UNIFIED_START --><div class="unified">${unifiedRows}</div><!-- MAICHAT_UNIFIED_END --></div>`
+  return `<div class="file" id="${anchorId}"><a name="${anchorId}"></a><div class="file-title"><span>${sectionLabel ? `<small>${escapeHtml(sectionLabel)}</small>` : ''}${escapeHtml(label)}</span></div><div class="meta"><code>${header}</code></div><!-- MAICHAT_SPLIT_START --><div class="split"><table class="split-table" width="100%" border="0" cellpadding="0" cellspacing="0"><tbody>${splitRows}</tbody></table></div><!-- MAICHAT_SPLIT_END --><!-- MAICHAT_UNIFIED_START --><div class="unified">${unifiedRows}</div><!-- MAICHAT_UNIFIED_END --></div>`
 }
 
 function truncateRepositoriesForHtml(repositories: RepositoryDiff[]): {
@@ -910,15 +911,35 @@ function buildHtml(input: {
 }): { html: string; complete: boolean } {
   const limited = truncateRepositoriesForHtml(input.repositories)
   const summary = summarize(limited.repositories)
-  const fileSections = limited.repositories.flatMap((repo) =>
-    parseHtmlDiff(repo.diff).map((file) =>
-      renderHtmlDiffFile(
-        file,
-        repo.label === '.' ? file.path : `${repo.label}/${file.path}`,
-        repo.label === '.' ? undefined : `Submodule: ${repo.label}`
-      )
-    )
+  // 先把所有文件摊平并编号，索引和正文用同一份编号，避免两边各数一次而对不齐。
+  const indexedFiles = limited.repositories.flatMap((repo) =>
+    parseHtmlDiff(repo.diff).map((file) => ({
+      file,
+      label: repo.label === '.' ? file.path : `${repo.label}/${file.path}`,
+      sectionLabel: repo.label === '.' ? undefined : `Submodule: ${repo.label}`
+    }))
   )
+  const fileSections = indexedFiles.map(({ file, label, sectionLabel }, index) =>
+    renderHtmlDiffFile(file, label, sectionLabel, `f${index}`)
+  )
+  // 文件索引：21 个文件平铺时，没有它就只能从头滚到尾。
+  // 纯 HTML 锚点，不用 JS——桌面端是 Qt 富文本渲染，JS 根本不执行；
+  // 手机端是真浏览器，但三端共用同一份 HTML，只能按最弱的那端设计。
+  // （Qt 的 scrollToAnchor / setSource("#id") 已用探针实测可用，含 openExternalLinks=true 的配置。）
+  const fileIndexRows = indexedFiles
+    .map(({ file, label }, index) => {
+      let additions = 0
+      let deletions = 0
+      for (const line of file.lines) {
+        if (line.kind === 'add') additions += 1
+        else if (line.kind === 'del') deletions += 1
+      }
+      return `<li><a href="#f${index}">${escapeHtml(label)}</a><span class="idx-stat"> &nbsp;&nbsp;<span class="idx-add">+${additions}</span> <span class="idx-del">-${deletions}</span></span></li>`
+    })
+    .join('')
+  const fileIndex = fileIndexRows
+    ? `<div class="file-index"><div class="file-index-title">变更文件（${indexedFiles.length}）</div><ul>${fileIndexRows}</ul></div>`
+    : ''
   const omittedRows = limited.repositories.flatMap((repo) =>
     repo.changes
       .filter((change) => change.sensitive || change.contentOmitted)
@@ -939,8 +960,8 @@ function buildHtml(input: {
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(input.repoName)} Diff</title>
 <style>
 :root{color-scheme:light dark;--bg:#f6f8fa;--panel:#fff;--border:#d0d7de;--text:#1f2328;--muted:#656d76;--add:#dafbe1;--del:#ffebe9;--hunk:#ddf4ff;--add-strong:#aceebb;--del-strong:#ffcecb}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.page{max-width:1800px;margin:auto;padding:18px}.title{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.title h1{font-size:20px;margin:0}.pill{border:1px solid var(--border);border-radius:999px;padding:3px 9px;background:var(--panel);color:var(--muted)}.qt-separator{display:none}.summary{margin:12px 0 18px;color:var(--muted)}.warning{padding:10px 12px;background:#fff8c5;border:1px solid #d4a72c;border-radius:8px;color:#633c01}.file{margin:12px 0;border:1px solid var(--border);border-radius:9px;overflow:hidden;background:var(--panel)}.file summary{cursor:pointer;display:flex;justify-content:space-between;gap:12px;padding:11px 14px;font:600 14px ui-monospace,SFMono-Regular,Menlo,monospace;background:#f6f8fa}.file summary small{display:block;color:var(--muted);font:11px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.meta{margin:0;padding:8px 12px;border-top:1px solid var(--border);border-bottom:1px solid var(--border);color:var(--muted);overflow:auto;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}.split-row{display:grid;grid-template-columns:54px minmax(320px,1fr) 54px minmax(320px,1fr);min-width:780px}.ln,.code{margin:0;min-height:24px;padding:3px 8px;border-bottom:1px solid rgba(208,215,222,.45);font:13px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}.ln{text-align:right;color:var(--muted);user-select:none;border-right:1px solid var(--border)}.code{white-space:pre;overflow:hidden}.ln.add,.code.add{background:var(--add)}.ln.del,.code.del{background:var(--del)}.ln.empty,.code.empty{background:rgba(175,184,193,.12)}.hunk,.unified-hunk{padding:5px 12px;background:var(--hunk);color:#0969da;font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;border-bottom:1px solid var(--border)}.hunk{grid-column:1/-1}.split{overflow:auto}.unified{display:none}.unified-row{display:grid;grid-template-columns:44px 44px minmax(320px,1fr)}.unified-row>*{margin:0;padding:3px 7px;border-bottom:1px solid rgba(208,215,222,.45);font:13px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}.unified-row pre{white-space:pre}.unified-row.add{background:var(--add)}.unified-row.del{background:var(--del)}.u-ln{text-align:right;color:var(--muted);border-right:1px solid var(--border);user-select:none}.omitted{color:var(--muted)}code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}@media(max-width:760px){.page{padding:10px}.split{display:none}.unified{display:block;overflow:auto}.file summary{font-size:12px}.summary{font-size:12px}}@media(prefers-color-scheme:dark){:root{--bg:#0d1117;--panel:#161b22;--border:#30363d;--text:#e6edf3;--muted:#8b949e;--add:#12261e;--del:#2d1518;--hunk:#0c2d42}.file summary{background:#161b22}.warning{background:#3b2e00;color:#f2cc60}}
-.file-title{display:flex;justify-content:space-between;gap:12px;padding:11px 14px;font:600 14px ui-monospace,SFMono-Regular,Menlo,monospace;background:#f6f8fa}.file-title small{display:block;color:#656d76;font:11px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.split-table{width:100%;min-width:780px;border-collapse:collapse;table-layout:fixed}.split-table .ln{width:54px}.split-table .code{width:calc(50% - 54px);text-align:left}.split-table .code-text{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-all;font:13px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}.split-table .add{background:#dafbe1}.split-table .del{background:#ffebe9}.split-table .empty{background:#f6f8fa}.split-table .context{background:#fff}.split-table .hunk{background:#ddf4ff;color:#0969da;text-align:left}@media(max-width:760px){.split-table{display:none}}@media(prefers-color-scheme:dark){.file-title{background:#161b22}.file-title small{color:#8b949e}.split-table .add{background:#12261e}.split-table .del{background:#2d1518}.split-table .empty,.split-table .context{background:#161b22}.split-table .hunk{background:#0c2d42}}
-</style></head><body><main class="page"><div class="title"><h1>${escapeHtml(input.repoName)}</h1><span class="pill">${escapeHtml(sourceDetail)}</span><span class="qt-separator" aria-hidden="true"> · </span><span class="pill">${summary.files} files</span><span class="qt-separator" aria-hidden="true"> · </span><span class="pill">+${summary.additions} / -${summary.deletions}</span></div><div class="summary">范围：<code>${escapeHtml(input.scope || '全部')}</code> · 生成：${escapeHtml(new Date(input.generatedAt).toISOString())}</div>${complete ? '' : '<p class="warning">报告内容超过安全预览上限，以下 Diff 不完整。请按文件路径重新请求。</p>'}${omittedRows.length ? `<div class="omitted"><strong>未展开：</strong><ul>${omittedRows.join('')}</ul></div>` : ''}${fileSections.join('') || '<p>没有可展示的文本 Diff。</p>'}</main></body></html>`
+.file-index{margin:0 0 16px;padding:12px 14px;border:1px solid #d0d7de;border-radius:9px;background:#fff}.file-index-title{font-weight:700;color:#1f2328;margin-bottom:8px}.file-index ul{margin:0;padding-left:18px}.file-index li{margin:2px 0;font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace}.file-index a{color:#0969da;text-decoration:none}.idx-stat{margin-left:8px}.idx-add{color:#1a7f37}.idx-del{color:#cf222e}@media(prefers-color-scheme:dark){.file-index{background:#161b22;border-color:#30363d}.file-index-title{color:#e6edf3}.file-index a{color:#4493f8}.idx-add{color:#3fb950}.idx-del{color:#f85149}}.file-title{display:flex;justify-content:space-between;gap:12px;padding:11px 14px;font:600 14px ui-monospace,SFMono-Regular,Menlo,monospace;background:#f6f8fa}.file-title small{display:block;color:#656d76;font:11px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.split-table{width:100%;min-width:780px;border-collapse:collapse;table-layout:fixed}.split-table .ln{width:54px}.split-table .code{width:calc(50% - 54px);text-align:left}.split-table .code-text{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-all;font:13px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}.split-table .add{background:#dafbe1}.split-table .del{background:#ffebe9}.split-table .empty{background:#f6f8fa}.split-table .context{background:#fff}.split-table .hunk{background:#ddf4ff;color:#0969da;text-align:left}@media(max-width:760px){.split-table{display:none}}@media(prefers-color-scheme:dark){.file-title{background:#161b22}.file-title small{color:#8b949e}.split-table .add{background:#12261e}.split-table .del{background:#2d1518}.split-table .empty,.split-table .context{background:#161b22}.split-table .hunk{background:#0c2d42}}
+</style></head><body><main class="page"><div class="title"><h1>${escapeHtml(input.repoName)}</h1><span class="pill">${escapeHtml(sourceDetail)}</span><span class="qt-separator" aria-hidden="true"> · </span><span class="pill">${summary.files} files</span><span class="qt-separator" aria-hidden="true"> · </span><span class="pill">+${summary.additions} / -${summary.deletions}</span></div><div class="summary">范围：<code>${escapeHtml(input.scope || '全部')}</code> · 生成：${escapeHtml(new Date(input.generatedAt).toISOString())}</div>${complete ? '' : '<p class="warning">报告内容超过安全预览上限，以下 Diff 不完整。请按文件路径重新请求。</p>'}${fileIndex}${omittedRows.length ? `<div class="omitted"><strong>未展开：</strong><ul>${omittedRows.join('')}</ul></div>` : ''}${fileSections.join('') || '<p>没有可展示的文本 Diff。</p>'}</main></body></html>`
   return { html, complete }
 }
 

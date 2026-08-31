@@ -23,6 +23,7 @@ private slots:
     void rendersHtmlContent();
     void rendersSideBySideDiffTable();
     void normalizesGitDiffHtmlForQt();
+    void keepsEveryFileWhenTheDiffHasManyFiles();
     void longFileNameIsElidedInsteadOfWideningWindow();
     void initialSizeTracksContentAndKeepsDiffReadable();
     void closeButtonsAccept();
@@ -105,6 +106,38 @@ void FilePreviewDialogTest::normalizesGitDiffHtmlForQt() {
     rendered.replace(QRegularExpression(QStringLiteral("\\s+")), QStringLiteral(" "));
     QVERIFY2(rendered.contains(QStringLiteral("提交 abc · 1 files · +3 / -1")),
              qPrintable(QStringLiteral("Qt 中的 Diff 摘要仍粘连：%1").arg(rendered)));
+}
+
+// 多文件 Diff 必须每个文件都留下来。
+//
+// 剥离 unified 块的正则原来是贪婪的 `.*`，而每个文件各有一对 START/END 标记：
+// 它会从第一个 START 一路吃到最后一个 END，把中间所有文件连同它们的 split 表格
+// 一起删掉。21 个文件的真实报告实测被吞掉 97.2%，桌面端只剩第一个文件可看，
+// 而且不报错、不空白——看起来就像「这次只改了一个文件」。
+//
+// 原来的用例只有一个文件，贪婪与非贪婪表现完全一致，所以这个 bug 一直没被发现。
+// 这条用例的关键就是**至少三个文件**。
+void FilePreviewDialogTest::keepsEveryFileWhenTheDiffHasManyFiles() {
+    QString source;
+    for (int i = 0; i < 3; ++i) {
+        source += QStringLiteral(
+                      "<div class='file'><a name='f%1'></a>"
+                      "<!-- MAICHAT_SPLIT_START --><div>split-%1</div><!-- MAICHAT_SPLIT_END -->"
+                      "<!-- MAICHAT_UNIFIED_START --><div>mobile-%1</div><!-- MAICHAT_UNIFIED_END -->"
+                      "</div>")
+                      .arg(i);
+    }
+
+    const QString normalized = FilePreviewDialog::normalizeGitDiffHtmlForQt(source);
+
+    for (int i = 0; i < 3; ++i) {
+        QVERIFY2(normalized.contains(QStringLiteral("split-%1").arg(i)),
+                 qPrintable(QStringLiteral("第 %1 个文件的对比表格被剥离步骤吃掉了").arg(i)));
+        QVERIFY2(normalized.contains(QStringLiteral("<a name='f%1'></a>").arg(i)),
+                 qPrintable(QStringLiteral("第 %1 个文件的锚点丢了，索引跳不过去").arg(i)));
+        QVERIFY(!normalized.contains(QStringLiteral("mobile-%1").arg(i)));
+    }
+    QVERIFY(!normalized.contains(QStringLiteral("MAICHAT_UNIFIED_START")));
 }
 
 void FilePreviewDialogTest::longFileNameIsElidedInsteadOfWideningWindow() {

@@ -41,6 +41,35 @@ afterEach(async () => {
 })
 
 describe('Git Diff report', () => {
+  it('lists every changed file in a clickable index anchored to its section', async () => {
+    const { repo, reports } = await createWorkspace()
+    await fs.writeFile(join(repo, 'README.md'), '# Demo\n')
+    await commitAll(repo)
+    // 三个文件足够暴露「索引只列了第一个」和「锚点没生成」这两类问题；
+    // 一个文件的用例对它们完全不敏感。
+    for (const name of ['alpha.ts', 'beta.ts', 'gamma.ts']) {
+      await fs.writeFile(join(repo, name), `export const ${name.split('.')[0]} = 1\n`)
+    }
+
+    const result = await createGitDiffReport({ targetRepo: repo, outputDir: reports })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok || !result.attachmentPath) throw new Error('expected an attachment')
+    const html = await fs.readFile(result.attachmentPath, 'utf8')
+
+    // 每个文件都要有一条索引项，并且指向一个真实存在的锚点。
+    for (const name of ['alpha.ts', 'beta.ts', 'gamma.ts']) {
+      expect(html).toContain(name)
+    }
+    const links = [...html.matchAll(/<li><a href="#(f\d+)">/g)].map((m) => m[1])
+    expect(links.length).toBe(3)
+    for (const id of links) {
+      // 索引项指向的锚点必须真的在文档里，否则点了不动——而且不报错。
+      expect(html).toContain(`<a name="${id}"></a>`)
+    }
+    expect(html).toContain('变更文件（3）')
+  })
+
   it('reports a clean repository without creating an attachment', async () => {
     const { repo, reports } = await createWorkspace()
     await fs.writeFile(join(repo, 'README.md'), '# Demo\n')

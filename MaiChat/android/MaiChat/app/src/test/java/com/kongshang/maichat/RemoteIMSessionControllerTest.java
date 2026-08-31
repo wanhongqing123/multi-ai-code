@@ -31,6 +31,35 @@ public class RemoteIMSessionControllerTest {
     }
 
     @Test
+    public void openingOldSearchHitDoesNotMoveTheConversationPageCursor() throws Exception {
+        RemoteIMSessionController session = newSession();
+        session.login("android-user");
+        session.addContact("alice");
+        session.recordOldestLoadedCursor("alice", 5_000L, "recent-window-oldest");
+        RemoteIMMessage oldMatch = new RemoteIMMessage(
+            "very-old-hit",
+            "sdk-very-old-hit",
+            "alice",
+            "android-user",
+            "很早以前的命中",
+            RemoteIMMessage.Direction.INCOMING,
+            RemoteIMMessage.Status.RECEIVED,
+            100L,
+            null,
+            null,
+            null,
+            null,
+            RemoteIMOrigin.HUMAN
+        );
+
+        session.openMessageSearchHit(new RemoteIMMessageSearchHit("alice", oldMatch));
+
+        assertEquals(Long.valueOf(5_000L), session.oldestLoadedCreatedAt("alice"));
+        assertEquals("recent-window-oldest", session.oldestLoadedMessageId("alice"));
+    }
+
+
+    @Test
     public void sendsTextWithQuoteSnapshotAttached() throws Exception {
         RemoteIMSessionController session = newSession();
         session.login("android-user");

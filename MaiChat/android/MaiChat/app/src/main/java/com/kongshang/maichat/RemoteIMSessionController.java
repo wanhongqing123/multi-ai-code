@@ -652,8 +652,23 @@ public final class RemoteIMSessionController {
     private void updateOldestLoadedCursor(String peerId, List<RemoteIMMessage> pageMessages) {
         if (pageMessages == null || pageMessages.isEmpty()) return;
         RemoteIMMessage oldest = pageMessages.get(0);
-        oldestLoadedCreatedAtByUserId.put(peerId, oldest.createdAtMillis());
-        oldestLoadedMessageIdByUserId.put(peerId, oldest.id());
+        recordOldestLoadedCursor(peerId, oldest.createdAtMillis(), oldest.id());
+    }
+
+    void recordOldestLoadedCursor(String peerId, long createdAtMillis, String messageId) {
+        String cleanPeerId = clean(peerId);
+        String cleanMessageId = clean(messageId);
+        if (cleanPeerId.isEmpty() || cleanMessageId.isEmpty()) return;
+        oldestLoadedCreatedAtByUserId.put(cleanPeerId, createdAtMillis);
+        oldestLoadedMessageIdByUserId.put(cleanPeerId, cleanMessageId);
+    }
+
+    Long oldestLoadedCreatedAt(String peerId) {
+        return oldestLoadedCreatedAtByUserId.get(clean(peerId));
+    }
+
+    String oldestLoadedMessageId(String peerId) {
+        return oldestLoadedMessageIdByUserId.get(clean(peerId));
     }
 
     public boolean hasEarlierMessages(String userId) {

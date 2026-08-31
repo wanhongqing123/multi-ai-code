@@ -277,25 +277,28 @@ struct ChatView: View {
     @State private var searchTargetMessageID: UUID?
 
     var body: some View {
-        Group {
-            if let activeContact {
-                ChatDetailView(
-                    contact: activeContact,
+        chatContent
+            .background(RemoteIMStyle.pageBackground.ignoresSafeArea())
+    }
+
+    @ViewBuilder
+    private var chatContent: some View {
+        if let activeContact {
+            ChatDetailView(
+                contact: activeContact,
+                activeContact: $activeContact,
+                searchTargetMessageID: searchTargetMessageID,
+                showRemoteDesktop: showRemoteDesktop
+            )
+        } else {
+            VStack(spacing: 0) {
+                HeaderView()
+                ConversationListView(
                     activeContact: $activeContact,
-                    searchTargetMessageID: searchTargetMessageID,
-                    showRemoteDesktop: showRemoteDesktop
+                    searchTargetMessageID: $searchTargetMessageID
                 )
-            } else {
-                VStack(spacing: 0) {
-                    HeaderView()
-                    ConversationListView(
-                        activeContact: $activeContact,
-                        searchTargetMessageID: $searchTargetMessageID
-                    )
-                }
             }
         }
-        .background(RemoteIMStyle.pageBackground.ignoresSafeArea())
     }
 }
 
@@ -898,6 +901,26 @@ private final class VoiceMessagePlayer: NSObject, ObservableObject, AVAudioPlaye
     }
 }
 
+private enum RemoteIMImagePreviewLayout {
+    static let coordinateSpaceName = "remote-im-image-preview-space"
+}
+
+private struct PresentedRemoteIMImage: Identifiable {
+    let item: RemoteIMImagePreviewItem
+    let image: UIImage
+    let sourceFrame: CGRect
+
+    var id: UUID { item.id }
+}
+
+private struct RemoteIMImageBubbleFramePreferenceKey: PreferenceKey {
+    static let defaultValue: CGRect = .zero
+
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        value = nextValue()
+    }
+}
+
 private struct ChatDetailView: View {
     let contact: RemoteIMContact
     @Binding var activeContact: RemoteIMContact?
@@ -906,6 +929,8 @@ private struct ChatDetailView: View {
     @EnvironmentObject private var appState: RemoteIMAppState
     @State private var initialHistoryLoadGeneration = 0
     @State private var transcriptionPresentation = VoiceTranscriptionPresentation()
+    @State private var imagePreviewPresentation: PresentedRemoteIMImage?
+    @State private var isImagePreviewExpanded = false
 
     var body: some View {
         ZStack {
@@ -922,6 +947,7 @@ private struct ChatDetailView: View {
                     searchTargetMessageID: searchTargetMessageID,
                     hasEarlierMessages: appState.hasEarlierMessages(with: contact.userID),
                     initialHistoryLoadGeneration: initialHistoryLoadGeneration,
+                    presentImagePreview: presentImagePreview,
                     loadEarlierMessages: {
                         await appState.loadEarlierMessages(with: contact.userID)
                     }
@@ -936,7 +962,17 @@ private struct ChatDetailView: View {
             VoiceTranscriptionHighlightHost(presentation: transcriptionPresentation)
                 .zIndex(10)
                 .allowsHitTesting(false)
+
+            if let imagePreviewPresentation {
+                FullScreenImagePreviewView(
+                    presentation: imagePreviewPresentation,
+                    isExpanded: isImagePreviewExpanded,
+                    close: closeImagePreview
+                )
+                .zIndex(20)
+            }
         }
+        .coordinateSpace(name: RemoteIMImagePreviewLayout.coordinateSpaceName)
         .background(RemoteIMStyle.pageBackground.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
         .simultaneousGesture(edgeSwipeBackGesture)
@@ -972,6 +1008,43 @@ private struct ChatDetailView: View {
                     "duration_ms": String(Int((elapsed * 1_000).rounded())),
                 ]
             )
+        }
+    }
+
+    private var imagePreviewAnimation: Animation {
+        .interactiveSpring(response: 0.38, dampingFraction: 0.86, blendDuration: 0.08)
+    }
+
+    private func presentImagePreview(
+        item: RemoteIMImagePreviewItem,
+        image: UIImage,
+        sourceFrame: CGRect
+    ) {
+        guard sourceFrame.width > 0, sourceFrame.height > 0 else { return }
+        imagePreviewPresentation = PresentedRemoteIMImage(
+            item: item,
+            image: image,
+            sourceFrame: sourceFrame
+        )
+        isImagePreviewExpanded = false
+        DispatchQueue.main.async {
+            guard imagePreviewPresentation?.id == item.id else { return }
+            withAnimation(imagePreviewAnimation) {
+                isImagePreviewExpanded = true
+            }
+        }
+    }
+
+    private func closeImagePreview() {
+        guard let closingID = imagePreviewPresentation?.id else { return }
+        withAnimation(imagePreviewAnimation) {
+            isImagePreviewExpanded = false
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) {
+            guard !isImagePreviewExpanded,
+                  imagePreviewPresentation?.id == closingID
+            else { return }
+            imagePreviewPresentation = nil
         }
     }
 
@@ -1313,10 +1386,10 @@ private struct MessageListView: View {
     let searchTargetMessageID: UUID?
     let hasEarlierMessages: Bool
     let initialHistoryLoadGeneration: Int
+    let presentImagePreview: (RemoteIMImagePreviewItem, UIImage, CGRect) -> Void
     let loadEarlierMessages: () async -> Void
     @EnvironmentObject private var appState: RemoteIMAppState
     @StateObject private var voicePlayer = VoiceMessagePlayer()
-    @State private var imagePreviewItem: RemoteIMImagePreviewItem?
     @State private var videoPreviewItem: RemoteIMVideoPreviewItem?
     @State private var filePreviewItem: RemoteIMFilePreviewItem?
     @State private var latestMessageID: UUID?
@@ -1375,8 +1448,11 @@ private struct MessageListView: View {
                                 playVoice: {
                                     voicePlayer.toggle(message: message)
                                 },
-                                previewImage: {
-                                    imagePreviewItem = RemoteIMImagePreviewPolicy.previewItem(for: message)
+                                previewImage: { image, sourceFrame in
+                                    guard let nextItem = RemoteIMImagePreviewPolicy.previewItem(
+                                        for: message
+                                    ) else { return }
+                                    presentImagePreview(nextItem, image, sourceFrame)
                                 },
                                 previewVideo: {
                                     videoPreviewItem = RemoteIMVideoPreviewPolicy.previewItem(for: message)
@@ -1485,11 +1561,6 @@ private struct MessageListView: View {
                 }
             }
         }
-        .fullScreenCover(item: $imagePreviewItem) { item in
-            FullScreenImagePreviewView(item: item) {
-                imagePreviewItem = nil
-            }
-        }
         .fullScreenCover(item: $videoPreviewItem) { item in
             FullScreenVideoPreviewView(item: item) {
                 videoPreviewItem = nil
@@ -1594,7 +1665,7 @@ private struct MessageBubbleView: View {
     let isVideoDownloading: Bool
     let isVoicePlaying: Bool
     let playVoice: () -> Void
-    let previewImage: () -> Void
+    let previewImage: (UIImage, CGRect) -> Void
     let previewVideo: () -> Void
     let previewFile: () -> Void
     @State private var selectableCopyItem: SelectableMessageCopyItem?
@@ -1712,10 +1783,10 @@ private struct MessageBubbleView: View {
                 } else if let imageAttachment = message.imageAttachment {
                     VStack(alignment: .leading, spacing: 8) {
                         if message.captionAbove { attachmentCaptionView }
-                        Button(action: previewImage) {
-                            ImageBubbleContent(attachment: imageAttachment)
-                        }
-                        .buttonStyle(.plain)
+                        ImageBubbleContent(
+                            attachment: imageAttachment,
+                            previewImage: previewImage
+                        )
                         if !message.captionAbove { attachmentCaptionView }
                     }
                 } else if let fileAttachment = message.fileAttachment {
@@ -1991,58 +2062,149 @@ private struct SelectableMessageTextView: UIViewRepresentable {
 }
 
 private struct FullScreenImagePreviewView: View {
-    let item: RemoteIMImagePreviewItem
+    let presentation: PresentedRemoteIMImage
+    let isExpanded: Bool
     let close: () -> Void
+    @State private var isSaving = false
+    @State private var saveResultText: String?
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
-            Color.black.ignoresSafeArea()
+        GeometryReader { geometry in
+            let fittedSize = aspectFitSize(
+                imageSize: presentation.image.size,
+                containerSize: geometry.size
+            )
+            let destinationFrame = CGRect(
+                x: (geometry.size.width - fittedSize.width) / 2,
+                y: (geometry.size.height - fittedSize.height) / 2,
+                width: fittedSize.width,
+                height: fittedSize.height
+            )
+            let imageFrame = isExpanded ? destinationFrame : presentation.sourceFrame
 
-            GeometryReader { geometry in
-                RemoteIMAsyncImage(
-                    filePath: item.localFilePath,
-                    maximumPointSize: geometry.size
-                ) { image in
-                    ZoomableImagePreview(image: image)
-                        .ignoresSafeArea()
+            ZStack(alignment: .bottomTrailing) {
+                Color.black
+                    .opacity(isExpanded ? 1 : 0)
+                    .ignoresSafeArea()
+                    .onTapGesture(perform: close)
+
+                Image(uiImage: presentation.image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(
+                            width: imageFrame.width,
+                            height: imageFrame.height
+                        )
+                        .position(x: imageFrame.midX, y: imageFrame.midY)
+                        .contentShape(Rectangle())
+                        .onTapGesture(perform: close)
                         .accessibilityLabel("图片预览")
                         .accessibilityIdentifier("remote-im-image-preview")
-                } placeholder: { hasFailed in
-                    if hasFailed {
-                        VStack(spacing: 12) {
-                            Image(systemName: "photo")
-                                .font(.system(size: 34, weight: .semibold))
-                            Text("图片文件已丢失，无法预览")
-                                .font(.system(size: 15, weight: .semibold))
-                            Text(URL(fileURLWithPath: item.localFilePath).lastPathComponent)
-                                .font(.system(size: 12, weight: .medium))
-                                .lineLimit(1)
-                                .truncationMode(.middle)
+
+                VStack(alignment: .trailing, spacing: 14) {
+                    if let saveResultText {
+                        Text(saveResultText)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 12)
+                            .frame(height: 34)
+                            .background(.black.opacity(0.62), in: Capsule())
+                            .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    }
+
+                    HStack(spacing: 14) {
+                        ShareLink(item: URL(fileURLWithPath: presentation.item.localFilePath)) {
+                            imagePreviewActionIcon("arrowshape.turn.up.right.fill")
                         }
-                        .foregroundStyle(.white.opacity(0.86))
-                        .padding(.horizontal, 28)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else {
-                        ProgressView()
-                            .tint(.white)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .accessibilityLabel("分享图片")
+
+                        Button(action: saveImageToPhotoLibrary) {
+                            imagePreviewActionIcon(isSaving ? "hourglass" : "arrow.down.to.line")
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isSaving)
+                        .accessibilityLabel(isSaving ? "正在保存图片" : "保存图片")
                     }
                 }
+                .padding(.trailing, 22)
+                .padding(.bottom, 24)
+                .opacity(isExpanded ? 1 : 0)
+                .allowsHitTesting(isExpanded)
             }
-
-            Button(action: close) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 44, height: 44)
-                    .background(.black.opacity(0.45), in: Circle())
-            }
-            .buttonStyle(.plain)
-            .padding(.top, 18)
-            .padding(.trailing, 18)
-            .accessibilityLabel("关闭图片预览")
+            .frame(width: geometry.size.width, height: geometry.size.height)
         }
-        .statusBarHidden(true)
+        .accessibilityAction(.escape, close)
+    }
+
+    private func imagePreviewActionIcon(_ systemName: String) -> some View {
+        Image(systemName: systemName)
+            .font(.system(size: 18, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: 48, height: 48)
+            .background(.black.opacity(0.56), in: Circle())
+            .overlay {
+                Circle().stroke(.white.opacity(0.12), lineWidth: 1)
+            }
+    }
+
+    private func saveImageToPhotoLibrary() {
+        guard !isSaving else { return }
+        isSaving = true
+        saveResultText = nil
+        let fileURL = URL(fileURLWithPath: presentation.item.localFilePath)
+
+        Task {
+            guard await requestPhotoLibraryPermission() else {
+                isSaving = false
+                saveResultText = "请在系统设置中允许访问照片"
+                return
+            }
+            do {
+                try await PHPhotoLibrary.shared().performChanges {
+                    PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: fileURL)
+                }
+                isSaving = false
+                withAnimation(.easeOut(duration: 0.2)) {
+                    saveResultText = "已保存到相册"
+                }
+            } catch {
+                isSaving = false
+                withAnimation(.easeOut(duration: 0.2)) {
+                    saveResultText = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func requestPhotoLibraryPermission() async -> Bool {
+        switch PHPhotoLibrary.authorizationStatus(for: .readWrite) {
+        case .authorized, .limited:
+            return true
+        case .notDetermined:
+            let status = await withCheckedContinuation { continuation in
+                PHPhotoLibrary.requestAuthorization(for: .readWrite) { status in
+                    continuation.resume(returning: status)
+                }
+            }
+            return status == .authorized || status == .limited
+        case .denied, .restricted:
+            return false
+        @unknown default:
+            return false
+        }
+    }
+
+    private func aspectFitSize(imageSize: CGSize, containerSize: CGSize) -> CGSize {
+        guard imageSize.width > 0,
+              imageSize.height > 0,
+              containerSize.width > 0,
+              containerSize.height > 0
+        else { return .zero }
+        let scale = min(
+            containerSize.width / imageSize.width,
+            containerSize.height / imageSize.height
+        )
+        return CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
     }
 }
 
@@ -2242,83 +2404,6 @@ private struct RemoteIMHTMLPreview: UIViewRepresentable {
     }
 }
 
-private struct ZoomableImagePreview: UIViewRepresentable {
-    let image: UIImage
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
-    }
-
-    func makeUIView(context: Context) -> UIScrollView {
-        let scrollView = UIScrollView()
-        scrollView.backgroundColor = .black
-        scrollView.delegate = context.coordinator
-        scrollView.minimumZoomScale = 1
-        scrollView.maximumZoomScale = 4
-        scrollView.bouncesZoom = true
-        scrollView.showsHorizontalScrollIndicator = false
-        scrollView.showsVerticalScrollIndicator = false
-
-        let imageView = UIImageView(image: image)
-        imageView.contentMode = .scaleAspectFit
-        imageView.isUserInteractionEnabled = true
-        imageView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.addSubview(imageView)
-
-        NSLayoutConstraint.activate([
-            imageView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
-            imageView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
-            imageView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
-            imageView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
-            imageView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
-            imageView.heightAnchor.constraint(equalTo: scrollView.frameLayoutGuide.heightAnchor)
-        ])
-
-        let doubleTap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleDoubleTap(_:)))
-        doubleTap.numberOfTapsRequired = 2
-        scrollView.addGestureRecognizer(doubleTap)
-
-        context.coordinator.scrollView = scrollView
-        context.coordinator.imageView = imageView
-        return scrollView
-    }
-
-    func updateUIView(_ scrollView: UIScrollView, context: Context) {
-        context.coordinator.imageView?.image = image
-        if scrollView.zoomScale < scrollView.minimumZoomScale {
-            scrollView.setZoomScale(scrollView.minimumZoomScale, animated: false)
-        }
-    }
-
-    final class Coordinator: NSObject, UIScrollViewDelegate {
-        weak var scrollView: UIScrollView?
-        weak var imageView: UIImageView?
-
-        func viewForZooming(in scrollView: UIScrollView) -> UIView? {
-            imageView
-        }
-
-        @objc func handleDoubleTap(_ recognizer: UITapGestureRecognizer) {
-            guard let scrollView, let imageView else { return }
-
-            if scrollView.zoomScale > scrollView.minimumZoomScale {
-                scrollView.setZoomScale(scrollView.minimumZoomScale, animated: true)
-                return
-            }
-
-            let tapPoint = recognizer.location(in: imageView)
-            let targetScale = min(scrollView.maximumZoomScale, scrollView.minimumZoomScale * 2)
-            let zoomRect = CGRect(
-                x: tapPoint.x - scrollView.bounds.width / targetScale / 2,
-                y: tapPoint.y - scrollView.bounds.height / targetScale / 2,
-                width: scrollView.bounds.width / targetScale,
-                height: scrollView.bounds.height / targetScale
-            )
-            scrollView.zoom(to: zoomRect, animated: true)
-        }
-    }
-}
-
 private struct RemoteIMVideoFileState: Equatable {
     let isPlayable: Bool
     let isDownloading: Bool
@@ -2448,6 +2533,8 @@ private struct VideoBubbleContent: View {
 
 private struct ImageBubbleContent: View {
     let attachment: RemoteIMImageAttachment
+    let previewImage: (UIImage, CGRect) -> Void
+    @State private var sourceFrame: CGRect = .zero
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -2455,14 +2542,34 @@ private struct ImageBubbleContent: View {
                 filePath: attachment.localFilePath,
                 maximumPointSize: CGSize(width: 220, height: 180)
             ) { image in
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: 220, maxHeight: 180)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .background(Color(red: 0.945, green: 0.957, blue: 0.973), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .accessibilityLabel("消息图片")
-                    .accessibilityIdentifier("remote-im-message-image")
+                Button {
+                    previewImage(image, sourceFrame)
+                } label: {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: 220, maxHeight: 180)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .background(Color(red: 0.945, green: 0.957, blue: 0.973), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .accessibilityLabel("消息图片")
+                        .accessibilityIdentifier("remote-im-message-image")
+                        .background {
+                            GeometryReader { geometry in
+                                Color.clear.preference(
+                                    key: RemoteIMImageBubbleFramePreferenceKey.self,
+                                    value: geometry.frame(
+                                        in: .named(
+                                            RemoteIMImagePreviewLayout.coordinateSpaceName
+                                        )
+                                    )
+                                )
+                            }
+                        }
+                }
+                .buttonStyle(.plain)
+                .onPreferenceChange(RemoteIMImageBubbleFramePreferenceKey.self) {
+                    sourceFrame = $0
+                }
             } placeholder: { hasFailed in
                 Group {
                     if hasFailed {

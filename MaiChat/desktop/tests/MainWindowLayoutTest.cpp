@@ -118,6 +118,7 @@ private slots:
     void droppingFilesIntoComposerAttachesThemInsteadOfPastingPaths();
     void quotedReplyRendersQuoteBlockAboveBody();
     void replyBarShowsTargetAndClearsAfterSending();
+    void conversationListPutsNewestMessageFirst();
     void droppingAnImageFileSendsTheOriginalFileAsAnImage();
 };
 
@@ -157,6 +158,54 @@ int highlightedRowCount(const QWidget& window) {
 //
 // 不清掉的后果很隐蔽：用户回复完一条，接着发一句无关的话，那句话会莫名其妙
 // 也带着上一条的引用——而且发送方自己的界面上看着是对的，只有对端能看出不对。
+// 会话列表必须把「刚来消息的人」排到最前面。
+//
+// 此前它沿用联系人列表的顺序，而那是按 userId 的字母序排的：
+// 刚回你消息的人可能排在第 11 位，顶上却是几周没说过话的。
+void MainWindowLayoutTest::conversationListPutsNewestMessageFirst() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    // 故意让字母序和时间序相反：alpha 名字最小但消息最旧。
+    app.addContact(QStringLiteral("alpha"), QStringLiteral("Alpha"));
+    app.addContact(QStringLiteral("bravo"), QStringLiteral("Bravo"));
+    app.addContact(QStringLiteral("charlie"), QStringLiteral("Charlie"));
+    // 从没聊过的联系人，应当沉到最后。
+    app.addContact(QStringLiteral("delta"), QStringLiteral("Delta"));
+
+    MainWindow window(app);
+    window.resize(1280, 800);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    app.selectPeer(QStringLiteral("alpha"));
+    app.sendText(QStringLiteral("最早"));
+    app.selectPeer(QStringLiteral("bravo"));
+    app.sendText(QStringLiteral("中间"));
+    app.selectPeer(QStringLiteral("charlie"));
+    app.sendText(QStringLiteral("最新"));
+    QCoreApplication::processEvents();
+
+    auto* list = window.findChild<QListWidget*>(QStringLiteral("conversationList"));
+    QVERIFY(list != nullptr);
+    QStringList order;
+    for (int row = 0; row < list->count(); ++row) {
+        // Qt::UserRole 就是 MainWindow.cpp 里的 UserIdRole（存 userId）。
+        order.append(list->item(row)->data(Qt::UserRole).toString());
+    }
+    QVERIFY2(order.size() >= 4, qPrintable(QStringLiteral("会话数不对：%1").arg(order.size())));
+    QCOMPARE(order.at(0), QStringLiteral("charlie"));
+    QCOMPARE(order.at(1), QStringLiteral("bravo"));
+    QCOMPARE(order.at(2), QStringLiteral("alpha"));
+    // 没有消息的排最后，而不是因为名字靠前就冒到上面。
+    QCOMPARE(order.at(3), QStringLiteral("delta"));
+
+    // 给最旧的那个补一条新消息，它必须立刻升到第一。
+    app.selectPeer(QStringLiteral("alpha"));
+    app.sendText(QStringLiteral("又说话了"));
+    QCoreApplication::processEvents();
+    QCOMPARE(list->item(0)->data(Qt::UserRole).toString(), QStringLiteral("alpha"));
+}
+
 void MainWindowLayoutTest::replyBarShowsTargetAndClearsAfterSending() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));

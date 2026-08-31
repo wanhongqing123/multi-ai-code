@@ -2241,13 +2241,41 @@ void MainWindow::refreshContacts() {
     conversationList_->blockSignals(true);
     conversationList_->clear();
     int selectedRow = -1;
-    const QList<RemoteIMContact> contacts = app_.chatState().contacts();
+    QList<RemoteIMContact> contacts = app_.chatState().contacts();
+
+    // 会话列表按「最近一条消息」倒序：有新消息的人排到最前面。
+    //
+    // 此前直接沿用 contacts() 的顺序，而那是按 userId 排的字母序——
+    // 结果是刚回你消息的人可能排在第 11 位，而列表顶上是几周没说过话的。
+    // 从来没有过消息的联系人排在最后（按名字，保证顺序稳定，不会每次刷新乱跳）。
+    QHash<QString, qint64> latestAtByUserId;
+    QHash<QString, RemoteIMMessage> latestByUserId;
+    for (const RemoteIMContact& contact : contacts) {
+        RemoteIMMessage latest;
+        if (!app_.chatState().latestMessageWith(contact.userId, &latest)) continue;
+        latestAtByUserId.insert(contact.userId, latest.createdAtMillis);
+        latestByUserId.insert(contact.userId, latest);
+    }
+    std::stable_sort(contacts.begin(), contacts.end(),
+                     [&latestAtByUserId](const RemoteIMContact& a, const RemoteIMContact& b) {
+        const bool aHas = latestAtByUserId.contains(a.userId);
+        const bool bHas = latestAtByUserId.contains(b.userId);
+        if (aHas != bHas) return aHas;  // 有消息的排在没消息的前面
+        if (!aHas) return a.userId.localeAwareCompare(b.userId) < 0;
+        const qint64 aAt = latestAtByUserId.value(a.userId);
+        const qint64 bAt = latestAtByUserId.value(b.userId);
+        // 时间相同的（同一批漫游拉回来的常见）退回名字比较，
+        // 否则每次刷新顺序都可能不同，列表会自己抖。
+        if (aAt == bAt) return a.userId.localeAwareCompare(b.userId) < 0;
+        return aAt > bAt;
+    });
+
     for (int index = 0; index < contacts.size(); ++index) {
         const RemoteIMContact& contact = contacts[index];
         auto* item = new QListWidgetItem();
         item->setSizeHint(QSize(0, UiZoom::s(76)));
-        RemoteIMMessage latestMessage;
-        const bool hasLatestMessage = app_.chatState().latestMessageWith(contact.userId, &latestMessage);
+        const bool hasLatestMessage = latestByUserId.contains(contact.userId);
+        const RemoteIMMessage latestMessage = latestByUserId.value(contact.userId);
         item->setData(UserIdRole, contact.userId);
         item->setData(DisplayNameRole, contact.displayName.isEmpty() ? contact.userId : contact.displayName);
         item->setData(PreviewRole, latestMessageText(hasLatestMessage ? &latestMessage : nullptr));

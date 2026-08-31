@@ -89,8 +89,19 @@ ParsedCloudMetadata messageMetadata(const QJsonObject& message) {
     const QJsonDocument document = QJsonDocument::fromJson(raw.toUtf8());
     if (!document.isObject()) return parsed;
     const QJsonObject metadata = document.object();
-    if (metadata.value(QStringLiteral("namespace")).toString() != QLatin1String(kMetadataNamespace)
-        || metadata.value(QStringLiteral("version")).toInt(-1) != kMetadataVersion) {
+    if (metadata.value(QStringLiteral("namespace")).toString() != QLatin1String(kMetadataNamespace)) {
+        return parsed;
+    }
+    // 版本闸门只挡「比我们旧」的格式，不挡「比我们新」的。
+    //
+    // 原来这里是严格相等，后果是元数据格式**永远无法在不做 flag day 的情况下扩展**：
+    // 只要有一端升了 version，另一端就把整块元数据丢掉——丢的不只是新字段，
+    // 连 origin（human/machine，自动回环阻断靠它）和 captionAbove 一起丢。
+    //
+    // 改成 >= 之后，新增可选键对旧客户端是加性的：认识的读，不认识的忽略。
+    // 真正破坏性的格式变更应该换 namespace，而不是继续靠版本号逼出 flag day。
+    const int version = metadata.value(QStringLiteral("version")).toInt(-1);
+    if (version < kMetadataVersion) {
         return parsed;
     }
     parsed.captionAbove = metadata.value(QStringLiteral("captionAbove")).toBool(false);

@@ -161,6 +161,7 @@ private slots:
     void emitsIncomingTextAndImageFromSdkMessages();
     void emitsIncomingApprovalRequestFromV2CloudMetadata();
     void emitsIncomingApprovalResolutionFromV2CloudMetadata();
+    void acceptsNewerCloudMetadataVersionAndIgnoresUnknownKeys();
     void emitsIncomingGenericFileWithRealMimeType();
     void mergesCaptionIntoGenericFileMessage();
     void loadsGenericFileFromHistory();
@@ -627,6 +628,54 @@ void TimSdkRemoteIMClientTest::emitsIncomingApprovalRequestFromV2CloudMetadata()
     QCOMPARE(oldMessages.size(), 1);
     QVERIFY(!oldMessages.first().hasApprovalRequest);
     QCOMPARE(oldMessages.first().origin, RemoteIMMessageOrigin::Unknown);
+}
+
+// 比我们新的协议版本必须被接受：认识的键照读，不认识的键忽略。
+//
+// 这条锁住的是「元数据可以加性扩展」这个性质。此前闸门是严格相等，
+// 只要一端先升 version，另一端就把整块元数据丢掉——连 origin 一起丢，
+// 而 origin 是自动回环阻断的依据，丢了会让 AI 消息被当成人类消息。
+void TimSdkRemoteIMClientTest::acceptsNewerCloudMetadataVersionAndIgnoresUnknownKeys() {
+    auto api = std::make_unique<FakeTimSdkApi>();
+    auto* fake = api.get();
+    TimSdkRemoteIMClient client(std::move(api));
+    QSignalSpy messagesSpy(&client, &RemoteIMClient::liveMessagesReceived);
+
+    client.connectToService(123456, QStringLiteral("desktop-user"), QStringLiteral("sig-value"), nullptr);
+    fake->emitMessages(QJsonArray{QJsonObject{
+        {QStringLiteral("message_is_from_self"), false},
+        {QStringLiteral("message_sender"), QStringLiteral("multi-ai-code")},
+        {QStringLiteral("message_msg_id"), QStringLiteral("future-version-1")},
+        {QStringLiteral("message_cloud_custom_str"), QStringLiteral(
+            "{\"namespace\":\"multi-ai-code\",\"version\":99,\"origin\":\"machine\","
+            "\"captionAbove\":true,\"somethingWeHaveNeverHeardOf\":{\"a\":1}}")},
+        {QStringLiteral("message_elem_array"), QJsonArray{
+            QJsonObject{
+                {QStringLiteral("elem_type"), 1},
+                {QStringLiteral("image_elem_orig_path"), QStringLiteral("C:/tmp/pic.png")},
+                {QStringLiteral("image_elem_image_list"), QJsonArray{QJsonObject{
+                    {QStringLiteral("image_type"), 0},
+                    {QStringLiteral("image_url"), QStringLiteral("https://example.com/pic.png")},
+                    {QStringLiteral("image_width"), 12},
+                    {QStringLiteral("image_height"), 8},
+                    {QStringLiteral("image_size"), 34}
+                }}}
+            },
+            QJsonObject{
+                {QStringLiteral("elem_type"), 0},
+                {QStringLiteral("text_elem_content"), QStringLiteral("来自更新协议的配文")}
+            }
+        }}
+    }});
+
+    QCOMPARE(messagesSpy.count(), 1);
+    const auto messages = messagesSpy.takeFirst().at(0).value<QList<RemoteIMMessage>>();
+    QVERIFY(!messages.isEmpty());
+    // 认识的键照读——尤其是 origin，丢了它自动回环阻断就失效。
+    QCOMPARE(messages.first().origin, RemoteIMMessageOrigin::Machine);
+    // captionAbove 只对带附件的消息有意义（源码里是 hasAttachment && metadata.captionAbove），
+    // 所以这条用例发的是图文消息，断言排版键也确实穿过了更高的版本号。
+    QVERIFY(messages.first().captionAbove);
 }
 
 void TimSdkRemoteIMClientTest::emitsIncomingApprovalResolutionFromV2CloudMetadata() {

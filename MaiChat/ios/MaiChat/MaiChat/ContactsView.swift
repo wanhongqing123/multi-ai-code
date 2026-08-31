@@ -6,10 +6,10 @@ struct ContactsView: View {
     @Binding var selectedTab: AppTab
     @Binding var activeContact: RemoteIMContact?
     @Binding var movingContact: RemoteIMContact?
+    @Binding var isShowingBroadcast: Bool
     let showAddContact: () -> Void
     @State private var isCreatingGroup = false
     @State private var groupNameDraft = ""
-    @State private var isBroadcasting = false
 
     var body: some View {
         ZStack {
@@ -22,7 +22,7 @@ struct ContactsView: View {
                         groupNameDraft = ""
                         isCreatingGroup = true
                     },
-                    showBroadcast: { isBroadcasting = true }
+                    showBroadcast: { isShowingBroadcast = true }
                 )
                 .background(RemoteIMStyle.pageBackground.ignoresSafeArea())
                 .toolbar {
@@ -36,9 +36,6 @@ struct ContactsView: View {
                 }
                 .toolbarBackground(RemoteIMStyle.panelBackground, for: .navigationBar)
                 .toolbarBackground(.visible, for: .navigationBar)
-                .sheet(isPresented: $isBroadcasting) {
-                    BroadcastComposeView()
-                }
             }
 
             if isCreatingGroup {
@@ -282,44 +279,49 @@ private struct ContactList: View {
     @State private var deletingGroup: String?
 
     var body: some View {
-        List {
-            HStack(spacing: 10) {
-                Button(action: showCreateGroup) {
-                    Label("新建分组", systemImage: "folder.badge.plus")
-                        .frame(maxWidth: .infinity)
-                }
-                Button(action: showBroadcast) {
-                    Label("群发消息", systemImage: "paperplane")
-                        .frame(maxWidth: .infinity)
-                }
-                .disabled(appState.chatState.contacts.isEmpty)
-            }
-            .buttonStyle(.bordered)
-            .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 8, trailing: 16))
-            .listRowSeparator(.hidden)
-            .listRowBackground(RemoteIMStyle.panelBackground)
+        VStack(spacing: 0) {
+            ContactSearchField(text: $searchText, placeholder: "搜索联系人")
 
-            if appState.chatState.contacts.isEmpty && appState.chatState.contactGroups.isEmpty {
-                EmptyContacts()
-                    .padding(.top, 76)
-                    .listRowInsets(EdgeInsets())
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(RemoteIMStyle.panelBackground)
-            } else {
-                ForEach(contactListItems) { item in
-                    switch item {
-                    case let .group(name, memberCount):
-                        groupHeader(name: name, memberCount: memberCount)
-                    case let .contact(contact, indented):
-                        contactButton(contact, grouped: indented)
+            List {
+                HStack(spacing: 10) {
+                    Button(action: showCreateGroup) {
+                        Label("新建分组", systemImage: "folder.badge.plus")
+                            .frame(maxWidth: .infinity)
+                    }
+                    Button(action: showBroadcast) {
+                        Label("群发消息", systemImage: "paperplane")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .disabled(appState.chatState.contacts.isEmpty)
+                }
+                .buttonStyle(.bordered)
+                .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 8, trailing: 16))
+                .listRowSeparator(.hidden)
+                .listRowBackground(RemoteIMStyle.panelBackground)
+
+                if appState.chatState.contacts.isEmpty && appState.chatState.contactGroups.isEmpty {
+                    EmptyContacts()
+                        .padding(.top, 76)
+                        .listRowInsets(EdgeInsets())
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(RemoteIMStyle.panelBackground)
+                } else {
+                    ForEach(contactListItems) { item in
+                        switch item {
+                        case let .group(name, memberCount):
+                            groupHeader(name: name, memberCount: memberCount)
+                        case let .contact(contact, indented):
+                            contactButton(contact, grouped: indented)
+                        }
                     }
                 }
             }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .scrollDismissesKeyboard(.immediately)
+            .background(RemoteIMStyle.panelBackground)
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
         .background(RemoteIMStyle.panelBackground)
-        .searchable(text: $searchText, prompt: "搜索联系人")
         .alert("重命名分组", isPresented: Binding(
             get: { renamingGroup != nil },
             set: { if !$0 { renamingGroup = nil } }
@@ -454,6 +456,65 @@ private struct ContactList: View {
     }
 }
 
+private struct ContactSearchField: View {
+    @Binding var text: String
+    let placeholder: String
+    var horizontalPadding: CGFloat = 16
+    var verticalPadding: CGFloat = 10
+    var usesSoftFill = false
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(
+                    isFocused || usesSoftFill ? RemoteIMStyle.blue : RemoteIMStyle.textSecondary
+                )
+
+            TextField(placeholder, text: $text)
+                .font(.system(size: 15))
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .focused($isFocused)
+                .submitLabel(.search)
+                .onSubmit { isFocused = false }
+
+            if !text.isEmpty {
+                Button {
+                    text = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(RemoteIMStyle.textSecondary.opacity(0.72))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("清空搜索")
+            }
+        }
+        .padding(.horizontal, 13)
+        .frame(height: 44)
+        .background(
+            usesSoftFill ? RemoteIMStyle.blueSoft.opacity(0.58) : RemoteIMStyle.pageBackground,
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(
+                    usesSoftFill
+                        ? Color.clear
+                        : (isFocused ? RemoteIMStyle.blue : RemoteIMStyle.border),
+                    lineWidth: usesSoftFill ? 0 : (isFocused ? 1.5 : 1)
+                )
+        )
+        .padding(.horizontal, horizontalPadding)
+        .padding(.vertical, verticalPadding)
+        .background(RemoteIMStyle.panelBackground)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("remote-im-contact-search-field")
+    }
+}
+
 struct MoveContactGroupDialog: View {
     @EnvironmentObject private var appState: RemoteIMAppState
     let contact: RemoteIMContact
@@ -477,7 +538,7 @@ struct MoveContactGroupDialog: View {
                         .lineLimit(2)
                 }
 
-                ScrollView {
+                ScrollView(showsIndicators: false) {
                     LazyVStack(spacing: 8) {
                         groupOption(
                             name: "",
@@ -581,105 +642,182 @@ struct MoveContactGroupDialog: View {
     }
 }
 
-private struct BroadcastComposeView: View {
+struct BroadcastComposeDialog: View {
     @EnvironmentObject private var appState: RemoteIMAppState
-    @Environment(\.dismiss) private var dismiss
+    @Binding var isPresented: Bool
     @State private var messageText = ""
     @State private var pickerState = RemoteIMBroadcastRecipientPickerState()
     @State private var isConfirming = false
     @State private var isSending = false
     @State private var resultMessage: String?
+    @State private var dismissAfterResult = false
+    @State private var backSwipeOffset: CGFloat = 0
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 12) {
-                Text("勾选的每个人都会单独收到一条私聊消息。")
-                    .font(.system(size: 13))
-                    .foregroundStyle(RemoteIMStyle.textSecondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+        ZStack {
+            RemoteIMStyle.pageBackground.ignoresSafeArea()
 
-                TextField("筛选联系人", text: Binding(
-                    get: { pickerState.filterText },
-                    set: { pickerState.setFilterText($0) }
-                ))
-                    .textFieldStyle(.roundedBorder)
+            VStack(spacing: 0) {
+                broadcastHeader
 
-                List {
-                    ForEach(recipientListItems) { item in
-                        switch item {
-                        case let .group(name, memberCount):
-                            groupSelectionRow(name: name, memberCount: memberCount)
-                        case let .contact(contact, indented):
-                            recipientRow(contact, indented: indented)
+                ContactSearchField(
+                    text: Binding(
+                        get: { pickerState.filterText },
+                        set: { pickerState.setFilterText($0) }
+                    ),
+                    placeholder: "筛选联系人",
+                    horizontalPadding: 16,
+                    verticalPadding: 10,
+                    usesSoftFill: true
+                )
+
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(recipientListItems) { item in
+                            switch item {
+                            case let .group(name, memberCount):
+                                groupSelectionRow(name: name, memberCount: memberCount)
+                            case let .contact(contact, indented):
+                                recipientRow(contact, indented: indented)
+                            }
                         }
                     }
                 }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
-                .background(RemoteIMStyle.pageBackground)
+                .scrollDismissesKeyboard(.immediately)
+                .frame(maxHeight: .infinity)
+                .background(RemoteIMStyle.panelBackground)
 
-                TextEditor(text: $messageText)
-                    .frame(minHeight: 88, maxHeight: 120)
-                    .padding(8)
-                    .background(
-                        RemoteIMStyle.pageBackground,
-                        in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(RemoteIMStyle.border, lineWidth: 1)
-                    )
+                composer
+            }
 
-                Button {
-                    isConfirming = true
-                } label: {
-                    HStack {
-                        if isSending { ProgressView().tint(.white) }
-                        Text(pickerState.selectedUserIDs.isEmpty
-                            ? "发送"
-                            : "发送给 \(pickerState.selectedUserIDs.count) 人")
-                    }
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 44)
-                    .background(
-                        canSend ? RemoteIMStyle.blue : Color.gray.opacity(0.4),
-                        in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    )
-                }
-                .buttonStyle(.plain)
-                .disabled(!canSend)
+            if isConfirming { confirmationDialog }
+            if let resultMessage { resultDialog(message: resultMessage) }
+        }
+        .offset(x: backSwipeOffset)
+        .simultaneousGesture(backSwipeGesture)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("群发消息")
+    }
+
+    private var canSwipeBack: Bool {
+        !isSending && !isConfirming && resultMessage == nil
+    }
+
+    private var backSwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 12, coordinateSpace: .global)
+            .onChanged { value in
+                guard canSwipeBack,
+                      value.startLocation.x <= 28,
+                      value.translation.width > 0,
+                      abs(value.translation.width) > abs(value.translation.height)
+                else { return }
+                backSwipeOffset = min(value.translation.width, UIScreen.main.bounds.width)
             }
-            .padding(16)
-            .background(RemoteIMStyle.panelBackground.ignoresSafeArea())
-            .navigationTitle("群发消息")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { dismiss() }
-                        .disabled(isSending)
+            .onEnded { value in
+                guard canSwipeBack,
+                      value.startLocation.x <= 28,
+                      value.translation.width > 0,
+                      abs(value.translation.width) > abs(value.translation.height)
+                else {
+                    withAnimation(.easeOut(duration: 0.16)) { backSwipeOffset = 0 }
+                    return
+                }
+
+                let shouldDismiss = value.translation.width >= 84
+                    || value.predictedEndTranslation.width >= 180
+                guard shouldDismiss else {
+                    withAnimation(.easeOut(duration: 0.16)) { backSwipeOffset = 0 }
+                    return
+                }
+
+                withAnimation(.easeOut(duration: 0.16)) {
+                    backSwipeOffset = UIScreen.main.bounds.width
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
+                    isPresented = false
+                    backSwipeOffset = 0
                 }
             }
-            .alert("确认群发", isPresented: $isConfirming) {
-                Button("取消", role: .cancel) {}
-                Button("发送给 \(pickerState.selectedUserIDs.count) 人") { sendBroadcast() }
-            } message: {
-                Text("以下每个人会各收到一条相同的私聊消息：\n\n\(selectedNames.joined(separator: "、"))")
+    }
+
+    private var broadcastHeader: some View {
+        HStack(spacing: 12) {
+            Button(action: cancel) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(RemoteIMStyle.textPrimary)
+                    .frame(width: 36, height: 36)
+                    .background(RemoteIMStyle.pageBackground, in: Circle())
             }
-            .alert("群发结果", isPresented: Binding(
-                get: { resultMessage != nil },
-                set: { if !$0 { resultMessage = nil } }
-            )) {
-                Button("知道了") {
-                    let succeeded = resultMessage?.contains("都收到了") == true
-                    resultMessage = nil
-                    if succeeded { dismiss() }
-                }
-            } message: {
-                Text(resultMessage ?? "")
+            .buttonStyle(.plain)
+            .disabled(isSending)
+            .accessibilityLabel("取消群发")
+
+            Spacer(minLength: 12)
+
+            if !pickerState.selectedUserIDs.isEmpty {
+                Text("已选 \(pickerState.selectedUserIDs.count) 人")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(RemoteIMStyle.blue)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(RemoteIMStyle.blueSoft, in: Capsule())
             }
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(RemoteIMStyle.panelBackground)
+    }
+
+    private var composer: some View {
+        HStack(alignment: .bottom, spacing: 10) {
+            ZStack(alignment: .topLeading) {
+                if messageText.isEmpty {
+                    Text("输入要发送的内容")
+                        .font(.system(size: 15))
+                        .foregroundStyle(RemoteIMStyle.textSecondary.opacity(0.68))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 17)
+                        .allowsHitTesting(false)
+                }
+                TextEditor(text: $messageText)
+                    .font(.system(size: 15))
+                    .scrollContentBackground(.hidden)
+                    .padding(8)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 54)
+            .background(
+                RemoteIMStyle.blueSoft.opacity(0.5),
+                in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+            )
+
+            Button {
+                isConfirming = true
+            } label: {
+                ZStack {
+                    if isSending {
+                        ProgressView().tint(.white)
+                    } else {
+                        Image(systemName: "paperplane.fill")
+                            .font(.system(size: 16, weight: .bold))
+                    }
+                }
+                .foregroundStyle(canSend ? Color.white : RemoteIMStyle.textSecondary)
+                .frame(width: 44, height: 44)
+                .background(
+                    canSend ? RemoteIMStyle.blue : RemoteIMStyle.blueSoft,
+                    in: Circle()
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(!canSend)
+            .accessibilityLabel("发送消息")
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 12)
+        .background(RemoteIMStyle.panelBackground)
     }
 
     private var canSend: Bool {
@@ -706,49 +844,172 @@ private struct BroadcastComposeView: View {
             groupName: name,
             contacts: appState.chatState.contacts
         )
-        let symbol = state == .all ? "checkmark.square.fill"
-            : state == .partial ? "minus.square.fill" : "square"
         return Button {
             pickerState.toggleGroup(
                 groupName: name,
                 contacts: appState.chatState.contacts
             )
         } label: {
-            HStack {
-                Image(systemName: symbol)
-                    .foregroundStyle(RemoteIMStyle.blue)
+            HStack(spacing: 12) {
+                selectionIndicator(state: state)
                 Text(name).font(.system(size: 14, weight: .semibold))
                 Spacer()
                 Text("\(memberCount)").foregroundStyle(RemoteIMStyle.textSecondary)
             }
+            .padding(.horizontal, 16)
+            .frame(height: 46)
+            .foregroundStyle(RemoteIMStyle.textPrimary)
+            .background(RemoteIMStyle.blueSoft.opacity(state == .none ? 0.42 : 0.78))
         }
         .buttonStyle(.plain)
-        .listRowSeparator(.hidden)
     }
 
     private func recipientRow(_ contact: RemoteIMContact, indented: Bool) -> some View {
         Button {
             pickerState.toggleContact(userID: contact.userID)
         } label: {
-            HStack {
-                Image(systemName: pickerState.selectedUserIDs.contains(contact.userID)
-                    ? "checkmark.square.fill" : "square")
-                    .foregroundStyle(RemoteIMStyle.blue)
-                Text(contact.displayName)
+            HStack(spacing: 12) {
+                selectionIndicator(
+                    state: pickerState.selectedUserIDs.contains(contact.userID) ? .all : .none
+                )
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(contact.displayName)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(RemoteIMStyle.textPrimary)
+                        .lineLimit(1)
+                    Text(contact.userID)
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(RemoteIMStyle.textSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
                 Spacer()
-                Text(contact.userID)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(RemoteIMStyle.textSecondary)
             }
+            .padding(.leading, indented ? 34 : 16)
+            .padding(.trailing, 16)
+            .frame(height: 58)
+            .background(RemoteIMStyle.panelBackground)
         }
         .buttonStyle(.plain)
-        .listRowInsets(EdgeInsets(
-            top: 7,
-            leading: indented ? 30 : 16,
-            bottom: 7,
-            trailing: 16
-        ))
-        .listRowSeparator(.hidden)
+    }
+
+    private func selectionIndicator(
+        state: RemoteIMBroadcastGroupSelectionState
+    ) -> some View {
+        ZStack {
+            Circle()
+                .fill(state == .none ? Color.clear : RemoteIMStyle.blue)
+            Circle()
+                .stroke(RemoteIMStyle.blue, lineWidth: 1.5)
+            if state == .all {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.white)
+            } else if state == .partial {
+                Capsule()
+                    .fill(.white)
+                    .frame(width: 8, height: 2)
+            }
+        }
+        .frame(width: 18, height: 18)
+    }
+
+    private var confirmationDialog: some View {
+        ZStack {
+            Color.black.opacity(0.24).ignoresSafeArea()
+            VStack(alignment: .leading, spacing: 14) {
+                Text("确认群发")
+                    .font(.system(size: 19, weight: .bold))
+                    .foregroundStyle(RemoteIMStyle.textPrimary)
+                ScrollView {
+                    Text(selectedNames.joined(separator: "、"))
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(RemoteIMStyle.textPrimary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 150)
+
+                HStack(spacing: 12) {
+                    dialogButton(title: "取消", primary: false) {
+                        isConfirming = false
+                    }
+                    dialogButton(
+                        title: "发送给 \(pickerState.selectedUserIDs.count) 人",
+                        primary: true
+                    ) {
+                        isConfirming = false
+                        sendBroadcast()
+                    }
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: 360)
+            .background(
+                RemoteIMStyle.panelBackground,
+                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(RemoteIMStyle.border, lineWidth: 1)
+            )
+            .shadow(color: Color.black.opacity(0.2), radius: 24, y: 10)
+            .padding(.horizontal, 24)
+        }
+        .zIndex(20)
+    }
+
+    private func resultDialog(message: String) -> some View {
+        ZStack {
+            Color.black.opacity(0.24).ignoresSafeArea()
+            VStack(alignment: .leading, spacing: 14) {
+                Text("群发结果")
+                    .font(.system(size: 19, weight: .bold))
+                    .foregroundStyle(RemoteIMStyle.textPrimary)
+                Text(message)
+                    .font(.system(size: 14))
+                    .foregroundStyle(RemoteIMStyle.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                dialogButton(title: "知道了", primary: true) {
+                    resultMessage = nil
+                    if dismissAfterResult { isPresented = false }
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: 360)
+            .background(
+                RemoteIMStyle.panelBackground,
+                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(RemoteIMStyle.border, lineWidth: 1)
+            )
+            .shadow(color: Color.black.opacity(0.2), radius: 24, y: 10)
+            .padding(.horizontal, 24)
+        }
+        .zIndex(30)
+    }
+
+    private func dialogButton(
+        title: String,
+        primary: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(title, action: action)
+            .buttonStyle(.plain)
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(primary ? Color.white : RemoteIMStyle.textPrimary)
+            .frame(maxWidth: .infinity)
+            .frame(height: 42)
+            .background(
+                primary ? RemoteIMStyle.blue : Color(.secondarySystemBackground),
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
+    }
+
+    private func cancel() {
+        guard !isSending else { return }
+        isPresented = false
     }
 
     private func sendBroadcast() {
@@ -759,9 +1020,11 @@ private struct BroadcastComposeView: View {
             let result = await appState.broadcastText(to: recipients, text: text)
             isSending = false
             if result.failedUserIDs.isEmpty {
+                dismissAfterResult = true
                 resultMessage = "\(result.total) 个人都收到了。"
                 return
             }
+            dismissAfterResult = false
             let failedNames = appState.chatState.contacts
                 .filter { result.failedUserIDs.contains($0.userID) }
                 .map(\.displayName)

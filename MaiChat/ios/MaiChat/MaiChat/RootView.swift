@@ -16,6 +16,7 @@ struct RootView: View {
     @State private var selectedTab: AppTab = .messages
     @State private var activeChatContact: RemoteIMContact?
     @State private var isShowingAddContact = false
+    @State private var isShowingBroadcast = false
     @State private var movingContact: RemoteIMContact?
 
     var body: some View {
@@ -40,6 +41,7 @@ struct RootView: View {
                                 selectedTab: $selectedTab,
                                 activeContact: $activeChatContact,
                                 movingContact: $movingContact,
+                                isShowingBroadcast: $isShowingBroadcast,
                                 showAddContact: {
                                     appState.newContactUserID = ""
                                     isShowingAddContact = true
@@ -75,9 +77,16 @@ struct RootView: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.96)))
                 .zIndex(20)
             }
+
+            if isShowingBroadcast, !appState.shouldShowInitialLogin {
+                BroadcastComposeDialog(isPresented: $isShowingBroadcast)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                    .zIndex(30)
+            }
         }
         .animation(.easeOut(duration: 0.18), value: isShowingAddContact)
         .animation(.easeOut(duration: 0.18), value: movingContact?.userID)
+        .animation(.easeOut(duration: 0.18), value: isShowingBroadcast)
         .background(Color(red: 0.966, green: 0.976, blue: 0.988).ignoresSafeArea())
         .task {
             if !appState.shouldShowInitialLogin {

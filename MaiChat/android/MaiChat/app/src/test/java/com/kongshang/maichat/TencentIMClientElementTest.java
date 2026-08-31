@@ -85,6 +85,11 @@ public class TencentIMClientElementTest {
         assertNotNull(received.get(0).imageAttachment());
         assertEquals("先文字后图片", received.get(0).text());
         assertTrue(received.get(0).captionAbove());
+        assertEquals("message-text-first-1", received.get(0).remoteId());
+        assertEquals(
+            new RemoteIMQuote("quoted-sdk-1", "desktop-peer", "被引用的原文", "text"),
+            received.get(0).quote()
+        );
     }
 
     private static final class FakeMessage extends V2TIMMessage {
@@ -126,7 +131,9 @@ public class TencentIMClientElementTest {
 
         @Override public String getCloudCustomData() {
             return "{\"namespace\":\"multi-ai-code\",\"version\":2,"
-                + "\"origin\":\"human\",\"captionAbove\":true}";
+                + "\"origin\":\"human\",\"captionAbove\":true,"
+                + "\"quote\":{\"msgId\":\"quoted-sdk-1\",\"sender\":\"desktop-peer\","
+                + "\"digest\":\"被引用的原文\",\"kind\":\"text\"}}";
         }
     }
 

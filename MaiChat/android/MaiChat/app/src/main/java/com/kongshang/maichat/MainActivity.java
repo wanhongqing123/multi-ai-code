@@ -78,6 +78,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public final class MainActivity extends Activity implements RemoteIMSessionController.Listener {
     private static final int REQUEST_PICK_IMAGE = 1001;
@@ -99,7 +101,9 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private GrowingMessageEditText messageInput;
     private String activeChatUserId;
     private String draftText = "";
+    private RemoteIMQuote pendingQuote;
     private String historyAnchorMessageId;
+    private String messageSearchTargetId;
     private boolean stickToLatestMessage = true;
     private ScrollView currentMessageScroll;
     private LinearLayout currentMessageContainer;
@@ -122,6 +126,12 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private String loginError = "";
     private String loginUserDraft = "";
     private String contactSearchQuery = "";
+    private String conversationSearchQuery = "";
+    private List<RemoteIMMessageSearchHit> messageSearchResults = Collections.emptyList();
+    private boolean messageSearchLoading;
+    private int messageSearchGeneration;
+    private LinearLayout currentConversationRows;
+    private final ExecutorService messageSearchExecutor = Executors.newSingleThreadExecutor();
     private String pendingNotificationPeerUserId = "";
     private boolean activityInForeground;
     private final Set<String> collapsedContactGroups = new HashSet<>();
@@ -172,6 +182,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         destroyed = true;
         stopAudioPlayback();
         cancelVoiceRecording();
+        messageSearchExecutor.shutdownNow();
         if (session != null) session.destroy();
         super.onDestroy();
     }
@@ -182,6 +193,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             hideKeyboard();
             session.setConversationVisible(activeChatUserId, false);
             activeChatUserId = null;
+            messageSearchTargetId = null;
+            pendingQuote = null;
             render();
             return;
         }
@@ -625,10 +638,12 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         content.addView(connectionHeader(), match(dp(42)));
         EditText search = new EditText(this);
         search.setSingleLine(true);
-        search.setHint("搜索联系人或最近消息");
+        search.setHint("搜索联系人或全部消息");
         search.setTextSize(14);
         search.setPadding(dp(14), 0, dp(14), 0);
         search.setBackground(MaiChatTheme.bordered(Color.WHITE, MaiChatTheme.BORDER, 10, this));
+        search.setText(conversationSearchQuery);
+        search.setSelection(search.length());
         LinearLayout.LayoutParams searchParams = match(dp(42));
         searchParams.setMargins(dp(16), dp(10), dp(16), dp(8));
         content.addView(search, searchParams);
@@ -637,22 +652,60 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         LinearLayout rows = new LinearLayout(this);
         rows.setOrientation(LinearLayout.VERTICAL);
         rows.setBackgroundColor(Color.WHITE);
+        currentConversationRows = rows;
         scroll.addView(rows, matchWrap());
         content.addView(scroll, new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             0,
             1
         ));
-        renderConversationRows(rows, "");
+        renderConversationRows(
+            rows,
+            conversationSearchQuery,
+            messageSearchResults,
+            messageSearchLoading
+        );
         search.addTextChangedListener(new SimpleTextWatcher() {
             @Override
             public void afterTextChanged(Editable editable) {
-                renderConversationRows(rows, editable.toString());
+                String query = editable == null ? "" : editable.toString();
+                conversationSearchQuery = query;
+                int generation = ++messageSearchGeneration;
+                messageSearchResults = Collections.emptyList();
+                messageSearchLoading = !query.trim().isEmpty();
+                renderConversationRows(rows, query, messageSearchResults, messageSearchLoading);
+                if (!messageSearchLoading) return;
+
+                search.postDelayed(() -> messageSearchExecutor.execute(() -> {
+                    List<RemoteIMMessageSearchHit> hits = session.searchMessages(query, 100);
+                    runOnUiThread(() -> {
+                        if (destroyed
+                            || generation != messageSearchGeneration
+                            || !query.equals(conversationSearchQuery)) return;
+                        messageSearchResults = hits;
+                        messageSearchLoading = false;
+                        if (currentConversationRows != null
+                            && activeTab == RemoteIMTab.MESSAGES
+                            && activeChatUserId == null) {
+                            renderConversationRows(
+                                currentConversationRows,
+                                conversationSearchQuery,
+                                messageSearchResults,
+                                false
+                            );
+                        }
+                    });
+                }), 250);
             }
         });
     }
 
-    private void renderConversationRows(LinearLayout rows, String queryValue) {
+    private void renderConversationRows(
+        LinearLayout rows,
+        String queryValue,
+        List<RemoteIMMessageSearchHit> messageHits,
+        boolean searchingMessages
+    ) {
         rows.removeAllViews();
         String query = queryValue == null ? "" : queryValue.trim().toLowerCase(Locale.ROOT);
         List<RemoteIMContact> contacts = new ArrayList<>(session.chatState().contacts());
@@ -672,9 +725,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             return Long.compare(rightTime, leftTime);
         });
 
-        if (contacts.isEmpty()) {
-            rows.addView(emptyState("○", "暂无会话", "到通讯录添加好友账号后即可开始聊天。"), match(dp(260)));
-            return;
+        if (!query.isEmpty() && !contacts.isEmpty()) {
+            rows.addView(searchSectionLabel("联系人"), match(dp(34)));
         }
         for (RemoteIMContact contact : contacts) {
             View rowContent = conversationRow(contact);
@@ -692,6 +744,68 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             );
             rows.addView(row, match(dp(72)));
         }
+
+        if (searchingMessages) {
+            TextView loading = MaiChatTheme.text(this, "正在搜索全部消息…", 13, MaiChatTheme.SECONDARY);
+            loading.setGravity(Gravity.CENTER_VERTICAL);
+            loading.setPadding(dp(16), 0, dp(16), 0);
+            rows.addView(loading, match(dp(48)));
+        } else if (!query.isEmpty() && messageHits != null && !messageHits.isEmpty()) {
+            rows.addView(searchSectionLabel("消息"), match(dp(34)));
+            for (RemoteIMMessageSearchHit hit : messageHits) {
+                rows.addView(messageSearchResultRow(hit), match(dp(72)));
+            }
+        }
+
+        if (contacts.isEmpty()
+            && !searchingMessages
+            && (messageHits == null || messageHits.isEmpty())) {
+            String title = query.isEmpty() ? "暂无会话" : "没有搜索结果";
+            String detail = query.isEmpty()
+                ? "到通讯录添加好友账号后即可开始聊天。"
+                : "换个关键词再试试。";
+            rows.addView(emptyState("○", title, detail), match(dp(260)));
+        }
+    }
+
+    private TextView searchSectionLabel(String title) {
+        TextView label = MaiChatTheme.label(this, title, 12, MaiChatTheme.SECONDARY);
+        label.setGravity(Gravity.BOTTOM);
+        label.setPadding(dp(16), 0, dp(16), dp(6));
+        label.setBackgroundColor(MaiChatTheme.PAGE);
+        return label;
+    }
+
+    private View messageSearchResultRow(RemoteIMMessageSearchHit hit) {
+        RemoteIMContact contact = contact(hit.peerUserId());
+        RemoteIMMessage message = hit.message();
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.VERTICAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(16), dp(7), dp(16), dp(7));
+        row.setBackgroundColor(Color.WHITE);
+
+        LinearLayout heading = new LinearLayout(this);
+        heading.setGravity(Gravity.CENTER_VERTICAL);
+        TextView name = MaiChatTheme.label(
+            this,
+            contact == null ? hit.peerUserId() : contact.displayName(),
+            14,
+            MaiChatTheme.TEXT
+        );
+        heading.addView(name, new LinearLayout.LayoutParams(0, dp(24), 1));
+        heading.addView(
+            MaiChatTheme.text(this, timestamp(message.createdAtMillis()), 11, MaiChatTheme.SECONDARY),
+            wrapWrap()
+        );
+        row.addView(heading, match(dp(24)));
+
+        TextView digest = MaiChatTheme.text(this, message.text(), 13, MaiChatTheme.SECONDARY);
+        digest.setSingleLine(true);
+        digest.setEllipsize(TextUtils.TruncateAt.END);
+        row.addView(digest, match(dp(26)));
+        row.setOnClickListener(view -> openMessageSearchHit(hit));
+        return row;
     }
 
     private View conversationRow(RemoteIMContact contact) {
@@ -749,6 +863,23 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         stickToLatestMessage = true;
         preservedScrollAnchorId = null;
         historyAnchorMessageId = null;
+        messageSearchTargetId = null;
+        pendingQuote = null;
+        lastRenderedLatestMessageId = null;
+        hasUnseenLatestMessage = false;
+        render();
+    }
+
+    private void openMessageSearchHit(RemoteIMMessageSearchHit hit) {
+        RemoteIMContact opened = session.openMessageSearchHit(hit);
+        if (opened == null) return;
+        session.setConversationVisible(opened.userId(), true);
+        activeChatUserId = opened.userId();
+        activeTab = RemoteIMTab.MESSAGES;
+        stickToLatestMessage = false;
+        preservedScrollAnchorId = null;
+        historyAnchorMessageId = null;
+        messageSearchTargetId = hit.message().id();
         lastRenderedLatestMessageId = null;
         hasUnseenLatestMessage = false;
         render();
@@ -847,7 +978,14 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             }
         });
         messageScroll.post(() -> {
-            if (historyAnchorMessageId != null) {
+            if (messageSearchTargetId != null) {
+                View target = messages.findViewWithTag(messageSearchTargetId);
+                if (target != null) {
+                    int offset = Math.max(0, (messageScroll.getHeight() - target.getHeight()) / 3);
+                    messageScroll.scrollTo(0, Math.max(0, target.getTop() - offset));
+                }
+                messageSearchTargetId = null;
+            } else if (historyAnchorMessageId != null) {
                 View anchor = messages.findViewWithTag(historyAnchorMessageId);
                 if (anchor != null) messageScroll.scrollTo(0, anchor.getTop());
                 historyAnchorMessageId = null;
@@ -883,6 +1021,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             hideKeyboard();
             session.setConversationVisible(contact.userId(), false);
             activeChatUserId = null;
+            pendingQuote = null;
+            messageSearchTargetId = null;
             render();
         });
         header.addView(back, new LinearLayout.LayoutParams(dp(38), dp(42)));
@@ -952,6 +1092,10 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             MaiChatTheme.SECONDARY
         );
         bubble.addView(meta, match(dp(20)));
+
+        if (message.quote() != null) {
+            bubble.addView(quoteBlock(message.quote(), peer), matchWrap());
+        }
 
         String attachmentCaption = RemoteIMAttachmentCaptionPolicy.caption(message);
         RemoteIMAttachmentCaptionPolicy.Placement captionPlacement =
@@ -1028,6 +1172,91 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         body.setLineSpacing(0, 1.15f);
         body.setPadding(0, dp(5), 0, dp(5));
         return body;
+    }
+
+    private View quoteBlock(RemoteIMQuote quote, RemoteIMContact peer) {
+        LinearLayout block = new LinearLayout(this);
+        block.setOrientation(LinearLayout.HORIZONTAL);
+        block.setGravity(Gravity.CENTER_VERTICAL);
+        block.setPadding(dp(8), dp(7), dp(10), dp(7));
+        block.setBackground(MaiChatTheme.rounded(MaiChatTheme.BLUE_SOFT, 8, this));
+
+        View accent = new View(this);
+        accent.setBackground(MaiChatTheme.rounded(MaiChatTheme.BLUE, 2, this));
+        LinearLayout.LayoutParams accentParams = new LinearLayout.LayoutParams(dp(3), dp(30));
+        accentParams.setMargins(0, 0, dp(8), 0);
+        block.addView(accent, accentParams);
+
+        String sender = quoteSenderName(quote.senderId(), peer);
+        TextView text = MaiChatTheme.text(
+            this,
+            sender.isEmpty() ? quote.digest() : sender + "：" + quote.digest(),
+            12,
+            MaiChatTheme.SECONDARY
+        );
+        text.setMaxLines(2);
+        text.setEllipsize(TextUtils.TruncateAt.END);
+        block.addView(text, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        if (!quote.messageId().isEmpty()) {
+            block.setClickable(true);
+            block.setFocusable(true);
+            block.setOnClickListener(view -> jumpToQuotedMessage(quote));
+            block.setContentDescription("跳到引用的消息：" + text.getText());
+        }
+        LinearLayout.LayoutParams params = matchWrap();
+        params.setMargins(0, dp(5), 0, dp(5));
+        block.setLayoutParams(params);
+        return block;
+    }
+
+    private View pendingQuoteBar(RemoteIMQuote quote) {
+        LinearLayout bar = new LinearLayout(this);
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setPadding(dp(10), 0, dp(4), 0);
+        bar.setBackground(MaiChatTheme.rounded(MaiChatTheme.BLUE_SOFT, 9, this));
+
+        String sender = quoteSenderName(quote.senderId(), contact(activeChatUserId));
+        TextView text = MaiChatTheme.text(
+            this,
+            sender.isEmpty() ? quote.digest() : "回复 " + sender + "：" + quote.digest(),
+            12,
+            MaiChatTheme.SECONDARY
+        );
+        text.setSingleLine(true);
+        text.setEllipsize(TextUtils.TruncateAt.END);
+        bar.addView(text, new LinearLayout.LayoutParams(0, dp(42), 1));
+
+        TextView close = iconButton("×", 18, MaiChatTheme.SECONDARY);
+        close.setGravity(Gravity.CENTER);
+        close.setContentDescription("取消引用回复");
+        close.setOnClickListener(view -> {
+            pendingQuote = null;
+            render();
+        });
+        bar.addView(close, new LinearLayout.LayoutParams(dp(38), dp(38)));
+        return bar;
+    }
+
+    private String quoteSenderName(String senderId, RemoteIMContact peer) {
+        String cleanSender = senderId == null ? "" : senderId.trim();
+        if (cleanSender.isEmpty()) return "";
+        if (cleanSender.equals(session.chatState().ownerUserId())) return "我";
+        if (peer != null && cleanSender.equals(peer.userId())) return peer.displayName();
+        RemoteIMContact contact = contact(cleanSender);
+        return contact == null ? cleanSender : contact.displayName();
+    }
+
+    private void jumpToQuotedMessage(RemoteIMQuote quote) {
+        if (activeChatUserId == null || quote == null || quote.messageId().isEmpty()) return;
+        RemoteIMMessage target = session.findQuotedMessage(activeChatUserId, quote.messageId());
+        if (target == null) {
+            toast("原消息不在本地记录中");
+            return;
+        }
+        messageSearchTargetId = target.id();
+        stickToLatestMessage = false;
+        render();
     }
 
     private View approvalActions(
@@ -1144,6 +1373,10 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         wrapper.setOrientation(LinearLayout.VERTICAL);
         wrapper.setPadding(dp(16), dp(9), dp(16), dp(10));
         wrapper.setBackgroundColor(Color.WHITE);
+
+        if (pendingQuote != null) {
+            wrapper.addView(pendingQuoteBar(pendingQuote), match(dp(42)));
+        }
 
         LinearLayout suggestions = new LinearLayout(this);
         suggestions.setOrientation(LinearLayout.VERTICAL);
@@ -2147,8 +2380,9 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         String text = messageInput.getText().toString().trim();
         if (text.isEmpty()) return;
         try {
-            session.sendTextMessage(text);
+            session.sendTextMessage(text, pendingQuote);
             draftText = "";
+            pendingQuote = null;
             stickToLatestMessage = true;
             render();
         } catch (IOException | IllegalStateException error) {
@@ -2712,6 +2946,17 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         card.setBackground(MaiChatTheme.rounded(Color.WHITE, 14, this));
         TextView copy = popupTextButton("复制消息内容");
         TextView copyFull = popupTextButton("复制完整信息");
+        TextView reply = popupTextButton("引用回复");
+        reply.setOnClickListener(view -> {
+            pendingQuote = MessageQuote.from(message);
+            dialog.dismiss();
+            render();
+            if (messageInput != null) {
+                messageInput.requestFocus();
+                messageInput.post(() -> ((InputMethodManager) getSystemService(INPUT_METHOD_SERVICE))
+                    .showSoftInput(messageInput, InputMethodManager.SHOW_IMPLICIT));
+            }
+        });
         copy.setOnClickListener(view -> {
             copyToClipboard(message.text());
             dialog.dismiss();
@@ -2720,6 +2965,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             copyToClipboard(fullMessageText(message));
             dialog.dismiss();
         });
+        card.addView(reply, match(dp(46)));
         card.addView(copy, match(dp(46)));
         card.addView(copyFull, match(dp(46)));
         dialog.setContentView(card);

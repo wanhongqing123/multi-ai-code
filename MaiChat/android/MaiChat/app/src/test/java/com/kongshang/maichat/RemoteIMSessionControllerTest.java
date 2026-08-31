@@ -12,6 +12,42 @@ import java.util.List;
 
 public class RemoteIMSessionControllerTest {
     @Test
+    public void searchesHistoryAndOpensTheMatchedConversation() throws Exception {
+        Path root = Files.createTempDirectory("maichat-android-session-search");
+        RemoteIMSessionController session = newSession(root);
+        session.login("android-user");
+        session.addContact("alice");
+        session.addContact("bob");
+        session.chatState().selectPeer("alice");
+        session.sendTextMessage("唯一搜索词");
+        session.chatState().selectPeer("bob");
+
+        List<RemoteIMMessageSearchHit> hits = session.searchMessages("唯一搜索词", 20);
+
+        assertEquals(1, hits.size());
+        assertEquals("alice", hits.get(0).peerUserId());
+        assertEquals("alice", session.openMessageSearchHit(hits.get(0)).userId());
+        assertEquals("alice", session.chatState().selectedPeerId());
+    }
+
+    @Test
+    public void sendsTextWithQuoteSnapshotAttached() throws Exception {
+        RemoteIMSessionController session = newSession();
+        session.login("android-user");
+        RemoteIMQuote quote = new RemoteIMQuote(
+            "sdk-original-1",
+            "mac-office",
+            "原始消息",
+            "text"
+        );
+
+        RemoteIMMessage sent = session.sendTextMessage("回复正文", quote);
+
+        assertEquals(quote, sent.quote());
+        assertEquals(RemoteIMMessage.Status.SENT, sent.status());
+    }
+
+    @Test
     public void broadcastQueuesSeparatePrivateMessagesAndDeduplicatesRecipients() throws Exception {
         Path root = Files.createTempDirectory("maichat-android-session-broadcast");
         RemoteIMSessionController session = newSession(root);

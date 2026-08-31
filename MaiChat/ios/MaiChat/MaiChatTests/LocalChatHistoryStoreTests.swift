@@ -82,6 +82,50 @@ final class LocalChatHistoryStoreTests: XCTestCase {
         XCTAssertNotNil(restored.imageAttachment)
     }
 
+    func testPersistsQuoteSnapshotAndFindsOriginalByRemoteID() throws {
+        let directoryURL = makeTemporaryDirectoryURL()
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+        let store = LocalChatHistoryStore(baseDirectoryURL: directoryURL)
+        let original = RemoteIMMessage(
+            remoteID: "sdk-original-1",
+            fromUserID: "mac-quark-pc",
+            toUserID: "ios-master",
+            text: "原始消息",
+            direction: .incoming,
+            status: .received,
+            createdAt: Date(timeIntervalSince1970: 301)
+        )
+        let quote = RemoteIMQuote(
+            messageID: "sdk-original-1",
+            senderID: "mac-quark-pc",
+            digest: "原始消息",
+            kind: "text"
+        )
+        let reply = RemoteIMMessage(
+            remoteID: "sdk-reply-1",
+            fromUserID: "ios-master",
+            toUserID: "mac-quark-pc",
+            text: "回复正文",
+            quote: quote,
+            direction: .outgoing,
+            status: .sent,
+            createdAt: Date(timeIntervalSince1970: 302)
+        )
+        try persist([original, reply], in: store)
+
+        let messages = try conversationMessages(in: store, peerUserID: "mac-quark-pc")
+        XCTAssertEqual(messages.last?.quote, quote)
+        XCTAssertEqual(
+            try store.message(
+                remoteID: "sdk-original-1",
+                sdkAppID: 1_600_148_979,
+                ownerUserID: "ios-master",
+                peerUserID: "mac-quark-pc"
+            ),
+            original
+        )
+    }
+
     func testPersistsStructuredApprovalRequestWithoutParsingMessageText() throws {
         let directoryURL = makeTemporaryDirectoryURL()
         defer { try? FileManager.default.removeItem(at: directoryURL) }

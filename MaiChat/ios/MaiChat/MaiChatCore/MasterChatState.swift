@@ -147,6 +147,20 @@ public enum RemoteIMMessageOrigin: String, Codable, Equatable, Sendable {
     case machine
 }
 
+public struct RemoteIMQuote: Codable, Equatable, Sendable {
+    public let messageID: String
+    public let senderID: String
+    public let digest: String
+    public let kind: String
+
+    public init(messageID: String = "", senderID: String, digest: String, kind: String) {
+        self.messageID = messageID.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.senderID = senderID.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.digest = digest.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.kind = kind.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 public enum RemoteIMTextInteraction: Equatable, Sendable {
     case approvalRequest(RemoteIMApprovalRequest)
     case approvalDecision(token: String, action: RemoteIMApprovalAction)
@@ -156,15 +170,18 @@ public struct RemoteIMCloudMetadata: Equatable, Sendable {
     public let origin: RemoteIMMessageOrigin
     public let interaction: RemoteIMTextInteraction?
     public let captionAbove: Bool
+    public let quote: RemoteIMQuote?
 
     public init(
         origin: RemoteIMMessageOrigin,
         interaction: RemoteIMTextInteraction? = nil,
-        captionAbove: Bool = false
+        captionAbove: Bool = false,
+        quote: RemoteIMQuote? = nil
     ) {
         self.origin = origin
         self.interaction = interaction
         self.captionAbove = captionAbove
+        self.quote = quote
     }
 
     public var approvalRequest: RemoteIMApprovalRequest? {
@@ -196,6 +213,35 @@ public enum RemoteIMCloudMetadataCodec {
         let origin: String
         let interaction: WireInteraction?
         let captionAbove: Bool?
+        let quote: WireQuote?
+    }
+
+    private struct WireQuote: Codable {
+        let msgId: String?
+        let sender: String?
+        let digest: String?
+        let kind: String?
+
+        init(msgId: String?, sender: String?, digest: String?, kind: String?) {
+            self.msgId = msgId
+            self.sender = sender
+            self.digest = digest
+            self.kind = kind
+        }
+
+        init(from decoder: Decoder) throws {
+            guard let container = try? decoder.container(keyedBy: CodingKeys.self) else {
+                msgId = nil
+                sender = nil
+                digest = nil
+                kind = nil
+                return
+            }
+            msgId = try? container.decode(String.self, forKey: .msgId)
+            sender = try? container.decode(String.self, forKey: .sender)
+            digest = try? container.decode(String.self, forKey: .digest)
+            kind = try? container.decode(String.self, forKey: .kind)
+        }
     }
 
     public static func encode(_ metadata: RemoteIMCloudMetadata) -> Data {
@@ -220,12 +266,22 @@ public enum RemoteIMCloudMetadataCodec {
         case nil:
             wireInteraction = nil
         }
+        let wireQuote = metadata.quote.flatMap { quote -> WireQuote? in
+            guard !quote.digest.isEmpty else { return nil }
+            return WireQuote(
+                msgId: quote.messageID.isEmpty ? nil : quote.messageID,
+                sender: quote.senderID,
+                digest: quote.digest,
+                kind: quote.kind
+            )
+        }
         return try! JSONEncoder().encode(WireMetadata(
             namespace: namespace,
             version: version,
             origin: metadata.origin.rawValue,
             interaction: wireInteraction,
-            captionAbove: metadata.captionAbove ? true : nil
+            captionAbove: metadata.captionAbove ? true : nil,
+            quote: wireQuote
         ))
     }
 
@@ -233,11 +289,16 @@ public enum RemoteIMCloudMetadataCodec {
         guard let data,
               let wire = try? JSONDecoder().decode(WireMetadata.self, from: data),
               wire.namespace == namespace,
-              wire.version == version,
+              wire.version >= version,
               let origin = RemoteIMMessageOrigin(rawValue: wire.origin)
         else { return nil }
+        let quote = decodedQuote(wire.quote)
         guard let interaction = wire.interaction else {
-            return RemoteIMCloudMetadata(origin: origin, captionAbove: wire.captionAbove == true)
+            return RemoteIMCloudMetadata(
+                origin: origin,
+                captionAbove: wire.captionAbove == true,
+                quote: quote
+            )
         }
 
         if interaction.kind == "approval-request",
@@ -253,7 +314,8 @@ public enum RemoteIMCloudMetadataCodec {
             return RemoteIMCloudMetadata(
                 origin: origin,
                 interaction: .approvalRequest(request),
-                captionAbove: wire.captionAbove == true
+                captionAbove: wire.captionAbove == true,
+                quote: quote
             )
         }
 
@@ -268,7 +330,8 @@ public enum RemoteIMCloudMetadataCodec {
             return RemoteIMCloudMetadata(
                 origin: origin,
                 interaction: .approvalDecision(token: interaction.token, action: action),
-                captionAbove: wire.captionAbove == true
+                captionAbove: wire.captionAbove == true,
+                quote: quote
             )
         }
         if interaction.kind == "approval-resolved",
@@ -283,10 +346,27 @@ public enum RemoteIMCloudMetadataCodec {
             return RemoteIMCloudMetadata(
                 origin: origin,
                 interaction: .approvalDecision(token: interaction.token, action: action),
-                captionAbove: wire.captionAbove == true
+                captionAbove: wire.captionAbove == true,
+                quote: quote
             )
         }
         return nil
+    }
+
+    private static func decodedQuote(_ wire: WireQuote?) -> RemoteIMQuote? {
+        guard let digest = clamped(wire?.digest, limit: 200), !digest.isEmpty else { return nil }
+        return RemoteIMQuote(
+            messageID: clamped(wire?.msgId, limit: 256) ?? "",
+            senderID: clamped(wire?.sender, limit: 256) ?? "",
+            digest: digest,
+            kind: clamped(wire?.kind, limit: 256) ?? ""
+        )
+    }
+
+    private static func clamped(_ value: String?, limit: Int) -> String? {
+        guard let value else { return nil }
+        let clean = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return String(clean.prefix(limit))
     }
 }
 
@@ -1052,6 +1132,7 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
     public let toUserID: String
     public var text: String
     public var captionAbove: Bool
+    public var quote: RemoteIMQuote?
     public let voiceAttachment: RemoteIMVoiceAttachment?
     public let imageAttachment: RemoteIMImageAttachment?
     public let fileAttachment: RemoteIMFileAttachment?
@@ -1069,6 +1150,7 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
         toUserID: String,
         text: String,
         captionAbove: Bool = false,
+        quote: RemoteIMQuote? = nil,
         voiceAttachment: RemoteIMVoiceAttachment? = nil,
         imageAttachment: RemoteIMImageAttachment? = nil,
         fileAttachment: RemoteIMFileAttachment? = nil,
@@ -1085,6 +1167,7 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
         self.toUserID = toUserID
         self.text = text
         self.captionAbove = captionAbove
+        self.quote = quote
         self.voiceAttachment = voiceAttachment
         self.imageAttachment = imageAttachment
         self.fileAttachment = fileAttachment
@@ -1103,6 +1186,7 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
         case toUserID
         case text
         case captionAbove
+        case quote
         case voiceAttachment
         case imageAttachment
         case fileAttachment
@@ -1125,6 +1209,7 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
         toUserID = try container.decode(String.self, forKey: .toUserID)
         text = try container.decode(String.self, forKey: .text)
         captionAbove = try container.decodeIfPresent(Bool.self, forKey: .captionAbove) ?? false
+        quote = try container.decodeIfPresent(RemoteIMQuote.self, forKey: .quote)
         voiceAttachment = try container.decodeIfPresent(RemoteIMVoiceAttachment.self, forKey: .voiceAttachment)
         imageAttachment = try container.decodeIfPresent(RemoteIMImageAttachment.self, forKey: .imageAttachment)
         fileAttachment = try container.decodeIfPresent(RemoteIMFileAttachment.self, forKey: .fileAttachment)
@@ -1146,6 +1231,7 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
         if captionAbove {
             try container.encode(true, forKey: .captionAbove)
         }
+        try container.encodeIfPresent(quote, forKey: .quote)
         try container.encodeIfPresent(voiceAttachment, forKey: .voiceAttachment)
         try container.encodeIfPresent(imageAttachment, forKey: .imageAttachment)
         try container.encodeIfPresent(fileAttachment, forKey: .fileAttachment)
@@ -1171,6 +1257,61 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
 
     public var isVideoMessage: Bool {
         videoAttachment != nil
+    }
+}
+
+public enum RemoteIMMessageQuotePolicy {
+    public static let digestLimit = 120
+
+    public static func quote(for message: RemoteIMMessage) -> RemoteIMQuote? {
+        let digest = digest(for: message)
+        guard !digest.isEmpty else { return nil }
+        return RemoteIMQuote(
+            messageID: message.remoteID ?? "",
+            senderID: message.fromUserID,
+            digest: digest,
+            kind: kind(for: message)
+        )
+    }
+
+    public static func kind(for message: RemoteIMMessage) -> String {
+        if message.imageAttachment != nil { return "image" }
+        if message.videoAttachment != nil { return "video" }
+        if message.voiceAttachment != nil { return "voice" }
+        if message.fileAttachment != nil { return "file" }
+        return "text"
+    }
+
+    public static func digest(for message: RemoteIMMessage) -> String {
+        let caption = authoredCaption(message.text)
+        if message.imageAttachment != nil { return clamped(caption.isEmpty ? "[图片]" : caption) }
+        if message.videoAttachment != nil { return clamped(caption.isEmpty ? "[视频]" : caption) }
+        if message.voiceAttachment != nil { return clamped(caption.isEmpty ? "[语音]" : caption) }
+        if let file = message.fileAttachment {
+            if !caption.isEmpty { return clamped(caption) }
+            let raw = file.fileName.isEmpty ? file.localFilePath : file.fileName
+            let name = (raw.replacingOccurrences(of: "\\", with: "/") as NSString)
+                .lastPathComponent
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return clamped(name.isEmpty ? "[文件]" : "[文件] \(name)")
+        }
+        return clamped(caption)
+    }
+
+    private static func authoredCaption(_ value: String) -> String {
+        let clean = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !["[图片消息] ", "[文件消息] ", "[视频消息] ", "[语音消息] "]
+            .contains(where: clean.hasPrefix)
+        else { return "" }
+        return clean
+    }
+
+    private static func clamped(_ value: String) -> String {
+        let clean = value
+            .split(whereSeparator: \Character.isWhitespace)
+            .joined(separator: " ")
+        guard clean.count > digestLimit else { return clean }
+        return String(clean.prefix(digestLimit)) + "…"
     }
 }
 
@@ -1634,18 +1775,20 @@ public struct MasterChatState: Equatable {
     @discardableResult
     public mutating func queueOutgoingText(
         _ text: String,
+        quote: RemoteIMQuote? = nil,
         now: Date = Date()
     ) throws -> RemoteIMMessage {
         guard let peerID = selectedPeerID, !peerID.isEmpty else {
             throw MasterChatStateError.noSelectedPeer
         }
-        return try queueOutgoingText(to: peerID, text: text, now: now)
+        return try queueOutgoingText(to: peerID, text: text, quote: quote, now: now)
     }
 
     @discardableResult
     public mutating func queueOutgoingText(
         to peerID: String,
         text: String,
+        quote: RemoteIMQuote? = nil,
         now: Date = Date()
     ) throws -> RemoteIMMessage {
         let cleanText = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1656,6 +1799,7 @@ public struct MasterChatState: Equatable {
             fromUserID: ownerUserID,
             toUserID: cleanPeerID,
             text: cleanText,
+            quote: quote,
             direction: .outgoing,
             status: .pending,
             createdAt: now
@@ -1830,6 +1974,7 @@ public struct MasterChatState: Equatable {
         remoteID: String? = nil,
         approvalRequest: RemoteIMApprovalRequest? = nil,
         approvalDecision: RemoteIMApprovalDecision? = nil,
+        quote: RemoteIMQuote? = nil,
         now: Date = Date()
     ) -> RemoteIMMessage {
         if let existing = existingMessage(remoteID: remoteID) {
@@ -1841,6 +1986,7 @@ public struct MasterChatState: Equatable {
             fromUserID: cleanFromUserID,
             toUserID: ownerUserID,
             text: Self.incomingDisplayText(text),
+            quote: quote,
             approvalRequest: approvalRequest,
             approvalDecision: approvalDecision,
             direction: .incoming,
@@ -1858,6 +2004,7 @@ public struct MasterChatState: Equatable {
         durationSeconds: Int,
         fromUserID: String,
         remoteID: String? = nil,
+        quote: RemoteIMQuote? = nil,
         now: Date = Date()
     ) -> RemoteIMMessage {
         if let existing = existingMessage(remoteID: remoteID) {
@@ -1874,6 +2021,7 @@ public struct MasterChatState: Equatable {
             fromUserID: cleanFromUserID,
             toUserID: ownerUserID,
             text: Self.voiceDisplayText(durationSeconds: voiceAttachment.durationSeconds),
+            quote: quote,
             voiceAttachment: voiceAttachment,
             direction: .incoming,
             status: .received,
@@ -1894,6 +2042,7 @@ public struct MasterChatState: Equatable {
         sizeBytes: Int? = nil,
         caption: String? = nil,
         captionAbove: Bool = false,
+        quote: RemoteIMQuote? = nil,
         now: Date = Date()
     ) -> RemoteIMMessage {
         if let existing = existingMessage(remoteID: remoteID) {
@@ -1917,6 +2066,7 @@ public struct MasterChatState: Equatable {
                 ? cleanCaption!
                 : Self.imageDisplayText(filePath: cleanFilePath),
             captionAbove: cleanCaption?.isEmpty == false && captionAbove,
+            quote: quote,
             imageAttachment: imageAttachment,
             direction: .incoming,
             status: .received,
@@ -1939,6 +2089,7 @@ public struct MasterChatState: Equatable {
         remoteID: String? = nil,
         caption: String? = nil,
         captionAbove: Bool = false,
+        quote: RemoteIMQuote? = nil,
         now: Date = Date()
     ) -> RemoteIMMessage {
         let cleanFilePath = filePath.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1989,6 +2140,7 @@ public struct MasterChatState: Equatable {
                 ? cleanCaption!
                 : Self.videoDisplayText(durationSeconds: attachment.durationSeconds),
             captionAbove: cleanCaption?.isEmpty == false && captionAbove,
+            quote: quote,
             videoAttachment: attachment,
             direction: .incoming,
             status: .received,
@@ -2009,6 +2161,7 @@ public struct MasterChatState: Equatable {
         sizeBytes: Int? = nil,
         caption: String? = nil,
         captionAbove: Bool = false,
+        quote: RemoteIMQuote? = nil,
         now: Date = Date()
     ) -> RemoteIMMessage {
         if let existing = existingMessage(remoteID: remoteID) {
@@ -2032,6 +2185,7 @@ public struct MasterChatState: Equatable {
                 ? cleanCaption!
                 : Self.fileDisplayText(fileName: fileAttachment.fileName, filePath: cleanFilePath),
             captionAbove: cleanCaption?.isEmpty == false && captionAbove,
+            quote: quote,
             fileAttachment: fileAttachment,
             direction: .incoming,
             status: .received,

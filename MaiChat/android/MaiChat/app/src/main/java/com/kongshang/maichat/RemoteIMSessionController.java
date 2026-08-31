@@ -43,6 +43,8 @@ public final class RemoteIMSessionController {
     private final Map<String, Integer> unreadByUserId = new HashMap<>();
     private final Map<String, TencentIMClient.PresenceStatus> presenceByUserId = new HashMap<>();
     private final Map<String, Boolean> hasEarlierByUserId = new HashMap<>();
+    private final Map<String, Long> oldestLoadedCreatedAtByUserId = new HashMap<>();
+    private final Map<String, String> oldestLoadedMessageIdByUserId = new HashMap<>();
     private final boolean productionMode;
 
     private RemoteIMSettings settings;
@@ -131,6 +133,8 @@ public final class RemoteIMSessionController {
         unreadByUserId.clear();
         presenceByUserId.clear();
         hasEarlierByUserId.clear();
+        oldestLoadedCreatedAtByUserId.clear();
+        oldestLoadedMessageIdByUserId.clear();
         if (productionMode) {
             connect();
         } else {
@@ -146,6 +150,8 @@ public final class RemoteIMSessionController {
         unreadByUserId.clear();
         presenceByUserId.clear();
         hasEarlierByUserId.clear();
+        oldestLoadedCreatedAtByUserId.clear();
+        oldestLoadedMessageIdByUserId.clear();
         visibleConversationUserId = "";
         if (productionMode) {
             if (remoteDesktop != null) remoteDesktop.stop();
@@ -203,6 +209,8 @@ public final class RemoteIMSessionController {
                     unreadByUserId.remove(cleanUserId);
                     presenceByUserId.remove(cleanUserId);
                     hasEarlierByUserId.remove(cleanUserId);
+                    oldestLoadedCreatedAtByUserId.remove(cleanUserId);
+                    oldestLoadedMessageIdByUserId.remove(cleanUserId);
                     notifyStateChanged();
                 });
             }
@@ -298,6 +306,8 @@ public final class RemoteIMSessionController {
                     historyStore.deleteConversation(chatState.ownerUserId(), cleanUserId);
                     unreadByUserId.remove(cleanUserId);
                     hasEarlierByUserId.put(cleanUserId, false);
+                    oldestLoadedCreatedAtByUserId.remove(cleanUserId);
+                    oldestLoadedMessageIdByUserId.remove(cleanUserId);
                     notifyStateChanged();
                 });
             }
@@ -313,7 +323,12 @@ public final class RemoteIMSessionController {
     }
 
     public RemoteIMMessage sendTextMessage(String text) throws IOException {
+        return sendTextMessage(text, null);
+    }
+
+    public RemoteIMMessage sendTextMessage(String text, RemoteIMQuote quote) throws IOException {
         RemoteIMMessage message = chatState.queueOutgoingText(text);
+        message.setQuote(quote);
         if (!productionMode) {
             markMessageSentAndSave(message);
             return message;
@@ -324,6 +339,7 @@ public final class RemoteIMSessionController {
             message.toUserId(),
             message.text(),
             RemoteIMOrigin.HUMAN,
+            quote,
             sendCompletion(message)
         );
         return message;
@@ -555,24 +571,89 @@ public final class RemoteIMSessionController {
         );
         chatState.mergeMessages(page.messages());
         hasEarlierByUserId.put(peerId, page.hasEarlier());
+        updateOldestLoadedCursor(peerId, page.messages());
     }
 
     public boolean loadEarlierMessages(String userId) {
         if (!productionMode) return false;
         String peerId = clean(userId);
-        List<RemoteIMMessage> current = chatState.messagesWith(peerId);
-        RemoteIMMessage oldest = current.isEmpty() ? null : current.get(0);
+        Long oldestCreatedAt = oldestLoadedCreatedAtByUserId.get(peerId);
+        String oldestMessageId = oldestLoadedMessageIdByUserId.get(peerId);
         AndroidChatHistoryStore.Page page = historyStore.loadConversationPage(
             chatState.ownerUserId(),
             peerId,
-            oldest == null ? null : oldest.createdAtMillis(),
-            oldest == null ? null : oldest.id(),
+            oldestCreatedAt,
+            oldestMessageId,
             50
         );
         chatState.mergeMessages(page.messages());
         hasEarlierByUserId.put(peerId, page.hasEarlier());
+        updateOldestLoadedCursor(peerId, page.messages());
         notifyStateChanged();
         return !page.messages().isEmpty();
+    }
+
+    public List<RemoteIMMessageSearchHit> searchMessages(String query, int limit) {
+        String cleanQuery = clean(query);
+        if (cleanQuery.isEmpty() || requiresLogin()) return Collections.emptyList();
+        if (productionMode) {
+            return historyStore.searchMessages(chatState.ownerUserId(), cleanQuery, limit);
+        }
+        List<RemoteIMMessageSearchHit> hits = new ArrayList<>();
+        String lowerQuery = cleanQuery.toLowerCase(java.util.Locale.ROOT);
+        for (RemoteIMContact contact : chatState.contacts()) {
+            for (RemoteIMMessage message : chatState.messagesWith(contact.userId())) {
+                if (message.text().toLowerCase(java.util.Locale.ROOT).contains(lowerQuery)) {
+                    hits.add(new RemoteIMMessageSearchHit(contact.userId(), message));
+                }
+            }
+        }
+        hits.sort((left, right) -> Long.compare(
+            right.message().createdAtMillis(),
+            left.message().createdAtMillis()
+        ));
+        return Collections.unmodifiableList(
+            new ArrayList<>(hits.subList(0, Math.min(Math.max(limit, 1), hits.size())))
+        );
+    }
+
+    public RemoteIMContact openMessageSearchHit(RemoteIMMessageSearchHit hit) {
+        if (hit == null) return null;
+        RemoteIMContact contact = null;
+        for (RemoteIMContact candidate : chatState.contacts()) {
+            if (candidate.userId().equals(hit.peerUserId())) {
+                contact = candidate;
+                break;
+            }
+        }
+        if (contact == null) return null;
+        selectContact(contact.userId());
+        loadInitialMessages(contact.userId());
+        chatState.mergeMessages(Collections.singletonList(hit.message()));
+        return contact;
+    }
+
+    public RemoteIMMessage findQuotedMessage(String peerUserId, String remoteId) {
+        String cleanPeerId = clean(peerUserId);
+        String cleanRemoteId = clean(remoteId);
+        if (cleanPeerId.isEmpty() || cleanRemoteId.isEmpty()) return null;
+        RemoteIMMessage inMemory = chatState.messageWithRemoteId(cleanRemoteId);
+        if (inMemory != null) return inMemory;
+        if (!productionMode) return null;
+        RemoteIMMessage stored = historyStore.messageWithRemoteId(
+            chatState.ownerUserId(),
+            cleanPeerId,
+            cleanRemoteId
+        );
+        if (stored != null) chatState.mergeMessages(Collections.singletonList(stored));
+        return stored;
+    }
+
+    private void updateOldestLoadedCursor(String peerId, List<RemoteIMMessage> pageMessages) {
+        if (pageMessages == null || pageMessages.isEmpty()) return;
+        RemoteIMMessage oldest = pageMessages.get(0);
+        oldestLoadedCreatedAtByUserId.put(peerId, oldest.createdAtMillis());
+        oldestLoadedMessageIdByUserId.put(peerId, oldest.id());
     }
 
     public boolean hasEarlierMessages(String userId) {

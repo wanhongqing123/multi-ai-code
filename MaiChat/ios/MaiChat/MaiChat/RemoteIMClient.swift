@@ -8,6 +8,7 @@ struct IncomingRemoteIMText: Equatable {
     let origin: RemoteIMMessageOrigin?
     let approvalRequest: RemoteIMApprovalRequest?
     let approvalDecision: RemoteIMApprovalDecision?
+    var quote: RemoteIMQuote? = nil
     let createdAt: Date
 }
 
@@ -17,6 +18,7 @@ struct IncomingRemoteIMVoice: Equatable {
     let durationSeconds: Int
     let remoteID: String?
     let origin: RemoteIMMessageOrigin?
+    var quote: RemoteIMQuote? = nil
     let createdAt: Date
 }
 
@@ -30,6 +32,7 @@ struct IncomingRemoteIMImage: Equatable {
     let caption: String?
     let captionAbove: Bool
     let origin: RemoteIMMessageOrigin?
+    var quote: RemoteIMQuote? = nil
     let createdAt: Date
 }
 
@@ -43,6 +46,7 @@ struct IncomingRemoteIMFile: Equatable {
     let caption: String?
     let captionAbove: Bool
     let origin: RemoteIMMessageOrigin?
+    var quote: RemoteIMQuote? = nil
     let createdAt: Date
 }
 
@@ -58,6 +62,7 @@ struct IncomingRemoteIMVideo: Equatable {
     let captionAbove: Bool
     let remoteID: String?
     let origin: RemoteIMMessageOrigin?
+    var quote: RemoteIMQuote? = nil
     let createdAt: Date
     let stage: RemoteIMVideoDownloadStage
 }
@@ -130,7 +135,12 @@ protocol RemoteIMClient: AnyObject {
 
     func connect(sdkAppID: Int, userID: String, userSig: String) async throws
     func disconnect() async
-    func sendText(to userID: String, text: String, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt
+    func sendText(
+        to userID: String,
+        text: String,
+        origin: RemoteIMMessageOrigin,
+        quote: RemoteIMQuote?
+    ) async throws -> RemoteIMSendReceipt
     func sendApprovalDecision(
         to userID: String,
         token: String,
@@ -151,7 +161,15 @@ protocol RemoteIMClient: AnyObject {
 extension RemoteIMClient {
     // Messages initiated from the MaiChat UI are human-originated by default.
     func sendText(to userID: String, text: String) async throws -> RemoteIMSendReceipt {
-        try await sendText(to: userID, text: text, origin: .human)
+        try await sendText(to: userID, text: text, origin: .human, quote: nil)
+    }
+
+    func sendText(
+        to userID: String,
+        text: String,
+        origin: RemoteIMMessageOrigin
+    ) async throws -> RemoteIMSendReceipt {
+        try await sendText(to: userID, text: text, origin: origin, quote: nil)
     }
 
     func sendVoice(to userID: String, recording: RemoteIMVoiceRecording) async throws -> RemoteIMSendReceipt {

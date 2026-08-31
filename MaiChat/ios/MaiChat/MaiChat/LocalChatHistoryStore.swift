@@ -233,7 +233,7 @@ final class LocalChatHistoryStore {
                 sql: """
                 SELECT id, remote_id, from_user, to_user, text, direction, status, created_at,
                        voice_attachment, image_attachment, file_attachment, video_attachment,
-                       approval_request, approval_decision, caption_above
+                       approval_request, approval_decision, caption_above, quote
                 FROM messages
                 WHERE sdk_app_id = ? AND owner_user_id = ?
                   AND peer_user_id = ?
@@ -301,7 +301,7 @@ final class LocalChatHistoryStore {
                 sql: """
                 SELECT id, remote_id, from_user, to_user, text, direction, status, created_at,
                        voice_attachment, image_attachment, file_attachment, video_attachment,
-                       approval_request, approval_decision, caption_above
+                       approval_request, approval_decision, caption_above, quote
                 FROM messages
                 WHERE sdk_app_id = ? AND owner_user_id = ? AND peer_user_id = ?
                 ORDER BY created_at DESC, id DESC
@@ -359,7 +359,7 @@ final class LocalChatHistoryStore {
                 sql: """
                 SELECT id, remote_id, from_user, to_user, text, direction, status, created_at,
                        voice_attachment, image_attachment, file_attachment, video_attachment,
-                       approval_request, approval_decision, caption_above,
+                       approval_request, approval_decision, caption_above, quote,
                        CASE
                            WHEN peer_user_id IS NULL OR peer_user_id = '' THEN
                                CASE WHEN from_user = owner_user_id THEN to_user ELSE from_user END
@@ -384,7 +384,7 @@ final class LocalChatHistoryStore {
             while true {
                 switch sqlite3_step(statement) {
                 case SQLITE_ROW:
-                    let peerUserID = textColumn(statement, at: 15)
+                    let peerUserID = textColumn(statement, at: 16)
                         .trimmingCharacters(in: .whitespacesAndNewlines)
                     if !peerUserID.isEmpty, let message = decodeMessage(from: statement) {
                         hits.append(LocalChatHistorySearchHit(
@@ -431,6 +431,49 @@ final class LocalChatHistoryStore {
                 return true
             case SQLITE_DONE:
                 return false
+            default:
+                throw databaseError(database)
+            }
+        }
+    }
+
+    func message(
+        remoteID: String,
+        sdkAppID: Int?,
+        ownerUserID: String,
+        peerUserID: String
+    ) throws -> RemoteIMMessage? {
+        let cleanRemoteID = remoteID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanOwnerUserID = ownerUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanPeerUserID = peerUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanRemoteID.isEmpty, !cleanOwnerUserID.isEmpty, !cleanPeerUserID.isEmpty else {
+            return nil
+        }
+        try migrateLegacyHistoryIfNeeded(sdkAppID: sdkAppID, ownerUserID: cleanOwnerUserID)
+        return try withDatabase { database in
+            let statement = try prepare(
+                database,
+                sql: """
+                SELECT id, remote_id, from_user, to_user, text, direction, status, created_at,
+                       voice_attachment, image_attachment, file_attachment, video_attachment,
+                       approval_request, approval_decision, caption_above, quote
+                FROM messages
+                WHERE sdk_app_id = ? AND owner_user_id = ?
+                  AND peer_user_id = ? AND remote_id = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """
+            )
+            defer { sqlite3_finalize(statement) }
+            try bindText(accountKey(for: sdkAppID), to: statement, at: 1, database: database)
+            try bindText(cleanOwnerUserID, to: statement, at: 2, database: database)
+            try bindText(cleanPeerUserID, to: statement, at: 3, database: database)
+            try bindText(cleanRemoteID, to: statement, at: 4, database: database)
+            switch sqlite3_step(statement) {
+            case SQLITE_ROW:
+                return decodeMessage(from: statement)
+            case SQLITE_DONE:
+                return nil
             default:
                 throw databaseError(database)
             }
@@ -562,6 +605,7 @@ final class LocalChatHistoryStore {
                   approval_request = excluded.approval_request,
                   approval_decision = excluded.approval_decision,
                   caption_above = excluded.caption_above,
+                  quote = excluded.quote,
                   peer_user_id = excluded.peer_user_id
               """
             : "DO NOTHING"
@@ -572,8 +616,8 @@ final class LocalChatHistoryStore {
                 sdk_app_id, owner_user_id, id, remote_id, from_user, to_user, text,
                 direction, status, created_at,
                 voice_attachment, image_attachment, file_attachment, video_attachment,
-                approval_request, approval_decision, caption_above, peer_user_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                approval_request, approval_decision, caption_above, quote, peer_user_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(sdk_app_id, owner_user_id, id) \(conflictClause)
             """
         )
@@ -654,10 +698,11 @@ final class LocalChatHistoryStore {
             try bindOptionalJSON(message.approvalRequest, to: statement, at: 15, database: database)
             try bindOptionalJSON(message.approvalDecision, to: statement, at: 16, database: database)
             sqlite3_bind_int(statement, 17, message.captionAbove ? 1 : 0)
+            try bindOptionalJSON(message.quote, to: statement, at: 18, database: database)
             let peerUserID = message.fromUserID == ownerUserID
                 ? message.toUserID
                 : message.fromUserID
-            try bindText(peerUserID, to: statement, at: 18, database: database)
+            try bindText(peerUserID, to: statement, at: 19, database: database)
             guard sqlite3_step(statement) == SQLITE_DONE else {
                 throw databaseError(database)
             }
@@ -753,6 +798,10 @@ final class LocalChatHistoryStore {
             toUserID: textColumn(statement, at: 3),
             text: textColumn(statement, at: 4),
             captionAbove: sqlite3_column_int(statement, 14) != 0,
+            quote: decodeOptionalJSON(
+                RemoteIMQuote.self,
+                from: optionalTextColumn(statement, at: 15)
+            ),
             voiceAttachment: voiceAttachment,
             imageAttachment: imageAttachment,
             fileAttachment: fileAttachment,
@@ -816,6 +865,7 @@ final class LocalChatHistoryStore {
                 approval_request TEXT,
                 approval_decision TEXT,
                 caption_above INTEGER NOT NULL DEFAULT 0,
+                quote TEXT,
                 peer_user_id TEXT,
                 PRIMARY KEY (sdk_app_id, owner_user_id, id)
             )
@@ -841,6 +891,9 @@ final class LocalChatHistoryStore {
                 database,
                 sql: "ALTER TABLE messages ADD COLUMN caption_above INTEGER NOT NULL DEFAULT 0"
             )
+        }
+        if try !columnExists("quote", in: "messages", database: database) {
+            try execute(database, sql: "ALTER TABLE messages ADD COLUMN quote TEXT")
         }
         if previousSchemaVersion < 3 {
             try execute(
@@ -1154,6 +1207,20 @@ actor LocalChatHistoryPersistence {
             remoteID: remoteID,
             sdkAppID: sdkAppID,
             ownerUserID: ownerUserID
+        )
+    }
+
+    func message(
+        remoteID: String,
+        sdkAppID: Int?,
+        ownerUserID: String,
+        peerUserID: String
+    ) throws -> RemoteIMMessage? {
+        try store.message(
+            remoteID: remoteID,
+            sdkAppID: sdkAppID,
+            ownerUserID: ownerUserID,
+            peerUserID: peerUserID
         )
     }
 

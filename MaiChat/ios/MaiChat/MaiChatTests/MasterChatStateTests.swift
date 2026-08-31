@@ -415,6 +415,55 @@ final class MasterChatStateTests: XCTestCase {
         )
     }
 
+    func testQuoteMetadataRoundTripsAndMalformedQuoteDoesNotPoisonOtherFields() {
+        let quote = RemoteIMQuote(
+            messageID: "sdk-message-1",
+            senderID: "mac",
+            digest: "第二步已经完成",
+            kind: "text"
+        )
+        let metadata = RemoteIMCloudMetadata(origin: .human, captionAbove: true, quote: quote)
+        XCTAssertEqual(
+            RemoteIMCloudMetadataCodec.decode(RemoteIMCloudMetadataCodec.encode(metadata)),
+            metadata
+        )
+        let malformed = RemoteIMCloudMetadataCodec.decode(Data(
+            #"{"namespace":"multi-ai-code","version":3,"origin":"human","captionAbove":true,"quote":"broken"}"#.utf8
+        ))
+        XCTAssertEqual(malformed?.origin, .human)
+        XCTAssertEqual(malformed?.captionAbove, true)
+        XCTAssertNil(malformed?.quote)
+    }
+
+    func testQuoteDigestHidesAttachmentPlaceholdersAndBasenamesFiles() {
+        let image = RemoteIMMessage(
+            remoteID: "image-sdk",
+            fromUserID: "mac",
+            toUserID: "ios",
+            text: "[图片消息] /private/photo.jpg",
+            imageAttachment: RemoteIMImageAttachment(localFilePath: "/private/photo.jpg"),
+            direction: .incoming,
+            status: .received,
+            createdAt: Date()
+        )
+        XCTAssertEqual(RemoteIMMessageQuotePolicy.quote(for: image)?.digest, "[图片]")
+
+        let file = RemoteIMMessage(
+            fromUserID: "mac",
+            toUserID: "ios",
+            text: "[文件消息] 2026年薪资表.xlsx",
+            fileAttachment: RemoteIMFileAttachment(
+                localFilePath: "/private/payroll.xlsx",
+                fileName: #"C:\薪资\2026年薪资表.xlsx"#,
+                mimeType: "application/xlsx"
+            ),
+            direction: .incoming,
+            status: .received,
+            createdAt: Date()
+        )
+        XCTAssertEqual(RemoteIMMessageQuotePolicy.quote(for: file)?.digest, "[文件] 2026年薪资表.xlsx")
+    }
+
     func testRemoteMessageDecodesLegacyHistoryWithoutCaptionPlacement() throws {
         let legacyJSON = #"{"id":"44444444-4444-4444-4444-444444444444","fromUserID":"mac","toUserID":"ios","text":"[图片消息] photo.png","direction":"incoming","status":"received","createdAt":0}"#
         let decoder = JSONDecoder()

@@ -32,6 +32,7 @@ public final class RemoteIMMessage {
     private final RemoteIMApprovalRequest approvalRequest;
     private final RemoteIMApprovalDecision approvalDecision;
     private boolean captionAbove;
+    private RemoteIMQuote quote;
 
     public RemoteIMMessage(
         String fromUserId,
@@ -319,6 +320,14 @@ public final class RemoteIMMessage {
         this.captionAbove = captionAbove;
     }
 
+    public RemoteIMQuote quote() {
+        return quote;
+    }
+
+    public void setQuote(RemoteIMQuote quote) {
+        this.quote = quote;
+    }
+
     private static String clean(String value) {
         return value == null ? "" : value.trim();
     }
@@ -341,6 +350,7 @@ public final class RemoteIMMessage {
             && Objects.equals(fileAttachment, that.fileAttachment)
             && Objects.equals(videoAttachment, that.videoAttachment)
             && captionAbove == that.captionAbove
+            && Objects.equals(quote, that.quote)
             && origin == that.origin
             && Objects.equals(approvalRequest, that.approvalRequest)
             && Objects.equals(approvalDecision, that.approvalDecision);
@@ -362,6 +372,7 @@ public final class RemoteIMMessage {
             fileAttachment,
             videoAttachment,
             captionAbove,
+            quote,
             origin,
             approvalRequest,
             approvalDecision

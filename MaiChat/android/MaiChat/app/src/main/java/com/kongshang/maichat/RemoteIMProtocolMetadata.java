@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 public final class RemoteIMProtocolMetadata {
     public static final int VERSION = 2;
@@ -15,17 +16,20 @@ public final class RemoteIMProtocolMetadata {
         private final RemoteIMApprovalRequest approvalRequest;
         private final RemoteIMApprovalDecision approvalDecision;
         private final boolean captionAbove;
+        private final RemoteIMQuote quote;
 
         Metadata(
             RemoteIMOrigin origin,
             RemoteIMApprovalRequest approvalRequest,
             RemoteIMApprovalDecision approvalDecision,
-            boolean captionAbove
+            boolean captionAbove,
+            RemoteIMQuote quote
         ) {
             this.origin = origin == null ? RemoteIMOrigin.MACHINE : origin;
             this.approvalRequest = approvalRequest;
             this.approvalDecision = approvalDecision;
             this.captionAbove = captionAbove;
+            this.quote = quote;
         }
 
         public RemoteIMOrigin origin() {
@@ -43,6 +47,10 @@ public final class RemoteIMProtocolMetadata {
         public boolean captionAbove() {
             return captionAbove;
         }
+
+        public RemoteIMQuote quote() {
+            return quote;
+        }
     }
 
     private static final class WireMetadata {
@@ -51,6 +59,14 @@ public final class RemoteIMProtocolMetadata {
         String origin;
         WireInteraction interaction;
         Object captionAbove;
+        Object quote;
+    }
+
+    private static final class WireQuote {
+        Object msgId;
+        Object sender;
+        Object digest;
+        Object kind;
     }
 
     private static final class WireInteraction {
@@ -65,12 +81,16 @@ public final class RemoteIMProtocolMetadata {
     }
 
     public static String encode(RemoteIMOrigin origin) {
-        return encode(origin, null, null);
+        return encode(origin, null, null, null);
+    }
+
+    public static String encode(RemoteIMOrigin origin, RemoteIMQuote quote) {
+        return encode(origin, null, null, quote);
     }
 
     public static String encodeApprovalRequest(RemoteIMApprovalRequest request) {
         if (request == null) throw new IllegalArgumentException("approval request is required");
-        return encode(RemoteIMOrigin.MACHINE, request, null);
+        return encode(RemoteIMOrigin.MACHINE, request, null, null);
     }
 
     public static String encodeApprovalDecision(RemoteIMApprovalDecision decision) {
@@ -80,7 +100,7 @@ public final class RemoteIMProtocolMetadata {
             && decision.action() != RemoteIMApprovalAction.REJECT) {
             throw new IllegalArgumentException("approval resolution cannot be sent as a user decision");
         }
-        return encode(RemoteIMOrigin.HUMAN, null, decision);
+        return encode(RemoteIMOrigin.HUMAN, null, decision, null);
     }
 
     public static RemoteIMOrigin decode(String value) {
@@ -97,7 +117,7 @@ public final class RemoteIMProtocolMetadata {
         }
         if (wire == null
             || !NAMESPACE.equals(wire.namespace)
-            || wire.version != VERSION) {
+            || wire.version < VERSION) {
             return machineMetadata();
         }
         if (!"human".equals(wire.origin) && !"machine".equals(wire.origin)) {
@@ -105,7 +125,8 @@ public final class RemoteIMProtocolMetadata {
         }
         RemoteIMOrigin origin = RemoteIMOrigin.fromWireValue(wire.origin);
         boolean captionAbove = Boolean.TRUE.equals(wire.captionAbove);
-        if (wire.interaction == null) return new Metadata(origin, null, null, captionAbove);
+        RemoteIMQuote quote = decodeQuote(wire.quote);
+        if (wire.interaction == null) return new Metadata(origin, null, null, captionAbove, quote);
 
         WireInteraction interaction = wire.interaction;
         if ("approval-request".equals(interaction.kind)
@@ -123,7 +144,8 @@ public final class RemoteIMProtocolMetadata {
                     origin,
                     new RemoteIMApprovalRequest(interaction.token, actions),
                     null,
-                    captionAbove
+                    captionAbove,
+                    quote
                 );
             } catch (IllegalArgumentException error) {
                 return machineMetadata();
@@ -142,7 +164,8 @@ public final class RemoteIMProtocolMetadata {
                     origin,
                     null,
                     new RemoteIMApprovalDecision(interaction.token, action),
-                    captionAbove
+                    captionAbove,
+                    quote
                 );
             } catch (IllegalArgumentException error) {
                 return machineMetadata();
@@ -165,7 +188,8 @@ public final class RemoteIMProtocolMetadata {
                     origin,
                     null,
                     new RemoteIMApprovalDecision(interaction.token, action),
-                    captionAbove
+                    captionAbove,
+                    quote
                 );
             } catch (IllegalArgumentException error) {
                 return machineMetadata();
@@ -177,7 +201,8 @@ public final class RemoteIMProtocolMetadata {
     private static String encode(
         RemoteIMOrigin origin,
         RemoteIMApprovalRequest request,
-        RemoteIMApprovalDecision decision
+        RemoteIMApprovalDecision decision,
+        RemoteIMQuote quote
     ) {
         WireMetadata wire = new WireMetadata();
         wire.namespace = NAMESPACE;
@@ -199,10 +224,43 @@ public final class RemoteIMProtocolMetadata {
             interaction.action = decision.action().wireValue();
             wire.interaction = interaction;
         }
+        if (quote != null && !quote.digest().isEmpty()) {
+            WireQuote wireQuote = new WireQuote();
+            if (!quote.messageId().isEmpty()) wireQuote.msgId = quote.messageId();
+            wireQuote.sender = quote.senderId();
+            wireQuote.digest = quote.digest();
+            wireQuote.kind = quote.kind();
+            wire.quote = wireQuote;
+        }
         return GSON.toJson(wire);
     }
 
+    private static RemoteIMQuote decodeQuote(Object value) {
+        if (!(value instanceof Map)) return null;
+        Map<?, ?> wire = (Map<?, ?>) value;
+        Object rawDigest = wire.get("digest");
+        if (!(rawDigest instanceof String)) return null;
+        String digest = clamp((String) rawDigest, 200);
+        if (digest.isEmpty()) return null;
+        Object rawMessageId = wire.get("msgId");
+        Object rawSender = wire.get("sender");
+        Object rawKind = wire.get("kind");
+        String messageId = rawMessageId instanceof String ? clamp((String) rawMessageId, 256) : "";
+        String sender = rawSender instanceof String ? clamp((String) rawSender, 256) : "";
+        String kind = rawKind instanceof String ? clamp((String) rawKind, 256) : "";
+        try {
+            return new RemoteIMQuote(messageId, sender, digest, kind);
+        } catch (IllegalArgumentException error) {
+            return null;
+        }
+    }
+
+    private static String clamp(String value, int limit) {
+        String clean = value == null ? "" : value.trim();
+        return clean.length() <= limit ? clean : clean.substring(0, limit);
+    }
+
     private static Metadata machineMetadata() {
-        return new Metadata(RemoteIMOrigin.MACHINE, null, null, false);
+        return new Metadata(RemoteIMOrigin.MACHINE, null, null, false, null);
     }
 }

@@ -232,7 +232,12 @@ final class TencentIMClient:
         }
     }
 
-    func sendText(to userID: String, text: String, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt {
+    func sendText(
+        to userID: String,
+        text: String,
+        origin: RemoteIMMessageOrigin,
+        quote: RemoteIMQuote?
+    ) async throws -> RemoteIMSendReceipt {
         guard let message = V2TIMManager.sharedInstance().createTextMessage(text: text) else {
             Self.logMessageCreateFailure(kind: "text", peerUserID: userID)
             throw RemoteIMClientError.operationFailed(code: -1, description: "create text message failed")
@@ -242,6 +247,10 @@ final class TencentIMClient:
             to: userID,
             kind: "text",
             origin: origin,
+            cloudCustomData: RemoteIMCloudMetadataCodec.encode(RemoteIMCloudMetadata(
+                origin: origin,
+                quote: quote
+            )),
             metadata: ["content_bytes": String(text.lengthOfBytes(using: .utf8))],
             failureDescription: "send text failed"
         )
@@ -575,6 +584,7 @@ final class TencentIMClient:
                     origin: metadata?.origin,
                     approvalRequest: metadata?.approvalRequest,
                     approvalDecision: metadata?.approvalDecision,
+                    quote: metadata?.quote,
                     createdAt: createdAt
                 )
             },
@@ -596,6 +606,7 @@ final class TencentIMClient:
                     origin: nil,
                     approvalRequest: nil,
                     approvalDecision: nil,
+                    quote: nil,
                     createdAt: fallbackDate
                 )
             }
@@ -729,9 +740,12 @@ final class TencentIMClient:
     ) {
         let createdAt = msg.timestamp ?? Date()
         let durationSeconds = max(1, Int(soundElem.duration))
-        let remoteID = soundElem.uuid ?? msg.msgID
-        let origin = Self.messageMetadata(for: msg)?.origin
-        let targetURL = Self.voiceCacheURL(remoteID: remoteID, messageID: msg.msgID)
+        let mediaID = soundElem.uuid ?? msg.msgID
+        let remoteID = Self.nonEmpty(msg.msgID) ?? mediaID
+        let metadata = Self.messageMetadata(for: msg)
+        let origin = metadata?.origin
+        let quote = metadata?.quote
+        let targetURL = Self.voiceCacheURL(remoteID: mediaID, messageID: msg.msgID)
         let startedAt = ProcessInfo.processInfo.systemUptime
         let diagnosticFields = Self.messageDiagnosticFields(
             kind: "voice",
@@ -750,13 +764,14 @@ final class TencentIMClient:
                 fields["result"] = "ok"
                 fields["duration_ms"] = Self.elapsedMilliseconds(since: startedAt)
                 Self.logSDK(level: .info, event: "media-download-finished", fields: fields)
-                Task { @MainActor [weak self, fromUserID, targetURL, durationSeconds, remoteID, origin, createdAt] in
+                Task { @MainActor [weak self, fromUserID, targetURL, durationSeconds, remoteID, origin, quote, createdAt] in
                     let event = IncomingRemoteIMVoice(
                         fromUserID: fromUserID,
                         fileURL: targetURL,
                         durationSeconds: durationSeconds,
                         remoteID: remoteID,
                         origin: origin,
+                        quote: quote,
                         createdAt: createdAt
                     )
                     self?.onIncomingVoice?(event)
@@ -785,9 +800,12 @@ final class TencentIMClient:
     ) {
         let fileName = Self.cleanFileName(fileElem.filename)
         let createdAt = msg.timestamp ?? Date()
-        let remoteID = fileElem.uuid ?? msg.msgID
-        let origin = Self.messageMetadata(for: msg)?.origin
-        let targetURL = Self.fileCacheURL(remoteID: remoteID, messageID: msg.msgID, fileName: fileName)
+        let mediaID = fileElem.uuid ?? msg.msgID
+        let remoteID = Self.nonEmpty(msg.msgID) ?? mediaID
+        let metadata = Self.messageMetadata(for: msg)
+        let origin = metadata?.origin
+        let quote = metadata?.quote
+        let targetURL = Self.fileCacheURL(remoteID: mediaID, messageID: msg.msgID, fileName: fileName)
         let mimeType = Self.mimeType(for: fileName)
         let sizeBytes = fileElem.fileSize > 0 ? Int(fileElem.fileSize) : nil
         let startedAt = ProcessInfo.processInfo.systemUptime
@@ -811,7 +829,7 @@ final class TencentIMClient:
                 fields["result"] = "ok"
                 fields["duration_ms"] = Self.elapsedMilliseconds(since: startedAt)
                 Self.logSDK(level: .info, event: "media-download-finished", fields: fields)
-                Task { @MainActor [weak self, fromUserID, targetURL, fileName, mimeType, remoteID, sizeBytes, origin, createdAt, caption, captionAbove] in
+                Task { @MainActor [weak self, fromUserID, targetURL, fileName, mimeType, remoteID, sizeBytes, origin, quote, createdAt, caption, captionAbove] in
                     let event = IncomingRemoteIMFile(
                         fromUserID: fromUserID,
                         fileURL: targetURL,
@@ -822,6 +840,7 @@ final class TencentIMClient:
                         caption: caption,
                         captionAbove: captionAbove,
                         origin: origin,
+                        quote: quote,
                         createdAt: createdAt
                     )
                     self?.onIncomingFile?(event)
@@ -850,9 +869,12 @@ final class TencentIMClient:
     ) {
         guard let image = Self.preferredImage(from: imageElem.imageList) else { return }
         let createdAt = msg.timestamp ?? Date()
-        let remoteID = image.uuid ?? msg.msgID
-        let origin = Self.messageMetadata(for: msg)?.origin
-        let targetURL = Self.imageCacheURL(remoteID: remoteID, messageID: msg.msgID, imageURL: image.url)
+        let mediaID = image.uuid ?? msg.msgID
+        let remoteID = Self.nonEmpty(msg.msgID) ?? mediaID
+        let metadata = Self.messageMetadata(for: msg)
+        let origin = metadata?.origin
+        let quote = metadata?.quote
+        let targetURL = Self.imageCacheURL(remoteID: mediaID, messageID: msg.msgID, imageURL: image.url)
         let width = image.width > 0 ? Int(image.width) : nil
         let height = image.height > 0 ? Int(image.height) : nil
         let sizeBytes = image.size > 0 ? Int(image.size) : nil
@@ -877,7 +899,7 @@ final class TencentIMClient:
                 fields["result"] = "ok"
                 fields["duration_ms"] = Self.elapsedMilliseconds(since: startedAt)
                 Self.logSDK(level: .info, event: "media-download-finished", fields: fields)
-                Task { @MainActor [weak self, fromUserID, targetURL, remoteID, width, height, sizeBytes, origin, createdAt, caption, captionAbove] in
+                Task { @MainActor [weak self, fromUserID, targetURL, remoteID, width, height, sizeBytes, origin, quote, createdAt, caption, captionAbove] in
                     let event = IncomingRemoteIMImage(
                         fromUserID: fromUserID,
                         fileURL: targetURL,
@@ -888,6 +910,7 @@ final class TencentIMClient:
                         caption: caption,
                         captionAbove: captionAbove,
                         origin: origin,
+                        quote: quote,
                         createdAt: createdAt
                     )
                     self?.onIncomingImage?(event)
@@ -915,20 +938,23 @@ final class TencentIMClient:
         captionAbove: Bool
     ) {
         let createdAt = msg.timestamp ?? Date()
-        let remoteID = Self.nonEmpty(videoElem.videoUUID) ?? Self.nonEmpty(msg.msgID) ?? UUID().uuidString
-        let origin = Self.messageMetadata(for: msg)?.origin
+        let mediaID = Self.nonEmpty(videoElem.videoUUID) ?? Self.nonEmpty(msg.msgID) ?? UUID().uuidString
+        let remoteID = Self.nonEmpty(msg.msgID) ?? mediaID
+        let metadata = Self.messageMetadata(for: msg)
+        let origin = metadata?.origin
+        let quote = metadata?.quote
         let durationSeconds = max(0, Int(videoElem.duration))
         let width = max(0, Int(videoElem.snapshotWidth))
         let height = max(0, Int(videoElem.snapshotHeight))
         let sizeBytes = max(0, Int64(videoElem.videoSize))
         let videoURL = Self.videoCacheURL(
-            remoteID: remoteID,
+            remoteID: mediaID,
             videoType: videoElem.videoType
         )
         let hasSnapshot = Self.nonEmpty(videoElem.snapshotUUID) != nil ||
             videoElem.snapshotSize > 0 || width > 0 || height > 0
         let coverURL = hasSnapshot
-            ? Self.videoCoverCacheURL(remoteID: remoteID)
+            ? Self.videoCoverCacheURL(remoteID: mediaID)
             : nil
         let diagnosticFields = Self.messageDiagnosticFields(
             kind: "video",
@@ -955,6 +981,7 @@ final class TencentIMClient:
             caption: caption,
             captionAbove: captionAbove,
             origin: origin,
+            quote: quote,
             createdAt: createdAt,
             stage: .metadata
         )
@@ -973,6 +1000,7 @@ final class TencentIMClient:
                     caption: caption,
                     captionAbove: captionAbove,
                     origin: origin,
+                    quote: quote,
                     createdAt: createdAt,
                     stage: .coverReady
                 )
@@ -1010,6 +1038,7 @@ final class TencentIMClient:
                             caption: caption,
                             captionAbove: captionAbove,
                             origin: origin,
+                            quote: quote,
                             createdAt: createdAt,
                             stage: .coverReady
                         )
@@ -1039,6 +1068,7 @@ final class TencentIMClient:
                 caption: caption,
                 captionAbove: captionAbove,
                 origin: origin,
+                quote: quote,
                 createdAt: createdAt,
                 stage: .videoReady
             )
@@ -1073,6 +1103,7 @@ final class TencentIMClient:
                         caption: caption,
                         captionAbove: captionAbove,
                         origin: origin,
+                        quote: quote,
                         createdAt: createdAt,
                         stage: .videoFailed
                     )
@@ -1093,6 +1124,7 @@ final class TencentIMClient:
                     caption: caption,
                     captionAbove: captionAbove,
                     origin: origin,
+                    quote: quote,
                     createdAt: createdAt,
                     stage: .videoReady
                 )
@@ -1116,6 +1148,7 @@ final class TencentIMClient:
                     caption: caption,
                     captionAbove: captionAbove,
                     origin: origin,
+                    quote: quote,
                     createdAt: createdAt,
                     stage: .videoFailed
                 )
@@ -1135,6 +1168,7 @@ final class TencentIMClient:
         caption: String?,
         captionAbove: Bool,
         origin: RemoteIMMessageOrigin?,
+        quote: RemoteIMQuote?,
         createdAt: Date,
         stage: RemoteIMVideoDownloadStage
     ) {
@@ -1152,6 +1186,7 @@ final class TencentIMClient:
                     captionAbove: captionAbove,
                     remoteID: remoteID,
                     origin: origin,
+                    quote: quote,
                     createdAt: createdAt,
                     stage: stage
                 )
@@ -1166,9 +1201,10 @@ final class TencentIMClient:
         origin: RemoteIMMessageOrigin?,
         approvalRequest: RemoteIMApprovalRequest?,
         approvalDecision: RemoteIMApprovalDecision?,
+        quote: RemoteIMQuote?,
         createdAt: Date
     ) {
-        Task { @MainActor [weak self, fromUserID, text, remoteID, origin, approvalRequest, approvalDecision, createdAt] in
+        Task { @MainActor [weak self, fromUserID, text, remoteID, origin, approvalRequest, approvalDecision, quote, createdAt] in
             let event = IncomingRemoteIMText(
                 fromUserID: fromUserID,
                 text: text,
@@ -1176,6 +1212,7 @@ final class TencentIMClient:
                 origin: origin,
                 approvalRequest: approvalRequest,
                 approvalDecision: approvalDecision,
+                quote: quote,
                 createdAt: createdAt
             )
             self?.onIncomingText?(event)
@@ -1424,7 +1461,12 @@ final class TencentIMClient: RemoteIMClient {
 
     func disconnect() async {}
 
-    func sendText(to userID: String, text: String, origin: RemoteIMMessageOrigin) async throws -> RemoteIMSendReceipt {
+    func sendText(
+        to userID: String,
+        text: String,
+        origin: RemoteIMMessageOrigin,
+        quote: RemoteIMQuote?
+    ) async throws -> RemoteIMSendReceipt {
         throw RemoteIMClientError.sdkNotIntegrated
     }
 

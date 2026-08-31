@@ -13,7 +13,7 @@ import java.util.List;
 
 public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
     private static final String DATABASE_NAME = "maichat-history.db";
-    private static final int DATABASE_VERSION = 5;
+    private static final int DATABASE_VERSION = 6;
     private static final String TAG = "MaiChat.im";
 
     private final RemoteIMMediaPaths mediaPaths;
@@ -92,6 +92,10 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
                 + "approval_decision_token TEXT NOT NULL DEFAULT '',"
                 + "approval_decision_action TEXT NOT NULL DEFAULT '',"
                 + "caption_above INTEGER NOT NULL DEFAULT 0,"
+                + "quote_msg_id TEXT NOT NULL DEFAULT '',"
+                + "quote_sender TEXT NOT NULL DEFAULT '',"
+                + "quote_digest TEXT NOT NULL DEFAULT '',"
+                + "quote_kind TEXT NOT NULL DEFAULT '',"
                 + "PRIMARY KEY(owner_id, id))"
         );
         database.execSQL(
@@ -126,6 +130,10 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
             );
             version = 5;
         }
+        if (version < 6) {
+            addQuoteColumns(database);
+            version = 6;
+        }
         if (version != newVersion) {
             // 只有在没有可用迁移路径时才重建。重建会清空用户本地聊天记录，
             // 为了加几列而删历史，这个代价不该由用户承担，所以放在最后一步。
@@ -159,6 +167,13 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
         database.execSQL(
             "ALTER TABLE messages ADD COLUMN approval_decision_action TEXT NOT NULL DEFAULT ''"
         );
+    }
+
+    private static void addQuoteColumns(SQLiteDatabase database) {
+        database.execSQL("ALTER TABLE messages ADD COLUMN quote_msg_id TEXT NOT NULL DEFAULT ''");
+        database.execSQL("ALTER TABLE messages ADD COLUMN quote_sender TEXT NOT NULL DEFAULT ''");
+        database.execSQL("ALTER TABLE messages ADD COLUMN quote_digest TEXT NOT NULL DEFAULT ''");
+        database.execSQL("ALTER TABLE messages ADD COLUMN quote_kind TEXT NOT NULL DEFAULT ''");
     }
 
     private static void createContactGroupsTable(SQLiteDatabase database) {
@@ -411,6 +426,40 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
         return new Page(descending, hasEarlier);
     }
 
+    /**
+     * Searches the complete persisted history for one account. `instr` deliberately treats `%`
+     * and `_` as literal text instead of LIKE wildcards. SQLite lower() folds ASCII only; Chinese
+     * text is unaffected and remains searchable as entered.
+     */
+    public List<RemoteIMMessageSearchHit> searchMessages(
+        String ownerId,
+        String query,
+        int limit
+    ) {
+        String cleanOwnerId = clean(ownerId);
+        String cleanQuery = clean(query);
+        int safeLimit = Math.max(1, Math.min(limit, 200));
+        if (cleanOwnerId.isEmpty() || cleanQuery.isEmpty()) return Collections.emptyList();
+
+        String sql = "SELECT " + columns("m") + ",m.peer_id FROM messages m"
+            + " WHERE m.owner_id = ? AND m.body <> ''"
+            + " AND instr(lower(m.body), lower(?)) > 0"
+            + " ORDER BY m.created_at DESC, m.id DESC LIMIT ?";
+        List<RemoteIMMessageSearchHit> hits = new ArrayList<>();
+        try (Cursor cursor = getReadableDatabase().rawQuery(
+            sql,
+            new String[]{cleanOwnerId, cleanQuery, String.valueOf(safeLimit)}
+        )) {
+            while (cursor.moveToNext()) {
+                String peerUserId = clean(cursor.getString(columnNames().length));
+                if (!peerUserId.isEmpty()) {
+                    hits.add(new RemoteIMMessageSearchHit(peerUserId, readMessage(cursor)));
+                }
+            }
+        }
+        return Collections.unmodifiableList(hits);
+    }
+
     public boolean containsRemoteId(String ownerId, String remoteId) {
         String cleanRemoteId = clean(remoteId);
         if (cleanRemoteId.isEmpty()) return false;
@@ -419,6 +468,23 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
             new String[]{clean(ownerId), cleanRemoteId}
         )) {
             return cursor.moveToFirst();
+        }
+    }
+
+    public RemoteIMMessage messageWithRemoteId(String ownerId, String peerId, String remoteId) {
+        String cleanRemoteId = clean(remoteId);
+        if (cleanRemoteId.isEmpty()) return null;
+        try (Cursor cursor = getReadableDatabase().query(
+            "messages",
+            columnNames(),
+            "owner_id = ? AND peer_id = ? AND remote_id = ?",
+            new String[]{clean(ownerId), clean(peerId), cleanRemoteId},
+            null,
+            null,
+            "created_at DESC, id DESC",
+            "1"
+        )) {
+            return cursor.moveToFirst() ? readMessage(cursor) : null;
         }
     }
 
@@ -477,6 +543,11 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
             approvalDecision == null ? "" : approvalDecision.action().wireValue()
         );
         values.put("caption_above", message.captionAbove() ? 1 : 0);
+        RemoteIMQuote quote = message.quote();
+        values.put("quote_msg_id", quote == null ? "" : quote.messageId());
+        values.put("quote_sender", quote == null ? "" : quote.senderId());
+        values.put("quote_digest", quote == null ? "" : quote.digest());
+        values.put("quote_kind", quote == null ? "" : quote.kind());
         values.put("origin", message.origin().wireValue());
         getWritableDatabase().insertWithOnConflict(
             "messages",
@@ -503,7 +574,8 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
             "video_path", "video_cover_path", "video_duration", "video_width",
             "video_height", "video_size", "approval_request_token",
             "approval_request_actions", "approval_decision_token",
-            "approval_decision_action", "caption_above"
+            "approval_decision_action", "caption_above", "quote_msg_id", "quote_sender",
+            "quote_digest", "quote_kind"
         };
     }
 
@@ -595,6 +667,19 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
             approvalDecision
         );
         message.setCaptionAbove(cursor.getInt(29) != 0);
+        String quoteDigest = clean(cursor.getString(32));
+        if (!quoteDigest.isEmpty()) {
+            try {
+                message.setQuote(new RemoteIMQuote(
+                    cursor.getString(30),
+                    cursor.getString(31),
+                    quoteDigest,
+                    cursor.getString(33)
+                ));
+            } catch (IllegalArgumentException ignored) {
+                // A malformed persisted quote must not make the containing message unreadable.
+            }
+        }
         return message;
     }
 

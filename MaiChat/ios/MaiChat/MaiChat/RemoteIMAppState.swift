@@ -5,6 +5,7 @@ import UIKit
 @MainActor
 final class RemoteIMDraftState: ObservableObject {
     @Published var text = ""
+    @Published var quote: RemoteIMQuote?
 }
 
 struct RemoteIMBroadcastResult: Equatable {
@@ -527,6 +528,7 @@ final class RemoteIMAppState: ObservableObject {
 
     func selectContact(_ contact: RemoteIMContact) {
         if chatState.selectedPeerID != contact.userID {
+            draft.quote = nil
             chatState.selectPeer(userID: contact.userID)
         }
         if unreadCountByUserID.removeValue(forKey: contact.userID) != nil {
@@ -578,6 +580,35 @@ final class RemoteIMAppState: ObservableObject {
 
     func visibleMessages(with userID: String) -> [RemoteIMMessage] {
         chatState.messages(with: userID)
+    }
+
+    func beginReply(to message: RemoteIMMessage) {
+        draft.quote = RemoteIMMessageQuotePolicy.quote(for: message)
+    }
+
+    func cancelReply() {
+        draft.quote = nil
+    }
+
+    func openQuotedMessage(_ quote: RemoteIMQuote, peerUserID: String) async -> UUID? {
+        let remoteID = quote.messageID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let peer = peerUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !remoteID.isEmpty, !peer.isEmpty else { return nil }
+        if let cached = chatState.message(remoteID: remoteID) { return cached.id }
+        _ = await flushHistoryPersistence()
+        do {
+            guard let stored = try await historyPersistence.message(
+                remoteID: remoteID,
+                sdkAppID: chatHistorySDKAppID,
+                ownerUserID: chatState.ownerUserID,
+                peerUserID: peer
+            ) else { return nil }
+            chatState.mergeMessages([stored])
+            return stored.id
+        } catch {
+            recordHistoryLoadFailure(error, operation: "quoted-message")
+            return nil
+        }
     }
 
     func searchMessages(_ query: String, limit: Int = 100) async -> [LocalChatHistorySearchHit] {
@@ -758,16 +789,23 @@ final class RemoteIMAppState: ObservableObject {
     func sendDraft() async {
         guard canSend else { return }
         let text = draft.text
+        let quote = draft.quote
         draft.text = ""
-        await sendText(text)
+        draft.quote = nil
+        await sendText(text, quote: quote)
     }
 
     /// 直接发一段文本（语音识别结果走这里）。与 sendDraft 共用同一套排队/落库/回执逻辑，
     /// 避免语音输入这条路径漏掉其中任何一步。
     @discardableResult
-    func sendText(_ text: String) async -> Bool {
-        await sendQueuedText(text) { [client] userID, queuedText in
-            try await client.sendText(to: userID, text: queuedText)
+    func sendText(_ text: String, quote: RemoteIMQuote? = nil) async -> Bool {
+        await sendQueuedText(text, quote: quote) { [client] userID, queuedText in
+            try await client.sendText(
+                to: userID,
+                text: queuedText,
+                origin: .human,
+                quote: quote
+            )
         }
     }
 
@@ -836,6 +874,7 @@ final class RemoteIMAppState: ObservableObject {
     private func sendQueuedText(
         _ text: String,
         approvalDecision: RemoteIMApprovalDecision? = nil,
+        quote: RemoteIMQuote? = nil,
         deliver: (String, String) async throws -> RemoteIMSendReceipt
     ) async -> Bool {
         guard canSendVoice else { return false }   // 连接 + 已选联系人；正文非空由调用方保证
@@ -847,7 +886,7 @@ final class RemoteIMAppState: ObservableObject {
                     action: approvalDecision.action
                 )
             } else {
-                try chatState.queueOutgoingText(text)
+                try chatState.queueOutgoingText(text, quote: quote)
             }
             queuedMessageID = message.id
             enqueueHistoryUpsert(message)
@@ -1047,6 +1086,7 @@ final class RemoteIMAppState: ObservableObject {
             remoteID: event.remoteID,
             approvalRequest: event.approvalRequest,
             approvalDecision: event.approvalDecision,
+            quote: event.quote,
             now: event.createdAt
         )
         let wasInserted = chatState.messages.count > previousCount
@@ -1084,6 +1124,7 @@ final class RemoteIMAppState: ObservableObject {
             durationSeconds: event.durationSeconds,
             fromUserID: event.fromUserID,
             remoteID: event.remoteID,
+            quote: event.quote,
             now: event.createdAt
         )
         let wasInserted = chatState.messages.count > previousCount
@@ -1120,6 +1161,7 @@ final class RemoteIMAppState: ObservableObject {
             sizeBytes: event.sizeBytes,
             caption: event.caption,
             captionAbove: event.captionAbove,
+            quote: event.quote,
             now: event.createdAt
         )
         let wasInserted = chatState.messages.count > previousCount
@@ -1160,6 +1202,7 @@ final class RemoteIMAppState: ObservableObject {
             sizeBytes: event.sizeBytes,
             caption: event.caption,
             captionAbove: event.captionAbove,
+            quote: event.quote,
             now: event.createdAt
         )
         let wasInserted = chatState.messages.count > previousCount
@@ -1206,6 +1249,7 @@ final class RemoteIMAppState: ObservableObject {
             remoteID: event.remoteID,
             caption: event.caption,
             captionAbove: event.captionAbove,
+            quote: event.quote,
             now: event.createdAt
         )
         let wasInserted = chatState.messages.count > previousCount

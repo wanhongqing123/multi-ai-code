@@ -186,8 +186,18 @@ public final class TencentIMClient {
         RemoteIMOrigin origin,
         SendCompletion completion
     ) {
+        sendText(peerId, text, origin, null, completion);
+    }
+
+    public void sendText(
+        String peerId,
+        String text,
+        RemoteIMOrigin origin,
+        RemoteIMQuote quote,
+        SendCompletion completion
+    ) {
         V2TIMMessage message = V2TIMManager.getMessageManager().createTextMessage(text);
-        send(message, peerId, origin, completion);
+        send(message, peerId, RemoteIMProtocolMetadata.encode(origin, quote), completion);
     }
 
     public void sendApprovalDecision(
@@ -464,25 +474,28 @@ public final class TencentIMClient {
         if (parts.image != null) {
             downloadImage(
                 sdkMessage, parts.image, fromUserId, recipientUserId, createdAt, origin,
-                parts.caption, metadata.captionAbove()
+                parts.caption, metadata.captionAbove(), metadata.quote()
             );
             return;
         }
         if (parts.sound != null) {
-            downloadVoice(sdkMessage, parts.sound, fromUserId, recipientUserId, createdAt, origin);
+            downloadVoice(
+                sdkMessage, parts.sound, fromUserId, recipientUserId, createdAt, origin,
+                metadata.quote()
+            );
             return;
         }
         if (parts.video != null) {
             downloadVideo(
                 sdkMessage, parts.video, fromUserId, recipientUserId, createdAt, origin,
-                parts.caption, metadata.captionAbove()
+                parts.caption, metadata.captionAbove(), metadata.quote()
             );
             return;
         }
         if (parts.file != null) {
             downloadFile(
                 sdkMessage, parts.file, fromUserId, recipientUserId, createdAt, origin,
-                parts.caption, metadata.captionAbove()
+                parts.caption, metadata.captionAbove(), metadata.quote()
             );
             return;
         }
@@ -492,7 +505,7 @@ public final class TencentIMClient {
                     + " id=" + messageId
                     + " actions=" + metadata.approvalRequest().actions().size());
             }
-            listener.onIncomingMessage(new RemoteIMMessage(
+            RemoteIMMessage incoming = new RemoteIMMessage(
                 null,
                 messageId,
                 fromUserId,
@@ -508,7 +521,9 @@ public final class TencentIMClient {
                 origin,
                 metadata.approvalRequest(),
                 metadata.approvalDecision()
-            ));
+            );
+            incoming.setQuote(metadata.quote());
+            listener.onIncomingMessage(incoming);
             return;
         }
         // 一个分支都没命中就说明这类消息 Android 端根本不认，而且原来是悄悄丢掉的。
@@ -566,7 +581,8 @@ public final class TencentIMClient {
         long createdAt,
         RemoteIMOrigin origin,
         String caption,
-        boolean captionAbove
+        boolean captionAbove,
+        RemoteIMQuote quote
     ) {
         V2TIMImageElem.V2TIMImage selected = null;
         for (V2TIMImageElem.V2TIMImage image : elem.getImageList()) {
@@ -577,11 +593,13 @@ public final class TencentIMClient {
                 + clean(message.getMsgID()));
             return;
         }
-        String remoteId = clean(selected.getUUID());
-        if (remoteId.isEmpty()) remoteId = clean(message.getMsgID());
-        File target = mediaFile(RemoteIMMediaPaths.IMAGES, remoteId, extension(selected.getUrl(), "jpg"));
+        String mediaId = clean(selected.getUUID());
+        if (mediaId.isEmpty()) mediaId = clean(message.getMsgID());
+        String messageId = clean(message.getMsgID());
+        if (messageId.isEmpty()) messageId = mediaId;
+        File target = mediaFile(RemoteIMMediaPaths.IMAGES, mediaId, extension(selected.getUrl(), "jpg"));
         V2TIMImageElem.V2TIMImage image = selected;
-        String finalRemoteId = remoteId;
+        String finalMessageId = messageId;
         selected.downloadImage(target.getAbsolutePath(), new V2TIMDownloadCallback() {
             @Override
             public void onProgress(V2TIMElem.V2ProgressInfo progressInfo) {
@@ -597,7 +615,7 @@ public final class TencentIMClient {
                 );
                 RemoteIMMessage incoming = new RemoteIMMessage(
                     null,
-                    finalRemoteId,
+                    finalMessageId,
                     fromUserId,
                     recipientUserId,
                     caption.isEmpty() ? "[图片消息] " + target.getName() : caption,
@@ -611,6 +629,7 @@ public final class TencentIMClient {
                     origin
                 );
                 incoming.setCaptionAbove(!caption.isEmpty() && captionAbove);
+                incoming.setQuote(quote);
                 listener.onIncomingMessage(incoming);
             }
 
@@ -628,13 +647,16 @@ public final class TencentIMClient {
         String fromUserId,
         String recipientUserId,
         long createdAt,
-        RemoteIMOrigin origin
+        RemoteIMOrigin origin,
+        RemoteIMQuote quote
     ) {
-        String remoteId = clean(elem.getUUID());
-        if (remoteId.isEmpty()) remoteId = clean(message.getMsgID());
-        File target = mediaFile(RemoteIMMediaPaths.VOICES, remoteId, "m4a");
+        String mediaId = clean(elem.getUUID());
+        if (mediaId.isEmpty()) mediaId = clean(message.getMsgID());
+        String messageId = clean(message.getMsgID());
+        if (messageId.isEmpty()) messageId = mediaId;
+        File target = mediaFile(RemoteIMMediaPaths.VOICES, mediaId, "m4a");
         int duration = Math.max(1, elem.getDuration());
-        String finalRemoteId = remoteId;
+        String finalMessageId = messageId;
         elem.downloadSound(target.getAbsolutePath(), new V2TIMDownloadCallback() {
             @Override
             public void onProgress(V2TIMElem.V2ProgressInfo progressInfo) {
@@ -642,9 +664,9 @@ public final class TencentIMClient {
 
             @Override
             public void onSuccess() {
-                listener.onIncomingMessage(new RemoteIMMessage(
+                RemoteIMMessage incoming = new RemoteIMMessage(
                     null,
-                    finalRemoteId,
+                    finalMessageId,
                     fromUserId,
                     recipientUserId,
                     "[语音消息 " + duration + "s]",
@@ -656,7 +678,9 @@ public final class TencentIMClient {
                     null,
                     null,
                     origin
-                ));
+                );
+                incoming.setQuote(quote);
+                listener.onIncomingMessage(incoming);
             }
 
             @Override
@@ -675,17 +699,20 @@ public final class TencentIMClient {
         long createdAt,
         RemoteIMOrigin origin,
         String caption,
-        boolean captionAbove
+        boolean captionAbove,
+        RemoteIMQuote quote
     ) {
-        String remoteId = clean(elem.getVideoUUID());
-        if (remoteId.isEmpty()) remoteId = clean(message.getMsgID());
-        final String finalRemoteId = remoteId;
+        String mediaId = clean(elem.getVideoUUID());
+        if (mediaId.isEmpty()) mediaId = clean(message.getMsgID());
+        String messageId = clean(message.getMsgID());
+        if (messageId.isEmpty()) messageId = mediaId;
+        final String finalMessageId = messageId;
 
-        final File videoTarget = mediaFile(RemoteIMMediaPaths.VIDEOS, remoteId, extension(elem.getVideoPath(), "mp4"));
+        final File videoTarget = mediaFile(RemoteIMMediaPaths.VIDEOS, mediaId, extension(elem.getVideoPath(), "mp4"));
         // 先下到 .part 再改名：这样"目标文件存在"就等价于"已经下完"，界面只需判存在性，
         // 不会拿到一个下了一半的文件去播放。
         final File videoPart = new File(videoTarget.getAbsolutePath() + ".part");
-        final File coverTarget = mediaFile(RemoteIMMediaPaths.VIDEO_COVERS, remoteId + "-cover", "jpg");
+        final File coverTarget = mediaFile(RemoteIMMediaPaths.VIDEO_COVERS, mediaId + "-cover", "jpg");
 
         final int duration = Math.max(0, (int) elem.getDuration());
         final int width = Math.max(0, elem.getSnapshotWidth());
@@ -706,9 +733,9 @@ public final class TencentIMClient {
             public void onSuccess() {
                 if (delivered.compareAndSet(false, true)) {
                     emitVideoMessage(
-                        finalRemoteId, fromUserId, recipientUserId, createdAt, origin,
+                        finalMessageId, fromUserId, recipientUserId, createdAt, origin,
                         videoTarget.getAbsolutePath(), coverTarget.getAbsolutePath(),
-                        duration, width, height, sizeBytes, caption, captionAbove
+                        duration, width, height, sizeBytes, caption, captionAbove, quote
                     );
                 }
             }
@@ -739,10 +766,10 @@ public final class TencentIMClient {
                 // 封面失败或还没回来时，这里兜底把消息投出去。
                 if (delivered.compareAndSet(false, true)) {
                     emitVideoMessage(
-                        finalRemoteId, fromUserId, recipientUserId, createdAt, origin,
+                        finalMessageId, fromUserId, recipientUserId, createdAt, origin,
                         videoTarget.getAbsolutePath(),
                         coverTarget.exists() ? coverTarget.getAbsolutePath() : "",
-                        duration, width, height, sizeBytes, caption, captionAbove
+                        duration, width, height, sizeBytes, caption, captionAbove, quote
                     );
                 }
             }
@@ -773,7 +800,8 @@ public final class TencentIMClient {
         int height,
         long sizeBytes,
         String caption,
-        boolean captionAbove
+        boolean captionAbove,
+        RemoteIMQuote quote
     ) {
         RemoteIMVideoAttachment attachment = new RemoteIMVideoAttachment(
             videoPath, coverPath, duration, width, height, sizeBytes
@@ -794,6 +822,7 @@ public final class TencentIMClient {
             origin
         );
         incoming.setCaptionAbove(!caption.isEmpty() && captionAbove);
+        incoming.setQuote(quote);
         listener.onIncomingMessage(incoming);
     }
 
@@ -805,13 +834,16 @@ public final class TencentIMClient {
         long createdAt,
         RemoteIMOrigin origin,
         String caption,
-        boolean captionAbove
+        boolean captionAbove,
+        RemoteIMQuote quote
     ) {
-        String remoteId = clean(elem.getUUID());
-        if (remoteId.isEmpty()) remoteId = clean(message.getMsgID());
+        String mediaId = clean(elem.getUUID());
+        if (mediaId.isEmpty()) mediaId = clean(message.getMsgID());
+        String messageId = clean(message.getMsgID());
+        if (messageId.isEmpty()) messageId = mediaId;
         String fileName = safeFileName(elem.getFileName(), "remote-im-file.bin");
-        File target = mediaFile(RemoteIMMediaPaths.FILES, remoteId, extension(fileName, "bin"));
-        String finalRemoteId = remoteId;
+        File target = mediaFile(RemoteIMMediaPaths.FILES, mediaId, extension(fileName, "bin"));
+        String finalMessageId = messageId;
         elem.downloadFile(target.getAbsolutePath(), new V2TIMDownloadCallback() {
             @Override
             public void onProgress(V2TIMElem.V2ProgressInfo progressInfo) {
@@ -827,7 +859,7 @@ public final class TencentIMClient {
                 );
                 RemoteIMMessage incoming = new RemoteIMMessage(
                     null,
-                    finalRemoteId,
+                    finalMessageId,
                     fromUserId,
                     recipientUserId,
                     caption.isEmpty() ? "[文件消息] " + fileName : caption,
@@ -841,6 +873,7 @@ public final class TencentIMClient {
                     origin
                 );
                 incoming.setCaptionAbove(!caption.isEmpty() && captionAbove);
+                incoming.setQuote(quote);
                 listener.onIncomingMessage(incoming);
             }
 

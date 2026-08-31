@@ -48,6 +48,41 @@ public class RemoteIMProtocolMetadataTest {
     }
 
     @Test
+    public void roundTripsQuoteAndAcceptsFutureMetadataVersions() {
+        RemoteIMQuote quote = new RemoteIMQuote(
+            "sdk-message-1",
+            "alice",
+            "第二步已经跑完了",
+            "text"
+        );
+        String encoded = RemoteIMProtocolMetadata.encode(RemoteIMOrigin.HUMAN, quote);
+        RemoteIMProtocolMetadata.Metadata decoded =
+            RemoteIMProtocolMetadata.decodeMetadata(encoded);
+        assertEquals(RemoteIMOrigin.HUMAN, decoded.origin());
+        assertEquals(quote, decoded.quote());
+
+        RemoteIMProtocolMetadata.Metadata future = RemoteIMProtocolMetadata.decodeMetadata(
+            "{\"namespace\":\"multi-ai-code\",\"version\":3,\"origin\":\"human\","
+                + "\"quote\":{\"digest\":\"未来版本\",\"kind\":\"text\"}}"
+        );
+        assertEquals(RemoteIMOrigin.HUMAN, future.origin());
+        assertEquals("未来版本", future.quote().digest());
+    }
+
+    @Test
+    public void malformedQuoteDoesNotPoisonOtherMetadataFields() {
+        for (String quoteJson : new String[]{"{\"digest\":123}", "\"not-an-object\""}) {
+            RemoteIMProtocolMetadata.Metadata metadata = RemoteIMProtocolMetadata.decodeMetadata(
+                "{\"namespace\":\"multi-ai-code\",\"version\":2,\"origin\":\"human\","
+                    + "\"captionAbove\":true,\"quote\":" + quoteJson + "}"
+            );
+            assertEquals(RemoteIMOrigin.HUMAN, metadata.origin());
+            assertTrue(metadata.captionAbove());
+            assertNull(metadata.quote());
+        }
+    }
+
+    @Test
     public void roundTripsApprovalRequests() {
         RemoteIMApprovalRequest request = new RemoteIMApprovalRequest(
             "approval-wire-android-1",

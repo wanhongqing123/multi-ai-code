@@ -931,6 +931,7 @@ private struct ChatDetailView: View {
     @State private var transcriptionPresentation = VoiceTranscriptionPresentation()
     @State private var imagePreviewPresentation: PresentedRemoteIMImage?
     @State private var isImagePreviewExpanded = false
+    @State private var quoteTargetMessageID: UUID?
 
     var body: some View {
         ZStack {
@@ -944,10 +945,21 @@ private struct ChatDetailView: View {
                 MessageListView(
                     messages: appState.visibleMessages(with: contact.userID),
                     peerRelation: contact.relation,
-                    searchTargetMessageID: searchTargetMessageID,
+                    searchTargetMessageID: quoteTargetMessageID ?? searchTargetMessageID,
                     hasEarlierMessages: appState.hasEarlierMessages(with: contact.userID),
                     initialHistoryLoadGeneration: initialHistoryLoadGeneration,
                     presentImagePreview: presentImagePreview,
+                    replyToMessage: { message in
+                        appState.beginReply(to: message)
+                    },
+                    openQuote: { quote in
+                        Task {
+                            quoteTargetMessageID = await appState.openQuotedMessage(
+                                quote,
+                                peerUserID: contact.userID
+                            )
+                        }
+                    },
                     loadEarlierMessages: {
                         await appState.loadEarlierMessages(with: contact.userID)
                     }
@@ -991,6 +1003,7 @@ private struct ChatDetailView: View {
         }
         .onDisappear {
             appState.setConversationVisible(userID: contact.userID, visible: false)
+            appState.cancelReply()
         }
         .task(id: contact.userID) {
             let startedAt = ProcessInfo.processInfo.systemUptime
@@ -1387,6 +1400,8 @@ private struct MessageListView: View {
     let hasEarlierMessages: Bool
     let initialHistoryLoadGeneration: Int
     let presentImagePreview: (RemoteIMImagePreviewItem, UIImage, CGRect) -> Void
+    let replyToMessage: (RemoteIMMessage) -> Void
+    let openQuote: (RemoteIMQuote) -> Void
     let loadEarlierMessages: () async -> Void
     @EnvironmentObject private var appState: RemoteIMAppState
     @StateObject private var voicePlayer = VoiceMessagePlayer()
@@ -1459,7 +1474,9 @@ private struct MessageListView: View {
                                 },
                                 previewFile: {
                                     filePreviewItem = RemoteIMFilePreviewItem(message: message)
-                                }
+                                },
+                                reply: { replyToMessage(message) },
+                                openQuote: openQuote
                             )
                                 .padding(searchTargetMessageID == message.id ? 4 : 0)
                                 .overlay {
@@ -1668,6 +1685,8 @@ private struct MessageBubbleView: View {
     let previewImage: (UIImage, CGRect) -> Void
     let previewVideo: () -> Void
     let previewFile: () -> Void
+    let reply: () -> Void
+    let openQuote: (RemoteIMQuote) -> Void
     @State private var selectableCopyItem: SelectableMessageCopyItem?
 
     var body: some View {
@@ -1697,6 +1716,10 @@ private struct MessageBubbleView: View {
         }
         .frame(maxWidth: .infinity, alignment: message.direction == .outgoing ? .trailing : .leading)
         .contextMenu {
+            Button(action: reply) {
+                Label("引用回复", systemImage: "arrowshape.turn.up.left")
+            }
+
             Button {
                 selectableCopyItem = SelectableMessageCopyItem(
                     text: RemoteIMMessageCopyPolicy.selectionText(for: message)
@@ -1760,8 +1783,35 @@ private struct MessageBubbleView: View {
 
     private var messageContent: some View {
         HStack(alignment: .bottom, spacing: 10) {
-            Group {
-                if let videoAttachment = message.videoAttachment {
+            VStack(alignment: .leading, spacing: 8) {
+                if let quote = message.quote {
+                    Button {
+                        guard !quote.messageID.isEmpty else { return }
+                        openQuote(quote)
+                    } label: {
+                        HStack(spacing: 8) {
+                            Capsule()
+                                .fill(RemoteIMStyle.blue)
+                                .frame(width: 3, height: 28)
+                            Text(quote.senderID.isEmpty
+                                ? quote.digest
+                                : "\(quote.senderID)：\(quote.digest)")
+                                .font(.system(size: 12))
+                                .foregroundStyle(RemoteIMStyle.textSecondary)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 7)
+                        .background(RemoteIMStyle.blueSoft, in: RoundedRectangle(cornerRadius: 7))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(quote.messageID.isEmpty)
+                }
+
+                Group {
+                    if let videoAttachment = message.videoAttachment {
                     VStack(alignment: .leading, spacing: 8) {
                         if message.captionAbove { attachmentCaptionView }
                         let fileState = RemoteIMVideoFileState(
@@ -1838,6 +1888,7 @@ private struct MessageBubbleView: View {
                         .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
                         .layoutPriority(1)
+                    }
                 }
             }
             .padding(.horizontal, 13)
@@ -3492,6 +3543,35 @@ private struct ComposerView: View {
                     }
                 }
 
+                if let quote = draft.quote {
+                    HStack(spacing: 8) {
+                        Capsule()
+                            .fill(RemoteIMStyle.blue)
+                            .frame(width: 3, height: 26)
+                        Text(quote.senderID.isEmpty
+                            ? quote.digest
+                            : "回复 \(quote.senderID)：\(quote.digest)")
+                            .font(.system(size: 12))
+                            .foregroundStyle(RemoteIMStyle.textSecondary)
+                            .lineLimit(1)
+                        Spacer(minLength: 4)
+                        Button {
+                            appState.cancelReply()
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 12, weight: .bold))
+                                .frame(width: 30, height: 30)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(RemoteIMStyle.textSecondary)
+                        .accessibilityLabel("取消引用回复")
+                    }
+                    .padding(.leading, 9)
+                    .padding(.trailing, 4)
+                    .frame(height: 40)
+                    .background(RemoteIMStyle.blueSoft, in: RoundedRectangle(cornerRadius: 9))
+                }
+
                 HStack(alignment: .bottom, spacing: 8) {
                     Button {
                         setVoiceMode(!isVoiceMode)
@@ -3633,6 +3713,11 @@ private struct ComposerView: View {
             }
         }
         .animation(.easeOut(duration: 0.18), value: isAttachmentPanelPresented)
+        .onChange(of: draft.quote) { quote in
+            if quote != nil {
+                composerFocusRequestGeneration &+= 1
+            }
+        }
         .background(RemoteIMStyle.panelBackground)
         .overlay(alignment: .top) {
             Divider().background(RemoteIMStyle.border)

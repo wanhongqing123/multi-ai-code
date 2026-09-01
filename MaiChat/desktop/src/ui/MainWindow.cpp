@@ -1202,7 +1202,10 @@ QString readTextFile(const QString& path) {
 
 }  // namespace
 
-MainWindow::MainWindow(RemoteIMApplication& app, QWidget* parent) : QMainWindow(parent), app_(app) {
+MainWindow::MainWindow(RemoteIMApplication& app, QWidget* parent)
+    : QMainWindow(parent),
+      app_(app),
+      notificationTracker_(QDateTime::currentMSecsSinceEpoch()) {
     // 缩放只作用于主界面：登录窗（先于此构造）保持设计尺寸，
     // 进入主界面时才把全局字体切到基准 13px × 倍率。
     QFont scaledFont = QApplication::font();
@@ -1218,7 +1221,13 @@ MainWindow::MainWindow(RemoteIMApplication& app, QWidget* parent) : QMainWindow(
     connect(qApp, &QGuiApplication::applicationStateChanged, this,
             [this](Qt::ApplicationState state) {
                 // macOS 从“辅助功能”设置切回来后立即刷新授权状态。
-                if (state == Qt::ApplicationActive) refreshRemoteDesktopSettings();
+                if (state == Qt::ApplicationActive) {
+                    refreshRemoteDesktopSettings();
+                    // 回到前台后系统通知已失去意义；清掉「已经提醒过」状态，
+                    // 下次重新退后台时，真正的新消息仍可正常提醒一次。
+                    notificationTracker_.clearAll();
+                    lastNotifiedPeerId_.clear();
+                }
             });
     connect(qApp, &QCoreApplication::aboutToQuit, this,
             [this] { stopRemoteDesktopForShutdown(); });
@@ -2234,6 +2243,7 @@ void MainWindow::refreshSelectedConversation() {
     conversationList_->viewport()->update();
     refreshMessages();
     updateRemoteDesktopButton();
+    if (appIsForegroundVisible()) notificationTracker_.clear(selectedPeer);
 }
 
 void MainWindow::refreshContacts() {
@@ -2630,35 +2640,47 @@ void MainWindow::setUpMessageNotifications() {
             });
 }
 
-bool MainWindow::conversationIsVisibleTo(const QString& peerId) const {
-    // 三个条件都满足才算「用户正看着这个人的消息」：窗口是激活的、
-    // 当前在消息页、且选中的就是这个人。少一个都该通知——
-    // 窗口在后台却不弹，用户就永远不知道有人找他。
-    if (!isActiveWindow() || isMinimized()) return false;
-    if (!contentStack_ || contentStack_->currentWidget() != messagesPage_) return false;
-    return app_.chatState().selectedPeerId() == peerId;
+bool MainWindow::appIsForegroundVisible() const {
+    // 用整个应用的激活态，而不是只看主窗口：自绘对话框获得焦点时主窗口的
+    // isActiveWindow() 会是 false，但 MaiChat 显然仍在用户眼前，也不该弹系统通知。
+    const bool applicationActive =
+        QGuiApplication::applicationState() == Qt::ApplicationActive;
+    return MessageNotification::shouldSuppressForForegroundWindow(applicationActive, isMinimized());
 }
 
 void MainWindow::handleIncomingMessageForNotification(const QString& peerId,
                                                       const RemoteIMMessage& message) {
     if (!trayIcon_ || peerId.isEmpty()) return;
 
-    if (conversationIsVisibleTo(peerId)) {
-        // 正开着这个人的会话，消息已经在眼前了，再弹一次是纯打扰。
-        qInfo("[notify] suppressed peer=%s reason=conversation-visible",
+    if (appIsForegroundVisible()) {
+        // 应用就在用户眼前时，消息页红点和列表更新已经足够；无论当前打开哪一页，
+        // 再弹一层 Windows 通知都是纯打扰。
+        qInfo("[notify] suppressed peer=%s reason=app-foreground",
               qUtf8Printable(peerId));
-        pendingNotificationCounts_.remove(peerId);
+        notificationTracker_.clear(peerId);
         return;
     }
 
-    const int pending = pendingNotificationCounts_.value(peerId, 0) + 1;
-    pendingNotificationCounts_[peerId] = pending;
+    const MessageNotification::DeliveryDecision decision =
+        notificationTracker_.record(peerId, message.createdAtMillis);
+    if (decision.disposition == MessageNotification::DeliveryDisposition::StartupBacklog) {
+        qInfo("[notify] suppressed peer=%s reason=startup-backlog",
+              qUtf8Printable(peerId));
+        return;
+    }
+    if (decision.disposition == MessageNotification::DeliveryDisposition::AlreadyPending) {
+        qInfo("[notify] suppressed peer=%s reason=already-pending pending=%d",
+              qUtf8Printable(peerId), decision.pendingCount);
+        return;
+    }
+
     lastNotifiedPeerId_ = peerId;
 
     const QString title = MessageNotification::title(contactName(peerId), peerId);
-    const QString body = MessageNotification::aggregatedPreview(message, pending);
+    const QString body = MessageNotification::aggregatedPreview(message, decision.pendingCount);
     // 正文不入日志：通知内容会进系统通知中心已经够了，日志里再存一份没有必要。
-    qInfo("[notify] requested peer=%s pending=%d", qUtf8Printable(peerId), pending);
+    qInfo("[notify] requested peer=%s pending=%d",
+          qUtf8Printable(peerId), decision.pendingCount);
     trayIcon_->showMessage(title, body, QSystemTrayIcon::Information, 5000);
 }
 
@@ -2673,13 +2695,13 @@ void MainWindow::openConversationFromNotification() {
     activateWindow();
     app_.selectPeer(peerId);
     showMessagesPage();
-    pendingNotificationCounts_.remove(peerId);
+    notificationTracker_.clear(peerId);
 }
 
 void MainWindow::showMessagesPage() {
     // 用户看到消息了，堆积计数归零；不清的话下一条通知会显示成「第 5 条」，
     // 而他其实前 4 条都读过了。
-    pendingNotificationCounts_.remove(app_.chatState().selectedPeerId());
+    notificationTracker_.clear(app_.chatState().selectedPeerId());
     contentStack_->setCurrentWidget(messagesPage_);
     syncNavigationSelection();
     messageEditor_->setFocus();

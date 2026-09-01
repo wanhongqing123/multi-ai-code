@@ -1357,16 +1357,13 @@ final class RemoteIMAppState: ObservableObject {
         guard RemoteIMNewMessageNotificationPolicy.shouldNotify(
             wasInserted: wasInserted,
             isApplicationActive: isApplicationActive,
-            visibleConversationUserID: visibleConversationUserID,
             incomingUserID: userID
         ) else {
             logIM(
                 level: .debug,
                 event: "notification-suppressed",
                 fields: [
-                    "reason": wasInserted
-                        ? "visible-foreground-conversation"
-                        : "duplicate-or-history",
+                    "reason": wasInserted ? "app-foreground" : "duplicate-or-history",
                 ],
                 userID: userID
             )

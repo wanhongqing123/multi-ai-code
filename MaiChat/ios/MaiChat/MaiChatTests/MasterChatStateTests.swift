@@ -21,7 +21,7 @@ final class MasterChatStateTests: XCTestCase {
         XCTAssertFalse(RemoteIMGitDiffDisplayPolicy.isGitDiff(ordinary))
     }
 
-    func testNewMessageNotificationPolicyOnlySuppressesDuplicateOrVisibleForegroundConversation() {
+    func testNewMessageNotificationPolicyOnlyNotifiesInBackground() {
         XCTAssertEqual(RemoteIMNewMessageNotificationPolicy.systemBadgeCount(totalUnreadCount: -1), 0)
         XCTAssertEqual(RemoteIMNewMessageNotificationPolicy.systemBadgeCount(totalUnreadCount: 0), 0)
         XCTAssertEqual(RemoteIMNewMessageNotificationPolicy.systemBadgeCount(totalUnreadCount: 58), 58)
@@ -29,25 +29,22 @@ final class MasterChatStateTests: XCTestCase {
         XCTAssertFalse(RemoteIMNewMessageNotificationPolicy.shouldNotify(
             wasInserted: false,
             isApplicationActive: false,
-            visibleConversationUserID: nil,
             incomingUserID: "peer-a"
         ))
         XCTAssertFalse(RemoteIMNewMessageNotificationPolicy.shouldNotify(
             wasInserted: true,
             isApplicationActive: true,
-            visibleConversationUserID: "peer-a",
             incomingUserID: "peer-a"
         ))
-        XCTAssertTrue(RemoteIMNewMessageNotificationPolicy.shouldNotify(
+        // 即使前台打开的是别人的会话，也只更新列表/红点，不弹系统横幅。
+        XCTAssertFalse(RemoteIMNewMessageNotificationPolicy.shouldNotify(
             wasInserted: true,
             isApplicationActive: true,
-            visibleConversationUserID: "peer-b",
             incomingUserID: "peer-a"
         ))
         XCTAssertTrue(RemoteIMNewMessageNotificationPolicy.shouldNotify(
             wasInserted: true,
             isApplicationActive: false,
-            visibleConversationUserID: "peer-a",
             incomingUserID: "peer-a"
         ))
     }

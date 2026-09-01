@@ -30,6 +30,9 @@ private slots:
     void previewDropsInternalPlaceholderText();
     void longTextIsTruncated();
     void aggregatedPreviewReportsHowManyArePending();
+    void deliveryTrackerSuppressesStartupBacklog();
+    void deliveryTrackerShowsOnlyOnceUntilConversationIsViewed();
+    void foregroundWindowSuppressesSystemNotification();
 };
 
 void MessageNotificationTest::titleFallsBackToUserIdWhenThereIsNoDisplayName() {
@@ -88,6 +91,62 @@ void MessageNotificationTest::aggregatedPreviewReportsHowManyArePending() {
     // 而用户真正想知道的是「谁找我、有几条」。
     QCOMPARE(MessageNotification::aggregatedPreview(latest, 5),
              QStringLiteral("5 条新消息：在吗"));
+}
+
+void MessageNotificationTest::deliveryTrackerSuppressesStartupBacklog() {
+    MessageNotification::DeliveryTracker tracker(/*sessionStartedAtMillis=*/10'500);
+
+    // 启动前一秒及更早的 SDK 补投只进入聊天记录/未读，不进入系统通知队列。
+    const auto backlog = tracker.record(QStringLiteral("peer-a"), 9'999);
+    QCOMPARE(backlog.disposition, MessageNotification::DeliveryDisposition::StartupBacklog);
+    QVERIFY(!backlog.shouldShow());
+    QCOMPARE(backlog.pendingCount, 0);
+
+    // SDK 时间是秒级：启动所在的同一秒必须放行，否则刚启动后立刻来的真消息会丢提醒。
+    const auto sameSecond = tracker.record(QStringLiteral("peer-a"), 10'000);
+    QCOMPARE(sameSecond.disposition, MessageNotification::DeliveryDisposition::Show);
+    QVERIFY(sameSecond.shouldShow());
+}
+
+void MessageNotificationTest::deliveryTrackerShowsOnlyOnceUntilConversationIsViewed() {
+    MessageNotification::DeliveryTracker tracker(/*sessionStartedAtMillis=*/10'500);
+
+    const auto first = tracker.record(QStringLiteral("peer-a"), 11'000);
+    QCOMPARE(first.disposition, MessageNotification::DeliveryDisposition::Show);
+    QCOMPARE(first.pendingCount, 1);
+
+    // 以前这里仍会调用 showMessage 68 次，只是正文从 2 一直改到 69；
+    // Windows 不会覆盖旧气泡，结果就是用户关都关不掉的通知风暴。
+    for (int pending = 2; pending <= 69; ++pending) {
+        const auto repeated = tracker.record(QStringLiteral("peer-a"), 11'000 + pending);
+        QCOMPARE(repeated.disposition, MessageNotification::DeliveryDisposition::AlreadyPending);
+        QVERIFY(!repeated.shouldShow());
+        QCOMPARE(repeated.pendingCount, pending);
+    }
+
+    // 打开会话等同于确认已看到；清闸后下一条真正的新消息可以再次提醒。
+    tracker.clear(QStringLiteral("peer-a"));
+    const auto afterViewed = tracker.record(QStringLiteral("peer-a"), 12'000);
+    QCOMPARE(afterViewed.disposition, MessageNotification::DeliveryDisposition::Show);
+    QCOMPARE(afterViewed.pendingCount, 1);
+
+    // 一个联系人的待处理状态不能把另一个人的第一条通知一起吞掉。
+    const auto otherPeer = tracker.record(QStringLiteral("peer-b"), 12'000);
+    QCOMPARE(otherPeer.disposition, MessageNotification::DeliveryDisposition::Show);
+
+    tracker.clearAll();
+    const auto afterForeground = tracker.record(QStringLiteral("peer-a"), 13'000);
+    QCOMPARE(afterForeground.disposition, MessageNotification::DeliveryDisposition::Show);
+    QCOMPARE(afterForeground.pendingCount, 1);
+}
+
+void MessageNotificationTest::foregroundWindowSuppressesSystemNotification() {
+    // 用户正在操作 MaiChat 时，无论看的是联系人、设置还是别人的会话，都不弹系统通知。
+    QVERIFY(MessageNotification::shouldSuppressForForegroundWindow(true, false));
+
+    // 最小化或切到别的应用后才需要系统级提醒。
+    QVERIFY(!MessageNotification::shouldSuppressForForegroundWindow(true, true));
+    QVERIFY(!MessageNotification::shouldSuppressForForegroundWindow(false, false));
 }
 
 QTEST_MAIN(MessageNotificationTest)

@@ -1325,14 +1325,12 @@ public enum RemoteIMNewMessageNotificationPolicy {
     public static func shouldNotify(
         wasInserted: Bool,
         isApplicationActive: Bool,
-        visibleConversationUserID: String?,
         incomingUserID: String
     ) -> Bool {
         guard wasInserted else { return false }
         let incoming = incomingUserID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !incoming.isEmpty else { return false }
-        let visible = visibleConversationUserID?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !(isApplicationActive && visible == incoming)
+        return !isApplicationActive
     }
 
     public static func preview(for message: RemoteIMMessage, limit: Int = 80) -> String {

@@ -248,7 +248,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         boolean conversationVisible
     ) {
         if (destroyed || message == null) return;
-        runOnUiThread(() -> showNewMessageNotification(message, conversationVisible));
+        runOnUiThread(() -> showNewMessageNotification(message));
     }
 
     @Override
@@ -306,16 +306,12 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         );
     }
 
-    private void showNewMessageNotification(
-        RemoteIMMessage message,
-        boolean conversationVisible
-    ) {
+    private void showNewMessageNotification(RemoteIMMessage message) {
         if (!RemoteIMNewMessageNotificationPolicy.shouldNotify(
             true,
-            activityInForeground,
-            conversationVisible
+            activityInForeground
         )) {
-            Log.d(TAG, "notification-suppressed reason=visible-foreground-conversation"
+            Log.d(TAG, "notification-suppressed reason=app-foreground"
                 + " peer=" + message.fromUserId());
             return;
         }

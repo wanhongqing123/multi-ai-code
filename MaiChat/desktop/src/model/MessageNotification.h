@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QHash>
 #include <QString>
 
 #include "model/RemoteIMMessage.h"
@@ -9,6 +10,40 @@
 // 单独拎出来是因为它有一条硬要求：**通知正文里不能出现本地文件路径**。
 // 系统通知会出现在锁屏、通知中心、甚至录屏里，路径既没用又泄露目录结构。
 namespace MessageNotification {
+
+enum class DeliveryDisposition {
+    Show,
+    StartupBacklog,
+    AlreadyPending
+};
+
+struct DeliveryDecision {
+    DeliveryDisposition disposition = DeliveryDisposition::StartupBacklog;
+    int pendingCount = 0;
+
+    bool shouldShow() const { return disposition == DeliveryDisposition::Show; }
+};
+
+// 系统托盘通知的交付闸门：
+// 1. 本次进程启动前产生、登录后才补投的旧消息只进未读，不弹系统通知；
+// 2. 同一联系人尚未被查看时最多弹一次，后续只累计 pendingCount；
+// 3. clear 后下一条实时消息可以再次提醒。
+class DeliveryTracker {
+public:
+    explicit DeliveryTracker(qint64 sessionStartedAtMillis);
+
+    DeliveryDecision record(const QString& peerId, qint64 messageCreatedAtMillis);
+    void clear(const QString& peerId);
+    void clearAll();
+
+private:
+    qint64 sessionStartedAtMillis_ = 0;
+    QHash<QString, int> pendingCounts_;
+};
+
+// 系统通知只在窗口最小化或失去前台焦点时有意义。应用就在用户眼前时，
+// 无论当前是哪一页/哪个会话，都不再额外弹 Windows 通知。
+bool shouldSuppressForForegroundWindow(bool applicationActive, bool isMinimized);
 
 // 标题用联系人显示名；没有显示名就退回 userId——总得让人知道是谁发的。
 QString title(const QString& displayName, const QString& peerId);

@@ -8,11 +8,10 @@ import org.junit.Test;
 
 public class RemoteIMNewMessageNotificationPolicyTest {
     @Test
-    public void onlySuppressesDuplicateOrVisibleForegroundConversation() {
-        assertFalse(RemoteIMNewMessageNotificationPolicy.shouldNotify(false, false, false));
-        assertFalse(RemoteIMNewMessageNotificationPolicy.shouldNotify(true, true, true));
-        assertTrue(RemoteIMNewMessageNotificationPolicy.shouldNotify(true, true, false));
-        assertTrue(RemoteIMNewMessageNotificationPolicy.shouldNotify(true, false, true));
+    public void onlyNotifiesForFirstInsertionWhileInBackground() {
+        assertFalse(RemoteIMNewMessageNotificationPolicy.shouldNotify(false, false));
+        assertFalse(RemoteIMNewMessageNotificationPolicy.shouldNotify(true, true));
+        assertTrue(RemoteIMNewMessageNotificationPolicy.shouldNotify(true, false));
     }
 
     @Test

@@ -133,7 +133,9 @@ final class RemoteIMSystemNotificationCenter: NSObject, ObservableObject, UNUser
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        [.banner, .list, .sound, .badge]
+        // 这个回调只会在 App 位于前台时触发。前台已经有会话列表和未读红点，
+        // 不再叠一层系统横幅；退到后台后由系统按通知内容正常展示。
+        []
     }
 
     nonisolated func userNotificationCenter(

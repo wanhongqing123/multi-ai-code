@@ -31,6 +31,40 @@ QString truncated(const QString& text) {
 
 }  // namespace
 
+DeliveryTracker::DeliveryTracker(qint64 sessionStartedAtMillis)
+    : sessionStartedAtMillis_(sessionStartedAtMillis) {}
+
+DeliveryDecision DeliveryTracker::record(const QString& peerId, qint64 messageCreatedAtMillis) {
+    const QString peer = peerId.trimmed();
+    if (peer.isEmpty()) return {DeliveryDisposition::StartupBacklog, 0};
+
+    // 腾讯 IM 的服务端时间通常只有秒级精度。把启动时刻也降到整秒：本进程启动后、
+    // 但恰好落在同一秒的新消息不能被误当成历史；更早秒的消息则是登录后的补投。
+    const qint64 sessionSecond = (sessionStartedAtMillis_ / 1000) * 1000;
+    if (sessionStartedAtMillis_ > 0
+        && messageCreatedAtMillis > 0
+        && messageCreatedAtMillis < sessionSecond) {
+        return {DeliveryDisposition::StartupBacklog, 0};
+    }
+
+    const int pending = pendingCounts_.value(peer, 0) + 1;
+    pendingCounts_.insert(peer, pending);
+    if (pending > 1) return {DeliveryDisposition::AlreadyPending, pending};
+    return {DeliveryDisposition::Show, pending};
+}
+
+void DeliveryTracker::clear(const QString& peerId) {
+    pendingCounts_.remove(peerId.trimmed());
+}
+
+void DeliveryTracker::clearAll() {
+    pendingCounts_.clear();
+}
+
+bool shouldSuppressForForegroundWindow(bool applicationActive, bool isMinimized) {
+    return applicationActive && !isMinimized;
+}
+
 QString title(const QString& displayName, const QString& peerId) {
     const QString name = displayName.trimmed();
     return name.isEmpty() ? peerId.trimmed() : name;

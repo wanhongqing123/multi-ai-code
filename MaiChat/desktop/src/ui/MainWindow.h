@@ -14,6 +14,7 @@
 #include <memory>
 
 #include "app/RemoteIMApplication.h"
+#include "model/MessageNotification.h"
 #include "remote/RemoteDesktopController.h"
 #include "remote/RemoteDesktopSettings.h"
 #include "ui/RemoteInputCapture.h"
@@ -102,8 +103,8 @@ private:
     // ---- 新消息系统通知 ----
     void setUpMessageNotifications();
     void handleIncomingMessageForNotification(const QString& peerId, const RemoteIMMessage& message);
-    // 「这条消息现在该不该打扰用户」。窗口没激活、或者开着别人的会话，都要通知。
-    bool conversationIsVisibleTo(const QString& peerId) const;
+    // MaiChat 正在前台且未最小化时不弹系统通知；失焦或最小化才需要提醒。
+    bool appIsForegroundVisible() const;
     void openConversationFromNotification();
     void showContactsPage();
     void showSettingsPage();
@@ -218,8 +219,9 @@ private:
     // 系统只保留最近一个通知气泡，点击回调也不带任何负载，所以只能记住
     // 「最后弹的是谁」。多个联系人先后来消息时，点通知只能定位到最后那个。
     QString lastNotifiedPeerId_;
-    // 每个联系人堆了多少条还没被看到的通知，用来聚合成一条而不是弹一串。
-    QHash<QString, int> pendingNotificationCounts_;
+    // 启动补投不弹、同一联系人未查看前最多弹一次。计数与闸门放在可单测的模型里，
+    // 避免这里只改显示文字却仍对每条消息调用一次 showMessage。
+    MessageNotification::DeliveryTracker notificationTracker_;
     // 折叠状态只活在内存里：重启后一律展开。持久化它的收益很小，
     // 而"上次收起来的组这次还是收着的"反而容易让人以为联系人少了。
     QSet<QString> collapsedContactGroups_;

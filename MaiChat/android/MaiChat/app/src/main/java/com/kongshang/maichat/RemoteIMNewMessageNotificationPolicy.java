@@ -6,10 +6,9 @@ public final class RemoteIMNewMessageNotificationPolicy {
 
     public static boolean shouldNotify(
         boolean wasInserted,
-        boolean activityInForeground,
-        boolean conversationVisible
+        boolean activityInForeground
     ) {
-        return wasInserted && !(activityInForeground && conversationVisible);
+        return wasInserted && !activityInForeground;
     }
 
     public static String preview(RemoteIMMessage message) {

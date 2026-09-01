@@ -575,6 +575,17 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
     return result
   }
 
+  function resolveQuotedText(quote: RemoteImMessageQuote | undefined): string | undefined {
+    const msgId = quote?.msgId?.trim()
+    if (!msgId || !deps.store.findByRemoteMessageId) return undefined
+    // 附件消息的 content 是内部占位串（"[图片消息] ..."），拿它当引用原文
+    // 只会把内部约定漏给模型；那种情况摘要反而是对的（客户端会写成"[图片]"）。
+    if (quote?.kind && quote.kind !== 'text') return undefined
+    const found = deps.store.findByRemoteMessageId('tencent-im', msgId)
+    const text = found?.content?.trim()
+    return text || undefined
+  }
+
   async function routeTaskTextToAicli(input: {
     message: RemoteImIncomingTextMessage
     fromUserId: string
@@ -636,13 +647,18 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       input.origin === 'human'
         ? createOutputRoute(session, input.message.projectId, input.fromUserId, true)
         : null
+    // 引用只带 120 字摘要，够人认出是哪条，但常常不够模型看懂引用的是什么。
+    // 原文就在本地库里（引用带的是原始 SDK 消息 ID，与入库的 remoteMessageId 同一个值），
+    // 查得到就给全文，查不到再退回摘要——老消息、别的设备发的、发送失败的都会落到这条路上。
+    const quotedText = resolveQuotedText(input.quote)
     const buildPrompt = () =>
       buildRemoteImAicliPrompt(
         {
           fromUserId: input.fromUserId,
           text: input.text,
           replyId: outputRoute?.replyId,
-          quote: input.quote
+          quote: input.quote,
+          quotedText
         },
         {
           includeReplyProtocol:

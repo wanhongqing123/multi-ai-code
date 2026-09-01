@@ -31,6 +31,44 @@ describe('remote IM reply protocol', () => {
     expect(bodyLine).toBeGreaterThan(quoteLine)
   })
 
+  it('quotes the resolved original in full instead of the truncated digest', () => {
+    const prompt = buildRemoteImAicliPrompt({
+      fromUserId: 'phone_admin',
+      text: '按第二条执行',
+      quote: {
+        msgId: 'sdk-1',
+        sender: 'bot',
+        // 线上摘要被发送端截到 120 字，结论恰好在截断处之后。
+        digest: '诊断对比后，推荐方案 A…'
+      },
+      quotedText: ['诊断对比后，推荐方案 A：', '', '2. 只调色度，不改亮度'].join('\n')
+    })
+
+    const lines = prompt.split('\n')
+    expect(lines).toContain('> bot：诊断对比后，推荐方案 A：')
+    expect(lines).toContain('> 2. 只调色度，不改亮度')
+    // 空行必须也带 '>'：裸的空行会终止引用块，
+    // 剩下的原文就变成“人刚刚写的话”了。
+    expect(lines).toContain('>')
+    // 有全文时不再用摘要那一行。
+    expect(prompt).not.toContain('> bot：诊断对比后，推荐方案 A…')
+  })
+
+  it('caps a very long quoted original so one reply cannot flood the prompt', () => {
+    const long = 'x'.repeat(5000)
+    const prompt = buildRemoteImAicliPrompt({
+      fromUserId: 'phone_admin',
+      text: '继续',
+      quote: { sender: 'bot', digest: 'xxx' },
+      quotedText: long
+    })
+    const quoteLine = prompt.split('\n').find((line) => line.startsWith('> bot'))
+    expect(quoteLine).toBeDefined()
+    // '> ' + 'bot：' + 2000 个 x + 省略号
+    expect(quoteLine!.length).toBe(2 + 4 + 2000 + 1)
+    expect(quoteLine!.endsWith('…')).toBe(true)
+  })
+
   it('omits the blockquote entirely when there is no quote', () => {
     const prompt = buildRemoteImAicliPrompt({ fromUserId: 'phone_admin', text: 'plain' })
     const quoteLines = prompt.split('\n').filter((line) => line.startsWith('> '))

@@ -11,6 +11,8 @@ export interface RemoteImAicliPromptInput {
   replyId?: string
   /** Set when the human replied to a specific earlier message. */
   quote?: RemoteImMessageQuote
+  /** The quoted message resolved from the local store; falls back to the digest. */
+  quotedText?: string
 }
 
 export interface RemoteImAicliPromptOptions {
@@ -233,15 +235,41 @@ function extractExpectedRemoteImReply(clean: string, replyId: string): RemoteImR
  *
  * Markdown blockquote is used rather than a bespoke tag because every model
  * already reads it as quoted context; no protocol needs to be taught.
+ *
+ * `quotedText` is the original message resolved from the local store. The wire
+ * digest is capped at 120 characters by the sending client, which is enough for
+ * a human to recognise a message they can still see on screen but routinely too
+ * short for the model: a reply quoting the conclusion of a long analysis arrives
+ * truncated mid-sentence. When the original is on hand it is quoted in full.
  */
-function formatQuoteLines(quote: RemoteImMessageQuote | undefined): string[] {
+const QUOTED_TEXT_LIMIT = 2000
+
+function clampQuotedText(text: string): string {
+  return text.length <= QUOTED_TEXT_LIMIT ? text : text.slice(0, QUOTED_TEXT_LIMIT) + '\u2026'
+}
+
+function formatQuoteLines(
+  quote: RemoteImMessageQuote | undefined,
+  quotedText?: string
+): string[] {
   const digest = quote?.digest?.trim()
   if (!digest) return []
   const sender = quote?.sender?.trim()
-  const head = sender ? sender + '\uff1a' + digest : digest
+  const head = sender ? sender + '\uff1a' : ''
+
+  const full = quotedText?.trim()
+  if (full) {
+    const lines = clampQuotedText(full).split('\n')
+    // A blank line would terminate the blockquote and hand the rest of the
+    // original back to the model as if the human had just written it.
+    const quoted = lines.map((line) => (line.trim() ? '> ' + line : '>'))
+    quoted[0] = '> ' + head + lines[0]
+    return [...quoted, '']
+  }
+
   // Collapse whitespace: a multi-line digest would break out of the blockquote
   // and read as if the human had written those lines.
-  return ['> ' + head.replace(/\s+/g, ' '), '']
+  return ['> ' + (head + digest).replace(/\s+/g, ' '), '']
 }
 
 export function buildRemoteImAicliPrompt(
@@ -250,7 +278,7 @@ export function buildRemoteImAicliPrompt(
 ): string {
   const lines = [
     `[来自远程 IM：${input.fromUserId.trim()}]`,
-    ...formatQuoteLines(input.quote),
+    ...formatQuoteLines(input.quote, input.quotedText),
     input.text,
     '',
     '如果需要查询或操作 IM，请先运行 imcli help；如需把截图或本地图片发回 IM，可保存为 png/jpg/webp/gif 文件后使用 imcli send-image <user> <imagePath>；如需发送 Markdown/HTML 报告文件，使用 imcli send-file <user> <filePath>；如需发送当前仓库的代码 Diff，使用 imcli send-diff <user> [--working | --commit <ref> | --range <base>..<head>]。正常回复必须使用真实的 Markdown 换行，不要把 Windows 命令行的转义规则用于回复正文。手工调用 imcli send 发送文本时，正文一律传 UTF-8 文本的标准 Base64：imcli send <user> --text-b64 <base64>。'

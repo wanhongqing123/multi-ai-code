@@ -230,6 +230,143 @@ describe('remote IM router', () => {
     expect(sentToAicli[0].text).not.toContain('[IM_REPLY]')
   })
 
+  it('replaces the truncated digest with the original message from the store', async () => {
+    const store = createMessageStore()
+    // 被引用的原消息：就是 AICLI 自己之前发出去的那一条。
+    store.create({
+      projectId: 'project-1',
+      sessionId: null,
+      provider: 'tencent-im',
+      remoteMessageId: 'sdk-original-1',
+      fromUserId: 'desktop_bot',
+      toUserId: 'phone_admin',
+      role: 'aicli',
+      direction: 'outgoing',
+      content: ['诊断对比后，推荐方案 A：', '', '5. 先验证 2 秒，相似度不低于 0.78'].join('\n'),
+      kind: 'text',
+      attachment: null,
+      status: 'sent-to-im',
+      error: null,
+      createdAt: 50,
+      sentToAicliAt: null,
+      sentToImAt: 60
+    })
+    const sentToAicli: string[] = []
+    const router = createRemoteImRouter({
+      getConfig: () => config,
+      resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo', sourceKind: 'codex' }),
+      sendUser: async (_sessionId, text) => {
+        sentToAicli.push(text)
+        return { ok: true }
+      },
+      sendImText: async () => ({ ok: true }),
+      store
+    })
+
+    const result = await router.handleIncomingText({
+      projectId: 'project-1',
+      remoteMessageId: 'remote-quote-full-1',
+      fromUserId: 'phone_admin',
+      toUserId: 'desktop_bot',
+      text: '按第 5 条执行',
+      origin: 'human',
+      quote: {
+        msgId: 'sdk-original-1',
+        sender: 'desktop_bot',
+        // 线上只能带摘要，结论那行已经被截掉了。
+        digest: '诊断对比后，推荐方案 A…',
+        kind: 'text'
+      },
+      createdAt: 100
+    })
+
+    expect(result.ok).toBe(true)
+    const lines = sentToAicli[0].split('\n')
+    // 被截掉的那行现在模型看得到了。
+    expect(lines).toContain('> 5. 先验证 2 秒，相似度不低于 0.78')
+    expect(lines).toContain('> desktop_bot：诊断对比后，推荐方案 A：')
+    expect(sentToAicli[0]).not.toContain('方案 A…')
+  })
+
+  it('keeps the digest for a quoted attachment so no internal placeholder leaks', async () => {
+    const store = createMessageStore()
+    store.create({
+      projectId: 'project-1',
+      sessionId: null,
+      provider: 'tencent-im',
+      remoteMessageId: 'sdk-image-1',
+      fromUserId: 'desktop_bot',
+      toUserId: 'phone_admin',
+      role: 'aicli',
+      direction: 'outgoing',
+      // 附件消息的 content 是内部占位串，里面可能带本地路径。
+      content: '[图片消息] C:/Users/whq/AppData/cache/im/9f2c.png',
+      kind: 'image',
+      attachment: null,
+      status: 'sent-to-im',
+      error: null,
+      createdAt: 50,
+      sentToAicliAt: null,
+      sentToImAt: 60
+    })
+    const sentToAicli: string[] = []
+    const router = createRemoteImRouter({
+      getConfig: () => config,
+      resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo', sourceKind: 'codex' }),
+      sendUser: async (_sessionId, text) => {
+        sentToAicli.push(text)
+        return { ok: true }
+      },
+      sendImText: async () => ({ ok: true }),
+      store
+    })
+
+    await router.handleIncomingText({
+      projectId: 'project-1',
+      remoteMessageId: 'remote-quote-image-1',
+      fromUserId: 'phone_admin',
+      toUserId: 'desktop_bot',
+      text: '这张重新生成',
+      origin: 'human',
+      quote: { msgId: 'sdk-image-1', sender: 'desktop_bot', digest: '[图片]', kind: 'image' },
+      createdAt: 100
+    })
+
+    expect(sentToAicli[0].split('\n')).toContain('> desktop_bot：[图片]')
+    // 本地路径绝不能因为“给模型看全文”而漏出去。
+    expect(sentToAicli[0]).not.toContain('AppData')
+    expect(sentToAicli[0]).not.toContain('[图片消息]')
+  })
+
+  it('falls back to the digest when the quoted original is not in the store', async () => {
+    const store = createMessageStore()
+    const sentToAicli: string[] = []
+    const router = createRemoteImRouter({
+      getConfig: () => config,
+      resolveSession: () => ({ sessionId: 'session-main', targetRepo: 'repo', sourceKind: 'codex' }),
+      sendUser: async (_sessionId, text) => {
+        sentToAicli.push(text)
+        return { ok: true }
+      },
+      sendImText: async () => ({ ok: true }),
+      store
+    })
+
+    await router.handleIncomingText({
+      projectId: 'project-1',
+      remoteMessageId: 'remote-quote-miss-1',
+      fromUserId: 'phone_admin',
+      toUserId: 'desktop_bot',
+      text: '继续',
+      origin: 'human',
+      // 老消息、别的设备发的、发送失败的，都会落到这条路上。
+      quote: { msgId: 'sdk-not-here', sender: 'bot', digest: '只剩摘要', kind: 'text' },
+      createdAt: 100
+    })
+
+    expect(sentToAicli[0].split('\n')).toContain('> bot：只剩摘要')
+  })
+
   it('reports structured auto-decline audit data when accepting the next message', async () => {
     const store = createMessageStore()
     const acceptedDeliveries: unknown[] = []

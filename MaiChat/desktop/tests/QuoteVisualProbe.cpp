@@ -47,7 +47,7 @@ int main(int argc, char** argv) {
     // 3) 引用一条很长的文本，检查是否按省略号截断而不是把气泡撑爆。
     RemoteIMQuote longQuote;
     longQuote.senderId = QStringLiteral("phone-user");
-    longQuote.digest = QString(160, QLatin1Char('长')) + QStringLiteral("…");
+    longQuote.digest = QString(160, QChar(0x957F)) + QStringLiteral("…");  // 0x957F = 「长」
     longQuote.kind = QStringLiteral("text");
     application.sendText(QStringLiteral("这条引用很长，检查截断"), longQuote, true);
 

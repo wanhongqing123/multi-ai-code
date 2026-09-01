@@ -2249,25 +2249,37 @@ void MainWindow::refreshContacts() {
     // 结果是刚回你消息的人可能排在第 11 位，而列表顶上是几周没说过话的。
     // 从来没有过消息的联系人排在最后（按名字，保证顺序稳定，不会每次刷新乱跳）。
     QHash<QString, qint64> latestAtByUserId;
+    QHash<QString, int> latestOrderByUserId;
     QHash<QString, RemoteIMMessage> latestByUserId;
     for (const RemoteIMContact& contact : contacts) {
         RemoteIMMessage latest;
         if (!app_.chatState().latestMessageWith(contact.userId, &latest)) continue;
         latestAtByUserId.insert(contact.userId, latest.createdAtMillis);
+        latestOrderByUserId.insert(contact.userId,
+                                   app_.chatState().latestMessageOrderWith(contact.userId));
         latestByUserId.insert(contact.userId, latest);
     }
     std::stable_sort(contacts.begin(), contacts.end(),
-                     [&latestAtByUserId](const RemoteIMContact& a, const RemoteIMContact& b) {
+                     [&latestAtByUserId, &latestOrderByUserId](const RemoteIMContact& a,
+                                                               const RemoteIMContact& b) {
         const bool aHas = latestAtByUserId.contains(a.userId);
         const bool bHas = latestAtByUserId.contains(b.userId);
         if (aHas != bHas) return aHas;  // 有消息的排在没消息的前面
         if (!aHas) return a.userId.localeAwareCompare(b.userId) < 0;
         const qint64 aAt = latestAtByUserId.value(a.userId);
         const qint64 bAt = latestAtByUserId.value(b.userId);
-        // 时间相同的（同一批漫游拉回来的常见）退回名字比较，
-        // 否则每次刷新顺序都可能不同，列表会自己抖。
-        if (aAt == bAt) return a.userId.localeAwareCompare(b.userId) < 0;
-        return aAt > bAt;
+        if (aAt != bAt) return aAt > bAt;
+        // 时间相同时用「最后一条消息的全局内存顺序」，而不是名字。
+        //
+        // 出站消息的 createdAtMillis 被有意截成整秒（对齐 SDK 的秒级时间戳、
+        // 用于漫游去重），所以同一秒内到达的多个会话在时间上完全并列——
+        // 而同秒多个会话来消息在线上很常见。此前退回名字比较，结果是
+        // 「刚来消息的人」按名字排，最新的那个可能沉到中间，功能等于失效。
+        const int aOrder = latestOrderByUserId.value(a.userId, -1);
+        const int bOrder = latestOrderByUserId.value(b.userId, -1);
+        if (aOrder != bOrder) return aOrder > bOrder;
+        // 内存顺序也相同才退回名字：保证顺序稳定，列表不会每次刷新自己抖。
+        return a.userId.localeAwareCompare(b.userId) < 0;
     });
 
     for (int index = 0; index < contacts.size(); ++index) {

@@ -185,6 +185,26 @@ void MainWindowLayoutTest::conversationListPutsNewestMessageFirst() {
     app.sendText(QStringLiteral("最新"));
     QCoreApplication::processEvents();
 
+    // **主动把三条消息的时间设成完全相同**，让「时间并列」成为这条用例的前提，
+    // 而不是靠机器快慢碰运气。
+    //
+    // 这一步是必须的：原来这条用例在 Windows 上通过、在 macOS 上稳定失败，
+    // 看起来像平台差异，其实是它**根本没测到自己要测的东西**——
+    // 三次发送恰好跨毫秒时时间不同，排序走的是时间分支，
+    // 并列时才走的那个分支从来没被执行过。
+    //
+    // 同秒/同毫秒多个会话来消息在线上很常见（一批漫游消息、同时收到多人回复），
+    // 所以并列分支才是真正需要钉住的那条。
+    RemoteIMMessage tie;
+    QVERIFY(app.chatState().latestMessageWith(QStringLiteral("charlie"), &tie));
+    for (const char* peer : {"alpha", "bravo", "charlie"}) {
+        RemoteIMMessage m;
+        QVERIFY(app.chatState().latestMessageWith(QString::fromLatin1(peer), &m));
+        QVERIFY(app.chatState().updateMessageTime(m.id, tie.createdAtMillis));
+    }
+    emit app.stateChanged();  // 走 MainWindow 平时重排列表的那条真实路径
+    QCoreApplication::processEvents();
+
     auto* list = window.findChild<QListWidget*>(QStringLiteral("conversationList"));
     QVERIFY(list != nullptr);
     QStringList order;

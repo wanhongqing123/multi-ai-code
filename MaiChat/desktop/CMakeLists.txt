@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 # C 用于 third_party/md4c（Markdown 解析，纯 C 实现）。
-project(MaiChatDesktop VERSION 0.1.65 LANGUAGES C CXX)
+project(MaiChatDesktop VERSION 0.1.66 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

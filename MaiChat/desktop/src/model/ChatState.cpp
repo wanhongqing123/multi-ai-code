@@ -400,12 +400,6 @@ bool ChatState::latestMessageWith(const QString& peerId, RemoteIMMessage* messag
     return true;
 }
 
-int ChatState::latestMessageOrderWith(const QString& peerId) const {
-    const auto conversation = messageIdsByPeer_.constFind(clean(peerId));
-    if (conversation == messageIdsByPeer_.cend() || conversation->isEmpty()) return -1;
-    return messageIndexById_.value(conversation->last(), -1);
-}
-
 bool ChatState::updateMessageStatus(const QString& messageId, RemoteIMMessageStatus status) {
     const int index = messageIndexById_.value(messageId, -1);
     if (index < 0 || index >= messages_.size()) return false;

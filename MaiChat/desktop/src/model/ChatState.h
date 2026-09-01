@@ -64,14 +64,6 @@ public:
                             const std::function<void(const RemoteIMMessage&)>& visit) const;
     int messageCountWith(const QString& peerId) const;
     bool latestMessageWith(const QString& peerId, RemoteIMMessage* message) const;
-
-    // 该会话最后一条消息在全局消息序列中的下标；没有消息返回 -1。
-    //
-    // 会话列表排序需要它做「时间相同」时的第二排序键：出站消息的 createdAtMillis
-    // 被有意截成整秒（对齐 SDK 的秒级时间戳，用于漫游去重），所以同一秒内到达的
-    // 多个会话在时间上完全并列——而同秒多个会话来消息在线上很常见。
-    // 只靠时间排序会让「刚来消息的人」退回按名字排，最新的那个可能沉到中间。
-    int latestMessageOrderWith(const QString& peerId) const;
     bool updateMessageStatus(const QString& messageId, RemoteIMMessageStatus status);
     bool updateMessageTime(const QString& messageId, qint64 createdAtMillis);
     // 出站消息发送成功后，把本地临时 UUID 换成 SDK 确认的稳定 id（漫游重投可

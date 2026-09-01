@@ -119,6 +119,7 @@ private slots:
     void quotedReplyRendersQuoteBlockAboveBody();
     void replyBarShowsTargetAndClearsAfterSending();
     void conversationListPutsNewestMessageFirst();
+    void conversationListBreaksTimeTiesByName();
     void droppingAnImageFileSendsTheOriginalFileAsAnImage();
 };
 
@@ -185,24 +186,24 @@ void MainWindowLayoutTest::conversationListPutsNewestMessageFirst() {
     app.sendText(QStringLiteral("最新"));
     QCoreApplication::processEvents();
 
-    // **主动把三条消息的时间设成完全相同**，让「时间并列」成为这条用例的前提，
-    // 而不是靠机器快慢碰运气。
+    // 显式给三条消息设置**严格递增且互不相同**的时间。
     //
-    // 这一步是必须的：原来这条用例在 Windows 上通过、在 macOS 上稳定失败，
-    // 看起来像平台差异，其实是它**根本没测到自己要测的东西**——
-    // 三次发送恰好跨毫秒时时间不同，排序走的是时间分支，
-    // 并列时才走的那个分支从来没被执行过。
+    // 原来这条用例连发三条就直接断言，时间戳由机器快慢决定：
+    // 恰好不同就走时间分支（通过），恰好相同就走并列分支（失败）。
+    // 结果是它在 Windows 恒绿、在 macOS 恒红，看着像平台差异，
+    // 其实是**用例根本没控制住自己的前提**。
     //
-    // 同秒/同毫秒多个会话来消息在线上很常见（一批漫游消息、同时收到多人回复），
-    // 所以并列分支才是真正需要钉住的那条。
-    RemoteIMMessage tie;
-    QVERIFY(app.chatState().latestMessageWith(QStringLiteral("charlie"), &tie));
-    for (const char* peer : {"alpha", "bravo", "charlie"}) {
+    // 产品口径是「时间相同按首字母」，所以这里要测的是时间不同时按时间排——
+    // 那就必须让时间确实不同，而不是指望它不同。
+    struct Seed { const char* peer; qint64 at; };
+    const QList<Seed> seeds{{"alpha", 1000}, {"bravo", 2000}, {"charlie", 3000}};
+    for (const Seed& seed : seeds) {
         RemoteIMMessage m;
-        QVERIFY(app.chatState().latestMessageWith(QString::fromLatin1(peer), &m));
-        QVERIFY(app.chatState().updateMessageTime(m.id, tie.createdAtMillis));
+        QVERIFY(app.chatState().latestMessageWith(QString::fromLatin1(seed.peer), &m));
+        QVERIFY(app.chatState().updateMessageTime(m.id, seed.at));
     }
     emit app.stateChanged();  // 走 MainWindow 平时重排列表的那条真实路径
+    QCoreApplication::processEvents();
     QCoreApplication::processEvents();
 
     auto* list = window.findChild<QListWidget*>(QStringLiteral("conversationList"));
@@ -219,11 +220,65 @@ void MainWindowLayoutTest::conversationListPutsNewestMessageFirst() {
     // 没有消息的排最后，而不是因为名字靠前就冒到上面。
     QCOMPARE(order.at(3), QStringLiteral("delta"));
 
-    // 给最旧的那个补一条新消息，它必须立刻升到第一。
+    // 给最旧的那个补一条新消息、并显式设成最大时间，它必须立刻升到第一。
+    // 这里同样不依赖「新发的消息时间一定更大」——那又会变成碰运气。
     app.selectPeer(QStringLiteral("alpha"));
     app.sendText(QStringLiteral("又说话了"));
+    RemoteIMMessage revived;
+    QVERIFY(app.chatState().latestMessageWith(QStringLiteral("alpha"), &revived));
+    QVERIFY(app.chatState().updateMessageTime(revived.id, 9000));
+    emit app.stateChanged();
     QCoreApplication::processEvents();
     QCOMPARE(list->item(0)->data(Qt::UserRole).toString(), QStringLiteral("alpha"));
+}
+
+// 时间完全相同时按首字母稳定排序。
+//
+// 产品口径：时间戳是秒级精度，同秒并列按名字即可，不引入额外的活动顺序状态。
+// 这条用例钉住的是「并列时的行为是确定的」——不是随机、也不会每次刷新变一个样。
+void MainWindowLayoutTest::conversationListBreaksTimeTiesByName() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("charlie"), QStringLiteral("Charlie"));
+    app.addContact(QStringLiteral("alpha"), QStringLiteral("Alpha"));
+    app.addContact(QStringLiteral("bravo"), QStringLiteral("Bravo"));
+
+    MainWindow window(app);
+    window.resize(1280, 800);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    for (const char* peer : {"charlie", "alpha", "bravo"}) {
+        app.selectPeer(QString::fromLatin1(peer));
+        app.sendText(QStringLiteral("同一时刻"));
+    }
+    // 三条设成**完全相同**的时间，强制走并列分支。
+    for (const char* peer : {"charlie", "alpha", "bravo"}) {
+        RemoteIMMessage m;
+        QVERIFY(app.chatState().latestMessageWith(QString::fromLatin1(peer), &m));
+        QVERIFY(app.chatState().updateMessageTime(m.id, 5000));
+    }
+    emit app.stateChanged();
+    QCoreApplication::processEvents();
+
+    auto* list = window.findChild<QListWidget*>(QStringLiteral("conversationList"));
+    QVERIFY(list != nullptr);
+    QStringList order;
+    for (int row = 0; row < list->count(); ++row) {
+        order.append(list->item(row)->data(Qt::UserRole).toString());
+    }
+    QCOMPARE(order, QStringList({QStringLiteral("alpha"),
+                                 QStringLiteral("bravo"),
+                                 QStringLiteral("charlie")}));
+
+    // 再刷一次必须还是同样的顺序：并列时如果顺序不稳定，列表会自己抖。
+    emit app.stateChanged();
+    QCoreApplication::processEvents();
+    QStringList again;
+    for (int row = 0; row < list->count(); ++row) {
+        again.append(list->item(row)->data(Qt::UserRole).toString());
+    }
+    QCOMPARE(again, order);
 }
 
 void MainWindowLayoutTest::replyBarShowsTargetAndClearsAfterSending() {

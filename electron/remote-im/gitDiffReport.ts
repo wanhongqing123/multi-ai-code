@@ -861,7 +861,7 @@ function renderSplitSide(line: HtmlDiffLine | undefined, side: 'left' | 'right')
   return `<td class="ln ${kind}" width="54" align="right" bgcolor="${background}" style="padding:3px 8px;border-right:1px solid #d0d7de;color:#656d76">${htmlLineNumber(lineNumber)}</td><td class="code ${kind}" bgcolor="${background}" style="padding:3px 8px"><span class="code-text">${line ? escapeHtml(line.text) : ''}</span></td>`
 }
 
-function renderHtmlDiffFile(file: HtmlDiffFile, label: string, sectionLabel?: string,
+function renderHtmlDiffFile(file: HtmlDiffFile, label: string, sectionLabel: string | undefined,
   anchorId: string): string {
   const pairedRows = pairHtmlDiffLines(file.lines)
   const splitRows = pairedRows

@@ -83,11 +83,4 @@ QString preview(const RemoteIMMessage& message) {
     return truncated(text);
 }
 
-QString aggregatedPreview(const RemoteIMMessage& latest, int pendingCount) {
-    if (pendingCount <= 1) return preview(latest);
-    // 只报条数 + 最新一条。逐条弹窗在收到一串消息时会把桌面刷满，
-    // 而用户真正想知道的是「谁找我、有几条」。
-    return QStringLiteral("%1 条新消息：%2").arg(pendingCount).arg(preview(latest));
-}
-
 }  // namespace MessageNotification

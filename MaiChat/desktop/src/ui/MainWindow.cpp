@@ -2677,7 +2677,9 @@ void MainWindow::handleIncomingMessageForNotification(const QString& peerId,
     lastNotifiedPeerId_ = peerId;
 
     const QString title = MessageNotification::title(contactName(peerId), peerId);
-    const QString body = MessageNotification::aggregatedPreview(message, decision.pendingCount);
+    // Windows 的 QSystemTrayIcon 没有可复用的通知 ID，不能原位更新成“69 条”；
+    // 再 show 一次只会新增气泡。未查看前只展示首条，数量交给会话未读红点。
+    const QString body = MessageNotification::preview(message);
     // 正文不入日志：通知内容会进系统通知中心已经够了，日志里再存一份没有必要。
     qInfo("[notify] requested peer=%s pending=%d",
           qUtf8Printable(peerId), decision.pendingCount);

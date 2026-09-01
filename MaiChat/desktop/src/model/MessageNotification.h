@@ -52,9 +52,6 @@ QString title(const QString& displayName, const QString& peerId);
 // 永远不用文件名或路径。文本超过 kPreviewLimit 个字符会截断。
 QString preview(const RemoteIMMessage& message);
 
-// 同一个人堆了多条时，用聚合正文代替逐条弹窗。
-QString aggregatedPreview(const RemoteIMMessage& latest, int pendingCount);
-
 // 预览的最大长度。通知栏本来就显示不下更多，截断处加省略号。
 constexpr int kPreviewLimit = 60;
 

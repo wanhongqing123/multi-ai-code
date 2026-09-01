@@ -29,7 +29,6 @@ private slots:
     void previewUsesCaptionWhenTheAttachmentHasOne();
     void previewDropsInternalPlaceholderText();
     void longTextIsTruncated();
-    void aggregatedPreviewReportsHowManyArePending();
     void deliveryTrackerSuppressesStartupBacklog();
     void deliveryTrackerShowsOnlyOnceUntilConversationIsViewed();
     void foregroundWindowSuppressesSystemNotification();
@@ -78,19 +77,6 @@ void MessageNotificationTest::longTextIsTruncated() {
     // 刚好等于上限的不截断，也不加省略号。
     const QString exact = QString(MessageNotification::kPreviewLimit, QLatin1Char('y'));
     QCOMPARE(MessageNotification::preview(textMessage(exact)), exact);
-}
-
-void MessageNotificationTest::aggregatedPreviewReportsHowManyArePending() {
-    const RemoteIMMessage latest = textMessage(QStringLiteral("在吗"));
-
-    // 一条就正常显示，不要写成「1 条新消息：在吗」那种啰嗦话。
-    QCOMPARE(MessageNotification::aggregatedPreview(latest, 1), QStringLiteral("在吗"));
-    QCOMPARE(MessageNotification::aggregatedPreview(latest, 0), QStringLiteral("在吗"));
-
-    // 堆了多条时报条数 + 最新一条：逐条弹窗会把桌面刷满，
-    // 而用户真正想知道的是「谁找我、有几条」。
-    QCOMPARE(MessageNotification::aggregatedPreview(latest, 5),
-             QStringLiteral("5 条新消息：在吗"));
 }
 
 void MessageNotificationTest::deliveryTrackerSuppressesStartupBacklog() {

@@ -185,6 +185,9 @@ private:
     // 再缩小会被旧的大最小值卡住，布局缩不回去。
     void applyScaledFixedGeometry();
     void showZoomToast();
+    // 居中黑色气泡提示。缩放百分比与「定位不到原消息」共用一个浮层：
+    // 两者都是一句话、都自动消失，各建一个只会让它们互相盖住。
+    void showToast(const QString& text, int fontPx, int durationMs);
     // 远程桌面入口：可用性随会话选中状态与 TRTC 是否编译进来变化。
     void requestRemoteDesktop();
     void updateRemoteDesktopButton();
@@ -311,7 +314,7 @@ private:
     QString lastAttachmentSaveDir_;
     // 图片预览只允许存在一个实例，避免重复点击或平台窗口事件重入后叠出多个预览。
     ImagePreviewDialog* imagePreviewDialog_ = nullptr;
-    // 缩放百分比提示浮层（飞书式居中黑色气泡），零点几秒后自动隐藏。
-    QLabel* zoomToast_ = nullptr;
-    QTimer* zoomToastTimer_ = nullptr;
+    // 居中黑色气泡提示浮层（飞书式），零点几秒后自动隐藏。
+    QLabel* toast_ = nullptr;
+    QTimer* toastTimer_ = nullptr;
 };

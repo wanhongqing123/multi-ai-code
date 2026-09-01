@@ -33,6 +33,7 @@
 #include "im/FakeRemoteIMClient.h"
 #include "ui/ImagePreviewDialog.h"
 #include "ui/AppMessageDialog.h"
+#include "model/MessageQuote.h"
 #include "ui/MainWindow.h"
 #include "ui/UiZoom.h"
 
@@ -117,6 +118,8 @@ private slots:
     void settingsPanelBorderIsNotCoveredByRows();
     void droppingFilesIntoComposerAttachesThemInsteadOfPastingPaths();
     void quotedReplyRendersQuoteBlockAboveBody();
+    void clickingQuoteBlockJumpsToTheOriginalMessage();
+    void clickingQuoteBlockSaysSoWhenTheOriginalIsNotLocal();
     void replyBarShowsTargetAndClearsAfterSending();
     void conversationListPutsNewestMessageFirst();
     void conversationListBreaksTimeTiesByName();
@@ -332,6 +335,121 @@ void MainWindowLayoutTest::replyBarShowsTargetAndClearsAfterSending() {
     const RemoteIMMessage plain = app.chatState().messages().last();
     QCOMPARE(plain.text, QStringLiteral("一句无关的话"));
     QVERIFY2(!plain.hasQuote, "引用是单条回复的属性，不能粘在后续消息上");
+}
+
+namespace {
+
+// 引用块所在的气泡会在「排队 → 已发送」时被整块重建，旧的走 deleteLater：
+// 那一瞬间 findChild 能同时看见新旧两个同名部件，而旧的马上就要被销毁。
+// 所以必须先让事件循环把重建和销毁都跑完，再去取——顺序反了就会拿到野指针
+// （实测直接崩在 QWidget::mapTo）。取到后还要求「只有一个」，否则说明没settle。
+QWidget* settledQuoteBlock(QWidget& window) {
+    QWidget* block = nullptr;
+    // QTRY_ 宏只能用在测试方法里，这里手动转事件循环。
+    for (int i = 0; i < 50; ++i) {
+        QTest::qWait(20);
+        const QList<QWidget*> blocks =
+            window.findChildren<QWidget*>(QStringLiteral("messageQuoteBlock"));
+        if (blocks.size() != 1) continue;
+        block = blocks.first();
+        // 高度为 0 表示布局还没跑，这时候的坐标是假的，点下去会落到窗口外。
+        if (block->height() > 0) return block;
+    }
+    return block;
+}
+
+}  // namespace
+
+void MainWindowLayoutTest::clickingQuoteBlockJumpsToTheOriginalMessage() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+
+    MainWindow window(app);
+    window.resize(1280, 800);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    app.selectPeer(QStringLiteral("phone-user"));
+
+    app.sendText(QStringLiteral("这是被引用的原始消息"));
+    QCoreApplication::processEvents();
+    const QList<RemoteIMMessage> seeded = app.chatState().messagesWith(QStringLiteral("phone-user"));
+    QVERIFY(!seeded.isEmpty());
+    const RemoteIMMessage original = seeded.last();
+
+    // 中间塞一批，保证原消息不是「刚好就在回复旁边」——否则不跳转也能碰巧通过。
+    for (int i = 0; i < 12; ++i) {
+        app.sendText(QStringLiteral("填充消息 %1").arg(i));
+        QCoreApplication::processEvents();
+    }
+
+    const RemoteIMQuote quote = MessageQuote::quoteFor(original);
+    QVERIFY2(!quote.msgId.isEmpty(), "引用必须带上原始 SDK 消息 ID，否则块根本不可点");
+    app.sendText(QStringLiteral("这是回复"), quote, true);
+
+    QWidget* block = settledQuoteBlock(window);
+    QVERIFY2(block != nullptr, "带引用的消息必须渲染出引用块");
+    QVERIFY2(block->height() > 0, "引用块必须已经完成布局，否则点击坐标是假的");
+    QCOMPARE(block->property("quoteMsgId").toString(), quote.msgId);
+
+    const auto highlightedRow = [&window]() -> QWidget* {
+        QWidget* found = nullptr;
+        for (QWidget* candidate : window.findChildren<QWidget*>()) {
+            if (!candidate->property("searchHit").toBool()) continue;
+            // 同一时刻只该有一条高亮；多于一条说明上一次的没清掉。
+            if (found) return nullptr;
+            found = candidate;
+        }
+        return found;
+    };
+
+    QVERIFY2(highlightedRow() == nullptr, "还没点，不该有任何消息被高亮");
+
+    QTest::mouseClick(block, Qt::LeftButton);
+    // 跳转被推迟到下一轮事件循环（它可能触发整屏刷新），所以要真正转起事件循环。
+    QTest::qWait(100);
+
+    QWidget* row = highlightedRow();
+    QVERIFY2(row != nullptr, "点击引用块必须定位并高亮原消息");
+    // 高亮到「某一条」不算数，必须高亮到「被引用的那一条」：
+    // 只断言存在高亮的话，跳到任意一条都能过。
+    auto* body = row->findChild<QTextBrowser*>(QStringLiteral("messageMarkdownView"));
+    QVERIFY2(body != nullptr, "高亮的行里应当有正文");
+    QVERIFY2(body->toPlainText().contains(QStringLiteral("这是被引用的原始消息")),
+             qPrintable(QStringLiteral("跳错了行，正文是：") + body->toPlainText()));
+}
+
+void MainWindowLayoutTest::clickingQuoteBlockSaysSoWhenTheOriginalIsNotLocal() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+
+    MainWindow window(app);
+    window.resize(1280, 800);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    app.selectPeer(QStringLiteral("phone-user"));
+
+    // 引用一条本地根本没有的消息：别的设备发的、或本地已清理过的历史。
+    RemoteIMQuote quote;
+    quote.msgId = QStringLiteral("not-in-this-database");
+    quote.senderId = QStringLiteral("phone-user");
+    quote.digest = QStringLiteral("只剩快照的原文");
+    quote.kind = QStringLiteral("text");
+    app.sendText(QStringLiteral("这是回复"), quote, true);
+
+    QWidget* block = settledQuoteBlock(window);
+    QVERIFY(block != nullptr);
+    QVERIFY(block->height() > 0);
+
+    QTest::mouseClick(block, Qt::LeftButton);
+    QTest::qWait(100);
+
+    // 手型光标等于承诺了会有反应，所以定位不到时必须说一句，不能静默。
+    auto* toast = window.findChild<QLabel*>(QStringLiteral("toast"));
+    QVERIFY2(toast != nullptr && toast->isVisible(), "定位不到原消息时必须给出提示");
+    QVERIFY2(toast->text().contains(QStringLiteral("原消息")),
+             qPrintable(QStringLiteral("提示文案不对：") + toast->text()));
 }
 
 void MainWindowLayoutTest::quotedReplyRendersQuoteBlockAboveBody() {
@@ -2080,7 +2198,7 @@ void MainWindowLayoutTest::ctrlShortcutsZoomWholeUi() {
     // Ctrl+= 放大一档并弹出百分比浮层。
     QTest::keyClick(&window, Qt::Key_Equal, Qt::ControlModifier);
     QCOMPARE(qRound(UiZoom::factor() * 100), 110);
-    auto* toast = window.findChild<QLabel*>(QStringLiteral("zoomToast"));
+    auto* toast = window.findChild<QLabel*>(QStringLiteral("toast"));
     QVERIFY(toast != nullptr);
     QVERIFY(toast->isVisible());
     QCOMPARE(toast->text(), QStringLiteral("110%"));

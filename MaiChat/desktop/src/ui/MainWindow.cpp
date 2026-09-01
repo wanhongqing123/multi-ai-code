@@ -3453,28 +3453,46 @@ void MainWindow::refreshPendingReplyBar() {
 // 所以命中可能不止一条：锚定下标最小的那条，不承诺定位到 desktop 私有拆分后的某个 elem。
 void MainWindow::jumpToQuotedMessage(const QString& sdkMsgId) {
     if (sdkMsgId.isEmpty()) return;
+
+    // 本地主键是 <sdkMsgId>#<元素序号>：一条 SDK 消息可能拆成多行（图片 + 配文），
+    // 定位到序号最小的那一行，才是「原消息的开头」。
     const QString prefix = sdkMsgId + QLatin1Char('#');
-    QString best;
-    int bestIndex = std::numeric_limits<int>::max();
-    for (auto it = messageRowById_.constBegin(); it != messageRowById_.constEnd(); ++it) {
-        const QString& id = it.key();
-        if (id == sdkMsgId) {
-            best = id;
-            bestIndex = -1;
-            break;
+    const auto findLoadedRow = [this, &sdkMsgId, &prefix]() -> QString {
+        QString best;
+        int bestIndex = std::numeric_limits<int>::max();
+        for (auto it = messageRowById_.constBegin(); it != messageRowById_.constEnd(); ++it) {
+            const QString& id = it.key();
+            if (id == sdkMsgId) return id;
+            if (!id.startsWith(prefix)) continue;
+            bool ok = false;
+            const int index = QStringView(id).mid(prefix.size()).toInt(&ok);
+            if (ok && index < bestIndex) {
+                bestIndex = index;
+                best = id;
+            }
         }
-        if (!id.startsWith(prefix)) continue;
-        bool ok = false;
-        const int index = QStringView(id).mid(prefix.size()).toInt(&ok);
-        if (ok && index < bestIndex) {
-            bestIndex = index;
-            best = id;
+        return best;
+    };
+
+    // 被引用的消息常常比当前已加载的范围更早——重开会话只加载最近一页。
+    // 用户点的是「带我去那条」，所以先按页往回加载再找，而不是直接放弃。
+    constexpr int kMaxPagesToLoad = 20;
+    const QString peerId = app_.chatState().selectedPeerId();
+    for (int page = 0;; ++page) {
+        const QString hit = findLoadedRow();
+        if (!hit.isEmpty()) {
+            highlightMessage(hit);
+            return;
         }
+        if (page >= kMaxPagesToLoad) break;
+        if (!app_.hasEarlierMessages(peerId)) break;
+        if (app_.loadEarlierMessages(peerId) <= 0) break;
     }
-    // 找不到是正常情况：原消息可能还没加载进来，或者根本不在本地。
-    // 此时什么都不做——引用块的快照已经把内容显示出来了。
-    if (best.isEmpty()) return;
-    highlightMessage(best);
+
+    // 翻到头也没有：原消息不在本地（别的设备发的、或本地已清理）。引用块里的
+    // 快照已经把内容显示出来了，但必须说一声——点了完全没反应最让人困惑，
+    // 而这个块还带着手型光标，等于承诺了会有反应。
+    showToast(QStringLiteral("原消息不在本地记录中"), 15, 1600);
 }
 
 namespace {
@@ -3518,10 +3536,45 @@ private:
 
 }  // namespace
 
+namespace {
+
+// 引用块要整块可点。QWidget 自己不发点击信号，套一个只管 mouseReleaseEvent 的
+// 小子类，比在 MainWindow::eventFilter 里按 objectName 分发要干净——那种分发
+// 以后每多一个可点部件都得回去改同一个函数。
+class ClickableWidget final : public QWidget {
+public:
+    ClickableWidget(QWidget* parent, std::function<void()> onClick)
+        : QWidget(parent), onClick_(std::move(onClick)) {}
+
+protected:
+    void mouseReleaseEvent(QMouseEvent* event) override {
+        // 只认「按下和松开都在块内」的左键，和按钮的判定一致：
+        // 从块里按下拖出去再松手不该触发跳转。
+        if (event->button() == Qt::LeftButton && rect().contains(event->pos()) && onClick_) {
+            onClick_();
+        }
+        QWidget::mouseReleaseEvent(event);
+    }
+
+private:
+    std::function<void()> onClick_;
+};
+
+}  // namespace
+
 QWidget* MainWindow::createQuoteBlock(const RemoteIMMessage& message, QWidget* parent) {
     if (!message.hasQuote || message.quote.digest.isEmpty()) return nullptr;
 
-    auto* block = new QWidget(parent);
+    const QString quoteMsgId = message.quote.msgId;
+    // 只有拿得到原始 SDK 消息 ID 时才做成可点的。没有 ID 的引用块照常显示，
+    // 但既不给手型光标也不装点击处理——点了没反应比不可点更让人困惑。
+    QWidget* block = quoteMsgId.isEmpty()
+        ? new QWidget(parent)
+        : new ClickableWidget(parent, [this, quoteMsgId] {
+              // 定位可能触发「加载更早」，那会整屏刷新、重建气泡——在被点部件
+              // 自己的事件处理里同步做这件事，等于在自己脚下拆房子。
+              QTimer::singleShot(0, this, [this, quoteMsgId] { jumpToQuotedMessage(quoteMsgId); });
+          });
     block->setObjectName(QStringLiteral("messageQuoteBlock"));
     auto* layout = new QHBoxLayout(block);
     layout->setContentsMargins(UiZoom::s(9), UiZoom::s(6), UiZoom::s(9), UiZoom::s(6));
@@ -3543,11 +3596,9 @@ QWidget* MainWindow::createQuoteBlock(const RemoteIMMessage& message, QWidget* p
     text->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     layout->addWidget(text, 1);
 
-    // 只有拿得到原始 SDK 消息 ID 时才可点。没有 ID 的引用块照常显示，
-    // 但不做成可点——点了没反应比不可点更让人困惑。
-    if (!message.quote.msgId.isEmpty()) {
+    if (!quoteMsgId.isEmpty()) {
         block->setCursor(Qt::PointingHandCursor);
-        block->setProperty("quoteMsgId", message.quote.msgId);
+        block->setProperty("quoteMsgId", quoteMsgId);
     }
 
     block->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
@@ -4370,31 +4421,35 @@ void MainWindow::applyScaledFixedGeometry() {
 }
 
 void MainWindow::showZoomToast() {
-    if (!zoomToast_) {
-        zoomToast_ = new QLabel(this);
-        zoomToast_->setObjectName(QStringLiteral("zoomToast"));
-        zoomToast_->setAlignment(Qt::AlignCenter);
-        zoomToast_->setAttribute(Qt::WA_TransparentForMouseEvents);
-        zoomToastTimer_ = new QTimer(this);
-        zoomToastTimer_->setSingleShot(true);
-        connect(zoomToastTimer_, &QTimer::timeout, this, [this] { zoomToast_->hide(); });
+    showToast(QStringLiteral("%1%").arg(qRound(UiZoom::factor() * 100)), 18, 900);
+}
+
+void MainWindow::showToast(const QString& text, int fontPx, int durationMs) {
+    if (!toast_) {
+        toast_ = new QLabel(this);
+        toast_->setObjectName(QStringLiteral("toast"));
+        toast_->setAlignment(Qt::AlignCenter);
+        toast_->setAttribute(Qt::WA_TransparentForMouseEvents);
+        toastTimer_ = new QTimer(this);
+        toastTimer_->setSingleShot(true);
+        connect(toastTimer_, &QTimer::timeout, this, [this] { toast_->hide(); });
     }
-    zoomToast_->setText(QStringLiteral("%1%").arg(qRound(UiZoom::factor() * 100)));
-    zoomToast_->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
-        QLabel#zoomToast {
+    toast_->setText(text);
+    toast_->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
+        QLabel#toast {
             background: rgba(17, 24, 39, 0.88);
             color: #ffffff;
             border-radius: 10px;
-            font-size: 18px;
+            font-size: %1px;
             font-weight: 800;
             padding: 12px 26px;
         }
-    )")));
-    zoomToast_->adjustSize();
-    zoomToast_->move((width() - zoomToast_->width()) / 2, (height() - zoomToast_->height()) / 2);
-    zoomToast_->raise();
-    zoomToast_->show();
-    zoomToastTimer_->start(900);
+    )").arg(fontPx)));
+    toast_->adjustSize();
+    toast_->move((width() - toast_->width()) / 2, (height() - toast_->height()) / 2);
+    toast_->raise();
+    toast_->show();
+    toastTimer_->start(durationMs);
 }
 
 void MainWindow::updateRemoteDesktopButton() {

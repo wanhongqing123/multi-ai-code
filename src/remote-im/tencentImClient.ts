@@ -7,6 +7,7 @@ import type {
   RemoteImApprovalAction,
   RemoteImGitDiffArtifact,
   RemoteImMessageOrigin,
+  RemoteImMessageQuote,
   RemoteImTextInteraction,
   RemoteImRuntimeLogEntryInput
 } from '../../electron/preload.js'
@@ -16,11 +17,47 @@ export const REMOTE_IM_CLOUD_METADATA_VERSION = 2
 
 interface RemoteImCloudMetadata {
   namespace: typeof REMOTE_IM_CLOUD_METADATA_NAMESPACE
-  version: typeof REMOTE_IM_CLOUD_METADATA_VERSION
+  /** The sender's protocol version. May be newer than ours; see the gate in the parser. */
+  version: number
   origin: RemoteImMessageOrigin
   interaction?: RemoteImTextInteraction
   captionAbove?: true
   artifact?: RemoteImGitDiffArtifact
+  quote?: RemoteImMessageQuote
+}
+
+// 与 MaiChat 原生端 (TimSdkRemoteIMClient.cpp) 保持一致的字段上限：两端截断长度
+// 不一样的话，一端存得下、另一端悄悄截短，出问题时很难看出是协议不对称。
+const QUOTE_FIELD_LIMIT = 256
+const QUOTE_DIGEST_LIMIT = 200
+
+function quoteField(value: unknown, limit: number): string | undefined {
+  return typeof value === 'string' && value ? value.slice(0, limit) : undefined
+}
+
+/**
+ * Decodes the quoted message a reply carries.
+ *
+ * Fault tolerance is deliberate and asymmetric: a malformed quote must never
+ * invalidate the whole metadata object, because that would also discard
+ * `origin` and downgrade a human message to the conservative fallback - a far
+ * worse outcome than a missing quote block. Only `digest` is required; it is
+ * the snapshot that makes the quote renderable without a local lookup.
+ */
+function parseRemoteImMessageQuote(value: unknown): RemoteImMessageQuote | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const raw = value as Record<string, unknown>
+  const digest = quoteField(raw.digest, QUOTE_DIGEST_LIMIT)
+  if (!digest) return undefined
+  const msgId = quoteField(raw.msgId, QUOTE_FIELD_LIMIT)
+  const sender = quoteField(raw.sender, QUOTE_FIELD_LIMIT)
+  const kind = quoteField(raw.kind, QUOTE_FIELD_LIMIT)
+  return {
+    ...(msgId ? { msgId } : {}),
+    ...(sender ? { sender } : {}),
+    digest,
+    ...(kind ? { kind } : {})
+  }
 }
 
 /** Encodes transport metadata shared by Web/Electron and native MaiChat clients. */
@@ -172,24 +209,30 @@ export function parseRemoteImCloudMetadata(value: unknown): RemoteImCloudMetadat
   if (typeof value !== 'string' || !value.trim()) return undefined
   try {
     const raw = JSON.parse(value) as Record<string, unknown> | null
+    // 版本闸门只挡「比我们旧」的格式，不挡「比我们新」的：新增可选字段时
+    // 各端不必同一天发版。这条规则与 MaiChat 原生端一致。
     if (
       !raw ||
       raw.namespace !== REMOTE_IM_CLOUD_METADATA_NAMESPACE ||
-      raw.version !== REMOTE_IM_CLOUD_METADATA_VERSION ||
+      typeof raw.version !== 'number' ||
+      raw.version < REMOTE_IM_CLOUD_METADATA_VERSION ||
       (raw.origin !== 'human' && raw.origin !== 'machine')
     ) {
       return undefined
     }
     const origin = raw.origin
+    const version = raw.version
     const captionAbove = raw.captionAbove === true ? true : undefined
     const artifact = raw.artifact === undefined ? undefined : parseGitDiffArtifact(raw.artifact)
     if (raw.artifact !== undefined && !artifact) return undefined
+    const quote = parseRemoteImMessageQuote(raw.quote)
     const base = {
       namespace: REMOTE_IM_CLOUD_METADATA_NAMESPACE,
-      version: REMOTE_IM_CLOUD_METADATA_VERSION,
+      version,
       origin,
       ...(captionAbove ? { captionAbove } : {}),
-      ...(artifact ? { artifact } : {})
+      ...(artifact ? { artifact } : {}),
+      ...(quote ? { quote } : {})
     } satisfies RemoteImCloudMetadata
     if (raw.interaction === undefined) {
       return base
@@ -223,6 +266,7 @@ export interface TencentImTextMessage {
   text: string
   origin?: RemoteImMessageOrigin
   interaction?: RemoteImTextInteraction
+  quote?: RemoteImMessageQuote
   createdAt?: number
 }
 
@@ -730,6 +774,7 @@ export function extractTencentImTextMessages(event: unknown): TencentImTextMessa
         text,
         ...(metadata?.origin ? { origin: metadata.origin } : {}),
         ...(metadata?.interaction ? { interaction: metadata.interaction } : {}),
+        ...(metadata?.quote ? { quote: metadata.quote } : {}),
         createdAt: typeof message.time === 'number' ? message.time * 1000 : undefined
       }
     ]
@@ -1262,6 +1307,9 @@ export async function connectTencentImClient(input: {
           text: parts.caption,
           ...(origin ? { origin } : {}),
           ...(metadata?.interaction ? { interaction: metadata.interaction } : {}),
+          // 引用块必须跟着正文一起进 AICLI：只发正文的话，模型看不出在回哪一条，
+          // 而且这个丢失是静默的——人在客户端看得见引用，会以为模型也看见了。
+          ...(metadata?.quote ? { quote: metadata.quote } : {}),
           createdAt
         })
       }

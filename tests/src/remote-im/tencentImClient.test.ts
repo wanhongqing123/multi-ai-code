@@ -178,6 +178,33 @@ describe('tencent IM client helpers', () => {
     ).toBeUndefined()
   })
 
+  it('accepts metadata from a newer protocol version and rejects only older ones', () => {
+    // 闸门只挡「比我们旧」的：新增可选字段时各端不必同一天发版。
+    expect(
+      parseRemoteImCloudMetadata(
+        '{"namespace":"multi-ai-code","version":3,"origin":"human","somethingNew":1}'
+      )
+    ).toMatchObject({ origin: 'human', version: 3 })
+    expect(
+      parseRemoteImCloudMetadata('{"namespace":"multi-ai-code","version":1,"origin":"human"}')
+    ).toBeUndefined()
+  })
+
+  it('drops only the quote when it is malformed, never the origin', () => {
+    // 引用解析失败如果连带废掉整个元数据，origin 会一起丢，
+    // 一条人发的消息会被降级成保守策略——比少个引用块严重得多。
+    expect(
+      parseRemoteImCloudMetadata(
+        '{"namespace":"multi-ai-code","version":2,"origin":"human","quote":{"sender":"bot"}}'
+      )
+    ).toEqual({ namespace: 'multi-ai-code', version: 2, origin: 'human' })
+    expect(
+      parseRemoteImCloudMetadata(
+        '{"namespace":"multi-ai-code","version":2,"origin":"human","quote":"not-an-object"}'
+      )
+    ).toEqual({ namespace: 'multi-ai-code', version: 2, origin: 'human' })
+  })
+
   it('reads caption placement as an additive optional v2 metadata key', () => {
     expect(
       parseRemoteImCloudMetadata(
@@ -976,6 +1003,62 @@ describe('tencent IM client helpers', () => {
         uuid: 'video-uuid-1',
         fileName: 'video-uuid-1.mp4',
         mimeType: 'video/mp4'
+      })
+    )
+  })
+
+  it('delivers the quote from a MaiChat reply to the AICLI text handler', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, json: async () => ({ userSig: 'sig-1' }) }))
+    )
+    const onIncomingText = vi.fn()
+    const runtimePromise = connectTencentImClient({
+      projectId: 'project-1',
+      config: baseConfig(),
+      onIncomingText
+    })
+    await vi.waitFor(() => expect(sdkMock.chat.login).toHaveBeenCalled())
+    sdkMock.chat.isReady.mockReturnValue(true)
+    sdkMock.handlers.get('sdkReady')?.()
+    await runtimePromise
+
+    sdkMock.handlers.get('messageReceived')?.({
+      data: [
+        {
+          ID: 'msg-quote-1',
+          from: 'phone-user',
+          to: 'desktop-a',
+          time: 1700000000,
+          type: 'TIMTextElem',
+          payload: { text: '按照这个方向继续吧' },
+          // 原样照抄 MaiChat 桌面端写出的元数据：手写线格式，不用本模块的编码器，
+          // 否则测试只证明了「自己写的自己读得回来」。
+          cloudCustomData: JSON.stringify({
+            namespace: 'multi-ai-code',
+            version: 2,
+            origin: 'human',
+            quote: {
+              msgId: '144115...-1700000000',
+              sender: 'house-ai-picture',
+              digest: '确实是 Wan 动画阶段把脸重绘走样了',
+              kind: 'text'
+            }
+          })
+        }
+      ]
+    })
+
+    expect(onIncomingText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: '按照这个方向继续吧',
+        origin: 'human',
+        quote: {
+          msgId: '144115...-1700000000',
+          sender: 'house-ai-picture',
+          digest: '确实是 Wan 动画阶段把脸重绘走样了',
+          kind: 'text'
+        }
       })
     )
   })

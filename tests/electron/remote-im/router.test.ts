@@ -184,6 +184,52 @@ describe('remote IM router', () => {
     expect(store.messages.map((message) => message.status)).toEqual(['sent-to-aicli'])
   })
 
+  it('forwards the quote of a reply into the AICLI prompt, including non-claude sessions', async () => {
+    const store = createMessageStore()
+    const sentToAicli: { text: string; displayText?: string }[] = []
+    const router = createRemoteImRouter({
+      getConfig: () => config,
+      resolveSession: () => ({
+        sessionId: 'session-main',
+        targetRepo: 'repo',
+        // codex 不用回复协议，但引用是内容不是协议——它同样必须收到。
+        sourceKind: 'codex'
+      }),
+      sendUser: async (_sessionId, text, options) => {
+        sentToAicli.push({ text, displayText: options?.displayText })
+        return { ok: true }
+      },
+      sendImText: async () => ({ ok: true }),
+      store
+    })
+
+    const result = await router.handleIncomingText({
+      projectId: 'project-1',
+      remoteMessageId: 'remote-quote-1',
+      fromUserId: 'phone_admin',
+      toUserId: 'desktop_bot',
+      text: '按照这个方向继续吧',
+      origin: 'human',
+      quote: {
+        msgId: '144115-1700000000',
+        sender: 'house-ai-picture',
+        digest: '确实是 Wan 动画阶段把脸重绘走样了',
+        kind: 'text'
+      },
+      createdAt: 100
+    })
+
+    expect(result.ok).toBe(true)
+    expect(sentToAicli).toHaveLength(1)
+    const lines = sentToAicli[0].text.split('\n')
+    // 引用块必须排在正文之前：顺序反了，模型会把引用当成用户新说的话。
+    const quoteLine = lines.indexOf('> house-ai-picture：确实是 Wan 动画阶段把脸重绘走样了')
+    expect(quoteLine).toBeGreaterThanOrEqual(0)
+    expect(lines.indexOf('按照这个方向继续吧')).toBeGreaterThan(quoteLine)
+    expect(sentToAicli[0].displayText).toContain('> house-ai-picture：确实是 Wan 动画阶段把脸重绘走样了')
+    expect(sentToAicli[0].text).not.toContain('[IM_REPLY]')
+  })
+
   it('reports structured auto-decline audit data when accepting the next message', async () => {
     const store = createMessageStore()
     const acceptedDeliveries: unknown[] = []

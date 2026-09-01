@@ -63,7 +63,7 @@ describe('remote IM reply protocol', () => {
       fromUserId: 'phone_admin',
       text: 'check build',
       replyId: 'reply-123'
-    })
+    }, { includeReplyProtocol: true })
 
     expect(prompt).toContain('[来自远程 IM：phone_admin]')
     expect(prompt).toContain('check build')
@@ -102,14 +102,11 @@ describe('remote IM reply protocol', () => {
     expect(displayText).not.toContain(REMOTE_IM_REPLY_CLOSE_TAG)
   })
 
-  it('builds a source-routed prompt without reply markers', () => {
-    const prompt = buildRemoteImAicliPrompt(
-      {
-        fromUserId: 'phone_admin',
-        text: 'check build'
-      },
-      { includeReplyProtocol: false }
-    )
+  it('defaults to a structured prompt without reply markers', () => {
+    const prompt = buildRemoteImAicliPrompt({
+      fromUserId: 'phone_admin',
+      text: 'check build'
+    })
 
     expect(prompt).toContain('[来自远程 IM：phone_admin]')
     expect(prompt).toContain('check build')
@@ -308,7 +305,7 @@ describe('remote IM reply protocol', () => {
       fromUserId: 'phone_admin',
       text: '检查构建',
       replyId: 'reply-123'
-    })
+    }, { includeReplyProtocol: true })
     const output = [
       promptEcho,
       'Find and fix a bug in @filename',

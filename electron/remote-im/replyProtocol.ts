@@ -246,7 +246,7 @@ function formatQuoteLines(quote: RemoteImMessageQuote | undefined): string[] {
 
 export function buildRemoteImAicliPrompt(
   input: RemoteImAicliPromptInput,
-  options: RemoteImAicliPromptOptions = {}
+  options: RemoteImAicliPromptOptions = { includeReplyProtocol: false }
 ): string {
   const lines = [
     `[来自远程 IM：${input.fromUserId.trim()}]`,
@@ -255,7 +255,7 @@ export function buildRemoteImAicliPrompt(
     '',
     '如果需要查询或操作 IM，请先运行 imcli help；如需把截图或本地图片发回 IM，可保存为 png/jpg/webp/gif 文件后使用 imcli send-image <user> <imagePath>；如需发送 Markdown/HTML 报告文件，使用 imcli send-file <user> <filePath>；如需发送当前仓库的代码 Diff，使用 imcli send-diff <user> [--working | --commit <ref> | --range <base>..<head>]。正常回复必须使用真实的 Markdown 换行，不要把 Windows 命令行的转义规则用于回复正文。手工调用 imcli send 发送文本时，正文一律传 UTF-8 文本的标准 Base64：imcli send <user> --text-b64 <base64>。'
   ]
-  if (options.includeReplyProtocol === false) return lines.join('\n')
+  if (options.includeReplyProtocol !== true) return lines.join('\n')
   const replyId = normalizeReplyId(input.replyId)
   lines.push(
     '[IM_REPLY] Put final Markdown for IM between these exact markers, each on its own line in your reply:',

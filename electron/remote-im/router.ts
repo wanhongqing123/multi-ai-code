@@ -10,6 +10,7 @@ import type {
   RemoteImImageAttachment,
   RemoteImMessageOrigin,
   RemoteImMessage,
+  RemoteImMessageQuote,
   RemoteImRoamedTextMessage
 } from './types.js'
 import type { RemoteImAicliOutputSourceKind } from './outputSanitizer.js'
@@ -581,6 +582,7 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
     recordText: string
     now: number
     origin: RemoteImMessageOrigin
+    quote?: RemoteImMessageQuote
     recordRole?: RemoteImMessage['role']
   }): Promise<RemoteImRouteResult> {
     const routePermission = canRouteRemoteImTaskFrom(
@@ -644,7 +646,7 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
         },
         {
           includeReplyProtocol:
-            input.origin === 'human' && !usesSourceLevelRouting(session)
+            input.origin === 'human' && session.sourceKind === 'claude'
         }
       )
     const displayText = buildRemoteImAicliDisplayText({
@@ -896,6 +898,7 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
       recordText: text,
       now,
       origin,
+      quote: message.quote,
       recordRole
     })
   }
@@ -1068,7 +1071,7 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
     const buildPrompt = () =>
       buildRemoteImAicliPrompt(
         { fromUserId, text: taskText, replyId: outputRoute?.replyId },
-        { includeReplyProtocol: origin === 'human' && !usesSourceLevelRouting(session) }
+        { includeReplyProtocol: origin === 'human' && session.sourceKind === 'claude' }
       )
     const displayText = buildRemoteImAicliDisplayText({
       fromUserId,
@@ -1221,7 +1224,7 @@ export function createRemoteImRouter(deps: RemoteImRouterDeps) {
     const buildPrompt = () =>
       buildRemoteImAicliPrompt(
         { fromUserId, text: taskText, replyId: outputRoute?.replyId },
-        { includeReplyProtocol: origin === 'human' && !usesSourceLevelRouting(session) }
+        { includeReplyProtocol: origin === 'human' && session.sourceKind === 'claude' }
       )
     const displayText = buildRemoteImAicliDisplayText({
       fromUserId,

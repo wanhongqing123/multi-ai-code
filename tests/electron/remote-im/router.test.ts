@@ -127,7 +127,7 @@ describe('remote IM router', () => {
     expect(store.messages[0]).toMatchObject({ status: 'rejected', role: 'remote-user' })
   })
 
-  it('wraps whitelisted text and sends it to the current AICLI session', async () => {
+  it('sends unknown AICLI input without granting marker-based reply authority', async () => {
     const store = createMessageStore()
     const sentToAicli: Array<{
       sessionId: string
@@ -174,8 +174,8 @@ describe('remote IM router', () => {
     expect(sentToAicli).toHaveLength(1)
     expect(sentToAicli[0]?.sessionId).toBe('session-main')
     expect(sentToAicli[0]?.text).toContain('phone_admin')
-    expect(sentToAicli[0]?.text).toContain('<remote-im-reply id="reply-fixed">')
-    expect(sentToAicli[0]?.text).toContain('</remote-im-reply id="reply-fixed">')
+    expect(sentToAicli[0]?.text).not.toContain('<remote-im-reply')
+    expect(sentToAicli[0]?.text).not.toContain('</remote-im-reply')
     expect(sentToAicli[0]?.displayText).toBe('[来自远程 IM：phone_admin]\n检查构建')
     expect(sentToAicli[0]?.displayText).not.toContain('[IM_REPLY]')
     expect(sentToAicli[0]?.replyId).toBe('reply-fixed')

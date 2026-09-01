@@ -14,7 +14,10 @@ function transcriptUser(replyId: string, timestamp: string, text = 'continue') {
     timestamp,
     message: {
       role: 'user',
-      content: buildRemoteImAicliPrompt({ fromUserId: 'phone', text, replyId })
+      content: buildRemoteImAicliPrompt(
+        { fromUserId: 'phone', text, replyId },
+        { includeReplyProtocol: true }
+      )
     }
   }
 }
@@ -272,7 +275,7 @@ describe('Claude transcript remote IM replies', () => {
                 fromUserId: 'phone',
                 text: 'terminal echo only',
                 replyId: 'rim-second'
-              })
+              }, { includeReplyProtocol: true })
             }
           ]
         }
@@ -291,7 +294,7 @@ describe('Claude transcript remote IM replies', () => {
           fromUserId: 'phone',
           text: 'queued',
           replyId: 'rim-second'
-        })
+        }, { includeReplyProtocol: true })
       }
     ]
     writeFileSync(transcript, firstTurn.map((entry) => JSON.stringify(entry)).join('\n') + '\n')
@@ -379,12 +382,12 @@ describe('Claude transcript remote IM replies', () => {
                 fromUserId: 'phone',
                 text: 'first',
                 replyId: 'rim-first'
-              }),
+              }, { includeReplyProtocol: true }),
               buildRemoteImAicliPrompt({
                 fromUserId: 'phone',
                 text: 'steer',
                 replyId: 'rim-steer'
-              })
+              }, { includeReplyProtocol: true })
             ].join('\n')
           }
         },

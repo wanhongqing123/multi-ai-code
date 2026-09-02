@@ -82,6 +82,13 @@ void FilePreviewDialog::buildUi(const QString& displayName, const QString& html)
     auto* panel = new QFrame(this);
     panel->setObjectName(QStringLiteral("filePreviewPanel"));
     rootLayout->addWidget(panel);
+    panel_ = panel;
+    // 缩放判定带跨在面板边线两侧：外圈是对话框自己的透明区，内侧几像素落在
+    // 面板上。不开鼠标跟踪的话，没按下按钮时收不到 MouseMove，光标就不会变，
+    // 用户根本看不出这里可以拖。
+    setMouseTracking(true);
+    panel_->setMouseTracking(true);
+    panel_->installEventFilter(this);
 
     auto* layout = new QVBoxLayout(panel);
     layout->setContentsMargins(24, 20, 24, 18);
@@ -254,6 +261,144 @@ void FilePreviewDialog::updateElidedTitle() {
     title_->setText(title_->fontMetrics().elidedText(fullTitle_, Qt::ElideMiddle, available));
 }
 
+namespace {
+
+// 判定带在面板边线内侧留出的宽度。太窄了用户得像穿针一样瞄，太宽了会把
+// 靠边的正常点击也吃掉。
+//
+// 这个内侧带必须自己就够用，不能指望面板外那圈透明区：窗口开了
+// WA_TranslucentBackground，在 Windows 上是分层窗口，**完全透明的像素会被系统
+// 判为点击穿透**，那圈里的按下根本到不了我们手上。外圈的处理留着（有的平台
+// 收得到，收到就是白赚），但可用性只能押在这条内侧带上。
+constexpr int kResizeInnerBand = 8;
+
+Qt::CursorShape cursorForEdges(Qt::Edges edges) {
+    const bool left = edges & Qt::LeftEdge;
+    const bool right = edges & Qt::RightEdge;
+    const bool top = edges & Qt::TopEdge;
+    const bool bottom = edges & Qt::BottomEdge;
+    if ((left && top) || (right && bottom)) return Qt::SizeFDiagCursor;
+    if ((right && top) || (left && bottom)) return Qt::SizeBDiagCursor;
+    if (left || right) return Qt::SizeHorCursor;
+    if (top || bottom) return Qt::SizeVerCursor;
+    return Qt::ArrowCursor;
+}
+
+}  // namespace
+
+Qt::Edges FilePreviewDialog::resizeEdgesAt(const QPoint& pos) const {
+    if (!rect().contains(pos)) return {};
+    // 用面板的边线而不是对话框的：对话框外圈是透明阴影区，用户瞄的是
+    // 看得见的那条白色边。
+    const QRect panel = panel_ ? panel_->geometry() : rect();
+    const int band = UiZoom::s(kResizeInnerBand);
+    Qt::Edges edges;
+    if (pos.x() <= panel.left() + band) edges |= Qt::LeftEdge;
+    if (pos.x() >= panel.right() - band) edges |= Qt::RightEdge;
+    if (pos.y() <= panel.top() + band) edges |= Qt::TopEdge;
+    if (pos.y() >= panel.bottom() - band) edges |= Qt::BottomEdge;
+    return edges;
+}
+
+bool FilePreviewDialog::beginResize(const QPoint& globalPos, const QPoint& localPos) {
+    const Qt::Edges edges = resizeEdgesAt(localPos);
+    if (!edges) return false;
+    resizeEdges_ = edges;
+    resizeStartGeometry_ = geometry();
+    resizeStartGlobal_ = globalPos;
+    return true;
+}
+
+void FilePreviewDialog::updateResize(const QPoint& globalPos) {
+    const QPoint delta = globalPos - resizeStartGlobal_;
+    QRect target = resizeStartGeometry_;
+    const QSize floor = minimumSize();
+    // QRect 的 right()/bottom() 是闭区间，所以夹取时要 -1/+1。
+    // 右/下两边其实 Qt 的 setGeometry 自己就会按 minimumSize 夹住尺寸；
+    // 必须我们自己夹的是左/上：只夹尺寸的话，窗口会一边保持最小尺寸、
+    // 一边让 topLeft 跟着鼠标继续滑走，整个窗口就飘出去了。
+    if (resizeEdges_ & Qt::LeftEdge) {
+        target.setLeft(qMin(target.left() + delta.x(), target.right() - floor.width() + 1));
+    }
+    if (resizeEdges_ & Qt::RightEdge) {
+        target.setRight(qMax(target.right() + delta.x(), target.left() + floor.width() - 1));
+    }
+    if (resizeEdges_ & Qt::TopEdge) {
+        target.setTop(qMin(target.top() + delta.y(), target.bottom() - floor.height() + 1));
+    }
+    if (resizeEdges_ & Qt::BottomEdge) {
+        target.setBottom(qMax(target.bottom() + delta.y(), target.top() + floor.height() - 1));
+    }
+    setGeometry(target);
+}
+
+void FilePreviewDialog::applyResizeCursor(const QPoint& localPos) {
+    const Qt::CursorShape shape = cursorForEdges(resizeEdgesAt(localPos));
+    if (shape == Qt::ArrowCursor) {
+        unsetCursor();
+        return;
+    }
+    setCursor(shape);
+}
+
+// 面板盖住了对话框的绝大部分，靠内那几像素的判定带落在它身上，
+// 所以这些事件得转回来按对话框坐标处理。
+bool FilePreviewDialog::handlePanelMouseEvent(QEvent* event) {
+    if (!panel_) return false;
+    const QEvent::Type type = event->type();
+    if (type != QEvent::MouseButtonPress && type != QEvent::MouseMove
+        && type != QEvent::MouseButtonRelease) {
+        return false;
+    }
+    auto* mouse = static_cast<QMouseEvent*>(event);
+    const QPoint local = panel_->mapTo(this, mouse->pos());
+    if (type == QEvent::MouseButtonPress) {
+        return mouse->button() == Qt::LeftButton && beginResize(mouse->globalPos(), local);
+    }
+    if (type == QEvent::MouseMove) {
+        if (resizeEdges_ && (mouse->buttons() & Qt::LeftButton)) {
+            updateResize(mouse->globalPos());
+            return true;
+        }
+        applyResizeCursor(local);
+        return false;
+    }
+    if (resizeEdges_) {
+        resizeEdges_ = {};
+        unsetCursor();
+        return true;
+    }
+    return false;
+}
+
+void FilePreviewDialog::mousePressEvent(QMouseEvent* event) {
+    if (event->button() == Qt::LeftButton && beginResize(event->globalPos(), event->pos())) {
+        event->accept();
+        return;
+    }
+    QDialog::mousePressEvent(event);
+}
+
+void FilePreviewDialog::mouseMoveEvent(QMouseEvent* event) {
+    if (resizeEdges_ && (event->buttons() & Qt::LeftButton)) {
+        updateResize(event->globalPos());
+        event->accept();
+        return;
+    }
+    applyResizeCursor(event->pos());
+    QDialog::mouseMoveEvent(event);
+}
+
+void FilePreviewDialog::mouseReleaseEvent(QMouseEvent* event) {
+    if (resizeEdges_) {
+        resizeEdges_ = {};
+        unsetCursor();
+        event->accept();
+        return;
+    }
+    QDialog::mouseReleaseEvent(event);
+}
+
 void FilePreviewDialog::resizeEvent(QResizeEvent* event) {
     QDialog::resizeEvent(event);
     updateElidedTitle();
@@ -264,6 +409,7 @@ bool FilePreviewDialog::eventFilter(QObject* watched, QEvent* event) {
         updateElidedTitle();
         return false;
     }
+    if (watched == panel_ && handlePanelMouseEvent(event)) return true;
     if (watched == header_) {
         if (event->type() == QEvent::MouseButtonPress) {
             auto* mouse = static_cast<QMouseEvent*>(event);

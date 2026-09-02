@@ -29,6 +29,9 @@ private slots:
     void closeButtonsAccept();
     void escapeStillCloses();
     void stillResizableWithoutSystemFrame();
+    void draggingAnyEdgeResizesTheWindow();
+    void resizeIsClampedToTheMinimumSize();
+    void pressInTheMiddleDoesNotResize();
     void panelActuallyPaintsItsBackground();
     void contentFontFollowsApplicationFont();
 };
@@ -233,6 +236,91 @@ void FilePreviewDialogTest::escapeStillCloses() {
     QSignalSpy finishedSpy(&dialog, &QDialog::finished);
     QTest::keyClick(&dialog, Qt::Key_Escape);
     QCOMPARE(finishedSpy.count(), 1);
+}
+
+namespace {
+
+// 用显式的全局坐标发事件：拖上边/左边时窗口原点会跟着动，
+// 若在每一步用 mapToGlobal 现算，第二次算出来的全局点就已经偏了。
+void sendMouseAt(QWidget* widget, QEvent::Type type, const QPoint& global,
+                 Qt::MouseButton button, Qt::MouseButtons buttons) {
+    QMouseEvent event(type, widget->mapFromGlobal(global), global, button, buttons,
+                      Qt::NoModifier);
+    QApplication::sendEvent(widget, &event);
+}
+
+void dragEdge(QWidget* widget, const QPoint& grabLocal, const QPoint& delta) {
+    const QPoint start = widget->mapToGlobal(grabLocal);
+    sendMouseAt(widget, QEvent::MouseButtonPress, start, Qt::LeftButton, Qt::LeftButton);
+    sendMouseAt(widget, QEvent::MouseMove, start + delta, Qt::NoButton, Qt::LeftButton);
+    sendMouseAt(widget, QEvent::MouseButtonRelease, start + delta, Qt::LeftButton, Qt::NoButton);
+}
+
+}  // namespace
+
+void FilePreviewDialogTest::draggingAnyEdgeResizesTheWindow() {
+    FilePreviewDialog dialog(QStringLiteral("report.md"), QStringLiteral("<p>hi</p>"));
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+
+    // 右边缘。外圈是对话框自己的透明区，子部件不该盖住它，
+    // 否则真实鼠标根本点不到——这一条是「看得见的handle」测不出来的。
+    const QPoint rightEdge(dialog.width() - 2, dialog.height() / 2);
+    QVERIFY2(dialog.childAt(rightEdge) == nullptr, "右边缘被子部件盖住，真实鼠标点不到");
+
+    QSize before = dialog.size();
+    dragEdge(&dialog, rightEdge, QPoint(120, 0));
+    QCOMPARE(dialog.width(), before.width() + 120);
+    QCOMPARE(dialog.height(), before.height());
+
+    // 下边缘。
+    before = dialog.size();
+    dragEdge(&dialog, QPoint(dialog.width() / 2, dialog.height() - 2), QPoint(0, 80));
+    QCOMPARE(dialog.height(), before.height() + 80);
+    QCOMPARE(dialog.width(), before.width());
+
+    // 左边缘：变宽的同时窗口原点要跟着左移，否则就是「右边被拉长了」。
+    before = dialog.size();
+    const int leftBefore = dialog.geometry().left();
+    dragEdge(&dialog, QPoint(2, dialog.height() / 2), QPoint(-100, 0));
+    QCOMPARE(dialog.width(), before.width() + 100);
+    QCOMPARE(dialog.geometry().left(), leftBefore - 100);
+}
+
+void FilePreviewDialogTest::resizeIsClampedToTheMinimumSize() {
+    FilePreviewDialog dialog(QStringLiteral("report.md"), QStringLiteral("<p>hi</p>"));
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+
+    // 拖右边／下边过头只需要尺寸不塌——这一半其实是 Qt 的 setGeometry
+    // 自己按 minimumSize 夹住的，断言它并不能证明我们的夹取逻辑存在。
+    dragEdge(&dialog, QPoint(dialog.width() - 2, dialog.height() / 2), QPoint(-100000, 0));
+    QCOMPARE(dialog.width(), dialog.minimumWidth());
+    dragEdge(&dialog, QPoint(dialog.width() / 2, dialog.height() - 2), QPoint(0, -100000));
+    QCOMPARE(dialog.height(), dialog.minimumHeight());
+
+    // 真正要自己夹的是**位置**：左／上边往里拖过头时，只夹尺寸的话 Qt 会保持
+    // 最小尺寸、却让 topLeft 继续跟着鼠标滑走，窗口就一路飘出去了。
+    QRect before = dialog.geometry();
+    dragEdge(&dialog, QPoint(2, dialog.height() / 2), QPoint(100000, 0));
+    QCOMPARE(dialog.width(), dialog.minimumWidth());
+    QCOMPARE(dialog.geometry().left(), before.right() - dialog.minimumWidth() + 1);
+
+    before = dialog.geometry();
+    dragEdge(&dialog, QPoint(dialog.width() / 2, 2), QPoint(0, 100000));
+    QCOMPARE(dialog.height(), dialog.minimumHeight());
+    QCOMPARE(dialog.geometry().top(), before.bottom() - dialog.minimumHeight() + 1);
+}
+
+void FilePreviewDialogTest::pressInTheMiddleDoesNotResize() {
+    FilePreviewDialog dialog(QStringLiteral("report.md"), QStringLiteral("<p>hi</p>"));
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+
+    const QSize before = dialog.size();
+    // 正文中央离每条边都很远：在这里按住拖动是选中文字，不该动窗口尺寸。
+    dragEdge(&dialog, dialog.rect().center(), QPoint(150, 150));
+    QCOMPARE(dialog.size(), before);
 }
 
 void FilePreviewDialogTest::stillResizableWithoutSystemFrame() {

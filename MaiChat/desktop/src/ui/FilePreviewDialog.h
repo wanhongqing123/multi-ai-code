@@ -2,9 +2,11 @@
 
 #include <QDialog>
 #include <QPoint>
+#include <QRect>
 #include <QSize>
 #include <QString>
 
+class QFrame;
 class QLabel;
 class QTextBrowser;
 
@@ -16,6 +18,9 @@ class QTextBrowser;
 //
 // 与那两个小弹窗不同的是：文档预览窗口大、停留久，去掉系统标题栏后必须自己补回
 // 「拖动」和「缩放」，否则窗口被钉死在屏幕中央，比原生样式更难用。
+//
+// 缩放要四条边都能拖，不能只给右下角一个 grip：无边框窗口没有系统缩放边框，
+// 而那个 grip 又几乎看不见，用户会以为这个窗口根本不能调大小。
 class FilePreviewDialog final : public QDialog {
     Q_OBJECT
 
@@ -32,17 +37,30 @@ public:
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
 
 private:
     void buildUi(const QString& displayName, const QString& html);
     void applyStyle();
     void updateElidedTitle();
     QSize contentAwareInitialSize();
+    // pos 为对话框坐标。返回空表示这个位置不在缩放判定带上。
+    Qt::Edges resizeEdgesAt(const QPoint& pos) const;
+    bool beginResize(const QPoint& globalPos, const QPoint& localPos);
+    void updateResize(const QPoint& globalPos);
+    void applyResizeCursor(const QPoint& localPos);
+    bool handlePanelMouseEvent(QEvent* event);
 
+    QFrame* panel_ = nullptr;
     QWidget* header_ = nullptr;
     QLabel* title_ = nullptr;
     QTextBrowser* content_ = nullptr;
     QString fullTitle_;
     QPoint dragOffset_;
     bool dragging_ = false;
+    Qt::Edges resizeEdges_;
+    QRect resizeStartGeometry_;
+    QPoint resizeStartGlobal_;
 };

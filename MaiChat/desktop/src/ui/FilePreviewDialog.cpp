@@ -1,3 +1,4 @@
+#include <QHash>
 #include <QHeaderView>
 #include <QSplitter>
 #include <QTreeWidget>
@@ -147,7 +148,7 @@ void FilePreviewDialog::buildUi(const QString& displayName, const QString& html)
         splitter->addWidget(content_);
         splitter->setStretchFactor(0, 0);
         splitter->setStretchFactor(1, 1);
-        splitter->setSizes({UiZoom::s(300), UiZoom::s(900)});
+        splitter->setSizes({UiZoom::s(340), UiZoom::s(900)});
         layout->addWidget(splitter, 1);
         // 左栏顶替了文档顶部那份索引，两份并排只会让人怀疑哪份是准的。
         // 手机端没有左栏，所以索引只在这里、只对 Qt 剥掉。
@@ -339,6 +340,30 @@ Qt::CursorShape cursorForEdges(Qt::Edges edges) {
 
 }  // namespace
 
+namespace {
+
+bool isDirectoryRow(const QTreeWidgetItem* item) {
+    // 叶子行才带锚点；目录行没有可跳转的目标。
+    return item->data(0, Qt::UserRole).toString().isEmpty();
+}
+
+// 把「只有一个子目录」的目录节点与那个子节点并成一行：
+// electron/ > remote-im/ 各占一行、每层只有一个孩子，纯粹是缩进噪声，
+// 合成 electron/remote-im/ 一行既短又不丢信息。
+void collapseSingleChildDirectories(QTreeWidgetItem* item) {
+    while (isDirectoryRow(item) && item->childCount() == 1 && isDirectoryRow(item->child(0))) {
+        QTreeWidgetItem* only = item->takeChild(0);
+        item->setText(0, item->text(0) + only->text(0));
+        item->addChildren(only->takeChildren());
+        delete only;
+    }
+    for (int i = 0; i < item->childCount(); ++i) {
+        collapseSingleChildDirectories(item->child(i));
+    }
+}
+
+}  // namespace
+
 QList<FilePreviewDialog::FileIndexEntry> FilePreviewDialog::parseFileIndex(const QString& html) {
     // 直接读生成器写出的那段索引标记，而不是自己再解析一遍 diff：
     // 索引与正文锚点由同一处编号产出，跟着它走就不会与正文对不上。
@@ -375,22 +400,47 @@ QWidget* FilePreviewDialog::buildFileListPane(const QList<FileIndexEntry>& entri
     tree->setColumnCount(2);
     tree->setHeaderLabels({QStringLiteral("变更文件（%1）").arg(entries.size()),
                            QStringLiteral("")});
-    tree->setRootIsDecorated(false);
+    tree->setRootIsDecorated(true);
     tree->setUniformRowHeights(true);
     tree->setAlternatingRowColors(false);
     tree->setSelectionMode(QAbstractItemView::SingleSelection);
     tree->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    // 路径长，左侧省略：文件名在末尾，砍开头才不会把「是哪个文件」砍掉。
-    tree->setTextElideMode(Qt::ElideLeft);
+    // 叶子只放文件名，短，右侧省略即可。
+    tree->setTextElideMode(Qt::ElideRight);
+    // 默认缩进按一层 20px 算，java 包名那种深目录到第四层就把文件名挤没了。
+    // 这里的层级已经被折叠压过一轮，缩进再给小一点即可读。
+    tree->setIndentation(UiZoom::s(12));
 
+    // 按目录建树，而不是平铺整条路径：仓库根下的完整路径动辄七八层，
+    // 平铺时每行都在重复同样的前缀，真正要看的文件名反而被挤没了。
+    QHash<QString, QTreeWidgetItem*> directories;
     for (const FileIndexEntry& entry : entries) {
-        auto* item = new QTreeWidgetItem(tree);
-        item->setText(0, entry.label);
-        item->setToolTip(0, entry.label);
-        item->setText(1, QStringLiteral("+%1 -%2").arg(entry.additions).arg(entry.deletions));
-        item->setTextAlignment(1, Qt::AlignRight | Qt::AlignVCenter);
-        item->setData(0, Qt::UserRole, entry.anchor);
+        const QStringList parts = entry.label.split(QLatin1Char('/'), Qt::SkipEmptyParts);
+        QTreeWidgetItem* parent = nullptr;
+        QString path;
+        for (int i = 0; i + 1 < parts.size(); ++i) {
+            path += (path.isEmpty() ? QString() : QStringLiteral("/")) + parts.at(i);
+            QTreeWidgetItem*& directory = directories[path];
+            if (!directory) {
+                directory = parent ? new QTreeWidgetItem(parent) : new QTreeWidgetItem(tree);
+                directory->setText(0, parts.at(i) + QLatin1Char('/'));
+                // 目录行没有增删数，让名字占满两列，省得右边空一格。
+                directory->setFirstColumnSpanned(true);
+            }
+            parent = directory;
+        }
+        auto* leaf = parent ? new QTreeWidgetItem(parent) : new QTreeWidgetItem(tree);
+        leaf->setText(0, parts.isEmpty() ? entry.label : parts.last());
+        // 完整路径进 tooltip：树里看到的是文件名，偶尔仍需要确认它在哪。
+        leaf->setToolTip(0, entry.label);
+        leaf->setText(1, QStringLiteral("+%1 -%2").arg(entry.additions).arg(entry.deletions));
+        leaf->setTextAlignment(1, Qt::AlignRight | Qt::AlignVCenter);
+        leaf->setData(0, Qt::UserRole, entry.anchor);
     }
+    for (int i = 0; i < tree->topLevelItemCount(); ++i) {
+        collapseSingleChildDirectories(tree->topLevelItem(i));
+    }
+    tree->expandAll();
     tree->header()->setStretchLastSection(false);
     tree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     tree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);

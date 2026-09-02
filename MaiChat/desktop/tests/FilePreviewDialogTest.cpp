@@ -10,6 +10,7 @@
 #include <QSizeGrip>
 #include <QSplitter>
 #include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
 #include <QTextBrowser>
 #include <QTextDocument>
 #include <QTextTable>
@@ -36,6 +37,7 @@ private slots:
     void pressInTheMiddleDoesNotResize();
     void multiFileDiffPutsTheFileListOnTheLeft();
     void clickingAFileInTheListJumpsToItsDiff();
+    void fileTreeCollapsesSingleChildDirectories();
     void plainDocumentHasNoFileList();
     void panelActuallyPaintsItsBackground();
     void contentFontFollowsApplicationFont();
@@ -267,23 +269,26 @@ namespace {
 
 // 按生成器真实写出的结构造报告：索引行的标记必须和 gitDiffReport.ts 一致，
 // 自己另编一套等于把解析器对着自己的想象测。
-QString diffReportHtml(int fileCount, int bodyLines) {
+QString diffReportHtmlFor(const QStringList& labels, int bodyLines) {
+    const int fileCount = labels.size();
     QString index = QStringLiteral(
         "<div class=\"file-index\"><div class=\"file-index-title\">变更文件（%1）</div><ul>")
         .arg(fileCount);
     QString body;
     for (int i = 0; i < fileCount; ++i) {
         index += QStringLiteral(
-                     "<li><a href=\"#f%1\">pkg/module%1/source%1.ts</a>"
+                     "<li><a href=\"#f%1\">%4</a>"
                      "<span class=\"idx-stat\"> &nbsp;&nbsp;"
                      "<span class=\"idx-add\">+%2</span> "
                      "<span class=\"idx-del\">-%3</span></span></li>")
                      .arg(i)
                      .arg(10 + i)
-                     .arg(i);
+                     .arg(i)
+                     .arg(labels.at(i));
         body += QStringLiteral("<div class=\"file\" id=\"f%1\"><a name=\"f%1\"></a>"
-                               "<div class=\"file-title\">pkg/module%1/source%1.ts</div>")
-                    .arg(i);
+                               "<div class=\"file-title\">%2</div>")
+                    .arg(i)
+                    .arg(labels.at(i));
         for (int line = 0; line < bodyLines; ++line) {
             body += QStringLiteral("<p>file %1 line %2</p>").arg(i).arg(line);
         }
@@ -291,6 +296,24 @@ QString diffReportHtml(int fileCount, int bodyLines) {
     }
     index += QStringLiteral("</ul></div>");
     return index + body;
+}
+
+QString diffReportHtml(int fileCount, int bodyLines) {
+    QStringList labels;
+    for (int i = 0; i < fileCount; ++i) {
+        labels << QStringLiteral("pkg/module%1/source%1.ts").arg(i);
+    }
+    return diffReportHtmlFor(labels, bodyLines);
+}
+
+// 树里叶子的位置随目录折叠而变，按锚点找才不会写死结构。
+QTreeWidgetItem* leafForAnchor(QTreeWidget* tree, const QString& anchor) {
+    QTreeWidgetItemIterator it(tree);
+    while (*it) {
+        if ((*it)->data(0, Qt::UserRole).toString() == anchor) return *it;
+        ++it;
+    }
+    return nullptr;
 }
 
 }  // namespace
@@ -312,12 +335,18 @@ void FilePreviewDialogTest::multiFileDiffPutsTheFileListOnTheLeft() {
     // 任一栏被拖没就没有恢复入口了。
     QVERIFY(!splitter->childrenCollapsible());
 
-    QCOMPARE(list->topLevelItemCount(), 3);
-    QCOMPARE(list->topLevelItem(0)->text(0), QStringLiteral("pkg/module0/source0.ts"));
-    QCOMPARE(list->topLevelItem(2)->text(0), QStringLiteral("pkg/module2/source2.ts"));
+    // 目录成树，不是把整条路径平铺：根下只有 pkg/ 一个节点。
+    QCOMPARE(list->topLevelItemCount(), 1);
+    QCOMPARE(list->topLevelItem(0)->text(0), QStringLiteral("pkg/"));
+    QCOMPARE(list->topLevelItem(0)->childCount(), 3);
+
+    QTreeWidgetItem* first = leafForAnchor(list, QStringLiteral("f0"));
+    QVERIFY(first != nullptr);
+    // 叶子只显示文件名；完整路径退到 tooltip，不占那一行的宽度。
+    QCOMPARE(first->text(0), QStringLiteral("source0.ts"));
+    QCOMPARE(first->toolTip(0), QStringLiteral("pkg/module0/source0.ts"));
     // 增删行数要跟着，否则这个列表只是个文件名清单。
-    QCOMPARE(list->topLevelItem(2)->text(1), QStringLiteral("+12 -2"));
-    QCOMPARE(list->topLevelItem(0)->data(0, Qt::UserRole).toString(), QStringLiteral("f0"));
+    QCOMPARE(leafForAnchor(list, QStringLiteral("f2"))->text(1), QStringLiteral("+12 -2"));
 
     // 左栏顶替了文档顶部那份索引：两份并排会让人怀疑哪份是准的。
     QVERIFY2(!content->toPlainText().contains(QStringLiteral("变更文件（3）")),
@@ -342,14 +371,38 @@ void FilePreviewDialogTest::clickingAFileInTheListJumpsToItsDiff() {
     QVERIFY2(content->verticalScrollBar()->maximum() > 0, "正文没到能滚动的长度，用例证明不了跳转");
     QCOMPARE(content->verticalScrollBar()->value(), 0);
 
-    list->setCurrentItem(list->topLevelItem(3));
+    list->setCurrentItem(leafForAnchor(list, QStringLiteral("f3")));
     const int atLast = content->verticalScrollBar()->value();
     QVERIFY2(atLast > 0, "点了左栏最后一个文件，右侧正文没动");
 
     // 再点回第一个必须往回走，不然只能证明「往下滚过一次」，证明不了是在按文件定位。
-    list->setCurrentItem(list->topLevelItem(0));
+    list->setCurrentItem(leafForAnchor(list, QStringLiteral("f0")));
     QVERIFY2(content->verticalScrollBar()->value() < atLast,
              "点回第一个文件没有往回滚，说明跳转不是按文件定位的");
+}
+
+void FilePreviewDialogTest::fileTreeCollapsesSingleChildDirectories() {
+    FilePreviewDialog dialog(
+        QStringLiteral("remote-im-diff-demo.html"),
+        diffReportHtmlFor({QStringLiteral("electron/remote-im/router.ts"),
+                           QStringLiteral("electron/remote-im/replyProtocol.ts"),
+                           QStringLiteral("package.json")},
+                          4));
+
+    auto* list = dialog.findChild<QTreeWidget*>(QStringLiteral("filePreviewFileList"));
+    QVERIFY(list != nullptr);
+
+    // electron/ 下只有 remote-im/ 一个孩子，两层各占一行纯粹是缩进噪声，
+    // 必须并成 electron/remote-im/ 一行。
+    QCOMPARE(list->topLevelItemCount(), 2);
+    QCOMPARE(list->topLevelItem(0)->text(0), QStringLiteral("electron/remote-im/"));
+    QCOMPARE(list->topLevelItem(0)->childCount(), 2);
+    // 仓库根下的文件不该被硬塞进某个目录节点。
+    QCOMPARE(list->topLevelItem(1)->text(0), QStringLiteral("package.json"));
+    QCOMPARE(list->topLevelItem(1)->data(0, Qt::UserRole).toString(), QStringLiteral("f2"));
+
+    QCOMPARE(leafForAnchor(list, QStringLiteral("f0"))->text(0), QStringLiteral("router.ts"));
+    QVERIFY2(list->topLevelItem(0)->isExpanded(), "树默认要展开，否则还得一层层点开");
 }
 
 void FilePreviewDialogTest::plainDocumentHasNoFileList() {

@@ -1,3 +1,9 @@
+#include <QHeaderView>
+#include <QSplitter>
+#include <QTreeWidget>
+#include <QTreeWidgetItem>
+#include <QAbstractItemView>
+
 #include "ui/FilePreviewDialog.h"
 
 #include <QApplication>
@@ -128,8 +134,33 @@ void FilePreviewDialog::buildUi(const QString& displayName, const QString& html)
     // 取 QApplication::font() 而不是写死字体名：Windows 是 Segoe UI + 微软雅黑
     // （main.cpp 里按平台设的），macOS 用系统默认，且能跟上 MainWindow 的缩放倍率。
     content_->document()->setDefaultFont(QApplication::font());
-    content_->setHtml(html);
-    layout->addWidget(content_, 1);
+    // 多文件 Diff 用「左目录 / 右正文」两栏：索引在文档顶部时，看第 20 个文件
+    // 得先滚回最上面再点一次，来回找位置。左栏常驻才是这类报告该有的样子。
+    const QList<FileIndexEntry> entries = parseFileIndex(html);
+    if (entries.size() >= 2) {
+        auto* splitter = new QSplitter(Qt::Horizontal, panel);
+        splitter->setObjectName(QStringLiteral("filePreviewSplitter"));
+        // 不允许把任一栏拖没：拖没了没有恢复入口，等于把功能弄丢。
+        splitter->setChildrenCollapsible(false);
+        fileList_ = qobject_cast<QTreeWidget*>(buildFileListPane(entries, splitter));
+        splitter->addWidget(fileList_);
+        splitter->addWidget(content_);
+        splitter->setStretchFactor(0, 0);
+        splitter->setStretchFactor(1, 1);
+        splitter->setSizes({UiZoom::s(300), UiZoom::s(900)});
+        layout->addWidget(splitter, 1);
+        // 左栏顶替了文档顶部那份索引，两份并排只会让人怀疑哪份是准的。
+        // 手机端没有左栏，所以索引只在这里、只对 Qt 剥掉。
+        static const QRegularExpression indexBlock(
+            QStringLiteral("<div class=\"file-index\">.*?</ul></div>"),
+            QRegularExpression::DotMatchesEverythingOption);
+        QString withoutIndex = html;
+        withoutIndex.remove(indexBlock);
+        content_->setHtml(withoutIndex);
+    } else {
+        content_->setHtml(html);
+        layout->addWidget(content_, 1);
+    }
 
     auto* footerRow = new QHBoxLayout();
     footerRow->setContentsMargins(0, 0, 0, 0);
@@ -176,6 +207,28 @@ void FilePreviewDialog::applyStyle() {
             border-radius: 12px;
             color: #172033;
             padding: 16px;
+        }
+        #filePreviewFileList {
+            background: #ffffff;
+            border: 1px solid #e6edf5;
+            border-radius: 12px;
+            color: #172033;
+            font-size: 12px;
+        }
+        #filePreviewFileList::item {
+            padding: 3px 2px;
+        }
+        #filePreviewFileList QHeaderView::section {
+            background: #f1f5f9;
+            border: 0;
+            border-bottom: 1px solid #e6edf5;
+            color: #475569;
+            font-weight: 700;
+            padding: 6px 8px;
+        }
+        #filePreviewSplitter::handle {
+            background: transparent;
+            width: 10px;
         }
         #filePreviewClose {
             background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
@@ -285,6 +338,76 @@ Qt::CursorShape cursorForEdges(Qt::Edges edges) {
 }
 
 }  // namespace
+
+QList<FilePreviewDialog::FileIndexEntry> FilePreviewDialog::parseFileIndex(const QString& html) {
+    // 直接读生成器写出的那段索引标记，而不是自己再解析一遍 diff：
+    // 索引与正文锚点由同一处编号产出，跟着它走就不会与正文对不上。
+    static const QRegularExpression row(
+        QStringLiteral("<li><a href=\"#(f\\d+)\">(.*?)</a>"
+                       ".*?<span class=\"idx-add\">\\+(\\d+)</span>"
+                       ".*?<span class=\"idx-del\">-(\\d+)</span>"),
+        QRegularExpression::DotMatchesEverythingOption);
+
+    QList<FileIndexEntry> entries;
+    QRegularExpressionMatchIterator it = row.globalMatch(html);
+    while (it.hasNext()) {
+        const QRegularExpressionMatch match = it.next();
+        FileIndexEntry entry;
+        entry.anchor = match.captured(1);
+        // 生成器对路径做过 HTML 转义，这里还原回来再显示。
+        entry.label = match.captured(2)
+                          .replace(QStringLiteral("&amp;"), QStringLiteral("&"))
+                          .replace(QStringLiteral("&lt;"), QStringLiteral("<"))
+                          .replace(QStringLiteral("&gt;"), QStringLiteral(">"))
+                          .replace(QStringLiteral("&quot;"), QStringLiteral("\""))
+                          .replace(QStringLiteral("&#39;"), QStringLiteral("'"));
+        entry.additions = match.captured(3).toInt();
+        entry.deletions = match.captured(4).toInt();
+        entries.append(entry);
+    }
+    return entries;
+}
+
+QWidget* FilePreviewDialog::buildFileListPane(const QList<FileIndexEntry>& entries,
+                                              QWidget* parent) {
+    auto* tree = new QTreeWidget(parent);
+    tree->setObjectName(QStringLiteral("filePreviewFileList"));
+    tree->setColumnCount(2);
+    tree->setHeaderLabels({QStringLiteral("变更文件（%1）").arg(entries.size()),
+                           QStringLiteral("")});
+    tree->setRootIsDecorated(false);
+    tree->setUniformRowHeights(true);
+    tree->setAlternatingRowColors(false);
+    tree->setSelectionMode(QAbstractItemView::SingleSelection);
+    tree->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    // 路径长，左侧省略：文件名在末尾，砍开头才不会把「是哪个文件」砍掉。
+    tree->setTextElideMode(Qt::ElideLeft);
+
+    for (const FileIndexEntry& entry : entries) {
+        auto* item = new QTreeWidgetItem(tree);
+        item->setText(0, entry.label);
+        item->setToolTip(0, entry.label);
+        item->setText(1, QStringLiteral("+%1 -%2").arg(entry.additions).arg(entry.deletions));
+        item->setTextAlignment(1, Qt::AlignRight | Qt::AlignVCenter);
+        item->setData(0, Qt::UserRole, entry.anchor);
+    }
+    tree->header()->setStretchLastSection(false);
+    tree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    tree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+
+    const auto jump = [this](QTreeWidgetItem* item) {
+        if (!item || !content_) return;
+        const QString anchor = item->data(0, Qt::UserRole).toString();
+        if (anchor.isEmpty()) return;
+        content_->scrollToAnchor(anchor);
+    };
+    // 单击就跳：这是一个导航列表，不是需要「确认」的选择器。
+    connect(tree, &QTreeWidget::itemClicked, this,
+            [jump](QTreeWidgetItem* item, int) { jump(item); });
+    connect(tree, &QTreeWidget::currentItemChanged, this,
+            [jump](QTreeWidgetItem* current, QTreeWidgetItem*) { jump(current); });
+    return tree;
+}
 
 Qt::Edges FilePreviewDialog::resizeEdgesAt(const QPoint& pos) const {
     if (!rect().contains(pos)) return {};

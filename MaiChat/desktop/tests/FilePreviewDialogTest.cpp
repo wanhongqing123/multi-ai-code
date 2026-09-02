@@ -8,6 +8,8 @@
 #include <QScreen>
 #include <QScrollBar>
 #include <QSizeGrip>
+#include <QSplitter>
+#include <QTreeWidget>
 #include <QTextBrowser>
 #include <QTextDocument>
 #include <QTextTable>
@@ -32,6 +34,9 @@ private slots:
     void draggingAnyEdgeResizesTheWindow();
     void resizeIsClampedToTheMinimumSize();
     void pressInTheMiddleDoesNotResize();
+    void multiFileDiffPutsTheFileListOnTheLeft();
+    void clickingAFileInTheListJumpsToItsDiff();
+    void plainDocumentHasNoFileList();
     void panelActuallyPaintsItsBackground();
     void contentFontFollowsApplicationFont();
 };
@@ -257,6 +262,106 @@ void dragEdge(QWidget* widget, const QPoint& grabLocal, const QPoint& delta) {
 }
 
 }  // namespace
+
+namespace {
+
+// 按生成器真实写出的结构造报告：索引行的标记必须和 gitDiffReport.ts 一致，
+// 自己另编一套等于把解析器对着自己的想象测。
+QString diffReportHtml(int fileCount, int bodyLines) {
+    QString index = QStringLiteral(
+        "<div class=\"file-index\"><div class=\"file-index-title\">变更文件（%1）</div><ul>")
+        .arg(fileCount);
+    QString body;
+    for (int i = 0; i < fileCount; ++i) {
+        index += QStringLiteral(
+                     "<li><a href=\"#f%1\">pkg/module%1/source%1.ts</a>"
+                     "<span class=\"idx-stat\"> &nbsp;&nbsp;"
+                     "<span class=\"idx-add\">+%2</span> "
+                     "<span class=\"idx-del\">-%3</span></span></li>")
+                     .arg(i)
+                     .arg(10 + i)
+                     .arg(i);
+        body += QStringLiteral("<div class=\"file\" id=\"f%1\"><a name=\"f%1\"></a>"
+                               "<div class=\"file-title\">pkg/module%1/source%1.ts</div>")
+                    .arg(i);
+        for (int line = 0; line < bodyLines; ++line) {
+            body += QStringLiteral("<p>file %1 line %2</p>").arg(i).arg(line);
+        }
+        body += QStringLiteral("</div>");
+    }
+    index += QStringLiteral("</ul></div>");
+    return index + body;
+}
+
+}  // namespace
+
+void FilePreviewDialogTest::multiFileDiffPutsTheFileListOnTheLeft() {
+    FilePreviewDialog dialog(QStringLiteral("remote-im-diff-demo.html"), diffReportHtml(3, 4));
+
+    auto* splitter = dialog.findChild<QSplitter*>(QStringLiteral("filePreviewSplitter"));
+    QVERIFY2(splitter != nullptr, "多文件 Diff 应当是左右两栏");
+    auto* list = dialog.findChild<QTreeWidget*>(QStringLiteral("filePreviewFileList"));
+    QVERIFY2(list != nullptr, "左栏没有文件列表");
+    auto* content = dialog.findChild<QTextBrowser*>(QStringLiteral("filePreviewContent"));
+    QVERIFY(content != nullptr);
+
+    // 顺序不能反：目录在左、正文在右。
+    QCOMPARE(splitter->indexOf(list), 0);
+    QCOMPARE(splitter->indexOf(content), 1);
+    QCOMPARE(splitter->orientation(), Qt::Horizontal);
+    // 任一栏被拖没就没有恢复入口了。
+    QVERIFY(!splitter->childrenCollapsible());
+
+    QCOMPARE(list->topLevelItemCount(), 3);
+    QCOMPARE(list->topLevelItem(0)->text(0), QStringLiteral("pkg/module0/source0.ts"));
+    QCOMPARE(list->topLevelItem(2)->text(0), QStringLiteral("pkg/module2/source2.ts"));
+    // 增删行数要跟着，否则这个列表只是个文件名清单。
+    QCOMPARE(list->topLevelItem(2)->text(1), QStringLiteral("+12 -2"));
+    QCOMPARE(list->topLevelItem(0)->data(0, Qt::UserRole).toString(), QStringLiteral("f0"));
+
+    // 左栏顶替了文档顶部那份索引：两份并排会让人怀疑哪份是准的。
+    QVERIFY2(!content->toPlainText().contains(QStringLiteral("变更文件（3）")),
+             "文档里那份索引没被剥掉，和左栏重复了");
+    // 但正文本身一个文件都不能少。
+    for (int i = 0; i < 3; ++i) {
+        QVERIFY2(content->toPlainText().contains(QStringLiteral("pkg/module%1/source%1.ts").arg(i)),
+                 qPrintable(QStringLiteral("剥索引把第 %1 个文件也带走了").arg(i)));
+    }
+}
+
+void FilePreviewDialogTest::clickingAFileInTheListJumpsToItsDiff() {
+    // 正文要足够长，短文档根本滚不动，断言就恒真了。
+    FilePreviewDialog dialog(QStringLiteral("remote-im-diff-demo.html"), diffReportHtml(4, 120));
+    dialog.resize(900, 500);
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+
+    auto* list = dialog.findChild<QTreeWidget*>(QStringLiteral("filePreviewFileList"));
+    auto* content = dialog.findChild<QTextBrowser*>(QStringLiteral("filePreviewContent"));
+    QVERIFY(list != nullptr && content != nullptr);
+    QVERIFY2(content->verticalScrollBar()->maximum() > 0, "正文没到能滚动的长度，用例证明不了跳转");
+    QCOMPARE(content->verticalScrollBar()->value(), 0);
+
+    list->setCurrentItem(list->topLevelItem(3));
+    const int atLast = content->verticalScrollBar()->value();
+    QVERIFY2(atLast > 0, "点了左栏最后一个文件，右侧正文没动");
+
+    // 再点回第一个必须往回走，不然只能证明「往下滚过一次」，证明不了是在按文件定位。
+    list->setCurrentItem(list->topLevelItem(0));
+    QVERIFY2(content->verticalScrollBar()->value() < atLast,
+             "点回第一个文件没有往回滚，说明跳转不是按文件定位的");
+}
+
+void FilePreviewDialogTest::plainDocumentHasNoFileList() {
+    // 普通 Markdown/HTML 附件没有文件索引，左栏纯占地方。
+    FilePreviewDialog dialog(QStringLiteral("report.md"), QStringLiteral("<p>hi</p>"));
+    QVERIFY(dialog.findChild<QTreeWidget*>(QStringLiteral("filePreviewFileList")) == nullptr);
+    QVERIFY(dialog.findChild<QSplitter*>(QStringLiteral("filePreviewSplitter")) == nullptr);
+
+    // 只有一个文件时也不给左栏：列表里只有一行，点它等于原地不动。
+    FilePreviewDialog single(QStringLiteral("remote-im-diff-demo.html"), diffReportHtml(1, 4));
+    QVERIFY(single.findChild<QTreeWidget*>(QStringLiteral("filePreviewFileList")) == nullptr);
+}
 
 void FilePreviewDialogTest::draggingAnyEdgeResizesTheWindow() {
     FilePreviewDialog dialog(QStringLiteral("report.md"), QStringLiteral("<p>hi</p>"));

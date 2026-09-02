@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QDialog>
+#include <QList>
 #include <QPoint>
 #include <QRect>
 #include <QSize>
@@ -9,6 +10,7 @@
 class QFrame;
 class QLabel;
 class QTextBrowser;
+class QTreeWidget;
 
 // Markdown / HTML 附件的预览窗。
 //
@@ -29,6 +31,17 @@ public:
     // 也会忽略部分现代布局属性；在进入 QTextDocument 前集中做一次兼容化，避免调用方
     // 各自维护容易分家的替换规则。
     static QString normalizeGitDiffHtmlForQt(QString html);
+
+    // Diff 报告顶部那份「变更文件」索引里的一行。
+    struct FileIndexEntry {
+        QString label;       // 仓库内相对路径（多仓库时带 <子模块>/ 前缀）
+        QString anchor;      // 文档内锚点 id，形如 f0
+        int additions = 0;
+        int deletions = 0;
+    };
+
+    // 从报告 HTML 里读出文件索引。不是 Diff 报告、或索引不存在时返回空列表。
+    static QList<FileIndexEntry> parseFileIndex(const QString& html);
 
     // html 由调用方渲染好（markdown 转换 / 原始 HTML 各走各的），
     // 这样本类不碰文件读取与 markdown 细节，纯粹负责外观与交互。
@@ -52,11 +65,14 @@ private:
     void updateResize(const QPoint& globalPos);
     void applyResizeCursor(const QPoint& localPos);
     bool handlePanelMouseEvent(QEvent* event);
+    // 多文件 Diff 才建左栏：只有一个文件时列表是纯占地方。
+    QWidget* buildFileListPane(const QList<FileIndexEntry>& entries, QWidget* parent);
 
     QFrame* panel_ = nullptr;
     QWidget* header_ = nullptr;
     QLabel* title_ = nullptr;
     QTextBrowser* content_ = nullptr;
+    QTreeWidget* fileList_ = nullptr;
     QString fullTitle_;
     QPoint dragOffset_;
     bool dragging_ = false;

@@ -257,6 +257,38 @@ QString avatarMonogram(const QString& displayName, const QString& userId) {
 // 纯色底上非常显眼，小字号下字形显脏（QFont::NoSubpixelAntialias 在 Windows
 // 字体引擎上并不可靠）。整块头像改为离屏生成：文字走 QPainterPath 填充
 // （纯灰度抗锯齿），按 DPR 物理分辨率渲染并缓存，导航/列表/消息区共用。
+// 连接状态点自己画，不靠 QSS 的 border-radius：缩放倍率不是整数时，
+// 尺寸和圆角各自四舍五入，半径会小于半边长，圆就塌成圆角方块——
+// 用户看到的就是「一个又大又丑的绿方块」。
+QPixmap statusDotPixmap(bool connected, int logicalSize, int ringWidth, qreal dpr) {
+    const QString key = QStringLiteral("statusdot:%1:%2:%3:%4")
+                            .arg(connected)
+                            .arg(logicalSize)
+                            .arg(ringWidth)
+                            .arg(dpr);
+    static QHash<QString, QPixmap> cache;
+    const auto found = cache.constFind(key);
+    if (found != cache.cend()) return found.value();
+
+    const int physical = qMax(1, qRound(logicalSize * dpr));
+    QPixmap pixmap(physical, physical);
+    pixmap.setDevicePixelRatio(dpr);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(Qt::NoPen);
+    // 外圈用导航栏底色，让点与头像之间留出一道呼吸缝。
+    painter.setBrush(QColor(0xec, 0xf3, 0xff));
+    painter.drawEllipse(QRectF(0, 0, logicalSize, logicalSize));
+    painter.setBrush(connected ? QColor(0x12, 0xb7, 0x6a) : QColor(0x98, 0xa2, 0xb3));
+    painter.drawEllipse(QRectF(ringWidth, ringWidth,
+                               logicalSize - 2.0 * ringWidth, logicalSize - 2.0 * ringWidth));
+    painter.end();
+
+    cache.insert(key, pixmap);
+    return pixmap;
+}
+
 QPixmap monogramAvatarPixmap(const QString& text,
                              int logicalSize,
                              qreal radius,
@@ -1395,8 +1427,12 @@ void MainWindow::buildUi() {
 
     statusLabel_ = new QLabel(logoContainer);
     statusLabel_->setObjectName(QStringLiteral("connectionStatusDot"));
-    statusLabel_->setFixedSize(UiZoom::s(12), UiZoom::s(12));
-    statusLabel_->move(UiZoom::s(29), UiZoom::s(1));
+    // 34px 的头像上挂一个 12px 的点，占了三分之一还多，抢眼到像个徽标。
+    // 收到 9px，并往回挪到贴着头像右上角——原来在 y=1，浮在头像上边之外，
+    // 看着不像「头像上的状态」，像掉在角落里的一块东西。
+    statusLabel_->setFixedSize(UiZoom::s(9), UiZoom::s(9));
+    statusLabel_->move(UiZoom::s(30), UiZoom::s(6));
+    statusLabel_->setScaledContents(false);
     statusLabel_->setAccessibleName(QStringLiteral("IM 连接状态"));
     // 头像独占一行居中；「添加联系人」已移到会话栏的搜索框旁边（微信式）。
     navLayout->addWidget(logoContainer, 0, Qt::AlignHCenter);
@@ -1809,17 +1845,11 @@ void MainWindow::applyStyle() {
             max-height: 34px;
             background: transparent;
         }
+        /* 形状和颜色都由 statusDotPixmap 画。这里只保证背景透明：
+           QSS 和点阵图各画一半，缩放时最容易对不齐。 */
         #connectionStatusDot {
-            min-width: 12px;
-            max-width: 12px;
-            min-height: 12px;
-            max-height: 12px;
-            border: 2px solid #ecf3ff;
-            border-radius: 6px;
-            background: #98a2b3;
-        }
-        #connectionStatusDot[connected="true"] {
-            background: #12b76a;
+            background: transparent;
+            border: 0;
         }
         #addConversationButton {
             min-width: 30px;
@@ -2760,6 +2790,8 @@ void MainWindow::updateConnectionIndicator() {
     if (!statusLabel_) return;
     const bool connected = app_.isConnected();
     statusLabel_->setText(QString());
+    statusLabel_->setPixmap(statusDotPixmap(connected, UiZoom::s(9), UiZoom::s(2),
+                                            statusLabel_->devicePixelRatioF()));
     statusLabel_->setProperty("connected", connected);
     statusLabel_->setToolTip(connected ? QStringLiteral("IM 已连接")
                                        : QStringLiteral("IM 未连接"));
@@ -4390,8 +4422,9 @@ void MainWindow::applyScaledFixedGeometry() {
                                              UiZoom::s(15), logo->devicePixelRatioF()));
     }
     if (statusLabel_) {
-        statusLabel_->setFixedSize(UiZoom::s(12), UiZoom::s(12));
-        statusLabel_->move(UiZoom::s(29), UiZoom::s(1));
+        statusLabel_->setFixedSize(UiZoom::s(9), UiZoom::s(9));
+        statusLabel_->move(UiZoom::s(30), UiZoom::s(6));
+        updateConnectionIndicator();  // 重画点阵图，否则放大后还是旧尺寸那张
     }
     if (auto* pane = findChild<QWidget*>(QStringLiteral("conversationPane"))) {
         pane->setMinimumWidth(UiZoom::s(220));

@@ -2058,6 +2058,24 @@ void MainWindowLayoutTest::connectionStatusLivesOnNavAvatarWithoutText() {
     QCOMPARE(statusDot->text(), QString());
     QCOMPARE(statusDot->property("connected").toBool(), false);
 
+    // 12px 的点挂在 34px 的头像上占了三分之一还多，抢眼到像个徽标。
+    QVERIFY2(statusDot->width() * 3 <= logo->width(),
+             qPrintable(QStringLiteral("状态点相对头像太大：%1 vs %2")
+                            .arg(statusDot->width())
+                            .arg(logo->width())));
+
+    // 形状必须真是个圆。QSS 的 border-radius 在非整数缩放倍率下会塌成圆角方块
+    // （尺寸与圆角各自四舍五入，半径小于半边长），所以这里直接看画出来的像素：
+    // 四角透明、中心不透明。断言「有个 QLabel 在那儿」是看不出方块的。
+    const QPixmap* painted = statusDot->pixmap();
+    QVERIFY2(painted != nullptr && !painted->isNull(), "状态点没有画出来");
+    const QImage image = painted->toImage();
+    QCOMPARE(qAlpha(image.pixel(0, 0)), 0);
+    QCOMPARE(qAlpha(image.pixel(image.width() - 1, 0)), 0);
+    QCOMPARE(qAlpha(image.pixel(0, image.height() - 1)), 0);
+    QVERIFY2(qAlpha(image.pixel(image.width() / 2, image.height() / 2)) > 200,
+             "状态点中心是透明的，等于没画");
+
     app.connectToService(1, QStringLiteral("test-user-sig"));
     QCOMPARE(statusDot->property("connected").toBool(), true);
     QCOMPARE(statusDot->text(), QString());

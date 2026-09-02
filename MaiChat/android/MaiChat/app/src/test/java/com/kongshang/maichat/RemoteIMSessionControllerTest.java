@@ -119,6 +119,34 @@ public class RemoteIMSessionControllerTest {
     }
 
     @Test
+    public void forwardingUnsupportedVideoFailsBeforeQueueing() throws Exception {
+        RemoteIMSessionController session = newSession();
+        session.login("android-user");
+        session.addContact("bob");
+        RemoteIMMessage source = new RemoteIMMessage(
+            "video-local",
+            "alice",
+            "android-user",
+            "[视频消息 8s]",
+            RemoteIMMessage.Direction.INCOMING,
+            RemoteIMMessage.Status.RECEIVED,
+            1L,
+            null,
+            null,
+            null,
+            new RemoteIMVideoAttachment("/tmp/video.mp4", "/tmp/cover.jpg", 8, 640, 360, 1024)
+        );
+
+        try {
+            session.forwardMessage(source, "bob");
+            throw new AssertionError("Android video forwarding must be rejected");
+        } catch (java.io.IOException error) {
+            assertTrue(error.getMessage().contains("暂不支持转发视频"));
+        }
+        assertTrue(session.chatState().messagesWith("bob").isEmpty());
+    }
+
+    @Test
     public void startsLoggedOutWhenSettingsAreEmpty() throws Exception {
         RemoteIMSessionController session = newSession();
 

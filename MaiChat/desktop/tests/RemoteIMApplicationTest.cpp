@@ -34,6 +34,8 @@ private slots:
     void broadcastDoesNotDependOnTheSelectedConversation();
     void forwardsTextWithoutChangingTheSelectedConversation();
     void forwardsDownloadedImageAndRejectsMissingAttachment();
+    void rejectsInternalAttachmentPlaceholderAsPlainText();
+    void rejectsUnsupportedVoiceBeforeQueueing();
 };
 
 void RemoteIMApplicationTest::sendsTextThroughClientAndMarksSent() {
@@ -650,6 +652,41 @@ void RemoteIMApplicationTest::forwardsDownloadedImageAndRejectsMissingAttachment
     QVERIFY(!app.forwardMessage(source, QStringLiteral("bob")));
     QCOMPARE(errorSpy.count(), 1);
     QCOMPARE(app.chatState().messagesWith(QStringLiteral("bob")).size(), 1);
+}
+
+void RemoteIMApplicationTest::rejectsInternalAttachmentPlaceholderAsPlainText() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    auto* fakeClient = client.get();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("bob"), QStringLiteral("Bob"));
+
+    RemoteIMMessage degraded;
+    degraded.fromUserId = QStringLiteral("alice");
+    degraded.toUserId = QStringLiteral("desktop-user");
+    degraded.text = QStringLiteral("[图片消息] private-photo.png");
+    // 下载失败的历史退化消息没有附件标记；占位串仍不能被当作普通正文转发。
+    QVERIFY(!degraded.hasImage);
+    QVERIFY(!app.forwardMessage(degraded, QStringLiteral("bob")));
+    QVERIFY(fakeClient->lastTextPeerId().isEmpty());
+    QVERIFY(app.chatState().messagesWith(QStringLiteral("bob")).isEmpty());
+}
+
+void RemoteIMApplicationTest::rejectsUnsupportedVoiceBeforeQueueing() {
+    RemoteIMApplication app(QStringLiteral("desktop-user"),
+                            std::make_unique<FakeRemoteIMClient>());
+    app.addContact(QStringLiteral("bob"), QStringLiteral("Bob"));
+    QSignalSpy errorSpy(&app, &RemoteIMApplication::errorMessage);
+
+    RemoteIMMessage voice;
+    voice.fromUserId = QStringLiteral("alice");
+    voice.toUserId = QStringLiteral("desktop-user");
+    voice.text = QStringLiteral("[语音消息 3s]");
+    voice.hasVoice = true;
+    voice.voice = RemoteIMVoiceAttachment{QStringLiteral("/tmp/voice.amr"), 3};
+
+    QVERIFY(!app.forwardMessage(voice, QStringLiteral("bob")));
+    QCOMPARE(errorSpy.count(), 1);
+    QVERIFY(app.chatState().messagesWith(QStringLiteral("bob")).isEmpty());
 }
 
 QTEST_MAIN(RemoteIMApplicationTest)

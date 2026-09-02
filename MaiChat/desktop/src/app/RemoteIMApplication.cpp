@@ -326,7 +326,9 @@ bool RemoteIMApplication::forwardMessage(const RemoteIMMessage& source,
         return false;
     }
 
-    const QString text = source.text.trimmed();
+    // 历史中可能存在「附件下载失败，只剩内部占位文本」的退化记录。
+    // 这种记录不能伪装成普通文本转发，否则会把内部协议和文件名发给对方。
+    const QString text = forwardedCaption(source);
     if (text.isEmpty()) return false;
     RemoteIMMessage message = state_.queueOutgoingTextTo(target, text);
     persistMessage(message);

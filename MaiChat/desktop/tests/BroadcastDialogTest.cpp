@@ -34,6 +34,7 @@ private slots:
     void filteringHidesRowsButKeepsWhatIsAlreadySelected();
     void sendStaysDisabledUntilThereAreRecipientsAndText();
     void actionButtonsHaveBreathingRoom();
+    void forwardingSelectsExactlyOneContactWithoutMessageComposer();
 };
 
 void BroadcastDialogTest::checkingAGroupHeaderSelectsEveryMember() {
@@ -147,6 +148,28 @@ void BroadcastDialogTest::actionButtonsHaveBreathingRoom() {
     QVERIFY2(gap >= 16, "群发窗口的取消与发送按钮仍然挤在一起");
     QVERIFY(cancel->width() >= 104);
     QVERIFY(send->width() >= 116);
+}
+
+void BroadcastDialogTest::forwardingSelectsExactlyOneContactWithoutMessageComposer() {
+    const QList<RemoteIMContact> contacts{
+        makeContact(QStringLiteral("alice"), QStringLiteral("Alice"), QStringLiteral("同事")),
+        makeContact(QStringLiteral("bob"), QStringLiteral("Bob"), QStringLiteral("同事"))};
+    BroadcastDialog dialog(contacts, {QStringLiteral("同事")}, QString(),
+                           BroadcastDialog::Mode::Forward);
+    QListWidget* list = recipientsOf(dialog);
+    auto* send = dialog.findChild<QPushButton*>(QStringLiteral("broadcastSend"));
+    QVERIFY(list != nullptr && send != nullptr);
+    QVERIFY(dialog.findChild<QTextEdit*>(QStringLiteral("broadcastMessage")) == nullptr);
+    // 转发是选一个会话，不显示会造成整组误发的分组表头。
+    QCOMPARE(list->count(), 2);
+
+    rowNamed(list, QStringLiteral("Alice"))->setCheckState(Qt::Checked);
+    QVERIFY(send->isEnabled());
+    QCOMPARE(dialog.selectedPeerIds(), QStringList({QStringLiteral("alice")}));
+
+    rowNamed(list, QStringLiteral("Bob"))->setCheckState(Qt::Checked);
+    QCOMPARE(dialog.selectedPeerIds(), QStringList({QStringLiteral("bob")}));
+    QCOMPARE(send->text(), QStringLiteral("转发给 1 人"));
 }
 
 QTEST_MAIN(BroadcastDialogTest)

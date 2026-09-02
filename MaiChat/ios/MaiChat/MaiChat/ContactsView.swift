@@ -6,6 +6,7 @@ struct ContactsView: View {
     @Binding var selectedTab: AppTab
     @Binding var activeContact: RemoteIMContact?
     @Binding var movingContact: RemoteIMContact?
+    @Binding var groupActionName: String?
     @Binding var isShowingBroadcast: Bool
     let showAddContact: () -> Void
     @State private var isCreatingGroup = false
@@ -18,6 +19,7 @@ struct ContactsView: View {
                     selectedTab: $selectedTab,
                     activeContact: $activeContact,
                     movingContact: $movingContact,
+                    groupActionName: $groupActionName,
                     showCreateGroup: {
                         groupNameDraft = ""
                         isCreatingGroup = true
@@ -270,13 +272,11 @@ private struct ContactList: View {
     @Binding var selectedTab: AppTab
     @Binding var activeContact: RemoteIMContact?
     @Binding var movingContact: RemoteIMContact?
+    @Binding var groupActionName: String?
     let showCreateGroup: () -> Void
     let showBroadcast: () -> Void
     @State private var searchText = ""
     @State private var collapsedGroups = Set<String>()
-    @State private var renamingGroup: String?
-    @State private var renameDraft = ""
-    @State private var deletingGroup: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -322,40 +322,6 @@ private struct ContactList: View {
             .background(RemoteIMStyle.panelBackground)
         }
         .background(RemoteIMStyle.panelBackground)
-        .alert("重命名分组", isPresented: Binding(
-            get: { renamingGroup != nil },
-            set: { if !$0 { renamingGroup = nil } }
-        )) {
-            TextField("分组名", text: $renameDraft)
-            Button("取消", role: .cancel) { renamingGroup = nil }
-            Button("保存") {
-                if let group = renamingGroup,
-                   !appState.renameContactGroup(from: group, to: renameDraft)
-                {
-                    appState.errorMessage = "分组名不能为空，且不能与已有分组重名"
-                }
-                renamingGroup = nil
-            }
-        }
-        .confirmationDialog(
-            "删除分组？",
-            isPresented: Binding(
-                get: { deletingGroup != nil },
-                set: { if !$0 { deletingGroup = nil } }
-            ),
-            titleVisibility: .visible
-        ) {
-            Button("删除分组", role: .destructive) {
-                if let group = deletingGroup {
-                    _ = appState.deleteContactGroup(name: group)
-                    collapsedGroups.remove(group)
-                }
-                deletingGroup = nil
-            }
-            Button("取消", role: .cancel) { deletingGroup = nil }
-        } message: {
-            Text(deleteGroupMessage)
-        }
     }
 
     private var normalizedSearch: String {
@@ -396,12 +362,11 @@ private struct ContactList: View {
         .listRowInsets(EdgeInsets(top: 7, leading: 16, bottom: 7, trailing: 16))
         .listRowSeparator(.hidden)
         .listRowBackground(RemoteIMStyle.panelBackground)
-        .contextMenu {
-            Button("重命名分组") {
-                renameDraft = name
-                renamingGroup = name
-            }
-            Button("删除分组", role: .destructive) { deletingGroup = name }
+        .onLongPressGesture(minimumDuration: 0.42) {
+            groupActionName = name
+        }
+        .accessibilityAction(named: "分组操作") {
+            groupActionName = name
         }
     }
 
@@ -447,12 +412,228 @@ private struct ContactList: View {
         }
     }
 
-    private var deleteGroupMessage: String {
-        guard let group = deletingGroup else { return "" }
-        let count = appState.chatState.contacts.filter { $0.groupName == group }.count
-        return count == 0
-            ? "这个分组是空的，删除后不影响任何联系人。"
-            : "组里的 \(count) 位联系人会直接列在通讯录里，好友本身不会被删除。"
+}
+
+struct ContactGroupActionDialog: View {
+    let groupName: String
+    let dismiss: () -> Void
+    let rename: () -> Void
+    let delete: () -> Void
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.28)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture(perform: dismiss)
+
+            VStack(alignment: .leading, spacing: 12) {
+                Text(groupName)
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(RemoteIMStyle.textPrimary)
+                    .lineLimit(1)
+
+                groupActionButton(
+                    title: "重命名分组",
+                    systemImage: "pencil",
+                    color: RemoteIMStyle.blue,
+                    destructive: false,
+                    action: rename
+                )
+                groupActionButton(
+                    title: "删除分组",
+                    systemImage: "trash",
+                    color: .red,
+                    destructive: true,
+                    action: delete
+                )
+            }
+            .padding(14)
+            .frame(maxWidth: 330)
+            .background(
+                RemoteIMStyle.panelBackground,
+                in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(RemoteIMStyle.border, lineWidth: 1)
+            }
+            .shadow(color: Color.black.opacity(0.16), radius: 24, y: 10)
+            .padding(.horizontal, 28)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityAction(.escape, dismiss)
+    }
+
+    private func groupActionButton(
+        title: String,
+        systemImage: String,
+        color: Color,
+        destructive: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 13) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(color)
+                    .frame(width: 30, height: 30)
+                    .background(color.opacity(0.1), in: Circle())
+                Text(title)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(destructive ? Color.red : RemoteIMStyle.textPrimary)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 52)
+            .background(
+                RemoteIMStyle.pageBackground,
+                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct RenameContactGroupDialog: View {
+    let originalName: String
+    @Binding var name: String
+    let cancel: () -> Void
+    let save: () -> Void
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.28)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture(perform: cancel)
+
+            VStack(alignment: .leading, spacing: 16) {
+                Text("重命名分组")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(RemoteIMStyle.textPrimary)
+                TextField(originalName, text: $name)
+                    .focused($isFocused)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .padding(.horizontal, 14)
+                    .frame(height: 48)
+                    .background(
+                        RemoteIMStyle.pageBackground,
+                        in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    )
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(RemoteIMStyle.blue, lineWidth: 1.5)
+                    }
+
+                HStack(spacing: 12) {
+                    dialogButton(title: "取消", primary: false, action: cancel)
+                    dialogButton(title: "保存", primary: true, action: save)
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: 360)
+            .background(
+                RemoteIMStyle.panelBackground,
+                in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(RemoteIMStyle.border, lineWidth: 1)
+            }
+            .shadow(color: Color.black.opacity(0.16), radius: 24, y: 10)
+            .padding(.horizontal, 24)
+        }
+        .onAppear {
+            DispatchQueue.main.async { isFocused = true }
+        }
+        .accessibilityAction(.escape, cancel)
+    }
+
+    private func dialogButton(
+        title: String,
+        primary: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(title, action: action)
+            .buttonStyle(.plain)
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(primary ? Color.white : RemoteIMStyle.textPrimary)
+            .frame(maxWidth: .infinity)
+            .frame(height: 46)
+            .background(
+                primary ? RemoteIMStyle.blue : RemoteIMStyle.pageBackground,
+                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+            )
+    }
+}
+
+struct DeleteContactGroupDialog: View {
+    let groupName: String
+    let memberCount: Int
+    let cancel: () -> Void
+    let delete: () -> Void
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.28)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture(perform: cancel)
+
+            VStack(alignment: .leading, spacing: 16) {
+                Text("删除分组？")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(RemoteIMStyle.textPrimary)
+                Text(deleteMessage)
+                    .font(.system(size: 14))
+                    .foregroundStyle(RemoteIMStyle.textSecondary)
+
+                HStack(spacing: 12) {
+                    dialogButton(title: "取消", destructive: false, action: cancel)
+                    dialogButton(title: "删除", destructive: true, action: delete)
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: 360)
+            .background(
+                RemoteIMStyle.panelBackground,
+                in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(RemoteIMStyle.border, lineWidth: 1)
+            }
+            .shadow(color: Color.black.opacity(0.16), radius: 24, y: 10)
+            .padding(.horizontal, 24)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityAction(.escape, cancel)
+    }
+
+    private var deleteMessage: String {
+        memberCount == 0
+            ? "“\(groupName)”是空分组，删除后不影响联系人。"
+            : "删除“\(groupName)”后，\(memberCount) 位联系人会回到未分组。"
+    }
+
+    private func dialogButton(
+        title: String,
+        destructive: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(title, action: action)
+            .buttonStyle(.plain)
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(destructive ? Color.red : RemoteIMStyle.textPrimary)
+            .frame(maxWidth: .infinity)
+            .frame(height: 46)
+            .background(
+                RemoteIMStyle.pageBackground,
+                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+            )
     }
 }
 

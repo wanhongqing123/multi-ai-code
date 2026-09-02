@@ -63,6 +63,7 @@ final class RemoteIMSystemNotificationCenter: NSObject, ObservableObject, UNUser
 
     private let center = UNUserNotificationCenter.current()
     @Published private(set) var pendingRouteRevision: UInt64 = 0
+    @Published private(set) var authorizationStatus: UNAuthorizationStatus = .notDetermined
     private(set) var pendingPeerUserID: String?
 
     func install() {
@@ -71,8 +72,14 @@ final class RemoteIMSystemNotificationCenter: NSObject, ObservableObject, UNUser
 
     func requestAuthorizationIfNeeded() async {
         let settings = await center.notificationSettings()
+        authorizationStatus = settings.authorizationStatus
         guard settings.authorizationStatus == .notDetermined else { return }
         _ = try? await center.requestAuthorization(options: [.alert, .sound, .badge])
+        await refreshAuthorizationStatus()
+    }
+
+    func refreshAuthorizationStatus() async {
+        authorizationStatus = await center.notificationSettings().authorizationStatus
     }
 
     func post(peerUserID: String, title: String, body: String, badgeCount: Int) async -> Bool {

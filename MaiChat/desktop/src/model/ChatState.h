@@ -50,9 +50,13 @@ public:
     RemoteIMMessage queueOutgoingApprovalDecision(const QString& token,
                                                    RemoteIMApprovalAction action);
     RemoteIMMessage queueOutgoingImage(const QString& localPath, int width, int height, qint64 sizeBytes, const QString& text = QString(), bool captionAbove = false);
+    RemoteIMMessage queueOutgoingImageTo(const QString& peerId, const QString& localPath, int width, int height, qint64 sizeBytes, const QString& text = QString(), bool captionAbove = false);
     RemoteIMMessage queueOutgoingVoice(const QString& localPath, int durationSeconds);
+    RemoteIMMessage queueOutgoingVoiceTo(const QString& peerId, const QString& localPath, int durationSeconds);
     RemoteIMMessage queueOutgoingFile(const QString& localPath, const QString& fileName, const QString& mimeType, qint64 sizeBytes, const QString& text = QString(), bool captionAbove = false);
+    RemoteIMMessage queueOutgoingFileTo(const QString& peerId, const QString& localPath, const QString& fileName, const QString& mimeType, qint64 sizeBytes, const QString& text = QString(), bool captionAbove = false);
     RemoteIMMessage queueOutgoingVideo(const QString& localPath, const QString& fileName, const QString& coverPath, int durationSeconds, qint64 sizeBytes, const QString& text = QString(), bool captionAbove = false);
+    RemoteIMMessage queueOutgoingVideoTo(const QString& peerId, const QString& localPath, const QString& fileName, const QString& coverPath, int durationSeconds, qint64 sizeBytes, const QString& text = QString(), bool captionAbove = false);
     RemoteIMMessage receiveText(const QString& fromUserId, const QString& text);
     RemoteIMMessage receiveImage(const QString& fromUserId, const QString& localPath, int width, int height, qint64 sizeBytes);
     RemoteIMMessage receiveVoice(const QString& fromUserId, const QString& localPath, int durationSeconds);

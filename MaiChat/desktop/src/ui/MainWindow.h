@@ -73,6 +73,7 @@ private:
     QString createContactGroup();
     // preselectedGroup 非空时，打开对话框就预先勾中该分组（分组表头右键进来的情况）。
     void openBroadcastDialog(const QString& preselectedGroup = QString());
+    void openForwardDialog(const RemoteIMMessage& message);
     void reportBroadcastResult(int total, const QStringList& failedPeerIds);
     void renameContactGroup(const QString& groupName);
     void deleteContactGroup(const QString& groupName);

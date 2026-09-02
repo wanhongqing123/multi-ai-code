@@ -98,6 +98,27 @@ public class RemoteIMSessionControllerTest {
     }
 
     @Test
+    public void forwardingCreatesANewPlainMessageWithoutChangingConversation() throws Exception {
+        RemoteIMSessionController session = newSession();
+        session.login("android-user");
+        session.addContact("alice");
+        session.addContact("bob");
+        session.chatState().selectPeer("alice");
+        RemoteIMMessage source = session.sendTextMessage("需要转发的正文", new RemoteIMQuote(
+            "sdk-original", "alice", "原引用", "text"
+        ));
+
+        RemoteIMMessage forwarded = session.forwardMessage(source, "bob");
+
+        assertEquals("alice", session.chatState().selectedPeerId());
+        assertEquals("bob", forwarded.toUserId());
+        assertEquals("需要转发的正文", forwarded.text());
+        assertEquals(RemoteIMMessage.Status.SENT, forwarded.status());
+        assertEquals(null, forwarded.quote());
+        assertEquals(1, session.chatState().messagesWith("bob").size());
+    }
+
+    @Test
     public void startsLoggedOutWhenSettingsAreEmpty() throws Exception {
         RemoteIMSessionController session = newSession();
 

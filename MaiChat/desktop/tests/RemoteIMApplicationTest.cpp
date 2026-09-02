@@ -32,6 +32,8 @@ private slots:
     void broadcastDeliversOneMessagePerRecipientAndSkipsDuplicates();
     void broadcastNamesTheRecipientsThatFailed();
     void broadcastDoesNotDependOnTheSelectedConversation();
+    void forwardsTextWithoutChangingTheSelectedConversation();
+    void forwardsDownloadedImageAndRejectsMissingAttachment();
 };
 
 void RemoteIMApplicationTest::sendsTextThroughClientAndMarksSent() {
@@ -581,6 +583,73 @@ void RemoteIMApplicationTest::broadcastDoesNotDependOnTheSelectedConversation() 
     // 沿用的话消息会发错人，而且是发给一个用户没勾选的人。
     QCOMPARE(app.chatState().messagesWith(QStringLiteral("bob")).size(), 1);
     QVERIFY(app.chatState().messagesWith(QStringLiteral("alice")).isEmpty());
+}
+
+void RemoteIMApplicationTest::forwardsTextWithoutChangingTheSelectedConversation() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    auto* fakeClient = client.get();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("alice"), QStringLiteral("Alice"));
+    app.addContact(QStringLiteral("bob"), QStringLiteral("Bob"));
+    app.selectPeer(QStringLiteral("alice"));
+
+    RemoteIMMessage source;
+    source.fromUserId = QStringLiteral("alice");
+    source.toUserId = QStringLiteral("desktop-user");
+    source.text = QStringLiteral("需要转发的正文");
+    source.hasQuote = true;
+    source.quote.digest = QStringLiteral("不应继承的引用");
+    source.hasApprovalRequest = true;
+
+    QVERIFY(app.forwardMessage(source, QStringLiteral(" bob ")));
+
+    QCOMPARE(app.chatState().selectedPeerId(), QStringLiteral("alice"));
+    QCOMPARE(fakeClient->lastTextPeerId(), QStringLiteral("bob"));
+    QCOMPARE(fakeClient->lastText(), QStringLiteral("需要转发的正文"));
+    const QList<RemoteIMMessage> forwarded = app.chatState().messagesWith(QStringLiteral("bob"));
+    QCOMPARE(forwarded.size(), 1);
+    QCOMPARE(forwarded.first().status, RemoteIMMessageStatus::Sent);
+    QVERIFY(!forwarded.first().hasQuote);
+    QVERIFY(!forwarded.first().hasApprovalRequest);
+}
+
+void RemoteIMApplicationTest::forwardsDownloadedImageAndRejectsMissingAttachment() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    auto* fakeClient = client.get();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("alice"), QStringLiteral("Alice"));
+    app.addContact(QStringLiteral("bob"), QStringLiteral("Bob"));
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString imagePath = dir.filePath(QStringLiteral("photo.png"));
+    QFile image(imagePath);
+    QVERIFY(image.open(QIODevice::WriteOnly));
+    image.write("not-an-image-but-a-readable-forwarding-payload");
+    image.close();
+
+    RemoteIMMessage source;
+    source.fromUserId = QStringLiteral("alice");
+    source.toUserId = QStringLiteral("desktop-user");
+    source.text = QStringLiteral("配文仍然跟着图片");
+    source.hasImage = true;
+    source.captionAbove = true;
+    source.image = RemoteIMImageAttachment{imagePath, 640, 480, image.size()};
+
+    QVERIFY(app.forwardMessage(source, QStringLiteral("bob")));
+    QCOMPARE(fakeClient->lastImagePeerId(), QStringLiteral("bob"));
+    QCOMPARE(fakeClient->lastImagePath(), imagePath);
+    const QList<RemoteIMMessage> forwarded = app.chatState().messagesWith(QStringLiteral("bob"));
+    QCOMPARE(forwarded.size(), 1);
+    QVERIFY(forwarded.first().hasImage);
+    QCOMPARE(forwarded.first().text, QStringLiteral("配文仍然跟着图片"));
+    QVERIFY(forwarded.first().captionAbove);
+
+    source.image.localPath = dir.filePath(QStringLiteral("deleted.png"));
+    QSignalSpy errorSpy(&app, &RemoteIMApplication::errorMessage);
+    QVERIFY(!app.forwardMessage(source, QStringLiteral("bob")));
+    QCOMPARE(errorSpy.count(), 1);
+    QCOMPARE(app.chatState().messagesWith(QStringLiteral("bob")).size(), 1);
 }
 
 QTEST_MAIN(RemoteIMApplicationTest)

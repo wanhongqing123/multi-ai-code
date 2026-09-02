@@ -206,11 +206,22 @@ public final class ChatState {
     }
 
     public RemoteIMMessage queueOutgoingImage(String localPath, int width, int height, long sizeBytes) {
+        return queueOutgoingImageTo(requireSelectedPeer(), localPath, width, height, sizeBytes);
+    }
+
+    public RemoteIMMessage queueOutgoingImageTo(
+        String peerIdValue,
+        String localPath,
+        int width,
+        int height,
+        long sizeBytes
+    ) {
         String cleanPath = clean(localPath);
         if (cleanPath.isEmpty()) {
             throw new IllegalArgumentException("localPath is required");
         }
-        String peerId = requireSelectedPeer();
+        String peerId = clean(peerIdValue);
+        if (peerId.isEmpty()) throw new IllegalArgumentException("peerId is required");
         RemoteIMImageAttachment attachment = new RemoteIMImageAttachment(
             cleanPath,
             width,
@@ -232,11 +243,20 @@ public final class ChatState {
     }
 
     public RemoteIMMessage queueOutgoingVoice(String localPath, int durationSeconds) {
+        return queueOutgoingVoiceTo(requireSelectedPeer(), localPath, durationSeconds);
+    }
+
+    public RemoteIMMessage queueOutgoingVoiceTo(
+        String peerIdValue,
+        String localPath,
+        int durationSeconds
+    ) {
         String cleanPath = clean(localPath);
         if (cleanPath.isEmpty()) {
             throw new IllegalArgumentException("localPath is required");
         }
-        String peerId = requireSelectedPeer();
+        String peerId = clean(peerIdValue);
+        if (peerId.isEmpty()) throw new IllegalArgumentException("peerId is required");
         RemoteIMVoiceAttachment attachment = new RemoteIMVoiceAttachment(cleanPath, durationSeconds);
         RemoteIMMessage message = new RemoteIMMessage(
             ownerUserId,
@@ -253,11 +273,22 @@ public final class ChatState {
     }
 
     public RemoteIMMessage queueOutgoingFile(String localPath, String fileName, String mimeType, long sizeBytes) {
+        return queueOutgoingFileTo(requireSelectedPeer(), localPath, fileName, mimeType, sizeBytes);
+    }
+
+    public RemoteIMMessage queueOutgoingFileTo(
+        String peerIdValue,
+        String localPath,
+        String fileName,
+        String mimeType,
+        long sizeBytes
+    ) {
         String cleanPath = clean(localPath);
         if (cleanPath.isEmpty()) {
             throw new IllegalArgumentException("localPath is required");
         }
-        String peerId = requireSelectedPeer();
+        String peerId = clean(peerIdValue);
+        if (peerId.isEmpty()) throw new IllegalArgumentException("peerId is required");
         RemoteIMFileAttachment attachment = new RemoteIMFileAttachment(
             cleanPath,
             fileName,

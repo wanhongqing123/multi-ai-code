@@ -504,73 +504,93 @@ private struct ConversationListView: View {
     @State private var isSearchingMessages = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            ConversationSearchField(text: $searchText)
+        ZStack {
+            VStack(spacing: 0) {
+                ConversationSearchField(text: $searchText)
 
-            List {
-                if normalizedSearch.isEmpty {
-                    if filteredContacts.isEmpty {
-                        EmptyConversationListView()
-                            .padding(.top, 96)
-                            .listRowInsets(EdgeInsets())
-                            .listRowSeparator(.hidden)
-                            .listRowBackground(RemoteIMStyle.panelBackground)
-                    } else {
-                        ForEach(filteredContacts) { contact in
-                            conversationButton(contact)
-                        }
-                    }
-                } else {
-                    if !filteredContacts.isEmpty {
-                        Section("联系人") {
+                List {
+                    if normalizedSearch.isEmpty {
+                        if filteredContacts.isEmpty {
+                            EmptyConversationListView()
+                                .padding(.top, 96)
+                                .listRowInsets(EdgeInsets())
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(RemoteIMStyle.panelBackground)
+                        } else {
                             ForEach(filteredContacts) { contact in
                                 conversationButton(contact)
                             }
                         }
-                    }
-
-                    if isSearchingMessages {
-                        HStack(spacing: 10) {
-                            ProgressView()
-                            Text("正在搜索全部消息…")
-                                .foregroundStyle(RemoteIMStyle.textSecondary)
-                        }
-                        .listRowSeparator(.hidden)
-                        .listRowBackground(RemoteIMStyle.panelBackground)
-                    } else if !visibleMessageSearchHits.isEmpty {
-                        Section("消息") {
-                            ForEach(visibleMessageSearchHits) { hit in
-                                if let contact = contact(for: hit.peerUserID) {
-                                    Button {
-                                        guard let openedContact = appState.openMessageSearchHit(hit)
-                                        else { return }
-                                        searchTargetMessageID = hit.message.id
-                                        activeContact = openedContact
-                                    } label: {
-                                        MessageSearchResultRow(contact: contact, hit: hit)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .listRowInsets(EdgeInsets())
-                                    .listRowSeparator(.hidden)
-                                    .listRowBackground(RemoteIMStyle.panelBackground)
+                    } else {
+                        if !filteredContacts.isEmpty {
+                            Section("联系人") {
+                                ForEach(filteredContacts) { contact in
+                                    conversationButton(contact)
                                 }
                             }
                         }
-                    } else if filteredContacts.isEmpty {
-                        EmptyMessageSearchView(query: searchText)
-                            .padding(.top, 72)
-                            .listRowInsets(EdgeInsets())
+
+                        if isSearchingMessages {
+                            HStack(spacing: 10) {
+                                ProgressView()
+                                Text("正在搜索全部消息…")
+                                    .foregroundStyle(RemoteIMStyle.textSecondary)
+                            }
                             .listRowSeparator(.hidden)
                             .listRowBackground(RemoteIMStyle.panelBackground)
+                        } else if !visibleMessageSearchHits.isEmpty {
+                            Section("消息") {
+                                ForEach(visibleMessageSearchHits) { hit in
+                                    if let contact = contact(for: hit.peerUserID) {
+                                        Button {
+                                            guard let openedContact = appState.openMessageSearchHit(hit)
+                                            else { return }
+                                            searchTargetMessageID = hit.message.id
+                                            activeContact = openedContact
+                                        } label: {
+                                            MessageSearchResultRow(contact: contact, hit: hit)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .listRowInsets(EdgeInsets())
+                                        .listRowSeparator(.hidden)
+                                        .listRowBackground(RemoteIMStyle.panelBackground)
+                                    }
+                                }
+                            }
+                        } else if filteredContacts.isEmpty {
+                            EmptyMessageSearchView(query: searchText)
+                                .padding(.top, 72)
+                                .listRowInsets(EdgeInsets())
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(RemoteIMStyle.panelBackground)
+                        }
                     }
                 }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .scrollDismissesKeyboard(.immediately)
+                .background(RemoteIMStyle.panelBackground)
             }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-            .scrollDismissesKeyboard(.immediately)
             .background(RemoteIMStyle.panelBackground)
+
+            if let pendingClearHistoryContact {
+                ClearHistoryDialog(
+                    contact: pendingClearHistoryContact,
+                    cancel: { self.pendingClearHistoryContact = nil },
+                    clear: {
+                        self.pendingClearHistoryContact = nil
+                        Task {
+                            _ = await appState.clearHistory(
+                                with: pendingClearHistoryContact.userID
+                            )
+                        }
+                    }
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                .zIndex(10)
+            }
         }
-        .background(RemoteIMStyle.panelBackground)
+        .animation(.easeOut(duration: 0.18), value: pendingClearHistoryContact?.userID)
         .task(id: normalizedSearch) {
             let query = normalizedSearch
             guard !query.isEmpty else {
@@ -593,18 +613,6 @@ private struct ConversationListView: View {
             let hits = await appState.searchMessages(query)
             guard !Task.isCancelled, normalizedSearch == query else { return }
             messageSearchHits = hits
-        }
-        .alert(item: $pendingClearHistoryContact) { contact in
-            Alert(
-                title: Text("清空聊天记录？"),
-                message: Text("将清空与 \(contact.displayName) 的消息，但保留该好友。"),
-                primaryButton: .destructive(Text("清空")) {
-                    Task {
-                        _ = await appState.clearHistory(with: contact.userID)
-                    }
-                },
-                secondaryButton: .cancel()
-            )
         }
     }
 
@@ -669,6 +677,66 @@ private struct ConversationListView: View {
             }
     }
 
+}
+
+private struct ClearHistoryDialog: View {
+    let contact: RemoteIMContact
+    let cancel: () -> Void
+    let clear: () -> Void
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.28)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture(perform: cancel)
+
+            VStack(alignment: .leading, spacing: 16) {
+                Text("清空聊天记录？")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(RemoteIMStyle.textPrimary)
+                Text("将清空与 \(contact.displayName) 的消息，但保留该好友。")
+                    .font(.system(size: 14))
+                    .foregroundStyle(RemoteIMStyle.textSecondary)
+
+                HStack(spacing: 12) {
+                    dialogButton(title: "取消", color: RemoteIMStyle.textPrimary, action: cancel)
+                    dialogButton(title: "清空", color: .red, action: clear)
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: 360)
+            .background(
+                RemoteIMStyle.panelBackground,
+                in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(RemoteIMStyle.border, lineWidth: 1)
+            }
+            .shadow(color: Color.black.opacity(0.16), radius: 24, y: 10)
+            .padding(.horizontal, 24)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityAction(.escape, cancel)
+    }
+
+    private func dialogButton(
+        title: String,
+        color: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(title, action: action)
+            .buttonStyle(.plain)
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(color)
+            .frame(maxWidth: .infinity)
+            .frame(height: 46)
+            .background(
+                RemoteIMStyle.pageBackground,
+                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+            )
+    }
 }
 
 private struct ConversationSearchField: View {
@@ -913,6 +981,13 @@ private struct PresentedRemoteIMImage: Identifiable {
     var id: UUID { item.id }
 }
 
+private struct PresentedMessageActions: Identifiable {
+    let message: RemoteIMMessage
+    let sourceFrame: CGRect
+
+    var id: UUID { message.id }
+}
+
 private struct RemoteIMImageBubbleFramePreferenceKey: PreferenceKey {
     static let defaultValue: CGRect = .zero
 
@@ -932,6 +1007,9 @@ private struct ChatDetailView: View {
     @State private var imagePreviewPresentation: PresentedRemoteIMImage?
     @State private var isImagePreviewExpanded = false
     @State private var quoteTargetMessageID: UUID?
+    @State private var messageActionTarget: PresentedMessageActions?
+    @State private var selectingMessageID: UUID?
+    @State private var forwardingMessage: RemoteIMMessage?
 
     var body: some View {
         ZStack {
@@ -948,7 +1026,16 @@ private struct ChatDetailView: View {
                     searchTargetMessageID: quoteTargetMessageID ?? searchTargetMessageID,
                     hasEarlierMessages: appState.hasEarlierMessages(with: contact.userID),
                     initialHistoryLoadGeneration: initialHistoryLoadGeneration,
+                    selectingMessageID: selectingMessageID,
+                    finishSelectingText: { selectingMessageID = nil },
                     presentImagePreview: presentImagePreview,
+                    showMessageActions: { message, sourceFrame in
+                        dismissKeyboard()
+                        messageActionTarget = PresentedMessageActions(
+                            message: message,
+                            sourceFrame: sourceFrame
+                        )
+                    },
                     replyToMessage: { message in
                         appState.beginReply(to: message)
                     },
@@ -983,11 +1070,58 @@ private struct ChatDetailView: View {
                 )
                 .zIndex(20)
             }
+
+            if let messageActionTarget {
+                MessageActionDialog(
+                    sourceFrame: messageActionTarget.sourceFrame,
+                    dismiss: { self.messageActionTarget = nil },
+                    reply: {
+                        self.messageActionTarget = nil
+                        appState.beginReply(to: messageActionTarget.message)
+                    },
+                    selectCopy: {
+                        selectingMessageID = messageActionTarget.message.id
+                        self.messageActionTarget = nil
+                    },
+                    forward: {
+                        forwardingMessage = messageActionTarget.message
+                        self.messageActionTarget = nil
+                        selectingMessageID = nil
+                    },
+                    copyAll: {
+                        UIPasteboard.general.string = RemoteIMMessageCopyPolicy.fullText(
+                            for: messageActionTarget.message
+                        )
+                        self.messageActionTarget = nil
+                        selectingMessageID = nil
+                    }
+                )
+                .transition(.opacity)
+                .zIndex(30)
+            }
+
+            if let forwardingMessage {
+                ForwardMessageDialog(
+                    message: forwardingMessage,
+                    contacts: appState.chatState.contacts,
+                    cancel: { self.forwardingMessage = nil },
+                    forward: { contact in
+                        self.forwardingMessage = nil
+                        Task {
+                            _ = await appState.forwardMessage(forwardingMessage, to: contact)
+                        }
+                    }
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.97)))
+                .zIndex(40)
+            }
         }
         .coordinateSpace(name: RemoteIMImagePreviewLayout.coordinateSpaceName)
         .background(RemoteIMStyle.pageBackground.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
         .simultaneousGesture(edgeSwipeBackGesture)
+        .animation(.easeOut(duration: 0.18), value: messageActionTarget?.id)
+        .animation(.easeOut(duration: 0.18), value: forwardingMessage?.id)
         .onAppear {
             appState.selectContact(contact)
             appState.setConversationVisible(userID: contact.userID, visible: true)
@@ -1004,6 +1138,9 @@ private struct ChatDetailView: View {
         .onDisappear {
             appState.setConversationVisible(userID: contact.userID, visible: false)
             appState.cancelReply()
+            messageActionTarget = nil
+            selectingMessageID = nil
+            forwardingMessage = nil
         }
         .task(id: contact.userID) {
             let startedAt = ProcessInfo.processInfo.systemUptime
@@ -1399,7 +1536,10 @@ private struct MessageListView: View {
     let searchTargetMessageID: UUID?
     let hasEarlierMessages: Bool
     let initialHistoryLoadGeneration: Int
+    let selectingMessageID: UUID?
+    let finishSelectingText: () -> Void
     let presentImagePreview: (RemoteIMImagePreviewItem, UIImage, CGRect) -> Void
+    let showMessageActions: (RemoteIMMessage, CGRect) -> Void
     let replyToMessage: (RemoteIMMessage) -> Void
     let openQuote: (RemoteIMQuote) -> Void
     let loadEarlierMessages: () async -> Void
@@ -1474,6 +1614,11 @@ private struct MessageListView: View {
                                 },
                                 previewFile: {
                                     filePreviewItem = RemoteIMFilePreviewItem(message: message)
+                                },
+                                isSelectingText: selectingMessageID == message.id,
+                                finishSelectingText: finishSelectingText,
+                                showActions: { sourceFrame in
+                                    showMessageActions(message, sourceFrame)
                                 },
                                 reply: { replyToMessage(message) },
                                 openQuote: openQuote
@@ -1685,9 +1830,12 @@ private struct MessageBubbleView: View {
     let previewImage: (UIImage, CGRect) -> Void
     let previewVideo: () -> Void
     let previewFile: () -> Void
+    let isSelectingText: Bool
+    let finishSelectingText: () -> Void
+    let showActions: (CGRect) -> Void
     let reply: () -> Void
     let openQuote: (RemoteIMQuote) -> Void
-    @State private var selectableCopyItem: SelectableMessageCopyItem?
+    @State private var actionSourceFrame: CGRect = .zero
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -1715,27 +1863,17 @@ private struct MessageBubbleView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: message.direction == .outgoing ? .trailing : .leading)
-        .contextMenu {
-            Button(action: reply) {
-                Label("引用回复", systemImage: "arrowshape.turn.up.left")
-            }
-
-            Button {
-                selectableCopyItem = SelectableMessageCopyItem(
-                    text: RemoteIMMessageCopyPolicy.selectionText(for: message)
-                )
-            } label: {
-                Label("选择复制", systemImage: "text.cursor")
-            }
-
-            Button {
-                UIPasteboard.general.string = RemoteIMMessageCopyPolicy.fullText(for: message)
-            } label: {
-                Label("复制全部信息", systemImage: "doc.on.doc")
-            }
+        // 不使用系统 contextMenu：它会把被长按的消息单独提亮/放大，且视觉风格
+        // 与 MaiChat 完全不同。长按只打开根层自绘卡片，消息本身保持原样。
+        .onLongPressGesture(minimumDuration: 0.42) {
+            guard !isSelectingText else { return }
+            showActions(actionSourceFrame)
         }
-        .sheet(item: $selectableCopyItem) { item in
-            SelectableMessageCopyView(item: item)
+        .accessibilityAction(named: "消息操作") {
+            showActions(actionSourceFrame)
+        }
+        .accessibilityAction(named: "引用回复") {
+            reply()
         }
     }
 
@@ -1891,6 +2029,15 @@ private struct MessageBubbleView: View {
                     }
                 }
             }
+            .opacity(isSelectingText ? 0 : 1)
+            .allowsHitTesting(!isSelectingText)
+            .overlay(alignment: .topLeading) {
+                if isSelectingText {
+                    SelectableMessageTextView(
+                        text: RemoteIMMessageCopyPolicy.selectionText(for: message)
+                    )
+                }
+            }
             .padding(.horizontal, 13)
             .padding(.vertical, 11)
             .background(bubbleBackground, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -1902,6 +2049,36 @@ private struct MessageBubbleView: View {
             if message.direction == .outgoing {
                 StatusIcon(status: message.status)
                     .padding(.bottom, 4)
+            }
+        }
+        .background {
+            GeometryReader { geometry in
+                Color.clear
+                    .onAppear {
+                        actionSourceFrame = geometry.frame(
+                            in: .named(RemoteIMImagePreviewLayout.coordinateSpaceName)
+                        )
+                    }
+                    .onChange(of: geometry.frame(
+                        in: .named(RemoteIMImagePreviewLayout.coordinateSpaceName)
+                    )) { nextFrame in
+                        actionSourceFrame = nextFrame
+                    }
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if isSelectingText {
+                Button(action: finishSelectingText) {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 28, height: 28)
+                        .background(RemoteIMStyle.blue, in: Circle())
+                        .shadow(color: Color.black.opacity(0.16), radius: 6, y: 2)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("完成选择")
+                .padding(5)
             }
         }
     }
@@ -2059,30 +2236,240 @@ private extension ApprovalDecisionDisplayState {
     }
 }
 
-private struct SelectableMessageCopyItem: Identifiable {
-    let id = UUID()
-    let text: String
-}
-
-private struct SelectableMessageCopyView: View {
-    let item: SelectableMessageCopyItem
-    @Environment(\.dismiss) private var dismiss
+private struct MessageActionDialog: View {
+    let sourceFrame: CGRect
+    let dismiss: () -> Void
+    let reply: () -> Void
+    let selectCopy: () -> Void
+    let forward: () -> Void
+    let copyAll: () -> Void
 
     var body: some View {
-        NavigationStack {
-            SelectableMessageTextView(text: item.text)
-                .background(RemoteIMStyle.panelBackground)
-                .navigationTitle("选择复制")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("完成") {
-                            dismiss()
+        GeometryReader { geometry in
+            let panelWidth = min(CGFloat(380), max(280, geometry.size.width - 32))
+            let showAbove = sourceFrame.minY > 116
+            let centerX = min(
+                max(sourceFrame.midX, panelWidth / 2 + 16),
+                geometry.size.width - panelWidth / 2 - 16
+            )
+            let centerY = showAbove
+                ? max(62, sourceFrame.minY - 55)
+                : min(geometry.size.height - 62, sourceFrame.maxY + 55)
+
+            ZStack {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture(perform: dismiss)
+
+                VStack(spacing: 0) {
+                    if !showAbove {
+                        MessageActionPointer()
+                            .fill(Color(red: 0.25, green: 0.25, blue: 0.27))
+                            .frame(width: 22, height: 10)
+                            .rotationEffect(.degrees(180))
+                    }
+
+                    HStack(spacing: 0) {
+                        actionButton(
+                            title: "引用",
+                            systemImage: "quote.opening",
+                            action: reply
+                        )
+                        actionButton(
+                            title: "选择",
+                            systemImage: "text.cursor",
+                            action: selectCopy
+                        )
+                        actionButton(
+                            title: "转发",
+                            systemImage: "arrowshape.turn.up.right",
+                            action: forward
+                        )
+                        actionButton(
+                            title: "复制",
+                            systemImage: "doc.on.doc",
+                            action: copyAll
+                        )
+                    }
+                    .frame(width: panelWidth, height: 82)
+                    .background(
+                        Color(red: 0.25, green: 0.25, blue: 0.27),
+                        in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    )
+
+                    if showAbove {
+                        MessageActionPointer()
+                            .fill(Color(red: 0.25, green: 0.25, blue: 0.27))
+                            .frame(width: 22, height: 10)
+                    }
+                }
+                .shadow(color: Color.black.opacity(0.2), radius: 16, y: 7)
+                .position(x: centerX, y: centerY)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("消息操作")
+        .accessibilityAction(.escape, dismiss)
+    }
+
+    private func actionButton(
+        title: String,
+        systemImage: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            VStack(spacing: 7) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 20, weight: .semibold))
+                Text(title)
+                    .font(.system(size: 14, weight: .medium))
+            }
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+    }
+}
+
+private struct MessageActionPointer: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
+        path.closeSubpath()
+        return path
+    }
+}
+
+private struct ForwardMessageDialog: View {
+    let message: RemoteIMMessage
+    let contacts: [RemoteIMContact]
+    let cancel: () -> Void
+    let forward: (RemoteIMContact) -> Void
+    @State private var searchText = ""
+
+    private var filteredContacts: [RemoteIMContact] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return contacts }
+        return contacts.filter {
+            $0.displayName.lowercased().contains(query)
+                || $0.userID.lowercased().contains(query)
+        }
+    }
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.28)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture(perform: cancel)
+
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("转发给")
+                            .font(.system(size: 20, weight: .bold))
+                            .foregroundStyle(RemoteIMStyle.textPrimary)
+                        Text(RemoteIMMessageCopyPolicy.selectionText(for: message))
+                            .font(.system(size: 12))
+                            .foregroundStyle(RemoteIMStyle.textSecondary)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    Button("取消", action: cancel)
+                        .buttonStyle(.plain)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(RemoteIMStyle.textSecondary)
+                }
+
+                HStack(spacing: 10) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(RemoteIMStyle.textSecondary)
+                    TextField("搜索联系人", text: $searchText)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                }
+                .padding(.horizontal, 13)
+                .frame(height: 46)
+                .background(
+                    RemoteIMStyle.pageBackground,
+                    in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(RemoteIMStyle.border, lineWidth: 1)
+                }
+
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(filteredContacts) { contact in
+                            Button {
+                                forward(contact)
+                            } label: {
+                                HStack(spacing: 12) {
+                                    Text(String(contact.displayName.prefix(1)).uppercased())
+                                        .font(.system(size: 15, weight: .bold))
+                                        .foregroundStyle(.white)
+                                        .frame(width: 38, height: 38)
+                                        .background(RemoteIMStyle.blue, in: Circle())
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(contact.displayName)
+                                            .font(.system(size: 15, weight: .semibold))
+                                            .foregroundStyle(RemoteIMStyle.textPrimary)
+                                            .lineLimit(1)
+                                        if contact.displayName != contact.userID {
+                                            Text(contact.userID)
+                                                .font(.system(size: 12, design: .monospaced))
+                                                .foregroundStyle(RemoteIMStyle.textSecondary)
+                                                .lineLimit(1)
+                                                .truncationMode(.middle)
+                                        }
+                                    }
+                                    Spacer(minLength: 0)
+                                    Image(systemName: "paperplane.fill")
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundStyle(RemoteIMStyle.blue)
+                                }
+                                .padding(.horizontal, 12)
+                                .frame(height: 58)
+                                .background(
+                                    RemoteIMStyle.pageBackground,
+                                    in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("转发给 \(contact.displayName)")
+                        }
+
+                        if filteredContacts.isEmpty {
+                            Text("没有匹配的联系人")
+                                .font(.system(size: 14))
+                                .foregroundStyle(RemoteIMStyle.textSecondary)
+                                .padding(.vertical, 28)
                         }
                     }
                 }
+                .frame(maxHeight: 340)
+            }
+            .padding(18)
+            .frame(maxWidth: 380)
+            .background(
+                RemoteIMStyle.panelBackground,
+                in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(RemoteIMStyle.border, lineWidth: 1)
+            }
+            .shadow(color: Color.black.opacity(0.16), radius: 24, y: 10)
+            .padding(.horizontal, 24)
         }
-        .presentationDetents([.medium, .large])
+        .accessibilityElement(children: .contain)
+        .accessibilityAction(.escape, cancel)
     }
 }
 
@@ -2093,13 +2480,13 @@ private struct SelectableMessageTextView: UIViewRepresentable {
         let textView = UITextView()
         textView.isEditable = false
         textView.isSelectable = true
-        textView.isScrollEnabled = true
-        textView.alwaysBounceVertical = true
+        textView.isScrollEnabled = false
+        textView.alwaysBounceVertical = false
         textView.backgroundColor = .clear
-        textView.font = .preferredFont(forTextStyle: .body)
+        textView.font = .systemFont(ofSize: 13)
         textView.adjustsFontForContentSizeCategory = true
         textView.textColor = .label
-        textView.textContainerInset = UIEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
+        textView.textContainerInset = .zero
         textView.textContainer.lineFragmentPadding = 0
         textView.accessibilityIdentifier = "selectable-message-copy-text"
         textView.accessibilityLabel = "可选择的消息正文"

@@ -23,9 +23,19 @@ class BroadcastDialog final : public QDialog {
     Q_OBJECT
 
 public:
+    enum class Mode {
+        Broadcast,
+        Forward,
+    };
+
     BroadcastDialog(const QList<RemoteIMContact>& contacts,
                     const QStringList& groups,
                     const QString& preselectedGroup,
+                    QWidget* parent = nullptr);
+    BroadcastDialog(const QList<RemoteIMContact>& contacts,
+                    const QStringList& groups,
+                    const QString& preselectedGroup,
+                    Mode mode,
                     QWidget* parent = nullptr);
 
     QStringList selectedPeerIds() const;
@@ -47,5 +57,6 @@ private:
     QTextEdit* messageInput_ = nullptr;
     QPushButton* sendButton_ = nullptr;
     QLabel* summaryLabel_ = nullptr;
+    Mode mode_ = Mode::Broadcast;
     bool syncingChecks_ = false;
 };

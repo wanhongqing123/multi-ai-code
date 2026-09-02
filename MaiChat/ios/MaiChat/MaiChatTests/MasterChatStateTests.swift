@@ -125,6 +125,47 @@ final class MasterChatStateTests: XCTestCase {
         XCTAssertEqual(state.messages(with: "bob").first?.toUserID, "bob")
     }
 
+    func testForwardingCreatesNewPlainMessageWithoutChangingSelectedConversation() throws {
+        var state = MasterChatState(ownerUserID: "ios-master")
+        try state.upsertContact(userID: "alice", relation: .friend)
+        try state.upsertContact(userID: "bob", relation: .friend)
+        state.selectPeer(userID: "alice")
+        let source = RemoteIMMessage(
+            remoteID: "sdk-original",
+            fromUserID: "alice",
+            toUserID: "ios-master",
+            text: "需要转发的正文",
+            quote: RemoteIMQuote(
+                messageID: "sdk-quoted",
+                senderID: "someone",
+                digest: "不应继承的引用",
+                kind: "text"
+            ),
+            approvalRequest: RemoteIMApprovalRequest(
+                token: "approval-forwarding-test",
+                actions: [.approveOnce, .reject]
+            ),
+            direction: .incoming,
+            status: .received,
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+
+        let forwarded = try state.queueForwardedMessage(
+            source,
+            to: "bob",
+            now: Date(timeIntervalSince1970: 2)
+        )
+
+        XCTAssertEqual(state.selectedPeerID, "alice")
+        XCTAssertEqual(forwarded.toUserID, "bob")
+        XCTAssertEqual(forwarded.text, "需要转发的正文")
+        XCTAssertNil(forwarded.remoteID)
+        XCTAssertNil(forwarded.quote)
+        XCTAssertNil(forwarded.approvalRequest)
+        XCTAssertEqual(forwarded.status, .pending)
+        XCTAssertEqual(state.messages(with: "bob"), [forwarded])
+    }
+
     func testBroadcastSelectionDeduplicatesAndTracksGroupTriState() {
         let contacts = [
             RemoteIMContact(userID: "alice", displayName: "Alice", groupName: "同事"),

@@ -25,7 +25,14 @@ BroadcastDialog::BroadcastDialog(const QList<RemoteIMContact>& contacts,
                                  const QStringList& groups,
                                  const QString& preselectedGroup,
                                  QWidget* parent)
-    : QDialog(parent) {
+    : BroadcastDialog(contacts, groups, preselectedGroup, Mode::Broadcast, parent) {}
+
+BroadcastDialog::BroadcastDialog(const QList<RemoteIMContact>& contacts,
+                                 const QStringList& groups,
+                                 const QString& preselectedGroup,
+                                 Mode mode,
+                                 QWidget* parent)
+    : QDialog(parent), mode_(mode) {
     buildUi(contacts, groups, preselectedGroup);
     applyStyle();
 }
@@ -42,14 +49,15 @@ QStringList BroadcastDialog::selectedPeerIds() const {
 }
 
 QString BroadcastDialog::messageText() const {
-    return messageInput_->toPlainText();
+    return messageInput_ ? messageInput_->toPlainText() : QString();
 }
 
 void BroadcastDialog::buildUi(const QList<RemoteIMContact>& contacts,
                               const QStringList& groups,
                               const QString& preselectedGroup) {
     setObjectName(QStringLiteral("broadcastDialog"));
-    setWindowTitle(QStringLiteral("群发消息"));
+    const bool forwarding = mode_ == Mode::Forward;
+    setWindowTitle(forwarding ? QStringLiteral("转发消息") : QStringLiteral("群发消息"));
     setModal(true);
     setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint);
     setAttribute(Qt::WA_TranslucentBackground, true);
@@ -66,16 +74,18 @@ void BroadcastDialog::buildUi(const QList<RemoteIMContact>& contacts,
     layout->setContentsMargins(28, 26, 28, 22);
     layout->setSpacing(UiZoom::s(12));
 
-    auto* title = new QLabel(QStringLiteral("群发消息"), panel);
+    auto* title = new QLabel(forwarding ? QStringLiteral("转发给") : QStringLiteral("群发消息"), panel);
     title->setObjectName(QStringLiteral("broadcastTitle"));
     layout->addWidget(title);
 
-    auto* description = new QLabel(
-        QStringLiteral("勾选的每个人都会单独收到一条消息，和平时的私聊没有区别。"),
-        panel);
-    description->setObjectName(QStringLiteral("broadcastDescription"));
-    description->setWordWrap(true);
-    layout->addWidget(description);
+    if (!forwarding) {
+        auto* description = new QLabel(
+            QStringLiteral("勾选的每个人都会单独收到一条消息，和平时的私聊没有区别。"),
+            panel);
+        description->setObjectName(QStringLiteral("broadcastDescription"));
+        description->setWordWrap(true);
+        layout->addWidget(description);
+    }
 
     filterInput_ = new QLineEdit(panel);
     filterInput_->setObjectName(QStringLiteral("broadcastFilter"));
@@ -105,29 +115,38 @@ void BroadcastDialog::buildUi(const QList<RemoteIMContact>& contacts,
         recipientList_->addItem(item);
     };
 
-    for (const QString& group : groups) {
-        const QList<RemoteIMContact> members = byGroup.value(group);
-        auto* header = new QListWidgetItem(QStringLiteral("%1（%2）").arg(group).arg(members.size()));
-        header->setData(IsGroupHeaderRole, true);
-        header->setData(GroupNameRole, group);
-        // 分组表头本身可勾选：一次勾中整组，这是群发最常用的动作。
-        header->setFlags(Qt::ItemIsEnabled | Qt::ItemIsUserCheckable);
-        header->setCheckState(Qt::Unchecked);
-        recipientList_->addItem(header);
-        for (const RemoteIMContact& contact : members) {
-            addContactRow(contact, group == preselectedGroup, true);
+    if (forwarding) {
+        // 转发只选一个会话：平铺联系人，避免“分组全选”在这里造成误发。
+        for (const RemoteIMContact& contact : contacts) {
+            addContactRow(contact, false, false);
         }
-    }
-    for (const RemoteIMContact& contact : byGroup.value(QString())) {
-        addContactRow(contact, false, false);
+    } else {
+        for (const QString& group : groups) {
+            const QList<RemoteIMContact> members = byGroup.value(group);
+            auto* header = new QListWidgetItem(QStringLiteral("%1（%2）").arg(group).arg(members.size()));
+            header->setData(IsGroupHeaderRole, true);
+            header->setData(GroupNameRole, group);
+            // 分组表头本身可勾选：一次勾中整组，这是群发最常用的动作。
+            header->setFlags(Qt::ItemIsEnabled | Qt::ItemIsUserCheckable);
+            header->setCheckState(Qt::Unchecked);
+            recipientList_->addItem(header);
+            for (const RemoteIMContact& contact : members) {
+                addContactRow(contact, group == preselectedGroup, true);
+            }
+        }
+        for (const RemoteIMContact& contact : byGroup.value(QString())) {
+            addContactRow(contact, false, false);
+        }
     }
     layout->addWidget(recipientList_, 1);
 
-    messageInput_ = new QTextEdit(panel);
-    messageInput_->setObjectName(QStringLiteral("broadcastMessage"));
-    messageInput_->setPlaceholderText(QStringLiteral("要发送的内容"));
-    messageInput_->setMinimumHeight(UiZoom::s(90));
-    layout->addWidget(messageInput_);
+    if (!forwarding) {
+        messageInput_ = new QTextEdit(panel);
+        messageInput_->setObjectName(QStringLiteral("broadcastMessage"));
+        messageInput_->setPlaceholderText(QStringLiteral("要发送的内容"));
+        messageInput_->setMinimumHeight(UiZoom::s(90));
+        layout->addWidget(messageInput_);
+    }
 
     auto* buttonRow = new QHBoxLayout();
     buttonRow->setContentsMargins(0, UiZoom::s(8), 0, 0);
@@ -155,9 +174,19 @@ void BroadcastDialog::buildUi(const QList<RemoteIMContact>& contacts,
     buttonRow->addWidget(sendButton_);
     layout->addLayout(buttonRow);
 
-    connect(messageInput_, &QTextEdit::textChanged, this, [this] { refreshSendState(); });
+    if (messageInput_) {
+        connect(messageInput_, &QTextEdit::textChanged, this, [this] { refreshSendState(); });
+    }
     connect(recipientList_, &QListWidget::itemChanged, this, [this](QListWidgetItem* item) {
         if (syncingChecks_) return;
+        if (mode_ == Mode::Forward && item->checkState() == Qt::Checked) {
+            syncingChecks_ = true;
+            for (int row = 0; row < recipientList_->count(); ++row) {
+                QListWidgetItem* candidate = recipientList_->item(row);
+                if (candidate != item) candidate->setCheckState(Qt::Unchecked);
+            }
+            syncingChecks_ = false;
+        }
         if (item->data(IsGroupHeaderRole).toBool()) {
             toggleGroupSelection(item);
         } else {
@@ -177,10 +206,11 @@ void BroadcastDialog::buildUi(const QList<RemoteIMContact>& contacts,
         }
     });
 
-    syncGroupCheckStates();
+    if (!forwarding) syncGroupCheckStates();
     refreshSendState();
     setMinimumWidth(UiZoom::s(520));
-    messageInput_->setFocus(Qt::OtherFocusReason);
+    (messageInput_ ? static_cast<QWidget*>(messageInput_)
+                   : static_cast<QWidget*>(filterInput_))->setFocus(Qt::OtherFocusReason);
 }
 
 void BroadcastDialog::toggleGroupSelection(QListWidgetItem* header) {
@@ -233,10 +263,16 @@ void BroadcastDialog::syncGroupCheckStates() {
 
 void BroadcastDialog::refreshSendState() {
     const int count = selectedPeerIds().size();
-    const bool hasText = !messageInput_->toPlainText().trimmed().isEmpty();
-    sendButton_->setText(count > 0 ? QStringLiteral("发送给 %1 人").arg(count)
-                                   : QStringLiteral("发送"));
-    sendButton_->setEnabled(count > 0 && hasText);
+    const bool hasContent = mode_ == Mode::Forward
+        || (messageInput_ && !messageInput_->toPlainText().trimmed().isEmpty());
+    if (mode_ == Mode::Forward) {
+        sendButton_->setText(count > 0 ? QStringLiteral("转发给 %1 人").arg(count)
+                                       : QStringLiteral("转发"));
+    } else {
+        sendButton_->setText(count > 0 ? QStringLiteral("发送给 %1 人").arg(count)
+                                       : QStringLiteral("发送"));
+    }
+    sendButton_->setEnabled(count > 0 && hasContent);
     summaryLabel_->setText(count > 0 ? QStringLiteral("已选 %1 人").arg(count)
                                      : QStringLiteral("还没有选人"));
 }

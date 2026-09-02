@@ -1806,6 +1806,49 @@ public struct MasterChatState: Equatable {
         return message
     }
 
+    /// Forwarding creates a new ordinary outbound message. Correlation data belongs to the
+    /// original conversation, so remoteID / quote / approval fields are deliberately dropped.
+    @discardableResult
+    public mutating func queueForwardedMessage(
+        _ source: RemoteIMMessage,
+        to peerID: String,
+        now: Date = Date()
+    ) throws -> RemoteIMMessage {
+        let cleanPeerID = peerID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanPeerID.isEmpty else { throw MasterChatStateError.noSelectedPeer }
+        let cleanText = source.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displayText: String
+        if source.imageAttachment != nil {
+            displayText = "[图片消息]"
+        } else if let file = source.fileAttachment {
+            displayText = Self.fileDisplayText(
+                fileName: file.fileName,
+                filePath: file.localFilePath
+            )
+        } else if let video = source.videoAttachment {
+            displayText = Self.videoDisplayText(durationSeconds: video.durationSeconds)
+        } else if let voice = source.voiceAttachment {
+            displayText = Self.voiceDisplayText(durationSeconds: voice.durationSeconds)
+        } else {
+            guard !cleanText.isEmpty else { throw MasterChatStateError.blankMessage }
+            displayText = cleanText
+        }
+        let message = RemoteIMMessage(
+            fromUserID: ownerUserID,
+            toUserID: cleanPeerID,
+            text: displayText,
+            voiceAttachment: source.voiceAttachment,
+            imageAttachment: source.imageAttachment,
+            fileAttachment: source.fileAttachment,
+            videoAttachment: source.videoAttachment,
+            direction: .outgoing,
+            status: .pending,
+            createdAt: now
+        )
+        appendMessage(message)
+        return message
+    }
+
     @discardableResult
     public mutating func queueOutgoingApprovalDecision(
         token: String,

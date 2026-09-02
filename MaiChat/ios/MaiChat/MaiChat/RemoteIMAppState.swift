@@ -850,6 +850,123 @@ final class RemoteIMAppState: ObservableObject {
     }
 
     @discardableResult
+    func forwardMessage(_ source: RemoteIMMessage, to contact: RemoteIMContact) async -> Bool {
+        let targetUserID = contact.userID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard connectionState == .connected,
+              !targetUserID.isEmpty,
+              targetUserID != chatState.ownerUserID
+        else {
+            errorMessage = "当前无法转发消息"
+            return false
+        }
+        guard forwardAttachmentIsReady(source) else {
+            errorMessage = "附件尚未下载完成，暂时无法转发"
+            return false
+        }
+
+        var queuedMessageID: UUID?
+        do {
+            // 转发是新的出站消息，不继承原消息的 remoteID、引用或审批语义。
+            let queued = try chatState.queueForwardedMessage(source, to: targetUserID)
+            queuedMessageID = queued.id
+            enqueueHistoryUpsert(queued)
+            let receipt = try await deliverForwardedMessage(source, to: targetUserID)
+            try chatState.updateMessageDelivery(
+                id: queued.id,
+                remoteID: receipt.remoteID,
+                createdAt: receipt.createdAt
+            )
+            enqueueCurrentMessage(id: queued.id)
+            errorMessage = nil
+            return true
+        } catch {
+            if let queuedMessageID {
+                try? chatState.updateMessageStatus(id: queuedMessageID, status: .failed)
+                enqueueCurrentMessage(id: queuedMessageID)
+            }
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    private func forwardAttachmentIsReady(_ message: RemoteIMMessage) -> Bool {
+        let manager = FileManager.default
+        if let attachment = message.imageAttachment {
+            return manager.fileExists(atPath: attachment.localFilePath)
+        }
+        if let attachment = message.fileAttachment {
+            return manager.fileExists(atPath: attachment.localFilePath)
+        }
+        if let attachment = message.voiceAttachment {
+            return manager.fileExists(atPath: attachment.localFilePath)
+        }
+        if let attachment = message.videoAttachment {
+            guard manager.fileExists(atPath: attachment.localPath),
+                  let coverPath = attachment.coverPath,
+                  manager.fileExists(atPath: coverPath)
+            else { return false }
+        }
+        return !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func deliverForwardedMessage(
+        _ message: RemoteIMMessage,
+        to targetUserID: String
+    ) async throws -> RemoteIMSendReceipt {
+        if let attachment = message.imageAttachment {
+            return try await client.sendImage(
+                to: targetUserID,
+                image: RemoteIMImageFile(
+                    fileURL: URL(fileURLWithPath: attachment.localFilePath),
+                    width: attachment.width,
+                    height: attachment.height,
+                    sizeBytes: attachment.sizeBytes
+                )
+            )
+        }
+        if let attachment = message.fileAttachment {
+            return try await client.sendFile(
+                to: targetUserID,
+                file: RemoteIMFile(
+                    fileURL: URL(fileURLWithPath: attachment.localFilePath),
+                    fileName: attachment.fileName,
+                    mimeType: attachment.mimeType,
+                    sizeBytes: attachment.sizeBytes
+                )
+            )
+        }
+        if let attachment = message.voiceAttachment {
+            return try await client.sendVoice(
+                to: targetUserID,
+                recording: RemoteIMVoiceRecording(
+                    fileURL: URL(fileURLWithPath: attachment.localFilePath),
+                    durationSeconds: attachment.durationSeconds
+                )
+            )
+        }
+        if let attachment = message.videoAttachment,
+           let coverPath = attachment.coverPath
+        {
+            return try await client.sendVideo(
+                to: targetUserID,
+                video: RemoteIMVideoFile(
+                    fileURL: URL(fileURLWithPath: attachment.localPath),
+                    coverFileURL: URL(fileURLWithPath: coverPath),
+                    fileType: URL(fileURLWithPath: attachment.localPath).pathExtension,
+                    durationSeconds: attachment.durationSeconds,
+                    width: attachment.width,
+                    height: attachment.height,
+                    sizeBytes: attachment.sizeBytes
+                )
+            )
+        }
+        return try await client.sendText(
+            to: targetUserID,
+            text: message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
+
+    @discardableResult
     func sendApprovalDecision(
         _ action: RemoteIMApprovalAction,
         for request: RemoteIMApprovalRequest

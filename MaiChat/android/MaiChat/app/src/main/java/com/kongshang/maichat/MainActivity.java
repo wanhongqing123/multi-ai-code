@@ -2943,6 +2943,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         TextView copy = popupTextButton("复制消息内容");
         TextView copyFull = popupTextButton("复制完整信息");
         TextView reply = popupTextButton("引用回复");
+        TextView forward = popupTextButton("转发");
         reply.setOnClickListener(view -> {
             pendingQuote = MessageQuote.from(message);
             dialog.dismiss();
@@ -2962,6 +2963,11 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             dialog.dismiss();
         });
         card.addView(reply, match(dp(46)));
+        forward.setOnClickListener(view -> {
+            dialog.dismiss();
+            showForwardMessageDialog(message);
+        });
+        card.addView(forward, match(dp(46)));
         card.addView(copy, match(dp(46)));
         card.addView(copyFull, match(dp(46)));
         dialog.setContentView(card);
@@ -2970,6 +2976,99 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         if (window != null) {
             window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
             window.setLayout(dp(260), ViewGroup.LayoutParams.WRAP_CONTENT);
+        }
+    }
+
+    private void showForwardMessageDialog(RemoteIMMessage message) {
+        List<RemoteIMContact> contacts = session.chatState().contacts();
+        if (contacts.isEmpty()) {
+            toast("还没有联系人，暂时无法转发");
+            return;
+        }
+
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(18), dp(18), dp(18), dp(16));
+        card.setBackground(MaiChatTheme.rounded(Color.WHITE, 16, this));
+        card.addView(MaiChatTheme.label(this, "转发给", 20, MaiChatTheme.TEXT), match(dp(32)));
+
+        EditText filter = new EditText(this);
+        filter.setSingleLine(true);
+        filter.setHint("搜索联系人");
+        filter.setPadding(dp(12), 0, dp(12), 0);
+        filter.setBackground(MaiChatTheme.bordered(
+            MaiChatTheme.PAGE, MaiChatTheme.BORDER, 9, this
+        ));
+        card.addView(filter, match(dp(42)));
+
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout rows = new LinearLayout(this);
+        rows.setOrientation(LinearLayout.VERTICAL);
+        scroll.addView(rows, matchWrap());
+        LinearLayout.LayoutParams scrollParams = match(dp(340));
+        scrollParams.setMargins(0, dp(10), 0, dp(4));
+        card.addView(scroll, scrollParams);
+
+        Runnable refreshRows = () -> {
+            String query = filter.getText().toString().trim().toLowerCase(java.util.Locale.ROOT);
+            rows.removeAllViews();
+            for (RemoteIMContact contact : contacts) {
+                String displayName = contact.displayName().isEmpty()
+                    ? contact.userId() : contact.displayName();
+                if (!query.isEmpty()
+                    && !displayName.toLowerCase(java.util.Locale.ROOT).contains(query)
+                    && !contact.userId().toLowerCase(java.util.Locale.ROOT).contains(query)) {
+                    continue;
+                }
+                LinearLayout row = new LinearLayout(this);
+                row.setGravity(Gravity.CENTER_VERTICAL);
+                row.setPadding(dp(12), dp(7), dp(12), dp(7));
+                row.setBackground(MaiChatTheme.rounded(MaiChatTheme.PAGE, 10, this));
+                TextView name = MaiChatTheme.label(this, displayName, 15, MaiChatTheme.TEXT);
+                row.addView(name, new LinearLayout.LayoutParams(0, dp(44), 1));
+                TextView arrow = MaiChatTheme.text(this, "➜", 17, MaiChatTheme.BLUE_DARK);
+                row.addView(arrow, new LinearLayout.LayoutParams(dp(30), dp(44)));
+                row.setContentDescription("转发给 " + displayName);
+                row.setOnClickListener(view -> {
+                    try {
+                        session.forwardMessage(message, contact.userId());
+                        dialog.dismiss();
+                        toast("已转发给 " + displayName);
+                    } catch (IOException | IllegalArgumentException error) {
+                        toast(error.getMessage() == null ? "转发失败" : error.getMessage());
+                    }
+                });
+                LinearLayout.LayoutParams rowParams = match(dp(58));
+                rowParams.setMargins(0, 0, 0, dp(8));
+                rows.addView(row, rowParams);
+            }
+            if (rows.getChildCount() == 0) {
+                TextView empty = MaiChatTheme.text(
+                    this, "没有匹配的联系人", 14, MaiChatTheme.SECONDARY
+                );
+                empty.setGravity(Gravity.CENTER);
+                rows.addView(empty, match(dp(72)));
+            }
+        };
+        filter.addTextChangedListener(new SimpleTextWatcher() {
+            @Override
+            public void afterTextChanged(Editable editable) { refreshRows.run(); }
+        });
+        refreshRows.run();
+
+        dialog.setContentView(card);
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.setDimAmount(0.28f);
+            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            window.setLayout(
+                (int) (getResources().getDisplayMetrics().widthPixels * 0.88f),
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            );
         }
     }
 

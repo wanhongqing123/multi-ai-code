@@ -23,6 +23,17 @@ QString peerOf(const RemoteIMMessage& message) {
     return message.direction == RemoteIMMessageDirection::Outgoing ? message.toUserId : message.fromUserId;
 }
 
+QString forwardedCaption(const RemoteIMMessage& message) {
+    const QString text = message.text.trimmed();
+    if (text.startsWith(QStringLiteral("[图片消息]"))
+            || text.startsWith(QStringLiteral("[文件消息]"))
+            || text.startsWith(QStringLiteral("[视频消息]"))
+            || text.startsWith(QStringLiteral("[语音消息]"))) {
+        return QString();
+    }
+    return text;
+}
+
 }  // namespace
 
 RemoteIMApplication::RemoteIMApplication(QString ownerUserId,
@@ -233,6 +244,97 @@ int RemoteIMApplication::broadcastText(const QStringList& peerIds, const QString
     return total;
 }
 
+bool RemoteIMApplication::forwardMessage(const RemoteIMMessage& source,
+                                         const QString& peerId) {
+    const QString target = peerId.trimmed();
+    if (target.isEmpty() || target == state_.ownerUserId()) return false;
+
+    auto finish = [this](const QString& localId, const QString& failureText) {
+        return [this, localId, failureText](bool ok, const QString& error,
+                                            const RemoteIMSendReceipt& receipt) {
+            const QString effectiveId =
+                adoptRemoteMessageId(localId, ok ? receipt.remoteMessageId : QString());
+            if (ok) {
+                state_.updateMessageTime(effectiveId, receipt.createdAtMillis);
+                if (database_) database_->updateMessageTime(effectiveId, receipt.createdAtMillis);
+            }
+            markMessage(effectiveId,
+                        ok ? RemoteIMMessageStatus::Sent : RemoteIMMessageStatus::Failed);
+            if (!ok) emit errorMessage(error.isEmpty() ? failureText : error);
+        };
+    };
+
+    if (source.hasImage) {
+        const QString path = source.image.localPath.trimmed();
+        const QFileInfo info(path);
+        if (path.isEmpty() || !info.exists() || !info.isFile()) {
+            emit errorMessage(QStringLiteral("图片尚未下载完成或本地缓存已被清理"));
+            return false;
+        }
+        const QString caption = forwardedCaption(source);
+        RemoteIMMessage message = state_.queueOutgoingImageTo(
+            target, path, source.image.width, source.image.height,
+            source.image.sizeBytes > 0 ? source.image.sizeBytes : info.size(),
+            caption, source.captionAbove);
+        persistMessage(message);
+        emit stateChanged();
+        RemoteIMSendCompletion onDone = finish(message.id, QStringLiteral("图片转发失败"));
+        if (caption.isEmpty()) {
+            client_->sendImage(target, path, std::move(onDone));
+        } else {
+            client_->sendImageWithText(target, path, caption, source.captionAbove,
+                                       std::move(onDone));
+        }
+        return true;
+    }
+
+    if (source.hasFile) {
+        const QString path = source.file.localPath.trimmed();
+        const QFileInfo info(path);
+        if (path.isEmpty() || !info.exists() || !info.isFile()) {
+            emit errorMessage(QStringLiteral("文件尚未下载完成或本地缓存已被清理"));
+            return false;
+        }
+        const QString fileName = source.file.fileName.trimmed().isEmpty()
+            ? info.fileName() : source.file.fileName.trimmed();
+        const QString mimeType = source.file.mimeType.trimmed().isEmpty()
+            ? QMimeDatabase().mimeTypeForFile(info).name() : source.file.mimeType;
+        const QString caption = forwardedCaption(source);
+        RemoteIMMessage message = state_.queueOutgoingFileTo(
+            target, path, fileName, mimeType,
+            source.file.sizeBytes > 0 ? source.file.sizeBytes : info.size(),
+            caption, source.captionAbove);
+        persistMessage(message);
+        emit stateChanged();
+        RemoteIMSendCompletion onDone = finish(message.id, QStringLiteral("文件转发失败"));
+        if (caption.isEmpty()) {
+            client_->sendFile(target, path, fileName, std::move(onDone));
+        } else {
+            client_->sendFileWithText(target, path, fileName, caption,
+                                      source.captionAbove, std::move(onDone));
+        }
+        return true;
+    }
+
+    if (source.hasVideo) {
+        return sendVideoTo(target, source.video.localPath,
+                           forwardedCaption(source), source.captionAbove);
+    }
+
+    if (source.hasVoice) {
+        emit errorMessage(QStringLiteral("桌面端暂不支持转发语音消息"));
+        return false;
+    }
+
+    const QString text = source.text.trimmed();
+    if (text.isEmpty()) return false;
+    RemoteIMMessage message = state_.queueOutgoingTextTo(target, text);
+    persistMessage(message);
+    emit stateChanged();
+    client_->sendText(target, text, finish(message.id, QStringLiteral("消息转发失败")));
+    return true;
+}
+
 void RemoteIMApplication::sendApprovalDecision(const QString& token,
                                                RemoteIMApprovalAction action,
                                                std::function<void(bool)> completion) {
@@ -329,17 +431,23 @@ void RemoteIMApplication::sendFile(const QString& localPath, const QString& text
 }
 
 void RemoteIMApplication::sendVideo(const QString& localPath, const QString& text, bool captionAbove) {
+    sendVideoTo(state_.selectedPeerId(), localPath, text, captionAbove);
+}
+
+bool RemoteIMApplication::sendVideoTo(const QString& peerId, const QString& localPath,
+                                      const QString& text, bool captionAbove) {
+    const QString target = peerId.trimmed();
     const QString cleanPath = localPath.trimmed();
-    if (cleanPath.isEmpty() || state_.selectedPeerId().isEmpty()) return;
+    if (cleanPath.isEmpty() || target.isEmpty()) return false;
 
     const QFileInfo info(cleanPath);
     if (!info.exists() || !info.isFile()) {
         emit errorMessage(QStringLiteral("视频不存在或不可读：%1").arg(cleanPath));
-        return;
+        return false;
     }
     if (!isSupportedVideoFile(cleanPath)) {
         emit errorMessage(QStringLiteral("只支持发送 mp4 / mov 视频"));
-        return;
+        return false;
     }
 
     VideoFileMetadata metadata = readVideoFileMetadata(cleanPath);
@@ -353,7 +461,7 @@ void RemoteIMApplication::sendVideo(const QString& localPath, const QString& tex
     const VideoCoverImage cover = createVideoCoverImage(cleanPath, metadata, coverDirectory);
     if (!cover.valid) {
         emit errorMessage(QStringLiteral("视频封面生成失败，无法发送视频"));
-        return;
+        return false;
     }
 
     RemoteIMVideoPayload payload;
@@ -371,8 +479,9 @@ void RemoteIMApplication::sendVideo(const QString& localPath, const QString& tex
     const QString caption = text.trimmed();
     // 本地回显用真正的视频附件（messages 表已有视频列）：气泡直接显示封面 + 时长，
     // 点击可播放，不再借道文件卡。
-    RemoteIMMessage message = state_.queueOutgoingVideo(
-        cleanPath, fileName, cover.path, metadata.durationSeconds, info.size(), caption, captionAbove);
+    RemoteIMMessage message = state_.queueOutgoingVideoTo(
+        target, cleanPath, fileName, cover.path, metadata.durationSeconds, info.size(),
+        caption, captionAbove);
     persistMessage(message);
     emit stateChanged();
 
@@ -391,6 +500,7 @@ void RemoteIMApplication::sendVideo(const QString& localPath, const QString& tex
     } else {
         client_->sendVideoWithText(message.toUserId, payload, caption, captionAbove, std::move(onDone));
     }
+    return true;
 }
 
 void RemoteIMApplication::sendVoicePlaceholder() {

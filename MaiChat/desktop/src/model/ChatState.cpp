@@ -211,11 +211,18 @@ RemoteIMMessage ChatState::queueOutgoingApprovalDecision(
 }
 
 RemoteIMMessage ChatState::queueOutgoingImage(const QString& localPath, int width, int height, qint64 sizeBytes, const QString& text, bool captionAbove) {
+    return queueOutgoingImageTo(requireSelectedPeer(), localPath, width, height, sizeBytes,
+                                text, captionAbove);
+}
+
+RemoteIMMessage ChatState::queueOutgoingImageTo(const QString& peerId, const QString& localPath, int width, int height, qint64 sizeBytes, const QString& text, bool captionAbove) {
     const QString cleanPath = clean(localPath);
     if (cleanPath.isEmpty()) throw std::invalid_argument("localPath is required");
+    const QString peer = clean(peerId);
+    if (peer.isEmpty()) throw std::invalid_argument("peerId is required");
     RemoteIMMessage message;
     message.fromUserId = ownerUserId_;
-    message.toUserId = requireSelectedPeer();
+    message.toUserId = peer;
     // 有配文时 text 存配文（气泡里图下显示、会话列表预览也显示配文）；无配文回退占位摘要。
     message.text = clean(text).isEmpty() ? (QStringLiteral("[图片消息] ") + fileName(cleanPath)) : clean(text);
     message.direction = RemoteIMMessageDirection::Outgoing;
@@ -230,11 +237,17 @@ RemoteIMMessage ChatState::queueOutgoingImage(const QString& localPath, int widt
 }
 
 RemoteIMMessage ChatState::queueOutgoingVoice(const QString& localPath, int durationSeconds) {
+    return queueOutgoingVoiceTo(requireSelectedPeer(), localPath, durationSeconds);
+}
+
+RemoteIMMessage ChatState::queueOutgoingVoiceTo(const QString& peerId, const QString& localPath, int durationSeconds) {
     const QString cleanPath = clean(localPath);
     if (cleanPath.isEmpty()) throw std::invalid_argument("localPath is required");
+    const QString peer = clean(peerId);
+    if (peer.isEmpty()) throw std::invalid_argument("peerId is required");
     RemoteIMMessage message;
     message.fromUserId = ownerUserId_;
-    message.toUserId = requireSelectedPeer();
+    message.toUserId = peer;
     message.text = QString("[语音消息 %1s]").arg(qMax(1, durationSeconds));
     message.direction = RemoteIMMessageDirection::Outgoing;
     message.status = RemoteIMMessageStatus::Pending;
@@ -246,12 +259,19 @@ RemoteIMMessage ChatState::queueOutgoingVoice(const QString& localPath, int dura
 }
 
 RemoteIMMessage ChatState::queueOutgoingFile(const QString& localPath, const QString& fileName, const QString& mimeType, qint64 sizeBytes, const QString& text, bool captionAbove) {
+    return queueOutgoingFileTo(requireSelectedPeer(), localPath, fileName, mimeType, sizeBytes,
+                               text, captionAbove);
+}
+
+RemoteIMMessage ChatState::queueOutgoingFileTo(const QString& peerId, const QString& localPath, const QString& fileName, const QString& mimeType, qint64 sizeBytes, const QString& text, bool captionAbove) {
     const QString cleanPath = clean(localPath);
     if (cleanPath.isEmpty()) throw std::invalid_argument("localPath is required");
+    const QString peer = clean(peerId);
+    if (peer.isEmpty()) throw std::invalid_argument("peerId is required");
     const QString cleanFileName = clean(fileName).isEmpty() ? ChatState::fileName(cleanPath) : clean(fileName);
     RemoteIMMessage message;
     message.fromUserId = ownerUserId_;
-    message.toUserId = requireSelectedPeer();
+    message.toUserId = peer;
     message.text = clean(text).isEmpty()
         ? QStringLiteral("[文件消息] %1").arg(cleanFileName.isEmpty() ? QStringLiteral("file") : cleanFileName)
         : clean(text);
@@ -266,12 +286,19 @@ RemoteIMMessage ChatState::queueOutgoingFile(const QString& localPath, const QSt
 }
 
 RemoteIMMessage ChatState::queueOutgoingVideo(const QString& localPath, const QString& fileName, const QString& coverPath, int durationSeconds, qint64 sizeBytes, const QString& text, bool captionAbove) {
+    return queueOutgoingVideoTo(requireSelectedPeer(), localPath, fileName, coverPath,
+                                durationSeconds, sizeBytes, text, captionAbove);
+}
+
+RemoteIMMessage ChatState::queueOutgoingVideoTo(const QString& peerId, const QString& localPath, const QString& fileName, const QString& coverPath, int durationSeconds, qint64 sizeBytes, const QString& text, bool captionAbove) {
     const QString cleanPath = clean(localPath);
     if (cleanPath.isEmpty()) throw std::invalid_argument("localPath is required");
+    const QString peer = clean(peerId);
+    if (peer.isEmpty()) throw std::invalid_argument("peerId is required");
     const QString cleanFileName = clean(fileName).isEmpty() ? ChatState::fileName(cleanPath) : clean(fileName);
     RemoteIMMessage message;
     message.fromUserId = ownerUserId_;
-    message.toUserId = requireSelectedPeer();
+    message.toUserId = peer;
     // 与图片/文件一致：有配文存配文（气泡里图下显示、会话列表也预览配文），无配文回退占位摘要。
     message.text = clean(text).isEmpty()
         ? QStringLiteral("[视频消息] %1").arg(cleanFileName.isEmpty() ? QStringLiteral("video") : cleanFileName)

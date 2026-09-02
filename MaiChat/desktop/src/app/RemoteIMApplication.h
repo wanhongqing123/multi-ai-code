@@ -53,6 +53,9 @@ public:
     // 这样每个人的聊天记录都是完整的，收件人那边看到的也和平时的私聊消息毫无区别。
     // 返回实际发出的人数（去重、去空之后）。
     int broadcastText(const QStringList& peerIds, const QString& text);
+    // 把一条既有消息作为全新的普通消息转发给指定联系人。不继承引用、审批和
+    // 原消息 id；附件必须仍有可读的本地缓存。成功入队返回 true。
+    bool forwardMessage(const RemoteIMMessage& source, const QString& peerId);
     void sendApprovalDecision(const QString& token,
                               RemoteIMApprovalAction action,
                               std::function<void(bool)> completion = {});
@@ -92,6 +95,10 @@ private:
     void persistMessage(const RemoteIMMessage& message);
     // 发送成功后用 SDK 稳定 id 替换本地临时 UUID（内存+库），返回生效的 id。
     QString adoptRemoteMessageId(const QString& localId, const QString& remoteMessageId);
+    bool sendVideoTo(const QString& peerId,
+                     const QString& localPath,
+                     const QString& text,
+                     bool captionAbove);
 
     ChatState state_;
     QHash<QString, bool> hasEarlierMessages_;

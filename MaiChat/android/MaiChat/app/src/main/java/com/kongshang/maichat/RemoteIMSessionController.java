@@ -4,6 +4,7 @@ import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -527,6 +528,77 @@ public final class RemoteIMSessionController {
             sendCompletion(message)
         );
         return message;
+    }
+
+    public RemoteIMMessage forwardMessage(RemoteIMMessage source, String targetUserId)
+        throws IOException {
+        if (source == null) throw new IllegalArgumentException("message is required");
+        String target = clean(targetUserId);
+        if (target.isEmpty() || target.equals(chatState.ownerUserId())) {
+            throw new IllegalArgumentException("target user is required");
+        }
+
+        RemoteIMMessage forwarded;
+        if (source.imageAttachment() != null) {
+            RemoteIMImageAttachment attachment = source.imageAttachment();
+            requireForwardingFile(attachment.localPath(), "图片");
+            forwarded = chatState.queueOutgoingImageTo(
+                target,
+                attachment.localPath(),
+                attachment.width(),
+                attachment.height(),
+                attachment.sizeBytes()
+            );
+        } else if (source.voiceAttachment() != null) {
+            RemoteIMVoiceAttachment attachment = source.voiceAttachment();
+            requireForwardingFile(attachment.localPath(), "语音");
+            forwarded = chatState.queueOutgoingVoiceTo(
+                target,
+                attachment.localPath(),
+                attachment.durationSeconds()
+            );
+        } else if (source.fileAttachment() != null) {
+            RemoteIMFileAttachment attachment = source.fileAttachment();
+            requireForwardingFile(attachment.localPath(), "文件");
+            forwarded = chatState.queueOutgoingFileTo(
+                target,
+                attachment.localPath(),
+                attachment.fileName(),
+                attachment.mimeType(),
+                attachment.sizeBytes()
+            );
+        } else if (source.videoAttachment() != null) {
+            throw new IOException("Android 暂不支持转发视频消息");
+        } else {
+            forwarded = chatState.queueOutgoingTextTo(target, source.text());
+        }
+
+        if (!productionMode) {
+            markMessageSentAndSave(forwarded);
+            return forwarded;
+        }
+        persistMessage(forwarded);
+        notifyStateChanged();
+        TencentIMClient.SendCompletion completion = sendCompletion(forwarded);
+        if (forwarded.imageAttachment() != null) {
+            client.sendImage(target, forwarded.imageAttachment().localPath(),
+                RemoteIMOrigin.HUMAN, completion);
+        } else if (forwarded.voiceAttachment() != null) {
+            client.sendVoice(target, forwarded.voiceAttachment().localPath(),
+                forwarded.voiceAttachment().durationSeconds(), RemoteIMOrigin.HUMAN, completion);
+        } else if (forwarded.fileAttachment() != null) {
+            client.sendFile(target, forwarded.fileAttachment().localPath(),
+                forwarded.fileAttachment().fileName(), RemoteIMOrigin.HUMAN, completion);
+        } else {
+            client.sendText(target, forwarded.text(), RemoteIMOrigin.HUMAN, completion);
+        }
+        return forwarded;
+    }
+
+    private static void requireForwardingFile(String path, String type) throws IOException {
+        if (path == null || path.trim().isEmpty() || !new File(path).isFile()) {
+            throw new IOException(type + "尚未下载完成或本地缓存已被清理");
+        }
     }
 
     public void selectContact(String userId) {

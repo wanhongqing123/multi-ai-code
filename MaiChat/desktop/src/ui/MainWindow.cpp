@@ -202,11 +202,13 @@ public:
     // 「回复」由 MainWindow 注入：这个视图本身不知道自己渲染的是哪条消息，
     // 把消息塞进来会让它依赖整个消息模型，不如只收一个回调。
     void setReplyHandler(std::function<void()> handler) { replyHandler_ = std::move(handler); }
+    void setForwardHandler(std::function<void()> handler) { forwardHandler_ = std::move(handler); }
 
 private:
     QString sourceMarkdown_;
     QAction* copyOriginalDataAction_ = nullptr;
     std::function<void()> replyHandler_;
+    std::function<void()> forwardHandler_;
 
     void updateContentHeight() {
         const int width = qMax(120, viewport()->width());
@@ -808,6 +810,7 @@ enum class LineIconKind {
     Link,
     SelectAll,
     Trash,
+    Forward,
     Screen,            // 远程桌面：显示器轮廓 + 底座
     ScreenConnecting,  // 连接中：显示器内三点
     ScreenDisconnect,  // 已连接，点击断开：显示器内叉
@@ -832,6 +835,7 @@ LineIconKind lineIconKindFromValue(int value) {
         case LineIconKind::Link:
         case LineIconKind::SelectAll:
         case LineIconKind::Trash:
+        case LineIconKind::Forward:
         case LineIconKind::Screen:
         case LineIconKind::ScreenConnecting:
         case LineIconKind::ScreenDisconnect:
@@ -965,6 +969,18 @@ QIcon makeLineIcon(LineIconKind kind, const QColor& color) {
             painter.drawLine(QPointF(21, 20), QPointF(21, 33));
             painter.drawLine(QPointF(27, 20), QPointF(27, 33));
             break;
+        case LineIconKind::Forward:
+            painter.drawPolyline(QPolygonF({
+                QPointF(27, 10), QPointF(40, 22), QPointF(27, 34),
+            }));
+            painter.drawLine(QPointF(39, 22), QPointF(20, 22));
+            {
+                QPainterPath bend;
+                bend.moveTo(QPointF(20, 22));
+                bend.cubicTo(QPointF(12, 22), QPointF(9, 28), QPointF(8, 38));
+                painter.drawPath(bend);
+            }
+            break;
         case LineIconKind::Send:
             // 纸飞机：常见的消息发送语义，缩小到按钮尺寸后仍保持清晰轮廓。
             painter.drawPolygon(QPolygonF({
@@ -1056,7 +1072,11 @@ void MarkdownMessageView::contextMenuEvent(QContextMenuEvent* event) {
     applyMessageContextMenuStyle(menu);
     const QString anchor = anchorAt(event->pos());
     QAction* replyAction = replyHandler_ ? menu.addAction(QStringLiteral("回复")) : nullptr;
-    if (replyAction != nullptr) menu.addSeparator();
+    QAction* forwardAction = forwardHandler_
+        ? menu.addAction(makeLineIcon(LineIconKind::Forward, kMenuIconColor),
+                         QStringLiteral("转发"))
+        : nullptr;
+    if (replyAction != nullptr || forwardAction != nullptr) menu.addSeparator();
     QAction* copyAction = menu.addAction(makeLineIcon(LineIconKind::Copy, kMenuIconColor),
                                          QStringLiteral("复制"));
     copyOriginalDataAction_->setIcon(makeLineIcon(LineIconKind::Copy, kMenuIconColor));
@@ -1070,6 +1090,8 @@ void MarkdownMessageView::contextMenuEvent(QContextMenuEvent* event) {
     QAction* chosen = menu.exec(event->globalPos());
     if (replyAction != nullptr && chosen == replyAction) {
         replyHandler_();
+    } else if (forwardAction != nullptr && chosen == forwardAction) {
+        forwardHandler_();
     } else if (chosen == copyAction) {
         if (textCursor().hasSelection()) {
             copy();
@@ -3734,6 +3756,9 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
                 QMenu menu(imageLabel);
                 applyMessageContextMenuStyle(menu);
                 QAction* replyAction = menu.addAction(QStringLiteral("回复"));
+                QAction* forwardAction = menu.addAction(
+                    makeLineIcon(LineIconKind::Forward, kMenuIconColor),
+                    QStringLiteral("转发"));
                 menu.addSeparator();
                 QAction* copyAction = menu.addAction(makeLineIcon(LineIconKind::Copy, kMenuIconColor),
                                                      QStringLiteral("复制"));
@@ -3745,6 +3770,8 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
                 QAction* chosen = menu.exec(imageLabel->mapToGlobal(pos));
                 if (chosen == replyAction) {
                     beginReplyTo(quoted);
+                } else if (chosen == forwardAction) {
+                    openForwardDialog(quoted);
                 } else if (chosen == copyAction) {
                     // 位图 + 文件 URL 一起放剪贴板：贴到聊天/文档得到图片，贴到资源管理器得到文件。
                     const QImage imageData(image.localPath);
@@ -3800,6 +3827,19 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
                 return;
             }
             QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+        });
+        voiceButton->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(voiceButton, &QPushButton::customContextMenuRequested, this,
+                [this, voiceButton, quoted = message](const QPoint& pos) {
+            QMenu menu(voiceButton);
+            applyMessageContextMenuStyle(menu);
+            QAction* replyAction = menu.addAction(QStringLiteral("回复"));
+            QAction* forwardAction = menu.addAction(
+                makeLineIcon(LineIconKind::Forward, kMenuIconColor),
+                QStringLiteral("转发"));
+            QAction* chosen = menu.exec(voiceButton->mapToGlobal(pos));
+            if (chosen == replyAction) beginReplyTo(quoted);
+            else if (chosen == forwardAction) openForwardDialog(quoted);
         });
         contentRow->addWidget(voiceButton);
     } else if (message.hasVideo) {
@@ -3872,6 +3912,23 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
             : QStringLiteral("点击播放 · %1").arg(parts.join(QStringLiteral(" · "))));
         connect(videoButton, &QPushButton::clicked, this,
                 [this, attachment = message.video]() { openVideoPreview(attachment); });
+        videoButton->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(videoButton, &QPushButton::customContextMenuRequested, this,
+                [this, videoButton, quoted = message](const QPoint& pos) {
+            QMenu menu(videoButton);
+            applyMessageContextMenuStyle(menu);
+            QAction* replyAction = menu.addAction(QStringLiteral("回复"));
+            QAction* forwardAction = menu.addAction(
+                makeLineIcon(LineIconKind::Forward, kMenuIconColor),
+                QStringLiteral("转发"));
+            QAction* previewAction = menu.addAction(
+                makeLineIcon(LineIconKind::Preview, kMenuIconColor),
+                QStringLiteral("预览"));
+            QAction* chosen = menu.exec(videoButton->mapToGlobal(pos));
+            if (chosen == replyAction) beginReplyTo(quoted);
+            else if (chosen == forwardAction) openForwardDialog(quoted);
+            else if (chosen == previewAction) openVideoPreview(quoted.video);
+        });
         contentRow->addWidget(videoButton);
         if (!parts.isEmpty()) {
             auto* metaLabel = new QLabel(parts.join(QStringLiteral(" · ")), bubble);
@@ -3937,9 +3994,14 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
         // 右键菜单（飞书式）：复制文件 / 预览（仅文档） / 保存到本地。
         fileButton->setContextMenuPolicy(Qt::CustomContextMenu);
         connect(fileButton, &QPushButton::customContextMenuRequested, this,
-                [this, fileButton, attachment = message.file](const QPoint& pos) {
+                [this, fileButton, attachment = message.file, quoted = message](const QPoint& pos) {
             QMenu menu(fileButton);
             applyMessageContextMenuStyle(menu);
+            QAction* replyAction = menu.addAction(QStringLiteral("回复"));
+            QAction* forwardAction = menu.addAction(
+                makeLineIcon(LineIconKind::Forward, kMenuIconColor),
+                QStringLiteral("转发"));
+            menu.addSeparator();
             QAction* copyAction = menu.addAction(makeLineIcon(LineIconKind::Copy, kMenuIconColor),
                                                  QStringLiteral("复制"));
             QAction* previewAction = isPreviewableDocument(attachment)
@@ -3950,7 +4012,11 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
             QAction* saveAction = menu.addAction(makeLineIcon(LineIconKind::Download, kMenuIconColor),
                                                  QStringLiteral("保存到本地…"));
             QAction* chosen = menu.exec(fileButton->mapToGlobal(pos));
-            if (chosen == copyAction) {
+            if (chosen == replyAction) {
+                beginReplyTo(quoted);
+            } else if (chosen == forwardAction) {
+                openForwardDialog(quoted);
+            } else if (chosen == copyAction) {
                 // 以文件形式放剪贴板：可直接粘贴到资源管理器/聊天窗口。
                 if (attachment.localPath.trimmed().isEmpty() || !QFile::exists(attachment.localPath)) {
                     AppMessageDialog::show(this, AppMessageDialog::Kind::Warning,
@@ -3971,6 +4037,9 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
     } else {
         auto* markdownView = new MarkdownMessageView(bubble);
         markdownView->setReplyHandler([this, quoted = message] { beginReplyTo(quoted); });
+        markdownView->setForwardHandler([this, forwarded = message] {
+            openForwardDialog(forwarded);
+        });
         markdownView->setMessageMarkdown(message.text);
         contentRow->addWidget(markdownView, 1);
     }
@@ -4090,6 +4159,9 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
             && !message.text.startsWith(QStringLiteral("[文件消息] "))) {
         auto* captionView = new MarkdownMessageView(bubble);
         captionView->setReplyHandler([this, quoted = message] { beginReplyTo(quoted); });
+        captionView->setForwardHandler([this, forwarded = message] {
+            openForwardDialog(forwarded);
+        });
         captionView->setMessageMarkdown(message.text);
         if (message.captionAbove) {
             // 附件是这条气泡里先加进来的部件，插到 0 就排到它上面。
@@ -5310,6 +5382,22 @@ void MainWindow::openBroadcastDialog(const QString& preselectedGroup) {
     }
 
     app_.broadcastText(peerIds, text);
+}
+
+void MainWindow::openForwardDialog(const RemoteIMMessage& message) {
+    const QList<RemoteIMContact> contacts = app_.chatState().contacts();
+    if (contacts.isEmpty()) {
+        AppMessageDialog::show(this, AppMessageDialog::Kind::Info,
+                               QStringLiteral("还没有联系人"),
+                               QStringLiteral("通讯录是空的，暂时无法转发。"));
+        return;
+    }
+
+    BroadcastDialog dialog(contacts, {}, QString(), BroadcastDialog::Mode::Forward, this);
+    if (dialog.exec() != QDialog::Accepted) return;
+    const QStringList peerIds = dialog.selectedPeerIds();
+    if (peerIds.size() != 1) return;
+    app_.forwardMessage(message, peerIds.first());
 }
 
 void MainWindow::reportBroadcastResult(int total, const QStringList& failedPeerIds) {

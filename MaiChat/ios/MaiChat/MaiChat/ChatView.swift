@@ -1836,6 +1836,7 @@ private struct MessageBubbleView: View {
     let reply: () -> Void
     let openQuote: (RemoteIMQuote) -> Void
     @State private var actionSourceFrame: CGRect = .zero
+    @State private var textSelectionController = MessageTextSelectionController()
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -2034,8 +2035,11 @@ private struct MessageBubbleView: View {
             .overlay(alignment: .topLeading) {
                 if isSelectingText {
                     SelectableMessageTextView(
-                        text: RemoteIMMessageCopyPolicy.selectionText(for: message)
+                        text: RemoteIMMessageCopyPolicy.selectionText(for: message),
+                        selectionController: textSelectionController
                     )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .clipped()
                 }
             }
             .padding(.horizontal, 13)
@@ -2068,16 +2072,32 @@ private struct MessageBubbleView: View {
         }
         .overlay(alignment: .topTrailing) {
             if isSelectingText {
-                Button(action: finishSelectingText) {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 28, height: 28)
-                        .background(RemoteIMStyle.blue, in: Circle())
-                        .shadow(color: Color.black.opacity(0.16), radius: 6, y: 2)
+                HStack(spacing: 2) {
+                    Button {
+                        UIPasteboard.general.string = textSelectionController.selectedText(
+                            fallback: RemoteIMMessageCopyPolicy.selectionText(for: message)
+                        )
+                        finishSelectingText()
+                    } label: {
+                        Label("复制", systemImage: "doc.on.doc")
+                            .font(.system(size: 12, weight: .semibold))
+                            .padding(.horizontal, 9)
+                            .frame(height: 30)
+                    }
+                    Button(action: finishSelectingText) {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 12, weight: .bold))
+                            .frame(width: 30, height: 30)
+                    }
+                    .accessibilityLabel("完成选择")
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("完成选择")
+                .foregroundStyle(.white)
+                .background(
+                    Color(red: 0.25, green: 0.25, blue: 0.27),
+                    in: Capsule()
+                )
+                .shadow(color: Color.black.opacity(0.18), radius: 8, y: 3)
                 .padding(5)
             }
         }
@@ -2246,15 +2266,15 @@ private struct MessageActionDialog: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let panelWidth = min(CGFloat(380), max(280, geometry.size.width - 32))
+            let panelWidth = min(CGFloat(344), max(268, geometry.size.width - 48))
             let showAbove = sourceFrame.minY > 116
             let centerX = min(
                 max(sourceFrame.midX, panelWidth / 2 + 16),
                 geometry.size.width - panelWidth / 2 - 16
             )
             let centerY = showAbove
-                ? max(62, sourceFrame.minY - 55)
-                : min(geometry.size.height - 62, sourceFrame.maxY + 55)
+                ? max(58, sourceFrame.minY - 50)
+                : min(geometry.size.height - 58, sourceFrame.maxY + 50)
 
             ZStack {
                 Color.clear
@@ -2265,7 +2285,7 @@ private struct MessageActionDialog: View {
                     if !showAbove {
                         MessageActionPointer()
                             .fill(Color(red: 0.25, green: 0.25, blue: 0.27))
-                            .frame(width: 22, height: 10)
+                            .frame(width: 20, height: 9)
                             .rotationEffect(.degrees(180))
                     }
 
@@ -2291,7 +2311,7 @@ private struct MessageActionDialog: View {
                             action: copyAll
                         )
                     }
-                    .frame(width: panelWidth, height: 82)
+                    .frame(width: panelWidth, height: 74)
                     .background(
                         Color(red: 0.25, green: 0.25, blue: 0.27),
                         in: RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -2300,7 +2320,7 @@ private struct MessageActionDialog: View {
                     if showAbove {
                         MessageActionPointer()
                             .fill(Color(red: 0.25, green: 0.25, blue: 0.27))
-                            .frame(width: 22, height: 10)
+                            .frame(width: 20, height: 9)
                     }
                 }
                 .shadow(color: Color.black.opacity(0.2), radius: 16, y: 7)
@@ -2318,11 +2338,11 @@ private struct MessageActionDialog: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            VStack(spacing: 7) {
+            VStack(spacing: 6) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 20, weight: .semibold))
+                    .font(.system(size: 18, weight: .semibold))
                 Text(title)
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.system(size: 13, weight: .medium))
             }
             .foregroundStyle(.white)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -2473,11 +2493,51 @@ private struct ForwardMessageDialog: View {
     }
 }
 
+private final class MenuSuppressingTextView: UITextView {
+    override func addInteraction(_ interaction: any UIInteraction) {
+        guard !(interaction is UIEditMenuInteraction) else { return }
+        super.addInteraction(interaction)
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard #available(iOS 16.0, *) else { return }
+        for interaction in interactions where interaction is UIEditMenuInteraction {
+            removeInteraction(interaction)
+        }
+    }
+
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        action == #selector(UIResponderStandardEditActions.copy(_:))
+    }
+}
+
+@MainActor
+private final class MessageTextSelectionController {
+    weak var textView: UITextView?
+
+    func selectedText(fallback: String) -> String {
+        guard let textView else { return fallback }
+        let fullText = textView.text as NSString
+        let range = textView.selectedRange
+        guard range.location != NSNotFound,
+              range.length > 0,
+              NSMaxRange(range) <= fullText.length
+        else { return fallback }
+        return fullText.substring(with: range)
+    }
+}
+
 private struct SelectableMessageTextView: UIViewRepresentable {
     let text: String
+    let selectionController: MessageTextSelectionController
 
-    func makeUIView(context _: Context) -> UITextView {
-        let textView = UITextView()
+    func makeCoordinator() -> Coordinator {
+        Coordinator(selectionController: selectionController)
+    }
+
+    func makeUIView(context: Context) -> UITextView {
+        let textView = MenuSuppressingTextView()
         textView.isEditable = false
         textView.isSelectable = true
         textView.isScrollEnabled = false
@@ -2488,14 +2548,98 @@ private struct SelectableMessageTextView: UIViewRepresentable {
         textView.textColor = .label
         textView.textContainerInset = .zero
         textView.textContainer.lineFragmentPadding = 0
+        textView.textContainer.widthTracksTextView = true
+        textView.textContainer.heightTracksTextView = false
+        textView.textContainer.lineBreakMode = .byWordWrapping
+        textView.clipsToBounds = true
+        textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        textView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        textView.delegate = context.coordinator
+        textView.text = text
+        textView.selectedRange = NSRange(location: 0, length: (text as NSString).length)
+        selectionController.textView = textView
+        DispatchQueue.main.async { [weak textView] in
+            guard let textView, textView.window != nil else { return }
+            textView.becomeFirstResponder()
+            textView.selectedRange = NSRange(location: 0, length: (textView.text as NSString).length)
+        }
         textView.accessibilityIdentifier = "selectable-message-copy-text"
         textView.accessibilityLabel = "可选择的消息正文"
         return textView
     }
 
-    func updateUIView(_ textView: UITextView, context _: Context) {
+    func updateUIView(_ textView: UITextView, context: Context) {
+        selectionController.textView = textView
         guard textView.text != text else { return }
         textView.text = text
+        // 选择模式只承载一条不可编辑的消息快照；它不会在展示期间被服务端改写。
+        // 若视图因复用拿到另一条文本，重置为全选比保留上一条消息的 NSRange 更安全。
+        textView.selectedRange = NSRange(location: 0, length: (text as NSString).length)
+    }
+
+    static func dismantleUIView(
+        _ textView: UITextView,
+        coordinator: Coordinator
+    ) {
+        textView.resignFirstResponder()
+        textView.delegate = nil
+        if coordinator.selectionController?.textView === textView {
+            coordinator.selectionController?.textView = nil
+        }
+    }
+
+    final class Coordinator: NSObject, UITextViewDelegate {
+        weak var selectionController: MessageTextSelectionController?
+
+        init(selectionController: MessageTextSelectionController) {
+            self.selectionController = selectionController
+        }
+
+        @available(iOS 16.0, *)
+        func textView(
+            _ textView: UITextView,
+            editMenuForTextIn range: NSRange,
+            suggestedActions: [UIMenuElement]
+        ) -> UIMenu? {
+            AppDiagnosticLog.shared.record(
+                level: .info,
+                category: "remote-im-ui",
+                event: "message-system-edit-menu-suppressed",
+                fields: ["api": "single-range"]
+            )
+            return UIMenu(children: [])
+        }
+
+        @available(iOS 26.0, *)
+        func textView(
+            _ textView: UITextView,
+            editMenuForTextInRanges ranges: [NSValue],
+            suggestedActions: [UIMenuElement]
+        ) -> UIMenu? {
+            AppDiagnosticLog.shared.record(
+                level: .info,
+                category: "remote-im-ui",
+                event: "message-system-edit-menu-suppressed",
+                fields: ["api": "multi-range"]
+            )
+            return UIMenu(children: [])
+        }
+    }
+}
+
+private enum RemoteIMPhotoLibraryWriter {
+    // Photos 会在自己的私有串行队列执行 change block。隔离保证写在真正执行
+    // performChanges 的函数上，调用方无论来自哪个 actor，都不会把 MainActor
+    // 隔离传进 change block。
+    nonisolated static func saveImage(at fileURL: URL) async -> String? {
+        do {
+            try await PHPhotoLibrary.shared().performChanges {
+                PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: fileURL)
+            }
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
     }
 }
 
@@ -2591,24 +2735,22 @@ private struct FullScreenImagePreviewView: View {
         saveResultText = nil
         let fileURL = URL(fileURLWithPath: presentation.item.localFilePath)
 
-        Task {
+        Task { @MainActor in
             guard await requestPhotoLibraryPermission() else {
                 isSaving = false
                 saveResultText = "请在系统设置中允许访问照片"
                 return
             }
-            do {
-                try await PHPhotoLibrary.shared().performChanges {
-                    PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: fileURL)
+            let saveError = await RemoteIMPhotoLibraryWriter.saveImage(at: fileURL)
+            if let saveError {
+                isSaving = false
+                withAnimation(.easeOut(duration: 0.2)) {
+                    saveResultText = saveError
                 }
+            } else {
                 isSaving = false
                 withAnimation(.easeOut(duration: 0.2)) {
                     saveResultText = "已保存到相册"
-                }
-            } catch {
-                isSaving = false
-                withAnimation(.easeOut(duration: 0.2)) {
-                    saveResultText = error.localizedDescription
                 }
             }
         }
@@ -3225,7 +3367,9 @@ private struct MarkdownLikeText: View {
         .lineLimit(nil)
         .multilineTextAlignment(.leading)
         .fixedSize(horizontal: false, vertical: true)
-        .textSelection(.enabled)
+        // 普通态长按统一交给 MessageActionDialog。这里启用系统选择会优先弹出
+        // Copy / Share…，绕过 MaiChat 的自绘菜单；需要选字时由“选择”动作切换到
+        // MenuSuppressingTextView。
     }
 }
 
@@ -3917,6 +4061,8 @@ private struct ComposerView: View {
     @State private var isAttachmentPanelPresented = false
     @State private var selectedMediaItems: [PhotosPickerItem] = []
     @State private var keyboardVisibleHeight = UIScreen.main.bounds.height
+    @State private var composerEditingController = ComposerTextEditingController()
+    @State private var composerEditMenuState: ComposerEditMenuState?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -3961,6 +4107,7 @@ private struct ComposerView: View {
 
                 HStack(alignment: .bottom, spacing: 8) {
                     Button {
+                        composerEditMenuState = nil
                         setVoiceMode(!isVoiceMode)
                     } label: {
                         Image(systemName: isVoiceMode ? "keyboard" : "speaker.wave.2.fill")
@@ -4002,6 +4149,17 @@ private struct ComposerView: View {
                             text: $draft.text,
                             onSubmit: submitDraft,
                             focusRequestGeneration: composerFocusRequestGeneration,
+                            editingController: composerEditingController,
+                            onEditMenuRequested: { state in
+                                withAnimation(.easeOut(duration: 0.14)) {
+                                    composerEditMenuState = state.hasActions ? state : nil
+                                }
+                            },
+                            onEditMenuDismissed: {
+                                withAnimation(.easeOut(duration: 0.12)) {
+                                    composerEditMenuState = nil
+                                }
+                            },
                             voiceTranscriptionEnabled: appState.canSendVoice && draft.text.isEmpty,
                             onVoiceLongPressChanged: { translation in
                                 handleVoicePressChanged(
@@ -4039,9 +4197,33 @@ private struct ComposerView: View {
                                 lineWidth: appState.canSend ? 1.5 : 1
                             )
                     )
+                    .overlay(alignment: .topTrailing) {
+                        if let state = composerEditMenuState {
+                            ComposerEditActionBar(
+                                state: state,
+                                pasteTarget: composerEditingController.textView,
+                                pasteCompleted: {
+                                    withAnimation(.easeOut(duration: 0.12)) {
+                                        composerEditMenuState = nil
+                                    }
+                                },
+                                perform: performComposerEditAction,
+                                dismiss: {
+                                    withAnimation(.easeOut(duration: 0.12)) {
+                                        composerEditMenuState = nil
+                                    }
+                                }
+                            )
+                            .offset(x: -4, y: -48)
+                            .transition(.scale(scale: 0.94, anchor: .bottomTrailing).combined(with: .opacity))
+                            .zIndex(20)
+                        }
+                    }
+                    .zIndex(composerEditMenuState == nil ? 0 : 20)
                 }
 
                 Button {
+                    composerEditMenuState = nil
                     if isAttachmentPanelPresented {
                         isAttachmentPanelPresented = false
                     } else {
@@ -4154,6 +4336,7 @@ private struct ComposerView: View {
             }
         }
         .onDisappear {
+            composerEditMenuState = nil
             realtimeSpeechRecognizer.onLiveTextUpdate = nil
             realtimeStartTask?.cancel()
             realtimeStartTask = nil
@@ -4172,6 +4355,17 @@ private struct ComposerView: View {
 
     private var canOpenAttachmentPanel: Bool {
         appState.canSendImage || appState.canSendVideo || appState.canSendFile || appState.canSendVoice
+    }
+
+    private func performComposerEditAction(_ action: ComposerEditAction) {
+        composerEditingController.perform(action)
+        switch action {
+        case .select, .selectAll:
+            let nextState = composerEditingController.menuState()
+            composerEditMenuState = nextState.hasActions ? nextState : nil
+        case .paste, .cut, .copy:
+            composerEditMenuState = nil
+        }
     }
 
     private func setVoiceMode(_ enabled: Bool) {
@@ -4616,8 +4810,237 @@ private struct ComposerView: View {
     }
 }
 
+private enum ComposerEditAction: CaseIterable, Identifiable {
+    case paste
+    case select
+    case selectAll
+    case cut
+    case copy
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .paste: return "粘贴"
+        case .select: return "选择"
+        case .selectAll: return "全选"
+        case .cut: return "剪切"
+        case .copy: return "复制"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .paste: return "doc.on.clipboard"
+        case .select: return "selection.pin.in.out"
+        case .selectAll: return "text.badge.checkmark"
+        case .cut: return "scissors"
+        case .copy: return "doc.on.doc"
+        }
+    }
+}
+
+private struct ComposerEditMenuState: Equatable {
+    let actions: [ComposerEditAction]
+
+    var hasActions: Bool { !actions.isEmpty }
+}
+
+@MainActor
+private final class ComposerTextEditingController {
+    weak var textView: UITextView?
+
+    func menuState() -> ComposerEditMenuState {
+        guard let textView else { return ComposerEditMenuState(actions: []) }
+        let textLength = (textView.text as NSString).length
+        let selectedRange = textView.selectedRange
+        let hasSelection = selectedRange.location != NSNotFound && selectedRange.length > 0
+        let hasText = textLength > 0
+        let isAllSelected = hasSelection
+            && selectedRange.location == 0
+            && selectedRange.length == textLength
+
+        var actions: [ComposerEditAction] = []
+        if hasSelection {
+            actions.append(contentsOf: [.copy, .cut])
+        }
+        // UIPasteControl 会根据 target 的 pasteConfiguration 自己决定能否粘贴，
+        // 这里不主动读取系统剪贴板，避免触发跨 App 粘贴授权提示。
+        actions.append(.paste)
+        if hasText && !hasSelection {
+            actions.append(.select)
+        }
+        if hasText && !isAllSelected {
+            actions.append(.selectAll)
+        }
+        return ComposerEditMenuState(actions: actions)
+    }
+
+    func perform(_ action: ComposerEditAction) {
+        guard let textView else { return }
+        switch action {
+        case .paste:
+            // 粘贴必须由 UIPasteControl 发起，才能保留 iOS 16+ 的受信任
+            // 用户操作语义；自定义按钮直接读剪贴板会触发授权提示。
+            break
+        case .select:
+            textView.select(nil)
+        case .selectAll:
+            textView.selectAll(nil)
+        case .cut:
+            textView.cut(nil)
+        case .copy:
+            textView.copy(nil)
+        }
+    }
+}
+
+private struct ComposerEditActionBar: View {
+    let state: ComposerEditMenuState
+    weak var pasteTarget: UITextView?
+    let pasteCompleted: () -> Void
+    let perform: (ComposerEditAction) -> Void
+    let dismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(state.actions) { action in
+                if action == .paste {
+                    ComposerPasteControl(
+                        target: pasteTarget,
+                        pasteCompleted: pasteCompleted
+                    )
+                    .frame(width: 54, height: 42)
+                } else {
+                    Button {
+                        perform(action)
+                    } label: {
+                        Text(action.title)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(RemoteIMStyle.textPrimary)
+                            .frame(minWidth: 54, minHeight: 42)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(action.title)
+                }
+
+                if action.id != state.actions.last?.id {
+                    Divider()
+                        .frame(height: 42)
+                        .overlay(RemoteIMStyle.border)
+                }
+            }
+
+            Button(action: dismiss) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(RemoteIMStyle.textPrimary)
+                    .frame(width: 42, height: 42)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("关闭编辑操作")
+        }
+        .background(
+            Color.white.opacity(0.98),
+            in: RoundedRectangle(cornerRadius: 13, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .stroke(RemoteIMStyle.border.opacity(0.8), lineWidth: 0.5)
+        }
+        .overlay(alignment: .bottomLeading) {
+            MessageActionPointer()
+                .fill(Color.white.opacity(0.98))
+                .frame(width: 18, height: 8)
+                .offset(x: 22, y: 7)
+        }
+        .shadow(color: Color.black.opacity(0.14), radius: 12, y: 5)
+        .accessibilityElement(children: .contain)
+    }
+}
+
+private struct ComposerPasteControl: UIViewRepresentable {
+    weak var target: UITextView?
+    let pasteCompleted: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(pasteCompleted: pasteCompleted)
+    }
+
+    func makeUIView(context: Context) -> UIPasteControl {
+        let configuration = UIPasteControl.Configuration()
+        configuration.displayMode = .labelOnly
+        configuration.cornerRadius = 0
+        configuration.baseForegroundColor = UIColor(RemoteIMStyle.textPrimary)
+        // `.clear` 在 iOS 26 会被 UIPasteControl 回退成独立的灰/黑按钮。
+        // 显式白底才能与外层浅色分段操作条融为一体。
+        configuration.baseBackgroundColor = .white
+        let control = UIPasteControl(configuration: configuration)
+        control.target = target
+        control.addTarget(
+            context.coordinator,
+            action: #selector(Coordinator.didPaste),
+            for: .primaryActionTriggered
+        )
+        control.accessibilityLabel = "粘贴"
+        return control
+    }
+
+    func updateUIView(_ control: UIPasteControl, context: Context) {
+        context.coordinator.pasteCompleted = pasteCompleted
+        control.target = target
+    }
+
+    @MainActor
+    final class Coordinator: NSObject {
+        var pasteCompleted: () -> Void
+
+        init(pasteCompleted: @escaping () -> Void) {
+            self.pasteCompleted = pasteCompleted
+        }
+
+        @objc func didPaste() {
+            DispatchQueue.main.async { [weak self] in
+                self?.pasteCompleted()
+            }
+        }
+    }
+}
+
 private final class GrowingComposerUITextView: UITextView {
     var onContentHeightChange: (() -> Void)?
+
+    override func addInteraction(_ interaction: any UIInteraction) {
+        guard !(interaction is UIEditMenuInteraction) else { return }
+        super.addInteraction(interaction)
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        removeSystemEditMenuInteractions()
+    }
+
+    func removeSystemEditMenuInteractions() {
+        guard #available(iOS 16.0, *) else { return }
+        for interaction in interactions where interaction is UIEditMenuInteraction {
+            removeInteraction(interaction)
+        }
+    }
+
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        switch action {
+        case #selector(UIResponderStandardEditActions.paste(_:)),
+             #selector(UIResponderStandardEditActions.select(_:)),
+             #selector(UIResponderStandardEditActions.selectAll(_:)),
+             #selector(UIResponderStandardEditActions.cut(_:)),
+             #selector(UIResponderStandardEditActions.copy(_:)):
+            return super.canPerformAction(action, withSender: sender)
+        default:
+            return false
+        }
+    }
 
     override var contentSize: CGSize {
         didSet {
@@ -4631,6 +5054,9 @@ private struct ComposerTextView: UIViewRepresentable {
     @Binding var text: String
     let onSubmit: () -> Void
     let focusRequestGeneration: Int
+    let editingController: ComposerTextEditingController
+    let onEditMenuRequested: (ComposerEditMenuState) -> Void
+    let onEditMenuDismissed: () -> Void
     let voiceTranscriptionEnabled: Bool
     let onVoiceLongPressChanged: (CGSize) -> Void
     let onVoiceLongPressEnded: (CGSize) -> Void
@@ -4654,6 +5080,13 @@ private struct ComposerTextView: UIViewRepresentable {
         textView.autocapitalizationType = .none
         textView.autocorrectionType = .no
         textView.spellCheckingType = .no
+        textView.pasteConfiguration = UIPasteConfiguration(
+            acceptableTypeIdentifiers: [
+                UTType.utf8PlainText.identifier,
+                UTType.plainText.identifier,
+                UTType.url.identifier,
+            ]
+        )
         textView.returnKeyType = .send
         textView.enablesReturnKeyAutomatically = true
         textView.textContainerInset = UIEdgeInsets(
@@ -4674,6 +5107,7 @@ private struct ComposerTextView: UIViewRepresentable {
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         textView.accessibilityIdentifier = "message-composer-text-view"
         textView.accessibilityLabel = "消息输入框，长按语音转文字"
+        editingController.textView = textView
         let voiceLongPress = UILongPressGestureRecognizer(
             target: context.coordinator,
             action: #selector(Coordinator.handleVoiceLongPress(_:))
@@ -4683,6 +5117,27 @@ private struct ComposerTextView: UIViewRepresentable {
         voiceLongPress.cancelsTouchesInView = true
         voiceLongPress.delegate = context.coordinator
         textView.addGestureRecognizer(voiceLongPress)
+        context.coordinator.voiceLongPressGesture = voiceLongPress
+
+        let editTap = UITapGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleEditTap(_:))
+        )
+        editTap.cancelsTouchesInView = false
+        editTap.delegate = context.coordinator
+        textView.addGestureRecognizer(editTap)
+        context.coordinator.editTapGesture = editTap
+
+        let editLongPress = UILongPressGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleEditLongPress(_:))
+        )
+        editLongPress.minimumPressDuration = 0.5
+        editLongPress.cancelsTouchesInView = false
+        editLongPress.delegate = context.coordinator
+        textView.addGestureRecognizer(editLongPress)
+        context.coordinator.editLongPressGesture = editLongPress
+        textView.removeSystemEditMenuInteractions()
         textView.onContentHeightChange = { [weak coordinator = context.coordinator, weak textView] in
             guard let coordinator, let textView else { return }
             coordinator.scheduleContentHeightRefresh(for: textView)
@@ -4692,6 +5147,8 @@ private struct ComposerTextView: UIViewRepresentable {
 
     func updateUIView(_ textView: GrowingComposerUITextView, context: Context) {
         context.coordinator.parent = self
+        editingController.textView = textView
+        textView.removeSystemEditMenuInteractions()
         if textView.text != text {
             let nextText = text
             context.coordinator.applyExternalText(nextText, to: textView)
@@ -4701,6 +5158,17 @@ private struct ComposerTextView: UIViewRepresentable {
             DispatchQueue.main.async { [weak textView] in
                 textView?.becomeFirstResponder()
             }
+        }
+    }
+
+    static func dismantleUIView(
+        _ textView: GrowingComposerUITextView,
+        coordinator: Coordinator
+    ) {
+        textView.delegate = nil
+        textView.onContentHeightChange = nil
+        if coordinator.parent.editingController.textView === textView {
+            coordinator.parent.editingController.textView = nil
         }
     }
 
@@ -4719,6 +5187,7 @@ private struct ComposerTextView: UIViewRepresentable {
         return context.coordinator.sizeThatFits(width: width, textView: textView)
     }
 
+    @MainActor
     final class Coordinator: NSObject, UITextViewDelegate, UIGestureRecognizerDelegate {
         var parent: ComposerTextView
         private var cachedWidth: CGFloat?
@@ -4727,6 +5196,11 @@ private struct ComposerTextView: UIViewRepresentable {
         private var hasScheduledContentHeightRefresh = false
         private var isApplyingExternalText = false
         private var voiceLongPressOrigin: CGPoint?
+        private var editTapBeganWhileFocused = false
+        private var editTapInitialSelection: NSRange?
+        weak var voiceLongPressGesture: UILongPressGestureRecognizer?
+        weak var editTapGesture: UITapGestureRecognizer?
+        weak var editLongPressGesture: UILongPressGestureRecognizer?
         var lastFocusRequestGeneration: Int
 
         init(parent: ComposerTextView) {
@@ -4777,7 +5251,55 @@ private struct ComposerTextView: UIViewRepresentable {
             if !isApplyingExternalText {
                 parent.text = textView.text
             }
+            parent.onEditMenuDismissed()
             scheduleContentHeightRefresh(for: textView)
+        }
+
+        func textViewDidEndEditing(_ textView: UITextView) {
+            parent.onEditMenuDismissed()
+        }
+
+        func textViewDidChangeSelection(_ textView: UITextView) {
+            guard textView.isFirstResponder, textView.markedTextRange == nil else { return }
+            if textView.selectedRange.length > 0 {
+                requestCustomEditMenu()
+            } else {
+                parent.onEditMenuDismissed()
+            }
+        }
+
+        @available(iOS 16.0, *)
+        func textView(
+            _ textView: UITextView,
+            editMenuForTextIn range: NSRange,
+            suggestedActions: [UIMenuElement]
+        ) -> UIMenu? {
+            requestCustomEditMenu(systemAPI: "single-range")
+            return UIMenu(children: [])
+        }
+
+        @available(iOS 26.0, *)
+        func textView(
+            _ textView: UITextView,
+            editMenuForTextInRanges ranges: [NSValue],
+            suggestedActions: [UIMenuElement]
+        ) -> UIMenu? {
+            requestCustomEditMenu(systemAPI: "multi-range")
+            return UIMenu(children: [])
+        }
+
+        private func requestCustomEditMenu(systemAPI: String? = nil) {
+            if let systemAPI {
+                AppDiagnosticLog.shared.record(
+                    level: .info,
+                    category: "remote-im-ui",
+                    event: "composer-system-edit-menu-suppressed",
+                    fields: ["api": systemAPI]
+                )
+            }
+            (parent.editingController.textView as? GrowingComposerUITextView)?
+                .removeSystemEditMenuInteractions()
+            parent.onEditMenuRequested(parent.editingController.menuState())
         }
 
         func textView(
@@ -4797,8 +5319,57 @@ private struct ComposerTextView: UIViewRepresentable {
         }
 
         func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-            guard gestureRecognizer is UILongPressGestureRecognizer else { return true }
-            return parent.voiceTranscriptionEnabled
+            if gestureRecognizer === voiceLongPressGesture {
+                return parent.voiceTranscriptionEnabled
+            }
+            if gestureRecognizer === editLongPressGesture {
+                return !parent.voiceTranscriptionEnabled
+            }
+            return true
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            gestureRecognizer === editTapGesture
+                || gestureRecognizer === editLongPressGesture
+                || otherGestureRecognizer === editTapGesture
+                || otherGestureRecognizer === editLongPressGesture
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldReceive touch: UITouch
+        ) -> Bool {
+            if gestureRecognizer === editTapGesture,
+               let textView = gestureRecognizer.view as? UITextView {
+                // 第一次点击只负责聚焦并打开键盘；已经聚焦后的再次点击才
+                // 展示编辑操作条，避免用户每次开始输入都被菜单打扰。
+                editTapBeganWhileFocused = textView.isFirstResponder
+                editTapInitialSelection = textView.selectedRange
+            }
+            return true
+        }
+
+        @objc func handleEditTap(_ gesture: UITapGestureRecognizer) {
+            guard gesture.state == .ended, editTapBeganWhileFocused else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard let self,
+                      let textView = gesture.view as? UITextView,
+                      self.editTapInitialSelection == textView.selectedRange
+                else { return }
+                // 有文本时第一次点到新位置只移动光标；再次点同一位置才弹条。
+                // 空文本的选区始终为 0,0，因此聚焦后的再次点击可直接粘贴。
+                self.requestCustomEditMenu()
+            }
+        }
+
+        @objc func handleEditLongPress(_ gesture: UILongPressGestureRecognizer) {
+            guard gesture.state == .ended else { return }
+            DispatchQueue.main.async { [weak self] in
+                self?.requestCustomEditMenu()
+            }
         }
 
         @objc func handleVoiceLongPress(_ gesture: UILongPressGestureRecognizer) {

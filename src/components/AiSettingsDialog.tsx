@@ -20,6 +20,10 @@ const AI_CLI_OPTIONS = [
     label: 'OpenCode'
   },
   {
+    value: 'claw',
+    label: 'Claw Code (试验中)'
+  },
+  {
     value: 'claude',
     label: 'Claude Code (不建议使用)'
   }

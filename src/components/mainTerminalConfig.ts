@@ -72,7 +72,11 @@ function isCliExecutable(cli: string | undefined, names: readonly string[]): boo
  * claude/codex 维持原有 convertEol=true 行为不变。
  */
 export function shouldConvertEolForCli(cli: string | undefined): boolean {
-  return !isCliExecutable(cli, ['opencode'])
+  // claw 同样按保守档处理（理由见 terminalMarkdown.shouldFormatMarkdownForCli 上方注释）。
+  // 关掉 convertEol 对「只发 CRLF」的 CLI 是无害的——CRLF 本来就正确渲染；而一旦它某处
+  // 用裸 LF 表示「下移一行、列不变」，开着 convertEol 就会把光标拽回第 0 列。
+  // 两个方向里只有一个会坏，所以选不会坏的那个。
+  return !isCliExecutable(cli, ['opencode', 'claw'])
 }
 
 export function buildMainTerminalOptions(theme: Theme, cli?: string): ITerminalOptions {

@@ -15,6 +15,23 @@ describe('shouldFormatMarkdownForCli', () => {
     expect(shouldFormatMarkdownForCli('/usr/local/bin/opencode')).toBe(false)
   })
 
+  it('bypasses markdown formatting for claw as a conservative default', () => {
+    // 这条锁的是一个**决定**，不是一条已验证的结论：claw 启动画面用了 ESC[2J / ESC[H /
+    // ESC[8;1H / ESC[17;1H（清屏 + 绝对光标定位），不是纯行式滚动；而它运行中怎么重绘
+    // 需要凭据才观测得到，尚未验证。
+    // 想放开成 true 的人：请先拿真实会话观测过再改，不要因为「claw 看起来只是个 REPL」
+    // 就翻掉——那正是当初的错误假设。
+    expect(shouldFormatMarkdownForCli('claw')).toBe(false)
+    expect(shouldFormatMarkdownForCli('Claw')).toBe(false)
+    expect(shouldFormatMarkdownForCli('claw.exe')).toBe(false)
+    expect(shouldFormatMarkdownForCli('C:\\Tools\\claw.exe')).toBe(false)
+    expect(shouldFormatMarkdownForCli('/usr/local/bin/claw')).toBe(false)
+    // claude 不能被 claw 这条规则误伤（两者共享 cla 前缀）。
+    expect(shouldFormatMarkdownForCli('claude')).toBe(true)
+    // claw-analog 是 claw workspace 里另一个二进制，不该套用 claw 的规则。
+    expect(shouldFormatMarkdownForCli('claw-analog')).toBe(true)
+  })
+
   it('bypasses markdown formatting for codex (full-screen ratatui TUI) in any command form', () => {
     // codex 也是全屏 TUI，改写行宽/删行会让它的光标定位错位（任务执行时光标乱跳、
     // 无法打字），必须与 opencode 一样原样直通。

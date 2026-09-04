@@ -50,7 +50,19 @@ const PTY_DUMP_ENABLED = process.env.MULTI_AI_CODE_PTY_DUMP === '1'
 function structuredOutputProvider(command: string): AicliStructuredOutputProvider | null {
   if (command === 'codex') return 'codex'
   if (isOpenCodeCommand(command)) return 'opencode'
+  // claw 的结构化输出（--output-format json / claw-analog 的 NDJSON 契约）还没接，
+  // 先返回 null 走纯 PTY 文本路径。
   return null
+}
+
+// 提交语义：claude/codex 的编辑器需要双回车兜底；opencode 和 claw 首个回车即提交，
+// 第二个回车会把空编辑器再提交一次，在会话里留下一条空消息。
+// claw 用 rustyline 行编辑器，其 --help 明确写着 "Shift+Enter for newline"，
+// 即裸回车就是提交。
+function usesSingleSubmit(command: string): boolean {
+  if (isOpenCodeCommand(command)) return true
+  const base = command.trim().replace(/^["']|["']$/g, '').split(/[\\/]/).pop()?.toLowerCase() ?? ''
+  return /^claw(\.(exe|cmd|bat|ps1))?$/.test(base)
 }
 
 async function openPtyDumpStream(
@@ -1114,7 +1126,7 @@ export function registerPtyIpc(): void {
                   planAbsPath: req.planAbsPath,
                   suggestion: req.suggestion
                 }),
-                { singleSubmit: isOpenCodeCommand(current.command) }
+                { singleSubmit: usesSingleSubmit(current.command) }
               )
             })
           } catch (err) {

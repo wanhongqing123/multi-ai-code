@@ -52,6 +52,18 @@ describe('shouldConvertEolForCli', () => {
     expect(shouldConvertEolForCli('/usr/local/bin/opencode')).toBe(false)
   })
 
+  it('disables convertEol for claw as a conservative default', () => {
+    // 同 terminalMarkdown 那条：这是决定不是结论。关掉对「只发 CRLF」的 CLI 无害，
+    // 而一旦它某处用裸 LF 表示「下移一行、列不变」，开着就会把光标拽回第 0 列。
+    expect(shouldConvertEolForCli('claw')).toBe(false)
+    expect(shouldConvertEolForCli('claw.exe')).toBe(false)
+    expect(shouldConvertEolForCli('C:\\Tools\\claw.exe')).toBe(false)
+    expect(shouldConvertEolForCli('/usr/local/bin/claw')).toBe(false)
+    // claude / claw-analog 不受这条规则影响。
+    expect(shouldConvertEolForCli('claude')).toBe(true)
+    expect(shouldConvertEolForCli('claw-analog')).toBe(true)
+  })
+
   it('keeps convertEol on for claude, codex and unknown CLIs', () => {
     expect(shouldConvertEolForCli('claude')).toBe(true)
     expect(shouldConvertEolForCli('codex')).toBe(true)

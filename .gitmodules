@@ -6,3 +6,7 @@
 	path = third_party/aicli/opencode
 	url = https://github.com/wanhongqing123/opencode
 	branch = multi-ai/im-bridge
+[submodule "third_party/aicli/claw"]
+	path = third_party/aicli/claw
+	url = https://github.com/wanhongqing123/claw-code
+	branch = multi-ai/im-bridge

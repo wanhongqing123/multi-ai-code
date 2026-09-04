@@ -4,12 +4,35 @@ import { fileURLToPath } from 'url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
-export type BundledCli = 'codex' | 'opencode'
+export type BundledCli = 'codex' | 'opencode' | 'claw'
+export type BundledCliLabel = 'Codex' | 'OpenCode' | 'Claw'
 export type AicliLaunchSource = 'bundled' | 'custom' | 'path'
+
+// 内置 AICLI 注册表。加第四种（claw）时发现原来的判定散在四处——两个各写一遍的
+// 正则、一个 label 三元表达式、一句写死 "codex / opencode" 的报错文案——每加一种
+// 都要同步改四个地方，漏掉任何一个都不会有测试报错。改成一张表之后，这些派生逻辑
+// 只从表里读，新增一种 AICLI 只动这一处。
+const BUNDLED_CLIS: readonly { id: BundledCli; label: BundledCliLabel }[] = [
+  { id: 'codex', label: 'Codex' },
+  { id: 'opencode', label: 'OpenCode' },
+  { id: 'claw', label: 'Claw' }
+]
+
+// 只匹配裸命令名（可带 Windows 可执行后缀）。**两端锚定是必须的**：claw workspace 里
+// 真实存在 claw-analog / claw-rag-service，codex 那边有 codex-code-mode-host——少了 $
+// 锚点它们都会被认成对应的内置 CLI，进而被强制改写成主二进制去执行。
+// （这个缺陷对原来那套用例是隐形的：它只测了前缀不匹配，没有一条测后缀。）
+function matchesBundledCli(base: string, tool: BundledCli): boolean {
+  return new RegExp(`^${tool}(\\.(exe|cmd|bat|ps1))?$`).test(base)
+}
+
+function bundledCliFromBaseName(base: string): BundledCli | null {
+  return BUNDLED_CLIS.find((entry) => matchesBundledCli(base, entry.id))?.id ?? null
+}
 
 export interface AicliLaunchDescription {
   tool: BundledCli
-  label: 'Codex' | 'OpenCode'
+  label: BundledCliLabel
   source: AicliLaunchSource
   commandPath: string
   notice: string
@@ -41,22 +64,16 @@ export function bundledCliFromCommand(command: string): BundledCli | null {
   if (isAbsolute(normalized) || normalized.includes('/') || normalized.includes('\\')) {
     return null
   }
-  const base = basename(normalized).toLowerCase()
-  if (/^codex(\.(exe|cmd|bat|ps1))?$/.test(base)) return 'codex'
-  if (/^opencode(\.(exe|cmd|bat|ps1))?$/.test(base)) return 'opencode'
-  return null
+  return bundledCliFromBaseName(basename(normalized).toLowerCase())
 }
 
 function aicliFromAnyCommand(command: string): BundledCli | null {
   const normalized = normalizeCliCommand(command)
-  const base = basename(normalized).toLowerCase()
-  if (/^codex(\.(exe|cmd|bat|ps1))?$/.test(base)) return 'codex'
-  if (/^opencode(\.(exe|cmd|bat|ps1))?$/.test(base)) return 'opencode'
-  return null
+  return bundledCliFromBaseName(basename(normalized).toLowerCase())
 }
 
-function bundledCliLabel(tool: BundledCli): 'Codex' | 'OpenCode' {
-  return tool === 'codex' ? 'Codex' : 'OpenCode'
+function bundledCliLabel(tool: BundledCli): BundledCliLabel {
+  return BUNDLED_CLIS.find((entry) => entry.id === tool)!.label
 }
 
 function commandLooksLikeCustomPath(command: string): boolean {
@@ -163,18 +180,18 @@ export function resolveBundledCliCommand(
 }
 
 export interface AicliCommandResolution {
-  // codex / opencode 时非空；claude 及其它命令为 null（不受内置约束）。
+  // 内置 AICLI（codex / opencode / claw）时非空；claude 及其它命令为 null（不受内置约束）。
   tool: BundledCli | null
-  label: 'Codex' | 'OpenCode' | null
-  // 内置二进制的绝对路径；codex/opencode 解析到内置时非空。
+  label: BundledCliLabel | null
+  // 内置二进制的绝对路径；解析到内置时非空。
   bundledCommand: string | null
-  // codex/opencode 但没找到内置二进制：调用方必须报错，绝不回退宿主机版本。
+  // 是内置 AICLI 但没找到二进制：调用方必须报错，绝不回退宿主机版本。
   bundledMissing: boolean
 }
 
-// codex / opencode 已随应用深度定制，策略：只允许运行随应用打包的「内置」版本。
-// 无论配置成裸命令 "codex"/"opencode" 还是宿主机上的 PATH / 自定义路径，一律解析到
-// 内置二进制；解析不到就置 bundledMissing（调用方据此报错，绝不回退到宿主机自行安装的版本）。
+// 内置 AICLI 已随应用深度定制，策略：只允许运行随应用打包的「内置」版本。
+// 无论配置成裸命令还是宿主机上的 PATH / 自定义路径，一律解析到内置二进制；
+// 解析不到就置 bundledMissing（调用方据此报错，绝不回退到宿主机自行安装的版本）。
 // claude 及其它命令返回 tool=null，不受影响，仍按原来的 PATH / 自定义路径解析。
 export function resolveAicliCommand(
   command: string,
@@ -193,12 +210,13 @@ export function resolveAicliCommand(
   }
 }
 
-// codex/opencode 必须用内置版本时，找不到内置二进制的统一报错文案。
+// 内置 AICLI 必须用内置版本时，找不到内置二进制的统一报错文案。
 export function bundledCliMissingMessage(resolution: AicliCommandResolution): string {
   const label = resolution.label ?? 'AICLI'
   const tool = resolution.tool ?? ''
+  const family = BUNDLED_CLIS.map((entry) => entry.id).join(' / ')
   return (
-    `未找到内置的 ${label} 可执行文件。${label}（codex / opencode）已随应用深度定制，` +
+    `未找到内置的 ${label} 可执行文件。${label}（${family}）已随应用深度定制，` +
     `仅支持随应用打包的内置版本，无法使用宿主机上自行安装的 ${tool}。` +
     `请重新安装应用，或在源码仓库执行 \`npm run build:aicli\` 生成 bin/aicli 下的二进制。`
   )

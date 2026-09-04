@@ -25,6 +25,7 @@ function describeCli(command: string): string {
   if (command === 'claude') return 'Claude Code'
   if (command === 'codex') return 'Codex'
   if (command === 'opencode') return 'OpenCode'
+  if (command === 'claw') return 'Claw Code'
   return command || '(未配置)'
 }
 

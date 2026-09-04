@@ -274,9 +274,15 @@ export function createTerminalMarkdownState(): TerminalMarkdownState {
  * 注意：这里只影响 xterm 本地显示。IM 回传走独立的结构化输出桥（assistant_text），
  * 与此函数无关，改动不影响 IM 消息发送。
  */
+// claw 也列在这里，是一个**刻意保守**的默认值，不是已经验证过的结论：
+// claw 的启动画面里有 ESC[2J / ESC[H / ESC[8;1H / ESC[17;1H，也就是它会做清屏和绝对
+// 光标定位，并不是纯行式滚动输出。它在真实对话过程中如何重绘，需要凭据才观测得到，
+// 目前没验过。
+// 选错方向的代价不对称：裸透传最多损失 Markdown 美化；反过来允许改写、而它其实依赖
+// 精确列宽的话，整屏都会花。等 claw 真正跑起来观测过再决定要不要放开。
 export function shouldFormatMarkdownForCli(cli: string | undefined): boolean {
   if (!cli) return true
-  return !/(^|[\\/])(opencode|codex)(\.(exe|cmd|bat|ps1))?$/i.test(cli.trim())
+  return !/(^|[\\/])(opencode|codex|claw)(\.(exe|cmd|bat|ps1))?$/i.test(cli.trim())
 }
 
 export function stripAnsi(text: string): string {

@@ -1649,17 +1649,20 @@ private struct MessageListView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 18)
+                .background(
+                    ScrollViewKeyboardDismissInstaller { window in
+                        dismissKeyboard(in: window)
+                        if selectingMessageID != nil {
+                            finishSelectingText()
+                        }
+                    }
+                )
             }
             .refreshable {
                 await loadEarlierMessagesKeepingAnchor(proxy: proxy)
             }
             .scrollDismissesKeyboard(.interactively)
             .background(RemoteIMStyle.panelBackground)
-            .simultaneousGesture(
-                TapGesture().onEnded {
-                    dismissKeyboard()
-                }
-            )
             .onAppear {
                 latestMessageID = messages.last?.id
                 if !scrollToSearchTarget(proxy: proxy) {
@@ -1792,14 +1795,120 @@ private struct MessageListView: View {
     }
 }
 
+private struct ScrollViewKeyboardDismissInstaller: UIViewRepresentable {
+    let onTap: (UIWindow?) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onTap: onTap)
+    }
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView(frame: .zero)
+        view.isUserInteractionEnabled = false
+        scheduleInstallation(from: view, coordinator: context.coordinator)
+        return view
+    }
+
+    func updateUIView(_ view: UIView, context: Context) {
+        context.coordinator.onTap = onTap
+        scheduleInstallation(from: view, coordinator: context.coordinator)
+    }
+
+    static func dismantleUIView(_ view: UIView, coordinator: Coordinator) {
+        coordinator.uninstall()
+    }
+
+    private func scheduleInstallation(from view: UIView, coordinator: Coordinator) {
+        DispatchQueue.main.async { [weak view, weak coordinator] in
+            guard let view, let coordinator else { return }
+            coordinator.install(from: view)
+        }
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var onTap: (UIWindow?) -> Void
+        private weak var scrollView: UIScrollView?
+        private lazy var tapGesture: UITapGestureRecognizer = {
+            let gesture = UITapGestureRecognizer(
+                target: self,
+                action: #selector(handleTap)
+            )
+            gesture.cancelsTouchesInView = false
+            gesture.delegate = self
+            return gesture
+        }()
+
+        init(onTap: @escaping (UIWindow?) -> Void) {
+            self.onTap = onTap
+        }
+
+        func install(from view: UIView) {
+            var ancestor = view.superview
+            while let current = ancestor, !(current is UIScrollView) {
+                ancestor = current.superview
+            }
+            guard let nextScrollView = ancestor as? UIScrollView else { return }
+            guard scrollView !== nextScrollView else { return }
+            uninstall()
+            nextScrollView.addGestureRecognizer(tapGesture)
+            scrollView = nextScrollView
+        }
+
+        func uninstall() {
+            scrollView?.removeGestureRecognizer(tapGesture)
+            scrollView = nil
+        }
+
+        @objc private func handleTap() {
+            let tappedWindow = scrollView?.window
+            onTap(tappedWindow)
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            true
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldReceive touch: UITouch
+        ) -> Bool {
+            var touchedView = touch.view
+            while let current = touchedView, current !== scrollView {
+                if current is UITextView || current is UIControl {
+                    return false
+                }
+                touchedView = current.superview
+            }
+            return true
+        }
+    }
+}
+
+@MainActor
+private func dismissKeyboard(in window: UIWindow?) {
+    let didEndEditing = window?.endEditing(true) ?? false
+    if !didEndEditing {
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder),
+            to: nil,
+            from: nil,
+            for: nil
+        )
+    }
+}
+
 @MainActor
 private func dismissKeyboard() {
-    UIApplication.shared.sendAction(
-        #selector(UIResponder.resignFirstResponder),
-        to: nil,
-        from: nil,
-        for: nil
-    )
+    let activeWindow = UIApplication.shared.connectedScenes
+        .compactMap { $0 as? UIWindowScene }
+        .filter { $0.activationState == .foregroundActive }
+        .flatMap(\.windows)
+        .first(where: \.isKeyWindow)
+    dismissKeyboard(in: activeWindow)
 }
 
 private struct EmptyMessagesView: View {

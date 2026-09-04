@@ -314,6 +314,17 @@ const api = {
         { ok: true } | { ok: false; error: string }
       >
   },
+  claw: {
+    getConfig: () =>
+      ipcRenderer.invoke('claw:get-config') as Promise<
+        | { ok: true; value: { apiKey: string; baseUrl: string; model: string } }
+        | { ok: false; error: string }
+      >,
+    setConfig: (config: { apiKey: string; baseUrl: string; model: string }) =>
+      ipcRenderer.invoke('claw:set-config', config) as Promise<
+        { ok: true } | { ok: false; error: string }
+      >
+  },
   /** Resolve a DataTransfer File to its absolute filesystem path (Electron 32+). */
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
   clipboard: {

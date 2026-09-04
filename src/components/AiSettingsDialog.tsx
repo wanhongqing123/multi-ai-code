@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { AiSettings, AiPermissionMode, OpenCodeProviderProfile } from '../../electron/preload'
+import { CLAW_DEFAULT_BASE_URL, CLAW_DEFAULT_MODEL } from '../../electron/aicli/clawConfig'
 // 类型真源在 electron 侧，这里 re-export 兼容既有从本组件引用它们的地方（App.tsx / RepoViewerWindow）。
 export type { AiSettings, AiPermissionMode, OpenCodeProviderProfile }
 import type { RemoteImConfig, RemoteDesktopMode } from '../../electron/remote-im/types'
@@ -149,12 +150,19 @@ function SettingsSection(props: {
   permissionMode: AiPermissionMode
   zhipuApiKey: string
   apiKeyLoading: boolean
+  clawApiKey: string
+  clawBaseUrl: string
+  clawModel: string
+  clawLoading: boolean
   advancedOpen: boolean
   argsText: string
   envText: string
   onAiCli: (next: AiCliKind) => void
   onPermissionMode: (next: AiPermissionMode) => void
   onZhipuApiKey: (next: string) => void
+  onClawApiKey: (next: string) => void
+  onClawBaseUrl: (next: string) => void
+  onClawModel: (next: string) => void
   onAdvancedOpen: (next: boolean) => void
   onArgs: (next: string) => void
   onEnv: (next: string) => void
@@ -209,6 +217,53 @@ function SettingsSection(props: {
               仅保存在当前桌面账号的本地数据目录，不会写入项目仓库或安装包。
             </span>
           </label>
+        )}
+        {props.aiCli === 'claw' && (
+          <>
+            <label className="ai-settings-grid-full">
+              Claw API Key
+              <input
+                type="password"
+                value={props.clawApiKey}
+                disabled={props.clawLoading}
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(event) => props.onClawApiKey(event.target.value)}
+                placeholder={props.clawLoading ? '正在读取…' : '默认按智谱 Coding Plan 的 Key 使用'}
+              />
+              <span className="ai-settings-help">
+                仅保存在当前桌面账号的本地数据目录，不会写入项目仓库或安装包。
+              </span>
+            </label>
+            <label className="ai-settings-grid-full">
+              Base URL（留空用智谱）
+              <input
+                type="text"
+                value={props.clawBaseUrl}
+                disabled={props.clawLoading}
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(event) => props.onClawBaseUrl(event.target.value)}
+                placeholder={CLAW_DEFAULT_BASE_URL}
+              />
+            </label>
+            <label className="ai-settings-grid-full">
+              模型（留空用默认）
+              <input
+                type="text"
+                value={props.clawModel}
+                disabled={props.clawLoading}
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(event) => props.onClawModel(event.target.value)}
+                placeholder={CLAW_DEFAULT_MODEL}
+              />
+              <span className="ai-settings-help">
+                模型名必须带 provider 前缀：claw 按前缀路由，openai/ 走 OpenAI 兼容端点
+                （智谱即走这条），anthropic/ 走 Anthropic。漏掉前缀会被当成 Anthropic 模型。
+              </span>
+            </label>
+          </>
         )}
         {/* 启动参数不该是常规操作：默认折叠，需要按特定参数启动的人自己展开。 */}
         <div className="ai-settings-grid-full ai-settings-advanced">
@@ -267,6 +322,11 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
   )
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // claw 的托管配置独立于 opencode 存储（终点是删掉 opencode，不能耦合过去）。
+  const [clawApiKey, setClawApiKey] = useState('')
+  const [clawBaseUrl, setClawBaseUrl] = useState('')
+  const [clawModel, setClawModel] = useState('')
+  const [clawLoading, setClawLoading] = useState(false)
   // 远程桌面模式住在 remote-im 配置里（与 AI 设置不同的存储），单独加载与保存。
   const [remoteImConfig, setRemoteImConfig] = useState<RemoteImConfig | null>(null)
   const [remoteDesktopMode, setRemoteDesktopMode] = useState<RemoteDesktopMode>('disabled')
@@ -283,6 +343,25 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
         return
       }
       setZhipuApiKey(result.value)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    setClawLoading(true)
+    void window.api.claw.getConfig().then((result) => {
+      if (cancelled) return
+      setClawLoading(false)
+      if (!result.ok) {
+        setError(result.error)
+        return
+      }
+      setClawApiKey(result.value.apiKey)
+      setClawBaseUrl(result.value.baseUrl)
+      setClawModel(result.value.model)
     })
     return () => {
       cancelled = true
@@ -316,9 +395,13 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
   }, [props.initial, saving])
 
   const handleSave = async (): Promise<void> => {
-    if (apiKeyLoading) return
+    if (apiKeyLoading || clawLoading) return
     if (aiCli === 'opencode' && !zhipuApiKey.trim()) {
       setError('请输入智谱 API Key 后再保存 OpenCode 设置')
+      return
+    }
+    if (aiCli === 'claw' && !clawApiKey.trim()) {
+      setError('请输入 Claw API Key 后再保存 Claw 设置')
       return
     }
     setSaving(true)
@@ -329,6 +412,12 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
     try {
       const credentialResult = await window.api.opencode.setApiKey(zhipuApiKey)
       if (!credentialResult.ok) throw new Error(credentialResult.error)
+      const clawResult = await window.api.claw.setConfig({
+        apiKey: clawApiKey,
+        baseUrl: clawBaseUrl,
+        model: clawModel
+      })
+      if (!clawResult.ok) throw new Error(clawResult.error)
       if (props.projectId) {
         const repairToast = await saveProjectScopedSettings({
           projectId: props.projectId,
@@ -380,12 +469,19 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
                   permissionMode={permissionMode}
                   zhipuApiKey={zhipuApiKey}
                   apiKeyLoading={apiKeyLoading}
+                  clawApiKey={clawApiKey}
+                  clawBaseUrl={clawBaseUrl}
+                  clawModel={clawModel}
+                  clawLoading={clawLoading}
                   advancedOpen={advancedOpen}
                   argsText={argsText}
                   envText={envText}
                   onAiCli={setAiCli}
                   onPermissionMode={setPermissionMode}
                   onZhipuApiKey={setZhipuApiKey}
+                  onClawApiKey={setClawApiKey}
+                  onClawBaseUrl={setClawBaseUrl}
+                  onClawModel={setClawModel}
                   onAdvancedOpen={setAdvancedOpen}
                   onArgs={setArgsText}
                   onEnv={setEnvText}

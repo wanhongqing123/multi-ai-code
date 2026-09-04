@@ -38,7 +38,8 @@ import {
 } from '../aicli/structuredOutputBridge.js'
 
 import { detectMsys } from '../util/msys.js'
-import { opencodeRuntimeDir, rootDir } from '../store/paths.js'
+import { clawRuntimeDir, opencodeRuntimeDir, rootDir } from '../store/paths.js'
+import { withClawRuntimeEnv, withClawRuntimeModelArgs } from '../aicli/clawCredentials.js'
 
 /**
  * PTY chunk debug dumper. Enable by setting env var MULTI_AI_CODE_PTY_DUMP=1
@@ -864,6 +865,19 @@ export function registerPtyIpc(): void {
       }
     }
 
+    // claw 的托管凭据（OPENAI_API_KEY / OPENAI_BASE_URL）与默认模型。
+    // 两个函数对非 claw 命令都是恒等变换，所以不需要在这里再判一次。
+    let managedEnv: Record<string, string> | undefined
+    try {
+      managedEnv = withClawRuntimeEnv(req.command, managedOpenCodeEnv, clawRuntimeDir())
+      effectiveArgs = withClawRuntimeModelArgs(req.command, effectiveArgs, clawRuntimeDir())
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error)
+      }
+    }
+
     const structuredProvider = structuredOutputProvider(req.command)
     const structuredOutputBridge = structuredProvider
       ? await createAicliStructuredOutputBridge(req.sessionId, structuredProvider)
@@ -879,7 +893,7 @@ export function registerPtyIpc(): void {
       cols: req.cols,
       rows: req.rows,
       env: withRemoteImCliEnv(
-        withCodexTerminalEnv(req.command, managedOpenCodeEnv, req.terminalTheme),
+        withCodexTerminalEnv(req.command, managedEnv, req.terminalTheme),
         req.projectId,
         req.sessionId
       ),

@@ -4306,7 +4306,7 @@ private struct ComposerView: View {
                                 lineWidth: appState.canSend ? 1.5 : 1
                             )
                     )
-                    .overlay(alignment: .topTrailing) {
+                    .overlay(alignment: .topLeading) {
                         if let state = composerEditMenuState {
                             ComposerEditActionBar(
                                 state: state,
@@ -4316,15 +4316,10 @@ private struct ComposerView: View {
                                         composerEditMenuState = nil
                                     }
                                 },
-                                perform: performComposerEditAction,
-                                dismiss: {
-                                    withAnimation(.easeOut(duration: 0.12)) {
-                                        composerEditMenuState = nil
-                                    }
-                                }
+                                perform: performComposerEditAction
                             )
-                            .offset(x: -4, y: -48)
-                            .transition(.scale(scale: 0.94, anchor: .bottomTrailing).combined(with: .opacity))
+                            .offset(x: 4, y: -50)
+                            .transition(.scale(scale: 0.94, anchor: .bottomLeading).combined(with: .opacity))
                             .zIndex(20)
                         }
                     }
@@ -4472,7 +4467,7 @@ private struct ComposerView: View {
         case .select, .selectAll:
             let nextState = composerEditingController.menuState()
             composerEditMenuState = nextState.hasActions ? nextState : nil
-        case .paste, .cut, .copy:
+        case .paste, .cut, .copy, .readAloud, .newLine:
             composerEditMenuState = nil
         }
     }
@@ -4925,6 +4920,8 @@ private enum ComposerEditAction: CaseIterable, Identifiable {
     case selectAll
     case cut
     case copy
+    case readAloud
+    case newLine
 
     var id: Self { self }
 
@@ -4935,6 +4932,8 @@ private enum ComposerEditAction: CaseIterable, Identifiable {
         case .selectAll: return "全选"
         case .cut: return "剪切"
         case .copy: return "复制"
+        case .readAloud: return "朗读"
+        case .newLine: return "换行"
         }
     }
 
@@ -4945,44 +4944,47 @@ private enum ComposerEditAction: CaseIterable, Identifiable {
         case .selectAll: return "text.badge.checkmark"
         case .cut: return "scissors"
         case .copy: return "doc.on.doc"
+        case .readAloud: return "speaker.wave.2"
+        case .newLine: return "return"
         }
     }
 }
 
 private struct ComposerEditMenuState: Equatable {
     let actions: [ComposerEditAction]
+    let disabledActions: Set<ComposerEditAction>
 
     var hasActions: Bool { !actions.isEmpty }
+
+    func isEnabled(_ action: ComposerEditAction) -> Bool {
+        !disabledActions.contains(action)
+    }
 }
 
 @MainActor
 private final class ComposerTextEditingController {
     weak var textView: UITextView?
+    private let speechSynthesizer = AVSpeechSynthesizer()
 
     func menuState() -> ComposerEditMenuState {
-        guard let textView else { return ComposerEditMenuState(actions: []) }
+        guard let textView else {
+            return ComposerEditMenuState(actions: [], disabledActions: [])
+        }
         let textLength = (textView.text as NSString).length
         let selectedRange = textView.selectedRange
         let hasSelection = selectedRange.location != NSNotFound && selectedRange.length > 0
         let hasText = textLength > 0
-        let isAllSelected = hasSelection
-            && selectedRange.location == 0
-            && selectedRange.length == textLength
 
-        var actions: [ComposerEditAction] = []
-        if hasSelection {
-            actions.append(contentsOf: [.copy, .cut])
-        }
         // UIPasteControl 会根据 target 的 pasteConfiguration 自己决定能否粘贴，
         // 这里不主动读取系统剪贴板，避免触发跨 App 粘贴授权提示。
-        actions.append(.paste)
-        if hasText && !hasSelection {
-            actions.append(.select)
+        let actions: [ComposerEditAction] = hasSelection
+            ? [.copy, .cut, .paste, .readAloud, .newLine]
+            : [.paste, .select, .selectAll, .readAloud, .newLine]
+        var disabledActions = Set<ComposerEditAction>()
+        if !hasText {
+            disabledActions.formUnion([.select, .selectAll, .readAloud])
         }
-        if hasText && !isAllSelected {
-            actions.append(.selectAll)
-        }
-        return ComposerEditMenuState(actions: actions)
+        return ComposerEditMenuState(actions: actions, disabledActions: disabledActions)
     }
 
     func perform(_ action: ComposerEditAction) {
@@ -5000,6 +5002,43 @@ private final class ComposerTextEditingController {
             textView.cut(nil)
         case .copy:
             textView.copy(nil)
+        case .readAloud:
+            let fullText = textView.text ?? ""
+            let selectedRange = textView.selectedRange
+            let spokenText: String
+            if selectedRange.location != NSNotFound,
+               selectedRange.length > 0,
+               NSMaxRange(selectedRange) <= (fullText as NSString).length {
+                spokenText = (fullText as NSString).substring(with: selectedRange)
+            } else {
+                spokenText = fullText
+            }
+            guard !spokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return
+            }
+            speechSynthesizer.stopSpeaking(at: .immediate)
+            let utterance = AVSpeechUtterance(string: spokenText)
+            utterance.voice = AVSpeechSynthesisVoice(
+                language: Locale.preferredLanguages.first ?? "zh-CN"
+            )
+            speechSynthesizer.speak(utterance)
+        case .newLine:
+            let fullText = textView.text ?? ""
+            let textLength = (fullText as NSString).length
+            let selectedRange = textView.selectedRange
+            let insertionRange = selectedRange.location != NSNotFound
+                && NSMaxRange(selectedRange) <= textLength
+                ? selectedRange
+                : NSRange(location: textLength, length: 0)
+            textView.text = (fullText as NSString).replacingCharacters(
+                in: insertionRange,
+                with: "\n"
+            )
+            textView.selectedRange = NSRange(
+                location: insertionRange.location + 1,
+                length: 0
+            )
+            textView.delegate?.textViewDidChange?(textView)
         }
     }
 }
@@ -5009,64 +5048,68 @@ private struct ComposerEditActionBar: View {
     weak var pasteTarget: UITextView?
     let pasteCompleted: () -> Void
     let perform: (ComposerEditAction) -> Void
-    let dismiss: () -> Void
 
     var body: some View {
-        HStack(spacing: 0) {
-            ForEach(state.actions) { action in
-                if action == .paste {
-                    ComposerPasteControl(
-                        target: pasteTarget,
-                        pasteCompleted: pasteCompleted
-                    )
-                    .frame(width: 54, height: 42)
-                } else {
-                    Button {
-                        perform(action)
-                    } label: {
-                        Text(action.title)
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(RemoteIMStyle.textPrimary)
-                            .frame(minWidth: 54, minHeight: 42)
-                            .contentShape(Rectangle())
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 0) {
+                ForEach(state.actions) { action in
+                    if action == .paste {
+                        ComposerPasteControl(
+                            target: pasteTarget,
+                            pasteCompleted: pasteCompleted
+                        )
+                        .frame(width: 58, height: 42)
+                        .overlay {
+                            ZStack {
+                                Color.white
+                                Text("粘贴")
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundStyle(RemoteIMStyle.textPrimary)
+                            }
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                        }
+                        .accessibilityLabel("粘贴")
+                        .accessibilityIdentifier("composer-custom-paste-control")
+                    } else {
+                        Button {
+                            perform(action)
+                        } label: {
+                            Text(action.title)
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(RemoteIMStyle.textPrimary)
+                                .frame(minWidth: 58, minHeight: 42)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!state.isEnabled(action))
+                        .opacity(state.isEnabled(action) ? 1 : 0.35)
+                        .accessibilityLabel(action.title)
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(action.title)
-                }
 
-                if action.id != state.actions.last?.id {
-                    Divider()
-                        .frame(height: 42)
-                        .overlay(RemoteIMStyle.border)
+                    if action.id != state.actions.last?.id {
+                        Divider()
+                            .frame(height: 42)
+                            .overlay(RemoteIMStyle.border)
+                    }
                 }
             }
-
-            Button(action: dismiss) {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(RemoteIMStyle.textPrimary)
-                    .frame(width: 42, height: 42)
-                    .contentShape(Rectangle())
+            .background(Color.white)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(RemoteIMStyle.border.opacity(0.72), lineWidth: 0.5)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("关闭编辑操作")
-        }
-        .background(
-            Color.white.opacity(0.98),
-            in: RoundedRectangle(cornerRadius: 13, style: .continuous)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .stroke(RemoteIMStyle.border.opacity(0.8), lineWidth: 0.5)
-        }
-        .overlay(alignment: .bottomLeading) {
+
             MessageActionPointer()
-                .fill(Color.white.opacity(0.98))
-                .frame(width: 18, height: 8)
-                .offset(x: 22, y: 7)
+                .fill(Color.white)
+                .frame(width: 16, height: 7)
+                .padding(.leading, 20)
+                .offset(y: -0.5)
         }
-        .shadow(color: Color.black.opacity(0.14), radius: 12, y: 5)
+        .shadow(color: Color.black.opacity(0.14), radius: 11, y: 5)
         .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("composer-custom-edit-action-bar")
     }
 }
 
@@ -5080,20 +5123,20 @@ private struct ComposerPasteControl: UIViewRepresentable {
 
     func makeUIView(context: Context) -> UIPasteControl {
         let configuration = UIPasteControl.Configuration()
-        configuration.displayMode = .labelOnly
+        configuration.displayMode = .iconOnly
         configuration.cornerRadius = 0
-        configuration.baseForegroundColor = UIColor(RemoteIMStyle.textPrimary)
-        // `.clear` 在 iOS 26 会被 UIPasteControl 回退成独立的灰/黑按钮。
-        // 显式白底才能与外层浅色分段操作条融为一体。
+        configuration.baseForegroundColor = .white
+        // 显式白底避免 `.clear` 在 iOS 26 被回退成独立灰/黑按钮；
+        // 可见的“粘贴”文字由上层自绘，系统控件只保留受信任点击能力。
         configuration.baseBackgroundColor = .white
         let control = UIPasteControl(configuration: configuration)
         control.target = target
+        control.accessibilityIdentifier = "composer-custom-paste-control"
         control.addTarget(
             context.coordinator,
             action: #selector(Coordinator.didPaste),
             for: .primaryActionTriggered
         )
-        control.accessibilityLabel = "粘贴"
         return control
     }
 

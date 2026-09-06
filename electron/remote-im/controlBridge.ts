@@ -23,7 +23,9 @@ export type RemoteImSwitchAicliMode = (
 
 export interface RemoteImExecuteAicliCommandRequest {
   sessionId: string
-  sourceKind: Extract<RemoteImAicliOutputSourceKind, 'codex' | 'opencode'>
+  // claw 目前只实现了 interrupt；其余命令由 claw 侧自己回明确错误，
+  // 比在宿主这边逐个拦更自解释（用户会看到「claw 尚未支持控制命令：xxx」）。
+  sourceKind: Extract<RemoteImAicliOutputSourceKind, 'codex' | 'opencode' | 'claw'>
   command: 'status' | 'model' | 'goal' | 'btw' | 'interrupt' | 'compact' | 'clear'
   model?: string
   reasoning?: string
@@ -66,6 +68,7 @@ function displaySourceKind(sourceKind: RemoteImAicliOutputSourceKind): string {
   if (sourceKind === 'codex') return 'Codex'
   if (sourceKind === 'opencode') return 'OpenCode'
   if (sourceKind === 'claude') return 'Claude'
+  if (sourceKind === 'claw') return 'Claw'
   return '未知 AICLI'
 }
 
@@ -422,7 +425,11 @@ async function lifecycleCommand(
     }
   }
 
-  if (input.sourceKind !== 'codex' && input.sourceKind !== 'opencode') {
+  if (
+    input.sourceKind !== 'codex' &&
+    input.sourceKind !== 'opencode' &&
+    input.sourceKind !== 'claw'
+  ) {
     return {
       ok: false,
       text: `当前 AICLI 类型未知，无法安全${label}。`

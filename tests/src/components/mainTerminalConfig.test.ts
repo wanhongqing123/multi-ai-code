@@ -52,16 +52,14 @@ describe('shouldConvertEolForCli', () => {
     expect(shouldConvertEolForCli('/usr/local/bin/opencode')).toBe(false)
   })
 
-  it('disables convertEol for claw as a conservative default', () => {
-    // 同 terminalMarkdown 那条：这是决定不是结论。关掉对「只发 CRLF」的 CLI 无害，
-    // 而一旦它某处用裸 LF 表示「下移一行、列不变」，开着就会把光标拽回第 0 列。
-    expect(shouldConvertEolForCli('claw')).toBe(false)
-    expect(shouldConvertEolForCli('claw.exe')).toBe(false)
-    expect(shouldConvertEolForCli('C:\\Tools\\claw.exe')).toBe(false)
-    expect(shouldConvertEolForCli('/usr/local/bin/claw')).toBe(false)
-    // claude / claw-analog 不受这条规则影响。
-    expect(shouldConvertEolForCli('claude')).toBe(true)
+  it('keeps convertEol on for claw', () => {
+    // claw 在 Done 之后重新打印的原始 markdown 用裸 LF，语义就是「下一行、回第 0 列」
+    // 的普通滚动文本，正是 convertEol 该做的；它不像 opencode 那样用裸 LF 做定位重绘。
+    expect(shouldConvertEolForCli('claw')).toBe(true)
+    expect(shouldConvertEolForCli('claw.exe')).toBe(true)
     expect(shouldConvertEolForCli('claw-analog')).toBe(true)
+    // 反向锚点：opencode 仍必须关掉。
+    expect(shouldConvertEolForCli('opencode')).toBe(false)
   })
 
   it('keeps convertEol on for claude, codex and unknown CLIs', () => {

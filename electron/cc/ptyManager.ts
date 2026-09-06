@@ -40,7 +40,7 @@ import {
 import { detectMsys } from '../util/msys.js'
 import { clawRuntimeDir, opencodeRuntimeDir, rootDir } from '../store/paths.js'
 import { withClawRuntimeEnv, withClawRuntimeModelArgs } from '../aicli/clawCredentials.js'
-import { isClawCommand } from '../aicli/clawConfig.js'
+import { isClawCommand, withClawDataDirEnv } from '../aicli/clawConfig.js'
 
 /**
  * PTY chunk debug dumper. Enable by setting env var MULTI_AI_CODE_PTY_DUMP=1
@@ -872,6 +872,7 @@ export function registerPtyIpc(): void {
     let managedEnv: Record<string, string> | undefined
     try {
       managedEnv = withClawRuntimeEnv(req.command, managedOpenCodeEnv, clawRuntimeDir())
+      managedEnv = withClawDataDirEnv(req.command, managedEnv, clawRuntimeDir())
       effectiveArgs = withClawRuntimeModelArgs(req.command, effectiveArgs, clawRuntimeDir())
     } catch (error) {
       return {

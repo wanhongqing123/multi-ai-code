@@ -4,6 +4,7 @@ import {
   CLAW_DEFAULT_MODEL,
   EMPTY_CLAW_CONFIG,
   isClawCommand,
+  withClawDataDirEnv,
   withClawManagedEnv,
   withClawModelArgs
 } from '../../../electron/aicli/clawConfig.js'
@@ -98,5 +99,34 @@ describe('withClawModelArgs', () => {
   it('is an identity transform for other CLIs', () => {
     expect(withClawModelArgs('codex', ['resume'], configured)).toEqual(['resume'])
     expect(withClawModelArgs('claw-analog', ['doctor'], configured)).toEqual(['doctor'])
+  })
+})
+
+describe('withClawDataDirEnv', () => {
+  it('moves claw session storage out of the user repo', () => {
+    expect(withClawDataDirEnv('claw', undefined, 'C:/data/aicli/claw')).toEqual({
+      CLAW_DATA_DIR: 'C:/data/aicli/claw'
+    })
+  })
+
+  // 与凭据分开注入是刻意的：仓库污染跟有没有配 provider 无关，
+  // 没配 Key 也必须生效。合进 withClawManagedEnv 会让它在无 Key 时静默失效。
+  it('applies even when no API key is configured', () => {
+    const withKey = withClawManagedEnv('claw', undefined, EMPTY_CLAW_CONFIG)
+    expect(withKey).toEqual({})
+    expect(withClawDataDirEnv('claw', withKey, 'C:/data/aicli/claw')).toEqual({
+      CLAW_DATA_DIR: 'C:/data/aicli/claw'
+    })
+  })
+
+  it('never overrides an explicitly configured data dir', () => {
+    const userEnv = { CLAW_DATA_DIR: 'D:/my/own/place' }
+    expect(withClawDataDirEnv('claw', userEnv, 'C:/data/aicli/claw')).toEqual(userEnv)
+  })
+
+  it('is an identity transform for other CLIs', () => {
+    const env = { FOO: 'bar' }
+    expect(withClawDataDirEnv('codex', env, 'C:/data')).toBe(env)
+    expect(withClawDataDirEnv('claw-analog', env, 'C:/data')).toBe(env)
   })
 })

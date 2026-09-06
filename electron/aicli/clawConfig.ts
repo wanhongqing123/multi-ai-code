@@ -18,6 +18,11 @@ export const CLAW_DEFAULT_MODEL = 'openai/glm-4.6'
 export const CLAW_API_KEY_ENV = 'OPENAI_API_KEY'
 export const CLAW_BASE_URL_ENV = 'OPENAI_BASE_URL'
 
+// claw 默认把会话写在 <cwd>/.claw/sessions/ —— 而 cwd 是**用户自己的仓库**，
+// 等于我们往人家仓库里拉目录。fork 里给 SessionStore::from_cwd 加了这个 env：
+// 设了就改用 <CLAW_DATA_DIR>/sessions/<workspace 指纹>/，不同仓库仍互相隔离。
+export const CLAW_DATA_DIR_ENV = 'CLAW_DATA_DIR'
+
 export interface ClawManagedConfig {
   apiKey: string
   /** 空表示用 CLAW_DEFAULT_BASE_URL。 */
@@ -59,6 +64,21 @@ export function withClawManagedEnv(
   if (!config.apiKey) return next
   if (!next[CLAW_API_KEY_ENV]) next[CLAW_API_KEY_ENV] = config.apiKey
   if (!next[CLAW_BASE_URL_ENV]) next[CLAW_BASE_URL_ENV] = config.baseUrl || CLAW_DEFAULT_BASE_URL
+  return next
+}
+
+/**
+ * 把会话目录挪出用户仓库。与凭据分开是刻意的：**没配 API Key 也要生效**——
+ * 仓库污染和有没有配置 provider 无关。
+ */
+export function withClawDataDirEnv(
+  command: string,
+  env: Record<string, string> | undefined,
+  dataDir: string
+): Record<string, string> | undefined {
+  if (!isClawCommand(command)) return env
+  const next = { ...(env ?? {}) }
+  if (!next[CLAW_DATA_DIR_ENV] && dataDir) next[CLAW_DATA_DIR_ENV] = dataDir
   return next
 }
 

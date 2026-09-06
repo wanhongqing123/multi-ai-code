@@ -45,7 +45,9 @@ export interface RemoteImOutputCompletionInfo {
 export type RemoteImOutputFlushTimer = ReturnType<typeof setTimeout>
 
 export interface RemoteImTranscriptSource {
-  kind: 'claude'
+  // claude 与 claw 都把会话写成磁盘上的 JSONL，回传走「读文件」而不是 TCP 桥，
+  // 因此共用这条通路（codex/opencode 走 structuredOutputBridge）。
+  kind: 'claude' | 'claw'
   cwd: string
   sinceMs: number
   replyId?: string

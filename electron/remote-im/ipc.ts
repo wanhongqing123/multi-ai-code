@@ -82,7 +82,6 @@ import {
 } from './router.js'
 import { appendRemoteImRuntimeLog } from './runtimeLog.js'
 import { readLatestClaudeRemoteImReply } from './claudeTranscript.js'
-import { readLatestClawRemoteImReply } from './clawTranscript.js'
 import { startRemoteImCliServer } from './imcliServer.js'
 import { addAicliStructuredOutputListener } from '../aicli/structuredOutputBridge.js'
 import { executeRemoteImControlCommand } from './controlBridge.js'
@@ -1502,7 +1501,6 @@ function readRemoteImTranscriptReply(
     pendingReplyIds: source.pendingReplyIds
   }
   if (source.kind === 'claude') return readLatestClaudeRemoteImReply(args)
-  if (source.kind === 'claw') return readLatestClawRemoteImReply(args)
   return null
 }
 
@@ -1581,7 +1579,7 @@ function startOutputForwarding(
     structuredOutput: false,
     autoReplyToIm,
     transcript:
-      (sourceKind === 'claude' || sourceKind === 'claw') && runtime
+      sourceKind === 'claude' && runtime
         ? {
             kind: sourceKind,
             cwd: runtime.targetRepo,
@@ -1590,7 +1588,7 @@ function startOutputForwarding(
             pendingReplyIds: [replyId]
           }
         : undefined,
-    ...(sourceKind === 'claude' || sourceKind === 'claw' ? { pendingReplyIds: [replyId] } : {})
+    ...(sourceKind === 'claude' ? { pendingReplyIds: [replyId] } : {})
   })
 }
 

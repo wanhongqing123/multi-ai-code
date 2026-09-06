@@ -40,6 +40,7 @@ import {
 import { detectMsys } from '../util/msys.js'
 import { clawRuntimeDir, opencodeRuntimeDir, rootDir } from '../store/paths.js'
 import { withClawRuntimeEnv, withClawRuntimeModelArgs } from '../aicli/clawCredentials.js'
+import { isClawCommand } from '../aicli/clawConfig.js'
 
 /**
  * PTY chunk debug dumper. Enable by setting env var MULTI_AI_CODE_PTY_DUMP=1
@@ -51,8 +52,9 @@ const PTY_DUMP_ENABLED = process.env.MULTI_AI_CODE_PTY_DUMP === '1'
 function structuredOutputProvider(command: string): AicliStructuredOutputProvider | null {
   if (command === 'codex') return 'codex'
   if (isOpenCodeCommand(command)) return 'opencode'
-  // claw 的结构化输出（--output-format json / claw-analog 的 NDJSON 契约）还没接，
-  // 先返回 null 走纯 PTY 文本路径。
+  // claw 与前两者同路：我们持有它的 fork，就在源码里接出结构化事件，
+  // 而不是去读它落盘的会话文件。读文件那条只留给 claude——它是唯一拿不到源码的。
+  if (isClawCommand(command)) return 'claw'
   return null
 }
 

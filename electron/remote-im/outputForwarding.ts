@@ -45,9 +45,10 @@ export interface RemoteImOutputCompletionInfo {
 export type RemoteImOutputFlushTimer = ReturnType<typeof setTimeout>
 
 export interface RemoteImTranscriptSource {
-  // claude 与 claw 都把会话写成磁盘上的 JSONL，回传走「读文件」而不是 TCP 桥，
-  // 因此共用这条通路（codex/opencode 走 structuredOutputBridge）。
-  kind: 'claude' | 'claw'
+  // 读磁盘会话文件这条通路**只给 claude**：它是唯一我们拿不到源码的 AICLI。
+  // 凡是我们持有 fork 的内核（codex / opencode / claw）一律走 structuredOutputBridge，
+  // 在源码里接出结构化事件——通道统一，控制命令也走同一条。
+  kind: 'claude'
   cwd: string
   sinceMs: number
   replyId?: string

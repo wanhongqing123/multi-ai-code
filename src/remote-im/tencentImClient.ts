@@ -343,6 +343,8 @@ interface ResolvedTencentUserSig {
 
 const DEFAULT_TENCENT_USER_SIG_TTL_SECONDS = 7 * 24 * 60 * 60
 const TENCENT_USER_SIG_REFRESH_LEAD_SECONDS = 20 * 60
+const TENCENT_USER_SIG_FAILURE_WINDOW_MS = 10_000
+const TENCENT_USER_SIG_MAX_CONSECUTIVE_FAILURES = 3
 
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = ''
@@ -1320,13 +1322,17 @@ export async function connectTencentImClient(input: {
   const multipleDeviceType =
     TencentCloudChat.TYPES?.KICKED_OUT_MULT_DEVICE ?? 'multipleDevice'
   const restApiKickType = TencentCloudChat.TYPES?.KICKED_OUT_REST_API ?? 'REST_API_Kick'
+  const repeatedUserSigFailureType = 'repeatedUserSigFailure'
   let terminalKickType: string | null = null
   let userSigExpired = false
   let currentUserSigLifetime: TencentUserSigLifetime | null = null
   let refreshTimer: ReturnType<typeof setTimeout> | null = null
+  let userSigFailureResetTimer: ReturnType<typeof setTimeout> | null = null
   let loginInFlight: Promise<void> | null = null
   let disconnected = false
   let lastKickEvent: { type: string; createdAt: number } | null = null
+  let consecutiveUserSigFailures = 0
+  let lastUserSigFailureAt = 0
 
   const userSigLogDetail = (): Record<string, unknown> => {
     const nowSeconds = Math.floor(Date.now() / 1000)
@@ -1350,7 +1356,15 @@ export async function connectTencentImClient(input: {
     refreshTimer = null
   }
 
+  const clearUserSigFailureResetTimer = (): void => {
+    if (userSigFailureResetTimer !== null) clearTimeout(userSigFailureResetTimer)
+    userSigFailureResetTimer = null
+  }
+
   const terminalKickMessage = (): string => {
+    if (terminalKickType === repeatedUserSigFailureType) {
+      return '登录凭证反复失效，请检查系统时间与账号配置'
+    }
     if (terminalKickType === multipleAccountType || terminalKickType === multipleDeviceType) {
       return 'IM 账号已在其他客户端登录，本端已被踢下线，已停止自动重登'
     }
@@ -1358,6 +1372,42 @@ export async function connectTencentImClient(input: {
       return 'IM 账号已被服务端下线，已停止自动重登'
     }
     return 'IM 账号已被踢下线，已停止自动重登'
+  }
+
+  const scheduleUserSigFailureReset = (): void => {
+    clearUserSigFailureResetTimer()
+    if (consecutiveUserSigFailures === 0 || disconnected) return
+    userSigFailureResetTimer = setTimeout(() => {
+      userSigFailureResetTimer = null
+      consecutiveUserSigFailures = 0
+      lastUserSigFailureAt = 0
+    }, TENCENT_USER_SIG_FAILURE_WINDOW_MS)
+  }
+
+  const registerUserSigFailure = (source: string, type: string): boolean => {
+    clearUserSigFailureResetTimer()
+    const createdAt = Date.now()
+    consecutiveUserSigFailures =
+      lastUserSigFailureAt > 0 &&
+      createdAt - lastUserSigFailureAt < TENCENT_USER_SIG_FAILURE_WINDOW_MS
+        ? consecutiveUserSigFailures + 1
+        : 1
+    lastUserSigFailureAt = createdAt
+    if (consecutiveUserSigFailures < TENCENT_USER_SIG_MAX_CONSECUTIVE_FAILURES) return true
+
+    terminalKickType = repeatedUserSigFailureType
+    userSigExpired = false
+    clearRefreshTimer()
+    const detail = {
+      source,
+      type,
+      consecutiveFailures: consecutiveUserSigFailures,
+      windowMs: TENCENT_USER_SIG_FAILURE_WINDOW_MS,
+      ...userSigLogDetail()
+    }
+    input.onConnectionStateChanged?.('error', terminalKickMessage())
+    emitRuntimeLog('user-sig:refresh:aborted', { detail })
+    return false
   }
 
   function scheduleUserSigRefresh(lifetime: TencentUserSigLifetime | null): void {
@@ -1415,6 +1465,7 @@ export async function connectTencentImClient(input: {
         loggedInUserId = input.config.desktopUserId
         userSigExpired = false
         scheduleUserSigRefresh(lifetime)
+        scheduleUserSigFailureReset()
         if (isRefresh) {
           input.onConnectionStateChanged?.('connected', null)
           emitRuntimeLog('user-sig:refresh:success', {
@@ -1589,6 +1640,7 @@ export async function connectTencentImClient(input: {
     sdkReady = false
     loggedInUserId = null
     if (type === userSigExpiredType) {
+      if (!registerUserSigFailure('sdk-event', type)) return
       userSigExpired = true
       emitRuntimeLog('user-sig:expired', {
         detail: {
@@ -1604,6 +1656,7 @@ export async function connectTencentImClient(input: {
 
     terminalKickType = type
     clearRefreshTimer()
+    clearUserSigFailureResetTimer()
     input.onConnectionStateChanged?.('error', terminalKickMessage())
     emitRuntimeLog('kicked-out', {
       detail: {
@@ -1685,20 +1738,29 @@ export async function connectTencentImClient(input: {
         }
         return result
       } catch (error) {
-        if (attempt === 1 && isTencentUserSigExpiredFailure(error)) {
-          sdkReady = false
-          loggedInUserId = null
-          userSigExpired = true
-          emitRuntimeLog('user-sig:expired-during-send', {
+        if (isTencentUserSigExpiredFailure(error)) {
+          const errorText = error instanceof Error ? error.message : String(error)
+          const errorType = String(getTencentImErrorCode(error) ?? 'unknown')
+          if (!registerUserSigFailure('send', errorType)) {
+            throw new Error(terminalKickMessage())
+          }
+          if (attempt === 1) {
+            sdkReady = false
+            loggedInUserId = null
+            userSigExpired = true
+            emitRuntimeLog('user-sig:expired-during-send', {
+              peerUserId: options.peerUserId,
+              messageId: options.messageId,
+              detail: { error: errorText, ...userSigLogDetail() }
+            })
+            await performLogin('send-retry')
+            continue
+          }
+          emitRuntimeLog('user-sig:send-retry-exhausted', {
             peerUserId: options.peerUserId,
             messageId: options.messageId,
-            detail: {
-              error: error instanceof Error ? error.message : String(error),
-              ...userSigLogDetail()
-            }
+            detail: { error: errorText, ...userSigLogDetail() }
           })
-          await performLogin('send-retry')
-          continue
         }
         throw error
       }
@@ -1711,6 +1773,7 @@ export async function connectTencentImClient(input: {
       emitRuntimeLog('disconnect:start')
       disconnected = true
       clearRefreshTimer()
+      clearUserSigFailureResetTimer()
       chat.off?.(eventName, onMessageReceived)
       chat.off?.(sdkReadyEventName, onSdkReady)
       chat.off?.(sdkNotReadyEventName, onSdkNotReady)
@@ -1721,6 +1784,8 @@ export async function connectTencentImClient(input: {
       terminalKickType = null
       userSigExpired = false
       currentUserSigLifetime = null
+      consecutiveUserSigFailures = 0
+      lastUserSigFailureAt = 0
       await chat.logout?.()
       await chat.destroy?.()
       emitRuntimeLog('disconnect:complete')

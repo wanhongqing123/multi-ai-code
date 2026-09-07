@@ -1321,6 +1321,62 @@ describe('tencent IM client helpers', () => {
     expect(onConnectionStateChanged).toHaveBeenNthCalledWith(2, 'connected', null)
   })
 
+  it('stops automatic relogin after three rapid userSigExpired cycles', async () => {
+    let now = 1_788_420_000_000
+    vi.spyOn(Date, 'now').mockImplementation(() => now)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, json: async () => ({ userSig: 'fresh-sig' }) }))
+    )
+    sdkMock.chat.isReady.mockReturnValue(true)
+    const onRuntimeLog = vi.fn()
+    const onConnectionStateChanged = vi.fn()
+    const runtime = await connectTencentImClient({
+      projectId: 'project-1',
+      config: baseConfig(),
+      onIncomingText: vi.fn(),
+      onRuntimeLog,
+      onConnectionStateChanged
+    })
+
+    for (let recovery = 1; recovery <= 2; recovery++) {
+      now += 3_000
+      sdkMock.handlers.get('kickedOut')?.({ data: { type: 'userSigExpired' } })
+      await vi.waitFor(() => expect(sdkMock.chat.login).toHaveBeenCalledTimes(recovery + 1))
+      await vi.waitFor(() =>
+        expect(
+          onRuntimeLog.mock.calls.filter(
+            ([entry]) => entry.event === 'user-sig:refresh:success'
+          )
+        ).toHaveLength(recovery)
+      )
+    }
+
+    now += 3_000
+    sdkMock.handlers.get('kickedOut')?.({ data: { type: 'userSigExpired' } })
+
+    expect(sdkMock.chat.login).toHaveBeenCalledTimes(3)
+    expect(onRuntimeLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'user-sig:refresh:aborted',
+        detail: expect.objectContaining({
+          source: 'sdk-event',
+          type: 'userSigExpired',
+          consecutiveFailures: 3,
+          windowMs: 10_000
+        })
+      })
+    )
+    expect(onConnectionStateChanged).toHaveBeenLastCalledWith(
+      'error',
+      '登录凭证反复失效，请检查系统时间与账号配置'
+    )
+    await expect(runtime.sendText('desktop-b', 'must stay stopped')).rejects.toThrow(
+      '登录凭证反复失效，请检查系统时间与账号配置'
+    )
+    await runtime.disconnect()
+  })
+
   it('keeps multiple-account kick as a terminal state and does not relogin', async () => {
     vi.stubGlobal(
       'fetch',

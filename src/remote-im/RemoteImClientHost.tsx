@@ -399,6 +399,13 @@ export default function RemoteImClientHost(props: RemoteImClientHostProps): null
           },
           onRuntimeLog: (entry) => {
             void window.api.remoteIm.writeRuntimeLog(entry)
+          },
+          onConnectionStateChanged: (state, detail) => {
+            if (cancelled) return
+            void window.api.remoteIm.updateSdkRuntimeStatus(
+              { projectId, state, detail },
+              runtimeIdentity
+            )
           }
         })
         if (cancelled) {

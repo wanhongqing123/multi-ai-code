@@ -330,6 +330,20 @@ export interface GenerateTencentUserSigInput {
   nowSeconds?: number
 }
 
+export interface TencentUserSigLifetime {
+  issuedAtSeconds: number
+  expiresAtSeconds: number
+  ttlSeconds: number
+}
+
+interface ResolvedTencentUserSig {
+  userSig: string
+  lifetime: TencentUserSigLifetime | null
+}
+
+const DEFAULT_TENCENT_USER_SIG_TTL_SECONDS = 7 * 24 * 60 * 60
+const TENCENT_USER_SIG_REFRESH_LEAD_SECONDS = 20 * 60
+
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = ''
   const chunkSize = 0x8000
@@ -365,6 +379,47 @@ async function deflateUtf8(input: string): Promise<Uint8Array> {
   return new Uint8Array(await new Response(stream).arrayBuffer())
 }
 
+async function inflateUtf8(input: Uint8Array): Promise<string> {
+  if (typeof DecompressionStream === 'undefined') {
+    throw new Error('当前运行环境不支持解析登录凭证有效期')
+  }
+  const bytes = new Uint8Array(input.byteLength)
+  bytes.set(input)
+  const stream = new Blob([bytes.buffer]).stream().pipeThrough(new DecompressionStream('deflate'))
+  return new Response(stream).text()
+}
+
+function base64ToBytes(base64: string): Uint8Array {
+  const binary = atob(base64)
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0))
+}
+
+export async function inspectTencentUserSigLifetime(
+  userSig: string
+): Promise<TencentUserSigLifetime | null> {
+  try {
+    const base64 = userSig.replace(/\*/g, '+').replace(/-/g, '/').replace(/_/g, '=')
+    const payload = JSON.parse(await inflateUtf8(base64ToBytes(base64))) as Record<string, unknown>
+    const issuedAtSeconds = Number(payload['TLS.time'])
+    const ttlSeconds = Number(payload['TLS.expire'])
+    if (
+      !Number.isSafeInteger(issuedAtSeconds) ||
+      issuedAtSeconds <= 0 ||
+      !Number.isSafeInteger(ttlSeconds) ||
+      ttlSeconds <= 0
+    ) {
+      return null
+    }
+    return {
+      issuedAtSeconds,
+      expiresAtSeconds: issuedAtSeconds + ttlSeconds,
+      ttlSeconds
+    }
+  } catch {
+    return null
+  }
+}
+
 export async function generateTencentUserSig(input: GenerateTencentUserSigInput): Promise<string> {
   const userId = input.userId.trim()
   const secretKey = input.secretKey.trim()
@@ -374,7 +429,7 @@ export async function generateTencentUserSig(input: GenerateTencentUserSigInput)
   if (!userId) throw new Error('请填写登录账号')
   if (!secretKey) throw new Error('内置连接凭证无效')
 
-  const expireSeconds = input.expireSeconds ?? 604800
+  const expireSeconds = input.expireSeconds ?? DEFAULT_TENCENT_USER_SIG_TTL_SECONDS
   const nowSeconds = input.nowSeconds ?? Math.floor(Date.now() / 1000)
   const contentToSign =
     `TLS.identifier:${userId}\n` +
@@ -906,13 +961,24 @@ export function extractTencentImAudioMessages(event: unknown): TencentImAudioMes
  * 用同一套规则算出来。远程桌面那边原先无条件本地生成，账号是 endpoint
  * 模式时 secretKey 为空，直接抛「内置连接凭证无效」。
  */
-export async function requestUserSig(config: RemoteImConfig): Promise<string> {
+async function resolveUserSig(config: RemoteImConfig): Promise<ResolvedTencentUserSig> {
   if (config.userSigMode === 'secret-key') {
-    return generateTencentUserSig({
+    const issuedAtSeconds = Math.floor(Date.now() / 1000)
+    const userSig = await generateTencentUserSig({
       sdkAppId: config.sdkAppId ?? 0,
       userId: config.desktopUserId,
-      secretKey: config.userSigSecretKey
+      secretKey: config.userSigSecretKey,
+      expireSeconds: DEFAULT_TENCENT_USER_SIG_TTL_SECONDS,
+      nowSeconds: issuedAtSeconds
     })
+    return {
+      userSig,
+      lifetime: {
+        issuedAtSeconds,
+        expiresAtSeconds: issuedAtSeconds + DEFAULT_TENCENT_USER_SIG_TTL_SECONDS,
+        ttlSeconds: DEFAULT_TENCENT_USER_SIG_TTL_SECONDS
+      }
+    }
   }
   const response = await fetch(config.userSigEndpoint, {
     method: 'POST',
@@ -925,7 +991,15 @@ export async function requestUserSig(config: RemoteImConfig): Promise<string> {
   if (!response.ok) {
     throw new Error(`凭证接口返回 HTTP ${response.status}`)
   }
-  return extractUserSig(await response.json())
+  const userSig = extractUserSig(await response.json())
+  return {
+    userSig,
+    lifetime: await inspectTencentUserSigLifetime(userSig)
+  }
+}
+
+export async function requestUserSig(config: RemoteImConfig): Promise<string> {
+  return (await resolveUserSig(config)).userSig
 }
 
 async function loadTencentImSdk(): Promise<any> {
@@ -968,6 +1042,33 @@ function getTencentImApiFailure(action: string, result: unknown): string | null 
       ? response.message.trim()
       : JSON.stringify(result)
   return `IM ${getTencentImApiActionLabel(action)}失败 (${code}): ${message}`
+}
+
+const TENCENT_USER_SIG_EXPIRED_ERROR_CODES = new Set([
+  6206,
+  6226,
+  70001,
+  70052,
+  -10001,
+  -10003
+])
+
+function getTencentImErrorCode(value: unknown): number | null {
+  if (!value || typeof value !== 'object') return null
+  const source = value as { code?: unknown; errorCode?: unknown }
+  const code = Number(source.code ?? source.errorCode)
+  return Number.isFinite(code) ? code : null
+}
+
+function isTencentUserSigExpiredFailure(value: unknown): boolean {
+  const code = getTencentImErrorCode(value)
+  if (code !== null && TENCENT_USER_SIG_EXPIRED_ERROR_CODES.has(code)) return true
+  const message = value instanceof Error ? value.message : String(value ?? '')
+  return (
+    /user\s*sig.{0,32}(expired|过期|失效)/i.test(message) ||
+    /(登录凭证|票据).{0,16}(过期|失效)/.test(message) ||
+    /(?:^|\D)(6206|6226|70001|70052|-10001|-10003)(?:\D|$)/.test(message)
+  )
 }
 
 function getTencentImApiActionLabel(action: string): string {
@@ -1015,19 +1116,27 @@ async function loginTencentImClient(
   TencentCloudChat: any,
   config: RemoteImConfig,
   emitRuntimeLog?: (event: string, patch?: Partial<RemoteImRuntimeLogEntryInput>) => void
-): Promise<void> {
+): Promise<TencentUserSigLifetime | null> {
   try {
     emitRuntimeLog?.('login:user-sig:start', {
       detail: { mode: config.userSigMode }
     })
-    const userSig = await requestUserSig(config)
+    const resolvedUserSig = await resolveUserSig(config)
+    const remainingTtlSeconds = resolvedUserSig.lifetime
+      ? Math.max(0, resolvedUserSig.lifetime.expiresAtSeconds - Math.floor(Date.now() / 1000))
+      : null
     emitRuntimeLog?.('login:user-sig:ready', {
-      detail: { mode: config.userSigMode }
+      detail: {
+        mode: config.userSigMode,
+        issuedAtSeconds: resolvedUserSig.lifetime?.issuedAtSeconds ?? null,
+        expiresAtSeconds: resolvedUserSig.lifetime?.expiresAtSeconds ?? null,
+        remainingTtlSeconds
+      }
     })
     emitRuntimeLog?.('login:start')
     const result = await chat.login({
       userID: config.desktopUserId,
-      userSig
+      userSig: resolvedUserSig.userSig
     })
     emitRuntimeLog?.('login:resolved', {
       detail: summarizeTencentImApiResult(result)
@@ -1052,6 +1161,7 @@ async function loginTencentImClient(
           : 'IM 登录未建立有效会话'
       )
     }
+    return resolvedUserSig.lifetime
   } catch (err) {
     emitRuntimeLog?.('login:failed', {
       detail: { error: err instanceof Error ? err.message : String(err) }
@@ -1177,6 +1287,10 @@ export async function connectTencentImClient(input: {
   onIncomingFile?: (message: RemoteImIncomingFileMessage) => void
   onFriendListUpdated?: (userIds: string[]) => void
   onRuntimeLog?: (entry: RemoteImRuntimeLogEntryInput) => void
+  onConnectionStateChanged?: (
+    state: 'connecting' | 'connected' | 'error',
+    detail: string | null
+  ) => void
 }): Promise<TencentImRuntime> {
   const emitRuntimeLog = (
     event: string,
@@ -1199,9 +1313,134 @@ export async function connectTencentImClient(input: {
   chat.setLogLevel?.(1)
   let sdkReady = false
   let loggedInUserId: string | null = null
-  // 被同账号在别处登录顶下线后置真：阻断 ensureLoggedIn 的自动重登，避免与另一端
-  // 互踢死循环。只有重新 connect（disconnect 后再连）才复位。
-  let kickedOut = false
+  const userSigExpiredType =
+    TencentCloudChat.TYPES?.KICKED_OUT_USERSIG_EXPIRED ?? 'userSigExpired'
+  const multipleAccountType =
+    TencentCloudChat.TYPES?.KICKED_OUT_MULT_ACCOUNT ?? 'multipleAccount'
+  const multipleDeviceType =
+    TencentCloudChat.TYPES?.KICKED_OUT_MULT_DEVICE ?? 'multipleDevice'
+  const restApiKickType = TencentCloudChat.TYPES?.KICKED_OUT_REST_API ?? 'REST_API_Kick'
+  let terminalKickType: string | null = null
+  let userSigExpired = false
+  let currentUserSigLifetime: TencentUserSigLifetime | null = null
+  let refreshTimer: ReturnType<typeof setTimeout> | null = null
+  let loginInFlight: Promise<void> | null = null
+  let disconnected = false
+  let lastKickEvent: { type: string; createdAt: number } | null = null
+
+  const userSigLogDetail = (): Record<string, unknown> => {
+    const nowSeconds = Math.floor(Date.now() / 1000)
+    return {
+      issuedAtSeconds: currentUserSigLifetime?.issuedAtSeconds ?? null,
+      expiresAtSeconds: currentUserSigLifetime?.expiresAtSeconds ?? null,
+      remainingTtlSeconds: currentUserSigLifetime
+        ? Math.max(0, currentUserSigLifetime.expiresAtSeconds - nowSeconds)
+        : null
+    }
+  }
+
+  const userSigRefreshLeadSeconds = (lifetime: TencentUserSigLifetime): number =>
+    Math.min(
+      TENCENT_USER_SIG_REFRESH_LEAD_SECONDS,
+      Math.max(60, Math.floor(lifetime.ttlSeconds / 10))
+    )
+
+  const clearRefreshTimer = (): void => {
+    if (refreshTimer !== null) clearTimeout(refreshTimer)
+    refreshTimer = null
+  }
+
+  const terminalKickMessage = (): string => {
+    if (terminalKickType === multipleAccountType || terminalKickType === multipleDeviceType) {
+      return 'IM 账号已在其他客户端登录，本端已被踢下线，已停止自动重登'
+    }
+    if (terminalKickType === restApiKickType) {
+      return 'IM 账号已被服务端下线，已停止自动重登'
+    }
+    return 'IM 账号已被踢下线，已停止自动重登'
+  }
+
+  function scheduleUserSigRefresh(lifetime: TencentUserSigLifetime | null): void {
+    clearRefreshTimer()
+    currentUserSigLifetime = lifetime
+    if (!lifetime || disconnected) return
+
+    const nowSeconds = Math.floor(Date.now() / 1000)
+    const leadSeconds = userSigRefreshLeadSeconds(lifetime)
+    // endpoint 若持续返回同一张临期票据，至少退避一分钟，避免零延迟刷新风暴。
+    const delaySeconds = Math.max(60, lifetime.expiresAtSeconds - nowSeconds - leadSeconds)
+    emitRuntimeLog('user-sig:refresh:scheduled', {
+      detail: {
+        ...userSigLogDetail(),
+        leadSeconds,
+        refreshAtSeconds: nowSeconds + delaySeconds
+      }
+    })
+    refreshTimer = setTimeout(() => {
+      refreshTimer = null
+      void performLogin('ttl-threshold').catch(() => undefined)
+    }, delaySeconds * 1000)
+  }
+
+  async function performLogin(reason: string): Promise<void> {
+    if (terminalKickType) {
+      emitRuntimeLog('login:skip-kicked-out', { detail: { type: terminalKickType } })
+      throw new Error(terminalKickMessage())
+    }
+    if (loginInFlight) return loginInFlight
+
+    const isRefresh = reason !== 'initial'
+    const task = (async () => {
+      if (isRefresh) {
+        input.onConnectionStateChanged?.(
+          'connecting',
+          reason === 'user-sig-expired' || reason === 'send-retry'
+            ? '登录凭证已过期，正在重新登录'
+            : '正在刷新登录凭证'
+        )
+        emitRuntimeLog('user-sig:refresh:start', {
+          detail: { reason, ...userSigLogDetail() }
+        })
+      }
+      try {
+        const lifetime = await loginTencentImClient(
+          chat,
+          TencentCloudChat,
+          input.config,
+          emitRuntimeLog
+        )
+        if (disconnected) return
+        if (terminalKickType) throw new Error(terminalKickMessage())
+        sdkReady = true
+        loggedInUserId = input.config.desktopUserId
+        userSigExpired = false
+        scheduleUserSigRefresh(lifetime)
+        if (isRefresh) {
+          input.onConnectionStateChanged?.('connected', null)
+          emitRuntimeLog('user-sig:refresh:success', {
+            detail: { reason, ...userSigLogDetail() }
+          })
+        }
+      } catch (error) {
+        sdkReady = false
+        loggedInUserId = null
+        if (isRefresh) {
+          const errorText = error instanceof Error ? error.message : String(error)
+          input.onConnectionStateChanged?.('error', `登录凭证刷新失败：${errorText}`)
+          emitRuntimeLog('user-sig:refresh:failed', {
+            detail: { reason, error: errorText, ...userSigLogDetail() }
+          })
+        }
+        throw error
+      }
+    })()
+    loginInFlight = task
+    try {
+      await task
+    } finally {
+      if (loginInFlight === task) loginInFlight = null
+    }
+  }
 
   const onMessageReceived = (event: unknown): void => {
     const data = event && typeof event === 'object' ? (event as { data?: unknown }).data : null
@@ -1341,15 +1580,37 @@ export async function connectTencentImClient(input: {
   }
   const kickedOutEventName = TencentCloudChat.EVENT?.KICKED_OUT ?? 'kickedOut'
   const onKickedOut = (event: { data?: { type?: string } } | undefined): void => {
-    const type = event?.data?.type
-    kickedOut = true
+    const type = event?.data?.type ?? 'unknown'
+    if (terminalKickType === type) return
+    if (type === userSigExpiredType && userSigExpired && loginInFlight) return
+    const createdAt = Date.now()
+    if (lastKickEvent?.type === type && createdAt - lastKickEvent.createdAt < 2_000) return
+    lastKickEvent = { type, createdAt }
     sdkReady = false
     loggedInUserId = null
+    if (type === userSigExpiredType) {
+      userSigExpired = true
+      emitRuntimeLog('user-sig:expired', {
+        detail: {
+          type,
+          multipleAccount: false,
+          multipleDevice: false,
+          ...userSigLogDetail()
+        }
+      })
+      void performLogin('user-sig-expired').catch(() => undefined)
+      return
+    }
+
+    terminalKickType = type
+    clearRefreshTimer()
+    input.onConnectionStateChanged?.('error', terminalKickMessage())
     emitRuntimeLog('kicked-out', {
       detail: {
         type,
-        multipleAccount:
-          type === (TencentCloudChat.TYPES?.KICKED_OUT_MULTI_ACCOUNT ?? 'multipleAccount')
+        multipleAccount: type === multipleAccountType,
+        multipleDevice: type === multipleDeviceType,
+        restApiKick: type === restApiKickType
       }
     })
   }
@@ -1368,27 +1629,88 @@ export async function connectTencentImClient(input: {
   chat.on?.(sdkNotReadyEventName, onSdkNotReady)
   chat.on?.(kickedOutEventName, onKickedOut)
   chat.on?.(friendListUpdatedEventName, onFriendListUpdated)
-  await loginTencentImClient(chat, TencentCloudChat, input.config, emitRuntimeLog)
-  sdkReady = true
-  loggedInUserId = input.config.desktopUserId
+  await performLogin('initial')
 
   async function ensureLoggedIn(): Promise<void> {
-    if (kickedOut) {
-      emitRuntimeLog('login:skip-kicked-out')
-      throw new Error('IM 账号已在别处登录，本端已被踢下线，已停止自动重登')
+    if (terminalKickType) {
+      emitRuntimeLog('login:skip-kicked-out', { detail: { type: terminalKickType } })
+      throw new Error(terminalKickMessage())
     }
-    if (loggedInUserId === input.config.desktopUserId && sdkReady) return
+    const nowSeconds = Math.floor(Date.now() / 1000)
+    const nearingExpiry = currentUserSigLifetime
+      ? currentUserSigLifetime.expiresAtSeconds - nowSeconds <=
+        userSigRefreshLeadSeconds(currentUserSigLifetime)
+      : false
+    if (
+      loggedInUserId === input.config.desktopUserId &&
+      sdkReady &&
+      !userSigExpired &&
+      !nearingExpiry
+    ) {
+      return
+    }
+    const reason = userSigExpired
+      ? 'user-sig-expired'
+      : nearingExpiry
+        ? 'ttl-threshold'
+        : 'sdk-not-ready'
     emitRuntimeLog('login:refresh-required', {
-      detail: { sdkReady, loggedInUserId }
+      detail: { reason, sdkReady, loggedInUserId, ...userSigLogDetail() }
     })
-    await loginTencentImClient(chat, TencentCloudChat, input.config, emitRuntimeLog)
-    sdkReady = true
-    loggedInUserId = input.config.desktopUserId
+    await performLogin(reason)
+  }
+
+  async function sendMessageWithUserSigRetry(options: {
+    eventPrefix: string
+    peerUserId: string
+    messageId?: number | null
+    createMessage: () => unknown
+  }): Promise<unknown> {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      await ensureLoggedIn()
+      const message = options.createMessage()
+      emitRuntimeLog(`${options.eventPrefix}:created`, {
+        peerUserId: options.peerUserId,
+        messageId: options.messageId,
+        detail: { ...summarizeTencentImMessage(message), attempt }
+      })
+      try {
+        const result = await chat.sendMessage(message)
+        const failure = getTencentImApiFailure('send', result)
+        if (failure) {
+          const error = new Error(failure) as Error & { code?: number }
+          const code = getTencentImErrorCode(result)
+          if (code !== null) error.code = code
+          throw error
+        }
+        return result
+      } catch (error) {
+        if (attempt === 1 && isTencentUserSigExpiredFailure(error)) {
+          sdkReady = false
+          loggedInUserId = null
+          userSigExpired = true
+          emitRuntimeLog('user-sig:expired-during-send', {
+            peerUserId: options.peerUserId,
+            messageId: options.messageId,
+            detail: {
+              error: error instanceof Error ? error.message : String(error),
+              ...userSigLogDetail()
+            }
+          })
+          await performLogin('send-retry')
+          continue
+        }
+        throw error
+      }
+    }
+    throw new Error('IM 发送重试次数已耗尽')
   }
 
   return {
     async disconnect() {
       emitRuntimeLog('disconnect:start')
+      disconnected = true
+      clearRefreshTimer()
       chat.off?.(eventName, onMessageReceived)
       chat.off?.(sdkReadyEventName, onSdkReady)
       chat.off?.(sdkNotReadyEventName, onSdkNotReady)
@@ -1396,7 +1718,9 @@ export async function connectTencentImClient(input: {
       chat.off?.(friendListUpdatedEventName, onFriendListUpdated)
       sdkReady = false
       loggedInUserId = null
-      kickedOut = false
+      terminalKickType = null
+      userSigExpired = false
+      currentUserSigLifetime = null
       await chat.logout?.()
       await chat.destroy?.()
       emitRuntimeLog('disconnect:complete')
@@ -1491,30 +1815,27 @@ export async function connectTencentImClient(input: {
           isReady: typeof chat.isReady === 'function' ? Boolean(chat.isReady()) : null
         }
       })
-      await ensureLoggedIn()
-      const message = chat.createTextMessage({
-        to: toUserId,
-        conversationType: TencentCloudChat.TYPES?.CONV_C2C ?? 'C2C',
-        payload: { text },
-        cloudCustomData: createRemoteImCloudCustomData(
-          options.origin ?? 'machine',
-          options.interaction
-        )
-      })
-      emitRuntimeLog('send:created', {
-        peerUserId: toUserId,
-        messageId: options.messageId,
-        detail: summarizeTencentImMessage(message)
-      })
       try {
-        const result = await chat.sendMessage(message)
+        const result = await sendMessageWithUserSigRetry({
+          eventPrefix: 'send',
+          peerUserId: toUserId,
+          messageId: options.messageId,
+          createMessage: () =>
+            chat.createTextMessage({
+              to: toUserId,
+              conversationType: TencentCloudChat.TYPES?.CONV_C2C ?? 'C2C',
+              payload: { text },
+              cloudCustomData: createRemoteImCloudCustomData(
+                options.origin ?? 'machine',
+                options.interaction
+              )
+            })
+        })
         emitRuntimeLog('send:resolved', {
           peerUserId: toUserId,
           messageId: options.messageId,
           detail: summarizeTencentImApiResult(result)
         })
-        const failure = getTencentImApiFailure('send', result)
-        if (failure) throw new Error(failure)
         return { remoteMessageId: getSentRemoteMessageId(result) }
       } catch (err) {
         emitRuntimeLog('send:rejected', {
@@ -1538,27 +1859,24 @@ export async function connectTencentImClient(input: {
           fileType: file.type
         }
       })
-      await ensureLoggedIn()
-      const message = chat.createImageMessage({
-        to: toUserId,
-        conversationType: TencentCloudChat.TYPES?.CONV_C2C ?? 'C2C',
-        payload: { file },
-        cloudCustomData: createRemoteImCloudCustomData(options.origin ?? 'machine')
-      })
-      emitRuntimeLog('send:image:created', {
-        peerUserId: toUserId,
-        messageId: options.messageId,
-        detail: summarizeTencentImMessage(message)
-      })
       try {
-        const result = await chat.sendMessage(message)
+        const result = await sendMessageWithUserSigRetry({
+          eventPrefix: 'send:image',
+          peerUserId: toUserId,
+          messageId: options.messageId,
+          createMessage: () =>
+            chat.createImageMessage({
+              to: toUserId,
+              conversationType: TencentCloudChat.TYPES?.CONV_C2C ?? 'C2C',
+              payload: { file },
+              cloudCustomData: createRemoteImCloudCustomData(options.origin ?? 'machine')
+            })
+        })
         emitRuntimeLog('send:image:resolved', {
           peerUserId: toUserId,
           messageId: options.messageId,
           detail: summarizeTencentImApiResult(result)
         })
-        const failure = getTencentImApiFailure('send', result)
-        if (failure) throw new Error(failure)
         return { remoteMessageId: getSentRemoteMessageId(result) }
       } catch (err) {
         emitRuntimeLog('send:image:rejected', {
@@ -1582,31 +1900,28 @@ export async function connectTencentImClient(input: {
           fileType: file.type
         }
       })
-      await ensureLoggedIn()
-      const message = chat.createFileMessage({
-        to: toUserId,
-        conversationType: TencentCloudChat.TYPES?.CONV_C2C ?? 'C2C',
-        payload: { file },
-        cloudCustomData: createRemoteImCloudCustomData(
-          options.origin ?? 'machine',
-          undefined,
-          options.artifact
-        )
-      })
-      emitRuntimeLog('send:file:created', {
-        peerUserId: toUserId,
-        messageId: options.messageId,
-        detail: summarizeTencentImMessage(message)
-      })
       try {
-        const result = await chat.sendMessage(message)
+        const result = await sendMessageWithUserSigRetry({
+          eventPrefix: 'send:file',
+          peerUserId: toUserId,
+          messageId: options.messageId,
+          createMessage: () =>
+            chat.createFileMessage({
+              to: toUserId,
+              conversationType: TencentCloudChat.TYPES?.CONV_C2C ?? 'C2C',
+              payload: { file },
+              cloudCustomData: createRemoteImCloudCustomData(
+                options.origin ?? 'machine',
+                undefined,
+                options.artifact
+              )
+            })
+        })
         emitRuntimeLog('send:file:resolved', {
           peerUserId: toUserId,
           messageId: options.messageId,
           detail: summarizeTencentImApiResult(result)
         })
-        const failure = getTencentImApiFailure('send', result)
-        if (failure) throw new Error(failure)
         return { remoteMessageId: getSentRemoteMessageId(result) }
       } catch (err) {
         emitRuntimeLog('send:file:rejected', {
@@ -1633,27 +1948,24 @@ export async function connectTencentImClient(input: {
           durationSeconds
         }
       })
-      await ensureLoggedIn()
-      const message = chat.createVideoMessage({
-        to: toUserId,
-        conversationType: TencentCloudChat.TYPES?.CONV_C2C ?? 'C2C',
-        payload: { file: withProbedVideoDuration(file, durationSeconds) },
-        cloudCustomData: createRemoteImCloudCustomData(options.origin ?? 'machine')
-      })
-      emitRuntimeLog('send:video:created', {
-        peerUserId: toUserId,
-        messageId: options.messageId,
-        detail: summarizeTencentImMessage(message)
-      })
       try {
-        const result = await chat.sendMessage(message)
+        const result = await sendMessageWithUserSigRetry({
+          eventPrefix: 'send:video',
+          peerUserId: toUserId,
+          messageId: options.messageId,
+          createMessage: () =>
+            chat.createVideoMessage({
+              to: toUserId,
+              conversationType: TencentCloudChat.TYPES?.CONV_C2C ?? 'C2C',
+              payload: { file: withProbedVideoDuration(file, durationSeconds) },
+              cloudCustomData: createRemoteImCloudCustomData(options.origin ?? 'machine')
+            })
+        })
         emitRuntimeLog('send:video:resolved', {
           peerUserId: toUserId,
           messageId: options.messageId,
           detail: summarizeTencentImApiResult(result)
         })
-        const failure = getTencentImApiFailure('send', result)
-        if (failure) throw new Error(failure)
         return { remoteMessageId: getSentRemoteMessageId(result) }
       } catch (err) {
         emitRuntimeLog('send:video:rejected', {

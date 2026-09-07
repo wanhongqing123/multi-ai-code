@@ -15,6 +15,7 @@ import {
   extractTencentImTextMessages,
   extractUserSig,
   generateTencentUserSig,
+  inspectTencentUserSigLifetime,
   extractTencentImRoamedTextMessages,
   getSentRemoteMessageId,
   parseRemoteImCloudMetadata,
@@ -61,7 +62,11 @@ const sdkMock = vi.hoisted(() => {
       FRIEND_LIST_UPDATED: 'friendListUpdated'
     },
     TYPES: {
-      CONV_C2C: 'C2C'
+      CONV_C2C: 'C2C',
+      KICKED_OUT_MULT_ACCOUNT: 'multipleAccount',
+      KICKED_OUT_MULT_DEVICE: 'multipleDevice',
+      KICKED_OUT_USERSIG_EXPIRED: 'userSigExpired',
+      KICKED_OUT_REST_API: 'REST_API_Kick'
     }
   }
   return {
@@ -650,6 +655,23 @@ describe('tencent IM client helpers', () => {
     })
     expect(typeof payload['TLS.sig']).toBe('string')
     expect(payload['TLS.sig'].length).toBeGreaterThan(10)
+  })
+
+  it('reads issued time, expiry time, and TTL from a generated Tencent UserSig', async () => {
+    const userSig = await generateTencentUserSig({
+      sdkAppId: 1600148979,
+      userId: 'desktop-a',
+      secretKey: 'local-test-secret',
+      expireSeconds: 7_200,
+      nowSeconds: 1_788_420_000
+    })
+
+    await expect(inspectTencentUserSigLifetime(userSig)).resolves.toEqual({
+      issuedAtSeconds: 1_788_420_000,
+      expiresAtSeconds: 1_788_427_200,
+      ttlSeconds: 7_200
+    })
+    await expect(inspectTencentUserSigLifetime('not-a-usersig')).resolves.toBeNull()
   })
 
   it('uses a Vite-statically analyzable Tencent IM SDK import', () => {
@@ -1247,6 +1269,163 @@ describe('tencent IM client helpers', () => {
     expect(sdkMock.chat.sendMessage).toHaveBeenCalledTimes(1)
   })
 
+  it('refreshes UserSig and relogs in when KICKED_OUT reports userSigExpired', async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ userSig: 'sig-1' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ userSig: 'sig-2' }) })
+    vi.stubGlobal('fetch', fetch)
+    const onRuntimeLog = vi.fn()
+    const onConnectionStateChanged = vi.fn()
+    const runtimePromise = connectTencentImClient({
+      projectId: 'project-1',
+      config: baseConfig(),
+      onIncomingText: vi.fn(),
+      onRuntimeLog,
+      onConnectionStateChanged
+    })
+
+    await vi.waitFor(() => expect(sdkMock.chat.login).toHaveBeenCalledTimes(1))
+    sdkMock.handlers.get('sdkReady')?.()
+    const runtime = await runtimePromise
+
+    sdkMock.handlers.get('kickedOut')?.({ data: { type: 'userSigExpired' } })
+    // 同一 SDK 事件短时间重复投递时，不得重复生成凭证和发起登录。
+    sdkMock.handlers.get('kickedOut')?.({ data: { type: 'userSigExpired' } })
+    await vi.waitFor(() => expect(sdkMock.chat.login).toHaveBeenCalledTimes(2))
+    expect(sdkMock.chat.login.mock.calls[1]?.[0]).toEqual({
+      userID: 'desktop-a',
+      userSig: 'sig-2'
+    })
+    sdkMock.handlers.get('sdkReady')?.()
+    await vi.waitFor(() =>
+      expect(onRuntimeLog).toHaveBeenCalledWith(
+        expect.objectContaining({ event: 'user-sig:refresh:success' })
+      )
+    )
+
+    await runtime.sendText('desktop-b', 'after refresh')
+
+    expect(sdkMock.chat.sendMessage).toHaveBeenCalledTimes(1)
+    expect(
+      onRuntimeLog.mock.calls.filter(([entry]) => entry.event === 'user-sig:expired')
+    ).toHaveLength(1)
+    expect(
+      onRuntimeLog.mock.calls.some(([entry]) => entry.event === 'login:skip-kicked-out')
+    ).toBe(false)
+    expect(onRuntimeLog.mock.calls.some(([entry]) => entry.event === 'kicked-out')).toBe(false)
+    expect(onConnectionStateChanged).toHaveBeenNthCalledWith(
+      1,
+      'connecting',
+      '登录凭证已过期，正在重新登录'
+    )
+    expect(onConnectionStateChanged).toHaveBeenNthCalledWith(2, 'connected', null)
+  })
+
+  it('keeps multiple-account kick as a terminal state and does not relogin', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, json: async () => ({ userSig: 'sig-1' }) }))
+    )
+    const onRuntimeLog = vi.fn()
+    const onConnectionStateChanged = vi.fn()
+    const runtimePromise = connectTencentImClient({
+      projectId: 'project-1',
+      config: baseConfig(),
+      onIncomingText: vi.fn(),
+      onRuntimeLog,
+      onConnectionStateChanged
+    })
+
+    await vi.waitFor(() => expect(sdkMock.chat.login).toHaveBeenCalledTimes(1))
+    sdkMock.handlers.get('sdkReady')?.()
+    const runtime = await runtimePromise
+    sdkMock.handlers.get('kickedOut')?.({ data: { type: 'multipleAccount' } })
+
+    await expect(runtime.sendText('desktop-b', 'must not send')).rejects.toThrow(
+      'IM 账号已在其他客户端登录，本端已被踢下线，已停止自动重登'
+    )
+
+    expect(sdkMock.chat.login).toHaveBeenCalledTimes(1)
+    expect(sdkMock.chat.sendMessage).not.toHaveBeenCalled()
+    expect(onRuntimeLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'kicked-out',
+        detail: expect.objectContaining({ type: 'multipleAccount', multipleAccount: true })
+      })
+    )
+    expect(onConnectionStateChanged).toHaveBeenCalledWith(
+      'error',
+      'IM 账号已在其他客户端登录，本端已被踢下线，已停止自动重登'
+    )
+  })
+
+  it('relogs in once and retries a send once when the SDK reports expired UserSig', async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ userSig: 'sig-1' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ userSig: 'sig-2' }) })
+    vi.stubGlobal('fetch', fetch)
+    const onRuntimeLog = vi.fn()
+    const runtimePromise = connectTencentImClient({
+      projectId: 'project-1',
+      config: baseConfig(),
+      onIncomingText: vi.fn(),
+      onRuntimeLog
+    })
+
+    await vi.waitFor(() => expect(sdkMock.chat.login).toHaveBeenCalledTimes(1))
+    sdkMock.handlers.get('sdkReady')?.()
+    const runtime = await runtimePromise
+    sdkMock.chat.sendMessage
+      .mockRejectedValueOnce({ code: 6206, message: 'UserSig expired' })
+      .mockResolvedValueOnce({ code: 0, message: 'OK' })
+
+    const sendPromise = runtime.sendText('desktop-b', 'retry me')
+    await vi.waitFor(() => expect(sdkMock.chat.login).toHaveBeenCalledTimes(2))
+    sdkMock.handlers.get('sdkReady')?.()
+    await sendPromise
+
+    expect(sdkMock.chat.sendMessage).toHaveBeenCalledTimes(2)
+    expect(sdkMock.chat.createTextMessage).toHaveBeenCalledTimes(2)
+    expect(
+      onRuntimeLog.mock.calls.filter(
+        ([entry]) => entry.event === 'user-sig:expired-during-send'
+      )
+    ).toHaveLength(1)
+  })
+
+  it('never retries an expired-UserSig send more than once', async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ userSig: 'sig-1' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ userSig: 'sig-2' }) })
+    vi.stubGlobal('fetch', fetch)
+    const onRuntimeLog = vi.fn()
+    const runtimePromise = connectTencentImClient({
+      projectId: 'project-1',
+      config: baseConfig(),
+      onIncomingText: vi.fn(),
+      onRuntimeLog
+    })
+
+    await vi.waitFor(() => expect(sdkMock.chat.login).toHaveBeenCalledTimes(1))
+    sdkMock.handlers.get('sdkReady')?.()
+    const runtime = await runtimePromise
+    sdkMock.chat.sendMessage.mockRejectedValue({ code: 6206, message: 'UserSig expired' })
+
+    const sendPromise = runtime.sendText('desktop-b', 'retry only once')
+    await vi.waitFor(() => expect(sdkMock.chat.login).toHaveBeenCalledTimes(2))
+    sdkMock.handlers.get('sdkReady')?.()
+    await expect(sendPromise).rejects.toMatchObject({ code: 6206 })
+
+    expect(sdkMock.chat.login).toHaveBeenCalledTimes(2)
+    expect(sdkMock.chat.sendMessage).toHaveBeenCalledTimes(2)
+    expect(sdkMock.chat.createTextMessage).toHaveBeenCalledTimes(2)
+    expect(
+      onRuntimeLog.mock.calls.filter(
+        ([entry]) => entry.event === 'user-sig:expired-during-send'
+      )
+    ).toHaveLength(1)
+  })
+
   it('rejects connect when Tencent IM login returns a non-zero code', async () => {
     vi.stubGlobal(
       'fetch',
@@ -1304,7 +1483,7 @@ describe('tencent IM client helpers', () => {
 
     await vi.waitFor(() => expect(sdkMock.chat.login).toHaveBeenCalled())
     sdkMock.handlers.get('sdkReady')?.()
-    await runtimePromise
+    const runtime = await runtimePromise
 
     expect(fetch).not.toHaveBeenCalled()
     const loginInput = (sdkMock.chat.login.mock.calls.at(-1) as
@@ -1314,6 +1493,64 @@ describe('tencent IM client helpers', () => {
       userID: 'desktop-a'
     })
     expect(loginInput?.userSig).toEqual(expect.any(String))
+    await runtime.disconnect()
+  })
+
+  it('proactively refreshes a local UserSig before its seven-day expiry', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date(1_788_420_000 * 1000))
+      sdkMock.chat.isReady.mockReturnValue(true)
+      const onRuntimeLog = vi.fn()
+      const runtime = await connectTencentImClient({
+        projectId: 'project-1',
+        config: {
+          ...baseConfig(),
+          userSigMode: 'secret-key',
+          userSigEndpoint: '',
+          userSigSecretKey: 'local-test-secret'
+        },
+        onIncomingText: vi.fn(),
+        onRuntimeLog
+      })
+
+      expect(sdkMock.chat.login).toHaveBeenCalledTimes(1)
+      expect(onRuntimeLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event: 'user-sig:refresh:scheduled',
+          detail: expect.objectContaining({
+            issuedAtSeconds: 1_788_420_000,
+            expiresAtSeconds: 1_789_024_800,
+            remainingTtlSeconds: 604_800,
+            leadSeconds: 1_200,
+            refreshAtSeconds: 1_789_023_600
+          })
+        })
+      )
+
+      expect(vi.getTimerCount()).toBe(1)
+      await vi.runOnlyPendingTimersAsync()
+      expect(onRuntimeLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event: 'user-sig:refresh:start',
+          detail: expect.objectContaining({ reason: 'ttl-threshold' })
+        })
+      )
+      // UserSig 的 WebCrypto 生成不受 fake timers 驱动；定时器触发后切回
+      // 真实时钟等待签名完成，避免把“定时器已触发”和“登录已完成”混为一谈。
+      vi.useRealTimers()
+      await vi.waitFor(() => expect(sdkMock.chat.login).toHaveBeenCalledTimes(2))
+
+      expect(onRuntimeLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event: 'user-sig:refresh:success',
+          detail: expect.objectContaining({ reason: 'ttl-threshold' })
+        })
+      )
+      await runtime.disconnect()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('emits runtime diagnostics around Tencent IM send attempts', async () => {
@@ -1403,6 +1640,7 @@ describe('tencent IM client helpers', () => {
       })
     )
     expect(JSON.stringify(onRuntimeLog.mock.calls)).not.toContain('local-test-secret')
+    await runtime.disconnect()
   })
 })
 

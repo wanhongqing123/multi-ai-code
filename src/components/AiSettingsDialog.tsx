@@ -1,6 +1,10 @@
 import { useEffect, useState } from 'react'
 import type { AiSettings, AiPermissionMode, OpenCodeProviderProfile } from '../../electron/preload'
-import { CLAW_DEFAULT_BASE_URL, CLAW_DEFAULT_MODEL } from '../../electron/aicli/clawConfig'
+import {
+  CLAW_PROTOCOLS,
+  clawProtocolSpec,
+  type ClawProtocol
+} from '../../electron/aicli/clawConfig'
 // 类型真源在 electron 侧，这里 re-export 兼容既有从本组件引用它们的地方（App.tsx / RepoViewerWindow）。
 export type { AiSettings, AiPermissionMode, OpenCodeProviderProfile }
 import type { RemoteImConfig, RemoteDesktopMode } from '../../electron/remote-im/types'
@@ -150,6 +154,7 @@ function SettingsSection(props: {
   permissionMode: AiPermissionMode
   zhipuApiKey: string
   apiKeyLoading: boolean
+  clawProtocol: ClawProtocol
   clawApiKey: string
   clawBaseUrl: string
   clawModel: string
@@ -160,6 +165,7 @@ function SettingsSection(props: {
   onAiCli: (next: AiCliKind) => void
   onPermissionMode: (next: AiPermissionMode) => void
   onZhipuApiKey: (next: string) => void
+  onClawProtocol: (next: ClawProtocol) => void
   onClawApiKey: (next: string) => void
   onClawBaseUrl: (next: string) => void
   onClawModel: (next: string) => void
@@ -220,35 +226,22 @@ function SettingsSection(props: {
         )}
         {props.aiCli === 'claw' && (
           <>
-            <label className="ai-settings-grid-full">
-              Claw API Key
-              <input
-                type="password"
-                value={props.clawApiKey}
+            <label>
+              协议
+              <select
+                value={props.clawProtocol}
                 disabled={props.clawLoading}
-                autoComplete="off"
-                spellCheck={false}
-                onChange={(event) => props.onClawApiKey(event.target.value)}
-                placeholder={props.clawLoading ? '正在读取…' : '默认按智谱 Coding Plan 的 Key 使用'}
-              />
-              <span className="ai-settings-help">
-                仅保存在当前桌面账号的本地数据目录，不会写入项目仓库或安装包。
-              </span>
+                onChange={(event) => props.onClawProtocol(event.target.value as ClawProtocol)}
+              >
+                {CLAW_PROTOCOLS.map((spec) => (
+                  <option key={spec.id} value={spec.id}>
+                    {spec.label}
+                  </option>
+                ))}
+              </select>
             </label>
-            <label className="ai-settings-grid-full">
-              Base URL（留空用智谱）
-              <input
-                type="text"
-                value={props.clawBaseUrl}
-                disabled={props.clawLoading}
-                autoComplete="off"
-                spellCheck={false}
-                onChange={(event) => props.onClawBaseUrl(event.target.value)}
-                placeholder={CLAW_DEFAULT_BASE_URL}
-              />
-            </label>
-            <label className="ai-settings-grid-full">
-              模型（留空用默认）
+            <label>
+              模型
               <input
                 type="text"
                 value={props.clawModel}
@@ -256,11 +249,41 @@ function SettingsSection(props: {
                 autoComplete="off"
                 spellCheck={false}
                 onChange={(event) => props.onClawModel(event.target.value)}
-                placeholder={CLAW_DEFAULT_MODEL}
+                placeholder={clawProtocolSpec(props.clawProtocol).sampleModel}
+              />
+            </label>
+            {clawProtocolSpec(props.clawProtocol).keyEnv !== null && (
+              <label className="ai-settings-grid-full">
+                API Key
+                <input
+                  type="password"
+                  value={props.clawApiKey}
+                  disabled={props.clawLoading}
+                  autoComplete="off"
+                  spellCheck={false}
+                  onChange={(event) => props.onClawApiKey(event.target.value)}
+                  placeholder={props.clawLoading ? '正在读取…' : '该协议服务商的 API Key'}
+                />
+                <span className="ai-settings-help">
+                  仅保存在当前桌面账号的本地数据目录，不会写入项目仓库或安装包。
+                </span>
+              </label>
+            )}
+            <label className="ai-settings-grid-full">
+              Base URL
+              <input
+                type="text"
+                value={props.clawBaseUrl}
+                disabled={props.clawLoading}
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(event) => props.onClawBaseUrl(event.target.value)}
+                placeholder={
+                  clawProtocolSpec(props.clawProtocol).defaultBaseUrl ?? '留空用该协议的官方端点'
+                }
               />
               <span className="ai-settings-help">
-                模型名必须带 provider 前缀：claw 按前缀路由，openai/ 走 OpenAI 兼容端点
-                （智谱即走这条），anthropic/ 走 Anthropic。漏掉前缀会被当成 Anthropic 模型。
+                {clawProtocolSpec(props.clawProtocol).hint}
               </span>
             </label>
           </>
@@ -323,6 +346,7 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // claw 的托管配置独立于 opencode 存储（终点是删掉 opencode，不能耦合过去）。
+  const [clawProtocol, setClawProtocol] = useState<ClawProtocol>('openai')
   const [clawApiKey, setClawApiKey] = useState('')
   const [clawBaseUrl, setClawBaseUrl] = useState('')
   const [clawModel, setClawModel] = useState('')
@@ -359,6 +383,7 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
         setError(result.error)
         return
       }
+      setClawProtocol(result.value.protocol)
       setClawApiKey(result.value.apiKey)
       setClawBaseUrl(result.value.baseUrl)
       setClawModel(result.value.model)
@@ -400,8 +425,9 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
       setError('请输入智谱 API Key 后再保存 OpenCode 设置')
       return
     }
-    if (aiCli === 'claw' && !clawApiKey.trim()) {
-      setError('请输入 Claw API Key 后再保存 Claw 设置')
+    // ollama 不需要 Key，其余协议才强制要求。
+    if (aiCli === 'claw' && clawProtocolSpec(clawProtocol).keyEnv !== null && !clawApiKey.trim()) {
+      setError('请输入该协议的 API Key 后再保存 Claw 设置')
       return
     }
     setSaving(true)
@@ -413,6 +439,7 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
       const credentialResult = await window.api.opencode.setApiKey(zhipuApiKey)
       if (!credentialResult.ok) throw new Error(credentialResult.error)
       const clawResult = await window.api.claw.setConfig({
+        protocol: clawProtocol,
         apiKey: clawApiKey,
         baseUrl: clawBaseUrl,
         model: clawModel
@@ -469,6 +496,7 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
                   permissionMode={permissionMode}
                   zhipuApiKey={zhipuApiKey}
                   apiKeyLoading={apiKeyLoading}
+                  clawProtocol={clawProtocol}
                   clawApiKey={clawApiKey}
                   clawBaseUrl={clawBaseUrl}
                   clawModel={clawModel}
@@ -479,6 +507,7 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
                   onAiCli={setAiCli}
                   onPermissionMode={setPermissionMode}
                   onZhipuApiKey={setZhipuApiKey}
+                  onClawProtocol={setClawProtocol}
                   onClawApiKey={setClawApiKey}
                   onClawBaseUrl={setClawBaseUrl}
                   onClawModel={setClawModel}

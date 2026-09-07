@@ -1,58 +1,141 @@
 // 纯模块：不碰 fs/crypto，因此可以进 tsconfig.web 的 include，被渲染端直接引用。
-// 需要落盘的读写在 clawCredentials.ts（与 opencodeConfig / opencodeCredentials 同一分法）。
-
-// claw 按**模型名前缀**路由 provider（crates/api/src/providers/mod.rs 的 provider 元数据表）：
-//
-//   anthropic/<name>            → Anthropic     读 ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL
-//   openai/<name>、gpt-*        → OpenAI 兼容   读 OPENAI_API_KEY    / OPENAI_BASE_URL
-//   grok* / qwen* / kimi* ...   → 各自的 provider
-//   **无前缀 → 不匹配任何一条 → 落到「按已设置的鉴权变量嗅探」**
-//
-// 最后那条是个坑：只要我们设了 OPENAI_API_KEY，无前缀模型就会被嗅探成 OpenAI。
-//
-// 智谱同时提供两种兼容端点，实测两条都能用（用真实 Key 打过）：
-//   https://open.bigmodel.cn/api/coding/paas/v4   OpenAI 兼容    → 200
-//   https://open.bigmodel.cn/api/anthropic        Anthropic 兼容 → 200
-// 而**不带 /coding/ 的普通 OpenAI 端点对 Coding Plan 的 Key 返回 429「无可用资源包」**，
-// 后端状态不同也会表现成 {"code":500,"msg":"404 NOT_FOUND"}。
-//
-// 默认值必须与 resources/opencode/managed-models.json 里的智谱条目一致，有用例钉住。
-export const CLAW_DEFAULT_BASE_URL = 'https://open.bigmodel.cn/api/coding/paas/v4'
-export const CLAW_DEFAULT_MODEL = 'openai/glm-5.3'
-
-/** Anthropic 端点的默认值，供用户把模型换成 anthropic/ 前缀时使用。 */
-export const CLAW_ANTHROPIC_BASE_URL = 'https://open.bigmodel.cn/api/anthropic'
-
-export const CLAW_OPENAI_KEY_ENV = 'OPENAI_API_KEY'
-export const CLAW_OPENAI_BASE_URL_ENV = 'OPENAI_BASE_URL'
-export const CLAW_ANTHROPIC_KEY_ENV = 'ANTHROPIC_API_KEY'
-export const CLAW_ANTHROPIC_BASE_URL_ENV = 'ANTHROPIC_BASE_URL'
+// 需要落盘的读写在 clawCredentials.ts。
 
 /**
- * 模型名决定该往哪一组 env 写凭据和端点。
+ * 设计取向：**协议是显式选项，模型是自由文本，端点可改。**
  *
- * **这是一个真实事故的修复**：此前无论模型走哪个 provider，代码都把用户填的 Base URL
- * 写进 OPENAI_BASE_URL。用户把 Base URL 填成 Anthropic 端点、模型填 `glm-5.3`（无前缀），
- * 结果无前缀被嗅探成 OpenAI，claw 就往
+ * 刻意**不**采用 opencode 那套「宿主维护一份策展目录、用户只能从白名单里挑」的做法：
+ * 那是围墙花园，而 claw 本身是开放的——设好 env、写上模型名，它就按前缀路由。
+ * 我们要做的只是把「协议 ↔ 该写哪组 env」这层机械对应关系接好，不去替用户决定能用什么模型。
+ * （opencode 即将废弃，它的资源文件和设计思路都不该被 claw 继承。）
+ *
+ * claw 内部按模型名前缀路由（crates/api/src/providers/mod.rs 的元数据表），
+ * 每个协议有自己的一组 env：
+ *
+ *   前缀          鉴权 env              端点 env
+ *   anthropic/    ANTHROPIC_API_KEY     ANTHROPIC_BASE_URL
+ *   openai/       OPENAI_API_KEY        OPENAI_BASE_URL
+ *   xai/、grok*   XAI_API_KEY           XAI_BASE_URL
+ *   qwen*、kimi*  DASHSCOPE_API_KEY     DASHSCOPE_BASE_URL
+ *   local/        （无）                OLLAMA_HOST
+ *
+ * **无前缀不匹配任何一条，会落到「按已设置的鉴权变量嗅探」** —— 结果取决于我们注入了
+ * 什么，用户无法预期。所以界面上选协议、填裸模型名，前缀由代码拼。
+ *
+ * 曾经因为这个出过事故：用户把 Base URL 填成智谱的 Anthropic 端点、模型填裸名 glm-5.3，
+ * 无前缀被嗅探成 OpenAI，而代码又无条件把 Base URL 写进 OPENAI_BASE_URL，于是请求打到
  *     https://open.bigmodel.cn/api/anthropic/chat/completions
- * 发请求——这个路径不存在，于是 404 NOT_FOUND。
- * 一个 Base URL 输入框对应两组互不相干的 env，必须按前缀分派。
+ * 这个不存在的路径上 → 404 NOT_FOUND。
  */
-export function clawProviderForModel(model: string): 'anthropic' | 'openai' {
-  return model.trim().toLowerCase().startsWith('anthropic/') ? 'anthropic' : 'openai'
+export type ClawProtocol = 'openai' | 'anthropic' | 'xai' | 'dashscope' | 'ollama'
+
+export interface ClawProtocolSpec {
+  id: ClawProtocol
+  /** 界面上显示的名字。 */
+  label: string
+  /** claw 内部的模型名前缀。 */
+  prefix: string
+  /** 该协议的鉴权 env；ollama 不需要 Key。 */
+  keyEnv: string | null
+  baseUrlEnv: string
+  /** 留空 Base URL 时使用；null 表示交给 claw 自己的默认端点。 */
+  defaultBaseUrl: string | null
+  /** 输入框占位提示用的示例模型，**只是提示，不是限制**。 */
+  sampleModel: string
+  /** 界面上的一句话说明。 */
+  hint: string
 }
 
+/**
+ * 协议表。字段取值来自 claw 源码的 provider 元数据表；
+ * 智谱那两个端点是用真实 Key 打过验证的：
+ *   https://open.bigmodel.cn/api/coding/paas/v4   OpenAI 兼容    → 200
+ *   https://open.bigmodel.cn/api/anthropic        Anthropic 兼容 → 200
+ *   不带 /coding/ 的普通 OpenAI 端点对 Coding Plan 的 Key → 429「无可用资源包」
+ *
+ * defaultBaseUrl 只是**留空时的缺省**，任何一条都能被用户改掉。
+ */
+export const CLAW_PROTOCOLS: readonly ClawProtocolSpec[] = [
+  {
+    id: 'openai',
+    label: 'OpenAI 兼容',
+    prefix: 'openai/',
+    keyEnv: 'OPENAI_API_KEY',
+    baseUrlEnv: 'OPENAI_BASE_URL',
+    defaultBaseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4',
+    sampleModel: 'glm-5.3',
+    hint: '任何 OpenAI 兼容服务。留空 Base URL 时用智谱 Coding Plan。'
+  },
+  {
+    id: 'anthropic',
+    label: 'Anthropic 协议',
+    prefix: 'anthropic/',
+    keyEnv: 'ANTHROPIC_API_KEY',
+    baseUrlEnv: 'ANTHROPIC_BASE_URL',
+    defaultBaseUrl: 'https://open.bigmodel.cn/api/anthropic',
+    sampleModel: 'glm-5.3',
+    hint: 'Anthropic 官方或任何兼容中转。留空 Base URL 时用智谱的 Anthropic 端点。'
+  },
+  {
+    id: 'xai',
+    label: 'xAI（Grok）',
+    prefix: 'xai/',
+    keyEnv: 'XAI_API_KEY',
+    baseUrlEnv: 'XAI_BASE_URL',
+    defaultBaseUrl: null,
+    sampleModel: 'grok-4',
+    hint: '留空 Base URL 时用 xAI 官方端点。'
+  },
+  {
+    id: 'dashscope',
+    label: '阿里云百炼 DashScope',
+    prefix: 'qwen/',
+    keyEnv: 'DASHSCOPE_API_KEY',
+    baseUrlEnv: 'DASHSCOPE_BASE_URL',
+    defaultBaseUrl: null,
+    sampleModel: 'qwen-max',
+    hint: '通义千问 / Kimi 走这条。'
+  },
+  {
+    id: 'ollama',
+    label: '本地 Ollama',
+    prefix: 'local/',
+    keyEnv: null,
+    baseUrlEnv: 'OLLAMA_HOST',
+    defaultBaseUrl: 'http://127.0.0.1:11434/v1',
+    sampleModel: 'qwen2.5-coder',
+    hint: '连本机模型，不需要 API Key。'
+  }
+]
+
+export const CLAW_DEFAULT_PROTOCOL: ClawProtocol = 'openai'
+export const CLAW_DEFAULT_MODEL = 'glm-5.3'
+
+export function clawProtocolSpec(protocol: ClawProtocol): ClawProtocolSpec {
+  return CLAW_PROTOCOLS.find((entry) => entry.id === protocol) ?? CLAW_PROTOCOLS[0]
+}
+
+// claw 默认把会话写在 <cwd>/.claw/sessions/ —— 而 cwd 是**用户自己的仓库**，
+// 等于我们往人家仓库里拉目录。fork 里给 SessionStore::from_cwd 加了这个 env：
+// 设了就改用 <CLAW_DATA_DIR>/sessions/<workspace 指纹>/，不同仓库仍互相隔离。
 export const CLAW_DATA_DIR_ENV = 'CLAW_DATA_DIR'
 
 export interface ClawManagedConfig {
+  /** 协议。老配置里没有这个字段，读取时按模型前缀反推。 */
+  protocol: ClawProtocol
   apiKey: string
-  /** 空表示用 CLAW_DEFAULT_BASE_URL。 */
+  /** 空表示用该协议的默认端点。 */
   baseUrl: string
-  /** 空表示用 CLAW_DEFAULT_MODEL；必须带 provider 前缀，否则 claw 会按 Anthropic 路由。 */
+  /** **裸模型名**，不带前缀；前缀由协议决定、代码拼。 */
   model: string
 }
 
-export const EMPTY_CLAW_CONFIG: ClawManagedConfig = { apiKey: '', baseUrl: '', model: '' }
+export const EMPTY_CLAW_CONFIG: ClawManagedConfig = {
+  protocol: CLAW_DEFAULT_PROTOCOL,
+  apiKey: '',
+  baseUrl: '',
+  model: ''
+}
 
 export function isClawCommand(command: string): boolean {
   let normalized = command.trim()
@@ -72,8 +155,33 @@ export function isClawCommand(command: string): boolean {
 }
 
 /**
- * 把托管配置合成进 claw 的启动环境。用户在设置里显式写的同名 env 优先——
- * 那是他们指向别的 provider（xAI / DashScope / Ollama / 自建）的唯一出口。
+ * 拼出传给 claw 的完整模型名。
+ * 用户填裸名；已经带了任一已知前缀就原样保留（方便直接粘贴全名）。
+ */
+export function clawQualifiedModel(config: ClawManagedConfig): string {
+  const model = config.model.trim() || CLAW_DEFAULT_MODEL
+  const lower = model.toLowerCase()
+  if (CLAW_PROTOCOLS.some((spec) => lower.startsWith(spec.prefix))) return model
+  return `${clawProtocolSpec(config.protocol).prefix}${model}`
+}
+
+/** 老配置没有 protocol 字段时按模型前缀反推，保证升级后行为不变。 */
+export function clawProtocolFromModel(model: string): ClawProtocol {
+  const lower = model.trim().toLowerCase()
+  return CLAW_PROTOCOLS.find((spec) => lower.startsWith(spec.prefix))?.id ?? CLAW_DEFAULT_PROTOCOL
+}
+
+/** 去掉前缀，还原成界面上显示的裸模型名。 */
+export function clawBareModel(model: string): string {
+  const trimmed = model.trim()
+  const lower = trimmed.toLowerCase()
+  const spec = CLAW_PROTOCOLS.find((entry) => lower.startsWith(entry.prefix))
+  return spec ? trimmed.slice(spec.prefix.length) : trimmed
+}
+
+/**
+ * 按所选协议把凭据和端点写进**对应的那一组 env**。
+ * 用户在设置里显式写的同名 env 优先——那是他们指向别的服务的出口。
  */
 export function withClawManagedEnv(
   command: string,
@@ -82,23 +190,19 @@ export function withClawManagedEnv(
 ): Record<string, string> | undefined {
   if (!isClawCommand(command)) return env
   const next = { ...(env ?? {}) }
-  if (!config.apiKey) return next
+  const spec = clawProtocolSpec(config.protocol)
+  // ollama 不需要 Key；其余协议没 Key 就什么都不注入。
+  if (spec.keyEnv && !config.apiKey) return next
 
-  // 必须用规范化后的名字：withClawModelArgs 传给 claw 的是规范化结果，
-  // 这里若用原始值判定，填裸名时 env 会指向另一个 provider —— 正是这次事故的形状。
-  const provider = clawProviderForModel(clawCanonicalModel(config.model))
-  const keyEnv = provider === 'anthropic' ? CLAW_ANTHROPIC_KEY_ENV : CLAW_OPENAI_KEY_ENV
-  const urlEnv = provider === 'anthropic' ? CLAW_ANTHROPIC_BASE_URL_ENV : CLAW_OPENAI_BASE_URL_ENV
-  const fallbackUrl = provider === 'anthropic' ? CLAW_ANTHROPIC_BASE_URL : CLAW_DEFAULT_BASE_URL
-
-  if (!next[keyEnv]) next[keyEnv] = config.apiKey
-  if (!next[urlEnv]) next[urlEnv] = config.baseUrl || fallbackUrl
+  if (spec.keyEnv && !next[spec.keyEnv]) next[spec.keyEnv] = config.apiKey
+  const baseUrl = config.baseUrl.trim() || spec.defaultBaseUrl
+  if (baseUrl && !next[spec.baseUrlEnv]) next[spec.baseUrlEnv] = baseUrl
   return next
 }
 
 /**
  * 把会话目录挪出用户仓库。与凭据分开是刻意的：**没配 API Key 也要生效**——
- * 仓库污染和有没有配置 provider 无关。
+ * 仓库污染和有没有配置协议无关。
  */
 export function withClawDataDirEnv(
   command: string,
@@ -112,9 +216,9 @@ export function withClawDataDirEnv(
 }
 
 /**
- * 补上 `--model`。claw 缺省走 anthropic/claude-*，在托管（智谱）配置下必然认证失败，
- * 所以没显式指定时要注入一个带 provider 前缀的模型名。
- * 用户自己在 args 里写了 --model 就完全不动——包括他写了别的 provider 的情况。
+ * 补上 `--model`。claw 缺省走 anthropic/claude-*，在我们注入的配置下必然认证失败，
+ * 所以没显式指定时要注入带前缀的模型名。
+ * 用户自己在 args 里写了 --model 就完全不动。
  */
 export function withClawModelArgs(
   command: string,
@@ -123,27 +227,7 @@ export function withClawModelArgs(
 ): string[] {
   if (!isClawCommand(command)) return [...args]
   if (args.some((arg) => arg === '--model' || arg.startsWith('--model='))) return [...args]
-  if (!config.apiKey) return [...args]
-  return ['--model', clawCanonicalModel(config.model), ...args]
-}
-
-/**
- * 把设置里填的模型名补成带 provider 前缀的形式。
- *
- * claw 对**无前缀**的模型名不做前缀路由，而是落到「按已设置的鉴权变量嗅探」——
- * 那条路径的结果取决于我们注入了哪些 env，用户完全无法预期。
- * 设置界面已经写明「必须带 provider 前缀」，但只靠提示文字挡不住；
- * 这里按前缀分派的同一套规则把它补齐，让路由变成确定的。
- *
- * 只认已知前缀，其余一律按 OpenAI 兼容补 `openai/`——智谱两种端点里
- * 我们的默认走的就是 OpenAI 兼容那条。
- */
-export function clawCanonicalModel(model: string): string {
-  const trimmed = model.trim()
-  if (!trimmed) return CLAW_DEFAULT_MODEL
-  const known = ['anthropic/', 'openai/', 'local/', 'qwen/', 'kimi/', 'xai/']
-  if (known.some((prefix) => trimmed.toLowerCase().startsWith(prefix))) return trimmed
-  // 这些裸名在 claw 里有自己的路由规则，不要画蛇添足加前缀。
-  if (/^(gpt-|grok|qwen-|kimi-)/i.test(trimmed)) return trimmed
-  return `openai/${trimmed}`
+  const spec = clawProtocolSpec(config.protocol)
+  if (spec.keyEnv && !config.apiKey) return [...args]
+  return ['--model', clawQualifiedModel(config), ...args]
 }

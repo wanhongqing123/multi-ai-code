@@ -1,5 +1,8 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent, webUtils } from 'electron'
 
+// claw 协议的类型真源在 aicli/clawConfig（纯类型可用模块）。
+import type { ClawProtocol } from './aicli/clawConfig.js'
+
 // 第二批类型去重：ScheduledTask* 的真源在各自 types.ts（均为纯类型模块）。
 import type {
   ScheduledTaskScheduleType,
@@ -317,10 +320,18 @@ const api = {
   claw: {
     getConfig: () =>
       ipcRenderer.invoke('claw:get-config') as Promise<
-        | { ok: true; value: { apiKey: string; baseUrl: string; model: string } }
+        | {
+            ok: true
+            value: { protocol: ClawProtocol; apiKey: string; baseUrl: string; model: string }
+          }
         | { ok: false; error: string }
       >,
-    setConfig: (config: { apiKey: string; baseUrl: string; model: string }) =>
+    setConfig: (config: {
+      protocol: ClawProtocol
+      apiKey: string
+      baseUrl: string
+      model: string
+    }) =>
       ipcRenderer.invoke('claw:set-config', config) as Promise<
         { ok: true } | { ok: false; error: string }
       >

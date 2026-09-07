@@ -10,10 +10,14 @@ import {
 import { randomUUID } from 'crypto'
 import { join } from 'path'
 import {
+  CLAW_PROTOCOLS,
   EMPTY_CLAW_CONFIG,
+  clawBareModel,
+  clawProtocolFromModel,
   withClawManagedEnv,
   withClawModelArgs,
-  type ClawManagedConfig
+  type ClawManagedConfig,
+  type ClawProtocol
 } from './clawConfig.js'
 
 const CLAW_CONFIG_FILE = 'managed-config.json'
@@ -23,6 +27,8 @@ const MAX_MODEL_LENGTH = 256
 
 interface ClawConfigFile {
   version: 1
+  /** v1 没有这个字段；读到老配置时按模型前缀反推。 */
+  protocol?: string
   apiKey: string
   baseUrl: string
   model: string
@@ -47,11 +53,23 @@ export function readClawConfig(runtimeRoot: string): ClawManagedConfig {
   const config = value as Partial<ClawConfigFile>
   if (config.version !== 1 || typeof config.apiKey !== 'string') corrupt()
 
+  const rawModel = typeof config.model === 'string' ? config.model.trim() : ''
+  // 老配置（没有 protocol 字段）把带前缀的全名存在 model 里。按前缀反推协议、
+  // 并把 model 还原成裸名，升级后行为不变、界面也能正确回显。
+  const protocol = isKnownProtocol(config.protocol)
+    ? config.protocol
+    : clawProtocolFromModel(rawModel)
+
   return {
+    protocol,
     apiKey: config.apiKey.trim(),
     baseUrl: typeof config.baseUrl === 'string' ? config.baseUrl.trim() : '',
-    model: typeof config.model === 'string' ? config.model.trim() : ''
+    model: clawBareModel(rawModel)
   }
+}
+
+function isKnownProtocol(value: unknown): value is ClawProtocol {
+  return CLAW_PROTOCOLS.some((spec) => spec.id === value)
 }
 
 export function writeClawConfig(runtimeRoot: string, config: ClawManagedConfig): void {
@@ -76,7 +94,17 @@ export function writeClawConfig(runtimeRoot: string, config: ClawManagedConfig):
   const temporaryPath = join(runtimeRoot, `.${CLAW_CONFIG_FILE}.${randomUUID()}.tmp`)
   writeFileSync(
     temporaryPath,
-    `${JSON.stringify({ version: 1, apiKey, baseUrl, model } satisfies ClawConfigFile, null, 2)}\n`,
+    `${JSON.stringify(
+      {
+        version: 1,
+        protocol: config.protocol,
+        apiKey,
+        baseUrl,
+        model
+      } satisfies ClawConfigFile,
+      null,
+      2
+    )}\n`,
     { encoding: 'utf8', mode: 0o600 }
   )
   renameSync(temporaryPath, path)

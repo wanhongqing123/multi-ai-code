@@ -11,7 +11,8 @@ import {
   resolvePythonCommand,
   rustTargetForPlatform,
   stripArgsForPlatform,
-  stripReleaseExecutable
+  stripReleaseExecutable,
+  assertExecutableRuns
 } from './aicli-build-utils.mjs'
 
 describe('AICLI build utilities', () => {
@@ -145,5 +146,61 @@ describe('AICLI build utilities', () => {
         spawn: () => ({ status: 137, stdout: '', stderr: '' })
       })
     ).toThrow(/无法执行 --version/)
+  })
+
+  // 这一组钉的是 2026-09-07 v0.1.71 出包时 mac 侧发现的真实缺陷：
+  // macOS 上 `strip -S -x` 把 Rust 产物改坏——文件在、体积正常、codesign 也过，
+  // 但一跑就被 SIGKILL、stdout/stderr 全空。构建脚本原先只在 copy/strip **之前**
+  // 验过原始二进制，之后仅查存在与大小，损坏能一路带进安装包。
+  describe('assertExecutableRuns', () => {
+    const fakeSpawn = (result) => () => result
+
+    it('rejects a binary killed by a signal（mac strip 破坏的真实形状）', () => {
+      expect(() =>
+        assertExecutableRuns('/bin/claw', {
+          spawn: fakeSpawn({ status: null, signal: 'SIGKILL', stdout: '', stderr: '' })
+        })
+      ).toThrow(/损坏/)
+    })
+
+    it('rejects a binary that runs but prints nothing at all', () => {
+      expect(() =>
+        assertExecutableRuns('/bin/claw', {
+          spawn: fakeSpawn({ status: 137, signal: null, stdout: '', stderr: '' })
+        })
+      ).toThrow(/没有任何输出/)
+    })
+
+    it('rejects a binary that cannot be spawned', () => {
+      expect(() =>
+        assertExecutableRuns('/bin/claw', {
+          spawn: fakeSpawn({ error: new Error('ENOENT') })
+        })
+      ).toThrow(/无法执行/)
+    })
+
+    // 关键的反向锚点：判据必须宽松到不误伤 codex-code-mode-host——
+    // 它不认 --version，会以 exit 2 报 unexpected argument，
+    // 而那恰恰证明它跑起来并解析了参数。收紧成「必须 exit 0」会把它判死。
+    it('accepts a non-zero exit as long as the binary produced output', () => {
+      expect(
+        assertExecutableRuns('/bin/codex-code-mode-host', {
+          spawn: fakeSpawn({
+            status: 2,
+            signal: null,
+            stdout: '',
+            stderr: "error: unexpected argument '--version' found"
+          })
+        })
+      ).toContain('unexpected argument')
+    })
+
+    it('accepts a healthy binary', () => {
+      expect(
+        assertExecutableRuns('/bin/claw', {
+          spawn: fakeSpawn({ status: 0, signal: null, stdout: 'Claw Code Version 0.1.3', stderr: '' })
+        })
+      ).toContain('0.1.3')
+    })
   })
 })

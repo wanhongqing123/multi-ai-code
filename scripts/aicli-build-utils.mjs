@@ -66,6 +66,46 @@ export function stripReleaseExecutable(
   return true
 }
 
+/**
+ * 确认「最终落盘的那个产物」真的能被执行。
+ *
+ * 为什么不能只查存在与非零字节：macOS 上 `strip -S -x` 会把 Rust 产物改坏——
+ * 文件还在、体积正常、codesign --verify 也过，但一跑就被 SIGKILL（exit 137），
+ * stdout/stderr 全空。构建脚本原先只在 copy/strip **之前**验过原始二进制，
+ * strip 之后仅检查存在与大小，于是这种损坏能一路带进安装包。
+ * （2026-09-07 出 v0.1.71 时由 mac 侧的产物级启动检查发现。）
+ *
+ * 判据刻意宽松：只要进程**起得来并产生了输出**就算通过。
+ * 退出码非零不算失败——codex-code-mode-host 不认 --version，会以 exit 2 报
+ * “unexpected argument”，那恰恰证明它跑起来并解析了参数。
+ * 真正的失败是：spawn 失败、被信号杀死、或没有任何输出。
+ */
+export function assertExecutableRuns(binaryPath, { args = ['--version'], spawn = spawnSync } = {}) {
+  const result = spawn(binaryPath, args, {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    shell: false,
+    timeout: 60_000
+  })
+  if (result.error) {
+    throw new Error(`AICLI 产物无法执行：${binaryPath}（${result.error.message}）`)
+  }
+  if (result.signal) {
+    throw new Error(
+      `AICLI 产物被信号 ${result.signal} 杀死，产物已损坏：${binaryPath}
+` +
+        '常见原因：release 构建后的 strip 破坏了二进制。'
+    )
+  }
+  const output = `${result.stdout ?? ''}${result.stderr ?? ''}`.trim()
+  if (!output) {
+    throw new Error(
+      `AICLI 产物执行后没有任何输出，视为已损坏：${binaryPath}（exit=${result.status}）`
+    )
+  }
+  return output
+}
+
 export function capture(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: options.cwd ?? repoRoot,

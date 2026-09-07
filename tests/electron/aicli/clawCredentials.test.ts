@@ -8,6 +8,10 @@ import {
   withClawRuntimeEnv,
   withClawRuntimeModelArgs
 } from '../../../electron/aicli/clawCredentials.js'
+import {
+  CLAW_DEFAULT_BASE_URL,
+  CLAW_DEFAULT_MODEL
+} from '../../../electron/aicli/clawConfig.js'
 
 describe('claw config round trip', () => {
   it('writes, reads back, and produces the launch env proven against a live endpoint', () => {
@@ -16,11 +20,13 @@ describe('claw config round trip', () => {
       writeClawConfig(dir, { apiKey: 'zhipu-abc', baseUrl: '', model: '' })
       expect(readClawConfig(dir)).toEqual({ apiKey: 'zhipu-abc', baseUrl: '', model: '' })
 
+      // 端点与默认模型都对着 resources/opencode/managed-models.json 里的智谱条目，
+      // 由 clawConfig.test.ts 的防漂移用例钉住，这里只验往返本身。
       expect(withClawRuntimeEnv('claw', undefined, dir)).toEqual({
         OPENAI_API_KEY: 'zhipu-abc',
-        OPENAI_BASE_URL: 'https://open.bigmodel.cn/api/paas/v4'
+        OPENAI_BASE_URL: CLAW_DEFAULT_BASE_URL
       })
-      expect(withClawRuntimeModelArgs('claw', [], dir)).toEqual(['--model', 'openai/glm-4.6'])
+      expect(withClawRuntimeModelArgs('claw', [], dir)).toEqual(['--model', CLAW_DEFAULT_MODEL])
 
       // 清空 Key 等于取消配置：文件整份删掉。
       writeClawConfig(dir, { apiKey: '', baseUrl: 'https://x', model: 'y' })

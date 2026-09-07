@@ -27,6 +27,11 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
     private var sessionStartedUptime: TimeInterval?
     private var firstTextUptime: TimeInterval?
     private var textUpdateCount = 0
+    // 必须保持串行：取消与快速重启依赖 deactivate/activate 严格按入队顺序执行。
+    private nonisolated static let audioSessionQueue = DispatchQueue(
+        label: "com.kongshang.maichat.asr-audio-session",
+        qos: .userInitiated
+    )
 
     init(appId: String, secretId: String, secretKey: String) {
         self.appId = appId.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -49,9 +54,18 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
         try Task.checkCancellation()
 
         cancelCurrentSession()
-        let audioSession = AVAudioSession.sharedInstance()
-        try audioSession.setCategory(.record, mode: .measurement)
-        try audioSession.setActive(true)
+        sessionSequence &+= 1
+        sessionStartedUptime = ProcessInfo.processInfo.systemUptime
+        let audioSessionStartedAt = ProcessInfo.processInfo.systemUptime
+        do {
+            try await Self.activateAudioSession()
+            try Task.checkCancellation()
+        } catch {
+            Self.deactivateAudioSession()
+            sessionStartedUptime = nil
+            throw error
+        }
+        let audioSessionReadyAt = ProcessInfo.processInfo.systemUptime
 
         let config = QCloudConfig(
             appId: appId,
@@ -72,18 +86,28 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
         nextRecognizer.delegate = self
         recognizer = nextRecognizer
         recognizerID = ObjectIdentifier(nextRecognizer)
-        sessionSequence &+= 1
-        sessionStartedUptime = ProcessInfo.processInfo.systemUptime
         firstTextUptime = nil
         textUpdateCount = 0
         liveText = ""
         isRecognizing = true
+        let sdkStartBeganAt = ProcessInfo.processInfo.systemUptime
+        nextRecognizer.start()
+        let sdkStartReturnedAt = ProcessInfo.processInfo.systemUptime
         log(
             level: .info,
             event: "session-started",
-            fields: ["session": String(sessionSequence)]
+            fields: [
+                "session": String(sessionSequence),
+                "audio_session_ms": Self.milliseconds(
+                    from: audioSessionStartedAt,
+                    to: audioSessionReadyAt
+                ),
+                "sdk_start_call_ms": Self.milliseconds(
+                    from: sdkStartBeganAt,
+                    to: sdkStartReturnedAt
+                ),
+            ]
         )
-        nextRecognizer.start()
     }
 
     func stop() async throws -> String {
@@ -226,7 +250,7 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
         recognizer = nil
         recognizerID = nil
         isRecognizing = false
-        deactivateAudioSession()
+        Self.deactivateAudioSession()
 
         let resultName: String
         switch result {
@@ -266,7 +290,7 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
         isRecognizing = false
         stopTimeoutTask?.cancel()
         stopTimeoutTask = nil
-        deactivateAudioSession()
+        Self.deactivateAudioSession()
         if let continuation = stopContinuation {
             stopContinuation = nil
             continuation.resume(throwing: CancellationError())
@@ -296,11 +320,36 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
         return String(Int((max(0, uptime - sessionStartedUptime) * 1_000).rounded()))
     }
 
-    private func deactivateAudioSession() {
-        try? AVAudioSession.sharedInstance().setActive(
-            false,
-            options: .notifyOthersOnDeactivation
-        )
+    private nonisolated static func activateAudioSession() async throws {
+        try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<Void, Error>) in
+            audioSessionQueue.async {
+                do {
+                    let audioSession = AVAudioSession.sharedInstance()
+                    try audioSession.setCategory(.record, mode: .measurement)
+                    try audioSession.setActive(true)
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    private nonisolated static func deactivateAudioSession() {
+        audioSessionQueue.async {
+            try? AVAudioSession.sharedInstance().setActive(
+                false,
+                options: .notifyOthersOnDeactivation
+            )
+        }
+    }
+
+    private nonisolated static func milliseconds(
+        from start: TimeInterval,
+        to end: TimeInterval
+    ) -> String {
+        String(Int((max(0, end - start) * 1_000).rounded()))
     }
 
     private func log(

@@ -988,14 +988,6 @@ private struct PresentedMessageActions: Identifiable {
     var id: UUID { message.id }
 }
 
-private struct RemoteIMImageBubbleFramePreferenceKey: PreferenceKey {
-    static let defaultValue: CGRect = .zero
-
-    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
-        value = nextValue()
-    }
-}
-
 private struct ChatDetailView: View {
     let contact: RemoteIMContact
     @Binding var activeContact: RemoteIMContact?
@@ -1302,10 +1294,9 @@ private struct VoiceTranscriptionHighlight: View {
                         .background(
                             RoundedRectangle(cornerRadius: 24, style: .continuous)
                                 .fill(RemoteIMStyle.blue.opacity(0.94))
-                                .shadow(color: RemoteIMStyle.blue.opacity(0.45), radius: 20)
                         )
                         .padding(.horizontal, 30)
-                        .transition(.scale(scale: 0.92).combined(with: .opacity))
+                        .transition(.opacity)
 
                     listeningIndicator(size: 58)
                         .padding(.top, 18)
@@ -1343,13 +1334,11 @@ private struct VoiceTranscriptionHighlight: View {
     private func listeningIndicator(size: CGFloat) -> some View {
         ZStack {
             Circle()
-                .fill(indicatorColor.opacity(0.25))
+                .fill(indicatorColor.opacity(0.2))
                 .frame(width: size * 1.34, height: size * 1.34)
-                .blur(radius: size * 0.1)
             Circle()
                 .fill(indicatorColor)
                 .frame(width: size, height: size)
-                .shadow(color: indicatorColor.opacity(0.9), radius: size * 0.2)
             if target == .cancel {
                 Image(systemName: "xmark")
                     .font(.system(size: size * 0.3, weight: .bold))
@@ -1945,6 +1934,8 @@ private struct MessageBubbleView: View {
     let reply: () -> Void
     let openQuote: (RemoteIMQuote) -> Void
     @State private var actionSourceFrame: CGRect = .zero
+    @State private var isActionPressing = false
+    @State private var requestsAccessibilityActions = false
     @State private var textSelectionController = MessageTextSelectionController()
 
     var body: some View {
@@ -1975,12 +1966,22 @@ private struct MessageBubbleView: View {
         .frame(maxWidth: .infinity, alignment: message.direction == .outgoing ? .trailing : .leading)
         // 不使用系统 contextMenu：它会把被长按的消息单独提亮/放大，且视觉风格
         // 与 MaiChat 完全不同。长按只打开根层自绘卡片，消息本身保持原样。
-        .onLongPressGesture(minimumDuration: 0.42) {
-            guard !isSelectingText else { return }
-            showActions(actionSourceFrame)
-        }
+        .onLongPressGesture(
+            minimumDuration: 0.42,
+            perform: {
+                guard !isSelectingText else { return }
+                showActions(actionSourceFrame)
+            },
+            onPressingChanged: { isPressing in
+                guard !isSelectingText, isActionPressing != isPressing else { return }
+                isActionPressing = isPressing
+            }
+        )
         .accessibilityAction(named: "消息操作") {
-            showActions(actionSourceFrame)
+            guard !isSelectingText else { return }
+            if !requestsAccessibilityActions {
+                requestsAccessibilityActions = true
+            }
         }
         .accessibilityAction(named: "引用回复") {
             reply()
@@ -2172,10 +2173,23 @@ private struct MessageBubbleView: View {
                             in: .named(RemoteIMImagePreviewLayout.coordinateSpaceName)
                         )
                     }
-                    .onChange(of: geometry.frame(
-                        in: .named(RemoteIMImagePreviewLayout.coordinateSpaceName)
-                    )) { nextFrame in
+                    .onChange(of: isActionPressing) { shouldRefresh in
+                        guard shouldRefresh else { return }
+                        let nextFrame = geometry.frame(
+                            in: .named(RemoteIMImagePreviewLayout.coordinateSpaceName)
+                        )
+                        if actionSourceFrame != nextFrame {
+                            actionSourceFrame = nextFrame
+                        }
+                    }
+                    .onChange(of: requestsAccessibilityActions) { shouldShow in
+                        guard shouldShow else { return }
+                        let nextFrame = geometry.frame(
+                            in: .named(RemoteIMImagePreviewLayout.coordinateSpaceName)
+                        )
                         actionSourceFrame = nextFrame
+                        requestsAccessibilityActions = false
+                        showActions(nextFrame)
                     }
             }
         }
@@ -3223,7 +3237,6 @@ private struct VideoBubbleContent: View {
 private struct ImageBubbleContent: View {
     let attachment: RemoteIMImageAttachment
     let previewImage: (UIImage, CGRect) -> Void
-    @State private var sourceFrame: CGRect = .zero
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -3231,34 +3244,32 @@ private struct ImageBubbleContent: View {
                 filePath: attachment.localFilePath,
                 maximumPointSize: CGSize(width: 220, height: 180)
             ) { image in
-                Button {
-                    previewImage(image, sourceFrame)
-                } label: {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxWidth: 220, maxHeight: 180)
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                        .background(Color(red: 0.945, green: 0.957, blue: 0.973), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                        .accessibilityLabel("消息图片")
-                        .accessibilityIdentifier("remote-im-message-image")
-                        .background {
-                            GeometryReader { geometry in
-                                Color.clear.preference(
-                                    key: RemoteIMImageBubbleFramePreferenceKey.self,
-                                    value: geometry.frame(
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: 220, maxHeight: 180)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .background(Color(red: 0.945, green: 0.957, blue: 0.973), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay {
+                        GeometryReader { geometry in
+                            Button {
+                                previewImage(
+                                    image,
+                                    geometry.frame(
                                         in: .named(
                                             RemoteIMImagePreviewLayout.coordinateSpaceName
                                         )
                                     )
                                 )
+                            } label: {
+                                Color.clear
+                                    .contentShape(Rectangle())
                             }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("消息图片")
+                            .accessibilityIdentifier("remote-im-message-image")
                         }
-                }
-                .buttonStyle(.plain)
-                .onPreferenceChange(RemoteIMImageBubbleFramePreferenceKey.self) {
-                    sourceFrame = $0
-                }
+                    }
             } placeholder: { hasFailed in
                 Group {
                     if hasFailed {
@@ -4260,12 +4271,15 @@ private struct ComposerView: View {
                             focusRequestGeneration: composerFocusRequestGeneration,
                             editingController: composerEditingController,
                             onEditMenuRequested: { state in
-                                withAnimation(.easeOut(duration: 0.14)) {
-                                    composerEditMenuState = state.hasActions ? state : nil
+                                let nextState = state.hasActions ? state : nil
+                                guard composerEditMenuState != nextState else { return }
+                                withAnimation(.easeOut(duration: 0.1)) {
+                                    composerEditMenuState = nextState
                                 }
                             },
                             onEditMenuDismissed: {
-                                withAnimation(.easeOut(duration: 0.12)) {
+                                guard composerEditMenuState != nil else { return }
+                                withAnimation(.easeOut(duration: 0.08)) {
                                     composerEditMenuState = nil
                                 }
                             },
@@ -4312,14 +4326,14 @@ private struct ComposerView: View {
                                 state: state,
                                 pasteTarget: composerEditingController.textView,
                                 pasteCompleted: {
-                                    withAnimation(.easeOut(duration: 0.12)) {
+                                    withAnimation(.easeOut(duration: 0.08)) {
                                         composerEditMenuState = nil
                                     }
                                 },
                                 perform: performComposerEditAction
                             )
                             .offset(x: 4, y: -50)
-                            .transition(.scale(scale: 0.94, anchor: .bottomLeading).combined(with: .opacity))
+                            .transition(.opacity)
                             .zIndex(20)
                         }
                     }
@@ -4598,11 +4612,21 @@ private struct ComposerView: View {
         }
         if showsTranscriptionHighlight {
             let target = transcriptionTarget(for: translation)
-            isCancellingVoice = target == .cancel
-            transcriptionPresentation.target = target
+            let nextIsCancelling = target == .cancel
+            if isCancellingVoice != nextIsCancelling {
+                isCancellingVoice = nextIsCancelling
+            }
+            if transcriptionPresentation.target != target {
+                transcriptionPresentation.target = target
+            }
         } else {
-            isCancellingVoice = translation.height < -70
-            transcriptionPresentation.target = nil
+            let nextIsCancelling = translation.height < -70
+            if isCancellingVoice != nextIsCancelling {
+                isCancellingVoice = nextIsCancelling
+            }
+            if transcriptionPresentation.target != nil {
+                transcriptionPresentation.target = nil
+            }
         }
     }
 
@@ -5300,7 +5324,6 @@ private struct ComposerTextView: UIViewRepresentable {
     func updateUIView(_ textView: GrowingComposerUITextView, context: Context) {
         context.coordinator.parent = self
         editingController.textView = textView
-        textView.removeSystemEditMenuInteractions()
         if textView.text != text {
             let nextText = text
             context.coordinator.applyExternalText(nextText, to: textView)
@@ -5400,7 +5423,7 @@ private struct ComposerTextView: UIViewRepresentable {
         }
 
         func textViewDidChange(_ textView: UITextView) {
-            if !isApplyingExternalText {
+            if !isApplyingExternalText, parent.text != textView.text {
                 parent.text = textView.text
             }
             parent.onEditMenuDismissed()

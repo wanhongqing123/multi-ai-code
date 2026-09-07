@@ -63,16 +63,24 @@ export function stripReleaseExecutable(
   const stripArgs = stripArgsForPlatform(platform)
   if (!stripArgs) return false
   runCommand('strip', [...stripArgs, binaryPath])
+  // Apple Silicon 上 /usr/bin/strip 生成的 linker-signed CodeDirectory 偶发会被
+  // AMFI 以 "Unrecoverable CT signature issue" 拒绝；文件仍存在，codesign --verify
+  // 甚至也可能通过，但实际执行会收到 SIGKILL。对 strip 后的最终文件重新做一次
+  // ad-hoc 签名，既保留去符号结果，也把签名收敛成可稳定执行的普通 ad-hoc 形态。
+  if (platform === 'darwin') {
+    runCommand('codesign', ['--force', '--sign', '-', binaryPath])
+  }
   return true
 }
 
 /**
  * 确认「最终落盘的那个产物」真的能被执行。
  *
- * 为什么不能只查存在与非零字节：macOS 上 `strip -S -x` 会把 Rust 产物改坏——
- * 文件还在、体积正常、codesign --verify 也过，但一跑就被 SIGKILL（exit 137），
- * stdout/stderr 全空。构建脚本原先只在 copy/strip **之前**验过原始二进制，
- * strip 之后仅检查存在与大小，于是这种损坏能一路带进安装包。
+ * 为什么不能只查存在与非零字节：macOS 上 `strip -S -x` 后的 Rust 产物曾被
+ * AMFI 以 "Unrecoverable CT signature issue" 拒绝——文件还在、体积正常、
+ * codesign --verify 也过，但一跑就被 SIGKILL（exit 137），stdout/stderr 全空。
+ * 构建脚本原先只在 copy/strip **之前**验过原始二进制，strip 之后仅检查存在
+ * 与大小，于是这种签名异常能一路带进安装包。
  * （2026-09-07 出 v0.1.71 时由 mac 侧的产物级启动检查发现。）
  *
  * 判据刻意宽松：只要进程**起得来并产生了输出**就算通过。

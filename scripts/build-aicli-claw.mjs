@@ -112,8 +112,8 @@ if (missing.length > 0) {
   throw new Error(`Claw 打包产物缺失或为空：${missing.map((entry) => entry.fileName).join(', ')}`)
 }
 
-// 存在且非零字节**不够**：macOS 的 strip 会把 Rust 产物改坏——文件在、体积正常、
-// 签名也过，但一跑就被 SIGKILL、没有任何输出。原先只在 copy/strip 之前验过原始二进制，
+// 存在且非零字节**不够**：macOS 的 strip 产物曾因 CT signature issue 被 AMFI
+// 直接 SIGKILL，文件与签名校验却都正常。原先只在 copy/strip 之前验过原始二进制，
 // 这里补上「对最终落盘的那一个再执行一次」。
 for (const entry of requiredBinaries) {
   assertExecutableRuns(entry.outputPath)

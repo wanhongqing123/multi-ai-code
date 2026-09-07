@@ -128,7 +128,20 @@ describe('AICLI build utilities', () => {
     })
 
     expect(stripped).toBe(true)
-    expect(calls).toEqual([['strip', ['-S', '-x', '/tmp/codex']]])
+    expect(calls).toEqual([
+      ['strip', ['-S', '-x', '/tmp/codex']],
+      ['codesign', ['--force', '--sign', '-', '/tmp/codex']]
+    ])
+
+    const linuxCalls = []
+    expect(
+      stripReleaseExecutable('/tmp/codex', {
+        platform: 'linux',
+        runCommand: (command, args) => linuxCalls.push([command, args])
+      })
+    ).toBe(true)
+    expect(linuxCalls).toEqual([['strip', ['--strip-unneeded', '/tmp/codex']]])
+
     expect(stripReleaseExecutable('/tmp/codex.exe', { platform: 'win32', runCommand: () => {} })).toBe(
       false
     )
@@ -149,9 +162,10 @@ describe('AICLI build utilities', () => {
   })
 
   // 这一组钉的是 2026-09-07 v0.1.71 出包时 mac 侧发现的真实缺陷：
-  // macOS 上 `strip -S -x` 把 Rust 产物改坏——文件在、体积正常、codesign 也过，
-  // 但一跑就被 SIGKILL、stdout/stderr 全空。构建脚本原先只在 copy/strip **之前**
-  // 验过原始二进制，之后仅查存在与大小，损坏能一路带进安装包。
+  // macOS 上 `strip -S -x` 后的 Rust 产物曾被 AMFI 以 CT signature issue 拒绝——
+  // 文件在、体积正常、codesign --verify 也过，但一跑就被 SIGKILL、stdout/stderr
+  // 全空。构建脚本原先只在 copy/strip **之前**验过原始二进制，之后仅查存在
+  // 与大小，签名异常能一路带进安装包。
   describe('assertExecutableRuns', () => {
     const fakeSpawn = (result) => () => result
 

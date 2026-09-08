@@ -22,6 +22,8 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTextBrowser>
+#include <QTextBlock>
+#include <QAbstractTextDocumentLayout>
 #include <QTextEdit>
 #include <QTimer>
 #include <QUrl>
@@ -88,6 +90,10 @@ private slots:
     void contactSearchHidesGroupsWithoutAnyHit();
     void groupHeaderCountStaysTheGroupSizeWhileSearching();
     void rendersMarkdownMessageContent();
+    void notificationClickPreservesWindowState_data();
+    void notificationClickPreservesWindowState();
+    void markdownBubbleHasCompactBottomSpacing_data();
+    void markdownBubbleHasCompactBottomSpacing();
     void rendersApprovalButtonsAndSendsStructuredDecision();
     void restoresSubmittedApprovalStateFromDatabase();
     void authoritativeApprovalResolutionOverridesLateSentDecision();
@@ -1108,6 +1114,70 @@ void MainWindowLayoutTest::rendersMarkdownMessageContent() {
     QVERIFY(!markdownView->toPlainText().contains(QStringLiteral("# Win/Mac")));
     QVERIFY(markdownView->toPlainText().contains(QStringLiteral("重点")));
     QVERIFY(markdownView->toHtml().contains(QStringLiteral("href=\"https://example.com\"")));
+}
+
+void MainWindowLayoutTest::notificationClickPreservesWindowState_data() {
+    QTest::addColumn<int>("state");
+    QTest::newRow("normal") << int(Qt::WindowNoState);
+    QTest::newRow("maximized") << int(Qt::WindowMaximized);
+    QTest::newRow("minimized") << int(Qt::WindowMinimized);
+    QTest::newRow("maximized-minimized") << int(Qt::WindowMaximized | Qt::WindowMinimized);
+    QTest::newRow("fullscreen") << int(Qt::WindowFullScreen);
+}
+
+void MainWindowLayoutTest::notificationClickPreservesWindowState() {
+    QFETCH(int, state);
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+    app.addContact(QStringLiteral("other-user"), QStringLiteral("Other"));
+    app.selectPeer(QStringLiteral("other-user"));
+    MainWindow window(app);
+    window.setWindowState(Qt::WindowStates(state));
+    window.show();
+    QCoreApplication::processEvents();
+    window.openConversationFromNotification(QStringLiteral("phone-user"));
+    QVERIFY(window.isVisible());
+    QVERIFY(!window.isMinimized());
+    QCOMPARE(window.isMaximized(), bool(state & Qt::WindowMaximized));
+    QCOMPARE(window.isFullScreen(), bool(state & Qt::WindowFullScreen));
+    QCOMPARE(app.chatState().selectedPeerId(), QStringLiteral("phone-user"));
+}
+
+void MainWindowLayoutTest::markdownBubbleHasCompactBottomSpacing_data() {
+    QTest::addColumn<QString>("text");
+    QTest::newRow("one-line") << QStringLiteral("同样先调节 iOS 的");
+    QTest::newRow("paragraphs") << QStringLiteral("已调整样式。\n\n现在可以直接看效果。");
+    QTest::newRow("list") << QStringLiteral("- 第一项\n- 最后一项");
+    QTest::newRow("code") << QStringLiteral("```cpp\nint a = 1;\n```");
+    QTest::newRow("table") << QStringLiteral("| A | B |\n| --- | --- |\n| 最后一行 | 内容 |");
+    QTest::newRow("quote") << QStringLiteral("> 引用的最后一行");
+}
+
+void MainWindowLayoutTest::markdownBubbleHasCompactBottomSpacing() {
+    QFETCH(QString, text);
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+    app.chatState().receiveText(QStringLiteral("phone-user"), text);
+    MainWindow window(app);
+    window.resize(1200, 850);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto* view = window.findChild<QTextBrowser*>(QStringLiteral("messageMarkdownView"));
+    auto* bubble = window.findChild<QWidget*>(QStringLiteral("messageBubbleIncoming"));
+    QVERIFY(view != nullptr);
+    QVERIFY(bubble != nullptr);
+    QVERIFY(bubble->isAncestorOf(view));
+    QTRY_VERIFY(view->height() > 0);
+    QTest::qWait(100);
+    QCOMPARE(view->document()->lastBlock().blockFormat().bottomMargin(), qreal(0));
+    const qreal contentBottom = view->mapTo(bubble, QPoint()).y()
+        + view->document()->documentLayout()->blockBoundingRect(view->document()->lastBlock()).bottom();
+    // 8px 气泡内边距 + 4px 行间距 + 2px 文档保护边，另容许 1px 像素取整。
+    QVERIFY2(bubble->height() - contentBottom <= UiZoom::s(14) + 1,
+             qPrintable(QStringLiteral("bottom gap = %1").arg(bubble->height() - contentBottom)));
+    QVERIFY(view->viewport()->height() + 1 >= view->document()->size().height());
 }
 
 void MainWindowLayoutTest::rendersApprovalButtonsAndSendsStructuredDecision() {

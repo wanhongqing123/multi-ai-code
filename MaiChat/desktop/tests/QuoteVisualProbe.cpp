@@ -4,6 +4,7 @@
 //
 // 这个程序只在本地手工排查时用，不进 ctest。
 #include <QApplication>
+#include <QDir>
 #include <QTimer>
 
 #include "app/RemoteIMApplication.h"
@@ -14,6 +15,7 @@ int main(int argc, char** argv) {
     QApplication app(argc, argv);
 
     auto client = std::make_unique<FakeRemoteIMClient>();
+    auto* fakeClient = client.get();
     RemoteIMApplication application(QStringLiteral("desktop-user"), std::move(client));
     application.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
     // 故意让字母序与时间序相反，用来肉眼确认列表按最近消息排而不是按名字排。
@@ -33,6 +35,18 @@ int main(int argc, char** argv) {
     window.resize(1440, 900);
 
     application.selectPeer(QStringLiteral("phone-user"));
+
+    if (app.arguments().contains(QStringLiteral("--markdown-style"))) {
+        application.sendText(QStringLiteral("同样先调节 iOS 的"));
+        fakeClient->emitIncomingText(QStringLiteral("phone-user"), QStringLiteral(
+            "## 让阅读更轻松\n\n统一蓝白配色，让 **重点更清晰**。\n\n"
+            "> 好的排版，让长消息也容易读。\n\n"
+            "- 清晰的标题与段落\n- 轻量的代码与引用\n\n"
+            "```swift\nlet message = \"Hello, MaiChat\"\nprint(message)\n```\n\n"
+            "| 内容 | 样式 |\n| --- | --- |\n| 正文 | 舒展易读 |\n| 代码 | 等宽字体 |"));
+        fakeClient->emitIncomingText(QStringLiteral("phone-user"),
+            QStringLiteral("已调整样式。\n\n现在可以直接看效果。"));
+    } else {
 
     // 1) 普通消息，作为被引用的原文。
     application.sendText(QStringLiteral("季度报表我放在共享盘了，路径在文档里"));
@@ -64,15 +78,18 @@ int main(int argc, char** argv) {
     fileQuote.digest = QStringLiteral("[文件] 季度报表.xlsx");
     fileQuote.kind = QStringLiteral("file");
     application.sendText(QStringLiteral("表格我改完了"), fileQuote, true);
+    }
 
     // 直接把部件树渲染成图片，不走屏幕截图：屏幕截图要和窗口管理器、DPI、
     // 遮挡、模态框较劲，而 grab() 只依赖布局本身，结果可复现。
     QCoreApplication::processEvents();
-    QTimer::singleShot(600, [&window] {
+    const int outputArg = app.arguments().indexOf(QStringLiteral("--output"));
+    const QString outputPath = outputArg >= 0
+        ? app.arguments().value(outputArg + 1)
+        : QDir::temp().filePath(QStringLiteral("maichat-quote-preview.png"));
+    QTimer::singleShot(600, [&window, outputPath] {
         QCoreApplication::processEvents();
-        const QString out = QStringLiteral(
-            "C:/Users/18034/AppData/Local/Temp/claude/E--OpenSource-multi-ai-code/"
-            "7f88cf50-b88d-479e-a8fa-caf31bf66c11/scratchpad/quote_grab.png");
+        const QString out = outputPath;
         if (window.grab().save(out)) {
             qInfo("saved %s", qPrintable(out));
         } else {

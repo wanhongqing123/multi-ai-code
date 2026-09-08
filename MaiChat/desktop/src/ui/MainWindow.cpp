@@ -174,18 +174,33 @@ public:
         // 渲染器输出的 HTML 内嵌固定 px 字号（正文 14px/h1 22px/code 13px…），
         // 会盖过控件字体——整体缩放时须把这些 px 一并按倍率缩放。
         setHtml(UiZoom::scaleQss(MarkdownRenderer::renderToHtml(markdown)));
-        // Qt 富文本 CSS 子集不支持 line-height，setHtml 后统一用块格式补上，
-        // 对齐 Electron .remote-im-bubble 的 line-height:1.55（含代码块，两端一致）。
+        // 与 iOS 的 4pt 行间距一致。155% 会把最后一行也拉高，
+        // 单行气泡的底部会额外多出约半行空白。
         QTextCursor cursor(document());
         cursor.select(QTextCursor::Document);
         QTextBlockFormat lineHeight;
-        lineHeight.setLineHeight(155, QTextBlockFormat::ProportionalHeight);
+        lineHeight.setLineHeight(UiZoom::s(4), QTextBlockFormat::LineDistanceHeight);
         cursor.mergeBlockFormat(lineHeight);
+        // 段间距只留在正文内部；气泡边缘由外层布局统一留白。
+        QTextCursor first(document()->firstBlock());
+        QTextBlockFormat firstFormat = first.blockFormat();
+        firstFormat.setTopMargin(0);
+        first.setBlockFormat(firstFormat);
+        QTextCursor last(document()->lastBlock());
+        QTextBlockFormat lastFormat = last.blockFormat();
+        lastFormat.setBottomMargin(0);
+        // QTextDocument 会在结尾表格后附带一个空块，不让它占一整行。
+        // 必须只压真正空块；非空块（含图片对象）压到 1px 会裁切内容。
+        if (document()->blockCount() > 1 && last.block().text().isEmpty()) {
+            lastFormat.setTopMargin(0);
+            lastFormat.setLineHeight(1, QTextBlockFormat::FixedHeight);
+        }
+        last.setBlockFormat(lastFormat);
         updateContentHeight();
     }
 
     QSize sizeHint() const override {
-        return QSize(360, qMax(24, qCeil(document()->size().height()) + 2));
+        return QSize(360, qMax(UiZoom::s(20), qCeil(document()->size().height()) + 2));
     }
 
 protected:
@@ -215,7 +230,7 @@ private:
         if (!qFuzzyCompare(document()->textWidth(), static_cast<qreal>(width))) {
             document()->setTextWidth(width);
         }
-        setFixedHeight(qMax(24, qCeil(document()->size().height()) + 2));
+        setFixedHeight(qMax(UiZoom::s(20), qCeil(document()->size().height()) + 2));
         updateGeometry();
     }
 };
@@ -2685,7 +2700,7 @@ void MainWindow::setUpMessageNotifications() {
     trayIcon_->show();
 
     connect(trayIcon_, &QSystemTrayIcon::messageClicked, this,
-            [this] { openConversationFromNotification(); });
+            [this] { openConversationFromNotification(lastNotifiedPeerId_); });
     connect(&app_, &RemoteIMApplication::incomingMessageArrived, this,
             [this](const QString& peerId, const RemoteIMMessage& message) {
                 handleIncomingMessageForNotification(peerId, message);
@@ -2738,13 +2753,13 @@ void MainWindow::handleIncomingMessageForNotification(const QString& peerId,
     trayIcon_->showMessage(title, body, QSystemTrayIcon::Information, 5000);
 }
 
-void MainWindow::openConversationFromNotification() {
-    if (lastNotifiedPeerId_.isEmpty()) return;
-    const QString peerId = lastNotifiedPeerId_;
+void MainWindow::openConversationFromNotification(const QString& peerId) {
+    if (peerId.isEmpty()) return;
     qInfo("[notify] clicked peer=%s", qUtf8Printable(peerId));
 
-    // 窗口可能被最小化或压在别的程序后面，先弄回前台再切会话。
-    showNormal();
+    // 只解除最小化；showNormal 会同时清掉最大化/全屏状态。
+    if (isMinimized()) setWindowState(windowState() & ~Qt::WindowMinimized);
+    show();
     raise();
     activateWindow();
     app_.selectPeer(peerId);
@@ -3690,14 +3705,13 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
     bubble->setProperty("expandedTextBubble", expandedTextBubble);
     applyMessageBubbleWidth(bubble, expandedTextBubble);
     bubble->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
-    // 配色/圆角对齐 Electron 端 .remote-im-bubble：本方(用户)白底 #dbeafe 边，
-    // 对方(aicli)米黄底 #fffbeb + #fde68a 边，圆角 16px。
+    // 与 iOS 定稿配色一致：发送浅蓝，接收接近白色，边框保持轻量。
     bubble->setStyleSheet(UiZoom::scaleQss(outgoing
-                              ? QStringLiteral("#messageBubbleOutgoing{background:#ffffff;border:1px solid #dbeafe;border-radius:16px;}")
-                              : QStringLiteral("#messageBubbleIncoming{background:#fffbeb;border:1px solid #fde68a;border-radius:16px;}")));
+                              ? QStringLiteral("#messageBubbleOutgoing{background:#eaf4ff;border:1px solid #c3dffe;border-radius:12px;}")
+                              : QStringLiteral("#messageBubbleIncoming{background:#fafcfe;border:1px solid #ebf0f6;border-radius:12px;}")));
 
     auto* bubbleLayout = new QVBoxLayout(bubble);
-    bubbleLayout->setContentsMargins(14, 11, 14, 12);
+    bubbleLayout->setContentsMargins(UiZoom::s(14), UiZoom::s(8), UiZoom::s(14), UiZoom::s(8));
     bubbleLayout->setSpacing(7);
 
     // 引用块在正文之上，和聊天软件的惯例一致：先看到「在回复什么」，再看到回复内容。

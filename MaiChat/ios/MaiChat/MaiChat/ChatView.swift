@@ -22,8 +22,9 @@ enum RemoteIMStyle {
     static let blueSoft = Color(red: 0.882, green: 0.957, blue: 1.0)
     static let green = Color(red: 0.063, green: 0.596, blue: 0.325)
     static let greenSoft = Color(red: 0.848, green: 0.984, blue: 0.902)
-    static let yellowBorder = Color(red: 0.992, green: 0.812, blue: 0.345)
-    static let yellowSoft = Color(red: 1.0, green: 0.984, blue: 0.913)
+    static let incomingBubbleBorder = Color(red: 235 / 255.0, green: 240 / 255.0, blue: 246 / 255.0)
+    static let incomingBubbleBackground = Color(red: 250 / 255.0, green: 252 / 255.0, blue: 254 / 255.0)
+    static let outgoingBubbleBackground = Color(red: 234 / 255.0, green: 244 / 255.0, blue: 255 / 255.0)
 }
 
 private struct RemoteIMImageRequest: Hashable, Sendable {
@@ -1991,7 +1992,7 @@ private struct MessageBubbleView: View {
     private var messageMetadata: some View {
         HStack(spacing: 8) {
             Text(message.fromUserID)
-                .font(.system(size: 13, weight: .bold, design: .monospaced))
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(RemoteIMStyle.textPrimary)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -2154,10 +2155,10 @@ private struct MessageBubbleView: View {
             }
             .padding(.horizontal, 13)
             .padding(.vertical, 11)
-            .background(bubbleBackground, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(bubbleBackground, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(bubbleBorder, lineWidth: 1)
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(bubbleBorder, lineWidth: 0.5)
             )
 
             if message.direction == .outgoing {
@@ -2227,11 +2228,11 @@ private struct MessageBubbleView: View {
     }
 
     private var bubbleBackground: Color {
-        message.direction == .outgoing ? Color.white : RemoteIMStyle.yellowSoft
+        message.direction == .outgoing ? RemoteIMStyle.outgoingBubbleBackground : RemoteIMStyle.incomingBubbleBackground
     }
 
     private var bubbleBorder: Color {
-        message.direction == .outgoing ? Color(red: 0.764, green: 0.873, blue: 0.996) : RemoteIMStyle.yellowBorder
+        message.direction == .outgoing ? Color(red: 0.764, green: 0.873, blue: 0.996) : RemoteIMStyle.incomingBubbleBorder
     }
 }
 
@@ -3449,7 +3450,11 @@ private final class MarkdownRenderCache: @unchecked Sendable {
         if let cached = attributedTexts.object(forKey: key) {
             return cached.value
         }
-        let parsed = try? AttributedString(markdown: text)
+        // Block layout is handled below; preserve line breaks within prose and list items.
+        let parsed = try? AttributedString(
+            markdown: text,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        )
         attributedTexts.setObject(
             MarkdownAttributedTextBox(parsed),
             forKey: key,
@@ -3467,23 +3472,42 @@ private struct MarkdownLikeText: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
             ForEach(blocks) { block in
                 switch block.kind {
                 case .markdown(let text):
                     MarkdownInlineText(text: text)
                 case .heading(let level, let text):
                     MarkdownHeadingView(level: level, text: text)
-                case .unorderedList(let list):
+                case .list(let list):
                     MarkdownListView(list: list)
-                case .code(let code):
-                    MarkdownCodeBlock(code: code)
+                case .code(let language, let code):
+                    MarkdownCodeBlock(language: language, code: code)
                 case .table(let table):
                     MarkdownTableView(table: table)
+                case .quote(let text):
+                    MarkdownInlineText(text: text)
+                        .foregroundStyle(RemoteIMStyle.textSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                        .padding(.leading, 3)
+                        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
+                        .overlay(alignment: .leading) {
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(RemoteIMStyle.blue.opacity(0.55))
+                                .frame(width: 3)
+                        }
+                case .divider:
+                    Rectangle()
+                        .fill(RemoteIMStyle.border)
+                        .frame(height: 1)
+                        .padding(.vertical, 3)
                 }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .font(.system(size: 14))
+        .lineSpacing(4)
+        .tint(RemoteIMStyle.blue)
         .lineLimit(nil)
         .multilineTextAlignment(.leading)
         .fixedSize(horizontal: false, vertical: true)
@@ -3501,9 +3525,11 @@ private struct MarkdownBlock: Identifiable {
 private enum MarkdownBlockKind {
     case markdown(String)
     case heading(level: Int, text: String)
-    case unorderedList(MarkdownList)
-    case code(String)
+    case list(MarkdownList)
+    case code(language: String, text: String)
     case table(MarkdownTable)
+    case quote(String)
+    case divider
 }
 
 private struct MarkdownList {
@@ -3513,6 +3539,8 @@ private struct MarkdownList {
 private struct MarkdownListItem: Identifiable {
     let id = UUID()
     var text: String
+    var marker: String = "•"
+    var indent: Int = 0
 }
 
 private struct MarkdownTable {
@@ -3549,19 +3577,21 @@ private struct MarkdownHeadingView: View {
 
     var body: some View {
         MarkdownInlineText(text: text)
-            .font(.system(size: fontSize, weight: .bold))
+            .font(.system(size: fontSize, weight: .semibold))
             .foregroundStyle(RemoteIMStyle.textPrimary)
-            .padding(.top, level <= 2 ? 2 : 0)
+            .lineSpacing(3)
+            .padding(.top, level <= 2 ? 4 : 2)
+            .accessibilityAddTraits(.isHeader)
     }
 
     private var fontSize: CGFloat {
         switch level {
         case 1:
-            return 17
+            return 20
         case 2:
-            return 15
+            return 17
         default:
-            return 14
+            return 15
         }
     }
 }
@@ -3570,52 +3600,83 @@ private struct MarkdownListView: View {
     let list: MarkdownList
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             ForEach(list.items) { item in
-                HStack(alignment: .top, spacing: 7) {
-                    Text("•")
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(item.marker)
                         .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(RemoteIMStyle.textPrimary)
-                        .frame(width: 10, alignment: .center)
-                        .padding(.top, 1)
+                        .foregroundStyle(RemoteIMStyle.textSecondary)
+                        .frame(minWidth: 12, alignment: .trailing)
                     MarkdownInlineText(text: item.text)
-                        .font(.system(size: 13, weight: .regular))
+                        .font(.system(size: 14, weight: .regular))
                         .foregroundStyle(RemoteIMStyle.textPrimary)
-                        .lineSpacing(3)
+                        .lineSpacing(4)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .padding(.leading, CGFloat(min(item.indent, 4)) * 12)
             }
         }
     }
 }
 
 private struct MarkdownCodeBlock: View {
+    let language: String
     let code: String
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            Text(code.isEmpty ? " " : code)
-                .font(.system(size: 12, weight: .regular, design: .monospaced))
-                .foregroundStyle(RemoteIMStyle.textPrimary)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: "chevron.left.forwardslash.chevron.right")
+                    .accessibilityHidden(true)
+                Text(language.isEmpty ? "代码" : language)
+                    .lineLimit(1)
+            }
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(RemoteIMStyle.textSecondary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.primary.opacity(0.035))
+
+            ScrollView(.horizontal, showsIndicators: true) {
+                Text(code.isEmpty ? " " : code)
+                    .font(.system(size: 12, weight: .regular, design: .monospaced))
+                    .lineSpacing(4)
+                    .foregroundStyle(RemoteIMStyle.textPrimary)
+                    .fixedSize(horizontal: true, vertical: true)
+                    .padding(12)
+            }
         }
-        .background(Color(red: 0.945, green: 0.957, blue: 0.973), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .background(Color(red: 0.955, green: 0.965, blue: 0.978))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .stroke(RemoteIMStyle.border, lineWidth: 1)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(RemoteIMStyle.border.opacity(0.7), lineWidth: 0.5)
         )
     }
 }
 
 private struct MarkdownTableView: View {
     let table: MarkdownTable
+    private let columnWidths: [CGFloat]
+
+    init(table: MarkdownTable) {
+        self.table = table
+        // Share column widths across rows; don't rescan the table for every cell.
+        let count = max(table.headers.count, table.rows.map(\.count).max() ?? 0)
+        self.columnWidths = (0..<count).map { column in
+            let values = [table.headers[safe: column] ?? ""] + table.rows.map { $0[safe: column] ?? "" }
+            let longest = values
+                .flatMap { $0.components(separatedBy: .newlines) }
+                .map(\.count).max() ?? 0
+            return min(190, max(88, CGFloat(longest) * 7 + 24))
+        }
+    }
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
-                GridRow {
+        ScrollView(.horizontal, showsIndicators: true) {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .top, spacing: 0) {
                     ForEach(0..<columnCount, id: \.self) { column in
                         tableCell(
                             table.headers[safe: column] ?? "",
@@ -3624,8 +3685,9 @@ private struct MarkdownTableView: View {
                         )
                     }
                 }
-                ForEach(Array(table.rows.enumerated()), id: \.offset) { _, row in
-                    GridRow {
+                .background(Color(red: 0.91, green: 0.94, blue: 0.97))
+                ForEach(Array(table.rows.enumerated()), id: \.offset) { rowIndex, row in
+                    HStack(alignment: .top, spacing: 0) {
                         ForEach(0..<columnCount, id: \.self) { column in
                             tableCell(
                                 row[safe: column] ?? "",
@@ -3634,30 +3696,22 @@ private struct MarkdownTableView: View {
                             )
                         }
                     }
+                    .background(rowIndex.isMultiple(of: 2) ? Color.white.opacity(0.85) : Color(red: 0.96, green: 0.97, blue: 0.98))
+                    .overlay(alignment: .bottom) {
+                        Rectangle().fill(RemoteIMStyle.border.opacity(0.6)).frame(height: 0.5)
+                    }
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .stroke(RemoteIMStyle.border, lineWidth: 1)
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(RemoteIMStyle.border, lineWidth: 0.5)
             )
         }
     }
 
     private var columnCount: Int {
-        max(table.headers.count, table.rows.map(\.count).max() ?? 0)
-    }
-
-    private var columnWidths: [CGFloat] {
-        (0..<columnCount).map { column in
-            let values = [table.headers[safe: column] ?? ""] +
-                table.rows.map { $0[safe: column] ?? "" }
-            let longestLineLength = values
-                .flatMap { $0.components(separatedBy: .newlines) }
-                .map(\.count)
-                .max() ?? 0
-            return min(180, max(78, CGFloat(longestLineLength) * 7 + 18))
-        }
+        columnWidths.count
     }
 
     private func tableCell(_ text: String, isHeader: Bool, width: CGFloat) -> some View {
@@ -3665,15 +3719,11 @@ private struct MarkdownTableView: View {
             .font(.system(size: 12, weight: isHeader ? .semibold : .regular))
             .foregroundStyle(RemoteIMStyle.textPrimary)
             .lineLimit(nil)
-            .frame(width: max(1, width - 18), alignment: .topLeading)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 7)
+            .lineSpacing(3)
+            .frame(width: max(1, width - 24), alignment: .topLeading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
             .frame(width: width, alignment: .topLeading)
-            .background(isHeader ? Color(red: 0.93, green: 0.945, blue: 0.965) : Color.white.opacity(0.72))
-            .overlay(
-                Rectangle()
-                    .stroke(RemoteIMStyle.border, lineWidth: 0.5)
-            )
     }
 }
 
@@ -3703,6 +3753,7 @@ private func parseMarkdownBlocks(_ source: String) -> [MarkdownBlock] {
 
         if trimmed.hasPrefix("```") {
             flushMarkdown()
+            let language = String(trimmed.dropFirst(3)).trimmingCharacters(in: .whitespaces)
             index += 1
             var codeLines: [String] = []
             while index < lines.count {
@@ -3714,7 +3765,35 @@ private func parseMarkdownBlocks(_ source: String) -> [MarkdownBlock] {
                 codeLines.append(codeLine)
                 index += 1
             }
-            blocks.append(MarkdownBlock(kind: .code(codeLines.joined(separator: "\n"))))
+            blocks.append(MarkdownBlock(kind: .code(language: language, text: codeLines.joined(separator: "\n"))))
+            continue
+        }
+
+        if trimmed.isEmpty {
+            flushMarkdown()
+            index += 1
+            continue
+        }
+
+        if trimmed.hasPrefix(">") {
+            flushMarkdown()
+            var quoteLines: [String] = []
+            while index < lines.count {
+                let quoted = lines[index].trimmingCharacters(in: .whitespaces)
+                guard quoted.hasPrefix(">") else { break }
+                let content = quoted.dropFirst()
+                quoteLines.append(String(content.first == " " ? content.dropFirst() : content))
+                index += 1
+            }
+            blocks.append(MarkdownBlock(kind: .quote(quoteLines.joined(separator: "\n"))))
+            continue
+        }
+
+        let rule = trimmed.filter { !$0.isWhitespace }
+        if rule.count >= 3, let marker = rule.first, ["-", "*", "_"].contains(String(marker)), rule.allSatisfy({ $0 == marker }) {
+            flushMarkdown()
+            blocks.append(MarkdownBlock(kind: .divider))
+            index += 1
             continue
         }
 
@@ -3734,7 +3813,7 @@ private func parseMarkdownBlocks(_ source: String) -> [MarkdownBlock] {
 
         if let parsed = parseMarkdownList(lines: lines, startIndex: index) {
             flushMarkdown()
-            blocks.append(MarkdownBlock(kind: .unorderedList(parsed.list)))
+            blocks.append(MarkdownBlock(kind: .list(parsed.list)))
             index = parsed.endIndex
             continue
         }
@@ -3792,8 +3871,8 @@ private func parseMarkdownList(lines: [String], startIndex: Int) -> (list: Markd
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty { break }
 
-        if let itemText = parseMarkdownListItem(line) {
-            items.append(MarkdownListItem(text: itemText))
+        if let item = parseMarkdownListItem(line) {
+            items.append(item)
             index += 1
             continue
         }
@@ -3811,11 +3890,19 @@ private func parseMarkdownList(lines: [String], startIndex: Int) -> (list: Markd
     return (MarkdownList(items: items), index)
 }
 
-private func parseMarkdownListItem(_ line: String) -> String? {
+private func parseMarkdownListItem(_ line: String) -> MarkdownListItem? {
     let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+    let indent = line.prefix(while: { $0.isWhitespace }).reduce(0) { $0 + ($1 == "\t" ? 4 : 1) } / 2
     for marker in ["- ", "* ", "+ "] {
         if trimmed.hasPrefix(marker) {
-            return String(trimmed.dropFirst(marker.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            return MarkdownListItem(text: String(trimmed.dropFirst(marker.count)), indent: indent)
+        }
+    }
+    let digits = trimmed.prefix(while: { $0.isASCII && $0.isNumber })
+    if !digits.isEmpty, digits.count <= 9 {
+        let suffix = trimmed.dropFirst(digits.count)
+        if suffix.hasPrefix(". ") || suffix.hasPrefix(") ") {
+            return MarkdownListItem(text: String(suffix.dropFirst(2)), marker: String(digits) + ".", indent: indent)
         }
     }
     return nil

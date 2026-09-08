@@ -43,6 +43,9 @@ public:
     // 开始回复某条消息：右键菜单调它，测试也直接调它。
     void beginReplyTo(const RemoteIMMessage& message);
 
+    // 通知点击统一入口：定位会话并唤起窗口，保留最大化/全屏状态。
+    void openConversationFromNotification(const QString& peerId);
+
     // 把 IM 收/发的文件附件从本地缓存拷贝到 targetPath（存在则覆盖）。
     // 纯文件操作、不弹 UI，供右键「保存到本地」与单测复用；失败时经
     // errorMessage 返回原因。
@@ -106,7 +109,6 @@ private:
     void handleIncomingMessageForNotification(const QString& peerId, const RemoteIMMessage& message);
     // MaiChat 正在前台且未最小化时不弹系统通知；失焦或最小化才需要提醒。
     bool appIsForegroundVisible() const;
-    void openConversationFromNotification();
     void showContactsPage();
     void showSettingsPage();
     void showRemotePage();

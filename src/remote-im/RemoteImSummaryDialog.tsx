@@ -6,6 +6,8 @@ import {
   buildRemoteImMessageSummaryMarkdown,
   formatSummaryDay,
   formatSummaryTime,
+  filterRemoteImSummaryMessages,
+  remoteImSummarySenders,
   summarizeRemoteImMessages,
   summaryAttachmentParts,
   summaryMessageContent,
@@ -167,13 +169,20 @@ export function isScrolledToBottom(metrics: {
   return metrics.scrollHeight - metrics.scrollTop - metrics.clientHeight <= BOTTOM_TOLERANCE_PX
 }
 
-// 消息记录汇总弹窗：结构化文档视图（统计徽章、会话卡片、日期分隔、方向着色的
+// 消息记录汇总弹窗：结构化文档视图（发送人筛选、会话卡片、日期分隔、方向着色的
 // 发送者胶囊），消息正文仍用 Markdown 渲染（AICLI 输出的标题/列表/代码块不丢）。
 // 「发送给 AICLI」用共享生成器落成完整 .md 文件后把路径交给主会话。
 export default function RemoteImSummaryDialog(props: RemoteImSummaryDialogProps): JSX.Element | null {
+  if (!props.open) return null
+  // 关闭或切换项目后重新建立状态，避免沿用上次的发送人及消息快照。
+  return <RemoteImSummaryDialogContent key={props.projectId ?? ''} {...props} />
+}
+
+function RemoteImSummaryDialogContent(props: RemoteImSummaryDialogProps): JSX.Element {
   const [messages, setMessages] = useState<RemoteImMessage[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
+  const [senderKey, setSenderKey] = useState('')
 
   useEffect(() => {
     if (!props.open || !props.projectId) return
@@ -194,7 +203,15 @@ export default function RemoteImSummaryDialog(props: RemoteImSummaryDialogProps)
     }
   }, [props.open, props.projectId])
 
-  const summary = useMemo(() => (messages ? summarizeRemoteImMessages(messages) : null), [messages])
+  const senders = useMemo(
+    () => remoteImSummarySenders(messages ?? [], props.ownerUserId),
+    [messages, props.ownerUserId]
+  )
+  const visibleMessages = useMemo(
+    () => filterRemoteImSummaryMessages(messages ?? [], senderKey, props.ownerUserId),
+    [messages, senderKey, props.ownerUserId]
+  )
+  const summary = useMemo(() => summarizeRemoteImMessages(visibleMessages), [visibleMessages])
 
   const bodyRef = useRef<HTMLDivElement | null>(null)
   // 打开就停在最后一条：这个弹窗是用来回看「最近发生了什么」的，
@@ -232,18 +249,28 @@ export default function RemoteImSummaryDialog(props: RemoteImSummaryDialogProps)
   }, [props.open, summary])
   const markdown = useMemo(
     () =>
-      messages
-        ? buildRemoteImMessageSummaryMarkdown(messages, { ownerUserId: props.ownerUserId })
+      summary
+        ? buildRemoteImMessageSummaryMarkdown(visibleMessages, { ownerUserId: props.ownerUserId })
         : '',
-    [messages, props.ownerUserId]
+    [summary, visibleMessages, props.ownerUserId]
   )
-
-  if (!props.open) return null
 
   return (
     <div className="modal-backdrop" onClick={props.onClose}>
       <div className="modal remote-im-summary-modal" onClick={(event) => event.stopPropagation()}>
         <header className="remote-im-summary-header">
+          <label className="remote-im-summary-filter">
+            <span>发送人</span>
+            <select
+              aria-label="发送人"
+              value={senderKey}
+              disabled={messages === null || !!error || senders.length === 0}
+              onChange={(event) => setSenderKey(event.target.value)}
+            >
+              <option value="">全部发送人</option>
+              {senders.map(sender => <option key={sender.key} value={sender.key}>{sender.label}</option>)}
+            </select>
+          </label>
           <div className="remote-im-summary-actions">
             <button
               type="button"
@@ -251,7 +278,9 @@ export default function RemoteImSummaryDialog(props: RemoteImSummaryDialogProps)
               disabled={!markdown || sending || !props.canSendToAicli || !props.onSendToAicli}
               title={
                 props.canSendToAicli
-                  ? '开启时光胶囊：把全部消息记录交给当前 AICLI，帮它找回此前的对话记忆与背景'
+                  ? senderKey
+                    ? '开启时光胶囊：把当前发送人筛选后的消息记录交给当前 AICLI'
+                    : '开启时光胶囊：把全部消息记录交给当前 AICLI，帮它找回此前的对话记忆与背景'
                   : '主会话未运行，先启动 AICLI 会话'
               }
               onClick={() => {
@@ -263,7 +292,7 @@ export default function RemoteImSummaryDialog(props: RemoteImSummaryDialogProps)
             >
               ⏳ 时光胶囊
             </button>
-            <button type="button" className="remote-im-close" onClick={props.onClose}>
+            <button type="button" className="remote-im-close" aria-label="关闭" onClick={props.onClose}>
               ×
             </button>
           </div>
@@ -274,20 +303,9 @@ export default function RemoteImSummaryDialog(props: RemoteImSummaryDialogProps)
           ) : messages === null ? (
             <div className="remote-im-summary-loading">加载消息记录中…</div>
           ) : !summary ? (
-            <div className="remote-im-summary-loading">暂无消息记录</div>
+            <div className="remote-im-summary-loading">{senderKey ? '该发送人暂无消息记录' : '暂无消息记录'}</div>
           ) : (
             <div className="remote-im-summary-doc">
-              <div className="remote-im-summary-stats">
-                <span className="remote-im-summary-stat">
-                  <b>{summary.total}</b> 条消息
-                </span>
-                <span className="remote-im-summary-stat">
-                  <b>{summary.sessionCount}</b> 个会话
-                </span>
-                <span className="remote-im-summary-stat remote-im-summary-stat-range">
-                  {formatSummaryTime(summary.firstAt)} ~ {formatSummaryTime(summary.lastAt)}
-                </span>
-              </div>
               {summary.groups.map((group) => {
                 let lastDay = ''
                 return (

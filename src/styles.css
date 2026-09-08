@@ -7089,7 +7089,8 @@ html, body, #root {
 .remote-im-summary-header {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
   gap: 12px;
   padding: 10px 14px;
   border-bottom: 1px solid #e2e8f0;
@@ -7099,6 +7100,34 @@ html, body, #root {
   display: flex;
   align-items: center;
   gap: 10px;
+  margin-left: auto;
+}
+
+.remote-im-summary-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.remote-im-summary-filter select {
+  width: 220px;
+  max-width: 48vw;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid #dfe7f3;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #172033;
+  font: inherit;
+}
+
+.remote-im-summary-filter select:focus-visible {
+  outline: 2px solid #2f81f7;
+  outline-offset: 2px;
 }
 
 .remote-im-summary-send {
@@ -7130,42 +7159,10 @@ html, body, #root {
   background: #f5f7fb;
 }
 
-/* 汇总文档（结构化视图）：统计徽章行 + 会话卡片 + 日期分隔 + 消息条目。 */
+/* 汇总文档：会话卡片 + 日期分隔 + 消息条目，筛选固定在弹窗头部。 */
 .remote-im-summary-doc {
   max-width: 780px;
   margin: 0 auto;
-}
-
-.remote-im-summary-stats {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-}
-
-.remote-im-summary-stat {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 30px;
-  padding: 0 13px;
-  border: 1px solid #dfe7f3;
-  border-radius: 999px;
-  background: #ffffff;
-  color: #5b6b84;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.remote-im-summary-stat b {
-  color: #1d4ed8;
-  font-size: 14px;
-  font-weight: 850;
-}
-
-.remote-im-summary-stat-range {
-  color: #8a97ad;
-  font-weight: 650;
 }
 
 .remote-im-summary-session {

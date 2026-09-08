@@ -5,6 +5,8 @@ import {
   formatSummaryClock,
   formatSummaryDay,
   formatSummaryTime,
+  filterRemoteImSummaryMessages,
+  remoteImSummarySenders,
   summaryMessageContent
 } from '../../../src/remote-im/messageSummary.js'
 
@@ -32,6 +34,51 @@ function makeMessage(input: Partial<RemoteImMessage>): RemoteImMessage {
     ...input
   } as RemoteImMessage
 }
+
+describe('sender filtering', () => {
+  const records = [
+    makeMessage({ fromUserId: 'alice', toUserId: 'desktop', content: 'Alice incoming' }),
+    makeMessage({ fromUserId: 'bob', toUserId: 'desktop', content: 'Bob incoming' }),
+    makeMessage({ fromUserId: 'desktop', toUserId: 'alice', direction: 'outgoing', role: 'aicli', content: 'Reply to Alice' }),
+    makeMessage({ fromUserId: null, toUserId: 'bob', direction: 'outgoing', role: 'aicli', content: 'Reply to Bob' }),
+    makeMessage({ role: 'system', fromUserId: 'receipt', content: 'System receipt' })
+  ]
+
+  it('lists unique senders rather than conversation recipients and omits system receipts', () => {
+    expect(remoteImSummarySenders(records, 'desktop')).toEqual([
+      { key: 'user:alice', label: 'alice' },
+      { key: 'user:bob', label: 'bob' },
+      { key: 'user:desktop', label: 'desktop' }
+    ])
+  })
+
+  it('selects the outgoing sender across peers, including legacy records without fromUserId', () => {
+    const filtered = filterRemoteImSummaryMessages(records, 'user:desktop', 'desktop')
+    expect(filtered.map(message => message.content)).toEqual(['Reply to Alice', 'Reply to Bob'])
+    const markdown = buildRemoteImMessageSummaryMarkdown(filtered, { ownerUserId: 'desktop' })
+    expect(markdown).toContain('Reply to Alice')
+    expect(markdown).toContain('Reply to Bob')
+    expect(markdown).not.toContain('Alice incoming')
+    expect(markdown).not.toContain('Bob incoming')
+  })
+
+  it('keeps only the selected incoming sender, not replies addressed to them', () => {
+    expect(filterRemoteImSummaryMessages(records, 'user:alice', 'desktop')).toEqual([records[0]])
+  })
+
+  it('restores all meaningful records and returns no matches for an absent sender', () => {
+    expect(filterRemoteImSummaryMessages(records, '', 'desktop')).toEqual(records.slice(0, 4))
+    expect(filterRemoteImSummaryMessages(records, 'user:missing', 'desktop')).toEqual([])
+    expect(records).toHaveLength(5)
+  })
+
+  it('keeps unknown sender keys separate from accounts named like a fallback label', () => {
+    const messages = [makeMessage({ fromUserId: null }), makeMessage({ fromUserId: '对方' })]
+    const options = remoteImSummarySenders(messages)
+    expect(new Set(options.map(option => option.key)).size).toBe(2)
+    expect(filterRemoteImSummaryMessages(messages, 'unknown:incoming')).toEqual([messages[0]])
+  })
+})
 
 describe('buildRemoteImMessageSummaryMarkdown', () => {
   it('renders an empty placeholder when there are no messages', () => {

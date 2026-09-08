@@ -36,8 +36,35 @@ function peerOf(message: RemoteImMessage): string {
 
 export function summarySenderLabel(message: RemoteImMessage, ownerUserId?: string | null): string {
   if (message.direction === 'incoming') return message.fromUserId?.trim() || '对方'
-  if (message.direction === 'outgoing') return ownerUserId?.trim() || '我'
+  if (message.direction === 'outgoing') return message.fromUserId?.trim() || ownerUserId?.trim() || '我'
   return message.role === 'aicli' ? 'AICLI' : '系统'
+}
+
+function summarySenderKey(message: RemoteImMessage, ownerUserId?: string | null): string {
+  if (message.direction === 'internal') return `internal:${message.role}`
+  const userId = message.fromUserId?.trim()
+    || (message.direction === 'outgoing' ? ownerUserId?.trim() : '')
+  return userId ? `user:${userId}` : `unknown:${message.direction}`
+}
+
+export function remoteImSummarySenders(messages: RemoteImMessage[], ownerUserId?: string | null): {
+  key: string
+  label: string
+}[] {
+  const senders = new Map<string, string>()
+  for (const message of messages) {
+    if (message.role === 'system') continue
+    senders.set(summarySenderKey(message, ownerUserId), summarySenderLabel(message, ownerUserId))
+  }
+  return [...senders].map(([key, label]) => ({ key, label }))
+    .sort((a, b) => a.label.localeCompare(b.label))
+}
+
+export function filterRemoteImSummaryMessages(
+  messages: RemoteImMessage[], senderKey: string, ownerUserId?: string | null
+): RemoteImMessage[] {
+  return messages.filter(message => message.role !== 'system'
+    && (!senderKey || summarySenderKey(message, ownerUserId) === senderKey))
 }
 
 export interface RemoteImSummaryAttachmentParts {

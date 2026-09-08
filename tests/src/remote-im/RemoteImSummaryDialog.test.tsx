@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { RemoteImMessage } from '../../../electron/preload.js'
 import {
+  default as RemoteImSummaryDialog,
   RemoteImSummaryImage,
   isScrolledToBottom
 } from '../../../src/remote-im/RemoteImSummaryDialog.js'
@@ -40,6 +41,18 @@ function imageMessage(overrides: Partial<RemoteImMessage> = {}): RemoteImMessage
     ...overrides
   }
 }
+
+describe('RemoteImSummaryDialog controls', () => {
+  it('replaces summary stats with an accessible sender selector', () => {
+    const markup = renderToStaticMarkup(<RemoteImSummaryDialog
+      open projectId="p1" canSendToAicli={false} onClose={() => {}}
+    />)
+    expect(markup).toContain('aria-label="发送人"')
+    expect(markup).toContain('全部发送人')
+    expect(markup).not.toContain('remote-im-summary-stats')
+    expect(markup).not.toContain('remote-im-summary-stat-range')
+  })
+})
 
 describe('RemoteImSummaryImage', () => {
   it('uses the controlled preview loader for local history images', () => {

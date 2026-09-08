@@ -16,6 +16,7 @@
 #include <QDir>
 #include <QDropEvent>
 #include <QFile>
+#include <QFontMetrics>
 #include <QImage>
 #include <QInputMethodEvent>
 #include <QMimeData>
@@ -1172,11 +1173,20 @@ void MainWindowLayoutTest::markdownBubbleHasCompactBottomSpacing() {
     QTRY_VERIFY(view->height() > 0);
     QTest::qWait(100);
     QCOMPARE(view->document()->lastBlock().blockFormat().bottomMargin(), qreal(0));
-    const qreal contentBottom = view->mapTo(bubble, QPoint()).y()
-        + view->document()->documentLayout()->blockBoundingRect(view->document()->lastBlock()).bottom();
-    // 8px 气泡内边距 + 4px 行间距 + 2px 文档保护边，另容许 1px 像素取整。
-    QVERIFY2(bubble->height() - contentBottom <= UiZoom::s(14) + 1,
-             qPrintable(QStringLiteral("bottom gap = %1").arg(bubble->height() - contentBottom)));
+    const qreal blockBottom = view->document()->documentLayout()
+        ->blockBoundingRect(view->document()->lastBlock()).bottom();
+    const qreal slack = view->document()->size().height() - blockBottom;
+    const int lineSpacing = view->fontMetrics().lineSpacing();
+    // 字体的自然 leading 随平台变化，不能把 macOS 的 15px 总间隙写成上限。
+    // 真正防止的回归是文档末尾多出半行；气泡内边距另行约束。
+    QVERIFY(lineSpacing > 0);
+    QVERIFY2(slack * 2 < lineSpacing,
+             qPrintable(QStringLiteral("document tail slack=%1, font lineSpacing=%2")
+                            .arg(slack).arg(lineSpacing)));
+    const int bottomInset = bubble->height()
+        - (view->mapTo(bubble, QPoint()).y() + view->height());
+    QVERIFY2(bottomInset >= 0 && bottomInset <= UiZoom::s(8) + 1,
+             qPrintable(QStringLiteral("bubble bottom inset=%1").arg(bottomInset)));
     QVERIFY(view->viewport()->height() + 1 >= view->document()->size().height());
 }
 

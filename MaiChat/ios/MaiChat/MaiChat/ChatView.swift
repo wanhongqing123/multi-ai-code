@@ -3451,10 +3451,14 @@ private final class MarkdownRenderCache: @unchecked Sendable {
             return cached.value
         }
         // Block layout is handled below; preserve line breaks within prose and list items.
-        let parsed = try? AttributedString(
+        var parsed = try? AttributedString(
             markdown: text,
             options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         )
+        // Apply inline styling once per cached string, not on every scroll frame.
+        if let unstyled = parsed {
+            parsed = MarkdownInlineStyling.apply(to: unstyled)
+        }
         attributedTexts.setObject(
             MarkdownAttributedTextBox(parsed),
             forKey: key,
@@ -3481,22 +3485,12 @@ private struct MarkdownLikeText: View {
                     MarkdownHeadingView(level: level, text: text)
                 case .list(let list):
                     MarkdownListView(list: list)
-                case .code(let language, let code):
-                    MarkdownCodeBlock(language: language, code: code)
+                case .code(let language, let code, let lineCount):
+                    MarkdownCodeBlock(language: language, code: code, lineCount: lineCount)
                 case .table(let table):
                     MarkdownTableView(table: table)
-                case .quote(let text):
-                    MarkdownInlineText(text: text)
-                        .foregroundStyle(RemoteIMStyle.textSecondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(12)
-                        .padding(.leading, 3)
-                        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
-                        .overlay(alignment: .leading) {
-                            RoundedRectangle(cornerRadius: 2)
-                                .fill(RemoteIMStyle.blue.opacity(0.55))
-                                .frame(width: 3)
-                        }
+                case .quote(let quote):
+                    MarkdownQuoteView(quote: quote)
                 case .divider:
                     Rectangle()
                         .fill(RemoteIMStyle.border)
@@ -3526,9 +3520,9 @@ private enum MarkdownBlockKind {
     case markdown(String)
     case heading(level: Int, text: String)
     case list(MarkdownList)
-    case code(language: String, text: String)
+    case code(language: String, text: String, lineCount: Int)
     case table(MarkdownTable)
-    case quote(String)
+    case quote(MarkdownQuotePresentation)
     case divider
 }
 
@@ -3541,6 +3535,7 @@ private struct MarkdownListItem: Identifiable {
     var text: String
     var marker: String = "•"
     var indent: Int = 0
+    var isChecked: Bool? = nil
 }
 
 private struct MarkdownTable {
@@ -3571,6 +3566,54 @@ private struct MarkdownInlineText: View {
     }
 }
 
+private struct MarkdownQuoteView: View {
+    let quote: MarkdownQuotePresentation
+
+    private var accent: Color {
+        switch quote.kind {
+        case .note: Color(red: 0.12, green: 0.39, blue: 0.69)
+        case .tip: Color(red: 0.09, green: 0.51, blue: 0.42)
+        case .important: Color(red: 0.46, green: 0.28, blue: 0.66)
+        case .warning: Color(red: 0.61, green: 0.39, blue: 0.06)
+        case .caution: Color(red: 0.73, green: 0.24, blue: 0.25)
+        case nil: RemoteIMStyle.blue.opacity(0.55)
+        }
+    }
+
+    private var symbol: String {
+        switch quote.kind {
+        case .note: "info.circle.fill"
+        case .tip: "lightbulb.fill"
+        case .important: "exclamationmark.bubble.fill"
+        case .warning: "exclamationmark.triangle.fill"
+        case .caution: "exclamationmark.octagon.fill"
+        case nil: "quote.opening"
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let kind = quote.kind {
+                Label(kind.title, systemImage: symbol)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(accent)
+            }
+            if !quote.text.isEmpty {
+                MarkdownInlineText(text: quote.text)
+                    .foregroundStyle(RemoteIMStyle.textSecondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .padding(.leading, 3)
+        .background(quote.kind == nil ? Color.primary.opacity(0.035) : accent.opacity(0.065),
+                    in: RoundedRectangle(cornerRadius: 8))
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 2).fill(accent).frame(width: 3)
+        }
+    }
+}
+
 private struct MarkdownHeadingView: View {
     let level: Int
     let text: String
@@ -3578,7 +3621,7 @@ private struct MarkdownHeadingView: View {
     var body: some View {
         MarkdownInlineText(text: text)
             .font(.system(size: fontSize, weight: .semibold))
-            .foregroundStyle(RemoteIMStyle.textPrimary)
+            .foregroundStyle(level <= 2 ? Color(red: 0.11, green: 0.31, blue: 0.54) : RemoteIMStyle.textPrimary)
             .lineSpacing(3)
             .padding(.top, level <= 2 ? 4 : 2)
             .accessibilityAddTraits(.isHeader)
@@ -3587,11 +3630,11 @@ private struct MarkdownHeadingView: View {
     private var fontSize: CGFloat {
         switch level {
         case 1:
-            return 20
+            return 22
         case 2:
-            return 17
+            return 18
         default:
-            return 15
+            return level == 3 ? 16 : 14
         }
     }
 }
@@ -3603,10 +3646,17 @@ private struct MarkdownListView: View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(list.items) { item in
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(item.marker)
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(RemoteIMStyle.textSecondary)
-                        .frame(minWidth: 12, alignment: .trailing)
+                    Group {
+                        if let checked = item.isChecked {
+                            Image(systemName: checked ? "checkmark.square.fill" : "square")
+                                .foregroundStyle(checked ? Color(red: 0.09, green: 0.51, blue: 0.42) : RemoteIMStyle.textSecondary)
+                                .accessibilityLabel(checked ? "已完成" : "未完成")
+                        } else {
+                            Text(item.marker).foregroundStyle(RemoteIMStyle.blue)
+                        }
+                    }
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(minWidth: 16, alignment: .trailing)
                     MarkdownInlineText(text: item.text)
                         .font(.system(size: 14, weight: .regular))
                         .foregroundStyle(RemoteIMStyle.textPrimary)
@@ -3614,6 +3664,7 @@ private struct MarkdownListView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .padding(.leading, CGFloat(min(item.indent, 4)) * 12)
+                .accessibilityElement(children: .combine)
             }
         }
     }
@@ -3622,6 +3673,7 @@ private struct MarkdownListView: View {
 private struct MarkdownCodeBlock: View {
     let language: String
     let code: String
+    let lineCount: Int
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -3630,13 +3682,16 @@ private struct MarkdownCodeBlock: View {
                     .accessibilityHidden(true)
                 Text(language.isEmpty ? "代码" : language)
                     .lineLimit(1)
+                Spacer(minLength: 8)
+                Text("\(lineCount) 行")
+                    .foregroundStyle(RemoteIMStyle.textSecondary)
             }
             .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(RemoteIMStyle.textSecondary)
+            .foregroundStyle(Color(red: 0.11, green: 0.31, blue: 0.54))
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.primary.opacity(0.035))
+            .background(Color(red: 0.91, green: 0.95, blue: 0.98))
 
             ScrollView(.horizontal, showsIndicators: true) {
                 Text(code.isEmpty ? " " : code)
@@ -3765,7 +3820,7 @@ private func parseMarkdownBlocks(_ source: String) -> [MarkdownBlock] {
                 codeLines.append(codeLine)
                 index += 1
             }
-            blocks.append(MarkdownBlock(kind: .code(language: language, text: codeLines.joined(separator: "\n"))))
+            blocks.append(MarkdownBlock(kind: .code(language: language, text: codeLines.joined(separator: "\n"), lineCount: max(1, codeLines.count))))
             continue
         }
 
@@ -3785,7 +3840,7 @@ private func parseMarkdownBlocks(_ source: String) -> [MarkdownBlock] {
                 quoteLines.append(String(content.first == " " ? content.dropFirst() : content))
                 index += 1
             }
-            blocks.append(MarkdownBlock(kind: .quote(quoteLines.joined(separator: "\n"))))
+            blocks.append(MarkdownBlock(kind: .quote(MarkdownQuotePresentation(quoteLines.joined(separator: "\n")))))
             continue
         }
 
@@ -3895,7 +3950,11 @@ private func parseMarkdownListItem(_ line: String) -> MarkdownListItem? {
     let indent = line.prefix(while: { $0.isWhitespace }).reduce(0) { $0 + ($1 == "\t" ? 4 : 1) } / 2
     for marker in ["- ", "* ", "+ "] {
         if trimmed.hasPrefix(marker) {
-            return MarkdownListItem(text: String(trimmed.dropFirst(marker.count)), indent: indent)
+            let text = String(trimmed.dropFirst(marker.count))
+            if let task = MarkdownTaskPresentation.parse(text) {
+                return MarkdownListItem(text: task.text, indent: indent, isChecked: task.checked)
+            }
+            return MarkdownListItem(text: text, indent: indent)
         }
     }
     let digits = trimmed.prefix(while: { $0.isASCII && $0.isNumber })

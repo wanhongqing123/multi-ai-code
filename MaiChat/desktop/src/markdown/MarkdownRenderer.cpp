@@ -28,6 +28,19 @@ QString sanitizeLinks(QString html) {
     return html;
 }
 
+QString quoteOpening(const QString& accent, const QString& background, const QString& title = {}) {
+    QString result = QStringLiteral(
+        "<table width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"margin-bottom:8px;\">"
+        "<tr><td width=\"3\" bgcolor=\"%1\"></td><td>"
+        "<table width=\"100%\" cellspacing=\"0\" cellpadding=\"8\" bgcolor=\"%2\">"
+        "<tr><td style=\"color:#475569;\">").arg(accent, background);
+    if (!title.isEmpty()) {
+        result += QStringLiteral("<p style=\"margin:0 0 6px 0;color:%1;font-size:13px;\"><strong>%2</strong></p>")
+            .arg(accent, title);
+    }
+    return result;
+}
+
 QString renderBody(const QString& markdown) {
     const QByteArray utf8 = markdown.toUtf8();
     QByteArray out;
@@ -40,9 +53,9 @@ QString renderBody(const QString& markdown) {
 
     // 任务列表：QTextDocument 渲染不了 <input type="checkbox">，换成字符。
     html.replace(QStringLiteral("<input type=\"checkbox\" class=\"task-list-item-checkbox\" disabled checked>"),
-                 QStringLiteral("☑ "));
+                 QStringLiteral("<span style=\"color:#16836b;\">☑</span> "));
     html.replace(QStringLiteral("<input type=\"checkbox\" class=\"task-list-item-checkbox\" disabled>"),
-                 QStringLiteral("☐ "));
+                 QStringLiteral("<span style=\"color:#64748b;\">☐</span> "));
 
     // QTextDocument 不支持 nth-child，用每个单元格的底色形成完整斑马纹行。
     static const QRegularExpression tablePattern(QStringLiteral("<table>([\\s\\S]*?)</table>"));
@@ -93,21 +106,35 @@ QString renderBody(const QString& markdown) {
         const QString label = language.hasMatch() ? language.captured(1) : QStringLiteral("代码");
         QString code = match.captured(2);
         if (code.endsWith(QLatin1Char('\n'))) code.chop(1);
+        const QString lineCount = QString::number(code.count(QLatin1Char('\n')) + 1);
         const QString replacement = QStringLiteral(
             "<table width=\"100%\" cellspacing=\"0\" cellpadding=\"10\" bgcolor=\"#f6f8fb\" style=\"margin-top:0;margin-bottom:8px;\">"
-            "<tr><td bgcolor=\"#e9eff5\"><span style=\"font-size:11px;color:#64748b;\">%1</span></td></tr>"
+            "<tr><td bgcolor=\"#e8f2fa\"><span style=\"font-size:11px;color:#1c4f8a;\">%1</span>"
+            "<span style=\"font-size:11px;color:#64748b;\"> · %4 行</span></td></tr>"
             "<tr><td><pre><code%2>%3</code></pre></td></tr></table>")
-            .arg(label, match.captured(1), code);
+            .arg(label, match.captured(1), code, lineCount);
         html.replace(match.capturedStart(), match.capturedLength(), replacement);
         codeOffset = match.capturedStart() + replacement.size();
     }
 
+    // Recognize only a standalone first-line GFM callout marker. Escaped code,
+    // unknown markers, and markers appearing within ordinary prose stay literal.
+    struct Callout { const char* name; const char* accent; const char* background; QString title; };
+    const Callout callouts[] = {
+        {"NOTE", "#1f64b0", "#f0f5fb", QStringLiteral("提示")},
+        {"TIP", "#16836b", "#eff7f4", QStringLiteral("建议")},
+        {"IMPORTANT", "#7547a8", "#f5f1fa", QStringLiteral("重要")},
+        {"WARNING", "#9c640f", "#fbf6ec", QStringLiteral("注意")},
+        {"CAUTION", "#ba3d40", "#fbf1f2", QStringLiteral("警告")}
+    };
+    for (const auto& callout : callouts) {
+        const QRegularExpression marker(QStringLiteral("<blockquote>\\s*<p>\\[!%1\\][ \\t]*(?:\\n|<br\\s*/?>\\n?|(?=</p>))")
+            .arg(QString::fromLatin1(callout.name)), QRegularExpression::CaseInsensitiveOption);
+        html.replace(marker, quoteOpening(QString::fromLatin1(callout.accent),
+            QString::fromLatin1(callout.background), callout.title) + QStringLiteral("<p>"));
+    }
     // Qt 不支持 CSS border-left/padding，用窄色条和带内边距的内表格呈现引用。
-    html.replace(QStringLiteral("<blockquote>"), QStringLiteral(
-        "<table width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"margin-bottom:8px;\">"
-        "<tr><td width=\"3\" bgcolor=\"#90c9ed\"></td><td>"
-        "<table width=\"100%\" cellspacing=\"0\" cellpadding=\"8\" bgcolor=\"#eef3f8\">"
-        "<tr><td style=\"color:#475569;\">"));
+    html.replace(QStringLiteral("<blockquote>"), quoteOpening(QStringLiteral("#90c9ed"), QStringLiteral("#eef3f8")));
     html.replace(QStringLiteral("</blockquote>"),
         QStringLiteral("</td></tr></table></td></tr></table>"));
 
@@ -122,11 +149,11 @@ QString MarkdownRenderer::renderToHtml(const QString& markdown) {
 body{margin:0;color:#0f172a;font-size:14px;}
 p{margin:0 0 8px 0;}
 h1,h2,h3,h4,h5,h6{margin:4px 0 10px 0;font-weight:600;color:#0f172a;}
-h1{font-size:20px;}h2{font-size:17px;}h3{font-size:15px;}h4,h5,h6{font-size:14px;}
+h1{font-size:22px;color:#1c4f8a;}h2{font-size:18px;color:#1c4f8a;}h3{font-size:16px;}h4,h5,h6{font-size:14px;}
 ul,ol{margin:0 0 8px 0;padding:0;}
 li{margin:2px 0;}
 pre{margin:0;color:#172033;white-space:pre-wrap;}
-code{font-family:'MAICHAT_CODE_FONT';background:#eef2f7;font-size:13px;}
+code{font-family:'MAICHAT_CODE_FONT';background:#f2edf9;color:#6b3b96;font-size:13px;}
 pre code{background:transparent;color:#172033;}
 a{color:#2563eb;text-decoration:none;}
 del{text-decoration:line-through;}

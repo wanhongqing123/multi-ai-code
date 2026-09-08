@@ -14,6 +14,12 @@ private slots:
     void rendersCodeCardLabels_data();
     void rendersCodeCardLabels();
     void rendersQuoteAccentWithoutDroppingText();
+    void rendersSemanticCallouts_data();
+    void rendersSemanticCallouts();
+    void preservesLiteralCalloutMarkers();
+    void stylesTaskMarkersAndCountsCodeLines();
+    void rendersCalloutsWithMixedLineEndingsAndNestedQuotes();
+    void toleratesCalloutMarkerCaseAndTrailingSpaces();
 };
 
 void MarkdownRendererTest::rendersCommonAiCliMarkdown() {
@@ -92,6 +98,71 @@ void MarkdownRendererTest::rendersQuoteAccentWithoutDroppingText() {
     QVERIFY(html.contains(QStringLiteral("<td width=\"3\" bgcolor=\"#90c9ed\"></td>")));
     QVERIFY(html.contains(QStringLiteral("引用里的 <strong>重点</strong>")));
     QVERIFY(!html.contains(QStringLiteral("<blockquote>")));
+}
+
+void MarkdownRendererTest::rendersSemanticCallouts_data() {
+    QTest::addColumn<QString>("kind");
+    QTest::addColumn<QString>("title");
+    QTest::addColumn<QString>("accent");
+    QTest::newRow("note") << QStringLiteral("NOTE") << QStringLiteral("提示") << QStringLiteral("#1f64b0");
+    QTest::newRow("tip") << QStringLiteral("TIP") << QStringLiteral("建议") << QStringLiteral("#16836b");
+    QTest::newRow("important") << QStringLiteral("IMPORTANT") << QStringLiteral("重要") << QStringLiteral("#7547a8");
+    QTest::newRow("warning") << QStringLiteral("WARNING") << QStringLiteral("注意") << QStringLiteral("#9c640f");
+    QTest::newRow("caution") << QStringLiteral("CAUTION") << QStringLiteral("警告") << QStringLiteral("#ba3d40");
+}
+
+void MarkdownRendererTest::rendersSemanticCallouts() {
+    QFETCH(QString, kind);
+    QFETCH(QString, title);
+    QFETCH(QString, accent);
+    const QString html = MarkdownRenderer::renderToHtml(
+        QStringLiteral("> [!%1]\n> **保留正文** 与 `code`\n>\n> 第二段").arg(kind));
+    QVERIFY(html.contains(QStringLiteral("<strong>%1</strong>").arg(title)));
+    QVERIFY(html.contains(QStringLiteral("<td width=\"3\" bgcolor=\"%1\"></td>").arg(accent)));
+    QVERIFY(html.contains(QStringLiteral("<strong>保留正文</strong>")));
+    QVERIFY(html.contains(QStringLiteral("第二段")));
+    QVERIFY(!html.contains(QStringLiteral("[!%1]").arg(kind)));
+    QCOMPARE(html.count(QStringLiteral("<table")), html.count(QStringLiteral("</table>")));
+}
+
+void MarkdownRendererTest::preservesLiteralCalloutMarkers() {
+    const QString html = MarkdownRenderer::renderToHtml(QStringLiteral(
+        "`[!NOTE]`\n\n```text\n> [!WARNING]\n```\n\n> [!UNKNOWN]\n> 普通引用\n\n> [!TIP] 不独占一行"));
+    QVERIFY(html.contains(QStringLiteral("[!NOTE]")));
+    QVERIFY(html.contains(QStringLiteral("[!WARNING]")));
+    QVERIFY(html.contains(QStringLiteral("[!UNKNOWN]")));
+    QVERIFY(html.contains(QStringLiteral("[!TIP] 不独占一行")));
+}
+
+void MarkdownRendererTest::stylesTaskMarkersAndCountsCodeLines() {
+    const QString html = MarkdownRenderer::renderToHtml(QStringLiteral("- [x] done\n- [ ] todo\n\n```cpp\n%1 <literal>\nsecond\n```"));
+    QVERIFY(html.contains(QStringLiteral("color:#16836b;\">☑</span>")));
+    QVERIFY(html.contains(QStringLiteral("color:#64748b;\">☐</span>")));
+    QVERIFY(html.contains(QStringLiteral(" · 2 行</span>")));
+    QVERIFY(html.contains(QStringLiteral("%1 &lt;literal&gt;\nsecond")));
+}
+
+void MarkdownRendererTest::rendersCalloutsWithMixedLineEndingsAndNestedQuotes() {
+    const QString html = MarkdownRenderer::renderToHtml(QStringLiteral(
+        "> [!NOTE]\r\n> 第一行\n>\r\n> > 内层引用\r\n>\n> 第三行"));
+    QVERIFY(html.contains(QStringLiteral("<strong>提示</strong>")));
+    QVERIFY(html.contains(QStringLiteral("第一行")));
+    QVERIFY(html.contains(QStringLiteral("内层引用")));
+    QVERIFY(html.contains(QStringLiteral("第三行")));
+    QVERIFY(!html.contains(QStringLiteral("[!NOTE]")));
+    QCOMPARE(html.count(QStringLiteral("<table")), html.count(QStringLiteral("</table>")));
+}
+
+void MarkdownRendererTest::toleratesCalloutMarkerCaseAndTrailingSpaces() {
+    for (const QString& marker : {QStringLiteral("[!Note] "), QStringLiteral("[!note]\t"), QStringLiteral("[!NOTE]  ")}) {
+        const QString html = MarkdownRenderer::renderToHtml(QStringLiteral("> ") + marker + QStringLiteral("\r\n> 正文"));
+        QVERIFY(html.contains(QStringLiteral("<strong>提示</strong>")));
+        QVERIFY(html.contains(QStringLiteral("正文")));
+        QVERIFY(!html.contains(QStringLiteral("[!")));
+        QVERIFY(!html.contains(QStringLiteral("<p><br")));
+    }
+    const QString ordinary = MarkdownRenderer::renderToHtml(QStringLiteral("> [!Note]  同行正文"));
+    QVERIFY(ordinary.contains(QStringLiteral("[!Note]  同行正文")));
 }
 
 QTEST_MAIN(MarkdownRendererTest)

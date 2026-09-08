@@ -36,7 +36,16 @@ int main(int argc, char** argv) {
 
     application.selectPeer(QStringLiteral("phone-user"));
 
-    if (app.arguments().contains(QStringLiteral("--markdown-style"))) {
+    if (app.arguments().contains(QStringLiteral("--markdown-rich"))) {
+        application.sendText(QStringLiteral("保留浅色风格，让信息更有层次。"));
+        fakeClient->emitIncomingText(QStringLiteral("phone-user"), QStringLiteral(
+            "## 发布前检查\n\n**重点内容**、[参考链接](https://example.com) 与 `CODEX_HOME` 一眼可辨。\n\n"
+            "> [!TIP]\n> 每个账号使用独立目录，原有历史**不会删除**。\n\n"
+            "> [!WARNING]\n> 首次使用需要重新登录，请先保存手头的工作。\n\n"
+            "### 检查清单\n\n- [x] 完成代码复核\n- [ ] 验证安装效果\n\n"
+            "```swift\nlet message = \"Hello, MaiChat\"\nprint(message)\n```\n\n"
+            "| 内容 | 呈现 |\n| --- | --- |\n| 行内代码 | 等宽色块 |\n| 提示引用 | 语义配色 |"));
+    } else if (app.arguments().contains(QStringLiteral("--markdown-style"))) {
         application.sendText(QStringLiteral("同样先调节 iOS 的"));
         fakeClient->emitIncomingText(QStringLiteral("phone-user"), QStringLiteral(
             "## 让阅读更轻松\n\n统一蓝白配色，让 **重点更清晰**。\n\n"

@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { spawnSync } from 'child_process'
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { seedAccountCodexConfig, withCodexAccountHome } from '../../../electron/aicli/codexRuntime.js'
+import { withCodexAccountHome } from '../../../electron/aicli/codexRuntime.js'
 
 function withTempHome(body: (home: string) => void): void {
   const root = mkdtempSync(join(tmpdir(), 'codex-home-'))
@@ -12,56 +13,6 @@ function withTempHome(body: (home: string) => void): void {
     rmSync(root, { recursive: true, force: true })
   }
 }
-
-// 账号隔离之后，「Windows 沙箱已安装完成」的标记留在旧的全局目录里，新账号目录看不到它。
-// 沙箱级别是 elevated 时 codex 会认为需要重装，去拉 codex-windows-sandbox-setup.exe——
-// 那个 helper 当前不打包，于是弹「Windows 找不到文件」。用户明确要求不使用沙箱，
-// 而这件事不该丢给用户自己去手写配置。
-describe('seedAccountCodexConfig', () => {
-  it('writes a visible disabled-sandbox default when the account home is new', () => {
-    withTempHome((home) => {
-      withCodexAccountHome({}, home)
-      const text = readFileSync(join(home, 'config.toml'), 'utf8')
-      expect(text).toContain('[windows]')
-      expect(text).toContain('sandbox = "disabled"')
-      // 降低隔离强度的默认值必须看得见、改得回，所以注释里要写清另外两个取值。
-      expect(text).toContain('unelevated')
-      expect(text).toContain('elevated')
-    })
-  })
-
-  // 覆盖用户已有配置才是真正的「静默削弱隔离」，这条是这个功能的红线。
-  it('never overwrites an existing config, whatever it says', () => {
-    withTempHome((home) => {
-      withCodexAccountHome({}, home)
-      const file = join(home, 'config.toml')
-      const chosen = '[windows]\nsandbox = "elevated"\n'
-      writeFileSync(file, chosen, 'utf8')
-      withCodexAccountHome({}, home)
-      expect(readFileSync(file, 'utf8')).toBe(chosen)
-    })
-  })
-
-  // 用户可能故意清空它来回到 codex 的内置默认值；再次启动不该把默认值塞回去。
-  it('leaves an intentionally emptied config empty', () => {
-    withTempHome((home) => {
-      withCodexAccountHome({}, home)
-      const file = join(home, 'config.toml')
-      writeFileSync(file, '', 'utf8')
-      seedAccountCodexConfig(home)
-      expect(readFileSync(file, 'utf8')).toBe('')
-    })
-  })
-
-  // 写不下去（只读目录、磁盘满）不该让会话起不来——codex 有自己的内置默认值。
-  it('stays non-fatal when the config cannot be written', () => {
-    withTempHome((home) => {
-      writeFileSync(home.replace(/[\\/]\.codex$/, '/blocker'), 'x', 'utf8')
-      expect(() => seedAccountCodexConfig(join(home, 'missing-parent'))).not.toThrow()
-      expect(existsSync(join(home, 'missing-parent', 'config.toml'))).toBe(false)
-    })
-  })
-})
 
 describe('withCodexAccountHome', () => {
   it('refuses a relative home so nothing lands inside the target repo', () => {
@@ -97,5 +48,54 @@ describe('withCodexAccountHome', () => {
       expect(env.CODEX_CA_CERTIFICATE).toBe('X:/ca.pem')
       expect(env.CODEX_APP_SERVER_MANAGED_CONFIG_PATH).toBe('X:/managed.toml')
     })
+  })
+
+  // 我们**不往账号目录写任何 config.toml**。曾经写过一份 `[windows] sandbox = "disabled"`
+  // 的默认值，那是错的：内核的 WindowsSandboxModeToml 只有 elevated / unelevated 两个变体，
+  // 写 "disabled" 会让整份配置解析失败、codex 直接起不来（见下面的内核回归）。
+  // 「关闭沙箱」在内核里的正确表达是**不写这个键**——缺省即 WindowsSandboxLevel::Disabled。
+  it('creates the account home without planting any config file in it', () => {
+    withTempHome((home) => {
+      withCodexAccountHome({}, home)
+      expect(existsSync(home)).toBe(true)
+      expect(readdirSync(home)).toEqual([])
+    })
+  })
+})
+
+// 这条用**打包进安装包的真实内核**跑，不是断言字符串。上一版的缺陷正是「单测只比对
+// 文件内容、从没让 codex 读过它」——内核根本不接受那个值，而测试全绿。
+const packagedCodex = join(
+  process.cwd(),
+  'release/win-unpacked/resources/app.asar.unpacked/bin/aicli/codex/win32-x64/codex.exe'
+)
+const kernelAvailable = process.platform === 'win32' && existsSync(packagedCodex)
+
+describe.runIf(kernelAvailable)('bundled codex kernel: what it accepts for [windows] sandbox', () => {
+  function loadConfig(contents: string | null): string {
+    const root = mkdtempSync(join(tmpdir(), 'codex-kernel-'))
+    try {
+      if (contents !== null) writeFileSync(join(root, 'config.toml'), contents, 'utf8')
+      // `login status` 未登录时返回非零，所以不能用 execFileSync（它会抛掉输出）。
+      // 我们要的是内核对配置的判读，退出码在这里没有意义。
+      const run = spawnSync(packagedCodex, ['login', 'status'], {
+        env: { ...process.env, CODEX_HOME: root, CODEX_SQLITE_HOME: root },
+        encoding: 'utf8',
+        timeout: 120_000
+      })
+      return `${run.stdout ?? ''}${run.stderr ?? ''}`
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  }
+
+  it('rejects sandbox = "disabled" outright, so we must never write it', () => {
+    expect(loadConfig('[windows]\nsandbox = "disabled"\n')).toMatch(
+      /unknown variant `disabled`, expected `elevated` or `unelevated`/
+    )
+  })
+
+  it('loads a home with no config at all, which is how the sandbox stays off', () => {
+    expect(loadConfig(null)).not.toMatch(/Error loading configuration/)
   })
 })

@@ -59,6 +59,11 @@ export function opencodeRuntimeDir(): string {
   return join(rootDir(), 'aicli', 'opencode')
 }
 
+/** Persistent per-account Codex state; deliberately outside every target repo. */
+export function codexRuntimeDir(): string {
+  return join(rootDir(), '.codex')
+}
+
 // claw 的凭据**不复用** opencode 那份：这条线的终点是删掉 opencode，
 // 把 claw 的存储挂在 opencodeRuntimeDir() 下等于给将来的删除埋一个雷。
 export function clawRuntimeDir(): string {

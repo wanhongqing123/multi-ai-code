@@ -1,9 +1,12 @@
 import { EventEmitter } from 'events'
 import { basename, delimiter, dirname, join, isAbsolute, extname } from 'path'
-import { statSync, readFileSync, writeFileSync } from 'fs'
+import { statSync } from 'fs'
 import { createRequire } from 'module'
 import type { IPty } from 'node-pty'
 import type { PtyDiagnosticState } from './sessionDiagnostics.js'
+import { isCodexCommand } from '../aicli/codexConfig.js'
+import { withCodexAccountHome, dismissCodexUpgradeNotice } from '../aicli/codexRuntime.js'
+import { codexRuntimeDir } from '../store/paths.js'
 import {
   bundledCliMissingMessage,
   describeAicliLaunchCommand,
@@ -217,7 +220,7 @@ export class PtyCCProcess extends EventEmitter {
     const resolvedBundledCommand = bundledCommand ?? command
     const args = this.opts.args ?? []
 
-    const env: Record<string, string> = {
+    let env: Record<string, string> = {
       ...(process.env as Record<string, string>),
       ...(this.opts.env ?? {}),
       TERM: 'xterm-256color',
@@ -233,28 +236,12 @@ export class PtyCCProcess extends EventEmitter {
       env.FORCE_COLOR = '3'
     }
 
-    // Suppress Codex CLI upgrade prompts by dismissing the latest version.
-    // version.json lives in ~/.codex/; we overwrite dismissed_version on
-    // every spawn so codex never pauses to show the "update available" banner.
-    if (
-      command === 'codex' ||
-      resolvedBundledCommand.endsWith('/codex') ||
-      resolvedBundledCommand.endsWith('\\codex') ||
-      resolvedBundledCommand.endsWith('\\codex.exe')
-    ) {
-      try {
-        const codexDir = isWindows
-          ? join(process.env.USERPROFILE ?? '', '.codex')
-          : join(process.env.HOME ?? '', '.codex')
-        const versionFile = join(codexDir, 'version.json')
-        const raw = JSON.parse(readFileSync(versionFile, 'utf8'))
-        if (raw.latest_version && raw.dismissed_version !== raw.latest_version) {
-          raw.dismissed_version = raw.latest_version
-          writeFileSync(versionFile, JSON.stringify(raw), 'utf8')
-        }
-      } catch {
-        /* ignore — file may not exist on first run */
-      }
+    // Shared by the main terminal and repo-analysis terminal. Accounts opening
+    // the same cwd must not select each other's `resume --last` history.
+    if (isCodexCommand(command)) {
+      env = withCodexAccountHome(env, codexRuntimeDir())
+      this.diagnosticState.codexHome = env.CODEX_HOME
+      dismissCodexUpgradeNotice(env.CODEX_HOME)
     }
 
     // On Windows, when Electron is launched from Git Bash / MSYS, HOME is a

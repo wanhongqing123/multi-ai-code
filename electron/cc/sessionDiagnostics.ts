@@ -6,6 +6,7 @@ export type HostStopReason = 'cc:kill' | 'cc:kill-all' | 'project-delete'
   | 'project-target-changed' | 'window-all-closed' | 'before-quit'
 
 export interface PtyDiagnosticState {
+  codexHome?: string | null
   pid: number | null
   executable: string | null
   lastInputAt: number | null
@@ -17,7 +18,7 @@ const FILE_NAME = 'aicli-lifecycle.jsonl'
 const MAX_BYTES = 2 * 1024 * 1024
 const EXPORT_FIELDS = [
   'sessionId', 'projectId', 'cli', 'appVersion', 'sourceCommit', 'hostPid', 'pid',
-  'executable', 'startedAt', 'lifetimeMs', 'lastInputAt', 'sinceInputMs',
+  'executable', 'codexHome', 'startedAt', 'lifetimeMs', 'lastInputAt', 'sinceInputMs',
   'lastOutputAt', 'lastEtxAt', 'lastControl', 'lastControlAt', 'hostStopReason',
   'stopRequestedAt', 'stopReasonRequested', 'requestedProjectId', 'event', 'createdAt', 'exitCode', 'signal', 'exitCodeHex',
   'spawnErrorCode'
@@ -74,6 +75,7 @@ export class SessionDiagnostics {
       cli: this.context.cli, appVersion: this.context.appVersion,
       sourceCommit: this.sourceCommit,
       hostPid: process.pid, pid: io?.pid ?? null,
+      codexHome: io?.codexHome ?? null,
       executable: io?.executable
         ? this.context.cli === 'custom' ? basename(io.executable) : io.executable
         : null,

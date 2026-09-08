@@ -70,7 +70,9 @@ describe('Codex account isolation at the native PTY boundary', () => {
       expect(option.env.CODEX_APP_SERVER_MANAGED_CONFIG_PATH).toBe(join(root, 'policy.toml'))
     }
     expect(readdirSync(repo)).toEqual([])
-    expect(readdirSync(join(root, 'accounts', 'account-a', '.codex'))).toEqual([])
+    // 首次建目录时会写一份可见的默认 config.toml（见 seedAccountCodexConfig）；
+    // 除此之外仍然不往账号目录里搞任何东西。
+    expect(readdirSync(join(root, 'accounts', 'account-a', '.codex'))).toEqual(['config.toml'])
   })
 
   it('does not rewrite the global home or import credentials, sessions, or locks', () => {
@@ -86,7 +88,7 @@ describe('Codex account isolation at the native PTY boundary', () => {
     start('account-a')
     expect(JSON.parse(readFileSync(join(codexRuntimeDir(), 'version.json'), 'utf8')).dismissed_version).toBe('test')
     for (const name of readdirSync(global)) expect(readFileSync(join(global, name), 'utf8')).toBe(original)
-    expect(readdirSync(codexRuntimeDir())).toEqual(['version.json'])
+    expect(readdirSync(codexRuntimeDir()).sort()).toEqual(['config.toml', 'version.json'])
   })
 
   it('does not silently fall back to the shared home when creating the account home fails', () => {

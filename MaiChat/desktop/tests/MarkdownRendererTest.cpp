@@ -1,6 +1,7 @@
 #include <QTest>
 
 #include "markdown/MarkdownRenderer.h"
+#include "markdown/PreviewText.h"
 
 class MarkdownRendererTest : public QObject {
     Q_OBJECT
@@ -20,6 +21,8 @@ private slots:
     void stylesTaskMarkersAndCountsCodeLines();
     void rendersCalloutsWithMixedLineEndingsAndNestedQuotes();
     void toleratesCalloutMarkerCaseAndTrailingSpaces();
+    void previewHtmlPreservesCodeSemanticsWithoutFontHeuristics();
+    void previewRejectsOldQtBoundariesInsideEmoji();
 };
 
 void MarkdownRendererTest::rendersCommonAiCliMarkdown() {
@@ -163,6 +166,32 @@ void MarkdownRendererTest::toleratesCalloutMarkerCaseAndTrailingSpaces() {
     }
     const QString ordinary = MarkdownRenderer::renderToHtml(QStringLiteral("> [!Note]  同行正文"));
     QVERIFY(ordinary.contains(QStringLiteral("[!Note]  同行正文")));
+}
+
+void MarkdownRendererTest::previewHtmlPreservesCodeSemanticsWithoutFontHeuristics() {
+    const QString code = MarkdownRenderer::renderPreviewHtml(QStringLiteral("> `[!TIP]`"));
+    QVERIFY(code.contains(QStringLiteral("<code>[!TIP]</code>")));
+    QVERIFY(!code.contains(QStringLiteral("建议：")));
+    const QString quote = MarkdownRenderer::renderPreviewHtml(QStringLiteral("> [!TIP]\n> 正文"));
+    QVERIFY(quote.contains(QStringLiteral("建议：正文")));
+    QVERIFY(!quote.contains(QStringLiteral("[!TIP]")));
+    const QString fenced = MarkdownRenderer::renderPreviewHtml(QStringLiteral("```cpp\n%1 a*b*c\n```"));
+    QVERIFY(fenced.contains(QStringLiteral("%1 a*b*c")));
+    QVERIFY(!fenced.contains(QStringLiteral(" 行</span>")));
+}
+
+void MarkdownRendererTest::previewRejectsOldQtBoundariesInsideEmoji() {
+    for (const QString& sequence : {QString::fromUtf8("👨‍👩‍👧‍👦"), QString::fromUtf8("👩🏽‍💻"),
+                                    QString::fromUtf8("❤️"), QString::fromUtf8("1️⃣"), QString::fromUtf8("🇨🇳")}) {
+        // Simulate every boundary an older Qt could return, even on newer Qt.
+        for (int offset = 1; offset < sequence.size(); ++offset) {
+            QVERIFY2(PreviewText::continuesEmojiOrMark(sequence, offset),
+                     qPrintable(QStringLiteral("unsafe UTF16 offset=%1").arg(offset)));
+        }
+        QVERIFY(!PreviewText::continuesEmojiOrMark(sequence + sequence, sequence.size()));
+        QCOMPARE(PreviewText::truncate(sequence + sequence, 1), sequence + QStringLiteral("…"));
+    }
+    QCOMPARE(PreviewText::truncate(QStringLiteral("ordinary text"), 4), QStringLiteral("ordi…"));
 }
 
 QTEST_MAIN(MarkdownRendererTest)

@@ -73,6 +73,7 @@ add_library(remote_im_core
   src/model/MessageSearch.cpp
   src/model/PinyinInitials.cpp
   src/markdown/MarkdownRenderer.h
+  src/markdown/PreviewText.h
   src/markdown/MarkdownRenderer.cpp
   src/im/RemoteIMClient.h
   src/im/RemoteIMCredentialDefaults.h

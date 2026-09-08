@@ -91,7 +91,7 @@
 #include <QRadioButton>
 #include <QRegularExpression>
 #include <QCache>
-#include <QTextBoundaryFinder>
+#include "markdown/PreviewText.h"
 
 #include "im/RemoteIMCredentialDefaults.h"
 #include "im/TencentUserSigGenerator.h"
@@ -1174,15 +1174,8 @@ QString conversationMarkdownPreview(const QString& source) {
     if (!input.isEmpty() && QChar(input.back()).isHighSurrogate()) input.chop(1);
     if (const auto* cached = cache.object(input)) return *cached;
     PreviewTextDocument document;
-    QTextDocument::MarkdownFeatures features = QTextDocument::MarkdownDialectGitHub;
-    features |= QTextDocument::MarkdownNoHTML;
-    document.setMarkdown(input, features);
+    document.setHtml(MarkdownRenderer::renderPreviewHtml(input));
     QStringList blocks;
-    static const QRegularExpression callout(QStringLiteral("^\\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\\](?:[ \\t]+|$)"),
-                                            QRegularExpression::CaseInsensitiveOption);
-    const QHash<QString, QString> titles{{QStringLiteral("NOTE"), QStringLiteral("提示")},
-        {QStringLiteral("TIP"), QStringLiteral("建议")}, {QStringLiteral("IMPORTANT"), QStringLiteral("重要")},
-        {QStringLiteral("WARNING"), QStringLiteral("注意")}, {QStringLiteral("CAUTION"), QStringLiteral("警告")}};
     for (auto block = document.begin(); block.isValid(); block = block.next()) {
         QString text;
         for (auto it = block.begin(); !it.atEnd(); ++it) {
@@ -1194,30 +1187,10 @@ QString conversationMarkdownPreview(const QString& source) {
                 text += fragment.text();
             }
         }
-        const auto format = block.blockFormat();
-        const bool codeBlock = format.hasProperty(QTextFormat::BlockCodeFence)
-            || format.hasProperty(QTextFormat::BlockCodeLanguage) || format.nonBreakableLines();
-        const auto firstIt = block.begin();
-        const auto first = firstIt.atEnd() ? QTextCharFormat() : firstIt.fragment().charFormat();
-        const bool literalStart = first.fontFixedPitch() || first.isAnchor();
-        if (!codeBlock && !literalStart && format.intProperty(QTextFormat::BlockQuoteLevel) > 0) {
-            const auto marker = callout.match(text);
-            if (marker.hasMatch()) text = titles.value(marker.captured(1).toUpper()) + QStringLiteral("：") + text.mid(marker.capturedLength());
-        }
-        if (format.marker() == QTextBlockFormat::MarkerType::Checked) text.prepend(QStringLiteral("☑ "));
-        if (format.marker() == QTextBlockFormat::MarkerType::Unchecked) text.prepend(QStringLiteral("☐ "));
         blocks.append(text);
     }
     QString result = blocks.join(QLatin1Char(' ')).simplified();
-    // Truncate at grapheme boundaries (not in the middle of an emoji/surrogate).
-    QTextBoundaryFinder boundary(QTextBoundaryFinder::Grapheme, result);
-    int end = 0;
-    for (int count = 0; count < 160; ++count) {
-        const int next = boundary.toNextBoundary();
-        if (next < 0) { end = result.size(); break; }
-        end = next;
-    }
-    if (end < result.size()) result = result.left(end) + QStringLiteral("…");
+    result = PreviewText::truncate(result);
     cache.insert(input, new QString(result), (input.size() + result.size()) * 2 + 1);
     return result;
 }

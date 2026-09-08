@@ -41,15 +41,31 @@ QString quoteOpening(const QString& accent, const QString& background, const QSt
     return result;
 }
 
-QString renderBody(const QString& markdown) {
+QString parseHtml(const QString& markdown) {
     const QByteArray utf8 = markdown.toUtf8();
     QByteArray out;
     out.reserve(utf8.size() * 2);
     md_html(utf8.constData(), static_cast<MD_SIZE>(utf8.size()), appendHtmlChunk, &out,
             MD_DIALECT_GITHUB | MD_FLAG_NOHTML, MD_HTML_FLAG_XHTML);
-    QString html = QString::fromUtf8(out);
+    return sanitizeLinks(QString::fromUtf8(out));
+}
 
-    html = sanitizeLinks(html);
+struct Callout { const char* name; const char* accent; const char* background; QString title; };
+const Callout callouts[] = {
+    {"NOTE", "#1f64b0", "#f0f5fb", QStringLiteral("提示")},
+    {"TIP", "#16836b", "#eff7f4", QStringLiteral("建议")},
+    {"IMPORTANT", "#7547a8", "#f5f1fa", QStringLiteral("重要")},
+    {"WARNING", "#9c640f", "#fbf6ec", QStringLiteral("注意")},
+    {"CAUTION", "#ba3d40", "#fbf1f2", QStringLiteral("警告")}
+};
+
+QRegularExpression calloutMarker(const char* name) {
+    return QRegularExpression(QStringLiteral("<blockquote>\\s*<p>\\[!%1\\][ \\t]*(?:\\n|<br\\s*/?>\\n?|(?=</p>))")
+        .arg(QString::fromLatin1(name)), QRegularExpression::CaseInsensitiveOption);
+}
+
+QString renderBody(const QString& markdown) {
+    QString html = parseHtml(markdown);
 
     // 任务列表：QTextDocument 渲染不了 <input type="checkbox">，换成字符。
     html.replace(QStringLiteral("<input type=\"checkbox\" class=\"task-list-item-checkbox\" disabled checked>"),
@@ -119,18 +135,8 @@ QString renderBody(const QString& markdown) {
 
     // Recognize only a standalone first-line GFM callout marker. Escaped code,
     // unknown markers, and markers appearing within ordinary prose stay literal.
-    struct Callout { const char* name; const char* accent; const char* background; QString title; };
-    const Callout callouts[] = {
-        {"NOTE", "#1f64b0", "#f0f5fb", QStringLiteral("提示")},
-        {"TIP", "#16836b", "#eff7f4", QStringLiteral("建议")},
-        {"IMPORTANT", "#7547a8", "#f5f1fa", QStringLiteral("重要")},
-        {"WARNING", "#9c640f", "#fbf6ec", QStringLiteral("注意")},
-        {"CAUTION", "#ba3d40", "#fbf1f2", QStringLiteral("警告")}
-    };
     for (const auto& callout : callouts) {
-        const QRegularExpression marker(QStringLiteral("<blockquote>\\s*<p>\\[!%1\\][ \\t]*(?:\\n|<br\\s*/?>\\n?|(?=</p>))")
-            .arg(QString::fromLatin1(callout.name)), QRegularExpression::CaseInsensitiveOption);
-        html.replace(marker, quoteOpening(QString::fromLatin1(callout.accent),
+        html.replace(calloutMarker(callout.name), quoteOpening(QString::fromLatin1(callout.accent),
             QString::fromLatin1(callout.background), callout.title) + QStringLiteral("<p>"));
     }
     // Qt 不支持 CSS border-left/padding，用窄色条和带内边距的内表格呈现引用。
@@ -142,6 +148,29 @@ QString renderBody(const QString& markdown) {
 }
 
 }  // namespace
+
+QString MarkdownRenderer::renderPreviewHtml(const QString& markdown) {
+    QString html = parseHtml(markdown);
+    // Plain previews do not need emphasis tags, but keep code/link tags until
+    // after callout recognition so their literal labels remain protected.
+    static const QRegularExpression emphasis(QStringLiteral("</?(?:strong|em|del)>"));
+    html.remove(emphasis);
+    // Recognize callouts before Qt discards inline-code semantics into font
+    // properties. <p><code>[!TIP]</code> can never match the plain marker.
+    for (const auto& callout : callouts) {
+        // Preserve the existing preview policy: a leading plain callout token
+        // may also precede same-line text. Rich message rendering stays strict.
+        const QRegularExpression marker(QStringLiteral("<blockquote>\\s*<p>\\[!%1\\](?:[ \\t]*(?:\\n|<br\\s*/?>\\n?|(?=</p>))|[ \\t]+)")
+            .arg(QString::fromLatin1(callout.name)), QRegularExpression::CaseInsensitiveOption);
+        html.replace(marker, QStringLiteral("<blockquote><p>") + callout.title + QStringLiteral("："));
+    }
+    html.replace(QStringLiteral("<input type=\"checkbox\" class=\"task-list-item-checkbox\" disabled checked>"), QStringLiteral("☑ "));
+    html.replace(QStringLiteral("<input type=\"checkbox\" class=\"task-list-item-checkbox\" disabled>"), QStringLiteral("☐ "));
+    // Preview extraction never needs image resources, only their escaped alt text.
+    static const QRegularExpression image(QStringLiteral("<img\\b[^>]*\\balt=\"([^\"]*)\"[^>]*>"));
+    html.replace(image, QStringLiteral("\\1"));
+    return html;
+}
 
 QString MarkdownRenderer::renderToHtml(const QString& markdown) {
     // 与 iOS 使用同一套轻量排版：浅色代码卡片、清晰标题、淡色表头。

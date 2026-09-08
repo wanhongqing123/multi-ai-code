@@ -703,6 +703,9 @@ void MainWindowLayoutTest::conversationPreviewUsesPlainMarkdown_data() {
     QTest::newRow("link-strike") << QStringLiteral("[文档](https://example.com) 与 ~~旧版~~") << QStringLiteral("文档 与 旧版") << false;
     QTest::newRow("code-literals") << QStringLiteral("```cpp\na*b*c\npath_with_under_score\n```") << QStringLiteral("a*b*c path_with_under_score") << false;
     QTest::newRow("callout") << QStringLiteral("> [!TIP]\n> 使用 **独立目录**") << QStringLiteral("建议：使用 独立目录") << false;
+    QTest::newRow("same-line-preview-callout") << QStringLiteral("> [!TIP] 正文") << QStringLiteral("建议：正文") << false;
+    QTest::newRow("emphasized-preview-callout") << QStringLiteral("> **[!TIP]** 正文") << QStringLiteral("建议：正文") << false;
+    QTest::newRow("linked-literal-callout") << QStringLiteral("> [[!TIP]](https://example.com)") << QStringLiteral("[!TIP]") << false;
     QTest::newRow("tasks") << QStringLiteral("- [x] 完成\n- [ ] 待办") << QStringLiteral("☑ 完成 ☐ 待办") << false;
     QTest::newRow("table") << QStringLiteral("| A | B |\n|---|---|\n|1|2|") << QStringLiteral("A B 1 2") << false;
     QTest::newRow("reference-link") << QStringLiteral("[文档][ref]\n\n[ref]: https://example.com") << QStringLiteral("文档") << false;
@@ -715,6 +718,12 @@ void MainWindowLayoutTest::conversationPreviewUsesPlainMarkdown_data() {
     QTest::newRow("only-markup") << QStringLiteral("---") << QStringLiteral("新消息") << false;
     const QString emoji = QString::fromUtf8("👨‍👩‍👧‍👦");
     QTest::newRow("long-emoji") << emoji.repeated(170) << (emoji.repeated(160) + QStringLiteral("…")) << false;
+    for (const QString& sequence : {emoji, QString::fromUtf8("👩🏽‍💻"), QString::fromUtf8("❤️"),
+                                    QString::fromUtf8("1️⃣"), QString::fromUtf8("🇨🇳")}) {
+        const QByteArray name = QByteArray("emoji-after-159-") + sequence.toUtf8().toHex();
+        QTest::newRow(name.constData()) << (QString(159, QLatin1Char('a')) + sequence + sequence)
+            << (QString(159, QLatin1Char('a')) + sequence + QStringLiteral("…")) << false;
+    }
 }
 
 void MainWindowLayoutTest::conversationPreviewUsesPlainMarkdown() {
@@ -734,7 +743,20 @@ void MainWindowLayoutTest::conversationPreviewUsesPlainMarkdown() {
     auto* list = window.findChild<QListWidget*>(QStringLiteral("conversationList"));
     QVERIFY(list != nullptr);
     QCOMPARE(list->count(), 1);
-    QCOMPARE(list->item(0)->data(Qt::UserRole + 2).toString(), expected);
+    const QString actual = list->item(0)->data(Qt::UserRole + 2).toString();
+    if (actual != expected) {
+        QStringList tail;
+        const auto codepoints = actual.toUcs4();
+        for (int i = qMax(0, codepoints.size() - 12); i < codepoints.size(); ++i) {
+            tail.append(QString::number(codepoints.at(i), 16));
+        }
+        qInfo().noquote() << "preview mismatch: actual UTF16=" << actual.size()
+            << "expected UTF16=" << expected.size()
+            << "actual ZWJ=" << actual.count(QChar(0x200D))
+            << "expected ZWJ=" << expected.count(QChar(0x200D))
+            << "actual tail scalars=" << tail.join(QLatin1Char(','));
+    }
+    QCOMPARE(actual, expected);
     RemoteIMMessage stored;
     QVERIFY(app.chatState().latestMessageWith(QStringLiteral("phone-user"), &stored));
     QCOMPARE(stored.text, source);

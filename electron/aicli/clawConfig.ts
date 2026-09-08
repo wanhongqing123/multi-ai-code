@@ -120,6 +120,11 @@ export function clawProtocolSpec(protocol: ClawProtocol): ClawProtocolSpec {
 // 设了就改用 <CLAW_DATA_DIR>/sessions/<workspace 指纹>/，不同仓库仍互相隔离。
 export const CLAW_DATA_DIR_ENV = 'CLAW_DATA_DIR'
 
+/** 主模型；claw 里 --model 优先于它，所以两边同时给是安全的。 */
+export const CLAW_MODEL_ENV = 'CLAW_MODEL'
+/** 子代理专用模型；fork 里的回退链第一顺位就是它。 */
+export const CLAW_SUBAGENT_MODEL_ENV = 'CLAW_SUBAGENT_MODEL'
+
 export interface ClawManagedConfig {
   /** 协议。老配置里没有这个字段，读取时按模型前缀反推。 */
   protocol: ClawProtocol
@@ -128,13 +133,22 @@ export interface ClawManagedConfig {
   baseUrl: string
   /** **裸模型名**，不带前缀；前缀由协议决定、代码拼。 */
   model: string
+  /**
+   * 子代理（claw 的 Agent 工具）用的裸模型名。**留空就跟随主模型**。
+   *
+   * 上游把它写死成 `claude-opus-4-6`，只对 Anthropic 官方凭据有意义：用智谱 /
+   * DashScope / Ollama 跑 claw 时，一旦触发子代理就会拿着用户的 Key 去请求一个
+   * 对方根本没有的模型名。fork 里已把那个常量拆掉，改成读下面这组 env。
+   */
+  subagentModel: string
 }
 
 export const EMPTY_CLAW_CONFIG: ClawManagedConfig = {
   protocol: CLAW_DEFAULT_PROTOCOL,
   apiKey: '',
   baseUrl: '',
-  model: ''
+  model: '',
+  subagentModel: ''
 }
 
 export function isClawCommand(command: string): boolean {
@@ -159,10 +173,23 @@ export function isClawCommand(command: string): boolean {
  * 用户填裸名；已经带了任一已知前缀就原样保留（方便直接粘贴全名）。
  */
 export function clawQualifiedModel(config: ClawManagedConfig): string {
-  const model = config.model.trim() || CLAW_DEFAULT_MODEL
+  return qualify(config.model.trim() || CLAW_DEFAULT_MODEL, config.protocol)
+}
+
+/**
+ * 子代理模型的完整名。**没填就返回 null**，交给 claw 自己回退到主模型——
+ * 宿主不在这里替用户拿主意，避免两边各算一份、以后不一致。
+ */
+export function clawQualifiedSubagentModel(config: ClawManagedConfig): string | null {
+  const model = config.subagentModel.trim()
+  return model ? qualify(model, config.protocol) : null
+}
+
+/** 已经带任一已知前缀就原样保留（方便直接粘贴全名）。 */
+function qualify(model: string, protocol: ClawProtocol): string {
   const lower = model.toLowerCase()
   if (CLAW_PROTOCOLS.some((spec) => lower.startsWith(spec.prefix))) return model
-  return `${clawProtocolSpec(config.protocol).prefix}${model}`
+  return `${clawProtocolSpec(protocol).prefix}${model}`
 }
 
 /** 老配置没有 protocol 字段时按模型前缀反推，保证升级后行为不变。 */
@@ -197,6 +224,14 @@ export function withClawManagedEnv(
   if (spec.keyEnv && !next[spec.keyEnv]) next[spec.keyEnv] = config.apiKey
   const baseUrl = config.baseUrl.trim() || spec.defaultBaseUrl
   if (baseUrl && !next[spec.baseUrlEnv]) next[spec.baseUrlEnv] = baseUrl
+
+  // 主模型同时走 --model 和 CLAW_MODEL：claw 的子代理进不到命令行参数，
+  // 只能从 env 看到主模型。两者取值相同，且 claw 里 --model 优先于 env。
+  if (!next[CLAW_MODEL_ENV]) next[CLAW_MODEL_ENV] = clawQualifiedModel(config)
+  const subagentModel = clawQualifiedSubagentModel(config)
+  if (subagentModel && !next[CLAW_SUBAGENT_MODEL_ENV]) {
+    next[CLAW_SUBAGENT_MODEL_ENV] = subagentModel
+  }
   return next
 }
 

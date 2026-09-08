@@ -322,7 +322,13 @@ const api = {
       ipcRenderer.invoke('claw:get-config') as Promise<
         | {
             ok: true
-            value: { protocol: ClawProtocol; apiKey: string; baseUrl: string; model: string }
+            value: {
+              protocol: ClawProtocol
+              apiKey: string
+              baseUrl: string
+              model: string
+              subagentModel: string
+            }
           }
         | { ok: false; error: string }
       >,
@@ -331,6 +337,7 @@ const api = {
       apiKey: string
       baseUrl: string
       model: string
+      subagentModel: string
     }) =>
       ipcRenderer.invoke('claw:set-config', config) as Promise<
         { ok: true } | { ok: false; error: string }

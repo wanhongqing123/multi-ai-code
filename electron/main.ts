@@ -272,13 +272,20 @@ app.whenReady().then(async () => {
     'claw:set-config',
     async (
       _event,
-      input: { protocol?: unknown; apiKey?: unknown; baseUrl?: unknown; model?: unknown }
+      input: {
+        protocol?: unknown
+        apiKey?: unknown
+        baseUrl?: unknown
+        model?: unknown
+        subagentModel?: unknown
+      }
     ) => {
       try {
         if (
           typeof input?.apiKey !== 'string' ||
           typeof input?.baseUrl !== 'string' ||
           typeof input?.model !== 'string' ||
+          typeof input?.subagentModel !== 'string' ||
           !isClawProtocol(input?.protocol)
         ) {
           return { ok: false as const, error: 'Claw 配置格式无效' }
@@ -287,7 +294,8 @@ app.whenReady().then(async () => {
           protocol: input.protocol,
           apiKey: input.apiKey,
           baseUrl: input.baseUrl,
-          model: input.model
+          model: input.model,
+          subagentModel: input.subagentModel
         })
         return { ok: true as const }
       } catch (error) {

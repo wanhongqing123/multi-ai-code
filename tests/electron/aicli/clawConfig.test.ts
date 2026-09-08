@@ -10,6 +10,7 @@ import {
   clawProtocolFromModel,
   clawProtocolSpec,
   clawQualifiedModel,
+  clawQualifiedSubagentModel,
   isClawCommand,
   withClawDataDirEnv,
   withClawManagedEnv,
@@ -80,7 +81,8 @@ describe('credentials and endpoint follow the selected protocol', () => {
     const env = withClawManagedEnv('claw', undefined, config({ protocol: 'anthropic' }))
     expect(env).toEqual({
       ANTHROPIC_API_KEY: 'k',
-      ANTHROPIC_BASE_URL: 'https://open.bigmodel.cn/api/anthropic'
+      ANTHROPIC_BASE_URL: 'https://open.bigmodel.cn/api/anthropic',
+      CLAW_MODEL: `anthropic/${CLAW_DEFAULT_MODEL}`
     })
     // 事故的形状：绝不能把 Anthropic 端点写进 OPENAI_BASE_URL。
     expect(env).not.toHaveProperty('OPENAI_BASE_URL')
@@ -90,24 +92,30 @@ describe('credentials and endpoint follow the selected protocol', () => {
     const env = withClawManagedEnv('claw', undefined, config({ protocol: 'openai' }))
     expect(env).toEqual({
       OPENAI_API_KEY: 'k',
-      OPENAI_BASE_URL: 'https://open.bigmodel.cn/api/coding/paas/v4'
+      OPENAI_BASE_URL: 'https://open.bigmodel.cn/api/coding/paas/v4',
+      CLAW_MODEL: `openai/${CLAW_DEFAULT_MODEL}`
     })
     expect(env).not.toHaveProperty('ANTHROPIC_BASE_URL')
   })
 
   it('uses each protocol own env names', () => {
     expect(withClawManagedEnv('claw', undefined, config({ protocol: 'xai' }))).toEqual({
-      XAI_API_KEY: 'k'
+      XAI_API_KEY: 'k',
+      CLAW_MODEL: `xai/${CLAW_DEFAULT_MODEL}`
     })
     expect(withClawManagedEnv('claw', undefined, config({ protocol: 'dashscope' }))).toEqual({
-      DASHSCOPE_API_KEY: 'k'
+      DASHSCOPE_API_KEY: 'k',
+      CLAW_MODEL: `qwen/${CLAW_DEFAULT_MODEL}`
     })
   })
 
   it('injects the ollama endpoint even with no API key', () => {
     expect(
       withClawManagedEnv('claw', undefined, { ...EMPTY_CLAW_CONFIG, protocol: 'ollama' })
-    ).toEqual({ OLLAMA_HOST: 'http://127.0.0.1:11434/v1' })
+    ).toEqual({
+      OLLAMA_HOST: 'http://127.0.0.1:11434/v1',
+      CLAW_MODEL: `local/${CLAW_DEFAULT_MODEL}`
+    })
   })
 
   it('honours a Base URL the user typed in over the protocol default', () => {
@@ -118,14 +126,22 @@ describe('credentials and endpoint follow the selected protocol', () => {
     )
     expect(env).toEqual({
       OPENAI_API_KEY: 'k',
-      OPENAI_BASE_URL: 'https://my-gateway.internal/v1'
+      OPENAI_BASE_URL: 'https://my-gateway.internal/v1',
+      CLAW_MODEL: `openai/${CLAW_DEFAULT_MODEL}`
     })
   })
 
   // 手写的 env 是用户指向别的服务的出口，托管配置绝不能盖掉。
   it('never overrides env the user set explicitly', () => {
-    const userEnv = { OPENAI_API_KEY: 'mine', OPENAI_BASE_URL: 'http://localhost:1234/v1' }
-    expect(withClawManagedEnv('claw', userEnv, config())).toEqual(userEnv)
+    const userEnv = {
+      OPENAI_API_KEY: 'mine',
+      OPENAI_BASE_URL: 'http://localhost:1234/v1',
+      CLAW_MODEL: 'openai/my-own-model',
+      CLAW_SUBAGENT_MODEL: 'openai/my-own-cheap-model'
+    }
+    expect(withClawManagedEnv('claw', userEnv, config({ subagentModel: 'glm-5.3-flash' }))).toEqual(
+      userEnv
+    )
   })
 
   it('adds nothing when a key-requiring protocol has no key', () => {
@@ -181,7 +197,8 @@ describe('model name is composed from protocol + bare name', () => {
     expect(withClawModelArgs('claw', [], anthropic)).toEqual(['--model', 'anthropic/glm-5.3'])
     expect(Object.keys(withClawManagedEnv('claw', undefined, anthropic) ?? {})).toEqual([
       'ANTHROPIC_API_KEY',
-      'ANTHROPIC_BASE_URL'
+      'ANTHROPIC_BASE_URL',
+      'CLAW_MODEL'
     ])
   })
 
@@ -190,6 +207,51 @@ describe('model name is composed from protocol + bare name', () => {
     expect(withClawModelArgs('claw', ['--model=x'], config())).toEqual(['--model=x'])
     expect(withClawModelArgs('claw', ['--verbose'], EMPTY_CLAW_CONFIG)).toEqual(['--verbose'])
     expect(withClawModelArgs('codex', ['resume'], config())).toEqual(['resume'])
+  })
+})
+
+// claw 的子代理（Agent 工具）上游把模型写死成 claude-opus-4-6。配智谱时一旦触发子代理，
+// 就会拿用户的 Key 去请求一个对方根本没有的模型名。fork 里拆掉了那个常量，
+// 改成读 CLAW_SUBAGENT_MODEL → CLAW_MODEL → ANTHROPIC_MODEL → ANTHROPIC_DEFAULT_MODEL。
+// 这一组盯的是宿主这侧必须把这两个变量喂对。
+describe('subagent model', () => {
+  it('always exports the main model so the subagent can follow it', () => {
+    // 子代理拿不到命令行参数，--model 对它不可见，只能从 env 看到主模型。
+    const env = withClawManagedEnv('claw', undefined, config({ model: 'glm-5.3' }))
+    expect(env?.CLAW_MODEL).toBe('openai/glm-5.3')
+    expect(env?.CLAW_MODEL).toBe(withClawModelArgs('claw', [], config({ model: 'glm-5.3' }))[1])
+  })
+
+  it('exports a dedicated subagent model only when one is filled in', () => {
+    expect(withClawManagedEnv('claw', undefined, config())).not.toHaveProperty(
+      'CLAW_SUBAGENT_MODEL'
+    )
+    const env = withClawManagedEnv(
+      'claw',
+      undefined,
+      config({ model: 'glm-5.3', subagentModel: 'glm-5.3-flash' })
+    )
+    expect(env?.CLAW_SUBAGENT_MODEL).toBe('openai/glm-5.3-flash')
+  })
+
+  it('qualifies the subagent model with the same protocol as the main model', () => {
+    expect(
+      clawQualifiedSubagentModel(config({ protocol: 'anthropic', subagentModel: 'glm-5.3-flash' }))
+    ).toBe('anthropic/glm-5.3-flash')
+    // 粘贴全名不再套一层前缀。
+    expect(
+      clawQualifiedSubagentModel(config({ protocol: 'openai', subagentModel: 'qwen/qwen-max' }))
+    ).toBe('qwen/qwen-max')
+  })
+
+  // 留空 = 跟随主模型。宿主不在这里替用户拿主意，避免两边各算一份。
+  it('leaves the subagent model unset when the field is empty', () => {
+    expect(clawQualifiedSubagentModel(config())).toBeNull()
+    expect(clawQualifiedSubagentModel(config({ subagentModel: '   ' }))).toBeNull()
+  })
+
+  it('adds neither model variable when the protocol has no key', () => {
+    expect(withClawManagedEnv('claw', undefined, EMPTY_CLAW_CONFIG)).toEqual({})
   })
 })
 

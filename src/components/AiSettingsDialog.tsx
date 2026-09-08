@@ -158,6 +158,7 @@ function SettingsSection(props: {
   clawApiKey: string
   clawBaseUrl: string
   clawModel: string
+  clawSubagentModel: string
   clawLoading: boolean
   advancedOpen: boolean
   argsText: string
@@ -169,6 +170,7 @@ function SettingsSection(props: {
   onClawApiKey: (next: string) => void
   onClawBaseUrl: (next: string) => void
   onClawModel: (next: string) => void
+  onClawSubagentModel: (next: string) => void
   onAdvancedOpen: (next: boolean) => void
   onArgs: (next: string) => void
   onEnv: (next: string) => void
@@ -251,6 +253,21 @@ function SettingsSection(props: {
                 onChange={(event) => props.onClawModel(event.target.value)}
                 placeholder={clawProtocolSpec(props.clawProtocol).sampleModel}
               />
+            </label>
+            <label className="ai-settings-grid-full">
+              子代理模型
+              <input
+                type="text"
+                value={props.clawSubagentModel}
+                disabled={props.clawLoading}
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(event) => props.onClawSubagentModel(event.target.value)}
+                placeholder="留空跟随主模型"
+              />
+              <span className="ai-settings-help">
+                claw 开子任务时用的模型。想用更便宜的模型跑子任务才需要填。
+              </span>
             </label>
             {clawProtocolSpec(props.clawProtocol).keyEnv !== null && (
               <label className="ai-settings-grid-full">
@@ -350,6 +367,7 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
   const [clawApiKey, setClawApiKey] = useState('')
   const [clawBaseUrl, setClawBaseUrl] = useState('')
   const [clawModel, setClawModel] = useState('')
+  const [clawSubagentModel, setClawSubagentModel] = useState('')
   const [clawLoading, setClawLoading] = useState(false)
   // 远程桌面模式住在 remote-im 配置里（与 AI 设置不同的存储），单独加载与保存。
   const [remoteImConfig, setRemoteImConfig] = useState<RemoteImConfig | null>(null)
@@ -387,6 +405,7 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
       setClawApiKey(result.value.apiKey)
       setClawBaseUrl(result.value.baseUrl)
       setClawModel(result.value.model)
+      setClawSubagentModel(result.value.subagentModel)
     })
     return () => {
       cancelled = true
@@ -442,7 +461,8 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
         protocol: clawProtocol,
         apiKey: clawApiKey,
         baseUrl: clawBaseUrl,
-        model: clawModel
+        model: clawModel,
+        subagentModel: clawSubagentModel
       })
       if (!clawResult.ok) throw new Error(clawResult.error)
       if (props.projectId) {
@@ -500,6 +520,7 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
                   clawApiKey={clawApiKey}
                   clawBaseUrl={clawBaseUrl}
                   clawModel={clawModel}
+                  clawSubagentModel={clawSubagentModel}
                   clawLoading={clawLoading}
                   advancedOpen={advancedOpen}
                   argsText={argsText}
@@ -511,6 +532,7 @@ export default function AiSettingsDialog(props: AiSettingsDialogProps): JSX.Elem
                   onClawApiKey={setClawApiKey}
                   onClawBaseUrl={setClawBaseUrl}
                   onClawModel={setClawModel}
+                  onClawSubagentModel={setClawSubagentModel}
                   onAdvancedOpen={setAdvancedOpen}
                   onArgs={setArgsText}
                   onEnv={setEnvText}

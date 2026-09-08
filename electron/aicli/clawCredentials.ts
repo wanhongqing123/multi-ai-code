@@ -32,6 +32,8 @@ interface ClawConfigFile {
   apiKey: string
   baseUrl: string
   model: string
+  /** v1 没有这个字段；缺失等同「跟随主模型」。 */
+  subagentModel?: string
 }
 
 function corrupt(): never {
@@ -64,7 +66,9 @@ export function readClawConfig(runtimeRoot: string): ClawManagedConfig {
     protocol,
     apiKey: config.apiKey.trim(),
     baseUrl: typeof config.baseUrl === 'string' ? config.baseUrl.trim() : '',
-    model: clawBareModel(rawModel)
+    model: clawBareModel(rawModel),
+    subagentModel:
+      typeof config.subagentModel === 'string' ? clawBareModel(config.subagentModel) : ''
   }
 }
 
@@ -76,9 +80,11 @@ export function writeClawConfig(runtimeRoot: string, config: ClawManagedConfig):
   const apiKey = config.apiKey.trim()
   const baseUrl = config.baseUrl.trim()
   const model = config.model.trim()
+  const subagentModel = config.subagentModel.trim()
   if (apiKey.length > MAX_API_KEY_LENGTH) throw new Error('Claw API Key 长度无效')
   if (baseUrl.length > MAX_BASE_URL_LENGTH) throw new Error('Claw Base URL 长度无效')
   if (model.length > MAX_MODEL_LENGTH) throw new Error('Claw 模型名长度无效')
+  if (subagentModel.length > MAX_MODEL_LENGTH) throw new Error('Claw 子代理模型名长度无效')
   if (baseUrl && !/^https?:\/\//i.test(baseUrl)) {
     throw new Error('Claw Base URL 必须以 http:// 或 https:// 开头')
   }
@@ -100,7 +106,8 @@ export function writeClawConfig(runtimeRoot: string, config: ClawManagedConfig):
         protocol: config.protocol,
         apiKey,
         baseUrl,
-        model
+        model,
+        subagentModel
       } satisfies ClawConfigFile,
       null,
       2

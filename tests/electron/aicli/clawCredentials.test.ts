@@ -31,19 +31,22 @@ describe('claw config round trip', () => {
         protocol: 'anthropic',
         apiKey: 'zhipu-abc',
         baseUrl: '',
-        model: 'glm-5.3'
+        model: 'glm-5.3',
+        subagentModel: ''
       })
       expect(readClawConfig(dir)).toEqual({
         protocol: 'anthropic',
         apiKey: 'zhipu-abc',
         baseUrl: '',
-        model: 'glm-5.3'
+        model: 'glm-5.3',
+        subagentModel: ''
       })
 
       // 端点与 --model 必须一起落在 Anthropic 那一组上。
       expect(withClawRuntimeEnv('claw', undefined, dir)).toEqual({
         ANTHROPIC_API_KEY: 'zhipu-abc',
-        ANTHROPIC_BASE_URL: clawProtocolSpec('anthropic').defaultBaseUrl
+        ANTHROPIC_BASE_URL: clawProtocolSpec('anthropic').defaultBaseUrl,
+        CLAW_MODEL: 'anthropic/glm-5.3'
       })
       expect(withClawRuntimeModelArgs('claw', [], dir)).toEqual(['--model', 'anthropic/glm-5.3'])
     })
@@ -51,10 +54,17 @@ describe('claw config round trip', () => {
 
   it('switching protocol switches which env pair is written', () => {
     withTempDir((dir) => {
-      writeClawConfig(dir, { protocol: 'openai', apiKey: 'k', baseUrl: '', model: '' })
+      writeClawConfig(dir, {
+        protocol: 'openai',
+        apiKey: 'k',
+        baseUrl: '',
+        model: '',
+        subagentModel: ''
+      })
       expect(withClawRuntimeEnv('claw', undefined, dir)).toEqual({
         OPENAI_API_KEY: 'k',
-        OPENAI_BASE_URL: clawProtocolSpec('openai').defaultBaseUrl
+        OPENAI_BASE_URL: clawProtocolSpec('openai').defaultBaseUrl,
+        CLAW_MODEL: `openai/${CLAW_DEFAULT_MODEL}`
       })
       expect(withClawRuntimeModelArgs('claw', [], dir)).toEqual([
         '--model',
@@ -67,7 +77,13 @@ describe('claw config round trip', () => {
   // 最容易漏的组合：不落盘的话，下次读回来会掉回默认协议。
   it('persists the protocol even when the model name carries no prefix', () => {
     withTempDir((dir) => {
-      writeClawConfig(dir, { protocol: 'xai', apiKey: 'k', baseUrl: '', model: 'grok-4' })
+      writeClawConfig(dir, {
+        protocol: 'xai',
+        apiKey: 'k',
+        baseUrl: '',
+        model: 'grok-4',
+        subagentModel: ''
+      })
       const raw = JSON.parse(readFileSync(join(dir, 'managed-config.json'), 'utf8'))
       expect(raw.protocol).toBe('xai')
       expect(readClawConfig(dir).protocol).toBe('xai')
@@ -92,11 +108,14 @@ describe('claw config round trip', () => {
         protocol: 'anthropic',
         apiKey: 'legacy-key',
         baseUrl: 'https://open.bigmodel.cn/api/anthropic',
-        model: 'glm-5.3'
+        model: 'glm-5.3',
+        // 老配置没有这个字段，缺失等同「跟随主模型」。
+        subagentModel: ''
       })
       expect(withClawRuntimeEnv('claw', undefined, dir)).toEqual({
         ANTHROPIC_API_KEY: 'legacy-key',
-        ANTHROPIC_BASE_URL: 'https://open.bigmodel.cn/api/anthropic'
+        ANTHROPIC_BASE_URL: 'https://open.bigmodel.cn/api/anthropic',
+        CLAW_MODEL: 'anthropic/glm-5.3'
       })
     })
   })
@@ -129,10 +148,54 @@ describe('claw config round trip', () => {
     })
   })
 
+  it('round-trips a dedicated subagent model and exports it to claw', () => {
+    withTempDir((dir) => {
+      writeClawConfig(dir, {
+        protocol: 'openai',
+        apiKey: 'k',
+        baseUrl: '',
+        model: 'glm-5.3',
+        subagentModel: 'glm-5.3-flash'
+      })
+      expect(readClawConfig(dir).subagentModel).toBe('glm-5.3-flash')
+      const env = withClawRuntimeEnv('claw', undefined, dir)
+      expect(env?.CLAW_MODEL).toBe('openai/glm-5.3')
+      expect(env?.CLAW_SUBAGENT_MODEL).toBe('openai/glm-5.3-flash')
+    })
+  })
+
+  // 留空就不该注入专用变量，让 claw 自己回退到 CLAW_MODEL。
+  it('exports no subagent variable when the field is left empty', () => {
+    withTempDir((dir) => {
+      writeClawConfig(dir, {
+        protocol: 'openai',
+        apiKey: 'k',
+        baseUrl: '',
+        model: 'glm-5.3',
+        subagentModel: ''
+      })
+      const env = withClawRuntimeEnv('claw', undefined, dir)
+      expect(env).not.toHaveProperty('CLAW_SUBAGENT_MODEL')
+      expect(env?.CLAW_MODEL).toBe('openai/glm-5.3')
+    })
+  })
+
   it('clearing the key deletes the file rather than leaving an endpoint-only shell', () => {
     withTempDir((dir) => {
-      writeClawConfig(dir, { protocol: 'openai', apiKey: 'k', baseUrl: '', model: '' })
-      writeClawConfig(dir, { protocol: 'openai', apiKey: '', baseUrl: 'https://x', model: 'y' })
+      writeClawConfig(dir, {
+        protocol: 'openai',
+        apiKey: 'k',
+        baseUrl: '',
+        model: '',
+        subagentModel: ''
+      })
+      writeClawConfig(dir, {
+        protocol: 'openai',
+        apiKey: '',
+        baseUrl: 'https://x',
+        model: 'y',
+        subagentModel: 'z'
+      })
       expect(existsSync(join(dir, 'managed-config.json'))).toBe(false)
       expect(readClawConfig(dir)).toEqual(EMPTY_CLAW_CONFIG)
     })
@@ -145,7 +208,8 @@ describe('claw config round trip', () => {
           protocol: 'openai',
           apiKey: 'k',
           baseUrl: 'ftp://example.com',
-          model: ''
+          model: '',
+          subagentModel: ''
         })
       ).toThrow(/http/)
     })

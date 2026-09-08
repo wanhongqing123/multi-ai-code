@@ -1425,7 +1425,7 @@ void MainWindow::buildUi() {
     auto* rootNavigationSplitter = new QSplitter(Qt::Horizontal, rootContent);
     rootNavigationSplitter->setObjectName(QStringLiteral("rootNavigationSplitter"));
     rootNavigationSplitter->setChildrenCollapsible(false);
-    rootNavigationSplitter->setHandleWidth(6);
+    rootNavigationSplitter->setHandleWidth(1);
 
     contentStack_ = new QStackedWidget(rootNavigationSplitter);
     contentStack_->setObjectName(QStringLiteral("contentStack"));
@@ -1439,7 +1439,9 @@ void MainWindow::buildUi() {
     auto* contentSplitter = new QSplitter(Qt::Horizontal, messagesPage_);
     contentSplitter->setObjectName(QStringLiteral("contentSplitter"));
     contentSplitter->setChildrenCollapsible(false);
-    contentSplitter->setHandleWidth(6);
+    // Qt expands the grab area for a 1px handle over neighbouring widgets:
+    // retain a usable drag target without a wide visible gutter.
+    contentSplitter->setHandleWidth(1);
 
     navRail_ = new QWidget(rootNavigationSplitter);
     navRail_->setObjectName(QStringLiteral("navRail"));
@@ -1673,7 +1675,7 @@ void MainWindow::buildUi() {
     auto* messageComposerSplitter = new QSplitter(Qt::Vertical, chatContentPane);
     messageComposerSplitter->setObjectName(QStringLiteral("messageComposerSplitter"));
     messageComposerSplitter->setChildrenCollapsible(false);
-    messageComposerSplitter->setHandleWidth(6);
+    messageComposerSplitter->setHandleWidth(1);
     messageComposerSplitter->addWidget(messageScroll_);
     messageComposerSplitter->addWidget(composer);
     messageComposerSplitter->setStretchFactor(0, 1);
@@ -2136,16 +2138,16 @@ void MainWindow::applyStyle() {
             background: #c4def0;
         }
         QSplitter::handle {
-            background: #edf2f8;
+            background: #e5ecf3;
         }
         QSplitter::handle:horizontal {
-            width: 6px;
+            width: 1px;
         }
         QSplitter::handle:vertical {
-            height: 6px;
+            height: 1px;
         }
         QSplitter::handle:hover {
-            background: #c7d8ea;
+            background: #90c9ed;
         }
     )")));
 }

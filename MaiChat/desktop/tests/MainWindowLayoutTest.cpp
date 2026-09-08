@@ -11,6 +11,8 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSplitter>
+#include <QSplitterHandle>
+#include <QMouseEvent>
 #include <QStringList>
 #include <QStackedWidget>
 #include <QDir>
@@ -68,6 +70,8 @@ private slots:
     void exposesDesktopChatLayoutControls();
     void composerUsesEmbeddedIconSendAction();
     void exposesResizableSplitters();
+    void compactSplittersKeepDragTargets_data();
+    void compactSplittersKeepDragTargets();
     void rendersEmptyConversationState();
     void sendsTextFromComposer();
     void returnKeySendsComposerText();
@@ -689,6 +693,54 @@ void MainWindowLayoutTest::composerUsesEmbeddedIconSendAction() {
     }
 }
 
+void MainWindowLayoutTest::compactSplittersKeepDragTargets_data() {
+    QTest::addColumn<QString>("name");
+    QTest::addColumn<qreal>("zoom");
+    for (const char* name : {"contentSplitter", "messageComposerSplitter"}) {
+        for (const qreal zoom : {0.8, 1.0, 1.5, 2.0}) {
+            const QByteArray row = QByteArray(name) + '-' + QByteArray::number(zoom);
+            QTest::newRow(row.constData()) << QString::fromLatin1(name) << zoom;
+        }
+    }
+}
+
+void MainWindowLayoutTest::compactSplittersKeepDragTargets() {
+    QFETCH(QString, name);
+    QFETCH(qreal, zoom);
+    struct RestoreZoom { qreal old; ~RestoreZoom() { UiZoom::setFactor(old); } } restore{UiZoom::factor()};
+    UiZoom::setFactor(zoom);
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    MainWindow window(app);
+    window.resize(1800, 1200);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto* splitter = window.findChild<QSplitter*>(name);
+    QVERIFY(splitter != nullptr);
+    QCOMPARE(splitter->count(), 2);
+    const bool horizontal = splitter->orientation() == Qt::Horizontal;
+    const QRect first = splitter->widget(0)->geometry();
+    const QRect second = splitter->widget(1)->geometry();
+    const int gap = horizontal ? second.left() - first.right() - 1 : second.top() - first.bottom() - 1;
+    QVERIFY2(gap <= UiZoom::s(1), qPrintable(QStringLiteral("visible splitter gap=%1").arg(gap)));
+    QVERIFY(gap > 0);
+    auto* handle = splitter->handle(1);
+    QVERIFY(handle != nullptr);
+    // Qt expands a 1px splitter's mouse area over its neighbours. A thin line
+    // must not become a one-pixel-only drag target.
+    const int grabSize = horizontal ? handle->width() : handle->height();
+    QVERIFY(grabSize > gap);
+    const int before = splitter->sizes().at(0);
+    const QPoint start = handle->rect().center();
+    const QPoint finish = start + (horizontal ? QPoint(40, 0) : QPoint(0, -40));
+    QTest::mousePress(handle, Qt::LeftButton, Qt::NoModifier, start);
+    QMouseEvent move(QEvent::MouseMove, QPointF(finish), QPointF(handle->mapToGlobal(finish)),
+                     Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(handle, &move);
+    QTest::mouseRelease(handle, Qt::LeftButton, Qt::NoModifier, finish);
+    QVERIFY2(splitter->sizes().at(0) != before, "The thin splitter must remain draggable");
+}
+
 void MainWindowLayoutTest::exposesResizableSplitters() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
@@ -1019,7 +1071,7 @@ void MainWindowLayoutTest::leftNavigationRailIsResizableAndWider() {
     // splitter 拖回原来那么宽。
     QVERIFY2(navRail->maximumWidth() <= 96, "导航栏应当是窄条，不该再占一整列");
     QCOMPARE(navRail->minimumWidth(), navRail->maximumWidth());
-    QVERIFY(rootNavigationSplitter->handleWidth() >= 6);
+    QCOMPARE(rootNavigationSplitter->handleWidth(), 1);
 
     // 一列图标的尺寸必须一致：混用尺寸时肉眼看到的就是「有的大有的小」，
     // 而每个按钮单独看都正常，所以要横向比。

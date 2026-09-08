@@ -3,6 +3,7 @@ import { basename, delimiter, dirname, join, isAbsolute, extname } from 'path'
 import { statSync, readFileSync, writeFileSync } from 'fs'
 import { createRequire } from 'module'
 import type { IPty } from 'node-pty'
+import type { PtyDiagnosticState } from './sessionDiagnostics.js'
 import {
   bundledCliMissingMessage,
   describeAicliLaunchCommand,
@@ -189,6 +190,9 @@ export interface PtyCCOptions {
 export class PtyCCProcess extends EventEmitter {
   private pty: IPty | null = null
   private readonly opts: PtyCCOptions
+  private readonly diagnosticState: PtyDiagnosticState = {
+    pid: null, executable: null, lastInputAt: null, lastOutputAt: null, lastEtxAt: null
+  }
 
   constructor(opts: PtyCCOptions) {
     super()
@@ -399,6 +403,7 @@ export class PtyCCProcess extends EventEmitter {
       console.log('[pty-dump][env]', JSON.stringify(summary, null, 2))
     }
 
+    this.diagnosticState.executable = spawnCommand
     this.pty = nodePtySpawn(spawnCommand, spawnArgs, {
       name: 'xterm-256color',
       cols: this.opts.cols ?? 100,
@@ -407,7 +412,11 @@ export class PtyCCProcess extends EventEmitter {
       env
     })
 
-    this.pty.onData((chunk) => this.emit('data', chunk))
+    this.diagnosticState.pid = this.pty.pid
+    this.pty.onData((chunk) => {
+      this.diagnosticState.lastOutputAt = Date.now()
+      this.emit('data', chunk)
+    })
     this.pty.onExit(({ exitCode, signal }) => {
       this.emit('exit', { exitCode, signal })
       this.pty = null
@@ -415,8 +424,13 @@ export class PtyCCProcess extends EventEmitter {
   }
 
   write(data: string): void {
-    this.pty?.write(data)
+    if (!this.pty) return
+    this.pty.write(data)
+    this.diagnosticState.lastInputAt = Date.now()
+    if (data.includes('\x03')) this.diagnosticState.lastEtxAt = this.diagnosticState.lastInputAt
   }
+
+  get diagnostics(): PtyDiagnosticState { return { ...this.diagnosticState } }
 
   resize(cols: number, rows: number): void {
     if (cols > 0 && rows > 0) {

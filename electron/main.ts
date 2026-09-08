@@ -533,7 +533,7 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('project:delete', async (_e, { id }: { id: string }) => {
     try {
-      killAllSessions()
+      killAllSessions('project-delete', id)
       const row = getProject(id)
       const pdir = projectDirFn(id)
       // Move to .trash instead of hard rm so it can be undone
@@ -921,7 +921,7 @@ app.whenReady().then(async () => {
       } catch {
         return { ok: false, error: '目录不存在或无法访问' }
       }
-      killAllSessions()
+      killAllSessions('project-target-changed', id)
       const pdir = projectDirFn(id)
       const metaPath = join(pdir, 'project.json')
       let meta: Record<string, unknown> = {}
@@ -1155,14 +1155,14 @@ async function activateAccountDataLayerOnce(
 }
 
 app.on('window-all-closed', () => {
-  killAllSessions()
+  killAllSessions('window-all-closed')
   closeDb()
   releaseInstanceLock()
   if (process.platform !== 'darwin') app.quit()
 })
 
 app.on('before-quit', () => {
-  killAllSessions()
+  killAllSessions('before-quit')
   stopScheduledTaskScheduler()
   releaseInstanceLock()
 })

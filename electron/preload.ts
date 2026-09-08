@@ -1019,6 +1019,9 @@ const api = {
       >,
     killAll: () =>
       ipcRenderer.invoke('cc:kill-all') as Promise<{ ok: boolean; killed: string[] }>,
+    exportDiagnostics: () => ipcRenderer.invoke('cc:export-diagnostics') as Promise<
+      { ok: true; path: string } | { ok: false; canceled?: boolean; error?: string }
+    >,
     list: () => ipcRenderer.invoke('cc:list') as Promise<string[]>,
     has: (sessionId: string) =>
       ipcRenderer.invoke('cc:has', { sessionId }) as Promise<boolean>,

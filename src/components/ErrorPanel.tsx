@@ -47,11 +47,24 @@ export function notifyWarn(source: string, message: string): void {
 
 export default function ErrorPanel({ onClose }: { onClose: () => void }) {
   const [entries, clear] = useLogs()
+  const [exporting, setExporting] = useState(false)
   return (
     <div className="error-panel">
       <div className="error-panel-head">
         <span>📣 错误与通知 · {entries.length}</span>
         <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <button className="drawer-btn" disabled={exporting} onClick={async () => {
+            setExporting(true)
+            try {
+              const result = await window.api.cc.exportDiagnostics()
+              if (result.ok) pushLog('info', '排障', `日志已导出：${result.path}`)
+              else if (!result.canceled) pushLog('error', '排障', result.error ?? '导出失败')
+            } catch (error) {
+              pushLog('error', '排障', error instanceof Error ? error.message : '导出失败')
+            } finally { setExporting(false) }
+          }}>
+            {exporting ? '正在导出…' : '导出排障日志'}
+          </button>
           <button className="drawer-btn" onClick={clear}>
             清空
           </button>

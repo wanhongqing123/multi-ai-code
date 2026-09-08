@@ -40,6 +40,12 @@ beforeEach(() => {
 })
 
 describe('preload remote IM api', () => {
+  it('exports diagnostics through a host-owned save dialog without accepting arbitrary file paths', async () => {
+    const api = await loadApi()
+    electronMock.invoke.mockResolvedValue({ ok: true, path: '/chosen/diagnostics.json' })
+    await expect(api.cc.exportDiagnostics()).resolves.toEqual({ ok: true, path: '/chosen/diagnostics.json' })
+    expect(electronMock.invoke).toHaveBeenCalledWith('cc:export-diagnostics')
+  })
   it('routes remote IM config and message calls through dedicated IPC channels', async () => {
     const api = await loadApi()
     const imageFile = { name: 'photo.png' } as File

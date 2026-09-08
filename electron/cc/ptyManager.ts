@@ -41,6 +41,8 @@ import { detectMsys } from '../util/msys.js'
 import { clawRuntimeDir, opencodeRuntimeDir, rootDir } from '../store/paths.js'
 import { withClawRuntimeEnv, withClawRuntimeModelArgs } from '../aicli/clawCredentials.js'
 import { isClawCommand, withClawDataDirEnv } from '../aicli/clawConfig.js'
+import { app, dialog } from 'electron'
+import { SessionDiagnostics, buildSessionDiagnosticsReport, type HostStopReason } from './sessionDiagnostics.js'
 
 /**
  * PTY chunk debug dumper. Enable by setting env var MULTI_AI_CODE_PTY_DUMP=1
@@ -196,6 +198,7 @@ interface Session {
   dumpStream?: WriteStream | null
   structuredOutputBridge?: AicliStructuredOutputBridge | null
   inputQueue?: Promise<void>
+  diagnostics: SessionDiagnostics
 }
 
 interface ExternalReviewJudgeRequest {
@@ -238,6 +241,10 @@ const EXTERNAL_REVIEW_TIMEOUT_MS = 90_000
 const RESUME_BOOT_TAIL_LIMIT = 16_384
 const CLI_BOOT_TEXT_LIMIT = 65_536
 const EXTERNAL_REVIEW_BUFFER_LIMIT = 524_288
+
+function observeDiagnostics(action: () => void): void {
+  try { action() } catch { /* Diagnostics may never interrupt terminal lifecycle actions. */ }
+}
 
 function broadcast(channel: string, payload: unknown): void {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -882,8 +889,12 @@ export function registerPtyIpc(): void {
     }
 
     const structuredProvider = structuredOutputProvider(req.command)
+    const diagnostics = new SessionDiagnostics(rootDir(), {
+      sessionId: req.sessionId, projectId: req.projectId,
+      cli: structuredProvider ?? 'custom', appVersion: app.getVersion()
+    })
     const structuredOutputBridge = structuredProvider
-      ? await createAicliStructuredOutputBridge(req.sessionId, structuredProvider)
+      ? await createAicliStructuredOutputBridge(req.sessionId, structuredProvider, command => diagnostics.control(command))
       : null
     if (structuredOutputBridge) {
       effectiveArgs = [...effectiveArgs, ...structuredOutputBridge.args]
@@ -906,6 +917,7 @@ export function registerPtyIpc(): void {
     })
 
     const dumpStream = await openPtyDumpStream(req.sessionId, req.projectId)
+    diagnostics.attach(() => proc.diagnostics)
 
     const session: Session = {
       proc,
@@ -915,6 +927,7 @@ export function registerPtyIpc(): void {
       sessionId: req.sessionId,
       command: req.command,
       startedAtMs: Date.now(),
+      diagnostics,
       dumpStream,
       structuredOutputBridge
     }
@@ -979,6 +992,7 @@ export function registerPtyIpc(): void {
       emitSessionData({ sessionId: req.sessionId, chunk })
     })
     proc.on('exit', (info: { exitCode: number; signal?: number }) => {
+      observeDiagnostics(() => diagnostics.exited(info.exitCode, info.signal))
       if (resumeWindowTimer) clearTimeout(resumeWindowTimer)
       if (resumeWindowOpen && info.exitCode !== 0) {
         broadcast('cc:resume-failed', {
@@ -1001,7 +1015,9 @@ export function registerPtyIpc(): void {
 
     try {
       proc.start()
+      observeDiagnostics(() => diagnostics.spawned())
     } catch (err) {
+      observeDiagnostics(() => diagnostics.spawnFailed(err))
       void structuredOutputBridge?.close()
       return { ok: false, error: (err as Error).message }
     }
@@ -1065,6 +1081,7 @@ export function registerPtyIpc(): void {
   ipcMain.handle('cc:kill', (_e, { sessionId }: { sessionId: string }) => {
     const s = sessions.get(sessionId)
     if (!s) return { ok: false, error: 'no session' }
+    observeDiagnostics(() => s.diagnostics.stop('cc:kill'))
     s.proc.kill()
     rejectPendingExternalReview(
       sessionId,
@@ -1086,6 +1103,7 @@ export function registerPtyIpc(): void {
       )
     }
     for (const [sessionId, s] of sessions) {
+      observeDiagnostics(() => s.diagnostics.stop('cc:kill-all'))
       s.proc.kill()
       void s.structuredOutputBridge?.close()
       emitSessionExit({ sessionId, exitCode: null, signal: 'kill-all' })
@@ -1096,6 +1114,25 @@ export function registerPtyIpc(): void {
   })
 
   ipcMain.handle('cc:list', () => Array.from(sessions.keys()))
+
+  ipcMain.handle('cc:export-diagnostics', async () => {
+    try {
+      // Capture this account before the save dialog yields to the event loop.
+      const root = rootDir()
+      const active = Array.from(sessions.values()).map(session => session.diagnostics.snapshot())
+      const report = buildSessionDiagnosticsReport(root, app.getVersion(), active)
+      const result = await dialog.showSaveDialog({
+        title: '导出 AICLI 排障日志',
+        defaultPath: `Multi-AI-Code-diagnostics-${new Date().toISOString().replace(/[:.]/g, '-')}.json`,
+        filters: [{ name: '诊断日志', extensions: ['json'] }]
+      })
+      if (result.canceled || !result.filePath) return { ok: false as const, canceled: true }
+      await fs.writeFile(result.filePath, JSON.stringify(report, null, 2), { encoding: 'utf8', mode: 0o600 })
+      return { ok: true as const, path: result.filePath }
+    } catch (error) {
+      return { ok: false as const, error: error instanceof Error ? error.message : '导出失败' }
+    }
+  })
 
   ipcMain.handle('cc:has', (_e, { sessionId }: { sessionId: string }) =>
     sessions.has(sessionId)
@@ -1166,7 +1203,7 @@ export function registerPtyIpc(): void {
 
 }
 
-export function killAllSessions(): void {
+export function killAllSessions(reason: HostStopReason, requestedProjectId?: string): void {
   for (const sessionId of pendingExternalReviews.keys()) {
     rejectPendingExternalReview(
       sessionId,
@@ -1174,6 +1211,7 @@ export function killAllSessions(): void {
     )
   }
   for (const [, s] of sessions) {
+    observeDiagnostics(() => s.diagnostics.stop(reason, requestedProjectId))
     s.proc.kill()
     closePtyDump(s.dumpStream, 'killAll')
   }

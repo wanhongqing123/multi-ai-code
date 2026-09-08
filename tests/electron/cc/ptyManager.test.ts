@@ -9,13 +9,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const ipcHandlers = vi.hoisted(() => new Map<string, (...args: unknown[]) => unknown>())
 const browserWindowSends = vi.hoisted(() => [] as Array<{ channel: string; payload: unknown }>)
 const interactionEvents = vi.hoisted(() => [] as string[])
+const diagnosticCalls = vi.hoisted(() => [] as Array<{ event: string; args: unknown[] }>)
+const diagnosticThrows = vi.hoisted(() => new Set<string>())
+const saveDialog = vi.hoisted(() => vi.fn(async (): Promise<{ canceled: boolean; filePath?: string }> => ({ canceled: true })))
+const diagnosticReport = vi.hoisted(() => vi.fn(() => ({ schemaVersion: 1, files: [] })))
 const ptyInstances = vi.hoisted(() => [] as Array<{
   writes: string[]
   opts: Record<string, unknown>
   emitData: (chunk: string) => void
+  emitExit: (info: { exitCode: number; signal?: number }) => void
 }>)
 
 vi.mock('electron', () => ({
+  app: { getVersion: () => 'test' },
+  dialog: { showSaveDialog: saveDialog },
   ipcMain: {
     handle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
       ipcHandlers.set(channel, handler)
@@ -47,11 +54,30 @@ vi.mock('electron', () => ({
   },
 }))
 
+vi.mock('../../../electron/cc/sessionDiagnostics.js', () => ({
+  SessionDiagnostics: class {
+    attach() {}
+    control(...args: unknown[]) { diagnosticCalls.push({ event: 'control', args }) }
+    stop(...args: unknown[]) {
+      diagnosticCalls.push({ event: 'stop', args })
+      if (diagnosticThrows.has('stop')) throw new Error('diagnostic failure')
+    }
+    spawned(...args: unknown[]) { diagnosticCalls.push({ event: 'spawned', args }) }
+    spawnFailed(...args: unknown[]) { diagnosticCalls.push({ event: 'spawn-failed', args }) }
+    exited(...args: unknown[]) {
+      diagnosticCalls.push({ event: 'exit', args })
+      if (diagnosticThrows.has('exit')) throw new Error('diagnostic failure')
+    }
+    snapshot() { return {} }
+  },
+  buildSessionDiagnosticsReport: diagnosticReport
+}))
+
 vi.mock('../../../electron/cc/PtyCCProcess.js', () => ({
   PtyCCProcess: class MockPtyCCProcess {
     writes: string[] = []
     opts: Record<string, unknown>
-    private handlers = new Map<string, Array<(chunk: string) => void>>()
+    private handlers = new Map<string, Array<(chunk: any) => void>>()
 
     constructor(opts: Record<string, unknown>) {
       this.opts = opts
@@ -67,7 +93,7 @@ vi.mock('../../../electron/cc/PtyCCProcess.js', () => ({
       this.writes.push(data)
     }
 
-    on(event: string, cb: (chunk: string) => void): void {
+    on(event: string, cb: (chunk: any) => void): void {
       const handlers = this.handlers.get(event) ?? []
       handlers.push(cb)
       this.handlers.set(event, handlers)
@@ -75,6 +101,10 @@ vi.mock('../../../electron/cc/PtyCCProcess.js', () => ({
 
     emitData(chunk: string): void {
       for (const cb of this.handlers.get('data') ?? []) cb(chunk)
+    }
+    kill(): void { diagnosticCalls.push({ event: 'native-kill', args: [] }) }
+    emitExit(info: { exitCode: number; signal?: number }): void {
+      for (const cb of this.handlers.get('exit') ?? []) cb(info)
     }
   },
 }))
@@ -90,9 +120,62 @@ describe('registerPtyIpc prompt injection timing', () => {
     browserWindowSends.length = 0
     interactionEvents.length = 0
     ptyInstances.length = 0
+    diagnosticCalls.length = 0
+    diagnosticThrows.clear()
+    saveDialog.mockResolvedValue({ canceled: true })
   })
 
   const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
+  it('records host stop intent before native kill and records the later exit code', async () => {
+    const { proc } = await spawnClaudeSession()
+    const kill = ipcHandlers.get('cc:kill')!
+    await kill({}, { sessionId: 'session-1' })
+    proc.emitExit({ exitCode: -1073741510 })
+    expect(diagnosticCalls).toEqual([
+      { event: 'spawned', args: [] },
+      { event: 'stop', args: ['cc:kill'] },
+      { event: 'native-kill', args: [] },
+      { event: 'exit', args: [-1073741510, undefined] }
+    ])
+  })
+
+  it('exports a report to the user-selected path and handles cancellation', async () => {
+    const { targetRepo } = await spawnClaudeSession()
+    const exportLogs = ipcHandlers.get('cc:export-diagnostics')!
+    expect(await exportLogs()).toEqual({ ok: false, canceled: true })
+    const filePath = join(targetRepo, 'diagnostics.json')
+    saveDialog.mockResolvedValue({ canceled: false, filePath })
+    expect(await exportLogs()).toEqual({ ok: true, path: filePath })
+    expect(JSON.parse(await fs.readFile(filePath, 'utf8'))).toEqual({ schemaVersion: 1, files: [] })
+  })
+
+  it.each(['cc:kill', 'cc:kill-all', 'before-quit'])('still kills when stop diagnostics throw (%s)', async (path) => {
+    await spawnClaudeSession()
+    diagnosticThrows.add('stop')
+    if (path === 'before-quit') {
+      const { killAllSessions } = await import('../../../electron/cc/ptyManager.js')
+      expect(() => killAllSessions('before-quit')).not.toThrow()
+    } else if (path === 'cc:kill-all') {
+      expect(await ipcHandlers.get(path)!()).toMatchObject({ ok: true })
+    } else {
+      expect(await ipcHandlers.get(path)!({}, { sessionId: 'session-1' })).toEqual({ ok: true })
+    }
+    expect(diagnosticCalls.some(call => call.event === 'native-kill')).toBe(true)
+  })
+
+  it('still publishes exit and removes the session when exit diagnostics throw', async () => {
+    const { proc } = await spawnClaudeSession()
+    const { addSessionExitListener } = await import('../../../electron/cc/ptyManager.js')
+    const listener = vi.fn()
+    const remove = addSessionExitListener(listener)
+    diagnosticThrows.add('exit')
+    try {
+      expect(() => proc.emitExit({ exitCode: -1073741510 })).not.toThrow()
+      expect(listener).toHaveBeenCalledWith({ sessionId: 'session-1', exitCode: -1073741510 })
+      expect(await ipcHandlers.get('cc:list')!()).toEqual([])
+    } finally { remove() }
+  })
 
   async function connectAicliControlBridge(
     proc: (typeof ptyInstances)[number],

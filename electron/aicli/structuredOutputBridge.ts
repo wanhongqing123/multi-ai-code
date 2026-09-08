@@ -177,7 +177,8 @@ function asApprovalResolution(value: unknown): AicliApprovalResolutionResult | u
 
 export async function createAicliStructuredOutputBridge(
   sessionId: string,
-  provider: AicliStructuredOutputProvider
+  provider: AicliStructuredOutputProvider,
+  observeControl?: (command: AicliRequestControlCommand['command']) => void
 ): Promise<AicliStructuredOutputBridge> {
   const token = randomUUID()
   const controlSockets = new Set<net.Socket>()
@@ -369,6 +370,7 @@ export async function createAicliStructuredOutputBridge(
       })
     },
     requestControlCommand: (input, timeoutMs = 5000) => {
+      try { observeControl?.(input.command) } catch { /* diagnostics must not affect control */ }
       const requestId = randomUUID()
       return new Promise<AicliControlCommandResult>((resolve) => {
         const timeout = setTimeout(() => {

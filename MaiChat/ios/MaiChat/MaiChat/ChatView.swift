@@ -882,7 +882,7 @@ private struct ConversationRow: View {
                 }
 
                 HStack(spacing: 8) {
-                    Text(latestMessage?.text ?? "暂无消息")
+                    Text(MarkdownConversationPreview.text(for: latestMessage))
                         .font(.system(size: 13))
                         .foregroundStyle(RemoteIMStyle.textSecondary)
                         .lineLimit(1)

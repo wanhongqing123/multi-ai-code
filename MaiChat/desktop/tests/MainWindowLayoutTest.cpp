@@ -68,6 +68,8 @@ class MainWindowLayoutTest : public QObject {
 
 private slots:
     void exposesDesktopChatLayoutControls();
+    void conversationPreviewUsesPlainMarkdown_data();
+    void conversationPreviewUsesPlainMarkdown();
     void composerUsesEmbeddedIconSendAction();
     void exposesResizableSplitters();
     void compactSplittersKeepDragTargets_data();
@@ -691,6 +693,54 @@ void MainWindowLayoutTest::composerUsesEmbeddedIconSendAction() {
     for (const QPushButton* button : buttons) {
         QVERIFY(button->toolTip() != QStringLiteral("语音消息"));
     }
+}
+
+void MainWindowLayoutTest::conversationPreviewUsesPlainMarkdown_data() {
+    QTest::addColumn<QString>("source");
+    QTest::addColumn<QString>("expected");
+    QTest::addColumn<bool>("attachment");
+    QTest::newRow("heading-inline") << QStringLiteral("## 标题\n\n**重点** 与 `code`") << QStringLiteral("标题 重点 与 code") << false;
+    QTest::newRow("link-strike") << QStringLiteral("[文档](https://example.com) 与 ~~旧版~~") << QStringLiteral("文档 与 旧版") << false;
+    QTest::newRow("code-literals") << QStringLiteral("```cpp\na*b*c\npath_with_under_score\n```") << QStringLiteral("a*b*c path_with_under_score") << false;
+    QTest::newRow("callout") << QStringLiteral("> [!TIP]\n> 使用 **独立目录**") << QStringLiteral("建议：使用 独立目录") << false;
+    QTest::newRow("tasks") << QStringLiteral("- [x] 完成\n- [ ] 待办") << QStringLiteral("☑ 完成 ☐ 待办") << false;
+    QTest::newRow("table") << QStringLiteral("| A | B |\n|---|---|\n|1|2|") << QStringLiteral("A B 1 2") << false;
+    QTest::newRow("reference-link") << QStringLiteral("[文档][ref]\n\n[ref]: https://example.com") << QStringLiteral("文档") << false;
+    QTest::newRow("image-alt") << QStringLiteral("![替代文字](https://example.com/a.png)") << QStringLiteral("替代文字") << false;
+    QTest::newRow("inline-code-literals") << QStringLiteral("`**literal**` 与 `a_b`") << QStringLiteral("**literal** 与 a_b") << false;
+    QTest::newRow("callout-in-code") << QStringLiteral("```text\n> [!TIP]\n```") << QStringLiteral("> [!TIP]") << false;
+    QTest::newRow("inline-callout-code") << QStringLiteral("> `[!TIP]`") << QStringLiteral("[!TIP]") << false;
+    QTest::newRow("crlf") << QStringLiteral("## 标题\r\n\r\n下一段") << QStringLiteral("标题 下一段") << false;
+    QTest::newRow("attachment") << QStringLiteral("[文件消息] **report**.md") << QStringLiteral("[文件消息] **report**.md") << true;
+    QTest::newRow("only-markup") << QStringLiteral("---") << QStringLiteral("新消息") << false;
+    const QString emoji = QString::fromUtf8("👨‍👩‍👧‍👦");
+    QTest::newRow("long-emoji") << emoji.repeated(170) << (emoji.repeated(160) + QStringLiteral("…")) << false;
+}
+
+void MainWindowLayoutTest::conversationPreviewUsesPlainMarkdown() {
+    QFETCH(QString, source);
+    QFETCH(QString, expected);
+    QFETCH(bool, attachment);
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+    RemoteIMMessage message;
+    message.fromUserId = QStringLiteral("phone-user");
+    message.toUserId = QStringLiteral("desktop-user");
+    message.text = source;
+    message.hasFile = attachment;
+    app.chatState().appendMessageForRestore(message);
+    MainWindow window(app);
+    auto* list = window.findChild<QListWidget*>(QStringLiteral("conversationList"));
+    QVERIFY(list != nullptr);
+    QCOMPARE(list->count(), 1);
+    QCOMPARE(list->item(0)->data(Qt::UserRole + 2).toString(), expected);
+    RemoteIMMessage stored;
+    QVERIFY(app.chatState().latestMessageWith(QStringLiteral("phone-user"), &stored));
+    QCOMPARE(stored.text, source);
+    // Exercise the cached path through a real list refresh, not only the helper.
+    emit app.stateChanged();
+    QCOMPARE(list->item(0)->data(Qt::UserRole + 2).toString(), expected);
 }
 
 void MainWindowLayoutTest::compactSplittersKeepDragTargets_data() {

@@ -90,6 +90,8 @@
 #include <QCheckBox>
 #include <QRadioButton>
 #include <QRegularExpression>
+#include <QCache>
+#include <QTextBoundaryFinder>
 
 #include "im/RemoteIMCredentialDefaults.h"
 #include "im/TencentUserSigGenerator.h"
@@ -1159,11 +1161,76 @@ QString deliveryStatusIndicator(RemoteIMMessageStatus status) {
     return QString();
 }
 
+class PreviewTextDocument final : public QTextDocument {
+protected:
+    QVariant loadResource(int, const QUrl&) override { return {}; }
+};
+
+QString conversationMarkdownPreview(const QString& source) {
+    // UI-thread only, outside the item delegate's paint path. Bound both parse
+    // input and cache cost so long AICLI replies do not slow every list refresh.
+    static QCache<QString, QString> cache(2 * 1024 * 1024);
+    QString input = source.left(8192);
+    if (!input.isEmpty() && QChar(input.back()).isHighSurrogate()) input.chop(1);
+    if (const auto* cached = cache.object(input)) return *cached;
+    PreviewTextDocument document;
+    QTextDocument::MarkdownFeatures features = QTextDocument::MarkdownDialectGitHub;
+    features |= QTextDocument::MarkdownNoHTML;
+    document.setMarkdown(input, features);
+    QStringList blocks;
+    static const QRegularExpression callout(QStringLiteral("^\\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\\](?:[ \\t]+|$)"),
+                                            QRegularExpression::CaseInsensitiveOption);
+    const QHash<QString, QString> titles{{QStringLiteral("NOTE"), QStringLiteral("提示")},
+        {QStringLiteral("TIP"), QStringLiteral("建议")}, {QStringLiteral("IMPORTANT"), QStringLiteral("重要")},
+        {QStringLiteral("WARNING"), QStringLiteral("注意")}, {QStringLiteral("CAUTION"), QStringLiteral("警告")}};
+    for (auto block = document.begin(); block.isValid(); block = block.next()) {
+        QString text;
+        for (auto it = block.begin(); !it.atEnd(); ++it) {
+            const auto fragment = it.fragment();
+            if (!fragment.isValid()) continue;
+            if (fragment.charFormat().isImageFormat()) {
+                text += fragment.charFormat().stringProperty(QTextFormat::ImageAltText);
+            } else {
+                text += fragment.text();
+            }
+        }
+        const auto format = block.blockFormat();
+        const bool codeBlock = format.hasProperty(QTextFormat::BlockCodeFence)
+            || format.hasProperty(QTextFormat::BlockCodeLanguage) || format.nonBreakableLines();
+        const auto firstIt = block.begin();
+        const auto first = firstIt.atEnd() ? QTextCharFormat() : firstIt.fragment().charFormat();
+        const bool literalStart = first.fontFixedPitch() || first.isAnchor();
+        if (!codeBlock && !literalStart && format.intProperty(QTextFormat::BlockQuoteLevel) > 0) {
+            const auto marker = callout.match(text);
+            if (marker.hasMatch()) text = titles.value(marker.captured(1).toUpper()) + QStringLiteral("：") + text.mid(marker.capturedLength());
+        }
+        if (format.marker() == QTextBlockFormat::MarkerType::Checked) text.prepend(QStringLiteral("☑ "));
+        if (format.marker() == QTextBlockFormat::MarkerType::Unchecked) text.prepend(QStringLiteral("☐ "));
+        blocks.append(text);
+    }
+    QString result = blocks.join(QLatin1Char(' ')).simplified();
+    // Truncate at grapheme boundaries (not in the middle of an emoji/surrogate).
+    QTextBoundaryFinder boundary(QTextBoundaryFinder::Grapheme, result);
+    int end = 0;
+    for (int count = 0; count < 160; ++count) {
+        const int next = boundary.toNextBoundary();
+        if (next < 0) { end = result.size(); break; }
+        end = next;
+    }
+    if (end < result.size()) result = result.left(end) + QStringLiteral("…");
+    cache.insert(input, new QString(result), (input.size() + result.size()) * 2 + 1);
+    return result;
+}
+
 QString latestMessageText(const RemoteIMMessage* message) {
     if (!message) return QStringLiteral("暂无消息");
-    QString text = message->text;
-    text.replace(QLatin1Char('\n'), QLatin1Char(' '));
-    return text;
+    if (message->hasImage || message->hasFile || message->hasVideo || message->hasVoice) {
+        QString text = message->text;
+        text.replace(QLatin1Char('\n'), QLatin1Char(' '));
+        return text;
+    }
+    const QString preview = conversationMarkdownPreview(message->text);
+    return preview.isEmpty() ? QStringLiteral("新消息") : preview;
 }
 
 QString relativeMessageTimeText(qint64 createdAtMillis) {

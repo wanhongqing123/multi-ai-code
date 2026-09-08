@@ -3,6 +3,50 @@ import SwiftUI
 @testable import MaiChatCore
 
 final class MarkdownPresentationTests: XCTestCase {
+    func testConversationPreviewUsesReadableMarkdownText() {
+        let cases: [(String, String)] = [
+            ("## 标题\n\n**重点** 与 `code`", "标题 重点 与 code"),
+            ("[文档](https://example.com) 与 ~~旧版~~", "文档 与 旧版"),
+            ("```cpp\na*b*c\npath_with_under_score\n```", "a*b*c path_with_under_score"),
+            ("> [!TIP]\n> 使用 **独立目录**", "建议：使用 独立目录"),
+            ("- [x] 完成\n- [ ] 待办", "☑ 完成 ☐ 待办"),
+            ("| A | B |\n|---|---|\n|1|2|", "A B 1 2"),
+            ("[文档][ref]\n\n[ref]: https://example.com", "文档"),
+            ("![替代文字](https://example.com/a.png)", "替代文字"),
+            ("`**literal**` 与 `a_b`", "**literal** 与 a_b"),
+            ("```text\n> [!TIP]\n```", "> [!TIP]"),
+            ("> `[!TIP]`", "[!TIP]"),
+            ("## 标题\r\n\r\n下一段", "标题 下一段")
+        ]
+        for (source, expected) in cases {
+            XCTAssertEqual(MarkdownConversationPreview.plainText(source), expected, source)
+            // Repeated list refreshes return the same cached presentation.
+            XCTAssertEqual(MarkdownConversationPreview.plainText(source), expected, source)
+        }
+    }
+
+    func testConversationPreviewDoesNotModifyMessagesOrAttachments() {
+        var message = RemoteIMMessage(fromUserID: "a", toUserID: "b", text: "## **原文**",
+                                      direction: .incoming, status: .received, createdAt: Date())
+        XCTAssertEqual(MarkdownConversationPreview.text(for: message), "原文")
+        XCTAssertEqual(message.text, "## **原文**")
+        message.text = "**更新**"
+        XCTAssertEqual(MarkdownConversationPreview.text(for: message), "更新")
+        XCTAssertEqual(MarkdownConversationPreview.text(for: nil), "暂无消息")
+        let attachment = RemoteIMMessage(fromUserID: "a", toUserID: "b", text: "[文件消息] **report**.md",
+            fileAttachment: RemoteIMFileAttachment(localFilePath: "/tmp/report.md", fileName: "report.md", mimeType: "text/markdown"),
+            direction: .incoming, status: .received, createdAt: Date())
+        XCTAssertEqual(MarkdownConversationPreview.text(for: attachment), attachment.text)
+    }
+
+    func testConversationPreviewClampsAtWholeEmojiBoundaries() {
+        let emoji = "👨‍👩‍👧‍👦"
+        XCTAssertEqual(MarkdownConversationPreview.plainText(String(repeating: emoji, count: 170)),
+                       String(repeating: emoji, count: 160) + "…")
+        XCTAssertLessThanOrEqual(MarkdownConversationPreview.plainText(String(repeating: "长", count: 100_000)).count, 161)
+        XCTAssertEqual(MarkdownConversationPreview.plainText("---"), "")
+    }
+
     func testInlineCodeStylesEveryRangeAndPreservesOtherTextAndLinks() throws {
         let source = try AttributedString(markdown: "`one` plain `two` **`three`** [link](https://example.com)")
         let styled = MarkdownInlineStyling.apply(to: source)

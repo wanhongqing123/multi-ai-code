@@ -247,12 +247,13 @@ function RemoteImSummaryDialogContent(props: RemoteImSummaryDialogProps): JSX.El
       observer?.disconnect()
     }
   }, [props.open, summary])
+  // 发送人筛选只控制浏览；时光胶囊始终交付项目内全部好友的消息。
   const markdown = useMemo(
     () =>
-      summary
-        ? buildRemoteImMessageSummaryMarkdown(visibleMessages, { ownerUserId: props.ownerUserId })
+      messages?.some(message => message.role !== 'system')
+        ? buildRemoteImMessageSummaryMarkdown(messages, { ownerUserId: props.ownerUserId })
         : '',
-    [summary, visibleMessages, props.ownerUserId]
+    [messages, props.ownerUserId]
   )
 
   return (
@@ -278,9 +279,7 @@ function RemoteImSummaryDialogContent(props: RemoteImSummaryDialogProps): JSX.El
               disabled={!markdown || sending || !props.canSendToAicli || !props.onSendToAicli}
               title={
                 props.canSendToAicli
-                  ? senderKey
-                    ? '开启时光胶囊：把当前发送人筛选后的消息记录交给当前 AICLI'
-                    : '开启时光胶囊：把全部消息记录交给当前 AICLI，帮它找回此前的对话记忆与背景'
+                  ? '开启时光胶囊：始终把全部好友的消息记录交给当前 AICLI，不受发送人筛选影响'
                   : '主会话未运行，先启动 AICLI 会话'
               }
               onClick={() => {

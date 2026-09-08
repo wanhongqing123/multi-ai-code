@@ -55,11 +55,12 @@ describe('sender filtering', () => {
   it('selects the outgoing sender across peers, including legacy records without fromUserId', () => {
     const filtered = filterRemoteImSummaryMessages(records, 'user:desktop', 'desktop')
     expect(filtered.map(message => message.content)).toEqual(['Reply to Alice', 'Reply to Bob'])
-    const markdown = buildRemoteImMessageSummaryMarkdown(filtered, { ownerUserId: 'desktop' })
+    // 筛选只改变浏览列表，完整记录仍可交给时光胶囊。
+    const markdown = buildRemoteImMessageSummaryMarkdown(records, { ownerUserId: 'desktop' })
     expect(markdown).toContain('Reply to Alice')
     expect(markdown).toContain('Reply to Bob')
-    expect(markdown).not.toContain('Alice incoming')
-    expect(markdown).not.toContain('Bob incoming')
+    expect(markdown).toContain('Alice incoming')
+    expect(markdown).toContain('Bob incoming')
   })
 
   it('keeps only the selected incoming sender, not replies addressed to them', () => {

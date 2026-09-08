@@ -45,10 +45,11 @@ function imageMessage(overrides: Partial<RemoteImMessage> = {}): RemoteImMessage
 describe('RemoteImSummaryDialog controls', () => {
   it('replaces summary stats with an accessible sender selector', () => {
     const markup = renderToStaticMarkup(<RemoteImSummaryDialog
-      open projectId="p1" canSendToAicli={false} onClose={() => {}}
+      open projectId="p1" canSendToAicli onClose={() => {}}
     />)
     expect(markup).toContain('aria-label="发送人"')
     expect(markup).toContain('全部发送人')
+    expect(markup).toContain('始终把全部好友的消息记录交给当前 AICLI，不受发送人筛选影响')
     expect(markup).not.toContain('remote-im-summary-stats')
     expect(markup).not.toContain('remote-im-summary-stat-range')
   })

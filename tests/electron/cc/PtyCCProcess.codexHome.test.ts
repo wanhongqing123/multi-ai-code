@@ -16,7 +16,7 @@ import { PtyCCProcess } from '../../../electron/cc/PtyCCProcess.js'
 import { codexRuntimeDir, setActiveAccount } from '../../../electron/store/paths.js'
 import { SessionDiagnostics, buildSessionDiagnosticsReport } from '../../../electron/cc/sessionDiagnostics.js'
 
-describe('Codex account isolation at the native PTY boundary', () => {
+describe('Codex home selection at the native PTY boundary', () => {
   let root: string
   let repo: string
   beforeEach(() => {
@@ -50,16 +50,18 @@ describe('Codex account isolation at the native PTY boundary', () => {
     return proc
   }
 
-  it('isolates accounts sharing a repo, retains the same home on restart, and overrides inherited aliases', () => {
+  // The user asked for one login and one history across accounts, so the home is
+  // deliberately shared. It still must not be the caller's, the inherited
+  // shell's, or the host's own ~/.codex, and it must never land in the repo.
+  it('gives every account the same home, and overrides inherited aliases', () => {
     start('account-a')
     start('account-b')
     start('account-a')
     const options = nativeSpawn.mock.calls.map(call => call[2])
-    expect(options.map(o => o.env.CODEX_HOME)).toEqual([
-      join(root, 'accounts', 'account-a', '.codex'),
-      join(root, 'accounts', 'account-b', '.codex'),
-      join(root, 'accounts', 'account-a', '.codex')
-    ])
+    const shared = join(root, '.codex')
+    expect(options.map(o => o.env.CODEX_HOME)).toEqual([shared, shared, shared])
+    expect(options[0].env.CODEX_HOME).not.toBe(join(root, 'caller-codex'))
+    expect(options[0].env.CODEX_HOME).not.toBe(join(root, 'global-codex'))
     for (const option of options) {
       expect(option.cwd).toBe(repo)
       expect(Object.keys(option.env).filter(k => k.toUpperCase() === 'CODEX_HOME')).toEqual(['CODEX_HOME'])
@@ -70,7 +72,7 @@ describe('Codex account isolation at the native PTY boundary', () => {
       expect(option.env.CODEX_APP_SERVER_MANAGED_CONFIG_PATH).toBe(join(root, 'policy.toml'))
     }
     expect(readdirSync(repo)).toEqual([])
-    expect(readdirSync(join(root, 'accounts', 'account-a', '.codex'))).toEqual([])
+    expect(readdirSync(shared)).toEqual([])
   })
 
   it('does not rewrite the global home or import credentials, sessions, or locks', () => {
@@ -89,9 +91,8 @@ describe('Codex account isolation at the native PTY boundary', () => {
     expect(readdirSync(codexRuntimeDir())).toEqual(['version.json'])
   })
 
-  it('does not silently fall back to the shared home when creating the account home fails', () => {
+  it('does not silently fall back when creating the shared home fails', () => {
     setActiveAccount('account-a')
-    mkdirSync(join(root, 'accounts', 'account-a'), { recursive: true })
     writeFileSync(codexRuntimeDir(), 'not a directory')
     expect(() => start('account-a')).toThrow()
     expect(nativeSpawn).not.toHaveBeenCalled()
@@ -117,6 +118,7 @@ describe('Codex account isolation at the native PTY boundary', () => {
     const report = buildSessionDiagnosticsReport(join(root, 'accounts', 'account-a'), 'test') as any
     const exits = report.files.flatMap((file: any) => file.events).filter((e: any) => e.event === 'process-exit')
     expect(exits).toHaveLength(1)
-    expect(exits[0].codexHome).toBe(join(root, 'accounts', 'account-a', '.codex'))
+    // Diagnostics must record the home actually used, which is now the shared one.
+    expect(exits[0].codexHome).toBe(join(root, '.codex'))
   })
 })

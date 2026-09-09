@@ -59,9 +59,22 @@ export function opencodeRuntimeDir(): string {
   return join(rootDir(), 'aicli', 'opencode')
 }
 
-/** Persistent per-account Codex state; deliberately outside every target repo. */
+/**
+ * Codex state, shared by every account, deliberately outside every target repo.
+ *
+ * This sits beside `accounts/` rather than inside it: the user asked for one
+ * login and one configuration across all accounts, including session history.
+ *
+ * It is **not** the host's own `~/.codex`. That directory belongs to whatever
+ * Codex the user installed themselves, and this app must never read or write it.
+ *
+ * Tradeoff, accepted deliberately: Codex keys its writer lock on this directory,
+ * so two accounts resuming the *same* session can once again hit "session
+ * already has an active writer". Per-account directories avoided that, at the
+ * cost of a separate login and separate history per account.
+ */
 export function codexRuntimeDir(): string {
-  return join(rootDir(), '.codex')
+  return join(baseDir(), '.codex')
 }
 
 // claw 的凭据**不复用** opencode 那份：这条线的终点是删掉 opencode，

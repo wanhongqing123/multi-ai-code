@@ -72,6 +72,8 @@ add_library(remote_im_core
   src/model/MessageSearch.h
   src/model/MessageSearch.cpp
   src/model/PinyinInitials.cpp
+  src/diagnostics/RemoteDiagnosticsEvidence.h
+  src/diagnostics/RemoteDiagnosticsEvidence.cpp
   src/diagnostics/RemoteDiagnosticsProtocol.h
   src/diagnostics/RemoteDiagnosticsProtocol.cpp
   src/markdown/MarkdownRenderer.h
@@ -273,6 +275,9 @@ if(MAICHAT_USE_FAKE_CLIENT)
   target_compile_definitions(maichat PRIVATE MAICHAT_USE_FAKE_CLIENT=1)
 endif()
 
+add_executable(remote_diagnostics_evidence_test tests/RemoteDiagnosticsEvidenceTest.cpp)
+target_link_libraries(remote_diagnostics_evidence_test PRIVATE remote_im_core Qt5::Test)
+
 add_executable(remote_diagnostics_protocol_test tests/RemoteDiagnosticsProtocolTest.cpp)
 target_link_libraries(remote_diagnostics_protocol_test PRIVATE remote_im_core Qt5::Test)
 # 回绝样例是三端共用的同一份文件，测试直接读它，不再各自抄一份提示串。
@@ -400,6 +405,7 @@ add_executable(ui_zoom_test tests/UiZoomTest.cpp)
 target_link_libraries(ui_zoom_test PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets Qt5::Test)
 
 enable_testing()
+add_test(NAME remote_diagnostics_evidence_test COMMAND remote_diagnostics_evidence_test)
 add_test(NAME remote_diagnostics_protocol_test COMMAND remote_diagnostics_protocol_test)
 add_test(NAME message_notification_test COMMAND message_notification_test)
 add_test(NAME message_quote_test COMMAND message_quote_test)

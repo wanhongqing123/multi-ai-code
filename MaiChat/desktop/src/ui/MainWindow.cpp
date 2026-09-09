@@ -516,7 +516,11 @@ public:
         painter->save();
         painter->setRenderHint(QPainter::Antialiasing, true);
 
-        const QRect rowRect = option.rect.adjusted(0, 2, -6, -2);
+        // 上下各留 2px 是行间距；右侧不再内缩——那 6px 会在选中行右边留出一条
+        // 空白，看起来像滚动条的位置一直空着。滚动条真的出现时 Qt 已经把它从视口
+        // 里扣掉了，这里再缩一次只会让留白更宽。行内文字有自己的右边距，不靠它。
+        // 另外这个 6 是裸值，不跟 UiZoom 缩放，放大后留白比例还会失真。
+        const QRect rowRect = option.rect.adjusted(0, 2, 0, -2);
         if (option.state & QStyle::State_Selected) {
             painter->setPen(Qt::NoPen);
             painter->setBrush(QColor(QStringLiteral("#dff3ff")));
@@ -620,7 +624,11 @@ public:
         painter->save();
         painter->setRenderHint(QPainter::Antialiasing, true);
 
-        const QRect rowRect = option.rect.adjusted(0, 2, -6, -2);
+        // 上下各留 2px 是行间距；右侧不再内缩——那 6px 会在选中行右边留出一条
+        // 空白，看起来像滚动条的位置一直空着。滚动条真的出现时 Qt 已经把它从视口
+        // 里扣掉了，这里再缩一次只会让留白更宽。行内文字有自己的右边距，不靠它。
+        // 另外这个 6 是裸值，不跟 UiZoom 缩放，放大后留白比例还会失真。
+        const QRect rowRect = option.rect.adjusted(0, 2, 0, -2);
         if (option.state & QStyle::State_Selected) {
             painter->setPen(Qt::NoPen);
             painter->setBrush(QColor(QStringLiteral("#dff3ff")));

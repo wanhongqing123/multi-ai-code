@@ -5,6 +5,7 @@
 #include <QDateTime>
 #include <QLabel>
 #include <QListWidget>
+#include <QScrollBar>
 #include <QLayout>
 #include <QLineEdit>
 #include <QMessageBox>
@@ -90,6 +91,7 @@ private slots:
     void clickingFilteredConversationJumpsToItsSearchHit();
     void globalSearchReportsNoResultWithLoadedScopeHint();
     void conversationListsUseDelegateItemsForSmoothScrolling();
+    void selectedConversationRowReachesTheListEdge();
     void contactDirectoryStaysFlatUntilAGroupExists();
     void contactDirectoryShowsGroupsWithUngroupedLast();
     void clickingGroupHeaderCollapsesItsMembers();
@@ -179,6 +181,56 @@ int highlightedRowCount(const QWidget& window) {
 //
 // 此前它沿用联系人列表的顺序，而那是按 userId 的字母序排的：
 // 刚回你消息的人可能排在第 11 位，顶上却是几周没说过话的。
+// 用户报「会话列表滚动条留白」：选中一条会话时，高亮块右侧留出一条空白，
+// 看起来像滚动条位置一直空着。这条用例把它变成可测量的量——
+// 抓真实绘制结果，从视口右缘往左数有多少列不是高亮色。
+void MainWindowLayoutTest::selectedConversationRowReachesTheListEdge() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("alpha"), QStringLiteral("Alpha"));
+
+    MainWindow window(app);
+    window.resize(1280, 800);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    app.selectPeer(QStringLiteral("alpha"));
+    app.sendText(QStringLiteral("hello"));
+    QCoreApplication::processEvents();
+    QCoreApplication::processEvents();
+
+    auto* list = window.findChild<QListWidget*>(QStringLiteral("conversationList"));
+    QVERIFY(list != nullptr);
+    QVERIFY2(list->count() > 0, "会话列表应至少有一行");
+    list->setCurrentRow(0);
+    QCoreApplication::processEvents();
+
+    // 少量会话时不该出现纵向滚动条；留白若仍在，就与滚动条无关，是行本身没画到边。
+    QVERIFY2(!list->verticalScrollBar()->isVisible(),
+             "前提不成立：只有一条会话却出现了纵向滚动条");
+
+    const QRect rowRect = list->visualItemRect(list->item(0));
+    const QImage painted = list->viewport()->grab().toImage();
+    QVERIFY(!painted.isNull());
+
+    const QColor selected(QStringLiteral("#dff3ff"));
+    const int y = rowRect.center().y();
+    QVERIFY2(y >= 0 && y < painted.height(), "取样行超出了抓图范围");
+
+    // 从右缘往左找第一列高亮像素，中间隔了多少列就是留白宽度。
+    int gap = 0;
+    for (int x = painted.width() - 1; x >= 0; --x) {
+        if (painted.pixelColor(x, y) == selected) {
+            break;
+        }
+        ++gap;
+    }
+
+    QVERIFY2(gap <= 1,
+             qPrintable(QStringLiteral("选中行右侧留白 %1px，应贴到列表边缘（容 1px 取整）")
+                            .arg(gap)));
+}
+
 void MainWindowLayoutTest::conversationListPutsNewestMessageFirst() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));

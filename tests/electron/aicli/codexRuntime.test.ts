@@ -3,7 +3,7 @@ import { spawnSync } from 'child_process'
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { withCodexAccountHome } from '../../../electron/aicli/codexRuntime.js'
+import { withCodexHome } from '../../../electron/aicli/codexRuntime.js'
 
 function withTempHome(body: (home: string) => void): void {
   const root = mkdtempSync(join(tmpdir(), 'codex-home-'))
@@ -14,16 +14,16 @@ function withTempHome(body: (home: string) => void): void {
   }
 }
 
-describe('withCodexAccountHome', () => {
+describe('withCodexHome', () => {
   it('refuses a relative home so nothing lands inside the target repo', () => {
-    expect(() => withCodexAccountHome({}, 'relative/.codex')).toThrow(/absolute/)
+    expect(() => withCodexHome({}, 'relative/.codex')).toThrow(/absolute/)
   })
 
   // Windows 的环境变量名不区分大小写，但 {...process.env} 保留的是继承时的原始拼写。
   // 不先删别名的话，对象里会同时存在两个键，交给 CreateProcess 后谁胜出不确定。
   it('drops inherited aliases in any casing before injecting the account home', () => {
     withTempHome((home) => {
-      const env = withCodexAccountHome(
+      const env = withCodexHome(
         { Codex_Home: 'X:/inherited', codex_sqlite_home: 'Y:/inherited', PATH: 'keep' },
         home
       )
@@ -36,7 +36,7 @@ describe('withCodexAccountHome', () => {
 
   it('clears a developer capture sink but keeps managed policy and CA settings', () => {
     withTempHome((home) => {
-      const env = withCodexAccountHome(
+      const env = withCodexHome(
         {
           CODEX_ANALYTICS_EVENTS_CAPTURE_FILE: 'X:/capture.jsonl',
           CODEX_CA_CERTIFICATE: 'X:/ca.pem',
@@ -56,7 +56,7 @@ describe('withCodexAccountHome', () => {
   // 「关闭沙箱」在内核里的正确表达是**不写这个键**——缺省即 WindowsSandboxLevel::Disabled。
   it('creates the account home without planting any config file in it', () => {
     withTempHome((home) => {
-      withCodexAccountHome({}, home)
+      withCodexHome({}, home)
       expect(existsSync(home)).toBe(true)
       expect(readdirSync(home)).toEqual([])
     })

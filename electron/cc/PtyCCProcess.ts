@@ -5,8 +5,8 @@ import { createRequire } from 'module'
 import type { IPty } from 'node-pty'
 import type { PtyDiagnosticState } from './sessionDiagnostics.js'
 import { isCodexCommand } from '../aicli/codexConfig.js'
-import { withCodexAccountHome, dismissCodexUpgradeNotice } from '../aicli/codexRuntime.js'
-import { codexRuntimeDir } from '../store/paths.js'
+import { withCodexHome, dismissCodexUpgradeNotice } from '../aicli/codexRuntime.js'
+import { codexRuntimeDir, getActiveAccount } from '../store/paths.js'
 import {
   bundledCliMissingMessage,
   describeAicliLaunchCommand,
@@ -236,10 +236,15 @@ export class PtyCCProcess extends EventEmitter {
       env.FORCE_COLOR = '3'
     }
 
-    // Shared by the main terminal and repo-analysis terminal. Accounts opening
-    // the same cwd must not select each other's `resume --last` history.
+    // Every account shares one Codex home (login, config and session history),
+    // but reaching a session still requires being logged in. `codexRuntimeDir()`
+    // no longer derives from the account, so assert the gate here rather than
+    // letting it disappear along with the per-account path.
     if (isCodexCommand(command)) {
-      env = withCodexAccountHome(env, codexRuntimeDir())
+      if (!getActiveAccount()) {
+        throw new Error('Codex requires a bound account (login required first)')
+      }
+      env = withCodexHome(env, codexRuntimeDir())
       this.diagnosticState.codexHome = env.CODEX_HOME
       dismissCodexUpgradeNotice(env.CODEX_HOME)
     }

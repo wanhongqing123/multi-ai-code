@@ -49,6 +49,10 @@ public:
     void sendText(const QString& text,
                   const RemoteIMQuote& quote = RemoteIMQuote(),
                   bool hasQuote = false);
+    // Explicit, persisted destinations for the user-confirmed diagnostics flow.
+    // Never change selectedPeerId to send a background report.
+    void sendDiagnosticTextTo(const QString& peerId, const QString& text, std::function<void(bool)> completion);
+    void sendDiagnosticReportTo(const QString& peerId, const QString& path, std::function<void(bool)> completion);
     // 群发：给每个收件人各发一条独立消息，进各自的会话——不是一条"群消息"。
     // 这样每个人的聊天记录都是完整的，收件人那边看到的也和平时的私聊消息毫无区别。
     // 返回实际发出的人数（去重、去空之后）。
@@ -87,6 +91,8 @@ signals:
     void remoteDesktopSignalReceived(const QString& fromUserId, const QString& text);
 
 private:
+    void sendDiagnosticTo(const QString& peerId, const QString& text, const QString& path,
+                          std::function<void(bool)> completion);
     void markMessage(const QString& messageId, RemoteIMMessageStatus status);
     void bindClientSignals();
     // 漫游/历史（live=false，不计红点）与实时推送（live=true，新入站消息计红点）

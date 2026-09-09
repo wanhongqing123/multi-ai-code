@@ -154,6 +154,8 @@ if(MAICHAT_TRTC_AVAILABLE)
 endif()
 
 add_library(remote_im_desktop_app
+  src/diagnostics/RemoteDiagnosticsController.h
+  src/diagnostics/RemoteDiagnosticsController.cpp
   src/app/RemoteIMApplication.h
   src/app/RemoteIMApplication.cpp
   src/app/VideoCoverImage.h
@@ -274,6 +276,9 @@ endif()
 if(MAICHAT_USE_FAKE_CLIENT)
   target_compile_definitions(maichat PRIVATE MAICHAT_USE_FAKE_CLIENT=1)
 endif()
+
+add_executable(remote_diagnostics_controller_test tests/RemoteDiagnosticsControllerTest.cpp)
+target_link_libraries(remote_diagnostics_controller_test PRIVATE remote_im_desktop_app Qt5::Test)
 
 add_executable(remote_diagnostics_evidence_test tests/RemoteDiagnosticsEvidenceTest.cpp)
 target_link_libraries(remote_diagnostics_evidence_test PRIVATE remote_im_core Qt5::Test)
@@ -405,6 +410,7 @@ add_executable(ui_zoom_test tests/UiZoomTest.cpp)
 target_link_libraries(ui_zoom_test PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets Qt5::Test)
 
 enable_testing()
+add_test(NAME remote_diagnostics_controller_test COMMAND remote_diagnostics_controller_test)
 add_test(NAME remote_diagnostics_evidence_test COMMAND remote_diagnostics_evidence_test)
 add_test(NAME remote_diagnostics_protocol_test COMMAND remote_diagnostics_protocol_test)
 add_test(NAME message_notification_test COMMAND message_notification_test)

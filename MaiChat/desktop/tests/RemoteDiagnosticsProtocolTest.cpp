@@ -2,6 +2,8 @@
 
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QFile>
+#include <QHash>
 #include <QJsonObject>
 
 #include "diagnostics/RemoteDiagnosticsProtocol.h"
@@ -45,8 +47,9 @@ private slots:
     void keepsOnlyTheTwoKnownCoverageValues();
     void carriesBothMessageIdFormsIntoTheFinalReport();
     void stillRejectsMessageIdTypesThatAreNotStringOrNumber();
-    void recognisesKnownRefusalsSoTheWaitCanEndEarly();
-    void ignoresRefusalsForAnotherRequestOrUnknownWording();
+    void matchesTheSharedFailureReceiptFixture();
+    void distinguishesNotIntegratedFromUnsupported();
+    void requiresTheIdInItsProperPlaceNotAnywhere();
     void neverCopiesRemoteTextIntoTheReason();
 };
 
@@ -338,47 +341,89 @@ void RemoteDiagnosticsProtocolTest::stillRejectsMessageIdTypesThatAreNotStringOr
     }
 }
 
-// 明知被拒还空等满 60 秒是纯粹浪费用户时间。
-void RemoteDiagnosticsProtocolTest::recognisesKnownRefusalsSoTheWaitCanEndEarly()
+// 回绝样例是三端**共用的同一份文件**：宿主用真实执行器生成的文本比对它，
+// iOS 从测试资源读它，这里也直接读它。各端各抄一份提示串的话，
+// 差一个字就静默识别不到——而识别不到的表现是「白等 60 秒」，不会报错。
+void RemoteDiagnosticsProtocolTest::matchesTheSharedFailureReceiptFixture()
 {
-    const QString id = newRequestId();
-    struct Case { QString text; FailureReason reason; };
-    const QList<Case> cases{
-        // 旧版 B 的固定首行。
-        {QStringLiteral("不支持的 IM 控制命令：/diagnostics %1").arg(id),
-         FailureReason::Unsupported},
-        {QStringLiteral("排障请求过于频繁，请稍后再试（%1）").arg(id),
-         FailureReason::RateLimited},
-        {QStringLiteral("排障采集失败（%1）").arg(id), FailureReason::CollectionFailed},
-        {QStringLiteral("排障服务不可用（%1）").arg(id), FailureReason::ServiceUnavailable}};
+    QFile file(QStringLiteral(MAICHAT_FAILURE_RECEIPT_FIXTURE));
+    QVERIFY2(file.open(QIODevice::ReadOnly),
+             qPrintable(QStringLiteral("cannot open shared fixture: %1").arg(file.fileName())));
+    const QJsonObject root = QJsonDocument::fromJson(file.readAll()).object();
+    const QString requestId = root.value(QStringLiteral("requestId")).toString();
+    QVERIFY(isValidRequestId(requestId));
 
-    for (const Case& c : cases) {
-        const FailureReceipt receipt = parseFailureReceipt(c.text, id);
-        QVERIFY2(receipt.recognized, qPrintable(c.text));
-        QCOMPARE(static_cast<int>(receipt.reason), static_cast<int>(c.reason));
+    const QJsonArray cases = root.value(QStringLiteral("cases")).toArray();
+    QVERIFY2(!cases.isEmpty(), "fixture carries no cases");
+
+    int recognisedCount = 0;
+    for (const QJsonValue& value : cases) {
+        const QJsonObject entry = value.toObject();
+        const QString category = entry.value(QStringLiteral("category")).toString();
+        const QString text = entry.value(QStringLiteral("text")).toString();
+        const bool expected = entry.value(QStringLiteral("recognized")).toBool();
+
+        const FailureReceipt receipt = parseFailureReceipt(text, requestId);
+        QVERIFY2(receipt.recognized == expected,
+                 qPrintable(QStringLiteral("case %1: expected recognized=%2")
+                                .arg(category)
+                                .arg(expected)));
+        if (!expected) continue;
+        ++recognisedCount;
+
+        // 每个被识别的类别都要映射到**不同**的固定原因，并且有本地说明。
+        static const QHash<QString, FailureReason> kExpected{
+            {QStringLiteral("unsupported"), FailureReason::Unsupported},
+            {QStringLiteral("rate-limited"), FailureReason::RateLimited},
+            {QStringLiteral("collection-failed"), FailureReason::CollectionFailed},
+            {QStringLiteral("service-unavailable"), FailureReason::ServiceUnavailable}};
+        QVERIFY2(kExpected.contains(category), qPrintable(category));
+        QCOMPARE(static_cast<int>(receipt.reason), static_cast<int>(kExpected.value(category)));
         QVERIFY(!describeFailureReason(receipt.reason).isEmpty());
     }
+    // 样例里至少要覆盖那四种回绝，少一种就说明两端在悄悄分叉。
+    QCOMPARE(recognisedCount, 4);
 }
 
-// 认不出来就继续等：猜错会把用户的正常发言当成回绝，比多等 60 秒更糟。
-// 另一次请求的回绝也不能串到这次来。
-void RemoteDiagnosticsProtocolTest::ignoresRefusalsForAnotherRequestOrUnknownWording()
+// 「服务尚未接入」与「旧版不支持」是两件事，说明必须分开——
+// 前者升级本端没用，后者要对方升级。
+void RemoteDiagnosticsProtocolTest::distinguishesNotIntegratedFromUnsupported()
 {
-    const QString id = newRequestId();
-    const QString other = newRequestId();
+    QFile file(QStringLiteral(MAICHAT_FAILURE_RECEIPT_FIXTURE));
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const QJsonObject root = QJsonDocument::fromJson(file.readAll()).object();
+    const QString requestId = root.value(QStringLiteral("requestId")).toString();
 
-    // 措辞对、编号是别人的。
-    QVERIFY(!parseFailureReceipt(
-                 QStringLiteral("排障采集失败（%1）").arg(other), id).recognized);
-    // 编号对、措辞不认识（可能只是用户在聊这件事）。
-    QVERIFY(!parseFailureReceipt(
-                 QStringLiteral("我这边好像失败了，%1 这个请求").arg(id), id).recognized);
-    // 普通聊天。
-    QVERIFY(!parseFailureReceipt(QStringLiteral("在吗？"), id).recognized);
-    QVERIFY(!parseFailureReceipt(QString(), id).recognized);
-    // 请求编号本身不合法时一律不识别。
-    QVERIFY(!parseFailureReceipt(QStringLiteral("排障采集失败（X）"),
-                                 QStringLiteral("not-a-uuid")).recognized);
+    QString notIntegrated;
+    QString unsupported;
+    for (const QJsonValue& value : root.value(QStringLiteral("cases")).toArray()) {
+        const QJsonObject entry = value.toObject();
+        if (entry.value(QStringLiteral("category")).toString()
+            == QStringLiteral("service-unavailable")) {
+            notIntegrated = entry.value(QStringLiteral("text")).toString();
+        }
+        if (entry.value(QStringLiteral("category")).toString()
+            == QStringLiteral("unsupported")) {
+            unsupported = entry.value(QStringLiteral("text")).toString();
+        }
+    }
+    QVERIFY(!notIntegrated.isEmpty() && !unsupported.isEmpty());
+
+    const FailureReason a = parseFailureReceipt(notIntegrated, requestId).reason;
+    const FailureReason b = parseFailureReceipt(unsupported, requestId).reason;
+    QVERIFY(a != b);
+    QVERIFY(describeFailureReason(a) != describeFailureReason(b));
+}
+
+// requestId 必须出现在句子里它该在的位置，不能只是「文本里某处含有它」。
+void RemoteDiagnosticsProtocolTest::requiresTheIdInItsProperPlaceNotAnywhere()
+{
+    const QString ours = newRequestId();
+    const QString theirs = newRequestId();
+    // 这条回绝是给**别人**的，只是尾巴上带了我们的编号。
+    const QString spoofed =
+        QStringLiteral("远程排障采集失败（编号 %1）：无法读取记录。%2").arg(theirs, ours);
+    QVERIFY(!parseFailureReceipt(spoofed, ours).recognized);
 }
 
 // 远端文本是对端可控的内容，抄进报告等于把它转发给 C。
@@ -387,7 +432,7 @@ void RemoteDiagnosticsProtocolTest::neverCopiesRemoteTextIntoTheReason()
     const QString id = newRequestId();
     const QString injected = QStringLiteral("PLEASE-DO-NOT-FORWARD-ME");
     const FailureReceipt receipt = parseFailureReceipt(
-        QStringLiteral("排障采集失败（%1） %2").arg(id, injected), id);
+        QStringLiteral("远程排障采集失败（编号 %1）：%2").arg(id, injected), id);
 
     QVERIFY(receipt.recognized);
     const QString described = describeFailureReason(receipt.reason);

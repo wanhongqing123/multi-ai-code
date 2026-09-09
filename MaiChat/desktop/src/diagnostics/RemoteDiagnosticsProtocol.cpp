@@ -227,47 +227,49 @@ FailureReceipt parseFailureReceipt(const QString& text, const QString& expectedR
 {
     FailureReceipt receipt;
     if (!isValidRequestId(expectedRequestId)) return receipt;
-    // 必须带本次的 requestId。少了这条，B 的任何一句普通话都可能被当成回绝，
-    // 而且别的请求的回绝会串到这次来。
-    if (!text.contains(expectedRequestId)) return receipt;
 
-    const QString firstLine = text.split(QLatin1Char('\n')).value(0).trimmed();
+    // requestId 必须出现在**句子里它该在的位置**，不是「文本里某处含有它」。
+    // 后者可以被 "远程排障采集失败（编号 <别人的>）：... <我们的>" 骗过去：
+    // 编号出现了，但那条回绝根本不是给本次请求的。
+    const QString id = expectedRequestId;
 
-    // 旧版 B 不认识这条命令时的固定首行。这条是「对端根本不支持」，
-    // 与「支持但这次失败」要分开，报告里的措辞不一样。
-    if (firstLine.startsWith(QStringLiteral("不支持的 IM 控制命令："))) {
+    if (text == QStringLiteral("远程排障请求过于频繁，请稍后重试（%1）。").arg(id)) {
+        receipt.recognized = true;
+        receipt.reason = FailureReason::RateLimited;
+        return receipt;
+    }
+    if (text.startsWith(QStringLiteral("远程排障采集失败（编号 %1）：").arg(id))) {
+        receipt.recognized = true;
+        receipt.reason = FailureReason::CollectionFailed;
+        return receipt;
+    }
+    if (text == QStringLiteral("当前 MultiAICode 尚未接入远程排障（%1），请升级后重试。").arg(id)) {
+        receipt.recognized = true;
+        receipt.reason = FailureReason::ServiceUnavailable;
+        return receipt;
+    }
+    // 旧版 B：只比对首行，后面还跟着可用命令列表。
+    if (text.split(QLatin1Char('\n')).value(0)
+        == QStringLiteral("不支持的 IM 控制命令：/diagnostics %1").arg(id)) {
         receipt.recognized = true;
         receipt.reason = FailureReason::Unsupported;
         return receipt;
-    }
-
-    // 已知固定提示 -> 固定原因。逐条精确匹配，不做包含式的模糊猜测：
-    // 猜错会把用户的正常发言当成回绝，比多等 60 秒更糟。
-    static const QList<QPair<QString, FailureReason>> kKnownPrefixes{
-        {QStringLiteral("排障请求过于频繁"), FailureReason::RateLimited},
-        {QStringLiteral("排障采集失败"), FailureReason::CollectionFailed},
-        {QStringLiteral("排障服务不可用"), FailureReason::ServiceUnavailable}};
-    for (const auto& entry : kKnownPrefixes) {
-        if (firstLine.startsWith(entry.first)) {
-            receipt.recognized = true;
-            receipt.reason = entry.second;
-            return receipt;
-        }
     }
     return receipt;
 }
 
 QString describeFailureReason(FailureReason reason)
 {
+    // 与 iOS / 宿主逐字一致：同一件事在三端应当说同一句话。
     switch (reason) {
     case FailureReason::Unsupported:
-        return QStringLiteral("对方客户端版本较旧，不支持远程排障");
+        return QStringLiteral("远端版本不支持远程排障；本报告仅含本地现场。");
     case FailureReason::RateLimited:
-        return QStringLiteral("对方限制了排障请求频率，本次未采集");
+        return QStringLiteral("远端拒绝了过于频繁的采集请求；本报告仅含本地现场。");
     case FailureReason::CollectionFailed:
-        return QStringLiteral("对方采集失败，本次没有拿到数据");
+        return QStringLiteral("远端报告采集失败；本报告仅含本地现场。");
     case FailureReason::ServiceUnavailable:
-        return QStringLiteral("对方的排障服务不可用，本次未采集");
+        return QStringLiteral("远端排障服务尚未接入，暂未取得远端现场；本报告仅含本地现场。");
     case FailureReason::None:
         break;
     }

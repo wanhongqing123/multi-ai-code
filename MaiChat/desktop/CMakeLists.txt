@@ -275,6 +275,9 @@ endif()
 
 add_executable(remote_diagnostics_protocol_test tests/RemoteDiagnosticsProtocolTest.cpp)
 target_link_libraries(remote_diagnostics_protocol_test PRIVATE remote_im_core Qt5::Test)
+# 回绝样例是三端共用的同一份文件，测试直接读它，不再各自抄一份提示串。
+target_compile_definitions(remote_diagnostics_protocol_test PRIVATE
+  MAICHAT_FAILURE_RECEIPT_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../../tests/fixtures/remote-diagnostics-failure-receipts.json")
 
 add_executable(chat_state_test tests/ChatStateTest.cpp)
 target_link_libraries(chat_state_test PRIVATE remote_im_core Qt5::Test)

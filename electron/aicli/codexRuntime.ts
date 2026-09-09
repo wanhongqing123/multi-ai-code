@@ -37,8 +37,14 @@ function isWithinDirectory(parent: string, candidate: string): boolean {
  * omitting the `[windows] sandbox` key — there is no `disabled` value, and
  * writing one stops Codex booting — but an omitted key is also half of the
  * trigger for the offer, so the same question returns for every new directory
- * and declining records nothing. This app deliberately runs Codex unsandboxed,
- * so it answers once, here. A sandbox that policy *requires* still prompts.
+ * and declining records nothing. This answers that one question, once.
+ *
+ * Scope, precisely: it changes nothing except whether the *optional* offer is
+ * shown. A sandbox mode already configured stays in force; a sandbox that
+ * policy requires still prompts, because that prompt is how it gets
+ * provisioned. It does not disable an active sandbox, and does not mean every
+ * Codex session runs unsandboxed — only that sessions with no sandbox
+ * configured stop being asked to create one.
  *
  * Must match `SUPPRESS_OPTIONAL_PROMPT_ENV` in the kernel's
  * `tui/src/windows_sandbox.rs`; a test on each side pins the spelling.

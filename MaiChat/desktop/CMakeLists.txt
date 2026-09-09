@@ -72,6 +72,8 @@ add_library(remote_im_core
   src/model/MessageSearch.h
   src/model/MessageSearch.cpp
   src/model/PinyinInitials.cpp
+  src/diagnostics/RemoteDiagnosticsProtocol.h
+  src/diagnostics/RemoteDiagnosticsProtocol.cpp
   src/markdown/MarkdownRenderer.h
   src/markdown/PreviewText.h
   src/markdown/MarkdownRenderer.cpp
@@ -271,6 +273,9 @@ if(MAICHAT_USE_FAKE_CLIENT)
   target_compile_definitions(maichat PRIVATE MAICHAT_USE_FAKE_CLIENT=1)
 endif()
 
+add_executable(remote_diagnostics_protocol_test tests/RemoteDiagnosticsProtocolTest.cpp)
+target_link_libraries(remote_diagnostics_protocol_test PRIVATE remote_im_core Qt5::Test)
+
 add_executable(chat_state_test tests/ChatStateTest.cpp)
 target_link_libraries(chat_state_test PRIVATE remote_im_core Qt5::Test)
 
@@ -392,6 +397,7 @@ add_executable(ui_zoom_test tests/UiZoomTest.cpp)
 target_link_libraries(ui_zoom_test PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets Qt5::Test)
 
 enable_testing()
+add_test(NAME remote_diagnostics_protocol_test COMMAND remote_diagnostics_protocol_test)
 add_test(NAME message_notification_test COMMAND message_notification_test)
 add_test(NAME message_quote_test COMMAND message_quote_test)
 add_test(NAME broadcast_dialog_test COMMAND broadcast_dialog_test)

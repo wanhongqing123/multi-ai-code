@@ -58,6 +58,8 @@ public struct RemoteDiagnosticsLocalEvidence: Codable, Sendable {
     public let displayedConversation: Bool
     public let timeZone: String
     public let processId: Int32
+    public let loadedMessageCount: Int
+    public let excludedMessageCount: Int
     public let logs: [RemoteDiagnosticsLogEntry]
     public let logCoverage: String
 
@@ -69,19 +71,41 @@ public struct RemoteDiagnosticsLocalEvidence: Codable, Sendable {
         self.ownerUserID = ownerUserID
         self.peerUserID = peerUserID
         self.collectedAt = collectedAt.timeIntervalSince1970 * 1000
-        self.messages = messages.filter {
-            $0.createdAt >= collectedAt.addingTimeInterval(-1800) && $0.createdAt <= collectedAt
-        }.suffix(1000).map(RemoteDiagnosticsMessage.init)
+        let observedTags = Set(logs.compactMap { $0.fields["message"] })
+        let selected = messages.filter {
+            ($0.createdAt >= collectedAt.addingTimeInterval(-1800) && $0.createdAt <= collectedAt) ||
+                observedTags.contains(DiagnosticLogPrivacy.stableTag($0.remoteID ?? $0.id.uuidString, prefix: "m"))
+        }
+        self.messages = selected.suffix(1000).map(RemoteDiagnosticsMessage.init)
+        loadedMessageCount = messages.count
+        excludedMessageCount = messages.count - self.messages.count
         self.displayedConversation = displayedConversation
         timeZone = TimeZone.current.identifier
         processId = ProcessInfo.processInfo.processIdentifier
         self.logs = logs
-        logCoverage = "当前启动以来保留的近期元数据；较早条目可能受容量上限影响。row-presented 只证明视图挂载，不证明屏幕像素已绘制。"
+        logCoverage = "当前账号本次启动以来保留的近期元数据；保留近期本地观察到的消息，不用服务端时钟排除这些消息。较早条目可能受容量上限影响。row-presented 只证明视图挂载，不证明屏幕像素已绘制。"
     }
 }
 
 public enum RemoteDiagnosticsProtocol {
     public static let maximumBytes = 2 * 1024 * 1024
+
+    public static func accountTag(sdkAppID: Int, ownerUserID: String) -> String {
+        DiagnosticLogPrivacy.stableTag("\(sdkAppID):\(ownerUserID)", prefix: "a")
+    }
+
+    public static func scopedLogs(_ entries: [DiagnosticLogEntry], accountTag: String,
+                                  peerUserID: String, since: Date) -> [RemoteDiagnosticsLogEntry] {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let peer = DiagnosticLogPrivacy.stableTag(peerUserID, prefix: "u")
+        let connectionEvents: Set<String> = ["login-start", "login-finished", "connect-start", "connect-finished", "disconnect-start", "disconnect-finished", "sdk-connecting", "sdk-connected", "sdk-connect-failed", "sdk-kicked-offline", "sdk-user-sig-expired"]
+        return entries.filter { entry in
+            guard !accountTag.isEmpty, entry.fields["account"] == accountTag,
+                  let date = formatter.date(from: entry.createdAt), date >= since else { return false }
+            return entry.fields["peer"] == peer || connectionEvents.contains(entry.event)
+        }.suffix(1000).map(RemoteDiagnosticsLogEntry.init)
+    }
 
     public static func requestText(id: UUID) -> String {
         "/diagnostics \(id.uuidString.lowercased())"

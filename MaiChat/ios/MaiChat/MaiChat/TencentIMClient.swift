@@ -23,6 +23,21 @@ private final class ApplicationBadgeSnapshot: @unchecked Sendable {
     }
 }
 
+private final class DiagnosticAccountSnapshot: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: String?
+    func store(_ value: String?) {
+        lock.lock()
+        self.value = value
+        lock.unlock()
+    }
+    func load() -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+}
+
 final class TencentIMClient:
     NSObject,
     RemoteIMClient,
@@ -40,8 +55,11 @@ final class TencentIMClient:
     private var initializedSDKAppID: Int?
     private var hasRegisteredIMSDKListener = false
     private nonisolated let applicationBadgeSnapshot = ApplicationBadgeSnapshot()
+    private nonisolated static let diagnosticAccountSnapshot = DiagnosticAccountSnapshot()
 
     func connect(sdkAppID: Int, userID: String, userSig: String) async throws {
+        let diagnosticAccount = RemoteDiagnosticsProtocol.accountTag(sdkAppID: sdkAppID, ownerUserID: userID)
+        Self.diagnosticAccountSnapshot.store(diagnosticAccount)
         if initializedSDKAppID != sdkAppID {
             let config = V2TIMSDKConfig()
             let initialized = V2TIMManager.sharedInstance().initSDK(
@@ -70,7 +88,7 @@ final class TencentIMClient:
                     Self.logSDK(
                         level: .info,
                         event: "login-finished",
-                        fields: ["result": "ok", "peer": Self.peerTag(userID)]
+                        fields: ["result": "ok", "peer": Self.peerTag(userID), "account": diagnosticAccount]
                     )
                     V2TIMManager.sharedInstance().getTotalUnreadMessageCount(
                         succ: { count in
@@ -97,6 +115,7 @@ final class TencentIMClient:
                         fields: [
                             "result": "failed",
                             "code": String(code),
+                            "account": diagnosticAccount,
                             "peer": Self.peerTag(userID)
                         ]
                     )
@@ -112,6 +131,7 @@ final class TencentIMClient:
     }
 
     func disconnect() async {
+        Self.diagnosticAccountSnapshot.store(nil)
         if hasRegisteredIMSDKListener {
             V2TIMManager.sharedInstance().removeIMSDKListener(listener: self)
             hasRegisteredIMSDKListener = false
@@ -437,6 +457,7 @@ final class TencentIMClient:
         )
         startFields["kind"] = kind
         startFields["peer"] = Self.peerTag(userID)
+        startFields["account"] = Self.diagnosticAccountSnapshot.load() ?? "unbound"
         Self.logSDK(level: .info, event: "message-send-start", fields: startFields)
         return try await withCheckedThrowingContinuation { continuation in
             V2TIMManager.sharedInstance().sendMessage(
@@ -1392,6 +1413,7 @@ final class TencentIMClient:
         fields["kind"] = kind
         fields["peer"] = peerTag(peerUserID)
         fields["message"] = messageTag(messageID)
+        fields["account"] = diagnosticAccountSnapshot.load() ?? "unbound"
         return fields
     }
 
@@ -1415,12 +1437,15 @@ final class TencentIMClient:
         event: String,
         fields: [String: String] = [:]
     ) {
+        var scopedFields = fields
+        if scopedFields["account"] == nil { scopedFields["account"] = diagnosticAccountSnapshot.load() }
+        let context = scopedFields
         Task { @MainActor in
             AppDiagnosticLog.shared.record(
                 level: level,
                 category: "remote-im",
                 event: event,
-                fields: fields
+                fields: context
             )
         }
     }

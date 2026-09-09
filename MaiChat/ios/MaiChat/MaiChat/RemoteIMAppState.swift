@@ -801,7 +801,12 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     }
 
     func remoteDiagnosticsLogs(peer: String, since: Date) -> [RemoteDiagnosticsLogEntry] {
-        AppDiagnosticLog.shared.remoteMetadata(peerUserID: peer, since: since)
+        AppDiagnosticLog.shared.remoteMetadata(peerUserID: peer, accountTag: remoteDiagnosticsAccountTag, since: since)
+    }
+
+    var remoteDiagnosticsAccountTag: String {
+        guard let sdkAppID = chatHistorySDKAppID else { return "" }
+        return RemoteDiagnosticsProtocol.accountTag(sdkAppID: sdkAppID, ownerUserID: chatState.ownerUserID)
     }
 
     func remoteDiagnosticsMayContinue(identity: String, peer: String, recipient: String) -> Bool {
@@ -2071,6 +2076,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         var values = fields
         values["connection_state"] = connectionState.diagnosticName
         let resolvedUserID = userID ?? masterUserID
+        if resolvedUserID == chatState.ownerUserID { values["account"] = remoteDiagnosticsAccountTag }
         if !resolvedUserID.isEmpty {
             values["user"] = DiagnosticLogPrivacy.stableTag(resolvedUserID, prefix: "u")
         }

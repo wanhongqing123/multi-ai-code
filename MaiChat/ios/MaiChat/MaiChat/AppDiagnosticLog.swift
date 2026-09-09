@@ -121,12 +121,8 @@ final class AppDiagnosticLog: DiagnosticLogSink {
         return try await fileStore.makeExportSnapshot(in: exportDirectoryURL)
     }
 
-    func remoteMetadata(peerUserID: String, since: Date) -> [RemoteDiagnosticsLogEntry] {
-        let peer = DiagnosticLogPrivacy.stableTag(peerUserID, prefix: "u")
-        return recentEntries.filter { entry in
-            guard let date = Self.timestampFormatter.date(from: entry.createdAt), date >= since else { return false }
-            return entry.fields["peer"] == peer || (entry.category == "app" && entry.event == "launch")
-        }.suffix(1000).map(RemoteDiagnosticsLogEntry.init)
+    func remoteMetadata(peerUserID: String, accountTag: String, since: Date) -> [RemoteDiagnosticsLogEntry] {
+        RemoteDiagnosticsProtocol.scopedLogs(recentEntries, accountTag: accountTag, peerUserID: peerUserID, since: since)
     }
 
     func flush() async {

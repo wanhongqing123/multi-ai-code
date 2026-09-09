@@ -248,4 +248,39 @@ final class RemoteDiagnosticsTests: XCTestCase {
                 row["recognized"] as? Bool, row["category"] as? String ?? "unknown")
         }
     }
+
+    func testLocalLogsCannotCrossAccountsSDKsOrPeers() throws {
+        let date = Date()
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let account = RemoteDiagnosticsProtocol.accountTag(sdkAppID: 1, ownerUserID: "current")
+        let oldAccount = RemoteDiagnosticsProtocol.accountTag(sdkAppID: 1, ownerUserID: "previous")
+        let otherSDK = RemoteDiagnosticsProtocol.accountTag(sdkAppID: 2, ownerUserID: "current")
+        let peer = DiagnosticLogPrivacy.stableTag("machine", prefix: "u")
+        func entry(_ scope: String, _ target: String, _ message: String, event: String = "message-receive-callback") -> DiagnosticLogEntry {
+            DiagnosticLogEntry(sequence: 1, createdAt: formatter.string(from: date), level: .info,
+                category: "remote-im", event: event, fields: ["account": scope, "peer": target, "message": message])
+        }
+        let entries = [entry(oldAccount, peer, "OLD_ACCOUNT"), entry(otherSDK, peer, "OTHER_SDK"),
+            entry("", peer, "UNSCOPED"), entry(account, "other-peer", "OTHER_PEER"),
+            entry(account, peer, "CURRENT"), entry(account, "", "CONNECTION", event: "sdk-connect-failed")]
+        let scoped = RemoteDiagnosticsProtocol.scopedLogs(entries, accountTag: account, peerUserID: "machine", since: date.addingTimeInterval(-1))
+        XCTAssertEqual(scoped.count, 2)
+        let encoded = String(decoding: try JSONEncoder().encode(scoped), as: UTF8.self)
+        for hidden in ["OLD_ACCOUNT", "OTHER_SDK", "UNSCOPED", "OTHER_PEER"] { XCTAssertFalse(encoded.contains(hidden)) }
+        XCTAssertTrue(encoded.contains("CURRENT"))
+        XCTAssertTrue(encoded.contains("CONNECTION"))
+    }
+
+    func testLocallyObservedMessageSurvivesServerClockSkew() {
+        let now = Date()
+        let message = RemoteIMMessage(remoteID: "sdk-future-message", fromUserID: "machine", toUserID: "phone",
+            text: "DO_NOT_EXPORT_BODY", direction: .incoming, status: .received, createdAt: now.addingTimeInterval(3600))
+        let observed = RemoteDiagnosticsLogEntry(DiagnosticLogEntry(sequence: 1, createdAt: "now", level: .info,
+            category: "remote-im", event: "message-receive-callback", fields: ["message": DiagnosticLogPrivacy.stableTag("sdk-future-message", prefix: "m")]))
+        let evidence = RemoteDiagnosticsLocalEvidence(appVersion: "test", ownerUserID: "phone", peerUserID: "machine",
+            collectedAt: now, messages: [message], displayedConversation: true, logs: [observed])
+        XCTAssertEqual(evidence.messages.map(\.remoteID), ["sdk-future-message"])
+        XCTAssertEqual(evidence.excludedMessageCount, 0)
+    }
 }

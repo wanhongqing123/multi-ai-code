@@ -1124,6 +1124,7 @@ private struct ChatDetailView: View {
                 event: "conversation-opened",
                 fields: [
                     "peer": DiagnosticLogPrivacy.stableTag(contact.userID, prefix: "u"),
+                    "account": appState.remoteDiagnosticsAccountTag,
                     "cached_messages": String(appState.visibleMessages(with: contact.userID).count),
                 ]
             )
@@ -1641,8 +1642,11 @@ private struct MessageListView: View {
                                 }
                                 .id(message.id)
                                 .onAppear {
+                                    let owner = appState.chatState.ownerUserID
+                                    guard message.fromUserID == owner || message.toUserID == owner else { return }
                                     let peer = message.direction == .incoming ? message.fromUserID : message.toUserID
                                     AppDiagnosticLog.shared.record(level: .debug, category: "remote-im-ui", event: "row-presented", fields: [
+                                        "account": appState.remoteDiagnosticsAccountTag,
                                         "peer": DiagnosticLogPrivacy.stableTag(peer, prefix: "u"),
                                         "message": DiagnosticLogPrivacy.stableTag(message.remoteID ?? message.id.uuidString, prefix: "m")
                                     ])

@@ -1,8 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { spawnSync } from 'child_process'
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { dirname, join } from 'path'
 import { withCodexHome } from '../../../electron/aicli/codexRuntime.js'
 
 function withTempHome(body: (home: string) => void): void {
@@ -17,6 +17,22 @@ function withTempHome(body: (home: string) => void): void {
 describe('withCodexHome', () => {
   it('refuses a relative home so nothing lands inside the target repo', () => {
     expect(() => withCodexHome({}, 'relative/.codex', process.cwd())).toThrow(/absolute/)
+  })
+
+  it.runIf(process.platform === 'win32' || process.platform === 'darwin')('rejects a differently cased host home before creating it', () => {
+    withTempHome((home) => {
+      const fakeUserHome = dirname(home)
+      vi.stubEnv(process.platform === 'win32' ? 'USERPROFILE' : 'HOME', fakeUserHome)
+      try {
+        // Neither spelling exists: this also exercises canonicalizing an absent
+        // leaf. The fixture is the OS-home stand-in, never the operator's home.
+        expect(() => withCodexHome({}, join(fakeUserHome, '.CODEX'), join(fakeUserHome, 'repo')))
+          .toThrow(/host global/)
+        expect(readdirSync(fakeUserHome)).toEqual([])
+      } finally {
+        vi.unstubAllEnvs()
+      }
+    })
   })
 
   // Windows 的环境变量名不区分大小写，但 {...process.env} 保留的是继承时的原始拼写。

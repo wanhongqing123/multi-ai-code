@@ -1,6 +1,45 @@
 import CryptoKit
 import Foundation
 
+/// Bounded, text-free statistics for interaction work. Durations are supplied by
+/// the caller so queue wait and actual processing time remain separate metrics.
+public struct DiagnosticTimingAccumulator: Sendable {
+    private var count = 0
+    private var slowCount = 0
+    private var totalMilliseconds = 0.0
+    private var maximumMilliseconds = 0.0
+
+    public init() {}
+
+    public mutating func record(seconds: TimeInterval) {
+        let milliseconds = seconds * 1_000
+        guard milliseconds.isFinite, milliseconds >= 0 else { return }
+        count += 1
+        if milliseconds >= 16 { slowCount += 1 }
+        totalMilliseconds += milliseconds
+        maximumMilliseconds = max(maximumMilliseconds, milliseconds)
+    }
+
+    public mutating func takeSnapshot() -> DiagnosticTimingSnapshot? {
+        guard count > 0 else { return nil }
+        let snapshot = DiagnosticTimingSnapshot(
+            sampleCount: count,
+            slowSampleCount: slowCount,
+            maximumMilliseconds: maximumMilliseconds,
+            averageMilliseconds: totalMilliseconds / Double(count)
+        )
+        self = Self()
+        return snapshot
+    }
+}
+
+public struct DiagnosticTimingSnapshot: Equatable, Sendable {
+    public let sampleCount: Int
+    public let slowSampleCount: Int
+    public let maximumMilliseconds: Double
+    public let averageMilliseconds: Double
+}
+
 public enum DiagnosticLogLevel: String, Codable, Sendable {
     case debug
     case info

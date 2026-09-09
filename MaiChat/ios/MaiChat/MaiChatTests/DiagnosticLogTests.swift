@@ -3,6 +3,34 @@ import XCTest
 @testable import MaiChatCore
 
 final class DiagnosticLogTests: XCTestCase {
+    func testInteractionTimingAggregatesAndResetsWithoutKeepingText() throws {
+        var accumulator = DiagnosticTimingAccumulator()
+        XCTAssertNil(accumulator.takeSnapshot())
+        accumulator.record(seconds: 0.001)
+        accumulator.record(seconds: 0.020)
+        accumulator.record(seconds: 0.100)
+        let snapshot = try XCTUnwrap(accumulator.takeSnapshot())
+        XCTAssertEqual(snapshot.sampleCount, 3)
+        XCTAssertEqual(snapshot.slowSampleCount, 2)
+        XCTAssertEqual(snapshot.maximumMilliseconds, 100, accuracy: 0.001)
+        XCTAssertEqual(snapshot.averageMilliseconds, 121.0 / 3, accuracy: 0.001)
+        XCTAssertNil(accumulator.takeSnapshot())
+        accumulator.record(seconds: 0.002)
+        XCTAssertEqual(accumulator.takeSnapshot()?.sampleCount, 1)
+    }
+
+    func testInteractionTimingRejectsInvalidDurations() throws {
+        var accumulator = DiagnosticTimingAccumulator()
+        for invalid in [-1.0, Double.infinity, Double.nan] {
+            accumulator.record(seconds: invalid)
+        }
+        XCTAssertNil(accumulator.takeSnapshot())
+        accumulator.record(seconds: 0.016)
+        let snapshot = try XCTUnwrap(accumulator.takeSnapshot())
+        XCTAssertEqual(snapshot.sampleCount, 1)
+        XCTAssertEqual(snapshot.slowSampleCount, 1)
+    }
+
     func testEntrySanitizesRedactsAndRoundTrips() throws {
         let entry = DiagnosticLogEntry(
             sequence: 7,

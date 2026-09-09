@@ -18,6 +18,15 @@ struct DiagnosticLogExport: Transferable, Sendable {
 final class AppDiagnosticLog: DiagnosticLogSink {
     static let shared = AppDiagnosticLog()
 
+    enum InteractionMetric: String, CaseIterable {
+        case composerEdit = "composer-edit"
+        case composerTextMutation = "composer-text-mutation"
+        case composerUpdate = "composer-update"
+        case composerLayout = "composer-layout"
+        case composerHeightQueue = "composer-height-queue"
+        case asrMainActorWait = "asr-main-actor-wait"
+    }
+
     private let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "com.kongshang.maichat",
         category: "diagnostics"
@@ -29,6 +38,12 @@ final class AppDiagnosticLog: DiagnosticLogSink {
     private var pendingEntries: [DiagnosticLogEntry] = []
     private var writeTask: Task<Void, Never>?
     private var didRecordLaunch = false
+    private var interactionTimings: [InteractionMetric: DiagnosticTimingAccumulator] = [:]
+    private var performanceTimer: Timer?
+    private var performanceObservers: [NSObjectProtocol] = []
+    private var lastHeartbeatUptime: TimeInterval?
+    private var lastPerformanceFlushUptime: TimeInterval = 0
+    private var lastDelayLogUptime: TimeInterval = 0
 
     private static let timestampFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
@@ -51,6 +66,7 @@ final class AppDiagnosticLog: DiagnosticLogSink {
     func install() {
         guard !didRecordLaunch else { return }
         didRecordLaunch = true
+        installPerformanceSampling()
 
         Task { [fileStore] in
             do {
@@ -104,6 +120,7 @@ final class AppDiagnosticLog: DiagnosticLogSink {
 
     func flush() async {
         install()
+        flushInteractionTimings()
         if writeTask == nil, !pendingEntries.isEmpty {
             scheduleWrite(immediately: true)
         }
@@ -120,6 +137,93 @@ final class AppDiagnosticLog: DiagnosticLogSink {
             }
             guard let self else { return }
             await self.drainPendingEntries()
+        }
+    }
+
+    func recordDuration(
+        _ metric: InteractionMetric,
+        since start: TimeInterval,
+        until end: TimeInterval = ProcessInfo.processInfo.systemUptime
+    ) {
+        interactionTimings[metric, default: DiagnosticTimingAccumulator()]
+            .record(seconds: end - start)
+    }
+
+    private func installPerformanceSampling() {
+        let center = NotificationCenter.default
+        performanceObservers.append(center.addObserver(
+            forName: UIApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.startPerformanceSampling() }
+        })
+        performanceObservers.append(center.addObserver(
+            forName: UIApplication.willResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.performanceTimer?.invalidate()
+                self?.performanceTimer = nil
+                self?.lastHeartbeatUptime = nil
+                self?.flushInteractionTimings()
+            }
+        })
+        if UIApplication.shared.applicationState == .active {
+            startPerformanceSampling()
+        }
+    }
+
+    private func startPerformanceSampling() {
+        guard performanceTimer == nil else { return }
+        lastHeartbeatUptime = ProcessInfo.processInfo.systemUptime
+        lastPerformanceFlushUptime = lastHeartbeatUptime ?? 0
+        let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.sampleMainRunLoop() }
+        }
+        timer.tolerance = 0.025
+        performanceTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func sampleMainRunLoop() {
+        guard UIApplication.shared.applicationState == .active else {
+            lastHeartbeatUptime = nil
+            return
+        }
+        let now = ProcessInfo.processInfo.systemUptime
+        if let previous = lastHeartbeatUptime {
+            let lateMilliseconds = max(0, now - previous - 0.25) * 1_000
+            // This measures a late run-loop tick, not a stack trace or proof of
+            // CPU work. Do not count background suspension as a foreground stall.
+            if lateMilliseconds >= 150, now - lastDelayLogUptime >= 2 {
+                lastDelayLogUptime = now
+                record(level: .warning, category: "interaction-performance",
+                       event: "main-runloop-delay", fields: [
+                        "late_ms": String(Int(lateMilliseconds.rounded())),
+                        "sample_interval_ms": "250",
+                       ])
+            }
+        }
+        lastHeartbeatUptime = now
+        if now - lastPerformanceFlushUptime >= 2 {
+            lastPerformanceFlushUptime = now
+            flushInteractionTimings()
+        }
+    }
+
+    private func flushInteractionTimings() {
+        for metric in InteractionMetric.allCases {
+            guard let snapshot = interactionTimings[metric]?.takeSnapshot() else { continue }
+            record(level: .info, category: "interaction-performance",
+                   event: metric.rawValue, fields: [
+                    "samples": String(snapshot.sampleCount),
+                    "slow_samples": String(snapshot.slowSampleCount),
+                    "slow_threshold_ms": "16",
+                    "max_ms": String(format: "%.2f", snapshot.maximumMilliseconds),
+                    "average_ms": String(format: "%.2f", snapshot.averageMilliseconds),
+                   ])
         }
     }
 

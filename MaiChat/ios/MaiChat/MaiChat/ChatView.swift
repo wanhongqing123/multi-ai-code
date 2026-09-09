@@ -5468,6 +5468,8 @@ private struct ComposerTextView: UIViewRepresentable {
     }
 
     func updateUIView(_ textView: GrowingComposerUITextView, context: Context) {
+        let started = ProcessInfo.processInfo.systemUptime
+        defer { AppDiagnosticLog.shared.recordDuration(.composerUpdate, since: started) }
         context.coordinator.parent = self
         editingController.textView = textView
         if textView.text != text {
@@ -5516,6 +5518,7 @@ private struct ComposerTextView: UIViewRepresentable {
         private var requiresMeasurement = true
         private var hasScheduledContentHeightRefresh = false
         private var isApplyingExternalText = false
+        private var pendingTextChangeUptime: TimeInterval?
         private var voiceLongPressOrigin: CGPoint?
         private var editTapBeganWhileFocused = false
         private var editTapInitialSelection: NSRange?
@@ -5540,6 +5543,8 @@ private struct ComposerTextView: UIViewRepresentable {
         func sizeThatFits(width: CGFloat, textView: UITextView) -> CGSize {
             let widthChanged = cachedWidth.map { abs($0 - width) >= 0.5 } ?? true
             if requiresMeasurement || widthChanged {
+                let started = ProcessInfo.processInfo.systemUptime
+                defer { AppDiagnosticLog.shared.recordDuration(.composerLayout, since: started) }
                 let fittingSize = textView.sizeThatFits(
                     CGSize(width: width, height: .greatestFiniteMagnitude)
                 )
@@ -5555,6 +5560,7 @@ private struct ComposerTextView: UIViewRepresentable {
         }
 
         func applyExternalText(_ text: String, to textView: UITextView) {
+            pendingTextChangeUptime = nil
             isApplyingExternalText = true
             defer { isApplyingExternalText = false }
 
@@ -5569,6 +5575,14 @@ private struct ComposerTextView: UIViewRepresentable {
         }
 
         func textViewDidChange(_ textView: UITextView) {
+            let started = ProcessInfo.processInfo.systemUptime
+            defer { AppDiagnosticLog.shared.recordDuration(.composerEdit, since: started) }
+            if let acceptedAt = pendingTextChangeUptime {
+                pendingTextChangeUptime = nil
+                AppDiagnosticLog.shared.recordDuration(
+                    .composerTextMutation, since: acceptedAt, until: started
+                )
+            }
             if !isApplyingExternalText, parent.text != textView.text {
                 parent.text = textView.text
             }
@@ -5632,9 +5646,12 @@ private struct ComposerTextView: UIViewRepresentable {
                 textView.markedTextRange == nil,
                 RemoteIMDraftSubmitPolicy.shouldSubmit(replacementText: replacementText)
             else {
+                // Earliest app-side edit callback, not the physical keypress.
+                pendingTextChangeUptime = ProcessInfo.processInfo.systemUptime
                 return true
             }
 
+            pendingTextChangeUptime = nil
             parent.onSubmit()
             return false
         }
@@ -5726,10 +5743,12 @@ private struct ComposerTextView: UIViewRepresentable {
         func scheduleContentHeightRefresh(for textView: UITextView) {
             guard !hasScheduledContentHeightRefresh else { return }
             hasScheduledContentHeightRefresh = true
+            let enqueuedUptime = ProcessInfo.processInfo.systemUptime
             DispatchQueue.main.async { [weak self, weak textView] in
                 guard let self else { return }
                 self.hasScheduledContentHeightRefresh = false
                 guard let textView else { return }
+                AppDiagnosticLog.shared.recordDuration(.composerHeightQueue, since: enqueuedUptime)
                 guard
                     let cachedWidth = self.cachedWidth,
                     textView.bounds.width.isFinite,

@@ -147,14 +147,26 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
         onSliceRecognize recognizer: QCloudRealTimeRecognizer,
         result: QCloudRealTimeResult
     ) {
-        publish(resultText(from: result), recognizerID: ObjectIdentifier(recognizer))
+        let callbackUptime = ProcessInfo.processInfo.systemUptime
+        publish(
+            resultText(from: result),
+            recognizerID: ObjectIdentifier(recognizer),
+            callbackUptime: callbackUptime,
+            callbackOnMainThread: Thread.isMainThread
+        )
     }
 
     nonisolated func realTimeRecognizer(
         onSegmentSuccessRecognize recognizer: QCloudRealTimeRecognizer,
         result: QCloudRealTimeResult
     ) {
-        publish(resultText(from: result), recognizerID: ObjectIdentifier(recognizer))
+        let callbackUptime = ProcessInfo.processInfo.systemUptime
+        publish(
+            resultText(from: result),
+            recognizerID: ObjectIdentifier(recognizer),
+            callbackUptime: callbackUptime,
+            callbackOnMainThread: Thread.isMainThread
+        )
     }
 
     nonisolated func realTimeRecognizerDidFinish(
@@ -188,6 +200,8 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
         _ recognizer: QCloudRealTimeRecognizer,
         error: Error?
     ) {
+        let callbackUptime = ProcessInfo.processInfo.systemUptime
+        let callbackOnMainThread = Thread.isMainThread
         let sourceID = ObjectIdentifier(recognizer)
         Task { @MainActor [weak self] in
             guard let self, self.isCurrentRecognizer(sourceID) else { return }
@@ -195,7 +209,14 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
                 self.log(
                     level: .info,
                     event: "recording-started",
-                    fields: ["session": String(self.sessionSequence)]
+                    fields: [
+                        "session": String(self.sessionSequence),
+                        "callback_latency_ms": self.elapsedMilliseconds(at: callbackUptime),
+                        "main_actor_wait_ms": Self.milliseconds(
+                            from: callbackUptime, to: ProcessInfo.processInfo.systemUptime
+                        ),
+                        "callback_on_main": String(callbackOnMainThread),
+                    ]
                 )
                 return
             }
@@ -212,10 +233,23 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
         return result.text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private nonisolated func publish(_ text: String, recognizerID: ObjectIdentifier) {
+    // callbackUptime is delegate entry, not a network receive timestamp. When
+    // callbackOnMainThread is true, SDK-internal main-queue delay is already
+    // included; interpret it alongside the foreground run-loop probe.
+    private nonisolated func publish(
+        _ text: String,
+        recognizerID: ObjectIdentifier,
+        callbackUptime: TimeInterval,
+        callbackOnMainThread: Bool
+    ) {
         guard !text.isEmpty else { return }
+        let enqueuedUptime = ProcessInfo.processInfo.systemUptime
         Task { @MainActor [weak self] in
             guard let self, self.isCurrentRecognizer(recognizerID) else { return }
+            let processedUptime = ProcessInfo.processInfo.systemUptime
+            AppDiagnosticLog.shared.recordDuration(
+                .asrMainActorWait, since: enqueuedUptime, until: processedUptime
+            )
             guard self.liveText != text else { return }
             self.textUpdateCount += 1
             if self.firstTextUptime == nil {
@@ -227,6 +261,14 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
                     fields: [
                         "session": String(self.sessionSequence),
                         "latency_ms": self.elapsedMilliseconds(at: now),
+                        "callback_latency_ms": self.elapsedMilliseconds(at: callbackUptime),
+                        "callback_on_main": String(callbackOnMainThread),
+                        "callback_extract_ms": Self.milliseconds(
+                            from: callbackUptime, to: enqueuedUptime
+                        ),
+                        "main_actor_wait_ms": Self.milliseconds(
+                            from: enqueuedUptime, to: processedUptime
+                        ),
                         "characters": String(text.count),
                     ]
                 )

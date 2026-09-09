@@ -45,6 +45,9 @@ private slots:
     void keepsOnlyTheTwoKnownCoverageValues();
     void carriesBothMessageIdFormsIntoTheFinalReport();
     void stillRejectsMessageIdTypesThatAreNotStringOrNumber();
+    void recognisesKnownRefusalsSoTheWaitCanEndEarly();
+    void ignoresRefusalsForAnotherRequestOrUnknownWording();
+    void neverCopiesRemoteTextIntoTheReason();
 };
 
 // requestId 由我们生成、由我们校验，两边形状必须自洽。
@@ -333,6 +336,63 @@ void RemoteDiagnosticsProtocolTest::stillRejectsMessageIdTypesThatAreNotStringOr
         QVERIFY(!kept.contains(QStringLiteral("messageId")));
         QCOMPARE(kept.value(QStringLiteral("ID")).toString(), QStringLiteral("KEEP"));
     }
+}
+
+// 明知被拒还空等满 60 秒是纯粹浪费用户时间。
+void RemoteDiagnosticsProtocolTest::recognisesKnownRefusalsSoTheWaitCanEndEarly()
+{
+    const QString id = newRequestId();
+    struct Case { QString text; FailureReason reason; };
+    const QList<Case> cases{
+        // 旧版 B 的固定首行。
+        {QStringLiteral("不支持的 IM 控制命令：/diagnostics %1").arg(id),
+         FailureReason::Unsupported},
+        {QStringLiteral("排障请求过于频繁，请稍后再试（%1）").arg(id),
+         FailureReason::RateLimited},
+        {QStringLiteral("排障采集失败（%1）").arg(id), FailureReason::CollectionFailed},
+        {QStringLiteral("排障服务不可用（%1）").arg(id), FailureReason::ServiceUnavailable}};
+
+    for (const Case& c : cases) {
+        const FailureReceipt receipt = parseFailureReceipt(c.text, id);
+        QVERIFY2(receipt.recognized, qPrintable(c.text));
+        QCOMPARE(static_cast<int>(receipt.reason), static_cast<int>(c.reason));
+        QVERIFY(!describeFailureReason(receipt.reason).isEmpty());
+    }
+}
+
+// 认不出来就继续等：猜错会把用户的正常发言当成回绝，比多等 60 秒更糟。
+// 另一次请求的回绝也不能串到这次来。
+void RemoteDiagnosticsProtocolTest::ignoresRefusalsForAnotherRequestOrUnknownWording()
+{
+    const QString id = newRequestId();
+    const QString other = newRequestId();
+
+    // 措辞对、编号是别人的。
+    QVERIFY(!parseFailureReceipt(
+                 QStringLiteral("排障采集失败（%1）").arg(other), id).recognized);
+    // 编号对、措辞不认识（可能只是用户在聊这件事）。
+    QVERIFY(!parseFailureReceipt(
+                 QStringLiteral("我这边好像失败了，%1 这个请求").arg(id), id).recognized);
+    // 普通聊天。
+    QVERIFY(!parseFailureReceipt(QStringLiteral("在吗？"), id).recognized);
+    QVERIFY(!parseFailureReceipt(QString(), id).recognized);
+    // 请求编号本身不合法时一律不识别。
+    QVERIFY(!parseFailureReceipt(QStringLiteral("排障采集失败（X）"),
+                                 QStringLiteral("not-a-uuid")).recognized);
+}
+
+// 远端文本是对端可控的内容，抄进报告等于把它转发给 C。
+void RemoteDiagnosticsProtocolTest::neverCopiesRemoteTextIntoTheReason()
+{
+    const QString id = newRequestId();
+    const QString injected = QStringLiteral("PLEASE-DO-NOT-FORWARD-ME");
+    const FailureReceipt receipt = parseFailureReceipt(
+        QStringLiteral("排障采集失败（%1） %2").arg(id, injected), id);
+
+    QVERIFY(receipt.recognized);
+    const QString described = describeFailureReason(receipt.reason);
+    QVERIFY(!described.contains(injected));
+    QVERIFY(!described.contains(id));
 }
 
 QTEST_MAIN(RemoteDiagnosticsProtocolTest)

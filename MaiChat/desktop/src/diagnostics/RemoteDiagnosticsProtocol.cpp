@@ -223,6 +223,57 @@ bool matchesAttachmentFileName(const QString& fileName, const QString& requestId
     return fileName == attachmentFileName(requestId);
 }
 
+FailureReceipt parseFailureReceipt(const QString& text, const QString& expectedRequestId)
+{
+    FailureReceipt receipt;
+    if (!isValidRequestId(expectedRequestId)) return receipt;
+    // 必须带本次的 requestId。少了这条，B 的任何一句普通话都可能被当成回绝，
+    // 而且别的请求的回绝会串到这次来。
+    if (!text.contains(expectedRequestId)) return receipt;
+
+    const QString firstLine = text.split(QLatin1Char('\n')).value(0).trimmed();
+
+    // 旧版 B 不认识这条命令时的固定首行。这条是「对端根本不支持」，
+    // 与「支持但这次失败」要分开，报告里的措辞不一样。
+    if (firstLine.startsWith(QStringLiteral("不支持的 IM 控制命令："))) {
+        receipt.recognized = true;
+        receipt.reason = FailureReason::Unsupported;
+        return receipt;
+    }
+
+    // 已知固定提示 -> 固定原因。逐条精确匹配，不做包含式的模糊猜测：
+    // 猜错会把用户的正常发言当成回绝，比多等 60 秒更糟。
+    static const QList<QPair<QString, FailureReason>> kKnownPrefixes{
+        {QStringLiteral("排障请求过于频繁"), FailureReason::RateLimited},
+        {QStringLiteral("排障采集失败"), FailureReason::CollectionFailed},
+        {QStringLiteral("排障服务不可用"), FailureReason::ServiceUnavailable}};
+    for (const auto& entry : kKnownPrefixes) {
+        if (firstLine.startsWith(entry.first)) {
+            receipt.recognized = true;
+            receipt.reason = entry.second;
+            return receipt;
+        }
+    }
+    return receipt;
+}
+
+QString describeFailureReason(FailureReason reason)
+{
+    switch (reason) {
+    case FailureReason::Unsupported:
+        return QStringLiteral("对方客户端版本较旧，不支持远程排障");
+    case FailureReason::RateLimited:
+        return QStringLiteral("对方限制了排障请求频率，本次未采集");
+    case FailureReason::CollectionFailed:
+        return QStringLiteral("对方采集失败，本次没有拿到数据");
+    case FailureReason::ServiceUnavailable:
+        return QStringLiteral("对方的排障服务不可用，本次未采集");
+    case FailureReason::None:
+        break;
+    }
+    return QString();
+}
+
 ParsedReport parseReport(const QByteArray& payload,
                          const QString& fileName,
                          const QString& expectedRequestId,

@@ -55,6 +55,34 @@ struct ParsedReport {
     QStringList droppedFields;
 };
 
+// B 明确回绝时的固定原因。
+//
+// 只认**已知的固定提示**并映射成这些枚举；**绝不把远端文本复制进报告**——
+// 那是对端可控的内容，抄进去等于把它转发给 C。
+enum class FailureReason {
+    None,                 // 不是回绝（普通聊天文本）
+    Unsupported,          // 旧版 B：不认识这条命令
+    RateLimited,          // B 限流
+    CollectionFailed,     // B 采集失败
+    ServiceUnavailable    // B 的采集服务不可用
+};
+
+struct FailureReceipt {
+    bool recognized = false;
+    FailureReason reason = FailureReason::None;
+};
+
+// 从 B 的一条文本里识别「本次请求被回绝」。
+//
+// 必须同时满足：文本携带**本次**的 requestId，且首行是**已知固定提示**之一。
+// 识别到就可以提前结束等待——明知被拒还空等满 60 秒是纯粹浪费用户时间。
+// 认不出来的一律返回 recognized=false（当普通聊天文本，继续等），
+// 不做模糊匹配：猜错会把用户的正常发言当成回绝。
+FailureReceipt parseFailureReceipt(const QString& text, const QString& expectedRequestId);
+
+// 这份报告是给谁看的：把固定原因转成给人读的说明。
+QString describeFailureReason(FailureReason reason);
+
 // 按白名单裁剪 B 的报告。
 //
 // `expectedRequestId` 与 `expectedSenderId` 必须与附件实际来源一致，

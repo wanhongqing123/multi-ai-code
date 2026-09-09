@@ -223,6 +223,7 @@ private:
 
     RemoteIMApplication& app_;
     RemoteDiagnosticsController* diagnostics_ = nullptr;
+    QLabel* diagnosticsStatusLabel_ = nullptr;
     QPushButton* moreButton_ = nullptr;
     QWidget* navRail_ = nullptr;
     QLineEdit* navSearchInput_ = nullptr;

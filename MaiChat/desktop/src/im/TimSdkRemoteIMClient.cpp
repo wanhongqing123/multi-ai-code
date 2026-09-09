@@ -1369,7 +1369,7 @@ void TimSdkRemoteIMClient::handleIncomingFileUrl(RemoteIMMessage message, const 
 
     const QString targetPath = cacheFilePathForUrl(url, message.file.fileName);
     message.file.localPath = targetPath;
-    if (QFile::exists(targetPath)) {
+    if (QFileInfo(targetPath).isFile() && QFileInfo(targetPath).isReadable()) {
         recordAttachmentPhase(origin, message, RemoteDiagnostics::AttachmentPhase::CacheHit);
         // 缓存命中也要走同一套判定：真的发出去才算交付。
         recordAttachmentPhase(origin, message,

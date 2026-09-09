@@ -1741,6 +1741,14 @@ void MainWindow::buildUi() {
     });
 
     chatLayout->addWidget(header);
+    diagnosticsStatusLabel_ = new QLabel(chatContentPane);
+    diagnosticsStatusLabel_->setObjectName(QStringLiteral("remoteDiagnosticsStatus"));
+    diagnosticsStatusLabel_->setTextFormat(Qt::PlainText);
+    diagnosticsStatusLabel_->setWordWrap(true);
+    diagnosticsStatusLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    diagnosticsStatusLabel_->setContentsMargins(UiZoom::s(12), UiZoom::s(8), UiZoom::s(12), UiZoom::s(8));
+    diagnosticsStatusLabel_->hide();
+    chatLayout->addWidget(diagnosticsStatusLabel_);
     chatLayout->addWidget(messageComposerSplitter, 1);
 
     contentSplitter->addWidget(conversationPane);
@@ -5308,6 +5316,7 @@ void MainWindow::showMoreMenu() {
     connect(diagnose, &QAction::triggered, this, &MainWindow::requestRemoteDiagnostics);
     if (diagnostics_ && diagnostics_->isRunning()) {
         QAction* cancel = menu.addAction(QStringLiteral("取消远程排障"));
+        cancel->setEnabled(!diagnostics_->isSending());
         connect(cancel, &QAction::triggered, this, [this] {
             if (diagnostics_) diagnostics_->cancel();
         });
@@ -5323,7 +5332,7 @@ void MainWindow::requestRemoteDiagnostics() {
     // 而且那台正是我们怀疑有问题的。
     QList<RemoteIMContact> candidates;
     for (const RemoteIMContact& contact : app_.chatState().contacts()) {
-        if (contact.userId == peerId) continue;
+        if (contact.userId == peerId || contact.userId == app_.chatState().ownerUserId()) continue;
         candidates.append(contact);
     }
     if (candidates.isEmpty()) {
@@ -5341,8 +5350,14 @@ void MainWindow::requestRemoteDiagnostics() {
         if (!contact.displayName.isEmpty()) peerName = contact.displayName;
         break;
     }
+    const auto confirmedAccount = app_.client().currentAccount();
     RemoteDiagnosticsDialog dialog(peerName, candidates, this);
     if (dialog.exec() != QDialog::Accepted) return;
+    if (confirmedAccount != app_.client().currentAccount()) {
+        diagnosticsStatusLabel_->setText(QStringLiteral("远程排障：确认期间账号已变更，未发起采集，请重新确认。"));
+        diagnosticsStatusLabel_->show();
+        return;
+    }
     const QString recipientId = dialog.selectedRecipientId();
     if (recipientId.isEmpty()) return;
 
@@ -5360,7 +5375,10 @@ void MainWindow::refreshDiagnosticsStatus() {
     if (!diagnostics_) return;
     const QString status = diagnostics_->status();
     if (status.isEmpty()) return;
-    if (statusLabel_) statusLabel_->setText(status);
+    if (diagnosticsStatusLabel_) {
+        diagnosticsStatusLabel_->setText(QStringLiteral("远程排障：") + status);
+        diagnosticsStatusLabel_->show();
+    }
 }
 
 void MainWindow::requestRemoteDesktop() {

@@ -287,6 +287,9 @@ target_compile_definitions(remote_diagnostics_controller_test PRIVATE
 add_executable(attachment_download_evidence_test tests/AttachmentDownloadEvidenceTest.cpp)
 target_link_libraries(attachment_download_evidence_test PRIVATE remote_im_core Qt5::Network Qt5::Test)
 
+add_executable(remote_diagnostics_ui_test tests/RemoteDiagnosticsUiTest.cpp)
+target_link_libraries(remote_diagnostics_ui_test PRIVATE remote_im_desktop_ui remote_im_desktop_app Qt5::Widgets Qt5::Test)
+
 add_executable(remote_diagnostics_evidence_test tests/RemoteDiagnosticsEvidenceTest.cpp)
 target_link_libraries(remote_diagnostics_evidence_test PRIVATE remote_im_core Qt5::Test)
 
@@ -419,6 +422,7 @@ target_link_libraries(ui_zoom_test PRIVATE remote_im_desktop_ui remote_im_deskto
 enable_testing()
 add_test(NAME remote_diagnostics_controller_test COMMAND remote_diagnostics_controller_test)
 add_test(NAME attachment_download_evidence_test COMMAND attachment_download_evidence_test)
+add_test(NAME remote_diagnostics_ui_test COMMAND remote_diagnostics_ui_test)
 add_test(NAME remote_diagnostics_evidence_test COMMAND remote_diagnostics_evidence_test)
 add_test(NAME remote_diagnostics_protocol_test COMMAND remote_diagnostics_protocol_test)
 add_test(NAME message_notification_test COMMAND message_notification_test)

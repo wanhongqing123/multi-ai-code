@@ -73,7 +73,8 @@ void RemoteDiagnosticsDialog::buildUi(const QString& faultyPeerName,
     recipientList_->setObjectName(QStringLiteral("diagnosticsRecipients"));
     recipientList_->setSelectionMode(QAbstractItemView::SingleSelection);
     for (const RemoteIMContact& contact : candidates) {
-        const QString label = contact.displayName.isEmpty() ? contact.userId : contact.displayName;
+        const QString label = contact.displayName.isEmpty() || contact.displayName == contact.userId
+            ? contact.userId : QStringLiteral("%1 (%2)").arg(contact.displayName, contact.userId);
         auto* item = new QListWidgetItem(label, recipientList_);
         item->setData(PeerIdRole, contact.userId);
     }

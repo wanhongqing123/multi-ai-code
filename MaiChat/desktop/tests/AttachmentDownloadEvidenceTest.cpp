@@ -151,6 +151,7 @@ private slots:
     void normalDownloadIsRecordedAsDeliveredAndReachesTheConversation();
     void networkFailureIsRecordedAndNoMessageAppears();
     void writeFailureIsNotRecordedAsDelivered();
+    void directoryAtCachePathIsNotAFileHit();
     void lateDownloadAfterAnAccountSwitchIsDroppedNotDelivered();
 };
 
@@ -253,6 +254,25 @@ void AttachmentDownloadEvidenceTest::writeFailureIsNotRecordedAsDelivered()
     // 还原，后面的用例还要用这个目录。
     QFile::remove(cacheDir);
     QDir().mkpath(cacheDir);
+}
+
+void AttachmentDownloadEvidenceTest::directoryAtCachePathIsNotAFileHit()
+{
+    auto api = std::make_unique<FakeApi>(); auto* fake = api.get();
+    TimSdkRemoteIMClient client(std::move(api));
+    OneShotServer server(QByteArray("{\"a\":1}"));
+    client.connectToService(123456, QStringLiteral("desktop-user"), QStringLiteral("sig"), nullptr);
+    QSignalSpy live(&client, &RemoteIMClient::liveMessagesReceived);
+    const auto name = QStringLiteral("directory-not-file.json");
+    const auto url = server.url(name); const auto target = cachePathFor(url, name);
+    QVERIFY(QDir().mkdir(target));
+    fake->deliver(fileMessage(url, name, QStringLiteral("m-directory")));
+    const AccountTag account{123456, QStringLiteral("desktop-user")};
+    QTRY_VERIFY_WITH_TIMEOUT(hasPhase(client.diagnosticsEvidence().exportFor(account, "phone-user"), AttachmentPhase::WriteFailed), 1500);
+    const auto events = client.diagnosticsEvidence().exportFor(account, "phone-user");
+    QVERIFY(!hasPhase(events, AttachmentPhase::CacheHit));
+    QVERIFY(!hasPhase(events, AttachmentPhase::Delivered)); QCOMPARE(live.count(), 0);
+    QVERIFY(QDir().rmdir(target));
 }
 
 // 甲开始下载 -> 切到乙 -> 甲完成。文件确实下完了，但它不能进乙的会话，

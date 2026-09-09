@@ -10,6 +10,7 @@
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QStandardPaths>
+#include <QSysInfo>
 #include <QTimeZone>
 
 namespace {
@@ -136,7 +137,9 @@ QJsonObject RemoteDiagnosticsController::localEvidence() const {
             {"status", int(message.status)}, {"kind", message.hasFile ? "file" : message.hasImage ? "image" : "message"}});
         if (messages.size() > 1000) messages.removeFirst();
     });
-    return {{"platform", "Desktop"}, {"appVersion", QCoreApplication::applicationVersion()},
+    return {{"client", "DesktopMaiChat"}, {"platform", QSysInfo::productType()},
+        {"osVersion", QSysInfo::productVersion()}, {"qtVersion", QString::fromLatin1(qVersion())},
+        {"appVersion", QCoreApplication::applicationVersion()},
         {"ownerUserID", safeId(account_.ownerUserId)}, {"peerUserID", safeId(peer_)},
         {"collectedAt", double(beganAt_)}, {"timeZone", QString::fromUtf8(QTimeZone::systemTimeZoneId())},
         {"processId", double(QCoreApplication::applicationPid())}, {"messages", messages},
@@ -187,6 +190,8 @@ void RemoteDiagnosticsController::sendReport(const QJsonObject& remote, const QS
     app_->sendDiagnosticReportTo(recipient_, path, [self, generation, partial = remote.isEmpty()](bool ok) {
         if (!self || !self->running_ || !self->sending_ || generation != self->generation_) return;
         if (!self->contextValid()) { self->finish(QStringLiteral("账号或好友已变更，发送结果未确认。")); return; }
-        self->finish(ok ? (partial ? QStringLiteral("部分报告已发送，远端缺失原因已写入报告。") : QStringLiteral("合并报告已发送，缺失和截断项已标注。")) : QStringLiteral("报告发送失败，未确认送达。"));
+        self->finish(ok ? QStringLiteral("已发送给 %1：%2").arg(self->recipient_,
+            partial ? QStringLiteral("部分报告，远端缺失原因已写入报告。") : QStringLiteral("合并报告，缺失和截断项已标注。"))
+            : QStringLiteral("报告发送失败，未确认送达。"));
     });
 }

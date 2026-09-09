@@ -2,6 +2,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QStandardPaths>
+#include <QSysInfo>
 #include <QTemporaryDir>
 #include <QTest>
 #include "app/RemoteIMApplication.h"
@@ -105,6 +106,11 @@ private slots:
         QVERIFY(client_->reports.first().contains("1799998000000"));
         QVERIFY(client_->reports.first().contains("1799999999000"));
         const auto report = client_->reports.first();
+        const auto localBegin = report.indexOf("```json\n") + 8;
+        const auto localEnd = report.indexOf("```", localBegin);
+        const auto local = QJsonDocument::fromJson(report.mid(localBegin, localEnd - localBegin)).object();
+        QCOMPARE(local.value("platform").toString(), QSysInfo::productType());
+        QCOMPARE(local.value("qtVersion").toString(), QString::fromLatin1(qVersion()));
         const auto section = report.indexOf(QStringLiteral("## B 端远程现场").toUtf8()); QVERIFY(section >= 0);
         const auto begin = report.indexOf("```json\n", section) + 8;
         const auto end = report.indexOf("```", begin); QVERIFY(end > begin);

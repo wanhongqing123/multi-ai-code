@@ -7,6 +7,7 @@ class FakeRemoteIMClient final : public RemoteIMClient {
 
 public:
     explicit FakeRemoteIMClient(QObject* parent = nullptr);
+    RemoteDiagnostics::AccountTag currentAccount() const override { return {sdkAppId_, connectedUserId_}; }
 
     void connectToService(int sdkAppId, const QString& userId, const QString& userSig, RemoteIMCompletion completion) override;
     void disconnectFromService(RemoteIMCompletion completion) override;
@@ -45,6 +46,7 @@ private:
     void completeSend(RemoteIMSendCompletion completion);
 
     QString connectedUserId_;
+    quint64 sdkAppId_ = 0;
     QString lastDeletedContactId_;
     QString lastTextPeerId_;
     QString lastText_;

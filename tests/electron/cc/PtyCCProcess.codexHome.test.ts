@@ -130,6 +130,35 @@ describe('Codex home selection at the native PTY boundary', () => {
     expect(existsSync(join(repo, 'nested-data'))).toBe(false)
   })
 
+  it.each(['direct', 'linked ancestor'])('rejects descendants of the host global home (%s) before writing', (mode) => {
+    const fakeSystemHome = join(root, 'system-user')
+    const forbidden = join(fakeSystemHome, '.codex')
+    mkdirSync(forbidden, { recursive: true })
+    writeFileSync(join(forbidden, 'auth.json'), 'fixture-must-stay-unchanged')
+    vi.stubEnv(process.platform === 'win32' ? 'USERPROFILE' : 'HOME', fakeSystemHome)
+    let ancestor = forbidden
+    if (mode === 'linked ancestor') {
+      ancestor = join(root, 'alias')
+      symlinkSync(forbidden, ancestor, process.platform === 'win32' ? 'junction' : 'dir')
+    }
+    vi.stubEnv('MULTI_AI_ROOT', join(ancestor, 'nested-state'))
+    expect(() => start('account-a')).toThrow(/host global/)
+    expect(nativeSpawn).not.toHaveBeenCalled()
+    expect(readdirSync(forbidden)).toEqual(['auth.json'])
+    expect(readFileSync(join(forbidden, 'auth.json'), 'utf8')).toBe('fixture-must-stay-unchanged')
+  })
+
+  it('allows a sibling whose name merely shares the global home prefix', () => {
+    const fakeSystemHome = join(root, 'system-user')
+    vi.stubEnv(process.platform === 'win32' ? 'USERPROFILE' : 'HOME', fakeSystemHome)
+    const dataRoot = join(fakeSystemHome, '.codex-app-data')
+    vi.stubEnv('MULTI_AI_ROOT', dataRoot)
+    start('account-a')
+    expect(nativeSpawn).toHaveBeenCalledOnce()
+    expect(nativeSpawn.mock.calls[0][2].env.CODEX_HOME).toBe(join(dataRoot, '.codex'))
+    expect(existsSync(join(fakeSystemHome, '.codex'))).toBe(false)
+  })
+
   it('rejects a shared-home symlink or junction into the host global home', () => {
     const fakeSystemHome = join(root, 'system-user')
     const forbidden = join(fakeSystemHome, '.codex')

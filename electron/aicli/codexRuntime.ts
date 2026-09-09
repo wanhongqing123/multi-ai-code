@@ -23,6 +23,13 @@ function comparablePath(path: string): string {
   }
 }
 
+// Inputs are already canonical paths. Compare path segments, not raw prefixes:
+// `.codex-app-data` is a sibling, not a child of `.codex`.
+function isWithinDirectory(parent: string, candidate: string): boolean {
+  const child = relative(parent, candidate)
+  return child === '' || (!isAbsolute(child) && child !== '..' && !child.startsWith(`..${sep}`))
+}
+
 /** All accounts share the app-owned home, never an inherited caller's home. */
 export function withCodexHome(
   env: Record<string, string>,
@@ -31,11 +38,10 @@ export function withCodexHome(
 ): Record<string, string> {
   if (!isAbsolute(codexHome)) throw new Error('Codex home must be an absolute path')
   const home = comparablePath(codexHome)
-  if (home === comparablePath(join(homedir(), '.codex'))) {
+  if (isWithinDirectory(comparablePath(join(homedir(), '.codex')), home)) {
     throw new Error('Codex shared home must not use the host global .codex directory')
   }
-  const fromRepo = relative(comparablePath(workingDirectory), home)
-  if (fromRepo === '' || (!isAbsolute(fromRepo) && fromRepo !== '..' && !fromRepo.startsWith(`..${sep}`))) {
+  if (isWithinDirectory(comparablePath(workingDirectory), home)) {
     throw new Error('Codex shared home must be outside the target repository')
   }
   mkdirSync(codexHome, { recursive: true, mode: 0o700 })

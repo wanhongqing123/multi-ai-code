@@ -516,7 +516,11 @@ public:
         painter->save();
         painter->setRenderHint(QPainter::Antialiasing, true);
 
-        const QRect rowRect = option.rect.adjusted(0, 2, -6, -2);
+        // 上下各留 2px 是行间距；右侧不再内缩——那 6px 会在选中行右边留出一条
+        // 空白，看起来像滚动条的位置一直空着。滚动条真的出现时 Qt 已经把它从视口
+        // 里扣掉了，这里再缩一次只会让留白更宽。行内文字有自己的右边距，不靠它。
+        // 另外这个 6 是裸值，不跟 UiZoom 缩放，放大后留白比例还会失真。
+        const QRect rowRect = option.rect.adjusted(0, 2, 0, -2);
         if (option.state & QStyle::State_Selected) {
             painter->setPen(Qt::NoPen);
             painter->setBrush(QColor(QStringLiteral("#dff3ff")));
@@ -620,7 +624,11 @@ public:
         painter->save();
         painter->setRenderHint(QPainter::Antialiasing, true);
 
-        const QRect rowRect = option.rect.adjusted(0, 2, -6, -2);
+        // 上下各留 2px 是行间距；右侧不再内缩——那 6px 会在选中行右边留出一条
+        // 空白，看起来像滚动条的位置一直空着。滚动条真的出现时 Qt 已经把它从视口
+        // 里扣掉了，这里再缩一次只会让留白更宽。行内文字有自己的右边距，不靠它。
+        // 另外这个 6 是裸值，不跟 UiZoom 缩放，放大后留白比例还会失真。
+        const QRect rowRect = option.rect.adjusted(0, 2, 0, -2);
         if (option.state & QStyle::State_Selected) {
             painter->setPen(Qt::NoPen);
             painter->setBrush(QColor(QStringLiteral("#dff3ff")));
@@ -2071,6 +2079,42 @@ void MainWindow::applyStyle() {
         #contactsList::item:selected {
             background: #e1f5ff;
             border: 0;
+        }
+        /* 左侧两个列表的纵向滚动条收窄到 8px。Qt 默认那条约 17px，
+           再乘上界面缩放就更宽——用户看到的就是行右边一整条灰带。
+           这里只改这两个列表：消息区和其它滚动条不动。
+           仍然是 Qt 原生滚动条（没有换成覆盖式控件），所以拖动滑块、
+           滚轮、点轨道翻页这些行为都保持原样。
+           px 值会被 UiZoom::scaleQss 按当前缩放换算，不写死物理像素。 */
+        #conversationList QScrollBar:vertical, #contactsList QScrollBar:vertical {
+            background: transparent;
+            width: 8px;
+            margin: 0;
+        }
+        #conversationList QScrollBar::handle:vertical,
+        #contactsList QScrollBar::handle:vertical {
+            background: #d3dae4;
+            border-radius: 4px;
+            min-height: 24px;
+        }
+        #conversationList QScrollBar::handle:vertical:hover,
+        #contactsList QScrollBar::handle:vertical:hover {
+            background: #b9c3d1;
+        }
+        /* 上下箭头按钮置零，否则 8px 宽度下它们会挤成两个色块。 */
+        #conversationList QScrollBar::add-line:vertical,
+        #conversationList QScrollBar::sub-line:vertical,
+        #contactsList QScrollBar::add-line:vertical,
+        #contactsList QScrollBar::sub-line:vertical {
+            height: 0;
+            border: 0;
+            background: transparent;
+        }
+        #conversationList QScrollBar::add-page:vertical,
+        #conversationList QScrollBar::sub-page:vertical,
+        #contactsList QScrollBar::add-page:vertical,
+        #contactsList QScrollBar::sub-page:vertical {
+            background: transparent;
         }
         #contactHintTitle {
             color: #101828;

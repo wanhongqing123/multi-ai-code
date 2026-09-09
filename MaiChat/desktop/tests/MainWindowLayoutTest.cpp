@@ -5,6 +5,9 @@
 #include <QDateTime>
 #include <QLabel>
 #include <QListWidget>
+#include <QScrollBar>
+#include <QStyle>
+#include <QStyleOptionSlider>
 #include <QLayout>
 #include <QLineEdit>
 #include <QMessageBox>
@@ -90,6 +93,9 @@ private slots:
     void clickingFilteredConversationJumpsToItsSearchHit();
     void globalSearchReportsNoResultWithLoadedScopeHint();
     void conversationListsUseDelegateItemsForSmoothScrolling();
+    void selectedConversationRowReachesTheListEdge();
+    void selectedConversationRowReachesTheListEdgeWithScrollBar();
+    void listScrollBarsAreNarrowAndStillScrollableAcrossZoomLevels();
     void contactDirectoryStaysFlatUntilAGroupExists();
     void contactDirectoryShowsGroupsWithUngroupedLast();
     void clickingGroupHeaderCollapsesItsMembers();
@@ -179,6 +185,257 @@ int highlightedRowCount(const QWidget& window) {
 //
 // 此前它沿用联系人列表的顺序，而那是按 userId 的字母序排的：
 // 刚回你消息的人可能排在第 11 位，顶上却是几周没说过话的。
+// 用户报「会话列表滚动条留白」：选中一条会话时，高亮块右侧留出一条空白，
+// 看起来像滚动条位置一直空着。这条用例把它变成可测量的量——
+// 抓真实绘制结果，从视口右缘往左数有多少列不是高亮色。
+void MainWindowLayoutTest::selectedConversationRowReachesTheListEdge() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("alpha"), QStringLiteral("Alpha"));
+
+    MainWindow window(app);
+    window.resize(1280, 800);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    app.selectPeer(QStringLiteral("alpha"));
+    app.sendText(QStringLiteral("hello"));
+    QCoreApplication::processEvents();
+    QCoreApplication::processEvents();
+
+    auto* list = window.findChild<QListWidget*>(QStringLiteral("conversationList"));
+    QVERIFY(list != nullptr);
+    QVERIFY2(list->count() > 0, "会话列表应至少有一行");
+    list->setCurrentRow(0);
+    QCoreApplication::processEvents();
+
+    // 少量会话时不该出现纵向滚动条；留白若仍在，就与滚动条无关，是行本身没画到边。
+    QVERIFY2(!list->verticalScrollBar()->isVisible(),
+             "前提不成立：只有一条会话却出现了纵向滚动条");
+
+    const QRect rowRect = list->visualItemRect(list->item(0));
+    const QImage painted = list->viewport()->grab().toImage();
+    QVERIFY(!painted.isNull());
+
+    const QColor selected(QStringLiteral("#dff3ff"));
+    // grab() 返回的是物理像素图：rowRect 是逻辑坐标，取样前必须乘 dpr，
+    // 否则高分屏上会取到别的行。
+    const qreal dpr = painted.devicePixelRatio();
+    const int y = qRound(rowRect.center().y() * dpr);
+    QVERIFY2(y >= 0 && y < painted.height(),
+             qPrintable(QStringLiteral("取样行 y=%1 超出抓图高度 %2（dpr=%3）")
+                            .arg(y).arg(painted.height()).arg(dpr)));
+
+    // 从右缘往左找第一列高亮像素，中间隔了多少列就是留白宽度（物理像素）。
+    int gap = 0;
+    for (int x = painted.width() - 1; x >= 0; --x) {
+        if (painted.pixelColor(x, y) == selected) {
+            break;
+        }
+        ++gap;
+    }
+
+    const int tolerance = qMax(1, qRound(dpr));
+    QVERIFY2(gap <= tolerance,
+             qPrintable(QStringLiteral("选中行右侧留白 %1 物理像素，应贴到列表边缘（容 %2）")
+                            .arg(gap).arg(tolerance)));
+}
+
+// 上一条特意断言「没有滚动条」，只能证明委托多缩了 6px。
+// 但用户截图里滚动条是在的，所以这一条把会话灌到溢出、让滚动条真的出现，
+// 再量一次右侧空白——用来区分「委托内缩」和「滚动条本身占位」两件事。
+void MainWindowLayoutTest::selectedConversationRowReachesTheListEdgeWithScrollBar() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    for (int i = 0; i < 40; ++i) {
+        const QString id = QStringLiteral("peer%1").arg(i, 2, 10, QLatin1Char('0'));
+        app.addContact(id, QStringLiteral("联系人 %1").arg(i));
+    }
+
+    MainWindow window(app);
+    window.resize(1280, 800);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    app.selectPeer(QStringLiteral("peer00"));
+    app.sendText(QStringLiteral("hello"));
+    QCoreApplication::processEvents();
+    QCoreApplication::processEvents();
+
+    auto* list = window.findChild<QListWidget*>(QStringLiteral("conversationList"));
+    QVERIFY(list != nullptr);
+    list->setCurrentRow(0);
+    QCoreApplication::processEvents();
+
+    // 这条用例的前提正好和上一条相反：必须真的有滚动条，否则它什么都没测到。
+    QVERIFY2(list->verticalScrollBar()->isVisible(),
+             qPrintable(QStringLiteral("前提不成立：%1 条会话仍未出现纵向滚动条")
+                            .arg(list->count())));
+
+    const QRect rowRect = list->visualItemRect(list->item(0));
+    const QImage painted = list->viewport()->grab().toImage();
+    QVERIFY(!painted.isNull());
+
+    const QColor selected(QStringLiteral("#dff3ff"));
+    const qreal dpr = painted.devicePixelRatio();
+    const int y = qRound(rowRect.center().y() * dpr);
+    QVERIFY2(y >= 0 && y < painted.height(),
+             qPrintable(QStringLiteral("取样行 y=%1 超出抓图高度 %2（dpr=%3）")
+                            .arg(y).arg(painted.height()).arg(dpr)));
+    int gap = 0;
+    for (int x = painted.width() - 1; x >= 0; --x) {
+        if (painted.pixelColor(x, y) == selected) {
+            break;
+        }
+        ++gap;
+    }
+
+    // 视口宽度已经不含滚动条，所以这里量到的仍然只该是委托自己的内缩。
+    // 用户看到的整条空白 = 这里的 gap + 滚动条自身宽度；后者是 Qt 的正常占位，
+    // 本用例不改也不断言它，只钉住委托这部分为 0。
+    const int tolerance = qMax(1, qRound(dpr));
+    QVERIFY2(gap <= tolerance,
+             qPrintable(QStringLiteral("有滚动条时选中行右侧仍留白 %1 物理像素（容 %2；"
+                                       "抓图宽 %3，滚动条宽 %4 逻辑像素，dpr=%5）")
+                            .arg(gap)
+                            .arg(tolerance)
+                            .arg(painted.width())
+                            .arg(list->verticalScrollBar()->width())
+                            .arg(dpr)));
+}
+
+namespace {
+
+// 真正按住滑块拖一段，而不是 setValue —— 后者绕开了命中测试，
+// 收窄之后滑块是否还抓得住，只有真实鼠标事件能证明。
+bool dragScrollBarHandle(QScrollBar* bar, int dyLogical) {
+    QStyleOptionSlider option;
+    option.initFrom(bar);
+    option.orientation = bar->orientation();
+    option.minimum = bar->minimum();
+    option.maximum = bar->maximum();
+    option.sliderPosition = bar->sliderPosition();
+    option.sliderValue = bar->value();
+    option.pageStep = bar->pageStep();
+    option.singleStep = bar->singleStep();
+    const QRect handle =
+        bar->style()->subControlRect(QStyle::CC_ScrollBar, &option, QStyle::SC_ScrollBarSlider, bar);
+    if (handle.isEmpty()) {
+        return false;
+    }
+    const QPoint from = handle.center();
+    const QPoint to = from + QPoint(0, dyLogical);
+    QTest::mousePress(bar, Qt::LeftButton, Qt::NoModifier, from);
+    // QTest::mouseMove 发出的移动事件 buttons 为 NoButton，QScrollBar 会当成
+    // 普通悬停忽略掉，拖不动。这里手工构造一个「左键仍按住」的移动事件。
+    QMouseEvent move(QEvent::MouseMove, to, bar->mapToGlobal(to), Qt::NoButton, Qt::LeftButton,
+                     Qt::NoModifier);
+    QCoreApplication::sendEvent(bar, &move);
+    QCoreApplication::processEvents();
+    QTest::mouseRelease(bar, Qt::LeftButton, Qt::NoModifier, to);
+    QCoreApplication::processEvents();
+    return true;
+}
+
+}  // namespace
+
+// 收窄滚动条之后要同时成立三件事，缺一件都不算修好：
+//   1. 有滚动条时确实变窄了，且宽度跟着 UiZoom 缩放（不是写死物理像素）
+//   2. 还能拖、还能滚 —— 收窄不能把交互弄没
+//   3. 没有滚动条时不占位，别用一条恒定留白换掉原来的问题
+void MainWindowLayoutTest::listScrollBarsAreNarrowAndStillScrollableAcrossZoomLevels() {
+    struct RestoreZoom { qreal old; ~RestoreZoom() { UiZoom::setFactor(old); } } restore{UiZoom::factor()};
+
+    for (const qreal zoom : {0.8, 1.0, 1.5, 2.0}) {
+        UiZoom::setFactor(zoom);
+
+        auto client = std::make_unique<FakeRemoteIMClient>();
+        RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+        for (int i = 0; i < 40; ++i) {
+            app.addContact(QStringLiteral("peer%1").arg(i, 2, 10, QLatin1Char('0')),
+                           QStringLiteral("联系人 %1").arg(i));
+        }
+
+        MainWindow window(app);
+        window.resize(1280, 800);
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        QCoreApplication::processEvents();
+
+        auto* list = window.findChild<QListWidget*>(QStringLiteral("conversationList"));
+        QVERIFY(list != nullptr);
+        QScrollBar* bar = list->verticalScrollBar();
+        QVERIFY2(bar->isVisible(),
+                 qPrintable(QStringLiteral("缩放 %1：40 条会话却没有纵向滚动条").arg(zoom)));
+
+        // 1. 宽度：基准 8px 随缩放走。Qt 默认约 17px，这里必须明显更窄。
+        const int expected = UiZoom::s(8);
+        QVERIFY2(qAbs(bar->width() - expected) <= 1,
+                 qPrintable(QStringLiteral("缩放 %1：滚动条宽 %2px，期望约 %3px")
+                                .arg(zoom).arg(bar->width()).arg(expected)));
+
+        // 2. 还能滚：直接改值 + 真实滚轮事件都要生效。
+        // 注意别假设初始位置在顶部——列表会自动滚到当前项，起始值不一定是 minimum。
+        QVERIFY2(bar->maximum() > bar->minimum(),
+                 qPrintable(QStringLiteral("缩放 %1：滚动范围为空，无法验证滚动").arg(zoom)));
+        bar->setValue(bar->maximum());
+        QCOMPARE(bar->value(), bar->maximum());
+        bar->setValue(bar->minimum());
+        QCOMPARE(bar->value(), bar->minimum());
+        QWheelEvent wheel(QPointF(list->viewport()->rect().center()),
+                          list->viewport()->mapToGlobal(list->viewport()->rect().center()),
+                          QPoint(0, -40), QPoint(0, -120), Qt::NoButton, Qt::NoModifier,
+                          Qt::NoScrollPhase, /*inverted*/ false);
+        QCoreApplication::sendEvent(list->viewport(), &wheel);
+        QCoreApplication::processEvents();
+        QVERIFY2(bar->value() > bar->minimum(),
+                 qPrintable(QStringLiteral("缩放 %1：滚轮没有滚动列表").arg(zoom)));
+
+        // 真实拖动：8px 宽的滑块必须还抓得住。setValue 走不到命中测试，
+        // 证明不了这一点。
+        bar->setValue(bar->minimum());
+        QCoreApplication::processEvents();
+        QVERIFY2(dragScrollBarHandle(bar, 120),
+                 qPrintable(QStringLiteral("缩放 %1：会话列表滑块矩形为空，无法拖动").arg(zoom)));
+        QVERIFY2(bar->value() > bar->minimum(),
+                 qPrintable(QStringLiteral("缩放 %1：按住会话列表滑块拖动后 value 没变（仍为 %2）")
+                                .arg(zoom).arg(bar->value())));
+
+        // 联系人列表用的是同一套样式，一并验证它也拖得动。
+        auto* contacts = window.findChild<QListWidget*>(QStringLiteral("contactsList"));
+        QVERIFY(contacts != nullptr);
+        QScrollBar* contactsBar = contacts->verticalScrollBar();
+        if (contactsBar->maximum() > contactsBar->minimum()) {
+            QVERIFY2(qAbs(contactsBar->width() - expected) <= 1,
+                     qPrintable(QStringLiteral("缩放 %1：联系人列表滚动条宽 %2px，期望约 %3px")
+                                    .arg(zoom).arg(contactsBar->width()).arg(expected)));
+            contactsBar->setValue(contactsBar->minimum());
+            QCoreApplication::processEvents();
+            QVERIFY2(dragScrollBarHandle(contactsBar, 120),
+                     qPrintable(QStringLiteral("缩放 %1：联系人列表滑块矩形为空").arg(zoom)));
+            QVERIFY2(contactsBar->value() > contactsBar->minimum(),
+                     qPrintable(QStringLiteral("缩放 %1：拖动联系人列表滑块后 value 没变").arg(zoom)));
+        }
+    }
+
+    // 3. 会话很少时不该有滚动条，也不该留下它的占位宽度。
+    UiZoom::setFactor(1.0);
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("solo"), QStringLiteral("Solo"));
+
+    MainWindow window(app);
+    window.resize(1280, 800);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QCoreApplication::processEvents();
+
+    auto* list = window.findChild<QListWidget*>(QStringLiteral("conversationList"));
+    QVERIFY(list != nullptr);
+    QVERIFY2(!list->verticalScrollBar()->isVisible(), "只有一条会话时不该出现滚动条");
+    QCOMPARE(list->viewport()->width(), list->width());
+}
+
 void MainWindowLayoutTest::conversationListPutsNewestMessageFirst() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));

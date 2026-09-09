@@ -176,6 +176,8 @@ add_library(remote_im_desktop_ui
   src/ui/AppMessageDialog.cpp
   src/ui/AppTextInputDialog.h
   src/ui/AppTextInputDialog.cpp
+  src/ui/RemoteDiagnosticsDialog.h
+  src/ui/RemoteDiagnosticsDialog.cpp
   src/ui/BroadcastDialog.h
   src/ui/BroadcastDialog.cpp
   src/ui/AddContactDialog.h

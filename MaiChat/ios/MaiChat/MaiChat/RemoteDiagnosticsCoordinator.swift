@@ -41,6 +41,7 @@ final class RemoteDiagnosticsCoordinator: ObservableObject {
     private let timeout: Duration
     private let pollInterval: Duration
     private let deliveryTimeout: Duration
+    var contextIdentity: String { appState?.remoteDiagnosticsIdentity ?? "" }
 
     init(appState: any RemoteDiagnosticsContextProvider, timeout: Duration = .seconds(60), pollInterval: Duration = .milliseconds(500), deliveryTimeout: Duration = .seconds(30)) {
         self.appState = appState
@@ -76,9 +77,13 @@ final class RemoteDiagnosticsCoordinator: ObservableObject {
         status = "已取消回传；已经发出的采集请求无法撤回。"
     }
 
-    func start(peer: RemoteIMContact, recipient: RemoteIMContact) {
+    func start(peer: RemoteIMContact, recipient: RemoteIMContact, expectedIdentity: String? = nil) {
         guard !isRunning, let appState else { return }
         let identity = appState.remoteDiagnosticsIdentity
+        if let expectedIdentity, expectedIdentity != identity {
+            status = "确认期间账号或连接已变更，未发起采集，请关闭后重新确认。"
+            return
+        }
         guard appState.remoteDiagnosticsMayContinue(identity: identity, peer: peer.userID, recipient: recipient.userID) else {
             status = "当前账号、连接或好友已失效，未发起采集。"
             return

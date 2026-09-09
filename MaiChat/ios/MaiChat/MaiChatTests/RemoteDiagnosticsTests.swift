@@ -204,6 +204,19 @@ final class RemoteDiagnosticsTests: XCTestCase {
         }
     }
 
+    func testAccountChangeDuringConfirmationDoesNotCollectOrSend() async throws {
+        try await withContext { context in
+            let coordinator = RemoteDiagnosticsCoordinator(appState: context)
+            let confirmedIdentity = coordinator.contextIdentity
+            context.remoteDiagnosticsIdentity = "another-account-generation"
+            coordinator.start(peer: context.chatState.contacts[0], recipient: context.chatState.contacts[1], expectedIdentity: confirmedIdentity)
+            XCTAssertFalse(coordinator.isRunning)
+            XCTAssertTrue(context.requests.isEmpty)
+            XCTAssertTrue(context.sentReports.isEmpty)
+            XCTAssertTrue(coordinator.status.contains("重新确认"))
+        }
+    }
+
     func testTimeoutStillSendsLocalEvidenceWithMissingReason() async throws {
         try await withContext { context in
             let coordinator = RemoteDiagnosticsCoordinator(appState: context, timeout: .milliseconds(30), pollInterval: .milliseconds(5))

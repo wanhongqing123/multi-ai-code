@@ -9,6 +9,7 @@ struct RemoteDiagnosticsView: View {
     @ObservedObject var coordinator: RemoteDiagnosticsCoordinator
     @Environment(\.dismiss) private var dismiss
     @State private var recipientID = ""
+    @State private var confirmationIdentity: String?
 
     private var recipients: [RemoteIMContact] {
         contacts.filter { $0.userID != ownerUserID }
@@ -26,7 +27,7 @@ struct RemoteDiagnosticsView: View {
                     Picker("接收报告", selection: $recipientID) {
                         Text("请选择好友").tag("")
                         ForEach(recipients, id: \.userID) { contact in
-                            Text(contact.displayName).tag(contact.userID)
+                            Text(contact.displayName == contact.userID ? contact.userID : "\(contact.displayName) (\(contact.userID))").tag(contact.userID)
                         }
                     }
                     .disabled(coordinator.isRunning)
@@ -36,7 +37,8 @@ struct RemoteDiagnosticsView: View {
                 Section {
                     Button("确认收集并发送") {
                         guard let recipient = recipients.first(where: { $0.userID == recipientID }) else { return }
-                        coordinator.start(peer: peer, recipient: recipient)
+                        guard let confirmationIdentity else { return }
+                        coordinator.start(peer: peer, recipient: recipient, expectedIdentity: confirmationIdentity)
                     }
                     .disabled(recipientID.isEmpty || coordinator.isRunning || !connected)
                     .accessibilityIdentifier("confirmRemoteDiagnostics")
@@ -59,6 +61,7 @@ struct RemoteDiagnosticsView: View {
         }
         .interactiveDismissDisabled(coordinator.isRunning)
         .onAppear {
+            if confirmationIdentity == nil { confirmationIdentity = coordinator.contextIdentity }
             recipientID = recipients.first(where: { $0.userID == "mac-multi-ai-code" })?.userID
                 ?? recipients.first(where: { $0.userID == "house-multi-ai-code" })?.userID ?? ""
         }

@@ -244,7 +244,7 @@ export class PtyCCProcess extends EventEmitter {
       if (!getActiveAccount()) {
         throw new Error('Codex requires a bound account (login required first)')
       }
-      env = withCodexHome(env, codexRuntimeDir())
+      env = withCodexHome(env, codexRuntimeDir(), this.opts.cwd)
       this.diagnosticState.codexHome = env.CODEX_HOME
       dismissCodexUpgradeNotice(env.CODEX_HOME)
     }

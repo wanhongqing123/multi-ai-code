@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 
@@ -105,6 +105,40 @@ describe('Codex home selection at the native PTY boundary', () => {
     start('account-a', 'claw')
     expect(nativeSpawn.mock.calls[0][2].env.CODEX_HOME).toBe(join(root, 'caller-codex'))
     expect(readdirSync(repo)).toEqual([])
+  })
+
+  it('rejects a data root that would use the real host home location before writing', () => {
+    const fakeSystemHome = join(root, 'system-user')
+    const forbidden = join(fakeSystemHome, '.codex')
+    mkdirSync(forbidden, { recursive: true })
+    writeFileSync(join(forbidden, 'version.json'), '{"latest_version":"keep"}')
+    vi.stubEnv(process.platform === 'win32' ? 'USERPROFILE' : 'HOME', fakeSystemHome)
+    vi.stubEnv('MULTI_AI_ROOT', fakeSystemHome)
+    expect(() => start('account-a')).toThrow(/host global/)
+    expect(nativeSpawn).not.toHaveBeenCalled()
+    expect(readFileSync(join(forbidden, 'version.json'), 'utf8')).toBe('{"latest_version":"keep"}')
+    expect(readdirSync(forbidden)).toEqual(['version.json'])
+  })
+
+  it('rejects shared state inside the opened repository before creating it', () => {
+    vi.stubEnv('MULTI_AI_ROOT', repo)
+    expect(() => start('account-a')).toThrow(/outside the target repository/)
+    expect(nativeSpawn).not.toHaveBeenCalled()
+    expect(readdirSync(repo)).toEqual([])
+    vi.stubEnv('MULTI_AI_ROOT', join(repo, 'nested-data'))
+    expect(() => start('account-a')).toThrow(/outside the target repository/)
+    expect(existsSync(join(repo, 'nested-data'))).toBe(false)
+  })
+
+  it('rejects a shared-home symlink or junction into the host global home', () => {
+    const fakeSystemHome = join(root, 'system-user')
+    const forbidden = join(fakeSystemHome, '.codex')
+    mkdirSync(forbidden, { recursive: true })
+    vi.stubEnv(process.platform === 'win32' ? 'USERPROFILE' : 'HOME', fakeSystemHome)
+    symlinkSync(forbidden, join(root, '.codex'), process.platform === 'win32' ? 'junction' : 'dir')
+    expect(() => start('account-a')).toThrow(/host global/)
+    expect(nativeSpawn).not.toHaveBeenCalled()
+    expect(readdirSync(forbidden)).toEqual([])
   })
 
   it('retains the effective home in real exported lifecycle records', () => {

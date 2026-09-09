@@ -1,12 +1,43 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'fs'
-import { isAbsolute, join } from 'path'
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'fs'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path'
+import { homedir } from 'os'
 
-/** The host owns CODEX_HOME; neither a caller nor an inherited shell may share it. */
+// Resolve existing ancestors too: the requested directory may not exist yet,
+// while its parent (or the home itself) can be a symlink/junction.
+function comparablePath(path: string): string {
+  let ancestor = resolve(path)
+  const tail: string[] = []
+  while (true) {
+    try {
+      const canonical = join(realpathSync.native(ancestor), ...tail)
+      return process.platform === 'win32' || process.platform === 'darwin'
+        ? canonical.toLowerCase()
+        : canonical
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      const parent = dirname(ancestor)
+      if (!['ENOENT', 'ENOTDIR'].includes(code ?? '') || parent === ancestor) throw error
+      tail.unshift(basename(ancestor))
+      ancestor = parent
+    }
+  }
+}
+
+/** All accounts share the app-owned home, never an inherited caller's home. */
 export function withCodexHome(
   env: Record<string, string>,
-  codexHome: string
+  codexHome: string,
+  workingDirectory: string
 ): Record<string, string> {
   if (!isAbsolute(codexHome)) throw new Error('Codex home must be an absolute path')
+  const home = comparablePath(codexHome)
+  if (home === comparablePath(join(homedir(), '.codex'))) {
+    throw new Error('Codex shared home must not use the host global .codex directory')
+  }
+  const fromRepo = relative(comparablePath(workingDirectory), home)
+  if (fromRepo === '' || (!isAbsolute(fromRepo) && fromRepo !== '..' && !fromRepo.startsWith(`..${sep}`))) {
+    throw new Error('Codex shared home must be outside the target repository')
+  }
   mkdirSync(codexHome, { recursive: true, mode: 0o700 })
   const next = { ...env }
   // Windows environment variable names are case-insensitive. Remove aliases

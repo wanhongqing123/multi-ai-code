@@ -16,16 +16,17 @@ function withTempHome(body: (home: string) => void): void {
 
 describe('withCodexHome', () => {
   it('refuses a relative home so nothing lands inside the target repo', () => {
-    expect(() => withCodexHome({}, 'relative/.codex')).toThrow(/absolute/)
+    expect(() => withCodexHome({}, 'relative/.codex', process.cwd())).toThrow(/absolute/)
   })
 
   // Windows 的环境变量名不区分大小写，但 {...process.env} 保留的是继承时的原始拼写。
   // 不先删别名的话，对象里会同时存在两个键，交给 CreateProcess 后谁胜出不确定。
-  it('drops inherited aliases in any casing before injecting the account home', () => {
+  it('drops inherited aliases in any casing before injecting the shared home', () => {
     withTempHome((home) => {
       const env = withCodexHome(
         { Codex_Home: 'X:/inherited', codex_sqlite_home: 'Y:/inherited', PATH: 'keep' },
-        home
+        home,
+        join(home, '..', 'repo')
       )
       expect(Object.keys(env).filter((k) => k.toUpperCase() === 'CODEX_HOME')).toEqual(['CODEX_HOME'])
       expect(env.CODEX_HOME).toBe(home)
@@ -42,7 +43,8 @@ describe('withCodexHome', () => {
           CODEX_CA_CERTIFICATE: 'X:/ca.pem',
           CODEX_APP_SERVER_MANAGED_CONFIG_PATH: 'X:/managed.toml'
         },
-        home
+        home,
+        join(home, '..', 'repo')
       )
       expect(env).not.toHaveProperty('CODEX_ANALYTICS_EVENTS_CAPTURE_FILE')
       expect(env.CODEX_CA_CERTIFICATE).toBe('X:/ca.pem')
@@ -50,13 +52,13 @@ describe('withCodexHome', () => {
     })
   })
 
-  // 我们**不往账号目录写任何 config.toml**。曾经写过一份 `[windows] sandbox = "disabled"`
+  // 我们**不往共享目录写任何 config.toml**。曾经写过一份 `[windows] sandbox = "disabled"`
   // 的默认值，那是错的：内核的 WindowsSandboxModeToml 只有 elevated / unelevated 两个变体，
   // 写 "disabled" 会让整份配置解析失败、codex 直接起不来（见下面的内核回归）。
   // 「关闭沙箱」在内核里的正确表达是**不写这个键**——缺省即 WindowsSandboxLevel::Disabled。
-  it('creates the account home without planting any config file in it', () => {
+  it('creates the shared home without planting any config file in it', () => {
     withTempHome((home) => {
-      withCodexHome({}, home)
+      withCodexHome({}, home, join(home, '..', 'repo'))
       expect(existsSync(home)).toBe(true)
       expect(readdirSync(home)).toEqual([])
     })

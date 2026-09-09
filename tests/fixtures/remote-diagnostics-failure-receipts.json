@@ -1,0 +1,11 @@
+{
+  "requestId": "65de6748-3a4e-4d08-8ffd-bc78e1804ff9",
+  "cases": [
+    {"category":"unsupported","recognized":true,"text":"不支持的 IM 控制命令：/diagnostics 65de6748-3a4e-4d08-8ffd-bc78e1804ff9\n可用 IM 控制命令："},
+    {"category":"rate-limited","recognized":true,"text":"远程排障请求过于频繁，请稍后重试（65de6748-3a4e-4d08-8ffd-bc78e1804ff9）。"},
+    {"category":"collection-failed","recognized":true,"text":"远程排障采集失败（编号 65de6748-3a4e-4d08-8ffd-bc78e1804ff9）：无法读取记录或保存报告。未执行 AI 命令、未修改会话。"},
+    {"category":"service-unavailable","recognized":true,"text":"当前 MultiAICode 尚未接入远程排障（65de6748-3a4e-4d08-8ffd-bc78e1804ff9），请升级后重试。"},
+    {"category":"wrong-request","recognized":false,"text":"远程排障请求过于频繁，请稍后重试（75de6748-3a4e-4d08-8ffd-bc78e1804ff9）。"},
+    {"category":"ordinary-text","recognized":false,"text":"刚才提到了排障失败，编号 65de6748-3a4e-4d08-8ffd-bc78e1804ff9"}
+  ]
+}

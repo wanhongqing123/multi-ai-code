@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		FEDCBA098765432100000112 /* remote-diagnostics-failure-receipts.json in Resources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000111 /* remote-diagnostics-failure-receipts.json */; };
 		FEDCBA098765432100000110 /* RemoteDiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000106 /* RemoteDiagnosticsView.swift */; };
 		FEDCBA098765432100000109 /* RemoteDiagnosticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000108 /* RemoteDiagnosticsTests.swift */; };
 		FEDCBA098765432100000102 /* RemoteDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000101 /* RemoteDiagnostics.swift */; };
@@ -99,6 +100,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		FEDCBA098765432100000111 /* remote-diagnostics-failure-receipts.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "../../../tests/fixtures/remote-diagnostics-failure-receipts.json"; sourceTree = SOURCE_ROOT; };
 		FEDCBA098765432100000108 /* RemoteDiagnosticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDiagnosticsTests.swift; sourceTree = "<group>"; };
 		FEDCBA098765432100000101 /* RemoteDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDiagnostics.swift; sourceTree = "<group>"; };
 		FEDCBA098765432100000103 /* RemoteDiagnosticsCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDiagnosticsCoordinator.swift; sourceTree = "<group>"; };
@@ -233,6 +235,7 @@
 			children = (
 				FEDCBA098765432100000003 /* MarkdownPresentationTests.swift */,
 				FEDCBA098765432100000108 /* RemoteDiagnosticsTests.swift */,
+				FEDCBA098765432100000111 /* remote-diagnostics-failure-receipts.json */,
 				E85A5C5C020900B2D0178B0A /* DiagnosticLogTests.swift */,
 				59C1F4DABEBD721F3CB32385 /* LocalChatHistoryStoreTests.swift */,
 				975D1B034E3ED14E787A9284 /* MasterChatStateTests.swift */,
@@ -273,6 +276,7 @@
 			buildConfigurationList = 16A6AC4CEE642186491D04BE /* Build configuration list for PBXNativeTarget "MaiChatTests" */;
 			buildPhases = (
 				5C1335D837886521E0D993B2 /* Sources */,
+				FEDCBA098765432100000113 /* Resources */,
 				F6F6FE20C3212B0F514A202F /* Frameworks */,
 				CBB9844C81A8142E9CF9E905 /* Embed Frameworks */,
 			);
@@ -356,6 +360,7 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		FEDCBA098765432100000113 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (FEDCBA098765432100000112 /* remote-diagnostics-failure-receipts.json in Resources */, ); runOnlyForDeploymentPostprocessing = 0; };
 		3D122CAA634FBFB42F650CDF /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;

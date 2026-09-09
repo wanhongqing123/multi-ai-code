@@ -40,6 +40,8 @@ targets:
       - path: MaiChat/MessageBubbleLayout.swift
       - path: MaiChat/RemoteDiagnosticsCoordinator.swift
       - path: MaiChat/RemoteDiagnosticsView.swift
+      - path: ../../../tests/fixtures/remote-diagnostics-failure-receipts.json
+        buildPhase: resources
     dependencies:
       - target: MaiChatCore
     settings:

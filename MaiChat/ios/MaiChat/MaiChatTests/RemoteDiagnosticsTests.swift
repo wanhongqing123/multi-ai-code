@@ -10,6 +10,8 @@ private final class DiagnosticsContext: RemoteDiagnosticsContextProvider {
     var sentReports: [(String, String)] = []
     var requests: [String] = []
     var onRequest: ((DiagnosticsContext, UUID) throws -> Void)?
+    var holdRequest = false
+    var pendingRequest: CheckedContinuation<Bool, Never>?
     let directory: URL
 
     init(directory: URL) throws {
@@ -30,6 +32,7 @@ private final class DiagnosticsContext: RemoteDiagnosticsContextProvider {
 
     func sendRemoteDiagnosticsText(_ text: String, to peerID: String, identity: String) async -> Bool {
         requests.append(peerID)
+        if holdRequest { return await withCheckedContinuation { pendingRequest = $0 } }
         guard let id = UUID(uuidString: String(text.dropFirst("/diagnostics ".count))) else { return false }
         do { try onRequest?(self, id); return true } catch { return false }
     }
@@ -41,7 +44,7 @@ private final class DiagnosticsContext: RemoteDiagnosticsContextProvider {
         return true
     }
 
-    func respond(id: UUID, from: String = "machine", payloadID: UUID? = nil) throws {
+    func respond(id: UUID, from: String = "machine", payloadID: UUID? = nil, createdAt: Date = Date()) throws {
         let data = try JSONSerialization.data(withJSONObject: [
             "schemaVersion": 1, "requestId": (payloadID ?? id).uuidString.lowercased(),
             "token": "TOKEN_SENTINEL", "files": [["source": "runtime", "status": "ok", "events": [
@@ -51,7 +54,7 @@ private final class DiagnosticsContext: RemoteDiagnosticsContextProvider {
         let path = directory.appendingPathComponent(UUID().uuidString + ".json")
         try data.write(to: path)
         chatState.receiveFile(filePath: path.path, fromUserID: from,
-            fileName: RemoteDiagnosticsProtocol.reportFileName(id: id), mimeType: "application/json")
+            fileName: RemoteDiagnosticsProtocol.reportFileName(id: id), mimeType: "application/json", now: createdAt)
     }
 }
 
@@ -154,6 +157,28 @@ final class RemoteDiagnosticsTests: XCTestCase {
         }
     }
 
+    func testFreshNonceStillMatchesWhenRemoteClockIsBehind() async throws {
+        try await withContext { context in
+            context.onRequest = { context, id in try context.respond(id: id, createdAt: Date().addingTimeInterval(-3600)) }
+            let coordinator = RemoteDiagnosticsCoordinator(appState: context, timeout: .milliseconds(100), pollInterval: .milliseconds(5))
+            coordinator.start(peer: context.chatState.contacts[0], recipient: context.chatState.contacts[1])
+            try await waitForCompletion(coordinator)
+            XCTAssertTrue(try XCTUnwrap(context.sentReports.first?.1).contains("call-async"))
+        }
+    }
+
+    func testMissingSDKCallbackDoesNotHoldTheCoordinatorOpen() async throws {
+        try await withContext { context in
+            context.holdRequest = true
+            defer { context.pendingRequest?.resume(returning: true); context.pendingRequest = nil }
+            let coordinator = RemoteDiagnosticsCoordinator(appState: context, timeout: .milliseconds(50), pollInterval: .milliseconds(5), deliveryTimeout: .milliseconds(20))
+            coordinator.start(peer: context.chatState.contacts[0], recipient: context.chatState.contacts[1])
+            try await waitForCompletion(coordinator)
+            XCTAssertEqual(context.sentReports.count, 1)
+            XCTAssertTrue(try XCTUnwrap(context.sentReports.first?.1).contains("未回传有效报告"))
+        }
+    }
+
     func testCancelBeforeTheTaskStartsSendsNothing() async throws {
         try await withContext { context in
             let coordinator = RemoteDiagnosticsCoordinator(appState: context)
@@ -198,5 +223,29 @@ final class RemoteDiagnosticsTests: XCTestCase {
         let detail = try XCTUnwrap(events[0]["detail"] as? [String: Any])
         XCTAssertEqual(detail["ID"] as? String, "sdk-remote-id")
         XCTAssertFalse(String(decoding: sanitized, as: UTF8.self).contains("TOKEN_SENTINEL"))
+    }
+
+    func testFailureReceiptsRequireTheExactNonceAndDoNotCopyRemoteText() {
+        let id = UUID()
+        let nonce = id.uuidString.lowercased()
+        XCTAssertNotNil(RemoteDiagnosticsProtocol.failureReceipt("不支持的 IM 控制命令：/diagnostics \(nonce)\n可用命令…", requestID: id))
+        XCTAssertNotNil(RemoteDiagnosticsProtocol.failureReceipt("远程排障请求过于频繁，请稍后重试（\(nonce)）。", requestID: id))
+        XCTAssertNil(RemoteDiagnosticsProtocol.failureReceipt("远程排障请求过于频繁，请稍后重试（\(UUID().uuidString.lowercased())）。", requestID: id))
+        let reason = RemoteDiagnosticsProtocol.failureReceipt("远程排障采集失败（编号 \(nonce)）：PRIVATE_ERROR_SENTINEL", requestID: id)
+        XCTAssertNotNil(reason)
+        XCTAssertFalse(reason?.contains("PRIVATE_ERROR_SENTINEL") ?? true)
+    }
+
+    func testSharedFailureReceiptContract() throws {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "remote-diagnostics-failure-receipts", withExtension: "json"))
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        let id = try XCTUnwrap(UUID(uuidString: try XCTUnwrap(root["requestId"] as? String)))
+        let cases = try XCTUnwrap(root["cases"] as? [[String: Any]])
+        XCTAssertEqual(cases.count, 6)
+        for row in cases {
+            let text = try XCTUnwrap(row["text"] as? String)
+            XCTAssertEqual(RemoteDiagnosticsProtocol.failureReceipt(text, requestID: id) != nil,
+                row["recognized"] as? Bool, row["category"] as? String ?? "unknown")
+        }
     }
 }

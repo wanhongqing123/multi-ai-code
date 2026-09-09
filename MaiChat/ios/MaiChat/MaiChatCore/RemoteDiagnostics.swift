@@ -91,6 +91,25 @@ public enum RemoteDiagnosticsProtocol {
         "remote-diagnostics-\(id.uuidString.lowercased()).json"
     }
 
+    /// Recognize only our host's nonce-bound failure receipts (including the
+    /// older unsupported-command reply). Never copy free-form remote text.
+    public static func failureReceipt(_ text: String, requestID: UUID) -> String? {
+        let id = requestID.uuidString.lowercased()
+        if text == "远程排障请求过于频繁，请稍后重试（\(id)）。" {
+            return "远端拒绝了过于频繁的采集请求；本报告仅含本地现场。"
+        }
+        if text.hasPrefix("远程排障采集失败（编号 \(id)）：") {
+            return "远端报告采集失败；本报告仅含本地现场。"
+        }
+        if text == "当前 MultiAICode 尚未接入远程排障（\(id)），请升级后重试。" {
+            return "远端排障服务尚未接入，暂未取得远端现场；本报告仅含本地现场。"
+        }
+        if text.components(separatedBy: "\n").first == "不支持的 IM 控制命令：/diagnostics \(id)" {
+            return "远端版本不支持远程排障；本报告仅含本地现场。"
+        }
+        return nil
+    }
+
     /// Only expected, bounded metadata survives decoding; unknown fields and
     /// free-form text cannot enter the final report through a remote attachment.
     public static func sanitizedReport(_ data: Data, requestID: UUID) throws -> Data {

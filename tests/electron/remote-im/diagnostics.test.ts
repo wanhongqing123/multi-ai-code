@@ -130,4 +130,18 @@ describe('remote diagnostics collection', () => {
     expect((await executeRemoteImControlCommand({ ...input, args: requestId.toUpperCase() })).ok).toBe(false)
     expect(createDiagnosticsReport).not.toHaveBeenCalled()
   })
+
+  it('emits failure receipts matching the shared client contract', async () => {
+    const fixture = JSON.parse(readFileSync(new URL('../../fixtures/remote-diagnostics-failure-receipts.json', import.meta.url), 'utf8'))
+    expect(fixture.requestId).toBe(requestId)
+    const expected = (category: string) => fixture.cases.find((row: any) => row.category === category).text
+    const input = { command: 'diagnostics' as const, sourceKind: 'unknown' as const, session: null, args: requestId }
+    expect((await executeRemoteImControlCommand(input)).text).toBe(expected('service-unavailable'))
+    expect((await executeRemoteImControlCommand({ ...input, createDiagnosticsReport: async () => { throw new Error('PRIVATE_SENTINEL') } })).text).toBe(expected('collection-failed'))
+    const collect = createRemoteDiagnosticsService()
+    const context = { root, projectId: 'p', appVersion: 'test', requesterUserId: 'phone', now }
+    await collect({ ...context, requestId: '75de6748-3a4e-4d08-8ffd-bc78e1804ff9' })
+    const limited = await executeRemoteImControlCommand({ ...input, createDiagnosticsReport: id => collect({ ...context, requestId: id }) })
+    expect(limited.text).toBe(expected('rate-limited'))
+  })
 })

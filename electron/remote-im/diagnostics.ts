@@ -112,7 +112,7 @@ export function createRemoteDiagnosticsService() {
     const prior = cache.get(key)
     if (prior) return prior.result
     if (now - (last.get(owner) ?? -Infinity) < 30_000 || cache.size >= 64) {
-      return { ok: false as const, text: '远程排障请求过于频繁，请稍后重试。' }
+      return { ok: false as const, text: `远程排障请求过于频繁，请稍后重试（${input.requestId}）。` }
     }
     last.set(owner, now)
     const controller = new AbortController()

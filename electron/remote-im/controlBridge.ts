@@ -469,7 +469,7 @@ export async function executeRemoteImControlCommand(
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(requestId)) {
       return { ok: false, text: '排障编号无效，请从 MaiChat 的远程排障入口重新发起。' }
     }
-    if (!input.createDiagnosticsReport) return { ok: false, text: '当前 MultiAICode 尚未接入远程排障，请升级后重试。' }
+    if (!input.createDiagnosticsReport) return { ok: false, text: `当前 MultiAICode 尚未接入远程排障（${requestId}），请升级后重试。` }
     try {
       return await input.createDiagnosticsReport(requestId)
     } catch {

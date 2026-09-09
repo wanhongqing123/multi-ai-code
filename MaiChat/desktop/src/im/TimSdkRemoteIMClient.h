@@ -70,7 +70,9 @@ private:
     // origin 有效时表示「这批消息是某次异步请求发起时那个账号的」。
     // 与当前账号不符就整批丢弃：换账号之后晚到的下载结果不能进新账号的库。
     // 同步路径不传 origin（调用期间账号不可能变）。
-    void emitReceivedMessages(const QList<RemoteIMMessage>& messages, bool live,
+    // 返回是否真的把信号发出去了。调用方据此决定记 Delivered 还是
+    // DroppedForAccountSwitch——「下完了」和「进了会话」是两件事。
+    bool emitReceivedMessages(const QList<RemoteIMMessage>& messages, bool live,
                               const RemoteDiagnostics::AccountTag& origin = {});
     void recordAttachmentPhase(const RemoteDiagnostics::AccountTag& account,
                                const RemoteIMMessage& message,

@@ -39,7 +39,10 @@ enum class AttachmentPhase {
     CacheHit,          // 命中本地缓存，未走网络
     DownloadFailed,    // 网络层失败
     WriteFailed,       // 下载成功但落盘失败（open 失败或写入字节数不足）
-    Delivered          // 文件确实落盘且消息已投递
+    Delivered,         // 文件确实落盘**且消息信号真的发出去了**
+    // 账号已切换，这批结果被普通消息入口丢弃。必须与 Delivered 分开：
+    // 文件是下完了，但它没有进入任何账号的会话——记成 Delivered 就是谎报。
+    DroppedForAccountSwitch
 };
 
 struct AttachmentEvent {

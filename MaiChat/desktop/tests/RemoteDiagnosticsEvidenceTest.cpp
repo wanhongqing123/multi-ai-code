@@ -39,6 +39,7 @@ private slots:
     void keepsEveryPhaseDistinctIncludingTheTwoFailureKinds();
     void ringBufferDropsOldestNotNewest();
     void separatesThisReportsFailureFromAnyOtherAttachment();
+    void droppedForAccountSwitchIsNotDelivered();
 };
 
 void RemoteDiagnosticsEvidenceTest::exportsOnlyTheAskingAccountsOwnEntries()
@@ -93,7 +94,8 @@ void RemoteDiagnosticsEvidenceTest::keepsEveryPhaseDistinctIncludingTheTwoFailur
     const QList<AttachmentPhase> phases{
         AttachmentPhase::MetadataReceived, AttachmentPhase::DownloadStarted,
         AttachmentPhase::CacheHit,         AttachmentPhase::DownloadFailed,
-        AttachmentPhase::WriteFailed,      AttachmentPhase::Delivered};
+        AttachmentPhase::WriteFailed,      AttachmentPhase::Delivered,
+        AttachmentPhase::DroppedForAccountSwitch};
 
     QSet<QString> descriptions;
     for (AttachmentPhase phase : phases) {
@@ -152,6 +154,22 @@ void RemoteDiagnosticsEvidenceTest::separatesThisReportsFailureFromAnyOtherAttac
         }
     }
     QCOMPARE(failuresForThisRequest, 1);
+}
+
+// 「文件下完了」和「进了会话」是两件事。换号被护栏丢弃时文件确实落了盘，
+// 但它没有进入任何账号的会话——记成 Delivered 就是谎报，而排障恰恰要靠
+// 这条记录判断附件到底有没有到手。
+void RemoteDiagnosticsEvidenceTest::droppedForAccountSwitchIsNotDelivered()
+{
+    QVERIFY(AttachmentPhase::DroppedForAccountSwitch != AttachmentPhase::Delivered);
+    QVERIFY(describeAttachmentPhase(AttachmentPhase::DroppedForAccountSwitch)
+            != describeAttachmentPhase(AttachmentPhase::Delivered));
+
+    EvidenceLog log;
+    log.record(makeEvent(kAlice, kPeer, AttachmentPhase::DroppedForAccountSwitch));
+    const QList<AttachmentEvent> kept = log.exportFor(kAlice, kPeer);
+    QCOMPARE(kept.size(), 1);
+    QVERIFY(kept.at(0).phase != AttachmentPhase::Delivered);
 }
 
 QTEST_MAIN(RemoteDiagnosticsEvidenceTest)

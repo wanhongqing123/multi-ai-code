@@ -1,4 +1,8 @@
 #include "ui/MainWindow.h"
+
+#include <QMenu>
+
+#include "ui/RemoteDiagnosticsDialog.h"
 #include "model/MessageNotification.h"
 #include "model/MessageQuote.h"
 #include "model/ContactGroups.h"
@@ -1610,7 +1614,10 @@ void MainWindow::buildUi() {
     connect(remoteDesktopButton_, &QPushButton::clicked, this,
             &MainWindow::requestRemoteDesktop);
     headerLayout->addWidget(remoteDesktopButton_);
-    headerLayout->addWidget(makeHeaderIconButton(LineIconKind::More, QStringLiteral("更多"), header));
+    moreButton_ = makeHeaderIconButton(LineIconKind::More, QStringLiteral("更多"), header);
+    moreButton_->setObjectName(QStringLiteral("moreButton"));
+    connect(moreButton_, &QPushButton::clicked, this, &MainWindow::showMoreMenu);
+    headerLayout->addWidget(moreButton_);
 
     messageScroll_ = new QScrollArea(chatContentPane);
     messageScroll_->setObjectName(QStringLiteral("messageScroll"));
@@ -5287,6 +5294,73 @@ void MainWindow::handleRemoteDesktopConsent(const QString& fromUserId) {
     RemoteDesktopConsentDialog dialog(fromUserId, RemoteDesktop::kConsentTimeoutMs, this);
     const bool accepted = dialog.exec() == QDialog::Accepted;
     remoteDesktop_->resolveConsent(accepted);
+}
+
+void MainWindow::showMoreMenu() {
+    // 菜单跟着当前会话走，和远程桌面按钮同一套逻辑：正在跟谁聊天就排查谁。
+    const QString peerId = app_.chatState().selectedPeerId();
+    QMenu menu(this);
+    QAction* diagnose = menu.addAction(QStringLiteral("远程排障"));
+    // 没有选中会话、或排障已在进行时不可用。让菜单项灰着而不是点了没反应——
+    // 后者会让人以为程序卡了。
+    diagnose->setEnabled(!peerId.isEmpty()
+                         && (diagnostics_ == nullptr || !diagnostics_->isRunning()));
+    connect(diagnose, &QAction::triggered, this, &MainWindow::requestRemoteDiagnostics);
+    if (diagnostics_ && diagnostics_->isRunning()) {
+        QAction* cancel = menu.addAction(QStringLiteral("取消远程排障"));
+        connect(cancel, &QAction::triggered, this, [this] {
+            if (diagnostics_) diagnostics_->cancel();
+        });
+    }
+    menu.exec(moreButton_->mapToGlobal(QPoint(0, moreButton_->height())));
+}
+
+void MainWindow::requestRemoteDiagnostics() {
+    const QString peerId = app_.chatState().selectedPeerId();
+    if (peerId.isEmpty()) return;
+
+    // 收件人候选里去掉故障客户端本人：把报告发回给出故障的那台没有意义，
+    // 而且那台正是我们怀疑有问题的。
+    QList<RemoteIMContact> candidates;
+    for (const RemoteIMContact& contact : app_.chatState().contacts()) {
+        if (contact.userId == peerId) continue;
+        candidates.append(contact);
+    }
+    if (candidates.isEmpty()) {
+        AppMessageDialog::show(
+            this, AppMessageDialog::Kind::Info, QStringLiteral("远程排障"),
+            QStringLiteral("没有可以接收报告的好友。先添加一位好友再试。"));
+        return;
+    }
+
+    // ChatState 没有按 id 取显示名的接口，从联系人列表里找；找不到就用 id 本身，
+    // 不留空——确认框里必须能看出是在排查谁。
+    QString peerName = peerId;
+    for (const RemoteIMContact& contact : app_.chatState().contacts()) {
+        if (contact.userId != peerId) continue;
+        if (!contact.displayName.isEmpty()) peerName = contact.displayName;
+        break;
+    }
+    RemoteDiagnosticsDialog dialog(peerName, candidates, this);
+    if (dialog.exec() != QDialog::Accepted) return;
+    const QString recipientId = dialog.selectedRecipientId();
+    if (recipientId.isEmpty()) return;
+
+    if (!diagnostics_) {
+        diagnostics_ = new RemoteDiagnosticsController(&app_, this);
+        connect(diagnostics_, &RemoteDiagnosticsController::changed, this,
+                &MainWindow::refreshDiagnosticsStatus);
+    }
+    // 收件人在这里定死，交给控制器锁住——之后用户切到别的聊天也不改收件人。
+    diagnostics_->start(peerId, recipientId);
+    refreshDiagnosticsStatus();
+}
+
+void MainWindow::refreshDiagnosticsStatus() {
+    if (!diagnostics_) return;
+    const QString status = diagnostics_->status();
+    if (status.isEmpty()) return;
+    if (statusLabel_) statusLabel_->setText(status);
 }
 
 void MainWindow::requestRemoteDesktop() {

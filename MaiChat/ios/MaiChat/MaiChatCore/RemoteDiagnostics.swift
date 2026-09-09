@@ -42,7 +42,10 @@ public struct RemoteDiagnosticsLogEntry: Codable, Sendable {
         event = entry.event
         let allowed: Set<String> = ["peer", "message", "launch", "kind", "result", "code", "duration_ms", "operation", "cached_messages", "near_bottom", "scroll_action", "app_version", "build", "ios", "pid"]
         fields = entry.fields.filter { key, value in
-            allowed.contains(key) && value.count <= 120 &&
+            if key == "requestId" {
+                return UUID(uuidString: value)?.uuidString.lowercased() == value
+            }
+            return allowed.contains(key) && value.count <= 120 &&
                 value.range(of: "^[a-zA-Z0-9_.:#/-]+$", options: .regularExpression) != nil
         }
     }
@@ -113,6 +116,25 @@ public enum RemoteDiagnosticsProtocol {
 
     public static func reportFileName(id: UUID) -> String {
         "remote-diagnostics-\(id.uuidString.lowercased()).json"
+    }
+
+    public static func requestID(reportFileName name: String) -> UUID? {
+        let prefix = "remote-diagnostics-"
+        guard name.hasPrefix(prefix), name.hasSuffix(".json"),
+              let id = UUID(uuidString: String(name.dropFirst(prefix.count).dropLast(5))),
+              reportFileName(id: id) == name else { return nil }
+        return id
+    }
+
+    /// Entries must already be account-scoped by the context provider. Require
+    /// this peer and nonce too; unrelated failed attachments cannot end a wait.
+    public static func reportDownloadFailed(_ logs: [RemoteDiagnosticsLogEntry], requestID: UUID, peerUserID: String) -> Bool {
+        logs.contains {
+            $0.event == "media-download-finished" && $0.fields["kind"] == "file" &&
+                $0.fields["result"] == "failed" &&
+                $0.fields["peer"] == DiagnosticLogPrivacy.stableTag(peerUserID, prefix: "u") &&
+                $0.fields["requestId"] == requestID.uuidString.lowercased()
+        }
     }
 
     /// Recognize only our host's nonce-bound failure receipts (including the

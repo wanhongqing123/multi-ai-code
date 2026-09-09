@@ -9,6 +9,7 @@ private final class DiagnosticsContext: RemoteDiagnosticsContextProvider {
     var connected = true
     var sentReports: [(String, String)] = []
     var requests: [String] = []
+    var diagnosticLogs: [RemoteDiagnosticsLogEntry] = []
     var onRequest: ((DiagnosticsContext, UUID) throws -> Void)?
     var holdRequest = false
     var pendingRequest: CheckedContinuation<Bool, Never>?
@@ -28,7 +29,18 @@ private final class DiagnosticsContext: RemoteDiagnosticsContextProvider {
             chatState.contacts.contains(where: { $0.userID == peer }) &&
             chatState.contacts.contains(where: { $0.userID == recipient })
     }
-    func remoteDiagnosticsLogs(peer: String, since: Date) -> [RemoteDiagnosticsLogEntry] { [] }
+    func remoteDiagnosticsLogs(peer: String, since: Date) -> [RemoteDiagnosticsLogEntry] { diagnosticLogs }
+
+    func downloadFailed(id: UUID, peer: String = "machine") {
+        diagnosticLogs.append(RemoteDiagnosticsLogEntry(DiagnosticLogEntry(
+            sequence: 1, createdAt: ISO8601DateFormatter().string(from: Date()),
+            level: .warning, category: "im", event: "media-download-finished",
+            fields: ["kind": "file", "result": "failed", "code": "-1",
+                     "requestId": id.uuidString.lowercased(),
+                     "peer": DiagnosticLogPrivacy.stableTag(peer, prefix: "u"),
+                     "error": "ERROR_BODY_SENTINEL", "url": "https://private.example/secret"]
+        )))
+    }
 
     func sendRemoteDiagnosticsText(_ text: String, to peerID: String, identity: String) async -> Bool {
         requests.append(peerID)
@@ -175,7 +187,9 @@ final class RemoteDiagnosticsTests: XCTestCase {
             coordinator.start(peer: context.chatState.contacts[0], recipient: context.chatState.contacts[1])
             try await waitForCompletion(coordinator)
             XCTAssertEqual(context.sentReports.count, 1)
-            XCTAssertTrue(try XCTUnwrap(context.sentReports.first?.1).contains("未回传有效报告"))
+            let report = try XCTUnwrap(context.sentReports.first?.1)
+            XCTAssertTrue(report.contains("未收到有效报告"))
+            XCTAssertTrue(report.contains("发送结果也尚未确认"))
         }
     }
 
@@ -196,8 +210,56 @@ final class RemoteDiagnosticsTests: XCTestCase {
             coordinator.start(peer: context.chatState.contacts[0], recipient: context.chatState.contacts[1])
             try await waitForCompletion(coordinator)
             let report = try XCTUnwrap(context.sentReports.first?.1)
-            XCTAssertTrue(report.contains("未回传有效报告"))
+            XCTAssertTrue(report.contains("未收到有效报告"))
             XCTAssertTrue(report.contains("ownerUserID"))
+        }
+    }
+
+    func testDownloadFailureEndsWaitAndSurvivesInTheSentReportWithoutSecrets() async throws {
+        try await withContext { context in
+            var requestID: UUID?
+            context.onRequest = { context, id in requestID = id; context.downloadFailed(id: id) }
+            // Completion helper fails after three seconds; a missing early-exit
+            // branch therefore cannot pass by merely reaching the deadline.
+            let coordinator = RemoteDiagnosticsCoordinator(appState: context, timeout: .seconds(60), pollInterval: .milliseconds(5))
+            coordinator.start(peer: context.chatState.contacts[0], recipient: context.chatState.contacts[1])
+            defer { coordinator.cancel() }
+            try await waitForCompletion(coordinator)
+            let report = try XCTUnwrap(context.sentReports.first?.1)
+            XCTAssertEqual(context.sentReports.count, 1)
+            XCTAssertTrue(report.contains("附件下载失败"))
+            XCTAssertTrue(report.contains("media-download-finished"))
+            XCTAssertTrue(report.contains(try XCTUnwrap(requestID).uuidString.lowercased()))
+            XCTAssertFalse(report.contains("ERROR_BODY_SENTINEL"))
+            XCTAssertFalse(report.contains("private.example"))
+        }
+    }
+
+    func testUnrelatedDownloadFailuresDoNotStopWaitingForTheRealReport() async throws {
+        try await withContext { context in
+            context.onRequest = { context, id in
+                context.downloadFailed(id: UUID())
+                context.downloadFailed(id: id, peer: "other")
+                Task { @MainActor in
+                    try await Task.sleep(for: .milliseconds(30))
+                    try context.respond(id: id)
+                }
+            }
+            let coordinator = RemoteDiagnosticsCoordinator(appState: context, timeout: .milliseconds(200), pollInterval: .milliseconds(5))
+            coordinator.start(peer: context.chatState.contacts[0], recipient: context.chatState.contacts[1])
+            try await waitForCompletion(coordinator)
+            let report = try XCTUnwrap(context.sentReports.first?.1)
+            XCTAssertTrue(report.contains("call-async"))
+            XCTAssertFalse(report.contains("本报告仅含本地现场"))
+        }
+    }
+
+    func testOnlyCanonicalReportFileNamesProduceDiagnosticRequestIds() {
+        let id = UUID()
+        let name = RemoteDiagnosticsProtocol.reportFileName(id: id)
+        XCTAssertEqual(RemoteDiagnosticsProtocol.requestID(reportFileName: name), id)
+        for invalid in [name.uppercased(), "../" + name, name + ".bak", "notes.json", "remote-diagnostics-secret.json"] {
+            XCTAssertNil(RemoteDiagnosticsProtocol.requestID(reportFileName: invalid))
         }
     }
 

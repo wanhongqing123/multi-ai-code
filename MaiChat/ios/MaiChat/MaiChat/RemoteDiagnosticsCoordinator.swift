@@ -85,13 +85,8 @@ final class RemoteDiagnosticsCoordinator: ObservableObject {
         }
         let requestID = UUID()
         let began = Date()
-        let local = RemoteDiagnosticsLocalEvidence(
-            appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown",
-            ownerUserID: appState.chatState.ownerUserID, peerUserID: peer.userID, collectedAt: began,
-            messages: appState.chatState.messages(with: peer.userID),
-            displayedConversation: appState.chatState.selectedPeerID == peer.userID,
-            logs: appState.remoteDiagnosticsLogs(peer: peer.userID, since: began.addingTimeInterval(-1800))
-        )
+        let messages = appState.chatState.messages(with: peer.userID)
+        let displayedConversation = appState.chatState.selectedPeerID == peer.userID
         isRunning = true
         status = "正在向 \(peer.displayName) 请求现场，最长等待 60 秒…"
         task = Task { [weak self, weak appState] in
@@ -107,7 +102,8 @@ final class RemoteDiagnosticsCoordinator: ObservableObject {
                 }
                 try Task.checkCancellation()
                 var remote: Data?
-                var missing = requested == false ? "采集请求发送失败，未取得远端报告。" : "远端在 60 秒内未回传有效报告，可能离线、版本不支持或采集失败。"
+                var missing = requested == false ? "采集请求发送失败，未取得远端报告。" : "等待结束仍未收到有效报告；可能是对方未响应、版本不支持、采集失败或附件下载失败。"
+                if requested == nil { missing += "采集请求发送结果也尚未确认，不能据此断言未送达。" }
                 var inspected = Set<UUID>()
                 var remoteFailed = false
                 while requested != false && ContinuousClock.now < deadline {
@@ -149,6 +145,13 @@ final class RemoteDiagnosticsCoordinator: ObservableObject {
                         }
                     }
                     if remote != nil || remoteFailed { break }
+                    if RemoteDiagnosticsProtocol.reportDownloadFailed(
+                        appState.remoteDiagnosticsLogs(peer: peer.userID, since: began),
+                        requestID: requestID, peerUserID: peer.userID
+                    ) {
+                        missing = "已收到本次报告的附件通知，但附件下载失败；本报告仅含本地现场。"
+                        break
+                    }
                     try await Task.sleep(for: self.pollInterval)
                 }
                 try Task.checkCancellation()
@@ -158,6 +161,14 @@ final class RemoteDiagnosticsCoordinator: ObservableObject {
                 }
                 let sanitizedRemote = remote
                 let missingReason = remote == nil ? missing : nil
+                // Keep the original conversation snapshot, but include the
+                // request/download observations made during this collection.
+                let local = RemoteDiagnosticsLocalEvidence(
+                    appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown",
+                    ownerUserID: appState.chatState.ownerUserID, peerUserID: peer.userID, collectedAt: began,
+                    messages: messages, displayedConversation: displayedConversation,
+                    logs: appState.remoteDiagnosticsLogs(peer: peer.userID, since: began.addingTimeInterval(-1800))
+                )
                 let file = try await Task.detached {
                     let data = try RemoteDiagnosticsProtocol.mergedReport(requestID: requestID, local: local, remote: sanitizedRemote, missingReason: missingReason)
                     let folder = FileManager.default.temporaryDirectory.appendingPathComponent("MaiChatRemoteDiagnostics", isDirectory: true)

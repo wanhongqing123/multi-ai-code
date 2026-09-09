@@ -118,6 +118,33 @@ describe('remote diagnostics collection', () => {
     expect(readdirSync(root)).toEqual([])
   })
 
+  it('releases a stalled collection at its deadline and does not write after the read returns', async () => {
+    vi.useFakeTimers()
+    let finishRead!: () => void
+    const stalledRead = new Promise<never>((_resolve, reject) => {
+      finishRead = () => reject(Object.assign(new Error('fixture read unavailable'), { code: 'ENOENT' }))
+    })
+    vi.spyOn(fs, 'open').mockReturnValue(stalledRead)
+    const mkdir = vi.spyOn(fs, 'mkdir')
+    const write = vi.spyOn(fs, 'writeFile')
+    try {
+      const pending = createRemoteDiagnosticsService()({ root, projectId: 'p', requestId, appVersion: 'test', requesterUserId: 'phone' })
+      const rejected = expect(pending).rejects.toThrow('diagnostic collection timed out')
+      await vi.advanceTimersByTimeAsync(25_000)
+      await rejected
+      expect(mkdir).not.toHaveBeenCalled()
+      finishRead()
+      // Let all three source readers settle and reach the abort check.
+      await vi.advanceTimersByTimeAsync(0)
+      expect(mkdir).not.toHaveBeenCalled()
+      expect(write).not.toHaveBeenCalled()
+      expect(readdirSync(root)).toEqual([])
+    } finally {
+      finishRead()
+      vi.useRealTimers()
+    }
+  })
+
   it('runs the host collector even without an AI session and rejects path arguments', async () => {
     const executeCommand = vi.fn()
     const createDiagnosticsReport = vi.fn(async (id: string) => createRemoteDiagnosticsReport({ root, projectId: 'p', appVersion: 'test', requestId: id, now }))

@@ -37,6 +37,8 @@ struct IncomingRemoteIMImage: Equatable {
 }
 
 struct IncomingRemoteIMFile: Equatable {
+    /// SDK account captured before the asynchronous download, not on delivery.
+    let accountTag: String
     let fromUserID: String
     let fileURL: URL
     let fileName: String

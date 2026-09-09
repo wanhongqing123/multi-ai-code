@@ -171,7 +171,7 @@ describe('AICLI build utilities', () => {
 
     it('rejects a binary killed by a signal（mac strip 破坏的真实形状）', () => {
       expect(() =>
-        assertExecutableRuns('/bin/claw', {
+        assertExecutableRuns('/bin/sample-cli', {
           spawn: fakeSpawn({ status: null, signal: 'SIGKILL', stdout: '', stderr: '' })
         })
       ).toThrow(/损坏/)
@@ -179,7 +179,7 @@ describe('AICLI build utilities', () => {
 
     it('rejects a binary that runs but prints nothing at all', () => {
       expect(() =>
-        assertExecutableRuns('/bin/claw', {
+        assertExecutableRuns('/bin/sample-cli', {
           spawn: fakeSpawn({ status: 137, signal: null, stdout: '', stderr: '' })
         })
       ).toThrow(/没有任何输出/)
@@ -187,7 +187,7 @@ describe('AICLI build utilities', () => {
 
     it('rejects a binary that cannot be spawned', () => {
       expect(() =>
-        assertExecutableRuns('/bin/claw', {
+        assertExecutableRuns('/bin/sample-cli', {
           spawn: fakeSpawn({ error: new Error('ENOENT') })
         })
       ).toThrow(/无法执行/)
@@ -211,8 +211,8 @@ describe('AICLI build utilities', () => {
 
     it('accepts a healthy binary', () => {
       expect(
-        assertExecutableRuns('/bin/claw', {
-          spawn: fakeSpawn({ status: 0, signal: null, stdout: 'Claw Code Version 0.1.3', stderr: '' })
+        assertExecutableRuns('/bin/sample-cli', {
+          spawn: fakeSpawn({ status: 0, signal: null, stdout: 'Sample CLI Version 0.1.3', stderr: '' })
         })
       ).toContain('0.1.3')
     })

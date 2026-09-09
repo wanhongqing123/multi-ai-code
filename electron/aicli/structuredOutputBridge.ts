@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import net from 'node:net'
 
-export type AicliStructuredOutputProvider = 'codex' | 'opencode' | 'claw'
+export type AicliStructuredOutputProvider = 'codex' | 'opencode'
 export type AicliControlMode = 'plan' | 'build'
 export type AicliUserMessageInputOrigin = 'remote-im' | 'remote-im-machine' | 'local'
 export type AicliApprovalDecision = 'accept' | 'accept-persistent' | 'cancel'

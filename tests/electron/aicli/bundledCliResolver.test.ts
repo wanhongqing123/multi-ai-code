@@ -22,56 +22,21 @@ describe('bundledCliResolver', () => {
     expect(bundledCliFromCommand('my-codex-wrapper')).toBeNull()
   })
 
-  it('recognizes bare Claw commands', () => {
-    expect(bundledCliFromCommand('claw')).toBe('claw')
-    expect(bundledCliFromCommand('claw.exe')).toBe('claw')
-    expect(bundledCliFromCommand('claude')).toBeNull()
-    expect(resolveAicliCommand('claw', { roots: [], existsFile: () => false }).tool).toBe('claw')
-    expect(resolveAicliCommand('claude', { roots: [], existsFile: () => false }).tool).toBeNull()
-  })
 
   // 命令名判定必须两端锚定。之前这套用例只测了**前缀**不匹配（my-codex-wrapper），
   // 没有一条测后缀，所以把正则末尾的 $ 删掉时 13 条全绿——这个 bug 对整个套件是隐形的。
   //
-  // 而它有真实后果：claw-analog 是 claw workspace 里真实存在的二进制（NDJSON 契约那个）。
-  // 少了 $ 锚点，claw-analog 会被认成内置 claw，进而被强制改写成 claw.exe 去执行。
+  // 而它有真实后果：codex-code-mode-host 是 codex 打包里真实存在的辅助二进制。
+  // 少了 $ 锚点，它会被认成内置 codex，进而被强制改写成 codex.exe 去执行。
   it('requires a full command-name match, not just a prefix', () => {
-    expect(bundledCliFromCommand('claw-analog')).toBeNull()
-    expect(bundledCliFromCommand('claw-rag-service')).toBeNull()
     expect(bundledCliFromCommand('codex-code-mode-host')).toBeNull()
     expect(bundledCliFromCommand('opencode-server')).toBeNull()
     // 后缀也不行：内置策略只认裸命令名本身。
-    expect(bundledCliFromCommand('clawx')).toBeNull()
-    expect(resolveAicliCommand('claw-analog', { roots: [], existsFile: () => false }).tool).toBeNull()
+    expect(bundledCliFromCommand('codexx')).toBeNull()
+    expect(resolveAicliCommand('codex-code-mode-host', { roots: [], existsFile: () => false }).tool).toBeNull()
   })
 
-  it('resolves bundled Claw when the platform binary exists', () => {
-    const root = '/repo/bin/aicli'
-    const expected = join(root, 'claw', 'win32-x64', 'claw.exe')
-    expect(
-      resolveBundledCliCommand('claw', {
-        platform: 'win32',
-        arch: 'x64',
-        roots: [root],
-        existsFile: (path) => path === expected
-      })
-    ).toBe(expected)
-  })
 
-  it('forces Claw to the bundled binary and reports when it is missing', () => {
-    const missing = resolveAicliCommand('claw', { roots: ['/repo/bin/aicli'], existsFile: () => false })
-    expect(missing).toEqual({
-      tool: 'claw',
-      label: 'Claw',
-      bundledCommand: null,
-      bundledMissing: true
-    })
-    // 宿主机上的自定义路径同样必须被拉回内置，不能回退。
-    expect(
-      resolveAicliCommand('/usr/local/bin/claw', { roots: ['/repo/bin/aicli'], existsFile: () => false })
-        .bundledMissing
-    ).toBe(true)
-  })
 
   it('resolves bundled Codex when the platform binary exists', () => {
     const root = '/repo/bin/aicli'

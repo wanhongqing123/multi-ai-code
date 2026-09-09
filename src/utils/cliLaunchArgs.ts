@@ -5,7 +5,7 @@ import type { AiPermissionMode } from '../../electron/settings/types'
 // （electron/settings/types.ts 是纯类型模块，运行时常量只能放这边。）
 export const DEFAULT_AI_PERMISSION_MODE: AiPermissionMode = 'full-access'
 
-export type SupportedCli = 'claude' | 'codex' | 'opencode' | 'claw'
+export type SupportedCli = 'claude' | 'codex' | 'opencode'
 export const CODEX_CONTEXT_WINDOW_CONFIG = 'model_context_window=1000000'
 export const CODEX_APPROVALS_REVIEWER_CONFIG = 'approvals_reviewer="user"'
 const CODEX_NO_ALT_SCREEN_ARG = '--no-alt-screen'
@@ -151,20 +151,6 @@ function opencodeDefaultArgs(
   return ['--dangerously-skip-permissions']
 }
 
-// claw 的权限开关与 opencode 同形：--dangerously-skip-permissions（别名 --skip-permissions）。
-// 它另有 --permission-mode read-only|workspace-write|danger-full-access，但我们这边只有
-// default / 非 default 两档，映射到跳过开关即可，不引入第三档语义。
-function clawDefaultArgs(
-  extraArgs: readonly string[],
-  permissionMode: AiPermissionMode
-): string[] {
-  if (permissionMode === 'default') return []
-  if (hasAnyArg(extraArgs, ['--dangerously-skip-permissions', '--skip-permissions'])) {
-    return []
-  }
-  return ['--dangerously-skip-permissions']
-}
-
 export function buildCliLaunchArgs(
   binary: SupportedCli,
   _targetRepo: string,
@@ -184,11 +170,6 @@ export function buildCliLaunchArgs(
 
   if (binary === 'opencode') {
     args.push(...opencodeDefaultArgs(extraArgs, permissionMode))
-    return [...args, ...extraArgs]
-  }
-
-  if (binary === 'claw') {
-    args.push(...clawDefaultArgs(extraArgs, permissionMode))
     return [...args, ...extraArgs]
   }
 

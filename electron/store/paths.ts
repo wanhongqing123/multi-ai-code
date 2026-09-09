@@ -77,17 +77,10 @@ export function codexRuntimeDir(): string {
   return join(baseDir(), '.codex')
 }
 
-// claw 的凭据**不复用** opencode 那份：这条线的终点是删掉 opencode，
-// 把 claw 的存储挂在 opencodeRuntimeDir() 下等于给将来的删除埋一个雷。
-export function clawRuntimeDir(): string {
-  return join(rootDir(), 'aicli', 'claw')
-}
-
 export async function ensureRootDir(): Promise<void> {
   await Promise.all([
     fs.mkdir(projectsDir(), { recursive: true }),
-    fs.mkdir(opencodeRuntimeDir(), { recursive: true }),
-    fs.mkdir(clawRuntimeDir(), { recursive: true })
+    fs.mkdir(opencodeRuntimeDir(), { recursive: true })
   ])
   // Retire the platform-managed `workspaces/` subdir from every project.
   // 分阶段流程与方案文档都已删除，工作台不再往用户仓库写任何东西；

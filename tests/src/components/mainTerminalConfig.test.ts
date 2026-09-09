@@ -52,15 +52,6 @@ describe('shouldConvertEolForCli', () => {
     expect(shouldConvertEolForCli('/usr/local/bin/opencode')).toBe(false)
   })
 
-  it('keeps convertEol on for claw', () => {
-    // claw 在 Done 之后重新打印的原始 markdown 用裸 LF，语义就是「下一行、回第 0 列」
-    // 的普通滚动文本，正是 convertEol 该做的；它不像 opencode 那样用裸 LF 做定位重绘。
-    expect(shouldConvertEolForCli('claw')).toBe(true)
-    expect(shouldConvertEolForCli('claw.exe')).toBe(true)
-    expect(shouldConvertEolForCli('claw-analog')).toBe(true)
-    // 反向锚点：opencode 仍必须关掉。
-    expect(shouldConvertEolForCli('opencode')).toBe(false)
-  })
 
   it('keeps convertEol on for claude, codex and unknown CLIs', () => {
     expect(shouldConvertEolForCli('claude')).toBe(true)

@@ -71,10 +71,6 @@ function isCliExecutable(cli: string | undefined, names: readonly string[]): boo
  * 第 0 列后，后续相对定位全部错位，屏幕上留下残影碎片，因此必须关闭。
  * claude/codex 维持原有 convertEol=true 行为不变。
  */
-// claw **不在这个列表里**：它在 Done 之后重新打印的那份原始 markdown 用的是裸 LF，
-// 而那里的语义就是「下一行、回到第 0 列」（普通滚动文本），正是 convertEol 该做的。
-// 它不像 opencode 那样用裸 LF 表示「下移一行、列不变」去做定位重绘——回答阶段它几乎
-// 不做光标定位（详见 terminalMarkdown.shouldFormatMarkdownForCli 上方那段观测记录）。
 export function shouldConvertEolForCli(cli: string | undefined): boolean {
   return !isCliExecutable(cli, ['opencode'])
 }

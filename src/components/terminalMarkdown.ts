@@ -274,25 +274,14 @@ export function createTerminalMarkdownState(): TerminalMarkdownState {
  * 注意：这里只影响 xterm 本地显示。IM 回传走独立的结构化输出桥（assistant_text），
  * 与此函数无关，改动不影响 IM 消息发送。
  */
-// **claw 不在这个列表里**，而且这一条是观测过的，不是默认值。
+// 这个列表只列 codex / opencode，理由是观测过的、不是默认值：
+// 它们在**回答阶段**仍会做绝对光标定位，改写行宽/行数会让它们错位——
+// 表现为光标乱跳、输入框被顶走、屏幕残影。所以必须原样直通。
 //
-// 先前按「启动画面有 ESC[2J / ESC[8;1H，可能依赖精确定位」保守关掉过，那个判断错了：
-// 它只看了启动阶段。拿本地 mock provider 跑一次真实对话、分别统计两个阶段之后：
+// claude（Ink）不在列表里是另一个理由：它自己把 markdown 渲染成 ANSI，
+// 字节流里没有可命中的裸 markdown，改写器无从下手也无害。
 //
-//   启动阶段   清屏 1 次，绝对定位 3 次（ESC[H / ESC[8;1H / ESC[17;1H）——画 banner
-//   回答阶段   清屏 0 次，绝对定位 1 次，且那一次是 ESC[29;100H
-//              （ConPTY 在行尾折行时自己补的，不是 claw 的布局逻辑）
-//
-// 也就是说 **claw 输出回答时基本不做光标定位**，改写行宽/行数不会让它错位——
-// 这正是 codex/opencode 必须裸透传的原因，claw 没有这个约束。
-//
-// 更重要的是 claw 和 claude(Ink) 同类：**它自己就渲染 markdown**。流式阶段吐出来的
-// 已经是 • 列表、│─┼─│ 框线表、╭─ 代码框，没有字面量 `## ` / `|---|` 留给改写器去动；
-// 真正会被改写的是它在 Done 之后**重新打印的那份原始 markdown**，那一块正是需要美化的。
-// （框线表用的是 U+2502 `│`，TABLE_DIVIDER_RE 只匹配 ASCII `|`，不会误删。）
-//
-// 结论是拿真实字节流分别按两条路喂 xterm.js 截图对比得到的：右侧（开启改写）标题成样式、
-// 加粗生效、列表变项目符号、代码块成框，**且无花屏、无光标跳动、无覆盖**。
+// 结论是拿真实字节流分别按两条路喂 xterm.js 截图对比得到的。
 export function shouldFormatMarkdownForCli(cli: string | undefined): boolean {
   if (!cli) return true
   return !/(^|[\\/])(opencode|codex)(\.(exe|cmd|bat|ps1))?$/i.test(cli.trim())

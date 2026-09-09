@@ -73,10 +73,6 @@ MaiChat/android/**/local.properties
 # Codex local project config
 .codex/config.toml
 
-# Claw local session state。claw 把会话写在 <cwd>/.claw/sessions/<workspace hash>/，
-# 且没有把 SessionStore::from_data_dir 接到任何命令行开关上（那个函数目前是死代码），
-# 所以在目标仓库里跑 claw 一定会留下这个目录，改不掉——只能忽略。
-.claw/
 
 # Superpowers brainstorming / visual-companion session state
 .superpowers/

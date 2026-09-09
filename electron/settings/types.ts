@@ -12,7 +12,7 @@ export type AiPermissionMode = 'default' | 'full-access' | 'dangerous'
 
 // 单个 AI CLI 的配置（主会话 / repo 视图共用）。
 export interface AiSettings {
-  ai_cli: 'claude' | 'codex' | 'opencode' | 'claw'
+  ai_cli: 'claude' | 'codex' | 'opencode'
   /** 缺省视为 'full-access'——老配置里没有这个字段，行为必须保持不变。 */
   permission_mode?: AiPermissionMode
   command?: string

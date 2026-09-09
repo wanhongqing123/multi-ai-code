@@ -102,7 +102,7 @@ describe('Codex home selection at the native PTY boundary', () => {
     setActiveAccount(null)
     expect(() => new PtyCCProcess({ command: 'codex', cwd: repo }).start()).toThrow(/account/)
     expect(nativeSpawn).not.toHaveBeenCalled()
-    start('account-a', 'claw')
+    start('account-a', 'opencode')
     expect(nativeSpawn.mock.calls[0][2].env.CODEX_HOME).toBe(join(root, 'caller-codex'))
     expect(readdirSync(repo)).toEqual([])
   })

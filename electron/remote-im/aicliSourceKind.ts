@@ -16,7 +16,5 @@ export function getRemoteImAicliOutputSourceKind(
   if (/^claude(\.(exe|cmd|bat|ps1))?$/.test(base)) return 'claude'
   if (/^codex(\.(exe|cmd|bat|ps1))?$/.test(base)) return 'codex'
   if (/^opencode(\.(exe|cmd|bat|ps1))?$/.test(base)) return 'opencode'
-  // 两端锚定：claw workspace 里还有 claw-analog / claw-rag-service。
-  if (/^claw(\.(exe|cmd|bat|ps1))?$/.test(base)) return 'claw'
   return 'unknown'
 }

@@ -21,7 +21,6 @@ import {
   projectDir as projectDirFn,
   rootDir,
   opencodeRuntimeDir,
-  clawRuntimeDir,
   setActiveAccount,
   sanitizeAccountId
 } from './store/paths.js'
@@ -52,12 +51,6 @@ import {
 } from './repo-view/repoAnalysisManager.js'
 import { getRemoteImRuntimeProfileId, resolveRemoteImUserDataPath } from './remote-im/profile.js'
 import { readOpenCodeApiKey, writeOpenCodeApiKey } from './aicli/opencodeCredentials.js'
-import { readClawConfig, writeClawConfig } from './aicli/clawCredentials.js'
-import { CLAW_PROTOCOLS, type ClawProtocol } from './aicli/clawConfig.js'
-
-function isClawProtocol(value: unknown): value is ClawProtocol {
-  return CLAW_PROTOCOLS.some((spec) => spec.id === value)
-}
 
 const isDev = !app.isPackaged
 const repoViewWindows = new Map<string, BrowserWindow>()
@@ -258,55 +251,6 @@ app.whenReady().then(async () => {
       }
     }
   })
-  ipcMain.handle('claw:get-config', async () => {
-    try {
-      return { ok: true as const, value: readClawConfig(clawRuntimeDir()) }
-    } catch (error) {
-      return {
-        ok: false as const,
-        error: error instanceof Error ? error.message : String(error)
-      }
-    }
-  })
-  ipcMain.handle(
-    'claw:set-config',
-    async (
-      _event,
-      input: {
-        protocol?: unknown
-        apiKey?: unknown
-        baseUrl?: unknown
-        model?: unknown
-        subagentModel?: unknown
-      }
-    ) => {
-      try {
-        if (
-          typeof input?.apiKey !== 'string' ||
-          typeof input?.baseUrl !== 'string' ||
-          typeof input?.model !== 'string' ||
-          typeof input?.subagentModel !== 'string' ||
-          !isClawProtocol(input?.protocol)
-        ) {
-          return { ok: false as const, error: 'Claw 配置格式无效' }
-        }
-        writeClawConfig(clawRuntimeDir(), {
-          protocol: input.protocol,
-          apiKey: input.apiKey,
-          baseUrl: input.baseUrl,
-          model: input.model,
-          subagentModel: input.subagentModel
-        })
-        return { ok: true as const }
-      } catch (error) {
-        return {
-          ok: false as const,
-          error: error instanceof Error ? error.message : String(error)
-        }
-      }
-    }
-  )
-
   // 无边框窗口的页面内自绘按钮（最小化/最大化/关闭）——作用于发起请求的窗口。
   ipcMain.on('window-controls:minimize', (event) => {
     BrowserWindow.fromWebContents(event.sender)?.minimize()

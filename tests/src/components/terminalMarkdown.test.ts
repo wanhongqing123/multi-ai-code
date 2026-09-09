@@ -15,23 +15,6 @@ describe('shouldFormatMarkdownForCli', () => {
     expect(shouldFormatMarkdownForCli('/usr/local/bin/opencode')).toBe(false)
   })
 
-  it('keeps markdown formatting on for claw, which renders markdown itself like claude', () => {
-    // claw 与 claude(Ink) 同类：自己就把 markdown 渲染成 • 列表 / 框线表 / 代码框，
-    // 流式阶段没有字面量 `## ` / `|---|` 留给改写器动；真正被改写的是它在 Done 之后
-    // 重新打印的那份原始 markdown，那一块正是需要美化的。
-    //
-    // 曾按「启动画面有 ESC[2J / ESC[8;1H」保守关掉过，那个判断只看了启动阶段，是错的。
-    // 分阶段实测：回答阶段清屏 0 次、绝对定位仅 1 次且是 ConPTY 折行时补的，
-    // 改写行宽/行数不会让它错位。
-    expect(shouldFormatMarkdownForCli('claw')).toBe(true)
-    expect(shouldFormatMarkdownForCli('claw.exe')).toBe(true)
-    expect(shouldFormatMarkdownForCli('C:\Tools\claw.exe')).toBe(true)
-    expect(shouldFormatMarkdownForCli('claude')).toBe(true)
-    expect(shouldFormatMarkdownForCli('claw-analog')).toBe(true)
-    // 反向锚点：真正需要裸透传的那两个仍然是 false，别一起放开。
-    expect(shouldFormatMarkdownForCli('codex')).toBe(false)
-    expect(shouldFormatMarkdownForCli('opencode')).toBe(false)
-  })
 
   it('bypasses markdown formatting for codex (full-screen ratatui TUI) in any command form', () => {
     // codex 也是全屏 TUI，改写行宽/删行会让它的光标定位错位（任务执行时光标乱跳、

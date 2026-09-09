@@ -21,7 +21,7 @@ import {
 
 // 归一化的 AI CLI 种类。codex 的浅色/背景样式问题已从根源解决（fork 版按宿主终端
 // 主题注入 CODEX_DEFAULT_TERMINAL_BG/FG），不再需要在渲染侧剥离 SGR。
-export type TerminalStyleCli = 'claude' | 'codex' | 'opencode' | 'claw' | 'unknown'
+export type TerminalStyleCli = 'claude' | 'codex' | 'opencode' | 'unknown'
 import {
   copySelection,
   interceptTerminalRightMouseEvent,

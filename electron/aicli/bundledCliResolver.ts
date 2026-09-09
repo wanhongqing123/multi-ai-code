@@ -4,22 +4,21 @@ import { fileURLToPath } from 'url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
-export type BundledCli = 'codex' | 'opencode' | 'claw'
-export type BundledCliLabel = 'Codex' | 'OpenCode' | 'Claw'
+export type BundledCli = 'codex' | 'opencode'
+export type BundledCliLabel = 'Codex' | 'OpenCode'
 export type AicliLaunchSource = 'bundled' | 'custom' | 'path'
 
-// 内置 AICLI 注册表。加第四种（claw）时发现原来的判定散在四处——两个各写一遍的
+// 内置 AICLI 注册表。判定曾经散在四处——两个各写一遍的
 // 正则、一个 label 三元表达式、一句写死 "codex / opencode" 的报错文案——每加一种
 // 都要同步改四个地方，漏掉任何一个都不会有测试报错。改成一张表之后，这些派生逻辑
 // 只从表里读，新增一种 AICLI 只动这一处。
 const BUNDLED_CLIS: readonly { id: BundledCli; label: BundledCliLabel }[] = [
   { id: 'codex', label: 'Codex' },
   { id: 'opencode', label: 'OpenCode' },
-  { id: 'claw', label: 'Claw' }
 ]
 
-// 只匹配裸命令名（可带 Windows 可执行后缀）。**两端锚定是必须的**：claw workspace 里
-// 真实存在 claw-analog / claw-rag-service，codex 那边有 codex-code-mode-host——少了 $
+// 只匹配裸命令名（可带 Windows 可执行后缀）。**两端锚定是必须的**：
+// codex 那边有 codex-code-mode-host——少了 $
 // 锚点它们都会被认成对应的内置 CLI，进而被强制改写成主二进制去执行。
 // （这个缺陷对原来那套用例是隐形的：它只测了前缀不匹配，没有一条测后缀。）
 function matchesBundledCli(base: string, tool: BundledCli): boolean {
@@ -180,7 +179,7 @@ export function resolveBundledCliCommand(
 }
 
 export interface AicliCommandResolution {
-  // 内置 AICLI（codex / opencode / claw）时非空；claude 及其它命令为 null（不受内置约束）。
+  // 内置 AICLI（codex / opencode）时非空；claude 及其它命令为 null（不受内置约束）。
   tool: BundledCli | null
   label: BundledCliLabel | null
   // 内置二进制的绝对路径；解析到内置时非空。

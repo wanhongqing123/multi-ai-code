@@ -105,7 +105,7 @@ export class SessionDiagnostics {
 
   spawned(): void {
     const executable = this.readPty()?.executable
-    if (executable && ['codex', 'opencode', 'claw'].includes(this.context.cli)) {
+    if (executable && ['codex', 'opencode'].includes(this.context.cli)) {
       try {
         const file = join(dirname(dirname(dirname(executable))), 'manifest.json')
         if (statSync(file).size <= 64 * 1024) {

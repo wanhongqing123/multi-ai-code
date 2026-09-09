@@ -34,7 +34,6 @@
     "electron/remote-desktop/inputSinkWindows.ts",
     "electron/settings/types.ts",
     "electron/aicli/opencodeConfig.ts",
-    "electron/aicli/clawConfig.ts",
     "electron/scheduledTasks/types.ts",
     "tests/src/**/*.ts",
     "tests/src/**/*.tsx"

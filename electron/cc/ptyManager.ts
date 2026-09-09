@@ -38,9 +38,7 @@ import {
 } from '../aicli/structuredOutputBridge.js'
 
 import { detectMsys } from '../util/msys.js'
-import { clawRuntimeDir, opencodeRuntimeDir, rootDir } from '../store/paths.js'
-import { withClawRuntimeEnv, withClawRuntimeModelArgs } from '../aicli/clawCredentials.js'
-import { isClawCommand, withClawDataDirEnv } from '../aicli/clawConfig.js'
+import { opencodeRuntimeDir, rootDir } from '../store/paths.js'
 import { app, dialog } from 'electron'
 import { SessionDiagnostics, buildSessionDiagnosticsReport, type HostStopReason } from './sessionDiagnostics.js'
 
@@ -54,20 +52,13 @@ const PTY_DUMP_ENABLED = process.env.MULTI_AI_CODE_PTY_DUMP === '1'
 function structuredOutputProvider(command: string): AicliStructuredOutputProvider | null {
   if (command === 'codex') return 'codex'
   if (isOpenCodeCommand(command)) return 'opencode'
-  // claw 与前两者同路：我们持有它的 fork，就在源码里接出结构化事件，
-  // 而不是去读它落盘的会话文件。读文件那条只留给 claude——它是唯一拿不到源码的。
-  if (isClawCommand(command)) return 'claw'
   return null
 }
 
-// 提交语义：claude/codex 的编辑器需要双回车兜底；opencode 和 claw 首个回车即提交，
+// 提交语义：claude/codex 的编辑器需要双回车兜底；opencode 首个回车即提交，
 // 第二个回车会把空编辑器再提交一次，在会话里留下一条空消息。
-// claw 用 rustyline 行编辑器，其 --help 明确写着 "Shift+Enter for newline"，
-// 即裸回车就是提交。
 function usesSingleSubmit(command: string): boolean {
-  if (isOpenCodeCommand(command)) return true
-  const base = command.trim().replace(/^["']|["']$/g, '').split(/[\\/]/).pop()?.toLowerCase() ?? ''
-  return /^claw(\.(exe|cmd|bat|ps1))?$/.test(base)
+  return isOpenCodeCommand(command)
 }
 
 async function openPtyDumpStream(
@@ -881,20 +872,6 @@ export function registerPtyIpc(): void {
       }
     }
 
-    // claw 的托管凭据（OPENAI_API_KEY / OPENAI_BASE_URL）与默认模型。
-    // 两个函数对非 claw 命令都是恒等变换，所以不需要在这里再判一次。
-    let managedEnv: Record<string, string> | undefined
-    try {
-      managedEnv = withClawRuntimeEnv(req.command, managedOpenCodeEnv, clawRuntimeDir())
-      managedEnv = withClawDataDirEnv(req.command, managedEnv, clawRuntimeDir())
-      effectiveArgs = withClawRuntimeModelArgs(req.command, effectiveArgs, clawRuntimeDir())
-    } catch (error) {
-      return {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error)
-      }
-    }
-
     const structuredProvider = structuredOutputProvider(req.command)
     const diagnostics = new SessionDiagnostics(rootDir(), {
       sessionId: req.sessionId, projectId: req.projectId,
@@ -914,7 +891,7 @@ export function registerPtyIpc(): void {
       cols: req.cols,
       rows: req.rows,
       env: withRemoteImCliEnv(
-        withCodexTerminalEnv(req.command, managedEnv, req.terminalTheme),
+        withCodexTerminalEnv(req.command, managedOpenCodeEnv, req.terminalTheme),
         req.projectId,
         req.sessionId
       ),

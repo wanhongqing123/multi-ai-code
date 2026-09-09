@@ -42,6 +42,8 @@ targets:
       - path: MaiChat/RemoteDiagnosticsView.swift
       - path: ../../../tests/fixtures/remote-diagnostics-failure-receipts.json
         buildPhase: resources
+      - path: ../../../tests/fixtures/remote-diagnostics-report.json
+        buildPhase: resources
     dependencies:
       - target: MaiChatCore
     settings:

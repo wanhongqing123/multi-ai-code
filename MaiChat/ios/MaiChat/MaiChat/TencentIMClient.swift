@@ -830,14 +830,18 @@ final class TencentIMClient:
         let mimeType = Self.mimeType(for: fileName)
         let sizeBytes = fileElem.fileSize > 0 ? Int(fileElem.fileSize) : nil
         let startedAt = ProcessInfo.processInfo.systemUptime
+        var fileMetadata = [
+            "bytes": sizeBytes.map(String.init) ?? "unknown",
+            "mime_type": mimeType,
+        ]
+        if let requestID = RemoteDiagnosticsProtocol.requestID(reportFileName: fileName) {
+            fileMetadata["requestId"] = requestID.uuidString.lowercased()
+        }
         let diagnosticFields = Self.messageDiagnosticFields(
             kind: "file",
             peerUserID: fromUserID,
             messageID: remoteID,
-            metadata: [
-                "bytes": sizeBytes.map(String.init) ?? "unknown",
-                "mime_type": mimeType,
-            ]
+            metadata: fileMetadata
         )
         Self.logSDK(level: .info, event: "message-receive-callback", fields: diagnosticFields)
         Self.logSDK(level: .info, event: "media-download-start", fields: diagnosticFields)
@@ -852,6 +856,7 @@ final class TencentIMClient:
                 Self.logSDK(level: .info, event: "media-download-finished", fields: fields)
                 Task { @MainActor [weak self, fromUserID, targetURL, fileName, mimeType, remoteID, sizeBytes, origin, quote, createdAt, caption, captionAbove] in
                     let event = IncomingRemoteIMFile(
+                        accountTag: diagnosticFields["account"] ?? "unbound",
                         fromUserID: fromUserID,
                         fileURL: targetURL,
                         fileName: fileName,

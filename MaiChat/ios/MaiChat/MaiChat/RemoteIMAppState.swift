@@ -1376,8 +1376,12 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     }
 
     private func receive(_ event: IncomingRemoteIMFile) async {
+        guard !remoteDiagnosticsAccountTag.isEmpty, event.accountTag == remoteDiagnosticsAccountTag else { return }
         guard shouldAcceptIncomingSender(event.fromUserID, kind: "file") else { return }
         guard await shouldAcceptIncomingMessage(remoteID: event.remoteID) else { return }
+        // The history lookup suspends. An account change during that await must
+        // not let the old account's completed download enter the new store.
+        guard event.accountTag == remoteDiagnosticsAccountTag else { return }
         let previousCount = chatState.messages.count
         let message = chatState.receiveFile(
             filePath: event.fileURL.path,

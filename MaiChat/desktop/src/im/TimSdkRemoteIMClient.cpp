@@ -1371,7 +1371,11 @@ void TimSdkRemoteIMClient::handleIncomingFileUrl(RemoteIMMessage message, const 
     message.file.localPath = targetPath;
     if (QFile::exists(targetPath)) {
         recordAttachmentPhase(origin, message, RemoteDiagnostics::AttachmentPhase::CacheHit);
-        emitReceivedMessages({message}, live, origin);
+        // 缓存命中也要走同一套判定：真的发出去才算交付。
+        recordAttachmentPhase(origin, message,
+                              emitReceivedMessages({message}, live, origin)
+                                  ? RemoteDiagnostics::AttachmentPhase::Delivered
+                                  : RemoteDiagnostics::AttachmentPhase::DroppedForAccountSwitch);
         return;
     }
 
@@ -1416,8 +1420,13 @@ void TimSdkRemoteIMClient::handleIncomingFileUrl(RemoteIMMessage message, const 
                        .arg(written).arg(data.size());
             return;
         }
-        recordAttachmentPhase(origin, message, RemoteDiagnostics::AttachmentPhase::Delivered);
-        emitReceivedMessages({message}, live, origin);
+        // 顺序很重要：先发、再按「有没有真的发出去」记。反过来的话，
+        // 换账号被护栏丢弃时日志仍会写「已交付」——文件是下完了，
+        // 但它没有进入任何账号的会话，那就是谎报。
+        recordAttachmentPhase(origin, message,
+                              emitReceivedMessages({message}, live, origin)
+                                  ? RemoteDiagnostics::AttachmentPhase::Delivered
+                                  : RemoteDiagnostics::AttachmentPhase::DroppedForAccountSwitch);
     });
 }
 
@@ -1541,9 +1550,9 @@ void TimSdkRemoteIMClient::recordAttachmentPhase(const RemoteDiagnostics::Accoun
     evidence_.record(event);
 }
 
-void TimSdkRemoteIMClient::emitReceivedMessages(const QList<RemoteIMMessage>& messages, bool live,
+bool TimSdkRemoteIMClient::emitReceivedMessages(const QList<RemoteIMMessage>& messages, bool live,
                                                 const RemoteDiagnostics::AccountTag& origin) {
-    if (messages.isEmpty()) return;
+    if (messages.isEmpty()) return false;
     // 换账号之后晚到的异步结果不能进新账号的库。这条护栏放在**普通消息入口**，
     // 不只保护排障记录——否则甲的附件会静静地出现在乙的聊天里。
     // 同账号断线重连不受影响：AccountTag 只有 sdkAppId + ownerUserId，
@@ -1552,13 +1561,14 @@ void TimSdkRemoteIMClient::emitReceivedMessages(const QList<RemoteIMMessage>& me
         qInfo().noquote()
             << QStringLiteral("[im] dropped %1 late message(s) from a previous account")
                    .arg(messages.size());
-        return;
+        return false;
     }
     if (live) {
         emit liveMessagesReceived(messages);
     } else {
         emit messagesReceived(messages);
     }
+    return true;
 }
 
 void TimSdkRemoteIMClient::complete(RemoteIMCompletion completion, int code, const QString& description) {

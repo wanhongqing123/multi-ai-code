@@ -18,6 +18,8 @@ QString describeAttachmentPhase(AttachmentPhase phase)
         return QStringLiteral("附件下载完成但保存失败");
     case AttachmentPhase::Delivered:
         return QStringLiteral("附件已保存并交付");
+    case AttachmentPhase::DroppedForAccountSwitch:
+        return QStringLiteral("下载完成时账号已切换，结果未并入会话");
     }
     return QString();
 }

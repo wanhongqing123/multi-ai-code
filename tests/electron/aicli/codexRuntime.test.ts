@@ -3,7 +3,7 @@ import { spawnSync } from 'child_process'
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
-import { withCodexHome } from '../../../electron/aicli/codexRuntime.js'
+import { SUPPRESS_SANDBOX_PROMPT_ENV, withCodexHome } from '../../../electron/aicli/codexRuntime.js'
 
 function withTempHome(body: (home: string) => void): void {
   const root = mkdtempSync(join(tmpdir(), 'codex-home-'))
@@ -115,5 +115,42 @@ describe.runIf(kernelAvailable)('bundled codex kernel: what it accepts for [wind
 
   it('loads a home with no config at all, which is how the sandbox stays off', () => {
     expect(loadConfig(null)).not.toMatch(/Error loading configuration/)
+  })
+})
+
+// The app runs Codex unsandboxed on purpose. Without this the sandbox offer
+// returns for every new directory, and declining it records nothing — the user
+// is asked the same question forever. It suppresses the *offer* only: no config
+// is written, and a policy-required sandbox still prompts inside the kernel.
+describe('windows sandbox prompt suppression', () => {
+  it('tells codex to stop offering the sandbox', () => {
+    withTempHome((home) => {
+      const env = withCodexHome({}, home, join(home, '..', 'repo'))
+      expect(env[SUPPRESS_SANDBOX_PROMPT_ENV]).toBe('1')
+    })
+  })
+
+  // Same reasoning as CODEX_HOME: on Windows the names are case-insensitive but
+  // the object keeps the inherited spelling, so a stale alias could survive
+  // beside ours and let CreateProcess pick the loser.
+  it('drops an inherited alias in any casing rather than leaving two keys', () => {
+    withTempHome((home) => {
+      const env = withCodexHome(
+        { Codex_Suppress_Optional_Windows_Sandbox_Prompt: '0' },
+        home,
+        join(home, '..', 'repo')
+      )
+      expect(
+        Object.keys(env).filter((k) => k.toUpperCase() === SUPPRESS_SANDBOX_PROMPT_ENV)
+      ).toEqual([SUPPRESS_SANDBOX_PROMPT_ENV])
+      expect(env[SUPPRESS_SANDBOX_PROMPT_ENV]).toBe('1')
+    })
+  })
+
+  // Tripwire for the cross-process contract: the kernel reads this exact string
+  // in tui/src/windows_sandbox.rs. Renaming one side alone would silently stop
+  // the suppression from ever engaging, with nothing failing to say so.
+  it('uses the exact variable name the kernel reads', () => {
+    expect(SUPPRESS_SANDBOX_PROMPT_ENV).toBe('CODEX_SUPPRESS_OPTIONAL_WINDOWS_SANDBOX_PROMPT')
   })
 })

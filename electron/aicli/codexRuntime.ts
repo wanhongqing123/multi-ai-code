@@ -30,6 +30,21 @@ function isWithinDirectory(parent: string, candidate: string): boolean {
   return child === '' || (!isAbsolute(child) && child !== '..' && !child.startsWith(`..${sep}`))
 }
 
+/**
+ * Tells Codex to stop *offering* to turn its Windows sandbox on.
+ *
+ * This suppresses an offer, not a protection. Codex spells "no sandbox" by
+ * omitting the `[windows] sandbox` key — there is no `disabled` value, and
+ * writing one stops Codex booting — but an omitted key is also half of the
+ * trigger for the offer, so the same question returns for every new directory
+ * and declining records nothing. This app deliberately runs Codex unsandboxed,
+ * so it answers once, here. A sandbox that policy *requires* still prompts.
+ *
+ * Must match `SUPPRESS_OPTIONAL_PROMPT_ENV` in the kernel's
+ * `tui/src/windows_sandbox.rs`; a test on each side pins the spelling.
+ */
+export const SUPPRESS_SANDBOX_PROMPT_ENV = 'CODEX_SUPPRESS_OPTIONAL_WINDOWS_SANDBOX_PROMPT'
+
 /** All accounts share the app-owned home, never an inherited caller's home. */
 export function withCodexHome(
   env: Record<string, string>,
@@ -49,12 +64,18 @@ export function withCodexHome(
   // Windows environment variable names are case-insensitive. Remove aliases
   // before injecting the canonical key so the inherited value cannot win.
   for (const key of Object.keys(next)) {
-    if (['CODEX_HOME', 'CODEX_SQLITE_HOME', 'CODEX_ANALYTICS_EVENTS_CAPTURE_FILE'].includes(key.toUpperCase())) delete next[key]
+    if ([
+      'CODEX_HOME',
+      'CODEX_SQLITE_HOME',
+      'CODEX_ANALYTICS_EVENTS_CAPTURE_FILE',
+      SUPPRESS_SANDBOX_PROMPT_ENV
+    ].includes(key.toUpperCase())) delete next[key]
   }
   // Do not inherit a developer capture sink that writes outside this home.
   // Managed policy and CA settings are intentionally retained, not bypassed.
   next.CODEX_HOME = codexHome
   next.CODEX_SQLITE_HOME = codexHome
+  next[SUPPRESS_SANDBOX_PROMPT_ENV] = '1'
   return next
 }
 

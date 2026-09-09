@@ -93,6 +93,7 @@ private slots:
     void conversationListsUseDelegateItemsForSmoothScrolling();
     void selectedConversationRowReachesTheListEdge();
     void selectedConversationRowReachesTheListEdgeWithScrollBar();
+    void listScrollBarsAreNarrowAndStillScrollableAcrossZoomLevels();
     void contactDirectoryStaysFlatUntilAGroupExists();
     void contactDirectoryShowsGroupsWithUngroupedLast();
     void clickingGroupHeaderCollapsesItsMembers();
@@ -285,6 +286,77 @@ void MainWindowLayoutTest::selectedConversationRowReachesTheListEdgeWithScrollBa
                             .arg(gap)
                             .arg(painted.width())
                             .arg(list->verticalScrollBar()->width())));
+}
+
+// 收窄滚动条之后要同时成立三件事，缺一件都不算修好：
+//   1. 有滚动条时确实变窄了，且宽度跟着 UiZoom 缩放（不是写死物理像素）
+//   2. 还能拖、还能滚 —— 收窄不能把交互弄没
+//   3. 没有滚动条时不占位，别用一条恒定留白换掉原来的问题
+void MainWindowLayoutTest::listScrollBarsAreNarrowAndStillScrollableAcrossZoomLevels() {
+    struct RestoreZoom { qreal old; ~RestoreZoom() { UiZoom::setFactor(old); } } restore{UiZoom::factor()};
+
+    for (const qreal zoom : {0.8, 1.0, 1.5, 2.0}) {
+        UiZoom::setFactor(zoom);
+
+        auto client = std::make_unique<FakeRemoteIMClient>();
+        RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+        for (int i = 0; i < 40; ++i) {
+            app.addContact(QStringLiteral("peer%1").arg(i, 2, 10, QLatin1Char('0')),
+                           QStringLiteral("联系人 %1").arg(i));
+        }
+
+        MainWindow window(app);
+        window.resize(1280, 800);
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        QCoreApplication::processEvents();
+
+        auto* list = window.findChild<QListWidget*>(QStringLiteral("conversationList"));
+        QVERIFY(list != nullptr);
+        QScrollBar* bar = list->verticalScrollBar();
+        QVERIFY2(bar->isVisible(),
+                 qPrintable(QStringLiteral("缩放 %1：40 条会话却没有纵向滚动条").arg(zoom)));
+
+        // 1. 宽度：基准 8px 随缩放走。Qt 默认约 17px，这里必须明显更窄。
+        const int expected = UiZoom::s(8);
+        QVERIFY2(qAbs(bar->width() - expected) <= 1,
+                 qPrintable(QStringLiteral("缩放 %1：滚动条宽 %2px，期望约 %3px")
+                                .arg(zoom).arg(bar->width()).arg(expected)));
+
+        // 2. 还能滚：直接改值 + 真实滚轮事件都要生效。
+        // 注意别假设初始位置在顶部——列表会自动滚到当前项，起始值不一定是 minimum。
+        QVERIFY2(bar->maximum() > bar->minimum(),
+                 qPrintable(QStringLiteral("缩放 %1：滚动范围为空，无法验证滚动").arg(zoom)));
+        bar->setValue(bar->maximum());
+        QCOMPARE(bar->value(), bar->maximum());
+        bar->setValue(bar->minimum());
+        QCOMPARE(bar->value(), bar->minimum());
+        QWheelEvent wheel(QPointF(list->viewport()->rect().center()),
+                          list->viewport()->mapToGlobal(list->viewport()->rect().center()),
+                          QPoint(0, -40), QPoint(0, -120), Qt::NoButton, Qt::NoModifier,
+                          Qt::NoScrollPhase, /*inverted*/ false);
+        QCoreApplication::sendEvent(list->viewport(), &wheel);
+        QCoreApplication::processEvents();
+        QVERIFY2(bar->value() > bar->minimum(),
+                 qPrintable(QStringLiteral("缩放 %1：滚轮没有滚动列表").arg(zoom)));
+    }
+
+    // 3. 会话很少时不该有滚动条，也不该留下它的占位宽度。
+    UiZoom::setFactor(1.0);
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("solo"), QStringLiteral("Solo"));
+
+    MainWindow window(app);
+    window.resize(1280, 800);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QCoreApplication::processEvents();
+
+    auto* list = window.findChild<QListWidget*>(QStringLiteral("conversationList"));
+    QVERIFY(list != nullptr);
+    QVERIFY2(!list->verticalScrollBar()->isVisible(), "只有一条会话时不该出现滚动条");
+    QCOMPARE(list->viewport()->width(), list->width());
 }
 
 void MainWindowLayoutTest::conversationListPutsNewestMessageFirst() {

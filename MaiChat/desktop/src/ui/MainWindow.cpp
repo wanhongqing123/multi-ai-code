@@ -2080,6 +2080,42 @@ void MainWindow::applyStyle() {
             background: #e1f5ff;
             border: 0;
         }
+        /* 左侧两个列表的纵向滚动条收窄到 8px。Qt 默认那条约 17px，
+           再乘上界面缩放就更宽——用户看到的就是行右边一整条灰带。
+           这里只改这两个列表：消息区和其它滚动条不动。
+           仍然是 Qt 原生滚动条（没有换成覆盖式控件），所以拖动滑块、
+           滚轮、点轨道翻页这些行为都保持原样。
+           px 值会被 UiZoom::scaleQss 按当前缩放换算，不写死物理像素。 */
+        #conversationList QScrollBar:vertical, #contactsList QScrollBar:vertical {
+            background: transparent;
+            width: 8px;
+            margin: 0;
+        }
+        #conversationList QScrollBar::handle:vertical,
+        #contactsList QScrollBar::handle:vertical {
+            background: #d3dae4;
+            border-radius: 4px;
+            min-height: 24px;
+        }
+        #conversationList QScrollBar::handle:vertical:hover,
+        #contactsList QScrollBar::handle:vertical:hover {
+            background: #b9c3d1;
+        }
+        /* 上下箭头按钮置零，否则 8px 宽度下它们会挤成两个色块。 */
+        #conversationList QScrollBar::add-line:vertical,
+        #conversationList QScrollBar::sub-line:vertical,
+        #contactsList QScrollBar::add-line:vertical,
+        #contactsList QScrollBar::sub-line:vertical {
+            height: 0;
+            border: 0;
+            background: transparent;
+        }
+        #conversationList QScrollBar::add-page:vertical,
+        #conversationList QScrollBar::sub-page:vertical,
+        #contactsList QScrollBar::add-page:vertical,
+        #contactsList QScrollBar::sub-page:vertical {
+            background: transparent;
+        }
         #contactHintTitle {
             color: #101828;
             font-size: 16px;

@@ -1406,6 +1406,7 @@ private struct ChatDetailHeader: View {
     @ObservedObject var session: RemoteDesktopSession
     let showRemoteDesktop: () -> Void
     @EnvironmentObject private var appState: RemoteIMAppState
+    @State private var showRemoteDiagnostics = false
 
     var body: some View {
         HStack(spacing: 10) {
@@ -1457,6 +1458,16 @@ private struct ChatDetailHeader: View {
             .disabled(!canUseRemoteButton)
             .accessibilityLabel(remoteButtonAccessibilityLabel)
 
+            Menu {
+                Button { showRemoteDiagnostics = true } label: {
+                    Label("远程排障", systemImage: "stethoscope")
+                }
+            } label: {
+                Image(systemName: "ellipsis").frame(width: 34, height: 34)
+            }
+            .accessibilityLabel("更多")
+            .accessibilityIdentifier("chatMoreMenu")
+
             StatusPill(state: appState.connectionState)
         }
         .padding(.horizontal, 10)
@@ -1465,6 +1476,11 @@ private struct ChatDetailHeader: View {
         .background(RemoteIMStyle.panelBackground)
         .overlay(alignment: .bottom) {
             Divider().background(RemoteIMStyle.border)
+        }
+        .sheet(isPresented: $showRemoteDiagnostics) {
+            RemoteDiagnosticsView(peer: contact, contacts: appState.chatState.contacts,
+                ownerUserID: appState.chatState.ownerUserID, connected: appState.connectionState == .connected,
+                coordinator: appState.remoteDiagnostics)
         }
     }
 
@@ -1624,6 +1640,13 @@ private struct MessageListView: View {
                                         )
                                 }
                                 .id(message.id)
+                                .onAppear {
+                                    let peer = message.direction == .incoming ? message.fromUserID : message.toUserID
+                                    AppDiagnosticLog.shared.record(level: .debug, category: "remote-im-ui", event: "row-presented", fields: [
+                                        "peer": DiagnosticLogPrivacy.stableTag(peer, prefix: "u"),
+                                        "message": DiagnosticLogPrivacy.stableTag(message.remoteID ?? message.id.uuidString, prefix: "m")
+                                    ])
+                                }
                         }
                     }
                     Color.clear

@@ -38,6 +38,8 @@ targets:
       - path: MaiChat/LocalChatHistoryStore.swift
       - path: MaiChat/MarkdownInlineStyling.swift
       - path: MaiChat/MessageBubbleLayout.swift
+      - path: MaiChat/RemoteDiagnosticsCoordinator.swift
+      - path: MaiChat/RemoteDiagnosticsView.swift
     dependencies:
       - target: MaiChatCore
     settings:

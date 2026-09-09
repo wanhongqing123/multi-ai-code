@@ -529,6 +529,13 @@ export function getSessionRuntimeInfo(sessionId: string): {
   }
 }
 
+/** Internal metadata only; callers must redact paths before remote export. */
+export function getProjectDiagnosticSessions(projectId: string): object[] {
+  return Array.from(sessions.values())
+    .filter(session => session.projectId === projectId)
+    .map(session => ({ ...session.diagnostics.snapshot(), targetRepo: session.targetRepo }))
+}
+
 async function enqueueSessionInput<T>(
   sessionId: string,
   task: (session: Session) => Promise<T>

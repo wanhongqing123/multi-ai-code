@@ -7,6 +7,7 @@ export type RemoteImControlCommandName =
   | 'goal'
   | 'btw'
   | 'diff'
+  | 'diagnostics'
   | 'interrupt'
   | 'compact'
   | 'clear'
@@ -73,6 +74,11 @@ export const REMOTE_IM_CONTROL_COMMANDS: RemoteImControlCommandDefinition[] = [
     name: 'diff',
     usage: '/diff [--stat] [--working | --commit <ref> | --range <base>..<head>] [文件或目录]',
     description: '查看当前仓库工作区、提交或范围 Diff，并发送响应式 HTML 预览'
+  },
+  {
+    name: 'diagnostics',
+    usage: '/diagnostics <排障编号>',
+    description: '由宿主收集近期诊断元数据并回传，不依赖 AI 会话'
   },
   {
     name: 'interrupt',

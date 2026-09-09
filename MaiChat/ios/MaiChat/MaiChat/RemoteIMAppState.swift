@@ -14,7 +14,7 @@ struct RemoteIMBroadcastResult: Equatable {
 }
 
 @MainActor
-final class RemoteIMAppState: ObservableObject {
+final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider {
     private struct ConversationHistoryState {
         var hasLoadedInitialPage = false
         var isLoading = false
@@ -62,6 +62,7 @@ final class RemoteIMAppState: ObservableObject {
 
     let remoteDesktop: RemoteDesktopSession
     let draft = RemoteIMDraftState()
+    lazy var remoteDiagnostics = RemoteDiagnosticsCoordinator(appState: self)
 
     private let settingsStore: LocalSettingsStore
     private let secretStore: KeychainSecretStore
@@ -793,6 +794,69 @@ final class RemoteIMAppState: ObservableObject {
         draft.text = ""
         draft.quote = nil
         await sendText(text, quote: quote)
+    }
+
+    var remoteDiagnosticsIdentity: String {
+        "\(chatState.ownerUserID)|\(historyAccountGeneration)|\(accountRebuildRequestGeneration)|\(chatHistorySDKAppID ?? 0)"
+    }
+
+    func remoteDiagnosticsLogs(peer: String, since: Date) -> [RemoteDiagnosticsLogEntry] {
+        AppDiagnosticLog.shared.remoteMetadata(peerUserID: peer, since: since)
+    }
+
+    func remoteDiagnosticsMayContinue(identity: String, peer: String, recipient: String) -> Bool {
+        connectionState == .connected && remoteDiagnosticsIdentity == identity &&
+            chatState.contacts.contains(where: { $0.userID == peer }) &&
+            chatState.contacts.contains(where: { $0.userID == recipient }) &&
+            recipient != chatState.ownerUserID
+    }
+
+    func sendRemoteDiagnosticsText(_ text: String, to peerID: String, identity: String) async -> Bool {
+        guard remoteDiagnosticsMayContinue(identity: identity, peer: peerID, recipient: peerID) else { return false }
+        var messageID: UUID?
+        do {
+            let message = try chatState.queueOutgoingText(to: peerID, text: text)
+            messageID = message.id
+            enqueueHistoryUpsert(message)
+            let receipt = try await client.sendText(to: peerID, text: text, origin: .human, quote: nil)
+            guard remoteDiagnosticsIdentity == identity else { return false }
+            try chatState.updateMessageDelivery(id: message.id, remoteID: receipt.remoteID, createdAt: receipt.createdAt)
+            enqueueCurrentMessage(id: message.id)
+            return true
+        } catch {
+            if remoteDiagnosticsIdentity == identity, let messageID {
+                try? chatState.updateMessageStatus(id: messageID, status: .failed)
+                enqueueCurrentMessage(id: messageID)
+            }
+            return false
+        }
+    }
+
+    func sendRemoteDiagnosticsReport(_ file: URL, to recipient: RemoteIMContact, identity: String) async -> Bool {
+        guard remoteDiagnosticsMayContinue(identity: identity, peer: recipient.userID, recipient: recipient.userID) else { return false }
+        let source = RemoteIMMessage(fromUserID: chatState.ownerUserID, toUserID: recipient.userID,
+            text: "请协助分析这份远程排障报告。",
+            fileAttachment: RemoteIMFileAttachment(localFilePath: file.path, fileName: file.lastPathComponent, mimeType: "text/markdown"),
+            direction: .outgoing, status: .pending, createdAt: Date())
+        var messageID: UUID?
+        do {
+            // Lock the target explicitly; never consult the chat selected later.
+            let queued = try chatState.queueForwardedMessage(source, to: recipient.userID)
+            messageID = queued.id
+            enqueueHistoryUpsert(queued)
+            let receipt = try await client.sendFile(to: recipient.userID,
+                file: RemoteIMFile(fileURL: file, fileName: file.lastPathComponent, mimeType: "text/markdown", sizeBytes: nil))
+            guard remoteDiagnosticsIdentity == identity else { return false }
+            try chatState.updateMessageDelivery(id: queued.id, remoteID: receipt.remoteID, createdAt: receipt.createdAt)
+            enqueueCurrentMessage(id: queued.id)
+            return true
+        } catch {
+            if remoteDiagnosticsIdentity == identity, let messageID {
+                try? chatState.updateMessageStatus(id: messageID, status: .failed)
+                enqueueCurrentMessage(id: messageID)
+            }
+            return false
+        }
     }
 
     /// 直接发一段文本（语音识别结果走这里）。与 sendDraft 共用同一套排队/落库/回执逻辑，

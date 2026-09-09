@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain } from 'electron'
 import { createHash } from 'crypto'
 import { promises as fs } from 'fs'
 import { basename, join } from 'path'
@@ -8,6 +8,7 @@ import {
   addSessionLocalInputListener,
   getActiveSessionForProject,
   getSessionRuntimeInfo,
+  getProjectDiagnosticSessions,
   requestAicliBtwForSession,
   requestAicliApprovalForSession,
   requestAicliClearForSession,
@@ -19,7 +20,7 @@ import {
   sendUserMessageToSession,
   switchAicliModeForSession
 } from '../cc/ptyManager.js'
-import { getActiveAccount, projectDir, rootDir, sanitizeAccountId } from '../store/paths.js'
+import { baseDir, getActiveAccount, projectDir, rootDir, sanitizeAccountId } from '../store/paths.js'
 import {
   readProjectMetaFile,
   writeProjectMetaFile,
@@ -81,6 +82,8 @@ import {
   type RemoteImSessionInfo
 } from './router.js'
 import { appendRemoteImRuntimeLog } from './runtimeLog.js'
+import { createRemoteDiagnosticsService } from './diagnostics.js'
+
 import { readLatestClaudeRemoteImReply } from './claudeTranscript.js'
 import { startRemoteImCliServer } from './imcliServer.js'
 import { addAicliStructuredOutputListener } from '../aicli/structuredOutputBridge.js'
@@ -132,6 +135,7 @@ import type {
   RemoteImStatus
 } from './types.js'
 
+const collectRemoteDiagnostics = createRemoteDiagnosticsService()
 const REMOTE_IM_META_KEY = 'remote_im_config'
 const DEFAULT_REMOTE_IM_PROFILE_ID = 'default'
 // Renderer delivery can spend up to 15s waiting for the current Tencent IM
@@ -3172,7 +3176,7 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
           sendRemoteImPeerLocalFile(projectId, localPath, toUserId, 'machine'),
         handleApprovalDecision: (input) =>
           getRemoteImApprovalCoordinator().handleDecision(input),
-        handleControlCommand: async ({ command, args, replyId, taskId }) => {
+        handleControlCommand: async ({ command, args, replyId, taskId, fromUserId }) => {
           const runtime = session ? getSessionRuntimeInfo(session.sessionId) : null
           const sourceKind = runtime ? getRemoteImAicliOutputSourceKind(runtime.command) : 'unknown'
           if (session) {
@@ -3240,6 +3244,27 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
                 ...(diffArgs ? { args: diffArgs } : {}),
                 outputDir: join(rootDir(), 'remote-im-diff-reports')
               }),
+            createDiagnosticsReport: async (requestId) => {
+              const accountRoot = rootDir()
+              const appDataRoot = baseDir()
+              const activeSessions = getProjectDiagnosticSessions(message.projectId)
+              let targetRepo = runtime?.targetRepo
+              if (!targetRepo) {
+                // Diagnostic collection must never invoke the normal reader's
+                // repair-and-rewrite path for damaged project settings.
+                try {
+                  const path = join(accountRoot, 'projects', message.projectId, 'project.json')
+                  if ((await fs.stat(path)).size <= 64 * 1024) {
+                    const meta = JSON.parse(await fs.readFile(path, 'utf8'))
+                    if (typeof meta.target_repo === 'string') targetRepo = meta.target_repo
+                  }
+                } catch { /* Partial report: project metadata is unavailable. */ }
+              }
+              return collectRemoteDiagnostics({
+                root: accountRoot, appDataRoot, targetRepo, projectId: message.projectId,
+                requesterUserId: fromUserId, appVersion: app.getVersion(), requestId, activeSessions
+              })
+            },
             args,
             ...(replyId ? { replyId } : {}),
             ...(taskId ? { taskId } : {})

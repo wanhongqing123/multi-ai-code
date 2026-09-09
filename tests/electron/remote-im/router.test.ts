@@ -59,6 +59,40 @@ function createMessageStore() {
 }
 
 describe('remote IM router', () => {
+  it('returns diagnostics only to the authorized human requester without an AI route', async () => {
+    for (const [fromUserId, origin, allowed] of [
+      ['phone_admin', 'human', true],
+      ['stranger', 'human', false],
+      ['phone_admin', 'machine', false]
+    ] as const) {
+      const store = createMessageStore()
+      let collected = 0
+      const files: string[] = []
+      const ai: string[] = []
+      const router = createRemoteImRouter({
+        getConfig: () => config,
+        resolveSession: () => null,
+        store,
+        sendUser: async (_session, text) => { ai.push(text); return { ok: true } },
+        sendImText: async () => ({ ok: true }),
+        sendImFile: async (_project, peer, path) => { files.push(`${peer}:${path}`); return { ok: true } },
+        handleControlCommand: async ({ command }) => {
+          expect(command).toBe('diagnostics')
+          collected++
+          return { ok: true, text: 'report', attachmentPath: '/generated/report.json' }
+        }
+      })
+      await router.handleIncomingText({
+        projectId: 'project-1', remoteMessageId: `${fromUserId}-${origin}`, fromUserId,
+        toUserId: 'desktop_bot', origin, createdAt: 100,
+        text: '/diagnostics 65de6748-3a4e-4d08-8ffd-bc78e1804ff9'
+      })
+      expect(collected).toBe(allowed ? 1 : 0)
+      expect(files).toEqual(allowed ? ['phone_admin:/generated/report.json'] : [])
+      expect(ai).toEqual([])
+    }
+  })
+
   it('consumes remote desktop protocol frames before machine collaboration routing', async () => {
     const store = createMessageStore()
     const sentToAicli: string[] = []

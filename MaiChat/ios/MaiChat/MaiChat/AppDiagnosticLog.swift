@@ -36,6 +36,7 @@ final class AppDiagnosticLog: DiagnosticLogSink {
     private let launchID = String(UUID().uuidString.prefix(8)).lowercased()
     private var sequence: UInt64 = 0
     private var pendingEntries: [DiagnosticLogEntry] = []
+    private var recentEntries: [DiagnosticLogEntry] = []
     private var writeTask: Task<Void, Never>?
     private var didRecordLaunch = false
     private var interactionTimings: [InteractionMetric: DiagnosticTimingAccumulator] = [:]
@@ -109,6 +110,8 @@ final class AppDiagnosticLog: DiagnosticLogSink {
             fields: context
         )
         emitToUnifiedLog(entry)
+        recentEntries.append(entry)
+        if recentEntries.count > 2048 { recentEntries.removeFirst(512) }
         pendingEntries.append(entry)
         scheduleWrite(immediately: level == .error)
     }
@@ -116,6 +119,14 @@ final class AppDiagnosticLog: DiagnosticLogSink {
     func makeExportSnapshot() async throws -> URL {
         await flush()
         return try await fileStore.makeExportSnapshot(in: exportDirectoryURL)
+    }
+
+    func remoteMetadata(peerUserID: String, since: Date) -> [RemoteDiagnosticsLogEntry] {
+        let peer = DiagnosticLogPrivacy.stableTag(peerUserID, prefix: "u")
+        return recentEntries.filter { entry in
+            guard let date = Self.timestampFormatter.date(from: entry.createdAt), date >= since else { return false }
+            return entry.fields["peer"] == peer || (entry.category == "app" && entry.event == "launch")
+        }.suffix(1000).map(RemoteDiagnosticsLogEntry.init)
     }
 
     func flush() async {

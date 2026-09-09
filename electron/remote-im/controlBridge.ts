@@ -53,6 +53,7 @@ export interface ExecuteRemoteImControlCommandInput {
     | { ok: true; text: string; attachmentPath?: string }
     | { ok: false; error: string; text: string }
   >
+  createDiagnosticsReport?: (requestId: string) => Promise<ExecuteRemoteImControlCommandResult>
   now?: () => number
   replyId?: string
   taskId?: string
@@ -463,6 +464,18 @@ async function lifecycleCommand(
 export async function executeRemoteImControlCommand(
   input: ExecuteRemoteImControlCommandInput
 ): Promise<ExecuteRemoteImControlCommandResult> {
+  if (input.command === 'diagnostics') {
+    const requestId = input.args?.trim() ?? ''
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(requestId)) {
+      return { ok: false, text: '排障编号无效，请从 MaiChat 的远程排障入口重新发起。' }
+    }
+    if (!input.createDiagnosticsReport) return { ok: false, text: '当前 MultiAICode 尚未接入远程排障，请升级后重试。' }
+    try {
+      return await input.createDiagnosticsReport(requestId)
+    } catch {
+      return { ok: false, text: `远程排障采集失败（编号 ${requestId}）：无法读取记录或保存报告。未执行 AI 命令、未修改会话。` }
+    }
+  }
   if (input.command === 'help') {
     return { ok: true, text: formatRemoteImControlCommandHelp() }
   }

@@ -43,6 +43,8 @@ private slots:
     void dropsUnknownFieldsInsteadOfPassingThemThrough();
     void keepsOnDiskBinaryMetadataWithItsCorrectTypes();
     void keepsOnlyTheTwoKnownCoverageValues();
+    void carriesBothMessageIdFormsIntoTheFinalReport();
+    void stillRejectsMessageIdTypesThatAreNotStringOrNumber();
 };
 
 // requestId 由我们生成、由我们校验，两边形状必须自洽。
@@ -115,8 +117,9 @@ void RemoteDiagnosticsProtocolTest::rejectsAnOversizedReport()
     QVERIFY(parsed.rejectionReason.contains(QStringLiteral("上限")));
 }
 
-// 大写字符串 ID（来自 send:created）与数字 messageId 是两个东西。
-// 混用或漏掉任一个，两端日志就对不上号——报告再全也接不起来。
+// 大写 ID（来自 send:created 的 SDK 标识）与 messageId 是两个不同的字段，
+// 不是同一个值的两种写法。混用或漏掉任一个，两端日志就对不上号。
+// 这条用的是 messageId 的数字形态；字符串形态另有专门用例。
 void RemoteDiagnosticsProtocolTest::keepsWhitelistedIdentifiersIncludingTheUppercaseSdkId()
 {
     const QString id = newRequestId();
@@ -247,6 +250,89 @@ void RemoteDiagnosticsProtocolTest::keepsOnlyTheTwoKnownCoverageValues()
                  .toObject()
                  .contains(QStringLiteral("aicliOriginalEvents")));
     QVERIFY(parsed.droppedFields.contains(QStringLiteral("sourceCoverage.aicliOriginalEvents")));
+}
+
+// messageId 合法地有两种类型，两种都不能丢：
+//
+//   codex-original-events 的 messageId = "call-async..."  调用标识（字符串）
+//   runtime 事件顶层 messageId          = 1637             本地入库编号（数字）
+//
+// 只收数字会把字符串那种静默丢掉，而那正是两端日志对得上号的关键——
+// 报告看着是全的，但 A 侧根本认不出对应的是哪一次调用。
+void RemoteDiagnosticsProtocolTest::carriesBothMessageIdFormsIntoTheFinalReport()
+{
+    const QString id = newRequestId();
+    QJsonObject body = minimalReport(id);
+
+    QJsonObject codexEvent{
+        {QStringLiteral("messageId"), QStringLiteral("call-async-question")},
+        {QStringLiteral("phase"), QStringLiteral("final_answer")},
+        {QStringLiteral("delivery"), QStringLiteral("async")}};
+    QJsonObject runtimeEvent{
+        {QStringLiteral("messageId"), 1637},
+        {QStringLiteral("ID"), QStringLiteral("144115-SDK-ID")},
+        {QStringLiteral("detail"),
+         QJsonObject{{QStringLiteral("messageId"), QStringLiteral("msg_abc123")}}}};
+
+    body.insert(
+        QStringLiteral("files"),
+        QJsonArray{
+            QJsonObject{{QStringLiteral("source"), QStringLiteral("codex-original-events")},
+                        {QStringLiteral("events"), QJsonArray{codexEvent}}},
+            QJsonObject{{QStringLiteral("source"), QStringLiteral("runtime")},
+                        {QStringLiteral("events"), QJsonArray{runtimeEvent}}}});
+
+    const ParsedReport parsed =
+        parseReport(reportBytes(body), attachmentFileName(id), id, kPeer, kPeer);
+    QVERIFY(parsed.accepted);
+
+    const QJsonArray files = parsed.report.value(QStringLiteral("files")).toArray();
+    const QJsonObject codexKept =
+        files.at(0).toObject().value(QStringLiteral("events")).toArray().at(0).toObject();
+    const QJsonObject runtimeKept =
+        files.at(1).toObject().value(QStringLiteral("events")).toArray().at(0).toObject();
+
+    QCOMPARE(codexKept.value(QStringLiteral("messageId")).toString(),
+             QStringLiteral("call-async-question"));
+    QCOMPARE(runtimeKept.value(QStringLiteral("messageId")).toInt(), 1637);
+    QCOMPARE(runtimeKept.value(QStringLiteral("ID")).toString(),
+             QStringLiteral("144115-SDK-ID"));
+    QCOMPARE(runtimeKept.value(QStringLiteral("detail"))
+                 .toObject()
+                 .value(QStringLiteral("messageId"))
+                 .toString(),
+             QStringLiteral("msg_abc123"));
+
+    // 两种形态都要真的出现在最终报告的序列化结果里，不是只在中间对象里。
+    const QByteArray serialized = QJsonDocument(parsed.report).toJson(QJsonDocument::Compact);
+    QVERIFY(serialized.contains("call-async-question"));
+    QVERIFY(serialized.contains("1637"));
+    QVERIFY(serialized.contains("msg_abc123"));
+}
+
+// 放宽到 string|number 不等于放弃校验：其它形态仍然不是这个字段的合法取值。
+void RemoteDiagnosticsProtocolTest::stillRejectsMessageIdTypesThatAreNotStringOrNumber()
+{
+    const QString id = newRequestId();
+    for (const QJsonValue& bad :
+         {QJsonValue(true), QJsonValue(QJsonObject{{QStringLiteral("a"), 1}}),
+          QJsonValue(QJsonArray{1, 2})}) {
+        QJsonObject body = minimalReport(id);
+        body.insert(QStringLiteral("files"),
+                    QJsonArray{QJsonObject{
+                        {QStringLiteral("source"), QStringLiteral("runtime")},
+                        {QStringLiteral("events"),
+                         QJsonArray{QJsonObject{{QStringLiteral("messageId"), bad},
+                                                {QStringLiteral("ID"), QStringLiteral("KEEP")}}}}}});
+        const ParsedReport parsed =
+            parseReport(reportBytes(body), attachmentFileName(id), id, kPeer, kPeer);
+        QVERIFY(parsed.accepted);
+        const QJsonObject kept = parsed.report.value(QStringLiteral("files"))
+                                     .toArray().at(0).toObject()
+                                     .value(QStringLiteral("events")).toArray().at(0).toObject();
+        QVERIFY(!kept.contains(QStringLiteral("messageId")));
+        QCOMPARE(kept.value(QStringLiteral("ID")).toString(), QStringLiteral("KEEP"));
+    }
 }
 
 QTEST_MAIN(RemoteDiagnosticsProtocolTest)

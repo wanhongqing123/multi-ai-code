@@ -45,9 +45,9 @@ const QStringList& fileStringFields()
 
 // events / detail 里允许的**字符串** ID 类字段。
 //
-// 注意 ID 与 messageId 是两个东西：ID 是 SDK 的大写字符串 ID（来自
-// send:created），messageId 是本地入库的数字编号。混用会让两端日志
-// 对不上号——报告再全也接不起来，所以两者分表放，类型也分开校验。
+// 注意 ID 与 messageId 是两个不同字段，不是同一个值的两种写法：
+// ID 是 send:created 里的 SDK 大写字符串标识；messageId 见下，
+// 合法地有数字与字符串两种形态。混用会让两端日志对不上号。
 const QStringList& eventStringFields()
 {
     static const QStringList fields{
@@ -68,11 +68,24 @@ const QStringList& eventStringFields()
 const QStringList& eventNumberFields()
 {
     static const QStringList fields{
-        QStringLiteral("messageId"),
         QStringLiteral("attempt"),
         QStringLiteral("code"),
         QStringLiteral("errorCode"),
         QStringLiteral("at")};
+    return fields;
+}
+
+// messageId 合法地有两种类型，不能只收一种：
+//
+//   事件顶层 messageId = 1637              本地入库的数字编号
+//   detail.messageId   = "msg_..."         原生消息标识
+//   codex-original-events 的 messageId     = "call-async..." 调用标识
+//
+// 只收数字会把后两种静默丢掉，而那正是两端日志对得上号的关键。
+// 布尔/对象/数组仍然拒绝——那些不是这个字段的合法形态。
+const QStringList& eventStringOrNumberFields()
+{
+    static const QStringList fields{QStringLiteral("messageId")};
     return fields;
 }
 
@@ -126,7 +139,12 @@ QJsonObject pickWhitelisted(const QJsonObject& source,
         const bool wantString = stringFields.contains(key);
         const bool wantNumber = numberFields.contains(key);
         const bool wantBool = boolFields.contains(key);
-        if (wantString && value.isString()) {
+        const bool wantEither = eventStringOrNumberFields().contains(key);
+        if (wantEither && value.isString()) {
+            out.insert(key, value.toString());
+        } else if (wantEither && value.isDouble()) {
+            out.insert(key, value.toDouble());
+        } else if (wantString && value.isString()) {
             out.insert(key, value.toString());
         } else if (wantNumber && value.isDouble()) {
             out.insert(key, value.toDouble());

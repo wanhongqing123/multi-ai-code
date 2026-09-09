@@ -1,3 +1,4 @@
+#include "diagnostics/PerformanceLog.h"
 #include "ui/MessageImageLoader.h"
 
 #include <QDebug>
@@ -18,7 +19,7 @@ constexpr qint64 kSlowDecodeMs = 50;      // 只有超过这个值才记一条�
 class DecodeTask : public QRunnable {
 public:
     DecodeTask(MessageImageLoader* owner, QString path, QSize target, QString key)
-        : owner_(owner), path_(std::move(path)), target_(target), key_(std::move(key)) {
+        : owner_(owner), path_(std::move(path)), target_(target), key_(std::move(key)), context_(RemoteDiagnostics::PerformanceLog::shared().context()) {
         setAutoDelete(true);
     }
 
@@ -39,7 +40,7 @@ public:
         if (!owner_) return;
         QMetaObject::invokeMethod(owner_, "deliver", Qt::QueuedConnection,
                                   Q_ARG(QString, key_), Q_ARG(QImage, image),
-                                  Q_ARG(qint64, elapsed));
+                                  Q_ARG(qint64, elapsed), Q_ARG(QString, context_));
     }
 
 private:
@@ -47,6 +48,7 @@ private:
     QString path_;
     QSize target_;
     QString key_;
+    QString context_;
 };
 
 }  // namespace
@@ -111,7 +113,9 @@ void MessageImageLoader::load(const QString& path, const QSize& targetPixels, QW
     pool_.start(new DecodeTask(this, path, targetPixels, key));
 }
 
-void MessageImageLoader::deliver(const QString& key, const QImage& image, qint64 elapsedMs) {
+void MessageImageLoader::deliver(const QString& key, const QImage& image, qint64 elapsedMs, const QString& context) {
+    if (context == RemoteDiagnostics::PerformanceLog::shared().context())
+        RemoteDiagnostics::PerformanceLog::shared().record("image-decode", elapsedMs);
     const QVector<Pending> targets = waiting_.take(key);
     if (image.isNull()) {
         qWarning().noquote()

@@ -23,6 +23,8 @@
       "messageId": 1637,
       "detail": {
         "ID": "sdk-id",
+        "duration_ms": 12.5, "samples": 3, "max_ms": 16.5,
+        "stage": "history_inserted", "visibleLength": 109, "cellCount": 4, "replacedCells": 0, "hasStream": false, "replay": false,
         "messageId": "call-async",
         "callId": "call-async",
         "phase": "final_answer",
@@ -42,5 +44,5 @@
     "hostPid": 122,
     "autoReplyToIm": true
   }],
-  "sourceCoverage": {"aicliOriginalEvents": "unavailable"}
+  "sourceCoverage": {"uiPerformance": "unavailable", "aicliOriginalEvents": "unavailable"}
 }

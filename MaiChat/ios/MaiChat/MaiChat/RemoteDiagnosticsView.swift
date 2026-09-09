@@ -31,7 +31,7 @@ struct RemoteDiagnosticsView: View {
                         }
                     }
                     .disabled(coordinator.isRunning)
-                    Text("确认后将自动合并并发送给所选好友。报告不含聊天正文、登录凭据或环境变量；远端未响应或记录缺失时会明确标注。采集请求会作为一条消息留在当前聊天。")
+                    Text("确认后将自动合并并发送给所选好友。报告包含消息收发、输入处理、界面响应和存储性能记录，不含聊天正文、登录凭据或环境变量；远端未响应或记录缺失时会明确标注。采集请求会作为一条消息留在当前聊天。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section {

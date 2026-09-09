@@ -40,8 +40,13 @@ public struct RemoteDiagnosticsLogEntry: Codable, Sendable {
     public init(_ entry: DiagnosticLogEntry) {
         createdAt = entry.createdAt
         event = entry.event
-        let allowed: Set<String> = ["peer", "message", "launch", "kind", "result", "code", "duration_ms", "operation", "cached_messages", "near_bottom", "scroll_action", "app_version", "build", "ios", "pid"]
+        let allowed: Set<String> = ["peer", "message", "launch", "kind", "result", "code", "duration_ms", "operation", "cached_messages", "near_bottom", "scroll_action", "app_version", "build", "ios", "pid", "scope"]
+        let numeric: Set<String> = ["samples", "slow_samples", "slow_threshold_ms", "max_ms", "average_ms", "late_ms", "sample_interval_ms", "mutation_count", "upserted_count", "removed_count", "message_count", "limit", "dropped_entries", "export_truncated", "retained_entries", "capacity"]
         fields = entry.fields.filter { key, value in
+            if numeric.contains(key) {
+                guard value.count <= 30, let number = Double(value), number.isFinite, number >= 0 else { return false }
+                return true
+            }
             if key == "requestId" {
                 return UUID(uuidString: value)?.uuidString.lowercased() == value
             }
@@ -54,6 +59,7 @@ public struct RemoteDiagnosticsLogEntry: Codable, Sendable {
 public struct RemoteDiagnosticsLocalEvidence: Codable, Sendable {
     public let appVersion: String
     public let platform: String
+    public let osVersion: String
     public let ownerUserID: String
     public let peerUserID: String
     public let collectedAt: Double
@@ -65,12 +71,14 @@ public struct RemoteDiagnosticsLocalEvidence: Codable, Sendable {
     public let excludedMessageCount: Int
     public let logs: [RemoteDiagnosticsLogEntry]
     public let logCoverage: String
+    public let performanceCoverage: [String: String]
 
     public init(appVersion: String, ownerUserID: String, peerUserID: String,
                 collectedAt: Date, messages: [RemoteIMMessage], displayedConversation: Bool,
                 logs: [RemoteDiagnosticsLogEntry] = []) {
         self.appVersion = appVersion
         platform = "iOS"
+        osVersion = ProcessInfo.processInfo.operatingSystemVersionString
         self.ownerUserID = ownerUserID
         self.peerUserID = peerUserID
         self.collectedAt = collectedAt.timeIntervalSince1970 * 1000
@@ -86,11 +94,27 @@ public struct RemoteDiagnosticsLocalEvidence: Codable, Sendable {
         timeZone = TimeZone.current.identifier
         processId = ProcessInfo.processInfo.processIdentifier
         self.logs = logs
+        let performance = logs.filter { RemoteDiagnosticsProtocol.performanceEvents.contains($0.event) }
+        performanceCoverage = [
+            "status": performance.isEmpty ? "no-retained-samples" : "sampled",
+            "scope": "account-process", "eventCount": String(performance.count),
+            "firstEventAt": performance.first?.createdAt ?? "unavailable",
+            "lastEventAt": performance.last?.createdAt ?? "unavailable",
+            "mainRunloopIntervalMs": "250", "mainRunloopLogThrottleMs": "2000",
+            "dropCounterScope": "since-last-account-activation", "mainRunloopDelayThresholdMs": "150",
+            "operationSlowThresholdMs": "16", "stackTraces": "unavailable",
+            "retention": "in-memory-current-launch-bounded-2048-entries-export-last-1000",
+            "droppedEntries": logs.last(where: { $0.event == "diagnostic-log-coverage" })?.fields["dropped_entries"] ?? "unknown",
+            "exportTruncated": logs.last(where: { $0.event == "diagnostic-log-coverage" })?.fields["export_truncated"] ?? "unknown",
+            "interpretation": "App-wide timings are not proof this conversation caused a stall; absent events are not zero latency."
+        ]
         logCoverage = "当前账号本次启动以来保留的近期元数据；保留近期本地观察到的消息，不用服务端时钟排除这些消息。较早条目可能受容量上限影响。row-presented 只证明视图挂载，不证明屏幕像素已绘制。"
     }
 }
 
 public enum RemoteDiagnosticsProtocol {
+    public static let performanceEvents: Set<String> = ["composer-edit", "composer-text-mutation", "composer-update", "composer-layout", "composer-height-queue", "asr-main-actor-wait", "main-runloop-delay"]
+    public static let historyEvents: Set<String> = ["history-save-slow", "history-save-failed", "history-load-failed", "history-load-completed"]
     public static let maximumBytes = 2 * 1024 * 1024
 
     public static func accountTag(sdkAppID: Int, ownerUserID: String) -> String {
@@ -98,7 +122,7 @@ public enum RemoteDiagnosticsProtocol {
     }
 
     public static func scopedLogs(_ entries: [DiagnosticLogEntry], accountTag: String,
-                                  peerUserID: String, since: Date) -> [RemoteDiagnosticsLogEntry] {
+                                  peerUserID: String, since: Date, limit: Int = 1000) -> [RemoteDiagnosticsLogEntry] {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let peer = DiagnosticLogPrivacy.stableTag(peerUserID, prefix: "u")
@@ -106,8 +130,10 @@ public enum RemoteDiagnosticsProtocol {
         return entries.filter { entry in
             guard !accountTag.isEmpty, entry.fields["account"] == accountTag,
                   let date = formatter.date(from: entry.createdAt), date >= since else { return false }
-            return entry.fields["peer"] == peer || connectionEvents.contains(entry.event)
-        }.suffix(1000).map(RemoteDiagnosticsLogEntry.init)
+            return entry.fields["peer"] == peer || connectionEvents.contains(entry.event) ||
+                (entry.category == "interaction-performance" && performanceEvents.contains(entry.event) && entry.fields["scope"] == "account-process") ||
+                (entry.fields["peer"] == nil && historyEvents.contains(entry.event))
+        }.suffix(max(0, min(limit, 2048))).map(RemoteDiagnosticsLogEntry.init)
     }
 
     public static func requestText(id: UUID) -> String {
@@ -186,6 +212,11 @@ public enum RemoteDiagnosticsProtocol {
            ["see-codex-original-events", "unavailable"].contains(original) {
             result["sourceCoverage"] = ["aicliOriginalEvents": original]
         }
+        if let coverage = raw["sourceCoverage"] as? [String: Any], coverage["uiPerformance"] as? String == "unavailable" {
+            var clean = result["sourceCoverage"] as? [String: Any] ?? [:]
+            clean["uiPerformance"] = "unavailable"
+            result["sourceCoverage"] = clean
+        }
         return try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys])
     }
 
@@ -205,13 +236,13 @@ public enum RemoteDiagnosticsProtocol {
     private static func metadata(_ value: Any, depth: Int = 0) -> [String: Any] {
         guard depth <= 3, let raw = value as? [String: Any] else { return [:] }
         var result: [String: Any] = [:]
-        for key in ["id", "ID", "remoteMessageId", "callId", "sessionId", "taskId", "replyId", "messageId", "partId", "threadId", "turnId", "eventTaskId", "eventReplyId", "sourceCommit", "onDiskBinarySha256", "onDiskBinaryStatus", "event", "kind", "type", "phase", "delivery", "sourceKind", "cli", "status", "terminalKind", "hostStopReason", "stopReasonRequested", "spawnErrorCode", "signal", "exitCodeHex", "appVersion"] {
+        for key in ["id", "ID", "remoteMessageId", "callId", "sessionId", "taskId", "replyId", "messageId", "partId", "threadId", "turnId", "eventTaskId", "eventReplyId", "sourceCommit", "onDiskBinarySha256", "onDiskBinaryStatus", "stage", "event", "kind", "type", "phase", "delivery", "sourceKind", "cli", "status", "terminalKind", "hostStopReason", "stopReasonRequested", "spawnErrorCode", "signal", "exitCodeHex", "appVersion"] {
             if let value = safeString(raw[key]) { result[key] = value }
         }
-        for key in ["createdAt", "startedAt", "pid", "hostPid", "lifetimeMs", "lastInputAt", "lastOutputAt", "lastEtxAt", "stopRequestedAt", "exitCode", "textLength", "inputLength", "resolvedLength", "forwardedChunks", "code", "errorCode", "messageId", "attempt", "onDiskBinaryBytes"] {
+        for key in ["createdAt", "startedAt", "pid", "hostPid", "lifetimeMs", "lastInputAt", "lastOutputAt", "lastEtxAt", "stopRequestedAt", "exitCode", "textLength", "inputLength", "resolvedLength", "forwardedChunks", "code", "errorCode", "messageId", "attempt", "onDiskBinaryBytes", "duration_ms", "samples", "slow_samples", "slow_threshold_ms", "max_ms", "average_ms", "late_ms", "sample_interval_ms", "visibleLength", "cellCount", "replacedCells"] {
             if let value = finiteNumber(raw[key]) { result[key] = value }
         }
-        for key in ["ok", "sourceStarted", "autoReplyToIm", "sdkReady", "isReady", "accepted"] {
+        for key in ["ok", "sourceStarted", "autoReplyToIm", "sdkReady", "isReady", "accepted", "hasStream", "replay"] {
             if let value = raw[key] as? Bool { result[key] = value }
         }
         if let detail = raw["detail"] { result["detail"] = metadata(detail, depth: depth + 1) }
@@ -233,7 +264,7 @@ public enum RemoteDiagnosticsProtocol {
         let text = """
         # MaiChat 跨端远程排障报告
 
-        请协助排查这段聊天近期的消息收发或展示异常；以下是自动收集的现场，未预判根因。
+        请协助排查这段聊天近期的消息收发、键盘输入、界面响应或展示异常；以下是自动收集的现场，未预判根因。
 
         排障编号：\(requestID.uuidString.lowercased())
 

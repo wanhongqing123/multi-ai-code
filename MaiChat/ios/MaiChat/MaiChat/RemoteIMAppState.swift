@@ -170,6 +170,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                 await self?.receive(event)
             }
         }
+        AppDiagnosticLog.shared.setPerformanceAccount(remoteDiagnosticsAccountTag)
         self.client.onPresenceStatusChanged = { [weak self] updates in
             Task { @MainActor in
                 self?.applyPresenceStatusUpdates(updates)
@@ -690,6 +691,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         objectWillChange.send()
 
         do {
+            let historyReadStart = ProcessInfo.processInfo.systemUptime
             let page = try await historyPersistence.loadConversationPage(
                 sdkAppID: account.sdkAppID,
                 ownerUserID: account.ownerUserID,
@@ -704,6 +706,11 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                 loadGeneration: loadGeneration
             )
             else { return }
+            logIM(level: .info, event: "history-load-completed", fields: [
+                "peer": DiagnosticLogPrivacy.stableTag(cleanUserID, prefix: "u"),
+                "duration_ms": elapsedMilliseconds(since: historyReadStart),
+                "message_count": String(page.messages.count), "operation": "page-await"
+            ])
             chatState.mergeMessages(page.messages)
             conversationHistoryStateByUserID[cleanUserID] = ConversationHistoryState(
                 hasLoadedInitialPage: true,
@@ -749,6 +756,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         objectWillChange.send()
 
         do {
+            let historyReadStart = ProcessInfo.processInfo.systemUptime
             let page = try await historyPersistence.loadConversationPage(
                 sdkAppID: account.sdkAppID,
                 ownerUserID: account.ownerUserID,
@@ -763,6 +771,11 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                 loadGeneration: loadGeneration
             )
             else { return }
+            logIM(level: .info, event: "history-load-completed", fields: [
+                "peer": DiagnosticLogPrivacy.stableTag(cleanUserID, prefix: "u"),
+                "duration_ms": elapsedMilliseconds(since: historyReadStart),
+                "message_count": String(page.messages.count), "operation": "page-await"
+            ])
             chatState.mergeMessages(page.messages)
             state.isLoading = false
             state.hasEarlierMessages = page.hasEarlierMessages
@@ -1696,6 +1709,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             selectedPeerID: chatState.selectedPeerID
         )
         chatState = nextState
+        AppDiagnosticLog.shared.setPerformanceAccount(remoteDiagnosticsAccountTag)
         Task {
             await refreshPresenceForCurrentContacts()
         }
@@ -1833,7 +1847,9 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             }
 
             if let result = saveResult {
-                if result.durationMilliseconds >= 50 {
+                if result.durationMilliseconds >= 50, mutations.allSatisfy({
+                    $0.account.sdkAppID == chatHistorySDKAppID && $0.account.ownerUserID == chatState.ownerUserID
+                }) {
                     logIM(
                         level: .warning,
                         event: "history-save-slow",

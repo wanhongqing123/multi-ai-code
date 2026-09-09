@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 # C 用于 third_party/md4c（Markdown 解析，纯 C 实现）。
-project(MaiChatDesktop VERSION 0.1.78 LANGUAGES C CXX)
+project(MaiChatDesktop VERSION 0.1.79 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -72,6 +72,8 @@ add_library(remote_im_core
   src/model/MessageSearch.h
   src/model/MessageSearch.cpp
   src/model/PinyinInitials.cpp
+  src/diagnostics/PerformanceLog.h
+  src/diagnostics/PerformanceLog.cpp
   src/diagnostics/RemoteDiagnosticsEvidence.h
   src/diagnostics/RemoteDiagnosticsEvidence.cpp
   src/diagnostics/RemoteDiagnosticsProtocol.h
@@ -419,7 +421,10 @@ target_link_libraries(message_search_test PRIVATE remote_im_core Qt5::Widgets Qt
 add_executable(ui_zoom_test tests/UiZoomTest.cpp)
 target_link_libraries(ui_zoom_test PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets Qt5::Test)
 
+add_executable(performance_log_test tests/PerformanceLogTest.cpp)
+target_link_libraries(performance_log_test PRIVATE remote_im_core Qt5::Test)
 enable_testing()
+add_test(NAME performance_log_test COMMAND performance_log_test)
 add_test(NAME remote_diagnostics_controller_test COMMAND remote_diagnostics_controller_test)
 add_test(NAME attachment_download_evidence_test COMMAND attachment_download_evidence_test)
 add_test(NAME remote_diagnostics_ui_test COMMAND remote_diagnostics_ui_test)

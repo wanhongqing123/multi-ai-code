@@ -3,12 +3,16 @@ import { promises as fs, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSy
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { createHash } from 'crypto'
-import { createRemoteDiagnosticsReport, createRemoteDiagnosticsService } from '../../../electron/remote-im/diagnostics.js'
+import { createRemoteDiagnosticsReport, createRemoteDiagnosticsService, diagnosticMetadata } from '../../../electron/remote-im/diagnostics.js'
 import { executeRemoteImControlCommand } from '../../../electron/remote-im/controlBridge.js'
 
 const requestId = '65de6748-3a4e-4d08-8ffd-bc78e1804ff9'
 const now = 1_800_000_000_000
 describe('remote diagnostics collection', () => {
+  it('retains finite numeric performance fields without free-form content', () => {
+    expect(diagnosticMetadata({ samples: 3, max_ms: 18.5, average_ms: Infinity, late_ms: 'secret', draft: 'secret' }))
+      .toEqual({ samples: 3, max_ms: 18.5 })
+  })
   let root: string
   beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'remote-diagnostics-')) })
   afterEach(() => { vi.restoreAllMocks(); rmSync(root, { recursive: true, force: true }) })

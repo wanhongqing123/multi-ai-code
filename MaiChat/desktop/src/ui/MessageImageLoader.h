@@ -48,7 +48,7 @@ public:
     static QString cacheKey(const QString& path, const QSize& targetPixels);
 
 private slots:
-    void deliver(const QString& key, const QImage& image, qint64 elapsedMs);
+    void deliver(const QString& key, const QImage& image, qint64 elapsedMs, const QString& context);
 
 private:
     explicit MessageImageLoader(QObject* parent = nullptr);

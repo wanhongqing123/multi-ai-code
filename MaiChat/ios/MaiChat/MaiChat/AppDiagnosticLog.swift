@@ -39,6 +39,8 @@ final class AppDiagnosticLog: DiagnosticLogSink {
     private var recentEntries: [DiagnosticLogEntry] = []
     private var writeTask: Task<Void, Never>?
     private var didRecordLaunch = false
+    private var performanceAccountTag = ""
+    private var droppedAccountEntries = 0
     private var interactionTimings: [InteractionMetric: DiagnosticTimingAccumulator] = [:]
     private var performanceTimer: Timer?
     private var performanceObservers: [NSObjectProtocol] = []
@@ -111,7 +113,10 @@ final class AppDiagnosticLog: DiagnosticLogSink {
         )
         emitToUnifiedLog(entry)
         recentEntries.append(entry)
-        if recentEntries.count > 2048 { recentEntries.removeFirst(512) }
+        if recentEntries.count > 2048 {
+            droppedAccountEntries += recentEntries.prefix(512).filter { $0.fields["account"] == performanceAccountTag }.count
+            recentEntries.removeFirst(512)
+        }
         pendingEntries.append(entry)
         scheduleWrite(immediately: level == .error)
     }
@@ -122,7 +127,16 @@ final class AppDiagnosticLog: DiagnosticLogSink {
     }
 
     func remoteMetadata(peerUserID: String, accountTag: String, since: Date) -> [RemoteDiagnosticsLogEntry] {
-        RemoteDiagnosticsProtocol.scopedLogs(recentEntries, accountTag: accountTag, peerUserID: peerUserID, since: since)
+        flushInteractionTimings()
+        let retained = RemoteDiagnosticsProtocol.scopedLogs(recentEntries, accountTag: accountTag, peerUserID: peerUserID, since: since, limit: 2048)
+        var result = Array(retained.suffix(1000))
+        result.append(RemoteDiagnosticsLogEntry(DiagnosticLogEntry(sequence: sequence,
+            createdAt: Self.timestampFormatter.string(from: Date()), level: .info, category: "diagnostics",
+            event: "diagnostic-log-coverage", fields: [
+                "dropped_entries": String(droppedAccountEntries), "export_truncated": retained.count > 1000 ? "1" : "0",
+                "retained_entries": String(retained.count), "capacity": "2048"
+            ])))
+        return result
     }
 
     func flush() async {
@@ -147,11 +161,21 @@ final class AppDiagnosticLog: DiagnosticLogSink {
         }
     }
 
+    func setPerformanceAccount(_ accountTag: String) {
+        guard accountTag != performanceAccountTag else { return }
+        flushInteractionTimings()
+        interactionTimings.removeAll()
+        performanceAccountTag = accountTag
+        droppedAccountEntries = 0
+        lastHeartbeatUptime = nil
+    }
+
     func recordDuration(
         _ metric: InteractionMetric,
         since start: TimeInterval,
         until end: TimeInterval = ProcessInfo.processInfo.systemUptime
     ) {
+        guard !performanceAccountTag.isEmpty else { return }
         interactionTimings[metric, default: DiagnosticTimingAccumulator()]
             .record(seconds: end - start)
     }
@@ -208,6 +232,7 @@ final class AppDiagnosticLog: DiagnosticLogSink {
                 lastDelayLogUptime = now
                 record(level: .warning, category: "interaction-performance",
                        event: "main-runloop-delay", fields: [
+                        "account": performanceAccountTag, "scope": "account-process",
                         "late_ms": String(Int(lateMilliseconds.rounded())),
                         "sample_interval_ms": "250",
                        ])
@@ -225,6 +250,7 @@ final class AppDiagnosticLog: DiagnosticLogSink {
             guard let snapshot = interactionTimings[metric]?.takeSnapshot() else { continue }
             record(level: .info, category: "interaction-performance",
                    event: metric.rawValue, fields: [
+                    "account": performanceAccountTag, "scope": "account-process",
                     "samples": String(snapshot.sampleCount),
                     "slow_samples": String(snapshot.slowSampleCount),
                     "slow_threshold_ms": "16",

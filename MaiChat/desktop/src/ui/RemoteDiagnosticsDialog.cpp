@@ -56,7 +56,7 @@ void RemoteDiagnosticsDialog::buildUi(const QString& faultyPeerName,
     // 逐条写明范围。含糊的「诊断信息」等于没说，用户没法判断该不该发。
     contents->setText(QStringLiteral(
         "报告只包含设备与会话的元数据：应用版本、系统平台、消息编号与收发状态、"
-        "附件下载各阶段的结果。\n"
+        "附件下载结果、输入与界面响应、存储耗时和性能采样覆盖范围。\n"
         "不包含聊天正文、账号密码或登录凭据，也不包含文件路径与下载地址。"));
     layout->addWidget(contents);
 
@@ -117,7 +117,7 @@ void RemoteDiagnosticsDialog::refreshConfirmState() {
     QListWidgetItem* item = recipientList_->currentItem();
     const bool usable = item && !item->isHidden();
     confirmButton_->setEnabled(usable);
-    // 确认前把收件人**再说一遍**：这是发给第三个人的动作，
+    // 确认前把收件人**再说一遍**：接收人可以是当前好友或第三人，
     // 选错人的代价是把设备信息发给了不该看的人。
     summaryLabel_->setText(
         usable ? QStringLiteral("确认后将发送给：%1").arg(item->text())

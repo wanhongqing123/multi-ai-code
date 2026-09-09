@@ -19,12 +19,12 @@
 
 class RemoteDiagnosticsUiTest : public QObject {
     Q_OBJECT
-    void throughRealMenu(bool confirm, bool switchAccount = false) {
+    void throughRealMenu(bool confirm, bool switchAccount = false, bool toPeer = false, bool onlyPeer = false) {
         auto client = std::make_unique<FakeRemoteIMClient>(); auto* fake = client.get();
         RemoteIMApplication app("phone", std::move(client));
         app.addContact("machine", "Faulty computer");
-        app.addContact("helper", "Same display name");
-        app.addContact("other", "Same display name");
+        if (!onlyPeer) { app.addContact("helper", "Same display name"); app.addContact("other", "Same display name"); }
+        const QString recipient = toPeer ? "machine" : "helper";
         app.connectToService(123, "test-only-signature"); app.selectPeer("machine");
         MainWindow window(app); window.resize(1100, 800); window.show();
         QTest::qWait(50);
@@ -55,21 +55,21 @@ class RemoteDiagnosticsUiTest : public QObject {
                 auto* submit = dialog->findChild<QPushButton*>("diagnosticsConfirm");
                 auto* cancel = dialog->findChild<QPushButton*>("diagnosticsCancel");
                 QVERIFY(recipients); QVERIFY(submit); QVERIFY(cancel);
-                QVERIFY(!submit->isEnabled()); QCOMPARE(recipients->count(), 2);
+                QVERIFY(!submit->isEnabled()); QCOMPARE(recipients->count(), onlyPeer ? 1 : 3);
                 int selected = -1;
                 for (int i = 0; i < recipients->count(); ++i) {
-                    QVERIFY(!recipients->item(i)->text().contains("machine"));
-                    if (recipients->item(i)->text().contains("(helper)")) selected = i;
+
+                    if (recipients->item(i)->text().contains("(" + recipient + ")")) selected = i;
                 }
                 QVERIFY(selected >= 0);
                 QTest::mouseClick(recipients->viewport(), Qt::LeftButton, Qt::NoModifier,
                     recipients->visualItemRect(recipients->item(selected)).center());
-                QVERIFY(submit->isEnabled()); QCOMPARE(dialog->selectedRecipientId(), QString("helper"));
-                QVERIFY(dialog->findChild<QLabel*>("diagnosticsSummary")->text().contains("helper"));
+                QVERIFY(submit->isEnabled()); QCOMPARE(dialog->selectedRecipientId(), recipient);
+                QVERIFY(dialog->findChild<QLabel*>("diagnosticsSummary")->text().contains(recipient));
                 const auto screenshot = qEnvironmentVariable("MAICHAT_DIAGNOSTICS_UI_SCREENSHOT");
                 if (confirm && !screenshot.isEmpty()) QVERIFY(dialog->grab().save(screenshot + "-confirm.png"));
                 // Even an external chat switch while confirming cannot change B.
-                app.selectPeer("other");
+                if (!onlyPeer) app.selectPeer("other");
                 if (switchAccount) app.connectToService(124, "another-test-signature");
                 QTest::mouseClick(confirm ? submit : cancel, Qt::LeftButton);
                 return;
@@ -110,10 +110,10 @@ class RemoteDiagnosticsUiTest : public QObject {
         // unused incomingFile signal. Real network I/O is covered separately.
         emit fake->liveMessagesReceived({message});
         QTRY_VERIFY_WITH_TIMEOUT(!controller->isRunning(), 1500);
-        QCOMPARE(fake->lastFilePeerId(), QString("helper"));
-        QVERIFY(status->isVisible()); QVERIFY(status->text().contains("helper"));
+        QCOMPARE(fake->lastFilePeerId(), recipient);
+        QVERIFY(status->isVisible()); QVERIFY(status->text().contains(recipient));
         QVERIFY(dot->text().isEmpty());
-        QCOMPARE(app.chatState().selectedPeerId(), QString("other"));
+        QCOMPARE(app.chatState().selectedPeerId(), onlyPeer ? QString("machine") : QString("other"));
         QFile report(fake->lastFilePath()); QVERIFY(report.open(QIODevice::ReadOnly));
         QVERIFY(report.readAll().contains(controller->requestId().toUtf8())); report.close();
         QFile::remove(fake->lastFilePath());
@@ -128,6 +128,8 @@ private slots:
     void cancelFromTheRealMoreMenuDoesNotSend() { throughRealMenu(false); }
     void confirmFromTheRealMoreMenuSendsToTheLockedRecipientAndShowsStatus() { throughRealMenu(true); }
     void accountChangeDuringConfirmationDoesNotSend() { throughRealMenu(true, true); }
+    void sendsMergedReportToTheCurrentPeer() { throughRealMenu(true, false, true); }
+    void onlyFriendCanReceiveTheReport() { throughRealMenu(true, false, true, true); }
     void filteringOutTheSelectionDisablesConfirmation() {
         RemoteDiagnosticsDialog dialog("machine", {{"helper", "Same name", {}, {}}, {"other", "Same name", {}, {}}});
         dialog.show();

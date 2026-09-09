@@ -385,4 +385,70 @@ final class RemoteDiagnosticsTests: XCTestCase {
         XCTAssertEqual(evidence.messages.map(\.remoteID), ["sdk-future-message"])
         XCTAssertEqual(evidence.excludedMessageCount, 0)
     }
+    func testPerformanceMetricsStayScopedAndNumericInFinalReport() throws {
+        let date = Date()
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let account = RemoteDiagnosticsProtocol.accountTag(sdkAppID: 1, ownerUserID: "phone")
+        func sample(_ owner: String, event: String = "composer-layout", category: String = "interaction-performance") -> DiagnosticLogEntry {
+            DiagnosticLogEntry(sequence: 1, createdAt: formatter.string(from: date), level: .info,
+                category: category, event: event, fields: ["account": owner, "scope": "account-process",
+                    "samples": "12", "max_ms": "28.5", "average_ms": "NaN", "slow_samples": "-1",
+                    "draft": "PRIVATE_DRAFT", "peer": "unrelated"])
+        }
+        let logs = RemoteDiagnosticsProtocol.scopedLogs([
+            sample(account), sample("old"), sample(""), sample(account, event: "arbitrary"),
+            sample(account, category: "unrelated")
+        ], accountTag: account, peerUserID: "machine", since: date.addingTimeInterval(-1))
+        XCTAssertEqual(logs.count, 1)
+        XCTAssertEqual(logs[0].fields["samples"], "12")
+        XCTAssertEqual(logs[0].fields["max_ms"], "28.5")
+        XCTAssertNil(logs[0].fields["average_ms"])
+        XCTAssertNil(logs[0].fields["slow_samples"])
+        let local = RemoteDiagnosticsLocalEvidence(appVersion: "test", ownerUserID: "phone", peerUserID: "machine",
+            collectedAt: date, messages: [], displayedConversation: true, logs: logs)
+        let report = String(decoding: try RemoteDiagnosticsProtocol.mergedReport(requestID: UUID(), local: local,
+            remote: nil, missingReason: "missing"), as: UTF8.self)
+        XCTAssertTrue(report.contains("composer-layout")); XCTAssertTrue(report.contains("28.5"))
+        XCTAssertFalse(report.contains("PRIVATE_DRAFT"))
+        XCTAssertEqual(local.performanceCoverage["status"], "sampled")
+        XCTAssertEqual(local.performanceCoverage["stackTraces"], "unavailable")
+    }
+
+    func testMissingPerformanceSamplesAreNotZeroLatency() {
+        let local = RemoteDiagnosticsLocalEvidence(appVersion: "test", ownerUserID: "phone", peerUserID: "machine",
+            collectedAt: Date(), messages: [], displayedConversation: true)
+        XCTAssertEqual(local.performanceCoverage["status"], "no-retained-samples")
+        XCTAssertEqual(local.performanceCoverage["firstEventAt"], "unavailable")
+        XCTAssertEqual(local.performanceCoverage["exportTruncated"], "unknown")
+    }
+
+    func testRemoteNumericPerformanceAndUnavailableCoverageSurvive() throws {
+        let id = UUID()
+        let data = try JSONSerialization.data(withJSONObject: ["schemaVersion": 1, "requestId": id.uuidString.lowercased(),
+            "sourceCoverage": ["uiPerformance": "unavailable"],
+            "files": [["source": "performance", "events": [["event": "composer-layout", "samples": 12,
+                "max_ms": 28.5, "average_ms": "PRIVATE", "draft": "PRIVATE"]]]]])
+        let clean = try RemoteDiagnosticsProtocol.sanitizedReport(data, requestID: id)
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: clean) as? [String: Any])
+        let files = try XCTUnwrap(root["files"] as? [[String: Any]])
+        let events = try XCTUnwrap(files[0]["events"] as? [[String: Any]])
+        XCTAssertEqual(events[0]["max_ms"] as? Double, 28.5)
+        XCTAssertEqual(events[0]["samples"] as? Int, 12)
+        XCTAssertEqual((root["sourceCoverage"] as? [String: String])?["uiPerformance"], "unavailable")
+        XCTAssertFalse(String(decoding: clean, as: UTF8.self).contains("PRIVATE"))
+    }
+
+    func testMergedReportCanBeDeliveredToTheCollectedPeer() async throws {
+        try await withContext { context in
+            context.onRequest = { context, id in try context.respond(id: id) }
+            let coordinator = RemoteDiagnosticsCoordinator(appState: context, timeout: .milliseconds(100), pollInterval: .milliseconds(5))
+            coordinator.start(peer: context.chatState.contacts[0], recipient: context.chatState.contacts[0])
+            try await waitForCompletion(coordinator)
+            XCTAssertEqual(context.sentReports.map(\.0), ["machine"])
+            let report = try XCTUnwrap(context.sentReports.first?.1)
+            XCTAssertTrue(report.contains("ownerUserID")); XCTAssertTrue(report.contains("call-async"))
+        }
+    }
+
 }

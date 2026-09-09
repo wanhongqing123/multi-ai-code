@@ -1,3 +1,4 @@
+#include "diagnostics/PerformanceLog.h"
 #include "diagnostics/RemoteDiagnosticsController.h"
 #include "diagnostics/RemoteDiagnosticsProtocol.h"
 #include "app/RemoteIMApplication.h"
@@ -161,6 +162,7 @@ void RemoteDiagnosticsController::sendReport(const QJsonObject& remote, const QS
         events.append(entry);
     }
     local.insert("attachmentEvents", events);
+    local.insert("performance", RemoteDiagnostics::PerformanceLog::shared().snapshot(beganAt_ - 1800000, QDateTime::currentMSecsSinceEpoch()));
     QByteArray report = QStringLiteral("# 远程排障报告\n\n排障编号：%1\n\n仅诊断元数据，不含正文、路径或登录凭据。\n\n").arg(requestId_).toUtf8();
     report += "## A 端本地现场\n\n```json\n" + json(local) + "```\n\n";
     if (remote.isEmpty()) report += "## 远端现场缺失\n\n" + missingReason.toUtf8() + "\n";

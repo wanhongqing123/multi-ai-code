@@ -1,3 +1,4 @@
+#include "diagnostics/PerformanceLog.h"
 #include "ui/MainWindow.h"
 
 #include <QMenu>
@@ -1332,6 +1333,24 @@ MainWindow::MainWindow(RemoteIMApplication& app, QWidget* parent)
     QFont scaledFont = QApplication::font();
     scaledFont.setPixelSize(UiZoom::s(13));
     QApplication::setFont(scaledFont);
+    auto updatePerformanceContext = [this] {
+        const auto account = app_.client().currentAccount();
+        RemoteDiagnostics::PerformanceLog::shared().setContext(account.isValid()
+            ? QString::number(account.sdkAppId) + ":" + account.ownerUserId : QString());
+    };
+    updatePerformanceContext();
+    connect(&app_, &RemoteIMApplication::stateChanged, this, updatePerformanceContext);
+    connect(&app_, &RemoteIMApplication::connectionChanged, this, updatePerformanceContext);
+    auto* performanceTimer = new QTimer(this);
+    performanceTimer->setInterval(250);
+    auto clock = std::make_shared<QElapsedTimer>(); clock->start();
+    connect(performanceTimer, &QTimer::timeout, this, [clock] {
+        RemoteDiagnostics::PerformanceLog::shared().heartbeat(clock->elapsed(), qApp->applicationState() == Qt::ApplicationActive);
+    });
+    connect(qApp, &QGuiApplication::applicationStateChanged, this, [clock](Qt::ApplicationState) {
+        RemoteDiagnostics::PerformanceLog::shared().heartbeat(clock->elapsed(), false);
+    });
+    performanceTimer->start();
     buildUi();
     applyStyle();
     bindSignals();
@@ -1379,6 +1398,14 @@ void MainWindow::closeEvent(QCloseEvent* event) {
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == messageEditor_ && (event->type() == QEvent::KeyPress || event->type() == QEvent::InputMethod)) {
+        auto clock = std::make_shared<QElapsedTimer>(); clock->start();
+        const auto account = app_.client().currentAccount();
+        QTimer::singleShot(0, this, [this, clock, account] {
+            if (app_.client().currentAccount() == account)
+                RemoteDiagnostics::PerformanceLog::shared().record("composer-event-queue", clock->nsecsElapsed() / 1000000.0);
+        });
+    }
     if ((watched == conversationList_ || watched == contactsList_) && event->type() == QEvent::KeyPress) {
         auto* keyEvent = static_cast<QKeyEvent*>(event);
         if (keyEvent->key() == Qt::Key_Delete || keyEvent->key() == Qt::Key_Backspace) {
@@ -2336,6 +2363,7 @@ void MainWindow::bindSignals() {
     slashCommandUpdateTimer_->setInterval(150);  // 防抖：只在停顿后重建，避开按键前后那一瞬间
     connect(slashCommandUpdateTimer_, &QTimer::timeout, this, [this] { updateSlashCommandSuggestions(); });
     connect(messageEditor_, &QTextEdit::textChanged, this, [this] {
+        RemoteDiagnostics::PerformanceSpan performance("composer-change");
         updateComposerState();
         // 组词期间不触发重建（由 InputMethod 事件在组词结束时再拉起）；否则重启防抖定时器：
         // 连续输入天然合并成一次重建，且始终落在按键/组词之外。
@@ -2941,6 +2969,7 @@ void MainWindow::updateConnectionIndicator() {
 }
 
 void MainWindow::refreshMessages() {
+    RemoteDiagnostics::PerformanceSpan performance("message-refresh");
     const QString selectedPeer = app_.chatState().selectedPeerId();
     titleLabel_->setText(selectedPeer.isEmpty() ? QStringLiteral("请选择会话") : contactName(selectedPeer));
     updateConnectionIndicator();
@@ -3145,6 +3174,7 @@ void MainWindow::rebuildMessageList(const QString& peerId, const QList<RemoteIMM
 }
 
 void MainWindow::applyIncrementalMessageUpdate(const QList<RemoteIMMessage>& messages) {
+    RemoteDiagnostics::PerformanceSpan performance("message-layout");
     QSet<QString> newIds;
     newIds.reserve(messages.size());
     for (const RemoteIMMessage& message : messages) newIds.insert(message.id);
@@ -4389,6 +4419,7 @@ void MainWindow::applyMessageBubbleWidth(QWidget* bubble, bool expanded) const {
 }
 
 void MainWindow::updateMessageBubbleWidths() {
+    RemoteDiagnostics::PerformanceSpan performance("message-layout");
     QList<QWidget*> bubbles = messageContainer_->findChildren<QWidget*>(QStringLiteral("messageBubbleIncoming"));
     bubbles.append(messageContainer_->findChildren<QWidget*>(QStringLiteral("messageBubbleOutgoing")));
     for (QWidget* bubble : bubbles) {
@@ -5328,12 +5359,13 @@ void MainWindow::requestRemoteDiagnostics() {
     const QString peerId = app_.chatState().selectedPeerId();
     if (peerId.isEmpty()) return;
 
-    // 收件人候选里去掉故障客户端本人：把报告发回给出故障的那台没有意义，
-    // 而且那台正是我们怀疑有问题的。
+    // 被采集好友也可以负责排查并接收 A+B 合并报告。
     QList<RemoteIMContact> candidates;
     for (const RemoteIMContact& contact : app_.chatState().contacts()) {
-        if (contact.userId == peerId || contact.userId == app_.chatState().ownerUserId()) continue;
-        candidates.append(contact);
+        if (contact.userId == app_.chatState().ownerUserId()) continue;
+        auto candidate = contact;
+        if (candidate.userId == peerId) candidate.displayName += QStringLiteral(" · 当前会话");
+        candidates.append(candidate);
     }
     if (candidates.isEmpty()) {
         AppMessageDialog::show(

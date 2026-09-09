@@ -1,3 +1,4 @@
+#include "diagnostics/PerformanceLog.h"
 #include "storage/LocalMessageDatabase.h"
 
 #include "model/ContactGroups.h"
@@ -215,6 +216,7 @@ void LocalMessageDatabase::migrate() {
 }
 
 void LocalMessageDatabase::loadInto(ChatState& state) const {
+    RemoteDiagnostics::PerformanceSpan performance("history-load");
     if (!db_.isOpen()) return;
 
     QSqlQuery contactQuery(db_);
@@ -236,6 +238,7 @@ void LocalMessageDatabase::loadInto(ChatState& state) const {
 }
 
 QHash<QString, bool> LocalMessageDatabase::loadRecentInto(ChatState& state, int perPeerLimit) const {
+    RemoteDiagnostics::PerformanceSpan performance("history-load");
     QHash<QString, bool> hasEarlier;
     if (!db_.isOpen() || perPeerLimit <= 0) return hasEarlier;
 
@@ -276,6 +279,7 @@ QList<RemoteIMMessage> LocalMessageDatabase::loadMessagesBefore(const QString& p
                                                                 qint64 beforeCreatedAt,
                                                                 const QString& beforeId,
                                                                 int limit) const {
+    RemoteDiagnostics::PerformanceSpan performance("history-load");
     QList<RemoteIMMessage> result;
     if (!db_.isOpen() || peer.isEmpty() || limit <= 0) return result;
     QSqlQuery query(db_);
@@ -435,6 +439,7 @@ void LocalMessageDatabase::removeContactCascade(const QString& userId) {
 }
 
 bool LocalMessageDatabase::insertMessageIfAbsent(const RemoteIMMessage& message, const QString& peer) {
+    RemoteDiagnostics::PerformanceSpan performance("history-write");
     if (!db_.isOpen() || message.id.isEmpty()) return false;
     QSqlQuery query(db_);
     query.prepare(QStringLiteral(
@@ -518,6 +523,7 @@ void LocalMessageDatabase::adoptMessageId(const QString& oldId, const QString& n
 }
 
 void LocalMessageDatabase::updateMessageStatus(const QString& messageId, RemoteIMMessageStatus status) {
+    RemoteDiagnostics::PerformanceSpan performance("history-write");
     if (!db_.isOpen()) return;
     QSqlQuery query(db_);
     query.prepare(QStringLiteral("UPDATE messages SET status = ? WHERE id = ?"));

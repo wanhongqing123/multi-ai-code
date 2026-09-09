@@ -92,6 +92,7 @@ private slots:
     void globalSearchReportsNoResultWithLoadedScopeHint();
     void conversationListsUseDelegateItemsForSmoothScrolling();
     void selectedConversationRowReachesTheListEdge();
+    void selectedConversationRowReachesTheListEdgeWithScrollBar();
     void contactDirectoryStaysFlatUntilAGroupExists();
     void contactDirectoryShowsGroupsWithUngroupedLast();
     void clickingGroupHeaderCollapsesItsMembers();
@@ -229,6 +230,61 @@ void MainWindowLayoutTest::selectedConversationRowReachesTheListEdge() {
     QVERIFY2(gap <= 1,
              qPrintable(QStringLiteral("选中行右侧留白 %1px，应贴到列表边缘（容 1px 取整）")
                             .arg(gap)));
+}
+
+// 上一条特意断言「没有滚动条」，只能证明委托多缩了 6px。
+// 但用户截图里滚动条是在的，所以这一条把会话灌到溢出、让滚动条真的出现，
+// 再量一次右侧空白——用来区分「委托内缩」和「滚动条本身占位」两件事。
+void MainWindowLayoutTest::selectedConversationRowReachesTheListEdgeWithScrollBar() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    for (int i = 0; i < 40; ++i) {
+        const QString id = QStringLiteral("peer%1").arg(i, 2, 10, QLatin1Char('0'));
+        app.addContact(id, QStringLiteral("联系人 %1").arg(i));
+    }
+
+    MainWindow window(app);
+    window.resize(1280, 800);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    app.selectPeer(QStringLiteral("peer00"));
+    app.sendText(QStringLiteral("hello"));
+    QCoreApplication::processEvents();
+    QCoreApplication::processEvents();
+
+    auto* list = window.findChild<QListWidget*>(QStringLiteral("conversationList"));
+    QVERIFY(list != nullptr);
+    list->setCurrentRow(0);
+    QCoreApplication::processEvents();
+
+    // 这条用例的前提正好和上一条相反：必须真的有滚动条，否则它什么都没测到。
+    QVERIFY2(list->verticalScrollBar()->isVisible(),
+             qPrintable(QStringLiteral("前提不成立：%1 条会话仍未出现纵向滚动条")
+                            .arg(list->count())));
+
+    const QRect rowRect = list->visualItemRect(list->item(0));
+    const QImage painted = list->viewport()->grab().toImage();
+    QVERIFY(!painted.isNull());
+
+    const QColor selected(QStringLiteral("#dff3ff"));
+    const int y = rowRect.center().y();
+    int gap = 0;
+    for (int x = painted.width() - 1; x >= 0; --x) {
+        if (painted.pixelColor(x, y) == selected) {
+            break;
+        }
+        ++gap;
+    }
+
+    // 视口宽度已经不含滚动条，所以这里量到的仍然只该是委托自己的内缩。
+    // 用户看到的整条空白 = 这里的 gap + 滚动条自身宽度；后者是 Qt 的正常占位，
+    // 本用例不改也不断言它，只钉住委托这部分为 0。
+    QVERIFY2(gap <= 1,
+             qPrintable(QStringLiteral("有滚动条时选中行右侧仍留白 %1px（视口宽 %2，滚动条宽 %3）")
+                            .arg(gap)
+                            .arg(painted.width())
+                            .arg(list->verticalScrollBar()->width())));
 }
 
 void MainWindowLayoutTest::conversationListPutsNewestMessageFirst() {

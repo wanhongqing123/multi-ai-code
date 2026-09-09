@@ -311,6 +311,33 @@ final class RemoteDiagnosticsTests: XCTestCase {
         }
     }
 
+    func testSharedHostReportSurvivesInTheFinalSentAttachment() async throws {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "remote-diagnostics-report", withExtension: "json"))
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        try await withContext { context in
+            var expected = fixture
+            context.onRequest = { context, id in
+                expected["requestId"] = id.uuidString.lowercased()
+                let path = context.directory.appendingPathComponent("report.json")
+                try JSONSerialization.data(withJSONObject: expected).write(to: path)
+                context.chatState.receiveFile(filePath: path.path, fromUserID: "machine",
+                    fileName: RemoteDiagnosticsProtocol.reportFileName(id: id), mimeType: "application/json")
+            }
+            let coordinator = RemoteDiagnosticsCoordinator(appState: context, timeout: .milliseconds(100), pollInterval: .milliseconds(5))
+            coordinator.start(peer: context.chatState.contacts[0], recipient: context.chatState.contacts[1])
+            try await waitForCompletion(coordinator)
+            let report = try XCTUnwrap(context.sentReports.first?.1)
+            // JSON blocks are parsed back from the actual attachment passed to
+            // sendFile; compare values AND types, not loose substring presence.
+            let blocks = report.components(separatedBy: "```json\n").dropFirst()
+            let objects = blocks.compactMap { block -> NSDictionary? in
+                guard let data = block.components(separatedBy: "```").first?.data(using: .utf8) else { return nil }
+                return (try? JSONSerialization.jsonObject(with: data)) as? NSDictionary
+            }
+            XCTAssertTrue(objects.contains { $0.isEqual(to: expected) })
+        }
+    }
+
     func testLocalLogsCannotCrossAccountsSDKsOrPeers() throws {
         let date = Date()
         let formatter = ISO8601DateFormatter()

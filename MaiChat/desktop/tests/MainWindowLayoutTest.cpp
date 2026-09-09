@@ -404,18 +404,24 @@ void MainWindowLayoutTest::listScrollBarsAreNarrowAndStillScrollableAcrossZoomLe
         // 联系人列表用的是同一套样式，一并验证它也拖得动。
         auto* contacts = window.findChild<QListWidget*>(QStringLiteral("contactsList"));
         QVERIFY(contacts != nullptr);
+        auto* contactsNav = window.findChild<QPushButton*>(QStringLiteral("contactsNavButton"));
+        QVERIFY(contactsNav != nullptr);
+        contactsNav->click();
+        QCoreApplication::processEvents();
         QScrollBar* contactsBar = contacts->verticalScrollBar();
-        if (contactsBar->maximum() > contactsBar->minimum()) {
-            QVERIFY2(qAbs(contactsBar->width() - expected) <= 1,
-                     qPrintable(QStringLiteral("缩放 %1：联系人列表滚动条宽 %2px，期望约 %3px")
-                                    .arg(zoom).arg(contactsBar->width()).arg(expected)));
-            contactsBar->setValue(contactsBar->minimum());
-            QCoreApplication::processEvents();
-            QVERIFY2(dragScrollBarHandle(contactsBar, 120),
-                     qPrintable(QStringLiteral("缩放 %1：联系人列表滑块矩形为空").arg(zoom)));
-            QVERIFY2(contactsBar->value() > contactsBar->minimum(),
-                     qPrintable(QStringLiteral("缩放 %1：拖动联系人列表滑块后 value 没变").arg(zoom)));
-        }
+        QVERIFY(contacts->isVisible());
+        QVERIFY(contactsBar->isVisible());
+        QVERIFY2(contactsBar->maximum() > contactsBar->minimum(),
+                 "联系人滚动范围必须非空，不能跳过拖动验证");
+        QVERIFY2(qAbs(contactsBar->width() - expected) <= 1,
+                 qPrintable(QStringLiteral("缩放 %1：联系人列表滚动条宽 %2px，期望约 %3px")
+                                .arg(zoom).arg(contactsBar->width()).arg(expected)));
+        contactsBar->setValue(contactsBar->minimum());
+        QCoreApplication::processEvents();
+        QVERIFY2(dragScrollBarHandle(contactsBar, 120),
+                 qPrintable(QStringLiteral("缩放 %1：联系人列表滑块矩形为空").arg(zoom)));
+        QVERIFY2(contactsBar->value() > contactsBar->minimum(),
+                 qPrintable(QStringLiteral("缩放 %1：拖动联系人列表滑块后 value 没变").arg(zoom)));
     }
 
     // 3. 会话很少时不该有滚动条，也不该留下它的占位宽度。

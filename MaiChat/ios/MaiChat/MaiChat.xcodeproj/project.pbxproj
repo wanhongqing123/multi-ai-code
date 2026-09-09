@@ -46,6 +46,8 @@
 		FEDCBA098765432100000004 /* MarkdownPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000003 /* MarkdownPresentationTests.swift */; };
 		FEDCBA098765432100000006 /* MarkdownInlineStyling.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000005 /* MarkdownInlineStyling.swift */; };
 		FEDCBA098765432100000007 /* MarkdownInlineStyling.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000005 /* MarkdownInlineStyling.swift */; };
+		FEDCBA098765432100000009 /* MessageBubbleLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000008 /* MessageBubbleLayout.swift */; };
+		FEDCBA09876543210000000A /* MessageBubbleLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDCBA098765432100000008 /* MessageBubbleLayout.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -130,6 +132,7 @@
 		FEDCBA098765432100000001 /* MarkdownPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownPresentation.swift; sourceTree = "<group>"; };
 		FEDCBA098765432100000003 /* MarkdownPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownPresentationTests.swift; sourceTree = "<group>"; };
 		FEDCBA098765432100000005 /* MarkdownInlineStyling.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownInlineStyling.swift; sourceTree = "<group>"; };
+		FEDCBA098765432100000008 /* MessageBubbleLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageBubbleLayout.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -160,6 +163,7 @@
 				A6457534DA0479F3AD712C60 /* Assets.xcassets */,
 				CCD4178AAA9A0B6146AFEFCD /* ChatView.swift */,
 				FEDCBA098765432100000005 /* MarkdownInlineStyling.swift */,
+				FEDCBA098765432100000008 /* MessageBubbleLayout.swift */,
 				982ED942EFC3EBB4726E7D3D /* ContactsView.swift */,
 				AE6737BFED0DFE1A50F676EE /* Info.plist */,
 				77098CB4FAD4DDF16F02FA58 /* KeychainSecretStore.swift */,
@@ -427,6 +431,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				FEDCBA098765432100000007 /* MarkdownInlineStyling.swift in Sources */,
+				FEDCBA09876543210000000A /* MessageBubbleLayout.swift in Sources */,
 				FEDCBA098765432100000004 /* MarkdownPresentationTests.swift in Sources */,
 				F0D9326831C7925F6C4FC5D6 /* DiagnosticLogTests.swift in Sources */,
 				B0AD7763503D992983F88DAE /* LocalChatHistoryStore.swift in Sources */,
@@ -443,6 +448,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				FEDCBA098765432100000006 /* MarkdownInlineStyling.swift in Sources */,
+				FEDCBA098765432100000009 /* MessageBubbleLayout.swift in Sources */,
 				6C8CC7B0E521485EB1383FFA /* AppDiagnosticLog.swift in Sources */,
 				563F2D96FC7FE65D52984507 /* ChatView.swift in Sources */,
 				4213D8C4C34EA1026840453D /* ContactsView.swift in Sources */,

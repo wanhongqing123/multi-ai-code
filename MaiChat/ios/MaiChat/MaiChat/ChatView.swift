@@ -1637,7 +1637,7 @@ private struct MessageListView: View {
                             isNearBottom = false
                         }
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, MessageBubbleMetrics.horizontalInset)
                 .padding(.vertical, 18)
                 .background(
                     ScrollViewKeyboardDismissInstaller { window in
@@ -1940,31 +1940,17 @@ private struct MessageBubbleView: View {
     @State private var textSelectionController = MessageTextSelectionController()
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            if message.direction == .outgoing {
-                Spacer(minLength: 50)
-            }
-
-            if message.direction == .incoming {
-                RemoteIMUserAvatar(profile: senderProfile, outgoing: false, size: 40)
-            }
-
-            VStack(alignment: message.direction == .outgoing ? .trailing : .leading, spacing: 6) {
-                messageMetadata
-                messageContent
-            }
-            .padding(.top, 4)
-            .layoutPriority(1)
-
-            if message.direction == .outgoing {
-                RemoteIMUserAvatar(profile: senderProfile, outgoing: true, size: 40)
-            }
-
-            if message.direction == .incoming {
-                Spacer(minLength: 50)
-            }
+        MessageBubbleLayout(isOutgoing: message.direction == .outgoing) {
+            RemoteIMUserAvatar(
+                profile: senderProfile,
+                outgoing: message.direction == .outgoing,
+                size: MessageBubbleMetrics.avatarSize
+            )
+        } metadata: {
+            messageMetadata
+        } content: {
+            messageContent
         }
-        .frame(maxWidth: .infinity, alignment: message.direction == .outgoing ? .trailing : .leading)
         // 不使用系统 contextMenu：它会把被长按的消息单独提亮/放大，且视觉风格
         // 与 MaiChat 完全不同。长按只打开根层自绘卡片，消息本身保持原样。
         .onLongPressGesture(

@@ -1,8 +1,95 @@
 import XCTest
 import SwiftUI
+import UIKit
 @testable import MaiChatCore
 
 final class MarkdownPresentationTests: XCTestCase {
+    @MainActor
+    func testLongBubbleContentUsesAvailableWidthInBothDirections() throws {
+        for width: CGFloat in [320, 393, 430, 844] {
+            for outgoing in [false, true] {
+                let frame = try measureBubbleContent(
+                    width: width, outgoing: outgoing, shortMessage: false
+                )
+                XCTAssertEqual(frame.minX, MessageBubbleMetrics.horizontalInset, accuracy: 1)
+                XCTAssertEqual(
+                    frame.width, width - MessageBubbleMetrics.horizontalInset * 2, accuracy: 1,
+                    "Sender identity and opposite-side spacers must not reserve a text column"
+                )
+            }
+        }
+    }
+
+    @MainActor
+    func testShortBubblesKeepTheirIntrinsicWidthAndDirection() throws {
+        for outgoing in [false, true] {
+            let frame = try measureBubbleContent(width: 393, outgoing: outgoing, shortMessage: true)
+            XCTAssertGreaterThan(frame.width, 20)
+            XCTAssertLessThan(frame.width, 120, "Short messages must not become full-width bars")
+            if outgoing {
+                XCTAssertEqual(frame.maxX, 393 - MessageBubbleMetrics.horizontalInset, accuracy: 1)
+            } else {
+                XCTAssertEqual(frame.minX, MessageBubbleMetrics.horizontalInset, accuracy: 1)
+            }
+        }
+    }
+
+    @MainActor
+    private final class BubbleGeometry {
+        var frame: CGRect?
+    }
+
+    @MainActor
+    private func measureBubbleContent(
+        width: CGFloat,
+        outgoing: Bool,
+        shortMessage: Bool
+    ) throws -> CGRect {
+        let measured = BubbleGeometry()
+        let view = MessageBubbleLayout(isOutgoing: outgoing) {
+            Color.blue.frame(width: MessageBubbleMetrics.avatarSize,
+                             height: MessageBubbleMetrics.avatarSize)
+        } metadata: {
+            Text("Sender · 11:04")
+        } content: {
+            Group {
+                if shortMessage {
+                    Text("OK").padding(13)
+                } else {
+                    Color.blue.frame(height: 80)
+                }
+            }
+            .background {
+                GeometryReader { geometry in
+                    Color.clear
+                        .onAppear { measured.frame = geometry.frame(in: .named("bubble-test")) }
+                        .onChange(of: geometry.size) { _ in
+                            measured.frame = geometry.frame(in: .named("bubble-test"))
+                        }
+                }
+            }
+        }
+        .padding(.horizontal, MessageBubbleMetrics.horizontalInset)
+        .coordinateSpace(name: "bubble-test")
+        .frame(width: width, height: 240, alignment: .topLeading)
+        .ignoresSafeArea()
+        let controller = UIHostingController(rootView: view)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: width, height: 300))
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        controller.view.setNeedsLayout()
+        controller.view.layoutIfNeeded()
+        let deadline = Date().addingTimeInterval(2)
+        while measured.frame == nil, Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        return try XCTUnwrap(measured.frame, "The rendered content geometry must be observed")
+    }
+
     func testConversationPreviewUsesReadableMarkdownText() {
         let cases: [(String, String)] = [
             ("## 标题\n\n**重点** 与 `code`", "标题 重点 与 code"),

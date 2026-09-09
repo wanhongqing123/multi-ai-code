@@ -37,6 +37,7 @@ targets:
       - path: MaiChatTests
       - path: MaiChat/LocalChatHistoryStore.swift
       - path: MaiChat/MarkdownInlineStyling.swift
+      - path: MaiChat/MessageBubbleLayout.swift
     dependencies:
       - target: MaiChatCore
     settings:

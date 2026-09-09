@@ -1,5 +1,7 @@
 #include "im/TimSdkRemoteIMClient.h"
 
+#include "diagnostics/RemoteDiagnosticsProtocol.h"
+
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDebug>
@@ -433,6 +435,7 @@ void TimSdkRemoteIMClient::connectToService(int sdkAppId, const QString& userId,
         return;
     }
     currentUserId_ = userId.trimmed();
+    sdkAppId_ = static_cast<quint64>(sdkAppId);
 
     qInfo().noquote()
         << QStringLiteral("[im] connect: sdkAppId=%1 user=%2").arg(sdkAppId).arg(currentUserId_);
@@ -1359,31 +1362,71 @@ void TimSdkRemoteIMClient::handleIncomingImageUrl(RemoteIMMessage message, const
 }
 
 void TimSdkRemoteIMClient::handleIncomingFileUrl(RemoteIMMessage message, const QString& url, bool live) {
+    // 账号标签在**发起时**捕获，跟着这次下载走。回调里再取「当前账号」是错的：
+    // 下载完成时用户可能已经换号，那样旧账号的附件会被算到新账号头上。
+    const RemoteDiagnostics::AccountTag origin = currentAccount();
+    recordAttachmentPhase(origin, message, RemoteDiagnostics::AttachmentPhase::MetadataReceived);
+
     const QString targetPath = cacheFilePathForUrl(url, message.file.fileName);
     message.file.localPath = targetPath;
-    if (QFile::exists(targetPath)) {
-        emitReceivedMessages({message}, live);
+    if (QFileInfo(targetPath).isFile() && QFileInfo(targetPath).isReadable()) {
+        recordAttachmentPhase(origin, message, RemoteDiagnostics::AttachmentPhase::CacheHit);
+        // 缓存命中也要走同一套判定：真的发出去才算交付。
+        recordAttachmentPhase(origin, message,
+                              emitReceivedMessages({message}, live, origin)
+                                  ? RemoteDiagnostics::AttachmentPhase::Delivered
+                                  : RemoteDiagnostics::AttachmentPhase::DroppedForAccountSwitch);
         return;
     }
 
+    recordAttachmentPhase(origin, message, RemoteDiagnostics::AttachmentPhase::DownloadStarted);
     QNetworkReply* reply = network_.get(QNetworkRequest(QUrl(url)));
-    connect(reply, &QNetworkReply::finished, this, [this, reply, message, live] {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, message, live, origin] {
         const QByteArray data = reply->readAll();
-        const bool ok = reply->error() == QNetworkReply::NoError && !data.isEmpty();
+        const QNetworkReply::NetworkError error = reply->error();
+        const bool ok = error == QNetworkReply::NoError && !data.isEmpty();
         const QString replyError = reply->errorString();
         reply->deleteLater();
         if (!ok) {
             // 以前这里是静默 return：附件下载失败时界面上什么都不出现，日志里也没有痕迹。
+            // 现在除了日志，还留一条**带账号归属**的固定阶段记录，
+            // 这样排障报告能回答「附件到底卡在哪一步」，而不是只剩一片沉默。
+            // 记的是错误码，不是 errorString——那是网络栈的自由文本。
+            recordAttachmentPhase(origin, message,
+                                  RemoteDiagnostics::AttachmentPhase::DownloadFailed,
+                                  static_cast<int>(error));
             qWarning().noquote()
                 << QStringLiteral("[im] attachment download failed: %1 (%2 bytes)")
                        .arg(replyError).arg(data.size());
             return;
         }
         QFile file(message.file.localPath);
-        if (!file.open(QIODevice::WriteOnly)) return;
-        file.write(data);
+        if (!file.open(QIODevice::WriteOnly)) {
+            recordAttachmentPhase(origin, message,
+                                  RemoteDiagnostics::AttachmentPhase::WriteFailed);
+            return;
+        }
+        // 写入不足同样是失败：文件存在但内容残缺，当成功交付会让下游
+        // 把半截 JSON 当成「对端给了个坏报告」，而不是「我们没存住」。
+        const qint64 written = file.write(data);
         file.close();
-        emitReceivedMessages({message}, live);
+        if (written != data.size()) {
+            recordAttachmentPhase(origin, message,
+                                  RemoteDiagnostics::AttachmentPhase::WriteFailed,
+                                  static_cast<int>(data.size() - written));
+            QFile::remove(message.file.localPath);
+            qWarning().noquote()
+                << QStringLiteral("[im] attachment write short: %1 of %2 bytes")
+                       .arg(written).arg(data.size());
+            return;
+        }
+        // 顺序很重要：先发、再按「有没有真的发出去」记。反过来的话，
+        // 换账号被护栏丢弃时日志仍会写「已交付」——文件是下完了，
+        // 但它没有进入任何账号的会话，那就是谎报。
+        recordAttachmentPhase(origin, message,
+                              emitReceivedMessages({message}, live, origin)
+                                  ? RemoteDiagnostics::AttachmentPhase::Delivered
+                                  : RemoteDiagnostics::AttachmentPhase::DroppedForAccountSwitch);
     });
 }
 
@@ -1484,13 +1527,48 @@ void TimSdkRemoteIMClient::handleIncomingVoiceUrl(RemoteIMMessage message, const
     });
 }
 
-void TimSdkRemoteIMClient::emitReceivedMessages(const QList<RemoteIMMessage>& messages, bool live) {
-    if (messages.isEmpty()) return;
+RemoteDiagnostics::AccountTag TimSdkRemoteIMClient::currentAccount() const {
+    return RemoteDiagnostics::AccountTag{sdkAppId_, currentUserId_};
+}
+
+void TimSdkRemoteIMClient::recordAttachmentPhase(const RemoteDiagnostics::AccountTag& account,
+                                                 const RemoteIMMessage& message,
+                                                 RemoteDiagnostics::AttachmentPhase phase,
+                                                 int code) {
+    RemoteDiagnostics::AttachmentEvent event;
+    event.account = account;
+    // RemoteIMMessage 没有 peerId：对端要按方向取。入站是发件人，出站是收件人。
+    event.peerId = message.direction == RemoteIMMessageDirection::Incoming ? message.fromUserId
+                                                                           : message.toUserId;
+    event.messageId = message.id;
+    // 只认完整匹配的报告名；普通附件留空，控制器据此把它们当现场元数据，
+    // 而不是当成本次排障的失败证据。**不记文件名本身，也不记 URL。**
+    event.requestId = RemoteDiagnostics::requestIdFromAttachmentFileName(message.file.fileName);
+    event.phase = phase;
+    event.code = code;
+    event.atMs = QDateTime::currentMSecsSinceEpoch();
+    evidence_.record(event);
+}
+
+bool TimSdkRemoteIMClient::emitReceivedMessages(const QList<RemoteIMMessage>& messages, bool live,
+                                                const RemoteDiagnostics::AccountTag& origin) {
+    if (messages.isEmpty()) return false;
+    // 换账号之后晚到的异步结果不能进新账号的库。这条护栏放在**普通消息入口**，
+    // 不只保护排障记录——否则甲的附件会静静地出现在乙的聊天里。
+    // 同账号断线重连不受影响：AccountTag 只有 sdkAppId + ownerUserId，
+    // 不含任何连接/会话序号。
+    if (origin.isValid() && origin != currentAccount()) {
+        qInfo().noquote()
+            << QStringLiteral("[im] dropped %1 late message(s) from a previous account")
+                   .arg(messages.size());
+        return false;
+    }
     if (live) {
         emit liveMessagesReceived(messages);
     } else {
         emit messagesReceived(messages);
     }
+    return true;
 }
 
 void TimSdkRemoteIMClient::complete(RemoteIMCompletion completion, int code, const QString& description) {

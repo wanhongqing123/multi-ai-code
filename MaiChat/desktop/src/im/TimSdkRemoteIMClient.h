@@ -67,14 +67,29 @@ private:
     void handleIncomingVoiceUrl(RemoteIMMessage message, const QString& url, bool live);
     void handleIncomingVideoUrls(RemoteIMMessage message, const QString& videoUrl,
                                  const QString& coverUrl, bool live);
-    void emitReceivedMessages(const QList<RemoteIMMessage>& messages, bool live);
+    // origin 有效时表示「这批消息是某次异步请求发起时那个账号的」。
+    // 与当前账号不符就整批丢弃：换账号之后晚到的下载结果不能进新账号的库。
+    // 同步路径不传 origin（调用期间账号不可能变）。
+    // 返回是否真的把信号发出去了。调用方据此决定记 Delivered 还是
+    // DroppedForAccountSwitch——「下完了」和「进了会话」是两件事。
+    bool emitReceivedMessages(const QList<RemoteIMMessage>& messages, bool live,
+                              const RemoteDiagnostics::AccountTag& origin = {});
+    void recordAttachmentPhase(const RemoteDiagnostics::AccountTag& account,
+                               const RemoteIMMessage& message,
+                               RemoteDiagnostics::AttachmentPhase phase,
+                               int code = 0);
     static void complete(RemoteIMCompletion completion, int code, const QString& description);
     static QString compactJson(const QJsonObject& object);
 
     std::unique_ptr<TimSdkApi> api_;
     QNetworkAccessManager network_;
     QString currentUserId_;
+    // AccountTag 的另一半。以前没存过——只有连接日志里出现过一次。
+    quint64 sdkAppId_ = 0;
     QHash<QString, qint64> orderedSecondByPeer_;
     QHash<QString, int> nextOrderInSecondByPeer_;
     bool connected_ = false;
+
+public:
+    RemoteDiagnostics::AccountTag currentAccount() const override;
 };

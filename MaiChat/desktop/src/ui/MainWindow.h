@@ -14,6 +14,7 @@
 #include <memory>
 
 #include "app/RemoteIMApplication.h"
+#include "diagnostics/RemoteDiagnosticsController.h"
 #include "model/MessageNotification.h"
 #include "remote/RemoteDesktopController.h"
 #include "remote/RemoteDesktopSettings.h"
@@ -193,6 +194,11 @@ private:
     void showToast(const QString& text, int fontPx, int durationMs);
     // 远程桌面入口：可用性随会话选中状态与 TRTC 是否编译进来变化。
     void requestRemoteDesktop();
+    // 「更多」菜单。这个按钮此前只被 addWidget 进布局，没有任何 connect——
+    // 菜单是从这里才开始存在的。
+    void showMoreMenu();
+    void requestRemoteDiagnostics();
+    void refreshDiagnosticsStatus();
     void updateRemoteDesktopButton();
     void setupRemoteDesktop();
     void handleRemoteDesktopConsent(const QString& fromUserId);
@@ -216,6 +222,9 @@ private:
     void updateConnectionIndicator();
 
     RemoteIMApplication& app_;
+    RemoteDiagnosticsController* diagnostics_ = nullptr;
+    QLabel* diagnosticsStatusLabel_ = nullptr;
+    QPushButton* moreButton_ = nullptr;
     QWidget* navRail_ = nullptr;
     QLineEdit* navSearchInput_ = nullptr;
     QLineEdit* contactsSearchInput_ = nullptr;

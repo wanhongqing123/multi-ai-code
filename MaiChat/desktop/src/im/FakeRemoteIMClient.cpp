@@ -2,13 +2,15 @@
 
 FakeRemoteIMClient::FakeRemoteIMClient(QObject* parent) : RemoteIMClient(parent) {}
 
-void FakeRemoteIMClient::connectToService(int, const QString& userId, const QString&, RemoteIMCompletion completion) {
+void FakeRemoteIMClient::connectToService(int sdkAppId, const QString& userId, const QString&, RemoteIMCompletion completion) {
+    sdkAppId_ = sdkAppId > 0 ? quint64(sdkAppId) : 0;
     connectedUserId_ = userId.trimmed();
     complete(std::move(completion));
 }
 
 void FakeRemoteIMClient::disconnectFromService(RemoteIMCompletion completion) {
     connectedUserId_.clear();
+    sdkAppId_ = 0;
     complete(std::move(completion));
 }
 

@@ -72,6 +72,10 @@ add_library(remote_im_core
   src/model/MessageSearch.h
   src/model/MessageSearch.cpp
   src/model/PinyinInitials.cpp
+  src/diagnostics/RemoteDiagnosticsEvidence.h
+  src/diagnostics/RemoteDiagnosticsEvidence.cpp
+  src/diagnostics/RemoteDiagnosticsProtocol.h
+  src/diagnostics/RemoteDiagnosticsProtocol.cpp
   src/markdown/MarkdownRenderer.h
   src/markdown/PreviewText.h
   src/markdown/MarkdownRenderer.cpp
@@ -150,6 +154,8 @@ if(MAICHAT_TRTC_AVAILABLE)
 endif()
 
 add_library(remote_im_desktop_app
+  src/diagnostics/RemoteDiagnosticsController.h
+  src/diagnostics/RemoteDiagnosticsController.cpp
   src/app/RemoteIMApplication.h
   src/app/RemoteIMApplication.cpp
   src/app/VideoCoverImage.h
@@ -170,6 +176,8 @@ add_library(remote_im_desktop_ui
   src/ui/AppMessageDialog.cpp
   src/ui/AppTextInputDialog.h
   src/ui/AppTextInputDialog.cpp
+  src/ui/RemoteDiagnosticsDialog.h
+  src/ui/RemoteDiagnosticsDialog.cpp
   src/ui/BroadcastDialog.h
   src/ui/BroadcastDialog.cpp
   src/ui/AddContactDialog.h
@@ -270,6 +278,26 @@ endif()
 if(MAICHAT_USE_FAKE_CLIENT)
   target_compile_definitions(maichat PRIVATE MAICHAT_USE_FAKE_CLIENT=1)
 endif()
+
+add_executable(remote_diagnostics_controller_test tests/RemoteDiagnosticsControllerTest.cpp)
+target_link_libraries(remote_diagnostics_controller_test PRIVATE remote_im_desktop_app Qt5::Test)
+target_compile_definitions(remote_diagnostics_controller_test PRIVATE
+  MAICHAT_DIAGNOSTICS_REPORT_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../../tests/fixtures/remote-diagnostics-report.json")
+
+add_executable(attachment_download_evidence_test tests/AttachmentDownloadEvidenceTest.cpp)
+target_link_libraries(attachment_download_evidence_test PRIVATE remote_im_core Qt5::Network Qt5::Test)
+
+add_executable(remote_diagnostics_ui_test tests/RemoteDiagnosticsUiTest.cpp)
+target_link_libraries(remote_diagnostics_ui_test PRIVATE remote_im_desktop_ui remote_im_desktop_app Qt5::Widgets Qt5::Test)
+
+add_executable(remote_diagnostics_evidence_test tests/RemoteDiagnosticsEvidenceTest.cpp)
+target_link_libraries(remote_diagnostics_evidence_test PRIVATE remote_im_core Qt5::Test)
+
+add_executable(remote_diagnostics_protocol_test tests/RemoteDiagnosticsProtocolTest.cpp)
+target_link_libraries(remote_diagnostics_protocol_test PRIVATE remote_im_core Qt5::Test)
+# 回绝样例是三端共用的同一份文件，测试直接读它，不再各自抄一份提示串。
+target_compile_definitions(remote_diagnostics_protocol_test PRIVATE
+  MAICHAT_FAILURE_RECEIPT_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../../tests/fixtures/remote-diagnostics-failure-receipts.json")
 
 add_executable(chat_state_test tests/ChatStateTest.cpp)
 target_link_libraries(chat_state_test PRIVATE remote_im_core Qt5::Test)
@@ -392,6 +420,11 @@ add_executable(ui_zoom_test tests/UiZoomTest.cpp)
 target_link_libraries(ui_zoom_test PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets Qt5::Test)
 
 enable_testing()
+add_test(NAME remote_diagnostics_controller_test COMMAND remote_diagnostics_controller_test)
+add_test(NAME attachment_download_evidence_test COMMAND attachment_download_evidence_test)
+add_test(NAME remote_diagnostics_ui_test COMMAND remote_diagnostics_ui_test)
+add_test(NAME remote_diagnostics_evidence_test COMMAND remote_diagnostics_evidence_test)
+add_test(NAME remote_diagnostics_protocol_test COMMAND remote_diagnostics_protocol_test)
 add_test(NAME message_notification_test COMMAND message_notification_test)
 add_test(NAME message_quote_test COMMAND message_quote_test)
 add_test(NAME broadcast_dialog_test COMMAND broadcast_dialog_test)

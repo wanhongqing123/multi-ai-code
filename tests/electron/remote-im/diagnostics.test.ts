@@ -13,6 +13,22 @@ describe('remote diagnostics collection', () => {
   beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'remote-diagnostics-')) })
   afterEach(() => { vi.restoreAllMocks(); rmSync(root, { recursive: true, force: true }) })
 
+  it('produces the same event and session contract consumed by the Qt report fixture', async () => {
+    const fixture = JSON.parse(readFileSync(new URL('../../fixtures/remote-diagnostics-report.json', import.meta.url), 'utf8'))
+    writeFileSync(join(root, 'remote-im-runtime.log'), fixture.files[0].events
+      .map((event: object) => JSON.stringify({ ...event, projectId: fixture.projectId })).join('\n'))
+    const output = await createRemoteDiagnosticsReport({ root, projectId: fixture.projectId,
+      appVersion: fixture.appVersion, requestId: fixture.requestId, now: fixture.exportedAt,
+      activeSessions: fixture.activeSessions })
+    const actual = JSON.parse(readFileSync(output.attachmentPath, 'utf8'))
+    expect(actual.files[0]).toEqual(fixture.files[0])
+    expect(actual.activeSessions).toEqual(fixture.activeSessions)
+    expect(actual.exportedAt).toBe(fixture.exportedAt)
+    expect(actual.from).toBe(fixture.from)
+    expect(actual.projectId).toBe(fixture.projectId)
+    expect(actual.sourceCoverage).toEqual(fixture.sourceCoverage)
+  })
+
   it('exports correlated metadata, but not credentials, text or another project', async () => {
     mkdirSync(join(root, 'logs'))
     const entries = [

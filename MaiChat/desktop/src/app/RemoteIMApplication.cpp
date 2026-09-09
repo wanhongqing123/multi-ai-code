@@ -1,6 +1,8 @@
 #include "app/RemoteIMApplication.h"
 
 #include <QSet>
+#include <QPointer>
+#include <QTimer>
 #include <memory>
 
 #include <QDir>
@@ -189,6 +191,58 @@ void RemoteIMApplication::sendText(const QString& text,
         markMessage(effectiveId, ok ? RemoteIMMessageStatus::Sent : RemoteIMMessageStatus::Failed);
         if (!ok) emit errorMessage(error.isEmpty() ? QStringLiteral("文本消息发送失败") : error);
     });
+}
+
+void RemoteIMApplication::sendDiagnosticTextTo(const QString& peerId, const QString& text,
+                                               std::function<void(bool)> completion) {
+    sendDiagnosticTo(peerId, text, {}, std::move(completion));
+}
+
+void RemoteIMApplication::sendDiagnosticReportTo(const QString& peerId, const QString& path,
+                                                 std::function<void(bool)> completion) {
+    sendDiagnosticTo(peerId, {}, path, std::move(completion));
+}
+
+void RemoteIMApplication::sendDiagnosticTo(const QString& peerId, const QString& text, const QString& path,
+                                           std::function<void(bool)> completion) {
+    const auto account = client_->currentAccount();
+    bool friendExists = false;
+    for (const auto& contact : state_.contacts()) if (contact.userId == peerId) friendExists = true;
+    if (!isConnected() || !account.isValid() || account.ownerUserId != state_.ownerUserId() ||
+        !friendExists || peerId == account.ownerUserId || (text.isEmpty() && path.isEmpty())) {
+        if (completion) completion(false);
+        return;
+    }
+    const QFileInfo info(path);
+    if (!path.isEmpty() && (!info.isFile() || !info.isReadable())) {
+        if (completion) completion(false);
+        return;
+    }
+    const auto message = path.isEmpty() ? state_.queueOutgoingTextTo(peerId, text) :
+        state_.queueOutgoingFileTo(peerId, path, info.fileName(), QStringLiteral("text/markdown"), info.size());
+    persistMessage(message);
+    emit stateChanged();
+    const QPointer<RemoteIMApplication> self(this);
+    auto done = [self, account, id = message.id, completion = std::move(completion)]
+                (bool ok, const QString&, const RemoteIMSendReceipt& receipt) {
+        if (!self) return;
+        QTimer::singleShot(0, self, [self, account, id, ok, receipt, completion] {
+            if (!self) return;
+            if (self->client_->currentAccount() != account || self->state_.ownerUserId() != account.ownerUserId) {
+                if (completion) completion(false);
+                return;
+            }
+            const auto effectiveId = self->adoptRemoteMessageId(id, ok ? receipt.remoteMessageId : QString());
+            if (ok) {
+                self->state_.updateMessageTime(effectiveId, receipt.createdAtMillis);
+                if (self->database_) self->database_->updateMessageTime(effectiveId, receipt.createdAtMillis);
+            }
+            self->markMessage(effectiveId, ok ? RemoteIMMessageStatus::Sent : RemoteIMMessageStatus::Failed);
+            if (completion) completion(ok);
+        });
+    };
+    if (path.isEmpty()) client_->sendText(peerId, text, std::move(done));
+    else client_->sendFile(peerId, path, info.fileName(), std::move(done));
 }
 
 int RemoteIMApplication::broadcastText(const QStringList& peerIds, const QString& text) {

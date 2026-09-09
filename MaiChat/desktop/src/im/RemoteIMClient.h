@@ -8,6 +8,7 @@
 #include "model/RemoteIMContact.h"
 #include "model/RemoteIMMessage.h"
 #include "model/RemoteIMVideoPayload.h"
+#include "diagnostics/RemoteDiagnosticsEvidence.h"
 
 using RemoteIMCompletion = std::function<void(bool ok, const QString& error)>;
 struct RemoteIMSendReceipt {
@@ -26,6 +27,13 @@ class RemoteIMClient : public QObject {
 public:
     explicit RemoteIMClient(QObject* parent = nullptr) : QObject(parent) {}
     ~RemoteIMClient() override = default;
+
+    // 排障现场记录。放在基类是因为它要被**下载路径**写、被排障控制器读，
+    // 两边都不该去碰具体实现类。条目自带账号归属，导出时按账号+好友筛。
+    const RemoteDiagnostics::EvidenceLog& diagnosticsEvidence() const { return evidence_; }
+
+    // 当前登录身份。无效（未登录）时排障不该开始，也不该导出任何记录。
+    virtual RemoteDiagnostics::AccountTag currentAccount() const { return {}; }
 
     virtual void connectToService(int sdkAppId, const QString& userId, const QString& userSig, RemoteIMCompletion completion) = 0;
     virtual void disconnectFromService(RemoteIMCompletion completion) = 0;
@@ -120,4 +128,7 @@ signals:
     void incomingVoice(const QString& fromUserId, const QString& localPath, int durationSeconds);
     void incomingFile(const QString& fromUserId, const QString& localPath, const QString& fileName, const QString& mimeType, qint64 sizeBytes);
     void disconnected();
+
+protected:
+    RemoteDiagnostics::EvidenceLog evidence_;
 };

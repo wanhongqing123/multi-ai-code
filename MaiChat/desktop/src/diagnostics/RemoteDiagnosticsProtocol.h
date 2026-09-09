@@ -45,6 +45,14 @@ QString attachmentFileName(const QString& requestId);
 // 只查一个就能被"文件名对、内容是别人的"绕过。
 bool matchesAttachmentFileName(const QString& fileName, const QString& requestId);
 
+// 从附件名反解出 requestId；**只在完整匹配** remote-diagnostics-<小写UUID>.json
+// 时返回，其它文件一律返回空。
+//
+// 存在的理由：同一个好友可能同时在传别的附件。只凭「这个好友有一次下载失败」
+// 就断定本次排障报告失败，会把无关文件的失败算到排障头上。带上 requestId
+// 才能确定那条失败记录说的就是这份报告。
+QString requestIdFromAttachmentFileName(const QString& fileName);
+
 // 白名单裁剪的结果。
 struct ParsedReport {
     bool accepted = false;

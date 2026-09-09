@@ -46,6 +46,10 @@ struct AttachmentEvent {
     AccountTag account;
     QString peerId;
     QString messageId;
+    // 仅当附件名完整匹配 remote-diagnostics-<小写UUID>.json 时填入，其余留空。
+    // 各阶段贯穿同一个值，这样「哪一次排障的附件失败了」是确定的，
+    // 而不是靠「这个好友有过一次下载失败」去猜。
+    QString requestId;
     AttachmentPhase phase = AttachmentPhase::MetadataReceived;
     // 固定错误码（网络栈的 enum 值 / 写入短缺字节数）。不带文本。
     int code = 0;

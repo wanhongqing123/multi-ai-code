@@ -38,6 +38,7 @@ private slots:
     void refusesEntriesWithIncompleteOwnership();
     void keepsEveryPhaseDistinctIncludingTheTwoFailureKinds();
     void ringBufferDropsOldestNotNewest();
+    void separatesThisReportsFailureFromAnyOtherAttachment();
 };
 
 void RemoteDiagnosticsEvidenceTest::exportsOnlyTheAskingAccountsOwnEntries()
@@ -119,6 +120,38 @@ void RemoteDiagnosticsEvidenceTest::ringBufferDropsOldestNotNewest()
     QCOMPARE(kept.size(), 3);
     QCOMPARE(kept.first().messageId, QStringLiteral("m2"));
     QCOMPARE(kept.last().messageId, QStringLiteral("m4"));
+}
+
+// 控制器要靠 account+peer+requestId 三者同时匹配才提前收尾。
+// 只按 account+peer 的话，同一好友随便一个附件下载失败都会被当成
+// 「本次排障报告没下来」，从而提前发一份说错了原因的部分报告。
+void RemoteDiagnosticsEvidenceTest::separatesThisReportsFailureFromAnyOtherAttachment()
+{
+    EvidenceLog log;
+    const QString mine = QStringLiteral("65de6748-3a4e-4d08-8ffd-bc78e1804ff9");
+
+    AttachmentEvent unrelated = makeEvent(kAlice, kPeer, AttachmentPhase::DownloadFailed,
+                                          QStringLiteral("m-photo"));
+    unrelated.requestId.clear();  // 普通附件：没有 requestId
+    log.record(unrelated);
+
+    AttachmentEvent ours = makeEvent(kAlice, kPeer, AttachmentPhase::DownloadFailed,
+                                     QStringLiteral("m-report"));
+    ours.requestId = mine;
+    log.record(ours);
+
+    const QList<AttachmentEvent> scene = log.exportFor(kAlice, kPeer);
+    // 两条都属于现场元数据，都要留在报告里。
+    QCOMPARE(scene.size(), 2);
+
+    // 但只有一条能作为「本次报告下载失败」的依据。
+    int failuresForThisRequest = 0;
+    for (const AttachmentEvent& e : scene) {
+        if (e.requestId == mine && e.phase == AttachmentPhase::DownloadFailed) {
+            ++failuresForThisRequest;
+        }
+    }
+    QCOMPARE(failuresForThisRequest, 1);
 }
 
 QTEST_MAIN(RemoteDiagnosticsEvidenceTest)

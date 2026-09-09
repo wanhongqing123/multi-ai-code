@@ -276,6 +276,17 @@ QString describeFailureReason(FailureReason reason)
     return QString();
 }
 
+QString requestIdFromAttachmentFileName(const QString& fileName)
+{
+    static const QString prefix = QStringLiteral("remote-diagnostics-");
+    static const QString suffix = QStringLiteral(".json");
+    if (!fileName.startsWith(prefix) || !fileName.endsWith(suffix)) return QString();
+    const QString candidate =
+        fileName.mid(prefix.size(), fileName.size() - prefix.size() - suffix.size());
+    // 形状不对就当普通文件。这里不放宽：放宽等于把别的文件认成排障报告。
+    return isValidRequestId(candidate) ? candidate : QString();
+}
+
 ParsedReport parseReport(const QByteArray& payload,
                          const QString& fileName,
                          const QString& expectedRequestId,

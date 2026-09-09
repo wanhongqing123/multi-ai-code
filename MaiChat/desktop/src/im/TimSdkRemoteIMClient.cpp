@@ -1,5 +1,7 @@
 #include "im/TimSdkRemoteIMClient.h"
 
+#include "diagnostics/RemoteDiagnosticsProtocol.h"
+
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDebug>
@@ -1530,6 +1532,9 @@ void TimSdkRemoteIMClient::recordAttachmentPhase(const RemoteDiagnostics::Accoun
     event.peerId = message.direction == RemoteIMMessageDirection::Incoming ? message.fromUserId
                                                                            : message.toUserId;
     event.messageId = message.id;
+    // 只认完整匹配的报告名；普通附件留空，控制器据此把它们当现场元数据，
+    // 而不是当成本次排障的失败证据。**不记文件名本身，也不记 URL。**
+    event.requestId = RemoteDiagnostics::requestIdFromAttachmentFileName(message.file.fileName);
     event.phase = phase;
     event.code = code;
     event.atMs = QDateTime::currentMSecsSinceEpoch();

@@ -51,6 +51,7 @@ private slots:
     void distinguishesNotIntegratedFromUnsupported();
     void requiresTheIdInItsProperPlaceNotAnywhere();
     void neverCopiesRemoteTextIntoTheReason();
+    void extractsTheRequestIdOnlyFromAnExactReportFileName();
 };
 
 // requestId 由我们生成、由我们校验，两边形状必须自洽。
@@ -438,6 +439,29 @@ void RemoteDiagnosticsProtocolTest::neverCopiesRemoteTextIntoTheReason()
     const QString described = describeFailureReason(receipt.reason);
     QVERIFY(!described.contains(injected));
     QVERIFY(!described.contains(id));
+}
+
+// 同一个好友可能同时在传别的附件。只凭「这个好友有一次下载失败」就断定
+// 本次排障报告失败，会把无关文件的失败算到排障头上——所以只认完整匹配的名字。
+void RemoteDiagnosticsProtocolTest::extractsTheRequestIdOnlyFromAnExactReportFileName()
+{
+    const QString id = newRequestId();
+    QCOMPARE(requestIdFromAttachmentFileName(attachmentFileName(id)), id);
+
+    // 普通附件一律留空——包括看起来很像的那些。
+    const QStringList notReports{
+        QStringLiteral("holiday.png"),
+        QStringLiteral("remote-diagnostics-.json"),
+        QStringLiteral("remote-diagnostics-not-a-uuid.json"),
+        QStringLiteral("remote-diagnostics-%1.JSON").arg(id),
+        QStringLiteral("remote-diagnostics-%1.json.bak").arg(id),
+        QStringLiteral("x-remote-diagnostics-%1.json").arg(id),
+        QStringLiteral("remote-diagnostics-%1.json").arg(id.toUpper()),
+        QStringLiteral("文件"),
+        QString()};
+    for (const QString& name : notReports) {
+        QVERIFY2(requestIdFromAttachmentFileName(name).isEmpty(), qPrintable(name));
+    }
 }
 
 QTEST_MAIN(RemoteDiagnosticsProtocolTest)

@@ -27,11 +27,11 @@ const QRegularExpression& requestIdPattern()
 const QStringList& topLevelStringFields()
 {
     static const QStringList fields{
-        QStringLiteral("schemaVersion"),  // 数字，单独校验，这里不列
         QStringLiteral("requestId"),
         QStringLiteral("appVersion"),
         QStringLiteral("platform"),
-        QStringLiteral("exportedAt"),
+        QStringLiteral("projectId"),
+        QStringLiteral("electronVersion"),
         QStringLiteral("timeZone")};
     return fields;
 }
@@ -62,7 +62,13 @@ const QStringList& eventStringFields()
         QStringLiteral("turnId"),
         QStringLiteral("direction"),
         QStringLiteral("status")};
-    return fields;
+    // Kept in sync with the actual host producer, not an IM prose summary.
+    static const QStringList all = fields + QStringList{
+        "event", "kind", "sourceKind", "cli", "sessionId", "taskId", "replyId", "partId",
+        "eventTaskId", "eventReplyId", "sourceCommit", "onDiskBinarySha256", "terminalKind",
+        "hostStopReason", "stopReasonRequested", "spawnErrorCode", "signal", "exitCodeHex",
+        "appVersion", "onDiskBinaryStatus"};
+    return all;
 }
 
 const QStringList& eventNumberFields()
@@ -71,7 +77,9 @@ const QStringList& eventNumberFields()
         QStringLiteral("attempt"),
         QStringLiteral("code"),
         QStringLiteral("errorCode"),
-        QStringLiteral("at")};
+        QStringLiteral("at"), "createdAt", "startedAt", "pid", "hostPid", "lifetimeMs", "lastInputAt",
+        "lastOutputAt", "lastEtxAt", "stopRequestedAt", "exitCode", "textLength", "inputLength",
+        "resolvedLength", "forwardedChunks", "onDiskBinaryBytes"};
     return fields;
 }
 
@@ -92,26 +100,19 @@ const QStringList& eventStringOrNumberFields()
 const QStringList& eventBoolFields()
 {
     static const QStringList fields{
-        QStringLiteral("sdkReady"), QStringLiteral("isReady"), QStringLiteral("accepted")};
+        QStringLiteral("sdkReady"), QStringLiteral("isReady"), QStringLiteral("accepted"),
+        "ok", "sourceStarted", "autoReplyToIm"};
     return fields;
 }
 
 const QStringList& sessionStringFields()
 {
-    static const QStringList fields{
-        QStringLiteral("appVersion"),
-        QStringLiteral("sourceCommit"),
-        QStringLiteral("startedAt"),
-        QStringLiteral("onDiskBinarySha256"),
-        QStringLiteral("onDiskBinaryStatus")};
-    return fields;
+    return eventStringFields();
 }
 
 const QStringList& sessionNumberFields()
 {
-    static const QStringList fields{
-        QStringLiteral("pid"), QStringLiteral("onDiskBinaryBytes")};
-    return fields;
+    return eventNumberFields();
 }
 
 // sourceCoverage.aicliOriginalEvents 只认两个取值。
@@ -130,7 +131,7 @@ QJsonObject pickWhitelisted(const QJsonObject& source,
                             const QStringList& numberFields,
                             const QStringList& boolFields,
                             const QString& path,
-                            QStringList* dropped)
+                            QStringList* dropped, int depth = 0)
 {
     QJsonObject out;
     for (auto it = source.begin(); it != source.end(); ++it) {
@@ -140,7 +141,18 @@ QJsonObject pickWhitelisted(const QJsonObject& source,
         const bool wantNumber = numberFields.contains(key);
         const bool wantBool = boolFields.contains(key);
         const bool wantEither = eventStringOrNumberFields().contains(key);
-        if (wantEither && value.isString()) {
+        if (key == "detail" && value.isObject() && depth < 3) {
+            out.insert(key, pickWhitelisted(value.toObject(), eventStringFields(), eventNumberFields(),
+                eventBoolFields(), path + ".detail", dropped, depth + 1));
+        } else if (key == "candidates" && value.isArray() && depth < 3) {
+            QJsonArray candidates;
+            for (const auto& candidate : value.toArray()) {
+                if (candidates.size() >= 20) break;
+                if (candidate.isObject()) candidates.append(pickWhitelisted(candidate.toObject(), eventStringFields(),
+                    eventNumberFields(), eventBoolFields(), path + ".candidates", dropped, depth + 1));
+            }
+            out.insert(key, candidates);
+        } else if (wantEither && value.isString()) {
             out.insert(key, value.toString());
         } else if (wantEither && value.isDouble()) {
             out.insert(key, value.toDouble());
@@ -165,7 +177,7 @@ QJsonArray pickEventArray(const QJsonValue& value, const QString& path, QStringL
         return out;
     }
     const QJsonArray source = value.toArray();
-    for (int i = 0; i < source.size(); ++i) {
+    for (int i = 0; i < qMin(source.size(), 1000); ++i) {
         if (!source.at(i).isObject()) {
             dropped->append(QStringLiteral("%1[%2]").arg(path).arg(i));
             continue;
@@ -174,14 +186,6 @@ QJsonArray pickEventArray(const QJsonValue& value, const QString& path, QStringL
         QJsonObject event = pickWhitelisted(source.at(i).toObject(), eventStringFields(),
                                             eventNumberFields(), eventBoolFields(), itemPath,
                                             dropped);
-        // detail 是嵌套的一层，字段表与 events 相同。
-        const QJsonValue detail = source.at(i).toObject().value(QStringLiteral("detail"));
-        if (detail.isObject()) {
-            const QJsonObject picked =
-                pickWhitelisted(detail.toObject(), eventStringFields(), eventNumberFields(),
-                                eventBoolFields(), itemPath + QStringLiteral(".detail"), dropped);
-            if (!picked.isEmpty()) event.insert(QStringLiteral("detail"), picked);
-        }
         if (!event.isEmpty()) out.append(event);
     }
     return out;
@@ -319,9 +323,13 @@ ParsedReport parseReport(const QByteArray& payload,
     }
     const QJsonObject root = document.object();
 
-    if (root.value(QStringLiteral("schemaVersion")).toInt(-1) != kSchemaVersion) {
+    if (!root.value("schemaVersion").isDouble() || root.value("schemaVersion").toDouble() != kSchemaVersion) {
         result.rejectionReason = QStringLiteral("报告 schemaVersion 不是 %1，已拒收")
                                      .arg(kSchemaVersion);
+        return result;
+    }
+    if (!root.value("files").isArray() || root.value("files").toArray().size() > 16) {
+        result.rejectionReason = QStringLiteral("报告来源列表缺失、无效或超过上限，已拒收");
         return result;
     }
     // 文件名对了，内容里的编号也必须对——两处都查，少查一处就能被绕过。
@@ -337,10 +345,9 @@ ParsedReport parseReport(const QByteArray& payload,
         const QJsonValue value = root.value(key);
         if (value.isString()) out.insert(key, value.toString());
     }
-    for (const QString& key : {QStringLiteral("from"), QStringLiteral("projectId")}) {
+    for (const QString& key : {QStringLiteral("from"), QStringLiteral("exportedAt")}) {
         const QJsonValue value = root.value(key);
         if (value.isDouble()) out.insert(key, value.toDouble());
-        else if (value.isString()) out.insert(key, value.toString());
     }
 
     if (root.contains(QStringLiteral("files"))) {
@@ -361,6 +368,7 @@ ParsedReport parseReport(const QByteArray& payload,
                         pickEventArray(entry.value(QStringLiteral("events")),
                                        path + QStringLiteral(".events"), &result.droppedFields);
                     file.insert(QStringLiteral("events"), events);
+                    if (entry.value("events").toArray().size() > 1000) file.insert("truncated", true);
                 }
                 files.append(file);
             }
@@ -373,10 +381,10 @@ ParsedReport parseReport(const QByteArray& payload,
         const QJsonValue value = root.value(QStringLiteral("activeSessions"));
         if (value.isArray()) {
             const QJsonArray source = value.toArray();
-            for (int i = 0; i < source.size(); ++i) {
+            for (int i = 0; i < qMin(source.size(), 32); ++i) {
                 if (!source.at(i).isObject()) continue;
                 sessions.append(pickWhitelisted(
-                    source.at(i).toObject(), sessionStringFields(), sessionNumberFields(), {},
+                    source.at(i).toObject(), sessionStringFields(), sessionNumberFields(), eventBoolFields(),
                     QStringLiteral("activeSessions[%1]").arg(i), &result.droppedFields));
             }
         }

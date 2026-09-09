@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "requestId": "65de6748-3a4e-4d08-8ffd-bc78e1804ff9",
+  "appVersion": "0.1.77",
+  "platform": "win32",
+  "projectId": "project-a",
+  "electronVersion": "35.0.0",
+  "exportedAt": 1800000000000,
+  "from": 1799998200000,
+  "timeZone": "Asia/Shanghai",
+  "files": [{
+    "source": "remote-im-runtime.log",
+    "status": "ok",
+    "truncated": false,
+    "invalidLines": 0,
+    "events": [{
+      "event": "aicli:event-forwarded",
+      "createdAt": 1799999999000,
+      "sessionId": "session-a",
+      "taskId": "task-a",
+      "replyId": "reply-a",
+      "kind": "assistant_text",
+      "messageId": 1637,
+      "detail": {
+        "ID": "sdk-id",
+        "messageId": "call-async",
+        "callId": "call-async",
+        "phase": "final_answer",
+        "delivery": "async",
+        "sdkReady": true,
+        "attempt": 1,
+        "candidates": [{"taskId": "candidate-task", "replyId": "candidate-reply"}]
+      }
+    }]
+  }],
+  "activeSessions": [{
+    "sessionId": "session-a",
+    "cli": "codex",
+    "sourceCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "startedAt": 1799998000000,
+    "pid": 123,
+    "hostPid": 122,
+    "autoReplyToIm": true
+  }],
+  "sourceCoverage": {"aicliOriginalEvents": "unavailable"}
+}

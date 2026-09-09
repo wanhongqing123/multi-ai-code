@@ -50,12 +50,21 @@ class RemoteDiagnosticsControllerTest : public QObject {
     std::unique_ptr<RemoteDiagnosticsController> controller_;
     DiagnosticsClient* client_ = nullptr;
 
+    QJsonObject reportFixture() {
+        QFile file(QString::fromUtf8(MAICHAT_DIAGNOSTICS_REPORT_FIXTURE));
+        if (!file.open(QIODevice::ReadOnly)) return {};
+        return QJsonDocument::fromJson(file.readAll()).object();
+    }
+
     void response(const QString& from = "machine", const QString& payloadId = {}) {
         const auto id = controller_->requestId();
-        const QJsonObject payload{{"schemaVersion", 1}, {"requestId", payloadId.isEmpty() ? id : payloadId},
-            {"token", "PRIVATE_TOKEN_SENTINEL"}, {"files", QJsonArray{QJsonObject{{"source", "codex-original-events"},
-                {"events", QJsonArray{QJsonObject{{"messageId", "call-async"}, {"delivery", "async"},
-                    {"text", "PRIVATE_BODY_SENTINEL"}, {"detail", QJsonObject{{"ID", "sdk-id"}}}}}}}}}};
+        auto payload = reportFixture(); QVERIFY(!payload.isEmpty());
+        payload.insert("requestId", payloadId.isEmpty() ? id : payloadId);
+        payload.insert("token", "PRIVATE_TOKEN_SENTINEL");
+        auto files = payload.value("files").toArray();
+        auto source = files[0].toObject(); auto events = source.value("events").toArray();
+        auto event = events[0].toObject(); event.insert("text", "PRIVATE_BODY_SENTINEL");
+        events[0] = event; source.insert("events", events); files[0] = source; payload.insert("files", files);
         const auto path = temp_.filePath(QUuid::createUuid().toString(QUuid::WithoutBraces) + ".json");
         QFile file(path); QVERIFY(file.open(QIODevice::WriteOnly)); file.write(QJsonDocument(payload).toJson()); file.close();
         RemoteIMMessage message;
@@ -90,6 +99,17 @@ private slots:
         QCOMPARE(client_->reportTargets, QStringList{"helper"});
         QVERIFY(client_->reports.first().contains("call-async"));
         QVERIFY(client_->reports.first().contains("sdk-id"));
+        for (const auto& field : {"aicli:event-forwarded", "session-a", "task-a", "reply-a", "candidate-task", "candidate-reply"})
+            QVERIFY2(client_->reports.first().contains(field), field);
+        QVERIFY(client_->reports.first().contains("1800000000000"));
+        QVERIFY(client_->reports.first().contains("1799998000000"));
+        QVERIFY(client_->reports.first().contains("1799999999000"));
+        const auto report = client_->reports.first();
+        const auto section = report.indexOf(QStringLiteral("## B 端远程现场").toUtf8()); QVERIFY(section >= 0);
+        const auto begin = report.indexOf("```json\n", section) + 8;
+        const auto end = report.indexOf("```", begin); QVERIFY(end > begin);
+        auto expected = reportFixture(); expected.insert("requestId", controller_->requestId());
+        QCOMPARE(QJsonDocument::fromJson(report.mid(begin, end - begin)).object(), expected);
         QVERIFY(!client_->reports.first().contains("PRIVATE_BODY_SENTINEL"));
         QVERIFY(!client_->reports.first().contains("PRIVATE_TOKEN_SENTINEL"));
         QCOMPARE(app_->chatState().selectedPeerId(), QString("other"));

@@ -279,6 +279,8 @@ endif()
 
 add_executable(remote_diagnostics_controller_test tests/RemoteDiagnosticsControllerTest.cpp)
 target_link_libraries(remote_diagnostics_controller_test PRIVATE remote_im_desktop_app Qt5::Test)
+target_compile_definitions(remote_diagnostics_controller_test PRIVATE
+  MAICHAT_DIAGNOSTICS_REPORT_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../../tests/fixtures/remote-diagnostics-report.json")
 
 add_executable(remote_diagnostics_evidence_test tests/RemoteDiagnosticsEvidenceTest.cpp)
 target_link_libraries(remote_diagnostics_evidence_test PRIVATE remote_im_core Qt5::Test)

@@ -26,6 +26,7 @@ QJsonObject minimalReport(const QString& requestId)
     root.insert(QStringLiteral("requestId"), requestId);
     root.insert(QStringLiteral("appVersion"), QStringLiteral("0.1.77"));
     root.insert(QStringLiteral("platform"), QStringLiteral("win32"));
+    root.insert(QStringLiteral("files"), QJsonArray{});
     return root;
 }
 
@@ -52,7 +53,37 @@ private slots:
     void requiresTheIdInItsProperPlaceNotAnywhere();
     void neverCopiesRemoteTextIntoTheReason();
     void extractsTheRequestIdOnlyFromAnExactReportFileName();
+    void retainsNumericHostTimesAndRejectsWrongTypes();
+    void rejectsMissingSourcesAndFractionalSchema();
 };
+
+void RemoteDiagnosticsProtocolTest::retainsNumericHostTimesAndRejectsWrongTypes()
+{
+    const auto id = newRequestId();
+    auto body = minimalReport(id);
+    body.insert("exportedAt", 1800000000000.0);
+    body.insert("activeSessions", QJsonArray{QJsonObject{{"startedAt", 1799999999000.0}, {"sessionId", "s"}, {"cli", "codex"}}});
+    auto parsed = parseReport(reportBytes(body), attachmentFileName(id), id, kPeer, kPeer);
+    QVERIFY(parsed.accepted);
+    QCOMPARE(parsed.report.value("exportedAt").toDouble(), 1800000000000.0);
+    QCOMPARE(parsed.report.value("activeSessions").toArray()[0].toObject().value("startedAt").toDouble(), 1799999999000.0);
+    body.insert("exportedAt", "1800000000000");
+    body.insert("activeSessions", QJsonArray{QJsonObject{{"startedAt", "1799999999000"}, {"sessionId", "s"}}});
+    parsed = parseReport(reportBytes(body), attachmentFileName(id), id, kPeer, kPeer);
+    QVERIFY(!parsed.report.contains("exportedAt"));
+    QVERIFY(!parsed.report.value("activeSessions").toArray()[0].toObject().contains("startedAt"));
+}
+
+void RemoteDiagnosticsProtocolTest::rejectsMissingSourcesAndFractionalSchema()
+{
+    const auto id = newRequestId();
+    auto body = minimalReport(id); body.remove("files");
+    QVERIFY(!parseReport(reportBytes(body), attachmentFileName(id), id, kPeer, kPeer).accepted);
+    body = minimalReport(id); body.insert("schemaVersion", 1.5);
+    QVERIFY(!parseReport(reportBytes(body), attachmentFileName(id), id, kPeer, kPeer).accepted);
+    body.insert("schemaVersion", true);
+    QVERIFY(!parseReport(reportBytes(body), attachmentFileName(id), id, kPeer, kPeer).accepted);
+}
 
 // requestId 由我们生成、由我们校验，两边形状必须自洽。
 void RemoteDiagnosticsProtocolTest::generatedRequestIdIsAcceptedByOurOwnValidator()

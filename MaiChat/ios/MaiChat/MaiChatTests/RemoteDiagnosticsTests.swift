@@ -398,6 +398,59 @@ final class RemoteDiagnosticsTests: XCTestCase {
         XCTAssertTrue(invalid.fields.isEmpty)
     }
 
+    func testSpeechCoverageSurvivesFinalMergedReportAndFlagsMissingStages() throws {
+        let now = Date()
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let session = UUID().uuidString.lowercased()
+        let events = ["gesture-started", "session-started", "recording-started", "first-text-received",
+                      "ui-first-text-updated", "gesture-ended", "stop-requested", "session-finished",
+                      "transcription-applied"]
+        let entries = events.enumerated().map { index, event in
+            DiagnosticLogEntry(sequence: UInt64(index), createdAt: formatter.string(from: now.addingTimeInterval(Double(index))),
+                level: .info, category: "asr", event: event,
+                fields: ["account": "a", "peer": DiagnosticLogPrivacy.stableTag("machine", prefix: "u"),
+                         "asr_session": session, "text": "PRIVATE_SPEECH"])
+        }
+        let logs = RemoteDiagnosticsProtocol.scopedLogs(entries, accountTag: "a", peerUserID: "machine", since: now.addingTimeInterval(-1))
+        let full = SpeechDiagnosticSession(id: session, logs: logs)
+        XCTAssertEqual(full.outcome, "applied")
+        XCTAssertTrue(full.missingStages.isEmpty)
+        XCTAssertEqual(full.durationsMS["press_to_first_text"], 3000)
+        let partial = logs.filter { $0.event != "first-text-received" }
+        let local = RemoteDiagnosticsLocalEvidence(appVersion: "test", ownerUserID: "phone", peerUserID: "machine",
+            collectedAt: now.addingTimeInterval(10), messages: [], displayedConversation: true, logs: partial)
+        XCTAssertEqual(local.speechCoverage["sessionsWithMissingStages"], "1")
+        XCTAssertEqual(local.speechSessions.first?.missingStages, ["first-text-received"])
+        XCTAssertNil(local.speechSessions.first?.durationsMS["press_to_first_text"])
+        let report = String(decoding: try RemoteDiagnosticsProtocol.mergedReport(requestID: UUID(), local: local,
+            remote: nil, missingReason: "unavailable"), as: UTF8.self)
+        XCTAssertTrue(report.contains("speechSessions"))
+        XCTAssertTrue(report.contains("missingStages"))
+        XCTAssertTrue(report.contains(session))
+        XCTAssertFalse(report.contains("PRIVATE_SPEECH"))
+        let empty = RemoteDiagnosticsLocalEvidence(appVersion: "test", ownerUserID: "phone", peerUserID: "machine",
+            collectedAt: now, messages: [], displayedConversation: true)
+        XCTAssertEqual(empty.speechCoverage["status"], "no-retained-session-evidence")
+    }
+
+    func testLifecycleAndExportContextCannotCrossAccounts() {
+        let now = Date()
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        func entry(_ event: String, account: String = "a") -> DiagnosticLogEntry {
+            DiagnosticLogEntry(sequence: 1, createdAt: formatter.string(from: now), level: .info,
+                category: "interaction-performance", event: event,
+                fields: ["account": account, "scope": "account-process", "active_operation": "diagnostic-export"])
+        }
+        let logs = RemoteDiagnosticsProtocol.scopedLogs([
+            entry("app-active"), entry("app-inactive"), entry("diagnostic-export-start"),
+            entry("diagnostic-export-finished"), entry("app-active", account: "other"), entry("unknown")
+        ], accountTag: "a", peerUserID: "machine", since: now.addingTimeInterval(-1))
+        XCTAssertEqual(logs.map(\.event), ["app-active", "app-inactive", "diagnostic-export-start", "diagnostic-export-finished"])
+        XCTAssertTrue(logs.allSatisfy { $0.fields["active_operation"] == "diagnostic-export" })
+    }
+
     func testLocalLogsCannotCrossAccountsSDKsOrPeers() throws {
         let date = Date()
         let formatter = ISO8601DateFormatter()

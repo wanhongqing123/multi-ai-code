@@ -40,7 +40,7 @@ public struct RemoteDiagnosticsLogEntry: Codable, Sendable {
     public init(_ entry: DiagnosticLogEntry) {
         createdAt = entry.createdAt
         event = entry.event
-        let allowed: Set<String> = ["peer", "message", "launch", "kind", "result", "code", "duration_ms", "operation", "cached_messages", "near_bottom", "scroll_action", "app_version", "build", "ios", "pid", "scope", "layout", "asr_session", "action", "mode", "completion", "callback_on_main"]
+        let allowed: Set<String> = ["peer", "message", "launch", "kind", "result", "code", "duration_ms", "operation", "cached_messages", "near_bottom", "scroll_action", "app_version", "build", "ios", "pid", "scope", "layout", "asr_session", "action", "mode", "completion", "callback_on_main", "phase", "active_operation"]
         let numeric: Set<String> = ["samples", "slow_samples", "slow_threshold_ms", "max_ms", "average_ms", "late_ms", "sample_interval_ms", "mutation_count", "upserted_count", "removed_count", "message_count", "limit", "dropped_entries", "export_truncated", "retained_entries", "capacity", "loaded_messages", "eager_rows", "history_rows", "text_bytes", "session", "characters", "text_updates", "audio_session_ms", "audio_queue_ms", "audio_category_ms", "audio_activate_ms", "audio_resume_ms", "sdk_start_call_ms", "elapsed_ms", "latency_ms", "callback_latency_ms", "callback_extract_ms", "main_actor_wait_ms", "stop_wait_ms"]
         fields = entry.fields.filter { key, value in
             if numeric.contains(key) {
@@ -53,6 +53,52 @@ public struct RemoteDiagnosticsLogEntry: Codable, Sendable {
             return allowed.contains(key) && value.count <= 120 &&
                 value.range(of: "^[a-zA-Z0-9_.:#/-]+$", options: .regularExpression) != nil
         }
+    }
+}
+
+/// Summarizes retained evidence, never infers a missing stage's duration as zero.
+public struct SpeechDiagnosticSession: Codable, Sendable {
+    public let id: String
+    public let events: [String]
+    public let missingStages: [String]
+    public let outcome: String
+    public let durationsMS: [String: Double]
+
+    public init(id: String, logs: [RemoteDiagnosticsLogEntry]) {
+        self.id = id
+        events = logs.map(\.event)
+        let observed = Set(events)
+        let failed = observed.contains("session-start-failed") || observed.contains("transcription-apply-failed") ||
+            logs.contains { $0.event == "session-finished" && $0.fields["result"] == "failed" }
+        let cancelled = observed.contains("session-cancelled") ||
+            logs.contains { $0.event == "gesture-ended" && $0.fields["action"] == "cancel" }
+        let empty = observed.contains("transcription-empty")
+        outcome = failed ? "failed" : cancelled ? "cancelled" : empty ? "no-text" :
+            observed.contains("transcription-applied") ? "applied" : "unfinished-or-missing"
+        var expected = ["gesture-started"]
+        if !failed && !cancelled {
+            expected += ["session-started", "recording-started", "gesture-ended", "stop-requested", "session-finished"]
+            if !empty { expected += ["first-text-received", "ui-first-text-updated", "transcription-applied"] }
+        }
+        missingStages = expected.filter { !observed.contains($0) }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        var durations: [String: Double] = [:]
+        for (key, start, end) in [
+            ("press_to_first_text", "gesture-started", "first-text-received"),
+            ("record_to_first_text", "recording-started", "first-text-received"),
+            ("stop_to_finish", "stop-requested", "session-finished"),
+            ("release_to_apply", "gesture-ended", "transcription-applied"),
+            ("first_text_to_ui_state", "first-text-received", "ui-first-text-updated")
+        ] {
+            if let a = logs.first(where: { $0.event == start }),
+               let b = logs.first(where: { $0.event == end }),
+               let begin = formatter.date(from: a.createdAt), let finish = formatter.date(from: b.createdAt),
+               finish >= begin {
+                durations[key] = (finish.timeIntervalSince(begin) * 1000).rounded()
+            }
+        }
+        durationsMS = durations
     }
 }
 
@@ -72,6 +118,8 @@ public struct RemoteDiagnosticsLocalEvidence: Codable, Sendable {
     public let logs: [RemoteDiagnosticsLogEntry]
     public let logCoverage: String
     public let performanceCoverage: [String: String]
+    public let speechSessions: [SpeechDiagnosticSession]
+    public let speechCoverage: [String: String]
 
     public init(appVersion: String, ownerUserID: String, peerUserID: String,
                 collectedAt: Date, messages: [RemoteIMMessage], displayedConversation: Bool,
@@ -94,6 +142,17 @@ public struct RemoteDiagnosticsLocalEvidence: Codable, Sendable {
         timeZone = TimeZone.current.identifier
         processId = ProcessInfo.processInfo.processIdentifier
         self.logs = logs
+        let speech = logs.filter { $0.fields["asr_session"] != nil }
+        let grouped = Dictionary(grouping: speech) { $0.fields["asr_session"]! }
+        speechSessions = grouped.keys.sorted().map { SpeechDiagnosticSession(id: $0, logs: grouped[$0]!) }
+        speechCoverage = [
+            "instrumentation": "speech-stages-v2",
+            "status": speech.isEmpty ? "no-retained-session-evidence" : "retained-session-evidence",
+            "sessionCount": String(speechSessions.count),
+            "sessionsWithMissingStages": String(speechSessions.filter { !$0.missingStages.isEmpty }.count),
+            "limits": "No audio packet timestamps, network RTT or screen-presentation timing; no blocking stack traces. Missing stages may be ongoing, outside the window or dropped, not necessarily a product failure.",
+            "timing": "release_to_apply includes send wait in send mode; first_text_to_ui_state is not pixel presentation."
+        ]
         let performance = logs.filter { RemoteDiagnosticsProtocol.performanceEvents.contains($0.event) }
         performanceCoverage = [
             "status": performance.isEmpty ? "no-retained-samples" : "sampled",
@@ -114,6 +173,7 @@ public struct RemoteDiagnosticsLocalEvidence: Codable, Sendable {
 
 public enum RemoteDiagnosticsProtocol {
     public static let performanceEvents: Set<String> = ["composer-edit", "composer-text-mutation", "composer-update", "composer-layout", "composer-height-queue", "asr-main-actor-wait", "main-runloop-delay"]
+    public static let contextEvents: Set<String> = ["app-active", "app-inactive", "diagnostic-export-start", "diagnostic-export-finished", "diagnostic-export-failed"]
     public static let historyEvents: Set<String> = ["history-save-slow", "history-save-failed", "history-load-failed", "history-load-completed"]
     public static let maximumBytes = 2 * 1024 * 1024
 
@@ -131,7 +191,7 @@ public enum RemoteDiagnosticsProtocol {
             guard !accountTag.isEmpty, entry.fields["account"] == accountTag,
                   let date = formatter.date(from: entry.createdAt), date >= since else { return false }
             return entry.fields["peer"] == peer || connectionEvents.contains(entry.event) ||
-                (entry.category == "interaction-performance" && performanceEvents.contains(entry.event) && entry.fields["scope"] == "account-process") ||
+                (entry.category == "interaction-performance" && (performanceEvents.contains(entry.event) || contextEvents.contains(entry.event)) && entry.fields["scope"] == "account-process") ||
                 (entry.fields["peer"] == nil && historyEvents.contains(entry.event))
         }.suffix(max(0, min(limit, 2048))).map(RemoteDiagnosticsLogEntry.init)
     }

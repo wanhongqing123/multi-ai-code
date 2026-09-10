@@ -47,6 +47,7 @@ final class AppDiagnosticLog: DiagnosticLogSink {
     private var lastHeartbeatUptime: TimeInterval?
     private var lastPerformanceFlushUptime: TimeInterval = 0
     private var lastDelayLogUptime: TimeInterval = 0
+    private var diagnosticExportCount = 0
 
     private static let timestampFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
@@ -122,8 +123,24 @@ final class AppDiagnosticLog: DiagnosticLogSink {
     }
 
     func makeExportSnapshot() async throws -> URL {
+        let started = ProcessInfo.processInfo.systemUptime
+        let account = performanceAccountTag
+        let operation = UUID().uuidString.lowercased()
+        diagnosticExportCount += 1
+        defer { diagnosticExportCount -= 1 }
+        let fields = ["account": account, "scope": "account-process", "operation": operation]
+        record(level: .info, category: "interaction-performance", event: "diagnostic-export-start", fields: fields)
         await flush()
-        return try await fileStore.makeExportSnapshot(in: exportDirectoryURL)
+        do {
+            let url = try await fileStore.makeExportSnapshot(in: exportDirectoryURL)
+            record(level: .info, category: "interaction-performance", event: "diagnostic-export-finished",
+                fields: fields.merging(["duration_ms": String(Int((ProcessInfo.processInfo.systemUptime - started) * 1000))]) { _, b in b })
+            return url
+        } catch {
+            record(level: .warning, category: "interaction-performance", event: "diagnostic-export-failed",
+                fields: fields.merging(["code": String((error as NSError).code)]) { _, b in b })
+            throw error
+        }
     }
 
     func remoteMetadata(peerUserID: String, accountTag: String, since: Date) -> [RemoteDiagnosticsLogEntry] {
@@ -187,7 +204,10 @@ final class AppDiagnosticLog: DiagnosticLogSink {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.startPerformanceSampling() }
+            MainActor.assumeIsolated {
+                self?.recordAppPhase("app-active")
+                self?.startPerformanceSampling()
+            }
         })
         performanceObservers.append(center.addObserver(
             forName: UIApplication.willResignActiveNotification,
@@ -195,6 +215,7 @@ final class AppDiagnosticLog: DiagnosticLogSink {
             queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
+                self?.recordAppPhase("app-inactive")
                 self?.performanceTimer?.invalidate()
                 self?.performanceTimer = nil
                 self?.lastHeartbeatUptime = nil
@@ -204,6 +225,11 @@ final class AppDiagnosticLog: DiagnosticLogSink {
         if UIApplication.shared.applicationState == .active {
             startPerformanceSampling()
         }
+    }
+
+    private func recordAppPhase(_ event: String) {
+        record(level: .info, category: "interaction-performance", event: event,
+            fields: ["account": performanceAccountTag, "scope": "account-process"])
     }
 
     private func startPerformanceSampling() {
@@ -234,6 +260,7 @@ final class AppDiagnosticLog: DiagnosticLogSink {
                        event: "main-runloop-delay", fields: [
                         "account": performanceAccountTag, "scope": "account-process",
                         "late_ms": String(Int(lateMilliseconds.rounded())),
+                        "active_operation": diagnosticExportCount > 0 ? "diagnostic-export" : "untracked",
                         "sample_interval_ms": "250",
                        ])
             }

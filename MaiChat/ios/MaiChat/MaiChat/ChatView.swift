@@ -4870,6 +4870,8 @@ private struct ComposerView: View {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             transcriptionPresentation.reset()
             guard !text.isEmpty else {
+                AppDiagnosticLog.shared.record(level: .info, category: "asr",
+                    event: "transcription-empty", fields: diagnosticFields)
                 appState.errorMessage = "没有识别到文字，未发送"
                 return
             }

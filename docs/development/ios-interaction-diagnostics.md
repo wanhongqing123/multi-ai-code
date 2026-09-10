@@ -53,3 +53,19 @@ delegate 入口不是网络收包时间；如果 SDK 自己先投递到主线程
 为 SDK 阶段回调，不代表网络收包时间。
 `session-finished.stop_wait_ms` 包括调度等待，`completion=stop-timeout-fallback`
 表示使用已有文字兜底；`transcription-applied.duration_ms` 从松手计时，发送模式包含发送等待。
+
+## 最终报告的完整性检查
+
+`RemoteDiagnosticsLocalEvidence.speechSessions` 按 `asr_session` 汇总保留的事件，输出
+`missingStages`、`outcome` 和可计算的阶段耗时。缺失时间点不会填成零；取消、失败和
+无文字使用不同结果，进行中与日志缺失无法仅凭不完整记录区分。
+`speechCoverage` 明示会话证据是否存在，以及仍未采集的原始音频包时间、网络 RTT、
+像素呈现时间和阻塞调用栈。结合已有 dropped_entries / export_truncated 判断保留边界。
+
+`app-active` / `app-inactive`、`diagnostic-export-start` / `diagnostic-export-finished` /
+`diagnostic-export-failed` 随当前账号进入远程报告。长延迟的 active_operation 只标记
+探针执行时是否仍在等待日志导出，不证明导出导致阻塞；untracked 不是空闲证明。
+本地导出完成事件写在快照形成后，因此可能只出现在后续日志或远程报告中。
+
+验证覆盖原始事件筛选到最终合并报告：人为删除首次出字事件，检查 missingStages
+及耗时缺省；检查私密字段过滤与账号隔离。27 项排障测试及模拟器应用编译通过。

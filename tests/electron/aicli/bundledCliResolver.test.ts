@@ -14,9 +14,9 @@ describe('bundledCliResolver', () => {
     expect(bundledPlatformArch('win32', 'x64')).toBe('win32-x64')
   })
 
-  it('recognizes only bare Codex and OpenCode commands', () => {
+  it('recognizes only the bare Codex command', () => {
     expect(bundledCliFromCommand('codex')).toBe('codex')
-    expect(bundledCliFromCommand('"opencode"')).toBe('opencode')
+    expect(bundledCliFromCommand('"codex"')).toBe('codex')
     expect(bundledCliFromCommand('/custom/bin/codex')).toBeNull()
     expect(bundledCliFromCommand('claude')).toBeNull()
     expect(bundledCliFromCommand('my-codex-wrapper')).toBeNull()
@@ -30,7 +30,6 @@ describe('bundledCliResolver', () => {
   // 少了 $ 锚点，它会被认成内置 codex，进而被强制改写成 codex.exe 去执行。
   it('requires a full command-name match, not just a prefix', () => {
     expect(bundledCliFromCommand('codex-code-mode-host')).toBeNull()
-    expect(bundledCliFromCommand('opencode-server')).toBeNull()
     // 后缀也不行：内置策略只认裸命令名本身。
     expect(bundledCliFromCommand('codexx')).toBeNull()
     expect(resolveAicliCommand('codex-code-mode-host', { roots: [], existsFile: () => false }).tool).toBeNull()
@@ -45,19 +44,6 @@ describe('bundledCliResolver', () => {
       resolveBundledCliCommand('codex', {
         platform: 'darwin',
         arch: 'arm64',
-        roots: [root],
-        existsFile: (path) => path === expected
-      })
-    ).toBe(expected)
-  })
-
-  it('resolves bundled OpenCode when the platform binary exists', () => {
-    const root = '/repo/bin/aicli'
-    const expected = join(root, 'opencode', 'win32-x64', 'opencode.exe')
-    expect(
-      resolveBundledCliCommand('opencode', {
-        platform: 'win32',
-        arch: 'x64',
         roots: [root],
         existsFile: (path) => path === expected
       })
@@ -80,7 +66,7 @@ describe('bundledCliResolver', () => {
     ).toBeNull()
   })
 
-  it('forces codex/opencode to the bundled binary and reports when it is missing', () => {
+  it('forces codex to the bundled binary and reports when it is missing', () => {
     const root = '/repo/bin/aicli'
     const codexBundled = join(root, 'codex', 'darwin-arm64', 'codex')
     const opts = { platform: 'darwin' as const, arch: 'arm64' as const, roots: [root] }
@@ -99,9 +85,6 @@ describe('bundledCliResolver', () => {
     expect(
       resolveAicliCommand('codex', { ...opts, existsFile: () => false })
     ).toEqual({ tool: 'codex', label: 'Codex', bundledCommand: null, bundledMissing: true })
-    expect(
-      resolveAicliCommand('opencode', { ...opts, existsFile: () => false })
-    ).toEqual({ tool: 'opencode', label: 'OpenCode', bundledCommand: null, bundledMissing: true })
   })
 
   it('leaves claude and other commands unconstrained by the bundled policy', () => {
@@ -126,14 +109,14 @@ describe('bundledCliResolver', () => {
     })
   })
 
-  it('describes custom OpenCode paths without rewriting them', () => {
-    const path = '/custom/bin/opencode'
+  it('describes custom Codex paths without rewriting them', () => {
+    const path = '/custom/bin/codex'
     expect(describeAicliLaunchCommand(path, path, null)).toMatchObject({
-      tool: 'opencode',
-      label: 'OpenCode',
+      tool: 'codex',
+      label: 'Codex',
       source: 'custom',
       commandPath: path,
-      notice: `当前启动 OpenCode：自定义路径 ${path}`
+      notice: `当前启动 Codex：自定义路径 ${path}`
     })
   })
 

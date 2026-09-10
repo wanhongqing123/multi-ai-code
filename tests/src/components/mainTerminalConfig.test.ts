@@ -45,19 +45,13 @@ afterEach(() => {
 })
 
 describe('shouldConvertEolForCli', () => {
-  it('disables convertEol for opencode so bare LF keeps VT index semantics', () => {
-    expect(shouldConvertEolForCli('opencode')).toBe(false)
-    expect(shouldConvertEolForCli('opencode.exe')).toBe(false)
-    expect(shouldConvertEolForCli('C:\\Tools\\opencode.exe')).toBe(false)
-    expect(shouldConvertEolForCli('/usr/local/bin/opencode')).toBe(false)
-  })
-
-
-  it('keeps convertEol on for claude, codex and unknown CLIs', () => {
+  // 当前没有需要关掉 convertEol 的内置 CLI；开关留着，名单是空的。
+  it('keeps convertEol on for every CLI, including unknown ones', () => {
     expect(shouldConvertEolForCli('claude')).toBe(true)
     expect(shouldConvertEolForCli('codex')).toBe(true)
+    expect(shouldConvertEolForCli('codex.exe')).toBe(true)
     expect(shouldConvertEolForCli(undefined)).toBe(true)
-    expect(shouldConvertEolForCli('my-opencode-wrapper')).toBe(true)
+    expect(shouldConvertEolForCli('my-wrapper')).toBe(true)
   })
 })
 
@@ -84,10 +78,10 @@ describe('buildMainTerminalOptions', () => {
     })
   })
 
-  it('keeps convertEol for claude but turns it off for opencode', () => {
+  it('keeps convertEol on for claude, codex and unset CLIs', () => {
     expect(buildMainTerminalOptions('light', 'claude').convertEol).toBe(true)
     expect(buildMainTerminalOptions('light').convertEol).toBe(true)
-    expect(buildMainTerminalOptions('light', 'opencode').convertEol).toBe(false)
+    expect(buildMainTerminalOptions('light', 'codex').convertEol).toBe(true)
   })
 
   it('keeps a large scrollback for long AICLI PTY transcripts', () => {
@@ -101,7 +95,7 @@ describe('buildMainTerminalOptions', () => {
       configurable: true
     })
 
-    for (const cli of ['codex', 'opencode']) {
+    for (const cli of ['codex', 'claude']) {
       const linkHandler = buildMainTerminalOptions('light', cli).linkHandler
       expect(linkHandler).toBeTruthy()
       linkHandler?.activate(
@@ -112,7 +106,7 @@ describe('buildMainTerminalOptions', () => {
     }
 
     expect(openExternal).toHaveBeenNthCalledWith(1, 'https://example.com/codex')
-    expect(openExternal).toHaveBeenNthCalledWith(2, 'https://example.com/opencode')
+    expect(openExternal).toHaveBeenNthCalledWith(2, 'https://example.com/claude')
   })
 
   it('uses heavier weights and larger size on Windows; lighter elsewhere', () => {
@@ -150,7 +144,7 @@ describe('buildMainTerminalOptions', () => {
     })
   })
 
-  it('uses a tighter Windows profile only for codex and opencode', () => {
+  it('uses a tighter Windows profile only for codex', () => {
     mockNavigatorPlatform('Win32')
 
     expect(buildMainTerminalOptions('light', 'codex')).toMatchObject({
@@ -158,7 +152,7 @@ describe('buildMainTerminalOptions', () => {
       fontWeight: 500,
       fontWeightBold: 700
     })
-    expect(buildMainTerminalOptions('light', 'C:\\Tools\\opencode.exe')).toMatchObject({
+    expect(buildMainTerminalOptions('light', 'C:\\Tools\\codex.exe')).toMatchObject({
       lineHeight: 1.25,
       fontWeight: 500,
       fontWeightBold: 700

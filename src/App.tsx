@@ -210,7 +210,7 @@ function AppShell() {
   const handleToggleTheme = useCallback(() => {
     const next = toggleTheme()
     setThemeState(next)
-    // 让运行中的 AICLI TUI（codex / opencode）跟随明暗，无需重启会话。
+    // 让运行中的 AICLI TUI（codex）跟随明暗，无需重启会话。
     window.api.cc.setTerminalTheme(next)
   }, [])
 
@@ -580,7 +580,6 @@ function AppShell() {
       command,
       args,
       env: aiSettings.env ?? {},
-      opencode: aiSettings.opencode,
       terminalTheme: theme,
       mode
     })

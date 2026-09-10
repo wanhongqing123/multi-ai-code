@@ -109,10 +109,6 @@ vi.mock('../../../electron/cc/PtyCCProcess.js', () => ({
   },
 }))
 
-vi.mock('../../../electron/aicli/opencodeCredentials.js', () => ({
-  readOpenCodeCredentialEnv: () => ({ ZHIPU_API_KEY: 'test-zhipu-key' })
-}))
-
 describe('registerPtyIpc prompt injection timing', () => {
   beforeEach(() => {
     vi.resetModules()
@@ -287,7 +283,7 @@ describe('registerPtyIpc prompt injection timing', () => {
       mode: 'new',
     })
 
-    // opencode 会附带 launchNotice 字段，claude 不带；两者 ok 均为 true。
+    // codex 会附带 launchNotice 字段，claude 不带；两者 ok 均为 true。
     expect(result).toMatchObject({ ok: true })
     expect(ptyInstances).toHaveLength(1)
     return { proc: ptyInstances[0] }
@@ -323,53 +319,6 @@ describe('registerPtyIpc prompt injection timing', () => {
     expect(env.MULTI_AI_CODE_SESSION_ID).toBe('session-no-plan')
     expect(env.MULTI_AI_CODE_ROOT_DIR).toBeTruthy()
     expect(pathValue.split(':').some((item) => item.endsWith('/bin'))).toBe(true)
-  })
-
-  it('starts OpenCode with the managed account runtime and curated providers', async () => {
-    const targetRepo = await fs.mkdtemp(join(tmpdir(), 'multi-ai-code-target-opencode-'))
-    const projectDir = await fs.mkdtemp(join(tmpdir(), 'multi-ai-code-project-opencode-'))
-    await fs.writeFile(join(projectDir, 'project.json'), JSON.stringify({ name: 'demo' }), 'utf8')
-
-    const { setActiveAccount } = await import('../../../electron/store/paths.js')
-    setActiveAccount('test-account')
-    const { registerPtyIpc } = await import('../../../electron/cc/ptyManager.js')
-    registerPtyIpc()
-
-    const handler = ipcHandlers.get('cc:spawn')
-    if (!handler) throw new Error('cc:spawn handler was not registered')
-
-    const result = await handler({}, {
-      sessionId: 'session-opencode',
-      projectId: 'project-1',
-      projectDir,
-      targetRepo,
-      command: 'opencode',
-      args: [],
-      opencode: {
-        providerId: 'legacy-custom-provider',
-        name: '旧的项目级模型服务',
-        baseURL: 'https://llm.example.test/v1',
-        apiKey: 'test-api-key',
-        mainModel: 'legacy-model'
-      },
-      mode: 'new',
-    })
-
-    expect(result).toMatchObject({ ok: true })
-    const env = ptyInstances[0].opts.env as Record<string, string>
-    const config = JSON.parse(env.OPENCODE_CONFIG_CONTENT) as Record<string, unknown>
-    expect(config).toMatchObject({
-      lsp: true,
-      model: 'zhipu/glm-5.3',
-      small_model: 'zhipu/glm-5.3',
-      enabled_providers: ['zhipu']
-    })
-    expect(config).not.toHaveProperty('provider')
-    expect(env.OPENCODE_RUNTIME_ROOT).toContain('/accounts/test-account/aicli/opencode')
-    expect(env.OPENCODE_MODELS_PATH).toMatch(/managed-models\.json$/)
-    expect(env.OPENCODE_MANAGED_ROUTING_PATH).toMatch(/managed-routing\.json$/)
-    expect(env.ZHIPU_API_KEY).toBe('test-zhipu-key')
-    expect(env.LEGACY_CUSTOM_PROVIDER_API_KEY).toBeUndefined()
   })
 
   it('resolves Codex launch through the bundled policy, never a host/custom path', async () => {
@@ -585,8 +534,8 @@ describe('registerPtyIpc prompt injection timing', () => {
     })
   })
 
-  it('submits OpenCode messages through the source bridge without PTY input or local echo', async () => {
-    const { proc } = await spawnNoPlanSession('opencode')
+  it('submits source-level messages through the bridge without PTY input or local echo', async () => {
+    const { proc } = await spawnNoPlanSession('codex')
     const receivedLines: string[] = []
     const socket = await connectAicliControlBridge(proc, receivedLines)
 
@@ -624,7 +573,7 @@ describe('registerPtyIpc prompt injection timing', () => {
   })
 
   it('serializes concurrent programmatic messages to the same AICLI session', async () => {
-    const { proc } = await spawnNoPlanSession('opencode')
+    const { proc } = await spawnNoPlanSession('codex')
     const receivedLines: string[] = []
     const socket = await connectAicliControlBridge(proc, receivedLines)
 

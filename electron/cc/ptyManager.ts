@@ -17,12 +17,6 @@ import { buildResumeArgs, type ResumeCommand } from './resumeArgs.js'
 import { withEmbeddedClaudeSettings } from './claudeLaunchSettings.js'
 import { buildEnvWithPath, resolveCliSpawn } from '../util/cliSpawn.js'
 import {
-  isOpenCodeCommand,
-  withOpenCodeLspEnv,
-  type OpenCodeProviderProfile
-} from '../aicli/opencodeConfig.js'
-import { withOpenCodeManagedRuntimeEnv } from '../aicli/opencodeManagedRuntime.js'
-import {
   codexTerminalColors,
   withCodexTerminalEnv,
   type TerminalThemeMode
@@ -38,7 +32,7 @@ import {
 } from '../aicli/structuredOutputBridge.js'
 
 import { detectMsys } from '../util/msys.js'
-import { opencodeRuntimeDir, rootDir } from '../store/paths.js'
+import { rootDir } from '../store/paths.js'
 import { app, dialog } from 'electron'
 import { SessionDiagnostics, buildSessionDiagnosticsReport, type HostStopReason } from './sessionDiagnostics.js'
 
@@ -51,14 +45,12 @@ const PTY_DUMP_ENABLED = process.env.MULTI_AI_CODE_PTY_DUMP === '1'
 
 function structuredOutputProvider(command: string): AicliStructuredOutputProvider | null {
   if (command === 'codex') return 'codex'
-  if (isOpenCodeCommand(command)) return 'opencode'
   return null
 }
 
-// 提交语义：claude/codex 的编辑器需要双回车兜底；opencode 首个回车即提交，
-// 第二个回车会把空编辑器再提交一次，在会话里留下一条空消息。
-function usesSingleSubmit(command: string): boolean {
-  return isOpenCodeCommand(command)
+// 提交语义：claude/codex 的编辑器都需要双回车兜底，目前没有单回车即提交的内置 CLI。
+function usesSingleSubmit(_command: string): boolean {
+  return false
 }
 
 async function openPtyDumpStream(
@@ -122,7 +114,6 @@ export interface SpawnRequest {
   /** CLI args. */
   args: string[]
   env?: Record<string, string>
-  opencode?: OpenCodeProviderProfile
   /**
    * 宿主终端当前的明暗主题。用于给 codex 注入 CODEX_DEFAULT_TERMINAL_BG/FG，
    * 让 codex 的明暗判定与我们实际的终端背景一致（Windows ConPTY 无法探测）。
@@ -409,21 +400,6 @@ async function waitForCodexReady(
   return s?.codexPromptReady === true
 }
 
-async function waitForOpenCodeReady(
-  sessionId: string,
-  timeoutMs: number
-): Promise<boolean> {
-  const session = sessions.get(sessionId)
-  if (!session) return false
-  if (!session.structuredOutputBridge) return true
-
-  // OpenCode historically accepted input immediately. Prefer the source-level
-  // bridge readiness when available, but keep old binaries usable if they do
-  // not emit control_ready.
-  const ready = await session.structuredOutputBridge.waitUntilReady(timeoutMs)
-  return ready || sessions.has(sessionId)
-}
-
 async function waitForClaudeReady(
   sessionId: string,
   timeoutMs: number
@@ -454,8 +430,7 @@ async function sendMessage(
   await streamInput(proc, text)
   await sleep(500)
   proc.write('\r')
-  // 双回车是 claude/codex 的提交兜底；opencode 首个回车即提交，
-  // 第二个回车会把空编辑器再提交一次，在会话里留下一条空消息。
+  // 双回车是 claude/codex 的提交兜底。
   if (options.singleSubmit) return
   await sleep(150)
   proc.write('\r')
@@ -554,7 +529,7 @@ async function enqueueSessionInput<T>(
 
 /**
  * 把宿主的明暗主题广播给所有运行中、且带 im-bridge 控制通道的 AICLI 会话，让 TUI
- * 运行时重绘（codex 用 bg/fg 判定明暗、opencode 用 mode），不必重启会话。fire-and-forget。
+ * 运行时重绘（codex 用 bg/fg 判定明暗），不必重启会话。fire-and-forget。
  */
 export function setSessionsTerminalTheme(theme: TerminalThemeMode): void {
   const colors = codexTerminalColors(theme)
@@ -584,9 +559,7 @@ export async function sendUserMessageToSession(
       ? await waitForCodexReady(sessionId, 10_000)
       : session.command === 'claude'
         ? await waitForClaudeReady(sessionId, 15_000)
-        : isOpenCodeCommand(session.command)
-          ? await waitForOpenCodeReady(sessionId, 10_000)
-          : true
+        : true
   if (!ready) return { ok: false, error: 'session not ready for input' }
   session = sessions.get(sessionId)
   if (!session) return { ok: false, error: 'no session' }
@@ -596,7 +569,7 @@ export async function sendUserMessageToSession(
       if (!options.inputOrigin || options.inputOrigin === 'local') {
         emitSessionLocalInput(sessionId, 'submit-attempt')
       }
-      const sourceSubmitted = current.command === 'codex' || isOpenCodeCommand(current.command)
+      const sourceSubmitted = current.command === 'codex'
       if (sourceSubmitted) {
         if (!current.structuredOutputBridge) {
           sourceResult = { ok: false, error: 'AICLI source bridge is not available' }
@@ -849,29 +822,11 @@ export function registerPtyIpc(): void {
     // for an unsupported binary.
     const isResumeMode =
       req.mode === 'resume' &&
-      (req.command === 'claude' || req.command === 'codex' || req.command === 'opencode')
+      (req.command === 'claude' || req.command === 'codex')
     let effectiveArgs = isResumeMode
       ? buildResumeArgs(req.command as ResumeCommand, req.args)
       : req.args
     effectiveArgs = withEmbeddedClaudeSettings(req.command, effectiveArgs)
-    const configuredOpenCodeEnv = withOpenCodeLspEnv(
-      req.command,
-      req.env,
-      req.opencode,
-      req.terminalTheme
-    )
-    let managedOpenCodeEnv: Record<string, string> | undefined
-    try {
-      managedOpenCodeEnv = isOpenCodeCommand(req.command)
-        ? withOpenCodeManagedRuntimeEnv(req.command, configuredOpenCodeEnv, opencodeRuntimeDir())
-        : configuredOpenCodeEnv
-    } catch (error) {
-      return {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error)
-      }
-    }
-
     const structuredProvider = structuredOutputProvider(req.command)
     const diagnostics = new SessionDiagnostics(rootDir(), {
       sessionId: req.sessionId, projectId: req.projectId,
@@ -891,7 +846,7 @@ export function registerPtyIpc(): void {
       cols: req.cols,
       rows: req.rows,
       env: withRemoteImCliEnv(
-        withCodexTerminalEnv(req.command, managedOpenCodeEnv, req.terminalTheme),
+        withCodexTerminalEnv(req.command, req.env, req.terminalTheme),
         req.projectId,
         req.sessionId
       ),
@@ -1030,7 +985,7 @@ export function registerPtyIpc(): void {
   })
 
   // 宿主切换明暗主题时，把新主题广播给所有运行中的 AICLI 会话，让 TUI 运行时重绘
-  // （通过既有的 im-bridge 控制通道；codex 用 bg/fg、opencode 用 mode），不必重启会话。
+  // （通过既有的 im-bridge 控制通道；codex 用 bg/fg），不必重启会话。
   ipcMain.on('cc:set-terminal-theme', (_e, { theme }: { theme: TerminalThemeMode }) => {
     setSessionsTerminalTheme(theme === 'dark' ? 'dark' : 'light')
   })

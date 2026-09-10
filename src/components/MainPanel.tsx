@@ -21,15 +21,13 @@ import {
 
 // 归一化的 AI CLI 种类。codex 的浅色/背景样式问题已从根源解决（fork 版按宿主终端
 // 主题注入 CODEX_DEFAULT_TERMINAL_BG/FG），不再需要在渲染侧剥离 SGR。
-export type TerminalStyleCli = 'claude' | 'codex' | 'opencode' | 'unknown'
+export type TerminalStyleCli = 'claude' | 'codex' | 'unknown'
 import {
   copySelection,
   interceptTerminalRightMouseEvent,
   installCopyBinding,
-  installOsc52SelectionCapture,
   installPasteHandler,
-  pasteFromClipboard,
-  tuiOwnsRightClickCopy
+  pasteFromClipboard
 } from './terminalClipboard.js'
 import { buildDroppedFileInput } from './terminalDragDrop.js'
 import { scheduleTerminalMeasurementRecovery } from './terminalLayoutRecovery.js'
@@ -56,7 +54,6 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
   const searchRef = useRef<SearchAddon | null>(null)
   const markdownStateRef = useRef(createTerminalMarkdownState())
   const aiCliRef = useRef<TerminalStyleCli>(props.aiCli ?? 'unknown')
-  const openCodeSelectionRef = useRef('')
   const unsubRef = useRef<Array<() => void>>([])
   const [dragActive, setDragActive] = useState(false)
   const [menu, setMenu] = useState<{
@@ -67,7 +64,6 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
 
   useEffect(() => {
     aiCliRef.current = props.aiCli ?? 'unknown'
-    openCodeSelectionRef.current = ''
   }, [props.aiCli])
 
   useEffect(() => {
@@ -102,13 +98,6 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
     })
 
     installCopyBinding(term, { ctrlCAsCopyInMainTui: true })
-    const detachOsc52Capture = installOsc52SelectionCapture(term, (text) => {
-      if (aiCliRef.current !== 'opencode') return
-      openCodeSelectionRef.current = text
-      setMenu((current) =>
-        current && !current.copyText ? { ...current, copyText: text } : current
-      )
-    })
     const detachPaste = installPasteHandler(containerRef.current, {
       sessionId: props.sessionId,
       writeInput: window.api.cc.write,
@@ -118,11 +107,11 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
       },
       saveImage: window.api.clipboard.saveImage
     })
-    unsubRef.current.push(detachOsc52Capture, detachPaste)
+    unsubRef.current.push(detachPaste)
 
     const offData = window.api.cc.onData((evt) => {
       if (evt.sessionId !== props.sessionId) return
-      // opencode 的全屏 TUI 依赖精确列宽，Markdown 改写会造成重绘残影，须直通。
+      // codex 的全屏 TUI 依赖精确列宽，Markdown 改写会造成重绘残影，须直通。
       const text = shouldFormatMarkdownForCli(aiCliRef.current)
         ? formatMarkdownChunk(evt.chunk, markdownStateRef.current).text
         : evt.chunk
@@ -198,19 +187,12 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
   )
 
   const openContextMenu = useCallback((x: number, y: number) => {
-    const xtermSelection = termRef.current?.getSelection() ?? ''
-    const openCodeSelection =
-      aiCliRef.current === 'opencode' ? openCodeSelectionRef.current : ''
-    setMenu({ x, y, copyText: xtermSelection || openCodeSelection })
+    setMenu({ x, y, copyText: termRef.current?.getSelection() ?? '' })
   }, [])
 
   const handleTerminalMouseDown = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
-      if (e.button === 0 && aiCliRef.current === 'opencode') {
-        openCodeSelectionRef.current = ''
-      }
-      const forward = tuiOwnsRightClickCopy(aiCliRef.current)
-      if (!interceptTerminalRightMouseEvent(e, forward)) return
+      if (!interceptTerminalRightMouseEvent(e)) return
       openContextMenu(e.clientX, e.clientY)
     },
     [openContextMenu]
@@ -218,7 +200,7 @@ export default function MainPanel(props: MainPanelProps): JSX.Element {
 
   const handleTerminalMouseUp = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
-      interceptTerminalRightMouseEvent(e, tuiOwnsRightClickCopy(aiCliRef.current))
+      interceptTerminalRightMouseEvent(e)
     },
     []
   )

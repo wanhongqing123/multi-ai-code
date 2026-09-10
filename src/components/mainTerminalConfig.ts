@@ -66,20 +66,19 @@ function isCliExecutable(cli: string | undefined, names: readonly string[]): boo
 }
 
 /**
- * opencode 的 opentui 渲染器用裸 LF 表示"下移一行、列不变"（VT 标准语义，
- * 实测字节流中侧栏刷新即如此）。convertEol 会把它改写成 CR+LF，光标被拽回
- * 第 0 列后，后续相对定位全部错位，屏幕上留下残影碎片，因此必须关闭。
- * claude/codex 维持原有 convertEol=true 行为不变。
+ * 目前没有需要关闭 convertEol 的内置 CLI：claude/codex 都按 CR+LF 正常工作。
+ * 保留这个开关是因为它是终端选项的唯一出口——真出现按裸 LF 定位的 TUI 时，
+ * 在这里加名字即可，不必改调用方。
  */
 export function shouldConvertEolForCli(cli: string | undefined): boolean {
-  return !isCliExecutable(cli, ['opencode'])
+  return !isCliExecutable(cli, [])
 }
 
 export function buildMainTerminalOptions(theme: Theme, cli?: string): ITerminalOptions {
   // Windows 下 GDI/DirectWrite 渲染较瘦，保留较粗权重保证清晰度；
   // macOS / Linux 对齐系统终端的紧凑行距和常用字体，避免 TUI 被撑高、显得松散。
   const heavy = isWindowsPlatform()
-  const tunedWindowsAicli = heavy && isCliExecutable(cli, ['codex', 'opencode'])
+  const tunedWindowsAicli = heavy && isCliExecutable(cli, ['codex'])
   return {
     fontSize: heavy ? 13 : 12,
     lineHeight: tunedWindowsAicli ? 1.25 : heavy ? 1.45 : 1.15,
@@ -103,7 +102,7 @@ export function buildMainTerminalOptions(theme: Theme, cli?: string): ITerminalO
     smoothScrollDuration: 0,
     theme: xtermThemeFor(theme),
     allowProposedApi: true,
-    // Codex and OpenCode emit OSC 8 hyperlinks. Handle them explicitly so
+    // Codex emits OSC 8 hyperlinks. Handle them explicitly so
     // xterm never navigates the Electron renderer for a terminal link.
     linkHandler: {
       activate: (_event, uri) => openTerminalExternalLink(uri)

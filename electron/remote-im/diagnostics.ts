@@ -79,7 +79,7 @@ async function activeSessionMetadata(sessions: object[], signal?: AbortSignal): 
     const session = value as { executable?: unknown; cli?: unknown }
     const metadata = diagnosticMetadata(value)
     if (typeof session.executable === 'string' && isAbsolute(session.executable) &&
-        typeof session.cli === 'string' && ['codex', 'opencode'].includes(session.cli) &&
+        typeof session.cli === 'string' && session.cli === 'codex' &&
         [session.cli, `${session.cli}.exe`].includes(basename(session.executable).toLowerCase())) {
       const path = session.executable
       if (!cache.has(path) && cache.size < 4) cache.set(path, (async () => {

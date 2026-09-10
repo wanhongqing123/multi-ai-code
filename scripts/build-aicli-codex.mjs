@@ -67,7 +67,6 @@ const outputBinary = requiredBinaries.find((entry) => entry.name === 'codex').ou
 // 默认 release：dev profile 的 codex.exe 带调试信息约 358MB 且未优化，
 // 打进安装包体积和速度都不可接受。日常改代码迭代可用 CODEX_BUILD_PROFILE=dev
 // 走增量 debug 构建（秒级），发布打包前再跑一次默认 release。
-// （opencode 无此区分：bun 单文件编译始终 minify + 无 sourcemap。）
 const profile = process.env.CODEX_BUILD_PROFILE === 'dev' ? 'dev' : 'release'
 const targetDir = join(codexRsRoot, 'target', profile === 'dev' ? 'debug' : 'release')
 for (const entry of requiredBinaries) {

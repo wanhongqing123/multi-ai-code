@@ -55,10 +55,6 @@ export function projectDir(projectId: string): string {
   return join(projectsDir(), projectId)
 }
 
-export function opencodeRuntimeDir(): string {
-  return join(rootDir(), 'aicli', 'opencode')
-}
-
 /**
  * Codex state, shared by every account, deliberately outside every target repo.
  *
@@ -78,10 +74,7 @@ export function codexRuntimeDir(): string {
 }
 
 export async function ensureRootDir(): Promise<void> {
-  await Promise.all([
-    fs.mkdir(projectsDir(), { recursive: true }),
-    fs.mkdir(opencodeRuntimeDir(), { recursive: true })
-  ])
+  await fs.mkdir(projectsDir(), { recursive: true })
   // Retire the platform-managed `workspaces/` subdir from every project.
   // 分阶段流程与方案文档都已删除，工作台不再往用户仓库写任何东西；
   // 这里只负责清掉老版本残留的 workspaces/。每次启动跑一遍是安全的。

@@ -15,6 +15,5 @@ export function getRemoteImAicliOutputSourceKind(
   const base = commandBaseName(command)
   if (/^claude(\.(exe|cmd|bat|ps1))?$/.test(base)) return 'claude'
   if (/^codex(\.(exe|cmd|bat|ps1))?$/.test(base)) return 'codex'
-  if (/^opencode(\.(exe|cmd|bat|ps1))?$/.test(base)) return 'opencode'
   return 'unknown'
 }

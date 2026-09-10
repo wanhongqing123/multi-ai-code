@@ -27,12 +27,6 @@ describe('buildCliLaunchArgs', () => {
     ])
   })
 
-  it('uses OpenCode permission bypass without Codex context config', () => {
-    expect(buildCliLaunchArgs('opencode', '/repo/demo')).toEqual([
-      '--dangerously-skip-permissions'
-    ])
-  })
-
   it('keeps user-supplied Codex context window override', () => {
     expect(
       buildCliLaunchArgs('codex', '/repo/demo', [
@@ -239,11 +233,6 @@ describe('buildCliLaunchArgs', () => {
     ])
   })
 
-  it('does not duplicate OpenCode permission bypass aliases', () => {
-    expect(buildCliLaunchArgs('opencode', '/repo/demo', ['--auto'])).toEqual([
-      '--auto'
-    ])
-  })
 })
 
 describe('权限档位', () => {
@@ -265,7 +254,6 @@ describe('权限档位', () => {
       'model_context_window=1000000'
     ])
     expect(buildCliLaunchArgs('claude', '/repo/demo', [], 'default')).toEqual([])
-    expect(buildCliLaunchArgs('opencode', '/repo/demo', [], 'default')).toEqual([])
   })
 
   it('still honours flags the user typed under 高级参数设置', () => {
@@ -274,7 +262,6 @@ describe('权限档位', () => {
     expect(
       buildCliLaunchArgs('claude', '/repo/demo', ['--dangerously-skip-permissions'], 'default')
     ).toEqual(['--dangerously-skip-permissions'])
-    expect(buildCliLaunchArgs('opencode', '/repo/demo', ['--yolo'], 'default')).toEqual(['--yolo'])
   })
 
   it('keeps full access unrestricted while allowing dangerous commands to request approval', () => {
@@ -293,9 +280,6 @@ describe('权限档位', () => {
     expect(buildCliLaunchArgs('claude', '/repo/demo', [], 'full-access')).toEqual([
       '--dangerously-skip-permissions'
     ])
-    expect(buildCliLaunchArgs('opencode', '/repo/demo', [], 'full-access')).toEqual([
-      '--dangerously-skip-permissions'
-    ])
   })
 
   it('uses the explicit all-command bypass only in dangerous mode', () => {
@@ -307,9 +291,6 @@ describe('权限档位', () => {
       'model_context_window=1000000'
     ])
     expect(buildCliLaunchArgs('claude', '/repo/demo', [], 'dangerous')).toEqual([
-      '--dangerously-skip-permissions'
-    ])
-    expect(buildCliLaunchArgs('opencode', '/repo/demo', [], 'dangerous')).toEqual([
       '--dangerously-skip-permissions'
     ])
   })

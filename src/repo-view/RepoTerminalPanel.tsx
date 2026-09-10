@@ -21,10 +21,8 @@ import {
   copySelection,
   interceptTerminalRightMouseEvent,
   installCopyBinding,
-  installOsc52SelectionCapture,
   installPasteHandler,
-  pasteFromClipboard,
-  tuiOwnsRightClickCopy
+  pasteFromClipboard
 } from '../components/terminalClipboard.js'
 import { buildDroppedFileInput } from '../components/terminalDragDrop.js'
 import { scheduleTerminalMeasurementRecovery } from '../components/terminalLayoutRecovery.js'
@@ -49,11 +47,9 @@ export default function RepoTerminalPanel(
   const fitRef = useRef<FitAddon | null>(null)
   const markdownStateRef = useRef(createTerminalMarkdownState())
   const cliLabelRef = useRef(props.cliLabel)
-  const openCodeSelectionRef = useRef('')
   useEffect(() => {
     cliLabelRef.current = props.cliLabel
-    openCodeSelectionRef.current = ''
-    // 终端跨会话复用；切换 CLI 后同步换行语义（opencode 必须关 convertEol）。
+    // 终端跨会话复用；切换 CLI 后同步换行语义。
     if (termRef.current) {
       termRef.current.options.convertEol = shouldConvertEolForCli(props.cliLabel)
     }
@@ -92,13 +88,6 @@ export default function RepoTerminalPanel(
     })
 
     installCopyBinding(term)
-    const detachOsc52Capture = installOsc52SelectionCapture(term, (text) => {
-      if (cliLabelRef.current.toLowerCase() !== 'opencode') return
-      openCodeSelectionRef.current = text
-      setMenu((current) =>
-        current && !current.copyText ? { ...current, copyText: text } : current
-      )
-    })
     const detachPaste = installPasteHandler(containerRef.current, {
       sessionId: '',
       writeInput: (_sessionId, data) => window.api.repoView.analysisInput(data),
@@ -108,10 +97,10 @@ export default function RepoTerminalPanel(
       },
       saveImage: window.api.clipboard.saveImage
     })
-    unsubRef.current.push(detachOsc52Capture, detachPaste)
+    unsubRef.current.push(detachPaste)
 
     const offData = window.api.repoView.onAnalysisData((evt) => {
-      // opencode 的全屏 TUI 依赖精确列宽，Markdown 改写会造成重绘残影，须直通。
+      // codex 的全屏 TUI 依赖精确列宽，Markdown 改写会造成重绘残影，须直通。
       const text = shouldFormatMarkdownForCli(cliLabelRef.current)
         ? formatMarkdownChunk(evt.chunk, markdownStateRef.current).text
         : evt.chunk
@@ -180,21 +169,12 @@ export default function RepoTerminalPanel(
   }, [])
 
   const openContextMenu = useCallback((x: number, y: number) => {
-    const xtermSelection = termRef.current?.getSelection() ?? ''
-    const openCodeSelection =
-      cliLabelRef.current.toLowerCase() === 'opencode'
-        ? openCodeSelectionRef.current
-        : ''
-    setMenu({ x, y, copyText: xtermSelection || openCodeSelection })
+    setMenu({ x, y, copyText: termRef.current?.getSelection() ?? '' })
   }, [])
 
   const handleTerminalMouseDown = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
-      if (e.button === 0 && cliLabelRef.current.toLowerCase() === 'opencode') {
-        openCodeSelectionRef.current = ''
-      }
-      const forward = tuiOwnsRightClickCopy(cliLabelRef.current)
-      if (!interceptTerminalRightMouseEvent(e, forward)) return
+      if (!interceptTerminalRightMouseEvent(e)) return
       openContextMenu(e.clientX, e.clientY)
     },
     [openContextMenu]
@@ -202,10 +182,7 @@ export default function RepoTerminalPanel(
 
   const handleTerminalMouseUp = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
-      interceptTerminalRightMouseEvent(
-        e,
-        tuiOwnsRightClickCopy(cliLabelRef.current)
-      )
+      interceptTerminalRightMouseEvent(e)
     },
     []
   )

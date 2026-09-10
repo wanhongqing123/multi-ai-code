@@ -497,7 +497,7 @@ function formatRemoteImFileSize(bytes: number): string {
 
 export function createRemoteImRouter(deps: RemoteImRouterDeps) {
   function usesSourceLevelRouting(session: RemoteImSessionInfo): boolean {
-    return session.sourceKind === 'codex' || session.sourceKind === 'opencode'
+    return session.sourceKind === 'codex'
   }
 
   function createOutputRoute(

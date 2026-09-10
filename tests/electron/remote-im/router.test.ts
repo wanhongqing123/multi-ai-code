@@ -446,7 +446,7 @@ describe('remote IM router', () => {
     ])
   })
 
-  it.each(['codex', 'opencode'] as const)(
+  it.each(['codex'] as const)(
     'uses explicit task correlation for %s without adding reply markers to the prompt',
     async (sourceKind) => {
       const store = createMessageStore()

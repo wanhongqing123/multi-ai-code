@@ -1,4 +1,3 @@
-import type { OpenCodeProviderProfile } from '../aicli/opencodeConfig.js'
 
 /**
  * AICLI 的权限档位。只有两档，用户不需要知道背后是哪些参数：
@@ -12,12 +11,10 @@ export type AiPermissionMode = 'default' | 'full-access' | 'dangerous'
 
 // 单个 AI CLI 的配置（主会话 / repo 视图共用）。
 export interface AiSettings {
-  ai_cli: 'claude' | 'codex' | 'opencode'
+  ai_cli: 'claude' | 'codex'
   /** 缺省视为 'full-access'——老配置里没有这个字段，行为必须保持不变。 */
   permission_mode?: AiPermissionMode
   command?: string
   args?: string[]
   env?: Record<string, string>
-  /** @deprecated 仅用于读取旧项目设置；托管 OpenCode 不再使用项目级 Provider。 */
-  opencode?: OpenCodeProviderProfile
 }

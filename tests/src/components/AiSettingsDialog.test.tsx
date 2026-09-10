@@ -134,30 +134,6 @@ describe('AiSettingsDialog', () => {
     expect(codexOptionIndex).toBeLessThan(claudeOptionIndex)
   })
 
-  it('shows only the local Zhipu API Key setting for OpenCode', () => {
-    const markup = renderDialog({
-      initial: {
-        ai_cli: 'opencode',
-        opencode: {
-          providerId: 'legacy-custom-provider',
-          name: '旧的项目级模型服务',
-          baseURL: 'https://llm.example.test/v1',
-          apiKey: 'test-api-key',
-          mainModel: 'legacy-model',
-          smallModel: 'legacy-small-model'
-        }
-      }
-    })
-
-    expect(markup).not.toContain('OpenCode 模型服务')
-    expect(markup).not.toContain('Provider ID')
-    expect(markup).not.toContain('legacy-custom-provider')
-    expect(markup).toContain('智谱 API Key')
-    expect(markup).toContain('type="password"')
-    expect(markup).toContain('不会写入项目仓库或安装包')
-    expect(markup).not.toContain('test-api-key')
-  })
-
   it('keeps remote IM configuration out of the settings center', () => {
     const markup = renderDialog()
 

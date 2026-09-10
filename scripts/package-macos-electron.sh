@@ -13,7 +13,7 @@ Outputs:
   release/MultiAICode-<version>-arm64.dmg.blockmap
 
 Options:
-  --skip-aicli   Do not rebuild bundled codex/opencode before packaging.
+  --skip-aicli   Do not rebuild the bundled codex before packaging.
   --skip-build   Do not run electron-builder; only print existing artifacts.
   -h, --help     Show this help.
 USAGE

@@ -174,7 +174,7 @@ export interface ResolvedSpawn {
   spawnArgs: string[]
   /** Whether to use `shell: true`. Always false here — we resolve explicitly. */
   shell: false
-  /** User-visible diagnostics for Codex/OpenCode launch source. */
+  /** User-visible diagnostics for Codex launch source. */
   launchNotice?: string
 }
 
@@ -204,7 +204,7 @@ export function resolveCliSpawn(
     isAbsolute(normalizedCommand) ||
     normalizedCommand.includes('/') ||
     normalizedCommand.includes('\\')
-  // codex / opencode 只允许运行内置版本；找不到内置二进制直接失败，绝不回退宿主机版本。
+  // codex 只允许运行内置版本；找不到内置二进制直接失败，绝不回退宿主机版本。
   const aicli = resolveAicliCommand(normalizedCommand, bundledOptions)
   if (aicli.bundledMissing) {
     return { ok: false, error: bundledCliMissingMessage(aicli) }

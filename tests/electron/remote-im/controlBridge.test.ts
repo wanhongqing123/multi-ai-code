@@ -281,29 +281,6 @@ describe('remote IM control bridge', () => {
     expect(executeCommand).not.toHaveBeenCalled()
   })
 
-  it('switches OpenCode mode through an injected source-level bridge', async () => {
-    const switchMode = vi.fn(async () => ({ ok: true as const }))
-    const result = await executeRemoteImControlCommand({
-      command: 'plan',
-      session: {
-        sessionId: 'session-opencode',
-        targetRepo: '/repo',
-        command: 'opencode',
-        startedAtMs: 0
-      },
-      sourceKind: 'opencode',
-      switchMode
-    })
-
-    expect(result.ok).toBe(true)
-    expect(result.text).toContain('已切换到计划模式')
-    expect(switchMode).toHaveBeenCalledWith({
-      sessionId: 'session-opencode',
-      sourceKind: 'opencode',
-      mode: 'plan'
-    })
-  })
-
   it('reports the AICLI rejection instead of a fake success', async () => {
     const switchMode = vi.fn(async () => ({
       ok: false as const,

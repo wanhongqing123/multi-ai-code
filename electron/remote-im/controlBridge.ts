@@ -13,7 +13,7 @@ export interface RemoteImControlSessionInfo {
 
 export interface RemoteImSwitchAicliModeRequest {
   sessionId: string
-  sourceKind: Extract<RemoteImAicliOutputSourceKind, 'codex' | 'opencode'>
+  sourceKind: Extract<RemoteImAicliOutputSourceKind, 'codex'>
   mode: RemoteImAicliControlMode
 }
 
@@ -23,7 +23,7 @@ export type RemoteImSwitchAicliMode = (
 
 export interface RemoteImExecuteAicliCommandRequest {
   sessionId: string
-  sourceKind: Extract<RemoteImAicliOutputSourceKind, 'codex' | 'opencode'>
+  sourceKind: Extract<RemoteImAicliOutputSourceKind, 'codex'>
   command: 'status' | 'model' | 'goal' | 'btw' | 'interrupt' | 'compact' | 'clear'
   model?: string
   reasoning?: string
@@ -65,7 +65,6 @@ export interface ExecuteRemoteImControlCommandResult {
 
 function displaySourceKind(sourceKind: RemoteImAicliOutputSourceKind): string {
   if (sourceKind === 'codex') return 'Codex'
-  if (sourceKind === 'opencode') return 'OpenCode'
   if (sourceKind === 'claude') return 'Claude'
   return '未知 AICLI'
 }
@@ -131,7 +130,7 @@ async function switchMode(
     }
   }
 
-  if (input.sourceKind !== 'codex' && input.sourceKind !== 'opencode') {
+  if (input.sourceKind !== 'codex') {
     return {
       ok: false,
       text: '当前 AICLI 类型未知，无法安全切换模式。'
@@ -181,7 +180,7 @@ async function status(
     }
   }
 
-  if (input.sourceKind === 'codex' || input.sourceKind === 'opencode') {
+  if (input.sourceKind === 'codex') {
     if (!input.executeCommand) {
       return {
         ok: false,
@@ -230,7 +229,7 @@ async function model(
     }
   }
 
-  if (input.sourceKind !== 'codex' && input.sourceKind !== 'opencode') {
+  if (input.sourceKind !== 'codex') {
     return {
       ok: false,
       text: '当前 AICLI 类型未知，无法安全查看或切换模型。'
@@ -279,7 +278,7 @@ async function btw(
     }
   }
 
-  if (input.sourceKind !== 'codex' && input.sourceKind !== 'opencode') {
+  if (input.sourceKind !== 'codex') {
     return {
       ok: false,
       text: '当前 AICLI 类型未知，无法安全执行 /btw。'
@@ -338,7 +337,7 @@ async function goal(
     }
   }
 
-  if (input.sourceKind !== 'codex' && input.sourceKind !== 'opencode') {
+  if (input.sourceKind !== 'codex') {
     return {
       ok: false,
       text: '当前 AICLI 类型未知，无法安全执行 /goal。'
@@ -423,10 +422,7 @@ async function lifecycleCommand(
     }
   }
 
-  if (
-    input.sourceKind !== 'codex' &&
-    input.sourceKind !== 'opencode'
-  ) {
+  if (input.sourceKind !== 'codex') {
     return {
       ok: false,
       text: `当前 AICLI 类型未知，无法安全${label}。`

@@ -644,20 +644,20 @@ describe('remote IM output forwarding', () => {
     expect(sentTexts).toEqual([expected])
   })
 
-  it('forwards OpenCode tagged replies through the normal terminal buffer path', () => {
+  it('forwards source-level tagged replies through the normal terminal buffer path', () => {
     const state = createState(
       [
-        'opencode terminal chrome outside tags',
+        'codex terminal chrome outside tags',
         '<remote-im-reply id="rim-current">',
-        'OpenCode reply for IM.',
+        'Source-level reply for IM.',
         '</remote-im-reply id="rim-current">'
       ].join('\n'),
       { outputMaxChunkChars: 500 }
     )
     state.replyId = 'rim-current'
-    state.sourceKind = 'opencode'
+    state.sourceKind = 'codex'
     state.transcript = {
-      kind: 'opencode' as 'claude',
+      kind: 'codex' as 'claude',
       cwd: '/Users/me/work/repo',
       sinceMs: Date.parse('2026-07-09T00:00:00.000Z'),
       replyId: 'rim-current'
@@ -674,13 +674,13 @@ describe('remote IM output forwarding', () => {
       },
       messagesChanged: () => undefined,
       readTranscriptReply: () => {
-        throw new Error('OpenCode should not read transcript storage')
+        throw new Error('source-level CLIs must not read transcript storage')
       }
     })
 
     expect(chunks).toBe(1)
-    expect(messages[0]?.content).toBe('OpenCode reply for IM.')
-    expect(sentTexts).toEqual(['OpenCode reply for IM.'])
+    expect(messages[0]?.content).toBe('Source-level reply for IM.')
+    expect(sentTexts).toEqual(['Source-level reply for IM.'])
   })
 
   it('forwards a markerless source-confirmed final reply without intermediate output', () => {
@@ -691,7 +691,7 @@ describe('remote IM output forwarding', () => {
       remoteDesktopControl: false
     })
     state.replyId = 'rim-current'
-    state.sourceKind = 'opencode'
+    state.sourceKind = 'codex'
     const messages: CreateRemoteImMessageInput[] = []
     const sentTexts: string[] = []
     const deps: RemoteImOutputForwardingDeps = {
@@ -948,7 +948,7 @@ describe('remote IM output forwarding', () => {
     const state = createState('', { outputMaxChunkChars: 500 })
     state.replyId = 'rim-current'
     state.taskId = 'task-current'
-    state.sourceKind = 'opencode'
+    state.sourceKind = 'codex'
     const messages: CreateRemoteImMessageInput[] = []
     const deps: RemoteImOutputForwardingDeps = {
       createMessage: (input) => messages.push(input),
@@ -983,7 +983,7 @@ describe('remote IM output forwarding', () => {
     const state = createState('', { outputMaxChunkChars: 500 })
     state.replyId = 'rim-current'
     state.taskId = 'task-current'
-    state.sourceKind = 'opencode'
+    state.sourceKind = 'codex'
     const messages: CreateRemoteImMessageInput[] = []
     const deps: RemoteImOutputForwardingDeps = {
       createMessage: (input) => messages.push(input),
@@ -1017,9 +1017,9 @@ describe('remote IM output forwarding', () => {
     ])
   })
 
-  it('does not resend an OpenCode final aggregate already emitted as assistant text', () => {
+  it('does not resend a source-level final aggregate already emitted as assistant text', () => {
     const state = createState('', { outputMaxChunkChars: 500 })
-    state.sourceKind = 'opencode'
+    state.sourceKind = 'codex'
     const messages: CreateRemoteImMessageInput[] = []
     const deps: RemoteImOutputForwardingDeps = {
       createMessage: (input) => messages.push(input),
@@ -1127,7 +1127,7 @@ describe('remote IM output forwarding', () => {
   it('does not use reply id as structured terminal event deduplication key', () => {
     const state = createState('', { outputMaxChunkChars: 500 })
     state.replyId = 'rim-current'
-    state.sourceKind = 'opencode'
+    state.sourceKind = 'codex'
     const sentTexts: string[] = []
     const deps: RemoteImOutputForwardingDeps = {
       createMessage: () => undefined,
@@ -1162,7 +1162,7 @@ describe('remote IM output forwarding', () => {
   it('forwards a source-confirmed final reply even when its text has a stale reply marker', () => {
     const state = createState('', { outputMaxChunkChars: 500 })
     state.replyId = 'rim-current'
-    state.sourceKind = 'opencode'
+    state.sourceKind = 'codex'
     const messages: CreateRemoteImMessageInput[] = []
     const sentTexts: string[] = []
     const tagged = [

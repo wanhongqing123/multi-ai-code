@@ -36,7 +36,7 @@ describe('AICLI structured output bridge', () => {
     } finally { await bridge.close() }
   })
   it('accepts token-matched JSONL output and acks it on the same socket', async () => {
-    const bridge = await createAicliStructuredOutputBridge('session-1', 'opencode')
+    const bridge = await createAicliStructuredOutputBridge('session-1', 'codex')
     const { port, token } = parseTcpEndpoint(bridge.endpoint)
     const events: AicliStructuredOutputEvent[] = []
     const removeListener = addAicliStructuredOutputListener((event) => {
@@ -76,7 +76,7 @@ describe('AICLI structured output bridge', () => {
     expect(events).toEqual([
       {
         sessionId: 'session-1',
-        provider: 'opencode',
+        provider: 'codex',
         kind: 'assistant_text',
         text: '<remote-im-reply id="rim-1">\nhello\n</remote-im-reply id="rim-1">',
         messageId: 'm1',
@@ -109,7 +109,7 @@ describe('AICLI structured output bridge', () => {
   })
 
   it('preserves the remote reply id on terminal assistant output', async () => {
-    const bridge = await createAicliStructuredOutputBridge('session-1', 'opencode')
+    const bridge = await createAicliStructuredOutputBridge('session-1', 'codex')
     const { port, token } = parseTcpEndpoint(bridge.endpoint)
     const events: AicliStructuredOutputEvent[] = []
     const removeListener = addAicliStructuredOutputListener((event) => events.push(event))
@@ -128,7 +128,7 @@ describe('AICLI structured output bridge', () => {
     expect(events).toEqual([
       {
         sessionId: 'session-1',
-        provider: 'opencode',
+        provider: 'codex',
         kind: 'assistant_final',
         text: 'final answer',
         messageId: undefined,
@@ -266,7 +266,7 @@ describe('AICLI structured output bridge', () => {
   })
 
   it('switches mode via request/response and reports the AICLI verdict', async () => {
-    const bridge = await createAicliStructuredOutputBridge('session-1', 'opencode')
+    const bridge = await createAicliStructuredOutputBridge('session-1', 'codex')
     const { port, token } = parseTcpEndpoint(bridge.endpoint)
     const receivedLines: string[] = []
 

@@ -11,7 +11,6 @@ describe('Codex terminal env', () => {
     expect(isCodexCommand('codex')).toBe(true)
     expect(isCodexCommand('/usr/local/bin/codex')).toBe(true)
     expect(isCodexCommand('"C:\\Tools\\codex.exe"')).toBe(true)
-    expect(isCodexCommand('opencode')).toBe(false)
     expect(isCodexCommand('claude')).toBe(false)
     expect(isCodexCommand('my-codex-wrapper')).toBe(false)
   })
@@ -54,7 +53,7 @@ describe('Codex terminal env', () => {
 
   it('leaves env untouched for non-codex commands', () => {
     const input = { FOO: 'bar' }
-    const env = withCodexTerminalEnv('opencode', input, 'light')
+    const env = withCodexTerminalEnv('claude', input, 'light')
     expect(env).toBe(input)
     expect(env?.[CODEX_DEFAULT_TERMINAL_BG_ENV]).toBeUndefined()
   })

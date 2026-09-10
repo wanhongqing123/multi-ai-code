@@ -40,7 +40,6 @@ import type {
   RemoteDesktopEngine
 } from './remote-desktop/engine.js'
 import { createTrtcRemoteDesktopEngine } from './remote-desktop/preloadEngine.js'
-import type { OpenCodeProviderProfile } from './aicli/opencodeConfig.js'
 import type {
   RemoteImContactRelation,
   RemoteImConfig,
@@ -78,7 +77,6 @@ import type {
 export type {
   AiPermissionMode,
   AiSettings,
-  OpenCodeProviderProfile,
   RemoteImContactRelation,
   RemoteImConfig,
   RemoteImAccountConfig,
@@ -198,7 +196,6 @@ export interface SpawnRequest {
   /** CLI args. */
   args: string[]
   env?: Record<string, string>
-  opencode?: OpenCodeProviderProfile
   /** 宿主终端当前明暗主题，用于给 codex 注入正确的默认背景/前景色。 */
   terminalTheme?: 'light' | 'dark'
   cols?: number
@@ -304,16 +301,6 @@ const api = {
     minimize: () => ipcRenderer.send('window-controls:minimize'),
     toggleMaximize: () => ipcRenderer.send('window-controls:toggle-maximize'),
     close: () => ipcRenderer.send('window-controls:close')
-  },
-  opencode: {
-    getApiKey: () =>
-      ipcRenderer.invoke('opencode:get-api-key') as Promise<
-        { ok: true; value: string } | { ok: false; error: string }
-      >,
-    setApiKey: (apiKey: string) =>
-      ipcRenderer.invoke('opencode:set-api-key', { apiKey }) as Promise<
-        { ok: true } | { ok: false; error: string }
-      >
   },
   /** Resolve a DataTransfer File to its absolute filesystem path (Electron 32+). */
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
@@ -905,7 +892,6 @@ const api = {
       command: string
       args: string[]
       env?: Record<string, string>
-      opencode?: OpenCodeProviderProfile
     }) =>
       ipcRenderer.invoke('repo-view:analysis-start', req) as Promise<{
         ok: boolean

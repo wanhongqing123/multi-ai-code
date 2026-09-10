@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import net from 'node:net'
 
-export type AicliStructuredOutputProvider = 'codex' | 'opencode'
+export type AicliStructuredOutputProvider = 'codex'
 export type AicliControlMode = 'plan' | 'build'
 export type AicliUserMessageInputOrigin = 'remote-im' | 'remote-im-machine' | 'local'
 export type AicliApprovalDecision = 'accept' | 'accept-persistent' | 'cancel'
@@ -54,7 +54,7 @@ export interface AicliStructuredOutputBridge {
   ): Promise<AicliControlCommandResult>
   /**
    * Fire-and-forget: push the host's light/dark theme to a running TUI so it
-   * repaints without a session restart. codex 用 bg/fg 判定明暗，opencode 用 mode。
+   * repaints without a session restart. codex 用 bg/fg 判定明暗。
    * 无 requestId、不等 control_result（切主题是广播、不需要逐条回执）。
    */
   notifyTheme(input: { mode: 'light' | 'dark'; bg: string; fg: string }): number

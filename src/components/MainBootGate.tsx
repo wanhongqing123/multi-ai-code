@@ -24,7 +24,6 @@ export interface MainBootGateProps {
 function describeCli(command: string): string {
   if (command === 'claude') return 'Claude Code'
   if (command === 'codex') return 'Codex'
-  if (command === 'opencode') return 'OpenCode'
   return command || '(未配置)'
 }
 
@@ -128,10 +127,10 @@ export default function MainBootGate(props: MainBootGateProps): JSX.Element {
                 disabled={
                   disabled ||
                   spawning ||
-                  (command !== 'codex' && command !== 'opencode')
+                  command !== 'codex'
                 }
                 title={
-                  command === 'codex' || command === 'opencode'
+                  command === 'codex'
                     ? '继续上次会话（由 CLI 自身回放历史）'
                     : '当前 CLI 不支持续聊'
                 }

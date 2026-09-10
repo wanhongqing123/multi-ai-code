@@ -5,7 +5,7 @@ import type { AiPermissionMode } from '../../electron/settings/types'
 // （electron/settings/types.ts 是纯类型模块，运行时常量只能放这边。）
 export const DEFAULT_AI_PERMISSION_MODE: AiPermissionMode = 'full-access'
 
-export type SupportedCli = 'claude' | 'codex' | 'opencode'
+export type SupportedCli = 'claude' | 'codex'
 export const CODEX_CONTEXT_WINDOW_CONFIG = 'model_context_window=1000000'
 export const CODEX_APPROVALS_REVIEWER_CONFIG = 'approvals_reviewer="user"'
 const CODEX_NO_ALT_SCREEN_ARG = '--no-alt-screen'
@@ -140,17 +140,6 @@ function codexDefaultArgs(
   return args
 }
 
-function opencodeDefaultArgs(
-  extraArgs: readonly string[],
-  permissionMode: AiPermissionMode
-): string[] {
-  if (permissionMode === 'default') return []
-  if (hasAnyArg(extraArgs, ['--dangerously-skip-permissions', '--yolo', '--auto'])) {
-    return []
-  }
-  return ['--dangerously-skip-permissions']
-}
-
 export function buildCliLaunchArgs(
   binary: SupportedCli,
   _targetRepo: string,
@@ -165,11 +154,6 @@ export function buildCliLaunchArgs(
     ) {
       args.push('--dangerously-skip-permissions')
     }
-    return [...args, ...extraArgs]
-  }
-
-  if (binary === 'opencode') {
-    args.push(...opencodeDefaultArgs(extraArgs, permissionMode))
     return [...args, ...extraArgs]
   }
 

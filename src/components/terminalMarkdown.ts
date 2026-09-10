@@ -264,18 +264,18 @@ export function createTerminalMarkdownState(): TerminalMarkdownState {
 }
 
 /**
- * codex（ratatui）与 opencode（opentui）都是按精确列宽增量重绘的全屏 TUI。
+ * codex（ratatui）是按精确列宽增量重绘的全屏 TUI。
  * Markdown 改写会改行宽（• 替换、剥 ## 前缀、**加粗**→SGR）甚至整行删除（表格
- * 分隔行），使这两种渲染器内部记录的屏幕状态与实际显示错位：任务流式输出时表现
+ * 分隔行），使这种渲染器内部记录的屏幕状态与实际显示错位：任务流式输出时表现
  * 为光标乱跳、底部输入框被顶走、无法打字，屏幕上还会留下残影碎片。因此对 codex
- * 和 opencode 都必须原样直通。claude（Ink）自己把 markdown 渲染成 ANSI，字节流里
+ * 必须原样直通。claude（Ink）自己把 markdown 渲染成 ANSI，字节流里
  * 没有可命中的裸 markdown，维持美化不变。
  *
  * 注意：这里只影响 xterm 本地显示。IM 回传走独立的结构化输出桥（assistant_text），
  * 与此函数无关，改动不影响 IM 消息发送。
  */
-// 这个列表只列 codex / opencode，理由是观测过的、不是默认值：
-// 它们在**回答阶段**仍会做绝对光标定位，改写行宽/行数会让它们错位——
+// 这个列表只列 codex，理由是观测过的、不是默认值：
+// 它在**回答阶段**仍会做绝对光标定位，改写行宽/行数会让它错位——
 // 表现为光标乱跳、输入框被顶走、屏幕残影。所以必须原样直通。
 //
 // claude（Ink）不在列表里是另一个理由：它自己把 markdown 渲染成 ANSI，
@@ -284,7 +284,7 @@ export function createTerminalMarkdownState(): TerminalMarkdownState {
 // 结论是拿真实字节流分别按两条路喂 xterm.js 截图对比得到的。
 export function shouldFormatMarkdownForCli(cli: string | undefined): boolean {
   if (!cli) return true
-  return !/(^|[\\/])(opencode|codex)(\.(exe|cmd|bat|ps1))?$/i.test(cli.trim())
+  return !/(^|[\\/])(codex)(\.(exe|cmd|bat|ps1))?$/i.test(cli.trim())
 }
 
 export function stripAnsi(text: string): string {

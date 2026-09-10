@@ -4,17 +4,16 @@ import { fileURLToPath } from 'url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
-export type BundledCli = 'codex' | 'opencode'
-export type BundledCliLabel = 'Codex' | 'OpenCode'
+export type BundledCli = 'codex'
+export type BundledCliLabel = 'Codex'
 export type AicliLaunchSource = 'bundled' | 'custom' | 'path'
 
 // 内置 AICLI 注册表。判定曾经散在四处——两个各写一遍的
-// 正则、一个 label 三元表达式、一句写死 "codex / opencode" 的报错文案——每加一种
+// 正则、一个 label 三元表达式、一句写死内置清单的报错文案——每加一种
 // 都要同步改四个地方，漏掉任何一个都不会有测试报错。改成一张表之后，这些派生逻辑
 // 只从表里读，新增一种 AICLI 只动这一处。
 const BUNDLED_CLIS: readonly { id: BundledCli; label: BundledCliLabel }[] = [
   { id: 'codex', label: 'Codex' },
-  { id: 'opencode', label: 'OpenCode' },
 ]
 
 // 只匹配裸命令名（可带 Windows 可执行后缀）。**两端锚定是必须的**：
@@ -128,7 +127,7 @@ function defaultRoots(): string[] {
     // live under `app.asar.unpacked/bin/aicli`. A path *inside* app.asar is not
     // executable by native launchers (node-pty bypasses Electron's asar path
     // translation), which is why launching produced
-    // "File not found: ...\\app.asar\\bin\\aicli\\...\\opencode.exe".
+    // "File not found: ...\\app.asar\\bin\\aicli\\...\\codex.exe".
     // Prefer the on-disk unpacked location. In dev these two candidates do not
     // exist (resourcesPath points at the prebuilt Electron), so resolution
     // still falls through to cwd/__dirname → the repo's own bin/aicli.
@@ -179,7 +178,7 @@ export function resolveBundledCliCommand(
 }
 
 export interface AicliCommandResolution {
-  // 内置 AICLI（codex / opencode）时非空；claude 及其它命令为 null（不受内置约束）。
+  // 内置 AICLI（codex）时非空；claude 及其它命令为 null（不受内置约束）。
   tool: BundledCli | null
   label: BundledCliLabel | null
   // 内置二进制的绝对路径；解析到内置时非空。

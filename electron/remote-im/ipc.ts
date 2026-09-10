@@ -1519,7 +1519,7 @@ function startOutputForwarding(
 ): void {
   const runtime = getSessionRuntimeInfo(sessionId)
   const sourceKind = runtime ? getRemoteImAicliOutputSourceKind(runtime.command) : 'unknown'
-  if (sourceKind === 'codex' || sourceKind === 'opencode') {
+  if (sourceKind === 'codex') {
     const existing = structuredOutputTasks.resolve(
       sessionId,
       { taskId, replyId },
@@ -1749,7 +1749,7 @@ function createOutputRoutingDeps(
       const sourceKind = runtime
         ? getRemoteImAicliOutputSourceKind(runtime.command)
         : 'unknown'
-      if (sourceKind !== 'codex' && sourceKind !== 'opencode') {
+      if (sourceKind !== 'codex') {
         const current = outputSessions.get(route.sessionId)
         if (!current) return { ok: true as const }
         if (
@@ -1888,10 +1888,7 @@ function createOutputRoutingDeps(
       const sourceKind = runtime
         ? getRemoteImAicliOutputSourceKind(runtime.command)
         : 'unknown'
-      if (
-        route.continuation &&
-        (sourceKind === 'codex' || sourceKind === 'opencode')
-      ) {
+      if (route.continuation && sourceKind === 'codex') {
         structuredOutputTasks.clearLocalTakeover(route.sessionId, route.taskId)
         startOutputForwarding(
           route.sessionId,

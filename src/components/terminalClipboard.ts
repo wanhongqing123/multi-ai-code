@@ -25,8 +25,7 @@ function isProtectedMainTuiPlatform(platform?: string): boolean {
 }
 
 /** Copy the current xterm selection to the system clipboard.
- *  OpenCode owns its TUI selection, so callers may provide the text captured
- *  from its OSC 52 clipboard sequence as a fallback. */
+ *  Callers may pass text captured elsewhere as a fallback. */
 export function copySelection(term: Terminal, fallbackSelection = ''): boolean {
   const selection = term.getSelection() || fallbackSelection
   if (!selection) return false
@@ -44,18 +43,6 @@ interface TerminalMouseEvent {
   stopPropagation(): void
 }
 
-/** OpenCode copies its own selection on right mouse down and writes both the
- *  system clipboard and OSC 52. Swallowing the right button to open our menu
- *  therefore strands the selection: xterm holds none of its own while mouse
- *  tracking is on, and the OSC 52 the menu reads is only ever emitted by the
- *  copy we just prevented. Forward the button and let the TUI do the copy —
- *  the menu then opens from the `contextmenu` event with that text.
- *  Safe on platforms where OpenCode copies on select instead: opentui only
- *  starts/clears selections on the left button, so the cache survives. */
-export function tuiOwnsRightClickCopy(cli: string): boolean {
-  return cli.trim().toLowerCase() === 'opencode'
-}
-
 /** Keep a TUI's mouse-tracking mode from consuming either half of a right
  *  click before the Electron terminal can handle its copy/paste menu.
  *  Pass `forwardToTui` for TUIs that implement right-click copy themselves. */
@@ -68,36 +55,6 @@ export function interceptTerminalRightMouseEvent(
   event.preventDefault()
   event.stopPropagation()
   return true
-}
-
-/** Decode the payload passed to an xterm OSC 52 handler (`target;base64`). */
-export function decodeOsc52ClipboardText(data: string): string | null {
-  const separator = data.indexOf(';')
-  if (separator < 0) return null
-  const payload = data.slice(separator + 1).trim()
-  if (!payload || payload === '?') return null
-
-  try {
-    const binary = globalThis.atob(payload)
-    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0))
-    return new TextDecoder().decode(bytes)
-  } catch {
-    return null
-  }
-}
-
-/** Observe OSC 52 clipboard writes without consuming the sequence. OpenCode
- *  uses this sequence when its own mouse-aware TUI copies a selection. */
-export function installOsc52SelectionCapture(
-  term: Terminal,
-  onSelection: (text: string) => void
-): () => void {
-  const disposable = term.parser.registerOscHandler(52, (data) => {
-    const text = decodeOsc52ClipboardText(data)
-    if (text) onSelection(text)
-    return false
-  })
-  return () => disposable.dispose()
 }
 
 export interface CopyBindingOptions {

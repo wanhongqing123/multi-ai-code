@@ -90,6 +90,113 @@ final class MarkdownPresentationTests: XCTestCase {
         return try XCTUnwrap(measured.frame, "The rendered content geometry must be observed")
     }
 
+    private struct HistoryItem: Identifiable { let id: Int }
+
+    @MainActor
+    private final class HistoryModel: ObservableObject {
+        @Published var items: [HistoryItem]
+        init(_ range: Range<Int>) { items = range.map(HistoryItem.init) }
+    }
+
+    @MainActor
+    private final class HistoryProbe {
+        var mounted = Set<Int>()
+        var frames: [Int: CGRect] = [:]
+        var proxy: ScrollViewProxy?
+        var nearBottom: Bool?
+    }
+
+    @MainActor
+    private struct HistoryHarness: View {
+        @ObservedObject var model: HistoryModel
+        let probe: HistoryProbe
+        var body: some View {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(spacing: 14) {
+                        MessageHistoryStack(items: model.items) { item in
+                            Text(String(repeating: "Markdown line \(item.id)\n", count: abs(item.id) % 5 + 1))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background {
+                                    GeometryReader { geometry in
+                                        Color.clear.onAppear {
+                                            probe.mounted.insert(item.id)
+                                            probe.frames[item.id] = geometry.frame(in: .named("history-test"))
+                                        }.onChange(of: geometry.frame(in: .named("history-test"))) { frame in
+                                            probe.frames[item.id] = frame
+                                        }
+                                    }
+                                }
+                                .id(item.id)
+                        }
+                        Color.clear.frame(height: 1).id("bottom")
+                    }
+                    .background(MessageScrollPositionReader { probe.nearBottom = $0 })
+                }
+                .onAppear { probe.proxy = proxy }
+            }
+            .coordinateSpace(name: "history-test")
+            .frame(width: 393, height: 640)
+            .ignoresSafeArea()
+        }
+    }
+
+    @MainActor
+    private func historyWindow(_ model: HistoryModel, _ probe: HistoryProbe) -> UIWindow {
+        let controller = UIHostingController(rootView: HistoryHarness(model: model, probe: probe))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 640))
+        window.rootViewController = controller; window.makeKeyAndVisible()
+        controller.view.layoutIfNeeded()
+        return window
+    }
+
+    @MainActor
+    func testHistoryRenderingIsBoundedAndLatestAnchorRemainsReachable() async throws {
+        for count in [350, 1000] {
+            let probe = HistoryProbe(), model = HistoryModel(0..<count)
+            let window = historyWindow(model, probe)
+            defer { window.isHidden = true; window.rootViewController = nil }
+            try await Task.sleep(for: .milliseconds(250))
+            print("history initial loaded=\(count) mounted=\(probe.mounted.count)")
+            XCTAssertLessThan(probe.mounted.count, 150, "Offscreen history must not mount every loaded row")
+            probe.proxy?.scrollTo("bottom", anchor: .bottom)
+            try await Task.sleep(for: .milliseconds(200))
+            probe.proxy?.scrollTo("bottom", anchor: .bottom)
+            try await Task.sleep(for: .milliseconds(200))
+            let lastFrame = try XCTUnwrap(probe.frames[count - 1])
+            XCTAssertGreaterThan(lastFrame.maxY, 0)
+            XCTAssertLessThanOrEqual(lastFrame.maxY, 641, "Latest row must be visible without user dragging")
+            XCTAssertLessThan(probe.mounted.count, 180)
+            XCTAssertEqual(probe.nearBottom, true)
+            print("history after bottom loaded=\(count) mounted=\(probe.mounted.count)")
+            probe.proxy?.scrollTo(count / 2, anchor: .center)
+            try await Task.sleep(for: .milliseconds(250))
+            let target = try XCTUnwrap(probe.frames[count / 2])
+            XCTAssertGreaterThan(target.maxY, 0)
+            XCTAssertLessThan(target.minY, 640, "Search jump must materialize its older target")
+            XCTAssertLessThan(probe.mounted.count, 200)
+            XCTAssertEqual(probe.nearBottom, false)
+        }
+    }
+
+    @MainActor
+    func testHistoryPrependKeepsTheOldFirstRowAsAnAnchor() async throws {
+        let model = HistoryModel(0..<50), probe = HistoryProbe()
+        let window = historyWindow(model, probe)
+        defer { window.isHidden = true; window.rootViewController = nil }
+        try await Task.sleep(for: .milliseconds(200))
+        probe.proxy?.scrollTo(0, anchor: .top)
+        try await Task.sleep(for: .milliseconds(150))
+        model.items = (-50..<50).map(HistoryItem.init)
+        try await Task.sleep(for: .milliseconds(150))
+        probe.proxy?.scrollTo(0, anchor: .top)
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(try XCTUnwrap(probe.frames[0]).minY, 0, accuracy: 2)
+        probe.proxy?.scrollTo(-50, anchor: .top)
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(try XCTUnwrap(probe.frames[-50]).minY, 0, accuracy: 2)
+    }
+
     func testConversationPreviewUsesReadableMarkdownText() {
         let cases: [(String, String)] = [
             ("## 标题\n\n**重点** 与 `code`", "标题 重点 与 code"),

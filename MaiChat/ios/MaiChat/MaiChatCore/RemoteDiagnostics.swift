@@ -40,8 +40,8 @@ public struct RemoteDiagnosticsLogEntry: Codable, Sendable {
     public init(_ entry: DiagnosticLogEntry) {
         createdAt = entry.createdAt
         event = entry.event
-        let allowed: Set<String> = ["peer", "message", "launch", "kind", "result", "code", "duration_ms", "operation", "cached_messages", "near_bottom", "scroll_action", "app_version", "build", "ios", "pid", "scope"]
-        let numeric: Set<String> = ["samples", "slow_samples", "slow_threshold_ms", "max_ms", "average_ms", "late_ms", "sample_interval_ms", "mutation_count", "upserted_count", "removed_count", "message_count", "limit", "dropped_entries", "export_truncated", "retained_entries", "capacity"]
+        let allowed: Set<String> = ["peer", "message", "launch", "kind", "result", "code", "duration_ms", "operation", "cached_messages", "near_bottom", "scroll_action", "app_version", "build", "ios", "pid", "scope", "layout", "asr_session", "action", "mode", "completion", "callback_on_main"]
+        let numeric: Set<String> = ["samples", "slow_samples", "slow_threshold_ms", "max_ms", "average_ms", "late_ms", "sample_interval_ms", "mutation_count", "upserted_count", "removed_count", "message_count", "limit", "dropped_entries", "export_truncated", "retained_entries", "capacity", "loaded_messages", "eager_rows", "history_rows", "text_bytes", "session", "characters", "text_updates", "audio_session_ms", "audio_queue_ms", "audio_category_ms", "audio_activate_ms", "audio_resume_ms", "sdk_start_call_ms", "elapsed_ms", "latency_ms", "callback_latency_ms", "callback_extract_ms", "main_actor_wait_ms", "stop_wait_ms"]
         fields = entry.fields.filter { key, value in
             if numeric.contains(key) {
                 guard value.count <= 30, let number = Double(value), number.isFinite, number >= 0 else { return false }
@@ -108,7 +108,7 @@ public struct RemoteDiagnosticsLocalEvidence: Codable, Sendable {
             "exportTruncated": logs.last(where: { $0.event == "diagnostic-log-coverage" })?.fields["export_truncated"] ?? "unknown",
             "interpretation": "App-wide timings are not proof this conversation caused a stall; absent events are not zero latency."
         ]
-        logCoverage = "当前账号本次启动以来保留的近期元数据；保留近期本地观察到的消息，不用服务端时钟排除这些消息。较早条目可能受容量上限影响。row-presented 只证明视图挂载，不证明屏幕像素已绘制。"
+        logCoverage = "当前账号本次启动以来保留的近期元数据；保留近期本地观察到的消息，不用服务端时钟排除这些消息。较早条目可能受容量上限影响。row-presented 只证明视图挂载，不证明屏幕像素已绘制。语音事件以 asr_session 关联当前会话；ui-first-text-updated 只表示界面状态更新，非屏幕绘制完成。识别回调时间不是网络接收时间；stop_wait_ms 包括主线程调度等待；transcription-applied 的 duration_ms 从松手开始计时，发送模式包含发送等待。"
     }
 }
 

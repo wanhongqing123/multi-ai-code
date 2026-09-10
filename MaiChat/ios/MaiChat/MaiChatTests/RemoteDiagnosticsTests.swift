@@ -351,6 +351,53 @@ final class RemoteDiagnosticsTests: XCTestCase {
         }
     }
 
+    func testSpeechStagesExportOnlyForTheirConversationWithoutContent() throws {
+        let now = Date()
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let session = UUID().uuidString.lowercased()
+        let events = ["gesture-started", "session-started", "recording-started",
+                      "flow-started", "recording-stopped", "first-text-received", "ui-first-text-updated", "gesture-ended",
+                      "stop-requested", "sdk-stop-returned", "session-finished",
+                      "transcription-applied", "session-cancelled", "session-start-failed",
+                      "transcription-apply-failed"]
+        func entry(_ event: String, account: String = "current", peer: String = "machine",
+                   date: Date? = nil) -> DiagnosticLogEntry {
+            DiagnosticLogEntry(sequence: 1, createdAt: formatter.string(from: date ?? now),
+                level: .info, category: "asr", event: event, fields: [
+                    "account": account, "peer": DiagnosticLogPrivacy.stableTag(peer, prefix: "u"),
+                    "asr_session": session, "session": "2", "characters": "40", "text_updates": "6",
+                    "audio_queue_ms": "1", "audio_category_ms": "2", "audio_activate_ms": "8", "audio_resume_ms": "1",
+                    "audio_session_ms": "12", "sdk_start_call_ms": "3", "elapsed_ms": "900",
+                    "latency_ms": "100", "callback_latency_ms": "80", "callback_extract_ms": "1",
+                    "main_actor_wait_ms": "19", "stop_wait_ms": "1000", "duration_ms": "1900",
+                    "completion": "stop-timeout-fallback", "action": "edit", "mode": "transcription",
+                    "callback_on_main": "false", "code": "-1",
+                    "text": "PRIVATE_TRANSCRIPT", "audio": "PRIVATE_AUDIO",
+                    "secretKey": "PRIVATE_KEY", "error": "PRIVATE_ERROR"
+                ])
+        }
+        let logs = RemoteDiagnosticsProtocol.scopedLogs(events.map { entry($0) } + [
+            entry("wrong-account", account: "old"), entry("wrong-peer", peer: "other"),
+            entry("unscoped", account: ""), entry("expired", date: now.addingTimeInterval(-120))
+        ], accountTag: "current", peerUserID: "machine", since: now.addingTimeInterval(-60))
+        XCTAssertEqual(logs.map(\.event), events)
+        XCTAssertTrue(logs.allSatisfy { $0.fields["asr_session"] == session })
+        for key in ["session", "characters", "text_updates", "audio_queue_ms", "audio_category_ms",
+                    "audio_activate_ms", "audio_resume_ms", "audio_session_ms", "sdk_start_call_ms",
+                    "elapsed_ms", "latency_ms", "callback_latency_ms", "callback_extract_ms",
+                    "main_actor_wait_ms", "stop_wait_ms", "duration_ms", "completion", "action",
+                    "mode", "callback_on_main", "code"] {
+            XCTAssertNotNil(logs[0].fields[key], key)
+        }
+        let encoded = String(decoding: try JSONEncoder().encode(logs), as: UTF8.self)
+        XCTAssertFalse(encoded.contains("PRIVATE_"))
+        let invalid = RemoteDiagnosticsLogEntry(DiagnosticLogEntry(sequence: 1, createdAt: "now",
+            level: .info, category: "asr", event: "first-text-received",
+            fields: ["main_actor_wait_ms": "NaN", "characters": "-1", "text_updates": "body"]))
+        XCTAssertTrue(invalid.fields.isEmpty)
+    }
+
     func testLocalLogsCannotCrossAccountsSDKsOrPeers() throws {
         let date = Date()
         let formatter = ISO8601DateFormatter()
@@ -449,6 +496,15 @@ final class RemoteDiagnosticsTests: XCTestCase {
             let report = try XCTUnwrap(context.sentReports.first?.1)
             XCTAssertTrue(report.contains("ownerUserID")); XCTAssertTrue(report.contains("call-async"))
         }
+    }
+
+    func testHistoryLayoutEvidenceKeepsCountsWithoutMessageBodies() {
+        let entry = RemoteDiagnosticsLogEntry(DiagnosticLogEntry(sequence: 1, createdAt: "now", level: .info,
+            category: "remote-im-ui", event: "history-layout", fields: [
+                "layout": "lazy-history-eager-tail", "loaded_messages": "350", "eager_rows": "50", "history_rows": "300",
+                "text_bytes": "2048", "text": "PRIVATE_BODY"
+            ]))
+        XCTAssertEqual(entry.fields, ["layout": "lazy-history-eager-tail", "loaded_messages": "350", "eager_rows": "50", "history_rows": "300", "text_bytes": "2048"])
     }
 
 }

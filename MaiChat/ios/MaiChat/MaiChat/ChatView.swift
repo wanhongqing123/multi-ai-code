@@ -1223,7 +1223,12 @@ private final class VoiceTranscriptionPresentation: ObservableObject {
     @Published var liveText = ""
     private var firstLoggedSessionID: UInt64?
 
-    func prepareForNewSession() {
+    private(set) var diagnosticFields: [String: String] = [:]
+
+    func prepareForNewSession(account: String, peer: String) {
+        diagnosticFields = ["account": account,
+                            "peer": DiagnosticLogPrivacy.stableTag(peer, prefix: "u"),
+                            "asr_session": UUID().uuidString.lowercased()]
         liveText = ""
         firstLoggedSessionID = nil
     }
@@ -1239,7 +1244,7 @@ private final class VoiceTranscriptionPresentation: ObservableObject {
                 fields: [
                     "session": String(sessionID),
                     "characters": String(text.count),
-                ]
+                ].merging(diagnosticFields) { _, context in context }
             )
         }
         liveText = text
@@ -1559,6 +1564,7 @@ private struct MessageListView: View {
     @State private var isNearBottom = true
     @State private var hasUnseenLatestMessage = false
 
+    @State private var lastLoggedHistoryCount = -1
     private let bottomAnchorID = "message-list-bottom"
 
     private var approvalDecisionStates: [String: ApprovalDecisionDisplayState] {
@@ -1585,16 +1591,14 @@ private struct MessageListView: View {
         let decisionStates = approvalDecisionStates
         ScrollViewReader { proxy in
             ScrollView {
-                // Keep the initial page eagerly laid out so the dedicated bottom anchor has its
-                // final position before the first scroll. LazyVStack recreates the historical
-                // "first open is blank until the user drags" failure with variable-height Markdown
-                // bubbles, even when the anchor scroll is repeated on the next main-loop turn.
+                // Only the latest page is eager, keeping the bottom anchor measurable.
+                // Older pages must not create/layout every Markdown row while scrolling.
                 VStack(alignment: .leading, spacing: 14) {
                     if messages.isEmpty {
                         EmptyMessagesView()
                             .padding(.top, 72)
                     } else {
-                        ForEach(messages) { message in
+                        MessageHistoryStack(items: messages) { message in
                             MessageBubbleView(
                                 message: message,
                                 approvalDecisionState: message.approvalRequest.map {
@@ -1658,7 +1662,8 @@ private struct MessageListView: View {
                                     AppDiagnosticLog.shared.record(level: .debug, category: "remote-im-ui", event: "row-presented", fields: [
                                         "account": appState.remoteDiagnosticsAccountTag,
                                         "peer": DiagnosticLogPrivacy.stableTag(peer, prefix: "u"),
-                                        "message": DiagnosticLogPrivacy.stableTag(message.remoteID ?? message.id.uuidString, prefix: "m")
+                                        "message": DiagnosticLogPrivacy.stableTag(message.remoteID ?? message.id.uuidString, prefix: "m"),
+                                        "text_bytes": String(message.text.utf8.count)
                                     ])
                                 }
                         }
@@ -1666,16 +1671,13 @@ private struct MessageListView: View {
                     Color.clear
                         .frame(height: 1)
                         .id(bottomAnchorID)
-                        .onAppear {
-                            isNearBottom = true
-                            hasUnseenLatestMessage = false
-                        }
-                        .onDisappear {
-                            isNearBottom = false
-                        }
                 }
                 .padding(.horizontal, MessageBubbleMetrics.horizontalInset)
                 .padding(.vertical, 18)
+                .background(MessageScrollPositionReader { nearBottom in
+                    isNearBottom = nearBottom
+                    if nearBottom { hasUnseenLatestMessage = false }
+                })
                 .background(
                     ScrollViewKeyboardDismissInstaller { window in
                         dismissKeyboard(in: window)
@@ -1691,11 +1693,13 @@ private struct MessageListView: View {
             .scrollDismissesKeyboard(.interactively)
             .background(RemoteIMStyle.panelBackground)
             .onAppear {
+                recordHistoryLayout()
                 latestMessageID = messages.last?.id
                 if !scrollToSearchTarget(proxy: proxy) {
                     scrollToLatestMessage(proxy: proxy)
                 }
             }
+            .onChange(of: messages.count) { _ in recordHistoryLayout() }
             .onChange(of: searchTargetMessageID) { _ in
                 _ = scrollToSearchTarget(proxy: proxy)
             }
@@ -1763,6 +1767,21 @@ private struct MessageListView: View {
                 filePreviewItem = nil
             }
         }
+    }
+
+    private func recordHistoryLayout() {
+        guard messages.count != lastLoggedHistoryCount, let message = messages.last else { return }
+        let owner = appState.chatState.ownerUserID
+        guard message.fromUserID == owner || message.toUserID == owner else { return }
+        lastLoggedHistoryCount = messages.count
+        let eagerRows = min(MessageHistoryMetrics.eagerTailCount, messages.count)
+        let peer = message.direction == .incoming ? message.fromUserID : message.toUserID
+        AppDiagnosticLog.shared.record(level: .info, category: "remote-im-ui", event: "history-layout", fields: [
+            "account": appState.remoteDiagnosticsAccountTag,
+            "peer": DiagnosticLogPrivacy.stableTag(peer, prefix: "u"),
+            "layout": "lazy-history-eager-tail", "loaded_messages": String(messages.count),
+            "eager_rows": String(eagerRows), "history_rows": String(messages.count - eagerRows)
+        ])
     }
 
     @discardableResult
@@ -4758,13 +4777,16 @@ private struct ComposerView: View {
         if !isPressingVoice {
             isPressingVoice = true
             if showsTranscriptionHighlight {
-                transcriptionPresentation.prepareForNewSession()
+                transcriptionPresentation.prepareForNewSession(
+                    account: appState.remoteDiagnosticsAccountTag,
+                    peer: appState.chatState.selectedPeerID ?? ""
+                )
                 transcriptionPresentation.target = .send
                 AppDiagnosticLog.shared.record(
                     level: .info,
                     category: "asr",
                     event: "gesture-started",
-                    fields: ["mode": "transcription"]
+                    fields: ["mode": "transcription"].merging(transcriptionPresentation.diagnosticFields) { _, context in context }
                 )
                 realtimeStartTask = Task { await startRealtimeTranscription() }
             } else {
@@ -4811,6 +4833,8 @@ private struct ComposerView: View {
             return
         }
 
+        let diagnosticFields = transcriptionPresentation.diagnosticFields
+        let releasedAt = ProcessInfo.processInfo.systemUptime
         let releaseTarget = transcriptionTarget(for: translation)
         isCancellingVoice = false
         if releaseTarget == .cancel {
@@ -4818,7 +4842,7 @@ private struct ComposerView: View {
                 level: .info,
                 category: "asr",
                 event: "gesture-ended",
-                fields: ["action": "cancel"]
+                fields: ["action": "cancel"].merging(diagnosticFields) { _, context in context }
             )
             realtimeStartTask?.cancel()
             realtimeStartTask = nil
@@ -4832,7 +4856,7 @@ private struct ComposerView: View {
             level: .info,
             category: "asr",
             event: "gesture-ended",
-            fields: ["action": shouldEdit ? "edit" : "send"]
+            fields: ["action": shouldEdit ? "edit" : "send"].merging(diagnosticFields) { _, context in context }
         )
         transcriptionPresentation.target = shouldEdit ? .finishingEdit : .finishingSend
         let didStart = await realtimeStartTask?.value ?? realtimeSpeechRecognizer.isRecognizing
@@ -4860,14 +4884,19 @@ private struct ComposerView: View {
                 category: "asr",
                 event: "transcription-applied",
                 fields: [
+                    "duration_ms": String(Int((ProcessInfo.processInfo.systemUptime - releasedAt) * 1000)),
                     "action": shouldEdit ? "edit" : "send",
                     "characters": String(text.count),
-                ]
+                ].merging(diagnosticFields) { _, context in context }
             )
         } catch is CancellationError {
             transcriptionPresentation.reset()
         } catch {
             transcriptionPresentation.reset()
+            AppDiagnosticLog.shared.record(level: .warning, category: "asr",
+                event: "transcription-apply-failed",
+                fields: ["code": String((error as NSError).code)]
+                    .merging(diagnosticFields) { _, context in context })
             appState.errorMessage = "语音转文字失败，未发送：\(error.localizedDescription)"
         }
     }
@@ -4892,6 +4921,7 @@ private struct ComposerView: View {
     }
 
     private func startRealtimeTranscription() async -> Bool {
+        let diagnosticFields = transcriptionPresentation.diagnosticFields
         guard realtimeSpeechRecognizer.isAvailable else {
             transcriptionPresentation.target = nil
             isPressingVoice = false
@@ -4899,7 +4929,7 @@ private struct ComposerView: View {
             return false
         }
         do {
-            try await realtimeSpeechRecognizer.start()
+            try await realtimeSpeechRecognizer.start(diagnosticFields: diagnosticFields)
             guard !Task.isCancelled else {
                 realtimeSpeechRecognizer.cancel()
                 return false
@@ -4919,8 +4949,8 @@ private struct ComposerView: View {
                 event: "session-start-failed",
                 fields: [
                     "error_domain": (error as NSError).domain,
-                    "error_code": String((error as NSError).code),
-                ]
+                    "code": String((error as NSError).code),
+                ].merging(diagnosticFields) { _, context in context }
             )
             return false
         }

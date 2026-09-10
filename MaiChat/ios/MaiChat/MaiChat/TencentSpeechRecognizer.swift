@@ -27,6 +27,9 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
     private var sessionStartedUptime: TimeInterval?
     private var firstTextUptime: TimeInterval?
     private var textUpdateCount = 0
+    // Frozen at session start so delayed SDK callbacks retain their original conversation.
+    private var diagnosticFields: [String: String] = [:]
+    private var stopRequestedUptime: TimeInterval?
     // 必须保持串行：取消与快速重启依赖 deactivate/activate 严格按入队顺序执行。
     private nonisolated static let audioSessionQueue = DispatchQueue(
         label: "com.kongshang.maichat.asr-audio-session",
@@ -46,7 +49,7 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
 
     var diagnosticSessionID: UInt64 { sessionSequence }
 
-    func start() async throws {
+    func start(diagnosticFields: [String: String]) async throws {
         guard isAvailable else { throw SpeechRecognitionError.unavailable }
         guard await requestRecordPermission() else {
             throw SpeechRecognitionError.service("没有麦克风权限")
@@ -54,11 +57,14 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
         try Task.checkCancellation()
 
         cancelCurrentSession()
+        self.diagnosticFields = diagnosticFields
+        stopRequestedUptime = nil
         sessionSequence &+= 1
         sessionStartedUptime = ProcessInfo.processInfo.systemUptime
         let audioSessionStartedAt = ProcessInfo.processInfo.systemUptime
+        let audioTiming: AudioActivationTiming
         do {
-            try await Self.activateAudioSession()
+            audioTiming = try await Self.activateAudioSession()
             try Task.checkCancellation()
         } catch {
             Self.deactivateAudioSession()
@@ -102,6 +108,10 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
                     from: audioSessionStartedAt,
                     to: audioSessionReadyAt
                 ),
+                "audio_queue_ms": Self.milliseconds(from: audioSessionStartedAt, to: audioTiming.began),
+                "audio_category_ms": Self.milliseconds(from: audioTiming.began, to: audioTiming.configured),
+                "audio_activate_ms": Self.milliseconds(from: audioTiming.configured, to: audioTiming.activated),
+                "audio_resume_ms": Self.milliseconds(from: audioTiming.activated, to: audioSessionReadyAt),
                 "sdk_start_call_ms": Self.milliseconds(
                     from: sdkStartBeganAt,
                     to: sdkStartReturnedAt
@@ -116,6 +126,7 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
         }
         return try await withCheckedThrowingContinuation { continuation in
             stopContinuation = continuation
+            stopRequestedUptime = ProcessInfo.processInfo.systemUptime
             log(
                 level: .info,
                 event: "stop-requested",
@@ -124,7 +135,11 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
                     "elapsed_ms": elapsedMilliseconds(),
                 ]
             )
+            let stopCallStarted = ProcessInfo.processInfo.systemUptime
             recognizer.stop()
+            log(level: .info, event: "sdk-stop-returned", fields: [
+                "duration_ms": Self.milliseconds(from: stopCallStarted, to: ProcessInfo.processInfo.systemUptime)
+            ])
             stopTimeoutTask?.cancel()
             stopTimeoutTask = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(1))
@@ -133,7 +148,7 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
                 // 是服务端返回的识别结果，用它兜底，避免界面无限停在“正在完成识别”。
                 self.recognizer?.delegate = nil
                 self.recognizer?.cancel()
-                self.finish(.success(self.liveText))
+                self.finish(.success(self.liveText), completion: "stop-timeout-fallback")
             }
         }
     }
@@ -227,6 +242,35 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
         }
     }
 
+    nonisolated func realTimeRecognizer(
+        onFlowRecognizeStart recognizer: QCloudRealTimeRecognizer, voiceId: String, seq: Int
+    ) {
+        recordSDKStage("flow-started", recognizer: recognizer)
+    }
+
+    nonisolated func realTimeRecognizerDidStopRecord(_ recognizer: QCloudRealTimeRecognizer) {
+        recordSDKStage("recording-stopped", recognizer: recognizer)
+    }
+
+    private nonisolated func recordSDKStage(
+        _ event: String, recognizer: QCloudRealTimeRecognizer
+    ) {
+        let callbackUptime = ProcessInfo.processInfo.systemUptime
+        let callbackOnMain = Thread.isMainThread
+        let sourceID = ObjectIdentifier(recognizer)
+        Task { @MainActor [weak self] in
+            guard let self, self.isCurrentRecognizer(sourceID) else { return }
+            self.log(level: .info, event: event, fields: [
+                "callback_latency_ms": self.elapsedMilliseconds(at: callbackUptime),
+                "callback_on_main": String(callbackOnMain),
+                "main_actor_wait_ms": Self.milliseconds(
+                    from: callbackUptime, to: ProcessInfo.processInfo.systemUptime
+                ),
+                "session": String(self.sessionSequence),
+            ])
+        }
+    }
+
     private nonisolated func resultText(from result: QCloudRealTimeResult) -> String {
         let recognized = result.recognizedText.trimmingCharacters(in: .whitespacesAndNewlines)
         if !recognized.isEmpty { return recognized }
@@ -280,7 +324,8 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
 
     private func finish(
         _ result: Result<String, Error>,
-        sourceID: ObjectIdentifier? = nil
+        sourceID: ObjectIdentifier? = nil,
+        completion: String = "sdk-callback"
     ) {
         if let sourceID, !isCurrentRecognizer(sourceID) { return }
         let continuation = stopContinuation
@@ -295,9 +340,12 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
         Self.deactivateAudioSession()
 
         let resultName: String
+        var resultFields: [String: String] = [:]
         switch result {
         case .success: resultName = "ok"
-        case .failure: resultName = "failed"
+        case .failure(let error):
+            resultName = "failed"
+            resultFields["code"] = String((error as NSError).code)
         }
         log(
             level: resultName == "ok" ? .info : .warning,
@@ -305,9 +353,13 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
             fields: [
                 "session": String(sessionSequence),
                 "result": resultName,
+                "completion": completion,
+                "stop_wait_ms": stopRequestedUptime.map { Self.milliseconds(
+                    from: $0, to: ProcessInfo.processInfo.systemUptime
+                ) } ?? "0",
                 "duration_ms": elapsedMilliseconds(),
                 "text_updates": String(textUpdateCount),
-            ]
+            ].merging(resultFields) { _, result in result }
         )
         sessionStartedUptime = nil
 
@@ -332,7 +384,11 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
         isRecognizing = false
         stopTimeoutTask?.cancel()
         stopTimeoutTask = nil
-        Self.deactivateAudioSession()
+        // An idle cancel must not enqueue setActive(false) ahead of the next
+        // activation, or interfere with another audio feature in the app.
+        if wasActive || sessionStartedUptime != nil {
+            Self.deactivateAudioSession()
+        }
         if let continuation = stopContinuation {
             stopContinuation = nil
             continuation.resume(throwing: CancellationError())
@@ -362,15 +418,26 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
         return String(Int((max(0, uptime - sessionStartedUptime) * 1_000).rounded()))
     }
 
-    private nonisolated static func activateAudioSession() async throws {
+    private struct AudioActivationTiming: Sendable {
+        let began: TimeInterval
+        let configured: TimeInterval
+        let activated: TimeInterval
+    }
+
+    private nonisolated static func activateAudioSession() async throws -> AudioActivationTiming {
         try await withCheckedThrowingContinuation {
-            (continuation: CheckedContinuation<Void, Error>) in
+            (continuation: CheckedContinuation<AudioActivationTiming, Error>) in
             audioSessionQueue.async {
                 do {
+                    let began = ProcessInfo.processInfo.systemUptime
                     let audioSession = AVAudioSession.sharedInstance()
                     try audioSession.setCategory(.record, mode: .measurement)
+                    let configured = ProcessInfo.processInfo.systemUptime
                     try audioSession.setActive(true)
-                    continuation.resume()
+                    continuation.resume(returning: AudioActivationTiming(
+                        began: began, configured: configured,
+                        activated: ProcessInfo.processInfo.systemUptime
+                    ))
                 } catch {
                     continuation.resume(throwing: error)
                 }
@@ -403,7 +470,7 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
             level: level,
             category: "asr",
             event: event,
-            fields: fields
+            fields: fields.merging(diagnosticFields) { _, context in context }
         )
     }
 

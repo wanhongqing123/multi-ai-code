@@ -41,3 +41,15 @@ delegate 入口不是网络收包时间；如果 SDK 自己先投递到主线程
 统计窗口的聚合、重置和非法耗时处理有 Core 单测。隔离模拟器探针使用真实的
 `AppDiagnosticLog`，注入主线程阻塞和失活/恢复通知，检查日志落盘与采样启停。
 该探针不连接 IM、不调用语音服务，不等同于真实手机输入性能或真实后台切换测试。
+
+## 现场记录与启动阶段
+
+[2026-09-10 滚动与语音排障汇总](diagnostics/2026-09-10-ios-performance.md)包含原始日志索引、测量基线、已做改动、未解决问题和下次判断步骤。
+
+语音阶段通过冻结的账号、会话及 `asr_session` 进入远程报告。
+`session-started` 的 `audio_session_ms` 拆为 `audio_queue_ms`（串行队列等待）、
+`audio_category_ms`（系统录音模式设置）、`audio_activate_ms`（系统激活）及
+`audio_resume_ms`（返回 MainActor）。新增 `flow-started`、`recording-stopped`
+为 SDK 阶段回调，不代表网络收包时间。
+`session-finished.stop_wait_ms` 包括调度等待，`completion=stop-timeout-fallback`
+表示使用已有文字兜底；`transcription-applied.duration_ms` 从松手计时，发送模式包含发送等待。

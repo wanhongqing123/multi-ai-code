@@ -2176,8 +2176,7 @@ private struct MessageBubbleView: View {
                     .clipped()
                 }
             }
-            .padding(.leading, message.direction == .incoming ? 0 : 13)
-            .padding(.trailing, 13)
+            .padding(.horizontal, 13)
             .padding(.vertical, 11)
             .background(bubbleBackground, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 

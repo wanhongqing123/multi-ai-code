@@ -29,6 +29,7 @@
 #include <QTest>
 #include <QTextBrowser>
 #include <QTextBlock>
+#include <QTextFragment>
 #include <QAbstractTextDocumentLayout>
 #include <QTextEdit>
 #include <QTimer>
@@ -119,6 +120,8 @@ private slots:
     void navigationSelectionFollowsContentStackCurrentPage();
     void contactsDirectoryUsesSingleLineRows();
     void wideChatUsesWiderMessageBubbles();
+    void receivedMessagesKeepTheSameLeftEdge_data();
+    void receivedMessagesKeepTheSameLeftEdge();
     void restoredLongMessagesExpandAfterWindowIsShown();
     void slashCommandSuggestionsFillComposer();
     void slashCommandBarLeavesImeCompositionUndisturbed();
@@ -764,9 +767,15 @@ void MainWindowLayoutTest::quotedReplyRendersQuoteBlockAboveBody() {
     QCOMPARE(bubble->layout()->indexOf(block), 0);
     auto* text = block->findChild<QLabel*>(QStringLiteral("messageQuoteText"));
     QVERIFY(text != nullptr);
-    QVERIFY2(text->text().contains(QStringLiteral("这是被引用的原始消息")),
-             qPrintable(QStringLiteral("引用块内容不对：") + text->text()));
-    QVERIFY(text->text().contains(QStringLiteral("phone-user")));
+    // Status updates can replace the pending row via deleteLater. Resolve the
+    // current label on each retry rather than retaining a deleted widget.
+    const auto currentQuoteText = [&window] {
+        const auto* label = window.findChild<QLabel*>(QStringLiteral("messageQuoteText"));
+        return label ? label->text() : QString();
+    };
+    QTRY_VERIFY2(currentQuoteText().contains(QStringLiteral("这是被引用的原始消息")),
+                 qPrintable(QStringLiteral("引用块内容不对：") + currentQuoteText()));
+    QVERIFY(currentQuoteText().contains(QStringLiteral("phone-user")));
 }
 
 void MainWindowLayoutTest::droppingFilesIntoComposerAttachesThemInsteadOfPastingPaths() {
@@ -1232,8 +1241,8 @@ void MainWindowLayoutTest::rendersSentMessageFromTopWithMetadata() {
     QCOMPARE(authorLabel->text(), QStringLiteral("desktop-user"));
     QCOMPARE(avatarLabel->text(), QStringLiteral("D"));
     QCOMPARE(avatarLabel->property("avatarUserId").toString(), QStringLiteral("desktop-user"));
-    QCOMPARE(avatarLabel->minimumSize(), QSize(40, 40));
-    QCOMPARE(avatarLabel->maximumSize(), QSize(40, 40));
+    QCOMPARE(avatarLabel->minimumSize(), QSize(30, 30));
+    QCOMPARE(avatarLabel->maximumSize(), QSize(30, 30));
     QVERIFY(!timeLabel->text().trimmed().isEmpty());
     QCOMPARE(statusLabel->text(), QStringLiteral("✓"));
     QCOMPARE(statusLabel->alignment(), Qt::AlignCenter);
@@ -1491,7 +1500,7 @@ void MainWindowLayoutTest::rendersMarkdownMessageContent() {
     restoredMessage.fromUserId = QStringLiteral("phone-user");
     restoredMessage.toUserId = QStringLiteral("desktop-user");
     restoredMessage.text = hiddenPrefix
-        + QStringLiteral("# Win/Mac 每周 Crash 详细报表\n\n**重点**\n\n- 第一条\n- [链接](https://example.com)");
+        + QStringLiteral("# Win/Mac 每周 Crash 详细报表 `code`\n\n**重点**\n\n- 第一条\n- [链接](https://example.com)");
     restoredMessage.direction = RemoteIMMessageDirection::Incoming;
     app.chatState().appendMessageForRestore(restoredMessage);
 
@@ -1500,6 +1509,23 @@ void MainWindowLayoutTest::rendersMarkdownMessageContent() {
     QVERIFY(markdownView != nullptr);
     QVERIFY(markdownView->toHtml().contains(QStringLiteral("<h1")));
     QVERIFY(!markdownView->toPlainText().contains(QStringLiteral("# Win/Mac")));
+    // Inspect the actual Qt document: heading adjustments used to override CSS
+    // sizes, and CSS 700 mapped to Black rather than the intended bold weight.
+    const auto heading = markdownView->document()->firstBlock();
+    QCOMPARE(heading.blockFormat().headingLevel(), 1);
+    bool sawInlineCode = false;
+    for (auto it = heading.begin(); !it.atEnd(); ++it) {
+        const auto fragment = it.fragment();
+        if (!fragment.isValid()) continue;
+        if (fragment.text().contains(QStringLiteral("code"))) {
+            sawInlineCode = true;
+            QCOMPARE(fragment.charFormat().font().pixelSize(), UiZoom::s(13));
+        } else {
+            QCOMPARE(fragment.charFormat().font().pixelSize(), UiZoom::s(22));
+            QCOMPARE(fragment.charFormat().fontWeight(), int(QFont::DemiBold));
+        }
+    }
+    QVERIFY(sawInlineCode);
     QVERIFY(markdownView->toPlainText().contains(QStringLiteral("重点")));
     QVERIFY(markdownView->toHtml().contains(QStringLiteral("href=\"https://example.com\"")));
 }
@@ -2041,6 +2067,34 @@ void MainWindowLayoutTest::contactsDirectoryUsesSingleLineRows() {
     QVERIFY(contactsList->sizeHintForRow(0) <= 56);
 }
 
+void MainWindowLayoutTest::receivedMessagesKeepTheSameLeftEdge_data() {
+    QTest::addColumn<QString>("text");
+    QTest::newRow("short") << QStringLiteral("好");
+    QTest::newRow("below-old-threshold") << QString(49, QChar(0x6587));
+    QTest::newRow("at-old-threshold") << QString(50, QChar(0x6587));
+    QTest::newRow("above-old-threshold") << QString(51, QChar(0x6587));
+    QTest::newRow("multiline") << QStringLiteral("第一行\n第二行");
+}
+
+void MainWindowLayoutTest::receivedMessagesKeepTheSameLeftEdge() {
+    QFETCH(QString, text);
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("phone-user"), QStringLiteral("iPhone"));
+    app.chatState().receiveText(QStringLiteral("phone-user"), text);
+    MainWindow window(app);
+    window.resize(1200, 850);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto* avatar = window.findChild<QLabel*>(QStringLiteral("messageAvatarIncoming"));
+    auto* view = window.findChild<QTextBrowser*>(QStringLiteral("messageMarkdownView"));
+    QVERIFY(avatar); QVERIFY(view);
+    auto* row = avatar->parentWidget();
+    QTRY_COMPARE(view->mapTo(row, QPoint()).x(), avatar->mapTo(row, QPoint()).x());
+    QTRY_VERIFY(view->mapTo(row, QPoint()).y() >= avatar->mapTo(row, QPoint()).y() + avatar->height());
+    QTRY_VERIFY(view->width() >= row->contentsRect().width() - UiZoom::s(14) - 2);
+}
+
 void MainWindowLayoutTest::wideChatUsesWiderMessageBubbles() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     auto* fakeClient = client.get();
@@ -2070,7 +2124,7 @@ void MainWindowLayoutTest::wideChatUsesWiderMessageBubbles() {
     QVERIFY(incomingAvatar != nullptr);
     QCOMPARE(incomingAvatar->text(), QStringLiteral("IP"));
     QCOMPARE(incomingAvatar->property("avatarUserId").toString(), QStringLiteral("phone-user"));
-    QCOMPARE(incomingAvatar->minimumSize(), QSize(40, 40));
+    QCOMPARE(incomingAvatar->minimumSize(), QSize(30, 30));
     QTRY_VERIFY2(incomingBubble->maximumWidth() >= 820,
                  qPrintable(QStringLiteral("max=%1 min=%2")
                                 .arg(incomingBubble->maximumWidth())
@@ -2100,9 +2154,15 @@ void MainWindowLayoutTest::wideChatUsesWiderMessageBubbles() {
                                .arg(outgoingTime->mapTo(outgoingRow, QPoint(0, 0)).y())
                                .arg(outgoingTime->height())
                                .arg(outgoingBubble->mapTo(outgoingRow, QPoint(0, 0)).y())));
-    QTRY_VERIFY(incomingBubble->mapTo(messageContainer, QPoint(0, 0)).x()
-                    + incomingBubble->width()
-                <= outgoingAvatar->mapTo(messageContainer, QPoint(0, 0)).x());
+    auto* incomingRow = incomingAvatar->parentWidget();
+    auto* incomingBadge = incomingRow->findChild<QLabel*>(QStringLiteral("messageRelationBadge"));
+    QVERIFY(incomingBadge != nullptr);
+    QTRY_VERIFY(incomingBadge->height() < incomingAvatar->height());
+    QTRY_COMPARE(incomingBubble->mapTo(incomingRow, QPoint(0, 0)).x(),
+                 incomingAvatar->mapTo(incomingRow, QPoint(0, 0)).x());
+    QTRY_VERIFY(incomingBubble->mapTo(incomingRow, QPoint(0, 0)).y()
+                >= incomingAvatar->mapTo(incomingRow, QPoint(0, 0)).y() + incomingAvatar->height());
+    QTRY_VERIFY(incomingBubble->width() >= incomingRow->contentsRect().width() - 2);
 }
 
 void MainWindowLayoutTest::restoredLongMessagesExpandAfterWindowIsShown() {

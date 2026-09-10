@@ -12,13 +12,11 @@ private slots:
     void escapesRawHtmlAndUnsafeLinks();
     void rendersFencedCodeWithoutInlineFormatting();
     void rendersGfmTableStrikethroughTaskList();
-    void rendersCodeCardLabels_data();
-    void rendersCodeCardLabels();
     void rendersQuoteAccentWithoutDroppingText();
     void rendersSemanticCallouts_data();
     void rendersSemanticCallouts();
     void preservesLiteralCalloutMarkers();
-    void stylesTaskMarkersAndCountsCodeLines();
+    void stylesTaskMarkersAndPreservesCodeLines();
     void rendersCalloutsWithMixedLineEndingsAndNestedQuotes();
     void toleratesCalloutMarkerCaseAndTrailingSpaces();
     void previewHtmlPreservesCodeSemanticsWithoutFontHeuristics();
@@ -68,10 +66,10 @@ void MarkdownRendererTest::rendersGfmTableStrikethroughTaskList() {
     const QString html = MarkdownRenderer::renderToHtml(
         QStringLiteral("| A | B |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n\n~~gone~~\n\n- [x] done\n- [ ] todo"));
 
-    QVERIFY(html.contains(QStringLiteral("<table border=\"1\"")));
-    QVERIFY(html.contains(QStringLiteral("<th bgcolor=\"#e8f0f8\">A</th>")));
+    QVERIFY(html.contains(QStringLiteral("<table border=\"0\"")));
+    QVERIFY(html.contains(QStringLiteral("<th bgcolor=\"#245995\">A</th>")));
     QVERIFY(html.contains(QStringLiteral("<td bgcolor=\"#ffffff\">1</td>")));
-    QVERIFY(html.contains(QStringLiteral("<td bgcolor=\"#f6f8fb\">3</td>")));
+    QVERIFY(html.contains(QStringLiteral("<td bgcolor=\"#f7f7f7\">3</td>")));
     QVERIFY(html.contains(QStringLiteral("<del>gone</del>")));
     QVERIFY(html.contains(QStringLiteral("☑")));
     QVERIFY(html.contains(QStringLiteral("☐")));
@@ -79,26 +77,9 @@ void MarkdownRendererTest::rendersGfmTableStrikethroughTaskList() {
     QVERIFY(!html.contains(QStringLiteral("<input")));
 }
 
-void MarkdownRendererTest::rendersCodeCardLabels_data() {
-    QTest::addColumn<QString>("language");
-    QTest::addColumn<QString>("label");
-    QTest::newRow("named-language") << QStringLiteral("cpp") << QStringLiteral("cpp");
-    QTest::newRow("fallback-label") << QString() << QStringLiteral("代码");
-}
-
-void MarkdownRendererTest::rendersCodeCardLabels() {
-    QFETCH(QString, language);
-    QFETCH(QString, label);
-    const QString html = MarkdownRenderer::renderToHtml(
-        QStringLiteral("```") + language + QStringLiteral("\n%1 <literal>\n```"));
-    // Match the visible label, not the language-cpp attribute on the code element.
-    QVERIFY(html.contains(QLatin1Char('>') + label + QStringLiteral("</span>")));
-    QVERIFY(html.contains(QStringLiteral("%1 &lt;literal&gt;")));
-}
-
 void MarkdownRendererTest::rendersQuoteAccentWithoutDroppingText() {
     const QString html = MarkdownRenderer::renderToHtml(QStringLiteral("> 引用里的 **重点**"));
-    QVERIFY(html.contains(QStringLiteral("<td width=\"3\" bgcolor=\"#90c9ed\"></td>")));
+    QVERIFY(html.contains(QStringLiteral("<td width=\"3\" bgcolor=\"#2873c7\"></td>")));
     QVERIFY(html.contains(QStringLiteral("引用里的 <strong>重点</strong>")));
     QVERIFY(!html.contains(QStringLiteral("<blockquote>")));
 }
@@ -137,11 +118,10 @@ void MarkdownRendererTest::preservesLiteralCalloutMarkers() {
     QVERIFY(html.contains(QStringLiteral("[!TIP] 不独占一行")));
 }
 
-void MarkdownRendererTest::stylesTaskMarkersAndCountsCodeLines() {
+void MarkdownRendererTest::stylesTaskMarkersAndPreservesCodeLines() {
     const QString html = MarkdownRenderer::renderToHtml(QStringLiteral("- [x] done\n- [ ] todo\n\n```cpp\n%1 <literal>\nsecond\n```"));
     QVERIFY(html.contains(QStringLiteral("color:#16836b;\">☑</span>")));
     QVERIFY(html.contains(QStringLiteral("color:#64748b;\">☐</span>")));
-    QVERIFY(html.contains(QStringLiteral(" · 2 行</span>")));
     QVERIFY(html.contains(QStringLiteral("%1 &lt;literal&gt;\nsecond")));
 }
 

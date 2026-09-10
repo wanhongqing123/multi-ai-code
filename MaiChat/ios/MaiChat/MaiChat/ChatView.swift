@@ -1640,6 +1640,16 @@ private struct MessageListView: View {
                                             lineWidth: 2
                                         )
                                 }
+                                // One view per message keeps the existing scroll anchor stable.
+                                .padding(.top, message.id == messages.first?.id ? 0 : 14)
+                                .overlay(alignment: .top) {
+                                    if message.id != messages.first?.id {
+                                        Rectangle()
+                                            .fill(RemoteIMStyle.border.opacity(0.8))
+                                            .frame(height: 0.5)
+                                            .accessibilityHidden(true)
+                                    }
+                                }
                                 .id(message.id)
                                 .onAppear {
                                     let owner = appState.chatState.ownerUserID
@@ -2166,13 +2176,10 @@ private struct MessageBubbleView: View {
                     .clipped()
                 }
             }
-            .padding(.horizontal, 13)
+            .padding(.leading, message.direction == .incoming ? 0 : 13)
+            .padding(.trailing, 13)
             .padding(.vertical, 11)
             .background(bubbleBackground, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(bubbleBorder, lineWidth: 0.5)
-            )
 
             if message.direction == .outgoing {
                 StatusIcon(status: message.status)
@@ -2241,11 +2248,7 @@ private struct MessageBubbleView: View {
     }
 
     private var bubbleBackground: Color {
-        message.direction == .outgoing ? RemoteIMStyle.outgoingBubbleBackground : RemoteIMStyle.incomingBubbleBackground
-    }
-
-    private var bubbleBorder: Color {
-        message.direction == .outgoing ? Color(red: 0.764, green: 0.873, blue: 0.996) : RemoteIMStyle.incomingBubbleBorder
+        message.direction == .outgoing ? RemoteIMStyle.outgoingBubbleBackground : .clear
     }
 }
 

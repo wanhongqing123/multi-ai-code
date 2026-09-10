@@ -88,15 +88,15 @@ QString renderBody(const QString& markdown) {
             if (!row.hasMatch()) break;
             QString cells = row.captured(1);
             const bool header = cells.contains(QStringLiteral("<th"));
-            const QString color = header ? QStringLiteral("#e8f0f8")
-                : (rowIndex++ % 2 == 0 ? QStringLiteral("#ffffff") : QStringLiteral("#f6f8fb"));
+            const QString color = header ? QStringLiteral("#245995")
+                : (rowIndex++ % 2 == 0 ? QStringLiteral("#ffffff") : QStringLiteral("#f7f7f7"));
             cells.replace(QStringLiteral("<td"), QStringLiteral("<td bgcolor=\"%1\"").arg(color));
             cells.replace(QStringLiteral("<th"), QStringLiteral("<th bgcolor=\"%1\"").arg(color));
             const QString replacement = QStringLiteral("<tr>") + cells + QStringLiteral("</tr>");
             body.replace(row.capturedStart(), row.capturedLength(), replacement);
             rowOffset = row.capturedStart() + replacement.size();
         }
-        const QString replacement = QStringLiteral("<table border=\"1\" bordercolor=\"#dce5ef\" cellspacing=\"0\" cellpadding=\"8\" style=\"border-collapse:collapse;margin-bottom:8px;\">")
+        const QString replacement = QStringLiteral("<table border=\"0\" cellspacing=\"0\" cellpadding=\"8\" style=\"border-collapse:collapse;margin-bottom:8px;\">")
             + body + QStringLiteral("</table>");
         html.replace(match.capturedStart(), match.capturedLength(), replacement);
         tableOffset = match.capturedStart() + replacement.size();
@@ -110,25 +110,19 @@ QString renderBody(const QString& markdown) {
     html.replace(QStringLiteral("<code>"), QStringLiteral("<code>&#8201;"));
     html.replace(QStringLiteral("</code>"), QStringLiteral("&#8201;</code>"));
 
-    // Qt 的富文本不支持块级圆角；用浅色表格卡片保留内边距和语言标签。
+    // D 明晰蓝：代码块只保留浅底与内边距，减少装饰性标题栏。
     static const QRegularExpression codePattern(
         QStringLiteral("<pre><mdblockcode([^>]*)>([\\s\\S]*?)</mdblockcode></pre>"));
-    static const QRegularExpression languagePattern(QStringLiteral("class=\"language-([^\"]*)\""));
     int codeOffset = 0;
     while (true) {
         const auto match = codePattern.match(html, codeOffset);
         if (!match.hasMatch()) break;
-        const auto language = languagePattern.match(match.captured(1));
-        const QString label = language.hasMatch() ? language.captured(1) : QStringLiteral("代码");
         QString code = match.captured(2);
         if (code.endsWith(QLatin1Char('\n'))) code.chop(1);
-        const QString lineCount = QString::number(code.count(QLatin1Char('\n')) + 1);
         const QString replacement = QStringLiteral(
-            "<table width=\"100%\" cellspacing=\"0\" cellpadding=\"10\" bgcolor=\"#f6f8fb\" style=\"margin-top:0;margin-bottom:8px;\">"
-            "<tr><td bgcolor=\"#e8f2fa\"><span style=\"font-size:11px;color:#1c4f8a;\">%1</span>"
-            "<span style=\"font-size:11px;color:#64748b;\"> · %4 行</span></td></tr>"
-            "<tr><td><pre><code%2>%3</code></pre></td></tr></table>")
-            .arg(label, match.captured(1), code, lineCount);
+            "<table width=\"100%\" cellspacing=\"0\" cellpadding=\"10\" bgcolor=\"#f7f7f7\" style=\"margin-top:0;margin-bottom:8px;\">"
+            "<tr><td><pre><code%1>%2</code></pre></td></tr></table>")
+            .arg(match.captured(1), code);
         html.replace(match.capturedStart(), match.capturedLength(), replacement);
         codeOffset = match.capturedStart() + replacement.size();
     }
@@ -140,7 +134,7 @@ QString renderBody(const QString& markdown) {
             QString::fromLatin1(callout.background), callout.title) + QStringLiteral("<p>"));
     }
     // Qt 不支持 CSS border-left/padding，用窄色条和带内边距的内表格呈现引用。
-    html.replace(QStringLiteral("<blockquote>"), quoteOpening(QStringLiteral("#90c9ed"), QStringLiteral("#eef3f8")));
+    html.replace(QStringLiteral("<blockquote>"), quoteOpening(QStringLiteral("#2873c7"), QStringLiteral("#eaf3fd")));
     html.replace(QStringLiteral("</blockquote>"),
         QStringLiteral("</td></tr></table></td></tr></table>"));
 
@@ -173,20 +167,30 @@ QString MarkdownRenderer::renderPreviewHtml(const QString& markdown) {
 }
 
 QString MarkdownRenderer::renderToHtml(const QString& markdown) {
-    // 与 iOS 使用同一套轻量排版：浅色代码卡片、清晰标题、淡色表头。
+    // 保留 D 的颜色层级，字号与 iOS 的 22/18/16/14 对齐。
+    // QTextDocument 的 CSS 数值字重映射到 Qt 0..99：500 为 DemiBold(63)，
+    // 600 为 Bold(75)，700 已接近 Black(88)，不能照搬浏览器的字重数值。
     QString styledHtml = QStringLiteral(R"(<!doctype html><html><head><meta charset="utf-8"><style>
-body{margin:0;color:#0f172a;font-size:14px;}
-p{margin:0 0 8px 0;}
-h1,h2,h3,h4,h5,h6{margin:4px 0 10px 0;font-weight:600;color:#0f172a;}
-h1{font-size:22px;color:#1c4f8a;}h2{font-size:18px;color:#1c4f8a;}h3{font-size:16px;}h4,h5,h6{font-size:14px;}
+body{margin:0;color:#334155;font-size:14px;font-weight:400;}
+p{margin:0 0 10px 0;font-weight:400;}
+h1,h2,h3,h4,h5,h6{font-weight:500;}
+h1{font-size:22px;color:#142b4a;margin:0 0 12px 0;}
+h2{font-size:18px;color:#1769be;margin:16px 0 10px 0;}
+h3{font-size:16px;color:#176e83;margin:12px 0 8px 0;}
+h4{font-size:14px;color:#37465c;margin:10px 0 8px 0;}
+h5{font-size:14px;color:#37465c;margin:10px 0 8px 0;}
+h6{font-size:14px;color:#54657a;margin:10px 0 6px 0;}
 ul,ol{margin:0 0 8px 0;padding:0;}
-li{margin:2px 0;}
-pre{margin:0;color:#172033;white-space:pre-wrap;}
-code{font-family:'MAICHAT_CODE_FONT';background:#f2edf9;color:#6b3b96;font-size:13px;}
-pre code{background:transparent;color:#172033;}
-a{color:#2563eb;text-decoration:none;}
-del{text-decoration:line-through;}
-th{background:#e8f0f8;}
+li{margin:4px 0;font-weight:400;}
+strong{font-weight:600;color:#1e293b;}
+em{font-style:italic;color:#54657a;}
+pre{margin:0;color:#454545;white-space:pre-wrap;}
+code{font-family:'MAICHAT_CODE_FONT';background:#e6efff;color:#164eac;font-size:13px;}
+pre code{background:transparent;color:#454545;}
+a{color:#075fd1;text-decoration:underline;}
+del{color:#7c8798;text-decoration:line-through;}
+th{background:#245995;color:#ffffff;font-weight:500;font-size:13px;}
+td{font-size:13px;}
 </style></head><body>)");
     // QTextDocument 的 font-family 不解析浏览器式的多字体回退列表。
 #ifdef Q_OS_MAC

@@ -26,6 +26,7 @@
 #include <QStandardPaths>
 #include <QUrl>
 #include <QColor>
+#include <QFontInfo>
 #include <QFontMetrics>
 #include <QTextBlock>
 #include <QTextFormat>
@@ -133,10 +134,21 @@ constexpr int kNavIconPixels = 20;
 // 导航栏图标比会话栏那个「+」大一档：它是四个入口里唯一的辨识依据（没有文字），
 // 太小就只能靠位置记。图标源是 48px 渲染的，26 仍是缩小、不会糊。
 constexpr int kNavRailIconPixels = 26;
-constexpr int MessageAvatarLogicalSize = 40;
+constexpr int MessageAvatarLogicalSize = 30;
 constexpr int MessageAvatarGap = 10;
 constexpr int MessageMetaBubbleGap = 6;
 constexpr int RemoteDesktopStopSendTimeoutMs = 800;
+
+// Keep dividers on the existing rows so pagination and message indexes stay stable.
+void setMessageRowDivider(QWidget* row, bool visible) {
+    if (row->property("showMessageDivider").isValid()
+        && row->property("showMessageDivider").toBool() == visible) return;
+    row->setProperty("showMessageDivider", visible);
+    row->layout()->setContentsMargins(0, visible ? UiZoom::s(10) : 0, 0, 0);
+    row->style()->unpolish(row);
+    row->style()->polish(row);
+    row->update();
+}
 
 class MarkdownMessageView final : public QTextBrowser {
 public:
@@ -181,6 +193,35 @@ public:
         // 渲染器输出的 HTML 内嵌固定 px 字号（正文 14px/h1 22px/code 13px…），
         // 会盖过控件字体——整体缩放时须把这些 px 一并按倍率缩放。
         setHtml(UiZoom::scaleQss(MarkdownRenderer::renderToHtml(markdown)));
+        // Qt's HTML heading size adjustment can override CSS pixel sizes.
+        // Set actual heading runs explicitly, preserving inline code and emphasis.
+        for (auto block = document()->begin(); block.isValid(); block = block.next()) {
+            const int level = block.blockFormat().headingLevel();
+            if (level <= 0) continue;
+            const int size = level == 1 ? 22 : level == 2 ? 18 : level == 3 ? 16 : 14;
+            // Snapshot runs before editing their formats, which may merge runs.
+            struct HeadingRun {
+                int position;
+                int length;
+                QTextCharFormat format;
+            };
+            QList<HeadingRun> runs;
+            for (auto it = block.begin(); !it.atEnd(); ++it) {
+                const auto fragment = it.fragment();
+                if (fragment.isValid())
+                    runs.append({fragment.position(), fragment.length(), fragment.charFormat()});
+            }
+            for (auto& run : runs) {
+                const bool inlineCode = QFontInfo(run.format.font()).fixedPitch();
+                run.format.clearProperty(QTextFormat::FontSizeAdjustment);
+                run.format.setProperty(QTextFormat::FontPixelSize, UiZoom::s(inlineCode ? 13 : size));
+                if (inlineCode) run.format.setFontWeight(QFont::Normal);
+                QTextCursor heading(document());
+                heading.setPosition(run.position);
+                heading.setPosition(run.position + run.length, QTextCursor::KeepAnchor);
+                heading.setCharFormat(run.format);
+            }
+        }
         // 与 iOS 的 4pt 行间距一致。155% 会把最后一行也拉高，
         // 单行气泡的底部会额外多出约半行空白。
         QTextCursor cursor(document());
@@ -468,15 +509,15 @@ protected:
         painter.setRenderHint(QPainter::Antialiasing, true);
         const auto cached = avatarPixmapCache().constFind(avatarUrl_);
         if (cached != avatarPixmapCache().cend()) {
-            drawAvatarPixmap(&painter, rect(), cached.value(), UiZoom::s(10));
+            drawAvatarPixmap(&painter, rect(), cached.value(), UiZoom::s(8));
             return;
         }
         // 头像未下载（或没有头像）时显示生成的 monogram 块。
         painter.drawPixmap(0, 0,
-                           monogramAvatarPixmap(text(), width(), UiZoom::s(10),
+                           monogramAvatarPixmap(text(), width(), UiZoom::s(8),
                                                 outgoing_ ? kBrandGradientFrom : kPeerGradientFrom,
                                                 outgoing_ ? kBrandGradientTo : kPeerGradientTo,
-                                                UiZoom::s(12), devicePixelRatioF()));
+                                                UiZoom::s(11), devicePixelRatioF()));
         requestAvatarPixmap(avatarUrl_, this);
     }
 
@@ -3139,6 +3180,7 @@ void MainWindow::rebuildMessageList(const QString& peerId, const QList<RemoteIMM
     QStringList renderedApprovalIds;
     for (const RemoteIMMessage& message : messages) {
         QWidget* row = createMessageBubble(message);
+        setMessageRowDivider(row, message.id != messages.first().id);
         messageLayout_->addWidget(row);
         renderedMessageIds_.append(message.id);
         messageRowById_.insert(message.id, row);
@@ -3215,12 +3257,14 @@ void MainWindow::applyIncrementalMessageUpdate(const QList<RemoteIMMessage>& mes
         const RemoteIMMessage& message = messages.at(i);
         resultIds.append(message.id);
         if (QWidget* existing = messageRowById_.value(message.id)) {
+            setMessageRowDivider(existing, i > 0);
             const ApprovalDisplayState approvalState = approvalDisplayState(message);
             if (renderedStatusById_.value(message.id) != message.status
                     || renderedApprovalStateById_.value(message.id) != approvalState) {
                 // 状态徽标在气泡内部：原位替换单个气泡，代价 O(1)。
                 const int layoutIndex = messageLayout_->indexOf(existing);
                 QWidget* fresh = createMessageBubble(message);
+                setMessageRowDivider(fresh, i > 0);
                 messageLayout_->removeWidget(existing);
                 existing->deleteLater();
                 messageLayout_->insertWidget(layoutIndex, fresh);
@@ -3231,6 +3275,7 @@ void MainWindow::applyIncrementalMessageUpdate(const QList<RemoteIMMessage>& mes
             continue;
         }
         QWidget* row = createMessageBubble(message);
+        setMessageRowDivider(row, i > 0);
         messageLayout_->insertWidget(kLayoutBase + i, row);
         messageRowById_.insert(message.id, row);
         renderedStatusById_.insert(message.id, message.status);
@@ -3821,28 +3866,30 @@ QWidget* MainWindow::createQuoteBlock(const RemoteIMMessage& message, QWidget* p
 
 QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
     const bool outgoing = message.direction == RemoteIMMessageDirection::Outgoing;
+    const bool expandedTextBubble = message.hasApprovalRequest
+        || (!message.hasImage && !message.hasFile && !message.hasVideo && !message.hasVoice
+            && (!outgoing || message.text.size() >= 50 || message.text.contains(QLatin1Char('\n'))));
+    const bool fullWidthBody = !outgoing;
     auto* row = new QWidget(messageContainer_);
     row->setObjectName(outgoing ? QStringLiteral("messageRowOutgoing") : QStringLiteral("messageRowIncoming"));
     row->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    auto* rowLayout = new QHBoxLayout(row);
+    auto* rowLayout = new QBoxLayout(fullWidthBody ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight, row);
     rowLayout->setContentsMargins(0, 0, 0, 0);
-    rowLayout->setSpacing(UiZoom::s(MessageAvatarGap));
+    rowLayout->setSpacing(UiZoom::s(fullWidthBody ? 4 : MessageAvatarGap));
 
     auto* bubble = new QWidget(row);
     bubble->setObjectName(outgoing ? QStringLiteral("messageBubbleOutgoing") : QStringLiteral("messageBubbleIncoming"));
-    const bool expandedTextBubble = message.hasApprovalRequest
-        || (!message.hasImage && !message.hasFile && !message.hasVideo && !message.hasVoice
-            && (message.text.size() >= 50 || message.text.contains(QLatin1Char('\n'))));
+    bubble->setProperty("fullWidthBody", fullWidthBody);
     bubble->setProperty("expandedTextBubble", expandedTextBubble);
     applyMessageBubbleWidth(bubble, expandedTextBubble);
     bubble->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
-    // 与 iOS 定稿配色一致：发送浅蓝，接收接近白色，边框保持轻量。
+    // 取消消息外框；发送仍用浅蓝底区分，接收正文融入聊天背景。
     bubble->setStyleSheet(UiZoom::scaleQss(outgoing
-                              ? QStringLiteral("#messageBubbleOutgoing{background:#eaf4ff;border:1px solid #c3dffe;border-radius:12px;}")
-                              : QStringLiteral("#messageBubbleIncoming{background:#fafcfe;border:1px solid #ebf0f6;border-radius:12px;}")));
+                              ? QStringLiteral("#messageBubbleOutgoing{background:#eaf4ff;border:0;border-radius:12px;}")
+                              : QStringLiteral("#messageBubbleIncoming{background:transparent;border:0;}")));
 
     auto* bubbleLayout = new QVBoxLayout(bubble);
-    bubbleLayout->setContentsMargins(UiZoom::s(14), UiZoom::s(8), UiZoom::s(14), UiZoom::s(8));
+    bubbleLayout->setContentsMargins(fullWidthBody ? 0 : UiZoom::s(14), UiZoom::s(8), UiZoom::s(14), UiZoom::s(8));
     bubbleLayout->setSpacing(7);
 
     // 引用块在正文之上，和聊天软件的惯例一致：先看到「在回复什么」，再看到回复内容。
@@ -4319,6 +4366,9 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
     // 时间 #94a3b8、好友徽章 #ecfdf5 底 #047857 字 11px 胶囊。
     // 样式挂在 row 上（meta 已移出气泡，不再随气泡背景）。
     row->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
+        #messageRowIncoming[showMessageDivider="true"], #messageRowOutgoing[showMessageDivider="true"] {
+            border-top: 1px solid #e8edf3;
+        }
         #messageAuthorLabel {
             color: #334155;
             font-size: 13px;
@@ -4358,9 +4408,9 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
     const int metaBubbleGap = UiZoom::s(MessageMetaBubbleGap);
     const int columnTopInset = qMax(
         0, (UiZoom::s(MessageAvatarLogicalSize) - metaBubbleGap) / 2 - (metaHeight * 3) / 4);
-    column->setContentsMargins(0, columnTopInset, 0, 0);
+    column->setContentsMargins(0, fullWidthBody ? 0 : columnTopInset, 0, 0);
     column->setSpacing(metaBubbleGap);
-    column->addLayout(metaRow);
+    if (!fullWidthBody) column->addLayout(metaRow);
     auto* bubbleRow = new QHBoxLayout();
     bubbleRow->setContentsMargins(0, 0, 0, 0);
     bubbleRow->setSpacing(UiZoom::s(8));
@@ -4382,14 +4432,28 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
     }
     auto* avatar = createMessageAvatarLabel(
         avatarUserId, avatarDisplayName, avatarUrl, outgoing, row);
-    if (outgoing) {
-        rowLayout->addStretch(1);
+    if (fullWidthBody) {
+        // Every received message uses the space below the avatar rather than
+        // reserving an empty avatar column for every line of the message.
+        auto* header = new QHBoxLayout();
+        header->setContentsMargins(0, 0, 0, 0);
+        header->setSpacing(UiZoom::s(MessageAvatarGap));
+        header->addWidget(avatar, 0, Qt::AlignVCenter);
+        header->addLayout(metaRow, 1);
+        header->setAlignment(metaRow, Qt::AlignVCenter);
+        rowLayout->addLayout(header);
         rowLayout->addLayout(column);
-        rowLayout->addWidget(avatar, 0, Qt::AlignTop);
     } else {
-        rowLayout->addWidget(avatar, 0, Qt::AlignTop);
-        rowLayout->addLayout(column);
         rowLayout->addStretch(1);
+        rowLayout->addLayout(column);
+        auto* avatarColumn = new QVBoxLayout();
+        const int avatarTopInset = qMax(0, columnTopInset + (metaHeight * 3) / 4
+            + metaBubbleGap / 2 - UiZoom::s(MessageAvatarLogicalSize) / 2);
+        avatarColumn->setContentsMargins(0, avatarTopInset, 0, 0);
+        avatarColumn->setSpacing(0);
+        avatarColumn->addWidget(avatar, 0, Qt::AlignTop);
+        avatarColumn->addStretch(1);
+        rowLayout->addLayout(avatarColumn);
     }
     return row;
 }
@@ -4403,17 +4467,16 @@ int MainWindow::messageBubbleMaximumWidth() const {
     }
     const QMargins margins = messageLayout_ ? messageLayout_->contentsMargins() : QMargins();
     const int rowWidth = viewportWidth - margins.left() - margins.right();
-    const int avatarColumnWidth = UiZoom::s(MessageAvatarLogicalSize)
-        + UiZoom::s(MessageAvatarGap);
-    // Reserve a sender-avatar column at both ends of every row. The bubble starts
-    // after its own avatar and stops before the opposite sender's avatar; changing
-    // avatar size or UI zoom therefore updates the limit automatically.
-    return qBound(280, rowWidth - 2 * avatarColumnWidth, 1280);
+    return qMax(0, rowWidth);
 }
 
 void MainWindow::applyMessageBubbleWidth(QWidget* bubble, bool expanded) const {
     if (!bubble) return;
-    const int maximumWidth = messageBubbleMaximumWidth();
+    int maximumWidth = messageBubbleMaximumWidth();
+    if (!bubble->property("fullWidthBody").toBool()) {
+        const int avatarColumnWidth = UiZoom::s(MessageAvatarLogicalSize) + UiZoom::s(MessageAvatarGap);
+        maximumWidth = qBound(0, maximumWidth - 2 * avatarColumnWidth, 1280);
+    }
     bubble->setMaximumWidth(maximumWidth);
     bubble->setMinimumWidth(expanded ? maximumWidth : 0);
 }

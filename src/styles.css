@@ -1497,7 +1497,6 @@ html, body, #root {
   justify-content: space-between;
   gap: var(--mac-sp-3);
 }
-.ai-settings-help,
 .ai-settings-note {
   font-size: var(--mac-text-xs);
   color: var(--mac-fg-subtle);

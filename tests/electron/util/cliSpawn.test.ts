@@ -25,7 +25,7 @@ async function mkBin(name: string): Promise<{ dir: string; full: string }> {
 
 // 在内置目录结构 <root>/<tool>/<platform-arch>/<tool>[.exe] 下造一个可执行文件，
 // 供 resolveCliSpawn 通过 bundledOptions.roots 解析到「内置版本」。
-async function mkBundledCli(tool: 'codex' | 'opencode'): Promise<{ root: string; full: string }> {
+async function mkBundledCli(tool: 'codex'): Promise<{ root: string; full: string }> {
   const root = await fs.mkdtemp(join(tmpdir(), 'cli-bundled-'))
   tempRoots.push(root)
   const binary = isWindows ? `${tool}.exe` : tool
@@ -175,7 +175,7 @@ describe('resolveCliSpawn', () => {
     }
   })
 
-  it('refuses codex/opencode when no bundled binary exists instead of falling back to host PATH', () => {
+  it('refuses codex when no bundled binary exists instead of falling back to host PATH', () => {
     // codex 已深度定制，只用内置版本；找不到内置就报错，不回退宿主机安装的 codex。
     const r = resolveCliSpawn(
       'codex',

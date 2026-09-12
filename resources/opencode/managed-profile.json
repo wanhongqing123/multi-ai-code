@@ -1,6 +1,0 @@
-{
-  "version": 1,
-  "defaultModel": "zhipu/glm-5.3",
-  "smallModel": "zhipu/glm-5.3",
-  "enabledProviders": ["zhipu"]
-}

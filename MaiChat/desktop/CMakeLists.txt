@@ -350,7 +350,7 @@ target_link_libraries(file_preview_dialog_test PRIVATE remote_im_desktop_ui remo
 add_executable(video_preview_dialog_test tests/VideoPreviewDialogTest.cpp)
 target_link_libraries(video_preview_dialog_test PRIVATE remote_im_desktop_ui remote_im_core Qt5::Widgets Qt5::Multimedia Qt5::Test)
 target_compile_definitions(video_preview_dialog_test PRIVATE
-  MAICHAT_TEST_VIDEO_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/aicli/opencode/packages/app/src/assets/help/introducing-tabs.mp4")
+  MAICHAT_TEST_VIDEO_PATH="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/video-lifecycle.mp4")
 
 add_executable(add_contact_dialog_test tests/AddContactDialogTest.cpp)
 target_link_libraries(add_contact_dialog_test PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets Qt5::Test)

@@ -171,7 +171,7 @@ QString MarkdownRenderer::renderToHtml(const QString& markdown) {
     // QTextDocument 的 CSS 数值字重映射到 Qt 0..99：500 为 DemiBold(63)，
     // 600 为 Bold(75)，700 已接近 Black(88)，不能照搬浏览器的字重数值。
     QString styledHtml = QStringLiteral(R"(<!doctype html><html><head><meta charset="utf-8"><style>
-body{margin:0;color:#334155;font-size:14px;font-weight:400;}
+body{margin:0;color:#20242b;font-size:15px;font-weight:400;}
 p{margin:0 0 10px 0;font-weight:400;}
 h1,h2,h3,h4,h5,h6{font-weight:500;}
 h1{font-size:22px;color:#142b4a;margin:0 0 12px 0;}

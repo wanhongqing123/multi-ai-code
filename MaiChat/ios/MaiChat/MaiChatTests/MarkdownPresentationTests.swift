@@ -4,6 +4,89 @@ import UIKit
 @testable import MaiChatCore
 
 final class MarkdownPresentationTests: XCTestCase {
+    func testVoiceCancelUsesVisibleTargetRegardlessOfPressOrigin() {
+        let cancel = CGRect(x: 100, y: 600, width: 64, height: 90)
+        let edit = CGRect(x: 236, y: 600, width: 64, height: 90)
+        let point = CGPoint(x: 132, y: 640)
+        for originX: CGFloat in [30, 130, 200, 330] {
+            XCTAssertEqual(VoiceTranscriptionHitTest.target(
+                translation: CGSize(width: point.x - originX, height: -100), location: point,
+                cancelFrame: cancel, editFrame: edit), .cancel)
+        }
+        XCTAssertEqual(VoiceTranscriptionHitTest.target(
+            translation: CGSize(width: -30, height: -100), location: CGPoint(x: 260, y: 640),
+            cancelFrame: cancel, editFrame: edit), .edit)
+        XCTAssertEqual(VoiceTranscriptionHitTest.target(
+            translation: .zero, location: CGPoint(x: 195, y: 780),
+            cancelFrame: cancel, editFrame: edit), .send)
+        XCTAssertEqual(VoiceTranscriptionHitTest.target(
+            translation: CGSize(width: -90, height: 0), location: nil,
+            cancelFrame: nil, editFrame: nil), .cancel)
+    }
+
+    @MainActor
+    private final class TrackingScrollView: UIScrollView {
+        var trackingForTest = false
+        override var isTracking: Bool { trackingForTest || super.isTracking }
+    }
+
+    @MainActor
+    func testViewportResizeKeepsLatestButDoesNotMoveHistoryReaders() {
+        let scroll = TrackingScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
+        scroll.contentSize = CGSize(width: 390, height: 3000)
+        scroll.contentOffset.y = 2300
+        let marker = UIView()
+        scroll.addSubview(marker)
+        let coordinator = MessageScrollPositionReader.Coordinator { _ in }
+        coordinator.install(from: marker)
+        defer { coordinator.uninstall() }
+        // Keyboard opens, then closes; no new messages arrive.
+        scroll.frame.size.height = 400
+        XCTAssertEqual(scroll.contentOffset.y, 2600, accuracy: 1)
+        scroll.frame.size.height = 700
+        XCTAssertEqual(scroll.contentOffset.y, 2300, accuracy: 1)
+        // Composer expands/collapses through several intermediate layout sizes.
+        for height in [650.0, 550.0, 450.0, 700.0] {
+            scroll.frame.size.height = height
+            XCTAssertEqual(scroll.contentOffset.y, 3000 - height, accuracy: 1)
+        }
+        // Explicitly reading earlier history must not jump to latest on resize.
+        scroll.trackingForTest = true
+        scroll.contentOffset.y = 900
+        scroll.trackingForTest = false
+        scroll.frame.size.height = 400
+        XCTAssertEqual(scroll.contentOffset.y, 900, accuracy: 1)
+        scroll.frame.size.height = 700
+        XCTAssertEqual(scroll.contentOffset.y, 900, accuracy: 1)
+        scroll.contentOffset.y = 2300
+        coordinator.allowsBottomFollowing = false
+        scroll.frame.size.height = 400
+        XCTAssertEqual(scroll.contentOffset.y, 2300, accuracy: 1, "Search positioning disables automatic bottom following")
+    }
+
+    @MainActor
+    func testUserDragCancelsQueuedBottomRestoration() async throws {
+        let scroll = UIScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
+        scroll.contentSize = CGSize(width: 390, height: 3000)
+        scroll.contentOffset.y = 2300
+        let marker = UIView(); scroll.addSubview(marker)
+        var restorations = 0
+        let coordinator = MessageScrollPositionReader.Coordinator { _ in }
+        coordinator.onViewportResizeNeedsBottom = { restorations += 1 }
+        coordinator.install(from: marker)
+        defer { coordinator.uninstall() }
+        scroll.frame.size.height = 400
+        coordinator.userDidBeginScrolling()
+        try await Task.sleep(for: .milliseconds(60))
+        XCTAssertEqual(restorations, 0, "A queued layout restore must not fight a new user drag")
+        scroll.contentOffset.y = 2600
+        scroll.frame.size.height = 500
+        try await Task.sleep(for: .milliseconds(60))
+        XCTAssertEqual(restorations, 2, "A real viewport resize may restore twice, then must settle")
+        try await Task.sleep(for: .milliseconds(60))
+        XCTAssertEqual(restorations, 2)
+    }
+
     @MainActor
     func testLongBubbleContentUsesAvailableWidthInBothDirections() throws {
         for width: CGFloat in [320, 393, 430, 844] {
@@ -94,6 +177,7 @@ final class MarkdownPresentationTests: XCTestCase {
 
     @MainActor
     private final class HistoryModel: ObservableObject {
+        @Published var viewportHeight: CGFloat = 640
         @Published var items: [HistoryItem]
         init(_ range: Range<Int>) { items = range.map(HistoryItem.init) }
     }
@@ -131,12 +215,21 @@ final class MarkdownPresentationTests: XCTestCase {
                         }
                         Color.clear.frame(height: 1).id("bottom")
                     }
-                    .background(MessageScrollPositionReader { probe.nearBottom = $0 })
+                    .background(MessageScrollPositionReader(onViewportResizeNeedsBottom: {
+                        proxy.scrollTo("bottom", anchor: .bottom)
+                    }) { probe.nearBottom = $0 })
                 }
                 .onAppear { probe.proxy = proxy }
+                .onChange(of: model.items.last?.id) { _ in
+                    // Match MessageListView's post-layout restoration on outgoing append.
+                    DispatchQueue.main.async {
+                        proxy.scrollTo("bottom", anchor: .bottom)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.016) { proxy.scrollTo("bottom", anchor: .bottom) }
+                    }
+                }
             }
             .coordinateSpace(name: "history-test")
-            .frame(width: 393, height: 640)
+            .frame(width: 393, height: model.viewportHeight)
             .ignoresSafeArea()
         }
     }
@@ -177,6 +270,48 @@ final class MarkdownPresentationTests: XCTestCase {
             XCTAssertLessThan(probe.mounted.count, 200)
             XCTAssertEqual(probe.nearBottom, false)
         }
+    }
+
+    @MainActor
+    func testLazyHistoryStaysAtBottomAcrossKeyboardSizedChanges() async throws {
+        let model = HistoryModel(0..<350), probe = HistoryProbe()
+        let window = historyWindow(model, probe)
+        defer { window.isHidden = true; window.rootViewController = nil }
+        try await Task.sleep(for: .milliseconds(250))
+        for _ in 0..<2 {
+            probe.proxy?.scrollTo("bottom", anchor: .bottom)
+            try await Task.sleep(for: .milliseconds(200))
+        }
+        for height: CGFloat in [350, 640, 400, 640] {
+            model.viewportHeight = height
+            try await Task.sleep(for: .milliseconds(250))
+            let last = try XCTUnwrap(probe.frames[349])
+            XCTAssertGreaterThan(last.maxY, 0)
+            XCTAssertLessThanOrEqual(last.maxY, height + 1)
+            XCTAssertEqual(probe.nearBottom, true)
+        }
+    }
+
+    @MainActor
+    func testRepeatedSendsAndComposerResizesSettleAtLatest() async throws {
+        let model = HistoryModel(0..<90), probe = HistoryProbe()
+        let window = historyWindow(model, probe)
+        defer { window.isHidden = true; window.rootViewController = nil }
+        try await Task.sleep(for: .milliseconds(250))
+        for _ in 0..<2 {
+            probe.proxy?.scrollTo("bottom", anchor: .bottom)
+            try await Task.sleep(for: .milliseconds(150))
+        }
+        for id in 90..<100 {
+            model.items.append(HistoryItem(id: id))
+            model.viewportHeight = id % 2 == 0 ? 350 : 640
+            try await Task.sleep(for: .milliseconds(200))
+            XCTAssertEqual(probe.nearBottom, true)
+        }
+        let settled = try XCTUnwrap(probe.frames[99])
+        try await Task.sleep(for: .milliseconds(300))
+        let later = try XCTUnwrap(probe.frames[99])
+        XCTAssertEqual(later.minY, settled.minY, accuracy: 1, "No self-sustaining scroll/layout oscillation after sending stops")
     }
 
     @MainActor

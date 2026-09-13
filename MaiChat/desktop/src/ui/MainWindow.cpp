@@ -169,10 +169,10 @@ public:
         // 对齐 Electron 端 .remote-im-bubble 正文：14px / #0f172a，链接 #2563eb。
         setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
             QTextBrowser {
-                color: #0f172a;
+                color: #20242b;
                 background: transparent;
                 border: 0;
-                font-size: 14px;
+                font-size: 15px;
             }
             QTextBrowser a {
                 color: #2563eb;
@@ -1091,6 +1091,7 @@ void applyNavButtonIcon(QPushButton* button, bool selected) {
 QPushButton* makeHeaderIconButton(LineIconKind kind, const QString& tooltip, QWidget* parent) {
     auto* button = new QPushButton(parent);
     button->setObjectName(QStringLiteral("headerIconButton"));
+    button->setProperty("chatHeaderIcon", true);
     button->setIcon(makeLineIcon(kind, QColor(QStringLiteral("#4c5866"))));
     button->setIconSize(QSize(17, 17));
     button->setToolTip(tooltip);
@@ -2106,7 +2107,7 @@ void MainWindow::applyStyle() {
             font-size: 16px;
             font-weight: 600;
         }
-        #headerIconButton {
+        QPushButton[chatHeaderIcon="true"] {
             min-width: 34px;
             max-width: 34px;
             min-height: 34px;
@@ -2124,7 +2125,7 @@ void MainWindow::applyStyle() {
             border-radius: 17px;
             background: transparent;
         }
-        #headerIconButton:hover, #addConversationButton:hover {
+        QPushButton[chatHeaderIcon="true"]:hover, #addConversationButton:hover {
             background: #e9eef5;
         }
         #conversationList {
@@ -3482,11 +3483,14 @@ void MainWindow::insertComposerChip(const QString& localPath, const QString& ico
     const QFontMetrics fm(messageEditor_->font());
     const int chipW = fm.horizontalAdvance(label) + 22;
     const int chipH = 28;
-    QPixmap chip(chipW, chipH);
+    const qreal chipDpr = messageEditor_->devicePixelRatioF();
+    QPixmap chip((QSizeF(chipW, chipH) * chipDpr).toSize());
+    chip.setDevicePixelRatio(chipDpr);
     chip.fill(Qt::transparent);
     {
         QPainter p(&chip);
         p.setRenderHint(QPainter::Antialiasing, true);
+        p.setFont(messageEditor_->font());
         p.setPen(QPen(QColor(QStringLiteral("#d9e4ef"))));
         p.setBrush(QColor(QStringLiteral("#f1f6fb")));
         p.drawRoundedRect(QRectF(0.5, 0.5, chipW - 1.0, chipH - 1.0), 6, 6);
@@ -4046,7 +4050,9 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
         // 封面同样不在这里同步解码：先摆一张纯色占位，解码回来再把带角标的封面换上。
         const int coverWidth = UiZoom::s(kCoverMaxWidth);
         const int coverHeight = UiZoom::s(135);
-        QPixmap cover(coverWidth, coverHeight);
+        const qreal coverDpr = videoButton->devicePixelRatioF();
+        QPixmap cover((QSizeF(coverWidth, coverHeight) * coverDpr).toSize());
+        cover.setDevicePixelRatio(coverDpr);
         cover.fill(QColor(0x11, 0x18, 0x27));
         // 播放角标画进封面本身：QPushButton 的 icon 只有一层，叠控件在这里
         // 会被气泡的布局挤走。
@@ -4054,8 +4060,9 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
         auto paintPlayBadge = [](QPixmap& target) {
             QPainter painter(&target);
             painter.setRenderHint(QPainter::Antialiasing, true);
-            const QPointF center(target.width() / 2.0, target.height() / 2.0);
-            const double radius = qMin(target.width(), target.height()) * 0.16;
+            const QSizeF logicalSize = QSizeF(target.size()) / target.devicePixelRatioF();
+            const QPointF center(logicalSize.width() / 2.0, logicalSize.height() / 2.0);
+            const double radius = qMin(logicalSize.width(), logicalSize.height()) * 0.16;
             painter.setPen(Qt::NoPen);
             painter.setBrush(QColor(0, 0, 0, 110));
             painter.drawEllipse(center, radius, radius);
@@ -4074,15 +4081,15 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
         videoButton->setIconSize(QSize(coverWidth, coverHeight));
         // 真封面后台解码，回来再换上；解不出来就一直是占位图，不影响播放。
         if (!message.video.coverPath.trimmed().isEmpty()) {
-            const qreal coverDpr = videoButton->devicePixelRatioF();
             MessageImageLoader::instance().load(
                 message.video.coverPath,
                 (QSizeF(coverWidth, coverHeight) * coverDpr).toSize(),
                 videoButton,
-                [videoButton, coverWidth, coverHeight, paintPlayBadge](const QPixmap& loaded) {
-                    QPixmap composed = loaded.scaled(QSize(coverWidth, coverHeight),
+                [videoButton, coverWidth, coverHeight, coverDpr, paintPlayBadge](const QPixmap& loaded) {
+                    QPixmap composed = loaded.scaled((QSizeF(coverWidth, coverHeight) * coverDpr).toSize(),
                                                      Qt::KeepAspectRatioByExpanding,
                                                      Qt::SmoothTransformation);
+                    composed.setDevicePixelRatio(coverDpr);
                     paintPlayBadge(composed);
                     videoButton->setIcon(QIcon(composed));
                 });
@@ -4370,15 +4377,15 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
             border-top: 1px solid #e8edf3;
         }
         #messageAuthorLabel {
-            color: #334155;
+            color: #374151;
             font-size: 13px;
-            font-weight: 700;
+            font-weight: 500;
             background: transparent;
         }
         #messageTimeLabel {
-            color: #94a3b8;
+            color: #7b8491;
             font-size: 12px;
-            font-weight: 600;
+            font-weight: 400;
             background: transparent;
         }
         #messageRelationBadge {
@@ -4388,7 +4395,7 @@ QWidget* MainWindow::createMessageBubble(const RemoteIMMessage& message) {
             color: #047857;
             padding: 2px 8px;
             font-size: 11px;
-            font-weight: 800;
+            font-weight: 500;
         }
         /* 搜索命中高亮：用动态属性切换，不去改写 row 的 styleSheet——
            这份样式表还带着上面几条 meta 规则，整体替换会把它们一起抹掉。 */

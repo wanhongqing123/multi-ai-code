@@ -995,6 +995,7 @@ private struct ChatDetailView: View {
     let searchTargetMessageID: UUID?
     let showRemoteDesktop: () -> Void
     @EnvironmentObject private var appState: RemoteIMAppState
+    @State private var isAttachmentPanelPresented = false
     @State private var initialHistoryLoadGeneration = 0
     @State private var transcriptionPresentation = VoiceTranscriptionPresentation()
     @State private var imagePreviewPresentation: PresentedRemoteIMImage?
@@ -1021,6 +1022,7 @@ private struct ChatDetailView: View {
                     initialHistoryLoadGeneration: initialHistoryLoadGeneration,
                     selectingMessageID: selectingMessageID,
                     finishSelectingText: { selectingMessageID = nil },
+                    dismissAttachmentPanel: { isAttachmentPanelPresented = false },
                     presentImagePreview: presentImagePreview,
                     showMessageActions: { message, sourceFrame in
                         dismissKeyboard()
@@ -1046,6 +1048,7 @@ private struct ChatDetailView: View {
                 )
                 .id(contact.userID)
                 ComposerView(
+                    isAttachmentPanelPresented: $isAttachmentPanelPresented,
                     draft: appState.draft,
                     transcriptionPresentation: transcriptionPresentation
                 )
@@ -1053,7 +1056,6 @@ private struct ChatDetailView: View {
 
             VoiceTranscriptionHighlightHost(presentation: transcriptionPresentation)
                 .zIndex(10)
-                .allowsHitTesting(false)
 
             if let imagePreviewPresentation {
                 FullScreenImagePreviewView(
@@ -1209,27 +1211,37 @@ private struct ChatDetailView: View {
     }
 }
 
-private enum VoiceTranscriptionTarget: Equatable {
-    case send
-    case cancel
-    case edit
-    case finishingSend
-    case finishingEdit
+private struct VoiceActionFramesKey: PreferenceKey {
+    static let defaultValue: [VoiceTranscriptionTarget: CGRect] = [:]
+    static func reduce(value: inout [VoiceTranscriptionTarget: CGRect], nextValue: () -> [VoiceTranscriptionTarget: CGRect]) {
+        value.merge(nextValue()) { _, new in new }
+    }
 }
 
 @MainActor
 private final class VoiceTranscriptionPresentation: ObservableObject {
-    @Published var target: VoiceTranscriptionTarget?
-    @Published var liveText = ""
+    private struct PresentationState: Equatable {
+        var target: VoiceTranscriptionTarget?
+        var liveText = ""
+    }
+    @Published private var state = PresentationState()
+    var target: VoiceTranscriptionTarget? {
+        get { state.target }
+        set { if state.target != newValue { state.target = newValue } }
+    }
+    var liveText: String { state.liveText }
     private var firstLoggedSessionID: UInt64?
 
+    var onCancel: (() -> Void)?
+    var onEdit: (() -> Void)?
+    var actionFrames: [VoiceTranscriptionTarget: CGRect] = [:]
     private(set) var diagnosticFields: [String: String] = [:]
 
     func prepareForNewSession(account: String, peer: String) {
         diagnosticFields = ["account": account,
                             "peer": DiagnosticLogPrivacy.stableTag(peer, prefix: "u"),
                             "asr_session": UUID().uuidString.lowercased()]
-        liveText = ""
+        state = PresentationState()
         firstLoggedSessionID = nil
     }
 
@@ -1247,12 +1259,11 @@ private final class VoiceTranscriptionPresentation: ObservableObject {
                 ].merging(diagnosticFields) { _, context in context }
             )
         }
-        liveText = text
+        state.liveText = text
     }
 
     func reset() {
-        target = nil
-        liveText = ""
+        state = PresentationState()
         firstLoggedSessionID = nil
     }
 }
@@ -1265,18 +1276,26 @@ private struct VoiceTranscriptionHighlightHost: View {
             if let target = presentation.target {
                 VoiceTranscriptionHighlight(
                     target: target,
-                    transcript: presentation.liveText
+                    transcript: presentation.liveText,
+                    onCancel: { presentation.onCancel?() },
+                    onEdit: { presentation.onEdit?() }
                 )
                 .transition(.opacity)
+                .onPreferenceChange(VoiceActionFramesKey.self) { presentation.actionFrames = $0 }
             }
         }
-        .animation(.easeOut(duration: 0.14), value: presentation.target)
+        .transaction { transaction in
+            transaction.animation = nil
+            transaction.disablesAnimations = true
+        }
     }
 }
 
 private struct VoiceTranscriptionHighlight: View {
     let target: VoiceTranscriptionTarget
     let transcript: String
+    let onCancel: () -> Void
+    let onEdit: () -> Void
 
     var body: some View {
         ZStack {
@@ -1333,7 +1352,7 @@ private struct VoiceTranscriptionHighlight: View {
                 .padding(.bottom, 76)
             }
         }
-        .animation(.easeOut(duration: 0.12), value: target)
+
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(statusText)
     }
@@ -1364,6 +1383,7 @@ private struct VoiceTranscriptionHighlight: View {
         selected: Bool,
         selectedColor: Color
     ) -> some View {
+        Button(action: systemImage == "xmark" ? onCancel : onEdit) {
         VStack(spacing: 8) {
             Image(systemName: systemImage)
                 .font(.system(size: 22, weight: .semibold))
@@ -1378,7 +1398,16 @@ private struct VoiceTranscriptionHighlight: View {
                 .font(.system(size: 15, weight: .semibold))
         }
         .foregroundStyle(.white)
+        .background {
+            GeometryReader { geometry in
+                Color.clear.preference(key: VoiceActionFramesKey.self,
+                    value: [systemImage == "xmark" ? .cancel : .edit: geometry.frame(in: .global)])
+            }
+        }
         .scaleEffect(selected ? 1.12 : 1)
+        }
+        .buttonStyle(.plain)
+        .disabled(target == .finishingSend || target == .finishingEdit)
     }
 
     private var statusText: String {
@@ -1550,6 +1579,7 @@ private struct MessageListView: View {
     let initialHistoryLoadGeneration: Int
     let selectingMessageID: UUID?
     let finishSelectingText: () -> Void
+    let dismissAttachmentPanel: () -> Void
     let presentImagePreview: (RemoteIMImagePreviewItem, UIImage, CGRect) -> Void
     let showMessageActions: (RemoteIMMessage, CGRect) -> Void
     let replyToMessage: (RemoteIMMessage) -> Void
@@ -1674,12 +1704,16 @@ private struct MessageListView: View {
                 }
                 .padding(.horizontal, MessageBubbleMetrics.horizontalInset)
                 .padding(.vertical, 18)
-                .background(MessageScrollPositionReader { nearBottom in
+                .background(MessageScrollPositionReader(allowsBottomFollowing: searchTargetMessageID == nil, onViewportResizeNeedsBottom: {
+                    guard searchTargetMessageID == nil else { return }
+                    scrollToBottom(proxy: proxy)
+                }) { nearBottom in
                     isNearBottom = nearBottom
                     if nearBottom { hasUnseenLatestMessage = false }
                 })
                 .background(
                     ScrollViewKeyboardDismissInstaller { window in
+                        dismissAttachmentPanel()
                         dismissKeyboard(in: window)
                         if selectingMessageID != nil {
                             finishSelectingText()
@@ -1805,7 +1839,7 @@ private struct MessageListView: View {
             scrollToBottom(proxy: proxy)
             // The first pass establishes the content layout. Repeating on the next main-loop
             // turn accounts for multiline Markdown text whose final height is resolved then.
-            DispatchQueue.main.async {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.016) {
                 scrollToBottom(proxy: proxy)
             }
         }
@@ -4341,6 +4375,7 @@ private struct ComposerAttachmentPanel: View {
 }
 
 private struct ComposerView: View {
+    @Binding var isAttachmentPanelPresented: Bool
     @EnvironmentObject private var appState: RemoteIMAppState
     @ObservedObject var draft: RemoteIMDraftState
     let transcriptionPresentation: VoiceTranscriptionPresentation
@@ -4358,7 +4393,6 @@ private struct ComposerView: View {
     @State private var isCameraPresented = false
     @State private var isPhotoPickerPresented = false
     @State private var isFileImporterPresented = false
-    @State private var isAttachmentPanelPresented = false
     @State private var selectedMediaItems: [PhotosPickerItem] = []
     @State private var keyboardVisibleHeight = UIScreen.main.bounds.height
     @State private var composerEditingController = ComposerTextEditingController()
@@ -4464,17 +4498,19 @@ private struct ComposerView: View {
                                 }
                             },
                             voiceTranscriptionEnabled: appState.canSendVoice && draft.text.isEmpty,
-                            onVoiceLongPressChanged: { translation in
+                            onVoiceLongPressChanged: { translation, location in
                                 handleVoicePressChanged(
                                     translation: translation,
-                                    showsTranscriptionHighlight: true
+                                    showsTranscriptionHighlight: true,
+                                    location: location
                                 )
                             },
-                            onVoiceLongPressEnded: { translation in
+                            onVoiceLongPressEnded: { translation, location in
                                 Task {
                                     await handleVoicePressEnded(
                                         translation: translation,
-                                        sendsVoiceDirectly: false
+                                        sendsVoiceDirectly: false,
+                                        location: location
                                     )
                                 }
                             },
@@ -4531,7 +4567,6 @@ private struct ComposerView: View {
                 } label: {
                     Image(systemName: "plus")
                         .font(.system(size: 20, weight: .semibold))
-                        .rotationEffect(.degrees(isAttachmentPanelPresented ? 45 : 0))
                         .frame(width: 44, height: 44)
                         .background(Color.white, in: Circle())
                         .overlay(
@@ -4627,6 +4662,13 @@ private struct ComposerView: View {
             keyboardVisibleHeight = UIScreen.main.bounds.height
         }
         .onAppear {
+            transcriptionPresentation.onCancel = cancelVoiceLongPress
+            transcriptionPresentation.onEdit = {
+                Task {
+                    await handleVoicePressEnded(translation: .zero, sendsVoiceDirectly: false,
+                                               explicitTarget: .edit)
+                }
+            }
             realtimeSpeechRecognizer.onLiveTextUpdate = {
                 [weak transcriptionPresentation] text, sessionID in
                 guard transcriptionPresentation?.target != nil else { return }
@@ -4636,6 +4678,8 @@ private struct ComposerView: View {
         .onDisappear {
             composerEditMenuState = nil
             realtimeSpeechRecognizer.onLiveTextUpdate = nil
+            transcriptionPresentation.onCancel = nil
+            transcriptionPresentation.onEdit = nil
             realtimeStartTask?.cancel()
             realtimeStartTask = nil
             realtimeSpeechRecognizer.cancel()
@@ -4771,7 +4815,8 @@ private struct ComposerView: View {
 
     private func handleVoicePressChanged(
         translation: CGSize,
-        showsTranscriptionHighlight: Bool
+        showsTranscriptionHighlight: Bool,
+        location: CGPoint? = nil
     ) {
         guard appState.canSendVoice else { return }
         if !isPressingVoice {
@@ -4794,7 +4839,7 @@ private struct ComposerView: View {
             }
         }
         if showsTranscriptionHighlight {
-            let target = transcriptionTarget(for: translation)
+            let target = transcriptionTarget(for: translation, location: location)
             let nextIsCancelling = target == .cancel
             if isCancellingVoice != nextIsCancelling {
                 isCancellingVoice = nextIsCancelling
@@ -4815,7 +4860,9 @@ private struct ComposerView: View {
 
     private func handleVoicePressEnded(
         translation: CGSize,
-        sendsVoiceDirectly: Bool
+        sendsVoiceDirectly: Bool,
+        location: CGPoint? = nil,
+        explicitTarget: VoiceTranscriptionTarget? = nil
     ) async {
         guard isPressingVoice else { return }
         isPressingVoice = false
@@ -4835,7 +4882,7 @@ private struct ComposerView: View {
 
         let diagnosticFields = transcriptionPresentation.diagnosticFields
         let releasedAt = ProcessInfo.processInfo.systemUptime
-        let releaseTarget = transcriptionTarget(for: translation)
+        let releaseTarget = explicitTarget ?? transcriptionTarget(for: translation, location: location)
         isCancellingVoice = false
         if releaseTarget == .cancel {
             AppDiagnosticLog.shared.record(
@@ -4912,14 +4959,10 @@ private struct ComposerView: View {
         realtimeSpeechRecognizer.cancel()
     }
 
-    private func transcriptionTarget(for translation: CGSize) -> VoiceTranscriptionTarget {
-        if translation.width < -70 {
-            return .cancel
-        }
-        if translation.width > 70, translation.height < -35 {
-            return .edit
-        }
-        return .send
+    private func transcriptionTarget(for translation: CGSize, location: CGPoint?) -> VoiceTranscriptionTarget {
+        VoiceTranscriptionHitTest.target(translation: translation, location: location,
+            cancelFrame: transcriptionPresentation.actionFrames[.cancel],
+            editFrame: transcriptionPresentation.actionFrames[.edit])
     }
 
     private func startRealtimeTranscription() async -> Bool {
@@ -5427,8 +5470,8 @@ private struct ComposerTextView: UIViewRepresentable {
     let onEditMenuRequested: (ComposerEditMenuState) -> Void
     let onEditMenuDismissed: () -> Void
     let voiceTranscriptionEnabled: Bool
-    let onVoiceLongPressChanged: (CGSize) -> Void
-    let onVoiceLongPressEnded: (CGSize) -> Void
+    let onVoiceLongPressChanged: (CGSize, CGPoint) -> Void
+    let onVoiceLongPressEnded: (CGSize, CGPoint) -> Void
     let onVoiceLongPressCancelled: () -> Void
 
     private let minimumHeight: CGFloat = 44
@@ -5758,23 +5801,23 @@ private struct ComposerTextView: UIViewRepresentable {
         }
 
         @objc func handleVoiceLongPress(_ gesture: UILongPressGestureRecognizer) {
-            let location = gesture.location(in: gesture.view)
+            let location = gesture.location(in: gesture.view?.window)
             switch gesture.state {
             case .began:
                 guard parent.voiceTranscriptionEnabled else { return }
                 voiceLongPressOrigin = location
                 gesture.view?.resignFirstResponder()
-                parent.onVoiceLongPressChanged(.zero)
+                parent.onVoiceLongPressChanged(.zero, location)
             case .changed:
                 guard let origin = voiceLongPressOrigin else { return }
                 parent.onVoiceLongPressChanged(
-                    CGSize(width: location.x - origin.x, height: location.y - origin.y)
+                    CGSize(width: location.x - origin.x, height: location.y - origin.y), location
                 )
             case .ended:
                 guard let origin = voiceLongPressOrigin else { return }
                 voiceLongPressOrigin = nil
                 parent.onVoiceLongPressEnded(
-                    CGSize(width: location.x - origin.x, height: location.y - origin.y)
+                    CGSize(width: location.x - origin.x, height: location.y - origin.y), location
                 )
             case .cancelled, .failed:
                 voiceLongPressOrigin = nil

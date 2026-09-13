@@ -71,6 +71,9 @@ class MainWindowLayoutTest : public QObject {
     Q_OBJECT
 
 private slots:
+    void videoCoverRetainsPhysicalPixels();
+    void renamedHeaderButtonsKeepTheirCompactAppearance();
+    void messageTextUsesNativeResolutionAndRegularBodyFont();
     void exposesDesktopChatLayoutControls();
     void conversationPreviewUsesPlainMarkdown_data();
     void conversationPreviewUsesPlainMarkdown();
@@ -3110,6 +3113,77 @@ void MainWindowLayoutTest::groupHeaderCountStaysTheGroupSizeWhileSearching() {
     // 那个数字说的是「这个分组有几个人」，不是「搜到了几个」——
     // 跟着搜索变的话，一边搜一边看，分组的人数就成了会跳的数字。
     QCOMPARE(visibleLabels(list), QStringList({"[同事 2]", "Alice"}));
+}
+
+void MainWindowLayoutTest::videoCoverRetainsPhysicalPixels() {
+    QTemporaryDir dir;
+    QImage image(960, 540, QImage::Format_RGB32);
+    image.fill(Qt::red);
+    const auto path = dir.filePath("cover.png");
+    QVERIFY(image.save(path));
+    RemoteIMApplication app("preview-user", std::make_unique<FakeRemoteIMClient>());
+    app.addContact("phone-user", "Phone");
+    app.selectPeer("phone-user");
+    RemoteIMMessage message;
+    message.fromUserId = "phone-user";
+    message.toUserId = "preview-user";
+    message.hasVideo = true;
+    message.video.coverPath = path;
+    app.chatState().appendMessageForRestore(message);
+    MainWindow window(app);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto* button = window.findChild<QPushButton*>("messageVideoButton");
+    QVERIFY(button);
+    const auto physical = (QSizeF(button->iconSize()) * button->devicePixelRatioF()).toSize();
+    // Wait for the red decoded cover, not merely the high-DPI placeholder.
+    QTRY_VERIFY(button->icon().pixmap(physical).toImage().pixelColor(5, 5).red() > 200);
+    const auto rendered = button->icon().pixmap(physical);
+    QVERIFY(rendered.width() >= physical.width());
+    QVERIFY(rendered.height() >= physical.height());
+}
+
+void MainWindowLayoutTest::messageTextUsesNativeResolutionAndRegularBodyFont() {
+    RemoteIMApplication app("preview-user", std::make_unique<FakeRemoteIMClient>());
+    app.addContact("phone-user", "Phone");
+    app.selectPeer("phone-user");
+    app.chatState().receiveText("phone-user", QStringLiteral("清晰度验证 Native text 123\n\n**强调文字**"));
+    MainWindow window(app);
+    window.resize(1200, 800);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto* browser = window.findChild<QTextBrowser*>("messageMarkdownView");
+    QVERIFY(browser);
+    const auto capture = browser->viewport()->grab();
+    const qreal dpr = browser->devicePixelRatioF();
+    QCOMPARE(capture.devicePixelRatioF(), dpr);
+    QCOMPARE(capture.size(), (QSizeF(browser->viewport()->size()) * dpr).toSize());
+    const auto format = browser->document()->begin().begin().fragment().charFormat();
+    QCOMPARE(format.fontWeight(), int(QFont::Normal));
+    QCOMPARE(format.property(QTextFormat::FontPixelSize).toInt(), UiZoom::s(15));
+    for (auto* widget = static_cast<QWidget*>(browser); widget; widget = widget->parentWidget())
+        QVERIFY2(!widget->graphicsEffect(), "Message text must not pass through a graphics-effect bitmap cache");
+    qInfo() << "message-render-verification" << "dpr" << dpr
+            << "logical" << browser->viewport()->size() << "physical" << capture.size()
+            << "font" << browser->document()->defaultFont();
+}
+
+void MainWindowLayoutTest::renamedHeaderButtonsKeepTheirCompactAppearance() {
+    RemoteIMApplication app("preview-user", std::make_unique<FakeRemoteIMClient>());
+    app.addContact("phone-user", "Phone");
+    app.selectPeer("phone-user");
+    MainWindow window(app);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    for (const auto* name : {"remoteDesktopButton", "moreButton"}) {
+        auto* button = window.findChild<QPushButton*>(QString::fromLatin1(name));
+        QVERIFY(button);
+        QCOMPARE(button->size(), QSize(UiZoom::s(34), UiZoom::s(34)));
+        // The corners must reveal the white header, not a native gray button frame.
+        const auto image = button->grab().toImage();
+        const auto corner = image.pixelColor(0, 0);
+        QCOMPARE(corner.alpha(), 0);
+    }
 }
 
 QTEST_MAIN(MainWindowLayoutTest)

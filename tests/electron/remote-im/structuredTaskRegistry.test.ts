@@ -7,10 +7,26 @@ interface Task {
   taskId: string
   replyId?: string
   value: string
+  executionIdle?: boolean
   sourceStarted?: boolean
 }
 
 describe('RemoteImStructuredTaskRegistry', () => {
+  it('keeps forwarding identity after execution becomes idle, then stops on input takeover', () => {
+    const registry = new RemoteImStructuredTaskRegistry<Task>()
+    const task: Task = { taskId: 'task-a', replyId: 'reply-a', value: 'phone', sourceStarted: true }
+    registry.add('session', task)
+    registry.markExecutionIdle('session', 'task-a')
+    expect(registry.resolve('session', { taskId: 'task-a' })).toEqual({ ...task, sourceStarted: false, executionIdle: true })
+    expect(registry.isLocallyTakenOver('session', 'task-a')).toBe(false)
+    registry.markLocalTakeover('session')
+    expect(registry.isLocallyTakenOver('session', 'task-a')).toBe(true)
+    registry.remove('session', 'task-a')
+    registry.add('session', { taskId: 'task-b', replyId: 'reply-b', value: 'new-phone' })
+    expect(registry.resolve('session', { taskId: 'task-a' })).toBeUndefined()
+    expect(registry.resolve('session', { taskId: 'task-b' })?.value).toBe('new-phone')
+  })
+
   it('resolves terminal events by task id even without a reply id', () => {
     const registry = new RemoteImStructuredTaskRegistry<Task>()
     const task = { taskId: 'task-1', replyId: 'rim-1', value: 'first' }

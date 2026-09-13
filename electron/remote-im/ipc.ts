@@ -174,6 +174,7 @@ type RemoteImAccountBoundOutputSessionState = RemoteImOutputSessionState & {
 }
 const outputSessions = new Map<string, RemoteImAccountBoundOutputSessionState>()
 type RemoteImStructuredTaskState = RemoteImAccountBoundOutputSessionState & {
+  executionIdle?: boolean
   taskId: string
 }
 const structuredOutputTasks = new RemoteImStructuredTaskRegistry<RemoteImStructuredTaskState>()
@@ -1769,6 +1770,11 @@ function createOutputRoutingDeps(
         return { ok: true as const }
       }
 
+      // A completed execution may keep forwarding until the next input. A new
+      // human request receives a fresh identity; old delayed events cannot follow it.
+      for (const previous of structuredOutputTasks.list(route.sessionId)) {
+        if (previous.executionIdle) removeStructuredOutputTask(route.sessionId, previous, 'next-human-input')
+      }
       const existingRoutes = structuredOutputTasks.list(route.sessionId)
       if (existingRoutes.length === 0) {
         writeStructuredOutputRuntimeLog('aicli:route-admission-fresh', {
@@ -2055,6 +2061,7 @@ function removeStructuredOutputTask(
 }
 
 function markStructuredTaskActive(state: RemoteImStructuredTaskState): void {
+  state.executionIdle = false
   state.sourceStarted = true
   state.lastActivityAt = Date.now()
 }
@@ -2233,6 +2240,7 @@ function ensureSessionListeners(): void {
       const retainedRoutes = structuredOutputTasks.markLocalTakeover(sessionId)
       void getRemoteImApprovalCoordinator().cancelSession(sessionId)
       for (const state of retainedRoutes) {
+        if (state.executionIdle) removeStructuredOutputTask(sessionId, state, 'input-origin-changed')
         writeStructuredOutputRuntimeLog('aicli:route-deactivated', {
           sessionId,
           state,
@@ -2471,7 +2479,7 @@ function ensureSessionListeners(): void {
           reasonPreview: structuredOutputTextPreview(text)
         }
       })
-      removeStructuredOutputTask(sessionId, state, 'turn-error')
+      structuredOutputTasks.markExecutionIdle(sessionId, state.taskId)
       return
     }
     if (kind === 'assistant_final') {
@@ -2522,11 +2530,12 @@ function ensureSessionListeners(): void {
           '任务已经结束，但最终回复为空或无法解析。请查看 remote-im-runtime.log。'
         )
       }
-      removeStructuredOutputTask(sessionId, state, 'assistant-final')
+      // Compatibility for older bundled kernels: final is ordinary output, not a forwarding stop.
+      structuredOutputTasks.markExecutionIdle(sessionId, state.taskId)
       return
     }
     if (kind && kind !== 'assistant_text') return
-    markStructuredTaskActive(state)
+    state.lastActivityAt = Date.now()
     const forwardedChunks = forwardRemoteImStructuredAssistantOutput(
       sessionId,
       state,

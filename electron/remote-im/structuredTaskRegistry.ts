@@ -1,6 +1,8 @@
 export interface RemoteImStructuredTaskIdentity {
   taskId: string
   replyId?: string
+  executionIdle?: boolean
+  sourceStarted?: boolean
 }
 
 export class RemoteImStructuredTaskRegistry<T extends RemoteImStructuredTaskIdentity> {
@@ -17,11 +19,19 @@ export class RemoteImStructuredTaskRegistry<T extends RemoteImStructuredTaskIden
     this.locallyTakenOverTaskIdsBySession.get(sessionId)?.delete(task.taskId)
   }
 
+  markExecutionIdle(sessionId: string, taskId: string): T | undefined {
+    const task = this.tasksBySession.get(sessionId)?.get(taskId)
+    if (task) {
+      task.executionIdle = true
+      task.sourceStarted = false
+    }
+    return task
+  }
+
   /**
-   * Stop forwarding a remote task after local TUI input without releasing its
-   * admission lock. A local steer can remain inside the same Codex turn, so the
-   * task must block another remote authority until a real terminal event (or
-   * process exit) removes it.
+   * Stop forwarding on local or machine input. A still-running execution keeps
+   * its admission lock until completion; the caller can remove an already-idle
+   * subscription immediately. Reply classification does not own this switch.
    */
   markLocalTakeover(sessionId: string): T[] {
     const tasks = this.tasksBySession.get(sessionId)

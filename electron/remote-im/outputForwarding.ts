@@ -449,8 +449,8 @@ export function resolveRemoteImStructuredFinalContent(
 }
 
 /**
- * Forward a source-confirmed final assistant response. Normal streaming output still
- * requires reply markers; only this terminal event may fall back to markerless text.
+ * Accept a legacy completion payload, suppressing content already forwarded as
+ * an ordinary item. Execution/forwarding lifetime is managed by the caller.
  */
 export function forwardRemoteImStructuredFinalOutput(
   sessionId: string,

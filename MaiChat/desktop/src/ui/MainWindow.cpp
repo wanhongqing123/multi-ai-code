@@ -216,6 +216,11 @@ public:
                 run.format.clearProperty(QTextFormat::FontSizeAdjustment);
                 run.format.setProperty(QTextFormat::FontPixelSize, UiZoom::s(inlineCode ? 13 : size));
                 if (inlineCode) run.format.setFontWeight(QFont::Normal);
+                else if (run.format.fontWeight() < QFont::Bold) {
+                    // CSS 500 can import as 62 instead of DemiBold (63). Use the
+                    // semantic Qt weight while preserving explicitly bold runs.
+                    run.format.setFontWeight(QFont::DemiBold);
+                }
                 QTextCursor heading(document());
                 heading.setPosition(run.position);
                 heading.setPosition(run.position + run.length, QTextCursor::KeepAnchor);

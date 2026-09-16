@@ -135,20 +135,26 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
                     "elapsed_ms": elapsedMilliseconds(),
                 ]
             )
+            let stoppingID = ObjectIdentifier(recognizer)
             let stopCallStarted = ProcessInfo.processInfo.systemUptime
             recognizer.stop()
             log(level: .info, event: "sdk-stop-returned", fields: [
                 "duration_ms": Self.milliseconds(from: stopCallStarted, to: ProcessInfo.processInfo.systemUptime)
             ])
+            // stop() may complete synchronously via a delegate callback. Never
+            // create a late timeout for an already-finished (or replaced) session.
+            guard stopContinuation != nil, isCurrentRecognizer(stoppingID) else { return }
             stopTimeoutTask?.cancel()
             stopTimeoutTask = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(1))
-                guard !Task.isCancelled, let self else { return }
+                guard !Task.isCancelled, let self, self.stopContinuation != nil,
+                      self.isCurrentRecognizer(stoppingID) else { return }
                 // 个别 SDK/网络状态下 stop 后不会回调 DidFinish。屏幕上的实时文本已经
                 // 是服务端返回的识别结果，用它兜底，避免界面无限停在“正在完成识别”。
-                self.recognizer?.delegate = nil
-                self.recognizer?.cancel()
-                self.finish(.success(self.liveText), completion: "stop-timeout-fallback")
+                // finish owns cleanup; calling cancel here too performs SDK
+                // teardown twice before the waiting UI can resume.
+                self.finish(.success(self.liveText), sourceID: stoppingID,
+                            completion: "stop-timeout-fallback")
             }
         }
     }

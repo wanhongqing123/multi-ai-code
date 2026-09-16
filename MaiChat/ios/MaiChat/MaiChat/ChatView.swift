@@ -275,31 +275,55 @@ private struct RemoteIMAsyncImage<Content: View, Placeholder: View>: View {
 struct ChatView: View {
     @Binding var activeContact: RemoteIMContact?
     let showRemoteDesktop: () -> Void
+    let bottomBar: AnyView
     @State private var searchTargetMessageID: UUID?
+    @State private var preparedContactID: String?
+    @EnvironmentObject private var appState: RemoteIMAppState
 
     var body: some View {
-        chatContent
-            .background(RemoteIMStyle.pageBackground.ignoresSafeArea())
-    }
-
-    @ViewBuilder
-    private var chatContent: some View {
-        if let activeContact {
-            ChatDetailView(
-                contact: activeContact,
-                activeContact: $activeContact,
-                searchTargetMessageID: searchTargetMessageID,
-                showRemoteDesktop: showRemoteDesktop
-            )
-        } else {
-            VStack(spacing: 0) {
+        ChatNavigationHost(
+            root: AnyView(VStack(spacing: 0) {
                 HeaderView()
                 ConversationListView(
                     activeContact: $activeContact,
                     searchTargetMessageID: $searchTargetMessageID
                 )
+                // The bar belongs to the previous page, so UIKit reveals it
+                // together with the conversation list during interactive pop.
+                bottomBar
+            }.background(RemoteIMStyle.pageBackground).environmentObject(appState)),
+            detail: detail,
+            selectionID: canPresentContact ? activeContact?.userID : nil,
+            onPop: { activeContact = nil }
+        )
+        .background(RemoteIMStyle.pageBackground.ignoresSafeArea())
+        .task(id: activeContact?.userID) {
+            guard let contact = activeContact else {
+                preparedContactID = nil
+                return
             }
+            // Read the local first page before constructing/pushing its view.
+            // Otherwise one summary row flashes before the initial history page replaces it.
+            await appState.loadInitialMessages(with: contact.userID)
+            guard !Task.isCancelled, activeContact?.userID == contact.userID else { return }
+            preparedContactID = contact.userID
         }
+    }
+
+    private var canPresentContact: Bool {
+        guard let contact = activeContact else { return false }
+        return preparedContactID == contact.userID &&
+            !appState.isLoadingInitialMessages(with: contact.userID)
+    }
+
+    private var detail: AnyView? {
+        guard let activeContact, canPresentContact else { return nil }
+        return AnyView(ChatDetailView(
+            contact: activeContact,
+            activeContact: $activeContact,
+            searchTargetMessageID: searchTargetMessageID,
+            showRemoteDesktop: showRemoteDesktop
+        ).environmentObject(appState))
     }
 }
 
@@ -996,7 +1020,6 @@ private struct ChatDetailView: View {
     let showRemoteDesktop: () -> Void
     @EnvironmentObject private var appState: RemoteIMAppState
     @State private var isAttachmentPanelPresented = false
-    @State private var initialHistoryLoadGeneration = 0
     @State private var transcriptionPresentation = VoiceTranscriptionPresentation()
     @State private var imagePreviewPresentation: PresentedRemoteIMImage?
     @State private var isImagePreviewExpanded = false
@@ -1015,11 +1038,11 @@ private struct ChatDetailView: View {
                     showRemoteDesktop: showRemoteDesktop
                 )
                 MessageListView(
+                    peerUserID: contact.userID,
                     messages: appState.visibleMessages(with: contact.userID),
                     peerRelation: contact.relation,
                     searchTargetMessageID: quoteTargetMessageID ?? searchTargetMessageID,
                     hasEarlierMessages: appState.hasEarlierMessages(with: contact.userID),
-                    initialHistoryLoadGeneration: initialHistoryLoadGeneration,
                     selectingMessageID: selectingMessageID,
                     finishSelectingText: { selectingMessageID = nil },
                     dismissAttachmentPanel: { isAttachmentPanelPresented = false },
@@ -1053,9 +1076,12 @@ private struct ChatDetailView: View {
                     transcriptionPresentation: transcriptionPresentation
                 )
             }
-
-            VoiceTranscriptionHighlightHost(presentation: transcriptionPresentation)
-                .zIndex(10)
+            // A transient voice panel must not participate in the chat's size
+            // calculation. As a ZStack sibling, its minimum height enlarged the
+            // underlying list and invalidated its lazy geometry on dismissal.
+            .overlay {
+                VoiceTranscriptionHighlightHost(presentation: transcriptionPresentation)
+            }
 
             if let imagePreviewPresentation {
                 FullScreenImagePreviewView(
@@ -1114,7 +1140,6 @@ private struct ChatDetailView: View {
         .coordinateSpace(name: RemoteIMImagePreviewLayout.coordinateSpaceName)
         .background(RemoteIMStyle.pageBackground.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
-        .simultaneousGesture(edgeSwipeBackGesture)
         .animation(.easeOut(duration: 0.18), value: messageActionTarget?.id)
         .animation(.easeOut(duration: 0.18), value: forwardingMessage?.id)
         .onAppear {
@@ -1141,7 +1166,6 @@ private struct ChatDetailView: View {
         .task(id: contact.userID) {
             let startedAt = ProcessInfo.processInfo.systemUptime
             await appState.loadInitialMessages(with: contact.userID)
-            initialHistoryLoadGeneration &+= 1
             let elapsed = max(ProcessInfo.processInfo.systemUptime - startedAt, 0)
             AppDiagnosticLog.shared.record(
                 level: .info,
@@ -1194,21 +1218,7 @@ private struct ChatDetailView: View {
         }
     }
 
-    private var edgeSwipeBackGesture: some Gesture {
-        DragGesture(minimumDistance: 20, coordinateSpace: .local)
-            .onEnded { value in
-                guard ChatDetailSwipeBackPolicy.shouldReturnToConversationList(
-                    startX: Double(value.startLocation.x),
-                    translationWidth: Double(value.translation.width),
-                    translationHeight: Double(value.translation.height)
-                ) else { return }
 
-                dismissKeyboard()
-                withAnimation(.easeOut(duration: 0.18)) {
-                    activeContact = nil
-                }
-            }
-    }
 }
 
 private struct VoiceActionFramesKey: PreferenceKey {
@@ -1572,11 +1582,12 @@ struct RelationBadge: View {
 }
 
 private struct MessageListView: View {
+    let peerUserID: String
     let messages: [RemoteIMMessage]
     let peerRelation: RemoteIMContactRelation
+    @StateObject private var scrollIntent = MessageScrollIntent()
     let searchTargetMessageID: UUID?
     let hasEarlierMessages: Bool
-    let initialHistoryLoadGeneration: Int
     let selectingMessageID: UUID?
     let finishSelectingText: () -> Void
     let dismissAttachmentPanel: () -> Void
@@ -1589,13 +1600,13 @@ private struct MessageListView: View {
     @StateObject private var voicePlayer = VoiceMessagePlayer()
     @State private var videoPreviewItem: RemoteIMVideoPreviewItem?
     @State private var filePreviewItem: RemoteIMFilePreviewItem?
-    @State private var latestMessageID: UUID?
     @State private var isLoadingEarlierMessages = false
-    @State private var isNearBottom = true
-    @State private var hasUnseenLatestMessage = false
+    @State private var isVisible = false
+    @State private var keyboardIsVisible = false
 
+    @EnvironmentObject private var navigationArrival: ChatNavigationArrival
     @State private var lastLoggedHistoryCount = -1
-    private let bottomAnchorID = "message-list-bottom"
+
 
     private var approvalDecisionStates: [String: ApprovalDecisionDisplayState] {
         var states: [String: ApprovalDecisionDisplayState] = [:]
@@ -1621,21 +1632,19 @@ private struct MessageListView: View {
         let decisionStates = approvalDecisionStates
         ScrollViewReader { proxy in
             ScrollView {
-                // Only the latest page is eager, keeping the bottom anchor measurable.
-                // Older pages must not create/layout every Markdown row while scrolling.
+                // One lazy list preserves message identity across local sends and
+                // history changes without mounting all Markdown rows.
                 VStack(alignment: .leading, spacing: 14) {
                     if messages.isEmpty {
                         EmptyMessagesView()
                             .padding(.top, 72)
                     } else {
-                        MessageHistoryStack(items: messages) { message in
+                        MessageHistoryStack(items: Array(messages.reversed())) { message in
                             MessageBubbleView(
                                 message: message,
                                 approvalDecisionState: message.approvalRequest.map {
                                     decisionStates[$0.token] ?? .available
                                 } ?? .available,
-                                senderProfile: appState.profile(for: message.fromUserID),
-                                incomingRelation: peerRelation,
                                 isVideoDownloading: appState.isVideoDownloading(
                                     remoteID: message.remoteID,
                                     localPath: message.videoAttachment?.localPath ?? ""
@@ -1684,8 +1693,12 @@ private struct MessageListView: View {
                                             .accessibilityHidden(true)
                                     }
                                 }
+                                .rotationEffect(.degrees(180))
                                 .id(message.id)
                                 .onAppear {
+                                    if message.id == appState.chatState.messages(with: peerUserID).first?.id, scrollIntent.userBrowsedHistory {
+                                        Task { await loadEarlierMessagesIfNeeded() }
+                                    }
                                     let owner = appState.chatState.ownerUserID
                                     guard message.fromUserID == owner || message.toUserID == owner else { return }
                                     let peer = message.direction == .incoming ? message.fromUserID : message.toUserID
@@ -1698,19 +1711,22 @@ private struct MessageListView: View {
                                 }
                         }
                     }
-                    Color.clear
-                        .frame(height: 1)
-                        .id(bottomAnchorID)
+                    if hasEarlierMessages {
+                        Button {
+                            Task { await loadEarlierMessagesIfNeeded() }
+                        } label: {
+                            if isLoadingEarlierMessages { ProgressView() }
+                            else { Text("加载更早消息").font(.caption) }
+                        }
+                        .disabled(isLoadingEarlierMessages)
+                        .frame(maxWidth: .infinity)
+                        .rotationEffect(.degrees(180))
+                    }
                 }
                 .padding(.horizontal, MessageBubbleMetrics.horizontalInset)
                 .padding(.vertical, 18)
-                .background(MessageScrollPositionReader(allowsBottomFollowing: searchTargetMessageID == nil, onViewportResizeNeedsBottom: {
-                    guard searchTargetMessageID == nil else { return }
-                    scrollToBottom(proxy: proxy)
-                }) { nearBottom in
-                    isNearBottom = nearBottom
-                    if nearBottom { hasUnseenLatestMessage = false }
-                })
+                .background(MessageScrollPositionReader(allowsBottomFollowing: false,
+                    onUserScroll: { scrollIntent.userDidScroll() }) { _ in })
                 .background(
                     ScrollViewKeyboardDismissInstaller { window in
                         dismissAttachmentPanel()
@@ -1721,75 +1737,48 @@ private struct MessageListView: View {
                     }
                 )
             }
-            .refreshable {
-                await loadEarlierMessagesKeepingAnchor(proxy: proxy)
-            }
+            // The native origin is the newest row. Resizing for the keyboard
+            // keeps that origin attached to the input area without a second jump.
+            .rotationEffect(.degrees(180))
             .scrollDismissesKeyboard(.interactively)
             .background(RemoteIMStyle.panelBackground)
             .onAppear {
+                isVisible = true
+                navigationArrival.scrollIntent = scrollIntent
                 recordHistoryLayout()
-                latestMessageID = messages.last?.id
-                if !scrollToSearchTarget(proxy: proxy) {
-                    scrollToLatestMessage(proxy: proxy)
-                }
+            }
+            .onDisappear {
+                isVisible = false
+                scrollIntent.cancelPendingPositioning()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { notification in
+                guard isVisible, !navigationArrival.isReturning, !keyboardIsVisible,
+                      navigationArrival.composerView?.isFirstResponder == true else { return }
+                keyboardIsVisible = true
+                guard let targetID = messages.last?.id else { return }
+                scrollIntent.positionWithKeyboard(proxy: proxy, id: targetID, notification: notification, anchor: .top)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { _ in
+                keyboardIsVisible = false
+            }
+            .onChange(of: appState.locallyQueuedMessageID) { id in
+                // onChange can hold the previous body's messages value. Validate
+                // against the current model, not that stale array snapshot.
+                guard isVisible, !navigationArrival.isReturning, let id,
+                      appState.chatState.message(id: id)?.toUserID == peerUserID else { return }
+                scrollIntent.positionAtBottom(proxy: proxy, id: id, anchor: .top)
             }
             .onChange(of: messages.count) { _ in recordHistoryLayout() }
-            .onChange(of: searchTargetMessageID) { _ in
-                _ = scrollToSearchTarget(proxy: proxy)
+            .onChange(of: searchTargetMessageID) { targetID in
+                _ = scrollToSearchTarget(proxy: proxy, targetID: targetID)
             }
-            .onChange(of: messages.last?.id) { _ in
-                let nextLatestMessageID = messages.last?.id
-                guard nextLatestMessageID != latestMessageID else { return }
-                latestMessageID = nextLatestMessageID
-                let latestMessage = messages.last
-                let shouldScroll = searchTargetMessageID == nil &&
-                    (isNearBottom || latestMessage?.direction == .outgoing)
-                if let latestMessage, latestMessage.approvalRequest != nil {
-                    AppDiagnosticLog.shared.record(
-                        level: .info,
-                        category: "approval",
-                        event: "list-update",
-                        fields: [
-                            "message": DiagnosticLogPrivacy.stableTag(
-                                latestMessage.remoteID ?? latestMessage.id.uuidString,
-                                prefix: "m"
-                            ),
-                            "near_bottom": isNearBottom ? "true" : "false",
-                            "scroll_action": shouldScroll ? "scroll-to-bottom" : "show-new-message-indicator",
-                        ]
-                    )
-                }
-                if shouldScroll {
-                    hasUnseenLatestMessage = false
-                    scrollToLatestMessage(proxy: proxy)
-                } else {
-                    hasUnseenLatestMessage = true
-                }
-            }
-            .onChange(of: initialHistoryLoadGeneration) { _ in
-                latestMessageID = messages.last?.id
-                hasUnseenLatestMessage = false
-                if !scrollToSearchTarget(proxy: proxy) {
+            .onChange(of: navigationArrival.hasArrived) { arrived in
+                guard arrived else { return }
+                if !scrollToSearchTarget(proxy: proxy, targetID: searchTargetMessageID) {
                     scrollToLatestMessage(proxy: proxy)
                 }
             }
-            .overlay(alignment: .bottomTrailing) {
-                if hasUnseenLatestMessage {
-                    Button {
-                        hasUnseenLatestMessage = false
-                        scrollToLatestMessage(proxy: proxy)
-                    } label: {
-                        Label("新消息", systemImage: "arrow.down")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 12)
-                            .frame(height: 34)
-                            .background(RemoteIMStyle.blue, in: Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .padding(12)
-                }
-            }
+
         }
         .fullScreenCover(item: $videoPreviewItem) { item in
             FullScreenVideoPreviewView(item: item) {
@@ -1808,22 +1797,22 @@ private struct MessageListView: View {
         let owner = appState.chatState.ownerUserID
         guard message.fromUserID == owner || message.toUserID == owner else { return }
         lastLoggedHistoryCount = messages.count
-        let eagerRows = min(MessageHistoryMetrics.eagerTailCount, messages.count)
         let peer = message.direction == .incoming ? message.fromUserID : message.toUserID
         AppDiagnosticLog.shared.record(level: .info, category: "remote-im-ui", event: "history-layout", fields: [
             "account": appState.remoteDiagnosticsAccountTag,
             "peer": DiagnosticLogPrivacy.stableTag(peer, prefix: "u"),
-            "layout": "lazy-history-eager-tail", "loaded_messages": String(messages.count),
-            "eager_rows": String(eagerRows), "history_rows": String(messages.count - eagerRows)
+            "layout": "bottom-origin-lazy-stack", "loaded_messages": String(messages.count)
         ])
     }
 
     @discardableResult
-    private func scrollToSearchTarget(proxy: ScrollViewProxy) -> Bool {
-        guard let targetID = searchTargetMessageID,
-              messages.contains(where: { $0.id == targetID })
+    private func scrollToSearchTarget(proxy: ScrollViewProxy, targetID: UUID?) -> Bool {
+        guard let targetID,
+              appState.chatState.messages(with: peerUserID).contains(where: { $0.id == targetID })
         else { return false }
+        let generation = scrollIntent.beginPositioning()
         DispatchQueue.main.async {
+            guard scrollIntent.isCurrent(generation) else { return }
             withAnimation(.easeOut(duration: 0.2)) {
                 proxy.scrollTo(targetID, anchor: .center)
             }
@@ -1832,47 +1821,20 @@ private struct MessageListView: View {
     }
 
     private func scrollToLatestMessage(proxy: ScrollViewProxy) {
-        guard MessageListAutoScrollPolicy.latestMessageID(from: messages) != nil else {
-            return
-        }
-        DispatchQueue.main.async {
-            scrollToBottom(proxy: proxy)
-            // The first pass establishes the content layout. Repeating on the next main-loop
-            // turn accounts for multiline Markdown text whose final height is resolved then.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.016) {
-                scrollToBottom(proxy: proxy)
-            }
-        }
-    }
-
-    private func scrollToBottom(proxy: ScrollViewProxy) {
-        var transaction = Transaction(animation: nil)
-        transaction.disablesAnimations = true
-        withTransaction(transaction) {
-            proxy.scrollTo(bottomAnchorID, anchor: .bottom)
-        }
+        guard let targetID = appState.chatState.latestMessage(with: peerUserID)?.id else { return }
+        scrollIntent.positionAtBottom(proxy: proxy, id: targetID, anchor: .top)
     }
 
     @MainActor
-    private func loadEarlierMessagesKeepingAnchor(proxy: ScrollViewProxy) async {
+    private func loadEarlierMessagesIfNeeded() async {
         guard hasEarlierMessages, !isLoadingEarlierMessages else { return }
-        let previousFirstMessageID = messages.first?.id
         isLoadingEarlierMessages = true
         defer { isLoadingEarlierMessages = false }
-
+        // Older rows append at the far end of the reversed timeline, so there
+        // is no explicit positioning command after pagination.
         await loadEarlierMessages()
-        guard let previousFirstMessageID else { return }
-        await withCheckedContinuation { continuation in
-            DispatchQueue.main.async {
-                var transaction = Transaction(animation: nil)
-                transaction.disablesAnimations = true
-                withTransaction(transaction) {
-                    proxy.scrollTo(previousFirstMessageID, anchor: .top)
-                }
-                continuation.resume()
-            }
-        }
     }
+
 }
 
 private struct ScrollViewKeyboardDismissInstaller: UIViewRepresentable {
@@ -2011,8 +1973,6 @@ private struct EmptyMessagesView: View {
 private struct MessageBubbleView: View {
     let message: RemoteIMMessage
     let approvalDecisionState: ApprovalDecisionDisplayState
-    let senderProfile: RemoteIMUserProfile
-    let incomingRelation: RemoteIMContactRelation
     let isVideoDownloading: Bool
     let isVoicePlaying: Bool
     let playVoice: () -> Void
@@ -2030,17 +1990,25 @@ private struct MessageBubbleView: View {
     @State private var textSelectionController = MessageTextSelectionController()
 
     var body: some View {
-        MessageBubbleLayout(isOutgoing: message.direction == .outgoing) {
-            RemoteIMUserAvatar(
-                profile: senderProfile,
-                outgoing: message.direction == .outgoing,
-                size: MessageBubbleMetrics.avatarSize
-            )
+        MessageBubbleLayout(isOutgoing: message.direction == .outgoing,
+                            showsHeader: false) {
+            EmptyView()
         } metadata: {
-            messageMetadata
+            EmptyView()
         } content: {
-            messageContent
+            if usesInlineDate {
+                messageContent
+            } else {
+                MarkdownTrailingDate(timestamp: messageDate) { messageContent }
+            }
         }
+        #if targetEnvironment(simulator)
+        .background {
+            if ProcessInfo.processInfo.environment["MAICHAT_LAYOUT_PROBES"] == "1" {
+                MessageGeometryProbe(identifier: "message-row-\(message.id.uuidString)")
+            }
+        }
+        #endif
         // 不使用系统 contextMenu：它会把被长按的消息单独提亮/放大，且视觉风格
         // 与 MaiChat 完全不同。长按只打开根层自绘卡片，消息本身保持原样。
         .onLongPressGesture(
@@ -2065,24 +2033,14 @@ private struct MessageBubbleView: View {
         }
     }
 
-    private var messageMetadata: some View {
-        HStack(spacing: 8) {
-            Text(message.fromUserID)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(RemoteIMStyle.textPrimary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            if let relationText {
-                RelationBadge(text: relationText)
-            }
-            Text(RemoteIMTimestampTextPolicy.displayText(for: message.createdAt))
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(RemoteIMStyle.textSecondary)
-        }
+    private var messageDate: String {
+        RemoteIMTimestampTextPolicy.displayText(for: message.createdAt)
     }
 
-    private var relationText: String? {
-        message.direction == .outgoing ? nil : incomingRelation.displayName
+    private var usesInlineDate: Bool {
+        message.imageAttachment == nil && message.fileAttachment == nil &&
+        message.videoAttachment == nil && message.voiceAttachment == nil &&
+        message.approvalRequest == nil
     }
 
     private var attachmentCaption: String? {
@@ -2206,7 +2164,7 @@ private struct MessageBubbleView: View {
                         )
                     }
                 } else {
-                    MarkdownLikeText(message.text)
+                    MarkdownLikeText(message.text, trailingTimestamp: messageDate)
                         .font(.system(size: 13, weight: .regular))
                         .lineSpacing(3)
                         .foregroundStyle(RemoteIMStyle.textPrimary)
@@ -3538,32 +3496,48 @@ private final class MarkdownRenderCache: @unchecked Sendable {
 
 private struct MarkdownLikeText: View {
     private let blocks: [MarkdownBlock]
+    private let trailingTimestamp: String?
 
-    init(_ text: String) {
+    init(_ text: String, trailingTimestamp: String? = nil) {
         self.blocks = MarkdownRenderCache.shared.blocks(for: text)
+        self.trailingTimestamp = trailingTimestamp
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            if blocks.isEmpty, let trailingTimestamp {
+                MarkdownInlineText(text: "", trailingTimestamp: trailingTimestamp)
+            }
             ForEach(blocks) { block in
+                let timestamp = block.id == blocks.last?.id ? trailingTimestamp : nil
                 switch block.kind {
                 case .markdown(let text):
-                    MarkdownInlineText(text: text)
+                    MarkdownInlineText(text: text, trailingTimestamp: timestamp)
+                case .sourceNote(let text):
+                    MarkdownTrailingDate(timestamp: timestamp) {
+                        MarkdownInlineText(text: text)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(RemoteIMStyle.blue)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(RemoteIMStyle.blueSoft, in: RoundedRectangle(cornerRadius: 4))
+                    }
                 case .heading(let level, let text):
-                    MarkdownHeadingView(level: level, text: text)
+                    MarkdownHeadingView(level: level, text: text, trailingTimestamp: timestamp)
                 case .list(let list):
-                    MarkdownListView(list: list)
+                    MarkdownListView(list: list, trailingTimestamp: timestamp)
                 case .code(let language, let code, let lineCount):
-                    MarkdownCodeBlock(language: language, code: code, lineCount: lineCount)
+                    MarkdownTrailingDate(timestamp: timestamp) {
+                        MarkdownCodeBlock(language: language, code: code, lineCount: lineCount)
+                    }
                 case .table(let table):
-                    MarkdownTableView(table: table)
+                    MarkdownTrailingDate(timestamp: timestamp) { MarkdownTableView(table: table) }
                 case .quote(let quote):
-                    MarkdownQuoteView(quote: quote)
+                    MarkdownQuoteView(quote: quote, trailingTimestamp: timestamp)
                 case .divider:
-                    Rectangle()
-                        .fill(RemoteIMStyle.border)
-                        .frame(height: 1)
-                        .padding(.vertical, 3)
+                    MarkdownTrailingDate(timestamp: timestamp) {
+                        Rectangle().fill(RemoteIMStyle.border).frame(height: 1).padding(.vertical, 3)
+                    }
                 }
             }
         }
@@ -3586,6 +3560,7 @@ private struct MarkdownBlock: Identifiable {
 
 private enum MarkdownBlockKind {
     case markdown(String)
+    case sourceNote(String)
     case heading(level: Int, text: String)
     case list(MarkdownList)
     case code(language: String, text: String, lineCount: Int)
@@ -3611,31 +3586,49 @@ private struct MarkdownTable {
     let rows: [[String]]
 }
 
+private struct MarkdownTrailingDate<Content: View>: View {
+    let timestamp: String?
+    @ViewBuilder let content: () -> Content
+    var body: some View {
+        if let timestamp {
+            HStack(alignment: .bottom, spacing: 8) {
+                content()
+                Text("· " + timestamp)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(RemoteIMStyle.blue)
+                    .fixedSize()
+            }
+        } else { content() }
+    }
+}
+
 private struct MarkdownInlineText: View {
     let text: String
-    private let attributedText: AttributedString?
+    private let attributedText: AttributedString
 
-    init(text: String) {
+    init(text: String, trailingTimestamp: String? = nil) {
         self.text = text
-        self.attributedText = MarkdownRenderCache.shared.attributedText(for: text)
+        var rendered = MarkdownRenderCache.shared.attributedText(for: text) ?? AttributedString(text)
+        if let trailingTimestamp {
+            var date = AttributedString("  · " + trailingTimestamp)
+            date.font = .system(size: 11, weight: .semibold)
+            date.foregroundColor = RemoteIMStyle.blue
+            rendered.append(date)
+        }
+        self.attributedText = rendered
     }
 
     var body: some View {
-        Group {
-            if let attributedText {
-                Text(attributedText)
-            } else {
-                Text(text)
-            }
-        }
-        .lineLimit(nil)
-        .multilineTextAlignment(.leading)
-        .fixedSize(horizontal: false, vertical: true)
+        Text(attributedText)
+            .lineLimit(nil)
+            .multilineTextAlignment(.leading)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 
 private struct MarkdownQuoteView: View {
     let quote: MarkdownQuotePresentation
+    var trailingTimestamp: String? = nil
 
     private var accent: Color {
         switch quote.kind {
@@ -3666,8 +3659,8 @@ private struct MarkdownQuoteView: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(accent)
             }
-            if !quote.text.isEmpty {
-                MarkdownInlineText(text: quote.text)
+            if !quote.text.isEmpty || trailingTimestamp != nil {
+                MarkdownInlineText(text: quote.text, trailingTimestamp: trailingTimestamp)
                     .foregroundStyle(RemoteIMStyle.textSecondary)
             }
         }
@@ -3685,9 +3678,10 @@ private struct MarkdownQuoteView: View {
 private struct MarkdownHeadingView: View {
     let level: Int
     let text: String
+    var trailingTimestamp: String? = nil
 
     var body: some View {
-        MarkdownInlineText(text: text)
+        MarkdownInlineText(text: text, trailingTimestamp: trailingTimestamp)
             .font(.system(size: fontSize, weight: .semibold))
             .foregroundStyle(level <= 2 ? Color(red: 0.11, green: 0.31, blue: 0.54) : RemoteIMStyle.textPrimary)
             .lineSpacing(3)
@@ -3709,6 +3703,7 @@ private struct MarkdownHeadingView: View {
 
 private struct MarkdownListView: View {
     let list: MarkdownList
+    var trailingTimestamp: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -3725,7 +3720,8 @@ private struct MarkdownListView: View {
                     }
                     .font(.system(size: 13, weight: .semibold))
                     .frame(minWidth: 16, alignment: .trailing)
-                    MarkdownInlineText(text: item.text)
+                    MarkdownInlineText(text: item.text,
+                        trailingTimestamp: item.id == list.items.last?.id ? trailingTimestamp : nil)
                         .font(.system(size: 14, weight: .regular))
                         .foregroundStyle(RemoteIMStyle.textPrimary)
                         .lineSpacing(4)
@@ -3873,6 +3869,13 @@ private func parseMarkdownBlocks(_ source: String) -> [MarkdownBlock] {
     while index < lines.count {
         let line = lines[index]
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if index == lines.count - 1, trimmed == "此消息来自 imcli" {
+            flushMarkdown()
+            blocks.append(MarkdownBlock(kind: .sourceNote(trimmed)))
+            index += 1
+            continue
+        }
 
         if trimmed.hasPrefix("```") {
             flushMarkdown()
@@ -5463,6 +5466,7 @@ private final class GrowingComposerUITextView: UITextView {
 }
 
 private struct ComposerTextView: UIViewRepresentable {
+    @EnvironmentObject private var navigationArrival: ChatNavigationArrival
     @Binding var text: String
     let onSubmit: () -> Void
     let focusRequestGeneration: Int
@@ -5520,6 +5524,7 @@ private struct ComposerTextView: UIViewRepresentable {
         textView.accessibilityIdentifier = "message-composer-text-view"
         textView.accessibilityLabel = "消息输入框，长按语音转文字"
         editingController.textView = textView
+        navigationArrival.composerView = textView
         let voiceLongPress = UILongPressGestureRecognizer(
             target: context.coordinator,
             action: #selector(Coordinator.handleVoiceLongPress(_:))
@@ -5562,6 +5567,7 @@ private struct ComposerTextView: UIViewRepresentable {
         defer { AppDiagnosticLog.shared.recordDuration(.composerUpdate, since: started) }
         context.coordinator.parent = self
         editingController.textView = textView
+        navigationArrival.composerView = textView
         if textView.text != text {
             let nextText = text
             context.coordinator.applyExternalText(nextText, to: textView)

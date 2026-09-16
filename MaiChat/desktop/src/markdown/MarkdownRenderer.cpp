@@ -67,6 +67,18 @@ QRegularExpression calloutMarker(const char* name) {
 QString renderBody(const QString& markdown) {
     QString html = parseHtml(markdown);
 
+    // Style the standalone trailing source note, never a mention inside prose,
+    // inline code, a fenced block or a quotation. Keep original text unchanged.
+    const QString normalized = QString(markdown).replace(QStringLiteral("\r\n"), QStringLiteral("\n"))
+        .replace(QLatin1Char('\r'), QLatin1Char('\n')).trimmed();
+    static const QRegularExpression sourceLine(QStringLiteral("(?:^|\\n)[ \t]{0,3}此消息来自 imcli[ \t]*$"));
+    static const QRegularExpression sourceParagraphEnd(QStringLiteral("此消息来自 imcli(?=\\s*</p>\\s*$)"));
+    if (sourceLine.match(normalized).hasMatch()) {
+        html.replace(sourceParagraphEnd, QStringLiteral(
+            "<span class=\"imcli-source-note\" style=\"color:#0f8ddd;background-color:#e6f5ff;font-size:12px;font-weight:600;\">"
+            "此消息来自 imcli</span>"));
+    }
+
     // 任务列表：QTextDocument 渲染不了 <input type="checkbox">，换成字符。
     html.replace(QStringLiteral("<input type=\"checkbox\" class=\"task-list-item-checkbox\" disabled checked>"),
                  QStringLiteral("<span style=\"color:#16836b;\">☑</span> "));

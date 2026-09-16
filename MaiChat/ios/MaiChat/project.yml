@@ -56,7 +56,7 @@ schemes:
         MaiChat: all
         MaiChatCore: all
     run:
-      config: Debug
+      config: Release
   MaiChatCoreTests:
     build:
       targets:

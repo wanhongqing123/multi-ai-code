@@ -8,6 +8,7 @@ class MarkdownRendererTest : public QObject {
 
 private slots:
     void rendersCommonAiCliMarkdown();
+    void stylesStandaloneImcliSourceFooter();
     void collapsesSoftLineBreaksLikeElectron();
     void escapesRawHtmlAndUnsafeLinks();
     void rendersFencedCodeWithoutInlineFormatting();
@@ -22,6 +23,21 @@ private slots:
     void previewHtmlPreservesCodeSemanticsWithoutFontHeuristics();
     void previewRejectsOldQtBoundariesInsideEmoji();
 };
+
+void MarkdownRendererTest::stylesStandaloneImcliSourceFooter() {
+    for (const auto& source : {QStringLiteral("报告完成。\n\n此消息来自 imcli"),
+                               QStringLiteral("报告完成。\n此消息来自 imcli")}) {
+        const auto html = MarkdownRenderer::renderToHtml(source);
+        QVERIFY(html.contains(QStringLiteral("class=\"imcli-source-note\"")));
+        QVERIFY(html.contains(QStringLiteral("此消息来自 imcli</span>")));
+    }
+    for (const auto& source : {QStringLiteral("```\n此消息来自 imcli\n```"),
+                               QStringLiteral("`此消息来自 imcli`"),
+                               QStringLiteral("> 此消息来自 imcli"),
+                               QStringLiteral("正文讨论此消息来自 imcli")}) {
+        QVERIFY(!MarkdownRenderer::renderToHtml(source).contains(QStringLiteral("class=\"imcli-source-note\"")));
+    }
+}
 
 void MarkdownRendererTest::rendersCommonAiCliMarkdown() {
     const QString html = MarkdownRenderer::renderToHtml(QStringLiteral("## 标题\n\n**重点** 和 `code`\n\n- 第一条\n- [链接](https://example.com)"));

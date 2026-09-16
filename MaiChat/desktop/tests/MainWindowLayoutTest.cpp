@@ -29,6 +29,7 @@
 #include <QTest>
 #include <QTextBrowser>
 #include <QTextBlock>
+#include <QTextList>
 #include <QTextFragment>
 #include <QAbstractTextDocumentLayout>
 #include <QTextEdit>
@@ -1233,20 +1234,18 @@ void MainWindowLayoutTest::rendersSentMessageFromTopWithMetadata() {
     QCOMPARE(messageLayout->itemAt(1)->widget()->objectName(), QStringLiteral("messageRowOutgoing"));
     QVERIFY(window.findChild<QWidget*>(QStringLiteral("messageBubbleOutgoing")) != nullptr);
 
-    auto* authorLabel = window.findChild<QLabel*>(QStringLiteral("messageAuthorLabel"));
-    auto* timeLabel = window.findChild<QLabel*>(QStringLiteral("messageTimeLabel"));
+    QVERIFY(window.findChild<QLabel*>(QStringLiteral("messageAuthorLabel")) == nullptr);
+    QVERIFY(window.findChild<QLabel*>(QStringLiteral("messageTimeLabel")) == nullptr);
+    QVERIFY(window.findChild<QLabel*>(QStringLiteral("messageAvatarOutgoing")) == nullptr);
+    auto* markdown = window.findChild<QTextBrowser*>(QStringLiteral("messageMarkdownView"));
+    QVERIFY(markdown != nullptr);
+    const auto timestamp = markdown->property("messageTimestamp").toString();
+    QVERIFY(!timestamp.isEmpty());
+    QVERIFY(markdown->toPlainText().startsWith(QStringLiteral("hello from desktop")));
+    QVERIFY(markdown->toPlainText().endsWith(timestamp));
+    QCOMPARE(markdown->document()->blockCount(), 1); // date is not a second paragraph
     auto* statusLabel = window.findChild<QLabel*>(QStringLiteral("messageStatusLabel"));
-    auto* avatarLabel = window.findChild<QLabel*>(QStringLiteral("messageAvatarOutgoing"));
-    QVERIFY(authorLabel != nullptr);
-    QVERIFY(timeLabel != nullptr);
     QVERIFY(statusLabel != nullptr);
-    QVERIFY(avatarLabel != nullptr);
-    QCOMPARE(authorLabel->text(), QStringLiteral("desktop-user"));
-    QCOMPARE(avatarLabel->text(), QStringLiteral("D"));
-    QCOMPARE(avatarLabel->property("avatarUserId").toString(), QStringLiteral("desktop-user"));
-    QCOMPARE(avatarLabel->minimumSize(), QSize(30, 30));
-    QCOMPARE(avatarLabel->maximumSize(), QSize(30, 30));
-    QVERIFY(!timeLabel->text().trimmed().isEmpty());
     QCOMPARE(statusLabel->text(), QStringLiteral("✓"));
     QCOMPARE(statusLabel->alignment(), Qt::AlignCenter);
     QCOMPARE(statusLabel->minimumWidth(), 16);
@@ -1302,8 +1301,10 @@ void MainWindowLayoutTest::rendersRelativeMessageDates() {
     MainWindow window(app);
 
     QStringList actualTimes;
-    for (const QLabel* label : window.findChildren<QLabel*>(QStringLiteral("messageTimeLabel"))) {
-        actualTimes.append(label->text());
+    for (const auto* view : window.findChildren<QTextBrowser*>(QStringLiteral("messageMarkdownView"))) {
+        const auto timestamp = view->property("messageTimestamp").toString();
+        QVERIFY(view->toPlainText().endsWith(timestamp));
+        actualTimes.append(timestamp);
     }
 
     QVERIFY(actualTimes.contains(QStringLiteral("16:13")));
@@ -1529,6 +1530,23 @@ void MainWindowLayoutTest::rendersMarkdownMessageContent() {
         }
     }
     QVERIFY(sawInlineCode);
+    // Marker spacing must not leak into prose or links, and the real list
+    // structure must remain intact for wrapping, nesting and copying.
+    int listItems = 0;
+    for (auto block = markdownView->document()->begin(); block.isValid(); block = block.next()) {
+        if (!block.textList()) continue;
+        ++listItems;
+        QCOMPARE(block.textList()->format().style(), QTextListFormat::ListDisc);
+        const auto marker = block.charFormat();
+        for (auto it = block.begin(); !it.atEnd(); ++it) {
+            const auto fragment = it.fragment();
+            if (!fragment.isValid()) continue;
+            QVERIFY(marker.font().wordSpacing() > fragment.charFormat().font().wordSpacing());
+            if (!fragment.text().contains(QStringLiteral("·")))
+                QVERIFY(marker.foreground().color() != fragment.charFormat().foreground().color());
+        }
+    }
+    QCOMPARE(listItems, 2);
     QVERIFY(markdownView->toPlainText().contains(QStringLiteral("重点")));
     QVERIFY(markdownView->toHtml().contains(QStringLiteral("href=\"https://example.com\"")));
 }
@@ -2089,13 +2107,14 @@ void MainWindowLayoutTest::receivedMessagesKeepTheSameLeftEdge() {
     window.resize(1200, 850);
     window.show();
     QVERIFY(QTest::qWaitForWindowExposed(&window));
-    auto* avatar = window.findChild<QLabel*>(QStringLiteral("messageAvatarIncoming"));
+    QVERIFY(window.findChild<QLabel*>(QStringLiteral("messageAvatarIncoming")) == nullptr);
     auto* view = window.findChild<QTextBrowser*>(QStringLiteral("messageMarkdownView"));
-    QVERIFY(avatar); QVERIFY(view);
-    auto* row = avatar->parentWidget();
-    QTRY_COMPARE(view->mapTo(row, QPoint()).x(), avatar->mapTo(row, QPoint()).x());
-    QTRY_VERIFY(view->mapTo(row, QPoint()).y() >= avatar->mapTo(row, QPoint()).y() + avatar->height());
+    auto* row = window.findChild<QWidget*>(QStringLiteral("messageRowIncoming"));
+    QVERIFY(row); QVERIFY(view);
+    QTRY_COMPARE(view->mapTo(row, QPoint()).x(), 0);
+    QTRY_VERIFY(view->mapTo(row, QPoint()).y() <= UiZoom::s(8));
     QTRY_VERIFY(view->width() >= row->contentsRect().width() - UiZoom::s(14) - 2);
+
 }
 
 void MainWindowLayoutTest::wideChatUsesWiderMessageBubbles() {
@@ -2123,49 +2142,21 @@ void MainWindowLayoutTest::wideChatUsesWiderMessageBubbles() {
 
     auto* incomingBubble = window.findChild<QWidget*>(QStringLiteral("messageBubbleIncoming"));
     QVERIFY(incomingBubble != nullptr);
-    auto* incomingAvatar = window.findChild<QLabel*>(QStringLiteral("messageAvatarIncoming"));
-    QVERIFY(incomingAvatar != nullptr);
-    QCOMPARE(incomingAvatar->text(), QStringLiteral("IP"));
-    QCOMPARE(incomingAvatar->property("avatarUserId").toString(), QStringLiteral("phone-user"));
-    QCOMPARE(incomingAvatar->minimumSize(), QSize(30, 30));
-    QTRY_VERIFY2(incomingBubble->maximumWidth() >= 820,
-                 qPrintable(QStringLiteral("max=%1 min=%2")
-                                .arg(incomingBubble->maximumWidth())
-                                .arg(incomingBubble->minimumWidth())));
+    QVERIFY(window.findChild<QLabel*>(QStringLiteral("messageAvatarIncoming")) == nullptr);
+    QVERIFY(window.findChild<QLabel*>(QStringLiteral("messageAvatarOutgoing")) == nullptr);
+    QVERIFY(window.findChild<QLabel*>(QStringLiteral("messageAuthorLabel")) == nullptr);
+    QVERIFY(window.findChild<QLabel*>(QStringLiteral("messageRelationBadge")) == nullptr);
+    QTRY_VERIFY(incomingBubble->maximumWidth() >= 820);
     QTRY_VERIFY(incomingBubble->minimumWidth() >= 820);
-
-    auto* messageContainer = window.findChild<QWidget*>(QStringLiteral("messageContainer"));
-    QVERIFY(messageContainer != nullptr);
-    auto* outgoingAvatar = window.findChild<QLabel*>(QStringLiteral("messageAvatarOutgoing"));
-    QVERIFY(outgoingAvatar != nullptr);
-    auto* outgoingRow = outgoingAvatar->parentWidget();
-    QVERIFY(outgoingRow != nullptr);
-    auto* outgoingTime = outgoingRow->findChild<QLabel*>(QStringLiteral("messageTimeLabel"));
-    auto* outgoingBubble = outgoingRow->findChild<QWidget*>(QStringLiteral("messageBubbleOutgoing"));
-    QVERIFY(outgoingTime != nullptr);
-    QVERIFY(outgoingBubble != nullptr);
-    QTRY_VERIFY2(qAbs((outgoingAvatar->mapTo(outgoingRow, QPoint(0, 0)).y()
-                       + outgoingAvatar->height() / 2)
-                      - ((outgoingTime->mapTo(outgoingRow, QPoint(0, 0)).y()
-                          + outgoingTime->height() / 2
-                          + outgoingBubble->mapTo(outgoingRow, QPoint(0, 0)).y())
-                         / 2))
-                <= 2,
-                qPrintable(QStringLiteral("avatarY=%1 avatarH=%2 timeY=%3 timeH=%4 bubbleY=%5")
-                               .arg(outgoingAvatar->mapTo(outgoingRow, QPoint(0, 0)).y())
-                               .arg(outgoingAvatar->height())
-                               .arg(outgoingTime->mapTo(outgoingRow, QPoint(0, 0)).y())
-                               .arg(outgoingTime->height())
-                               .arg(outgoingBubble->mapTo(outgoingRow, QPoint(0, 0)).y())));
-    auto* incomingRow = incomingAvatar->parentWidget();
-    auto* incomingBadge = incomingRow->findChild<QLabel*>(QStringLiteral("messageRelationBadge"));
-    QVERIFY(incomingBadge != nullptr);
-    QTRY_VERIFY(incomingBadge->height() < incomingAvatar->height());
-    QTRY_COMPARE(incomingBubble->mapTo(incomingRow, QPoint(0, 0)).x(),
-                 incomingAvatar->mapTo(incomingRow, QPoint(0, 0)).x());
-    QTRY_VERIFY(incomingBubble->mapTo(incomingRow, QPoint(0, 0)).y()
-                >= incomingAvatar->mapTo(incomingRow, QPoint(0, 0)).y() + incomingAvatar->height());
+    auto* incomingRow = incomingBubble->parentWidget();
+    QTRY_COMPARE(incomingBubble->mapTo(incomingRow, QPoint()).x(), 0);
     QTRY_VERIFY(incomingBubble->width() >= incomingRow->contentsRect().width() - 2);
+    auto* outgoingRow = window.findChild<QWidget*>(QStringLiteral("messageRowOutgoing"));
+    QVERIFY(outgoingRow);
+    auto* outgoingView = outgoingRow->findChild<QTextBrowser*>(QStringLiteral("messageMarkdownView"));
+    QVERIFY(outgoingView);
+    QVERIFY(outgoingView->toPlainText().endsWith(outgoingView->property("messageTimestamp").toString()));
+
 }
 
 void MainWindowLayoutTest::restoredLongMessagesExpandAfterWindowIsShown() {

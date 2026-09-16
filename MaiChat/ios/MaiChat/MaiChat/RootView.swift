@@ -41,7 +41,11 @@ struct RootView: View {
                                 showRemoteDesktop: {
                                     activeChatContact = nil
                                     selectedTab = .remote
-                                }
+                                },
+                                bottomBar: AnyView(RootTabBar(
+                                    selectedTab: $selectedTab,
+                                    remoteDesktop: appState.remoteDesktop
+                                ))
                             )
                         case .contacts:
                             ContactsView(
@@ -63,7 +67,10 @@ struct RootView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                    if activeChatContact == nil {
+                    // Messages owns its bar inside the navigation root. An
+                    // outer conditional bar appears too late during back swipes
+                    // and resizes both pages as soon as selection is cleared.
+                    if selectedTab != .messages && activeChatContact == nil {
                         RootTabBar(
                             selectedTab: $selectedTab,
                             remoteDesktop: appState.remoteDesktop

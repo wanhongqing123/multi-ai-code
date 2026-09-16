@@ -45,6 +45,8 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     @Published var newContactRelation: RemoteIMContactRelation = .friend
     @Published var errorMessage: String?
     @Published var connectionState: ConnectionState = .disconnected
+    // Emitted only when this device queues a user send, never on history or delivery updates.
+    @Published private(set) var locallyQueuedMessageID: UUID?
     @Published var chatState: MasterChatState
     @Published var hasCompletedInitialLogin = false
     @Published var presenceStatusByUserID: [String: RemoteIMPresenceStatus] = [:]
@@ -82,7 +84,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     private var historySaveTask: Task<Void, Never>?
     private var pendingIncomingRemoteIDs = Set<String>()
     private var profileRefreshUserIDsInFlight = Set<String>()
-    private let messagePageSize = 50
+    private let messagePageSize = 20
 
     init(
         settingsStore: LocalSettingsStore = LocalSettingsStore(),
@@ -659,11 +661,16 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     func openMessageSearchHit(_ hit: LocalChatHistorySearchHit) -> RemoteIMContact? {
         guard let contact = chatState.contacts.first(where: { $0.userID == hit.peerUserID })
         else { return nil }
-        // Search covers the full database, so an old hit may not be in the current 50-message
+        // Search covers the full database, so an old hit may not be in the current 20-message
         // window. Merge the authoritative stored row before opening, making the scroll target real.
         chatState.mergeMessages([hit.message])
         selectContact(contact)
         return contact
+    }
+
+    func isLoadingInitialMessages(with userID: String) -> Bool {
+        guard let state = conversationHistoryStateByUserID[userID] else { return false }
+        return state.isLoading && !state.hasLoadedInitialPage
     }
 
     func hasEarlierMessages(with userID: String) -> Bool {
@@ -729,6 +736,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                 loadGeneration: loadGeneration
             ) else { return }
             conversationHistoryStateByUserID[cleanUserID] = current
+            objectWillChange.send()
             recordHistoryLoadFailure(error, operation: "initial-page")
         }
     }
@@ -951,6 +959,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             // 转发是新的出站消息，不继承原消息的 remoteID、引用或审批语义。
             let queued = try chatState.queueForwardedMessage(source, to: targetUserID)
             queuedMessageID = queued.id
+            locallyQueuedMessageID = queued.id
             enqueueHistoryUpsert(queued)
             let receipt = try await deliverForwardedMessage(source, to: targetUserID)
             try chatState.updateMessageDelivery(
@@ -1088,6 +1097,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                 try chatState.queueOutgoingText(text, quote: quote)
             }
             queuedMessageID = message.id
+            locallyQueuedMessageID = message.id
             enqueueHistoryUpsert(message)
             let receipt = try await deliver(message.toUserID, message.text)
             try chatState.updateMessageDelivery(
@@ -1118,6 +1128,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                 durationSeconds: recording.durationSeconds
             )
             queuedMessageID = message.id
+            locallyQueuedMessageID = message.id
             enqueueHistoryUpsert(message)
             let receipt = try await client.sendVoice(to: message.toUserID, recording: recording)
             try chatState.updateMessageDelivery(
@@ -1148,6 +1159,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                 sizeBytes: image.sizeBytes
             )
             queuedMessageID = message.id
+            locallyQueuedMessageID = message.id
             enqueueHistoryUpsert(message)
             let receipt = try await client.sendImage(to: message.toUserID, image: image)
             try chatState.updateMessageDelivery(
@@ -1180,6 +1192,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                 sizeBytes: video.sizeBytes
             )
             queuedMessageID = message.id
+            locallyQueuedMessageID = message.id
             enqueueHistoryUpsert(message)
             let receipt = try await client.sendVideo(to: message.toUserID, video: video)
             try chatState.updateMessageDelivery(
@@ -1210,6 +1223,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                 sizeBytes: file.sizeBytes
             )
             queuedMessageID = message.id
+            locallyQueuedMessageID = message.id
             enqueueHistoryUpsert(message)
             let receipt = try await client.sendFile(to: message.toUserID, file: file)
             try chatState.updateMessageDelivery(

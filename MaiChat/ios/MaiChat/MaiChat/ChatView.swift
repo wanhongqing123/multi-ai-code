@@ -1638,6 +1638,7 @@ private struct MessageListView: View {
                     if messages.isEmpty {
                         EmptyMessagesView()
                             .padding(.top, 72)
+                            .rotationEffect(.degrees(180))
                     } else {
                         MessageHistoryStack(items: Array(messages.reversed())) { message in
                             MessageBubbleView(

@@ -1,0 +1,24 @@
+# CMake / 构建产物
+build/
+out/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+CMakeUserPresets.json
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+*.pdb
+*.ilk
+compile_commands.json
+
+# 本地运行产生的
+*.db
+*.db-wal
+*.db-shm
+*.log

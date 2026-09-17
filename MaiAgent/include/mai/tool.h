@@ -66,7 +66,7 @@ class ToolRegistry {
   bool empty() const { return tools_.empty(); }
 
   // 给模型的工具清单。
-  std::vector<ToolSchema> schemas() const;
+  std::vector<ToolSpec> specs() const;
 
  private:
   std::vector<std::unique_ptr<Tool>> tools_;

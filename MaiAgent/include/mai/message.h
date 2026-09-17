@@ -10,7 +10,7 @@
 
 namespace mai {
 
-// ── Part：一条消息里的一个片段 ──────────────────────────────────
+// ── MessagePart：一条消息里的一个片段 ──────────────────────────────────
 // 用 std::variant 而不是继承 + 虚函数：part 在流式期间高频读写，
 // variant 是值语义、无堆分配、cache 友好，而且穷尽 visit 时编译器会
 // 提醒漏掉的分支——加新 part 类型时不会悄悄漏处理。
@@ -35,11 +35,11 @@ struct ToolPart {
   ToolState state = ToolState::Pending;
 };
 
-using PartBody = std::variant<TextPart, ReasoningPart, ToolPart>;
+using MessagePartBody = std::variant<TextPart, ReasoningPart, ToolPart>;
 
-struct Part {
+struct MessagePart {
   std::string id;  // prt_...，**创建后永不改变**——界面靠它做增量更新
-  PartBody body;
+  MessagePartBody body;
   Millis created = 0;
 };
 
@@ -50,7 +50,7 @@ const char* to_string(Role r);
 struct Message {
   std::string id;  // msg_...
   Role role = Role::User;
-  std::vector<Part> parts;
+  std::vector<MessagePart> parts;
   Millis created = 0;
   Millis completed = 0;  // 0 表示还在进行中
 

@@ -7,7 +7,7 @@ namespace {
 
 // 所有事件共有的字段只在这一处填。加新事件类型时不会漏掉 id 或 time——
 // 漏了不会编译报错，只会在界面上表现成某些更新莫名其妙丢了。
-Event base(EventType type, const std::string& session_id) {
+Event make_event(EventType type, const std::string& session_id) {
   Event e;
   e.id = id::event();
   e.type = type;
@@ -18,32 +18,34 @@ Event base(EventType type, const std::string& session_id) {
 
 }  // namespace
 
-void EventEmitter::session(EventType type, const std::string& session_id,
-                           const std::string& detail) {
-  Event e = base(type, session_id);
+void EventEmitter::emit_session(EventType type, const std::string& session_id,
+                                const std::string& detail) {
+  Event e = make_event(type, session_id);
   e.detail = detail;
   bus_.publish(e);
 }
 
-void EventEmitter::message(EventType type, const std::string& session_id,
-                           const std::string& message_id) {
-  Event e = base(type, session_id);
+void EventEmitter::emit_message(EventType type, const std::string& session_id,
+                                const std::string& message_id) {
+  Event e = make_event(type, session_id);
   e.message_id = message_id;
   bus_.publish(e);
 }
 
-void EventEmitter::part(EventType type, const std::string& session_id,
-                        const std::string& message_id, const std::string& part_id) {
-  Event e = base(type, session_id);
+void EventEmitter::emit_part(EventType type, const std::string& session_id,
+                             const std::string& message_id,
+                             const std::string& part_id) {
+  Event e = make_event(type, session_id);
   e.message_id = message_id;
   e.part_id = part_id;
   bus_.publish(e);
 }
 
-void EventEmitter::delta(const std::string& session_id, const std::string& message_id,
-                         const std::string& part_id, const char* field,
-                         std::string_view chunk) {
-  Event e = base(EventType::MessagePartDelta, session_id);
+void EventEmitter::emit_delta(const std::string& session_id,
+                              const std::string& message_id,
+                              const std::string& part_id, const char* field,
+                              std::string_view chunk) {
+  Event e = make_event(EventType::MessagePartDelta, session_id);
   e.message_id = message_id;
   e.part_id = part_id;
   e.field = field;

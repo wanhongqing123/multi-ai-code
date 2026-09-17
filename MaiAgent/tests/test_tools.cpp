@@ -276,7 +276,7 @@ void test_registry() {
   }
   CHECK(reg.find("不存在的工具") == nullptr);
 
-  const auto schemas = reg.schemas();
+  const auto schemas = reg.specs();
   CHECK(schemas.size() == 4);
   for (const auto& s : schemas) {
     CHECK(!s.name.empty());
@@ -293,7 +293,7 @@ void test_registry() {
 
   // 同名覆盖而不是并存
   reg.add(make_read_tool());
-  CHECK(reg.schemas().size() == 4);
+  CHECK(reg.specs().size() == 4);
 }
 
 void test_cancel_stops_traversal() {

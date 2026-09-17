@@ -29,11 +29,11 @@ Tool* ToolRegistry::find(const std::string& name) const {
   return it == tools_.end() ? nullptr : it->get();
 }
 
-std::vector<ToolSchema> ToolRegistry::schemas() const {
-  std::vector<ToolSchema> out;
+std::vector<ToolSpec> ToolRegistry::specs() const {
+  std::vector<ToolSpec> out;
   out.reserve(tools_.size());
   for (const auto& t : tools_) {
-    ToolSchema s;
+    ToolSpec s;
     s.name = t->name();
     s.description = t->description();
     s.parameters_json = t->parameters_schema();

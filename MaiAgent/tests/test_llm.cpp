@@ -92,12 +92,12 @@ Collected run(const std::string& script, std::size_t chunk) {
   cfg.api_key = "test-key";
   auto client = make_model_client(cfg);
 
-  Completion req;
+  ModelRequest req;
   req.model = "glm-5.3";
-  Turn t;
-  t.speaker = Turn::Speaker::User;
+  ModelMessage t;
+  t.role = ModelRole::User;
   t.content = "跑一下测试";
-  req.turns.push_back(t);
+  req.messages.push_back(t);
 
   Collected c;
   StreamSink h;

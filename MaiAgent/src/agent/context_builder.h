@@ -26,7 +26,7 @@ class ContextBuilder {
 
   explicit ContextBuilder(Options options = {}) : options_(std::move(options)) {}
 
-  std::vector<Turn> build(const std::vector<Message>& history) const;
+  std::vector<ModelMessage> build(const std::vector<Message>& history) const;
 
  private:
   Options options_;

@@ -13,6 +13,7 @@
 
 #include "agent/context_builder.h"
 #include "agent/event_emitter.h"
+#include "agent/session_titler.h"
 
 namespace mai::internal {
 
@@ -31,6 +32,7 @@ class TurnRunner {
     EventEmitter* emitter = nullptr;
     const ContextBuilder* context = nullptr;
     const ToolRegistry* tools = nullptr;
+    const SessionTitler* titler = nullptr;
     std::string default_model;
     // 模型可以连着调工具，一轮对话因此会有多次请求。设上限是因为模型会绕圈——
     // 拿同样的参数反复调同一个工具，没有上限就一直烧钱。
@@ -43,15 +45,21 @@ class TurnRunner {
   void run(const std::atomic<bool>& cancel);
 
  private:
-  // 发一次请求并收完流。返回这次模型要调的工具（可能为空）。
-  std::vector<ToolInvocation> stream_once(const Completion& req,
-                                          const std::atomic<bool>& cancel);
-  // 执行一批工具调用，把结果作为 part 追加到 assistant_ 上。
-  void run_tools(const std::vector<ToolInvocation>& calls, const std::atomic<bool>& cancel);
+  // 发一次请求并收完这一次的流。返回模型这次要调的工具（可能为空）。
+  // 一轮对话里这个会被调用多次——每次工具执行完都要再问一遍模型。
+  std::vector<ToolInvocation> request_completion(const ModelRequest& req,
+                                                 const std::atomic<bool>& cancel);
 
-  void flush_text_parts();
-  void persist_and_finish(const std::atomic<bool>& cancel);
-  void maybe_name_session();
+  // 执行一批工具调用，把每个的结果作为 part 追加到 assistant_ 上。
+  void execute_tools(const std::vector<ToolInvocation>& calls,
+                     const std::atomic<bool>& cancel);
+
+  // 组装这一次要发给模型的请求。
+  ModelRequest build_request(const std::string& model_name) const;
+
+  // 把这一圈累积的文本和推理落成 part。
+  void commit_streamed_parts();
+  void finish(const std::atomic<bool>& cancel);
 
   Deps deps_;
   std::string session_id_;

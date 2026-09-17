@@ -2,21 +2,21 @@
 
 namespace mai::internal {
 
-std::vector<Turn> ContextBuilder::build(const std::vector<Message>& history) const {
-  std::vector<Turn> out;
+std::vector<ModelMessage> ContextBuilder::build(const std::vector<Message>& history) const {
+  std::vector<ModelMessage> out;
   out.reserve(history.size() + 1);
 
   if (!options_.system_prompt.empty()) {
-    Turn t;
-    t.speaker = Turn::Speaker::System;
+    ModelMessage t;
+    t.role = ModelRole::System;
     t.content = options_.system_prompt;
     out.push_back(std::move(t));
   }
 
   for (const auto& m : history) {
     if (m.role == Role::User) {
-      Turn t;
-      t.speaker = Turn::Speaker::User;
+      ModelMessage t;
+      t.role = ModelRole::User;
       t.content = m.text();
       if (!t.content.empty()) out.push_back(std::move(t));
       continue;
@@ -31,8 +31,8 @@ std::vector<Turn> ContextBuilder::build(const std::vector<Message>& history) con
     //   assistant（后续文本）
     // 所以不能把整条消息压成一个 turn——那样模型看不到调用和结果的对应关系，
     // 下一轮会重复调同一个工具。
-    Turn pending;
-    pending.speaker = Turn::Speaker::Assistant;
+    ModelMessage pending;
+    pending.role = ModelRole::Assistant;
     std::vector<const ToolPart*> batch;
 
     auto flush_batch = [&] {
@@ -46,14 +46,14 @@ std::vector<Turn> ContextBuilder::build(const std::vector<Message>& history) con
         pending.invocations.push_back(std::move(inv));
       }
       out.push_back(pending);
-      pending = Turn{};
-      pending.speaker = Turn::Speaker::Assistant;
+      pending = ModelMessage{};
+      pending.role = ModelRole::Assistant;
 
       // 再发每个调用的结果。tool_call_id 必须对得上，否则模型认不出
       // 这是哪次调用的结果。
       for (const auto* tp : batch) {
-        Turn r;
-        r.speaker = Turn::Speaker::ToolResult;
+        ModelMessage r;
+        r.role = ModelRole::ToolResult;
         r.tool_call_id = tp->call_id;
         r.content = tp->output.empty() ? "（无输出）" : tp->output;
         out.push_back(std::move(r));

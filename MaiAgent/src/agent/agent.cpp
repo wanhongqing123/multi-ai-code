@@ -9,6 +9,7 @@
 
 #include "agent/context_builder.h"
 #include "agent/event_emitter.h"
+#include "agent/session_titler.h"
 #include "agent/turn_runner.h"
 
 namespace mai {
@@ -31,6 +32,7 @@ struct Agent::Impl {
   EventBus bus;
   internal::EventEmitter emitter{bus};
   internal::ContextBuilder context;
+  internal::SessionTitler titler;
 
   mutable std::mutex mu;
   std::condition_variable cv;
@@ -59,13 +61,14 @@ struct Agent::Impl {
     d.emitter = &emitter;
     d.context = &context;
     d.tools = tools.get();
+    d.titler = &titler;
     d.default_model = options.default_model;
     d.max_iterations = options.max_tool_iterations;
     return d;
   }
 
   void retire(const std::string& session_id, const std::shared_ptr<ActiveTurn>& turn) {
-    emitter.session(EventType::SessionIdle, session_id);
+    emitter.emit_session(EventType::SessionIdle, session_id);
     {
       std::lock_guard<std::mutex> lock(mu);
       auto it = active.find(session_id);
@@ -128,7 +131,7 @@ Result<std::string> Agent::submit(const Op& op) {
           s.created = now_ms();
           s.updated = s.created;
           impl_->store->put_session(s);
-          impl_->emitter.session(EventType::SessionCreated, s.id, s.title);
+          impl_->emitter.emit_session(EventType::SessionCreated, s.id, s.title);
           return s.id;
 
         } else if constexpr (std::is_same_v<T, UpdateSession>) {
@@ -141,16 +144,16 @@ Result<std::string> Agent::submit(const Op& op) {
             title = s.title;
           });
           if (!found) return {ErrorCode::NotFound, "会话不存在"};
-          impl_->emitter.session(EventType::SessionUpdated, o.session_id, title);
+          impl_->emitter.emit_session(EventType::SessionUpdated, o.session_id, title);
           return o.session_id;
 
         } else if constexpr (std::is_same_v<T, DeleteSession>) {
           if (!impl_->store->remove_session(o.session_id))
             return {ErrorCode::NotFound, "会话不存在"};
-          impl_->emitter.session(EventType::SessionDeleted, o.session_id);
+          impl_->emitter.emit_session(EventType::SessionDeleted, o.session_id);
           return o.session_id;
 
-        } else if constexpr (std::is_same_v<T, Prompt>) {
+        } else if constexpr (std::is_same_v<T, SendPrompt>) {
           if (o.text.empty()) return {ErrorCode::InvalidInput, "消息不能为空"};
 
           Session s;
@@ -169,13 +172,13 @@ Result<std::string> Agent::submit(const Op& op) {
           user.role = Role::User;
           user.created = now_ms();
           user.completed = user.created;
-          Part up;
+          MessagePart up;
           up.id = id::part();
           up.body = TextPart{o.text};
           up.created = user.created;
           user.parts.push_back(std::move(up));
           impl_->store->put_message(o.session_id, user);
-          impl_->emitter.message(EventType::MessageUpdated, o.session_id, user.id);
+          impl_->emitter.emit_message(EventType::MessageUpdated, o.session_id, user.id);
 
           // assistant 消息此刻就建好，后续 delta 都挂在它下面。
           Message assistant;
@@ -183,7 +186,7 @@ Result<std::string> Agent::submit(const Op& op) {
           assistant.role = Role::Assistant;
           assistant.created = now_ms();
           impl_->store->put_message(o.session_id, assistant);
-          impl_->emitter.message(EventType::MessageUpdated, o.session_id, assistant.id);
+          impl_->emitter.emit_message(EventType::MessageUpdated, o.session_id, assistant.id);
 
           impl_->store->mutate_session(o.session_id,
                                        [](Session& sess) { sess.updated = now_ms(); });

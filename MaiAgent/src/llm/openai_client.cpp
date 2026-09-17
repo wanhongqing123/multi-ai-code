@@ -87,23 +87,23 @@ class InvocationAccumulator {
   std::map<int, ToolInvocation> slots_;
 };
 
-// 中立的 Speaker -> OpenAI 的 role 字符串。
+// 中立的 ModelRole -> OpenAI 的 role 字符串。
 // 这个映射是**这一层的职责**：上层用自己的词汇，翻译只发生在边界。
-const char* role_of(Turn::Speaker s) {
-  switch (s) {
-    case Turn::Speaker::System:     return "system";
-    case Turn::Speaker::User:       return "user";
-    case Turn::Speaker::Assistant:  return "assistant";
-    case Turn::Speaker::ToolResult: return "tool";
+const char* role_of(ModelRole role) {
+  switch (role) {
+    case ModelRole::System:     return "system";
+    case ModelRole::User:       return "user";
+    case ModelRole::Assistant:  return "assistant";
+    case ModelRole::ToolResult: return "tool";
   }
   return "user";
 }
 
 // ── 请求体构造：中立结构 -> OpenAI 线格式 ─────────────────────
-std::string build_body(const Completion& req) {
+std::string build_body(const ModelRequest& req) {
   json msgs = json::array();
-  for (const auto& m : req.turns) {
-    json jm{{"role", role_of(m.speaker)}};
+  for (const auto& m : req.messages) {
+    json jm{{"role", role_of(m.role)}};
     // assistant 发起调用的那条，content 可以是 null，但必须带 tool_calls。
     if (!m.content.empty() || m.invocations.empty()) jm["content"] = m.content;
     if (!m.tool_call_id.empty()) jm["tool_call_id"] = m.tool_call_id;
@@ -210,7 +210,7 @@ class ChatCompletionsClient final : public ModelClient {
 
   WireApi wire() const override { return WireApi::ChatCompletions; }
 
-  Error stream(const Completion& req, const StreamSink& sink,
+  Error stream(const ModelRequest& req, const StreamSink& sink,
                const std::atomic<bool>& cancel) override {
 
     CURL* curl = curl_easy_init();

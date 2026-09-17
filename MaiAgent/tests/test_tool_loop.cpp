@@ -167,7 +167,7 @@ void test_tool_loop_closes() {
 
   const std::string sid =
       agent->submit(CreateSession{ws.utf8_root(), "", ""}).value();
-  agent->submit(Prompt{sid, "看看 src/hello.txt 里是什么"});
+  agent->submit(SendPrompt{sid, "看看 src/hello.txt 里是什么"});
   agent->wait_idle();
 
   // 1. 模型被请求了两次——工具循环确实转了一圈
@@ -247,7 +247,7 @@ void test_tool_error_is_fed_back() {
 
   auto agent = make_agent(model);
   const std::string sid = agent->submit(CreateSession{ws.utf8_root(), "", ""}).value();
-  agent->submit(Prompt{sid, "读一下"});
+  agent->submit(SendPrompt{sid, "读一下"});
   agent->wait_idle();
 
   CHECK(model.request_count() == 2);
@@ -280,7 +280,7 @@ void test_unknown_tool_does_not_kill_the_turn() {
 
   auto agent = make_agent(model);
   const std::string sid = agent->submit(CreateSession{ws.utf8_root(), "", ""}).value();
-  agent->submit(Prompt{sid, "干点什么"});
+  agent->submit(SendPrompt{sid, "干点什么"});
   agent->wait_idle();
 
   // 整轮不能因此失败，而是把"没这个工具"告诉模型让它改
@@ -306,7 +306,7 @@ void test_path_escape_through_model() {
 
   auto agent = make_agent(model);
   const std::string sid = agent->submit(CreateSession{ws.utf8_root(), "", ""}).value();
-  agent->submit(Prompt{sid, "读一下系统密码文件"});
+  agent->submit(SendPrompt{sid, "读一下系统密码文件"});
   agent->wait_idle();
 
   const auto msgs = agent->messages(sid);
@@ -342,7 +342,7 @@ void test_iteration_cap() {
   Recorder rec;
   rec.attach(agent);
   const std::string sid = agent.submit(CreateSession{ws.utf8_root(), "", ""}).value();
-  agent.submit(Prompt{sid, "循环吧"});
+  agent.submit(SendPrompt{sid, "循环吧"});
   agent.wait_idle();
 
   // 到上限就停，不能无限烧钱
@@ -367,7 +367,7 @@ void test_no_tools_means_no_tool_field() {
   // 不给工具注册表 = 纯对话模式
   Agent agent(make_memory_store(), make_model_client(cfg), nullptr, {});
   const std::string sid = agent.submit(CreateSession{ws.utf8_root(), "", ""}).value();
-  agent.submit(Prompt{sid, "聊聊"});
+  agent.submit(SendPrompt{sid, "聊聊"});
   agent.wait_idle();
 
   // 请求里不该出现 tools 字段——模型看不到工具就不会尝试调用

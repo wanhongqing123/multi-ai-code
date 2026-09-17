@@ -32,26 +32,35 @@ struct ToolInvocation {
   std::string arguments;
 };
 
-// 给模型看的一轮发言。刻意和领域模型的 Message 分开：
+// 发给模型的一条消息里，说话的是谁。
+// 独立成枚举而不是嵌在 ModelMessage 里，是因为它会被单独传递
+// （wire 实现要把它映射成各家的 role 字符串）。
+enum class ModelRole {
+  System,
+  User,
+  Assistant,
+  ToolResult,  // 一次工具调用的结果，协议里是 role="tool"
+};
+
+// 发给模型的一条消息。刻意和领域模型的 Message 分开：
 // Message 是"我们怎么存"，这个是"模型怎么看"，两者的演化节奏不一样。
-struct Turn {
-  enum class Speaker { System, User, Assistant, ToolResult };
-  Speaker speaker = Speaker::User;
+struct ModelMessage {
+  ModelRole role = ModelRole::User;
   std::string content;
   std::string tool_call_id;                 // ToolResult 时必填
   std::vector<ToolInvocation> invocations;  // Assistant 发起调用时
 };
 
-struct ToolSchema {
+struct ToolSpec {
   std::string name;
   std::string description;
   std::string parameters_json;  // JSON Schema 原文
 };
 
-struct Completion {
+struct ModelRequest {
   std::string model;
-  std::vector<Turn> turns;
-  std::vector<ToolSchema> tools;
+  std::vector<ModelMessage> messages;
+  std::vector<ToolSpec> tools;
   double temperature = -1.0;  // < 0 表示不传，用服务端默认
 };
 
@@ -83,7 +92,7 @@ class ModelClient {
   // 阻塞直到这一轮结束。
   // cancel 置 true 会让传输尽快中断——这是 Interrupt 的落点，
   // 比等超时干净。主动取消返回的是 ErrorCode::Canceled，**不是故障**。
-  virtual Error stream(const Completion& req, const StreamSink& sink,
+  virtual Error stream(const ModelRequest& req, const StreamSink& sink,
                        const std::atomic<bool>& cancel) = 0;
 
   virtual WireApi wire() const = 0;

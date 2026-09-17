@@ -36,7 +36,7 @@ struct DeleteSession {
 };
 
 // 发一轮消息。**立刻返回**，真正的输出全部走事件流。
-struct Prompt {
+struct SendPrompt {
   std::string session_id;
   std::string text;
 };
@@ -48,7 +48,7 @@ struct Interrupt {
 
 // M4: ApprovePermission
 
-using Op = std::variant<CreateSession, UpdateSession, DeleteSession, Prompt, Interrupt>;
+using Op = std::variant<CreateSession, UpdateSession, DeleteSession, SendPrompt, Interrupt>;
 
 // ── Agent：核心的门面 ───────────────────────────────────────────
 //

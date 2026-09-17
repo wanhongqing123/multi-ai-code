@@ -95,6 +95,7 @@ add_library(maiagent STATIC
   src/agent/turn_runner.cpp
   src/agent/context_builder.cpp
   src/agent/event_emitter.cpp
+  src/agent/session_titler.cpp
 )
 target_include_directories(maiagent
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include

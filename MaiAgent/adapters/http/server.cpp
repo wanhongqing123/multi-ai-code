@@ -57,7 +57,7 @@ json to_json(const Session& s) {
   };
 }
 
-json to_json(const Part& p) {
+json to_json(const MessagePart& p) {
   json j{{"id", p.id}};
   std::visit(
       [&j](const auto& body) {
@@ -252,7 +252,7 @@ void Server::Impl::routes() {
                  }
                }
              }
-             const auto sent = agent.submit(Prompt{sid, text});
+             const auto sent = agent.submit(SendPrompt{sid, text});
              if (!sent) {
                // 核心给的是结构化错误码，这里只做一次映射。
                // 之前核心只返回空字符串，适配器得靠 busy() 反猜是哪种失败——

@@ -16,9 +16,9 @@
 #include <httplib.h>
 #include <json.hpp>
 
-#include "mai/agent/llm.h"
+#include "mai/llm.h"
 
-using namespace mai::agent;
+using namespace mai;
 using nlohmann::json;
 
 static int failures = 0;
@@ -75,8 +75,9 @@ struct FakeServer {
 struct Collected {
   std::string text;
   std::string reasoning;
-  std::vector<ToolCall> calls;
+  std::vector<ToolInvocation> calls;
   std::string error;
+  ErrorCode code = ErrorCode::Ok;
   bool done = false;
 };
 
@@ -86,28 +87,31 @@ Collected run(const std::string& script, std::size_t chunk) {
   fake.chunk = chunk;
   fake.start();
 
-  LlmConfig cfg;
+  ModelConfig cfg;
   cfg.base_url = fake.base();
   cfg.api_key = "test-key";
-  auto client = make_openai_client(cfg);
+  auto client = make_model_client(cfg);
 
-  ChatRequest req;
+  Completion req;
   req.model = "glm-5.3";
-  ChatMessage m;
-  m.role = "user";
-  m.content = "跑一下测试";
-  req.messages.push_back(m);
+  Turn t;
+  t.speaker = Turn::Speaker::User;
+  t.content = "跑一下测试";
+  req.turns.push_back(t);
 
   Collected c;
-  StreamHandler h;
+  StreamSink h;
   h.on_text = [&c](std::string_view s) { c.text.append(s); };
   h.on_reasoning = [&c](std::string_view s) { c.reasoning.append(s); };
-  h.on_tool_call = [&c](const ToolCall& t) { c.calls.push_back(t); };
-  h.on_error = [&c](const std::string& e) { c.error = e; };
-  h.on_done = [&c] { c.done = true; };
+  h.on_tool_call = [&c](const ToolInvocation& t) { c.calls.push_back(t); };
 
   const std::atomic<bool> cancel{false};
-  client->stream(req, h, cancel);
+  // 错误现在是返回值而不是回调：调用方不会漏接，而且能拿到错误码
+  // 来区分"网断了"和"用户按了停"。
+  const Error err = client->stream(req, h, cancel);
+  c.error = err.message;
+  c.code = err.code;
+  c.done = !err;
   return c;
 }
 
@@ -258,6 +262,7 @@ void test_server_error_inside_stream() {
   root["error"] = "额度不足";
   const auto c = run(sse(root), 4);
   CHECK(c.error == "额度不足");
+  CHECK(c.code == ErrorCode::Protocol);
   CHECK(!c.done);
 }
 

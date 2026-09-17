@@ -1,7 +1,7 @@
 #pragma once
 #include <string>
 
-namespace mai::agent {
+namespace mai {
 
 // ID 前缀沿用 opencode 的约定，因为现有 Electron UI 会按这些前缀做校验：
 // openapi.json 里 sessionID 是 ^ses、messageID 是 ^msg、partID 是 ^prt、事件 id 是 ^evt_。
@@ -19,4 +19,4 @@ std::string permission();
 std::string generate(const char* prefix);
 
 }  // namespace id
-}  // namespace mai::agent
+}  // namespace mai

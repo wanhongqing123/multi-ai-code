@@ -5,9 +5,9 @@
 #include <variant>
 #include <vector>
 
-#include "mai/agent/session.h"
+#include "mai/types.h"
 
-namespace mai::agent {
+namespace mai {
 
 // ── 事件 ────────────────────────────────────────────────────────
 // 只做第一阶段要的 13 种。openapi.json 里有 89 种 type，其余 76 种属于
@@ -56,6 +56,9 @@ struct Event {
 // ── 事件总线 ────────────────────────────────────────────────────
 // 核心里它是观察者接口，不是 SSE。HTTP 适配器订阅之后翻译成 SSE；
 // 移动端 / 嵌入式直接订阅，完全不经过 HTTP。
+// 线程契约：handler **在 publish 的那个线程上同步调用**，
+// 流式期间那就是网络读线程。handler 里不要做慢活，否则会拖慢模型读取；
+// 需要慢处理自己塞队列（HTTP 适配器的 SSE 就是这么做的）。
 class EventBus {
  public:
   using Handler = std::function<void(const Event&)>;
@@ -77,4 +80,4 @@ class EventBus {
   std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace mai::agent
+}  // namespace mai

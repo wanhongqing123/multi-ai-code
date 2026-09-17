@@ -3,10 +3,10 @@
 #include <string>
 #include <set>
 
-#include "mai/agent/id.h"
-#include "mai/agent/thread.h"
+#include "mai/id.h"
+#include "mai/agent.h"
 
-using namespace mai::agent;
+using namespace mai;
 
 static int failures = 0;
 #define CHECK(cond)                                                     \
@@ -35,7 +35,7 @@ static void test_id_prefix_and_monotonic() {
 }
 
 static void test_session_crud_and_events() {
-  Agent agent(make_memory_store());
+  Agent agent(make_memory_store(), nullptr);
 
   int created = 0, updated = 0, deleted = 0;
   agent.events().subscribe([&](const Event& e) {
@@ -44,7 +44,7 @@ static void test_session_crud_and_events() {
     if (e.type == EventType::SessionDeleted) ++deleted;
   });
 
-  const std::string a = agent.submit(OpCreateSession{"/tmp/a", "会话 A", "glm-5.3"});
+  const std::string a = agent.submit(CreateSession{"/tmp/a", "会话 A", "glm-5.3"}).value();
   CHECK(!a.empty());
   CHECK(created == 1);
 
@@ -54,12 +54,12 @@ static void test_session_crud_and_events() {
   CHECK(s.model == "glm-5.3");
   CHECK(s.agent == "build");
 
-  agent.submit(OpUpdateSession{a, "改了标题", "", ""});
+  agent.submit(UpdateSession{a, "改了标题", "", ""});
   CHECK(updated == 1);
   CHECK(agent.session(a, s));
   CHECK(s.title == "改了标题");
 
-  const std::string b = agent.submit(OpCreateSession{"", "", ""});
+  const std::string b = agent.submit(CreateSession{"", "", ""}).value();
   CHECK(agent.session(b, s));
   CHECK(s.title == "新会话");
 
@@ -68,24 +68,24 @@ static void test_session_crud_and_events() {
   CHECK(list.size() == 2);
   CHECK(list[0].updated >= list[1].updated);
 
-  agent.submit(OpDeleteSession{a});
+  agent.submit(DeleteSession{a});
   CHECK(deleted == 1);
   CHECK(!agent.session(a, s));
   CHECK(agent.sessions().size() == 1);
 
   // 删不存在的不该发事件
-  agent.submit(OpDeleteSession{"ses_nope"});
+  agent.submit(DeleteSession{"ses_nope"});
   CHECK(deleted == 1);
 }
 
 static void test_unsubscribe() {
-  Agent agent(make_memory_store());
+  Agent agent(make_memory_store(), nullptr);
   int n = 0;
   const auto tok = agent.events().subscribe([&](const Event&) { ++n; });
-  agent.submit(OpCreateSession{"", "x", ""});
+  agent.submit(CreateSession{"", "x", ""});
   CHECK(n == 1);
   agent.events().unsubscribe(tok);
-  agent.submit(OpCreateSession{"", "y", ""});
+  agent.submit(CreateSession{"", "y", ""});
   CHECK(n == 1);
   CHECK(agent.events().subscriber_count() == 0);
 }

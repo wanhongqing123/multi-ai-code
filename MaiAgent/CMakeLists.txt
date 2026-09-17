@@ -80,15 +80,25 @@ FetchContent_MakeAvailable(curl)
 find_package(Threads REQUIRED)
 
 # ── 核心库：纯 C++，无 Qt，无 HTTP 服务端依赖 ────────────────────
+# 按子系统分目录，和架构分层一一对应。
+# 之前 src/ 是平的，四个子系统的文件混在一起，看不出边界在哪。
 add_library(maiagent STATIC
-  src/id.cpp
-  src/session.cpp
-  src/event_bus.cpp
-  src/thread.cpp
-  src/llm_openai.cpp
+  src/util/types.cpp
+  src/util/message.cpp
+  src/util/id.cpp
+  src/event/event_bus.cpp
+  src/store/memory_store.cpp
+  src/llm/openai_client.cpp
+  src/agent/agent.cpp
+  src/agent/turn_runner.cpp
+  src/agent/context_builder.cpp
+  src/agent/event_emitter.cpp
 )
 target_include_directories(maiagent
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+  # src 加进来，好让内部头用 "agent/turn_runner.h" 这种稳定路径互相引用，
+  # 而不是一堆 "../"。这是 PRIVATE：外部看不到，也链不到内部实现头。
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nlohmann
 )
 # libcurl 是 HTTP **客户端**（核心用它调大模型），

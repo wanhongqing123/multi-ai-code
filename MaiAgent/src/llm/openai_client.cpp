@@ -1,4 +1,4 @@
-#include "mai/agent/llm.h"
+#include "mai/llm.h"
 
 #include <curl/curl.h>
 #include <json.hpp>
@@ -6,7 +6,7 @@
 #include <cstring>
 #include <map>
 
-namespace mai::agent {
+namespace mai {
 namespace {
 
 using json = nlohmann::json;
@@ -49,7 +49,7 @@ class LineBuffer {
 //   {index:0,             function:{arguments:" test\"}"}}
 // 不同服务端分片时机不一样——有的整块给，有的一个字符一个字符给，
 // 两种都要能处理，所以只能按 index 攒，等流结束再交付。
-class ToolCallAccumulator {
+class InvocationAccumulator {
  public:
   void feed(const json& delta_tool_calls) {
     if (!delta_tool_calls.is_array()) return;
@@ -70,8 +70,8 @@ class ToolCallAccumulator {
     }
   }
 
-  std::vector<ToolCall> take() {
-    std::vector<ToolCall> out;
+  std::vector<ToolInvocation> take() {
+    std::vector<ToolInvocation> out;
     out.reserve(slots_.size());
     for (auto& [_, c] : slots_) {  // map 保证按 index 有序
       if (c.name.empty()) continue;
@@ -84,20 +84,32 @@ class ToolCallAccumulator {
   bool empty() const { return slots_.empty(); }
 
  private:
-  std::map<int, ToolCall> slots_;
+  std::map<int, ToolInvocation> slots_;
 };
 
-// ── 请求体构造：原生结构体 -> JSON ─────────────────────────────
-std::string build_body(const ChatRequest& req) {
+// 中立的 Speaker -> OpenAI 的 role 字符串。
+// 这个映射是**这一层的职责**：上层用自己的词汇，翻译只发生在边界。
+const char* role_of(Turn::Speaker s) {
+  switch (s) {
+    case Turn::Speaker::System:     return "system";
+    case Turn::Speaker::User:       return "user";
+    case Turn::Speaker::Assistant:  return "assistant";
+    case Turn::Speaker::ToolResult: return "tool";
+  }
+  return "user";
+}
+
+// ── 请求体构造：中立结构 -> OpenAI 线格式 ─────────────────────
+std::string build_body(const Completion& req) {
   json msgs = json::array();
-  for (const auto& m : req.messages) {
-    json jm{{"role", m.role}};
+  for (const auto& m : req.turns) {
+    json jm{{"role", role_of(m.speaker)}};
     // assistant 发起调用的那条，content 可以是 null，但必须带 tool_calls。
-    if (!m.content.empty() || m.tool_calls.empty()) jm["content"] = m.content;
+    if (!m.content.empty() || m.invocations.empty()) jm["content"] = m.content;
     if (!m.tool_call_id.empty()) jm["tool_call_id"] = m.tool_call_id;
-    if (!m.tool_calls.empty()) {
+    if (!m.invocations.empty()) {
       json calls = json::array();
-      for (const auto& c : m.tool_calls) {
+      for (const auto& c : m.invocations) {
         calls.push_back({{"id", c.id},
                          {"type", "function"},
                          {"function", {{"name", c.name}, {"arguments", c.arguments}}}});
@@ -128,10 +140,10 @@ std::string build_body(const ChatRequest& req) {
 
 // ── curl 回调的上下文 ───────────────────────────────────────────
 struct StreamCtx {
-  const StreamHandler* handler;
+  const StreamSink* sink;
   const std::atomic<bool>* cancel;
   LineBuffer lines;
-  ToolCallAccumulator tools;
+  InvocationAccumulator tools;
   std::string error;
   bool done = false;
 };
@@ -165,13 +177,13 @@ void handle_sse_line(StreamCtx& ctx, const std::string& line) {
 
   if (delta.contains("content") && delta["content"].is_string()) {
     const auto s = delta["content"].get<std::string>();
-    if (!s.empty() && ctx.handler->on_text) ctx.handler->on_text(s);
+    if (!s.empty() && ctx.sink->on_text) ctx.sink->on_text(s);
   }
   // 推理增量各家字段名不统一，这两个是见得最多的。
   for (const char* key : {"reasoning_content", "reasoning"}) {
     if (delta.contains(key) && delta[key].is_string()) {
       const auto s = delta[key].get<std::string>();
-      if (!s.empty() && ctx.handler->on_reasoning) ctx.handler->on_reasoning(s);
+      if (!s.empty() && ctx.sink->on_reasoning) ctx.sink->on_reasoning(s);
     }
   }
   if (delta.contains("tool_calls")) ctx.tools.feed(delta["tool_calls"]);
@@ -190,22 +202,19 @@ std::size_t write_cb(char* ptr, std::size_t size, std::size_t nmemb, void* userd
   return total;
 }
 
-class OpenAiClient final : public LlmClient {
+// Chat Completions 的实现。Responses 将来是同一个接口的另一个实现，
+// 上层一行都不用改——这正是把 ModelClient 做成中立抽象的目的。
+class ChatCompletionsClient final : public ModelClient {
  public:
-  explicit OpenAiClient(LlmConfig cfg) : cfg_(std::move(cfg)) {}
+  explicit ChatCompletionsClient(ModelConfig cfg) : cfg_(std::move(cfg)) {}
 
-  bool stream(const ChatRequest& req, const StreamHandler& handler,
-              const std::atomic<bool>& cancel) override {
-    if (cfg_.wire != WireApi::ChatCompletions) {
-      if (handler.on_error) handler.on_error("Responses 线格式尚未实现（第一版只做 Chat Completions）");
-      return false;
-    }
+  WireApi wire() const override { return WireApi::ChatCompletions; }
+
+  Error stream(const Completion& req, const StreamSink& sink,
+               const std::atomic<bool>& cancel) override {
 
     CURL* curl = curl_easy_init();
-    if (!curl) {
-      if (handler.on_error) handler.on_error("curl_easy_init 失败");
-      return false;
-    }
+    if (!curl) return Error::make(ErrorCode::Internal, "curl_easy_init 失败");
 
     std::string url = cfg_.base_url;
     if (!url.empty() && url.back() == '/') url.pop_back();
@@ -224,7 +233,7 @@ class OpenAiClient final : public LlmClient {
       headers = curl_slist_append(headers, auth.c_str());
     }
 
-    StreamCtx ctx{&handler, &cancel, {}, {}, {}, false};
+    StreamCtx ctx{&sink, &cancel, {}, {}, {}, false};
 
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_POST, 1L);
@@ -246,33 +255,29 @@ class OpenAiClient final : public LlmClient {
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
 
-    if (cancel.load(std::memory_order_relaxed)) {
-      if (handler.on_done) handler.on_done();
-      return true;  // 主动取消不算错误
-    }
-    if (rc != CURLE_OK) {
-      if (handler.on_error) handler.on_error(std::string("curl: ") + curl_easy_strerror(rc));
-      return false;
-    }
-    if (status >= 400) {
-      if (handler.on_error) handler.on_error("HTTP " + std::to_string(status));
-      return false;
-    }
-    if (!ctx.error.empty()) {
-      if (handler.on_error) handler.on_error(ctx.error);
-      return false;
-    }
+    // 主动取消**不是故障**：单独一个错误码，让上层能区分"用户按了停"
+    // 和"网断了"，界面才知道该不该弹错误。
+    if (cancel.load(std::memory_order_relaxed))
+      return Error::make(ErrorCode::Canceled, "已取消");
+
+    if (rc != CURLE_OK)
+      return Error::make(ErrorCode::Network,
+                         std::string("curl: ") + curl_easy_strerror(rc));
+    if (status >= 400)
+      return Error::make(status == 401 || status == 403 ? ErrorCode::NotConfigured
+                                                        : ErrorCode::Protocol,
+                         "HTTP " + std::to_string(status));
+    if (!ctx.error.empty()) return Error::make(ErrorCode::Protocol, ctx.error);
 
     // 工具调用攒到流结束才交付——中途交付会拿到半截 JSON。
-    if (handler.on_tool_call) {
-      for (const auto& c : ctx.tools.take()) handler.on_tool_call(c);
+    if (sink.on_tool_call) {
+      for (const auto& c : ctx.tools.take()) sink.on_tool_call(c);
     }
-    if (handler.on_done) handler.on_done();
-    return true;
+    return Error::ok();
   }
 
  private:
-  LlmConfig cfg_;
+  ModelConfig cfg_;
 };
 
 struct CurlGlobal {
@@ -282,11 +287,26 @@ struct CurlGlobal {
 
 }  // namespace
 
-std::unique_ptr<LlmClient> make_openai_client(LlmConfig config) {
+std::unique_ptr<ModelClient> make_model_client(ModelConfig config) {
   // curl_global_init 不是线程安全的，用函数内静态保证只跑一次。
   static CurlGlobal once;
   (void)once;
-  return std::make_unique<OpenAiClient>(std::move(config));
+  switch (config.wire) {
+    case WireApi::ChatCompletions:
+      return std::make_unique<ChatCompletionsClient>(std::move(config));
+    case WireApi::Responses:
+      // 枚举已经立着，加实现时只动这里。
+      return nullptr;
+  }
+  return nullptr;
 }
 
-}  // namespace mai::agent
+const char* to_string(WireApi w) {
+  switch (w) {
+    case WireApi::ChatCompletions: return "chat_completions";
+    case WireApi::Responses:       return "responses";
+  }
+  return "chat_completions";
+}
+
+}  // namespace mai

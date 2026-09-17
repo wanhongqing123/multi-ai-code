@@ -1,4 +1,4 @@
-// agent loop 的测试：从 submit(OpTurnInput) 到事件流吐完的完整一圈。
+// agent loop 的测试：从 submit(Prompt) 到事件流吐完的完整一圈。
 //
 // 用假的 Chat Completions 服务端当模型，所以不需要 API key、不花钱、
 // 结果完全确定。真实 GLM 说的是同一个协议，切过去只改 base_url。
@@ -13,9 +13,9 @@
 #include <httplib.h>
 #include <json.hpp>
 
-#include "mai/agent/thread.h"
+#include "mai/agent.h"
 
-using namespace mai::agent;
+using namespace mai;
 using nlohmann::json;
 
 static int failures = 0;
@@ -153,10 +153,12 @@ struct Recorder {
 };
 
 std::unique_ptr<Agent> make_agent(const FakeModel& model) {
-  LlmConfig cfg;
+  ModelConfig cfg;
   cfg.base_url = model.base();
   cfg.api_key = "test";
-  return std::make_unique<Agent>(make_memory_store(), make_openai_client(cfg), "glm-5.3");
+  Agent::Options opts;
+  opts.default_model = "glm-5.3";
+  return std::make_unique<Agent>(make_memory_store(), make_model_client(cfg), opts);
 }
 
 // ── 用例 ────────────────────────────────────────────────────────
@@ -168,8 +170,8 @@ void test_full_turn() {
   Recorder rec;
   rec.attach(*agent);
 
-  const std::string sid = agent->submit(OpCreateSession{"/tmp", "", ""});
-  const std::string msg_id = agent->submit(OpTurnInput{sid, "你是谁？"});
+  const std::string sid = agent->submit(CreateSession{"/tmp", "", ""}).value();
+  const std::string msg_id = agent->submit(Prompt{sid, "你是谁？"}).value();
   CHECK(!msg_id.empty());
   CHECK(msg_id.rfind("msg_", 0) == 0);
 
@@ -222,8 +224,8 @@ void test_request_body_is_correct() {
   model.start();
   auto agent = make_agent(model);
 
-  const std::string sid = agent->submit(OpCreateSession{"/tmp", "", "glm-4.6"});
-  agent->submit(OpTurnInput{sid, "第一句"});
+  const std::string sid = agent->submit(CreateSession{"/tmp", "", "glm-4.6"}).value();
+  agent->submit(Prompt{sid, "第一句"});
   agent->wait_idle();
 
   const json b = json::parse(model.body(), nullptr, false);
@@ -240,10 +242,10 @@ void test_multi_turn_history() {
   model.start();
   auto agent = make_agent(model);
 
-  const std::string sid = agent->submit(OpCreateSession{"/tmp", "", ""});
-  agent->submit(OpTurnInput{sid, "第一句"});
+  const std::string sid = agent->submit(CreateSession{"/tmp", "", ""}).value();
+  agent->submit(Prompt{sid, "第一句"});
   agent->wait_idle();
-  agent->submit(OpTurnInput{sid, "第二句"});
+  agent->submit(Prompt{sid, "第二句"});
   agent->wait_idle();
 
   // 第二轮必须带上完整历史，否则模型没有上下文
@@ -266,8 +268,8 @@ void test_reasoning_goes_to_its_own_part() {
   Recorder rec;
   rec.attach(*agent);
 
-  const std::string sid = agent->submit(OpCreateSession{"/tmp", "", ""});
-  agent->submit(OpTurnInput{sid, "算一下"});
+  const std::string sid = agent->submit(CreateSession{"/tmp", "", ""}).value();
+  agent->submit(Prompt{sid, "算一下"});
   agent->wait_idle();
 
   // reasoning 和 text 必须是两个不同的 part，界面才能分开显示
@@ -291,7 +293,7 @@ void test_reasoning_goes_to_its_own_part() {
   }
 
   // reasoning 不该回灌给模型——它是草稿，会污染下一轮上下文
-  agent->submit(OpTurnInput{sid, "继续"});
+  agent->submit(Prompt{sid, "继续"});
   agent->wait_idle();
   const json b = json::parse(model.body(), nullptr, false);
   bool leaked = false;
@@ -309,13 +311,12 @@ void test_interrupt() {
   Recorder rec;
   rec.attach(*agent);
 
-  const std::string sid = agent->submit(OpCreateSession{"/tmp", "", ""});
-  agent->submit(OpTurnInput{sid, "数数"});
+  const std::string sid = agent->submit(CreateSession{"/tmp", "", ""}).value();
+  agent->submit(Prompt{sid, "数数"});
 
   std::this_thread::sleep_for(std::chrono::milliseconds(400));
   CHECK(agent->busy(sid));
-  const std::string r = agent->submit(OpInterrupt{sid});
-  CHECK(!r.empty());
+  CHECK(agent->submit(Interrupt{sid}).ok());
 
   agent->wait_idle();
   CHECK(!agent->busy(sid));
@@ -337,11 +338,11 @@ void test_busy_session_rejects_second_turn() {
   model.start();
   auto agent = make_agent(model);
 
-  const std::string sid = agent->submit(OpCreateSession{"/tmp", "", ""});
-  CHECK(!agent->submit(OpTurnInput{sid, "第一句"}).empty());
+  const std::string sid = agent->submit(CreateSession{"/tmp", "", ""}).value();
+  CHECK(agent->submit(Prompt{sid, "第一句"}).ok());
   std::this_thread::sleep_for(std::chrono::milliseconds(60));
   // 不排队而是拒绝：排队会让用户以为消息丢了，界面上看不出区别
-  CHECK(agent->submit(OpTurnInput{sid, "第二句"}).empty());
+  CHECK(!agent->submit(Prompt{sid, "第二句"}).ok());
   agent->wait_idle();
   CHECK(agent->messages(sid).size() == 2);
 }
@@ -350,17 +351,17 @@ void test_unknown_session() {
   FakeModel model;
   model.start();
   auto agent = make_agent(model);
-  CHECK(agent->submit(OpTurnInput{"ses_nope", "hi"}).empty());
-  CHECK(agent->submit(OpInterrupt{"ses_nope"}).empty());
+  CHECK(!agent->submit(Prompt{"ses_nope", "hi"}).ok());
+  CHECK(!agent->submit(Interrupt{"ses_nope"}).ok());
 }
 
 void test_no_llm_configured() {
   // M1 的空转服务端就是这个配置：没有模型客户端，但不能崩
-  Agent agent(make_memory_store());
+  Agent agent(make_memory_store(), nullptr);
   Recorder rec;
   rec.attach(agent);
-  const std::string sid = agent.submit(OpCreateSession{"/tmp", "", ""});
-  CHECK(!agent.submit(OpTurnInput{sid, "hi"}).empty());
+  const std::string sid = agent.submit(CreateSession{"/tmp", "", ""}).value();
+  CHECK(agent.submit(Prompt{sid, "hi"}).ok());
   agent.wait_idle();
   CHECK(rec.count(EventType::SessionError) == 1);
   CHECK(rec.count(EventType::SessionIdle) == 1);
@@ -374,8 +375,9 @@ void test_concurrent_sessions() {
 
   // 多个会话必须能同时跑——一个卡住不能拖累其它的
   std::vector<std::string> sids;
-  for (int i = 0; i < 4; ++i) sids.push_back(agent->submit(OpCreateSession{"/tmp", "", ""}));
-  for (const auto& sid : sids) CHECK(!agent->submit(OpTurnInput{sid, "并发测试"}).empty());
+  for (int i = 0; i < 4; ++i)
+    sids.push_back(agent->submit(CreateSession{"/tmp", "", ""}).value());
+  for (const auto& sid : sids) CHECK(agent->submit(Prompt{sid, "并发测试"}).ok());
   agent->wait_idle();
   for (const auto& sid : sids) {
     const auto msgs = agent->messages(sid);

@@ -1,11 +1,11 @@
-#include "mai/agent/id.h"
+#include "mai/id.h"
 
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <random>
 
-namespace mai::agent::id {
+namespace mai::id {
 namespace {
 
 // Crockford base32 的字母表（去掉 I L O U，避免和 1 0 混淆）。
@@ -62,4 +62,4 @@ std::string part() { return generate("prt_"); }
 std::string event() { return generate("evt_"); }
 std::string permission() { return generate("per_"); }
 
-}  // namespace mai::agent::id
+}  // namespace mai::id

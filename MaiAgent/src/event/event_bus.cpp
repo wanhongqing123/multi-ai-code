@@ -1,11 +1,11 @@
-#include "mai/agent/event.h"
+#include "mai/event.h"
 
 #include <atomic>
 #include <mutex>
 #include <shared_mutex>
 #include <unordered_map>
 
-namespace mai::agent {
+namespace mai {
 
 const char* to_wire(EventType t) {
   switch (t) {
@@ -66,4 +66,4 @@ std::size_t EventBus::subscriber_count() const {
   return impl_->handlers.size();
 }
 
-}  // namespace mai::agent
+}  // namespace mai

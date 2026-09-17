@@ -10,14 +10,30 @@
 #include <httplib.h>
 #include <json.hpp>
 
-#include "mai/agent/id.h"
+#include "mai/id.h"
 
-namespace mai::agent::http {
+namespace mai::http {
 namespace {
 
 using json = nlohmann::json;
 
 const char* role_wire(Role r) { return r == Role::User ? "user" : "assistant"; }
+
+// 核心的错误码 -> HTTP 状态码。映射只在这一处，核心本身不知道 HTTP。
+int http_status(ErrorCode c) {
+  switch (c) {
+    case ErrorCode::Ok:            return 200;
+    case ErrorCode::NotFound:      return 404;
+    case ErrorCode::Busy:          return 409;
+    case ErrorCode::InvalidInput:  return 400;
+    case ErrorCode::NotConfigured: return 503;
+    case ErrorCode::Network:
+    case ErrorCode::Protocol:      return 502;
+    case ErrorCode::Canceled:      return 200;
+    case ErrorCode::Internal:      return 500;
+  }
+  return 500;
+}
 
 const char* tool_state_wire(ToolState s) {
   switch (s) {
@@ -129,7 +145,7 @@ struct SseConn {
 
 struct Server::Impl {
   Agent& agent;
-  Options opts;
+  ServerOptions opts;
   httplib::Server srv;
   std::atomic<int> bound_port{0};
 
@@ -138,7 +154,7 @@ struct Server::Impl {
   std::atomic<std::uint64_t> next_conn{1};
   EventBus::Token bus_token = 0;
 
-  explicit Impl(Agent& a, Options o) : agent(a), opts(std::move(o)) {}
+  explicit Impl(Agent& a, ServerOptions o) : agent(a), opts(std::move(o)) {}
 
   void broadcast(const Event& e) {
     const std::string frame = serialize_event(e);  // 只 dump 一次
@@ -173,7 +189,7 @@ void Server::Impl::routes() {
   });
 
   srv.Post("/api/session", [this](const httplib::Request& req, httplib::Response& res) {
-    OpCreateSession op;
+    CreateSession op;
     if (!req.body.empty()) {
       // 客户端给的 JSON 可能缺字段甚至不是合法 JSON，不能让它把服务端搞崩。
       const json body = json::parse(req.body, nullptr, /*allow_exceptions=*/false);
@@ -183,9 +199,16 @@ void Server::Impl::routes() {
         op.model = body.value("model", std::string{});
       }
     }
-    const std::string sid = agent.submit(op);
+    const auto created = agent.submit(op);
+    if (!created) {
+      res.status = 400;
+      res.set_content(json{{"error", created.error().message},
+                           {"code", to_string(created.error().code)}}.dump(),
+                      "application/json");
+      return;
+    }
     Session s;
-    agent.session(sid, s);
+    agent.session(created.value(), s);
     res.set_content(to_json(s).dump(), "application/json");
   });
 
@@ -229,30 +252,25 @@ void Server::Impl::routes() {
                  }
                }
              }
-             if (text.empty()) {
-               res.status = 400;
-               res.set_content(json{{"error", "empty prompt"}}.dump(), "application/json");
+             const auto sent = agent.submit(Prompt{sid, text});
+             if (!sent) {
+               // 核心给的是结构化错误码，这里只做一次映射。
+               // 之前核心只返回空字符串，适配器得靠 busy() 反猜是哪种失败——
+               // 那是个竞态：猜的时候状态可能已经变了。
+               res.status = http_status(sent.error().code);
+               res.set_content(json{{"error", sent.error().message},
+                                    {"code", to_string(sent.error().code)}}.dump(),
+                               "application/json");
                return;
              }
-
-             const std::string msg_id = agent.submit(OpTurnInput{sid, text});
-             if (msg_id.empty()) {
-               // 会话不存在，或者这个会话已经有一轮在跑。
-               res.status = 409;
-               res.set_content(
-                   json{{"error", agent.busy(sid) ? "session is busy" : "session not found"}}
-                       .dump(),
-                   "application/json");
-               return;
-             }
-             res.set_content(json{{"messageID", msg_id}}.dump(), "application/json");
+             res.set_content(json{{"messageID", sent.value()}}.dump(), "application/json");
            });
 
   srv.Post(R"(/api/session/([^/]+)/interrupt)",
            [this](const httplib::Request& req, httplib::Response& res) {
              const std::string sid = req.matches[1];
-             const bool ok = !agent.submit(OpInterrupt{sid}).empty();
-             res.set_content(json{{"interrupted", ok}}.dump(), "application/json");
+             const auto r = agent.submit(Interrupt{sid});
+             res.set_content(json{{"interrupted", r.ok()}}.dump(), "application/json");
            });
 
   // ── SSE 事件流 ────────────────────────────────────────────────
@@ -300,7 +318,7 @@ void Server::Impl::routes() {
   });
 }
 
-Server::Server(Agent& agent, Options opts)
+Server::Server(Agent& agent, ServerOptions opts)
     : impl_(std::make_unique<Impl>(agent, std::move(opts))) {
   impl_->routes();
   impl_->bus_token =
@@ -340,4 +358,4 @@ std::string Server::base_url() const {
   return "http://" + impl_->opts.host + ":" + std::to_string(port());
 }
 
-}  // namespace mai::agent::http
+}  // namespace mai::http

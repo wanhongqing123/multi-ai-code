@@ -3,9 +3,9 @@
 #include <string>
 
 #include "http/server.h"
-#include "mai/agent/thread.h"
+#include "mai/agent.h"
 
-using namespace mai::agent;
+using namespace mai;
 
 namespace {
 
@@ -32,7 +32,7 @@ const char* env_or_empty(const char* name) {
 }  // namespace
 
 int main(int argc, char** argv) {
-  http::Options opts;
+  http::ServerOptions opts;
   std::string model_url;
   std::string model_key = env_or_empty("MAIAGENT_API_KEY");
   std::string model_name = "glm-5.3";
@@ -60,15 +60,17 @@ int main(int argc, char** argv) {
     }
   }
 
-  std::unique_ptr<LlmClient> llm;
+  std::unique_ptr<ModelClient> model;
   if (!model_url.empty()) {
-    LlmConfig cfg;
+    ModelConfig cfg;
     cfg.base_url = model_url;
     cfg.api_key = model_key;
-    llm = make_openai_client(cfg);
+    model = make_model_client(cfg);
   }
 
-  Agent agent(make_memory_store(), std::move(llm), model_name);
+  Agent::Options agent_opts;
+  agent_opts.default_model = model_name;
+  Agent agent(make_memory_store(), std::move(model), agent_opts);
   http::Server server(agent, opts);
 
   if (!server.bind()) {

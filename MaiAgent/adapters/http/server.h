@@ -2,11 +2,11 @@
 #include <memory>
 #include <string>
 
-#include "mai/agent/thread.h"
+#include "mai/agent.h"
 
-namespace mai::agent::http {
+namespace mai::http {
 
-struct Options {
+struct ServerOptions {
   std::string host = "127.0.0.1";
   int port = 0;   // 0 = 让系统选一个空闲端口，启动后用 port() 取实际值
 };
@@ -17,7 +17,7 @@ struct Options {
 // 进来的请求在这里解析成 Op，出去的事件在这里序列化成 SSE。
 class Server {
  public:
-  Server(Agent& agent, Options opts);
+  Server(Agent& agent, ServerOptions opts);
   ~Server();
   Server(const Server&) = delete;
   Server& operator=(const Server&) = delete;
@@ -36,4 +36,4 @@ class Server {
   std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace mai::agent::http
+}  // namespace mai::http

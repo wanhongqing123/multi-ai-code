@@ -89,6 +89,8 @@ add_library(maiagent STATIC
   src/event/event_bus.cpp
   src/store/memory_store.cpp
   src/llm/openai_client.cpp
+  src/tool/registry.cpp
+  src/tool/file_tools.cpp
   src/agent/agent.cpp
   src/agent/turn_runner.cpp
   src/agent/context_builder.cpp
@@ -143,4 +145,17 @@ if(MAIAGENT_BUILD_TESTS)
     target_link_libraries(maiagent_loop_tests PRIVATE ws2_32 crypt32)
   endif()
   add_test(NAME maiagent_loop_tests COMMAND maiagent_loop_tests)
+
+  # 工具层：路径边界 + 四个内置工具。
+  add_executable(maiagent_tool_tests tests/test_tools.cpp)
+  target_link_libraries(maiagent_tool_tests PRIVATE maiagent mai_thirdparty)
+  add_test(NAME maiagent_tool_tests COMMAND maiagent_tool_tests)
+
+  # 工具循环：模型要调工具 -> 执行 -> 回灌 -> 接着答。M3 的核心。
+  add_executable(maiagent_tool_loop_tests tests/test_tool_loop.cpp)
+  target_link_libraries(maiagent_tool_loop_tests PRIVATE maiagent mai_thirdparty)
+  if(WIN32)
+    target_link_libraries(maiagent_tool_loop_tests PRIVATE ws2_32 crypt32)
+  endif()
+  add_test(NAME maiagent_tool_loop_tests COMMAND maiagent_tool_loop_tests)
 endif()

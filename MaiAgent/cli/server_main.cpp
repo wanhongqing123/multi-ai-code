@@ -5,6 +5,8 @@
 #include "http/server.h"
 #include "mai/agent.h"
 
+#include <memory>
+
 using namespace mai;
 
 namespace {
@@ -68,9 +70,14 @@ int main(int argc, char** argv) {
     model = make_model_client(cfg);
   }
 
+  // 装上内置工具。没有工作目录的会话用不了文件类工具（工具层会明确拒绝），
+  // 但注册表本身总是装着——要不要给模型看是 ContextBuilder 的事。
+  auto tools = std::make_unique<ToolRegistry>();
+  register_builtin_tools(*tools);
+
   Agent::Options agent_opts;
   agent_opts.default_model = model_name;
-  Agent agent(make_memory_store(), std::move(model), agent_opts);
+  Agent agent(make_memory_store(), std::move(model), std::move(tools), agent_opts);
   http::Server server(agent, opts);
 
   if (!server.bind()) {

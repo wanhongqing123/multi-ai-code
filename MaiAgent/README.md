@@ -28,6 +28,8 @@ cmake --build build
 ./build/bin/maiagent_tests          # id / 会话 / 事件总线
 ./build/bin/maiagent_llm_tests      # 流式解析 + 工具调用分片聚合
 ./build/bin/maiagent_loop_tests     # agent loop 完整一圈
+./build/bin/maiagent_tool_tests     # 路径边界 + 四个内置工具
+./build/bin/maiagent_tool_loop_tests # 工具循环：调用 -> 执行 -> 回灌 -> 再答
 
 # 端到端（会自己起假模型和服务端，不需要 API key）
 python tests/e2e/m2_loop.py
@@ -45,7 +47,7 @@ Windows 上要先进 MSVC 环境（`vcvars64.bat`）。
 
 - [x] **M1 空转服务端** — health / session 增删查 / SSE 事件流（含心跳）
 - [x] **M2 能聊天** — Chat Completions 流式客户端 + agent loop + prompt/interrupt
-- [ ] M3 能干活 — 工具注册表 + read/write/glob/grep
+- [x] **M3 能干活** — 工具注册表 + read/write/glob/grep + 工具循环
 - [ ] M4 权限闸门
 - [ ] M5 SQLite 持久化 + interrupt/切模型
 - [ ] M6 脱壳验证 — 摘掉 HTTP，写一个直接链库的 CLI
@@ -55,3 +57,7 @@ Windows 上要先进 MSVC 环境（`vcvars64.bat`）。
 1. **JSON 只出现在 `adapters/`。** 核心里一律原生结构体。详见 `third_party/README.md`。
 2. **构建产物只放 `MaiAgent/build/`。** 仓库根目录那个 `build/` 是
    electron-builder 在用，里面有被 git 跟踪的图标文件，别污染它。
+3. **路径一律走 `internal::path_from_utf8` / `path_to_utf8`**（`src/util/fs_utf8.h`）。
+   MSVC 的 `fs::path` 把 narrow 字符串按当前 ANSI 代码页解释，中文环境是 GBK，
+   而我们的路径全来自 JSON、是 UTF-8。直接 `fs::path(s)` 会让中文路径出错——
+   实测是进程直接挂掉，不是返回错误。测试里写中文路径要用 `std::filesystem::u8path`。

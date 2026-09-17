@@ -9,6 +9,7 @@
 #include "mai/message.h"
 #include "mai/session.h"
 #include "mai/store.h"
+#include "mai/tool.h"
 #include "mai/types.h"
 
 namespace mai {
@@ -62,6 +63,9 @@ class Agent {
  public:
   struct Options {
     std::string default_model = "glm-5.3";
+    // 模型可以连着调工具，一轮对话因此会有多次请求。设上限是因为模型会绕圈——
+    // 拿同样的参数反复调同一个工具，没有上限就一直烧钱。
+    int max_tool_iterations = 12;
     // 每个会话同时只跑一轮。第二条来了直接拒绝而不是排队——
     // 排队会让用户以为消息丢了，界面上看不出区别。
     bool reject_when_busy = true;
@@ -69,8 +73,9 @@ class Agent {
 
   // model 可以为空：那样 Prompt 会以 NotConfigured 收场，
   // 但其余功能照常——空转模式就是这么跑的。
+  // tools 为空就是纯对话模式：模型收不到任何工具，也就不会尝试调用。
   Agent(std::unique_ptr<SessionStore> store, std::unique_ptr<ModelClient> model,
-        Options options = {});
+        std::unique_ptr<ToolRegistry> tools = nullptr, Options options = {});
   ~Agent();
   Agent(const Agent&) = delete;
   Agent& operator=(const Agent&) = delete;

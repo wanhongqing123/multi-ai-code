@@ -25,6 +25,7 @@ struct ActiveTurn {
 struct Agent::Impl {
   std::unique_ptr<SessionStore> store;
   std::unique_ptr<ModelClient> model;
+  std::unique_ptr<ToolRegistry> tools;
   Options options;
 
   EventBus bus;
@@ -57,7 +58,9 @@ struct Agent::Impl {
     d.model = model.get();
     d.emitter = &emitter;
     d.context = &context;
+    d.tools = tools.get();
     d.default_model = options.default_model;
+    d.max_iterations = options.max_tool_iterations;
     return d;
   }
 
@@ -78,10 +81,11 @@ struct Agent::Impl {
 };
 
 Agent::Agent(std::unique_ptr<SessionStore> store, std::unique_ptr<ModelClient> model,
-             Options options)
+             std::unique_ptr<ToolRegistry> tools, Options options)
     : impl_(std::make_unique<Impl>()) {
   impl_->store = std::move(store);
   impl_->model = std::move(model);
+  impl_->tools = std::move(tools);
   impl_->options = std::move(options);
 }
 

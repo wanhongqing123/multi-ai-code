@@ -35,7 +35,7 @@ static void test_id_prefix_and_monotonic() {
 }
 
 static void test_session_crud_and_events() {
-  Agent agent(make_memory_store(), nullptr);
+  Agent agent(make_memory_store(), nullptr, nullptr);
 
   int created = 0, updated = 0, deleted = 0;
   agent.events().subscribe([&](const Event& e) {
@@ -79,7 +79,7 @@ static void test_session_crud_and_events() {
 }
 
 static void test_unsubscribe() {
-  Agent agent(make_memory_store(), nullptr);
+  Agent agent(make_memory_store(), nullptr, nullptr);
   int n = 0;
   const auto tok = agent.events().subscribe([&](const Event&) { ++n; });
   agent.submit(CreateSession{"", "x", ""});

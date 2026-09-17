@@ -158,7 +158,7 @@ std::unique_ptr<Agent> make_agent(const FakeModel& model) {
   cfg.api_key = "test";
   Agent::Options opts;
   opts.default_model = "glm-5.3";
-  return std::make_unique<Agent>(make_memory_store(), make_model_client(cfg), opts);
+  return std::make_unique<Agent>(make_memory_store(), make_model_client(cfg), nullptr, opts);
 }
 
 // ── 用例 ────────────────────────────────────────────────────────

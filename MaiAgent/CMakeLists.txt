@@ -125,4 +125,12 @@ if(MAIAGENT_BUILD_TESTS)
     target_link_libraries(maiagent_llm_tests PRIVATE ws2_32 crypt32)
   endif()
   add_test(NAME maiagent_llm_tests COMMAND maiagent_llm_tests)
+
+  # agent loop 的完整一圈：submit -> 流式 -> 事件 -> 落库。
+  add_executable(maiagent_loop_tests tests/test_loop.cpp)
+  target_link_libraries(maiagent_loop_tests PRIVATE maiagent mai_thirdparty)
+  if(WIN32)
+    target_link_libraries(maiagent_loop_tests PRIVATE ws2_32 crypt32)
+  endif()
+  add_test(NAME maiagent_loop_tests COMMAND maiagent_loop_tests)
 endif()

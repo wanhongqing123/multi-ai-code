@@ -208,6 +208,53 @@ void Server::Impl::routes() {
             res.set_content(arr.dump(), "application/json");
           });
 
+  // 发一轮消息。**立刻返回**——真正的输出全部走 /api/event 的事件流。
+  // 这里如果同步等 agent 跑完，HTTP 请求会挂几十秒，界面就卡死了。
+  srv.Post(R"(/api/session/([^/]+)/prompt)",
+           [this](const httplib::Request& req, httplib::Response& res) {
+             const std::string sid = req.matches[1];
+             std::string text;
+             const json body = json::parse(req.body, nullptr, /*allow_exceptions=*/false);
+             if (body.is_object()) {
+               // UI 可能给 {"text": "..."}，也可能给 opencode 那种
+               // {"parts":[{"type":"text","text":"..."}]}，两种都认。
+               if (body.contains("text") && body["text"].is_string()) {
+                 text = body["text"].get<std::string>();
+               } else if (body.contains("parts") && body["parts"].is_array()) {
+                 for (const auto& part : body["parts"]) {
+                   if (part.is_object() && part.value("type", "") == "text") {
+                     if (!text.empty()) text += "\n";
+                     text += part.value("text", std::string{});
+                   }
+                 }
+               }
+             }
+             if (text.empty()) {
+               res.status = 400;
+               res.set_content(json{{"error", "empty prompt"}}.dump(), "application/json");
+               return;
+             }
+
+             const std::string msg_id = agent.submit(OpTurnInput{sid, text});
+             if (msg_id.empty()) {
+               // 会话不存在，或者这个会话已经有一轮在跑。
+               res.status = 409;
+               res.set_content(
+                   json{{"error", agent.busy(sid) ? "session is busy" : "session not found"}}
+                       .dump(),
+                   "application/json");
+               return;
+             }
+             res.set_content(json{{"messageID", msg_id}}.dump(), "application/json");
+           });
+
+  srv.Post(R"(/api/session/([^/]+)/interrupt)",
+           [this](const httplib::Request& req, httplib::Response& res) {
+             const std::string sid = req.matches[1];
+             const bool ok = !agent.submit(OpInterrupt{sid}).empty();
+             res.set_content(json{{"interrupted", ok}}.dump(), "application/json");
+           });
+
   // ── SSE 事件流 ────────────────────────────────────────────────
   srv.Get("/api/event", [this](const httplib::Request&, httplib::Response& res) {
     auto conn = std::make_shared<SseConn>();

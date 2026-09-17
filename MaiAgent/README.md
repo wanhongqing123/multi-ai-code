@@ -24,9 +24,19 @@ HTTP 只是贴在外面的一层——移动端和嵌入式直接链库，不经
 ```bash
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
-./build/bin/maiagent_tests          # 单元测试
-./build/bin/maiagent-server         # 起服务，端口会打印出来
-python tests/e2e/m1_smoke.py http://127.0.0.1:<port>
+# 三套单元测试
+./build/bin/maiagent_tests          # id / 会话 / 事件总线
+./build/bin/maiagent_llm_tests      # 流式解析 + 工具调用分片聚合
+./build/bin/maiagent_loop_tests     # agent loop 完整一圈
+
+# 端到端（会自己起假模型和服务端，不需要 API key）
+python tests/e2e/m2_loop.py
+
+# 手动起服务
+./build/bin/maiagent-server --help
+./build/bin/maiagent-server                              # 空转，不接模型
+./build/bin/maiagent-server --model-url http://127.0.0.1:11434/v1 --model qwen2.5
+./build/bin/maiagent-server --model-url https://open.bigmodel.cn/api/paas/v4                            --model-key $MAIAGENT_API_KEY --model glm-5.3
 ```
 
 Windows 上要先进 MSVC 环境（`vcvars64.bat`）。
@@ -34,7 +44,7 @@ Windows 上要先进 MSVC 环境（`vcvars64.bat`）。
 ## 进度
 
 - [x] **M1 空转服务端** — health / session 增删查 / SSE 事件流（含心跳）
-- [ ] M2 能聊天 — OpenAI Chat Completions 客户端 + prompt + 流式
+- [x] **M2 能聊天** — Chat Completions 流式客户端 + agent loop + prompt/interrupt
 - [ ] M3 能干活 — 工具注册表 + read/write/glob/grep
 - [ ] M4 权限闸门
 - [ ] M5 SQLite 持久化 + interrupt/切模型

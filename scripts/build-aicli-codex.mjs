@@ -34,21 +34,27 @@ const outputDir = join(repoRoot, 'bin', 'aicli', 'codex', platform)
 const CODEX_BINARIES = [
   { name: 'codex', platforms: null, bundled: true },
   { name: 'codex-code-mode-host', platforms: null, bundled: true },
-  // 以下两个只在 Windows 沙箱的 elevated 级别用得上，**当前不打包**（合计约 23.7MB）。
+  // 以下两个只服务于 Windows 沙箱的 elevated 档位。**那一档已经在子仓里整体关掉了**，
+  // 所以它们现在连构建都不会发生（bundled: false 只是顺带成立）。
   //
-  // 三个级别里只有 elevated 会碰它们：
+  // 三个档位里只有 elevated 会碰它们：
   //   disabled    不隔离
   //   unelevated  以当前用户身份跑、受限令牌 —— 直接拉起子进程，不经过 command-runner
   //   elevated    以一个专门创建的 Windows 用户跑 —— setup 负责建这个用户，
-  //               command-runner 以该用户身份接 IPC 并拉起子进程
+  //               command-runner 以该用户身份接 IPC 并拉起子进程。
+  //               需要独立 exe 的原因是进程启动后无法改变自己的用户身份，
+  //               换用户只能靠 CreateProcessAsUser 拉一个新进程。
   //
-  // 而 elevated 只能靠 config.toml 里显式写 `[windows] sandbox = "elevated"` 选中：
-  // 走 feature 那条路的 Feature::WindowsSandboxElevated 是
-  // `stage: Removed, default_enabled: false`（features/src/lib.rs），已经不是活开关。
+  // 关闭的方式（子仓 multi-ai/im-bridge，提交 88fa7cd7b）：
+  //   codex-rs/config/src/types.rs        手写 Deserialize，遇到 elevated 直接报错
+  //   codex-rs/windows-sandbox-rs/Cargo.toml  注释掉这两个 [[bin]]
+  //   codex-rs/windows-sandbox-rs/build.rs    跟着短路（否则 rustc-link-arg-bin 会让构建失败）
   //
-  // 所以默认配置下它们一次都不会被调用，纯占体积。要开 elevated 时把 bundled 改成 true
-  // 重建即可——留在表里而不是删掉，是为了保住上面这段结论，省得下次有人重新查一遍，
+  // 要恢复：撤销上面三处，并把这里的 bundled 改回 true。
+  // 留在表里而不是从清单删掉，是为了保住这段结论，省得下次有人重新查一遍，
   // 或者反过来又漏掉它们（这个坑已经踩过两次）。
+  //
+  // 回归检查：node scripts/verify-codex-no-elevated.mjs
   { name: 'codex-windows-sandbox-setup', platforms: ['win32'], bundled: false },
   { name: 'codex-command-runner', platforms: ['win32'], bundled: false }
 ]

@@ -10,13 +10,11 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
 endif()
 
-# 产物统一放一处，方便 Electron 那边指过来。
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
 if(MSVC)
   add_compile_options(/utf-8 /W4 /permissive- /EHsc)
-  # httplib 在 MSVC 下会告一堆无关紧要的，先压掉这几个具体的，不整体关警告。
   add_compile_options(/wd4100 /wd4996)
   add_compile_definitions(_CRT_SECURE_NO_WARNINGS NOMINMAX WIN32_LEAN_AND_MEAN)
 else()
@@ -37,13 +35,11 @@ target_include_directories(mai_thirdparty INTERFACE
 #
 # 离线构建：把 curl-8.11.1 解好放到某处，configure 时加
 #   -DFETCHCONTENT_SOURCE_DIR_CURL=/path/to/curl-8.11.1
-# 就不会去下载。
 #
 # TLS 后端按平台挑，不是一律 OpenSSL：
-#   Windows  Schannel —— 零额外依赖，而且走系统证书库，
-#                        公司代理 / MITM 证书自动认（OpenSSL 要自己维护 CA bundle）
+#   Windows  Schannel —— 零额外依赖，走系统证书库，公司代理的证书自动认
 #   Linux    OpenSSL  —— 发行版自带
-#   嵌入式   mbedTLS  —— OpenSSL 三五兆，mbedTLS 两百来 K，差一个量级
+#   嵌入式   mbedTLS  —— OpenSSL 三五兆，mbedTLS 两百来 K
 include(FetchContent)
 
 set(BUILD_CURL_EXE      OFF CACHE BOOL "" FORCE)
@@ -64,8 +60,6 @@ set(CURL_ENABLE_SSL     ON  CACHE BOOL "" FORCE)
 if(WIN32)
   set(CURL_USE_SCHANNEL ON  CACHE BOOL "" FORCE)
   set(CURL_USE_OPENSSL  OFF CACHE BOOL "" FORCE)
-elseif(APPLE)
-  set(CURL_USE_OPENSSL  ON  CACHE BOOL "" FORCE)
 else()
   set(CURL_USE_OPENSSL  ON  CACHE BOOL "" FORCE)
 endif()
@@ -80,38 +74,39 @@ FetchContent_MakeAvailable(curl)
 find_package(Threads REQUIRED)
 
 # ── 核心库：纯 C++，无 Qt，无 HTTP 服务端依赖 ────────────────────
-# 按子系统分目录，和架构分层一一对应。
-# 之前 src/ 是平的，四个子系统的文件混在一起，看不出边界在哪。
+# 文件名一律大驼峰 + Mai 前缀，见 docs/CodingStyle.md。
 add_library(maiagent STATIC
-  src/util/types.cpp
-  src/util/message.cpp
-  src/util/id.cpp
-  src/event/event_bus.cpp
-  src/store/memory_store.cpp
-  src/llm/openai_client.cpp
-  src/tool/registry.cpp
-  src/tool/file_tools.cpp
-  src/agent/agent.cpp
-  src/agent/turn_runner.cpp
-  src/agent/context_builder.cpp
-  src/agent/event_emitter.cpp
-  src/agent/session_titler.cpp
+  src/MaiTime.cpp
+  src/MaiError.cpp
+  src/MaiSession.cpp
+  src/MaiMessage.cpp
+  src/MaiIdGenerator.cpp
+  src/MaiEventBus.cpp
+  src/MaiMemoryStore.cpp
+  src/MaiOpenAiClient.cpp
+  src/MaiPathUtf8.cpp
+  src/MaiPathGuard.cpp
+  src/MaiTool.cpp
+  src/MaiFileTools.cpp
+  src/MaiAgent.cpp
+  src/MaiTurnRunner.cpp
+  src/MaiContextBuilder.cpp
+  src/MaiEventEmitter.cpp
+  src/MaiSessionTitler.cpp
 )
 target_include_directories(maiagent
-  PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
-  # src 加进来，好让内部头用 "agent/turn_runner.h" 这种稳定路径互相引用，
-  # 而不是一堆 "../"。这是 PRIVATE：外部看不到，也链不到内部实现头。
+  PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}/include
+  # src 只对自己可见：内部头（MaiTurnRunner.h 等）不是公开 API。
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nlohmann
 )
 # libcurl 是 HTTP **客户端**（核心用它调大模型），
-# 和 adapters/http 里的 cpp-httplib（HTTP **服务端**）是两回事，两个都要。
+# 和适配器里的 cpp-httplib（HTTP **服务端**）是两回事，两个都要。
 target_link_libraries(maiagent PUBLIC Threads::Threads PRIVATE CURL::libcurl)
 
-# ── HTTP 适配器：把核心包成 REST + SSE，喂现有的 Electron UI ──────
-# 注意这是 HTTP 服务端。核心里调大模型用的 HTTP 客户端是另一回事（M2 引入 libcurl）。
+# ── HTTP 适配器：把核心包成 REST + SSE，喂现有的 Electron 界面 ────
 add_library(maiagent_http STATIC
-  adapters/http/server.cpp
+  adapters/MaiHttpServer.cpp
 )
 target_include_directories(maiagent_http PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/adapters)
 target_link_libraries(maiagent_http PUBLIC maiagent mai_thirdparty)
@@ -119,44 +114,27 @@ if(WIN32)
   target_link_libraries(maiagent_http PUBLIC ws2_32 crypt32)
 endif()
 
-# ── 可执行：HTTP 服务端 ─────────────────────────────────────────
-add_executable(maiagent-server cli/server_main.cpp)
+add_executable(maiagent-server cli/MaiServerMain.cpp)
 target_link_libraries(maiagent-server PRIVATE maiagent_http)
 
 # ── 测试 ────────────────────────────────────────────────────────
 option(MAIAGENT_BUILD_TESTS "Build MaiAgent tests" ON)
 if(MAIAGENT_BUILD_TESTS)
   enable_testing()
-  add_executable(maiagent_tests tests/test_main.cpp)
-  target_link_libraries(maiagent_tests PRIVATE maiagent mai_thirdparty)
-  add_test(NAME maiagent_tests COMMAND maiagent_tests)
 
-  # LLM 测试要起一个假的 Chat Completions 服务端，所以也要 httplib 和 ws2_32。
-  add_executable(maiagent_llm_tests tests/test_llm.cpp)
-  target_link_libraries(maiagent_llm_tests PRIVATE maiagent mai_thirdparty)
-  if(WIN32)
-    target_link_libraries(maiagent_llm_tests PRIVATE ws2_32 crypt32)
-  endif()
-  add_test(NAME maiagent_llm_tests COMMAND maiagent_llm_tests)
-
-  # agent loop 的完整一圈：submit -> 流式 -> 事件 -> 落库。
-  add_executable(maiagent_loop_tests tests/test_loop.cpp)
-  target_link_libraries(maiagent_loop_tests PRIVATE maiagent mai_thirdparty)
-  if(WIN32)
-    target_link_libraries(maiagent_loop_tests PRIVATE ws2_32 crypt32)
-  endif()
-  add_test(NAME maiagent_loop_tests COMMAND maiagent_loop_tests)
-
-  # 工具层：路径边界 + 四个内置工具。
-  add_executable(maiagent_tool_tests tests/test_tools.cpp)
-  target_link_libraries(maiagent_tool_tests PRIVATE maiagent mai_thirdparty)
-  add_test(NAME maiagent_tool_tests COMMAND maiagent_tool_tests)
-
-  # 工具循环：模型要调工具 -> 执行 -> 回灌 -> 接着答。M3 的核心。
-  add_executable(maiagent_tool_loop_tests tests/test_tool_loop.cpp)
-  target_link_libraries(maiagent_tool_loop_tests PRIVATE maiagent mai_thirdparty)
-  if(WIN32)
-    target_link_libraries(maiagent_tool_loop_tests PRIVATE ws2_32 crypt32)
-  endif()
-  add_test(NAME maiagent_tool_loop_tests COMMAND maiagent_tool_loop_tests)
+  # 测试要碰内部头（MaiPathUtf8 等），所以也要 src 的 include 路径。
+  foreach(test_name
+      MaiCoreTests          # id / 会话 / 事件总线
+      MaiModelClientTests   # 流式解析 + 工具调用分片聚合
+      MaiTurnRunnerTests    # 一轮对话的完整生命周期
+      MaiToolTests          # 路径边界 + 四个内置工具
+      MaiToolLoopTests)     # 工具循环：调用 -> 执行 -> 回灌 -> 再答
+    add_executable(${test_name} tests/${test_name}.cpp)
+    target_link_libraries(${test_name} PRIVATE maiagent mai_thirdparty)
+    target_include_directories(${test_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    if(WIN32)
+      target_link_libraries(${test_name} PRIVATE ws2_32 crypt32)
+    endif()
+    add_test(NAME ${test_name} COMMAND ${test_name})
+  endforeach()
 endif()

@@ -1,0 +1,28 @@
+# 和 MaiChat/desktop 对齐：4 空格缩进，访问说明符顶格，指针/引用贴类型。
+# 有这份文件，规范就不只是文档——`clang-format -i` 能直接把它落实。
+Language:        Cpp
+BasedOnStyle:    Google
+
+IndentWidth:     4
+TabWidth:        4
+UseTab:          Never
+ColumnLimit:     100
+
+# public: / private: 顶格，和 MaiChat 一致
+AccessModifierOffset: -4
+IndentAccessModifiers: false
+
+# const QString& 而不是 const QString &
+PointerAlignment: Left
+DerivePointerAlignment: false
+
+# 注释里的 ── 分隔线和对齐的行尾注释不要被重排
+ReflowComments:  false
+AlignTrailingComments: true
+
+# include 分组由我们自己按规范第 7 条排，不让工具打乱
+SortIncludes:    false
+
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortCaseLabelsOnASingleLine: true

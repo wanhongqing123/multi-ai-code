@@ -94,13 +94,13 @@ Windows 上要先进 MSVC 环境（`vcvars64.bat`）。
 工具卡进入 pending 状态          message.part.updated
 核心广播"有人在等授权"            permission.asked   { permissionID, partID }
         ↓  这一轮在这里阻塞（只挂住它自己那个线程）
-界面裁决                          POST /api/permission/<id>  {"decision": "once"}
+界面裁决                          POST /api/permission/<id>  {"decision": "approved"}
 核心广播裁决结果                  permission.replied { permissionID, detail }
 工具卡进入 running 并真正执行      message.part.updated
 ```
 
-`decision` 三选一：`once`（就这一次）、`always`（这个会话里这个工具以后别问了）、
-`reject`。**认不出来的取值一律 400**，不会兜底成放行——闸门不该被一个错别字拆掉。
+`decision` 三选一：`approved`（就这一次）、`approved_for_session`（这个会话里这个工具以后别问了）、
+`denied`。**认不出来的取值一律 400**，不会兜底成放行——闸门不该被一个错别字拆掉。
 
 `GET /api/permission` 列出当前所有待裁决的请求。界面重连之后必须拉一次：
 SSE 断开的那个窗口期里发出的 `permission.asked` 是看不到的，只靠事件流会

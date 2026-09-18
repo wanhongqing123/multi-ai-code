@@ -7,6 +7,28 @@
 
 ---
 
+## 0. 拿不准的时候看 codex
+
+**参照系是 codex，不是 opencode。** 形状、命名、协议取值有疑问，先去
+`third_party/aicli/codex/codex-rs` 里看它怎么做的。
+
+已经照着它来的：
+
+| 我们 | codex |
+|---|---|
+| `MaiAgent::submit(MaiOperation)` + 事件流 | `codex_thread.rs` 的 `submit(op)` / `next_event()` |
+| `MaiPermissionDecision` 的取值 | `protocol.rs` 的 `ReviewDecision` |
+| `MaiOpenAiClient` 里的行缓冲 | `ollama/src/line_buffer.rs` |
+
+**opencode 只在一个地方还有影响力：线上 id 的前缀**（`ses_` / `msg_` /
+`prt_` / `evt_` / `per_`）。那不是我们选的风格，是现在这个 Electron 界面
+（派生自 opencode）在两处硬校验：`packages/sdk/openapi.json` 里的 pattern，
+以及路由里的 `startsWith("ses")`。属于被迫兼容，不是设计偏好——
+`MaiIdGenerator.h` 的注释里写明了，并记着 codex 用的是裸 UUIDv7。
+
+抄之前先核对真实源码，别照着印象写。这条踩过坑：曾经把"codex 接不了智谱"
+当成事实讲出去，而实际上人家早就加了 Responses 端点。
+
 ## 1. 文件命名
 
 **大驼峰，`Mai` 前缀，`.h` / `.cpp` 成对同名。**

@@ -22,7 +22,7 @@ struct ActiveTurn {
 
 }  // namespace
 
-struct MaiAgent::Implementation {
+struct MaiAgent::Runtime {
     std::unique_ptr<MaiSessionStore> store;
     std::unique_ptr<MaiModelClient> model;
     std::unique_ptr<MaiToolRegistry> tools;
@@ -40,7 +40,7 @@ struct MaiAgent::Implementation {
     std::condition_variable turnFinished;
     std::unordered_map<std::string, std::shared_ptr<ActiveTurn>> active;
 
-    ~Implementation() {
+    ~Runtime() {
         // 析构时把所有在跑的轮次叫停并等它们退出，
         // 否则工作线程会访问已经销毁的 store/emitter。
         std::vector<std::shared_ptr<ActiveTurn>> pending;
@@ -95,50 +95,50 @@ struct MaiAgent::Implementation {
 
 MaiAgent::MaiAgent(std::unique_ptr<MaiSessionStore> store, std::unique_ptr<MaiModelClient> model,
                    std::unique_ptr<MaiToolRegistry> tools, Options options)
-    : mImplementation(std::make_unique<Implementation>()) {
-    mImplementation->store = std::move(store);
-    mImplementation->model = std::move(model);
-    mImplementation->tools = std::move(tools);
-    mImplementation->options = std::move(options);
+    : mRuntime(std::make_unique<Runtime>()) {
+    mRuntime->store = std::move(store);
+    mRuntime->model = std::move(model);
+    mRuntime->tools = std::move(tools);
+    mRuntime->options = std::move(options);
 
     MaiPermissionGate::Options gateOptions;
-    gateOptions.timeoutMs = mImplementation->options.permissionTimeoutMs;
-    mImplementation->permissions = std::make_unique<MaiPermissionGate>(gateOptions);
+    gateOptions.timeoutMs = mRuntime->options.permissionTimeoutMs;
+    mRuntime->permissions = std::make_unique<MaiPermissionGate>(gateOptions);
 }
 
 MaiAgent::~MaiAgent() = default;
 
 std::vector<MaiSession> MaiAgent::listSessions() const {
-    return mImplementation->store->listSessions();
+    return mRuntime->store->listSessions();
 }
 
 bool MaiAgent::getSession(const std::string& id, MaiSession& out) const {
-    return mImplementation->store->getSession(id, out);
+    return mRuntime->store->getSession(id, out);
 }
 
 std::vector<MaiMessage> MaiAgent::listMessages(const std::string& sessionId) const {
-    return mImplementation->store->listMessages(sessionId);
+    return mRuntime->store->listMessages(sessionId);
 }
 
 std::vector<MaiPermissionRequest> MaiAgent::listPendingPermissions() const {
-    return mImplementation->permissions->listPending();
+    return mRuntime->permissions->listPending();
 }
 
 bool MaiAgent::isBusy(const std::string& sessionId) const {
-    std::lock_guard<std::mutex> lock(mImplementation->mutex);
-    return mImplementation->active.count(sessionId) > 0;
+    std::lock_guard<std::mutex> lock(mRuntime->mutex);
+    return mRuntime->active.count(sessionId) > 0;
 }
 
 void MaiAgent::waitIdle() {
-    std::unique_lock<std::mutex> lock(mImplementation->mutex);
-    mImplementation->turnFinished.wait(lock, [this] { return mImplementation->active.empty(); });
+    std::unique_lock<std::mutex> lock(mRuntime->mutex);
+    mRuntime->turnFinished.wait(lock, [this] { return mRuntime->active.empty(); });
 }
 
 MaiEventBus& MaiAgent::eventBus() {
-    return mImplementation->bus;
+    return mRuntime->bus;
 }
 const MaiEventBus& MaiAgent::eventBus() const {
-    return mImplementation->bus;
+    return mRuntime->bus;
 }
 
 MaiResult<std::string> MaiAgent::submit(const MaiOperation& operation) {
@@ -154,15 +154,15 @@ MaiResult<std::string> MaiAgent::submit(const MaiOperation& operation) {
                 session.model = operation.model;
                 session.created = MaiTime::getCurrentTime();
                 session.updated = session.created;
-                mImplementation->store->putSession(session);
-                mImplementation->emitter.emitSession(MaiEventType::SessionCreated, session.id,
-                                                     session.title);
+                mRuntime->store->putSession(session);
+                mRuntime->emitter.emitSession(MaiEventType::SessionCreated, session.id,
+                                              session.title);
                 return session.id;
 
             } else if constexpr (std::is_same_v<T, MaiUpdateSession>) {
                 std::string title;
-                const bool found = mImplementation->store->mutateSession(
-                    operation.sessionId, [&](MaiSession& session) {
+                const bool found =
+                    mRuntime->store->mutateSession(operation.sessionId, [&](MaiSession& session) {
                         if (!operation.title.empty()) session.title = operation.title;
                         if (!operation.model.empty()) session.model = operation.model;
                         if (!operation.agent.empty()) session.agent = operation.agent;
@@ -170,19 +170,18 @@ MaiResult<std::string> MaiAgent::submit(const MaiOperation& operation) {
                         title = session.title;
                     });
                 if (!found) return {MaiErrorCode::NotFound, "session not found"};
-                mImplementation->emitter.emitSession(MaiEventType::SessionUpdated,
-                                                     operation.sessionId, title);
+                mRuntime->emitter.emitSession(MaiEventType::SessionUpdated, operation.sessionId,
+                                              title);
                 return operation.sessionId;
 
             } else if constexpr (std::is_same_v<T, MaiDeleteSession>) {
-                if (!mImplementation->store->removeSession(operation.sessionId))
+                if (!mRuntime->store->removeSession(operation.sessionId))
                     return {MaiErrorCode::NotFound, "session not found"};
                 // 会话没了，它还在等的授权就没意义了；"本会话都允许"也要一起清掉，
                 // 否则以后建一个同 id 的会话会白捡上一个的授权。
-                mImplementation->permissions->cancelSession(operation.sessionId);
-                mImplementation->permissions->forgetSession(operation.sessionId);
-                mImplementation->emitter.emitSession(MaiEventType::SessionDeleted,
-                                                     operation.sessionId);
+                mRuntime->permissions->cancelSession(operation.sessionId);
+                mRuntime->permissions->forgetSession(operation.sessionId);
+                mRuntime->emitter.emitSession(MaiEventType::SessionDeleted, operation.sessionId);
                 return operation.sessionId;
 
             } else if constexpr (std::is_same_v<T, MaiSendPrompt>) {
@@ -190,13 +189,13 @@ MaiResult<std::string> MaiAgent::submit(const MaiOperation& operation) {
                     return {MaiErrorCode::InvalidInput, "prompt text must not be empty"};
 
                 MaiSession session;
-                if (!mImplementation->store->getSession(operation.sessionId, session))
+                if (!mRuntime->store->getSession(operation.sessionId, session))
                     return {MaiErrorCode::NotFound, "session not found"};
 
                 {
-                    std::lock_guard<std::mutex> lock(mImplementation->mutex);
-                    if (mImplementation->options.rejectWhenBusy &&
-                        mImplementation->active.count(operation.sessionId))
+                    std::lock_guard<std::mutex> lock(mRuntime->mutex);
+                    if (mRuntime->options.rejectWhenBusy &&
+                        mRuntime->active.count(operation.sessionId))
                         return {MaiErrorCode::Busy, "a turn is already running for this session"};
                 }
 
@@ -211,51 +210,51 @@ MaiResult<std::string> MaiAgent::submit(const MaiOperation& operation) {
                 up.body = MaiTextPart{operation.text};
                 up.created = user.created;
                 user.parts.push_back(std::move(up));
-                mImplementation->store->putMessage(operation.sessionId, user);
-                mImplementation->emitter.emitMessage(MaiEventType::MessageUpdated,
-                                                     operation.sessionId, user.id);
+                mRuntime->store->putMessage(operation.sessionId, user);
+                mRuntime->emitter.emitMessage(MaiEventType::MessageUpdated, operation.sessionId,
+                                              user.id);
 
                 // assistant 消息此刻就建好，后续 delta 都挂在它下面。
                 MaiMessage assistant;
                 assistant.id = MaiIdGenerator::newMessageId();
                 assistant.role = MaiRole::Assistant;
                 assistant.created = MaiTime::getCurrentTime();
-                mImplementation->store->putMessage(operation.sessionId, assistant);
-                mImplementation->emitter.emitMessage(MaiEventType::MessageUpdated,
-                                                     operation.sessionId, assistant.id);
+                mRuntime->store->putMessage(operation.sessionId, assistant);
+                mRuntime->emitter.emitMessage(MaiEventType::MessageUpdated, operation.sessionId,
+                                              assistant.id);
 
-                mImplementation->store->mutateSession(operation.sessionId, [](MaiSession& sess) {
+                mRuntime->store->mutateSession(operation.sessionId, [](MaiSession& sess) {
                     sess.updated = MaiTime::getCurrentTime();
                 });
 
                 auto turn = std::make_shared<ActiveTurn>();
                 {
-                    std::lock_guard<std::mutex> lock(mImplementation->mutex);
-                    mImplementation->active[operation.sessionId] = turn;
+                    std::lock_guard<std::mutex> lock(mRuntime->mutex);
+                    mRuntime->active[operation.sessionId] = turn;
                 }
 
                 // 单独线程跑，submit 立刻返回——同步等会让 HTTP 请求挂几十秒。
                 const std::string sessionId = operation.sessionId;
-                auto dependencies = mImplementation->dependencies();
+                auto dependencies = mRuntime->dependencies();
                 turn->worker = std::thread([this, sessionId, turn, dependencies, assistant] {
                     MaiTurnRunner runner(dependencies, sessionId, assistant);
                     runner.run(turn->cancel);
-                    mImplementation->retire(sessionId, turn);
+                    mRuntime->retire(sessionId, turn);
                 });
                 return assistant.id;
 
             } else if constexpr (std::is_same_v<T, MaiInterrupt>) {
                 {
-                    std::lock_guard<std::mutex> lock(mImplementation->mutex);
-                    auto it = mImplementation->active.find(operation.sessionId);
-                    if (it == mImplementation->active.end())
+                    std::lock_guard<std::mutex> lock(mRuntime->mutex);
+                    auto it = mRuntime->active.find(operation.sessionId);
+                    if (it == mRuntime->active.end())
                         return {MaiErrorCode::NotFound, "no turn is running for this session"};
                     it->second->cancel.store(true, std::memory_order_relaxed);
                 }
                 // 光置 cancel 叫不醒卡在等授权的那个线程——它睡在闸门的
                 // condition_variable 上，看不见这个标志，必须显式敲一下。
                 //（闸门那边还有个 250ms 的兜底轮询，但那是安全网，不是主路径。）
-                mImplementation->permissions->cancelSession(operation.sessionId);
+                mRuntime->permissions->cancelSession(operation.sessionId);
                 return operation.sessionId;
 
             } else if constexpr (std::is_same_v<T, MaiReplyPermission>) {
@@ -264,8 +263,7 @@ MaiResult<std::string> MaiAgent::submit(const MaiOperation& operation) {
                 // 找不到就是找不到：界面重复点、或者对着已经被中断的请求点，
                 // 都会走到这里。不是故障，但也不能假装成功——界面要据此把那个
                 // 已经过期的对话框收掉。
-                if (!mImplementation->permissions->reply(operation.permissionId,
-                                                         operation.decision))
+                if (!mRuntime->permissions->reply(operation.permissionId, operation.decision))
                     return {MaiErrorCode::NotFound, "permission request is no longer pending"};
                 // permission.replied 由等在闸门上的那一轮发出（只有它知道请求的
                 // 全貌）。这里只负责放行，不重复广播。

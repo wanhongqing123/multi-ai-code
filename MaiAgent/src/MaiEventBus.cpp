@@ -24,7 +24,7 @@ const char* maiEventTypeToString(MaiEventType type) {
     return "session.status";
 }
 
-struct MaiEventBus::Implementation {
+struct MaiEventBus::SubscriberTable {
     // 读多写极少：publish 每秒几十次并发读订阅表，subscribe/unsubscribe 只在
     // 连接建立和断开时发生。用 shared_mutex 让 publish 之间不互相阻塞。
     mutable std::shared_mutex mutex;
@@ -32,19 +32,19 @@ struct MaiEventBus::Implementation {
     std::atomic<Token> next{1};
 };
 
-MaiEventBus::MaiEventBus() : mImplementation(std::make_unique<Implementation>()) {}
+MaiEventBus::MaiEventBus() : mSubscribers(std::make_unique<SubscriberTable>()) {}
 MaiEventBus::~MaiEventBus() = default;
 
 MaiEventBus::Token MaiEventBus::subscribe(Handler handler) {
-    const Token token = mImplementation->next.fetch_add(1, std::memory_order_relaxed);
-    std::unique_lock lock(mImplementation->mutex);
-    mImplementation->handlers.emplace(token, std::move(handler));
+    const Token token = mSubscribers->next.fetch_add(1, std::memory_order_relaxed);
+    std::unique_lock lock(mSubscribers->mutex);
+    mSubscribers->handlers.emplace(token, std::move(handler));
     return token;
 }
 
 void MaiEventBus::unsubscribe(Token token) {
-    std::unique_lock lock(mImplementation->mutex);
-    mImplementation->handlers.erase(token);
+    std::unique_lock lock(mSubscribers->mutex);
+    mSubscribers->handlers.erase(token);
 }
 
 void MaiEventBus::publish(const MaiEvent& event) {
@@ -52,14 +52,14 @@ void MaiEventBus::publish(const MaiEvent& event) {
     // 造成自死锁——SSE 连接断开时正是在 handler 里触发 unsubscribe 的。
     std::vector<Handler> snapshot;
     {
-        std::shared_lock lock(mImplementation->mutex);
-        snapshot.reserve(mImplementation->handlers.size());
-        for (const auto& [_, handler] : mImplementation->handlers) snapshot.push_back(handler);
+        std::shared_lock lock(mSubscribers->mutex);
+        snapshot.reserve(mSubscribers->handlers.size());
+        for (const auto& [_, handler] : mSubscribers->handlers) snapshot.push_back(handler);
     }
     for (const auto& handler : snapshot) handler(event);
 }
 
 std::size_t MaiEventBus::subscriberCount() const {
-    std::shared_lock lock(mImplementation->mutex);
-    return mImplementation->handlers.size();
+    std::shared_lock lock(mSubscribers->mutex);
+    return mSubscribers->handlers.size();
 }

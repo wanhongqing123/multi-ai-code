@@ -52,7 +52,7 @@ struct MaiInterrupt {
 // 一样的错误码、一样的返回形状，适配器不用为它单开一套处理。
 struct MaiReplyPermission {
     std::string permissionId;
-    MaiPermissionDecision decision = MaiPermissionDecision::Reject;
+    MaiPermissionDecision decision = MaiPermissionDecision::Denied;
 };
 
 using MaiOperation = std::variant<MaiCreateSession, MaiUpdateSession, MaiDeleteSession,
@@ -114,8 +114,10 @@ public:
     const MaiEventBus& eventBus() const;
 
 private:
-    // pimpl：实现体是 struct（内部全公开），前向声明必须跟着写 struct，
-    // 否则 MSVC 会报 C4099。
-    struct Implementation;
-    std::unique_ptr<Implementation> mImplementation;
+    // pimpl。实现体叫 Runtime 而不是 Implementation：后者任何一个
+    // pimpl 类都能叫，等于没说。这个名字说的是它装什么——运行时状态：依赖、事件管线、正在跑的轮次。
+    //
+    // 前向声明必须跟着写 struct（实现体内部全公开），否则 MSVC 报 C4099。
+    struct Runtime;
+    std::unique_ptr<Runtime> mRuntime;
 };

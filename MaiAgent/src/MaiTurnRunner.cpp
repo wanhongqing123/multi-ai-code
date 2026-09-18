@@ -9,9 +9,15 @@ namespace {
 // "不要重试"这句是必须的：不写的话模型会拿一模一样的参数再调一次，
 // 把 maxIterations 那 12 圈全烧在同一个被拒的操作上，用户看到的是
 // agent 卡住了。
-constexpr const char* kRejectedHint =
+constexpr const char* kDeniedHint =
     "The user denied this tool call. Do not retry the same operation. "
     "Try a different approach, or ask the user how they want to proceed.";
+
+// 超时和被拒绝要分开说。合在一起的话，模型会以为用户看过并且说了"不行"，
+// 于是它会去"换个做法"——而真相是没人在，换什么做法都一样没人批。
+constexpr const char* kTimedOutHint =
+    "The approval request timed out with no answer from the user. "
+    "Do not retry; tell the user what you were about to do and wait for them.";
 
 }  // namespace
 
@@ -219,7 +225,7 @@ MaiToolResult MaiTurnRunner::checkPermission(const MaiToolInvocation& call,
     const std::string signature = call.name + std::string(1, '\0') + call.arguments;
     if (mRejected.count(signature) > 0) {
         allowed = false;
-        return MaiToolResult::failure(MaiErrorCode::Canceled, kRejectedHint);
+        return MaiToolResult::failure(MaiErrorCode::Canceled, kDeniedHint);
     }
 
     if (!mDependencies.permissions) {
@@ -256,7 +262,13 @@ MaiToolResult MaiTurnRunner::checkPermission(const MaiToolInvocation& call,
 
     if (emitter) emitter->emitPermissionReplied(request, decision);
 
-    if (decision == MaiPermissionDecision::Reject) {
+    if (decision == MaiPermissionDecision::TimedOut) {
+        allowed = false;
+        mRejected.insert(signature);
+        return MaiToolResult::failure(MaiErrorCode::Canceled, kTimedOutHint);
+    }
+
+    if (decision == MaiPermissionDecision::Denied) {
         allowed = false;
         mRejected.insert(signature);
         // 中断和拒绝在闸门那边长得一样（都是 Reject），但对模型说的话要分开：
@@ -264,7 +276,7 @@ MaiToolResult MaiTurnRunner::checkPermission(const MaiToolInvocation& call,
         // 误导下一轮。
         if (cancel.load(std::memory_order_relaxed))
             return MaiToolResult::failure(MaiErrorCode::Canceled, "Interrupted.");
-        return MaiToolResult::failure(MaiErrorCode::Canceled, kRejectedHint);
+        return MaiToolResult::failure(MaiErrorCode::Canceled, kDeniedHint);
     }
     return {};
 }

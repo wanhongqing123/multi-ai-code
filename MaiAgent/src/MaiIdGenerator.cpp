@@ -38,8 +38,8 @@ std::string MaiIdGenerator::generate(const char* prefix) {
     static std::atomic<std::uint64_t> counter{0};
     static std::atomic<std::uint64_t> last_ms{0};
     std::uint64_t seq = 0;
-    std::uint64_t prev = last_ms.load(std::memory_order_relaxed);
-    if (prev == now) {
+    std::uint64_t previous = last_ms.load(std::memory_order_relaxed);
+    if (previous == now) {
         seq = counter.fetch_add(1, std::memory_order_relaxed) + 1;
     } else {
         last_ms.store(now, std::memory_order_relaxed);

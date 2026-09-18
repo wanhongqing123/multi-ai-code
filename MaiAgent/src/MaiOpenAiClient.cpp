@@ -19,19 +19,19 @@ using json = nlohmann::json;
 // 思路取自 codex 的 ollama/src/line_buffer.rs（那边 32 行）。
 class LineBuffer {
 public:
-    void append(const char* data, std::size_t len) {
-        mBuffer.append(data, len);
+    void append(const char* data, std::size_t length) {
+        mBuffer.append(data, length);
     }
 
     bool nextLine(std::string& out) {
-        const std::size_t pos = mBuffer.find('\n', mScanned);
-        if (pos == std::string::npos) {
+        const std::size_t newlineAt = mBuffer.find('\n', mScanned);
+        if (newlineAt == std::string::npos) {
             mScanned = mBuffer.size();
             return false;
         }
-        out.assign(mBuffer, 0, pos);
+        out.assign(mBuffer, 0, newlineAt);
         if (!out.empty() && out.back() == '\r') out.pop_back();
-        mBuffer.erase(0, pos + 1);
+        mBuffer.erase(0, newlineAt + 1);
         mScanned = 0;
         return true;
     }

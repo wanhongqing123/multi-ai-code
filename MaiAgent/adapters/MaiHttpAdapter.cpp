@@ -130,7 +130,7 @@ std::string serializeEvent(const MaiEvent& event) {
 // ── SSE 连接 ────────────────────────────────────────────────────
 // 每个连接一个队列。事件在适配器层**只序列化一次**，再把同一份字符串
 // 分发给所有连接——N 个客户端时不做 N 次 dump()。
-struct SseConn {
+struct SseConnection {
     std::mutex mutex;
     std::condition_variable hasWork;
     std::deque<std::string> queue;
@@ -158,35 +158,35 @@ struct SseConn {
 
 }  // namespace
 
-struct MaiHttpAdapter::Implementation {
+struct MaiHttpAdapter::Listener {
     MaiAgent& agent;
     MaiHttpAdapterOptions options;
     httplib::Server server;
     std::atomic<int> boundPort{0};
 
     std::mutex connectionsMutex;
-    std::unordered_map<std::uint64_t, std::shared_ptr<SseConn>> conns;
+    std::unordered_map<std::uint64_t, std::shared_ptr<SseConnection>> connections;
     std::atomic<std::uint64_t> nextConnection{1};
     MaiEventBus::Token busToken = 0;
 
-    explicit Implementation(MaiAgent& agent, MaiHttpAdapterOptions options)
+    explicit Listener(MaiAgent& agent, MaiHttpAdapterOptions options)
         : agent(agent), options(std::move(options)) {}
 
     void broadcast(const MaiEvent& event) {
         const std::string frame = serializeEvent(event);  // 只 dump 一次
-        std::vector<std::shared_ptr<SseConn>> targets;
+        std::vector<std::shared_ptr<SseConnection>> targets;
         {
             std::lock_guard<std::mutex> lock(connectionsMutex);
-            targets.reserve(conns.size());
-            for (const auto& [_, code] : conns) targets.push_back(code);
+            targets.reserve(connections.size());
+            for (const auto& [_, connection] : connections) targets.push_back(connection);
         }
-        for (const auto& code : targets) code->push(frame);
+        for (const auto& connection : targets) connection->push(frame);
     }
 
     void routes();
 };
 
-void MaiHttpAdapter::Implementation::routes() {
+void MaiHttpAdapter::Listener::routes() {
     server.Get("/api/health", [](const httplib::Request&, httplib::Response& response) {
         response.set_content(json{{"status", "ok"}, {"service", "maiagent"}}.dump(),
                              "application/json");
@@ -308,13 +308,14 @@ void MaiHttpAdapter::Implementation::routes() {
         const std::string raw =
             body.is_object() ? body.value("decision", std::string{}) : std::string{};
 
-        MaiPermissionDecision decision = MaiPermissionDecision::Reject;
+        MaiPermissionDecision decision = MaiPermissionDecision::Denied;
         if (!maiParsePermissionDecision(raw, decision)) {
             // 认不出来就 400，**不要兜底成允许**。把拼错的 decision
             // 当成放行，等于闸门被一个错别字拆掉，而且毫无痕迹。
             response.status = 400;
             response.set_content(
-                json{{"error", "decision must be one of: once, always, reject"}, {"got", raw}}
+                json{{"error", "decision must be one of: approved, approved_for_session, denied"},
+                     {"got", raw}}
                     .dump(),
                 "application/json");
             return;
@@ -340,11 +341,11 @@ void MaiHttpAdapter::Implementation::routes() {
 
     // ── SSE 事件流 ────────────────────────────────────────────────
     server.Get("/api/event", [this](const httplib::Request&, httplib::Response& response) {
-        auto connection = std::make_shared<SseConn>();
+        auto connection = std::make_shared<SseConnection>();
         const std::uint64_t cid = nextConnection.fetch_add(1);
         {
             std::lock_guard<std::mutex> lock(connectionsMutex);
-            conns.emplace(cid, connection);
+            connections.emplace(cid, connection);
         }
 
         response.set_header("Cache-Control", "no-cache");
@@ -378,54 +379,52 @@ void MaiHttpAdapter::Implementation::routes() {
             [this, cid, connection](bool) {
                 connection->close();
                 std::lock_guard<std::mutex> lock(connectionsMutex);
-                conns.erase(cid);
+                connections.erase(cid);
             });
     });
 }
 
 MaiHttpAdapter::MaiHttpAdapter(MaiAgent& agent, MaiHttpAdapterOptions options)
-    : mImplementation(std::make_unique<Implementation>(agent, std::move(options))) {
-    mImplementation->routes();
-    mImplementation->busToken = mImplementation->agent.eventBus().subscribe(
-        [this](const MaiEvent& event) { mImplementation->broadcast(event); });
+    : mListener(std::make_unique<Listener>(agent, std::move(options))) {
+    mListener->routes();
+    mListener->busToken = mListener->agent.eventBus().subscribe(
+        [this](const MaiEvent& event) { mListener->broadcast(event); });
 }
 
 MaiHttpAdapter::~MaiHttpAdapter() {
-    if (mImplementation->busToken)
-        mImplementation->agent.eventBus().unsubscribe(mImplementation->busToken);
+    if (mListener->busToken) mListener->agent.eventBus().unsubscribe(mListener->busToken);
     stop();
 }
 
 bool MaiHttpAdapter::bind() {
     // port=0 走 bind_to_any_port 让系统挑；指定端口就直接绑。
-    const int boundPort =
-        mImplementation->options.port > 0
-            ? (mImplementation->server.bind_to_port(mImplementation->options.host.c_str(),
-                                                    mImplementation->options.port)
-                   ? mImplementation->options.port
-                   : 0)
-            : mImplementation->server.bind_to_any_port(mImplementation->options.host.c_str());
+    const int boundPort = mListener->options.port > 0
+                              ? (mListener->server.bind_to_port(mListener->options.host.c_str(),
+                                                                mListener->options.port)
+                                     ? mListener->options.port
+                                     : 0)
+                              : mListener->server.bind_to_any_port(mListener->options.host.c_str());
     if (boundPort <= 0) return false;
-    mImplementation->boundPort.store(boundPort);
+    mListener->boundPort.store(boundPort);
     return true;
 }
 
 bool MaiHttpAdapter::serve() {
-    return mImplementation->server.listen_after_bind();
+    return mListener->server.listen_after_bind();
 }
 
 void MaiHttpAdapter::stop() {
     {
-        std::lock_guard<std::mutex> lock(mImplementation->connectionsMutex);
-        for (auto& [_, code] : mImplementation->conns) code->close();
+        std::lock_guard<std::mutex> lock(mListener->connectionsMutex);
+        for (auto& [_, code] : mListener->connections) code->close();
     }
-    mImplementation->server.stop();
+    mListener->server.stop();
 }
 
 int MaiHttpAdapter::port() const {
-    return mImplementation->boundPort.load();
+    return mListener->boundPort.load();
 }
 
 std::string MaiHttpAdapter::baseUrl() const {
-    return "http://" + mImplementation->options.host + ":" + std::to_string(port());
+    return "http://" + mListener->options.host + ":" + std::to_string(port());
 }

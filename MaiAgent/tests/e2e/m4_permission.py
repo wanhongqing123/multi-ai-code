@@ -212,7 +212,7 @@ if tool_parts:
 
 check("the file does not exist yet", not os.path.exists(os.path.join(workspace, "rejected.txt")))
 
-st, body = post("/api/permission/%s" % pending[0]["id"], {"decision": "reject"})
+st, body = post("/api/permission/%s" % pending[0]["id"], {"decision": "denied"})
 check("decision returned 200", st == 200, str(st))
 
 wait_for(lambda: events("session.idle"))
@@ -222,7 +222,7 @@ check("the file really was not written", not os.path.exists(os.path.join(workspa
 replied = events("permission.replied")
 check("SSE delivered permission.replied", len(replied) == 1)
 if replied:
-    check("the decision reads reject", replied[0]["data"].get("detail") == "reject",
+    check("the decision reads denied", replied[0]["data"].get("detail") == "denied",
           str(replied[0]["data"].get("detail")))
 
 fed = ""
@@ -250,7 +250,7 @@ post("/api/session/%s/prompt" % sid2, {"text": "write allowed.txt"})
 
 pending = wait_for(lambda: json.loads(get("/api/permission")[1].decode("utf-8")))
 check("another request is pending", len(pending) == 1)
-st, body = post("/api/permission/%s" % pending[0]["id"], {"decision": "once"})
+st, body = post("/api/permission/%s" % pending[0]["id"], {"decision": "approved"})
 check("decision returned 200", st == 200, str(st))
 
 wait_for(lambda: events("session.idle"))
@@ -285,7 +285,7 @@ pending = wait_for(lambda: json.loads(get("/api/permission")[1].decode("utf-8"))
 check("one request is pending", len(pending) == 1)
 
 pid = pending[0]["id"]
-for bad in ["Once", "yes", "", "ALLOW"]:
+for bad in ["once", "Approved", "yes", "", "ALLOW"]:
     st, body = post("/api/permission/%s" % pid, {"decision": bad})
     check("decision=%r rejected with 400" % bad, st == 400, str(st))
 
@@ -294,7 +294,7 @@ check("still pending, not silently allowed",
 check("the file still does not exist", not os.path.exists(os.path.join(workspace, "typo.txt")))
 
 # 不存在的 id 要 404，而不是假装成功
-st, _ = post("/api/permission/per_nope", {"decision": "once"})
+st, _ = post("/api/permission/per_nope", {"decision": "approved"})
 check("an unknown permissionID gives 404", st == 404, str(st))
 
 # 用中断收尾，顺带验证卡在等授权的那一轮能被叫醒
@@ -319,7 +319,7 @@ sid4 = new_session()
 post("/api/session/%s/prompt" % sid4, {"text": "write two files"})
 pending = wait_for(lambda: json.loads(get("/api/permission")[1].decode("utf-8")))
 check("asked the first time", len(pending) == 1)
-post("/api/permission/%s" % pending[0]["id"], {"decision": "always"})
+post("/api/permission/%s" % pending[0]["id"], {"decision": "approved_for_session"})
 
 wait_for(lambda: events("session.idle"))
 time.sleep(0.3)

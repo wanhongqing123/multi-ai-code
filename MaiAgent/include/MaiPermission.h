@@ -9,11 +9,25 @@
 #include "MaiTime.h"
 
 // 用户对一次工具调用的裁决。
+//
+// 取值照抄 codex 的 ReviewDecision（codex-rs/protocol/src/protocol.rs）。
+// 原来叫 Once / AlwaysInSession / Reject，"Once" 根本没说是批准还是拒绝，
+// 得看另外两个值反推。
 enum class MaiPermissionDecision {
-    Once,             // 就这一次
-    AlwaysInSession,  // 这个会话里这个工具以后别再问
-    Reject,           // 不许跑
+    Approved,            // 批准这一次
+    ApprovedForSession,  // 批准，且这个会话里这个工具以后别再问
+    Denied,              // 不许跑，但这一轮继续，让模型换个做法
+
+    // 没人裁决就到点了。**不能和 Denied 合并**：合并之后回灌给模型的话是
+    // "用户拒绝了这次调用"，而用户可能根本没看见那个请求。对模型说假话，
+    // 它下一步就会基于假前提行动。
+    //
+    // 这个值只会由闸门自己产生，不接受从线上传进来。
+    TimedOut,
 };
+
+// codex 还有两个值我们暂时没有：Denied 带一句用户写的理由，
+// 以及 Abort（拒绝并且整轮停下）。Abort 现在由 MaiInterrupt 覆盖。
 
 const char* maiPermissionDecisionToString(MaiPermissionDecision decision);
 
@@ -37,7 +51,7 @@ struct MaiPermissionRequest {
 // 权限闸门：会改东西的工具跑之前，在这里停一下等用户点头。
 //
 // **线程契约**：`ask()` 阻塞**调用它的那个线程**，直到有人裁决。
-// 每一轮对话跑在自己的线程上（见 MaiAgent::Implementation），所以一个会话卡在
+// 每一轮对话跑在自己的线程上（见 MaiAgent::ApprovalTable），所以一个会话卡在
 // 等授权，不影响其它会话继续跑。
 //
 // 为什么是阻塞而不是把这一轮拆成状态机：拆开之后"跑一轮"的代码就不再是
@@ -90,6 +104,6 @@ public:
     void forgetSession(const std::string& sessionId);
 
 private:
-    struct Implementation;
-    std::unique_ptr<Implementation> mImplementation;
+    struct ApprovalTable;
+    std::unique_ptr<ApprovalTable> mApprovals;
 };

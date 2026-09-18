@@ -66,21 +66,28 @@ bool waitFor(Pred pred, std::chrono::milliseconds limit = std::chrono::seconds(5
 // ── 第 1 层：闸门本身 ───────────────────────────────────────────
 
 void test_decision_parsing() {
-    MaiPermissionDecision d = MaiPermissionDecision::Once;
+    MaiPermissionDecision d = MaiPermissionDecision::Approved;
 
-    CHECK(maiParsePermissionDecision("once", d) && d == MaiPermissionDecision::Once);
-    CHECK(maiParsePermissionDecision("allow", d) && d == MaiPermissionDecision::Once);
-    CHECK(maiParsePermissionDecision("always", d) && d == MaiPermissionDecision::AlwaysInSession);
-    CHECK(maiParsePermissionDecision("reject", d) && d == MaiPermissionDecision::Reject);
-    CHECK(maiParsePermissionDecision("deny", d) && d == MaiPermissionDecision::Reject);
+    // 线上取值照 codex 的 ReviewDecision，snake_case。
+    CHECK(maiParsePermissionDecision("approved", d) && d == MaiPermissionDecision::Approved);
+    CHECK(maiParsePermissionDecision("approved_for_session", d) &&
+          d == MaiPermissionDecision::ApprovedForSession);
+    CHECK(maiParsePermissionDecision("denied", d) && d == MaiPermissionDecision::Denied);
 
-    // 认不出来必须返回 false，且**不能**把 out 改成 Once。
+    // 认不出来必须返回 false，且**不能**把 out 改成 Approved。
     // 把拼错的输入当放行，等于闸门被一个错别字拆掉，而且毫无痕迹。
-    d = MaiPermissionDecision::Reject;
-    CHECK(!maiParsePermissionDecision("Once", d));  // 大小写不认
+    d = MaiPermissionDecision::Denied;
+    CHECK(!maiParsePermissionDecision("Approved", d));  // 大小写不认
+    CHECK(!maiParsePermissionDecision("once", d));      // 改名前的旧取值也不认
+    CHECK(!maiParsePermissionDecision("allow", d));
     CHECK(!maiParsePermissionDecision("yes", d));
     CHECK(!maiParsePermissionDecision("", d));
-    CHECK(d == MaiPermissionDecision::Reject);  // 没被动过
+
+    // timed_out 是闸门自己的结论，不接受从线上传进来——允许调用方声称
+    // "超时了"，等于给了它一条绕过用户的路。
+    CHECK(!maiParsePermissionDecision("timed_out", d));
+
+    CHECK(d == MaiPermissionDecision::Denied);  // 全程没被动过
 }
 
 void test_ask_blocks_until_reply() {
@@ -101,17 +108,17 @@ void test_ask_blocks_until_reply() {
     CHECK(gate.listPending().size() == 1);
     CHECK(outcome.load() == -1);  // 还在等
 
-    CHECK(gate.reply("per_1", MaiPermissionDecision::Once));
+    CHECK(gate.reply("per_1", MaiPermissionDecision::Approved));
     worker.join();
 
-    CHECK(outcome.load() == static_cast<int>(MaiPermissionDecision::Once));
+    CHECK(outcome.load() == static_cast<int>(MaiPermissionDecision::Approved));
     CHECK(gate.listPending().empty());
 }
 
 void test_reply_to_unknown_id() {
     MaiPermissionGate gate;
     // 界面重复点、或者对着已经结束的请求点，都走这里。不是异常。
-    CHECK(!gate.reply("per_nope", MaiPermissionDecision::Once));
+    CHECK(!gate.reply("per_nope", MaiPermissionDecision::Approved));
 }
 
 void test_reject_and_always() {
@@ -122,14 +129,14 @@ void test_reject_and_always() {
         first = static_cast<int>(gate.ask(makeRequest("per_1", "ses_1"), nullptr, kNeverCancel));
     });
     CHECK(waitFor([&] { return gate.listPending().size() == 1; }));
-    gate.reply("per_1", MaiPermissionDecision::Reject);
+    gate.reply("per_1", MaiPermissionDecision::Denied);
     t1.join();
-    CHECK(first.load() == static_cast<int>(MaiPermissionDecision::Reject));
+    CHECK(first.load() == static_cast<int>(MaiPermissionDecision::Denied));
     CHECK(!gate.isAllowedInSession("ses_1", "write"));
 
     std::thread t2([&] { gate.ask(makeRequest("per_2", "ses_1"), nullptr, kNeverCancel); });
     CHECK(waitFor([&] { return gate.listPending().size() == 1; }));
-    gate.reply("per_2", MaiPermissionDecision::AlwaysInSession);
+    gate.reply("per_2", MaiPermissionDecision::ApprovedForSession);
     t2.join();
 
     CHECK(gate.isAllowedInSession("ses_1", "write"));
@@ -156,7 +163,7 @@ void test_cancel_session_wakes_waiter() {
     gate.cancelSession("ses_1");
     worker.join();
     // 没人点头就醒了，一律按拒绝。兜底成允许 = 没人点头也能改用户的文件。
-    CHECK(outcome.load() == static_cast<int>(MaiPermissionDecision::Reject));
+    CHECK(outcome.load() == static_cast<int>(MaiPermissionDecision::Denied));
 }
 
 void test_cancel_flag_wakes_waiter() {
@@ -172,7 +179,7 @@ void test_cancel_flag_wakes_waiter() {
 
     cancel = true;
     worker.join();
-    CHECK(outcome.load() == static_cast<int>(MaiPermissionDecision::Reject));
+    CHECK(outcome.load() == static_cast<int>(MaiPermissionDecision::Denied));
 }
 
 void test_timeout() {
@@ -186,7 +193,9 @@ void test_timeout() {
                              std::chrono::steady_clock::now() - started)
                              .count();
 
-    CHECK(d == MaiPermissionDecision::Reject);
+    // 超时**不是** Denied：没人看过那个请求，说成"用户拒绝了"是对模型撒谎，
+    // 它会照着"换个做法"去试，而真相是没人在，换什么做法都一样没人批。
+    CHECK(d == MaiPermissionDecision::TimedOut);
     CHECK(elapsed >= 250);  // 确实等过
     CHECK(elapsed < 3000);  // 但没等到天荒地老
     CHECK(gate.listPending().empty());
@@ -391,7 +400,7 @@ void test_write_waits_for_approval_then_runs() {
 
     MaiReplyPermission reply;
     reply.permissionId = pending[0].id;
-    reply.decision = MaiPermissionDecision::Once;
+    reply.decision = MaiPermissionDecision::Approved;
     CHECK(agent->submit(reply).isOk());
 
     agent->waitIdle();
@@ -424,7 +433,7 @@ void test_reject_blocks_write_and_tells_model() {
     CHECK(waitFor([&] { return agent->listPendingPermissions().size() == 1; }));
     MaiReplyPermission reply;
     reply.permissionId = agent->listPendingPermissions()[0].id;
-    reply.decision = MaiPermissionDecision::Reject;
+    reply.decision = MaiPermissionDecision::Denied;
     CHECK(agent->submit(reply).isOk());
 
     agent->waitIdle();
@@ -466,7 +475,7 @@ void test_rejected_repeat_does_not_ask_again() {
     CHECK(waitFor([&] { return agent->listPendingPermissions().size() == 1; }));
     MaiReplyPermission reply;
     reply.permissionId = agent->listPendingPermissions()[0].id;
-    reply.decision = MaiPermissionDecision::Reject;
+    reply.decision = MaiPermissionDecision::Denied;
     agent->submit(reply);
 
     agent->waitIdle();
@@ -499,7 +508,7 @@ void test_always_in_session_asks_only_once() {
     CHECK(waitFor([&] { return agent->listPendingPermissions().size() == 1; }));
     MaiReplyPermission reply;
     reply.permissionId = agent->listPendingPermissions()[0].id;
-    reply.decision = MaiPermissionDecision::AlwaysInSession;
+    reply.decision = MaiPermissionDecision::ApprovedForSession;
     agent->submit(reply);
 
     agent->waitIdle();
@@ -577,7 +586,7 @@ void test_reply_to_stale_permission_is_not_found() {
 
     MaiReplyPermission reply;
     reply.permissionId = pid;
-    reply.decision = MaiPermissionDecision::Once;
+    reply.decision = MaiPermissionDecision::Approved;
     CHECK(agent->submit(reply).isOk());
     agent->waitIdle();
 

@@ -42,6 +42,6 @@ public:
     std::string baseUrl() const;
 
 private:
-    struct Implementation;
-    std::unique_ptr<Implementation> mImplementation;
+    struct Listener;
+    std::unique_ptr<Listener> mListener;
 };

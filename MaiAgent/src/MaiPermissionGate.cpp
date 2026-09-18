@@ -53,34 +53,35 @@ struct Pending {
 
 }  // namespace
 
-struct MaiPermissionGate::Impl {
+struct MaiPermissionGate::Implementation {
     Options options;
 
-    mutable std::mutex mu;
-    std::condition_variable cv;
+    mutable std::mutex mutex;
+    std::condition_variable decided;
     // 用 shared_ptr 是因为等待的那个线程要在解锁之后仍然能看着自己那条
     // 记录，而 reply() 可能已经把它从表里摘掉了。
     std::unordered_map<std::string, std::shared_ptr<Pending>> pending;
     // sessionId -> 用户说了"本会话都允许"的工具名
     std::unordered_map<std::string, std::set<std::string>> sessionAllowlist;
 
-    explicit Impl(Options o) : options(o) {}
+    explicit Implementation(Options options) : options(options) {}
 };
 
-MaiPermissionGate::MaiPermissionGate(Options options) : impl_(std::make_unique<Impl>(options)) {}
+MaiPermissionGate::MaiPermissionGate(Options options)
+    : mImplementation(std::make_unique<Implementation>(options)) {}
 
 MaiPermissionGate::~MaiPermissionGate() {
     // 析构时把还在等的全部叫醒，否则那些线程会一直挂在已经销毁的
     // condition_variable 上。
     {
-        std::lock_guard<std::mutex> lock(impl_->mu);
-        for (auto& [_, p] : impl_->pending) {
-            p->decision = MaiPermissionDecision::Reject;
-            p->settled = true;
+        std::lock_guard<std::mutex> lock(mImplementation->mutex);
+        for (auto& [_, entry] : mImplementation->pending) {
+            entry->decision = MaiPermissionDecision::Reject;
+            entry->settled = true;
         }
-        impl_->pending.clear();
+        mImplementation->pending.clear();
     }
-    impl_->cv.notify_all();
+    mImplementation->decided.notify_all();
 }
 
 MaiPermissionDecision MaiPermissionGate::ask(const MaiPermissionRequest& request,
@@ -90,81 +91,82 @@ MaiPermissionDecision MaiPermissionGate::ask(const MaiPermissionRequest& request
     entry->request = request;
 
     {
-        std::lock_guard<std::mutex> lock(impl_->mu);
+        std::lock_guard<std::mutex> lock(mImplementation->mutex);
         // 先登记。广播必须在登记之后，否则界面可能抢在登记前就回了裁决，
         // reply() 找不到这个 id，这一轮就永远醒不过来。
-        impl_->pending[request.id] = entry;
+        mImplementation->pending[request.id] = entry;
     }
 
     // 在锁外广播：处理函数是订阅方的代码（HTTP 适配器会在里面序列化并
     // 写 socket），拿着锁调用它等于把闸门的锁交给了外部代码。
     if (announce) announce(request);
 
-    const auto deadline =
-        std::chrono::steady_clock::now() + std::chrono::milliseconds(impl_->options.timeoutMs);
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(mImplementation->options.timeoutMs);
 
-    std::unique_lock<std::mutex> lock(impl_->mu);
+    std::unique_lock<std::mutex> lock(mImplementation->mutex);
     while (!entry->settled) {
         if (cancel.load(std::memory_order_relaxed)) break;
-        if (impl_->options.timeoutMs > 0 && std::chrono::steady_clock::now() >= deadline) break;
-        impl_->cv.wait_for(lock, kCancelPollInterval);
+        if (mImplementation->options.timeoutMs > 0 && std::chrono::steady_clock::now() >= deadline)
+            break;
+        mImplementation->decided.wait_for(lock, kCancelPollInterval);
     }
 
-    impl_->pending.erase(request.id);
+    mImplementation->pending.erase(request.id);
     // 没裁决就醒了（中断或超时）一律按拒绝走。这是唯一安全的兜底方向：
     // 兜底成允许，就意味着"没人点头"也能改用户的文件。
     const MaiPermissionDecision decision =
         entry->settled ? entry->decision : MaiPermissionDecision::Reject;
 
     if (decision == MaiPermissionDecision::AlwaysInSession) {
-        impl_->sessionAllowlist[request.sessionId].insert(request.toolName);
+        mImplementation->sessionAllowlist[request.sessionId].insert(request.toolName);
     }
     return decision;
 }
 
 bool MaiPermissionGate::reply(const std::string& permissionId, MaiPermissionDecision decision) {
     {
-        std::lock_guard<std::mutex> lock(impl_->mu);
-        auto it = impl_->pending.find(permissionId);
-        if (it == impl_->pending.end()) return false;
+        std::lock_guard<std::mutex> lock(mImplementation->mutex);
+        auto it = mImplementation->pending.find(permissionId);
+        if (it == mImplementation->pending.end()) return false;
         if (it->second->settled) return false;  // 界面重复点
         it->second->decision = decision;
         it->second->settled = true;
     }
-    impl_->cv.notify_all();
+    mImplementation->decided.notify_all();
     return true;
 }
 
 bool MaiPermissionGate::isAllowedInSession(const std::string& sessionId,
                                            const std::string& toolName) const {
-    std::lock_guard<std::mutex> lock(impl_->mu);
-    auto it = impl_->sessionAllowlist.find(sessionId);
-    return it != impl_->sessionAllowlist.end() && it->second.count(toolName) > 0;
+    std::lock_guard<std::mutex> lock(mImplementation->mutex);
+    auto it = mImplementation->sessionAllowlist.find(sessionId);
+    return it != mImplementation->sessionAllowlist.end() && it->second.count(toolName) > 0;
 }
 
 std::vector<MaiPermissionRequest> MaiPermissionGate::listPending() const {
-    std::lock_guard<std::mutex> lock(impl_->mu);
+    std::lock_guard<std::mutex> lock(mImplementation->mutex);
     std::vector<MaiPermissionRequest> out;
-    out.reserve(impl_->pending.size());
-    for (const auto& [_, p] : impl_->pending) {
-        if (!p->settled) out.push_back(p->request);
+    out.reserve(mImplementation->pending.size());
+    for (const auto& [_, entry] : mImplementation->pending) {
+        if (!entry->settled) out.push_back(entry->request);
     }
     return out;
 }
 
 void MaiPermissionGate::cancelSession(const std::string& sessionId) {
     {
-        std::lock_guard<std::mutex> lock(impl_->mu);
-        for (auto& [_, p] : impl_->pending) {
-            if (p->request.sessionId != sessionId || p->settled) continue;
-            p->decision = MaiPermissionDecision::Reject;
-            p->settled = true;
+        std::lock_guard<std::mutex> lock(mImplementation->mutex);
+        for (auto& [_, entry] : mImplementation->pending) {
+            if (entry->request.sessionId != sessionId || entry->settled) continue;
+            entry->decision = MaiPermissionDecision::Reject;
+            entry->settled = true;
         }
     }
-    impl_->cv.notify_all();
+    mImplementation->decided.notify_all();
 }
 
 void MaiPermissionGate::forgetSession(const std::string& sessionId) {
-    std::lock_guard<std::mutex> lock(impl_->mu);
-    impl_->sessionAllowlist.erase(sessionId);
+    std::lock_guard<std::mutex> lock(mImplementation->mutex);
+    mImplementation->sessionAllowlist.erase(sessionId);
 }

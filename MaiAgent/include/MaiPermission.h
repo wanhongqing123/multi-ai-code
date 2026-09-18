@@ -37,7 +37,7 @@ struct MaiPermissionRequest {
 // 权限闸门：会改东西的工具跑之前，在这里停一下等用户点头。
 //
 // **线程契约**：`ask()` 阻塞**调用它的那个线程**，直到有人裁决。
-// 每一轮对话跑在自己的线程上（见 MaiAgent::Impl），所以一个会话卡在
+// 每一轮对话跑在自己的线程上（见 MaiAgent::Implementation），所以一个会话卡在
 // 等授权，不影响其它会话继续跑。
 //
 // 为什么是阻塞而不是把这一轮拆成状态机：拆开之后"跑一轮"的代码就不再是
@@ -90,6 +90,6 @@ public:
     void forgetSession(const std::string& sessionId);
 
 private:
-    struct Impl;
-    std::unique_ptr<Impl> impl_;
+    struct Implementation;
+    std::unique_ptr<Implementation> mImplementation;
 };

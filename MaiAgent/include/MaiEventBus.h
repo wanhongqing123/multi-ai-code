@@ -88,6 +88,6 @@ public:
 private:
     // pimpl：实现体是 struct（内部全公开），前向声明必须跟着写 struct，
     // 否则 MSVC 会报 C4099。
-    struct Impl;
-    std::unique_ptr<Impl> impl_;
+    struct Implementation;
+    std::unique_ptr<Implementation> mImplementation;
 };

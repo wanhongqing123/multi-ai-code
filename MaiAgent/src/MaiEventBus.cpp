@@ -5,8 +5,8 @@
 #include <shared_mutex>
 #include <unordered_map>
 
-const char* maiEventTypeToString(MaiEventType t) {
-    switch (t) {
+const char* maiEventTypeToString(MaiEventType type) {
+    switch (type) {
         case MaiEventType::SessionCreated: return "session.created";
         case MaiEventType::SessionUpdated: return "session.updated";
         case MaiEventType::SessionDeleted: return "session.deleted";
@@ -24,42 +24,42 @@ const char* maiEventTypeToString(MaiEventType t) {
     return "session.status";
 }
 
-struct MaiEventBus::Impl {
+struct MaiEventBus::Implementation {
     // 读多写极少：publish 每秒几十次并发读订阅表，subscribe/unsubscribe 只在
     // 连接建立和断开时发生。用 shared_mutex 让 publish 之间不互相阻塞。
-    mutable std::shared_mutex mu;
+    mutable std::shared_mutex mutex;
     std::unordered_map<Token, Handler> handlers;
     std::atomic<Token> next{1};
 };
 
-MaiEventBus::MaiEventBus() : impl_(std::make_unique<Impl>()) {}
+MaiEventBus::MaiEventBus() : mImplementation(std::make_unique<Implementation>()) {}
 MaiEventBus::~MaiEventBus() = default;
 
-MaiEventBus::Token MaiEventBus::subscribe(Handler h) {
-    const Token t = impl_->next.fetch_add(1, std::memory_order_relaxed);
-    std::unique_lock lock(impl_->mu);
-    impl_->handlers.emplace(t, std::move(h));
-    return t;
+MaiEventBus::Token MaiEventBus::subscribe(Handler handler) {
+    const Token token = mImplementation->next.fetch_add(1, std::memory_order_relaxed);
+    std::unique_lock lock(mImplementation->mutex);
+    mImplementation->handlers.emplace(token, std::move(handler));
+    return token;
 }
 
-void MaiEventBus::unsubscribe(Token t) {
-    std::unique_lock lock(impl_->mu);
-    impl_->handlers.erase(t);
+void MaiEventBus::unsubscribe(Token token) {
+    std::unique_lock lock(mImplementation->mutex);
+    mImplementation->handlers.erase(token);
 }
 
-void MaiEventBus::publish(const MaiEvent& e) {
+void MaiEventBus::publish(const MaiEvent& event) {
     // 先在读锁内把 handler 拷出来再调用，避免 handler 里反过来 subscribe/unsubscribe
     // 造成自死锁——SSE 连接断开时正是在 handler 里触发 unsubscribe 的。
     std::vector<Handler> snapshot;
     {
-        std::shared_lock lock(impl_->mu);
-        snapshot.reserve(impl_->handlers.size());
-        for (const auto& [_, h] : impl_->handlers) snapshot.push_back(h);
+        std::shared_lock lock(mImplementation->mutex);
+        snapshot.reserve(mImplementation->handlers.size());
+        for (const auto& [_, handler] : mImplementation->handlers) snapshot.push_back(handler);
     }
-    for (const auto& h : snapshot) h(e);
+    for (const auto& handler : snapshot) handler(event);
 }
 
 std::size_t MaiEventBus::subscriberCount() const {
-    std::shared_lock lock(impl_->mu);
-    return impl_->handlers.size();
+    std::shared_lock lock(mImplementation->mutex);
+    return mImplementation->handlers.size();
 }

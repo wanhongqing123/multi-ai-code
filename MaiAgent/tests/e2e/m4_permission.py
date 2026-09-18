@@ -77,10 +77,10 @@ ModelHandler.bodies = []
 model = ThreadingHTTPServer(("127.0.0.1", 0), ModelHandler)
 model_port = model.server_address[1]
 threading.Thread(target=model.serve_forever, daemon=True).start()
-say("假模型监听在 127.0.0.1:%d" % model_port)
+say("fake model listening on 127.0.0.1:%d" % model_port)
 
 workspace = tempfile.mkdtemp(prefix="maiagent-m4-")
-say("工作目录 " + workspace)
+say("workspace " + workspace)
 
 proc = subprocess.Popen(
     [r"E:\OpenSource\multi-ai-code\MaiAgent\build\bin\maiagent-bridge.exe",
@@ -99,9 +99,9 @@ while time.time() < deadline:
         base = m.group(1)
         break
 if not base:
-    say("服务端没起来")
+    say("bridge did not start")
     sys.exit(1)
-say("maiagent-bridge 监听在 " + base)
+say("maiagent-bridge listening on " + base)
 say("")
 
 
@@ -175,54 +175,54 @@ def new_session():
 
 
 # ══ 1. 拒绝：文件不该出现 ═════════════════════════════════════
-say("== 1. 拒绝一次 write ==")
-SCRIPTS[:] = [("", "write", json.dumps({"path": "rejected.txt", "content": "不该出现"})),
-              ("好的，我不写了。", "", "")]
+say("== 1. deny one write ==")
+SCRIPTS[:] = [("", "write", json.dumps({"path": "rejected.txt", "content": "must not appear"})),
+              ("All right, I will not write it.", "", "")]
 with served_lock:
     served["n"] = 0
 
 sid = new_session()
-post("/api/session/%s/prompt" % sid, {"text": "写 rejected.txt"})
+post("/api/session/%s/prompt" % sid, {"text": "write rejected.txt"})
 
 pending = wait_for(lambda: json.loads(get("/api/permission")[1].decode("utf-8")))
-check("GET /api/permission 列出了待裁决", len(pending) == 1,
-      "%d 条" % len(pending))
+check("GET /api/permission lists the pending request", len(pending) == 1,
+      "%d rows" % len(pending))
 if pending:
     p = pending[0]
-    check("带上了工具名", p.get("tool") == "write", repr(p.get("tool")))
-    check("带上了参数原文", "rejected.txt" in p.get("input", ""))
-    check("id 以 per_ 开头", str(p.get("id", "")).startswith("per_"), p.get("id"))
-    check("partID 指向工具卡", bool(p.get("partID")))
+    check("carries the tool name", p.get("tool") == "write", repr(p.get("tool")))
+    check("carries the raw arguments", "rejected.txt" in p.get("input", ""))
+    check("id starts with per_", str(p.get("id", "")).startswith("per_"), p.get("id"))
+    check("partID points at the tool card", bool(p.get("partID")))
 
 asked = wait_for(lambda: events("permission.asked"))
-check("SSE 收到 permission.asked", len(asked) == 1)
+check("SSE delivered permission.asked", len(asked) == 1)
 if asked and pending:
-    check("事件里带了 permissionID",
+    check("event carries permissionID",
           asked[0]["data"].get("permissionID") == pending[0]["id"],
           str(asked[0]["data"].get("permissionID")))
-    check("事件里带了 partID", asked[0]["data"].get("partID") == pending[0]["partID"])
+    check("event carries partID", asked[0]["data"].get("partID") == pending[0]["partID"])
 
 # 等授权期间刷新界面也要看得见那张卡（SSE 断线重连就是这个场景）。
 msgs = json.loads(get("/api/session/%s/message" % sid)[1].decode("utf-8"))
 tool_parts = [pp for m in msgs for pp in m["parts"] if pp.get("type") == "tool"]
-check("刷新也能拉到工具卡", len(tool_parts) == 1, "%d 个" % len(tool_parts))
+check("a refresh also finds the tool card", len(tool_parts) == 1, "%d found" % len(tool_parts))
 if tool_parts:
-    check("状态是 pending", tool_parts[0]["state"]["status"] == "pending",
+    check("state is pending", tool_parts[0]["state"]["status"] == "pending",
           tool_parts[0]["state"]["status"])
 
-check("这一刻文件还不存在", not os.path.exists(os.path.join(workspace, "rejected.txt")))
+check("the file does not exist yet", not os.path.exists(os.path.join(workspace, "rejected.txt")))
 
 st, body = post("/api/permission/%s" % pending[0]["id"], {"decision": "reject"})
-check("裁决返回 200", st == 200, str(st))
+check("decision returned 200", st == 200, str(st))
 
 wait_for(lambda: events("session.idle"))
 time.sleep(0.3)
-check("文件确实没被写出来", not os.path.exists(os.path.join(workspace, "rejected.txt")))
+check("the file really was not written", not os.path.exists(os.path.join(workspace, "rejected.txt")))
 
 replied = events("permission.replied")
-check("SSE 收到 permission.replied", len(replied) == 1)
+check("SSE delivered permission.replied", len(replied) == 1)
 if replied:
-    check("裁决内容是 reject", replied[0]["data"].get("detail") == "reject",
+    check("the decision reads reject", replied[0]["data"].get("detail") == "reject",
           str(replied[0]["data"].get("detail")))
 
 fed = ""
@@ -231,102 +231,102 @@ for b in ModelHandler.bodies:
     for m in j.get("messages", []):
         if m.get("role") == "tool":
             fed = m.get("content", "")
-check("拒绝的理由回灌给了模型", "拒绝" in fed, repr(fed[:40]))
-check("并且明确告诉它别重试", "不要重试" in fed)
+check("the denial reached the model", "denied" in fed, repr(fed[:40]))
+check("and it is told not to retry", "Do not retry" in fed)
 say("")
 
 # ══ 2. 允许一次：文件该出现 ═══════════════════════════════════
-say("== 2. 允许一次 write ==")
+say("== 2. allow one write ==")
 with lock:
     frames.clear()
-SCRIPTS[:] = [("", "write", json.dumps({"path": "allowed.txt", "content": "批准之后才出现"})),
-              ("写好了。", "", "")]
+SCRIPTS[:] = [("", "write", json.dumps({"path": "allowed.txt", "content": "only after approval"})),
+              ("Written.", "", "")]
 with served_lock:
     served["n"] = 0
     ModelHandler.bodies[:] = []
 
 sid2 = new_session()
-post("/api/session/%s/prompt" % sid2, {"text": "写 allowed.txt"})
+post("/api/session/%s/prompt" % sid2, {"text": "write allowed.txt"})
 
 pending = wait_for(lambda: json.loads(get("/api/permission")[1].decode("utf-8")))
-check("又有一条在等", len(pending) == 1)
+check("another request is pending", len(pending) == 1)
 st, body = post("/api/permission/%s" % pending[0]["id"], {"decision": "once"})
-check("裁决返回 200", st == 200, str(st))
+check("decision returned 200", st == 200, str(st))
 
 wait_for(lambda: events("session.idle"))
 time.sleep(0.3)
 target = os.path.join(workspace, "allowed.txt")
-check("文件写出来了", os.path.exists(target))
+check("the file was written", os.path.exists(target))
 if os.path.exists(target):
     with open(target, "rb") as f:
         got = f.read().decode("utf-8")
-    check("内容正确且中文没坏", got == "批准之后才出现", repr(got))
+    check("content is byte-exact", got == "only after approval", repr(got))
 
 msgs = json.loads(get("/api/session/%s/message" % sid2)[1].decode("utf-8"))
 tool_parts = [pp for m in msgs for pp in m["parts"] if pp.get("type") == "tool"]
-check("工具卡变成 completed",
+check("tool card is completed",
       bool(tool_parts) and tool_parts[0]["state"]["status"] == "completed",
-      tool_parts[0]["state"]["status"] if tool_parts else "没有")
-check("待裁决清空了", json.loads(get("/api/permission")[1].decode("utf-8")) == [])
+      tool_parts[0]["state"]["status"] if tool_parts else "none")
+check("nothing left pending", json.loads(get("/api/permission")[1].decode("utf-8")) == [])
 say("")
 
 # ══ 3. 认不出的 decision 必须 400，不能兜底成放行 ═════════════
-say("== 3. 坏的 decision ==")
+say("== 3. a malformed decision ==")
 with lock:
     frames.clear()
 SCRIPTS[:] = [("", "write", json.dumps({"path": "typo.txt", "content": "x"})),
-              ("结束。", "", "")]
+              ("Done.", "", "")]
 with served_lock:
     served["n"] = 0
 
 sid3 = new_session()
-post("/api/session/%s/prompt" % sid3, {"text": "写 typo.txt"})
+post("/api/session/%s/prompt" % sid3, {"text": "write typo.txt"})
 pending = wait_for(lambda: json.loads(get("/api/permission")[1].decode("utf-8")))
-check("有一条在等", len(pending) == 1)
+check("one request is pending", len(pending) == 1)
 
 pid = pending[0]["id"]
 for bad in ["Once", "yes", "", "ALLOW"]:
     st, body = post("/api/permission/%s" % pid, {"decision": bad})
-    check("decision=%r 被拒成 400" % bad, st == 400, str(st))
+    check("decision=%r rejected with 400" % bad, st == 400, str(st))
 
-check("那一条还在等，没被误放行",
+check("still pending, not silently allowed",
       len(json.loads(get("/api/permission")[1].decode("utf-8"))) == 1)
-check("文件仍然不存在", not os.path.exists(os.path.join(workspace, "typo.txt")))
+check("the file still does not exist", not os.path.exists(os.path.join(workspace, "typo.txt")))
 
 # 不存在的 id 要 404，而不是假装成功
 st, _ = post("/api/permission/per_nope", {"decision": "once"})
-check("不存在的 permissionID 返回 404", st == 404, str(st))
+check("an unknown permissionID gives 404", st == 404, str(st))
 
 # 用中断收尾，顺带验证卡在等授权的那一轮能被叫醒
 st, _ = post("/api/session/%s/interrupt" % sid3, {})
-check("interrupt 返回 200", st == 200, str(st))
+check("interrupt returned 200", st == 200, str(st))
 idle = wait_for(lambda: events("session.idle"), limit=10)
-check("等授权的那一轮被中断唤醒了", bool(idle))
-check("待裁决被清掉", json.loads(get("/api/permission")[1].decode("utf-8")) == [])
+check("the waiting turn woke up on interrupt", bool(idle))
+check("pending requests were cleared", json.loads(get("/api/permission")[1].decode("utf-8")) == [])
 say("")
 
 # ══ 4. always：同一会话第二次不再问 ═══════════════════════════
-say("== 4. always 之后不再问 ==")
+say("== 4. always stops the asking ==")
 with lock:
     frames.clear()
 SCRIPTS[:] = [("", "write", json.dumps({"path": "one.txt", "content": "1"})),
               ("", "write", json.dumps({"path": "two.txt", "content": "2"})),
-              ("两个都写好了。", "", "")]
+              ("Both files written.", "", "")]
 with served_lock:
     served["n"] = 0
 
 sid4 = new_session()
-post("/api/session/%s/prompt" % sid4, {"text": "写两个文件"})
+post("/api/session/%s/prompt" % sid4, {"text": "write two files"})
 pending = wait_for(lambda: json.loads(get("/api/permission")[1].decode("utf-8")))
-check("第一次问了", len(pending) == 1)
+check("asked the first time", len(pending) == 1)
 post("/api/permission/%s" % pending[0]["id"], {"decision": "always"})
 
 wait_for(lambda: events("session.idle"))
 time.sleep(0.3)
-check("第一个文件写了", os.path.exists(os.path.join(workspace, "one.txt")))
-check("第二个文件也写了", os.path.exists(os.path.join(workspace, "two.txt")))
-check("全程只问了一次", len(events("permission.asked")) == 1,
-      "%d 次" % len(events("permission.asked")))
+check("first file written", os.path.exists(os.path.join(workspace, "one.txt")))
+check("second file written too", os.path.exists(os.path.join(workspace, "two.txt")))
+check("asked exactly once", len(events("permission.asked")) == 1,
+      "%d times" % len(events("permission.asked")))
 say("")
 
 # ── 收尾 ──────────────────────────────────────────────────────
@@ -341,8 +341,8 @@ shutil.rmtree(workspace, ignore_errors=True)
 
 say("-" * 40)
 if fails:
-    say("M4 端到端有 %d 项失败：" % len(fails))
+    say("M4 end-to-end: %d checks failed:" % len(fails))
     for f in fails:
         say("  - " + f)
     sys.exit(1)
-say("M4 端到端全部通过")
+say("M4 end-to-end: all checks passed")

@@ -1,25 +1,25 @@
 #include "MaiContextBuilder.h"
 
-MaiContextBuilder::MaiContextBuilder(Options options) : options_(std::move(options)) {}
+MaiContextBuilder::MaiContextBuilder(Options options) : mOptions(std::move(options)) {}
 
 std::vector<MaiModelMessage> MaiContextBuilder::build(
     const std::vector<MaiMessage>& history) const {
     std::vector<MaiModelMessage> out;
     out.reserve(history.size() + 1);
 
-    if (!options_.systemPrompt.empty()) {
-        MaiModelMessage t;
-        t.role = MaiModelRole::System;
-        t.content = options_.systemPrompt;
-        out.push_back(std::move(t));
+    if (!mOptions.systemPrompt.empty()) {
+        MaiModelMessage modelMessage;
+        modelMessage.role = MaiModelRole::System;
+        modelMessage.content = mOptions.systemPrompt;
+        out.push_back(std::move(modelMessage));
     }
 
-    for (const auto& m : history) {
-        if (m.role == MaiRole::User) {
-            MaiModelMessage t;
-            t.role = MaiModelRole::User;
-            t.content = m.text();
-            if (!t.content.empty()) out.push_back(std::move(t));
+    for (const auto& message : history) {
+        if (message.role == MaiRole::User) {
+            MaiModelMessage modelMessage;
+            modelMessage.role = MaiModelRole::User;
+            modelMessage.content = message.text();
+            if (!modelMessage.content.empty()) out.push_back(std::move(modelMessage));
             continue;
         }
 
@@ -39,11 +39,11 @@ std::vector<MaiModelMessage> MaiContextBuilder::build(
         auto flush_batch = [&] {
             if (batch.empty()) return;
             // 先发 assistant + 它发起的这批调用
-            for (const auto* tp : batch) {
+            for (const auto* toolPart : batch) {
                 MaiToolInvocation inv;
-                inv.id = tp->callId;
-                inv.name = tp->tool;
-                inv.arguments = tp->input;
+                inv.id = toolPart->callId;
+                inv.name = toolPart->tool;
+                inv.arguments = toolPart->input;
                 pending.invocations.push_back(std::move(inv));
             }
             out.push_back(pending);
@@ -52,33 +52,34 @@ std::vector<MaiModelMessage> MaiContextBuilder::build(
 
             // 再发每个调用的结果。toolCallId 必须对得上，否则模型认不出
             // 这是哪次调用的结果。
-            for (const auto* tp : batch) {
-                MaiModelMessage r;
-                r.role = MaiModelRole::ToolResult;
-                r.toolCallId = tp->callId;
-                r.content = tp->output.empty() ? "（无输出）" : tp->output;
-                out.push_back(std::move(r));
+            for (const auto* toolPart : batch) {
+                MaiModelMessage toolResult;
+                toolResult.role = MaiModelRole::ToolResult;
+                toolResult.toolCallId = toolPart->callId;
+                toolResult.content = toolPart->output.empty() ? "(no output)" : toolPart->output;
+                out.push_back(std::move(toolResult));
             }
             batch.clear();
         };
 
-        for (const auto& p : m.parts) {
-            if (const auto* text = std::get_if<MaiTextPart>(&p.body)) {
+        for (const auto& part : message.parts) {
+            if (const auto* text = std::get_if<MaiTextPart>(&part.body)) {
                 // 工具调用之后又开口说话了，说明上一批已经结束，先结算。
                 flush_batch();
                 if (!pending.content.empty()) pending.content += "\n";
                 pending.content += text->text;
-            } else if (const auto* r = std::get_if<MaiReasoningPart>(&p.body)) {
+            } else if (const auto* toolResult = std::get_if<MaiReasoningPart>(&part.body)) {
                 // 默认不回灌。reasoning 是模型的草稿，喂回去会污染下一轮的判断。
-                if (options_.includeReasoning) {
+                if (mOptions.includeReasoning) {
                     flush_batch();
                     if (!pending.content.empty()) pending.content += "\n";
-                    pending.content += r->text;
+                    pending.content += toolResult->text;
                 }
-            } else if (const auto* tp = std::get_if<MaiToolPart>(&p.body)) {
+            } else if (const auto* toolPart = std::get_if<MaiToolPart>(&part.body)) {
                 // 还没跑完的不回灌：模型看到一个没有结果的调用会以为它失败了。
-                if (tp->state == MaiToolState::Completed || tp->state == MaiToolState::Error) {
-                    batch.push_back(tp);
+                if (toolPart->state == MaiToolState::Completed ||
+                    toolPart->state == MaiToolState::Error) {
+                    batch.push_back(toolPart);
                 }
             }
         }

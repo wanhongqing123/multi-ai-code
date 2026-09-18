@@ -176,9 +176,9 @@ void test_cancel_flag_wakes_waiter() {
 }
 
 void test_timeout() {
-    MaiPermissionGate::Options opts;
-    opts.timeoutMs = 300;
-    MaiPermissionGate gate(opts);
+    MaiPermissionGate::Options options;
+    options.timeoutMs = 300;
+    MaiPermissionGate gate(options);
 
     const auto started = std::chrono::steady_clock::now();
     const auto d = gate.ask(makeRequest("per_1", "ses_1"), nullptr, kNeverCancel);
@@ -201,7 +201,7 @@ struct Script {
 };
 
 struct FakeModel {
-    httplib::Server srv;
+    httplib::Server server;
     std::thread th;
     int port = 0;
 
@@ -211,11 +211,12 @@ struct FakeModel {
     std::size_t served = 0;
 
     void start() {
-        srv.Post("/chat/completions", [this](const httplib::Request& req, httplib::Response& res) {
+        server.Post("/chat/completions", [this](const httplib::Request& request,
+                                                httplib::Response& response) {
             Script s;
             {
                 std::lock_guard<std::mutex> lock(mu);
-                bodies.push_back(req.body);
+                bodies.push_back(request.body);
                 if (served < scripts.size()) s = scripts[served];
                 ++served;
             }
@@ -243,16 +244,16 @@ struct FakeModel {
                 out += "data: " + root.dump() + "\n\n";
             }
             out += "data: [DONE]\n\n";
-            res.set_content(out, "text/event-stream");
+            response.set_content(out, "text/event-stream");
         });
-        port = srv.bind_to_any_port("127.0.0.1");
-        th = std::thread([this] { srv.listen_after_bind(); });
-        for (int i = 0; i < 200 && !srv.is_running(); ++i)
+        port = server.bind_to_any_port("127.0.0.1");
+        th = std::thread([this] { server.listen_after_bind(); });
+        for (int i = 0; i < 200 && !server.is_running(); ++i)
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
     ~FakeModel() {
-        srv.stop();
+        server.stop();
         if (th.joinable()) th.join();
     }
 
@@ -298,15 +299,15 @@ struct Workspace {
 };
 
 std::unique_ptr<MaiAgent> makeAgent(const FakeModel& model) {
-    MaiModelConfig cfg;
-    cfg.baseUrl = model.base();
-    cfg.apiKey = "test";
+    MaiModelConfig config;
+    config.baseUrl = model.base();
+    config.apiKey = "test";
     auto tools = std::make_unique<MaiToolRegistry>();
     registerMaiBuiltinTools(*tools);
-    MaiAgent::Options opts;
-    opts.defaultModel = "glm-5.3";
-    return std::make_unique<MaiAgent>(makeMaiMemoryStore(), makeMaiModelClient(cfg),
-                                      std::move(tools), opts);
+    MaiAgent::Options options;
+    options.defaultModel = "glm-5.3";
+    return std::make_unique<MaiAgent>(makeMaiMemoryStore(), makeMaiModelClient(config),
+                                      std::move(tools), options);
 }
 
 struct Recorder {
@@ -332,8 +333,8 @@ struct Recorder {
 };
 
 // 取当前 assistant 消息里那个工具 part 的状态。
-bool toolPartState(MaiAgent& agent, const std::string& sid, MaiToolState& out) {
-    for (const auto& m : agent.listMessages(sid)) {
+bool toolPartState(MaiAgent& agent, const std::string& sessionId, MaiToolState& out) {
+    for (const auto& m : agent.listMessages(sessionId)) {
         for (const auto& p : m.parts) {
             if (const auto* t = std::get_if<MaiToolPart>(&p.body)) {
                 out = t->state;
@@ -345,45 +346,46 @@ bool toolPartState(MaiAgent& agent, const std::string& sid, MaiToolState& out) {
 }
 
 void test_write_waits_for_approval_then_runs() {
-    Workspace ws;
+    Workspace workspace;
     FakeModel model;
     model.scripts = {
-        Script{"", "write", R"({"path":"note.txt","content":"批准之后才该出现"})"},
-        Script{"写好了。", "", ""},
+        Script{"", "write", R"({"path":"note.txt","content":"only after approval"})"},
+        Script{"Written.", "", ""},
     };
     model.start();
 
     auto agent = makeAgent(model);
-    Recorder rec;
-    rec.attach(*agent);
+    Recorder recorder;
+    recorder.attach(*agent);
 
-    const std::string sid = agent->submit(MaiCreateSession{ws.utf8Root(), "", ""}).value();
-    agent->submit(MaiSendPrompt{sid, "写个 note.txt"});
+    const std::string sessionId =
+        agent->submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
+    agent->submit(MaiSendPrompt{sessionId, "write note.txt"});
 
     // 闸门必须先拦住：这一刻文件不该存在。
     CHECK(waitFor([&] { return agent->listPendingPermissions().size() == 1; }));
-    CHECK(!ws.has("note.txt"));
+    CHECK(!workspace.has("note.txt"));
 
     const auto pending = agent->listPendingPermissions();
     CHECK(pending.size() == 1);
     CHECK(pending[0].toolName == "write");
-    CHECK(pending[0].sessionId == sid);
+    CHECK(pending[0].sessionId == sessionId);
     CHECK(pending[0].arguments.find("note.txt") != std::string::npos);
     CHECK(pending[0].id.rfind("per_", 0) == 0);
 
     // 等授权期间，工具卡应当是 Pending——界面靠这个显示"等待授权"。
     MaiToolState state = MaiToolState::Completed;
-    CHECK(toolPartState(*agent, sid, state));
+    CHECK(toolPartState(*agent, sessionId, state));
     CHECK(state == MaiToolState::Pending);
 
     // permission.asked 带了 permissionId 和 partId，界面据此定位到那张卡。
     bool sawAsked = false;
-    for (const auto& e : rec.all()) {
+    for (const auto& e : recorder.all()) {
         if (e.type != MaiEventType::PermissionAsked) continue;
         sawAsked = true;
         CHECK(e.permissionId == pending[0].id);
         CHECK(e.partId == pending[0].partId);
-        CHECK(e.sessionId == sid);
+        CHECK(e.sessionId == sessionId);
     }
     CHECK(sawAsked);
 
@@ -394,29 +396,30 @@ void test_write_waits_for_approval_then_runs() {
 
     agent->waitIdle();
 
-    CHECK(ws.has("note.txt"));
-    std::ifstream in(ws.root / "note.txt", std::ios::binary);
+    CHECK(workspace.has("note.txt"));
+    std::ifstream in(workspace.root / "note.txt", std::ios::binary);
     const std::string content((std::istreambuf_iterator<char>(in)), {});
-    CHECK(content == "批准之后才该出现");
+    CHECK(content == "only after approval");
 
-    CHECK(toolPartState(*agent, sid, state));
+    CHECK(toolPartState(*agent, sessionId, state));
     CHECK(state == MaiToolState::Completed);
-    CHECK(rec.count(MaiEventType::PermissionReplied) == 1);
+    CHECK(recorder.count(MaiEventType::PermissionReplied) == 1);
     CHECK(agent->listPendingPermissions().empty());
 }
 
 void test_reject_blocks_write_and_tells_model() {
-    Workspace ws;
+    Workspace workspace;
     FakeModel model;
     model.scripts = {
-        Script{"", "write", R"({"path":"nope.txt","content":"不该被写出来"})"},
-        Script{"好的，我不写了。", "", ""},
+        Script{"", "write", R"({"path":"nope.txt","content":"must not be written"})"},
+        Script{"All right, I will not write it.", "", ""},
     };
     model.start();
 
     auto agent = makeAgent(model);
-    const std::string sid = agent->submit(MaiCreateSession{ws.utf8Root(), "", ""}).value();
-    agent->submit(MaiSendPrompt{sid, "写个 nope.txt"});
+    const std::string sessionId =
+        agent->submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
+    agent->submit(MaiSendPrompt{sessionId, "write nope.txt"});
 
     CHECK(waitFor([&] { return agent->listPendingPermissions().size() == 1; }));
     MaiReplyPermission reply;
@@ -427,37 +430,38 @@ void test_reject_blocks_write_and_tells_model() {
     agent->waitIdle();
 
     // 最要紧的一条：文件没被写出来。
-    CHECK(!ws.has("nope.txt"));
+    CHECK(!workspace.has("nope.txt"));
 
     MaiToolState state = MaiToolState::Completed;
-    CHECK(toolPartState(*agent, sid, state));
+    CHECK(toolPartState(*agent, sessionId, state));
     CHECK(state == MaiToolState::Error);
 
     // 模型得知道发生了什么，而且得被明确告知别重试——否则它会拿同样的
     // 参数把 12 圈烧光。
-    const std::string fed = model.lastToolResultText();
-    CHECK(fed.find("拒绝") != std::string::npos);
-    CHECK(fed.find("不要重试") != std::string::npos);
+    const std::string toolResultText = model.lastToolResultText();
+    CHECK(toolResultText.find("denied") != std::string::npos);
+    CHECK(toolResultText.find("Do not retry") != std::string::npos);
 }
 
 void test_rejected_repeat_does_not_ask_again() {
-    Workspace ws;
+    Workspace workspace;
     FakeModel model;
     // 模型被拒之后原样再调一次——真实模型经常这么干。
     const char* args = R"({"path":"again.txt","content":"x"})";
     model.scripts = {
         Script{"", "write", args},
         Script{"", "write", args},
-        Script{"算了。", "", ""},
+        Script{"Never mind.", "", ""},
     };
     model.start();
 
     auto agent = makeAgent(model);
-    Recorder rec;
-    rec.attach(*agent);
+    Recorder recorder;
+    recorder.attach(*agent);
 
-    const std::string sid = agent->submit(MaiCreateSession{ws.utf8Root(), "", ""}).value();
-    agent->submit(MaiSendPrompt{sid, "写 again.txt"});
+    const std::string sessionId =
+        agent->submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
+    agent->submit(MaiSendPrompt{sessionId, "write again.txt"});
 
     CHECK(waitFor([&] { return agent->listPendingPermissions().size() == 1; }));
     MaiReplyPermission reply;
@@ -467,29 +471,30 @@ void test_rejected_repeat_does_not_ask_again() {
 
     agent->waitIdle();
 
-    CHECK(!ws.has("again.txt"));
+    CHECK(!workspace.has("again.txt"));
     // 第二次同样的调用直接回同样的拒绝，**不再弹第二个框**。
     // 不做这件事的话，模型每重试一次用户就要点一次"不行"。
-    CHECK(rec.count(MaiEventType::PermissionAsked) == 1);
+    CHECK(recorder.count(MaiEventType::PermissionAsked) == 1);
     CHECK(model.requestCount() == 3);  // 三圈都跑到了，没卡住
 }
 
 void test_always_in_session_asks_only_once() {
-    Workspace ws;
+    Workspace workspace;
     FakeModel model;
     model.scripts = {
         Script{"", "write", R"({"path":"a.txt","content":"1"})"},
         Script{"", "write", R"({"path":"b.txt","content":"2"})"},
-        Script{"两个都写好了。", "", ""},
+        Script{"Both files written.", "", ""},
     };
     model.start();
 
     auto agent = makeAgent(model);
-    Recorder rec;
-    rec.attach(*agent);
+    Recorder recorder;
+    recorder.attach(*agent);
 
-    const std::string sid = agent->submit(MaiCreateSession{ws.utf8Root(), "", ""}).value();
-    agent->submit(MaiSendPrompt{sid, "写两个文件"});
+    const std::string sessionId =
+        agent->submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
+    agent->submit(MaiSendPrompt{sessionId, "write two files"});
 
     CHECK(waitFor([&] { return agent->listPendingPermissions().size() == 1; }));
     MaiReplyPermission reply;
@@ -499,70 +504,73 @@ void test_always_in_session_asks_only_once() {
 
     agent->waitIdle();
 
-    CHECK(ws.has("a.txt"));
-    CHECK(ws.has("b.txt"));  // 第二次没再问，直接放行
-    CHECK(rec.count(MaiEventType::PermissionAsked) == 1);
+    CHECK(workspace.has("a.txt"));
+    CHECK(workspace.has("b.txt"));  // 第二次没再问，直接放行
+    CHECK(recorder.count(MaiEventType::PermissionAsked) == 1);
 }
 
 void test_read_never_asks() {
-    Workspace ws;
-    std::ofstream(ws.root / "x.txt", std::ios::binary) << "内容";
+    Workspace workspace;
+    std::ofstream(workspace.root / "x.txt", std::ios::binary) << "some content";
     FakeModel model;
     model.scripts = {
         Script{"", "read", R"({"path":"x.txt"})"},
-        Script{"读到了。", "", ""},
+        Script{"Got it.", "", ""},
     };
     model.start();
 
     auto agent = makeAgent(model);
-    Recorder rec;
-    rec.attach(*agent);
+    Recorder recorder;
+    recorder.attach(*agent);
 
-    const std::string sid = agent->submit(MaiCreateSession{ws.utf8Root(), "", ""}).value();
-    agent->submit(MaiSendPrompt{sid, "读 x.txt"});
+    const std::string sessionId =
+        agent->submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
+    agent->submit(MaiSendPrompt{sessionId, "read x.txt"});
     agent->waitIdle();
 
     // 只读的工具不该打扰用户。每一次多余的确认都在训练用户闭眼点"允许"。
-    CHECK(rec.count(MaiEventType::PermissionAsked) == 0);
+    CHECK(recorder.count(MaiEventType::PermissionAsked) == 0);
     CHECK(agent->listPendingPermissions().empty());
 }
 
 void test_interrupt_while_waiting_for_approval() {
-    Workspace ws;
+    Workspace workspace;
     FakeModel model;
     model.scripts = {
         Script{"", "write", R"({"path":"interrupted.txt","content":"x"})"},
-        Script{"收到。", "", ""},
+        Script{"Understood.", "", ""},
     };
     model.start();
 
     auto agent = makeAgent(model);
-    const std::string sid = agent->submit(MaiCreateSession{ws.utf8Root(), "", ""}).value();
-    agent->submit(MaiSendPrompt{sid, "写 interrupted.txt"});
+    const std::string sessionId =
+        agent->submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
+    agent->submit(MaiSendPrompt{sessionId, "write interrupted.txt"});
 
     CHECK(waitFor([&] { return agent->listPendingPermissions().size() == 1; }));
-    CHECK(agent->submit(MaiInterrupt{sid}).isOk());
+    CHECK(agent->submit(MaiInterrupt{sessionId}).isOk());
 
     // 卡在等授权的那个线程必须醒过来，否则这一句永远返回不了。
     agent->waitIdle();
 
-    CHECK(!ws.has("interrupted.txt"));
+    CHECK(!workspace.has("interrupted.txt"));
     CHECK(agent->listPendingPermissions().empty());
-    CHECK(!agent->isBusy(sid));
+    CHECK(!agent->isBusy(sessionId));
 }
 
 void test_reply_to_stale_permission_is_not_found() {
-    Workspace ws;
+    Workspace workspace;
     FakeModel model;
     model.scripts = {
         Script{"", "write", R"({"path":"stale.txt","content":"x"})"},
-        Script{"完事。", "", ""},
+        Script{"Done.", "", ""},
     };
     model.start();
 
     auto agent = makeAgent(model);
-    const std::string sid = agent->submit(MaiCreateSession{ws.utf8Root(), "", ""}).value();
-    agent->submit(MaiSendPrompt{sid, "写 stale.txt"});
+    const std::string sessionId =
+        agent->submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
+    agent->submit(MaiSendPrompt{sessionId, "write stale.txt"});
 
     CHECK(waitFor([&] { return agent->listPendingPermissions().size() == 1; }));
     const std::string pid = agent->listPendingPermissions()[0].id;
@@ -617,7 +625,7 @@ int main() {
     test_reply_to_stale_permission_is_not_found();
 
     if (failures) {
-        std::printf("\n%d 项失败\n", failures);
+        std::printf("\n%d checks failed\n", failures);
         return 1;
     }
     std::printf("\npermission tests passed\n");

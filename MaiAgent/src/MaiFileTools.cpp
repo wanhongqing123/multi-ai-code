@@ -27,16 +27,16 @@ constexpr int kMaxGlobResults = 300;
 
 // 截断时要落在 UTF-8 字符边界上，不然会切出半个汉字，
 // 后面 JSON 序列化会失败或者产生乱码。
-void truncateUtf8(std::string& s, std::size_t maxBytes) {
-    if (s.size() <= maxBytes) return;
+void truncateUtf8(std::string& text, std::size_t maxBytes) {
+    if (text.size() <= maxBytes) return;
     std::size_t cut = maxBytes;
-    while (cut > 0 && (static_cast<unsigned char>(s[cut]) & 0xC0) == 0x80) --cut;
-    s.resize(cut);
+    while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0) == 0x80) --cut;
+    text.resize(cut);
 }
 
 json parseArguments(const std::string& raw) {
-    const json j = json::parse(raw, nullptr, /*allow_exceptions=*/false);
-    return j.is_object() ? j : json::object();
+    const json parsed = json::parse(raw, nullptr, /*allow_exceptions=*/false);
+    return parsed.is_object() ? parsed : json::object();
 }
 
 // 把 root 之外的路径挡掉，并给模型一句它能据此改正的话。
@@ -46,15 +46,19 @@ struct Resolved {
     bool ok = false;
 };
 
-Resolved resolveOrFail(const MaiToolContext& ctx, const std::string& rawPath) {
+Resolved resolveOrFail(const MaiToolContext& context, const std::string& rawPath) {
     if (rawPath.empty())
-        return {{}, MaiToolResult::failure(MaiErrorCode::InvalidInput, "缺少 path 参数"), false};
-    const std::string resolved = maiResolvePathWithinRoot(ctx.root, rawPath);
+        return {
+            {},
+            MaiToolResult::failure(MaiErrorCode::InvalidInput, "missing required parameter: path"),
+            false};
+    const std::string resolved = maiResolvePathWithinRoot(context.root, rawPath);
     if (resolved.empty()) {
         return {{},
                 MaiToolResult::failure(
                     MaiErrorCode::InvalidInput,
-                    "路径超出了工作目录，被拒绝：" + rawPath + "。只能访问工作目录内的文件。"),
+                    "Path is outside the working directory and was rejected: " + rawPath +
+                        ". Only files inside the working directory are accessible."),
                 false};
     }
     return {resolved, {}, true};
@@ -75,35 +79,37 @@ Resolved resolveOrFail(const MaiToolContext& ctx, const std::string& rawPath) {
 //   **  匹配任意字符，跨分隔符
 //   ?   匹配单个非分隔符字符
 // 大小写不敏感，只对 ASCII 做折叠——中文没有大小写，不需要处理。
-bool isSeparator(char c) {
-    return c == '/' || c == '\\';
+bool isSeparator(char character) {
+    return character == '/' || character == '\\';
 }
 
-char fold(char c) {
-    return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
+char fold(char character) {
+    return (character >= 'A' && character <= 'Z') ? static_cast<char>(character - 'A' + 'a')
+                                                  : character;
 }
 
 bool globMatch(const std::string& pattern, const std::string& text) {
-    std::size_t p = 0, t = 0;
+    std::size_t cursor = 0, textCursor = 0;
     std::size_t starPattern = std::string::npos, starText = 0;
     bool starCrossesSeparator = false;
 
-    while (t < text.size()) {
-        if (p < pattern.size() && pattern[p] == '*') {
-            const bool doubled = (p + 1 < pattern.size() && pattern[p + 1] == '*');
-            starPattern = p;
+    while (textCursor < text.size()) {
+        if (cursor < pattern.size() && pattern[cursor] == '*') {
+            const bool doubled = (cursor + 1 < pattern.size() && pattern[cursor + 1] == '*');
+            starPattern = cursor;
             starCrossesSeparator = doubled;
-            p += doubled ? 2 : 1;
+            cursor += doubled ? 2 : 1;
             // `**/` 里的那个分隔符是可选的：`**/*.cpp` 也该匹配根目录下的 a.cpp
-            if (doubled && p < pattern.size() && isSeparator(pattern[p])) ++p;
-            starText = t;
+            if (doubled && cursor < pattern.size() && isSeparator(pattern[cursor])) ++cursor;
+            starText = textCursor;
             continue;
         }
-        if (p < pattern.size() &&
-            (fold(pattern[p]) == fold(text[t]) || (pattern[p] == '?' && !isSeparator(text[t])) ||
-             (isSeparator(pattern[p]) && isSeparator(text[t])))) {
-            ++p;
-            ++t;
+        if (cursor < pattern.size() &&
+            (fold(pattern[cursor]) == fold(text[textCursor]) ||
+             (pattern[cursor] == '?' && !isSeparator(text[textCursor])) ||
+             (isSeparator(pattern[cursor]) && isSeparator(text[textCursor])))) {
+            ++cursor;
+            ++textCursor;
             continue;
         }
         // 失配：退回最近的 `*`，让它多吃一个字符。
@@ -111,16 +117,17 @@ bool globMatch(const std::string& pattern, const std::string& text) {
             // 单星不跨分隔符，遇到分隔符就彻底失败。
             if (!starCrossesSeparator && isSeparator(text[starText])) return false;
             ++starText;
-            t = starText;
-            p = starPattern + (starCrossesSeparator ? 2 : 1);
-            if (starCrossesSeparator && p < pattern.size() && isSeparator(pattern[p])) ++p;
+            textCursor = starText;
+            cursor = starPattern + (starCrossesSeparator ? 2 : 1);
+            if (starCrossesSeparator && cursor < pattern.size() && isSeparator(pattern[cursor]))
+                ++cursor;
             continue;
         }
         return false;
     }
     // 文本吃完了，剩下的模式必须全是 `*`
-    while (p < pattern.size() && pattern[p] == '*') ++p;
-    return p == pattern.size();
+    while (cursor < pattern.size() && pattern[cursor] == '*') ++cursor;
+    return cursor == pattern.size();
 }
 
 // 跳过这些目录：它们体量巨大而且几乎肯定不是模型要找的东西。
@@ -128,17 +135,17 @@ bool globMatch(const std::string& pattern, const std::string& text) {
 bool shouldSkipDirectory(const std::string& name) {
     static const char* kSkip[] = {".git", "node_modules", "target",      "build", "dist",
                                   "out",  ".venv",        "__pycache__", ".cache"};
-    for (const char* s : kSkip)
-        if (name == s) return true;
+    for (const char* text : kSkip)
+        if (name == text) return true;
     return false;
 }
 
-std::string toRelativePath(const std::string& root, const fs::path& p) {
-    std::error_code ec;
-    const fs::path rel = fs::relative(p, MaiPathUtf8::fromUtf8(root), ec);
+std::string toRelativePath(const std::string& root, const fs::path& path) {
+    std::error_code errorCode;
+    const fs::path rel = fs::relative(path, MaiPathUtf8::fromUtf8(root), errorCode);
     // 一律返回 UTF-8。generic 形式统一用 / 分隔，这样模型看到的路径
     // 在三个平台上长得一样，它给回来的路径我们也认。
-    return ec ? MaiPathUtf8::toUtf8(p) : MaiPathUtf8::toUtf8Generic(rel);
+    return errorCode ? MaiPathUtf8::toUtf8(path) : MaiPathUtf8::toUtf8Generic(rel);
 }
 
 // ── read ────────────────────────────────────────────────────────
@@ -148,32 +155,37 @@ public:
         return "read";
     }
     std::string description() const override {
-        return "读取工作目录内某个文件的内容。返回带行号的文本，便于后续引用具体行。";
+        return "Read a file inside the working directory. Returns the text with line numbers "
+               "so you can refer to specific lines later.";
     }
     std::string parametersSchema() const override {
         return R"({"type":"object","properties":{)"
-               R"("path":{"type":"string","description":"相对于工作目录的文件路径"},)"
-               R"("offset":{"type":"integer","description":"从第几行开始，默认 1"},)"
-               R"("limit":{"type":"integer","description":"最多读多少行，默认 500"}},)"
+               R"("path":{"type":"string","description":"File path relative to the working directory"},)"
+               R"("offset":{"type":"integer","description":"1-based line to start from, default 1"},)"
+               R"("limit":{"type":"integer","description":"Maximum number of lines to read, default 500"}},)"
                R"("required":["path"]})";
     }
 
-    MaiToolResult execute(const std::string& raw, const MaiToolContext& ctx) override {
+    MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         const json args = parseArguments(raw);
-        auto r = resolveOrFail(ctx, args.value("path", std::string{}));
-        if (!r.ok) return r.error;
+        auto resolved = resolveOrFail(context, args.value("path", std::string{}));
+        if (!resolved.ok) return resolved.error;
 
-        std::error_code ec;
-        const fs::path target = MaiPathUtf8::fromUtf8(r.path);
-        if (!fs::exists(target, ec) || ec)
-            return MaiToolResult::failure(MaiErrorCode::NotFound,
-                                          "文件不存在：" + args.value("path", std::string{}));
-        if (fs::is_directory(target, ec))
-            return MaiToolResult::failure(MaiErrorCode::InvalidInput,
-                                          "这是一个目录，不是文件。用 glob 列目录内容。");
+        std::error_code errorCode;
+        const fs::path target = MaiPathUtf8::fromUtf8(resolved.path);
+        if (!fs::exists(target, errorCode) || errorCode)
+            return MaiToolResult::failure(
+                MaiErrorCode::NotFound,
+                "file does not exist: " + args.value("path", std::string{}));
+        if (fs::is_directory(target, errorCode))
+            return MaiToolResult::failure(
+                MaiErrorCode::InvalidInput,
+                "That is a directory, not a file. Use glob to list its contents.");
 
-        std::ifstream in(MaiPathUtf8::fromUtf8(r.path), std::ios::binary);
-        if (!in) return MaiToolResult::failure(MaiErrorCode::Internal, "打不开文件");
+        std::ifstream in(MaiPathUtf8::fromUtf8(resolved.path), std::ios::binary);
+        if (!in)
+            return MaiToolResult::failure(MaiErrorCode::Internal,
+                                          "could not open file for reading");
 
         const int offset = std::max(1, args.value("offset", 1));
         const int limit = std::max(1, args.value("limit", 500));
@@ -203,12 +215,12 @@ public:
         }
 
         if (out.empty()) {
-            return MaiToolResult::success(lineno == 0 ? "（空文件）"
-                                                      : "（从第 " + std::to_string(offset) +
-                                                            " 行起没有内容）");
+            return MaiToolResult::success(lineno == 0 ? "(empty file)"
+                                                      : "(no content at or after line " +
+                                                            std::to_string(offset) + ")");
         }
         truncateUtf8(out, kMaxReadBytes);
-        if (truncated) out += "\n…内容被截断。用 offset 参数继续读后面的部分。";
+        if (truncated) out += "\n...Output truncated. Use the offset parameter to read further.";
         return MaiToolResult::success(std::move(out), truncated);
     }
 };
@@ -220,12 +232,13 @@ public:
         return "write";
     }
     std::string description() const override {
-        return "把内容写入工作目录内的某个文件，覆盖原有内容。父目录会自动创建。";
+        return "Write content to a file inside the working directory, replacing whatever was "
+               "there. Parent directories are created as needed.";
     }
     std::string parametersSchema() const override {
         return R"({"type":"object","properties":{)"
-               R"("path":{"type":"string","description":"相对于工作目录的文件路径"},)"
-               R"("content":{"type":"string","description":"要写入的完整内容"}},)"
+               R"("path":{"type":"string","description":"File path relative to the working directory"},)"
+               R"("content":{"type":"string","description":"The full content to write"}},)"
                R"("required":["path","content"]})";
     }
     // 会改文件。M4 的闸门就位后这里会真正拦一道。
@@ -233,31 +246,35 @@ public:
         return true;
     }
 
-    MaiToolResult execute(const std::string& raw, const MaiToolContext& ctx) override {
+    MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         const json args = parseArguments(raw);
-        auto r = resolveOrFail(ctx, args.value("path", std::string{}));
-        if (!r.ok) return r.error;
+        auto resolved = resolveOrFail(context, args.value("path", std::string{}));
+        if (!resolved.ok) return resolved.error;
         if (!args.contains("content") || !args["content"].is_string())
-            return MaiToolResult::failure(MaiErrorCode::InvalidInput, "缺少 content 参数");
+            return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                          "missing required parameter: content");
 
         const std::string content = args["content"].get<std::string>();
 
-        std::error_code ec;
-        const fs::path p = MaiPathUtf8::fromUtf8(r.path);
-        if (p.has_parent_path()) {
-            fs::create_directories(p.parent_path(), ec);
-            if (ec)
-                return MaiToolResult::failure(MaiErrorCode::Internal,
-                                              "创建父目录失败：" + ec.message());
+        std::error_code errorCode;
+        const fs::path path = MaiPathUtf8::fromUtf8(resolved.path);
+        if (path.has_parent_path()) {
+            fs::create_directories(path.parent_path(), errorCode);
+            if (errorCode)
+                return MaiToolResult::failure(
+                    MaiErrorCode::Internal,
+                    "could not create parent directory: " + errorCode.message());
         }
-        std::ofstream out(MaiPathUtf8::fromUtf8(r.path), std::ios::binary | std::ios::trunc);
-        if (!out) return MaiToolResult::failure(MaiErrorCode::Internal, "打不开文件用于写入");
+        std::ofstream out(MaiPathUtf8::fromUtf8(resolved.path), std::ios::binary | std::ios::trunc);
+        if (!out)
+            return MaiToolResult::failure(MaiErrorCode::Internal,
+                                          "could not open file for writing");
         out.write(content.data(), static_cast<std::streamsize>(content.size()));
-        if (!out) return MaiToolResult::failure(MaiErrorCode::Internal, "写入失败");
+        if (!out) return MaiToolResult::failure(MaiErrorCode::Internal, "write failed");
         out.close();
 
-        return MaiToolResult::success("已写入 " + toRelativePath(ctx.root, p) + "（" +
-                                      std::to_string(content.size()) + " 字节）");
+        return MaiToolResult::success("Wrote " + toRelativePath(context.root, path) + " (" +
+                                      std::to_string(content.size()) + " bytes)");
     }
 };
 
@@ -268,45 +285,48 @@ public:
         return "glob";
     }
     std::string description() const override {
-        return "按文件名模式查找工作目录内的文件。支持 * ? 和 **（跨目录）。";
+        return "Find files inside the working directory by name pattern. Supports * and ?, "
+               "and ** to cross directory boundaries.";
     }
     std::string parametersSchema() const override {
         return R"({"type":"object","properties":{)"
-               R"("pattern":{"type":"string","description":"如 **/*.cpp 或 src/*.h"},)"
-               R"("path":{"type":"string","description":"从哪个子目录开始找，默认工作目录根"}},)"
+               R"("pattern":{"type":"string","description":"For example **/*.cpp or src/*.h"},)"
+               R"("path":{"type":"string","description":"Subdirectory to search from, defaults to the working directory root"}},)"
                R"("required":["pattern"]})";
     }
 
-    MaiToolResult execute(const std::string& raw, const MaiToolContext& ctx) override {
+    MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         const json args = parseArguments(raw);
         const std::string pattern = args.value("pattern", std::string{});
         if (pattern.empty())
-            return MaiToolResult::failure(MaiErrorCode::InvalidInput, "缺少 pattern 参数");
+            return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                          "missing required parameter: pattern");
 
-        std::string base = ctx.root;
+        std::string base = context.root;
         if (args.contains("path") && args["path"].is_string() &&
             !args["path"].get<std::string>().empty()) {
-            auto r = resolveOrFail(ctx, args["path"].get<std::string>());
-            if (!r.ok) return r.error;
-            base = r.path;
+            auto resolved = resolveOrFail(context, args["path"].get<std::string>());
+            if (!resolved.ok) return resolved.error;
+            base = resolved.path;
         }
 
         std::vector<std::string> hits;
-        std::error_code ec;
-        fs::recursive_directory_iterator it(MaiPathUtf8::fromUtf8(base),
-                                            fs::directory_options::skip_permission_denied, ec);
-        if (ec)
-            return MaiToolResult::failure(MaiErrorCode::NotFound, "目录读不了：" + ec.message());
+        std::error_code errorCode;
+        fs::recursive_directory_iterator it(
+            MaiPathUtf8::fromUtf8(base), fs::directory_options::skip_permission_denied, errorCode);
+        if (errorCode)
+            return MaiToolResult::failure(MaiErrorCode::NotFound,
+                                          "could not read directory: " + errorCode.message());
 
-        for (; it != fs::recursive_directory_iterator(); it.increment(ec)) {
-            if (ec) break;
-            if (ctx.isCanceled()) break;
-            if (it->is_directory(ec)) {
+        for (; it != fs::recursive_directory_iterator(); it.increment(errorCode)) {
+            if (errorCode) break;
+            if (context.isCanceled()) break;
+            if (it->is_directory(errorCode)) {
                 if (shouldSkipDirectory(MaiPathUtf8::toUtf8(it->path().filename())))
                     it.disable_recursion_pending();
                 continue;
             }
-            const std::string rel = toRelativePath(ctx.root, it->path());
+            const std::string rel = toRelativePath(context.root, it->path());
             if (globMatch(pattern, rel) ||
                 globMatch(pattern, MaiPathUtf8::toUtf8(it->path().filename()))) {
                 hits.push_back(rel);
@@ -314,16 +334,17 @@ public:
             }
         }
 
-        if (hits.empty()) return MaiToolResult::success("没有匹配 " + pattern + " 的文件");
+        if (hits.empty()) return MaiToolResult::success("No files match " + pattern);
         std::sort(hits.begin(), hits.end());
         std::string out;
-        for (const auto& h : hits) {
-            out += h;
+        for (const auto& hit : hits) {
+            out += hit;
             out += "\n";
         }
         const bool truncated = static_cast<int>(hits.size()) >= kMaxGlobResults;
         if (truncated)
-            out += "…只显示前 " + std::to_string(kMaxGlobResults) + " 条，用更精确的模式缩小范围。";
+            out += "...Showing the first " + std::to_string(kMaxGlobResults) +
+                   " matches only. Use a more specific pattern to narrow the search.";
         return MaiToolResult::success(std::move(out), truncated);
     }
 };
@@ -335,36 +356,39 @@ public:
         return "grep";
     }
     std::string description() const override {
-        return "在工作目录内按正则搜索文件内容，返回匹配的文件、行号和整行。";
+        return "Search file contents inside the working directory with a regular expression. "
+               "Returns the file, line number and the whole matching line.";
     }
     std::string parametersSchema() const override {
         return R"({"type":"object","properties":{)"
-               R"("pattern":{"type":"string","description":"正则表达式"},)"
-               R"("path":{"type":"string","description":"从哪个子目录开始搜，默认工作目录根"},)"
-               R"("glob":{"type":"string","description":"只搜匹配此模式的文件，如 *.cpp"}},)"
+               R"("pattern":{"type":"string","description":"Regular expression"},)"
+               R"("path":{"type":"string","description":"Subdirectory to search from, defaults to the working directory root"},)"
+               R"("glob":{"type":"string","description":"Only search files matching this pattern, for example *.cpp"}},)"
                R"("required":["pattern"]})";
     }
 
-    MaiToolResult execute(const std::string& raw, const MaiToolContext& ctx) override {
+    MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         const json args = parseArguments(raw);
         const std::string pattern = args.value("pattern", std::string{});
         if (pattern.empty())
-            return MaiToolResult::failure(MaiErrorCode::InvalidInput, "缺少 pattern 参数");
+            return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                          "missing required parameter: pattern");
 
-        std::string base = ctx.root;
+        std::string base = context.root;
         if (args.contains("path") && args["path"].is_string() &&
             !args["path"].get<std::string>().empty()) {
-            auto r = resolveOrFail(ctx, args["path"].get<std::string>());
-            if (!r.ok) return r.error;
-            base = r.path;
+            auto resolved = resolveOrFail(context, args["path"].get<std::string>());
+            if (!resolved.ok) return resolved.error;
+            base = resolved.path;
         }
 
         std::regex re;
         try {
             re = std::regex(pattern, std::regex::ECMAScript);
-        } catch (const std::regex_error& e) {
-            return MaiToolResult::failure(MaiErrorCode::InvalidInput,
-                                          std::string("正则无法解析：") + e.what());
+        } catch (const std::regex_error& regexError) {
+            return MaiToolResult::failure(
+                MaiErrorCode::InvalidInput,
+                std::string("could not parse the regular expression: ") + regexError.what());
         }
 
         const std::string globPattern = args.value("glob", std::string{});
@@ -372,30 +396,31 @@ public:
 
         std::string out;
         int matches = 0;
-        std::error_code ec;
-        fs::recursive_directory_iterator it(MaiPathUtf8::fromUtf8(base),
-                                            fs::directory_options::skip_permission_denied, ec);
-        if (ec)
-            return MaiToolResult::failure(MaiErrorCode::NotFound, "目录读不了：" + ec.message());
+        std::error_code errorCode;
+        fs::recursive_directory_iterator it(
+            MaiPathUtf8::fromUtf8(base), fs::directory_options::skip_permission_denied, errorCode);
+        if (errorCode)
+            return MaiToolResult::failure(MaiErrorCode::NotFound,
+                                          "could not read directory: " + errorCode.message());
 
         for (; it != fs::recursive_directory_iterator() && matches < kMaxGrepMatches;
-             it.increment(ec)) {
-            if (ec) break;
-            if (ctx.isCanceled()) break;
-            if (it->is_directory(ec)) {
+             it.increment(errorCode)) {
+            if (errorCode) break;
+            if (context.isCanceled()) break;
+            if (it->is_directory(errorCode)) {
                 if (shouldSkipDirectory(MaiPathUtf8::toUtf8(it->path().filename())))
                     it.disable_recursion_pending();
                 continue;
             }
-            if (!it->is_regular_file(ec)) continue;
-            const std::string rel = toRelativePath(ctx.root, it->path());
+            if (!it->is_regular_file(errorCode)) continue;
+            const std::string rel = toRelativePath(context.root, it->path());
             if (hasFilter && !globMatch(globPattern, rel) &&
                 !globMatch(globPattern, MaiPathUtf8::toUtf8(it->path().filename())))
                 continue;
 
             // 太大的文件跳过：多半是二进制或产物，搜了也没意义还很慢。
-            const auto size = fs::file_size(it->path(), ec);
-            if (ec || size > 2u * 1024 * 1024) continue;
+            const auto size = fs::file_size(it->path(), errorCode);
+            if (errorCode || size > 2u * 1024 * 1024) continue;
 
             std::ifstream in(it->path(), std::ios::binary);
             if (!in) continue;
@@ -426,11 +451,13 @@ public:
             if (out.size() > kMaxOutputBytes) break;
         }
 
-        if (matches == 0) return MaiToolResult::success("没有匹配 " + pattern + " 的内容");
+        if (matches == 0) return MaiToolResult::success("No content matches " + pattern);
         const bool truncated = matches >= kMaxGrepMatches || out.size() > kMaxOutputBytes;
         truncateUtf8(out, kMaxOutputBytes);
         if (truncated)
-            out += "\n…匹配太多，只显示前面一部分。用更精确的正则或加 glob 参数缩小范围。";
+            out +=
+                "\n...Too many matches; showing the first ones only. Use a more specific "
+                "regular expression, or add the glob parameter to narrow the search.";
         return MaiToolResult::success(std::move(out), truncated);
     }
 };

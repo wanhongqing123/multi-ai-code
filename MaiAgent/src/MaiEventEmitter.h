@@ -9,7 +9,7 @@
 
 // 把"构造事件并发布"这件事收在一处。
 //
-// 之前 MaiAgent::Impl 里散着四个发事件的私有方法，每个都在手工填
+// 之前 MaiAgent::Implementation 里散着四个发事件的私有方法，每个都在手工填
 // id/time/type 那几个字段——加一种事件就要再抄一遍，抄漏一个字段
 // 不会编译报错，只会在界面上表现成某些更新丢了。
 //
@@ -41,5 +41,5 @@ public:
     void emitPermissionReplied(const MaiPermissionRequest& request, MaiPermissionDecision decision);
 
 private:
-    MaiEventBus& bus_;
+    MaiEventBus& mBus;
 };

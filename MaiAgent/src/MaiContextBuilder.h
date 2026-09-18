@@ -27,5 +27,5 @@ public:
     std::vector<MaiModelMessage> build(const std::vector<MaiMessage>& history) const;
 
 private:
-    Options options_;
+    Options mOptions;
 };

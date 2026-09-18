@@ -39,7 +39,7 @@ struct Script {
 };
 
 struct FakeModel {
-    httplib::Server srv;
+    httplib::Server server;
     std::thread th;
     int port = 0;
 
@@ -49,11 +49,12 @@ struct FakeModel {
     std::size_t served = 0;
 
     void start() {
-        srv.Post("/chat/completions", [this](const httplib::Request& req, httplib::Response& res) {
+        server.Post("/chat/completions", [this](const httplib::Request& request,
+                                                httplib::Response& response) {
             Script s;
             {
                 std::lock_guard<std::mutex> lock(mu);
-                bodies.push_back(req.body);
+                bodies.push_back(request.body);
                 if (served < scripts.size()) s = scripts[served];
                 ++served;
             }
@@ -81,16 +82,16 @@ struct FakeModel {
                 out += "data: " + root.dump() + "\n\n";
             }
             out += "data: [DONE]\n\n";
-            res.set_content(out, "text/event-stream");
+            response.set_content(out, "text/event-stream");
         });
-        port = srv.bind_to_any_port("127.0.0.1");
-        th = std::thread([this] { srv.listen_after_bind(); });
-        for (int i = 0; i < 200 && !srv.is_running(); ++i)
+        port = server.bind_to_any_port("127.0.0.1");
+        th = std::thread([this] { server.listen_after_bind(); });
+        for (int i = 0; i < 200 && !server.is_running(); ++i)
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
     ~FakeModel() {
-        srv.stop();
+        server.stop();
         if (th.joinable()) th.join();
     }
 
@@ -114,7 +115,7 @@ struct Workspace {
     Workspace() {
         root = fs::temp_directory_path() / ("maiagent-loop-" + std::to_string(std::rand()));
         fs::create_directories(root / "src");
-        std::ofstream(root / "src" / "hello.txt", std::ios::binary) << "第一行\n第二行\n";
+        std::ofstream(root / "src" / "hello.txt", std::ios::binary) << "line one\nline two\n";
     }
     ~Workspace() {
         std::error_code ec;
@@ -127,15 +128,15 @@ struct Workspace {
 };
 
 std::unique_ptr<MaiAgent> make_agent(const FakeModel& model) {
-    MaiModelConfig cfg;
-    cfg.baseUrl = model.base();
-    cfg.apiKey = "test";
+    MaiModelConfig config;
+    config.baseUrl = model.base();
+    config.apiKey = "test";
     auto tools = std::make_unique<MaiToolRegistry>();
     registerMaiBuiltinTools(*tools);
-    MaiAgent::Options opts;
-    opts.defaultModel = "glm-5.3";
-    return std::make_unique<MaiAgent>(makeMaiMemoryStore(), makeMaiModelClient(cfg),
-                                      std::move(tools), opts);
+    MaiAgent::Options options;
+    options.defaultModel = "glm-5.3";
+    return std::make_unique<MaiAgent>(makeMaiMemoryStore(), makeMaiModelClient(config),
+                                      std::move(tools), options);
 }
 
 struct Recorder {
@@ -156,21 +157,22 @@ struct Recorder {
 // ── 用例 ────────────────────────────────────────────────────────
 
 void test_tool_loop_closes() {
-    Workspace ws;
+    Workspace workspace;
     FakeModel model;
     // 第一次：要调 read。第二次：拿到内容后给出回答。
     model.scripts = {
         Script{"", "read", R"({"path":"src/hello.txt"})"},
-        Script{"文件里有两行。", "", ""},
+        Script{"The file has two lines.", "", ""},
     };
     model.start();
 
     auto agent = make_agent(model);
-    Recorder rec;
-    rec.attach(*agent);
+    Recorder recorder;
+    recorder.attach(*agent);
 
-    const std::string sid = agent->submit(MaiCreateSession{ws.utf8Root(), "", ""}).value();
-    agent->submit(MaiSendPrompt{sid, "看看 src/hello.txt 里是什么"});
+    const std::string sessionId =
+        agent->submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
+    agent->submit(MaiSendPrompt{sessionId, "what is in src/hello.txt"});
     agent->waitIdle();
 
     // 1. 模型被请求了两次——工具循环确实转了一圈
@@ -204,53 +206,54 @@ void test_tool_loop_closes() {
             foundToolResult = true;
             CHECK(m.value("toolCallId", "") == callId);
             // 真的把文件内容回灌了
-            CHECK(m.value("content", std::string{}).find("第一行") != std::string::npos);
+            CHECK(m.value("content", std::string{}).find("line one") != std::string::npos);
         }
     }
     CHECK(foundAssistantCall);
     CHECK(foundToolResult);
 
     // 4. 落库里有一个完成状态的 tool part
-    const auto msgs = agent->listMessages(sid);
+    const auto msgs = agent->listMessages(sessionId);
     CHECK(msgs.size() == 2);
-    const MaiToolPart* tp = nullptr;
+    const MaiToolPart* toolPart = nullptr;
     const MaiTextPart* final_text = nullptr;
     if (msgs.size() == 2) {
         for (const auto& p : msgs[1].parts) {
-            if (const auto* t = std::get_if<MaiToolPart>(&p.body)) tp = t;
+            if (const auto* t = std::get_if<MaiToolPart>(&p.body)) toolPart = t;
             if (const auto* t = std::get_if<MaiTextPart>(&p.body)) final_text = t;
         }
     }
-    CHECK(tp != nullptr);
-    if (tp) {
-        CHECK(tp->tool == "read");
-        CHECK(tp->state == MaiToolState::Completed);
-        CHECK(tp->output.find("第一行") != std::string::npos);
+    CHECK(toolPart != nullptr);
+    if (toolPart) {
+        CHECK(toolPart->tool == "read");
+        CHECK(toolPart->state == MaiToolState::Completed);
+        CHECK(toolPart->output.find("line one") != std::string::npos);
     }
     // 5. 最终回答也在
     CHECK(final_text != nullptr);
-    if (final_text) CHECK(final_text->text == "文件里有两行。");
+    if (final_text) CHECK(final_text->text == "The file has two lines.");
 
     // 6. 界面能看到工具卡的状态变化
     std::size_t partUpdates = 0;
-    for (const auto& e : rec.all())
+    for (const auto& e : recorder.all())
         if (e.type == MaiEventType::MessagePartUpdated) ++partUpdates;
     CHECK(partUpdates >= 2);  // 至少 running 和 completed 各一次
 }
 
 void test_tool_error_is_fed_back() {
-    Workspace ws;
+    Workspace workspace;
     FakeModel model;
     // 模型要读一个不存在的文件，然后（拿到错误后）改口
     model.scripts = {
-        Script{"", "read", R"({"path":"不存在的文件.txt"})"},
-        Script{"那个文件不存在。", "", ""},
+        Script{"", "read", R"({"path":"no-such-file.txt"})"},
+        Script{"That file does not exist.", "", ""},
     };
     model.start();
 
     auto agent = make_agent(model);
-    const std::string sid = agent->submit(MaiCreateSession{ws.utf8Root(), "", ""}).value();
-    agent->submit(MaiSendPrompt{sid, "读一下"});
+    const std::string sessionId =
+        agent->submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
+    agent->submit(MaiSendPrompt{sessionId, "read it"});
     agent->waitIdle();
 
     CHECK(model.requestCount() == 2);
@@ -259,118 +262,123 @@ void test_tool_error_is_fed_back() {
     bool fedError = false;
     for (const auto& m : second["messages"])
         if (m.value("role", "") == "tool" &&
-            m.value("content", std::string{}).find("不存在") != std::string::npos)
+            m.value("content", std::string{}).find("does not exist") != std::string::npos)
             fedError = true;
     CHECK(fedError);
 
-    const auto msgs = agent->listMessages(sid);
-    const MaiToolPart* tp = nullptr;
+    const auto msgs = agent->listMessages(sessionId);
+    const MaiToolPart* toolPart = nullptr;
     if (msgs.size() == 2)
         for (const auto& p : msgs[1].parts)
-            if (const auto* t = std::get_if<MaiToolPart>(&p.body)) tp = t;
-    CHECK(tp && tp->state == MaiToolState::Error);
+            if (const auto* t = std::get_if<MaiToolPart>(&p.body)) toolPart = t;
+    CHECK(toolPart && toolPart->state == MaiToolState::Error);
 }
 
 void test_unknown_tool_does_not_kill_the_turn() {
-    Workspace ws;
+    Workspace workspace;
     FakeModel model;
     // 模型编了一个不存在的工具名——这事真会发生
     model.scripts = {
-        Script{"", "编造的工具", R"({})"},
-        Script{"抱歉，我用错工具了。", "", ""},
+        Script{"", "made-up-tool", R"({})"},
+        Script{"Sorry, I used the wrong tool.", "", ""},
     };
     model.start();
 
     auto agent = make_agent(model);
-    const std::string sid = agent->submit(MaiCreateSession{ws.utf8Root(), "", ""}).value();
-    agent->submit(MaiSendPrompt{sid, "干点什么"});
+    const std::string sessionId =
+        agent->submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
+    agent->submit(MaiSendPrompt{sessionId, "do something"});
     agent->waitIdle();
 
     // 整轮不能因此失败，而是把"没这个工具"告诉模型让它改
     CHECK(model.requestCount() == 2);
-    const auto msgs = agent->listMessages(sid);
+    const auto msgs = agent->listMessages(sessionId);
     bool hasFinalText = false;
     if (msgs.size() == 2)
         for (const auto& p : msgs[1].parts)
             if (const auto* t = std::get_if<MaiTextPart>(&p.body))
-                if (t->text.find("用错工具") != std::string::npos) hasFinalText = true;
+                if (t->text.find("wrong tool") != std::string::npos) hasFinalText = true;
     CHECK(hasFinalText);
 }
 
 void test_path_escape_through_model() {
-    Workspace ws;
+    Workspace workspace;
     FakeModel model;
     // 模型（或提示词注入）让它读工作目录外的东西
     model.scripts = {
         Script{"", "read", R"({"path":"../../../etc/passwd"})"},
-        Script{"读不了那个路径。", "", ""},
+        Script{"I cannot read that path.", "", ""},
     };
     model.start();
 
     auto agent = make_agent(model);
-    const std::string sid = agent->submit(MaiCreateSession{ws.utf8Root(), "", ""}).value();
-    agent->submit(MaiSendPrompt{sid, "读一下系统密码文件"});
+    const std::string sessionId =
+        agent->submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
+    agent->submit(MaiSendPrompt{sessionId, "read the system password file"});
     agent->waitIdle();
 
-    const auto msgs = agent->listMessages(sid);
-    const MaiToolPart* tp = nullptr;
+    const auto msgs = agent->listMessages(sessionId);
+    const MaiToolPart* toolPart = nullptr;
     if (msgs.size() == 2)
         for (const auto& p : msgs[1].parts)
-            if (const auto* t = std::get_if<MaiToolPart>(&p.body)) tp = t;
-    CHECK(tp != nullptr);
-    if (tp) {
-        CHECK(tp->state == MaiToolState::Error);
-        CHECK(tp->output.find("超出了工作目录") != std::string::npos);
+            if (const auto* t = std::get_if<MaiToolPart>(&p.body)) toolPart = t;
+    CHECK(toolPart != nullptr);
+    if (toolPart) {
+        CHECK(toolPart->state == MaiToolState::Error);
+        CHECK(toolPart->output.find("outside the working directory") != std::string::npos);
     }
 }
 
 void test_iteration_cap() {
-    Workspace ws;
+    Workspace workspace;
     FakeModel model;
     // 模型一直要调工具，永不收手——真实中会发生（它会绕圈）
     for (int i = 0; i < 40; ++i)
         model.scripts.push_back(Script{"", "read", R"({"path":"src/hello.txt"})"});
     model.start();
 
-    MaiModelConfig cfg;
-    cfg.baseUrl = model.base();
-    cfg.apiKey = "test";
+    MaiModelConfig config;
+    config.baseUrl = model.base();
+    config.apiKey = "test";
     auto tools = std::make_unique<MaiToolRegistry>();
     registerMaiBuiltinTools(*tools);
-    MaiAgent::Options opts;
-    opts.defaultModel = "glm-5.3";
-    opts.maxToolIterations = 3;  // 调小便于测试
-    MaiAgent agent(makeMaiMemoryStore(), makeMaiModelClient(cfg), std::move(tools), opts);
+    MaiAgent::Options options;
+    options.defaultModel = "glm-5.3";
+    options.maxToolIterations = 3;  // 调小便于测试
+    MaiAgent agent(makeMaiMemoryStore(), makeMaiModelClient(config), std::move(tools), options);
 
-    Recorder rec;
-    rec.attach(agent);
-    const std::string sid = agent.submit(MaiCreateSession{ws.utf8Root(), "", ""}).value();
-    agent.submit(MaiSendPrompt{sid, "循环吧"});
+    Recorder recorder;
+    recorder.attach(agent);
+    const std::string sessionId =
+        agent.submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
+    agent.submit(MaiSendPrompt{sessionId, "loop forever"});
     agent.waitIdle();
 
     // 到上限就停，不能无限烧钱
     CHECK(model.requestCount() == 3);
     // 而且要明确告诉用户停在哪儿了，不是悄悄结束让人以为跑完了
     bool toldUser = false;
-    for (const auto& e : rec.all())
-        if (e.type == MaiEventType::SessionError && e.detail.find("上限") != std::string::npos)
+    for (const auto& e : recorder.all())
+        if (e.type == MaiEventType::SessionError &&
+            e.detail.find("tool-call limit") != std::string::npos)
             toldUser = true;
     CHECK(toldUser);
 }
 
 void test_no_tools_means_no_tool_field() {
-    Workspace ws;
+    Workspace workspace;
     FakeModel model;
-    model.scripts = {Script{"纯对话", "", ""}};
+    model.scripts = {Script{"just chatting", "", ""}};
     model.start();
 
-    MaiModelConfig cfg;
-    cfg.baseUrl = model.base();
-    cfg.apiKey = "test";
+    MaiModelConfig config;
+    config.baseUrl = model.base();
+    config.apiKey = "test";
     // 不给工具注册表 = 纯对话模式
-    MaiAgent agent(makeMaiMemoryStore(), makeMaiModelClient(cfg), nullptr, {});
-    const std::string sid = agent.submit(MaiCreateSession{ws.utf8Root(), "", ""}).value();
-    agent.submit(MaiSendPrompt{sid, "聊聊"});
+    MaiAgent agent(makeMaiMemoryStore(), makeMaiModelClient(config), nullptr, {});
+    const std::string sessionId =
+        agent.submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
+    agent.submit(MaiSendPrompt{sessionId, "chat"});
     agent.waitIdle();
 
     // 请求里不该出现 tools 字段——模型看不到工具就不会尝试调用

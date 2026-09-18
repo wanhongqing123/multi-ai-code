@@ -36,8 +36,8 @@ public:
     explicit operator bool() const;
 
 private:
-    MaiErrorCode code_ = MaiErrorCode::Ok;
-    std::string message_;
+    MaiErrorCode mCode = MaiErrorCode::Ok;
+    std::string mMessage;
 };
 
 // 轻量 Result。C++17 没有 std::expected，自己兜一个够用的。
@@ -48,28 +48,28 @@ private:
 template <typename T>
 class MaiResult {
 public:
-    MaiResult(T value) : value_(std::move(value)) {}         // NOLINT: 允许隐式
-    MaiResult(MaiError error) : error_(std::move(error)) {}  // NOLINT
-    MaiResult(MaiErrorCode code, std::string message) : error_(code, std::move(message)) {}
+    MaiResult(T value) : mValue(std::move(value)) {}         // NOLINT: 允许隐式
+    MaiResult(MaiError error) : mError(std::move(error)) {}  // NOLINT
+    MaiResult(MaiErrorCode code, std::string message) : mError(code, std::move(message)) {}
 
     bool isOk() const {
-        return !error_.hasError();
+        return !mError.hasError();
     }
     explicit operator bool() const {
         return isOk();
     }
 
     const T& value() const {
-        return value_;
+        return mValue;
     }
     T& value() {
-        return value_;
+        return mValue;
     }
     const MaiError& error() const {
-        return error_;
+        return mError;
     }
 
 private:
-    T value_{};
-    MaiError error_;
+    T mValue{};
+    MaiError mError;
 };

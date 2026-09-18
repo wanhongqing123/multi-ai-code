@@ -33,37 +33,38 @@ namespace {
 
 // 把一段完整的 SSE 文本按给定块大小切开发出去，模拟网络分片。
 struct FakeServer {
-    httplib::Server srv;
+    httplib::Server server;
     std::thread th;
     int port = 0;
     std::string script;
     std::size_t chunk = 1;
 
     void start() {
-        srv.Post("/chat/completions", [this](const httplib::Request&, httplib::Response& res) {
-            auto text = std::make_shared<std::string>(script);
-            auto pos = std::make_shared<std::size_t>(0);
-            const std::size_t step = chunk;
-            res.set_chunked_content_provider(
-                "text/event-stream", [text, pos, step](std::size_t, httplib::DataSink& sink) {
-                    if (*pos >= text->size()) {
-                        sink.done();
-                        return false;
-                    }
-                    const std::size_t n = std::min(step, text->size() - *pos);
-                    const bool ok = sink.write(text->data() + *pos, n);
-                    *pos += n;
-                    return ok;
-                });
-        });
-        port = srv.bind_to_any_port("127.0.0.1");
-        th = std::thread([this] { srv.listen_after_bind(); });
-        for (int i = 0; i < 200 && !srv.is_running(); ++i)
+        server.Post(
+            "/chat/completions", [this](const httplib::Request&, httplib::Response& response) {
+                auto text = std::make_shared<std::string>(script);
+                auto pos = std::make_shared<std::size_t>(0);
+                const std::size_t step = chunk;
+                response.set_chunked_content_provider(
+                    "text/event-stream", [text, pos, step](std::size_t, httplib::DataSink& sink) {
+                        if (*pos >= text->size()) {
+                            sink.done();
+                            return false;
+                        }
+                        const std::size_t n = std::min(step, text->size() - *pos);
+                        const bool ok = sink.write(text->data() + *pos, n);
+                        *pos += n;
+                        return ok;
+                    });
+            });
+        port = server.bind_to_any_port("127.0.0.1");
+        th = std::thread([this] { server.listen_after_bind(); });
+        for (int i = 0; i < 200 && !server.is_running(); ++i)
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
     ~FakeServer() {
-        srv.stop();
+        server.stop();
         if (th.joinable()) th.join();
     }
 
@@ -87,17 +88,17 @@ Collected run(const std::string& script, std::size_t chunk) {
     fake.chunk = chunk;
     fake.start();
 
-    MaiModelConfig cfg;
-    cfg.baseUrl = fake.base();
-    cfg.apiKey = "test-key";
-    auto client = makeMaiModelClient(cfg);
+    MaiModelConfig config;
+    config.baseUrl = fake.base();
+    config.apiKey = "test-key";
+    auto client = makeMaiModelClient(config);
 
-    MaiModelRequest req;
-    req.model = "glm-5.3";
+    MaiModelRequest request;
+    request.model = "glm-5.3";
     MaiModelMessage t;
     t.role = MaiModelRole::User;
-    t.content = "跑一下测试";
-    req.messages.push_back(t);
+    t.content = "run the tests";
+    request.messages.push_back(t);
 
     Collected c;
     MaiStreamSink h;
@@ -108,7 +109,7 @@ Collected run(const std::string& script, std::size_t chunk) {
     const std::atomic<bool> cancel{false};
     // 错误现在是返回值而不是回调：调用方不会漏接，而且能拿到错误码
     // 来区分"网断了"和"用户按了停"。
-    const MaiError err = client->stream(req, h, cancel);
+    const MaiError err = client->stream(request, h, cancel);
     c.error = err.message();
     c.code = err.code();
     c.done = !err;
@@ -154,9 +155,26 @@ std::string text_delta(const char* content) {
 
 const char* kDone = "data: [DONE]\n\n";
 
+// 这三段合起来是 "你好，世界 🙂"。
+//
+// 写成 \u 转义而不是直接的汉字，是因为规范要求代码里除注释外不出现中文；
+// 但这个用例**测的就是非 ASCII**——多字节字符被切在 chunk 边界上还能不能
+// 拼回来，所以字节本身一个都不能改。
+//
+//   \u4f60\u597d       你好
+//   \uff0c\u4e16\u754c  ，世界
+//   \U0001F642        🙂
+const char* kGreetingPart1 = "\u4f60\u597d";
+const char* kGreetingPart2 = "\uff0c\u4e16\u754c";
+const char* kGreetingPart3 = " \U0001F642";
+
+std::string greeting() {
+    return std::string(kGreetingPart1) + kGreetingPart2 + kGreetingPart3;
+}
+
 std::string text_script() {
-    return std::string(": ping\n\n") + text_delta("你好") + text_delta("，世界") +
-           text_delta(" 🙂") + kDone;
+    return std::string(": ping\n\n") + text_delta(kGreetingPart1) + text_delta(kGreetingPart2) +
+           text_delta(kGreetingPart3) + kDone;
 }
 
 // 工具调用：arguments 切成四段，切点故意落在 JSON 的引号和冒号中间。
@@ -202,14 +220,14 @@ void test_text_stream_one_byte_at_a_time() {
     const auto c = run(text_script(), 1);  // 最恶劣的分片
     CHECK(c.error.empty());
     CHECK(c.done);
-    CHECK(c.text == "你好，世界 🙂");
+    CHECK(c.text == greeting());
     CHECK(c.calls.empty());
 }
 
 void test_text_stream_all_at_once() {
     const auto c = run(text_script(), 100000);  // 另一个极端：全挤一个包
     CHECK(c.error.empty());
-    CHECK(c.text == "你好，世界 🙂");
+    CHECK(c.text == greeting());
 }
 
 void test_tool_call_fragments() {
@@ -222,7 +240,7 @@ void test_tool_call_fragments() {
             CHECK(c.calls[0].id == "call_abc");
             CHECK(c.calls[0].name == "bash");
             if (c.calls[0].arguments != "{\"command\":\"npm test\"}")
-                std::printf("  chunk=%zu 实际 arguments = %s\n", chunk,
+                std::printf("  chunk=%zu actual arguments = %s\n", chunk,
                             c.calls[0].arguments.c_str());
             CHECK(c.calls[0].arguments == "{\"command\":\"npm test\"}");
             // 拼出来的必须是合法 JSON——这才是工具实现拿得到的东西
@@ -247,9 +265,9 @@ void test_two_tool_calls_interleaved() {
 }
 
 void test_malformed_lines_are_ignored() {
-    const std::string script = std::string(": 心跳\n\n") + "data: 这不是 JSON\n\n" +
+    const std::string script = std::string(": heartbeat\n\n") + "data: not json at all\n\n" +
                                "data: {\"choices\":[]}\n\n" + text_delta("ok") +
-                               "没有前缀的垃圾行\n\n" + kDone;
+                               "garbage line with no prefix\n\n" + kDone;
     const auto c = run(script, 5);
     CHECK(c.error.empty());  // 畸形行不该升级成错误
     CHECK(c.text == "ok");   // 正常那条仍要收到
@@ -259,24 +277,24 @@ void test_malformed_lines_are_ignored() {
 void test_server_error_inside_stream() {
     // 有的服务端不用 HTTP 状态码，把错误塞在正常的流里
     json root;
-    root["error"] = "额度不足";
+    root["error"] = "quota exhausted";
     const auto c = run(sse(root), 4);
-    CHECK(c.error == "额度不足");
+    CHECK(c.error == "quota exhausted");
     CHECK(c.code == MaiErrorCode::Protocol);
     CHECK(!c.done);
 }
 
 void test_reasoning_delta() {
     json delta;
-    delta["reasoning_content"] = "先想想";
+    delta["reasoning_content"] = "let me think";
     json choice;
     choice["delta"] = std::move(delta);
     json root;
     root["choices"] = json::array({choice});
 
-    const auto c = run(sse(root) + text_delta("答案") + kDone, 2);
-    CHECK(c.reasoning == "先想想");
-    CHECK(c.text == "答案");
+    const auto c = run(sse(root) + text_delta("the answer") + kDone, 2);
+    CHECK(c.reasoning == "let me think");
+    CHECK(c.text == "the answer");
 }
 
 }  // namespace

@@ -27,7 +27,7 @@ struct MaiHttpAdapterOptions {
 // 进来的请求在这里解析成 MaiOperation，出去的事件在这里序列化成 SSE。
 class MaiHttpAdapter {
 public:
-    MaiHttpAdapter(MaiAgent& agent, MaiHttpAdapterOptions opts);
+    MaiHttpAdapter(MaiAgent& agent, MaiHttpAdapterOptions options);
     ~MaiHttpAdapter();
     MaiHttpAdapter(const MaiHttpAdapter&) = delete;
     MaiHttpAdapter& operator=(const MaiHttpAdapter&) = delete;
@@ -42,6 +42,6 @@ public:
     std::string baseUrl() const;
 
 private:
-    struct Impl;
-    std::unique_ptr<Impl> impl_;
+    struct Implementation;
+    std::unique_ptr<Implementation> mImplementation;
 };

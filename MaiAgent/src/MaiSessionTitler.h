@@ -29,5 +29,5 @@ public:
     std::string makeTitle(const std::string& text) const;
 
 private:
-    Options options_;
+    Options mOptions;
 };

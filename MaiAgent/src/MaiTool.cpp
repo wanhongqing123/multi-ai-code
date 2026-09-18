@@ -12,31 +12,31 @@ bool MaiToolContext::isCanceled() const {
 
 MaiToolResult MaiToolResult::success(std::string output, bool truncated) {
     MaiToolResult result;
-    result.output_ = std::move(output);
-    result.truncated_ = truncated;
+    result.mOutput = std::move(output);
+    result.mTruncated = truncated;
     return result;
 }
 
 MaiToolResult MaiToolResult::failure(MaiErrorCode code, std::string message) {
     MaiToolResult result;
-    result.error_ = MaiError::make(code, std::move(message));
+    result.mError = MaiError::make(code, std::move(message));
     return result;
 }
 
 const std::string& MaiToolResult::output() const {
-    return output_;
+    return mOutput;
 }
 
 const MaiError& MaiToolResult::error() const {
-    return error_;
+    return mError;
 }
 
 bool MaiToolResult::isTruncated() const {
-    return truncated_;
+    return mTruncated;
 }
 
 bool MaiToolResult::hasError() const {
-    return error_.hasError();
+    return mError.hasError();
 }
 
 // ── MaiTool ─────────────────────────────────────────────────────
@@ -52,30 +52,30 @@ void MaiToolRegistry::add(std::unique_ptr<MaiTool> tool) {
     const std::string name = tool->name();
     // 同名覆盖：注册表里不该出现两个同名工具，模型按名字调，撞了就不确定跑哪个。
     auto existing = std::find_if(
-        tools_.begin(), tools_.end(),
+        mTools.begin(), mTools.end(),
         [&](const std::unique_ptr<MaiTool>& candidate) { return candidate->name() == name; });
-    if (existing != tools_.end()) {
+    if (existing != mTools.end()) {
         *existing = std::move(tool);
         return;
     }
-    tools_.push_back(std::move(tool));
+    mTools.push_back(std::move(tool));
 }
 
 MaiTool* MaiToolRegistry::find(const std::string& name) const {
     auto hit = std::find_if(
-        tools_.begin(), tools_.end(),
+        mTools.begin(), mTools.end(),
         [&](const std::unique_ptr<MaiTool>& candidate) { return candidate->name() == name; });
-    return hit == tools_.end() ? nullptr : hit->get();
+    return hit == mTools.end() ? nullptr : hit->get();
 }
 
 bool MaiToolRegistry::isEmpty() const {
-    return tools_.empty();
+    return mTools.empty();
 }
 
 std::vector<MaiToolSpec> MaiToolRegistry::specs() const {
     std::vector<MaiToolSpec> out;
-    out.reserve(tools_.size());
-    for (const auto& tool : tools_) {
+    out.reserve(mTools.size());
+    for (const auto& tool : mTools) {
         MaiToolSpec spec;
         spec.name = tool->name();
         spec.description = tool->description();

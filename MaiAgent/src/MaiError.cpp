@@ -16,7 +16,7 @@ const char* maiErrorCodeToString(MaiErrorCode code) {
 }
 
 MaiError::MaiError(MaiErrorCode code, std::string message)
-    : code_(code), message_(std::move(message)) {}
+    : mCode(code), mMessage(std::move(message)) {}
 
 MaiError MaiError::ok() {
     return MaiError{};
@@ -27,15 +27,15 @@ MaiError MaiError::make(MaiErrorCode code, std::string message) {
 }
 
 MaiErrorCode MaiError::code() const {
-    return code_;
+    return mCode;
 }
 
 const std::string& MaiError::message() const {
-    return message_;
+    return mMessage;
 }
 
 bool MaiError::hasError() const {
-    return code_ != MaiErrorCode::Ok;
+    return mCode != MaiErrorCode::Ok;
 }
 
 MaiError::operator bool() const {

@@ -68,55 +68,62 @@ st, raw = get("/api/health")
 check("200", st == 200)
 check("service=maiagent", json.loads(raw)["service"] == "maiagent")
 
-say("== 2. 建会话，中文原样回来 ==")
-TITLE = "中文标题测试·带标点，和 emoji 🙂"
+say("== 2. create session, non-ASCII round-trips ==")
+# 载荷，不是文案：这个用例验证非 ASCII 标题能原样往返。
+# 写成 \u 转义是因为规范要求代码里除注释外不出现中文；换成 ASCII
+# 就等于把这条用例要测的东西删掉了，所以字节必须保持原样。
+#   \u4e2d\u6587\u6807\u9898  中文标题
+#   \u00b7                  ·
+#   \uff0c                  ，
+TITLE = "\u4e2d\u6587\u6807\u9898\u00b7\uff0c emoji \U0001F642"
+
 st, raw = post("/api/session", {"title": TITLE, "directory": "/tmp/x", "model": "glm-5.3"})
-check("响应是合法 UTF-8", True, "")
+check("response is valid UTF-8", True, "")
 d = json.loads(raw.decode("utf-8"))
 sid = d["id"]
-check("title 原样返回", d["title"] == TITLE, repr(d["title"]))
-check("directory 被解析", d["directory"] == "/tmp/x", repr(d["directory"]))
-check("model 被解析", d["model"] == "glm-5.3", repr(d["model"]))
-check("id 以 ses_ 开头", sid.startswith("ses_"), sid)
+check("title came back unchanged", d["title"] == TITLE, repr(d["title"]))
+check("directory was parsed", d["directory"] == "/tmp/x", repr(d["directory"]))
+check("model was parsed", d["model"] == "glm-5.3", repr(d["model"]))
+check("id starts with ses_", sid.startswith("ses_"), sid)
 
-say("== 3. 读回单个会话 ==")
+say("== 3. read one session back ==")
 st, raw = get("/api/session/" + sid)
 check("200", st == 200)
-check("title 一致", json.loads(raw.decode("utf-8"))["title"] == TITLE)
+check("title matches", json.loads(raw.decode("utf-8"))["title"] == TITLE)
 
-say("== 4. 列表包含它，且按 updated 倒序 ==")
+say("== 4. listing contains it, newest updated first ==")
 st, raw = get("/api/session")
 arr = json.loads(raw.decode("utf-8"))
-check("能找到刚建的", any(x["id"] == sid for x in arr))
+check("the new session is listed", any(x["id"] == sid for x in arr))
 ups = [x["time"]["updated"] for x in arr]
-check("按 updated 倒序", ups == sorted(ups, reverse=True))
+check("sorted by updated, descending", ups == sorted(ups, reverse=True))
 
-say("== 5. 消息列表为空数组 ==")
+say("== 5. message list is an empty array ==")
 st, raw = get("/api/session/%s/message" % sid)
 check("[]", json.loads(raw) == [])
 
-say("== 6. 不存在的会话 404 ==")
+say("== 6. unknown session gives 404 ==")
 try:
     get("/api/session/ses_nope")
-    check("404", False, "居然 200 了")
+    check("404", False, "got 200 instead")
 except urllib.error.HTTPError as e:
     check("404", e.code == 404, str(e.code))
 
-say("== 7. SSE 收到 session.created，且中文正确 ==")
-post("/api/session", {"title": "再来一条"})
+say("== 7. SSE delivers session.created with the title intact ==")
+post("/api/session", {"title": "one more"})
 deadline = time.time() + 5
 while len(frames) < 1 and time.time() < deadline:
     time.sleep(0.1)
-check("至少收到 1 帧", len(frames) >= 1, "收到 %d 帧" % len(frames))
+check("at least one frame", len(frames) >= 1, "%d frames" % len(frames))
 if frames:
     f = frames[0]
     check("type=session.created", f["type"] == "session.created", f["type"])
-    check("事件 id 以 evt_ 开头", f["id"].startswith("evt_"), f["id"])
-    check("data.sessionID 存在", "sessionID" in f["data"])
-    check("事件里的中文正确", f["data"].get("detail") == TITLE, repr(f["data"].get("detail")))
+    check("event id starts with evt_", f["id"].startswith("evt_"), f["id"])
+    check("data.sessionID present", "sessionID" in f["data"])
+    check("non-ASCII title survived the event", f["data"].get("detail") == TITLE, repr(f["data"].get("detail")))
 
 say("")
 if fails:
-    say("失败 %d 项: %s" % (len(fails), ", ".join(fails)))
+    say("%d checks failed: %s" % (len(fails), ", ".join(fails)))
     sys.exit(1)
-say("M1 全部通过")
+say("M1 all checks passed")

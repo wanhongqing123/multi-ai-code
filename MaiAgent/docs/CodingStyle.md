@@ -108,26 +108,76 @@ MaiSessionTitler   // 不叫 MaiTitleUtil —— Util 等于没说
 判断方法：把名字念给一个没读过这份代码的人听，问他这东西在架构里
 处于什么位置。答错了就是名字的问题，不是他的问题。
 
+## 3.6 不用晦涩的简写
+
+**名字要能读出它装的是什么。** 局部变量也一样——单字母和随手砍掉几个
+音节的简写，读代码的人得往上翻好几行才知道它是什么。
+
+```cpp
+// 坏
+const auto ctx = ...;        for (const auto& p : msg.parts)
+MaiTurnRunner::Deps d;       std::mutex mu;
+
+// 好
+const auto context = ...;    for (const auto& part : message.parts)
+MaiTurnRunner::Dependencies dependencies;   std::mutex mutex;
+```
+
+危害最大的是**一个字母在不同地方装不同东西**。改之前这个仓库里：
+`e` 同时是 event、error、std::regex_error；`s` 同时是 session、string、
+MaiToolState；`p` 同时是 fs::path、MessagePart 和 glob 匹配的下标。
+读到 `s.id` 得先猜它是哪一个。
+
+留下来没展开的，是展开之后反而更糟的几类：
+
+| 保留 | 理由 |
+|---|---|
+| `i` `n` | 纯粹的下标和计数，没有别的含义 |
+| `it` | 迭代器，C++ 里通用到不需要解释 |
+| `fs` `json` | `namespace fs = std::filesystem`、`using json = nlohmann::json`，标准写法 |
+| `HTTP` `SSE` `JSON` `UTF-8` | 标准缩略语，全称反而没人念 |
+| `ses_` `msg_` `prt_` `evt_` `per_` | 线上 id 前缀，是契约的一部分，改了就不兼容 |
+
+pimpl 的那个成员**不在**保留名单里：写全 `mImplementation` / `Implementation`。
+`Impl` 是惯用法不假，但惯用法不等于自明——这条规范的标准是"读的人不用猜"，
+不是"圈内人认得"。
+
+
+**批量改名时注意 `#include`**：`\bh\b` 这种正则会把 `<curl/curl.h>` 改成
+`<curl/curl.header>`。这个坑踩过一次，编译错误是"找不到头文件"，离真正的
+原因很远。
+
 ## 4. 成员变量
 
-**小驼峰 + 尾下划线**（与 MaiChat 一致）：
+**类的成员变量用 `m` 前缀 + 大驼峰**：
 
 ```cpp
 class MaiTurnRunner {
- private:
-  std::string sessionId_;
-  MaiMessage assistant_;
+private:
+    std::string mSessionId;
+    MaiMessage mAssistant;
+    MaiError mError;
 };
 ```
 
-公开的纯数据结构体不加下划线：
+前缀是为了在成员函数里一眼分清成员和局部变量、参数。没有前缀时，
+`session = x;` 这行要往上翻几十行才知道改的是成员还是局部。
+
+**公开的纯数据结构体不加前缀**：
 
 ```cpp
 struct MaiSession {
-  std::string id;
-  std::string title;
+    std::string id;
+    std::string title;
 };
 ```
+
+它们按字段名聚合初始化、按字段名序列化上线，加前缀既起不到区分作用，
+又会让 C++ 字段名和线上字段名对不上。
+
+> 注意：`MaiChat/desktop` 用的是尾下划线（`currentUserId_`，344 处）。
+> 这一条是 MaiAgent 和它不一致的地方，按项目要求走 `m` 前缀。
+> 两边哪天要统一，得动的是 MaiChat 那 344 处。
 
 ## 5. 头文件里不写函数实现
 
@@ -202,6 +252,31 @@ clang-format -i --style=file <改过的文件>
 #include "MaiIdGenerator.h"  // 4. 本项目其它头
 #include "MaiSessionStore.h"
 ```
+
+## 7.5 字符串字面量一律英文
+
+**除注释外，代码里不出现中文。** 错误信息、日志、工具描述、CLI 帮助、
+测试里的断言文案，全部英文。
+
+理由有三层：
+
+- 核心是个要被链进各种壳的库。把中文写死在库里，等于所有壳都被迫说中文，
+  本地化就没地方做了——那是界面的事。
+- 工具的 description 和 JSON Schema 是**给模型看的**，各家模型对英文
+  工具描述的训练数据都多得多。
+- 这台机器上 bash / PowerShell 会把 UTF-8 按 GBK 解释。之前有两次把
+  shell 毁掉的中文当成了服务端的 bug 去查。
+
+**唯一的例外是"被测数据"**：几个用例测的就是非 ASCII 路径和内容能不能
+原样往返（MSVC 的 `fs::path` 按 ANSI 代码页解释 narrow 字符串，中文路径
+当初是让进程直接挂掉，不是返回错误）。这种地方字节不能改，写成转义：
+
+```cpp
+// \u65b0\u76ee\u5f55 = 新目录
+const char* kCjkDir = "\u65b0\u76ee\u5f55";
+```
+
+这样源码里没有汉字，被测的字节又一个不差。汉字写在注释里说明它是什么。
 
 ## 8. 注释
 

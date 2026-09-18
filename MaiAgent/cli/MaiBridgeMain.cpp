@@ -15,56 +15,58 @@ namespace {
 
 void usage() {
     std::printf(
-        "用法: maiagent-bridge [选项]\n"
+        "Usage: maiagent-bridge [options]\n"
         "\n"
-        "  --host <addr>        监听地址，默认 127.0.0.1\n"
-        "  --port <n>           监听端口，0 或省略则由系统分配\n"
-        "  --model-url <url>    模型的 base url，例如\n"
+        "  --host <addr>        Address to listen on, default 127.0.0.1\n"
+        "  --port <n>           Port to listen on; 0 or omitted lets the OS pick one\n"
+        "  --model-url <url>    Model base url, for example\n"
         "                         https://open.bigmodel.cn/api/paas/v4   (GLM)\n"
         "                         http://127.0.0.1:11434/v1              (Ollama)\n"
-        "  --model-key <key>    API key；也可用环境变量 MAIAGENT_API_KEY\n"
-        "  --model <name>       默认模型名，默认 glm-5.3\n"
+        "  --model-key <key>    API key; MAIAGENT_API_KEY works too\n"
+        "  --model <name>       Default model name, default glm-5.3\n"
         "  --permission-timeout <ms>\n"
-        "                       等用户授权的超时毫秒数。0（默认）= 一直等。\n"
-        "                       超时按拒绝处理。无人值守时才需要设。\n"
+        "                       Milliseconds to wait for user approval. 0 (default) waits\n"
+        "                       forever; a timeout counts as a denial. Only needed when\n"
+        "                       nobody is there to answer.\n"
         "\n"
-        "不给 --model-url 就是空转模式：界面能起、会话能建，但发消息不会有回复。\n");
+        "Without --model-url the bridge idles: the UI starts and sessions can be\n"
+        "created, but prompts get no reply.\n");
 }
 
 const char* envOrEmpty(const char* name) {
-    const char* v = std::getenv(name);
-    return v ? v : "";
+    const char* value = std::getenv(name);
+    return value ? value : "";
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
-    MaiHttpAdapterOptions opts;
+    MaiHttpAdapterOptions options;
     std::string modelUrl;
     std::string modelKey = envOrEmpty("MAIAGENT_API_KEY");
     std::string modelName = "glm-5.3";
     MaiMillis permissionTimeoutMs = 0;
 
     for (int i = 1; i < argc; ++i) {
-        const std::string a = argv[i];
+        const std::string argument = argv[i];
         const bool hasNext = (i + 1) < argc;
-        if (a == "--help" || a == "-h") {
+        if (argument == "--help" || argument == "-h") {
             usage();
             return 0;
-        } else if (a == "--port" && hasNext) {
-            opts.port = std::atoi(argv[++i]);
-        } else if (a == "--host" && hasNext) {
-            opts.host = argv[++i];
-        } else if (a == "--model-url" && hasNext) {
+        } else if (argument == "--port" && hasNext) {
+            options.port = std::atoi(argv[++i]);
+        } else if (argument == "--host" && hasNext) {
+            options.host = argv[++i];
+        } else if (argument == "--model-url" && hasNext) {
             modelUrl = argv[++i];
-        } else if (a == "--model-key" && hasNext) {
+        } else if (argument == "--model-key" && hasNext) {
             modelKey = argv[++i];
-        } else if (a == "--model" && hasNext) {
+        } else if (argument == "--model" && hasNext) {
             modelName = argv[++i];
-        } else if (a == "--permission-timeout" && hasNext) {
+        } else if (argument == "--permission-timeout" && hasNext) {
             permissionTimeoutMs = std::atoll(argv[++i]);
         } else {
-            std::fprintf(stderr, "maiagent: 无法识别的参数 %s\n", a.c_str());
+            std::fprintf(stderr, "maiagent: unrecognized argument %s\n", argument.c_str());
             usage();
             return 2;
         }
@@ -72,10 +74,10 @@ int main(int argc, char** argv) {
 
     std::unique_ptr<MaiModelClient> model;
     if (!modelUrl.empty()) {
-        MaiModelConfig cfg;
-        cfg.baseUrl = modelUrl;
-        cfg.apiKey = modelKey;
-        model = makeMaiModelClient(cfg);
+        MaiModelConfig config;
+        config.baseUrl = modelUrl;
+        config.apiKey = modelKey;
+        model = makeMaiModelClient(config);
     }
 
     // 装上内置工具。没有工作目录的会话用不了文件类工具（工具层会明确拒绝），
@@ -87,20 +89,21 @@ int main(int argc, char** argv) {
     agentOptions.defaultModel = modelName;
     agentOptions.permissionTimeoutMs = permissionTimeoutMs;
     MaiAgent agent(makeMaiMemoryStore(), std::move(model), std::move(tools), agentOptions);
-    MaiHttpAdapter server(agent, opts);
+    MaiHttpAdapter server(agent, options);
 
     if (!server.bind()) {
-        std::fprintf(stderr, "maiagent: 无法绑定 %s:%d\n", opts.host.c_str(), opts.port);
+        std::fprintf(stderr, "maiagent: could not bind %s:%d\n", options.host.c_str(),
+                     options.port);
         return 1;
     }
     // 端口必须在开始阻塞之前打出来，否则 port=0 时没人知道它监听在哪。
     std::printf("maiagent listening on %s\n", server.baseUrl().c_str());
-    std::printf("  权限: write 需要授权，走 POST /api/permission/<id>%s\n",
-                permissionTimeoutMs > 0 ? "（有超时）" : "（无超时，一直等）");
+    std::printf("  permissions: write needs approval via POST /api/permission/<id>%s\n",
+                permissionTimeoutMs > 0 ? " (with timeout)" : " (no timeout, waits forever)");
     if (modelUrl.empty()) {
-        std::printf("  模型: 未配置（空转模式，发消息不会有回复）\n");
+        std::printf("  model: not configured (idle mode, prompts get no reply)\n");
     } else {
-        std::printf("  模型: %s @ %s\n", modelName.c_str(), modelUrl.c_str());
+        std::printf("  model: %s @ %s\n", modelName.c_str(), modelUrl.c_str());
     }
     std::fflush(stdout);
     return server.serve() ? 0 : 1;

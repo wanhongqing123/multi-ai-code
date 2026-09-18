@@ -32,9 +32,9 @@ public:
     bool hasError() const;
 
 private:
-    std::string output_;
-    MaiError error_;
-    bool truncated_ = false;
+    std::string mOutput;
+    MaiError mError;
+    bool mTruncated = false;
 };
 
 // 一个工具。
@@ -69,7 +69,7 @@ public:
     std::vector<MaiToolSpec> specs() const;
 
 private:
-    std::vector<std::unique_ptr<MaiTool>> tools_;
+    std::vector<std::unique_ptr<MaiTool>> mTools;
 };
 
 // 第一批工具。read / glob / grep 是只读的；write 会改文件，

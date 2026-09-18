@@ -30,13 +30,13 @@ namespace {
 
 // ── 假模型：一个真的 Chat Completions 端点 ─────────────────────
 struct FakeModel {
-    httplib::Server srv;
+    httplib::Server server;
     std::thread th;
     int port = 0;
 
     // 每个 content 片段之间的停顿，用来模拟"慢慢吐字"，好测中断。
     int delayMilliseconds = 0;
-    std::vector<std::string> chunks{"你好", "，我是", "测试模型"};
+    std::vector<std::string> chunks{"Hi", ", I am ", "a fake model"};
     std::string reasoning;
 
     // 收到的最后一个请求体，用来断言我们发出去的东西对不对。
@@ -44,58 +44,60 @@ struct FakeModel {
     std::string lastBody;
 
     void start() {
-        srv.Post("/chat/completions", [this](const httplib::Request& req, httplib::Response& res) {
-            {
-                std::lock_guard<std::mutex> lock(mu);
-                lastBody = req.body;
-            }
-            auto idx = std::make_shared<std::size_t>(0);
-            auto sentReasoning = std::make_shared<bool>(reasoning.empty());
-            const auto chunkList = chunks;
-            const auto reasoningText = reasoning;
-            const int delay = delayMilliseconds;
+        server.Post("/chat/completions",
+                    [this](const httplib::Request& request, httplib::Response& response) {
+                        {
+                            std::lock_guard<std::mutex> lock(mu);
+                            lastBody = request.body;
+                        }
+                        auto index = std::make_shared<std::size_t>(0);
+                        auto sentReasoning = std::make_shared<bool>(reasoning.empty());
+                        const auto chunkList = chunks;
+                        const auto reasoningText = reasoning;
+                        const int delay = delayMilliseconds;
 
-            res.set_chunked_content_provider(
-                "text/event-stream", [idx, sentReasoning, chunkList, reasoningText, delay](
-                                         std::size_t, httplib::DataSink& sink) {
-                    if (delay > 0) std::this_thread::sleep_for(std::chrono::milliseconds(delay));
+                        response.set_chunked_content_provider(
+                            "text/event-stream", [index, sentReasoning, chunkList, reasoningText,
+                                                  delay](std::size_t, httplib::DataSink& sink) {
+                                if (delay > 0)
+                                    std::this_thread::sleep_for(std::chrono::milliseconds(delay));
 
-                    if (!*sentReasoning) {
-                        *sentReasoning = true;
-                        json d;
-                        d["reasoning_content"] = reasoningText;
-                        json c;
-                        c["delta"] = std::move(d);
-                        json root;
-                        root["choices"] = json::array({c});
-                        const std::string f = "data: " + root.dump() + "\n\n";
-                        return sink.write(f.data(), f.size());
-                    }
-                    if (*idx < chunkList.size()) {
-                        json d;
-                        d["content"] = chunkList[*idx];
-                        json c;
-                        c["delta"] = std::move(d);
-                        json root;
-                        root["choices"] = json::array({c});
-                        ++*idx;
-                        const std::string f = "data: " + root.dump() + "\n\n";
-                        return sink.write(f.data(), f.size());
-                    }
-                    const std::string done = "data: [DONE]\n\n";
-                    const bool ok = sink.write(done.data(), done.size());
-                    sink.done();
-                    return ok;
-                });
-        });
-        port = srv.bind_to_any_port("127.0.0.1");
-        th = std::thread([this] { srv.listen_after_bind(); });
-        for (int i = 0; i < 200 && !srv.is_running(); ++i)
+                                if (!*sentReasoning) {
+                                    *sentReasoning = true;
+                                    json d;
+                                    d["reasoning_content"] = reasoningText;
+                                    json c;
+                                    c["delta"] = std::move(d);
+                                    json root;
+                                    root["choices"] = json::array({c});
+                                    const std::string f = "data: " + root.dump() + "\n\n";
+                                    return sink.write(f.data(), f.size());
+                                }
+                                if (*index < chunkList.size()) {
+                                    json d;
+                                    d["content"] = chunkList[*index];
+                                    json c;
+                                    c["delta"] = std::move(d);
+                                    json root;
+                                    root["choices"] = json::array({c});
+                                    ++*index;
+                                    const std::string f = "data: " + root.dump() + "\n\n";
+                                    return sink.write(f.data(), f.size());
+                                }
+                                const std::string done = "data: [DONE]\n\n";
+                                const bool ok = sink.write(done.data(), done.size());
+                                sink.done();
+                                return ok;
+                            });
+                    });
+        port = server.bind_to_any_port("127.0.0.1");
+        th = std::thread([this] { server.listen_after_bind(); });
+        for (int i = 0; i < 200 && !server.is_running(); ++i)
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
     ~FakeModel() {
-        srv.stop();
+        server.stop();
         if (th.joinable()) th.join();
     }
 
@@ -153,12 +155,13 @@ struct Recorder {
 };
 
 std::unique_ptr<MaiAgent> make_agent(const FakeModel& model) {
-    MaiModelConfig cfg;
-    cfg.baseUrl = model.base();
-    cfg.apiKey = "test";
-    MaiAgent::Options opts;
-    opts.defaultModel = "glm-5.3";
-    return std::make_unique<MaiAgent>(makeMaiMemoryStore(), makeMaiModelClient(cfg), nullptr, opts);
+    MaiModelConfig config;
+    config.baseUrl = model.base();
+    config.apiKey = "test";
+    MaiAgent::Options options;
+    options.defaultModel = "glm-5.3";
+    return std::make_unique<MaiAgent>(makeMaiMemoryStore(), makeMaiModelClient(config), nullptr,
+                                      options);
 }
 
 // ── 用例 ────────────────────────────────────────────────────────
@@ -167,23 +170,23 @@ void test_full_turn() {
     FakeModel model;
     model.start();
     auto agent = make_agent(model);
-    Recorder rec;
-    rec.attach(*agent);
+    Recorder recorder;
+    recorder.attach(*agent);
 
-    const std::string sid = agent->submit(MaiCreateSession{"/tmp", "", ""}).value();
-    const std::string msg_id = agent->submit(MaiSendPrompt{sid, "你是谁？"}).value();
+    const std::string sessionId = agent->submit(MaiCreateSession{"/tmp", "", ""}).value();
+    const std::string msg_id = agent->submit(MaiSendPrompt{sessionId, "who are you?"}).value();
     CHECK(!msg_id.empty());
     CHECK(msg_id.rfind("msg_", 0) == 0);
 
     agent->waitIdle();
 
     // 1. 事件顺序：至少要有 delta，最后要有 idle
-    CHECK(rec.count(MaiEventType::MessagePartDelta) == 3);  // 三个 chunk
-    CHECK(rec.count(MaiEventType::SessionIdle) == 1);
-    CHECK(rec.count(MaiEventType::SessionError) == 0);
+    CHECK(recorder.count(MaiEventType::MessagePartDelta) == 3);  // 三个 chunk
+    CHECK(recorder.count(MaiEventType::SessionIdle) == 1);
+    CHECK(recorder.count(MaiEventType::SessionError) == 0);
 
     // 2. part id 全程稳定 —— 换 id 会让界面重绘甚至闪屏
-    const auto all = rec.snapshot();
+    const auto all = recorder.snapshot();
     std::string partId;
     for (const auto& e : all) {
         if (e.type != MaiEventType::MessagePartDelta) continue;
@@ -195,10 +198,10 @@ void test_full_turn() {
     CHECK(partId.rfind("prt_", 0) == 0);
 
     // 3. 界面把 delta 拼起来 == 完整正文
-    CHECK(rec.assemble(partId) == "你好，我是测试模型");
+    CHECK(recorder.assemble(partId) == "Hi, I am a fake model");
 
     // 4. 落库的内容一致，刷新后不会变样
-    const auto msgs = agent->listMessages(sid);
+    const auto msgs = agent->listMessages(sessionId);
     CHECK(msgs.size() == 2);  // user + assistant
     if (msgs.size() == 2) {
         CHECK(msgs[0].role == MaiRole::User);
@@ -209,14 +212,14 @@ void test_full_turn() {
             CHECK(msgs[1].parts[0].id == partId);  // 落库的 id 和事件里的一致
             const auto* t = std::get_if<MaiTextPart>(&msgs[1].parts[0].body);
             CHECK(t != nullptr);
-            if (t) CHECK(t->text == "你好，我是测试模型");
+            if (t) CHECK(t->text == "Hi, I am a fake model");
         }
     }
 
     // 5. 标题自动从第一句话来，不再是"新会话"
     MaiSession s;
-    CHECK(agent->getSession(sid, s));
-    CHECK(s.title == "你是谁？");
+    CHECK(agent->getSession(sessionId, s));
+    CHECK(s.title == "who are you?");
 }
 
 void test_request_body_is_correct() {
@@ -224,8 +227,8 @@ void test_request_body_is_correct() {
     model.start();
     auto agent = make_agent(model);
 
-    const std::string sid = agent->submit(MaiCreateSession{"/tmp", "", "glm-4.6"}).value();
-    agent->submit(MaiSendPrompt{sid, "第一句"});
+    const std::string sessionId = agent->submit(MaiCreateSession{"/tmp", "", "glm-4.6"}).value();
+    agent->submit(MaiSendPrompt{sessionId, "first"});
     agent->waitIdle();
 
     const json b = json::parse(model.body(), nullptr, false);
@@ -234,7 +237,7 @@ void test_request_body_is_correct() {
     CHECK(b.value("stream", false) == true);
     CHECK(b["messages"].size() == 1);
     CHECK(b["messages"][0]["role"] == "user");
-    CHECK(b["messages"][0]["content"] == "第一句");
+    CHECK(b["messages"][0]["content"] == "first");
 }
 
 void test_multi_turn_history() {
@@ -242,38 +245,38 @@ void test_multi_turn_history() {
     model.start();
     auto agent = make_agent(model);
 
-    const std::string sid = agent->submit(MaiCreateSession{"/tmp", "", ""}).value();
-    agent->submit(MaiSendPrompt{sid, "第一句"});
+    const std::string sessionId = agent->submit(MaiCreateSession{"/tmp", "", ""}).value();
+    agent->submit(MaiSendPrompt{sessionId, "first"});
     agent->waitIdle();
-    agent->submit(MaiSendPrompt{sid, "第二句"});
+    agent->submit(MaiSendPrompt{sessionId, "second"});
     agent->waitIdle();
 
     // 第二轮必须带上完整历史，否则模型没有上下文
     const json b = json::parse(model.body(), nullptr, false);
     CHECK(b["messages"].size() == 3);  // user + assistant + user
     if (b["messages"].size() == 3) {
-        CHECK(b["messages"][0]["content"] == "第一句");
+        CHECK(b["messages"][0]["content"] == "first");
         CHECK(b["messages"][1]["role"] == "assistant");
-        CHECK(b["messages"][1]["content"] == "你好，我是测试模型");
-        CHECK(b["messages"][2]["content"] == "第二句");
+        CHECK(b["messages"][1]["content"] == "Hi, I am a fake model");
+        CHECK(b["messages"][2]["content"] == "second");
     }
-    CHECK(agent->listMessages(sid).size() == 4);
+    CHECK(agent->listMessages(sessionId).size() == 4);
 }
 
 void test_reasoning_goes_to_its_own_part() {
     FakeModel model;
-    model.reasoning = "让我想想";
+    model.reasoning = "let me think";
     model.start();
     auto agent = make_agent(model);
-    Recorder rec;
-    rec.attach(*agent);
+    Recorder recorder;
+    recorder.attach(*agent);
 
-    const std::string sid = agent->submit(MaiCreateSession{"/tmp", "", ""}).value();
-    agent->submit(MaiSendPrompt{sid, "算一下"});
+    const std::string sessionId = agent->submit(MaiCreateSession{"/tmp", "", ""}).value();
+    agent->submit(MaiSendPrompt{sessionId, "compute this"});
     agent->waitIdle();
 
     // reasoning 和 text 必须是两个不同的 part，界面才能分开显示
-    const auto all = rec.snapshot();
+    const auto all = recorder.snapshot();
     std::vector<std::string> part_ids;
     for (const auto& e : all) {
         if (e.type != MaiEventType::MessagePartDelta) continue;
@@ -282,7 +285,7 @@ void test_reasoning_goes_to_its_own_part() {
     }
     CHECK(part_ids.size() == 2);
 
-    const auto msgs = agent->listMessages(sid);
+    const auto msgs = agent->listMessages(sessionId);
     CHECK(msgs.size() == 2);
     if (msgs.size() == 2) {
         CHECK(msgs[1].parts.size() == 2);
@@ -293,41 +296,42 @@ void test_reasoning_goes_to_its_own_part() {
     }
 
     // reasoning 不该回灌给模型——它是草稿，会污染下一轮上下文
-    agent->submit(MaiSendPrompt{sid, "继续"});
+    agent->submit(MaiSendPrompt{sessionId, "go on"});
     agent->waitIdle();
     const json b = json::parse(model.body(), nullptr, false);
     bool leaked = false;
     for (const auto& m : b["messages"])
-        if (m.value("content", std::string{}).find("让我想想") != std::string::npos) leaked = true;
+        if (m.value("content", std::string{}).find("let me think") != std::string::npos)
+            leaked = true;
     CHECK(!leaked);
 }
 
 void test_interrupt() {
     FakeModel model;
     model.delayMilliseconds = 150;  // 慢慢吐，好让我们插进去
-    model.chunks = {"一", "二", "三", "四", "五", "六", "七", "八"};
+    model.chunks = {"a", "b", "c", "d", "e", "f", "g", "h"};
     model.start();
     auto agent = make_agent(model);
-    Recorder rec;
-    rec.attach(*agent);
+    Recorder recorder;
+    recorder.attach(*agent);
 
-    const std::string sid = agent->submit(MaiCreateSession{"/tmp", "", ""}).value();
-    agent->submit(MaiSendPrompt{sid, "数数"});
+    const std::string sessionId = agent->submit(MaiCreateSession{"/tmp", "", ""}).value();
+    agent->submit(MaiSendPrompt{sessionId, "count"});
 
     std::this_thread::sleep_for(std::chrono::milliseconds(400));
-    CHECK(agent->isBusy(sid));
-    CHECK(agent->submit(MaiInterrupt{sid}).isOk());
+    CHECK(agent->isBusy(sessionId));
+    CHECK(agent->submit(MaiInterrupt{sessionId}).isOk());
 
     agent->waitIdle();
-    CHECK(!agent->isBusy(sid));
+    CHECK(!agent->isBusy(sessionId));
 
     // 中断不算错误，而且已经吐出来的内容要保住
-    CHECK(rec.count(MaiEventType::SessionError) == 0);
-    CHECK(rec.count(MaiEventType::SessionIdle) == 1);
-    const std::size_t got = rec.count(MaiEventType::MessagePartDelta);
+    CHECK(recorder.count(MaiEventType::SessionError) == 0);
+    CHECK(recorder.count(MaiEventType::SessionIdle) == 1);
+    const std::size_t got = recorder.count(MaiEventType::MessagePartDelta);
     CHECK(got > 0);
     CHECK(got < 8);  // 确实提前停了
-    const auto msgs = agent->listMessages(sid);
+    const auto msgs = agent->listMessages(sessionId);
     CHECK(msgs.size() == 2);
     if (msgs.size() == 2) CHECK(!msgs[1].parts.empty());  // 半截内容也落库
 }
@@ -338,13 +342,13 @@ void test_busy_session_rejects_second_turn() {
     model.start();
     auto agent = make_agent(model);
 
-    const std::string sid = agent->submit(MaiCreateSession{"/tmp", "", ""}).value();
-    CHECK(agent->submit(MaiSendPrompt{sid, "第一句"}).isOk());
+    const std::string sessionId = agent->submit(MaiCreateSession{"/tmp", "", ""}).value();
+    CHECK(agent->submit(MaiSendPrompt{sessionId, "first"}).isOk());
     std::this_thread::sleep_for(std::chrono::milliseconds(60));
     // 不排队而是拒绝：排队会让用户以为消息丢了，界面上看不出区别
-    CHECK(!agent->submit(MaiSendPrompt{sid, "第二句"}).isOk());
+    CHECK(!agent->submit(MaiSendPrompt{sessionId, "second"}).isOk());
     agent->waitIdle();
-    CHECK(agent->listMessages(sid).size() == 2);
+    CHECK(agent->listMessages(sessionId).size() == 2);
 }
 
 void test_unknown_session() {
@@ -358,13 +362,13 @@ void test_unknown_session() {
 void test_no_llm_configured() {
     // M1 的空转服务端就是这个配置：没有模型客户端，但不能崩
     MaiAgent agent(makeMaiMemoryStore(), nullptr);
-    Recorder rec;
-    rec.attach(agent);
-    const std::string sid = agent.submit(MaiCreateSession{"/tmp", "", ""}).value();
-    CHECK(agent.submit(MaiSendPrompt{sid, "hi"}).isOk());
+    Recorder recorder;
+    recorder.attach(agent);
+    const std::string sessionId = agent.submit(MaiCreateSession{"/tmp", "", ""}).value();
+    CHECK(agent.submit(MaiSendPrompt{sessionId, "hi"}).isOk());
     agent.waitIdle();
-    CHECK(rec.count(MaiEventType::SessionError) == 1);
-    CHECK(rec.count(MaiEventType::SessionIdle) == 1);
+    CHECK(recorder.count(MaiEventType::SessionError) == 1);
+    CHECK(recorder.count(MaiEventType::SessionIdle) == 1);
 }
 
 void test_concurrent_sessions() {
@@ -377,14 +381,15 @@ void test_concurrent_sessions() {
     std::vector<std::string> sids;
     for (int i = 0; i < 4; ++i)
         sids.push_back(agent->submit(MaiCreateSession{"/tmp", "", ""}).value());
-    for (const auto& sid : sids) CHECK(agent->submit(MaiSendPrompt{sid, "并发测试"}).isOk());
+    for (const auto& sessionId : sids)
+        CHECK(agent->submit(MaiSendPrompt{sessionId, "concurrency"}).isOk());
     agent->waitIdle();
-    for (const auto& sid : sids) {
-        const auto msgs = agent->listMessages(sid);
+    for (const auto& sessionId : sids) {
+        const auto msgs = agent->listMessages(sessionId);
         CHECK(msgs.size() == 2);
         if (msgs.size() == 2 && !msgs[1].parts.empty()) {
             const auto* t = std::get_if<MaiTextPart>(&msgs[1].parts[0].body);
-            CHECK(t && t->text == "你好，我是测试模型");
+            CHECK(t && t->text == "Hi, I am a fake model");
         }
     }
 }

@@ -35,6 +35,29 @@ static int failures = 0;
 namespace {
 
 // 造一个临时工作区，里面放好几种文件。
+// ── 这一组常量是非 ASCII 用例的素材，不是普通测试数据 ──────────
+//
+// 写成 \u 转义而不是直接的汉字：规范要求代码里除注释外不出现中文。
+// 但这几条用例测的**就是**非 ASCII 路径和内容——MSVC 的 fs::path 会把
+// narrow 字符串按当前 ANSI 代码页（中文机器上是 GBK）解释，而我们的路径
+// 全来自 JSON、是 UTF-8。当初这个 bug 不是返回错误，是进程直接挂掉
+// （STATUS_STACK_BUFFER_OVERRUN）。所以字节本身一个都不能改。
+//
+//   kCjkDir      \u65b0\u76ee\u5f55                新目录
+//   kCjkFile     \u65b0\u6587\u4ef6.txt            新文件.txt
+//   kCjkContent  \u5199\u5165\u7684\u5185\u5bb9 🙂  写入的内容 🙂
+//   kCjkLine2    \u7b2c\u4e8c\u884c                第二行
+const char* kCjkDir = "\u65b0\u76ee\u5f55";
+const char* kCjkFile = "\u65b0\u6587\u4ef6.txt";
+const char* kCjkContent = "\u5199\u5165\u7684\u5185\u5bb9 \U0001F642";
+const char* kCjkOverwrite = "\u8986\u76d6\u4e86";
+const char* kCjkLine1 = "\u7b2c\u4e00\u884c";
+const char* kCjkLine2 = "\u7b2c\u4e8c\u884c";
+const char* kCjkLine3 = "\u7b2c\u4e09\u884c";
+const char* kCjkMissingFile = "\u4e0d\u5b58\u5728.txt";         // 不存在.txt
+const char* kCjkNotYetExists = "\u8fd8\u4e0d\u5b58\u5728.txt";  // 还不存在的文件.txt
+const char* kSecretMarker = "TOP-SECRET";
+
 struct Workspace {
     fs::path root;
     fs::path outside;  // root 之外的一个目录，用来验证越界被挡住
@@ -48,13 +71,14 @@ struct Workspace {
         fs::create_directories(root / "node_modules" / "junk");
         fs::create_directories(outside);
 
-        write(root / "README.md", "第一行\n第二行 hello\n第三行\n");
+        write(root / "README.md",
+              std::string(kCjkLine1) + "\n" + kCjkLine2 + " hello\n" + kCjkLine3 + "\n");
         write(root / "src" / "main.cpp", "#include <cstdio>\nint main() { return 0; }\n");
-        write(root / "src" / "util.cpp", "void helper() {}\n// TODO: 补实现\n");
+        write(root / "src" / "util.cpp", "void helper() {}\n// TODO: fill this in\n");
         write(root / "src" / "util.h", "void helper();\n");
         // node_modules 里也放一个能匹配的，验证它被跳过
         write(root / "node_modules" / "junk" / "main.cpp", "should not be found\n");
-        write(outside / "secret.txt", "这是工作目录之外的机密\n");
+        write(outside / "secret.txt", std::string(kSecretMarker) + " outside the workspace\n");
     }
 
     ~Workspace() {
@@ -67,7 +91,7 @@ struct Workspace {
         out << body;
     }
 
-    MaiToolContext ctx() const {
+    MaiToolContext context() const {
         MaiToolContext c;
         c.sessionId = "ses_test";
         c.root = root.string();
@@ -82,9 +106,9 @@ std::string args(const json& j) {
 // ── 1. 路径边界 ─────────────────────────────────────────────────
 
 void test_path_escape_is_blocked() {
-    Workspace ws;
+    Workspace workspace;
     auto read = makeMaiReadTool();
-    const auto ctx = ws.ctx();
+    const auto context = workspace.context();
 
     // 各种越界写法都要被挡住
     const char* escapes[] = {
@@ -94,37 +118,38 @@ void test_path_escape_is_blocked() {
         "./src/./../../outside/secret.txt",
     };
     for (const char* p : escapes) {
-        const auto r = read->execute(args({{"path", p}}), ctx);
+        const auto r = read->execute(args({{"path", p}}), context);
         CHECK(r.error().code() == MaiErrorCode::InvalidInput);
         if (r.error().code() != MaiErrorCode::InvalidInput)
-            std::printf("  越界没被挡住: %s -> %s\n", p, r.output().c_str());
+            std::printf("  escape was not blocked: %s -> %s\n", p, r.output().c_str());
         // 而且不能把机密内容漏出去
-        CHECK(r.output().find("机密") == std::string::npos);
+        CHECK(r.output().find(kSecretMarker) == std::string::npos);
     }
 
     // 绝对路径指向外面，同样挡住
-    const auto abs = read->execute(args({{"path", (ws.outside / "secret.txt").string()}}), ctx);
+    const auto abs =
+        read->execute(args({{"path", (workspace.outside / "secret.txt").string()}}), context);
     CHECK(abs.error().code() == MaiErrorCode::InvalidInput);
-    CHECK(abs.output().find("机密") == std::string::npos);
+    CHECK(abs.output().find(kSecretMarker) == std::string::npos);
 }
 
 void test_write_cannot_escape() {
-    Workspace ws;
+    Workspace workspace;
     auto write = makeMaiWriteTool();
-    const auto r =
-        write->execute(args({{"path", "../outside/pwned.txt"}, {"content", "x"}}), ws.ctx());
+    const auto r = write->execute(args({{"path", "../outside/pwned.txt"}, {"content", "x"}}),
+                                  workspace.context());
     CHECK(r.error().code() == MaiErrorCode::InvalidInput);
-    CHECK(!fs::exists(ws.outside / "pwned.txt"));
+    CHECK(!fs::exists(workspace.outside / "pwned.txt"));
 }
 
 void test_maiResolvePathWithinRoot_directly() {
-    Workspace ws;
-    const std::string root = ws.root.string();
+    Workspace workspace;
+    const std::string root = workspace.root.string();
 
     // 合法的
     CHECK(!maiResolvePathWithinRoot(root, "README.md").empty());
     CHECK(!maiResolvePathWithinRoot(root, "src/main.cpp").empty());
-    CHECK(!maiResolvePathWithinRoot(root, "还不存在的文件.txt").empty());  // write 要能创建
+    CHECK(!maiResolvePathWithinRoot(root, kCjkNotYetExists).empty());  // write 要能创建
 
     // 非法的
     CHECK(maiResolvePathWithinRoot(root, "../outside/secret.txt").empty());
@@ -133,7 +158,7 @@ void test_maiResolvePathWithinRoot_directly() {
 
     // 前缀不等于包含：同级的 workspace-evil 不能通过 workspace 的检查。
     // 用字符串前缀判断的实现会在这里漏。
-    const fs::path sibling = ws.root.parent_path() / "workspace-evil";
+    const fs::path sibling = workspace.root.parent_path() / "workspace-evil";
     fs::create_directories(sibling);
     Workspace::write(sibling / "x.txt", "evil");
     CHECK(maiResolvePathWithinRoot(root, (sibling / "x.txt").string()).empty());
@@ -142,64 +167,65 @@ void test_maiResolvePathWithinRoot_directly() {
 // ── 2. read ─────────────────────────────────────────────────────
 
 void test_read() {
-    Workspace ws;
+    Workspace workspace;
     auto read = makeMaiReadTool();
-    const auto ctx = ws.ctx();
+    const auto context = workspace.context();
 
-    const auto r = read->execute(args({{"path", "README.md"}}), ctx);
+    const auto r = read->execute(args({{"path", "README.md"}}), context);
     CHECK(!r.hasError());
-    CHECK(r.output().find("第二行 hello") != std::string::npos);
+    CHECK(r.output().find(std::string(kCjkLine2) + " hello") != std::string::npos);
     CHECK(r.output().find("1\t") != std::string::npos);  // 带行号
 
-    const auto off = read->execute(args({{"path", "README.md"}, {"offset", 2}, {"limit", 1}}), ctx);
+    const auto off =
+        read->execute(args({{"path", "README.md"}, {"offset", 2}, {"limit", 1}}), context);
     CHECK(!off.hasError());
-    CHECK(off.output().find("第二行") != std::string::npos);
-    CHECK(off.output().find("第一行") == std::string::npos);
-    CHECK(off.output().find("第三行") == std::string::npos);
+    CHECK(off.output().find(kCjkLine2) != std::string::npos);
+    CHECK(off.output().find(kCjkLine1) == std::string::npos);
+    CHECK(off.output().find(kCjkLine3) == std::string::npos);
 
-    const auto missing = read->execute(args({{"path", "不存在.txt"}}), ctx);
+    const auto missing = read->execute(args({{"path", kCjkMissingFile}}), context);
     CHECK(missing.error().code() == MaiErrorCode::NotFound);
 
     // 目录要给一句有用的话，而不是一个看不懂的失败
-    const auto dir = read->execute(args({{"path", "src"}}), ctx);
+    const auto dir = read->execute(args({{"path", "src"}}), context);
     CHECK(dir.error().code() == MaiErrorCode::InvalidInput);
     CHECK(dir.error().message().find("glob") != std::string::npos);
 
-    const auto no_path = read->execute("{}", ctx);
+    const auto no_path = read->execute("{}", context);
     CHECK(no_path.error().code() == MaiErrorCode::InvalidInput);
 
     // 畸形 JSON 不能让工具崩
-    const auto junk = read->execute("这不是 JSON", ctx);
+    const auto junk = read->execute("this is not json", context);
     CHECK(junk.error().code() == MaiErrorCode::InvalidInput);
 }
 
 // ── 3. write ────────────────────────────────────────────────────
 
 void test_write() {
-    Workspace ws;
+    Workspace workspace;
     auto write = makeMaiWriteTool();
-    const auto ctx = ws.ctx();
+    const auto context = workspace.context();
 
-    const auto r =
-        write->execute(args({{"path", "新目录/新文件.txt"}, {"content", "写入的内容 🙂"}}), ctx);
+    const std::string cjkPath = std::string(kCjkDir) + "/" + kCjkFile;
+    const auto r = write->execute(args({{"path", cjkPath}, {"content", kCjkContent}}), context);
     CHECK(!r.hasError());
-    // 测试里自己拼路径时也要走 UTF-8：ws.root 是 fs::path，但字面量
+    // 测试里自己拼路径时也要走 UTF-8：workspace.root 是 fs::path，但字面量
     // "新目录" 是 UTF-8 的 char*，`path / "中文"` 同样会按 ANSI 代码页解释。
     const fs::path written =
-        ws.root / std::filesystem::u8path("新目录") / std::filesystem::u8path("新文件.txt");
+        workspace.root / std::filesystem::u8path(kCjkDir) / std::filesystem::u8path(kCjkFile);
     CHECK(fs::exists(written));
 
     std::ifstream in(written, std::ios::binary);
     std::string body((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    CHECK(body == "写入的内容 🙂");
+    CHECK(body == kCjkContent);
 
     // 覆盖
-    write->execute(args({{"path", "新目录/新文件.txt"}, {"content", "覆盖了"}}), ctx);
+    write->execute(args({{"path", cjkPath}, {"content", kCjkOverwrite}}), context);
     std::ifstream in2(written, std::ios::binary);
     std::string body2((std::istreambuf_iterator<char>(in2)), std::istreambuf_iterator<char>());
-    CHECK(body2 == "覆盖了");
+    CHECK(body2 == kCjkOverwrite);
 
-    CHECK(write->execute(args({{"path", "x.txt"}}), ctx).error().code() ==
+    CHECK(write->execute(args({{"path", "x.txt"}}), context).error().code() ==
           MaiErrorCode::InvalidInput);
     // write 会改东西，必须标记为需要审批（M4 的闸门靠这个标志）
     CHECK(write->requiresApproval());
@@ -209,56 +235,58 @@ void test_write() {
 // ── 4. glob ─────────────────────────────────────────────────────
 
 void test_glob() {
-    Workspace ws;
+    Workspace workspace;
     auto glob = makeMaiGlobTool();
-    const auto ctx = ws.ctx();
+    const auto context = workspace.context();
 
-    const auto cpp = glob->execute(args({{"pattern", "**/*.cpp"}}), ctx);
+    const auto cpp = glob->execute(args({{"pattern", "**/*.cpp"}}), context);
     CHECK(!cpp.hasError());
     CHECK(cpp.output().find("src/main.cpp") != std::string::npos);
     CHECK(cpp.output().find("src/util.cpp") != std::string::npos);
     // node_modules 必须被跳过，否则在真实仓库里会走几十万个文件
     CHECK(cpp.output().find("node_modules") == std::string::npos);
 
-    const auto h = glob->execute(args({{"pattern", "*.h"}}), ctx);
+    const auto h = glob->execute(args({{"pattern", "*.h"}}), context);
     CHECK(!h.hasError());
     CHECK(h.output().find("util.h") != std::string::npos);
     CHECK(h.output().find(".cpp") == std::string::npos);
 
-    const auto none = glob->execute(args({{"pattern", "**/*.rs"}}), ctx);
+    const auto none = glob->execute(args({{"pattern", "**/*.rs"}}), context);
     CHECK(!none.hasError());
-    CHECK(none.output().find("没有匹配") != std::string::npos);
+    CHECK(none.output().find("No files match") != std::string::npos);
 
-    CHECK(glob->execute("{}", ctx).error().code() == MaiErrorCode::InvalidInput);
+    CHECK(glob->execute("{}", context).error().code() == MaiErrorCode::InvalidInput);
 }
 
 // ── 5. grep ─────────────────────────────────────────────────────
 
 void test_grep() {
-    Workspace ws;
+    Workspace workspace;
     auto grep = makeMaiGrepTool();
-    const auto ctx = ws.ctx();
+    const auto context = workspace.context();
 
-    const auto todo = grep->execute(args({{"pattern", "TODO"}}), ctx);
+    const auto todo = grep->execute(args({{"pattern", "TODO"}}), context);
     CHECK(!todo.hasError());
     CHECK(todo.output().find("src/util.cpp") != std::string::npos);
     CHECK(todo.output().find(":2:") != std::string::npos);  // 带行号
 
-    const auto filtered = grep->execute(args({{"pattern", "helper"}, {"glob", "*.h"}}), ctx);
+    const auto filtered = grep->execute(args({{"pattern", "helper"}, {"glob", "*.h"}}), context);
     CHECK(!filtered.hasError());
     CHECK(filtered.output().find("util.h") != std::string::npos);
     CHECK(filtered.output().find("util.cpp") == std::string::npos);
 
-    const auto none = grep->execute(args({{"pattern", "绝对找不到的字符串xyzzy"}}), ctx);
+    const auto none = grep->execute(args({{"pattern", "definitely-not-there-xyzzy"}}), context);
     CHECK(!none.hasError());
-    CHECK(none.output().find("没有匹配") != std::string::npos);
+    // grep 说的是 "No content matches"，glob 说的是 "No files match"——
+    // 两边措辞不同是有意的：以前都叫"没有匹配"，断言根本分不出是谁产出的。
+    CHECK(none.output().find("No content matches") != std::string::npos);
 
     // 坏正则要给一句能改的话，而不是崩掉
-    const auto bad = grep->execute(args({{"pattern", "([unclosed"}}), ctx);
+    const auto bad = grep->execute(args({{"pattern", "([unclosed"}}), context);
     CHECK(bad.error().code() == MaiErrorCode::InvalidInput);
 
     // 中文能搜到
-    const auto cn = grep->execute(args({{"pattern", "第二行"}}), ctx);
+    const auto cn = grep->execute(args({{"pattern", kCjkLine2}}), context);
     CHECK(!cn.hasError());
     CHECK(cn.output().find("README.md") != std::string::npos);
 }
@@ -274,7 +302,7 @@ void test_registry() {
     for (const char* n : {"read", "write", "glob", "grep"}) {
         CHECK(reg.find(n) != nullptr);
     }
-    CHECK(reg.find("不存在的工具") == nullptr);
+    CHECK(reg.find("no-such-tool") == nullptr);
 
     const auto schemas = reg.specs();
     CHECK(schemas.size() == 4);
@@ -297,13 +325,13 @@ void test_registry() {
 }
 
 void test_cancel_stops_traversal() {
-    Workspace ws;
+    Workspace workspace;
     auto glob = makeMaiGlobTool();
-    auto ctx = ws.ctx();
+    auto context = workspace.context();
     std::atomic<bool> canceled{true};
-    ctx.cancel = &canceled;
+    context.cancel = &canceled;
     // 已取消时不该继续遍历。这里只验证它不崩、能立刻返回。
-    const auto r = glob->execute(args({{"pattern", "**/*"}}), ctx);
+    const auto r = glob->execute(args({{"pattern", "**/*"}}), context);
     CHECK(!r.hasError() || r.error().code() != MaiErrorCode::Internal);
 }
 

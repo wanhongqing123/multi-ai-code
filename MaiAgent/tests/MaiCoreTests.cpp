@@ -42,24 +42,24 @@ static void test_session_crud_and_events() {
         if (e.type == MaiEventType::SessionDeleted) ++deleted;
     });
 
-    const std::string a = agent.submit(MaiCreateSession{"/tmp/a", "会话 A", "glm-5.3"}).value();
+    const std::string a = agent.submit(MaiCreateSession{"/tmp/a", "Session A", "glm-5.3"}).value();
     CHECK(!a.empty());
     CHECK(created == 1);
 
     MaiSession s;
     CHECK(agent.getSession(a, s));
-    CHECK(s.title == "会话 A");
+    CHECK(s.title == "Session A");
     CHECK(s.model == "glm-5.3");
     CHECK(s.agent == "build");
 
-    agent.submit(MaiUpdateSession{a, "改了标题", "", ""});
+    agent.submit(MaiUpdateSession{a, "Renamed", "", ""});
     CHECK(updated == 1);
     CHECK(agent.getSession(a, s));
-    CHECK(s.title == "改了标题");
+    CHECK(s.title == "Renamed");
 
     const std::string b = agent.submit(MaiCreateSession{"", "", ""}).value();
     CHECK(agent.getSession(b, s));
-    CHECK(s.title == "新会话");
+    CHECK(s.title == kMaiDefaultSessionTitle);
 
     // 列表按 updated 倒序
     const auto list = agent.listSessions();

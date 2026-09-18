@@ -28,7 +28,10 @@ def check(name, cond, extra=""):
 
 
 # ── 假模型：一个真的 Chat Completions 端点，慢慢吐字 ──────────
-CHUNKS = ["你好", "！我是", "跑在 C++ ", "核心里的", "测试模型 🙂"]
+# 载荷，不是文案：验证多字节字符被切在 SSE chunk 边界上还能拼回来。
+# 合起来是 "你好！我是跑在 C++ 核心里的测试模型 🙂"
+CHUNKS = ["\u4f60\u597d", "\uff01\u6211\u662f", "\u8dd1\u5728 C++ ",
+          "\u6838\u5fc3\u91cc\u7684", "\u6d4b\u8bd5\u6a21\u578b \U0001F642"]
 FULL = "".join(CHUNKS)
 
 
@@ -56,7 +59,7 @@ ModelHandler.last_body = b""
 model = ThreadingHTTPServer(("127.0.0.1", 0), ModelHandler)
 model_port = model.server_address[1]
 threading.Thread(target=model.serve_forever, daemon=True).start()
-say("假模型监听在 127.0.0.1:%d" % model_port)
+say("fake model listening on 127.0.0.1:%d" % model_port)
 
 proc = subprocess.Popen(
     [r"E:\OpenSource\multi-ai-code\MaiAgent\build\bin\maiagent-bridge.exe",
@@ -75,9 +78,9 @@ while time.time() < deadline:
         base = m.group(1)
         break
 if not base:
-    say("服务端没起来")
+    say("bridge did not start")
     sys.exit(1)
-say("maiagent-bridge 监听在 " + base)
+say("maiagent-bridge listening on " + base)
 say("")
 
 
@@ -144,97 +147,98 @@ def snap():
         return list(frames)
 
 
-say("== 1. 建会话 ==")
+say("== 1. create session ==")
 st, raw = post("/api/session", {"title": "", "directory": "E:/tmp"})
 sid = json.loads(raw.decode("utf-8"))["id"]
-check("会话建好", sid.startswith("ses_"), sid)
+check("session created", sid.startswith("ses_"), sid)
 
-say("== 2. 发消息（应立刻返回，不等模型）==")
+say("== 2. send a prompt (must return at once, not wait for the model) ==")
 t0 = time.time()
-st, raw = post("/api/session/%s/prompt" % sid, {"text": "你是谁？"})
+st, raw = post("/api/session/%s/prompt" % sid, {"text": "who are you?"})
 elapsed = time.time() - t0
 msg_id = json.loads(raw.decode("utf-8"))["messageID"]
-check("返回 messageID", msg_id.startswith("msg_"), msg_id)
-check("立刻返回（<0.3s）", elapsed < 0.3, "%.3fs" % elapsed)
+check("returned a messageID", msg_id.startswith("msg_"), msg_id)
+check("returned immediately (<0.3s)", elapsed < 0.3, "%.3fs" % elapsed)
 
-say("== 3. 等这一轮吐完 ==")
-check("收到 session.idle", wait_turns(1))
+say("== 3. wait for the turn to finish ==")
+check("got session.idle", wait_turns(1))
 fs = snap()
 types = [f["type"] for f in fs]
 deltas = [f for f in fs if f["type"] == "message.part.delta"]
-check("收到 %d 条 delta" % len(deltas), len(deltas) == len(CHUNKS), "期望 %d" % len(CHUNKS))
-check("没有 session.error", "session.error" not in types)
+check("got %d deltas" % len(deltas), len(deltas) == len(CHUNKS), "expected %d" % len(CHUNKS))
+check("no session.error", "session.error" not in types)
 
-say("== 4. 把 delta 拼起来（界面就是这么干的）==")
+say("== 4. reassemble the deltas (exactly what the UI does) ==")
 part_ids = {d["data"]["partID"] for d in deltas}
-check("part id 全程稳定", len(part_ids) == 1, str(part_ids))
+check("part id stayed stable", len(part_ids) == 1, str(part_ids))
 assembled = "".join(d["data"]["delta"] for d in deltas)
-check("拼出来 == 完整正文", assembled == FULL, repr(assembled))
+check("reassembled == full text", assembled == FULL, repr(assembled))
 
-say("== 5. 落库内容一致（刷新后不变样）==")
+say("== 5. stored content matches (a refresh shows the same thing) ==")
 msgs = json.loads(get("/api/session/%s/message" % sid)[1].decode("utf-8"))
-check("两条消息", len(msgs) == 2, str(len(msgs)))
+check("two messages", len(msgs) == 2, str(len(msgs)))
 if len(msgs) == 2:
-    check("第一条是 user", msgs[0]["role"] == "user")
-    check("第二条是 assistant", msgs[1]["role"] == "assistant")
+    check("first is user", msgs[0]["role"] == "user")
+    check("second is assistant", msgs[1]["role"] == "assistant")
     txt = "".join(p.get("text", "") for p in msgs[1]["parts"])
-    check("落库正文 == 流式正文", txt == FULL, repr(txt))
-    check("落库 part id == 事件里的", msgs[1]["parts"][0]["id"] in part_ids)
+    check("stored text == streamed text", txt == FULL, repr(txt))
+    check("stored part id == the one in the events", msgs[1]["parts"][0]["id"] in part_ids)
 
-say("== 6. 标题自动从第一句话来 ==")
+say("== 6. title is taken from the first prompt ==")
 title = json.loads(get("/api/session/" + sid)[1].decode("utf-8"))["title"]
-check("标题 = 你是谁？", title == "你是谁？", repr(title))
+check("title == the first prompt", title == "who are you?", repr(title))
 
-say("== 7. 发给模型的请求体对不对 ==")
+say("== 7. the request body sent to the model ==")
 b = json.loads(ModelHandler.last_body.decode("utf-8"))
-check("model 正确", b.get("model") == "glm-5.3", repr(b.get("model")))
+check("model is correct", b.get("model") == "glm-5.3", repr(b.get("model")))
 check("stream=true", b.get("stream") is True)
-check("带了用户那句话", b["messages"][-1]["content"] == "你是谁？")
+check("carries the user prompt", b["messages"][-1]["content"] == "who are you?")
 
-say("== 8. 第二轮带上完整历史 ==")
-post("/api/session/%s/prompt" % sid, {"text": "再说一遍"})
-check("第二轮结束", wait_turns(2))
+say("== 8. second turn carries the full history ==")
+post("/api/session/%s/prompt" % sid, {"text": "say that again"})
+check("second turn finished", wait_turns(2))
 b = json.loads(ModelHandler.last_body.decode("utf-8"))
-check("历史 3 条", len(b["messages"]) == 3, str(len(b["messages"])))
+check("three messages in history", len(b["messages"]) == 3, str(len(b["messages"])))
 if len(b["messages"]) == 3:
-    check("含上一轮的回答", b["messages"][1]["content"] == FULL)
+    check("includes the previous answer", b["messages"][1]["content"] == FULL)
 
-say("== 9. parts 形式的 body 也认 ==")
+say("== 9. the parts-shaped body is accepted too ==")
 st, raw = post("/api/session/%s/prompt" % sid,
-               {"parts": [{"type": "text", "text": "用 parts 发的"}]})
-check("接受 parts 形式", json.loads(raw.decode("utf-8"))["messageID"].startswith("msg_"))
-check("第三轮结束", wait_turns(3))
+               {"parts": [{"type": "text", "text": "sent via parts"}]})
+check("parts shape accepted", json.loads(raw.decode("utf-8"))["messageID"].startswith("msg_"))
+check("third turn finished", wait_turns(3))
 b = json.loads(ModelHandler.last_body.decode("utf-8"))
-check("parts 里的文本送达了模型", b["messages"][-1]["content"] == "用 parts 发的",
+check("text from parts reached the model", b["messages"][-1]["content"] == "sent via parts",
       repr(b["messages"][-1]["content"]))
 
-say("== 10. 同一会话在跑时拒绝第二条（不排队，免得用户以为消息丢了）==")
-post("/api/session/%s/prompt" % sid, {"text": "慢慢答"})
+say("== 10. a busy session rejects a second prompt "
+    "(no queueing: queued messages look lost to the user) ==")
+post("/api/session/%s/prompt" % sid, {"text": "answer slowly"})
 busy_rejected = False
 try:
-    post("/api/session/%s/prompt" % sid, {"text": "插队"})
+    post("/api/session/%s/prompt" % sid, {"text": "cut in line"})
 except urllib.error.HTTPError as e:
     busy_rejected = (e.code == 409)
-check("409 拒绝", busy_rejected)
-check("第四轮结束", wait_turns(4))
+check("rejected with 409", busy_rejected)
+check("fourth turn finished", wait_turns(4))
 
-say("== 11. 空 prompt 应 400 ==")
+say("== 11. an empty prompt gives 400 ==")
 try:
     post("/api/session/%s/prompt" % sid, {"text": ""})
-    check("400", False, "居然成功了")
+    check("400", False, "it succeeded instead")
 except urllib.error.HTTPError as e:
     check("400", e.code == 400, str(e.code))
 
-say("== 12. 中断 ==")
+say("== 12. interrupt ==")
 sid2 = json.loads(post("/api/session", {"title": ""})[1].decode("utf-8"))["id"]
 before = idle_count()
-post("/api/session/%s/prompt" % sid2, {"text": "数数"})
+post("/api/session/%s/prompt" % sid2, {"text": "count for me"})
 time.sleep(0.1)  # 让它吐出一两个 chunk
 st, raw = post("/api/session/%s/interrupt" % sid2, {})
-check("interrupt 返回 true", json.loads(raw.decode("utf-8"))["interrupted"] is True)
-check("中断后进入 idle", wait_turns(before + 1))
+check("interrupt returned true", json.loads(raw.decode("utf-8"))["interrupted"] is True)
+check("went idle after the interrupt", wait_turns(before + 1))
 m2 = json.loads(get("/api/session/%s/message" % sid2)[1].decode("utf-8"))
-check("半截内容也落库", len(m2) == 2 and len(m2[1]["parts"]) >= 1)
+check("the partial content was stored", len(m2) == 2 and len(m2[1]["parts"]) >= 1)
 
 stop.set()
 proc.terminate()
@@ -242,6 +246,6 @@ model.shutdown()
 
 say("")
 if fails:
-    say("失败 %d 项: %s" % (len(fails), ", ".join(fails)))
+    say("%d checks failed: %s" % (len(fails), ", ".join(fails)))
     sys.exit(1)
-say("M2 端到端全部通过")
+say("M2 end-to-end: all checks passed")

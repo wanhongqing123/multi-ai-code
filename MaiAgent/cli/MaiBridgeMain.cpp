@@ -1,17 +1,21 @@
+// maiagent-bridge：把核心跑起来，并通过 HTTP 适配器暴露给 Electron 界面。
+//
+// 叫 bridge 不叫 server，是因为它不是这个项目的产物，只是座桥：
+// 界面是 JS 写的、调不了 C++，所以要有个进程夹在中间。Qt 界面就位之后
+// 这个 exe 就没用了——那边直接链 maiagent 库，进程内调用。
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
 #include <string>
 
-#include "MaiHttpServer.h"
 #include "MaiAgent.h"
-
-#include <memory>
+#include "MaiHttpAdapter.h"
 
 namespace {
 
 void usage() {
     std::printf(
-        "用法: maiagent-server [选项]\n"
+        "用法: maiagent-bridge [选项]\n"
         "\n"
         "  --host <addr>        监听地址，默认 127.0.0.1\n"
         "  --port <n>           监听端口，0 或省略则由系统分配\n"
@@ -32,7 +36,7 @@ const char* envOrEmpty(const char* name) {
 }  // namespace
 
 int main(int argc, char** argv) {
-    MaiHttpServerOptions opts;
+    MaiHttpAdapterOptions opts;
     std::string modelUrl;
     std::string modelKey = envOrEmpty("MAIAGENT_API_KEY");
     std::string modelName = "glm-5.3";
@@ -76,7 +80,7 @@ int main(int argc, char** argv) {
     MaiAgent::Options agentOptions;
     agentOptions.defaultModel = modelName;
     MaiAgent agent(makeMaiMemoryStore(), std::move(model), std::move(tools), agentOptions);
-    MaiHttpServer server(agent, opts);
+    MaiHttpAdapter server(agent, opts);
 
     if (!server.bind()) {
         std::fprintf(stderr, "maiagent: 无法绑定 %s:%d\n", opts.host.c_str(), opts.port);

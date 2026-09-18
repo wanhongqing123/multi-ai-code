@@ -15,7 +15,7 @@
 MaiTime.h        MaiTime.cpp
 MaiError.h       MaiError.cpp
 MaiSessionStore.h
-MaiHttpServer.h  MaiHttpServer.cpp
+MaiHttpAdapter.h  MaiHttpAdapter.cpp
 ```
 
 不要这样：
@@ -79,6 +79,34 @@ std::string session();        // 坏：像是在取某个会话
 ```
 
 查询类的布尔方法用 `is` / `has` 开头：`isEmpty()`、`isBusy()`、`hasError()`。
+
+## 3.5 名字要说清"这是什么角色"，别只说"这是什么技术"
+
+一个名字如果只交代了实现技术，读的人会自己脑补它在架构里的地位，
+而那个脑补往往是错的。
+
+真事：HTTP 适配器最早叫 `MaiHttpServer`，放在 `adapters/` 下、364 行、
+核心一个字节都不依赖它。但凡看到这个名字的人第一反应都是
+**"这个 agent 是个服务端"**——产物明明是 `maiagent` 这个库，HTTP 只是
+为了让说不了 C++ 的 Electron 界面能连上来临时贴的一层壳。
+
+改成 `MaiHttpAdapter` 之后歧义就没了：`Http` 说技术，`Adapter` 说角色。
+
+```
+MaiHttpServer   -> MaiHttpAdapter    Adapter 才是它的角色
+maiagent-server -> maiagent-bridge   它不是产物，是座桥
+```
+
+同一条的其它落点：
+
+```cpp
+MaiTurnRunner      // 不叫 MaiLoop —— Loop 只说了形状，没说跑的是什么
+MaiContextBuilder  // 不叫 MaiHistory —— 它在组装，不是在存
+MaiSessionTitler   // 不叫 MaiTitleUtil —— Util 等于没说
+```
+
+判断方法：把名字念给一个没读过这份代码的人听，问他这东西在架构里
+处于什么位置。答错了就是名字的问题，不是他的问题。
 
 ## 4. 成员变量
 

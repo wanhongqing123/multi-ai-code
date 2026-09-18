@@ -105,17 +105,17 @@ target_include_directories(maiagent
 target_link_libraries(maiagent PUBLIC Threads::Threads PRIVATE CURL::libcurl)
 
 # ── HTTP 适配器：把核心包成 REST + SSE，喂现有的 Electron 界面 ────
-add_library(maiagent_http STATIC
-  adapters/MaiHttpServer.cpp
+add_library(maiagent_http_adapter STATIC
+  adapters/MaiHttpAdapter.cpp
 )
-target_include_directories(maiagent_http PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/adapters)
-target_link_libraries(maiagent_http PUBLIC maiagent mai_thirdparty)
+target_include_directories(maiagent_http_adapter PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/adapters)
+target_link_libraries(maiagent_http_adapter PUBLIC maiagent mai_thirdparty)
 if(WIN32)
-  target_link_libraries(maiagent_http PUBLIC ws2_32 crypt32)
+  target_link_libraries(maiagent_http_adapter PUBLIC ws2_32 crypt32)
 endif()
 
-add_executable(maiagent-server cli/MaiServerMain.cpp)
-target_link_libraries(maiagent-server PRIVATE maiagent_http)
+add_executable(maiagent-bridge cli/MaiBridgeMain.cpp)
+target_link_libraries(maiagent-bridge PRIVATE maiagent_http_adapter)
 
 # ── 测试 ────────────────────────────────────────────────────────
 option(MAIAGENT_BUILD_TESTS "Build MaiAgent tests" ON)

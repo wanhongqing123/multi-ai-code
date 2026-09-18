@@ -1,4 +1,4 @@
-#include "MaiHttpServer.h"
+#include "MaiHttpAdapter.h"
 
 #include <atomic>
 #include <condition_variable>
@@ -145,9 +145,9 @@ struct SseConn {
 
 }  // namespace
 
-struct MaiHttpServer::Impl {
+struct MaiHttpAdapter::Impl {
     MaiAgent& agent;
-    MaiHttpServerOptions opts;
+    MaiHttpAdapterOptions opts;
     httplib::Server srv;
     std::atomic<int> boundPort{0};
 
@@ -156,7 +156,7 @@ struct MaiHttpServer::Impl {
     std::atomic<std::uint64_t> nextConnection{1};
     MaiEventBus::Token busToken = 0;
 
-    explicit Impl(MaiAgent& a, MaiHttpServerOptions o) : agent(a), opts(std::move(o)) {}
+    explicit Impl(MaiAgent& a, MaiHttpAdapterOptions o) : agent(a), opts(std::move(o)) {}
 
     void broadcast(const MaiEvent& e) {
         const std::string frame = serializeEvent(e);  // 只 dump 一次
@@ -172,7 +172,7 @@ struct MaiHttpServer::Impl {
     void routes();
 };
 
-void MaiHttpServer::Impl::routes() {
+void MaiHttpAdapter::Impl::routes() {
     srv.Get("/api/health", [](const httplib::Request&, httplib::Response& res) {
         res.set_content(json{{"status", "ok"}, {"service", "maiagent"}}.dump(), "application/json");
     });
@@ -319,19 +319,19 @@ void MaiHttpServer::Impl::routes() {
     });
 }
 
-MaiHttpServer::MaiHttpServer(MaiAgent& agent, MaiHttpServerOptions opts)
+MaiHttpAdapter::MaiHttpAdapter(MaiAgent& agent, MaiHttpAdapterOptions opts)
     : impl_(std::make_unique<Impl>(agent, std::move(opts))) {
     impl_->routes();
     impl_->busToken =
         impl_->agent.eventBus().subscribe([this](const MaiEvent& e) { impl_->broadcast(e); });
 }
 
-MaiHttpServer::~MaiHttpServer() {
+MaiHttpAdapter::~MaiHttpAdapter() {
     if (impl_->busToken) impl_->agent.eventBus().unsubscribe(impl_->busToken);
     stop();
 }
 
-bool MaiHttpServer::bind() {
+bool MaiHttpAdapter::bind() {
     // port=0 走 bind_to_any_port 让系统挑；指定端口就直接绑。
     const int p = impl_->opts.port > 0
                       ? (impl_->srv.bind_to_port(impl_->opts.host.c_str(), impl_->opts.port)
@@ -343,11 +343,11 @@ bool MaiHttpServer::bind() {
     return true;
 }
 
-bool MaiHttpServer::serve() {
+bool MaiHttpAdapter::serve() {
     return impl_->srv.listen_after_bind();
 }
 
-void MaiHttpServer::stop() {
+void MaiHttpAdapter::stop() {
     {
         std::lock_guard<std::mutex> lock(impl_->connectionsMutex);
         for (auto& [_, c] : impl_->conns) c->close();
@@ -355,10 +355,10 @@ void MaiHttpServer::stop() {
     impl_->srv.stop();
 }
 
-int MaiHttpServer::port() const {
+int MaiHttpAdapter::port() const {
     return impl_->boundPort.load();
 }
 
-std::string MaiHttpServer::baseUrl() const {
+std::string MaiHttpAdapter::baseUrl() const {
     return "http://" + impl_->opts.host + ":" + std::to_string(port());
 }

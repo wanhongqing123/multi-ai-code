@@ -1,4 +1,4 @@
-# M2 端到端：起一个假模型 + 真的 maiagent-server，完全按界面的方式走一遍。
+# M2 端到端：起一个假模型 + 真的 maiagent-bridge，完全按界面的方式走一遍。
 #
 # 一切收发都在 Python 里显式 UTF-8，不经过 shell 传参——
 # 这台机器的 bash/PowerShell 会把中文按 GBK 毁掉，之前两次误判服务端有 bug。
@@ -59,7 +59,7 @@ threading.Thread(target=model.serve_forever, daemon=True).start()
 say("假模型监听在 127.0.0.1:%d" % model_port)
 
 proc = subprocess.Popen(
-    [r"E:\OpenSource\multi-ai-code\MaiAgent\build\bin\maiagent-server.exe",
+    [r"E:\OpenSource\multi-ai-code\MaiAgent\build\bin\maiagent-bridge.exe",
      "--model-url", "http://127.0.0.1:%d" % model_port,
      "--model-key", "fake", "--model", "glm-5.3"],
     stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -77,7 +77,7 @@ while time.time() < deadline:
 if not base:
     say("服务端没起来")
     sys.exit(1)
-say("maiagent-server 监听在 " + base)
+say("maiagent-bridge 监听在 " + base)
 say("")
 
 

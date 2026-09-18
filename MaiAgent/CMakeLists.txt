@@ -87,6 +87,7 @@ add_library(maiagent STATIC
   src/MaiPathUtf8.cpp
   src/MaiPathGuard.cpp
   src/MaiTool.cpp
+  src/MaiPermissionGate.cpp
   src/MaiFileTools.cpp
   src/MaiAgent.cpp
   src/MaiTurnRunner.cpp
@@ -128,7 +129,8 @@ if(MAIAGENT_BUILD_TESTS)
       MaiModelClientTests   # 流式解析 + 工具调用分片聚合
       MaiTurnRunnerTests    # 一轮对话的完整生命周期
       MaiToolTests          # 路径边界 + 四个内置工具
-      MaiToolLoopTests)     # 工具循环：调用 -> 执行 -> 回灌 -> 再答
+      MaiToolLoopTests      # 工具循环：调用 -> 执行 -> 回灌 -> 再答
+      MaiPermissionTests)   # 权限闸门：拦住 -> 等裁决 -> 放行或拒绝
     add_executable(${test_name} tests/${test_name}.cpp)
     target_link_libraries(${test_name} PRIVATE maiagent mai_thirdparty)
     target_include_directories(${test_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

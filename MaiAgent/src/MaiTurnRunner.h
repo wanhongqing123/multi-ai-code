@@ -1,12 +1,14 @@
 #pragma once
 #include <atomic>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
 #include "MaiEventBus.h"
 #include "MaiModelClient.h"
 #include "MaiMessage.h"
+#include "MaiPermission.h"
 #include "MaiSessionStore.h"
 #include "MaiTool.h"
 #include "MaiTime.h"
@@ -32,6 +34,9 @@ public:
         const MaiContextBuilder* context = nullptr;
         const MaiToolRegistry* tools = nullptr;
         const MaiSessionTitler* titler = nullptr;
+        // 可以为空：那样 requiresApproval() 的工具一律直接拒绝。
+        // 不是"直接放行"——没装闸门就等于没人能点头，而不是所有人都点了头。
+        MaiPermissionGate* permissions = nullptr;
         std::string defaultModel;
         // 模型可以连着调工具，一轮对话因此会有多次请求。设上限是因为模型会绕圈——
         // 拿同样的参数反复调同一个工具，没有上限就一直烧钱。
@@ -52,6 +57,11 @@ private:
     // 执行一批工具调用，把每个的结果作为 part 追加到 assistant_ 上。
     void executeTools(const std::vector<MaiToolInvocation>& calls, const std::atomic<bool>& cancel);
 
+    // 这次调用该不该放行。需要审批的话会在这里阻塞等用户裁决。
+    // 返回空表示放行；非空就是要直接回灌给模型的失败结果。
+    MaiToolResult checkPermission(const MaiToolInvocation& call, const std::string& partId,
+                                  bool& allowed, const std::atomic<bool>& cancel);
+
     // 组装这一次要发给模型的请求。
     MaiModelRequest buildRequest(const std::string& modelName) const;
 
@@ -71,4 +81,10 @@ private:
     std::string reasoning_part_id_;
 
     MaiError error_;
+
+    // 这一轮里已经被拒绝过的 (工具名, 参数)。模型被拒之后经常原样再调一次，
+    // 每次都弹一个框会把用户烦死；记下来直接回同样的拒绝，它才会换招。
+    //
+    // 只记这一轮：用户拒绝的是"现在这件事"，下一轮同样的请求该重新问。
+    std::set<std::string> rejected_;
 };

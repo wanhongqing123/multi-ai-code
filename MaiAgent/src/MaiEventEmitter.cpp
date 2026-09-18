@@ -51,3 +51,21 @@ void MaiEventEmitter::emitDelta(const std::string& sessionId, const std::string&
     e.delta.assign(chunk);
     bus_.publish(e);
 }
+
+void MaiEventEmitter::emitPermissionAsked(const MaiPermissionRequest& request) {
+    MaiEvent e = makeEvent(MaiEventType::PermissionAsked, request.sessionId);
+    e.messageId = request.messageId;
+    e.partId = request.partId;
+    e.permissionId = request.id;
+    bus_.publish(e);
+}
+
+void MaiEventEmitter::emitPermissionReplied(const MaiPermissionRequest& request,
+                                            MaiPermissionDecision decision) {
+    MaiEvent e = makeEvent(MaiEventType::PermissionReplied, request.sessionId);
+    e.messageId = request.messageId;
+    e.partId = request.partId;
+    e.permissionId = request.id;
+    e.detail = maiPermissionDecisionToString(decision);
+    bus_.publish(e);
+}

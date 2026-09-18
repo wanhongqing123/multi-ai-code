@@ -32,6 +32,9 @@ struct MaiAgent::Impl {
     MaiEventEmitter emitter{bus};
     MaiContextBuilder context;
     MaiSessionTitler titler;
+    // 闸门归门面持有而不是归某一轮：用户的"本会话都允许"要跨轮活着，
+    // 而且界面查"还有什么在等授权"时可能一轮都没在跑。
+    std::unique_ptr<MaiPermissionGate> permissions;
 
     mutable std::mutex mu;
     std::condition_variable cv;
@@ -48,6 +51,13 @@ struct MaiAgent::Impl {
                 pending.push_back(t);
             }
         }
+        // 卡在等授权的线程看不见 cancel 标志（它睡在闸门的 condition_variable
+        // 上），必须显式叫醒，否则下面的 join 要等满闸门那 250ms 的兜底轮询。
+        // 靠兜底能过，但让退出路径依赖一个安全网是不对的。
+        if (permissions) {
+            for (const auto& r : permissions->listPending())
+                permissions->cancelSession(r.sessionId);
+        }
         for (auto& t : pending) {
             if (t->worker.joinable()) t->worker.join();
         }
@@ -61,6 +71,7 @@ struct MaiAgent::Impl {
         d.context = &context;
         d.tools = tools.get();
         d.titler = &titler;
+        d.permissions = permissions.get();
         d.defaultModel = options.defaultModel;
         d.maxIterations = options.maxToolIterations;
         return d;
@@ -89,6 +100,10 @@ MaiAgent::MaiAgent(std::unique_ptr<MaiSessionStore> store, std::unique_ptr<MaiMo
     impl_->model = std::move(model);
     impl_->tools = std::move(tools);
     impl_->options = std::move(options);
+
+    MaiPermissionGate::Options gateOptions;
+    gateOptions.timeoutMs = impl_->options.permissionTimeoutMs;
+    impl_->permissions = std::make_unique<MaiPermissionGate>(gateOptions);
 }
 
 MaiAgent::~MaiAgent() = default;
@@ -103,6 +118,10 @@ bool MaiAgent::getSession(const std::string& id, MaiSession& out) const {
 
 std::vector<MaiMessage> MaiAgent::listMessages(const std::string& sessionId) const {
     return impl_->store->listMessages(sessionId);
+}
+
+std::vector<MaiPermissionRequest> MaiAgent::listPendingPermissions() const {
+    return impl_->permissions->listPending();
 }
 
 bool MaiAgent::isBusy(const std::string& sessionId) const {
@@ -155,6 +174,10 @@ MaiResult<std::string> MaiAgent::submit(const MaiOperation& op) {
             } else if constexpr (std::is_same_v<T, MaiDeleteSession>) {
                 if (!impl_->store->removeSession(o.sessionId))
                     return {MaiErrorCode::NotFound, "会话不存在"};
+                // 会话没了，它还在等的授权就没意义了；"本会话都允许"也要一起清掉，
+                // 否则以后建一个同 id 的会话会白捡上一个的授权。
+                impl_->permissions->cancelSession(o.sessionId);
+                impl_->permissions->forgetSession(o.sessionId);
                 impl_->emitter.emitSession(MaiEventType::SessionDeleted, o.sessionId);
                 return o.sessionId;
 
@@ -214,11 +237,30 @@ MaiResult<std::string> MaiAgent::submit(const MaiOperation& op) {
                 return assistant.id;
 
             } else if constexpr (std::is_same_v<T, MaiInterrupt>) {
-                std::lock_guard<std::mutex> lock(impl_->mu);
-                auto it = impl_->active.find(o.sessionId);
-                if (it == impl_->active.end()) return {MaiErrorCode::NotFound, "没有正在跑的轮次"};
-                it->second->cancel.store(true, std::memory_order_relaxed);
+                {
+                    std::lock_guard<std::mutex> lock(impl_->mu);
+                    auto it = impl_->active.find(o.sessionId);
+                    if (it == impl_->active.end())
+                        return {MaiErrorCode::NotFound, "没有正在跑的轮次"};
+                    it->second->cancel.store(true, std::memory_order_relaxed);
+                }
+                // 光置 cancel 叫不醒卡在等授权的那个线程——它睡在闸门的
+                // condition_variable 上，看不见这个标志，必须显式敲一下。
+                //（闸门那边还有个 250ms 的兜底轮询，但那是安全网，不是主路径。）
+                impl_->permissions->cancelSession(o.sessionId);
                 return o.sessionId;
+
+            } else if constexpr (std::is_same_v<T, MaiReplyPermission>) {
+                if (o.permissionId.empty())
+                    return {MaiErrorCode::InvalidInput, "缺少 permissionId"};
+                // 找不到就是找不到：界面重复点、或者对着已经被中断的请求点，
+                // 都会走到这里。不是故障，但也不能假装成功——界面要据此把那个
+                // 已经过期的对话框收掉。
+                if (!impl_->permissions->reply(o.permissionId, o.decision))
+                    return {MaiErrorCode::NotFound, "这个授权请求已经不在等待中了"};
+                // permission.replied 由等在闸门上的那一轮发出（只有它知道请求的
+                // 全貌）。这里只负责放行，不重复广播。
+                return o.permissionId;
 
             } else {
                 return {MaiErrorCode::Internal, "未处理的操作"};

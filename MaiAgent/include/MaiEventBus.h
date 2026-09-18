@@ -47,7 +47,17 @@ struct MaiEvent {
     std::string field;
     std::string delta;
 
-    // 其它事件的附带信息（权限 id、错误文本、标题等）。
+    // PermissionAsked / PermissionReplied 用。
+    //
+    // 单独一个字段而不是塞进 detail：权限事件同时要带"是哪一次请求"和
+    // "裁决是什么"两样东西，两样都往 detail 里挤，解析方就得约定分隔符——
+    // 那种约定没人会去读，只会在某天出现带分隔符的内容时静默出错。
+    //
+    // 请求的工具名和参数不放在这里：它们已经在 partId 指向的那个
+    // MaiToolPart 上了，重复一份就会有两个真相。
+    std::string permissionId;
+
+    // 其它事件的附带信息（错误文本、标题、权限裁决等）。
     std::string detail;
     MaiMillis time = 0;
 };

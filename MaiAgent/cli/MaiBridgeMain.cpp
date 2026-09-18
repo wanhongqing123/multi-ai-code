@@ -24,6 +24,9 @@ void usage() {
         "                         http://127.0.0.1:11434/v1              (Ollama)\n"
         "  --model-key <key>    API key；也可用环境变量 MAIAGENT_API_KEY\n"
         "  --model <name>       默认模型名，默认 glm-5.3\n"
+        "  --permission-timeout <ms>\n"
+        "                       等用户授权的超时毫秒数。0（默认）= 一直等。\n"
+        "                       超时按拒绝处理。无人值守时才需要设。\n"
         "\n"
         "不给 --model-url 就是空转模式：界面能起、会话能建，但发消息不会有回复。\n");
 }
@@ -40,6 +43,7 @@ int main(int argc, char** argv) {
     std::string modelUrl;
     std::string modelKey = envOrEmpty("MAIAGENT_API_KEY");
     std::string modelName = "glm-5.3";
+    MaiMillis permissionTimeoutMs = 0;
 
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -57,6 +61,8 @@ int main(int argc, char** argv) {
             modelKey = argv[++i];
         } else if (a == "--model" && hasNext) {
             modelName = argv[++i];
+        } else if (a == "--permission-timeout" && hasNext) {
+            permissionTimeoutMs = std::atoll(argv[++i]);
         } else {
             std::fprintf(stderr, "maiagent: 无法识别的参数 %s\n", a.c_str());
             usage();
@@ -79,6 +85,7 @@ int main(int argc, char** argv) {
 
     MaiAgent::Options agentOptions;
     agentOptions.defaultModel = modelName;
+    agentOptions.permissionTimeoutMs = permissionTimeoutMs;
     MaiAgent agent(makeMaiMemoryStore(), std::move(model), std::move(tools), agentOptions);
     MaiHttpAdapter server(agent, opts);
 
@@ -88,6 +95,8 @@ int main(int argc, char** argv) {
     }
     // 端口必须在开始阻塞之前打出来，否则 port=0 时没人知道它监听在哪。
     std::printf("maiagent listening on %s\n", server.baseUrl().c_str());
+    std::printf("  权限: write 需要授权，走 POST /api/permission/<id>%s\n",
+                permissionTimeoutMs > 0 ? "（有超时）" : "（无超时，一直等）");
     if (modelUrl.empty()) {
         std::printf("  模型: 未配置（空转模式，发消息不会有回复）\n");
     } else {

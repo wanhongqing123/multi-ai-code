@@ -9,6 +9,7 @@
 #include "MaiEventBus.h"
 #include "MaiMessage.h"
 #include "MaiModelClient.h"
+#include "MaiPermission.h"
 #include "MaiSession.h"
 #include "MaiSessionStore.h"
 #include "MaiTool.h"
@@ -45,8 +46,17 @@ struct MaiInterrupt {
     std::string sessionId;
 };
 
-using MaiOperation =
-    std::variant<MaiCreateSession, MaiUpdateSession, MaiDeleteSession, MaiSendPrompt, MaiInterrupt>;
+// 对一次工具调用的授权请求作出裁决。
+//
+// 做成操作而不是直接调闸门，是为了让它和别的变更走同一条路：
+// 一样的错误码、一样的返回形状，适配器不用为它单开一套处理。
+struct MaiReplyPermission {
+    std::string permissionId;
+    MaiPermissionDecision decision = MaiPermissionDecision::Reject;
+};
+
+using MaiOperation = std::variant<MaiCreateSession, MaiUpdateSession, MaiDeleteSession,
+                                  MaiSendPrompt, MaiInterrupt, MaiReplyPermission>;
 
 // ── 核心的门面 ──────────────────────────────────────────────────
 //
@@ -66,6 +76,8 @@ public:
         // 每个会话同时只跑一轮。第二条来了直接拒绝而不是排队——
         // 排队会让用户以为消息丢了，界面上看不出区别。
         bool rejectWhenBusy = true;
+        // 等用户授权的超时。0 = 无限等，理由见 MaiPermissionGate::Options。
+        MaiMillis permissionTimeoutMs = 0;
     };
 
     // model 可以为空：那样发消息会以 NotConfigured 收场，但其余功能照常。
@@ -81,6 +93,13 @@ public:
     bool getSession(const std::string& id, MaiSession& out) const;
     std::vector<MaiMessage> listMessages(const std::string& sessionId) const;
     bool isBusy(const std::string& sessionId) const;
+
+    // 现在有哪些工具调用在等授权。
+    //
+    // 界面重连之后必须能补上这一份：SSE 断开的那个窗口期里发出的
+    // permission.asked 是看不到的，没有这个查询，那一轮会一直挂着，
+    // 而界面上什么都没显示。
+    std::vector<MaiPermissionRequest> listPendingPermissions() const;
 
     // ── 变更 ────────────────────────────────────────────────────
     // 返回受影响的对象 id；发消息返回新建的 assistant 消息 id。

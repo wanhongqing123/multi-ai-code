@@ -59,9 +59,11 @@ cmake --build build
 ./build/bin/MaiTurnRunnerTests      # 一轮对话的完整生命周期
 ./build/bin/MaiToolTests            # 路径边界 + 四个内置工具
 ./build/bin/MaiToolLoopTests        # 工具循环：调用 -> 执行 -> 回灌 -> 再答
+./build/bin/MaiPermissionTests      # 权限闸门：拦住 -> 等裁决 -> 放行或拒绝
 
-# 端到端（会自己起假模型和服务端，不需要 API key）
+# 端到端（会自己起假模型和 bridge，不需要 API key）
 python tests/e2e/m2_loop.py
+python tests/e2e/m4_permission.py
 
 # 手动起服务
 ./build/bin/maiagent-bridge --help
@@ -77,9 +79,44 @@ Windows 上要先进 MSVC 环境（`vcvars64.bat`）。
 - [x] **M1 空转骨架** — health / session 增删查 / SSE 事件流（含心跳）
 - [x] **M2 能聊天** — Chat Completions 流式客户端 + agent loop + prompt/interrupt
 - [x] **M3 能干活** — 工具注册表 + read/write/glob/grep + 工具循环
-- [ ] M4 权限闸门
+- [x] **M4 权限闸门** — write 跑之前停下来等用户点头
 - [ ] M5 SQLite 持久化 + interrupt/切模型
 - [ ] M6 脱壳验证 — 摘掉 HTTP，写一个直接链库的 CLI
+
+## 权限闸门
+
+会改东西的工具（现在只有 `write`）跑之前会停下来等用户点头。
+只读的 `read` / `glob` / `grep` 不问——每一次多余的确认都在训练用户闭眼点"允许"。
+
+一次授权的完整链路：
+
+```
+工具卡进入 pending 状态          message.part.updated
+核心广播"有人在等授权"            permission.asked   { permissionID, partID }
+        ↓  这一轮在这里阻塞（只挂住它自己那个线程）
+界面裁决                          POST /api/permission/<id>  {"decision": "once"}
+核心广播裁决结果                  permission.replied { permissionID, detail }
+工具卡进入 running 并真正执行      message.part.updated
+```
+
+`decision` 三选一：`once`（就这一次）、`always`（这个会话里这个工具以后别问了）、
+`reject`。**认不出来的取值一律 400**，不会兜底成放行——闸门不该被一个错别字拆掉。
+
+`GET /api/permission` 列出当前所有待裁决的请求。界面重连之后必须拉一次：
+SSE 断开的那个窗口期里发出的 `permission.asked` 是看不到的，只靠事件流会
+漏掉整整一次授权请求，那一轮就一直挂着而界面上什么都没显示。
+
+几个刻意的选择：
+
+- **默认不超时。** 超时自动拒绝等于替用户做了决定，而用户可能只是走开了。
+  等待期间会话是"在跑"状态，界面上看得见，随时可以中断。无人值守的场景用
+  `--permission-timeout <ms>`。
+- **所有兜底方向都是拒绝。** 中断、超时、没接闸门、decision 解析失败——
+  全部按拒绝走。兜底成允许意味着"没人点头"也能改用户的文件。
+- **被拒之后同样的调用不再问第二次。** 模型被拒后经常原样重试，每次都弹框
+  会把用户烦死。同一轮里相同的 (工具, 参数) 直接回同样的拒绝。
+- **拒绝时告诉模型"不要重试"。** 不写这句，模型会把 12 圈全烧在同一个被拒的
+  操作上，用户看到的是 agent 卡住了。
 
 ## 三条铁律
 

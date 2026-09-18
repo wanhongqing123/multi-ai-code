@@ -94,6 +94,18 @@ json toJson(const MaiMessage& m) {
     };
 }
 
+json toJson(const MaiPermissionRequest& r) {
+    return json{
+        {"id", r.id},
+        {"sessionID", r.sessionId},
+        {"messageID", r.messageId},
+        {"partID", r.partId},
+        {"tool", r.toolName},
+        {"input", r.arguments},
+        {"time", {{"asked", r.asked}}},
+    };
+}
+
 // 事件的线上形状照 openapi.json 里的 MaiMessagePartDelta 等 schema：
 // { id, type, data: { sessionID, messageID, partID, field, delta } }
 std::string serializeEvent(const MaiEvent& e) {
@@ -102,6 +114,7 @@ std::string serializeEvent(const MaiEvent& e) {
     if (!e.partId.empty()) data["partID"] = e.partId;
     if (!e.field.empty()) data["field"] = e.field;
     if (!e.delta.empty()) data["delta"] = e.delta;
+    if (!e.permissionId.empty()) data["permissionID"] = e.permissionId;
     if (!e.detail.empty()) data["detail"] = e.detail;
 
     const json envelope{
@@ -273,6 +286,51 @@ void MaiHttpAdapter::Impl::routes() {
                  const auto r = agent.submit(MaiInterrupt{sid});
                  res.set_content(json{{"interrupted", r.isOk()}}.dump(), "application/json");
              });
+
+    // ── 权限 ──────────────────────────────────────────────────────
+    // 界面重连之后必须能补上这一份：SSE 断开的那个窗口期里发出的
+    // permission.asked 是看不到的，只靠事件流会漏掉整整一次授权请求，
+    // 那一轮就一直挂着而界面上什么都没有。
+    srv.Get("/api/permission", [this](const httplib::Request&, httplib::Response& res) {
+        json arr = json::array();
+        for (const auto& r : agent.listPendingPermissions()) arr.push_back(toJson(r));
+        res.set_content(arr.dump(), "application/json");
+    });
+
+    srv.Post(R"(/api/permission/([^/]+))", [this](const httplib::Request& req,
+                                                  httplib::Response& res) {
+        const json body = json::parse(req.body, nullptr, /*allow_exceptions=*/false);
+        const std::string raw =
+            body.is_object() ? body.value("decision", std::string{}) : std::string{};
+
+        MaiPermissionDecision decision = MaiPermissionDecision::Reject;
+        if (!maiParsePermissionDecision(raw, decision)) {
+            // 认不出来就 400，**不要兜底成允许**。把拼错的 decision
+            // 当成放行，等于闸门被一个错别字拆掉，而且毫无痕迹。
+            res.status = 400;
+            res.set_content(
+                json{{"error", "decision 必须是 once / always / reject 之一"}, {"got", raw}}.dump(),
+                "application/json");
+            return;
+        }
+
+        MaiReplyPermission op;
+        op.permissionId = req.matches[1];
+        op.decision = decision;
+        const auto replied = agent.submit(op);
+        if (!replied) {
+            res.status = toHttpStatus(replied.error().code());
+            res.set_content(json{{"error", replied.error().message()},
+                                 {"code", maiErrorCodeToString(replied.error().code())}}
+                                .dump(),
+                            "application/json");
+            return;
+        }
+        res.set_content(json{{"permissionID", replied.value()},
+                             {"decision", maiPermissionDecisionToString(decision)}}
+                            .dump(),
+                        "application/json");
+    });
 
     // ── SSE 事件流 ────────────────────────────────────────────────
     srv.Get("/api/event", [this](const httplib::Request&, httplib::Response& res) {

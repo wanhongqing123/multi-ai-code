@@ -11,12 +11,8 @@
 #include <thread>
 #include <vector>
 
-#include <httplib.h>
-#include <json.hpp>
-
 #include "MaiAgent.h"
-
-using nlohmann::json;
+#include "MaiFakeModelClient.h"
 
 namespace fs = std::filesystem;
 
@@ -31,84 +27,28 @@ static int failures = 0;
 
 namespace {
 
-// 一次模型应答的剧本：要么吐文本，要么发起工具调用。
-struct Script {
-    std::string text;
-    std::string tool_name;
-    std::string tool_args;
-};
+// 一次模型应答的剧本：要么吐一句话，要么发起一次工具调用。
+//
+// 不起假 HTTP 服务端。这个文件测的是工具循环本身——调用发出去、执行、
+// 结果回灌、再问一遍——中间那层传输是噪音。以前想断言"第二次请求带着
+// 调用和结果、而且 toolCallId 对得上"，得去 JSON 里翻
+// `messages[i]["tool_calls"][0]["id"]`；现在直接看
+// `message.invocations[0].id`，编译器帮着查类型。
+//
+// tool_calls 在线上怎么嵌套（function.name 那一层）是线格式的事，
+// 归 MaiModelClientTests 管，那边走真 socket。
+MaiFakeModelClient::Turn sayTurn(const std::string& text) {
+    MaiFakeModelClient::Turn turn;
+    turn.textChunks = {text};
+    return turn;
+}
 
-struct FakeModel {
-    httplib::Server server;
-    std::thread th;
-    int port = 0;
-
-    std::mutex mu;
-    std::vector<Script> scripts;  // 第 N 次请求用第 N 个剧本
-    std::vector<std::string> bodies;
-    std::size_t served = 0;
-
-    void start() {
-        server.Post("/chat/completions", [this](const httplib::Request& request,
-                                                httplib::Response& response) {
-            Script s;
-            {
-                std::lock_guard<std::mutex> lock(mu);
-                bodies.push_back(request.body);
-                if (served < scripts.size()) s = scripts[served];
-                ++served;
-            }
-            std::string out;
-            if (!s.tool_name.empty()) {
-                json tc;
-                tc["index"] = 0;
-                tc["id"] = "call_" + s.tool_name;
-                tc["function"] = json{{"name", s.tool_name}, {"arguments", s.tool_args}};
-                json d;
-                d["tool_calls"] = json::array({tc});
-                json c;
-                c["delta"] = std::move(d);
-                json root;
-                root["choices"] = json::array({c});
-                out += "data: " + root.dump() + "\n\n";
-            }
-            if (!s.text.empty()) {
-                json d;
-                d["content"] = s.text;
-                json c;
-                c["delta"] = std::move(d);
-                json root;
-                root["choices"] = json::array({c});
-                out += "data: " + root.dump() + "\n\n";
-            }
-            out += "data: [DONE]\n\n";
-            response.set_content(out, "text/event-stream");
-        });
-        port = server.bind_to_any_port("127.0.0.1");
-        th = std::thread([this] { server.listen_after_bind(); });
-        for (int i = 0; i < 200 && !server.is_running(); ++i)
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-
-    ~FakeModel() {
-        server.stop();
-        if (th.joinable()) th.join();
-    }
-
-    std::string base() const {
-        return "http://127.0.0.1:" + std::to_string(port);
-    }
-
-    std::size_t requestCount() {
-        std::lock_guard<std::mutex> lock(mu);
-        return bodies.size();
-    }
-    json body(std::size_t i) {
-        std::lock_guard<std::mutex> lock(mu);
-        if (i >= bodies.size()) return json::object();
-        return json::parse(bodies[i], nullptr, false);
-    }
-};
+MaiFakeModelClient::Turn callTurn(const std::string& tool, const std::string& arguments,
+                                  const std::string& callId = "call_1") {
+    MaiFakeModelClient::Turn turn;
+    turn.invocations.push_back(MaiToolInvocation{callId, tool, arguments});
+    return turn;
+}
 
 struct Workspace {
     fs::path root;
@@ -127,16 +67,25 @@ struct Workspace {
     }
 };
 
-std::unique_ptr<MaiAgent> make_agent(const FakeModel& model) {
-    MaiModelConfig config;
-    config.baseUrl = model.base();
-    config.apiKey = "test";
-    auto tools = std::make_unique<MaiToolRegistry>();
-    registerMaiBuiltinTools(*tools);
-    MaiAgent::Options options;
-    options.defaultModel = "glm-5.3";
-    return std::make_unique<MaiAgent>(makeMaiMemoryStore(), makeMaiModelClient(config),
-                                      std::move(tools), options);
+struct AgentUnderTest {
+    std::unique_ptr<MaiAgent> agent;
+    MaiFakeModelClient* model = nullptr;  // agent 持有，这里只借着看
+};
+
+AgentUnderTest makeAgent(std::vector<MaiFakeModelClient::Turn> script,
+                         MaiAgent::Options options = {}, bool withTools = true) {
+    auto model = std::make_unique<MaiFakeModelClient>(std::move(script));
+    MaiFakeModelClient* observer = model.get();
+
+    std::unique_ptr<MaiToolRegistry> tools;
+    if (withTools) {
+        tools = std::make_unique<MaiToolRegistry>();
+        registerMaiBuiltinTools(*tools);
+    }
+    if (options.defaultModel.empty()) options.defaultModel = "glm-5.3";
+    return {std::make_unique<MaiAgent>(makeMaiMemoryStore(), std::move(model), std::move(tools),
+                                       options),
+            observer};
 }
 
 struct Recorder {
@@ -158,15 +107,11 @@ struct Recorder {
 
 void test_tool_loop_closes() {
     Workspace workspace;
-    FakeModel model;
     // 第一次：要调 read。第二次：拿到内容后给出回答。
-    model.scripts = {
-        Script{"", "read", R"({"path":"src/hello.txt"})"},
-        Script{"The file has two lines.", "", ""},
-    };
-    model.start();
-
-    auto agent = make_agent(model);
+    auto underTest = makeAgent({callTurn("read", R"({"path":"src/hello.txt"})", "call_read"),
+                                sayTurn("The file has two lines.")});
+    MaiAgent* agent = underTest.agent.get();
+    MaiFakeModelClient* model = underTest.model;
     Recorder recorder;
     recorder.attach(*agent);
 
@@ -176,37 +121,33 @@ void test_tool_loop_closes() {
     agent->waitIdle();
 
     // 1. 模型被请求了两次——工具循环确实转了一圈
-    CHECK(model.requestCount() == 2);
+    CHECK(model->requestCount() == 2);
 
     // 2. 第一次请求里带了工具清单
-    const json first = model.body(0);
-    CHECK(first.contains("tools"));
-    if (first.contains("tools")) {
-        CHECK(first["tools"].size() == 4);
-        bool has_read = false;
-        for (const auto& t : first["tools"])
-            if (t["function"]["name"] == "read") has_read = true;
-        CHECK(has_read);
-    }
+    const MaiModelRequest first = model->request(0);
+    CHECK(first.tools.size() == 4);
+    bool hasRead = false;
+    for (const auto& tool : first.tools)
+        if (tool.name == "read") hasRead = true;
+    CHECK(hasRead);
 
     // 3. 第二次请求里必须带着调用和结果，而且 toolCallId 对得上——
     //    对不上的话模型认不出这是哪次调用的结果，下一轮会重复调。
-    const json second = model.body(1);
-    CHECK(second.contains("messages"));
+    const MaiModelRequest second = model->request(1);
     bool foundAssistantCall = false;
     bool foundToolResult = false;
     std::string callId;
-    for (const auto& m : second["messages"]) {
-        if (m.value("role", "") == "assistant" && m.contains("tool_calls")) {
+    for (const auto& message : second.messages) {
+        if (message.role == MaiModelRole::Assistant && !message.invocations.empty()) {
             foundAssistantCall = true;
-            callId = m["tool_calls"][0].value("id", "");
-            CHECK(m["tool_calls"][0]["function"]["name"] == "read");
+            callId = message.invocations[0].id;
+            CHECK(message.invocations[0].name == "read");
         }
-        if (m.value("role", "") == "tool") {
+        if (message.role == MaiModelRole::ToolResult) {
             foundToolResult = true;
-            CHECK(m.value("toolCallId", "") == callId);
+            CHECK(message.toolCallId == callId);
             // 真的把文件内容回灌了
-            CHECK(m.value("content", std::string{}).find("line one") != std::string::npos);
+            CHECK(message.content.find("line one") != std::string::npos);
         }
     }
     CHECK(foundAssistantCall);
@@ -242,27 +183,23 @@ void test_tool_loop_closes() {
 
 void test_tool_error_is_fed_back() {
     Workspace workspace;
-    FakeModel model;
     // 模型要读一个不存在的文件，然后（拿到错误后）改口
-    model.scripts = {
-        Script{"", "read", R"({"path":"no-such-file.txt"})"},
-        Script{"That file does not exist.", "", ""},
-    };
-    model.start();
-
-    auto agent = make_agent(model);
+    auto underTest = makeAgent(
+        {callTurn("read", R"({"path":"no-such-file.txt"})"), sayTurn("That file does not exist.")});
+    MaiAgent* agent = underTest.agent.get();
+    MaiFakeModelClient* model = underTest.model;
     const std::string sessionId =
         agent->submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
     agent->submit(MaiSendPrompt{sessionId, "read it"});
     agent->waitIdle();
 
-    CHECK(model.requestCount() == 2);
+    CHECK(model->requestCount() == 2);
     // 错误必须回灌——模型要知道失败了才能换个做法，而不是干等
-    const json second = model.body(1);
+    const MaiModelRequest second = model->request(1);
     bool fedError = false;
-    for (const auto& m : second["messages"])
-        if (m.value("role", "") == "tool" &&
-            m.value("content", std::string{}).find("does not exist") != std::string::npos)
+    for (const auto& message : second.messages)
+        if (message.role == MaiModelRole::ToolResult &&
+            message.content.find("does not exist") != std::string::npos)
             fedError = true;
     CHECK(fedError);
 
@@ -276,22 +213,17 @@ void test_tool_error_is_fed_back() {
 
 void test_unknown_tool_does_not_kill_the_turn() {
     Workspace workspace;
-    FakeModel model;
-    // 模型编了一个不存在的工具名——这事真会发生
-    model.scripts = {
-        Script{"", "made-up-tool", R"({})"},
-        Script{"Sorry, I used the wrong tool.", "", ""},
-    };
-    model.start();
-
-    auto agent = make_agent(model);
+    auto underTest =
+        makeAgent({callTurn("made-up-tool", R"({})"), sayTurn("Sorry, I used the wrong tool.")});
+    MaiAgent* agent = underTest.agent.get();
+    MaiFakeModelClient* model = underTest.model;
     const std::string sessionId =
         agent->submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
     agent->submit(MaiSendPrompt{sessionId, "do something"});
     agent->waitIdle();
 
     // 整轮不能因此失败，而是把"没这个工具"告诉模型让它改
-    CHECK(model.requestCount() == 2);
+    CHECK(model->requestCount() == 2);
     const auto msgs = agent->listMessages(sessionId);
     bool hasFinalText = false;
     if (msgs.size() == 2)
@@ -303,15 +235,9 @@ void test_unknown_tool_does_not_kill_the_turn() {
 
 void test_path_escape_through_model() {
     Workspace workspace;
-    FakeModel model;
-    // 模型（或提示词注入）让它读工作目录外的东西
-    model.scripts = {
-        Script{"", "read", R"({"path":"../../../etc/passwd"})"},
-        Script{"I cannot read that path.", "", ""},
-    };
-    model.start();
-
-    auto agent = make_agent(model);
+    auto underTest = makeAgent({callTurn("read", R"({"path":"../../../etc/passwd"})"),
+                                sayTurn("I cannot read that path.")});
+    MaiAgent* agent = underTest.agent.get();
     const std::string sessionId =
         agent->submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
     agent->submit(MaiSendPrompt{sessionId, "read the system password file"});
@@ -331,21 +257,15 @@ void test_path_escape_through_model() {
 
 void test_iteration_cap() {
     Workspace workspace;
-    FakeModel model;
     // 模型一直要调工具，永不收手——真实中会发生（它会绕圈）
-    for (int i = 0; i < 40; ++i)
-        model.scripts.push_back(Script{"", "read", R"({"path":"src/hello.txt"})"});
-    model.start();
+    std::vector<MaiFakeModelClient::Turn> script;
+    for (int i = 0; i < 40; ++i) script.push_back(callTurn("read", R"({"path":"src/hello.txt"})"));
 
-    MaiModelConfig config;
-    config.baseUrl = model.base();
-    config.apiKey = "test";
-    auto tools = std::make_unique<MaiToolRegistry>();
-    registerMaiBuiltinTools(*tools);
     MaiAgent::Options options;
-    options.defaultModel = "glm-5.3";
     options.maxToolIterations = 3;  // 调小便于测试
-    MaiAgent agent(makeMaiMemoryStore(), makeMaiModelClient(config), std::move(tools), options);
+    auto underTest = makeAgent(std::move(script), options);
+    MaiAgent& agent = *underTest.agent;
+    MaiFakeModelClient* model = underTest.model;
 
     Recorder recorder;
     recorder.attach(agent);
@@ -355,7 +275,7 @@ void test_iteration_cap() {
     agent.waitIdle();
 
     // 到上限就停，不能无限烧钱
-    CHECK(model.requestCount() == 3);
+    CHECK(model->requestCount() == 3);
     // 而且要明确告诉用户停在哪儿了，不是悄悄结束让人以为跑完了
     bool toldUser = false;
     for (const auto& e : recorder.all())
@@ -367,23 +287,19 @@ void test_iteration_cap() {
 
 void test_no_tools_means_no_tool_field() {
     Workspace workspace;
-    FakeModel model;
-    model.scripts = {Script{"just chatting", "", ""}};
-    model.start();
-
-    MaiModelConfig config;
-    config.baseUrl = model.base();
-    config.apiKey = "test";
     // 不给工具注册表 = 纯对话模式
-    MaiAgent agent(makeMaiMemoryStore(), makeMaiModelClient(config), nullptr, {});
+    auto underTest = makeAgent({sayTurn("just chatting")}, {}, /*withTools=*/false);
+    MaiAgent& agent = *underTest.agent;
+    MaiFakeModelClient* model = underTest.model;
     const std::string sessionId =
         agent.submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
     agent.submit(MaiSendPrompt{sessionId, "chat"});
     agent.waitIdle();
 
-    // 请求里不该出现 tools 字段——模型看不到工具就不会尝试调用
-    const json b = model.body(0);
-    CHECK(!b.contains("tools"));
+    // 请求里不该带工具清单——模型看不到工具就不会尝试调用。
+    // 这个清单空着时线上会不会真的省掉 tools 字段，是序列化那一层的事，
+    // 归 MaiModelClientTests 管。
+    CHECK(model->request(0).tools.empty());
 }
 
 }  // namespace

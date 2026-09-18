@@ -61,6 +61,10 @@ cmake --build build
 ./build/bin/MaiToolLoopTests        # 工具循环：调用 -> 执行 -> 回灌 -> 再答
 ./build/bin/MaiPermissionTests      # 权限闸门：拦住 -> 等裁决 -> 放行或拒绝
 
+# 只有 MaiModelClientTests 会起 socket——它测的就是传输和线格式。
+# 其余几套直接实现 MaiModelClient 接口（tests/support/MaiFakeModelClient），
+# 进程内跑，没有端口也没有 sleep。理由见 docs/CodingStyle.md 7.6。
+
 # 端到端（会自己起假模型和 bridge，不需要 API key）
 python tests/e2e/m2_loop.py
 python tests/e2e/m4_permission.py

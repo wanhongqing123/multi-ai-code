@@ -300,6 +300,56 @@ const char* kCjkDir = "\u65b0\u76ee\u5f55";
 
 这样源码里没有汉字，被测的字节又一个不差。汉字写在注释里说明它是什么。
 
+## 7.6 测试：先问"要测的东西在哪一层"
+
+**别为了测上层逻辑去搭下层的真实环境。**
+
+`MaiModelClient` 是个抽象接口，`MaiAgent` 构造时接的就是它。所以测"一轮
+对话的生命周期""工具循环""权限闸门"，直接实现那个接口就行
+（`tests/support/MaiFakeModelClient`），不需要 HTTP。
+
+以前那三个文件各起一个 httplib 服务端，于是每条断言都要绕一圈：
+
+```
+组装 MaiModelRequest -> 序列化成 JSON -> TCP -> curl -> SSE 解析 -> 回调
+```
+
+想断言"第二轮带上了上一轮的回答"，得去 `body["messages"][1]["content"]`
+里翻——而那句话本来就在 `MaiModelRequest` 这个结构体里放着。
+
+换掉之后：断言写 `request.messages[1].role == MaiModelRole::Assistant`，
+编译器帮着查类型；没有端口、线程和 sleep，也就没有"机器一慢就偶发失败"。
+
+**分层同样要守住**：
+
+| 要测什么 | 在哪测 | 用什么 |
+|---|---|---|
+| agent 的行为 | `MaiTurnRunnerTests` / `MaiToolLoopTests` / `MaiPermissionTests` | `MaiFakeModelClient`，进程内 |
+| SSE 解析、分片聚合 | `MaiModelClientTests` | 真 socket，能造出真实的分片 |
+| **线格式**（字段名、嵌套） | `MaiModelClientTests` | 真 socket，断言**发出去的字节** |
+| 整条链路 | `tests/e2e/*.py` | 真 bridge + 真 curl |
+
+codex 也是这么分的：`core` 的集成测试用 wiremock 起真 HTTP（dev 依赖，
+不进产物），而 `line_buffer` 那种纯解析逻辑是直接喂字节的单元测试
+（`codex-rs/ollama/src/line_buffer_tests.rs`）。
+
+### 测协议时，断言要对着规范，不能对着自己
+
+这条是有代价才学到的。`buildRequestBody` 曾经把工具结果的字段写成
+`toolCallId`，而 OpenAI 的线格式是 `tool_call_id`。当时的用例写的是：
+
+```cpp
+CHECK(m.value("toolCallId", "") == callId);   // 永远绿
+```
+
+拿自己的字段名去核自己的输出，什么也没验证。真跑起来服务端会说缺
+`tool_call_id`，或者模型认不出这是哪次调用的结果，下一轮把同样的工具
+再调一遍。
+
+所以：**协议相关的断言，字段名要从规范或真实样例里抄，不能从自己的
+结构体里抄。** 改完之后做一次红→绿对照——把 bug 放回去，确认用例真的
+会红。
+
 ## 8. 注释
 
 写"为什么"，不写"做了什么"——后者代码本身就说了。

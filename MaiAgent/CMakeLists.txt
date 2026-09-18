@@ -123,6 +123,15 @@ option(MAIAGENT_BUILD_TESTS "Build MaiAgent tests" ON)
 if(MAIAGENT_BUILD_TESTS)
   enable_testing()
 
+  # 测试共用的假实现。做成库而不是头文件里塞实现，是为了守住
+  # "头文件里不写函数实现"那条规范——测试代码不该有豁免。
+  add_library(maiagent_test_support STATIC
+    tests/support/MaiFakeModelClient.cpp
+  )
+  target_include_directories(maiagent_test_support
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tests/support)
+  target_link_libraries(maiagent_test_support PUBLIC maiagent)
+
   # 测试要碰内部头（MaiPathUtf8 等），所以也要 src 的 include 路径。
   foreach(test_name
       MaiCoreTests          # id / 会话 / 事件总线
@@ -132,7 +141,7 @@ if(MAIAGENT_BUILD_TESTS)
       MaiToolLoopTests      # 工具循环：调用 -> 执行 -> 回灌 -> 再答
       MaiPermissionTests)   # 权限闸门：拦住 -> 等裁决 -> 放行或拒绝
     add_executable(${test_name} tests/${test_name}.cpp)
-    target_link_libraries(${test_name} PRIVATE maiagent mai_thirdparty)
+    target_link_libraries(${test_name} PRIVATE maiagent maiagent_test_support mai_thirdparty)
     target_include_directories(${test_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     if(WIN32)
       target_link_libraries(${test_name} PRIVATE ws2_32 crypt32)

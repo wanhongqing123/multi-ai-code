@@ -39,24 +39,35 @@ struct FakeServer {
     std::string script;
     std::size_t chunk = 1;
 
+    // 收到的请求体和鉴权头。测线格式要看**真正发出去的字节**，
+    // 不能拿我们自己的结构体去对——那只能证明"符合我的理解"。
+    std::mutex mutex;
+    std::string lastBody;
+    std::string lastAuthorization;
+
     void start() {
-        server.Post(
-            "/chat/completions", [this](const httplib::Request&, httplib::Response& response) {
-                auto text = std::make_shared<std::string>(script);
-                auto pos = std::make_shared<std::size_t>(0);
-                const std::size_t step = chunk;
-                response.set_chunked_content_provider(
-                    "text/event-stream", [text, pos, step](std::size_t, httplib::DataSink& sink) {
-                        if (*pos >= text->size()) {
-                            sink.done();
-                            return false;
-                        }
-                        const std::size_t n = std::min(step, text->size() - *pos);
-                        const bool ok = sink.write(text->data() + *pos, n);
-                        *pos += n;
-                        return ok;
-                    });
-            });
+        server.Post("/chat/completions", [this](const httplib::Request& request,
+                                                httplib::Response& response) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                lastBody = request.body;
+                lastAuthorization = request.get_header_value("Authorization");
+            }
+            auto text = std::make_shared<std::string>(script);
+            auto pos = std::make_shared<std::size_t>(0);
+            const std::size_t step = chunk;
+            response.set_chunked_content_provider(
+                "text/event-stream", [text, pos, step](std::size_t, httplib::DataSink& sink) {
+                    if (*pos >= text->size()) {
+                        sink.done();
+                        return false;
+                    }
+                    const std::size_t n = std::min(step, text->size() - *pos);
+                    const bool ok = sink.write(text->data() + *pos, n);
+                    *pos += n;
+                    return ok;
+                });
+        });
         port = server.bind_to_any_port("127.0.0.1");
         th = std::thread([this] { server.listen_after_bind(); });
         for (int i = 0; i < 200 && !server.is_running(); ++i)
@@ -81,6 +92,28 @@ struct Collected {
     MaiErrorCode code = MaiErrorCode::Ok;
     bool done = false;
 };
+
+Collected runAgainst(FakeServer& fake, const MaiModelRequest& request) {
+    MaiModelConfig config;
+    config.baseUrl = fake.base();
+    config.apiKey = "test-key";
+    auto client = makeMaiModelClient(config);
+
+    Collected collected;
+    MaiStreamSink sink;
+    sink.onText = [&collected](std::string_view text) { collected.text.append(text); };
+    sink.onReasoning = [&collected](std::string_view text) { collected.reasoning.append(text); };
+    sink.onToolCall = [&collected](const MaiToolInvocation& invocation) {
+        collected.calls.push_back(invocation);
+    };
+
+    const std::atomic<bool> cancel{false};
+    const MaiError error = client->stream(request, sink, cancel);
+    collected.error = error.message();
+    collected.code = error.code();
+    collected.done = !error;
+    return collected;
+}
 
 Collected run(const std::string& script, std::size_t chunk) {
     FakeServer fake;
@@ -297,6 +330,122 @@ void test_reasoning_delta() {
     CHECK(c.text == "the answer");
 }
 
+// ── 线格式 ──────────────────────────────────────────────────────
+//
+// 这一组断言的是**真正发到 socket 上的 JSON**，对照 OpenAI Chat
+// Completions 的规范，不是对照我们自己的结构体。
+//
+// 这个区分是有代价才学到的：tool_call_id 曾经被写成了 toolCallId，
+// 而当时的用例写的是 `m.value("toolCallId", "") == callId`——拿自己的
+// 字段名去核自己的输出，永远是绿的。真跑起来服务端会说缺 tool_call_id，
+// 或者模型认不出这是哪次调用的结果，下一轮把同样的工具再调一遍。
+void test_wire_shape_of_request() {
+    FakeServer fake;
+    fake.script = std::string(": ping\n\n") + kDone;
+    fake.chunk = 100000;
+    fake.start();
+
+    MaiModelRequest request;
+    request.model = "glm-4.6";
+
+    MaiModelMessage user;
+    user.role = MaiModelRole::User;
+    user.content = "read a.txt";
+    request.messages.push_back(user);
+
+    MaiModelMessage assistant;
+    assistant.role = MaiModelRole::Assistant;
+    assistant.invocations.push_back(MaiToolInvocation{"call_1", "read", R"({"path":"a.txt"})"});
+    request.messages.push_back(assistant);
+
+    MaiModelMessage toolResult;
+    toolResult.role = MaiModelRole::ToolResult;
+    toolResult.toolCallId = "call_1";
+    toolResult.content = "file body";
+    request.messages.push_back(toolResult);
+
+    MaiToolSpec spec;
+    spec.name = "read";
+    spec.description = "read a file";
+    spec.parametersJson = R"({"type":"object","properties":{}})";
+    request.tools.push_back(spec);
+
+    runAgainst(fake, request);
+
+    std::string body;
+    std::string authorization;
+    {
+        std::lock_guard<std::mutex> lock(fake.mutex);
+        body = fake.lastBody;
+        authorization = fake.lastAuthorization;
+    }
+    CHECK(authorization == "Bearer test-key");
+
+    const json sent = json::parse(body, nullptr, false);
+    CHECK(!sent.is_discarded());
+    if (sent.is_discarded()) return;
+
+    CHECK(sent.value("model", "") == "glm-4.6");
+    CHECK(sent.value("stream", false) == true);  // 不开流就收不到增量
+    CHECK(sent["messages"].size() == 3);
+
+    CHECK(sent["messages"][0]["role"] == "user");
+    CHECK(sent["messages"][0]["content"] == "read a.txt");
+
+    // assistant 发起调用那条：tool_calls 的嵌套必须对。
+    const json& call = sent["messages"][1];
+    CHECK(call["role"] == "assistant");
+    CHECK(call["tool_calls"].size() == 1);
+    if (call["tool_calls"].size() == 1) {
+        CHECK(call["tool_calls"][0]["id"] == "call_1");
+        CHECK(call["tool_calls"][0]["type"] == "function");
+        CHECK(call["tool_calls"][0]["function"]["name"] == "read");
+        // arguments 是 JSON **字符串**，不是对象。写成对象服务端会拒。
+        CHECK(call["tool_calls"][0]["function"]["arguments"].is_string());
+    }
+
+    // 工具结果那条：字段名是 tool_call_id，snake_case。
+    const json& result = sent["messages"][2];
+    CHECK(result["role"] == "tool");
+    CHECK(result.contains("tool_call_id"));
+    CHECK(result.value("tool_call_id", "") == "call_1");
+    CHECK(!result.contains("toolCallId"));  // 别再犯一次
+    CHECK(result["content"] == "file body");
+
+    // 工具清单的嵌套：type / function / {name, description, parameters}
+    CHECK(sent["tools"].size() == 1);
+    if (sent["tools"].size() == 1) {
+        CHECK(sent["tools"][0]["type"] == "function");
+        CHECK(sent["tools"][0]["function"]["name"] == "read");
+        CHECK(sent["tools"][0]["function"]["parameters"].is_object());
+    }
+}
+
+void test_no_tools_field_when_empty() {
+    FakeServer fake;
+    fake.script = std::string(": ping\n\n") + kDone;
+    fake.chunk = 100000;
+    fake.start();
+
+    MaiModelRequest request;
+    request.model = "glm-5.3";
+    MaiModelMessage user;
+    user.role = MaiModelRole::User;
+    user.content = "chat";
+    request.messages.push_back(user);
+
+    runAgainst(fake, request);
+
+    std::string body;
+    {
+        std::lock_guard<std::mutex> lock(fake.mutex);
+        body = fake.lastBody;
+    }
+    const json sent = json::parse(body, nullptr, false);
+    // 没工具就不带 tools 字段，而不是带一个空数组——有的服务端见到空数组会报错。
+    CHECK(!sent.is_discarded() && !sent.contains("tools"));
+}
+
 }  // namespace
 
 int main() {
@@ -307,6 +456,8 @@ int main() {
     test_malformed_lines_are_ignored();
     test_server_error_inside_stream();
     test_reasoning_delta();
+    test_wire_shape_of_request();
+    test_no_tools_field_when_empty();
     if (failures == 0) std::printf("llm tests passed\n");
     return failures == 0 ? 0 : 1;
 }

@@ -16,13 +16,9 @@
 #include <thread>
 #include <vector>
 
-#include <httplib.h>
-#include <json.hpp>
-
 #include "MaiAgent.h"
+#include "MaiFakeModelClient.h"
 #include "MaiPermission.h"
-
-using nlohmann::json;
 
 namespace fs = std::filesystem;
 
@@ -203,90 +199,34 @@ void test_timeout() {
 
 // ── 第 2 层：接进 agent 的真实路径 ──────────────────────────────
 
-struct Script {
-    std::string text;
-    std::string tool_name;
-    std::string tool_args;
-};
+// 一次应答的剧本：要么吐一句话，要么发起一次工具调用。
+//
+// 这里不再起假 HTTP 服务端。理由见 MaiFakeModelClient.h——要测的是闸门
+// 拦不拦得住，不是 SSE 解析对不对，中间那层传输纯属噪音。
+MaiFakeModelClient::Turn sayTurn(const std::string& text) {
+    MaiFakeModelClient::Turn turn;
+    turn.textChunks = {text};
+    return turn;
+}
 
-struct FakeModel {
-    httplib::Server server;
-    std::thread th;
-    int port = 0;
+MaiFakeModelClient::Turn callTurn(const std::string& tool, const std::string& arguments,
+                                  const std::string& callId = "call_1") {
+    MaiFakeModelClient::Turn turn;
+    turn.invocations.push_back(MaiToolInvocation{callId, tool, arguments});
+    return turn;
+}
 
-    std::mutex mu;
-    std::vector<Script> scripts;
-    std::vector<std::string> bodies;
-    std::size_t served = 0;
-
-    void start() {
-        server.Post("/chat/completions", [this](const httplib::Request& request,
-                                                httplib::Response& response) {
-            Script s;
-            {
-                std::lock_guard<std::mutex> lock(mu);
-                bodies.push_back(request.body);
-                if (served < scripts.size()) s = scripts[served];
-                ++served;
-            }
-            std::string out;
-            if (!s.tool_name.empty()) {
-                json tc;
-                tc["index"] = 0;
-                tc["id"] = "call_" + std::to_string(bodies.size());
-                tc["function"] = json{{"name", s.tool_name}, {"arguments", s.tool_args}};
-                json d;
-                d["tool_calls"] = json::array({tc});
-                json c;
-                c["delta"] = std::move(d);
-                json root;
-                root["choices"] = json::array({c});
-                out += "data: " + root.dump() + "\n\n";
-            }
-            if (!s.text.empty()) {
-                json d;
-                d["content"] = s.text;
-                json c;
-                c["delta"] = std::move(d);
-                json root;
-                root["choices"] = json::array({c});
-                out += "data: " + root.dump() + "\n\n";
-            }
-            out += "data: [DONE]\n\n";
-            response.set_content(out, "text/event-stream");
-        });
-        port = server.bind_to_any_port("127.0.0.1");
-        th = std::thread([this] { server.listen_after_bind(); });
-        for (int i = 0; i < 200 && !server.is_running(); ++i)
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+// 回灌给模型的工具结果。拒绝时模型看到的就是这段文字。
+//
+// 以前得把最后一个请求体的 JSON 解出来、倒着找 role=="tool"；
+// 现在直接在结构体里找 MaiModelRole::ToolResult，编译器帮着查类型。
+std::string lastToolResultText(const MaiFakeModelClient& model) {
+    const MaiModelRequest request = model.lastRequest();
+    for (auto it = request.messages.rbegin(); it != request.messages.rend(); ++it) {
+        if (it->role == MaiModelRole::ToolResult) return it->content;
     }
-
-    ~FakeModel() {
-        server.stop();
-        if (th.joinable()) th.join();
-    }
-
-    std::string base() const {
-        return "http://127.0.0.1:" + std::to_string(port);
-    }
-
-    std::size_t requestCount() {
-        std::lock_guard<std::mutex> lock(mu);
-        return bodies.size();
-    }
-
-    // 回灌给模型的工具结果。拒绝时模型看到的就是这段文字。
-    std::string lastToolResultText() {
-        std::lock_guard<std::mutex> lock(mu);
-        if (bodies.empty()) return {};
-        const json b = json::parse(bodies.back(), nullptr, false);
-        if (!b.is_object() || !b.contains("messages")) return {};
-        for (auto it = b["messages"].rbegin(); it != b["messages"].rend(); ++it) {
-            if (it->value("role", "") == "tool") return it->value("content", "");
-        }
-        return {};
-    }
-};
+    return {};
+}
 
 struct Workspace {
     fs::path root;
@@ -307,16 +247,26 @@ struct Workspace {
     }
 };
 
-std::unique_ptr<MaiAgent> makeAgent(const FakeModel& model) {
-    MaiModelConfig config;
-    config.baseUrl = model.base();
-    config.apiKey = "test";
+// 建一个装好内置工具的 agent，并把假模型的指针交回去给用例回看。
+//
+// 指针的生命周期挂在 agent 上：agent 持有 unique_ptr，用例只借着看。
+struct AgentUnderTest {
+    std::unique_ptr<MaiAgent> agent;
+    MaiFakeModelClient* model = nullptr;  // agent 持有，这里只是观察用
+};
+
+AgentUnderTest makeAgent(std::vector<MaiFakeModelClient::Turn> script) {
+    auto model = std::make_unique<MaiFakeModelClient>(std::move(script));
+    MaiFakeModelClient* observer = model.get();
+
     auto tools = std::make_unique<MaiToolRegistry>();
     registerMaiBuiltinTools(*tools);
+
     MaiAgent::Options options;
     options.defaultModel = "glm-5.3";
-    return std::make_unique<MaiAgent>(makeMaiMemoryStore(), makeMaiModelClient(config),
-                                      std::move(tools), options);
+    return {std::make_unique<MaiAgent>(makeMaiMemoryStore(), std::move(model), std::move(tools),
+                                       options),
+            observer};
 }
 
 struct Recorder {
@@ -356,14 +306,10 @@ bool toolPartState(MaiAgent& agent, const std::string& sessionId, MaiToolState& 
 
 void test_write_waits_for_approval_then_runs() {
     Workspace workspace;
-    FakeModel model;
-    model.scripts = {
-        Script{"", "write", R"({"path":"note.txt","content":"only after approval"})"},
-        Script{"Written.", "", ""},
-    };
-    model.start();
-
-    auto agent = makeAgent(model);
+    auto underTest =
+        makeAgent({callTurn("write", R"({"path":"note.txt","content":"only after approval"})"),
+                   sayTurn("Written.")});
+    MaiAgent* agent = underTest.agent.get();
     Recorder recorder;
     recorder.attach(*agent);
 
@@ -418,14 +364,11 @@ void test_write_waits_for_approval_then_runs() {
 
 void test_reject_blocks_write_and_tells_model() {
     Workspace workspace;
-    FakeModel model;
-    model.scripts = {
-        Script{"", "write", R"({"path":"nope.txt","content":"must not be written"})"},
-        Script{"All right, I will not write it.", "", ""},
-    };
-    model.start();
-
-    auto agent = makeAgent(model);
+    auto underTest =
+        makeAgent({callTurn("write", R"({"path":"nope.txt","content":"must not be written"})"),
+                   sayTurn("All right, I will not write it.")});
+    MaiAgent* agent = underTest.agent.get();
+    MaiFakeModelClient* model = underTest.model;
     const std::string sessionId =
         agent->submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
     agent->submit(MaiSendPrompt{sessionId, "write nope.txt"});
@@ -447,24 +390,19 @@ void test_reject_blocks_write_and_tells_model() {
 
     // 模型得知道发生了什么，而且得被明确告知别重试——否则它会拿同样的
     // 参数把 12 圈烧光。
-    const std::string toolResultText = model.lastToolResultText();
+    const std::string toolResultText = lastToolResultText(*model);
     CHECK(toolResultText.find("denied") != std::string::npos);
     CHECK(toolResultText.find("Do not retry") != std::string::npos);
 }
 
 void test_rejected_repeat_does_not_ask_again() {
     Workspace workspace;
-    FakeModel model;
     // 模型被拒之后原样再调一次——真实模型经常这么干。
     const char* args = R"({"path":"again.txt","content":"x"})";
-    model.scripts = {
-        Script{"", "write", args},
-        Script{"", "write", args},
-        Script{"Never mind.", "", ""},
-    };
-    model.start();
-
-    auto agent = makeAgent(model);
+    auto underTest = makeAgent({callTurn("write", args, "call_1"),
+                                callTurn("write", args, "call_2"), sayTurn("Never mind.")});
+    MaiAgent* agent = underTest.agent.get();
+    MaiFakeModelClient* model = underTest.model;
     Recorder recorder;
     recorder.attach(*agent);
 
@@ -484,20 +422,15 @@ void test_rejected_repeat_does_not_ask_again() {
     // 第二次同样的调用直接回同样的拒绝，**不再弹第二个框**。
     // 不做这件事的话，模型每重试一次用户就要点一次"不行"。
     CHECK(recorder.count(MaiEventType::PermissionAsked) == 1);
-    CHECK(model.requestCount() == 3);  // 三圈都跑到了，没卡住
+    CHECK(model->requestCount() == 3);  // 三圈都跑到了，没卡住
 }
 
 void test_always_in_session_asks_only_once() {
     Workspace workspace;
-    FakeModel model;
-    model.scripts = {
-        Script{"", "write", R"({"path":"a.txt","content":"1"})"},
-        Script{"", "write", R"({"path":"b.txt","content":"2"})"},
-        Script{"Both files written.", "", ""},
-    };
-    model.start();
-
-    auto agent = makeAgent(model);
+    auto underTest = makeAgent({callTurn("write", R"({"path":"a.txt","content":"1"})", "call_1"),
+                                callTurn("write", R"({"path":"b.txt","content":"2"})", "call_2"),
+                                sayTurn("Both files written.")});
+    MaiAgent* agent = underTest.agent.get();
     Recorder recorder;
     recorder.attach(*agent);
 
@@ -521,14 +454,8 @@ void test_always_in_session_asks_only_once() {
 void test_read_never_asks() {
     Workspace workspace;
     std::ofstream(workspace.root / "x.txt", std::ios::binary) << "some content";
-    FakeModel model;
-    model.scripts = {
-        Script{"", "read", R"({"path":"x.txt"})"},
-        Script{"Got it.", "", ""},
-    };
-    model.start();
-
-    auto agent = makeAgent(model);
+    auto underTest = makeAgent({callTurn("read", R"({"path":"x.txt"})"), sayTurn("Got it.")});
+    MaiAgent* agent = underTest.agent.get();
     Recorder recorder;
     recorder.attach(*agent);
 
@@ -544,14 +471,9 @@ void test_read_never_asks() {
 
 void test_interrupt_while_waiting_for_approval() {
     Workspace workspace;
-    FakeModel model;
-    model.scripts = {
-        Script{"", "write", R"({"path":"interrupted.txt","content":"x"})"},
-        Script{"Understood.", "", ""},
-    };
-    model.start();
-
-    auto agent = makeAgent(model);
+    auto underTest = makeAgent(
+        {callTurn("write", R"({"path":"interrupted.txt","content":"x"})"), sayTurn("Understood.")});
+    MaiAgent* agent = underTest.agent.get();
     const std::string sessionId =
         agent->submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
     agent->submit(MaiSendPrompt{sessionId, "write interrupted.txt"});
@@ -569,14 +491,9 @@ void test_interrupt_while_waiting_for_approval() {
 
 void test_reply_to_stale_permission_is_not_found() {
     Workspace workspace;
-    FakeModel model;
-    model.scripts = {
-        Script{"", "write", R"({"path":"stale.txt","content":"x"})"},
-        Script{"Done.", "", ""},
-    };
-    model.start();
-
-    auto agent = makeAgent(model);
+    auto underTest =
+        makeAgent({callTurn("write", R"({"path":"stale.txt","content":"x"})"), sayTurn("Done.")});
+    MaiAgent* agent = underTest.agent.get();
     const std::string sessionId =
         agent->submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
     agent->submit(MaiSendPrompt{sessionId, "write stale.txt"});

@@ -111,7 +111,11 @@ std::string buildRequestBody(const MaiModelRequest& request) {
         // assistant 发起调用的那条，content 可以是 null，但必须带 tool_calls。
         if (!message.content.empty() || message.invocations.empty())
             messageNode["content"] = message.content;
-        if (!message.toolCallId.empty()) messageNode["toolCallId"] = message.toolCallId;
+        // 线上字段名是 tool_call_id（snake_case），不是我们结构体里那个
+        // toolCallId。写错的话工具结果和它对应的调用就对不上——
+        // 服务端要么直接 400，要么模型认不出这是哪次调用的结果，
+        // 下一轮把同样的工具再调一遍。
+        if (!message.toolCallId.empty()) messageNode["tool_call_id"] = message.toolCallId;
         if (!message.invocations.empty()) {
             json calls = json::array();
             for (const auto& choice : message.invocations) {

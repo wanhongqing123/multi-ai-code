@@ -66,8 +66,8 @@ private:
 
     // 流式 part 刚冒头时：先在消息里占个位、落库，再广播。
     //
-    // 顺序和工具那边一样，理由也一样（规范第 10 节）：事件只带 part id，
-    // 订阅方要拿它去存储查全量，库里没有就什么都查不到。
+    // 顺序和工具那边一样，理由也一样（规范第 10 节）：事件只带 part id，订阅方要拿它去存储查全量，
+    // 库里没有就什么都查不到。
     //
     // **这一条的代价比工具那边隐蔽得多。** 正文和思考过程的增量 field 都是 "text"，
     // 订阅方唯一能分清的办法就是去查这个 part 是 MaiTextPart 还是 MaiReasoningPart。
@@ -75,8 +75,8 @@ private:
     // 这个洞是拿真实 GLM-5.3 跑出来的：假模型不发 reasoning_content，测不到。
     void beginStreamedPart(const std::string& partId, MaiMessagePartBody body);
 
-    // 把这一圈累积的文本和推理填进各自的 part。
-    // **就地填**，不是新建——part 在第一个 chunk 到达时就已经占位入库了。
+    // 把这一圈累积的文本和推理填进各自的 part。**就地填**，
+    // 不是新建——part 在第一个 chunk 到达时就已经占位入库了。
     void commitStreamedParts();
     void fillStreamedPart(const std::string& partId, std::string& buffer);
     void finish(const std::atomic<bool>& cancel);

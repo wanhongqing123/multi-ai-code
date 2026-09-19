@@ -2,8 +2,8 @@
 //
 // ── 它是这个仓库里唯一的宿主进程 ────────────────────────────────
 //
-// 以前还有一个 maiagent-bridge：核心 + REST/SSE 适配器，637 行，存在的唯一理由是
-// 当时的界面是 Electron、JS 写的、调不了 C++。那个界面撤了，那层壳跟着删了，
+// 以前还有一个 maiagent-bridge：核心 + REST/SSE 适配器，637 行，
+// 存在的唯一理由是当时的界面是 Electron、JS 写的、调不了 C++。那个界面撤了，那层壳跟着删了，
 // **核心一行都没改**——那就是当初要有这条边界的全部意义。
 //
 // 所以现在它同时是证明和工具：
@@ -16,8 +16,8 @@
 //
 // ── 为什么不做成 TUI ────────────────────────────────────────────
 //
-// 逐行读写，不接管终端：不进 raw mode，不画光标，不重排屏幕。做 TUI 要在三个平台上
-// 各写一套终端控制，那是另一件事，和这里要证明的东西无关。
+// 逐行读写，不接管终端：不进 raw mode，不画光标，不重排屏幕。
+// 做 TUI 要在三个平台上各写一套终端控制，那是另一件事，和这里要证明的东西无关。
 //
 // 代价是模型流式输出的时候用户在"盲打"——敲进去的命令照样收得到（主线程一直挂在读输入上），
 // 只是屏幕上会和模型的输出混在一起。所以中断、授权这些命令都做得很短（/n、/y）。
@@ -34,8 +34,7 @@
 #include <vector>
 
 #if defined(_WIN32)
-// windows.h 必须排在标准库**后面**：它会 #define max / min 这类很短的名字，
-// 排在前面会污染标准库头。
+// windows.h 必须排在标准库**后面**：它会 #define max / min 这类很短的名字，排在前面会污染标准库头。
 #include <windows.h>
 #endif
 
@@ -50,18 +49,19 @@ namespace {
 //
 // 这一段是纯粹的平台适配，和 agent 无关，但少了它中文全是乱码。
 //
-// 核心内部一路到模型都是 UTF-8。Windows 控制台不是：它按**当前代码页**收发字节，
-// 中文机器上是 GBK。直接把 UTF-8 字节 fwrite 给 stdout，屏幕上出来的是一堆问号；
+// 核心内部一路到模型都是 UTF-8。Windows 控制台不是：它按**当前代码页**收发字节，中文机器上是 GBK。
+// 直接把 UTF-8 字节 fwrite 给 stdout，屏幕上出来的是一堆问号；
 // 直接把控制台给的字节当 UTF-8 送进核心，模型收到的是乱码。两个方向都得转。
 //
-// 这个坑在这个项目里已经付过两次代价了——端到端脚本刻意不走 shell 传参就是为了躲开它
-// （见 tests/e2e/console_e2e.py 开头）。
+// 这个坑在这个项目里已经付过两次代价了——端到端脚本刻意不走 shell 传参就是为了躲开它（见 
+// tests/e2e/console_e2e.py 开头）。
 
 #if defined(_WIN32)
 
 // 只有**真的控制台**才要转宽字符。输出被重定向到文件或管道时（`maiagent-console > out.txt`、
-// 或者端到端脚本用管道喂它）WriteConsoleW 会失败，那种情况下原样写 UTF-8 字节才是对的——
-// 文件里存 UTF-8，拿到的东西是能用的。GetConsoleMode 成功就是"这是个控制台"。
+// 或者端到端脚本用管道喂它）WriteConsoleW 会失败，
+// 那种情况下原样写 UTF-8 字节才是对的——文件里存 UTF-8，拿到的东西是能用的。
+// GetConsoleMode 成功就是"这是个控制台"。
 bool isRealConsole(HANDLE handle) {
     DWORD mode = 0;
     return handle != INVALID_HANDLE_VALUE && ::GetConsoleMode(handle, &mode) != 0;
@@ -177,9 +177,10 @@ public:
 
     // 起渲染线程。**必须在 eventBus().subscribe() 之前调用。**
     //
-    // agent 只用来查片段详情，不会往里提交操作。它必须活得比这个渲染器**短**——
-    // MaiAgent 析构时还会发最后几条事件，渲染器先死的话那几条就打到悬空引用上了
-    // （见 MaiAgent.h 的析构一节）。main 里靠声明顺序保证：渲染器先声明，agent 后声明。
+    // agent 只用来查片段详情，不会往里提交操作。
+    // 它必须活得比这个渲染器**短**——MaiAgent 析构时还会发最后几条事件，
+    // 渲染器先死的话那几条就打到悬空引用上了（见 MaiAgent.h 的析构一节）。main 里靠声明顺序保证：
+    // 渲染器先声明，agent 后声明。
     void start(MaiAgent& agent, bool showReasoning);
 
     // 事件处理函数调这个。只入队，立刻返回。
@@ -228,8 +229,8 @@ private:
 
     // 只有渲染线程碰这两个，不用加锁。
     std::map<std::string, PartMemo> mParts;
-    // 上一次写出去的东西是不是以换行结尾。模型的增量不带换行，
-    // 而工具卡、提示这些必须从行首开始——不补这一个换行的话它们会接在半句话后面。
+    // 上一次写出去的东西是不是以换行结尾。模型的增量不带换行，而工具卡、
+    // 提示这些必须从行首开始——不补这一个换行的话它们会接在半句话后面。
     bool mAtLineStart = true;
 };
 
@@ -289,9 +290,9 @@ void MaiConsoleRenderer::drain() {
         // 而控制台的写本来就可能很慢（见这个类开头的第 2 条）。
         //
         // mAtLineStart 要**在循环里逐条更新**，不能等整批拼完再更新一次：
-        // 同一批里前一条的输出决定了后一条在不在行首。等到最后才更新的话，一批里每一条
-        // 看到的都是上一批留下的旧状态，补出来的换行就全错了——
-        // 表现是提示符前面凭空多一个空行，而模型的回答又被接在提示符后面。
+        // 同一批里前一条的输出决定了后一条在不在行首。等到最后才更新的话，
+        // 一批里每一条看到的都是上一批留下的旧状态，
+        // 补出来的换行就全错了——表现是提示符前面凭空多一个空行，而模型的回答又被接在提示符后面。
         std::string out;
         for (const Entry& entry : batch) {
             const std::string piece = entry.isEvent ? format(entry.event) : entry.text;
@@ -328,8 +329,8 @@ std::string MaiConsoleRenderer::format(const MaiEvent& event) {
             if (event.detail.empty()) return {};
             return atLineStart(mAtLineStart, "[session] titled \"" + event.detail + "\"\n");
         case MaiEventType::PermissionAsked:
-            // 工具名和参数已经在上一条 message.part.updated 里打出来了（那个片段就是 Pending 状态），
-            // 这里只说怎么答，不重复一遍参数。
+            // 工具名和参数已经在上一条 message.part.updated 里打出来了（那个片段就是 Pending 状态
+            // ），这里只说怎么答，不重复一遍参数。
             return atLineStart(mAtLineStart,
                                "       needs approval -> /y approve   /n deny   "
                                "/a approve for this session\n");
@@ -357,9 +358,9 @@ std::string MaiConsoleRenderer::formatPartUpdated(const MaiEvent& event) {
         mParts[event.partId].kind = PartMemo::Kind::Reasoning;
         // 不显示思考内容的时候也要说一声"它在想"。
         //
-        // 真实的推理模型（GLM-5.3）思考期能有十几秒，这段时间里 content 一个字都不吐——
-        // 把 reasoning 藏掉之后，屏幕上就是**完全没有反应**，和卡死分不开。
-        // 这是拿真模型跑出来的：假模型根本不发 reasoning_content，测不到这个。
+        // 真实的推理模型（GLM-5.3）思考期能有十几秒，
+        // 这段时间里 content 一个字都不吐——把 reasoning 藏掉之后，屏幕上就是**完全没有反应**，
+        // 和卡死分不开。这是拿真模型跑出来的：假模型根本不发 reasoning_content，测不到这个。
         return atLineStart(mAtLineStart, mShowReasoning ? "[thinking] " : "[thinking...]\n");
     }
     if (std::get_if<MaiTextPart>(&part.body) != nullptr) {
@@ -392,8 +393,8 @@ std::string MaiConsoleRenderer::formatPartUpdated(const MaiEvent& event) {
 
 bool MaiConsoleRenderer::findPart(const MaiEvent& event, MaiMessagePart& out) const {
     if (mAgent == nullptr) return false;
-    // 事件只带 id，片段的内容要去问存储——这是事件总线的设计：事件是通知，存储是真相
-    // （见 MaiEventBus.h "新订阅者看不到之前的事件"那一段）。
+    // 事件只带 id，片段的内容要去问存储——这是事件总线的设计：事件是通知，
+    // 存储是真相（见 MaiEventBus.h "新订阅者看不到之前的事件"那一段）。
     //
     // 这个查询**只能在渲染线程做**：存储可能是 SQLite，读它是慢活，
     // 在事件处理函数里做会被守卫当场打死（见 MaiBlockingCheck.h）。
@@ -607,9 +608,9 @@ int main(int argc, char** argv) {
     agentOptions.defaultModel = modelName;
     agentOptions.permissionTimeoutMs = permissionTimeoutMs;
 
-    // 声明顺序有讲究，别调。渲染器在前、agent 在后，所以析构时 **agent 先走**——
-    // MaiAgent 析构会叫停所有轮次并发最后几条事件，那时渲染器必须还活着
-    // （见 MaiAgent.h 的析构一节：订阅者必须活得比 MaiAgent 久）。
+    // 声明顺序有讲究，别调。渲染器在前、agent 在后，
+    // 所以析构时 **agent 先走**——MaiAgent 析构会叫停所有轮次并发最后几条事件，
+    // 那时渲染器必须还活着（见 MaiAgent.h 的析构一节：订阅者必须活得比 MaiAgent 久）。
     MaiConsoleRenderer renderer;
     MaiAgent agent(std::move(store), std::move(model), std::move(tools), agentOptions);
     renderer.start(agent, showReasoning);
@@ -687,9 +688,9 @@ int main(int argc, char** argv) {
                 if (stopped) {
                     continue;  // 打断成功之后还会来一条 SessionIdle，提示符交给它
                 }
-                // 失败的路上没有 SessionIdle，提示符得自己打。不打的话用户会停在
-                // 一个没有提示符的屏幕上，以为控制台卡死了——最常见的情况就是
-                // 手快按了两次 /interrupt。
+                // 失败的路上没有 SessionIdle，提示符得自己打。
+                // 不打的话用户会停在一个没有提示符的屏幕上，
+                // 以为控制台卡死了——最常见的情况就是手快按了两次 /interrupt。
                 renderer.say("[console] " + stopped.error().message() + "\n> ");
                 continue;
             } else {
@@ -709,8 +710,8 @@ int main(int argc, char** argv) {
         // 成功的话什么都不打：模型的输出马上就从事件流里过来了，提示符等 SessionIdle 再打。
     }
 
-    // 收尾的顺序：先让在跑的轮次结束，再把队列里剩下的写完。
-    // 反过来的话最后那几条事件（SessionIdle、错误）就丢了。
+    // 收尾的顺序：先让在跑的轮次结束，再把队列里剩下的写完。反过来的话最后那几条事件（SessionIdle、
+    // 错误）就丢了。
     renderer.say("\n");
     agent.waitIdle();
     renderer.stop();

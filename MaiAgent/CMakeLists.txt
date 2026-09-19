@@ -96,6 +96,16 @@ set(CURL_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
 # HTTP_ONLY 把 FTP/LDAP/SMTP/telnet 等一律关掉。我们只打 HTTPS，
 # 少掉的这些既是体积也是攻击面。
 set(HTTP_ONLY           ON  CACHE BOOL "" FORCE)
+# 不用 zlib。
+#
+# curl 这个选项默认是 AUTO——环境里找得到 zlib 就用上。**被别人 add_subdirectory
+# 进去的时候这是个雷**：MaiChat 那边把 ZLIB_INCLUDE_DIR 指向 Qt 自带的私有副本
+# （C:/Qt/.../include/QtZlib），而那份 zlib.h 第一行就 #include <qglobal.h>。
+# curl 的 C 文件看不见 Qt 的头，编译直接 C1083，报错还落在 curl 的源码里，
+# 和 Qt 八竿子打不着，很难往回推。
+#
+# zlib 对我们只影响 gzip 传输编码，而模型接口是 SSE 明文，用不上。
+set(CURL_ZLIB           OFF CACHE STRING "" FORCE)
 set(CURL_USE_LIBPSL     OFF CACHE BOOL "" FORCE)
 set(CURL_USE_LIBSSH2    OFF CACHE BOOL "" FORCE)
 set(USE_LIBIDN2         OFF CACHE BOOL "" FORCE)
@@ -157,6 +167,16 @@ target_include_directories(maiagent
 # 和适配器里的 cpp-httplib（HTTP **服务端**）是两回事，两个都要。
 # sqlite 和 libcurl 都是 PRIVATE：它们是实现细节，公开头里不出现。
 target_link_libraries(maiagent PUBLIC Threads::Threads PRIVATE CURL::libcurl mai_sqlite)
+
+# 公开头里的中文注释要能被**别人**正确编译。
+#
+# 这些文件是无 BOM 的 UTF-8。MSVC 不带 /utf-8 就按当前 ANSI 代码页读（中文机器是 936），
+# 中文注释里的字节被拆错，后面的代码跟着被吃掉——报出来是一句 C4819 加一长串
+# C4430 / C2059，看上去像是头文件本身写错了，很难想到是编码。
+#
+# 上面那句 add_compile_options(/utf-8) 只管**本目录自己的目标**，link 过来的人带不上，
+# 所以这里必须再挂一个 INTERFACE。MaiChat 把这个库 add_subdirectory 进去时就是这么炸的。
+target_compile_options(maiagent INTERFACE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
 
 # ── 唯一的宿主进程：只链核心库的控制台 ───────────────────────────
 # 这一行是全部：`maiagent`，没有别的。产物里没有 HTTP 服务端，

@@ -29,13 +29,13 @@ const char* maiWireApiToString(MaiWireApi wire);
 // **攒完整才交付**：流式过程中 arguments 可能是一个个 JSON 碎片到达的
 // （见 MaiStreamSink::onToolCall 的说明），中途给出去会是半截 JSON。
 //
-// 注意"可能"两个字——**分不分片是供应商的自由，不是协议的规定**。实测过 GLM-5.3
-// （zhipuai coding plan）：tool_calls 永远只有一帧，arguments 整块给，连 1.2 KB 的
-// 长参数也不切。所以拿 GLM 跑通**不等于**这段聚合验过了，它根本没被执行到。
+// 注意"可能"两个字——**分不分片是供应商的自由，不是协议的规定**。
+// 实测过 GLM-5.3（zhipuai coding plan）：tool_calls 永远只有一帧，arguments 整块给，
+// 连 1.2 KB 的长参数也不切。所以拿 GLM 跑通**不等于**这段聚合验过了，它根本没被执行到。
 //
-// 真正证明这段逻辑的是 MaiModelClientTests：那里喂的是对抗性分片——切点故意落在 JSON
-// 的引号和冒号中间，而且从 chunk=1 开始每个块大小都跑一遍，比任何真实供应商都狠。
-// 换供应商时别把这组用例删了。
+// 真正证明这段逻辑的是 MaiModelClientTests：
+// 那里喂的是对抗性分片——切点故意落在 JSON 的引号和冒号中间，而且从 chunk=1 开始每个块大小都跑一遍，
+// 比任何真实供应商都狠。换供应商时别把这组用例删了。
 struct MaiToolInvocation {
     // 服务端给的调用 id。回灌结果时要**原样带回**，对不上的话模型认不出这是哪次调用的结果，
     // 下一轮会把同样的工具再调一遍。

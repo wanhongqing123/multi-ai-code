@@ -33,8 +33,8 @@ enum class MaiErrorCode {
     Internal,  // 剩下的。落库失败、curl 初始化失败之类
 };
 
-// 转成 "not_found" 这类稳定字符串。给日志和跨进程传递用——
-// 接收方据此分支，而不是去匹配 message 的文字（文案会改，码不会）。
+// 转成 "not_found" 这类稳定字符串。给日志和跨进程传递用——接收方据此分支，
+// 而不是去匹配 message 的文字（文案会改，码不会）。
 const char* maiErrorCodeToString(MaiErrorCode code);
 
 // 一个错误，或者"没有错误"。

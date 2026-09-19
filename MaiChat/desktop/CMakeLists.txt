@@ -47,6 +47,50 @@ find_package(ZLIB REQUIRED)
 
 # md4c：CommonMark + GFM 扩展的 Markdown 解析器（与 Qt 内嵌同源，MIT）。
 # 来源 https://github.com/mity/md4c release-0.5.2，见 third_party/md4c/LICENSE.md。
+# ---- MaiAgent：agent 核心，纯 C++ 的库 ----
+#
+# 直接 add_subdirectory 源码编进来，不走预编译产物：
+# 两边同一个工具链、同一套 Release 选项，省掉 ABI 对不上的一整类问题。
+#
+# 它自带的第三方依赖全在 MaiAgent/third_party 里，**构建过程不下载任何东西**。
+# 和这边的依赖不打架：Windows 上它的 curl 走 Schannel（不碰我们 vendor 的 openssl），
+# sqlite 是它自己 amalgamation 的一份，这边本来也没有。
+#
+# 测试关掉：那是 MaiAgent 自己仓库里跑的事，不该拖慢这边的构建。
+set(MAIAGENT_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+
+# AUTOMOC/AUTOUIC/AUTORCC 是**目录属性**，会顺着 add_subdirectory 传染进去。
+# MaiAgent 里一个 Q_OBJECT 都没有，让 moc 去扫它纯属浪费，还会给它每个目标
+# 凭空多出一个 mocs_compilation.cpp。进去之前关掉，出来再恢复。
+set(_maichat_automoc ${CMAKE_AUTOMOC})
+set(_maichat_autouic ${CMAKE_AUTOUIC})
+set(_maichat_autorcc ${CMAKE_AUTORCC})
+set(CMAKE_AUTOMOC OFF)
+set(CMAKE_AUTOUIC OFF)
+set(CMAKE_AUTORCC OFF)
+
+# 还要把 ZLIB_FOUND 一起藏起来。
+#
+# 上面那句 find_package(ZLIB REQUIRED) 把 ZLIB_FOUND 留在了当前作用域，
+# 而子目录会继承它。curl 的 CMakeLists 是这么写的：
+#
+#     curl_dependency_option(ZLIB)   # 看 CURL_ZLIB，我们已经设成 OFF 了
+#     if(ZLIB_FOUND)                 # 但这一句不看 CURL_ZLIB，只看有没有找到过
+#       list(APPEND CURL_LIBS ZLIB::ZLIB)
+#
+# 所以光在 MaiAgent 那边设 CURL_ZLIB=OFF 是拦不住的。而这边的 ZLIB 指的是
+# Qt 自带的私有副本（include/QtZlib），它的 zlib.h 第一行就 #include <qglobal.h>——
+# curl 的 C 文件没有 Qt 的 include 路径，编译直接 C1083，报错还落在 curl 的源码里。
+set(_maichat_zlib_found ${ZLIB_FOUND})
+set(ZLIB_FOUND FALSE)
+
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent maiagent EXCLUDE_FROM_ALL)
+
+set(ZLIB_FOUND ${_maichat_zlib_found})
+set(CMAKE_AUTOMOC ${_maichat_automoc})
+set(CMAKE_AUTOUIC ${_maichat_autouic})
+set(CMAKE_AUTORCC ${_maichat_autorcc})
+
 add_library(md4c STATIC
   third_party/md4c/md4c.c
   third_party/md4c/md4c.h
@@ -281,6 +325,18 @@ if(MAICHAT_USE_FAKE_CLIENT)
   target_compile_definitions(maichat PRIVATE MAICHAT_USE_FAKE_CLIENT=1)
 endif()
 
+# ---- agent 接入层 ----
+# 只做一件事：把 MaiAgent 的事件搬到 Qt 主线程。界面代码不直接碰 MaiAgent 的事件总线。
+add_library(maichat_agent
+  src/agent/AgentController.h
+  src/agent/AgentController.cpp
+)
+target_include_directories(maichat_agent PUBLIC src)
+target_link_libraries(maichat_agent PUBLIC Qt5::Core maiagent)
+
+add_executable(agent_controller_test tests/AgentControllerTest.cpp)
+target_link_libraries(agent_controller_test PRIVATE maichat_agent Qt5::Test)
+
 add_executable(remote_diagnostics_controller_test tests/RemoteDiagnosticsControllerTest.cpp)
 target_link_libraries(remote_diagnostics_controller_test PRIVATE remote_im_desktop_app Qt5::Test)
 target_compile_definitions(remote_diagnostics_controller_test PRIVATE
@@ -424,6 +480,7 @@ target_link_libraries(ui_zoom_test PRIVATE remote_im_desktop_ui remote_im_deskto
 add_executable(performance_log_test tests/PerformanceLogTest.cpp)
 target_link_libraries(performance_log_test PRIVATE remote_im_core Qt5::Test)
 enable_testing()
+add_test(NAME agent_controller_test COMMAND agent_controller_test)
 add_test(NAME performance_log_test COMMAND performance_log_test)
 add_test(NAME remote_diagnostics_controller_test COMMAND remote_diagnostics_controller_test)
 add_test(NAME attachment_download_evidence_test COMMAND attachment_download_evidence_test)

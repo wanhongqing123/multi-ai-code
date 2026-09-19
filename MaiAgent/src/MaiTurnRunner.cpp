@@ -284,8 +284,8 @@ void MaiTurnRunner::beginStreamedPart(const std::string& partId, MaiMessagePartB
     part.created = MaiTime::getCurrentTime();
     mAssistant.parts.push_back(std::move(part));
 
-    // 先落库，再广播。理由见头文件里这个函数的注释——这里错了的话，
-    // 界面分不出正文和思考过程，会把模型的草稿当答案显示出来。
+    // 先落库，再广播。理由见头文件里这个函数的注释——这里错了的话，界面分不出正文和思考过程，
+    // 会把模型的草稿当答案显示出来。
     mDependencies.store->putMessage(mSessionId, mAssistant);
     mDependencies.emitter->emitPart(MaiEventType::MessagePartUpdated, mSessionId, mAssistant.id,
                                     partId);
@@ -311,8 +311,8 @@ void MaiTurnRunner::fillStreamedPart(const std::string& partId, std::string& buf
         }
         break;
     }
-    // 找不到对应的 part 说明占位那一步没跑过（理论上不可能：有内容就一定先有第一个
-    // chunk）。清掉缓冲而不是把它留到下一圈——留着会让下一圈的 part 带上这一圈的尾巴。
+    // 找不到对应的 part 说明占位那一步没跑过（理论上不可能：有内容就一定先有第一个 chunk）。
+    // 清掉缓冲而不是把它留到下一圈——留着会让下一圈的 part 带上这一圈的尾巴。
     buffer.clear();
 }
 

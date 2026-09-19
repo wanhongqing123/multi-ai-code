@@ -110,6 +110,15 @@
 #include "ui/SharingIndicatorBar.h"
 #include "ui/UiZoom.h"
 
+#include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QSettings>
+#include <QStandardPaths>
+
+#include "agent/AgentChatPanel.h"
+#include "agent/AgentController.h"
+
 namespace {
 
 constexpr int UserIdRole = Qt::UserRole;
@@ -1356,6 +1365,50 @@ QString readTextFile(const QString& path) {
 
 }  // namespace
 
+namespace {
+
+// AI 助手连哪个模型。
+//
+// **正式来源是设置页**（QSettings）。读不到时退回 opencode 的 auth.json——
+// 那是开发期的方便，不是设计：这台机器上已经有一份可用的智谱 key，
+// 不然每次跑起来都得先去界面里填一遍。设置页做好之后这一段就该删掉。
+AgentController::ModelConfig loadAgentModelConfig() {
+    AgentController::ModelConfig config;
+
+    QSettings settings;
+    config.baseUrl = settings.value(QStringLiteral("agent/baseUrl")).toString();
+    config.apiKey = settings.value(QStringLiteral("agent/apiKey")).toString();
+    config.modelName =
+        settings.value(QStringLiteral("agent/model"), QStringLiteral("glm-5.3")).toString();
+    if (!config.baseUrl.isEmpty() && !config.apiKey.isEmpty()) return config;
+
+    const QString authPath =
+        QDir::homePath() + QStringLiteral("/.local/share/opencode/auth.json");
+    QFile authFile(authPath);
+    if (!authFile.open(QIODevice::ReadOnly)) return config;
+    const QJsonObject root = QJsonDocument::fromJson(authFile.readAll()).object();
+    const QJsonObject entry = root.value(QStringLiteral("zhipuai-coding-plan")).toObject();
+    const QString key = entry.value(QStringLiteral("key")).toString();
+    if (key.isEmpty()) return config;
+
+    // 编程套餐走 /api/coding/paas/v4，不是普通的 /api/paas/v4。
+    // 打错那个地址会拿到 429，看着像限流，其实是端点不对。
+    config.baseUrl = QStringLiteral("https://open.bigmodel.cn/api/coding/paas/v4");
+    config.apiKey = key;
+    return config;
+}
+
+// 会话和消息落在哪。放应用数据目录，不放当前目录——
+// 当前目录是用户的工作目录，往里扔数据库文件不礼貌。
+QString agentDatabasePath() {
+    const QString root = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    if (root.isEmpty()) return QString();  // 取不到就纯内存，不要为此起不来
+    QDir().mkpath(root);
+    return root + QStringLiteral("/agent.db");
+}
+
+}  // namespace
+
 MainWindow::MainWindow(RemoteIMApplication& app, QWidget* parent)
     : QMainWindow(parent),
       app_(app),
@@ -1593,22 +1646,32 @@ void MainWindow::buildUi() {
     // 远程桌面画面在应用内成页展示，不再弹独立窗口。
     remoteNavButton_ = makeNavButton(QStringLiteral("远程"), QStringLiteral("remoteNavButton"), navRail_);
     settingsNavButton_ = makeNavButton(QStringLiteral("设置"), QStringLiteral("settingsNavButton"), navRail_);
+    agentNavButton_ = makeNavButton(QStringLiteral("AI"), QStringLiteral("agentNavButton"), navRail_);
     messageNavButton_->setProperty("navIconKind", lineIconKindValue(LineIconKind::Messages));
     contactsNavButton_->setProperty("navIconKind", lineIconKindValue(LineIconKind::Contacts));
     remoteNavButton_->setProperty("navIconKind", lineIconKindValue(LineIconKind::Screen));
     settingsNavButton_->setProperty("navIconKind", lineIconKindValue(LineIconKind::Settings));
+    // 没有这一句那一格就是空白——makeNavButton 只画文字，图标是靠这个属性来的。
+    agentNavButton_->setProperty("navIconKind", lineIconKindValue(LineIconKind::Send));
     messageNavButton_->setProperty("selected", true);
     for (QPushButton* navButton :
-         {messageNavButton_, contactsNavButton_, remoteNavButton_, settingsNavButton_}) {
+         {messageNavButton_, contactsNavButton_, remoteNavButton_, settingsNavButton_,
+          agentNavButton_}) {
         navButton->setIconSize(QSize(kNavRailIconPixels, kNavRailIconPixels));
     }
     applyNavButtonIcon(messageNavButton_, true);
     applyNavButtonIcon(contactsNavButton_, false);
     applyNavButtonIcon(remoteNavButton_, false);
     applyNavButtonIcon(settingsNavButton_, false);
+    // 漏了这一句按钮就是个空白方块：图标不是 makeNavButton 画的，
+    // 是这里按 navIconKind 属性单独画上去的。
+    applyNavButtonIcon(agentNavButton_, false);
     navLayout->addWidget(messageNavButton_);
     navLayout->addWidget(contactsNavButton_);
     navLayout->addWidget(remoteNavButton_);
+    // AI 放在「消息」下面、其它之上：它是要常用的东西，沉到最底下就等于藏起来。
+    // makeNavButton 只设 parent，不入布局——漏了这一句按钮会存在但永远不显示。
+    navLayout->insertWidget(navLayout->indexOf(contactsNavButton_), agentNavButton_);
     navLayout->addWidget(settingsNavButton_);
     navLayout->addStretch(1);
 
@@ -1971,10 +2034,31 @@ void MainWindow::buildUi() {
     connect(remoteDesktopView_, &RemoteDesktopViewPanel::controlToggleRequested, this,
             &MainWindow::toggleRemoteDesktopControl);
 
+    // AI 助手页。整页就是一个 AgentChatPanel，MainWindow 只负责把它放进来，
+    // 不参与它内部的任何事——这样将来要摘掉它，删这几行就够。
+    agentPage_ = new QWidget(contentStack_);
+    {
+        auto* agentLayout = new QVBoxLayout(agentPage_);
+        agentLayout->setContentsMargins(0, 0, 0, 0);
+        agentLayout->setSpacing(0);
+        const AgentController::ModelConfig modelConfig = loadAgentModelConfig();
+        agentController_ = new AgentController(modelConfig, agentDatabasePath(), this);
+        agentPanel_ = new AgentChatPanel(*agentController_, agentPage_);
+        // 面板自己看不到"实际在用哪个模型"——会话上的 model 字段为空是常态，
+        // 那表示"用 MaiAgent::Options 的默认值"。所以由这里告诉它。
+        agentPanel_->setModelLabel(modelConfig.baseUrl.isEmpty()
+                                       ? QStringLiteral("未配置模型")
+                                       : modelConfig.modelName);
+        agentLayout->addWidget(agentPanel_);
+    }
+
     contentStack_->addWidget(messagesPage_);
     contentStack_->addWidget(contactsPage_);
     contentStack_->addWidget(remotePage_);
     contentStack_->addWidget(settingsPage_);
+    // **排在最后**。QStackedWidget 默认显示第 0 个，插在 messagesPage_ 前面会让
+    // 应用一启动就停在 AI 页——原来的默认页就被我改掉了。
+    contentStack_->addWidget(agentPage_);
 
     rootNavigationSplitter->addWidget(navRail_);
     rootNavigationSplitter->addWidget(contentStack_);
@@ -2384,6 +2468,7 @@ void MainWindow::bindSignals() {
     connect(contactsNavButton_, &QPushButton::clicked, this, [this] { showContactsPage(); });
     connect(remoteNavButton_, &QPushButton::clicked, this, [this] { showRemotePage(); });
     connect(settingsNavButton_, &QPushButton::clicked, this, [this] { showSettingsPage(); });
+    connect(agentNavButton_, &QPushButton::clicked, this, [this] { showAgentPage(); });
     connect(contentStack_, &QStackedWidget::currentChanged, this, [this] { syncNavigationSelection(); });
     connect(sendButton_, &QPushButton::clicked, this, [this] { sendCurrentText(); });
     // 命令提示条的重建（删除全部按钮、隐藏/抬升悬浮层）必须延后到事件循环下一轮，
@@ -2954,7 +3039,19 @@ void MainWindow::showRemotePage() {
     syncNavigationSelection();
 }
 
+void MainWindow::showAgentPage() {
+    // 会话只开一次，之后一直用它。核心本来支持多会话，但界面上这里只有一个
+    // 固定的 AI 助手——开第二个用户分不清自己在跟哪个说话。
+    if (agentPanel_->sessionId().isEmpty()) agentPanel_->openSession();
+    contentStack_->setCurrentWidget(agentPage_);
+    syncNavigationSelection();
+}
+
 void MainWindow::syncNavigationSelection() {
+    if (contentStack_->currentWidget() == agentPage_) {
+        updateNavigationSelection(agentNavButton_);
+        return;
+    }
     if (contentStack_->currentWidget() == contactsPage_) {
         updateNavigationSelection(contactsNavButton_);
         return;
@@ -2972,7 +3069,7 @@ void MainWindow::syncNavigationSelection() {
 
 void MainWindow::updateNavigationSelection(QPushButton* selectedButton) {
     const QList<QPushButton*> buttons = {messageNavButton_, contactsNavButton_, remoteNavButton_,
-                                         settingsNavButton_};
+                                         settingsNavButton_, agentNavButton_};
     for (QPushButton* button : buttons) {
         if (!button) continue;
         const bool isSelected = button == selectedButton;

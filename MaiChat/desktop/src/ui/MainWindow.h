@@ -21,6 +21,8 @@
 #include "ui/RemoteInputCapture.h"
 
 class SharingIndicatorBar;
+class AgentController;
+class AgentChatPanel;
 class RemoteDesktopViewPanel;
 class QButtonGroup;
 class QCheckBox;
@@ -113,6 +115,7 @@ private:
     void showContactsPage();
     void showSettingsPage();
     void showRemotePage();
+    void showAgentPage();
     void syncNavigationSelection();
     void updateNavigationSelection(QPushButton* selectedButton);
     void openAddContactDialog();
@@ -262,6 +265,14 @@ private:
     QSize remoteDesktopRemoteVideoSize_;
     QWidget* remotePage_ = nullptr;
     QPushButton* remoteNavButton_ = nullptr;
+
+    // ---- AI 助手 ----
+    // 和 IM 那一侧完全不相干：不共用 RemoteIMClient，也不碰 chatState。
+    // 它自己拿着一个 agent 核心，跑在同一个进程里。
+    QWidget* agentPage_ = nullptr;
+    QPushButton* agentNavButton_ = nullptr;
+    AgentController* agentController_ = nullptr;
+    AgentChatPanel* agentPanel_ = nullptr;
     RemoteDesktopController* remoteDesktop_ = nullptr;
     bool remoteDesktopShutdown_ = false;
     bool remoteDesktopShutdownComplete_ = false;

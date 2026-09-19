@@ -256,7 +256,8 @@ add_library(remote_im_desktop_ui
   src/ui/UiZoom.cpp
 )
 target_include_directories(remote_im_desktop_ui PUBLIC src)
-target_link_libraries(remote_im_desktop_ui PUBLIC remote_im_desktop_app remote_im_core Qt5::Widgets Qt5::Multimedia Qt5::MultimediaWidgets)
+target_link_libraries(remote_im_desktop_ui PUBLIC remote_im_desktop_app remote_im_core
+  maichat_agent Qt5::Widgets Qt5::Multimedia Qt5::MultimediaWidgets)
 
 add_executable(maichat
   src/main.cpp
@@ -316,7 +317,7 @@ if(APPLE)
     )
   endif()
 endif()
-target_link_libraries(maichat PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets)
+target_link_libraries(maichat PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core maichat_agent Qt5::Widgets)
 if(WIN32)
   # SetCurrentProcessExplicitAppUserModelID：没有它系统通知会被静默丢弃。
   target_link_libraries(maichat PRIVATE shell32)
@@ -330,9 +331,11 @@ endif()
 add_library(maichat_agent
   src/agent/AgentController.h
   src/agent/AgentController.cpp
+  src/agent/AgentChatPanel.h
+  src/agent/AgentChatPanel.cpp
 )
 target_include_directories(maichat_agent PUBLIC src)
-target_link_libraries(maichat_agent PUBLIC Qt5::Core maiagent)
+target_link_libraries(maichat_agent PUBLIC Qt5::Core Qt5::Widgets maiagent)
 
 add_executable(agent_controller_test tests/AgentControllerTest.cpp)
 target_link_libraries(agent_controller_test PRIVATE maichat_agent Qt5::Test)

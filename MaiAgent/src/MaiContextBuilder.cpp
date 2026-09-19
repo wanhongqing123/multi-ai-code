@@ -50,8 +50,7 @@ std::vector<MaiModelMessage> MaiContextBuilder::build(
             pending = MaiModelMessage{};
             pending.role = MaiModelRole::Assistant;
 
-            // 再发每个调用的结果。toolCallId 必须对得上，否则模型认不出
-            // 这是哪次调用的结果。
+            // 再发每个调用的结果。toolCallId 必须对得上，否则模型认不出这是哪次调用的结果。
             for (const auto* toolPart : batch) {
                 MaiModelMessage toolResult;
                 toolResult.role = MaiModelRole::ToolResult;

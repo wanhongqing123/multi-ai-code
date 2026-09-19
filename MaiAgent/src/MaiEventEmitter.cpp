@@ -6,8 +6,8 @@ MaiEventEmitter::MaiEventEmitter(MaiEventBus& bus) : mBus(bus) {}
 
 namespace {
 
-// 所有事件共有的字段只在这一处填。加新事件类型时不会漏掉 id 或 time——
-// 漏了不会编译报错，只会在界面上表现成某些更新莫名其妙丢了。
+// 所有事件共有的字段只在这一处填。加新事件类型时不会漏掉 id 或 time——漏了不会编译报错，
+// 只会在界面上表现成某些更新莫名其妙丢了。
 MaiEvent makeEvent(MaiEventType type, const std::string& sessionId) {
     MaiEvent event;
     event.id = MaiIdGenerator::newEventId();

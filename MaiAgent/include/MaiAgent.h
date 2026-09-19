@@ -48,8 +48,8 @@ struct MaiInterrupt {
 
 // 对一次工具调用的授权请求作出裁决。
 //
-// 做成操作而不是直接调闸门，是为了让它和别的变更走同一条路：
-// 一样的错误码、一样的返回形状，适配器不用为它单开一套处理。
+// 做成操作而不是直接调闸门，是为了让它和别的变更走同一条路：一样的错误码、一样的返回形状，
+// 适配器不用为它单开一套处理。
 struct MaiReplyPermission {
     std::string permissionId;
     MaiPermissionDecision decision = MaiPermissionDecision::Denied;
@@ -61,8 +61,8 @@ using MaiOperation = std::variant<MaiCreateSession, MaiUpdateSession, MaiDeleteS
 // ── 核心的门面 ──────────────────────────────────────────────────
 //
 // 它只做四件事：接收操作、转发查询、持有依赖、暴露事件流。
-// **跑一轮对话的逻辑不在这里**——那在 MaiTurnRunner，上下文组装在
-// MaiContextBuilder，给会话起名在 MaiSessionTitler。
+// **跑一轮对话的逻辑不在这里**——那在 MaiTurnRunner，上下文组装在 MaiContextBuilder，
+// 给会话起名在 MaiSessionTitler。
 //
 // Qt 桌面、iOS / Android、命令行、HTTP 适配器都只认这一个类。
 // 这里不出现任何 HTTP 或 JSON 的概念——这是"库是边界"的落点。
@@ -87,11 +87,10 @@ using MaiOperation = std::variant<MaiCreateSession, MaiUpdateSession, MaiDeleteS
 // ── submit 是异步的 ─────────────────────────────────────────────
 //
 // **这是用这个类最容易搞错的地方。** MaiSendPrompt 提交之后立刻返回，
-// 返回的只是"新建的 assistant 消息 id"，不是回答。真正的输出全部通过
-// 事件流出来——模型每吐一点就是一条 MessagePartDelta。
+// 返回的只是"新建的 assistant 消息 id"，不是回答。
+// 真正的输出全部通过事件流出来——模型每吐一点就是一条 MessagePartDelta。
 //
-// 同步等模型答完会让界面卡几十秒，所以这一层不提供那种接口。
-// 测试里要等结果用 waitIdle()。
+// 同步等模型答完会让界面卡几十秒，所以这一层不提供那种接口。测试里要等结果用 waitIdle()。
 //
 // ── 线程 ────────────────────────────────────────────────────────
 //
@@ -105,22 +104,20 @@ using MaiOperation = std::variant<MaiCreateSession, MaiUpdateSession, MaiDeleteS
 //
 // ── 析构 ────────────────────────────────────────────────────────
 //
-// 析构会把所有在跑的轮次叫停并**等它们退出**，所以析构可能阻塞若干秒
-// （要等 HTTP 传输真的断掉）。不这么做的话工作线程会去访问已经销毁的
-// store 和 emitter。
+// 析构会把所有在跑的轮次叫停并**等它们退出**，所以析构可能阻塞若干秒（要等 HTTP 传输真的断掉）。
+// 不这么做的话工作线程会去访问已经销毁的 store 和 emitter。
 //
-// 推论：**事件订阅者必须活得比 MaiAgent 久**，否则析构过程中最后几条
-// 事件会调到悬空的处理函数上。
+// 推论：**事件订阅者必须活得比 MaiAgent 久**，否则析构过程中最后几条事件会调到悬空的处理函数上。
 class MaiAgent {
 public:
     struct Options {
         // 会话没指定模型时用这个。会话上配了就用会话的（MaiUpdateSession）。
         std::string defaultModel = "glm-5.3";
-        // 模型可以连着调工具，一轮对话因此会有多次请求。设上限是因为
-        // 模型会绕圈——拿同样的参数反复调同一个工具，没上限就一直烧钱。
+        // 模型可以连着调工具，一轮对话因此会有多次请求。
+        // 设上限是因为模型会绕圈——拿同样的参数反复调同一个工具，没上限就一直烧钱。
         int maxToolIterations = 12;
-        // 每个会话同时只跑一轮。第二条来了直接拒绝而不是排队——
-        // 排队会让用户以为消息丢了，界面上看不出区别。
+        // 每个会话同时只跑一轮。第二条来了直接拒绝而不是排队——排队会让用户以为消息丢了，
+        // 界面上看不出区别。
         bool rejectWhenBusy = true;
         // 等用户授权的超时。0 = 无限等，理由见 MaiPermissionGate::Options。
         MaiMillis permissionTimeoutMs = 0;
@@ -128,9 +125,9 @@ public:
 
     // 三个依赖**都被接管所有权**，活到 MaiAgent 析构为止。
     //
-    // store 不能为空。model 可以为空：那样发消息会以 NotConfigured 收场，
-    // 但建会话、查历史这些照常（M1 的空转骨架就是这个配置）。
-    // tools 可以为空：那是纯对话模式，模型收不到任何工具声明。
+    // store 不能为空。model 可以为空：那样发消息会以 NotConfigured 收场，但建会话、
+    // 查历史这些照常（M1 的空转骨架就是这个配置）。tools 可以为空：那是纯对话模式，
+    // 模型收不到任何工具声明。
     MaiAgent(std::unique_ptr<MaiSessionStore> store, std::unique_ptr<MaiModelClient> model,
              std::unique_ptr<MaiToolRegistry> tools = nullptr, Options options = {});
     ~MaiAgent();
@@ -139,38 +136,33 @@ public:
 
     // ── 查询 ────────────────────────────────────────────────────
     // 纯读，直接问存储，不经过操作队列。轮次跑着的时候也能查，
-    // 查到的是**那一刻已经落库的内容**（流式期间 assistant 消息会随着
-    // 每次工具调用逐步变长）。
+    // 查到的是**那一刻已经落库的内容**（流式期间 assistant 消息会随着每次工具调用逐步变长）。
 
     // 按 updated 倒序——界面左侧列表直接用这个顺序。
     std::vector<MaiSession> listSessions() const;
     // 会话不存在返回 false，out 不动。
     bool getSession(const std::string& id, MaiSession& out) const;
-    // 按生成顺序。会话不存在时返回空 vector，和"会话存在但没有消息"
-    // 分不开——要分清先用 getSession。
+    // 按生成顺序。会话不存在时返回空 vector，和"会话存在但没有消息"分不开——要分清先用 getSession。
     std::vector<MaiMessage> listMessages(const std::string& sessionId) const;
     // 这个会话现在有没有一轮在跑。注意这是**那一瞬间**的答案，
-    // 拿它去做"没跑就发消息"的判断是有竞态的——直接 submit，
-    // 忙的话会返回 Busy，那个判断在锁里做。
+    // 拿它去做"没跑就发消息"的判断是有竞态的——直接 submit，忙的话会返回 Busy，那个判断在锁里做。
     bool isBusy(const std::string& sessionId) const;
 
     // 现在有哪些工具调用在等授权。
     //
-    // 界面重连之后必须能补上这一份：SSE 断开的那个窗口期里发出的
-    // permission.asked 是看不到的，没有这个查询，那一轮会一直挂着，
-    // 而界面上什么都没显示。
+    // 界面重连之后必须能补上这一份：SSE 断开的那个窗口期里发出的 permission.asked 是看不到的，
+    // 没有这个查询，那一轮会一直挂着，而界面上什么都没显示。
     std::vector<MaiPermissionRequest> listPendingPermissions() const;
 
     // ── 变更 ────────────────────────────────────────────────────
 
     // 提交一个操作。**立刻返回**，见上面"submit 是异步的"。
     //
-    // 成功时返回受影响的对象 id：建会话返回 ses_...，发消息返回新建的
-    // assistant 消息 id（msg_...），裁决授权返回 per_...。
+    // 成功时返回受影响的对象 id：建会话返回 ses_...，
+    // 发消息返回新建的 assistant 消息 id（msg_...），裁决授权返回 per_...。
     //
-    // 失败时带错误码，调用方据此分支：NotFound（会话不存在）、
-    // Busy（这个会话已经有一轮在跑）、InvalidInput（空 prompt 等）。
-    // HTTP 适配器把它映射成状态码，就一处映射。
+    // 失败时带错误码，调用方据此分支：NotFound（会话不存在）、Busy（这个会话已经有一轮在跑）、
+    // InvalidInput（空 prompt 等）。HTTP 适配器把它映射成状态码，就一处映射。
     MaiResult<std::string> submit(const MaiOperation& operation);
 
     // 等所有在跑的轮次结束。给测试和优雅退出用。
@@ -180,8 +172,8 @@ public:
     const MaiEventBus& eventBus() const;
 
 private:
-    // pimpl。实现体叫 Runtime 而不是 Implementation：后者任何一个
-    // pimpl 类都能叫，等于没说。这个名字说的是它装什么——运行时状态：依赖、事件管线、正在跑的轮次。
+    // pimpl。实现体叫 Runtime 而不是 Implementation：后者任何一个 pimpl 类都能叫，等于没说。
+    // 这个名字说的是它装什么——运行时状态：依赖、事件管线、正在跑的轮次。
     //
     // 前向声明必须跟着写 struct（实现体内部全公开），否则 MSVC 报 C4099。
     struct Runtime;

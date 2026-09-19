@@ -1,7 +1,7 @@
 #include "MaiFilePath.h"
 
-// 纯词法的那一半：不碰磁盘，不调系统调用，在任何平台上给同样的输入得
-// 同样的结果。fromUtf8 / toUtf8 在各平台的文件里（那两个要调系统 API）。
+// 纯词法的那一半：不碰磁盘，不调系统调用，在任何平台上给同样的输入得同样的结果。
+// fromUtf8 / toUtf8 在各平台的文件里（那两个要调系统 API）。
 
 namespace {
 
@@ -71,9 +71,9 @@ MaiFilePath MaiFilePath::append(const MaiFilePath& tail) const {
 MaiFilePath MaiFilePath::dirName() const {
     const std::size_t prefix = rootPrefixLength(mValue);
 
-    // 根后面紧跟的那个分隔符也属于"根"，砍到这儿就不能再往里砍了。
-    // 少了这一步，"/" 的父目录会算成空串——而 createDirectories 是靠
-    // dirName 往上递归的，空串会让它以为到顶了，实际是把根给丢了。
+    // 根后面紧跟的那个分隔符也属于"根"，砍到这儿就不能再往里砍了。少了这一步，
+    // "/" 的父目录会算成空串——而 createDirectories 是靠 dirName 往上递归的，空串会让它以为到顶了，
+    // 实际是把根给丢了。
     std::size_t rootEnd = prefix;
     if (rootEnd < mValue.size() && isSeparator(mValue[rootEnd])) ++rootEnd;
 
@@ -109,8 +109,7 @@ std::vector<MaiFilePath::StringType> MaiFilePath::components() const {
     const std::size_t prefix = rootPrefixLength(mValue);
     std::size_t index = 0;
 
-    // 根单独成一段（"C:" 或者第一个 "/"），这样绝对路径和相对路径
-    // 不会被切成看起来一样的东西。
+    // 根单独成一段（"C:" 或者第一个 "/"），这样绝对路径和相对路径不会被切成看起来一样的东西。
     if (prefix > 0) {
         out.push_back(mValue.substr(0, prefix));
         index = prefix;
@@ -143,8 +142,8 @@ bool MaiFilePath::isParentOf(const MaiFilePath& child) const {
 
     for (std::size_t i = 0; i < mine.size(); ++i) {
 #if defined(_WIN32)
-        // Windows 的路径比较不分大小写。不这么做的话，模型送来
-        // "C:\Work\a.txt" 而 root 是 "C:\work"，会被误判成越界。
+        // Windows 的路径比较不分大小写。不这么做的话，
+        // 模型送来"C:\Work\a.txt" 而 root 是 "C:\work"，会被误判成越界。
         if (mine[i].size() != theirs[i].size()) return false;
         for (std::size_t n = 0; n < mine[i].size(); ++n) {
             wchar_t left = mine[i][n];

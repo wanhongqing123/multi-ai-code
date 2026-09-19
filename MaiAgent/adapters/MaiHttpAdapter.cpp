@@ -128,8 +128,8 @@ std::string serializeEvent(const MaiEvent& event) {
 }
 
 // ── SSE 连接 ────────────────────────────────────────────────────
-// 每个连接一个队列。事件在适配器层**只序列化一次**，再把同一份字符串
-// 分发给所有连接——N 个客户端时不做 N 次 dump()。
+// 每个连接一个队列。事件在适配器层**只序列化一次**，
+// 再把同一份字符串分发给所有连接——N 个客户端时不做 N 次 dump()。
 struct SseConnection {
     std::mutex mutex;
     std::condition_variable hasWork;
@@ -282,8 +282,8 @@ void MaiHttpAdapter::Listener::routes() {
                    response.set_content(array.dump(), "application/json");
                });
 
-    // 发一轮消息。**立刻返回**——真正的输出全部走 /api/event 的事件流。
-    // 这里如果同步等 agent 跑完，HTTP 请求会挂几十秒，界面就卡死了。
+    // 发一轮消息。**立刻返回**——真正的输出全部走 /api/event 的事件流。这里如果同步等 agent 跑完，
+    // HTTP 请求会挂几十秒，界面就卡死了。
     server.Post(R"(/api/session/([^/]+)/prompt)", [this](const httplib::Request& request,
                                                          httplib::Response& response) {
         const std::string sessionId = request.matches[1];
@@ -305,9 +305,8 @@ void MaiHttpAdapter::Listener::routes() {
         }
         const auto sent = agent.submit(MaiSendPrompt{sessionId, text});
         if (!sent) {
-            // 核心给的是结构化错误码，这里只做一次映射。
-            // 之前核心只返回空字符串，适配器得靠 busy() 反猜是哪种失败——
-            // 那是个竞态：猜的时候状态可能已经变了。
+            // 核心给的是结构化错误码，这里只做一次映射。之前核心只返回空字符串，
+            // 适配器得靠 busy() 反猜是哪种失败——那是个竞态：猜的时候状态可能已经变了。
             response.status = toHttpStatus(sent.error().code());
             response.set_content(json{{"error", sent.error().message()},
                                       {"code", maiErrorCodeToString(sent.error().code())}}
@@ -326,9 +325,8 @@ void MaiHttpAdapter::Listener::routes() {
     });
 
     // ── 权限 ──────────────────────────────────────────────────────
-    // 界面重连之后必须能补上这一份：SSE 断开的那个窗口期里发出的
-    // permission.asked 是看不到的，只靠事件流会漏掉整整一次授权请求，
-    // 那一轮就一直挂着而界面上什么都没有。
+    // 界面重连之后必须能补上这一份：SSE 断开的那个窗口期里发出的 permission.asked 是看不到的，
+    // 只靠事件流会漏掉整整一次授权请求，那一轮就一直挂着而界面上什么都没有。
     server.Get("/api/permission", [this](const httplib::Request&, httplib::Response& response) {
         json array = json::array();
         for (const auto& result : agent.listPendingPermissions()) array.push_back(toJson(result));
@@ -343,8 +341,8 @@ void MaiHttpAdapter::Listener::routes() {
 
         MaiPermissionDecision decision = MaiPermissionDecision::Denied;
         if (!maiParsePermissionDecision(raw, decision)) {
-            // 认不出来就 400，**不要兜底成允许**。把拼错的 decision
-            // 当成放行，等于闸门被一个错别字拆掉，而且毫无痕迹。
+            // 认不出来就 400，**不要兜底成允许**。把拼错的 decision 当成放行，
+            // 等于闸门被一个错别字拆掉，而且毫无痕迹。
             response.status = 400;
             response.set_content(
                 json{{"error", "decision must be one of: approved, approved_for_session, denied"},

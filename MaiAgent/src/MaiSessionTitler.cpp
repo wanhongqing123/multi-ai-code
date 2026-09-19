@@ -4,8 +4,7 @@ MaiSessionTitler::MaiSessionTitler(Options options) : mOptions(options) {}
 
 std::string MaiSessionTitler::makeTitle(const std::string& text) const {
     if (text.size() <= mOptions.maxBytes) return text;
-    // 退到 UTF-8 字符边界。按字节硬切会切出半个汉字，
-    // 后面 JSON 序列化会失败或者在界面上显示成乱码。
+    // 退到 UTF-8 字符边界。按字节硬切会切出半个汉字，后面 JSON 序列化会失败或者在界面上显示成乱码。
     std::size_t cut = mOptions.maxBytes;
     while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0) == 0x80) --cut;
     return text.substr(0, cut) + "…";

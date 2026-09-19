@@ -20,8 +20,7 @@ bool maiIsBlockingAllowed() {
 void maiAssertBlockingAllowed(const char* what) {
     if (tBlockingAllowed) return;
 
-    // 这里只能用 stderr：核心库不带日志设施，而且这条信息必须在进程
-    // 死掉之前出来。
+    // 这里只能用 stderr：核心库不带日志设施，而且这条信息必须在进程死掉之前出来。
     const std::string name = MaiThread::currentName();
     std::fprintf(stderr,
                  "\n[MaiAgent] blocking call inside a no-blocking scope: %s\n"

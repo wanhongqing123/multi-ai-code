@@ -19,14 +19,12 @@
 
 // POSIX 实现。
 //
-// **这份没有在真机上跑过**——本项目目前只在 Windows 上构建。写得尽量
-// 守规矩（EINTR 重试、O_CLOEXEC、不跟进符号链接），但第一次在 Linux/mac
-// 上跑之前，不要假设它是对的。MaiFileSystemTests 是可移植的，到那边
-// 先跑那一套。
+// **这份没有在真机上跑过**——本项目目前只在 Windows 上构建。写得尽量守规矩（EINTR 重试、O_CLOEXEC、
+// 不跟进符号链接），但第一次在 Linux/mac 上跑之前，不要假设它是对的。
+// MaiFileSystemTests 是可移植的，到那边先跑那一套。
 //
-// 路径在 POSIX 上就是字节序列，**不保证是合法 UTF-8**。所以这里
-// fromUtf8 / toUtf8 都是原样搬运：擅自做编码转换反而会改写文件名。
-// 这正是内部不统一用 UTF-8 的理由（见 MaiFilePath.h）。
+// 路径在 POSIX 上就是字节序列，**不保证是合法 UTF-8**。所以这里 fromUtf8 / toUtf8 都是原样搬运：
+// 擅自做编码转换反而会改写文件名。这正是内部不统一用 UTF-8 的理由（见 MaiFilePath.h）。
 
 namespace {
 
@@ -195,9 +193,8 @@ void MaiFileSystem::walk(const MaiFilePath& root,
             entry.path = directory.append(MaiFilePath(name));
             entry.nameUtf8 = name;
 
-            // lstat 不是 stat：要看的是这一项**自身**是不是符号链接，
-            // 而不是它指向的东西。用 stat 的话符号链接会被当成它的目标，
-            // 于是指回上级的链接会让遍历无限转下去。
+            // lstat 不是 stat：要看的是这一项**自身**是不是符号链接，而不是它指向的东西。
+            // 用 stat 的话符号链接会被当成它的目标，于是指回上级的链接会让遍历无限转下去。
             struct stat info {};
             if (::lstat(entry.path.value().c_str(), &info) != 0) continue;
             const bool isSymlink = S_ISLNK(info.st_mode);
@@ -228,8 +225,8 @@ MaiFilePath MaiFileSystem::resolve(const MaiFilePath& path) {
         return out;
     }
 
-    // 不存在（write 要新建的文件就是这种）：把存在的那一段解析掉，
-    // 剩下的词法拼回去。只做词法的话，root 里一个符号链接就能绕过越界检查。
+    // 不存在（write 要新建的文件就是这种）：把存在的那一段解析掉，剩下的词法拼回去。只做词法的话，
+    // root 里一个符号链接就能绕过越界检查。
     const MaiFilePath parent = path.dirName();
     const MaiFilePath leaf = path.baseName();
     if (parent.isEmpty() || parent == path || leaf.isEmpty()) return {};
@@ -284,8 +281,7 @@ void MaiThread::setCurrentName(const std::string& name) {
     // macOS 的是单参数版，只能给自己起名；上限 63 字节。
     ::pthread_setname_np(name.substr(0, 63).c_str());
 #elif defined(__linux__)
-    // Linux 上限是 **15 字节 + NUL**，超了整个调用会失败（不是截断），
-    // 所以这里先自己截。
+    // Linux 上限是 **15 字节 + NUL**，超了整个调用会失败（不是截断），所以这里先自己截。
     ::pthread_setname_np(::pthread_self(), name.substr(0, 15).c_str());
 #else
     (void)name;

@@ -1,8 +1,7 @@
 // maiagent-bridge：把核心跑起来，并通过 HTTP 适配器暴露给 Electron 界面。
 //
-// 叫 bridge 不叫 server，是因为它不是这个项目的产物，只是座桥：
-// 界面是 JS 写的、调不了 C++，所以要有个进程夹在中间。Qt 界面就位之后
-// 这个 exe 就没用了——那边直接链 maiagent 库，进程内调用。
+// 叫 bridge 不叫 server，是因为它不是这个项目的产物，只是座桥：界面是 JS 写的、调不了 C++，
+// 所以要有个进程夹在中间。Qt 界面就位之后这个 exe 就没用了——那边直接链 maiagent 库，进程内调用。
 #include <cstdio>
 #include <cstdlib>
 #include <memory>

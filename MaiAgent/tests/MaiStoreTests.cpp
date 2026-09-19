@@ -1,8 +1,8 @@
 // 存储层测试。
 //
 // 核心是一组**契约用例**：同一套断言对内存存储和 SQLite 存储各跑一遍。
-// 这是这个文件存在的主要理由——MaiSessionStore 有两个实现，而上层
-// （MaiAgent / MaiTurnRunner）只认接口。两个实现行为不一致的话，
+// 这是这个文件存在的主要理由——MaiSessionStore 有两个实现，
+// 而上层（MaiAgent / MaiTurnRunner）只认接口。两个实现行为不一致的话，
 // 换存储就会冒出一堆"只在落盘时才出现"的怪毛病，而且很难联想到存储层。
 //
 // 契约之外还有两类：
@@ -199,8 +199,8 @@ void contract_messages_and_parts(MaiSessionStore& store, const char* which) {
 void contract_put_message_replaces_parts(MaiSessionStore& store, const char* which) {
     std::printf("   [%s] re-putting a message replaces it\n", which);
 
-    // 跑一轮的过程中，assistant 消息会被反复 put：先一个 part，
-    // 再两个，再三个。要是每次都追加而不是覆盖，界面上就会看到内容重复。
+    // 跑一轮的过程中，assistant 消息会被反复 put：先一个 part，再两个，再三个。
+    // 要是每次都追加而不是覆盖，界面上就会看到内容重复。
     const std::string sessionId = MaiIdGenerator::newSessionId();
     store.putSession(makeSession(sessionId, "growing", 1));
 
@@ -281,8 +281,7 @@ void contract_switch_model(MaiSessionStore& store, const char* which) {
 void contract_concurrent_writes(MaiSessionStore& store, const char* which) {
     std::printf("   [%s] concurrent writes\n", which);
 
-    // 多个会话各跑各的线程，都会写同一个 store。这条不是测性能，
-    // 是测"同时写不会丢行、不会崩"。
+    // 多个会话各跑各的线程，都会写同一个 store。这条不是测性能，是测"同时写不会丢行、不会崩"。
     constexpr int kThreads = 4;
     constexpr int kPerThread = 20;
     std::vector<std::string> sessionIds;
@@ -380,8 +379,8 @@ void test_survives_reopen() {
 void test_creates_parent_directory() {
     std::printf("-> test_creates_parent_directory\n");
     TempDir temp;
-    // 父目录不存在。少了自动创建这一步，第一次跑的人只会看到
-    // "unable to open database file"，猜不到是目录的问题。
+    // 父目录不存在。少了自动创建这一步，第一次跑的人只会看到"unable to open database file"，
+    // 猜不到是目录的问题。
     const std::string path = (temp.root / "deep" / "nested" / "agent.db").u8string();
     auto opened = makeMaiSqliteStore(path);
     CHECK(opened.isOk());
@@ -408,8 +407,8 @@ void test_bad_path_reports_error() {
 
 void test_message_order_follows_id_order() {
     std::printf("-> test_message_order_follows_id_order\n");
-    // SQLite 那边靠 ORDER BY id 还原插入顺序，前提是 MaiIdGenerator
-    // 产出的 id 单调递增。这条用例盯着那个许诺——换 id 方案时它会先红。
+    // SQLite 那边靠 ORDER BY id 还原插入顺序，前提是 MaiIdGenerator 产出的 id 单调递增。
+    // 这条用例盯着那个许诺——换 id 方案时它会先红。
     auto opened = makeMaiSqliteStore(":memory:");
     CHECK(opened.isOk());
     if (!opened.isOk()) return;

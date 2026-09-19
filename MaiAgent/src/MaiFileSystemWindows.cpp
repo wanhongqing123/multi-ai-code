@@ -134,8 +134,8 @@ MaiError MaiFileSystem::readFile(const MaiFilePath& path, std::string& contents,
     if (path.isEmpty()) return MaiError::make(MaiErrorCode::InvalidInput, "empty path");
 
     maiAssertBlockingAllowed("MaiFileSystem::readFile");
-    // FILE_SHARE_READ | FILE_SHARE_WRITE：别人正开着这个文件时我们也能读。
-    // 不给 SHARE_WRITE 的话，读一个编辑器正打开的文件会失败。
+    // FILE_SHARE_READ | FILE_SHARE_WRITE：别人正开着这个文件时我们也能读。不给 SHARE_WRITE 的话，
+    // 读一个编辑器正打开的文件会失败。
     const HANDLE handle = ::CreateFileW(path.value().c_str(), GENERIC_READ,
                                         FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
                                         OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -202,8 +202,7 @@ MaiError MaiFileSystem::createDirectories(const MaiFilePath& path) {
     if (path.isEmpty()) return MaiError::make(MaiErrorCode::InvalidInput, "empty path");
     if (isDirectory(path)) return {};
 
-    // 先建父目录再建自己。递归比循环好写，而路径深度是有上限的，
-    // 不会把栈用光。
+    // 先建父目录再建自己。递归比循环好写，而路径深度是有上限的，不会把栈用光。
     const MaiFilePath parent = path.dirName();
     if (!parent.isEmpty() && parent != path) {
         const MaiError error = createDirectories(parent);
@@ -220,8 +219,8 @@ void MaiFileSystem::walk(const MaiFilePath& root,
                          const std::function<MaiWalkAction(const MaiFileEntry&)>& visit) {
     if (root.isEmpty() || !visit) return;
 
-    // 自己维护待遍历队列，不用递归：目录树可能很深，而且这样
-    // SkipDirectory 的实现就是"不往队列里放"，一目了然。
+    // 自己维护待遍历队列，不用递归：目录树可能很深，
+    // 而且这样 SkipDirectory 的实现就是"不往队列里放"，一目了然。
     std::vector<MaiFilePath> pending{root};
 
     while (!pending.empty()) {
@@ -254,8 +253,8 @@ void MaiFileSystem::walk(const MaiFilePath& root,
             }
             if (!entry.isDirectory || action == MaiWalkAction::SkipDirectory) continue;
 
-            // 不跟进重解析点（符号链接、目录联接）。跟进的话一个指回上级
-            // 的联接就能让遍历无限转下去。
+            // 不跟进重解析点（符号链接、目录联接）。
+            // 跟进的话一个指回上级的联接就能让遍历无限转下去。
             if ((data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) continue;
 
             pending.push_back(entry.path);
@@ -269,11 +268,9 @@ MaiFilePath MaiFileSystem::resolve(const MaiFilePath& path) {
     if (path.isEmpty()) return {};
 
     // 存在的话用 GetFinalPathNameByHandleW：它会解析符号链接和联接，
-    // 这是判断越界时必须做的一步——root 里放一个指向 C:\ 的联接，
-    // 光靠词法规范化是看不出来的。
+    // 这是判断越界时必须做的一步——root 里放一个指向 C:\ 的联接，光靠词法规范化是看不出来的。
     //
-    // FILE_FLAG_BACKUP_SEMANTICS 是打开**目录**句柄所必需的，少了它
-    // CreateFileW 对目录一律失败。
+    // FILE_FLAG_BACKUP_SEMANTICS 是打开**目录**句柄所必需的，少了它 CreateFileW 对目录一律失败。
     const HANDLE handle = ::CreateFileW(path.value().c_str(), 0,
                                         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                         nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS,
@@ -300,9 +297,8 @@ MaiFilePath MaiFileSystem::resolve(const MaiFilePath& path) {
         }
     }
 
-    // 不存在（write 要新建的文件就是这种）：尽力而为——
-    // 用 GetFullPathNameW 做词法规范化，它会消掉 "." 和 ".."，
-    // 并把相对路径按当前目录补全。符号链接解析不了，但路径都还不存在，
+    // 不存在（write 要新建的文件就是这种）：尽力而为——用 GetFullPathNameW 做词法规范化，
+    // 它会消掉 "." 和 ".."，并把相对路径按当前目录补全。符号链接解析不了，但路径都还不存在，
     // 也就无从链接起。
     std::wstring buffer(1024, L'\0');
     DWORD length = ::GetFullPathNameW(path.value().c_str(), static_cast<DWORD>(buffer.size()),
@@ -334,8 +330,7 @@ void MaiFileSystem::removeRecursively(const MaiFilePath& path) {
         return;
     }
 
-    // 先收集再删。一边遍历一边删同一个目录，FindNextFileW 的行为是
-    // 未定义的。
+    // 先收集再删。一边遍历一边删同一个目录，FindNextFileW 的行为是未定义的。
     std::vector<MaiFilePath> files;
     std::vector<MaiFilePath> directories;
     walk(path, [&](const MaiFileEntry& entry) {
@@ -355,13 +350,13 @@ void MaiFileSystem::removeRecursively(const MaiFilePath& path) {
 }
 
 // ── MaiThread ───────────────────────────────────────────────────
-// 放在这个文件里而不是单开一个：它就两个函数，而且和上面一样是
-// "平台相关的一小段"，单开文件反而让人多找一次。
+// 放在这个文件里而不是单开一个：它就两个函数，而且和上面一样是"平台相关的一小段"，
+// 单开文件反而让人多找一次。
 
 namespace {
 
-// 自己留一份。Windows 有 GetThreadDescription 可以读回来，但它是
-// Win10 1607+ 才有的，而且要 LocalFree 释放，为了一句日志不值当。
+// 自己留一份。Windows 有 GetThreadDescription 可以读回来，但它是 Win10 1607+ 才有的，
+// 而且要 LocalFree 释放，为了一句日志不值当。
 thread_local std::string tThreadName;
 
 }  // namespace
@@ -394,9 +389,8 @@ void raiseThreadNameException(const char* name) {
 void MaiThread::setCurrentName(const std::string& name) {
     tThreadName = name;
 
-    // SetThreadDescription 是 Win10 1607 才有的，动态取。
-    // 它的好处是**不挂调试器也生效**——抓 dump、看任务管理器、事后用
-    // WinDbg 打开都能看见名字。
+    // SetThreadDescription 是 Win10 1607 才有的，动态取。它的好处是**不挂调试器也生效**——抓 dump、
+    // 看任务管理器、事后用 WinDbg 打开都能看见名字。
     using SetThreadDescriptionFn = HRESULT(WINAPI*)(HANDLE, PCWSTR);
     static const auto setThreadDescription = reinterpret_cast<SetThreadDescriptionFn>(
         ::GetProcAddress(::GetModuleHandleW(L"kernel32.dll"), "SetThreadDescription"));
@@ -404,8 +398,8 @@ void MaiThread::setCurrentName(const std::string& name) {
         setThreadDescription(::GetCurrentThread(), widen(name).c_str());
     }
 
-    // 老系统上的兜底：MSVC 调试器约定的那个魔法异常。只有挂着调试器时
-    // 才有人接，没挂的话白抛一次，所以先问一句。
+    // 老系统上的兜底：MSVC 调试器约定的那个魔法异常。只有挂着调试器时才有人接，没挂的话白抛一次，
+    // 所以先问一句。
     if (!::IsDebuggerPresent()) return;
     raiseThreadNameException(name.c_str());
 }

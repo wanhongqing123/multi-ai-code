@@ -1,12 +1,11 @@
 // MaiFilePath / MaiFileSystem 的测试。
 //
 // ── 为什么这个文件里还留着 std::filesystem ──────────────────────
-// 别的地方都把它换掉了，但测试里**故意**留着：用它来造目录和文件，
-// 再用 MaiFileSystem 去读。
+// 别的地方都把它换掉了，但测试里**故意**留着：用它来造目录和文件，再用 MaiFileSystem 去读。
 //
-// 两个独立实现互相印证。要是造和读都用 MaiFileSystem，那么它的编码转换
-// 哪怕整个是错的，自己写自己读也能对上——测试会一路绿，而别的程序建的
-// 文件我们全读不了。这正是当初那个中文路径 bug 的形状。
+// 两个独立实现互相印证。要是造和读都用 MaiFileSystem，那么它的编码转换哪怕整个是错的，
+// 自己写自己读也能对上——测试会一路绿，而别的程序建的文件我们全读不了。
+// 这正是当初那个中文路径 bug 的形状。
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -84,8 +83,8 @@ void test_is_absolute() {
     CHECK(fromUtf8("C:\\Windows").isAbsolute());
     CHECK(fromUtf8("C:/Windows").isAbsolute());
     CHECK(fromUtf8("\\\\server\\share").isAbsolute());
-    // "C:x" 是**相对**路径（C 盘的当前目录下的 x），不是绝对。
-    // 把它当绝对路径的话，越界检查会从一个错误的起点开始算。
+    // "C:x" 是**相对**路径（C 盘的当前目录下的 x），不是绝对。把它当绝对路径的话，
+    // 越界检查会从一个错误的起点开始算。
     CHECK(!fromUtf8("C:x").isAbsolute());
 #endif
 }
@@ -115,9 +114,8 @@ void test_is_parent_of() {
     // 自己不是自己的父目录
     CHECK(!fromUtf8("/a").isParentOf(fromUtf8("/a")));
 
-    // **同前缀的兄弟目录不算在里面**。用字符串前缀判断的实现会在这里出错，
-    // 而那是这一层最容易犯、后果最严重的 bug：root 旁边放一个同前缀的
-    // 目录，越界检查就全漏了。
+    // **同前缀的兄弟目录不算在里面**。用字符串前缀判断的实现会在这里出错，而那是这一层最容易犯、
+    // 后果最严重的 bug：root 旁边放一个同前缀的目录，越界检查就全漏了。
     CHECK(!fromUtf8("/server/app").isParentOf(fromUtf8("/server/app-secrets")));
     CHECK(!fromUtf8("/server/app").isParentOf(fromUtf8("/server/app-secrets/x.txt")));
 
@@ -127,8 +125,8 @@ void test_is_parent_of() {
     // 绝对和相对不能混为一谈
     CHECK(!fromUtf8("a").isParentOf(fromUtf8("/a/b")));
 #if defined(_WIN32)
-    // Windows 路径不分大小写。不这么做的话，模型送来 "C:\\Work\\a.txt"
-    // 而 root 是 "C:\\work"，会被误判成越界。
+    // Windows 路径不分大小写。不这么做的话，模型送来 "C:\\Work\\a.txt"而 root 是 "C:\\work"，
+    // 会被误判成越界。
     CHECK(fromUtf8("C:\\work").isParentOf(fromUtf8("C:\\WORK\\a.txt")));
 #endif
 }

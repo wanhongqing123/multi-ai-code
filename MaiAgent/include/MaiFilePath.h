@@ -8,8 +8,8 @@
 //
 // ── 为什么不用 std::filesystem::path ────────────────────────────
 // MSVC 的 fs::path 把 narrow 字符串按**当前 ANSI 代码页**解释（中文机器
-// 是 GBK），而我们的路径全部来自 JSON，是 UTF-8。这个坑踩过一次：
-// 中文文件名不是优雅失败，是进程直接挂掉（STATUS_STACK_BUFFER_OVERRUN）。
+// 是 GBK），而我们的路径全部来自 JSON，是 UTF-8。这个坑踩过一次：中文文件名不是优雅失败，
+// 是进程直接挂掉（STATUS_STACK_BUFFER_OVERRUN）。
 //
 // ── 为什么内部存"平台原生类型"而不是统一 UTF-8 ──────────────────
 // 这是从 chromium 学来的，理由是**正确性**不是性能：
@@ -20,8 +20,8 @@
 //   一个用 Latin-1 命名的文件，强行当 UTF-8 处理就会丢掉或改写它的名字。
 //
 // 所以内部一律用平台原生串：Windows 上 wstring，其它平台上 string。
-// 只在两个边界上转 UTF-8——模型送进来的 JSON 参数，和回给模型的文本。
-// 那两处转换是本来就避不开的，因为模型只会说 UTF-8。
+// 只在两个边界上转 UTF-8——模型送进来的 JSON 参数，和回给模型的文本。那两处转换是本来就避不开的，
+// 因为模型只会说 UTF-8。
 class MaiFilePath {
 public:
 #if defined(_WIN32)
@@ -37,13 +37,12 @@ public:
     explicit MaiFilePath(StringType value) : mValue(std::move(value)) {}
 
     // ── 边界转换 ────────────────────────────────────────────────
-    // 实现在各平台的文件里：Windows 走 MultiByteToWideChar，
-    // POSIX 上字节就是字节，原样拿着。
+    // 实现在各平台的文件里：Windows 走 MultiByteToWideChar，POSIX 上字节就是字节，原样拿着。
     static MaiFilePath fromUtf8(const std::string& utf8);
     std::string toUtf8() const;
 
-    // 分隔符统一成 '/' 的 UTF-8 形式。给模型看的路径走这个——
-    // 三个平台上长得一样，它回给我们的我们也认。
+    // 分隔符统一成 '/' 的 UTF-8 形式。给模型看的路径走这个——三个平台上长得一样，
+    // 它回给我们的我们也认。
     std::string toGenericUtf8() const;
 
     const StringType& value() const {
@@ -62,8 +61,8 @@ public:
     // 拼接。tail 是绝对路径时直接返回 tail。
     MaiFilePath append(const MaiFilePath& tail) const;
 
-    // 去掉最后一段。纯字符串操作，**不解析 ".."**，和 chromium 的
-    // DirName 一样——"../a" 的结果是 ".."。
+    // 去掉最后一段。纯字符串操作，**不解析 ".."**，
+    // 和 chromium 的 DirName 一样——"../a" 的结果是 ".."。
     MaiFilePath dirName() const;
 
     // 最后一段。

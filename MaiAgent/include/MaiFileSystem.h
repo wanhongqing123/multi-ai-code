@@ -47,8 +47,8 @@ public:
     static bool fileSize(const MaiFilePath& path, std::uint64_t& size);
 
     // ── 读写 ────────────────────────────────────────────────────
-    // 整个读进来。maxBytes 为 0 表示不限；超过就读到上限为止并把
-    // truncated 置位——工具层要据此告诉模型"你看到的不是全部"。
+    // 整个读进来。maxBytes 为 0 表示不限；
+    // 超过就读到上限为止并把 truncated 置位——工具层要据此告诉模型"你看到的不是全部"。
     static MaiError readFile(const MaiFilePath& path, std::string& contents,
                              std::uint64_t maxBytes = 0, bool* truncated = nullptr);
 
@@ -61,20 +61,18 @@ public:
 
     // 递归遍历。
     //
-    // **不跟进目录符号链接**。跟进的话，一个指回上级的链接就能让遍历
-    // 无限转下去——chromium 在 POSIX 上是靠记 (dev, ino) 防这个，
+    // **不跟进目录符号链接**。跟进的话，
+    // 一个指回上级的链接就能让遍历无限转下去——chromium 在 POSIX 上是靠记 (dev, ino) 防这个，
     // 我们直接不跟进，既简单又和 std::filesystem 的默认行为一致，
     // 换过来不会改变现有语义。
     //
-    // 遍历顺序不保证，和 chromium 的 FileEnumerator 一样。glob 要排序的话
-    // 自己排。
+    // 遍历顺序不保证，和 chromium 的 FileEnumerator 一样。glob 要排序的话自己排。
     static void walk(const MaiFilePath& root,
                      const std::function<MaiWalkAction(const MaiFileEntry&)>& visit);
 
     // ── 其它 ────────────────────────────────────────────────────
     // 解析成真实路径：消掉 "."/".."，并且**解析符号链接**。
-    // 路径不存在时尽力而为——把存在的那一段解析掉，剩下的做词法规范化。
-    // 失败返回空路径。
+    // 路径不存在时尽力而为——把存在的那一段解析掉，剩下的做词法规范化。失败返回空路径。
     static MaiFilePath resolve(const MaiFilePath& path);
 
     // 系统临时目录。测试用。

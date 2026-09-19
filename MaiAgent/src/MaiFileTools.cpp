@@ -17,19 +17,17 @@ using json = nlohmann::json;
 
 // ── 输出上限 ────────────────────────────────────────────────────
 // 工具输出会原样进上下文，所以每一个字节都要花 token、也都要占内存。
-// grep 一个大仓库能返回几 MB —— 不设限的话内存、请求体、费用一起炸。
-// 这是计划里的二号性能风险。
+// grep 一个大仓库能返回几 MB —— 不设限的话内存、请求体、费用一起炸。这是计划里的二号性能风险。
 constexpr std::size_t kMaxOutputBytes = 64 * 1024;
 constexpr std::size_t kMaxReadBytes = 256 * 1024;
 constexpr int kMaxGrepMatches = 200;
-// 单个文件最多读这么多。几百兆的文件读全了既没意义又会把内存吃光；
-// 截断了会告诉模型，它可以用 offset 继续读。
+// 单个文件最多读这么多。几百兆的文件读全了既没意义又会把内存吃光；截断了会告诉模型，
+// 它可以用 offset 继续读。
 constexpr std::uint64_t kMaxFileBytes = 8u * 1024 * 1024;
 
 constexpr int kMaxGlobResults = 300;
 
-// 截断时要落在 UTF-8 字符边界上，不然会切出半个汉字，
-// 后面 JSON 序列化会失败或者产生乱码。
+// 截断时要落在 UTF-8 字符边界上，不然会切出半个汉字，后面 JSON 序列化会失败或者产生乱码。
 void truncateUtf8(std::string& text, std::size_t maxBytes) {
     if (text.size() <= maxBytes) return;
     std::size_t cut = maxBytes;
@@ -70,12 +68,12 @@ Resolved resolveOrFail(const MaiToolContext& context, const std::string& rawPath
 // glob 匹配。**不用 std::regex。**
 //
 // 第一版是把 glob 转成正则再交给 std::regex，结果整个进程崩了
-// （STATUS_STACK_BUFFER_OVERRUN）。原因是 `**/*.cpp` 会转成
-// `.*[^/\\]*\.cpp` 这种形状，两个贪婪量词挨着会产生灾难性回溯，
+// （STATUS_STACK_BUFFER_OVERRUN）。原因是 `**/*.cpp` 会转成`.*[^/\\]*\.cpp` 这种形状，
+// 两个贪婪量词挨着会产生灾难性回溯，
 // 而 MSVC 的 std::regex 是递归实现的，回溯深度直接把栈打穿。
 //
-// 手写的这个是迭代式的：记住最近一次 `*` 的位置，失配就回到那里让 `*`
-// 多吃一个字符。最坏 O(n*m)，不递归、不分配、没有栈风险。
+// 手写的这个是迭代式的：记住最近一次 `*` 的位置，失配就回到那里让 `*`多吃一个字符。最坏 O(n*m)，
+// 不递归、不分配、没有栈风险。
 //
 // 语义：
 //   *   匹配任意字符，但不跨路径分隔符
@@ -145,12 +143,11 @@ bool shouldSkipDirectory(const std::string& name) {
 
 // path 相对于 root 的写法。算不出来（不在 root 下）就返回完整路径。
 //
-// 自己按段算，不调系统的 PathRelativePathToW：那个 API 在两边不同盘时
-// 行为古怪，而我们这里 path 一定在 root 之内（调用方已经过了安全检查），
-// 逐段砍掉公共前缀就够了。
+// 自己按段算，不调系统的 PathRelativePathToW：那个 API 在两边不同盘时行为古怪，
+// 而我们这里 path 一定在 root 之内（调用方已经过了安全检查），逐段砍掉公共前缀就够了。
 //
-// 一律返回 generic 形式（'/' 分隔）的 UTF-8：模型看到的路径在三个平台上
-// 长得一样，它给回来的我们也认。
+// 一律返回 generic 形式（'/' 分隔）的 UTF-8：模型看到的路径在三个平台上长得一样，
+// 它给回来的我们也认。
 std::string toRelativePath(const std::string& root, const MaiFilePath& path) {
     const MaiFilePath rootPath = MaiFilePath::fromUtf8(root);
     const auto rootParts = rootPath.components();
@@ -197,8 +194,8 @@ public:
                 "That is a directory, not a file. Use glob to list its contents.");
 
         // 一次读进来，再自己按行切。以前用 std::getline 一行行读，
-        // 每行一次系统调用；一次读完再切，大文件上差别明显。
-        // 读多少有上限，免得一个几百兆的文件把内存吃光。
+        // 每行一次系统调用；一次读完再切，大文件上差别明显。读多少有上限，
+        // 免得一个几百兆的文件把内存吃光。
         std::string blob;
         bool readTruncated = false;
         const MaiError readError =
@@ -432,8 +429,8 @@ public:
                 !globMatch(globPattern, entry.nameUtf8))
                 return MaiWalkAction::Continue;
 
-            // 太大的文件跳过：多半是二进制或产物，搜了也没意义还很慢。
-            // 大小是遍历时顺路拿到的，不用再 stat 一次。
+            // 太大的文件跳过：多半是二进制或产物，搜了也没意义还很慢。大小是遍历时顺路拿到的，
+            // 不用再 stat 一次。
             if (entry.size > 2u * 1024 * 1024) return MaiWalkAction::Continue;
 
             std::string blob;
@@ -457,8 +454,8 @@ public:
                 if (!line.empty() && line.back() == '\r') line.pop_back();
                 // 含 NUL 的当二进制跳过整个文件。
                 if (line.find('\0') != std::string::npos) break;
-                // 先截断再匹配。用户给的正则可能有灾难性回溯，行越长越容易把栈打穿——
-                // glob 那边已经因此崩过一次，这里不重蹈覆辙。
+                // 先截断再匹配。用户给的正则可能有灾难性回溯，
+                // 行越长越容易把栈打穿——glob 那边已经因此崩过一次，这里不重蹈覆辙。
                 if (line.size() > 400) {
                     std::size_t cut = 400;
                     while (cut > 0 && (static_cast<unsigned char>(line[cut]) & 0xC0) == 0x80) --cut;

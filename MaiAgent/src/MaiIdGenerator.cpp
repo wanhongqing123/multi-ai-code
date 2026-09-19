@@ -7,8 +7,8 @@
 
 namespace {
 
-// Crockford base32 的字母表（去掉 I L O U，避免和 1 0 混淆）。
-// 和 ULID 用的是同一套，以后真要换成标准 ULID 时不用动已有数据。
+// Crockford base32 的字母表（去掉 I L O U，避免和 1 0 混淆）。和 ULID 用的是同一套，
+// 以后真要换成标准 ULID 时不用动已有数据。
 constexpr char kAlphabet[] = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 std::mt19937_64& rng() {

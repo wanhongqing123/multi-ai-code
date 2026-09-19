@@ -29,14 +29,13 @@ namespace {
 
 // 一次模型应答的剧本：要么吐一句话，要么发起一次工具调用。
 //
-// 不起假 HTTP 服务端。这个文件测的是工具循环本身——调用发出去、执行、
-// 结果回灌、再问一遍——中间那层传输是噪音。以前想断言"第二次请求带着
-// 调用和结果、而且 toolCallId 对得上"，得去 JSON 里翻
-// `messages[i]["tool_calls"][0]["id"]`；现在直接看
-// `message.invocations[0].id`，编译器帮着查类型。
+// 不起假 HTTP 服务端。这个文件测的是工具循环本身——调用发出去、执行、结果回灌、
+// 再问一遍——中间那层传输是噪音。以前想断言"第二次请求带着调用和结果、而且 toolCallId 对得上"，
+// 得去 JSON 里翻`messages[i]["tool_calls"][0]["id"]`；现在直接看`message.invocations[0].id`，
+// 编译器帮着查类型。
 //
-// tool_calls 在线上怎么嵌套（function.name 那一层）是线格式的事，
-// 归 MaiModelClientTests 管，那边走真 socket。
+// tool_calls 在线上怎么嵌套（function.name 那一层）是线格式的事，归 MaiModelClientTests 管，
+// 那边走真 socket。
 MaiFakeModelClient::Turn sayTurn(const std::string& text) {
     MaiFakeModelClient::Turn turn;
     turn.textChunks = {text};
@@ -297,8 +296,7 @@ void test_no_tools_means_no_tool_field() {
     agent.waitIdle();
 
     // 请求里不该带工具清单——模型看不到工具就不会尝试调用。
-    // 这个清单空着时线上会不会真的省掉 tools 字段，是序列化那一层的事，
-    // 归 MaiModelClientTests 管。
+    // 这个清单空着时线上会不会真的省掉 tools 字段，是序列化那一层的事，归 MaiModelClientTests 管。
     CHECK(model->request(0).tools.empty());
 }
 

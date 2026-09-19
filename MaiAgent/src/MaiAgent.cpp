@@ -42,8 +42,7 @@ struct MaiAgent::Runtime {
     std::unordered_map<std::string, std::shared_ptr<ActiveTurn>> active;
 
     ~Runtime() {
-        // 析构时把所有在跑的轮次叫停并等它们退出，
-        // 否则工作线程会访问已经销毁的 store/emitter。
+        // 析构时把所有在跑的轮次叫停并等它们退出，否则工作线程会访问已经销毁的 store/emitter。
         std::vector<std::shared_ptr<ActiveTurn>> pending;
         {
             std::lock_guard<std::mutex> lock(mutex);
@@ -52,9 +51,9 @@ struct MaiAgent::Runtime {
                 pending.push_back(turn);
             }
         }
-        // 卡在等授权的线程看不见 cancel 标志（它睡在闸门的 condition_variable
-        // 上），必须显式叫醒，否则下面的 join 要等满闸门那 250ms 的兜底轮询。
-        // 靠兜底能过，但让退出路径依赖一个安全网是不对的。
+        // 卡在等授权的线程看不见 cancel 标志（它睡在闸门的 condition_variable 上），必须显式叫醒，
+        // 否则下面的 join 要等满闸门那 250ms 的兜底轮询。靠兜底能过，
+        // 但让退出路径依赖一个安全网是不对的。
         if (permissions) {
             for (const auto& request : permissions->listPending())
                 permissions->cancelSession(request.sessionId);
@@ -238,9 +237,9 @@ MaiResult<std::string> MaiAgent::submit(const MaiOperation& operation) {
                 const std::string sessionId = operation.sessionId;
                 auto dependencies = mRuntime->dependencies();
                 turn->worker = std::thread([this, sessionId, turn, dependencies, assistant] {
-                    // 给线程起名字。抓 dump 或者挂调试器时，一堆并发的轮次
-                    // 才分得清谁是谁——否则只有一串线程 ID。
-                    // Linux 上限 15 字节，所以名字要短。
+                    // 给线程起名字。抓 dump 或者挂调试器时，
+                    // 一堆并发的轮次才分得清谁是谁——否则只有一串线程 ID。Linux 上限 15 字节，
+                    // 所以名字要短。
                     MaiThread::setCurrentName("mai-turn");
                     MaiTurnRunner runner(dependencies, sessionId, assistant);
                     runner.run(turn->cancel);
@@ -256,22 +255,21 @@ MaiResult<std::string> MaiAgent::submit(const MaiOperation& operation) {
                         return {MaiErrorCode::NotFound, "no turn is running for this session"};
                     it->second->cancel.store(true, std::memory_order_relaxed);
                 }
-                // 光置 cancel 叫不醒卡在等授权的那个线程——它睡在闸门的
-                // condition_variable 上，看不见这个标志，必须显式敲一下。
-                //（闸门那边还有个 250ms 的兜底轮询，但那是安全网，不是主路径。）
+                // 光置 cancel 叫不醒卡在等授权的那个线程——它睡在闸门的 condition_variable 上，
+                // 看不见这个标志，必须显式敲一下。（闸门那边还有个 250ms 的兜底轮询，但那是安全网，
+                // 不是主路径。）
                 mRuntime->permissions->cancelSession(operation.sessionId);
                 return operation.sessionId;
 
             } else if constexpr (std::is_same_v<T, MaiReplyPermission>) {
                 if (operation.permissionId.empty())
                     return {MaiErrorCode::InvalidInput, "permissionId is required"};
-                // 找不到就是找不到：界面重复点、或者对着已经被中断的请求点，
-                // 都会走到这里。不是故障，但也不能假装成功——界面要据此把那个
-                // 已经过期的对话框收掉。
+                // 找不到就是找不到：界面重复点、或者对着已经被中断的请求点，都会走到这里。
+                // 不是故障，但也不能假装成功——界面要据此把那个已经过期的对话框收掉。
                 if (!mRuntime->permissions->reply(operation.permissionId, operation.decision))
                     return {MaiErrorCode::NotFound, "permission request is no longer pending"};
-                // permission.replied 由等在闸门上的那一轮发出（只有它知道请求的
-                // 全貌）。这里只负责放行，不重复广播。
+                // permission.replied 由等在闸门上的那一轮发出（只有它知道请求的全貌）。
+                // 这里只负责放行，不重复广播。
                 return operation.permissionId;
 
             } else {

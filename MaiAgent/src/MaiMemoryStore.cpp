@@ -46,8 +46,8 @@ public:
 
     bool mutateSession(const std::string& id,
                        const std::function<void(MaiSession&)>& mutator) override {
-        // 读-改-写整个在锁内完成。调用方自己做这三步的话，中间那段窗口里
-        // 别人的改动会被盖掉（lost update）——之前跑一轮的收尾就有这个洞。
+        // 读-改-写整个在锁内完成。调用方自己做这三步的话，
+        // 中间那段窗口里别人的改动会被盖掉（lost update）——之前跑一轮的收尾就有这个洞。
         std::lock_guard<std::mutex> lock(mMutex);
         auto it = mSessions.find(id);
         if (it == mSessions.end()) return false;

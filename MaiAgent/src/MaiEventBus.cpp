@@ -27,8 +27,8 @@ const char* maiEventTypeToString(MaiEventType type) {
 }
 
 struct MaiEventBus::SubscriberTable {
-    // 读多写极少：publish 每秒几十次并发读订阅表，subscribe/unsubscribe 只在
-    // 连接建立和断开时发生。用 shared_mutex 让 publish 之间不互相阻塞。
+    // 读多写极少：publish 每秒几十次并发读订阅表，subscribe/unsubscribe 只在连接建立和断开时发生。
+    // 用 shared_mutex 让 publish 之间不互相阻塞。
     mutable std::shared_mutex mutex;
     std::unordered_map<Token, Handler> handlers;
     std::atomic<Token> next{1};
@@ -50,8 +50,9 @@ void MaiEventBus::unsubscribe(Token token) {
 }
 
 void MaiEventBus::publish(const MaiEvent& event) {
-    // 先在读锁内把 handler 拷出来再调用，避免 handler 里反过来 subscribe/unsubscribe
-    // 造成自死锁——SSE 连接断开时正是在 handler 里触发 unsubscribe 的。
+    // 先在读锁内把 handler 拷出来再调用，
+    // 避免 handler 里反过来 subscribe/unsubscribe 造成自死锁——SSE 连接断开时正是在 handler 里触发 u
+    // nsubscribe 的。
     std::vector<Handler> snapshot;
     {
         std::shared_lock lock(mSubscribers->mutex);
@@ -59,8 +60,8 @@ void MaiEventBus::publish(const MaiEvent& event) {
         for (const auto& [_, handler] : mSubscribers->handlers) snapshot.push_back(handler);
     }
     // 处理函数在**这个线程上同步跑**，流式期间那就是网络读线程。
-    // 在里面读文件或写库会直接拖慢模型吐字，而症状（"吐字变卡了"）
-    // 没人会联想到事件总线。以前这只是句注释，现在有人守着了。
+    // 在里面读文件或写库会直接拖慢模型吐字，而症状（"吐字变卡了"）没人会联想到事件总线。
+    // 以前这只是句注释，现在有人守着了。
     MaiScopedDisallowBlocking noBlocking;
     for (const auto& handler : snapshot) handler(event);
 }

@@ -18,8 +18,7 @@
 #include "MaiEventEmitter.h"
 #include "MaiSessionTitler.h"
 
-// 跑一轮对话：组装上下文 → 流式请求 → 把增量变成事件 → 有工具调用就执行
-// 并再来一圈 → 落库。
+// 跑一轮对话：组装上下文 → 流式请求 → 把增量变成事件 → 有工具调用就执行并再来一圈 → 落库。
 //
 // 从 MaiAgent 里分出来的理由是职责：MaiAgent 是门面（接 MaiOperation、转发查询、持有依赖），
 // 一轮对话的生命周期是另一回事。M4 的权限挂起也长在这里。
@@ -38,8 +37,8 @@ public:
         // 不是"直接放行"——没装闸门就等于没人能点头，而不是所有人都点了头。
         MaiPermissionGate* permissions = nullptr;
         std::string defaultModel;
-        // 模型可以连着调工具，一轮对话因此会有多次请求。设上限是因为模型会绕圈——
-        // 拿同样的参数反复调同一个工具，没有上限就一直烧钱。
+        // 模型可以连着调工具，一轮对话因此会有多次请求。
+        // 设上限是因为模型会绕圈——拿同样的参数反复调同一个工具，没有上限就一直烧钱。
         int maxIterations = 12;
     };
 
@@ -57,8 +56,8 @@ private:
     // 执行一批工具调用，把每个的结果作为 part 追加到 mAssistant 上。
     void executeTools(const std::vector<MaiToolInvocation>& calls, const std::atomic<bool>& cancel);
 
-    // 这次调用该不该放行。需要审批的话会在这里阻塞等用户裁决。
-    // 返回空表示放行；非空就是要直接回灌给模型的失败结果。
+    // 这次调用该不该放行。需要审批的话会在这里阻塞等用户裁决。返回空表示放行；
+    // 非空就是要直接回灌给模型的失败结果。
     MaiToolResult checkPermission(const MaiToolInvocation& call, const std::string& partId,
                                   bool& allowed, const std::atomic<bool>& cancel);
 
@@ -73,8 +72,8 @@ private:
     std::string mSessionId;
     MaiMessage mAssistant;
 
-    // 每一圈的文本和推理各自是独立的 part——模型在工具调用前后说的话
-    // 是两段不同的发言，混成一个 part 会让界面把工具卡夹在一段文字中间。
+    // 每一圈的文本和推理各自是独立的 part——模型在工具调用前后说的话是两段不同的发言，
+    // 混成一个 part 会让界面把工具卡夹在一段文字中间。
     std::string mText;
     std::string mReasoning;
     std::string mTextPartId;

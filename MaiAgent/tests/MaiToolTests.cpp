@@ -1,11 +1,11 @@
 // 工具层测试。
 //
-// 顺序是有意的：先测路径边界，再测功能。边界错了后面全都不重要——
-// 模型会主动试着越界（有时是它自己想看 ../.env，有时是被提示词注入诱导），
+// 顺序是有意的：先测路径边界，再测功能。
+// 边界错了后面全都不重要——模型会主动试着越界（有时是它自己想看 ../.env，有时是被提示词注入诱导），
 // 这不是假想威胁。
 //
-// 写这些用例时踩到的坑，记在这里免得重犯：
-// **在 Windows 上不要写 `some_path / "中文目录"`。** 源码里的字面量是 UTF-8，
+// 写这些用例时踩到的坑，记在这里免得重犯：**在 Windows 上不要写 `some_path / "中文目录"`。
+// ** 源码里的字面量是 UTF-8，
 // 而 MSVC 的 fs::path 把 narrow 字符串按当前 ANSI 代码页（中文机器是 GBK）
 // 解释，拼出来是乱码路径——实测直接让进程挂掉，不是返回错误。
 // 测试里要用 std::filesystem::u8path("中文")，产品代码里用
@@ -41,9 +41,9 @@ namespace {
 //
 // 写成 \u 转义而不是直接的汉字：规范要求代码里除注释外不出现中文。
 // 但这几条用例测的**就是**非 ASCII 路径和内容——MSVC 的 fs::path 会把
-// narrow 字符串按当前 ANSI 代码页（中文机器上是 GBK）解释，而我们的路径
-// 全来自 JSON、是 UTF-8。当初这个 bug 不是返回错误，是进程直接挂掉
-// （STATUS_STACK_BUFFER_OVERRUN）。所以字节本身一个都不能改。
+// narrow 字符串按当前 ANSI 代码页（中文机器上是 GBK）解释，而我们的路径全来自 JSON、是 UTF-8。
+// 当初这个 bug 不是返回错误，是进程直接挂掉（STATUS_STACK_BUFFER_OVERRUN）。
+// 所以字节本身一个都不能改。
 //
 //   kCjkDir      \u65b0\u76ee\u5f55                新目录
 //   kCjkFile     \u65b0\u6587\u4ef6.txt            新文件.txt
@@ -138,8 +138,8 @@ void test_path_escape_is_blocked() {
 // 同前缀的兄弟目录不能算"在里面"。
 //
 // 这条是冲着一类经典实现错误来的：用字符串前缀判断包含关系。
-// "/server/app-secrets" 确实以 "/server/app" 开头，但它是**另一个目录**。
-// 真按前缀判，root 旁边随便放一个同前缀的目录就全漏了。
+// "/server/app-secrets" 确实以 "/server/app" 开头，但它是**另一个目录**。真按前缀判，
+// root 旁边随便放一个同前缀的目录就全漏了。
 //
 // MaiFilePath::isParentOf 是逐段比的，所以这里必须被挡住。
 void test_sibling_with_shared_prefix_is_outside() {
@@ -317,8 +317,8 @@ void test_grep() {
 
     const auto none = grep->execute(args({{"pattern", "definitely-not-there-xyzzy"}}), context);
     CHECK(!none.hasError());
-    // grep 说的是 "No content matches"，glob 说的是 "No files match"——
-    // 两边措辞不同是有意的：以前都叫"没有匹配"，断言根本分不出是谁产出的。
+    // grep 说的是 "No content matches"，glob 说的是 "No files match"——两边措辞不同是有意的：
+    // 以前都叫"没有匹配"，断言根本分不出是谁产出的。
     CHECK(none.output().find("No content matches") != std::string::npos);
 
     // 坏正则要给一句能改的话，而不是崩掉
@@ -349,8 +349,7 @@ void test_registry() {
     for (const auto& s : schemas) {
         CHECK(!s.name.empty());
         CHECK(!s.description.empty());
-        // schema 必须是合法 JSON，否则请求体构造时会被悄悄换成空对象，
-        // 模型就不知道参数怎么填了
+        // schema 必须是合法 JSON，否则请求体构造时会被悄悄换成空对象，模型就不知道参数怎么填了
         const auto parsed = json::parse(s.parametersJson, nullptr, false);
         CHECK(!parsed.is_discarded());
         if (!parsed.is_discarded()) {
@@ -377,8 +376,8 @@ void test_cancel_stops_traversal() {
 
 }  // namespace
 
-// 每个用例跑之前先打一行，崩了的话能立刻看出停在哪一个。
-// 这次就是靠它定位的：上一版整个进程直接挂掉，一条输出都没有。
+// 每个用例跑之前先打一行，崩了的话能立刻看出停在哪一个。这次就是靠它定位的：
+// 上一版整个进程直接挂掉，一条输出都没有。
 #define RUN(f)                      \
     do {                            \
         std::printf("-> %s\n", #f); \

@@ -7,8 +7,7 @@ namespace {
 // 拒绝之后回灌给模型的话。
 //
 // "不要重试"这句是必须的：不写的话模型会拿一模一样的参数再调一次，
-// 把 maxIterations 那 12 圈全烧在同一个被拒的操作上，用户看到的是
-// agent 卡住了。
+// 把 maxIterations 那 12 圈全烧在同一个被拒的操作上，用户看到的是 agent 卡住了。
 constexpr const char* kDeniedHint =
     "The user denied this tool call. Do not retry the same operation. "
     "Try a different approach, or ask the user how they want to proceed.";
@@ -44,11 +43,11 @@ void MaiTurnRunner::run(const std::atomic<bool>& cancel) {
         session.model.empty() ? mDependencies.defaultModel : session.model;
 
     // ── 工具循环 ──────────────────────────────────────────────────
-    // 这是 agent 之所以是 agent 的地方：模型说要调工具 → 我们执行 → 把结果
-    // 回灌 → 再问一次 → 它可能还要调 → 直到它不再要调为止。
+    // 这是 agent 之所以是 agent 的地方：
+    // 模型说要调工具 → 我们执行 → 把结果回灌 → 再问一次 → 它可能还要调 → 直到它不再要调为止。
     //
-    // 每一圈都重新组装上下文，因为上一圈的工具结果已经作为 part 落在
-    // mAssistant 上了，MaiContextBuilder 会把它展开成模型认得的形状。
+    // 每一圈都重新组装上下文，因为上一圈的工具结果已经作为 part 落在 mAssistant 上了，
+    // MaiContextBuilder 会把它展开成模型认得的形状。
     for (int iteration = 0; iteration < mDependencies.maxIterations; ++iteration) {
         if (cancel.load(std::memory_order_relaxed)) break;
 
@@ -77,8 +76,8 @@ MaiModelRequest MaiTurnRunner::buildRequest(const std::string& modelName) const 
     MaiModelRequest request;
     request.model = modelName;
 
-    // 历史里那条正在写的 assistant 消息，要用内存中最新的版本——
-    // 存储里的那份可能还没包含刚执行完的工具结果。
+    // 历史里那条正在写的 assistant 消息，
+    // 要用内存中最新的版本——存储里的那份可能还没包含刚执行完的工具结果。
     auto history = mDependencies.store->listMessages(mSessionId);
     for (auto& message : history) {
         if (message.id == mAssistant.id) message = mAssistant;
@@ -159,9 +158,9 @@ void MaiTurnRunner::executeTools(const std::vector<MaiToolInvocation>& calls,
 
         // 先落库再广播。
         //
-        // 顺序反了会有个不容易发现的洞：事件说"有个 part 更新了"，界面拿着
-        // 这个 id 去 /message 拉全量，却什么都拉不到——因为那时还没入库。
-        // 工具跑几秒是常事，等授权更是以分钟计，这个窗口期足够用户刷新一次。
+        // 顺序反了会有个不容易发现的洞：事件说"有个 part 更新了"，
+        // 界面拿着这个 id 去 /message 拉全量，却什么都拉不到——因为那时还没入库。工具跑几秒是常事，
+        // 等授权更是以分钟计，这个窗口期足够用户刷新一次。
         mDependencies.store->putMessage(mSessionId, mAssistant);
         mDependencies.emitter->emitPart(MaiEventType::MessagePartUpdated, mSessionId, mAssistant.id,
                                         part.id);
@@ -183,8 +182,8 @@ void MaiTurnRunner::executeTools(const std::vector<MaiToolInvocation>& calls,
                 result = std::move(denial);
             } else {
                 if (needsApproval) {
-                    // 批了才真正开跑。这条状态变化界面等着用——不发的话工具卡
-                    // 会一直停在"等待授权"，直到它跑完才跳变。
+                    // 批了才真正开跑。这条状态变化界面等着用——不发的话工具卡会一直停在"等待授权"，
+                    // 直到它跑完才跳变。
                     std::get<MaiToolPart>(mAssistant.parts.back().body).state =
                         MaiToolState::Running;
                     mDependencies.store->putMessage(mSessionId, mAssistant);
@@ -272,8 +271,7 @@ MaiToolResult MaiTurnRunner::checkPermission(const MaiToolInvocation& call,
         allowed = false;
         mRejected.insert(signature);
         // 中断和拒绝在闸门那边长得一样（都是 Reject），但对模型说的话要分开：
-        // 中断时整轮马上就结束了，那句"换个做法"没人会读到，只会被存进历史
-        // 误导下一轮。
+        // 中断时整轮马上就结束了，那句"换个做法"没人会读到，只会被存进历史误导下一轮。
         if (cancel.load(std::memory_order_relaxed))
             return MaiToolResult::failure(MaiErrorCode::Canceled, "Interrupted.");
         return MaiToolResult::failure(MaiErrorCode::Canceled, kDeniedHint);
@@ -316,8 +314,8 @@ void MaiTurnRunner::finish(const std::atomic<bool>& cancel) {
         }
     }
 
-    // 落库失败不能无声无息。磁盘满了还假装存上了，用户是第二天打开
-    // 发现对话没了才知道的。一轮查一次就够——写接口在热路径上，
+    // 落库失败不能无声无息。磁盘满了还假装存上了，用户是第二天打开发现对话没了才知道的。
+    // 一轮查一次就够——写接口在热路径上，
     // 每次都检查会把代码淹掉（见 MaiSessionStore::lastWriteError）。
     const MaiError writeError = mDependencies.store->lastWriteError();
     if (writeError.hasError() && !mError.hasError()) mError = writeError;

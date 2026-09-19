@@ -11,11 +11,11 @@ namespace {
 using json = nlohmann::json;
 
 // ── 按行切分流式字节 ────────────────────────────────────────────
-// curl 的写回调给的是任意大小的字节块，一个 SSE 事件可能被劈成几块，
-// 也可能一块里塞了好几个事件。所以必须自己缓冲按 \n 切。
+// curl 的写回调给的是任意大小的字节块，一个 SSE 事件可能被劈成几块，也可能一块里塞了好几个事件。
+// 所以必须自己缓冲按 \n 切。
 //
-// mScanned 记住"已扫描过、确认不含换行"的前缀长度，避免每来一块就把
-// 整个缓冲区重扫一遍——流式期间这个回调每秒被调几十次。
+// mScanned 记住"已扫描过、确认不含换行"的前缀长度，
+// 避免每来一块就把整个缓冲区重扫一遍——流式期间这个回调每秒被调几十次。
 // 思路取自 codex 的 ollama/src/line_buffer.rs（那边 32 行）。
 class LineBuffer {
 public:
@@ -42,14 +42,14 @@ private:
 };
 
 // ── 工具调用的分片聚合 ──────────────────────────────────────────
-// 这是 Chat Completions 最容易写错的一处。arguments 不是一次给全的，
-// 是 JSON 字符串的碎片，按 index 分批到达：
+// 这是 Chat Completions 最容易写错的一处。arguments 不是一次给全的，是 JSON 字符串的碎片，
+// 按 index 分批到达：
 //   {index:0, id:"call_x", function:{name:"bash", arguments:""}}
 //   {index:0,             function:{arguments:"{\"comm"}}
 //   {index:0,             function:{arguments:"and\":\"npm"}}
 //   {index:0,             function:{arguments:" test\"}"}}
-// 不同服务端分片时机不一样——有的整块给，有的一个字符一个字符给，
-// 两种都要能处理，所以只能按 index 攒，等流结束再交付。
+// 不同服务端分片时机不一样——有的整块给，有的一个字符一个字符给，两种都要能处理，
+// 所以只能按 index 攒，等流结束再交付。
 class InvocationAccumulator {
 public:
     void feed(const json& delta_tool_calls) {
@@ -111,10 +111,9 @@ std::string buildRequestBody(const MaiModelRequest& request) {
         // assistant 发起调用的那条，content 可以是 null，但必须带 tool_calls。
         if (!message.content.empty() || message.invocations.empty())
             messageNode["content"] = message.content;
-        // 线上字段名是 tool_call_id（snake_case），不是我们结构体里那个
-        // toolCallId。写错的话工具结果和它对应的调用就对不上——
-        // 服务端要么直接 400，要么模型认不出这是哪次调用的结果，
-        // 下一轮把同样的工具再调一遍。
+        // 线上字段名是 tool_call_id（snake_case），不是我们结构体里那个 toolCallId。
+        // 写错的话工具结果和它对应的调用就对不上——服务端要么直接 400，
+        // 要么模型认不出这是哪次调用的结果，下一轮把同样的工具再调一遍。
         if (!message.toolCallId.empty()) messageNode["tool_call_id"] = message.toolCallId;
         if (!message.invocations.empty()) {
             json calls = json::array();
@@ -204,8 +203,8 @@ void handleSseLine(StreamCtx& context, const std::string& line) {
 std::size_t writeCallback(char* ptr, std::size_t size, std::size_t nmemb, void* userdata) {
     auto& context = *static_cast<StreamCtx*>(userdata);
     const std::size_t total = size * nmemb;
-    // 返回不等于 total 的值会让 curl 以 CURLE_WRITE_ERROR 中断传输——
-    // 这就是 MaiInterrupt 的落点，比等超时干净。
+    // 返回不等于 total 的值会让 curl 以 CURLE_WRITE_ERROR 中断传输——这就是 MaiInterrupt 的落点，
+    // 比等超时干净。
     if (context.cancel->load(std::memory_order_relaxed)) return 0;
 
     context.lines.append(ptr, total);
@@ -269,8 +268,8 @@ public:
         curl_slist_free_all(headers);
         curl_easy_cleanup(curl);
 
-        // 主动取消**不是故障**：单独一个错误码，让上层能区分"用户按了停"
-        // 和"网断了"，界面才知道该不该弹错误。
+        // 主动取消**不是故障**：单独一个错误码，让上层能区分"用户按了停"和"网断了"，
+        // 界面才知道该不该弹错误。
         if (cancel.load(std::memory_order_relaxed))
             return MaiError::make(MaiErrorCode::Canceled, "canceled by user");
 

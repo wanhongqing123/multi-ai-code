@@ -81,8 +81,8 @@ static void test_session_crud_and_events() {
 
 // 事件处理函数里不许做慢活——而且这条要真的被装上，不能只是注释。
 //
-// 不能直接测"违反了会炸"：那会终止进程，测试框架接不住。所以退一步，
-// 测**守卫确实在生效**：处理函数里问一句"现在允许慢活吗"，答案必须是否。
+// 不能直接测"违反了会炸"：那会终止进程，测试框架接不住。所以退一步，测**守卫确实在生效**：
+// 处理函数里问一句"现在允许慢活吗"，答案必须是否。
 // 这就足以说明 MaiFileSystem 里那几个断言会在这条路径上被触发。
 static void test_event_handlers_run_with_blocking_disallowed() {
     MaiEventBus bus;
@@ -112,8 +112,8 @@ static void test_blocking_scopes_nest() {
             MaiScopedAllowBlocking inner;
             CHECK(maiIsBlockingAllowed());
         }
-        // 内层退出时要恢复成**进来之前**的状态，不是无条件放开——
-        // 无条件放开的话，一次嵌套就把外层的限制悄悄拆了。
+        // 内层退出时要恢复成**进来之前**的状态，不是无条件放开——无条件放开的话，
+        // 一次嵌套就把外层的限制悄悄拆了。
         CHECK(!maiIsBlockingAllowed());
     }
     CHECK(maiIsBlockingAllowed());

@@ -1,8 +1,8 @@
 // LLM 客户端的测试。
 //
 // 不打真实的大模型：一是要 API key、二是要钱、三是结果不确定。
-// 这里起一个假的 Chat Completions 服务端，喂**对抗性分片**的 SSE ——
-// 把工具调用的 arguments 一个字符一个字符地切、切在 JSON 的引号中间、
+// 这里起一个假的 Chat Completions 服务端，
+// 喂**对抗性分片**的 SSE ——把工具调用的 arguments 一个字符一个字符地切、切在 JSON 的引号中间、
 // 把多个事件塞进同一个 TCP 包、再掺几个心跳注释行和畸形行。
 //
 // 这正是真实服务端会干的事，也是这一层唯一真正难写的地方。
@@ -140,8 +140,7 @@ Collected run(const std::string& script, std::size_t chunk) {
     h.onToolCall = [&c](const MaiToolInvocation& t) { c.calls.push_back(t); };
 
     const std::atomic<bool> cancel{false};
-    // 错误现在是返回值而不是回调：调用方不会漏接，而且能拿到错误码
-    // 来区分"网断了"和"用户按了停"。
+    // 错误现在是返回值而不是回调：调用方不会漏接，而且能拿到错误码来区分"网断了"和"用户按了停"。
     const MaiError err = client->stream(request, h, cancel);
     c.error = err.message();
     c.code = err.code();
@@ -151,8 +150,8 @@ Collected run(const std::string& script, std::size_t chunk) {
 
 // ── 用 JSON 库构造 SSE 帧 ───────────────────────────────────────
 // 不手写多层转义。arguments 本身是一段 JSON 文本，外面再套一层 JSON，
-// 手数反斜杠几乎必错——第一版就多写了一层，测试红了，查了半天才发现
-// 是测试自己写错，不是被测代码的问题。转义交给库最省事。
+// 手数反斜杠几乎必错——第一版就多写了一层，测试红了，查了半天才发现是测试自己写错，
+// 不是被测代码的问题。转义交给库最省事。
 std::string sse(const json& j) {
     return "data: " + j.dump() + "\n\n";
 }
@@ -191,8 +190,8 @@ const char* kDone = "data: [DONE]\n\n";
 // 这三段合起来是 "你好，世界 🙂"。
 //
 // 写成 \u 转义而不是直接的汉字，是因为规范要求代码里除注释外不出现中文；
-// 但这个用例**测的就是非 ASCII**——多字节字符被切在 chunk 边界上还能不能
-// 拼回来，所以字节本身一个都不能改。
+// 但这个用例**测的就是非 ASCII**——多字节字符被切在 chunk 边界上还能不能拼回来，
+// 所以字节本身一个都不能改。
 //
 //   \u4f60\u597d       你好
 //   \uff0c\u4e16\u754c  ，世界
@@ -332,13 +331,13 @@ void test_reasoning_delta() {
 
 // ── 线格式 ──────────────────────────────────────────────────────
 //
-// 这一组断言的是**真正发到 socket 上的 JSON**，对照 OpenAI Chat
-// Completions 的规范，不是对照我们自己的结构体。
+// 这一组断言的是**真正发到 socket 上的 JSON**，对照 OpenAI Chat Completions 的规范，
+// 不是对照我们自己的结构体。
 //
 // 这个区分是有代价才学到的：tool_call_id 曾经被写成了 toolCallId，
-// 而当时的用例写的是 `m.value("toolCallId", "") == callId`——拿自己的
-// 字段名去核自己的输出，永远是绿的。真跑起来服务端会说缺 tool_call_id，
-// 或者模型认不出这是哪次调用的结果，下一轮把同样的工具再调一遍。
+// 而当时的用例写的是 `m.value("toolCallId", "") == callId`——拿自己的字段名去核自己的输出，
+// 永远是绿的。真跑起来服务端会说缺 tool_call_id，或者模型认不出这是哪次调用的结果，
+// 下一轮把同样的工具再调一遍。
 void test_wire_shape_of_request() {
     FakeServer fake;
     fake.script = std::string(": ping\n\n") + kDone;

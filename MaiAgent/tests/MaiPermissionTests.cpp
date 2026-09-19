@@ -4,8 +4,8 @@
 //   1. 闸门本身——阻塞 / 唤醒 / 中断 / 超时 / 兜底方向，不需要搭 agent。
 //   2. 接进 agent 之后的真实路径——模型要写文件，闸门拦住，用户点头才写。
 //
-// 第 2 层才是真正要证的东西：**闸门装上了，而且真的拦得住**。
-// 只测第 1 层的话，一个忘了调 checkPermission 的 bug 会一路绿灯过去。
+// 第 2 层才是真正要证的东西：**闸门装上了，而且真的拦得住**。只测第 1 层的话，
+// 一个忘了调 checkPermission 的 bug 会一路绿灯过去。
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -47,8 +47,8 @@ MaiPermissionRequest makeRequest(const std::string& id, const std::string& sessi
     return r;
 }
 
-// 等一个条件成立，最多等 limit。轮询而不是睡固定时长：
-// 睡固定时长的测试在慢机器上会假失败，在快机器上白白拖慢整套。
+// 等一个条件成立，最多等 limit。轮询而不是睡固定时长：睡固定时长的测试在慢机器上会假失败，
+// 在快机器上白白拖慢整套。
 template <typename Pred>
 bool waitFor(Pred pred, std::chrono::milliseconds limit = std::chrono::seconds(5)) {
     const auto deadline = std::chrono::steady_clock::now() + limit;
@@ -70,8 +70,8 @@ void test_decision_parsing() {
           d == MaiPermissionDecision::ApprovedForSession);
     CHECK(maiParsePermissionDecision("denied", d) && d == MaiPermissionDecision::Denied);
 
-    // 认不出来必须返回 false，且**不能**把 out 改成 Approved。
-    // 把拼错的输入当放行，等于闸门被一个错别字拆掉，而且毫无痕迹。
+    // 认不出来必须返回 false，且**不能**把 out 改成 Approved。把拼错的输入当放行，
+    // 等于闸门被一个错别字拆掉，而且毫无痕迹。
     d = MaiPermissionDecision::Denied;
     CHECK(!maiParsePermissionDecision("Approved", d));  // 大小写不认
     CHECK(!maiParsePermissionDecision("once", d));      // 改名前的旧取值也不认
@@ -79,8 +79,8 @@ void test_decision_parsing() {
     CHECK(!maiParsePermissionDecision("yes", d));
     CHECK(!maiParsePermissionDecision("", d));
 
-    // timed_out 是闸门自己的结论，不接受从线上传进来——允许调用方声称
-    // "超时了"，等于给了它一条绕过用户的路。
+    // timed_out 是闸门自己的结论，不接受从线上传进来——允许调用方声称"超时了"，
+    // 等于给了它一条绕过用户的路。
     CHECK(!maiParsePermissionDecision("timed_out", d));
 
     CHECK(d == MaiPermissionDecision::Denied);  // 全程没被动过
@@ -99,8 +99,8 @@ void test_ask_blocks_until_reply() {
     });
 
     CHECK(waitFor([&] { return announced.load(); }));
-    // 广播出去之后、裁决之前，请求必须已经在待办表里——
-    // 顺序反了的话，抢在中间到达的裁决会找不到这条记录。
+    // 广播出去之后、裁决之前，请求必须已经在待办表里——顺序反了的话，
+    // 抢在中间到达的裁决会找不到这条记录。
     CHECK(gate.listPending().size() == 1);
     CHECK(outcome.load() == -1);  // 还在等
 
@@ -163,8 +163,8 @@ void test_cancel_session_wakes_waiter() {
 }
 
 void test_cancel_flag_wakes_waiter() {
-    // 这条测的是兜底轮询：只翻 cancel 标志、不调 cancelSession，
-    // 等待方也必须能醒。agent 析构时走的就是这条路。
+    // 这条测的是兜底轮询：只翻 cancel 标志、不调 cancelSession，等待方也必须能醒。
+    // agent 析构时走的就是这条路。
     MaiPermissionGate gate;
     std::atomic<bool> cancel{false};
     std::atomic<int> outcome{-1};
@@ -189,8 +189,8 @@ void test_timeout() {
                              std::chrono::steady_clock::now() - started)
                              .count();
 
-    // 超时**不是** Denied：没人看过那个请求，说成"用户拒绝了"是对模型撒谎，
-    // 它会照着"换个做法"去试，而真相是没人在，换什么做法都一样没人批。
+    // 超时**不是** Denied：没人看过那个请求，说成"用户拒绝了"是对模型撒谎，它会照着"换个做法"去试，
+    // 而真相是没人在，换什么做法都一样没人批。
     CHECK(d == MaiPermissionDecision::TimedOut);
     CHECK(elapsed >= 250);  // 确实等过
     CHECK(elapsed < 3000);  // 但没等到天荒地老
@@ -201,8 +201,8 @@ void test_timeout() {
 
 // 一次应答的剧本：要么吐一句话，要么发起一次工具调用。
 //
-// 这里不再起假 HTTP 服务端。理由见 MaiFakeModelClient.h——要测的是闸门
-// 拦不拦得住，不是 SSE 解析对不对，中间那层传输纯属噪音。
+// 这里不再起假 HTTP 服务端。理由见 MaiFakeModelClient.h——要测的是闸门拦不拦得住，
+// 不是 SSE 解析对不对，中间那层传输纯属噪音。
 MaiFakeModelClient::Turn sayTurn(const std::string& text) {
     MaiFakeModelClient::Turn turn;
     turn.textChunks = {text};
@@ -388,8 +388,7 @@ void test_reject_blocks_write_and_tells_model() {
     CHECK(toolPartState(*agent, sessionId, state));
     CHECK(state == MaiToolState::Error);
 
-    // 模型得知道发生了什么，而且得被明确告知别重试——否则它会拿同样的
-    // 参数把 12 圈烧光。
+    // 模型得知道发生了什么，而且得被明确告知别重试——否则它会拿同样的参数把 12 圈烧光。
     const std::string toolResultText = lastToolResultText(*model);
     CHECK(toolResultText.find("denied") != std::string::npos);
     CHECK(toolResultText.find("Do not retry") != std::string::npos);
@@ -419,8 +418,8 @@ void test_rejected_repeat_does_not_ask_again() {
     agent->waitIdle();
 
     CHECK(!workspace.has("again.txt"));
-    // 第二次同样的调用直接回同样的拒绝，**不再弹第二个框**。
-    // 不做这件事的话，模型每重试一次用户就要点一次"不行"。
+    // 第二次同样的调用直接回同样的拒绝，**不再弹第二个框**。不做这件事的话，
+    // 模型每重试一次用户就要点一次"不行"。
     CHECK(recorder.count(MaiEventType::PermissionAsked) == 1);
     CHECK(model->requestCount() == 3);  // 三圈都跑到了，没卡住
 }
@@ -507,8 +506,8 @@ void test_reply_to_stale_permission_is_not_found() {
     CHECK(agent->submit(reply).isOk());
     agent->waitIdle();
 
-    // 同一个 id 再点一次：界面重复点击、或者两个端同时点，都会走到这里。
-    // 必须是明确的 NotFound，不能假装成功——界面要据此把对话框收掉。
+    // 同一个 id 再点一次：界面重复点击、或者两个端同时点，都会走到这里。必须是明确的 NotFound，
+    // 不能假装成功——界面要据此把对话框收掉。
     const auto again = agent->submit(reply);
     CHECK(!again.isOk());
     CHECK(again.error().code() == MaiErrorCode::NotFound);

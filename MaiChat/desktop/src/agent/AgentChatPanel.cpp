@@ -237,6 +237,12 @@ private:
 class AgentChatPanel::ToolCard final : public QFrame {
 public:
     explicit ToolCard(QWidget* parent = nullptr) : QFrame(parent) {
+        // **必须给它一个 objectName，样式表按 id 选。**
+        //
+        // QLabel 自己就是 QFrame 的子类，所以 "QFrame{border:...}" 会把卡片里
+        // 每一个标签也套上边框和圆角——真机上看到的就是一堆框里套框。
+        // 按 id 选只命中这张卡本身。
+        setObjectName(QStringLiteral("agentToolCard"));
         auto* column = new QVBoxLayout(this);
         column->setContentsMargins(UiZoom::s(11), UiZoom::s(7), UiZoom::s(11), UiZoom::s(7));
         column->setSpacing(UiZoom::s(6));
@@ -250,7 +256,10 @@ public:
         state_ = makeLabel(QString(), 11, kInkFaint);
         state_->setWordWrap(false);
         head->addWidget(name_);
-        head->addWidget(args_, 1);
+        head->addWidget(args_);
+        // 伸缩放在参数和状态之间：参数按内容长，状态贴右边，
+        // 给参数 stretch 会让它撑满整行，看起来像个空输入框。
+        head->addStretch(1);
         head->addWidget(state_);
         column->addLayout(head);
 
@@ -321,8 +330,8 @@ public:
         state_->setStyleSheet(QStringLiteral("color:%1;background:transparent;")
                                   .arg(toolState == MaiToolState::Error ? kDanger : kInkFaint));
         setStyleSheet(UiZoom::scaleQss(
-            QStringLiteral("QFrame{background:%1;border:1px solid %2;border-left:3px solid %3;"
-                           "border-radius:7px;}")
+            QStringLiteral("QFrame#agentToolCard{background:%1;border:1px solid %2;"
+                           "border-left:3px solid %3;border-radius:7px;}")
                 .arg(waitingForUser ? kGoldWash : "#ffffff", kLine, edge)));
         approval_->setVisible(waitingForUser);
         waiting_ = waitingForUser;
@@ -633,8 +642,13 @@ void AgentChatPanel::addToStream(QWidget* widget, Qt::Alignment alignment) {
     if (alignment.testFlag(Qt::AlignRight)) {
         rowLayout->addStretch(1);
         rowLayout->addWidget(widget);
+    } else if (widget->sizePolicy().horizontalPolicy() == QSizePolicy::Maximum) {
+        // 不想撑满的东西（工具卡）：贴左，右边留白。
+        // 不补这条 stretch 的话 Qt 会把它**居中**——一张注记卡浮在正文中间很奇怪。
+        rowLayout->addWidget(widget);
+        rowLayout->addStretch(1);
     } else {
-        // 助手这一侧不加 stretch：正文要占满整个阅读列，那正是它和气泡的区别。
+        // 助手的正文要占满整个阅读列，那正是它和气泡的区别。
         rowLayout->addWidget(widget, 1);
     }
 
@@ -654,14 +668,18 @@ void AgentChatPanel::appendUserBubble(const QString& text) {
     // **宽度得自己量，不能交给 sizeHint。**
     //
     // 开了 wordWrap 的 QLabel，sizeHint 给的是一个偏窄的方块（Qt 想让它接近正方），
-    // 所以一句二十来字的话会被折成三行、右边空出一大片。上一版就是这样。
+    // 所以一句二十来字的话会被折成三行、右边空出一大片。
     //
-    // 这里按"在上限宽度内真正排下来要多宽"来量：短句子就一行，长句子才到上限换行。
+    // 量法是"这句话排成一行要多宽"：放得下就给它那么宽，一个换行都不要；
+    // 放不下才用满上限，让它在上限处折。
+    //
+    // 最后那点余量不是玄学：QLabel 自己还有 contentsMargins 和边框，
+    // 样式表里的 padding 也是按整数像素缩放的。少算几个像素的后果不是"挤一点"，
+    // 而是**最后一个字被挤到下一行**——"你好"两个字排成两行就是这么来的。
     const int cap = UiZoom::s(kColumnWidth * 3 / 4);
     const QFontMetrics metrics(bubble->font());
-    const QRect used = metrics.boundingRect(QRect(0, 0, cap - padding, 1 << 20),
-                                            Qt::TextWordWrap, text);
-    bubble->setFixedWidth(std::min(used.width() + padding, cap));
+    const int oneLine = metrics.horizontalAdvance(text) + padding + UiZoom::s(8);
+    bubble->setFixedWidth(std::min(oneLine, cap));
     addToStream(bubble, Qt::AlignRight);
 }
 
@@ -698,6 +716,8 @@ AgentChatPanel::ToolCard* AgentChatPanel::toolCardFor(const QString& partId) {
     if (found != runtime_->toolCards.constEnd()) return found.value();
 
     auto* card = new ToolCard;
+    // 不撑满整列：它是一条注记，不是正文。撑满会让它看起来比回答还重要。
+    card->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
     addToStream(card, Qt::AlignLeft);
     runtime_->toolCards.insert(partId, card);
 

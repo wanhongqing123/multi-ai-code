@@ -113,7 +113,10 @@ add_library(maiagent STATIC
   src/MaiMemoryStore.cpp
   src/MaiSqliteStore.cpp
   src/MaiOpenAiClient.cpp
-  src/MaiPathUtf8.cpp
+  # 路径与文件系统：不用 std::filesystem，走系统 API。
+  # 纯词法的那一半（MaiFilePath.cpp）是可移植的；真正调系统调用的那一半
+  # 按平台各一份。形状参考 chromium 的 base/files。
+  src/MaiFilePath.cpp
   src/MaiPathGuard.cpp
   src/MaiTool.cpp
   src/MaiPermissionGate.cpp
@@ -124,6 +127,13 @@ add_library(maiagent STATIC
   src/MaiEventEmitter.cpp
   src/MaiSessionTitler.cpp
 )
+# 文件系统实现按平台挑一份。Windows 走宽字符 Win32 API，其余走 POSIX。
+if(WIN32)
+  target_sources(maiagent PRIVATE src/MaiFileSystemWindows.cpp)
+else()
+  target_sources(maiagent PRIVATE src/MaiFileSystemPosix.cpp)
+endif()
+
 target_include_directories(maiagent
   PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}/include
   # src 只对自己可见：内部头（MaiTurnRunner.h 等）不是公开 API。
@@ -165,6 +175,7 @@ if(MAIAGENT_BUILD_TESTS)
   # 测试要碰内部头（MaiPathUtf8 等），所以也要 src 的 include 路径。
   foreach(test_name
       MaiCoreTests          # id / 会话 / 事件总线
+      MaiFilePathTests      # 路径词法 + 文件系统（走系统 API，不用 std::filesystem）
       MaiStoreTests         # 存储契约：内存和 SQLite 行为必须一致
       MaiModelClientTests   # 流式解析 + 工具调用分片聚合
       MaiTurnRunnerTests    # 一轮对话的完整生命周期

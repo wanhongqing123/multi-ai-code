@@ -156,6 +156,22 @@ SSE 断开的那个窗口期里发出的 `permission.asked` 是看不到的，�
 `lastWriteError()`，失败就把会话标成错误让界面看见。磁盘满了还假装存上了，
 是用户第二天打开发现对话没了的那种 bug。
 
+## 文件操作
+
+**库代码里不出现 `std::filesystem` 和 `fstream`。** 路径是 `MaiFilePath`，
+操作是 `MaiFileSystem`：Windows 走宽字符 Win32 API（`CreateFileW` /
+`FindFirstFileExW` / `GetFinalPathNameByHandleW`），其它平台走 POSIX
+（`open` / `opendir` / `realpath`）。
+
+形状参考 chromium 的 `base/files`。最关键的一点是**内部存平台原生串**
+（Windows 上 `wstring`，其它平台 `string`），只在跟模型打交道的边界转
+UTF-8——POSIX 的文件名是任意字节序列，不保证是合法 UTF-8，统一成 UTF-8
+会改写文件名。
+
+> POSIX 那一份（`MaiFileSystemPosix.cpp`）**没有在真机上跑过**，
+> 本项目目前只在 Windows 上构建。`MaiFilePathTests` 是可移植的，
+> 第一次在 Linux/mac 上构建时先跑那一套。
+
 ## 三条铁律
 
 1. **公开头 `include/` 里不出现 JSON、HTTP、Qt。** 对外 API 一律原生结构体——

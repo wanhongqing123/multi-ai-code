@@ -18,6 +18,8 @@
 
 #include <json.hpp>
 
+#include "MaiFilePath.h"
+#include "MaiFileSystem.h"
 #include "MaiTool.h"
 
 namespace fs = std::filesystem;
@@ -131,6 +133,44 @@ void test_path_escape_is_blocked() {
         read->execute(args({{"path", (workspace.outside / "secret.txt").string()}}), context);
     CHECK(abs.error().code() == MaiErrorCode::InvalidInput);
     CHECK(abs.output().find(kSecretMarker) == std::string::npos);
+}
+
+// 同前缀的兄弟目录不能算"在里面"。
+//
+// 这条是冲着一类经典实现错误来的：用字符串前缀判断包含关系。
+// "/server/app-secrets" 确实以 "/server/app" 开头，但它是**另一个目录**。
+// 真按前缀判，root 旁边随便放一个同前缀的目录就全漏了。
+//
+// MaiFilePath::isParentOf 是逐段比的，所以这里必须被挡住。
+void test_sibling_with_shared_prefix_is_outside() {
+    Workspace workspace;
+
+    // workspace.root 叫 "workspace"，在它旁边造一个 "workspace-secrets"
+    const MaiFilePath rootPath = MaiFilePath::fromUtf8(workspace.root.u8string());
+    const MaiFilePath sibling =
+        rootPath.dirName().append(MaiFilePath::fromUtf8("workspace-secrets"));
+    MaiFileSystem::createDirectories(sibling);
+    const MaiFilePath leaked = sibling.append(MaiFilePath::fromUtf8("secret.txt"));
+    MaiFileSystem::writeFile(leaked, std::string(kSecretMarker) + " sibling directory\n");
+
+    // 用绝对路径直接指过去
+    CHECK(maiResolvePathWithinRoot(workspace.root.u8string(), leaked.toUtf8()).empty());
+
+    // 用相对路径绕过去（..\workspace-secrets\secret.txt）
+    const std::string relative = "../workspace-secrets/secret.txt";
+    CHECK(maiResolvePathWithinRoot(workspace.root.u8string(), relative).empty());
+
+    // 走真正的工具，确认内容没漏出去
+    auto read = makeMaiReadTool();
+    const auto viaAbsolute = read->execute(args({{"path", leaked.toUtf8()}}), workspace.context());
+    CHECK(viaAbsolute.error().code() == MaiErrorCode::InvalidInput);
+    CHECK(viaAbsolute.output().find(kSecretMarker) == std::string::npos);
+
+    const auto viaRelative = read->execute(args({{"path", relative}}), workspace.context());
+    CHECK(viaRelative.error().code() == MaiErrorCode::InvalidInput);
+    CHECK(viaRelative.output().find(kSecretMarker) == std::string::npos);
+
+    MaiFileSystem::removeRecursively(sibling);
 }
 
 void test_write_cannot_escape() {
@@ -348,6 +388,7 @@ void test_cancel_stops_traversal() {
 
 int main() {
     RUN(test_path_escape_is_blocked);
+    RUN(test_sibling_with_shared_prefix_is_outside);
     RUN(test_write_cannot_escape);
     RUN(test_maiResolvePathWithinRoot_directly);
     RUN(test_read);

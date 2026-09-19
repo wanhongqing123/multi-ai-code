@@ -445,6 +445,63 @@ try a different approach"。用户可能根本没看见那个请求——模型�
 参数再调一次，把 `maxToolIterations` 那 12 圈全烧在同一个被拒的操作上，
 用户看到的是 agent 卡住了。
 
+## 12.5 碰文件走系统 API，不用 std::filesystem
+
+**库代码里不出现 `<filesystem>` 和 `<fstream>`。** 路径用 `MaiFilePath`，
+文件操作用 `MaiFileSystem`。Windows 上它们走宽字符 Win32 API，
+其它平台走 POSIX。
+
+三条理由，第一条是踩出来的：
+
+1. **MSVC 的 `fs::path` 把 narrow 字符串按当前 ANSI 代码页解释**（中文
+   机器是 GBK），而我们的路径全部来自 JSON，是 UTF-8。中文文件名不是
+   优雅失败，是进程直接挂掉（`STATUS_STACK_BUFFER_OVERRUN`）。
+2. **错误信息会被糊掉。** `std::filesystem` 把 Win32 错误码塞进
+   `std::error_code` 之后，"没找到"和"没权限"变成同一句含糊的话。
+   自己调就能直接拿 `GetLastError()` / `errno`，分得出 `NotFound` 和
+   `InvalidInput`。
+3. **嵌入式和移动端的工具链未必带 `<filesystem>`**，而这个项目就是奔着
+   那些平台去的。
+
+### 内部存平台原生串，不统一成 UTF-8
+
+这一条是从 chromium 的 `base::FilePath`
+（`E:\OpenSource\chromium\src\base\files\file_path.h`）学来的，
+理由是**正确性**不是性能：
+
+- Windows 文件名是 UTF-16，可能含未配对代理项，转成 UTF-8 再转回来不
+  保证原样。
+- POSIX 文件名是任意字节序列，**根本不保证是合法 UTF-8**。Linux 上一个
+  用 Latin-1 命名的文件，强行当 UTF-8 处理就会丢掉或改写它的名字。
+
+所以 `MaiFilePath::StringType` 在 Windows 上是 `std::wstring`，其它平台
+上是 `std::string`。只在两个边界上转 UTF-8：模型送进来的 JSON 参数，
+和回给模型的文本。那两处本来就避不开，因为模型只会说 UTF-8。
+
+### 判断"在不在某个目录下"，先解析再逐段比
+
+两步都不能省：
+
+```cpp
+const MaiFilePath resolved = MaiFileSystem::resolve(target);  // 消 ".."，解符号链接
+if (resolved != rootPath && !rootPath.isParentOf(resolved)) return {};  // 逐段比
+```
+
+- 只做词法规范化不够：root 里放一个指向 `C:\` 的符号链接或目录联接，
+  词法上看它就在 root 里面。
+- 比字符串前缀更不行：`/server/app-secrets` 确实以 `/server/app` 开头，
+  却是另一个目录。`isParentOf` 是逐段比的，Windows 上还不分大小写。
+
+这条有红→绿对照守着：把 `isParentOf` 换成前缀比较，`MaiToolTests` 里
+7 条断言会变红。
+
+### 测试里可以留 std::filesystem
+
+`MaiFilePathTests` 故意用 `std::filesystem` 造目录和文件，再用
+`MaiFileSystem` 去读。两个独立实现互相印证——要是造和读都用自己那套，
+编码转换整个写错了也能自洽，测试一路绿，而别的程序建的文件我们全读不了。
+那正是当初那个中文路径 bug 的形状。
+
 ## 13. 验证之前先问"这套观测能不能看见目标"
 
 报"全绿"或者"发现 bug"之前，先确认你的观测手段真的能看见要看的东西。

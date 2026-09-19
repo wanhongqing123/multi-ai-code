@@ -1,6 +1,5 @@
 #include <algorithm>
-#include <filesystem>
-#include <fstream>
+#include <cstdint>
 #include <regex>
 #include <sstream>
 #include <system_error>
@@ -9,11 +8,11 @@
 
 #include "MaiTool.h"
 
-#include "MaiPathUtf8.h"
+#include "MaiFilePath.h"
+#include "MaiFileSystem.h"
 
 namespace {
 
-namespace fs = std::filesystem;
 using json = nlohmann::json;
 
 // ── 输出上限 ────────────────────────────────────────────────────
@@ -23,6 +22,10 @@ using json = nlohmann::json;
 constexpr std::size_t kMaxOutputBytes = 64 * 1024;
 constexpr std::size_t kMaxReadBytes = 256 * 1024;
 constexpr int kMaxGrepMatches = 200;
+// 单个文件最多读这么多。几百兆的文件读全了既没意义又会把内存吃光；
+// 截断了会告诉模型，它可以用 offset 继续读。
+constexpr std::uint64_t kMaxFileBytes = 8u * 1024 * 1024;
+
 constexpr int kMaxGlobResults = 300;
 
 // 截断时要落在 UTF-8 字符边界上，不然会切出半个汉字，
@@ -140,12 +143,24 @@ bool shouldSkipDirectory(const std::string& name) {
     return false;
 }
 
-std::string toRelativePath(const std::string& root, const fs::path& path) {
-    std::error_code errorCode;
-    const fs::path rel = fs::relative(path, MaiPathUtf8::fromUtf8(root), errorCode);
-    // 一律返回 UTF-8。generic 形式统一用 / 分隔，这样模型看到的路径
-    // 在三个平台上长得一样，它给回来的路径我们也认。
-    return errorCode ? MaiPathUtf8::toUtf8(path) : MaiPathUtf8::toUtf8Generic(rel);
+// path 相对于 root 的写法。算不出来（不在 root 下）就返回完整路径。
+//
+// 自己按段算，不调系统的 PathRelativePathToW：那个 API 在两边不同盘时
+// 行为古怪，而我们这里 path 一定在 root 之内（调用方已经过了安全检查），
+// 逐段砍掉公共前缀就够了。
+//
+// 一律返回 generic 形式（'/' 分隔）的 UTF-8：模型看到的路径在三个平台上
+// 长得一样，它给回来的我们也认。
+std::string toRelativePath(const std::string& root, const MaiFilePath& path) {
+    const MaiFilePath rootPath = MaiFilePath::fromUtf8(root);
+    const auto rootParts = rootPath.components();
+    const auto pathParts = path.components();
+    if (pathParts.size() <= rootParts.size()) return path.toGenericUtf8();
+
+    MaiFilePath relative;
+    for (std::size_t i = rootParts.size(); i < pathParts.size(); ++i)
+        relative = relative.append(MaiFilePath(pathParts[i]));
+    return relative.isEmpty() ? path.toGenericUtf8() : relative.toGenericUtf8();
 }
 
 // ── read ────────────────────────────────────────────────────────
@@ -171,21 +186,25 @@ public:
         auto resolved = resolveOrFail(context, args.value("path", std::string{}));
         if (!resolved.ok) return resolved.error;
 
-        std::error_code errorCode;
-        const fs::path target = MaiPathUtf8::fromUtf8(resolved.path);
-        if (!fs::exists(target, errorCode) || errorCode)
+        const MaiFilePath target = MaiFilePath::fromUtf8(resolved.path);
+        if (!MaiFileSystem::exists(target))
             return MaiToolResult::failure(
                 MaiErrorCode::NotFound,
                 "file does not exist: " + args.value("path", std::string{}));
-        if (fs::is_directory(target, errorCode))
+        if (MaiFileSystem::isDirectory(target))
             return MaiToolResult::failure(
                 MaiErrorCode::InvalidInput,
                 "That is a directory, not a file. Use glob to list its contents.");
 
-        std::ifstream in(MaiPathUtf8::fromUtf8(resolved.path), std::ios::binary);
-        if (!in)
-            return MaiToolResult::failure(MaiErrorCode::Internal,
-                                          "could not open file for reading");
+        // 一次读进来，再自己按行切。以前用 std::getline 一行行读，
+        // 每行一次系统调用；一次读完再切，大文件上差别明显。
+        // 读多少有上限，免得一个几百兆的文件把内存吃光。
+        std::string blob;
+        bool readTruncated = false;
+        const MaiError readError =
+            MaiFileSystem::readFile(target, blob, kMaxFileBytes, &readTruncated);
+        if (readError.hasError())
+            return MaiToolResult::failure(readError.code(), readError.message());
 
         const int offset = std::max(1, args.value("offset", 1));
         const int limit = std::max(1, args.value("limit", 500));
@@ -194,8 +213,18 @@ public:
         std::string line;
         int lineno = 0;
         int emitted = 0;
-        bool truncated = false;
-        while (std::getline(in, line)) {
+        bool truncated = readTruncated;
+        std::size_t cursor = 0;
+        while (cursor <= blob.size()) {
+            const std::size_t newlineAt = blob.find('\n', cursor);
+            if (newlineAt == std::string::npos) {
+                if (cursor >= blob.size()) break;
+                line = blob.substr(cursor);
+                cursor = blob.size() + 1;
+            } else {
+                line = blob.substr(cursor, newlineAt - cursor);
+                cursor = newlineAt + 1;
+            }
             ++lineno;
             if (lineno < offset) continue;
             if (emitted >= limit) {
@@ -256,22 +285,16 @@ public:
 
         const std::string content = args["content"].get<std::string>();
 
-        std::error_code errorCode;
-        const fs::path path = MaiPathUtf8::fromUtf8(resolved.path);
-        if (path.has_parent_path()) {
-            fs::create_directories(path.parent_path(), errorCode);
-            if (errorCode)
+        const MaiFilePath path = MaiFilePath::fromUtf8(resolved.path);
+        const MaiFilePath parent = path.dirName();
+        if (!parent.isEmpty() && parent != path) {
+            const MaiError error = MaiFileSystem::createDirectories(parent);
+            if (error.hasError())
                 return MaiToolResult::failure(
-                    MaiErrorCode::Internal,
-                    "could not create parent directory: " + errorCode.message());
+                    error.code(), "could not create parent directory: " + error.message());
         }
-        std::ofstream out(MaiPathUtf8::fromUtf8(resolved.path), std::ios::binary | std::ios::trunc);
-        if (!out)
-            return MaiToolResult::failure(MaiErrorCode::Internal,
-                                          "could not open file for writing");
-        out.write(content.data(), static_cast<std::streamsize>(content.size()));
-        if (!out) return MaiToolResult::failure(MaiErrorCode::Internal, "write failed");
-        out.close();
+        const MaiError error = MaiFileSystem::writeFile(path, content);
+        if (error.hasError()) return MaiToolResult::failure(error.code(), error.message());
 
         return MaiToolResult::success("Wrote " + toRelativePath(context.root, path) + " (" +
                                       std::to_string(content.size()) + " bytes)");
@@ -310,29 +333,25 @@ public:
             base = resolved.path;
         }
 
-        std::vector<std::string> hits;
-        std::error_code errorCode;
-        fs::recursive_directory_iterator it(
-            MaiPathUtf8::fromUtf8(base), fs::directory_options::skip_permission_denied, errorCode);
-        if (errorCode)
+        const MaiFilePath basePath = MaiFilePath::fromUtf8(base);
+        if (!MaiFileSystem::isDirectory(basePath))
             return MaiToolResult::failure(MaiErrorCode::NotFound,
-                                          "could not read directory: " + errorCode.message());
+                                          "could not read directory: " + base);
 
-        for (; it != fs::recursive_directory_iterator(); it.increment(errorCode)) {
-            if (errorCode) break;
-            if (context.isCanceled()) break;
-            if (it->is_directory(errorCode)) {
-                if (shouldSkipDirectory(MaiPathUtf8::toUtf8(it->path().filename())))
-                    it.disable_recursion_pending();
-                continue;
+        std::vector<std::string> hits;
+        MaiFileSystem::walk(basePath, [&](const MaiFileEntry& entry) {
+            if (context.isCanceled()) return MaiWalkAction::Stop;
+            if (entry.isDirectory) {
+                return shouldSkipDirectory(entry.nameUtf8) ? MaiWalkAction::SkipDirectory
+                                                           : MaiWalkAction::Continue;
             }
-            const std::string rel = toRelativePath(context.root, it->path());
-            if (globMatch(pattern, rel) ||
-                globMatch(pattern, MaiPathUtf8::toUtf8(it->path().filename()))) {
-                hits.push_back(rel);
-                if (static_cast<int>(hits.size()) >= kMaxGlobResults) break;
+            const std::string relative = toRelativePath(context.root, entry.path);
+            if (globMatch(pattern, relative) || globMatch(pattern, entry.nameUtf8)) {
+                hits.push_back(relative);
+                if (static_cast<int>(hits.size()) >= kMaxGlobResults) return MaiWalkAction::Stop;
             }
-        }
+            return MaiWalkAction::Continue;
+        });
 
         if (hits.empty()) return MaiToolResult::success("No files match " + pattern);
         std::sort(hits.begin(), hits.end());
@@ -396,37 +415,44 @@ public:
 
         std::string out;
         int matches = 0;
-        std::error_code errorCode;
-        fs::recursive_directory_iterator it(
-            MaiPathUtf8::fromUtf8(base), fs::directory_options::skip_permission_denied, errorCode);
-        if (errorCode)
-            return MaiToolResult::failure(MaiErrorCode::NotFound,
-                                          "could not read directory: " + errorCode.message());
 
-        for (; it != fs::recursive_directory_iterator() && matches < kMaxGrepMatches;
-             it.increment(errorCode)) {
-            if (errorCode) break;
-            if (context.isCanceled()) break;
-            if (it->is_directory(errorCode)) {
-                if (shouldSkipDirectory(MaiPathUtf8::toUtf8(it->path().filename())))
-                    it.disable_recursion_pending();
-                continue;
+        const MaiFilePath basePath = MaiFilePath::fromUtf8(base);
+        if (!MaiFileSystem::isDirectory(basePath))
+            return MaiToolResult::failure(MaiErrorCode::NotFound,
+                                          "could not read directory: " + base);
+
+        MaiFileSystem::walk(basePath, [&](const MaiFileEntry& entry) {
+            if (context.isCanceled() || matches >= kMaxGrepMatches) return MaiWalkAction::Stop;
+            if (entry.isDirectory) {
+                return shouldSkipDirectory(entry.nameUtf8) ? MaiWalkAction::SkipDirectory
+                                                           : MaiWalkAction::Continue;
             }
-            if (!it->is_regular_file(errorCode)) continue;
-            const std::string rel = toRelativePath(context.root, it->path());
-            if (hasFilter && !globMatch(globPattern, rel) &&
-                !globMatch(globPattern, MaiPathUtf8::toUtf8(it->path().filename())))
-                continue;
+            const std::string relative = toRelativePath(context.root, entry.path);
+            if (hasFilter && !globMatch(globPattern, relative) &&
+                !globMatch(globPattern, entry.nameUtf8))
+                return MaiWalkAction::Continue;
 
             // 太大的文件跳过：多半是二进制或产物，搜了也没意义还很慢。
-            const auto size = fs::file_size(it->path(), errorCode);
-            if (errorCode || size > 2u * 1024 * 1024) continue;
+            // 大小是遍历时顺路拿到的，不用再 stat 一次。
+            if (entry.size > 2u * 1024 * 1024) return MaiWalkAction::Continue;
 
-            std::ifstream in(it->path(), std::ios::binary);
-            if (!in) continue;
+            std::string blob;
+            if (MaiFileSystem::readFile(entry.path, blob).hasError())
+                return MaiWalkAction::Continue;
+
             std::string line;
             int lineno = 0;
-            while (std::getline(in, line) && matches < kMaxGrepMatches) {
+            std::size_t cursor = 0;
+            while (cursor <= blob.size() && matches < kMaxGrepMatches) {
+                const std::size_t newlineAt = blob.find('\n', cursor);
+                if (newlineAt == std::string::npos) {
+                    if (cursor >= blob.size()) break;
+                    line = blob.substr(cursor);
+                    cursor = blob.size() + 1;
+                } else {
+                    line = blob.substr(cursor, newlineAt - cursor);
+                    cursor = newlineAt + 1;
+                }
                 ++lineno;
                 if (!line.empty() && line.back() == '\r') line.pop_back();
                 // 含 NUL 的当二进制跳过整个文件。
@@ -439,7 +465,7 @@ public:
                     line.resize(cut);
                 }
                 if (!std::regex_search(line, re)) continue;
-                out += rel;
+                out += relative;
                 out += ":";
                 out += std::to_string(lineno);
                 out += ": ";
@@ -448,8 +474,8 @@ public:
                 ++matches;
                 if (out.size() > kMaxOutputBytes) break;
             }
-            if (out.size() > kMaxOutputBytes) break;
-        }
+            return out.size() > kMaxOutputBytes ? MaiWalkAction::Stop : MaiWalkAction::Continue;
+        });
 
         if (matches == 0) return MaiToolResult::success("No content matches " + pattern);
         const bool truncated = matches >= kMaxGrepMatches || out.size() > kMaxOutputBytes;

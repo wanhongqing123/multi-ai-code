@@ -1,12 +1,12 @@
 #include <sqlite3.h>
 
-#include <filesystem>
 #include <map>
 #include <mutex>
 #include <string>
 #include <vector>
 
-#include "MaiPathUtf8.h"
+#include "MaiFilePath.h"
+#include "MaiFileSystem.h"
 #include "MaiSessionStore.h"
 
 // SQLite 落库。
@@ -441,14 +441,15 @@ MaiResult<std::unique_ptr<MaiSessionStore>> makeMaiSqliteStore(
 
     // 父目录不存在就建出来。少了这一步，第一次跑的人会看到一句
     // "unable to open database file"，完全猜不到是目录的问题。
-    // 走 MaiPathUtf8：MSVC 的 fs::path 会把 narrow 字符串按 ANSI 代码页
-    // 解释，中文路径会出错（见 docs 里那条踩坑记录）。
+    // 走 MaiFilePath / MaiFileSystem，不碰 std::filesystem：后者在 MSVC 上
+    // 把 narrow 字符串按 ANSI 代码页解释，中文路径会出错。
+    //
+    // 注意 sqlite3_open_v2 的文件名参数本身要的就是 UTF-8（它内部在
+    // Windows 上转成 UTF-16），所以那一处直接把 UTF-8 传进去是对的。
     if (databasePathUtf8 != ":memory:") {
-        const std::filesystem::path path = MaiPathUtf8::fromUtf8(databasePathUtf8);
-        if (path.has_parent_path()) {
-            std::error_code errorCode;
-            std::filesystem::create_directories(path.parent_path(), errorCode);
-        }
+        const MaiFilePath path = MaiFilePath::fromUtf8(databasePathUtf8);
+        const MaiFilePath parent = path.dirName();
+        if (!parent.isEmpty() && parent != path) MaiFileSystem::createDirectories(parent);
     }
 
     sqlite3* database = nullptr;

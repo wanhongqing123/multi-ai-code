@@ -17,7 +17,7 @@
 
 **[`MaiAgent/docs/CodingStyle.md`](MaiAgent/docs/CodingStyle.md)**
 
-开头有一张 19 条的速查表。最容易想当然做错的是这两条：代码里除注释外
+开头有一张 20 条的速查表。最容易想当然做错的是这两条：代码里除注释外
 不出现中文；碰文件不要用 `std::filesystem`。
 
 ## 两个参照系

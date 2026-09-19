@@ -24,63 +24,131 @@ enum class MaiWireApi {
 
 const char* maiWireApiToString(MaiWireApi wire);
 
-// 模型发起的一次工具调用。arguments 保持 JSON 原文——
-// 核心不解析它，交给工具实现去解，这样加新工具不用动这一层。
+// 模型发起的一次工具调用。
+//
+// **攒完整才交付**：流式过程中 arguments 是一个个 JSON 碎片到达的
+// （见 MaiStreamSink::onToolCall 的说明），中途给出去会是半截 JSON。
 struct MaiToolInvocation {
+    // 服务端给的调用 id。回灌结果时要**原样带回**，对不上的话模型认不出
+    // 这是哪次调用的结果，下一轮会把同样的工具再调一遍。
     std::string id;
-    std::string name;
+    std::string name;  // 工具名，要能在 MaiToolRegistry 里查到
+    // 参数的 JSON 原文。核心**不解析**它，交给工具实现去解——
+    // 这样加新工具不用动这一层的任何代码。
+    //
+    // 模型有时会给出不合法的 JSON（尤其是被截断时），所以工具实现
+    // 解析失败要当成"参数不对"返回错误，不能崩。
     std::string arguments;
 };
 
 // 发给模型的一条消息里，说话的是谁。
+//
+// 比 MaiRole（只有 User / Assistant）多两个，因为这是**模型看到的视角**：
+// 系统提示词和工具结果在协议里都是独立的一条消息，而在我们的领域模型里
+// 前者根本不存历史、后者是 assistant 消息里的一个片段。
 enum class MaiModelRole {
-    System,
+    System,  // 系统提示词。MaiContextBuilder 临时加的，不属于对话历史
     User,
     Assistant,
-    ToolResult,  // 一次工具调用的结果，协议里是 role="tool"
+    ToolResult,  // 一次工具调用的结果。线格式里是 role="tool"
 };
 
-// 发给模型的一条消息。刻意和领域模型的 MaiMessage 分开：
-// MaiMessage 是"我们怎么存"，这个是"模型怎么看"，两者演化节奏不一样。
+// 发给模型的一条消息。
+//
+// **刻意和领域模型的 MaiMessage 分开**：MaiMessage 是"我们怎么存"，
+// 这个是"模型怎么看"，两者演化节奏不一样。比如 reasoning 片段存着但不
+// 回灌、工具结果存成片段但发出去是独立消息——如果共用一个类型，
+// 这些差异就得靠"某些字段在某些场景下不填"来表达，很快就没人说得清了。
+//
+// 谁来填：MaiContextBuilder 把历史 MaiMessage 翻成这个。
+// 谁来读：各个 wire 实现（现在只有 MaiOpenAiClient）翻成自家的线格式。
 struct MaiModelMessage {
     MaiModelRole role = MaiModelRole::User;
+    // 正文。assistant 发起工具调用的那条可以是空的（那时候 invocations
+    // 非空），线格式里对应 content: null。
     std::string content;
-    std::string toolCallId;                      // ToolResult 时必填
-    std::vector<MaiToolInvocation> invocations;  // Assistant 发起调用时
+    // ToolResult 时**必填**：这条结果对应哪次调用。
+    // 线上字段名是 tool_call_id（snake_case），别写成驼峰——
+    // 那个 bug 犯过一次，见 MaiModelClientTests 里的线格式用例。
+    std::string toolCallId;
+    // Assistant 发起调用时填。一条消息可以同时发起多个调用。
+    std::vector<MaiToolInvocation> invocations;
 };
 
-// 一个工具对模型的完整声明。
+// 一个工具对模型的完整声明。模型靠它决定什么时候调、怎么调。
+//
+// description 和 parametersJson 是**给模型看的提示词**，不是给人看的文档：
+// 写得含糊模型就会用错，写得啰嗦就白烧 token。每次请求都会原样发过去。
 struct MaiToolSpec {
     std::string name;
     std::string description;
-    std::string parametersJson;  // JSON Schema 原文
+    // JSON Schema 原文。这一层不校验它合不合法——
+    // 序列化时解析失败会退化成空对象（见 MaiOpenAiClient 的 buildRequestBody）。
+    std::string parametersJson;
 };
 
+// 一次请求的全部内容。每一轮对话会发好几次——模型每调一次工具就要
+// 重新问一遍，所以 messages 会越滚越长（见 MaiContextBuilder 对增量
+// 缓存的说明，那是一号性能风险）。
 struct MaiModelRequest {
+    // 模型名。会话上配了就用会话的，否则用 MaiAgent::Options::defaultModel。
     std::string model;
+    // 完整历史，按时间顺序。**每次都要带全**——协议是无状态的，
+    // 少带了模型就没有上下文。
     std::vector<MaiModelMessage> messages;
+    // 这一轮允许模型用的工具。空表示纯对话模式，线上会**整个省掉
+    // tools 字段**而不是发一个空数组（有的服务端见到空数组会报错）。
     std::vector<MaiToolSpec> tools;
-    double temperature = -1.0;  // < 0 表示不传，用服务端默认
+    // < 0 表示不传这个字段，用服务端默认。
+    // 不用 0 当哨兵：0 是一个合法且有意义的取值（完全确定性输出）。
+    double temperature = -1.0;
 };
 
 // ── 流式回调 ────────────────────────────────────────────────────
 //
-// 线程契约（重要）：这些回调**在网络读线程上同步调用**。
-// 实现方不要在里面做慢活（写 socket、落盘、等锁），否则会拖慢模型读取。
-// 需要慢处理就自己塞队列——HTTP 适配器的 SSE 就是这么做的。
+// 线程契约（重要）：这些回调**在网络读线程上同步调用**——
+// 具体说就是 libcurl 的写回调里面。实现方不要在里面做慢活（写 socket、
+// 落盘、等锁），否则会直接拖慢模型吐字。需要慢处理就自己塞队列，
+// HTTP 适配器的 SSE 就是这么做的。
+//
+// 回调可以为空，实现方调用前要判。比如只关心最终文本的调用方
+// 可以不设 onReasoning。
 struct MaiStreamSink {
+    // 正文增量。**只带这次新增的部分**，不是累计值——
+    // 调用方自己往后拼。每秒会被调几十次。
+    //
+    // 参数是 string_view，指向的缓冲区**在回调返回后就不保证有效**了。
+    // 要留着就自己拷一份。
     std::function<void(std::string_view)> onText;
+
+    // 思考过程的增量（OpenAI 协议的 reasoning_content）。
+    // 语义和 onText 一样，但要落成**另一个片段**——界面要能单独折叠它。
     std::function<void(std::string_view)> onReasoning;
-    // 工具调用是**攒完整**才给的。流式过程中参数是碎片，中途给会是半截 JSON。
+
+    // 工具调用是**攒完整**才给的，不是增量。
+    //
+    // 流式过程中 arguments 是 JSON 字符串的碎片，按 index 分批到达：
+    //     {index:0, id:"call_x", function:{name:"read", arguments:""}}
+    //     {index:0,             function:{arguments:"{\"pa"}}
+    //     {index:0,             function:{arguments:"th\":\"a.txt\"}"}}
+    // 不同服务端分片时机不一样，有的整块给，有的一个字符一个字符给。
+    // 中途交付会是半截 JSON，所以攒到流结束再一次性给。
     std::function<void(const MaiToolInvocation&)> onToolCall;
 };
 
 struct MaiModelConfig {
+    // 不带末尾斜杠，也不带具体路径。客户端自己拼 "/chat/completions"。
+    // 例如：
+    //   https://open.bigmodel.cn/api/paas/v4   GLM
+    //   http://127.0.0.1:11434/v1              Ollama
     std::string baseUrl;
+    // 放进 Authorization: Bearer 头。
     std::string apiKey;
     MaiWireApi wire = MaiWireApi::ChatCompletions;
     long connectTimeoutSeconds = 20;
-    long totalTimeoutSeconds = 0;  // 0 = 不限；流式对话可能很久
+    // 0 = 不限。流式对话可能跑很久（模型想很长时间，或者输出很长），
+    // 设了上限就会在半截把人掐掉。真要停用 cancel，那个干净得多。
+    long totalTimeoutSeconds = 0;
 };
 
 // 模型客户端。一个接口，多个 wire 实现。
@@ -88,9 +156,16 @@ class MaiModelClient {
 public:
     virtual ~MaiModelClient() = default;
 
-    // 阻塞直到这一次应答结束。
-    // cancel 置 true 会让传输尽快中断——这是中断功能的落点，比等超时干净。
-    // 主动取消返回的是 MaiErrorCode::Canceled，**不是故障**。
+    // 阻塞直到这一次应答结束。调用方负责把它放到自己的线程上。
+    //
+    // 回调在**这个线程**上同步触发（见 MaiStreamSink 的线程契约）。
+    //
+    // cancel 置 true 会让传输尽快中断——实现方要在收数据的循环里查它，
+    // 这是中断功能的落点，比等超时干净得多。主动取消返回的是
+    // MaiErrorCode::Canceled，**不是故障**，上层不该当错误报给用户。
+    //
+    // 返回错误时，**已经通过回调交付出去的内容仍然有效**——
+    // 半截回答要保留下来，不要因为最后失败了就整段丢掉。
     virtual MaiError stream(const MaiModelRequest& request, const MaiStreamSink& sink,
                             const std::atomic<bool>& cancel) = 0;
 

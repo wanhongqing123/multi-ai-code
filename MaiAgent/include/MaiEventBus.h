@@ -79,10 +79,38 @@ public:
     MaiEventBus(const MaiEventBus&) = delete;
     MaiEventBus& operator=(const MaiEventBus&) = delete;
 
+    // 订阅。返回的 token 拿来退订，**别丢掉**——丢了就退不掉了。
+    //
+    // 可以从任意线程调用，也可以在处理函数里面调（发布时用的是订阅表的
+    // 快照，不会边遍历边改）。
+    //
+    // 新订阅者**看不到之前的事件**，这里没有回放。界面重连之后要自己去
+    // 拉一次当前状态（listMessages / listPendingPermissions），
+    // 否则断线那段时间发生的事就永远看不见了。
     Token subscribe(Handler handler);
+
+    // 退订。token 不存在就什么也不做，不算错——重复退订、或者对着已经
+    // 销毁的总线退订，都会走到这里。
+    //
+    // 注意：**退订返回之后，处理函数仍可能正在别的线程上执行**。
+    // 处理函数捕获的东西要么活得够久，要么用 shared_ptr 保住。
     void unsubscribe(Token token);
+
+    // 发布。**同步**调用所有处理函数，全部返回后这个函数才返回。
+    //
+    // 处理函数跑在**调用 publish 的这个线程**上，流式期间那是网络读线程。
+    // 里面不许做慢活——有守卫盯着，违反了当场终止并打印原因
+    // （见 MaiBlockingCheck.h）。
+    //
+    // 处理函数里再 publish 是可以的（不持锁调用），但要自己小心别写成
+    // 无限递归。
+    //
+    // 某个处理函数抛异常的话会一路往上抛，后面的处理函数收不到这条事件。
+    // 所以处理函数不要抛。
     void publish(const MaiEvent& event);
 
+    // 当前订阅者个数。给测试和诊断用，不要拿它做逻辑判断——
+    // 读到的那一刻别的线程可能正在订阅或退订。
     std::size_t subscriberCount() const;
 
 private:

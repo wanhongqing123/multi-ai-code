@@ -25,10 +25,10 @@
 
 // 一个目录项。
 struct MaiFileEntry {
-    MaiFilePath path;         // 完整路径
-    std::string nameUtf8;     // 只有最后一段，UTF-8
+    MaiFilePath path;      // 完整路径
+    std::string nameUtf8;  // 只有最后一段，UTF-8
     bool isDirectory = false;
-    std::uint64_t size = 0;   // 目录时无意义
+    std::uint64_t size = 0;  // 目录时无意义
 };
 
 // 遍历时对每一项的处置。

@@ -66,9 +66,55 @@ using MaiOperation = std::variant<MaiCreateSession, MaiUpdateSession, MaiDeleteS
 //
 // Qt 桌面、iOS / Android、命令行、HTTP 适配器都只认这一个类。
 // 这里不出现任何 HTTP 或 JSON 的概念——这是"库是边界"的落点。
+//
+// ── 怎么用 ──────────────────────────────────────────────────────
+//
+//   auto store = makeMaiMemoryStore();               // 或 makeMaiSqliteStore(path)
+//   MaiModelConfig config;
+//   config.baseUrl = "https://open.bigmodel.cn/api/paas/v4";
+//   config.apiKey  = apiKey;
+//   auto tools = std::make_unique<MaiToolRegistry>();
+//   registerMaiBuiltinTools(*tools);
+//
+//   MaiAgent agent(std::move(store), makeMaiModelClient(config), std::move(tools));
+//
+//   // 先订阅，再发消息——否则会漏掉最前面的事件
+//   agent.eventBus().subscribe([](const MaiEvent& event) { /* 刷界面 */ });
+//
+//   const std::string sessionId = agent.submit(MaiCreateSession{workdir, "", ""}).value();
+//   agent.submit(MaiSendPrompt{sessionId, "你好"});   // 立刻返回，不等模型
+//
+// ── submit 是异步的 ─────────────────────────────────────────────
+//
+// **这是用这个类最容易搞错的地方。** MaiSendPrompt 提交之后立刻返回，
+// 返回的只是"新建的 assistant 消息 id"，不是回答。真正的输出全部通过
+// 事件流出来——模型每吐一点就是一条 MessagePartDelta。
+//
+// 同步等模型答完会让界面卡几十秒，所以这一层不提供那种接口。
+// 测试里要等结果用 waitIdle()。
+//
+// ── 线程 ────────────────────────────────────────────────────────
+//
+// **所有公开方法都可以从任意线程调用**，内部自己加锁。
+//
+// 每一轮对话跑在**自己的工作线程**上（一轮一个），所以：
+//   - 多个会话真的并行，一个卡在等授权不影响别的；
+//   - 跑着的时候照样可以查询（listMessages 等）；
+//   - 事件处理函数在**发布事件的那个线程**上同步跑，流式期间那是网络
+//     读线程——里面不要做慢活，有守卫盯着（见 MaiBlockingCheck.h）。
+//
+// ── 析构 ────────────────────────────────────────────────────────
+//
+// 析构会把所有在跑的轮次叫停并**等它们退出**，所以析构可能阻塞若干秒
+// （要等 HTTP 传输真的断掉）。不这么做的话工作线程会去访问已经销毁的
+// store 和 emitter。
+//
+// 推论：**事件订阅者必须活得比 MaiAgent 久**，否则析构过程中最后几条
+// 事件会调到悬空的处理函数上。
 class MaiAgent {
 public:
     struct Options {
+        // 会话没指定模型时用这个。会话上配了就用会话的（MaiUpdateSession）。
         std::string defaultModel = "glm-5.3";
         // 模型可以连着调工具，一轮对话因此会有多次请求。设上限是因为
         // 模型会绕圈——拿同样的参数反复调同一个工具，没上限就一直烧钱。
@@ -80,18 +126,32 @@ public:
         MaiMillis permissionTimeoutMs = 0;
     };
 
-    // model 可以为空：那样发消息会以 NotConfigured 收场，但其余功能照常。
-    // tools 可以为空：那是纯对话模式，模型收不到任何工具。
+    // 三个依赖**都被接管所有权**，活到 MaiAgent 析构为止。
+    //
+    // store 不能为空。model 可以为空：那样发消息会以 NotConfigured 收场，
+    // 但建会话、查历史这些照常（M1 的空转骨架就是这个配置）。
+    // tools 可以为空：那是纯对话模式，模型收不到任何工具声明。
     MaiAgent(std::unique_ptr<MaiSessionStore> store, std::unique_ptr<MaiModelClient> model,
              std::unique_ptr<MaiToolRegistry> tools = nullptr, Options options = {});
     ~MaiAgent();
     MaiAgent(const MaiAgent&) = delete;
     MaiAgent& operator=(const MaiAgent&) = delete;
 
-    // ── 查询（纯读，不经过操作队列）──────────────────────────────
+    // ── 查询 ────────────────────────────────────────────────────
+    // 纯读，直接问存储，不经过操作队列。轮次跑着的时候也能查，
+    // 查到的是**那一刻已经落库的内容**（流式期间 assistant 消息会随着
+    // 每次工具调用逐步变长）。
+
+    // 按 updated 倒序——界面左侧列表直接用这个顺序。
     std::vector<MaiSession> listSessions() const;
+    // 会话不存在返回 false，out 不动。
     bool getSession(const std::string& id, MaiSession& out) const;
+    // 按生成顺序。会话不存在时返回空 vector，和"会话存在但没有消息"
+    // 分不开——要分清先用 getSession。
     std::vector<MaiMessage> listMessages(const std::string& sessionId) const;
+    // 这个会话现在有没有一轮在跑。注意这是**那一瞬间**的答案，
+    // 拿它去做"没跑就发消息"的判断是有竞态的——直接 submit，
+    // 忙的话会返回 Busy，那个判断在锁里做。
     bool isBusy(const std::string& sessionId) const;
 
     // 现在有哪些工具调用在等授权。
@@ -102,9 +162,15 @@ public:
     std::vector<MaiPermissionRequest> listPendingPermissions() const;
 
     // ── 变更 ────────────────────────────────────────────────────
-    // 返回受影响的对象 id；发消息返回新建的 assistant 消息 id。
-    // 失败时带错误码，调用方能区分"会话不存在"和"正忙"——
-    // 之前只返回空字符串，上层只能猜。
+
+    // 提交一个操作。**立刻返回**，见上面"submit 是异步的"。
+    //
+    // 成功时返回受影响的对象 id：建会话返回 ses_...，发消息返回新建的
+    // assistant 消息 id（msg_...），裁决授权返回 per_...。
+    //
+    // 失败时带错误码，调用方据此分支：NotFound（会话不存在）、
+    // Busy（这个会话已经有一轮在跑）、InvalidInput（空 prompt 等）。
+    // HTTP 适配器把它映射成状态码，就一处映射。
     MaiResult<std::string> submit(const MaiOperation& operation);
 
     // 等所有在跑的轮次结束。给测试和优雅退出用。

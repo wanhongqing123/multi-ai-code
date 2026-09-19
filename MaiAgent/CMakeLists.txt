@@ -161,6 +161,23 @@ endif()
 add_executable(maiagent-bridge cli/MaiBridgeMain.cpp)
 target_link_libraries(maiagent-bridge PRIVATE maiagent_http_adapter)
 
+# ── 脱壳验证：只链核心库的控制台 ─────────────────────────────────
+# 这一行是这个目标存在的全部理由：只有 `maiagent`。没有 maiagent_http_adapter，
+# 也没有 mai_thirdparty——**httplib 在后者里面**，所以 HTTP 服务端进不来。
+#
+# 哪天有人把 httplib 漏进核心，这个目标会当场链不过："adapters/ 和 cli/ 是可摘的壳"
+# （规范第 9 节）从一句文档变成了构建期的约束。别为了让它过而在这里补依赖，
+# 那等于把闸门自己拆了；该改的是漏进核心的那段代码。
+#
+# 说清楚这条线**不**管什么，免得下一个人误判：
+#   - nlohmann 还是会进核心，走的是 maiagent 自己的 PRIVATE include 路径。
+#     这是有意的：OpenAI 的线格式就是 JSON，客户端必须能解。守的那条线是
+#     "公开头里不出现 JSON"，不是"核心不许碰 JSON"。
+#   - libcurl 也会进来。它是 HTTP **客户端**（核心用它调模型），
+#     和 httplib 这个 HTTP **服务端**是两件完全不同的事。
+add_executable(maiagent-console cli/MaiConsoleMain.cpp)
+target_link_libraries(maiagent-console PRIVATE maiagent)
+
 # ── 测试 ────────────────────────────────────────────────────────
 option(MAIAGENT_BUILD_TESTS "Build MaiAgent tests" ON)
 if(MAIAGENT_BUILD_TESTS)

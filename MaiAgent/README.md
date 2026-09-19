@@ -11,7 +11,9 @@ Qt 桌面、iOS/Android、Linux 服务器、嵌入式。
 include/     核心公开头（MaiAgent.h / MaiTool.h / ...）。对外只有 submit(Op) 和事件流
 src/         核心实现 + 内部头。无 Qt、无 HTTP 服务端、无 JSON
 adapters/    MaiHttpAdapter：REST + SSE 适配器，喂现有的 Electron 界面。**可摘**
-cli/         maiagent-bridge：跑核心 + 挂适配器的宿主进程。**可摘**
+cli/         两个宿主进程，都**可摘**：
+             maiagent-bridge   核心 + HTTP 适配器，喂 Electron 界面
+             maiagent-console  只链核心的交互式控制台，不碰 HTTP
 tests/       单元测试 + e2e
 docs/        编码规范
 ```
@@ -22,10 +24,16 @@ docs/        编码规范
 
 ## 这不是一个服务端
 
-产物是 **`maiagent` 这个库**。`adapters/` 和 `cli/` 加起来 493 行，核心
-2672 行——那 493 行存在的唯一理由是：现在的界面是 Electron，JS 写的，
-调不了 C++ 函数，只会说 HTTP。所以要有人把 `submit()` 翻译成 REST、
-把事件流翻译成 SSE。
+产物是 **`maiagent` 这个库**。核心 5230 行，HTTP 那层壳
+（`adapters/` + `cli/MaiBridgeMain.cpp`）637 行——那 637 行存在的唯一理由是：
+调用方说不了 C++，只会说 HTTP。所以要有人把 `submit()` 翻译成 REST、
+把事件流翻译成 SSE。说得了 C++ 的调用方一行都不需要它。
+
+这句话不是靠文档维持的，是**构建系统盯着的**：`maiagent-console` 这个目标
+只链 `maiagent`，不链适配器也不链 httplib 所在的 `mai_thirdparty`。
+谁把 HTTP 服务端漏进核心，它当场链不过。`tests/e2e/m6_console.py` 还会
+翻一遍产出的 exe，确认里面既没有 httplib 也没有那几条 REST 路由
+（拿 maiagent-bridge 当对照组，免得检查恒为真）。
 
 Qt 桌面 / iOS / Android / 嵌入式全都直接链库，一行 HTTP 都不过：
 
@@ -70,6 +78,12 @@ cmake --build build
 python tests/e2e/m2_loop.py
 python tests/e2e/m4_permission.py
 python tests/e2e/m5_persistence.py
+python tests/e2e/m6_console.py      # 脱壳：控制台只链库，HTTP 整块摘掉
+
+# 交互式控制台：一个进程，不起服务端，中文输入输出都走宽字符 API
+./build/bin/maiagent-console --help
+./build/bin/maiagent-console --model-url http://127.0.0.1:11434/v1 --model qwen2.5
+./build/bin/maiagent-console --db ./agent.db --dir E:/some/project
 
 # 手动起服务
 ./build/bin/maiagent-bridge --help
@@ -92,7 +106,7 @@ Windows 上要先进 MSVC 环境（`vcvars64.bat`）。
 - [x] **M3 能干活** — 工具注册表 + read/write/glob/grep + 工具循环
 - [x] **M4 权限闸门** — write 跑之前停下来等用户点头
 - [x] **M5 落库** — SQLite 持久化 + 切模型 + 写失败不再无声无息
-- [ ] M6 脱壳验证 — 摘掉 HTTP，写一个直接链库的 CLI
+- [x] **M6 脱壳验证** — `maiagent-console` 只链 `maiagent`，HTTP 整块摘掉
 
 ## 权限闸门
 

@@ -1,7 +1,7 @@
 # MaiAgent
 
 MaiChatBuddy 的 agent 核心，纯 C++，可移植。产物是 `maiagent` 这个库——
-`adapters/` 和 `cli/` 是可摘的壳，不是产物本身。
+`cli/` 只是个壳，不是产物本身。
 
 ## 动代码之前先读编码规范
 
@@ -31,8 +31,8 @@ clang-format -i --style=file <改过的文件>
 构建和跑测试见 [`README.md`](README.md)。**构建不需要网络**——第三方依赖
 全在 `third_party/` 里。
 
-提交前至少跑一遍八套单元测试；动到 HTTP 适配器、存储或者控制台的话，
-`tests/e2e/` 下那五个脚本也跑一下。
+提交前至少跑一遍八套单元测试；动到存储或者控制台的话，
+`tests/e2e/console_e2e.py` 也跑一下。
 
 ---
 

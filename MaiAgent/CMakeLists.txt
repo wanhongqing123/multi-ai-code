@@ -32,8 +32,18 @@ endif()
 
 # ── 第三方：全部单头文件，直接进仓库，不依赖包管理器 ──────────────
 # 这样在没有网络的机器上（以及嵌入式交叉编译时）也能构建。
-add_library(mai_thirdparty INTERFACE)
-target_include_directories(mai_thirdparty INTERFACE
+#
+# **这个目标只给测试用，产物一行都不碰它。** 名字里带 test 是刻意的：
+# 以前它叫 mai_thirdparty，链给谁都不显眼，httplib 就是那么进到产物里去的。
+#
+#   nlohmann  核心自己也用（走 maiagent 的 PRIVATE include），这里这份是给
+#             测试直接构造线格式用的。
+#   httplib   HTTP **服务端**。产物里没有、也不该有——它在这里的唯一身份是
+#             MaiModelClientTests 的假模型服务端：要测 MaiOpenAiClient 这个
+#             HTTP **客户端**，就得有个真的 socket 在对面，不然分片和 SSE
+#             边界那些东西根本测不到。
+add_library(mai_thirdparty_for_tests INTERFACE)
+target_include_directories(mai_thirdparty_for_tests INTERFACE
   ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nlohmann
   ${CMAKE_CURRENT_SOURCE_DIR}/third_party/httplib
 )
@@ -148,26 +158,14 @@ target_include_directories(maiagent
 # sqlite 和 libcurl 都是 PRIVATE：它们是实现细节，公开头里不出现。
 target_link_libraries(maiagent PUBLIC Threads::Threads PRIVATE CURL::libcurl mai_sqlite)
 
-# ── HTTP 适配器：把核心包成 REST + SSE，喂现有的 Electron 界面 ────
-add_library(maiagent_http_adapter STATIC
-  adapters/MaiHttpAdapter.cpp
-)
-target_include_directories(maiagent_http_adapter PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/adapters)
-target_link_libraries(maiagent_http_adapter PUBLIC maiagent mai_thirdparty)
-if(WIN32)
-  target_link_libraries(maiagent_http_adapter PUBLIC ws2_32 crypt32)
-endif()
-
-add_executable(maiagent-bridge cli/MaiBridgeMain.cpp)
-target_link_libraries(maiagent-bridge PRIVATE maiagent_http_adapter)
-
-# ── 脱壳验证：只链核心库的控制台 ─────────────────────────────────
-# 这一行是这个目标存在的全部理由：只有 `maiagent`。没有 maiagent_http_adapter，
-# 也没有 mai_thirdparty——**httplib 在后者里面**，所以 HTTP 服务端进不来。
+# ── 唯一的宿主进程：只链核心库的控制台 ───────────────────────────
+# 这一行是全部：`maiagent`，没有别的。产物里没有 HTTP 服务端，
+# 因为压根就没有东西能提供一个——httplib 只在 mai_thirdparty_for_tests 里。
 #
-# 哪天有人把 httplib 漏进核心，这个目标会当场链不过："adapters/ 和 cli/ 是可摘的壳"
-# （规范第 9 节）从一句文档变成了构建期的约束。别为了让它过而在这里补依赖，
-# 那等于把闸门自己拆了；该改的是漏进核心的那段代码。
+# 曾经这里还有 maiagent_http_adapter（REST + SSE）和 maiagent-bridge，
+# 存在的唯一理由是 Electron 界面说不了 C++。那个界面要撤，这层壳跟着撤了。
+# Qt / iOS / Android / 嵌入式都和这个 exe 一样：构造 MaiAgent，订阅事件总线，
+# submit 操作，进程内调用。
 #
 # 说清楚这条线**不**管什么，免得下一个人误判：
 #   - nlohmann 还是会进核心，走的是 maiagent 自己的 PRIVATE include 路径。
@@ -203,7 +201,7 @@ if(MAIAGENT_BUILD_TESTS)
       MaiToolLoopTests      # 工具循环：调用 -> 执行 -> 回灌 -> 再答
       MaiPermissionTests)   # 权限闸门：拦住 -> 等裁决 -> 放行或拒绝
     add_executable(${test_name} tests/${test_name}.cpp)
-    target_link_libraries(${test_name} PRIVATE maiagent maiagent_test_support mai_thirdparty)
+    target_link_libraries(${test_name} PRIVATE maiagent maiagent_test_support mai_thirdparty_for_tests)
     target_include_directories(${test_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     if(WIN32)
       target_link_libraries(${test_name} PRIVATE ws2_32 crypt32)

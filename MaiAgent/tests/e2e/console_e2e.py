@@ -1,15 +1,15 @@
-# M6 端到端：脱壳验证。
+# 端到端：把整个产物当交互程序用一遍。
 #
-# 前面五个脚本验的都是"经过 HTTP 之后行为还对不对"。这一份反过来，验的是
-# **HTTP 可以整块摘掉**：maiagent-console 只链 maiagent 这个库，进程内直接订阅事件总线，
-# 全程没有 socket 服务端、没有 REST、没有 SSE。
+# 这是**唯一**的端到端脚本。以前还有四个（m1/m2/m4/m5），验的是"经过 REST + SSE
+# 之后行为还对不对"——它们测的是 Electron 那套协议，协议和界面一起撤掉了，
+# 脚本跟着撤。剩下的这一份直接对着产物：maiagent-console 只链 maiagent，
+# 进程内订阅事件总线，全程没有 socket 服务端、没有 REST、没有 SSE。
 #
 # 两件事分开验：
 #
-#   1. 静态：exe 里翻不到 httplib，也翻不到适配器那几条路由。
-#      "adapters/ 和 cli/ 是可摘的壳"这句话到这里才算有证据。
-#   2. 动态：把它当交互程序用一遍——聊天、工具、授权、切会话、落库，
-#      全部通过 stdin / stdout。能用才算摘得干净，编译过不算。
+#   1. 静态：产物的 exe 里翻不到 httplib。
+#   2. 动态：聊天、工具、授权、切会话、落库，全部通过 stdin / stdout。
+#      能用才算数，编译过不算。
 #
 # 唯一还剩的 HTTP 是**客户端**那一侧：核心用 libcurl 调模型。
 # 这个脚本起的假模型就是个真的 Chat Completions 端点，那条线本来就该在。
@@ -43,22 +43,26 @@ def check(name, cond, extra=""):
         fails.append(name)
 
 
-# ── 1. 静态：这个 exe 里没有 HTTP 服务端 ─────────────────────────
-say("== 1. the binary carries no HTTP server ==")
+# ── 1. 静态：产物里没有 HTTP 服务端 ──────────────────────────────
+say("== 1. the shipped binary carries no HTTP server ==")
 
 with open(CONSOLE, "rb") as f:
     binary = f.read()
-bridge_path = CONSOLE.replace("maiagent-console", "maiagent-bridge")
-with open(bridge_path, "rb") as f:
-    bridge_binary = f.read()
+# 对照组是 MaiModelClientTests：它**故意**链了 httplib，拿来当假的模型服务端。
+# 只说"console 里没有"是不够的——万一这个标记本来就编不进任何 exe，
+# 那这条检查恒为真，等于什么都没验（规范第 13 节）。
+# 顺带也把话说清楚了：httplib 在这个仓库里只剩测试夹具这一个身份。
+fixture = CONSOLE.replace("maiagent-console", "MaiModelClientTests")
+with open(fixture, "rb") as f:
+    fixture_binary = f.read()
 
-# 拿 bridge 当对照组。只说"console 里没有"是不够的——万一这几个标记本来就
-# 编不进任何 exe，那这条检查恒为真，等于什么都没验（规范第 13 节）。
-for marker in (b"httplib", b"/api/session", b"/api/event"):
-    name = marker.decode()
-    check("console has no " + name, binary.count(marker) == 0)
-    check("but bridge does (so the probe works)", bridge_binary.count(marker) > 0,
-          "%d hits" % bridge_binary.count(marker))
+check("the product has no httplib", binary.count(b"httplib") == 0)
+check("but the test fixture does (so the probe works)", fixture_binary.count(b"httplib") > 0,
+      "%d hits" % fixture_binary.count(b"httplib"))
+# 适配器那几条路由。别写成 b"/api/" —— 帮助文本里的 GLM 地址
+# （.../api/paas/v4）也会撞上，那是**客户端**要调的地址，不是路由。
+for route in (b"/api/session", b"/api/event", b"/api/permission"):
+    check("no " + route.decode() + " route", binary.count(route) == 0)
 
 # 反过来，客户端那一侧必须还在：核心得能调模型。
 check("client-side SSE is still there", binary.count(b"text/event-stream") > 0)
@@ -124,7 +128,7 @@ SCRIPTS[:] = [
     ("Done, I wrote note.txt.", "", ""),                                   # 第二轮的收尾
 ]
 
-say("== 2. drive it as an interactive program ==")
+say("== 2. drive the product as an interactive program ==")
 say("  workspace " + workspace)
 say("  fake model on 127.0.0.1:%d" % model_port)
 
@@ -272,13 +276,80 @@ reopened = reread.stdout.decode("utf-8", "replace")
 check("the old sessions came back", reopened.count("ses_") >= 3,
       "%d mentions" % reopened.count("ses_"))
 
+say("")
+
+
+# ── 4. 硬杀之后数据还在吗 ──────────────────────────────────
+# 上面那一段是**正常退出**：析构跑过、SQLite 干净关闭。真实世界不长这样——
+# 用户直接叉掉窗口、进程被杀、机器断电。
+#
+# 这一段用 terminate() 硬杀，一个析构函数都不跑，然后重开看数据还在不在。
+# 验的是 WAL：提交过的数据先落在 <db>-wal 里，下次打开时由 SQLite 自己重放。
+# （顺带说明为什么只拷 agent.db 不算备份——wal 里那部分会丢。）
+say("== 4. survives a hard kill ==")
+
+workspace2 = tempfile.mkdtemp(prefix="maiagent-kill-")
+database2 = os.path.join(workspace2, "agent.db")
+served["n"] = 0
+SURVIVOR = "this line must survive a hard kill"
+SCRIPTS[:] = [(SURVIVOR, "", "")]
+
+victim = subprocess.Popen(
+    [CONSOLE, "--dir", workspace2, "--db", database2,
+     "--model-url", "http://127.0.0.1:%d" % model_port, "--model-key", "fake"],
+    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+seen = []
+
+
+def pump_victim():
+    while True:
+        chunk = victim.stdout.read(1)
+        if not chunk:
+            return
+        seen.append(chunk)
+
+
+threading.Thread(target=pump_victim, daemon=True).start()
+victim.stdin.write(b"remember this\n")
+victim.stdin.flush()
+
+deadline = time.time() + 20
+while time.time() < deadline:
+    if SURVIVOR in b"".join(seen).decode("utf-8", "replace"):
+        break
+    time.sleep(0.05)
+victim_screen = b"".join(seen).decode("utf-8", "replace")
+check("the answer came through before the kill", SURVIVOR in victim_screen)
+
+old_session = ""
+for token in victim_screen.split():
+    if token.startswith("ses_"):
+        old_session = token
+        break
+check("captured the session id", old_session.startswith("ses_"), old_session)
+
+# 硬杀：没有 /quit，没有析构，没有干净关库。
+victim.terminate()
+victim.wait(timeout=10)
+
+revived = subprocess.run(
+    [CONSOLE, "--dir", workspace2, "--db", database2],
+    input=("/use %s\n/history\n/quit\n" % old_session).encode("utf-8"),
+    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=30)
+revived_screen = revived.stdout.decode("utf-8", "replace")
+check("the killed session came back", ("now talking to " + old_session) in revived_screen)
+check("and its answer is still in the history", SURVIVOR in revived_screen,
+      repr(revived_screen[-200:]))
+
 shutil.rmtree(workspace, ignore_errors=True)
+shutil.rmtree(workspace2, ignore_errors=True)
 
 say("")
 say("-" * 40)
 if fails:
-    say("M6 end-to-end: %d checks FAILED" % len(fails))
+    say("console end-to-end: %d checks FAILED" % len(fails))
     for f in fails:
         say("  - " + f)
     sys.exit(1)
-say("M6 end-to-end: all checks passed")
+say("console end-to-end: all checks passed")

@@ -49,7 +49,7 @@ struct MaiInterrupt {
 // 对一次工具调用的授权请求作出裁决。
 //
 // 做成操作而不是直接调闸门，是为了让它和别的变更走同一条路：一样的错误码、一样的返回形状，
-// 适配器不用为它单开一套处理。
+// 调用方不用为它单开一套处理。
 struct MaiReplyPermission {
     std::string permissionId;
     MaiPermissionDecision decision = MaiPermissionDecision::Denied;
@@ -64,8 +64,11 @@ using MaiOperation = std::variant<MaiCreateSession, MaiUpdateSession, MaiDeleteS
 // **跑一轮对话的逻辑不在这里**——那在 MaiTurnRunner，上下文组装在 MaiContextBuilder，
 // 给会话起名在 MaiSessionTitler。
 //
-// Qt 桌面、iOS / Android、命令行、HTTP 适配器都只认这一个类。
+// Qt 桌面、iOS / Android、命令行都只认这一个类。
 // 这里不出现任何 HTTP 或 JSON 的概念——这是"库是边界"的落点。
+//
+// 这条边界已经受过一次检验：给 Electron 界面用的那层 REST + SSE 适配器整个删掉时，
+// 这个文件一行都没改。
 //
 // ── 怎么用 ──────────────────────────────────────────────────────
 //
@@ -162,7 +165,7 @@ public:
     // 发消息返回新建的 assistant 消息 id（msg_...），裁决授权返回 per_...。
     //
     // 失败时带错误码，调用方据此分支：NotFound（会话不存在）、Busy（这个会话已经有一轮在跑）、
-    // InvalidInput（空 prompt 等）。HTTP 适配器把它映射成状态码，就一处映射。
+    // InvalidInput（空 prompt 等）。界面据此决定是弹错误、还是提示"先等这一轮跑完"。
     MaiResult<std::string> submit(const MaiOperation& operation);
 
     // 等所有在跑的轮次结束。给测试和优雅退出用。

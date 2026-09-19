@@ -4,7 +4,7 @@
 
 // ID 生成。
 //
-// **带前缀不是我们挑的形状，是被现有界面逼的。** 那个 Electron 界面派生自 opencode，
+// **带前缀不是我们挑的形状，是被当初那个界面逼的。** 那个 Electron 界面派生自 opencode，
 // 它按前缀做校验，而且是两道：
 // packages/sdk/openapi.json 里 sessionID / messageID / partID / 事件 id 分别有 ^ses、^msg、^prt、
 // ^evt_的 pattern；另外服务端路由里还有一句
@@ -16,8 +16,15 @@
 // UUIDv7 本身按时间有序，
 // 所以它不需要我们下面这套"单调计数 + 随机后缀"——那套是在手工复刻 UUIDv7 已经保证的性质。
 //
-// 等界面不再依赖前缀（Qt 端直接链库，根本不过这层校验），这里就该换成 UUIDv7，
-// 把这套手写的东西删掉。
+// **那个条件后来成立了，但不能换了。** Electron 界面撤掉、REST 适配器删掉之后，
+// 已经没有任何一处在校验前缀。按上面那句话，这里本该换成 UUIDv7。
+//
+// 拦住它的是另一件事：**库里已经存着带前缀的 id**。而 MaiSqliteStore 靠
+// `ORDER BY id` 还原插入顺序（见那个文件里的注释），UUIDv7 虽然自己也按时间有序，
+// 但和 "ses_01M2..." 混在一张表里排出来的顺序是错的——历史消息会乱序显示。
+//
+// 所以要换的话是一次带数据迁移的动作，不是改个函数。在有人真的需要之前，
+// 留着这套手写的东西比换掉便宜。
 class MaiIdGenerator {
 public:
     static std::string newSessionId();     // ses_...

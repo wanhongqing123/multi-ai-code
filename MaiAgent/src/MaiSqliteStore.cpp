@@ -472,7 +472,7 @@ MaiResult<std::unique_ptr<MaiSessionStore>> makeMaiSqliteStore(
     // 要么先让进程干净退出——sqlite3_close 在最后一个连接关闭时会做 checkpoint 并删掉 -wal。
     //
     // 进程被硬杀不会丢数据：下次打开时 SQLite 会从 -wal 恢复。
-    // 这条是实测过的（tests/e2e/m5_persistence.py 就是 terminate() 杀的）。
+    // 这条是实测过的（tests/e2e/console_e2e.py 里那一段就是 terminate() 硬杀的）。
     sqlite3_exec(database, "PRAGMA journal_mode=WAL", nullptr, nullptr, nullptr);
     sqlite3_exec(database, "PRAGMA synchronous=NORMAL", nullptr, nullptr, nullptr);
     // 被别的写者占着时等 5 秒再报 busy，而不是立刻失败。

@@ -105,7 +105,7 @@ struct MaiModelRequest {
 //
 // 线程契约（重要）：这些回调**在网络读线程上同步调用**——具体说就是 libcurl 的写回调里面。
 // 实现方不要在里面做慢活（写 socket、落盘、等锁），否则会直接拖慢模型吐字。需要慢处理就自己塞队列，
-// HTTP 适配器的 SSE 就是这么做的。
+// 控制台的渲染线程就是这么做的（见 cli/MaiConsoleMain.cpp）。
 //
 // 回调可以为空，实现方调用前要判。比如只关心最终文本的调用方可以不设 onReasoning。
 struct MaiStreamSink {

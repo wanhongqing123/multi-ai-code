@@ -63,7 +63,7 @@ cmake --build build && ctest --test-dir build   # 或直接跑 build/bin/Mai*Tes
 | `MaiOpenAiClient` 里的行缓冲 | `ollama/src/line_buffer.rs` |
 
 **opencode 只在一个地方还有影响力：线上 id 的前缀**（`ses_` / `msg_` /
-`prt_` / `evt_` / `per_`）。那不是我们选的风格，是现在这个 Electron 界面
+`prt_` / `evt_` / `per_`）。那不是我们选的风格，是当初那个 Electron 界面
 （派生自 opencode）在两处硬校验：`packages/sdk/openapi.json` 里的 pattern，
 以及路由里的 `startsWith("ses")`。属于被迫兼容，不是设计偏好——
 `MaiIdGenerator.h` 的注释里写明了，并记着 codex 用的是裸 UUIDv7。
@@ -154,7 +154,7 @@ Windows 那边是 UTF-16，可能含未配对代理项，转一圈回不来。
 MaiTime.h        MaiTime.cpp
 MaiError.h       MaiError.cpp
 MaiSessionStore.h
-MaiHttpAdapter.h  MaiHttpAdapter.cpp
+MaiFilePath.h    MaiFilePath.cpp
 ```
 
 不要这样：
@@ -230,6 +230,10 @@ std::string session();        // 坏：像是在取某个会话
 为了让说不了 C++ 的 Electron 界面能连上来临时贴的一层壳。
 
 改成 `MaiHttpAdapter` 之后歧义就没了：`Http` 说技术，`Adapter` 说角色。
+
+（那个界面后来撤了，适配器和 `maiagent-bridge` 跟着整个删掉，仓库里已经
+找不到这两个文件——**别去搜**。这一条留着是因为教训还在：名字取错的那几个月，
+每个新来的人都要被口头纠正一次"这不是服务端"。）
 
 ```
 MaiHttpServer   -> MaiHttpAdapter    Adapter 才是它的角色
@@ -599,26 +603,35 @@ MaiMillis completed = 0;
 
 ## 9. 核心不认识 HTTP 服务端
 
-产物是 `maiagent` 这个库。`adapters/` 和 `cli/` 是**可摘的壳**——现在的
-界面是 Electron、JS 写的、调不了 C++，才需要有人把 `submit()` 翻译成
-REST。Qt 界面就位之后那两个目录可以整个删掉，核心一行都不用改。
+产物是 `maiagent` 这个库。仓库里**一个 HTTP 服务端都没有**了。
 
-**别把两个 HTTP 搞混**，它们方向相反：
+这一条以前的说法是"`adapters/` 和 `cli/` 是可摘的壳"。后来真摘了：
+Electron 界面撤掉，`adapters/MaiHttpAdapter`（REST + SSE）和
+`maiagent-bridge` 一起删，637 行。**核心一行都没改**——那就是当初要有这条
+边界的全部意义。现在唯一的宿主进程是 `maiagent-console`，
+Qt / iOS / Android / 嵌入式都和它一样：进程内构造 `MaiAgent`，
+订阅事件总线，`submit` 操作。
 
-| | 是什么 | 谁用 | 能不能摘 |
+**别把两个 HTTP 搞混**，它们方向相反，现在只剩一个：
+
+| | 是什么 | 谁用 | 现状 |
 |---|---|---|---|
-| libcurl | HTTP **客户端** | 核心去调大模型 | 摘不掉 |
-| cpp-httplib | HTTP **服务端** | 适配器给界面连、测传输的那个用例 | 能摘 |
+| libcurl | HTTP **客户端** | 核心去调大模型 | 在，摘不掉 |
+| cpp-httplib | HTTP **服务端** | 以前是适配器，现在只剩 `MaiModelClientTests` 拿它当假模型 | 产物里没有 |
 
 这条边界可以直接量，不用靠自觉：
 
 ```bat
-dumpbin /symbols build\lib\maiagent.lib              | findstr /C:httplib   :: 应为 0
-dumpbin /symbols build\lib\maiagent_http_adapter.lib | findstr /C:curl_easy :: 应为 0
+:: 产物里不该有服务端
+dumpbin /symbols build\lib\maiagent.lib | findstr /C:httplib   :: 应为 0
+
+:: 更硬的一道：maiagent-console 只链 maiagent，httplib 只在
+:: mai_thirdparty_for_tests 里。谁把服务端漏进核心，这个目标当场链不过。
+:: tests/e2e/console_e2e.py 还会翻产出的 exe 复核一遍。
 ```
 
 同理，公开头 `include/` 里不出现 JSON、HTTP、Qt 的类型。实现里 JSON 只在
-"协议本身就是 JSON"的地方出现（SSE 载荷、工具参数、REST）。
+"协议本身就是 JSON"的地方出现（SSE 载荷、工具参数、存进库的片段）。
 
 ## 10. 先落库，再广播
 
@@ -761,7 +774,8 @@ MSVC 那套魔法异常（`RaiseException(0x406D1388)`），只在挂着调试�
 和它守着的那些系统调用比可以忽略。
 
 确实必须在那儿做慢活时，用 `MaiScopedAllowBlocking` 明确开口子——
-但先想想能不能把慢活挪出去（HTTP 适配器的 SSE 就是塞队列换线程做的）。
+但先想想能不能把慢活挪出去（控制台的渲染线程就是这么做的：事件处理函数只入队，
+排版和写都在另一个线程上）。
 
 ## 13. 验证之前先问"这套观测能不能看见目标"
 
